@@ -226,7 +226,7 @@ func (q *Queries) CreateComputerCommand(ctx context.Context, arg CreateComputerC
 }
 
 const failPendingComputerCommand = `-- name: FailPendingComputerCommand :one
-UPDATE computer_commands SET status='failed',failure_reason='placement_failed',
+UPDATE computer_commands SET status='failed',failure_reason='dispatch_failed',
  error=$1,terminal_at=clock_timestamp(),terminal_reason_code=$2,
  result_expires_at=clock_timestamp()+interval '30 days',revision=revision+1,updated_at=clock_timestamp()
  WHERE id=$3 AND environment_id=$4

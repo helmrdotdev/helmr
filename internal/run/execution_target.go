@@ -47,9 +47,9 @@ func LockLiveExecutionForComputer(ctx context.Context, tx pgx.Tx, fence Executio
 	return a, nil
 }
 
-func lockExecutionPlacement(ctx context.Context, tx pgx.Tx, lineage []uuid.UUID, environment pgtype.UUID, target executionTarget) error {
+func lockExecutionComputers(ctx context.Context, tx pgx.Tx, lineage []uuid.UUID, environment pgtype.UUID, target executionTarget) error {
 	if !target.session.Valid && !target.computer.Valid {
-		return lockCancellationPlacement(ctx, tx, lineage, nil)
+		return lockCancellationComputers(ctx, tx, lineage, nil)
 	}
 	var addressed pgtype.UUID
 	if target.session.Valid {

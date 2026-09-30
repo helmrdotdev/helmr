@@ -17,7 +17,7 @@ export type CommandOutcome = Readonly<{
 }> & (
   | Readonly<{ kind: "exited"; exitCode: number }>
   | Readonly<{ kind: "cancelled" | "timed_out" }>
-  | Readonly<{ kind: "system_failed"; failure: Readonly<{ reason: "guest_failure" | "placement_failed" | "scope_termination_failed" }> }>
+  | Readonly<{ kind: "system_failed"; failure: Readonly<{ reason: "guest_failure" | "dispatch_failed" | "scope_termination_failed" }> }>
 )
 
 export interface CommandInfo {
@@ -84,7 +84,7 @@ export function parseCommandInfo(value: unknown, expectedId?: string): CommandIn
       outcome = Object.freeze({ ...base, kind })
     } else {
       const reason = object(wire["failure"], "Command failure")["reason"]
-      if (reason !== "guest_failure" && reason !== "placement_failed" && reason !== "scope_termination_failed") throw new Error("Command failure reason is invalid")
+      if (reason !== "guest_failure" && reason !== "dispatch_failed" && reason !== "scope_termination_failed") throw new Error("Command failure reason is invalid")
       outcome = Object.freeze({ ...base, kind: "system_failed", failure: Object.freeze({ reason }) })
     }
   }

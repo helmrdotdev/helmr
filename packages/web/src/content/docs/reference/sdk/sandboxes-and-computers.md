@@ -89,8 +89,8 @@ reaching their read store.
 
 Call `command.cancel()` to request termination. Repeated calls return the same
 retained operation receipt; the receipt confirms intent, not process exit. Use
-`retrieve()` or `wait()` for the outcome. Pending work that has not been placed is
-cancelled without starting. Placed work retains its execution identity until the
+`retrieve()` or `wait()` for the outcome. Pending work that has not been assigned is
+cancelled without starting. Assigned work retains its execution identity until the
 worker confirms cleanup; `processReconciled` reports that separate fact. Commands
 are independent of Actor and Task lifecycles; cancelling a Run does not cancel
 a Command on the same Computer.

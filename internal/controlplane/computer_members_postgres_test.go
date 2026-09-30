@@ -66,7 +66,7 @@ func TestComputerMembersReadAuthoritativeRowsAndScopeCursor(t *testing.T) {
 	if body := decodeHTTPError(t, invalidLimit.Body.Bytes()); body.Code != "invalid_computer_reference" || body.Message != "limit must be an integer in [1,100]" {
 		t.Fatalf("invalid limit error = %+v", body)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_commands SET status='failed',failure_reason='placement_failed',terminal_at=now(),terminal_reason_code='placement_failed' WHERE id=$1`, commandID)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_commands SET status='failed',failure_reason='dispatch_failed',terminal_at=now(),terminal_reason_code='dispatch_failed' WHERE id=$1`, commandID)
 	last := read(f.computerIDs[0], "", reader, http.StatusOK)
 	if len(last.Members) != 1 || last.Members[0].ID != started.SessionID.String() {
 		t.Fatalf("settled membership=%+v", last)

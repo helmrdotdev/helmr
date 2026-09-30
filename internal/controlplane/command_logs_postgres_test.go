@@ -57,7 +57,7 @@ func TestCommandLogOutboxScopeReplayAndCollection(t *testing.T) {
 	if count, err := q.PruneTelemetryOutboxWritten(t.Context(), db.PruneTelemetryOutboxWrittenParams{RetainFor: pgvalue.Interval(0), RowLimit: 100}); err != nil || count != 0 {
 		t.Fatalf("live execution prune=%d, %v", count, err)
 	}
-	if _, err := f.pool.Exec(t.Context(), "UPDATE computer_commands SET status = 'failed', failure_reason='placement_failed', terminal_at = now(), terminal_reason_code = 'cancelled', result_expires_at = now() + interval '30 days' WHERE id = $1", admitted.ID); err != nil {
+	if _, err := f.pool.Exec(t.Context(), "UPDATE computer_commands SET status = 'failed', failure_reason='dispatch_failed', terminal_at = now(), terminal_reason_code = 'cancelled', result_expires_at = now() + interval '30 days' WHERE id = $1", admitted.ID); err != nil {
 		t.Fatal(err)
 	}
 	if count, err := q.PruneTelemetryOutboxWritten(t.Context(), db.PruneTelemetryOutboxWrittenParams{RetainFor: pgvalue.Interval(0), RowLimit: 100}); err != nil || count != 1 {

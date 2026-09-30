@@ -79,7 +79,7 @@ func lockExecution(ctx context.Context, tx pgx.Tx, request ExecutionFence, opera
 	if err != nil {
 		return ExecutionAuthority{}, err
 	}
-	if err = lockExecutionPlacement(ctx, tx, lineage, loc.EnvironmentID, target); err != nil {
+	if err = lockExecutionComputers(ctx, tx, lineage, loc.EnvironmentID, target); err != nil {
 		return ExecutionAuthority{}, err
 	}
 	access := computer.RunAdmission

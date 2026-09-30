@@ -22,10 +22,10 @@ func TestPendingCommandFailureDocumentsKeepTheirEncoding(t *testing.T) {
 	}
 
 	timedOut := pendingSharedCommand(t, f, work)
-	if err := a.FailPendingComputerCommand(t.Context(), timedOut, "computer_command_placement_timed_out"); err != nil {
+	if err := a.FailPendingComputerCommand(t.Context(), timedOut, "computer_command_assignment_timed_out"); err != nil {
 		t.Fatal(err)
 	}
-	if status, document := failure(uuid.UUID(timedOut.CommandID.Bytes)); status != "failed" || document != `{"code": "computer_command_placement_timed_out"}` {
+	if status, document := failure(uuid.UUID(timedOut.CommandID.Bytes)); status != "failed" || document != `{"code": "computer_command_assignment_timed_out"}` {
 		t.Fatalf("timeout status=%s error=%s", status, document)
 	}
 

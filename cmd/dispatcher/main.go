@@ -38,8 +38,8 @@ import (
 // lease and Computer instance reconcilers) are at most 10 connections, below
 // its cap of 32; each holder's work takes further connections. The Computer
 // deletion reconciler holds no session lock and takes one connection per
-// cycle, as it did as a dispatch lane. Default demand is about 31 of 32, so
-// exhaustion only queues acquisitions within each cycle's timeout.
+// cycle. Default demand is about 31 of 32, so exhaustion only queues
+// acquisitions within each cycle's timeout.
 const (
 	baseMaxConns        = int32(12)
 	runDispatchMaxConns = int32(32)

@@ -82,10 +82,10 @@ func TestExecuteComputerHTTPPostgresReturnsAdmissionAndTerminalReplay(t *testing
 
 	if _, err := c.pool.Exec(t.Context(), `
 		UPDATE computer_commands
-		   SET status = 'failed', failure_reason='placement_failed',
+		   SET status = 'failed', failure_reason='dispatch_failed',
 		       revision = revision + 1,
 		       terminal_at = now(),
-		       terminal_reason_code = 'computer_command_placement_timed_out',
+		       terminal_reason_code = 'computer_command_assignment_timed_out',
 		       error = '{"code":"internal detail that must not be public"}'::jsonb,
 		       updated_at = now()
 		 WHERE id = $1
@@ -140,7 +140,7 @@ func TestExecuteComputerHTTPReplaySurvivesComputerDeletion(t *testing.T) {
 	body := `{"command":["true"],"idempotency_key":"delete-replay"}`
 	accepted := c.exec(t, body)
 	if _, err := c.pool.Exec(t.Context(), `UPDATE computer_commands
- SET status='failed',failure_reason='placement_failed',terminal_at=now(),terminal_reason_code='computer_command_placement_timed_out' WHERE id=$1`, accepted.CommandID); err != nil {
+ SET status='failed',failure_reason='dispatch_failed',terminal_at=now(),terminal_reason_code='computer_command_assignment_timed_out' WHERE id=$1`, accepted.CommandID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := computer.Delete(t.Context(), c.pool, computer.Deletion{
@@ -204,8 +204,8 @@ func TestGetComputerCommandHTTPPostgres(t *testing.T) {
 	c.expect(t, viewer, http.MethodGet, path, "", http.StatusForbidden, "permission_required")
 	c.expect(t, c.key, http.MethodGet, "/v1/commands/not-a-command", "", http.StatusBadRequest, "invalid_command_reference")
 	c.expect(t, c.key, http.MethodGet, "/v1/commands/"+uuid.NewV7().String(), "", http.StatusNotFound, "computer_command_not_found")
-	if _, err := c.pool.Exec(t.Context(), `UPDATE computer_commands SET status='failed',failure_reason='placement_failed',terminal_at=now(),
- terminal_reason_code='computer_command_placement_timed_out',result_expires_at=now()-interval '1 day' WHERE id=$1`, admitted.CommandID); err != nil {
+	if _, err := c.pool.Exec(t.Context(), `UPDATE computer_commands SET status='failed',failure_reason='dispatch_failed',terminal_at=now(),
+ terminal_reason_code='computer_command_assignment_timed_out',result_expires_at=now()-interval '1 day' WHERE id=$1`, admitted.CommandID); err != nil {
 		t.Fatal(err)
 	}
 	if pruned, err := c.server.db.PruneExpiredComputerCommandResults(t.Context(), 100); err != nil || pruned != 1 {

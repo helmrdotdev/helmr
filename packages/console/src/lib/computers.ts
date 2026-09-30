@@ -51,7 +51,7 @@ export type CommandInfo = {
     kind: "exited" | "cancelled" | "timed_out" | "system_failed";
     terminal_at: string;
     exit_code?: number;
-    failure?: { reason: "guest_failure" | "placement_failed" | "scope_termination_failed" };
+    failure?: { reason: "guest_failure" | "dispatch_failed" | "scope_termination_failed" };
   };
 };
 

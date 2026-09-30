@@ -209,7 +209,7 @@ func lockOwnedFinalization(
 			nil,
 		)
 	}
-	if err := lockCancellationPlacement(ctx, tx, lockOrder, beforeInstance); err != nil {
+	if err := lockCancellationComputers(ctx, tx, lockOrder, beforeInstance); err != nil {
 		return OwnedFinalization{}, err
 	}
 	slices.SortFunc(lockOrder, func(a, b uuid.UUID) int { return slices.Compare(a[:], b[:]) })
@@ -566,7 +566,7 @@ func (c *Canceler) Cancel(
 			nil,
 		)
 	}
-	if err := lockCancellationPlacement(ctx, tx, lockOrder, nil); err != nil {
+	if err := lockCancellationComputers(ctx, tx, lockOrder, nil); err != nil {
 		return CancellationResult{}, err
 	}
 	slices.SortFunc(lockOrder, func(a, b uuid.UUID) int { return slices.Compare(a[:], b[:]) })
@@ -805,7 +805,7 @@ func discoverOwnedCancellationRuns(
 	return ids, nil
 }
 
-func lockCancellationPlacement(ctx context.Context, tx pgx.Tx, runIDs []uuid.UUID, beforeInstance func() error) error {
+func lockCancellationComputers(ctx context.Context, tx pgx.Tx, runIDs []uuid.UUID, beforeInstance func() error) error {
 	if beforeInstance != nil {
 		if err := beforeInstance(); err != nil {
 			return err

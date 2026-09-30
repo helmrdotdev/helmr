@@ -376,7 +376,7 @@ func (r *Reconciler) ReconcileComputerCommands(ctx context.Context) error {
 			err := r.computerCommandAuthority.FailPendingComputerCommand(
 				ctx,
 				candidate,
-				"computer_command_placement_timed_out",
+				"computer_command_assignment_timed_out",
 			)
 			if errors.Is(err, ErrCandidateChanged) || errors.Is(err, pgx.ErrNoRows) {
 				continue

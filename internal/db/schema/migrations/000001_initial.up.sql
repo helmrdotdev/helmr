@@ -1131,7 +1131,7 @@ CREATE TABLE computer_commands (
     CHECK ((terminal_at IS NULL) = (terminal_reason_code IS NULL)),
     CHECK (status <> 'exited' OR (exit_code IS NOT NULL AND process_exited_at IS NOT NULL)),
     CHECK (process_reconciled_at IS NULL OR terminal_at IS NOT NULL),
-    failure_reason TEXT CHECK (failure_reason IN ('guest_failure','placement_failed','scope_termination_failed')),
+    failure_reason TEXT CHECK (failure_reason IN ('guest_failure','dispatch_failed','scope_termination_failed')),
     result_pruned_at TIMESTAMPTZ,
     CHECK ((result_pruned_at IS NULL AND argv IS NOT NULL AND env IS NOT NULL AND stdin IS NOT NULL)
  OR (result_pruned_at IS NOT NULL AND result_expires_at IS NOT NULL AND result_pruned_at>=result_expires_at
@@ -1893,7 +1893,7 @@ CREATE TABLE computer_instances (
     terminal_error JSONB,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT computer_instances_computer_identity_key UNIQUE (environment_id, computer_id, id),
-    CONSTRAINT computer_instances_placement_identity_key UNIQUE (org_id, project_id, environment_id, region_id, worker_group_id, worker_host_id, worker_epoch, id),
+    CONSTRAINT computer_instances_assignment_identity_key UNIQUE (org_id, project_id, environment_id, region_id, worker_group_id, worker_host_id, worker_epoch, id),
     CONSTRAINT computer_instances_close_version_check CHECK (desired_state <> 'closed' OR desired_version > 1),
     CONSTRAINT computer_instances_close_observation_check CHECK (observed_desired_version < desired_version OR desired_state <> 'closed' OR observed_state IN ('closed', 'failed', 'lost')),
     CONSTRAINT computer_instances_ready_time_check CHECK (ready_at IS NULL OR ready_at >= allocated_at),
@@ -1995,7 +1995,7 @@ CREATE INDEX cas_upload_reclaims_reclaim_idx ON cas_upload_reclaims (digest, nex
 
 CREATE INDEX cas_objects_digest_idx ON cas_objects (digest);
 
-CREATE INDEX worker_groups_active_placement_idx
+CREATE INDEX worker_groups_active_dispatch_idx
     ON worker_groups (region_id, id)
     WHERE status = 'active';
 
@@ -2003,7 +2003,7 @@ CREATE UNIQUE INDEX worker_groups_one_active_per_region_idx
 	ON worker_groups (region_id)
 	WHERE status IN ('active', 'paused');
 
-CREATE INDEX worker_pools_active_placement_idx
+CREATE INDEX worker_pools_active_dispatch_idx
     ON worker_pools (worker_group_id, id)
     WHERE status = 'active';
 
@@ -2011,7 +2011,7 @@ CREATE UNIQUE INDEX worker_hosts_one_live_locator_idx
     ON worker_hosts (worker_group_id, resource_id)
     WHERE status IN ('registering', 'active', 'draining');
 
-CREATE INDEX worker_hosts_active_placement_idx
+CREATE INDEX worker_hosts_active_dispatch_idx
     ON worker_hosts (worker_group_id, id)
     WHERE status = 'active';
 

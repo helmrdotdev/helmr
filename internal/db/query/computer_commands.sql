@@ -114,7 +114,7 @@ UPDATE computer_commands SET cancel_requested_at=COALESCE(cancel_requested_at,cl
  RETURNING *;
 
 -- name: FailPendingComputerCommand :one
-UPDATE computer_commands SET status='failed',failure_reason='placement_failed',
+UPDATE computer_commands SET status='failed',failure_reason='dispatch_failed',
  error=sqlc.arg(error),terminal_at=clock_timestamp(),terminal_reason_code=sqlc.arg(reason_code),
  result_expires_at=clock_timestamp()+interval '30 days',revision=revision+1,updated_at=clock_timestamp()
  WHERE id=sqlc.arg(command_id) AND environment_id=sqlc.arg(environment_id)
