@@ -97,6 +97,7 @@ CGO_ENABLED=1 go test -race -count=1 \
 	./internal/run \
 	./internal/scheduler \
 	./internal/secret \
+	./internal/session \
 	./internal/pglock \
 	./internal/region \
 	./internal/token \
