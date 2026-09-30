@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -206,6 +207,9 @@ func (d *Authority) FailPendingComputerCommand(
 	return nil
 }
 
+// failPendingComputerCommand fails the pending candidate through the command
+// owner in tx; a candidate that changed since discovery is
+// ErrCandidateChanged.
 func failPendingComputerCommand(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -213,35 +217,34 @@ func failPendingComputerCommand(
 	reasonCode string,
 	errorJSON []byte,
 ) error {
-	q := db.New(tx)
-	target, err := q.GetComputerCommandTarget(ctx, db.GetComputerCommandTargetParams{OrgID: candidate.OrgID, CommandID: candidate.CommandID})
-	if err != nil {
-		return classifyComputerCommandCandidateError(err)
-	}
-	if _, err = q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: target.EnvironmentID, ID: target.ComputerID}); err != nil {
-		return err
-	}
-	command, err := q.LockComputerCommand(ctx, db.LockComputerCommandParams{EnvironmentID: target.EnvironmentID, ComputerID: target.ComputerID, CommandID: candidate.CommandID})
-	if err != nil {
-		return err
-	}
-	if command.Revision != candidate.ExpectedRevision {
+	err := command.FailPending(ctx, tx, command.Pending{
+		OrgID: uuid.UUID(candidate.OrgID.Bytes), CommandID: uuid.UUID(candidate.CommandID.Bytes), ExpectedRevision: candidate.ExpectedRevision,
+	}, command.Failure{Code: reasonCode, Detail: errorJSON})
+	if errors.Is(err, command.ErrChanged) {
 		return ErrCandidateChanged
 	}
-	_, err = q.FailPendingComputerCommand(
-		ctx,
-		db.FailPendingComputerCommandParams{
-			ReasonCode:    pgvalue.Text(reasonCode),
-			Error:         errorJSON,
-			EnvironmentID: target.EnvironmentID,
-			CommandID:     candidate.CommandID,
-		},
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrCandidateChanged
-		}
-		return fmt.Errorf("fail pending Command: %w", err)
+	return err
+}
+
+// RecoverableComputerCommandCandidate is a Command the command lane found
+// with possibly lost physical authority, at its discovered revision.
+type RecoverableComputerCommandCandidate struct {
+	OrgID            pgtype.UUID
+	CommandID        pgtype.UUID
+	ComputerID       pgtype.UUID
+	ExpectedRevision int64
+}
+
+// RecoverComputerCommand recovers the candidate through the command owner on
+// the dispatch pool; a candidate that changed since discovery is
+// ErrCandidateChanged.
+func (d *Authority) RecoverComputerCommand(ctx context.Context, candidate RecoverableComputerCommandCandidate) error {
+	err := command.Recover(ctx, d.pool, command.RecoveryCandidate{
+		OrgID: uuid.UUID(candidate.OrgID.Bytes), CommandID: uuid.UUID(candidate.CommandID.Bytes),
+		ComputerID: uuid.UUID(candidate.ComputerID.Bytes), ExpectedRevision: candidate.ExpectedRevision,
+	})
+	if errors.Is(err, command.ErrChanged) {
+		return ErrCandidateChanged
 	}
-	return nil
+	return err
 }

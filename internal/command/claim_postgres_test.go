@@ -1,4 +1,4 @@
-package controlplane
+package command
 
 import (
 	"errors"
@@ -6,6 +6,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/command/commandtest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -22,15 +23,8 @@ func TestCommandClaimSharesInstanceAndReplays(t *testing.T) {
 	worker := workergroup.HostPrincipal{HostID: f.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	var requests []commandClaim
 	for range 3 {
-		id, claim := uuid.NewV7(), uuid.NewV7()
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO idempotency_claims(id,environment_id,operation,slot_hash,request_fingerprint,accepted_at) VALUES($1,$2,'computer.command.start',$3,$3,now())`, claim, f.EnvironmentID, dbtest.Hash(claim.String()))
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_commands(id,environment_id,computer_id,claim_id,argv,env,stdin,timeout_ms,created_by_subject_type,created_by_subject_id,computer_instance_id,writer_generation,status)
- SELECT $2,environment_id,computer_id,$3,ARRAY['true'],'{}',''::bytea,60000,'api_key',run_id::text,computer_instance_id,writer_generation,'starting' FROM run_leases WHERE id=$1`, member.LeaseID, id, claim)
-		r := commandClaim{OrgID: pgvalue.UUID(f.OrgID), CommandID: pgvalue.UUID(id)}
-		if err := f.Pool.QueryRow(t.Context(), `SELECT computer_instance_id,writer_generation FROM computer_commands WHERE id=$1`, id).Scan(&r.ComputerInstanceID, &r.WriterGeneration); err != nil {
-			t.Fatal(err)
-		}
-		requests = append(requests, r)
+		command := commandtest.Bound(t, f, member.LeaseID, "starting")
+		requests = append(requests, commandClaim{OrgID: pgvalue.UUID(f.OrgID), CommandID: pgvalue.UUID(command.ID), ComputerInstanceID: pgvalue.UUID(command.InstanceID), WriterGeneration: command.WriterGeneration})
 	}
 	execute := func(r commandClaim, w workergroup.HostPrincipal) (commandClaimAuthority, error) {
 		tx, err := f.Pool.Begin(t.Context())

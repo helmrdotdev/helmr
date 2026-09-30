@@ -31,6 +31,7 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		"artifact/verify":   {"builder", "bundle", "controlplane", "db"},
 		"auth":              {"db", "deployment", "identity", "org", "token", "workergroup"},
 		"builder":           {"compute", "computerhost", "controlplane", "db", "dispatch", "executor", "scheduler", "vm", "wire", "worker"},
+		"command":           {"api", "controlplane", "deployment", "dispatch", "identity", "org", "run", "scheduler", "session", "telemetry", "token", "workerapi"},
 		"bundle":            {"artifact/snapshot", "artifact/verify", "builder", "controlplane", "db", "deployment"},
 		"cas":               {"cas/s3"},
 		"client":            {"workerapi", "workerclient"},
@@ -39,13 +40,14 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		"frameio":           {"api", "db", "proto/program/v0", "wire"},
 		"httpclient":        {"controlplane", "db", "workerapi"},
 		"deployment":        {"api", "controlplane", "dispatch", "identity", "org", "run", "scheduler", "session", "workerapi"},
+		"dispatch":          {"api", "controlplane", "scheduler", "session", "token", "workerapi"},
 		"identity":          {"api", "controlplane", "deployment", "dispatch", "run", "session", "workerapi"},
 		"org":               {"api", "controlplane", "deployment", "dispatch", "identity", "run", "session", "workerapi"},
 		"wire":              {"api", "computerhost", "controlplane", "db", "disk", "executor", "guestd"},
 		"definition":        {"api", "artifact", "artifact/snapshot", "artifact/verify", "builder", "bundle", "compute", "computerhost", "controlplane", "db", "deployment", "disk", "executor", "frameio", "guestd", "nbd", "scheduler", "vm", "wire"},
 		"guestd":            {"artifact/snapshot", "artifact/verify", "bundle", "computerhost", "controlplane", "db", "executor", "vm"},
 		"disk":              {"api", "computerhost", "controlplane", "db", "executor", "guestd", "pgvalue", "wire"},
-		"computer":          {"api", "controlplane", "deployment", "dispatch", "identity", "org", "run", "scheduler", "session", "token", "workerapi"},
+		"computer":          {"api", "command", "controlplane", "deployment", "dispatch", "identity", "org", "run", "scheduler", "session", "token", "workerapi"},
 		"computerhost":      {"controlplane", "db", "executor", "guestd", "worker"},
 		"controlplane":      {"computerhost", "eventstream", "executor", "firecracker", "guestd", "pglock"},
 		"region":            {"controlplane", "org", "workergroup"},
@@ -58,7 +60,7 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		// ValidatePoolName, so api still arrives transitively through
 		// workerapi's wire contract. Worker supply sits beneath the Computer
 		// owner, which run composes and may import.
-		"workergroup": {"api", "computer", "controlplane", "deployment", "dispatch", "identity", "org", "run", "scheduler", "session", "token"},
+		"workergroup": {"api", "command", "computer", "controlplane", "deployment", "dispatch", "identity", "org", "run", "scheduler", "session", "token"},
 	} {
 		if _, ok := actual[source]; !ok {
 			t.Fatalf("dependency rule source package does not exist: %s", source)

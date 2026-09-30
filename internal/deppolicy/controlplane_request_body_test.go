@@ -67,7 +67,6 @@ var controlPlaneDecodersOutsideOwner = map[string]string{
 	"normalizeAnnotations":               "owner-decoded metadata, fixed message",
 	"normalizeRunMetadataMutation":       "owner-canonicalized metadata patch",
 	"normalizeTaskFailure":               "owner-canonicalized details, fixed message",
-	"parseCommandCompletion":             "owner-decoded field, fixed message",
 	"parseRunListCursor":                 "opaque cursor, fixed message",
 	"projectComputerInstanceRestore":     "stored checkpoint manifest",
 	"projectRunFailure":                  "stored run failure",

@@ -1,4 +1,4 @@
-package dispatch
+package command
 
 import (
 	"context"
@@ -8,9 +8,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 )
 
-// CollectComputerCommandResults prunes expired, reconciled command payloads.
-// Execution identity and outcome facts remain durable.
-func CollectComputerCommandResults(ctx context.Context, queries *db.Queries, log *slog.Logger) error {
+// CollectResults prunes the payloads of expired, reconciled Command results
+// every minute until ctx ends. Execution identity and outcome facts remain
+// durable.
+func CollectResults(ctx context.Context, queries *db.Queries, log *slog.Logger) error {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {

@@ -2,6 +2,7 @@ package computer
 
 import (
 	"context"
+	"errors"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -67,6 +68,98 @@ func LockInstanceForRun(ctx context.Context, tx pgx.Tx, ref RunInstanceRef, acce
 	return c, i, nil
 }
 
+// CommandRef addresses a Computer Command in its Environment.
+type CommandRef struct {
+	EnvironmentID uuid.UUID
+	ComputerID    uuid.UUID
+	CommandID     uuid.UUID
+}
+
+// CommandInstance is the Computer and the Instance a Command was bound to,
+// locked in the owning transaction in that order. It grants no capability:
+// the caller's Command operation checks the Command and decides which of
+// the predicates it requires. A Command that was never bound, or whose
+// Instance incarnation no longer matches its writer generation, locks only
+// the Computer and is not Bound. A CommandInstance is valid only inside the
+// transaction that locked it.
+type CommandInstance struct {
+	tx       pgx.Tx
+	computer db.Computer
+	instance db.ComputerInstance
+	bound    bool
+}
+
+// LockCommandInstance locks the Computer, then the exact Instance incarnation
+// the Command was bound to; a newer Instance is never substituted. The caller
+// takes any Secret and worker host locks first and locks the Command after.
+// A missing Computer returns pgx.ErrNoRows; a missing bound Instance is not
+// an error.
+func LockCommandInstance(ctx context.Context, tx pgx.Tx, ref CommandRef) (CommandInstance, error) {
+	q := db.New(tx)
+	environment, computerID := pgvalue.UUID(ref.EnvironmentID), pgvalue.UUID(ref.ComputerID)
+	c, err := q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: environment, ID: computerID})
+	if err != nil {
+		return CommandInstance{}, err
+	}
+	i, err := q.LockComputerCommandInstance(ctx, db.LockComputerCommandInstanceParams{EnvironmentID: environment, ComputerID: computerID, CommandID: pgvalue.UUID(ref.CommandID)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CommandInstance{tx: tx, computer: c}, nil
+	}
+	if err != nil {
+		return CommandInstance{}, err
+	}
+	return CommandInstance{tx: tx, computer: c, instance: i, bound: true}, nil
+}
+
+// Computer is the locked Computer.
+func (c CommandInstance) Computer() db.Computer {
+	return c.computer
+}
+
+// Instance is the locked bound Instance; it is the zero value when the
+// Command is not Bound.
+func (c CommandInstance) Instance() db.ComputerInstance {
+	return c.instance
+}
+
+// Bound reports whether the Command's Instance incarnation was locked.
+func (c CommandInstance) Bound() bool {
+	return c.bound
+}
+
+// On reports whether the bound Instance is the addressed incarnation on the
+// worker host epoch at the writer generation the host acts for.
+func (c CommandInstance) On(host Host, instanceID uuid.UUID, writerGeneration int64) bool {
+	i := c.instance
+	return c.bound && i.ID == pgvalue.UUID(instanceID) && i.WorkerHostID == pgvalue.UUID(host.HostID) && i.WorkerGroupID == pgvalue.UUID(host.GroupID) && i.WorkerEpoch == host.Epoch && i.WriterGeneration == writerGeneration
+}
+
+// Serving reports whether the bound Instance is unreclaimed, desired and
+// observed ready at its desired version, mounted, and the Computer's current
+// writer. Admission and Computer status checks stay with the caller.
+func (c CommandInstance) Serving() bool {
+	i := c.instance
+	return c.bound && !i.ReclaimedAt.Valid && i.DesiredState == "ready" && i.ObservedState == "ready" && i.ObservedDesiredVersion == i.DesiredVersion && i.MountState == "mounted" && i.WriterGeneration == c.computer.WriterGeneration
+}
+
+// TouchActivity records member activity on the locked Computer while it is
+// active and the bound Instance's writer generation is still its current
+// one; otherwise, including when the Command is not Bound, it records
+// nothing. orgID and projectID scope the Command's Environment.
+func (c CommandInstance) TouchActivity(ctx context.Context, orgID, projectID uuid.UUID) error {
+	if !c.bound {
+		return nil
+	}
+	_, err := db.New(c.tx).TouchRunComputerActivity(ctx, db.TouchRunComputerActivityParams{
+		ID: c.computer.ID, EnvironmentID: c.computer.EnvironmentID,
+		OrgID: pgvalue.UUID(orgID), ProjectID: pgvalue.UUID(projectID), WriterGeneration: c.instance.WriterGeneration,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	return err
+}
+
 // CommandInstanceRef addresses the Instance a Computer Command was bound to:
 // the Instance incarnation on the worker host epoch at the writer generation
 // the host acts for.
@@ -79,29 +172,24 @@ type CommandInstanceRef struct {
 	WriterGeneration int64
 }
 
-// LockInstanceForCommand locks the Computer, then the Instance bound to the
-// Command. The worker host must already be locked. The Computer must be
-// active and its current writer the Instance, which must be the addressed
+// LockInstanceForCommand locks the Command's Instance through
+// LockCommandInstance for an operation that grants a worker host authority
+// over the Command. The worker host must already be locked. The Computer must
+// be active and its current writer the Instance, which must be the addressed
 // ready, mounted and unreclaimed incarnation on the host epoch. Admission
 // checks stay with the caller's Command operation.
 func LockInstanceForCommand(ctx context.Context, tx pgx.Tx, ref CommandInstanceRef) (db.ComputerInstance, error) {
-	q := db.New(tx)
-	environment, computerID := pgvalue.UUID(ref.EnvironmentID), pgvalue.UUID(ref.ComputerID)
-	c, err := q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: environment, ID: computerID})
+	locked, err := LockCommandInstance(ctx, tx, CommandRef{EnvironmentID: ref.EnvironmentID, ComputerID: ref.ComputerID, CommandID: ref.CommandID})
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
-	i, err := q.LockComputerCommandInstance(ctx, db.LockComputerCommandInstanceParams{EnvironmentID: environment, ComputerID: computerID, CommandID: pgvalue.UUID(ref.CommandID)})
-	if err != nil {
-		return db.ComputerInstance{}, err
-	}
-	if i.ID != pgvalue.UUID(ref.InstanceID) || i.WorkerHostID != pgvalue.UUID(ref.Host.HostID) || i.WorkerGroupID != pgvalue.UUID(ref.Host.GroupID) || i.WorkerEpoch != ref.Host.Epoch || i.WriterGeneration != ref.WriterGeneration {
+	if !locked.On(ref.Host, ref.InstanceID, ref.WriterGeneration) {
 		return db.ComputerInstance{}, pgx.ErrNoRows
 	}
-	if c.Status != "active" || c.DesiredState != "active" || i.ReclaimedAt.Valid || i.DesiredState != "ready" || i.ObservedState != "ready" || i.ObservedDesiredVersion != i.DesiredVersion || i.MountState != "mounted" || i.WriterGeneration != c.WriterGeneration {
+	if c := locked.Computer(); c.Status != "active" || c.DesiredState != "active" || !locked.Serving() {
 		return db.ComputerInstance{}, pgx.ErrNoRows
 	}
-	return i, nil
+	return locked.Instance(), nil
 }
 
 // LockRunComputers update-locks, in id order, the Computers of the Runs,

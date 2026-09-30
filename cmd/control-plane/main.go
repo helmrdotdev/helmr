@@ -23,6 +23,7 @@ import (
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
+	"github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/config"
@@ -31,7 +32,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 	dbschema "github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/disk"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/email"
 	emailresend "github.com/helmrdotdev/helmr/internal/email/resend"
 	"github.com/helmrdotdev/helmr/internal/eventstream"
@@ -268,7 +268,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 			return idempotency.CollectReceipts(ctx, queries, log)
 		}},
 		{name: "exec result retention", run: func(ctx context.Context) error {
-			return dispatch.CollectComputerCommandResults(ctx, queries, log)
+			return command.CollectResults(ctx, queries, log)
 		}},
 		{name: "queued child Run expiry", run: queuedChildExpiry.Run},
 		{name: "magic link delivery", run: magicLinkDelivery.Run},
