@@ -1,4 +1,4 @@
-package auth
+package workergroup
 
 import (
 	"errors"
@@ -9,19 +9,23 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+// Worker host epoch tokens are HS256 JWTs issued by the control plane for
+// the worker audience. The issuer, audience and claim names are wire
+// contract.
 const (
-	WorkerTokenIssuer         = "helmr-controlplane"
-	WorkerTokenAudience       = "helmr-worker"
-	WorkerTokenSigningKeySize = 32
+	TokenIssuer         = "helmr-controlplane"
+	TokenAudience       = "helmr-worker"
+	TokenSigningKeySize = 32
 )
 
 var (
-	ErrInvalidWorkerToken           = errors.New("invalid worker JWT")
-	ErrExpiredWorkerToken           = errors.New("expired worker JWT")
-	ErrInvalidWorkerTokenSigningKey = errors.New("worker JWT signing key must be exactly 32 bytes")
+	errInvalidToken           = errors.New("invalid worker JWT")
+	errExpiredToken           = errors.New("expired worker JWT")
+	errInvalidTokenSigningKey = errors.New("worker JWT signing key must be exactly 32 bytes")
 )
 
-type WorkerClaims struct {
+// tokenClaims are the verified claims of a worker host epoch token.
+type tokenClaims struct {
 	WorkerGroupID     string
 	WorkerHostID      string
 	CredentialID      string
@@ -32,7 +36,8 @@ type WorkerClaims struct {
 	ExpiresAt         time.Time
 }
 
-type workerJWTClaims struct {
+// jwtClaims is the JSON encoding of tokenClaims.
+type jwtClaims struct {
 	WorkerGroupID     string `json:"worker_group_id"`
 	WorkerHostID      string `json:"worker_host_id"`
 	CredentialID      string `json:"credential_id"`
@@ -42,20 +47,20 @@ type workerJWTClaims struct {
 	jwt.RegisteredClaims
 }
 
-func IssueWorkerToken(signingKey []byte, payload WorkerClaims) (string, error) {
-	if err := ValidateWorkerTokenSigningKey(signingKey); err != nil {
+func issueToken(signingKey []byte, payload tokenClaims) (string, error) {
+	if err := validateTokenSigningKey(signingKey); err != nil {
 		return "", err
 	}
-	if err := validateWorkerClaims(payload); err != nil {
+	if err := validateTokenClaims(payload); err != nil {
 		return "", err
 	}
-	claims := workerJWTClaims{
+	claims := jwtClaims{
 		WorkerGroupID: payload.WorkerGroupID, WorkerHostID: payload.WorkerHostID,
 		CredentialID: payload.CredentialID, WorkerEpoch: payload.WorkerEpoch,
 		ClaimVersion: payload.ClaimVersion, GroupClaimVersion: payload.GroupClaimVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer: WorkerTokenIssuer, Subject: payload.WorkerHostID,
-			Audience: jwt.ClaimStrings{WorkerTokenAudience},
+			Issuer: TokenIssuer, Subject: payload.WorkerHostID,
+			Audience: jwt.ClaimStrings{TokenAudience},
 			IssuedAt: jwt.NewNumericDate(payload.IssuedAt), ExpiresAt: jwt.NewNumericDate(payload.ExpiresAt),
 		},
 	}
@@ -68,44 +73,44 @@ func IssueWorkerToken(signingKey []byte, payload WorkerClaims) (string, error) {
 	return signed, nil
 }
 
-func VerifyWorkerToken(signingKey []byte, rawToken string, now time.Time) (WorkerClaims, error) {
-	if err := ValidateWorkerTokenSigningKey(signingKey); err != nil {
-		return WorkerClaims{}, err
+func verifyToken(signingKey []byte, rawToken string, now time.Time) (tokenClaims, error) {
+	if err := validateTokenSigningKey(signingKey); err != nil {
+		return tokenClaims{}, err
 	}
 	if now.IsZero() {
-		return WorkerClaims{}, fmt.Errorf("%w: verification time is zero", ErrInvalidWorkerToken)
+		return tokenClaims{}, fmt.Errorf("%w: verification time is zero", errInvalidToken)
 	}
 	if rawToken == "" || strings.TrimSpace(rawToken) != rawToken {
-		return WorkerClaims{}, fmt.Errorf("%w: token is empty or non-canonical", ErrInvalidWorkerToken)
+		return tokenClaims{}, fmt.Errorf("%w: token is empty or non-canonical", errInvalidToken)
 	}
 
-	var claims workerJWTClaims
+	var claims jwtClaims
 	parser := jwt.NewParser(
 		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
-		jwt.WithIssuer(WorkerTokenIssuer), jwt.WithAudience(WorkerTokenAudience),
+		jwt.WithIssuer(TokenIssuer), jwt.WithAudience(TokenAudience),
 		jwt.WithExpirationRequired(), jwt.WithIssuedAt(), jwt.WithStrictDecoding(),
 		jwt.WithTimeFunc(func() time.Time { return now }),
 	)
 	token, err := parser.ParseWithClaims(rawToken, &claims, func(token *jwt.Token) (any, error) {
 		if token.Method != jwt.SigningMethodHS256 {
-			return nil, fmt.Errorf("%w: unexpected signing method %s", ErrInvalidWorkerToken, token.Method.Alg())
+			return nil, fmt.Errorf("%w: unexpected signing method %s", errInvalidToken, token.Method.Alg())
 		}
 		return signingKey, nil
 	})
 	if err != nil {
 		if errors.Is(err, jwt.ErrTokenExpired) {
-			return WorkerClaims{}, fmt.Errorf("%w: %w", ErrExpiredWorkerToken, err)
+			return tokenClaims{}, fmt.Errorf("%w: %w", errExpiredToken, err)
 		}
-		return WorkerClaims{}, fmt.Errorf("%w: %w", ErrInvalidWorkerToken, err)
+		return tokenClaims{}, fmt.Errorf("%w: %w", errInvalidToken, err)
 	}
 	if token == nil || !token.Valid {
-		return WorkerClaims{}, ErrInvalidWorkerToken
+		return tokenClaims{}, errInvalidToken
 	}
 	if typ, ok := token.Header["typ"].(string); !ok || typ != "JWT" {
-		return WorkerClaims{}, fmt.Errorf("%w: unexpected token type", ErrInvalidWorkerToken)
+		return tokenClaims{}, fmt.Errorf("%w: unexpected token type", errInvalidToken)
 	}
 
-	payload := WorkerClaims{
+	payload := tokenClaims{
 		WorkerGroupID: claims.WorkerGroupID, WorkerHostID: claims.WorkerHostID,
 		CredentialID: claims.CredentialID, WorkerEpoch: claims.WorkerEpoch,
 		ClaimVersion: claims.ClaimVersion, GroupClaimVersion: claims.GroupClaimVersion,
@@ -116,26 +121,26 @@ func VerifyWorkerToken(signingKey []byte, rawToken string, now time.Time) (Worke
 	if claims.ExpiresAt != nil {
 		payload.ExpiresAt = claims.ExpiresAt.Time.UTC()
 	}
-	if err := validateWorkerClaims(payload); err != nil {
-		return WorkerClaims{}, fmt.Errorf("%w: %w", ErrInvalidWorkerToken, err)
+	if err := validateTokenClaims(payload); err != nil {
+		return tokenClaims{}, fmt.Errorf("%w: %w", errInvalidToken, err)
 	}
 	if claims.Subject != payload.WorkerHostID {
-		return WorkerClaims{}, fmt.Errorf("%w: subject does not match worker_host_id", ErrInvalidWorkerToken)
+		return tokenClaims{}, fmt.Errorf("%w: subject does not match worker_host_id", errInvalidToken)
 	}
-	if claims.Issuer != WorkerTokenIssuer || len(claims.Audience) != 1 || claims.Audience[0] != WorkerTokenAudience {
-		return WorkerClaims{}, fmt.Errorf("%w: non-canonical issuer or audience", ErrInvalidWorkerToken)
+	if claims.Issuer != TokenIssuer || len(claims.Audience) != 1 || claims.Audience[0] != TokenAudience {
+		return tokenClaims{}, fmt.Errorf("%w: non-canonical issuer or audience", errInvalidToken)
 	}
 	return payload, nil
 }
 
-func ValidateWorkerTokenSigningKey(signingKey []byte) error {
-	if len(signingKey) != WorkerTokenSigningKeySize {
-		return ErrInvalidWorkerTokenSigningKey
+func validateTokenSigningKey(signingKey []byte) error {
+	if len(signingKey) != TokenSigningKeySize {
+		return errInvalidTokenSigningKey
 	}
 	return nil
 }
 
-func validateWorkerClaims(payload WorkerClaims) error {
+func validateTokenClaims(payload tokenClaims) error {
 	if payload.WorkerGroupID == "" || strings.TrimSpace(payload.WorkerGroupID) != payload.WorkerGroupID {
 		return errors.New("worker_group_id must be nonempty and canonical")
 	}

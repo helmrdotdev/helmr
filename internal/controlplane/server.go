@@ -31,6 +31,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/token"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
@@ -77,8 +78,7 @@ type Server struct {
 	tokenCredentialKey    auth.CredentialKey
 	eventStream           SubjectEventReader
 	telemetryReader       telemetry.Reader
-	workerTokenSigningKey []byte
-	workerTokenTTL        time.Duration
+	hostCredentials       workergroup.CredentialConfig
 	workerEnrollmentGuard *workerEnrollmentGuard
 	capacityTokenHash     []byte
 	setupToken            string
@@ -190,7 +190,8 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := auth.ValidateWorkerTokenSigningKey(cfg.WorkerTokenSigningKey); err != nil {
+	hostCredentials, err := workergroup.NewCredentialConfig(authKeys.WorkerHost, cfg.WorkerTokenSigningKey, cfg.WorkerTokenTTL)
+	if err != nil {
 		return nil, err
 	}
 	telemetryReader := cfg.TelemetryReader
@@ -207,10 +208,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	}
 	if _, unconfigured := mailer.(email.Unconfigured); !unconfigured && cfg.MagicLinkDelivery == nil {
 		return nil, errors.New("magic link delivery worker is required")
-	}
-	workerTokenTTL := cfg.WorkerTokenTTL
-	if workerTokenTTL <= 0 {
-		workerTokenTTL = defaultWorkerTokenTTL
 	}
 	apiOrigin := cfg.APIOrigin
 	if apiOrigin == nil {
@@ -243,8 +240,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		tokenCredentialKey:    cfg.TokenCredentialKey,
 		eventStream:           cfg.EventStream,
 		telemetryReader:       telemetryReader,
-		workerTokenSigningKey: cfg.WorkerTokenSigningKey,
-		workerTokenTTL:        workerTokenTTL,
+		hostCredentials:       hostCredentials,
 		workerEnrollmentGuard: newWorkerEnrollmentGuard(),
 		capacityTokenHash:     capacityTokenHash,
 		setupToken:            cfg.SetupToken,

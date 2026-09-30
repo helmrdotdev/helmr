@@ -216,7 +216,7 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 		t.Fatalf("source delivery: %v", err)
 	}
 	delivered.clear()
-	client := sourceKeyHTTPClient(t, f, b, fence)
+	client := sourceKeyHTTPClient(t, f, b)
 	wire, err := client.ComputerSource(t.Context(), workerapi.ComputerSourceRequest{ComputerInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 1})
 	if err != nil || wire.Root != root || wire.VersionID != pgvalue.UUIDString(versionID) || wire.WriteKeyID != key.ID || len(wire.Keys) != 2 {
 		t.Fatalf("authenticated source transport: %v", err)

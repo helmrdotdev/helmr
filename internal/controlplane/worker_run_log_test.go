@@ -14,8 +14,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
@@ -67,7 +65,6 @@ func TestMountedWorkerRunLogRouteAcceptsExactMaximumAndRejectsOneByteOver(t *tes
 	credentialID := uuid.NewV7()
 	lease := validRunLeaseAssignment(workerID)
 	now := time.Now().UTC()
-	signingKey := []byte("01234567890123456789012345678901")
 	store := workerLogReplayStore{
 		replayMatches: true,
 		authorization: &db.AuthorizeWorkerHostCredentialRow{
@@ -76,20 +73,17 @@ func TestMountedWorkerRunLogRouteAcceptsExactMaximumAndRejectsOneByteOver(t *tes
 			EpochStartedAt: pgtype.Timestamptz{Time: now, Valid: true},
 		},
 	}
-	server := &Server{
-		db: store, log: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		workerTokenSigningKey: signingKey,
-	}
-	router := chi.NewRouter()
-	server.mountWorkerRoutes(router)
-	token, err := auth.IssueWorkerToken(signingKey, auth.WorkerClaims{
-		WorkerGroupID: lease.WorkerGroupID, WorkerHostID: workerID.String(), CredentialID: credentialID.String(),
-		WorkerEpoch: lease.WorkerEpoch, ClaimVersion: 1, GroupClaimVersion: 1,
-		IssuedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour),
-	})
+	cfg := completeServerConfig(t)
+	cfg.DB = store
+	router, err := NewServer(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The store authorizes any credential, so this transport test signs the
+	// token the exchange would issue for the lease's host and epoch.
+	claims := rawWorkerJWTClaims(workerID.String(), lease.WorkerGroupID, credentialID.String())
+	claims["worker_epoch"] = lease.WorkerEpoch
+	token := signRawWorkerJWT(t, claims)
 
 	requestBody := func(contentBytes int) []byte {
 		t.Helper()

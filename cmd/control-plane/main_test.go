@@ -31,6 +31,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -59,7 +60,7 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		ComputerFencingKey:    controlplanetestComputerFencingKey(),
 		TokenCredentialKey:    controlplanetestTokenCredentialKey(),
 		AuthKey:               make([]byte, auth.RootKeySize),
-		WorkerTokenSigningKey: make([]byte, auth.WorkerTokenSigningKeySize),
+		WorkerTokenSigningKey: make([]byte, workergroup.TokenSigningKeySize),
 		PublicURL:             publicURL,
 		TelemetryReader:       controlplanetestTelemetryReader{store: store},
 		MagicLinkDebugURLs:    true,

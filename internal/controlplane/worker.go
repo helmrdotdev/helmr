@@ -1,7 +1,6 @@
 package controlplane
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,11 +17,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
-
-const defaultWorkerTokenTTL = 15 * time.Minute
 
 func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 	if !s.workerEnrollmentGuard.allowEnrollment(workerEnrollmentSource(r), time.Now()) {
@@ -36,50 +32,24 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid worker enrollment JSON: %w", err))
 		return
 	}
-	if request.ResourceID == "" || strings.TrimSpace(request.ResourceID) != request.ResourceID || len(request.ResourceID) > 512 {
-		writeError(w, badRequest(errors.New("resource_id is required and must not exceed 512 bytes")))
-		return
-	}
-	if err := workerapi.ValidatePoolName(request.PoolName); err != nil {
-		writeError(w, badRequest(fmt.Errorf("worker pool name: %w", err)))
-		return
-	}
+	// An unparsable enrollment token is rejected by the owner after it has
+	// validated the rest of the request.
 	tokenHash, err := strictWorkerEnrollmentBearer(r.Header.Values("Authorization"))
 	if err != nil {
-		writeError(w, unauthorized(errors.New("worker enrollment token is invalid")))
-		return
+		tokenHash = nil
 	}
-	generated, err := auth.GenerateWorkerHostSecret(s.authKeys.WorkerHost)
-	if err != nil {
-		writeError(w, errors.New("generate worker instance credential"))
-		return
-	}
-	workerHostID := uuid.NewV7()
-	credential, err := s.db.EnrollWorkerHost(r.Context(), db.EnrollWorkerHostParams{
-		TokenHash:        tokenHash,
-		WorkerPoolID:     pgvalue.UUID(uuid.NewV7()),
-		PoolName:         request.PoolName,
-		WorkerHostID:     pgvalue.UUID(workerHostID),
-		CurrentServiceID: pgvalue.UUID(uuid.NewV7()),
-		ResourceID:       request.ResourceID,
-		CredentialID:     pgvalue.UUID(uuid.NewV7()),
-		KeyPrefix:        generated.KeyPrefix,
-		SecretHash:       generated.TokenHash,
+	enrolled, err := workergroup.EnrollHost(r.Context(), s.db, s.hostCredentials, workergroup.Enrollment{
+		TokenHash: tokenHash, PoolName: request.PoolName, ResourceID: request.ResourceID,
 	})
-	if isNoRows(err) {
-		writeError(w, unauthorized(errors.New("worker enrollment token is invalid")))
-		return
-	}
 	if err != nil {
-		s.log.Error("worker enrollment failed", "resource_id", request.ResourceID, "error", err)
-		writeError(w, errors.New("enroll worker"))
+		s.writeWorkerHostError(w, "enroll worker", err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, workerapi.EnrollmentResponse{
-		WorkerHostID:     pgvalue.MustUUIDValue(credential.WorkerHostID).String(),
-		WorkerGroupID:    pgvalue.UUIDString(credential.WorkerGroupID),
-		WorkerPoolID:     pgvalue.MustUUIDValue(credential.WorkerPoolID).String(),
-		WorkerHostSecret: generated.Raw,
+		WorkerHostID:     enrolled.HostID.String(),
+		WorkerGroupID:    enrolled.GroupID.String(),
+		WorkerPoolID:     enrolled.PoolID.String(),
+		WorkerHostSecret: enrolled.Secret,
 	})
 }
 
@@ -95,84 +65,22 @@ func strictWorkerEnrollmentBearer(values []string) ([]byte, error) {
 }
 
 func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
-	if !s.authKeys.Valid() || len(s.workerTokenSigningKey) == 0 {
-		writeError(w, unavailable(errors.New("worker authentication is not configured")))
-		return
-	}
 	var request workerapi.TokenRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
 		writeError(w, fmt.Errorf("invalid worker token request JSON: %w", err))
 		return
 	}
-	if request.WorkerHostID == "" {
-		writeError(w, badRequest(errors.New("worker_host_id is required")))
-		return
-	}
-	workerHostID, err := ids.Parse(request.WorkerHostID)
+	token, err := workergroup.ExchangeCredential(r.Context(), s.db, s.hostCredentials, workergroup.CredentialExchange{
+		HostID: request.WorkerHostID, Secret: request.WorkerHostSecret, ServiceID: request.ServiceID,
+	}, time.Now)
 	if err != nil {
-		writeError(w, badRequest(errors.New("worker_host_id must be a canonical UUIDv7")))
-		return
-	}
-	secretHash, err := auth.HashToken(s.authKeys.WorkerHost, request.WorkerHostSecret)
-	if err != nil {
-		writeError(w, unauthorized(errors.New("worker authentication is required")))
-		return
-	}
-	serviceID, err := ids.Parse(request.ServiceID)
-	if err != nil {
-		writeError(w, badRequest(errors.New("service_id must be a canonical UUIDv7")))
-		return
-	}
-	credential, err := s.db.AuthenticateWorkerHostCredential(r.Context(), db.AuthenticateWorkerHostCredentialParams{
-		WorkerHostID: pgvalue.UUID(workerHostID),
-		SecretHash:   secretHash,
-		ServiceID:    pgvalue.UUID(serviceID),
-	})
-	if isNoRows(err) {
-		writeError(w, unauthorized(errors.New("worker authentication is required")))
-		return
-	}
-	if err != nil {
-		s.log.Error("worker instance credential authentication failed", "worker_host_id", request.WorkerHostID, "error", err)
-		writeError(w, errors.New("worker authentication"))
-		return
-	}
-	credentialID, err := pgvalue.UUIDValue(credential.ID)
-	if err != nil {
-		writeError(w, errors.New("worker instance credential id"))
-		return
-	}
-	now := time.Now()
-	expiresAt := now.Add(s.workerTokenTTL)
-	if !credential.CurrentEpoch.Valid || credential.CurrentEpoch.Int64 <= 0 {
-		writeError(w, errors.New("worker epoch was not established"))
-		return
-	}
-	claims, err := (auth.WorkerTokenAuthority{
-		WorkerHostID:      pgvalue.MustUUIDValue(credential.WorkerHostID),
-		CredentialID:      credentialID,
-		WorkerGroupID:     pgvalue.MustUUIDValue(credential.WorkerGroupID),
-		ClaimVersion:      credential.ClaimVersion,
-		GroupClaimVersion: credential.GroupClaimVersion,
-		WorkerEpoch:       credential.CurrentEpoch.Int64,
-	}).Claims(auth.EpochExchangeInput{
-		ServiceID: serviceID,
-	}, now, expiresAt)
-	if err != nil {
-		s.log.Error("derive worker token claims failed", "worker_host_id", request.WorkerHostID, "error", err)
-		writeError(w, errors.New("mint worker token"))
-		return
-	}
-	signed, err := auth.IssueWorkerToken(s.workerTokenSigningKey, claims)
-	if err != nil {
-		s.log.Error("mint worker token failed", "worker_host_id", request.WorkerHostID, "error", err)
-		writeError(w, errors.New("mint worker token"))
+		s.writeWorkerHostError(w, "worker authentication", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.TokenResponse{
-		Token:            signed,
-		ExpiresInSeconds: int64(s.workerTokenTTL / time.Second),
-		WorkerEpoch:      credential.CurrentEpoch.Int64,
+		Token:            token.Token,
+		ExpiresInSeconds: int64(token.ExpiresIn / time.Second),
+		WorkerEpoch:      token.Epoch,
 	})
 }
 
@@ -188,13 +96,17 @@ func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
-	err = s.activateWorker(r.Context(), worker, capabilities)
-	if isNoRows(err) {
-		writeError(w, conflict(errors.New("worker activation is stale")))
+	cpuEnvironment, err := json.Marshal(capabilities.CPUEnvironment)
+	if err != nil {
+		s.writeWorkerHostError(w, "activate worker", fmt.Errorf("encode Worker CPU environment: %w", err))
 		return
-	} else if err != nil {
-		s.log.Error("worker activate failed", "worker_host_id", worker.HostID.String(), "error", err)
-		writeError(w, errors.New("activate worker"))
+	}
+	if err := workergroup.ActivateHost(r.Context(), s.tx, worker, workergroup.Activation{
+		Template:             workerTemplate(capabilities),
+		CPUEnvironment:       cpuEnvironment,
+		CPUEnvironmentDigest: capabilities.CPUEnvironment.Digest,
+	}); err != nil {
+		s.writeWorkerHostError(w, "activate worker", err)
 		return
 	}
 	s.writeWorkerStatus(w, r, worker)
@@ -216,15 +128,8 @@ func (s *Server) workerStartupRecovery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("encode startup recovery evidence")))
 		return
 	}
-	if _, err := s.db.CompleteWorkerStartupRecovery(r.Context(), db.CompleteWorkerStartupRecoveryParams{
-		WorkerHostID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID),
-		WorkerEpoch: pgtype.Int8{Int64: worker.Epoch, Valid: true}, RecoveryEvidence: evidence,
-	}); isNoRows(err) {
-		writeError(w, conflict(errors.New("worker startup recovery fence is stale")))
-		return
-	} else if err != nil {
-		s.log.Error("record worker startup recovery failed", "worker_host_id", worker.HostID.String(), "error", err)
-		writeError(w, errors.New("record worker startup recovery"))
+	if err := workergroup.RecordStartupRecovery(r.Context(), s.db, worker, evidence); err != nil {
+		s.writeWorkerHostError(w, "record worker startup recovery", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -291,8 +196,11 @@ func (s *Server) workerObserve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if err := s.recordWorkerObservation(r.Context(), worker, request.Observation); err != nil {
-		writeError(w, err)
+	if err := workergroup.RecordObservation(r.Context(), s.db, worker, workergroup.HostObservation{
+		RunPausedReason: request.Observation.RunPausedReason,
+		VMPausedReason:  request.Observation.VMPausedReason,
+	}); err != nil {
+		s.writeWorkerHostError(w, "record worker observation", err)
 		return
 	}
 	s.writeWorkerStatus(w, r, worker)
@@ -300,17 +208,8 @@ func (s *Server) workerObserve(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) workerDrain(w http.ResponseWriter, r *http.Request) {
 	worker := workerFromContext(r.Context())
-	if _, err := s.db.DrainWorkerHost(r.Context(), db.DrainWorkerHostParams{
-		ID:                   pgvalue.UUID(worker.HostID),
-		WorkerGroupID:        pgvalue.UUID(worker.GroupID),
-		ExpectedEpoch:        pgtype.Int8{Int64: worker.Epoch, Valid: true},
-		ExpectedClaimVersion: worker.HostClaimVersion,
-	}); isNoRows(err) {
-		writeError(w, notFound(errors.New("worker is not registered")))
-		return
-	} else if err != nil {
-		s.log.Error("worker drain failed", "worker_host_id", worker.HostID.String(), "error", err)
-		writeError(w, errors.New("drain worker"))
+	if err := workergroup.BeginHostDrain(r.Context(), s.db, worker); err != nil {
+		s.writeWorkerHostError(w, "drain worker", err)
 		return
 	}
 	s.writeWorkerStatus(w, r, worker)
@@ -341,24 +240,9 @@ func (s *Server) workerCompleteDrain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("drain completion requires empty inventory, reclaimed, quarantined, and errors lists")))
 		return
 	}
-	completed, err := s.completeWorkerDrain(r.Context(), db.CompleteWorkerDrainParams{
-		WorkerHostID:         pgvalue.UUID(worker.HostID),
-		WorkerGroupID:        pgvalue.UUID(worker.GroupID),
-		WorkerEpoch:          pgtype.Int8{Int64: worker.Epoch, Valid: true},
-		ExpectedClaimVersion: worker.HostClaimVersion,
-		ObservedAt:           pgvalue.Timestamptz(request.ObservedAt),
-	})
-	if isNoRows(err) {
-		writeError(w, conflict(errors.New("worker drain is not complete or its claim fence is stale")))
-		return
-	}
+	completed, err := workergroup.CompleteHostDrain(r.Context(), s.tx, worker, request.ObservedAt)
 	if err != nil {
-		s.log.Error("worker drain completion failed", "worker_host_id", worker.HostID.String(), "error", err)
-		writeError(w, errors.New("complete worker drain"))
-		return
-	}
-	if completed.Status != db.WorkerHostStatusTerminationReady {
-		writeError(w, errors.New("complete worker drain returned a non-terminal worker state"))
+		s.writeWorkerHostError(w, "complete worker drain", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.StatusResponse{
@@ -369,47 +253,14 @@ func (s *Server) workerCompleteDrain(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) completeWorkerDrain(ctx context.Context, params db.CompleteWorkerDrainParams) (db.CompleteWorkerDrainRow, error) {
-	var completed db.CompleteWorkerDrainRow
-	err := s.inTx(ctx, func(work *txWork) error {
-		if _, err := work.q.LockWorkerDrainCompletion(ctx, db.LockWorkerDrainCompletionParams{
-			WorkerHostID:  params.WorkerHostID,
-			WorkerGroupID: params.WorkerGroupID,
-			WorkerEpoch:   params.WorkerEpoch,
-		}); err != nil {
-			return err
-		}
-		var err error
-		completed, err = work.q.CompleteWorkerDrain(ctx, params)
-		return err
-	})
-	return completed, err
-}
-
 func (s *Server) workerFence(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.FenceRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
 		writeError(w, fmt.Errorf("invalid worker fence request JSON: %w", err))
 		return
 	}
-	reasonCode := strings.TrimSpace(request.ReasonCode)
-	if reasonCode != "termination_drain_failed" && reasonCode != "worker_retired" {
-		writeError(w, badRequest(errors.New("unsupported worker fence reason")))
-		return
-	}
-	worker := workerFromContext(r.Context())
-	if _, err := s.db.FenceWorkerHost(r.Context(), db.FenceWorkerHostParams{
-		ID:                   pgvalue.UUID(worker.HostID),
-		WorkerGroupID:        pgvalue.UUID(worker.GroupID),
-		ExpectedEpoch:        pgtype.Int8{Int64: worker.Epoch, Valid: true},
-		ExpectedClaimVersion: worker.HostClaimVersion,
-		ReasonCode:           pgtype.Text{String: reasonCode, Valid: true},
-	}); isNoRows(err) {
-		writeError(w, notFound(errors.New("worker is not registered")))
-		return
-	} else if err != nil {
-		s.log.Error("worker fence failed", "worker_host_id", worker.HostID.String(), "error", err)
-		writeError(w, errors.New("fence worker"))
+	if err := workergroup.FenceHost(r.Context(), s.db, workerFromContext(r.Context()), request.ReasonCode); err != nil {
+		s.writeWorkerHostError(w, "fence worker", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -420,18 +271,9 @@ func (s *Server) workerStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worker workergroup.HostPrincipal) {
-	state, err := s.db.GetWorkerHostStatus(r.Context(), db.GetWorkerHostStatusParams{
-		ID:                          pgvalue.UUID(worker.HostID),
-		WorkerGroupID:               pgvalue.UUID(worker.GroupID),
-		ObservationFreshnessSeconds: workergroup.ObservationFreshnessSeconds,
-	})
-	if isNoRows(err) {
-		writeError(w, notFound(errors.New("worker is not registered")))
-		return
-	}
+	state, err := workergroup.ReadHost(r.Context(), s.db, worker)
 	if err != nil {
-		s.log.Error("get worker status failed", "worker_host_id", worker.HostID.String(), "error", err)
-		writeError(w, errors.New("get worker status"))
+		s.writeWorkerHostError(w, "get worker status", err)
 		return
 	}
 	readiness := workerapi.Readiness{
@@ -451,6 +293,18 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 		ActiveInstances: state.ActiveInstances,
 		Readiness:       readiness,
 	})
+}
+
+// writeWorkerHostError writes a worker host lifecycle error; a failure the
+// client is not told about is logged and reported as the operation.
+func (s *Server) writeWorkerHostError(w http.ResponseWriter, operation string, err error) {
+	mapped := workerGroupError(err)
+	if errorStatus(mapped) != http.StatusInternalServerError {
+		writeError(w, mapped)
+		return
+	}
+	s.log.Error("worker host request failed", "operation", operation, "error", err)
+	writeError(w, errors.New(operation))
 }
 
 func workerPublicStatus(state string) (workerapi.Status, error) {
@@ -486,172 +340,6 @@ func workerRoleReadiness(
 		result.PausedReason = "observation_stale"
 	}
 	return result
-}
-
-func (s *Server) recordWorkerObservation(ctx context.Context, worker workergroup.HostPrincipal, observation workerapi.Observation) error {
-	if _, err := s.db.RecordWorkerObservation(
-		ctx,
-		workerObservationParams(worker, observation),
-	); isNoRows(err) {
-		return forbidden(errors.New("worker observation conflicts with this worker epoch"))
-	} else if err != nil {
-		return errors.New("record worker observation")
-	}
-	return nil
-}
-
-func workerObservationParams(worker workergroup.HostPrincipal, observation workerapi.Observation) db.RecordWorkerObservationParams {
-	return db.RecordWorkerObservationParams{
-		RunPausedReason: pgtype.Text{String: observation.RunPausedReason, Valid: observation.RunPausedReason != ""},
-		VMPausedReason:  pgtype.Text{String: observation.VMPausedReason, Valid: observation.VMPausedReason != ""},
-		WorkerHostID:    pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID),
-		WorkerEpoch: pgtype.Int8{Int64: worker.Epoch, Valid: true},
-	}
-}
-
-func workerActivationParams(
-	worker workergroup.HostPrincipal,
-	c workerapi.Capabilities,
-	cpuEnvironment []byte,
-) db.ActivateWorkerHostParams {
-	return db.ActivateWorkerHostParams{
-		VMPlatformID:   pgtype.Text{String: c.Runtime.ID, Valid: true},
-		EpochCPUMillis: c.MaxVCPUs * 1000, EpochMemoryBytes: c.MaxMemoryMiB * 1024 * 1024,
-		EpochGuestEphemeralDiskBytes: c.GuestEphemeralDiskBytes,
-		PerVMCPUMillis:               c.VMMilliCPU, PerVMMemoryBytes: c.VMMemoryMiB * 1024 * 1024,
-		PerVMGuestEphemeralDiskBytes: c.VMGuestEphemeralDiskBytes,
-		MaxVMSlots:                   c.ExecutionSlotsAvailable,
-		MaxVMStarts:                  c.ExecutionSlotsAvailable,
-		CPUEnvironment:               cpuEnvironment, CPUEnvironmentDigest: pgtype.Text{String: c.CPUEnvironment.Digest, Valid: true},
-		WorkerHostID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID),
-		WorkerEpoch: pgtype.Int8{Int64: worker.Epoch, Valid: true},
-	}
-}
-
-func (s *Server) activateWorker(ctx context.Context, worker workergroup.HostPrincipal, capabilities workerapi.Capabilities) error {
-	cpuEnvironment, err := json.Marshal(capabilities.CPUEnvironment)
-	if err != nil {
-		return fmt.Errorf("encode Worker CPU environment: %w", err)
-	}
-	template := workerTemplate(capabilities)
-	return s.inTx(ctx, func(work *txWork) error {
-		group, err := work.q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(worker.GroupID))
-		if err != nil {
-			return err
-		}
-		if group.Status != db.WorkerGroupStatusActive && group.Status != db.WorkerGroupStatusPaused && group.Status != db.WorkerGroupStatusDraining {
-			return pgx.ErrNoRows
-		}
-		epoch := pgtype.Int8{Int64: worker.Epoch, Valid: true}
-		poolID, err := work.q.GetWorkerHostPoolID(ctx, db.GetWorkerHostPoolIDParams{
-			WorkerHostID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID),
-			WorkerEpoch: epoch,
-		})
-		if err != nil {
-			return err
-		}
-		pool, err := work.q.LockWorkerPool(ctx, db.LockWorkerPoolParams{
-			WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerPoolID: poolID,
-		})
-		if err != nil {
-			return err
-		}
-		if _, err := work.q.LockWorkerHostForActivation(ctx, db.LockWorkerHostForActivationParams{
-			WorkerHostID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID),
-			WorkerPoolID: poolID, WorkerEpoch: epoch,
-		}); err != nil {
-			return err
-		}
-		if _, err := work.q.UpsertVMPlatform(ctx, vmPlatformParams(capabilities.Runtime)); err != nil {
-			return err
-		}
-		switch pool.Status {
-		case "pending":
-			if group.Status == db.WorkerGroupStatusDraining {
-				return pgx.ErrNoRows
-			}
-			for _, shape := range capabilities.CPUShapes {
-				inserted, err := work.q.InsertWorkerPoolCPUShape(ctx, db.InsertWorkerPoolCPUShapeParams{
-					VCPUCount: shape.VCPUCount, CPUConfigDigest: shape.CPUConfigDigest, WorkerPoolID: poolID,
-				})
-				if err != nil {
-					return err
-				}
-				if inserted != 1 {
-					return pgx.ErrNoRows
-				}
-			}
-			pool, err = work.q.SealWorkerPool(ctx, sealWorkerPoolParams(worker.GroupID, poolID, template))
-			if err != nil {
-				return err
-			}
-			if _, err := work.q.SetInitialWorkerGroupPrimaryPool(ctx, db.SetInitialWorkerGroupPrimaryPoolParams{
-				WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerPoolID: poolID,
-			}); err != nil {
-				return err
-			}
-		case "active", "draining":
-			shapes, err := work.q.ListWorkerPoolCPUShapes(ctx, poolID)
-			if err != nil {
-				return err
-			}
-			if !workerPoolMatches(pool, shapes, template) {
-				return pgx.ErrNoRows
-			}
-		default:
-			return pgx.ErrNoRows
-		}
-		_, err = work.q.ActivateWorkerHost(ctx, workerActivationParams(worker, capabilities, cpuEnvironment))
-		return err
-	})
-}
-
-func vmPlatformParams(profile vmplatform.Profile) db.UpsertVMPlatformParams {
-	digest := pgtype.Text{String: profile.CPUTemplate.Digest, Valid: profile.CPUTemplate.Digest != ""}
-	return db.UpsertVMPlatformParams{
-		ID: profile.ID, Arch: profile.Arch, Contract: profile.Contract,
-		DescriptorDigest:  profile.VMRuntimeDescriptorDigest,
-		FirecrackerDigest: profile.FirecrackerDigest, FirecrackerVersion: profile.FirecrackerVersion,
-		SnapshotFormatVersion: profile.SnapshotFormatVersion, HostKernelRelease: profile.HostKernelRelease,
-		CPUTemplateKind: string(profile.CPUTemplate.Kind), CPUTemplateDigest: digest,
-		KernelDigest: profile.KernelDigest, InitramfsDigest: profile.InitramfsDigest, RootfsDigest: profile.RootfsDigest,
-	}
-}
-
-func sealWorkerPoolParams(groupID uuid.UUID, poolID pgtype.UUID, template workergroup.Template) db.SealWorkerPoolParams {
-	return db.SealWorkerPoolParams{
-		VMPlatformID:                    pgtype.Text{String: template.Runtime.ID, Valid: true},
-		CapacityCPUMillis:               pgtype.Int8{Int64: template.Capacity.CPUMillis, Valid: true},
-		CapacityMemoryBytes:             pgtype.Int8{Int64: template.Capacity.MemoryBytes, Valid: true},
-		CapacityGuestEphemeralDiskBytes: pgtype.Int8{Int64: template.Capacity.GuestEphemeralDiskBytes, Valid: true},
-		PerVMCPUMillis:                  pgtype.Int8{Int64: template.PerVM.CPUMillis, Valid: true},
-		PerVMMemoryBytes:                pgtype.Int8{Int64: template.PerVM.MemoryBytes, Valid: true},
-		PerVMGuestEphemeralDiskBytes:    pgtype.Int8{Int64: template.PerVM.GuestEphemeralDiskBytes, Valid: true},
-		MaxVMSlots:                      pgtype.Int4{Int32: int32(template.Capacity.VMSlots), Valid: true},
-		WorkerPoolID:                    poolID, WorkerGroupID: pgvalue.UUID(groupID),
-	}
-}
-
-func workerPoolMatches(pool db.WorkerPool, shapes []db.WorkerPoolCpuShape, template workergroup.Template) bool {
-	if !pool.SealedAt.Valid ||
-		!pool.VMPlatformID.Valid || pool.VMPlatformID.String != template.Runtime.ID ||
-		!pool.CapacityCPUMillis.Valid || pool.CapacityCPUMillis.Int64 != template.Capacity.CPUMillis ||
-		!pool.CapacityMemoryBytes.Valid || pool.CapacityMemoryBytes.Int64 != template.Capacity.MemoryBytes ||
-		!pool.CapacityGuestEphemeralDiskBytes.Valid || pool.CapacityGuestEphemeralDiskBytes.Int64 != template.Capacity.GuestEphemeralDiskBytes ||
-		!pool.PerVMCPUMillis.Valid || pool.PerVMCPUMillis.Int64 != template.PerVM.CPUMillis ||
-		!pool.PerVMMemoryBytes.Valid || pool.PerVMMemoryBytes.Int64 != template.PerVM.MemoryBytes ||
-		!pool.PerVMGuestEphemeralDiskBytes.Valid || pool.PerVMGuestEphemeralDiskBytes.Int64 != template.PerVM.GuestEphemeralDiskBytes ||
-		!pool.MaxVMSlots.Valid || int64(pool.MaxVMSlots.Int32) != template.Capacity.VMSlots ||
-		len(shapes) != len(template.CPUShapes) {
-		return false
-	}
-	for index := range shapes {
-		if shapes[index].VCPUCount != template.CPUShapes[index].VCPUCount ||
-			shapes[index].CPUConfigDigest != template.CPUShapes[index].CPUConfigDigest {
-			return false
-		}
-	}
-	return true
 }
 
 func workerTemplate(capabilities workerapi.Capabilities) workergroup.Template {

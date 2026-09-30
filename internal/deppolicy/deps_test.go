@@ -105,6 +105,26 @@ func TestLightProgramsDoNotReachDatabase(t *testing.T) {
 	}
 }
 
+// The worker exchanges its host secret for epoch tokens it never verifies;
+// signing and verifying them is workergroup's, in the control plane.
+func TestWorkerDoesNotLinkTokenSigning(t *testing.T) {
+	root := repositoryRoot(t)
+	for _, goos := range []string{"linux", "darwin"} {
+		cmd := exec.Command("go", "list", "-buildvcs=false", "-deps", "./cmd/worker")
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64")
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("go list ./cmd/worker for %s: %v\n%s", goos, err, output)
+		}
+		for _, dependency := range strings.Fields(string(output)) {
+			if strings.HasPrefix(dependency, "github.com/golang-jwt/") || dependency == internalImportPrefix+"workergroup" {
+				t.Fatalf("./cmd/worker must not depend on %s for %s", dependency, goos)
+			}
+		}
+	}
+}
+
 func TestContractPackagesDoNotReachArtifactResources(t *testing.T) {
 	root := repositoryRoot(t)
 	packages := []string{

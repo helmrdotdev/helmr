@@ -9,17 +9,14 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
-	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
-	"github.com/helmrdotdev/helmr/internal/workerclient"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -40,21 +37,8 @@ func TestTaskCompletionRefreshesAuthenticationWithoutChangingReceipt(t *testing.
 				t.Fatal(err)
 			}
 			server := &Server{db: db.New(f.Pool), tx: f.Pool}
-			keys, err := auth.NewKeys(bytes.Repeat([]byte{1}, auth.RootKeySize))
-			if err != nil {
-				t.Fatal(err)
-			}
-			secret := "test-worker-secret"
-			hash, err := auth.HashToken(keys.WorkerHost, secret)
-			if err != nil {
-				t.Fatal(err)
-			}
-			credentialID, serviceID := uuid.NewV7(), uuid.NewV7()
-			dbtest.MustExec(t, ctx, f.Pool, `UPDATE worker_hosts SET current_service_id=$2 WHERE id=$1`, f.WorkerID, serviceID)
-			dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO worker_host_credentials (id,worker_group_id,worker_host_id,key_prefix,secret_hash) VALUES ($1,$2,$3,'test-worker',$4)`, credentialID, runtest.WorkerGroupID, f.WorkerID, hash)
-			server.authKeys = keys
-			server.workerTokenSigningKey = bytes.Repeat([]byte{2}, auth.RootKeySize)
-			server.workerTokenTTL = time.Hour
+			credential := seedHostCredential(t, f.Pool, f.WorkerID)
+			server.hostCredentials = testHostCredentials(t)
 			server.log = slog.New(slog.NewTextHandler(io.Discard, nil))
 			drain := func(ctx context.Context) error {
 				if transition == "group" {
@@ -66,7 +50,7 @@ func TestTaskCompletionRefreshesAuthenticationWithoutChangingReceipt(t *testing.
 					ExpectedEpoch: pgtype.Int8{Int64: 1, Valid: true}, ExpectedClaimVersion: 1,
 				})
 				if err == nil && transition == "revoked" {
-					_, err = f.Pool.Exec(ctx, `UPDATE worker_host_credentials SET revoked_at=now() WHERE id=$1`, credentialID)
+					_, err = f.Pool.Exec(ctx, `UPDATE worker_host_credentials SET revoked_at=now() WHERE worker_host_id=$1`, f.WorkerID)
 				}
 				return err
 			}
@@ -107,10 +91,7 @@ func TestTaskCompletionRefreshesAuthenticationWithoutChangingReceipt(t *testing.
 				_, _ = w.Write(response.Body.Bytes())
 			}))
 			defer httpServer.Close()
-			client, err := workerclient.New(httpServer.URL, workerclient.WithAuth(f.WorkerID.String(), secret), workerclient.WithService(serviceID.String()))
-			if err != nil {
-				t.Fatal(err)
-			}
+			client := credential.client(t, httpServer.URL)
 			err = client.CompleteTask(ctx, request)
 			requestMu.Lock()
 			defer requestMu.Unlock()
