@@ -24,6 +24,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/version"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -111,18 +112,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure telemetry ingester: %w", err)
 	}
-	staleWorkerTransactions, err := dispatch.NewPGXStaleWorkerFenceTransactions(pool)
-	if err != nil {
-		return fmt.Errorf("configure stale worker fence transactions: %w", err)
-	}
-	staleWorkerLock, err := dispatch.NewStaleWorkerFenceAdvisoryLock(pool)
-	if err != nil {
-		return fmt.Errorf("configure stale worker fence lock: %w", err)
-	}
-	staleWorkerFencer, err := dispatch.NewStaleWorkerFencer(staleWorkerTransactions,
-		dispatch.WithStaleWorkerFenceLock(staleWorkerLock),
-		dispatch.WithStaleWorkerFenceLogger(log),
-	)
+	staleHostFencer, err := workergroup.NewStaleHostFencer(pool, workergroup.WithStaleHostFenceLogger(log))
 	if err != nil {
 		return fmt.Errorf("configure stale worker fencer: %w", err)
 	}
@@ -247,7 +237,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	runners := []func() error{
-		func() error { return staleWorkerFencer.Run(runCtx) },
+		func() error { return staleHostFencer.Run(runCtx) },
 		func() error { return runLeaseReconciler.Run(runCtx) },
 		func() error { return placementReconciler.Run(runCtx) },
 		func() error { return scheduleWorker.Run(runCtx) },
