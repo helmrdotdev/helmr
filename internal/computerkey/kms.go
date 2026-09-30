@@ -65,7 +65,7 @@ func (k *KMS) Unwrap(ctx context.Context, scope, keyID string, e Envelope) ([]by
 	}
 	out, err := k.client.Decrypt(ctx, &kms.DecryptInput{KeyId: aws.String(e.WrappingKeyID), EncryptionAlgorithm: types.EncryptionAlgorithmSpecSymmetricDefault, EncryptionContext: aad, CiphertextBlob: e.Ciphertext})
 	if err != nil {
-		return nil, kmsDecryptFailure(ctx, err)
+		return nil, kmsFailure(ctx, err)
 	}
 	if out == nil {
 		return nil, errors.New("empty KMS unwrapping response")

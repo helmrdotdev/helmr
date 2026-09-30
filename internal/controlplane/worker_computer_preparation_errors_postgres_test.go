@@ -500,8 +500,10 @@ func TestComputerPreparationFailuresReportTheirClass(t *testing.T) {
 }
 
 // Deterministic outcomes keep their statuses: a malformed request is a 400,
-// a claim mismatch a 401, and an expired or revoked preparation a 409, with
-// no plaintext in the response.
+// a claim mismatch a 401, an expired or revoked preparation, a changed or
+// shape-invalid persisted key and an invalid retained root a 409, and
+// persisted ciphertext that fails authentication a logged 500, with no
+// plaintext in the response or the logs.
 func TestComputerPreparationRejectionsReportTheirClass(t *testing.T) {
 	expire := func(s *preparationErrorServer) {
 		dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_instances SET preparation_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, s.f.runtime)
@@ -510,9 +512,15 @@ func TestComputerPreparationRejectionsReportTheirClass(t *testing.T) {
 		dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, s.f.runtime)
 	}
 	// corruptEnvelope flips one ciphertext byte of the Computer's persisted
-	// key, which keeps the envelope's shape but fails its authentication.
+	// key, which keeps the envelope's shape but fails its authentication: a
+	// data-integrity failure that must be logged.
 	corruptEnvelope := func(s *preparationErrorServer) {
 		dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_data_keys SET wrapped_key=set_byte(wrapped_key,20,get_byte(wrapped_key,20)#255) WHERE computer_id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, s.f.runtime)
+	}
+	// truncateEnvelope drops the last ciphertext byte of the Computer's
+	// persisted key: an envelope shape the provider cannot accept.
+	truncateEnvelope := func(s *preparationErrorServer) {
+		dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_data_keys SET wrapped_key=substring(wrapped_key from 1 for length(wrapped_key)-1) WHERE computer_id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, s.f.runtime)
 	}
 	staleClaims := func(s *preparationErrorServer) {
 		dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, pgvalue.UUID(s.f.worker.HostID))
@@ -539,11 +547,13 @@ func TestComputerPreparationRejectionsReportTheirClass(t *testing.T) {
 		{name: "version stale claims", stage: preparationRootCertified, path: initialVersionPath, change: staleClaims, status: http.StatusUnauthorized},
 		{name: "version malformed root", stage: preparationRootCertified, path: initialVersionPath, change: func(s *preparationErrorServer) { s.version.Root.Page.KeyID = "not-a-key" }, status: http.StatusBadRequest},
 		{name: "version root differs from inspection", stage: preparationRootCertified, path: initialVersionPath, change: func(s *preparationErrorServer) { s.version.Root.Page.Digest = dbtest.Digest("another root page") }, status: http.StatusConflict},
-		{name: "key invalid envelope", stage: preparationRootCertified, path: initialKeyPath, change: corruptEnvelope, status: http.StatusConflict},
+		{name: "key corrupt ciphertext", stage: preparationRootCertified, path: initialKeyPath, change: corruptEnvelope, status: http.StatusInternalServerError},
+		{name: "key envelope shape invalid", stage: preparationRootCertified, path: initialKeyPath, change: truncateEnvelope, status: http.StatusConflict},
 		{name: "key changed during delivery", stage: preparationRootCertified, path: initialKeyPath, change: func(s *preparationErrorServer) {
 			s.setKeys(func(k *faultingKeys) { k.afterUnwrap = func() { corruptEnvelope(s) } })
 		}, status: http.StatusConflict},
-		{name: "source invalid envelope", stage: preparationPublished, path: computerSourcePath, change: corruptEnvelope, status: http.StatusConflict},
+		{name: "source corrupt ciphertext", stage: preparationPublished, path: computerSourcePath, change: corruptEnvelope, status: http.StatusInternalServerError},
+		{name: "source envelope shape invalid", stage: preparationPublished, path: computerSourcePath, change: truncateEnvelope, status: http.StatusConflict},
 		{name: "source retained root invalid", stage: preparationPublished, path: computerSourcePath, change: func(s *preparationErrorServer) {
 			dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_disk_version_roots SET locator=jsonb_set(locator,'{page,salt}','"not-hex"') WHERE version_id=(SELECT retained_source_disk_version_id FROM computer_instances WHERE id=$1)`, s.f.runtime)
 		}, status: http.StatusConflict},

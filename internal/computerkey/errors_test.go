@@ -14,29 +14,27 @@ import (
 )
 
 // A failed KMS call is provider unavailability only when it is a recognized
-// transport, throttling, provider-internal or deadline failure. A decrypt of
-// ciphertext KMS cannot authenticate, or that another key wrapped, is an
-// invalid envelope. Access and key-state rejections keep only their cause.
+// transport, throttling, provider-internal or deadline failure. Ciphertext
+// rejections, access and key-state rejections keep only their cause, and so
+// does a failure after the caller's context ended.
 func TestKMSClassifiesProviderFailures(t *testing.T) {
 	for _, test := range []struct {
 		name        string
 		err         error
 		unavailable bool
-		// invalidEnvelope applies to decrypt only; encrypt takes no envelope.
-		invalidEnvelope bool
 	}{
-		{"transport", &net.OpError{Op: "dial", Err: errors.New("connection refused")}, true, false},
-		{"throttling", &smithy.GenericAPIError{Code: "ThrottlingException", Message: "rate exceeded"}, true, false},
-		{"internal", &types.KMSInternalException{Message: aws.String("internal")}, true, false},
-		{"dependency timeout", &types.DependencyTimeoutException{Message: aws.String("timeout")}, true, false},
-		{"key unavailable", &types.KeyUnavailableException{Message: aws.String("retry later")}, true, false},
-		{"deadline", context.DeadlineExceeded, true, false},
-		{"invalid ciphertext", &types.InvalidCiphertextException{Message: aws.String("bad")}, false, true},
-		{"incorrect key", &types.IncorrectKeyException{Message: aws.String("another key")}, false, true},
-		{"access denied", &smithy.GenericAPIError{Code: "AccessDeniedException", Message: "denied"}, false, false},
-		{"disabled key", &types.DisabledException{Message: aws.String("disabled")}, false, false},
-		{"missing key", &types.NotFoundException{Message: aws.String("missing")}, false, false},
-		{"key state", &types.KMSInvalidStateException{Message: aws.String("pending deletion")}, false, false},
+		{"transport", &net.OpError{Op: "dial", Err: errors.New("connection refused")}, true},
+		{"throttling", &smithy.GenericAPIError{Code: "ThrottlingException", Message: "rate exceeded"}, true},
+		{"internal", &types.KMSInternalException{Message: aws.String("internal")}, true},
+		{"dependency timeout", &types.DependencyTimeoutException{Message: aws.String("timeout")}, true},
+		{"key unavailable", &types.KeyUnavailableException{Message: aws.String("retry later")}, true},
+		{"deadline", context.DeadlineExceeded, true},
+		{"invalid ciphertext", &types.InvalidCiphertextException{Message: aws.String("bad")}, false},
+		{"incorrect key", &types.IncorrectKeyException{Message: aws.String("another key")}, false},
+		{"access denied", &smithy.GenericAPIError{Code: "AccessDeniedException", Message: "denied"}, false},
+		{"disabled key", &types.DisabledException{Message: aws.String("disabled")}, false},
+		{"missing key", &types.NotFoundException{Message: aws.String("missing")}, false},
+		{"key state", &types.KMSInvalidStateException{Message: aws.String("pending deletion")}, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			adapter, err := NewKMS(kmsFake{
@@ -48,12 +46,9 @@ func TestKMSClassifiesProviderFailures(t *testing.T) {
 			}
 			_, wrapErr := adapter.Wrap(t.Context(), "scope", "version", bytes.Repeat([]byte{3}, Size))
 			got, unwrapErr := adapter.Unwrap(t.Context(), "scope", "version", Envelope{testARN, []byte("wrapped")})
-			for _, result := range []struct {
-				err             error
-				invalidEnvelope bool
-			}{{wrapErr, false}, {unwrapErr, test.invalidEnvelope}} {
-				if !errors.Is(result.err, test.err) || errors.Is(result.err, ErrUnavailable) != test.unavailable || errors.Is(result.err, ErrInvalidEnvelope) != result.invalidEnvelope {
-					t.Fatalf("classified as %v", result.err)
+			for _, err := range []error{wrapErr, unwrapErr} {
+				if !errors.Is(err, test.err) || errors.Is(err, ErrUnavailable) != test.unavailable || errors.Is(err, ErrInvalidEnvelope) {
+					t.Fatalf("classified as %v", err)
 				}
 			}
 			if got != nil {
@@ -101,8 +96,9 @@ func TestKMSClassifiesEnvelopesAndResponses(t *testing.T) {
 	}
 }
 
-// A local envelope for another wrapping key or with tampered ciphertext is
-// invalid; a cancelled caller keeps its cause.
+// A local envelope of the wrong length is invalid; one for another wrapping
+// key or with tampered ciphertext keeps its cause, as does a cancelled
+// caller.
 func TestLocalClassifiesEnvelopes(t *testing.T) {
 	local, err := NewLocal("local-1", bytes.Repeat([]byte{1}, Size))
 	if err != nil {
@@ -117,9 +113,13 @@ func TestLocalClassifiesEnvelopes(t *testing.T) {
 	tampered := Envelope{WrappingKeyID: envelope.WrappingKeyID, Ciphertext: bytes.Clone(envelope.Ciphertext)}
 	tampered.Ciphertext[len(tampered.Ciphertext)-1] ^= 1
 	for name, e := range map[string]Envelope{"foreign key": foreign, "tampered": tampered} {
-		if got, err := local.Unwrap(t.Context(), "scope", "version", e); !errors.Is(err, ErrInvalidEnvelope) || got != nil {
+		if got, err := local.Unwrap(t.Context(), "scope", "version", e); err == nil || errors.Is(err, ErrInvalidEnvelope) || errors.Is(err, ErrUnavailable) || got != nil {
 			t.Fatalf("%s classified as %v", name, err)
 		}
+	}
+	short := Envelope{WrappingKeyID: envelope.WrappingKeyID, Ciphertext: envelope.Ciphertext[:len(envelope.Ciphertext)-1]}
+	if got, err := local.Unwrap(t.Context(), "scope", "version", short); !errors.Is(err, ErrInvalidEnvelope) || got != nil {
+		t.Fatalf("wrong-length envelope classified as %v", err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

@@ -39,7 +39,7 @@ func keyUnavailable(format string, args ...any) error {
 
 // providerFailure classifies a failed wrap or unwrap. A cancelled or expired
 // request keeps its cause, as a database failure would; recognized provider
-// unavailability reports ErrKeyProviderUnavailable, an invalid persisted
+// unavailability reports ErrKeyProviderUnavailable, a shape-invalid persisted
 // envelope ErrKeyUnavailable, and any other failure keeps its cause.
 func providerFailure(ctx context.Context, operation string, err error) error {
 	switch {
@@ -140,7 +140,7 @@ func encryptionScope(orgID, environmentID, computerID string) (string, error) {
 // first delivery uses the winner's persisted key, and a lost reply keeps the
 // same pin for its retry. A preparation that no longer authorizes delivery
 // reports ErrAuthorityChanged, stale claims report workergroup.ErrStaleClaims,
-// an absent, changed or invalid persisted key reports ErrKeyUnavailable and
+// an absent or changed key or a shape-invalid envelope reports ErrKeyUnavailable and
 // an unavailable provider reports ErrKeyProviderUnavailable; any other
 // failure, including a cancelled request, keeps its cause.
 // Plaintext is cleared on every failure.
