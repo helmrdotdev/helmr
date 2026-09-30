@@ -1,6 +1,7 @@
 package computer_test
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -11,6 +12,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const checkpointFailure = "snapshot upload failed"
@@ -87,6 +90,42 @@ func TestCheckpointFailureRejectsWrongAuthority(t *testing.T) {
 		if _, err := computer.FailCheckpoint(t.Context(), f.Pool, registered, message); !errors.Is(err, computer.ErrCheckpointCandidate) {
 			t.Fatalf("message validation=%v", err)
 		}
+	}
+}
+
+var errInjectedCommit = errors.New("injected commit failure")
+
+// commitFailingDB begins real transactions whose commit fails after every
+// write succeeded; the owner's transaction then rolls them back.
+type commitFailingDB struct{ pool *pgxpool.Pool }
+
+func (d commitFailingDB) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return commitFailingTx{tx}, nil
+}
+
+type commitFailingTx struct{ pgx.Tx }
+
+func (commitFailingTx) Commit(context.Context) error { return errInjectedCommit }
+
+// A failure report whose writes all succeed but whose commit fails leaves no
+// receipt and no change to the Instance's admission or desired state.
+func TestCheckpointFailureRollbackIsAtomic(t *testing.T) {
+	f, ref, _ := computertest.RegisteredCapture(t, false)
+	if _, err := computer.FailCheckpoint(t.Context(), commitFailingDB{f.Pool}, ref, checkpointFailure); !errors.Is(err, errInjectedCommit) {
+		t.Fatalf("failure with failed commit = %v", err)
+	}
+	var unchanged bool
+	err := f.Pool.QueryRow(t.Context(), `SELECT c.status='creating' AND c.failed_request_fingerprint IS NULL AND i.desired_state='ready' AND i.admission_state='checkpointing' AND i.desired_version=$2 FROM computer_checkpoints c JOIN computer_instances i ON i.id=c.source_computer_instance_id WHERE c.id=$1`, ref.CheckpointID, ref.DesiredVersion).Scan(&unchanged)
+	if err != nil || !unchanged {
+		t.Fatalf("atomic rollback=%v err=%v", unchanged, err)
+	}
+	// The same report then commits: the rolled-back attempt left no partial receipt.
+	if _, err = computer.FailCheckpoint(t.Context(), f.Pool, ref, checkpointFailure); err != nil {
+		t.Fatal(err)
 	}
 }
 

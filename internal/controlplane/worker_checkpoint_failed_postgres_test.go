@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func checkpointFailureFixture(t *testing.T) (runtest.Fixture, runtest.RunLease, workerapi.CheckpointFailedRequest, workerHTTPClient) {
+func checkpointFailureFixture(t *testing.T) (runtest.Fixture, runtest.RunLease, workerapi.CheckpointFailedRequest, workerHTTPClient, http.Handler) {
 	t.Helper()
 	f := runtest.New(t)
 	run := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
@@ -31,12 +31,27 @@ func checkpointFailureFixture(t *testing.T) (runtest.Fixture, runtest.RunLease, 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	worker := newWorkerHTTPClient(t, newPostgresServer(t, f.Pool), f.Pool, f.WorkerID)
-	return f, run, workerapi.CheckpointFailedRequest{ComputerInstanceID: capture.InstanceID.String(), WorkerEpoch: 1, DesiredVersion: capture.DesiredVersion + 1, CheckpointID: capture.CheckpointID.String(), Error: "snapshot failed"}, worker
+	handler := newPostgresServer(t, f.Pool)
+	worker := newWorkerHTTPClient(t, handler, f.Pool, f.WorkerID)
+	return f, run, workerapi.CheckpointFailedRequest{ComputerInstanceID: capture.InstanceID.String(), WorkerEpoch: 1, DesiredVersion: capture.DesiredVersion + 1, CheckpointID: capture.CheckpointID.String(), Error: "snapshot failed"}, worker, handler
+}
+
+// otherWorkerHost seeds a second active worker host in the fixture host's
+// Group and Pool at the same epoch, with its own service.
+func otherWorkerHost(t *testing.T, f runtest.Fixture) uuid.UUID {
+	t.Helper()
+	id := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_hosts (id,resource_id,worker_group_id,worker_pool_id,status,current_epoch,current_service_id,vm_platform_id,
+ epoch_cpu_millis,epoch_memory_bytes,epoch_guest_ephemeral_disk_bytes,per_vm_cpu_millis,per_vm_memory_bytes,per_vm_guest_ephemeral_disk_bytes,
+ max_vm_slots,max_vm_starts,cpu_environment,cpu_environment_digest,observed_at,epoch_started_at,activated_at)
+ SELECT $1,$4,worker_group_id,worker_pool_id,status,current_epoch,$2,vm_platform_id,
+ epoch_cpu_millis,epoch_memory_bytes,epoch_guest_ephemeral_disk_bytes,per_vm_cpu_millis,per_vm_memory_bytes,per_vm_guest_ephemeral_disk_bytes,
+ max_vm_slots,max_vm_starts,cpu_environment,cpu_environment_digest,now(),now(),now() FROM worker_hosts WHERE id=$3`, id, uuid.NewV7(), f.WorkerID, id.String())
+	return id
 }
 
 func TestWorkerCheckpointFailureRequestsSourceExclusion(t *testing.T) {
-	f, run, request, worker := checkpointFailureFixture(t)
+	f, run, request, worker, _ := checkpointFailureFixture(t)
 	for range 2 {
 		var receipt workerapi.ComputerCheckpointResponse
 		worker.post(t, checkpointFailedPath, request, http.StatusOK, &receipt)
@@ -52,8 +67,22 @@ func TestWorkerCheckpointFailureRequestsSourceExclusion(t *testing.T) {
 	worker.post(t, checkpointFailedPath, request, http.StatusConflict, nil)
 }
 
+// An authenticated worker host cannot report the failure of another host's
+// capture: the original request from a different host is a changed source and
+// leaves the capture untouched for its own host.
+func TestWorkerCheckpointFailureRejectsAnotherHost(t *testing.T) {
+	f, _, request, worker, handler := checkpointFailureFixture(t)
+	other := newWorkerHTTPClient(t, handler, f.Pool, otherWorkerHost(t, f))
+	other.post(t, checkpointFailedPath, request, http.StatusConflict, nil)
+	var unchanged bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT c.status='creating' AND c.failed_request_fingerprint IS NULL AND i.desired_state='ready' AND i.admission_state='checkpointing' AND i.desired_version=$2 FROM computer_checkpoints c JOIN computer_instances i ON i.id=c.source_computer_instance_id WHERE c.id=$1`, request.CheckpointID, request.DesiredVersion).Scan(&unchanged); err != nil || !unchanged {
+		t.Fatalf("another host changed the capture=%v err=%v", !unchanged, err)
+	}
+	worker.post(t, checkpointFailedPath, request, http.StatusOK, nil)
+}
+
 func TestWorkerCheckpointFailureRejectsInvalidSource(t *testing.T) {
-	_, _, request, worker := checkpointFailureFixture(t)
+	_, _, request, worker, _ := checkpointFailureFixture(t)
 	wrongSource := request
 	wrongSource.ComputerInstanceID = uuid.NewV7().String()
 	worker.post(t, checkpointFailedPath, wrongSource, http.StatusConflict, nil)

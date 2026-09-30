@@ -38,7 +38,9 @@ type Capture struct {
 // the durable physical capture intent. A fence that no longer holds, or a
 // member that cannot be captured, returns pgx.ErrNoRows.
 func BeginCapture(ctx context.Context, tx pgx.Tx, capture Capture) (db.ComputerCheckpoint, error) {
-	request := db.BeginComputerCheckpointParams{CheckpointID: pgvalue.UUID(capture.CheckpointID), ComputerInstanceID: pgvalue.UUID(capture.InstanceID), EnvironmentID: pgvalue.UUID(capture.EnvironmentID), WriterGeneration: capture.WriterGeneration, MembershipRevision: capture.MembershipRevision, DesiredVersion: capture.DesiredVersion}
+	// A capture has no request deadline: the checkpoint and the freshness check
+	// take an explicit NULL expiry.
+	request := db.BeginComputerCheckpointParams{CheckpointID: pgvalue.UUID(capture.CheckpointID), ExpiresAt: pgtype.Timestamptz{}, ComputerInstanceID: pgvalue.UUID(capture.InstanceID), EnvironmentID: pgvalue.UUID(capture.EnvironmentID), WriterGeneration: capture.WriterGeneration, MembershipRevision: capture.MembershipRevision, DesiredVersion: capture.DesiredVersion}
 	var groupID, workerID uuid.UUID
 	var computerID pgtype.UUID
 	var region string
@@ -81,7 +83,7 @@ func BeginCapture(ctx context.Context, tx pgx.Tx, capture Capture) (db.ComputerC
 		}
 	}
 	// Evaluate wall-clock deadlines only after the final potentially blocking lock.
-	fresh, err := q.GetComputerCaptureWorkerFresh(ctx, db.GetComputerCaptureWorkerFreshParams{ID: worker.ID, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds, ExpiresAt: request.ExpiresAt})
+	fresh, err := q.GetComputerCaptureWorkerFresh(ctx, db.GetComputerCaptureWorkerFreshParams{ID: worker.ID, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds, ExpiresAt: pgtype.Timestamptz{}})
 	if err != nil {
 		return db.ComputerCheckpoint{}, err
 	}

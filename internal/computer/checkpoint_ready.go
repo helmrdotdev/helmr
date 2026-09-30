@@ -55,14 +55,11 @@ func (p Publisher) CompleteCheckpoint(ctx context.Context, ref CheckpointRef, ma
 	if len(registered.RuntimeState.MemoryArtifacts) != 1 {
 		return db.ComputerCheckpoint{}, ErrCheckpointCandidate
 	}
-	descriptors := registered.runtimeObjects()
-	observed := make([]cas.Object, 0, len(descriptors))
-	for _, d := range descriptors {
-		object, err := p.objects.Stat(ctx, d.Digest)
-		if err != nil {
+	var observed [4]cas.Object
+	for n, d := range registered.runtimeObjects() {
+		if observed[n], err = p.objects.Stat(ctx, d.Digest); err != nil {
 			return db.ComputerCheckpoint{}, storageUnavailable(err)
 		}
-		observed = append(observed, object)
 	}
 	err = db.RunTx(ctx, p.db, func(tx pgx.Tx) error {
 		var err error
@@ -77,13 +74,13 @@ func (p Publisher) CompleteCheckpoint(ctx context.Context, ref CheckpointRef, ma
 
 // runtimeObjects are the manifest's runtime objects in publication order:
 // VM configuration, VM state, memory and scratch disk.
-func (m CheckpointManifest) runtimeObjects() []CheckpointArtifact {
-	return []CheckpointArtifact{m.RuntimeState.ConfigArtifact, m.RuntimeState.VMStateArtifact, m.RuntimeState.MemoryArtifacts[0], m.RuntimeState.ScratchDiskArtifact}
+func (m CheckpointManifest) runtimeObjects() [4]CheckpointArtifact {
+	return [4]CheckpointArtifact{m.RuntimeState.ConfigArtifact, m.RuntimeState.VMStateArtifact, m.RuntimeState.MemoryArtifacts[0], m.RuntimeState.ScratchDiskArtifact}
 }
 
 // completeCheckpoint consumes the storage-observed runtime objects, in
 // runtimeObjects order, never a worker's existence claim.
-func completeCheckpoint(ctx context.Context, tx pgx.Tx, ref CheckpointRef, manifest CheckpointManifest, observed []cas.Object) (db.ComputerCheckpoint, error) {
+func completeCheckpoint(ctx context.Context, tx pgx.Tx, ref CheckpointRef, manifest CheckpointManifest, observed [4]cas.Object) (db.ComputerCheckpoint, error) {
 	source, raw, fingerprint, err := prepareCheckpointReady(ctx, tx, ref, manifest)
 	if err != nil {
 		return db.ComputerCheckpoint{}, err
@@ -103,9 +100,6 @@ func completeCheckpoint(ctx context.Context, tx pgx.Tx, ref CheckpointRef, manif
 	}
 	q := db.New(tx)
 	descriptors := candidate.runtimeObjects()
-	if len(observed) != len(descriptors) {
-		return db.ComputerCheckpoint{}, ErrCheckpointCandidate
-	}
 	for n, d := range descriptors {
 		o := observed[n]
 		if o.Digest != d.Digest || o.SizeBytes != d.SizeBytes || o.MediaType != d.MediaType {

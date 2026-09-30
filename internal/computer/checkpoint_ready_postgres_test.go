@@ -72,20 +72,31 @@ func TestCheckpointReadyWholeSet(t *testing.T) {
 
 func TestCheckpointReadyRejectsUnprovedObjects(t *testing.T) {
 	f, ref, manifest, objects := computertest.ReadyCapture(t, false)
+	// Storage that lacks a registered object, including storage holding one
+	// object in place of another, cannot prove the candidate; stored bytes that
+	// differ from the registered descriptor reject the candidate itself.
 	for _, tc := range []struct {
 		name   string
 		change func(computertest.Objects) computertest.Objects
+		want   error
 	}{
-		{"missing", func(x computertest.Objects) computertest.Objects { return x[:3] }},
-		{"size", func(x computertest.Objects) computertest.Objects { x[0].SizeBytes++; return x }},
-		{"media", func(x computertest.Objects) computertest.Objects { x[0].MediaType = "text/plain"; return x }},
-		{"duplicate", func(x computertest.Objects) computertest.Objects { x[1] = x[0]; return x }},
+		{"missing", func(x computertest.Objects) computertest.Objects { return x[:3] }, computer.ErrStorageUnavailable},
+		{"size", func(x computertest.Objects) computertest.Objects { x[0].SizeBytes++; return x }, computer.ErrCheckpointCandidate},
+		{"media", func(x computertest.Objects) computertest.Objects { x[0].MediaType = "text/plain"; return x }, computer.ErrCheckpointCandidate},
+		{"duplicate", func(x computertest.Objects) computertest.Objects { x[1] = x[0]; return x }, computer.ErrStorageUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := completeCheckpoint(t, f, ref, manifest, tc.change(append(computertest.Objects{}, objects...))); err == nil {
-				t.Fatal("unproved artifacts accepted")
+			if _, err := completeCheckpoint(t, f, ref, manifest, tc.change(append(computertest.Objects{}, objects...))); !errors.Is(err, tc.want) {
+				t.Fatalf("unproved artifacts = %v, want %v", err, tc.want)
 			}
 		})
+	}
+	// A candidate naming one object twice never registers, so readiness can
+	// never observe duplicate runtime objects.
+	duplicate := manifest
+	duplicate.RuntimeState.VMStateArtifact = duplicate.RuntimeState.ConfigArtifact
+	if _, err := computer.RegisterCheckpoint(t.Context(), f.Pool, ref, duplicate); !errors.Is(err, computer.ErrCheckpointCandidate) {
+		t.Fatalf("duplicate runtime object registration = %v", err)
 	}
 	requireCreating := func(t *testing.T, f runtest.Fixture, ref computer.CheckpointRef) {
 		t.Helper()
