@@ -18,6 +18,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/scheduler"
+	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -481,11 +483,19 @@ func TestPromoteDeploymentPostgresMaximumBulkBudget(t *testing.T) {
 	t.Logf("deployment promotion bulk cancellation rollback: %s", rollbackElapsed)
 }
 
-func TestPromoteDeploymentPostgresAvoidsScheduleAdmissionSecretLockInversion(t *testing.T) {
+// TestPromoteDeploymentPostgresAndScheduleFireWithoutDeadlock races the real
+// promotion against a real fire of the schedule it reconciles. A blocker
+// holding the schedule's Secret parks promotion in its Secret lock while it
+// holds the environment; the fire then starts and waits, and the blocker
+// releases. A fire that held the schedule while waiting for the environment
+// deadlocked with promotion's later schedule reconciliation.
+func TestPromoteDeploymentPostgresAndScheduleFireWithoutDeadlock(t *testing.T) {
+	const raceTimeout = 30 * time.Second
 	fixture := newDeploymentPromotionPostgresFixture(t)
 	principal := fixture.apiKeyPrincipal()
+	queries := db.New(fixture.pool)
 	secretID, versionID := uuid.NewV7(), uuid.NewV7()
-	if _, err := db.New(fixture.pool).CreateSecret(t.Context(), db.CreateSecretParams{
+	if _, err := queries.CreateSecret(t.Context(), db.CreateSecretParams{
 		ID: pgvalue.UUID(secretID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
 		Name: "REPORT_TOKEN", VersionID: pgvalue.UUID(versionID),
 		Nonce: make([]byte, 12), Ciphertext: make([]byte, 16),
@@ -495,79 +505,118 @@ func TestPromoteDeploymentPostgresAvoidsScheduleAdmissionSecretLockInversion(t *
 	if _, err := fixture.promote(t, fixture.scheduledID, principal); err != nil {
 		t.Fatalf("initial promotion: %v", err)
 	}
-
-	admission, err := fixture.pool.Begin(t.Context())
+	var scheduleID pgtype.UUID
+	if err := fixture.pool.QueryRow(t.Context(), `
+		UPDATE schedules
+		   SET claimed_by = 'promotion-race', claim_expires_at = now() + interval '5 minutes'
+		 WHERE environment_id = $1 AND task_declared_id = 'daily-report'
+		RETURNING id
+	`, fixture.environmentID).Scan(&scheduleID); err != nil {
+		t.Fatal(err)
+	}
+	schedule, err := queries.GetSchedule(t.Context(), db.GetScheduleParams{
+		EnvironmentID: pgvalue.UUID(fixture.environmentID), ID: scheduleID,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = admission.Rollback(context.Background()) })
-	if _, err := admission.Exec(t.Context(), `
-		SELECT id
-		  FROM schedules
-		 WHERE environment_id = $1
-		   AND task_declared_id = 'daily-report'
-		 FOR UPDATE
-	`, fixture.environmentID); err != nil {
+	store, err := secret.New(queries, fixture.pool, make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitter, err := scheduler.NewDBAdmitter(fixture.pool, definition.NewScheduleAuthority(), store.GenerateProxyTrust)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*raceTimeout)
+	defer cancel()
+	blocker, err := fixture.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = blocker.Rollback(cleanup)
+	})
+	if _, err := blocker.Exec(ctx, `SELECT id FROM secrets WHERE id = $1 FOR NO KEY UPDATE`, secretID); err != nil {
 		t.Fatal(err)
 	}
 
 	beginner := &deploymentPromotionCountingBeginner{pool: fixture.pool}
 	fixture.txb = beginner
-	done := make(chan error, 1)
+	promotion := make(chan error, 1)
 	go func() {
-		_, err := fixture.promoteContext(t.Context(), t, fixture.scheduledID, principal)
-		done <- err
+		_, err := fixture.promoteContext(ctx, t, fixture.scheduledID, principal)
+		promotion <- err
 	}()
-
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		var waiting bool
-		if pid := beginner.backendPID.Load(); pid != 0 {
-			if err := fixture.pool.QueryRow(t.Context(), `
+	awaitWaiter := func(what, statement string, exclude int64) {
+		t.Helper()
+		deadline := time.Now().Add(raceTimeout)
+		for time.Now().Before(deadline) {
+			var waiting bool
+			queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			err := fixture.pool.QueryRow(queryCtx, `
 				SELECT EXISTS (
 					SELECT 1
 					  FROM pg_stat_activity
-					 WHERE pid = $1
+					 WHERE datname = current_database()
+					   AND pid <> $1
 					   AND wait_event_type = 'Lock'
-					   AND position('ReconcileSchedules' IN query) > 0
+					   AND position($2 IN query) > 0
 				)
-			`, pid).Scan(&waiting); err != nil {
+			`, exclude, statement).Scan(&waiting)
+			cancel()
+			if err != nil {
 				t.Fatal(err)
 			}
+			if waiting {
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
 		}
-		if waiting {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("promotion did not wait on the admission-held schedule")
-		}
-		time.Sleep(5 * time.Millisecond)
+		t.Fatalf("%s did not wait in %s", what, statement)
+	}
+	awaitWaiter("promotion", "-- name: LockActiveSecretsByNameForComputerCreate", 0)
+
+	fire := make(chan error, 1)
+	go func() { fire <- admitter.AdmitSchedule(ctx, schedule) }()
+	promotionPID := beginner.backendPID.Load()
+	awaitWaiter("schedule fire", "-- name: Lock", promotionPID)
+	if err := blocker.Rollback(ctx); err != nil {
+		t.Fatal(err)
 	}
 
-	if _, err := admission.Exec(t.Context(), `SET LOCAL lock_timeout = '500ms'`); err != nil {
-		t.Fatal(err)
-	}
-	// Computer Secret insertion takes this FK key-share lock after admission
-	// locks the schedule. It must coexist with promotion's Secret lock.
-	if _, err := admission.Exec(t.Context(), `
-		SELECT id
-		  FROM secrets
-		 WHERE environment_id = $1
-		   AND name = 'REPORT_TOKEN'
-		 FOR KEY SHARE
-	`, fixture.environmentID); err != nil {
-		t.Fatalf("schedule admission Secret reference blocked by promotion: %v", err)
-	}
-	if err := admission.Commit(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("promotion: %v", err)
+	result := func(name string, done <-chan error) error {
+		t.Helper()
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(raceTimeout):
+			t.Fatalf("%s did not finish", name)
+			return nil
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("promotion did not resume after schedule admission committed")
+	}
+	promotionErr := result("promotion", promotion)
+	fireErr := result("schedule fire", fire)
+	if promotionErr != nil || fireErr != nil {
+		detail := func(err error) string {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) {
+				return pgErr.Code + ": " + pgErr.Detail
+			}
+			return ""
+		}
+		t.Fatalf("promotion = %v [%s], schedule fire = %v [%s]",
+			promotionErr, detail(promotionErr), fireErr, detail(fireErr))
+	}
+	var runs int
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM runs WHERE schedule_id = $1`, scheduleID).Scan(&runs); err != nil {
+		t.Fatal(err)
+	}
+	if runs != 1 {
+		t.Fatalf("scheduled Runs = %d, want 1", runs)
 	}
 }
 

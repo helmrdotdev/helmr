@@ -17,7 +17,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -33,6 +32,7 @@ var protectedSchedulePlacements = []secretbinding.Placement{{
 // transaction, after that transaction has taken its creation locks.
 type caBarrier struct {
 	generate func(uuid.UUID, uuid.UUID, time.Time) (secret.ProxyTrust, error)
+	ctx      context.Context
 	entered  chan struct{}
 	release  chan struct{}
 	once     sync.Once
@@ -42,6 +42,7 @@ func newCABarrier(t *testing.T, pool *pgxpool.Pool) *caBarrier {
 	t.Helper()
 	return &caBarrier{
 		generate: testProxyTrustGenerator(t, pool),
+		ctx:      t.Context(),
 		entered:  make(chan struct{}),
 		release:  make(chan struct{}),
 	}
@@ -54,6 +55,8 @@ func (b *caBarrier) GenerateProxyTrust(environmentID, computerID uuid.UUID, crea
 		close(b.entered)
 		select {
 		case <-b.release:
+		case <-b.ctx.Done():
+			return secret.ProxyTrust{}, b.ctx.Err()
 		case <-time.After(lockRaceTimeout):
 			return secret.ProxyTrust{}, errors.New("Computer CA barrier was not released")
 		}
@@ -158,13 +161,16 @@ func awaitLockWaiter(t *testing.T, pool *pgxpool.Pool, statement string, results
 	deadline := time.Now().Add(lockRaceTimeout)
 	for time.Now().Before(deadline) {
 		var waiters int
-		if err := pool.QueryRow(t.Context(), `
+		queryCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		err := pool.QueryRow(queryCtx, `
 			SELECT count(*)
 			  FROM pg_stat_activity
 			 WHERE datname = current_database()
 			   AND wait_event_type = 'Lock'
 			   AND query LIKE $1
-		`, statement).Scan(&waiters); err != nil {
+		`, statement).Scan(&waiters)
+		cancel()
+		if err != nil {
 			t.Fatal(err)
 		}
 		if waiters > 0 {
@@ -241,7 +247,9 @@ func environmentComputers(t *testing.T, pool *pgxpool.Pool, schedule db.Schedule
 // TestScheduleFireAndPublicComputerCreationShareSecretWithoutDeadlock races a
 // schedule fire against a public Computer creation without an idempotency
 // key that binds the same Secret in the same environment, each pausing while
-// it holds its creation locks.
+// it holds its creation locks. Fire first reproduces the deadlock of a fire
+// that held its environment FOR UPDATE while it waited for the Secret; public
+// first is a regression guard for the reverse order.
 func TestScheduleFireAndPublicComputerCreationShareSecretWithoutDeadlock(t *testing.T) {
 	for _, first := range []string{"fire", "public"} {
 		t.Run(first+" first", func(t *testing.T) {
@@ -313,7 +321,9 @@ func TestScheduleFireAndPublicComputerCreationShareSecretWithoutDeadlock(t *test
 }
 
 // TestConcurrentScheduleFiresShareSecret races two schedules of one
-// environment that select the same Secret.
+// environment that select the same Secret. It is a regression guard: fires
+// must stay serialized by their environment, or two fires holding binding
+// key-share locks would deadlock on each other's Secret lock.
 func TestConcurrentScheduleFiresShareSecret(t *testing.T) {
 	pool := openSchedulePostgres(t)
 	first, digest := seedScheduleAdmission(t, pool)
@@ -347,10 +357,11 @@ func TestConcurrentScheduleFiresShareSecret(t *testing.T) {
 	}
 }
 
-// TestScheduleFireHoldsSecretAuthorityBeforeCreatingComputer revokes the
-// fire's Secret while the fire creates its Computer CA. The revocation waits
-// on the Secret row the fire already holds, and the fire resolves the Secret
-// before its revocation.
+// TestScheduleFireHoldsSecretAuthorityBeforeCreatingComputer is a regression
+// guard for the fire's Secret lock order rather than a deadlock
+// reproduction. It revokes the fire's Secret while the fire creates its
+// Computer CA. The revocation waits on the Secret row the fire already holds,
+// and the fire resolves the Secret before its revocation.
 func TestScheduleFireHoldsSecretAuthorityBeforeCreatingComputer(t *testing.T) {
 	pool := openSchedulePostgres(t)
 	schedule, digest := seedScheduleAdmission(t, pool)
@@ -407,68 +418,4 @@ func TestScheduleFireHoldsSecretAuthorityBeforeCreatingComputer(t *testing.T) {
 	if resolved != generation || status != "revoked" {
 		t.Fatalf("resolved generation/status = %d/%s, want %d/revoked", resolved, status, generation)
 	}
-}
-
-// TestScheduleFireAndPromotionWithoutDeadlock races a schedule fire against a
-// transaction that takes deployment promotion's locks in promotion's order:
-// the environment, the scheduled Computer Secrets, then the schedules.
-func TestScheduleFireAndPromotionWithoutDeadlock(t *testing.T) {
-	pool := openSchedulePostgres(t)
-	schedule, digest := seedScheduleAdmission(t, pool)
-	admitter, err := NewDBAdmitter(pool, fixedAuthority{digest: digest}, testProxyTrustGenerator(t, pool))
-	if err != nil {
-		t.Fatal(err)
-	}
-	admitter.now = func() time.Time { return schedule.NextFireAt.Time }
-	var orgID, projectID pgtype.UUID
-	if err := pool.QueryRow(t.Context(), `SELECT org_id, project_id FROM environments WHERE id = $1`, schedule.EnvironmentID).
-		Scan(&orgID, &projectID); err != nil {
-		t.Fatal(err)
-	}
-
-	ctx, cancel := context.WithTimeout(t.Context(), 2*lockRaceTimeout)
-	defer cancel()
-	promotion, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer promotion.Rollback(context.WithoutCancel(ctx))
-	q := db.New(promotion)
-	if _, err := q.LockDeploymentPromotionTarget(ctx, db.LockDeploymentPromotionTargetParams{
-		OrgID: orgID, ProjectID: projectID, EnvironmentID: schedule.EnvironmentID, DeploymentID: schedule.DeploymentID,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	fire := startFire(ctx, admitter, schedule)
-	awaitLockWaiter(t, pool, "%", fire)
-
-	promotionErr := func() error {
-		if _, err := q.LockActiveSecretsByNameForComputerCreate(ctx, db.LockActiveSecretsByNameForComputerCreateParams{
-			EnvironmentID: schedule.EnvironmentID, Names: []string{"API_TOKEN"},
-		}); err != nil {
-			return err
-		}
-		if _, err := q.ReconcileSchedules(ctx, db.ReconcileSchedulesParams{
-			Ids:                     []pgtype.UUID{pgvalue.UUID(uuid.NewV7())},
-			TaskDeclaredIds:         []string{schedule.TaskDeclaredID},
-			DeploymentDefinitionIds: []pgtype.UUID{schedule.DeploymentDefinitionID},
-			DeploymentIds:           []pgtype.UUID{schedule.DeploymentID},
-			CronPatterns:            []string{schedule.CronPattern},
-			Timezones:               []string{schedule.Timezone},
-			EffectiveFroms:          []pgtype.Timestamptz{schedule.EffectiveFrom},
-			NextFireAts:             []pgtype.Timestamptz{schedule.NextFireAt},
-			EnvironmentID:           schedule.EnvironmentID,
-			CronSemanticsVersion:    schedule.CronSemanticsVersion,
-		}); err != nil {
-			return err
-		}
-		return promotion.Commit(ctx)
-	}()
-	fireErr := awaitResult(t, "schedule fire", fire)
-	if promotionErr != nil || fireErr != nil {
-		t.Fatalf("promotion = %v [%s], schedule fire = %v [%s]",
-			promotionErr, pgFailure(promotionErr), fireErr, pgFailure(fireErr))
-	}
-	assertScheduleAdmissionCounts(t, pool, schedule, 1, 1)
 }
