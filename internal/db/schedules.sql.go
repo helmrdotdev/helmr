@@ -569,48 +569,6 @@ func (q *Queries) InsertScheduleSecrets(ctx context.Context, arg InsertScheduleS
 	return result.RowsAffected(), nil
 }
 
-const listScheduleSecrets = `-- name: ListScheduleSecrets :many
-SELECT schedule_id, environment_id, placement_kind, placement_target, secret_id, mode, allowed_origins, created_at
-  FROM schedule_secrets
- WHERE environment_id = $1
-   AND schedule_id = $2
- ORDER BY secret_id, placement_kind, placement_target
-`
-
-type ListScheduleSecretsParams struct {
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	ScheduleID    pgtype.UUID `json:"schedule_id"`
-}
-
-func (q *Queries) ListScheduleSecrets(ctx context.Context, arg ListScheduleSecretsParams) ([]ScheduleSecret, error) {
-	rows, err := q.db.Query(ctx, listScheduleSecrets, arg.EnvironmentID, arg.ScheduleID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ScheduleSecret
-	for rows.Next() {
-		var i ScheduleSecret
-		if err := rows.Scan(
-			&i.ScheduleID,
-			&i.EnvironmentID,
-			&i.PlacementKind,
-			&i.PlacementTarget,
-			&i.SecretID,
-			&i.Mode,
-			&i.AllowedOrigins,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listSchedules = `-- name: ListSchedules :many
 SELECT schedules.id, schedules.environment_id, schedules.task_declared_id, schedules.deployment_definition_id, schedules.deployment_id, schedules.cron_pattern, schedules.timezone, schedules.cron_semantics_version, schedules.generation, schedules.status, schedules.revision, schedules.effective_from, schedules.next_fire_at, schedules.last_fire_at, schedules.claimed_by, schedules.claim_expires_at, schedules.retry_step, schedules.retry_after, schedules.last_failure, schedules.created_at, schedules.updated_at
   FROM schedules
@@ -693,19 +651,15 @@ func (q *Queries) ListSchedules(ctx context.Context, arg ListSchedulesParams) ([
 }
 
 const lockClaimedSchedule = `-- name: LockClaimedSchedule :one
-SELECT schedules.id, schedules.environment_id, schedules.task_declared_id, schedules.deployment_definition_id, schedules.deployment_id, schedules.cron_pattern, schedules.timezone, schedules.cron_semantics_version, schedules.generation, schedules.status, schedules.revision, schedules.effective_from, schedules.next_fire_at, schedules.last_fire_at, schedules.claimed_by, schedules.claim_expires_at, schedules.retry_step, schedules.retry_after, schedules.last_failure, schedules.created_at, schedules.updated_at,
-       environments.org_id,
-       environments.project_id
+SELECT id, environment_id, task_declared_id, deployment_definition_id, deployment_id, cron_pattern, timezone, cron_semantics_version, generation, status, revision, effective_from, next_fire_at, last_fire_at, claimed_by, claim_expires_at, retry_step, retry_after, last_failure, created_at, updated_at
   FROM schedules
-  JOIN environments
-    ON environments.id = schedules.environment_id
- WHERE schedules.environment_id = $1
-   AND schedules.id = $2
-   AND schedules.status = 'active'
-   AND schedules.generation = $3
-   AND schedules.next_fire_at = $4
-   AND schedules.claimed_by = $5
-   AND schedules.claim_expires_at > now()
+ WHERE environment_id = $1
+   AND id = $2
+   AND status = 'active'
+   AND generation = $3
+   AND next_fire_at = $4
+   AND claimed_by = $5
+   AND claim_expires_at > now()
  FOR UPDATE
 `
 
@@ -717,13 +671,7 @@ type LockClaimedScheduleParams struct {
 	ClaimedBy           pgtype.Text        `json:"claimed_by"`
 }
 
-type LockClaimedScheduleRow struct {
-	Schedule  Schedule    `json:"schedule"`
-	OrgID     pgtype.UUID `json:"org_id"`
-	ProjectID pgtype.UUID `json:"project_id"`
-}
-
-func (q *Queries) LockClaimedSchedule(ctx context.Context, arg LockClaimedScheduleParams) (LockClaimedScheduleRow, error) {
+func (q *Queries) LockClaimedSchedule(ctx context.Context, arg LockClaimedScheduleParams) (Schedule, error) {
 	row := q.db.QueryRow(ctx, lockClaimedSchedule,
 		arg.EnvironmentID,
 		arg.ID,
@@ -731,33 +679,98 @@ func (q *Queries) LockClaimedSchedule(ctx context.Context, arg LockClaimedSchedu
 		arg.ExpectedScheduledAt,
 		arg.ClaimedBy,
 	)
-	var i LockClaimedScheduleRow
+	var i Schedule
 	err := row.Scan(
-		&i.Schedule.ID,
-		&i.Schedule.EnvironmentID,
-		&i.Schedule.TaskDeclaredID,
-		&i.Schedule.DeploymentDefinitionID,
-		&i.Schedule.DeploymentID,
-		&i.Schedule.CronPattern,
-		&i.Schedule.Timezone,
-		&i.Schedule.CronSemanticsVersion,
-		&i.Schedule.Generation,
-		&i.Schedule.Status,
-		&i.Schedule.Revision,
-		&i.Schedule.EffectiveFrom,
-		&i.Schedule.NextFireAt,
-		&i.Schedule.LastFireAt,
-		&i.Schedule.ClaimedBy,
-		&i.Schedule.ClaimExpiresAt,
-		&i.Schedule.RetryStep,
-		&i.Schedule.RetryAfter,
-		&i.Schedule.LastFailure,
-		&i.Schedule.CreatedAt,
-		&i.Schedule.UpdatedAt,
-		&i.OrgID,
-		&i.ProjectID,
+		&i.ID,
+		&i.EnvironmentID,
+		&i.TaskDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.DeploymentID,
+		&i.CronPattern,
+		&i.Timezone,
+		&i.CronSemanticsVersion,
+		&i.Generation,
+		&i.Status,
+		&i.Revision,
+		&i.EffectiveFrom,
+		&i.NextFireAt,
+		&i.LastFireAt,
+		&i.ClaimedBy,
+		&i.ClaimExpiresAt,
+		&i.RetryStep,
+		&i.RetryAfter,
+		&i.LastFailure,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const lockScheduleFireEnvironment = `-- name: LockScheduleFireEnvironment :one
+SELECT org_id, project_id
+  FROM environments
+ WHERE id = $1
+ FOR NO KEY UPDATE
+`
+
+type LockScheduleFireEnvironmentRow struct {
+	OrgID     pgtype.UUID `json:"org_id"`
+	ProjectID pgtype.UUID `json:"project_id"`
+}
+
+func (q *Queries) LockScheduleFireEnvironment(ctx context.Context, environmentID pgtype.UUID) (LockScheduleFireEnvironmentRow, error) {
+	row := q.db.QueryRow(ctx, lockScheduleFireEnvironment, environmentID)
+	var i LockScheduleFireEnvironmentRow
+	err := row.Scan(&i.OrgID, &i.ProjectID)
+	return i, err
+}
+
+const lockScheduleSecrets = `-- name: LockScheduleSecrets :many
+SELECT schedule_secrets.schedule_id, schedule_secrets.environment_id, schedule_secrets.placement_kind, schedule_secrets.placement_target, schedule_secrets.secret_id, schedule_secrets.mode, schedule_secrets.allowed_origins, schedule_secrets.created_at
+  FROM schedule_secrets
+  JOIN secrets
+    ON secrets.environment_id = schedule_secrets.environment_id
+   AND secrets.id = schedule_secrets.secret_id
+ WHERE schedule_secrets.environment_id = $1
+   AND schedule_secrets.schedule_id = $2
+ ORDER BY schedule_secrets.secret_id,
+          schedule_secrets.placement_kind,
+          schedule_secrets.placement_target
+ FOR UPDATE OF secrets
+`
+
+type LockScheduleSecretsParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ScheduleID    pgtype.UUID `json:"schedule_id"`
+}
+
+func (q *Queries) LockScheduleSecrets(ctx context.Context, arg LockScheduleSecretsParams) ([]ScheduleSecret, error) {
+	rows, err := q.db.Query(ctx, lockScheduleSecrets, arg.EnvironmentID, arg.ScheduleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ScheduleSecret
+	for rows.Next() {
+		var i ScheduleSecret
+		if err := rows.Scan(
+			&i.ScheduleID,
+			&i.EnvironmentID,
+			&i.PlacementKind,
+			&i.PlacementTarget,
+			&i.SecretID,
+			&i.Mode,
+			&i.AllowedOrigins,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const markScheduleAdmissionErrored = `-- name: MarkScheduleAdmissionErrored :one

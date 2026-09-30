@@ -37,13 +37,13 @@ func (a caScheduleAuthority) ResolveScheduledTask(v int32, id string, manifest, 
 }
 
 func TestScheduledComputerCACreationAndRollback(t *testing.T) {
-	for _, mode := range []string{"protected", "mixed", "raw", "none", "generation-failure", "after-generation-failure"} {
+	for _, mode := range []string{"protected", "mixed", "raw", "none", "generation-failure", "after-generation-failure", "binding-failure"} {
 		t.Run(mode, func(t *testing.T) {
 			pool := openSchedulePostgres(t)
 			candidate, digest := seedScheduleAdmission(t, pool)
 			q := db.New(pool)
-			selected, err := q.ListScheduleSecrets(t.Context(), db.ListScheduleSecretsParams{EnvironmentID: candidate.EnvironmentID, ScheduleID: candidate.ID})
-			if err != nil {
+			var secretID uuid.UUID
+			if err := pool.QueryRow(t.Context(), "SELECT secret_id FROM schedule_secrets WHERE schedule_id=$1 LIMIT 1", candidate.ID).Scan(&secretID); err != nil {
 				t.Fatal(err)
 			}
 			placements := []secretbinding.Placement{{Name: "API_TOKEN", Kind: "env", Target: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://example.com"}}}
@@ -57,7 +57,7 @@ func TestScheduledComputerCACreationAndRollback(t *testing.T) {
 			}
 			dbtest.MustExec(t, t.Context(), pool, "DELETE FROM schedule_secrets WHERE schedule_id=$1", candidate.ID)
 			for _, p := range placements {
-				dbtest.MustExec(t, t.Context(), pool, `INSERT INTO schedule_secrets(environment_id,schedule_id,placement_kind,placement_target,secret_id,mode,allowed_origins) VALUES($1,$2,$3,$4,$5,$6,COALESCE($7::text[],'{}'))`, candidate.EnvironmentID, candidate.ID, p.Kind, p.Target, selected[0].SecretID, p.Mode, p.AllowedOrigins)
+				dbtest.MustExec(t, t.Context(), pool, `INSERT INTO schedule_secrets(environment_id,schedule_id,placement_kind,placement_target,secret_id,mode,allowed_origins) VALUES($1,$2,$3,$4,$5,$6,COALESCE($7::text[],'{}'))`, candidate.EnvironmentID, candidate.ID, p.Kind, p.Target, secretID, p.Mode, p.AllowedOrigins)
 			}
 			generate := testProxyTrustGenerator(t, pool)
 			calls := 0
@@ -78,6 +78,11 @@ func TestScheduledComputerCACreationAndRollback(t *testing.T) {
     RAISE EXCEPTION 'synthetic post-generation failure'; END $$;
     CREATE TRIGGER reject_ca_run BEFORE INSERT ON runs FOR EACH ROW EXECUTE FUNCTION reject_ca_run();`)
 			}
+			if mode == "binding-failure" {
+				dbtest.MustExec(t, t.Context(), pool, `CREATE FUNCTION reject_binding() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+    RAISE EXCEPTION 'synthetic binding failure'; END $$;
+    CREATE TRIGGER reject_binding BEFORE INSERT ON computer_secrets FOR EACH ROW EXECUTE FUNCTION reject_binding();`)
+			}
 			var before int
 			if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM computers").Scan(&before); err != nil {
 				t.Fatal(err)
@@ -88,6 +93,9 @@ func TestScheduledComputerCACreationAndRollback(t *testing.T) {
 					t.Fatal("admission unexpectedly succeeded")
 				}
 				if mode == "after-generation-failure" && !strings.Contains(err.Error(), "synthetic post-generation failure") {
+					t.Fatal(err)
+				}
+				if mode == "binding-failure" && !strings.Contains(err.Error(), "synthetic binding failure") {
 					t.Fatal(err)
 				}
 				var after int
