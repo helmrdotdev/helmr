@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -367,7 +368,7 @@ func (w *partialSourceWrapper) Unwrap(ctx context.Context, scope, id string, e c
 	key, err := w.KeyWrapper.Unwrap(ctx, scope, id, e)
 	w.returned = append(w.returned, key)
 	if len(w.returned) == 2 {
-		return key, errors.New("injected second unwrap failure")
+		return key, fmt.Errorf("%w: injected second unwrap failure", computerkey.ErrUnavailable)
 	}
 	return key, err
 }

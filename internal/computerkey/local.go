@@ -75,7 +75,11 @@ func (l *Local) Unwrap(ctx context.Context, scope, keyID string, e Envelope) ([]
 	}
 	n := l.aead.NonceSize()
 	if e.WrappingKeyID != l.id || len(e.Ciphertext) != n+Size+l.aead.Overhead() {
-		return nil, errors.New("invalid computer key envelope")
+		return nil, invalidEnvelope("envelope does not belong to this local wrapping key")
 	}
-	return l.aead.Open(nil, e.Ciphertext[:n], e.Ciphertext[n:], aad)
+	plain, err := l.aead.Open(nil, e.Ciphertext[:n], e.Ciphertext[n:], aad)
+	if err != nil {
+		return nil, invalidEnvelope("envelope failed authentication")
+	}
+	return plain, nil
 }

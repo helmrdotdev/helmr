@@ -3,9 +3,12 @@ package controlplane
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -40,7 +44,10 @@ const (
 	registrationSQLMatch = "INSERT INTO computer_objects"
 )
 
-var errInjectedPreparation = errors.New(injectedFailureText)
+var (
+	errInjectedPreparation = errors.New(injectedFailureText)
+	providerUnavailable    = fmt.Errorf("%w: %w", computerkey.ErrUnavailable, errInjectedPreparation)
+)
 
 // sqlFaults fails, once armed, one statement whose text contains match after
 // letting skip of them through, or the next commit. Authority locks before
@@ -131,14 +138,17 @@ type sqlFaultRow struct{}
 func (sqlFaultRow) Scan(...any) error { return errInjectedPreparation }
 
 // faultingKeys is the fixture's key provider with injectable failures. Once
-// recording, it keeps every plaintext it returns and a copy of it, so a test
-// can require the plaintext cleared and absent from the response.
+// recording, it keeps every plaintext it hands back and a copy of the key it
+// unwrapped, so a test can require the plaintext cleared and absent from the
+// response and the logs.
 type faultingKeys struct {
 	computer.KeyWrapper
-	mu          sync.Mutex
-	recording   bool
-	failWrap    bool
-	failUnwrap  bool
+	mu        sync.Mutex
+	recording bool
+	wrapErr   error
+	// unwrap, when set, replaces a successful unwrap's result; it owns the
+	// provider's plaintext it does not hand back.
+	unwrap      func(key []byte) ([]byte, error)
 	afterUnwrap func()
 	returned    [][]byte
 	copies      [][]byte
@@ -146,10 +156,10 @@ type faultingKeys struct {
 
 func (k *faultingKeys) Wrap(ctx context.Context, scope, id string, key []byte) (computerkey.Envelope, error) {
 	k.mu.Lock()
-	fail := k.failWrap
+	err := k.wrapErr
 	k.mu.Unlock()
-	if fail {
-		return computerkey.Envelope{}, errInjectedPreparation
+	if err != nil {
+		return computerkey.Envelope{}, err
 	}
 	return k.KeyWrapper.Wrap(ctx, scope, id, key)
 }
@@ -158,18 +168,46 @@ func (k *faultingKeys) Unwrap(ctx context.Context, scope, id string, e computerk
 	key, err := k.KeyWrapper.Unwrap(ctx, scope, id, e)
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	if k.recording {
-		k.returned = append(k.returned, key)
-		k.copies = append(k.copies, bytes.Clone(key))
+	if err != nil {
+		return key, err
 	}
+	copied := bytes.Clone(key)
 	if k.afterUnwrap != nil {
 		k.afterUnwrap()
 		k.afterUnwrap = nil
 	}
-	if k.failUnwrap {
-		return key, errInjectedPreparation
+	if k.unwrap != nil {
+		key, err = k.unwrap(key)
+	}
+	if k.recording {
+		k.returned = append(k.returned, key)
+		k.copies = append(k.copies, copied)
 	}
 	return key, err
+}
+
+// setKeys changes the provider's failures under its lock.
+func (s *preparationErrorServer) setKeys(change func(*faultingKeys)) {
+	s.keys.mu.Lock()
+	defer s.keys.mu.Unlock()
+	change(s.keys)
+}
+
+// providerFailure fails a successful unwrap with err, clearing the plaintext
+// it withholds.
+func providerFailure(err error) func([]byte) ([]byte, error) {
+	return func(key []byte) ([]byte, error) {
+		clear(key)
+		return nil, err
+	}
+}
+
+// wrongLengthKey hands back a key one byte too long, as a provider breaking
+// its contract would, clearing the key it replaced.
+func wrongLengthKey(key []byte) ([]byte, error) {
+	long := append(bytes.Clone(key), 0)
+	clear(key)
+	return long, nil
 }
 
 // faultingObjects is the fixture's object storage with an injectable Stat
@@ -228,6 +266,8 @@ type preparationErrorServer struct {
 	objects  *faultingObjects
 	logs     *lockedBuffer
 	token    string
+	ctx      context.Context
+	cancel   context.CancelFunc
 	object   workerapi.InitialComputerObjectRequest
 	version  workerapi.InitialComputerGenerationRequest
 	instance string
@@ -258,6 +298,8 @@ func newPreparationErrorServer(t *testing.T, stage preparationStage) *preparatio
 		}
 	}
 	s.token = credential.token(t, s.handler)
+	s.ctx, s.cancel = context.WithCancel(t.Context())
+	t.Cleanup(s.cancel)
 	s.keys.mu.Lock()
 	s.keys.recording = true
 	s.keys.mu.Unlock()
@@ -280,7 +322,15 @@ func (s *preparationErrorServer) post(t *testing.T, path string) *httptest.Respo
 	default:
 		t.Fatalf("unknown preparation route %s", path)
 	}
-	return postWorker(t, s.handler, s.token, path, body)
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequestWithContext(s.ctx, http.MethodPost, path, bytes.NewReader(raw))
+	request.Header.Set("Authorization", "Bearer "+s.token)
+	response := httptest.NewRecorder()
+	s.handler.ServeHTTP(response, request)
+	return response
 }
 
 // armAfterUnwrap arms the SQL fault during the next provider unwrap, so the
@@ -313,22 +363,45 @@ func (s *preparationErrorServer) requireResponse(t *testing.T, response *httptes
 	}
 	s.keys.mu.Lock()
 	defer s.keys.mu.Unlock()
+	logs := s.logs.String()
 	for i, key := range s.keys.returned {
 		if !bytes.Equal(key, make([]byte, len(key))) {
 			t.Fatal("rejected plaintext not cleared")
 		}
-		if copied := s.keys.copies[i]; len(copied) > 0 && strings.Contains(response.Body.String(), base64.StdEncoding.EncodeToString(copied)) {
-			t.Fatal("response carries plaintext")
+		for _, encoded := range plaintextEncodings(s.keys.copies[i]) {
+			if strings.Contains(response.Body.String(), encoded) {
+				t.Fatal("response carries plaintext")
+			}
+			if strings.Contains(logs, encoded) {
+				t.Fatal("logs carry plaintext")
+			}
 		}
 	}
 	// A failed commit logs only its transaction stage, so count the error
 	// records rather than the injected cause.
-	logged := strings.Count(s.logs.String(), `"level":"ERROR"`)
+	logged := strings.Count(logs, `"level":"ERROR"`)
 	if status == http.StatusInternalServerError && logged != 1 {
-		t.Fatalf("internal failure logged %d times: %s", logged, s.logs.String())
+		t.Fatalf("internal failure logged %d times: %s", logged, logs)
 	}
 	if status != http.StatusInternalServerError && logged != 0 {
-		t.Fatalf("classified failure logged: %s", s.logs.String())
+		t.Fatalf("classified failure logged: %s", logs)
+	}
+}
+
+// plaintextEncodings are the forms key material could take in a JSON body
+// or a log record.
+func plaintextEncodings(key []byte) []string {
+	if len(key) == 0 {
+		return nil
+	}
+	return []string{
+		string(key),
+		hex.EncodeToString(key),
+		base64.StdEncoding.EncodeToString(key),
+		base64.RawStdEncoding.EncodeToString(key),
+		base64.URLEncoding.EncodeToString(key),
+		base64.RawURLEncoding.EncodeToString(key),
+		strings.Trim(strings.Join(strings.Fields(fmt.Sprint(key)), ","), "[]"),
 	}
 }
 
@@ -351,18 +424,52 @@ func TestComputerPreparationFailuresReportTheirClass(t *testing.T) {
 		{name: "key commit", path: initialKeyPath, inject: func(s *preparationErrorServer) { s.faults.arm("", 0, true) }, status: http.StatusInternalServerError},
 		{name: "key final deadline query", path: initialKeyPath, inject: func(s *preparationErrorServer) { s.armAfterUnwrap(deadlineStatement, 1) }, status: http.StatusInternalServerError, unwrapped: true},
 		{name: "key final claim read", path: initialKeyPath, inject: func(s *preparationErrorServer) { s.armAfterUnwrap(claimReadStatement, 0) }, status: http.StatusInternalServerError, unwrapped: true},
-		{name: "key provider wrap", path: initialKeyPath, inject: func(s *preparationErrorServer) { s.keys.failWrap = true }, status: http.StatusServiceUnavailable},
-		{name: "key provider unwrap", path: initialKeyPath, inject: func(s *preparationErrorServer) { s.keys.failUnwrap = true }, status: http.StatusServiceUnavailable, unwrapped: true},
+		{name: "key provider wrap unavailable", path: initialKeyPath, inject: func(s *preparationErrorServer) {
+			s.setKeys(func(k *faultingKeys) { k.wrapErr = providerUnavailable })
+		}, status: http.StatusServiceUnavailable},
+		{name: "key provider wrap unexpected", path: initialKeyPath, inject: func(s *preparationErrorServer) {
+			s.setKeys(func(k *faultingKeys) { k.wrapErr = errInjectedPreparation })
+		}, status: http.StatusInternalServerError},
+		{name: "key provider unwrap unavailable", path: initialKeyPath, inject: func(s *preparationErrorServer) {
+			s.setKeys(func(k *faultingKeys) { k.unwrap = providerFailure(providerUnavailable) })
+		}, status: http.StatusServiceUnavailable, unwrapped: true},
+		{name: "key provider unwrap unexpected", path: initialKeyPath, inject: func(s *preparationErrorServer) {
+			s.setKeys(func(k *faultingKeys) { k.unwrap = providerFailure(errInjectedPreparation) })
+		}, status: http.StatusInternalServerError, unwrapped: true},
+		{name: "key provider wrong key length", path: initialKeyPath, inject: func(s *preparationErrorServer) {
+			s.setKeys(func(k *faultingKeys) { k.unwrap = wrongLengthKey })
+		}, status: http.StatusInternalServerError, unwrapped: true},
+		{name: "key request cancelled during unwrap", path: initialKeyPath, inject: func(s *preparationErrorServer) {
+			s.setKeys(func(k *faultingKeys) {
+				k.unwrap = func(key []byte) ([]byte, error) {
+					s.cancel()
+					clear(key)
+					return nil, fmt.Errorf("%w: %w", providerUnavailable, context.Canceled)
+				}
+			})
+		}, status: http.StatusInternalServerError, unwrapped: true},
 		{name: "source first fence", stage: preparationPublished, path: computerSourcePath, inject: func(s *preparationErrorServer) { s.faults.arm(firstFenceStatement, 0, false) }, status: http.StatusInternalServerError},
 		{name: "source key read", stage: preparationPublished, path: computerSourcePath, inject: func(s *preparationErrorServer) { s.faults.arm(sourceKeysStatement, 0, false) }, status: http.StatusInternalServerError},
 		{name: "source pin write", stage: preparationPublished, path: computerSourcePath, inject: func(s *preparationErrorServer) { s.faults.arm(pinWriteStatement, 0, false) }, status: http.StatusInternalServerError},
 		{name: "source final deadline query", stage: preparationPublished, path: computerSourcePath, inject: func(s *preparationErrorServer) { s.armAfterUnwrap(deadlineStatement, 1) }, status: http.StatusInternalServerError, unwrapped: true},
 		{name: "source final claim read", stage: preparationPublished, path: computerSourcePath, inject: func(s *preparationErrorServer) { s.armAfterUnwrap(claimReadStatement, 0) }, status: http.StatusInternalServerError, unwrapped: true},
-		{name: "source provider unwrap", stage: preparationPublished, path: computerSourcePath, inject: func(s *preparationErrorServer) { s.keys.failUnwrap = true }, status: http.StatusServiceUnavailable, unwrapped: true},
+		{name: "source provider unwrap unavailable", stage: preparationPublished, path: computerSourcePath, inject: func(s *preparationErrorServer) {
+			s.setKeys(func(k *faultingKeys) { k.unwrap = providerFailure(providerUnavailable) })
+		}, status: http.StatusServiceUnavailable, unwrapped: true},
+		{name: "source provider unwrap unexpected", stage: preparationPublished, path: computerSourcePath, inject: func(s *preparationErrorServer) {
+			s.setKeys(func(k *faultingKeys) { k.unwrap = providerFailure(errInjectedPreparation) })
+		}, status: http.StatusInternalServerError, unwrapped: true},
+		{name: "source provider wrong key length", stage: preparationPublished, path: computerSourcePath, inject: func(s *preparationErrorServer) {
+			s.setKeys(func(k *faultingKeys) { k.unwrap = wrongLengthKey })
+		}, status: http.StatusInternalServerError, unwrapped: true},
 		{name: "object registration SQL", stage: preparationRootCertified, path: objectRegisterPath, inject: func(s *preparationErrorServer) { s.faults.arm(registrationSQLMatch, 0, false) }, status: http.StatusInternalServerError},
 		{name: "object registration first fence", stage: preparationRootCertified, path: objectRegisterPath, inject: func(s *preparationErrorServer) { s.faults.arm(firstFenceStatement, 0, false) }, status: http.StatusInternalServerError},
 		{name: "object registration commit", stage: preparationRootCertified, path: objectRegisterPath, inject: func(s *preparationErrorServer) { s.faults.arm("", 0, true) }, status: http.StatusInternalServerError},
-		{name: "object certification storage", stage: preparationRootCertified, path: objectCertifyPath, inject: func(s *preparationErrorServer) { s.objects.failStat = true }, status: http.StatusServiceUnavailable},
+		{name: "object certification storage", stage: preparationRootCertified, path: objectCertifyPath, inject: func(s *preparationErrorServer) {
+			s.objects.mu.Lock()
+			defer s.objects.mu.Unlock()
+			s.objects.failStat = true
+		}, status: http.StatusServiceUnavailable},
 		{name: "object certification final deadline query", stage: preparationRootCertified, path: objectCertifyPath, inject: func(s *preparationErrorServer) { s.faults.arm(deadlineStatement, 1, false) }, status: http.StatusInternalServerError},
 		{name: "version first fence", stage: preparationRootCertified, path: initialVersionPath, inject: func(s *preparationErrorServer) { s.faults.arm(firstFenceStatement, 0, false) }, status: http.StatusInternalServerError},
 		{name: "version commit", stage: preparationRootCertified, path: initialVersionPath, inject: func(s *preparationErrorServer) { s.faults.arm("", 0, true) }, status: http.StatusInternalServerError},
@@ -390,6 +497,11 @@ func TestComputerPreparationRejectionsReportTheirClass(t *testing.T) {
 	revoke := func(s *preparationErrorServer) {
 		dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, s.f.runtime)
 	}
+	// corruptEnvelope flips one ciphertext byte of the Computer's persisted
+	// key, which keeps the envelope's shape but fails its authentication.
+	corruptEnvelope := func(s *preparationErrorServer) {
+		dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_data_keys SET wrapped_key=set_byte(wrapped_key,20,get_byte(wrapped_key,20)#255) WHERE computer_id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, s.f.runtime)
+	}
 	staleClaims := func(s *preparationErrorServer) {
 		dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, pgvalue.UUID(s.f.worker.HostID))
 	}
@@ -414,6 +526,15 @@ func TestComputerPreparationRejectionsReportTheirClass(t *testing.T) {
 		{name: "version revoked", stage: preparationRootCertified, path: initialVersionPath, change: revoke, status: http.StatusConflict},
 		{name: "version stale claims", stage: preparationRootCertified, path: initialVersionPath, change: staleClaims, status: http.StatusUnauthorized},
 		{name: "version malformed root", stage: preparationRootCertified, path: initialVersionPath, change: func(s *preparationErrorServer) { s.version.Root.Page.KeyID = "not-a-key" }, status: http.StatusBadRequest},
+		{name: "version root differs from inspection", stage: preparationRootCertified, path: initialVersionPath, change: func(s *preparationErrorServer) { s.version.Root.Page.Digest = dbtest.Digest("another root page") }, status: http.StatusConflict},
+		{name: "key invalid envelope", stage: preparationRootCertified, path: initialKeyPath, change: corruptEnvelope, status: http.StatusConflict},
+		{name: "key changed during delivery", stage: preparationRootCertified, path: initialKeyPath, change: func(s *preparationErrorServer) {
+			s.setKeys(func(k *faultingKeys) { k.afterUnwrap = func() { corruptEnvelope(s) } })
+		}, status: http.StatusConflict},
+		{name: "source invalid envelope", stage: preparationPublished, path: computerSourcePath, change: corruptEnvelope, status: http.StatusConflict},
+		{name: "source retained root invalid", stage: preparationPublished, path: computerSourcePath, change: func(s *preparationErrorServer) {
+			dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_disk_version_roots SET locator=jsonb_set(locator,'{page,salt}','"not-hex"') WHERE version_id=(SELECT retained_source_disk_version_id FROM computer_instances WHERE id=$1)`, s.f.runtime)
+		}, status: http.StatusConflict},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			s := newPreparationErrorServer(t, test.stage)
@@ -423,15 +544,30 @@ func TestComputerPreparationRejectionsReportTheirClass(t *testing.T) {
 	}
 }
 
-func postWorker(t *testing.T, handler http.Handler, token, path string, body any) *httptest.ResponseRecorder {
-	t.Helper()
-	raw, err := json.Marshal(body)
-	if err != nil {
+// A checkpoint object whose child node differs from the certified child's
+// inspection is reported as a conflict.
+func TestCheckpointObjectWrongChildNodeIsConflictOverHTTP(t *testing.T) {
+	f, req, register, _ := checkpointPublicationFixture(t)
+	register()
+	var logicalBytes int64
+	var key string
+	if err := f.Pool.QueryRow(t.Context(), `SELECT reserved_guest_ephemeral_disk_bytes,write_key_id::text FROM computer_instances WHERE id=$1`, req.ComputerInstanceID).Scan(&logicalBytes, &key); err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(raw))
-	request.Header.Set("Authorization", "Bearer "+token)
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	return response
+	content := bytes.Repeat([]byte{5}, 64)
+	if _, err := f.store.Put(t.Context(), "application/octet-stream", bytes.NewReader(content)); err != nil {
+		t.Fatal(err)
+	}
+	shape := blockformat.Root{Capacity: logicalBytes, Fanout: 64, Level: 1}
+	child := blockformat.Locator{Pack: blockformat.PackRef{Digest: sha256.Sum256(content), Size: 64, Rank: 1}, Page: blockformat.Ref{Key: key, Kind: blockformat.NodeKind, Count: 1, Size: 32}, Offset: 8}
+	parent := blockformat.Locator{Pack: blockformat.PackRef{Digest: sha256.Sum256([]byte("checkpoint parent node")), Size: 64, Rank: 2}, Page: blockformat.Ref{Key: key, Kind: blockformat.NodeKind, Count: 1, Size: 32}, Offset: 8}
+	object := func(page blockformat.PageInspection) workerapi.CheckpointComputerObjectRequest {
+		return workerapi.CheckpointComputerObjectRequest{ComputerInstanceID: req.ComputerInstanceID, WorkerEpoch: req.WorkerEpoch, DesiredVersion: req.DesiredVersion, CheckpointID: req.CheckpointID,
+			Inspection: blockformat.ObjectInspection{Pack: &blockformat.PackInspection{Pages: []blockformat.PageInspection{page}, Keys: []string{key}}}}
+	}
+	childObject := object(blockformat.PageInspection{Locator: child, Shape: shape})
+	f.worker.post(t, "/worker/v1/computer/checkpoints/objects/register", childObject, http.StatusOK, nil)
+	f.worker.post(t, "/worker/v1/computer/checkpoints/objects/certify", childObject, http.StatusOK, nil)
+	wrongPosition := blockformat.NodeReference{Locator: child, Shape: shape, Start: 1}
+	f.worker.post(t, "/worker/v1/computer/checkpoints/objects/register", object(blockformat.PageInspection{Locator: parent, Shape: shape, Level: 1, Children: []blockformat.NodeReference{wrongPosition}}), http.StatusConflict, nil)
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -261,8 +262,8 @@ func TestInitialComputerKeyCorruptEnvelopeDoesNotReinitialize(t *testing.T) {
 	}
 	clear(first.Key)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_data_keys SET wrapped_key=decode('00','hex') WHERE id=$1`, first.ID)
-	if result, err := b.InitialKey(t.Context(), f.principal, f.ref); err == nil || len(result.Key) > 0 {
-		t.Fatal("corrupt envelope accepted")
+	if result, err := b.InitialKey(t.Context(), f.principal, f.ref); !errors.Is(err, ErrKeyUnavailable) || errors.Is(err, ErrKeyProviderUnavailable) || len(result.Key) > 0 {
+		t.Fatalf("corrupt envelope = %v", err)
 	}
 	var count int
 	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_data_keys`).Scan(&count); err != nil || count != 1 {
@@ -290,7 +291,7 @@ func TestInitialComputerKeyForeignComputerPointersRejected(t *testing.T) {
 func TestInitialComputerKeyTransientProviderFailureRetainsIdentity(t *testing.T) {
 	f := newPreparationFixture(t)
 	b := f.broker
-	observer := &observingKeyWrapper{KeyWrapper: b.wrapper, unwrapErr: errors.New("provider timeout")}
+	observer := &observingKeyWrapper{KeyWrapper: b.wrapper, unwrapErr: fmt.Errorf("%w: provider timeout", computerkey.ErrUnavailable)}
 	b.wrapper = observer
 	if result, err := b.InitialKey(t.Context(), f.principal, f.ref); !errors.Is(err, ErrKeyProviderUnavailable) || len(result.Key) != 0 {
 		t.Fatalf("provider error = %v", err)
@@ -535,17 +536,76 @@ func TestComputerKeyDeliveryDatabaseFaultsKeepTheirCause(t *testing.T) {
 	}
 }
 
-// A failed provider call is provider unavailability, not an unavailable key.
-func TestComputerKeyProviderFailureIsProviderUnavailability(t *testing.T) {
-	f := newPreparationFixture(t)
-	f.broker.wrapper = failingWrapper{}
-	if result, err := f.broker.InitialKey(t.Context(), f.principal, f.ref); !errors.Is(err, ErrKeyProviderUnavailable) || errors.Is(err, ErrKeyUnavailable) || len(result.Key) != 0 {
-		t.Fatalf("wrap failure = %v", err)
+// Each provider failure is classified at the adapter boundary: recognized
+// unavailability is provider unavailability, an invalid persisted envelope
+// is an unavailable key, and an unexpected failure, a cancelled request or a
+// wrong-length key keeps its cause. Plaintext returned before the failure is
+// cleared.
+func TestComputerKeyProviderFailuresKeepTheirClass(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		// fail returns the unwrap failure; cancel ends the request first.
+		fail        func(key []byte) ([]byte, error)
+		cancel      bool
+		unavailable bool
+		keyMissing  bool
+	}{
+		{name: "unavailable", fail: func(key []byte) ([]byte, error) {
+			return key, fmt.Errorf("%w: throttled", computerkey.ErrUnavailable)
+		}, unavailable: true},
+		{name: "invalid envelope", fail: func(key []byte) ([]byte, error) {
+			return key, fmt.Errorf("%w: failed authentication", computerkey.ErrInvalidEnvelope)
+		}, keyMissing: true},
+		{name: "unexpected", fail: func(key []byte) ([]byte, error) { return key, errors.New("access denied") }},
+		{name: "cancelled", cancel: true, fail: func(key []byte) ([]byte, error) {
+			return key, fmt.Errorf("%w: %w", computerkey.ErrUnavailable, context.Canceled)
+		}},
+		{name: "wrong length", fail: func(key []byte) ([]byte, error) { return append(key, 0), nil }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newPreparationFixture(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			wrapper := &classifiedFailureWrapper{KeyWrapper: f.broker.wrapper, fail: test.fail}
+			if test.cancel {
+				wrapper.before = cancel
+			}
+			f.broker.wrapper = wrapper
+			result, err := f.broker.InitialKey(ctx, f.principal, f.ref)
+			if err == nil || len(result.Key) != 0 {
+				t.Fatal("provider failure delivered a key")
+			}
+			if errors.Is(err, ErrKeyProviderUnavailable) != test.unavailable || errors.Is(err, ErrKeyUnavailable) != test.keyMissing {
+				t.Fatalf("classified as %v", err)
+			}
+			if test.cancel && !errors.Is(err, context.Canceled) {
+				t.Fatalf("cancellation lost its cause: %v", err)
+			}
+			if len(wrapper.returned) == 0 || !bytes.Equal(wrapper.returned, make([]byte, len(wrapper.returned))) {
+				t.Fatal("provider plaintext not cleared")
+			}
+		})
 	}
 }
 
-type failingWrapper struct{ KeyWrapper }
+// classifiedFailureWrapper unwraps through its provider and then fails as
+// fail chooses, keeping the plaintext it hands back.
+type classifiedFailureWrapper struct {
+	KeyWrapper
+	before   func()
+	fail     func(key []byte) ([]byte, error)
+	returned []byte
+}
 
-func (failingWrapper) Wrap(context.Context, string, string, []byte) (computerkey.Envelope, error) {
-	return computerkey.Envelope{}, errors.New("provider timeout")
+func (w *classifiedFailureWrapper) Unwrap(ctx context.Context, scope, id string, e computerkey.Envelope) ([]byte, error) {
+	key, err := w.KeyWrapper.Unwrap(ctx, scope, id, e)
+	if err != nil {
+		return nil, err
+	}
+	if w.before != nil {
+		w.before()
+	}
+	key, err = w.fail(key)
+	w.returned = key
+	return key, err
 }

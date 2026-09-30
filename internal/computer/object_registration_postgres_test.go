@@ -148,8 +148,9 @@ func TestInitialComputerObjectInspectedRegistration(t *testing.T) {
 	copied.Pages[0].Locator.Pack.Digest[0] ^= 1
 	copied.Pages[0].Children = append([]blockformat.NodeReference(nil), copied.Pages[0].Children...)
 	copied.Pages[0].Children[0].Start++
-	if err = f.recordInitialObject(t.Context(), f.principal, f.ref, bad, false); err == nil {
-		t.Fatal("wrong child position accepted")
+	var childConflict ObjectConflictError
+	if err = f.recordInitialObject(t.Context(), f.principal, f.ref, bad, false); !errors.As(err, &childConflict) {
+		t.Fatalf("wrong child position = %v", err)
 	}
 	// Registered graph edges retain uploaded children.
 	var childDigest string

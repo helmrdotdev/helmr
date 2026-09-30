@@ -25,8 +25,9 @@ import (
 // ErrAuthorityChanged instead.
 var ErrKeyUnavailable = errors.New("computer key is unavailable")
 
-// ErrKeyProviderUnavailable reports that the wrapping provider failed to wrap
-// or unwrap a Computer data key.
+// ErrKeyProviderUnavailable reports that the wrapping provider could not
+// serve a wrap or unwrap: a recognized dependency unavailability that may
+// succeed when retried.
 var ErrKeyProviderUnavailable = errors.New("computer key provider is unavailable")
 
 // keyUnavailable reports ErrKeyUnavailable with its cause as text. The cause
@@ -36,8 +37,30 @@ func keyUnavailable(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrKeyUnavailable, fmt.Sprintf(format, args...))
 }
 
-func keyProviderUnavailable(operation string, err error) error {
-	return fmt.Errorf("%w: %s: %w", ErrKeyProviderUnavailable, operation, err)
+// providerFailure classifies a failed wrap or unwrap. A cancelled or expired
+// request keeps its cause, as a database failure would; recognized provider
+// unavailability reports ErrKeyProviderUnavailable, an invalid persisted
+// envelope ErrKeyUnavailable, and any other failure keeps its cause.
+func providerFailure(ctx context.Context, operation string, err error) error {
+	switch {
+	case ctx.Err() != nil:
+		return fmt.Errorf("%s: %w", operation, err)
+	case errors.Is(err, computerkey.ErrUnavailable):
+		return fmt.Errorf("%w: %s: %w", ErrKeyProviderUnavailable, operation, err)
+	case errors.Is(err, computerkey.ErrInvalidEnvelope):
+		return keyUnavailable("%s: %v", operation, err)
+	default:
+		return fmt.Errorf("%s: %w", operation, err)
+	}
+}
+
+// providerKeyLength rejects unwrapped plaintext of the wrong length, which
+// breaks the provider's contract rather than the persisted key.
+func providerKeyLength(key []byte) error {
+	if len(key) == computerkey.Size {
+		return nil
+	}
+	return fmt.Errorf("computer key provider returned %d key bytes", len(key))
 }
 
 // KeyWrapper is the provider that wraps Computer data keys. Only the key
@@ -117,8 +140,9 @@ func encryptionScope(orgID, environmentID, computerID string) (string, error) {
 // first delivery uses the winner's persisted key, and a lost reply keeps the
 // same pin for its retry. A preparation that no longer authorizes delivery
 // reports ErrAuthorityChanged, stale claims report workergroup.ErrStaleClaims,
-// an absent or changed key reports ErrKeyUnavailable and a failed provider
-// call reports ErrKeyProviderUnavailable; any other failure keeps its cause.
+// an absent, changed or invalid persisted key reports ErrKeyUnavailable and
+// an unavailable provider reports ErrKeyProviderUnavailable; any other
+// failure, including a cancelled request, keeps its cause.
 // Plaintext is cleared on every failure.
 func (b *KeyBroker) InitialKey(ctx context.Context, principal workergroup.HostPrincipal, ref PreparationRef) (KeyMaterial, error) {
 	pin, err := b.pinInitialKey(ctx, principal, ref, nil, "")
@@ -137,7 +161,7 @@ func (b *KeyBroker) InitialKey(ctx context.Context, principal workergroup.HostPr
 		envelope, wrapErr := b.wrapper.Wrap(ctx, pin.scope, pgvalue.UUIDString(keyID), key)
 		clear(key)
 		if wrapErr != nil {
-			return KeyMaterial{}, keyProviderUnavailable("wrap computer key", wrapErr)
+			return KeyMaterial{}, providerFailure(ctx, "wrap computer key", wrapErr)
 		}
 		candidate := db.ComputerDataKey{ID: keyID, WrappingKeyID: envelope.WrappingKeyID, WrappedKey: envelope.Ciphertext}
 		if pin, err = b.pinInitialKey(ctx, principal, ref, &candidate, pin.scope); err != nil {
@@ -148,11 +172,11 @@ func (b *KeyBroker) InitialKey(ctx context.Context, principal workergroup.HostPr
 	plain, err := b.wrapper.Unwrap(ctx, pin.scope, keyID, computerkey.Envelope{WrappingKeyID: pin.key.WrappingKeyID, Ciphertext: pin.key.WrappedKey})
 	if err != nil {
 		clear(plain)
-		return KeyMaterial{}, keyProviderUnavailable("unwrap computer key", err)
+		return KeyMaterial{}, providerFailure(ctx, "unwrap computer key", err)
 	}
-	if len(plain) != computerkey.Size {
+	if err = providerKeyLength(plain); err != nil {
 		clear(plain)
-		return KeyMaterial{}, keyUnavailable("unwrapped computer key has %d bytes", len(plain))
+		return KeyMaterial{}, err
 	}
 	// A successful unwrap is not a delivery grant. Revocation, expiry,
 	// cancellation or a changed reservation during provider I/O must suppress
@@ -282,11 +306,11 @@ func (b *KeyBroker) SourceKeys(ctx context.Context, principal workergroup.HostPr
 		key, err := b.wrapper.Unwrap(ctx, source.Scope, id, computerkey.Envelope{WrappingKeyID: row.WrappingKeyID, Ciphertext: row.WrappedKey})
 		if err != nil {
 			clear(key)
-			return SourceMaterial{}, keyProviderUnavailable("unwrap computer key", err)
+			return SourceMaterial{}, providerFailure(ctx, "unwrap computer key", err)
 		}
-		if len(key) != computerkey.Size {
+		if err = providerKeyLength(key); err != nil {
 			clear(key)
-			return SourceMaterial{}, keyUnavailable("unwrapped computer key has %d bytes", len(key))
+			return SourceMaterial{}, err
 		}
 		source.Keys = append(source.Keys, KeyMaterial{Scope: source.Scope, ID: id, Key: key})
 	}

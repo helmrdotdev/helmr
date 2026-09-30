@@ -47,7 +47,7 @@ func (k *KMS) Wrap(ctx context.Context, scope, keyID string, plain []byte) (Enve
 	}
 	out, err := k.client.Encrypt(ctx, &kms.EncryptInput{KeyId: aws.String(k.keyARN), EncryptionAlgorithm: types.EncryptionAlgorithmSpecSymmetricDefault, EncryptionContext: aad, Plaintext: plain})
 	if err != nil {
-		return Envelope{}, err
+		return Envelope{}, kmsFailure(ctx, err)
 	}
 	if out == nil || aws.ToString(out.KeyId) != k.keyARN || out.EncryptionAlgorithm != types.EncryptionAlgorithmSpecSymmetricDefault || len(out.CiphertextBlob) == 0 || len(out.CiphertextBlob) > MaxWrappedSize {
 		return Envelope{}, errors.New("invalid KMS wrapping response")
@@ -61,11 +61,11 @@ func (k *KMS) Unwrap(ctx context.Context, scope, keyID string, e Envelope) ([]by
 	}
 	// Only the broker supplies persisted envelopes. The Worker cannot select this ARN.
 	if !validARN(e.WrappingKeyID) || len(e.Ciphertext) == 0 || len(e.Ciphertext) > MaxWrappedSize {
-		return nil, errors.New("invalid KMS envelope")
+		return nil, invalidEnvelope("invalid KMS envelope")
 	}
 	out, err := k.client.Decrypt(ctx, &kms.DecryptInput{KeyId: aws.String(e.WrappingKeyID), EncryptionAlgorithm: types.EncryptionAlgorithmSpecSymmetricDefault, EncryptionContext: aad, CiphertextBlob: e.Ciphertext})
 	if err != nil {
-		return nil, err
+		return nil, kmsFailure(ctx, err)
 	}
 	if out == nil {
 		return nil, errors.New("empty KMS unwrapping response")
