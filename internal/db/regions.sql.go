@@ -38,6 +38,27 @@ func (q *Queries) CreateRegion(ctx context.Context, arg CreateRegionParams) (Reg
 	return i, err
 }
 
+const ensureRegion = `-- name: EnsureRegion :exec
+INSERT INTO regions (id, display_name, location)
+VALUES (
+    $1,
+    $2,
+    $3::text
+)
+ON CONFLICT (id) DO NOTHING
+`
+
+type EnsureRegionParams struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+	Location    string `json:"location"`
+}
+
+func (q *Queries) EnsureRegion(ctx context.Context, arg EnsureRegionParams) error {
+	_, err := q.db.Exec(ctx, ensureRegion, arg.ID, arg.DisplayName, arg.Location)
+	return err
+}
+
 const getRegion = `-- name: GetRegion :one
 SELECT id, display_name, location, created_at, updated_at
   FROM regions
@@ -91,21 +112,33 @@ func (q *Queries) ListRegions(ctx context.Context) ([]Region, error) {
 
 const updateRegionMetadata = `-- name: UpdateRegionMetadata :one
 UPDATE regions
-   SET display_name = $1,
-       location = $2,
+   SET display_name = CASE WHEN $1::boolean
+                           THEN $2::text
+                           ELSE display_name END,
+       location = CASE WHEN $3::boolean
+                       THEN $4::text
+                       ELSE location END,
        updated_at = now()
- WHERE id = $3
+ WHERE id = $5
 RETURNING id, display_name, location, created_at, updated_at
 `
 
 type UpdateRegionMetadataParams struct {
-	DisplayName string `json:"display_name"`
-	Location    string `json:"location"`
-	ID          string `json:"id"`
+	SetDisplayName bool   `json:"set_display_name"`
+	DisplayName    string `json:"display_name"`
+	SetLocation    bool   `json:"set_location"`
+	Location       string `json:"location"`
+	ID             string `json:"id"`
 }
 
 func (q *Queries) UpdateRegionMetadata(ctx context.Context, arg UpdateRegionMetadataParams) (Region, error) {
-	row := q.db.QueryRow(ctx, updateRegionMetadata, arg.DisplayName, arg.Location, arg.ID)
+	row := q.db.QueryRow(ctx, updateRegionMetadata,
+		arg.SetDisplayName,
+		arg.DisplayName,
+		arg.SetLocation,
+		arg.Location,
+		arg.ID,
+	)
 	var i Region
 	err := row.Scan(
 		&i.ID,

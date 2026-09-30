@@ -194,6 +194,7 @@ type Querier interface {
 	EnqueueSessionTurn(ctx context.Context, arg EnqueueSessionTurnParams) (SessionTurn, error)
 	EnrollWorkerHost(ctx context.Context, arg EnrollWorkerHostParams) (EnrollWorkerHostRow, error)
 	EnsureOrgMember(ctx context.Context, arg EnsureOrgMemberParams) (OrgMember, error)
+	EnsureRegion(ctx context.Context, arg EnsureRegionParams) error
 	ExhaustRunInstancePreparation(ctx context.Context, arg ExhaustRunInstancePreparationParams) (Run, error)
 	// Caller holds Computer then Instance locks. Expiry requests physical teardown;
 	// it never fabricates exclusion evidence or releases reserved capacity/pins.

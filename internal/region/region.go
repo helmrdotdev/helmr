@@ -84,25 +84,26 @@ func Create(ctx context.Context, q db.Querier, details Details) (db.Region, erro
 	return created, nil
 }
 
-// Update applies patch to a region's metadata.
+// Update applies patch to a region's metadata in one statement, so concurrent
+// patches of different fields both take effect. An absent field is kept; a set
+// field replaces the stored value after trimming.
 func Update(ctx context.Context, q db.Querier, id string, patch Patch) (db.Region, error) {
-	current, err := Get(ctx, q, id)
-	if err != nil {
-		return db.Region{}, err
-	}
-	displayName, location := current.DisplayName, current.Location
+	params := db.UpdateRegionMetadataParams{ID: id}
 	if patch.DisplayName != nil {
-		displayName = strings.TrimSpace(*patch.DisplayName)
+		params.SetDisplayName = true
+		params.DisplayName = strings.TrimSpace(*patch.DisplayName)
+		if params.DisplayName == "" {
+			return db.Region{}, InputError{message: "display_name is required"}
+		}
 	}
 	if patch.Location != nil {
-		location = strings.TrimSpace(*patch.Location)
+		params.SetLocation = true
+		params.Location = strings.TrimSpace(*patch.Location)
 	}
-	if displayName == "" {
-		return db.Region{}, InputError{message: "display_name is required"}
+	updated, err := q.UpdateRegionMetadata(ctx, params)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return db.Region{}, ErrNotFound
 	}
-	updated, err := q.UpdateRegionMetadata(ctx, db.UpdateRegionMetadataParams{
-		ID: id, DisplayName: displayName, Location: location,
-	})
 	if err != nil {
 		return db.Region{}, fmt.Errorf("update region: %w", err)
 	}
@@ -110,8 +111,8 @@ func Update(ctx context.Context, q db.Querier, id string, patch Patch) (db.Regio
 }
 
 // Ensure creates the region when it does not exist and leaves an existing
-// region unchanged. An empty display name takes the ID. Callers that must not
-// race another creator hold their own serialization before calling it.
+// region unchanged, including when another caller creates it concurrently. An
+// empty display name takes the ID.
 func Ensure(ctx context.Context, q db.Querier, details Details) error {
 	details.DisplayName = strings.TrimSpace(details.DisplayName)
 	details.Location = strings.TrimSpace(details.Location)
@@ -121,14 +122,10 @@ func Ensure(ctx context.Context, q db.Querier, details Details) error {
 	if details.DisplayName == "" {
 		details.DisplayName = details.ID
 	}
-	_, err := Get(ctx, q, details.ID)
-	if !errors.Is(err, ErrNotFound) {
-		return err
-	}
-	if _, err := q.CreateRegion(ctx, db.CreateRegionParams{
+	if err := q.EnsureRegion(ctx, db.EnsureRegionParams{
 		ID: details.ID, DisplayName: details.DisplayName, Location: details.Location,
 	}); err != nil {
-		return fmt.Errorf("create region: %w", err)
+		return fmt.Errorf("ensure region: %w", err)
 	}
 	return nil
 }
