@@ -56,11 +56,10 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		"telemetry":         {"clickhouse"},
 		"workerapi":         {"controlplane", "db", "deployment", "firecracker", "identity", "org"},
 		"workerclient":      {"client"},
-		// Direct imports only: workergroup imports workerapi solely for
-		// ValidatePoolName, so api still arrives transitively through
-		// workerapi's wire contract. Worker supply sits beneath the Computer
-		// owner, which run composes and may import.
-		"workergroup": {"api", "command", "computer", "controlplane", "deployment", "dispatch", "identity", "org", "run", "scheduler", "session", "token"},
+		// Worker supply sits beneath the Computer owner, which run composes
+		// and may import. TestWorkerSupplyDoesNotReachWireContracts also
+		// forbids api and workerapi across the transitive closure.
+		"workergroup": {"api", "command", "computer", "controlplane", "deployment", "dispatch", "identity", "org", "run", "scheduler", "session", "token", "workerapi"},
 	} {
 		if _, ok := actual[source]; !ok {
 			t.Fatalf("dependency rule source package does not exist: %s", source)
@@ -124,6 +123,30 @@ func TestWorkerDoesNotLinkTokenSigning(t *testing.T) {
 		for _, dependency := range strings.Fields(string(output)) {
 			if strings.HasPrefix(dependency, "github.com/golang-jwt/") || dependency == internalImportPrefix+"workergroup" {
 				t.Fatalf("./cmd/worker must not depend on %s for %s", dependency, goos)
+			}
+		}
+	}
+}
+
+// Worker supply validates pool names through the workerpoolname leaf, so it
+// reaches neither the public API contract nor the worker wire contract.
+func TestWorkerSupplyDoesNotReachWireContracts(t *testing.T) {
+	root := repositoryRoot(t)
+	forbidden := []string{
+		internalImportPrefix + "api",
+		internalImportPrefix + "workerapi",
+	}
+	for _, goos := range []string{"linux", "darwin"} {
+		cmd := exec.Command("go", "list", "-buildvcs=false", "-deps", "./internal/workergroup")
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64")
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("go list ./internal/workergroup for %s: %v\n%s", goos, err, output)
+		}
+		for _, dependency := range strings.Fields(string(output)) {
+			if slices.Contains(forbidden, dependency) {
+				t.Fatalf("./internal/workergroup must not depend on %s for %s", dependency, goos)
 			}
 		}
 	}
