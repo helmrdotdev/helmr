@@ -46,7 +46,7 @@ func newAdvisoryLock(pool *pgxpool.Pool, name string) (*advisoryLock, error) {
 	}
 	return &advisoryLock{
 		pool: pool,
-		key:  advisoryLockKey(name),
+		key:  pglock.Key(name),
 	}, nil
 }
 
@@ -69,10 +69,6 @@ func (g *advisoryLockGuard) Unlock(context.Context) error {
 	guard := g.guard
 	g.guard = nil
 	return guard.Unlock()
-}
-
-func advisoryLockKey(name string) int64 {
-	return pglock.Key(name)
 }
 
 func queueScopeLockKey(environmentID pgtype.UUID, queueName string, concurrencyKey pgtype.Text) (int64, error) {

@@ -98,5 +98,6 @@ CGO_ENABLED=1 go test -race -count=1 \
 	./internal/secret \
 	./internal/pglock \
 	./internal/token \
+	./internal/workergroup \
 	./cmd/control-plane \
 	./cmd/dispatcher
