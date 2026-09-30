@@ -30,6 +30,7 @@ type EnrollmentResponse struct {
 }
 
 type EnrollmentRequest struct {
+	Contract   string `json:"contract"`
 	ResourceID string `json:"resource_id"`
 	PoolName   string `json:"pool_name"`
 }
@@ -52,6 +53,7 @@ type RunLeaseDiscoveryResponse struct {
 }
 
 type ActivateRequest struct {
+	Contract     string       `json:"contract"`
 	Capabilities Capabilities `json:"capabilities"`
 }
 

@@ -23,6 +23,8 @@ type testControlPlane struct {
 	activateStatus atomic.Value
 	observeStatus  atomic.Value
 	completeErr    error
+	activateErr    error
+	activateCalls  atomic.Int32
 }
 
 func (c *testControlPlane) AuthenticateWorker(context.Context) error {
@@ -35,6 +37,10 @@ func (c *testControlPlane) ActivateWorker(_ context.Context, capabilities worker
 	}
 	if !c.recovered.Load() {
 		return workerapi.StatusResponse{}, errors.New("activation before startup recovery proof")
+	}
+	c.activateCalls.Add(1)
+	if c.activateErr != nil {
+		return workerapi.StatusResponse{}, c.activateErr
 	}
 	c.activated.Store(true)
 	if status, ok := c.activateStatus.Load().(workerapi.StatusResponse); ok {
@@ -448,6 +454,26 @@ func TestSupervisorRefusesActivationWithUnownedResidue(t *testing.T) {
 	}
 	if controlPlane.activated.Load() {
 		t.Fatal("worker activated with unowned residue")
+	}
+}
+
+func TestSupervisorStopsOnWorkerContractMismatch(t *testing.T) {
+	mismatch := workerapi.ContractMismatchError{Worker: workerapi.Contract, ControlPlane: "helmr.worker-api.v0"}
+	controlPlane := &testControlPlane{activateErr: mismatch}
+	s, err := New(Config{ControlPlane: controlPlane, PollEvery: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.Run(context.Background())
+	var got workerapi.ContractMismatchError
+	if !errors.As(err, &got) || got != mismatch {
+		t.Fatalf("run error = %v, want contract mismatch", err)
+	}
+	if calls := controlPlane.activateCalls.Load(); calls != 1 {
+		t.Fatalf("activation calls = %d, want 1", calls)
+	}
+	if state := s.state.Load(); state != StatusStarting {
+		t.Fatalf("state = %v after rejected activation, want %v", state, StatusStarting)
 	}
 }
 

@@ -68,6 +68,8 @@ The official AMI is selected from the release manifest by `helmr_version` and `a
 
 At boot, the module fetches the worker-group enrollment token into a root-only volatile file. The token selects the logical group. AWS identity, AMI provenance, instance profile, Auto Scaling membership, and fleet policy remain infrastructure responsibilities; the Control Plane does not authenticate or allowlist the AMI.
 
+Run workers from the same Helmr release as the Control Plane. A worker sends its worker API contract at enrollment and at activation, and the Control Plane rejects any other contract with HTTP 409 `worker_contract_mismatch`. The worker exits with an error that names both contracts; replace its AMI with the one for the Control Plane's `helmr_version`.
+
 Workers need outbound access to the Control Plane, S3, AWS APIs, and task
 destinations. They do not install dependencies or build Deployment artifacts.
 The deployment-owned blocked-CIDR set must include the exact execution VPC

@@ -32,6 +32,12 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid worker enrollment JSON: %w", err))
 		return
 	}
+	// A worker built for another contract is rejected before it is enrolled;
+	// like the rest of the request, the contract is checked before the token.
+	if err := workerapi.CheckContract(request.Contract); err != nil {
+		s.writeWorkerHostError(w, "enroll worker", err)
+		return
+	}
 	// An unparsable enrollment token is rejected by the owner after it has
 	// validated the rest of the request.
 	tokenHash, err := strictWorkerEnrollmentBearer(r.Header.Values("Authorization"))
@@ -88,6 +94,10 @@ func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.ActivateRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
 		writeError(w, fmt.Errorf("invalid worker activate request JSON: %w", err))
+		return
+	}
+	if err := workerapi.CheckContract(request.Contract); err != nil {
+		s.writeWorkerHostError(w, "activate worker", err)
 		return
 	}
 	capabilities, err := normalizeWorkerCapabilities(request.Capabilities)
@@ -298,13 +308,42 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 // writeWorkerHostError writes a worker host lifecycle error; a failure the
 // client is not told about is logged and reported as the operation.
 func (s *Server) writeWorkerHostError(w http.ResponseWriter, operation string, err error) {
-	mapped := workerGroupError(err)
+	mapped := workerHostError(err)
 	if errorStatus(mapped) != http.StatusInternalServerError {
 		writeError(w, mapped)
 		return
 	}
 	s.log.Error("worker host request failed", "operation", operation, "error", err)
 	writeError(w, errors.New(operation))
+}
+
+// workerHostError maps errors of worker host requests: the worker API
+// contract check, then the workergroup and region owners.
+func workerHostError(err error) error {
+	var mismatch workerapi.ContractMismatchError
+	if errors.As(err, &mismatch) {
+		return conflict(workerContractMismatchError{mismatch})
+	}
+	return workerGroupError(err)
+}
+
+// workerContractMismatchError names both contracts so that the worker can
+// report which build must change.
+type workerContractMismatchError struct {
+	workerapi.ContractMismatchError
+}
+
+func (e workerContractMismatchError) ErrorCode() string {
+	return workerapi.ContractMismatchCode
+}
+
+func (e workerContractMismatchError) ErrorDetails() map[string]json.RawMessage {
+	worker, _ := json.Marshal(e.Worker)
+	controlPlane, _ := json.Marshal(e.ControlPlane)
+	return map[string]json.RawMessage{
+		workerapi.ContractMismatchWorkerDetail:       worker,
+		workerapi.ContractMismatchControlPlaneDetail: controlPlane,
+	}
 }
 
 func workerPublicStatus(state string) (workerapi.Status, error) {

@@ -218,3 +218,23 @@ func (c *Client) requestToken(ctx context.Context) (string, time.Time, error) {
 	}
 	return response.Token, time.Now().Add(time.Duration(response.ExpiresInSeconds) * time.Second), nil
 }
+
+// contractMismatch turns the control plane's worker_contract_mismatch
+// rejection into workerapi.ContractMismatchError. Retrying cannot succeed:
+// only a worker and control plane from the same release are admitted.
+func contractMismatch(err error) error {
+	var httpErr *httpclient.Error
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusConflict || httpErr.Code != workerapi.ContractMismatchCode {
+		return err
+	}
+	var details map[string]string
+	if len(httpErr.Details) > 0 {
+		if decodeErr := json.Unmarshal(httpErr.Details, &details); decodeErr != nil {
+			return fmt.Errorf("%w (decode contract details: %v)", err, decodeErr)
+		}
+	}
+	return workerapi.ContractMismatchError{
+		Worker:       workerapi.Contract,
+		ControlPlane: details[workerapi.ContractMismatchControlPlaneDetail],
+	}
+}
