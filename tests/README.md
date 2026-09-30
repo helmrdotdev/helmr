@@ -44,8 +44,8 @@ Use the native runner for the affected implementation. These entrypoints cover
 different boundaries; none of them is a universal acceptance gate:
 
 - `nix develop -c go test ./internal/jsoncanon ./internal/builder`: example
-  focused package checks. Use `scripts/ci-postgres.sh PATTERN PACKAGE...` for
-  selected tests that need real PostgreSQL.
+  focused package checks. Use the local database entrypoint below for selected
+  tests that need real PostgreSQL.
 - `nix develop -c python3 -m unittest discover -s dev/runtime`: host profile logic
   without deploying a host. The Linux process-boundary check remains separate.
 - `nix develop -c bash dev/local/start.test.sh`: local composition tooling.
@@ -64,3 +64,29 @@ different boundaries; none of them is a universal acceptance gate:
 Fast PR CI keeps its existing source checks. The broader Nix CI entrypoints
 compose the same checks explicitly; changing file layout does not add real-host
 or all-case execution to PRs. Absence from fast CI does not mean a test is unused.
+
+## Local database verification
+
+When changing SQL, schema, transactions, constraints or persisted state
+transitions, select tests that exercise the affected behavior with PostgreSQL.
+Include dependent authorization, idempotency or scheduling behavior when shared
+queries or schema change. Pure logic tests can run without database services.
+
+For example, from the repository root:
+
+```sh
+nix run .#ci-postgres -- '^TestPostgresClaimSlotIsScopedByEnvironment$' ./internal/idempotency
+```
+
+This runs the existing `scripts/ci-postgres.sh` with pinned tools. It starts fresh
+temporary PostgreSQL and Redis processes on localhost and stops them on exit;
+by default it also removes their temporary files. It does not use a developer's
+existing database, shared staging or production. The example proves only the
+selected idempotency scope behavior; choose the cases relevant to the change.
+
+Selected tests must execute and pass: skips or missing matches fail the command.
+A passing fast PR check, which skips PostgreSQL tests, is not database evidence.
+Record the selected behavior, exact command, tested revision and result in the PR,
+including any database behavior left unproved. See the
+[selection details](e2e/README.md#real-postgresql-and-redis) for supported patterns
+and the distinction between selected tests and the full database suite.
