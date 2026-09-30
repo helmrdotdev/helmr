@@ -158,20 +158,23 @@ func TestLeaseAndInstanceReconcilersProgressOnConstrainedSharedPool(t *testing.T
 	}
 }
 
+// heldGuards counts the named session locks granted in one pg_locks snapshot.
 func heldGuards(t *testing.T, observer *pgxpool.Pool, names []string) int {
 	t.Helper()
-	held := 0
+	classIDs := make([]int64, 0, len(names))
+	objIDs := make([]int64, 0, len(names))
 	for _, name := range names {
 		key := uint64(pglock.Key(name))
-		var granted bool
-		if err := observer.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND granted
- AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND classid=$1::bigint::oid AND objid=$2::bigint::oid AND objsubid=1)`,
-			int64(key>>32), int64(key&0xffffffff)).Scan(&granted); err != nil {
-			t.Fatal(err)
-		}
-		if granted {
-			held++
-		}
+		classIDs = append(classIDs, int64(key>>32))
+		objIDs = append(objIDs, int64(key&0xffffffff))
+	}
+	var held int
+	if err := observer.QueryRow(t.Context(), `SELECT count(*) FROM pg_locks l
+ JOIN unnest($1::bigint[],$2::bigint[]) AS k(classid,objid) ON l.classid=k.classid::oid AND l.objid=k.objid::oid
+ WHERE l.locktype='advisory' AND l.granted AND l.objsubid=1
+ AND l.database=(SELECT oid FROM pg_database WHERE datname=current_database())`,
+		classIDs, objIDs).Scan(&held); err != nil {
+		t.Fatal(err)
 	}
 	return held
 }
