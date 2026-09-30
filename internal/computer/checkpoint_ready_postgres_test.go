@@ -92,9 +92,11 @@ func TestCheckpointReadyRejectsUnprovedObjects(t *testing.T) {
 		})
 	}
 	// A candidate naming one object twice never registers, so readiness can
-	// never observe duplicate runtime objects.
+	// never observe duplicate runtime objects. Only the digest repeats: the
+	// descriptor is otherwise valid for its role, and without the duplicate
+	// check the already registered checkpoint would report changed authority.
 	duplicate := manifest
-	duplicate.RuntimeState.VMStateArtifact = duplicate.RuntimeState.ConfigArtifact
+	duplicate.RuntimeState.VMStateArtifact.Digest = duplicate.RuntimeState.ConfigArtifact.Digest
 	if _, err := computer.RegisterCheckpoint(t.Context(), f.Pool, ref, duplicate); !errors.Is(err, computer.ErrCheckpointCandidate) {
 		t.Fatalf("duplicate runtime object registration = %v", err)
 	}
