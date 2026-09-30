@@ -253,21 +253,37 @@ func TestInitialComputerKeyRotationKeepsAdmittedRuntime(t *testing.T) {
 	}
 }
 
+// A persisted envelope of a shape the provider cannot accept is an
+// unavailable key; ciphertext of a valid shape that fails authentication is
+// a data-integrity failure that keeps its cause, so it is logged. Neither
+// replaces the persisted key.
 func TestInitialComputerKeyCorruptEnvelopeDoesNotReinitialize(t *testing.T) {
-	f := newPreparationFixture(t)
-	b := f.broker
-	first, err := b.InitialKey(t.Context(), f.principal, f.ref)
-	if err != nil {
-		t.Fatal(err)
-	}
-	clear(first.Key)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_data_keys SET wrapped_key=decode('00','hex') WHERE id=$1`, first.ID)
-	if result, err := b.InitialKey(t.Context(), f.principal, f.ref); !errors.Is(err, ErrKeyUnavailable) || errors.Is(err, ErrKeyProviderUnavailable) || len(result.Key) > 0 {
-		t.Fatalf("corrupt envelope = %v", err)
-	}
-	var count int
-	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_data_keys`).Scan(&count); err != nil || count != 1 {
-		t.Fatal("corruption generated replacement", err)
+	for _, test := range []struct {
+		name       string
+		corrupt    string
+		keyMissing bool
+	}{
+		{"truncated", `UPDATE computer_data_keys SET wrapped_key=decode('00','hex') WHERE id=$1`, true},
+		{"failed authentication", `UPDATE computer_data_keys SET wrapped_key=set_byte(wrapped_key,20,get_byte(wrapped_key,20)#255) WHERE id=$1`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newPreparationFixture(t)
+			b := f.broker
+			first, err := b.InitialKey(t.Context(), f.principal, f.ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			clear(first.Key)
+			dbtest.MustExec(t, t.Context(), f.Pool, test.corrupt, first.ID)
+			result, err := b.InitialKey(t.Context(), f.principal, f.ref)
+			if err == nil || errors.Is(err, ErrKeyUnavailable) != test.keyMissing || errors.Is(err, ErrKeyProviderUnavailable) || errors.Is(err, ErrAuthorityChanged) || len(result.Key) > 0 {
+				t.Fatalf("corrupt envelope = %v", err)
+			}
+			var count int
+			if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_data_keys`).Scan(&count); err != nil || count != 1 {
+				t.Fatal("corruption generated replacement", err)
+			}
+		})
 	}
 }
 
@@ -537,8 +553,8 @@ func TestComputerKeyDeliveryDatabaseFaultsKeepTheirCause(t *testing.T) {
 }
 
 // Each provider failure is classified at the adapter boundary: recognized
-// unavailability is provider unavailability, an invalid persisted envelope
-// is an unavailable key, and an unexpected failure, a cancelled request or a
+// unavailability is provider unavailability, a shape-invalid persisted
+// envelope is an unavailable key, and an unexpected failure, a cancelled request or a
 // wrong-length key keeps its cause. Plaintext returned before the failure is
 // cleared.
 func TestComputerKeyProviderFailuresKeepTheirClass(t *testing.T) {
@@ -553,8 +569,8 @@ func TestComputerKeyProviderFailuresKeepTheirClass(t *testing.T) {
 		{name: "unavailable", fail: func(key []byte) ([]byte, error) {
 			return key, fmt.Errorf("%w: throttled", computerkey.ErrUnavailable)
 		}, unavailable: true},
-		{name: "invalid envelope", fail: func(key []byte) ([]byte, error) {
-			return key, fmt.Errorf("%w: failed authentication", computerkey.ErrInvalidEnvelope)
+		{name: "invalid envelope shape", fail: func(key []byte) ([]byte, error) {
+			return key, fmt.Errorf("%w: wrong-length ciphertext", computerkey.ErrInvalidEnvelope)
 		}, keyMissing: true},
 		{name: "unexpected", fail: func(key []byte) ([]byte, error) { return key, errors.New("access denied") }},
 		{name: "cancelled", cancel: true, fail: func(key []byte) ([]byte, error) {
