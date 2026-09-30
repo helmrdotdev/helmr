@@ -26,73 +26,73 @@ func (e computerCommandPermanentError) Error() string {
 }
 func (e computerCommandPermanentError) Unwrap() error { return e.err }
 
-type ReadyComputerCommandCandidate struct {
+type CommandCandidate struct {
 	OrgID, CommandID pgtype.UUID
 	ExpectedRevision int64
 }
-type ComputerCommandPlacement struct {
+type CommandAssignment struct {
 	WorkerHostID, ComputerInstanceID pgtype.UUID
 	WorkerEpoch                      int64
 	ProcessBound                     bool
 }
 
-func (d *Authority) PlaceComputerCommand(ctx context.Context, candidate ReadyComputerCommandCandidate) (ComputerCommandPlacement, error) {
+func (d *Authority) AssignCommand(ctx context.Context, candidate CommandCandidate) (CommandAssignment, error) {
 	tx, err := d.begin(ctx)
 	if err != nil {
-		return ComputerCommandPlacement{}, err
+		return CommandAssignment{}, err
 	}
 	defer rollback(ctx, tx)
 	q := db.New(tx)
 	target, err := q.GetComputerCommandTarget(ctx, db.GetComputerCommandTargetParams{OrgID: candidate.OrgID, CommandID: candidate.CommandID})
 	if err != nil {
-		return ComputerCommandPlacement{}, classifyComputerCommandCandidateError(err)
+		return CommandAssignment{}, classifyComputerCommandCandidateError(err)
 	}
 	if err = lockComputerCommandSecrets(ctx, tx, candidate); err != nil {
-		return ComputerCommandPlacement{}, d.finishRejectedComputerCommand(ctx, tx, candidate, err)
+		return CommandAssignment{}, d.finishRejectedComputerCommand(ctx, tx, candidate, err)
 	}
-	prepared, err := discoverComputerPlacement(ctx, tx, target.EnvironmentID, target.ComputerID)
+	prepared, err := discoverInstanceAssignment(ctx, tx, target.EnvironmentID, target.ComputerID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return ComputerCommandPlacement{}, ErrCapacityUnavailable
+		return CommandAssignment{}, ErrCapacityUnavailable
 	}
 	if err != nil {
-		return ComputerCommandPlacement{}, err
+		return CommandAssignment{}, err
 	}
-	prepared, err = lockComputerPlacement(ctx, tx, prepared)
+	prepared, err = lockInstanceAssignment(ctx, tx, prepared)
 	if err != nil {
-		return ComputerCommandPlacement{}, classifyComputerCommandCandidateError(err)
+		return CommandAssignment{}, classifyComputerCommandCandidateError(err)
 	}
 	command, err := q.LockComputerCommand(ctx, db.LockComputerCommandParams{EnvironmentID: target.EnvironmentID, ComputerID: target.ComputerID, CommandID: candidate.CommandID})
 	if err != nil {
-		return ComputerCommandPlacement{}, err
+		return CommandAssignment{}, err
 	}
 	if command.Revision != candidate.ExpectedRevision || command.Status != "pending" || command.ComputerInstanceID.Valid {
-		return ComputerCommandPlacement{}, ErrCandidateChanged
+		return CommandAssignment{}, ErrCandidateChanged
 	}
 	instance := prepared.instance
 	if !instance.ID.Valid {
-		instance, err = d.allocateComputerPlacement(ctx, tx, prepared)
+		instance, err = d.allocateInstanceAssignment(ctx, tx, prepared)
 		if err != nil {
-			return ComputerCommandPlacement{}, err
+			return CommandAssignment{}, err
 		}
 	}
-	placement := ComputerCommandPlacement{WorkerHostID: instance.WorkerHostID, ComputerInstanceID: instance.ID, WorkerEpoch: instance.WorkerEpoch}
+	assignment := CommandAssignment{WorkerHostID: instance.WorkerHostID, ComputerInstanceID: instance.ID, WorkerEpoch: instance.WorkerEpoch}
 	if instance.ObservedState == "ready" && instance.DesiredState == "ready" && instance.MountState == "mounted" && instance.AdmissionState == "open" {
 		_, err = q.BindComputerCommandInstance(ctx, db.BindComputerCommandInstanceParams{EnvironmentID: target.EnvironmentID, ComputerID: target.ComputerID, CommandID: command.ID, ComputerInstanceID: instance.ID, WriterGeneration: instance.WriterGeneration})
 		if err != nil {
-			return ComputerCommandPlacement{}, classifyComputerCommandCandidateError(err)
+			return CommandAssignment{}, classifyComputerCommandCandidateError(err)
 		}
-		placement.ProcessBound = true
+		assignment.ProcessBound = true
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return ComputerCommandPlacement{}, err
+		return CommandAssignment{}, err
 	}
-	return placement, nil
+	return assignment, nil
 }
 
 func lockComputerCommandSecrets(
 	ctx context.Context,
 	tx pgx.Tx,
-	candidate ReadyComputerCommandCandidate,
+	candidate CommandCandidate,
 ) error {
 	rows, err := tx.Query(ctx, `
 SELECT secrets.status = 'active'
@@ -149,7 +149,7 @@ func classifyComputerCommandCandidateError(err error) error {
 func (d *Authority) finishRejectedComputerCommand(
 	ctx context.Context,
 	tx pgx.Tx,
-	candidate ReadyComputerCommandCandidate,
+	candidate CommandCandidate,
 	cause error,
 ) error {
 	var permanent computerCommandPermanentError
@@ -180,7 +180,7 @@ func (d *Authority) finishRejectedComputerCommand(
 
 func (d *Authority) FailPendingComputerCommand(
 	ctx context.Context,
-	candidate ReadyComputerCommandCandidate,
+	candidate CommandCandidate,
 	reasonCode string,
 ) error {
 	tx, err := d.begin(ctx)
@@ -213,7 +213,7 @@ func (d *Authority) FailPendingComputerCommand(
 func failPendingComputerCommand(
 	ctx context.Context,
 	tx pgx.Tx,
-	candidate ReadyComputerCommandCandidate,
+	candidate CommandCandidate,
 	reasonCode string,
 	errorJSON []byte,
 ) error {

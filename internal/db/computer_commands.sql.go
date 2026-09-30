@@ -35,7 +35,7 @@ type BindComputerCommandInstanceParams struct {
 	WriterGeneration   int64       `json:"writer_generation"`
 }
 
-// Placement is assigned once; reconnect never moves a potentially started command.
+// Assignment is made once; reconnect never moves a potentially started command.
 func (q *Queries) BindComputerCommandInstance(ctx context.Context, arg BindComputerCommandInstanceParams) (ComputerCommand, error) {
 	row := q.db.QueryRow(ctx, bindComputerCommandInstance,
 		arg.CommandID,
@@ -717,7 +717,7 @@ type LockComputerCommandInstanceParams struct {
 	CommandID     pgtype.UUID `json:"command_id"`
 }
 
-// Computer lock precedes this exact historical placement lock. A newer instance
+// Computer lock precedes this exact historical assignment lock. A newer instance
 // is never substituted for the command's original process scope.
 func (q *Queries) LockComputerCommandInstance(ctx context.Context, arg LockComputerCommandInstanceParams) (ComputerInstance, error) {
 	row := q.db.QueryRow(ctx, lockComputerCommandInstance, arg.EnvironmentID, arg.ComputerID, arg.CommandID)
@@ -1002,8 +1002,8 @@ type RequestComputerCommandCancellationParams struct {
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 }
 
-// A pending cancellation conclusively never launched. Placed work is cancelled by
-// its existing process scope, retaining placement until physical reconciliation.
+// A pending cancellation conclusively never launched. Assigned work is cancelled by
+// its existing process scope, retaining its assignment until physical reconciliation.
 func (q *Queries) RequestComputerCommandCancellation(ctx context.Context, arg RequestComputerCommandCancellationParams) (ComputerCommand, error) {
 	row := q.db.QueryRow(ctx, requestComputerCommandCancellation, arg.CommandID, arg.EnvironmentID)
 	var i ComputerCommand
@@ -1113,7 +1113,7 @@ type StopSecretRevokedComputerCommandParams struct {
 	ExpectedRevision int64       `json:"expected_revision"`
 }
 
-// A pending Command has no process. A placed Command must acknowledge stopping
+// A pending Command has no process. An assigned Command must acknowledge stopping
 // before its receipt becomes terminal; revocation does not retire its peers.
 func (q *Queries) StopSecretRevokedComputerCommand(ctx context.Context, arg StopSecretRevokedComputerCommandParams) (ComputerCommand, error) {
 	row := q.db.QueryRow(ctx, stopSecretRevokedComputerCommand, arg.CommandID, arg.EnvironmentID, arg.ExpectedRevision)

@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const listRunPlacementOrganizationsSQL = `
+const listRunDispatchOrganizationsSQL = `
 WITH RECURSIVE organization_heads AS (
     (
         SELECT runs.org_id,
@@ -49,7 +49,7 @@ SELECT org_id
   FROM organization_heads
  ORDER BY position`
 
-const listRunPlacementScopesSQL = `
+const listRunDispatchScopesSQL = `
 WITH RECURSIVE input_organizations AS (
     SELECT input_orgs.position::bigint AS organization_ordinal,
            input_orgs.org_id,
@@ -129,72 +129,72 @@ SELECT organization_ordinal, org_id, environment_id, queue_name, concurrency_key
   FROM scope_heads
  ORDER BY scope_position, organization_ordinal`
 
-type runPlacementScope struct {
+type runDispatchScope struct {
 	orgID          pgtype.UUID
 	environmentID  pgtype.UUID
 	queueName      string
 	concurrencyKey string
 }
 
-type runPlacementScopeCursor struct {
+type runDispatchScopeCursor struct {
 	environmentID  pgtype.UUID
 	queueName      string
 	concurrencyKey string
 	set            bool
 }
 
-type runPlacementScopeRow struct {
+type runDispatchScopeRow struct {
 	organizationOrdinal int64
-	scope               runPlacementScope
+	scope               runDispatchScope
 }
 
-type runPlacementScopeParams struct {
+type runDispatchScopeParams struct {
 	organizations []pgtype.UUID
-	after         []runPlacementScopeCursor
+	after         []runDispatchScopeCursor
 	limit         int32
 }
 
 const (
-	runPlacementLaneCount           = 64
-	runPlacementCandidateScopeLimit = 32
+	runLaneCount                   = 64
+	runDispatchCandidateScopeLimit = 32
 )
 
-func runPlacementLane(organizationID pgtype.UUID) int16 {
+func runLane(organizationID pgtype.UUID) int16 {
 	if !organizationID.Valid {
 		return 0
 	}
-	return runPlacementLaneBytes(organizationID.Bytes)
+	return runLaneBytes(organizationID.Bytes)
 }
 
-func runPlacementLaneBytes(organizationID [16]byte) int16 {
-	return int16(organizationID[15] & byte(runPlacementLaneCount-1))
+func runLaneBytes(organizationID [16]byte) int16 {
+	return int16(organizationID[15] & byte(runLaneCount-1))
 }
 
-type RunPlacementStore struct {
+type RunStore struct {
 	db      db.DBTX
 	queries *db.Queries
 }
 
-func NewRunPlacementStore(database db.DBTX) (*RunPlacementStore, error) {
+func NewRunStore(database db.DBTX) (*RunStore, error) {
 	if database == nil {
-		return nil, errors.New("run placement database is required")
+		return nil, errors.New("run dispatch database is required")
 	}
-	return &RunPlacementStore{db: database, queries: db.New(database)}, nil
+	return &RunStore{db: database, queries: db.New(database)}, nil
 }
 
-func (s *RunPlacementStore) ListOrganizations(
+func (s *RunStore) ListOrganizations(
 	ctx context.Context,
 	lane int16,
 	after pgtype.UUID,
 	limit int32,
 ) ([]pgtype.UUID, error) {
-	if lane < 0 || lane >= runPlacementLaneCount {
-		return nil, errors.New("run placement lane is out of range")
+	if lane < 0 || lane >= runLaneCount {
+		return nil, errors.New("run dispatch lane is out of range")
 	}
 	if limit <= 0 {
-		return nil, errors.New("run placement organization limit must be positive")
+		return nil, errors.New("run dispatch organization limit must be positive")
 	}
-	rows, err := s.db.Query(ctx, listRunPlacementOrganizationsSQL, lane, after, limit)
+	rows, err := s.db.Query(ctx, listRunDispatchOrganizationsSQL, lane, after, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -213,12 +213,12 @@ func (s *RunPlacementStore) ListOrganizations(
 	return organizations, nil
 }
 
-func (s *RunPlacementStore) ListScopes(
+func (s *RunStore) ListScopes(
 	ctx context.Context,
-	params runPlacementScopeParams,
-) ([]runPlacementScopeRow, error) {
+	params runDispatchScopeParams,
+) ([]runDispatchScopeRow, error) {
 	if len(params.organizations) == 0 || len(params.organizations) != len(params.after) {
-		return nil, errors.New("run placement organizations and cursors must be non-empty and aligned")
+		return nil, errors.New("run dispatch organizations and cursors must be non-empty and aligned")
 	}
 	afterSet := make([]bool, 0, len(params.after))
 	afterEnvironmentIDs := make([]pgtype.UUID, 0, len(params.after))
@@ -236,7 +236,7 @@ func (s *RunPlacementStore) ListScopes(
 	}
 	rows, err := s.db.Query(
 		ctx,
-		listRunPlacementScopesSQL,
+		listRunDispatchScopesSQL,
 		params.organizations,
 		afterSet,
 		afterEnvironmentIDs,
@@ -248,9 +248,9 @@ func (s *RunPlacementStore) ListScopes(
 		return nil, err
 	}
 	defer rows.Close()
-	result := make([]runPlacementScopeRow, 0)
+	result := make([]runDispatchScopeRow, 0)
 	for rows.Next() {
-		var row runPlacementScopeRow
+		var row runDispatchScopeRow
 		if err := rows.Scan(
 			&row.organizationOrdinal,
 			&row.scope.orgID,
@@ -268,13 +268,13 @@ func (s *RunPlacementStore) ListScopes(
 	return result, nil
 }
 
-func (s *RunPlacementStore) ListCandidates(
+func (s *RunStore) ListCandidates(
 	ctx context.Context,
-	params db.ListQueuedRunPlacementCandidatesParams,
-) ([]db.ListQueuedRunPlacementCandidatesRow, error) {
+	params db.ListQueuedRunDispatchCandidatesParams,
+) ([]db.ListQueuedRunDispatchCandidatesRow, error) {
 	count := len(params.OrgIds)
-	if count == 0 || count > runPlacementCandidateScopeLimit {
-		return nil, errors.New("run placement candidate scope count is out of range")
+	if count == 0 || count > runDispatchCandidateScopeLimit {
+		return nil, errors.New("run dispatch candidate scope count is out of range")
 	}
 	if len(params.EnvironmentIds) != count ||
 		len(params.ConcurrencyKeys) != count ||
@@ -283,12 +283,12 @@ func (s *RunPlacementStore) ListCandidates(
 		len(params.AfterSet) != count ||
 		len(params.AfterQueueScoreAt) != count ||
 		len(params.AfterRunIds) != count {
-		return nil, errors.New("run placement candidate scope inputs must be aligned")
+		return nil, errors.New("run dispatch candidate scope inputs must be aligned")
 	}
 	for _, limit := range params.CandidateLimits {
-		if limit <= 0 || limit > runPlacementCandidateScopeLimit {
-			return nil, errors.New("run placement candidate limit is out of range")
+		if limit <= 0 || limit > runDispatchCandidateScopeLimit {
+			return nil, errors.New("run dispatch candidate limit is out of range")
 		}
 	}
-	return s.queries.ListQueuedRunPlacementCandidates(ctx, params)
+	return s.queries.ListQueuedRunDispatchCandidates(ctx, params)
 }

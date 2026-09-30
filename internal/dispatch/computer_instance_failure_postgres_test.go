@@ -14,7 +14,7 @@ import (
 )
 
 func TestReconciliationSettlesDurableInstanceFailure(t *testing.T) {
-	f, work, a := commandPlacementFixture(t)
+	f, work, a := commandAssignmentFixture(t)
 	var id pgtype.UUID
 	if err := f.Pool.QueryRow(t.Context(), `SELECT computer_instance_id FROM run_leases WHERE id=$1`, work.LeaseID).Scan(&id); err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ func instanceFailure(i db.ComputerInstance, kind computer.FailureKind, reason st
 }
 
 func TestSourceFailureReconcilesPendingMembersAfterReporterStops(t *testing.T) {
-	f, work, a := commandPlacementFixture(t)
+	f, work, a := commandAssignmentFixture(t)
 	pending := pendingSharedCommand(t, f, work)
 	peer := pendingSharedCommand(t, f, work)
 	var id pgtype.UUID

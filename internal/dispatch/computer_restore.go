@@ -14,10 +14,10 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// CommitComputerRestore grants activation to exactly one destination and all
+// CommitRestore grants activation to exactly one destination and all
 // captured members on the computer.Restore fence. The caller owns rollback on
 // failure and commit on success.
-func (d *Authority) CommitComputerRestore(ctx context.Context, tx pgx.Tx, destination computer.InstanceRef) (db.ComputerCheckpoint, error) {
+func (d *Authority) CommitRestore(ctx context.Context, tx pgx.Tx, destination computer.InstanceRef) (db.ComputerCheckpoint, error) {
 	q := db.New(tx)
 	var checkpoint db.ComputerCheckpoint
 	var environmentID pgtype.UUID
@@ -33,7 +33,7 @@ func (d *Authority) CommitComputerRestore(ctx context.Context, tx pgx.Tx, destin
 		return checkpoint, err
 	}
 	// Restored members may span queues. Acquire the entire queue union before
-	// Secrets or placement authority, using the same lock keys as fresh admission.
+	// Secrets or assignment authority, using the same lock keys as fresh admission.
 	var keys []int64
 	for _, m := range members {
 		r, err := q.GetRun(ctx, db.GetRunParams{EnvironmentID: environmentID, ID: m.RunID})

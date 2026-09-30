@@ -21,7 +21,7 @@ type CancelReceipt struct {
 }
 
 // Cancel requests cancellation of the Command once: a pending Command is
-// cancelled, a placed one stops until its worker host reports the result,
+// cancelled, an assigned one stops until its worker host reports the result,
 // and a terminal one is unchanged. A repeated request replays the first
 // receipt without changing the Command, also after its result was pruned.
 // In one transaction Cancel reads the Command in its scope, acquires the

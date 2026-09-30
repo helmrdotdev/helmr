@@ -1,4 +1,4 @@
-// Package commandtest places Computer Commands over a Run test database: a
+// Package commandtest assigns Computer Commands over a Run test database: a
 // Command with its start claim, bound to a Run lease's Instance.
 package commandtest
 

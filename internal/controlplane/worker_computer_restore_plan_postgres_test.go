@@ -45,7 +45,7 @@ func restorePlanFixture(t *testing.T, idle, committed bool, setup ...func(runtes
 			t.Fatal(err)
 		}
 		defer tx.Rollback(context.Background())
-		if _, err := authority.CommitComputerRestore(t.Context(), tx, fence); err != nil {
+		if _, err := authority.CommitRestore(t.Context(), tx, fence); err != nil {
 			t.Fatal(err)
 		}
 		if err := tx.Commit(t.Context()); err != nil {
@@ -68,12 +68,12 @@ func activateRestorePlanFixture(t *testing.T, f runtest.Fixture, w workergroup.H
 		t.Fatal(err)
 	}
 	defer tx.Rollback(context.Background())
-	grants := make([]dispatch.ComputerRestoreGrant, 0, len(plan.Members))
+	grants := make([]dispatch.RestoreGrant, 0, len(plan.Members))
 	for _, member := range plan.Members {
-		grants = append(grants, dispatch.ComputerRestoreGrant{RunID: pgvalue.UUID(uuid.MustParse(member.RunID)), LeaseID: pgvalue.UUID(uuid.MustParse(member.Lease.ID)), LeaseSequence: member.Lease.LeaseSequence})
+		grants = append(grants, dispatch.RestoreGrant{RunID: pgvalue.UUID(uuid.MustParse(member.RunID)), LeaseID: pgvalue.UUID(uuid.MustParse(member.Lease.ID)), LeaseSequence: member.Lease.LeaseSequence})
 	}
 	destination := computer.InstanceRef{Host: computer.Host{GroupID: w.GroupID, HostID: w.HostID, Epoch: w.Epoch}, ID: uuid.MustParse(plan.ComputerInstanceID), DesiredVersion: plan.DesiredVersion}
-	_, err = dispatch.AcknowledgeComputerRestore(t.Context(), tx, destination, pgvalue.UUID(uuid.MustParse(plan.CheckpointID)), plan.WriterGeneration, grants)
+	_, err = dispatch.AcknowledgeRestore(t.Context(), tx, destination, pgvalue.UUID(uuid.MustParse(plan.CheckpointID)), plan.WriterGeneration, grants)
 	if err != nil {
 		t.Fatal(err)
 	}

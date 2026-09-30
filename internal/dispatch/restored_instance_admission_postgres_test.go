@@ -21,7 +21,7 @@ func TestNewMembersJoinPreviouslyRestoredInstance(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	checkpoint, err := a.CommitComputerRestore(t.Context(), tx, fence)
+	checkpoint, err := a.CommitRestore(t.Context(), tx, fence)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,16 +53,16 @@ func TestNewMembersJoinPreviouslyRestoredInstance(t *testing.T) {
 		if actor {
 			f.ConvertToActor(t, t.Context(), runtest.RunLease{RunID: id}, `{"enabled":false}`)
 		}
-		placed, err := a.PlaceReadyRun(t.Context(), dispatch.ReadyRunCandidate{OrgID: pgvalue.UUID(f.OrgID), RunID: pgvalue.UUID(id), ExpectedRunRevision: 1})
-		if err != nil || !placed.LeaseCreated {
-			t.Fatalf("fresh member placement: %+v %v", placed, err)
+		assigned, err := a.AssignRun(t.Context(), dispatch.RunCandidate{OrgID: pgvalue.UUID(f.OrgID), RunID: pgvalue.UUID(id), ExpectedRunRevision: 1})
+		if err != nil || !assigned.LeaseCreated {
+			t.Fatalf("fresh member assignment: %+v %v", assigned, err)
 		}
 		tx, err = f.Pool.Begin(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer tx.Rollback(t.Context())
-		claimed, err := run.ClaimExecution(t.Context(), tx, run.ExecutionFence{LeaseID: placed.Lease.ID, LeaseSequence: placed.Lease.LeaseSequence, WorkerGroupID: instance.WorkerGroupID, WorkerHostID: instance.WorkerHostID, WorkerEpoch: instance.WorkerEpoch, GroupClaimVersion: 1, HostClaimVersion: 1})
+		claimed, err := run.ClaimExecution(t.Context(), tx, run.ExecutionFence{LeaseID: assigned.Lease.ID, LeaseSequence: assigned.Lease.LeaseSequence, WorkerGroupID: instance.WorkerGroupID, WorkerHostID: instance.WorkerHostID, WorkerEpoch: instance.WorkerEpoch, GroupClaimVersion: 1, HostClaimVersion: 1})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -76,9 +76,9 @@ func TestNewMembersJoinPreviouslyRestoredInstance(t *testing.T) {
 	id, claim := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO idempotency_claims(id,environment_id,operation,slot_hash,request_fingerprint,accepted_at) VALUES($1,$2,'computer.command.start',$3,$3,now())`, claim, f.EnvironmentID, dbtest.Hash(claim.String()))
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_commands(id,environment_id,computer_id,claim_id,argv,env,stdin,timeout_ms,created_by_subject_type,created_by_subject_id) VALUES($1,$2,$3,$4,ARRAY['true'],'{}',''::bytea,60000,'test','test')`, id, f.EnvironmentID, instance.ComputerID, claim)
-	placed, err := a.PlaceComputerCommand(t.Context(), dispatch.ReadyComputerCommandCandidate{OrgID: pgvalue.UUID(f.OrgID), CommandID: pgvalue.UUID(id), ExpectedRevision: 1})
-	if err != nil || !placed.ProcessBound || placed.ComputerInstanceID != instance.ID {
-		t.Fatalf("command on restored instance: %+v %v", placed, err)
+	assigned, err := a.AssignCommand(t.Context(), dispatch.CommandCandidate{OrgID: pgvalue.UUID(f.OrgID), CommandID: pgvalue.UUID(id), ExpectedRevision: 1})
+	if err != nil || !assigned.ProcessBound || assigned.ComputerInstanceID != instance.ID {
+		t.Fatalf("command on restored instance: %+v %v", assigned, err)
 	}
 	var checkpointMember pgtype.UUID
 	if err = f.Pool.QueryRow(t.Context(), `SELECT id FROM computer_checkpoints WHERE id=$1 AND resume_computer_instance_id=$2 AND NOT EXISTS(SELECT 1 FROM computer_checkpoint_runs WHERE checkpoint_id=$1)`, checkpoint.ID, instance.ID).Scan(&checkpointMember); err != nil {

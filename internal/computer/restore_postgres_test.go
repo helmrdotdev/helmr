@@ -51,7 +51,7 @@ func TestRestoreFenceFencesEpochAndStatusNotClaims(t *testing.T) {
 					return err
 				}
 				defer tx.Rollback(t.Context())
-				if _, err = dispatch.AcknowledgeComputerRestore(t.Context(), tx, f.ref, cp.ID, f.writer.WriterGeneration, restoreGrants(t, f.Fixture, f.ref)); err != nil {
+				if _, err = dispatch.AcknowledgeRestore(t.Context(), tx, f.ref, cp.ID, f.writer.WriterGeneration, restoreGrants(t, f.Fixture, f.ref)); err != nil {
 					return err
 				}
 				return tx.Commit(t.Context())
@@ -116,14 +116,14 @@ func TestRestoreFenceReportsAdmission(t *testing.T) {
 	}
 }
 
-func restoreGrants(t *testing.T, f runtest.Fixture, ref computer.InstanceRef) []dispatch.ComputerRestoreGrant {
+func restoreGrants(t *testing.T, f runtest.Fixture, ref computer.InstanceRef) []dispatch.RestoreGrant {
 	t.Helper()
 	rows, err := f.Pool.Query(t.Context(), `SELECT run_id,id,lease_sequence FROM run_leases WHERE computer_instance_id=$1 ORDER BY run_id`, ref.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	grants, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (dispatch.ComputerRestoreGrant, error) {
-		var g dispatch.ComputerRestoreGrant
+	grants, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (dispatch.RestoreGrant, error) {
+		var g dispatch.RestoreGrant
 		err := row.Scan(&g.RunID, &g.LeaseID, &g.LeaseSequence)
 		return g, err
 	})

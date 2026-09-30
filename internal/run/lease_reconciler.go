@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	leaseRecoveryLockName        = "helmr.dispatcher.run_resume_recovery"
+	leaseRecoveryLockName        = "helmr.run.lease_recovery"
 	defaultLeaseRecoveryInterval = 5 * time.Second
 	defaultLeaseRecoveryTimeout  = 15 * time.Second
 	defaultLeaseRecoveryLimit    = int32(50)

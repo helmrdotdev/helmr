@@ -59,7 +59,7 @@ func TestMeasureDispatchHierarchy(t *testing.T) {
 			seedDispatchLaneMeasurement(
 				t, ctx, connection.Conn(), scenario.rows, scenario.organizations, scenario.scopes, scenario.skewed,
 			)
-			store, err := NewRunPlacementStore(connection)
+			store, err := NewRunStore(connection)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -194,7 +194,7 @@ SELECT md5('run:' || row_number::text)::uuid,
 func measureDispatchLaneCoverage(
 	t *testing.T,
 	ctx context.Context,
-	store *RunPlacementStore,
+	store *RunStore,
 	name string,
 	rows int,
 	organizations int,
@@ -231,18 +231,18 @@ func measureDispatchLaneCoverage(
 func scanEveryDispatchLane(
 	t *testing.T,
 	ctx context.Context,
-	store *RunPlacementStore,
+	store *RunStore,
 ) (int, int) {
 	t.Helper()
 	const organizationLimit = int32(32)
 	const scopeLimit = int32(1)
-	var cursors [runPlacementLaneCount]pgtype.UUID
-	var complete [runPlacementLaneCount]bool
-	remainingLanes := runPlacementLaneCount
+	var cursors [runLaneCount]pgtype.UUID
+	var complete [runLaneCount]bool
+	remainingLanes := runLaneCount
 	candidateHeads := 0
 	statements := 0
 	for remainingLanes > 0 {
-		for lane := int16(0); lane < runPlacementLaneCount; lane++ {
+		for lane := int16(0); lane < runLaneCount; lane++ {
 			if complete[lane] {
 				continue
 			}
@@ -257,8 +257,8 @@ func scanEveryDispatchLane(
 				remainingLanes--
 				continue
 			}
-			after := make([]runPlacementScopeCursor, len(selected))
-			scopeRows, err := store.ListScopes(ctx, runPlacementScopeParams{
+			after := make([]runDispatchScopeCursor, len(selected))
+			scopeRows, err := store.ListScopes(ctx, runDispatchScopeParams{
 				organizations: selected,
 				after:         after,
 				limit:         scopeLimit,
@@ -267,7 +267,7 @@ func scanEveryDispatchLane(
 				t.Fatal(err)
 			}
 			statements++
-			scopes := make([]runPlacementScope, 0, len(selected))
+			scopes := make([]runDispatchScope, 0, len(selected))
 			for _, row := range scopeRows {
 				scopes = append(scopes, row.scope)
 			}
@@ -278,7 +278,7 @@ func scanEveryDispatchLane(
 			for i := range limits {
 				limits[i] = 1
 			}
-			params := new(runPlacementCursor).candidateParams(scopes, limits)
+			params := new(runDispatchCursor).candidateParams(scopes, limits)
 			candidates, err := store.ListCandidates(ctx, params)
 			if err != nil {
 				t.Fatal(err)

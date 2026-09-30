@@ -220,7 +220,7 @@ SELECT input_scopes.scope_ordinal,
 FROM input_scopes LEFT JOIN active_usage USING(scope_ordinal)
 ORDER BY input_scopes.scope_ordinal;
 
--- name: ListQueuedRunPlacementCandidates :many
+-- name: ListQueuedRunDispatchCandidates :many
 WITH input_scopes AS (
     SELECT input_orgs.position::bigint AS scope_ordinal,
            input_orgs.org_id,

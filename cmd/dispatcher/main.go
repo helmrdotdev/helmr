@@ -34,11 +34,11 @@ import (
 )
 
 // The dispatcher's connection budget is 44 = 12 + 32. On the run dispatch
-// pool, session-lock holders (the run placement lane workers plus the Run
+// pool, session-lock holders (the run dispatch lane workers plus the Run
 // lease and Computer instance reconcilers) are at most 10 connections, below
 // its cap of 32; each holder's work takes further connections. The Computer
 // deletion reconciler holds no session lock and takes one connection per
-// cycle, as it did as a placement lane. Default demand is about 31 of 32, so
+// cycle, as it did as a dispatch lane. Default demand is about 31 of 32, so
 // exhaustion only queues acquisitions within each cycle's timeout.
 const (
 	baseMaxConns        = int32(12)
@@ -82,13 +82,13 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		"base", baseMaxConns, "run_dispatch", runDispatchMaxConns)
 	queries := db.New(pool)
 	runDispatchQueries := db.New(runDispatchPool)
-	runPlacementStore, err := dispatch.NewRunPlacementStore(runDispatchPool)
+	runStore, err := dispatch.NewRunStore(runDispatchPool)
 	if err != nil {
-		return fmt.Errorf("configure run placement store: %w", err)
+		return fmt.Errorf("configure run dispatch store: %w", err)
 	}
-	runPlacementLaneLock, err := dispatch.NewRunPlacementLaneLock(runDispatchPool)
+	runLaneLock, err := dispatch.NewRunLaneLock(runDispatchPool)
 	if err != nil {
-		return fmt.Errorf("configure run placement lane lock: %w", err)
+		return fmt.Errorf("configure run dispatch lane lock: %w", err)
 	}
 	computerFencingKey, err := disk.NewFencingKey(cfg.ComputerFencingKey)
 	if err != nil {
@@ -110,13 +110,13 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("configure clickhouse: %w", err)
 	}
 	defer clickHouseClient.Close()
-	placementReconciler, err := dispatch.NewPlacementReconciler(
-		runPlacementStore, runPlacementLaneLock, runDispatchAuthority,
+	dispatchReconciler, err := dispatch.NewReconciler(
+		runStore, runLaneLock, runDispatchAuthority,
 		runDispatchQueries, runDispatchAuthority,
 		log,
 	)
 	if err != nil {
-		return fmt.Errorf("configure placement reconciler: %w", err)
+		return fmt.Errorf("configure dispatch reconciler: %w", err)
 	}
 	computerDeletionReconciler, err := computer.NewDeletionReconciler(runDispatchPool, log)
 	if err != nil {
@@ -252,7 +252,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		{name: "stale host fencer", run: staleHostFencer.Run},
 		{name: "Run lease reconciler", run: runLeaseReconciler.Run},
 		{name: "Computer instance reconciler", run: instanceReconciler.Run},
-		{name: "placement reconciler", run: placementReconciler.Run},
+		{name: "dispatch reconciler", run: dispatchReconciler.Run},
 		{name: "Computer deletion reconciler", run: computerDeletionReconciler.Run},
 		{name: "schedule worker", run: scheduleWorker.Run},
 		{name: "token reconciliation delivery", run: tokenReconcileDelivery.Run},

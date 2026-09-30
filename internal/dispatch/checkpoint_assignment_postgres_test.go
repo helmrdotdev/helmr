@@ -12,7 +12,7 @@ import (
 	"uuid"
 )
 
-func TestCheckpointPlacementAllocatesRestoringInstance(t *testing.T) {
+func TestCheckpointAssignmentAllocatesRestoringInstance(t *testing.T) {
 	for _, kind := range []string{"run", "command", "missing parked checkpoint"} {
 		t.Run(kind, func(t *testing.T) {
 			f, ref, manifest, objects := computertest.ReadyCapture(t, kind != "missing parked checkpoint")
@@ -47,10 +47,10 @@ func TestCheckpointPlacementAllocatesRestoringInstance(t *testing.T) {
 				if kind == "missing parked checkpoint" {
 					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_checkpoints SET status='invalid',invalidated_at=clock_timestamp(),invalidation_reason_code='test_missing_resume_source' WHERE id=$1`, cp.ID)
 				}
-				placed, err := authority.PlaceComputerCommand(t.Context(), dispatch.ReadyComputerCommandCandidate{OrgID: pgvalue.UUID(f.OrgID), CommandID: pgvalue.UUID(id), ExpectedRevision: 1})
+				assigned, err := authority.AssignCommand(t.Context(), dispatch.CommandCandidate{OrgID: pgvalue.UUID(f.OrgID), CommandID: pgvalue.UUID(id), ExpectedRevision: 1})
 				if kind == "missing parked checkpoint" {
 					if !errors.Is(err, dispatch.ErrCandidateChanged) {
-						t.Fatalf("parked wait fallback=%+v %v", placed, err)
+						t.Fatalf("parked wait fallback=%+v %v", assigned, err)
 					}
 					var blocked bool
 					if err := f.Pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM run_waits WHERE computer_id=$1 AND suspension_status='parked') AND NOT EXISTS(SELECT 1 FROM computer_instances WHERE computer_id=$1 AND reclaimed_at IS NULL)`, cp.ComputerID).Scan(&blocked); err != nil || !blocked {
@@ -58,10 +58,10 @@ func TestCheckpointPlacementAllocatesRestoringInstance(t *testing.T) {
 					}
 					return
 				}
-				if err != nil || placed.ProcessBound {
-					t.Fatalf("restore command placement=%+v %v", placed, err)
+				if err != nil || assigned.ProcessBound {
+					t.Fatalf("restore command assignment=%+v %v", assigned, err)
 				}
-				instanceID = pgvalue.UUIDString(placed.ComputerInstanceID)
+				instanceID = pgvalue.UUIDString(assigned.ComputerInstanceID)
 			} else {
 				tx, err := f.Pool.Begin(t.Context())
 				if err != nil {
@@ -75,11 +75,11 @@ func TestCheckpointPlacementAllocatesRestoringInstance(t *testing.T) {
 				if err = tx.Commit(t.Context()); err != nil {
 					t.Fatal(err)
 				}
-				placed, err := authority.PlaceReadyRun(t.Context(), dispatch.ReadyRunCandidate{OrgID: pgvalue.UUID(f.OrgID), RunID: pgvalue.UUID(id), ExpectedRunRevision: 1})
-				if err != nil || placed.LeaseCreated {
-					t.Fatalf("restore run placement=%+v %v", placed, err)
+				assigned, err := authority.AssignRun(t.Context(), dispatch.RunCandidate{OrgID: pgvalue.UUID(f.OrgID), RunID: pgvalue.UUID(id), ExpectedRunRevision: 1})
+				if err != nil || assigned.LeaseCreated {
+					t.Fatalf("restore run assignment=%+v %v", assigned, err)
 				}
-				instanceID = pgvalue.UUIDString(placed.ComputerInstanceID)
+				instanceID = pgvalue.UUIDString(assigned.ComputerInstanceID)
 			}
 			instance, err := db.New(f.Pool).GetComputerInstance(t.Context(), db.GetComputerInstanceParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: pgvalue.UUID(uuid.MustParse(instanceID))})
 			if err != nil {

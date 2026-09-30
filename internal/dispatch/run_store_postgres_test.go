@@ -7,7 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestRunPlacementStorePagesOrganizationsAndScopes(t *testing.T) {
+func TestRunStorePagesOrganizationsAndScopes(t *testing.T) {
 	ctx := context.Background()
 	pool := newDispatchIntegrationDB(t, ctx)
 	connection, err := pool.Acquire(ctx)
@@ -61,7 +61,7 @@ ANALYZE runs`); err != nil {
 		t.Fatal(err)
 	}
 
-	store, err := NewRunPlacementStore(connection)
+	store, err := NewRunStore(connection)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,9 +92,9 @@ SELECT (get_byte(uuid_send(org_id), 15) & 63)::smallint AS lane,
 	}
 
 	selected := organizations[:2]
-	rows, err := store.ListScopes(ctx, runPlacementScopeParams{
+	rows, err := store.ListScopes(ctx, runDispatchScopeParams{
 		organizations: selected,
-		after:         make([]runPlacementScopeCursor, len(selected)),
+		after:         make([]runDispatchScopeCursor, len(selected)),
 		limit:         3,
 	})
 	if err != nil {
@@ -109,15 +109,15 @@ SELECT (get_byte(uuid_send(org_id), 15) & 63)::smallint AS lane,
 			t.Fatalf("scope %d organization ordinal = %d, want %d", index, row.organizationOrdinal, wantOrdinal)
 		}
 	}
-	after := make([]runPlacementScopeCursor, len(selected))
+	after := make([]runDispatchScopeCursor, len(selected))
 	for _, row := range rows {
 		index := int(row.organizationOrdinal - 1)
-		after[index] = runPlacementScopeCursor{
+		after[index] = runDispatchScopeCursor{
 			environmentID: row.scope.environmentID,
 			queueName:     row.scope.queueName, concurrencyKey: row.scope.concurrencyKey, set: true,
 		}
 	}
-	tailScopes, err := store.ListScopes(ctx, runPlacementScopeParams{
+	tailScopes, err := store.ListScopes(ctx, runDispatchScopeParams{
 		organizations: selected,
 		after:         after,
 		limit:         3,

@@ -11,94 +11,94 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type ReadyRunCandidate struct {
+type RunCandidate struct {
 	OrgID, RunID        pgtype.UUID
 	ExpectedRunRevision int64
 }
-type ReadyRunPlacement struct {
+type RunAssignment struct {
 	Lease                            db.RunLease
 	LeaseCreated                     bool
 	WorkerHostID, ComputerInstanceID pgtype.UUID
 	WorkerEpoch                      int64
 }
 
-func (d *Authority) PlaceReadyRun(ctx context.Context, candidate ReadyRunCandidate) (ReadyRunPlacement, error) {
+func (d *Authority) AssignRun(ctx context.Context, candidate RunCandidate) (RunAssignment, error) {
 	tx, err := d.begin(ctx)
 	if err != nil {
-		return ReadyRunPlacement{}, err
+		return RunAssignment{}, err
 	}
 	defer rollback(ctx, tx)
 	env, queue, key, err := lockRunQueueScope(ctx, tx, candidate)
 	if err != nil {
-		return ReadyRunPlacement{}, classifyRunCandidateError(err)
+		return RunAssignment{}, classifyRunCandidateError(err)
 	}
 	if err = lockRunSecrets(ctx, tx, candidate); err != nil {
-		return ReadyRunPlacement{}, err
+		return RunAssignment{}, err
 	}
 	var computerID pgtype.UUID
 	if err = tx.QueryRow(ctx, `SELECT computer_id FROM runs WHERE org_id=$1 AND id=$2 AND revision=$3`, candidate.OrgID, candidate.RunID, candidate.ExpectedRunRevision).Scan(&computerID); err != nil {
-		return ReadyRunPlacement{}, classifyRunCandidateError(err)
+		return RunAssignment{}, classifyRunCandidateError(err)
 	}
 	if replaced, err := replaceComputerProgram(ctx, tx, candidate, env, computerID); err != nil {
-		return ReadyRunPlacement{}, classifyRunCandidateError(err)
+		return RunAssignment{}, classifyRunCandidateError(err)
 	} else if replaced {
 		if err := tx.Commit(ctx); err != nil {
-			return ReadyRunPlacement{}, err
+			return RunAssignment{}, err
 		}
-		return ReadyRunPlacement{}, ErrCapacityUnavailable
+		return RunAssignment{}, ErrCapacityUnavailable
 	}
-	p, err := discoverComputerPlacement(ctx, tx, env, computerID)
+	p, err := discoverInstanceAssignment(ctx, tx, env, computerID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return ReadyRunPlacement{}, ErrCapacityUnavailable
+		return RunAssignment{}, ErrCapacityUnavailable
 	}
 	if err != nil {
-		return ReadyRunPlacement{}, err
+		return RunAssignment{}, err
 	}
-	p, err = lockComputerPlacement(ctx, tx, p)
+	p, err = lockInstanceAssignment(ctx, tx, p)
 	if err != nil {
-		return ReadyRunPlacement{}, classifyRunCandidateError(err)
+		return RunAssignment{}, classifyRunCandidateError(err)
 	}
-	r, err := lockRunPlacementAuthority(ctx, tx, candidate, p.computer.EnvironmentID, p.computer.ID)
+	r, err := lockRunAssignment(ctx, tx, candidate, p.computer.EnvironmentID, p.computer.ID)
 	if err != nil {
-		return ReadyRunPlacement{}, classifyRunCandidateError(err)
+		return RunAssignment{}, classifyRunCandidateError(err)
 	}
 	if r.EnvironmentID != env || r.QueueName != queue || r.ConcurrencyKey != key {
-		return ReadyRunPlacement{}, ErrCandidateChanged
+		return RunAssignment{}, ErrCandidateChanged
 	}
 	i := p.instance
 	if !i.ID.Valid {
 		if p.checkpoint.Valid && p.program.Valid && p.program != r.DeploymentID {
-			return ReadyRunPlacement{}, ErrCapacityUnavailable
+			return RunAssignment{}, ErrCapacityUnavailable
 		}
 		if !p.checkpoint.Valid {
 			p.program = r.DeploymentID
 		}
-		i, err = d.allocateComputerPlacement(ctx, tx, p)
+		i, err = d.allocateInstanceAssignment(ctx, tx, p)
 		if err != nil {
-			return ReadyRunPlacement{}, err
+			return RunAssignment{}, err
 		}
 	} else if i.ProgramDeploymentID != r.DeploymentID {
-		return ReadyRunPlacement{}, ErrCapacityUnavailable
+		return RunAssignment{}, ErrCapacityUnavailable
 	}
-	result := ReadyRunPlacement{WorkerHostID: i.WorkerHostID, ComputerInstanceID: i.ID, WorkerEpoch: i.WorkerEpoch}
+	result := RunAssignment{WorkerHostID: i.WorkerHostID, ComputerInstanceID: i.ID, WorkerEpoch: i.WorkerEpoch}
 	if i.ObservedState == "ready" && i.DesiredState == "ready" && i.AdmissionState == "open" && i.MountState == "mounted" && i.ObservedDesiredVersion == i.DesiredVersion {
 		result.Lease, err = d.grantFreshRun(ctx, tx, r, i)
 		if err != nil {
-			return ReadyRunPlacement{}, classifyRunCandidateError(err)
+			return RunAssignment{}, classifyRunCandidateError(err)
 		}
 		result.LeaseCreated = true
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return ReadyRunPlacement{}, err
+		return RunAssignment{}, err
 	}
 	return result, nil
 }
 
 // replaceComputerProgram takes the program replacement step the Run's
-// Computer needs, and reports whether it took one; Run placement retries
+// Computer needs, and reports whether it took one; Run assignment retries
 // after this transaction. Disk promotion requires no capacity for the
 // obsolete VM.
-func replaceComputerProgram(ctx context.Context, tx pgx.Tx, candidate ReadyRunCandidate, environmentID, computerID pgtype.UUID) (bool, error) {
+func replaceComputerProgram(ctx context.Context, tx pgx.Tx, candidate RunCandidate, environmentID, computerID pgtype.UUID) (bool, error) {
 	var deploymentID pgtype.UUID
 	if err := tx.QueryRow(ctx, `SELECT deployment_id FROM runs WHERE id=$1 AND org_id=$2 AND revision=$3`, candidate.RunID, candidate.OrgID, candidate.ExpectedRunRevision).Scan(&deploymentID); err != nil {
 		return false, err
@@ -113,10 +113,10 @@ func replaceComputerProgram(ctx context.Context, tx pgx.Tx, candidate ReadyRunCa
 		if _, err = replacement.Capture(ctx); err != nil {
 			return false, err
 		}
-		_, err = lockRunPlacementAuthority(ctx, tx, candidate, environmentID, computerID)
+		_, err = lockRunAssignment(ctx, tx, candidate, environmentID, computerID)
 		return err == nil, err
 	case computer.ReplacementPromotion:
-		if _, err = lockRunPlacementAuthority(ctx, tx, candidate, environmentID, computerID); err != nil {
+		if _, err = lockRunAssignment(ctx, tx, candidate, environmentID, computerID); err != nil {
 			return false, err
 		}
 		err = replacement.Promote(ctx)

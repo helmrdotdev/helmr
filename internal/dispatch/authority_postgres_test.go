@@ -12,7 +12,7 @@ import (
 )
 
 func TestAuthorityTransactionsReadCommitted(t *testing.T) {
-	_, _, authority := commandPlacementFixture(t)
+	_, _, authority := commandAssignmentFixture(t)
 	tx, err := authority.begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -23,14 +23,14 @@ func TestAuthorityTransactionsReadCommitted(t *testing.T) {
 		t.Fatal(err)
 	}
 	if isolation != "read committed" {
-		t.Fatalf("placement transaction isolation = %q, want read committed", isolation)
+		t.Fatalf("assignment transaction isolation = %q, want read committed", isolation)
 	}
 }
 
-func TestConcurrentRunPlacementRechecksLockedWorkerCapacity(t *testing.T) {
-	f, first, authority := commandPlacementFixture(t)
+func TestConcurrentRunAssignmentRechecksLockedWorkerCapacity(t *testing.T) {
+	f, first, authority := commandAssignmentFixture(t)
 	second := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
-	candidates := []ReadyRunCandidate{queuedSharedRun(t, f, first), queuedSharedRun(t, f, second)}
+	candidates := []RunCandidate{queuedSharedRun(t, f, first), queuedSharedRun(t, f, second)}
 	for _, candidate := range candidates {
 		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET concurrency_key=id::text WHERE id=$1`, candidate.RunID)
 	}
@@ -50,12 +50,12 @@ SELECT id FROM worker_groups WHERE id = $1 FOR UPDATE`, pgvalue.UUID(runtest.Wor
 
 	results := make(chan error, len(candidates))
 	for _, row := range candidates {
-		candidate := ReadyRunCandidate{
+		candidate := RunCandidate{
 			OrgID: row.OrgID, RunID: row.RunID,
 			ExpectedRunRevision: row.ExpectedRunRevision,
 		}
 		go func() {
-			_, err := authority.PlaceReadyRun(t.Context(), candidate)
+			_, err := authority.AssignRun(t.Context(), candidate)
 			results <- err
 		}()
 	}
@@ -70,11 +70,11 @@ SELECT id FROM worker_groups WHERE id = $1 FOR UPDATE`, pgvalue.UUID(runtest.Wor
 		}
 		select {
 		case err := <-results:
-			t.Fatalf("placement returned before Worker fence: %v", err)
+			t.Fatalf("assignment returned before Worker fence: %v", err)
 		default:
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("blocked placements=%d", waiting)
+			t.Fatalf("blocked assignments=%d", waiting)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -92,11 +92,11 @@ SELECT id FROM worker_groups WHERE id = $1 FOR UPDATE`, pgvalue.UUID(runtest.Wor
 		case errors.Is(err, ErrCapacityUnavailable):
 			capacityRejected++
 		default:
-			t.Fatalf("concurrent placement failed: %v", err)
+			t.Fatalf("concurrent assignment failed: %v", err)
 		}
 	}
 	if succeeded != 1 || capacityRejected != 1 {
-		t.Fatalf("placements succeeded=%d capacity_rejected=%d, want 1 and 1", succeeded, capacityRejected)
+		t.Fatalf("assignments succeeded=%d capacity_rejected=%d, want 1 and 1", succeeded, capacityRejected)
 	}
 
 	var reservations int

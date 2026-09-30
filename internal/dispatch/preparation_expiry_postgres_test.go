@@ -15,18 +15,18 @@ import (
 func TestPreparationExpirySerializesWithCancellationAndWorkerLoss(t *testing.T) {
 	for _, action := range []string{"cancel", "worker loss"} {
 		t.Run(action, func(t *testing.T) {
-			f, work, a := commandPlacementFixture(t)
+			f, work, a := commandAssignmentFixture(t)
 			candidate := queuedSharedRun(t, f, work)
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=2,observed_state='closed',observed_desired_version=2,terminal_at=now(),terminal_reason_code='test_exclusion',reclaimed_at=now(),reclaim_evidence='{"method":"host_reconciled"}',admission_state='closed',mount_state='unmounted',unmounted_at=now() WHERE id=(SELECT computer_instance_id FROM run_leases WHERE id=$1)`, work.LeaseID)
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET epoch_guest_ephemeral_disk_bytes=68719476736,per_vm_guest_ephemeral_disk_bytes=34359738368 WHERE id=$1`, f.WorkerID)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
-			placement, err := a.PlaceReadyRun(ctx, candidate)
+			assignment, err := a.AssignRun(ctx, candidate)
 			if err != nil {
 				t.Fatal(err)
 			}
 			q := db.New(f.Pool)
-			before, err := q.GetComputerInstance(ctx, db.GetComputerInstanceParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: placement.ComputerInstanceID})
+			before, err := q.GetComputerInstance(ctx, db.GetComputerInstanceParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: assignment.ComputerInstanceID})
 			if err != nil {
 				t.Fatal(err)
 			}

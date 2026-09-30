@@ -16,7 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
-// A Computer placement allocates an Instance whose initial preparation needs
+// Assigning a Computer allocates an Instance whose initial preparation needs
 // no member: the computer owner delivers its initial key, it has no source
 // to restore, and an expired writer holds no preparation.
 func TestComputerInitialPreparationNeedsNoMember(t *testing.T) {
@@ -40,15 +40,15 @@ func TestComputerInitialPreparationNeedsNoMember(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	p, err := discoverComputerPlacement(t.Context(), tx, c.EnvironmentID, c.ID)
+	p, err := discoverInstanceAssignment(t.Context(), tx, c.EnvironmentID, c.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err = lockComputerPlacement(t.Context(), tx, p)
+	p, err = lockInstanceAssignment(t.Context(), tx, p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	i, err := a.allocateComputerPlacement(t.Context(), tx, p)
+	i, err := a.allocateInstanceAssignment(t.Context(), tx, p)
 	if err != nil {
 		t.Fatal(err)
 	}

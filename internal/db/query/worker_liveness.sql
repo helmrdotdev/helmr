@@ -79,8 +79,8 @@ SELECT target.id, target.worker_group_id, target.current_epoch, target.status
  WHERE (SELECT count(*) FROM revoked_credentials) >= 0
    AND (SELECT count(*) FROM lost_runtimes) >= 0;
 
--- Worker Host fence for placement and Computer preparation. The caller
--- (workergroup.LockPlacementSupply) must already hold the Worker Group and Pool share
+-- Worker Host fence for dispatch and Computer preparation. The caller
+-- (workergroup.LockDispatchSupply) must already hold the Worker Group and Pool share
 -- locks and have validated their status. This query locks the Worker Host and
 -- checks epoch, observation freshness and platform. Admission also requires an
 -- active host without a Run pause; continuation of admitted work accepts a

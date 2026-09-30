@@ -164,7 +164,7 @@ func LockOwnedFinalization(
 	return lockOwnedFinalization(ctx, tx, request, nil)
 }
 
-// LockOwnedFinalizationWithInstanceFence fences Worker placement before acquiring
+// LockOwnedFinalizationWithInstanceFence fences Worker dispatch before acquiring
 // Computer, Instance and member locks for the owned Run graph.
 func LockOwnedFinalizationWithInstanceFence(
 	ctx context.Context,

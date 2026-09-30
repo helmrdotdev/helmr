@@ -79,9 +79,9 @@ func (d *Authority) failPreparationBlockedMembers(ctx context.Context, limit int
 	if err != nil {
 		return errors.Join(append(failures, err)...)
 	}
-	var commands []ReadyComputerCommandCandidate
+	var commands []CommandCandidate
 	for rows.Next() {
-		var p ReadyComputerCommandCandidate
+		var p CommandCandidate
 		if err = rows.Scan(&p.OrgID, &p.CommandID, &p.ExpectedRevision); err != nil {
 			rows.Close()
 			return errors.Join(append(failures, err)...)
@@ -117,7 +117,7 @@ func (d *Authority) failPreparationBlockedRun(ctx context.Context, request run.O
 	}
 	return tx.Commit(ctx)
 }
-func (d *Authority) failPreparationBlockedCommand(ctx context.Context, p ReadyComputerCommandCandidate) error {
+func (d *Authority) failPreparationBlockedCommand(ctx context.Context, p CommandCandidate) error {
 	tx, err := d.begin(ctx)
 	if err != nil {
 		return err

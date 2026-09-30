@@ -6,7 +6,7 @@ import (
 )
 
 func TestPreparationReconcilerSettlesUnstartedMembers(t *testing.T) {
-	f, work, a := commandPlacementFixture(t)
+	f, work, a := commandAssignmentFixture(t)
 	pending := pendingSharedCommand(t, f, work)
 	peer := pendingSharedCommand(t, f, work)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET preparation_attempt_count=8,preparation_instance_id=(SELECT computer_instance_id FROM run_leases WHERE id=$1) WHERE id=(SELECT computer_id FROM run_leases WHERE id=$1)`, work.LeaseID)

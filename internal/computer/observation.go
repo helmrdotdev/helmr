@@ -57,7 +57,7 @@ func lockObservation(ctx context.Context, tx pgx.Tx, ref InstanceRef, receipt bo
 	// The unlocked observation only selects the fence mode; the locked Instance
 	// must still match it before the continuation exception applies.
 	continuation := receipt || observed == "ready"
-	admitting, err := workergroup.LockPlacementSupply(ctx, tx, workergroup.PlacementSupply{GroupID: groupID, RegionID: region, HostID: workerID, Epoch: ref.Host.Epoch, RunArchitecture: string(definition.ArchitectureX8664), Continuation: continuation})
+	admitting, err := workergroup.LockDispatchSupply(ctx, tx, workergroup.DispatchSupply{GroupID: groupID, RegionID: region, HostID: workerID, Epoch: ref.Host.Epoch, RunArchitecture: string(definition.ArchitectureX8664), Continuation: continuation})
 	if err != nil {
 		return observedInstance{}, err
 	}

@@ -7,13 +7,13 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
-func TestRunPlacementLaneLockTransfersBetweenDispatchers(t *testing.T) {
+func TestRunLaneLockTransfersBetweenDispatchers(t *testing.T) {
 	database := dbtest.Open(t)
-	first, err := NewRunPlacementLaneLock(database.Pool)
+	first, err := NewRunLaneLock(database.Pool)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := NewRunPlacementLaneLock(database.Pool)
+	second, err := NewRunLaneLock(database.Pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,13 +54,13 @@ func TestRunPlacementLaneLockTransfersBetweenDispatchers(t *testing.T) {
 	}
 }
 
-func TestRunPlacementLaneLockReleasesAfterConnectionLoss(t *testing.T) {
+func TestRunLaneLockReleasesAfterConnectionLoss(t *testing.T) {
 	database := dbtest.Open(t)
-	first, err := NewRunPlacementLaneLock(database.Pool)
+	first, err := NewRunLaneLock(database.Pool)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := NewRunPlacementLaneLock(database.Pool)
+	second, err := NewRunLaneLock(database.Pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestRunPlacementLaneLockReleasesAfterConnectionLoss(t *testing.T) {
 	if !locked {
 		t.Fatal("first dispatcher did not acquire lane")
 	}
-	store, ok := guard.Discovery().(*RunPlacementStore)
+	store, ok := guard.Discovery().(*RunStore)
 	if !ok {
 		t.Fatal("lane guard did not expose its connection-bound store")
 	}
@@ -86,7 +86,7 @@ func TestRunPlacementLaneLockReleasesAfterConnectionLoss(t *testing.T) {
 		t.Fatal("unlock succeeded after its database connection was terminated")
 	}
 
-	var replacement RunPlacementLaneGuard
+	var replacement RunLaneGuard
 	for range 20 {
 		replacement, locked, err = second.TryLock(t.Context(), 9)
 		if err != nil {

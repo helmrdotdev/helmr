@@ -29,7 +29,7 @@ func TestComputerRestoreCommitsWholeSetAndOneIntent(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				cp, err := authority.CommitComputerRestore(t.Context(), tx, fence)
+				cp, err := authority.CommitRestore(t.Context(), tx, fence)
 				if err != nil {
 					tx.Rollback(t.Context())
 					t.Fatal(err)
@@ -79,7 +79,7 @@ func TestComputerRestoreRollsBackPartialActivation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err = authority.CommitComputerRestore(t.Context(), tx, fence); err == nil {
+			if _, err = authority.CommitRestore(t.Context(), tx, fence); err == nil {
 				tx.Rollback(t.Context())
 				t.Fatal("partial activation accepted")
 			}
@@ -115,7 +115,7 @@ func TestComputerRestoreRechecksGrantsAfterBlockedIntent(t *testing.T) {
 			return
 		}
 		defer tx.Rollback(t.Context())
-		_, err = authority.CommitComputerRestore(t.Context(), tx, fence)
+		_, err = authority.CommitRestore(t.Context(), tx, fence)
 		if err == nil {
 			err = tx.Commit(t.Context())
 		}
@@ -158,7 +158,7 @@ func TestComputerRestoreAcknowledgesEntireSet(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer tx.Rollback(t.Context())
-			cp, err := authority.CommitComputerRestore(t.Context(), tx, fence)
+			cp, err := authority.CommitRestore(t.Context(), tx, fence)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -175,7 +175,7 @@ func TestComputerRestoreAcknowledgesEntireSet(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				i, err := dispatch.AcknowledgeComputerRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants)
+				i, err := dispatch.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants)
 				if err != nil {
 					tx.Rollback(t.Context())
 					t.Fatal(err)
@@ -227,7 +227,7 @@ func TestComputerRestoreAcknowledgesEntireSet(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			replayed, err := dispatch.AcknowledgeComputerRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants)
+			replayed, err := dispatch.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants)
 			if err != nil {
 				tx.Rollback(t.Context())
 				t.Fatal(err)
@@ -242,7 +242,7 @@ func TestComputerRestoreAcknowledgesEntireSet(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err = authority.CommitComputerRestore(t.Context(), tx, fence); err != nil {
+			if _, err = authority.CommitRestore(t.Context(), tx, fence); err != nil {
 				tx.Rollback(t.Context())
 				t.Fatal(err)
 			}
@@ -254,16 +254,16 @@ func TestComputerRestoreAcknowledgesEntireSet(t *testing.T) {
 	}
 }
 
-func installedRestoreGrants(t *testing.T, f runtest.Fixture, fence computer.InstanceRef) []dispatch.ComputerRestoreGrant {
+func installedRestoreGrants(t *testing.T, f runtest.Fixture, fence computer.InstanceRef) []dispatch.RestoreGrant {
 	t.Helper()
 	rows, err := f.Pool.Query(t.Context(), `SELECT run_id,id,lease_sequence FROM run_leases WHERE computer_instance_id=$1 ORDER BY run_id`, fence.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
-	var grants []dispatch.ComputerRestoreGrant
+	var grants []dispatch.RestoreGrant
 	for rows.Next() {
-		var g dispatch.ComputerRestoreGrant
+		var g dispatch.RestoreGrant
 		if err = rows.Scan(&g.RunID, &g.LeaseID, &g.LeaseSequence); err != nil {
 			t.Fatal(err)
 		}
@@ -284,7 +284,7 @@ func TestComputerRestoreAcknowledgementRejectsPartialAuthority(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer tx.Rollback(t.Context())
-			cp, err := authority.CommitComputerRestore(t.Context(), tx, fence)
+			cp, err := authority.CommitRestore(t.Context(), tx, fence)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -324,7 +324,7 @@ func TestComputerRestoreAcknowledgementRejectsPartialAuthority(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = dispatch.AcknowledgeComputerRestore(t.Context(), tx, fence, checkpoint, generation, grants)
+			_, err = dispatch.AcknowledgeRestore(t.Context(), tx, fence, checkpoint, generation, grants)
 			tx.Rollback(t.Context())
 			if err == nil {
 				t.Fatal("invalid activation accepted")
@@ -367,7 +367,7 @@ func TestComputerRestoreAcknowledgementActorTurn(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer tx.Rollback(t.Context())
-			cp, err := authority.CommitComputerRestore(t.Context(), tx, fence)
+			cp, err := authority.CommitRestore(t.Context(), tx, fence)
 			if state == "cancel before grant" {
 				if err == nil {
 					t.Fatal("cancelled Session received activation permission")
@@ -399,7 +399,7 @@ func TestComputerRestoreAcknowledgementActorTurn(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer tx.Rollback(t.Context())
-			_, err = dispatch.AcknowledgeComputerRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants)
+			_, err = dispatch.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants)
 			if state != "rebind" {
 				if err == nil {
 					t.Fatal("stopped Actor activated")
@@ -432,7 +432,7 @@ func TestComputerRestoreAcknowledgementRechecksActiveBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	cp, err := authority.CommitComputerRestore(t.Context(), tx, fence)
+	cp, err := authority.CommitRestore(t.Context(), tx, fence)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -458,7 +458,7 @@ func TestComputerRestoreAcknowledgementRechecksActiveBudget(t *testing.T) {
 			return
 		}
 		defer tx.Rollback(t.Context())
-		_, err = dispatch.AcknowledgeComputerRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants)
+		_, err = dispatch.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants)
 		if err == nil {
 			err = tx.Commit(t.Context())
 		}
@@ -548,7 +548,7 @@ func TestComputerRestoreReconciliationPreparationDeadline(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer tx.Rollback(t.Context())
-				cp, err := authority.CommitComputerRestore(t.Context(), tx, fence)
+				cp, err := authority.CommitRestore(t.Context(), tx, fence)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -556,7 +556,7 @@ func TestComputerRestoreReconciliationPreparationDeadline(t *testing.T) {
 				if err = tx.QueryRow(t.Context(), `SELECT writer_generation FROM computer_instances WHERE id=$1`, fence.ID).Scan(&generation); err != nil {
 					t.Fatal(err)
 				}
-				if _, err = dispatch.AcknowledgeComputerRestore(t.Context(), tx, fence, cp.ID, generation, nil); err != nil {
+				if _, err = dispatch.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, generation, nil); err != nil {
 					t.Fatal(err)
 				}
 				if err = tx.Commit(t.Context()); err != nil {
@@ -630,7 +630,7 @@ func TestComputerRestoreReconciliationExpiresCommittedIntent(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer tx.Rollback(t.Context())
-			if _, err = authority.CommitComputerRestore(t.Context(), tx, fence); err == nil {
+			if _, err = authority.CommitRestore(t.Context(), tx, fence); err == nil {
 				t.Fatal("expired destination reactivated")
 			}
 		})
@@ -677,7 +677,7 @@ func TestComputerRestoreAfterWakeDuringCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	cp, err := authority.CommitComputerRestore(t.Context(), tx, fence)
+	cp, err := authority.CommitRestore(t.Context(), tx, fence)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -690,7 +690,7 @@ func TestComputerRestoreAfterWakeDuringCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	if _, err := dispatch.AcknowledgeComputerRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants); err != nil {
+	if _, err := dispatch.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(t.Context()); err != nil {

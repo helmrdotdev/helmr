@@ -28,12 +28,12 @@ func (d invokedCommandDiscovery) ListRecoverableComputerCommandCandidates(
 }
 
 // Run starts the Computer Command lane and joins every loop once cancelled.
-func TestPlacementReconcilerRunJoinsLoopsOnCancellation(t *testing.T) {
+func TestReconcilerRunJoinsLoopsOnCancellation(t *testing.T) {
 	discovery := invokedCommandDiscovery{invoked: make(chan struct{}, 1)}
-	reconciler := PlacementReconciler{
+	reconciler := Reconciler{
 		computerCommandDiscovery: discovery,
 		computerCommandAuthority: &computerCommandRecoveryAuthority{},
-		computerCommandPolicy: placementLoopPolicy{
+		computerCommandPolicy: loopPolicy{
 			interval: time.Hour, failureBackoff: time.Hour, timeout: time.Second, limit: 1,
 		},
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),

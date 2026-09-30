@@ -25,7 +25,7 @@ type RecoveryCandidate struct {
 // Command whose Secret resolutions were revoked, records a lost result when
 // its Instance was lost, and reconciles the process scope only on physical
 // exclusion evidence (a reclaimed Instance); a member cannot save or close
-// its Instance. A candidate whose Command or placement changed returns
+// its Instance. A candidate whose Command or assignment changed returns
 // ErrChanged.
 func Recover(ctx context.Context, txb db.TxBeginner, candidate RecoveryCandidate) error {
 	err := changed(db.RunTx(ctx, txb, func(tx pgx.Tx) error {

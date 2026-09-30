@@ -24,27 +24,27 @@ func (f supplyFixture) begin(t *testing.T) pgx.Tx {
 	return tx
 }
 
-func (f supplyFixture) placementSupply(hostID uuid.UUID) PlacementSupply {
-	return PlacementSupply{
+func (f supplyFixture) dispatchSupply(hostID uuid.UUID) DispatchSupply {
+	return DispatchSupply{
 		GroupID: f.group.ID, RegionID: fixtureRegionID,
 		HostID: pgvalue.UUID(hostID), Epoch: 1, RunArchitecture: "x86_64",
 	}
 }
 
-func TestPlacementSupplyCoordinatesAtHostGranularity(t *testing.T) {
+func TestDispatchSupplyCoordinatesAtHostGranularity(t *testing.T) {
 	f := newSupplyFixture(t)
 	pool := f.activePool(t, "default")
 	firstHost := f.activeHost(t, pool, "host-1")
 	secondHost := f.activeHost(t, pool, "host-2")
 
 	first := f.begin(t)
-	if _, err := LockPlacementSupply(t.Context(), first, f.placementSupply(firstHost)); err != nil {
+	if _, err := LockDispatchSupply(t.Context(), first, f.dispatchSupply(firstHost)); err != nil {
 		t.Fatal(err)
 	}
 	second := f.begin(t)
 	secondCtx, cancelSecond := context.WithTimeout(t.Context(), time.Second)
 	defer cancelSecond()
-	if _, err := LockPlacementSupply(secondCtx, second, f.placementSupply(secondHost)); err != nil {
+	if _, err := LockDispatchSupply(secondCtx, second, f.dispatchSupply(secondHost)); err != nil {
 		t.Fatalf("independent host supply blocked: %v", err)
 	}
 
@@ -53,11 +53,11 @@ func TestPlacementSupplyCoordinatesAtHostGranularity(t *testing.T) {
 	transitioned := make(chan error, 1)
 	go func() {
 		_, err := f.pool.Exec(transitionCtx, `
-/* placement supply group transition */
+/* dispatch supply group transition */
 UPDATE worker_groups SET status = 'paused' WHERE id = $1`, f.group.ID)
 		transitioned <- err
 	}()
-	waitForBlockedQuery(t, f.pool, "placement supply group transition", 1)
+	waitForBlockedQuery(t, f.pool, "dispatch supply group transition", 1)
 
 	if err := second.Commit(t.Context()); err != nil {
 		t.Fatal(err)
@@ -69,8 +69,8 @@ UPDATE worker_groups SET status = 'paused' WHERE id = $1`, f.group.ID)
 		t.Fatal(err)
 	}
 
-	if _, err := LockPlacementSupply(t.Context(), f.begin(t), f.placementSupply(firstHost)); err == nil {
-		t.Fatal("paused worker group remained eligible for placement")
+	if _, err := LockDispatchSupply(t.Context(), f.begin(t), f.dispatchSupply(firstHost)); err == nil {
+		t.Fatal("paused worker group remained eligible for dispatch")
 	}
 }
 
@@ -80,7 +80,7 @@ func TestHostRuntimeAdmissionRejectsVMPausedHost(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET vm_paused_reason = 'runtime_health' WHERE id = $1`, hostID)
 
 	tx := f.begin(t)
-	if _, err := LockPlacementSupply(t.Context(), tx, f.placementSupply(hostID)); err != nil {
+	if _, err := LockDispatchSupply(t.Context(), tx, f.dispatchSupply(hostID)); err != nil {
 		t.Fatalf("Run supply fence rejected a VM-only pause: %v", err)
 	}
 	if err := CheckHostRuntimeAdmission(t.Context(), tx, pgvalue.UUID(hostID), 1); err == nil {
@@ -88,7 +88,7 @@ func TestHostRuntimeAdmissionRejectsVMPausedHost(t *testing.T) {
 	}
 }
 
-func TestPlacementSupplyRequiresRunReadyHost(t *testing.T) {
+func TestDispatchSupplyRequiresRunReadyHost(t *testing.T) {
 	for _, test := range []struct {
 		name, sql    string
 		continuation bool
@@ -114,9 +114,9 @@ func TestPlacementSupplyRequiresRunReadyHost(t *testing.T) {
 			if test.sql != "" {
 				dbtest.MustExec(t, t.Context(), f.pool, test.sql, hostID)
 			}
-			supply := f.placementSupply(hostID)
+			supply := f.dispatchSupply(hostID)
 			supply.Continuation = test.continuation
-			_, err := LockPlacementSupply(t.Context(), f.begin(t), supply)
+			_, err := LockDispatchSupply(t.Context(), f.begin(t), supply)
 			if test.eligible && err != nil {
 				t.Fatalf("eligible host rejected: %v", err)
 			}

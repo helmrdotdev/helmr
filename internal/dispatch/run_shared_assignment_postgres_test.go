@@ -10,7 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 )
 
-func queuedSharedRun(t *testing.T, f runtest.Fixture, work runtest.RunLease) ReadyRunCandidate {
+func queuedSharedRun(t *testing.T, f runtest.Fixture, work runtest.RunLease) RunCandidate {
 	t.Helper()
 	id := uuid.NewV7()
 	tx, err := f.Pool.Begin(t.Context())
@@ -25,23 +25,23 @@ func queuedSharedRun(t *testing.T, f runtest.Fixture, work runtest.RunLease) Rea
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	return ReadyRunCandidate{OrgID: pgvalue.UUID(f.OrgID), RunID: pgvalue.UUID(id), ExpectedRunRevision: 1}
+	return RunCandidate{OrgID: pgvalue.UUID(f.OrgID), RunID: pgvalue.UUID(id), ExpectedRunRevision: 1}
 }
 func TestRunsAndCommandsSharePhysicalWriter(t *testing.T) {
-	f, work, a := commandPlacementFixture(t)
+	f, work, a := commandAssignmentFixture(t)
 	first, second := queuedSharedRun(t, f, work), queuedSharedRun(t, f, work)
 	command := pendingSharedCommand(t, f, work)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET max_vm_slots=1 WHERE id=$1`, f.WorkerID)
-	for _, candidate := range []ReadyRunCandidate{first, second} {
-		p, err := a.PlaceReadyRun(t.Context(), candidate)
+	for _, candidate := range []RunCandidate{first, second} {
+		p, err := a.AssignRun(t.Context(), candidate)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !p.LeaseCreated || p.Lease.WriterGeneration != 2 {
-			t.Fatalf("placement=%+v", p)
+			t.Fatalf("assignment=%+v", p)
 		}
 	}
-	if p, err := a.PlaceComputerCommand(t.Context(), command); err != nil || !p.ProcessBound {
+	if p, err := a.AssignCommand(t.Context(), command); err != nil || !p.ProcessBound {
 		t.Fatalf("Command=%+v err=%v", p, err)
 	}
 	var count int
@@ -53,15 +53,15 @@ func TestRunsAndCommandsSharePhysicalWriter(t *testing.T) {
 	if count != 1 || generation != 2 || membership != 3 {
 		t.Fatalf("instances=%d generation=%d membership=%d", count, generation, membership)
 	}
-	if _, err := a.PlaceReadyRun(t.Context(), first); !errors.Is(err, ErrCandidateChanged) {
+	if _, err := a.AssignRun(t.Context(), first); !errors.Is(err, ErrCandidateChanged) {
 		t.Fatalf("duplicate grant=%v", err)
 	}
 }
 func TestFreshRunQueueLimitRetainsSharedInstance(t *testing.T) {
-	f, work, a := commandPlacementFixture(t)
+	f, work, a := commandAssignmentFixture(t)
 	candidate := queuedSharedRun(t, f, work)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET queue_concurrency_limit=1 WHERE id=$1`, candidate.RunID)
-	if _, err := a.PlaceReadyRun(t.Context(), candidate); !errors.Is(err, ErrCapacityUnavailable) {
+	if _, err := a.AssignRun(t.Context(), candidate); !errors.Is(err, ErrCapacityUnavailable) {
 		t.Fatalf("queue limit=%v", err)
 	}
 	var retained bool
@@ -70,8 +70,8 @@ func TestFreshRunQueueLimitRetainsSharedInstance(t *testing.T) {
 	}
 	// Another admission can use the same resident writer after capacity is available.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET queue_concurrency_limit=2 WHERE id=$1`, candidate.RunID)
-	placed, err := a.PlaceReadyRun(t.Context(), candidate)
-	if err != nil || !placed.LeaseCreated {
-		t.Fatalf("admission after capacity available=%+v %v", placed, err)
+	assigned, err := a.AssignRun(t.Context(), candidate)
+	if err != nil || !assigned.LeaseCreated {
+		t.Fatalf("admission after capacity available=%+v %v", assigned, err)
 	}
 }

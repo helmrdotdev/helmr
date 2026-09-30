@@ -391,6 +391,169 @@ func (q *Queries) GetWorkerHostStatus(ctx context.Context, arg GetWorkerHostStat
 	return i, err
 }
 
+const listQueuedRunDispatchCandidates = `-- name: ListQueuedRunDispatchCandidates :many
+WITH input_scopes AS (
+    SELECT input_orgs.position::bigint AS scope_ordinal,
+           input_orgs.org_id,
+           input_environments.environment_id,
+           input_concurrency_keys.concurrency_key,
+           input_queues.queue_name,
+           input_candidate_limits.candidate_limit,
+           input_after_set.after_set,
+           input_after_scores.queue_score_at AS after_queue_score_at,
+           input_after_run_ids.run_id AS after_run_id
+      FROM unnest($1::uuid[])
+           WITH ORDINALITY AS input_orgs(org_id, position)
+      JOIN unnest($2::uuid[])
+           WITH ORDINALITY AS input_environments(environment_id, position)
+        ON input_environments.position = input_orgs.position
+      JOIN unnest($3::text[])
+           WITH ORDINALITY AS input_concurrency_keys(concurrency_key, position)
+        ON input_concurrency_keys.position = input_orgs.position
+      JOIN unnest($4::text[])
+           WITH ORDINALITY AS input_queues(queue_name, position)
+        ON input_queues.position = input_orgs.position
+      JOIN unnest($5::integer[])
+           WITH ORDINALITY AS input_candidate_limits(candidate_limit, position)
+        ON input_candidate_limits.position = input_orgs.position
+      JOIN unnest($6::boolean[])
+           WITH ORDINALITY AS input_after_set(after_set, position)
+        ON input_after_set.position = input_orgs.position
+      JOIN unnest($7::timestamptz[])
+           WITH ORDINALITY AS input_after_scores(queue_score_at, position)
+        ON input_after_scores.position = input_orgs.position
+      JOIN unnest($8::uuid[])
+           WITH ORDINALITY AS input_after_run_ids(run_id, position)
+        ON input_after_run_ids.position = input_orgs.position
+     WHERE cardinality($1::uuid[]) > 0
+       AND cardinality($2::uuid[]) = cardinality($1::uuid[])
+       AND cardinality($3::text[]) = cardinality($1::uuid[])
+       AND cardinality($4::text[]) = cardinality($1::uuid[])
+       AND cardinality($5::integer[]) = cardinality($1::uuid[])
+       AND NOT EXISTS (
+           SELECT 1 FROM unnest($5::integer[]) AS candidate_limit
+            WHERE candidate_limit <= 0
+       )
+       AND cardinality($6::boolean[]) = cardinality($1::uuid[])
+       AND cardinality($7::timestamptz[]) = cardinality($1::uuid[])
+       AND cardinality($8::uuid[]) = cardinality($1::uuid[])
+)
+SELECT input_scopes.scope_ordinal,
+       candidates.org_id,
+       candidates.run_id,
+       candidates.revision,
+       candidates.queue_score_at
+  FROM input_scopes
+ CROSS JOIN LATERAL (
+      SELECT runs.org_id,
+             runs.id AS run_id,
+             runs.revision,
+             runs.queue_score_at
+        FROM runs
+        JOIN computers ON computers.id=runs.computer_id AND computers.environment_id=runs.environment_id
+       WHERE runs.org_id = input_scopes.org_id
+         AND runs.environment_id = input_scopes.environment_id
+         AND coalesce(runs.concurrency_key, '') = input_scopes.concurrency_key
+         AND runs.queue_name = input_scopes.queue_name
+         AND runs.status = 'queued'
+         AND runs.current_run_lease_id IS NULL
+
+       AND computers.status='active' AND computers.desired_state='active'
+       AND computers.deleted_at IS NULL AND computers.recovery_failure IS NULL AND computers.preparation_failure IS NULL
+       AND computers.dirty_state NOT IN ('capture_failed','dirty_state_lost')
+       AND runs.active_elapsed_ms < runs.max_active_duration_ms
+       AND EXISTS(SELECT 1 FROM run_attempts a WHERE a.run_id=runs.id
+         AND a.number=runs.current_attempt_number AND a.terminal_at IS NULL)
+       AND (runs.entrypoint_kind='task' OR EXISTS(SELECT 1 FROM sessions a
+         WHERE a.id=runs.session_id AND a.current_run_id=runs.id AND a.computer_id=runs.computer_id
+           AND a.status IN ('open','closing') AND a.cancel_requested_at IS NULL
+           AND a.dispatch_hold_id IS NULL))
+       AND (runs.parent_owns_lifecycle IS NOT TRUE OR EXISTS(SELECT 1 FROM runs parent
+         WHERE parent.id=runs.parent_run_id AND parent.status IN ('queued','running','waiting','retry_delayed')))
+       AND (
+         NOT EXISTS(SELECT 1 FROM run_waits w WHERE w.run_id=runs.id
+           AND w.attempt_number=runs.current_attempt_number
+           AND w.suspension_status IN ('hot','checkpointing','parked','resume_pending','resuming'))
+         OR EXISTS(SELECT 1 FROM run_waits w
+           JOIN computer_checkpoint_runs m ON m.checkpoint_id=w.suspend_checkpoint_id AND m.run_wait_id=w.id
+             AND m.run_id=runs.id AND m.attempt_number=runs.current_attempt_number
+           JOIN computer_checkpoints c ON c.id=m.checkpoint_id AND c.computer_id=runs.computer_id
+           JOIN computer_disk_versions d ON d.id=c.private_computer_disk_version_id AND d.status='private'
+           JOIN run_leases l ON l.id=m.source_run_lease_id AND l.status='checkpointed'
+           WHERE w.run_id=runs.id AND w.suspension_status='resume_pending'
+             AND c.status='ready' AND c.resume_committed_at IS NULL
+             AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp())
+             AND (runs.session_id IS NULL OR EXISTS(SELECT 1 FROM sessions a WHERE a.id=runs.session_id
+               AND m.actor_speculative_input_sequence BETWEEN a.committed_input_sequence AND a.next_input_sequence-1)))
+       )
+         AND (runs.next_instance_preparation_at IS NULL
+              OR runs.next_instance_preparation_at <= transaction_timestamp())
+         AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+         AND (
+             NOT input_scopes.after_set
+             OR (runs.queue_score_at, runs.id)
+                > (input_scopes.after_queue_score_at, input_scopes.after_run_id)
+         )
+       ORDER BY runs.queue_score_at, runs.id
+       LIMIT input_scopes.candidate_limit
+  ) AS candidates
+ ORDER BY input_scopes.scope_ordinal, candidates.queue_score_at, candidates.run_id
+`
+
+type ListQueuedRunDispatchCandidatesParams struct {
+	OrgIds            []pgtype.UUID        `json:"org_ids"`
+	EnvironmentIds    []pgtype.UUID        `json:"environment_ids"`
+	ConcurrencyKeys   []string             `json:"concurrency_keys"`
+	QueueNames        []string             `json:"queue_names"`
+	CandidateLimits   []int32              `json:"candidate_limits"`
+	AfterSet          []bool               `json:"after_set"`
+	AfterQueueScoreAt []pgtype.Timestamptz `json:"after_queue_score_at"`
+	AfterRunIds       []pgtype.UUID        `json:"after_run_ids"`
+}
+
+type ListQueuedRunDispatchCandidatesRow struct {
+	ScopeOrdinal int64              `json:"scope_ordinal"`
+	OrgID        pgtype.UUID        `json:"org_id"`
+	RunID        pgtype.UUID        `json:"run_id"`
+	Revision     int64              `json:"revision"`
+	QueueScoreAt pgtype.Timestamptz `json:"queue_score_at"`
+}
+
+func (q *Queries) ListQueuedRunDispatchCandidates(ctx context.Context, arg ListQueuedRunDispatchCandidatesParams) ([]ListQueuedRunDispatchCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, listQueuedRunDispatchCandidates,
+		arg.OrgIds,
+		arg.EnvironmentIds,
+		arg.ConcurrencyKeys,
+		arg.QueueNames,
+		arg.CandidateLimits,
+		arg.AfterSet,
+		arg.AfterQueueScoreAt,
+		arg.AfterRunIds,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListQueuedRunDispatchCandidatesRow
+	for rows.Next() {
+		var i ListQueuedRunDispatchCandidatesRow
+		if err := rows.Scan(
+			&i.ScopeOrdinal,
+			&i.OrgID,
+			&i.RunID,
+			&i.Revision,
+			&i.QueueScoreAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listQueuedRunEligibleScopes = `-- name: ListQueuedRunEligibleScopes :many
 WITH candidate_scopes AS (
     SELECT runs.org_id, runs.project_id, runs.environment_id, computers.region_id,
@@ -502,169 +665,6 @@ func (q *Queries) ListQueuedRunEligibleScopes(ctx context.Context, arg ListQueue
 			&i.ConcurrencyKey,
 			&i.QueueName,
 			&i.SortKey,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listQueuedRunPlacementCandidates = `-- name: ListQueuedRunPlacementCandidates :many
-WITH input_scopes AS (
-    SELECT input_orgs.position::bigint AS scope_ordinal,
-           input_orgs.org_id,
-           input_environments.environment_id,
-           input_concurrency_keys.concurrency_key,
-           input_queues.queue_name,
-           input_candidate_limits.candidate_limit,
-           input_after_set.after_set,
-           input_after_scores.queue_score_at AS after_queue_score_at,
-           input_after_run_ids.run_id AS after_run_id
-      FROM unnest($1::uuid[])
-           WITH ORDINALITY AS input_orgs(org_id, position)
-      JOIN unnest($2::uuid[])
-           WITH ORDINALITY AS input_environments(environment_id, position)
-        ON input_environments.position = input_orgs.position
-      JOIN unnest($3::text[])
-           WITH ORDINALITY AS input_concurrency_keys(concurrency_key, position)
-        ON input_concurrency_keys.position = input_orgs.position
-      JOIN unnest($4::text[])
-           WITH ORDINALITY AS input_queues(queue_name, position)
-        ON input_queues.position = input_orgs.position
-      JOIN unnest($5::integer[])
-           WITH ORDINALITY AS input_candidate_limits(candidate_limit, position)
-        ON input_candidate_limits.position = input_orgs.position
-      JOIN unnest($6::boolean[])
-           WITH ORDINALITY AS input_after_set(after_set, position)
-        ON input_after_set.position = input_orgs.position
-      JOIN unnest($7::timestamptz[])
-           WITH ORDINALITY AS input_after_scores(queue_score_at, position)
-        ON input_after_scores.position = input_orgs.position
-      JOIN unnest($8::uuid[])
-           WITH ORDINALITY AS input_after_run_ids(run_id, position)
-        ON input_after_run_ids.position = input_orgs.position
-     WHERE cardinality($1::uuid[]) > 0
-       AND cardinality($2::uuid[]) = cardinality($1::uuid[])
-       AND cardinality($3::text[]) = cardinality($1::uuid[])
-       AND cardinality($4::text[]) = cardinality($1::uuid[])
-       AND cardinality($5::integer[]) = cardinality($1::uuid[])
-       AND NOT EXISTS (
-           SELECT 1 FROM unnest($5::integer[]) AS candidate_limit
-            WHERE candidate_limit <= 0
-       )
-       AND cardinality($6::boolean[]) = cardinality($1::uuid[])
-       AND cardinality($7::timestamptz[]) = cardinality($1::uuid[])
-       AND cardinality($8::uuid[]) = cardinality($1::uuid[])
-)
-SELECT input_scopes.scope_ordinal,
-       candidates.org_id,
-       candidates.run_id,
-       candidates.revision,
-       candidates.queue_score_at
-  FROM input_scopes
- CROSS JOIN LATERAL (
-      SELECT runs.org_id,
-             runs.id AS run_id,
-             runs.revision,
-             runs.queue_score_at
-        FROM runs
-        JOIN computers ON computers.id=runs.computer_id AND computers.environment_id=runs.environment_id
-       WHERE runs.org_id = input_scopes.org_id
-         AND runs.environment_id = input_scopes.environment_id
-         AND coalesce(runs.concurrency_key, '') = input_scopes.concurrency_key
-         AND runs.queue_name = input_scopes.queue_name
-         AND runs.status = 'queued'
-         AND runs.current_run_lease_id IS NULL
-
-       AND computers.status='active' AND computers.desired_state='active'
-       AND computers.deleted_at IS NULL AND computers.recovery_failure IS NULL AND computers.preparation_failure IS NULL
-       AND computers.dirty_state NOT IN ('capture_failed','dirty_state_lost')
-       AND runs.active_elapsed_ms < runs.max_active_duration_ms
-       AND EXISTS(SELECT 1 FROM run_attempts a WHERE a.run_id=runs.id
-         AND a.number=runs.current_attempt_number AND a.terminal_at IS NULL)
-       AND (runs.entrypoint_kind='task' OR EXISTS(SELECT 1 FROM sessions a
-         WHERE a.id=runs.session_id AND a.current_run_id=runs.id AND a.computer_id=runs.computer_id
-           AND a.status IN ('open','closing') AND a.cancel_requested_at IS NULL
-           AND a.dispatch_hold_id IS NULL))
-       AND (runs.parent_owns_lifecycle IS NOT TRUE OR EXISTS(SELECT 1 FROM runs parent
-         WHERE parent.id=runs.parent_run_id AND parent.status IN ('queued','running','waiting','retry_delayed')))
-       AND (
-         NOT EXISTS(SELECT 1 FROM run_waits w WHERE w.run_id=runs.id
-           AND w.attempt_number=runs.current_attempt_number
-           AND w.suspension_status IN ('hot','checkpointing','parked','resume_pending','resuming'))
-         OR EXISTS(SELECT 1 FROM run_waits w
-           JOIN computer_checkpoint_runs m ON m.checkpoint_id=w.suspend_checkpoint_id AND m.run_wait_id=w.id
-             AND m.run_id=runs.id AND m.attempt_number=runs.current_attempt_number
-           JOIN computer_checkpoints c ON c.id=m.checkpoint_id AND c.computer_id=runs.computer_id
-           JOIN computer_disk_versions d ON d.id=c.private_computer_disk_version_id AND d.status='private'
-           JOIN run_leases l ON l.id=m.source_run_lease_id AND l.status='checkpointed'
-           WHERE w.run_id=runs.id AND w.suspension_status='resume_pending'
-             AND c.status='ready' AND c.resume_committed_at IS NULL
-             AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp())
-             AND (runs.session_id IS NULL OR EXISTS(SELECT 1 FROM sessions a WHERE a.id=runs.session_id
-               AND m.actor_speculative_input_sequence BETWEEN a.committed_input_sequence AND a.next_input_sequence-1)))
-       )
-         AND (runs.next_instance_preparation_at IS NULL
-              OR runs.next_instance_preparation_at <= transaction_timestamp())
-         AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
-         AND (
-             NOT input_scopes.after_set
-             OR (runs.queue_score_at, runs.id)
-                > (input_scopes.after_queue_score_at, input_scopes.after_run_id)
-         )
-       ORDER BY runs.queue_score_at, runs.id
-       LIMIT input_scopes.candidate_limit
-  ) AS candidates
- ORDER BY input_scopes.scope_ordinal, candidates.queue_score_at, candidates.run_id
-`
-
-type ListQueuedRunPlacementCandidatesParams struct {
-	OrgIds            []pgtype.UUID        `json:"org_ids"`
-	EnvironmentIds    []pgtype.UUID        `json:"environment_ids"`
-	ConcurrencyKeys   []string             `json:"concurrency_keys"`
-	QueueNames        []string             `json:"queue_names"`
-	CandidateLimits   []int32              `json:"candidate_limits"`
-	AfterSet          []bool               `json:"after_set"`
-	AfterQueueScoreAt []pgtype.Timestamptz `json:"after_queue_score_at"`
-	AfterRunIds       []pgtype.UUID        `json:"after_run_ids"`
-}
-
-type ListQueuedRunPlacementCandidatesRow struct {
-	ScopeOrdinal int64              `json:"scope_ordinal"`
-	OrgID        pgtype.UUID        `json:"org_id"`
-	RunID        pgtype.UUID        `json:"run_id"`
-	Revision     int64              `json:"revision"`
-	QueueScoreAt pgtype.Timestamptz `json:"queue_score_at"`
-}
-
-func (q *Queries) ListQueuedRunPlacementCandidates(ctx context.Context, arg ListQueuedRunPlacementCandidatesParams) ([]ListQueuedRunPlacementCandidatesRow, error) {
-	rows, err := q.db.Query(ctx, listQueuedRunPlacementCandidates,
-		arg.OrgIds,
-		arg.EnvironmentIds,
-		arg.ConcurrencyKeys,
-		arg.QueueNames,
-		arg.CandidateLimits,
-		arg.AfterSet,
-		arg.AfterQueueScoreAt,
-		arg.AfterRunIds,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListQueuedRunPlacementCandidatesRow
-	for rows.Next() {
-		var i ListQueuedRunPlacementCandidatesRow
-		if err := rows.Scan(
-			&i.ScopeOrdinal,
-			&i.OrgID,
-			&i.RunID,
-			&i.Revision,
-			&i.QueueScoreAt,
 		); err != nil {
 			return nil, err
 		}

@@ -100,7 +100,7 @@ func lockPreparationFence(ctx context.Context, tx pgx.Tx, principal workergroup.
 	if err != nil {
 		return preparationFence{}, err
 	}
-	admitting, err := workergroup.LockPlacementSupply(ctx, tx, workergroup.PlacementSupply{GroupID: groupID, RegionID: region, HostID: workerID, Epoch: principal.Epoch, RunArchitecture: string(definition.ArchitectureX8664)})
+	admitting, err := workergroup.LockDispatchSupply(ctx, tx, workergroup.DispatchSupply{GroupID: groupID, RegionID: region, HostID: workerID, Epoch: principal.Epoch, RunArchitecture: string(definition.ArchitectureX8664)})
 	if err != nil {
 		return preparationFence{}, err
 	}

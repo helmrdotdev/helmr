@@ -31,7 +31,7 @@ func (s *Server) workerAcknowledgeComputerRestore(w http.ResponseWriter, r *http
 		writeError(w, badRequest(errors.New("restore versions and explicit grants are required")))
 		return
 	}
-	grants := make([]dispatch.ComputerRestoreGrant, 0, len(request.Grants))
+	grants := make([]dispatch.RestoreGrant, 0, len(request.Grants))
 	for _, g := range request.Grants {
 		run, err := parseCanonicalUUID("run_id", g.RunID)
 		if err != nil {
@@ -47,11 +47,11 @@ func (s *Server) workerAcknowledgeComputerRestore(w http.ResponseWriter, r *http
 			writeError(w, badRequest(errors.New("lease sequence must be positive")))
 			return
 		}
-		grants = append(grants, dispatch.ComputerRestoreGrant{RunID: pgvalue.UUID(run), LeaseID: pgvalue.UUID(lease), LeaseSequence: g.Lease.LeaseSequence})
+		grants = append(grants, dispatch.RestoreGrant{RunID: pgvalue.UUID(run), LeaseID: pgvalue.UUID(lease), LeaseSequence: g.Lease.LeaseSequence})
 	}
 	worker := workerFromContext(r.Context())
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		_, err := dispatch.AcknowledgeComputerRestore(r.Context(), work.tx, computer.InstanceRef{Host: computer.Host{GroupID: worker.GroupID, HostID: worker.HostID, Epoch: worker.Epoch}, ID: instance, DesiredVersion: request.DesiredVersion}, pgvalue.UUID(checkpoint), request.WriterGeneration, grants)
+		_, err := dispatch.AcknowledgeRestore(r.Context(), work.tx, computer.InstanceRef{Host: computer.Host{GroupID: worker.GroupID, HostID: worker.HostID, Epoch: worker.Epoch}, ID: instance, DesiredVersion: request.DesiredVersion}, pgvalue.UUID(checkpoint), request.WriterGeneration, grants)
 		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
