@@ -123,7 +123,7 @@ func (c *Connector) configForMaterializeRequest(request vm.MaterializeRequest) (
 
 func (c *Connector) configForResources(resources compute.ResourceVector, operation string) (Config, error) {
 	cfg := c.cfg
-	if err := resources.Validate(true); err != nil {
+	if err := resources.Validate(); err != nil {
 		return Config{}, fmt.Errorf("%s resources: %w", operation, err)
 	}
 	if resources.MemoryMiB > 0 {

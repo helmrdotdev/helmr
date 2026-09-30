@@ -1,25 +1,28 @@
 package compute
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-func TestResourceVectorFits(t *testing.T) {
-	capacity := ResourceVector{
-		MilliCPU:  4000,
-		MemoryMiB: 8192,
-		DiskMiB:   32768,
-		Slots:     4,
+func TestResourceVectorValidate(t *testing.T) {
+	if err := (ResourceVector{MilliCPU: 1000, MemoryMiB: 512, Slots: 1}).Validate(); err != nil {
+		t.Fatalf("zero disk request rejected: %v", err)
 	}
-
-	if !capacity.Fits(ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 1024, Slots: 2}) {
-		t.Fatal("expected capacity to satisfy smaller request")
-	}
-	if capacity.Fits(ResourceVector{MilliCPU: 5000, MemoryMiB: 4096, DiskMiB: 1024, Slots: 1}) {
-		t.Fatal("expected CPU overcommit to fail")
-	}
-	if capacity.Fits(ResourceVector{MilliCPU: 1000, MemoryMiB: 16384, DiskMiB: 1024, Slots: 1}) {
-		t.Fatal("expected memory overcommit to fail")
-	}
-	if capacity.Fits(ResourceVector{MilliCPU: 1000, MemoryMiB: 4096, DiskMiB: 1024, Slots: 5}) {
-		t.Fatal("expected slot overcommit to fail")
+	for name, tc := range map[string]struct {
+		resources ResourceVector
+		want      string
+	}{
+		"zero cpu":      {ResourceVector{MemoryMiB: 512, Slots: 1}, "milli_cpu must be positive"},
+		"zero memory":   {ResourceVector{MilliCPU: 1000, Slots: 1}, "memory_mib must be positive"},
+		"negative disk": {ResourceVector{MilliCPU: 1000, MemoryMiB: 512, DiskMiB: -1, Slots: 1}, "disk_mib must not be negative"},
+		"zero slots":    {ResourceVector{MilliCPU: 1000, MemoryMiB: 512}, "slots must be positive"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := tc.resources.Validate()
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate() error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }

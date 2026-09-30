@@ -31,10 +31,3 @@ func (c WorkerDiskCapacity) Validate() error {
 	}
 	return nil
 }
-
-func (c WorkerDiskCapacity) FitsVMs(count int64) bool {
-	if count <= 0 || c.Validate() != nil {
-		return false
-	}
-	return c.VMGuestEphemeralDiskBytes <= c.HostGuestEphemeralDiskBytes/count
-}
