@@ -12,9 +12,9 @@ import (
 func TestWorkerWaitCursorCompletedActorInputReplay(t *testing.T) {
 	sessionID, runID, turnID := pgvalue.UUID(uuid.NewV7()), pgvalue.UUID(uuid.NewV7()), pgvalue.UUID(uuid.NewV7())
 	a := waitCursorScope{
-		Run:     db.Run{ID: runID, EntrypointKind: "actor", SessionID: sessionID},
-		Session: db.Session{ID: sessionID, CurrentRunID: runID, Status: "open", CommittedInputSequence: 3, NextInputSequence: 5, ActiveTurnID: turnID, RunGeneration: 2},
-		Attempt: db.RunAttempt{SessionInputStartSequence: pgtype.Int8{Int64: 1, Valid: true}},
+		run:     db.Run{ID: runID, EntrypointKind: "actor", SessionID: sessionID},
+		session: db.Session{ID: sessionID, CurrentRunID: runID, Status: "open", CommittedInputSequence: 3, NextInputSequence: 5, ActiveTurnID: turnID, RunGeneration: 2},
+		attempt: db.RunAttempt{SessionInputStartSequence: pgtype.Int8{Int64: 1, Valid: true}},
 	}
 	receipt := db.RunWait{Kind: db.WaitKindActorInput, CompletedTurnID: turnID, TurnID: turnID, TurnSessionID: sessionID, TurnRunGeneration: pgtype.Int8{Int64: 2, Valid: true}}
 	cursor := pgtype.Int8{Int64: 3, Valid: true}

@@ -23,10 +23,8 @@ type LiveSource struct {
 	orgID         pgtype.UUID
 	projectID     pgtype.UUID
 	environmentID pgtype.UUID
-	deploymentID  pgtype.UUID
 	computerID    pgtype.UUID
 	runID         pgtype.UUID
-	attemptNumber int32
 }
 
 // OrgID is the source Run's organization.
@@ -38,17 +36,11 @@ func (s LiveSource) ProjectID() pgtype.UUID { return s.projectID }
 // EnvironmentID is the source Run's environment.
 func (s LiveSource) EnvironmentID() pgtype.UUID { return s.environmentID }
 
-// DeploymentID is the source Run's deployment.
-func (s LiveSource) DeploymentID() pgtype.UUID { return s.deploymentID }
-
 // ComputerID is the source Run's Computer.
 func (s LiveSource) ComputerID() pgtype.UUID { return s.computerID }
 
 // RunID is the source Run.
 func (s LiveSource) RunID() pgtype.UUID { return s.runID }
-
-// AttemptNumber is the source Run's current attempt.
-func (s LiveSource) AttemptNumber() int32 { return s.attemptNumber }
 
 // LockLiveSource locks the fenced execution as LockLiveExecution does and
 // requires a live source. Secret locks, when needed, precede it.
@@ -74,7 +66,7 @@ func (e Execution) LiveSource() (LiveSource, error) {
 	if e.run.Status != db.RunStatusRunning || e.lease.Status != db.RunLeaseStatusRunning || !e.run.ActiveStartedAt.Valid || !e.attempt.EntrypointEnteredAt.Valid || e.attempt.TerminalAt.Valid || e.lease.FinalizationOperationID.Valid {
 		return LiveSource{}, fmt.Errorf("%w: live authority mismatch", ErrStaleSource)
 	}
-	return LiveSource{orgID: e.run.OrgID, projectID: e.run.ProjectID, environmentID: e.run.EnvironmentID, deploymentID: e.run.DeploymentID, computerID: e.Computer().ID, runID: e.run.ID, attemptNumber: e.attempt.Number}, nil
+	return LiveSource{orgID: e.run.OrgID, projectID: e.run.ProjectID, environmentID: e.run.EnvironmentID, computerID: e.Computer().ID, runID: e.run.ID}, nil
 }
 
 // checkLiveSource validates the result of a live execution lock as a live

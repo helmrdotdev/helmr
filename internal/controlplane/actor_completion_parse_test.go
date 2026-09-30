@@ -56,33 +56,50 @@ func TestDecideActorRunTerminal(t *testing.T) {
 			name: "successful progress remains open",
 			state: func() actorRunTerminalState {
 				s := actorTerminalState("open", 2, 4)
-				s.committedInputSequence = 3
+				s.session.CommittedInputSequence = 3
 				return s
 			}(),
 			completion: parsedActorCompletion{kind: actorCompletionSucceeded},
 			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "open"},
 		},
 		{
-			name:       "input arriving after idle admission belongs to continuation",
-			state:      actorTerminalState("open", 2, 2),
+			name: "input arriving after idle admission belongs to continuation",
+			state: func() actorRunTerminalState {
+				s := actorTerminalState("open", 2, 2)
+				s.session.NextInputSequence = 4
+				return s
+			}(),
 			completion: parsedActorCompletion{kind: actorCompletionSucceeded},
 			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "open"},
 		},
 		{
-			name:       "late close frontier does not make an idle return fail",
-			state:      actorTerminalState("closing", 2, 2),
+			name: "late close frontier does not make an idle return fail",
+			state: func() actorRunTerminalState {
+				s := actorTerminalState("closing", 2, 2)
+				s.session.NextInputSequence = 4
+				s.session.CloseSequence = pgtype.Int8{Int64: 3, Valid: true}
+				return s
+			}(),
 			completion: parsedActorCompletion{kind: actorCompletionSucceeded},
 			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "closing"},
 		},
 		{
-			name:       "admission backlog without progress fails before close",
-			state:      actorTerminalState("closing", 2, 4),
+			name: "admission backlog without progress fails before close",
+			state: func() actorRunTerminalState {
+				s := actorTerminalState("closing", 2, 4)
+				s.session.CloseSequence = pgtype.Int8{Int64: 2, Valid: true}
+				return s
+			}(),
 			completion: parsedActorCompletion{kind: actorCompletionSucceeded},
 			want:       actorRunTerminalDecision{runStatus: db.RunStatusFailed, actorStatus: "closing", runReason: pgvalue.Text("no_progress")},
 		},
 		{
-			name:       "closing waits for process reconciliation",
-			state:      actorTerminalState("closing", 2, 2),
+			name: "closing waits for process reconciliation",
+			state: func() actorRunTerminalState {
+				s := actorTerminalState("closing", 2, 2)
+				s.session.CloseSequence = pgtype.Int8{Int64: 2, Valid: true}
+				return s
+			}(),
 			completion: parsedActorCompletion{kind: actorCompletionSucceeded},
 			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "closing"},
 		},
@@ -105,10 +122,11 @@ func TestDecideActorRunTerminal(t *testing.T) {
 
 func actorTerminalState(status string, start, highWatermark int64) actorRunTerminalState {
 	return actorRunTerminalState{
-		sessionStatus:          status,
-		committedInputSequence: start,
-		inputStartSequence:     pgtype.Int8{Int64: start, Valid: true},
-		inputHighWatermark:     pgtype.Int8{Int64: highWatermark, Valid: true},
+		session: db.Session{Status: status, CommittedInputSequence: start, NextInputSequence: highWatermark + 1},
+		run: db.Run{
+			SessionInputStartSequence: pgtype.Int8{Int64: start, Valid: true},
+			SessionInputHighWatermark: pgtype.Int8{Int64: highWatermark, Valid: true},
+		},
 	}
 }
 

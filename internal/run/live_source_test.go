@@ -20,7 +20,7 @@ func TestLiveSourceRequiresEnteredRunningExecution(t *testing.T) {
 		lease:   db.RunLease{Status: db.RunLeaseStatusRunning},
 	}
 	source, err := valid.LiveSource()
-	if err != nil || source.RunID() != valid.run.ID || source.OrgID() != valid.run.OrgID || source.ProjectID() != valid.run.ProjectID || source.EnvironmentID() != valid.run.EnvironmentID || source.DeploymentID() != valid.run.DeploymentID || source.AttemptNumber() != 2 {
+	if err != nil || source.RunID() != valid.run.ID || source.OrgID() != valid.run.OrgID || source.ProjectID() != valid.run.ProjectID || source.EnvironmentID() != valid.run.EnvironmentID {
 		t.Fatalf("source=%+v err=%v", source, err)
 	}
 	for _, mutate := range []func(*Execution){

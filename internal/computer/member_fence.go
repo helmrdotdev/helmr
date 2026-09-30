@@ -103,6 +103,9 @@ func cloneInstance(i db.ComputerInstance) db.ComputerInstance {
 // applies no status or writer generation predicate: the caller's Run lease
 // fence has already validated both under the locks.
 func (r RunInstance) RecordStart(ctx context.Context) error {
+	if r.tx == nil {
+		return errors.New("run instance is not locked")
+	}
 	_, err := r.tx.Exec(ctx, `UPDATE computers SET last_activity_at=greatest(last_activity_at,clock_timestamp()),updated_at=clock_timestamp() WHERE id=$1`, r.computer.ID)
 	return err
 }
