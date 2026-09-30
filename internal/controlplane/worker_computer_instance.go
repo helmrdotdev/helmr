@@ -97,7 +97,7 @@ func (s *Server) workerMarkComputerInstanceReady(w http.ResponseWriter, r *http.
 		return
 	}
 	row, err := computer.RecordInstanceReady(r.Context(), s.tx, computer.Readiness{Observation: observation, VCPUCount: request.VMVCPUCount, CPUConfigDigest: request.CPUConfigDigest})
-	writeComputerInstanceObservation(w, row, err)
+	s.writeComputerInstanceObservation(w, row, err)
 }
 
 func (s *Server) workerMarkComputerInstanceClosed(w http.ResponseWriter, r *http.Request) {
@@ -110,7 +110,7 @@ func (s *Server) workerMarkComputerInstanceClosed(w http.ResponseWriter, r *http
 		reason = "desired_state_reconciled"
 	}
 	row, err := computer.RecordInstanceClosed(r.Context(), s.tx, computer.Closure{Observation: observation, Reason: reason, CleanupProof: computerCleanupProof(request.CleanupProof)})
-	writeComputerInstanceObservation(w, row, err)
+	s.writeComputerInstanceObservation(w, row, err)
 }
 
 func (s *Server) workerMarkComputerInstanceFailed(w http.ResponseWriter, r *http.Request) {
@@ -133,7 +133,7 @@ func (s *Server) workerMarkComputerInstanceFailed(w http.ResponseWriter, r *http
 		Observation: observation, Kind: kind, Reason: reason, Error: normalizedJSONRawMessage(request.Error),
 		CleanupProof: computerCleanupProof(request.CleanupProof),
 	})
-	writeComputerInstanceObservation(w, row, err)
+	s.writeComputerInstanceObservation(w, row, err)
 }
 
 // decodeComputerInstanceObservation decodes an Instance observation and
@@ -174,9 +174,9 @@ func computerCleanupProof(proof *workerapi.RuntimeCleanupProof) *computer.Cleanu
 	return &computer.CleanupProof{Method: proof.Method, CompletedAt: proof.CompletedAt}
 }
 
-func writeComputerInstanceObservation(w http.ResponseWriter, row db.ComputerInstance, err error) {
+func (s *Server) writeComputerInstanceObservation(w http.ResponseWriter, row db.ComputerInstance, err error) {
 	if err != nil {
-		writeError(w, computerError(err, computerInstanceObservationOperation))
+		s.writeWorkerComputerError(w, err, computerInstanceObservationOperation, "Computer Instance observation failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, computerInstanceResponse(row))

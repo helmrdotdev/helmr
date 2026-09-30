@@ -24,7 +24,7 @@ func (s *Server) workerRenewComputerInstance(w http.ResponseWriter, r *http.Requ
 	}
 	instance, err := computer.RenewInstance(r.Context(), s.tx, workerFromContext(r.Context()), computer.WriterRef{EnvironmentID: environmentID, InstanceID: instanceID, WriterGeneration: request.WriterGeneration})
 	if err != nil {
-		writeError(w, computerError(err, computerInstanceRenewalOperation))
+		s.writeWorkerComputerError(w, err, computerInstanceRenewalOperation, "Computer Instance renewal failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.ComputerInstanceRenewResponse{ComputerInstanceID: pgvalue.UUIDString(instance.ID), WriterGeneration: instance.WriterGeneration, DesiredState: instance.DesiredState, DesiredVersion: instance.DesiredVersion, ObservedVersion: instance.ObservedVersion, WriterExpiresAt: instance.WriterExpiresAt.Time})

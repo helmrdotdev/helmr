@@ -17,7 +17,7 @@ func (s *Server) workerClaimComputerInstance(w http.ResponseWriter, r *http.Requ
 	}
 	claimed, err := computer.ClaimInstance(r.Context(), s.db, s.tx, workerFromContext(r.Context()))
 	if err != nil {
-		writeError(w, computerError(err, computerInstanceClaimOperation))
+		s.writeWorkerComputerError(w, err, computerInstanceClaimOperation, "Computer Instance claim failed")
 		return
 	}
 	if claimed == nil {

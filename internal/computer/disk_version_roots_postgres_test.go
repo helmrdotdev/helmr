@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -202,8 +203,9 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 	}
 	assertRetained()
 
-	// Read-key delivery is unavailable while this version is still initializing.
-	if _, err := b.SourceKeys(t.Context(), f.principal, f.ref); !errors.Is(err, ErrKeyUnavailable) {
+	// A source preparation is not authorized while this version is still
+	// initializing.
+	if _, err := b.SourceKeys(t.Context(), f.principal, f.ref); !errors.Is(err, ErrAuthorityChanged) {
 		t.Fatal("initial source key grant", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_disk_versions SET status='committed',published_at=clock_timestamp(),root_pack_digest=$2,logical_bytes=$3,publisher_computer_instance_id=$4,publisher_desired_version=1,publication_request_fingerprint=decode(repeat('ab',32),'hex') WHERE id=$1`, versionID, digest, root.LogicalBytes, f.runtime)
@@ -253,7 +255,7 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 
 	failing := &partialSourceWrapper{KeyWrapper: b.wrapper}
 	b.wrapper = failing
-	if _, err = b.SourceKeys(t.Context(), f.principal, f.ref); !errors.Is(err, ErrKeyUnavailable) {
+	if _, err = b.SourceKeys(t.Context(), f.principal, f.ref); !errors.Is(err, ErrKeyProviderUnavailable) || errors.Is(err, ErrKeyUnavailable) {
 		t.Fatal("partial unwrap accepted", err)
 	}
 	if len(failing.returned) != 2 {
@@ -285,12 +287,12 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET claim_version=claim_version-1 WHERE id=$1`, f.runtimeWorker())
 	b.wrapper = observer.KeyWrapper
 
-	// A database failure during final revalidation keeps its own
-	// classification, which the worker is told is retryable unavailability.
+	// A database failure during final revalidation keeps its own cause, which
+	// the worker is told is an internal failure.
 	faulted, restore := finalClaimReadFailure(b)
 	_, err = b.SourceKeys(t.Context(), f.principal, f.ref)
 	restore()
-	if !errors.Is(err, errInjectedClaimRead) || errors.Is(err, ErrKeyUnavailable) {
+	if !errors.Is(err, errInjectedSQL) || errors.Is(err, ErrKeyUnavailable) || errors.Is(err, ErrAuthorityChanged) {
 		t.Fatalf("final source claim read failure = %v", err)
 	}
 	if len(faulted.returned) == 0 || !bytes.Equal(faulted.returned, make([]byte, len(faulted.returned))) {
@@ -366,7 +368,7 @@ func (w *partialSourceWrapper) Unwrap(ctx context.Context, scope, id string, e c
 	key, err := w.KeyWrapper.Unwrap(ctx, scope, id, e)
 	w.returned = append(w.returned, key)
 	if len(w.returned) == 2 {
-		return key, errors.New("injected second unwrap failure")
+		return key, fmt.Errorf("%w: injected second unwrap failure", computerkey.ErrUnavailable)
 	}
 	return key, err
 }

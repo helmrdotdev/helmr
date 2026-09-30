@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 	"uuid"
@@ -222,5 +223,33 @@ func TestCheckpointObjectCertificationReportsUnavailableStorage(t *testing.T) {
 	}
 	if err = publisher.CertifyCheckpointObject(t.Context(), ref, inspection); !errors.Is(err, computer.ErrStorageUnavailable) {
 		t.Fatalf("certification with unavailable storage: %v", err)
+	}
+}
+
+// A checkpoint object whose child node differs from the certified child's
+// inspection is an object conflict, not an internal failure.
+func TestCheckpointObjectWrongChildNodeIsConflict(t *testing.T) {
+	f, member, _, instance := residentInstance(t)
+	_, ref := registerEmptyCapture(t, f, member, instance)
+	key := pgvalue.UUIDString(instance.WriteKeyID)
+	shape := blockformat.Root{Capacity: instance.ReservedGuestEphemeralDiskBytes, Fanout: 64, Level: 1}
+	child := blockformat.Locator{Pack: blockformat.PackRef{Digest: sha256.Sum256([]byte("checkpoint child node")), Size: 64, Rank: 1}, Page: blockformat.Ref{Key: key, Kind: blockformat.NodeKind, Count: 1, Size: 32}, Offset: 8}
+	childInspection := blockformat.ObjectInspection{Pack: &blockformat.PackInspection{Pages: []blockformat.PageInspection{{Locator: child, Shape: shape}}, Keys: []string{key}}}
+	publisher, err := computer.NewPublisher(f.Pool, computertest.Objects{{Digest: "sha256:" + hex.EncodeToString(child.Pack.Digest[:]), SizeBytes: 64, MediaType: "application/octet-stream"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = publisher.RegisterCheckpointObject(t.Context(), ref, childInspection); err != nil {
+		t.Fatal(err)
+	}
+	if err = publisher.CertifyCheckpointObject(t.Context(), ref, childInspection); err != nil {
+		t.Fatal(err)
+	}
+	parent := blockformat.Locator{Pack: blockformat.PackRef{Digest: sha256.Sum256([]byte("checkpoint parent node")), Size: 64, Rank: 2}, Page: blockformat.Ref{Key: key, Kind: blockformat.NodeKind, Count: 1, Size: 32}, Offset: 8}
+	wrongPosition := blockformat.NodeReference{Locator: child, Shape: shape, Start: 1}
+	parentInspection := blockformat.ObjectInspection{Pack: &blockformat.PackInspection{Pages: []blockformat.PageInspection{{Locator: parent, Shape: shape, Level: 1, Children: []blockformat.NodeReference{wrongPosition}}}, Keys: []string{key}}}
+	var conflict computer.ObjectConflictError
+	if err = publisher.RegisterCheckpointObject(t.Context(), ref, parentInspection); !errors.As(err, &conflict) || !strings.Contains(err.Error(), "child node differs") {
+		t.Fatalf("wrong child node = %v", err)
 	}
 }

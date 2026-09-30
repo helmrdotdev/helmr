@@ -38,7 +38,7 @@ func (s *Server) workerInitialComputerObject(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err = record(r.Context(), workerFromContext(r.Context()), ref, request.Inspection); err != nil {
-		writeError(w, computerError(err, computerInitialObjectOperation))
+		s.writeWorkerComputerError(w, err, computerInitialObjectOperation, "initial computer object recording failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, struct{}{})

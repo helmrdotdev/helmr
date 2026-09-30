@@ -34,7 +34,7 @@ func (s *Server) workerInitialComputerKey(w http.ResponseWriter, r *http.Request
 	}
 	material, err := s.computerKeys.InitialKey(r.Context(), workerFromContext(r.Context()), ref)
 	if err != nil {
-		writeError(w, computerError(err, computerKeyDeliveryOperation))
+		s.writeWorkerComputerError(w, err, computerKeyDeliveryOperation, "initial computer key delivery failed")
 		return
 	}
 	defer clear(material.Key)
@@ -55,7 +55,7 @@ func (s *Server) workerComputerSource(w http.ResponseWriter, r *http.Request) {
 	}
 	material, err := s.computerKeys.SourceKeys(r.Context(), workerFromContext(r.Context()), ref)
 	if err != nil {
-		writeError(w, computerError(err, computerKeyDeliveryOperation))
+		s.writeWorkerComputerError(w, err, computerKeyDeliveryOperation, "computer source delivery failed")
 		return
 	}
 	defer material.Clear()

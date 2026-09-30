@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestInitialGenerationPublicationReplay(t *testing.T) {
@@ -81,11 +82,13 @@ func TestInitialGenerationPublicationReplay(t *testing.T) {
 }
 
 func TestInitialGenerationPublicationRejectsInvalidCandidate(t *testing.T) {
-	for _, kind := range []string{"page", "capacity", "claim", "pin", "closed", "atomic failure", "source pin failure"} {
+	for _, kind := range []string{"malformed", "page", "capacity", "claim", "pin", "closed", "atomic failure", "source pin failure"} {
 		t.Run(kind, func(t *testing.T) {
 			f, input := newGenerationFixture(t)
 			principal := f.principal
 			switch kind {
+			case "malformed":
+				input.Root.FormatVersion = 2
 			case "page":
 				input.Root.Page.Digest = dbtest.Digest("wrong page")
 			case "capacity":
@@ -105,8 +108,32 @@ func TestInitialGenerationPublicationRejectsInvalidCandidate(t *testing.T) {
 			if err == nil {
 				t.Fatal("invalid publication accepted")
 			}
-			if kind == "claim" && !errors.Is(err, workergroup.ErrStaleClaims) {
-				t.Fatalf("stale claims classified as %v", err)
+			// Deterministic rejections are object conflicts or changed
+			// authority; an unexpected database failure keeps its cause.
+			var objectConflict ObjectConflictError
+			var inputErr InputError
+			switch kind {
+			case "malformed":
+				if !errors.As(err, &inputErr) {
+					t.Fatalf("malformed root classified as %v", err)
+				}
+			case "claim":
+				if !errors.Is(err, workergroup.ErrStaleClaims) {
+					t.Fatalf("stale claims classified as %v", err)
+				}
+			case "page", "capacity", "pin":
+				if !errors.As(err, &objectConflict) {
+					t.Fatalf("%s classified as %v", kind, err)
+				}
+			case "closed":
+				if !errors.Is(err, ErrAuthorityChanged) {
+					t.Fatalf("closed Instance classified as %v", err)
+				}
+			default:
+				var pgErr *pgconn.PgError
+				if !errors.As(err, &pgErr) || errors.As(err, &objectConflict) || errors.Is(err, ErrAuthorityChanged) {
+					t.Fatalf("%s classified as %v", kind, err)
+				}
 			}
 			var unchanged bool
 			if err := f.Pool.QueryRow(t.Context(), `SELECT runtime.source_disk_version_id IS NULL AND v.status='initializing' AND v.publication_request_fingerprint IS NULL AND c.initial_config IS NULL AND NOT EXISTS(SELECT 1 FROM computer_disk_version_roots r WHERE r.version_id=v.id) FROM computer_instances runtime JOIN computer_disk_versions v ON v.computer_id=runtime.computer_id AND v.status='initializing' JOIN computers c ON c.id=v.computer_id WHERE runtime.id=$1`, f.runtime).Scan(&unchanged); err != nil || !unchanged {

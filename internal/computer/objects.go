@@ -333,7 +333,7 @@ func (s objectScope) recordGraph(ctx context.Context, tx pgx.Tx, object inspecte
 		}
 		for _, child := range children {
 			if err = evidence.Pack.CheckNode(child); err != nil {
-				return err
+				return objectConflict("child node differs from its inspection: %v", err)
 			}
 		}
 		if err = s.insertEdge(ctx, tx, object, objectDigest(ref.Digest), ref.Rank); err != nil {

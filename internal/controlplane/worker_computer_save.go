@@ -37,7 +37,7 @@ func (s *Server) workerBeginComputerSave(w http.ResponseWriter, r *http.Request)
 	}
 	begun, err := s.publisher.BeginSave(r.Context(), workerFromContext(r.Context()), ref)
 	if err != nil {
-		s.writeComputerPublicationError(w, err, computerSaveOperation)
+		s.writeWorkerComputerError(w, err, computerSaveOperation, "computer object publication failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.ComputerSaveBeginResponse{ComputerInstanceID: request.ComputerInstanceID, WriterGeneration: request.WriterGeneration, PredecessorID: pgvalue.UUIDString(begun.PredecessorID), DesiredVersion: begun.DesiredVersion, SaveID: request.SaveID, Sequence: request.Sequence})
@@ -55,7 +55,7 @@ func (s *Server) workerAbandonComputerSave(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err = s.publisher.AbandonSave(r.Context(), workerFromContext(r.Context()), ref); err != nil {
-		s.writeComputerPublicationError(w, err, computerSaveOperation)
+		s.writeWorkerComputerError(w, err, computerSaveOperation, "computer object publication failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, struct{}{})
@@ -78,7 +78,7 @@ func (s *Server) workerPublishComputerSave(w http.ResponseWriter, r *http.Reques
 	}
 	published, err := s.publisher.PublishSave(r.Context(), workerFromContext(r.Context()), ref, request.Root)
 	if err != nil {
-		s.writeComputerPublicationError(w, err, computerSaveOperation)
+		s.writeWorkerComputerError(w, err, computerSaveOperation, "computer object publication failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.ComputerSavePublicationResponse{ComputerID: published.ComputerID.String(), VersionID: published.VersionID.String()})
@@ -100,7 +100,7 @@ func (s *Server) workerAdoptComputerSave(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err = s.publisher.AdoptSave(r.Context(), workerFromContext(r.Context()), ref, request.Root); err != nil {
-		s.writeComputerPublicationError(w, err, computerSaveOperation)
+		s.writeWorkerComputerError(w, err, computerSaveOperation, "computer object publication failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, struct{}{})
@@ -134,7 +134,7 @@ func (s *Server) workerComputerSaveObject(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err = record(r.Context(), workerFromContext(r.Context()), ref, request.Inspection); err != nil {
-		s.writeComputerPublicationError(w, err, computerSaveOperation)
+		s.writeWorkerComputerError(w, err, computerSaveOperation, "computer object publication failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, struct{}{})
