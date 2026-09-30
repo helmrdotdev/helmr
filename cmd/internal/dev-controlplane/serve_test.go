@@ -48,7 +48,7 @@ func TestServeDevClosesDependenciesAfterHTTPDrainAndLoops(t *testing.T) {
 	go func() {
 		// runDev closes Redis, ClickHouse and PostgreSQL in defers once
 		// serveDev returns; record that point.
-		err := serveDev(ctx, discardLog(), server, loops, 5*time.Second)
+		err := serveDev(ctx, discardLog(), server, "", loops, 5*time.Second)
 		record("dependencies closed")
 		serveErr <- err
 	}()
@@ -107,7 +107,7 @@ func TestServeDevForceClosesAfterShutdownTimeoutAndJoinsLoops(t *testing.T) {
 	defer cancel()
 	serveErr := make(chan error, 1)
 	go func() {
-		serveErr <- serveDev(ctx, discardLog(), server, loops, 20*time.Millisecond)
+		serveErr <- serveDev(ctx, discardLog(), server, "", loops, 20*time.Millisecond)
 	}()
 	requestErr := make(chan error, 1)
 	go func() { requestErr <- get(addr) }()
@@ -146,7 +146,7 @@ func TestServeDevReturnsListenFailureWithoutStartingLoops(t *testing.T) {
 	defer occupied.Close()
 	started := make(chan struct{}, 1)
 	server := &http.Server{Addr: occupied.Addr().String(), Handler: http.NotFoundHandler()}
-	err = serveDev(t.Context(), discardLog(), server, []backgroundLoop{{name: "never", run: func(context.Context) error {
+	err = serveDev(t.Context(), discardLog(), server, "", []backgroundLoop{{name: "never", run: func(context.Context) error {
 		started <- struct{}{}
 		return nil
 	}}}, time.Second)

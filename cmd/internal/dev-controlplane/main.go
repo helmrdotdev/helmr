@@ -68,6 +68,9 @@ func main() {
 func runDev(ctx context.Context, log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	// Restore default signal handling after the first signal so a second one
+	// kills the process during a long drain or loop join.
+	context.AfterFunc(ctx, stop)
 
 	cfg, err := loadConfig()
 	if err != nil {
@@ -220,10 +223,10 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		{name: "event stream publisher", run: eventStream.RunPublisher},
 		{name: "telemetry ingester", run: telemetryIngestor.Run},
 	}
-	log.Info("Helmr dev login", "url", strings.TrimRight(cfg.publicURL, "/")+"/dev/login")
+	loginURL := strings.TrimRight(cfg.publicURL, "/") + "/dev/login"
 	// Deferred Redis, ClickHouse and PostgreSQL closes run only after serveDev
-	// has drained HTTP and joined every background loop.
-	return serveDev(ctx, log, httpServer, loops, 10*time.Second)
+	// has drained or force-closed HTTP and joined every background loop.
+	return serveDev(ctx, log, httpServer, loginURL, loops, 10*time.Second)
 }
 
 type backgroundLoop struct {
@@ -237,6 +240,7 @@ func serveDev(
 	ctx context.Context,
 	log *slog.Logger,
 	server *http.Server,
+	loginURL string,
 	loops []backgroundLoop,
 	shutdownTimeout time.Duration,
 ) error {
@@ -262,7 +266,7 @@ func serveDev(
 	go func() {
 		serverErr <- server.Serve(listener)
 	}()
-	log.Info("Helmr dev control listening", "addr", listener.Addr().String())
+	log.Info("Helmr dev control listening", "addr", listener.Addr().String(), "login_url", loginURL)
 
 	var runErr error
 	serverStopped := false
