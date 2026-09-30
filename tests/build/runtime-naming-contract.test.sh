@@ -102,11 +102,6 @@ require_text 'WORKER_IMAGE_NAME="${WORKER_IMAGE_NAME:-helmr-worker-image}"' \
   "${root}/scripts/aws-release-artifacts.sh" "Worker image infrastructure identity changed"
 require_text 'base_name="${2:-helmr-worker}"' \
   "${root}/scripts/release-worker-image-identity.sh" "Worker AMI release name does not use the helmr-worker base"
-for variables in infra/aws/modules/release-artifacts/variables.tf \
-  infra/aws/quickstart/variables.tf infra/aws/standard/variables.tf; do
-  require_text 'condition     = can(regex("^v(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)([.]((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$"' \
-    "${root}/${variables}" "${variables} does not require an exact Helmr release tag"
-done
 require_text '.schema == "helmr.worker-host-artifacts.v0"' \
   "${root}/infra/aws/modules/worker-image/templates/install-worker-host.sh" \
   "Worker host-artifact schema identity changed"

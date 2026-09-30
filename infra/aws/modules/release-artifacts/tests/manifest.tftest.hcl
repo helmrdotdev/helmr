@@ -26,3 +26,61 @@ run "resolves_current_release_manifest" {
     error_message = "workerImage.amis must resolve for aws_region from the current release manifest contract"
   }
 }
+
+run "release_tag_accepts_stable" {
+  command = plan
+  variables { helmr_version = "v1.2.3" }
+}
+
+run "release_tag_accepts_prerelease" {
+  command = plan
+  variables { helmr_version = "v1.2.3-rc.1" }
+}
+
+run "release_tag_rejects_latest" {
+  command = plan
+  variables { helmr_version = "latest" }
+  expect_failures = [var.helmr_version]
+}
+
+run "release_tag_rejects_range" {
+  command = plan
+  variables { helmr_version = ">=1.2.3" }
+  expect_failures = [var.helmr_version]
+}
+
+run "release_tag_rejects_missing_prefix" {
+  command = plan
+  variables { helmr_version = "1.2.3" }
+  expect_failures = [var.helmr_version]
+}
+
+run "release_tag_rejects_missing_patch" {
+  command = plan
+  variables { helmr_version = "v1.2" }
+  expect_failures = [var.helmr_version]
+}
+
+run "release_tag_rejects_leading_zero" {
+  command = plan
+  variables { helmr_version = "v01.2.3" }
+  expect_failures = [var.helmr_version]
+}
+
+run "release_tag_rejects_prerelease_leading_zero" {
+  command = plan
+  variables { helmr_version = "v1.2.3-01" }
+  expect_failures = [var.helmr_version]
+}
+
+run "release_tag_rejects_build_metadata" {
+  command = plan
+  variables { helmr_version = "v1.2.3+build.1" }
+  expect_failures = [var.helmr_version]
+}
+
+run "release_tag_rejects_trailing_text" {
+  command = plan
+  variables { helmr_version = "v1.2.3junk" }
+  expect_failures = [var.helmr_version]
+}
