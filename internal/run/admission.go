@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	ErrComputerAdmissionConflict = errors.New("Computer admission changed")
+	ErrComputerAdmissionConflict = errors.New("computer admission changed")
 	ErrSecretUnavailable         = errors.New("computer secret is unavailable")
 )
 

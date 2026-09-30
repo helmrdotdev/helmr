@@ -41,7 +41,7 @@ func (r *computerOperationRegistry) cancelCommand(ctx context.Context, a *comput
 		return nil
 	}
 	if r.captureSealed() || entry.stopping {
-		return errors.New("Computer has sealed Command admission")
+		return errors.New("computer has sealed Command admission")
 	}
 	output, err := newCommandOutputSpool()
 	if err != nil {

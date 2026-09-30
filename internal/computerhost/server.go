@@ -60,19 +60,19 @@ func NewServer(m Server) (Server, error) {
 
 func (m Server) validate() error {
 	if m.RestoreControl == nil {
-		return errors.New("Computer restore control plane is required")
+		return errors.New("computer restore control plane is required")
 	}
 	if m.ComputerSaves == nil {
-		return errors.New("Computer save control plane is required")
+		return errors.New("computer save control plane is required")
 	}
 	if m.ComputerSaveEvery <= 0 {
-		return errors.New("Computer save interval must be positive")
+		return errors.New("computer save interval must be positive")
 	}
 	if m.CAS == nil {
 		return errors.New("computer server CAS is required")
 	}
 	if m.ComputerObjects == nil {
-		return errors.New("Computer object store is required")
+		return errors.New("computer object store is required")
 	}
 	if m.Mounts == nil {
 		return errors.New("computer mount session registry is required")
@@ -85,7 +85,7 @@ func (m Server) validate() error {
 
 func (m Server) Serve(ctx context.Context, mount workerapi.ComputerInstanceAssignment, client workerapi.ComputerServerControlPlaneClient) (runErr error) {
 	if mount.WriterGeneration <= 0 {
-		return errors.New("Computer Instance writer generation is required")
+		return errors.New("computer Instance writer generation is required")
 	}
 	// A Server built without NewServer fails the mount here
 	// instead of when a later phase first needs the missing collaborator.
@@ -145,7 +145,7 @@ func (m Server) Serve(ctx context.Context, mount workerapi.ComputerInstanceAssig
 	}()
 	writerGeneration := checkout.writerGeneration
 	if writerGeneration != mount.WriterGeneration {
-		return errors.New("Computer Instance writer differs from prepared machine")
+		return errors.New("computer Instance writer differs from prepared machine")
 	}
 	phaseStarted = time.Now()
 	if err := m.registerComputerMountContext(startupCtx, instance, mount, computerInstanceID); err != nil {
@@ -1269,7 +1269,7 @@ func (m Server) stopControlledComputerMount(ctx context.Context, session vm.Mach
 	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), m.failureTimeout())
 	defer cancel()
 	if mount.ComputerInstanceID == "" || mount.RuntimeEpoch <= 0 || mount.DesiredVersion <= 0 || mount.ObservedVersion < 0 {
-		return errors.New("Computer Instance close requires its observed authority")
+		return errors.New("computer Instance close requires its observed authority")
 	}
 	request := workerapi.ComputerInstanceStateRequest{
 		ID: mount.ComputerInstanceID, WorkerEpoch: mount.RuntimeEpoch,
@@ -1312,7 +1312,7 @@ func (m Server) channelToken(mount workerapi.ComputerInstanceAssignment) string 
 
 func (m Server) failComputerMount(client workerapi.ComputerServerControlPlaneClient, mount workerapi.ComputerInstanceAssignment, cause error) error {
 	if mount.ComputerInstanceID == "" || mount.RuntimeEpoch <= 0 || mount.DesiredVersion <= 0 || mount.ObservedVersion < 0 {
-		return errors.New("Computer Instance failure requires its observed authority")
+		return errors.New("computer Instance failure requires its observed authority")
 	}
 	body := computerMountError(cause)
 	ctx, cancel := context.WithTimeout(context.Background(), m.failureTimeout())
@@ -1360,13 +1360,13 @@ func (reader *contextReader) Read(target []byte) (int, error) {
 
 func validateInstanceRenewal(request workerapi.ComputerInstanceRenewRequest, response workerapi.ComputerInstanceRenewResponse, now time.Time) error {
 	if request.WriterGeneration <= 0 || response.ComputerInstanceID != request.ComputerInstanceID || response.WriterGeneration != request.WriterGeneration || response.DesiredVersion <= 0 || response.ObservedVersion < 0 {
-		return errors.New("Computer Instance renewal authority differs from request")
+		return errors.New("computer Instance renewal authority differs from request")
 	}
 	if response.DesiredState == "closed" {
 		return nil
 	}
 	if response.DesiredState != "ready" || !response.WriterExpiresAt.After(now) {
-		return errors.New("Computer Instance renewal is expired or invalid")
+		return errors.New("computer Instance renewal is expired or invalid")
 	}
 	return nil
 }

@@ -16,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-var ErrTaskCompletionAdmission = errors.New("Task completion admission is unavailable")
+var ErrTaskCompletionAdmission = errors.New("task completion admission is unavailable")
 
 // TaskCompletion records a member outcome, never a Computer disk publication.
 // Fingerprint covers the entire normalized request, including the operation ID.
@@ -92,18 +92,18 @@ func CompleteTaskExecution(ctx context.Context, tx pgx.Tx, request TaskCompletio
 	}
 	loc, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: request.Fence.LeaseID, LeaseSequence: request.Fence.LeaseSequence, WorkerGroupID: request.Fence.WorkerGroupID, WorkerHostID: request.Fence.WorkerHostID, WorkerEpoch: request.Fence.WorkerEpoch})
 	if err != nil {
-		return fmt.Errorf("Task completion locate: %w", err)
+		return fmt.Errorf("task completion locate: %w", err)
 	}
 	secrets, err := secret.LockAttemptDelivery(ctx, q, loc.RunID, loc.AttemptNumber, loc.ComputerID)
 	if err != nil {
 		if errors.Is(err, secret.ErrDeliveryUnavailable) {
 			return errors.Join(ErrTaskCompletionAdmission, err)
 		}
-		return fmt.Errorf("Task completion Secrets: %w", err)
+		return fmt.Errorf("task completion Secrets: %w", err)
 	}
 	graph, err := LockOwnedFinalizationWithInstanceFence(ctx, tx, OwnedFinalizationRequest{OrgID: pgvalue.MustUUIDValue(loc.OrgID), ProjectID: pgvalue.MustUUIDValue(loc.ProjectID), EnvironmentID: pgvalue.MustUUIDValue(loc.EnvironmentID), RunID: pgvalue.MustUUIDValue(loc.RunID)}, func() error { return workergroup.LockExecutionHost(ctx, q, request.Fence.host(loc.RegionID, false)) })
 	if err != nil {
-		return fmt.Errorf("Task completion graph: %w", err)
+		return fmt.Errorf("task completion graph: %w", err)
 	}
 	// A competing identical request may have committed while graph locks waited.
 	replay, err = q.GetTaskCompletionReplay(ctx, db.GetTaskCompletionReplayParams{RunLeaseID: request.Fence.LeaseID, LeaseSequence: request.Fence.LeaseSequence, WorkerGroupID: request.Fence.WorkerGroupID, WorkerHostID: request.Fence.WorkerHostID})
@@ -118,7 +118,7 @@ func CompleteTaskExecution(ctx context.Context, tx pgx.Tx, request TaskCompletio
 	}
 	a, err := lockExecution(ctx, tx, request.Fence, executionLive, executionTarget{})
 	if err != nil {
-		return fmt.Errorf("Task completion authority: %w", err)
+		return fmt.Errorf("task completion authority: %w", err)
 	}
 	r, l := a.Run, a.Lease
 	if r.EntrypointKind != "task" || r.SessionID.Valid || r.Status != db.RunStatusRunning || l.Status != db.RunLeaseStatusFinalizing || l.FinalizationOperationID != request.OperationID || !l.FinalizationStartedAt.Valid || !a.Attempt.EntrypointEnteredAt.Valid || r.ActiveStartedAt.Valid {
@@ -155,10 +155,10 @@ func CompleteTaskExecution(ctx context.Context, tx pgx.Tx, request TaskCompletio
 		}
 	}
 	if _, err = q.CompleteTaskRunLease(ctx, db.CompleteTaskRunLeaseParams{Status: leaseStatus, CompletedAt: now, ReasonCode: pgvalue.Text(reason), Error: request.Error, TerminalRequestFingerprint: pgvalue.Text(request.Fingerprint), ID: l.ID, RunID: r.ID, ComputerID: r.ComputerID, AttemptNumber: a.Attempt.Number, LeaseSequence: l.LeaseSequence}); err != nil {
-		return fmt.Errorf("Task completion lease: %w", err)
+		return fmt.Errorf("task completion lease: %w", err)
 	}
 	if _, err = q.CompleteTaskAttempt(ctx, db.CompleteTaskAttemptParams{TerminalOutcome: pgvalue.Text(outcome), ReasonCode: pgvalue.Text(reason), Error: request.Error, CompletedAt: now, RunID: r.ID, Number: a.Attempt.Number, ComputerID: r.ComputerID}); err != nil {
-		return fmt.Errorf("Task completion attempt: %w", err)
+		return fmt.Errorf("task completion attempt: %w", err)
 	}
 	if again {
 		// The saved head is recovery provenance, not the concurrently changing live
@@ -182,7 +182,7 @@ func CompleteTaskExecution(ctx context.Context, tx pgx.Tx, request TaskCompletio
 		}
 	} else {
 		if _, err = q.FinishTaskRun(ctx, db.FinishTaskRunParams{Status: status, Output: request.Output, Failure: failure, CompletedAt: now, ID: r.ID, ComputerID: r.ComputerID, AttemptNumber: a.Attempt.Number, RunLeaseID: l.ID}); err != nil {
-			return fmt.Errorf("Task completion Run: %w", err)
+			return fmt.Errorf("task completion Run: %w", err)
 		}
 		event, payload := "run.failed", []byte(`{"reason":"`+reason+`"}`)
 		if status == db.RunStatusSucceeded {

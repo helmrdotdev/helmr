@@ -5,15 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
-	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/session"
-	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func turnCommand(f *actorExecutionFixture, s session.TurnScope) workerapi.TurnExecutionRequest {
@@ -122,18 +117,7 @@ func TestSessionMessageSettlementBarrierPostgres(t *testing.T) {
 		t.Fatalf("queued identity changed: %+v %+v", next, queued)
 	}
 }
-func actorTokenWait(t *testing.T, f *actorExecutionFixture, s session.TurnScope) (*token.WaitReconciler, token.WaitRegistration) {
-	t.Helper()
-	tokenID := uuid.NewV7()
-	if _, err := f.server.db.CreateToken(t.Context(), db.CreateTokenParams{ID: pgvalue.UUID(tokenID), OrgID: pgvalue.UUID(f.OrgID), ProjectID: pgvalue.UUID(f.ProjectID), EnvironmentID: pgvalue.UUID(f.EnvironmentID), ExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)), CallbackSecretFingerprint: make([]byte, 32), Metadata: []byte(`{}`), Tags: []string{}}); err != nil {
-		t.Fatal(err)
-	}
-	reconciler, err := token.NewWaitReconciler(f.Pool)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return reconciler, token.WaitRegistration{TokenID: tokenID, WaitID: uuid.NewV7(), RunLeaseID: pgvalue.MustUUIDValue(f.claim.runLease.ID), LeaseSequence: f.fence().LeaseSequence, WorkerGroupID: f.worker.GroupID, WorkerHostID: f.worker.HostID, WorkerEpoch: f.worker.Epoch, RequestFingerprint: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ActorSpeculativeInputSequence: pgtype.Int8{Int64: 1, Valid: true}, TurnID: pgvalue.UUID(s.TurnID), RunGeneration: pgtype.Int8{Int64: s.RunGeneration, Valid: true}}
-}
+
 func TestSessionMessageWithoutHandlerRejectedAtSettlementPostgres(t *testing.T) {
 	f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 	scope := f.receiveTurn(t, 1)

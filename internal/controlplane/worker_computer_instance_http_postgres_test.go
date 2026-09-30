@@ -59,7 +59,7 @@ func TestComputerInstanceRoutesMapOwnerErrors(t *testing.T) {
 	if processes.Run != nil {
 		t.Fatalf("running lease offered for cleanup: %+v", processes.Run)
 	}
-	plan := workerapi.ComputerRestorePlanRequest{EnvironmentID: instance.EnvironmentID, ComputerInstanceID: instance.ComputerInstanceID, WriterGeneration: instance.WriterGeneration}
+	plan := workerapi.ComputerRestorePlanRequest(instance)
 	worker.post(t, "/worker/v1/computer/restores/plan", plan, http.StatusConflict, nil)
 
 	observation := workerapi.ComputerInstanceStateRequest{ID: instance.ComputerInstanceID, WorkerEpoch: 1, DesiredVersion: 1, ExpectedObservedVersion: 1}

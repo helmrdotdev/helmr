@@ -17,7 +17,7 @@ import (
 func (m Server) releaseComputerCommand(ctx context.Context, session vm.Machine, mount workerapi.ComputerInstanceAssignment, release workerapi.ComputerCommandRelease, client workerapi.ComputerServerControlPlaneClient) error {
 	r := release.Completion
 	if release.ComputerID != mount.ComputerID || r.ComputerInstanceID != mount.ComputerInstanceID || r.WriterGeneration != mount.WriterGeneration || r.OrgID != mount.OrgID || release.RequestFingerprint == "" {
-		return computerBasicExecProtocol(errors.New("Command release does not match the Instance"))
+		return computerBasicExecProtocol(errors.New("command release does not match the Instance"))
 	}
 	conn, err := session.OpenStream(ctx)
 	if err != nil {

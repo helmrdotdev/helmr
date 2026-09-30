@@ -973,7 +973,7 @@ type claimStore interface {
 
 func NewCommandCancelRequest(environmentID, commandID uuid.UUID) (Request, error) {
 	if environmentID == uuid.Nil() || commandID == uuid.Nil() {
-		return nil, errors.New("Command cancellation requires environment and Command IDs")
+		return nil, errors.New("command cancellation requires environment and Command IDs")
 	}
 	return sealedRequest{value: request{environmentID: environmentID, operation: operationCommandCancel, scope: bytes.Clone(commandID[:]), key: "cancel", fingerprint: func() ([sha256.Size]byte, error) { return operationFingerprint(operationCommandCancel, nil), nil }}}, nil
 }

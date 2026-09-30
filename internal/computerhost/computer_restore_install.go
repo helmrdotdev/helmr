@@ -3,12 +3,13 @@ package computerhost
 import (
 	"context"
 	"errors"
+	"time"
+
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"google.golang.org/protobuf/proto"
-	"time"
 )
 
 type computerRestoreAcknowledger interface {
@@ -74,7 +75,7 @@ func (m Server) activateRestore(ctx context.Context, session vm.Machine, mount w
 			return err
 		}
 		if response.Plan == nil {
-			return errors.New("Computer restore intent is not committed")
+			return errors.New("computer restore intent is not committed")
 		}
 		plan = response.Plan
 		return nil

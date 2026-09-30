@@ -61,10 +61,6 @@ func seedDemoEnvironmentData(ctx context.Context, tx pgx.Tx) error {
 	if err != nil {
 		return err
 	}
-	sandboxManifest, sandboxDigest, err := manifestDigest(`{}`)
-	if err != nil {
-		return err
-	}
 
 	programDigest := demoDigest("demo-program")
 	imageDigest := demoDigest("demo-computer-image")
@@ -128,7 +124,7 @@ UPDATE environments
 	if err != nil {
 		return err
 	}
-	sandboxManifest, sandboxDigest, err = manifestDigest(string(rawManifest))
+	sandboxManifest, sandboxDigest, err := manifestDigest(string(rawManifest))
 	if err != nil {
 		return err
 	}

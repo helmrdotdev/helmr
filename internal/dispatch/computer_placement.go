@@ -150,7 +150,7 @@ func lockComputerPlacement(ctx context.Context, tx pgx.Tx, p computerPlacement) 
 // The caller has locked the member and checked its admission before allocating.
 func (d *Authority) allocateComputerPlacement(ctx context.Context, tx pgx.Tx, p computerPlacement) (db.ComputerInstance, error) {
 	if p.computer.WriterGeneration == math.MaxInt64 {
-		return db.ComputerInstance{}, errors.New("Computer writer generation exhausted")
+		return db.ComputerInstance{}, errors.New("computer writer generation exhausted")
 	}
 	id := uuid.NewV7()
 	generation := p.computer.WriterGeneration + 1
