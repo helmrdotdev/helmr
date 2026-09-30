@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"os"
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -69,13 +68,6 @@ func (r ProgramRunner) validate() error {
 		return errors.New("computer mount session registry is required")
 	}
 	return nil
-}
-
-func (r ProgramRunner) tempDir() string {
-	if strings.TrimSpace(r.TempDir) != "" {
-		return r.TempDir
-	}
-	return os.TempDir()
 }
 
 func readResumeAck(ctx context.Context, session vm.Machine) (*programv0.ResumeAck, error) {

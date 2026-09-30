@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -11,7 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
-	"net/http"
 )
 
 func cancelCommandInTx(ctx context.Context, work *txWork, scope db.GetCommandParams) (api.CommandCancelReceipt, error) {
@@ -35,7 +36,7 @@ func cancelCommandInTx(ctx context.Context, work *txWork, scope db.GetCommandPar
 	if !acquired.New {
 		err = json.Unmarshal(acquired.Claim.Receipt, &receipt)
 		if err == nil && (receipt.ID != pgvalue.UUIDString(acquired.Claim.ID) || receipt.TargetID != pgvalue.UUIDString(scope.CommandID) || receipt.Status != "accepted") {
-			err = errors.New("Command cancellation receipt is invalid")
+			err = errors.New("command cancellation receipt is invalid")
 		}
 		return receipt, err
 	}

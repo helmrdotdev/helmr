@@ -24,7 +24,7 @@ func (p *PreparedMachines) captureRuntimeTarget(ctx context.Context, instances P
 		return err
 	}
 	if p.ComputerCaptures == nil || p.Checkpoints == nil || p.CheckpointEncryptor == nil || p.ComputerObjects == nil || p.Reservations == nil || instances == nil {
-		return errors.New("Computer capture dependencies are required")
+		return errors.New("computer capture dependencies are required")
 	}
 	ref := preparedMachineRef{id: target.ID, epoch: target.WorkerEpoch}
 	p.mu.Lock()
@@ -37,7 +37,7 @@ func (p *PreparedMachines) captureRuntimeTarget(ctx context.Context, instances P
 	}
 	if claim != nil && (claim.teardown || claim.release != nil) {
 		p.mu.Unlock()
-		return errors.New("Computer capture source is being closed by its owner")
+		return errors.New("computer capture source is being closed by its owner")
 	}
 	claimedReady := false
 	if claim == nil {
@@ -70,11 +70,11 @@ func (p *PreparedMachines) captureRuntimeTarget(ctx context.Context, instances P
 		defer p.returnUnstartedCapture(ref, claim)
 	}
 	if entry.target.Source.ComputerID != target.Source.ComputerID || entry.target.Source.WriterGeneration != target.Source.WriterGeneration {
-		return errors.New("Computer capture source ownership changed")
+		return errors.New("computer capture source ownership changed")
 	}
 	session, ok := entry.session.(vm.CheckpointableMachine)
 	if !ok {
-		return errors.New("Computer capture source cannot produce a checkpoint")
+		return errors.New("computer capture source cannot produce a checkpoint")
 	}
 	checkpointer := computerCheckpointer{session: session, mount: mount, reservations: p.Reservations, objects: p.ComputerObjects, encryptor: p.CheckpointEncryptor, tempDir: p.TempDir, computer: workerapi.CheckpointComputerBase{MountPath: "/workspace"}, publication: func(computerCheckpointRequest) disk.ContinuationPublication {
 		return checkpointComputerPublisher{client: p.Checkpoints, objects: p.ComputerObjects, request: workerapi.CheckpointComputerObjectRequest{ComputerInstanceID: target.ID, WorkerEpoch: target.WorkerEpoch, DesiredVersion: target.DesiredVersion, CheckpointID: target.Capture.CheckpointID}}
@@ -87,7 +87,7 @@ func (p *PreparedMachines) captureRuntimeTarget(ctx context.Context, instances P
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		if p.claims[ref] != claim || claim.teardown || claim.release != nil {
-			return errors.New("Computer capture source ownership changed")
+			return errors.New("computer capture source ownership changed")
 		}
 		if claim.kind == serverClaim {
 			p.claimGen++
@@ -154,7 +154,7 @@ func (p *PreparedMachines) captureRuntimeTarget(ctx context.Context, instances P
 	}, func(excludeCtx context.Context) error {
 		takeOverErr := takeOver()
 		if !knownClose && !failureAttempted {
-			_ = fail(excludeCtx, errors.New("Computer capture failed before snapshot publication"))
+			_ = fail(excludeCtx, errors.New("computer capture failed before snapshot publication"))
 		}
 		if takeOverErr != nil {
 			return takeOverErr

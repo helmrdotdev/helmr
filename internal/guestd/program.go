@@ -207,7 +207,7 @@ func handleProgramRunConnection(
 	defer stopProgram()
 	claim := registry.bindProgramStop(entry, &authority, stopProgram)
 	if claim == nil {
-		return errors.New("Program cleanup owner is missing")
+		return errors.New("program cleanup owner is missing")
 	}
 	ctx = programCtx
 	// Closing the control connection also interrupts pre-start reads.

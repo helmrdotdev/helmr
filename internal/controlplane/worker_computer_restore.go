@@ -55,7 +55,7 @@ func (s *Server) workerAcknowledgeComputerRestore(w http.ResponseWriter, r *http
 		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, conflict(errors.New("Computer restore authority changed")))
+		writeError(w, conflict(errors.New("computer restore authority changed")))
 		return
 	}
 	if err != nil {

@@ -605,7 +605,7 @@ func ingestCompilerOutput(project, output string) error {
 	metadataTarget := filepath.Join(project, "helmr")
 	info, err := os.Lstat(metadataTarget)
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("Program metadata target is not a directory")
+		return errors.New("program metadata target is not a directory")
 	}
 	for name := range filesByPath {
 		if err := copyCompilerFile(filepath.Join(output, name), filepath.Join(project, name)); err != nil {

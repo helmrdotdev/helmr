@@ -466,7 +466,7 @@ func (p Publisher) AdoptSave(ctx context.Context, principal workergroup.HostPrin
 		// A committed save leaves its pending slot only through adoption. The
 		// monotonic sequence excludes an unadmitted future request; this stays
 		// true after later saves, without a second acknowledgement ledger.
-		acknowledged, err := q.IsComputerInstanceSaveAdopted(ctx, db.IsComputerInstanceSaveAdoptedParams{ComputerInstanceID: params.ComputerInstanceID, EnvironmentID: params.EnvironmentID, WorkerHostID: params.WorkerHostID, WorkerGroupID: params.WorkerGroupID, WorkerEpoch: params.WorkerEpoch, WriterGeneration: params.WriterGeneration, Sequence: params.Sequence, SaveID: params.SaveID})
+		acknowledged, err := q.IsComputerInstanceSaveAdopted(ctx, db.IsComputerInstanceSaveAdoptedParams(params))
 		return acknowledged.Valid && acknowledged.Bool, err
 	}
 	if done, err := replayed(); err != nil || done {

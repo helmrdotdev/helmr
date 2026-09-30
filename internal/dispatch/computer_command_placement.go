@@ -131,7 +131,7 @@ SELECT secrets.status = 'active'
 		if !valid {
 			return computerCommandPermanentError{
 				code: "computer_command_secret_unavailable",
-				err:  errors.New("Command secret resolution is revoked or incomplete"),
+				err:  errors.New("command secret resolution is revoked or incomplete"),
 			}
 		}
 	}

@@ -135,20 +135,6 @@ func (f *actorExecutionFixture) receiveTurn(t *testing.T, sequence int64) sessio
 	return session.TurnScope{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID, TurnID: pgvalue.MustUUIDValue(input.ID), RunID: f.runID, AttemptNumber: input.AttemptNumber.Int32, RunGeneration: input.RunGeneration.Int64}
 }
 
-func (f *actorExecutionFixture) close(t *testing.T) {
-	t.Helper()
-	if _, err := f.server.applySessionClose(t.Context(), session.ControlRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}}); err != nil {
-		t.Fatal(err)
-	}
-	reconciler, err := session.NewReconciler(f.Pool)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = reconciler.ReconcileLifecycle(t.Context(), f.EnvironmentID, f.sessionID); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func (f *actorExecutionFixture) turn(t *testing.T, sequence int64) workerapi.CommitActorTurnResponse {
 	t.Helper()
 	var headBefore, baseBefore uuid.UUID

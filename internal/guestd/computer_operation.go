@@ -228,14 +228,6 @@ func computerEntryMatches(entry *computerMountEntry, computerInstanceID string, 
 		subtle.ConstantTimeCompare([]byte(entry.channelToken), []byte(token)) == 1
 }
 
-func (r *computerOperationRegistry) currentExactLocked(entry *computerMountEntry, computerInstanceID string, computerID string, token string, writerGeneration uint64) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.entries[computerInstanceID] == entry &&
-		computerEntryMatches(entry, computerInstanceID, computerID, token) &&
-		entry.currentWriterGeneration() == writerGeneration
-}
-
 func (entry *computerMountEntry) currentWriterGeneration() uint64 {
 	entry.fencingMu.RLock()
 	defer entry.fencingMu.RUnlock()
@@ -331,7 +323,7 @@ func (r *computerOperationRegistry) admitProgram(entry *computerMountEntry, auth
 	}
 	if entry.programCleanup[authority.GetFence().GetRunLeaseId()] != nil {
 		r.mu.Unlock()
-		return func() {}, errors.New("Program lease has been retired")
+		return func() {}, errors.New("program lease has been retired")
 	}
 	for _, current := range r.programClaims {
 		if current.authority.GetFence().GetRunId() == authority.GetFence().GetRunId() {
@@ -366,15 +358,6 @@ func (r *computerOperationRegistry) admitProgram(entry *computerMountEntry, auth
 		}
 		r.mu.Unlock()
 	}), nil
-}
-
-func (r *computerOperationRegistry) hasProgramClaimLocked(entry *computerMountEntry) bool {
-	for _, claim := range r.programClaims {
-		if claim.entry == entry {
-			return true
-		}
-	}
-	return false
 }
 
 func (r *computerOperationRegistry) programClaimLocked(

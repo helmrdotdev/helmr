@@ -19,7 +19,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -141,42 +140,6 @@ func (state *freshAdmissionState) expiresAt() time.Time {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	return state.lease.ExpiresAt
-}
-
-func (state *freshAdmissionState) snapshot() (workerapi.RunLeaseAssignment, *computerv0.ComputerRunAuthority) {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	return state.lease, proto.Clone(state.authority).(*computerv0.ComputerRunAuthority)
-}
-
-func runWithFreshAdmissionRenewal(
-	ctx context.Context,
-	state *freshAdmissionState,
-	operation func(context.Context) error,
-) error {
-	operationCtx, cancelOperation := context.WithCancel(ctx)
-	defer cancelOperation()
-	done := make(chan error, 1)
-	go func() { done <- operation(operationCtx) }()
-	renewTimer := time.NewTimer(runLeaseRenewDelay(state.expiresAt()))
-	defer renewTimer.Stop()
-	for {
-		select {
-		case err := <-done:
-			return err
-		case <-renewTimer.C:
-			if err := state.renew(ctx); err != nil {
-				cancelOperation()
-				<-done
-				return fmt.Errorf("renew admission run lease: %w", err)
-			}
-			renewTimer.Reset(runLeaseRenewDelay(state.expiresAt()))
-		case <-ctx.Done():
-			cancelOperation()
-			<-done
-			return ctx.Err()
-		}
-	}
 }
 
 func (state *freshAdmissionState) renew(ctx context.Context) error {

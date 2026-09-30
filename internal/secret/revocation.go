@@ -46,7 +46,7 @@ func NewRevocationReconciler(
 		return nil, errors.New("secret revocation database is required")
 	}
 	if execRecoverer == nil {
-		return nil, errors.New("Command recoverer is required")
+		return nil, errors.New("command recoverer is required")
 	}
 	if runFinalizer == nil {
 		return nil, errors.New("run finalizer is required")

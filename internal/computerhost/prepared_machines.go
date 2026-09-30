@@ -1797,7 +1797,7 @@ func (p *PreparedMachines) joinSaveOwner(ctx context.Context, computerInstanceID
 	settleErr := mount.saves.Quiesce(joinCtx)
 	cancel()
 	if !mount.saves.joined() {
-		return fmt.Errorf("Computer save owner still runs after physical cleanup: %w", settleErr)
+		return fmt.Errorf("computer save owner still runs after physical cleanup: %w", settleErr)
 	}
 	if settleErr != nil {
 		p.logInfo("Computer save settlement failed after physical cleanup", "computer_instance_id", computerInstanceID, "error", settleErr.Error())

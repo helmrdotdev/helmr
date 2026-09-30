@@ -63,7 +63,7 @@ func SettlePreparation(ctx context.Context, tx pgx.Tx, candidate db.ListFailedCo
 	if err := tx.QueryRow(ctx, `SELECT id FROM computer_instances WHERE id=$1 AND computer_id=$2 FOR UPDATE`, candidate.InstanceID, candidate.ComputerID).Scan(&id); err != nil {
 		return false, err
 	}
-	c, err := q.SettleComputerPreparationFailure(ctx, db.SettleComputerPreparationFailureParams{EnvironmentID: candidate.EnvironmentID, ComputerID: candidate.ComputerID, InstanceID: candidate.InstanceID})
+	c, err := q.SettleComputerPreparationFailure(ctx, db.SettleComputerPreparationFailureParams(candidate))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}

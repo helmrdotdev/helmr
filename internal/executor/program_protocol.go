@@ -143,7 +143,7 @@ func (task *guestRunLeaseTask) runHotWait(ctx context.Context, request WaitReque
 		return run(ctx, request)
 	}
 	if task.captures == nil {
-		return errors.New("Computer capture registry is required for hot waits")
+		return errors.New("computer capture registry is required for hot waits")
 	}
 	var captureRequests <-chan *computerhost.MemberPause
 	{

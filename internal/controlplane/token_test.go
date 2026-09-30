@@ -1,7 +1,6 @@
 package controlplane
 
 import (
-	"context"
 	"encoding/json"
 	"net/url"
 	"testing"
@@ -65,57 +64,4 @@ func TestTokenCreateResponseRemainsOriginalPendingProjection(t *testing.T) {
 			}
 		})
 	}
-}
-
-type expiredTokenOperationStore struct {
-	db.Querier
-	token         db.Token
-	completions   int
-	cancellations int
-	commits       int
-	rollbacks     int
-}
-
-func (s *expiredTokenOperationStore) CompleteToken(
-	context.Context,
-	db.CompleteTokenParams,
-) (db.CompleteTokenRow, error) {
-	s.completions++
-	return db.CompleteTokenRow{
-		ID:    s.token.ID,
-		OrgID: s.token.OrgID, ProjectID: s.token.ProjectID,
-		EnvironmentID:          s.token.EnvironmentID,
-		Status:                 db.TokenStatusExpired,
-		CompletionExpired:      true,
-		ReconciliationEnqueued: true,
-	}, nil
-}
-
-func (s *expiredTokenOperationStore) CancelToken(
-	context.Context,
-	db.CancelTokenParams,
-) (db.CancelTokenRow, error) {
-	s.cancellations++
-	return db.CancelTokenRow{
-		ID:    s.token.ID,
-		OrgID: s.token.OrgID, ProjectID: s.token.ProjectID,
-		EnvironmentID:          s.token.EnvironmentID,
-		Status:                 db.TokenStatusExpired,
-		CancellationExpired:    true,
-		ReconciliationEnqueued: true,
-	}, nil
-}
-
-type expiredTokenOperationTransaction struct {
-	store *expiredTokenOperationStore
-}
-
-func (tx expiredTokenOperationTransaction) Commit(context.Context) error {
-	tx.store.commits++
-	return nil
-}
-
-func (tx expiredTokenOperationTransaction) Rollback(context.Context) error {
-	tx.store.rollbacks++
-	return nil
 }

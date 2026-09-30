@@ -43,20 +43,6 @@ func applyChannelClaim(t *testing.T, f runtest.Fixture, principal workergroup.Ho
 	return i, err
 }
 
-func applyRenewal(t *testing.T, f runtest.Fixture, principal workergroup.HostPrincipal, writer WriterRef) (db.ComputerInstance, error) {
-	t.Helper()
-	tx, err := f.Pool.Begin(t.Context())
-	if err != nil {
-		return db.ComputerInstance{}, err
-	}
-	defer tx.Rollback(context.Background())
-	result, err := renewWriter(t.Context(), tx, principal, writer)
-	if err == nil {
-		err = tx.Commit(t.Context())
-	}
-	return result, err
-}
-
 func TestInstanceChannelHasOneOwner(t *testing.T) {
 	f := runtest.New(t)
 	work := f.AddRunLease(t, "running", time.Now())

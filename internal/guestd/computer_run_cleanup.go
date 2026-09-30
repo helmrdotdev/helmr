@@ -3,10 +3,11 @@ package guestd
 import (
 	"context"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/frameio"
-	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"io"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/frameio"
+	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 )
 
 func (r *computerOperationRegistry) bindProgramStop(entry *computerMountEntry, a *computerv0.ComputerRunAuthority, stop context.CancelFunc) *managedProgramClaim {
@@ -26,11 +27,11 @@ func (r *computerOperationRegistry) bindProgramStop(entry *computerMountEntry, a
 
 func (r *computerOperationRegistry) cleanupProgram(ctx context.Context, request *computerv0.ComputerRunCleanupRequest) error {
 	if request.GetRunId() == "" || request.GetRunLeaseId() == "" || request.GetAttemptNumber() == 0 || request.GetWriterGeneration() <= 0 {
-		return errors.New("Program cleanup identity is incomplete")
+		return errors.New("program cleanup identity is incomplete")
 	}
 	entry, release, ok := r.acquireCommandInstance(request.GetComputerInstanceId(), request.GetComputerId(), request.GetChannelToken())
 	if !ok {
-		return errors.New("Program cleanup Instance is unavailable")
+		return errors.New("program cleanup Instance is unavailable")
 	}
 	defer release()
 	entry.lifecycleMu.Lock()
@@ -40,7 +41,7 @@ func (r *computerOperationRegistry) cleanupProgram(ctx context.Context, request 
 		r.mu.Unlock()
 		entry.finalizationMu.Unlock()
 		entry.lifecycleMu.Unlock()
-		return errors.New("Program cleanup physical authority changed")
+		return errors.New("program cleanup physical authority changed")
 	}
 	claim := entry.programCleanup[request.GetRunLeaseId()]
 	if claim == nil {
@@ -57,7 +58,7 @@ func (r *computerOperationRegistry) cleanupProgram(ctx context.Context, request 
 			r.mu.Unlock()
 			entry.finalizationMu.Unlock()
 			entry.lifecycleMu.Unlock()
-			return errors.New("Program cleanup member identity changed")
+			return errors.New("program cleanup member identity changed")
 		}
 		claim.stopRequested = true
 		if claim.stop != nil {

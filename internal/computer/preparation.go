@@ -64,14 +64,14 @@ func (f initialFence) claim(ctx context.Context, principal workergroup.HostPrinc
 	if err := workergroup.CheckClaims(ctx, f.tx, principal); err != nil {
 		return initialPreparation{}, err
 	}
-	return initialPreparation{f.preparationFence}, nil
+	return initialPreparation(f), nil
 }
 
 func (f sourceFence) claim(ctx context.Context, principal workergroup.HostPrincipal) (sourcePreparation, error) {
 	if err := workergroup.CheckClaims(ctx, f.tx, principal); err != nil {
 		return sourcePreparation{}, err
 	}
-	return sourcePreparation{f.preparationFence}, nil
+	return sourcePreparation(f), nil
 }
 
 // lockInitialPreparation fences an initial preparation and compares the

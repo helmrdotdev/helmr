@@ -83,7 +83,7 @@ func (g guestControl) cleanupRun(ctx context.Context, request *computerv0.Comput
 		return err
 	}
 	if !response.Reconciled || response.Error != "" {
-		return fmt.Errorf("Program cleanup not proven: %s", response.Error)
+		return fmt.Errorf("program cleanup not proven: %s", response.Error)
 	}
 	return nil
 }

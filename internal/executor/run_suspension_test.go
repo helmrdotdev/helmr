@@ -181,17 +181,6 @@ func (c *fakeRunWaitClient) AcknowledgeRunWaitResume(_ context.Context, request 
 	}, nil
 }
 
-type mutableRunLeaseProvider struct {
-	assignment workerapi.RunLeaseAssignment
-}
-
-func (p *mutableRunLeaseProvider) CurrentWorkerRunLease() workerapi.RunLease {
-	return workerRunLeaseFromAssignment("", p.assignment)
-}
-func (p *mutableRunLeaseProvider) CurrentWorkerRunLeaseAssignment() workerapi.RunLeaseAssignment {
-	return p.assignment
-}
-
 func liveRunWaitResponse() workerapi.CreateRunWaitResponse {
 	return workerapi.CreateRunWaitResponse{
 		RunID: "run-1", RunWaitID: "run-wait-id-1", ResumeAttachID: "resume-attach-1",

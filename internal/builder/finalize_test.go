@@ -374,20 +374,14 @@ func writeVerifiedProgramFixture(
 		"package.json":            []byte(`{"packageManager":"yarn@4.9.2"}`),
 		sourcePath:                sourceRaw,
 	}
-	directories := []string{"helmr", "node_modules", "tasks"}
+	directories := []string{"helmr", "helmr/app", "node_modules", "tasks"}
 	inputRoot := t.TempDir()
 	for _, name := range directories {
-		if name == "helmr" {
-			continue
-		}
 		if err := os.MkdirAll(filepath.Join(inputRoot, name), 0755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for name, body := range files {
-		if strings.HasPrefix(name, "helmr/") {
-			continue
-		}
 		if err := os.WriteFile(filepath.Join(inputRoot, name), body, 0644); err != nil {
 			t.Fatal(err)
 		}

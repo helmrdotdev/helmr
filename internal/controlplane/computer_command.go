@@ -394,7 +394,7 @@ func publicCommandInfo(process db.ComputerCommand) (api.CommandInfo, error) {
 		case "guest_failure", "placement_failed", "scope_termination_failed":
 			outcome.Failure = &api.CommandFailure{Reason: process.FailureReason.String}
 		default:
-			return api.CommandInfo{}, errors.New("Command failure reason is invalid")
+			return api.CommandInfo{}, errors.New("command failure reason is invalid")
 		}
 	}
 	resource.Outcome = outcome

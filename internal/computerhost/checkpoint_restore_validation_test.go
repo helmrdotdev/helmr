@@ -26,7 +26,7 @@ func instanceRestoreValidationFixture(t *testing.T, count int) (workerapi.Runtim
 	manifest := workerapi.CheckpointManifest{RecoveryPoint: point, RuntimeState: workerapi.CheckpointRuntimeState{Computer: &workerapi.CheckpointComputer{ComputerID: source.ComputerID, LogicalBytes: disk.SeedCapacity, Root: *source.Computer.Root}, ConfigArtifact: a, VMStateArtifact: a, MemoryArtifacts: []workerapi.CheckpointArtifact{a}, ScratchDiskArtifact: a}}
 	source.Restore = &workerapi.RuntimeRestore{CheckpointID: point.ID}
 	for _, role := range []string{"vm_config", "vm_state", "memory", "scratch_disk"} {
-		source.Restore.Artifacts = append(source.Restore.Artifacts, workerapi.RunLeaseCheckpointArtifact{Role: role, Object: workerapi.CASObject{Digest: a.Digest, SizeBytes: a.SizeBytes, MediaType: a.MediaType}})
+		source.Restore.Artifacts = append(source.Restore.Artifacts, workerapi.RunLeaseCheckpointArtifact{Role: role, Object: workerapi.CASObject(a)})
 	}
 	return workerapi.RuntimeReconcileTarget{ID: "destination", Source: source}, manifest
 }

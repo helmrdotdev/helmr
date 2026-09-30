@@ -41,7 +41,7 @@ func TestComputerFreezeWaitsForEveryMember(t *testing.T) {
 		t.Fatal("registration did not notify coordinator")
 	}
 	first.markFrozen()
-	identity, changed, err = waits.computerCaptureProgress(request)
+	identity, _, err = waits.computerCaptureProgress(request)
 	if err != nil || identity != nil {
 		t.Fatalf("partial freeze: %v %v", identity, err)
 	}

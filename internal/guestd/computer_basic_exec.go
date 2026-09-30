@@ -69,7 +69,7 @@ func (r *computerOperationRegistry) startComputerBasicExec(ctx context.Context, 
 	unavailable := entry.recoveryRequired
 	entry.processesMu.Unlock()
 	if unavailable || entry.stopping {
-		return nil, "computer_command_unavailable", errors.New("Computer is not accepting Commands")
+		return nil, "computer_command_unavailable", errors.New("computer is not accepting Commands")
 	}
 	if execution := entry.commands[envelope.GetOperationId()]; execution != nil {
 		if execution.acknowledged {

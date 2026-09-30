@@ -8,13 +8,11 @@ package artifact
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
 	"slices"
-	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
@@ -342,15 +340,6 @@ func validArchitecture(architecture definition.RuntimeArchitecture) bool {
 	return architecture == definition.ArchitectureX8664
 }
 
-func hasNodeModulesComponent(value string) bool {
-	for item := range strings.SplitSeq(value, "/") {
-		if item == "node_modules" {
-			return true
-		}
-	}
-	return false
-}
-
 func ValidateDeclaration(declaration ProgramDeclaration) error {
 	if !definition.ValidDeclaredID(declaration.DeclaredID) {
 		return fmt.Errorf("declaredId %q is outside the exact ASCII ID domain", declaration.DeclaredID)
@@ -392,13 +381,4 @@ func declarationKindOrder(kind DeclarationKind) int {
 	default:
 		return 2
 	}
-}
-
-func domainDigest(domain string, canonical []byte) [sha256.Size]byte {
-	hash := sha256.New()
-	hash.Write([]byte(domain))
-	hash.Write(canonical)
-	var digest [sha256.Size]byte
-	copy(digest[:], hash.Sum(nil))
-	return digest
 }
