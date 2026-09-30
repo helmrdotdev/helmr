@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"errors"
+	"fmt"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -27,9 +28,13 @@ type RecoveryCandidate struct {
 // its Instance. A candidate whose Command or placement changed returns
 // ErrChanged.
 func Recover(ctx context.Context, txb db.TxBeginner, candidate RecoveryCandidate) error {
-	return changed(db.RunTx(ctx, txb, func(tx pgx.Tx) error {
+	err := changed(db.RunTx(ctx, txb, func(tx pgx.Tx) error {
 		return recoverCommand(ctx, tx, candidate)
 	}))
+	if err != nil {
+		return fmt.Errorf("recover Command: %w", err)
+	}
+	return nil
 }
 
 func recoverCommand(ctx context.Context, tx pgx.Tx, candidate RecoveryCandidate) error {

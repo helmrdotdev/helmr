@@ -144,9 +144,12 @@ func (c CommandInstance) Serving() bool {
 
 // TouchActivity records member activity on the locked Computer while it is
 // active and the bound Instance's writer generation is still its current
-// one; otherwise it records nothing. orgID and projectID scope the
-// Command's Environment.
+// one; otherwise, including when the Command is not Bound, it records
+// nothing. orgID and projectID scope the Command's Environment.
 func (c CommandInstance) TouchActivity(ctx context.Context, orgID, projectID uuid.UUID) error {
+	if !c.bound {
+		return nil
+	}
 	_, err := db.New(c.tx).TouchRunComputerActivity(ctx, db.TouchRunComputerActivityParams{
 		ID: c.computer.ID, EnvironmentID: c.computer.EnvironmentID,
 		OrgID: pgvalue.UUID(orgID), ProjectID: pgvalue.UUID(projectID), WriterGeneration: c.instance.WriterGeneration,
