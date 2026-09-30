@@ -12,6 +12,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/jackc/pgx/v5"
 
@@ -25,7 +26,7 @@ import (
 func checkpointPublicationFixture(t *testing.T) (*computerCheckpointFixture, workerapi.RegisterCheckpointRequest, func(int)) {
 	t.Helper()
 	f, req := checkpointRegistrationFixture(t)
-	req.Manifest.RuntimeState.Computer.Root = retainedTestGeneration(t, f.Pool, f.server, req.ComputerInstanceID, computerPublicationKey("checkpoint", pgvalue.UUID(uuid.MustParse(req.CheckpointID)), pgvalue.UUID(uuid.MustParse(req.CheckpointID))))
+	req.Manifest.RuntimeState.Computer.Root = retainedTestGeneration(t, f.Pool, f.server.cas, req.ComputerInstanceID, computer.CheckpointPublicationKey(uuid.MustParse(req.CheckpointID)))
 	artifacts := []*workerapi.CheckpointArtifact{&req.Manifest.RuntimeState.ConfigArtifact, &req.Manifest.RuntimeState.VMStateArtifact, &req.Manifest.RuntimeState.MemoryArtifacts[0], &req.Manifest.RuntimeState.ScratchDiskArtifact}
 	data := make([]string, len(artifacts))
 	for i, a := range artifacts {

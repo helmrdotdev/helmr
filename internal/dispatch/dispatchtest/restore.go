@@ -96,7 +96,7 @@ func PrepareCapture(t *testing.T, f runtest.Fixture, worker dispatch.ComputerCap
 		t.Fatalf("certify root n=%d err=%v", n, err)
 	}
 	id := uuid.MustParse(r.CheckpointID)
-	key := disk.PublicationKey("checkpoint", id, id)
+	key := computer.CheckpointPublicationKey(id)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_pins(computer_instance_id,digest,environment_id,computer_id,instance_desired_version,publication_key) VALUES($1,$2,$3,$4,$5,$6)`, r.ComputerInstanceID, root.Pack.Digest, f.EnvironmentID, r.Manifest.RecoveryPoint.ComputerID, r.DesiredVersion, key)
 	artifacts := []workerapi.CheckpointArtifact{r.Manifest.RuntimeState.ConfigArtifact, r.Manifest.RuntimeState.VMStateArtifact, r.Manifest.RuntimeState.MemoryArtifacts[0], r.Manifest.RuntimeState.ScratchDiskArtifact}
 	var uploaded []cas.Object

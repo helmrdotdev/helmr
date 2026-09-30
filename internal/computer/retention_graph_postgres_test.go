@@ -1,4 +1,4 @@
-package controlplane
+package computer
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -42,14 +41,14 @@ func (s *computerGraphReclaimStore) ReclaimVersions(ctx context.Context, digest 
 func TestComputerGraphCollectionRetainsRootsAndLivePublishers(t *testing.T) {
 	for _, published := range []bool{false, true} {
 		t.Run(map[bool]string{false: "abandoned", true: "published"}[published], func(t *testing.T) {
-			f, fence, input := generationPublicationFixture(t)
+			f, input := newGenerationFixture(t)
 			if published {
-				if _, err := f.server.publishInitialComputerGeneration(t.Context(), fence, input); err != nil {
+				if _, err := f.publisher.PublishInitialVersion(t.Context(), f.principal, f.ref, input); err != nil {
 					t.Fatal(err)
 				}
 			}
-			store := &computerGraphReclaimStore{t: t, q: f.server.db}
-			collector, err := computer.NewRetention(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			store := &computerGraphReclaimStore{t: t, q: db.New(f.Pool)}
+			collector, err := NewRetention(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -89,15 +88,15 @@ func TestComputerGraphCollectionRetainsRootsAndLivePublishers(t *testing.T) {
 func TestComputerGraphCollectionRetainsOtherOrganizationAndStorageRetry(t *testing.T) {
 	for _, shared := range []bool{false, true} {
 		t.Run(map[bool]string{false: "remote retry", true: "shared membership"}[shared], func(t *testing.T) {
-			f, _, input := generationPublicationFixture(t)
+			f, input := newGenerationFixture(t)
 			if shared {
-				if _, err := f.server.db.UpsertCasObject(t.Context(), db.UpsertCasObjectParams{OrgID: pgvalue.NewUUIDv7(), Digest: input.Root.Pack.Digest, SizeBytes: input.Root.Pack.SizeBytes, MediaType: "application/octet-stream"}); err != nil {
+				if _, err := db.New(f.Pool).UpsertCasObject(t.Context(), db.UpsertCasObjectParams{OrgID: pgvalue.NewUUIDv7(), Digest: input.Root.Pack.Digest, SizeBytes: input.Root.Pack.SizeBytes, MediaType: "application/octet-stream"}); err != nil {
 					t.Fatal(err)
 				}
 			}
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1,observed_state='failed',terminal_at=clock_timestamp(),terminal_reason_code='fixture',admission_state='closed',mount_state='lost',reclaimed_at=clock_timestamp(),reclaim_evidence='{"proof":"fixture"}' WHERE id=$1`, f.runtime)
-			store := &computerGraphReclaimStore{t: t, q: f.server.db, fail: true}
-			collector, err := computer.NewRetention(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			store := &computerGraphReclaimStore{t: t, q: db.New(f.Pool), fail: true}
+			collector, err := NewRetention(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			if err != nil {
 				t.Fatal(err)
 			}

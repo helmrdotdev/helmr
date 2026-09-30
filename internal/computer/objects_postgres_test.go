@@ -1,4 +1,4 @@
-package controlplane
+package computer
 
 import (
 	"context"
@@ -18,8 +18,8 @@ import (
 // This validates production ownership and atomic key derivation. Ciphertext
 // verification and the fenced publication caller are separate integration gates.
 func TestComputerObjectOwnershipAndCertification(t *testing.T) {
-	f, b, fence := initialKeyFixture(t)
-	material, err := b.initial(t.Context(), fence)
+	f := newPreparationFixture(t)
+	material, err := f.broker.InitialKey(t.Context(), f.principal, f.ref)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,8 +197,8 @@ func TestComputerObjectOwnershipAndCertification(t *testing.T) {
 }
 
 func TestComputerObjectCertificationRollback(t *testing.T) {
-	f, b, fence := initialKeyFixture(t)
-	material, err := b.initial(t.Context(), fence)
+	f := newPreparationFixture(t)
+	material, err := f.broker.InitialKey(t.Context(), f.principal, f.ref)
 	if err != nil {
 		t.Fatal(err)
 	}

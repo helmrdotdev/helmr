@@ -219,7 +219,7 @@ SELECT spec.seed_digest,spec.seed_size_bytes,spec.seed_media_type,platform.rootf
  JOIN vm_platforms platform ON platform.id=i.vm_platform_id WHERE i.id=sqlc.arg(id);
 
 -- Post-lock time check for a ready Instance's readiness or restore receipt.
--- The caller (dispatch.lockComputerPreparation) must already hold the Worker
+-- The caller (a computer owner fence) must already hold the Worker
 -- Group, Pool and Host fence (which pins supply status for the chosen mode, the
 -- epoch and a present observation) and the Computer and Instance locks.
 -- name: GetComputerInstanceWriterLive :one

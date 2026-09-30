@@ -1,4 +1,4 @@
-package controlplane
+package computer
 
 import (
 	"bytes"
@@ -7,37 +7,25 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/jackc/pgx/v5/pgconn"
-
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestInitialComputerObjectInspectedRegistration(t *testing.T) {
-	f, broker, fence := initialKeyFixture(t)
-	key, err := broker.initial(t.Context(), fence)
-	if err != nil {
-		t.Fatal(err)
-	}
+	f := newPreparationFixture(t)
+	key := f.initialKey(t)
 	defer clear(key.Key)
 	store, err := cas.NewFile(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	tx, err := f.Pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	owner, err := dispatch.LockComputerPreparation(t.Context(), tx, fence.ComputerPreparationFence)
-	_ = tx.Rollback(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	capacity := owner.LogicalBytes
+	capacity := f.logicalBytes
 	writer := blockformat.Writer{Source: store, Sink: store, Scope: key.Scope, ActiveKey: key.ID, Keys: map[string][]byte{key.ID: key.Key}, PackLimit: blockformat.MinPackLimit}
 	root, err := writer.Empty(t.Context(), capacity, 64)
 	if err != nil {
@@ -56,7 +44,7 @@ func TestInitialComputerObjectInspectedRegistration(t *testing.T) {
 		return blockformat.ObjectInspection{Pack: &p}
 	}
 	rootEvidence := inspect(root.Pack)
-	if err = testRecordInitialComputerObject(t.Context(), f.Pool, fence, rootEvidence, false); err == nil {
+	if err = f.recordInitialObject(t.Context(), f.principal, f.ref, rootEvidence, false); err == nil {
 		t.Fatal("uncertified child accepted")
 	}
 	var count int
@@ -65,7 +53,7 @@ func TestInitialComputerObjectInspectedRegistration(t *testing.T) {
 	}
 	upload := func(e blockformat.ObjectInspection) {
 		t.Helper()
-		o, err := describeComputerObject(e)
+		o, err := describeObject(e)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -75,23 +63,23 @@ func TestInitialComputerObjectInspectedRegistration(t *testing.T) {
 	registered := map[string]bool{}
 	record := func(e blockformat.ObjectInspection) {
 		t.Helper()
-		o, err := describeComputerObject(e)
+		o, err := describeObject(e)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if registered[o.digest] {
 			return
 		}
-		if err = testRecordInitialComputerObject(t.Context(), f.Pool, fence, e, true); err == nil {
+		if err = f.recordInitialObject(t.Context(), f.principal, f.ref, e, true); err == nil {
 			t.Fatal("certification without registration succeeded")
 		}
-		if err = testRecordInitialComputerObject(t.Context(), f.Pool, fence, e, false); err != nil {
+		if err = f.recordInitialObject(t.Context(), f.principal, f.ref, e, false); err != nil {
 			t.Fatal(err)
 		}
-		if err = testRecordInitialComputerObject(t.Context(), f.Pool, fence, e, false); err != nil {
+		if err = f.recordInitialObject(t.Context(), f.principal, f.ref, e, false); err != nil {
 			t.Fatal(err)
 		}
-		if err = testRecordInitialComputerObject(t.Context(), f.Pool, fence, e, true); err == nil {
+		if err = f.recordInitialObject(t.Context(), f.principal, f.ref, e, true); err == nil {
 			t.Fatal("certification before upload succeeded")
 		}
 		_, err = f.Pool.Exec(t.Context(), `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,$3,'application/octet-stream')`, f.OrgID, o.digest, o.size+1)
@@ -99,14 +87,14 @@ func TestInitialComputerObjectInspectedRegistration(t *testing.T) {
 		if !errors.As(err, &constraint) || constraint.Code != "23503" {
 			t.Fatalf("conflicting blob size accepted: %v", err)
 		}
-		if err = testRecordInitialComputerObject(t.Context(), f.Pool, fence, e, true); err == nil {
+		if err = f.recordInitialObject(t.Context(), f.principal, f.ref, e, true); err == nil {
 			t.Fatal("mismatched uploaded descriptor accepted")
 		}
 		upload(e)
-		if err = testRecordInitialComputerObject(t.Context(), f.Pool, fence, e, true); err != nil {
+		if err = f.recordInitialObject(t.Context(), f.principal, f.ref, e, true); err != nil {
 			t.Fatal(err)
 		}
-		if err = testRecordInitialComputerObject(t.Context(), f.Pool, fence, e, true); err != nil {
+		if err = f.recordInitialObject(t.Context(), f.principal, f.ref, e, true); err != nil {
 			t.Fatal(err)
 		}
 		registered[o.digest] = true
@@ -138,17 +126,17 @@ func TestInitialComputerObjectInspectedRegistration(t *testing.T) {
 		t.Fatal(err)
 	}
 	changed.Pack.Pages[0].Locator.Offset++
-	if err = testRecordInitialComputerObject(t.Context(), f.Pool, fence, changed, false); err == nil {
+	if err = f.recordInitialObject(t.Context(), f.principal, f.ref, changed, false); err == nil {
 		t.Fatal("changed inspection accepted")
 	}
-	stale := fence
-	stale.ClaimVersion++
-	if err = testRecordInitialComputerObject(t.Context(), f.Pool, stale, rootEvidence, true); err == nil {
-		t.Fatal("stale claims accepted")
+	stale := f.principal
+	stale.HostClaimVersion++
+	if err = f.recordInitialObject(t.Context(), stale, f.ref, rootEvidence, true); !errors.Is(err, workergroup.ErrStaleClaims) {
+		t.Fatalf("stale claims accepted: %v", err)
 	}
-	stale = fence
-	stale.DesiredVersion++
-	if err = testRecordInitialComputerObject(t.Context(), f.Pool, stale, rootEvidence, false); err == nil {
+	staleRef := f.ref
+	staleRef.DesiredVersion++
+	if err = f.recordInitialObject(t.Context(), f.principal, staleRef, rootEvidence, false); err == nil {
 		t.Fatal("stale runtime accepted")
 	}
 	// A new parent referring to a real child at the wrong node position must not
@@ -160,7 +148,7 @@ func TestInitialComputerObjectInspectedRegistration(t *testing.T) {
 	copied.Pages[0].Locator.Pack.Digest[0] ^= 1
 	copied.Pages[0].Children = append([]blockformat.NodeReference(nil), copied.Pages[0].Children...)
 	copied.Pages[0].Children[0].Start++
-	if err = testRecordInitialComputerObject(t.Context(), f.Pool, fence, bad, false); err == nil {
+	if err = f.recordInitialObject(t.Context(), f.principal, f.ref, bad, false); err == nil {
 		t.Fatal("wrong child position accepted")
 	}
 	// Registered graph edges retain uploaded children.
@@ -175,36 +163,35 @@ func TestInitialComputerObjectInspectedRegistration(t *testing.T) {
 	other := *rootEvidence.Pack
 	other.Pages = append([]blockformat.PageInspection(nil), other.Pages...)
 	other.Pages[0].Locator.Page.Key = pgvalue.UUIDString(pgvalue.NewUUIDv7())
-	if err = testRecordInitialComputerObject(t.Context(), f.Pool, fence, blockformat.ObjectInspection{Pack: &other}, false); err == nil {
+	if err = f.recordInitialObject(t.Context(), f.principal, f.ref, blockformat.ObjectInspection{Pack: &other}, false); err == nil {
 		t.Fatal("unpinned write key accepted")
 	}
 }
 
-// The storage verification boundary is exercised by authenticated HTTP tests.
-// This fixture selects only independently established CAS membership.
-func testRecordInitialComputerObject(ctx context.Context, tx db.TxBeginner, f computerKeyFence, e blockformat.ObjectInspection, certify bool) error {
+// recordInitialObject registers the object, or certifies it against the
+// organization's CAS membership. The storage verification boundary is
+// exercised by CertifyInitialObject and the authenticated HTTP tests; this
+// helper selects only independently established CAS membership.
+func (f preparationFixture) recordInitialObject(ctx context.Context, principal workergroup.HostPrincipal, ref PreparationRef, e blockformat.ObjectInspection, certify bool) error {
 	if !certify {
-		return recordInitialComputerObject(ctx, tx, f, e, nil)
+		return f.publisher.RegisterInitialObject(ctx, principal, ref, e)
 	}
-	object, err := describeComputerObject(e)
+	object, err := describeObject(e)
 	if err != nil {
 		return err
 	}
-	t, err := tx.Begin(ctx)
-	if err != nil {
+	var uploaded db.CasObject
+	if err = db.RunTx(ctx, f.Pool, func(tx pgx.Tx) error {
+		fence, err := lockInitialFence(ctx, tx, principal, ref)
+		if err != nil {
+			return err
+		}
+		uploaded, err = db.New(tx).GetCasObject(ctx, db.GetCasObjectParams{OrgID: fence.orgID, Digest: object.digest})
+		return err
+	}); err != nil {
 		return err
 	}
-	defer t.Rollback(context.WithoutCancel(ctx))
-	owner, err := dispatch.LockComputerPreparation(ctx, t, f.ComputerPreparationFence)
-	if err != nil {
-		return err
-	}
-	uploaded, err := db.New(t).GetCasObject(ctx, db.GetCasObjectParams{OrgID: owner.OrgID, Digest: object.digest})
-	if err != nil {
-		return err
-	}
-	if err = t.Rollback(ctx); err != nil {
-		return err
-	}
-	return recordInitialComputerObject(ctx, tx, f, e, &cas.Object{Digest: uploaded.Digest, SizeBytes: uploaded.SizeBytes, MediaType: uploaded.MediaType})
+	return f.publisher.inInitialPreparation(ctx, principal, ref, func(tx pgx.Tx, scope objectScope) error {
+		return scope.certifyObject(ctx, tx, e, cas.Object{Digest: uploaded.Digest, SizeBytes: uploaded.SizeBytes, MediaType: uploaded.MediaType})
+	})
 }

@@ -1,19 +1,24 @@
 package dispatch
 
 import (
+	"bytes"
 	"errors"
-	"github.com/jackc/pgx/v5"
 	"testing"
-	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
+// A Computer placement allocates an Instance whose initial preparation needs
+// no member: the computer owner delivers its initial key, it has no source
+// to restore, and an expired writer holds no preparation.
 func TestComputerInitialPreparationNeedsNoMember(t *testing.T) {
 	f := runtest.New(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.EnvironmentID, f.DeploymentID)
@@ -50,58 +55,32 @@ func TestComputerInitialPreparationNeedsNoMember(t *testing.T) {
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	tx, err = f.Pool.Begin(t.Context())
+	if i.WriterGeneration != 1 {
+		t.Fatalf("allocated writer generation = %d", i.WriterGeneration)
+	}
+	local, err := computerkey.NewLocal("local-1", bytes.Repeat([]byte{0x63}, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback(t.Context())
-	fence := ComputerPreparationFence{RuntimeID: i.ID, WorkerID: i.WorkerHostID, WorkerGroupID: i.WorkerGroupID, WorkerEpoch: i.WorkerEpoch, DesiredVersion: i.DesiredVersion}
-	owner, err := LockComputerPreparation(t.Context(), tx, fence)
+	broker, err := computer.NewKeyBroker(f.Pool, local)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if owner.VersionID != c.HeadDiskVersionID || owner.WriterGeneration != 1 {
-		t.Fatalf("preparation=%+v", owner)
+	principal := workergroup.HostPrincipal{HostID: pgvalue.MustUUIDValue(i.WorkerHostID), GroupID: pgvalue.MustUUIDValue(i.WorkerGroupID), Epoch: i.WorkerEpoch}
+	if err = f.Pool.QueryRow(t.Context(), `SELECT w.claim_version,g.claim_version FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1`, i.WorkerHostID).Scan(&principal.HostClaimVersion, &principal.GroupClaimVersion); err != nil {
+		t.Fatal(err)
 	}
-	if _, err = LockComputerSourcePreparation(t.Context(), tx, fence); !errors.Is(err, pgx.ErrNoRows) {
+	ref := computer.PreparationRef{InstanceID: pgvalue.MustUUIDValue(i.ID), DesiredVersion: i.DesiredVersion}
+	material, err := broker.InitialKey(t.Context(), principal, ref)
+	if err != nil {
+		t.Fatalf("initial preparation: %v", err)
+	}
+	clear(material.Key)
+	if _, err = broker.SourceKeys(t.Context(), principal, ref); !errors.Is(err, computer.ErrKeyUnavailable) {
 		t.Fatalf("unpublished source authorized: %v", err)
 	}
-	if err = tx.Rollback(t.Context()); err != nil {
-		t.Fatal(err)
-	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET writer_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, i.ID)
-	tx, err = f.Pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(t.Context())
-	if _, err = LockComputerPreparation(t.Context(), tx, fence); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err = broker.InitialKey(t.Context(), principal, ref); !errors.Is(err, computer.ErrKeyUnavailable) {
 		t.Fatalf("expired writer authorized: %v", err)
-	}
-}
-
-func TestComputerSourcePreparationRechecksDeadline(t *testing.T) {
-	f, work, _ := commandPlacementFixture(t)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='allocated',observed_version=0,observed_desired_version=0,ready_at=NULL WHERE id=(SELECT computer_instance_id FROM run_leases WHERE id=$1)`, work.LeaseID)
-	var fence ComputerPreparationFence
-	if err := f.Pool.QueryRow(t.Context(), `SELECT i.id,i.worker_host_id,i.worker_group_id,i.worker_epoch,i.desired_version FROM computer_instances i JOIN run_leases l ON l.computer_instance_id=i.id WHERE l.id=$1`, work.LeaseID).Scan(&fence.RuntimeID, &fence.WorkerID, &fence.WorkerGroupID, &fence.WorkerEpoch, &fence.DesiredVersion); err != nil {
-		t.Fatal(err)
-	}
-	tx, err := f.Pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(t.Context())
-	owner, err := LockComputerSourcePreparation(t.Context(), tx, fence)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = LockComputerPreparation(t.Context(), tx, fence); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("committed source initialized again: %v", err)
-	}
-	// Time may pass during certification even though this transaction owns the locks.
-	dbtest.MustExec(t, t.Context(), tx, `UPDATE computer_instances SET preparation_expires_at=$2 WHERE id=$1`, fence.RuntimeID, time.Now().Add(-time.Second))
-	if err = owner.CheckDeadlines(t.Context(), tx); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("expired preparation committed: %v", err)
 	}
 }

@@ -18,7 +18,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -39,28 +38,18 @@ func (s *objectStatObserver) Stat(ctx context.Context, digest string) (cas.Objec
 }
 
 func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
-	f, broker, fence := initialKeyFixture(t)
-	remote := newTestUploadStore(t)
+	f := newInitialPublicationFixture(t)
+	remote := f.store
 	observed := &objectStatObserver{UploadStore: remote}
-	f.server.cas = observed
-	router := serveComputerKeys(t, f, broker)
+	router := f.serve(t, func(cfg *ServerConfig) { cfg.CAS = observed })
 	server := httptest.NewServer(router)
 	defer server.Close()
 	client := seedHostCredential(t, f.Pool, f.worker.HostID).client(t, server.URL)
-	key, err := client.InitialComputerKey(t.Context(), workerapi.InitialComputerKeyRequest{ComputerInstanceID: pgvalue.UUIDString(fence.RuntimeID), DesiredVersion: fence.DesiredVersion})
+	key, err := client.InitialComputerKey(t.Context(), workerapi.InitialComputerKeyRequest{ComputerInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer clear(key.Key)
-	tx, err := f.Pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	owner, err := dispatch.LockComputerPreparation(t.Context(), tx, fence.ComputerPreparationFence)
-	_ = tx.Rollback(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
 	local, err := cas.NewFile(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +57,7 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 	writer := blockformat.Writer{Source: local, Sink: local, Scope: key.Scope, ActiveKey: key.ID, Keys: map[string][]byte{key.ID: key.Key}, PackLimit: blockformat.MinPackLimit}
 	candidate := func() workerapi.InitialComputerObjectRequest {
 		t.Helper()
-		root, err := writer.Empty(t.Context(), owner.LogicalBytes, 64)
+		root, err := writer.Empty(t.Context(), f.logicalBytes, 64)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -76,21 +65,18 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return workerapi.InitialComputerObjectRequest{ComputerInstanceID: pgvalue.UUIDString(fence.RuntimeID), DesiredVersion: fence.DesiredVersion, Inspection: blockformat.ObjectInspection{Pack: &evidence}}
+		return workerapi.InitialComputerObjectRequest{ComputerInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 1, Inspection: blockformat.ObjectInspection{Pack: &evidence}}
 	}
 	upload := func(r workerapi.InitialComputerObjectRequest) {
 		t.Helper()
-		o, err := describeComputerObject(r.Inspection)
-		if err != nil {
-			t.Fatal(err)
-		}
-		body, err := local.Get(t.Context(), o.digest)
+		digest := inspectedPackDigest(r.Inspection)
+		body, err := local.Get(t.Context(), digest)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer body.Close()
 		stored, err := remote.Put(t.Context(), "application/octet-stream", body)
-		if err != nil || stored.Digest != o.digest {
+		if err != nil || stored.Digest != digest {
 			t.Fatalf("upload: %v", err)
 		}
 	}
@@ -136,13 +122,13 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer diskFile.Close()
-	if err = diskFile.Truncate(owner.LogicalBytes); err != nil {
+	if err = diskFile.Truncate(f.logicalBytes); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = diskFile.WriteAt(bytes.Repeat([]byte{9}, 4096), (4<<20)+4096); err != nil {
 		t.Fatal(err)
 	}
-	generation, err := disk.CaptureInitialGeneration(t.Context(), disk.GenerationCapture{Disk: diskFile, Capacity: owner.LogicalBytes, StagingParent: t.TempDir(), Scope: key.Scope, KeyID: key.ID, Key: key.Key, Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 32 << 20, MaxObjects: 1000})
+	generation, err := disk.CaptureInitialGeneration(t.Context(), disk.GenerationCapture{Disk: diskFile, Capacity: f.logicalBytes, StagingParent: t.TempDir(), Scope: key.Scope, KeyID: key.ID, Key: key.Key, Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 32 << 20, MaxObjects: 1000})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,16 +161,16 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 	if err = client.CertifyInitialComputerObject(t.Context(), next); err == nil {
 		t.Fatal("revoked Runtime certified after storage I/O")
 	}
-	o, _ := describeComputerObject(next.Inspection)
+	nextDigest := inspectedPackDigest(next.Inspection)
 	var recorded int
-	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM cas_objects WHERE digest=$1`, o.digest).Scan(&recorded); err != nil || recorded != 0 {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM cas_objects WHERE digest=$1`, nextDigest).Scan(&recorded); err != nil || recorded != 0 {
 		t.Fatalf("revoked operation leaked membership: %d %v", recorded, err)
 	}
 	q := db.New(f.Pool)
 	if n, err := q.ReleaseReclaimedComputerObjects(t.Context(), 100); err != nil || n != 0 {
 		t.Fatalf("close request released candidates: %d %v", n, err)
 	}
-	if _, err = f.Pool.Exec(t.Context(), `DELETE FROM computer_objects WHERE digest=$1`, o.digest); err == nil {
+	if _, err = f.Pool.Exec(t.Context(), `DELETE FROM computer_objects WHERE digest=$1`, nextDigest); err == nil {
 		t.Fatal("live candidate collected")
 	}
 	var version int64
@@ -194,8 +180,8 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 	closure := computer.Closure{
 		Observation: computer.Observation{
 			Instance: computer.InstanceRef{
-				Host: computer.Host{GroupID: pgvalue.MustUUIDValue(fence.WorkerGroupID), HostID: pgvalue.MustUUIDValue(fence.WorkerID), Epoch: fence.WorkerEpoch},
-				ID:   pgvalue.MustUUIDValue(f.runtime), DesiredVersion: fence.DesiredVersion + 1,
+				Host: computer.Host{GroupID: f.worker.GroupID, HostID: f.worker.HostID, Epoch: f.worker.Epoch},
+				ID:   pgvalue.MustUUIDValue(f.runtime), DesiredVersion: 2,
 			},
 			ExpectedObservedVersion: version,
 		},

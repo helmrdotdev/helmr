@@ -50,6 +50,21 @@
 //     its own transaction before and, when the Instance fence no longer holds,
 //     after it. Close, expiry and preparation settlement lock only the
 //     Computer and its Instance.
+//   - Computer preparation (initial and source key delivery, initial object
+//     recording and initial version publication) locks worker_groups and
+//     worker_pools FOR SHARE like placement, then worker_hosts, the Computer
+//     and its Instance, and reads the disk version last; it then compares the
+//     worker's claim versions with the locked worker_hosts and worker_groups
+//     rows.
+//   - Checkpoint object recording locks worker_groups, worker_hosts, the
+//     Computer and its Instance, then the Session, Run, Attempt, Run lease and
+//     Wait rows of the Instance's unreconciled leases, then the checkpoint,
+//     without comparing claim versions, and repeats the whole fence before
+//     commit. Checkpoint registration, readiness and failure take the same
+//     checkpoint source locks.
+//   - Saves (admission, object recording, publication, adoption and
+//     abandonment) lock the Computer's secrets, worker_groups, worker_hosts,
+//     the Computer and then its Instance.
 //   - A restore commit takes its queue-scope advisory locks and then the
 //     restored members' Secret locks before the restore fence, and locks the
 //     restored members after it: Session, Run, Attempt, Wait, then the

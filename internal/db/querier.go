@@ -254,13 +254,13 @@ type Querier interface {
 	// Activation still requires the locked one-shot commit and its durable outbox.
 	GetComputerInstanceRestoreCheckpoint(ctx context.Context, arg GetComputerInstanceRestoreCheckpointParams) (GetComputerInstanceRestoreCheckpointRow, error)
 	// Post-lock time check for a ready Instance's readiness or restore receipt.
-	// The caller (dispatch.lockComputerPreparation) must already hold the Worker
+	// The caller (a computer owner fence) must already hold the Worker
 	// Group, Pool and Host fence (which pins supply status for the chosen mode, the
 	// epoch and a present observation) and the Computer and Instance locks.
 	GetComputerInstanceWriterLive(ctx context.Context, arg GetComputerInstanceWriterLiveParams) (bool, error)
 	GetComputerListItemByKey(ctx context.Context, arg GetComputerListItemByKeyParams) (GetComputerListItemByKeyRow, error)
 	// Post-lock check for an allocated Instance, repeated after object writes and
-	// before commit. The caller (dispatch.lockComputerPreparation) must already
+	// before commit. The caller (a computer owner fence) must already
 	// hold the admission-mode Worker Group, Pool and Host fence (which pins active
 	// supply, the epoch, a present observation and no Run or VM pause) and the
 	// Computer and Instance locks.

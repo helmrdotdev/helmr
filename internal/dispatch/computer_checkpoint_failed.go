@@ -30,11 +30,11 @@ func FailComputerCheckpoint(ctx context.Context, tx pgx.Tx, worker ComputerCaptu
 	if err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
-	instance, checkpoint := source.instance, source.checkpoint
+	instance, checkpoint := source.Instance, source.Checkpoint
 	if checkpoint.Status == "invalid" && checkpoint.InvalidationReasonCode.String == "checkpoint_failed" && checkpoint.FailedRequestFingerprint.Valid && checkpoint.FailedRequestFingerprint.String == fingerprint {
 		return checkpoint, nil
 	}
-	if checkpoint.Status != "creating" || checkpoint.SourceComputerInstanceID != instance.ID || checkpoint.WriterGeneration != instance.WriterGeneration || checkpoint.MembershipRevision != instance.MembershipRevision || checkpoint.ProgramDeploymentID != instance.ProgramDeploymentID || checkpoint.ComputerSpecID != instance.ComputerSpecID || source.computer.WriterGeneration != instance.WriterGeneration || instance.DesiredState != "ready" || instance.DesiredVersion != request.DesiredVersion || instance.AdmissionState != "checkpointing" || instance.ReclaimedAt.Valid {
+	if checkpoint.Status != "creating" || checkpoint.SourceComputerInstanceID != instance.ID || checkpoint.WriterGeneration != instance.WriterGeneration || checkpoint.MembershipRevision != instance.MembershipRevision || checkpoint.ProgramDeploymentID != instance.ProgramDeploymentID || checkpoint.ComputerSpecID != instance.ComputerSpecID || source.Computer.WriterGeneration != instance.WriterGeneration || instance.DesiredState != "ready" || instance.DesiredVersion != request.DesiredVersion || instance.AdmissionState != "checkpointing" || instance.ReclaimedAt.Valid {
 		return db.ComputerCheckpoint{}, pgx.ErrNoRows
 	}
 	// Expired writer/member deadlines must not prevent the current host from

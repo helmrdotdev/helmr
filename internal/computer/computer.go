@@ -7,6 +7,9 @@
 // failure observations, the guest channel claim, writer renewal, Run process
 // cleanup, the restore plan, reconcile targets, expiry and preparation
 // settlement, the restore fence and the member fences other owners compose.
+// It delivers the data keys of preparing Instances (KeyBroker), records the
+// disk objects worker hosts upload and publishes the versions they compose:
+// initial versions, checkpoint objects and saves (Publisher).
 // Operations take domain inputs and return the errors declared here; callers
 // map them to their transport.
 //

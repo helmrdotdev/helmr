@@ -1,74 +1,31 @@
-package controlplane
+package computer
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/disk"
-	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
-func generationPublicationFixture(t *testing.T) (initialPublicationFixture, computerKeyFence, initialComputerPublication) {
-	t.Helper()
-	f, b, fence := initialKeyFixture(t)
-	key, err := b.initial(t.Context(), fence)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer clear(key.Key)
-	store, err := cas.NewFile(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	writer := blockformat.Writer{Source: store, Sink: store, Scope: key.Scope, ActiveKey: key.ID, Keys: map[string][]byte{key.ID: key.Key}, PackLimit: blockformat.MinPackLimit}
-	locator, err := writer.Empty(t.Context(), f.logicalBytes, 64)
-	if err != nil {
-		t.Fatal(err)
-	}
-	inspected, err := blockformat.InspectPack(t.Context(), store, key.Scope, writer.Keys, locator.Pack)
-	if err != nil {
-		t.Fatal(err)
-	}
-	evidence := blockformat.ObjectInspection{Pack: &inspected}
-	if err = recordInitialComputerObject(t.Context(), f.Pool, fence, evidence, nil); err != nil {
-		t.Fatal(err)
-	}
-	root, err := disk.NewGenerationRoot(locator, f.logicalBytes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, err := store.Get(t.Context(), root.Pack.Digest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer body.Close()
-	uploaded, err := f.server.cas.Put(t.Context(), "application/octet-stream", body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = recordInitialComputerObject(t.Context(), f.Pool, fence, evidence, &uploaded); err != nil {
-		t.Fatal(err)
-	}
-	return f, fence, initialComputerPublication{Root: root, Config: oci.RuntimeConfig{User: "root", WorkingDir: "/workspace"}}
-}
-
 func TestInitialGenerationPublicationReplay(t *testing.T) {
-	f, fence, input := generationPublicationFixture(t)
+	f, input := newGenerationFixture(t)
 	type outcome struct {
-		result computerPublicationResult
+		result Publication
 		err    error
 	}
 	results := make(chan outcome, 2)
 	for range 2 {
 		go func() {
-			v, err := f.server.publishInitialComputerGeneration(t.Context(), fence, input)
+			v, err := f.publisher.PublishInitialVersion(t.Context(), f.principal, f.ref, input)
 			results <- outcome{v, err}
 		}()
 	}
@@ -76,13 +33,14 @@ func TestInitialGenerationPublicationReplay(t *testing.T) {
 	if first.err != nil || second.err != nil || first.result != second.result {
 		t.Fatalf("concurrent publication: %+v %+v", first, second)
 	}
+	versionID := pgvalue.UUID(first.result.VersionID)
 	var retained bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT source_disk_version_id=$2 AND retained_source_disk_version_id=$2 FROM computer_instances WHERE id=$1`, f.runtime, first.result.VersionID).Scan(&retained); err != nil || !retained {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT source_disk_version_id=$2 AND retained_source_disk_version_id=$2 FROM computer_instances WHERE id=$1`, f.runtime, versionID).Scan(&retained); err != nil || !retained {
 		t.Fatalf("published generation is not retained by runtime: %v %v", retained, err)
 	}
 	var config []byte
 	var roots, audits int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT initial_config,(SELECT count(*) FROM computer_disk_version_roots WHERE version_id=$1),(SELECT count(*) FROM computer_disk_versions WHERE id=$1 AND publication_request_fingerprint IS NOT NULL) FROM computers WHERE id=$2`, first.result.VersionID, first.result.ComputerID).Scan(&config, &roots, &audits); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT initial_config,(SELECT count(*) FROM computer_disk_version_roots WHERE version_id=$1),(SELECT count(*) FROM computer_disk_versions WHERE id=$1 AND publication_request_fingerprint IS NOT NULL) FROM computers WHERE id=$2`, versionID, pgvalue.UUID(first.result.ComputerID)).Scan(&config, &roots, &audits); err != nil {
 		t.Fatal(err)
 	}
 	var got oci.RuntimeConfig
@@ -92,31 +50,32 @@ func TestInitialGenerationPublicationReplay(t *testing.T) {
 	// The fixture supplies physical exclusion evidence; this test exercises
 	// retention/replay after that boundary, not the Worker's cleanup mechanism.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1,observed_state='failed',terminal_at=clock_timestamp(),terminal_reason_code='fixture',admission_state='closed',mount_state='lost',reclaimed_at=clock_timestamp(),reclaim_evidence='{"proof":"fixture"}' WHERE id=$1`, f.runtime)
-	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM computer_disk_version_roots WHERE version_id=$1`, first.result.VersionID)
-	if n, err := f.server.db.ReleaseReclaimedComputerObjects(t.Context(), 10); err != nil || n != 1 {
+	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM computer_disk_version_roots WHERE version_id=$1`, versionID)
+	q := db.New(f.Pool)
+	if n, err := q.ReleaseReclaimedComputerObjects(t.Context(), 10); err != nil || n != 1 {
 		t.Fatalf("release reclaimed pins: %d %v", n, err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET initial_config='{}',head_disk_version_id=NULL,status='deleted',desired_state='deleted',deleted_at=clock_timestamp(),sandbox_declared_id=NULL WHERE id=$1`, first.result.ComputerID)
-	replay, err := f.server.publishInitialComputerGeneration(t.Context(), fence, input)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET initial_config='{}',head_disk_version_id=NULL,status='deleted',desired_state='deleted',deleted_at=clock_timestamp(),sandbox_declared_id=NULL WHERE id=$1`, pgvalue.UUID(first.result.ComputerID))
+	replay, err := f.publisher.PublishInitialVersion(t.Context(), f.principal, f.ref, input)
 	if err != nil || replay != first.result {
 		t.Fatalf("historical replay: %+v %v", replay, err)
 	}
 	changed := input
 	changed.Config.User = "1000"
-	if _, err = f.server.publishInitialComputerGeneration(t.Context(), fence, changed); err == nil {
+	if _, err = f.publisher.PublishInitialVersion(t.Context(), f.principal, f.ref, changed); err == nil {
 		t.Fatal("changed config accepted")
 	}
-	wrong := fence
-	wrong.WorkerID = pgvalue.NewUUIDv7()
-	if _, err = f.server.publishInitialComputerGeneration(t.Context(), wrong, input); err == nil {
+	wrong := f.principal
+	wrong.HostID = uuid.NewV7()
+	if _, err = f.publisher.PublishInitialVersion(t.Context(), wrong, f.ref, input); err == nil {
 		t.Fatal("other Worker read publication")
 	}
-	wrong = fence
-	wrong.DesiredVersion++
-	if _, err = f.server.publishInitialComputerGeneration(t.Context(), wrong, input); err == nil {
+	stale := f.ref
+	stale.DesiredVersion++
+	if _, err = f.publisher.PublishInitialVersion(t.Context(), f.principal, stale, input); err == nil {
 		t.Fatal("other fence read publication")
 	}
-	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_disk_version_roots WHERE version_id=$1`, first.result.VersionID).Scan(&roots); err != nil || roots != 0 {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_disk_version_roots WHERE version_id=$1`, versionID).Scan(&roots); err != nil || roots != 0 {
 		t.Fatal("historical replay restored payload", err)
 	}
 }
@@ -124,14 +83,15 @@ func TestInitialGenerationPublicationReplay(t *testing.T) {
 func TestInitialGenerationPublicationRejectsInvalidCandidate(t *testing.T) {
 	for _, kind := range []string{"page", "capacity", "claim", "pin", "closed", "atomic failure", "source pin failure"} {
 		t.Run(kind, func(t *testing.T) {
-			f, fence, input := generationPublicationFixture(t)
+			f, input := newGenerationFixture(t)
+			principal := f.principal
 			switch kind {
 			case "page":
 				input.Root.Page.Digest = dbtest.Digest("wrong page")
 			case "capacity":
 				input.Root.LogicalBytes += 4096
 			case "claim":
-				fence.ClaimVersion++
+				principal.HostClaimVersion++
 			case "pin":
 				dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM computer_object_pins WHERE computer_instance_id=$1`, f.runtime)
 			case "closed":
@@ -141,8 +101,12 @@ func TestInitialGenerationPublicationRejectsInvalidCandidate(t *testing.T) {
 			case "atomic failure":
 				dbtest.MustExec(t, t.Context(), f.Pool, `CREATE FUNCTION reject_publication() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected publication failure'; END $$; CREATE TRIGGER reject_publication BEFORE INSERT ON computer_disk_version_roots FOR EACH ROW EXECUTE FUNCTION reject_publication()`)
 			}
-			if _, err := f.server.publishInitialComputerGeneration(t.Context(), fence, input); err == nil {
+			_, err := f.publisher.PublishInitialVersion(t.Context(), principal, f.ref, input)
+			if err == nil {
 				t.Fatal("invalid publication accepted")
+			}
+			if kind == "claim" && !errors.Is(err, workergroup.ErrStaleClaims) {
+				t.Fatalf("stale claims classified as %v", err)
 			}
 			var unchanged bool
 			if err := f.Pool.QueryRow(t.Context(), `SELECT runtime.source_disk_version_id IS NULL AND v.status='initializing' AND v.publication_request_fingerprint IS NULL AND c.initial_config IS NULL AND NOT EXISTS(SELECT 1 FROM computer_disk_version_roots r WHERE r.version_id=v.id) FROM computer_instances runtime JOIN computer_disk_versions v ON v.computer_id=runtime.computer_id AND v.status='initializing' JOIN computers c ON c.id=v.computer_id WHERE runtime.id=$1`, f.runtime).Scan(&unchanged); err != nil || !unchanged {
@@ -153,7 +117,7 @@ func TestInitialGenerationPublicationRejectsInvalidCandidate(t *testing.T) {
 }
 
 func TestInitialGenerationPublicationDeadlineAfterLockWait(t *testing.T) {
-	f, fence, input := generationPublicationFixture(t)
+	f, input := newGenerationFixture(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET preparation_expires_at=clock_timestamp()+interval '1 second' WHERE id=$1`, f.runtime)
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
@@ -165,7 +129,10 @@ func TestInitialGenerationPublicationDeadlineAfterLockWait(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { _, err := f.server.publishInitialComputerGeneration(t.Context(), fence, input); done <- err }()
+	go func() {
+		_, err := f.publisher.PublishInitialVersion(t.Context(), f.principal, f.ref, input)
+		done <- err
+	}()
 	deadline := time.NewTimer(5 * time.Second)
 	defer deadline.Stop()
 	tick := time.NewTicker(5 * time.Millisecond)
@@ -197,7 +164,7 @@ func TestInitialGenerationPublicationDeadlineAfterLockWait(t *testing.T) {
 }
 
 func TestInitialGenerationPublicationRevocationWinsLockWait(t *testing.T) {
-	f, fence, input := generationPublicationFixture(t)
+	f, input := newGenerationFixture(t)
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -208,7 +175,10 @@ func TestInitialGenerationPublicationRevocationWinsLockWait(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { _, err := f.server.publishInitialComputerGeneration(t.Context(), fence, input); done <- err }()
+	go func() {
+		_, err := f.publisher.PublishInitialVersion(t.Context(), f.principal, f.ref, input)
+		done <- err
+	}()
 	timeout := time.NewTimer(5 * time.Second)
 	defer timeout.Stop()
 	tick := time.NewTicker(5 * time.Millisecond)
@@ -241,21 +211,22 @@ func TestInitialGenerationPublicationRevocationWinsLockWait(t *testing.T) {
 }
 
 func TestComputerPublicationPinsRejectOtherOwnerAndReleaseOneAtATime(t *testing.T) {
-	f, fence, input := generationPublicationFixture(t)
+	f, input := newGenerationFixture(t)
 	other := bytes.Repeat([]byte{0xab}, 32)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_object_pins SET publication_key=$2 WHERE computer_instance_id=$1`, f.runtime, other)
-	if _, err := f.server.publishInitialComputerGeneration(t.Context(), fence, input); err == nil {
+	if _, err := f.publisher.PublishInitialVersion(t.Context(), f.principal, f.ref, input); err == nil {
 		t.Fatal("other publication pin authorized initial root")
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_pins(computer_instance_id,publication_key,digest,environment_id,computer_id,instance_desired_version)
- SELECT computer_instance_id,$2,digest,environment_id,computer_id,instance_desired_version FROM computer_object_pins WHERE computer_instance_id=$1`, f.runtime, computerPublicationKey("initial", f.runtime, f.runtime))
-	if n, err := f.server.db.ReleaseReclaimedComputerObjects(t.Context(), 1); err != nil || n != 0 {
+ SELECT computer_instance_id,$2,digest,environment_id,computer_id,instance_desired_version FROM computer_object_pins WHERE computer_instance_id=$1`, f.runtime, []byte(initialPublicationKey(f.ref.InstanceID)))
+	q := db.New(f.Pool)
+	if n, err := q.ReleaseReclaimedComputerObjects(t.Context(), 1); err != nil || n != 0 {
 		t.Fatalf("live Runtime released pins: %d %v", n, err)
 	}
 	// The test supplies physical exclusion evidence; it does not prove host cleanup.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1,observed_state='failed',terminal_at=clock_timestamp(),terminal_reason_code='fixture',admission_state='closed',mount_state='lost',reclaimed_at=clock_timestamp(),reclaim_evidence='{"proof":"fixture"}' WHERE id=$1`, f.runtime)
 	for want := 1; want >= 0; want-- {
-		if n, err := f.server.db.ReleaseReclaimedComputerObjects(t.Context(), 1); err != nil || n != 1 {
+		if n, err := q.ReleaseReclaimedComputerObjects(t.Context(), 1); err != nil || n != 1 {
 			t.Fatalf("bounded release: %d %v", n, err)
 		}
 		var retained int

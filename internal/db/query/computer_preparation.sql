@@ -70,7 +70,7 @@ WHERE c.environment_id=sqlc.arg(environment_id) AND c.id=sqlc.arg(computer_id)
  AND (i.desired_state='closed' OR i.observed_state IN ('failed','lost','closed') OR i.reclaimed_at IS NOT NULL);
 
 -- Post-lock check for an allocated Instance, repeated after object writes and
--- before commit. The caller (dispatch.lockComputerPreparation) must already
+-- before commit. The caller (a computer owner fence) must already
 -- hold the admission-mode Worker Group, Pool and Host fence (which pins active
 -- supply, the epoch, a present observation and no Run or VM pause) and the
 -- Computer and Instance locks.

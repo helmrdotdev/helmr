@@ -12,12 +12,8 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/disk"
-	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
-	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -121,28 +117,6 @@ func drainWorkerHost(f runtest.Fixture) func(context.Context) error {
 	}
 }
 
-// switchPrimaryPool moves the Group's primary pool away from the host's pool,
-// which advances only the Group claim version.
-func switchPrimaryPool(t *testing.T, f runtest.Fixture) func(context.Context) error {
-	t.Helper()
-	standby := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_pools (id,worker_group_id,name,status,vm_platform_id,
- capacity_cpu_millis,capacity_memory_bytes,capacity_guest_ephemeral_disk_bytes,
- per_vm_cpu_millis,per_vm_memory_bytes,per_vm_guest_ephemeral_disk_bytes,max_vm_slots,sealed_at)
- SELECT $2::uuid,worker_group_id,'standby-'||$2::uuid::text,'active',vm_platform_id,capacity_cpu_millis,capacity_memory_bytes,capacity_guest_ephemeral_disk_bytes,
- per_vm_cpu_millis,per_vm_memory_bytes,per_vm_guest_ephemeral_disk_bytes,max_vm_slots,sealed_at FROM worker_pools WHERE id=$1`, f.WorkerPoolID, standby)
-	return func(ctx context.Context) error {
-		var claim int64
-		if err := f.Pool.QueryRow(ctx, `SELECT claim_version FROM worker_groups WHERE id=$1`, runtest.WorkerGroupID).Scan(&claim); err != nil {
-			return err
-		}
-		_, err := db.New(f.Pool).SetWorkerGroupPrimaryPool(ctx, db.SetWorkerGroupPrimaryPoolParams{
-			PoolID: pgvalue.UUID(standby), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), ExpectedGroupClaimVersion: claim,
-		})
-		return err
-	}
-}
-
 func runningComputerCommand(t *testing.T, f runtest.Fixture) (uuid.UUID, uuid.UUID, int64) {
 	t.Helper()
 	member := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
@@ -218,79 +192,6 @@ func TestComputerCommandOperationsReauthenticateAcrossDrain(t *testing.T) {
 			race := newWorkerClaimsRace(t, f, server, map[string]http.HandlerFunc{test.path: test.handler(server)}, map[string]func(context.Context) error{test.path: drainWorkerHost(f)})
 			test.call(t, f, race.client, command, instance, generation)
 			race.requireReplayed(t, test.path)
-		})
-	}
-}
-
-func TestInitialComputerPreparationReauthenticatesAcrossPrimaryPoolSwitch(t *testing.T) {
-	const (
-		keyPath        = "/worker/v1/run/computer-instances/initialization/key"
-		registerPath   = "/worker/v1/run/computer-instances/initialization/objects/register"
-		certifyPath    = "/worker/v1/run/computer-instances/initialization/objects/certify"
-		generationPath = "/worker/v1/run/computer-instances/initialization/generation"
-	)
-	for name, raced := range map[string]string{"key": keyPath, "object registration": registerPath, "object certification": certifyPath, "generation publication": generationPath} {
-		t.Run(name, func(t *testing.T) {
-			f, broker, fence := initialKeyFixture(t)
-			f.server.computerKeys = broker
-			race := newWorkerClaimsRace(t, f.Fixture, f.server, map[string]http.HandlerFunc{
-				keyPath:        f.server.workerInitialComputerKey,
-				registerPath:   f.server.workerRegisterInitialComputerObject,
-				certifyPath:    f.server.workerCertifyInitialComputerObject,
-				generationPath: f.server.workerPublishInitialComputerGeneration,
-			}, map[string]func(context.Context) error{raced: switchPrimaryPool(t, f.Fixture)})
-			runtime := pgvalue.UUIDString(fence.RuntimeID)
-			key, err := race.client.InitialComputerKey(t.Context(), workerapi.InitialComputerKeyRequest{ComputerInstanceID: runtime, DesiredVersion: fence.DesiredVersion})
-			if err != nil {
-				t.Fatalf("initial key: %v", err)
-			}
-			defer clear(key.Key)
-			local, err := cas.NewFile(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
-			writer := blockformat.Writer{Source: local, Sink: local, Scope: key.Scope, ActiveKey: key.ID, Keys: map[string][]byte{key.ID: key.Key}, PackLimit: blockformat.MinPackLimit}
-			locator, err := writer.Empty(t.Context(), f.logicalBytes, 64)
-			if err != nil {
-				t.Fatal(err)
-			}
-			inspected, err := blockformat.InspectPack(t.Context(), local, key.Scope, writer.Keys, locator.Pack)
-			if err != nil {
-				t.Fatal(err)
-			}
-			object := workerapi.InitialComputerObjectRequest{ComputerInstanceID: runtime, DesiredVersion: fence.DesiredVersion, Inspection: blockformat.ObjectInspection{Pack: &inspected}}
-			if err = race.client.RegisterInitialComputerObject(t.Context(), object); err != nil {
-				t.Fatalf("object registration: %v", err)
-			}
-			described, err := describeComputerObject(object.Inspection)
-			if err != nil {
-				t.Fatal(err)
-			}
-			body, err := local.Get(t.Context(), described.digest)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = f.server.cas.Put(t.Context(), "application/octet-stream", body)
-			body.Close()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = race.client.CertifyInitialComputerObject(t.Context(), object); err != nil {
-				t.Fatal(err)
-			}
-			root, err := disk.NewGenerationRoot(locator, f.logicalBytes)
-			if err != nil {
-				t.Fatal(err)
-			}
-			published, err := race.client.PublishInitialComputerGeneration(t.Context(), workerapi.InitialComputerGenerationRequest{ComputerInstanceID: runtime, DesiredVersion: fence.DesiredVersion, Root: root, Config: oci.RuntimeConfig{User: "root"}})
-			if err != nil {
-				t.Fatalf("generation publication: %v", err)
-			}
-			race.requireReplayed(t, raced)
-			var head string
-			if err = f.Pool.QueryRow(t.Context(), `SELECT c.head_disk_version_id::text FROM computers c JOIN computer_instances i ON i.computer_id=c.id WHERE i.id=$1`, fence.RuntimeID).Scan(&head); err != nil || head != published.VersionID {
-				t.Fatalf("published head=%s response=%s err=%v", head, published.VersionID, err)
-			}
 		})
 	}
 }

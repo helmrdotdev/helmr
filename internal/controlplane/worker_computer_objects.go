@@ -1,72 +1,44 @@
 package controlplane
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"net/http"
 
-	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
-	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 const computerObjectRequestLimit = (16 << 20) + 4096
 
 func (s *Server) workerRegisterInitialComputerObject(w http.ResponseWriter, r *http.Request) {
-	s.workerInitialComputerObject(w, r, false)
+	s.workerInitialComputerObject(w, r, s.publisher.RegisterInitialObject)
 }
+
 func (s *Server) workerCertifyInitialComputerObject(w http.ResponseWriter, r *http.Request) {
-	s.workerInitialComputerObject(w, r, true)
+	s.workerInitialComputerObject(w, r, s.publisher.CertifyInitialObject)
 }
-func (s *Server) workerInitialComputerObject(w http.ResponseWriter, r *http.Request, certify bool) {
+
+func (s *Server) workerInitialComputerObject(w http.ResponseWriter, r *http.Request, record func(ctx context.Context, principal workergroup.HostPrincipal, ref computer.PreparationRef, inspection blockformat.ObjectInspection) error) {
 	w.Header().Set("Cache-Control", "no-store")
 	var request workerapi.InitialComputerObjectRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
 		writeError(w, fmt.Errorf("invalid computer object request: %w", err))
 		return
 	}
-	id, err := ids.Parse(request.ComputerInstanceID)
-	if err != nil || request.DesiredVersion <= 0 {
-		writeError(w, badRequest(errors.New("runtime identity and desired version are required")))
+	ref, err := computerPreparationRef(request.ComputerInstanceID, request.DesiredVersion)
+	if err != nil {
+		writeError(w, err)
 		return
 	}
-	object, err := describeComputerObject(request.Inspection)
-	if err != nil {
+	if err = computer.ValidateObjectInspection(request.Inspection); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	worker := workerFromContext(r.Context())
-	fence := computerKeyFence{ComputerPreparationFence: dispatch.ComputerPreparationFence{RuntimeID: pgvalue.UUID(id), WorkerID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerEpoch: worker.Epoch, DesiredVersion: request.DesiredVersion}, ClaimVersion: worker.HostClaimVersion, GroupClaimVersion: worker.GroupClaimVersion}
-	var uploaded *cas.Object
-	if certify {
-		// Restrict storage lookup to an exact registration belonging to this physical
-		// Runtime's Computer. This is not a commit grant: the owner rechecks all live
-		// preparation authority and exact facts after storage I/O.
-		var registered bool
-		registered, err = s.db.HasRegisteredInitialComputerObject(r.Context(), db.HasRegisteredInitialComputerObjectParams{RuntimeID: fence.RuntimeID, PublicationKey: computerPublicationKey("initial", fence.RuntimeID, fence.RuntimeID), WorkerID: fence.WorkerID, WorkerGroupID: fence.WorkerGroupID, WorkerEpoch: fence.WorkerEpoch, DesiredVersion: fence.DesiredVersion, Digest: object.digest, Inspection: object.encoded})
-		if err != nil || !registered {
-			writeError(w, conflict(errors.New("computer object registration is unavailable")))
-			return
-		}
-		stored, err := s.cas.Stat(r.Context(), object.digest)
-		if err != nil {
-			writeError(w, unavailable(errors.New("computer object is not available in storage")))
-			return
-		}
-		if stored.Digest != object.digest || stored.SizeBytes != object.size || stored.MediaType != "application/octet-stream" {
-			writeError(w, conflict(errors.New("stored computer object differs from registration")))
-			return
-		}
-		uploaded = &stored
-	}
-	if err = recordInitialComputerObject(r.Context(), s.tx, fence, request.Inspection, uploaded); err != nil {
-		if writeStaleWorkerClaims(w, err) {
-			return
-		}
-		writeError(w, conflict(errors.New("computer object authority or registration changed")))
+	if err = record(r.Context(), workerFromContext(r.Context()), ref, request.Inspection); err != nil {
+		writeError(w, computerError(err, computerInitialObjectOperation))
 		return
 	}
 	writeJSON(w, http.StatusOK, struct{}{})
