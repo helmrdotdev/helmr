@@ -72,17 +72,17 @@ type Scope struct {
 	EnvironmentID string
 }
 
-func (a Actor) HasPermission(permission Permission, scope Scope) bool {
+func (a Principal) HasPermission(permission Permission, scope Scope) bool {
 	if scope.OrgID != uuid.Nil() && a.OrgID != uuid.Nil() && scope.OrgID != a.OrgID {
 		return false
 	}
-	if a.Kind == ActorKindAPIKey {
+	if a.Kind == PrincipalKindAPIKey {
 		return RoleAllows(a.Role, permission) && a.matchesEnvironmentScope(scope) && slices.Contains(a.Permissions, permission)
 	}
 	return RoleAllows(a.Role, permission)
 }
 
-func (a Actor) matchesEnvironmentScope(scope Scope) bool {
+func (a Principal) matchesEnvironmentScope(scope Scope) bool {
 	if strings.TrimSpace(scope.ProjectID) == "" || strings.TrimSpace(scope.EnvironmentID) == "" {
 		return false
 	}

@@ -83,7 +83,7 @@ func listComputerMembers(ctx context.Context, queries db.Querier, params db.List
 }
 
 func (s *Server) listComputerMembersHTTP(w http.ResponseWriter, r *http.Request) {
-	principal := actorFromContext(r.Context())
+	principal := principalFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))

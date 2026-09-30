@@ -62,7 +62,7 @@ func (s *Server) executeComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		timeout = time.Duration(timeoutMS) * time.Millisecond
 	}
 
-	principal := actorFromContext(r.Context())
+	principal := principalFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
@@ -77,7 +77,7 @@ func (s *Server) executeComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		ProjectID:      pgvalue.MustUUIDValue(projectID),
 		EnvironmentID:  pgvalue.MustUUIDValue(environmentID),
 		ComputerID:     computerID,
-		Creator:        computerCommandCreatorFromActor(principal),
+		Creator:        computerCommandCreatorFromPrincipal(principal),
 		Command:        body.Command,
 		Cwd:            body.Cwd,
 		Env:            body.Env,
@@ -92,7 +92,7 @@ func (s *Server) executeComputerHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, api.CommandReceipt{CommandID: pgvalue.MustUUIDValue(admission.Process.ID).String()})
 }
 
-func canAccessComputerCommandOutput(principal auth.Actor, scope auth.Scope) bool {
+func canAccessComputerCommandOutput(principal auth.Principal, scope auth.Scope) bool {
 	return principal.HasPermission(auth.PermissionComputerCommandCreate, scope)
 }
 
@@ -102,7 +102,7 @@ func (s *Server) getComputerCommandHTTP(w http.ResponseWriter, r *http.Request) 
 		writeError(w, badRequest(codedError{code: "invalid_command_reference", message: "command ID is invalid"}))
 		return
 	}
-	principal := actorFromContext(r.Context())
+	principal := principalFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))

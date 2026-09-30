@@ -117,18 +117,18 @@ func TestSessionTurnProjectionPreservesAbsentResultAndJSONNull(t *testing.T) {
 	}
 }
 
-func sessionLifecycleRequest(body string, principal auth.Actor, sessionID, turnID string) *http.Request {
+func sessionLifecycleRequest(body string, principal auth.Principal, sessionID, turnID string) *http.Request {
 	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	route := chi.NewRouteContext()
 	route.URLParams.Add("sessionID", sessionID)
 	if turnID != "" {
 		route.URLParams.Add("turnID", turnID)
 	}
-	if principal.Kind == auth.ActorKindSession {
+	if principal.Kind == auth.PrincipalKindSession {
 		route.URLParams.Add("projectID", principal.ProjectID)
 		route.URLParams.Add("environmentID", principal.EnvironmentID)
 	}
 	ctx := context.WithValue(r.Context(), chi.RouteCtxKey, route)
-	ctx = context.WithValue(ctx, actorContextKey{}, principal)
+	ctx = context.WithValue(ctx, principalContextKey{}, principal)
 	return r.WithContext(ctx)
 }

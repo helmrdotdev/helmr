@@ -57,7 +57,7 @@ type IssuedAPIKey struct {
 	Raw    string
 }
 
-func authorizeAPIKeyManagement(manager auth.Actor) error {
+func authorizeAPIKeyManagement(manager auth.Principal) error {
 	if !manager.HasPermission(auth.PermissionAPIKeysManage, auth.Scope{OrgID: manager.OrgID}) {
 		return ErrAPIKeyManagementRequired
 	}
@@ -66,7 +66,7 @@ func authorizeAPIKeyManagement(manager auth.Actor) error {
 
 // ListAPIKeys returns up to limit API keys of the environment matching the
 // filter after the given position and whether more follow.
-func ListAPIKeys(ctx context.Context, q db.Querier, manager auth.Actor, scope auth.Scope, filter APIKeyFilter, limit int32, after *APIKeyPosition) ([]db.ListAPIKeysRow, bool, error) {
+func ListAPIKeys(ctx context.Context, q db.Querier, manager auth.Principal, scope auth.Scope, filter APIKeyFilter, limit int32, after *APIKeyPosition) ([]db.ListAPIKeysRow, bool, error) {
 	if err := authorizeAPIKeyManagement(manager); err != nil {
 		return nil, false, err
 	}
@@ -98,7 +98,7 @@ func ListAPIKeys(ctx context.Context, q db.Querier, manager auth.Actor, scope au
 // IssueAPIKey issues an API key for the environment that acts with the
 // issuer's role, limited to the given permissions. An active key of the
 // environment with the same name is revoked by the same statement.
-func IssueAPIKey(ctx context.Context, q db.Querier, issuer auth.Actor, scope auth.Scope, input APIKeyInput) (IssuedAPIKey, error) {
+func IssueAPIKey(ctx context.Context, q db.Querier, issuer auth.Principal, scope auth.Scope, input APIKeyInput) (IssuedAPIKey, error) {
 	if err := authorizeAPIKeyManagement(issuer); err != nil {
 		return IssuedAPIKey{}, err
 	}
@@ -153,7 +153,7 @@ func IssueAPIKey(ctx context.Context, q db.Querier, issuer auth.Actor, scope aut
 }
 
 // RevokeAPIKey revokes an API key of the environment.
-func RevokeAPIKey(ctx context.Context, q db.Querier, manager auth.Actor, scope auth.Scope, id uuid.UUID) error {
+func RevokeAPIKey(ctx context.Context, q db.Querier, manager auth.Principal, scope auth.Scope, id uuid.UUID) error {
 	if err := authorizeAPIKeyManagement(manager); err != nil {
 		return err
 	}
@@ -200,40 +200,40 @@ func NewAPIKeyAuthenticator(q db.Querier) APIKeyAuthenticator {
 
 // Authenticate resolves a raw API key to its principal and records its use. An
 // unknown, revoked or expired key is auth.ErrUnauthenticated.
-func (a APIKeyAuthenticator) Authenticate(ctx context.Context, rawKey string) (auth.Actor, error) {
+func (a APIKeyAuthenticator) Authenticate(ctx context.Context, rawKey string) (auth.Principal, error) {
 	token := strings.TrimSpace(rawKey)
 	if token == "" {
-		return auth.Actor{}, auth.ErrUnauthenticated
+		return auth.Principal{}, auth.ErrUnauthenticated
 	}
 	row, err := a.q.TouchActiveAPIKeyByTokenHash(ctx, auth.HashAPIKey(token))
 	if isNoRows(err) {
-		return auth.Actor{}, auth.ErrUnauthenticated
+		return auth.Principal{}, auth.ErrUnauthenticated
 	}
 	if err != nil {
-		return auth.Actor{}, fmt.Errorf("verify api key: %w", err)
+		return auth.Principal{}, fmt.Errorf("verify api key: %w", err)
 	}
 	orgID, err := pgvalue.UUIDValue(row.OrgID)
 	if err != nil {
-		return auth.Actor{}, fmt.Errorf("api key org id: %w", err)
+		return auth.Principal{}, fmt.Errorf("api key org id: %w", err)
 	}
 	projectID, err := pgvalue.UUIDValue(row.ProjectID)
 	if err != nil {
-		return auth.Actor{}, fmt.Errorf("api key project id: %w", err)
+		return auth.Principal{}, fmt.Errorf("api key project id: %w", err)
 	}
 	environmentID, err := pgvalue.UUIDValue(row.EnvironmentID)
 	if err != nil {
-		return auth.Actor{}, fmt.Errorf("api key environment id: %w", err)
+		return auth.Principal{}, fmt.Errorf("api key environment id: %w", err)
 	}
 	apiKeyID, err := pgvalue.UUIDValue(row.ID)
 	if err != nil {
-		return auth.Actor{}, fmt.Errorf("api key id: %w", err)
+		return auth.Principal{}, fmt.Errorf("api key id: %w", err)
 	}
-	return auth.Actor{
+	return auth.Principal{
 		OrgID:         orgID,
 		APIKeyID:      apiKeyID,
 		ProjectID:     projectID.String(),
 		EnvironmentID: environmentID.String(),
-		Kind:          auth.ActorKindAPIKey,
+		Kind:          auth.PrincipalKindAPIKey,
 		Role:          auth.Role(row.Role),
 		Permissions:   grantedPermissions(row.Permissions),
 	}, nil

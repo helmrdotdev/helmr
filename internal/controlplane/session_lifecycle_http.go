@@ -185,13 +185,13 @@ func (s *Server) sessionCommand(r *http.Request, permission auth.Permission, key
 	return session.ControlRequest{Target: target, IdempotencyKey: key}, nil
 }
 
-func authorizeSessionOperation(principal auth.Actor, permission auth.Permission) error {
+func authorizeSessionOperation(principal auth.Principal, permission auth.Permission) error {
 	switch principal.Kind {
-	case auth.ActorKindAPIKey:
+	case auth.PrincipalKindAPIKey:
 		if scope, ok := principal.EnvironmentScope(); ok && principal.HasPermission(permission, scope) {
 			return nil
 		}
-	case auth.ActorKindSession:
+	case auth.PrincipalKindSession:
 		if auth.RoleAllows(principal.Role, permission) {
 			return nil
 		}
@@ -200,7 +200,7 @@ func authorizeSessionOperation(principal auth.Actor, permission auth.Permission)
 }
 
 func (s *Server) sessionOperationTarget(r *http.Request, permission auth.Permission) (session.Target, error) {
-	principal := actorFromContext(r.Context())
+	principal := principalFromContext(r.Context())
 	if err := authorizeSessionOperation(principal, permission); err != nil {
 		return session.Target{}, err
 	}

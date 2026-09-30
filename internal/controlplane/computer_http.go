@@ -49,7 +49,7 @@ func (s *Server) createComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_idempotency_key", message: err.Error()}))
 		return
 	}
-	principal := actorFromContext(r.Context())
+	principal := principalFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_computer_create", message: err.Error()}))
@@ -103,7 +103,7 @@ func (s *Server) deleteComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_idempotency_key", message: err.Error()}))
 		return
 	}
-	principal := actorFromContext(r.Context())
+	principal := principalFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
@@ -152,7 +152,7 @@ func (s *Server) deleteComputerHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getComputerByReferenceHTTP(w http.ResponseWriter, r *http.Request) {
-	principal := actorFromContext(r.Context())
+	principal := principalFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))

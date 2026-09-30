@@ -37,7 +37,7 @@ type sessionStatusProjection struct {
 
 func (s *Server) sessionReadScope(
 	r *http.Request,
-	principal auth.Actor,
+	principal auth.Principal,
 ) (auth.Scope, pgtype.UUID, error) {
 	projectRef, environmentRef, err := environmentScopeRefsFromRequest(r, principal)
 	if err != nil {

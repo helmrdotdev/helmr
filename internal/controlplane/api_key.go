@@ -36,8 +36,8 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 		writeError(w, identityError(err))
 		return
 	}
-	actor := actorFromContext(r.Context())
-	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, actor)
+	principal := principalFromContext(r.Context())
+	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -56,7 +56,7 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 		}
 		after = &identity.APIKeyPosition{CreatedAt: createdAt, ID: uuid.MustParse(cursor.ID)}
 	}
-	rows, hasMore, err := identity.ListAPIKeys(r.Context(), s.db, actor, scope, filter, apiKeyListLimit, after)
+	rows, hasMore, err := identity.ListAPIKeys(r.Context(), s.db, principal, scope, filter, apiKeyListLimit, after)
 	if err != nil {
 		writeError(w, identityError(err))
 		return
@@ -113,8 +113,8 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid API key request JSON: %w", err))
 		return
 	}
-	actor := actorFromContext(r.Context())
-	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, actor)
+	principal := principalFromContext(r.Context())
+	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -124,7 +124,7 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	issued, err := identity.IssueAPIKey(r.Context(), s.db, actor, scope, identity.APIKeyInput{
+	issued, err := identity.IssueAPIKey(r.Context(), s.db, principal, scope, identity.APIKeyInput{
 		Name:          input.Name,
 		Permissions:   permissions,
 		ExpiresInDays: input.ExpiresInDays,
@@ -148,13 +148,13 @@ func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, notFound(errors.New("api key not found")))
 		return
 	}
-	actor := actorFromContext(r.Context())
-	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, actor)
+	principal := principalFromContext(r.Context())
+	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	if err := identity.RevokeAPIKey(r.Context(), s.db, actor, scope, id); err != nil {
+	if err := identity.RevokeAPIKey(r.Context(), s.db, principal, scope, id); err != nil {
 		writeError(w, identityError(err))
 		return
 	}

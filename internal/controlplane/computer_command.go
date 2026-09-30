@@ -172,7 +172,7 @@ func nonNilComputerCommandBytes(value []byte) []byte {
 
 func (s *Server) admitComputerCommand(ctx context.Context, request computerCommandRequest) (computerCommandAdmission, error) {
 	switch request.Creator.SubjectType {
-	case string(auth.ActorKindAPIKey), string(auth.ActorKindSession):
+	case string(auth.PrincipalKindAPIKey), string(auth.PrincipalKindSession):
 	default:
 		return computerCommandAdmission{}, fmt.Errorf("%w: creator type is invalid", errComputerCommandInvalid)
 	}
@@ -333,15 +333,15 @@ func (s *Server) admitComputerCommand(ctx context.Context, request computerComma
 	return admission, err
 }
 
-func computerCommandCreatorFromActor(principal auth.Actor) computerCommandCreator {
+func computerCommandCreatorFromPrincipal(principal auth.Principal) computerCommandCreator {
 	creator := computerCommandCreator{SubjectType: string(principal.Kind)}
 	switch principal.Kind {
-	case auth.ActorKindAPIKey:
+	case auth.PrincipalKindAPIKey:
 		if principal.APIKeyID != uuid.Nil() {
 			creator.SubjectID = principal.APIKeyID.String()
 			return creator
 		}
-	case auth.ActorKindSession:
+	case auth.PrincipalKindSession:
 		if principal.SessionID != uuid.Nil() {
 			creator.SubjectID = principal.SessionID.String()
 			return creator

@@ -31,8 +31,8 @@ type deploymentListCursor struct {
 }
 
 func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
-	actor := actorFromContext(r.Context())
-	scope, err := s.requestedRunListScope(r, actor)
+	principal := principalFromContext(r.Context())
+	scope, err := s.requestedRunListScope(r, principal)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -46,7 +46,7 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 	if cursor != nil {
 		after = &deployment.Position{CreatedAt: cursor.CreatedAt, ID: uuid.MustParse(cursor.ID)}
 	}
-	rows, hasMore, err := deployment.List(r.Context(), s.db, actor, scope, limit, after)
+	rows, hasMore, err := deployment.List(r.Context(), s.db, principal, scope, limit, after)
 	if err != nil {
 		s.writeDeploymentError(w, err)
 		return
@@ -131,13 +131,13 @@ func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	actor := actorFromContext(r.Context())
-	scope, err := s.requestedRunListScope(r, actor)
+	principal := principalFromContext(r.Context())
+	scope, err := s.requestedRunListScope(r, principal)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	record, err := deployment.Get(r.Context(), s.db, actor, scope, deploymentID)
+	record, err := deployment.Get(r.Context(), s.db, principal, scope, deploymentID)
 	if err != nil {
 		s.writeDeploymentError(w, err)
 		return
@@ -146,13 +146,13 @@ func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
-	actor := actorFromContext(r.Context())
-	scope, err := s.requestedRunListScope(r, actor)
+	principal := principalFromContext(r.Context())
+	scope, err := s.requestedRunListScope(r, principal)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	record, err := deployment.GetCurrent(r.Context(), s.db, actor, scope)
+	record, err := deployment.GetCurrent(r.Context(), s.db, principal, scope)
 	if err != nil {
 		s.writeDeploymentError(w, err)
 		return
@@ -166,13 +166,13 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	actor := actorFromContext(r.Context())
-	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, actor)
+	principal := principalFromContext(r.Context())
+	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	record, err := deployment.Promote(r.Context(), s.tx, actor, scope, deploymentID)
+	record, err := deployment.Promote(r.Context(), s.tx, principal, scope, deploymentID)
 	if err != nil {
 		s.writeDeploymentError(w, err)
 		return

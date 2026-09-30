@@ -31,7 +31,7 @@ type scheduleReconciliation struct {
 // schedules and their Secret bindings to the Deployment's scheduled Tasks,
 // switches the current Deployment and records the promotion event; any
 // rejection rolls back the whole set. It returns the promoted Deployment.
-func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Actor, scope auth.Scope, deploymentID uuid.UUID) (db.Deployment, error) {
+func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, scope auth.Scope, deploymentID uuid.UUID) (db.Deployment, error) {
 	if err := authorizeDeploy(principal, scope); err != nil {
 		return db.Deployment{}, err
 	}

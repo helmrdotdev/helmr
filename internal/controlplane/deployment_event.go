@@ -31,23 +31,23 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	actor := actorFromContext(r.Context())
-	scope, err := s.requestedRunListScope(r, actor)
+	principal := principalFromContext(r.Context())
+	scope, err := s.requestedRunListScope(r, principal)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	record, err := deployment.Get(r.Context(), s.db, actor, scope, deploymentID)
+	record, err := deployment.Get(r.Context(), s.db, principal, scope, deploymentID)
 	if err != nil {
 		s.writeDeploymentError(w, err)
 		return
 	}
 	if r.URL.Query().Get("follow") == "1" || strings.Contains(r.Header.Get("accept"), "text/event-stream") {
-		s.followDeploymentEvents(w, r, actor.OrgID, deploymentID, cursor)
+		s.followDeploymentEvents(w, r, principal.OrgID, deploymentID, cursor)
 		return
 	}
 	page, err := s.telemetryReader.ListEvents(r.Context(), telemetry.EventQuery{
-		OrgID:       actor.OrgID,
+		OrgID:       principal.OrgID,
 		SubjectType: eventSubjectTypeDeployment,
 		SubjectID:   pgvalue.MustUUIDValue(record.ID),
 		AfterSeq:    cursor,

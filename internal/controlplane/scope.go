@@ -30,12 +30,12 @@ func isInvalidEnvironmentScopeReference(err error) bool {
 	return errors.As(err, &referenceError)
 }
 
-func (s *Server) requestEnvironmentScope(ctx context.Context, actor auth.Actor, projectID string, environmentID string) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
-	if actor.Kind == auth.ActorKindAPIKey {
+func (s *Server) requestEnvironmentScope(ctx context.Context, principal auth.Principal, projectID string, environmentID string) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
+	if principal.Kind == auth.PrincipalKindAPIKey {
 		if projectID != "" || environmentID != "" {
 			return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, invalidEnvironmentScopeReference("project_id and environment_id are not accepted with API keys")
 		}
-		scope, ok := actor.EnvironmentScope()
+		scope, ok := principal.EnvironmentScope()
 		if !ok {
 			return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, errAPIKeyEnvironmentScopeRequired
 		}
@@ -45,7 +45,7 @@ func (s *Server) requestEnvironmentScope(ctx context.Context, actor auth.Actor, 
 		}
 		return scope, scopeProjectID, scopeEnvironmentID, nil
 	}
-	scope, err := org.ResolveEnvironmentScope(ctx, s.db, actor.OrgID, projectID, environmentID)
+	scope, err := org.ResolveEnvironmentScope(ctx, s.db, principal.OrgID, projectID, environmentID)
 	var input org.InputError
 	if errors.As(err, &input) {
 		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, invalidEnvironmentScopeReference(input.Error())
@@ -60,28 +60,28 @@ func (s *Server) requestEnvironmentScope(ctx context.Context, actor auth.Actor, 
 	return scope, scopeProjectID, scopeEnvironmentID, nil
 }
 
-func (s *Server) requestEnvironmentScopeFromRequest(r *http.Request, actor auth.Actor) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
-	projectID, environmentID, err := environmentScopeRefsFromRequest(r, actor)
+func (s *Server) requestEnvironmentScopeFromRequest(r *http.Request, principal auth.Principal) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
+	projectID, environmentID, err := environmentScopeRefsFromRequest(r, principal)
 	if err != nil {
 		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
 	}
-	return s.requestEnvironmentScope(r.Context(), actor, projectID, environmentID)
+	return s.requestEnvironmentScope(r.Context(), principal, projectID, environmentID)
 }
 
-func environmentScopeRefsFromRequest(r *http.Request, actor auth.Actor) (string, string, error) {
+func environmentScopeRefsFromRequest(r *http.Request, principal auth.Principal) (string, string, error) {
 	pathProjectID := chi.URLParam(r, "projectID")
 	pathEnvironmentID := chi.URLParam(r, "environmentID")
 	hasPathScope := pathProjectID != "" || pathEnvironmentID != ""
 	if hasPathScope && (pathProjectID == "" || pathEnvironmentID == "") {
 		return "", "", invalidEnvironmentScopeReference("project_id and environment_id must be provided together")
 	}
-	switch actor.Kind {
-	case auth.ActorKindSession:
+	switch principal.Kind {
+	case auth.PrincipalKindSession:
 		if !hasPathScope {
 			return "", "", invalidEnvironmentScopeReference("session environment scoped requests must use the project environment path")
 		}
 		return pathProjectID, pathEnvironmentID, nil
-	case auth.ActorKindAPIKey:
+	case auth.PrincipalKindAPIKey:
 		if hasPathScope {
 			return "", "", invalidEnvironmentScopeReference("API key requests must use API key routes")
 		}
@@ -93,17 +93,17 @@ func environmentScopeRefsFromRequest(r *http.Request, actor auth.Actor) (string,
 	return "", "", invalidEnvironmentScopeReference("environment scoped requests require a project environment path or an environment-bound API key")
 }
 
-func (s *Server) requestedRunListScope(r *http.Request, actor auth.Actor) (auth.Scope, error) {
-	pathProjectID, pathEnvironmentID, err := environmentScopeRefsFromRequest(r, actor)
+func (s *Server) requestedRunListScope(r *http.Request, principal auth.Principal) (auth.Scope, error) {
+	pathProjectID, pathEnvironmentID, err := environmentScopeRefsFromRequest(r, principal)
 	if err != nil {
 		return auth.Scope{}, err
 	}
 	if pathProjectID != "" || pathEnvironmentID != "" {
-		scope, _, _, err := s.requestEnvironmentScope(r.Context(), actor, pathProjectID, pathEnvironmentID)
+		scope, _, _, err := s.requestEnvironmentScope(r.Context(), principal, pathProjectID, pathEnvironmentID)
 		return scope, err
 	}
-	if actor.Kind == auth.ActorKindAPIKey {
-		scope, ok := actor.EnvironmentScope()
+	if principal.Kind == auth.PrincipalKindAPIKey {
+		scope, ok := principal.EnvironmentScope()
 		if !ok {
 			return auth.Scope{}, errAPIKeyEnvironmentScopeRequired
 		}

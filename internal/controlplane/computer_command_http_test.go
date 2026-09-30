@@ -127,8 +127,8 @@ func TestGetComputerCommandHTTPRequiresCommandPermissionAndValidIDs(t *testing.T
 	store := &computerCommandHTTPStore{}
 	server := &Server{db: store}
 
-	viewer := auth.Actor{
-		OrgID: orgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleViewer,
+	viewer := auth.Principal{
+		OrgID: orgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleViewer,
 		ProjectID: projectID.String(), EnvironmentID: environmentID.String(),
 		Permissions: []auth.Permission{auth.PermissionComputersRead},
 	}
@@ -177,7 +177,7 @@ func TestGetComputerCommandHTTPIsolatesEveryAuthorityCoordinate(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		principal  auth.Actor
+		principal  auth.Principal
 		computerID uuid.UUID
 		commandID  uuid.UUID
 	}{
@@ -200,9 +200,9 @@ func TestGetComputerCommandHTTPIsolatesEveryAuthorityCoordinate(t *testing.T) {
 	}
 }
 
-func computerCommandHTTPPrincipal(orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID) auth.Actor {
-	return auth.Actor{
-		OrgID: orgID, APIKeyID: uuid.NewV7(), Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper,
+func computerCommandHTTPPrincipal(orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID) auth.Principal {
+	return auth.Principal{
+		OrgID: orgID, APIKeyID: uuid.NewV7(), Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper,
 		ProjectID: projectID.String(), EnvironmentID: environmentID.String(),
 		Permissions: []auth.Permission{auth.PermissionComputerCommandCreate},
 	}
@@ -210,12 +210,12 @@ func computerCommandHTTPPrincipal(orgID uuid.UUID, projectID uuid.UUID, environm
 
 func computerCommandHTTPGetRequest(
 	commandID string,
-	principal auth.Actor,
+	principal auth.Principal,
 ) *http.Request {
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	route := chi.NewRouteContext()
 	route.URLParams.Add("commandID", commandID)
 	ctx := context.WithValue(request.Context(), chi.RouteCtxKey, route)
-	ctx = context.WithValue(ctx, actorContextKey{}, principal)
+	ctx = context.WithValue(ctx, principalContextKey{}, principal)
 	return request.WithContext(ctx)
 }

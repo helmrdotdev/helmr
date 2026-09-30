@@ -54,7 +54,7 @@ func (s *Server) getSandbox(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listDefinitions(w http.ResponseWriter, r *http.Request, kind definition.Kind) {
-	principal := actorFromContext(r.Context())
+	principal := principalFromContext(r.Context())
 	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(err))
@@ -95,7 +95,7 @@ func (s *Server) getDefinition(w http.ResponseWriter, r *http.Request, kind defi
 		writeError(w, badRequest(err))
 		return
 	}
-	principal := actorFromContext(r.Context())
+	principal := principalFromContext(r.Context())
 	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(err))

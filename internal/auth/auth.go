@@ -11,12 +11,11 @@ import (
 
 var ErrUnauthenticated = errors.New("unauthenticated")
 
-type ActorKind string
+type PrincipalKind string
 
 const (
-	ActorKindAPIKey  ActorKind = "api_key"
-	ActorKindSession ActorKind = "session"
-	ActorKindSystem  ActorKind = "system"
+	PrincipalKindAPIKey  PrincipalKind = "api_key"
+	PrincipalKindSession PrincipalKind = "session"
 )
 
 type Role string
@@ -28,24 +27,24 @@ const (
 	RoleViewer    Role = "viewer"
 )
 
-type Actor struct {
+type Principal struct {
 	OrgID         uuid.UUID
 	UserID        uuid.UUID
 	APIKeyID      uuid.UUID
 	SessionID     uuid.UUID
 	ProjectID     string
 	EnvironmentID string
-	Kind          ActorKind
+	Kind          PrincipalKind
 	Role          Role
 	Admin         bool
 	Permissions   []Permission
 }
 
 type Authenticator interface {
-	Authenticate(ctx context.Context, bearerToken string) (Actor, error)
+	Authenticate(ctx context.Context, bearerToken string) (Principal, error)
 }
 
-func (a Actor) EnvironmentScope() (Scope, bool) {
+func (a Principal) EnvironmentScope() (Scope, bool) {
 	if a.ProjectID == "" || a.EnvironmentID == "" {
 		return Scope{}, false
 	}

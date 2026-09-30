@@ -19,7 +19,7 @@ func TestSessionHTTPPostgresAdmissionEventsScopeAndClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal := auth.Actor{OrgID: f.orgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper, ProjectID: f.projectID.String(), EnvironmentID: f.environmentID.String()}
+	principal := auth.Principal{OrgID: f.orgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper, ProjectID: f.projectID.String(), EnvironmentID: f.environmentID.String()}
 	call := func(handler http.HandlerFunc, raw, turnID, query string) *httptest.ResponseRecorder {
 		t.Helper()
 		r := sessionLifecycleRequest(raw, principal, started.SessionID.String(), turnID)
@@ -142,7 +142,7 @@ func TestSessionHTTPPostgresAdmissionEventsScopeAndClose(t *testing.T) {
 func TestSessionHTTPPostgresStopKeepsFIFOAndRequiresExactHold(t *testing.T) {
 	f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 	scope := f.receiveTurn(t, 1)
-	principal := auth.Actor{OrgID: f.OrgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper, ProjectID: f.ProjectID.String(), EnvironmentID: f.EnvironmentID.String(), Permissions: []auth.Permission{auth.PermissionSessionsSend, auth.PermissionSessionsInterrupt, auth.PermissionSessionsResume, auth.PermissionSessionsRead, auth.PermissionSessionsClose}}
+	principal := auth.Principal{OrgID: f.OrgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper, ProjectID: f.ProjectID.String(), EnvironmentID: f.EnvironmentID.String(), Permissions: []auth.Permission{auth.PermissionSessionsSend, auth.PermissionSessionsInterrupt, auth.PermissionSessionsResume, auth.PermissionSessionsRead, auth.PermissionSessionsClose}}
 	call := func(handler http.HandlerFunc, raw, turnID string) *httptest.ResponseRecorder {
 		t.Helper()
 		w := httptest.NewRecorder()
@@ -225,7 +225,7 @@ func TestSessionHTTPPostgresIdleCloseReleasesComputer(t *testing.T) {
 		t.Fatal(err)
 	}
 	settleActorBootRun(t, f, started, 0)
-	principal := auth.Actor{OrgID: f.orgID, Kind: auth.ActorKindSession, Role: auth.RoleDeveloper, ProjectID: f.projectID.String(), EnvironmentID: f.environmentID.String()}
+	principal := auth.Principal{OrgID: f.orgID, Kind: auth.PrincipalKindSession, Role: auth.RoleDeveloper, ProjectID: f.projectID.String(), EnvironmentID: f.environmentID.String()}
 	r := sessionLifecycleRequest(`{"idempotency_key":"close-idle"}`, principal, started.SessionID.String(), "")
 	w := httptest.NewRecorder()
 	f.server.closeSessionHTTP(w, r)

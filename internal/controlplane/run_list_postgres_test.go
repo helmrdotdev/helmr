@@ -70,8 +70,8 @@ func TestRunListPostgresFiltersBySession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	principal := auth.Actor{
-		OrgID: fixture.orgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper,
+	principal := auth.Principal{
+		OrgID: fixture.orgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper,
 		ProjectID: fixture.projectID.String(), EnvironmentID: fixture.environmentID.String(),
 		Permissions: []auth.Permission{auth.PermissionRunsRead},
 	}
@@ -207,17 +207,17 @@ func runListIDs(response api.ListRunsResponse) string {
 	return strings.Join(ids, ",")
 }
 
-func runListPostgresRequest(target string, principal auth.Actor) *http.Request {
+func runListPostgresRequest(target string, principal auth.Principal) *http.Request {
 	request := httptest.NewRequest(http.MethodGet, target, nil)
 	ctx := context.WithValue(request.Context(), chi.RouteCtxKey, chi.NewRouteContext())
-	ctx = context.WithValue(ctx, actorContextKey{}, principal)
+	ctx = context.WithValue(ctx, principalContextKey{}, principal)
 	return request.WithContext(ctx)
 }
 
 func listRunsPostgresHTTP(
 	t *testing.T,
 	fixture actorStartPostgresFixture,
-	principal auth.Actor,
+	principal auth.Principal,
 	target string,
 ) api.ListRunsResponse {
 	t.Helper()

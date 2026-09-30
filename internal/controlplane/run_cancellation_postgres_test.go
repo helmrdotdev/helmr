@@ -21,7 +21,7 @@ func TestCancelRunHTTPAcceptsExactActorStopAndReplaysReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal := auth.Actor{OrgID: f.orgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper, ProjectID: f.projectID.String(), EnvironmentID: f.environmentID.String(), Permissions: []auth.Permission{auth.PermissionRunsManage}}
+	principal := auth.Principal{OrgID: f.orgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper, ProjectID: f.projectID.String(), EnvironmentID: f.environmentID.String(), Permissions: []auth.Permission{auth.PermissionRunsManage}}
 	cancel := func() *httptest.ResponseRecorder {
 		request := runCancellationRequest(t, started.BootRunID.String(), principal)
 		request.Body = io.NopCloser(strings.NewReader(`{"idempotency_key":"stop-init"}`))
@@ -58,7 +58,7 @@ func TestCancelRunHTTPAcceptsExactActorStopAndReplaysReceipt(t *testing.T) {
 func TestCancelRunHTTPRejectsActiveTurnWithoutMutatingItsAuthority(t *testing.T) {
 	f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 	scope := f.receiveTurn(t, 1)
-	principal := auth.Actor{OrgID: f.OrgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper, ProjectID: f.ProjectID.String(), EnvironmentID: f.EnvironmentID.String(), Permissions: []auth.Permission{auth.PermissionRunsManage}}
+	principal := auth.Principal{OrgID: f.OrgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper, ProjectID: f.ProjectID.String(), EnvironmentID: f.EnvironmentID.String(), Permissions: []auth.Permission{auth.PermissionRunsManage}}
 	request := runCancellationRequest(t, f.runID.String(), principal)
 	request.Body = io.NopCloser(strings.NewReader(`{"idempotency_key":"stale-run-only-cancel"}`))
 	w := httptest.NewRecorder()
@@ -82,8 +82,8 @@ func TestCancelRunHTTPDeniesBeforeRunValidation(t *testing.T) {
 	route := chi.NewRouteContext()
 	route.URLParams.Add("runID", "not-a-run")
 	ctx := context.WithValue(request.Context(), chi.RouteCtxKey, route)
-	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{
-		Kind: auth.ActorKindAPIKey, OrgID: uuid.NewV7(),
+	ctx = context.WithValue(ctx, principalContextKey{}, auth.Principal{
+		Kind: auth.PrincipalKindAPIKey, OrgID: uuid.NewV7(),
 		ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String(),
 	})
 	recorder := httptest.NewRecorder()
@@ -102,13 +102,13 @@ func TestCancelRunHTTPDeniesBeforeRunValidation(t *testing.T) {
 func runCancellationRequest(
 	t *testing.T,
 	runID string,
-	principal auth.Actor,
+	principal auth.Principal,
 ) *http.Request {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodPost, "/v1/runs/"+runID+"/cancel", nil)
 	route := chi.NewRouteContext()
 	route.URLParams.Add("runID", runID)
 	ctx := context.WithValue(request.Context(), chi.RouteCtxKey, route)
-	ctx = context.WithValue(ctx, actorContextKey{}, principal)
+	ctx = context.WithValue(ctx, principalContextKey{}, principal)
 	return request.WithContext(ctx)
 }

@@ -31,12 +31,12 @@ type projectListCursor struct {
 }
 
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
-	actor := actorFromContext(r.Context())
-	if actor.Role == "" {
+	principal := principalFromContext(r.Context())
+	if principal.Role == "" {
 		writeError(w, forbidden(errors.New("organization is required")))
 		return
 	}
-	limit, cursor, err := parseProjectListQuery(r, actor.OrgID)
+	limit, cursor, err := parseProjectListQuery(r, principal.OrgID)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -45,7 +45,7 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	if cursor != nil {
 		after = &org.ProjectPosition{IsDefault: cursor.IsDefault, Slug: cursor.Slug, ID: uuid.MustParse(cursor.ID)}
 	}
-	projects, hasMore, err := org.ListProjects(r.Context(), s.db, actor.OrgID, limit, after)
+	projects, hasMore, err := org.ListProjects(r.Context(), s.db, principal.OrgID, limit, after)
 	if err != nil {
 		writeError(w, orgError(err))
 		return
@@ -57,7 +57,7 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	if hasMore {
 		last := projects[len(projects)-1]
 		response.NextCursor, err = encodeProjectListCursor(projectListCursor{
-			OrgID: actor.OrgID.String(), IsDefault: last.IsDefault,
+			OrgID: principal.OrgID.String(), IsDefault: last.IsDefault,
 			Slug: last.Slug, ID: pgvalue.UUIDString(last.ID),
 		})
 		if err != nil {
@@ -69,8 +69,8 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
-	actor := actorFromContext(r.Context())
-	project, err := org.GetProject(r.Context(), s.db, actor.OrgID, chi.URLParam(r, "projectRef"))
+	principal := principalFromContext(r.Context())
+	project, err := org.GetProject(r.Context(), s.db, principal.OrgID, chi.URLParam(r, "projectRef"))
 	if err != nil {
 		writeError(w, orgError(err))
 		return
@@ -141,8 +141,8 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid project request JSON: %w", err))
 		return
 	}
-	actor := actorFromContext(r.Context())
-	project, environments, err := org.CreateProject(r.Context(), s.tx, actor.OrgID, org.ProjectInput{
+	principal := principalFromContext(r.Context())
+	project, environments, err := org.CreateProject(r.Context(), s.tx, principal.OrgID, org.ProjectInput{
 		ProjectDetails:  org.ProjectDetails{Slug: request.Slug, Name: request.Name},
 		DefaultRegionID: request.DefaultRegionID,
 	})
@@ -164,8 +164,8 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid project request JSON: %w", err))
 		return
 	}
-	actor := actorFromContext(r.Context())
-	project, err := org.UpdateProject(r.Context(), s.db, actor.OrgID, projectID, org.ProjectDetails{
+	principal := principalFromContext(r.Context())
+	project, err := org.UpdateProject(r.Context(), s.db, principal.OrgID, projectID, org.ProjectDetails{
 		Slug: request.Slug, Name: request.Name,
 	})
 	if err != nil {
@@ -191,8 +191,8 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	actor := actorFromContext(r.Context())
-	environment, err := org.CreateEnvironment(r.Context(), s.tx, actor.OrgID, projectID, org.EnvironmentDetails{
+	principal := principalFromContext(r.Context())
+	environment, err := org.CreateEnvironment(r.Context(), s.tx, principal.OrgID, projectID, org.EnvironmentDetails{
 		Slug: request.Slug, Name: request.Name, ColorHex: colorHex,
 	})
 	if err != nil {
@@ -213,8 +213,8 @@ func (s *Server) getEnvironment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	actor := actorFromContext(r.Context())
-	environment, err := org.GetEnvironment(r.Context(), s.db, actor.OrgID, projectID, environmentID)
+	principal := principalFromContext(r.Context())
+	environment, err := org.GetEnvironment(r.Context(), s.db, principal.OrgID, projectID, environmentID)
 	if err != nil {
 		writeError(w, orgError(err))
 		return
@@ -243,8 +243,8 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	actor := actorFromContext(r.Context())
-	environment, err := org.UpdateEnvironment(r.Context(), s.db, actor.OrgID, projectID, environmentID, org.EnvironmentDetails{
+	principal := principalFromContext(r.Context())
+	environment, err := org.UpdateEnvironment(r.Context(), s.db, principal.OrgID, projectID, environmentID, org.EnvironmentDetails{
 		Slug: request.Slug, Name: request.Name, ColorHex: colorHex,
 	})
 	if err != nil {

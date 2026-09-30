@@ -28,15 +28,15 @@ func TestComputerMembersReadAuthoritativeRowsAndScopeCursor(t *testing.T) {
  (id,environment_id,computer_id,argv,cwd,env,stdin,timeout_ms,claim_id,created_by_subject_type,created_by_subject_id)
  SELECT $1,environment_id,id,ARRAY['true'],'/workspace','{}'::jsonb,''::bytea,300000,$3,'user','test'
  FROM computers WHERE id=$2`, commandID, f.computerIDs[0], claimID)
-	principal := auth.Actor{
-		OrgID: f.orgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper,
+	principal := auth.Principal{
+		OrgID: f.orgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper,
 		ProjectID: f.projectID.String(), EnvironmentID: f.environmentID.String(),
 		Permissions: []auth.Permission{auth.PermissionComputersRead},
 	}
-	read := func(id uuid.UUID, query string, actor auth.Actor, want int) api.ListComputerMembersResponse {
+	read := func(id uuid.UUID, query string, principal auth.Principal, want int) api.ListComputerMembersResponse {
 		t.Helper()
 		recorder := httptest.NewRecorder()
-		f.server.listComputerMembersHTTP(recorder, computerReadPostgresRequest("/v1/computers/"+id.String()+"/members"+query, id.String(), actor))
+		f.server.listComputerMembersHTTP(recorder, computerReadPostgresRequest("/v1/computers/"+id.String()+"/members"+query, id.String(), principal))
 		if recorder.Code != want {
 			t.Fatalf("members status=%d want=%d: %s", recorder.Code, want, recorder.Body.String())
 		}

@@ -19,7 +19,7 @@ import (
 
 type apiKeyFixture struct {
 	identityFixture
-	owner auth.Actor
+	owner auth.Principal
 	scope auth.Scope
 }
 
@@ -35,7 +35,7 @@ func newAPIKeyFixture(t *testing.T) apiKeyFixture {
 	fixture.exec(t, `INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default) VALUES ($1, $2, $3, 'production', 'Production', '#315FCE', true)`, environmentID, orgID, projectID)
 	return apiKeyFixture{
 		identityFixture: fixture,
-		owner:           auth.Actor{OrgID: orgID, UserID: userID, Kind: auth.ActorKindSession, Role: auth.RoleOwner},
+		owner:           auth.Principal{OrgID: orgID, UserID: userID, Kind: auth.PrincipalKindSession, Role: auth.RoleOwner},
 		scope:           auth.Scope{OrgID: orgID, ProjectID: projectID.String(), EnvironmentID: environmentID.String()},
 	}
 }
@@ -63,10 +63,10 @@ func TestAPIKeyPostgresAuthenticatesActiveKeys(t *testing.T) {
 	if err != nil || store.reset() != 1 {
 		t.Fatalf("authenticate error = %v, want one statement", err)
 	}
-	want := auth.Actor{
+	want := auth.Principal{
 		OrgID: fixture.owner.OrgID, APIKeyID: pgvalue.MustUUIDValue(issued.Record.ID),
 		ProjectID: fixture.scope.ProjectID, EnvironmentID: fixture.scope.EnvironmentID,
-		Kind: auth.ActorKindAPIKey, Role: auth.RoleOwner,
+		Kind: auth.PrincipalKindAPIKey, Role: auth.RoleOwner,
 		Permissions: []auth.Permission{auth.PermissionRunsRead, auth.PermissionTasksDeploy},
 	}
 	if !reflect.DeepEqual(principal, want) {
@@ -145,7 +145,7 @@ func TestAPIKeyPostgresListsAndRevokesWithinEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	otherOrg := fixture.organization(t, "other")
-	other := auth.Actor{OrgID: otherOrg, UserID: fixture.user(t, "Other", ""), Kind: auth.ActorKindSession, Role: auth.RoleOwner}
+	other := auth.Principal{OrgID: otherOrg, UserID: fixture.user(t, "Other", ""), Kind: auth.PrincipalKindSession, Role: auth.RoleOwner}
 	fixture.member(t, otherOrg, other.UserID, db.OrgMemberRoleOwner)
 	otherProjectID, otherEnvironmentID := uuid.NewV7(), uuid.NewV7()
 	fixture.exec(t, `INSERT INTO projects (id, org_id, default_region_id, slug, name, is_default) VALUES ($1, $2, 'api-keys', 'other', 'Other', true)`, otherProjectID, otherOrg)

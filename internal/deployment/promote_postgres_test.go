@@ -221,9 +221,9 @@ func TestPromoteDeploymentPostgres(t *testing.T) {
 
 	t.Run("session principal", func(t *testing.T) {
 		fixture.setCurrent(t, fixture.currentID)
-		session := auth.Actor{
+		session := auth.Principal{
 			OrgID: fixture.orgID, UserID: uuid.NewV7(),
-			Kind: auth.ActorKindSession, Role: auth.RoleDeveloper,
+			Kind: auth.PrincipalKindSession, Role: auth.RoleDeveloper,
 		}
 		if _, err := fixture.promote(t, fixture.olderID, session); err != nil {
 			t.Fatalf("session principal promotion: %v", err)
@@ -775,9 +775,9 @@ func deploymentPromotionArgumentBytes(args []any) int64 {
 
 var _ db.TxBeginner = (*deploymentPromotionCountingBeginner)(nil)
 
-func (fixture deploymentPromotionPostgresFixture) apiKeyPrincipal() auth.Actor {
-	return auth.Actor{
-		OrgID: fixture.orgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper,
+func (fixture deploymentPromotionPostgresFixture) apiKeyPrincipal() auth.Principal {
+	return auth.Principal{
+		OrgID: fixture.orgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper,
 		ProjectID: fixture.projectID.String(), EnvironmentID: fixture.environmentID.String(),
 		Permissions: []auth.Permission{auth.PermissionTasksDeploy},
 	}
@@ -804,7 +804,7 @@ func (fixture deploymentPromotionPostgresFixture) currentDeployment(t *testing.T
 func (fixture deploymentPromotionPostgresFixture) promote(
 	t *testing.T,
 	deploymentID uuid.UUID,
-	principal auth.Actor,
+	principal auth.Principal,
 ) (db.Deployment, error) {
 	t.Helper()
 	return fixture.promoteContext(t.Context(), t, deploymentID, principal)
@@ -814,7 +814,7 @@ func (fixture deploymentPromotionPostgresFixture) promoteContext(
 	ctx context.Context,
 	t *testing.T,
 	deploymentID uuid.UUID,
-	principal auth.Actor,
+	principal auth.Principal,
 ) (db.Deployment, error) {
 	t.Helper()
 	scope := auth.Scope{

@@ -27,13 +27,13 @@ type deploymentBundleOwnershipStore interface {
 }
 
 func (s *Server) planDeploymentBundleUpload(w http.ResponseWriter, r *http.Request) {
-	actor := actorFromContext(r.Context())
-	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, actor)
+	principal := principalFromContext(r.Context())
+	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !actor.HasPermission(auth.PermissionTasksDeploy, scope) {
+	if !principal.HasPermission(auth.PermissionTasksDeploy, scope) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
@@ -54,7 +54,7 @@ func (s *Server) planDeploymentBundleUpload(w http.ResponseWriter, r *http.Reque
 
 	response, err := planDeploymentBundleUploads(
 		r.Context(), s.cas, s.db, s.platformStore,
-		strings.ToLower(actor.OrgID.String()), pgvalue.UUID(actor.OrgID), raw, manifest,
+		strings.ToLower(principal.OrgID.String()), pgvalue.UUID(principal.OrgID), raw, manifest,
 	)
 	if err != nil {
 		s.writeDeploymentError(w, err)
