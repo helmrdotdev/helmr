@@ -4,7 +4,9 @@
   "type": "module",
   "scripts": {
     "dev": "astro dev",
-    "build": "astro build && bun run check:build-output",
+    "build": "astro build && bun run check:build-output && vite build",
+    "check": "bun run build && CF_SEND_TELEMETRY=false cf deploy --prebuilt --mode production --dry-run",
+    "deploy": "bun run build && cf deploy --prebuilt --mode production",
     "check:build-output": "bun scripts/check-build-output.ts",
     "preview": "astro preview",
     "typecheck": "astro check"
@@ -14,7 +16,9 @@
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",
+    "@cloudflare/vite-plugin": "2.0.0-beta.sha-ad79608dd",
+    "cf": "1.0.0-beta.6",
     "typescript": "6.0.3",
-    "vite": "^8.3.0"
+    "vite": "8.3.0"
   }
 }

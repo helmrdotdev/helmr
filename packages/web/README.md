@@ -22,15 +22,16 @@ bun run check:web
 
 `build:web` runs Astro and its output checks, then packages the static files
 with the Cloudflare Vite plugin. The deployable artifact lives in
-`.cloudflare/output/v0/`. `check:web` also validates that artifact with a
+`packages/web/.cloudflare/output/v0/`. `check:web` also validates that artifact with a
 deployment dry run, without credentials or deployment API requests. CLI telemetry
 is disabled for the dry run. Source CI runs this check.
 
-`cloudflare.config.ts` owns the Worker name, domain, and asset serving policy.
-The root `vite.config.ts` packages Astro's output without adding a Worker script.
-Use `build:web` rather than `cf build` at the monorepo root: the Cloudflare CLI's
-framework detection expects an individual application, while this build combines
-Astro's static output with the root Vite configuration.
+The web package owns its Cloudflare dependencies, `cloudflare.config.ts`, and
+`vite.config.ts`. The Cloudflare configuration sets the Worker name, domain, and
+asset serving policy. Vite packages Astro's output without adding a Worker script.
+The root scripts delegate to this package so both build stages and deployment run
+from `packages/web`. Its existing Astro type check also checks both configuration
+files.
 The Cloudflare CLI runs on Node.js; Bun manages dependencies and runs the scripts.
 The CLI and Vite plugin use pinned beta releases, so update and validate them
 together.
