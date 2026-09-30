@@ -205,7 +205,19 @@ type SessionComputer struct {
 
 // Computer is the locked Computer.
 func (c SessionComputer) Computer() db.Computer {
-	return c.computer
+	return cloneComputer(c.computer)
+}
+
+// cloneComputer copies every slice of a Computer row, so a caller cannot
+// change what an accessor returns next through a returned row.
+func cloneComputer(c db.Computer) db.Computer {
+	c.RecoveryFailure = bytes.Clone(c.RecoveryFailure)
+	c.PreparationFailure = bytes.Clone(c.PreparationFailure)
+	c.InitialConfig = bytes.Clone(c.InitialConfig)
+	c.SecretCaCertificate = bytes.Clone(c.SecretCaCertificate)
+	c.SecretCaPrivateKeyNonce = bytes.Clone(c.SecretCaPrivateKeyNonce)
+	c.SecretCaPrivateKeyCiphertext = bytes.Clone(c.SecretCaPrivateKeyCiphertext)
+	return c
 }
 
 // LockSessionComputer update-locks the Session's Computer for a Session
