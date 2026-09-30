@@ -6,8 +6,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/secret"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -89,16 +87,15 @@ func BeginExecutionFinalization(ctx context.Context, tx pgx.Tx, request Executio
 // the exact finalizing member. It owns Secret and Worker lock ordering; the caller
 // owns outcome writes and transaction commit/rollback.
 func LockFinalizingExecution(ctx context.Context, tx pgx.Tx, fence ExecutionFence) (Execution, OwnedFinalization, error) {
-	q := db.New(tx)
-	loc, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: fence.LeaseID, LeaseSequence: fence.LeaseSequence, WorkerGroupID: fence.WorkerGroupID, WorkerHostID: fence.WorkerHostID, WorkerEpoch: fence.WorkerEpoch})
+	locator, err := LocateLiveExecution(ctx, tx, fence)
 	if err != nil {
 		return Execution{}, OwnedFinalization{}, err
 	}
-	secrets, err := secret.LockAttemptDelivery(ctx, q, loc.RunID, loc.AttemptNumber, loc.ComputerID)
+	secrets, err := locator.LockSecrets(ctx)
 	if err != nil {
 		return Execution{}, OwnedFinalization{}, err
 	}
-	graph, err := LockOwnedFinalizationWithInstanceFence(ctx, tx, OwnedFinalizationRequest{OrgID: pgvalue.MustUUIDValue(loc.OrgID), ProjectID: pgvalue.MustUUIDValue(loc.ProjectID), EnvironmentID: pgvalue.MustUUIDValue(loc.EnvironmentID), RunID: pgvalue.MustUUIDValue(loc.RunID)}, func() error { return workergroup.LockExecutionHost(ctx, q, fence.host(loc.RegionID, false)) })
+	graph, err := locator.lockOwnedFinalization(ctx)
 	if err != nil {
 		return Execution{}, OwnedFinalization{}, err
 	}
@@ -109,6 +106,6 @@ func LockFinalizingExecution(ctx context.Context, tx pgx.Tx, fence ExecutionFenc
 	if a.run.Status != db.RunStatusRunning || a.lease.Status != db.RunLeaseStatusFinalizing || a.run.ActiveStartedAt.Valid || !a.attempt.EntrypointEnteredAt.Valid || !a.lease.FinalizationOperationID.Valid || !a.lease.FinalizationStartedAt.Valid || !a.lease.FinalizationRequestFingerprint.Valid {
 		return Execution{}, OwnedFinalization{}, pgx.ErrNoRows
 	}
-	a.secrets = secrets
+	a.secrets = secrets.secrets
 	return a, graph, nil
 }

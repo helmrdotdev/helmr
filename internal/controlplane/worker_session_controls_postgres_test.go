@@ -18,7 +18,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -142,36 +141,47 @@ func TestWorkerSessionControlSelfInterruptRejectsResumePostgres(t *testing.T) {
 	}
 }
 
-func (q workerControlSecretRaceQueries) LockWorkerControlSecrets(ctx context.Context, ids []pgtype.UUID) ([]db.LockWorkerControlSecretsRow, error) {
-	rows, err := q.Querier.LockWorkerControlSecrets(ctx, ids)
-	if err == nil {
-		err = q.afterUnion()
-	}
-	return rows, err
-}
-
-func TestWorkerSessionControlNewBindingDoesNotAcquireLateSecretPostgres(t *testing.T) {
+// lockWorkerSessionControl re-reads the Secret union through run's Recheck:
+// a binding added while the control waits on the execution host is rejected
+// as unavailable instead of being locked after the fence.
+func TestWorkerSessionControlRejectsBindingAddedMidControlPostgres(t *testing.T) {
 	f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	tx, err := f.Pool.Begin(ctx)
+	hostBlocker, err := f.Pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback(context.Background())
-	blocker, err := f.Pool.Begin(ctx)
+	defer hostBlocker.Rollback(context.Background())
+	dbtest.MustExec(t, ctx, hostBlocker, `SELECT id FROM worker_hosts WHERE id=$1 FOR UPDATE`, f.worker.HostID)
+	control, err := f.Pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer blocker.Rollback(context.Background())
-	q := workerControlSecretRaceQueries{Querier: db.New(tx), afterUnion: func() error {
-		addWorkerControlSecret(t, f)
-		_, err := blocker.Exec(ctx, `SELECT id FROM secrets WHERE id IN(SELECT secret_id FROM computer_secrets WHERE computer_id=$1) FOR UPDATE`, f.computerID)
-		return err
-	}}
-	_, _, _, err = lockWorkerSessionControl(ctx, &txWork{q: q, tx: tx}, f.worker, f.fence(), pgvalue.UUID(f.sessionID), true)
-	if !errors.Is(err, secret.ErrDeliveryUnavailable) {
-		t.Fatalf("changed binding must reject without waiting for new Secret: %v", err)
+	defer control.Rollback(context.Background())
+	var pid int32
+	if err = control.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, _, _, err := lockWorkerSessionControl(ctx, &txWork{q: db.New(control), tx: control}, f.worker, f.fence(), pgvalue.UUID(f.sessionID), true)
+		done <- err
+	}()
+	// The control holds the Secret union and waits on the execution host.
+	waitForPostgresBlock(t, f.Pool, pid)
+	addWorkerControlSecret(t, f)
+	secretBlocker, err := f.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secretBlocker.Rollback(context.Background())
+	dbtest.MustExec(t, ctx, secretBlocker, `SELECT id FROM secrets WHERE id IN(SELECT secret_id FROM computer_secrets WHERE computer_id=$1) FOR UPDATE`, f.computerID)
+	if err = hostBlocker.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-done; !errors.Is(err, secret.ErrDeliveryUnavailable) {
+		t.Fatalf("changed binding must reject without waiting for the new Secret: %v", err)
 	}
 }
 
@@ -395,11 +405,6 @@ func TestWorkerSessionControlChildToParentFinalizationOrderPostgres(t *testing.T
 	if err = <-done; err != nil {
 		t.Fatal(err)
 	}
-}
-
-type workerControlSecretRaceQueries struct {
-	db.Querier
-	afterUnion func() error
 }
 
 func waitForPostgresBlock(t *testing.T, pool *pgxpool.Pool, backendPID int32) {

@@ -13,7 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
-	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -427,7 +426,7 @@ func parseWorkerWaitTurn(id *string, generation *int64) (pgtype.UUID, pgtype.Int
 		return pgtype.UUID{}, pgtype.Int8{}, nil
 	}
 	if id == nil || generation == nil || *generation <= 0 {
-		return pgtype.UUID{}, pgtype.Int8{}, session.ErrTurnScope
+		return pgtype.UUID{}, pgtype.Int8{}, run.ErrTurnScope
 	}
 	parsed, err := parseCanonicalUUID("turn_id", *id)
 	if err != nil {

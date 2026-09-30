@@ -11,7 +11,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -80,11 +80,11 @@ func (s *Server) workerCreateTimerRunWait(
 		if err != nil {
 			return err
 		}
-		if err := session.ValidateWaitCursor(authority, db.RunWait{TurnID: turnID, TurnRunGeneration: generation, TurnSessionID: authority.Session().ID}, actorCursor); err != nil {
+		if err := authority.ValidateWaitCursor(db.RunWait{TurnID: turnID, TurnRunGeneration: generation, TurnSessionID: authority.Session().ID}, actorCursor); err != nil {
 			return err
 		}
 		if turnID.Valid {
-			if _, err := session.ValidateTurnWork(r.Context(), work.tx, session.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(authority.Run().EnvironmentID), SessionID: pgvalue.MustUUIDValue(authority.Session().ID), RunID: pgvalue.MustUUIDValue(authority.Run().ID), TurnID: pgvalue.MustUUIDValue(turnID), AttemptNumber: authority.Attempt().Number, RunGeneration: generation.Int64}); err != nil {
+			if err := authority.ValidateTurnWork(r.Context(), work.tx, pgvalue.MustUUIDValue(turnID), generation.Int64); err != nil {
 				return err
 			}
 		}
@@ -99,7 +99,7 @@ func (s *Server) workerCreateTimerRunWait(
 			},
 		)
 		if err == nil {
-			return session.ValidateWaitCursor(authority, registered, actorCursor)
+			return authority.ValidateWaitCursor(registered, actorCursor)
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
@@ -134,7 +134,7 @@ func (s *Server) workerCreateTimerRunWait(
 	if writeStaleWorkerClaims(w, err) {
 		return
 	}
-	if errors.Is(err, errStaleRunLeaseClaim) || errors.Is(err, session.ErrAuthority) || errors.Is(err, session.ErrTurnStopped) || errors.Is(err, session.ErrTurnScope) {
+	if staleTimerWait(err) {
 		writeError(w, conflict(errors.New("worker timer wait receipt is stale")))
 		return
 	}
@@ -242,4 +242,10 @@ func timerWaitDecision(wait db.RunWait) (string, json.RawMessage, error) {
 		return "", nil, errors.New("timer wait decision is not completed")
 	}
 	return "completed", json.RawMessage(`null`), nil
+}
+
+// staleTimerWait reports a timer wait registration whose execution, Turn or
+// input cursor is stale.
+func staleTimerWait(err error) bool {
+	return errors.Is(err, errStaleRunLeaseClaim) || errors.Is(err, run.ErrWaitCursor) || errors.Is(err, run.ErrTurnStopped) || errors.Is(err, run.ErrTurnScope)
 }

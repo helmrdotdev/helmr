@@ -30,7 +30,7 @@ func TestTurnStopDoesNotConsumeSharedTokenOrUnrelatedWait(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(context.Background())
-	turn, err := session.ActivateTurn(ctx, tx, session.TurnScope{EnvironmentID: fixture.environmentID, SessionID: actorID, TurnID: turnID, RunID: actorWork.runID, AttemptNumber: 1})
+	turn, err := session.ActivateTurn(ctx, tx, run.TurnScope{EnvironmentID: fixture.environmentID, SessionID: actorID, TurnID: turnID, RunID: actorWork.runID, AttemptNumber: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

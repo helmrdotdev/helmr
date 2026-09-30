@@ -88,12 +88,42 @@
 //     checkpoint. A restore acknowledgement adds the Run leases after the
 //     Attempts and the Session turns after the Waits, before the checkpoint.
 //   - Run lease operations lock the execution host (a lease claim first locks
-//     its attempt's Secrets through secret.LockAttemptDelivery), then every
-//     Computer the Run lineage reaches in id order (with an addressed target
-//     Computer in the same statement), then those Computers' unreclaimed
-//     Instances in id order, before re-locking the lease's own Computer and
-//     Instance and the Session, Run, Attempt and lease. Run cancellation takes
-//     the same ordered Computer and Instance locks before any member lock.
+//     its attempt's Secrets through the run owner), then every Computer the
+//     Run lineage reaches in id order (with an addressed target Computer in
+//     the same statement), then those Computers' unreclaimed Instances in id
+//     order, before re-locking the lease's own Computer and Instance and the
+//     Session, Run, Attempt and lease. Run cancellation takes the same ordered
+//     Computer and Instance locks before any member lock.
+//   - Run lease operations that deliver Secrets (live operations with
+//     Secrets, finalization begin, task completion and waits) lock the source
+//     attempt's Secrets through the run owner before the execution host.
+//   - Worker Session operations that address another Session or Computer
+//     (send, enqueue, close, event reads, run-sourced Actor start) lock the
+//     source Computer's Secrets, plus an addressed Computer's (never an
+//     addressed Session's Computer's), then the execution fence with the
+//     target in the same ordered statements, then the source attempt's
+//     delivery Secrets. That delivery lock reads the source Computer's
+//     bindings again without comparing them with the first lock, so a
+//     binding added before the execution fence locks the source Computer is
+//     locked after the fence; these operations have no re-read check.
+//   - Worker Session controls (cancel, interrupt, resume) lock the sorted
+//     union of the source Computer's and the target Session's Computer's
+//     Secrets, then the execution fence, then re-read the union after the
+//     Session and Computer fences and fail if a binding changed, re-locking
+//     only the same Secrets.
+//   - Public Session cancel and interrupt with a current Run lock that Run's
+//     attempt Secrets, then its owned finalization graph, then re-lock the
+//     Session's Computer (already locked by the graph) and its Instance, then
+//     the Session. With no current Run they lock the Session before its
+//     Computer and Instance, an inversion of the order above. Public resume
+//     takes its own admission path: it locks the Session's Computer's
+//     Secrets, then the Computer, its Instance and the Session, then its
+//     idempotency claim, and then re-locks the already-held Computer through
+//     the Session predicate.
+//   - Session timeout reconciliation locks the Computer's Secrets, the
+//     Computer and its Instance, then the Session and Run, re-locks the
+//     already-held Computer through the open-Session predicate, then locks
+//     the Attempt and Wait.
 //   - Command operations, through the command owner, lock Secrets first when
 //     they deliver or validate them (claim, recovery). Worker-reported
 //     operations then lock worker_groups and worker_hosts, comparing claim

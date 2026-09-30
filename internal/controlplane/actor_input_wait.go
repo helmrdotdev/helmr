@@ -9,6 +9,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
@@ -109,7 +110,7 @@ func (s *Server) workerCreateActorInputRunWait(
 		}
 		registered, err = work.q.GetActorInputRunWaitRegistrationReplay(r.Context(), replayParams)
 		if err == nil {
-			return session.ValidateWaitCursor(authority, registered, cursor)
+			return authority.ValidateWaitCursor(registered, cursor)
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
@@ -120,7 +121,7 @@ func (s *Server) workerCreateActorInputRunWait(
 			_ = existing
 			return errStaleRunLeaseClaim
 		}
-		if err := session.ValidateWaitCursor(authority, db.RunWait{Kind: db.WaitKindActorInput}, cursor); err != nil {
+		if err := authority.ValidateWaitCursor(db.RunWait{Kind: db.WaitKindActorInput}, cursor); err != nil {
 			return err
 		}
 		if authority.Run().Status != db.RunStatusRunning || authority.Session().ActiveTurnID.Valid || authority.Session().DispatchHoldID.Valid || params.AfterInputSequence != authority.Session().CommittedInputSequence {
@@ -158,7 +159,7 @@ func (s *Server) workerCreateActorInputRunWait(
 	if writeStaleWorkerClaims(w, err) {
 		return
 	}
-	if errors.Is(err, errStaleRunLeaseClaim) || errors.Is(err, session.ErrAuthority) || errors.Is(err, session.ErrTurnStopped) || errors.Is(err, session.ErrTurnScope) {
+	if staleActorInputWait(err) {
 		writeError(w, conflict(errors.New("worker actor input wait receipt is stale")))
 		return
 	}
@@ -212,4 +213,11 @@ func actorInputWaitDecision(wait db.RunWait) (string, json.RawMessage, error) {
 	default:
 		return "", nil, errors.New("actor input wait is not terminal")
 	}
+}
+
+// staleActorInputWait reports an Actor input wait registration whose
+// execution, Turn or input cursor is stale, or whose completion found
+// inconsistent Session input.
+func staleActorInputWait(err error) bool {
+	return errors.Is(err, errStaleRunLeaseClaim) || errors.Is(err, run.ErrWaitCursor) || errors.Is(err, session.ErrAuthority) || errors.Is(err, run.ErrTurnStopped) || errors.Is(err, run.ErrTurnScope)
 }

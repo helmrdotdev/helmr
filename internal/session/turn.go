@@ -14,47 +14,32 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-var ErrTurnNotActive = errors.New("turn is not active")
-var ErrTurnStopped = errors.New("turn interruption has been accepted")
-var ErrTurnScope = errors.New("turn producer scope is stale")
-
-// TurnScope addresses one input under one execution. It is not a capability.
-// Callers must also validate their authenticated worker/lease authority in this transaction.
-type TurnScope struct {
-	EnvironmentID     uuid.UUID
-	SessionID         uuid.UUID
-	TurnID            uuid.UUID
-	RunID             uuid.UUID
-	AttemptNumber     int32
-	RunGeneration     int64
-	MessageDeliveryID uuid.UUID
-}
-
 // ActivateTurn is part of input delivery's transaction. It does not acknowledge input.
-func ActivateTurn(ctx context.Context, tx pgx.Tx, scope TurnScope) (db.SessionTurn, error) {
+func ActivateTurn(ctx context.Context, tx pgx.Tx, scope run.TurnScope) (db.SessionTurn, error) {
 	q := db.New(tx)
-	actor, input, err := lockTurn(ctx, q, scope)
+	locked, err := run.LockTurn(ctx, tx, scope)
 	if err != nil {
 		return db.SessionTurn{}, err
 	}
+	actor, input := locked.Session(), locked.Turn()
 	currentRun, err := q.GetRun(ctx, db.GetRunParams{EnvironmentID: actor.EnvironmentID, ID: actor.CurrentRunID})
 	if err != nil {
 		return db.SessionTurn{}, turnError(err)
 	}
 	if currentRun.ID != pgvalue.UUID(scope.RunID) || currentRun.CurrentAttemptNumber != scope.AttemptNumber || (currentRun.Status != db.RunStatusRunning && currentRun.Status != db.RunStatusWaiting) {
-		return db.SessionTurn{}, ErrTurnScope
+		return db.SessionTurn{}, run.ErrTurnScope
 	}
 	if actor.DispatchHoldID.Valid {
-		return db.SessionTurn{}, ErrTurnStopped
+		return db.SessionTurn{}, run.ErrTurnStopped
 	}
 	if actor.ActiveTurnID.Valid {
 		if actor.CurrentRunID == input.RunID && input.RunGeneration.Int64 == actor.RunGeneration && input.Status == "running" && actor.ActiveTurnID == input.ID && input.RunID == pgvalue.UUID(scope.RunID) && input.AttemptNumber.Int32 == scope.AttemptNumber {
 			return input, nil
 		}
-		return db.SessionTurn{}, ErrTurnNotActive
+		return db.SessionTurn{}, run.ErrTurnNotActive
 	}
 	if input.Status != "queued" || input.Sequence != actor.CommittedInputSequence+1 {
-		return db.SessionTurn{}, ErrTurnNotActive
+		return db.SessionTurn{}, run.ErrTurnNotActive
 	}
 	result, err := q.ActivateSessionTurn(ctx, db.ActivateSessionTurnParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, TurnID: input.ID, RunID: pgvalue.UUID(scope.RunID), AttemptNumber: pgtype.Int4{Int32: scope.AttemptNumber, Valid: true}, InputSequence: input.Sequence})
 	if err != nil {
@@ -63,40 +48,6 @@ func ActivateTurn(ctx context.Context, tx pgx.Tx, scope TurnScope) (db.SessionTu
 	scope.RunGeneration = actor.RunGeneration
 	_, err = appendEvent(ctx, q, scope, "turn.started", []byte(`{}`))
 	return result, err
-}
-
-func lockTurn(ctx context.Context, q db.Querier, scope TurnScope) (db.Session, db.SessionTurn, error) {
-	if scope.EnvironmentID == uuid.Nil() || scope.SessionID == uuid.Nil() || scope.TurnID == uuid.Nil() {
-		return db.Session{}, db.SessionTurn{}, ErrTurnScope
-	}
-	actor, err := q.LockSessionTurnAuthority(ctx, db.LockSessionTurnAuthorityParams{EnvironmentID: pgvalue.UUID(scope.EnvironmentID), ID: pgvalue.UUID(scope.SessionID)})
-	if err != nil {
-		return actor, db.SessionTurn{}, turnError(err)
-	}
-	input, err := q.LockSessionTurnInput(ctx, db.LockSessionTurnInputParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: pgvalue.UUID(scope.TurnID)})
-	return actor, input, turnError(err)
-}
-
-func ValidateTurn(ctx context.Context, tx pgx.Tx, scope TurnScope) (db.SessionTurn, error) {
-	q := db.New(tx)
-	actor, input, err := lockTurn(ctx, q, scope)
-	if err != nil {
-		return input, err
-	}
-	return validateTurn(actor, input, scope)
-}
-
-func validateTurn(actor db.Session, input db.SessionTurn, scope TurnScope) (db.SessionTurn, error) {
-	if scope.RunGeneration <= 0 || scope.RunID == uuid.Nil() || scope.AttemptNumber <= 0 || input.RunGeneration.Int64 != scope.RunGeneration || input.RunID != pgvalue.UUID(scope.RunID) || input.AttemptNumber.Int32 != scope.AttemptNumber || actor.CurrentRunID != input.RunID || actor.RunGeneration != scope.RunGeneration {
-		return input, ErrTurnScope
-	}
-	if actor.ActiveTurnID != input.ID || input.Status != "running" || (actor.Status != "open" && actor.Status != "closing") {
-		return input, ErrTurnNotActive
-	}
-	if actor.DispatchHoldID.Valid || input.InterruptRequestedAt.Valid {
-		return input, ErrTurnStopped
-	}
-	return input, nil
 }
 
 type InterruptReceipt struct {
@@ -165,7 +116,7 @@ func InterruptTurn(ctx context.Context, tx pgx.Tx, environmentID, sessionID, tur
 		return InterruptReceipt{}, err
 	}
 	holdID := pgvalue.MustUUIDValue(actor.DispatchHoldID)
-	scope := TurnScope{EnvironmentID: environmentID, SessionID: sessionID, TurnID: turnID, RunID: pgvalue.MustUUIDValue(input.RunID), AttemptNumber: input.AttemptNumber.Int32, RunGeneration: input.RunGeneration.Int64}
+	scope := run.TurnScope{EnvironmentID: environmentID, SessionID: sessionID, TurnID: turnID, RunID: pgvalue.MustUUIDValue(input.RunID), AttemptNumber: input.AttemptNumber.Int32, RunGeneration: input.RunGeneration.Int64}
 	data, _ := json.Marshal(struct {
 		HoldID uuid.UUID `json:"hold_id"`
 	}{holdID})
@@ -193,11 +144,11 @@ type OutputReceipt struct {
 	Event   db.SessionEvent `json:"-"`
 }
 
-func AppendTurnOutput(ctx context.Context, tx pgx.Tx, scope TurnScope, key string, data json.RawMessage) (OutputReceipt, error) {
+func AppendTurnOutput(ctx context.Context, tx pgx.Tx, scope run.TurnScope, key string, data json.RawMessage) (OutputReceipt, error) {
 	q := db.New(tx)
 	// New Turn operations lock Session/input before their disjoint claim namespaces.
 	// No code may acquire a turn.output.write or turn.interrupt claim before Session.
-	actor, input, err := lockTurn(ctx, q, scope)
+	locked, err := run.LockTurn(ctx, tx, scope)
 	if err != nil {
 		return OutputReceipt{}, err
 	}
@@ -222,17 +173,17 @@ func AppendTurnOutput(ctx context.Context, tx pgx.Tx, scope TurnScope, key strin
 			return receipt, nil
 		}
 	}
-	if err = validateOutput(ctx, q, actor, input, scope); err != nil {
+	if err = validateOutput(ctx, q, locked, scope); err != nil {
 		switch {
 		case errors.As(err, new(*OperationError)):
 			var operation *OperationError
 			errors.As(err, &operation)
 			receipt.Code = operation.Code
-		case errors.Is(err, ErrTurnStopped):
+		case errors.Is(err, run.ErrTurnStopped):
 			receipt.Code = "turn_stopping"
-		case errors.Is(err, ErrTurnScope):
+		case errors.Is(err, run.ErrTurnScope):
 			receipt.Code = "stale_execution"
-		case errors.Is(err, ErrTurnNotActive):
+		case errors.Is(err, run.ErrTurnNotActive):
 			receipt.Code = "turn_not_active"
 		default:
 			return OutputReceipt{}, err
@@ -250,7 +201,7 @@ func AppendTurnOutput(ctx context.Context, tx pgx.Tx, scope TurnScope, key strin
 	if claim.Claim.Status == "completed" {
 		event, err := q.GetSessionEvent(ctx, db.GetSessionEventParams{EnvironmentID: pgvalue.UUID(scope.EnvironmentID), SessionID: pgvalue.UUID(scope.SessionID), ID: pgvalue.UUID(receipt.EventID)})
 		if err == nil && (event.TurnID != pgvalue.UUID(scope.TurnID) || event.ProducerRunID != pgvalue.UUID(scope.RunID) || event.ProducerAttemptNumber.Int32 != scope.AttemptNumber || event.RunGeneration.Int64 != scope.RunGeneration) {
-			err = ErrTurnScope
+			err = run.ErrTurnScope
 		}
 		receipt.Event = event
 		return receipt, err
@@ -267,12 +218,12 @@ func AppendTurnOutput(ctx context.Context, tx pgx.Tx, scope TurnScope, key strin
 
 // SettleTurn commits the logical result and input cursor under execution authority.
 // Computer persistence has a separate lifecycle.
-func SettleTurn(ctx context.Context, tx pgx.Tx, scope TurnScope, status string, data json.RawMessage, fingerprint string) (db.SessionEvent, error) {
+func SettleTurn(ctx context.Context, tx pgx.Tx, scope run.TurnScope, status string, data json.RawMessage, fingerprint string) (db.SessionEvent, error) {
 	q := db.New(tx)
 	if (status != "completed" && status != "failed") || (len(data) != 0 && !json.Valid(data)) || (status == "failed" && len(data) == 0) {
-		return db.SessionEvent{}, ErrTurnScope
+		return db.SessionEvent{}, run.ErrTurnScope
 	}
-	input, err := ValidateTurn(ctx, tx, scope)
+	input, err := run.ValidateTurn(ctx, tx, scope)
 	if err != nil {
 		return db.SessionEvent{}, err
 	}
@@ -307,7 +258,7 @@ func SettleTurn(ctx context.Context, tx pgx.Tx, scope TurnScope, status string, 
 	return event, turnError(err)
 }
 
-func appendEvent(ctx context.Context, q db.Querier, scope TurnScope, kind string, data []byte) (db.SessionEvent, error) {
+func appendEvent(ctx context.Context, q db.Querier, scope run.TurnScope, kind string, data []byte) (db.SessionEvent, error) {
 	turnID := pgtype.UUID{}
 	if scope.TurnID != uuid.Nil() {
 		turnID = pgvalue.UUID(scope.TurnID)
@@ -316,7 +267,7 @@ func appendEvent(ctx context.Context, q db.Querier, scope TurnScope, kind string
 }
 func turnError(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrTurnScope
+		return run.ErrTurnScope
 	}
 	return err
 }

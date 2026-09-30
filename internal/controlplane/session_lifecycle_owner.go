@@ -6,7 +6,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
-	"github.com/helmrdotdev/helmr/internal/secret"
 
 	"github.com/helmrdotdev/helmr/internal/session"
 )
@@ -108,15 +107,7 @@ func lockSessionControlGraph(ctx context.Context, work *txWork, target session.T
 		}
 		return run.OwnedFinalization{}, nil
 	}
-	current, err := work.q.GetRun(ctx, db.GetRunParams{EnvironmentID: actor.EnvironmentID, ID: actor.CurrentRunID})
-	if err != nil {
-		return run.OwnedFinalization{}, err
-	}
-	if _, err = secret.LockAttemptDelivery(ctx, work.q, current.ID, current.CurrentAttemptNumber, actor.ComputerID); err != nil {
-		return run.OwnedFinalization{}, err
-	}
-	tx := work.tx
-	graph, err := run.LockOwnedFinalization(ctx, tx, run.OwnedFinalizationRequest{OrgID: pgvalue.MustUUIDValue(current.OrgID), ProjectID: pgvalue.MustUUIDValue(current.ProjectID), EnvironmentID: target.EnvironmentID, RunID: pgvalue.MustUUIDValue(current.ID)})
+	graph, err := run.LockOwnedFinalizationWithSecrets(ctx, work.tx, run.SessionRunSecrets{EnvironmentID: target.EnvironmentID, RunID: pgvalue.MustUUIDValue(actor.CurrentRunID), ComputerID: pgvalue.MustUUIDValue(actor.ComputerID)})
 	if err != nil {
 		return graph, err
 	}

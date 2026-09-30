@@ -11,7 +11,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
-	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -19,51 +18,35 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// Secret locks precede physical authority; source and target Sessions are then
-// locked together, in UUID order, before the source Run lineage.
+// Source-only Secret locks precede physical authority; source and target
+// Sessions are then locked together, in UUID order, before the source Run
+// lineage.
 func authorizeWorkerSessionOperation(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence, targetID, targetComputerID pgtype.UUID) (run.LiveSource, error) {
-	q := db.New(tx)
 	parsed, err := parseRunLeaseFence(lease)
 	if err != nil {
 		return run.LiveSource{}, err
 	}
-	loc, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch})
-	if err != nil {
-		return run.LiveSource{}, staleWorkerRunSource(err)
+	fence := workerExecutionFence(worker, parsed, lease)
+	var secrets run.SourceSecrets
+	if targetID.Valid {
+		secrets, err = run.LockSourceSecretsForSession(ctx, tx, fence, targetID)
+	} else {
+		secrets, err = run.LockSourceSecretsForComputer(ctx, tx, fence, targetComputerID)
 	}
-	computerIDs := []pgtype.UUID{loc.ComputerID}
-	if targetComputerID.Valid {
-		computerIDs = append(computerIDs, targetComputerID)
-	}
-	_, err = q.LockWorkerControlSecrets(ctx, computerIDs)
 	if err != nil {
 		return run.LiveSource{}, err
 	}
-	var authority run.Execution
-	if targetID.Valid {
-		authority, err = run.LockLiveExecutionForSession(ctx, tx, workerExecutionFence(worker, parsed, lease), targetID)
-	} else if targetComputerID.Valid {
-		authority, err = run.LockLiveExecutionForComputer(ctx, tx, workerExecutionFence(worker, parsed, lease), targetComputerID)
-	} else {
-		authority, err = run.LockLiveExecution(ctx, tx, workerExecutionFence(worker, parsed, lease))
-	}
+	authority, source, err := secrets.LockLiveSource(ctx)
 	if errors.Is(err, run.ErrExecutionTargetNotFound) {
 		if targetID.Valid {
 			return run.LiveSource{}, &session.OperationError{Code: "session_not_found"}
 		}
 		return run.LiveSource{}, errActorStartComputerNotFound
 	}
-	if errors.Is(err, pgx.ErrNoRows) {
-		return run.LiveSource{}, run.ErrStaleSource
-	}
 	if err != nil {
 		return run.LiveSource{}, err
 	}
-	source, err := authority.LiveSource()
-	if err != nil {
-		return run.LiveSource{}, err
-	}
-	if _, err = secret.LockAttemptDelivery(ctx, q, loc.RunID, loc.AttemptNumber, loc.ComputerID); err != nil {
+	if err = secrets.ValidateSourceDelivery(ctx); err != nil {
 		return run.LiveSource{}, err
 	}
 	actor := authority.Session()
@@ -72,7 +55,7 @@ func authorizeWorkerSessionOperation(ctx context.Context, tx pgx.Tx, worker work
 			return run.LiveSource{}, &session.OperationError{Code: "session_held"}
 		}
 		if actor.ActiveTurnID.Valid {
-			turn, err := q.GetSessionTurn(ctx, db.GetSessionTurnParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: actor.ActiveTurnID})
+			turn, err := db.New(tx).GetSessionTurn(ctx, db.GetSessionTurnParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: actor.ActiveTurnID})
 			if err != nil {
 				return run.LiveSource{}, err
 			}

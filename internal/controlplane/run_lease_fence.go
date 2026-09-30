@@ -43,15 +43,6 @@ func workerSourceFence(worker workergroup.HostPrincipal, lease workerapi.RunLeas
 	return workerExecutionFence(worker, parsed, lease), nil
 }
 
-// staleWorkerRunSource classifies a failed read of a worker's live source Run
-// lease: a missing lease is a stale source.
-func staleWorkerRunSource(err error) error {
-	if errors.Is(err, pgx.ErrNoRows) {
-		return run.ErrStaleSource
-	}
-	return err
-}
-
 // lockWorkerRunSource locks a worker's live source Run in the caller's
 // transaction.
 func lockWorkerRunSource(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence) (run.LiveSource, error) {

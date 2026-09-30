@@ -8,13 +8,15 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/jackc/pgx/v5"
 )
 
-func validateOutput(ctx context.Context, q db.Querier, actor db.Session, turn db.SessionTurn, scope TurnScope) error {
-	if _, err := validateTurn(actor, turn, scope); err != nil {
+func validateOutput(ctx context.Context, q db.Querier, locked run.LockedTurn, scope run.TurnScope) error {
+	if _, err := locked.Validate(); err != nil {
 		return err
 	}
+	actor, turn := locked.Session(), locked.Turn()
 	if scope.MessageDeliveryID == uuid.Nil() {
 		if turn.SettlementStartedAt.Valid {
 			return &OperationError{Code: "turn_unsettled"}
@@ -30,14 +32,14 @@ func validateOutput(ctx context.Context, q db.Querier, actor db.Session, turn db
 		return err
 	}
 	if message.Status != "handling" || message.TurnID != turn.ID || message.RunID != turn.RunID || message.AttemptNumber != scope.AttemptNumber || message.RunGeneration != scope.RunGeneration || message.DeliveryRunLeaseID != current.CurrentRunLeaseID {
-		return ErrTurnScope
+		return run.ErrTurnScope
 	}
 	return nil
 }
 
 // AppendSessionOutput belongs to the current Actor entrypoint outside a Turn.
 // Its historical event receipt never authorizes a later execution or a held Run.
-func AppendSessionOutput(ctx context.Context, tx pgx.Tx, scope TurnScope, key string, data json.RawMessage) (OutputReceipt, error) {
+func AppendSessionOutput(ctx context.Context, tx pgx.Tx, scope run.TurnScope, key string, data json.RawMessage) (OutputReceipt, error) {
 	q := db.New(tx)
 	if scope.TurnID != uuid.Nil() || scope.RunID == uuid.Nil() || scope.AttemptNumber <= 0 || scope.RunGeneration <= 0 || !json.Valid(data) || len(data) > 1<<20 {
 		return OutputReceipt{}, &OperationError{Code: "invalid_request"}
