@@ -50,16 +50,18 @@
 //     its own transaction before and, when the Instance fence no longer holds,
 //     after it. Close, expiry and preparation settlement lock only the
 //     Computer and its Instance.
-//   - A restore commit locks the restored members after the restore fence:
-//     Session, Run, Attempt, Wait, then the checkpoint. A restore
-//     acknowledgement adds the Run leases after the Attempts and the Session
-//     turns after the Waits, before the checkpoint.
-//   - Run lease operations lock the execution host, then every Computer the
-//     Run lineage reaches in id order (with an addressed target Computer in
-//     the same statement), then those Computers' unreclaimed Instances in id
-//     order, before re-locking the lease's own Computer and Instance and the
-//     Session, Run, Attempt and lease. Run cancellation takes the same ordered
-//     Computer and Instance locks before any member lock.
+//   - A restore commit takes its queue-scope advisory locks and then the
+//     restored members' Secret locks before the restore fence, and locks the
+//     restored members after it: Session, Run, Attempt, Wait, then the
+//     checkpoint. A restore acknowledgement adds the Run leases after the
+//     Attempts and the Session turns after the Waits, before the checkpoint.
+//   - Run lease operations lock the execution host (a lease claim first locks
+//     its attempt's Secrets through secret.LockAttemptDelivery), then every
+//     Computer the Run lineage reaches in id order (with an addressed target
+//     Computer in the same statement), then those Computers' unreclaimed
+//     Instances in id order, before re-locking the lease's own Computer and
+//     Instance and the Session, Run, Attempt and lease. Run cancellation takes
+//     the same ordered Computer and Instance locks before any member lock.
 //   - Computer Command operations lock the Command after its Computer and
 //     Instance.
 //   - Session-level singleton locks are acquired before, and held around, the
