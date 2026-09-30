@@ -169,8 +169,8 @@ func reclaimParams(o Observation, reason string, evidence []byte, requireFailure
 //  1. A FailureWorkerInvalid report first drains the host epoch in its own
 //     transaction; a failed drain fails the report. The drain precedes
 //     validation of the cleanup proof.
-//  2. With CleanupProof, it validates the proof and reclaims an Instance that
-//     is already failed; a replayed report ends here.
+//  2. With CleanupProof, it validates the proof; an Instance already failed
+//     at the reported fences is reclaimed and the report ends there.
 //  3. It records the failure under supply → Computer → Instance locks. When
 //     that fence no longer holds for a FailureWorkerInvalid report, it drains
 //     the host epoch again in its own transaction.

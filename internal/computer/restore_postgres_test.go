@@ -93,25 +93,25 @@ func TestRestoreFenceFencesEpochAndStatusNotClaims(t *testing.T) {
 // A first restore commit needs admitting supply; the fence reports it.
 func TestRestoreFenceReportsAdmission(t *testing.T) {
 	f := newRestorePlanFixture(t, false, false)
-	lock := func() computer.Restore {
+	admitting := func() bool {
 		tx, err := f.Pool.Begin(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { _ = tx.Rollback(t.Context()) })
+		defer tx.Rollback(t.Context())
 		restore, err := computer.LockRestore(t.Context(), tx, f.ref)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return restore
+		return restore.Admitting()
 	}
-	if !lock().Admitting() {
+	if !admitting() {
 		t.Fatal("active supply does not admit a restore")
 	}
 	if _, err := f.Pool.Exec(t.Context(), `UPDATE worker_groups SET status='paused',claim_version=claim_version+1 WHERE id=$1`, runtest.WorkerGroupID); err != nil {
 		t.Fatal(err)
 	}
-	if lock().Admitting() {
+	if admitting() {
 		t.Fatal("paused supply admits a restore")
 	}
 }
