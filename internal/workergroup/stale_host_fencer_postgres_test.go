@@ -35,6 +35,9 @@ func TestStaleHostFencerSkipsCycleWhileLockIsHeld(t *testing.T) {
 	if !locked {
 		t.Fatal("expected to hold the stale host fence lock")
 	}
+	// Returns the connection if an assertion fails before the explicit
+	// release; after that release, a second Unlock only reports an error.
+	t.Cleanup(func() { _ = holder.Unlock() })
 	cycle, err := fencer.ReconcileOnce(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -63,6 +66,7 @@ func TestStaleHostFencerSkipsCycleWhileLockIsHeld(t *testing.T) {
 	if !locked {
 		t.Fatal("fencer kept the stale host fence lock after its cycle")
 	}
+	t.Cleanup(func() { _ = observer.Unlock() })
 	if err := observer.Unlock(); err != nil {
 		t.Fatal(err)
 	}
