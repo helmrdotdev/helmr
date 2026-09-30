@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"uuid"
@@ -57,24 +59,31 @@ const (
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	if err := runDev(context.Background(), log); err != nil {
+		log.Error("Helmr dev control stopped", "error", err)
+		os.Exit(1)
+	}
+}
+
+func runDev(ctx context.Context, log *slog.Logger) error {
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	// Restore default signal handling after the first signal so a second one
+	// kills the process during a long drain or loop join.
+	context.AfterFunc(ctx, stop)
 
 	cfg, err := loadConfig()
 	if err != nil {
-		log.Error("load dev config", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("load dev config: %w", err)
 	}
 	pool, err := pgxpool.New(ctx, cfg.databaseURL)
 	if err != nil {
-		log.Error("connect database", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("connect database: %w", err)
 	}
 	defer pool.Close()
 	freshInit, err := migrate(ctx, pool)
 	if err != nil {
-		log.Error("migrate database", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("migrate database: %w", err)
 	}
 	if cfg.bootstrap.Enabled {
 		if err := workergroup.Bootstrap(ctx, pool, workergroup.BootstrapConfig{
@@ -82,120 +91,92 @@ func main() {
 			RegionLocation: cfg.bootstrap.RegionLocation, GroupName: cfg.bootstrap.WorkerGroupName,
 			EnrollmentToken: cfg.bootstrap.WorkerToken,
 		}); err != nil {
-			log.Error("bootstrap platform", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("bootstrap platform: %w", err)
 		}
 	}
 	if cfg.seedData && freshInit {
 		if err := seedDevData(ctx, pool, cfg); err != nil {
-			log.Error("seed dev data", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("seed dev data: %w", err)
 		}
 	}
 	casStore, err := cass3.New(ctx, cfg.casURI)
 	if err != nil {
-		log.Error("configure CAS", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("configure CAS: %w", err)
 	}
 	platformStore, err := cass3.NewImmutable(ctx, cfg.platformStoreURI)
 	if err != nil {
-		log.Error("configure platform artifact store", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("configure platform artifact store: %w", err)
 	}
 	runtimeRaw, err := os.ReadFile(cfg.deploymentRuntimeDescriptorPath)
 	if err != nil {
-		log.Error("read dev deployment Runtime descriptor", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("read dev deployment Runtime descriptor: %w", err)
 	}
 	runtimeDescriptor, err := artifact.ParseRuntimeDescriptor(runtimeRaw)
 	if err != nil {
-		log.Error("parse dev deployment Runtime descriptor", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("parse dev deployment Runtime descriptor: %w", err)
 	}
 	bundleAdmission := bundle.Admission{Runtime: runtimeDescriptor}
 	pool.Close()
 	pool, err = pgxpool.New(ctx, cfg.databaseURL)
 	if err != nil {
-		log.Error("connect database", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("connect database: %w", err)
 	}
 	defer pool.Close()
 	queries := db.New(pool)
-	redisOptions, err := redis.ParseURL(cfg.redisURL)
-	if err != nil {
-		log.Error("parse redis URL", "error", err)
-		os.Exit(1)
-	}
-	redisClient := redis.NewClient(redisOptions)
-	defer redisClient.Close()
-	if err := redisClient.Ping(ctx).Err(); err != nil {
-		log.Error("ping redis", "error", err)
-		os.Exit(1)
-	}
 	clickHouseConfig := clickhouse.Config{
 		URL:      cfg.clickHouseURL,
 		User:     cfg.clickHouseUser,
 		Password: cfg.clickHousePassword,
 	}
 	if err := clickhouseschema.Up(ctx, clickHouseConfig); err != nil {
-		log.Error("migrate clickhouse", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("migrate clickhouse: %w", err)
 	}
 	clickHouseClient, err := clickhouse.New(clickHouseConfig)
 	if err != nil {
-		log.Error("configure clickhouse", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("configure clickhouse: %w", err)
 	}
 	defer clickHouseClient.Close()
+	redisOptions, err := redis.ParseURL(cfg.redisURL)
+	if err != nil {
+		return fmt.Errorf("parse redis URL: %w", err)
+	}
+	redisClient := redis.NewClient(redisOptions)
+	defer redisClient.Close()
+	if err := redisClient.Ping(ctx).Err(); err != nil {
+		return fmt.Errorf("ping redis: %w", err)
+	}
 	telemetryReader := clickhouse.NewReader(clickHouseClient)
 	eventStream, err := eventstream.New(log, queries, redisClient, eventstream.Config{
 		TelemetryReader: telemetryReader,
 	})
 	if err != nil {
-		log.Error("configure event stream", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("configure event stream: %w", err)
 	}
 	telemetryIngestor, err := telemetry.NewIngestor(log, queries, clickhouse.NewWriter(clickHouseClient))
 	if err != nil {
-		log.Error("configure telemetry ingester", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("configure telemetry ingester: %w", err)
 	}
-	go func() {
-		if err := eventStream.RunPublisher(ctx); !errors.Is(err, context.Canceled) {
-			log.Error("event stream publisher stopped", "error", err)
-		}
-	}()
-	go func() {
-		if err := telemetryIngestor.Run(ctx); !errors.Is(err, context.Canceled) {
-			log.Error("telemetry ingester stopped", "error", err)
-		}
-	}()
 	secretStore, err := secret.New(queries, pool, cfg.encryptionKey)
 	if err != nil {
-		log.Error("configure secret store", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("configure secret store: %w", err)
 	}
 	computerFencingKey, err := disk.NewFencingKey(cfg.computerFencingKey)
 	if err != nil {
-		log.Error("configure Computer fencing key", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("configure Computer fencing key: %w", err)
 	}
 	tokenCredentialKey, err := auth.NewCredentialKey(cfg.tokenCredentialKey)
 	if err != nil {
-		log.Error("configure Token credential key", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("configure Token credential key: %w", err)
 	}
 	publicURL, err := url.Parse(cfg.publicURL)
 	if err != nil {
-		log.Error("parse public URL", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("parse public URL: %w", err)
 	}
 	// This development-only entrypoint uses local roots even when exercising
 	// managed-cloud console behavior. Production composition lives in control-plane.
 	computerKeys, err := computerkey.NewLocal("dev-computer-root", cfg.computerWrappingKey)
 	if err != nil {
-		log.Error("configure Computer wrapping key", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("configure Computer wrapping key: %w", err)
 	}
 	app, err := controlplane.NewServer(controlplane.ServerConfig{
 		ComputerKeys:          computerKeys,
@@ -222,12 +203,11 @@ func main() {
 		TelemetryReader:       telemetryReader,
 	})
 	if err != nil {
-		log.Error("configure control server", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("configure control server: %w", err)
 	}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/dev/login" {
-			devLogin(ctx, w, r, pool, queries, cfg)
+			devLogin(w, r, pool, queries, cfg)
 			return
 		}
 		app.ServeHTTP(w, r)
@@ -239,18 +219,81 @@ func main() {
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = httpServer.Shutdown(shutdownCtx)
-	}()
-
-	log.Info("Helmr dev control listening", "addr", cfg.addr, "login_url", strings.TrimRight(cfg.publicURL, "/")+"/dev/login")
-	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Error("serve", "error", err)
-		os.Exit(1)
+	loops := []backgroundLoop{
+		{name: "event stream publisher", run: eventStream.RunPublisher},
+		{name: "telemetry ingester", run: telemetryIngestor.Run},
 	}
+	loginURL := strings.TrimRight(cfg.publicURL, "/") + "/dev/login"
+	// Deferred Redis, ClickHouse and PostgreSQL closes run only after serveDev
+	// has drained or force-closed HTTP and joined every background loop.
+	return serveDev(ctx, log, httpServer, loginURL, loops, 10*time.Second)
+}
+
+type backgroundLoop struct {
+	name string
+	run  func(context.Context) error
+}
+
+// serveDev serves until ctx is done or the server fails, then awaits the HTTP
+// drain before it cancels and joins the background loops.
+func serveDev(
+	ctx context.Context,
+	log *slog.Logger,
+	server *http.Server,
+	loginURL string,
+	loops []backgroundLoop,
+	shutdownTimeout time.Duration,
+) error {
+	serverCtx, cancelServer := context.WithCancel(context.Background())
+	defer cancelServer()
+	server.BaseContext = func(net.Listener) context.Context {
+		return serverCtx
+	}
+	listener, err := net.Listen("tcp", server.Addr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", server.Addr, err)
+	}
+	loopCtx, cancelLoops := context.WithCancel(context.Background())
+	var loopWG sync.WaitGroup
+	for _, loop := range loops {
+		loopWG.Go(func() {
+			if err := loop.run(loopCtx); !errors.Is(err, context.Canceled) {
+				log.Error("background loop stopped", "loop", loop.name, "error", err)
+			}
+		})
+	}
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- server.Serve(listener)
+	}()
+	log.Info("Helmr dev control listening", "addr", listener.Addr().String(), "login_url", loginURL)
+
+	var runErr error
+	serverStopped := false
+	select {
+	case <-ctx.Done():
+	case err := <-serverErr:
+		serverStopped = true
+		runErr = fmt.Errorf("serve: %w", err)
+	}
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), shutdownTimeout)
+	shutdownErr := server.Shutdown(shutdownCtx)
+	cancelShutdown()
+	cancelServer()
+	if shutdownErr != nil {
+		runErr = errors.Join(runErr, fmt.Errorf("shutdown server: %w", shutdownErr))
+		if err := server.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			runErr = errors.Join(runErr, fmt.Errorf("close server: %w", err))
+		}
+	}
+	if !serverStopped {
+		if err := <-serverErr; !errors.Is(err, http.ErrServerClosed) {
+			runErr = errors.Join(runErr, fmt.Errorf("serve: %w", err))
+		}
+	}
+	cancelLoops()
+	loopWG.Wait()
+	return runErr
 }
 
 type devConfig struct {
@@ -470,7 +513,8 @@ func migrationPaths() ([]string, error) {
 	return nil, fmt.Errorf("no migrations found; run cmd/internal/dev-controlplane from the repository root or set cwd to a Helmr source checkout")
 }
 
-func devLogin(ctx context.Context, w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, queries *db.Queries, cfg devConfig) {
+func devLogin(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, queries *db.Queries, cfg devConfig) {
+	ctx := r.Context()
 	userID := mustUUID(defaultUserID)
 	if _, err := pool.Exec(ctx, `
 INSERT INTO users (id, display_name, primary_email)
