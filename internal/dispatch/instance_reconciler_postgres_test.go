@@ -23,7 +23,7 @@ import (
 // runners one working connection to share. Settling the failed checkpoint's
 // residents needs Run lease recovery before instance reconciliation, so both
 // runners must progress on that pool. Cancellation then arrives while both
-// hold their guards and wait for the working connection the test holds.
+// hold their guards: one waiting on a table lock, the other on the pool.
 func TestLeaseAndInstanceReconcilersProgressOnConstrainedSharedPool(t *testing.T) {
 	f, ref, _ := computertest.RegisteredCapture(t, false)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET active_started_at=clock_timestamp(),max_active_duration_ms=3600000,retry_policy='{"enabled":true,"maxAttempts":2,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}'`)
@@ -103,26 +103,25 @@ func TestLeaseAndInstanceReconcilersProgressOnConstrainedSharedPool(t *testing.T
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	// Take the one working connection, then wait until both runners hold
-	// their singleton locks, so cancellation reaches both while they wait for
-	// capacity with their guards held.
-	acquireCtx, acquireCancel := context.WithTimeout(t.Context(), 30*time.Second)
-	defer acquireCancel()
-	working, err := pool.Acquire(acquireCtx)
+	// Block both runners' discovery reads. One runner then holds its guard
+	// while its working connection waits on the table lock; the other holds
+	// its guard while it waits for the pool's last connection. That state is
+	// stable until cancellation, so both guards are held when it arrives.
+	blocker, err := f.Pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer working.Release()
+	defer func() { _ = blocker.Rollback(context.Background()) }()
+	if _, err := blocker.Exec(t.Context(), `LOCK TABLE computer_instances IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatal(err)
+	}
 	lockNames := []string{"helmr.dispatcher.run_resume_recovery", instanceReconciliationLockName}
 	heldDeadline := time.Now().Add(30 * time.Second)
-	for heldGuards(t, f.Pool, lockNames) != 2 {
+	for heldGuards(t, f.Pool, lockNames) != 2 || pool.Stat().AcquiredConns() != 3 {
 		if time.Now().After(heldDeadline) {
-			t.Fatalf("held singleton locks=%d", heldGuards(t, f.Pool, lockNames))
+			t.Fatalf("held singleton locks=%d acquired connections=%d", heldGuards(t, f.Pool, lockNames), pool.Stat().AcquiredConns())
 		}
 		time.Sleep(10 * time.Millisecond)
-	}
-	if acquired := pool.Stat().AcquiredConns(); acquired != 3 {
-		t.Fatalf("acquired connections with both guards and the working connection held: %d", acquired)
 	}
 
 	cancel()
@@ -138,7 +137,9 @@ func TestLeaseAndInstanceReconcilersProgressOnConstrainedSharedPool(t *testing.T
 			t.Fatalf("%d of 2 runners joined after cancellation", joined)
 		}
 	}
-	working.Release()
+	if err := blocker.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	// A connection closed by cancellation is destroyed asynchronously.
 	released := time.Now().Add(5 * time.Second)
 	for pool.Stat().AcquiredConns() != 0 {
