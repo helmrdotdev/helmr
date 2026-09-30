@@ -18,7 +18,7 @@ When a repeated style includes structure or behavior, make a Solid component. Wh
 
 ## IDs and actions
 
-The Founder decided where IDs and actions live (2026-09-12). Apply the table to every page instead of choosing per page.
+This table sets where IDs and actions live. Apply it to every page instead of choosing per page.
 
 | Place | IDs | Actions |
 | --- | --- | --- |
