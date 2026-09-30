@@ -115,8 +115,13 @@ func TestLeaseAndInstanceReconcilersProgressOnConstrainedSharedPool(t *testing.T
 			t.Fatalf("%d of 2 runners joined after cancellation", joined)
 		}
 	}
-	if acquired := pool.Stat().AcquiredConns(); acquired != 0 {
-		t.Fatalf("connections still acquired after join: %d", acquired)
+	// A connection closed by cancellation is destroyed asynchronously.
+	released := time.Now().Add(5 * time.Second)
+	for pool.Stat().AcquiredConns() != 0 {
+		if time.Now().After(released) {
+			t.Fatalf("connections still acquired after join: %d", pool.Stat().AcquiredConns())
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	for _, name := range []string{"helmr.dispatcher.run_resume_recovery", instanceReconciliationLockName} {
 		guard, locked, err := pglock.TryAcquire(t.Context(), f.Pool, pglock.Key(name))

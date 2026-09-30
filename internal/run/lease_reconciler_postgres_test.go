@@ -67,8 +67,13 @@ func TestLeaseReconcilerRecoversWithinTwoConnections(t *testing.T) {
 	case <-time.After(20 * time.Second):
 		t.Fatal("Run did not join after cancellation")
 	}
-	if acquired := pool.Stat().AcquiredConns(); acquired != 0 {
-		t.Fatalf("connections still acquired after join: %d", acquired)
+	// A connection closed by cancellation is destroyed asynchronously.
+	released := time.Now().Add(5 * time.Second)
+	for pool.Stat().AcquiredConns() != 0 {
+		if time.Now().After(released) {
+			t.Fatalf("connections still acquired after join: %d", pool.Stat().AcquiredConns())
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	guard, locked, err := pglock.TryAcquire(t.Context(), f.pool, pglock.Key(leaseRecoveryLockName))
 	if err != nil || !locked {
