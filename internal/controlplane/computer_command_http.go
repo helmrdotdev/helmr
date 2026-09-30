@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -155,11 +156,11 @@ func (s *Server) writeComputerCommandError(w http.ResponseWriter, err error) {
 		writeError(w, tooLarge(codedError{code: "computer_command_request_too_large", message: err.Error()}))
 	case errors.Is(err, errComputerCommandInvalid):
 		writeError(w, badRequest(codedError{code: "invalid_computer_command", message: err.Error()}))
-	case errors.Is(err, errComputerSecretUnavailable):
+	case errors.Is(err, computer.ErrSecretUnavailable):
 		writeError(w, conflict(codedError{code: "secret_unavailable", message: err.Error()}))
-	case errors.Is(err, errComputerNotFound):
+	case errors.Is(err, computer.ErrNotFound):
 		writeError(w, notFound(codedError{code: "computer_not_found", message: err.Error()}))
-	case errors.Is(err, errComputerBusy):
+	case errors.Is(err, computer.ErrBusy):
 		writeError(w, conflict(codedError{code: "computer_busy", message: err.Error(), retryable: true}))
 	case errors.As(err, &conflictError):
 		writeError(w, conflict(codedError{code: "idempotency_conflict", message: err.Error()}))

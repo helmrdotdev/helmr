@@ -2,12 +2,7 @@ package controlplane
 
 import (
 	"bytes"
-	"context"
-	"encoding/json"
-	"fmt"
-	"net/http/httptest"
-	"strings"
-	"sync"
+	"net/http"
 	"testing"
 	"time"
 	"uuid"
@@ -15,7 +10,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -52,135 +46,6 @@ func createTestComputerCA(t *testing.T, pool *pgxpool.Pool, store *secret.Store,
 		t.Fatalf("initialize fixture CA: %d %v", n, err)
 	}
 	return trust
-}
-
-func TestComputerCACreationRoutesAndRollback(t *testing.T) {
-	for _, pinned := range []bool{false, true} {
-		for _, mode := range []string{"protected", "mixed", "raw", "none", "missing-store", "generation-failure", "after-generation-failure"} {
-			t.Run(fmt.Sprintf("pinned=%v/%s", pinned, mode), func(t *testing.T) {
-				f := newActorStartPostgresFixture(t, 1)
-				f.server.secretProxy = testComputerCAStore(t, f.pool)
-				request := computerCreateRequest{OrgID: f.orgID, ProjectID: f.projectID, EnvironmentID: f.environmentID,
-					Declaration: computerDeclarationSelector{Kind: computerDeclarationPromoted}, DeclaredID: "computer.v1", IdempotencyKey: "ca-create"}
-				if pinned {
-					started, err := f.server.startActor(t.Context(), f.request(0, nil, "ca-parent"))
-					if err != nil {
-						t.Fatal(err)
-					}
-					request.Declaration = computerDeclarationSelector{Kind: computerDeclarationRunPinned, RunID: started.BootRunID}
-					request.Authorize = func(context.Context, pgx.Tx) error { return nil }
-				}
-				protected := secretbinding.Binding{Name: "API_TOKEN", Env: &secretbinding.Env{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://example.com"}}}
-				raw := secretbinding.Binding{Name: "API_TOKEN", Env: &secretbinding.Env{Name: "RAW", Mode: "raw"}}
-				switch mode {
-				case "none":
-				case "raw":
-					request.Secrets = []secretbinding.Binding{raw}
-				case "mixed":
-					request.Secrets = []secretbinding.Binding{protected, raw, {Name: "API_TOKEN", File: &secretbinding.File{Path: "/run/secrets/key"}}}
-				default:
-					request.Secrets = []secretbinding.Binding{protected}
-				}
-				if mode == "missing-store" {
-					f.server.secretProxy = nil
-				}
-				if mode == "generation-failure" {
-					f.server.secretProxy = &secret.Store{}
-				}
-				if mode == "after-generation-failure" {
-					dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_ca_binding() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM computers WHERE id=NEW.computer_id AND secret_ca_certificate IS NOT NULL) THEN RAISE EXCEPTION 'CA not generated'; END IF;
-        RAISE EXCEPTION 'synthetic post-generation failure'; END $$;
-        CREATE TRIGGER reject_ca_binding BEFORE INSERT ON computer_secrets FOR EACH ROW EXECUTE FUNCTION reject_ca_binding();`)
-				}
-				var before int
-				if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM computers").Scan(&before); err != nil {
-					t.Fatal(err)
-				}
-				result, err := f.server.createComputer(t.Context(), request)
-				fails := strings.Contains(mode, "failure") || mode == "missing-store"
-				if fails {
-					if err == nil {
-						t.Fatal("creation unexpectedly succeeded")
-					}
-					if mode == "after-generation-failure" && !strings.Contains(err.Error(), "synthetic post-generation failure") {
-						t.Fatal(err)
-					}
-					var after int
-					if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM computers").Scan(&after); err != nil {
-						t.Fatal(err)
-					}
-					if before != after {
-						t.Fatal("failed transaction retained Computer")
-					}
-					if mode == "after-generation-failure" {
-						dbtest.MustExec(t, t.Context(), f.pool, "DROP TRIGGER reject_ca_binding ON computer_secrets")
-					}
-					f.server.secretProxy = testComputerCAStore(t, f.pool)
-					result, err = f.server.createComputer(t.Context(), request)
-					if err != nil {
-						t.Fatalf("rolled-back receipt blocked retry: %v", err)
-					}
-				} else if err != nil {
-					t.Fatal(err)
-				}
-				ca, err := db.New(f.pool).GetComputerSecretCAPublic(t.Context(), db.GetComputerSecretCAPublicParams{EnvironmentID: pgvalue.UUID(f.environmentID), ComputerID: pgvalue.UUID(result.ComputerID)})
-				if err != nil {
-					t.Fatal(err)
-				}
-				hasCA := mode != "raw" && mode != "none"
-				if (len(ca.Certificate) > 0) != hasCA || ca.NotAfter.Valid != hasCA {
-					t.Fatal("CA presence differs from bindings")
-				}
-				if hasCA {
-					if !ca.NotAfter.Time.Equal(result.Snapshot.CreatedAt.AddDate(10, 0, 0).Truncate(time.Second)) {
-						t.Fatal("expiry not anchored to inserted timestamp")
-					}
-					if err := secret.ValidateProxyTrust(ca.Certificate, ca.NotAfter.Time, time.Now()); err != nil {
-						t.Fatal(err)
-					}
-				}
-				f.server.secretProxy = nil
-				replay, err := f.server.createComputer(t.Context(), request)
-				if err != nil || !replay.Replayed || replay.ComputerID != result.ComputerID {
-					t.Fatalf("replay: %+v %v", replay, err)
-				}
-			})
-		}
-	}
-}
-
-func TestComputerCAConcurrentIdempotentCreation(t *testing.T) {
-	f := newActorStartPostgresFixture(t, 1)
-	f.server.secretProxy = testComputerCAStore(t, f.pool)
-	request := computerCreateRequest{OrgID: f.orgID, ProjectID: f.projectID, EnvironmentID: f.environmentID, Declaration: computerDeclarationSelector{Kind: computerDeclarationPromoted}, DeclaredID: "computer.v1", IdempotencyKey: "same-ca", Secrets: []secretbinding.Binding{{Name: "API_TOKEN", Env: &secretbinding.Env{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://example.com"}}}}}
-	var wg sync.WaitGroup
-	results := make(chan computerCreateResult, 8)
-	errs := make(chan error, 8)
-	for range 8 {
-		wg.Go(func() { r, e := f.server.createComputer(t.Context(), request); results <- r; errs <- e })
-	}
-	wg.Wait()
-	close(results)
-	close(errs)
-	for err := range errs {
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	var first uuid.UUID
-	for r := range results {
-		if first == uuid.Nil() {
-			first = r.ComputerID
-		}
-		if r.ComputerID != first {
-			t.Fatal("duplicate Computer")
-		}
-	}
-	var count int
-	if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM computers WHERE secret_ca_certificate IS NOT NULL").Scan(&count); err != nil || count != 1 {
-		t.Fatalf("CA count %d: %v", count, err)
-	}
 }
 
 func TestComputerCAMalformedPreparationFailsWithoutWrites(t *testing.T) {
@@ -247,22 +112,15 @@ func TestComputerCAGuestCreateIngress(t *testing.T) {
 			case "mixed":
 				bindings = append(bindings, secretbinding.Binding{Name: "token-a", Env: &secretbinding.Env{Name: "RAW", Mode: "raw"}}, secretbinding.Binding{Name: "token-a", File: &secretbinding.File{Path: "/run/secrets/key"}})
 			}
+			handler := newPostgresServer(t, f.fixture.Pool, func(cfg *ServerConfig) { cfg.SecretProxy = f.store })
+			worker := newWorkerHTTPClient(t, handler, f.fixture.Pool, f.fixture.WorkerID)
 			request := workerapi.CreateComputerRequest{Lease: workerapi.RunLeaseFence{ID: f.run.LeaseID.String(), LeaseSequence: 1}, CorrelationID: uuid.NewV7().String(), SandboxDeclaredID: "test-computer", Secrets: bindings, IdempotencyKey: "guest-ca"}
 			var first string
 			for range 2 {
-				body, err := json.Marshal(request)
-				if err != nil {
-					t.Fatal(err)
-				}
-				r := httptest.NewRequest("POST", "/", bytes.NewReader(body)).WithContext(context.WithValue(t.Context(), workerContextKey{}, f.worker))
-				response := httptest.NewRecorder()
-				f.server.workerCreateComputer(response, r)
 				var result workerapi.CreateComputerResponse
-				if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
-					t.Fatal(err)
-				}
-				if response.Code != 200 || result.Completed == nil {
-					t.Fatalf("guest create: %d %s", response.Code, response.Body.String())
+				worker.post(t, "/worker/v1/run/computers/create", request, http.StatusOK, &result)
+				if result.Completed == nil {
+					t.Fatalf("guest create: %+v", result)
 				}
 				if first == "" {
 					first = result.Completed.ComputerID

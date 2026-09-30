@@ -18,6 +18,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
@@ -56,7 +57,7 @@ func newSnapshotFixture(t *testing.T, count int, root bool) *snapshotFixture {
 		t.Fatal(err)
 	}
 	f.worker = workergroup.HostPrincipal{HostID: f.fixture.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
-	f.server = &Server{db: f.q, tx: f.fixture.Pool, secretProxy: f.store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	f.server = &Server{db: f.q, tx: f.fixture.Pool, secretProxy: f.store, computers: computer.NewCreator(f.store), log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_instances SET guest_channel_token_hash=decode(repeat('01',32),'hex'),guest_channel_token_expires_at=now()+interval '10 minutes' WHERE id=$1", f.runtime)
 	for i := 0; i < count; i++ {
 		name := string(rune('a' + i))
@@ -394,7 +395,9 @@ func TestProtectedGuestIngressCeilingsBeforeReplay(t *testing.T) {
 			t.Fatal(err)
 		}
 		now := time.Now()
-		seed(request, computerCreateReceipt{Computer: api.ComputerSnapshot{ID: targetID.String(), SandboxID: "test-computer", DeploymentID: f.fixture.DeploymentID.String(), Status: api.ComputerStatusAvailable, CreatedAt: now, UpdatedAt: now, LastActivityAt: now}})
+		seed(request, struct {
+			Computer api.ComputerSnapshot `json:"computer"`
+		}{Computer: api.ComputerSnapshot{ID: targetID.String(), SandboxID: "test-computer", DeploymentID: f.fixture.DeploymentID.String(), Status: api.ComputerStatusAvailable, CreatedAt: now, UpdatedAt: now, LastActivityAt: now}})
 		invoke(t, f.server.workerCreateComputer, workerapi.CreateComputerRequest{Lease: fence, CorrelationID: uuid.NewV7().String(), SandboxDeclaredID: "test-computer", Secrets: bindings, IdempotencyKey: "replay-create"})
 	})
 	t.Run("child-new-and-replayed", func(t *testing.T) {

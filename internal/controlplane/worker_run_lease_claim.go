@@ -75,7 +75,7 @@ func (s *Server) workerClaimRunLease(w http.ResponseWriter, r *http.Request) {
 		s.writeRunLeaseClaimFailure(w, authority, err)
 		return
 	}
-	response.ProtectedEnv, err = computerProtectedEnv(r.Context(), s.db, authority.computer.EnvironmentID, authority.computer.ID)
+	response.ProtectedEnv, err = workerProtectedEnv(r.Context(), s.db, authority.computer.EnvironmentID, authority.computer.ID)
 	if err != nil {
 		s.writeRunLeaseClaimFailure(w, authority, err)
 		return

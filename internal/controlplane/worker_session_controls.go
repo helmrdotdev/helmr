@@ -21,10 +21,10 @@ import (
 // Both controls lock the complete Secret union before the ordered source-ancestor and target Sessions.
 // Secret bindings are read again after the Session and Computer fences; a new
 // binding invalidates this attempt rather than acquiring a Secret out of order.
-func lockWorkerSessionControl(ctx context.Context, work *txWork, worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence, targetID pgtype.UUID, interrupt bool) (workerRunSourceAuthority, run.OwnedFinalization, []db.LockComputerSecretsForAdmissionRow, error) {
+func lockWorkerSessionControl(ctx context.Context, work *txWork, worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence, targetID pgtype.UUID, interrupt bool) (run.LiveSource, run.OwnedFinalization, []db.LockComputerSecretsForAdmissionRow, error) {
 	var graph run.OwnedFinalization
-	fail := func(err error) (workerRunSourceAuthority, run.OwnedFinalization, []db.LockComputerSecretsForAdmissionRow, error) {
-		return workerRunSourceAuthority{}, graph, nil, err
+	fail := func(err error) (run.LiveSource, run.OwnedFinalization, []db.LockComputerSecretsForAdmissionRow, error) {
+		return run.LiveSource{}, graph, nil, err
 	}
 	parsed, err := parseRunLeaseFence(lease)
 	if err != nil {
@@ -55,7 +55,7 @@ func lockWorkerSessionControl(ctx context.Context, work *txWork, worker workergr
 	if errors.Is(err, run.ErrExecutionTargetNotFound) {
 		return fail(&session.OperationError{Code: "session_not_found"})
 	}
-	source, err := validateWorkerRunSource(authority, err)
+	source, err := run.CheckLiveSource(authority, err)
 	if err != nil {
 		return fail(err)
 	}

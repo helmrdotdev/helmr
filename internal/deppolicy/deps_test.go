@@ -56,8 +56,9 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		"workerclient":      {"client"},
 		// Direct imports only: workergroup imports workerapi solely for
 		// ValidatePoolName, so api still arrives transitively through
-		// workerapi's wire contract.
-		"workergroup": {"api", "controlplane", "deployment", "dispatch", "identity", "org", "run", "scheduler", "session", "token"},
+		// workerapi's wire contract. Worker supply sits beneath the Computer
+		// owner, which run composes and may import.
+		"workergroup": {"api", "computer", "controlplane", "deployment", "dispatch", "identity", "org", "run", "scheduler", "session", "token"},
 	} {
 		if _, ok := actual[source]; !ok {
 			t.Fatalf("dependency rule source package does not exist: %s", source)

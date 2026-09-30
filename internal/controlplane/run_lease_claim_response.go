@@ -2,14 +2,12 @@ package controlplane
 
 import (
 	"context"
-	"crypto/subtle"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"strings"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -111,7 +109,7 @@ func projectRunLeaseClaimResponse(
 	if err != nil {
 		return workerapi.RunLeaseClaimResponse{}, err
 	}
-	capability, err := deriveComputerCapability(fencingKey, authority.runtime)
+	capability, err := computer.WriteCapability(fencingKey, authority.runtime)
 	if err != nil {
 		return workerapi.RunLeaseClaimResponse{}, err
 	}
@@ -143,42 +141,12 @@ func projectRunLeaseClaimResponse(
 	}, nil
 }
 
-func deriveComputerCapability(
-	key disk.FencingKey,
-	instance db.ComputerInstance,
-) (disk.FencingCapability, error) {
-	instanceID, err := pgvalue.UUIDValue(instance.ID)
-	if err != nil {
-		return disk.FencingCapability{}, errors.New("computer instance ID is invalid")
-	}
-	computerID, err := pgvalue.UUIDValue(instance.ComputerID)
-	if err != nil {
-		return disk.FencingCapability{}, errors.New("computer ID is invalid")
-	}
-	capability, err := key.Derive(disk.FenceInput{
-		InstanceID:       instanceID,
-		ComputerID:       computerID,
-		WriterGeneration: instance.WriterGeneration,
-	})
-	if err != nil {
-		return disk.FencingCapability{}, err
-	}
-	hash, err := hex.DecodeString(strings.TrimPrefix(capability.Hash, "sha256:"))
-	if err != nil {
-		return disk.FencingCapability{}, err
-	}
-	if subtle.ConstantTimeCompare(hash, instance.WriterTokenHash) != 1 {
-		return disk.FencingCapability{}, errors.New("computer write capability does not match its Instance")
-	}
-	return capability, nil
-}
-
 func projectRestoredRunLeaseClaim(a runLeaseClaimAuthority, key disk.FencingKey) (workerapi.RunLeaseClaimResponse, error) {
 	lease, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{run: a.run, attempt: a.attempt, runtime: a.runtime, runLease: a.runLease, computer: a.computer})
 	if err != nil {
 		return workerapi.RunLeaseClaimResponse{}, err
 	}
-	capability, err := deriveComputerCapability(key, a.runtime)
+	capability, err := computer.WriteCapability(key, a.runtime)
 	if err != nil {
 		return workerapi.RunLeaseClaimResponse{}, err
 	}

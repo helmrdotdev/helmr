@@ -142,7 +142,7 @@ func (s *Server) workerClaimComputerCommand(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	defer clearComputerSecretDeliveries(deliveries)
-	protected, err := computerProtectedEnv(r.Context(), s.db, authority.Command.EnvironmentID, authority.Command.ComputerID)
+	protected, err := workerProtectedEnv(r.Context(), s.db, authority.Command.EnvironmentID, authority.Command.ComputerID)
 	if err != nil {
 		writeError(w, conflict(secret.ErrDeliveryUnavailable))
 		return

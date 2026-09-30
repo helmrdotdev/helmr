@@ -1,13 +1,11 @@
 package controlplane
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
+	"uuid"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 )
@@ -21,14 +19,10 @@ func TestComputerReadPostgresListsAttachedAndIdleComputers(t *testing.T) {
 	}
 	owned := fixture.computerIDs[0].String()
 	free := fixture.computerIDs[1].String()
-	principal := auth.Principal{
-		OrgID: fixture.orgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper,
-		ProjectID: fixture.projectID.String(), EnvironmentID: fixture.environmentID.String(),
-		Permissions: []auth.Permission{auth.PermissionComputersRead},
-	}
+	handler := newPostgresServer(t, fixture.pool)
+	reader := issueEnvironmentAPIKey(t, fixture.pool, fixture.orgID, fixture.projectID, fixture.environmentID, auth.PermissionComputersRead)
 
-	listRecorder := httptest.NewRecorder()
-	fixture.server.listComputersHTTP(listRecorder, computerReadPostgresRequest("/v1/computers", "", principal))
+	listRecorder := serveAPIKey(handler, http.MethodGet, "/v1/computers", reader, "")
 	if listRecorder.Code != http.StatusOK {
 		t.Fatalf("list HTTP = %d body=%s", listRecorder.Code, listRecorder.Body.String())
 	}
@@ -44,10 +38,14 @@ func TestComputerReadPostgresListsAttachedAndIdleComputers(t *testing.T) {
 			t.Fatalf("unexpected Computer %+v", item)
 		}
 	}
+	byKey := serveAPIKey(handler, http.MethodGet, "/v1/computers?key="+fixture.computerKeys[1], reader, "")
+	var keyed api.ListComputersResponse
+	if err := json.Unmarshal(byKey.Body.Bytes(), &keyed); err != nil || byKey.Code != http.StatusOK || len(keyed.Computers) != 1 || keyed.Computers[0].ID != free {
+		t.Fatalf("key lookup = %d %s", byKey.Code, byKey.Body.String())
+	}
 
 	for _, id := range []string{owned, free} {
-		recorder := httptest.NewRecorder()
-		fixture.server.getComputerHTTP(recorder, computerReadPostgresRequest("/v1/computers/"+id, id, principal))
+		recorder := serveAPIKey(handler, http.MethodGet, "/v1/computers/"+id, reader, "")
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("get %s HTTP = %d body=%s", id, recorder.Code, recorder.Body.String())
 		}
@@ -55,19 +53,16 @@ func TestComputerReadPostgresListsAttachedAndIdleComputers(t *testing.T) {
 		if err := json.Unmarshal(recorder.Body.Bytes(), &snapshot); err != nil {
 			t.Fatal(err)
 		}
-		if snapshot.ID != id {
+		if snapshot.ID != id || snapshot.Status != api.ComputerStatusAvailable || len(snapshot.Secrets) != 1 {
 			t.Fatalf("snapshot %s = %+v", id, snapshot)
 		}
 	}
-}
-
-func computerReadPostgresRequest(target string, computerID string, principal auth.Principal) *http.Request {
-	request := httptest.NewRequest(http.MethodGet, target, nil)
-	route := chi.NewRouteContext()
-	if computerID != "" {
-		route.URLParams.Add("computerID", computerID)
+	missing := serveAPIKey(handler, http.MethodGet, "/v1/computers/"+uuid.NewV7().String(), reader, "")
+	if body := decodeHTTPError(t, missing.Body.Bytes()); missing.Code != http.StatusNotFound || body.Code != "computer_not_found" {
+		t.Fatalf("missing Computer = %d %+v", missing.Code, body)
 	}
-	ctx := context.WithValue(request.Context(), chi.RouteCtxKey, route)
-	ctx = context.WithValue(ctx, principalContextKey{}, principal)
-	return request.WithContext(ctx)
+	malformed := serveAPIKey(handler, http.MethodGet, "/v1/computers/not-a-uuid", reader, "")
+	if body := decodeHTTPError(t, malformed.Body.Bytes()); malformed.Code != http.StatusBadRequest || body.Code != "invalid_computer_reference" {
+		t.Fatalf("malformed Computer = %d %+v", malformed.Code, body)
+	}
 }

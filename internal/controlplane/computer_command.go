@@ -16,6 +16,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -213,7 +214,7 @@ func (s *Server) admitComputerCommand(ctx context.Context, request computerComma
 			return err
 		}
 		if !scoped {
-			return errComputerNotFound
+			return computer.ErrNotFound
 		}
 		claims, err := idempotency.TransactionFor(work.tx)
 		if err != nil {
@@ -250,7 +251,7 @@ func (s *Server) admitComputerCommand(ctx context.Context, request computerComma
 		}
 		for _, binding := range bindings {
 			if binding.SecretStatus != "active" || !binding.CurrentVersionID.Valid {
-				return errComputerSecretUnavailable
+				return computer.ErrSecretUnavailable
 			}
 			if binding.PlacementKind == "env" {
 				if _, exists := normalized.env[binding.PlacementTarget]; exists {
@@ -263,7 +264,7 @@ func (s *Server) admitComputerCommand(ctx context.Context, request computerComma
 			ID:            pgvalue.UUID(request.ComputerID),
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
-			return errComputerNotFound
+			return computer.ErrNotFound
 		}
 		if err != nil {
 			return fmt.Errorf("lock computer exec authority: %w", err)
@@ -286,7 +287,7 @@ func (s *Server) admitComputerCommand(ctx context.Context, request computerComma
 			case db.ComputerStatusRecoveryRequired:
 				return conflict(codedError{code: "computer_recovery_required", message: "computer requires recovery"})
 			default:
-				return errComputerBusy
+				return computer.ErrBusy
 			}
 		}
 		if len(authority.PreparationFailure) > 0 {

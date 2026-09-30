@@ -68,7 +68,7 @@ func projectWorkerSessionEvent(event db.SessionEvent, deploymentID pgtype.UUID) 
 	return result
 }
 func (s *Server) writeWorkerSessionCommand(w http.ResponseWriter, correlation string, err error) {
-	if errors.Is(err, errStaleWorkerRunSource) {
+	if errors.Is(err, run.ErrStaleSource) {
 		err = &session.OperationError{Code: "stale_execution"}
 	}
 	response := workerapi.TurnCommandResponse{CorrelationID: correlation, Accepted: err == nil}

@@ -12,16 +12,8 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
-)
-
-const (
-	computerListDefaultLimit = int32(50)
-	computerListMaxLimit     = int32(100)
 )
 
 type computerListCursor struct {
@@ -48,12 +40,10 @@ func (s *Server) listComputersHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response := api.ListComputersResponse{Computers: []api.ComputerListItem{}}
+	addressed := computerScope(principal.OrgID, projectID, environmentID)
 	if exactKey != nil {
-		record, err := s.db.GetComputerListItemByKey(r.Context(), db.GetComputerListItemByKeyParams{
-			OrgID: pgvalue.UUID(principal.OrgID), ProjectID: projectID,
-			EnvironmentID: environmentID, Key: pgvalue.Text(*exactKey),
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
+		item, err := computer.FindByKey(r.Context(), s.db, addressed, *exactKey)
+		if errors.Is(err, computer.ErrNotFound) {
 			writeJSON(w, http.StatusOK, response)
 			return
 		}
@@ -61,56 +51,27 @@ func (s *Server) listComputersHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(w, unavailable(codedError{code: "computer_authority_unavailable", message: "computer authority is unavailable", retryable: true}))
 			return
 		}
-		item, err := computerListItem(
-			record.ID, record.Key, record.SandboxID, record.DeploymentID, record.Status,
-			record.LastActivityAt, record.CreatedAt, record.UpdatedAt,
-		)
-		if err != nil {
-			writeError(w, unavailable(codedError{code: "computer_authority_unavailable", message: "computer authority is unavailable", retryable: true}))
-			return
-		}
-		item.Error = record.ResidencyError
-		item.Residency = api.ComputerResidency(record.Residency)
-		response.Computers = append(response.Computers, item)
+		response.Computers = append(response.Computers, apiComputerListItem(item))
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
-	params := db.ListComputerListItemsParams{
-		OrgID: pgvalue.UUID(principal.OrgID), ProjectID: projectID, EnvironmentID: environmentID,
-		RowLimit: limit + 1,
-	}
+	page := computer.ListPage{Limit: limit}
 	if cursor != nil {
-		params.HasAfter = true
-		params.AfterCreatedAt = pgtype.Timestamptz{Time: cursor.CreatedAt, Valid: true}
-		params.AfterID = pgvalue.UUID(uuid.MustParse(cursor.ID))
+		page.After = &computer.ListPosition{CreatedAt: cursor.CreatedAt, ID: uuid.MustParse(cursor.ID)}
 	}
-	rows, err := s.db.ListComputerListItems(r.Context(), params)
+	listing, err := computer.List(r.Context(), s.db, addressed, page)
 	if err != nil {
 		writeError(w, unavailable(codedError{code: "computer_authority_unavailable", message: "computer authority is unavailable", retryable: true}))
 		return
 	}
-	hasMore := len(rows) > int(limit)
-	if hasMore {
-		rows = rows[:limit]
+	for _, item := range listing.Items {
+		response.Computers = append(response.Computers, apiComputerListItem(item))
 	}
-	for _, row := range rows {
-		item, err := computerListItem(
-			row.ID, row.Key, row.SandboxID, row.DeploymentID, row.Status,
-			row.LastActivityAt, row.CreatedAt, row.UpdatedAt,
-		)
-		if err != nil {
-			writeError(w, unavailable(codedError{code: "computer_authority_unavailable", message: "computer authority is unavailable", retryable: true}))
-			return
-		}
-		item.Error = row.ResidencyError
-		item.Residency = api.ComputerResidency(row.Residency)
-		response.Computers = append(response.Computers, item)
-	}
-	if hasMore {
-		last := rows[len(rows)-1]
+	if listing.More {
+		last := listing.Items[len(listing.Items)-1]
 		response.NextCursor, err = encodeComputerListCursor(computerListCursor{
 			ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
-			CreatedAt: pgvalue.Time(last.CreatedAt), ID: pgvalue.UUIDString(last.ID),
+			CreatedAt: last.CreatedAt, ID: last.ID,
 		})
 		if err != nil {
 			writeError(w, errors.New("list Computers"))
@@ -118,31 +79,6 @@ func (s *Server) listComputersHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, response)
-}
-
-func computerListItem(
-	id pgtype.UUID,
-	keyValue pgtype.Text,
-	sandboxID string,
-	deploymentID pgtype.UUID,
-	state string,
-	lastActivityAt, createdAt, updatedAt pgtype.Timestamptz,
-) (api.ComputerListItem, error) {
-	status, err := computerPublicStatus(state)
-	if err != nil {
-		return api.ComputerListItem{}, err
-	}
-	var key *string
-	if keyValue.Valid {
-		value := keyValue.String
-		key = &value
-	}
-	return api.ComputerListItem{
-		ID: pgvalue.UUIDString(id), Key: key, SandboxID: sandboxID,
-		DeploymentID: pgvalue.UUIDString(deploymentID), Status: status,
-		LastActivityAt: pgvalue.Time(lastActivityAt), CreatedAt: pgvalue.Time(createdAt),
-		UpdatedAt: pgvalue.Time(updatedAt),
-	}, nil
 }
 
 func parseComputerListQuery(
@@ -162,15 +98,15 @@ func parseComputerListQuery(
 		if values.Get("cursor") != "" || values.Get("limit") != "" {
 			return 0, nil, nil, errors.New("computer exact key lookup does not accept cursor or limit")
 		}
-		if err := validateComputerKey(&raw); err != nil {
+		if err := computer.ValidateKey(&raw); err != nil {
 			return 0, nil, nil, err
 		}
-		return computerListDefaultLimit, nil, &raw, nil
+		return computer.DefaultListLimit, nil, &raw, nil
 	}
-	limit := computerListDefaultLimit
+	limit := computer.DefaultListLimit
 	if raw := values.Get("limit"); raw != "" {
 		parsed, err := strconv.ParseInt(raw, 10, 32)
-		if err != nil || parsed < 1 || parsed > int64(computerListMaxLimit) {
+		if err != nil || parsed < 1 || parsed > int64(computer.MaxListLimit) {
 			return 0, nil, nil, errors.New("limit must be an integer in [1,100]")
 		}
 		limit = int32(parsed)

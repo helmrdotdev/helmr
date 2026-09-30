@@ -14,12 +14,14 @@ import (
 func TestPrunedOperationReceiptHasExplicitTransportOutcome(t *testing.T) {
 	server := &Server{}
 	for name, write := range map[string]func(http.ResponseWriter, error){
-		"computer exec":   server.writeComputerCommandError,
-		"computer create": server.writeComputerCreateError,
-		"actor start":     server.writeActorStartError,
-		"task start":      server.writeTaskStartError,
-		"session":         server.writeSessionOperationError,
-		"token":           server.writeTokenError,
+		"computer exec": server.writeComputerCommandError,
+		"computer create": func(w http.ResponseWriter, err error) {
+			server.writeComputerError(w, err, computerCreateOperation, "create Computer failed")
+		},
+		"actor start": server.writeActorStartError,
+		"task start":  server.writeTaskStartError,
+		"session":     server.writeSessionOperationError,
+		"token":       server.writeTokenError,
 	} {
 		t.Run(name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
@@ -42,7 +44,12 @@ func TestPrunedOperationReceiptHasExplicitTransportOutcome(t *testing.T) {
 		})
 	}
 	for name, convert := range map[string]func(error) (workerapi.RuntimeOperationFailure, bool){
-		"computer create": workerComputerCreateFailure, "computer delete": workerComputerDeleteFailure,
+		"computer create": func(err error) (workerapi.RuntimeOperationFailure, bool) {
+			return workerComputerFailure(err, computerCreateOperation)
+		},
+		"computer delete": func(err error) (workerapi.RuntimeOperationFailure, bool) {
+			return workerComputerFailure(err, computerDeleteOperation)
+		},
 		"actor start": workerActorStartFailure, "actor output": actorOutputAppendFailure,
 	} {
 		t.Run(name+" worker", func(t *testing.T) {
