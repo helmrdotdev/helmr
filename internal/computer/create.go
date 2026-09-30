@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 	"uuid"
@@ -156,12 +157,14 @@ type deploymentSource interface {
 }
 
 type insertedComputer struct {
-	ID             pgtype.UUID
-	Key            pgtype.Text
-	Status         string
-	LastActivityAt pgtype.Timestamptz
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
+	ID                pgtype.UUID
+	Key               pgtype.Text
+	Status            string
+	Revision          int64
+	HeadDiskVersionID pgtype.UUID
+	LastActivityAt    pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
 }
 
 type currentDeployment struct{}
@@ -185,8 +188,9 @@ func (currentDeployment) insert(ctx context.Context, q db.Querier, request Reque
 		Key:                    key,
 	})
 	return insertedComputer{
-		ID: created.ID, Key: created.Key, Status: created.Status,
-		LastActivityAt: created.LastActivityAt, CreatedAt: created.CreatedAt, UpdatedAt: created.UpdatedAt,
+		ID: created.ID, Key: created.Key, Status: created.Status, Revision: created.Revision,
+		HeadDiskVersionID: created.HeadDiskVersionID, LastActivityAt: created.LastActivityAt,
+		CreatedAt: created.CreatedAt, UpdatedAt: created.UpdatedAt,
 	}, err
 }
 
@@ -212,8 +216,9 @@ func (s runDeployment) insert(ctx context.Context, q db.Querier, request Request
 		Key:               key,
 	})
 	return insertedComputer{
-		ID: created.ID, Key: created.Key, Status: created.Status,
-		LastActivityAt: created.LastActivityAt, CreatedAt: created.CreatedAt, UpdatedAt: created.UpdatedAt,
+		ID: created.ID, Key: created.Key, Status: created.Status, Revision: created.Revision,
+		HeadDiskVersionID: created.HeadDiskVersionID, LastActivityAt: created.LastActivityAt,
+		CreatedAt: created.CreatedAt, UpdatedAt: created.UpdatedAt,
 	}, err
 }
 
@@ -288,64 +293,25 @@ func (c Creator) create(ctx context.Context, tx pgx.Tx, plan creation) (Created,
 		}
 	}
 
-	computerID := uuid.NewV7()
-	versionID := uuid.NewV7()
+	locked := make([]lockedSecret, 0, len(plan.placements))
+	for _, placement := range plan.placements {
+		locked = append(locked, lockedSecret{
+			SecretID: pgvalue.MustUUIDValue(secretIDs[placement.Name]),
+			Kind:     placement.Kind, Target: placement.Target,
+			Mode: placement.Mode, AllowedOrigins: placement.AllowedOrigins,
+		})
+	}
 	key := pgtype.Text{}
 	if request.Key != nil {
 		key = pgtype.Text{String: *request.Key, Valid: true}
 	}
-	created, err := plan.source.insert(ctx, q, request, sandbox, computerID, versionID, key)
+	created, err := c.install(ctx, q, request.Scope.EnvironmentID, request.Key, locked, func(computerID, versionID uuid.UUID) (insertedComputer, error) {
+		return plan.source.insert(ctx, q, request, sandbox, computerID, versionID, key)
+	})
 	if err != nil {
-		var postgresError *pgconn.PgError
-		if errors.As(err, &postgresError) &&
-			postgresError.ConstraintName == "computers_environment_key_uidx" &&
-			request.Key != nil {
-			return Created{}, KeyConflictError{Key: *request.Key}
-		}
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Created{}, ErrNotDeployed
-		}
-		return Created{}, fmt.Errorf("create computer: %w", err)
+		return Created{}, err
 	}
-	for _, placement := range plan.placements {
-		if placement.Mode != "protected" {
-			continue
-		}
-		// The CA expiry is anchored to the inserted row's CreatedAt and is
-		// persisted in the inserting transaction, never repaired later.
-		trust, err := c.ca.GenerateProxyTrust(request.Scope.EnvironmentID, computerID, created.CreatedAt.Time)
-		if err != nil {
-			return Created{}, err
-		}
-		count, err := q.InitializeComputerSecretCA(ctx, db.InitializeComputerSecretCAParams{
-			EnvironmentID: pgvalue.UUID(trust.EnvironmentID), ComputerID: pgvalue.UUID(trust.ComputerID),
-			Certificate: trust.Certificate, PrivateKeyNonce: trust.PrivateKeyNonce,
-			PrivateKeyCiphertext: trust.PrivateKeyCiphertext, NotAfter: pgvalue.Timestamptz(trust.NotAfter),
-		})
-		if err != nil {
-			return Created{}, err
-		}
-		if count != 1 {
-			return Created{}, ErrSecretUnavailable
-		}
-		break
-	}
-	for _, placement := range plan.placements {
-		placeholder, err := secretbinding.Placeholder(placement.Mode)
-		if err != nil {
-			return Created{}, err
-		}
-		if _, err := q.CreateComputerSecret(ctx, db.CreateComputerSecretParams{
-			ComputerID:      created.ID,
-			EnvironmentID:   pgvalue.UUID(request.Scope.EnvironmentID),
-			PlacementKind:   placement.Kind,
-			PlacementTarget: placement.Target,
-			SecretID:        secretIDs[placement.Name],
-			Mode:            placement.Mode, AllowedOrigins: placement.AllowedOrigins, Placeholder: placeholder,
-		}); err != nil {
-			return Created{}, fmt.Errorf("create computer secret placement: %w", err)
-		}
-	}
+	computerID := pgvalue.MustUUIDValue(created.ID)
 	status, err := publicStatus(created.Status)
 	if err != nil {
 		return Created{}, err
@@ -384,6 +350,190 @@ func (c Creator) create(ctx context.Context, tx pgx.Tx, plan creation) (Created,
 		}
 	}
 	return result, nil
+}
+
+// lockedSecret is a Secret placement of a new Computer whose Secret the
+// creating transaction already holds locked.
+type lockedSecret struct {
+	SecretID       uuid.UUID
+	Kind           string
+	Target         string
+	Mode           string
+	AllowedOrigins []string
+}
+
+// install inserts a Computer and its initial disk version with insert,
+// persists its secret proxy CA when a placement is protected and writes its
+// Secret placements in order, all in the caller's transaction. The CA is
+// generated for the inserted row's ID and CreatedAt. key is the requested
+// Computer key, for reporting a key conflict.
+func (c Creator) install(
+	ctx context.Context,
+	q *db.Queries,
+	environmentID uuid.UUID,
+	key *string,
+	secrets []lockedSecret,
+	insert func(computerID, versionID uuid.UUID) (insertedComputer, error),
+) (insertedComputer, error) {
+	created, err := insert(uuid.NewV7(), uuid.NewV7())
+	if err != nil {
+		var postgresError *pgconn.PgError
+		if errors.As(err, &postgresError) &&
+			postgresError.ConstraintName == "computers_environment_key_uidx" &&
+			key != nil {
+			return insertedComputer{}, KeyConflictError{Key: *key}
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			return insertedComputer{}, ErrNotDeployed
+		}
+		return insertedComputer{}, fmt.Errorf("create computer: %w", err)
+	}
+	computerID := pgvalue.MustUUIDValue(created.ID)
+	for _, placement := range secrets {
+		if placement.Mode != "protected" {
+			continue
+		}
+		// The CA expiry is anchored to the inserted row's CreatedAt and is
+		// persisted in the inserting transaction, never repaired later.
+		trust, err := c.ca.GenerateProxyTrust(environmentID, computerID, created.CreatedAt.Time)
+		if err != nil {
+			return insertedComputer{}, err
+		}
+		count, err := q.InitializeComputerSecretCA(ctx, db.InitializeComputerSecretCAParams{
+			EnvironmentID: pgvalue.UUID(trust.EnvironmentID), ComputerID: pgvalue.UUID(trust.ComputerID),
+			Certificate: trust.Certificate, PrivateKeyNonce: trust.PrivateKeyNonce,
+			PrivateKeyCiphertext: trust.PrivateKeyCiphertext, NotAfter: pgvalue.Timestamptz(trust.NotAfter),
+		})
+		if err != nil {
+			return insertedComputer{}, err
+		}
+		if count != 1 {
+			return insertedComputer{}, ErrSecretUnavailable
+		}
+		break
+	}
+	for _, placement := range secrets {
+		placeholder, err := secretbinding.Placeholder(placement.Mode)
+		if err != nil {
+			return insertedComputer{}, err
+		}
+		if _, err := q.CreateComputerSecret(ctx, db.CreateComputerSecretParams{
+			ComputerID:      created.ID,
+			EnvironmentID:   pgvalue.UUID(environmentID),
+			PlacementKind:   placement.Kind,
+			PlacementTarget: placement.Target,
+			SecretID:        pgvalue.UUID(placement.SecretID),
+			Mode:            placement.Mode, AllowedOrigins: placement.AllowedOrigins, Placeholder: placeholder,
+		}); err != nil {
+			return insertedComputer{}, fmt.Errorf("create computer secret placement: %w", err)
+		}
+	}
+	return created, nil
+}
+
+// errScheduleSecretsNotHeld reports a scheduled creation whose Secrets were
+// not locked for its schedule in its transaction.
+var errScheduleSecretsNotHeld = errors.New("schedule Secrets are not locked for this scheduled Computer creation")
+
+// ScheduleSecrets are a schedule's Secret placements, whose Secrets a
+// transaction holds locked. Only LockScheduleSecrets makes them.
+type ScheduleSecrets struct {
+	tx            pgx.Tx
+	environmentID uuid.UUID
+	scheduleID    uuid.UUID
+	rows          []db.ScheduleSecret
+}
+
+// LockScheduleSecrets locks the active Secrets of a schedule's placements in
+// tx, in Secret id order, and returns the placements ordered by Secret id,
+// kind and target.
+func LockScheduleSecrets(ctx context.Context, tx pgx.Tx, environmentID, scheduleID uuid.UUID) (ScheduleSecrets, error) {
+	rows, err := db.New(tx).LockScheduleSecrets(ctx, db.LockScheduleSecretsParams{
+		EnvironmentID: pgvalue.UUID(environmentID),
+		ScheduleID:    pgvalue.UUID(scheduleID),
+	})
+	if err != nil {
+		return ScheduleSecrets{}, err
+	}
+	return ScheduleSecrets{tx: tx, environmentID: environmentID, scheduleID: scheduleID, rows: rows}, nil
+}
+
+// Rows returns a copy of the locked placements, in lock order.
+func (s ScheduleSecrets) Rows() []db.ScheduleSecret {
+	rows := make([]db.ScheduleSecret, len(s.rows))
+	for i, row := range s.rows {
+		row.AllowedOrigins = slices.Clone(row.AllowedOrigins)
+		rows[i] = row
+	}
+	return rows
+}
+
+// ScheduledRequest is the Computer of one schedule fire, created from the
+// Sandbox declaration of the deployment the schedule is pinned to.
+type ScheduledRequest struct {
+	EnvironmentID      uuid.UUID
+	ScheduleID         uuid.UUID
+	ScheduleGeneration int64
+	SandboxDeclaredID  string
+	// Secrets are the schedule's placements, locked in the creating
+	// transaction; they are written in lock order.
+	Secrets ScheduleSecrets
+}
+
+// ScheduledComputer is a Computer created for a schedule fire.
+type ScheduledComputer struct {
+	ID                uuid.UUID
+	HeadDiskVersionID uuid.UUID
+	Revision          int64
+}
+
+// CreateScheduled creates the Computer of a schedule fire in the caller's
+// transaction: the Computer and its initial disk version, its secret proxy
+// CA when a placement is protected, and its Secret placements. The caller
+// must already hold the fire's environment and the active schedule at
+// ScheduleGeneration, and then the schedule's Secrets through
+// LockScheduleSecrets in the same transaction; Secrets locked in another
+// transaction or for another schedule are rejected before any write.
+// ErrNotDeployed reports that the schedule is no longer active at that
+// generation or that its pinned deployment has no such Sandbox declaration.
+func (c Creator) CreateScheduled(ctx context.Context, tx pgx.Tx, request ScheduledRequest) (ScheduledComputer, error) {
+	held := request.Secrets
+	if held.tx == nil || held.tx != tx ||
+		held.environmentID != request.EnvironmentID || held.scheduleID != request.ScheduleID {
+		return ScheduledComputer{}, errScheduleSecretsNotHeld
+	}
+	secrets := make([]lockedSecret, 0, len(held.rows))
+	for _, row := range held.rows {
+		secrets = append(secrets, lockedSecret{
+			SecretID: pgvalue.MustUUIDValue(row.SecretID),
+			Kind:     row.PlacementKind, Target: row.PlacementTarget,
+			Mode: row.Mode, AllowedOrigins: row.AllowedOrigins,
+		})
+	}
+	q := db.New(tx)
+	created, err := c.install(ctx, q, request.EnvironmentID, nil, secrets, func(computerID, versionID uuid.UUID) (insertedComputer, error) {
+		created, err := q.CreateComputerForScheduleFire(ctx, db.CreateComputerForScheduleFireParams{
+			SandboxDeclaredID:  request.SandboxDeclaredID,
+			EnvironmentID:      pgvalue.UUID(request.EnvironmentID),
+			ScheduleID:         pgvalue.UUID(request.ScheduleID),
+			ExpectedGeneration: request.ScheduleGeneration,
+			ID:                 pgvalue.UUID(computerID),
+			InitialVersionID:   pgvalue.UUID(versionID),
+		})
+		return insertedComputer{
+			ID: created.ID, Key: created.Key, Status: created.Status, Revision: created.Revision,
+			HeadDiskVersionID: created.HeadDiskVersionID, LastActivityAt: created.LastActivityAt,
+			CreatedAt: created.CreatedAt, UpdatedAt: created.UpdatedAt,
+		}, err
+	})
+	if err != nil {
+		return ScheduledComputer{}, err
+	}
+	return ScheduledComputer{
+		ID:                pgvalue.MustUUIDValue(created.ID),
+		HeadDiskVersionID: pgvalue.MustUUIDValue(created.HeadDiskVersionID),
+		Revision:          created.Revision,
+	}, nil
 }
 
 func createdFromReceipt(raw []byte) (Created, error) {
