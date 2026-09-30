@@ -38,9 +38,32 @@ type Capture struct {
 // the durable physical capture intent. A fence that no longer holds, or a
 // member that cannot be captured, returns pgx.ErrNoRows.
 func BeginCapture(ctx context.Context, tx pgx.Tx, capture Capture) (db.ComputerCheckpoint, error) {
+	fence, err := lockCapture(ctx, tx, capture)
+	if err != nil {
+		return db.ComputerCheckpoint{}, err
+	}
+	return fence.seal(ctx)
+}
+
+// captureFence is a capture's locked worker Host, Computer and Instance in
+// the owning transaction, before the member locks of its seal.
+type captureFence struct {
+	tx       pgx.Tx
+	request  db.BeginComputerCheckpointParams
+	worker   db.WorkerHost
+	instance db.ComputerInstance
+}
+
+func captureRequest(capture Capture) db.BeginComputerCheckpointParams {
 	// A capture has no request deadline: the checkpoint and the freshness check
 	// take an explicit NULL expiry.
-	request := db.BeginComputerCheckpointParams{CheckpointID: pgvalue.UUID(capture.CheckpointID), ExpiresAt: pgtype.Timestamptz{}, ComputerInstanceID: pgvalue.UUID(capture.InstanceID), EnvironmentID: pgvalue.UUID(capture.EnvironmentID), WriterGeneration: capture.WriterGeneration, MembershipRevision: capture.MembershipRevision, DesiredVersion: capture.DesiredVersion}
+	return db.BeginComputerCheckpointParams{CheckpointID: pgvalue.UUID(capture.CheckpointID), ExpiresAt: pgtype.Timestamptz{}, ComputerInstanceID: pgvalue.UUID(capture.InstanceID), EnvironmentID: pgvalue.UUID(capture.EnvironmentID), WriterGeneration: capture.WriterGeneration, MembershipRevision: capture.MembershipRevision, DesiredVersion: capture.DesiredVersion}
+}
+
+// lockCapture locks the worker Group and Host at the Instance's epoch without
+// comparing claim versions, then the Computer and the Instance.
+func lockCapture(ctx context.Context, tx pgx.Tx, capture Capture) (captureFence, error) {
+	request := captureRequest(capture)
 	var groupID, workerID uuid.UUID
 	var computerID pgtype.UUID
 	var region string
@@ -48,26 +71,42 @@ func BeginCapture(ctx context.Context, tx pgx.Tx, capture Capture) (db.ComputerC
 	err := tx.QueryRow(ctx, `SELECT worker_group_id,worker_host_id,computer_id,region_id,worker_epoch
  FROM computer_instances WHERE id=$1 AND environment_id=$2`, request.ComputerInstanceID, request.EnvironmentID).Scan(&groupID, &workerID, &computerID, &region, &epoch)
 	if err != nil {
-		return db.ComputerCheckpoint{}, err
+		return captureFence{}, err
 	}
 	q := db.New(tx)
 	host, err := workergroup.LockHostIgnoringClaims(ctx, q, groupID, region, workerID, epoch)
 	if err != nil {
-		return db.ComputerCheckpoint{}, err
+		return captureFence{}, err
 	}
-	worker := host.Host
 	c, err := q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: request.EnvironmentID, ID: computerID})
 	if err != nil {
-		return db.ComputerCheckpoint{}, err
+		return captureFence{}, err
 	}
-	i, err := q.LockComputerInstance(ctx, db.LockComputerInstanceParams{EnvironmentID: request.EnvironmentID, ComputerID: computerID})
+	return lockCaptureInstance(ctx, tx, request, host.Host, epoch, c)
+}
+
+// lockCaptureInstance locks the Computer's live Instance after the worker
+// Host and the Computer c. The Computer must be able to capture and the
+// Instance must be the addressed incarnation on the Host epoch and the
+// Computer's current writer.
+func lockCaptureInstance(ctx context.Context, tx pgx.Tx, request db.BeginComputerCheckpointParams, worker db.WorkerHost, epoch int64, c db.Computer) (captureFence, error) {
+	i, err := db.New(tx).LockComputerInstance(ctx, db.LockComputerInstanceParams{EnvironmentID: request.EnvironmentID, ComputerID: c.ID})
 	if err != nil {
-		return db.ComputerCheckpoint{}, err
+		return captureFence{}, err
 	}
 	if c.Status != "active" || c.DesiredState != "active" || c.DeletedAt.Valid || len(c.RecoveryFailure) > 0 || len(c.PreparationFailure) > 0 || c.DirtyState == "dirty_state_lost" || c.DirtyState == "capture_failed" ||
-		i.ID != request.ComputerInstanceID || i.WorkerHostID != pgvalue.UUID(workerID) || i.WorkerGroupID != pgvalue.UUID(groupID) || i.WorkerEpoch != epoch || !worker.VMPlatformID.Valid || i.VMPlatformID != worker.VMPlatformID.String || i.WriterGeneration != c.WriterGeneration {
-		return db.ComputerCheckpoint{}, pgx.ErrNoRows
+		i.ID != request.ComputerInstanceID || i.WorkerHostID != worker.ID || i.WorkerGroupID != worker.WorkerGroupID || i.WorkerEpoch != epoch || !worker.VMPlatformID.Valid || i.VMPlatformID != worker.VMPlatformID.String || i.WriterGeneration != c.WriterGeneration {
+		return captureFence{}, pgx.ErrNoRows
 	}
+	return captureFence{tx: tx, request: request, worker: worker, instance: i}, nil
+}
+
+// seal locks the Instance's resident members and seals them into the new
+// creating checkpoint.
+func (f captureFence) seal(ctx context.Context) (db.ComputerCheckpoint, error) {
+	tx, request, worker, i := f.tx, f.request, f.worker, f.instance
+	q := db.New(tx)
+	var err error
 	// Admissions and detachments take the Computer lock. Lock all resident owners
 	// in stable order before reading eligibility or capturing an Actor cursor.
 	for _, query := range []string{
@@ -152,7 +191,7 @@ func BeginCapture(ctx context.Context, tx pgx.Tx, capture Capture) (db.ComputerC
 		if _, err = q.MarkCheckpointMemberWaiting(ctx, db.MarkCheckpointMemberWaitingParams{CheckpointID: checkpoint.ID, WaitID: m.waitID}); err != nil {
 			return db.ComputerCheckpoint{}, err
 		}
-		if _, err = q.BeginRunLeaseCheckpoint(ctx, db.BeginRunLeaseCheckpointParams{ID: m.leaseID, RunID: m.runID, ComputerID: computerID, AttemptNumber: m.attempt, LeaseSequence: m.sequence}); err != nil {
+		if _, err = q.BeginRunLeaseCheckpoint(ctx, db.BeginRunLeaseCheckpointParams{ID: m.leaseID, RunID: m.runID, ComputerID: i.ComputerID, AttemptNumber: m.attempt, LeaseSequence: m.sequence}); err != nil {
 			return db.ComputerCheckpoint{}, err
 		}
 	}

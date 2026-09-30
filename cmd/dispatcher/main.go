@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbpool"
@@ -33,9 +34,10 @@ import (
 // The dispatcher's connection budget is 44 = 12 + 32. On the run dispatch
 // pool, session-lock holders (the run placement lane workers plus the Run
 // lease and Computer instance reconcilers) are at most 10 connections, below
-// its cap of 32; each holder's work takes further connections. Default demand
-// is about 31 of 32, so exhaustion only queues acquisitions within each
-// cycle's timeout.
+// its cap of 32; each holder's work takes further connections. The Computer
+// deletion reconciler holds no session lock and takes one connection per
+// cycle, as it did as a placement lane. Default demand is about 31 of 32, so
+// exhaustion only queues acquisitions within each cycle's timeout.
 const (
 	baseMaxConns        = int32(12)
 	runDispatchMaxConns = int32(32)
@@ -109,11 +111,14 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	placementReconciler, err := dispatch.NewPlacementReconciler(
 		runPlacementStore, runPlacementLaneLock, runDispatchAuthority,
 		runDispatchQueries, runDispatchAuthority,
-		runDispatchQueries,
 		log,
 	)
 	if err != nil {
 		return fmt.Errorf("configure placement reconciler: %w", err)
+	}
+	computerDeletionReconciler, err := computer.NewDeletionReconciler(runDispatchPool, log)
+	if err != nil {
+		return fmt.Errorf("configure Computer deletion reconciler: %w", err)
 	}
 	telemetryIngestor, err := telemetry.NewIngestor(log, queries, clickhouse.NewWriter(clickHouseClient))
 	if err != nil {
@@ -246,6 +251,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		{name: "Run lease reconciler", run: runLeaseReconciler.Run},
 		{name: "Computer instance reconciler", run: instanceReconciler.Run},
 		{name: "placement reconciler", run: placementReconciler.Run},
+		{name: "Computer deletion reconciler", run: computerDeletionReconciler.Run},
 		{name: "schedule worker", run: scheduleWorker.Run},
 		{name: "token reconciliation delivery", run: tokenReconcileDelivery.Run},
 		{name: "secret revocation delivery", run: secretRevocationDelivery.Run},

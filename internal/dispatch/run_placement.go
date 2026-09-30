@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -37,7 +39,7 @@ func (d *Authority) PlaceReadyRun(ctx context.Context, candidate ReadyRunCandida
 	if err = tx.QueryRow(ctx, `SELECT computer_id FROM runs WHERE org_id=$1 AND id=$2 AND revision=$3`, candidate.OrgID, candidate.RunID, candidate.ExpectedRunRevision).Scan(&computerID); err != nil {
 		return ReadyRunPlacement{}, classifyRunCandidateError(err)
 	}
-	if replaced, err := prepareComputerProgram(ctx, tx, candidate, env, computerID); err != nil {
+	if replaced, err := replaceComputerProgram(ctx, tx, candidate, env, computerID); err != nil {
 		return ReadyRunPlacement{}, classifyRunCandidateError(err)
 	} else if replaced {
 		if err := tx.Commit(ctx); err != nil {
@@ -56,7 +58,7 @@ func (d *Authority) PlaceReadyRun(ctx context.Context, candidate ReadyRunCandida
 	if err != nil {
 		return ReadyRunPlacement{}, classifyRunCandidateError(err)
 	}
-	r, err := lockRunPlacementAuthority(ctx, tx, candidate, p)
+	r, err := lockRunPlacementAuthority(ctx, tx, candidate, p.computer.EnvironmentID, p.computer.ID)
 	if err != nil {
 		return ReadyRunPlacement{}, classifyRunCandidateError(err)
 	}
@@ -92,9 +94,44 @@ func (d *Authority) PlaceReadyRun(ctx context.Context, candidate ReadyRunCandida
 	return result, nil
 }
 
+// replaceComputerProgram takes the program replacement step the Run's
+// Computer needs, and reports whether it took one; Run placement retries
+// after this transaction. Disk promotion requires no capacity for the
+// obsolete VM.
+func replaceComputerProgram(ctx context.Context, tx pgx.Tx, candidate ReadyRunCandidate, environmentID, computerID pgtype.UUID) (bool, error) {
+	var deploymentID pgtype.UUID
+	if err := tx.QueryRow(ctx, `SELECT deployment_id FROM runs WHERE id=$1 AND org_id=$2 AND revision=$3`, candidate.RunID, candidate.OrgID, candidate.ExpectedRunRevision).Scan(&deploymentID); err != nil {
+		return false, err
+	}
+	replacement, err := computer.LockReplacement(ctx, tx, computer.ReplacementRef{EnvironmentID: pgvalue.MustUUIDValue(environmentID), ComputerID: pgvalue.MustUUIDValue(computerID), DeploymentID: pgvalue.MustUUIDValue(deploymentID)})
+	if err != nil {
+		return false, err
+	}
+	switch replacement.Kind() {
+	case computer.ReplacementCapture:
+		// Capture locks the stable resident set before any new target member lock.
+		if _, err = replacement.Capture(ctx); err != nil {
+			return false, err
+		}
+		_, err = lockRunPlacementAuthority(ctx, tx, candidate, environmentID, computerID)
+		return err == nil, err
+	case computer.ReplacementPromotion:
+		if _, err = lockRunPlacementAuthority(ctx, tx, candidate, environmentID, computerID); err != nil {
+			return false, err
+		}
+		err = replacement.Promote(ctx)
+		return err == nil, err
+	default:
+		return false, nil
+	}
+}
+
 func classifyRunCandidateError(err error) error {
-	if errors.Is(err, pgx.ErrNoRows) {
+	switch {
+	case errors.Is(err, pgx.ErrNoRows), errors.Is(err, computer.ErrReplacementChanged):
 		return ErrCandidateChanged
+	case errors.Is(err, computer.ErrReplacementBlocked):
+		return ErrCapacityUnavailable
 	}
 	return err
 }

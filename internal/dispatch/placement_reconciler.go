@@ -25,7 +25,6 @@ const (
 	defaultRunPlacementParallelism       = 16
 	defaultRunPlacementPendingInterval   = time.Second
 	defaultComputerCommandPlacementLimit = int32(32)
-	defaultComputerDeleteFinalizeLimit   = int32(32)
 	defaultComputerCommandPendingTimeout = 10 * time.Minute
 )
 
@@ -66,20 +65,14 @@ type ComputerCommandPlacementAuthority interface {
 	) error
 }
 
-type ComputerDeletionFinalizer interface {
-	FinalizeDeletingComputers(context.Context, int32) ([]pgtype.UUID, error)
-}
-
 type PlacementReconciler struct {
 	runDiscovery             RunPlacementDiscovery
 	runLaneLocker            RunPlacementLaneLocker
 	runAuthority             RunPlacementAuthority
 	computerCommandDiscovery ComputerCommandPlacementDiscovery
 	computerCommandAuthority ComputerCommandPlacementAuthority
-	computerFinalizer        ComputerDeletionFinalizer
 	runPolicy                runPlacementPolicy
 	computerCommandPolicy    placementLoopPolicy
-	computerDeletePolicy     placementLoopPolicy
 	runCursors               [runPlacementLaneCount]runPlacementCursor
 	runLaneMutexes           [runPlacementLaneCount]sync.Mutex
 	runNextLane              atomic.Uint32
@@ -193,12 +186,11 @@ func NewPlacementReconciler(runDiscovery RunPlacementDiscovery, runLaneLocker Ru
 	runAuthority RunPlacementAuthority,
 	computerCommandDiscovery ComputerCommandPlacementDiscovery,
 	computerCommandAuthority ComputerCommandPlacementAuthority,
-	computerFinalizer ComputerDeletionFinalizer,
 	log *slog.Logger,
 ) (*PlacementReconciler, error) {
 	if runDiscovery == nil || runLaneLocker == nil || runAuthority == nil ||
-		computerCommandDiscovery == nil || computerCommandAuthority == nil || computerFinalizer == nil {
-		return nil, errors.New("run placement, computer exec placement, and computer deletion dependencies are required")
+		computerCommandDiscovery == nil || computerCommandAuthority == nil {
+		return nil, errors.New("run placement and computer exec placement dependencies are required")
 	}
 	if log == nil {
 		log = slog.Default()
@@ -207,7 +199,6 @@ func NewPlacementReconciler(runDiscovery RunPlacementDiscovery, runLaneLocker Ru
 		runDiscovery: runDiscovery, runLaneLocker: runLaneLocker, runAuthority: runAuthority,
 		computerCommandDiscovery: computerCommandDiscovery,
 		computerCommandAuthority: computerCommandAuthority,
-		computerFinalizer:        computerFinalizer,
 		log:                      log, metrics: newReconcileMetrics(),
 		runPolicy: runPlacementPolicy{
 			idleInterval:      defaultRunPlacementIdleInterval,
@@ -223,10 +214,6 @@ func NewPlacementReconciler(runDiscovery RunPlacementDiscovery, runLaneLocker Ru
 			interval: defaultRunPlacementIdleInterval, failureBackoff: defaultRunPlacementFailureBackoff,
 			timeout: defaultRunPlacementTimeout, limit: defaultComputerCommandPlacementLimit,
 		},
-		computerDeletePolicy: placementLoopPolicy{
-			interval: defaultRunPlacementIdleInterval, failureBackoff: defaultRunPlacementFailureBackoff,
-			timeout: defaultRunPlacementTimeout, limit: defaultComputerDeleteFinalizeLimit,
-		},
 	}
 	reconciler.runParallel = make(chan struct{}, reconciler.runPolicy.parallelism)
 	return reconciler, nil
@@ -235,7 +222,7 @@ func NewPlacementReconciler(runDiscovery RunPlacementDiscovery, runLaneLocker Ru
 func (r *PlacementReconciler) Run(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	loops := r.runPolicy.workers + 2
+	loops := r.runPolicy.workers + 1
 	errC := make(chan error, loops)
 	for range r.runPolicy.workers {
 		go func() { errC <- r.runPlacementLoop(runCtx) }()
@@ -246,14 +233,6 @@ func (r *PlacementReconciler) Run(ctx context.Context) error {
 			"computer_command",
 			r.computerCommandPolicy,
 			r.ReconcileComputerCommands,
-		)
-	}()
-	go func() {
-		errC <- r.runLoop(
-			runCtx,
-			"computer_delete",
-			r.computerDeletePolicy,
-			r.ReconcileComputerDeletes,
 		)
 	}()
 	var firstErr error
@@ -422,14 +401,6 @@ func (r *PlacementReconciler) ReconcileComputerCommands(ctx context.Context) err
 		}
 	}
 	return errors.Join(problems...)
-}
-
-func (r *PlacementReconciler) ReconcileComputerDeletes(ctx context.Context) error {
-	_, err := r.computerFinalizer.FinalizeDeletingComputers(ctx, r.computerDeletePolicy.limit)
-	if err != nil {
-		return fmt.Errorf("finalize deleting computers: %w", err)
-	}
-	return nil
 }
 
 func (r *PlacementReconciler) runLoop(ctx context.Context, domain string, policy placementLoopPolicy, reconcile func(context.Context) error) error {

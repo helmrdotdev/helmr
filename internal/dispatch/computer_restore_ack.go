@@ -47,18 +47,8 @@ func AcknowledgeComputerRestore(ctx context.Context, tx pgx.Tx, destination comp
 		}
 		installed[g.RunID] = g
 	}
-	for _, query := range []string{
-		`SELECT s.id FROM sessions s WHERE s.id IN(SELECT r.session_id FROM runs r JOIN computer_checkpoint_runs m ON m.run_id=r.id WHERE m.checkpoint_id=$1) ORDER BY s.id FOR UPDATE`,
-		`SELECT r.id FROM runs r JOIN computer_checkpoint_runs m ON m.run_id=r.id WHERE m.checkpoint_id=$1 ORDER BY r.id FOR UPDATE OF r`,
-		`SELECT a.run_id FROM run_attempts a JOIN computer_checkpoint_runs m ON m.run_id=a.run_id AND m.attempt_number=a.number WHERE m.checkpoint_id=$1 ORDER BY a.run_id FOR UPDATE OF a`,
-		`SELECT l.id FROM run_leases l JOIN computer_checkpoints c ON c.resume_computer_instance_id=l.computer_instance_id WHERE c.id=$1 ORDER BY l.id FOR UPDATE OF l`,
-		`SELECT w.id FROM run_waits w JOIN computer_checkpoint_runs m ON m.run_wait_id=w.id WHERE m.checkpoint_id=$1 ORDER BY w.run_id,w.id FOR UPDATE OF w`,
-		`SELECT t.id FROM session_turns t WHERE t.id IN(SELECT w.turn_id FROM run_waits w JOIN computer_checkpoint_runs m ON m.run_wait_id=w.id WHERE m.checkpoint_id=$1) ORDER BY t.id FOR UPDATE`,
-		`SELECT id FROM computer_checkpoints WHERE id=$1 FOR UPDATE`,
-	} {
-		if _, err = tx.Exec(ctx, query, checkpointID); err != nil {
-			return db.ComputerInstance{}, err
-		}
+	if err = restore.LockAcknowledgementMembers(ctx); err != nil {
+		return db.ComputerInstance{}, err
 	}
 	cp, err := q.LockComputerCheckpoint(ctx, db.LockComputerCheckpointParams{EnvironmentID: i.EnvironmentID, ComputerID: i.ComputerID, CheckpointID: checkpointID})
 	if err != nil {

@@ -78,6 +78,44 @@ func (r Restore) Open(ctx context.Context) (db.ComputerInstance, error) {
 	return i, nil
 }
 
+// LockCommitMembers locks the members that the restore commit grants, in
+// stable order after the restore fence: the Sessions, Runs, Attempts and
+// Waits the Instance's source checkpoint captured, then the checkpoint.
+func (r Restore) LockCommitMembers(ctx context.Context) error {
+	return r.lockMembers(ctx, []string{
+		`SELECT s.id FROM sessions s WHERE s.id IN(SELECT r.session_id FROM runs r JOIN computer_checkpoint_runs m ON m.run_id=r.id WHERE m.checkpoint_id=$1) ORDER BY s.id FOR UPDATE`,
+		`SELECT r.id FROM runs r JOIN computer_checkpoint_runs m ON m.run_id=r.id WHERE m.checkpoint_id=$1 ORDER BY r.id FOR UPDATE OF r`,
+		`SELECT a.run_id FROM run_attempts a JOIN computer_checkpoint_runs m ON m.run_id=a.run_id AND m.attempt_number=a.number WHERE m.checkpoint_id=$1 ORDER BY a.run_id FOR UPDATE OF a`,
+		`SELECT w.id FROM run_waits w JOIN computer_checkpoint_runs m ON m.run_wait_id=w.id WHERE m.checkpoint_id=$1 ORDER BY w.run_id,w.id FOR UPDATE OF w`,
+		`SELECT id FROM computer_checkpoints WHERE id=$1 FOR UPDATE`,
+	})
+}
+
+// LockAcknowledgementMembers locks the members that the restore
+// acknowledgement starts, in stable order after the restore fence: the
+// commit's members with the Run leases granted on the Instance after the
+// Attempts and the Session turns after the Waits, before the checkpoint.
+func (r Restore) LockAcknowledgementMembers(ctx context.Context) error {
+	return r.lockMembers(ctx, []string{
+		`SELECT s.id FROM sessions s WHERE s.id IN(SELECT r.session_id FROM runs r JOIN computer_checkpoint_runs m ON m.run_id=r.id WHERE m.checkpoint_id=$1) ORDER BY s.id FOR UPDATE`,
+		`SELECT r.id FROM runs r JOIN computer_checkpoint_runs m ON m.run_id=r.id WHERE m.checkpoint_id=$1 ORDER BY r.id FOR UPDATE OF r`,
+		`SELECT a.run_id FROM run_attempts a JOIN computer_checkpoint_runs m ON m.run_id=a.run_id AND m.attempt_number=a.number WHERE m.checkpoint_id=$1 ORDER BY a.run_id FOR UPDATE OF a`,
+		`SELECT l.id FROM run_leases l JOIN computer_checkpoints c ON c.resume_computer_instance_id=l.computer_instance_id WHERE c.id=$1 ORDER BY l.id FOR UPDATE OF l`,
+		`SELECT w.id FROM run_waits w JOIN computer_checkpoint_runs m ON m.run_wait_id=w.id WHERE m.checkpoint_id=$1 ORDER BY w.run_id,w.id FOR UPDATE OF w`,
+		`SELECT t.id FROM session_turns t WHERE t.id IN(SELECT w.turn_id FROM run_waits w JOIN computer_checkpoint_runs m ON m.run_wait_id=w.id WHERE m.checkpoint_id=$1) ORDER BY t.id FOR UPDATE`,
+		`SELECT id FROM computer_checkpoints WHERE id=$1 FOR UPDATE`,
+	})
+}
+
+func (r Restore) lockMembers(ctx context.Context, queries []string) error {
+	for _, query := range queries {
+		if _, err := r.tx.Exec(ctx, query, r.observed.instance.SourceCheckpointID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // RecheckReady re-evaluates the Instance's readiness fence, including its
 // writer and preparation deadlines, after the caller's blocking writes may
 // have consumed the remaining budget.
