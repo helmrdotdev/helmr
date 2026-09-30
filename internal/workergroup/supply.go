@@ -153,6 +153,43 @@ func LockExecutionHost(ctx context.Context, q db.Querier, host ExecutionHost) er
 	return nil
 }
 
+// ExecutionEpoch identifies the worker host epoch a Run lease was assigned,
+// in the Group's region.
+type ExecutionEpoch struct {
+	GroupID  pgtype.UUID
+	RegionID string
+	HostID   pgtype.UUID
+	Epoch    int64
+}
+
+// LockExecutionHostWithoutClaims update-locks the Group, then the Host, of a
+// Run lease without comparing claim versions, and returns the Host's VM
+// platform. The Group must be active, paused or draining and the Host active
+// or draining at the epoch with a VM platform; otherwise it returns
+// pgx.ErrNoRows.
+//
+// Equivalence: these are the two statements of LockExecutionHost, in the
+// same order and lock strength; only the claim version comparisons are
+// omitted and the Host must also report a VM platform.
+func LockExecutionHostWithoutClaims(ctx context.Context, q db.Querier, host ExecutionEpoch) (string, error) {
+	group, err := q.LockRunLeaseClaimWorkerGroup(ctx, db.LockRunLeaseClaimWorkerGroupParams{ID: host.GroupID, RegionID: host.RegionID})
+	if err != nil {
+		return "", err
+	}
+	if group.Status != db.WorkerGroupStatusActive && group.Status != db.WorkerGroupStatusPaused && group.Status != db.WorkerGroupStatusDraining {
+		return "", pgx.ErrNoRows
+	}
+	locked, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{ID: host.HostID, WorkerGroupID: host.GroupID})
+	if err != nil {
+		return "", err
+	}
+	if (locked.Status != db.WorkerHostStatusActive && locked.Status != db.WorkerHostStatusDraining) ||
+		!locked.CurrentEpoch.Valid || locked.CurrentEpoch.Int64 != host.Epoch || !locked.VMPlatformID.Valid {
+		return "", pgx.ErrNoRows
+	}
+	return locked.VMPlatformID.String, nil
+}
+
 // LockedHost is the Group and Host rows an authenticated worker host holds
 // update locks on.
 type LockedHost struct {

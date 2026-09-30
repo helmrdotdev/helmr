@@ -48,7 +48,7 @@ func AppendSessionOutput(ctx context.Context, tx pgx.Tx, scope run.TurnScope, ke
 	if err != nil {
 		return OutputReceipt{}, &OperationError{Code: "invalid_request"}
 	}
-	actor, err := lockSession(ctx, q, Target{EnvironmentID: scope.EnvironmentID, SessionID: scope.SessionID})
+	actor, err := lockSession(ctx, tx, Target{EnvironmentID: scope.EnvironmentID, SessionID: scope.SessionID})
 	if err != nil {
 		return OutputReceipt{}, err
 	}

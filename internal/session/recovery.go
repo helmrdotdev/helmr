@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -28,7 +29,7 @@ func reconcileLostExecution(ctx context.Context, tx pgx.Tx, actor db.Session, bi
 	default:
 		return actor, true, nil
 	}
-	ws, err := q.LockActorCloseComputer(ctx, db.LockActorCloseComputerParams{EnvironmentID: actor.EnvironmentID, ComputerID: actor.ComputerID, SessionID: actor.ID})
+	ws, err := computer.LockSessionComputer(ctx, tx, sessionComputerRef(actor))
 	if err != nil {
 		return actor, false, err
 	}
@@ -180,7 +181,7 @@ func reconcileStoppedExecution(ctx context.Context, tx pgx.Tx, actor db.Session)
 	if current.Status != db.RunStatusCancelled || current.CurrentRunLeaseID.Valid {
 		return actor, true, nil
 	}
-	ws, err := q.LockActorCloseComputer(ctx, db.LockActorCloseComputerParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ComputerID: actor.ComputerID})
+	ws, err := computer.LockSessionComputer(ctx, tx, sessionComputerRef(actor))
 	if err != nil {
 		return actor, false, err
 	}

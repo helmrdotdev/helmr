@@ -167,6 +167,37 @@ func TestExecutionHostClaimsDoNotReplaceEpochOrStateFences(t *testing.T) {
 	}
 }
 
+func TestExecutionHostWithoutClaimsKeepsEpochAndStateFences(t *testing.T) {
+	for _, test := range []struct {
+		name, sql string
+		want      error
+	}{
+		{"current", ``, nil},
+		{"host claims", `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, nil},
+		{"group claims", `UPDATE worker_groups SET claim_version=claim_version+1 WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, nil},
+		{"draining host", `UPDATE worker_hosts SET status='draining',draining_at=now() WHERE id=$1`, nil},
+		{"paused group", `UPDATE worker_groups SET status='paused' WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, nil},
+		{"draining group", `UPDATE worker_groups SET status='draining',primary_pool_id=NULL WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, nil},
+		{"disabled group", `UPDATE worker_groups SET status='disabled',primary_pool_id=NULL WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, pgx.ErrNoRows},
+		{"new epoch", `UPDATE worker_hosts SET current_epoch=2 WHERE id=$1`, pgx.ErrNoRows},
+		{"lost host", `UPDATE worker_hosts SET status='lost',lost_at=now() WHERE id=$1`, pgx.ErrNoRows},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newSupplyFixture(t)
+			hostID := f.activeHost(t, f.activePool(t, "default"), "host-1")
+			if test.sql != "" {
+				dbtest.MustExec(t, t.Context(), f.pool, test.sql, hostID)
+			}
+			platform, err := LockExecutionHostWithoutClaims(t.Context(), db.New(f.begin(t)), ExecutionEpoch{
+				GroupID: f.group.ID, RegionID: fixtureRegionID, HostID: pgvalue.UUID(hostID), Epoch: 1,
+			})
+			if test.want == nil && (err != nil || platform != f.vmPlatformID) || test.want != nil && !errors.Is(err, test.want) {
+				t.Fatalf("execution host = %q, %v, want %v", platform, err, test.want)
+			}
+		})
+	}
+}
+
 func TestLockHostReportsStaleClaimsAndContinuation(t *testing.T) {
 	for _, test := range []struct {
 		name, sql string

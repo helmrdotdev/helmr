@@ -124,6 +124,18 @@
 //     Computer and its Instance, then the Session and Run, re-locks the
 //     already-held Computer through the open-Session predicate, then locks
 //     the Attempt and Wait.
+//   - Session operations take their Computer and Instance locks through the
+//     computer owner: the admission lock and the unreclaimed Instance before
+//     the Session, and the Session-scoped Computer re-locks at the positions
+//     described above.
+//   - Timer and Token wait reconciliation lock the Run's own Computer and its
+//     unreclaimed Instance through the computer owner (timer: after that
+//     Computer's Secrets and within the Run's scope, locking no Instance when
+//     the scope no longer matches), then the Session, Run, Attempt and Wait
+//     (Token: then the Token), without worker supply or lineage locks. Token
+//     wait registration, staged through the run owner, locks worker_groups
+//     and worker_hosts without comparing claim versions, then the Computer,
+//     its Instance, the Session, Run, Attempt, Run lease, Wait and Token.
 //   - Command operations, through the command owner, lock Secrets first when
 //     they deliver or validate them (claim, recovery). Worker-reported
 //     operations then lock worker_groups and worker_hosts, comparing claim

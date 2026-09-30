@@ -293,6 +293,52 @@ func TestRunTestExcludesGenericDatabaseHelpers(t *testing.T) {
 	}
 }
 
+// Run, Session and Token operations lock Computer and Instance rows only
+// through the computer owner's fences, which keep the statements and their
+// predicates in one place.
+func TestComputerRowLocksStayBehindComputerFences(t *testing.T) {
+	forbidden := map[string]bool{
+		"LockActorCloseComputer":         true,
+		"LockActorInputComputer":         true,
+		"LockComputer":                   true,
+		"LockComputerAdmissionAuthority": true,
+		"LockComputerInstance":           true,
+		"LockRunLeaseClaimComputer":      true,
+		"LockRunLeaseClaimInstance":      true,
+		"LockTokenWaitComputer":          true,
+	}
+	root := filepath.Join(repositoryRoot(t), "internal")
+	for _, owner := range []string{"run", "session", "token"} {
+		err := filepath.WalkDir(filepath.Join(root, owner), func(filename string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || !strings.HasSuffix(filename, ".go") || strings.HasSuffix(filename, "_test.go") {
+				return nil
+			}
+			file, err := parser.ParseFile(token.NewFileSet(), filename, nil, 0)
+			if err != nil {
+				return err
+			}
+			var found error
+			ast.Inspect(file, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if !ok || found != nil {
+					return found == nil
+				}
+				if selector, ok := call.Fun.(*ast.SelectorExpr); ok && forbidden[selector.Sel.Name] {
+					found = fmt.Errorf("%s calls %s outside the computer owner's fences", filename, selector.Sel.Name)
+				}
+				return true
+			})
+			return found
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestProviderNeutralPackagesExcludeProviderSDKs(t *testing.T) {
 	root := filepath.Join(repositoryRoot(t), "internal")
 	for source, forbiddenPrefixes := range map[string][]string{

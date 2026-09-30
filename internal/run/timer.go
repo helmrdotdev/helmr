@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -80,21 +82,18 @@ func (r *TimerWaitReconciler) reconcileOne(
 	if _, err := q.LockComputerSecretsForAdmission(ctx, candidate.ComputerID); err != nil {
 		return false, err
 	}
-	computer, err := q.LockRunLeaseClaimComputer(ctx, db.LockRunLeaseClaimComputerParams{
-		ID: locator.ComputerID, OrgID: locator.OrgID, ProjectID: locator.ProjectID,
-		EnvironmentID: locator.EnvironmentID, RegionID: computerLocator.RegionID,
+	residence, err := computer.LockRunResidence(ctx, tx, computer.RunResidenceRef{
+		OrgID: pgvalue.MustUUIDValue(locator.OrgID), ProjectID: pgvalue.MustUUIDValue(locator.ProjectID),
+		EnvironmentID: pgvalue.MustUUIDValue(locator.EnvironmentID), RegionID: computerLocator.RegionID,
+		ComputerID: pgvalue.MustUUIDValue(locator.ComputerID),
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, computer.ErrNotFound) {
 		return false, tx.Commit(ctx)
 	}
 	if err != nil {
 		return false, err
 	}
-	if _, err := q.LockComputerInstance(ctx, db.LockComputerInstanceParams{
-		EnvironmentID: locator.EnvironmentID, ComputerID: locator.ComputerID,
-	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return false, err
-	}
+	residentComputer := residence.Computer()
 	if locator.SessionID.Valid {
 		actor, err := q.LockActorForInputReconcile(ctx, db.LockActorForInputReconcileParams{
 			EnvironmentID: locator.EnvironmentID,
@@ -123,7 +122,7 @@ func (r *TimerWaitReconciler) reconcileOne(
 		return false, err
 	}
 	attempt, err := q.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{
-		RunID: run.ID, Number: candidate.AttemptNumber, ComputerID: computer.ID,
+		RunID: run.ID, Number: candidate.AttemptNumber, ComputerID: residentComputer.ID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, tx.Commit(ctx)
@@ -148,7 +147,7 @@ func (r *TimerWaitReconciler) reconcileOne(
 	if !current {
 		return false, tx.Commit(ctx)
 	}
-	if !timerWaitAuthorityCurrent(run, computer, attempt, wait) {
+	if !timerWaitAuthorityCurrent(run, residentComputer, attempt, wait) {
 		return false, tx.Commit(ctx)
 	}
 	now, err := q.GetRunLeaseRenewalTime(ctx)

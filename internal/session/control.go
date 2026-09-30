@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -13,7 +14,7 @@ import (
 
 func Close(ctx context.Context, tx pgx.Tx, request ControlRequest) (ControlReceipt, error) {
 	q := db.New(tx)
-	actor, err := lockSession(ctx, q, request.Target)
+	actor, err := lockSession(ctx, tx, request.Target)
 	if err != nil {
 		return ControlReceipt{}, err
 	}
@@ -66,7 +67,7 @@ func Resume(ctx context.Context, tx pgx.Tx, request ResumeRequest) (ControlRecei
 // locked before Session authority by a cross-Session caller.
 func ResumeWithLockedSecrets(ctx context.Context, tx pgx.Tx, request ResumeRequest, computerID pgtype.UUID, bindings []db.LockComputerSecretsForAdmissionRow) (ControlReceipt, error) {
 	q := db.New(tx)
-	actor, err := lockSession(ctx, q, request.Target)
+	actor, err := lockSession(ctx, tx, request.Target)
 	if err != nil {
 		return ControlReceipt{}, err
 	}
@@ -97,7 +98,7 @@ func ResumeWithLockedSecrets(ctx context.Context, tx pgx.Tx, request ResumeReque
 	case actor.DispatchHoldReason.String == "recovery_required":
 		receipt.Code = "recovery_required"
 	default:
-		computer, err := q.LockActorCloseComputer(ctx, db.LockActorCloseComputerParams{EnvironmentID: actor.EnvironmentID, ComputerID: actor.ComputerID, SessionID: actor.ID})
+		sessionComputer, err := computer.LockSessionComputer(ctx, tx, sessionComputerRef(actor))
 		if err != nil {
 			return receipt, err
 		}
@@ -105,7 +106,7 @@ func ResumeWithLockedSecrets(ctx context.Context, tx pgx.Tx, request ResumeReque
 		if err != nil {
 			return receipt, err
 		}
-		if (!excluded) || (computer.DirtyState == db.ComputerDirtyStateCaptureFailed || computer.DirtyState == db.ComputerDirtyStateDirtyStateLost) || computer.Status != db.ComputerStatusActive || computer.DesiredState != db.ComputerDesiredStateActive || !computer.HeadDiskVersionID.Valid || !bindingsCanAdmit(actor, bindings) {
+		if (!excluded) || (sessionComputer.DirtyState == db.ComputerDirtyStateCaptureFailed || sessionComputer.DirtyState == db.ComputerDirtyStateDirtyStateLost) || sessionComputer.Status != db.ComputerStatusActive || sessionComputer.DesiredState != db.ComputerDesiredStateActive || !sessionComputer.HeadDiskVersionID.Valid || !bindingsCanAdmit(actor, bindings) {
 			receipt.Code = "not_settled"
 			break
 		}
@@ -120,7 +121,7 @@ func ResumeWithLockedSecrets(ctx context.Context, tx pgx.Tx, request ResumeReque
 		if actor.Status == "closing" {
 			err = q.CreateSessionLifecycleReconcileOutbox(ctx, db.CreateSessionLifecycleReconcileOutboxParams{ID: claim.ID, EnvironmentID: actor.EnvironmentID, SessionID: actor.ID})
 		} else if CanStartContinuation(actor) {
-			_, err = CreateContinuation(ctx, tx, actor, db.Computer{ID: computer.ID}, bindings)
+			_, err = CreateContinuation(ctx, tx, actor, db.Computer{ID: sessionComputer.ID}, bindings)
 		}
 		if err != nil {
 			return receipt, err

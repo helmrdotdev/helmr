@@ -110,6 +110,98 @@ func (r RunInstance) RecordStart(ctx context.Context) error {
 	return err
 }
 
+// TokenWaitInstanceRef addresses the Instance a Run lease registering a
+// Token wait runs on: the lease's Computer and Instance on the worker host
+// epoch, the VM platform of the locked worker host, and the lease's writer
+// generation.
+type TokenWaitInstanceRef struct {
+	OrgID            uuid.UUID
+	ProjectID        uuid.UUID
+	EnvironmentID    uuid.UUID
+	RegionID         string
+	ComputerID       uuid.UUID
+	InstanceID       uuid.UUID
+	Host             Host
+	VMPlatformID     string
+	WriterGeneration int64
+}
+
+// LockTokenWaitInstance locks the Computer, then the Instance, of a Run
+// lease that registers a Token wait. The worker host must already be
+// locked. The Computer must be active and desired active, and the Instance
+// the ready, mounted, unreclaimed and not terminal incarnation of the
+// Computer's and the lease's writer generation on the host's VM platform,
+// with open or draining admission. It does not check the Computer's dirty
+// state or deletion, which LockInstanceForRun does.
+//
+// Equivalence: the Computer statement is the plain Environment and id
+// Computer lock FOR UPDATE, and the Instance statement is the Run lease
+// scoped Instance lock (id, organization, project, Environment, region,
+// worker group, host, epoch and Computer) FOR UPDATE; the Instance statement
+// is issued only when the Computer statement returned an active Computer,
+// and the predicates above are the complete checks.
+func LockTokenWaitInstance(ctx context.Context, tx pgx.Tx, ref TokenWaitInstanceRef) (db.ComputerInstance, error) {
+	q := db.New(tx)
+	environment, computerID := pgvalue.UUID(ref.EnvironmentID), pgvalue.UUID(ref.ComputerID)
+	c, err := q.LockTokenWaitComputer(ctx, db.LockTokenWaitComputerParams{ComputerID: computerID, EnvironmentID: environment})
+	if err != nil {
+		return db.ComputerInstance{}, err
+	}
+	if c.Status != db.ComputerStatusActive || c.DesiredState != db.ComputerDesiredStateActive {
+		return db.ComputerInstance{}, pgx.ErrNoRows
+	}
+	i, err := q.LockRunLeaseClaimInstance(ctx, db.LockRunLeaseClaimInstanceParams{
+		ID: pgvalue.UUID(ref.InstanceID), OrgID: pgvalue.UUID(ref.OrgID), ProjectID: pgvalue.UUID(ref.ProjectID),
+		EnvironmentID: environment, RegionID: ref.RegionID, WorkerGroupID: pgvalue.UUID(ref.Host.GroupID),
+		WorkerHostID: pgvalue.UUID(ref.Host.HostID), WorkerEpoch: ref.Host.Epoch, ComputerID: computerID,
+	})
+	if err != nil {
+		return db.ComputerInstance{}, err
+	}
+	if i.VMPlatformID != ref.VMPlatformID ||
+		i.DesiredState != db.RuntimeDesiredStateReady || i.ObservedState != db.RuntimeObservedStateReady ||
+		i.ObservedDesiredVersion != i.DesiredVersion || i.TerminalAt.Valid ||
+		i.ReclaimedAt.Valid || i.MountState != "mounted" || i.WriterGeneration != c.WriterGeneration ||
+		i.WriterGeneration != ref.WriterGeneration || (i.AdmissionState != "open" && i.AdmissionState != "draining") {
+		return db.ComputerInstance{}, pgx.ErrNoRows
+	}
+	return i, nil
+}
+
+// SessionComputerRef addresses the Computer a Session runs on.
+type SessionComputerRef struct {
+	EnvironmentID uuid.UUID
+	ComputerID    uuid.UUID
+	SessionID     uuid.UUID
+}
+
+// LockSessionComputer update-locks the Session's Computer for a Session
+// lifecycle operation (close, resume, interruption and recovery settlement,
+// continuation). The Computer must be the one the Session runs on in the
+// Environment; the Session row itself is not locked.
+//
+// Equivalence: this is one statement, the Computer FOR UPDATE filtered by
+// the Environment, the id and the existence of the Session on that
+// Computer, with no status predicate.
+func LockSessionComputer(ctx context.Context, tx pgx.Tx, ref SessionComputerRef) (db.Computer, error) {
+	return db.New(tx).LockActorCloseComputer(ctx, db.LockActorCloseComputerParams{
+		EnvironmentID: pgvalue.UUID(ref.EnvironmentID), ComputerID: pgvalue.UUID(ref.ComputerID), SessionID: pgvalue.UUID(ref.SessionID),
+	})
+}
+
+// LockOpenSessionComputer update-locks the Session's Computer for input
+// delivery while the Session is open. The Computer must be the one the open
+// Session runs on in the Environment; the Session row itself is not locked.
+//
+// Equivalence: this is one statement, the Computer FOR UPDATE joined to the
+// Session on its Environment and Computer, filtered by the Environment, the
+// id, the Session and the Session's open status.
+func LockOpenSessionComputer(ctx context.Context, tx pgx.Tx, ref SessionComputerRef) (db.Computer, error) {
+	return db.New(tx).LockActorInputComputer(ctx, db.LockActorInputComputerParams{
+		EnvironmentID: pgvalue.UUID(ref.EnvironmentID), ID: pgvalue.UUID(ref.ComputerID), SessionID: pgvalue.UUID(ref.SessionID),
+	})
+}
+
 // CommandRef addresses a Computer Command in its Environment.
 type CommandRef struct {
 	EnvironmentID uuid.UUID
