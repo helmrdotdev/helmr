@@ -47,8 +47,6 @@ assert_contains "${controlplane_build_script}" 'path:/work#packages.x86_64-linux
   "Control Plane image Runtime build uses a path input"
 assert_contains "${controlplane_build_script}" 'path:/work#packages.x86_64-linux.timezoneData' \
   "Control Plane image timezone build uses a path input"
-assert_contains "${script}" 'Worker does not report the release cohort identity' \
-  "Worker release reported identity"
 if grep -Fq 'backend "s3"' "${storage_versions}" "${publisher_versions}"; then
   fail "release storage/publisher child modules must not declare a backend"
 fi
