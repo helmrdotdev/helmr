@@ -17,10 +17,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
-func applyInstanceChannelClaim(t *testing.T, f runtest.Fixture, w workerActor, r workerapi.ComputerInstanceRenewRequest, token string) (db.ComputerInstance, error) {
+func applyInstanceChannelClaim(t *testing.T, f runtest.Fixture, w workergroup.HostPrincipal, r workerapi.ComputerInstanceRenewRequest, token string) (db.ComputerInstance, error) {
 	t.Helper()
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
@@ -90,7 +91,7 @@ func TestComputerInstanceChannelRejectsStaleAdmission(t *testing.T) {
 			w, r := instanceRenewalFixture(t, f, work)
 			dbtest.MustExec(t, t.Context(), f.Pool, test.sql)
 			_, err := applyInstanceChannelClaim(t, f, w, r, "token")
-			if !errors.Is(err, pgx.ErrNoRows) && !errors.Is(err, errStaleWorkerClaims) {
+			if !errors.Is(err, pgx.ErrNoRows) && !errors.Is(err, workergroup.ErrStaleClaims) {
 				t.Fatalf("claim=%v", err)
 			}
 		})

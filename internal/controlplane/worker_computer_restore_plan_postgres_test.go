@@ -17,10 +17,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
-func restorePlanFixture(t *testing.T, idle, committed bool, setup ...func(runtest.Fixture, runtest.RunLease)) (runtest.Fixture, workerActor, workerapi.ComputerRestorePlanRequest, disk.FencingKey) {
+func restorePlanFixture(t *testing.T, idle, committed bool, setup ...func(runtest.Fixture, runtest.RunLease)) (runtest.Fixture, workergroup.HostPrincipal, workerapi.ComputerRestorePlanRequest, disk.FencingKey) {
 	t.Helper()
 	f, authority, fence := dispatchtest.Restore(t, idle, setup...)
 	key, err := disk.NewFencingKey(make([]byte, 32))
@@ -36,8 +37,8 @@ func restorePlanFixture(t *testing.T, idle, committed bool, setup ...func(runtes
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET writer_token_hash=decode(replace($2,'sha256:',''),'hex') WHERE id=$1`, i.ID, capability.Hash)
-	w := workerActor{WorkerHostID: f.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1}
-	if err := f.Pool.QueryRow(t.Context(), `SELECT w.claim_version,g.claim_version FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1`, f.WorkerID).Scan(&w.ClaimVersion, &w.GroupClaimVersion); err != nil {
+	w := workergroup.HostPrincipal{HostID: f.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1}
+	if err := f.Pool.QueryRow(t.Context(), `SELECT w.claim_version,g.claim_version FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1`, f.WorkerID).Scan(&w.HostClaimVersion, &w.GroupClaimVersion); err != nil {
 		t.Fatal(err)
 	}
 	if committed {
@@ -56,7 +57,7 @@ func restorePlanFixture(t *testing.T, idle, committed bool, setup ...func(runtes
 	return f, w, workerapi.ComputerRestorePlanRequest{EnvironmentID: f.EnvironmentID.String(), ComputerInstanceID: pgvalue.UUIDString(i.ID), WriterGeneration: i.WriterGeneration}, key
 }
 
-func readRestorePlan(t *testing.T, f runtest.Fixture, w workerActor, r workerapi.ComputerRestorePlanRequest, k disk.FencingKey) (*workerapi.ComputerRestorePlan, error) {
+func readRestorePlan(t *testing.T, f runtest.Fixture, w workergroup.HostPrincipal, r workerapi.ComputerRestorePlanRequest, k disk.FencingKey) (*workerapi.ComputerRestorePlan, error) {
 	t.Helper()
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
@@ -191,7 +192,7 @@ func TestComputerRestorePlanRechecksDeadlineAfterMemberLock(t *testing.T) {
 	}
 }
 
-func activateRestorePlanFixture(t *testing.T, f runtest.Fixture, w workerActor, plan *workerapi.ComputerRestorePlan) {
+func activateRestorePlanFixture(t *testing.T, f runtest.Fixture, w workergroup.HostPrincipal, plan *workerapi.ComputerRestorePlan) {
 	t.Helper()
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
@@ -202,7 +203,7 @@ func activateRestorePlanFixture(t *testing.T, f runtest.Fixture, w workerActor, 
 	for _, member := range plan.Members {
 		grants = append(grants, dispatch.ComputerRestoreGrant{RunID: pgvalue.UUID(uuid.MustParse(member.RunID)), LeaseID: pgvalue.UUID(uuid.MustParse(member.Lease.ID)), LeaseSequence: member.Lease.LeaseSequence})
 	}
-	_, err = dispatch.AcknowledgeComputerRestore(t.Context(), tx, dispatch.ComputerPreparationFence{RuntimeID: pgvalue.UUID(uuid.MustParse(plan.ComputerInstanceID)), WorkerID: pgvalue.UUID(w.WorkerHostID), WorkerGroupID: pgvalue.UUID(w.WorkerGroupID), WorkerEpoch: w.WorkerEpoch, DesiredVersion: plan.DesiredVersion}, pgvalue.UUID(uuid.MustParse(plan.CheckpointID)), plan.WriterGeneration, grants)
+	_, err = dispatch.AcknowledgeComputerRestore(t.Context(), tx, dispatch.ComputerPreparationFence{RuntimeID: pgvalue.UUID(uuid.MustParse(plan.ComputerInstanceID)), WorkerID: pgvalue.UUID(w.HostID), WorkerGroupID: pgvalue.UUID(w.GroupID), WorkerEpoch: w.Epoch, DesiredVersion: plan.DesiredVersion}, pgvalue.UUID(uuid.MustParse(plan.CheckpointID)), plan.WriterGeneration, grants)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +219,7 @@ func TestRestoredClaimDiscoversAndAttachesWithoutStartingAnotherProgram(t *testi
 		t.Fatal(err)
 	}
 	activateRestorePlanFixture(t, f, w, plan)
-	work, err := db.New(f.Pool).DiscoverWorkerRunLeaseWork(t.Context(), db.DiscoverWorkerRunLeaseWorkParams{WorkerHostID: pgvalue.UUID(w.WorkerHostID), WorkerGroupID: pgvalue.UUID(w.WorkerGroupID), WorkerEpoch: w.WorkerEpoch, RowLimit: 100})
+	work, err := db.New(f.Pool).DiscoverWorkerRunLeaseWork(t.Context(), db.DiscoverWorkerRunLeaseWorkParams{WorkerHostID: pgvalue.UUID(w.HostID), WorkerGroupID: pgvalue.UUID(w.GroupID), WorkerEpoch: w.Epoch, RowLimit: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +266,7 @@ func TestRestoredClaimRejectsUnactivatedAndAlreadyAcknowledgedMembers(t *testing
 					t.Fatal(err)
 				}
 				defer tx.Rollback(context.Background())
-				_, err = run.AcknowledgeWaitResume(t.Context(), tx, run.ExecutionFence{LeaseID: a.runLease.ID, LeaseSequence: member.Lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(w.WorkerGroupID), WorkerHostID: pgvalue.UUID(w.WorkerHostID), WorkerEpoch: w.WorkerEpoch, GroupClaimVersion: w.GroupClaimVersion, HostClaimVersion: w.ClaimVersion}, a.resumeWait.ID, a.runtime.SourceCheckpointID)
+				_, err = run.AcknowledgeWaitResume(t.Context(), tx, run.ExecutionFence{LeaseID: a.runLease.ID, LeaseSequence: member.Lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(w.GroupID), WorkerHostID: pgvalue.UUID(w.HostID), WorkerEpoch: w.Epoch, GroupClaimVersion: w.GroupClaimVersion, HostClaimVersion: w.HostClaimVersion}, a.resumeWait.ID, a.runtime.SourceCheckpointID)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -331,7 +332,7 @@ func TestRestoredActorCanAcknowledgeStopBeforeAndAfterClaim(t *testing.T) {
 						t.Fatal(err)
 					}
 					defer tx.Rollback(context.Background())
-					wait, err := run.AcknowledgeWaitResume(t.Context(), tx, run.ExecutionFence{LeaseID: a.runLease.ID, LeaseSequence: 2, WorkerGroupID: pgvalue.UUID(w.WorkerGroupID), WorkerHostID: pgvalue.UUID(w.WorkerHostID), WorkerEpoch: w.WorkerEpoch, GroupClaimVersion: w.GroupClaimVersion, HostClaimVersion: w.ClaimVersion}, a.resumeWait.ID, a.runtime.SourceCheckpointID)
+					wait, err := run.AcknowledgeWaitResume(t.Context(), tx, run.ExecutionFence{LeaseID: a.runLease.ID, LeaseSequence: 2, WorkerGroupID: pgvalue.UUID(w.GroupID), WorkerHostID: pgvalue.UUID(w.HostID), WorkerEpoch: w.Epoch, GroupClaimVersion: w.GroupClaimVersion, HostClaimVersion: w.HostClaimVersion}, a.resumeWait.ID, a.runtime.SourceCheckpointID)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -437,7 +438,7 @@ func TestComputerRestorePlanAfterParkedWakeup(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			fence := dispatch.ComputerPreparationFence{RuntimeID: pgvalue.UUID(uuid.MustParse(request.ComputerInstanceID)), WorkerID: pgvalue.UUID(worker.WorkerHostID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerEpoch: worker.WorkerEpoch, DesiredVersion: 1}
+			fence := dispatch.ComputerPreparationFence{RuntimeID: pgvalue.UUID(uuid.MustParse(request.ComputerInstanceID)), WorkerID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerEpoch: worker.Epoch, DesiredVersion: 1}
 			tx, err = f.Pool.Begin(t.Context())
 			if err != nil {
 				t.Fatal(err)

@@ -14,6 +14,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -34,10 +35,10 @@ func TestWorkerCompleteTaskReplaysPreviousEpochWithoutCAS(t *testing.T) {
 		t.Fatal(err)
 	}
 	httpRequest := httptest.NewRequest(http.MethodPost, "/worker/v1/run/tasks/complete", bytes.NewReader(body))
-	httpRequest = httpRequest.WithContext(context.WithValue(httpRequest.Context(), workerContextKey{}, workerActor{
-		WorkerHostID:  workerID,
-		WorkerGroupID: uuid.MustParse(lease.WorkerGroupID),
-		WorkerEpoch:   2,
+	httpRequest = httpRequest.WithContext(context.WithValue(httpRequest.Context(), workerContextKey{}, workergroup.HostPrincipal{
+		HostID:  workerID,
+		GroupID: uuid.MustParse(lease.WorkerGroupID),
+		Epoch:   2,
 	}))
 	response := httptest.NewRecorder()
 
@@ -64,10 +65,10 @@ func TestWorkerCompleteTaskRejectsChangedTerminalRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	httpRequest := httptest.NewRequest(http.MethodPost, "/worker/v1/run/tasks/complete", bytes.NewReader(body))
-	httpRequest = httpRequest.WithContext(context.WithValue(httpRequest.Context(), workerContextKey{}, workerActor{
-		WorkerHostID:  workerID,
-		WorkerGroupID: uuid.MustParse(lease.WorkerGroupID),
-		WorkerEpoch:   lease.WorkerEpoch,
+	httpRequest = httpRequest.WithContext(context.WithValue(httpRequest.Context(), workerContextKey{}, workergroup.HostPrincipal{
+		HostID:  workerID,
+		GroupID: uuid.MustParse(lease.WorkerGroupID),
+		Epoch:   lease.WorkerEpoch,
 	}))
 	response := httptest.NewRecorder()
 

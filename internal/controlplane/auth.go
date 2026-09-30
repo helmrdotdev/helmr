@@ -8,14 +8,11 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/identity"
-	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 type principalContextKey struct{}
@@ -237,123 +234,43 @@ func (s *Server) sessionPrincipalFromToken(r *http.Request, rawSession string) (
 }
 
 func (s *Server) requireWorker(next http.Handler) http.Handler {
-	return s.requireWorkerStatus(workerAuthActive, next)
+	return s.requireWorkerHost(workergroup.AuthenticateHost, next)
 }
 
 func (s *Server) requireWorkerActivation(next http.Handler) http.Handler {
-	return s.requireWorkerStatus(workerAuthActivation, next)
+	return s.requireWorkerHost(workergroup.AuthenticateActivatingHost, next)
 }
 
 func (s *Server) requireRecoveringWorker(next http.Handler) http.Handler {
-	return s.requireWorkerStatus(workerAuthRecovering, next)
+	return s.requireWorkerHost(workergroup.AuthenticateRecoveringHost, next)
 }
 
 func (s *Server) requireWorkerDrainCompletion(next http.Handler) http.Handler {
-	return s.requireWorkerStatus(workerAuthDrainCompletion, next)
+	return s.requireWorkerHost(workergroup.AuthenticateDrainCompletingHost, next)
 }
 
 func (s *Server) requireWorkerFence(next http.Handler) http.Handler {
-	return s.requireWorkerStatus(workerAuthFence, next)
+	return s.requireWorkerHost(workergroup.AuthenticateFencingHost, next)
 }
 
-type workerAuthState uint8
+// hostAuthenticator is one of the workergroup worker host authenticators.
+type hostAuthenticator func(context.Context, db.Querier, workergroup.CredentialConfig, string, time.Time) (workergroup.HostPrincipal, error)
 
-const (
-	workerAuthActive workerAuthState = iota
-	workerAuthActivation
-	workerAuthRecovering
-	workerAuthDrainCompletion
-	workerAuthFence
-)
-
-func (s *Server) requireWorkerStatus(state workerAuthState, next http.Handler) http.Handler {
+func (s *Server) requireWorkerHost(authenticate hostAuthenticator, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if len(s.workerTokenSigningKey) == 0 {
-			writeError(w, unavailable(errors.New("worker authentication is not configured")))
-			return
-		}
 		token, ok := bearerToken(r.Header.Get("authorization"))
 		if !ok {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}
-		payload, err := auth.VerifyWorkerToken(s.workerTokenSigningKey, token, time.Now())
+		worker, err := authenticate(r.Context(), s.db, s.hostCredentials, token, time.Now())
+		if errors.Is(err, workergroup.ErrUnauthenticated) {
+			writeError(w, unauthorized(errors.New("worker authentication is required")))
+			return
+		}
 		if err != nil {
-			writeError(w, unauthorized(errors.New("worker authentication is required")))
-			return
-		}
-		credentialID, err := uuid.Parse(payload.CredentialID)
-		if err != nil {
-			writeError(w, unauthorized(errors.New("worker authentication is required")))
-			return
-		}
-		workerHostID, err := uuid.Parse(payload.WorkerHostID)
-		if err != nil {
-			writeError(w, unauthorized(errors.New("worker authentication is required")))
-			return
-		}
-		workerGroupID, err := ids.Parse(payload.WorkerGroupID)
-		if err != nil {
-			writeError(w, unauthorized(errors.New("worker authentication is required")))
-			return
-		}
-		params := db.AuthorizeWorkerHostCredentialParams{
-			CredentialID:      pgvalue.UUID(credentialID),
-			ClaimVersion:      payload.ClaimVersion,
-			GroupClaimVersion: payload.GroupClaimVersion,
-			WorkerEpoch:       pgtype.Int8{Int64: payload.WorkerEpoch, Valid: true},
-		}
-		var row db.AuthorizeWorkerHostCredentialRow
-		var authorizationErr error
-		switch state {
-		case workerAuthActivation:
-			activationRow, activationErr := s.db.AuthorizeWorkerActivationCredential(r.Context(), db.AuthorizeWorkerActivationCredentialParams(params))
-			row, authorizationErr = db.AuthorizeWorkerHostCredentialRow(activationRow), activationErr
-		case workerAuthRecovering:
-			recoveryRow, recoveryErr := s.db.AuthorizeRecoveringWorkerHostCredential(r.Context(), db.AuthorizeRecoveringWorkerHostCredentialParams(params))
-			row, authorizationErr = db.AuthorizeWorkerHostCredentialRow(recoveryRow), recoveryErr
-		case workerAuthDrainCompletion:
-			row, authorizationErr = s.db.AuthorizeWorkerHostCredential(r.Context(), params)
-			if isNoRows(authorizationErr) {
-				replayRow, replayErr := s.db.AuthorizeWorkerDrainReplay(r.Context(), db.AuthorizeWorkerDrainReplayParams{
-					CredentialID: params.CredentialID, ClaimVersion: params.ClaimVersion,
-					WorkerEpoch: params.WorkerEpoch,
-				})
-				row, authorizationErr = db.AuthorizeWorkerHostCredentialRow(replayRow), replayErr
-			}
-		case workerAuthFence:
-			row, authorizationErr = s.db.AuthorizeWorkerHostCredential(r.Context(), params)
-			if isNoRows(authorizationErr) {
-				replayRow, replayErr := s.db.AuthorizeWorkerFenceReplay(r.Context(), db.AuthorizeWorkerFenceReplayParams{
-					CredentialID: params.CredentialID, ClaimVersion: params.ClaimVersion,
-					WorkerEpoch: params.WorkerEpoch,
-				})
-				row, authorizationErr = db.AuthorizeWorkerHostCredentialRow(replayRow), replayErr
-			}
-		default:
-			row, authorizationErr = s.db.AuthorizeWorkerHostCredential(r.Context(), params)
-		}
-		if isNoRows(authorizationErr) {
-			writeError(w, unauthorized(errors.New("worker authentication is required")))
-			return
-		}
-		if authorizationErr != nil {
-			s.log.Error("worker instance credential authorization failed", "worker_host_id", payload.WorkerHostID, "error", authorizationErr)
+			s.log.Error("worker host credential authorization failed", "error", err)
 			writeError(w, unavailable(errors.New("worker authentication is unavailable")))
-			return
-		}
-		worker := workerActor{
-			WorkerHostID:      workerHostID,
-			WorkerGroupID:     pgvalue.MustUUIDValue(row.WorkerGroupID),
-			ClaimVersion:      row.ClaimVersion,
-			GroupClaimVersion: payload.GroupClaimVersion,
-			ResourceID:        strings.TrimSpace(row.ResourceID),
-			WorkerEpoch:       payload.WorkerEpoch,
-			Status:            row.WorkerStatus,
-			EpochStartedAt:    pgvalue.Time(row.EpochStartedAt),
-		}
-		if pgvalue.MustUUIDValue(row.WorkerHostID) != workerHostID || worker.WorkerGroupID != workerGroupID || payload.ClaimVersion != worker.ClaimVersion {
-			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), workerContextKey{}, worker)))
@@ -365,8 +282,8 @@ func principalFromContext(ctx context.Context) auth.Principal {
 	return principal
 }
 
-func workerFromContext(ctx context.Context) workerActor {
-	worker, _ := ctx.Value(workerContextKey{}).(workerActor)
+func workerFromContext(ctx context.Context) workergroup.HostPrincipal {
+	worker, _ := ctx.Value(workerContextKey{}).(workergroup.HostPrincipal)
 	return worker
 }
 
@@ -472,7 +389,7 @@ func isSecureRequest(r *http.Request) bool {
 }
 
 func writeStaleWorkerClaims(w http.ResponseWriter, err error) bool {
-	if !errors.Is(err, errStaleWorkerClaims) {
+	if !errors.Is(err, workergroup.ErrStaleClaims) {
 		return false
 	}
 	writeError(w, unauthorized(errors.New("worker authentication is required")))

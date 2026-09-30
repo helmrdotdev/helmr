@@ -14,19 +14,20 @@ import (
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // Secret locks precede physical authority; source and target Sessions are then
 // locked together, in UUID order, before the source Run lineage.
-func authorizeWorkerSessionOperation(ctx context.Context, tx pgx.Tx, worker workerActor, lease workerapi.RunLeaseFence, targetID, targetComputerID pgtype.UUID) (workerRunSourceAuthority, error) {
+func authorizeWorkerSessionOperation(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence, targetID, targetComputerID pgtype.UUID) (workerRunSourceAuthority, error) {
 	q := db.New(tx)
 	parsed, err := parseRunLeaseFence(lease)
 	if err != nil {
 		return workerRunSourceAuthority{}, err
 	}
-	loc, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch})
+	loc, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch})
 	if err != nil {
 		return workerRunSourceAuthority{}, staleWorkerRunSource(err)
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -37,7 +38,7 @@ func TestWorkerRunSourceRequiresEnteredRunningExecution(t *testing.T) {
 			t.Fatalf("inactive execution=%v", err)
 		}
 	}
-	if _, err := validateWorkerRunSource(valid, run.ErrExecutionWorkerClaims); !errors.Is(err, errStaleWorkerClaims) {
+	if _, err := validateWorkerRunSource(valid, run.ErrExecutionWorkerClaims); !errors.Is(err, workergroup.ErrStaleClaims) {
 		t.Fatalf("worker claims=%v", err)
 	}
 	if _, err := validateWorkerRunSource(valid, pgx.ErrNoRows); !errors.Is(err, errStaleWorkerRunSource) {

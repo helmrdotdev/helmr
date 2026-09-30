@@ -7,6 +7,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -14,7 +15,7 @@ import (
 // producers. Transfer remote source retention and release only this operation's
 // pins atomically. Execution origins and the Computer head are not rewritten.
 // A historical acknowledgement is evidence only; it grants no new mutation.
-func (s *Server) adoptComputerSave(ctx context.Context, worker workerActor, request workerapi.ComputerSaveBeginRequest, root disk.GenerationRoot) error {
+func (s *Server) adoptComputerSave(ctx context.Context, worker workergroup.HostPrincipal, request workerapi.ComputerSaveBeginRequest, root disk.GenerationRoot) error {
 	params, err := computerSaveReceiptParams(worker, request)
 	if err != nil {
 		return err

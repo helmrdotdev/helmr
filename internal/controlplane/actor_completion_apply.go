@@ -8,9 +8,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
-func (s *Server) completeActor(ctx context.Context, worker workerActor, request workerapi.CompleteActorRequest, completion parsedActorCompletion) error {
+func (s *Server) completeActor(ctx context.Context, worker workergroup.HostPrincipal, request workerapi.CompleteActorRequest, completion parsedActorCompletion) error {
 	fence := workerExecutionFence(worker, completion.lease, request.Lease)
 	err := s.inTx(ctx, func(work *txWork) error { return completeActorExecution(ctx, work.tx, fence, completion) })
 	if err == nil {
@@ -28,7 +29,7 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 		return errors.Join(err, fmt.Errorf("check actor completion replay: %w", replayErr))
 	}
 	if errors.Is(err, run.ErrExecutionWorkerClaims) {
-		return errStaleWorkerClaims
+		return workergroup.ErrStaleClaims
 	}
 	if errors.Is(err, secret.ErrDeliveryUnavailable) {
 		return deterministicWorkerAdmission(err)

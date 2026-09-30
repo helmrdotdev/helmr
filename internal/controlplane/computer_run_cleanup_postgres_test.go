@@ -1,10 +1,12 @@
 package controlplane
 
 import (
-	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"testing"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 func TestComputerRunCleanupRequiresTerminalScopeAndCurrentPhysicalOwner(t *testing.T) {
@@ -28,13 +30,15 @@ func TestComputerRunCleanupRequiresTerminalScopeAndCurrentPhysicalOwner(t *testi
 	if err != nil || result.Run == nil || *result.Run != receipt.ComputerRunCleanup {
 		t.Fatalf("cancelled Run missing: %+v %v", result, err)
 	}
-	for _, alter := range []func(*workerActor, *workerapi.ComputerRunReconcileRequest){
-		func(w *workerActor, r *workerapi.ComputerRunReconcileRequest) { w.WorkerEpoch++ },
-		func(w *workerActor, r *workerapi.ComputerRunReconcileRequest) { w.ClaimVersion++ },
-		func(w *workerActor, r *workerapi.ComputerRunReconcileRequest) { w.GroupClaimVersion++ },
-		func(w *workerActor, r *workerapi.ComputerRunReconcileRequest) { r.WriterGeneration++ },
-		func(w *workerActor, r *workerapi.ComputerRunReconcileRequest) { r.AttemptNumber++ },
-		func(w *workerActor, r *workerapi.ComputerRunReconcileRequest) { r.RunID = peer.RunID.String() },
+	for _, alter := range []func(*workergroup.HostPrincipal, *workerapi.ComputerRunReconcileRequest){
+		func(w *workergroup.HostPrincipal, r *workerapi.ComputerRunReconcileRequest) { w.Epoch++ },
+		func(w *workergroup.HostPrincipal, r *workerapi.ComputerRunReconcileRequest) { w.HostClaimVersion++ },
+		func(w *workergroup.HostPrincipal, r *workerapi.ComputerRunReconcileRequest) { w.GroupClaimVersion++ },
+		func(w *workergroup.HostPrincipal, r *workerapi.ComputerRunReconcileRequest) { r.WriterGeneration++ },
+		func(w *workergroup.HostPrincipal, r *workerapi.ComputerRunReconcileRequest) { r.AttemptNumber++ },
+		func(w *workergroup.HostPrincipal, r *workerapi.ComputerRunReconcileRequest) {
+			r.RunID = peer.RunID.String()
+		},
 	} {
 		w, bad := worker, receipt
 		alter(&w, &bad)

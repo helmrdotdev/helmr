@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -46,8 +47,8 @@ func (s *Server) workerMarkCheckpointReady(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (s *Server) commitCheckpointReady(ctx context.Context, worker workerActor, request workerapi.CheckpointReadyRequest) (workerapi.ComputerCheckpointResponse, error) {
-	authority := dispatch.ComputerCaptureWorker{GroupID: pgvalue.UUID(worker.WorkerGroupID), HostID: pgvalue.UUID(worker.WorkerHostID), Epoch: worker.WorkerEpoch}
+func (s *Server) commitCheckpointReady(ctx context.Context, worker workergroup.HostPrincipal, request workerapi.CheckpointReadyRequest) (workerapi.ComputerCheckpointResponse, error) {
+	authority := dispatch.ComputerCaptureWorker{GroupID: pgvalue.UUID(worker.GroupID), HostID: pgvalue.UUID(worker.HostID), Epoch: worker.Epoch}
 	candidate := workerapi.RegisterCheckpointRequest(request)
 	var checkpoint db.ComputerCheckpoint
 	err := s.inTx(ctx, func(work *txWork) error {

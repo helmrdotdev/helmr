@@ -12,7 +12,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -40,24 +39,8 @@ type workerClaimsRace struct {
 
 func newWorkerClaimsRace(t *testing.T, f runtest.Fixture, server *Server, handlers map[string]http.HandlerFunc, races map[string]func(context.Context) error) *workerClaimsRace {
 	t.Helper()
-	ctx := t.Context()
-	keys, err := auth.NewKeys(bytes.Repeat([]byte{1}, auth.RootKeySize))
-	if err != nil {
-		t.Fatal(err)
-	}
-	secret := "claims-race-secret"
-	hash, err := auth.HashToken(keys.WorkerHost, secret)
-	if err != nil {
-		t.Fatal(err)
-	}
-	credentialID, serviceID := uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, ctx, f.Pool, `UPDATE worker_hosts SET current_service_id=$2 WHERE id=$1`, f.WorkerID, serviceID)
-	dbtest.MustExec(t, ctx, f.Pool, `UPDATE worker_host_credentials SET revoked_at=now() WHERE worker_host_id=$1 AND revoked_at IS NULL`, f.WorkerID)
-	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO worker_host_credentials (id,worker_group_id,worker_host_id,key_prefix,secret_hash,claim_version)
- SELECT $1,worker_group_id,id,'claims-race',$3,claim_version FROM worker_hosts WHERE id=$2`, credentialID, f.WorkerID, hash)
-	server.authKeys = keys
-	server.workerTokenSigningKey = bytes.Repeat([]byte{2}, auth.RootKeySize)
-	server.workerTokenTTL = time.Hour
+	credential := seedHostCredential(t, f.Pool, f.WorkerID)
+	server.hostCredentials = testHostCredentials(t)
 	server.log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	race := &workerClaimsRace{statuses: map[string][]int{}, bodies: map[string][][]byte{}}
 	protected := map[string]http.Handler{}
@@ -105,10 +88,7 @@ func newWorkerClaimsRace(t *testing.T, f runtest.Fixture, server *Server, handle
 		_, _ = w.Write(response.Body.Bytes())
 	}))
 	t.Cleanup(httpServer.Close)
-	race.client, err = workerclient.New(httpServer.URL, workerclient.WithAuth(f.WorkerID.String(), secret), workerclient.WithService(serviceID.String()))
-	if err != nil {
-		t.Fatal(err)
-	}
+	race.client = credential.client(t, httpServer.URL)
 	return race
 }
 

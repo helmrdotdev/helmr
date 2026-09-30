@@ -12,6 +12,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 func TestWorkerDiscoverRunLeasesReturnsExactTuples(t *testing.T) {
@@ -28,10 +29,10 @@ func TestWorkerDiscoverRunLeasesReturnsExactTuples(t *testing.T) {
 		db:  store,
 	}
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/leases/discover", strings.NewReader(`{}`))
-	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
-		WorkerHostID:  workerID,
-		WorkerGroupID: controlplaneTestWorkerGroupID,
-		WorkerEpoch:   9,
+	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workergroup.HostPrincipal{
+		HostID:  workerID,
+		GroupID: controlplaneTestWorkerGroupID,
+		Epoch:   9,
 	}))
 	response := httptest.NewRecorder()
 
@@ -54,7 +55,7 @@ func TestWorkerDiscoverRunLeasesRejectsAuthorityFields(t *testing.T) {
 		"/worker/v1/run/leases/discover",
 		strings.NewReader(`{"lease_id":"not-authority"}`),
 	)
-	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{}))
+	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workergroup.HostPrincipal{}))
 	response := httptest.NewRecorder()
 
 	server.workerDiscoverRunLeases(response, request)

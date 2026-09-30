@@ -21,6 +21,7 @@ type supplyFixture struct {
 	pool            *pgxpool.Pool
 	q               *db.Queries
 	group           db.WorkerGroup
+	enrollmentToken string
 	vmPlatformID    string
 	cpuConfigDigest string
 }
@@ -38,7 +39,7 @@ func newSupplyFixture(t *testing.T) supplyFixture {
 		t.Fatal(err)
 	}
 	fixture := supplyFixture{
-		pool: database.Pool, q: q, group: created.Group,
+		pool: database.Pool, q: q, group: created.Group, enrollmentToken: created.EnrollmentToken,
 		vmPlatformID:    dbtest.Digest("worker-pool-runtime"),
 		cpuConfigDigest: dbtest.Digest("worker-pool-cpu"),
 	}

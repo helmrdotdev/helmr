@@ -9,12 +9,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
-	"time"
 	"uuid"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/golang-jwt/jwt/v5"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 )
 
@@ -340,18 +337,12 @@ func TestRouterFallbacksUseHTTPErrorEnvelope(t *testing.T) {
 }
 
 func TestMachineRoutesPreserveAuthenticationBoundaries(t *testing.T) {
-	capacityTokenHash, err := hashCapacityToken(capacityTestToken())
+	cfg := completeServerConfig(t)
+	cfg.CapacityToken = capacityTestToken()
+	router, err := NewServer(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := &Server{
-		db:                    &routeWorkerAuthStore{},
-		capacityTokenHash:     capacityTokenHash,
-		workerTokenSigningKey: []byte(strings.Repeat("w", 32)),
-		workerEnrollmentGuard: newWorkerEnrollmentGuard(),
-	}
-	router := chi.NewRouter()
-	server.mountRoutes(router)
 
 	for _, test := range []struct {
 		name          string
@@ -383,32 +374,14 @@ func TestMachineRoutesPreserveAuthenticationBoundaries(t *testing.T) {
 }
 
 func TestWorkerRouteRejectsMalformedJWTGroupBeforeDatabase(t *testing.T) {
-	signingKey := []byte(strings.Repeat("w", auth.WorkerTokenSigningKeySize))
-	now := time.Now().UTC()
-	claims := jwt.MapClaims{
-		"iss":                 auth.WorkerTokenIssuer,
-		"sub":                 "01900000-0000-7000-8000-000000000711",
-		"aud":                 []string{auth.WorkerTokenAudience},
-		"iat":                 now.Add(-time.Minute).Unix(),
-		"exp":                 now.Add(time.Hour).Unix(),
-		"worker_group_id":     "not-a-uuid",
-		"worker_host_id":      "01900000-0000-7000-8000-000000000711",
-		"credential_id":       "01900000-0000-7000-8000-000000000712",
-		"worker_epoch":        1,
-		"claim_version":       1,
-		"group_claim_version": 1,
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	token.Header["typ"] = "JWT"
-	rawToken, err := token.SignedString(signingKey)
+	// completeServerConfig has no database: a query would fail the request.
+	router, err := NewServer(completeServerConfig(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := &Server{db: &routeWorkerAuthStore{}, workerTokenSigningKey: signingKey}
-	router := chi.NewRouter()
-	server.mountWorkerRoutes(router)
+	claims := rawWorkerJWTClaims("01900000-0000-7000-8000-000000000711", "not-a-uuid", "01900000-0000-7000-8000-000000000712")
 	request := httptest.NewRequest(http.MethodGet, "/worker/v1/instance", nil)
-	request.Header.Set("Authorization", "Bearer "+rawToken)
+	request.Header.Set("Authorization", "Bearer "+signRawWorkerJWT(t, claims))
 	response := httptest.NewRecorder()
 
 	router.ServeHTTP(response, request)
@@ -421,9 +394,10 @@ func TestWorkerRouteRejectsMalformedJWTGroupBeforeDatabase(t *testing.T) {
 // Capacity route limits are covered through NewServer in
 // TestCapacityHTTPPreservesRequestBodyLimits.
 func TestWorkerRoutesPreserveRequestBodyLimits(t *testing.T) {
-	server := &Server{}
-	router := chi.NewRouter()
-	server.mountRoutes(router)
+	router, err := NewServer(completeServerConfig(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1/instance/observations", strings.NewReader("x"))
 	request.ContentLength = apiRequestBodyLimit + 1
 	response := httptest.NewRecorder()

@@ -25,6 +25,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 func discardTestLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -83,7 +84,7 @@ func TestWorkerRunLeaseClaimRemainsReplayableAfterProjectionFailure(t *testing.T
 	}
 }
 
-func newWorkerRunLeaseClaimHTTPFixture(t *testing.T) (*Server, runtest.Fixture, runtest.RunLease, workerActor, []byte, *claimHTTPPlatformStore) {
+func newWorkerRunLeaseClaimHTTPFixture(t *testing.T) (*Server, runtest.Fixture, runtest.RunLease, workergroup.HostPrincipal, []byte, *claimHTTPPlatformStore) {
 	t.Helper()
 	f := runtest.New(t)
 	work := f.AddRunLease(t, "assigned", time.Now())
@@ -123,7 +124,7 @@ func newWorkerRunLeaseClaimHTTPFixture(t *testing.T) (*Server, runtest.Fixture, 
 		return nil
 	}}
 	server := &Server{tx: f.Pool, db: db.New(f.Pool), log: discardTestLogger(), platformStore: store, secretDelivery: claimHTTPSecrets{}, computerFencingKey: key}
-	worker := workerActor{WorkerHostID: f.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1, ClaimVersion: 1, GroupClaimVersion: 1}
+	worker := workergroup.HostPrincipal{HostID: f.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	body := []byte(`{"lease_id":"` + pgvalue.UUIDString(pgvalue.UUID(work.LeaseID)) + `","lease_sequence":1}`)
 	return server, f, work, worker, body, store
 }
@@ -152,7 +153,7 @@ func (claimHTTPSecrets) OpenDeliveries(uuid.UUID, []secret.DeliveryEnvelope) ([]
 	return nil, nil
 }
 
-func runWorkerLeaseClaimRequest(handler http.Handler, worker workerActor, body []byte) *httptest.ResponseRecorder {
+func runWorkerLeaseClaimRequest(handler http.Handler, worker workergroup.HostPrincipal, body []byte) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/leases/claim", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, worker))
 	response := httptest.NewRecorder()

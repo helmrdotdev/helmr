@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -18,7 +19,7 @@ var errInvalidCommandLog = errors.New("invalid command log identity, content or 
 
 // appendCommandLog fences a physical producer independently of Run lifetimes.
 // The caller commits the transaction only after this operation succeeds.
-func appendCommandLog(ctx context.Context, tx pgx.Tx, worker workerActor, request workerapi.CommandLogAppendRequest) error {
+func appendCommandLog(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, request workerapi.CommandLogAppendRequest) error {
 	orgID, orgErr := ids.Parse(request.OrgID)
 	commandID, execErr := ids.Parse(request.CommandID)
 	instanceID, instanceErr := ids.Parse(request.ComputerInstanceID)
@@ -39,17 +40,17 @@ func appendCommandLog(ctx context.Context, tx pgx.Tx, worker workerActor, reques
 		return err
 	}
 	// Serialize credential revocation before taking physical and member locks.
-	group, err := q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(worker.WorkerGroupID))
+	group, err := q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(worker.GroupID))
 	if err != nil {
 		return err
 	}
 	host, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{
-		ID: pgvalue.UUID(worker.WorkerHostID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
+		ID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID),
 	})
 	if err != nil {
 		return err
 	}
-	if err = worker.checkLockedClaims(host, group); err != nil {
+	if err = worker.CheckLockedClaims(host, group); err != nil {
 		return err
 	}
 	if _, err = q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: target.EnvironmentID, ID: target.ComputerID}); err != nil {
@@ -59,14 +60,14 @@ func appendCommandLog(ctx context.Context, tx pgx.Tx, worker workerActor, reques
 		return err
 	}
 	authority, err := q.LockComputerCommandWorkerAuthority(ctx, db.LockComputerCommandWorkerAuthorityParams{
-		OrgID: pgvalue.UUID(orgID), CommandID: pgvalue.UUID(commandID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
-		WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch,
+		OrgID: pgvalue.UUID(orgID), CommandID: pgvalue.UUID(commandID), WorkerGroupID: pgvalue.UUID(worker.GroupID),
+		WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch,
 	})
 	if err != nil {
 		return err
 	}
 	instance := authority.ComputerInstance
-	if instance.ID != pgvalue.UUID(instanceID) || instance.WorkerGroupID != pgvalue.UUID(worker.WorkerGroupID) ||
+	if instance.ID != pgvalue.UUID(instanceID) || instance.WorkerGroupID != pgvalue.UUID(worker.GroupID) ||
 		instance.ReclaimedAt.Valid || instance.DesiredState != db.RuntimeDesiredStateReady ||
 		instance.WriterGeneration != request.WriterGeneration ||
 		(authority.ComputerCommand.Status != "running" && authority.ComputerCommand.Status != "stopping") {
@@ -82,8 +83,8 @@ func appendCommandLog(ctx context.Context, tx pgx.Tx, worker workerActor, reques
 		return err
 	}
 	authorized, err := q.CommandLogProducerStillAuthorized(ctx, db.CommandLogProducerStillAuthorizedParams{
-		WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
-		WorkerEpoch: worker.WorkerEpoch, ExpiresAt: instance.WriterExpiresAt,
+		WorkerHostID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID),
+		WorkerEpoch: worker.Epoch, ExpiresAt: instance.WriterExpiresAt,
 	})
 	if err != nil {
 		return err

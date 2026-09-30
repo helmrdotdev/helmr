@@ -39,7 +39,7 @@ func (s *Server) workerInitialComputerObject(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	worker := workerFromContext(r.Context())
-	fence := computerKeyFence{ComputerPreparationFence: dispatch.ComputerPreparationFence{RuntimeID: pgvalue.UUID(id), WorkerID: pgvalue.UUID(worker.WorkerHostID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerEpoch: worker.WorkerEpoch, DesiredVersion: request.DesiredVersion}, ClaimVersion: worker.ClaimVersion, GroupClaimVersion: worker.GroupClaimVersion}
+	fence := computerKeyFence{ComputerPreparationFence: dispatch.ComputerPreparationFence{RuntimeID: pgvalue.UUID(id), WorkerID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerEpoch: worker.Epoch, DesiredVersion: request.DesiredVersion}, ClaimVersion: worker.HostClaimVersion, GroupClaimVersion: worker.GroupClaimVersion}
 	var uploaded *cas.Object
 	if certify {
 		// Restrict storage lookup to an exact registration belonging to this physical

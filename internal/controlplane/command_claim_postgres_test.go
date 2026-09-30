@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -18,7 +19,7 @@ func TestCommandClaimSharesInstanceAndReplays(t *testing.T) {
 	f := runtest.New(t)
 	member := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET status='running',started_at=now(),active_started_at=now() WHERE id=$1`, member.RunID)
-	worker := workerActor{WorkerHostID: f.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1, ClaimVersion: 1, GroupClaimVersion: 1}
+	worker := workergroup.HostPrincipal{HostID: f.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	var requests []commandClaim
 	for range 3 {
 		id, claim := uuid.NewV7(), uuid.NewV7()
@@ -31,7 +32,7 @@ func TestCommandClaimSharesInstanceAndReplays(t *testing.T) {
 		}
 		requests = append(requests, r)
 	}
-	execute := func(r commandClaim, w workerActor) (commandClaimAuthority, error) {
+	execute := func(r commandClaim, w workergroup.HostPrincipal) (commandClaimAuthority, error) {
 		tx, err := f.Pool.Begin(t.Context())
 		if err != nil {
 			return commandClaimAuthority{}, err
@@ -60,8 +61,8 @@ func TestCommandClaimSharesInstanceAndReplays(t *testing.T) {
 			t.Fatalf("wrong generation: %v", err)
 		}
 		stale := worker
-		stale.ClaimVersion++
-		if _, err := execute(r, stale); !errors.Is(err, errStaleWorkerClaims) {
+		stale.HostClaimVersion++
+		if _, err := execute(r, stale); !errors.Is(err, workergroup.ErrStaleClaims) {
 			t.Fatalf("stale worker: %v", err)
 		}
 		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET writer_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, r.ComputerInstanceID)
@@ -113,10 +114,10 @@ func TestCommandClaimSharesInstanceAndReplays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := execute(requests[0], worker); !errors.Is(err, errStaleWorkerClaims) {
+	if _, err := execute(requests[0], worker); !errors.Is(err, workergroup.ErrStaleClaims) {
 		t.Fatalf("stale credential after drain: %v", err)
 	}
-	worker.ClaimVersion = drained.ClaimVersion
+	worker.HostClaimVersion = drained.ClaimVersion
 	for _, status := range []string{"active", "draining", "paused"} {
 		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET status=$2 WHERE id=$1`, runtest.WorkerGroupID, status)
 		var revision int64
@@ -137,7 +138,7 @@ func TestCommandClaimSharesInstanceAndReplays(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET status='active' WHERE id=$1`, runtest.WorkerGroupID)
 	staleEpoch := worker
-	staleEpoch.WorkerEpoch++
+	staleEpoch.Epoch++
 	if _, err := execute(requests[0], staleEpoch); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("stale epoch during drain: %v", err)
 	}

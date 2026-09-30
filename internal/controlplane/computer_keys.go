@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -46,7 +47,7 @@ func (f computerKeyFence) checkLockedClaims(ctx context.Context, tx pgx.Tx) erro
 		return err
 	}
 	if host != f.ClaimVersion || group != f.GroupClaimVersion {
-		return errStaleWorkerClaims
+		return workergroup.ErrStaleClaims
 	}
 	return nil
 }

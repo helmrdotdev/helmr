@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -26,7 +27,7 @@ func TestCommandLogProducerFenceReplayAndCompletion(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT computer_instance_id,writer_generation FROM computer_commands WHERE id=$1`, commandID).Scan(&instanceID, &generation); err != nil {
 		t.Fatal(err)
 	}
-	producer := workerActor{WorkerHostID: f.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1, ClaimVersion: 1, GroupClaimVersion: 1}
+	producer := workergroup.HostPrincipal{HostID: f.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	request := workerapi.CommandLogAppendRequest{
 		OrgID: f.OrgID.String(), CommandID: commandID.String(), ComputerInstanceID: instanceID.String(),
 		WriterGeneration: generation, Stream: workerapi.LogStreamStdout,
@@ -71,14 +72,14 @@ func TestCommandLogProducerFenceReplayAndCompletion(t *testing.T) {
 	worker := producer
 	for _, test := range []struct {
 		name   string
-		mutate func(*workerActor)
+		mutate func(*workergroup.HostPrincipal)
 		want   error
 	}{
-		{"host", func(w *workerActor) { w.WorkerHostID = uuid.NewV7() }, pgx.ErrNoRows},
-		{"epoch", func(w *workerActor) { w.WorkerEpoch++ }, pgx.ErrNoRows},
-		{"group", func(w *workerActor) { w.WorkerGroupID = uuid.NewV7() }, pgx.ErrNoRows},
-		{"worker claim", func(w *workerActor) { w.ClaimVersion++ }, errStaleWorkerClaims},
-		{"group claim", func(w *workerActor) { w.GroupClaimVersion++ }, errStaleWorkerClaims},
+		{"host", func(w *workergroup.HostPrincipal) { w.HostID = uuid.NewV7() }, pgx.ErrNoRows},
+		{"epoch", func(w *workergroup.HostPrincipal) { w.Epoch++ }, pgx.ErrNoRows},
+		{"group", func(w *workergroup.HostPrincipal) { w.GroupID = uuid.NewV7() }, pgx.ErrNoRows},
+		{"worker claim", func(w *workergroup.HostPrincipal) { w.HostClaimVersion++ }, workergroup.ErrStaleClaims},
+		{"group claim", func(w *workergroup.HostPrincipal) { w.GroupClaimVersion++ }, workergroup.ErrStaleClaims},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			test.mutate(&producer)

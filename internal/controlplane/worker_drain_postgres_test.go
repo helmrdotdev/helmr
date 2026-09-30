@@ -1,59 +1,26 @@
 package controlplane
 
 import (
-	"bytes"
-	"io"
-	"log/slog"
 	"net/http/httptest"
 	"testing"
 	"time"
-	"uuid"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workerclient"
 )
 
 func TestWorkerDrainReauthenticatesDuringActiveWork(t *testing.T) {
 	f := runtest.New(t)
 	work := f.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
-	keys, err := auth.NewKeys(bytes.Repeat([]byte{1}, auth.RootKeySize))
-	if err != nil {
-		t.Fatal(err)
-	}
-	secret := "drain-test-secret"
-	hash, err := auth.HashToken(keys.WorkerHost, secret)
-	if err != nil {
-		t.Fatal(err)
-	}
-	credentialID, serviceID := uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET current_service_id=$2 WHERE id=$1`, f.WorkerID, serviceID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_host_credentials
- (id,worker_group_id,worker_host_id,key_prefix,secret_hash)
- VALUES ($1,$2,$3,'drain-test',$4)`, credentialID, runtest.WorkerGroupID, f.WorkerID, hash)
-	s := &Server{
-		db: db.New(f.Pool), tx: f.Pool, authKeys: keys,
-		workerTokenSigningKey: bytes.Repeat([]byte{2}, auth.RootKeySize), workerTokenTTL: time.Hour,
-		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
-	}
-	router := chi.NewRouter()
-	s.mountWorkerRoutes(router)
-	httpServer := httptest.NewServer(router)
+	credential := seedHostCredential(t, f.Pool, f.WorkerID)
+	httpServer := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer httpServer.Close()
 
 	var firstDrainingAt time.Time
 	for attempt := range 3 {
 		// Each CLI invocation exchanges the same Service credential for a fresh
 		// token, so the second drain carries the current post-transition claim.
-		client, err := workerclient.New(httpServer.URL, workerclient.WithAuth(f.WorkerID.String(), secret), workerclient.WithService(serviceID.String()))
-		if err != nil {
-			t.Fatal(err)
-		}
-		status, err := client.DrainWorker(t.Context())
+		status, err := credential.client(t, httpServer.URL).DrainWorker(t.Context())
 		if err != nil {
 			t.Fatalf("drain invocation %d: %v", attempt+1, err)
 		}
@@ -65,7 +32,7 @@ func TestWorkerDrainReauthenticatesDuringActiveWork(t *testing.T) {
 		var revoked bool
 		if err := f.Pool.QueryRow(t.Context(), `SELECT w.claim_version,c.claim_version,w.draining_at,c.revoked_at IS NOT NULL
  FROM worker_hosts w JOIN worker_host_credentials c ON c.worker_host_id=w.id
- WHERE w.id=$1 AND c.id=$2`, f.WorkerID, credentialID).Scan(&claim, &credentialClaim, &drainingAt, &revoked); err != nil {
+ WHERE w.id=$1 AND c.key_prefix=$2`, f.WorkerID, credential.secret).Scan(&claim, &credentialClaim, &drainingAt, &revoked); err != nil {
 			t.Fatal(err)
 		}
 		if attempt == 0 {

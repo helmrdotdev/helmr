@@ -13,7 +13,7 @@ import (
 
 // Claim the channel of an already prepared physical Instance. Allocation and
 // Program/Run admission are independent operations.
-func claimComputerInstanceChannel(ctx context.Context, tx pgx.Tx, worker workerActor, instanceID, environmentID pgtype.UUID, token string) (db.ComputerInstance, error) {
+func claimComputerInstanceChannel(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, instanceID, environmentID pgtype.UUID, token string) (db.ComputerInstance, error) {
 	q := db.New(tx)
 	target, err := q.GetComputerInstance(ctx, db.GetComputerInstanceParams{ID: instanceID, EnvironmentID: environmentID})
 	if err != nil {
@@ -23,25 +23,25 @@ func claimComputerInstanceChannel(ctx context.Context, tx pgx.Tx, worker workerA
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
-	group, err := q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(worker.WorkerGroupID))
+	group, err := q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(worker.GroupID))
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
-	host, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{ID: pgvalue.UUID(worker.WorkerHostID), WorkerGroupID: group.ID})
+	host, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{ID: pgvalue.UUID(worker.HostID), WorkerGroupID: group.ID})
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
-	if err = worker.checkLockedClaims(host, group); err != nil {
+	if err = worker.CheckLockedClaims(host, group); err != nil {
 		return db.ComputerInstance{}, err
 	}
-	if !host.CurrentEpoch.Valid || host.CurrentEpoch.Int64 != worker.WorkerEpoch || (host.Status != "active" && host.Status != "draining") || (group.Status != "active" && group.Status != "paused" && group.Status != "draining") {
+	if !host.CurrentEpoch.Valid || host.CurrentEpoch.Int64 != worker.Epoch || (host.Status != "active" && host.Status != "draining") || (group.Status != "active" && group.Status != "paused" && group.Status != "draining") {
 		return db.ComputerInstance{}, pgx.ErrNoRows
 	}
 	c, err := q.LockComputer(ctx, db.LockComputerParams{ID: target.ComputerID, EnvironmentID: target.EnvironmentID})
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
-	i, err := q.LockWorkerComputerInstance(ctx, db.LockWorkerComputerInstanceParams{ID: target.ID, OrgID: target.OrgID, WorkerHostID: host.ID, WorkerGroupID: group.ID, WorkerEpoch: worker.WorkerEpoch})
+	i, err := q.LockWorkerComputerInstance(ctx, db.LockWorkerComputerInstanceParams{ID: target.ID, OrgID: target.OrgID, WorkerHostID: host.ID, WorkerGroupID: group.ID, WorkerEpoch: worker.Epoch})
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
@@ -54,5 +54,5 @@ func claimComputerInstanceChannel(ctx context.Context, tx pgx.Tx, worker workerA
 		}
 	}
 	hash := sha256.Sum256([]byte(token))
-	return q.ClaimComputerInstanceChannel(ctx, db.ClaimComputerInstanceChannelParams{ID: i.ID, WorkerHostID: host.ID, WorkerEpoch: worker.WorkerEpoch, WriterGeneration: i.WriterGeneration, TokenHash: hash[:], WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds})
+	return q.ClaimComputerInstanceChannel(ctx, db.ClaimComputerInstanceChannelParams{ID: i.ID, WorkerHostID: host.ID, WorkerEpoch: worker.Epoch, WriterGeneration: i.WriterGeneration, TokenHash: hash[:], WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds})
 }

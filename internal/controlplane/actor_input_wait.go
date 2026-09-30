@@ -169,7 +169,7 @@ func (s *Server) workerCreateActorInputRunWait(
 	}
 	response := workerapi.CreateRunWaitResponse{
 		RunID: pgvalue.UUIDString(registrationLocators.RunID), RunWaitID: waitID.String(), ResumeAttachID: resumeAttachID.String(),
-		ComputerInstanceID: pgvalue.UUIDString(registrationLocators.ComputerInstanceID), RuntimeEpoch: worker.WorkerEpoch,
+		ComputerInstanceID: pgvalue.UUIDString(registrationLocators.ComputerInstanceID), RuntimeEpoch: worker.Epoch,
 	}
 	if registered.SuspensionStatus == db.RunWaitStatusReleased {
 		response.ResolutionKind, response.Resolution, err = actorInputWaitDecision(registered)

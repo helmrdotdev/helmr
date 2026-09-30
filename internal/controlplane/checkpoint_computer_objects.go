@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 func (s *Server) workerRegisterCheckpointComputerObject(w http.ResponseWriter, r *http.Request) {
@@ -65,11 +66,11 @@ func (s *Server) workerCheckpointComputerObject(w http.ResponseWriter, r *http.R
 	}
 	writeJSON(w, http.StatusOK, struct{}{})
 }
-func (s *Server) recordCheckpointComputerObject(ctx context.Context, worker workerActor, request workerapi.CheckpointComputerObjectRequest, uploaded *cas.Object, operation string) error {
+func (s *Server) recordCheckpointComputerObject(ctx context.Context, worker workergroup.HostPrincipal, request workerapi.CheckpointComputerObjectRequest, uploaded *cas.Object, operation string) error {
 	return s.inTx(ctx, func(work *txWork) error {
 		tx := work.tx
 		q := db.New(tx)
-		actor := dispatch.ComputerCaptureWorker{GroupID: pgvalue.UUID(worker.WorkerGroupID), HostID: pgvalue.UUID(worker.WorkerHostID), Epoch: worker.WorkerEpoch}
+		actor := dispatch.ComputerCaptureWorker{GroupID: pgvalue.UUID(worker.GroupID), HostID: pgvalue.UUID(worker.HostID), Epoch: worker.Epoch}
 		instance, checkpoint, err := dispatch.LockComputerCheckpointPublication(ctx, tx, actor, request)
 		if err != nil {
 			return err

@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 func taskHTTPExecutionFixture(t *testing.T) (runtest.Fixture, runtest.RunLease, run.ExecutionFence, workerapi.CompleteTaskRequest) {
@@ -54,7 +55,7 @@ func TestTaskCompletionHTTPPreservesReceiptAndStaleDiagnostics(t *testing.T) {
 	f, work, fence, request := taskHTTPExecutionFixture(t)
 	var logs bytes.Buffer
 	s := &Server{db: db.New(f.Pool), tx: f.Pool, log: slog.New(slog.NewTextHandler(&logs, nil))}
-	worker := workerActor{WorkerHostID: f.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1, ClaimVersion: fence.HostClaimVersion, GroupClaimVersion: fence.GroupClaimVersion}
+	worker := workergroup.HostPrincipal{HostID: f.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1, HostClaimVersion: fence.HostClaimVersion, GroupClaimVersion: fence.GroupClaimVersion}
 	invoke := func(r workerapi.CompleteTaskRequest) *httptest.ResponseRecorder {
 		t.Helper()
 		body, e := json.Marshal(r)
@@ -108,7 +109,7 @@ func TestTaskCompletionHTTPPreservesReceiptAndStaleDiagnostics(t *testing.T) {
 		return value
 	}
 	receipt = snapshot()
-	worker.WorkerEpoch++
+	worker.Epoch++
 	out = invoke(request)
 	if out.Code != http.StatusNoContent {
 		t.Fatalf("previous-epoch replay=%d %s", out.Code, out.Body.String())

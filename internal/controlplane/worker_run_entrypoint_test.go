@@ -11,16 +11,17 @@ import (
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 func TestEnterRunEntrypointTransaction(t *testing.T) {
 	f := runtest.New(t)
 	work := f.AddRunLease(t, "assigned", time.Now())
-	worker := workerActor{WorkerGroupID: runtest.WorkerGroupID, WorkerHostID: f.WorkerID, WorkerEpoch: 1}
-	if err := f.Pool.QueryRow(t.Context(), `SELECT h.claim_version,g.claim_version FROM worker_hosts h JOIN worker_groups g ON g.id=h.worker_group_id WHERE h.id=$1`, f.WorkerID).Scan(&worker.ClaimVersion, &worker.GroupClaimVersion); err != nil {
+	worker := workergroup.HostPrincipal{GroupID: runtest.WorkerGroupID, HostID: f.WorkerID, Epoch: 1}
+	if err := f.Pool.QueryRow(t.Context(), `SELECT h.claim_version,g.claim_version FROM worker_hosts h JOIN worker_groups g ON g.id=h.worker_group_id WHERE h.id=$1`, f.WorkerID).Scan(&worker.HostClaimVersion, &worker.GroupClaimVersion); err != nil {
 		t.Fatal(err)
 	}
-	fence := run.ExecutionFence{LeaseID: pgvalue.UUID(work.LeaseID), LeaseSequence: 1, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: 1, HostClaimVersion: worker.ClaimVersion, GroupClaimVersion: worker.GroupClaimVersion}
+	fence := run.ExecutionFence{LeaseID: pgvalue.UUID(work.LeaseID), LeaseSequence: 1, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: 1, HostClaimVersion: worker.HostClaimVersion, GroupClaimVersion: worker.GroupClaimVersion}
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -60,8 +61,8 @@ func TestEnterRunEntrypointTransaction(t *testing.T) {
 		t.Fatalf("receipt changed on replay: %v", err)
 	}
 	stale := worker
-	stale.ClaimVersion++
-	if err = enterRunEntrypoint(t.Context(), f.Pool, stale, fence.LeaseID, request); !errors.Is(err, errStaleWorkerClaims) {
+	stale.HostClaimVersion++
+	if err = enterRunEntrypoint(t.Context(), f.Pool, stale, fence.LeaseID, request); !errors.Is(err, workergroup.ErrStaleClaims) {
 		t.Fatalf("stale claims: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET writer_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, started.Instance.ID)

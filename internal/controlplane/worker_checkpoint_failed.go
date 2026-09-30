@@ -28,7 +28,7 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 	}
 	worker := workerFromContext(r.Context())
 	err := s.inTx(r.Context(), func(work *txWork) error {
-		_, err := dispatch.FailComputerCheckpoint(r.Context(), work.tx, dispatch.ComputerCaptureWorker{GroupID: pgvalue.UUID(worker.WorkerGroupID), HostID: pgvalue.UUID(worker.WorkerHostID), Epoch: worker.WorkerEpoch}, request)
+		_, err := dispatch.FailComputerCheckpoint(r.Context(), work.tx, dispatch.ComputerCaptureWorker{GroupID: pgvalue.UUID(worker.GroupID), HostID: pgvalue.UUID(worker.HostID), Epoch: worker.Epoch}, request)
 		return err
 	})
 	if errors.Is(err, dispatch.ErrCheckpointCandidate) {

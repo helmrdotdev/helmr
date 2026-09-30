@@ -14,7 +14,7 @@ import (
 func TestPausedWorkerGroupKeepsStartedWorkerAuthority(t *testing.T) {
 	t.Run("protected Secrets", func(t *testing.T) {
 		f := newSnapshotFixture(t, 1, true)
-		dbtest.MustExec(t, t.Context(), f.fixture.Pool, `UPDATE worker_groups SET status='paused' WHERE id=$1`, f.worker.WorkerGroupID)
+		dbtest.MustExec(t, t.Context(), f.fixture.Pool, `UPDATE worker_groups SET status='paused' WHERE id=$1`, f.worker.GroupID)
 		for _, resolve := range []bool{false, true} {
 			if response := f.invoke(t.Context(), resolve); response.Code != 200 {
 				t.Fatalf("resolve=%v on paused Group: %d %s", resolve, response.Code, response.Body.String())
@@ -37,7 +37,7 @@ func TestPausedWorkerGroupKeepsStartedWorkerAuthority(t *testing.T) {
 				f := newSnapshotFixture(t, 1, true)
 				dbtest.MustExec(t, t.Context(), f.fixture.Pool, `UPDATE computer_instances SET observed_state='allocated',observed_desired_version=0,ready_at=NULL,preparation_expires_at=now()+interval '5 minutes' WHERE id=$1`, f.runtime)
 				if test.sql != "" {
-					dbtest.MustExec(t, t.Context(), f.fixture.Pool, test.sql, f.worker.WorkerGroupID)
+					dbtest.MustExec(t, t.Context(), f.fixture.Pool, test.sql, f.worker.GroupID)
 				}
 				if response := f.invoke(t.Context(), false); (response.Code == 200) != test.allowed {
 					t.Fatalf("allocated preparation: %d %s", response.Code, response.Body.String())
@@ -48,8 +48,8 @@ func TestPausedWorkerGroupKeepsStartedWorkerAuthority(t *testing.T) {
 	t.Run("Session control", func(t *testing.T) {
 		f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 		scope := f.receiveTurn(t, 1)
-		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET status='paused' WHERE id=$1`, f.worker.WorkerGroupID)
-		state, err := f.server.db.ReadWorkerSessionControl(t.Context(), db.ReadWorkerSessionControlParams{RunLeaseID: f.claim.runLease.ID, LeaseSequence: f.fence().LeaseSequence, WorkerGroupID: pgvalue.UUID(f.worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(f.worker.WorkerHostID), WorkerEpoch: f.worker.WorkerEpoch, RunGeneration: scope.RunGeneration})
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET status='paused' WHERE id=$1`, f.worker.GroupID)
+		state, err := f.server.db.ReadWorkerSessionControl(t.Context(), db.ReadWorkerSessionControlParams{RunLeaseID: f.claim.runLease.ID, LeaseSequence: f.fence().LeaseSequence, WorkerGroupID: pgvalue.UUID(f.worker.GroupID), WorkerHostID: pgvalue.UUID(f.worker.HostID), WorkerEpoch: f.worker.Epoch, RunGeneration: scope.RunGeneration})
 		if err != nil || state.ActiveTurnID != pgvalue.UUID(scope.TurnID) {
 			t.Fatalf("Session control on paused Group: %+v %v", state, err)
 		}

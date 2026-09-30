@@ -8,15 +8,16 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func (s *Server) renewRunLease(ctx context.Context, worker workerActor, leaseID pgtype.UUID, fence workerapi.RunLeaseFence, expectedExpiresAt time.Time) (workerapi.RunLeaseRenewResponse, error) {
+func (s *Server) renewRunLease(ctx context.Context, worker workergroup.HostPrincipal, leaseID pgtype.UUID, fence workerapi.RunLeaseFence, expectedExpiresAt time.Time) (workerapi.RunLeaseRenewResponse, error) {
 	var response workerapi.RunLeaseRenewResponse
 	err := s.inTx(ctx, func(work *txWork) error {
-		a, err := run.RenewExecution(ctx, work.tx, run.ExecutionFence{LeaseID: leaseID, LeaseSequence: fence.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.ClaimVersion}, expectedExpiresAt)
+		a, err := run.RenewExecution(ctx, work.tx, run.ExecutionFence{LeaseID: leaseID, LeaseSequence: fence.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.HostClaimVersion}, expectedExpiresAt)
 		if errors.Is(err, run.ErrExecutionWorkerClaims) {
-			return errStaleWorkerClaims
+			return workergroup.ErrStaleClaims
 		}
 		if err != nil {
 			return staleRunLeaseClaim(err)

@@ -118,7 +118,7 @@ func (s *Server) cancelRunHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	projectUUID, projectErr := pgvalue.UUIDValue(projectID)
 	environmentUUID, environmentErr := pgvalue.UUIDValue(environmentID)
-	if projectErr != nil || environmentErr != nil || s.tx == nil {
+	if projectErr != nil || environmentErr != nil {
 		s.writeRunCancellationAuthorityError(w)
 		return
 	}

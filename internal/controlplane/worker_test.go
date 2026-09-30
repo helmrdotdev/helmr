@@ -1,31 +1,17 @@
 package controlplane
 
 import (
-	"bytes"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
-	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgtype"
 )
-
-func TestWorkerActivationDerivesRuntimeStartsFromRunSlots(t *testing.T) {
-	worker := workerActor{WorkerGroupID: controlplaneTestWorkerGroupID, WorkerEpoch: 1}
-	capabilities := validWorkerCapabilities(t)
-	if got := workerActivationParams(worker, capabilities, []byte(`{}`)).MaxVMStarts; got != capabilities.ExecutionSlotsAvailable {
-		t.Fatalf("max runtime starts = %d, want %d", got, capabilities.ExecutionSlotsAvailable)
-	}
-}
 
 func validWorkerCapabilities(t *testing.T) workerapi.Capabilities {
 	t.Helper()
@@ -147,102 +133,6 @@ func TestWorkerTemplateDerivesImmutablePoolContract(t *testing.T) {
 	}
 }
 
-func TestSealWorkerPoolParamsDerivePendingPoolContract(t *testing.T) {
-	capabilities := validWorkerCapabilities(t)
-	template := workerTemplate(capabilities)
-	poolID := pgvalue.NewUUIDv7()
-
-	got := sealWorkerPoolParams(controlplaneTestWorkerGroupID, poolID, template)
-	want := db.SealWorkerPoolParams{
-		VMPlatformID:                    pgtype.Text{String: template.Runtime.ID, Valid: true},
-		CapacityCPUMillis:               pgtype.Int8{Int64: template.Capacity.CPUMillis, Valid: true},
-		CapacityMemoryBytes:             pgtype.Int8{Int64: template.Capacity.MemoryBytes, Valid: true},
-		CapacityGuestEphemeralDiskBytes: pgtype.Int8{Int64: template.Capacity.GuestEphemeralDiskBytes, Valid: true},
-		PerVMCPUMillis:                  pgtype.Int8{Int64: template.PerVM.CPUMillis, Valid: true},
-		PerVMMemoryBytes:                pgtype.Int8{Int64: template.PerVM.MemoryBytes, Valid: true},
-		PerVMGuestEphemeralDiskBytes:    pgtype.Int8{Int64: template.PerVM.GuestEphemeralDiskBytes, Valid: true},
-		MaxVMSlots:                      pgtype.Int4{Int32: int32(template.Capacity.VMSlots), Valid: true},
-		WorkerPoolID:                    poolID,
-		WorkerGroupID:                   controlplaneTestWorkerGroupDBID,
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("seal params = %#v, want %#v", got, want)
-	}
-}
-
-func TestVMPlatformParamsDeriveCompleteProfile(t *testing.T) {
-	profile := validWorkerCapabilities(t).Runtime
-	profile.CPUTemplate = vmplatform.CPUTemplateSelector{
-		Kind:   vmplatform.CPUTemplateCustom,
-		Digest: "sha256:" + strings.Repeat("6", 64),
-	}
-	var err error
-	profile.ID, err = profile.ExpectedID()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	got := vmPlatformParams(profile)
-	want := db.UpsertVMPlatformParams{
-		ID:                    profile.ID,
-		Arch:                  profile.Arch,
-		Contract:              profile.Contract,
-		DescriptorDigest:      profile.VMRuntimeDescriptorDigest,
-		FirecrackerDigest:     profile.FirecrackerDigest,
-		FirecrackerVersion:    profile.FirecrackerVersion,
-		SnapshotFormatVersion: profile.SnapshotFormatVersion,
-		HostKernelRelease:     profile.HostKernelRelease,
-		CPUTemplateKind:       string(profile.CPUTemplate.Kind),
-		CPUTemplateDigest:     pgtype.Text{String: profile.CPUTemplate.Digest, Valid: true},
-		KernelDigest:          profile.KernelDigest,
-		InitramfsDigest:       profile.InitramfsDigest,
-		RootfsDigest:          profile.RootfsDigest,
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("VM platform params = %#v, want %#v", got, want)
-	}
-}
-
-func TestWorkerPoolMatchesExactActiveReplay(t *testing.T) {
-	template := workerTemplate(validWorkerCapabilities(t))
-	poolID := pgvalue.NewUUIDv7()
-	pool, shapes := sealedWorkerPool(poolID, controlplaneTestWorkerGroupID, "run-primary", template)
-
-	if !workerPoolMatches(pool, shapes, template) {
-		t.Fatal("exact active Worker Pool replay did not match")
-	}
-}
-
-func TestWorkerPoolMatchesRejectsCPUShapeOrTemplateMismatch(t *testing.T) {
-	template := workerTemplate(validWorkerCapabilities(t))
-	poolID := pgvalue.NewUUIDv7()
-	pool, shapes := sealedWorkerPool(poolID, controlplaneTestWorkerGroupID, "run-primary", template)
-
-	t.Run("CPU shape", func(t *testing.T) {
-		changed := append([]db.WorkerPoolCpuShape(nil), shapes...)
-		changed[1].CPUConfigDigest = "sha256:" + strings.Repeat("f", 64)
-		if workerPoolMatches(pool, changed, template) {
-			t.Fatal("Worker Pool matched a different CPU shape")
-		}
-	})
-
-	t.Run("CPU template", func(t *testing.T) {
-		changed := template
-		changed.Runtime.CPUTemplate = vmplatform.CPUTemplateSelector{
-			Kind:   vmplatform.CPUTemplateCustom,
-			Digest: "sha256:" + strings.Repeat("6", 64),
-		}
-		var err error
-		changed.Runtime.ID, err = changed.Runtime.ExpectedID()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if workerPoolMatches(pool, shapes, changed) {
-			t.Fatal("Worker Pool matched a different CPU template")
-		}
-	})
-}
-
 func TestNormalizeWorkerCapabilitiesEnforcesExecutionContract(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -283,36 +173,6 @@ func TestNormalizeWorkerCapabilitiesRejectsCPUShapeOrTemplateMismatch(t *testing
 	})
 }
 
-func sealedWorkerPool(
-	poolID pgtype.UUID,
-	groupID uuid.UUID,
-	name string,
-	template workergroup.Template,
-) (db.WorkerPool, []db.WorkerPoolCpuShape) {
-	pool := db.WorkerPool{
-		ID:                              poolID,
-		WorkerGroupID:                   pgvalue.UUID(groupID),
-		Name:                            name,
-		Status:                          "active",
-		VMPlatformID:                    pgtype.Text{String: template.Runtime.ID, Valid: true},
-		CapacityCPUMillis:               pgtype.Int8{Int64: template.Capacity.CPUMillis, Valid: true},
-		CapacityMemoryBytes:             pgtype.Int8{Int64: template.Capacity.MemoryBytes, Valid: true},
-		CapacityGuestEphemeralDiskBytes: pgtype.Int8{Int64: template.Capacity.GuestEphemeralDiskBytes, Valid: true},
-		PerVMCPUMillis:                  pgtype.Int8{Int64: template.PerVM.CPUMillis, Valid: true},
-		PerVMMemoryBytes:                pgtype.Int8{Int64: template.PerVM.MemoryBytes, Valid: true},
-		PerVMGuestEphemeralDiskBytes:    pgtype.Int8{Int64: template.PerVM.GuestEphemeralDiskBytes, Valid: true},
-		MaxVMSlots:                      pgtype.Int4{Int32: int32(template.Capacity.VMSlots), Valid: true},
-		SealedAt:                        pgtype.Timestamptz{Time: time.Unix(1, 0).UTC(), Valid: true},
-	}
-	shapes := make([]db.WorkerPoolCpuShape, len(template.CPUShapes))
-	for index, shape := range template.CPUShapes {
-		shapes[index] = db.WorkerPoolCpuShape{
-			WorkerPoolID: poolID, VCPUCount: shape.VCPUCount, CPUConfigDigest: shape.CPUConfigDigest,
-		}
-	}
-	return pool, shapes
-}
-
 func TestWorkerRoleReadinessReportsMissingObservation(t *testing.T) {
 	readiness := workerRoleReadiness(db.GetWorkerHostStatusRow{
 		Status: db.WorkerHostStatusActive,
@@ -347,25 +207,6 @@ func TestValidateWorkerStartupRecoveryRequiresCanonicalUUIDv7(t *testing.T) {
 			err := validateWorkerStartupRecovery(request, now.Add(-time.Minute), now)
 			if err == nil || !strings.Contains(err.Error(), "canonical UUIDv7") {
 				t.Fatalf("error = %v, want canonical UUIDv7 rejection", err)
-			}
-		})
-	}
-}
-
-func TestWorkerFenceRejectsDiagnosticCodesAsControlInputs(t *testing.T) {
-	// A call past validation has no database executor; these requests must stop first.
-	server := &Server{db: db.New(nil)}
-	for _, reason := range []string{"future_diagnostic", "worker_runtime_invalid", "checkpoint_failed", ""} {
-		t.Run(reason, func(t *testing.T) {
-			body, err := json.Marshal(workerapi.FenceRequest{ReasonCode: reason})
-			if err != nil {
-				t.Fatal(err)
-			}
-			request := httptest.NewRequest(http.MethodPost, "/worker/v1/instance/fence", bytes.NewReader(body))
-			response := httptest.NewRecorder()
-			server.workerFence(response, request)
-			if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"bad_request"`) {
-				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 			}
 		})
 	}

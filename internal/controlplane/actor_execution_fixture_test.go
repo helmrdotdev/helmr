@@ -20,13 +20,14 @@ import (
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type actorExecutionFixture struct {
 	runtest.Fixture
 	server                               *Server
-	worker                               workerActor
+	worker                               workergroup.HostPrincipal
 	computerID, rootID, sessionID, runID uuid.UUID
 	claim                                runLeaseClaimAuthority
 	leaseID                              uuid.UUID
@@ -56,7 +57,7 @@ func actorExecutionOnFixture(t *testing.T, base runtest.Fixture, input json.RawM
 	dbtest.MustExec(t, t.Context(), base.Pool, `UPDATE run_attempts SET session_input_start_sequence=0 WHERE run_id=$1`, work.RunID)
 	f := &actorExecutionFixture{Fixture: base, sessionID: sid, runID: work.RunID, leaseID: work.LeaseID,
 		server: &Server{db: db.New(base.Pool), tx: base.Pool, log: slog.Default()},
-		worker: workerActor{WorkerHostID: base.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1, ClaimVersion: 1, GroupClaimVersion: 1}}
+		worker: workergroup.HostPrincipal{HostID: base.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}}
 	if err := base.Pool.QueryRow(t.Context(), `SELECT computer_id,base_computer_disk_version_id FROM runs WHERE id=$1`, work.RunID).Scan(&f.computerID, &f.rootID); err != nil {
 		t.Fatal(err)
 	}

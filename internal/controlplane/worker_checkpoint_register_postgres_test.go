@@ -19,13 +19,14 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
 type computerCheckpointFixture struct {
 	runtest.Fixture
 	server *Server
-	worker workerActor
+	worker workergroup.HostPrincipal
 }
 
 func checkpointRegistrationFixture(t *testing.T) (*computerCheckpointFixture, workerapi.RegisterCheckpointRequest) {
@@ -35,7 +36,7 @@ func checkpointRegistrationFixture(t *testing.T) (*computerCheckpointFixture, wo
 	store := newTestUploadStore(t)
 	return &computerCheckpointFixture{Fixture: base,
 		server: &Server{db: db.New(base.Pool), tx: base.Pool, cas: store, log: slog.Default()},
-		worker: workerActor{WorkerHostID: base.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: worker.Epoch, ClaimVersion: 1, GroupClaimVersion: 1},
+		worker: workergroup.HostPrincipal{HostID: base.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: worker.Epoch, HostClaimVersion: 1, GroupClaimVersion: 1},
 	}, request
 }
 

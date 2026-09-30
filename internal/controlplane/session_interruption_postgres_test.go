@@ -173,12 +173,12 @@ func TestSessionControlObservationDoesNotLockWorkerSupplyPostgres(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer tx.Rollback(context.Background())
-	if _, err = tx.Exec(t.Context(), `SELECT id FROM worker_groups WHERE id=$1 FOR UPDATE`, f.worker.WorkerGroupID); err != nil {
+	if _, err = tx.Exec(t.Context(), `SELECT id FROM worker_groups WHERE id=$1 FOR UPDATE`, f.worker.GroupID); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
-	state, err := f.server.db.ReadWorkerSessionControl(ctx, db.ReadWorkerSessionControlParams{RunLeaseID: f.claim.runLease.ID, LeaseSequence: f.fence().LeaseSequence, WorkerGroupID: pgvalue.UUID(f.worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(f.worker.WorkerHostID), WorkerEpoch: f.worker.WorkerEpoch, RunGeneration: scope.RunGeneration})
+	state, err := f.server.db.ReadWorkerSessionControl(ctx, db.ReadWorkerSessionControlParams{RunLeaseID: f.claim.runLease.ID, LeaseSequence: f.fence().LeaseSequence, WorkerGroupID: pgvalue.UUID(f.worker.GroupID), WorkerHostID: pgvalue.UUID(f.worker.HostID), WorkerEpoch: f.worker.Epoch, RunGeneration: scope.RunGeneration})
 	if err != nil {
 		t.Fatalf("advisory read blocked on supply mutation: %v", err)
 	}

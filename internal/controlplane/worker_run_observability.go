@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -288,19 +289,19 @@ func (s *Server) workerAppendStructuredLog(w http.ResponseWriter, r *http.Reques
 func (s *Server) parseWorkerRunMutation(
 	r *http.Request,
 	lease workerapi.RunLeaseFence,
-) (parsedRunLeaseFence, workerActor, error) {
+) (parsedRunLeaseFence, workergroup.HostPrincipal, error) {
 	parsed, err := parseRunLeaseFence(lease)
 	if err != nil {
-		return parsedRunLeaseFence{}, workerActor{}, badRequest(err)
+		return parsedRunLeaseFence{}, workergroup.HostPrincipal{}, badRequest(err)
 	}
 	worker := workerFromContext(r.Context())
 	return parsed, worker, nil
 }
 
-func lockReceiptRunMutation(ctx context.Context, tx pgx.Tx, worker workerActor, lease workerapi.RunLeaseFence, parsed parsedRunLeaseFence) (run.ExecutionAuthority, error) {
-	authority, err := run.LockLiveExecution(ctx, tx, run.ExecutionFence{LeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.ClaimVersion})
+func lockReceiptRunMutation(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence, parsed parsedRunLeaseFence) (run.ExecutionAuthority, error) {
+	authority, err := run.LockLiveExecution(ctx, tx, run.ExecutionFence{LeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.HostClaimVersion})
 	if errors.Is(err, run.ErrExecutionWorkerClaims) {
-		return run.ExecutionAuthority{}, errStaleWorkerClaims
+		return run.ExecutionAuthority{}, workergroup.ErrStaleClaims
 	}
 	if err != nil {
 		return run.ExecutionAuthority{}, staleRunLeaseClaim(err)

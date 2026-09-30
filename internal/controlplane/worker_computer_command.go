@@ -41,7 +41,7 @@ func (s *Server) workerClaimComputerCommand(w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			return err
 		}
-		if i.OrgID != pgvalue.UUID(org) || i.WorkerHostID != pgvalue.UUID(worker.WorkerHostID) || i.WorkerGroupID != pgvalue.UUID(worker.WorkerGroupID) || i.WorkerEpoch != worker.WorkerEpoch || i.WriterGeneration != request.WriterGeneration {
+		if i.OrgID != pgvalue.UUID(org) || i.WorkerHostID != pgvalue.UUID(worker.HostID) || i.WorkerGroupID != pgvalue.UUID(worker.GroupID) || i.WorkerEpoch != worker.Epoch || i.WriterGeneration != request.WriterGeneration {
 			return pgx.ErrNoRows
 		}
 		commands, err := work.q.ListInstanceCommands(r.Context(), db.ListInstanceCommandsParams{ComputerInstanceID: i.ID, WriterGeneration: pgtype.Int8{Int64: request.WriterGeneration, Valid: true}})

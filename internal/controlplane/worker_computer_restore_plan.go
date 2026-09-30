@@ -8,6 +8,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -52,7 +53,7 @@ func (s *Server) workerComputerRestorePlan(w http.ResponseWriter, r *http.Reques
 
 // The Computer server owns this physical channel. Refresh its writer under the same
 // authority locks before projecting the committed, still-unstarted member set.
-func loadComputerRestorePlan(ctx context.Context, tx pgx.Tx, worker workerActor, request workerapi.ComputerRestorePlanRequest, key disk.FencingKey) (*workerapi.ComputerRestorePlan, error) {
+func loadComputerRestorePlan(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, request workerapi.ComputerRestorePlanRequest, key disk.FencingKey) (*workerapi.ComputerRestorePlan, error) {
 	i, err := renewComputerInstance(ctx, tx, worker, workerapi.ComputerInstanceRenewRequest{EnvironmentID: request.EnvironmentID, ComputerInstanceID: request.ComputerInstanceID, WriterGeneration: request.WriterGeneration})
 	if err != nil {
 		return nil, err

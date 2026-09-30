@@ -5,19 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log/slog"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
-	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computerhost"
 	"github.com/helmrdotdev/helmr/internal/disk"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -25,7 +20,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workerclient"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -46,34 +40,13 @@ func (s *objectStatObserver) Stat(ctx context.Context, digest string) (cas.Objec
 
 func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 	f, broker, fence := initialKeyFixture(t)
-	credentialID := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_host_credentials(id,worker_group_id,worker_host_id,key_prefix,secret_hash,claim_version) VALUES($1,$2,$3,'object-test-prefix',$4,$5)`, credentialID, fence.WorkerGroupID, fence.WorkerID, []byte("test-hash"), fence.ClaimVersion)
-	signingKey := bytes.Repeat([]byte{0x49}, 32)
-	claims := auth.WorkerClaims{WorkerGroupID: pgvalue.UUIDString(fence.WorkerGroupID), WorkerHostID: pgvalue.UUIDString(fence.WorkerID), CredentialID: credentialID.String(), WorkerEpoch: fence.WorkerEpoch, ClaimVersion: fence.ClaimVersion, GroupClaimVersion: fence.GroupClaimVersion, IssuedAt: time.Now().Add(-time.Minute), ExpiresAt: time.Now().Add(time.Hour)}
-	token, err := auth.IssueWorkerToken(signingKey, claims)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.server.computerKeys = broker
-	f.server.workerTokenSigningKey = signingKey
-	f.server.log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	remote := newTestUploadStore(t)
 	observed := &objectStatObserver{UploadStore: remote}
 	f.server.cas = observed
-	router := chi.NewRouter()
-	f.server.mountWorkerRoutes(router)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/worker/v1/instance/token" {
-			_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{Token: token, ExpiresInSeconds: 3600})
-			return
-		}
-		router.ServeHTTP(w, r)
-	}))
+	router := serveComputerKeys(t, f, broker)
+	server := httptest.NewServer(router)
 	defer server.Close()
-	client, err := workerclient.New(server.URL, workerclient.WithAuth(claims.WorkerHostID, "fixture-secret"), workerclient.WithService(uuid.NewV7().String()))
-	if err != nil {
-		t.Fatal(err)
-	}
+	client := seedHostCredential(t, f.Pool, f.worker.HostID).client(t, server.URL)
 	key, err := client.InitialComputerKey(t.Context(), workerapi.InitialComputerKeyRequest{ComputerInstanceID: pgvalue.UUIDString(fence.RuntimeID), DesiredVersion: fence.DesiredVersion})
 	if err != nil {
 		t.Fatal(err)

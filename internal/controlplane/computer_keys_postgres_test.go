@@ -19,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -59,14 +60,14 @@ func initialKeyFixture(t *testing.T) (initialPublicationFixture, *computerKeyBro
 	if err != nil {
 		t.Fatal(err)
 	}
-	fence := computerKeyFence{ComputerPreparationFence: dispatch.ComputerPreparationFence{RuntimeID: f.runtime, WorkerID: pgvalue.UUID(f.worker.WorkerHostID), WorkerGroupID: pgvalue.UUID(f.worker.WorkerGroupID), WorkerEpoch: f.worker.WorkerEpoch, DesiredVersion: 1}}
+	fence := computerKeyFence{ComputerPreparationFence: dispatch.ComputerPreparationFence{RuntimeID: f.runtime, WorkerID: pgvalue.UUID(f.worker.HostID), WorkerGroupID: pgvalue.UUID(f.worker.GroupID), WorkerEpoch: f.worker.Epoch, DesiredVersion: 1}}
 	if err = f.Pool.QueryRow(t.Context(), `SELECT w.claim_version,g.claim_version FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1`, f.runtimeWorker()).Scan(&fence.ClaimVersion, &fence.GroupClaimVersion); err != nil {
 		t.Fatal(err)
 	}
 	return f, broker, fence
 }
 func (f initialPublicationFixture) runtimeWorker() any {
-	return pgvalue.UUID(f.worker.WorkerHostID)
+	return pgvalue.UUID(f.worker.HostID)
 }
 func requireKeyFK(t *testing.T, err error) {
 	t.Helper()
@@ -139,7 +140,7 @@ func TestInitialComputerKeyRevocationDuringProviderIO(t *testing.T) {
 					case "claim":
 						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, f.runtimeWorker())
 					case "group claim":
-						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET claim_version=claim_version+1 WHERE id=$1`, pgvalue.UUID(f.worker.WorkerGroupID))
+						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET claim_version=claim_version+1 WHERE id=$1`, pgvalue.UUID(f.worker.GroupID))
 					case "expiry":
 						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET preparation_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, f.runtime)
 					case "computer stop":
@@ -159,7 +160,7 @@ func TestInitialComputerKeyRevocationDuringProviderIO(t *testing.T) {
 				}
 				want := errComputerKeyUnavailable
 				if change == "claim" || change == "group claim" {
-					want = errStaleWorkerClaims
+					want = workergroup.ErrStaleClaims
 				}
 				if !errors.Is(err, want) {
 					t.Fatalf("%s classified as %v, want %v", change, err, want)
@@ -382,7 +383,7 @@ func invokeComputerKeyHandler(t *testing.T, handler http.HandlerFunc, fence comp
 	if err != nil {
 		t.Fatal(err)
 	}
-	worker := workerActor{WorkerHostID: pgvalue.MustUUIDValue(fence.WorkerID), WorkerGroupID: pgvalue.MustUUIDValue(fence.WorkerGroupID), WorkerEpoch: fence.WorkerEpoch, ClaimVersion: fence.ClaimVersion, GroupClaimVersion: fence.GroupClaimVersion}
+	worker := workergroup.HostPrincipal{HostID: pgvalue.MustUUIDValue(fence.WorkerID), GroupID: pgvalue.MustUUIDValue(fence.WorkerGroupID), Epoch: fence.WorkerEpoch, HostClaimVersion: fence.ClaimVersion, GroupClaimVersion: fence.GroupClaimVersion}
 	request := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(raw)).WithContext(context.WithValue(t.Context(), workerContextKey{}, worker))
 	response := httptest.NewRecorder()
 	handler(response, request)

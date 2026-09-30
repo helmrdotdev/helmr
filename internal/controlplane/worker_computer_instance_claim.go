@@ -19,7 +19,7 @@ func (s *Server) workerClaimComputerInstance(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	worker := workerFromContext(r.Context())
-	targets, err := s.db.ListUnclaimedWorkerComputerInstances(r.Context(), db.ListUnclaimedWorkerComputerInstancesParams{WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch})
+	targets, err := s.db.ListUnclaimedWorkerComputerInstances(r.Context(), db.ListUnclaimedWorkerComputerInstancesParams{WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch})
 	if err != nil {
 		writeError(w, errors.New("list prepared Computer Instances"))
 		return

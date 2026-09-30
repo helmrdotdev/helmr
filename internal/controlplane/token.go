@@ -23,6 +23,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -66,7 +67,7 @@ type tokenOperationReceipt struct {
 type runtimeTokenCreate struct {
 	Lease          workerapi.RunLeaseFence
 	ParsedLease    parsedRunLeaseFence
-	Worker         workerActor
+	Worker         workergroup.HostPrincipal
 	CorrelationID  uuid.UUID
 	TimeoutMS      *int64
 	Metadata       json.RawMessage
@@ -375,15 +376,15 @@ func (s *Server) createTokenInTransaction(
 func loadTokenCreateLocators(
 	ctx context.Context,
 	q db.Querier,
-	worker workerActor,
+	worker workergroup.HostPrincipal,
 	lease workerapi.RunLeaseFence,
 	parsed parsedRunLeaseFence,
 ) (db.GetLiveRunLeaseLocatorsRow, error) {
 	locators, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 		ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence,
-		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
-		WorkerHostID:  pgvalue.UUID(worker.WorkerHostID),
-		WorkerEpoch:   worker.WorkerEpoch})
+		WorkerGroupID: pgvalue.UUID(worker.GroupID),
+		WorkerHostID:  pgvalue.UUID(worker.HostID),
+		WorkerEpoch:   worker.Epoch})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return db.GetLiveRunLeaseLocatorsRow{}, errTokenCreateAuthority
 	}
@@ -393,7 +394,7 @@ func loadTokenCreateLocators(
 func lockTokenCreateAuthority(
 	ctx context.Context,
 	tx pgx.Tx,
-	worker workerActor,
+	worker workergroup.HostPrincipal,
 	lease workerapi.RunLeaseFence,
 	parsed parsedRunLeaseFence,
 ) (db.GetLiveRunLeaseLocatorsRow, error) {

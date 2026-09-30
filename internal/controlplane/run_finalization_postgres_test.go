@@ -1,26 +1,28 @@
 package controlplane
 
 import (
-	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/run/runtest"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/run/runtest"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 func TestProgramQuiescenceReconcilesOnlyProvenLease(t *testing.T) {
 	f, work, fence, completion := taskHTTPExecutionFixture(t)
 	peer := f.AddRunLease(t, "assigned", time.Now())
 	s := &Server{db: db.New(f.Pool), tx: f.Pool}
-	worker := workerActor{WorkerHostID: f.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1, ClaimVersion: fence.HostClaimVersion, GroupClaimVersion: fence.GroupClaimVersion}
+	worker := workergroup.HostPrincipal{HostID: f.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1, HostClaimVersion: fence.HostClaimVersion, GroupClaimVersion: fence.GroupClaimVersion}
 	request := workerapi.BeginRunFinalizationRequest{Lease: completion.Lease, OperationID: completion.OperationID, ProgramQuiesced: workerapi.RunQuiescenceProof{RunID: work.RunID.String(), AttemptNumber: 1, RunLeaseID: work.LeaseID.String()}}
 	parsed, err := parseRunFinalization(request)
 	if err != nil {
 		t.Fatal(err)
 	}
 	stale := worker
-	stale.WorkerEpoch++
+	stale.Epoch++
 	if _, err = s.beginRunFinalization(t.Context(), stale, request, parsed); err == nil {
 		t.Fatal("stale Worker accepted")
 	}

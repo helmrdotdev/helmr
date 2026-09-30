@@ -132,7 +132,7 @@ func actorTokenWait(t *testing.T, f *actorExecutionFixture, s session.TurnScope)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return reconciler, token.WaitRegistration{TokenID: tokenID, WaitID: uuid.NewV7(), RunLeaseID: pgvalue.MustUUIDValue(f.claim.runLease.ID), LeaseSequence: f.fence().LeaseSequence, WorkerGroupID: f.worker.WorkerGroupID, WorkerHostID: f.worker.WorkerHostID, WorkerEpoch: f.worker.WorkerEpoch, RequestFingerprint: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ActorSpeculativeInputSequence: pgtype.Int8{Int64: 1, Valid: true}, TurnID: pgvalue.UUID(s.TurnID), RunGeneration: pgtype.Int8{Int64: s.RunGeneration, Valid: true}}
+	return reconciler, token.WaitRegistration{TokenID: tokenID, WaitID: uuid.NewV7(), RunLeaseID: pgvalue.MustUUIDValue(f.claim.runLease.ID), LeaseSequence: f.fence().LeaseSequence, WorkerGroupID: f.worker.GroupID, WorkerHostID: f.worker.HostID, WorkerEpoch: f.worker.Epoch, RequestFingerprint: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ActorSpeculativeInputSequence: pgtype.Int8{Int64: 1, Valid: true}, TurnID: pgvalue.UUID(s.TurnID), RunGeneration: pgtype.Int8{Int64: s.RunGeneration, Valid: true}}
 }
 func TestSessionMessageWithoutHandlerRejectedAtSettlementPostgres(t *testing.T) {
 	f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)

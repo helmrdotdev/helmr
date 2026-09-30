@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 type constructionDB struct{ db.TxDB }
@@ -42,8 +43,8 @@ func completeServerConfig(t *testing.T) ServerConfig {
 		ComputerFencingKey:    fencingKey,
 		TokenCredentialKey:    credentialKey,
 		TelemetryReader:       constructionTelemetry{},
-		AuthKey:               make([]byte, auth.RootKeySize),
-		WorkerTokenSigningKey: make([]byte, auth.WorkerTokenSigningKeySize),
+		AuthKey:               testAuthRootKey(),
+		WorkerTokenSigningKey: testWorkerTokenSigningKey(),
 	}
 }
 
@@ -85,5 +86,14 @@ func TestNewServerRequiresDeploymentBundleCollaborators(t *testing.T) {
 				t.Fatalf("NewServer without %s = %v, %v; want %q", name, handler, err, test.want)
 			}
 		})
+	}
+}
+
+func TestNewServerValidatesWorkerTokenSigningKey(t *testing.T) {
+	cfg := completeServerConfig(t)
+	cfg.WorkerTokenSigningKey = make([]byte, workergroup.TokenSigningKeySize-1)
+	handler, err := NewServer(cfg)
+	if err == nil || handler != nil || !strings.Contains(err.Error(), "worker JWT signing key must be exactly 32 bytes") {
+		t.Fatalf("NewServer with a short worker token signing key = %v, %v", handler, err)
 	}
 }

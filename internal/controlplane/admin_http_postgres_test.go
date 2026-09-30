@@ -86,11 +86,17 @@ func (f httpPostgresFixture) sealWorkerPool(t *testing.T, groupID string, poolID
 // returns the group.
 func (f httpPostgresFixture) supplyGroup(t *testing.T, admin string, regionID string) api.AdminWorkerGroup {
 	t.Helper()
+	return f.createSupplyGroup(t, admin, regionID).WorkerGroup
+}
+
+// createSupplyGroup creates a region and a worker group through the admin API
+// and returns the group with its enrollment token.
+func (f httpPostgresFixture) createSupplyGroup(t *testing.T, admin string, regionID string) api.CreateAdminWorkerGroupResponse {
+	t.Helper()
 	decodeAdmin[api.AdminRegion](t, f.request(t, http.MethodPost, "/admin/api/v1/regions", admin,
 		`{"id":"`+regionID+`","display_name":"Supply"}`), http.StatusCreated)
-	created := decodeAdmin[api.CreateAdminWorkerGroupResponse](t, f.request(t, http.MethodPost, "/admin/api/v1/worker-groups", admin,
+	return decodeAdmin[api.CreateAdminWorkerGroupResponse](t, f.request(t, http.MethodPost, "/admin/api/v1/worker-groups", admin,
 		`{"region_id":"`+regionID+`","name":"default"}`), http.StatusCreated)
-	return created.WorkerGroup
 }
 
 func decodeAdmin[T any](t *testing.T, response *httptest.ResponseRecorder, status int) T {

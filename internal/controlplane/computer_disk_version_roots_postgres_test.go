@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -215,7 +216,7 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 		t.Fatalf("source delivery: %v", err)
 	}
 	delivered.clear()
-	client := sourceKeyHTTPClient(t, f, b, fence)
+	client := sourceKeyHTTPClient(t, f, b)
 	wire, err := client.ComputerSource(t.Context(), workerapi.ComputerSourceRequest{ComputerInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 1})
 	if err != nil || wire.Root != root || wire.VersionID != pgvalue.UUIDString(versionID) || wire.WriteKeyID != key.ID || len(wire.Keys) != 2 {
 		t.Fatalf("authenticated source transport: %v", err)
@@ -283,7 +284,7 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, f.runtimeWorker())
 	}
 	b.wrapper = observer
-	if _, err = b.source(t.Context(), fence); !errors.Is(err, errStaleWorkerClaims) {
+	if _, err = b.source(t.Context(), fence); !errors.Is(err, workergroup.ErrStaleClaims) {
 		t.Fatal("worker with stale claims received source keys", err)
 	}
 	if !bytes.Equal(observer.returned, make([]byte, len(observer.returned))) {

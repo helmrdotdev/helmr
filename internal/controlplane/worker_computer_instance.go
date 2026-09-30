@@ -16,8 +16,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const workerRuntimeReconcileLimit int32 = 64
@@ -30,7 +30,7 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 	}
 	worker := workerFromContext(r.Context())
 	rows, err := s.db.ListComputerInstanceReconcileTargets(r.Context(), db.ListComputerInstanceReconcileTargetsParams{
-		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch,
+		WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch,
 		RowLimit: workerRuntimeReconcileLimit,
 	})
 	if err != nil {
@@ -97,7 +97,7 @@ func (s *Server) workerMarkComputerInstance(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if request.WorkerEpoch != worker.WorkerEpoch {
+	if request.WorkerEpoch != worker.Epoch {
 		writeError(w, forbidden(errors.New("runtime instance belongs to another worker epoch")))
 		return
 	}
@@ -112,9 +112,9 @@ func (s *Server) workerMarkComputerInstance(w http.ResponseWriter, r *http.Reque
 			writeError(w, badRequest(errors.New("cpu_config_digest must be a canonical SHA-256 digest")))
 			return
 		}
-		row, err = s.markComputerInstanceReady(r.Context(), pgvalue.UUID(worker.WorkerGroupID), db.MarkComputerInstanceReadyParams{
-			DesiredVersion: request.DesiredVersion, ID: pgvalue.UUID(id), WorkerHostID: pgvalue.UUID(worker.WorkerHostID),
-			WorkerEpoch:             worker.WorkerEpoch,
+		row, err = s.markComputerInstanceReady(r.Context(), pgvalue.UUID(worker.GroupID), db.MarkComputerInstanceReadyParams{
+			DesiredVersion: request.DesiredVersion, ID: pgvalue.UUID(id), WorkerHostID: pgvalue.UUID(worker.HostID),
+			WorkerEpoch:             worker.Epoch,
 			ExpectedObservedVersion: request.ExpectedObservedVersion,
 			VMVCPUCount:             request.VMVCPUCount, CPUConfigDigest: request.CPUConfigDigest,
 		})
@@ -136,8 +136,8 @@ func (s *Server) workerMarkComputerInstance(w http.ResponseWriter, r *http.Reque
 		if reason == "" {
 			reason = "desired_state_reconciled"
 		}
-		row, err = s.reclaimComputerInstance(r.Context(), worker.WorkerGroupID, db.ReclaimComputerInstanceParams{
-			ID: pgvalue.UUID(id), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch,
+		row, err = s.reclaimComputerInstance(r.Context(), worker.GroupID, db.ReclaimComputerInstanceParams{
+			ID: pgvalue.UUID(id), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch,
 			DesiredVersion: request.DesiredVersion, ExpectedObservedVersion: request.ExpectedObservedVersion,
 			Reason: pgvalue.Text(reason), Evidence: proof,
 		})
@@ -147,7 +147,7 @@ func (s *Server) workerMarkComputerInstance(w http.ResponseWriter, r *http.Reque
 			reason = "runtime_reconcile_failed"
 		}
 		if reason == workerapi.RuntimeFailureWorkerInvalid {
-			if err = s.fenceInvalidWorkerEpoch(r.Context(), worker.WorkerGroupID, pgvalue.UUID(worker.WorkerHostID), worker.WorkerEpoch); err != nil {
+			if err = workergroup.DrainInvalidEpoch(r.Context(), s.tx, worker.GroupID, worker.HostID, worker.Epoch); err != nil {
 				writeError(w, err)
 				return
 			}
@@ -162,8 +162,8 @@ func (s *Server) workerMarkComputerInstance(w http.ResponseWriter, r *http.Reque
 				writeError(w, badRequest(proofErr))
 				return
 			}
-			row, err = s.reclaimComputerInstance(r.Context(), worker.WorkerGroupID, db.ReclaimComputerInstanceParams{RequireFailure: true,
-				ID: pgvalue.UUID(id), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch,
+			row, err = s.reclaimComputerInstance(r.Context(), worker.GroupID, db.ReclaimComputerInstanceParams{RequireFailure: true,
+				ID: pgvalue.UUID(id), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch,
 				DesiredVersion: request.DesiredVersion, ExpectedObservedVersion: request.ExpectedObservedVersion, Reason: pgvalue.Text(reason), Evidence: proof,
 			})
 			if err == nil {
@@ -175,15 +175,15 @@ func (s *Server) workerMarkComputerInstance(w http.ResponseWriter, r *http.Reque
 				return
 			}
 		}
-		row, err = s.markComputerInstanceFailed(r.Context(), worker.WorkerGroupID, db.MarkComputerInstanceFailedParams{
+		row, err = s.markComputerInstanceFailed(r.Context(), worker.GroupID, db.MarkComputerInstanceFailedParams{
 			ReasonCode: pgvalue.Text(reason), Error: normalizedJSONRawMessage(request.Error),
-			ID: pgvalue.UUID(id), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch,
+			ID: pgvalue.UUID(id), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch,
 			DesiredVersion:          request.DesiredVersion,
 			ExpectedObservedVersion: request.ExpectedObservedVersion,
 		})
 		if err == nil && request.CleanupProof != nil {
 			proof, _ := json.Marshal(request.CleanupProof)
-			row, err = s.reclaimComputerInstance(r.Context(), worker.WorkerGroupID, db.ReclaimComputerInstanceParams{RequireFailure: true,
+			row, err = s.reclaimComputerInstance(r.Context(), worker.GroupID, db.ReclaimComputerInstanceParams{RequireFailure: true,
 				ID: row.ID, WorkerHostID: row.WorkerHostID, WorkerEpoch: row.WorkerEpoch, DesiredVersion: row.DesiredVersion,
 				ExpectedObservedVersion: row.ObservedVersion, Reason: row.TerminalReasonCode, Evidence: proof,
 			})
@@ -212,7 +212,7 @@ func (s *Server) markComputerInstanceFailed(ctx context.Context, workerGroupID u
 		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) && params.ReasonCode.String == workerapi.RuntimeFailureWorkerInvalid {
-		if fenceErr := s.fenceInvalidWorkerEpoch(ctx, workerGroupID, params.WorkerHostID, params.WorkerEpoch); fenceErr != nil {
+		if fenceErr := workergroup.DrainInvalidEpoch(ctx, s.tx, workerGroupID, pgvalue.MustUUIDValue(params.WorkerHostID), params.WorkerEpoch); fenceErr != nil {
 			return row, fenceErr
 		}
 	}
@@ -228,70 +228,6 @@ func (s *Server) reclaimComputerInstance(ctx context.Context, groupID uuid.UUID,
 		return err
 	})
 	return row, err
-}
-
-func (s *Server) fenceInvalidWorkerEpoch(
-	ctx context.Context,
-	workerGroupID uuid.UUID,
-	workerHostID pgtype.UUID,
-	workerEpoch int64,
-) error {
-	if s.tx == nil {
-		return errors.New("invalid Worker epoch transaction authority is unavailable")
-	}
-	return s.inTx(ctx, func(work *txWork) error {
-		tx := work.tx
-		queries := db.New(tx)
-		poolID, err := queries.GetWorkerHostPoolID(ctx, db.GetWorkerHostPoolIDParams{
-			WorkerHostID:  workerHostID,
-			WorkerGroupID: pgvalue.UUID(workerGroupID),
-			WorkerEpoch:   pgtype.Int8{Int64: workerEpoch, Valid: true},
-		})
-		if err != nil {
-			return fmt.Errorf("resolve invalid Worker epoch Pool: %w", err)
-		}
-		group, err := queries.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(workerGroupID))
-		if err != nil {
-			return fmt.Errorf("lock invalid Worker epoch Group: %w", err)
-		}
-		if group.Status != db.WorkerGroupStatusActive && group.Status != db.WorkerGroupStatusPaused &&
-			group.Status != db.WorkerGroupStatusDraining {
-			return errors.New("invalid Worker epoch Group is inactive")
-		}
-		pool, err := queries.LockWorkerPool(ctx, db.LockWorkerPoolParams{
-			WorkerGroupID: pgvalue.UUID(workerGroupID),
-			WorkerPoolID:  poolID,
-		})
-		if err != nil {
-			return fmt.Errorf("lock invalid Worker epoch Pool: %w", err)
-		}
-		if pool.Status != "active" && pool.Status != "draining" {
-			return errors.New("invalid Worker epoch Pool is inactive")
-		}
-		worker, err := queries.LockWorkerHostForActivation(ctx, db.LockWorkerHostForActivationParams{
-			WorkerHostID:  workerHostID,
-			WorkerGroupID: pgvalue.UUID(workerGroupID),
-			WorkerPoolID:  poolID,
-			WorkerEpoch:   pgtype.Int8{Int64: workerEpoch, Valid: true},
-		})
-		if err != nil {
-			return fmt.Errorf("lock invalid Worker epoch: %w", err)
-		}
-		if worker.Status != db.WorkerHostStatusActive && worker.Status != db.WorkerHostStatusDraining {
-			return errors.New("invalid Worker epoch is inactive")
-		}
-		if worker.Status == db.WorkerHostStatusActive {
-			if _, err := queries.DrainWorkerHost(ctx, db.DrainWorkerHostParams{
-				ID:                   workerHostID,
-				WorkerGroupID:        pgvalue.UUID(workerGroupID),
-				ExpectedEpoch:        pgtype.Int8{Int64: workerEpoch, Valid: true},
-				ExpectedClaimVersion: worker.ClaimVersion,
-			}); err != nil {
-				return fmt.Errorf("fence invalid Worker epoch: %w", err)
-			}
-		}
-		return nil
-	})
 }
 
 func validateRuntimeCleanupProof(proof workerapi.RuntimeCleanupProof, now time.Time) error {

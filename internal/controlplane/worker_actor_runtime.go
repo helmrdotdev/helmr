@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -76,7 +77,7 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.startActor(r.Context(), normalized)
 	if err != nil {
-		if errors.Is(err, errStaleWorkerRunSource) || errors.Is(err, errStaleWorkerClaims) {
+		if errors.Is(err, errStaleWorkerRunSource) || errors.Is(err, workergroup.ErrStaleClaims) {
 			s.writeWorkerActorSourceError(w, "start", request.Lease.ID, err)
 			return
 		}
@@ -127,7 +128,7 @@ func (s *Server) workerGetSessionStatus(w http.ResponseWriter, r *http.Request) 
 		return err
 	})
 	if err != nil {
-		if errors.Is(err, errStaleWorkerRunSource) || errors.Is(err, errStaleWorkerClaims) {
+		if errors.Is(err, errStaleWorkerRunSource) || errors.Is(err, workergroup.ErrStaleClaims) {
 			s.writeWorkerActorSourceError(w, "status", request.Lease.ID, err)
 			return
 		}
@@ -242,7 +243,7 @@ func (s *Server) workerReadSessionEvents(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) workerRunSource(
 	ctx context.Context,
-	worker workerActor,
+	worker workergroup.HostPrincipal,
 	lease workerapi.RunLeaseFence,
 ) (workerRunSourceAuthority, error) {
 	var source workerRunSourceAuthority

@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 func TestWorkerComputerMembersRequiresLiveRunAuthority(t *testing.T) {
@@ -47,9 +48,9 @@ SELECT worker_hosts.claim_version, worker_groups.claim_version
 	); err != nil {
 		t.Fatal(err)
 	}
-	worker := workerActor{
-		WorkerHostID: fixture.WorkerID, WorkerGroupID: runtest.WorkerGroupID,
-		WorkerEpoch: 1, ClaimVersion: workerClaimVersion, GroupClaimVersion: groupClaimVersion,
+	worker := workergroup.HostPrincipal{
+		HostID: fixture.WorkerID, GroupID: runtest.WorkerGroupID,
+		Epoch: 1, HostClaimVersion: workerClaimVersion, GroupClaimVersion: groupClaimVersion,
 	}
 	var computerID uuid.UUID
 	if err := fixture.Pool.QueryRow(t.Context(), `SELECT computer_id FROM runs WHERE id=$1`, work.RunID).Scan(&computerID); err != nil {
