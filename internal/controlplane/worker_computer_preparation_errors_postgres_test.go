@@ -46,7 +46,7 @@ const (
 
 var (
 	errInjectedPreparation = errors.New(injectedFailureText)
-	providerUnavailable    = fmt.Errorf("%w: %w", computerkey.ErrUnavailable, errInjectedPreparation)
+	errProviderUnavailable = fmt.Errorf("%w: %w", computerkey.ErrUnavailable, errInjectedPreparation)
 )
 
 // sqlFaults fails, once armed, one statement whose text contains match after
@@ -434,13 +434,13 @@ func TestComputerPreparationFailuresReportTheirClass(t *testing.T) {
 		{name: "key final deadline query", path: initialKeyPath, inject: func(s *preparationErrorServer) { s.armAfterUnwrap(deadlineStatement, 1) }, status: http.StatusInternalServerError, unwrapped: true},
 		{name: "key final claim read", path: initialKeyPath, inject: func(s *preparationErrorServer) { s.armAfterUnwrap(claimReadStatement, 0) }, status: http.StatusInternalServerError, unwrapped: true},
 		{name: "key provider wrap unavailable", path: initialKeyPath, inject: func(s *preparationErrorServer) {
-			s.setKeys(func(k *faultingKeys) { k.wrapErr = providerUnavailable })
+			s.setKeys(func(k *faultingKeys) { k.wrapErr = errProviderUnavailable })
 		}, status: http.StatusServiceUnavailable, wrapped: true},
 		{name: "key provider wrap unexpected", path: initialKeyPath, inject: func(s *preparationErrorServer) {
 			s.setKeys(func(k *faultingKeys) { k.wrapErr = errInjectedPreparation })
 		}, status: http.StatusInternalServerError, wrapped: true},
 		{name: "key provider unwrap unavailable", path: initialKeyPath, inject: func(s *preparationErrorServer) {
-			s.setKeys(func(k *faultingKeys) { k.unwrap = providerFailure(providerUnavailable) })
+			s.setKeys(func(k *faultingKeys) { k.unwrap = providerFailure(errProviderUnavailable) })
 		}, status: http.StatusServiceUnavailable, unwrapped: true},
 		{name: "key provider unwrap unexpected", path: initialKeyPath, inject: func(s *preparationErrorServer) {
 			s.setKeys(func(k *faultingKeys) { k.unwrap = providerFailure(errInjectedPreparation) })
@@ -453,7 +453,7 @@ func TestComputerPreparationFailuresReportTheirClass(t *testing.T) {
 				k.unwrap = func(key []byte) ([]byte, error) {
 					s.cancel()
 					clear(key)
-					return nil, fmt.Errorf("%w: %w", providerUnavailable, context.Canceled)
+					return nil, fmt.Errorf("%w: %w", errProviderUnavailable, context.Canceled)
 				}
 			})
 		}, status: http.StatusInternalServerError, unwrapped: true},
@@ -463,7 +463,7 @@ func TestComputerPreparationFailuresReportTheirClass(t *testing.T) {
 		{name: "source final deadline query", stage: preparationPublished, path: computerSourcePath, inject: func(s *preparationErrorServer) { s.armAfterUnwrap(deadlineStatement, 1) }, status: http.StatusInternalServerError, unwrapped: true},
 		{name: "source final claim read", stage: preparationPublished, path: computerSourcePath, inject: func(s *preparationErrorServer) { s.armAfterUnwrap(claimReadStatement, 0) }, status: http.StatusInternalServerError, unwrapped: true},
 		{name: "source provider unwrap unavailable", stage: preparationPublished, path: computerSourcePath, inject: func(s *preparationErrorServer) {
-			s.setKeys(func(k *faultingKeys) { k.unwrap = providerFailure(providerUnavailable) })
+			s.setKeys(func(k *faultingKeys) { k.unwrap = providerFailure(errProviderUnavailable) })
 		}, status: http.StatusServiceUnavailable, unwrapped: true},
 		{name: "source provider unwrap unexpected", stage: preparationPublished, path: computerSourcePath, inject: func(s *preparationErrorServer) {
 			s.setKeys(func(k *faultingKeys) { k.unwrap = providerFailure(errInjectedPreparation) })
