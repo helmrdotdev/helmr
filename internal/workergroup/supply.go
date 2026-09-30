@@ -224,7 +224,9 @@ func LockHostUnchecked(ctx context.Context, q db.Querier, groupID uuid.UUID, reg
 // LockHostIgnoringClaims is LockHostUnchecked for operations that continue
 // admitted work on a host epoch. The Group must be active, paused or draining
 // and the Host active or draining at the epoch; otherwise it returns
-// pgx.ErrNoRows.
+// pgx.ErrNoRows. It checks only after both locks, so a disabled Group still
+// takes the Host lock before returning pgx.ErrNoRows and may briefly wait on
+// the Host row.
 func LockHostIgnoringClaims(ctx context.Context, q db.Querier, groupID uuid.UUID, regionID string, hostID uuid.UUID, epoch int64) (LockedHost, error) {
 	locked, err := LockHostUnchecked(ctx, q, groupID, regionID, hostID, epoch)
 	if err != nil {

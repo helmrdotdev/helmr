@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -41,6 +42,9 @@ func TestReconciliationSettlesDurableInstanceFailure(t *testing.T) {
 	}
 	if err = f.Pool.QueryRow(t.Context(), `SELECT status FROM runs WHERE id=$1`, work.RunID).Scan(&status); err != nil || status != "system_failed" {
 		t.Fatalf("reconciled Run=%s %v", status, err)
+	}
+	if _, err = computer.RecordInstanceFailure(t.Context(), f.Pool, failure); !errors.Is(err, computer.ErrAuthorityChanged) {
+		t.Fatalf("replayed physical failure=%v", err)
 	}
 }
 
