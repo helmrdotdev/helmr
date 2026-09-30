@@ -59,7 +59,7 @@ func (s *Server) workerClaimComputerCommand(w http.ResponseWriter, r *http.Reque
 	}
 	authority := claimed.Start
 	stdin := bytes.Clone(authority.Command.Stdin)
-	if len(stdin) > computerCommandStdinMaxBytes {
+	if len(stdin) > command.MaxStdinBytes {
 		clear(stdin)
 		writeError(w, errors.New("command stdin exceeds its persisted limit"))
 		return
@@ -105,6 +105,15 @@ func (s *Server) workerClaimComputerCommand(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, workerapi.ComputerCommandClaimResponse{Command: &workerapi.ComputerCommand{
 		CommandID: pgvalue.UUIDString(authority.Command.ID), ComputerID: pgvalue.UUIDString(authority.Command.ComputerID), ComputerInstanceID: pgvalue.UUIDString(authority.Instance.ID), RequestFingerprint: hex.EncodeToString(authority.RequestFingerprint), Request: launchRequest, Stdin: stdin, Secrets: deliveries, ProtectedEnv: protected, WriterGeneration: authority.Instance.WriterGeneration, ExpiresAt: authority.Instance.WriterExpiresAt.Time,
 	}})
+}
+
+// computerCommandSpec is the launch request a worker host receives for a
+// claimed Command.
+type computerCommandSpec struct {
+	Command   []string          `json:"command"`
+	Cwd       string            `json:"cwd"`
+	Env       map[string]string `json:"env"`
+	TimeoutMS int64             `json:"timeout_ms"`
 }
 
 // activeCommandIDs are the canonical Command IDs a worker host reports it

@@ -38,6 +38,16 @@ var (
 	// ErrBusy reports that the Computer's current members or revision do not
 	// permit the change; the caller may retry.
 	ErrBusy = errors.New("computer is busy")
+	// ErrDeleting reports that the Computer is being deleted and admits no
+	// new work.
+	ErrDeleting = errors.New("computer is deleting")
+	// ErrRecoveryRequired reports that the Computer failed a capture or
+	// recovery, or is in recovery, and admits no new work until it is
+	// recovered.
+	ErrRecoveryRequired = errors.New("computer requires recovery")
+	// ErrPreparationExhausted reports that the Computer reached its
+	// preparation limit and admits no new work.
+	ErrPreparationExhausted = errors.New("computer preparation limit reached")
 	// ErrNotDeployed reports that the addressed Sandbox declaration is not in
 	// the deployment the creation resolves.
 	ErrNotDeployed = errors.New("computer declaration is not deployed")

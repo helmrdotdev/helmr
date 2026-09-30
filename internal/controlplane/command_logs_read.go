@@ -16,11 +16,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -49,8 +49,13 @@ func (s *Server) listCommandLogsHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
 		return
 	}
-	command, err := s.db.GetCommand(r.Context(), db.GetCommandParams{OrgID: pgvalue.UUID(principal.OrgID), ProjectID: projectID, EnvironmentID: environmentID, CommandID: pgvalue.UUID(id)})
-	if errors.Is(err, pgx.ErrNoRows) {
+	// The scope read is neutral to result retention; log history keeps its
+	// own boundary.
+	scoped, err := command.Get(r.Context(), s.db, command.Ref{
+		OrgID: principal.OrgID, ProjectID: pgvalue.MustUUIDValue(projectID),
+		EnvironmentID: pgvalue.MustUUIDValue(environmentID), CommandID: id,
+	})
+	if errors.Is(err, command.ErrNotFound) {
 		writeError(w, notFound(codedError{code: "command_not_found", message: "command was not found"}))
 		return
 	}
@@ -78,7 +83,7 @@ func (s *Server) listCommandLogsHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = int32(n)
 	}
-	page, err := s.readCommandLogs(r.Context(), pgvalue.UUID(principal.OrgID), command, query.Get("cursor"), limit)
+	page, err := s.readCommandLogs(r.Context(), pgvalue.UUID(principal.OrgID), scoped, query.Get("cursor"), limit)
 	if err != nil {
 		if errors.Is(err, errTelemetryInvalidCursor) {
 			writeError(w, badRequest(err))

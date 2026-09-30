@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -56,12 +57,12 @@ func TestManagedParkingAdmitsLogicalWork(t *testing.T) {
 		t.Run(state, func(t *testing.T) {
 			f := newActorExecutionFixture(t, json.RawMessage(`1`), true)
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET admission_state=$2 WHERE computer_id=$1 AND reclaimed_at IS NULL`, f.computerID, state)
-			command, err := f.server.admitComputerCommand(t.Context(), computerCommandRequest{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.EnvironmentID, ComputerID: f.computerID, Creator: computerCommandCreator{SubjectType: "api_key", SubjectID: f.runID.String()}, Command: []string{"true"}, IdempotencyKey: "during-parking"})
+			admitted, err := command.Create(t.Context(), f.Pool, command.CreateRequest{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.EnvironmentID, ComputerID: f.computerID, Creator: command.Creator{SubjectType: "api_key", SubjectID: f.runID.String()}, Argv: []string{"true"}, IdempotencyKey: "during-parking"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if command.Process.Status != "pending" || command.Process.ComputerInstanceID.Valid {
-				t.Fatalf("command crossed physical barrier: %+v", command.Process)
+			if admitted.Status != "pending" || admitted.ComputerInstanceID.Valid {
+				t.Fatalf("command crossed physical barrier: %+v", admitted)
 			}
 			tx, err := f.Pool.Begin(t.Context())
 			if err != nil {

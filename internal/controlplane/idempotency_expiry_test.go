@@ -14,7 +14,9 @@ import (
 func TestPrunedOperationReceiptHasExplicitTransportOutcome(t *testing.T) {
 	server := &Server{}
 	for name, write := range map[string]func(http.ResponseWriter, error){
-		"computer exec": server.writeComputerCommandError,
+		"computer exec": func(w http.ResponseWriter, err error) {
+			server.writeCommandError(w, err, commandCreateOperation)
+		},
 		"computer create": func(w http.ResponseWriter, err error) {
 			server.writeComputerError(w, err, computerCreateOperation, "create Computer failed")
 		},

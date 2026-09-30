@@ -1,8 +1,7 @@
 package controlplane
 
 import (
-	"errors"
-	"strings"
+	"net/http"
 	"testing"
 	"time"
 	"uuid"
@@ -44,6 +43,45 @@ func TestPreparationExhaustedCommandIsPlacementFailure(t *testing.T) {
 	}
 }
 
+// The public projection reports every Command state, and the outcome of a
+// terminal one.
+func TestPublicCommandInfoProjectsEveryState(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		command db.ComputerCommand
+	}{
+		{"pending", db.ComputerCommand{Status: db.ComputerCommandStatusPending}},
+		{"starting", db.ComputerCommand{Status: db.ComputerCommandStatusStarting}},
+		{"running", db.ComputerCommand{Status: db.ComputerCommandStatusRunning}},
+		{"stopping", db.ComputerCommand{Status: db.ComputerCommandStatusStopping}},
+		{"exited", db.ComputerCommand{Status: db.ComputerCommandStatusExited, ExitCode: pgtype.Int4{Int32: 17, Valid: true}, TerminalAt: pgvalue.Timestamptz(time.Now())}},
+		{"timed_out", db.ComputerCommand{Status: db.ComputerCommandStatusTimedOut, TerminalAt: pgvalue.Timestamptz(time.Now())}},
+		{"cancelled", db.ComputerCommand{Status: db.ComputerCommandStatusCancelled, TerminalAt: pgvalue.Timestamptz(time.Now())}},
+		{"lost", db.ComputerCommand{Status: db.ComputerCommandStatusLost, FailureReason: pgvalue.Text("guest_failure"), TerminalAt: pgvalue.Timestamptz(time.Now())}},
+		{"failed", db.ComputerCommand{Status: db.ComputerCommandStatusFailed, FailureReason: pgvalue.Text("placement_failed"), TerminalAt: pgvalue.Timestamptz(time.Now())}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			test.command.ID, test.command.ComputerID = pgvalue.NewUUIDv7(), pgvalue.NewUUIDv7()
+			info, err := publicCommandInfo(test.command)
+			if err != nil || info.ID != pgvalue.UUIDString(test.command.ID) || info.ComputerID != pgvalue.UUIDString(test.command.ComputerID) || info.Status != test.name {
+				t.Fatalf("info = %+v, %v", info, err)
+			}
+			if terminal := test.command.TerminalAt.Valid; terminal != (info.Outcome != nil) {
+				t.Fatalf("outcome = %+v", info.Outcome)
+			}
+			if test.name == "exited" && (info.Outcome.Kind != "exited" || *info.Outcome.ExitCode != 17) {
+				t.Fatalf("exited outcome = %+v", info.Outcome)
+			}
+			if test.name == "failed" && (info.Outcome.Failure == nil || info.Outcome.Failure.Reason != "placement_failed") {
+				t.Fatalf("failed outcome = %+v", info.Outcome)
+			}
+		})
+	}
+	if _, err := publicCommandInfo(db.ComputerCommand{ID: pgvalue.NewUUIDv7(), Status: db.ComputerCommandStatusFailed, ResultPrunedAt: pgvalue.Timestamptz(time.Now())}); errorStatus(err) != http.StatusGone {
+		t.Fatalf("pruned result = %v", err)
+	}
+}
+
 func TestComputerCommandGETRequiresExecPermissionNotComputerRead(t *testing.T) {
 	orgID := uuid.New()
 	scope := auth.Scope{OrgID: orgID, ProjectID: "project", EnvironmentID: "environment"}
@@ -58,71 +96,6 @@ func TestComputerCommandGETRequiresExecPermissionNotComputerRead(t *testing.T) {
 	}
 	if !canAccessComputerCommandOutput(createOnly, scope) {
 		t.Fatal("create-only API key was unable to poll its Computer Exec")
-	}
-}
-
-func TestNormalizeComputerCommandAppliesClosedDefaults(t *testing.T) {
-	normalized, err := normalizeComputerCommand(computerCommandRequest{
-		Command: []string{"printf", "", "ok"},
-		Env:     map[string]string{"LANG": "C.UTF-8"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if normalized.cwd != "/workspace" ||
-		normalized.timeout != 5*time.Minute ||
-		normalized.timeoutMS != 300000 ||
-		len(normalized.command) != 3 ||
-		normalized.command[1] != "" ||
-		normalized.stdin == nil {
-		t.Fatalf("normalized = %+v", normalized)
-	}
-
-}
-
-func TestNonNilComputerCommandBytesClonesInput(t *testing.T) {
-	if value := nonNilComputerCommandBytes(nil); value == nil || len(value) != 0 {
-		t.Fatalf("empty value = %#v", value)
-	}
-	source := []byte("secret")
-	cloned := nonNilComputerCommandBytes(source)
-	clear(source)
-	if string(cloned) != "secret" {
-		t.Fatalf("cloned value = %q", cloned)
-	}
-}
-
-func TestNormalizeComputerCommandRejectsInvalidAuthorityAndBounds(t *testing.T) {
-	tooManyArgs := make([]string, computerCommandArgMaxCount+1)
-	for index := range tooManyArgs {
-		tooManyArgs[index] = "x"
-	}
-	tooManyEnv := make(map[string]string, computerCommandEnvMaxCount+1)
-	for index := range computerCommandEnvMaxCount + 1 {
-		tooManyEnv["K"+strings.Repeat("X", index)] = "v"
-	}
-	tests := []struct {
-		name    string
-		request computerCommandRequest
-		target  error
-	}{
-		{name: "missing command", request: computerCommandRequest{}, target: errComputerCommandInvalid},
-		{name: "empty executable", request: computerCommandRequest{Command: []string{""}}, target: errComputerCommandInvalid},
-		{name: "nul argument", request: computerCommandRequest{Command: []string{"x", "\x00"}}, target: errComputerCommandInvalid},
-		{name: "too many arguments", request: computerCommandRequest{Command: tooManyArgs}, target: errComputerCommandTooLarge},
-		{name: "cwd escape", request: computerCommandRequest{Command: []string{"x"}, Cwd: "/workspace/../etc"}, target: errComputerCommandInvalid},
-		{name: "cwd sibling", request: computerCommandRequest{Command: []string{"x"}, Cwd: "/workspace-other"}, target: errComputerCommandInvalid},
-		{name: "reserved env", request: computerCommandRequest{Command: []string{"x"}, Env: map[string]string{"HELMR_TOKEN": "x"}}, target: errComputerCommandInvalid},
-		{name: "too many env", request: computerCommandRequest{Command: []string{"x"}, Env: tooManyEnv}, target: errComputerCommandTooLarge},
-		{name: "stdin", request: computerCommandRequest{Command: []string{"x"}, Stdin: make([]byte, computerCommandStdinMaxBytes+1)}, target: errComputerCommandStdinTooLarge},
-		{name: "timeout", request: computerCommandRequest{Command: []string{"x"}, Timeout: computerCommandMaxTimeout + time.Millisecond}, target: errComputerCommandInvalid},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if _, err := normalizeComputerCommand(test.request); !errors.Is(err, test.target) {
-				t.Fatalf("error = %v, want %v", err, test.target)
-			}
-		})
 	}
 }
 

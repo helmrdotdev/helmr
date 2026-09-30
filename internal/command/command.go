@@ -1,11 +1,15 @@
-// Package command owns Computer Commands: the durable transitions a worker
-// host reports for the processes it runs (claim, cancellation and release,
-// completion, reconciliation and log output), the dispatcher's recovery of
-// Commands whose physical authority was lost, the failure of pending
-// Commands and the retention of their results. Each operation locks, in the
-// global order, any Secrets it delivers or validates, then the worker supply
-// it compares claims against, then the Computer and the Command's Instance
-// through the computer owner, then the Command.
+// Package command owns Computer Commands: their creation with its
+// idempotency receipt, scoped reads and public cancellation; the durable
+// transitions a worker host reports for the processes it runs (claim,
+// cancellation and release, completion, reconciliation and log output); the
+// dispatcher's recovery of Commands whose physical authority was lost; the
+// failure of pending Commands and the retention of their results. Worker and
+// recovery operations lock, in the global order, any Secrets they deliver or
+// validate, then the worker supply they compare claims against, then the
+// Computer and the Command's Instance through the computer owner, then the
+// Command. Creation acquires its idempotency claim, then locks the Secrets
+// and the Computer; public cancellation acquires its claim and updates the
+// Command without Computer or Instance locks.
 package command
 
 import (
