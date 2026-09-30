@@ -14,26 +14,29 @@ import (
 )
 
 // A failed KMS call is provider unavailability only when it is a recognized
-// transport, throttling, provider-internal or deadline failure; access,
-// key-state and ciphertext rejections keep only their cause, and so does a
-// failure after the caller's context ended.
+// transport, throttling, provider-internal or deadline failure. A decrypt of
+// ciphertext KMS cannot authenticate, or that another key wrapped, is an
+// invalid envelope. Access and key-state rejections keep only their cause.
 func TestKMSClassifiesProviderFailures(t *testing.T) {
 	for _, test := range []struct {
 		name        string
 		err         error
 		unavailable bool
+		// invalidEnvelope applies to decrypt only; encrypt takes no envelope.
+		invalidEnvelope bool
 	}{
-		{"transport", &net.OpError{Op: "dial", Err: errors.New("connection refused")}, true},
-		{"throttling", &smithy.GenericAPIError{Code: "ThrottlingException", Message: "rate exceeded"}, true},
-		{"internal", &types.KMSInternalException{Message: aws.String("internal")}, true},
-		{"dependency timeout", &types.DependencyTimeoutException{Message: aws.String("timeout")}, true},
-		{"key unavailable", &types.KeyUnavailableException{Message: aws.String("retry later")}, true},
-		{"deadline", context.DeadlineExceeded, true},
-		{"invalid ciphertext", &types.InvalidCiphertextException{Message: aws.String("bad")}, false},
-		{"access denied", &smithy.GenericAPIError{Code: "AccessDeniedException", Message: "denied"}, false},
-		{"disabled key", &types.DisabledException{Message: aws.String("disabled")}, false},
-		{"missing key", &types.NotFoundException{Message: aws.String("missing")}, false},
-		{"key state", &types.KMSInvalidStateException{Message: aws.String("pending deletion")}, false},
+		{"transport", &net.OpError{Op: "dial", Err: errors.New("connection refused")}, true, false},
+		{"throttling", &smithy.GenericAPIError{Code: "ThrottlingException", Message: "rate exceeded"}, true, false},
+		{"internal", &types.KMSInternalException{Message: aws.String("internal")}, true, false},
+		{"dependency timeout", &types.DependencyTimeoutException{Message: aws.String("timeout")}, true, false},
+		{"key unavailable", &types.KeyUnavailableException{Message: aws.String("retry later")}, true, false},
+		{"deadline", context.DeadlineExceeded, true, false},
+		{"invalid ciphertext", &types.InvalidCiphertextException{Message: aws.String("bad")}, false, true},
+		{"incorrect key", &types.IncorrectKeyException{Message: aws.String("another key")}, false, true},
+		{"access denied", &smithy.GenericAPIError{Code: "AccessDeniedException", Message: "denied"}, false, false},
+		{"disabled key", &types.DisabledException{Message: aws.String("disabled")}, false, false},
+		{"missing key", &types.NotFoundException{Message: aws.String("missing")}, false, false},
+		{"key state", &types.KMSInvalidStateException{Message: aws.String("pending deletion")}, false, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			adapter, err := NewKMS(kmsFake{
@@ -45,9 +48,12 @@ func TestKMSClassifiesProviderFailures(t *testing.T) {
 			}
 			_, wrapErr := adapter.Wrap(t.Context(), "scope", "version", bytes.Repeat([]byte{3}, Size))
 			got, unwrapErr := adapter.Unwrap(t.Context(), "scope", "version", Envelope{testARN, []byte("wrapped")})
-			for _, err := range []error{wrapErr, unwrapErr} {
-				if !errors.Is(err, test.err) || errors.Is(err, ErrUnavailable) != test.unavailable || errors.Is(err, ErrInvalidEnvelope) {
-					t.Fatalf("classified as %v", err)
+			for _, result := range []struct {
+				err             error
+				invalidEnvelope bool
+			}{{wrapErr, false}, {unwrapErr, test.invalidEnvelope}} {
+				if !errors.Is(result.err, test.err) || errors.Is(result.err, ErrUnavailable) != test.unavailable || errors.Is(result.err, ErrInvalidEnvelope) != result.invalidEnvelope {
+					t.Fatalf("classified as %v", result.err)
 				}
 			}
 			if got != nil {

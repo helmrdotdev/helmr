@@ -138,9 +138,9 @@ type sqlFaultRow struct{}
 func (sqlFaultRow) Scan(...any) error { return errInjectedPreparation }
 
 // faultingKeys is the fixture's key provider with injectable failures. Once
-// recording, it keeps every plaintext it hands back and a copy of the key it
-// unwrapped, so a test can require the plaintext cleared and absent from the
-// response and the logs.
+// recording, it keeps every plaintext it is given to wrap or hands back from
+// an unwrap, with a copy of the key, so a test can require the plaintext
+// cleared and absent from the response and the logs.
 type faultingKeys struct {
 	computer.KeyWrapper
 	mu        sync.Mutex
@@ -150,6 +150,7 @@ type faultingKeys struct {
 	// provider's plaintext it does not hand back.
 	unwrap      func(key []byte) ([]byte, error)
 	afterUnwrap func()
+	unwraps     int
 	returned    [][]byte
 	copies      [][]byte
 }
@@ -157,6 +158,11 @@ type faultingKeys struct {
 func (k *faultingKeys) Wrap(ctx context.Context, scope, id string, key []byte) (computerkey.Envelope, error) {
 	k.mu.Lock()
 	err := k.wrapErr
+	if k.recording {
+		// The broker owns this plaintext and clears it after the wrap.
+		k.returned = append(k.returned, key)
+		k.copies = append(k.copies, bytes.Clone(key))
+	}
 	k.mu.Unlock()
 	if err != nil {
 		return computerkey.Envelope{}, err
@@ -180,6 +186,7 @@ func (k *faultingKeys) Unwrap(ctx context.Context, scope, id string, e computerk
 		key, err = k.unwrap(key)
 	}
 	if k.recording {
+		k.unwraps++
 		k.returned = append(k.returned, key)
 		k.copies = append(k.copies, copied)
 	}
@@ -418,6 +425,8 @@ func TestComputerPreparationFailuresReportTheirClass(t *testing.T) {
 		// unwrapped requires the provider to have returned plaintext before
 		// the failure.
 		unwrapped bool
+		// wrapped requires the provider to have been given plaintext to wrap.
+		wrapped bool
 	}{
 		{name: "key first fence", path: initialKeyPath, inject: func(s *preparationErrorServer) { s.faults.arm(firstFenceStatement, 0, false) }, status: http.StatusInternalServerError},
 		{name: "key pin write", path: initialKeyPath, inject: func(s *preparationErrorServer) { s.faults.arm(pinWriteStatement, 0, false) }, status: http.StatusInternalServerError},
@@ -426,10 +435,10 @@ func TestComputerPreparationFailuresReportTheirClass(t *testing.T) {
 		{name: "key final claim read", path: initialKeyPath, inject: func(s *preparationErrorServer) { s.armAfterUnwrap(claimReadStatement, 0) }, status: http.StatusInternalServerError, unwrapped: true},
 		{name: "key provider wrap unavailable", path: initialKeyPath, inject: func(s *preparationErrorServer) {
 			s.setKeys(func(k *faultingKeys) { k.wrapErr = providerUnavailable })
-		}, status: http.StatusServiceUnavailable},
+		}, status: http.StatusServiceUnavailable, wrapped: true},
 		{name: "key provider wrap unexpected", path: initialKeyPath, inject: func(s *preparationErrorServer) {
 			s.setKeys(func(k *faultingKeys) { k.wrapErr = errInjectedPreparation })
-		}, status: http.StatusInternalServerError},
+		}, status: http.StatusInternalServerError, wrapped: true},
 		{name: "key provider unwrap unavailable", path: initialKeyPath, inject: func(s *preparationErrorServer) {
 			s.setKeys(func(k *faultingKeys) { k.unwrap = providerFailure(providerUnavailable) })
 		}, status: http.StatusServiceUnavailable, unwrapped: true},
@@ -480,8 +489,11 @@ func TestComputerPreparationFailuresReportTheirClass(t *testing.T) {
 			test.inject(s)
 			response := s.post(t, test.path)
 			s.requireResponse(t, response, test.status)
-			if test.unwrapped && len(s.keys.returned) == 0 {
+			if test.unwrapped && s.keys.unwraps == 0 {
 				t.Fatal("failure was not reached after a provider unwrap")
+			}
+			if test.wrapped && len(s.keys.returned) == 0 {
+				t.Fatal("wrap plaintext was not recorded")
 			}
 		})
 	}

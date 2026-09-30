@@ -16,8 +16,8 @@ import (
 var ErrUnavailable = errors.New("computer key provider is unavailable")
 
 // ErrInvalidEnvelope reports a persisted envelope the provider rejects: a
-// wrapping key identity or ciphertext it cannot accept, or ciphertext that
-// fails authentication.
+// wrapping key identity or ciphertext it cannot accept, ciphertext that fails
+// authentication, or ciphertext wrapped under another key.
 var ErrInvalidEnvelope = errors.New("computer key envelope is invalid")
 
 func invalidEnvelope(reason string) error {
@@ -25,6 +25,18 @@ func invalidEnvelope(reason string) error {
 }
 
 var kmsThrottles = retry.ThrottleErrorCode{Codes: retry.DefaultThrottleErrorCodes}
+
+// kmsDecryptFailure classifies a failed KMS decrypt: ciphertext KMS cannot
+// authenticate in its context, or that another wrapping key produced, is an
+// invalid envelope; any other failure is classified as kmsFailure does.
+func kmsDecryptFailure(ctx context.Context, err error) error {
+	var invalid *types.InvalidCiphertextException
+	var incorrect *types.IncorrectKeyException
+	if ctx.Err() == nil && (errors.As(err, &invalid) || errors.As(err, &incorrect)) {
+		return fmt.Errorf("%w: %w", ErrInvalidEnvelope, err)
+	}
+	return kmsFailure(ctx, err)
+}
 
 // kmsFailure classifies a failed KMS call. Recognized unavailability reports
 // ErrUnavailable; a cancelled or expired caller context and every other
