@@ -46,7 +46,7 @@ func TestWorkerTokenUsesCanonicalClaims(t *testing.T) {
 	}
 	claims := decodeJWTPart(t, parts[1])
 	wants := map[string]any{
-		"iss": "helmr-controlplane", "sub": "worker-1", "aud": []any{WorkerTokenAudience},
+		"iss": "helmr-controlplane", "sub": "worker-1", "aud": []any{"helmr-worker"},
 		"worker_group_id": "01900000-0000-7000-8000-000000000501", "worker_host_id": "worker-1",
 		"credential_id": "credential-1", "worker_epoch": float64(7),
 		"claim_version": float64(2), "group_claim_version": float64(4),
