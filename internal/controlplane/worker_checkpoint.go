@@ -1,20 +1,32 @@
 package controlplane
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 
-	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5"
 )
+
+func (s *Server) workerRegisterCheckpoint(w http.ResponseWriter, r *http.Request) {
+	var request workerapi.RegisterCheckpointRequest
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, err)
+		return
+	}
+	ref, err := checkpointRef(workerFromContext(r.Context()), request.ComputerInstanceID, request.WorkerEpoch, request.DesiredVersion, request.CheckpointID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if _, err = computer.RegisterCheckpoint(r.Context(), s.tx, ref, computerCheckpointManifest(request.Manifest)); err != nil {
+		s.writeComputerPublicationError(w, err, computerCheckpointRegisterOperation)
+		return
+	}
+	writeJSON(w, http.StatusOK, workerapi.ComputerCheckpointResponse{ComputerInstanceID: request.ComputerInstanceID, WorkerEpoch: request.WorkerEpoch, DesiredVersion: request.DesiredVersion, CheckpointID: request.CheckpointID})
+}
 
 func (s *Server) workerMarkCheckpointReady(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.CheckpointReadyRequest
@@ -22,71 +34,113 @@ func (s *Server) workerMarkCheckpointReady(w http.ResponseWriter, r *http.Reques
 		writeError(w, err)
 		return
 	}
-	for name, value := range map[string]string{"computer_instance_id": request.ComputerInstanceID, "checkpoint_id": request.CheckpointID} {
-		if _, err := parseCanonicalUUID(name, value); err != nil {
-			writeError(w, badRequest(err))
-			return
-		}
-	}
-	if request.WorkerEpoch <= 0 || request.DesiredVersion <= 0 {
-		writeError(w, badRequest(errors.New("checkpoint source versions must be positive")))
+	ref, err := checkpointRef(workerFromContext(r.Context()), request.ComputerInstanceID, request.WorkerEpoch, request.DesiredVersion, request.CheckpointID)
+	if err != nil {
+		writeError(w, err)
 		return
 	}
-	response, err := s.commitCheckpointReady(r.Context(), workerFromContext(r.Context()), request)
-	if errors.Is(err, dispatch.ErrCheckpointCandidate) {
-		writeError(w, badRequest(err))
-		return
-	}
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, conflict(errors.New("checkpoint ready source or candidate changed")))
-		return
-	}
+	checkpoint, err := s.publisher.CompleteCheckpoint(r.Context(), ref, computerCheckpointManifest(request.Manifest))
 	if err != nil {
 		s.writeComputerPublicationError(w, err, computerCheckpointReadyOperation)
 		return
 	}
-	writeJSON(w, http.StatusOK, response)
+	writeJSON(w, http.StatusOK, workerapi.ComputerCheckpointResponse{ComputerInstanceID: request.ComputerInstanceID, WorkerEpoch: request.WorkerEpoch, DesiredVersion: request.DesiredVersion, CheckpointID: request.CheckpointID, ComputerDiskVersionID: pgvalue.UUIDString(checkpoint.PrivateComputerDiskVersionID)})
 }
 
-func (s *Server) commitCheckpointReady(ctx context.Context, worker workergroup.HostPrincipal, request workerapi.CheckpointReadyRequest) (workerapi.ComputerCheckpointResponse, error) {
-	authority := dispatch.ComputerCaptureWorker{GroupID: pgvalue.UUID(worker.GroupID), HostID: pgvalue.UUID(worker.HostID), Epoch: worker.Epoch}
-	candidate := workerapi.RegisterCheckpointRequest(request)
-	var checkpoint db.ComputerCheckpoint
-	err := s.inTx(ctx, func(work *txWork) error {
-		var err error
-		checkpoint, err = dispatch.CheckComputerCheckpointReady(ctx, work.tx, authority, candidate)
-		return err
-	})
+func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Request) {
+	var request workerapi.CheckpointFailedRequest
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, err)
+		return
+	}
+	ref, err := checkpointRef(workerFromContext(r.Context()), request.ComputerInstanceID, request.WorkerEpoch, request.DesiredVersion, request.CheckpointID)
 	if err != nil {
-		return workerapi.ComputerCheckpointResponse{}, err
+		writeError(w, err)
+		return
 	}
-	// A committed receipt is independent of current storage availability. Every
-	// replay still checks the authenticated source and exact candidate identity.
-	if checkpoint.Status != "ready" {
-		var manifest workerapi.CheckpointManifest
-		if err = json.Unmarshal(checkpoint.Manifest, &manifest); err != nil {
-			return workerapi.ComputerCheckpointResponse{}, err
-		}
-		if len(manifest.RuntimeState.MemoryArtifacts) != 1 {
-			return workerapi.ComputerCheckpointResponse{}, dispatch.ErrCheckpointCandidate
-		}
-		descriptors := []workerapi.CheckpointArtifact{manifest.RuntimeState.ConfigArtifact, manifest.RuntimeState.VMStateArtifact, manifest.RuntimeState.MemoryArtifacts[0], manifest.RuntimeState.ScratchDiskArtifact}
-		observed := make([]cas.Object, 0, len(descriptors))
-		for _, d := range descriptors {
-			object, e := s.cas.Stat(ctx, d.Digest)
-			if e != nil {
-				return workerapi.ComputerCheckpointResponse{}, fmt.Errorf("checkpoint object unavailable: %w", e)
-			}
-			observed = append(observed, object)
-		}
-		err = s.inTx(ctx, func(work *txWork) error {
-			var err error
-			checkpoint, err = dispatch.CompleteComputerCheckpoint(ctx, work.tx, authority, candidate, observed)
-			return err
-		})
-		if err != nil {
-			return workerapi.ComputerCheckpointResponse{}, err
+	if _, err = computer.FailCheckpoint(r.Context(), s.tx, ref, request.Error); err != nil {
+		s.writeComputerPublicationError(w, err, computerCheckpointFailedOperation)
+		return
+	}
+	writeJSON(w, http.StatusOK, workerapi.ComputerCheckpointResponse{ComputerInstanceID: request.ComputerInstanceID, WorkerEpoch: request.WorkerEpoch, DesiredVersion: request.DesiredVersion, CheckpointID: request.CheckpointID})
+}
+
+// checkpointRef addresses the capture checkpoint a worker request names on
+// the authenticated host epoch. Malformed identifiers and non-positive
+// versions are rejected before any database access.
+func checkpointRef(worker workergroup.HostPrincipal, instance string, workerEpoch, desiredVersion int64, checkpoint string) (computer.CheckpointRef, error) {
+	instanceID, err := parseCanonicalUUID("computer_instance_id", instance)
+	if err != nil {
+		return computer.CheckpointRef{}, badRequest(err)
+	}
+	checkpointID, err := parseCanonicalUUID("checkpoint_id", checkpoint)
+	if err != nil {
+		return computer.CheckpointRef{}, badRequest(err)
+	}
+	if workerEpoch <= 0 || desiredVersion <= 0 {
+		return computer.CheckpointRef{}, badRequest(errors.New("checkpoint source versions must be positive"))
+	}
+	return computer.CheckpointRef{
+		Host:       computer.Host{GroupID: worker.GroupID, HostID: worker.HostID, Epoch: worker.Epoch},
+		InstanceID: instanceID, WorkerEpoch: workerEpoch, DesiredVersion: desiredVersion, CheckpointID: checkpointID,
+	}, nil
+}
+
+// computerCheckpointManifest is the Computer owner's form of a worker's
+// checkpoint manifest. Both types encode to the same JSON, which the owner
+// persists and fingerprints.
+func computerCheckpointManifest(m workerapi.CheckpointManifest) computer.CheckpointManifest {
+	point := m.RecoveryPoint
+	runtime := point.Runtime
+	result := computer.CheckpointManifest{
+		RecoveryPoint: computer.CheckpointRecoveryPoint{
+			ID: point.ID, ComputerID: point.ComputerID, ComputerInstanceID: point.ComputerInstanceID,
+			WriterGeneration: point.WriterGeneration, MembershipRevision: point.MembershipRevision,
+			ComputerSpecID: point.ComputerSpecID, ProgramDeploymentID: point.ProgramDeploymentID,
+			Runtime: computer.CheckpointRuntime{
+				Backend: runtime.Backend, ID: runtime.ID, Arch: runtime.Arch, Contract: runtime.Contract,
+				KernelDigest: runtime.KernelDigest, InitramfsDigest: runtime.InitramfsDigest, RootfsDigest: runtime.RootfsDigest,
+				ConfigDigest: runtime.ConfigDigest, VMVCPUCount: runtime.VMVCPUCount, CPUConfigDigest: runtime.CPUConfigDigest,
+			},
+		},
+		RuntimeState: computer.CheckpointRuntimeState{
+			ConfigArtifact:      computerCheckpointArtifact(m.RuntimeState.ConfigArtifact),
+			VMStateArtifact:     computerCheckpointArtifact(m.RuntimeState.VMStateArtifact),
+			ScratchDiskArtifact: computerCheckpointArtifact(m.RuntimeState.ScratchDiskArtifact),
+			Config:              m.RuntimeState.Config,
+		},
+		ComputerState: computer.CheckpointComputerState{Base: computer.CheckpointComputerBase{MountPath: m.ComputerState.Base.MountPath}},
+	}
+	// A nil member list is a rejected candidate, distinct from an empty one.
+	if point.Runs != nil {
+		result.RecoveryPoint.Runs = make([]computer.CheckpointRun, 0, len(point.Runs))
+		for _, run := range point.Runs {
+			result.RecoveryPoint.Runs = append(result.RecoveryPoint.Runs, computer.CheckpointRun{
+				RunID: run.RunID, AttemptNumber: run.AttemptNumber, RunWaitID: run.RunWaitID, RunLeaseID: run.RunLeaseID,
+				ActorSpeculativeInputSequence: run.ActorSpeculativeInputSequence, CorrelationID: run.CorrelationID,
+			})
 		}
 	}
-	return workerapi.ComputerCheckpointResponse{ComputerInstanceID: request.ComputerInstanceID, WorkerEpoch: request.WorkerEpoch, DesiredVersion: request.DesiredVersion, CheckpointID: request.CheckpointID, ComputerDiskVersionID: pgvalue.UUIDString(checkpoint.PrivateComputerDiskVersionID)}, nil
+	if captured := m.RuntimeState.Computer; captured != nil {
+		result.RuntimeState.Computer = &computer.CheckpointComputer{ComputerID: captured.ComputerID, LogicalBytes: captured.LogicalBytes, Root: captured.Root}
+	}
+	for _, artifact := range m.RuntimeState.MemoryArtifacts {
+		result.RuntimeState.MemoryArtifacts = append(result.RuntimeState.MemoryArtifacts, computerCheckpointArtifact(artifact))
+	}
+	// Absent timings persist as no timings, distinct from an empty list.
+	if m.Phases != nil {
+		result.Phases = make([]computer.CheckpointPhase, 0, len(m.Phases))
+	}
+	for _, phase := range m.Phases {
+		converted := computer.CheckpointPhase{Name: phase.Name, DurationMs: phase.DurationMs, Role: phase.Role, MediaType: phase.MediaType, ErrorClass: phase.ErrorClass}
+		if phase.Filepack != nil {
+			converted.Filepack = &computer.CheckpointFilepackStats{LogicalBytes: phase.Filepack.LogicalBytes, EncodedChunks: phase.Filepack.EncodedChunks, UnpackWrittenBytes: phase.Filepack.UnpackWrittenBytes}
+		}
+		result.Phases = append(result.Phases, converted)
+	}
+	return result
+}
+
+func computerCheckpointArtifact(a workerapi.CheckpointArtifact) computer.CheckpointArtifact {
+	return computer.CheckpointArtifact{Digest: a.Digest, SizeBytes: a.SizeBytes, MediaType: a.MediaType}
 }

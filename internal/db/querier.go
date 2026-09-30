@@ -235,7 +235,7 @@ type Querier interface {
 	// as a permanent gap or skipped by a reconnect cursor.
 	GetCommandLogFrontier(ctx context.Context, arg GetCommandLogFrontierParams) (GetCommandLogFrontierRow, error)
 	GetComputer(ctx context.Context, arg GetComputerParams) (GetComputerRow, error)
-	// Post-lock time check only. The caller (dispatch.BeginComputerCapture) must
+	// Post-lock time check only. The caller (computer.BeginCapture) must
 	// already hold the Worker Group, Worker Host, Computer, Instance and resident
 	// owner locks and have validated Group/Host status and epoch. Run and VM pauses
 	// do not apply: capture continues resident work. A host that was never

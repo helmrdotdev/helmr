@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"errors"
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -28,28 +27,14 @@ func (s *Server) workerCheckpointComputerObject(w http.ResponseWriter, r *http.R
 		writeError(w, err)
 		return
 	}
-	instanceID, err := parseCanonicalUUID("computer_instance_id", request.ComputerInstanceID)
+	ref, err := checkpointRef(workerFromContext(r.Context()), request.ComputerInstanceID, request.WorkerEpoch, request.DesiredVersion, request.CheckpointID)
 	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	checkpointID, err := parseCanonicalUUID("checkpoint_id", request.CheckpointID)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	if request.WorkerEpoch <= 0 || request.DesiredVersion <= 0 {
-		writeError(w, badRequest(errors.New("checkpoint source versions must be positive")))
+		writeError(w, err)
 		return
 	}
 	if err = computer.ValidateObjectInspection(request.Inspection); err != nil {
 		writeError(w, badRequest(err))
 		return
-	}
-	worker := workerFromContext(r.Context())
-	ref := computer.CheckpointRef{
-		Host:       computer.Host{GroupID: worker.GroupID, HostID: worker.HostID, Epoch: worker.Epoch},
-		InstanceID: instanceID, WorkerEpoch: request.WorkerEpoch, DesiredVersion: request.DesiredVersion, CheckpointID: checkpointID,
 	}
 	if err = record(r.Context(), ref, request.Inspection); err != nil {
 		s.writeComputerPublicationError(w, err, computerCheckpointObjectOperation)

@@ -9,7 +9,12 @@
 // settlement, the restore fence and the member fences other owners compose.
 // It delivers the data keys of preparing Instances (KeyBroker), records the
 // disk objects worker hosts upload and publishes the versions they compose:
-// initial versions, checkpoint objects and saves (Publisher).
+// initial versions, checkpoint objects and saves (Publisher). It owns the
+// checkpoint lifecycle of an Instance's resident set: beginning a capture,
+// including idle capture, and the registration, readiness and failure a
+// worker host reports for it. A capture seals, and readiness parks, the
+// Instance's Run members as one set; transitions that grant a member
+// execution stay with dispatch.
 // Operations take domain inputs and return the errors declared here; callers
 // map them to their transport.
 //

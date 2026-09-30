@@ -1,37 +1,37 @@
-package dispatch_test
+package computer_test
 
 import (
 	"context"
 	"errors"
+	"testing"
+	"time"
+	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/computer/computertest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
-	"github.com/helmrdotdev/helmr/internal/dispatch/dispatchtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
-
-	"testing"
-	"time"
-	"uuid"
 )
 
 func TestComputerCaptureCompleteSet(t *testing.T) {
-	f, _, _, request := dispatchtest.Capture(t)
+	f, _, _, request := computertest.Capture(t)
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	cp, err := dispatch.BeginComputerCapture(t.Context(), tx, request)
+	cp, err := computer.BeginCapture(t.Context(), tx, request)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	members, err := db.New(f.Pool).ListComputerCheckpointRuns(t.Context(), db.ListComputerCheckpointRunsParams{EnvironmentID: request.EnvironmentID, CheckpointID: cp.ID})
+	members, err := db.New(f.Pool).ListComputerCheckpointRuns(t.Context(), db.ListComputerCheckpointRunsParams{EnvironmentID: pgvalue.UUID(request.EnvironmentID), CheckpointID: cp.ID})
 	if err != nil || len(members) != 2 {
 		t.Fatalf("members=%v err=%v", members, err)
 	}
@@ -46,15 +46,14 @@ func TestComputerCaptureCompleteSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	if _, err = dispatch.BeginComputerCapture(t.Context(), tx, request); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err = computer.BeginCapture(t.Context(), tx, request); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("repeated capture: %v", err)
 	}
 }
 
 func TestComputerCaptureRejectsUnsafeSet(t *testing.T) {
 	for _, test := range []struct {
-		name, sql      string
-		expiredRequest bool
+		name, sql string
 	}{
 		{name: "working peer", sql: `UPDATE runs SET status='running' WHERE id=$1`},
 		{name: "expired grant", sql: `UPDATE run_leases SET start_deadline_at=clock_timestamp()-interval '2 seconds',expires_at=clock_timestamp()-interval '1 second' WHERE run_id=$1`},
@@ -63,29 +62,23 @@ func TestComputerCaptureRejectsUnsafeSet(t *testing.T) {
 		{name: "stale revision", sql: `UPDATE runs SET revision=revision+1 WHERE id=$1`},
 		{name: "expired writer", sql: `UPDATE computer_instances SET writer_expires_at=clock_timestamp()-interval '1 second' WHERE id=(SELECT computer_instance_id FROM run_leases WHERE run_id=$1)`},
 		{name: "stale worker", sql: `UPDATE worker_hosts SET observed_at=clock_timestamp()-interval '1 hour' WHERE id=(SELECT worker_host_id FROM run_leases WHERE run_id=$1)`},
-		{name: "expired request deadline", expiredRequest: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			f, _, peer, request := dispatchtest.Capture(t)
-			if test.sql != "" {
-				dbtest.MustExec(t, t.Context(), f.Pool, test.sql, peer.RunID)
-			}
-			if test.expiredRequest {
-				request.ExpiresAt = pgvalue.Timestamptz(time.Now().Add(-time.Second))
-			}
+			f, _, peer, request := computertest.Capture(t)
+			dbtest.MustExec(t, t.Context(), f.Pool, test.sql, peer.RunID)
 			tx, err := f.Pool.Begin(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer tx.Rollback(t.Context())
-			if _, err = dispatch.BeginComputerCapture(t.Context(), tx, request); !errors.Is(err, pgx.ErrNoRows) {
+			if _, err = computer.BeginCapture(t.Context(), tx, request); !errors.Is(err, pgx.ErrNoRows) {
 				t.Fatalf("unsafe capture: %v", err)
 			}
 			if err = tx.Rollback(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			var untouched bool
-			if err = f.Pool.QueryRow(t.Context(), `SELECT admission_state='open' AND capture_checkpoint_id IS NULL AND desired_version=$2 AND NOT EXISTS(SELECT 1 FROM computer_checkpoints WHERE id=$3) FROM computer_instances WHERE id=$1`, request.ComputerInstanceID, request.DesiredVersion, request.CheckpointID).Scan(&untouched); err != nil || !untouched {
+			if err = f.Pool.QueryRow(t.Context(), `SELECT admission_state='open' AND capture_checkpoint_id IS NULL AND desired_version=$2 AND NOT EXISTS(SELECT 1 FROM computer_checkpoints WHERE id=$3) FROM computer_instances WHERE id=$1`, request.InstanceID, request.DesiredVersion, request.CheckpointID).Scan(&untouched); err != nil || !untouched {
 				t.Fatalf("partial capture: %v %v", untouched, err)
 			}
 		})
@@ -94,18 +87,18 @@ func TestComputerCaptureRejectsUnsafeSet(t *testing.T) {
 
 func TestComputerCaptureIdleAndActorCursor(t *testing.T) {
 	t.Run("idle", func(t *testing.T) {
-		f, _, _, request := dispatchtest.Capture(t)
-		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET status='cancelled',terminal_at=now(),terminal_reason_code='cancelled',process_reconciled_at=now() WHERE computer_instance_id=$1`, request.ComputerInstanceID)
+		f, _, _, request := computertest.Capture(t)
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET status='cancelled',terminal_at=now(),terminal_reason_code='cancelled',process_reconciled_at=now() WHERE computer_instance_id=$1`, request.InstanceID)
 		tx, err := f.Pool.Begin(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer tx.Rollback(t.Context())
-		cp, err := dispatch.BeginComputerCapture(t.Context(), tx, request)
+		cp, err := computer.BeginCapture(t.Context(), tx, request)
 		if err != nil {
 			t.Fatal(err)
 		}
-		members, err := db.New(tx).ListComputerCheckpointRuns(t.Context(), db.ListComputerCheckpointRunsParams{EnvironmentID: request.EnvironmentID, CheckpointID: cp.ID})
+		members, err := db.New(tx).ListComputerCheckpointRuns(t.Context(), db.ListComputerCheckpointRunsParams{EnvironmentID: pgvalue.UUID(request.EnvironmentID), CheckpointID: cp.ID})
 		if err != nil || len(members) != 0 {
 			t.Fatalf("idle members=%v err=%v", members, err)
 		}
@@ -114,18 +107,18 @@ func TestComputerCaptureIdleAndActorCursor(t *testing.T) {
 		}
 	})
 	t.Run("actor between turns", func(t *testing.T) {
-		f, work, _, request := dispatchtest.Capture(t)
+		f, work, _, request := computertest.Capture(t)
 		f.ConvertToActor(t, t.Context(), work, `{"enabled":false}`)
 		tx, err := f.Pool.Begin(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer tx.Rollback(t.Context())
-		cp, err := dispatch.BeginComputerCapture(t.Context(), tx, request)
+		cp, err := computer.BeginCapture(t.Context(), tx, request)
 		if err != nil {
 			t.Fatal(err)
 		}
-		members, err := db.New(tx).ListComputerCheckpointRuns(t.Context(), db.ListComputerCheckpointRunsParams{EnvironmentID: request.EnvironmentID, CheckpointID: cp.ID})
+		members, err := db.New(tx).ListComputerCheckpointRuns(t.Context(), db.ListComputerCheckpointRunsParams{EnvironmentID: pgvalue.UUID(request.EnvironmentID), CheckpointID: cp.ID})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -145,7 +138,7 @@ func TestComputerCaptureIdleAndActorCursor(t *testing.T) {
 }
 
 func TestComputerCaptureActiveTurn(t *testing.T) {
-	f, work, _, request := dispatchtest.Capture(t)
+	f, work, _, request := computertest.Capture(t)
 	actorID := f.ConvertToActor(t, t.Context(), work, `{"enabled":false}`)
 	turnID := uuid.NewV7()
 	tx, err := f.Pool.Begin(t.Context())
@@ -175,7 +168,7 @@ func TestComputerCaptureActiveTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	cp, err := dispatch.BeginComputerCapture(t.Context(), tx, request)
+	cp, err := computer.BeginCapture(t.Context(), tx, request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,13 +185,13 @@ func TestComputerCaptureActiveTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	if _, err = dispatch.BeginComputerCapture(t.Context(), tx, request); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err = computer.BeginCapture(t.Context(), tx, request); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("interrupted Turn captured: %v", err)
 	}
 }
 
 func TestComputerCaptureCommandProcessMustBeReconciled(t *testing.T) {
-	f, work, _, request := dispatchtest.Capture(t)
+	f, work, _, request := computertest.Capture(t)
 	id, claim := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO idempotency_claims(id,environment_id,operation,slot_hash,request_fingerprint,accepted_at) VALUES($1,$2,'computer.command.start',$3,$3,now())`, claim, f.EnvironmentID, dbtest.Hash(claim.String()))
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_commands(id,environment_id,computer_id,claim_id,argv,env,stdin,timeout_ms,created_by_subject_type,created_by_subject_id)
@@ -206,7 +199,7 @@ func TestComputerCaptureCommandProcessMustBeReconciled(t *testing.T) {
 	for _, stage := range []string{"pending", "running", "cancelled", "reconciled"} {
 		switch stage {
 		case "running":
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET status='running',computer_instance_id=i.id,writer_generation=i.writer_generation FROM computer_instances i WHERE computer_commands.id=$1 AND i.id=$2`, id, request.ComputerInstanceID)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET status='running',computer_instance_id=i.id,writer_generation=i.writer_generation FROM computer_instances i WHERE computer_commands.id=$1 AND i.id=$2`, id, request.InstanceID)
 		case "cancelled":
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET status='cancelled',terminal_at=now(),terminal_reason_code='cancelled' WHERE id=$1`, id)
 		case "reconciled":
@@ -216,7 +209,7 @@ func TestComputerCaptureCommandProcessMustBeReconciled(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = dispatch.BeginComputerCapture(t.Context(), tx, request)
+		_, err = computer.BeginCapture(t.Context(), tx, request)
 		tx.Rollback(t.Context())
 		if stage == "reconciled" {
 			if err != nil {
@@ -229,14 +222,14 @@ func TestComputerCaptureCommandProcessMustBeReconciled(t *testing.T) {
 }
 
 func TestComputerCaptureRechecksDeadlineAfterWaitLock(t *testing.T) {
-	f, work, _, request := dispatchtest.Capture(t)
+	f, work, _, request := computertest.Capture(t)
 	hold, err := f.Pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer hold.Rollback(t.Context())
 	dbtest.MustExec(t, t.Context(), hold, `SELECT id FROM run_waits WHERE run_id=$1 FOR UPDATE`, work.RunID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET writer_expires_at=clock_timestamp()+interval '1 second' WHERE id=$1`, request.ComputerInstanceID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET writer_expires_at=clock_timestamp()+interval '1 second' WHERE id=$1`, request.InstanceID)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	pidCh := make(chan int32, 1)
@@ -254,7 +247,7 @@ func TestComputerCaptureRechecksDeadlineAfterWaitLock(t *testing.T) {
 			return
 		}
 		pidCh <- pid
-		_, e = dispatch.BeginComputerCapture(ctx, tx, request)
+		_, e = computer.BeginCapture(ctx, tx, request)
 		done <- e
 	}()
 	var pid int32
@@ -267,7 +260,7 @@ func TestComputerCaptureRechecksDeadlineAfterWaitLock(t *testing.T) {
 	}
 	for {
 		var blocked, expired bool
-		if err = f.Pool.QueryRow(ctx, `SELECT coalesce((SELECT wait_event_type='Lock' FROM pg_stat_activity WHERE pid=$1),false),writer_expires_at<clock_timestamp() FROM computer_instances WHERE id=$2`, pid, request.ComputerInstanceID).Scan(&blocked, &expired); err != nil {
+		if err = f.Pool.QueryRow(ctx, `SELECT coalesce((SELECT wait_event_type='Lock' FROM pg_stat_activity WHERE pid=$1),false),writer_expires_at<clock_timestamp() FROM computer_instances WHERE id=$2`, pid, request.InstanceID).Scan(&blocked, &expired); err != nil {
 			t.Fatal(err)
 		}
 		if blocked && expired {
@@ -295,20 +288,20 @@ func TestComputerCaptureRechecksDeadlineAfterWaitLock(t *testing.T) {
 }
 
 func TestComputerCaptureDiscoveryFences(t *testing.T) {
-	f, _, _, request := dispatchtest.Capture(t)
+	f, _, _, request := computertest.Capture(t)
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	cp, err := dispatch.BeginComputerCapture(t.Context(), tx, request)
+	cp, err := computer.BeginCapture(t.Context(), tx, request)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	params := db.GetComputerInstanceCaptureCheckpointParams{ComputerInstanceID: request.ComputerInstanceID, EnvironmentID: request.EnvironmentID, WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerEpoch: 1, DesiredVersion: request.DesiredVersion + 1, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds}
+	params := db.GetComputerInstanceCaptureCheckpointParams{ComputerInstanceID: pgvalue.UUID(request.InstanceID), EnvironmentID: pgvalue.UUID(request.EnvironmentID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerEpoch: 1, DesiredVersion: request.DesiredVersion + 1, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds}
 	if got, err := db.New(f.Pool).GetComputerInstanceCaptureCheckpoint(t.Context(), params); err != nil || got.ID != cp.ID {
 		t.Fatalf("capture discovery: %v %v", got, err)
 	}
@@ -344,11 +337,76 @@ func TestComputerCaptureDiscoveryFences(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		dbtest.MustExec(t, t.Context(), tx, test.sql, request.ComputerInstanceID)
+		dbtest.MustExec(t, t.Context(), tx, test.sql, request.InstanceID)
 		_, err = db.New(tx).GetComputerInstanceCaptureCheckpoint(t.Context(), params)
 		tx.Rollback(t.Context())
 		if !errors.Is(err, pgx.ErrNoRows) {
 			t.Fatalf("%s discovered: %v", test.name, err)
 		}
+	}
+}
+
+func TestIdleComputerCaptureRequiresEveryMemberDue(t *testing.T) {
+	for _, tc := range []struct {
+		name, change string
+		want         bool
+	}{
+		{"all due", "", true},
+		{"peer still warm", `UPDATE run_waits SET idle_timeout_ms=3600000 WHERE run_id=$1`, false},
+		{"peer disables suspension", `UPDATE run_waits SET idle_timeout_ms=NULL WHERE run_id=$1`, false},
+		{"peer condition ready", `UPDATE run_waits SET due_at=clock_timestamp()-interval '1 second' WHERE run_id=$1`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _, peer, request := computertest.Capture(t)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_waits SET idle_timeout_ms=1,created_at=clock_timestamp()-interval '1 minute'`)
+			if tc.change != "" {
+				dbtest.MustExec(t, t.Context(), f.Pool, tc.change, peer.RunID)
+			}
+			tx, err := f.Pool.Begin(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(t.Context())
+			_, err = computer.BeginIdleCapture(t.Context(), tx, request)
+			if tc.want {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = tx.Commit(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if !errors.Is(err, pgx.ErrNoRows) {
+					t.Fatalf("capture = %v", err)
+				}
+				if err = tx.Rollback(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				var untouched bool
+				err = f.Pool.QueryRow(t.Context(), `SELECT admission_state='open' AND capture_checkpoint_id IS NULL AND desired_version=$2 AND NOT EXISTS(SELECT 1 FROM computer_checkpoints WHERE id=$3) FROM computer_instances WHERE id=$1`, request.InstanceID, request.DesiredVersion, request.CheckpointID).Scan(&untouched)
+				if err != nil || !untouched {
+					t.Fatalf("rejected capture changed authority: %v %v", untouched, err)
+				}
+			}
+		})
+	}
+}
+
+func TestIdleComputerCaptureEmptyCooldown(t *testing.T) {
+	for _, old := range []bool{false, true} {
+		t.Run(map[bool]string{false: "recent", true: "idle"}[old], func(t *testing.T) {
+			f, _, _, request := computertest.Capture(t)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET status='cancelled',terminal_at=now(),terminal_reason_code='cancelled',process_reconciled_at=now() WHERE computer_instance_id=$1`, request.InstanceID)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET last_activity_at=clock_timestamp()-CASE WHEN $2 THEN interval '1 minute' ELSE interval '0 seconds' END WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, request.InstanceID, old)
+			tx, err := f.Pool.Begin(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(t.Context())
+			_, err = computer.BeginIdleCapture(t.Context(), tx, request)
+			if old && err != nil || !old && !errors.Is(err, pgx.ErrNoRows) {
+				t.Fatalf("old=%v capture=%v", old, err)
+			}
+		})
 	}
 }

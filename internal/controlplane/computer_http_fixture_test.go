@@ -33,6 +33,21 @@ func newWorkerHTTPClient(t *testing.T, handler http.Handler, pool *pgxpool.Pool,
 // into out when out is non-nil.
 func (c workerHTTPClient) post(t *testing.T, path string, body any, want int, out any) *httptest.ResponseRecorder {
 	t.Helper()
+	response := c.send(t, path, body)
+	if response.Code != want {
+		t.Fatalf("POST %s status = %d, want %d: %s", path, response.Code, want, response.Body.String())
+	}
+	if out != nil && response.Code == http.StatusOK {
+		if err := json.Unmarshal(response.Body.Bytes(), out); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return response
+}
+
+// send sends body as JSON and returns the response whatever its status.
+func (c workerHTTPClient) send(t *testing.T, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		t.Fatal(err)
@@ -42,14 +57,6 @@ func (c workerHTTPClient) post(t *testing.T, path string, body any, want int, ou
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	c.handler.ServeHTTP(response, request)
-	if response.Code != want {
-		t.Fatalf("POST %s status = %d, want %d: %s", path, response.Code, want, response.Body.String())
-	}
-	if out != nil && response.Code == http.StatusOK {
-		if err := json.Unmarshal(response.Body.Bytes(), out); err != nil {
-			t.Fatal(err)
-		}
-	}
 	return response
 }
 

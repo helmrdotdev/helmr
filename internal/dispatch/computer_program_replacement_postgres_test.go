@@ -5,11 +5,11 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer/computertest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
-	"github.com/helmrdotdev/helmr/internal/dispatch/dispatchtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -25,7 +25,7 @@ func TestProgramReplacementPreservesCapturedDisk(t *testing.T) {
 }
 
 func testProgramReplacementPreservesCapturedDisk(t *testing.T, programless bool) {
-	f, old, _, capture := dispatchtest.Capture(t)
+	f, old, _, capture := computertest.Capture(t)
 	key, err := disk.NewFencingKey(make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
@@ -53,26 +53,26 @@ func testProgramReplacementPreservesCapturedDisk(t *testing.T, programless bool)
 	if _, err = a.PlaceReadyRun(t.Context(), candidate); !errors.Is(err, dispatch.ErrCapacityUnavailable) {
 		t.Fatalf("old live members did not block: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET status='cancelled',terminal_at=now(),terminal_reason_code='cancelled',process_reconciled_at=now() WHERE computer_instance_id=$1`, capture.ComputerInstanceID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET status='cancelled',terminal_at=now(),terminal_reason_code='cancelled',process_reconciled_at=now() WHERE computer_instance_id=$1`, capture.InstanceID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET status='cancelled',terminal_at=now(),failure='{"code":"cancelled","message":"Cancelled","details":{}}',current_run_lease_id=NULL,active_started_at=NULL WHERE computer_id=(SELECT computer_id FROM runs WHERE id=$1) AND id<>$1`, runID)
 	if programless {
-		dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM run_waits WHERE current_run_lease_id IN (SELECT id FROM run_leases WHERE computer_instance_id=$1)`, capture.ComputerInstanceID)
-		dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM run_leases WHERE computer_instance_id=$1`, capture.ComputerInstanceID)
-		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET program_deployment_id=NULL,observed_state='allocated',observed_desired_version=0,ready_at=NULL,mount_state='pending',mounted_at=NULL WHERE id=$1`, capture.ComputerInstanceID)
+		dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM run_waits WHERE current_run_lease_id IN (SELECT id FROM run_leases WHERE computer_instance_id=$1)`, capture.InstanceID)
+		dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM run_leases WHERE computer_instance_id=$1`, capture.InstanceID)
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET program_deployment_id=NULL,observed_state='allocated',observed_desired_version=0,ready_at=NULL,mount_state='pending',mounted_at=NULL WHERE id=$1`, capture.InstanceID)
 		if _, err = a.PlaceReadyRun(t.Context(), candidate); err == nil {
 			t.Fatal("preparing source accepted a Run")
 		}
 		var unchanged bool
-		if err = f.Pool.QueryRow(t.Context(), `SELECT program_deployment_id IS NULL AND desired_version=1 AND capture_checkpoint_id IS NULL FROM computer_instances WHERE id=$1`, capture.ComputerInstanceID).Scan(&unchanged); err != nil || !unchanged {
+		if err = f.Pool.QueryRow(t.Context(), `SELECT program_deployment_id IS NULL AND desired_version=1 AND capture_checkpoint_id IS NULL FROM computer_instances WHERE id=$1`, capture.InstanceID).Scan(&unchanged); err != nil || !unchanged {
 			t.Fatalf("in-flight preparation changed: %v %v", unchanged, err)
 		}
-		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='ready',observed_desired_version=desired_version,ready_at=now(),mount_state='mounted',mounted_at=now() WHERE id=$1`, capture.ComputerInstanceID)
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='ready',observed_desired_version=desired_version,ready_at=now(),mount_state='mounted',mounted_at=now() WHERE id=$1`, capture.InstanceID)
 	}
 	if _, err = a.PlaceReadyRun(t.Context(), candidate); !errors.Is(err, dispatch.ErrCapacityUnavailable) {
 		t.Fatalf("capture start=%v", err)
 	}
 	var checkpointID pgtype.UUID
-	if err = f.Pool.QueryRow(t.Context(), `SELECT capture_checkpoint_id FROM computer_instances WHERE id=$1`, capture.ComputerInstanceID).Scan(&checkpointID); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT capture_checkpoint_id FROM computer_instances WHERE id=$1`, capture.InstanceID).Scan(&checkpointID); err != nil {
 		t.Fatal(err)
 	}
 	var cp db.ComputerCheckpoint
@@ -92,24 +92,12 @@ func testProgramReplacementPreservesCapturedDisk(t *testing.T, programless bool)
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	worker, request := dispatchtest.CaptureRequest(t, f, cp)
-	uploaded := dispatchtest.PrepareCapture(t, f, worker, request)
-	tx, err = f.Pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(t.Context())
-	cp, err = dispatch.CompleteComputerCheckpoint(t.Context(), tx, worker, request, uploaded)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = tx.Commit(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	ref, manifest := computertest.CaptureRequest(t, f, cp)
+	cp = computertest.Complete(t, f, ref, manifest, computertest.PrepareCapture(t, f, ref, manifest))
 	if _, err = a.PlaceReadyRun(t.Context(), candidate); err == nil {
 		t.Fatal("replacement before exclusion")
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='closed',observed_desired_version=desired_version,mount_state='unmounted',unmounted_at=now(),terminal_at=now(),reclaimed_at=now(),reclaim_evidence='{"method":"session_closed"}',terminal_reason_code='checkpointed' WHERE id=$1`, capture.ComputerInstanceID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='closed',observed_desired_version=desired_version,mount_state='unmounted',unmounted_at=now(),terminal_at=now(),reclaimed_at=now(),reclaim_evidence='{"method":"session_closed"}',terminal_reason_code='checkpointed' WHERE id=$1`, capture.InstanceID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET writer_generation=writer_generation+1 WHERE id=$1`, computerID)
 	if _, err = a.PlaceReadyRun(t.Context(), candidate); !errors.Is(err, dispatch.ErrCandidateChanged) {
 		t.Fatalf("stale checkpoint generation=%v", err)

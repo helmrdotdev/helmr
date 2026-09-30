@@ -29,8 +29,10 @@ const (
 	computerKeyDeliveryOperation
 	computerInitialObjectOperation
 	computerInitialVersionOperation
+	computerCheckpointRegisterOperation
 	computerCheckpointObjectOperation
 	computerCheckpointReadyOperation
+	computerCheckpointFailedOperation
 	computerSaveOperation
 )
 
@@ -41,11 +43,11 @@ func (o computerOperation) instance() bool {
 	return o >= computerInstanceObservationOperation
 }
 
-// publication reports whether the operation records disk objects or
-// publishes a checkpoint or save, whose deterministic admission failures are
-// changed authority as well.
+// publication reports whether the operation registers a checkpoint, records
+// disk objects or publishes a checkpoint or save, whose deterministic
+// admission failures are changed authority as well.
 func (o computerOperation) publication() bool {
-	return o == computerCheckpointObjectOperation || o == computerCheckpointReadyOperation || o == computerSaveOperation
+	return o == computerCheckpointRegisterOperation || o == computerCheckpointObjectOperation || o == computerCheckpointReadyOperation || o == computerSaveOperation
 }
 
 // computerAuthorityChanged is the conflict each Instance operation reports
@@ -55,8 +57,10 @@ var computerAuthorityChanged = map[computerOperation]string{
 	computerInstanceRenewalOperation:     "Computer Instance writer is stale",
 	computerRunCleanupOperation:          "Run cleanup authority is stale",
 	computerRestorePlanOperation:         "Computer restore authority changed",
+	computerCheckpointRegisterOperation:  "checkpoint registration is stale or differs from its candidate",
 	computerCheckpointObjectOperation:    "computer publication authority changed",
-	computerCheckpointReadyOperation:     "computer publication authority changed",
+	computerCheckpointReadyOperation:     "checkpoint ready source or candidate changed",
+	computerCheckpointFailedOperation:    "checkpoint failure is stale or differs from its committed receipt",
 	computerSaveOperation:                "computer publication authority changed",
 }
 
@@ -70,6 +74,9 @@ func computerError(err error, operation computerOperation) error {
 	var objectConflict computer.ObjectConflictError
 	if operation.instance() && errors.Is(err, workergroup.ErrStaleClaims) {
 		return unauthorized(errors.New("worker authentication is required"))
+	}
+	if errors.Is(err, computer.ErrCheckpointCandidate) {
+		return badRequest(err)
 	}
 	switch operation {
 	case computerKeyDeliveryOperation:
@@ -127,8 +134,8 @@ func computerError(err error, operation computerOperation) error {
 	}
 }
 
-// writeComputerPublicationError writes the failure of a worker's disk object
-// or publication operation. Failures the worker is not told about are logged
+// writeComputerPublicationError writes the failure of a worker's checkpoint,
+// disk object or publication operation. Failures the worker is not told about are logged
 // and reported as internal.
 func (s *Server) writeComputerPublicationError(w http.ResponseWriter, err error, operation computerOperation) {
 	mapped := computerError(err, operation)

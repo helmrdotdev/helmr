@@ -40,7 +40,6 @@ var requestDecoders = map[string]bool{
 // reads a request body; request-derived input reaches them only after the
 // owner decoded or canonicalized it, and they report fixed messages.
 var controlPlaneDecodersOutsideOwner = map[string]string{
-	"Server.commitCheckpointReady":       "stored checkpoint manifest",
 	"Server.decodeAuthFlow":              "sealed auth flow cookie, fixed message",
 	"Server.parseCommandLogCursor":       "signed cursor, fixed message",
 	"Server.parseRunTelemetryCursor":     "signed cursor, fixed message",
@@ -49,7 +48,6 @@ var controlPlaneDecodersOutsideOwner = map[string]string{
 	"actorWaitIdleTimeout":               "stored definition manifest",
 	"applyRunMetadataMutation":           "stored run metadata",
 	"cancelCommandInTx":                  "stored idempotency receipt",
-	"checkpointCorrelationID":            "stored checkpoint manifest",
 	"decodeAPIKeyListCursor":             "opaque cursor, fixed message",
 	"decodeActorStartObject":             "canonical request member, fixed message",
 	"decodeComputerListCursor":           "opaque cursor, fixed message",

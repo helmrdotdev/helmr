@@ -2,11 +2,11 @@ package dispatch_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/computer/computertest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
-	"github.com/helmrdotdev/helmr/internal/dispatch/dispatchtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"testing"
 	"uuid"
@@ -15,18 +15,15 @@ import (
 func TestCheckpointPlacementAllocatesRestoringInstance(t *testing.T) {
 	for _, kind := range []string{"run", "command", "missing parked checkpoint"} {
 		t.Run(kind, func(t *testing.T) {
-			f, worker, request, uploaded := dispatchtest.ReadyCapture(t, kind != "missing parked checkpoint")
+			f, ref, manifest, objects := computertest.ReadyCapture(t, kind != "missing parked checkpoint")
+			cp := computertest.Complete(t, f, ref, manifest, objects)
 			tx, err := f.Pool.Begin(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer tx.Rollback(t.Context())
-			cp, err := dispatch.CompleteComputerCheckpoint(t.Context(), tx, worker, request, uploaded)
-			if err != nil {
-				t.Fatal(err)
-			}
-			dbtest.MustExec(t, t.Context(), tx, `UPDATE computer_instances SET observed_state='closed',observed_desired_version=desired_version,mount_state='unmounted',unmounted_at=now(),terminal_at=now(),reclaimed_at=now(),reclaim_evidence='{"method":"session_closed"}',terminal_reason_code='checkpointed' WHERE id=$1`, request.ComputerInstanceID)
-			dbtest.MustExec(t, t.Context(), tx, `UPDATE run_leases SET process_reconciled_at=now() WHERE computer_instance_id=$1`, request.ComputerInstanceID)
+			dbtest.MustExec(t, t.Context(), tx, `UPDATE computer_instances SET observed_state='closed',observed_desired_version=desired_version,mount_state='unmounted',unmounted_at=now(),terminal_at=now(),reclaimed_at=now(),reclaim_evidence='{"method":"session_closed"}',terminal_reason_code='checkpointed' WHERE id=$1`, ref.InstanceID)
+			dbtest.MustExec(t, t.Context(), tx, `UPDATE run_leases SET process_reconciled_at=now() WHERE computer_instance_id=$1`, ref.InstanceID)
 			if err = tx.Commit(t.Context()); err != nil {
 				t.Fatal(err)
 			}
@@ -73,7 +70,7 @@ func TestCheckpointPlacementAllocatesRestoringInstance(t *testing.T) {
 				defer tx.Rollback(t.Context())
 				dbtest.MustExec(t, t.Context(), tx, `SET CONSTRAINTS ALL DEFERRED`)
 				dbtest.MustExec(t, t.Context(), tx, `INSERT INTO runs(id,org_id,project_id,environment_id,deployment_id,deployment_definition_id,entrypoint_kind,entrypoint_declared_id,cause_kind,computer_id,base_computer_disk_version_id,payload,queue_name,queue_origin_at,queue_score_at,max_active_duration_ms,retry_policy,trace_id,root_span_id)
-   SELECT $2,org_id,project_id,environment_id,program_deployment_id,$3,'task','test-task','api',computer_id,(SELECT head_disk_version_id FROM computers WHERE id=computer_id),'{}','default',now(),now(),300000,'{"enabled":false}','11111111111111111111111111111111','2222222222222222' FROM computer_instances WHERE id=$1`, request.ComputerInstanceID, id, f.TaskDefinitionID)
+   SELECT $2,org_id,project_id,environment_id,program_deployment_id,$3,'task','test-task','api',computer_id,(SELECT head_disk_version_id FROM computers WHERE id=computer_id),'{}','default',now(),now(),300000,'{"enabled":false}','11111111111111111111111111111111','2222222222222222' FROM computer_instances WHERE id=$1`, ref.InstanceID, id, f.TaskDefinitionID)
 				dbtest.MustExec(t, t.Context(), tx, `INSERT INTO run_attempts(run_id,number,entrypoint_kind,computer_id,base_computer_disk_version_id) SELECT id,1,entrypoint_kind,computer_id,base_computer_disk_version_id FROM runs WHERE id=$1`, id)
 				if err = tx.Commit(t.Context()); err != nil {
 					t.Fatal(err)
@@ -92,7 +89,7 @@ func TestCheckpointPlacementAllocatesRestoringInstance(t *testing.T) {
 				t.Fatalf("allocated restore=%+v", instance)
 			}
 			var pinned bool
-			if err := f.Pool.QueryRow(t.Context(), `SELECT a.worker_group_id=b.worker_group_id AND a.vm_platform_id=b.vm_platform_id AND a.cpu_config_digest=b.cpu_config_digest AND a.vm_vcpu_count=b.vm_vcpu_count AND a.writer_generation>b.writer_generation FROM computer_instances a,computer_instances b WHERE a.id=$1 AND b.id=$2`, instance.ID, request.ComputerInstanceID).Scan(&pinned); err != nil || !pinned {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT a.worker_group_id=b.worker_group_id AND a.vm_platform_id=b.vm_platform_id AND a.cpu_config_digest=b.cpu_config_digest AND a.vm_vcpu_count=b.vm_vcpu_count AND a.writer_generation>b.writer_generation FROM computer_instances a,computer_instances b WHERE a.id=$1 AND b.id=$2`, instance.ID, ref.InstanceID).Scan(&pinned); err != nil || !pinned {
 				t.Fatalf("restore identity pinned=%v %v", pinned, err)
 			}
 		})

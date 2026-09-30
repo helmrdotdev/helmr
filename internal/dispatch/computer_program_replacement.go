@@ -5,6 +5,7 @@ import (
 	"errors"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -77,7 +78,7 @@ func prepareComputerProgram(ctx context.Context, tx pgx.Tx, candidate ReadyRunCa
 	}
 	if !checkpointID.Valid {
 		// Capture locks the stable resident set before any new target member lock.
-		if _, err = BeginComputerCapture(ctx, tx, db.BeginComputerCheckpointParams{CheckpointID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: environmentID, ComputerInstanceID: source.ID, WriterGeneration: source.WriterGeneration, MembershipRevision: source.MembershipRevision, DesiredVersion: source.DesiredVersion}); err != nil {
+		if _, err = computer.BeginCapture(ctx, tx, computer.Capture{CheckpointID: uuid.NewV7(), EnvironmentID: pgvalue.MustUUIDValue(environmentID), InstanceID: pgvalue.MustUUIDValue(source.ID), WriterGeneration: source.WriterGeneration, MembershipRevision: source.MembershipRevision, DesiredVersion: source.DesiredVersion}); err != nil {
 			return false, err
 		}
 		if _, err = lockRunPlacementAuthority(ctx, tx, candidate, computerPlacement{computer: c}); err != nil {

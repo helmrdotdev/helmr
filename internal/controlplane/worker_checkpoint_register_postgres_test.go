@@ -1,74 +1,72 @@
 package controlplane
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/computer/computertest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/dispatch/dispatchtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5"
 )
 
+const (
+	checkpointRegisterPath = "/worker/v1/computer/checkpoints/register"
+	checkpointReadyPath    = "/worker/v1/computer/checkpoints/ready"
+	checkpointFailedPath   = "/worker/v1/computer/checkpoints/failed"
+)
+
+// computerCheckpointFixture serves a registered capture's worker host
+// through NewServer, with object storage the host uploads to.
 type computerCheckpointFixture struct {
 	runtest.Fixture
-	server *Server
-	worker workergroup.HostPrincipal
+	queries *db.Queries
+	store   testUploadStore
+	worker  workerHTTPClient
 }
 
 func checkpointRegistrationFixture(t *testing.T) (*computerCheckpointFixture, workerapi.RegisterCheckpointRequest) {
 	t.Helper()
-	base, worker, request := dispatchtest.RegisteredCapture(t, false)
-	dbtest.MustExec(t, t.Context(), base.Pool, `UPDATE runs SET active_started_at=clock_timestamp(),max_active_duration_ms=3600000 WHERE current_run_lease_id IN (SELECT id FROM run_leases WHERE computer_instance_id=$1)`, request.ComputerInstanceID)
+	base, ref, manifest := computertest.RegisteredCapture(t, false)
+	dbtest.MustExec(t, t.Context(), base.Pool, `UPDATE runs SET active_started_at=clock_timestamp(),max_active_duration_ms=3600000 WHERE current_run_lease_id IN (SELECT id FROM run_leases WHERE computer_instance_id=$1)`, ref.InstanceID)
 	store := newTestUploadStore(t)
-	return &computerCheckpointFixture{Fixture: base,
-		server: &Server{db: db.New(base.Pool), tx: base.Pool, cas: store, log: slog.Default()},
-		worker: workergroup.HostPrincipal{HostID: base.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: worker.Epoch, HostClaimVersion: 1, GroupClaimVersion: 1},
-	}, request
+	handler := newPostgresServer(t, base.Pool, func(cfg *ServerConfig) { cfg.CAS = store })
+	return &computerCheckpointFixture{Fixture: base, queries: db.New(base.Pool), store: store, worker: newWorkerHTTPClient(t, handler, base.Pool, base.WorkerID)},
+		workerRegisterCheckpointRequest(t, ref, manifest)
 }
 
-func (f *computerCheckpointFixture) workerCall(t *testing.T, handler http.HandlerFunc, body any, result any) {
+// workerRegisterCheckpointRequest is the worker host's registration of the
+// candidate: the owner manifest has the wire manifest's encoding.
+func workerRegisterCheckpointRequest(t *testing.T, ref computer.CheckpointRef, manifest computer.CheckpointManifest) workerapi.RegisterCheckpointRequest {
 	t.Helper()
-	raw, err := json.Marshal(body)
+	encoded, err := json.Marshal(manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(raw))
-	r = r.WithContext(context.WithValue(t.Context(), workerContextKey{}, f.worker))
-	w := httptest.NewRecorder()
-	handler(w, r)
-	if w.Code != http.StatusOK && w.Code != http.StatusNoContent {
-		t.Fatalf("Worker request %T: status=%d body=%s", body, w.Code, w.Body.String())
+	request := workerapi.RegisterCheckpointRequest{ComputerInstanceID: ref.InstanceID.String(), WorkerEpoch: ref.WorkerEpoch, DesiredVersion: ref.DesiredVersion, CheckpointID: ref.CheckpointID.String()}
+	if err = json.Unmarshal(encoded, &request.Manifest); err != nil {
+		t.Fatal(err)
 	}
-	if result != nil {
-		if err := json.Unmarshal(w.Body.Bytes(), result); err != nil {
-			t.Fatal(err)
-		}
-	}
+	return request
 }
 
 func TestCheckpointRegistrationPinsCompleteCandidateUntilInvalidation(t *testing.T) {
 	f, req := checkpointRegistrationFixture(t)
 	var response workerapi.ComputerCheckpointResponse
-	f.workerCall(t, f.server.workerRegisterCheckpoint, req, &response)
+	f.worker.post(t, checkpointRegisterPath, req, http.StatusOK, &response)
 	if response.CheckpointID != req.CheckpointID || response.ComputerDiskVersionID != "" {
 		t.Fatalf("registration published a version: %+v", response)
 	}
 	// Nothing was uploaded. All four runtime descriptors are owned first.
-	rows, err := f.server.db.ListCheckpointObjects(t.Context(), pgvalue.UUID(uuid.MustParse(req.CheckpointID)))
+	rows, err := f.queries.ListCheckpointObjects(t.Context(), pgvalue.UUID(uuid.MustParse(req.CheckpointID)))
 	if err != nil || len(rows) != 4 {
 		t.Fatalf("objects=%d %v", len(rows), err)
 	}
@@ -81,36 +79,32 @@ func TestCheckpointRegistrationPinsCompleteCandidateUntilInvalidation(t *testing
 			t.Fatal("creating candidate lost pin")
 		}
 	}
-	f.workerCall(t, f.server.workerRegisterCheckpoint, req, nil)
+	f.worker.post(t, checkpointRegisterPath, req, http.StatusOK, nil)
 	changed := req
 	changed.Manifest.RuntimeState.Config = json.RawMessage(`{"different":true}`)
-	if _, err := f.server.registerCheckpoint(t.Context(), f.worker, changed); err == nil {
-		t.Fatal("replaced immutable candidate")
-	}
+	f.worker.post(t, checkpointRegisterPath, changed, http.StatusConflict, nil)
 	// Use the actual failed receipt path, not a test-only unpin operation.
-	f.workerCall(t, f.server.workerMarkCheckpointFailed, workerapi.CheckpointFailedRequest{ComputerInstanceID: req.ComputerInstanceID, WorkerEpoch: req.WorkerEpoch, DesiredVersion: req.DesiredVersion, CheckpointID: req.CheckpointID, Error: "upload failed"}, nil)
-	collectible, err := f.server.db.ListAbandonedCasBlobs(t.Context(), 100)
+	f.worker.post(t, checkpointFailedPath, workerapi.CheckpointFailedRequest{ComputerInstanceID: req.ComputerInstanceID, WorkerEpoch: req.WorkerEpoch, DesiredVersion: req.DesiredVersion, CheckpointID: req.CheckpointID, Error: "upload failed"}, http.StatusOK, nil)
+	collectible, err := f.queries.ListAbandonedCasBlobs(t.Context(), 100)
 	if err != nil || len(collectible) != 4 {
 		t.Fatalf("collector cannot discover failed set: %v %v", collectible, err)
 	}
 	for _, row := range rows {
-		if n, err := f.server.db.RetireAbandonedCasBlob(t.Context(), row.Digest); err != nil || n != 1 {
+		if n, err := f.queries.RetireAbandonedCasBlob(t.Context(), row.Digest); err != nil || n != 1 {
 			t.Fatalf("failed checkpoint object not collectible: %d %v", n, err)
 		}
 	}
-	if _, err := f.server.registerCheckpoint(t.Context(), f.worker, req); err == nil {
-		t.Fatal("reopened invalid candidate")
-	}
+	f.worker.post(t, checkpointRegisterPath, req, http.StatusConflict, nil)
 }
 
 func TestCheckpointRegistrationRollsBackWholeSetOnRetiredMember(t *testing.T) {
 	f, req := checkpointRegistrationFixture(t)
 	digest := req.Manifest.RuntimeState.MemoryArtifacts[0].Digest
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_blobs(digest,size_bytes,retired_at,next_reclaim_at) VALUES($1,$2,now(),now())`, digest, req.Manifest.RuntimeState.MemoryArtifacts[0].SizeBytes)
-	if _, err := f.server.registerCheckpoint(t.Context(), f.worker, req); err == nil {
+	if response := f.worker.send(t, checkpointRegisterPath, req); response.Code == http.StatusOK {
 		t.Fatal("adopted retired memory")
 	}
-	rows, err := f.server.db.ListCheckpointObjects(t.Context(), pgvalue.UUID(uuid.MustParse(req.CheckpointID)))
+	rows, err := f.queries.ListCheckpointObjects(t.Context(), pgvalue.UUID(uuid.MustParse(req.CheckpointID)))
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("partial registration survived: %d %v", len(rows), err)
 	}
@@ -122,29 +116,32 @@ func TestCheckpointRegistrationRollsBackWholeSetOnRetiredMember(t *testing.T) {
 
 func TestCheckpointRegistrationRejectsWrongSource(t *testing.T) {
 	f, req := checkpointRegistrationFixture(t)
-	for _, change := range []func(*workerapi.RegisterCheckpointRequest){
-		func(r *workerapi.RegisterCheckpointRequest) { r.DesiredVersion++ },
-		func(r *workerapi.RegisterCheckpointRequest) {
+	for _, change := range []struct {
+		status int
+		apply  func(*workerapi.RegisterCheckpointRequest)
+	}{
+		{http.StatusConflict, func(r *workerapi.RegisterCheckpointRequest) { r.DesiredVersion++ }},
+		{http.StatusBadRequest, func(r *workerapi.RegisterCheckpointRequest) {
 			r.Manifest.RecoveryPoint.ComputerInstanceID = uuid.NewV7().String()
-		},
-		func(r *workerapi.RegisterCheckpointRequest) {
+		}},
+		{http.StatusBadRequest, func(r *workerapi.RegisterCheckpointRequest) {
 			copy := *r.Manifest.RuntimeState.Computer
 			copy.LogicalBytes /= 2
 			r.Manifest.RuntimeState.Computer = &copy
-		},
-		func(r *workerapi.RegisterCheckpointRequest) {
+		}},
+		{http.StatusBadRequest, func(r *workerapi.RegisterCheckpointRequest) {
 			copy := *r.Manifest.RuntimeState.Computer
 			copy.ComputerID = uuid.NewV7().String()
 			r.Manifest.RuntimeState.Computer = &copy
-		},
+		}},
+		{http.StatusBadRequest, func(r *workerapi.RegisterCheckpointRequest) { r.CheckpointID = "not-a-uuid" }},
+		{http.StatusBadRequest, func(r *workerapi.RegisterCheckpointRequest) { r.WorkerEpoch = 0 }},
 	} {
 		changed := req
-		change(&changed)
-		if _, err := f.server.registerCheckpoint(context.Background(), f.worker, changed); err == nil {
-			t.Fatal("accepted mismatched authority")
-		}
+		change.apply(&changed)
+		f.worker.post(t, checkpointRegisterPath, changed, change.status, nil)
 	}
-	rows, err := db.New(f.Pool).ListCheckpointObjects(t.Context(), pgvalue.UUID(uuid.MustParse(req.CheckpointID)))
+	rows, err := f.queries.ListCheckpointObjects(t.Context(), pgvalue.UUID(uuid.MustParse(req.CheckpointID)))
 	if err != nil || len(rows) != 0 {
 		t.Fatal("stale registration left objects")
 	}
@@ -159,14 +156,14 @@ func TestCheckpointRegistrationConcurrentIdentity(t *testing.T) {
 				other.Manifest.RuntimeState.Config = json.RawMessage(`{"different":true}`)
 			}
 			start := make(chan struct{})
-			results := make(chan error, 2)
+			results := make(chan int, 2)
 			for _, r := range []workerapi.RegisterCheckpointRequest{req, other} {
-				go func() { <-start; _, err := f.server.registerCheckpoint(t.Context(), f.worker, r); results <- err }()
+				go func() { <-start; results <- f.worker.send(t, checkpointRegisterPath, r).Code }()
 			}
 			close(start)
 			failures := 0
 			for range 2 {
-				if err := <-results; err != nil {
+				if status := <-results; status != http.StatusOK {
 					failures++
 				}
 			}
@@ -177,7 +174,7 @@ func TestCheckpointRegistrationConcurrentIdentity(t *testing.T) {
 			if failures != want {
 				t.Fatalf("conflicts=%d want %d", failures, want)
 			}
-			rows, err := f.server.db.ListCheckpointObjects(t.Context(), pgvalue.UUID(uuid.MustParse(req.CheckpointID)))
+			rows, err := f.queries.ListCheckpointObjects(t.Context(), pgvalue.UUID(uuid.MustParse(req.CheckpointID)))
 			if err != nil || len(rows) != 4 {
 				t.Fatalf("partial set: %d %v", len(rows), err)
 			}
@@ -201,8 +198,8 @@ func TestCheckpointRegistrationExpiresDuringObjectLock(t *testing.T) {
 	if err := f.Pool.QueryRow(ctx, `UPDATE computer_checkpoints SET expires_at=clock_timestamp()+interval '3 seconds' WHERE id=$1 RETURNING expires_at`, req.CheckpointID).Scan(&expiry); err != nil {
 		t.Fatal(err)
 	}
-	result := make(chan error, 1)
-	go func() { _, err := f.server.registerCheckpoint(ctx, f.worker, req); result <- err }()
+	result := make(chan int, 1)
+	go func() { result <- f.worker.send(t, checkpointRegisterPath, req).Code }()
 	for {
 		var blocked bool
 		if err := f.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, locker.Conn().PgConn().PID()).Scan(&blocked); err != nil {
@@ -212,8 +209,8 @@ func TestCheckpointRegistrationExpiresDuringObjectLock(t *testing.T) {
 			break
 		}
 		select {
-		case err := <-result:
-			t.Fatalf("registration did not reach object lock: %v", err)
+		case status := <-result:
+			t.Fatalf("registration did not reach object lock: %d", status)
 		case <-ctx.Done():
 			t.Fatal(ctx.Err())
 		case <-time.After(time.Millisecond):
@@ -227,10 +224,10 @@ func TestCheckpointRegistrationExpiresDuringObjectLock(t *testing.T) {
 	if err := locker.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-result; !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("expired registration: %v", err)
+	if status := <-result; status != http.StatusConflict {
+		t.Fatalf("expired registration: %d", status)
 	}
-	rows, err := f.server.db.ListCheckpointObjects(ctx, pgvalue.UUID(uuid.MustParse(req.CheckpointID)))
+	rows, err := f.queries.ListCheckpointObjects(ctx, pgvalue.UUID(uuid.MustParse(req.CheckpointID)))
 	if err != nil || len(rows) != 0 {
 		t.Fatal("expired transaction retained a partial candidate")
 	}
@@ -238,15 +235,11 @@ func TestCheckpointRegistrationExpiresDuringObjectLock(t *testing.T) {
 
 func TestCheckpointRegistrationCannotBypassPairedPublication(t *testing.T) {
 	f, registered := checkpointRegistrationFixture(t)
-	if _, err := f.server.registerCheckpoint(t.Context(), f.worker, registered); err != nil {
-		t.Fatal(err)
-	}
+	f.worker.post(t, checkpointRegisterPath, registered, http.StatusOK, nil)
 	ready := workerapi.CheckpointReadyRequest(registered)
 	ready.Manifest.RuntimeState.Computer = nil
-	if status := checkpointReadyStatus(t, f, ready); status != http.StatusBadRequest {
-		t.Fatalf("checkpoint without paired Computer disk: status=%d", status)
-	}
-	rows, err := f.server.db.ListCheckpointObjects(t.Context(), pgvalue.UUID(uuid.MustParse(registered.CheckpointID)))
+	f.worker.post(t, checkpointReadyPath, ready, http.StatusBadRequest, nil)
+	rows, err := f.queries.ListCheckpointObjects(t.Context(), pgvalue.UUID(uuid.MustParse(registered.CheckpointID)))
 	if err != nil || len(rows) != 4 {
 		t.Fatal("publication rejection lost candidate")
 	}

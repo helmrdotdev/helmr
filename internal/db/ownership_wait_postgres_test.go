@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"testing"
 	"time"
@@ -321,11 +321,11 @@ func ownershipCapture(t *testing.T, f ownershipWaitFixture, work runtest.RunLeas
 }
 func ownershipBeginCapture(t *testing.T, f ownershipWaitFixture, work runtest.RunLease, tx pgx.Tx, id pgtype.UUID) {
 	t.Helper()
-	p := db.BeginComputerCheckpointParams{CheckpointID: id, EnvironmentID: pgvalue.UUID(f.EnvironmentID)}
-	if err := tx.QueryRow(t.Context(), `SELECT i.id,i.writer_generation,i.membership_revision,i.desired_version FROM computer_instances i JOIN run_leases l ON l.computer_instance_id=i.id WHERE l.id=$1`, work.LeaseID).Scan(&p.ComputerInstanceID, &p.WriterGeneration, &p.MembershipRevision, &p.DesiredVersion); err != nil {
+	p := computer.Capture{CheckpointID: pgvalue.MustUUIDValue(id), EnvironmentID: f.EnvironmentID}
+	if err := tx.QueryRow(t.Context(), `SELECT i.id,i.writer_generation,i.membership_revision,i.desired_version FROM computer_instances i JOIN run_leases l ON l.computer_instance_id=i.id WHERE l.id=$1`, work.LeaseID).Scan(&p.InstanceID, &p.WriterGeneration, &p.MembershipRevision, &p.DesiredVersion); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dispatch.BeginComputerCapture(t.Context(), tx, p); err != nil {
+	if _, err := computer.BeginCapture(t.Context(), tx, p); err != nil {
 		t.Fatal(err)
 	}
 }

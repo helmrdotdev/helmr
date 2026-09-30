@@ -73,13 +73,17 @@ func TestComputerErrorPreservesPublicStatusesAndWorkerFailures(t *testing.T) {
 // stay internal. Key delivery reports only rejected authority as a conflict
 // and anything else as retryable unavailability; initial preparation reports
 // every other failure as a conflict except unavailable object storage;
-// checkpoint objects and saves keep their own storage statuses. Run-sourced aggregate operations report stale claims through
-// their Run source, never as a Computer failure.
+// checkpoint objects and saves keep their own storage statuses; checkpoint
+// registration, readiness and failure report a rejected candidate as 400, and
+// only registration treats a deterministic admission failure as a conflict.
+// Run-sourced aggregate operations report stale claims through their Run
+// source, never as a Computer failure.
 func TestComputerErrorMapsInstanceOperations(t *testing.T) {
 	input := computer.ValidateKey(new(" padded "))
 	internal := errors.New("database unavailable")
 	storage := fmt.Errorf("%w: %w", computer.ErrStorageUnavailable, errors.New("stat timeout"))
 	admission := &pgconn.PgError{Code: "23514"}
+	candidate := fmt.Errorf("%w: manifest", computer.ErrCheckpointCandidate)
 	for _, test := range []struct {
 		name      string
 		err       error
@@ -119,8 +123,21 @@ func TestComputerErrorMapsInstanceOperations(t *testing.T) {
 		{"checkpoint object input", input, computerCheckpointObjectOperation, http.StatusBadRequest, "bad_request"},
 		{"checkpoint object storage", storage, computerCheckpointObjectOperation, http.StatusServiceUnavailable, "service_unavailable"},
 		{"checkpoint object internal", internal, computerCheckpointObjectOperation, http.StatusInternalServerError, "internal_error"},
+		{"checkpoint register stale claims", workergroup.ErrStaleClaims, computerCheckpointRegisterOperation, http.StatusUnauthorized, "unauthorized"},
+		{"checkpoint register candidate", candidate, computerCheckpointRegisterOperation, http.StatusBadRequest, "bad_request"},
+		{"checkpoint register changed", computer.ErrAuthorityChanged, computerCheckpointRegisterOperation, http.StatusConflict, "conflict"},
+		{"checkpoint register admission", admission, computerCheckpointRegisterOperation, http.StatusConflict, "conflict"},
+		{"checkpoint register internal", internal, computerCheckpointRegisterOperation, http.StatusInternalServerError, "internal_error"},
+		{"checkpoint ready candidate", candidate, computerCheckpointReadyOperation, http.StatusBadRequest, "bad_request"},
+		{"checkpoint ready changed", computer.ErrAuthorityChanged, computerCheckpointReadyOperation, http.StatusConflict, "conflict"},
 		{"checkpoint ready admission", admission, computerCheckpointReadyOperation, http.StatusConflict, "conflict"},
+		{"checkpoint ready storage", storage, computerCheckpointReadyOperation, http.StatusInternalServerError, "internal_error"},
 		{"checkpoint ready internal", internal, computerCheckpointReadyOperation, http.StatusInternalServerError, "internal_error"},
+		{"checkpoint failed stale claims", workergroup.ErrStaleClaims, computerCheckpointFailedOperation, http.StatusUnauthorized, "unauthorized"},
+		{"checkpoint failed candidate", candidate, computerCheckpointFailedOperation, http.StatusBadRequest, "bad_request"},
+		{"checkpoint failed changed", computer.ErrAuthorityChanged, computerCheckpointFailedOperation, http.StatusConflict, "conflict"},
+		{"checkpoint failed admission", admission, computerCheckpointFailedOperation, http.StatusInternalServerError, "internal_error"},
+		{"checkpoint failed internal", internal, computerCheckpointFailedOperation, http.StatusInternalServerError, "internal_error"},
 		{"save stale claims", workergroup.ErrStaleClaims, computerSaveOperation, http.StatusUnauthorized, "unauthorized"},
 		{"save changed", computer.ErrAuthorityChanged, computerSaveOperation, http.StatusConflict, "conflict"},
 		{"save admission", admission, computerSaveOperation, http.StatusConflict, "conflict"},

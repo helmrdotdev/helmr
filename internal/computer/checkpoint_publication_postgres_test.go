@@ -14,11 +14,10 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/computer/computertest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
-	"github.com/helmrdotdev/helmr/internal/dispatch/dispatchtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -56,29 +55,19 @@ func registerEmptyCapture(t *testing.T, f runtest.Fixture, member runtest.RunLea
 	if err != nil {
 		t.Fatal(err)
 	}
-	tx, err := f.Pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(context.Background())
-	cp, err := dispatch.BeginComputerCapture(t.Context(), tx, db.BeginComputerCheckpointParams{ComputerInstanceID: instance.ID, EnvironmentID: instance.EnvironmentID, WriterGeneration: instance.WriterGeneration, MembershipRevision: instance.MembershipRevision, DesiredVersion: instance.DesiredVersion, CheckpointID: pgvalue.NewUUIDv7()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = tx.Commit(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	worker, registered := dispatchtest.CaptureRequest(t, f, cp)
+	var cp db.ComputerCheckpoint
 	if err = db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error {
-		_, err := dispatch.RegisterComputerCheckpoint(t.Context(), tx, worker, registered)
+		var err error
+		cp, err = computer.BeginCapture(t.Context(), tx, computer.Capture{InstanceID: pgvalue.MustUUIDValue(instance.ID), EnvironmentID: pgvalue.MustUUIDValue(instance.EnvironmentID), WriterGeneration: instance.WriterGeneration, MembershipRevision: instance.MembershipRevision, DesiredVersion: instance.DesiredVersion, CheckpointID: uuid.NewV7()})
 		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
-	return cp, computer.CheckpointRef{
-		Host:       computer.Host{GroupID: pgvalue.MustUUIDValue(instance.WorkerGroupID), HostID: pgvalue.MustUUIDValue(instance.WorkerHostID), Epoch: instance.WorkerEpoch},
-		InstanceID: pgvalue.MustUUIDValue(instance.ID), WorkerEpoch: instance.WorkerEpoch, DesiredVersion: registered.DesiredVersion, CheckpointID: pgvalue.MustUUIDValue(cp.ID),
+	ref, manifest := computertest.CaptureRequest(t, f, cp)
+	if _, err = computer.RegisterCheckpoint(t.Context(), f.Pool, ref, manifest); err != nil {
+		t.Fatal(err)
 	}
+	return cp, ref
 }
 
 // Capture fences the host epoch and status, never claim versions: a claim
