@@ -45,11 +45,11 @@ func newAuthority(pool *pgxpool.Pool) (*Authority, error) {
 }
 
 func (d *Authority) begin(ctx context.Context) (pgx.Tx, error) {
-	// Dispatch authority transactions lock each mutable scope explicitly. READ
-	// COMMITTED lets a statement that follows a blocking scope or Worker lock
-	// re-read the state committed by the previous owner before it applies new
-	// authority.
-	return d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	// Dispatch authority transactions lock each mutable scope explicitly. The
+	// READ COMMITTED default pinned by dbpool.New lets a statement that follows
+	// a blocking scope or Worker lock re-read the state committed by the
+	// previous owner before it applies new authority.
+	return d.pool.Begin(ctx)
 }
 
 func rollback(ctx context.Context, tx pgx.Tx) {

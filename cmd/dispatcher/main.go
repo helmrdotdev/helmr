@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
@@ -302,7 +303,7 @@ func newDispatchPool(ctx context.Context, databaseURL string, maxConns int32) (*
 		return nil, err
 	}
 	poolConfig.MaxConns = maxConns
-	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	pool, err := dbpool.New(ctx, poolConfig)
 	if err != nil {
 		return nil, err
 	}

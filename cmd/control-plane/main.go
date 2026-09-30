@@ -28,6 +28,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/controlplane"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 	dbschema "github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
@@ -143,7 +144,11 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	bundleAdmission := bundle.Admission{Runtime: runtimeDescriptor}
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	poolConfig, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("connect database: %w", err)
+	}
+	pool, err := dbpool.New(ctx, poolConfig)
 	if err != nil {
 		return fmt.Errorf("connect database: %w", err)
 	}

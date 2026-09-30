@@ -31,6 +31,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/controlplane"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/eventstream"
@@ -76,7 +77,11 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load dev config: %w", err)
 	}
-	pool, err := pgxpool.New(ctx, cfg.databaseURL)
+	poolConfig, err := pgxpool.ParseConfig(cfg.databaseURL)
+	if err != nil {
+		return fmt.Errorf("connect database: %w", err)
+	}
+	pool, err := dbpool.New(ctx, poolConfig)
 	if err != nil {
 		return fmt.Errorf("connect database: %w", err)
 	}
@@ -117,7 +122,7 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 	}
 	bundleAdmission := bundle.Admission{Runtime: runtimeDescriptor}
 	pool.Close()
-	pool, err = pgxpool.New(ctx, cfg.databaseURL)
+	pool, err = dbpool.New(ctx, poolConfig)
 	if err != nil {
 		return fmt.Errorf("connect database: %w", err)
 	}

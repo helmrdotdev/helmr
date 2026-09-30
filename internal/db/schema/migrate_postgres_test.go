@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -24,7 +25,7 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	t.Helper()
 	dbctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	pool, err := pgxpool.New(dbctx, dsn)
+	pool, err := openPool(dbctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -994,7 +995,7 @@ var renderedJSONSizeConstraint = regexp.MustCompile(`(?s)octet_length\(\(*[a-zA-
 
 func TestJSONSizeGuardMatchesPostgresDeparse(t *testing.T) {
 	database := dbtest.Open(t)
-	pool, err := pgxpool.New(t.Context(), database.DSN)
+	pool, err := openPool(t.Context(), database.DSN)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1009,4 +1010,12 @@ func TestJSONSizeGuardMatchesPostgresDeparse(t *testing.T) {
 	if !renderedJSONSizeConstraint.MatchString(definition) {
 		t.Fatalf("representation-dependent admission check was missed: %s", definition)
 	}
+}
+
+func openPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+	config, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, err
+	}
+	return dbpool.New(ctx, config)
 }

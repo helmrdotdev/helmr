@@ -53,6 +53,7 @@ func newSmokeDatabase(t *testing.T, ctx context.Context) string {
 	if dsn == "" {
 		t.Skip("HELMR_TEST_DATABASE_URL is required for whole-binary smoke tests")
 	}
+	// Administrative connection for database DDL.
 	admin, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
@@ -78,6 +79,7 @@ func newSmokeDatabase(t *testing.T, ctx context.Context) string {
 	databaseURL := config.ConnString()
 	checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	// Probe connection for the server version check.
 	pool, err := pgxpool.New(checkCtx, databaseURL)
 	if err != nil {
 		t.Fatal(err)

@@ -2,14 +2,16 @@ package schema
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
+
+	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 
 	"github.com/golang-migrate/migrate/v4"
 	pgxdriver "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 func Up(ctx context.Context, databaseURL string) error {
@@ -29,11 +31,13 @@ func run(ctx context.Context, databaseURL string, apply func(*migrate.Migrate) e
 	if err != nil {
 		return fmt.Errorf("open embedded migrations: %w", err)
 	}
-	db, err := sql.Open("pgx", databaseURL)
+	config, err := pgx.ParseConfig(databaseURL)
 	if err != nil {
 		_ = source.Close()
 		return fmt.Errorf("open migration database: %w", err)
 	}
+	dbpool.PinReadCommitted(config)
+	db := stdlib.OpenDB(*config)
 	driver, err := pgxdriver.WithInstance(db, &pgxdriver.Config{})
 	if err != nil {
 		_ = source.Close()

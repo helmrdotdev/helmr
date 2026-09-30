@@ -12,6 +12,7 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -39,6 +40,7 @@ func Open(t *testing.T) Database {
 
 func openIsolatedDatabase(t *testing.T, dsn string) Database {
 	t.Helper()
+	// Administrative connection for database DDL.
 	admin, err := pgxpool.New(t.Context(), dsn)
 	if err != nil {
 		t.Fatal(err)
@@ -63,12 +65,7 @@ func openIsolatedDatabase(t *testing.T, dsn string) Database {
 		admin.Close()
 	})
 	testDSN := databaseDSN(t, dsn, name)
-	pool, err := pgxpool.New(t.Context(), testDSN)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
-	return Database{DSN: testDSN, Pool: pool}
+	return Database{DSN: testDSN, Pool: openPool(t, testDSN)}
 }
 
 func openLocalCluster(t *testing.T) Database {
@@ -120,12 +117,22 @@ func openLocalCluster(t *testing.T) Database {
 		os.Getenv("USER"),
 		port,
 	)
-	pool, err := pgxpool.New(t.Context(), dsn)
+	return Database{DSN: dsn, Pool: openPool(t, dsn)}
+}
+
+// openPool opens a test pool with the same connection settings as production.
+func openPool(t *testing.T, dsn string) *pgxpool.Pool {
+	t.Helper()
+	config, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := dbpool.New(t.Context(), config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	return Database{DSN: dsn, Pool: pool}
+	return pool
 }
 
 func databaseDSN(t *testing.T, dsn string, database string) string {

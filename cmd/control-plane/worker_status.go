@@ -10,6 +10,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -112,7 +113,11 @@ func withWorkerDatabase(ctx context.Context, run func(*pgxpool.Pool) error) erro
 	if err != nil {
 		return fmt.Errorf("load database config: %w", err)
 	}
-	pool, err := pgxpool.New(ctx, cfg.URL)
+	poolConfig, err := pgxpool.ParseConfig(cfg.URL)
+	if err != nil {
+		return fmt.Errorf("connect database: %w", err)
+	}
+	pool, err := dbpool.New(ctx, poolConfig)
 	if err != nil {
 		return fmt.Errorf("connect database: %w", err)
 	}

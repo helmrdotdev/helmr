@@ -30,7 +30,7 @@ func TestStaleWorkerFenceUsesStateAppropriateStrictBoundaries(t *testing.T) {
 	activeExactID := insertActiveWorkerWithObservation(t, ctx, pool, now)
 	activeStaleID := insertActiveWorkerWithObservation(t, ctx, pool, now)
 
-	tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestUnobservedActiveWorkerFreshnessStartsAtActivation(t *testing.T) {
 	exactID := insertActiveWorkerWithObservation(t, ctx, pool, now)
 	staleID := insertActiveWorkerWithObservation(t, ctx, pool, now)
 
-	tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestFreshWorkerObservationWinsAgainstStaleFenceRecheck(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	workerID := insertActiveWorkerWithObservation(t, ctx, pool, now.Add(-10*time.Minute))
 
-	observationTx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	observationTx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +250,7 @@ func TestStaleFenceWinsBeforeLateWorkerObservation(t *testing.T) {
 	pool := newPostgresDB(t, ctx)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	workerID := insertActiveWorkerWithObservation(t, ctx, pool, now.Add(-10*time.Minute))
-	fenceTx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	fenceTx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
