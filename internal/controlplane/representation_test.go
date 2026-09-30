@@ -20,8 +20,6 @@ func TestPublicLifecycleProjectionsRejectUnknownInternalValues(t *testing.T) {
 		{name: "schedule", project: func() error { _, err := schedulePublicStatus("future"); return err }},
 		{name: "computer", project: func() error { _, err := computerPublicStatus("future"); return err }},
 		{name: "session", project: func() error { _, err := sessionStatus("future"); return err }},
-		{name: "worker group", project: func() error { _, err := workerGroupPublicStatus("future"); return err }},
-		{name: "capacity worker", project: func() error { _, err := workerHostPublicStatus("future"); return err }},
 		{name: "worker", project: func() error { _, err := workerPublicStatus("future"); return err }},
 		{name: "secret", project: func() error { _, err := secretPublicStatus("future"); return err }},
 		{name: "token", project: func() error { _, err := tokenPublicStatus("future"); return err }},

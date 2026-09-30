@@ -7,12 +7,15 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
-func TestAcquireHoldsAndReleasesEveryKey(t *testing.T) {
+func TestTryAcquireHoldsAndReleasesKey(t *testing.T) {
 	database := dbtest.Open(t)
-	keys := []int64{Key("first"), Key("second")}
-	guard, err := Acquire(t.Context(), database.Pool, keys)
-	if err != nil {
-		t.Fatal(err)
+	key := Key("held")
+	guard, locked, err := TryAcquire(t.Context(), database.Pool, key)
+	if err != nil || !locked {
+		t.Fatalf("TryAcquire = %v, %v", locked, err)
+	}
+	if _, contended, err := TryAcquire(t.Context(), database.Pool, key); err != nil || contended {
+		t.Fatalf("contended TryAcquire = %v, %v", contended, err)
 	}
 
 	observer, err := database.Pool.Acquire(t.Context())
@@ -20,43 +23,41 @@ func TestAcquireHoldsAndReleasesEveryKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer observer.Release()
-	for _, key := range keys {
-		var acquired bool
-		if err := observer.QueryRow(t.Context(), "SELECT pg_try_advisory_lock($1)", key).Scan(&acquired); err != nil {
-			t.Fatal(err)
-		}
-		if acquired {
-			t.Fatalf("observer acquired held key %d", key)
-		}
+	var acquired bool
+	if err := observer.QueryRow(t.Context(), "SELECT pg_try_advisory_lock($1)", key).Scan(&acquired); err != nil {
+		t.Fatal(err)
+	}
+	if acquired {
+		t.Fatal("observer acquired the held key")
 	}
 
 	if err := guard.Unlock(); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range keys {
-		var acquired bool
-		if err := observer.QueryRow(t.Context(), "SELECT pg_try_advisory_lock($1)", key).Scan(&acquired); err != nil {
-			t.Fatal(err)
-		}
-		if !acquired {
-			t.Fatalf("observer did not acquire released key %d", key)
-		}
-		var released bool
-		if err := observer.QueryRow(t.Context(), "SELECT pg_advisory_unlock($1)", key).Scan(&released); err != nil {
-			t.Fatal(err)
-		}
-		if !released {
-			t.Fatalf("observer did not release key %d", key)
-		}
+	if err := observer.QueryRow(t.Context(), "SELECT pg_try_advisory_lock($1)", key).Scan(&acquired); err != nil {
+		t.Fatal(err)
+	}
+	if !acquired {
+		t.Fatal("observer did not acquire the released key")
+	}
+	var released bool
+	if err := observer.QueryRow(t.Context(), "SELECT pg_advisory_unlock($1)", key).Scan(&released); err != nil {
+		t.Fatal(err)
+	}
+	if !released {
+		t.Fatal("observer did not release the key")
+	}
+	if err := guard.Unlock(); err == nil {
+		t.Fatal("second Unlock succeeded")
 	}
 }
 
 func TestGuardDiscardsConnectionWhenReleaseCannotBeConfirmed(t *testing.T) {
 	database := dbtest.Open(t)
 	key := Key("unconfirmed-release")
-	guard, err := Acquire(t.Context(), database.Pool, []int64{key})
-	if err != nil {
-		t.Fatal(err)
+	guard, locked, err := TryAcquire(t.Context(), database.Pool, key)
+	if err != nil || !locked {
+		t.Fatalf("TryAcquire = %v, %v", locked, err)
 	}
 	var backendPID int32
 	if err := guard.Conn().QueryRow(t.Context(), "SELECT pg_backend_pid()").Scan(&backendPID); err != nil {

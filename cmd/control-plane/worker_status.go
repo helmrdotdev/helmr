@@ -7,12 +7,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/pglock"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -43,32 +41,20 @@ func runWorkerGroupStatusCommand(ctx context.Context, output io.Writer, args []s
 	if err != nil {
 		return errors.New("worker group id must be a canonical UUIDv7")
 	}
-	return withWorkerStore(ctx, func(pool *pgxpool.Pool, store *db.Queries) error {
+	return withWorkerDatabase(ctx, func(pool *pgxpool.Pool) error {
 		var result workergroup.GroupStatus
 		var err error
 		switch command {
 		case "status":
-			result, err = workergroup.ReadGroupStatus(ctx, store, parsedGroupID)
+			result, err = workergroup.ReadGroupStatus(ctx, db.New(pool), parsedGroupID)
 		case "pause":
-			err = withWorkerGroupStatusLease(ctx, pool, parsedGroupID, func() error {
-				result, err = workergroup.PauseGroup(ctx, store, parsedGroupID, expectedClaimVersion)
-				return err
-			})
+			result, err = workergroup.PauseGroup(ctx, pool, parsedGroupID, expectedClaimVersion)
 		case "activate":
-			err = withWorkerGroupStatusLease(ctx, pool, parsedGroupID, func() error {
-				result, err = workergroup.ActivateGroup(ctx, store, parsedGroupID, expectedClaimVersion)
-				return err
-			})
+			result, err = workergroup.ActivateGroup(ctx, pool, parsedGroupID, expectedClaimVersion)
 		case "drain":
-			err = withWorkerGroupStatusLease(ctx, pool, parsedGroupID, func() error {
-				result, err = workergroup.BeginGroupDrain(ctx, store, parsedGroupID, expectedClaimVersion)
-				return err
-			})
+			result, err = workergroup.BeginGroupDrain(ctx, pool, parsedGroupID, expectedClaimVersion)
 		case "disable":
-			err = withWorkerGroupStatusLease(ctx, pool, parsedGroupID, func() error {
-				result, err = workergroup.DisableGroup(ctx, store, parsedGroupID, expectedClaimVersion)
-				return err
-			})
+			result, err = workergroup.DisableGroup(ctx, pool, parsedGroupID, expectedClaimVersion)
 		}
 		if err != nil {
 			return err
@@ -90,7 +76,7 @@ func runWorkerHostStatusCommand(ctx context.Context, output io.Writer, args []st
 	flags.StringVar(&groupID, "group-id", "", "logical Worker group ID")
 	flags.StringVar(&resourceID, "resource-id", "", "opaque operator host locator")
 	if command == "lose" {
-		flags.Int64Var(&expectedClaimVersion, "expected-claim-version", 0, "observed Worker instance claim fence")
+		flags.Int64Var(&expectedClaimVersion, "expected-claim-version", 0, "observed worker host claim fence")
 	}
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
@@ -105,17 +91,14 @@ func runWorkerHostStatusCommand(ctx context.Context, output io.Writer, args []st
 	if err != nil {
 		return errors.New("worker group id must be a canonical UUIDv7")
 	}
-	return withWorkerStore(ctx, func(pool *pgxpool.Pool, store *db.Queries) error {
-		var result workergroup.InstanceStatus
+	return withWorkerDatabase(ctx, func(pool *pgxpool.Pool) error {
+		var result workergroup.HostStatus
 		var err error
 		switch command {
 		case "status":
-			result, err = workergroup.ReadInstanceStatus(ctx, store, parsedGroupID, resourceID)
+			result, err = workergroup.ReadHostStatus(ctx, db.New(pool), parsedGroupID, resourceID)
 		case "lose":
-			err = withWorkerGroupStatusLease(ctx, pool, parsedGroupID, func() error {
-				result, err = workergroup.MarkInstanceLost(ctx, store, parsedGroupID, resourceID, expectedClaimVersion)
-				return err
-			})
+			result, err = workergroup.MarkHostLost(ctx, pool, parsedGroupID, resourceID, expectedClaimVersion)
 		}
 		if err != nil {
 			return err
@@ -124,7 +107,7 @@ func runWorkerHostStatusCommand(ctx context.Context, output io.Writer, args []st
 	})
 }
 
-func withWorkerStore(ctx context.Context, run func(*pgxpool.Pool, *db.Queries) error) error {
+func withWorkerDatabase(ctx context.Context, run func(*pgxpool.Pool) error) error {
 	cfg, err := config.LoadDatabase()
 	if err != nil {
 		return fmt.Errorf("load database config: %w", err)
@@ -134,18 +117,5 @@ func withWorkerStore(ctx context.Context, run func(*pgxpool.Pool, *db.Queries) e
 		return fmt.Errorf("connect database: %w", err)
 	}
 	defer pool.Close()
-	return run(pool, db.New(pool))
-}
-
-func withWorkerGroupStatusLease(ctx context.Context, pool *pgxpool.Pool, groupID uuid.UUID, run func() error) (runErr error) {
-	guard, err := pglock.Acquire(ctx, pool, []int64{workergroup.StatusMutationLockKey(groupID)})
-	if err != nil {
-		return fmt.Errorf("acquire worker group lifecycle lease: %w", err)
-	}
-	defer func() {
-		if err := guard.Unlock(); err != nil && runErr == nil {
-			runErr = fmt.Errorf("release worker group lifecycle lease: %w", err)
-		}
-	}()
-	return run()
+	return run(pool)
 }

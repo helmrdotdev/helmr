@@ -21,7 +21,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/bootstrap"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
@@ -37,6 +36,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -76,13 +76,15 @@ func main() {
 		log.Error("migrate database", "error", err)
 		os.Exit(1)
 	}
-	if err := bootstrap.Apply(ctx, pool, bootstrap.Config{
-		Enabled: cfg.bootstrap.Enabled, RegionID: cfg.bootstrap.RegionID,
-		RegionDisplayName: cfg.bootstrap.RegionDisplayName, RegionLocation: cfg.bootstrap.RegionLocation,
-		WorkerGroupName: cfg.bootstrap.WorkerGroupName, WorkerToken: cfg.bootstrap.WorkerToken,
-	}); err != nil {
-		log.Error("bootstrap platform", "error", err)
-		os.Exit(1)
+	if cfg.bootstrap.Enabled {
+		if err := workergroup.Bootstrap(ctx, pool, workergroup.BootstrapConfig{
+			RegionID: cfg.bootstrap.RegionID, RegionDisplayName: cfg.bootstrap.RegionDisplayName,
+			RegionLocation: cfg.bootstrap.RegionLocation, GroupName: cfg.bootstrap.WorkerGroupName,
+			EnrollmentToken: cfg.bootstrap.WorkerToken,
+		}); err != nil {
+			log.Error("bootstrap platform", "error", err)
+			os.Exit(1)
+		}
 	}
 	if cfg.seedData && freshInit {
 		if err := seedDevData(ctx, pool, cfg); err != nil {

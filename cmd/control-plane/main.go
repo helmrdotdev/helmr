@@ -20,7 +20,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/artifactgc"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/bootstrap"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
@@ -40,6 +39,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/version"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -149,12 +149,14 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	}
 	defer pool.Close()
 	queries := db.New(pool)
-	if err := bootstrap.Apply(ctx, pool, bootstrap.Config{
-		Enabled: cfg.Bootstrap.Enabled, RegionID: cfg.Bootstrap.RegionID,
-		RegionDisplayName: cfg.Bootstrap.RegionDisplayName, RegionLocation: cfg.Bootstrap.RegionLocation,
-		WorkerGroupName: cfg.Bootstrap.WorkerGroupName, WorkerToken: cfg.Bootstrap.WorkerToken,
-	}); err != nil {
-		return fmt.Errorf("bootstrap platform: %w", err)
+	if cfg.Bootstrap.Enabled {
+		if err := workergroup.Bootstrap(ctx, pool, workergroup.BootstrapConfig{
+			RegionID: cfg.Bootstrap.RegionID, RegionDisplayName: cfg.Bootstrap.RegionDisplayName,
+			RegionLocation: cfg.Bootstrap.RegionLocation, GroupName: cfg.Bootstrap.WorkerGroupName,
+			EnrollmentToken: cfg.Bootstrap.WorkerToken,
+		}); err != nil {
+			return fmt.Errorf("bootstrap platform: %w", err)
+		}
 	}
 	clickHouseClient, err := clickhouse.New(clickHouseConfig)
 	if err != nil {

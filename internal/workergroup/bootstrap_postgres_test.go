@@ -1,4 +1,4 @@
-package bootstrap
+package workergroup
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 )
 
-func TestApplyCreatesOneRegionGroupAndToken(t *testing.T) {
+func TestBootstrapCreatesOneRegionGroupAndToken(t *testing.T) {
 	ctx := context.Background()
 	database := dbtest.Open(t)
 	if err := schema.Up(ctx, database.DSN); err != nil {
@@ -21,11 +21,11 @@ func TestApplyCreatesOneRegionGroupAndToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := Config{
-		Enabled: true, RegionID: "local",
-		RegionDisplayName: "Local", WorkerGroupName: "default", WorkerToken: token.Raw,
+	cfg := BootstrapConfig{
+		RegionID:          "local",
+		RegionDisplayName: "Local", GroupName: "default", EnrollmentToken: token.Raw,
 	}
-	if err := Apply(ctx, database.Pool, cfg); err != nil {
+	if err := Bootstrap(ctx, database.Pool, cfg); err != nil {
 		t.Fatal(err)
 	}
 	q := db.New(database.Pool)
@@ -49,7 +49,7 @@ func TestApplyCreatesOneRegionGroupAndToken(t *testing.T) {
 	}
 }
 
-func TestApplyPreservesExistingRowsWithoutParsingToken(t *testing.T) {
+func TestBootstrapPreservesExistingRowsWithoutParsingToken(t *testing.T) {
 	ctx := context.Background()
 	database := dbtest.Open(t)
 	if err := schema.Up(ctx, database.DSN); err != nil {
@@ -59,18 +59,18 @@ func TestApplyPreservesExistingRowsWithoutParsingToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	initial := Config{
-		Enabled: true, RegionID: "local",
-		RegionDisplayName: "Original", WorkerGroupName: "default", WorkerToken: token.Raw,
+	initial := BootstrapConfig{
+		RegionID:          "local",
+		RegionDisplayName: "Original", GroupName: "default", EnrollmentToken: token.Raw,
 	}
-	if err := Apply(ctx, database.Pool, initial); err != nil {
+	if err := Bootstrap(ctx, database.Pool, initial); err != nil {
 		t.Fatal(err)
 	}
 	restart := initial
 	restart.RegionDisplayName = "Changed"
 	for _, unusedToken := range []string{"", " invalid "} {
-		restart.WorkerToken = unusedToken
-		if err := Apply(ctx, database.Pool, restart); err != nil {
+		restart.EnrollmentToken = unusedToken
+		if err := Bootstrap(ctx, database.Pool, restart); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -90,7 +90,7 @@ func TestApplyPreservesExistingRowsWithoutParsingToken(t *testing.T) {
 	}
 }
 
-func TestApplyCreatesAnotherSeedWithoutChangingTheExistingSeed(t *testing.T) {
+func TestBootstrapCreatesAnotherSeedWithoutChangingTheExistingSeed(t *testing.T) {
 	ctx := context.Background()
 	database := dbtest.Open(t)
 	if err := schema.Up(ctx, database.DSN); err != nil {
@@ -100,9 +100,9 @@ func TestApplyCreatesAnotherSeedWithoutChangingTheExistingSeed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Apply(ctx, database.Pool, Config{
-		Enabled: true, RegionID: "primary", RegionDisplayName: "Primary",
-		WorkerGroupName: "default", WorkerToken: firstToken.Raw,
+	if err := Bootstrap(ctx, database.Pool, BootstrapConfig{
+		RegionID: "primary", RegionDisplayName: "Primary",
+		GroupName: "default", EnrollmentToken: firstToken.Raw,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -110,9 +110,9 @@ func TestApplyCreatesAnotherSeedWithoutChangingTheExistingSeed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Apply(ctx, database.Pool, Config{
-		Enabled: true, RegionID: "secondary", RegionDisplayName: "Secondary",
-		WorkerGroupName: "default", WorkerToken: secondToken.Raw,
+	if err := Bootstrap(ctx, database.Pool, BootstrapConfig{
+		RegionID: "secondary", RegionDisplayName: "Secondary",
+		GroupName: "default", EnrollmentToken: secondToken.Raw,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestApplyCreatesAnotherSeedWithoutChangingTheExistingSeed(t *testing.T) {
 	}
 }
 
-func TestApplySerializesConcurrentBootstrap(t *testing.T) {
+func TestBootstrapSerializesConcurrentBootstrap(t *testing.T) {
 	ctx := context.Background()
 	database := dbtest.Open(t)
 	if err := schema.Up(ctx, database.DSN); err != nil {
@@ -147,15 +147,15 @@ func TestApplySerializesConcurrentBootstrap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := Config{
-		Enabled: true, RegionID: "local",
-		RegionDisplayName: "Local", WorkerGroupName: "default", WorkerToken: token.Raw,
+	cfg := BootstrapConfig{
+		RegionID:          "local",
+		RegionDisplayName: "Local", GroupName: "default", EnrollmentToken: token.Raw,
 	}
 	errorsByReplica := make([]error, 2)
 	var wait sync.WaitGroup
 	for index := range errorsByReplica {
 		wait.Go(func() {
-			errorsByReplica[index] = Apply(ctx, database.Pool, cfg)
+			errorsByReplica[index] = Bootstrap(ctx, database.Pool, cfg)
 		})
 	}
 	wait.Wait()
@@ -177,21 +177,15 @@ func TestApplySerializesConcurrentBootstrap(t *testing.T) {
 	}
 }
 
-func TestApplyDisabledAllowsEmptyDatabase(t *testing.T) {
-	if err := Apply(context.Background(), nil, Config{}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestApplyRollsBackRegionWhenMissingGroupTokenIsInvalid(t *testing.T) {
+func TestBootstrapRollsBackRegionWhenMissingGroupTokenIsInvalid(t *testing.T) {
 	ctx := context.Background()
 	database := dbtest.Open(t)
 	if err := schema.Up(ctx, database.DSN); err != nil {
 		t.Fatal(err)
 	}
-	err := Apply(ctx, database.Pool, Config{
-		Enabled: true, RegionID: "local", RegionDisplayName: "Local",
-		WorkerGroupName: "default", WorkerToken: "invalid",
+	err := Bootstrap(ctx, database.Pool, BootstrapConfig{
+		RegionID: "local", RegionDisplayName: "Local",
+		GroupName: "default", EnrollmentToken: "invalid",
 	})
 	if err == nil {
 		t.Fatal("bootstrap accepted an invalid token")
