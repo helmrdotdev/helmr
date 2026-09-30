@@ -10,6 +10,8 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/command"
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
@@ -49,6 +51,59 @@ func TestCommandErrorMapsWorkerOperations(t *testing.T) {
 			}
 			if body.Error.Message != test.message {
 				t.Fatalf("message = %q, want %q", body.Error.Message, test.message)
+			}
+		})
+	}
+}
+
+func TestCommandErrorMapsPublicOperations(t *testing.T) {
+	stdin := command.InputError{Kind: command.InputStdinTooLarge}
+	large := command.InputError{Kind: command.InputTooLarge}
+	invalid := command.InputError{Kind: command.InputInvalid}
+	for _, test := range []struct {
+		name      string
+		operation commandOperation
+		err       error
+		status    int
+		code      string
+		retryable bool
+	}{
+		{"create invalid", commandCreateOperation, invalid, http.StatusBadRequest, "invalid_computer_command", false},
+		{"create too large", commandCreateOperation, large, http.StatusRequestEntityTooLarge, "computer_command_request_too_large", false},
+		{"create stdin", commandCreateOperation, fmt.Errorf("wrapped: %w", stdin), http.StatusRequestEntityTooLarge, "computer_stdin_too_large", false},
+		{"create computer missing", commandCreateOperation, computer.ErrNotFound, http.StatusNotFound, "computer_not_found", false},
+		{"create secret", commandCreateOperation, computer.ErrSecretUnavailable, http.StatusConflict, "secret_unavailable", false},
+		{"create busy", commandCreateOperation, computer.ErrBusy, http.StatusConflict, "computer_busy", true},
+		{"create recovery", commandCreateOperation, computer.ErrRecoveryRequired, http.StatusConflict, "computer_recovery_required", false},
+		{"create deleting", commandCreateOperation, computer.ErrDeleting, http.StatusConflict, "computer_deleting", false},
+		{"create exhausted", commandCreateOperation, computer.ErrPreparationExhausted, http.StatusConflict, "computer_preparation_exhausted", false},
+		{"create idempotency conflict", commandCreateOperation, idempotency.ConflictError{}, http.StatusConflict, "idempotency_conflict", false},
+		{"create expired", commandCreateOperation, fmt.Errorf("wrapped: %w", idempotency.ExpiredError{}), http.StatusGone, "operation_expired", false},
+		{"create receipt", commandCreateOperation, command.ErrReceiptInvalid, http.StatusServiceUnavailable, "computer_authority_unavailable", true},
+		{"create unmapped", commandCreateOperation, errors.New("database is down"), http.StatusServiceUnavailable, "computer_authority_unavailable", true},
+		{"get missing", commandGetOperation, command.ErrNotFound, http.StatusNotFound, "computer_command_not_found", false},
+		{"get pruned", commandGetOperation, gone(codedError{code: "command_result_expired", message: "exec result has expired"}), http.StatusGone, "command_result_expired", false},
+		{"get computer error", commandGetOperation, computer.ErrBusy, http.StatusServiceUnavailable, "computer_authority_unavailable", true},
+		{"get unmapped", commandGetOperation, errors.New("exec state is invalid"), http.StatusServiceUnavailable, "computer_authority_unavailable", true},
+		{"cancel missing", commandCancelOperation, command.ErrNotFound, http.StatusNotFound, "computer_command_not_found", false},
+		{"cancel idempotency conflict", commandCancelOperation, idempotency.ConflictError{}, http.StatusConflict, "idempotency_conflict", false},
+		{"cancel expired", commandCancelOperation, idempotency.ExpiredError{}, http.StatusGone, "operation_expired", false},
+		{"cancel receipt", commandCancelOperation, command.ErrReceiptInvalid, http.StatusServiceUnavailable, "computer_authority_unavailable", true},
+		{"cancel input", commandCancelOperation, invalid, http.StatusServiceUnavailable, "computer_authority_unavailable", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			mapped := commandError(test.err, test.operation)
+			recorder := httptest.NewRecorder()
+			writeError(recorder, mapped)
+			if recorder.Code != test.status {
+				t.Fatalf("status = %d, want %d", recorder.Code, test.status)
+			}
+			if code := decodeHTTPError(t, recorder.Body.Bytes()).Code; code != test.code {
+				t.Fatalf("code = %s, want %s", code, test.code)
+			}
+			var retryer interface{ ErrorRetryable() bool }
+			if retryable := errors.As(mapped, &retryer) && retryer.ErrorRetryable(); retryable != test.retryable {
+				t.Fatalf("retryable = %v, want %v", retryable, test.retryable)
 			}
 		})
 	}

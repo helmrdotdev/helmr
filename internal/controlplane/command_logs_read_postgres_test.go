@@ -8,6 +8,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
+	commandowner "github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
@@ -34,11 +35,10 @@ func (r *commandLogTestReader) ListCommandLogChunks(_ context.Context, q telemet
 
 func TestCommandLogsReadDeliveryCursorAndExpiry(t *testing.T) {
 	f := newActorStartPostgresFixture(t, 1)
-	admission, err := f.server.admitComputerCommand(t.Context(), computerCommandRequest{OrgID: f.orgID, ProjectID: f.projectID, EnvironmentID: f.environmentID, ComputerID: f.computerIDs[0], Creator: computerCommandCreator{SubjectType: "api_key", SubjectID: uuid.NewV7().String()}, Command: []string{"true"}, IdempotencyKey: "read-logs"})
+	command, err := commandowner.Create(t.Context(), f.pool, commandowner.CreateRequest{OrgID: f.orgID, ProjectID: f.projectID, EnvironmentID: f.environmentID, ComputerID: f.computerIDs[0], Creator: commandowner.Creator{SubjectType: "api_key", SubjectID: uuid.NewV7().String()}, Argv: []string{"true"}, IdempotencyKey: "read-logs"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := admission.Process
 	f.server.authKeys = auth.Keys{TelemetryCursor: make([]byte, auth.RootKeySize)}
 	sink := &commandLogTestReader{chunks: map[string][]telemetry.CommandLogChunk{}}
 	f.server.telemetryReader = sink

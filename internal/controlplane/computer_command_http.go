@@ -9,12 +9,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5"
 )
 
 func (s *Server) executeComputerHTTP(w http.ResponseWriter, r *http.Request) {
@@ -48,13 +45,13 @@ func (s *Server) executeComputerHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	timeout := computerCommandDefaultTimeout
+	timeout := command.DefaultTimeout
 	if body.Timeout != "" {
 		timeoutMS, err := api.ParseDurationMilliseconds(
 			body.Timeout,
 			"timeout",
 			1,
-			computerCommandMaxTimeout.Milliseconds(),
+			command.MaxTimeout.Milliseconds(),
 		)
 		if err != nil {
 			writeError(w, badRequest(codedError{code: "invalid_computer_command", message: err.Error()}))
@@ -73,13 +70,13 @@ func (s *Server) executeComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
 		return
 	}
-	admission, err := s.admitComputerCommand(r.Context(), computerCommandRequest{
+	created, err := command.Create(r.Context(), s.tx, command.CreateRequest{
 		OrgID:          principal.OrgID,
 		ProjectID:      pgvalue.MustUUIDValue(projectID),
 		EnvironmentID:  pgvalue.MustUUIDValue(environmentID),
 		ComputerID:     computerID,
 		Creator:        computerCommandCreatorFromPrincipal(principal),
-		Command:        body.Command,
+		Argv:           body.Command,
 		Cwd:            body.Cwd,
 		Env:            body.Env,
 		Stdin:          stdin,
@@ -87,10 +84,10 @@ func (s *Server) executeComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {
-		s.writeComputerCommandError(w, err)
+		s.writeCommandError(w, err, commandCreateOperation)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, api.CommandReceipt{CommandID: pgvalue.MustUUIDValue(admission.Process.ID).String()})
+	writeJSON(w, http.StatusAccepted, api.CommandReceipt{CommandID: pgvalue.MustUUIDValue(created.ID).String()})
 }
 
 func canAccessComputerCommandOutput(principal auth.Principal, scope auth.Scope) bool {
@@ -113,63 +110,18 @@ func (s *Server) getComputerCommandHTTP(w http.ResponseWriter, r *http.Request) 
 		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
 		return
 	}
-	process, err := s.db.GetCommand(r.Context(), db.GetCommandParams{
-		OrgID:         pgvalue.UUID(principal.OrgID),
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		CommandID:     pgvalue.UUID(commandID),
+	process, err := command.Get(r.Context(), s.db, command.Ref{
+		OrgID: principal.OrgID, ProjectID: pgvalue.MustUUIDValue(projectID),
+		EnvironmentID: pgvalue.MustUUIDValue(environmentID), CommandID: commandID,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, notFound(codedError{code: "computer_command_not_found", message: "computer exec process was not found"}))
-		return
-	}
 	if err != nil {
-		writeError(w, unavailable(codedError{
-			code:      "computer_authority_unavailable",
-			message:   errComputerAuthorityUnavailable.Error(),
-			retryable: true,
-		}))
+		s.writeCommandError(w, err, commandGetOperation)
 		return
 	}
 	resource, err := publicCommandInfo(process)
 	if err != nil {
-		s.writeComputerCommandError(w, err)
+		s.writeCommandError(w, err, commandGetOperation)
 		return
 	}
 	writeJSON(w, http.StatusOK, resource)
-}
-
-func (s *Server) writeComputerCommandError(w http.ResponseWriter, err error) {
-	var expired idempotency.ExpiredError
-	if errors.As(err, &expired) {
-		writeError(w, gone(expired))
-		return
-	}
-	var conflictError idempotency.ConflictError
-	var classified apiError
-	switch {
-	case errors.As(err, &classified):
-		writeError(w, classified)
-	case errors.Is(err, errComputerCommandStdinTooLarge):
-		writeError(w, tooLarge(codedError{code: "computer_stdin_too_large", message: err.Error()}))
-	case errors.Is(err, errComputerCommandTooLarge):
-		writeError(w, tooLarge(codedError{code: "computer_command_request_too_large", message: err.Error()}))
-	case errors.Is(err, errComputerCommandInvalid):
-		writeError(w, badRequest(codedError{code: "invalid_computer_command", message: err.Error()}))
-	case errors.Is(err, computer.ErrSecretUnavailable):
-		writeError(w, conflict(codedError{code: "secret_unavailable", message: err.Error()}))
-	case errors.Is(err, computer.ErrNotFound):
-		writeError(w, notFound(codedError{code: "computer_not_found", message: err.Error()}))
-	case errors.Is(err, computer.ErrBusy):
-		writeError(w, conflict(codedError{code: "computer_busy", message: err.Error(), retryable: true}))
-	case errors.As(err, &conflictError):
-		writeError(w, conflict(codedError{code: "idempotency_conflict", message: err.Error()}))
-	default:
-		s.log.Error("execute Computer failed", "error", err)
-		writeError(w, unavailable(codedError{
-			code:      "computer_authority_unavailable",
-			message:   errComputerAuthorityUnavailable.Error(),
-			retryable: true,
-		}))
-	}
 }

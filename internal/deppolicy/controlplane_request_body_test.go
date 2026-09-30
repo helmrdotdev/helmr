@@ -47,7 +47,6 @@ var controlPlaneDecodersOutsideOwner = map[string]string{
 	"actorStartResultFromReceipt":        "stored idempotency receipt",
 	"actorWaitIdleTimeout":               "stored definition manifest",
 	"applyRunMetadataMutation":           "stored run metadata",
-	"cancelCommandInTx":                  "stored idempotency receipt",
 	"decodeAPIKeyListCursor":             "opaque cursor, fixed message",
 	"decodeActorStartObject":             "canonical request member, fixed message",
 	"decodeComputerListCursor":           "opaque cursor, fixed message",
