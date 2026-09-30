@@ -42,7 +42,7 @@ func TestWorkerConnectionAPIVersionLeavesLifecycleStateUnchanged(t *testing.T) {
 	}
 	// Matching authentication advances the epoch without a version header.
 	restarted := uuid.NewV7().String()
-	token = exchangeWorkerToken(t, handler, credential.hostID.String(), credential.secret, restarted)
+	exchangeWorkerToken(t, handler, credential.hostID.String(), credential.secret, restarted)
 	if workerHostState(t, f.Pool, f.WorkerID) == before {
 		t.Fatal("matching token exchange did not advance epoch")
 	}
