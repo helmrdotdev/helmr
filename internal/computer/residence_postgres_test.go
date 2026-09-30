@@ -151,7 +151,7 @@ func TestSessionComputerFencesKeepTheirSessionPredicates(t *testing.T) {
 	ref := SessionComputerRef{EnvironmentID: f.EnvironmentID, ComputerID: computerID, SessionID: sessionID}
 	other := ref
 	other.SessionID = uuid.NewV7()
-	for name, lock := range map[string]func(context.Context, pgx.Tx, SessionComputerRef) (db.Computer, error){
+	for name, lock := range map[string]func(context.Context, pgx.Tx, SessionComputerRef) (SessionComputer, error){
 		"session": LockSessionComputer, "open session": LockOpenSessionComputer,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -159,8 +159,8 @@ func TestSessionComputerFencesKeepTheirSessionPredicates(t *testing.T) {
 				t.Fatalf("another Session's fence = %v, want pgx.ErrNoRows", err)
 			}
 			locked, err := lock(t.Context(), f.beginFence(t), ref)
-			if err != nil || locked.ID != pgvalue.UUID(computerID) {
-				t.Fatalf("Session's Computer = %v, %v", locked.ID, err)
+			if err != nil || locked.Computer().ID != pgvalue.UUID(computerID) {
+				t.Fatalf("Session's Computer = %v, %v", locked.Computer().ID, err)
 			}
 			if !f.locked(t, "computers", computerID) {
 				t.Fatal("the fence did not lock the Computer")
@@ -201,8 +201,9 @@ func TestTokenWaitInstanceChecksTheComputerBeforeTheInstance(t *testing.T) {
 
 	otherPlatform := ref
 	otherPlatform.VMPlatformID = "other-platform"
-	if _, err := lock(otherPlatform); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("another VM platform = %v, want pgx.ErrNoRows", err)
+	var rejected *TokenWaitInstanceError
+	if _, err := lock(otherPlatform); !errors.Is(err, pgx.ErrNoRows) || !errors.As(err, &rejected) || !rejected.Instance || rejected.Err != nil {
+		t.Fatalf("another VM platform = %v, want a rejected Instance", err)
 	}
 	otherGeneration := ref
 	otherGeneration.WriterGeneration = 3
@@ -211,8 +212,13 @@ func TestTokenWaitInstanceChecksTheComputerBeforeTheInstance(t *testing.T) {
 	}
 
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET desired_state='stopped' WHERE id=$1`, computerID)
-	if _, err := LockTokenWaitInstance(t.Context(), f.beginFence(t), ref); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("a Computer that is not desired active = %v, want pgx.ErrNoRows", err)
+	if _, err := LockTokenWaitInstance(t.Context(), f.beginFence(t), ref); !errors.Is(err, pgx.ErrNoRows) || !errors.As(err, &rejected) || rejected.Instance || rejected.Err != nil {
+		t.Fatalf("a Computer that is not desired active = %v, want a rejected Computer", err)
+	}
+	missing := ref
+	missing.ComputerID = uuid.NewV7()
+	if _, err := lock(missing); !errors.As(err, &rejected) || rejected.Instance || !errors.Is(rejected.Err, pgx.ErrNoRows) {
+		t.Fatalf("a missing Computer = %v, want the Computer statement's error", err)
 	}
 	if f.locked(t, "computer_instances", instanceID) {
 		t.Fatal("a rejected Computer locked its Instance")

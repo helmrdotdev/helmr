@@ -98,10 +98,11 @@ func ResumeWithLockedSecrets(ctx context.Context, tx pgx.Tx, request ResumeReque
 	case actor.DispatchHoldReason.String == "recovery_required":
 		receipt.Code = "recovery_required"
 	default:
-		sessionComputer, err := computer.LockSessionComputer(ctx, tx, sessionComputerRef(actor))
+		locked, err := computer.LockSessionComputer(ctx, tx, sessionComputerRef(actor))
 		if err != nil {
 			return receipt, err
 		}
+		sessionComputer := locked.Computer()
 		excluded, err := q.SessionExecutionScopesReconciled(ctx, actor.ID)
 		if err != nil {
 			return receipt, err

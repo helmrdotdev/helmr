@@ -85,10 +85,11 @@ func (r *Reconciler) ReconcileLifecycle(
 	// Completion commits before process cleanup. The same durable lifecycle
 	// intent admits a continuation only after the previous scopes are excluded.
 	if actor.Status == "open" && !actor.CancelRequestedAt.Valid && CanStartContinuation(actor) {
-		sessionComputer, err := computer.LockSessionComputer(ctx, tx, sessionComputerRef(actor))
+		locked, err := computer.LockSessionComputer(ctx, tx, sessionComputerRef(actor))
 		if err != nil {
 			return false, err
 		}
+		sessionComputer := locked.Computer()
 		if !bindingsCanAdmit(actor, bindings) {
 			return true, tx.Commit(ctx)
 		}
@@ -163,10 +164,11 @@ func (r *Reconciler) ReconcileInput(
 			return false, ErrAuthority
 		}
 	}
-	sessionComputer, err := computer.LockOpenSessionComputer(ctx, tx, sessionComputerRef(actor))
+	locked, err := computer.LockOpenSessionComputer(ctx, tx, sessionComputerRef(actor))
 	if err != nil {
 		return false, ErrAuthority
 	}
+	sessionComputer := locked.Computer()
 	if actor.CurrentRunID.Valid {
 		attempt, err := q.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{
 			RunID: currentRun.ID, Number: currentRun.CurrentAttemptNumber, ComputerID: sessionComputer.ID,
@@ -261,7 +263,7 @@ func (r *Reconciler) ReconcileTimeouts(ctx context.Context, limit int32) (int, e
 			_ = tx.Rollback(context.Background())
 			return resolved, ErrAuthority
 		}
-		sessionComputer, err := computer.LockOpenSessionComputer(ctx, tx, computer.SessionComputerRef{
+		locked, err := computer.LockOpenSessionComputer(ctx, tx, computer.SessionComputerRef{
 			EnvironmentID: pgvalue.MustUUIDValue(candidate.EnvironmentID),
 			ComputerID:    pgvalue.MustUUIDValue(candidate.ComputerID),
 			SessionID:     pgvalue.MustUUIDValue(candidate.SessionID),
@@ -270,6 +272,7 @@ func (r *Reconciler) ReconcileTimeouts(ctx context.Context, limit int32) (int, e
 			_ = tx.Rollback(context.Background())
 			return resolved, ErrAuthority
 		}
+		sessionComputer := locked.Computer()
 		attempt, err := q.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{
 			RunID: run.ID, Number: run.CurrentAttemptNumber, ComputerID: sessionComputer.ID,
 		})

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -295,19 +296,24 @@ func TestRunTestExcludesGenericDatabaseHelpers(t *testing.T) {
 
 // Run, Session and Token operations lock Computer and Instance rows only
 // through the computer owner's fences, which keep the statements and their
-// predicates in one place.
+// predicates in one place. Every generated query that locks computers or
+// computer_instances rows is covered.
 func TestComputerRowLocksStayBehindComputerFences(t *testing.T) {
-	forbidden := map[string]bool{
-		"LockActorCloseComputer":         true,
-		"LockActorInputComputer":         true,
-		"LockComputer":                   true,
-		"LockComputerAdmissionAuthority": true,
-		"LockComputerInstance":           true,
-		"LockRunLeaseClaimComputer":      true,
-		"LockRunLeaseClaimInstance":      true,
-		"LockTokenWaitComputer":          true,
-	}
 	root := filepath.Join(repositoryRoot(t), "internal")
+	forbidden, err := computerRowLockQueries(filepath.Join(root, "db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []string{
+		"LockActorCloseComputer", "LockActorInputComputer", "LockCancellationComputers", "LockCancellationInstances",
+		"LockChildComputerPair", "LockComputer", "LockComputerAdmissionAuthority", "LockComputerCommandInstance",
+		"LockComputerCommandWorkerAuthority", "LockComputerForDelete", "LockComputerInstance", "LockRunLeaseClaimComputer",
+		"LockRunLeaseClaimInstance", "LockTokenWaitComputer", "LockWorkerComputerInstance",
+	} {
+		if !forbidden[query] {
+			t.Fatalf("generated query %s is not recognized as a Computer row lock", query)
+		}
+	}
 	for _, owner := range []string{"run", "session", "token"} {
 		err := filepath.WalkDir(filepath.Join(root, owner), func(filename string, d fs.DirEntry, err error) error {
 			if err != nil {
@@ -337,6 +343,78 @@ func TestComputerRowLocksStayBehindComputerFences(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+var (
+	generatedQueryName = regexp.MustCompile(`^-- name: (\w+) `)
+	rowLockClause      = regexp.MustCompile(`(?i)\bFOR\s+(?:NO\s+KEY\s+)?UPDATE\b(?:\s+OF\s+(\w+(?:\s*,\s*\w+)*))?`)
+	computerRowSource  = regexp.MustCompile(`(?i)\b(?:FROM|JOIN)\s+(computers|computer_instances)\b(?:\s+(?:AS\s+)?(\w+))?`)
+)
+
+// computerRowLockQueries returns the generated queries whose statements lock
+// computers or computer_instances rows: a FOR UPDATE or FOR NO KEY UPDATE
+// clause that names one of those tables or their aliases, or that names no
+// table while reading one of them.
+func computerRowLockQueries(dbDir string) (map[string]bool, error) {
+	filenames, err := filepath.Glob(filepath.Join(dbDir, "*.sql.go"))
+	if err != nil {
+		return nil, err
+	}
+	queries := map[string]bool{}
+	for _, filename := range filenames {
+		file, err := parser.ParseFile(token.NewFileSet(), filename, nil, 0)
+		if err != nil {
+			return nil, err
+		}
+		for _, declaration := range file.Decls {
+			general, ok := declaration.(*ast.GenDecl)
+			if !ok || general.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range general.Specs {
+				for _, value := range spec.(*ast.ValueSpec).Values {
+					literal, ok := value.(*ast.BasicLit)
+					if !ok || literal.Kind != token.STRING {
+						continue
+					}
+					statement, err := strconv.Unquote(literal.Value)
+					if err != nil {
+						return nil, err
+					}
+					name := generatedQueryName.FindStringSubmatch(statement)
+					if name != nil && locksComputerRows(statement) {
+						queries[name[1]] = true
+					}
+				}
+			}
+		}
+	}
+	return queries, nil
+}
+
+func locksComputerRows(statement string) bool {
+	sources := computerRowSource.FindAllStringSubmatch(statement, -1)
+	if len(sources) == 0 {
+		return false
+	}
+	names := map[string]bool{}
+	for _, source := range sources {
+		names[strings.ToLower(source[1])] = true
+		if source[2] != "" {
+			names[strings.ToLower(source[2])] = true
+		}
+	}
+	for _, clause := range rowLockClause.FindAllStringSubmatch(statement, -1) {
+		if clause[1] == "" {
+			return true
+		}
+		for _, target := range strings.Split(clause[1], ",") {
+			if names[strings.ToLower(strings.TrimSpace(target))] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func TestProviderNeutralPackagesExcludeProviderSDKs(t *testing.T) {

@@ -29,10 +29,11 @@ func reconcileLostExecution(ctx context.Context, tx pgx.Tx, actor db.Session, bi
 	default:
 		return actor, true, nil
 	}
-	ws, err := computer.LockSessionComputer(ctx, tx, sessionComputerRef(actor))
+	locked, err := computer.LockSessionComputer(ctx, tx, sessionComputerRef(actor))
 	if err != nil {
 		return actor, false, err
 	}
+	ws := locked.Computer()
 	source, episode := ws.HeadDiskVersionID, ws.RecoveryID
 	repairFailure := ws.RecoveryFailure
 	reconciled, err := q.SessionExecutionScopesReconciled(ctx, actor.ID)
@@ -181,10 +182,11 @@ func reconcileStoppedExecution(ctx context.Context, tx pgx.Tx, actor db.Session)
 	if current.Status != db.RunStatusCancelled || current.CurrentRunLeaseID.Valid {
 		return actor, true, nil
 	}
-	ws, err := computer.LockSessionComputer(ctx, tx, sessionComputerRef(actor))
+	locked, err := computer.LockSessionComputer(ctx, tx, sessionComputerRef(actor))
 	if err != nil {
 		return actor, false, err
 	}
+	ws := locked.Computer()
 	if actor.ActiveTurnID.Valid && !ws.HeadDiskVersionID.Valid {
 		return actor, true, nil
 	}

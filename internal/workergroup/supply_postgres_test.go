@@ -171,16 +171,17 @@ func TestExecutionHostWithoutClaimsKeepsEpochAndStateFences(t *testing.T) {
 	for _, test := range []struct {
 		name, sql string
 		want      error
+		host      bool
 	}{
-		{"current", ``, nil},
-		{"host claims", `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, nil},
-		{"group claims", `UPDATE worker_groups SET claim_version=claim_version+1 WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, nil},
-		{"draining host", `UPDATE worker_hosts SET status='draining',draining_at=now() WHERE id=$1`, nil},
-		{"paused group", `UPDATE worker_groups SET status='paused' WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, nil},
-		{"draining group", `UPDATE worker_groups SET status='draining',primary_pool_id=NULL WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, nil},
-		{"disabled group", `UPDATE worker_groups SET status='disabled',primary_pool_id=NULL WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, pgx.ErrNoRows},
-		{"new epoch", `UPDATE worker_hosts SET current_epoch=2 WHERE id=$1`, pgx.ErrNoRows},
-		{"lost host", `UPDATE worker_hosts SET status='lost',lost_at=now() WHERE id=$1`, pgx.ErrNoRows},
+		{"current", ``, nil, false},
+		{"host claims", `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, nil, false},
+		{"group claims", `UPDATE worker_groups SET claim_version=claim_version+1 WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, nil, false},
+		{"draining host", `UPDATE worker_hosts SET status='draining',draining_at=now() WHERE id=$1`, nil, false},
+		{"paused group", `UPDATE worker_groups SET status='paused' WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, nil, false},
+		{"draining group", `UPDATE worker_groups SET status='draining',primary_pool_id=NULL WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, nil, false},
+		{"disabled group", `UPDATE worker_groups SET status='disabled',primary_pool_id=NULL WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, pgx.ErrNoRows, false},
+		{"new epoch", `UPDATE worker_hosts SET current_epoch=2 WHERE id=$1`, pgx.ErrNoRows, true},
+		{"lost host", `UPDATE worker_hosts SET status='lost',lost_at=now() WHERE id=$1`, pgx.ErrNoRows, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := newSupplyFixture(t)
@@ -193,6 +194,10 @@ func TestExecutionHostWithoutClaimsKeepsEpochAndStateFences(t *testing.T) {
 			})
 			if test.want == nil && (err != nil || platform != f.vmPlatformID) || test.want != nil && !errors.Is(err, test.want) {
 				t.Fatalf("execution host = %q, %v, want %v", platform, err, test.want)
+			}
+			var rejected *ExecutionHostError
+			if test.want != nil && (!errors.As(err, &rejected) || rejected.Host != test.host || rejected.Err != nil) {
+				t.Fatalf("execution host rejection = %#v, want a rejected row naming the host: %v", rejected, test.host)
 			}
 		})
 	}

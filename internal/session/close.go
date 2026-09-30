@@ -39,13 +39,14 @@ func ReconcileClose(
 	if actor.CurrentRunID.Valid {
 		return reconcileCurrentRunClose(ctx, tx, actor)
 	}
-	sessionComputer, err := computer.LockSessionComputer(ctx, tx, sessionComputerRef(actor))
+	locked, err := computer.LockSessionComputer(ctx, tx, sessionComputerRef(actor))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return actor, true, nil
 	}
 	if err != nil {
 		return db.Session{}, false, err
 	}
+	sessionComputer := locked.Computer()
 	activity, err := store.GetActorCloseComputerActivity(ctx, actor.ID)
 	if err != nil {
 		return db.Session{}, false, err
@@ -125,13 +126,14 @@ func reconcileCurrentRunClose(
 	if err != nil {
 		return db.Session{}, false, err
 	}
-	sessionComputer, err := computer.LockSessionComputer(ctx, tx, sessionComputerRef(actor))
+	locked, err := computer.LockSessionComputer(ctx, tx, sessionComputerRef(actor))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return actor, true, nil
 	}
 	if err != nil {
 		return db.Session{}, false, err
 	}
+	sessionComputer := locked.Computer()
 	attempt, err := store.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{
 		RunID:      run.ID,
 		Number:     run.CurrentAttemptNumber,
@@ -207,10 +209,11 @@ func reconcileCancellation(ctx context.Context, tx pgx.Tx, actor db.Session) (db
 		if !attempt.TerminalAt.Valid || attempt.EntrypointEnteredAt.Valid || actor.DispatchHoldReason.String != "interrupt_requested" {
 			return actor, true, nil
 		}
-		sessionComputer, err := computer.LockSessionComputer(ctx, tx, sessionComputerRef(actor))
+		locked, err := computer.LockSessionComputer(ctx, tx, sessionComputerRef(actor))
 		if err != nil {
 			return actor, false, err
 		}
+		sessionComputer := locked.Computer()
 		excluded, err := q.SessionExecutionScopesReconciled(ctx, actor.ID)
 		if err != nil {
 			return actor, false, err

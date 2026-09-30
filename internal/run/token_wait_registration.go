@@ -97,7 +97,7 @@ func BeginTokenWaitRegistration(ctx context.Context, tx pgx.Tx, fence TokenWaitF
 		HostID: pgvalue.UUID(fence.WorkerHostID), Epoch: fence.WorkerEpoch,
 	})
 	if err != nil {
-		return TokenWaitStage{}, tokenWaitError("lock current worker epoch", err)
+		return TokenWaitStage{}, tokenWaitHostError(err)
 	}
 	instance, err := computer.LockTokenWaitInstance(ctx, tx, computer.TokenWaitInstanceRef{
 		OrgID: pgvalue.MustUUIDValue(owner.OrgID), ProjectID: pgvalue.MustUUIDValue(owner.ProjectID),
@@ -107,7 +107,7 @@ func BeginTokenWaitRegistration(ctx context.Context, tx pgx.Tx, fence TokenWaitF
 		VMPlatformID: platform, WriterGeneration: lease.WriterGeneration,
 	})
 	if err != nil {
-		return TokenWaitStage{}, tokenWaitError("lock ready runtime", err)
+		return TokenWaitStage{}, tokenWaitInstanceError(err)
 	}
 	var session db.Session
 	if owner.SessionID.Valid {
@@ -198,4 +198,32 @@ func tokenWaitError(operation string, cause error) error {
 		return errors.New(operation)
 	}
 	return fmt.Errorf("%s: %w", operation, cause)
+}
+
+// tokenWaitHostError names the worker supply lock that rejected the
+// registration, with the statement's error when one failed.
+func tokenWaitHostError(err error) error {
+	operation, cause := "lock worker group", err
+	var rejected *workergroup.ExecutionHostError
+	if errors.As(err, &rejected) {
+		cause = rejected.Err
+		if rejected.Host {
+			operation = "lock current worker epoch"
+		}
+	}
+	return tokenWaitError(operation, cause)
+}
+
+// tokenWaitInstanceError names the Computer or Instance lock that rejected
+// the registration, with the statement's error when one failed.
+func tokenWaitInstanceError(err error) error {
+	operation, cause := "lock active Computer", err
+	var rejected *computer.TokenWaitInstanceError
+	if errors.As(err, &rejected) {
+		cause = rejected.Err
+		if rejected.Instance {
+			operation = "lock ready runtime"
+		}
+	}
+	return tokenWaitError(operation, cause)
 }
