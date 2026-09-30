@@ -28,20 +28,49 @@ VALUES ($1, $2, 'test-task', $3, $4, '* * * * *', 'UTC', 'active', now(), now() 
 	return scheduleID
 }
 
-func (f fixture) scheduledRequest(scheduleID uuid.UUID, secrets ...LockedSecret) ScheduledRequest {
-	return ScheduledRequest{
-		EnvironmentID: f.EnvironmentID, ScheduleID: scheduleID, ScheduleGeneration: 1,
-		SandboxDeclaredID: declaredID, Secrets: secrets,
+// schedulePlacement is a placement of the fixture API_TOKEN Secret on a
+// schedule.
+type schedulePlacement struct {
+	kind, target, mode string
+	origins            []string
+}
+
+var (
+	protectedPlacement = schedulePlacement{kind: "env", target: "TOKEN", mode: "protected", origins: []string{"https://example.com"}}
+	rawPlacement       = schedulePlacement{kind: "env", target: "RAW", mode: "raw"}
+	filePlacement      = schedulePlacement{kind: "file", target: "/run/secrets/key", mode: "raw"}
+)
+
+// setScheduleSecrets replaces the schedule's Secret placements.
+func (f fixture) setScheduleSecrets(t *testing.T, scheduleID uuid.UUID, placements ...schedulePlacement) {
+	t.Helper()
+	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM schedule_secrets WHERE schedule_id=$1`, scheduleID)
+	for _, p := range placements {
+		dbtest.MustExec(t, t.Context(), f.Pool, `
+INSERT INTO schedule_secrets (environment_id, schedule_id, placement_kind, placement_target, secret_id, mode, allowed_origins)
+VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::text[], '{}'))`,
+			f.EnvironmentID, scheduleID, p.kind, p.target, f.secretID, p.mode, p.origins)
 	}
 }
 
-// createScheduled runs CreateScheduled in its own transaction and commits
-// only when it succeeds.
+func (f fixture) scheduledRequest(scheduleID uuid.UUID) ScheduledRequest {
+	return ScheduledRequest{
+		EnvironmentID: f.EnvironmentID, ScheduleID: scheduleID, ScheduleGeneration: 1,
+		SandboxDeclaredID: declaredID,
+	}
+}
+
+// createScheduled locks the request's schedule Secrets and runs
+// CreateScheduled in one transaction, committing only when it succeeds.
 func (f fixture) createScheduled(t *testing.T, creator Creator, request ScheduledRequest) (ScheduledComputer, error) {
 	t.Helper()
 	var created ScheduledComputer
 	err := db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error {
 		var err error
+		request.Secrets, err = LockScheduleSecrets(t.Context(), tx, request.EnvironmentID, request.ScheduleID)
+		if err != nil {
+			return err
+		}
 		created, err = creator.CreateScheduled(t.Context(), tx, request)
 		return err
 	})
@@ -59,24 +88,22 @@ func TestCreateScheduledInstallsComputerCAAndPlacements(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f := newFixture(t)
 			scheduleID := f.scheduleFor(t)
-			protected := LockedSecret{SecretID: f.secretID, Kind: "env", Target: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://example.com"}}
-			raw := LockedSecret{SecretID: f.secretID, Kind: "env", Target: "RAW", Mode: "raw"}
-			file := LockedSecret{SecretID: f.secretID, Kind: "file", Target: "/run/secrets/key", Mode: "raw"}
-			var secrets []LockedSecret
+			var secrets []schedulePlacement
 			switch mode {
 			case "protected":
-				secrets = []LockedSecret{protected}
+				secrets = []schedulePlacement{protectedPlacement}
 			case "mixed":
-				secrets = []LockedSecret{protected, raw, file}
+				secrets = []schedulePlacement{protectedPlacement, rawPlacement, filePlacement}
 			case "raw":
-				secrets = []LockedSecret{raw}
+				secrets = []schedulePlacement{rawPlacement}
 			}
+			f.setScheduleSecrets(t, scheduleID, secrets...)
 			calls := 0
 			creator := NewCreator(issuerFunc(func(environmentID, computerID uuid.UUID, createdAt time.Time) (secret.ProxyTrust, error) {
 				calls++
 				return f.store.GenerateProxyTrust(environmentID, computerID, createdAt)
 			}))
-			created, err := f.createScheduled(t, creator, f.scheduledRequest(scheduleID, secrets...))
+			created, err := f.createScheduled(t, creator, f.scheduledRequest(scheduleID))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -147,37 +174,40 @@ SELECT computers.head_disk_version_id, computers.creation_deployment_id, compute
 func TestCreateScheduledRejectsWithoutWrites(t *testing.T) {
 	f := newFixture(t)
 	scheduleID := f.scheduleFor(t)
-	raw := LockedSecret{SecretID: f.secretID, Kind: "env", Target: "RAW", Mode: "raw"}
-	protected := LockedSecret{SecretID: f.secretID, Kind: "env", Target: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://example.com"}}
+	stale := f.scheduledRequest(scheduleID)
+	stale.ScheduleGeneration = 2
+	absentSandbox := f.scheduledRequest(scheduleID)
+	absentSandbox.SandboxDeclaredID = "absent-computer"
 	for name, test := range map[string]struct {
-		request ScheduledRequest
-		creator Creator
-		setup   func(t *testing.T) func()
-		want    func(error) bool
+		request    ScheduledRequest
+		placements []schedulePlacement
+		issuer     CAIssuer
+		setup      func(t *testing.T) func()
+		want       func(error) bool
 	}{
 		"stale generation": {
-			request: ScheduledRequest{EnvironmentID: f.EnvironmentID, ScheduleID: scheduleID, ScheduleGeneration: 2, SandboxDeclaredID: declaredID, Secrets: []LockedSecret{raw}},
-			want:    func(err error) bool { return errors.Is(err, ErrNotDeployed) },
+			request: stale, placements: []schedulePlacement{rawPlacement},
+			want: func(err error) bool { return errors.Is(err, ErrNotDeployed) },
 		},
 		"absent schedule": {
-			request: f.scheduledRequest(uuid.NewV7(), raw),
+			request: f.scheduledRequest(uuid.NewV7()),
 			want:    func(err error) bool { return errors.Is(err, ErrNotDeployed) },
 		},
 		"absent Sandbox": {
-			request: ScheduledRequest{EnvironmentID: f.EnvironmentID, ScheduleID: scheduleID, ScheduleGeneration: 1, SandboxDeclaredID: "absent-computer"},
+			request: absentSandbox,
 			want:    func(err error) bool { return errors.Is(err, ErrNotDeployed) },
 		},
 		"CA generation failure": {
-			request: f.scheduledRequest(scheduleID, protected),
-			creator: NewCreator(issuerFunc(func(uuid.UUID, uuid.UUID, time.Time) (secret.ProxyTrust, error) {
+			request: f.scheduledRequest(scheduleID), placements: []schedulePlacement{protectedPlacement},
+			issuer: issuerFunc(func(uuid.UUID, uuid.UUID, time.Time) (secret.ProxyTrust, error) {
 				return secret.ProxyTrust{}, errors.New("synthetic generation failure")
-			})),
+			}),
 			want: func(err error) bool {
 				return err != nil && strings.Contains(err.Error(), "synthetic generation failure")
 			},
 		},
 		"placement failure after CA": {
-			request: f.scheduledRequest(scheduleID, protected, raw),
+			request: f.scheduledRequest(scheduleID), placements: []schedulePlacement{protectedPlacement, rawPlacement},
 			setup: func(t *testing.T) func() {
 				dbtest.MustExec(t, t.Context(), f.Pool, `CREATE FUNCTION reject_scheduled_binding() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM computers WHERE id=NEW.computer_id AND secret_ca_certificate IS NOT NULL) THEN RAISE EXCEPTION 'CA not generated'; END IF;
@@ -191,12 +221,13 @@ func TestCreateScheduledRejectsWithoutWrites(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
+			f.setScheduleSecrets(t, scheduleID, test.placements...)
 			if test.setup != nil {
 				defer test.setup(t)()
 			}
-			creator := test.creator
-			if creator == (Creator{}) {
-				creator = f.creator()
+			creator := f.creator()
+			if test.issuer != nil {
+				creator = NewCreator(test.issuer)
 			}
 			before := f.count(t, "SELECT count(*) FROM computers")
 			beforeVersions := f.count(t, "SELECT count(*) FROM computer_disk_versions")
@@ -208,7 +239,59 @@ func TestCreateScheduledRejectsWithoutWrites(t *testing.T) {
 			}
 		})
 	}
-	if _, err := f.createScheduled(t, f.creator(), f.scheduledRequest(scheduleID, protected, raw)); err != nil {
+	f.setScheduleSecrets(t, scheduleID, protectedPlacement, rawPlacement)
+	if _, err := f.createScheduled(t, f.creator(), f.scheduledRequest(scheduleID)); err != nil {
 		t.Fatalf("creation after rejected attempts: %v", err)
+	}
+}
+
+func TestCreateScheduledRequiresSecretsLockedForItsScheduleAndTransaction(t *testing.T) {
+	f := newFixture(t)
+	scheduleID := f.scheduleFor(t)
+	f.setScheduleSecrets(t, scheduleID, protectedPlacement)
+	lockIn := func(tx pgx.Tx, environmentID, scheduleID uuid.UUID) ScheduleSecrets {
+		t.Helper()
+		held, err := LockScheduleSecrets(t.Context(), tx, environmentID, scheduleID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return held
+	}
+	for name, secrets := range map[string]func(tx pgx.Tx) ScheduleSecrets{
+		"never locked":        func(pgx.Tx) ScheduleSecrets { return ScheduleSecrets{} },
+		"another schedule":    func(tx pgx.Tx) ScheduleSecrets { return lockIn(tx, f.EnvironmentID, uuid.NewV7()) },
+		"another environment": func(tx pgx.Tx) ScheduleSecrets { return lockIn(tx, uuid.NewV7(), scheduleID) },
+		"another transaction": func(pgx.Tx) ScheduleSecrets {
+			other, err := f.Pool.Begin(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			held := lockIn(other, f.EnvironmentID, scheduleID)
+			if err := other.Rollback(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			return held
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			calls := 0
+			creator := NewCreator(issuerFunc(func(environmentID, computerID uuid.UUID, createdAt time.Time) (secret.ProxyTrust, error) {
+				calls++
+				return f.store.GenerateProxyTrust(environmentID, computerID, createdAt)
+			}))
+			before := f.count(t, "SELECT count(*) FROM computers")
+			err := db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error {
+				request := f.scheduledRequest(scheduleID)
+				request.Secrets = secrets(tx)
+				_, err := creator.CreateScheduled(t.Context(), tx, request)
+				return err
+			})
+			if !errors.Is(err, errScheduleSecretsNotHeld) {
+				t.Fatalf("error = %v", err)
+			}
+			if calls != 0 || f.count(t, "SELECT count(*) FROM computers") != before {
+				t.Fatal("rejected scheduled creation wrote a Computer or CA")
+			}
+		})
 	}
 }

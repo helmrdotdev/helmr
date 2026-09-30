@@ -137,31 +137,21 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		return &AdmissionError{Code: ErrorInvalidDefinition, Message: "scheduled task definition is invalid"}
 	}
 
-	selectedSecrets, err := queries.LockScheduleSecrets(ctx, db.LockScheduleSecretsParams{
-		EnvironmentID: lockedSchedule.EnvironmentID,
-		ScheduleID:    lockedSchedule.ID,
-	})
+	selectedSecrets, err := computer.LockScheduleSecrets(ctx, tx,
+		pgvalue.MustUUIDValue(lockedSchedule.EnvironmentID), pgvalue.MustUUIDValue(lockedSchedule.ID))
 	if err != nil {
 		return err
 	}
-	if !sameSecretPlacements(taskRun.SecretPlacements, selectedSecrets) {
+	if !sameSecretPlacements(taskRun.SecretPlacements, selectedSecrets.Rows()) {
 		return &AdmissionError{Code: ErrorSecretSelectionMismatch, Message: "schedule Secret selection does not match its definition"}
 	}
 	runID := uuid.NewV7()
-	secrets := make([]computer.LockedSecret, 0, len(selectedSecrets))
-	for _, selected := range selectedSecrets {
-		secrets = append(secrets, computer.LockedSecret{
-			SecretID: pgvalue.MustUUIDValue(selected.SecretID),
-			Kind:     selected.PlacementKind, Target: selected.PlacementTarget,
-			Mode: selected.Mode, AllowedOrigins: selected.AllowedOrigins,
-		})
-	}
 	createdComputer, err := a.computers.CreateScheduled(ctx, tx, computer.ScheduledRequest{
 		EnvironmentID:      pgvalue.MustUUIDValue(lockedSchedule.EnvironmentID),
 		ScheduleID:         pgvalue.MustUUIDValue(lockedSchedule.ID),
 		ScheduleGeneration: lockedSchedule.Generation,
 		SandboxDeclaredID:  taskRun.SandboxDeclaredID,
-		Secrets:            secrets,
+		Secrets:            selectedSecrets,
 	})
 	if errors.Is(err, computer.ErrNotDeployed) {
 		return &AdmissionError{Code: ErrorSandboxNotFound, Message: "schedule Sandbox is absent from its pinned deployment"}
