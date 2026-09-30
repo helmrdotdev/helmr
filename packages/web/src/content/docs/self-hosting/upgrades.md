@@ -26,6 +26,20 @@ The checked-in flow establishes migration-before-service ordering, but it does n
 
 When the target release changes the worker AMI, apply the new launch template but do not assume instances will refresh automatically. Drain each exact logical worker to `termination_ready` before provider deletion, then explicitly coordinate the Auto Scaling instance refresh. Preserve enough old capacity to serve work until replacement workers authenticate and become active.
 
+The steps above apply when the target release keeps the worker API contract revision. Old and new workers then both serve the upgraded Control Plane during the replacement.
+
+## Worker API contract changes
+
+Every worker request names the worker API contract it was built for, such as `helmr.worker-api.v1.r1`, and the Control Plane rejects any other or missing contract with `worker_contract_mismatch`. When the target release changes that revision, old workers cannot serve the upgraded Control Plane, so the Control Plane-first order above does not apply. The first release that checks the contract changes it for every existing worker; later releases change it only for incompatible worker API changes. The non-production rehearsal shows whether a target release changes it: after the Control Plane upgrade, old workers fail with `worker_contract_mismatch`.
+
+For such a release, cut over in this order:
+
+1. Before upgrading the Control Plane, drain the old workers to `termination_ready` against the old Control Plane, so their Runs and Computers are handed over or finished under the contract they speak.
+2. Run the migration and upgrade the Control Plane as above.
+3. Launch replacement workers from the target release's AMI and wait for them to authenticate and become active.
+
+Old workers cannot keep serving while the new Control Plane runs, so plan the capacity gap explicitly: either accept an interruption between the drain and the replacements' activation, or stage separate capacity, such as a second worker group for the target release, that is ready as soon as the Control Plane changes. Workers that are still running when the Control Plane changes are rejected on their next request and fenced about two minutes later.
+
 Checkpoint restore validates runtime compatibility, including runtime and rootfs digests and resource shape. Existing checkpoints may not resume on an incompatible replacement worker; the checked-in flow does not promise cross-release checkpoint conversion.
 
 ## Rollback limits

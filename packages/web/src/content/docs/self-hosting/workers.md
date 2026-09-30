@@ -68,7 +68,12 @@ The official AMI is selected from the release manifest by `helmr_version` and `a
 
 At boot, the module fetches the worker-group enrollment token into a root-only volatile file. The token selects the logical group. AWS identity, AMI provenance, instance profile, Auto Scaling membership, and fleet policy remain infrastructure responsibilities; the Control Plane does not authenticate or allowlist the AMI.
 
-Run workers from the same Helmr release as the Control Plane. Every worker request names the worker API contract the worker was built for, such as `helmr.worker-api.v1.r1`, in the `Helmr-Worker-Contract` header. The name is the route major followed by a revision, and the revision changes with every incompatible worker API change in a release. The Control Plane rejects any other or missing contract with HTTP 409 `worker_contract_mismatch` before it authenticates the worker or changes any state. The worker exits with an error that names both contracts and keeps its stored credential; systemd restarts it every 5 seconds, and each attempt is one rejected request. Workers still running when the Control Plane is upgraded to a release with another contract are rejected on their next request. Replace them with the AMI for the Control Plane's `helmr_version`, or roll the Control Plane back.
+Run workers from the same Helmr release as the Control Plane. Every worker request names the worker API contract the worker was built for, such as `helmr.worker-api.v1.r1`, in the `Helmr-Worker-Contract` header. The name is the route major followed by a revision, and the revision changes with every incompatible worker API change in a release. The Control Plane rejects any other or missing contract with HTTP 409 `worker_contract_mismatch` before it decodes the request, authenticates the worker or reads or changes any state.
+
+- A worker that is rejected while starting exits with an error that names both contracts and keeps its stored credential. systemd restarts it every 5 seconds, and each attempt is one rejected request.
+- A worker that is already running when the Control Plane changes keeps running: its observation loop logs each rejection and continues. After about 120 seconds without an accepted observation, the Control Plane fences the host and revokes its server-side credentials.
+
+Replace mismatched workers with the AMI for the Control Plane's `helmr_version`, or roll the Control Plane back. See [Upgrades](/docs/self-hosting/upgrades#worker-api-contract-changes) for rolling out a release that changes the contract.
 
 Workers need outbound access to the Control Plane, S3, AWS APIs, and task
 destinations. They do not install dependencies or build Deployment artifacts.

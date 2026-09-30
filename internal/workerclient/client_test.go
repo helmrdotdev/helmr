@@ -794,6 +794,37 @@ func TestWorkerClientSurfacesContractMismatchAfterAuthentication(t *testing.T) {
 	}
 }
 
+// Drain completion and fence replay ambiguous failures, but a contract
+// mismatch is final: at token exchange or at the mutation itself.
+func TestWorkerTerminalMutationsDoNotReplayContractMismatch(t *testing.T) {
+	for _, admitToken := range []bool{false, true} {
+		requests := map[string]int{}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests[r.URL.Path]++
+			if admitToken && r.URL.Path == "/worker/v1/instance/token" {
+				_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{Token: "worker-token", ExpiresInSeconds: 3600})
+				return
+			}
+			writeContractMismatch(w, r)
+		}))
+		client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("worker", "secret"), WithService("service"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = client.CompleteWorkerDrain(context.Background(), workerapi.DrainCompletionRequest{})
+		assertContractMismatch(t, "drain completion", err)
+		assertContractMismatch(t, "fence", client.FenceWorker(context.Background(), "termination_drain_failed"))
+		server.Close()
+		want := map[string]int{"/worker/v1/instance/token": 2}
+		if admitToken {
+			want = map[string]int{"/worker/v1/instance/token": 1, "/worker/v1/instance/drain/complete": 1, "/worker/v1/instance/fence": 1}
+		}
+		if fmt.Sprint(requests) != fmt.Sprint(want) {
+			t.Fatalf("admit token %v: requests = %v, want %v", admitToken, requests, want)
+		}
+	}
+}
+
 func TestWorkerClientKeepsOtherActivationConflicts(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/worker/v1/instance/token" {

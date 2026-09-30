@@ -539,6 +539,22 @@ func TestServerCompletionStopsOnNonRetryableError(t *testing.T) {
 	}
 }
 
+func TestServerCompletionStopsOnWorkerContractMismatch(t *testing.T) {
+	client := &serverTestClient{
+		completeErrors: []error{workerapi.ContractMismatchError{Worker: workerapi.Contract, ControlPlane: "helmr.worker-api.v1.r0"}},
+	}
+	err := (Server{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
+		CompleteErrorBackoff: time.Nanosecond,
+	}).completeComputerBasicExec(context.Background(), client, workerapi.ComputerCommandCompleteRequest{})
+	var mismatch workerapi.ContractMismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("completion error = %v, want contract mismatch", err)
+	}
+	if len(client.execCompletions) != 1 {
+		t.Fatalf("completion attempts = %d, want 1", len(client.execCompletions))
+	}
+}
+
 func TestServerCompletionRetriesServerError(t *testing.T) {
 	client := &serverTestClient{
 		completeErrors: []error{

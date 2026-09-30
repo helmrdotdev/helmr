@@ -255,3 +255,46 @@ func contractMismatch(err error) error {
 		ControlPlane: details[workerapi.ContractMismatchControlPlaneDetail],
 	}
 }
+
+func asContractMismatch(err error) (workerapi.ContractMismatchError, bool) {
+	var mismatch workerapi.ContractMismatchError
+	return mismatch, errors.As(err, &mismatch)
+}
+
+// sensitiveContractMismatch recovers the contract mismatch from the error body
+// of a sensitive request. Only the error code and the control plane's contract
+// name are read; every other response stays status-only.
+func sensitiveContractMismatch(status int, body []byte) error {
+	if status != http.StatusConflict {
+		return nil
+	}
+	var payload struct {
+		Error struct {
+			Code    string `json:"code"`
+			Details struct {
+				ControlPlane string `json:"control_plane_contract"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &payload) != nil || payload.Error.Code != workerapi.ContractMismatchCode {
+		return nil
+	}
+	controlPlane := payload.Error.Details.ControlPlane
+	if !contractName(controlPlane) {
+		return nil
+	}
+	return workerapi.ContractMismatchError{Worker: workerapi.Contract, ControlPlane: controlPlane}
+}
+
+// contractName accepts a short printable ASCII contract identifier.
+func contractName(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for _, r := range value {
+		if r <= ' ' || r > '~' {
+			return false
+		}
+	}
+	return true
+}

@@ -8,9 +8,10 @@ import (
 )
 
 // requireWorkerContract admits a /worker/v1 request only from a worker that
-// speaks this build's contract. It runs before body decoding, rate guards,
-// authentication and any database access, so a mismatched worker changes no
-// state and learns why in a stable error even after a wire change.
+// speaks this build's contract. It runs before body decoding, enrollment rate
+// accounting, authentication and database access, so a mismatched worker
+// changes no state and learns why in a stable error even after a wire change.
+// Only the shared request-size limit of the enclosing route group runs first.
 func requireWorkerContract(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if mismatch, ok := workerapi.ContractMismatch(r.Header.Values(workerapi.ContractHeader)); ok {

@@ -27,7 +27,7 @@ var workerContractRoutes = []struct {
 	{method: http.MethodGet, path: "/worker/v1/instance"},
 }
 
-func TestWorkerRoutesRejectContractMismatchBeforeEverythingElse(t *testing.T) {
+func TestWorkerRoutesRejectContractMismatchBeforeDecodingAuthAndDatabase(t *testing.T) {
 	// completeServerConfig has no database: a query would fail the request.
 	router, err := NewServer(completeServerConfig(t))
 	if err != nil {
@@ -57,6 +57,25 @@ func TestWorkerRoutesRejectContractMismatchBeforeEverythingElse(t *testing.T) {
 				assertWorkerContractMismatch(t, response, test.worker)
 			})
 		}
+	}
+}
+
+// The shared request-size limit wraps the whole route group, so a declared
+// body over the limit is refused before the contract is checked.
+func TestWorkerRequestSizeLimitPrecedesContractCheck(t *testing.T) {
+	router, err := NewServer(completeServerConfig(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, contract := range []string{"", "helmr.worker-api.v1.r0"} {
+		request := httptest.NewRequest(http.MethodPost, "/worker/v1/instance/observations", strings.NewReader("x"))
+		if contract != "" {
+			request.Header.Set(workerapi.ContractHeader, contract)
+		}
+		request.ContentLength = apiRequestBodyLimit + 1
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		assertAdminError(t, response, http.StatusRequestEntityTooLarge, "request_too_large")
 	}
 }
 

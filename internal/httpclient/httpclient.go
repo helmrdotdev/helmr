@@ -114,15 +114,34 @@ func (t *Transport) Do(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
+// SensitiveErrorBodyLimit bounds the error body DoSensitive offers to its
+// recoverError allowlist.
+const SensitiveErrorBodyLimit = 1024
+
 // DoSensitive avoids retaining server-provided error bodies, which may contain
 // secret material. Successful bodies remain the caller's bounded-read responsibility.
-func (t *Transport) DoSensitive(req *http.Request) (*http.Response, error) {
+// recoverError, when non-nil, sees at most SensitiveErrorBodyLimit bytes of an
+// error body and may return an error built only from explicitly allowlisted
+// fields; the bytes are cleared afterwards. A nil result keeps the sanitized
+// status-only error.
+func (t *Transport) DoSensitive(req *http.Request, recoverError func(status int, body []byte) error) (*http.Response, error) {
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
 		return nil, errors.New("sensitive HTTP request failed")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		resp.Body.Close()
+		defer resp.Body.Close()
+		if recoverError != nil {
+			body, readErr := io.ReadAll(io.LimitReader(resp.Body, SensitiveErrorBodyLimit+1))
+			var recovered error
+			if readErr == nil && len(body) <= SensitiveErrorBodyLimit {
+				recovered = recoverError(resp.StatusCode, body)
+			}
+			clear(body)
+			if recovered != nil {
+				return nil, recovered
+			}
+		}
 		return nil, &Error{StatusCode: resp.StatusCode, Status: http.StatusText(resp.StatusCode)}
 	}
 	return resp, nil

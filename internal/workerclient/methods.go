@@ -174,6 +174,10 @@ func ambiguousWorkerTerminalMutation(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
+	// A control plane on another contract rejects every replay.
+	if _, ok := asContractMismatch(err); ok {
+		return false
+	}
 	var httpErr *httpclient.Error
 	if !errors.As(err, &httpErr) {
 		return true
