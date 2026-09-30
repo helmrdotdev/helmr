@@ -15,10 +15,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
-	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -139,39 +137,6 @@ func TestWorkerSessionControlSelfInterruptRejectsResumePostgres(t *testing.T) {
 	var hold string
 	if err := f.Pool.QueryRow(t.Context(), `SELECT dispatch_hold_id::text FROM sessions WHERE id=$1`, f.sessionID).Scan(&hold); err != nil || hold != interrupted.Completed.HoldID {
 		t.Fatalf("hold=%s err=%v", hold, err)
-	}
-}
-
-func (q workerControlSecretRaceQueries) LockWorkerControlSecrets(ctx context.Context, ids []pgtype.UUID) ([]db.LockWorkerControlSecretsRow, error) {
-	rows, err := q.Querier.LockWorkerControlSecrets(ctx, ids)
-	if err == nil {
-		err = q.afterUnion()
-	}
-	return rows, err
-}
-
-func TestWorkerSessionControlNewBindingDoesNotAcquireLateSecretPostgres(t *testing.T) {
-	f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	tx, err := f.Pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(context.Background())
-	blocker, err := f.Pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer blocker.Rollback(context.Background())
-	q := workerControlSecretRaceQueries{Querier: db.New(tx), afterUnion: func() error {
-		addWorkerControlSecret(t, f)
-		_, err := blocker.Exec(ctx, `SELECT id FROM secrets WHERE id IN(SELECT secret_id FROM computer_secrets WHERE computer_id=$1) FOR UPDATE`, f.computerID)
-		return err
-	}}
-	_, _, _, err = lockWorkerSessionControl(ctx, &txWork{q: q, tx: tx}, f.worker, f.fence(), pgvalue.UUID(f.sessionID), true)
-	if !errors.Is(err, secret.ErrDeliveryUnavailable) {
-		t.Fatalf("changed binding must reject without waiting for new Secret: %v", err)
 	}
 }
 
@@ -395,11 +360,6 @@ func TestWorkerSessionControlChildToParentFinalizationOrderPostgres(t *testing.T
 	if err = <-done; err != nil {
 		t.Fatal(err)
 	}
-}
-
-type workerControlSecretRaceQueries struct {
-	db.Querier
-	afterUnion func() error
 }
 
 func waitForPostgresBlock(t *testing.T, pool *pgxpool.Pool, backendPID int32) {

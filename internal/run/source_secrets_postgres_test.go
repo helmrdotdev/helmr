@@ -7,8 +7,10 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
+	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -197,5 +199,47 @@ func TestControlSecretsStageOutcomes(t *testing.T) {
 				t.Fatalf("interrupt=%t recheck=%v", interrupt, err)
 			}
 		})
+	}
+}
+
+// A binding added after the union lock changes the re-read, so Recheck
+// rejects it before it could wait on the new, out-of-order Secret lock.
+func TestControlSecretsRecheckRejectsNewBindingWithoutLockingIt(t *testing.T) {
+	f, _, fence, targetID, targetComputer := startedSourceFixture(t, true)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	tx, err := f.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	controls, err := LockControlSecrets(ctx, tx, fence, targetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretID, versionID := uuid.NewV7(), uuid.NewV7()
+	committedTx(t, f, func(bind pgx.Tx) error {
+		dbtest.MustExec(t, t.Context(), bind, `SET CONSTRAINTS ALL DEFERRED`)
+		dbtest.MustExec(t, t.Context(), bind, `INSERT INTO secrets(id,environment_id,name,current_version_id) VALUES($1,$2,$3,$4)`, secretID, f.EnvironmentID, "secret-"+secretID.String(), versionID)
+		dbtest.MustExec(t, t.Context(), bind, `INSERT INTO secret_versions(id,secret_id,version,nonce,ciphertext) VALUES($1,$2,1,decode(repeat('01',12),'hex'),decode(repeat('02',16),'hex'))`, versionID, secretID)
+		dbtest.MustExec(t, t.Context(), bind, `INSERT INTO computer_secrets(computer_id,environment_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw')`, targetComputer, f.EnvironmentID, secretID)
+		return nil
+	})
+	blocker, err := f.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocker.Rollback(context.Background())
+	dbtest.MustExec(t, ctx, blocker, `SELECT id FROM secrets WHERE id=$1 FOR UPDATE`, secretID)
+	if _, _, _, err = controls.LockInterruptionLiveSource(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = controls.Recheck(ctx, true); !errors.Is(err, secret.ErrDeliveryUnavailable) {
+		t.Fatalf("changed binding must reject without waiting for the new Secret: %v", err)
+	}
+	for _, binding := range controls.TargetBindings() {
+		if binding.SecretID == pgvalue.UUID(secretID) {
+			t.Fatal("a binding added after the union lock was reported as locked")
+		}
 	}
 }
