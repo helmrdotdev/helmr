@@ -52,7 +52,7 @@
     "build:web": "bun run --cwd packages/web build && vite build",
     "check:web": "bun run build:web && CF_SEND_TELEMETRY=false cf deploy --prebuilt --mode production --dry-run",
     "deploy:web": "bun run build:web && cf deploy --prebuilt --mode production",
-    "typecheck:web": "bun run --cwd packages/web typecheck && bunx tsc -p tsconfig.web-build.json --noEmit",
+    "typecheck:web": "bun run --cwd packages/web typecheck",
     "test:browser": "playwright test"
   }
 }

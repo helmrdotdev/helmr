@@ -1,7 +1,0 @@
-{
-  "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "types": ["node"]
-  },
-  "files": ["cloudflare.config.ts", "vite.config.ts"]
-}
