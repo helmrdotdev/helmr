@@ -57,9 +57,6 @@ func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
 func (s *Server) startRun(ctx context.Context, worker workergroup.HostPrincipal, leaseID pgtype.UUID, expected workerapi.RunLeaseFence) (workerapi.RunLeaseFence, error) {
 	err := s.inTx(ctx, func(work *txWork) error {
 		_, err := run.StartExecution(ctx, work.tx, run.ExecutionFence{LeaseID: leaseID, LeaseSequence: expected.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.HostClaimVersion})
-		if errors.Is(err, run.ErrExecutionWorkerClaims) {
-			return workergroup.ErrStaleClaims
-		}
 		if err != nil {
 			return staleAuthority(staleAuthorityRunStart, "execution", staleRunLeaseClaim(err))
 		}

@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -35,15 +34,8 @@ func claimCommand(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincip
 	if err != nil {
 		return commandClaimAuthority{}, err
 	}
-	group, err := q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(worker.GroupID))
+	locked, err := workergroup.LockHost(ctx, q, worker)
 	if err != nil {
-		return commandClaimAuthority{}, err
-	}
-	host, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{ID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID)})
-	if err != nil {
-		return commandClaimAuthority{}, err
-	}
-	if err = worker.CheckLockedClaims(host, group); err != nil {
 		return commandClaimAuthority{}, err
 	}
 	computer, err := q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: target.EnvironmentID, ID: target.ComputerID})
@@ -58,7 +50,7 @@ func claimCommand(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincip
 	if err != nil {
 		return commandClaimAuthority{}, err
 	}
-	if i.ID != request.ComputerInstanceID || i.WorkerHostID != host.ID || i.WorkerGroupID != group.ID || i.WorkerEpoch != worker.Epoch || i.WriterGeneration != request.WriterGeneration || command.ComputerInstanceID != i.ID || !command.WriterGeneration.Valid || command.WriterGeneration.Int64 != i.WriterGeneration {
+	if i.ID != request.ComputerInstanceID || i.WorkerHostID != locked.Host.ID || i.WorkerGroupID != locked.Group.ID || i.WorkerEpoch != worker.Epoch || i.WriterGeneration != request.WriterGeneration || command.ComputerInstanceID != i.ID || !command.WriterGeneration.Valid || command.WriterGeneration.Int64 != i.WriterGeneration {
 		return commandClaimAuthority{}, pgx.ErrNoRows
 	}
 	if computer.Status != "active" || computer.DesiredState != "active" || i.ReclaimedAt.Valid || i.DesiredState != "ready" || i.ObservedState != "ready" || i.ObservedDesiredVersion != i.DesiredVersion || i.MountState != "mounted" || i.WriterGeneration != computer.WriterGeneration {
@@ -66,7 +58,7 @@ func claimCommand(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincip
 	}
 	switch command.Status {
 	case "starting":
-		if i.AdmissionState != "open" || group.Status != db.WorkerGroupStatusActive || host.Status != db.WorkerHostStatusActive {
+		if i.AdmissionState != "open" || locked.Group.Status != db.WorkerGroupStatusActive || locked.Host.Status != db.WorkerHostStatusActive {
 			return commandClaimAuthority{}, pgx.ErrNoRows
 		}
 	case "running":

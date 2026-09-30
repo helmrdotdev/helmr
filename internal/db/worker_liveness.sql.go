@@ -118,7 +118,7 @@ type LockRunEligibleWorkerHostParams struct {
 }
 
 // Worker Host fence for placement and Computer preparation. The caller
-// (dispatch.lockWorkerFence) must already hold the Worker Group and Pool share
+// (workergroup.LockPlacementSupply) must already hold the Worker Group and Pool share
 // locks and have validated their status. This query locks the Worker Host and
 // checks epoch, observation freshness and platform. Admission also requires an
 // active host without a Run pause; continuation of admitted work accepts a

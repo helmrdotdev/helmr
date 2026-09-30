@@ -24,8 +24,9 @@ func (s *Server) completeTask(ctx context.Context, worker workergroup.HostPrinci
 	err := s.inTx(ctx, func(work *txWork) error {
 		return run.CompleteTaskExecution(ctx, work.tx, run.TaskCompletion{Fence: workerExecutionFence(worker, completion.lease, request.Lease), OperationID: pgvalue.UUID(completion.operationID), Fingerprint: completion.fingerprint, Kind: string(completion.kind), Output: completion.output, Error: completion.errorObject})
 	})
-	if errors.Is(err, run.ErrExecutionWorkerClaims) {
-		return workergroup.ErrStaleClaims
+	// Stale claims re-authenticate before any replay lookup.
+	if errors.Is(err, workergroup.ErrStaleClaims) {
+		return err
 	}
 	// Includes an uncertain transaction commit or a concurrent completion that
 	// committed before this request could acquire live locators.

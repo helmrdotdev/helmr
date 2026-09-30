@@ -43,9 +43,6 @@ func (s *Server) claimRunLease(ctx context.Context, worker workergroup.HostPrinc
 		} else {
 			claimed, err = run.ClaimExecution(ctx, tx, fence)
 		}
-		if errors.Is(err, run.ErrExecutionWorkerClaims) {
-			return workergroup.ErrStaleClaims
-		}
 		if err != nil {
 			return staleRunLeaseClaim(err)
 		}

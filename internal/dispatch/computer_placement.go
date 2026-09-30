@@ -89,7 +89,7 @@ func lockComputerPlacement(ctx context.Context, tx pgx.Tx, p computerPlacement) 
 	if !p.worker.WorkerEpoch.Valid || !p.worker.VMPlatformID.Valid {
 		return p, ErrCapacityUnavailable
 	}
-	if _, err := lockWorkerFence(ctx, tx, workerFence{GroupID: p.worker.WorkerGroupID, RegionID: p.computer.RegionID, WorkerHostID: p.worker.WorkerHostID, WorkerEpoch: p.worker.WorkerEpoch.Int64, RunArchitecture: runtimeArchitecture, RequirePrimary: !p.instance.ID.Valid && !p.checkpoint.Valid}); err != nil {
+	if _, err := workergroup.LockPlacementSupply(ctx, tx, workergroup.PlacementSupply{GroupID: p.worker.WorkerGroupID, RegionID: p.computer.RegionID, HostID: p.worker.WorkerHostID, Epoch: p.worker.WorkerEpoch.Int64, RunArchitecture: runtimeArchitecture, RequirePrimary: !p.instance.ID.Valid && !p.checkpoint.Valid}); err != nil {
 		return p, err
 	}
 	c, err := db.New(tx).LockComputer(ctx, db.LockComputerParams{EnvironmentID: p.computer.EnvironmentID, ID: p.computer.ID})
@@ -128,7 +128,7 @@ func lockComputerPlacement(ctx context.Context, tx pgx.Tx, p computerPlacement) 
 	if !valid {
 		return p, ErrCandidateChanged
 	}
-	if err = checkLockedWorkerRuntimeAdmission(ctx, tx, p.worker.WorkerHostID, p.worker.WorkerEpoch.Int64); err != nil {
+	if err = workergroup.CheckHostRuntimeAdmission(ctx, tx, p.worker.WorkerHostID, p.worker.WorkerEpoch.Int64); err != nil {
 		return p, err
 	}
 	err = tx.QueryRow(ctx, `SELECT h.per_vm_cpu_millis >= $3 AND h.per_vm_memory_bytes >= $4 AND h.per_vm_guest_ephemeral_disk_bytes >= $5

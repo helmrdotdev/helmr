@@ -37,9 +37,9 @@ type HostPrincipal struct {
 	EpochStartedAt    time.Time
 }
 
-// CheckLockedClaims compares the authenticated claim versions with the worker
+// checkLockedClaims compares the authenticated claim versions with the worker
 // host and group rows the caller has locked.
-func (p HostPrincipal) CheckLockedClaims(host db.WorkerHost, group db.WorkerGroup) error {
+func (p HostPrincipal) checkLockedClaims(host db.WorkerHost, group db.WorkerGroup) error {
 	if host.ClaimVersion != p.HostClaimVersion || group.ClaimVersion != p.GroupClaimVersion {
 		return ErrStaleClaims
 	}

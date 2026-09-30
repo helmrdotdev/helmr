@@ -286,9 +286,6 @@ func (s *Server) invokeChildTask(
 			return err
 		}
 		authority, err := run.LockLiveExecutionForComputer(ctx, work.tx, workerExecutionFence(input.Worker, input.Parsed, input.Request.Lease), pgvalue.UUID(targetComputerID))
-		if errors.Is(err, run.ErrExecutionWorkerClaims) {
-			return workergroup.ErrStaleClaims
-		}
 		if errors.Is(err, run.ErrExecutionTargetNotFound) {
 			return errTaskComputerNotFound
 		}

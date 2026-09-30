@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -91,7 +92,7 @@ func TestExecutionClaimRejectsChangedAuthority(t *testing.T) {
 			_, err := claimExecutionTest(t, f, r, true)
 			expected := error(pgx.ErrNoRows)
 			if test.claims {
-				expected = ErrExecutionWorkerClaims
+				expected = workergroup.ErrStaleClaims
 			}
 			if !errors.Is(err, expected) {
 				t.Fatalf("claim error=%v, want %v", err, expected)

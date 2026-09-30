@@ -37,9 +37,6 @@ func lockWorkerSessionExecution(ctx context.Context, tx pgx.Tx, worker workergro
 		return run.ExecutionAuthority{}, err
 	}
 	a, err := run.LockLiveExecution(ctx, tx, run.ExecutionFence{LeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.HostClaimVersion})
-	if errors.Is(err, run.ErrExecutionWorkerClaims) {
-		return run.ExecutionAuthority{}, workergroup.ErrStaleClaims
-	}
 	if err != nil {
 		return run.ExecutionAuthority{}, staleRunLeaseClaim(err)
 	}

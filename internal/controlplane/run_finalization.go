@@ -48,9 +48,6 @@ func (s *Server) beginRunFinalization(
 			RunID: pgvalue.UUID(parsed.runID), AttemptNumber: parsed.attempt,
 			OperationID: pgvalue.UUID(parsed.operationID), Fingerprint: parsed.fingerprint,
 		})
-		if errors.Is(err, run.ErrExecutionWorkerClaims) {
-			return workergroup.ErrStaleClaims
-		}
 		if err != nil {
 			return staleRunFinalization(err)
 		}
@@ -73,6 +70,9 @@ func (s *Server) beginRunFinalization(
 }
 
 func staleRunFinalization(err error) error {
+	if errors.Is(err, workergroup.ErrStaleClaims) {
+		return err
+	}
 	if err == nil {
 		return errStaleRunFinalization
 	}

@@ -294,8 +294,7 @@ func (s *Server) workerAcknowledgeRunWaitResume(w http.ResponseWriter, r *http.R
 		wait, err = run.AcknowledgeWaitResume(r.Context(), work.tx, workerExecutionFence(workerFromContext(r.Context()), parsed, request.Lease), pgvalue.UUID(waitID), pgvalue.UUID(checkpointID))
 		return err
 	})
-	if errors.Is(err, run.ErrExecutionWorkerClaims) {
-		writeStaleWorkerClaims(w, workergroup.ErrStaleClaims)
+	if writeStaleWorkerClaims(w, err) {
 		return
 	}
 	if isNoRows(err) {

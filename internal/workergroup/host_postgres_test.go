@@ -262,13 +262,13 @@ func TestCheckLockedClaimsReportsStaleClaims(t *testing.T) {
 		_, claim := f.hostState(t, host.enrolled.HostID)
 		return db.WorkerHost{ClaimVersion: claim}, f.currentGroup(t)
 	}
-	if err := host.principal.CheckLockedClaims(locked()); err != nil {
+	if err := host.principal.checkLockedClaims(locked()); err != nil {
 		t.Fatalf("current claims: %v", err)
 	}
 	if _, err := PauseGroup(t.Context(), f.pool, f.groupID(), f.currentGroup(t).ClaimVersion); err != nil {
 		t.Fatal(err)
 	}
-	if err := host.principal.CheckLockedClaims(locked()); !errors.Is(err, ErrStaleClaims) {
+	if err := host.principal.checkLockedClaims(locked()); !errors.Is(err, ErrStaleClaims) {
 		t.Fatalf("group transition error = %v, want ErrStaleClaims", err)
 	}
 }

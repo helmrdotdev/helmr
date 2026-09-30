@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"errors"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -23,9 +22,6 @@ func lockWorkerWaitExecution(ctx context.Context, tx pgx.Tx, worker workergroup.
 		return run.ExecutionAuthority{}, err
 	}
 	a, err := run.LockLiveExecution(ctx, tx, workerExecutionFence(worker, parsed, receipt))
-	if errors.Is(err, run.ErrExecutionWorkerClaims) {
-		return run.ExecutionAuthority{}, workergroup.ErrStaleClaims
-	}
 	if err != nil {
 		return run.ExecutionAuthority{}, staleRunLeaseClaim(err)
 	}
