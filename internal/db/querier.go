@@ -437,7 +437,6 @@ type Querier interface {
 	// deciding outcome. Expiry cannot prove process exclusion or reclaim an instance.
 	ListRunExecutionLeaseRecoveryCandidates(ctx context.Context, limitCount int32) ([]ListRunExecutionLeaseRecoveryCandidatesRow, error)
 	ListRunListItems(ctx context.Context, arg ListRunListItemsParams) ([]ListRunListItemsRow, error)
-	ListScheduleSecrets(ctx context.Context, arg ListScheduleSecretsParams) ([]ScheduleSecret, error)
 	ListSchedules(ctx context.Context, arg ListSchedulesParams) ([]Schedule, error)
 	ListScopedDeployments(ctx context.Context, arg ListScopedDeploymentsParams) ([]ListScopedDeploymentsRow, error)
 	ListSecretRevocationProcesses(ctx context.Context, arg ListSecretRevocationProcessesParams) ([]ListSecretRevocationProcessesRow, error)
@@ -482,7 +481,7 @@ type Querier interface {
 	LockCancellationRunLeases(ctx context.Context, runIds []pgtype.UUID) ([]pgtype.UUID, error)
 	LockCancellationWaits(ctx context.Context, arg LockCancellationWaitsParams) ([]LockCancellationWaitsRow, error)
 	LockChildComputerPair(ctx context.Context, arg LockChildComputerPairParams) ([]Computer, error)
-	LockClaimedSchedule(ctx context.Context, arg LockClaimedScheduleParams) (LockClaimedScheduleRow, error)
+	LockClaimedSchedule(ctx context.Context, arg LockClaimedScheduleParams) (Schedule, error)
 	// Collectors deleting different logical owners of the same physical digest must
 	// serialize membership cleanup. Acquire in a separate statement after object
 	// deletion; subsequent statements then see the previous collector's commit.
@@ -542,6 +541,8 @@ type Querier interface {
 	LockRunLeaseClaimWorkerGroup(ctx context.Context, arg LockRunLeaseClaimWorkerGroupParams) (WorkerGroup, error)
 	LockRunStartLease(ctx context.Context, arg LockRunStartLeaseParams) (RunLease, error)
 	LockRunStartWait(ctx context.Context, arg LockRunStartWaitParams) (RunWait, error)
+	LockScheduleFireEnvironment(ctx context.Context, environmentID pgtype.UUID) (LockScheduleFireEnvironmentRow, error)
+	LockScheduleSecrets(ctx context.Context, arg LockScheduleSecretsParams) ([]ScheduleSecret, error)
 	LockSecretVersion(ctx context.Context, arg LockSecretVersionParams) (SecretVersion, error)
 	LockSessionMessage(ctx context.Context, arg LockSessionMessageParams) (SessionMessage, error)
 	LockSessionTurnAuthority(ctx context.Context, arg LockSessionTurnAuthorityParams) (Session, error)

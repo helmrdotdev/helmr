@@ -34,6 +34,10 @@
 //   - Public Computer creation acquires its idempotency claim before secrets.
 //     Run-sourced creation locks secrets, then the live source Run, then the
 //     idempotency claim, including on replay.
+//   - A schedule fire locks its environment FOR NO KEY UPDATE, then the
+//     schedule, then the schedule's secrets before it creates the Computer.
+//     The environment lock serializes fires with deployment promotion, which
+//     locks the environment, the scheduled secrets and then the schedules.
 //   - Computer deletion acquires its idempotency claim first; a run-sourced
 //     deletion then locks the live source Run with the target Computer.
 //     Under the Computer lock, deletion updates the Computer's checkpoint

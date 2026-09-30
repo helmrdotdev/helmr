@@ -68,7 +68,20 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		return err
 	}
 
-	locked, err := queries.LockClaimedSchedule(ctx, db.LockClaimedScheduleParams{
+	// A fire locks its environment, the schedule and then the schedule's
+	// Secrets before it creates the Computer. The environment lock serializes
+	// fires with deployment promotion, which locks the environment, the
+	// scheduled Secrets and then the schedules; it is FOR NO KEY UPDATE so that
+	// Computer creation, which locks its Secrets before its environment
+	// reference, is not blocked by it.
+	environment, err := queries.LockScheduleFireEnvironment(ctx, candidate.EnvironmentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrClaimSuperseded
+	}
+	if err != nil {
+		return err
+	}
+	lockedSchedule, err := queries.LockClaimedSchedule(ctx, db.LockClaimedScheduleParams{
 		EnvironmentID:       candidate.EnvironmentID,
 		ID:                  candidate.ID,
 		ExpectedGeneration:  candidate.Generation,
@@ -81,7 +94,6 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 	if err != nil {
 		return err
 	}
-	lockedSchedule := locked.Schedule
 	admission, err := BuildAdmissionAt(lockedSchedule, a.now())
 	if err != nil {
 		return err
@@ -125,7 +137,7 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		return &AdmissionError{Code: ErrorInvalidDefinition, Message: "scheduled task definition is invalid"}
 	}
 
-	selectedSecrets, err := queries.ListScheduleSecrets(ctx, db.ListScheduleSecretsParams{
+	selectedSecrets, err := queries.LockScheduleSecrets(ctx, db.LockScheduleSecretsParams{
 		EnvironmentID: lockedSchedule.EnvironmentID,
 		ScheduleID:    lockedSchedule.ID,
 	})
@@ -199,8 +211,8 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 	if _, err := run.CreateTask(ctx, queries, run.TaskRequest{
 		Run: db.CreateAdmittedRootTaskRunParams{
 			ID:                        pgvalue.UUID(runID),
-			OrgID:                     locked.OrgID,
-			ProjectID:                 locked.ProjectID,
+			OrgID:                     environment.OrgID,
+			ProjectID:                 environment.ProjectID,
 			EnvironmentID:             lockedSchedule.EnvironmentID,
 			DeploymentID:              lockedSchedule.DeploymentID,
 			DeploymentDefinitionID:    task.ID,

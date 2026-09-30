@@ -244,12 +244,18 @@ SELECT input.schedule_id,
        input.secret_id, input.mode, ARRAY(SELECT jsonb_array_elements_text(input.origins_json::jsonb))
   FROM input;
 
--- name: ListScheduleSecrets :many
-SELECT *
+-- name: LockScheduleSecrets :many
+SELECT schedule_secrets.*
   FROM schedule_secrets
- WHERE environment_id = sqlc.arg(environment_id)
-   AND schedule_id = sqlc.arg(schedule_id)
- ORDER BY secret_id, placement_kind, placement_target;
+  JOIN secrets
+    ON secrets.environment_id = schedule_secrets.environment_id
+   AND secrets.id = schedule_secrets.secret_id
+ WHERE schedule_secrets.environment_id = sqlc.arg(environment_id)
+   AND schedule_secrets.schedule_id = sqlc.arg(schedule_id)
+ ORDER BY schedule_secrets.secret_id,
+          schedule_secrets.placement_kind,
+          schedule_secrets.placement_target
+ FOR UPDATE OF secrets;
 
 -- name: CreateComputerForScheduleFire :one
 WITH selected_definition AS (
@@ -338,20 +344,22 @@ UPDATE schedules
  WHERE schedules.id = candidates.id
 RETURNING schedules.*;
 
+-- name: LockScheduleFireEnvironment :one
+SELECT org_id, project_id
+  FROM environments
+ WHERE id = sqlc.arg(environment_id)
+ FOR NO KEY UPDATE;
+
 -- name: LockClaimedSchedule :one
-SELECT sqlc.embed(schedules),
-       environments.org_id,
-       environments.project_id
+SELECT *
   FROM schedules
-  JOIN environments
-    ON environments.id = schedules.environment_id
- WHERE schedules.environment_id = sqlc.arg(environment_id)
-   AND schedules.id = sqlc.arg(id)
-   AND schedules.status = 'active'
-   AND schedules.generation = sqlc.arg(expected_generation)
-   AND schedules.next_fire_at = sqlc.arg(expected_scheduled_at)
-   AND schedules.claimed_by = sqlc.arg(claimed_by)
-   AND schedules.claim_expires_at > now()
+ WHERE environment_id = sqlc.arg(environment_id)
+   AND id = sqlc.arg(id)
+   AND status = 'active'
+   AND generation = sqlc.arg(expected_generation)
+   AND next_fire_at = sqlc.arg(expected_scheduled_at)
+   AND claimed_by = sqlc.arg(claimed_by)
+   AND claim_expires_at > now()
  FOR UPDATE;
 
 -- name: GetScheduledRunReceipt :one
