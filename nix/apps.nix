@@ -59,6 +59,7 @@ let
           bun install --frozen-lockfile --ignore-scripts
           bun run typecheck
           bun run test:ts
+          bun run check:web
         '';
 
     ci-policy =
@@ -122,7 +123,7 @@ let
           node tests/build/check-fixture-analysis.mjs --sdk-packages "$sdk_packages"
           bun run typecheck
           bun run test:ts:prepared
-          bun run build:web
+          bun run check:web
         '';
     ci-go-lint =
       app "ci-go-lint" "run Go lint checks with embedded console assets for CI" toolsets.ciGoLint
