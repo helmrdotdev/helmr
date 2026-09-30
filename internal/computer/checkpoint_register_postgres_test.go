@@ -209,3 +209,11 @@ func holdLockUntilExpired(t *testing.T, f runtest.Fixture, lock, expiryQuery, id
 		return nil
 	}
 }
+
+func TestComputerCheckpointRegistrationContinuesOnPausedGroup(t *testing.T) {
+	f, ref, manifest := computertest.RegisteredCapture(t, false)
+	dbtest.MustExec(t, t.Context(), f.Pool, pauseWorkerGroup, runtest.WorkerGroupID)
+	if _, err := computer.RegisterCheckpoint(t.Context(), f.Pool, ref, manifest); err != nil {
+		t.Fatalf("registration on paused Group: %v", err)
+	}
+}

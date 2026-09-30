@@ -211,6 +211,47 @@ func TestLockHostReportsStaleClaimsAndContinuation(t *testing.T) {
 	}
 }
 
+// LockHostUnchecked locks the supply whatever its claims, status or epoch and
+// leaves the lifecycle check to Continues; LockHostIgnoringClaims rejects
+// exactly the supply that does not continue admitted work.
+func TestLockHostUncheckedLeavesContinuationToCaller(t *testing.T) {
+	for _, test := range []struct {
+		name, sql string
+		continues bool
+	}{
+		{"active", ``, true},
+		{"host claims", `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, true},
+		{"draining host", `UPDATE worker_hosts SET status='draining',draining_at=now() WHERE id=$1`, true},
+		{"new epoch", `UPDATE worker_hosts SET current_epoch=2 WHERE id=$1`, false},
+		{"lost host", `UPDATE worker_hosts SET status='lost',lost_at=now() WHERE id=$1`, false},
+		{"paused group", `UPDATE worker_groups SET status='paused' WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, true},
+		{"disabled group", `UPDATE worker_groups SET status='disabled',primary_pool_id=NULL WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newSupplyFixture(t)
+			hostID := f.activeHost(t, f.activePool(t, "default"), "host-1")
+			if test.sql != "" {
+				dbtest.MustExec(t, t.Context(), f.pool, test.sql, hostID)
+			}
+			tx := f.begin(t)
+			locked, err := LockHostUnchecked(t.Context(), db.New(tx), f.groupID(), fixtureRegionID, hostID, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = tx.Rollback(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if locked.Host.ID != pgvalue.UUID(hostID) || locked.Group.ID != f.group.ID || locked.Continues() != test.continues {
+				t.Fatalf("locked host = %v group = %v continues = %v", locked.Host.ID, locked.Group.ID, locked.Continues())
+			}
+			_, err = LockHostIgnoringClaims(t.Context(), db.New(f.begin(t)), f.groupID(), fixtureRegionID, hostID, 1)
+			if test.continues && err != nil || !test.continues && !errors.Is(err, pgx.ErrNoRows) {
+				t.Fatalf("lock host ignoring claims error = %v, continues = %v", err, test.continues)
+			}
+		})
+	}
+}
+
 // LockHostWithPool ignores claim versions and accepts supply that continues
 // admitted work; DrainLockedHost drains only an active host.
 func TestLockHostWithPoolContinuesAndDrainsActiveHost(t *testing.T) {

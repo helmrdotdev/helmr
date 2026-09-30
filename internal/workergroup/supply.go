@@ -13,7 +13,8 @@ import (
 )
 
 // Worker supply lifecycle rule, applied by LockPlacementSupply,
-// LockExecutionHost, LockHostIgnoringClaims and LockedHost.Continues:
+// LockExecutionHost, LockHostIgnoringClaims and LockedHost.Continues
+// (LockHostUnchecked leaves it to Continues):
 //   - A paused Group holds: no placements, claims, starts or restore
 //     activations; work that is already running continues.
 //   - A draining Group, Pool or Host lets already dispatched work finish,
@@ -203,26 +204,36 @@ func CheckClaims(ctx context.Context, q db.DBTX, principal HostPrincipal) error 
 	return nil
 }
 
-// LockHostIgnoringClaims update-locks the Group in its region, then the Host,
-// without comparing claim versions, for operations that continue admitted
-// work on a host epoch. The Group must be active, paused or draining and the
-// Host active or draining at the epoch; otherwise it returns pgx.ErrNoRows.
-func LockHostIgnoringClaims(ctx context.Context, q db.Querier, groupID uuid.UUID, regionID string, hostID uuid.UUID, epoch int64) (LockedHost, error) {
+// LockHostUnchecked update-locks the Group in its region, then the Host,
+// without comparing claim versions or checking status or epoch. The caller
+// must check LockedHost.Continues before it continues admitted work; it lets
+// a fence take the supply locks first and rank the lifecycle check after
+// its own checks.
+func LockHostUnchecked(ctx context.Context, q db.Querier, groupID uuid.UUID, regionID string, hostID uuid.UUID, epoch int64) (LockedHost, error) {
 	group, err := q.LockRunLeaseClaimWorkerGroup(ctx, db.LockRunLeaseClaimWorkerGroupParams{ID: pgvalue.UUID(groupID), RegionID: regionID})
 	if err != nil {
 		return LockedHost{}, err
-	}
-	if group.Status != db.WorkerGroupStatusActive && group.Status != db.WorkerGroupStatusPaused && group.Status != db.WorkerGroupStatusDraining {
-		return LockedHost{}, pgx.ErrNoRows
 	}
 	host, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{ID: pgvalue.UUID(hostID), WorkerGroupID: pgvalue.UUID(groupID)})
 	if err != nil {
 		return LockedHost{}, err
 	}
-	if !host.CurrentEpoch.Valid || host.CurrentEpoch.Int64 != epoch || (host.Status != db.WorkerHostStatusActive && host.Status != db.WorkerHostStatusDraining) {
+	return LockedHost{Group: group, Host: host, epoch: epoch}, nil
+}
+
+// LockHostIgnoringClaims is LockHostUnchecked for operations that continue
+// admitted work on a host epoch. The Group must be active, paused or draining
+// and the Host active or draining at the epoch; otherwise it returns
+// pgx.ErrNoRows.
+func LockHostIgnoringClaims(ctx context.Context, q db.Querier, groupID uuid.UUID, regionID string, hostID uuid.UUID, epoch int64) (LockedHost, error) {
+	locked, err := LockHostUnchecked(ctx, q, groupID, regionID, hostID, epoch)
+	if err != nil {
+		return LockedHost{}, err
+	}
+	if !locked.Continues() {
 		return LockedHost{}, pgx.ErrNoRows
 	}
-	return LockedHost{Group: group, Host: host, epoch: epoch}, nil
+	return locked, nil
 }
 
 // LockHostWithPool update-locks the Group, the host's Pool and the Host at the

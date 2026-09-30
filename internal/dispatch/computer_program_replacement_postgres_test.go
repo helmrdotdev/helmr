@@ -14,6 +14,11 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const (
+	loseWorkerHost    = `UPDATE worker_hosts SET status='lost',lost_at=now() WHERE id=$1`
+	restoreWorkerHost = `UPDATE worker_hosts SET status='active',lost_at=NULL WHERE id=$1`
+)
+
 func TestProgramReplacementPreservesCapturedDisk(t *testing.T) {
 	for _, programless := range []bool{false, true} {
 		name := "resident-program"
@@ -53,8 +58,20 @@ func testProgramReplacementPreservesCapturedDisk(t *testing.T, programless bool)
 	if _, err = a.PlaceReadyRun(t.Context(), candidate); !errors.Is(err, dispatch.ErrCapacityUnavailable) {
 		t.Fatalf("old live members did not block: %v", err)
 	}
+	// A lost host ranks after the member check, so the placement outcome and
+	// its capacity cooldown stay unchanged.
+	dbtest.MustExec(t, t.Context(), f.Pool, loseWorkerHost, f.WorkerID)
+	if _, err = a.PlaceReadyRun(t.Context(), candidate); !errors.Is(err, dispatch.ErrCapacityUnavailable) {
+		t.Fatalf("members on a lost host did not block: %v", err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, restoreWorkerHost, f.WorkerID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET status='cancelled',terminal_at=now(),terminal_reason_code='cancelled',process_reconciled_at=now() WHERE computer_instance_id=$1`, capture.InstanceID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET status='cancelled',terminal_at=now(),failure='{"code":"cancelled","message":"Cancelled","details":{}}',current_run_lease_id=NULL,active_started_at=NULL WHERE computer_id=(SELECT computer_id FROM runs WHERE id=$1) AND id<>$1`, runID)
+	dbtest.MustExec(t, t.Context(), f.Pool, loseWorkerHost, f.WorkerID)
+	if _, err = a.PlaceReadyRun(t.Context(), candidate); !errors.Is(err, dispatch.ErrCandidateChanged) {
+		t.Fatalf("capture on a lost host=%v", err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, restoreWorkerHost, f.WorkerID)
 	if programless {
 		dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM run_waits WHERE current_run_lease_id IN (SELECT id FROM run_leases WHERE computer_instance_id=$1)`, capture.InstanceID)
 		dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM run_leases WHERE computer_instance_id=$1`, capture.InstanceID)

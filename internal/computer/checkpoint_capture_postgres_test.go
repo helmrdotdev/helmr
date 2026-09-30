@@ -410,3 +410,36 @@ func TestIdleComputerCaptureEmptyCooldown(t *testing.T) {
 		})
 	}
 }
+
+const pauseWorkerGroup = `UPDATE worker_groups SET status='paused',claim_version=claim_version+1 WHERE id=$1`
+
+// A paused Worker Group stops admission only; resident Computers still capture.
+func TestComputerCaptureContinuesOnPausedGroup(t *testing.T) {
+	f, _, _, request := computertest.Capture(t)
+	dbtest.MustExec(t, t.Context(), f.Pool, pauseWorkerGroup, runtest.WorkerGroupID)
+	tx, err := f.Pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	cp, err := computer.BeginCapture(t.Context(), tx, request)
+	if err != nil {
+		t.Fatalf("capture on paused Group: %v", err)
+	}
+	if err = tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	params := db.GetComputerInstanceCaptureCheckpointParams{ComputerInstanceID: pgvalue.UUID(request.InstanceID), EnvironmentID: pgvalue.UUID(request.EnvironmentID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerEpoch: 1, DesiredVersion: request.DesiredVersion + 1, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds}
+	if got, err := db.New(f.Pool).GetComputerInstanceCaptureCheckpoint(t.Context(), params); err != nil || got.ID != cp.ID {
+		t.Fatalf("capture discovery on paused Group: %v %v", got.ID, err)
+	}
+}
+
+func TestComputerCaptureWorkerFreshRejectsUnobservedWorker(t *testing.T) {
+	f, _, _, _ := computertest.Capture(t)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET observed_at=NULL WHERE id=$1`, f.WorkerID)
+	fresh, err := db.New(f.Pool).GetComputerCaptureWorkerFresh(t.Context(), db.GetComputerCaptureWorkerFreshParams{ID: pgvalue.UUID(f.WorkerID), WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds})
+	if err != nil || fresh {
+		t.Fatalf("unobserved Worker fresh=%v err=%v", fresh, err)
+	}
+}

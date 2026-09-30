@@ -65,8 +65,12 @@
 //     without comparing claim versions, the Computer and its Instance, then
 //     the Session, Run, Attempt, Run lease, Wait and Session turn rows of the
 //     Instance's unreconciled leases, and checks deadlines after the last
-//     lock. Program replacement takes worker_groups, worker_hosts, the
-//     Computer and the Instance before it begins that capture.
+//     lock. Program replacement, through the computer owner, takes the
+//     capture fence (worker_groups, worker_hosts without comparing claim
+//     versions, the Computer, its Instance) before the capture's member
+//     locks. When only a ready checkpoint remains, it locks the Computer,
+//     the checkpoint's source Instance and then the checkpoint, and it
+//     commits the checkpoint's disk version after the Run placement locks.
 //   - Checkpoint object recording locks worker_groups, worker_hosts, the
 //     Computer and its Instance, then the Session, Run, Attempt, Run lease and
 //     Wait rows of the Instance's unreconciled leases, then the checkpoint,

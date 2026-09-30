@@ -110,15 +110,15 @@ SELECT secrets.status = 'active'
 }
 
 // Computer and Instance locks must precede Session and Run admission locks.
-func lockRunPlacementAuthority(ctx context.Context, tx pgx.Tx, candidate ReadyRunCandidate, p computerPlacement) (db.Run, error) {
+func lockRunPlacementAuthority(ctx context.Context, tx pgx.Tx, candidate ReadyRunCandidate, environmentID, computerID pgtype.UUID) (db.Run, error) {
 	var sessionID pgtype.UUID
-	err := tx.QueryRow(ctx, `SELECT session_id FROM runs WHERE org_id=$1 AND id=$2 AND revision=$3 AND environment_id=$4 AND computer_id=$5`, candidate.OrgID, candidate.RunID, candidate.ExpectedRunRevision, p.computer.EnvironmentID, p.computer.ID).Scan(&sessionID)
+	err := tx.QueryRow(ctx, `SELECT session_id FROM runs WHERE org_id=$1 AND id=$2 AND revision=$3 AND environment_id=$4 AND computer_id=$5`, candidate.OrgID, candidate.RunID, candidate.ExpectedRunRevision, environmentID, computerID).Scan(&sessionID)
 	if err != nil {
 		return db.Run{}, err
 	}
 	if sessionID.Valid {
 		var id pgtype.UUID
-		err = tx.QueryRow(ctx, `SELECT id FROM sessions WHERE id=$1 AND current_run_id=$2 AND computer_id=$3 AND status IN ('open','closing') AND cancel_requested_at IS NULL AND dispatch_hold_id IS NULL FOR UPDATE`, sessionID, candidate.RunID, p.computer.ID).Scan(&id)
+		err = tx.QueryRow(ctx, `SELECT id FROM sessions WHERE id=$1 AND current_run_id=$2 AND computer_id=$3 AND status IN ('open','closing') AND cancel_requested_at IS NULL AND dispatch_hold_id IS NULL FOR UPDATE`, sessionID, candidate.RunID, computerID).Scan(&id)
 		if err != nil {
 			return db.Run{}, err
 		}
@@ -134,12 +134,12 @@ func lockRunPlacementAuthority(ctx context.Context, tx pgx.Tx, candidate ReadyRu
  AND EXISTS(SELECT 1 FROM deployments d JOIN deployment_definitions def ON def.environment_id=d.environment_id AND def.deployment_id=d.id
  WHERE d.id=r.deployment_id AND d.environment_id=r.environment_id AND def.id=r.deployment_definition_id AND def.kind::text=r.entrypoint_kind::text
  AND d.program_artifact_id IS NOT NULL AND d.runtime_artifact_digest IS NOT NULL AND d.program_index_digest IS NOT NULL)
- FROM runs r WHERE r.id=$2 AND r.org_id=$1 FOR UPDATE OF r`, candidate.OrgID, candidate.RunID, candidate.ExpectedRunRevision, p.computer.EnvironmentID, p.computer.ID).Scan(&valid)
+ FROM runs r WHERE r.id=$2 AND r.org_id=$1 FOR UPDATE OF r`, candidate.OrgID, candidate.RunID, candidate.ExpectedRunRevision, environmentID, computerID).Scan(&valid)
 	if err != nil {
 		return db.Run{}, err
 	}
 	if !valid {
 		return db.Run{}, ErrCandidateChanged
 	}
-	return db.New(tx).GetRun(ctx, db.GetRunParams{EnvironmentID: p.computer.EnvironmentID, ID: candidate.RunID})
+	return db.New(tx).GetRun(ctx, db.GetRunParams{EnvironmentID: environmentID, ID: candidate.RunID})
 }

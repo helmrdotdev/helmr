@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbpool"
@@ -109,11 +110,14 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	placementReconciler, err := dispatch.NewPlacementReconciler(
 		runPlacementStore, runPlacementLaneLock, runDispatchAuthority,
 		runDispatchQueries, runDispatchAuthority,
-		runDispatchQueries,
 		log,
 	)
 	if err != nil {
 		return fmt.Errorf("configure placement reconciler: %w", err)
+	}
+	computerDeletionReconciler, err := computer.NewDeletionReconciler(runDispatchPool, log)
+	if err != nil {
+		return fmt.Errorf("configure Computer deletion reconciler: %w", err)
 	}
 	telemetryIngestor, err := telemetry.NewIngestor(log, queries, clickhouse.NewWriter(clickHouseClient))
 	if err != nil {
@@ -246,6 +250,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		{name: "Run lease reconciler", run: runLeaseReconciler.Run},
 		{name: "Computer instance reconciler", run: instanceReconciler.Run},
 		{name: "placement reconciler", run: placementReconciler.Run},
+		{name: "Computer deletion reconciler", run: computerDeletionReconciler.Run},
 		{name: "schedule worker", run: scheduleWorker.Run},
 		{name: "token reconciliation delivery", run: tokenReconcileDelivery.Run},
 		{name: "secret revocation delivery", run: secretRevocationDelivery.Run},

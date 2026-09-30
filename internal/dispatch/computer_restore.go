@@ -69,16 +69,8 @@ func (d *Authority) CommitComputerRestore(ctx context.Context, tx pgx.Tx, destin
 	}
 	// Capture owns immutable membership. Lock live owners before inspecting their
 	// current outcomes, so wakeups cannot race grant and wait rebinding.
-	for _, sql := range []string{
-		`SELECT s.id FROM sessions s WHERE s.id IN(SELECT r.session_id FROM runs r JOIN computer_checkpoint_runs m ON m.run_id=r.id WHERE m.checkpoint_id=$1) ORDER BY s.id FOR UPDATE`,
-		`SELECT r.id FROM runs r JOIN computer_checkpoint_runs m ON m.run_id=r.id WHERE m.checkpoint_id=$1 ORDER BY r.id FOR UPDATE OF r`,
-		`SELECT a.run_id FROM run_attempts a JOIN computer_checkpoint_runs m ON m.run_id=a.run_id AND m.attempt_number=a.number WHERE m.checkpoint_id=$1 ORDER BY a.run_id FOR UPDATE OF a`,
-		`SELECT w.id FROM run_waits w JOIN computer_checkpoint_runs m ON m.run_wait_id=w.id WHERE m.checkpoint_id=$1 ORDER BY w.run_id,w.id FOR UPDATE OF w`,
-		`SELECT id FROM computer_checkpoints WHERE id=$1 FOR UPDATE`,
-	} {
-		if _, err = tx.Exec(ctx, sql, i.SourceCheckpointID); err != nil {
-			return checkpoint, err
-		}
+	if err = restore.LockCommitMembers(ctx); err != nil {
+		return checkpoint, err
 	}
 	// A committed receipt is replayed without allocating new leases or intents.
 	var committed bool
