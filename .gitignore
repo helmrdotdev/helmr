@@ -5,6 +5,10 @@ __pycache__/
 **/.astro/
 .cloudflare/
 internal/console/out/
+internal/compiler/program-compiler.mjs
+internal/hostconfig/config-evaluator.mjs
+internal/runtime/entry.mjs
+internal/runtime/module-preload.mjs
 images/*/out/
 .DS_Store
 .claude/

@@ -174,6 +174,7 @@ in
   deployment-bundle-finalizer =
     vendoredGoCheck "deployment-bundle-finalizer-check" [ helmrPackages.squashfsTools ]
       ''
+        cp ${helmrPackages.platformEntries}/internal/hostconfig/config-evaluator.mjs internal/hostconfig/config-evaluator.mjs
         HELMR_SQUASHFS_ENCODER=${helmrPackages.squashfsTools}/bin/mksquashfs \
           bash scripts/test-go-selection.sh \
             '^(TestFinalizeBundleWritesExactAtomicDirectory|TestFinalizeBundlePublishesExactlyOneConcurrentWriter)$' \
@@ -197,6 +198,7 @@ in
   firecracker-host-module = firecrackerHostModuleCheck;
   worker-host = helmrPackages.workerHost;
   substrate-projection = vendoredGoCheck "substrate-projection-check" [ pkgs.e2fsprogs ] ''
+    cp ${helmrPackages.platformEntries}/internal/hostconfig/config-evaluator.mjs internal/hostconfig/config-evaluator.mjs
     export HELMR_SUBSTRATE_MKFS_EXT4=${helmrPackages.workerHost}/bin/mkfs.ext4
     export HELMR_SUBSTRATE_MKE2FS_CONFIG=${helmrPackages.workerHost}/share/helmr/mke2fs.conf
     export HELMR_SUBSTRATE_E2FSCK=${lib.getBin pkgs.e2fsprogs}/bin/e2fsck
@@ -213,6 +215,7 @@ in
   program-archive-contract =
     vendoredGoCheck "program-archive-contract-check" [ helmrPackages.squashfsTools ]
       ''
+        cp ${helmrPackages.platformEntries}/internal/hostconfig/config-evaluator.mjs internal/hostconfig/config-evaluator.mjs
         HELMR_SQUASHFS_ENCODER=${helmrPackages.squashfsTools}/bin/mksquashfs \
           bash scripts/test-go-selection.sh '^TestPinnedProgramEncoder$' ./internal/builder
       '';

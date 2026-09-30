@@ -6,15 +6,28 @@
   bun,
   version,
   sourceCommit,
+  platformEntries,
 }:
 
 let
-  moduleFiles = lib.fileset.unions [
-    ../../cmd/helmr
-    ../../go.mod
-    ../../go.sum
-    ../../internal
-  ];
+  moduleFiles =
+    lib.fileset.difference
+      (lib.fileset.unions [
+        ../../cmd/helmr
+        ../../go.mod
+        ../../go.sum
+        ../../internal
+      ])
+      (
+        lib.fileset.unions (
+          map lib.fileset.maybeMissing [
+            ../../internal/hostconfig/config-evaluator.mjs
+            ../../internal/compiler/program-compiler.mjs
+            ../../internal/runtime/entry.mjs
+            ../../internal/runtime/module-preload.mjs
+          ]
+        )
+      );
   runtimeFiles = lib.fileset.intersection moduleFiles (
     lib.fileset.fileFilter (file: file.type != "regular" || !(lib.hasSuffix "_test.go" file.name)) ../..
   );
@@ -40,6 +53,10 @@ buildGoModule {
     src = moduleSource;
   };
   subPackages = [ "cmd/helmr" ];
+
+  postConfigure = ''
+    cp ${platformEntries}/internal/hostconfig/config-evaluator.mjs internal/hostconfig/config-evaluator.mjs
+  '';
 
   ldflags = [
     "-s"

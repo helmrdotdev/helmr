@@ -1,5 +1,12 @@
 {
-  lib, stdenvNoCC, coreutils, jq, nodejs_24, fetchurl, binutils,
+  lib,
+  stdenvNoCC,
+  coreutils,
+  jq,
+  nodejs_24,
+  fetchurl,
+  binutils,
+  platformEntries,
 }:
 let
   api = fetchurl {
@@ -10,12 +17,18 @@ let
     url = "https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-0.28.2.tgz";
     hash = "sha512-4xTZr1FUmSoQW4XIWmit3tzQrUTZM+N3P0XV8xROKYF50XfI7xeO90+1bZvNwxIufQ9hDQVRJH5YhgPVF8A/HQ==";
   };
-in stdenvNoCC.mkDerivation {
+in
+stdenvNoCC.mkDerivation {
   pname = "helmr-compiler";
   version = "0";
   dontUnpack = true;
   strictDeps = true;
-  nativeBuildInputs = [ coreutils jq nodejs_24 binutils ];
+  nativeBuildInputs = [
+    coreutils
+    jq
+    nodejs_24
+    binutils
+  ];
   buildCommand = ''
     set -euo pipefail
     tree="$TMPDIR/tree"
@@ -25,7 +38,7 @@ in stdenvNoCC.mkDerivation {
     if readelf -l "$tree/helmr/node_modules/@esbuild/linux-x64/bin/esbuild" | grep -q INTERP; then
       echo "esbuild must be a self-contained executable" >&2; exit 1
     fi
-    install -m0644 ${../../internal/compiler/program-compiler.mjs} "$tree/helmr/program-compiler.mjs"
+    install -m0644 ${platformEntries}/internal/compiler/program-compiler.mjs "$tree/helmr/program-compiler.mjs"
     node "$tree/helmr/program-compiler.mjs" --describe >"$TMPDIR/contract.json"
     jq -e '.apiVersion == "helmr.compiler.v0" and .bundler.apiVersion == "helmr.bundle.v0" and .bundler.esbuildVersion == "0.28.2"' "$TMPDIR/contract.json" >/dev/null
     program_digest="$(sha256sum "$tree/helmr/program-compiler.mjs" | cut -d' ' -f1)"

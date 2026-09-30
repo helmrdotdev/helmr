@@ -45,6 +45,10 @@ the actual preload bytes; the Runtime artifact contains no TypeScript compiler,
 esbuild or npm. Those tools belong to the build or authoring environment.
 
 Root authoring TypeScript, website/example dependencies, Bun and Go retain their
-own version ownership. Regenerate Runtime entries with
-`scripts/build-runtime-entry.sh`, then use its `--check` mode and the pinned Runtime
-artifact verification after changing runtime code or external inputs.
+own version ownership. The Linux `nix build .#runtimeRelease` package generates
+Runtime entries through the shared `platformEntries` package, then derives policy
+and artifact digests from those exact bytes. For local generation, install locked
+workspace dependencies and run `make platform-entries` in the pinned Nix shell;
+`scripts/build-runtime-entry.sh` remains available for focused regeneration.
+Generated platform entries are ignored by Git. Run the pinned Runtime artifact
+verification after changing runtime code or external inputs.

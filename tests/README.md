@@ -41,7 +41,12 @@ commands.
 ## Select the proof you need
 
 Use the native runner for the affected implementation. These entrypoints cover
-different boundaries; none of them is a universal acceptance gate:
+different boundaries; none of them is a universal acceptance gate.
+
+Install the locked workspace dependencies and run `nix develop -c make
+platform-entries` before focused Go checks that compile the CLI, host config or
+builder packages. Repeat preparation after changing TypeScript or dependencies.
+The Make build/test/lint targets and CI entrypoints perform this generation.
 
 - `nix develop -c go test ./internal/jsoncanon ./internal/builder`: example
   focused package checks. Use the local database entrypoint below for selected

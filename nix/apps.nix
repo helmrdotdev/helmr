@@ -45,7 +45,11 @@ let
     ci-fast-go = app "ci-fast-go" "compile commands and run Go unit tests" toolsets.ciGoConsole ''
       export HELMR_SKIP_POSTGRES_TESTS=1
       bun install --frozen-lockfile --ignore-scripts
-      make console-build
+      make platform-entries console-build
+      cmp ${helmrPackages.platformEntries}/internal/compiler/program-compiler.mjs internal/compiler/program-compiler.mjs
+      cmp ${helmrPackages.platformEntries}/internal/hostconfig/config-evaluator.mjs internal/hostconfig/config-evaluator.mjs
+      cmp ${helmrPackages.platformEntries}/internal/runtime/entry.mjs internal/runtime/entry.mjs
+      cmp ${helmrPackages.platformEntries}/internal/runtime/module-preload.mjs internal/runtime/module-preload.mjs
       go build -tags embed_console ./cmd/...
       go test -tags embed_console ./...
       bash tests/build/go-test-selection.test.sh
@@ -96,9 +100,6 @@ let
       app "ci-generated" "check generated artifacts and formatting for CI" toolsets.ciGenerated
         ''
           bun install --frozen-lockfile --ignore-scripts
-          scripts/build-compiler-entry.sh --check
-          scripts/build-hostconfig-entry.sh --check
-          scripts/build-runtime-entry.sh --check
           make generate
           make fmt
           make console-build
@@ -166,7 +167,7 @@ let
         (toolsets.ciGoConsole ++ [ helmrPackages.staticcheck ])
         ''
           bun install --frozen-lockfile --ignore-scripts
-          make console-build
+          make platform-entries console-build
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 staticcheck -tags embed_console ./...
         '';
     ci-infra-test =
@@ -253,6 +254,8 @@ ciApps
         pkgs.stdenv.cc
       ]
       ''
+        mkdir -p internal/hostconfig
+        cp ${helmrPackages.platformEntries}/internal/hostconfig/config-evaluator.mjs internal/hostconfig/config-evaluator.mjs
         exec bash ./tests/release/version-cohort.test.sh "$@"
       '';
   dev =

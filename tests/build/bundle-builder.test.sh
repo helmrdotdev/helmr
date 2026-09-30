@@ -104,6 +104,7 @@ docker buildx create \
 docker buildx inspect --bootstrap "$buildx_name" >/dev/null
 builder_image="$builder_registry_endpoint/bundle-builder@$builder_digest"
 
+(cd "$repo_root" && bun install --frozen-lockfile --ignore-scripts >/dev/null && make platform-entries)
 go -C "$repo_root" build \
   -trimpath \
   -ldflags="-X main.deploymentBundleBuilderImage=$builder_image" \
@@ -113,7 +114,7 @@ go -C "$repo_root" build \
 # helmr.config.ts is evaluated once on this host, so a project prepares the
 # packages its config imports here. The fixtures use the current packed SDK;
 # host node_modules stay out of the captured source and out of the Program.
-(cd "$repo_root" && bun install --frozen-lockfile --ignore-scripts >/dev/null && scripts/build-npm-packages.sh >/dev/null)
+(cd "$repo_root" && scripts/build-npm-packages.sh >/dev/null)
 prepare_host_sdk() {
   local target="$1"
   mkdir -p "$target/node_modules/@helmr" "$target/node_modules/@bufbuild"

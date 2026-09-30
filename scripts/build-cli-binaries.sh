@@ -8,7 +8,7 @@ output=${1:?output directory required}
 mkdir -p "$output"
 output=$(cd "$output" && pwd)
 cd "$root"
-scripts/build-runtime-entry.sh --check
+bun scripts/build-platform-entries.ts all
 for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
   os=${target%/*} arch=${target#*/}
   stage=$(mktemp -d)

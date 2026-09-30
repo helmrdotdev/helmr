@@ -208,7 +208,12 @@ class SourceInputTests(unittest.TestCase):
             self.assertNotEqual(first['dispatcher'], second['dispatcher'])
             self.assertEqual(first['worker'], second['worker'])
             self.assertEqual(first['guestd'], second['guestd'])
-            for relative in ['internal/runtime/entry.mjs', 'internal/runtime/module-preload.mjs', 'internal/compiler/program-compiler.mjs', 'internal/version/runtime-dependencies.json']:
+            for relative in [
+                    'internal/version/runtime-dependencies.json', 'tsconfig.json', 'bunfig.toml',
+                    'bun.lock', 'package.json', 'scripts/build-platform-entries.ts', 'scripts/node-version.mjs',
+                    'compiler/typescript/src/config-evaluator.ts', 'runtime/typescript/src/entry.ts',
+                    'sdk/typescript/src/index.ts', 'proto/typescript/src/gen/program_pb.ts',
+                    'packages/console/package.json', 'examples/hello-world/package.json']:
                 path = source / relative
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text('old')

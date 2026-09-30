@@ -7,7 +7,7 @@ CONSOLE_OUT := $(CURDIR)/internal/console/out
 
 MIGRATE_VERSION ?= v4.20.1
 
-.PHONY: all tools generate datapath-bpf proto sqlc fmt modernize modernize-check test go-test test-race go-test-race test-linux-compile lint go-lint build go-build console-build verify dev dev-console-stack dev-reset images boot-artifacts clean migration migrate-up migrate-down doctor doctor-linux
+.PHONY: all tools generate platform-entries datapath-bpf proto sqlc fmt modernize modernize-check test go-test test-race go-test-race test-linux-compile lint go-lint build go-build console-build verify dev dev-console-stack dev-reset images boot-artifacts clean migration migrate-up migrate-down doctor doctor-linux
 
 all: verify
 
@@ -16,6 +16,9 @@ tools:
 	@command -v protoc-gen-es >/dev/null
 
 generate: datapath-bpf proto sqlc
+
+platform-entries:
+	$(BUN) scripts/build-platform-entries.ts all
 
 datapath-bpf:
 	$(GO) generate ./internal/firecracker/datapath
@@ -35,20 +38,20 @@ GO_CONSOLE_TAGS := -tags embed_console
 fmt:
 	$(GO) fmt ./...
 
-modernize:
+modernize: | platform-entries
 	$(GO) fix ./...
 
-modernize-check:
+modernize-check: | platform-entries
 	$(GO) fix -diff ./...
 
 test: go-test
 
-go-test: | console-build
+go-test: | platform-entries console-build
 	$(GO) test $(GO_CONSOLE_TAGS) ./...
 
 test-race: go-test-race
 
-go-test-race: | console-build
+go-test-race: | platform-entries console-build
 	CGO_ENABLED=1 $(GO) test -race -count=1 $(GO_CONSOLE_TAGS) ./...
 
 test-linux-compile:
@@ -59,14 +62,14 @@ test-linux-compile:
 
 lint: go-lint
 
-go-lint: | console-build
+go-lint: | platform-entries console-build
 	$(GO) vet $(GO_CONSOLE_TAGS) ./...
 	staticcheck $(GO_CONSOLE_TAGS) ./...
 	unparam ./...
 
 build: go-build
 
-go-build: | console-build
+go-build: | platform-entries console-build
 	$(GO) build $(GO_CONSOLE_TAGS) ./cmd/...
 
 console-build:
@@ -106,3 +109,4 @@ migrate-down:
 
 clean:
 	rm -rf $(CONSOLE_OUT) $(CONSOLE_DIR)/dist dist images/*/out
+	rm -f internal/compiler/program-compiler.mjs internal/hostconfig/config-evaluator.mjs internal/runtime/entry.mjs internal/runtime/module-preload.mjs

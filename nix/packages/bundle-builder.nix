@@ -1,6 +1,7 @@
 {
   lib,
   buildGoModule,
+  platformEntries,
 }:
 
 buildGoModule {
@@ -9,16 +10,32 @@ buildGoModule {
 
   src = lib.fileset.toSource {
     root = ../..;
-    fileset = lib.fileset.unions [
-      ../../cmd/internal/bundle-builder
-      ../../go.mod
-      ../../go.sum
-      ../../internal
-    ];
+    fileset =
+      lib.fileset.difference
+        (lib.fileset.unions [
+          ../../cmd/internal/bundle-builder
+          ../../go.mod
+          ../../go.sum
+          ../../internal
+        ])
+        (
+          lib.fileset.unions (
+            map lib.fileset.maybeMissing [
+              ../../internal/hostconfig/config-evaluator.mjs
+              ../../internal/compiler/program-compiler.mjs
+              ../../internal/runtime/entry.mjs
+              ../../internal/runtime/module-preload.mjs
+            ]
+          )
+        );
   };
 
   vendorHash = "sha256-+FtnCDnqKjuIXSlUUsQBPdBZ3V6PxHQDMMWNPCqoqiQ=";
   subPackages = [ "cmd/internal/bundle-builder" ];
+
+  postConfigure = ''
+    cp ${platformEntries}/internal/hostconfig/config-evaluator.mjs internal/hostconfig/config-evaluator.mjs
+  '';
 
   # Static: the builder runs unchanged inside user-prepared environments.
   env.CGO_ENABLED = 0;
