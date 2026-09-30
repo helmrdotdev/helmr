@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -50,7 +51,7 @@ func (s *Server) workerAcknowledgeComputerRestore(w http.ResponseWriter, r *http
 	}
 	worker := workerFromContext(r.Context())
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		_, err := dispatch.AcknowledgeComputerRestore(r.Context(), work.tx, dispatch.ComputerPreparationFence{RuntimeID: pgvalue.UUID(instance), WorkerID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerEpoch: worker.Epoch, DesiredVersion: request.DesiredVersion}, pgvalue.UUID(checkpoint), request.WriterGeneration, grants)
+		_, err := dispatch.AcknowledgeComputerRestore(r.Context(), work.tx, computer.InstanceRef{Host: computer.Host{GroupID: worker.GroupID, HostID: worker.HostID, Epoch: worker.Epoch}, ID: instance, DesiredVersion: request.DesiredVersion}, pgvalue.UUID(checkpoint), request.WriterGeneration, grants)
 		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {

@@ -6,6 +6,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -72,30 +73,35 @@ func TestComputerRestoreDiscoveryProjectsPersistedCapture(t *testing.T) {
 	}
 	encodeRestoreManifest(t, &ready, manifest)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_checkpoints SET manifest=$2 WHERE id=$1`, checkpoint, ready.ComputerCheckpoint.Manifest)
-	rows, err := q.ListComputerInstanceReconcileTargets(t.Context(), db.ListComputerInstanceReconcileTargetsParams{WorkerGroupID: params.WorkerGroupID, WorkerHostID: params.WorkerHostID, WorkerEpoch: 1, RowLimit: 64})
+	host := computer.Host{GroupID: runtest.WorkerGroupID, HostID: f.WorkerID, Epoch: 1}
+	restoreTarget := func() *computer.ReconcileTarget {
+		t.Helper()
+		targets, err := computer.ReconcileTargets(t.Context(), q, host, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, target := range targets {
+			if target.Instance.ID == params.ComputerInstanceID {
+				return &target
+			}
+		}
+		t.Fatal("restore destination not discovered")
+		return nil
+	}
+	target := restoreTarget()
+	if target.Action != computer.ReconcilePrepare || target.Restore == nil {
+		t.Fatalf("restore destination target: %+v", target)
+	}
+	restore, err := projectComputerInstanceRestore(target.Restore.Checkpoint, target.Restore.Members)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var row db.ListComputerInstanceReconcileTargetsRow
-	for _, candidate := range rows {
-		if candidate.ID == params.ComputerInstanceID {
-			row = candidate
-		}
-	}
-	if !row.ID.Valid {
-		t.Fatal("restore destination not discovered")
-	}
-	var output workerapi.RuntimeSource
-	if err := populateRuntimeRestoreSource(t.Context(), q, &output, row); err != nil {
-		t.Fatal(err)
-	}
-	if output.Restore == nil || output.Restore.CheckpointID != checkpoint.String() || len(output.Restore.Artifacts) != 4 {
-		t.Fatalf("restore projection: %+v", output.Restore)
+	if restore.CheckpointID != checkpoint.String() || len(restore.Artifacts) != 4 {
+		t.Fatalf("restore projection: %+v", restore)
 	}
 	// Discovery does not retain authority after admission opens.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET admission_state='open' WHERE id=$1`, instance)
-	output.Restore = nil
-	if err := populateRuntimeRestoreSource(t.Context(), q, &output, row); err == nil || output.Restore != nil {
-		t.Fatal("stale discovery produced a restore payload")
+	if target := restoreTarget(); target.Restore != nil {
+		t.Fatal("discovery after admission opened produced a restore payload")
 	}
 }

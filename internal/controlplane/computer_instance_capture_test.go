@@ -6,7 +6,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -83,21 +82,5 @@ func TestComputerCaptureProjectionRejectsInvalidSet(t *testing.T) {
 				t.Fatal("invalid set accepted")
 			}
 		})
-	}
-}
-
-func TestComputerCaptureActionPrecedence(t *testing.T) {
-	for _, test := range []struct{ observed, desired, admission, want string }{
-		{"ready", "ready", "checkpointing", workerapi.RuntimeReconcileCapture},
-		{"ready", "closed", "checkpointing", workerapi.RuntimeReconcileClose},
-		{"failed", "closed", "checkpointing", workerapi.RuntimeReconcileReclaim},
-		{"lost", "ready", "checkpointing", workerapi.RuntimeReconcileReclaim},
-		{"allocated", "ready", "restoring", workerapi.RuntimeReconcilePrepare},
-		{"ready", "ready", "open", workerapi.RuntimeReconcilePrepare},
-	} {
-		row := db.ListComputerInstanceReconcileTargetsRow{ObservedState: test.observed, DesiredState: test.desired, AdmissionState: test.admission}
-		if got := computerInstanceReconcileAction(row); got != test.want {
-			t.Fatalf("%+v: %s", test, got)
-		}
 	}
 }

@@ -3,7 +3,9 @@ package controlplane
 import (
 	"context"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -13,6 +15,17 @@ import (
 type commandClaim struct {
 	OrgID, CommandID, ComputerInstanceID pgtype.UUID
 	WriterGeneration                     int64
+}
+
+// instance addresses the Instance the claimed Command is bound to on the
+// principal's host epoch.
+func (c commandClaim) instance(target db.GetComputerCommandTargetRow, worker workergroup.HostPrincipal) computer.CommandInstanceRef {
+	return computer.CommandInstanceRef{
+		EnvironmentID: pgvalue.MustUUIDValue(target.EnvironmentID), ComputerID: pgvalue.MustUUIDValue(target.ComputerID),
+		CommandID: pgvalue.MustUUIDValue(c.CommandID), InstanceID: pgvalue.MustUUIDValue(c.ComputerInstanceID),
+		Host:             computer.Host{GroupID: worker.GroupID, HostID: worker.HostID, Epoch: worker.Epoch},
+		WriterGeneration: c.WriterGeneration,
+	}
 }
 
 type commandClaimAuthority struct {
@@ -38,11 +51,7 @@ func claimCommand(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincip
 	if err != nil {
 		return commandClaimAuthority{}, err
 	}
-	computer, err := q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: target.EnvironmentID, ID: target.ComputerID})
-	if err != nil {
-		return commandClaimAuthority{}, err
-	}
-	i, err := q.LockComputerCommandInstance(ctx, db.LockComputerCommandInstanceParams{EnvironmentID: target.EnvironmentID, ComputerID: target.ComputerID, CommandID: request.CommandID})
+	i, err := computer.LockInstanceForCommand(ctx, tx, request.instance(target, worker))
 	if err != nil {
 		return commandClaimAuthority{}, err
 	}
@@ -50,10 +59,7 @@ func claimCommand(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincip
 	if err != nil {
 		return commandClaimAuthority{}, err
 	}
-	if i.ID != request.ComputerInstanceID || i.WorkerHostID != locked.Host.ID || i.WorkerGroupID != locked.Group.ID || i.WorkerEpoch != worker.Epoch || i.WriterGeneration != request.WriterGeneration || command.ComputerInstanceID != i.ID || !command.WriterGeneration.Valid || command.WriterGeneration.Int64 != i.WriterGeneration {
-		return commandClaimAuthority{}, pgx.ErrNoRows
-	}
-	if computer.Status != "active" || computer.DesiredState != "active" || i.ReclaimedAt.Valid || i.DesiredState != "ready" || i.ObservedState != "ready" || i.ObservedDesiredVersion != i.DesiredVersion || i.MountState != "mounted" || i.WriterGeneration != computer.WriterGeneration {
+	if command.ComputerInstanceID != i.ID || !command.WriterGeneration.Valid || command.WriterGeneration.Int64 != i.WriterGeneration {
 		return commandClaimAuthority{}, pgx.ErrNoRows
 	}
 	switch command.Status {

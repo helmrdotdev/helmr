@@ -1,11 +1,9 @@
-package dispatch
+package computer
 
 import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5"
 	"testing"
 	"time"
 	"uuid"
@@ -13,12 +11,21 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-
+	"github.com/helmrdotdev/helmr/internal/run/runtest"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+// readinessOf observes the Instance ready with its assigned VM shape at its
+// current fences.
+func readinessOf(i db.ComputerInstance) Readiness {
+	return Readiness{Observation: observationOf(i), VCPUCount: i.VMVCPUCount, CPUConfigDigest: i.CPUConfigDigest}
+}
+
 func TestReadyObservationFencesAndPreparationCommit(t *testing.T) {
-	f, work, _ := commandPlacementFixture(t)
+	f := runtest.New(t)
+	work := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
 	var id pgtype.UUID
 	if err := f.Pool.QueryRow(t.Context(), `SELECT computer_instance_id FROM run_leases WHERE id=$1`, work.LeaseID).Scan(&id); err != nil {
 		t.Fatal(err)
@@ -29,14 +36,14 @@ func TestReadyObservationFencesAndPreparationCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	params := db.MarkComputerInstanceReadyParams{ID: id, WorkerHostID: i.WorkerHostID, WorkerEpoch: i.WorkerEpoch, DesiredVersion: i.DesiredVersion, ExpectedObservedVersion: i.ObservedVersion, VMVCPUCount: i.VMVCPUCount, CPUConfigDigest: i.CPUConfigDigest}
-	acknowledge := func(p db.MarkComputerInstanceReadyParams, commit bool) (db.ComputerInstance, error) {
+	params := readinessOf(i)
+	acknowledge := func(p Readiness, commit bool) (db.ComputerInstance, error) {
 		tx, e := f.Pool.Begin(t.Context())
 		if e != nil {
 			return db.ComputerInstance{}, e
 		}
 		defer tx.Rollback(context.Background())
-		row, e := RecordComputerInstanceReady(t.Context(), tx, i.WorkerGroupID, p)
+		row, e := recordReady(t.Context(), tx, p)
 		if e != nil {
 			return row, e
 		}
@@ -47,15 +54,15 @@ func TestReadyObservationFencesAndPreparationCommit(t *testing.T) {
 	}
 	for _, change := range []struct {
 		name  string
-		apply func(*db.MarkComputerInstanceReadyParams)
+		apply func(*Readiness)
 	}{
-		{"observation", func(p *db.MarkComputerInstanceReadyParams) { p.ExpectedObservedVersion++ }},
-		{"desired", func(p *db.MarkComputerInstanceReadyParams) { p.DesiredVersion++ }},
-		{"CPU count", func(p *db.MarkComputerInstanceReadyParams) { p.VMVCPUCount++ }},
-		{"CPU config", func(p *db.MarkComputerInstanceReadyParams) {
+		{"observation", func(p *Readiness) { p.ExpectedObservedVersion++ }},
+		{"desired", func(p *Readiness) { p.Instance.DesiredVersion++ }},
+		{"CPU count", func(p *Readiness) { p.VCPUCount++ }},
+		{"CPU config", func(p *Readiness) {
 			p.CPUConfigDigest = hex.EncodeToString(dbtest.Hash("different"))
 		}},
-		{"epoch", func(p *db.MarkComputerInstanceReadyParams) { p.WorkerEpoch++ }},
+		{"epoch", func(p *Readiness) { p.Instance.Host.Epoch++ }},
 	} {
 		t.Run(change.name, func(t *testing.T) {
 			p := params
@@ -88,7 +95,7 @@ func TestReadyObservationFencesAndPreparationCommit(t *testing.T) {
 	// A later Program acknowledgement on the same live Instance must not depend
 	// on its already-completed initial preparation deadline.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_version=desired_version+1,preparation_expires_at=now()-interval '1 second' WHERE id=$1`, id)
-	params.DesiredVersion++
+	params.Instance.DesiredVersion++
 	params.ExpectedObservedVersion = ready.ObservedVersion
 	if _, err = acknowledge(params, true); err != nil {
 		t.Fatalf("resident Program readiness: %v", err)
@@ -96,7 +103,8 @@ func TestReadyObservationFencesAndPreparationCommit(t *testing.T) {
 }
 
 func TestResidentReadinessRejectsWorkerExpiringDuringComputerLock(t *testing.T) {
-	f, work, _ := commandPlacementFixture(t)
+	f := runtest.New(t)
+	work := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
 	var id pgtype.UUID
 	if err := f.Pool.QueryRow(t.Context(), `SELECT computer_instance_id FROM run_leases WHERE id=$1`, work.LeaseID).Scan(&id); err != nil {
 		t.Fatal(err)
@@ -131,7 +139,7 @@ func TestResidentReadinessRejectsWorkerExpiringDuringComputerLock(t *testing.T) 
 			return
 		}
 		pidCh <- pid
-		_, e = RecordComputerInstanceReady(ctx, tx, i.WorkerGroupID, db.MarkComputerInstanceReadyParams{ID: id, WorkerHostID: i.WorkerHostID, WorkerEpoch: i.WorkerEpoch, DesiredVersion: i.DesiredVersion, ExpectedObservedVersion: i.ObservedVersion, VMVCPUCount: i.VMVCPUCount, CPUConfigDigest: i.CPUConfigDigest})
+		_, e = recordReady(ctx, tx, readinessOf(i))
 		done <- e
 	}()
 	var pid int32
@@ -172,7 +180,8 @@ func TestResidentReadinessRejectsWorkerExpiringDuringComputerLock(t *testing.T) 
 }
 
 func TestFrozenReadinessRetainsPreparationBudget(t *testing.T) {
-	f, work, _ := commandPlacementFixture(t)
+	f := runtest.New(t)
+	work := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
 	checkpoint, private, instance := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	var source pgtype.UUID
 	if err := f.Pool.QueryRow(t.Context(), `SELECT computer_instance_id FROM run_leases WHERE id=$1`, work.LeaseID).Scan(&source); err != nil {
@@ -211,7 +220,7 @@ func TestFrozenReadinessRetainsPreparationBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(context.Background())
-	ready, err := RecordComputerInstanceReady(t.Context(), tx, i.WorkerGroupID, db.MarkComputerInstanceReadyParams{ID: i.ID, WorkerHostID: i.WorkerHostID, WorkerEpoch: i.WorkerEpoch, DesiredVersion: i.DesiredVersion, ExpectedObservedVersion: i.ObservedVersion, VMVCPUCount: i.VMVCPUCount, CPUConfigDigest: i.CPUConfigDigest})
+	ready, err := recordReady(t.Context(), tx, readinessOf(i))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +236,8 @@ func TestFrozenReadinessRetainsPreparationBudget(t *testing.T) {
 func TestInitialReadinessRechecksDeadlineAfterComputerLock(t *testing.T) {
 	for _, deadline := range []string{"preparation_expires_at", "writer_expires_at"} {
 		t.Run(deadline, func(t *testing.T) {
-			f, work, _ := commandPlacementFixture(t)
+			f := runtest.New(t)
+			work := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
 			var id pgtype.UUID
 			if err := f.Pool.QueryRow(t.Context(), `SELECT computer_instance_id FROM run_leases WHERE id=$1`, work.LeaseID).Scan(&id); err != nil {
 				t.Fatal(err)
@@ -268,7 +278,7 @@ func TestInitialReadinessRechecksDeadlineAfterComputerLock(t *testing.T) {
 					return
 				}
 				defer tx.Rollback(context.Background())
-				_, e = RecordComputerInstanceReady(ctx, tx, i.WorkerGroupID, db.MarkComputerInstanceReadyParams{ID: id, WorkerHostID: i.WorkerHostID, WorkerEpoch: i.WorkerEpoch, DesiredVersion: i.DesiredVersion, ExpectedObservedVersion: i.ObservedVersion, VMVCPUCount: i.VMVCPUCount, CPUConfigDigest: i.CPUConfigDigest})
+				_, e = recordReady(ctx, tx, readinessOf(i))
 				if e == nil {
 					e = tx.Commit(ctx)
 				}
@@ -305,5 +315,55 @@ func TestInitialReadinessRechecksDeadlineAfterComputerLock(t *testing.T) {
 				t.Fatal("expired readiness changed Computer or Instance")
 			}
 		})
+	}
+}
+
+// Readiness of an already ready Instance continues admitted work on paused or
+// draining supply; the first allocated-to-ready transition completes
+// preparation and needs admitting supply.
+func TestReadyObservationOnNonAdmittingSupply(t *testing.T) {
+	for _, supply := range []struct{ name, sql string }{
+		{"paused Group", `UPDATE worker_groups SET status='paused',claim_version=claim_version+1 WHERE id=$1`},
+		{"draining Group", `UPDATE worker_groups SET status='draining',primary_pool_id=NULL,claim_version=claim_version+1 WHERE id=$1`},
+		{"paused Host", `UPDATE worker_hosts SET run_paused_reason='startup_recovery_leak',vm_paused_reason='runtime_health' WHERE worker_group_id=$1`},
+		{"draining Pool", `WITH g AS (UPDATE worker_groups SET primary_pool_id=NULL WHERE id=$1 RETURNING id) UPDATE worker_pools SET status='draining' WHERE worker_group_id=(SELECT id FROM g)`},
+		{"draining Host", `WITH h AS (UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp() WHERE worker_group_id=$1 RETURNING id) UPDATE computer_instances SET admission_state='draining' WHERE worker_host_id IN (SELECT id FROM h) AND admission_state='open'`},
+	} {
+		for _, allocated := range []bool{false, true} {
+			t.Run(supply.name+map[bool]string{false: "/ready", true: "/allocated"}[allocated], func(t *testing.T) {
+				f := runtest.New(t)
+				work := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
+				var id pgtype.UUID
+				if err := f.Pool.QueryRow(t.Context(), `SELECT computer_instance_id FROM run_leases WHERE id=$1`, work.LeaseID).Scan(&id); err != nil {
+					t.Fatal(err)
+				}
+				if allocated {
+					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='allocated',observed_desired_version=0,ready_at=NULL,guest_channel_token_hash=decode(repeat('ab',32),'hex'),guest_channel_token_expires_at=now()+interval '5 minutes' WHERE id=$1`, id)
+				} else {
+					// A Program-ready acknowledgement on the resident Instance.
+					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_version=desired_version+1,preparation_expires_at=now()-interval '1 second' WHERE id=$1`, id)
+				}
+				dbtest.MustExec(t, t.Context(), f.Pool, supply.sql, runtest.WorkerGroupID)
+				i, err := db.New(f.Pool).GetComputerInstance(t.Context(), db.GetComputerInstanceParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: id})
+				if err != nil {
+					t.Fatal(err)
+				}
+				tx, err := f.Pool.Begin(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer tx.Rollback(context.Background())
+				row, err := recordReady(t.Context(), tx, readinessOf(i))
+				if allocated {
+					if !errors.Is(err, pgx.ErrNoRows) {
+						t.Fatalf("first readiness on %s: %v", supply.name, err)
+					}
+					return
+				}
+				if err != nil || row.ObservedDesiredVersion != i.DesiredVersion {
+					t.Fatalf("resident readiness on %s: %v %v", supply.name, row.ObservedDesiredVersion, err)
+				}
+			})
+		}
 	}
 }

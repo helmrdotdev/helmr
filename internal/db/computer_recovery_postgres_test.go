@@ -1,41 +1,33 @@
 package db_test
 
 import (
-	"context"
 	"errors"
 	"testing"
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestComputerSourceFailureEpisodeIsStablePostgres(t *testing.T) {
 	f := runtest.New(t)
 	work := f.AddRunLease(t, "assigned", time.Now().Add(-time.Minute))
-	var instance, computer, head uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT i.id,i.computer_id,c.head_disk_version_id FROM run_leases l JOIN computer_instances i ON i.id=l.computer_instance_id JOIN computers c ON c.id=i.computer_id WHERE l.id=$1`, work.LeaseID).Scan(&instance, &computer, &head); err != nil {
+	var instance, computerID, head uuid.UUID
+	if err := f.Pool.QueryRow(t.Context(), `SELECT i.id,i.computer_id,c.head_disk_version_id FROM run_leases l JOIN computer_instances i ON i.id=l.computer_instance_id JOIN computers c ON c.id=i.computer_id WHERE l.id=$1`, work.LeaseID).Scan(&instance, &computerID, &head); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='allocated',ready_at=NULL,observed_version=0,observed_desired_version=0 WHERE id=$1`, instance)
-	p := db.MarkComputerInstanceFailedParams{ID: pgvalue.UUID(instance), WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerEpoch: 1, DesiredVersion: 1, ExpectedObservedVersion: 0, ReasonCode: pgvalue.Text(workerapi.RuntimeFailureComputerSource), Error: []byte(`{"code":"source_unavailable"}`)}
+	failure := computer.Failure{
+		Observation: computer.Observation{Instance: computer.InstanceRef{Host: computer.Host{GroupID: runtest.WorkerGroupID, HostID: f.WorkerID, Epoch: 1}, ID: instance, DesiredVersion: 1}},
+		Kind:        computer.FailureSourceUnavailable, Reason: workerapi.RuntimeFailureComputerSource, Error: []byte(`{"code":"source_unavailable"}`),
+	}
 	report := func() error {
-		tx, err := f.Pool.Begin(t.Context())
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback(context.Background())
-		if _, err = dispatch.RecordComputerInstanceFailure(t.Context(), tx, runtest.WorkerGroupID, p); err != nil {
-			return err
-		}
-		return tx.Commit(t.Context())
+		_, err := computer.RecordInstanceFailure(t.Context(), f.Pool, failure)
+		return err
 	}
 	start := make(chan struct{})
 	results := make(chan error, 2)
@@ -49,7 +41,7 @@ func TestComputerSourceFailureEpisodeIsStablePostgres(t *testing.T) {
 		switch {
 		case err == nil:
 			accepted++
-		case errors.Is(err, pgx.ErrNoRows):
+		case errors.Is(err, computer.ErrAuthorityChanged):
 			stale++
 		default:
 			t.Fatal(err)
@@ -60,13 +52,13 @@ func TestComputerSourceFailureEpisodeIsStablePostgres(t *testing.T) {
 	}
 	snapshot := func() string {
 		var value string
-		if err := f.Pool.QueryRow(t.Context(), `SELECT jsonb_build_array(recovery_id,recovery_disk_version_id,recovery_reason,recovery_started_at,recovery_payload_required)::text FROM computers WHERE id=$1`, computer).Scan(&value); err != nil {
+		if err := f.Pool.QueryRow(t.Context(), `SELECT jsonb_build_array(recovery_id,recovery_disk_version_id,recovery_reason,recovery_started_at,recovery_payload_required)::text FROM computers WHERE id=$1`, computerID).Scan(&value); err != nil {
 			t.Fatal(err)
 		}
 		return value
 	}
 	before := snapshot()
-	if err := report(); !errors.Is(err, pgx.ErrNoRows) {
+	if err := report(); !errors.Is(err, computer.ErrAuthorityChanged) {
 		t.Fatalf("duplicate report=%v", err)
 	}
 	if after := snapshot(); after != before {
@@ -75,7 +67,7 @@ func TestComputerSourceFailureEpisodeIsStablePostgres(t *testing.T) {
 	var source uuid.UUID
 	var retained bool
 	var reason string
-	if err := f.Pool.QueryRow(t.Context(), `SELECT recovery_disk_version_id,recovery_payload_required IS TRUE,recovery_reason FROM computers WHERE id=$1 AND recovery_id IS NOT NULL AND recovery_started_at IS NOT NULL`, computer).Scan(&source, &retained, &reason); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT recovery_disk_version_id,recovery_payload_required IS TRUE,recovery_reason FROM computers WHERE id=$1 AND recovery_id IS NOT NULL AND recovery_started_at IS NOT NULL`, computerID).Scan(&source, &retained, &reason); err != nil {
 		t.Fatal(err)
 	}
 	if source != head || !retained || reason != "computer_source_unavailable" {
@@ -83,7 +75,7 @@ func TestComputerSourceFailureEpisodeIsStablePostgres(t *testing.T) {
 	}
 	reject := func(query string, arg any, code, constraint string) {
 		t.Helper()
-		_, err := f.Pool.Exec(t.Context(), query, computer, arg)
+		_, err := f.Pool.Exec(t.Context(), query, computerID, arg)
 		var pgerr *pgconn.PgError
 		if !errors.As(err, &pgerr) || pgerr.Code != code || pgerr.ConstraintName != constraint {
 			t.Fatalf("expected %s/%s got %v", code, constraint, err)

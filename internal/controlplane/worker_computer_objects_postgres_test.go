@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"io"
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computerhost"
@@ -20,7 +22,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type objectStatObserver struct {
@@ -191,15 +192,17 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 	if err = f.Pool.QueryRow(t.Context(), `SELECT observed_version FROM computer_instances WHERE id=$1`, f.runtime).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	tx, err = f.Pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
+	closure := computer.Closure{
+		Observation: computer.Observation{
+			Instance: computer.InstanceRef{
+				Host: computer.Host{GroupID: pgvalue.MustUUIDValue(fence.WorkerGroupID), HostID: pgvalue.MustUUIDValue(fence.WorkerID), Epoch: fence.WorkerEpoch},
+				ID:   pgvalue.MustUUIDValue(f.runtime), DesiredVersion: fence.DesiredVersion + 1,
+			},
+			ExpectedObservedVersion: version,
+		},
+		Reason: "test_cleanup", CleanupProof: &computer.CleanupProof{Method: computer.CleanupSessionClosed, CompletedAt: time.Now()},
 	}
-	defer tx.Rollback(t.Context())
-	if _, err = dispatch.RecordComputerInstanceReclaim(t.Context(), tx, pgvalue.MustUUIDValue(fence.WorkerGroupID), db.ReclaimComputerInstanceParams{ID: f.runtime, WorkerHostID: fence.WorkerID, WorkerEpoch: fence.WorkerEpoch, DesiredVersion: fence.DesiredVersion + 1, ExpectedObservedVersion: version, Reason: pgtype.Text{String: "test_cleanup", Valid: true}, Evidence: []byte(`{"method":"session_closed"}`)}); err != nil {
-		t.Fatal(err)
-	}
-	if err = tx.Commit(t.Context()); err != nil {
+	if _, err = computer.RecordInstanceClosed(t.Context(), f.Pool, closure); err != nil {
 		t.Fatal(err)
 	}
 	var expectedRetained int

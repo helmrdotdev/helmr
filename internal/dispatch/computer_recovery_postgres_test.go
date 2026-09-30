@@ -1,10 +1,11 @@
 package dispatch
 
 import (
-	"context"
 	"testing"
+	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -63,16 +64,8 @@ func TestComputerRecoveryPreparationBudget(t *testing.T) {
 				if i.ReclaimedAt.Valid || i.DesiredState != "closed" {
 					t.Fatalf("expiry released physical ownership: %+v", i)
 				}
-				tx, err := f.Pool.Begin(t.Context())
-				if err != nil {
-					t.Fatal(err)
-				}
-				_, err = RecordComputerInstanceReclaim(t.Context(), tx, pgvalue.MustUUIDValue(i.WorkerGroupID), db.ReclaimComputerInstanceParams{ID: id, WorkerHostID: i.WorkerHostID, WorkerEpoch: i.WorkerEpoch, DesiredVersion: i.DesiredVersion, ExpectedObservedVersion: i.ObservedVersion, Reason: pgvalue.Text("preparation_expired"), Evidence: []byte(`{"method":"host_reconciled"}`)})
-				if err != nil {
-					tx.Rollback(context.Background())
-					t.Fatal(err)
-				}
-				if err = tx.Commit(t.Context()); err != nil {
+				closure := computer.Closure{Observation: instanceObservation(i), Reason: "preparation_expired", CleanupProof: &computer.CleanupProof{Method: computer.CleanupHostReconciled, CompletedAt: time.Now()}}
+				if _, err = computer.RecordInstanceClosed(t.Context(), f.Pool, closure); err != nil {
 					t.Fatal(err)
 				}
 				if count < 8 {

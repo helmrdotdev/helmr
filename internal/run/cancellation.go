@@ -8,6 +8,7 @@ import (
 	"slices"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -810,11 +811,8 @@ func lockCancellationPlacement(ctx context.Context, tx pgx.Tx, runIDs []uuid.UUI
 			return err
 		}
 	}
-	if err := lockCancellationComputers(ctx, tx, runIDs); err != nil {
-		return err
-	}
-	if _, err := db.New(tx).LockCancellationInstances(ctx, pgUUIDs(runIDs)); err != nil {
-		return cancellationAuthority("lock cancellation Instances", err)
+	if err := computer.LockRunComputers(ctx, tx, runIDs); err != nil {
+		return cancellationAuthority("lock cancellation Computers and Instances", err)
 	}
 	return nil
 }
@@ -831,18 +829,6 @@ func lockCancellationResources(ctx context.Context, tx pgx.Tx, runIDs []uuid.UUI
 		return nil, err
 	}
 	return lockCancellationWaits(ctx, tx, runIDs, cancelIDs)
-}
-
-func lockCancellationComputers(
-	ctx context.Context,
-	tx pgx.Tx,
-	runIDs []uuid.UUID,
-) error {
-	_, err := db.New(tx).LockCancellationComputers(ctx, pgUUIDs(runIDs))
-	if err != nil {
-		return cancellationAuthority("lock cancellation computers", err)
-	}
-	return nil
 }
 
 func lockCancellationAttempts(

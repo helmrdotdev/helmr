@@ -2,20 +2,17 @@ package dispatch
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
-	"strings"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -157,11 +154,7 @@ func (d *Authority) allocateComputerPlacement(ctx context.Context, tx pgx.Tx, p 
 	}
 	id := uuid.NewV7()
 	generation := p.computer.WriterGeneration + 1
-	fence, err := d.fencingKey.Derive(disk.FenceInput{InstanceID: id, ComputerID: pgvalue.MustUUIDValue(p.computer.ID), WriterGeneration: generation})
-	if err != nil {
-		return db.ComputerInstance{}, err
-	}
-	hash, err := hex.DecodeString(strings.TrimPrefix(fence.Hash, "sha256:"))
+	hash, err := computer.WriterTokenHash(d.fencingKey, id, pgvalue.MustUUIDValue(p.computer.ID), generation)
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
@@ -169,8 +162,8 @@ func (d *Authority) allocateComputerPlacement(ctx context.Context, tx pgx.Tx, p 
 		ID: pgvalue.UUID(id), WorkerGroupID: p.worker.WorkerGroupID, WorkerHostID: p.worker.WorkerHostID, WorkerEpoch: p.worker.WorkerEpoch.Int64,
 		VMPlatformID: p.worker.VMPlatformID.String, VMVCPUCount: p.vcpu, CPUConfigDigest: p.cpuDigest,
 		ReservedCPUMillis: p.cpu, ReservedMemoryBytes: p.memory, ReservedGuestEphemeralDiskBytes: p.disk, ReservedExecutionSlots: 1,
-		ProgramDeploymentID: p.program, SourceCheckpointID: p.checkpoint, PreparationSeconds: int64(run.PreparationTTL / time.Second), Reason: "computer_preparation",
-		WriterTokenHash: hash, WriterTtlSeconds: int64(run.LeaseTTL / time.Second), WriterGeneration: generation,
+		ProgramDeploymentID: p.program, SourceCheckpointID: p.checkpoint, PreparationSeconds: int64(computer.PreparationTTL / time.Second), Reason: "computer_preparation",
+		WriterTokenHash: hash, WriterTtlSeconds: int64(computer.WriterTTL / time.Second), WriterGeneration: generation,
 		ComputerID: p.computer.ID, EnvironmentID: p.computer.EnvironmentID, ComputerSpecID: p.computer.ComputerSpecID,
 	})
 	if err != nil {

@@ -2,10 +2,12 @@ package dispatch_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/dispatch/dispatchtest"
 	"github.com/jackc/pgx/v5"
 	"strings"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -302,15 +304,16 @@ func TestComputerCheckpointFailureSettlesRetryingResidents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tx, err = f.Pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(t.Context())
-	if _, err := dispatch.RecordComputerInstanceReclaim(t.Context(), tx, pgvalue.MustUUIDValue(i.WorkerGroupID), db.ReclaimComputerInstanceParams{ID: i.ID, WorkerHostID: i.WorkerHostID, WorkerEpoch: i.WorkerEpoch, DesiredVersion: i.DesiredVersion, ExpectedObservedVersion: i.ObservedVersion, Reason: pgvalue.Text("checkpoint_failed"), Evidence: []byte(`{"method":"host_reconciled"}`)}); err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.Commit(t.Context()); err != nil {
+	if _, err := computer.RecordInstanceClosed(t.Context(), f.Pool, computer.Closure{
+		Observation: computer.Observation{
+			Instance: computer.InstanceRef{
+				Host: computer.Host{GroupID: pgvalue.MustUUIDValue(i.WorkerGroupID), HostID: pgvalue.MustUUIDValue(i.WorkerHostID), Epoch: i.WorkerEpoch},
+				ID:   pgvalue.MustUUIDValue(i.ID), DesiredVersion: i.DesiredVersion,
+			},
+			ExpectedObservedVersion: i.ObservedVersion,
+		},
+		Reason: "checkpoint_failed", CleanupProof: &computer.CleanupProof{Method: computer.CleanupHostReconciled, CompletedAt: time.Now()},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	key, err := disk.NewFencingKey(make([]byte, 32))

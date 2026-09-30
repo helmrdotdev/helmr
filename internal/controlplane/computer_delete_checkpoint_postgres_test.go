@@ -58,7 +58,7 @@ func TestComputerDeleteRetiresConsumedCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	var generation int64
-	if err = tx.QueryRow(t.Context(), `SELECT writer_generation FROM computer_instances WHERE id=$1`, fence.RuntimeID).Scan(&generation); err != nil {
+	if err = tx.QueryRow(t.Context(), `SELECT writer_generation FROM computer_instances WHERE id=$1`, fence.ID).Scan(&generation); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = dispatch.AcknowledgeComputerRestore(t.Context(), tx, fence, cp.ID, generation, nil); err != nil {

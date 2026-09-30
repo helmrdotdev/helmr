@@ -1,6 +1,7 @@
 package dispatch_test
 
 import (
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/dispatch/dispatchtest"
 	"testing"
 	"time"
@@ -21,7 +22,7 @@ func TestComputerRestoreCommitsWholeSetAndOneIntent(t *testing.T) {
 			f, authority, fence := dispatchtest.Restore(t, idle)
 			for pass := 0; pass < 3; pass++ {
 				if pass == 2 {
-					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET admission_state='open' WHERE id=$1`, fence.RuntimeID)
+					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET admission_state='open' WHERE id=$1`, fence.ID)
 				}
 				tx, err := f.Pool.Begin(t.Context())
 				if err != nil {
@@ -32,7 +33,7 @@ func TestComputerRestoreCommitsWholeSetAndOneIntent(t *testing.T) {
 					tx.Rollback(t.Context())
 					t.Fatal(err)
 				}
-				if cp.ResumeComputerInstanceID != fence.RuntimeID || !cp.ResumeCommittedAt.Valid {
+				if cp.ResumeComputerInstanceID != pgvalue.UUID(fence.ID) || !cp.ResumeCommittedAt.Valid {
 					t.Fatal("restore destination not committed")
 				}
 				if err = tx.Commit(t.Context()); err != nil {
@@ -40,13 +41,13 @@ func TestComputerRestoreCommitsWholeSetAndOneIntent(t *testing.T) {
 				}
 			}
 			var leases, intents, resuming int
-			if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM run_leases WHERE computer_instance_id=$1`, fence.RuntimeID).Scan(&leases); err != nil {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM run_leases WHERE computer_instance_id=$1`, fence.ID).Scan(&leases); err != nil {
 				t.Fatal(err)
 			}
-			if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM control_outbox WHERE topic=$1 AND payload->>'computer_instance_id'=$2`, dispatch.ComputerRestoreActivationTopic, pgvalue.UUIDString(fence.RuntimeID)).Scan(&intents); err != nil {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM control_outbox WHERE topic=$1 AND payload->>'computer_instance_id'=$2`, computer.RestoreActivationTopic, fence.ID.String()).Scan(&intents); err != nil {
 				t.Fatal(err)
 			}
-			if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM run_waits w JOIN run_leases l ON l.id=w.current_run_lease_id JOIN runs r ON r.id=w.run_id WHERE l.computer_instance_id=$1 AND w.suspension_status='resuming' AND w.expected_run_revision=r.revision AND r.current_run_lease_id=l.id`, fence.RuntimeID).Scan(&resuming); err != nil {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM run_waits w JOIN run_leases l ON l.id=w.current_run_lease_id JOIN runs r ON r.id=w.run_id WHERE l.computer_instance_id=$1 AND w.suspension_status='resuming' AND w.expected_run_revision=r.revision AND r.current_run_lease_id=l.id`, fence.ID).Scan(&resuming); err != nil {
 				t.Fatal(err)
 			}
 			want := 2
@@ -85,7 +86,7 @@ func TestComputerRestoreRollsBackPartialActivation(t *testing.T) {
 				t.Fatal(err)
 			}
 			var untouched bool
-			err = f.Pool.QueryRow(t.Context(), `SELECT c.resume_committed_at IS NULL AND c.resume_computer_instance_id IS NULL AND NOT EXISTS(SELECT 1 FROM run_leases WHERE computer_instance_id=i.id) AND NOT EXISTS(SELECT 1 FROM control_outbox WHERE topic=$2) FROM computer_instances i JOIN computer_checkpoints c ON c.id=i.source_checkpoint_id WHERE i.id=$1`, fence.RuntimeID, dispatch.ComputerRestoreActivationTopic).Scan(&untouched)
+			err = f.Pool.QueryRow(t.Context(), `SELECT c.resume_committed_at IS NULL AND c.resume_computer_instance_id IS NULL AND NOT EXISTS(SELECT 1 FROM run_leases WHERE computer_instance_id=i.id) AND NOT EXISTS(SELECT 1 FROM control_outbox WHERE topic=$2) FROM computer_instances i JOIN computer_checkpoints c ON c.id=i.source_checkpoint_id WHERE i.id=$1`, fence.ID, computer.RestoreActivationTopic).Scan(&untouched)
 			if err != nil || !untouched {
 				t.Fatalf("partial commit=%v %v", untouched, err)
 			}
@@ -141,7 +142,7 @@ func TestComputerRestoreRechecksGrantsAfterBlockedIntent(t *testing.T) {
 		t.Fatal("activation committed with expired member grants")
 	}
 	var untouched bool
-	err = f.Pool.QueryRow(t.Context(), `SELECT c.resume_committed_at IS NULL AND NOT EXISTS(SELECT 1 FROM run_leases WHERE computer_instance_id=i.id) AND NOT EXISTS(SELECT 1 FROM control_outbox WHERE topic=$2) FROM computer_instances i JOIN computer_checkpoints c ON c.id=i.source_checkpoint_id WHERE i.id=$1`, fence.RuntimeID, dispatch.ComputerRestoreActivationTopic).Scan(&untouched)
+	err = f.Pool.QueryRow(t.Context(), `SELECT c.resume_committed_at IS NULL AND NOT EXISTS(SELECT 1 FROM run_leases WHERE computer_instance_id=i.id) AND NOT EXISTS(SELECT 1 FROM control_outbox WHERE topic=$2) FROM computer_instances i JOIN computer_checkpoints c ON c.id=i.source_checkpoint_id WHERE i.id=$1`, fence.ID, computer.RestoreActivationTopic).Scan(&untouched)
 	if err != nil || !untouched {
 		t.Fatalf("expired activation persisted=%v %v", untouched, err)
 	}
@@ -186,11 +187,11 @@ func TestComputerRestoreAcknowledgesEntireSet(t *testing.T) {
 				}
 			}
 			var delivered int
-			if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM control_outbox WHERE topic=$1 AND status='delivered' AND delivered_at IS NOT NULL`, dispatch.ComputerRestoreActivationTopic).Scan(&delivered); err != nil || delivered != 1 {
+			if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM control_outbox WHERE topic=$1 AND status='delivered' AND delivered_at IS NOT NULL`, computer.RestoreActivationTopic).Scan(&delivered); err != nil || delivered != 1 {
 				t.Fatalf("activation intent delivery=%d err=%v", delivered, err)
 			}
 			var activated int
-			err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM run_leases l JOIN runs r ON r.current_run_lease_id=l.id JOIN run_waits w ON w.current_run_lease_id=l.id WHERE l.computer_instance_id=$1 AND l.status='running' AND r.status='waiting' AND r.active_started_at IS NOT NULL AND w.suspension_status='resuming' AND w.expected_run_revision=r.revision`, fence.RuntimeID).Scan(&activated)
+			err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM run_leases l JOIN runs r ON r.current_run_lease_id=l.id JOIN run_waits w ON w.current_run_lease_id=l.id WHERE l.computer_instance_id=$1 AND l.status='running' AND r.status='waiting' AND r.active_started_at IS NOT NULL AND w.suspension_status='resuming' AND w.expected_run_revision=r.revision`, fence.ID).Scan(&activated)
 			if err != nil || activated != len(grants) {
 				t.Fatalf("activated=%d err=%v", activated, err)
 			}
@@ -252,9 +253,9 @@ func TestComputerRestoreAcknowledgesEntireSet(t *testing.T) {
 	}
 }
 
-func installedRestoreGrants(t *testing.T, f runtest.Fixture, fence dispatch.ComputerPreparationFence) []dispatch.ComputerRestoreGrant {
+func installedRestoreGrants(t *testing.T, f runtest.Fixture, fence computer.InstanceRef) []dispatch.ComputerRestoreGrant {
 	t.Helper()
-	rows, err := f.Pool.Query(t.Context(), `SELECT run_id,id,lease_sequence FROM run_leases WHERE computer_instance_id=$1 ORDER BY run_id`, fence.RuntimeID)
+	rows, err := f.Pool.Query(t.Context(), `SELECT run_id,id,lease_sequence FROM run_leases WHERE computer_instance_id=$1 ORDER BY run_id`, fence.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +317,7 @@ func TestComputerRestoreAcknowledgementRejectsPartialAuthority(t *testing.T) {
 			case "draining Group":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET status='draining',primary_pool_id=NULL,claim_version=claim_version+1 WHERE id=$1`, runtest.WorkerGroupID)
 			case "preparation expired":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET preparation_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, fence.RuntimeID)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET preparation_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, fence.ID)
 			}
 			tx, err = f.Pool.Begin(t.Context())
 			if err != nil {
@@ -328,7 +329,7 @@ func TestComputerRestoreAcknowledgementRejectsPartialAuthority(t *testing.T) {
 				t.Fatal("invalid activation accepted")
 			}
 			var unchanged bool
-			err = f.Pool.QueryRow(t.Context(), `SELECT admission_state='restoring' AND NOT EXISTS(SELECT 1 FROM run_leases WHERE computer_instance_id=i.id AND status='running') AND NOT EXISTS(SELECT 1 FROM runs r JOIN run_leases l ON l.id=r.current_run_lease_id WHERE l.computer_instance_id=i.id AND r.active_started_at IS NOT NULL) FROM computer_instances i WHERE i.id=$1`, fence.RuntimeID).Scan(&unchanged)
+			err = f.Pool.QueryRow(t.Context(), `SELECT admission_state='restoring' AND NOT EXISTS(SELECT 1 FROM run_leases WHERE computer_instance_id=i.id AND status='running') AND NOT EXISTS(SELECT 1 FROM runs r JOIN run_leases l ON l.id=r.current_run_lease_id WHERE l.computer_instance_id=i.id AND r.active_started_at IS NOT NULL) FROM computer_instances i WHERE i.id=$1`, fence.ID).Scan(&unchanged)
 			if err != nil || !unchanged {
 				t.Fatalf("partial activation=%v err=%v", !unchanged, err)
 			}
@@ -372,7 +373,7 @@ func TestComputerRestoreAcknowledgementActorTurn(t *testing.T) {
 				}
 				tx.Rollback(t.Context())
 				var unchanged bool
-				err = f.Pool.QueryRow(t.Context(), `SELECT c.resume_committed_at IS NULL AND NOT EXISTS(SELECT 1 FROM run_leases WHERE computer_instance_id=i.id) FROM computer_instances i JOIN computer_checkpoints c ON c.id=i.source_checkpoint_id WHERE i.id=$1`, fence.RuntimeID).Scan(&unchanged)
+				err = f.Pool.QueryRow(t.Context(), `SELECT c.resume_committed_at IS NULL AND NOT EXISTS(SELECT 1 FROM run_leases WHERE computer_instance_id=i.id) FROM computer_instances i JOIN computer_checkpoints c ON c.id=i.source_checkpoint_id WHERE i.id=$1`, fence.ID).Scan(&unchanged)
 				if err != nil || !unchanged {
 					t.Fatalf("cancelled Session consumed checkpoint: %v %v", unchanged, err)
 				}
@@ -404,7 +405,7 @@ func TestComputerRestoreAcknowledgementActorTurn(t *testing.T) {
 				}
 				tx.Rollback(t.Context())
 				var unchanged bool
-				if err = f.Pool.QueryRow(t.Context(), `SELECT admission_state='restoring' AND NOT EXISTS(SELECT 1 FROM run_leases WHERE computer_instance_id=i.id AND status='running') FROM computer_instances i WHERE i.id=$1`, fence.RuntimeID).Scan(&unchanged); err != nil || !unchanged {
+				if err = f.Pool.QueryRow(t.Context(), `SELECT admission_state='restoring' AND NOT EXISTS(SELECT 1 FROM run_leases WHERE computer_instance_id=i.id AND status='running') FROM computer_instances i WHERE i.id=$1`, fence.ID).Scan(&unchanged); err != nil || !unchanged {
 					t.Fatalf("stopped Actor changed activation: %v %v", unchanged, err)
 				}
 			} else {
@@ -483,7 +484,7 @@ func TestComputerRestoreAcknowledgementRechecksActiveBudget(t *testing.T) {
 		t.Fatal("activation exceeded active budget while waiting for delivery write")
 	}
 	var unchanged bool
-	err = f.Pool.QueryRow(t.Context(), `SELECT i.admission_state='restoring' AND NOT EXISTS(SELECT 1 FROM run_leases WHERE computer_instance_id=i.id AND status='running') AND NOT EXISTS(SELECT 1 FROM control_outbox WHERE topic=$2 AND status='delivered') FROM computer_instances i WHERE i.id=$1`, fence.RuntimeID, dispatch.ComputerRestoreActivationTopic).Scan(&unchanged)
+	err = f.Pool.QueryRow(t.Context(), `SELECT i.admission_state='restoring' AND NOT EXISTS(SELECT 1 FROM run_leases WHERE computer_instance_id=i.id AND status='running') AND NOT EXISTS(SELECT 1 FROM control_outbox WHERE topic=$2 AND status='delivered') FROM computer_instances i WHERE i.id=$1`, fence.ID, computer.RestoreActivationTopic).Scan(&unchanged)
 	if err != nil || !unchanged {
 		t.Fatalf("partial activation: %v %v", unchanged, err)
 	}
@@ -504,7 +505,7 @@ func TestComputerRestoreReconciliation(t *testing.T) {
 				}
 			}
 			var committed bool
-			err := f.Pool.QueryRow(t.Context(), `SELECT cp.resume_computer_instance_id=i.id AND cp.resume_committed_at IS NOT NULL AND i.admission_state='restoring' AND (SELECT count(*) FROM control_outbox WHERE topic=$2 AND status='pending')=1 FROM computer_instances i JOIN computer_checkpoints cp ON cp.id=i.source_checkpoint_id WHERE i.id=$1`, fence.RuntimeID, dispatch.ComputerRestoreActivationTopic).Scan(&committed)
+			err := f.Pool.QueryRow(t.Context(), `SELECT cp.resume_computer_instance_id=i.id AND cp.resume_committed_at IS NOT NULL AND i.admission_state='restoring' AND (SELECT count(*) FROM control_outbox WHERE topic=$2 AND status='pending')=1 FROM computer_instances i JOIN computer_checkpoints cp ON cp.id=i.source_checkpoint_id WHERE i.id=$1`, fence.ID, computer.RestoreActivationTopic).Scan(&committed)
 			if err != nil || !committed {
 				t.Fatalf("committed=%v err=%v", committed, err)
 			}
@@ -522,7 +523,7 @@ func TestComputerRestoreReconciliationRetriesQueueCapacity(t *testing.T) {
 		}
 	}
 	var untouched bool
-	err := f.Pool.QueryRow(t.Context(), `SELECT cp.resume_committed_at IS NULL AND NOT EXISTS(SELECT 1 FROM run_leases WHERE computer_instance_id=i.id) AND NOT EXISTS(SELECT 1 FROM control_outbox WHERE topic=$2) FROM computer_instances i JOIN computer_checkpoints cp ON cp.id=i.source_checkpoint_id WHERE i.id=$1`, fence.RuntimeID, dispatch.ComputerRestoreActivationTopic).Scan(&untouched)
+	err := f.Pool.QueryRow(t.Context(), `SELECT cp.resume_committed_at IS NULL AND NOT EXISTS(SELECT 1 FROM run_leases WHERE computer_instance_id=i.id) AND NOT EXISTS(SELECT 1 FROM control_outbox WHERE topic=$2) FROM computer_instances i JOIN computer_checkpoints cp ON cp.id=i.source_checkpoint_id WHERE i.id=$1`, fence.ID, computer.RestoreActivationTopic).Scan(&untouched)
 	if err != nil || !untouched {
 		t.Fatalf("partial grants=%v err=%v", !untouched, err)
 	}
@@ -551,7 +552,7 @@ func TestComputerRestoreReconciliationPreparationDeadline(t *testing.T) {
 					t.Fatal(err)
 				}
 				var generation int64
-				if err = tx.QueryRow(t.Context(), `SELECT writer_generation FROM computer_instances WHERE id=$1`, fence.RuntimeID).Scan(&generation); err != nil {
+				if err = tx.QueryRow(t.Context(), `SELECT writer_generation FROM computer_instances WHERE id=$1`, fence.ID).Scan(&generation); err != nil {
 					t.Fatal(err)
 				}
 				if _, err = dispatch.AcknowledgeComputerRestore(t.Context(), tx, fence, cp.ID, generation, nil); err != nil {
@@ -561,13 +562,13 @@ func TestComputerRestoreReconciliationPreparationDeadline(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET preparation_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, fence.RuntimeID)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET preparation_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, fence.ID)
 			if _, err := authority.ReconcileComputerInstances(t.Context(), 10); err != nil {
 				t.Fatal(err)
 			}
 			var desired, reason string
 			var committed, reclaimed bool
-			err := f.Pool.QueryRow(t.Context(), `SELECT i.desired_state,i.desired_reason,cp.resume_committed_at IS NOT NULL,i.reclaimed_at IS NOT NULL FROM computer_instances i JOIN computer_checkpoints cp ON cp.id=i.source_checkpoint_id WHERE i.id=$1`, fence.RuntimeID).Scan(&desired, &reason, &committed, &reclaimed)
+			err := f.Pool.QueryRow(t.Context(), `SELECT i.desired_state,i.desired_reason,cp.resume_committed_at IS NOT NULL,i.reclaimed_at IS NOT NULL FROM computer_instances i JOIN computer_checkpoints cp ON cp.id=i.source_checkpoint_id WHERE i.id=$1`, fence.ID).Scan(&desired, &reason, &committed, &reclaimed)
 			want := "closed"
 			if activated {
 				want = "ready"
@@ -590,7 +591,7 @@ func TestComputerRestoreReconciliationRollsBackFailedIntent(t *testing.T) {
 		t.Fatalf("failed intent: count=%d err=%v", n, err)
 	}
 	var untouched bool
-	err := f.Pool.QueryRow(t.Context(), `SELECT cp.resume_committed_at IS NULL AND NOT EXISTS(SELECT 1 FROM run_leases WHERE computer_instance_id=i.id) FROM computer_instances i JOIN computer_checkpoints cp ON cp.id=i.source_checkpoint_id WHERE i.id=$1`, fence.RuntimeID).Scan(&untouched)
+	err := f.Pool.QueryRow(t.Context(), `SELECT cp.resume_committed_at IS NULL AND NOT EXISTS(SELECT 1 FROM run_leases WHERE computer_instance_id=i.id) FROM computer_instances i JOIN computer_checkpoints cp ON cp.id=i.source_checkpoint_id WHERE i.id=$1`, fence.ID).Scan(&untouched)
 	if err != nil || !untouched {
 		t.Fatalf("untouched=%v err=%v", untouched, err)
 	}
@@ -612,14 +613,14 @@ func TestComputerRestoreReconciliationExpiresCommittedIntent(t *testing.T) {
 				t.Fatalf("commit: count=%d err=%v", n, err)
 			}
 			if claimed {
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE control_outbox SET status='claimed',claimed_by='restore-test',claim_expires_at=clock_timestamp()+interval '1 minute',attempts=1 WHERE topic=$1`, dispatch.ComputerRestoreActivationTopic)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE control_outbox SET status='claimed',claimed_by='restore-test',claim_expires_at=clock_timestamp()+interval '1 minute',attempts=1 WHERE topic=$1`, computer.RestoreActivationTopic)
 			}
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET preparation_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, fence.RuntimeID)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET preparation_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, fence.ID)
 			if _, err := authority.ReconcileComputerInstances(t.Context(), 10); err != nil {
 				t.Fatal(err)
 			}
 			var closed bool
-			err := f.Pool.QueryRow(t.Context(), `SELECT i.desired_state='closed' AND cp.resume_committed_at IS NOT NULL AND cp.resume_computer_instance_id=i.id AND o.status='dead_lettered' AND o.claimed_by IS NULL AND o.claim_expires_at IS NULL AND o.last_error='Computer restore destination expired' AND o.delivered_at IS NULL FROM computer_instances i JOIN computer_checkpoints cp ON cp.id=i.source_checkpoint_id JOIN control_outbox o ON o.topic=$2 AND o.payload->>'computer_instance_id'=i.id::text WHERE i.id=$1`, fence.RuntimeID, dispatch.ComputerRestoreActivationTopic).Scan(&closed)
+			err := f.Pool.QueryRow(t.Context(), `SELECT i.desired_state='closed' AND cp.resume_committed_at IS NOT NULL AND cp.resume_computer_instance_id=i.id AND o.status='dead_lettered' AND o.claimed_by IS NULL AND o.claim_expires_at IS NULL AND o.last_error='Computer restore destination expired' AND o.delivered_at IS NULL FROM computer_instances i JOIN computer_checkpoints cp ON cp.id=i.source_checkpoint_id JOIN control_outbox o ON o.topic=$2 AND o.payload->>'computer_instance_id'=i.id::text WHERE i.id=$1`, fence.ID, computer.RestoreActivationTopic).Scan(&closed)
 			if err != nil || !closed {
 				t.Fatalf("terminal intent=%v err=%v", closed, err)
 			}
@@ -642,12 +643,12 @@ func TestComputerRestoreReconciliationExpiryIntentFailureRollsBack(t *testing.T)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `CREATE FUNCTION reject_restore_expiry() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'expiry intent rejected'; END $$`)
 	dbtest.MustExec(t, t.Context(), f.Pool, `CREATE TRIGGER reject_restore_expiry BEFORE UPDATE ON control_outbox FOR EACH ROW EXECUTE FUNCTION reject_restore_expiry()`)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET preparation_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, fence.RuntimeID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET preparation_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, fence.ID)
 	if _, err := authority.ReconcileComputerInstances(t.Context(), 10); err == nil {
 		t.Fatal("intent update failure swallowed")
 	}
 	var unchanged bool
-	err := f.Pool.QueryRow(t.Context(), `SELECT i.desired_state='ready' AND i.admission_state='restoring' AND i.desired_version=$2 AND o.status='pending' FROM computer_instances i JOIN control_outbox o ON o.topic=$3 AND o.payload->>'computer_instance_id'=i.id::text WHERE i.id=$1`, fence.RuntimeID, fence.DesiredVersion, dispatch.ComputerRestoreActivationTopic).Scan(&unchanged)
+	err := f.Pool.QueryRow(t.Context(), `SELECT i.desired_state='ready' AND i.admission_state='restoring' AND i.desired_version=$2 AND o.status='pending' FROM computer_instances i JOIN control_outbox o ON o.topic=$3 AND o.payload->>'computer_instance_id'=i.id::text WHERE i.id=$1`, fence.ID, fence.DesiredVersion, computer.RestoreActivationTopic).Scan(&unchanged)
 	if err != nil || !unchanged {
 		t.Fatalf("expiry atomic=%v err=%v", unchanged, err)
 	}

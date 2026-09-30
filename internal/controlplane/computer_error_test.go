@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 func TestComputerErrorPreservesPublicStatusesAndWorkerFailures(t *testing.T) {
@@ -63,6 +64,50 @@ func TestComputerErrorPreservesPublicStatusesAndWorkerFailures(t *testing.T) {
 				t.Fatalf("worker failure = %+v, %v; want %s retryable=%v", failure, ok, test.code, test.retryable)
 			}
 		})
+	}
+}
+
+// Instance operations authenticated by a worker host report stale claims as
+// 401, changed authority as 409 and rejected input as 400; other failures
+// stay internal. Run-sourced aggregate operations report stale claims through
+// their Run source, never as a Computer failure.
+func TestComputerErrorMapsInstanceOperations(t *testing.T) {
+	input := computer.ValidateKey(new(" padded "))
+	internal := errors.New("database unavailable")
+	for _, test := range []struct {
+		name      string
+		err       error
+		operation computerOperation
+		status    int
+		code      string
+	}{
+		{"observation changed", computer.ErrAuthorityChanged, computerInstanceObservationOperation, http.StatusConflict, "conflict"},
+		{"observation input", input, computerInstanceObservationOperation, http.StatusBadRequest, "bad_request"},
+		{"observation internal", internal, computerInstanceObservationOperation, http.StatusInternalServerError, "internal_error"},
+		{"claim stale claims", workergroup.ErrStaleClaims, computerInstanceClaimOperation, http.StatusUnauthorized, "unauthorized"},
+		{"claim internal", internal, computerInstanceClaimOperation, http.StatusInternalServerError, "internal_error"},
+		{"renewal changed", computer.ErrAuthorityChanged, computerInstanceRenewalOperation, http.StatusConflict, "conflict"},
+		{"renewal stale claims", workergroup.ErrStaleClaims, computerInstanceRenewalOperation, http.StatusUnauthorized, "unauthorized"},
+		{"renewal internal", internal, computerInstanceRenewalOperation, http.StatusInternalServerError, "internal_error"},
+		{"run cleanup changed", computer.ErrAuthorityChanged, computerRunCleanupOperation, http.StatusConflict, "conflict"},
+		{"run cleanup stale claims", workergroup.ErrStaleClaims, computerRunCleanupOperation, http.StatusUnauthorized, "unauthorized"},
+		{"run cleanup internal", internal, computerRunCleanupOperation, http.StatusInternalServerError, "internal_error"},
+		{"restore plan changed", computer.ErrAuthorityChanged, computerRestorePlanOperation, http.StatusConflict, "conflict"},
+		{"restore plan stale claims", workergroup.ErrStaleClaims, computerRestorePlanOperation, http.StatusUnauthorized, "unauthorized"},
+		{"restore plan internal", internal, computerRestorePlanOperation, http.StatusInternalServerError, "internal_error"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			writeError(recorder, computerError(fmt.Errorf("operation: %w", test.err), test.operation))
+			if recorder.Code != test.status || decodeHTTPError(t, recorder.Body.Bytes()).Code != test.code {
+				t.Fatalf("mapped = %d %s, want %d %s", recorder.Code, recorder.Body, test.status, test.code)
+			}
+		})
+	}
+	for _, operation := range []computerOperation{computerCreateOperation, computerDeleteOperation, computerReadOperation} {
+		if failure, ok := workerComputerFailure(workergroup.ErrStaleClaims, operation); ok {
+			t.Fatalf("run-sourced operation %d described stale claims as %+v", operation, failure)
+		}
 	}
 }
 

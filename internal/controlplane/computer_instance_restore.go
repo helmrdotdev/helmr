@@ -1,7 +1,6 @@
 package controlplane
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,34 +11,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
-
-func populateRuntimeRestoreSource(ctx context.Context, store db.Querier, source *workerapi.RuntimeSource, row db.ListComputerInstanceReconcileTargetsRow) error {
-	if store == nil || source == nil || row.AdmissionState != "restoring" || !row.SourceCheckpointID.Valid {
-		return errors.New("computer restore destination is incomplete")
-	}
-	authority, err := store.GetComputerInstanceRestoreCheckpoint(ctx, db.GetComputerInstanceRestoreCheckpointParams{
-		ComputerInstanceID: row.ID, EnvironmentID: row.EnvironmentID, WorkerGroupID: row.WorkerGroupID,
-		WorkerHostID: row.WorkerHostID, WorkerEpoch: row.WorkerEpoch, DesiredVersion: row.DesiredVersion,
-	})
-	if err != nil {
-		return fmt.Errorf("load computer restore checkpoint: %w", err)
-	}
-	cp := authority.ComputerCheckpoint
-	if cp.ID != row.SourceCheckpointID || cp.ComputerID != row.ComputerID || cp.ComputerSpecID != row.ComputerSpecID ||
-		cp.ProgramDeploymentID != row.ProgramDeploymentID || cp.PrivateComputerDiskVersionID != row.PreparationDiskVersionID {
-		return errors.New("computer restore source changed during discovery")
-	}
-	members, err := store.ListComputerCheckpointRuns(ctx, db.ListComputerCheckpointRunsParams{EnvironmentID: row.EnvironmentID, CheckpointID: cp.ID})
-	if err != nil {
-		return fmt.Errorf("load computer restore membership: %w", err)
-	}
-	restore, err := projectComputerInstanceRestore(authority, members)
-	if err != nil {
-		return err
-	}
-	source.Restore = &restore
-	return nil
-}
 
 func projectComputerInstanceRestore(authority db.GetComputerInstanceRestoreCheckpointRow, members []db.ComputerCheckpointRun) (workerapi.RuntimeRestore, error) {
 	cp := authority.ComputerCheckpoint

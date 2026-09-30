@@ -3,6 +3,7 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
@@ -10,8 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// Physical fact producers do not own retry accounting. A committed terminal
-// Instance is a durable reconciliation candidate even if its producer crashes.
+// reconcileComputerPreparations settles each failed preparation candidate in
+// its own transaction.
 func (d *Authority) reconcileComputerPreparations(ctx context.Context, limit int32) error {
 	candidates, err := db.New(d.pool).ListFailedComputerPreparations(ctx, limit)
 	if err != nil {
@@ -31,25 +32,9 @@ func (d *Authority) settleComputerPreparation(ctx context.Context, candidate db.
 		return err
 	}
 	defer rollback(ctx, tx)
-	q := db.New(tx)
-	if _, err = q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: candidate.EnvironmentID, ID: candidate.ComputerID}); err != nil {
+	settled, err := computer.SettlePreparation(ctx, tx, candidate)
+	if err != nil || !settled {
 		return err
-	}
-	var id pgtype.UUID
-	if err = tx.QueryRow(ctx, `SELECT id FROM computer_instances WHERE id=$1 AND computer_id=$2 FOR UPDATE`, candidate.InstanceID, candidate.ComputerID).Scan(&id); err != nil {
-		return err
-	}
-	c, err := q.SettleComputerPreparationFailure(ctx, db.SettleComputerPreparationFailureParams{EnvironmentID: candidate.EnvironmentID, ComputerID: candidate.ComputerID, InstanceID: candidate.InstanceID})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if len(c.PreparationFailure) > 0 {
-		if err = q.InvalidateExhaustedComputerCheckpoint(ctx, db.InvalidateExhaustedComputerCheckpointParams{EnvironmentID: c.EnvironmentID, ComputerID: c.ID}); err != nil {
-			return err
-		}
 	}
 	return tx.Commit(ctx)
 }

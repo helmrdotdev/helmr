@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -28,14 +30,14 @@ func (d *Authority) reconcileComputerRestores(ctx context.Context, limit int32) 
 		if err != nil {
 			return committed, errors.Join(append(failures, err)...)
 		}
-		var candidates []ComputerPreparationFence
+		var candidates []computer.InstanceRef
 		for rows.Next() {
-			var fence ComputerPreparationFence
-			if err = rows.Scan(&fence.RuntimeID, &fence.WorkerID, &fence.WorkerGroupID, &fence.WorkerEpoch, &fence.DesiredVersion); err != nil {
+			var destination computer.InstanceRef
+			if err = rows.Scan(&destination.ID, &destination.Host.HostID, &destination.Host.GroupID, &destination.Host.Epoch, &destination.DesiredVersion); err != nil {
 				rows.Close()
 				return committed, errors.Join(append(failures, err)...)
 			}
-			candidates = append(candidates, fence)
+			candidates = append(candidates, destination)
 		}
 		rows.Close()
 		if err = rows.Err(); err != nil {
@@ -44,9 +46,9 @@ func (d *Authority) reconcileComputerRestores(ctx context.Context, limit int32) 
 		if len(candidates) == 0 {
 			break
 		}
-		for _, fence := range candidates {
-			after = fence.RuntimeID
-			err := d.commitReadyComputerRestore(ctx, fence)
+		for _, destination := range candidates {
+			after = pgvalue.UUID(destination.ID)
+			err := d.commitReadyComputerRestore(ctx, destination)
 			if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, ErrCapacityUnavailable) {
 				continue
 			}
@@ -60,13 +62,13 @@ func (d *Authority) reconcileComputerRestores(ctx context.Context, limit int32) 
 	return committed, errors.Join(failures...)
 }
 
-func (d *Authority) commitReadyComputerRestore(ctx context.Context, fence ComputerPreparationFence) error {
+func (d *Authority) commitReadyComputerRestore(ctx context.Context, destination computer.InstanceRef) error {
 	tx, err := d.begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer rollback(ctx, tx)
-	if _, err = d.CommitComputerRestore(ctx, tx, fence); err != nil {
+	if _, err = d.CommitComputerRestore(ctx, tx, destination); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
