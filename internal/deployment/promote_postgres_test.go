@@ -524,7 +524,7 @@ func TestPromoteDeploymentPostgresAndScheduleFireWithoutDeadlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	admitter, err := scheduler.NewDBAdmitter(fixture.pool, definition.NewScheduleAuthority(), store.GenerateProxyTrust)
+	admitter, err := scheduler.NewDBAdmitter(fixture.pool, definition.NewScheduleAuthority(), store)
 	if err != nil {
 		t.Fatal(err)
 	}

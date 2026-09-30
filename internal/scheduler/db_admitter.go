@@ -8,11 +8,11 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
-	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
@@ -24,27 +24,27 @@ type Authority interface {
 }
 
 type DBAdmitter struct {
-	generateProxyTrust func(uuid.UUID, uuid.UUID, time.Time) (secret.ProxyTrust, error)
-	db                 db.TxBeginner
-	authority          Authority
-	now                func() time.Time
+	computers computer.Creator
+	db        db.TxBeginner
+	authority Authority
+	now       func() time.Time
 }
 
-func NewDBAdmitter(database db.TxBeginner, authority Authority, generateProxyTrust func(uuid.UUID, uuid.UUID, time.Time) (secret.ProxyTrust, error)) (*DBAdmitter, error) {
+func NewDBAdmitter(database db.TxBeginner, authority Authority, ca computer.CAIssuer) (*DBAdmitter, error) {
 	if database == nil {
 		return nil, errors.New("schedule admission database is required")
 	}
 	if authority == nil {
 		return nil, errors.New("schedule admission authority is required")
 	}
-	if generateProxyTrust == nil {
-		return nil, errors.New("schedule Computer CA generator is required")
+	if ca == nil {
+		return nil, errors.New("schedule Computer CA issuer is required")
 	}
 	return &DBAdmitter{
-		generateProxyTrust: generateProxyTrust,
-		db:                 database,
-		authority:          authority,
-		now:                func() time.Time { return time.Now().UTC() },
+		computers: computer.NewCreator(ca),
+		db:        database,
+		authority: authority,
+		now:       func() time.Time { return time.Now().UTC() },
 	}, nil
 }
 
@@ -148,61 +148,26 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		return &AdmissionError{Code: ErrorSecretSelectionMismatch, Message: "schedule Secret selection does not match its definition"}
 	}
 	runID := uuid.NewV7()
-	computerID := uuid.NewV7()
-	initialVersionID := uuid.NewV7()
-	createdComputer, err := queries.CreateComputerForScheduleFire(
-		ctx,
-		db.CreateComputerForScheduleFireParams{
-			SandboxDeclaredID:  taskRun.SandboxDeclaredID,
-			EnvironmentID:      lockedSchedule.EnvironmentID,
-			ScheduleID:         lockedSchedule.ID,
-			ExpectedGeneration: lockedSchedule.Generation,
-			ID:                 pgvalue.UUID(computerID),
-			InitialVersionID:   pgvalue.UUID(initialVersionID),
-		},
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	secrets := make([]computer.LockedSecret, 0, len(selectedSecrets))
+	for _, selected := range selectedSecrets {
+		secrets = append(secrets, computer.LockedSecret{
+			SecretID: pgvalue.MustUUIDValue(selected.SecretID),
+			Kind:     selected.PlacementKind, Target: selected.PlacementTarget,
+			Mode: selected.Mode, AllowedOrigins: selected.AllowedOrigins,
+		})
+	}
+	createdComputer, err := a.computers.CreateScheduled(ctx, tx, computer.ScheduledRequest{
+		EnvironmentID:      pgvalue.MustUUIDValue(lockedSchedule.EnvironmentID),
+		ScheduleID:         pgvalue.MustUUIDValue(lockedSchedule.ID),
+		ScheduleGeneration: lockedSchedule.Generation,
+		SandboxDeclaredID:  taskRun.SandboxDeclaredID,
+		Secrets:            secrets,
+	})
+	if errors.Is(err, computer.ErrNotDeployed) {
 		return &AdmissionError{Code: ErrorSandboxNotFound, Message: "schedule Sandbox is absent from its pinned deployment"}
 	}
 	if err != nil {
 		return err
-	}
-	for _, selected := range selectedSecrets {
-		if selected.Mode != "protected" {
-			continue
-		}
-		trust, err := a.generateProxyTrust(pgvalue.MustUUIDValue(lockedSchedule.EnvironmentID), computerID, createdComputer.CreatedAt.Time)
-		if err != nil {
-			return err
-		}
-		count, err := queries.InitializeComputerSecretCA(ctx, db.InitializeComputerSecretCAParams{
-			EnvironmentID: pgvalue.UUID(trust.EnvironmentID), ComputerID: pgvalue.UUID(trust.ComputerID),
-			Certificate: trust.Certificate, PrivateKeyNonce: trust.PrivateKeyNonce,
-			PrivateKeyCiphertext: trust.PrivateKeyCiphertext, NotAfter: pgvalue.Timestamptz(trust.NotAfter),
-		})
-		if err != nil {
-			return err
-		}
-		if count != 1 {
-			return errors.New("scheduled Computer CA creation failed")
-		}
-		break
-	}
-	for _, selected := range selectedSecrets {
-		placeholder, err := secretbinding.Placeholder(selected.Mode)
-		if err != nil {
-			return err
-		}
-		if _, err := queries.CreateComputerSecret(ctx, db.CreateComputerSecretParams{
-			ComputerID:      createdComputer.ID,
-			EnvironmentID:   lockedSchedule.EnvironmentID,
-			PlacementKind:   selected.PlacementKind,
-			PlacementTarget: selected.PlacementTarget,
-			SecretID:        selected.SecretID,
-			Mode:            selected.Mode, AllowedOrigins: selected.AllowedOrigins, Placeholder: placeholder,
-		}); err != nil {
-			return err
-		}
 	}
 	rootSpanID, err := tracing.NewSpanID()
 	if err != nil {
@@ -223,8 +188,8 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 			ScheduledAt:               lockedSchedule.NextFireAt,
 			PreviousScheduledAt:       lockedSchedule.LastFireAt,
 			ScheduleTimezone:          pgtype.Text{String: lockedSchedule.Timezone, Valid: true},
-			ComputerID:                createdComputer.ID,
-			BaseComputerDiskVersionID: createdComputer.HeadDiskVersionID,
+			ComputerID:                pgvalue.UUID(createdComputer.ID),
+			BaseComputerDiskVersionID: pgvalue.UUID(createdComputer.HeadDiskVersionID),
 			Payload:                   admission.Payload,
 			Metadata:                  []byte(`{}`),
 			Tags:                      []string{},

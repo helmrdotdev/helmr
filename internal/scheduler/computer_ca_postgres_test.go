@@ -16,7 +16,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func testProxyTrustGenerator(t *testing.T, pool *pgxpool.Pool) func(uuid.UUID, uuid.UUID, time.Time) (secret.ProxyTrust, error) {
+// proxyTrustFunc is a Computer CA issuer backed by a function.
+type proxyTrustFunc func(uuid.UUID, uuid.UUID, time.Time) (secret.ProxyTrust, error)
+
+func (f proxyTrustFunc) GenerateProxyTrust(environmentID, computerID uuid.UUID, createdAt time.Time) (secret.ProxyTrust, error) {
+	return f(environmentID, computerID, createdAt)
+}
+
+func testProxyTrustGenerator(t *testing.T, pool *pgxpool.Pool) proxyTrustFunc {
 	t.Helper()
 	store, err := secret.New(db.New(pool), pool, bytes.Repeat([]byte{71}, 32))
 	if err != nil {
@@ -61,13 +68,13 @@ func TestScheduledComputerCACreationAndRollback(t *testing.T) {
 			}
 			generate := testProxyTrustGenerator(t, pool)
 			calls := 0
-			admission, err := NewDBAdmitter(pool, caScheduleAuthority{fixedAuthority{digest: digest}, placements}, func(e, w uuid.UUID, c time.Time) (secret.ProxyTrust, error) {
+			admission, err := NewDBAdmitter(pool, caScheduleAuthority{fixedAuthority{digest: digest}, placements}, proxyTrustFunc(func(e, w uuid.UUID, c time.Time) (secret.ProxyTrust, error) {
 				calls++
 				if mode == "generation-failure" {
 					return secret.ProxyTrust{}, errors.New("synthetic generation failure")
 				}
 				return generate(e, w, c)
-			})
+			}))
 			if err != nil {
 				t.Fatal(err)
 			}

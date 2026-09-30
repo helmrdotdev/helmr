@@ -129,7 +129,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure scheduled Computer CA encryption: %w", err)
 	}
-	scheduleAdmitter, err := scheduler.NewDBAdmitter(pool, scheduleAuthority, secretStore.GenerateProxyTrust)
+	scheduleAdmitter, err := scheduler.NewDBAdmitter(pool, scheduleAuthority, secretStore)
 	if err != nil {
 		return fmt.Errorf("configure schedule admission: %w", err)
 	}

@@ -263,7 +263,7 @@ func TestScheduleFireAndPublicComputerCreationShareSecretWithoutDeadlock(t *test
 			} else {
 				close(fireCA.release)
 			}
-			admitter, err := NewDBAdmitter(pool, caScheduleAuthority{fixedAuthority{digest: digest}, protectedSchedulePlacements}, fireCA.GenerateProxyTrust)
+			admitter, err := NewDBAdmitter(pool, caScheduleAuthority{fixedAuthority{digest: digest}, protectedSchedulePlacements}, fireCA)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -330,7 +330,7 @@ func TestConcurrentScheduleFiresShareSecret(t *testing.T) {
 	protectScheduleSecrets(t, pool, first)
 	second := seedSiblingSchedule(t, pool, first, "nightly-report")
 	barrier := newCABarrier(t, pool)
-	admitter, err := NewDBAdmitter(pool, anyTaskAuthority{fixedAuthority{digest: digest}, protectedSchedulePlacements}, barrier.GenerateProxyTrust)
+	admitter, err := NewDBAdmitter(pool, anyTaskAuthority{fixedAuthority{digest: digest}, protectedSchedulePlacements}, barrier)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +367,7 @@ func TestScheduleFireHoldsSecretAuthorityBeforeCreatingComputer(t *testing.T) {
 	schedule, digest := seedScheduleAdmission(t, pool)
 	protectScheduleSecrets(t, pool, schedule)
 	barrier := newCABarrier(t, pool)
-	admitter, err := NewDBAdmitter(pool, caScheduleAuthority{fixedAuthority{digest: digest}, protectedSchedulePlacements}, barrier.GenerateProxyTrust)
+	admitter, err := NewDBAdmitter(pool, caScheduleAuthority{fixedAuthority{digest: digest}, protectedSchedulePlacements}, barrier)
 	if err != nil {
 		t.Fatal(err)
 	}
