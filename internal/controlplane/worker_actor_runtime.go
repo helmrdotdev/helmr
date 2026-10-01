@@ -48,12 +48,8 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	fence, err := workerSourceFence(workerFromContext(r.Context()), request.Lease)
-	if err != nil {
-		s.writeWorkerActorSourceError(w, "start", request.Lease.ID, err)
-		return
-	}
-	source, err := s.workerRunSource(r.Context(), fence)
+	worker := workerFromContext(r.Context())
+	source, err := s.workerRunSource(r.Context(), worker, request.Lease)
 	if err != nil {
 		s.writeWorkerActorSourceError(w, "start", request.Lease.ID, err)
 		return
@@ -73,6 +69,12 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, failedWorkerActorStart(
 			request.CorrelationID, "invalid_actor_start", err.Error(), false,
 		))
+		return
+	}
+	// The source lock above parsed the same lease receipt.
+	fence, err := workerSourceFence(worker, request.Lease)
+	if err != nil {
+		s.writeWorkerActorSourceError(w, "start", request.Lease.ID, err)
 		return
 	}
 	startRequest, claim, err := prepareActorStart(normalized)
@@ -234,13 +236,15 @@ func (s *Server) workerReadSessionEvents(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, workerapi.ReadSessionEventsResponse{CorrelationID: request.CorrelationID, Completed: &response})
 }
 
-// workerRunSource locks the worker's live source Run in its own
-// transaction.
-func (s *Server) workerRunSource(ctx context.Context, fence run.ExecutionFence) (run.LiveSource, error) {
+func (s *Server) workerRunSource(
+	ctx context.Context,
+	worker workergroup.HostPrincipal,
+	lease workerapi.RunLeaseFence,
+) (run.LiveSource, error) {
 	var source run.LiveSource
 	err := s.inTx(ctx, func(work *txWork) error {
 		var err error
-		source, err = run.LockLiveSource(ctx, work.tx, fence)
+		source, err = lockWorkerRunSource(ctx, work.tx, worker, lease)
 		return err
 	})
 	return source, err
