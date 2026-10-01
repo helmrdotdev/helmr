@@ -45,12 +45,12 @@ func TestParseActorCompletionRejectsNoncanonicalFailureMessage(t *testing.T) {
 }
 
 func TestActorContinuationHonorsManualCancellation(t *testing.T) {
-	actor := db.Session{Status: "open", CommittedInputSequence: 2, NextInputSequence: 5}
-	if !session.CanStartContinuation(actor) {
+	sessionRow := db.Session{Status: "open", CommittedInputSequence: 2, NextInputSequence: 5}
+	if !session.CanStartContinuation(sessionRow) {
 		t.Fatal("backlogged open Actor should need a continuation")
 	}
-	actor.DispatchHoldID = pgvalue.UUID(uuid.NewV7())
-	if session.CanStartContinuation(actor) {
+	sessionRow.DispatchHoldID = pgvalue.UUID(uuid.NewV7())
+	if session.CanStartContinuation(sessionRow) {
 		t.Fatal("manual Run cancellation hold admitted a continuation")
 	}
 }

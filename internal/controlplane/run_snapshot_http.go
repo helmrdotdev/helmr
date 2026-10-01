@@ -46,7 +46,7 @@ type runSnapshotRecord struct {
 	deploymentID         pgtype.UUID
 	deploymentVersion    string
 	computerID           pgtype.UUID
-	actorID              pgtype.UUID
+	sessionID            pgtype.UUID
 	parentRunID          pgtype.UUID
 	currentAttemptNumber int32
 	causeKind            string
@@ -484,8 +484,8 @@ func projectRunSnapshot(record runSnapshotRecord) (api.RunSnapshotResponse, erro
 		!record.createdAt.Valid {
 		return api.RunSnapshotResponse{}, errors.New("run projection authority is invalid")
 	}
-	actorID := pgvalue.UUIDString(record.actorID)
-	if record.actorID.Valid && ids.Validate(actorID) != nil {
+	sessionID := pgvalue.UUIDString(record.sessionID)
+	if record.sessionID.Valid && ids.Validate(sessionID) != nil {
 		return api.RunSnapshotResponse{}, errors.New("run actor projection authority is invalid")
 	}
 	parentRunID := pgvalue.UUIDString(record.parentRunID)
@@ -516,8 +516,8 @@ func projectRunSnapshot(record runSnapshotRecord) (api.RunSnapshotResponse, erro
 		Cause: cause, Metadata: json.RawMessage(record.metadata),
 		Tags: append([]string{}, record.tags...), CreatedAt: record.createdAt.Time.UTC(),
 	}
-	if record.actorID.Valid {
-		response.SessionID = actorID
+	if record.sessionID.Valid {
+		response.SessionID = sessionID
 	}
 	if record.parentRunID.Valid {
 		response.ParentRunID = parentRunID
@@ -621,7 +621,7 @@ func runSnapshotRecordFromGet(row db.GetRunSnapshotRow) runSnapshotRecord {
 		id: row.ID, status: row.Status,
 		entrypointKind: row.EntrypointKind, entrypointDeclaredID: row.EntrypointDeclaredID,
 		deploymentID: row.DeploymentID, deploymentVersion: row.DeploymentVersion,
-		computerID: row.ComputerID, actorID: row.SessionID,
+		computerID: row.ComputerID, sessionID: row.SessionID,
 		parentRunID:          row.ParentRunID,
 		currentAttemptNumber: row.CurrentAttemptNumber, causeKind: row.CauseKind,
 		scheduleID: row.ScheduleID, scheduledAt: row.ScheduledAt,

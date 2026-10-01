@@ -121,7 +121,7 @@ func (f *actorExecutionHTTP) receiveTurn(t *testing.T, sequence int64) run.TurnS
 	}
 	if input.Status == "queued" {
 		after := sequence - 1
-		waitParams, _ := json.Marshal(workerActorInputWaitParams{SessionID: f.SessionID.String(), AfterInputSequence: after})
+		waitParams, _ := json.Marshal(workerSessionInputWaitParams{SessionID: f.SessionID.String(), AfterInputSequence: after})
 		f.workerCall(t, "/run/waits/create", workerapi.CreateRunWaitRequest{CorrelationID: uuid.NewV7().String(), Lease: f.fence(), RunWaitID: uuid.NewV7().String(), ResumeAttachID: uuid.NewV7().String(), Kind: "actor_input", Params: waitParams, ActorSpeculativeInputSequence: &after}, nil)
 		input, err = f.queries.GetSessionTurnAtSequenceForUpdate(t.Context(), params)
 		if err != nil {

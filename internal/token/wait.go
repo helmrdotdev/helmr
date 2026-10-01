@@ -147,7 +147,7 @@ func registerTokenWait(
 	if err != nil {
 		return WaitRegistrationResult{}, tokenWaitStageError(err)
 	}
-	locators, locator, lockedActor := stage.Lease(), stage.Owner(), stage.Session()
+	locators, locator, lockedSession := stage.Lease(), stage.Owner(), stage.Session()
 	runID := pgvalue.MustUUIDValue(locators.RunID)
 	attemptNumber := locators.AttemptNumber
 	lockedRun := tokenWaitRunFromRow(stage.Run())
@@ -160,15 +160,15 @@ func registerTokenWait(
 	if err != nil {
 		return WaitRegistrationResult{}, tokenWaitStageError(err)
 	}
-	if err := validateTokenWaitActorCursor(
-		request.ActorSpeculativeInputSequence, locator.SessionID, lockedActor.CurrentRunID,
-		lockedActor.CommittedInputSequence, lockedActor.NextInputSequence,
+	if err := validateTokenWaitSessionCursor(
+		request.ActorSpeculativeInputSequence, locator.SessionID, lockedSession.CurrentRunID,
+		lockedSession.CommittedInputSequence, lockedSession.NextInputSequence,
 		lockedRun, attempt.Attempt().EntrypointKind, attempt.Attempt().SessionInputStartSequence,
 	); err != nil {
 		return WaitRegistrationResult{}, err
 	}
 	if lockedRun.entrypointKind == "actor" {
-		want := lockedActor.CommittedInputSequence
+		want := lockedSession.CommittedInputSequence
 		if request.TurnID.Valid {
 			want++
 		}
@@ -198,11 +198,11 @@ func registerTokenWait(
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("insert token wait", err)
 	}
 	if locators.SessionID.Valid {
-		if lockedActor.DispatchHoldID.Valid || lockedActor.ActiveTurnID != request.TurnID || lockedActor.RunGeneration != request.RunGeneration.Int64 && request.TurnID.Valid {
+		if lockedSession.DispatchHoldID.Valid || lockedSession.ActiveTurnID != request.TurnID || lockedSession.RunGeneration != request.RunGeneration.Int64 && request.TurnID.Valid {
 			return WaitRegistrationResult{}, ErrWaitAuthority
 		}
 		if request.TurnID.Valid {
-			_, err = q.BindRunWaitTurn(ctx, db.BindRunWaitTurnParams{SessionID: lockedActor.ID, TurnID: request.TurnID, RunGeneration: request.RunGeneration, WaitID: registered.ID})
+			_, err = q.BindRunWaitTurn(ctx, db.BindRunWaitTurnParams{SessionID: lockedSession.ID, TurnID: request.TurnID, RunGeneration: request.RunGeneration, WaitID: registered.ID})
 			if err != nil {
 				return WaitRegistrationResult{}, tokenWaitAuthorityError("bind Token wait to active Turn", err)
 			}
@@ -391,30 +391,30 @@ func (r *WaitReconciler) ReconcileTimeouts(
 	return resolved, nil
 }
 
-func validateTokenWaitActorCursor(
+func validateTokenWaitSessionCursor(
 	cursor pgtype.Int8,
 	ownerSessionID pgtype.UUID,
-	actorCurrentRunID pgtype.UUID,
-	actorCommittedInputSequence int64,
-	actorNextInputSequence int64,
+	sessionCurrentRunID pgtype.UUID,
+	sessionCommittedInputSequence int64,
+	sessionNextInputSequence int64,
 	run tokenWaitLockedRun,
 	attemptEntrypointKind string,
 	attemptSessionInputStartSequence pgtype.Int8,
 ) error {
 	switch run.entrypointKind {
 	case "task":
-		if run.actorID.Valid || cursor.Valid || attemptEntrypointKind != "task" ||
+		if run.sessionID.Valid || cursor.Valid || attemptEntrypointKind != "task" ||
 			attemptSessionInputStartSequence.Valid {
 			return tokenWaitAuthorityError("task token wait carries actor authority", nil)
 		}
 	case "actor":
-		if !run.actorID.Valid || run.actorID != ownerSessionID || !actorCurrentRunID.Valid ||
-			uuid.UUID(actorCurrentRunID.Bytes) != run.id || attemptEntrypointKind != "actor" ||
+		if !run.sessionID.Valid || run.sessionID != ownerSessionID || !sessionCurrentRunID.Valid ||
+			uuid.UUID(sessionCurrentRunID.Bytes) != run.id || attemptEntrypointKind != "actor" ||
 			!attemptSessionInputStartSequence.Valid || !cursor.Valid ||
-			attemptSessionInputStartSequence.Int64 > actorCommittedInputSequence ||
-			cursor.Int64 < actorCommittedInputSequence ||
-			cursor.Int64 > actorCommittedInputSequence+1 ||
-			cursor.Int64 >= actorNextInputSequence {
+			attemptSessionInputStartSequence.Int64 > sessionCommittedInputSequence ||
+			cursor.Int64 < sessionCommittedInputSequence ||
+			cursor.Int64 > sessionCommittedInputSequence+1 ||
+			cursor.Int64 >= sessionNextInputSequence {
 			return tokenWaitAuthorityError("actor token wait cursor authority does not match", nil)
 		}
 	default:
@@ -426,7 +426,7 @@ func validateTokenWaitActorCursor(
 type tokenWaitLockedRun struct {
 	id                uuid.UUID
 	computerID        uuid.UUID
-	actorID           pgtype.UUID
+	sessionID         pgtype.UUID
 	entrypointKind    string
 	status            db.RunStatus
 	revision          int64
@@ -511,16 +511,16 @@ func reconcileTokenWait(
 		return false, false, tokenWaitAuthorityError("lock Computer residence", err)
 	}
 
-	var lockedActorCurrentRunID pgtype.UUID
+	var lockedSessionCurrentRunID pgtype.UUID
 	if locator.SessionID.Valid {
-		actor, err := q.LockTokenWaitSession(ctx, locator.SessionID)
+		session, err := q.LockTokenWaitSession(ctx, locator.SessionID)
 		if err != nil {
 			return false, false, tokenWaitAuthorityError("lock owning actor", err)
 		}
-		if actor.Status != "open" && actor.Status != "closing" {
+		if session.Status != "open" && session.Status != "closing" {
 			return false, false, tokenWaitAuthorityError("owning actor is not active", nil)
 		}
-		lockedActorCurrentRunID = actor.CurrentRunID
+		lockedSessionCurrentRunID = session.CurrentRunID
 	}
 
 	addressedRun, err := lockTokenWaitRun(ctx, q, environmentID, runID)
@@ -532,7 +532,7 @@ func reconcileTokenWait(
 		addressedRun.currentAttempt != locator.AttemptNumber {
 		return false, false, tokenWaitAuthorityError("run locator changed", nil)
 	}
-	if locator.SessionID.Valid && (!lockedActorCurrentRunID.Valid || lockedActorCurrentRunID != locator.RunID) {
+	if locator.SessionID.Valid && (!lockedSessionCurrentRunID.Valid || lockedSessionCurrentRunID != locator.RunID) {
 		return false, false, tokenWaitAuthorityError("Session current Run changed", nil)
 	}
 
@@ -629,7 +629,7 @@ func lockTokenWaitRun(ctx context.Context, q *db.Queries, environmentID, runID u
 func tokenWaitRunFromRow(locked db.Run) tokenWaitLockedRun {
 	return tokenWaitLockedRun{
 		id: pgvalue.MustUUIDValue(locked.ID), computerID: pgvalue.MustUUIDValue(locked.ComputerID),
-		actorID: locked.SessionID, entrypointKind: locked.EntrypointKind, status: db.RunStatus(locked.Status),
+		sessionID: locked.SessionID, entrypointKind: locked.EntrypointKind, status: db.RunStatus(locked.Status),
 		revision: locked.Revision, currentAttempt: locked.CurrentAttemptNumber,
 		currentRunLeaseID: locked.CurrentRunLeaseID, activeStartedAt: locked.ActiveStartedAt,
 	}

@@ -25,7 +25,7 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 			ctx := context.Background()
 			fixture := newActorInputFixture(t)
 			work := fixture.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
-			actorID := fixture.ConvertToActor(t, ctx, work, `{"enabled":false}`)
+			sessionID := fixture.ConvertToActor(t, ctx, work, `{"enabled":false}`)
 			startActorInputWork(t, fixture, work)
 
 			var runVersion int64
@@ -37,7 +37,7 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 			register := func() RunWait {
 				wait, err := fixture.queries.RegisterSessionInputRunWait(ctx, RegisterSessionInputRunWaitParams{
 					ID: pgvalue.UUID(waitID), EnvironmentID: pgvalue.UUID(fixture.EnvironmentID),
-					IdleTimeoutMs: pgtype.Int8{Int64: 30_000, Valid: true}, SessionID: pgvalue.UUID(actorID),
+					IdleTimeoutMs: pgtype.Int8{Int64: 30_000, Valid: true}, SessionID: pgvalue.UUID(sessionID),
 					AfterInputSequence:             pgtype.Int8{Int64: 2, Valid: true},
 					RegistrationRequestFingerprint: pgvalue.Text(dbtest.Digest("actor-input-wait")), AttemptNumber: 1,
 					CurrentRunLeaseID: pgvalue.UUID(work.LeaseID),
@@ -51,7 +51,7 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 			}
 			appendRecord := func() SessionTurn {
 				record, err := fixture.queries.EnqueueSessionTurn(ctx, EnqueueSessionTurnParams{
-					EnvironmentID: pgvalue.UUID(fixture.EnvironmentID), SessionID: pgvalue.UUID(actorID),
+					EnvironmentID: pgvalue.UUID(fixture.EnvironmentID), SessionID: pgvalue.UUID(sessionID),
 					ID: pgvalue.UUID(turnID), Data: []byte(`{"message":"ready"}`)})
 				if err != nil {
 					t.Fatal(err)
@@ -72,7 +72,7 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 				record = appendRecord()
 			}
 			pending, err := fixture.queries.GetPendingSessionInputRunWait(ctx, GetPendingSessionInputRunWaitParams{
-				EnvironmentID: pgvalue.UUID(fixture.EnvironmentID), SessionID: pgvalue.UUID(actorID),
+				EnvironmentID: pgvalue.UUID(fixture.EnvironmentID), SessionID: pgvalue.UUID(sessionID),
 				RunID: pgvalue.UUID(work.RunID), AttemptNumber: 1,
 				AfterInputSequence: pgtype.Int8{Int64: 2, Valid: true},
 			})
@@ -212,7 +212,7 @@ func TestActorInputWaitTimeoutReleasesHotRun(t *testing.T) {
 	ctx := context.Background()
 	fixture := newActorInputFixture(t)
 	work := fixture.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
-	actorID := fixture.ConvertToActor(t, ctx, work, `{"enabled":false}`)
+	sessionID := fixture.ConvertToActor(t, ctx, work, `{"enabled":false}`)
 	startActorInputWork(t, fixture, work)
 	var runVersion int64
 	if err := fixture.Pool.QueryRow(ctx, `SELECT revision FROM runs WHERE id = $1`, work.RunID).Scan(&runVersion); err != nil {
@@ -221,7 +221,7 @@ func TestActorInputWaitTimeoutReleasesHotRun(t *testing.T) {
 	wait, err := fixture.queries.RegisterSessionInputRunWait(ctx, RegisterSessionInputRunWaitParams{
 		ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(fixture.EnvironmentID),
 		TimeoutAt:     pgvalue.Timestamptz(time.Now().Add(-time.Millisecond)),
-		IdleTimeoutMs: pgtype.Int8{Int64: 30_000, Valid: true}, SessionID: pgvalue.UUID(actorID),
+		IdleTimeoutMs: pgtype.Int8{Int64: 30_000, Valid: true}, SessionID: pgvalue.UUID(sessionID),
 		AfterInputSequence:             pgtype.Int8{Int64: 2, Valid: true},
 		RegistrationRequestFingerprint: pgvalue.Text(dbtest.Digest("actor-input-timeout")), AttemptNumber: 1,
 		CurrentRunLeaseID: pgvalue.UUID(work.LeaseID),
@@ -257,9 +257,9 @@ func TestActorInputClosingContinuationCASCreatesOneRun(t *testing.T) {
 	ctx := context.Background()
 	fixture := newActorInputFixture(t)
 	work := fixture.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
-	actorID := fixture.ConvertToActor(t, ctx, work, `{"enabled":false}`)
+	sessionID := fixture.ConvertToActor(t, ctx, work, `{"enabled":false}`)
 	var computerID uuid.UUID
-	if err := fixture.Pool.QueryRow(ctx, `SELECT computer_id FROM sessions WHERE id = $1`, actorID).Scan(&computerID); err != nil {
+	if err := fixture.Pool.QueryRow(ctx, `SELECT computer_id FROM sessions WHERE id = $1`, sessionID).Scan(&computerID); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, ctx, fixture.Pool, `
@@ -278,9 +278,9 @@ func TestActorInputClosingContinuationCASCreatesOneRun(t *testing.T) {
 		UPDATE sessions
 		   SET current_run_id = NULL, committed_input_sequence = 2
 		 WHERE id = $1
-	`, actorID)
+	`, sessionID)
 	input, err := fixture.queries.EnqueueSessionTurn(ctx, EnqueueSessionTurnParams{
-		EnvironmentID: pgvalue.UUID(fixture.EnvironmentID), SessionID: pgvalue.UUID(actorID),
+		EnvironmentID: pgvalue.UUID(fixture.EnvironmentID), SessionID: pgvalue.UUID(sessionID),
 		ID: pgvalue.UUID(uuid.NewV7()), Data: []byte(`{"wake":true}`)})
 	if err != nil || input.Sequence != 3 {
 		t.Fatalf("wake input = %+v, %v", input, err)
@@ -289,7 +289,7 @@ func TestActorInputClosingContinuationCASCreatesOneRun(t *testing.T) {
 		UPDATE sessions
 		   SET status = 'closing', close_sequence = 3
 		 WHERE id = $1
-	`, actorID)
+	`, sessionID)
 
 	type result struct {
 		run CreateActorContinuationRunRow
@@ -305,7 +305,7 @@ func TestActorInputClosingContinuationCASCreatesOneRun(t *testing.T) {
 				RunID:         pgvalue.UUID(uuid.NewV7()),
 				QueueOriginAt: pgvalue.Timestamptz(time.Now().UTC()),
 				TraceID:       pgvalue.Text("11111111111111111111111111111111"), RootSpanID: "2222222222222222",
-				EnvironmentID: pgvalue.UUID(fixture.EnvironmentID), SessionID: pgvalue.UUID(actorID),
+				EnvironmentID: pgvalue.UUID(fixture.EnvironmentID), SessionID: pgvalue.UUID(sessionID),
 				ComputerID: pgvalue.UUID(computerID), ExpectedRunGeneration: 1,
 			})
 			results <- result{run: run, err: err}
@@ -330,18 +330,18 @@ func TestActorInputClosingContinuationCASCreatesOneRun(t *testing.T) {
 		created.SessionInputStartSequence.Int64 != 2 || created.SessionInputHighWatermark.Int64 != 3 {
 		t.Fatalf("continuation CAS = created %d no-rows %d run %+v", createdCount, noRowsCount, created)
 	}
-	var actorCurrentRun uuid.UUID
+	var sessionCurrentRun uuid.UUID
 	var runCount, attemptCount int
 	if err := fixture.Pool.QueryRow(ctx, `
 		SELECT sessions.current_run_id,
 		       (SELECT count(*) FROM runs WHERE session_id = sessions.id AND cause_kind = 'continuation'),
 		       (SELECT count(*) FROM run_attempts WHERE run_id = sessions.current_run_id)
 		  FROM sessions WHERE sessions.id = $1
-	`, actorID).Scan(&actorCurrentRun, &runCount, &attemptCount); err != nil {
+	`, sessionID).Scan(&sessionCurrentRun, &runCount, &attemptCount); err != nil {
 		t.Fatal(err)
 	}
-	if actorCurrentRun != pgvalue.MustUUIDValue(created.ID) || runCount != 1 || attemptCount != 1 {
-		t.Fatalf("durable continuation = current %s runs %d attempts %d", actorCurrentRun, runCount, attemptCount)
+	if sessionCurrentRun != pgvalue.MustUUIDValue(created.ID) || runCount != 1 || attemptCount != 1 {
+		t.Fatalf("durable continuation = current %s runs %d attempts %d", sessionCurrentRun, runCount, attemptCount)
 	}
 }
 

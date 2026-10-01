@@ -14,7 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-type workerActorInputWaitParams struct {
+type workerSessionInputWaitParams struct {
 	SessionID          string `json:"session_id"`
 	AfterInputSequence int64  `json:"after_input_sequence"`
 }
@@ -23,13 +23,13 @@ type actorWaitManifest struct {
 	IdleTimeoutMS int64 `json:"idleTimeoutMs"`
 }
 
-func (s *Server) workerCreateActorInputRunWait(
+func (s *Server) workerCreateSessionInputRunWait(
 	w http.ResponseWriter,
 	r *http.Request,
 	request workerapi.CreateRunWaitRequest,
 	identity requestedRunWaitIdentity,
 ) {
-	var params workerActorInputWaitParams
+	var params workerSessionInputWaitParams
 	if err := decodeClosedJSON(request.Params, &params); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid actor input wait params: %w", err)))
 		return
@@ -71,7 +71,7 @@ func (s *Server) workerCreateActorInputRunWait(
 		return
 	}
 	normalized := request
-	normalized.Params, err = json.Marshal(workerActorInputWaitParams{
+	normalized.Params, err = json.Marshal(workerSessionInputWaitParams{
 		SessionID: sessionID.String(), AfterInputSequence: params.AfterInputSequence,
 	})
 	if err != nil {
@@ -105,7 +105,7 @@ func (s *Server) workerCreateActorInputRunWait(
 		ComputerInstanceID: pgvalue.UUIDString(registrationLocators.ComputerInstanceID), RuntimeEpoch: worker.Epoch,
 	}
 	if registered.SuspensionStatus == db.RunWaitStatusReleased {
-		response.ResolutionKind, response.Resolution, err = actorInputWaitDecision(registered)
+		response.ResolutionKind, response.Resolution, err = sessionInputWaitDecision(registered)
 		if err != nil {
 			writeError(w, conflict(err))
 			return
@@ -125,7 +125,7 @@ func actorWaitIdleTimeout(raw json.RawMessage) (time.Duration, error) {
 	return time.Duration(manifest.IdleTimeoutMS) * time.Millisecond, nil
 }
 
-func actorInputWaitDecision(wait db.RunWait) (string, json.RawMessage, error) {
+func sessionInputWaitDecision(wait db.RunWait) (string, json.RawMessage, error) {
 	switch wait.ConditionStatus {
 	case db.WaitStatusCompleted:
 		if !wait.CompletedTurnID.Valid || len(wait.ConditionResult) == 0 {
