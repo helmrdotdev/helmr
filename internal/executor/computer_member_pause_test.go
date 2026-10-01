@@ -141,3 +141,21 @@ func TestComputerMemberPauseStalledReceiptEndsAtGrantExpiry(t *testing.T) {
 		t.Fatal("grant expiry did not release stalled pause write")
 	}
 }
+
+func TestComputerMemberPauseCancellationBeforeDispatchKeepsHealthyMember(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	target := memberCaptureTarget(1)
+	member := target.Capture.Runs[0]
+	host, guest := net.Pipe()
+	defer guest.Close()
+	protocol := newProgramProtocol(host)
+	defer protocol.Close()
+	task := &guestRunLeaseTask{lease: memberCaptureLease(target, member), program: freshProgram{protocol: protocol}}
+	if err := task.pauseComputerMember(ctx, WaitRequest{RunWaitID: member.RunWaitID, ResumeAttachID: "attach", CorrelationID: "correlation"}, target, member); err != nil {
+		t.Fatalf("healthy member inherited capture cancellation: %v", err)
+	}
+	if task.capturePaused || task.checkpointFrozen {
+		t.Fatal("cancelled capture dispatched a pause")
+	}
+}

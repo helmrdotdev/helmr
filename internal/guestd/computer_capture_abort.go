@@ -14,10 +14,11 @@ import (
 var errCaptureAborted = errors.New("checkpoint capture aborted on its source")
 
 type captureAbortInstallation struct {
-	capture   *computerv0.FreezeComputerRequest
-	version   int64
-	members   map[string]*captureAbortMember
-	activated bool
+	capture    *computerv0.FreezeComputerRequest
+	version    int64
+	members    map[string]*captureAbortMember
+	activated  bool
+	beforeSeal bool
 }
 
 type captureAbortMember struct {
@@ -110,7 +111,7 @@ func (r *computerOperationRegistry) applyCaptureAbort(ctx context.Context, waits
 			return nil, errors.New("capture abort grants are not installed")
 		}
 		if installed == nil {
-			installed = &captureAbortInstallation{capture: proto.Clone(capture).(*computerv0.FreezeComputerRequest), version: request.AbortDesiredVersion, members: make(map[string]*captureAbortMember)}
+			installed = &captureAbortInstallation{capture: proto.Clone(capture).(*computerv0.FreezeComputerRequest), version: request.AbortDesiredVersion, members: make(map[string]*captureAbortMember), beforeSeal: r.captureRequest == nil}
 		}
 		expected := make(map[string]*computerv0.ComputerCaptureRun, len(capture.Runs))
 		for _, m := range capture.Runs {
@@ -174,7 +175,8 @@ func (r *computerOperationRegistry) applyCaptureAbort(ctx context.Context, waits
 			}
 			if request.Activate && !m.Cancelled {
 				if member.slot != nil {
-					if m.AttachSequence == 0 || m.AttachSequence != member.slot.abortSequence || (!member.released && member.slot.abortStream == nil) {
+					original := installed.beforeSeal && m.AttachSequence == 0 && member.slot.abortSequence == 0
+					if !original && (m.AttachSequence == 0 || m.AttachSequence != member.slot.abortSequence || (!member.released && member.slot.abortStream == nil)) {
 						return nil, errors.New("capture abort member transport is not prepared")
 					}
 				} else if m.AttachSequence != 0 {
@@ -268,6 +270,9 @@ func (r *computerOperationRegistry) applyCaptureAbort(ctx context.Context, waits
 	}
 	for _, member := range installation.members {
 		if !member.cancelled && !member.released && member.slot != nil {
+			// Snapshot creation requires the whole-Computer seal. Only an
+			// installation preceding that seal may retain an unprepared stream.
+			member.slot.abortOriginalStream = installation.beforeSeal && member.slot.abortSequence == 0
 			close(member.slot.abortResume)
 		}
 		member.released = true

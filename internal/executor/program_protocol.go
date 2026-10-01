@@ -263,7 +263,17 @@ func (task *guestRunLeaseTask) runHotWaitOnce(ctx context.Context, request WaitR
 			pollErr := <-done
 			select {
 			case <-resuming:
-				return finish(errors.New("computer capture raced a wait resume"))
+				pause.Abort(errors.New("computer capture raced a wait resume"))
+				if pollErr != nil && !errors.Is(pollErr, context.Canceled) {
+					return finish(pollErr)
+				}
+				result := finish(nil)
+				if pollErr == nil && errors.Is(result, errCaptureResumed) {
+					// ResumeDecision was already delivered before the queued
+					// pause was joined. Do not poll or deliver the same wait again.
+					return nil
+				}
+				return result
 			default:
 			}
 			if pollErr != nil && !errors.Is(pollErr, context.Canceled) {

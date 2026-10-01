@@ -1717,8 +1717,14 @@ func pauseAndResumeProgram(
 		if errors.Is(err, errCaptureAborted) {
 			registry.mu.Lock()
 			conn := registration.slot.abortStream
+			original := registration.slot.abortOriginalStream
 			registration.slot.abortStream = nil
 			registry.mu.Unlock()
+			if original {
+				stream.mu.Lock()
+				conn = stream.conn
+				stream.mu.Unlock()
+			}
 			if conn == nil {
 				return nil, false, errors.New("aborted capture has no prepared source stream")
 			}

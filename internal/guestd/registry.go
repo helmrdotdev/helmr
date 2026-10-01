@@ -40,6 +40,7 @@ type waitingRunSlot struct {
 	abortErr                 error
 	abortStream              programConnection
 	abortSequence            uint64
+	abortOriginalStream      bool
 	attached                 chan waitingRunAttachment
 	accepted                 *programv0.ResumeAttach
 	appliedDecision          *programv0.ResumeDecision

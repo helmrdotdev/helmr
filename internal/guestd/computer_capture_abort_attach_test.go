@@ -115,6 +115,13 @@ func TestCaptureAbortCleanupPrecedesHealthyRelease(t *testing.T) {
 }
 
 func TestRelayProgramCaptureAbortReplacesResetTransport(t *testing.T) {
+	testRelayProgramCaptureAbortTransport(t, true)
+}
+func TestRelayProgramCaptureAbortBeforeSealRetainsOriginalTransport(t *testing.T) {
+	testRelayProgramCaptureAbortTransport(t, false)
+}
+func testRelayProgramCaptureAbortTransport(t *testing.T, reset bool) {
+	t.Helper()
 	r, _, q := captureAbortFixture(t, 1)
 	r.captureRequest = nil
 	waits := newWaitingRunRegistry()
@@ -175,38 +182,52 @@ func TestRelayProgramCaptureAbortReplacesResetTransport(t *testing.T) {
 	if err != nil || h.Type != wire.StreamTypeCheckpointPauseReady {
 		t.Fatalf("pause: %v %v", h, err)
 	}
-	// SnapshotCreate resets every existing vsock connection, including the source.
-	host.Close()
-	guest.Close()
+	if reset {
+		if err := r.sealComputerCapture(q.Capture, time.Now); err != nil {
+			t.Fatal(err)
+		}
+		// SnapshotCreate resets every existing vsock connection, including the source.
+		host.Close()
+		guest.Close()
+	}
 	if err := r.applyCaptureAbort(ctx, waits, q, time.Now); err != nil {
 		t.Fatal(err)
 	}
-	newGuest, newHost := net.Pipe()
-	defer newGuest.Close()
-	defer newHost.Close()
-	attach := &computerv0.ComputerCaptureAbortAttachRequest{CheckpointId: q.Capture.CheckpointId, AbortDesiredVersion: q.AbortDesiredVersion, Member: m, Authority: q.Members[0].Authority, AttachSequence: 1}
-	attached := make(chan error, 1)
-	go func() {
-		keep, err := handleComputerCaptureAbortAttach(ctx, newGuest, 0, r, waits)
-		if !keep && err == nil {
-			err = io.ErrClosedPipe
+	// Replay must retain the pre-seal distinction after installation seals admission.
+	if err := r.applyCaptureAbort(ctx, waits, q, time.Now); err != nil {
+		t.Fatal(err)
+	}
+	newHost := host
+	if reset {
+		newGuest, replacementHost := net.Pipe()
+		newHost = replacementHost
+		defer newGuest.Close()
+		defer newHost.Close()
+		attach := &computerv0.ComputerCaptureAbortAttachRequest{CheckpointId: q.Capture.CheckpointId, AbortDesiredVersion: q.AbortDesiredVersion, Member: m, Authority: q.Members[0].Authority, AttachSequence: 1}
+		attached := make(chan error, 1)
+		go func() {
+			keep, err := handleComputerCaptureAbortAttach(ctx, newGuest, 0, r, waits)
+			if !keep && err == nil {
+				err = io.ErrClosedPipe
+			}
+			attached <- err
+		}()
+		if err := frameio.WriteProtoFrame(newHost, attach); err != nil {
+			t.Fatal(err)
 		}
-		attached <- err
-	}()
-	if err := frameio.WriteProtoFrame(newHost, attach); err != nil {
-		t.Fatal(err)
+		var ready computerv0.ComputerCaptureAbortAttachResponse
+		if err := frameio.ReadProtoFrame(newHost, &ready); err != nil {
+			t.Fatal(err)
+		}
+		if err := <-attached; err != nil {
+			t.Fatal(err)
+		}
+		if cgroup.thawCount() != 0 {
+			t.Fatal("preparation thawed Program")
+		}
+		q.Members[0].AttachSequence = ready.AttachSequence
+
 	}
-	var ready computerv0.ComputerCaptureAbortAttachResponse
-	if err := frameio.ReadProtoFrame(newHost, &ready); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-attached; err != nil {
-		t.Fatal(err)
-	}
-	if cgroup.thawCount() != 0 {
-		t.Fatal("preparation thawed Program")
-	}
-	q.Members[0].AttachSequence = ready.AttachSequence
 	q.Activate = true
 	if err := r.applyCaptureAbort(ctx, waits, q, time.Now); err != nil {
 		t.Fatal(err)
@@ -240,5 +261,103 @@ func TestRelayProgramCaptureAbortReplacesResetTransport(t *testing.T) {
 	cancel()
 	if err := <-result; !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
+	}
+}
+
+// Cancelling the short-lived attach RPC after Ready must not close the Program
+// connection whose ownership has already passed to the installed abort.
+func TestCaptureAbortReadyTransfersConnectionBeforeContextCancellation(t *testing.T) {
+	r, waits, q := captureAbortFixture(t, 1)
+	if err := r.applyCaptureAbort(t.Context(), waits, q, time.Now); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	_ = host.SetDeadline(time.Now().Add(3 * time.Second))
+	conn := &cancelAfterReadyConnection{Conn: guest, cancel: cancel}
+	member := q.Members[0]
+	request := &computerv0.ComputerCaptureAbortAttachRequest{CheckpointId: q.Capture.CheckpointId, AbortDesiredVersion: q.AbortDesiredVersion, Member: member.Member, Authority: member.Authority, AttachSequence: 1}
+	done := make(chan error, 1)
+	go func() {
+		keep, err := handleComputerCaptureAbortAttach(ctx, conn, 0, r, waits)
+		if err == nil && !keep {
+			err = errors.New("Ready did not retain stream")
+		}
+		done <- err
+	}()
+	if err := frameio.WriteProtoFrame(host, request); err != nil {
+		t.Fatal(err)
+	}
+	var ready computerv0.ComputerCaptureAbortAttachResponse
+	if err := frameio.ReadProtoFrame(host, &ready); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("Ready revoked after transfer: %v", err)
+	}
+	if ready.AttachSequence != 1 || waits.slots[member.Member.RunWaitId].abortStream != conn {
+		t.Fatal("wrong prepared stream")
+	}
+	go func() { _, err := host.Write([]byte{1}); done <- err }()
+	var next [1]byte
+	if _, err := guest.Read(next[:]); err != nil {
+		t.Fatalf("transferred stream closed: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+type cancelAfterReadyConnection struct {
+	net.Conn
+	cancel context.CancelFunc
+	writes int
+}
+
+func (c *cancelAfterReadyConnection) Write(data []byte) (int, error) {
+	n, err := c.Conn.Write(data)
+	c.writes++
+	if c.writes == 2 && err == nil {
+		c.cancel()
+	}
+	return n, err
+}
+
+func TestCaptureAbortMissingClaimRequiresTerminalDispositionBeforePeerRelease(t *testing.T) {
+	r, waits, q := captureAbortFixture(t, 2)
+	lost := q.Members[0].Member
+	r.programClaims = r.programClaims[1:]
+	delete(waits.slots, lost.RunWaitId)
+	if err := r.applyCaptureAbort(t.Context(), waits, q, time.Now); err == nil {
+		t.Fatal("missing live claim was revived")
+	}
+	healthy := waits.slots[q.Members[1].Member.RunWaitId]
+	select {
+	case <-healthy.abortResume:
+		t.Fatal("peer released without complete membership")
+	default:
+	}
+	// A subsequent exact receipt classifies the lost member as terminal.
+	q.Members[0].Cancelled = true
+	q.Members[0].Authority = nil
+	if err := r.applyCaptureAbort(t.Context(), waits, q, time.Now); err != nil {
+		t.Fatal(err)
+	}
+	prepareAbortFixtureStreams(t, r, waits, q)
+	close(healthy.abortDone)
+	q.Activate = true
+	if err := r.applyCaptureAbort(t.Context(), waits, q, time.Now); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-healthy.abortResume:
+	default:
+		t.Fatal("terminal disposition did not unblock peer")
+	}
+	if !r.captureAbort.activated {
+		t.Fatal("whole-set abort did not complete")
 	}
 }

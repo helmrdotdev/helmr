@@ -28,8 +28,10 @@ func (task *guestRunLeaseTask) pauseComputerMember(ctx context.Context, wait Wai
 	if !valid || lease.ID != member.RunLeaseID || lease.RunID != member.RunID || lease.AttemptNumber != member.AttemptNumber || lease.ComputerInstanceID != target.ID || lease.WorkerEpoch != target.WorkerEpoch || lease.ComputerID != target.Source.ComputerID || lease.WriterGeneration != target.Source.WriterGeneration || wait.RunWaitID != member.RunWaitID || wait.CorrelationID == "" || wait.ResumeAttachID == "" || task.program.protocol == nil {
 		return errors.New("computer member pause authority changed")
 	}
-	if err := ctx.Err(); err != nil {
-		return err
+	if ctx.Err() != nil {
+		// The coordinator already owns this capture cancellation. No pause
+		// was dispatched and the member itself has not failed.
+		return nil
 	}
 	// Once dispatched, join the pause receipt even if capture planning stops.
 	// The renewal gate also keeps abort activation behind this I/O, so a late

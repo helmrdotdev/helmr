@@ -197,13 +197,16 @@ func TestCaptureAbortRestoresHealthyMemberAndKeepsCancellation(t *testing.T) {
 			}
 			for index, result := range results {
 				r := <-result
-				if index == 0 && (r.err != nil || !r.resumed) {
-					t.Fatalf("healthy member=%+v", r)
+				if index == 0 && (!r.resumed || (r.err != nil) != partialPause) {
+					t.Fatalf("source-resumed member lost its own pause outcome: %+v", r)
 				}
 				if index == 1 && (r.err == nil || r.resumed) {
 					t.Fatalf("cancelled member revived=%+v", r)
 				}
-				_ = waits[index].Detach()
+				detachErr := waits[index].Detach()
+				if index == 0 && detachErr != nil {
+					t.Fatalf("resumed member inherited capture error on detach: %v", detachErr)
+				}
 			}
 			if len(phases) != 2 || phases[0] || !phases[1] || session.closeCount != 0 || captureRetained(p, ref) {
 				t.Fatalf("abort phases=%v closes=%d", phases, session.closeCount)

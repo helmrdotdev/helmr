@@ -43,6 +43,7 @@ var runSideComputerHostSurface = map[string]bool{
 	"MemberPause.Member":              true,
 	"MemberPause.Abort":               true,
 	"MemberPause.Settle":              true,
+	"MemberPause.Resumed":             true,
 }
 
 // TestRunSideUsesOnlyComputerHostRunSurface keeps executor on the physical

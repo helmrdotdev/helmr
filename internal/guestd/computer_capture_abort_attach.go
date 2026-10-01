@@ -22,15 +22,27 @@ func handleComputerCaptureAbortAttach(ctx context.Context, conn programConnectio
 	if err := conn.SetReadDeadline(time.Now().Add(resumeAttachTimeout)); err != nil {
 		return false, err
 	}
-	if err := conn.SetWriteDeadline(time.Now().Add(resumeAttachTimeout)); err != nil {
-		return false, err
-	}
 	var q computerv0.ComputerCaptureAbortAttachRequest
 	if err := frameio.ReadProtoFrameBounded(conn, maxProgramControlFrameBytes, &q); err != nil {
 		return false, err
 	}
 	r.captureAbortMu.Lock()
 	defer r.captureAbortMu.Unlock()
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		return false, err
+	}
+	// Release the handler's cancellation ownership before Ready can transfer
+	// this connection. The bounded write deadline still limits a lost peer.
+	if !stop() {
+		return false, ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	deadline, _ := ctx.Deadline()
+	if err := conn.SetWriteDeadline(deadline); err != nil {
+		return false, err
+	}
 	if err := r.parkCaptureAbortStream(waits, &q, conn, time.Now()); err != nil {
 		return false, err
 	}
@@ -38,15 +50,9 @@ func handleComputerCaptureAbortAttach(ctx context.Context, conn programConnectio
 	if err := frameio.WriteProtoFrame(conn, response); err != nil {
 		return false, err
 	}
-	if err := conn.SetReadDeadline(time.Time{}); err != nil {
-		return false, err
-	}
-	if err := conn.SetWriteDeadline(time.Time{}); err != nil {
-		return false, err
-	}
-	if !stop() {
-		return false, ctx.Err()
-	}
+	// Ready transfers ownership. Program output sets its own write deadlines;
+	// no handler cleanup may revoke a stream the host already accepted.
+	_ = conn.SetWriteDeadline(time.Time{})
 	return true, nil
 }
 

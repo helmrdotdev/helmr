@@ -70,7 +70,7 @@ func (p *MemberPause) Settle(err error) error {
 	p.ready <- err
 	<-p.finished
 	if p.resumed {
-		return nil
+		return err
 	}
 	return errors.Join(err, p.result)
 }
@@ -122,7 +122,9 @@ func (w *CaptureWait) Detach() error {
 			pause.abort(errors.New("computer capture member left its wait"))
 			<-pause.finished
 		}
-		w.detachErr = pause.result
+		if !pause.resumed {
+			w.detachErr = pause.result
+		}
 		r.mu.Lock()
 		if r.waits[w.lease.RunID] == w {
 			delete(r.waits, w.lease.RunID)
@@ -239,6 +241,9 @@ func (r *CaptureRuns) capture(ctx context.Context, target workerapi.InstanceReco
 		case <-captureCtx.Done():
 			return context.Cause(captureCtx)
 		}
+	}
+	if err := context.Cause(captureCtx); err != nil {
+		return err
 	}
 	err := capture(captureCtx)
 	return errors.Join(err, context.Cause(captureCtx))
