@@ -1,35 +1,27 @@
 package controlplane
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 	"uuid"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestRunListPostgresFiltersBySession(t *testing.T) {
-	fixture := newActorStartPostgresFixture(t, 3)
+	fixture := newSessionHTTP(t, sessiontest.New(t, 3))
 	firstKey, secondKey := "runs:first", "runs:second"
-	first, err := fixture.server.startActor(t.Context(), fixture.request(0, &firstKey, "runs-first"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := fixture.server.startActor(t.Context(), fixture.request(1, &secondKey, "runs-second"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fixture.pool.Exec(t.Context(), `
+	first := startSession(t, fixture.Fixture, 0, &firstKey, "runs-first")
+	second := startSession(t, fixture.Fixture, 1, &secondKey, "runs-second")
+	if _, err := fixture.Pool.Exec(t.Context(), `
 		UPDATE runs
 		   SET status = 'succeeded',
 		       output = 'null'::jsonb,
@@ -39,7 +31,7 @@ func TestRunListPostgresFiltersBySession(t *testing.T) {
 	`, first.BootRunID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.pool.Exec(t.Context(), `
+	if _, err := fixture.Pool.Exec(t.Context(), `
 		UPDATE sessions
 		   SET current_run_id = NULL,
 		       next_input_sequence = 2
@@ -48,49 +40,49 @@ func TestRunListPostgresFiltersBySession(t *testing.T) {
 		t.Fatal(err)
 	}
 	continuationID := uuid.NewV7()
-	if _, err := db.New(fixture.pool).CreateActorContinuationRun(t.Context(), db.CreateActorContinuationRunParams{
+	if _, err := db.New(fixture.Pool).CreateActorContinuationRun(t.Context(), db.CreateActorContinuationRunParams{
 		RunID:                 pgvalue.UUID(continuationID),
 		QueueOriginAt:         pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
 		RootSpanID:            "0000000000000001",
-		EnvironmentID:         pgvalue.UUID(fixture.environmentID),
+		EnvironmentID:         pgvalue.UUID(fixture.EnvironmentID),
 		SessionID:             pgvalue.UUID(first.SessionID),
-		ComputerID:            pgvalue.UUID(fixture.computerIDs[0]),
+		ComputerID:            pgvalue.UUID(fixture.ComputerIDs[0]),
 		ExpectedRunGeneration: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	task, err := fixture.server.startTask(t.Context(), taskStartRequest{
-		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
+	task, err := startTaskRun(t.Context(), fixture.Fixture, taskStartRequest{
+		OrgID: fixture.OrgID, ProjectID: fixture.ProjectID, EnvironmentID: fixture.EnvironmentID,
 		TaskDeclaredID: "resize-image", PayloadPresent: true,
 		Payload:    json.RawMessage(`{"imageId":"image-1"}`),
-		ComputerID: fixture.computerIDs[2], IdempotencyKey: "runs-task",
+		ComputerID: fixture.ComputerIDs[2], IdempotencyKey: "runs-task",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	principal := auth.Principal{
-		OrgID: fixture.orgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper,
-		ProjectID: fixture.projectID.String(), EnvironmentID: fixture.environmentID.String(),
+	token := fixture.apiKey(auth.Principal{
+		OrgID: fixture.OrgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper,
+		ProjectID: fixture.ProjectID.String(), EnvironmentID: fixture.EnvironmentID.String(),
 		Permissions: []auth.Permission{auth.PermissionRunsRead},
-	}
+	})
 	firstSession := first.SessionID.String()
 	secondSession := second.SessionID.String()
 
-	all := listRunsPostgresHTTP(t, fixture, principal, "/v1/runs")
+	all := listRunsPostgresHTTP(t, fixture, token, "/v1/runs")
 	if runListIDs(all) != strings.Join([]string{
 		task.RunID.String(), continuationID.String(), second.BootRunID.String(), first.BootRunID.String(),
 	}, ",") || all.NextCursor != "" {
 		t.Fatalf("unfiltered runs = %+v", all)
 	}
 
-	taskRuns := listRunsPostgresHTTP(t, fixture, principal, "/v1/runs?kind=task")
+	taskRuns := listRunsPostgresHTTP(t, fixture, token, "/v1/runs?kind=task")
 	if runListIDs(taskRuns) != task.RunID.String() || taskRuns.Runs[0].Entrypoint.Kind != "task" ||
 		taskRuns.Runs[0].SessionID != "" {
 		t.Fatalf("task runs = %+v", taskRuns)
 	}
-	actorRuns := listRunsPostgresHTTP(t, fixture, principal, "/v1/runs?kind=actor")
+	actorRuns := listRunsPostgresHTTP(t, fixture, token, "/v1/runs?kind=actor")
 	if runListIDs(actorRuns) != strings.Join([]string{
 		continuationID.String(), second.BootRunID.String(), first.BootRunID.String(),
 	}, ",") {
@@ -101,29 +93,29 @@ func TestRunListPostgresFiltersBySession(t *testing.T) {
 			t.Fatalf("actor run %s = %+v", item.ID, item)
 		}
 	}
-	if both := listRunsPostgresHTTP(t, fixture, principal, "/v1/runs?kind=actor,task"); runListIDs(both) != runListIDs(all) {
+	if both := listRunsPostgresHTTP(t, fixture, token, "/v1/runs?kind=actor,task"); runListIDs(both) != runListIDs(all) {
 		t.Fatalf("actor and task runs = %+v", both)
 	}
-	queuedActors := listRunsPostgresHTTP(t, fixture, principal, "/v1/runs?kind=actor&status=queued")
+	queuedActors := listRunsPostgresHTTP(t, fixture, token, "/v1/runs?kind=actor&status=queued")
 	if runListIDs(queuedActors) != continuationID.String()+","+second.BootRunID.String() {
 		t.Fatalf("queued actor runs = %+v", queuedActors)
 	}
 	if succeededTasks := listRunsPostgresHTTP(
-		t, fixture, principal, "/v1/runs?kind=task&status=succeeded",
+		t, fixture, token, "/v1/runs?kind=task&status=succeeded",
 	); len(succeededTasks.Runs) != 0 {
 		t.Fatalf("succeeded task runs = %+v", succeededTasks)
 	}
 	if taskInSession := listRunsPostgresHTTP(
-		t, fixture, principal, "/v1/runs?kind=task&session_id="+firstSession,
+		t, fixture, token, "/v1/runs?kind=task&session_id="+firstSession,
 	); len(taskInSession.Runs) != 0 {
 		t.Fatalf("task runs in Session = %+v", taskInSession)
 	}
-	actorPage := listRunsPostgresHTTP(t, fixture, principal, "/v1/runs?kind=actor&limit=2")
+	actorPage := listRunsPostgresHTTP(t, fixture, token, "/v1/runs?kind=actor&limit=2")
 	if runListIDs(actorPage) != continuationID.String()+","+second.BootRunID.String() || actorPage.NextCursor == "" {
 		t.Fatalf("actor page = %+v", actorPage)
 	}
 	if actorNext := listRunsPostgresHTTP(
-		t, fixture, principal, "/v1/runs?kind=actor&limit=2&cursor="+actorPage.NextCursor,
+		t, fixture, token, "/v1/runs?kind=actor&limit=2&cursor="+actorPage.NextCursor,
 	); runListIDs(actorNext) != first.BootRunID.String() || actorNext.NextCursor != "" {
 		t.Fatalf("actor next page = %+v", actorNext)
 	}
@@ -131,15 +123,14 @@ func TestRunListPostgresFiltersBySession(t *testing.T) {
 		"/v1/runs?kind=task&limit=2&cursor=" + actorPage.NextCursor,
 		"/v1/runs?limit=2&cursor=" + actorPage.NextCursor,
 	} {
-		recorder := httptest.NewRecorder()
-		fixture.server.listRunSnapshotsHTTP(recorder, runListPostgresRequest(target, principal))
+		recorder := fixture.request(t, http.MethodGet, target, token, "")
 		if recorder.Code != http.StatusBadRequest ||
 			!strings.Contains(recorder.Body.String(), `"code":"invalid_run_cursor"`) {
 			t.Fatalf("%s response = %d %s", target, recorder.Code, recorder.Body.String())
 		}
 	}
 
-	firstRuns := listRunsPostgresHTTP(t, fixture, principal, "/v1/runs?session_id="+firstSession)
+	firstRuns := listRunsPostgresHTTP(t, fixture, token, "/v1/runs?session_id="+firstSession)
 	if runListIDs(firstRuns) != continuationID.String()+","+first.BootRunID.String() {
 		t.Fatalf("first Session runs = %+v", firstRuns)
 	}
@@ -150,29 +141,29 @@ func TestRunListPostgresFiltersBySession(t *testing.T) {
 	}
 
 	succeeded := listRunsPostgresHTTP(
-		t, fixture, principal, "/v1/runs?status=succeeded&session_id="+firstSession,
+		t, fixture, token, "/v1/runs?status=succeeded&session_id="+firstSession,
 	)
 	if runListIDs(succeeded) != first.BootRunID.String() || succeeded.Runs[0].Status != api.RunStatusSucceeded {
 		t.Fatalf("succeeded first Session runs = %+v", succeeded)
 	}
 	queuedSecond := listRunsPostgresHTTP(
-		t, fixture, principal, "/v1/runs?session_id="+secondSession+"&status=queued",
+		t, fixture, token, "/v1/runs?session_id="+secondSession+"&status=queued",
 	)
 	if runListIDs(queuedSecond) != second.BootRunID.String() {
 		t.Fatalf("queued second Session runs = %+v", queuedSecond)
 	}
 	if none := listRunsPostgresHTTP(
-		t, fixture, principal, "/v1/runs?session_id="+uuid.NewV7().String(),
+		t, fixture, token, "/v1/runs?session_id="+uuid.NewV7().String(),
 	); len(none.Runs) != 0 || none.NextCursor != "" {
 		t.Fatalf("unknown Session runs = %+v", none)
 	}
 
-	page := listRunsPostgresHTTP(t, fixture, principal, "/v1/runs?session_id="+firstSession+"&limit=1")
+	page := listRunsPostgresHTTP(t, fixture, token, "/v1/runs?session_id="+firstSession+"&limit=1")
 	if runListIDs(page) != continuationID.String() || page.NextCursor == "" {
 		t.Fatalf("first page = %+v", page)
 	}
 	next := listRunsPostgresHTTP(
-		t, fixture, principal, "/v1/runs?session_id="+firstSession+"&limit=1&cursor="+page.NextCursor,
+		t, fixture, token, "/v1/runs?session_id="+firstSession+"&limit=1&cursor="+page.NextCursor,
 	)
 	if runListIDs(next) != first.BootRunID.String() || next.NextCursor != "" {
 		t.Fatalf("next page = %+v", next)
@@ -182,16 +173,14 @@ func TestRunListPostgresFiltersBySession(t *testing.T) {
 		"/v1/runs?limit=1&cursor=" + page.NextCursor,
 		"/v1/runs?session_id=" + firstSession + "&status=queued&limit=1&cursor=" + page.NextCursor,
 	} {
-		recorder := httptest.NewRecorder()
-		fixture.server.listRunSnapshotsHTTP(recorder, runListPostgresRequest(target, principal))
+		recorder := fixture.request(t, http.MethodGet, target, token, "")
 		if recorder.Code != http.StatusBadRequest ||
 			!strings.Contains(recorder.Body.String(), `"code":"invalid_run_cursor"`) {
 			t.Fatalf("%s response = %d %s", target, recorder.Code, recorder.Body.String())
 		}
 	}
 	for _, target := range []string{"/v1/runs?session_id=nope", "/v1/runs?kind=schedule"} {
-		recorder := httptest.NewRecorder()
-		fixture.server.listRunSnapshotsHTTP(recorder, runListPostgresRequest(target, principal))
+		recorder := fixture.request(t, http.MethodGet, target, token, "")
 		if recorder.Code != http.StatusBadRequest ||
 			!strings.Contains(recorder.Body.String(), `"code":"invalid_run_list"`) {
 			t.Fatalf("%s response = %d %s", target, recorder.Code, recorder.Body.String())
@@ -207,22 +196,14 @@ func runListIDs(response api.ListRunsResponse) string {
 	return strings.Join(ids, ",")
 }
 
-func runListPostgresRequest(target string, principal auth.Principal) *http.Request {
-	request := httptest.NewRequest(http.MethodGet, target, nil)
-	ctx := context.WithValue(request.Context(), chi.RouteCtxKey, chi.NewRouteContext())
-	ctx = context.WithValue(ctx, principalContextKey{}, principal)
-	return request.WithContext(ctx)
-}
-
 func listRunsPostgresHTTP(
 	t *testing.T,
-	fixture actorStartPostgresFixture,
-	principal auth.Principal,
+	fixture sessionHTTP,
+	token string,
 	target string,
 ) api.ListRunsResponse {
 	t.Helper()
-	recorder := httptest.NewRecorder()
-	fixture.server.listRunSnapshotsHTTP(recorder, runListPostgresRequest(target, principal))
+	recorder := fixture.request(t, http.MethodGet, target, token, "")
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("%s HTTP = %d body=%s", target, recorder.Code, recorder.Body.String())
 	}

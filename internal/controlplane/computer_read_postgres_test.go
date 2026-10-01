@@ -8,19 +8,17 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
 func TestComputerReadPostgresListsAttachedAndIdleComputers(t *testing.T) {
-	fixture := newActorStartPostgresFixture(t, 2)
+	fixture := sessiontest.New(t, 2)
 	key := "owner:session"
-	_, err := fixture.server.startActor(t.Context(), fixture.request(0, &key, "owner-session"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	owned := fixture.computerIDs[0].String()
-	free := fixture.computerIDs[1].String()
-	handler := newPostgresServer(t, fixture.pool)
-	reader := issueEnvironmentAPIKey(t, fixture.pool, fixture.orgID, fixture.projectID, fixture.environmentID, auth.PermissionComputersRead)
+	startSession(t, fixture, 0, &key, "owner-session")
+	owned := fixture.ComputerIDs[0].String()
+	free := fixture.ComputerIDs[1].String()
+	handler := newPostgresServer(t, fixture.Pool)
+	reader := issueEnvironmentAPIKey(t, fixture.Pool, fixture.OrgID, fixture.ProjectID, fixture.EnvironmentID, auth.PermissionComputersRead)
 
 	listRecorder := serveAPIKey(handler, http.MethodGet, "/v1/computers", reader, "")
 	if listRecorder.Code != http.StatusOK {
@@ -38,7 +36,7 @@ func TestComputerReadPostgresListsAttachedAndIdleComputers(t *testing.T) {
 			t.Fatalf("unexpected Computer %+v", item)
 		}
 	}
-	byKey := serveAPIKey(handler, http.MethodGet, "/v1/computers?key="+fixture.computerKeys[1], reader, "")
+	byKey := serveAPIKey(handler, http.MethodGet, "/v1/computers?key="+fixture.ComputerKeys[1], reader, "")
 	var keyed api.ListComputersResponse
 	if err := json.Unmarshal(byKey.Body.Bytes(), &keyed); err != nil || byKey.Code != http.StatusOK || len(keyed.Computers) != 1 || keyed.Computers[0].ID != free {
 		t.Fatalf("key lookup = %d %s", byKey.Code, byKey.Body.String())

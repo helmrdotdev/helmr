@@ -13,21 +13,15 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
 func TestCancelRunHTTPAcceptsExactActorStopAndReplaysReceipt(t *testing.T) {
-	f := newActorStartPostgresFixture(t, 1)
-	started, err := f.server.startActor(t.Context(), f.request(0, nil, "actor-cancel"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	principal := auth.Principal{OrgID: f.orgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper, ProjectID: f.projectID.String(), EnvironmentID: f.environmentID.String(), Permissions: []auth.Permission{auth.PermissionRunsManage}}
+	f := newSessionHTTP(t, sessiontest.New(t, 1))
+	started := startSession(t, f.Fixture, 0, nil, "actor-cancel")
+	token := f.apiKey(auth.Principal{OrgID: f.OrgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper, ProjectID: f.ProjectID.String(), EnvironmentID: f.EnvironmentID.String(), Permissions: []auth.Permission{auth.PermissionRunsManage}})
 	cancel := func() *httptest.ResponseRecorder {
-		request := runCancellationRequest(t, started.BootRunID.String(), principal)
-		request.Body = io.NopCloser(strings.NewReader(`{"idempotency_key":"stop-init"}`))
-		w := httptest.NewRecorder()
-		f.server.cancelRunHTTP(w, request)
-		return w
+		return f.request(t, http.MethodPost, "/v1/runs/"+started.BootRunID.String()+"/cancel", token, `{"idempotency_key":"stop-init"}`)
 	}
 	w := cancel()
 	if w.Code != http.StatusAccepted {
@@ -43,7 +37,7 @@ func TestCancelRunHTTPAcceptsExactActorStopAndReplaysReceipt(t *testing.T) {
 	var hold uuid.UUID
 	var current *uuid.UUID
 	var status string
-	if err := f.pool.QueryRow(t.Context(), `SELECT dispatch_hold_id,current_run_id,status FROM sessions WHERE id=$1`, started.SessionID).Scan(&hold, &current, &status); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT dispatch_hold_id,current_run_id,status FROM sessions WHERE id=$1`, started.SessionID).Scan(&hold, &current, &status); err != nil {
 		t.Fatal(err)
 	}
 	if hold.String() != receipt.HoldID || status != "open" {

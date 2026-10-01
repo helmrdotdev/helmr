@@ -13,25 +13,27 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
 // commandHTTP serves NewServer to an API key that may create Commands in the
-// actor start fixture's Environment.
+// Session fixture's Environment.
 type commandHTTP struct {
-	actorStartPostgresFixture
+	sessiontest.Fixture
 	handler http.Handler
 	key     string
 }
 
 func newCommandHTTP(t *testing.T, configure ...func(*ServerConfig)) commandHTTP {
 	t.Helper()
-	f := newActorStartPostgresFixture(t, 1)
+	f := sessiontest.New(t, 1)
 	return commandHTTP{
-		actorStartPostgresFixture: f,
-		handler:                   newPostgresServer(t, f.pool, configure...),
-		key:                       issueEnvironmentAPIKey(t, f.pool, f.orgID, f.projectID, f.environmentID, auth.PermissionComputerCommandCreate),
+		Fixture: f,
+		handler: newPostgresServer(t, f.Pool, configure...),
+		key:     issueEnvironmentAPIKey(t, f.Pool, f.OrgID, f.ProjectID, f.EnvironmentID, auth.PermissionComputerCommandCreate),
 	}
 }
 
@@ -55,7 +57,7 @@ func (c commandHTTP) expect(t *testing.T, key, method, path, body string, status
 func (c commandHTTP) exec(t *testing.T, body string) api.CommandReceipt {
 	t.Helper()
 	var receipt api.CommandReceipt
-	if err := json.Unmarshal(c.expect(t, c.key, http.MethodPost, "/v1/computers/"+c.computerRefs[0]+"/exec", body, http.StatusAccepted, ""), &receipt); err != nil {
+	if err := json.Unmarshal(c.expect(t, c.key, http.MethodPost, "/v1/computers/"+c.ComputerIDs[0].String()+"/exec", body, http.StatusAccepted, ""), &receipt); err != nil {
 		t.Fatal(err)
 	}
 	return receipt
@@ -73,14 +75,14 @@ func TestExecuteComputerHTTPPostgresReturnsAdmissionAndTerminalReplay(t *testing
 	var cwd, language string
 	var stdin []byte
 	var timeoutMS int64
-	if err := c.pool.QueryRow(t.Context(), `SELECT argv,cwd,env->>'LANG',stdin,timeout_ms FROM computer_commands WHERE id=$1`, admitted.CommandID).Scan(&argv, &cwd, &language, &stdin, &timeoutMS); err != nil {
+	if err := c.Pool.QueryRow(t.Context(), `SELECT argv,cwd,env->>'LANG',stdin,timeout_ms FROM computer_commands WHERE id=$1`, admitted.CommandID).Scan(&argv, &cwd, &language, &stdin, &timeoutMS); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(argv, []string{"printf", "", "hello world"}) || cwd != "/workspace/repo" || language != "C.UTF-8" || string(stdin) != "hello" || timeoutMS != 7000 {
 		t.Fatalf("persisted launch argv=%q cwd=%q env=%q stdin=%q timeout=%d", argv, cwd, language, stdin, timeoutMS)
 	}
 
-	if _, err := c.pool.Exec(t.Context(), `
+	if _, err := c.Pool.Exec(t.Context(), `
 		UPDATE computer_commands
 		   SET status = 'failed', failure_reason='dispatch_failed',
 		       revision = revision + 1,
@@ -93,7 +95,7 @@ func TestExecuteComputerHTTPPostgresReturnsAdmissionAndTerminalReplay(t *testing
 		t.Fatal(err)
 	}
 
-	path := "/v1/computers/" + c.computerRefs[0] + "/exec"
+	path := "/v1/computers/" + c.ComputerIDs[0].String() + "/exec"
 	replay := c.expect(t, c.key, http.MethodPost, path, body, http.StatusAccepted, "")
 	var replayed api.CommandReceipt
 	if err := json.Unmarshal(replay, &replayed); err != nil {
@@ -107,9 +109,9 @@ func TestExecuteComputerHTTPPostgresReturnsAdmissionAndTerminalReplay(t *testing
 	}
 
 	var processCount int
-	if err := c.pool.QueryRow(t.Context(), `
+	if err := c.Pool.QueryRow(t.Context(), `
 		SELECT count(*) FROM computer_commands WHERE computer_id = $1
-	`, c.computerIDs[0]).Scan(&processCount); err != nil {
+	`, c.ComputerIDs[0]).Scan(&processCount); err != nil {
 		t.Fatal(err)
 	}
 	if processCount != 1 {
@@ -121,7 +123,7 @@ func TestExecuteComputerHTTPPostgresReturnsAdmissionAndTerminalReplay(t *testing
 // Command is admitted.
 func TestExecuteComputerHTTPRejectsInput(t *testing.T) {
 	c := newCommandHTTP(t)
-	path := "/v1/computers/" + c.computerRefs[0] + "/exec"
+	path := "/v1/computers/" + c.ComputerIDs[0].String() + "/exec"
 	c.expect(t, c.key, http.MethodPost, path, `{"command":[],"idempotency_key":"empty"}`, http.StatusBadRequest, "invalid_computer_command")
 	c.expect(t, c.key, http.MethodPost, path, `{"command":["true"],"env":{"API_TOKEN":"x"},"idempotency_key":"secret-override"}`, http.StatusBadRequest, "invalid_computer_command")
 	c.expect(t, c.key, http.MethodPost, path, `{"command":["true"],"idempotency_key":"stdin","stdin_base64":"`+base64.StdEncoding.EncodeToString(make([]byte, command.MaxStdinBytes+1))+`"}`, http.StatusRequestEntityTooLarge, "computer_stdin_too_large")
@@ -129,27 +131,27 @@ func TestExecuteComputerHTTPRejectsInput(t *testing.T) {
 	c.expect(t, c.key, http.MethodPost, path, `{"command":["true"]}`, http.StatusBadRequest, "invalid_idempotency_key")
 	c.expect(t, c.key, http.MethodPost, "/v1/computers/"+uuid.NewV7().String()+"/exec", `{"command":["true"],"idempotency_key":"absent"}`, http.StatusNotFound, "computer_not_found")
 	var admitted int
-	if err := c.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_commands`).Scan(&admitted); err != nil || admitted != 0 {
+	if err := c.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_commands`).Scan(&admitted); err != nil || admitted != 0 {
 		t.Fatalf("admitted=%d err=%v", admitted, err)
 	}
 }
 
 func TestExecuteComputerHTTPReplaySurvivesComputerDeletion(t *testing.T) {
 	c := newCommandHTTP(t)
-	path := "/v1/computers/" + c.computerRefs[0] + "/exec"
+	path := "/v1/computers/" + c.ComputerIDs[0].String() + "/exec"
 	body := `{"command":["true"],"idempotency_key":"delete-replay"}`
 	accepted := c.exec(t, body)
-	if _, err := c.pool.Exec(t.Context(), `UPDATE computer_commands
+	if _, err := c.Pool.Exec(t.Context(), `UPDATE computer_commands
  SET status='failed',failure_reason='dispatch_failed',terminal_at=now(),terminal_reason_code='computer_command_assignment_timed_out' WHERE id=$1`, accepted.CommandID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := computer.Delete(t.Context(), c.pool, computer.Deletion{
-		Scope:      computer.Scope{OrgID: c.orgID, ProjectID: c.projectID, EnvironmentID: c.environmentID},
-		ComputerID: c.computerIDs[0], IdempotencyKey: "delete-after-exec",
+	if _, err := computer.Delete(t.Context(), c.Pool, computer.Deletion{
+		Scope:      computer.Scope{OrgID: c.OrgID, ProjectID: c.ProjectID, EnvironmentID: c.EnvironmentID},
+		ComputerID: c.ComputerIDs[0], IdempotencyKey: "delete-after-exec",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if deleted, err := c.server.db.FinalizeDeletingComputers(t.Context(), 100); err != nil || len(deleted) != 1 {
+	if deleted, err := db.New(c.Pool).FinalizeDeletingComputers(t.Context(), 100); err != nil || len(deleted) != 1 {
 		t.Fatalf("finalize deleted Computer=%v, %v", deleted, err)
 	}
 	if replay := c.exec(t, body); replay != accepted {
@@ -157,32 +159,32 @@ func TestExecuteComputerHTTPReplaySurvivesComputerDeletion(t *testing.T) {
 	}
 	c.expect(t, c.key, http.MethodPost, path, strings.Replace(body, "true", "false", 1), http.StatusConflict, "idempotency_conflict")
 	c.expect(t, c.key, http.MethodPost, path, strings.Replace(body, "delete-replay", "new-work", 1), http.StatusNotFound, "computer_not_found")
-	if _, err := c.pool.Exec(t.Context(), `UPDATE idempotency_claims SET receipt_expires_at=now()-interval '1 day'
+	if _, err := c.Pool.Exec(t.Context(), `UPDATE idempotency_claims SET receipt_expires_at=now()-interval '1 day'
  WHERE id=(SELECT claim_id FROM computer_commands WHERE id=$1)`, accepted.CommandID); err != nil {
 		t.Fatal(err)
 	}
-	if pruned, err := c.server.db.PruneExpiredIdempotencyReceipts(t.Context(), 100); err != nil || pruned != 1 {
+	if pruned, err := db.New(c.Pool).PruneExpiredIdempotencyReceipts(t.Context(), 100); err != nil || pruned != 1 {
 		t.Fatalf("prune receipt=%d, %v", pruned, err)
 	}
 	c.expect(t, c.key, http.MethodPost, path, body, http.StatusGone, "operation_expired")
 	c.expect(t, c.key, http.MethodPost, path, strings.Replace(body, "true", "false", 1), http.StatusConflict, "idempotency_conflict")
 	var count int
-	if err := c.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_commands WHERE computer_id=$1`, c.computerIDs[0]).Scan(&count); err != nil || count != 1 {
+	if err := c.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_commands WHERE computer_id=$1`, c.ComputerIDs[0]).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("retained exec count=%d, %v", count, err)
 	}
 }
 
 func TestExecuteComputerHTTPRejectsCaptureFailureWithoutRetry(t *testing.T) {
 	c := newCommandHTTP(t)
-	if _, err := c.pool.Exec(t.Context(), `UPDATE computers SET dirty_state='capture_failed',desired_state='stopped' WHERE id=$1`, c.computerIDs[0]); err != nil {
+	if _, err := c.Pool.Exec(t.Context(), `UPDATE computers SET dirty_state='capture_failed',desired_state='stopped' WHERE id=$1`, c.ComputerIDs[0]); err != nil {
 		t.Fatal(err)
 	}
-	body := c.expect(t, c.key, http.MethodPost, "/v1/computers/"+c.computerRefs[0]+"/exec", `{"command":["true"],"idempotency_key":"failed-capture"}`, http.StatusConflict, "computer_recovery_required")
+	body := c.expect(t, c.key, http.MethodPost, "/v1/computers/"+c.ComputerIDs[0].String()+"/exec", `{"command":["true"],"idempotency_key":"failed-capture"}`, http.StatusConflict, "computer_recovery_required")
 	if got := decodeHTTPError(t, body); got.Message != "computer requires recovery" || strings.Contains(string(body), `"retryable":true`) {
 		t.Fatalf("capture failure error=%s", body)
 	}
 	var admitted int
-	if err := c.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_commands`).Scan(&admitted); err != nil || admitted != 0 {
+	if err := c.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_commands`).Scan(&admitted); err != nil || admitted != 0 {
 		t.Fatalf("admitted=%d err=%v", admitted, err)
 	}
 }
@@ -197,18 +199,18 @@ func TestGetComputerCommandHTTPPostgres(t *testing.T) {
 	if err := json.Unmarshal(c.expect(t, c.key, http.MethodGet, path, "", http.StatusOK, ""), &info); err != nil {
 		t.Fatal(err)
 	}
-	if info.ID != admitted.CommandID || info.ComputerID != c.computerRefs[0] || info.Status != "pending" || info.Outcome != nil {
+	if info.ID != admitted.CommandID || info.ComputerID != c.ComputerIDs[0].String() || info.Status != "pending" || info.Outcome != nil {
 		t.Fatalf("info = %+v", info)
 	}
-	viewer := issueEnvironmentAPIKey(t, c.pool, c.orgID, c.projectID, c.environmentID, auth.PermissionComputersRead)
+	viewer := issueEnvironmentAPIKey(t, c.Pool, c.OrgID, c.ProjectID, c.EnvironmentID, auth.PermissionComputersRead)
 	c.expect(t, viewer, http.MethodGet, path, "", http.StatusForbidden, "permission_required")
 	c.expect(t, c.key, http.MethodGet, "/v1/commands/not-a-command", "", http.StatusBadRequest, "invalid_command_reference")
 	c.expect(t, c.key, http.MethodGet, "/v1/commands/"+uuid.NewV7().String(), "", http.StatusNotFound, "computer_command_not_found")
-	if _, err := c.pool.Exec(t.Context(), `UPDATE computer_commands SET status='failed',failure_reason='dispatch_failed',terminal_at=now(),
+	if _, err := c.Pool.Exec(t.Context(), `UPDATE computer_commands SET status='failed',failure_reason='dispatch_failed',terminal_at=now(),
  terminal_reason_code='computer_command_assignment_timed_out',result_expires_at=now()-interval '1 day' WHERE id=$1`, admitted.CommandID); err != nil {
 		t.Fatal(err)
 	}
-	if pruned, err := c.server.db.PruneExpiredComputerCommandResults(t.Context(), 100); err != nil || pruned != 1 {
+	if pruned, err := db.New(c.Pool).PruneExpiredComputerCommandResults(t.Context(), 100); err != nil || pruned != 1 {
 		t.Fatalf("prune result=%d, %v", pruned, err)
 	}
 	c.expect(t, c.key, http.MethodGet, path, "", http.StatusGone, "command_result_expired")
@@ -223,26 +225,26 @@ func TestCommandHTTPIsolatesEveryScopeCoordinate(t *testing.T) {
 	environment := func(orgID, projectID uuid.UUID) uuid.UUID {
 		t.Helper()
 		id := uuid.NewV7()
-		dbtest.MustExec(t, t.Context(), c.pool, `INSERT INTO environments (id, org_id, project_id, slug, name, color_hex) VALUES ($1, $2, $3, $4, 'Other', '#3366ff')`, id, orgID, projectID, "other-"+id.String())
+		dbtest.MustExec(t, t.Context(), c.Pool, `INSERT INTO environments (id, org_id, project_id, slug, name, color_hex) VALUES ($1, $2, $3, $4, 'Other', '#3366ff')`, id, orgID, projectID, "other-"+id.String())
 		return id
 	}
 	project := func(orgID uuid.UUID) uuid.UUID {
 		t.Helper()
 		id := uuid.NewV7()
-		dbtest.MustExec(t, t.Context(), c.pool, `INSERT INTO projects (id, org_id, default_region_id, slug, name) VALUES ($1, $2, 'us-east-1', $3, 'Other')`, id, orgID, "other-"+id.String())
+		dbtest.MustExec(t, t.Context(), c.Pool, `INSERT INTO projects (id, org_id, default_region_id, slug, name) VALUES ($1, $2, 'us-east-1', $3, 'Other')`, id, orgID, "other-"+id.String())
 		return id
 	}
 	otherOrg := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), c.pool, `INSERT INTO organizations (id, name, slug) VALUES ($1, 'Other', $2)`, otherOrg, "other-"+otherOrg.String())
+	dbtest.MustExec(t, t.Context(), c.Pool, `INSERT INTO organizations (id, name, slug) VALUES ($1, 'Other', $2)`, otherOrg, "other-"+otherOrg.String())
 	orgProject := project(otherOrg)
-	otherProject := project(c.orgID)
+	otherProject := project(c.OrgID)
 	for name, scope := range map[string][3]uuid.UUID{
 		"organization": {otherOrg, orgProject, environment(otherOrg, orgProject)},
-		"project":      {c.orgID, otherProject, environment(c.orgID, otherProject)},
-		"environment":  {c.orgID, c.projectID, environment(c.orgID, c.projectID)},
+		"project":      {c.OrgID, otherProject, environment(c.OrgID, otherProject)},
+		"environment":  {c.OrgID, c.ProjectID, environment(c.OrgID, c.ProjectID)},
 	} {
 		t.Run(name, func(t *testing.T) {
-			key := issueEnvironmentAPIKey(t, c.pool, scope[0], scope[1], scope[2], auth.PermissionComputerCommandCreate)
+			key := issueEnvironmentAPIKey(t, c.Pool, scope[0], scope[1], scope[2], auth.PermissionComputerCommandCreate)
 			path := "/v1/commands/" + admitted.CommandID
 			c.expect(t, key, http.MethodGet, path, "", http.StatusNotFound, "computer_command_not_found")
 			c.expect(t, key, http.MethodPost, path+"/cancel", "", http.StatusNotFound, "computer_command_not_found")
@@ -250,7 +252,7 @@ func TestCommandHTTPIsolatesEveryScopeCoordinate(t *testing.T) {
 		})
 	}
 	var status string
-	if err := c.pool.QueryRow(t.Context(), `SELECT status FROM computer_commands WHERE id=$1`, admitted.CommandID).Scan(&status); err != nil || status != "pending" {
+	if err := c.Pool.QueryRow(t.Context(), `SELECT status FROM computer_commands WHERE id=$1`, admitted.CommandID).Scan(&status); err != nil || status != "pending" {
 		t.Fatalf("isolated Command status = %s, %v", status, err)
 	}
 }

@@ -9,12 +9,13 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
 func TestComputerCreateAndDeleteHTTPPostgresContract(t *testing.T) {
-	f := newActorStartPostgresFixture(t, 1)
-	handler := newPostgresServer(t, f.pool, func(cfg *ServerConfig) { cfg.SecretProxy = testComputerCAStore(t, f.pool) })
-	key := issueEnvironmentAPIKey(t, f.pool, f.orgID, f.projectID, f.environmentID,
+	f := sessiontest.New(t, 1)
+	handler := newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.SecretProxy = testComputerCAStore(t, f.Pool) })
+	key := issueEnvironmentAPIKey(t, f.Pool, f.OrgID, f.ProjectID, f.EnvironmentID,
 		auth.PermissionComputersCreate, auth.PermissionComputersDelete, auth.PermissionComputersRead)
 	expect := func(method, path, body string, status int, code string) []byte {
 		t.Helper()
@@ -60,10 +61,8 @@ func TestComputerCreateAndDeleteHTTPPostgresContract(t *testing.T) {
 	expect(http.MethodDelete, "/v1/computers/"+uuid.NewV7().String(), "", http.StatusNotFound, "computer_not_found")
 	expect(http.MethodDelete, "/v1/computers/not-a-uuid", "", http.StatusBadRequest, "invalid_computer_reference")
 
-	if _, err := f.server.startActor(t.Context(), f.request(0, nil, "http-delete-member")); err != nil {
-		t.Fatal(err)
-	}
-	expect(http.MethodDelete, "/v1/computers/"+f.computerIDs[0].String(), "", http.StatusConflict, "computer_busy")
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE idempotency_claims SET receipt=NULL,receipt_expires_at=now()-interval '1 day',receipt_pruned_at=now() WHERE operation='computer.delete'`)
+	startSession(t, f, 0, nil, "http-delete-member")
+	expect(http.MethodDelete, "/v1/computers/"+f.ComputerIDs[0].String(), "", http.StatusConflict, "computer_busy")
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE idempotency_claims SET receipt=NULL,receipt_expires_at=now()-interval '1 day',receipt_pruned_at=now() WHERE operation='computer.delete'`)
 	expect(http.MethodDelete, deletePath, `{"idempotency_key":"http-delete"}`, http.StatusGone, "operation_expired")
 }

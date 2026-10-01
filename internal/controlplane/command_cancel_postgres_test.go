@@ -33,7 +33,7 @@ func TestCommandCancelHTTPPendingAndTerminalReplay(t *testing.T) {
 	var status string
 	var revision int64
 	var terminal, requested bool
-	if err := c.pool.QueryRow(t.Context(), `SELECT status,revision,terminal_at IS NOT NULL,cancel_requested_at IS NOT NULL FROM computer_commands WHERE id=$1`, command.CommandID).Scan(&status, &revision, &terminal, &requested); err != nil {
+	if err := c.Pool.QueryRow(t.Context(), `SELECT status,revision,terminal_at IS NOT NULL,cancel_requested_at IS NOT NULL FROM computer_commands WHERE id=$1`, command.CommandID).Scan(&status, &revision, &terminal, &requested); err != nil {
 		t.Fatal(err)
 	}
 	if status != "cancelled" || !terminal || !requested {
@@ -43,7 +43,7 @@ func TestCommandCancelHTTPPendingAndTerminalReplay(t *testing.T) {
 		t.Fatalf("replay=%+v first=%+v", replay, first)
 	}
 	var after int64
-	if err := c.pool.QueryRow(t.Context(), `SELECT revision FROM computer_commands WHERE id=$1`, command.CommandID).Scan(&after); err != nil {
+	if err := c.Pool.QueryRow(t.Context(), `SELECT revision FROM computer_commands WHERE id=$1`, command.CommandID).Scan(&after); err != nil {
 		t.Fatal(err)
 	}
 	if after != revision {
@@ -70,13 +70,13 @@ func TestCommandCancelAndLogsSurviveResultPruning(t *testing.T) {
 	c := newCommandHTTP(t, func(cfg *ServerConfig) { cfg.TelemetryReader = sink })
 	command := c.exec(t, `{"command":["true"],"idempotency_key":"pruned"}`)
 	commandID := pgvalue.UUID(uuid.MustParse(command.CommandID))
-	if _, err := c.server.db.InsertCommandLogChunk(t.Context(), db.InsertCommandLogChunkParams{
-		OrgID: pgvalue.UUID(c.orgID), ProjectID: pgvalue.UUID(c.projectID), EnvironmentID: pgvalue.UUID(c.environmentID), CommandID: commandID,
+	if _, err := db.New(c.Pool).InsertCommandLogChunk(t.Context(), db.InsertCommandLogChunkParams{
+		OrgID: pgvalue.UUID(c.OrgID), ProjectID: pgvalue.UUID(c.ProjectID), EnvironmentID: pgvalue.UUID(c.EnvironmentID), CommandID: commandID,
 		StreamName: "stdout", Content: []byte("out"), ObservedSeq: 0, ObservedAt: pgtype.Timestamptz{Time: at, Valid: true},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.pool.Exec(t.Context(), `UPDATE telemetry_outbox SET status='written',written_at=now() WHERE command_id=$1`, commandID); err != nil {
+	if _, err := c.Pool.Exec(t.Context(), `UPDATE telemetry_outbox SET status='written',written_at=now() WHERE command_id=$1`, commandID); err != nil {
 		t.Fatal(err)
 	}
 	cancelPath := "/v1/commands/" + command.CommandID + "/cancel"
@@ -84,10 +84,10 @@ func TestCommandCancelAndLogsSurviveResultPruning(t *testing.T) {
 	if err := json.Unmarshal(c.expect(t, c.key, http.MethodPost, cancelPath, "", http.StatusAccepted, ""), &first); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.pool.Exec(t.Context(), `UPDATE computer_commands SET result_expires_at=now()-interval '1 day' WHERE id=$1`, commandID); err != nil {
+	if _, err := c.Pool.Exec(t.Context(), `UPDATE computer_commands SET result_expires_at=now()-interval '1 day' WHERE id=$1`, commandID); err != nil {
 		t.Fatal(err)
 	}
-	if pruned, err := c.server.db.PruneExpiredComputerCommandResults(t.Context(), 100); err != nil || pruned != 1 {
+	if pruned, err := db.New(c.Pool).PruneExpiredComputerCommandResults(t.Context(), 100); err != nil || pruned != 1 {
 		t.Fatalf("prune result=%d, %v", pruned, err)
 	}
 	c.expect(t, c.key, http.MethodGet, "/v1/commands/"+command.CommandID, "", http.StatusGone, "command_result_expired")
