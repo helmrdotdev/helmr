@@ -252,16 +252,16 @@ func TestRestorePlanAfterParkedWakeup(t *testing.T) {
 			if err != nil || plan == nil || len(plan.Members) != 2 {
 				t.Fatalf("whole restored set missing: plan=%+v err=%v", plan, err)
 			}
-			var grants []dispatch.RestoreGrant
+			var grants []computer.RestoreGrant
 			for _, member := range plan.Members {
-				grants = append(grants, dispatch.RestoreGrant{RunID: pgvalue.UUID(uuid.MustParse(member.RunID)), LeaseID: pgvalue.UUID(uuid.MustParse(member.LeaseID)), LeaseSequence: member.LeaseSequence})
+				grants = append(grants, computer.RestoreGrant{RunID: pgvalue.UUID(uuid.MustParse(member.RunID)), LeaseID: pgvalue.UUID(uuid.MustParse(member.LeaseID)), LeaseSequence: member.LeaseSequence})
 			}
 			tx, err = f.Pool.Begin(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer tx.Rollback(context.Background())
-			if _, err := dispatch.AcknowledgeRestore(t.Context(), tx, f.ref, cp.ID, f.writer.WriterGeneration, grants); err != nil {
+			if _, err := computer.AcknowledgeRestore(t.Context(), tx, f.ref, cp.ID, f.writer.WriterGeneration, grants); err != nil {
 				t.Fatal(err)
 			}
 			if err := tx.Commit(t.Context()); err != nil {

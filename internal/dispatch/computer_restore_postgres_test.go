@@ -1,16 +1,16 @@
 package dispatch_test
 
 import (
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/computer/computertest"
-	"github.com/helmrdotdev/helmr/internal/dispatch/dispatchtest"
+	"errors"
 	"testing"
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/computer/computertest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
+	"github.com/helmrdotdev/helmr/internal/dispatch/dispatchtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
@@ -175,7 +175,7 @@ func TestComputerRestoreAcknowledgesEntireSet(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				i, err := dispatch.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants)
+				i, err := computer.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants)
 				if err != nil {
 					tx.Rollback(t.Context())
 					t.Fatal(err)
@@ -219,7 +219,7 @@ func TestComputerRestoreAcknowledgesEntireSet(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			replayed, err := dispatch.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants)
+			replayed, err := computer.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants)
 			if err != nil {
 				tx.Rollback(t.Context())
 				t.Fatal(err)
@@ -246,16 +246,16 @@ func TestComputerRestoreAcknowledgesEntireSet(t *testing.T) {
 	}
 }
 
-func installedRestoreGrants(t *testing.T, f runtest.Fixture, fence computer.InstanceRef) []dispatch.RestoreGrant {
+func installedRestoreGrants(t *testing.T, f runtest.Fixture, fence computer.InstanceRef) []computer.RestoreGrant {
 	t.Helper()
 	rows, err := f.Pool.Query(t.Context(), `SELECT run_id,id,lease_sequence FROM run_leases WHERE computer_instance_id=$1 ORDER BY run_id`, fence.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
-	var grants []dispatch.RestoreGrant
+	var grants []computer.RestoreGrant
 	for rows.Next() {
-		var g dispatch.RestoreGrant
+		var g computer.RestoreGrant
 		if err = rows.Scan(&g.RunID, &g.LeaseID, &g.LeaseSequence); err != nil {
 			t.Fatal(err)
 		}
@@ -316,10 +316,15 @@ func TestComputerRestoreAcknowledgementRejectsPartialAuthority(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = dispatch.AcknowledgeRestore(t.Context(), tx, fence, checkpoint, generation, grants)
+			_, err = computer.AcknowledgeRestore(t.Context(), tx, fence, checkpoint, generation, grants)
 			tx.Rollback(t.Context())
 			if err == nil {
 				t.Fatal("invalid activation accepted")
+			}
+			// A rejected delivery write is a database failure; every other
+			// mismatch is changed restore authority.
+			if changed := errors.Is(err, computer.ErrAuthorityChanged); changed == (failure == "delivery recording failed") {
+				t.Fatalf("activation error = %v, authority changed = %v", err, changed)
 			}
 			var unchanged bool
 			err = f.Pool.QueryRow(t.Context(), `SELECT admission_state='restoring' AND NOT EXISTS(SELECT 1 FROM run_leases WHERE computer_instance_id=i.id AND status='running') AND NOT EXISTS(SELECT 1 FROM runs r JOIN run_leases l ON l.id=r.current_run_lease_id WHERE l.computer_instance_id=i.id AND r.active_started_at IS NOT NULL) FROM computer_instances i WHERE i.id=$1`, fence.ID).Scan(&unchanged)
@@ -391,7 +396,7 @@ func TestComputerRestoreAcknowledgementActorTurn(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer tx.Rollback(t.Context())
-			_, err = dispatch.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants)
+			_, err = computer.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants)
 			if state != "rebind" {
 				if err == nil {
 					t.Fatal("stopped Actor activated")
@@ -450,7 +455,7 @@ func TestComputerRestoreAcknowledgementRechecksActiveBudget(t *testing.T) {
 			return
 		}
 		defer tx.Rollback(t.Context())
-		_, err = dispatch.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants)
+		_, err = computer.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants)
 		if err == nil {
 			err = tx.Commit(t.Context())
 		}
@@ -548,7 +553,7 @@ func TestComputerRestoreReconciliationPreparationDeadline(t *testing.T) {
 				if err = tx.QueryRow(t.Context(), `SELECT writer_generation FROM computer_instances WHERE id=$1`, fence.ID).Scan(&generation); err != nil {
 					t.Fatal(err)
 				}
-				if _, err = dispatch.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, generation, nil); err != nil {
+				if _, err = computer.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, generation, nil); err != nil {
 					t.Fatal(err)
 				}
 				if err = tx.Commit(t.Context()); err != nil {
@@ -682,7 +687,7 @@ func TestComputerRestoreAfterWakeDuringCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	if _, err := dispatch.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants); err != nil {
+	if _, err := computer.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(t.Context()); err != nil {

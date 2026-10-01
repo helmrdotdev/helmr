@@ -10,7 +10,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/disk"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/dispatch/dispatchtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
@@ -68,12 +67,12 @@ func activateRestorePlanFixture(t *testing.T, f runtest.Fixture, w workergroup.H
 		t.Fatal(err)
 	}
 	defer tx.Rollback(context.Background())
-	grants := make([]dispatch.RestoreGrant, 0, len(plan.Members))
+	grants := make([]computer.RestoreGrant, 0, len(plan.Members))
 	for _, member := range plan.Members {
-		grants = append(grants, dispatch.RestoreGrant{RunID: pgvalue.UUID(uuid.MustParse(member.RunID)), LeaseID: pgvalue.UUID(uuid.MustParse(member.Lease.ID)), LeaseSequence: member.Lease.LeaseSequence})
+		grants = append(grants, computer.RestoreGrant{RunID: pgvalue.UUID(uuid.MustParse(member.RunID)), LeaseID: pgvalue.UUID(uuid.MustParse(member.Lease.ID)), LeaseSequence: member.Lease.LeaseSequence})
 	}
 	destination := computer.InstanceRef{Host: computer.Host{GroupID: w.GroupID, HostID: w.HostID, Epoch: w.Epoch}, ID: uuid.MustParse(plan.ComputerInstanceID), DesiredVersion: plan.DesiredVersion}
-	_, err = dispatch.AcknowledgeRestore(t.Context(), tx, destination, pgvalue.UUID(uuid.MustParse(plan.CheckpointID)), plan.WriterGeneration, grants)
+	_, err = computer.AcknowledgeRestore(t.Context(), tx, destination, pgvalue.UUID(uuid.MustParse(plan.CheckpointID)), plan.WriterGeneration, grants)
 	if err != nil {
 		t.Fatal(err)
 	}

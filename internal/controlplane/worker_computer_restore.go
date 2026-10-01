@@ -5,10 +5,8 @@ import (
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/jackc/pgx/v5"
 )
 
 func (s *Server) workerAcknowledgeComputerRestore(w http.ResponseWriter, r *http.Request) {
@@ -31,7 +29,7 @@ func (s *Server) workerAcknowledgeComputerRestore(w http.ResponseWriter, r *http
 		writeError(w, badRequest(errors.New("restore versions and explicit grants are required")))
 		return
 	}
-	grants := make([]dispatch.RestoreGrant, 0, len(request.Grants))
+	grants := make([]computer.RestoreGrant, 0, len(request.Grants))
 	for _, g := range request.Grants {
 		run, err := parseCanonicalUUID("run_id", g.RunID)
 		if err != nil {
@@ -47,20 +45,12 @@ func (s *Server) workerAcknowledgeComputerRestore(w http.ResponseWriter, r *http
 			writeError(w, badRequest(errors.New("lease sequence must be positive")))
 			return
 		}
-		grants = append(grants, dispatch.RestoreGrant{RunID: pgvalue.UUID(run), LeaseID: pgvalue.UUID(lease), LeaseSequence: g.Lease.LeaseSequence})
+		grants = append(grants, computer.RestoreGrant{RunID: pgvalue.UUID(run), LeaseID: pgvalue.UUID(lease), LeaseSequence: g.Lease.LeaseSequence})
 	}
 	worker := workerFromContext(r.Context())
-	err = s.inTx(r.Context(), func(work *txWork) error {
-		_, err := dispatch.AcknowledgeRestore(r.Context(), work.tx, computer.InstanceRef{Host: computer.Host{GroupID: worker.GroupID, HostID: worker.HostID, Epoch: worker.Epoch}, ID: instance, DesiredVersion: request.DesiredVersion}, pgvalue.UUID(checkpoint), request.WriterGeneration, grants)
-		return err
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, conflict(errors.New("computer restore authority changed")))
-		return
-	}
-	if err != nil {
-		s.log.Error("Computer restore acknowledgement failed", "error", err)
-		writeError(w, errors.New("acknowledge Computer restore"))
+	destination := computer.InstanceRef{Host: computer.Host{GroupID: worker.GroupID, HostID: worker.HostID, Epoch: worker.Epoch}, ID: instance, DesiredVersion: request.DesiredVersion}
+	if _, err = computer.AcknowledgeRestore(r.Context(), s.tx, destination, pgvalue.UUID(checkpoint), request.WriterGeneration, grants); err != nil {
+		s.writeWorkerComputerError(w, err, computerRestoreAcknowledgementOperation, "acknowledge Computer restore")
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.ComputerRestoreAckResponse{ComputerInstanceID: request.ComputerInstanceID, CheckpointID: request.CheckpointID, DesiredVersion: request.DesiredVersion, WriterGeneration: request.WriterGeneration})

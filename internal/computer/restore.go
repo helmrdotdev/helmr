@@ -7,6 +7,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // Restore is the fence of a checkpoint restore into one destination Instance:
@@ -114,6 +115,19 @@ func (r Restore) lockMembers(ctx context.Context, queries []string) error {
 		}
 	}
 	return nil
+}
+
+// WaitCurrent reports whether a restored member's Wait still belongs to its
+// current turn and Session. Called with the captured Session, Run and Wait
+// locked. Session cancellation can precede asynchronous Run cancellation;
+// neither admission stage may cross it.
+func (r Restore) WaitCurrent(ctx context.Context, waitID pgtype.UUID) (bool, error) {
+	current, err := db.New(r.tx).RunWaitTurnCurrent(ctx, waitID)
+	if err != nil || !current {
+		return current, err
+	}
+	err = r.tx.QueryRow(ctx, `SELECT r.session_id IS NULL OR EXISTS(SELECT 1 FROM sessions s WHERE s.id=r.session_id AND s.current_run_id=r.id AND s.status IN ('open','closing') AND s.cancel_requested_at IS NULL) FROM run_waits w JOIN runs r ON r.id=w.run_id WHERE w.id=$1`, waitID).Scan(&current)
+	return current, err
 }
 
 // RecheckReady re-evaluates the Instance's readiness fence, including its
