@@ -27,16 +27,16 @@ func testWorkerHostCredentialSigningKey() []byte {
 	return make([]byte, workergroup.HostCredentialSigningKeySize)
 }
 
-// testHostCredentials is the worker host credential configuration that
+// testHostAuthConfig is the worker host authentication configuration that
 // NewServer builds from completeServerConfig, for tests that serve worker
 // routes from a Server they assemble themselves.
-func testHostCredentials(t *testing.T) workergroup.CredentialConfig {
+func testHostAuthConfig(t *testing.T) workergroup.HostAuthConfig {
 	t.Helper()
 	keys, err := auth.NewKeys(testAuthRootKey())
 	if err != nil {
 		t.Fatal(err)
 	}
-	credentials, err := workergroup.NewCredentialConfig(keys.WorkerHost, testWorkerHostCredentialSigningKey(), 0)
+	credentials, err := workergroup.NewHostAuthConfig(keys.WorkerHost, testWorkerHostCredentialSigningKey(), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,41 +62,41 @@ func newPostgresServer(t *testing.T, pool *pgxpool.Pool, configure ...func(*Serv
 	return handler
 }
 
-// seededHostCredential is a host secret for a worker host that a test seeded
+// seededHostSecret is a host secret for a worker host that a test seeded
 // directly in the database, bound to the service that holds its current
 // epoch.
-type seededHostCredential struct {
+type seededHostSecret struct {
 	hostID    uuid.UUID
 	secret    string
 	serviceID uuid.UUID
 }
 
-// seedHostCredential gives a seeded worker host a host secret keyed like
-// completeServerConfig, revoking its other credentials, and binds the host's
+// seedHostSecret gives a seeded worker host a host secret keyed like
+// completeServerConfig, revoking its other host secrets, and binds the host's
 // current epoch to a service so that exchanging the secret keeps that epoch.
-// The credential's key prefix is the whole secret, which keeps it unique.
-func seedHostCredential(t *testing.T, pool *pgxpool.Pool, hostID uuid.UUID) seededHostCredential {
+// The host secret's key prefix is the whole secret, which keeps it unique.
+func seedHostSecret(t *testing.T, pool *pgxpool.Pool, hostID uuid.UUID) seededHostSecret {
 	t.Helper()
 	keys, err := auth.NewKeys(testAuthRootKey())
 	if err != nil {
 		t.Fatal(err)
 	}
-	seeded := seededHostCredential{hostID: hostID, secret: "hlmr_wi_" + uuid.NewV7().String(), serviceID: uuid.NewV7()}
+	seeded := seededHostSecret{hostID: hostID, secret: "hlmr_wi_" + uuid.NewV7().String(), serviceID: uuid.NewV7()}
 	hash, err := auth.HashToken(keys.WorkerHost, seeded.secret)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := t.Context()
 	dbtest.MustExec(t, ctx, pool, `UPDATE worker_hosts SET current_service_id=$2 WHERE id=$1`, hostID, seeded.serviceID)
-	dbtest.MustExec(t, ctx, pool, `UPDATE worker_host_credentials SET revoked_at=now() WHERE worker_host_id=$1 AND revoked_at IS NULL`, hostID)
-	dbtest.MustExec(t, ctx, pool, `INSERT INTO worker_host_credentials (id,worker_group_id,worker_host_id,key_prefix,secret_hash,claim_version)
+	dbtest.MustExec(t, ctx, pool, `UPDATE worker_host_secrets SET revoked_at=now() WHERE worker_host_id=$1 AND revoked_at IS NULL`, hostID)
+	dbtest.MustExec(t, ctx, pool, `INSERT INTO worker_host_secrets (id,worker_group_id,worker_host_id,key_prefix,secret_hash,claim_version)
  SELECT $1,worker_group_id,id,$4,$3,claim_version FROM worker_hosts WHERE id=$2`, uuid.NewV7(), hostID, hash, seeded.secret)
 	return seeded
 }
 
 // client returns a worker client that exchanges the secret for host
 // credentials at baseURL.
-func (c seededHostCredential) client(t *testing.T, baseURL string) *workerclient.Client {
+func (c seededHostSecret) client(t *testing.T, baseURL string) *workerclient.Client {
 	t.Helper()
 	client, err := workerclient.New(baseURL, workerclient.WithAuth(c.hostID.String(), c.secret), workerclient.WithService(c.serviceID.String()))
 	if err != nil {
@@ -106,7 +106,7 @@ func (c seededHostCredential) client(t *testing.T, baseURL string) *workerclient
 }
 
 // issue exchanges the secret for a host credential through handler.
-func (c seededHostCredential) issue(t *testing.T, handler http.Handler) string {
+func (c seededHostSecret) issue(t *testing.T, handler http.Handler) string {
 	t.Helper()
 	return issueWorkerHostCredential(t, handler, c.hostID.String(), c.secret, c.serviceID.String())
 }
@@ -148,7 +148,7 @@ func signRawWorkerJWT(t *testing.T, claims jwt.MapClaims) string {
 
 // rawWorkerJWTClaims are well-formed host credential claims for a host, group and
 // credential, valid from a minute ago for an hour.
-func rawWorkerJWTClaims(hostID string, groupID string, credentialID string) jwt.MapClaims {
+func rawWorkerJWTClaims(hostID string, groupID string, hostSecretID string) jwt.MapClaims {
 	now := time.Now().UTC()
 	return jwt.MapClaims{
 		"iss":                 workergroup.HostCredentialIssuer,
@@ -158,7 +158,7 @@ func rawWorkerJWTClaims(hostID string, groupID string, credentialID string) jwt.
 		"exp":                 now.Add(time.Hour).Unix(),
 		"worker_group_id":     groupID,
 		"worker_host_id":      hostID,
-		"credential_id":       credentialID,
+		"host_secret_id":      hostSecretID,
 		"worker_epoch":        1,
 		"claim_version":       1,
 		"group_claim_version": 1,

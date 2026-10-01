@@ -1255,7 +1255,7 @@ type WorkerHost struct {
 	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
 }
 
-type WorkerHostCredential struct {
+type WorkerHostSecret struct {
 	ID            pgtype.UUID        `json:"id"`
 	WorkerGroupID pgtype.UUID        `json:"worker_group_id"`
 	WorkerHostID  pgtype.UUID        `json:"worker_host_id"`

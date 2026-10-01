@@ -89,7 +89,7 @@ func (f initialPublicationFixture) client(t *testing.T, handler http.Handler) *w
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	return seedHostCredential(t, f.Pool, f.worker.HostID).client(t, server.URL)
+	return seedHostSecret(t, f.Pool, f.worker.HostID).client(t, server.URL)
 }
 
 // inspectedPackDigest is the storage digest of an inspected pack.

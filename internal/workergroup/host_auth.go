@@ -22,68 +22,68 @@ import (
 // authorization could not be decided.
 
 // AuthenticateHost authenticates a worker host for its ordinary routes.
-func AuthenticateHost(ctx context.Context, q db.Querier, cfg CredentialConfig, rawCredential string, now time.Time) (HostPrincipal, error) {
-	return authenticateHost(ctx, q, cfg, rawCredential, now, q.AuthorizeWorkerHostCredential)
+func AuthenticateHost(ctx context.Context, q db.Querier, cfg HostAuthConfig, rawCredential string, now time.Time) (HostPrincipal, error) {
+	return authenticateHost(ctx, q, cfg, rawCredential, now, q.AuthorizeWorkerHostSecret)
 }
 
 // AuthenticateActivatingHost authenticates a worker host that is activating
 // its epoch.
-func AuthenticateActivatingHost(ctx context.Context, q db.Querier, cfg CredentialConfig, rawCredential string, now time.Time) (HostPrincipal, error) {
-	return authenticateHost(ctx, q, cfg, rawCredential, now, func(ctx context.Context, params db.AuthorizeWorkerHostCredentialParams) (db.AuthorizeWorkerHostCredentialRow, error) {
-		row, err := q.AuthorizeWorkerActivationCredential(ctx, db.AuthorizeWorkerActivationCredentialParams(params))
-		return db.AuthorizeWorkerHostCredentialRow(row), err
+func AuthenticateActivatingHost(ctx context.Context, q db.Querier, cfg HostAuthConfig, rawCredential string, now time.Time) (HostPrincipal, error) {
+	return authenticateHost(ctx, q, cfg, rawCredential, now, func(ctx context.Context, params db.AuthorizeWorkerHostSecretParams) (db.AuthorizeWorkerHostSecretRow, error) {
+		row, err := q.AuthorizeActivatingWorkerHostSecret(ctx, db.AuthorizeActivatingWorkerHostSecretParams(params))
+		return db.AuthorizeWorkerHostSecretRow(row), err
 	})
 }
 
 // AuthenticateRecoveringHost authenticates a worker host that is reporting
 // its startup recovery.
-func AuthenticateRecoveringHost(ctx context.Context, q db.Querier, cfg CredentialConfig, rawCredential string, now time.Time) (HostPrincipal, error) {
-	return authenticateHost(ctx, q, cfg, rawCredential, now, func(ctx context.Context, params db.AuthorizeWorkerHostCredentialParams) (db.AuthorizeWorkerHostCredentialRow, error) {
-		row, err := q.AuthorizeRecoveringWorkerHostCredential(ctx, db.AuthorizeRecoveringWorkerHostCredentialParams(params))
-		return db.AuthorizeWorkerHostCredentialRow(row), err
+func AuthenticateRecoveringHost(ctx context.Context, q db.Querier, cfg HostAuthConfig, rawCredential string, now time.Time) (HostPrincipal, error) {
+	return authenticateHost(ctx, q, cfg, rawCredential, now, func(ctx context.Context, params db.AuthorizeWorkerHostSecretParams) (db.AuthorizeWorkerHostSecretRow, error) {
+		row, err := q.AuthorizeRecoveringWorkerHostSecret(ctx, db.AuthorizeRecoveringWorkerHostSecretParams(params))
+		return db.AuthorizeWorkerHostSecretRow(row), err
 	})
 }
 
 // AuthenticateDrainCompletingHost authenticates a worker host that completes
 // its drain, including a replay after the completion was recorded.
-func AuthenticateDrainCompletingHost(ctx context.Context, q db.Querier, cfg CredentialConfig, rawCredential string, now time.Time) (HostPrincipal, error) {
-	return authenticateHost(ctx, q, cfg, rawCredential, now, func(ctx context.Context, params db.AuthorizeWorkerHostCredentialParams) (db.AuthorizeWorkerHostCredentialRow, error) {
-		row, err := q.AuthorizeWorkerHostCredential(ctx, params)
+func AuthenticateDrainCompletingHost(ctx context.Context, q db.Querier, cfg HostAuthConfig, rawCredential string, now time.Time) (HostPrincipal, error) {
+	return authenticateHost(ctx, q, cfg, rawCredential, now, func(ctx context.Context, params db.AuthorizeWorkerHostSecretParams) (db.AuthorizeWorkerHostSecretRow, error) {
+		row, err := q.AuthorizeWorkerHostSecret(ctx, params)
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return row, err
 		}
 		replay, err := q.AuthorizeWorkerDrainReplay(ctx, db.AuthorizeWorkerDrainReplayParams{
-			CredentialID: params.CredentialID, ClaimVersion: params.ClaimVersion,
+			HostSecretID: params.HostSecretID, ClaimVersion: params.ClaimVersion,
 			WorkerEpoch: params.WorkerEpoch,
 		})
-		return db.AuthorizeWorkerHostCredentialRow(replay), err
+		return db.AuthorizeWorkerHostSecretRow(replay), err
 	})
 }
 
 // AuthenticateFencingHost authenticates a worker host that fences itself,
 // including a replay after the fence was recorded.
-func AuthenticateFencingHost(ctx context.Context, q db.Querier, cfg CredentialConfig, rawCredential string, now time.Time) (HostPrincipal, error) {
-	return authenticateHost(ctx, q, cfg, rawCredential, now, func(ctx context.Context, params db.AuthorizeWorkerHostCredentialParams) (db.AuthorizeWorkerHostCredentialRow, error) {
-		row, err := q.AuthorizeWorkerHostCredential(ctx, params)
+func AuthenticateFencingHost(ctx context.Context, q db.Querier, cfg HostAuthConfig, rawCredential string, now time.Time) (HostPrincipal, error) {
+	return authenticateHost(ctx, q, cfg, rawCredential, now, func(ctx context.Context, params db.AuthorizeWorkerHostSecretParams) (db.AuthorizeWorkerHostSecretRow, error) {
+		row, err := q.AuthorizeWorkerHostSecret(ctx, params)
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return row, err
 		}
 		replay, err := q.AuthorizeWorkerFenceReplay(ctx, db.AuthorizeWorkerFenceReplayParams{
-			CredentialID: params.CredentialID, ClaimVersion: params.ClaimVersion,
+			HostSecretID: params.HostSecretID, ClaimVersion: params.ClaimVersion,
 			WorkerEpoch: params.WorkerEpoch,
 		})
-		return db.AuthorizeWorkerHostCredentialRow(replay), err
+		return db.AuthorizeWorkerHostSecretRow(replay), err
 	})
 }
 
-type hostAuthorization func(context.Context, db.AuthorizeWorkerHostCredentialParams) (db.AuthorizeWorkerHostCredentialRow, error)
+type hostAuthorization func(context.Context, db.AuthorizeWorkerHostSecretParams) (db.AuthorizeWorkerHostSecretRow, error)
 
-func authenticateHost(ctx context.Context, q db.Querier, cfg CredentialConfig, rawCredential string, now time.Time, authorize hostAuthorization) (HostPrincipal, error) {
+func authenticateHost(ctx context.Context, q db.Querier, cfg HostAuthConfig, rawCredential string, now time.Time, authorize hostAuthorization) (HostPrincipal, error) {
 	payload, err := verifyHostCredential(cfg.signingKey, rawCredential, now)
 	if err != nil {
 		return HostPrincipal{}, ErrUnauthenticated
 	}
-	credentialID, err := uuid.Parse(payload.CredentialID)
+	hostSecretID, err := uuid.Parse(payload.HostSecretID)
 	if err != nil {
 		return HostPrincipal{}, ErrUnauthenticated
 	}
@@ -95,8 +95,8 @@ func authenticateHost(ctx context.Context, q db.Querier, cfg CredentialConfig, r
 	if err != nil {
 		return HostPrincipal{}, ErrUnauthenticated
 	}
-	row, err := authorize(ctx, db.AuthorizeWorkerHostCredentialParams{
-		CredentialID:      pgvalue.UUID(credentialID),
+	row, err := authorize(ctx, db.AuthorizeWorkerHostSecretParams{
+		HostSecretID:      pgvalue.UUID(hostSecretID),
 		ClaimVersion:      payload.ClaimVersion,
 		GroupClaimVersion: payload.GroupClaimVersion,
 		WorkerEpoch:       pgtype.Int8{Int64: payload.WorkerEpoch, Valid: true},
@@ -105,7 +105,7 @@ func authenticateHost(ctx context.Context, q db.Querier, cfg CredentialConfig, r
 		return HostPrincipal{}, ErrUnauthenticated
 	}
 	if err != nil {
-		return HostPrincipal{}, fmt.Errorf("authorize worker host %s credential: %w", payload.WorkerHostID, err)
+		return HostPrincipal{}, fmt.Errorf("authorize worker host %s secret: %w", payload.WorkerHostID, err)
 	}
 	principal := HostPrincipal{
 		HostID:            hostID,

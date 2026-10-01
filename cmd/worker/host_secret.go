@@ -21,25 +21,25 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const workerCredentialFileName = "worker-credential.json"
+const workerHostSecretFileName = "worker-host-secret.json"
 
-type workerCredentialFile struct {
+type workerHostSecretFile struct {
 	WorkerHostID     string    `json:"worker_host_id"`
 	WorkerHostSecret string    `json:"worker_host_secret"`
 	CreatedAt        time.Time `json:"created_at"`
 }
 
-func resolveWorkerHostCredential(ctx context.Context, cfg config.Worker, workDir string) (workerCredentialFile, error) {
-	path := workerCredentialPath(workDir, cfg.WorkerHostCredentialPath)
-	if credential, err := readWorkerHostCredential(path); err == nil {
-		return credential, nil
+func resolveWorkerHostSecret(ctx context.Context, cfg config.Worker, workDir string) (workerHostSecretFile, error) {
+	path := workerHostSecretPath(workDir, cfg.WorkerHostSecretPath)
+	if hostSecret, err := readWorkerHostSecret(path); err == nil {
+		return hostSecret, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return workerCredentialFile{}, err
+		return workerHostSecretFile{}, err
 	}
-	var credential workerCredentialFile
-	if err := withWorkerCredentialLock(path, func() error {
-		if stored, err := readWorkerHostCredential(path); err == nil {
-			credential = stored
+	var hostSecret workerHostSecretFile
+	if err := withWorkerHostSecretLock(path, func() error {
+		if stored, err := readWorkerHostSecret(path); err == nil {
+			hostSecret = stored
 			return nil
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
@@ -70,53 +70,53 @@ func resolveWorkerHostCredential(ctx context.Context, cfg config.Worker, workDir
 		if _, err := ids.Parse(registered.WorkerPoolID); err != nil {
 			return errors.New("worker enrollment response worker_pool_id is not a canonical UUIDv7")
 		}
-		credential = workerCredentialFile{
+		hostSecret = workerHostSecretFile{
 			WorkerHostID:     registered.WorkerHostID,
 			WorkerHostSecret: registered.WorkerHostSecret,
 			CreatedAt:        time.Now().UTC(),
 		}
-		if err := writeWorkerHostSecret(path, credential); err != nil {
+		if err := writeWorkerHostSecret(path, hostSecret); err != nil {
 			return err
 		}
 		return nil
 	}); err != nil {
-		return workerCredentialFile{}, err
+		return workerHostSecretFile{}, err
 	}
-	return credential, nil
+	return hostSecret, nil
 }
 
-func resolveAuthenticatedWorkerCredential(
+func resolveAuthenticatedWorkerHostSecret(
 	ctx context.Context,
 	cfg config.Worker,
 	workDir string,
-	authenticate func(workerCredentialFile) error,
-) (workerCredentialFile, error) {
-	credential, err := resolveWorkerHostCredential(ctx, cfg, workDir)
+	authenticate func(workerHostSecretFile) error,
+) (workerHostSecretFile, error) {
+	hostSecret, err := resolveWorkerHostSecret(ctx, cfg, workDir)
 	if err != nil {
-		return workerCredentialFile{}, err
+		return workerHostSecretFile{}, err
 	}
-	if err := authenticate(credential); err == nil {
-		return credential, nil
+	if err := authenticate(hostSecret); err == nil {
+		return hostSecret, nil
 	} else if !httpclient.IsStatus(err, http.StatusUnauthorized) {
-		return workerCredentialFile{}, fmt.Errorf("authenticate worker credential: %w", err)
+		return workerHostSecretFile{}, fmt.Errorf("authenticate worker host secret: %w", err)
 	}
-	path := workerCredentialPath(workDir, cfg.WorkerHostCredentialPath)
-	if err := removeWorkerCredentialIfMatch(path, credential); err != nil {
-		return workerCredentialFile{}, err
+	path := workerHostSecretPath(workDir, cfg.WorkerHostSecretPath)
+	if err := removeWorkerHostSecretIfMatch(path, hostSecret); err != nil {
+		return workerHostSecretFile{}, err
 	}
-	credential, err = resolveWorkerHostCredential(ctx, cfg, workDir)
+	hostSecret, err = resolveWorkerHostSecret(ctx, cfg, workDir)
 	if err != nil {
-		return workerCredentialFile{}, fmt.Errorf("replace rejected worker credential: %w", err)
+		return workerHostSecretFile{}, fmt.Errorf("replace rejected worker host secret: %w", err)
 	}
-	if err := authenticate(credential); err != nil {
-		return workerCredentialFile{}, fmt.Errorf("authenticate replaced worker credential: %w", err)
+	if err := authenticate(hostSecret); err != nil {
+		return workerHostSecretFile{}, fmt.Errorf("authenticate replaced worker host secret: %w", err)
 	}
-	return credential, nil
+	return hostSecret, nil
 }
 
-func removeWorkerCredentialIfMatch(path string, rejected workerCredentialFile) error {
-	return withWorkerCredentialLock(path, func() error {
-		current, err := readWorkerHostCredential(path)
+func removeWorkerHostSecretIfMatch(path string, rejected workerHostSecretFile) error {
+	return withWorkerHostSecretLock(path, func() error {
+		current, err := readWorkerHostSecret(path)
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
@@ -127,25 +127,25 @@ func removeWorkerCredentialIfMatch(path string, rejected workerCredentialFile) e
 			return nil
 		}
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("remove rejected worker instance credential: %w", err)
+			return fmt.Errorf("remove rejected worker host secret: %w", err)
 		}
 		if err := syncDirectory(filepath.Dir(path)); err != nil {
-			return fmt.Errorf("sync rejected worker instance credential removal: %w", err)
+			return fmt.Errorf("sync rejected worker host secret removal: %w", err)
 		}
 		return nil
 	})
 }
 
-func resolveWorkerControlPlaneCredential(cfg config.WorkerControlPlane, workDir string) (workerCredentialFile, error) {
-	path := workerCredentialPath(workDir, cfg.WorkerHostCredentialPath)
-	return readWorkerHostCredential(path)
+func resolveWorkerControlPlaneHostSecret(cfg config.WorkerControlPlane, workDir string) (workerHostSecretFile, error) {
+	path := workerHostSecretPath(workDir, cfg.WorkerHostSecretPath)
+	return readWorkerHostSecret(path)
 }
 
-func workerCredentialPath(workDir string, configured string) string {
+func workerHostSecretPath(workDir string, configured string) string {
 	if configured = strings.TrimSpace(configured); configured != "" {
 		return configured
 	}
-	return filepath.Join(workDir, workerCredentialFileName)
+	return filepath.Join(workDir, workerHostSecretFileName)
 }
 
 func readWorkerEnrollmentToken(path string) (string, error) {
@@ -191,57 +191,57 @@ func readWorkerEnrollmentToken(path string) (string, error) {
 	return secret, nil
 }
 
-func readWorkerHostCredential(path string) (workerCredentialFile, error) {
+func readWorkerHostSecret(path string) (workerHostSecretFile, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
-		return workerCredentialFile{}, err
+		return workerHostSecretFile{}, err
 	}
 	if !info.Mode().IsRegular() {
-		return workerCredentialFile{}, fmt.Errorf("worker instance credential %s is not a regular file", path)
+		return workerHostSecretFile{}, fmt.Errorf("worker host secret %s is not a regular file", path)
 	}
 	if info.Mode().Perm() != 0o600 {
-		return workerCredentialFile{}, fmt.Errorf("worker instance credential %s must have mode 0600", path)
+		return workerHostSecretFile{}, fmt.Errorf("worker host secret %s must have mode 0600", path)
 	}
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
-		return workerCredentialFile{}, fmt.Errorf("open worker instance credential %s without following links: %w", path, err)
+		return workerHostSecretFile{}, fmt.Errorf("open worker host secret %s without following links: %w", path, err)
 	}
 	file := os.NewFile(uintptr(fd), path)
 	defer file.Close()
 	opened, err := file.Stat()
 	if err != nil {
-		return workerCredentialFile{}, fmt.Errorf("inspect opened worker instance credential %s: %w", path, err)
+		return workerHostSecretFile{}, fmt.Errorf("inspect opened worker host secret %s: %w", path, err)
 	}
 	if !opened.Mode().IsRegular() || opened.Mode().Perm() != 0o600 {
-		return workerCredentialFile{}, fmt.Errorf("opened worker instance credential %s changed type or permissions", path)
+		return workerHostSecretFile{}, fmt.Errorf("opened worker host secret %s changed type or permissions", path)
 	}
 	bytes, err := io.ReadAll(file)
 	if err != nil {
-		return workerCredentialFile{}, fmt.Errorf("read worker instance credential %s: %w", path, err)
+		return workerHostSecretFile{}, fmt.Errorf("read worker host secret %s: %w", path, err)
 	}
-	var credential workerCredentialFile
-	if err := json.Unmarshal(bytes, &credential); err != nil {
-		return workerCredentialFile{}, fmt.Errorf("read worker instance credential %s: %w", path, err)
+	var hostSecret workerHostSecretFile
+	if err := json.Unmarshal(bytes, &hostSecret); err != nil {
+		return workerHostSecretFile{}, fmt.Errorf("read worker host secret %s: %w", path, err)
 	}
-	credential.WorkerHostID = strings.TrimSpace(credential.WorkerHostID)
-	credential.WorkerHostSecret = strings.TrimSpace(credential.WorkerHostSecret)
-	if credential.WorkerHostID == "" || credential.WorkerHostSecret == "" {
-		return workerCredentialFile{}, fmt.Errorf("worker instance credential %s is incomplete", path)
+	hostSecret.WorkerHostID = strings.TrimSpace(hostSecret.WorkerHostID)
+	hostSecret.WorkerHostSecret = strings.TrimSpace(hostSecret.WorkerHostSecret)
+	if hostSecret.WorkerHostID == "" || hostSecret.WorkerHostSecret == "" {
+		return workerHostSecretFile{}, fmt.Errorf("worker host secret %s is incomplete", path)
 	}
-	return credential, nil
+	return hostSecret, nil
 }
 
-func writeWorkerHostSecret(path string, credential workerCredentialFile) error {
+func writeWorkerHostSecret(path string, hostSecret workerHostSecretFile) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return fmt.Errorf("create worker instance credential directory: %w", err)
+		return fmt.Errorf("create worker host secret directory: %w", err)
 	}
-	bytes, err := json.MarshalIndent(credential, "", "  ")
+	bytes, err := json.MarshalIndent(hostSecret, "", "  ")
 	if err != nil {
-		return fmt.Errorf("encode worker instance credential: %w", err)
+		return fmt.Errorf("encode worker host secret: %w", err)
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
 	if err != nil {
-		return fmt.Errorf("create worker instance credential temp file: %w", err)
+		return fmt.Errorf("create worker host secret temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
 	defer func() {
@@ -249,40 +249,40 @@ func writeWorkerHostSecret(path string, credential workerCredentialFile) error {
 	}()
 	if _, err := tmp.Write(append(bytes, '\n')); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("write worker instance credential temp file: %w", err)
+		return fmt.Errorf("write worker host secret temp file: %w", err)
 	}
 	if err := tmp.Chmod(0600); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("chmod worker instance credential temp file: %w", err)
+		return fmt.Errorf("chmod worker host secret temp file: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("sync worker instance credential temp file: %w", err)
+		return fmt.Errorf("sync worker host secret temp file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close worker instance credential temp file: %w", err)
+		return fmt.Errorf("close worker host secret temp file: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("install worker instance credential file: %w", err)
+		return fmt.Errorf("install worker host secret file: %w", err)
 	}
 	if err := syncDirectory(filepath.Dir(path)); err != nil {
-		return fmt.Errorf("sync worker instance credential directory: %w", err)
+		return fmt.Errorf("sync worker host secret directory: %w", err)
 	}
 	return nil
 }
 
-func withWorkerCredentialLock(path string, fn func() error) error {
+func withWorkerHostSecretLock(path string, fn func() error) error {
 	lockPath := path + ".lock"
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
-		return fmt.Errorf("create worker instance credential lock directory: %w", err)
+		return fmt.Errorf("create worker host secret lock directory: %w", err)
 	}
 	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		return fmt.Errorf("open worker instance credential lock: %w", err)
+		return fmt.Errorf("open worker host secret lock: %w", err)
 	}
 	defer lock.Close()
 	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
-		return fmt.Errorf("lock worker instance credential: %w", err)
+		return fmt.Errorf("lock worker host secret: %w", err)
 	}
 	defer func() {
 		_ = unix.Flock(int(lock.Fd()), unix.LOCK_UN)

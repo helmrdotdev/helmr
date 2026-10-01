@@ -1,7 +1,7 @@
 // Package workergroup owns worker supply: worker groups, their pools and
-// hosts, worker host enrollment, epoch credentials and lifecycle, the
-// /capacity/v1 scaling protocol's operations and planning, and the
-// self-hosted bootstrap seed. Operations take domain inputs, own their
+// hosts, worker host enrollment, host secrets, host credentials and
+// lifecycle, the /capacity/v1 scaling protocol's operations and planning,
+// and the self-hosted bootstrap seed. Operations take domain inputs, own their
 // transactions and locks, and return the errors declared here; callers map
 // them to their transport.
 package workergroup

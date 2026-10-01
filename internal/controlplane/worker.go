@@ -42,7 +42,7 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		tokenHash = nil
 	}
-	enrolled, err := workergroup.EnrollHost(r.Context(), s.db, s.hostCredentials, workergroup.Enrollment{
+	enrolled, err := workergroup.EnrollHost(r.Context(), s.db, s.hostAuth, workergroup.Enrollment{
 		TokenHash: tokenHash, PoolName: request.PoolName, ResourceID: request.ResourceID,
 	})
 	if err != nil {
@@ -78,7 +78,7 @@ func (s *Server) workerIssueHostCredential(w http.ResponseWriter, r *http.Reques
 		writeError(w, err)
 		return
 	}
-	credential, err := workergroup.IssueHostCredential(r.Context(), s.db, s.hostCredentials, workergroup.HostCredentialRequest{
+	credential, err := workergroup.IssueHostCredential(r.Context(), s.db, s.hostAuth, workergroup.HostCredentialRequest{
 		HostID: request.WorkerHostID, Secret: request.WorkerHostSecret, ServiceID: request.ServiceID,
 	}, time.Now)
 	if err != nil {

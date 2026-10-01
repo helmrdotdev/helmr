@@ -17,11 +17,11 @@ import (
 func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
 	f := newInitialPublicationFixture(t)
 	handler := f.serve(t)
-	credential := seedHostCredential(t, f.Pool, f.worker.HostID)
+	hostSecret := seedHostSecret(t, f.Pool, f.worker.HostID)
 	httpServer := httptest.NewServer(handler)
 	defer httpServer.Close()
-	client := credential.client(t, httpServer.URL)
-	hostCredential := credential.issue(t, handler)
+	client := hostSecret.client(t, httpServer.URL)
+	hostCredential := hostSecret.issue(t, handler)
 	request := workerapi.InitialComputerKeyRequest{ComputerInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 1}
 	first, err := client.InitialComputerKey(t.Context(), request)
 	if err != nil {

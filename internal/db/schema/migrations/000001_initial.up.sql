@@ -414,7 +414,7 @@ CREATE TABLE worker_hosts (
     CONSTRAINT worker_hosts_lost_time_check CHECK ((status = 'lost') = (lost_at IS NOT NULL))
 );
 
-CREATE TABLE worker_host_credentials (
+CREATE TABLE worker_host_secrets (
     id UUID PRIMARY KEY,
     worker_group_id UUID NOT NULL,
     worker_host_id UUID NOT NULL,
@@ -2015,8 +2015,8 @@ CREATE INDEX worker_hosts_active_dispatch_idx
     ON worker_hosts (worker_group_id, id)
     WHERE status = 'active';
 
-CREATE UNIQUE INDEX worker_host_credentials_one_active_idx
-    ON worker_host_credentials (worker_host_id)
+CREATE UNIQUE INDEX worker_host_secrets_one_active_idx
+    ON worker_host_secrets (worker_host_id)
     WHERE revoked_at IS NULL;
 
 CREATE INDEX artifacts_environment_id_id_kind_idx ON artifacts(environment_id, id, kind);
@@ -2555,7 +2555,7 @@ ALTER TABLE worker_hosts ADD FOREIGN KEY (worker_group_id, worker_pool_id)
         REFERENCES worker_pools(worker_group_id, id)
         ON DELETE RESTRICT;
 
-ALTER TABLE worker_host_credentials ADD CONSTRAINT worker_host_credentials_worker_scope_fkey FOREIGN KEY (worker_host_id, worker_group_id)
+ALTER TABLE worker_host_secrets ADD CONSTRAINT worker_host_secrets_worker_scope_fkey FOREIGN KEY (worker_host_id, worker_group_id)
         REFERENCES worker_hosts(id, worker_group_id)
         ON DELETE RESTRICT;
 

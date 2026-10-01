@@ -72,9 +72,9 @@ func TestReadWorkerEnrollmentTokenRejectsUnsafeFiles(t *testing.T) {
 }
 
 // A control plane on another worker API version rejects the stored secret's
-// host credential request with a 409, not a 401: the worker keeps its stored
+// host hostSecret request with a 409, not a 401: the worker keeps its stored
 // secret and neither re-enrolls nor retries.
-func TestWorkerCredentialSurvivesAPIVersionMismatch(t *testing.T) {
+func TestWorkerHostSecretSurvivesAPIVersionMismatch(t *testing.T) {
 	requests := map[string]int{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests[r.URL.Path]++
@@ -84,15 +84,15 @@ func TestWorkerCredentialSurvivesAPIVersionMismatch(t *testing.T) {
 	}))
 	defer server.Close()
 	workDir := t.TempDir()
-	stored := workerCredentialFile{WorkerHostID: "host", WorkerHostSecret: "hlmr_wi_secret", CreatedAt: time.Now().UTC()}
-	path := workerCredentialPath(workDir, "")
+	stored := workerHostSecretFile{WorkerHostID: "host", WorkerHostSecret: "hlmr_wi_secret", CreatedAt: time.Now().UTC()}
+	path := workerHostSecretPath(workDir, "")
 	if err := writeWorkerHostSecret(path, stored); err != nil {
 		t.Fatal(err)
 	}
 	cfg := config.Worker{ControlPlaneURL: server.URL}
-	_, err := resolveAuthenticatedWorkerCredential(t.Context(), cfg, workDir, func(credential workerCredentialFile) error {
+	_, err := resolveAuthenticatedWorkerHostSecret(t.Context(), cfg, workDir, func(hostSecret workerHostSecretFile) error {
 		client, err := workerclient.New(server.URL, workerclient.WithHTTPClient(server.Client()),
-			workerclient.WithAuth(credential.WorkerHostID, credential.WorkerHostSecret), workerclient.WithService("service"))
+			workerclient.WithAuth(hostSecret.WorkerHostID, hostSecret.WorkerHostSecret), workerclient.WithService("service"))
 		if err != nil {
 			return err
 		}
@@ -102,10 +102,10 @@ func TestWorkerCredentialSurvivesAPIVersionMismatch(t *testing.T) {
 	if !errors.As(err, &mismatch) || mismatch.Code != workerapi.APIVersionMismatchCode {
 		t.Fatalf("error = %v, want version mismatch", err)
 	}
-	if kept, err := readWorkerHostCredential(path); err != nil || kept.WorkerHostID != stored.WorkerHostID || kept.WorkerHostSecret != stored.WorkerHostSecret {
-		t.Fatalf("stored credential = %+v, err = %v; want it kept", kept, err)
+	if kept, err := readWorkerHostSecret(path); err != nil || kept.WorkerHostID != stored.WorkerHostID || kept.WorkerHostSecret != stored.WorkerHostSecret {
+		t.Fatalf("stored host secret = %+v, err = %v; want it kept", kept, err)
 	}
-	if len(requests) != 1 || requests["/worker/v1/instance/credential"] != 1 {
-		t.Fatalf("requests = %v, want one host credential request", requests)
+	if len(requests) != 1 || requests["/worker/v1/instance/hostSecret"] != 1 {
+		t.Fatalf("requests = %v, want one host hostSecret request", requests)
 	}
 }

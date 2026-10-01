@@ -61,7 +61,7 @@ func newActorExecution(t *testing.T, input json.RawMessage, start bool, configur
 		Execution:           f,
 		httpPostgresFixture: httpPostgresFixture{pool: f.Pool, queries: db.New(f.Pool), handler: handler, keys: keys},
 		principals:          principals,
-		workerCredential:    seedHostCredential(t, f.Pool, f.WorkerID).issue(t, handler),
+		workerCredential:    seedHostSecret(t, f.Pool, f.WorkerID).issue(t, handler),
 	}
 }
 

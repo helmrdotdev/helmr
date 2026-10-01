@@ -164,8 +164,9 @@ The Worker reads its Worker Group enrollment token from the strict-permission
 token file and presents it as a Bearer credential over TLS. The token selects
 the Worker Group; the Worker does not configure a group ID. Control Plane
 validates the Pool enrollment against that group, records token use, creates
-the authoritative Worker-instance identity, and issues a renewable
-per-instance credential stored at `WORKER_INSTANCE_CREDENTIAL_PATH`.
+the authoritative Worker-instance identity, and issues a per-instance host
+secret stored at `WORKER_HOST_SECRET_PATH`. The Worker exchanges that host
+secret for short-lived host credentials that authenticate its requests.
 `WORKER_RESOURCE_ID` remains an opaque deployment-owned locator for the
 physical Worker. Provider identity and infrastructure inventory are deployment
 responsibilities rather than Control Plane authentication inputs.

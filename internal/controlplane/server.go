@@ -81,7 +81,7 @@ type Server struct {
 	computerFencingKey    disk.FencingKey
 	eventStream           SubjectEventReader
 	telemetryReader       telemetry.Reader
-	hostCredentials       workergroup.CredentialConfig
+	hostAuth              workergroup.HostAuthConfig
 	workerEnrollmentGuard *workerEnrollmentGuard
 	capacityTokenHash     []byte
 	setupToken            string
@@ -187,7 +187,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	hostCredentials, err := workergroup.NewCredentialConfig(authKeys.WorkerHost, cfg.WorkerHostCredentialSigningKey, cfg.WorkerHostCredentialTTL)
+	hostAuth, err := workergroup.NewHostAuthConfig(authKeys.WorkerHost, cfg.WorkerHostCredentialSigningKey, cfg.WorkerHostCredentialTTL)
 	if err != nil {
 		return nil, err
 	}
@@ -247,7 +247,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		computerFencingKey:    cfg.ComputerFencingKey,
 		eventStream:           cfg.EventStream,
 		telemetryReader:       telemetryReader,
-		hostCredentials:       hostCredentials,
+		hostAuth:              hostAuth,
 		workerEnrollmentGuard: newWorkerEnrollmentGuard(),
 		capacityTokenHash:     capacityTokenHash,
 		setupToken:            cfg.SetupToken,

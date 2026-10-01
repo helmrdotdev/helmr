@@ -30,8 +30,8 @@ func TestTaskCompletionRefreshesAuthenticationWithoutChangingReceipt(t *testing.
 				t.Fatal(err)
 			}
 			server := &Server{db: db.New(f.Pool), tx: f.Pool}
-			credential := seedHostCredential(t, f.Pool, f.WorkerID)
-			server.hostCredentials = testHostCredentials(t)
+			hostSecret := seedHostSecret(t, f.Pool, f.WorkerID)
+			server.hostAuth = testHostAuthConfig(t)
 			server.log = slog.New(slog.NewTextHandler(io.Discard, nil))
 			drain := func(ctx context.Context) error {
 				if transition == "group" {
@@ -43,12 +43,12 @@ func TestTaskCompletionRefreshesAuthenticationWithoutChangingReceipt(t *testing.
 					ExpectedEpoch: pgtype.Int8{Int64: 1, Valid: true}, ExpectedClaimVersion: 1,
 				})
 				if err == nil && transition == "revoked" {
-					_, err = f.Pool.Exec(ctx, `UPDATE worker_host_credentials SET revoked_at=now() WHERE worker_host_id=$1`, f.WorkerID)
+					_, err = f.Pool.Exec(ctx, `UPDATE worker_host_secrets SET revoked_at=now() WHERE worker_host_id=$1`, f.WorkerID)
 				}
 				return err
 			}
 			var requestMu sync.Mutex
-			var tokenRequests int
+			var hostCredentialRequests int
 			var receiptBodies [][]byte
 			var statuses []int
 			complete := server.requireWorker(http.HandlerFunc(server.workerCompleteTask))
@@ -56,7 +56,7 @@ func TestTaskCompletionRefreshesAuthenticationWithoutChangingReceipt(t *testing.
 				requestMu.Lock()
 				defer requestMu.Unlock()
 				if r.URL.Path == "/worker/v1/instance/credential" {
-					tokenRequests++
+					hostCredentialRequests++
 					server.workerIssueHostCredential(w, r)
 					return
 				}
@@ -84,13 +84,13 @@ func TestTaskCompletionRefreshesAuthenticationWithoutChangingReceipt(t *testing.
 				_, _ = w.Write(response.Body.Bytes())
 			}))
 			defer httpServer.Close()
-			client := credential.client(t, httpServer.URL)
+			client := hostSecret.client(t, httpServer.URL)
 			err = client.CompleteTask(ctx, request)
 			requestMu.Lock()
 			defer requestMu.Unlock()
 			if transition == "revoked" {
-				if !httpclient.IsStatus(err, http.StatusUnauthorized) || tokenRequests != 2 || len(statuses) != 1 || statuses[0] != http.StatusUnauthorized {
-					t.Fatalf("revoked credential completion: err=%v token requests=%d statuses=%v", err, tokenRequests, statuses)
+				if !httpclient.IsStatus(err, http.StatusUnauthorized) || hostCredentialRequests != 2 || len(statuses) != 1 || statuses[0] != http.StatusUnauthorized {
+					t.Fatalf("revoked host credential completion: err=%v host credential requests=%d statuses=%v", err, hostCredentialRequests, statuses)
 				}
 				var unchanged bool
 				if err := f.Pool.QueryRow(ctx, `SELECT r.status='running' AND l.status='finalizing' AND l.terminal_at IS NULL FROM runs r JOIN run_leases l ON l.id=r.current_run_lease_id WHERE r.id=$1`, work.RunID).Scan(&unchanged); err != nil || !unchanged {
@@ -102,8 +102,8 @@ func TestTaskCompletionRefreshesAuthenticationWithoutChangingReceipt(t *testing.
 			if err != nil {
 				t.Fatalf("complete through Worker client: %v; statuses=%v", err, statuses)
 			}
-			if tokenRequests != 2 || len(statuses) != 2 || statuses[0] != http.StatusUnauthorized || statuses[1] != http.StatusNoContent {
-				t.Fatalf("token requests=%d completion statuses=%v", tokenRequests, statuses)
+			if hostCredentialRequests != 2 || len(statuses) != 2 || statuses[0] != http.StatusUnauthorized || statuses[1] != http.StatusNoContent {
+				t.Fatalf("host credential requests=%d completion statuses=%v", hostCredentialRequests, statuses)
 			}
 			if !bytes.Equal(receiptBodies[0], receiptBodies[1]) {
 				t.Fatal("completion receipt changed during authentication replay")

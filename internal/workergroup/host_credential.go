@@ -28,7 +28,7 @@ var (
 type hostCredentialClaims struct {
 	WorkerGroupID     string
 	WorkerHostID      string
-	CredentialID      string
+	HostSecretID      string
 	WorkerEpoch       int64
 	ClaimVersion      int64
 	GroupClaimVersion int64
@@ -40,7 +40,7 @@ type hostCredentialClaims struct {
 type jwtClaims struct {
 	WorkerGroupID     string `json:"worker_group_id"`
 	WorkerHostID      string `json:"worker_host_id"`
-	CredentialID      string `json:"credential_id"`
+	HostSecretID      string `json:"host_secret_id"`
 	WorkerEpoch       int64  `json:"worker_epoch"`
 	ClaimVersion      int64  `json:"claim_version"`
 	GroupClaimVersion int64  `json:"group_claim_version"`
@@ -56,7 +56,7 @@ func signHostCredential(signingKey []byte, payload hostCredentialClaims) (string
 	}
 	claims := jwtClaims{
 		WorkerGroupID: payload.WorkerGroupID, WorkerHostID: payload.WorkerHostID,
-		CredentialID: payload.CredentialID, WorkerEpoch: payload.WorkerEpoch,
+		HostSecretID: payload.HostSecretID, WorkerEpoch: payload.WorkerEpoch,
 		ClaimVersion: payload.ClaimVersion, GroupClaimVersion: payload.GroupClaimVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer: HostCredentialIssuer, Subject: payload.WorkerHostID,
@@ -112,7 +112,7 @@ func verifyHostCredential(signingKey []byte, rawCredential string, now time.Time
 
 	payload := hostCredentialClaims{
 		WorkerGroupID: claims.WorkerGroupID, WorkerHostID: claims.WorkerHostID,
-		CredentialID: claims.CredentialID, WorkerEpoch: claims.WorkerEpoch,
+		HostSecretID: claims.HostSecretID, WorkerEpoch: claims.WorkerEpoch,
 		ClaimVersion: claims.ClaimVersion, GroupClaimVersion: claims.GroupClaimVersion,
 	}
 	if claims.IssuedAt != nil {
@@ -147,8 +147,8 @@ func validateHostCredentialClaims(payload hostCredentialClaims) error {
 	if payload.WorkerHostID == "" || strings.TrimSpace(payload.WorkerHostID) != payload.WorkerHostID {
 		return errors.New("worker_host_id must be nonempty and canonical")
 	}
-	if payload.CredentialID == "" || strings.TrimSpace(payload.CredentialID) != payload.CredentialID {
-		return errors.New("credential_id must be nonempty and canonical")
+	if payload.HostSecretID == "" || strings.TrimSpace(payload.HostSecretID) != payload.HostSecretID {
+		return errors.New("host_secret_id must be nonempty and canonical")
 	}
 	if payload.WorkerEpoch <= 0 {
 		return errors.New("worker_epoch must be positive")

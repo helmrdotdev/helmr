@@ -48,7 +48,7 @@ func TestHostCredentialUsesCanonicalClaims(t *testing.T) {
 	wants := map[string]any{
 		"iss": "helmr-controlplane", "sub": "worker-1", "aud": []any{"helmr-worker"},
 		"worker_group_id": "01900000-0000-7000-8000-000000000501", "worker_host_id": "worker-1",
-		"credential_id": "credential-1", "worker_epoch": float64(7),
+		"host_secret_id": "host-secret-1", "worker_epoch": float64(7),
 		"claim_version": float64(2), "group_claim_version": float64(4),
 	}
 	for key, want := range wants {
@@ -67,7 +67,7 @@ func TestHostCredentialValidation(t *testing.T) {
 	}{
 		{"group", func(c *hostCredentialClaims) { c.WorkerGroupID = " " }, "worker_group_id must be nonempty and canonical"},
 		{"worker", func(c *hostCredentialClaims) { c.WorkerHostID = " " }, "worker_host_id must be nonempty and canonical"},
-		{"credential", func(c *hostCredentialClaims) { c.CredentialID = " " }, "credential_id must be nonempty and canonical"},
+		{"host secret", func(c *hostCredentialClaims) { c.HostSecretID = " " }, "host_secret_id must be nonempty and canonical"},
 		{"epoch", func(c *hostCredentialClaims) { c.WorkerEpoch = 0 }, "worker_epoch must be positive"},
 		{"claim version", func(c *hostCredentialClaims) { c.ClaimVersion = 0 }, "claim_version must be positive"},
 		{"group version", func(c *hostCredentialClaims) { c.GroupClaimVersion = 0 }, "group_claim_version must be positive"},
@@ -145,7 +145,7 @@ func TestVerifyHostCredentialRejectsInvalidCredentials(t *testing.T) {
 
 func validHostCredentialClaims(now time.Time) hostCredentialClaims {
 	return hostCredentialClaims{
-		WorkerGroupID: "01900000-0000-7000-8000-000000000501", WorkerHostID: "worker-1", CredentialID: "credential-1", WorkerEpoch: 7,
+		WorkerGroupID: "01900000-0000-7000-8000-000000000501", WorkerHostID: "worker-1", HostSecretID: "host-secret-1", WorkerEpoch: 7,
 		ClaimVersion: 2, GroupClaimVersion: 4,
 		IssuedAt: now, ExpiresAt: now.Add(time.Hour),
 	}
@@ -155,7 +155,7 @@ func signHostCredentialClaims(t *testing.T, secret []byte, now time.Time, edit f
 	t.Helper()
 	c := validHostCredentialClaims(now)
 	claims := jwtClaims{
-		WorkerGroupID: c.WorkerGroupID, WorkerHostID: c.WorkerHostID, CredentialID: c.CredentialID,
+		WorkerGroupID: c.WorkerGroupID, WorkerHostID: c.WorkerHostID, HostSecretID: c.HostSecretID,
 		WorkerEpoch: c.WorkerEpoch, ClaimVersion: c.ClaimVersion,
 		GroupClaimVersion: c.GroupClaimVersion,
 		RegisteredClaims:  jwt.RegisteredClaims{Issuer: HostCredentialIssuer, Subject: c.WorkerHostID, Audience: jwt.ClaimStrings{HostCredentialAudience}, IssuedAt: jwt.NewNumericDate(c.IssuedAt), ExpiresAt: jwt.NewNumericDate(c.ExpiresAt)},

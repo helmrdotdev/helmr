@@ -290,11 +290,11 @@ func newPreparationErrorServer(t *testing.T, stage preparationStage) *preparatio
 		cfg.CAS = s.objects
 		cfg.Log = slog.New(slog.NewJSONHandler(s.logs, nil))
 	})
-	credential := seedHostCredential(t, f.Pool, f.worker.HostID)
+	hostSecret := seedHostSecret(t, f.Pool, f.worker.HostID)
 	if stage >= preparationRootCertified {
 		server := httptest.NewServer(s.handler)
 		t.Cleanup(server.Close)
-		client := credential.client(t, server.URL)
+		client := hostSecret.client(t, server.URL)
 		_, root, object := f.certifyInitialRoot(t, client)
 		s.object = object
 		s.version = workerapi.InitialComputerVersionRequest{ComputerInstanceID: s.instance, DesiredVersion: 1, Root: root, Config: oci.RuntimeConfig{User: "root"}}
@@ -304,7 +304,7 @@ func newPreparationErrorServer(t *testing.T, stage preparationStage) *preparatio
 			}
 		}
 	}
-	s.hostCredential = credential.issue(t, s.handler)
+	s.hostCredential = hostSecret.issue(t, s.handler)
 	s.ctx, s.cancel = context.WithCancel(t.Context())
 	t.Cleanup(s.cancel)
 	s.keys.mu.Lock()

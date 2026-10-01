@@ -182,9 +182,9 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 	secretHash := []byte("epoch-liveness-secret")
 	enrollTestWorker(t, ctx, q, workerID, "epoch-liveness-worker", secretHash)
 
-	authenticate := func(service uuid.UUID) db.AuthenticateWorkerHostCredentialRow {
+	authenticate := func(service uuid.UUID) db.AuthenticateWorkerHostSecretRow {
 		t.Helper()
-		row, err := q.AuthenticateWorkerHostCredential(ctx, db.AuthenticateWorkerHostCredentialParams{
+		row, err := q.AuthenticateWorkerHostSecret(ctx, db.AuthenticateWorkerHostSecretParams{
 			WorkerHostID: pgvalue.UUID(workerID), SecretHash: secretHash,
 			ServiceID: pgvalue.UUID(service),
 		})
@@ -216,18 +216,18 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 			t.Fatalf("unobserved active worker appeared in capacity bins: %+v", bin)
 		}
 	}
-	authorization := db.AuthorizeWorkerActivationCredentialParams{
-		CredentialID: firstEpoch.ID, ClaimVersion: firstEpoch.ClaimVersion,
+	authorization := db.AuthorizeActivatingWorkerHostSecretParams{
+		HostSecretID: firstEpoch.ID, ClaimVersion: firstEpoch.ClaimVersion,
 		GroupClaimVersion: firstEpoch.GroupClaimVersion, WorkerEpoch: firstEpoch.CurrentEpoch,
 	}
-	if authorized, err := q.AuthorizeWorkerActivationCredential(ctx, authorization); err != nil {
+	if authorized, err := q.AuthorizeActivatingWorkerHostSecret(ctx, authorization); err != nil {
 		t.Fatal(err)
 	} else if authorized.WorkerStatus != db.WorkerHostStatusActive {
 		t.Fatalf("activation replay authorization state = %q, want active", authorized.WorkerStatus)
 	}
 	staleAuthorization := authorization
 	staleAuthorization.WorkerEpoch.Int64++
-	if _, err := q.AuthorizeWorkerActivationCredential(ctx, staleAuthorization); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := q.AuthorizeActivatingWorkerHostSecret(ctx, staleAuthorization); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("stale activation authorization error = %v, want pgx.ErrNoRows", err)
 	}
 	changed := activationParams
@@ -289,9 +289,9 @@ func TestDrainingWorkerActivationSurvivesRestartAndLostResponse(t *testing.T) {
 	workerID := uuid.NewV7()
 	secretHash := []byte("draining-restart-secret")
 	enrollTestWorker(t, ctx, q, workerID, "draining-restart-worker", secretHash)
-	authenticate := func(serviceID uuid.UUID) db.AuthenticateWorkerHostCredentialRow {
+	authenticate := func(serviceID uuid.UUID) db.AuthenticateWorkerHostSecretRow {
 		t.Helper()
-		row, err := q.AuthenticateWorkerHostCredential(ctx, db.AuthenticateWorkerHostCredentialParams{
+		row, err := q.AuthenticateWorkerHostSecret(ctx, db.AuthenticateWorkerHostSecretParams{
 			WorkerHostID: pgvalue.UUID(workerID),
 			SecretHash:   secretHash,
 			ServiceID:    pgvalue.UUID(serviceID),
@@ -301,10 +301,10 @@ func TestDrainingWorkerActivationSurvivesRestartAndLostResponse(t *testing.T) {
 		}
 		return row
 	}
-	authorizeActivation := func(row db.AuthenticateWorkerHostCredentialRow) db.AuthorizeWorkerActivationCredentialRow {
+	authorizeActivation := func(row db.AuthenticateWorkerHostSecretRow) db.AuthorizeActivatingWorkerHostSecretRow {
 		t.Helper()
-		authorized, err := q.AuthorizeWorkerActivationCredential(ctx, db.AuthorizeWorkerActivationCredentialParams{
-			CredentialID:      row.ID,
+		authorized, err := q.AuthorizeActivatingWorkerHostSecret(ctx, db.AuthorizeActivatingWorkerHostSecretParams{
+			HostSecretID:      row.ID,
 			ClaimVersion:      row.ClaimVersion,
 			GroupClaimVersion: row.GroupClaimVersion,
 			WorkerEpoch:       row.CurrentEpoch,
@@ -369,13 +369,13 @@ func TestDrainingWorkerActivationSurvivesRestartAndLostResponse(t *testing.T) {
 	if cleared.WorkerStatus != db.WorkerHostStatusDraining {
 		t.Fatalf("restarted draining authorization = %+v", cleared)
 	}
-	staleAuthorization := db.AuthorizeWorkerActivationCredentialParams{
-		CredentialID:      nextEpoch.ID,
+	staleAuthorization := db.AuthorizeActivatingWorkerHostSecretParams{
+		HostSecretID:      nextEpoch.ID,
 		ClaimVersion:      nextEpoch.ClaimVersion,
 		GroupClaimVersion: nextEpoch.GroupClaimVersion,
 		WorkerEpoch:       firstEpoch.CurrentEpoch,
 	}
-	if _, err := q.AuthorizeWorkerActivationCredential(ctx, staleAuthorization); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := q.AuthorizeActivatingWorkerHostSecret(ctx, staleAuthorization); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("stale draining epoch authorization error = %v, want pgx.ErrNoRows", err)
 	}
 
@@ -511,13 +511,13 @@ func TestDeploymentWorkerHostLossIsFencedAndReplaySafe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	credentialID := uuid.NewV7()
+	hostSecretID := uuid.NewV7()
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO worker_host_credentials (
+		INSERT INTO worker_host_secrets (
 			id, worker_group_id, worker_host_id, key_prefix, claim_version,
 			secret_hash
 		) VALUES ($1, $2, $3, $4, $5, $6)
-	`, credentialID, dbtest.DefaultWorkerGroupID, workerID, uuid.New().String(), initial.ClaimVersion, []byte("loss-secret")); err != nil {
+	`, hostSecretID, dbtest.DefaultWorkerGroupID, workerID, uuid.New().String(), initial.ClaimVersion, []byte("loss-secret")); err != nil {
 		t.Fatal(err)
 	}
 	lost, err := q.MarkWorkerHostLost(ctx, db.MarkWorkerHostLostParams{
@@ -547,7 +547,7 @@ func TestDeploymentWorkerHostLossIsFencedAndReplaySafe(t *testing.T) {
 		t.Fatalf("stale/new loss error = %v", err)
 	}
 	var revoked bool
-	if err := pool.QueryRow(ctx, `SELECT revoked_at IS NOT NULL FROM worker_host_credentials WHERE id = $1`, credentialID).Scan(&revoked); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT revoked_at IS NOT NULL FROM worker_host_secrets WHERE id = $1`, hostSecretID).Scan(&revoked); err != nil {
 		t.Fatal(err)
 	}
 	if !revoked {
@@ -582,7 +582,7 @@ func TestDeploymentWorkerHostLossTerminallyFencesRegisteringIdentity(t *testing.
 	if lost.Status != db.WorkerHostStatusLost || lost.CurrentEpoch.Valid || lost.ClaimVersion != initial.ClaimVersion+1 {
 		t.Fatalf("lost lifecycle = %+v, want terminal pre-epoch fence", lost)
 	}
-	if _, err := q.AuthenticateWorkerHostCredential(ctx, db.AuthenticateWorkerHostCredentialParams{
+	if _, err := q.AuthenticateWorkerHostSecret(ctx, db.AuthenticateWorkerHostSecretParams{
 		WorkerHostID: credential.WorkerHostID, SecretHash: secretHash,
 		ServiceID: pgvalue.NewUUIDv7(),
 	}); !errors.Is(err, pgx.ErrNoRows) {
@@ -626,7 +626,7 @@ func enrollmentParams(workerID uuid.UUID, resourceID string, secretHash []byte) 
 		TokenHash:    make([]byte, 32),
 		WorkerPoolID: pgvalue.UUID(uuid.MustParse(dbtest.DefaultWorkerPoolID)), PoolName: "default",
 		WorkerHostID: pgvalue.UUID(workerID), ResourceID: resourceID,
-		CurrentServiceID: pgvalue.NewUUIDv7(), CredentialID: pgvalue.NewUUIDv7(),
+		CurrentServiceID: pgvalue.NewUUIDv7(), HostSecretID: pgvalue.NewUUIDv7(),
 		KeyPrefix: uuid.New().String(), SecretHash: secretHash,
 	}
 }

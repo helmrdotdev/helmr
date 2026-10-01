@@ -656,13 +656,13 @@ func TestLoadWorkerReadsExecutionSlots(t *testing.T) {
 
 func TestLoadWorkerControlPlaneReadsOnlyControlAuth(t *testing.T) {
 	t.Setenv("CONTROL_PLANE_URL", "https://api.example.test")
-	t.Setenv("WORKER_INSTANCE_CREDENTIAL_PATH", "/run/helmr/worker-credential.json")
+	t.Setenv("WORKER_HOST_SECRET_PATH", "/run/helmr/worker-host-secret.json")
 
 	cfg, err := LoadWorkerControlPlane()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ControlPlaneURL != "https://api.example.test" || cfg.WorkerHostCredentialPath != "/run/helmr/worker-credential.json" || cfg.PollEvery <= 0 {
+	if cfg.ControlPlaneURL != "https://api.example.test" || cfg.WorkerHostSecretPath != "/run/helmr/worker-host-secret.json" || cfg.PollEvery <= 0 {
 		t.Fatalf("config = %+v", cfg)
 	}
 }

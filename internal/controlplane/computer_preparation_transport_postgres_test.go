@@ -82,7 +82,7 @@ func newServedClaimsRace(t *testing.T, f initialPublicationFixture, raced string
 		race.mu.Lock()
 		defer race.mu.Unlock()
 		if r.URL.Path == "/worker/v1/instance/credential" {
-			race.tokens++
+			race.hostCredentials++
 			handler.ServeHTTP(w, r)
 			return
 		}
@@ -108,7 +108,7 @@ func newServedClaimsRace(t *testing.T, f initialPublicationFixture, raced string
 		_, _ = w.Write(response.Body.Bytes())
 	}))
 	t.Cleanup(httpServer.Close)
-	race.client = seedHostCredential(t, f.Pool, f.worker.HostID).client(t, httpServer.URL)
+	race.client = seedHostSecret(t, f.Pool, f.worker.HostID).client(t, httpServer.URL)
 	return race
 }
 

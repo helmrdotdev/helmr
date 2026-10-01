@@ -34,7 +34,7 @@ DROP TABLE IF EXISTS
     deployment_definitions,
     deployments,
     artifacts,
-    worker_host_credentials,
+    worker_host_secrets,
     worker_hosts,
     worker_pool_cpu_shapes,
     worker_pools,
