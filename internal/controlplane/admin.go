@@ -20,7 +20,7 @@ import (
 func (s *Server) adminListRegions(w http.ResponseWriter, r *http.Request) {
 	rows, err := region.List(r.Context(), s.db)
 	if err != nil {
-		s.writeWorkerGroupError(w, err)
+		s.writeRegionError(w, err)
 		return
 	}
 	response := api.AdminRegionsResponse{Regions: make([]api.AdminRegion, 0, len(rows))}
@@ -33,7 +33,7 @@ func (s *Server) adminListRegions(w http.ResponseWriter, r *http.Request) {
 func (s *Server) adminGetRegion(w http.ResponseWriter, r *http.Request) {
 	row, err := region.Get(r.Context(), s.db, chi.URLParam(r, "regionID"))
 	if err != nil {
-		s.writeWorkerGroupError(w, err)
+		s.writeRegionError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, adminRegion(row))
@@ -49,7 +49,7 @@ func (s *Server) adminCreateRegion(w http.ResponseWriter, r *http.Request) {
 		ID: request.ID, DisplayName: request.DisplayName, Location: request.Location,
 	})
 	if err != nil {
-		s.writeWorkerGroupError(w, err)
+		s.writeRegionError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, adminRegion(created))
@@ -65,7 +65,7 @@ func (s *Server) adminUpdateRegion(w http.ResponseWriter, r *http.Request) {
 		DisplayName: request.DisplayName, Location: request.Location,
 	})
 	if err != nil {
-		s.writeWorkerGroupError(w, err)
+		s.writeRegionError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, adminRegion(updated))
