@@ -47,7 +47,7 @@ locals {
         health_check_grace_period_seconds               = 900
         launch_lifecycle_heartbeat_timeout_seconds      = var.worker_launch_timeout_seconds
         termination_lifecycle_heartbeat_timeout_seconds = 180
-        termination_drain_timeout_seconds               = 1800
+        termination_wait_timeout_seconds                = 1800
         lifecycle_heartbeat_interval_seconds            = 60
         termination_policies                            = ["OldestLaunchTemplate", "OldestInstance"]
         protect_from_scale_in                           = true
@@ -243,7 +243,7 @@ module "worker_group" {
   health_check_grace_period_seconds               = local.worker_generations[each.key].lifecycle.health_check_grace_period_seconds
   launch_lifecycle_heartbeat_timeout_seconds      = local.worker_generations[each.key].lifecycle.launch_lifecycle_heartbeat_timeout_seconds
   termination_lifecycle_heartbeat_timeout_seconds = local.worker_generations[each.key].lifecycle.termination_lifecycle_heartbeat_timeout_seconds
-  termination_drain_timeout_seconds               = local.worker_generations[each.key].lifecycle.termination_drain_timeout_seconds
+  termination_wait_timeout_seconds                = local.worker_generations[each.key].lifecycle.termination_wait_timeout_seconds
   lifecycle_heartbeat_interval_seconds            = local.worker_generations[each.key].lifecycle.lifecycle_heartbeat_interval_seconds
   min_size                                        = local.worker_generations[each.key].min_size
   max_size                                        = local.worker_generations[each.key].max_size

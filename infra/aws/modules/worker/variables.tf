@@ -72,7 +72,7 @@ variable "sealed_provider_definition" {
     health_check_grace_period_seconds               = number
     launch_lifecycle_heartbeat_timeout_seconds      = number
     termination_lifecycle_heartbeat_timeout_seconds = number
-    termination_drain_timeout_seconds               = number
+    termination_wait_timeout_seconds                = number
     lifecycle_heartbeat_interval_seconds            = number
     termination_policies                            = list(string)
     protect_from_scale_in                           = bool
@@ -100,7 +100,7 @@ variable "sealed_provider_definition" {
       var.sealed_provider_definition.health_check_grace_period_seconds > 0 &&
       var.sealed_provider_definition.launch_lifecycle_heartbeat_timeout_seconds > var.sealed_provider_definition.lifecycle_heartbeat_interval_seconds &&
       var.sealed_provider_definition.termination_lifecycle_heartbeat_timeout_seconds >= var.sealed_provider_definition.lifecycle_heartbeat_interval_seconds * 3 &&
-      var.sealed_provider_definition.termination_drain_timeout_seconds > 0 &&
+      var.sealed_provider_definition.termination_wait_timeout_seconds > 0 &&
       length(var.sealed_provider_definition.termination_policies) > 0 &&
       contains(["EC2", "ELB", "VPC_LATTICE"], var.sealed_provider_definition.health_check_type) &&
       var.sealed_provider_definition.instance_refresh_strategy == "Rolling" &&
@@ -157,8 +157,8 @@ variable "termination_lifecycle_heartbeat_timeout_seconds" {
   }
 }
 
-variable "termination_drain_timeout_seconds" {
-  description = "Maximum seconds worker drain should wait for active executions."
+variable "termination_wait_timeout_seconds" {
+  description = "Maximum observation wait after this provider instance has entered termination. Expiry never cancels a planned drain."
   type        = number
   default     = 1800
 }

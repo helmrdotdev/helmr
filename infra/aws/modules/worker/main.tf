@@ -67,7 +67,7 @@ locals {
     launch_lifecycle_hook_name           = local.launch_hook_name
     launch_readiness_timeout_seconds     = var.launch_lifecycle_heartbeat_timeout_seconds
     termination_lifecycle_hook_name      = local.termination_hook_name
-    termination_drain_timeout_seconds    = var.termination_drain_timeout_seconds
+    termination_wait_timeout_seconds     = var.termination_wait_timeout_seconds
     lifecycle_heartbeat_interval_seconds = var.lifecycle_heartbeat_interval_seconds
     worker_work_dir                      = local.base_worker_environment.WORKER_WORK_DIR
     aws_region                           = data.aws_region.current.region
@@ -205,7 +205,7 @@ locals {
   worker_health_check_grace_period_seconds               = var.sealed_provider_definition == null ? var.health_check_grace_period_seconds : var.sealed_provider_definition.health_check_grace_period_seconds
   worker_launch_lifecycle_heartbeat_timeout_seconds      = var.sealed_provider_definition == null ? var.launch_lifecycle_heartbeat_timeout_seconds : var.sealed_provider_definition.launch_lifecycle_heartbeat_timeout_seconds
   worker_termination_lifecycle_heartbeat_timeout_seconds = var.sealed_provider_definition == null ? var.termination_lifecycle_heartbeat_timeout_seconds : var.sealed_provider_definition.termination_lifecycle_heartbeat_timeout_seconds
-  worker_termination_drain_timeout_seconds               = var.sealed_provider_definition == null ? var.termination_drain_timeout_seconds : var.sealed_provider_definition.termination_drain_timeout_seconds
+  worker_termination_wait_timeout_seconds                = var.sealed_provider_definition == null ? var.termination_wait_timeout_seconds : var.sealed_provider_definition.termination_wait_timeout_seconds
   worker_lifecycle_heartbeat_interval_seconds            = var.sealed_provider_definition == null ? var.lifecycle_heartbeat_interval_seconds : var.sealed_provider_definition.lifecycle_heartbeat_interval_seconds
   worker_termination_policies                            = var.sealed_provider_definition == null ? ["OldestLaunchTemplate", "OldestInstance"] : var.sealed_provider_definition.termination_policies
   worker_protect_from_scale_in                           = var.sealed_provider_definition == null ? true : var.sealed_provider_definition.protect_from_scale_in

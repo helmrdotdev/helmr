@@ -84,7 +84,7 @@ asg_name='${autoscaling_group_name}'
 launch_hook='${launch_lifecycle_hook_name}'
 launch_timeout='${launch_readiness_timeout_seconds}'
 termination_hook='${termination_lifecycle_hook_name}'
-drain_timeout='${termination_drain_timeout_seconds}s'
+termination_wait_timeout='${termination_wait_timeout_seconds}s'
 heartbeat_interval='${lifecycle_heartbeat_interval_seconds}'
 worker_binary='${worker_binary_path}'
 drain_marker='${worker_work_dir}/drain-complete'
@@ -113,6 +113,9 @@ aws_region() {
   metadata_get dynamic/instance-identity/document | sed -n 's/.*"region"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
 }
 
+provider_instance_id="$(instance_id)"
+[ -n "$provider_instance_id" ] || exit 1
+
 export AWS_REGION="$(aws_region)"
 export AWS_DEFAULT_REGION="$AWS_REGION"
 
@@ -125,7 +128,7 @@ complete_lifecycle_action() {
   aws autoscaling complete-lifecycle-action \
     --auto-scaling-group-name "$asg_name" \
     --lifecycle-hook-name "$hook" \
-    --instance-id "$(instance_id)" \
+    --instance-id "$provider_instance_id" \
     --lifecycle-action-result "$result" >/dev/null
 }
 
@@ -137,7 +140,7 @@ record_heartbeat() {
   aws autoscaling record-lifecycle-action-heartbeat \
     --auto-scaling-group-name "$asg_name" \
     --lifecycle-hook-name "$hook" \
-    --instance-id "$(instance_id)" >/dev/null
+    --instance-id "$provider_instance_id" >/dev/null
 }
 
 complete_launch() {
@@ -149,12 +152,23 @@ complete_launch() {
   complete_lifecycle_action "$launch_hook" CONTINUE
 }
 
+# A planned drain does not authorize fencing. Only IMDS evidence that this exact
+# instance is already on the provider termination path permits bounded cleanup.
+# Lifecycle actions always address the instance identity pinned from local IMDS.
+termination_observed() {
+  case "$(target_lifecycle_state)" in
+    Terminated|Warmed:Terminated) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 drain_and_complete_termination() {
+  termination_observed || return 1
 	if [ -f "$drain_marker" ]; then
 		complete_lifecycle_action "$termination_hook" CONTINUE
 		return 0
 	fi
-  "$worker_binary" drain --timeout "$drain_timeout" >/var/log/helmr-worker-drain.log 2>&1 &
+  "$worker_binary" drain --wait-timeout "$termination_wait_timeout" >/var/log/helmr-worker-drain.log 2>&1 &
   drain_pid="$!"
   while kill -0 "$drain_pid" 2>/dev/null; do
     record_heartbeat "$termination_hook" || true
@@ -163,6 +177,11 @@ drain_and_complete_termination() {
   if wait "$drain_pid"; then
     complete_lifecycle_action "$termination_hook" CONTINUE
   else
+    if ! termination_observed; then
+      echo "termination evidence no longer matches this instance; leaving worker draining" >>/var/log/helmr-worker-drain.log
+      return 1
+    fi
+    echo "provider termination is in progress; fencing actual worker loss after bounded cleanup" >>/var/log/helmr-worker-drain.log
     if "$worker_binary" fence >>/var/log/helmr-worker-drain.log 2>&1; then
       complete_lifecycle_action "$termination_hook" CONTINUE
     else

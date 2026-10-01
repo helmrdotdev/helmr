@@ -1,9 +1,14 @@
 package controlplane
 
 import (
+	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/computer/computertest"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -49,5 +54,45 @@ func TestWorkerDrainReauthenticatesDuringActiveWork(t *testing.T) {
 	}
 	if leaseStatus != "starting" || desiredState != "ready" {
 		t.Fatalf("drain changed active execution: lease=%s instance=%s", leaseStatus, desiredState)
+	}
+}
+
+func TestWorkerDrainImmediatelyCapturesSafeResidents(t *testing.T) {
+	f, _, _, capture := computertest.Capture(t)
+	hostSecret := seedHostSecret(t, f.Pool, f.WorkerID)
+	server := httptest.NewServer(newPostgresServer(t, f.Pool))
+	defer server.Close()
+	if _, err := hostSecret.client(t, server.URL).DrainWorker(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var captured bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT admission_state='checkpointing' AND capture_checkpoint_id IS NOT NULL FROM computer_instances WHERE id=$1`, capture.InstanceID).Scan(&captured); err != nil || !captured {
+		t.Fatalf("capture after drain=%v %v", captured, err)
+	}
+}
+
+func TestWaitRegistrationImmediatelyCapturesDrainingComputer(t *testing.T) {
+	f := runtest.New(t)
+	work := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET status='running',started_at=now(),active_started_at=now() WHERE id=$1`, work.RunID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_attempts SET entrypoint_entered_at=now() WHERE run_id=$1`, work.RunID)
+	hostSecret := seedHostSecret(t, f.Pool, f.WorkerID)
+	handler := newPostgresServer(t, f.Pool)
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	if _, err := hostSecret.client(t, server.URL).DrainWorker(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var captured bool
+	query := `SELECT capture_checkpoint_id IS NOT NULL FROM computer_instances WHERE id=(SELECT computer_instance_id FROM run_leases WHERE id=$1)`
+	if err := f.Pool.QueryRow(t.Context(), query, work.LeaseID).Scan(&captured); err != nil || captured {
+		t.Fatalf("active member captured=%v %v", captured, err)
+	}
+	client := newWorkerHTTPClient(t, handler, f.Pool, f.WorkerID)
+	timeout := int64(3600000)
+	request := workerapi.CreateRunWaitRequest{Lease: workerapi.RunLeaseFence{ID: work.LeaseID.String(), LeaseSequence: 1}, CorrelationID: uuid.NewV7().String(), RunWaitID: uuid.NewV7().String(), ResumeAttachID: uuid.NewV7().String(), Kind: workerapi.RunWaitKindTimer, Params: json.RawMessage(`{"duration":"1h"}`), TimeoutMS: &timeout, IdleTimeoutMS: &timeout}
+	client.post(t, "/worker/v1/run/waits/create", request, http.StatusOK, nil)
+	if err := f.Pool.QueryRow(t.Context(), query, work.LeaseID).Scan(&captured); err != nil || !captured {
+		t.Fatalf("new safe wait not captured=%v %v", captured, err)
 	}
 }

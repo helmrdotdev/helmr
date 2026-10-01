@@ -3,26 +3,30 @@ package worker
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type testControlPlane struct {
-	authenticated  atomic.Bool
-	recovered      atomic.Bool
-	activated      atomic.Bool
-	recoveryCalls  atomic.Int32
-	recovery409s   atomic.Int32
-	completed      atomic.Int32
-	status         atomic.Value
-	activateStatus atomic.Value
-	observeStatus  atomic.Value
-	completeErr    error
+	authenticated     atomic.Bool
+	observeErrorCode  atomic.Int32
+	authorityRejected atomic.Bool
+	recovered         atomic.Bool
+	activated         atomic.Bool
+	recoveryCalls     atomic.Int32
+	recovery409s      atomic.Int32
+	completed         atomic.Int32
+	status            atomic.Value
+	activateStatus    atomic.Value
+	observeStatus     atomic.Value
+	completeErr       error
 }
 
 func (c *testControlPlane) AuthenticateWorker(context.Context) error {
@@ -55,6 +59,11 @@ func (c *testControlPlane) ReportWorkerStartupRecovery(_ context.Context, reques
 	return nil
 }
 
+type testAuthorityRejectedError struct{}
+
+func (testAuthorityRejectedError) Error() string                 { return "host credential rejected" }
+func (testAuthorityRejectedError) WorkerAuthorityRejected() bool { return true }
+
 type testHTTPStatusError struct{ status int }
 
 func (e testHTTPStatusError) Error() string       { return "test HTTP status" }
@@ -76,6 +85,12 @@ func (c *testControlPlane) returnedStatus() workerapi.StatusResponse {
 	return workerapi.StatusResponse{Status: workerapi.StatusActive}
 }
 func (c *testControlPlane) ObserveWorker(_ context.Context, observation workerapi.Observation) (workerapi.StatusResponse, error) {
+	if c.authorityRejected.Load() {
+		return workerapi.StatusResponse{}, testAuthorityRejectedError{}
+	}
+	if code := c.observeErrorCode.Load(); code != 0 {
+		return workerapi.StatusResponse{}, testHTTPStatusError{status: int(code)}
+	}
 	if observation.RunPausedReason == string(StatusDraining) {
 		return c.returnedStatus(), nil
 	}
@@ -227,7 +242,7 @@ func TestSupervisorRunsConcurrentWorkAndDrainsLocally(t *testing.T) {
 	}}
 	s, err := New(Config{
 		ControlPlane: controlPlane, Capabilities: workerapi.Capabilities{}, PollEvery: time.Millisecond,
-		DrainTimeout: time.Second, Consumers: []ConsumerSpec{{Name: "run", Concurrency: 2, Consumer: consumer}},
+		ProcessShutdownGrace: time.Second, Consumers: []ConsumerSpec{{Name: "run", Concurrency: 2, Consumer: consumer}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -320,12 +335,12 @@ func TestSupervisorDelaysRetryAfterNonfatalWorkFailure(t *testing.T) {
 	}
 }
 
-func TestSupervisorDrainTimeoutBoundsHungWork(t *testing.T) {
+func TestSupervisorProcessShutdownGraceBoundsHungWork(t *testing.T) {
 	controlPlane := &testControlPlane{}
 	started := make(chan struct{})
 	release := make(chan struct{})
 	consumer := &queuedConsumer{work: []Work{func(context.Context) error { close(started); <-release; return nil }}}
-	s, err := New(Config{ControlPlane: controlPlane, PollEvery: time.Millisecond, DrainTimeout: 30 * time.Millisecond, Consumers: []ConsumerSpec{{Name: "run", Concurrency: 1, Consumer: consumer}}})
+	s, err := New(Config{ControlPlane: controlPlane, PollEvery: time.Millisecond, ProcessShutdownGrace: 30 * time.Millisecond, Consumers: []ConsumerSpec{{Name: "run", Concurrency: 1, Consumer: consumer}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -458,7 +473,7 @@ func TestSupervisorShutdownWaitsForClaimThatReturnsCommittedWork(t *testing.T) {
 		workStarted: make(chan struct{}), releaseWork: make(chan struct{}),
 	}
 	s, err := New(Config{
-		ControlPlane: controlPlane, PollEvery: time.Millisecond, DrainTimeout: time.Second,
+		ControlPlane: controlPlane, PollEvery: time.Millisecond, ProcessShutdownGrace: time.Second,
 		Consumers: []ConsumerSpec{{Name: "run", Concurrency: 1, Consumer: consumer}},
 	})
 	if err != nil {
@@ -567,7 +582,7 @@ func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T)
 	}}}}
 	finalized := make(chan struct{})
 	s, err := New(Config{
-		ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond, DrainTimeout: time.Second,
+		ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond, ProcessShutdownGrace: time.Second,
 		Consumers: []ConsumerSpec{
 			{Name: "run", Concurrency: 1, Consumer: runs},
 			{Name: "computer-cleanup", Concurrency: 1, ContinueDuringDrain: true, BypassAdmissionDuringDrain: true, Consumer: cleanup},
@@ -648,7 +663,7 @@ func TestServerDirectedDrainContinuesBoundRunWithHardAdmission(t *testing.T) {
 	}}}}
 	s, err := New(Config{
 		ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond,
-		DrainTimeout: time.Second, AdmissionEvaluator: evaluator,
+		ProcessShutdownGrace: time.Second, AdmissionEvaluator: evaluator,
 		Consumers: []ConsumerSpec{{
 			Name: "run", Concurrency: 1, ContinueDuringDrain: true, Consumer: consumer,
 		}},
@@ -702,7 +717,7 @@ func TestServerDirectedDrainDoesNotBypassBoundRunAdmission(t *testing.T) {
 	consumer := &enabledConsumer{inner: &queuedConsumer{work: []Work{func(context.Context) error { return nil }}}}
 	s, err := New(Config{
 		ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond,
-		DrainTimeout: time.Second, AdmissionEvaluator: evaluator,
+		ProcessShutdownGrace: time.Second, AdmissionEvaluator: evaluator,
 		Consumers: []ConsumerSpec{{
 			Name: "run", Concurrency: 1, ContinueDuringDrain: true, Consumer: consumer,
 		}},
@@ -766,7 +781,7 @@ func TestActivationCanResumePreviouslyRequestedDrain(t *testing.T) {
 	controlPlane.activateStatus.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
 	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
 	s, err := New(Config{
-		ControlPlane: controlPlane, PollEvery: time.Millisecond, DrainTimeout: time.Second,
+		ControlPlane: controlPlane, PollEvery: time.Millisecond, ProcessShutdownGrace: time.Second,
 		FinalizeDrain: func(context.Context) (RecoveryEvidence, error) {
 			return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
 		},
@@ -787,7 +802,7 @@ func TestDurableDrainLatchWinsWhenShutdownIsAlsoReady(t *testing.T) {
 	controlPlane := &testControlPlane{}
 	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
 	s, err := New(Config{
-		ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Hour, DrainTimeout: time.Second,
+		ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Hour, ProcessShutdownGrace: time.Second,
 		FinalizeDrain: func(context.Context) (RecoveryEvidence, error) {
 			return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
 		},
@@ -826,7 +841,7 @@ func TestSignalDuringDurableDrainDoesNotCancelCompletion(t *testing.T) {
 	finalizeStarted := make(chan struct{})
 	releaseFinalize := make(chan struct{})
 	s, err := New(Config{
-		ControlPlane: controlPlane, PollEvery: time.Millisecond, DrainTimeout: time.Second,
+		ControlPlane: controlPlane, PollEvery: time.Millisecond, ProcessShutdownGrace: time.Second,
 		FinalizeDrain: func(finalizeCtx context.Context) (RecoveryEvidence, error) {
 			close(finalizeStarted)
 			select {
@@ -881,7 +896,7 @@ func TestObservationResponseTriggersDurableDrain(t *testing.T) {
 			controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
 			tt.setup(controlPlane)
 			s, err := New(Config{
-				ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond, DrainTimeout: time.Second,
+				ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond, ProcessShutdownGrace: time.Second,
 				FinalizeDrain: func(context.Context) (RecoveryEvidence, error) {
 					return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
 				},
@@ -899,7 +914,7 @@ func TestObservationResponseTriggersDurableDrain(t *testing.T) {
 	}
 }
 
-func TestServerDirectedDrainDoesNotCompleteOnTimeoutOrDirtyInventory(t *testing.T) {
+func TestServerDirectedDrainDoesNotCompleteWithDirtyInventoryOrFailedReceipt(t *testing.T) {
 	tests := []struct {
 		name        string
 		status      workerapi.StatusResponse
@@ -907,13 +922,6 @@ func TestServerDirectedDrainDoesNotCompleteOnTimeoutOrDirtyInventory(t *testing.
 		completeErr error
 		wantError   string
 	}{
-		{
-			name: "server authority timeout", status: workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveInstances: 1},
-			finalize: func(context.Context) (RecoveryEvidence, error) {
-				return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
-			},
-			wantError: "timed out",
-		},
 		{
 			name: "quarantined local inventory", status: workerapi.StatusResponse{Status: workerapi.StatusDraining},
 			finalize: func(context.Context) (RecoveryEvidence, error) {
@@ -943,7 +951,7 @@ func TestServerDirectedDrainDoesNotCompleteOnTimeoutOrDirtyInventory(t *testing.
 			controlPlane.completeErr = tt.completeErr
 			controlPlane.activateStatus.Store(tt.status)
 			controlPlane.status.Store(tt.status)
-			s, err := New(Config{ControlPlane: controlPlane, PollEvery: time.Millisecond, DrainTimeout: 20 * time.Millisecond, FinalizeDrain: tt.finalize})
+			s, err := New(Config{ControlPlane: controlPlane, PollEvery: time.Millisecond, ProcessShutdownGrace: 20 * time.Millisecond, FinalizeDrain: tt.finalize})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -976,4 +984,148 @@ func TestSingletonRejectsSecondOwner(t *testing.T) {
 	if err != nil || identity.ServiceID != "one" {
 		t.Fatalf("identity = %+v, err = %v", identity, err)
 	}
+}
+
+func TestPlannedDrainBeyondFormerDeadlineKeepsAdmittedWorkAndRenewals(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		controlPlane := &testControlPlane{}
+		controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusActive, ActiveInstances: 1})
+		started, release := make(chan struct{}), make(chan struct{})
+		var renewals atomic.Int32
+		consumer := &queuedConsumer{work: []Work{func(ctx context.Context) error {
+			close(started)
+			ticker := time.NewTicker(time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-release:
+					return nil
+				case <-ticker.C:
+					renewals.Add(1)
+				}
+			}
+		}}}
+		s, err := New(Config{ControlPlane: controlPlane, PollEvery: time.Second, ObservationEvery: time.Second, ProcessShutdownGrace: 30 * time.Minute,
+			Consumers:     []ConsumerSpec{{Name: "admitted run", Concurrency: 1, Consumer: consumer}},
+			FinalizeDrain: func(context.Context) (RecoveryEvidence, error) { return RecoveryEvidence{ObservedAt: time.Now()}, nil },
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() { done <- s.Run(t.Context()) }()
+		<-started
+		controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveInstances: 1})
+		time.Sleep(2 * time.Second)
+		synctest.Wait()
+		if s.state.Load().(Status) != StatusDraining {
+			t.Fatal("drain did not start")
+		}
+		time.Sleep(31 * time.Minute)
+		synctest.Wait()
+		select {
+		case err := <-done:
+			t.Fatalf("planned deadline stopped worker: %v", err)
+		default:
+		}
+		if renewals.Load() < 31 {
+			t.Fatalf("admitted work stopped renewing: %d", renewals.Load())
+		}
+		if controlPlane.completed.Load() != 0 {
+			t.Fatal("drain completed while source remains resident")
+		}
+		close(release)
+		controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		if controlPlane.completed.Load() != 1 {
+			t.Fatal("clean drain did not complete")
+		}
+	})
+}
+
+func TestDrainingAuthorityRejectionStopsButServingFailureDoesNot(t *testing.T) {
+	for _, admitted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "awaiting physical cleanup", true: "admitted work"}[admitted], func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				cp := &testControlPlane{}
+				draining := workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveInstances: 1}
+				started := make(chan struct{})
+				workStopped := make(chan struct{})
+				cfg := Config{ControlPlane: cp, PollEvery: time.Second, ObservationEvery: time.Second}
+				if admitted {
+					cfg.Consumers = []ConsumerSpec{{Name: "run", Concurrency: 1, Consumer: &queuedConsumer{work: []Work{func(ctx context.Context) error { close(started); <-ctx.Done(); close(workStopped); return ctx.Err() }}}}}
+				} else {
+					cp.activateStatus.Store(draining)
+				}
+				s, err := New(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				done := make(chan error, 1)
+				go func() { done <- s.Run(t.Context()) }()
+				if admitted {
+					<-started
+				}
+				cp.status.Store(draining)
+				time.Sleep(2 * time.Second)
+				synctest.Wait()
+				if s.state.Load().(Status) != StatusDraining {
+					t.Fatal("drain did not start")
+				}
+				cp.observeErrorCode.Store(http.StatusServiceUnavailable)
+				time.Sleep(2 * time.Minute)
+				synctest.Wait()
+				select {
+				case err := <-done:
+					t.Fatalf("transient CP outage stopped drain: %v", err)
+				default:
+				}
+				cp.observeErrorCode.Store(http.StatusUnauthorized)
+				time.Sleep(2 * time.Second)
+				synctest.Wait()
+				select {
+				case err := <-done:
+					t.Fatalf("stale claims stopped drain: %v", err)
+				default:
+				}
+				cp.authorityRejected.Store(true)
+				err = <-done
+				if err == nil || !strings.Contains(err.Error(), "authority rejected") {
+					t.Fatalf("authority loss=%v", err)
+				}
+				if admitted {
+					<-workStopped
+				}
+				if cp.completed.Load() != 0 {
+					t.Fatal("authority loss claimed graceful completion")
+				}
+			})
+		})
+	}
+}
+
+func TestActiveAuthorityRejectionStopsAdmittedWork(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cp := &testControlPlane{}
+		started, stopped := make(chan struct{}), make(chan struct{})
+		s, err := New(Config{ControlPlane: cp, PollEvery: time.Second, ObservationEvery: time.Second, Consumers: []ConsumerSpec{{Name: "run", Concurrency: 1, Consumer: &queuedConsumer{work: []Work{func(ctx context.Context) error { close(started); <-ctx.Done(); close(stopped); return ctx.Err() }}}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() { done <- s.Run(t.Context()) }()
+		<-started
+		cp.authorityRejected.Store(true)
+		if err := <-done; err == nil || !strings.Contains(err.Error(), "authority rejected") {
+			t.Fatalf("authority rejection = %v", err)
+		}
+		<-stopped
+		if cp.completed.Load() != 0 {
+			t.Fatal("authority rejection claimed graceful completion")
+		}
+	})
 }

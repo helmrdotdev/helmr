@@ -178,7 +178,7 @@ func (s *Server) workerCreateTokenRunWait(
 			return
 		}
 	}
-	_ = worker
+	s.captureDrainingComputers(r.Context(), worker.HostID, pgvalue.MustUUIDValue(locators.ComputerInstanceID))
 	writeJSON(w, http.StatusOK, response)
 }
 

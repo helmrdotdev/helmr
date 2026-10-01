@@ -117,7 +117,7 @@ inspection; it is not reported as an accepted environment. Read unit journals wi
 `journalctl -u helmr-verification-control-plane -u helmr-worker`, and the analogous
 backing-service units. Do not export private configuration with logs.
 
-`stop` first invokes native `worker drain --timeout 5m`, then stops Worker,
+`stop` first invokes native `worker drain --wait-timeout 5m`, then stops Worker,
 Dispatcher, CP and backing services in that order. Failed drain or unexpected
 Worker state stops the operation before dependencies are removed. Diagnose the
 retained environment; do not interpret a timeout as permission to erase it.

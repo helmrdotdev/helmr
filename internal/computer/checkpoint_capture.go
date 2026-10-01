@@ -209,6 +209,20 @@ func (f captureFence) seal(ctx context.Context) (db.ComputerCheckpoint, error) {
 	return checkpoint, nil
 }
 
+// BeginDrainCapture captures a draining source without an idle deadline. Queued
+// work stays on the Computer; every resident member must still pass the shared
+// capture fence. The caller must roll back on rejection or any other error.
+func BeginDrainCapture(ctx context.Context, tx pgx.Tx, capture Capture) (db.ComputerCheckpoint, error) {
+	fence, err := lockCapture(ctx, tx, capture)
+	if err != nil {
+		return db.ComputerCheckpoint{}, err
+	}
+	if fence.worker.Status != db.WorkerHostStatusDraining || fence.instance.AdmissionState != "draining" {
+		return db.ComputerCheckpoint{}, pgx.ErrNoRows
+	}
+	return fence.seal(ctx)
+}
+
 // BeginIdleCapture is BeginCapture under the idle policy, checked under the
 // capture's locks: every sealed member's Wait has passed its idle timeout,
 // an Instance without members has been inactive for IdleCaptureDelay, and

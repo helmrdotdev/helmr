@@ -42,7 +42,7 @@ func TestWaitForDrainCompletionRejectsInvalidReceipts(t *testing.T) {
 
 func TestWaitForDrainCompletionDoesNotInferSuccessWithoutReceipt(t *testing.T) {
 	err := waitForDrainCompleteMarker(t.Context(), t.TempDir(), "worker-current", time.Millisecond, time.Millisecond)
-	if err == nil || !strings.Contains(err.Error(), "timed out") {
+	if err == nil || !strings.Contains(err.Error(), "observation wait expired") {
 		t.Fatalf("got %v", err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())

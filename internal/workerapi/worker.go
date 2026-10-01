@@ -138,6 +138,9 @@ type RoleReadiness struct {
 	PausedReason string `json:"paused_reason,omitempty"`
 }
 
+// FenceReasonProviderTermination reports provider termination already in progress.
+const FenceReasonProviderTermination = "provider_termination"
+
 type FenceRequest struct {
 	ReasonCode string `json:"reason_code"`
 }

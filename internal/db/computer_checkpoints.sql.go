@@ -25,7 +25,7 @@ WITH barrier AS (
  AND c.id=i.computer_id AND c.environment_id=i.environment_id AND c.status='active'
  AND c.writer_generation=i.writer_generation
  AND NOT EXISTS(SELECT 1 FROM computer_commands command WHERE command.computer_id=i.computer_id
-                 AND (command.terminal_at IS NULL OR (command.computer_instance_id IS NOT NULL AND command.process_reconciled_at IS NULL)))
+                 AND ((command.terminal_at IS NULL AND (command.status<>'pending' OR command.computer_instance_id IS NOT NULL)) OR (command.computer_instance_id IS NOT NULL AND command.process_reconciled_at IS NULL)))
  AND NOT EXISTS(
   SELECT 1 FROM run_leases lease WHERE lease.computer_instance_id=i.id AND lease.process_reconciled_at IS NULL
   AND NOT (lease.status='running' AND lease.expires_at>clock_timestamp() AND EXISTS(

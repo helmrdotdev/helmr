@@ -514,7 +514,7 @@ variable "retained_worker_generations" {
           health_check_grace_period_seconds               = number
           launch_lifecycle_heartbeat_timeout_seconds      = number
           termination_lifecycle_heartbeat_timeout_seconds = number
-          termination_drain_timeout_seconds               = number
+          termination_wait_timeout_seconds                = number
           lifecycle_heartbeat_interval_seconds            = number
           termination_policies                            = list(string)
           protect_from_scale_in                           = bool
@@ -555,7 +555,7 @@ variable "retained_worker_generations" {
       health_check_grace_period_seconds               = number
       launch_lifecycle_heartbeat_timeout_seconds      = number
       termination_lifecycle_heartbeat_timeout_seconds = number
-      termination_drain_timeout_seconds               = number
+      termination_wait_timeout_seconds                = number
       lifecycle_heartbeat_interval_seconds            = number
       termination_policies                            = list(string)
       protect_from_scale_in                           = bool
@@ -598,7 +598,7 @@ variable "retained_worker_generations" {
       generation.sealed_provider_definition.health_check_grace_period_seconds == generation.generation_inputs.supply.lifecycle.health_check_grace_period_seconds &&
       generation.sealed_provider_definition.launch_lifecycle_heartbeat_timeout_seconds == generation.generation_inputs.supply.lifecycle.launch_lifecycle_heartbeat_timeout_seconds &&
       generation.sealed_provider_definition.termination_lifecycle_heartbeat_timeout_seconds == generation.generation_inputs.supply.lifecycle.termination_lifecycle_heartbeat_timeout_seconds &&
-      generation.sealed_provider_definition.termination_drain_timeout_seconds == generation.generation_inputs.supply.lifecycle.termination_drain_timeout_seconds &&
+      generation.sealed_provider_definition.termination_wait_timeout_seconds == generation.generation_inputs.supply.lifecycle.termination_wait_timeout_seconds &&
       generation.sealed_provider_definition.lifecycle_heartbeat_interval_seconds == generation.generation_inputs.supply.lifecycle.lifecycle_heartbeat_interval_seconds &&
       generation.sealed_provider_definition.termination_policies == generation.generation_inputs.supply.lifecycle.termination_policies &&
       generation.sealed_provider_definition.protect_from_scale_in == generation.generation_inputs.supply.lifecycle.protect_from_scale_in &&
@@ -616,7 +616,7 @@ variable "retained_worker_generations" {
       generation.sealed_provider_definition.health_check_grace_period_seconds > 0 &&
       generation.sealed_provider_definition.launch_lifecycle_heartbeat_timeout_seconds > generation.sealed_provider_definition.lifecycle_heartbeat_interval_seconds &&
       generation.sealed_provider_definition.termination_lifecycle_heartbeat_timeout_seconds >= generation.sealed_provider_definition.lifecycle_heartbeat_interval_seconds * 3 &&
-      generation.sealed_provider_definition.termination_drain_timeout_seconds > 0 &&
+      generation.sealed_provider_definition.termination_wait_timeout_seconds > 0 &&
       length(generation.sealed_provider_definition.termination_policies) > 0
     ])
     error_message = "retained_worker_generations must bind each canonical execution Pool key to one complete scale-zero generation input and sealed provider definition."

@@ -219,6 +219,7 @@ func (s *Server) capacityDrainWorkerHost(w http.ResponseWriter, r *http.Request)
 		s.writeWorkerGroupError(w, err)
 		return
 	}
+	s.captureDrainingComputers(r.Context(), id, uuid.Nil())
 	writeJSON(w, http.StatusOK, host)
 }
 

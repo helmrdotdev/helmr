@@ -335,11 +335,11 @@ func CompleteHostDrain(ctx context.Context, txb db.TxBeginner, principal HostPri
 }
 
 // FenceHost fences the authenticated epoch for a worker-reported reason,
-// fenced by its host claim version. Only a failed termination drain and a
+// fenced by its host claim version. Only provider termination and a
 // retired worker are control inputs; diagnostic codes are rejected.
 func FenceHost(ctx context.Context, q db.Querier, principal HostPrincipal, reasonCode string) error {
 	reasonCode = strings.TrimSpace(reasonCode)
-	if reasonCode != "termination_drain_failed" && reasonCode != "worker_retired" {
+	if reasonCode != "provider_termination" && reasonCode != "worker_retired" {
 		return invalidInput("unsupported worker fence reason")
 	}
 	_, err := q.FenceWorkerHost(ctx, db.FenceWorkerHostParams{

@@ -45,7 +45,7 @@ output "sealed_provider_definition" {
     health_check_grace_period_seconds               = local.worker_health_check_grace_period_seconds
     launch_lifecycle_heartbeat_timeout_seconds      = local.worker_launch_lifecycle_heartbeat_timeout_seconds
     termination_lifecycle_heartbeat_timeout_seconds = local.worker_termination_lifecycle_heartbeat_timeout_seconds
-    termination_drain_timeout_seconds               = local.worker_termination_drain_timeout_seconds
+    termination_wait_timeout_seconds                = local.worker_termination_wait_timeout_seconds
     lifecycle_heartbeat_interval_seconds            = local.worker_lifecycle_heartbeat_interval_seconds
     termination_policies                            = local.worker_termination_policies
     protect_from_scale_in                           = local.worker_protect_from_scale_in

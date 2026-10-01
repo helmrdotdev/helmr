@@ -334,7 +334,7 @@ def stop(cfg):
     active = state('helmr-worker.service')
     if active == 'active':
         # Keep CP and dispatcher alive until the native drain is acknowledged.
-        run('/usr/local/bin/worker', 'drain', '--timeout', '5m', env=dict(os.environ) | cfg['worker'], timeout=310)
+        run('/usr/local/bin/worker', 'drain', '--wait-timeout', '5m', env=dict(os.environ) | cfg['worker'], timeout=310)
         run('systemctl', 'stop', 'helmr-worker.service', timeout=180)
     elif active != 'inactive':
         raise RuntimeError('Worker is not inactive or active; inspect failure before stopping dependencies')

@@ -188,6 +188,15 @@ func (c *Client) hostCredential(ctx context.Context) (string, error) {
 	}
 }
 
+// HostAuthorityRejectedError means the durable host secret or service identity
+// cannot issue a credential. A rejected ordinary request may instead have raced
+// a claim-version change and must not be classified as lost host authority.
+type HostAuthorityRejectedError struct{ Err error }
+
+func (e HostAuthorityRejectedError) Error() string                 { return e.Err.Error() }
+func (e HostAuthorityRejectedError) Unwrap() error                 { return e.Err }
+func (e HostAuthorityRejectedError) WorkerAuthorityRejected() bool { return true }
+
 func (c *Client) requestHostCredential(ctx context.Context) (string, time.Time, error) {
 	if c.auth.serviceID == "" {
 		return "", time.Time{}, errors.New("worker service id is required")
@@ -208,6 +217,9 @@ func (c *Client) requestHostCredential(ctx context.Context) (string, time.Time, 
 	req.Header.Set("content-type", "application/json")
 	var response workerapi.HostCredentialResponse
 	if err := c.transport.DoJSON(req, &response); err != nil {
+		if httpclient.IsStatus(err, http.StatusUnauthorized) || httpclient.IsStatus(err, http.StatusForbidden) {
+			err = HostAuthorityRejectedError{Err: err}
+		}
 		return "", time.Time{}, err
 	}
 	if response.Credential == "" {

@@ -66,7 +66,7 @@ type Server struct {
 	log                   *slog.Logger
 	deploymentMode        string
 	db                    db.Querier
-	tx                    db.TxBeginner
+	tx                    db.TxDB
 	tokenWaits            *token.Registrar
 	tokens                *token.Tokens
 	readinessDB           db.DBTX

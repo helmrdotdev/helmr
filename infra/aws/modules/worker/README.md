@@ -69,9 +69,12 @@ Deployment infrastructure is the only desired-capacity writer. Terraform enforce
 exact drain path. Fixed capacity is expressed with equal minimum and maximum values.
 
 When capacity is raised, the launch lifecycle hook keeps the instance out of service until the
-worker systemd unit is active. During scale-in or instance refresh, the termination
-lifecycle hook gives `worker drain` time to stop accepting leases and wait for active
-executions before the instance terminates.
+worker systemd unit is active. Planned removal first drains the exact host to
+`termination_ready`; `worker drain --wait-timeout` bounds observation only and
+leaves admitted work running when that wait expires. The termination lifecycle
+hook handles provider termination that has already begun. It verifies the local
+instance identity and termination state before bounded cleanup, then fences actual
+loss if cleanup cannot finish. That hook is not authority to force a planned drain.
 
 Launch-template changes do not start an automatic instance refresh. Drain the
 exact logical worker instance to `termination_ready` before provider deletion,
