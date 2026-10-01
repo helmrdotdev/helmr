@@ -5,8 +5,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -40,7 +40,7 @@ func TestInstanceAssignmentUsesSpecResources(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if assigned.cpu != 1500 || assigned.memory != 2048*1024*1024 || assigned.disk != compute.ComputerGuestEphemeralDiskMiB*1024*1024 {
+			if assigned.cpu != 1500 || assigned.memory != 2048*1024*1024 || assigned.disk != disk.SeedCapacity {
 				t.Fatalf("assignment resources cpu=%d memory=%d disk=%d", assigned.cpu, assigned.memory, assigned.disk)
 			}
 		})

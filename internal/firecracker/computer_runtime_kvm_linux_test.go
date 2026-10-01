@@ -18,7 +18,6 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/nbd"
@@ -189,7 +188,7 @@ func TestComputerRuntimeKVM(t *testing.T) {
 				}
 			}()
 			start := time.Now()
-			machine, err := runtime.Materialize(t.Context(), vm.MaterializeRequest{ID: id, OwnerKind: owner.Kind, Binding: vm.WorkloadBinding{WorkerEpoch: 1, OwnerID: id, Generation: 1, ComputerInstanceID: id, VMPlatformID: identity.ID}, RootfsDigest: connector.artifacts.Rootfs.Digest, ComputerMountPath: "/workspace", Resources: compute.ResourceVector{MilliCPU: cfg.VCPUCount * 1000, MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.ScratchDiskMiB, Slots: 1}, VMVCPUCount: int32(cfg.VCPUCount), CPUConfigDigest: cpu, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: uuid.NewV7().String(), VersionID: uuid.NewV7().String(), SizeBytes: capacity, Device: device}}})
+			machine, err := runtime.Materialize(t.Context(), vm.MaterializeRequest{ID: id, OwnerKind: owner.Kind, Binding: vm.WorkloadBinding{WorkerEpoch: 1, OwnerID: id, Generation: 1, ComputerInstanceID: id, VMPlatformID: identity.ID}, RootfsDigest: connector.artifacts.Rootfs.Digest, ComputerMountPath: "/workspace", Resources: vm.Resources{MilliCPU: cfg.VCPUCount * 1000, MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.ScratchDiskMiB, Slots: 1}, VMVCPUCount: int32(cfg.VCPUCount), CPUConfigDigest: cpu, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: uuid.NewV7().String(), VersionID: uuid.NewV7().String(), SizeBytes: capacity, Device: device}}})
 			if err != nil {
 				t.Fatal(err)
 			}

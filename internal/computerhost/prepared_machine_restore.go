@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/compute"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/reservation"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -99,7 +98,7 @@ func (p *PreparedMachines) restorePreparedMachine(
 	runtimeInfo := checkpoint.RecoveryPoint.Runtime
 	machine, err := p.Backend.Restore(ctx, vm.RestoreRequest{
 		ID: restore.CheckpointID, ComputerInstanceID: target.ID, OwnerKind: vm.OwnerInstance,
-		Resources: compute.ResourceVector{MilliCPU: int64(target.Source.ReservedCPUMillis), MemoryMiB: int64(target.Source.ReservedMemoryMiB), DiskMiB: target.Source.ReservedDiskMiB, Slots: target.Source.ReservedExecutionSlots},
+		Resources: vm.Resources{MilliCPU: int64(target.Source.ReservedCPUMillis), MemoryMiB: int64(target.Source.ReservedMemoryMiB), DiskMiB: target.Source.ReservedDiskMiB, Slots: target.Source.ReservedExecutionSlots},
 		Binding:   instanceTargetWorkloadBinding(target),
 		VMState:   paths[1], VMStateMediaType: runtimeState.VMStateArtifact.MediaType,
 		Memory: []string{paths[2]}, MemoryMediaTypes: []string{runtimeState.MemoryArtifacts[0].MediaType},
