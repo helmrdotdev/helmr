@@ -14,7 +14,6 @@ func TestDeterministicWorkerAdmissionClassification(t *testing.T) {
 		err  error
 		want bool
 	}{
-		{name: "marked validation", err: deterministicWorkerAdmission(errors.New("invalid pinned policy")), want: true},
 		{name: "wrapped check violation", err: fmt.Errorf("complete task: %w", &pgconn.PgError{Code: "23514"}), want: true},
 		{name: "unique violation", err: &pgconn.PgError{Code: "23505"}},
 		{name: "transient database failure", err: errors.New("connection reset")},

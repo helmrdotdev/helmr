@@ -241,12 +241,12 @@ func taskStartError(err error) error {
 }
 
 // childInvokeFailure is the failure a child Task invocation reports to the
-// worker in a 200 response, or false when the error is not one. Actor output
-// failures are mapped first, including an expired or conflicting idempotency
+// worker in a 200 response, or false when the error is not one. Worker
+// Session failures are mapped first, including an expired or conflicting idempotency
 // claim and Turn rejections; then deployment, Computer, Secret and request
 // rejections.
 func childInvokeFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
-	if failure, ok := actorOutputAppendFailure(err); ok {
+	if failure, ok := sessionWorkerFailure(err); ok {
 		return failure, true
 	}
 	switch {

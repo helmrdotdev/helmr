@@ -1,28 +1,14 @@
 package controlplane
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/idempotency"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
-)
-
-const maxActorOutputBytes = 1 << 20
-
-var (
-	errStaleActorOutputAppend = errors.New("actor output append source authority is stale")
-	errActorOutputTooLarge    = errors.New("actor output exceeds the maximum size")
 )
 
 type parsedWorkerActorOutputAppend struct {
@@ -47,27 +33,26 @@ func (s *Server) workerWriteTurnOutput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
-
-	record, err := s.appendActorOutput(r.Context(), worker, request, parsed)
+	output, err := session.AppendTurnOutputFromRun(r.Context(), s.tx, s.db, workerExecutionFence(worker, parsed.lease, request.Lease), session.TurnOutput{
+		TurnID: parsed.turnID, RunGeneration: parsed.generation, MessageDeliveryID: parsed.messageDeliveryID,
+		CorrelationID: parsed.correlationID, IdempotencyKey: parsed.idempotencyKey, Data: parsed.data,
+	})
 	if err != nil {
-		if failure, ok := actorOutputAppendFailure(err); ok {
+		if failure, ok := sessionWorkerFailure(err); ok {
 			writeJSON(w, http.StatusOK, workerapi.WriteOutputResponse{
 				CorrelationID: request.CorrelationID,
 				Failed:        &failure,
 			})
 			return
 		}
-		if writeStaleWorkerClaims(w, err) {
-			return
+		mapped := sessionError(err, sessionWorkerOutputOperation)
+		if errorStatus(mapped) == http.StatusInternalServerError {
+			s.log.Error("append Actor output", "run_lease_id", request.Lease.ID, "error", err)
 		}
-		if errors.Is(err, errStaleActorOutputAppend) {
-			writeError(w, conflict(errStaleActorOutputAppend))
-			return
-		}
-		s.log.Error("append Actor output", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("append actor output"))
+		writeError(w, mapped)
 		return
 	}
+	record := projectWorkerSessionEvent(output.Event(), output.DeploymentID())
 	writeJSON(w, http.StatusOK, workerapi.WriteOutputResponse{
 		CorrelationID: request.CorrelationID,
 		Completed:     &record,
@@ -115,131 +100,4 @@ func parseWorkerActorOutputAppend(
 		data:              canonical,
 		idempotencyKey:    idempotencyKey,
 	}, nil
-}
-
-func (s *Server) appendActorOutput(
-	ctx context.Context,
-	worker workergroup.HostPrincipal,
-	request workerapi.WriteTurnOutputRequest,
-	parsed parsedWorkerActorOutputAppend,
-) (api.SessionEvent, error) {
-	if len(parsed.data) > maxActorOutputBytes {
-		return api.SessionEvent{}, errActorOutputTooLarge
-	}
-	locatorParams := db.GetLiveRunLeaseLocatorsParams{
-		ID:            pgvalue.UUID(parsed.lease.leaseID),
-		LeaseSequence: request.Lease.LeaseSequence,
-		WorkerGroupID: pgvalue.UUID(worker.GroupID),
-		WorkerHostID:  pgvalue.UUID(worker.HostID),
-		WorkerEpoch:   worker.Epoch,
-	}
-	discovered, err := s.db.GetLiveRunLeaseLocators(ctx, locatorParams)
-	if err != nil || !discovered.SessionID.Valid {
-		return api.SessionEvent{}, staleActorOutputAppend(err)
-	}
-	environmentID, err := pgvalue.UUIDValue(discovered.EnvironmentID)
-	if err != nil {
-		return api.SessionEvent{}, errStaleActorOutputAppend
-	}
-	actorID, err := pgvalue.UUIDValue(discovered.SessionID)
-	if err != nil {
-		return api.SessionEvent{}, errStaleActorOutputAppend
-	}
-	var response api.SessionEvent
-	var rejected error
-	err = s.inTx(ctx, func(work *txWork) error {
-		locator, err := run.LocateLiveExecution(ctx, work.tx, workerExecutionFence(worker, parsed.lease, request.Lease))
-		if err != nil ||
-			locator.EnvironmentID() != discovered.EnvironmentID ||
-			locator.SessionID() != discovered.SessionID {
-			return staleActorOutputAppend(err)
-		}
-		secrets, err := locator.LockSecrets(ctx)
-		if err != nil {
-			return fmt.Errorf("lock actor output secret authority: %w", err)
-		}
-		authority, err := secrets.LockExecution(ctx)
-		if err != nil || !authority.Session().ID.Valid {
-			return staleActorOutputAppend(err)
-		}
-
-		if authority.Run().ParentRunID.Valid ||
-			authority.Run().EntrypointKind != "actor" ||
-			authority.Run().SessionID != authority.Session().ID ||
-			authority.Session().CurrentRunID != authority.Run().ID ||
-			(authority.Session().Status != "open" && authority.Session().Status != "closing") ||
-			authority.Run().Status != db.RunStatusRunning ||
-			authority.Lease().Status != db.RunLeaseStatusRunning ||
-			!authority.Run().ActiveStartedAt.Valid ||
-			!authority.Attempt().EntrypointEnteredAt.Valid ||
-			authority.Attempt().TerminalAt.Valid ||
-			authority.Lease().FinalizationOperationID.Valid {
-			return errStaleActorOutputAppend
-		}
-		key := parsed.idempotencyKey
-		if key == "" {
-			key = parsed.correlationID.String()
-		}
-		receipt, err := session.AppendTurnOutput(ctx, work.tx, run.TurnScope{
-			EnvironmentID: environmentID, SessionID: actorID, TurnID: parsed.turnID,
-			RunID: pgvalue.MustUUIDValue(authority.Run().ID), AttemptNumber: authority.Attempt().Number, RunGeneration: parsed.generation, MessageDeliveryID: parsed.messageDeliveryID,
-		}, key, parsed.data)
-		if err != nil {
-			return err
-		}
-		if receipt.Code != "" {
-			rejected = &session.OperationError{Code: receipt.Code}
-			return nil
-		}
-		response = projectWorkerSessionEvent(receipt.Event, authority.Run().DeploymentID)
-		if _, err = run.LockLiveExecution(ctx, work.tx, workerExecutionFence(worker, parsed.lease, request.Lease)); err != nil {
-			return staleActorOutputAppend(err)
-		}
-		return nil
-	})
-	if err == nil {
-		err = rejected
-	}
-	return response, err
-}
-
-func staleActorOutputAppend(err error) error {
-	if errors.Is(err, workergroup.ErrStaleClaims) {
-		return err
-	}
-	if err == nil {
-		return errStaleActorOutputAppend
-	}
-	return errors.Join(errStaleActorOutputAppend, err)
-}
-
-func actorOutputAppendFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
-	var expired idempotency.ExpiredError
-	if errors.As(err, &expired) {
-		return workerapi.RuntimeOperationFailure{Code: expired.ErrorCode(), Message: expired.Error()}, true
-	}
-	var conflictError idempotency.ConflictError
-	var operation *session.OperationError
-	switch {
-	case errors.As(err, &operation):
-		return runtimeOperationFailure(operation.Code, operation.Error(), false), true
-	case errors.Is(err, run.ErrTurnUnsettled):
-		// The operation code is also the message, as for the equivalent
-		// OperationError.
-		return runtimeOperationFailure("turn_unsettled", "turn_unsettled", false), true
-	case errors.Is(err, run.ErrTurnStopped):
-		return workerapi.RuntimeOperationFailure{Code: "turn_stopping", Message: err.Error()}, true
-	case errors.Is(err, run.ErrTurnNotActive):
-		return workerapi.RuntimeOperationFailure{Code: "turn_not_active", Message: err.Error()}, true
-	case errors.Is(err, run.ErrTurnScope):
-		return workerapi.RuntimeOperationFailure{Code: "stale_execution", Message: err.Error()}, true
-	case errors.As(err, &conflictError):
-		return workerapi.RuntimeOperationFailure{
-			Code: "idempotency_conflict", Message: "idempotency key conflicts with an earlier Actor output",
-		}, true
-	case errors.Is(err, errActorOutputTooLarge):
-		return workerapi.RuntimeOperationFailure{Code: "actor_output_too_large", Message: err.Error()}, true
-	default:
-		return workerapi.RuntimeOperationFailure{}, false
-	}
 }

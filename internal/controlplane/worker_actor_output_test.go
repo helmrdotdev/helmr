@@ -2,11 +2,9 @@ package controlplane
 
 import (
 	"encoding/json"
-	"errors"
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -41,25 +39,5 @@ func TestParseWorkerActorOutputAppendNormalizesPayload(t *testing.T) {
 	request.IdempotencyKey = " output-1 "
 	if _, err := parseWorkerActorOutputAppend(request); err == nil {
 		t.Fatal("padded idempotency key was accepted")
-	}
-}
-
-func TestActorOutputAppendFailurePreservesSemanticCodes(t *testing.T) {
-	conflict := idempotency.ConflictError{ClaimID: uuid.NewV7()}
-	tests := []struct {
-		err  error
-		code string
-	}{
-		{conflict, "idempotency_conflict"},
-		{errActorOutputTooLarge, "actor_output_too_large"},
-	}
-	for _, test := range tests {
-		failure, ok := actorOutputAppendFailure(test.err)
-		if !ok || failure.Code != test.code || failure.Retryable {
-			t.Fatalf("failure(%v) = %+v, %v", test.err, failure, ok)
-		}
-	}
-	if _, ok := actorOutputAppendFailure(errors.New("database failed")); ok {
-		t.Fatal("infrastructure failure was exposed as a semantic result")
 	}
 }

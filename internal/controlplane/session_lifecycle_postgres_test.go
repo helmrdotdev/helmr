@@ -138,14 +138,12 @@ func TestSessionHTTPPostgresAdmissionEventsScopeAndClose(t *testing.T) {
 }
 
 func TestSessionHTTPPostgresStopKeepsFIFOAndRequiresExactHold(t *testing.T) {
-	f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
+	f := newActorExecution(t, json.RawMessage(`{"sequence":1}`), true)
 	scope := f.receiveTurn(t, 1)
-	principal := auth.Principal{OrgID: f.OrgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper, ProjectID: f.ProjectID.String(), EnvironmentID: f.EnvironmentID.String(), Permissions: []auth.Permission{auth.PermissionSessionsSend, auth.PermissionSessionsInterrupt, auth.PermissionSessionsResume, auth.PermissionSessionsRead, auth.PermissionSessionsClose}}
-	call := func(handler http.HandlerFunc, raw, turnID string) *httptest.ResponseRecorder {
+	token := f.apiKey(auth.Principal{OrgID: f.OrgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper, ProjectID: f.ProjectID.String(), EnvironmentID: f.EnvironmentID.String(), Permissions: []auth.Permission{auth.PermissionSessionsSend, auth.PermissionSessionsInterrupt, auth.PermissionSessionsResume, auth.PermissionSessionsRead, auth.PermissionSessionsClose}})
+	call := func(method, route, raw string) *httptest.ResponseRecorder {
 		t.Helper()
-		w := httptest.NewRecorder()
-		handler(w, sessionLifecycleRequest(raw, principal, f.sessionID.String(), turnID))
-		return w
+		return f.request(t, method, "/v1/sessions/"+f.SessionID.String()+route, token, raw)
 	}
 	assert := func(w *httptest.ResponseRecorder, status int) {
 		t.Helper()
@@ -153,8 +151,8 @@ func TestSessionHTTPPostgresStopKeepsFIFOAndRequiresExactHold(t *testing.T) {
 			t.Fatalf("status=%d want=%d body=%s", w.Code, status, w.Body.String())
 		}
 	}
-	assert(call(f.server.enqueueSessionHTTP, `{"data":"B","idempotency_key":"B"}`, ""), http.StatusAccepted)
-	w := call(f.server.interruptSessionTurnHTTP, `{"idempotency_key":"interrupt-A"}`, scope.TurnID.String())
+	assert(call(http.MethodPost, "/enqueue", `{"data":"B","idempotency_key":"B"}`), http.StatusAccepted)
+	w := call(http.MethodPost, "/turns/"+scope.TurnID.String()+"/interrupt", `{"idempotency_key":"interrupt-A"}`)
 	assert(w, http.StatusAccepted)
 	var receipt api.TurnInterruptReceipt
 	if err := json.Unmarshal(w.Body.Bytes(), &receipt); err != nil {
@@ -163,24 +161,24 @@ func TestSessionHTTPPostgresStopKeepsFIFOAndRequiresExactHold(t *testing.T) {
 	if receipt.TurnID != scope.TurnID.String() || receipt.HoldID == "" || receipt.Status != "accepted" {
 		t.Fatalf("interrupt=%+v", receipt)
 	}
-	assert(call(f.server.enqueueSessionHTTP, `{"data":"C","idempotency_key":"C"}`, ""), http.StatusAccepted)
-	w = call(f.server.sendSessionHTTP, `{"data":"D","idempotency_key":"D"}`, "")
+	assert(call(http.MethodPost, "/enqueue", `{"data":"C","idempotency_key":"C"}`), http.StatusAccepted)
+	w = call(http.MethodPost, "/send", `{"data":"D","idempotency_key":"D"}`)
 	assert(w, http.StatusConflict)
 	if decodeHTTPError(t, w.Body.Bytes()).Code != "session_held" {
 		t.Fatalf("held admission=%s", w.Body.String())
 	}
-	w = call(f.server.resumeSessionHTTP, `{"hold_id":"`+uuid.NewV7().String()+`","idempotency_key":"stale-resume"}`, "")
+	w = call(http.MethodPost, "/resume", `{"hold_id":"`+uuid.NewV7().String()+`","idempotency_key":"stale-resume"}`)
 	assert(w, http.StatusConflict)
 	if decodeHTTPError(t, w.Body.Bytes()).Code != "stale_hold" {
 		t.Fatalf("resume=%s", w.Body.String())
 	}
-	w = call(f.server.resumeSessionHTTP, `{"hold_id":"`+receipt.HoldID+`","idempotency_key":"early-resume"}`, "")
+	w = call(http.MethodPost, "/resume", `{"hold_id":"`+receipt.HoldID+`","idempotency_key":"early-resume"}`)
 	assert(w, http.StatusConflict)
 	if decodeHTTPError(t, w.Body.Bytes()).Code != "not_settled" {
 		t.Fatalf("resume before convergence=%s", w.Body.String())
 	}
-	assert(call(f.server.closeSessionHTTP, `{}`, ""), http.StatusAccepted)
-	w = call(f.server.getSessionTurnHTTP, "", scope.TurnID.String())
+	assert(call(http.MethodPost, "/close", `{}`), http.StatusAccepted)
+	w = call(http.MethodGet, "/turns/"+scope.TurnID.String(), "")
 	assert(w, http.StatusOK)
 	var turn api.SessionTurn
 	if err := json.Unmarshal(w.Body.Bytes(), &turn); err != nil {
@@ -189,7 +187,7 @@ func TestSessionHTTPPostgresStopKeepsFIFOAndRequiresExactHold(t *testing.T) {
 	if turn.Status != "running" || !turn.InterruptRequested || turn.AcceptsMessages || turn.TerminalEventID != nil {
 		t.Fatalf("acceptance claimed terminal: %+v", turn)
 	}
-	w = call(f.server.getSessionHTTP, "", "")
+	w = call(http.MethodGet, "", "")
 	assert(w, http.StatusOK)
 	var snapshot api.Session
 	if err := json.Unmarshal(w.Body.Bytes(), &snapshot); err != nil {
@@ -199,7 +197,7 @@ func TestSessionHTTPPostgresStopKeepsFIFOAndRequiresExactHold(t *testing.T) {
 		t.Fatalf("close cleared hold: %+v", snapshot)
 	}
 	var sequences []int64
-	rows, err := f.Pool.Query(t.Context(), `SELECT sequence FROM session_turns WHERE session_id=$1 AND status='queued' ORDER BY sequence`, f.sessionID)
+	rows, err := f.Pool.Query(t.Context(), `SELECT sequence FROM session_turns WHERE session_id=$1 AND status='queued' ORDER BY sequence`, f.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}

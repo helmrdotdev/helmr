@@ -6,13 +6,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -23,21 +21,15 @@ import (
 // missing Session to public callers and an internal failure to the worker
 // executing it.
 func TestSessionComputerAuthorityStatusByCaller(t *testing.T) {
-	f := newActorExecutionFixture(t, nil, true)
-	handler := newPostgresServer(t, f.Pool, func(cfg *ServerConfig) {
-		cfg.PublicURL = &url.URL{Scheme: "https", Host: "console.example.test"}
-	})
-	keys, err := auth.NewKeys(testAuthRootKey())
-	if err != nil {
-		t.Fatal(err)
-	}
-	web := httpPostgresFixture{pool: f.Pool, queries: db.New(f.Pool), handler: handler, keys: keys}
+	f := newActorExecution(t, nil, true)
+	web := f.httpPostgresFixture
+	handler := f.handler
 	ownerID := web.user(t, "Owner")
 	web.member(t, f.OrgID, ownerID, db.OrgMemberRoleOwner)
 	owner := web.session(t, ownerID, f.OrgID)
-	workerToken := seedHostCredential(t, f.Pool, f.WorkerID).token(t, handler)
+	workerToken := f.workerToken
 	var generation int64
-	if err := f.Pool.QueryRow(t.Context(), `SELECT run_generation FROM sessions WHERE id=$1`, f.sessionID).Scan(&generation); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT run_generation FROM sessions WHERE id=$1`, f.SessionID).Scan(&generation); err != nil {
 		t.Fatal(err)
 	}
 	writeOutput := func(t *testing.T) *httptest.ResponseRecorder {
@@ -71,17 +63,17 @@ func TestSessionComputerAuthorityStatusByCaller(t *testing.T) {
 	}
 	// A private head disk version withdraws the Computer's admission
 	// authority while the Session and its execution remain.
-	privateHead(t, f.Pool, f.computerID)
+	privateHead(t, f.Pool, f.ComputerID)
 
 	expectError(t, writeOutput(t), http.StatusInternalServerError, "internal_error")
 
-	base := fmt.Sprintf("/api/projects/%s/environments/%s/sessions/%s", f.ProjectID, f.EnvironmentID, f.sessionID)
+	base := fmt.Sprintf("/api/projects/%s/environments/%s/sessions/%s", f.ProjectID, f.EnvironmentID, f.SessionID)
 	if response := web.request(t, http.MethodGet, base, owner, ""); response.Code != http.StatusOK {
 		t.Fatalf("Session read = %d %s", response.Code, response.Body.String())
 	}
 	expectError(t, web.request(t, http.MethodPost, base+"/close", owner, `{}`), http.StatusNotFound, "session_not_found")
 	var status string
-	if err := f.Pool.QueryRow(t.Context(), `SELECT status FROM sessions WHERE id=$1`, f.sessionID).Scan(&status); err != nil || status != "open" {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status FROM sessions WHERE id=$1`, f.SessionID).Scan(&status); err != nil || status != "open" {
 		t.Fatalf("rejected close changed the Session: %q %v", status, err)
 	}
 }

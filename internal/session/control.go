@@ -60,12 +60,12 @@ func resume(ctx context.Context, tx pgx.Tx, request ResumeRequest) (ControlRecei
 	if err != nil {
 		return ControlReceipt{}, err
 	}
-	return ResumeWithLockedSecrets(ctx, tx, request, locator.ComputerID, bindings)
+	return resumeWithLockedSecrets(ctx, tx, request, locator.ComputerID, bindings)
 }
 
-// ResumeWithLockedSecrets consumes the target's complete admission bindings,
+// resumeWithLockedSecrets consumes the target's complete admission bindings,
 // locked before Session authority by a cross-Session caller.
-func ResumeWithLockedSecrets(ctx context.Context, tx pgx.Tx, request ResumeRequest, computerID pgtype.UUID, bindings []db.LockComputerSecretsForAdmissionRow) (ControlReceipt, error) {
+func resumeWithLockedSecrets(ctx context.Context, tx pgx.Tx, request ResumeRequest, computerID pgtype.UUID, bindings []db.LockComputerSecretsForAdmissionRow) (ControlReceipt, error) {
 	q := db.New(tx)
 	actor, err := lockSession(ctx, tx, request.Target)
 	if err != nil {

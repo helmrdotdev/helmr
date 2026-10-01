@@ -1,50 +1,16 @@
 package controlplane
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// Source-only Secret locks precede physical authority; source and target
-// Sessions are then locked together, in UUID order, before the source Run
-// lineage.
-func authorizeWorkerSessionOperation(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence, targetID pgtype.UUID) (run.LiveSource, error) {
-	parsed, err := parseRunLeaseFence(lease)
-	if err != nil {
-		return run.LiveSource{}, err
-	}
-	secrets, err := run.LockSourceSecretsForSession(ctx, tx, workerExecutionFence(worker, parsed, lease), targetID)
-	if err != nil {
-		return run.LiveSource{}, err
-	}
-	authority, source, err := secrets.LockLiveSource(ctx)
-	if errors.Is(err, run.ErrExecutionTargetNotFound) {
-		return run.LiveSource{}, &session.OperationError{Code: "session_not_found"}
-	}
-	if err != nil {
-		return run.LiveSource{}, err
-	}
-	if err = secrets.ValidateSourceDelivery(ctx); err != nil {
-		return run.LiveSource{}, err
-	}
-	if err = session.CheckSourceSession(ctx, db.New(tx), authority.Session()); err != nil {
-		return run.LiveSource{}, err
-	}
-	return source, nil
-}
 func (s *Server) workerSendSession(w http.ResponseWriter, r *http.Request) {
 	s.workerAdmitSession(w, r, session.SendMessageOrEnqueue)
 }
@@ -85,18 +51,10 @@ func (s *Server) workerAdmitSession(w http.ResponseWriter, r *http.Request, mode
 		return
 	}
 	var receipt session.AdmissionReceipt
-	err = s.inTx(r.Context(), func(work *txWork) error {
-		source, err := authorizeWorkerSessionOperation(r.Context(), work.tx, workerFromContext(r.Context()), request.Lease, pgvalue.UUID(targetID))
-		if err != nil {
-			return err
-		}
-		command.Target = session.Target{EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID()), SessionID: targetID}
-		command.SourceRunID = pgvalue.MustUUIDValue(source.RunID())
-		receipt, err = session.Admit(r.Context(), work.tx, command)
-		return err
-	})
-	if err == nil && receipt.Code != "" {
-		err = &session.OperationError{Code: receipt.Code}
+	fence, err := workerLeaseFence(workerFromContext(r.Context()), request.Lease)
+	if err == nil {
+		command.SessionID = targetID
+		receipt, err = session.AdmitFromRun(r.Context(), s.tx, fence, command)
 	}
 	if err != nil {
 		s.writeWorkerSessionCommand(w, request.CorrelationID, err)

@@ -44,7 +44,7 @@ func ApplyClose(ctx context.Context, txb db.TxBeginner, request ControlRequest) 
 
 // ApplyResume reads the Session without a lock to find its Computer, locks
 // that Computer's complete admission Secret set and then resumes the held
-// Session with those Secrets as ResumeWithLockedSecrets does.
+// Session with those Secrets as resumeWithLockedSecrets does.
 func ApplyResume(ctx context.Context, txb db.TxBeginner, request ResumeRequest) (ControlReceipt, error) {
 	var receipt ControlReceipt
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {

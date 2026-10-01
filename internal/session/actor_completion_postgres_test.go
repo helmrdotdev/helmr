@@ -1,4 +1,4 @@
-package controlplane
+package session
 
 import (
 	"context"
@@ -13,12 +13,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
-	"github.com/helmrdotdev/helmr/internal/session"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 )
 
-func actorMemberCompletionFixture(t *testing.T, kind string) (runtest.Fixture, run.ExecutionFence, parsedActorCompletion) {
+func actorMemberCompletionFixture(t *testing.T, kind string) (runtest.Fixture, run.ExecutionFence, ActorCompletion) {
 	t.Helper()
 	f := runtest.New(t)
 	work := f.AddRunLease(t, "assigned", time.Now())
@@ -46,14 +44,14 @@ func actorMemberCompletionFixture(t *testing.T, kind string) (runtest.Fixture, r
 		t.Fatal(err)
 	}
 	operation := uuid.NewV7()
-	request := workerapi.CompleteActorRequest{Lease: workerapi.RunLeaseFence{ID: work.LeaseID.String(), LeaseSequence: 1}, OperationID: operation.String(), Outcome: workerapi.ActorOutcome{RunGeneration: a.Session().RunGeneration, Succeeded: &workerapi.ActorSucceeded{}}}
+	completion := ActorCompletion{Kind: ActorSucceeded, RunGeneration: a.Session().RunGeneration, OperationID: operation, Fingerprint: dbtest.Digest("Actor completion " + kind)}
 	if kind != "no progress" {
 		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET committed_input_sequence=2 WHERE id=$1`, sid)
 	}
 	switch kind {
 	case "failure":
-		request.Outcome.Succeeded = nil
-		request.Outcome.Failed = &workerapi.TaskFailure{Message: "failed", Details: json.RawMessage(`{}`)}
+		completion.Kind = ActorFailed
+		completion.Error = json.RawMessage(`{"details":{},"message":"failed"}`)
 	case "close":
 		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET status='closing',close_sequence=2 WHERE id=$1`, sid)
 	case "continue":
@@ -61,8 +59,8 @@ func actorMemberCompletionFixture(t *testing.T, kind string) (runtest.Fixture, r
 	case "interrupt":
 		hold := uuid.NewV7()
 		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET dispatch_hold_id=$2,dispatch_hold_reason='interrupt_requested',dispatch_hold_run_id=current_run_id,dispatch_hold_attempt_number=1,dispatch_hold_run_generation=run_generation WHERE id=$1`, sid, hold)
-		request.Outcome.Succeeded = nil
-		request.Outcome.Interrupted = &workerapi.ActorInterrupted{HoldID: hold.String()}
+		completion.Kind = ActorInterrupted
+		completion.HoldID = hold
 	}
 	tx, err = f.Pool.Begin(t.Context())
 	if err != nil {
@@ -75,20 +73,16 @@ func actorMemberCompletionFixture(t *testing.T, kind string) (runtest.Fixture, r
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := parseActorCompletionRequest(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return f, fence, parsed
+	return f, fence, completion
 }
-func completeActorMemberTest(t *testing.T, f runtest.Fixture, fence run.ExecutionFence, completion parsedActorCompletion, commit bool) error {
+func completeActorMemberTest(t *testing.T, f runtest.Fixture, fence run.ExecutionFence, completion ActorCompletion, commit bool) error {
 	t.Helper()
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(context.Background())
-	err = completeActorExecution(t.Context(), tx, fence, completion)
+	err = completeActor(t.Context(), tx, fence, completion)
 	if err == nil && commit {
 		err = tx.Commit(t.Context())
 	}
@@ -162,7 +156,7 @@ func TestActorMemberCompletionPreservesComputer(t *testing.T) {
 				if err := f.Pool.QueryRow(t.Context(), `SELECT r.session_id FROM runs r JOIN run_leases l ON l.run_id=r.id WHERE l.id=$1`, fence.LeaseID).Scan(&sid); err != nil {
 					t.Fatal(err)
 				}
-				reconciler, err := session.NewReconciler(f.Pool)
+				reconciler, err := NewReconciler(f.Pool)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -184,8 +178,8 @@ func TestActorMemberCompletionPreservesComputer(t *testing.T) {
 				}
 			}
 
-			completion.fingerprint = dbtest.Digest("changed Actor outcome")
-			if err := completeActorMemberTest(t, f, fence, completion, true); !errors.Is(err, errStaleActorCompletion) {
+			completion.Fingerprint = dbtest.Digest("changed Actor outcome")
+			if err := completeActorMemberTest(t, f, fence, completion, true); !errors.Is(err, ErrStaleCompletion) {
 				t.Fatalf("changed replay=%v", err)
 			}
 		})
@@ -197,7 +191,7 @@ func TestActorMemberInterruptionWaitsForTerminalChildCleanup(t *testing.T) {
 	child := terminalActorChild(t, f, fence)
 	var err error
 
-	if err = completeActorMemberTest(t, f, fence, completion, true); !errors.Is(err, errActorStopCleanupPending) {
+	if err = completeActorMemberTest(t, f, fence, completion, true); !errors.Is(err, ErrStopCleanupPending) {
 		t.Fatalf("terminal child bypassed cleanup=%v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET process_reconciled_at=clock_timestamp() WHERE id=$1`, child.LeaseID)
@@ -209,7 +203,7 @@ func TestActorMemberInterruptionWaitsForTerminalChildCleanup(t *testing.T) {
 func TestActorMemberInterruptionSettlesActiveTurnCursor(t *testing.T) {
 	f, fence, completion := actorMemberCompletionFixture(t, "interrupt")
 	turn := uuid.NewV7()
-	completion.turnID = &turn
+	completion.TurnID = &turn
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -282,7 +276,7 @@ func TestActorContinuationWaitsForOwnedScopeCleanup(t *testing.T) {
 			}
 			attempt := func() (bool, error) {
 				if path == "lifecycle" {
-					r, err := session.NewReconciler(f.Pool)
+					r, err := NewReconciler(f.Pool)
 					if err != nil {
 						return false, err
 					}
@@ -302,7 +296,7 @@ func TestActorContinuationWaitsForOwnedScopeCleanup(t *testing.T) {
 				if err != nil {
 					return false, err
 				}
-				if _, err = session.CreateContinuation(t.Context(), tx, a, c, nil); errors.Is(err, pgx.ErrNoRows) {
+				if _, err = CreateContinuation(t.Context(), tx, a, c, nil); errors.Is(err, pgx.ErrNoRows) {
 					return true, nil
 				} else if err != nil {
 					return false, err
