@@ -57,8 +57,11 @@ def merge_owned(supplied, owned):
 
 def compile_config(raw):
     """Generate stable per-scope credentials once, without accessing a host."""
-    if set(raw) != {'binaries', 'control_plane', 'worker', 'services_candidate', 'worker_host_receipt', 'worker_runtime_receipt'}:
+    if set(raw) - {'capture_reply_faults'} != {'binaries', 'control_plane', 'worker', 'services_candidate', 'worker_host_receipt', 'worker_runtime_receipt'}:
         raise ValueError('expected binaries, control_plane, worker, services_candidate, worker_host_receipt, worker_runtime_receipt')
+    reply_faults = raw.get('capture_reply_faults', False)
+    if type(reply_faults) is not bool:
+        raise ValueError('capture_reply_faults must be a boolean')
     binaries = raw['binaries']
     if set(binaries) != {'postgres', 'initdb', 'psql', 'redis-server', 'clickhouse'}:
         raise ValueError('binaries must name all backing-service tools')
@@ -103,7 +106,7 @@ def compile_config(raw):
     if not devices or len(set(devices)) != len(devices) or any(not re.fullmatch(r'/dev/nbd[0-9]+', d) for d in devices):
         raise ValueError('supply distinct operator-owned /dev/nbdN devices')
     worker = merge_owned(worker, {
-        'CONTROL_PLANE_URL': 'http://127.0.0.1:58080', 'WORKER_POOL_NAME': 'default',
+        'CONTROL_PLANE_URL': 'http://127.0.0.1:58088' if reply_faults else 'http://127.0.0.1:58080', 'WORKER_POOL_NAME': 'default',
         'CAS_URI': cp['CAS_URI'], 'PLATFORM_STORE_URI': cp['PLATFORM_STORE_URI'],
         'WORKER_ENROLLMENT_TOKEN_FILE': str(CONFIG / 'enrollment-token'),
         'WORKER_WORK_DIR': str(WORKER_DATA), 'WORKER_IMAGES_DIR': '/var/lib/helmr/images',
@@ -115,7 +118,7 @@ def compile_config(raw):
     })
     worker.setdefault('WORKER_COMPUTER_SAVE_EVERY', '30s')
     dispatcher = {key: cp[key] for key in ['DATABASE_URL', 'CLICKHOUSE_URL', 'COMPUTER_FENCING_KEY', 'ENCRYPTION_KEY']}
-    dispatcher['CONTROL_PLANE_URL'] = worker['CONTROL_PLANE_URL']
+    dispatcher['CONTROL_PLANE_URL'] = 'http://127.0.0.1:58080'
     dispatcher.update(CLICKHOUSE_USER=ch['CLICKHOUSE_INGESTER_USER'], CLICKHOUSE_PASSWORD=ch['CLICKHOUSE_INGESTER_PASSWORD'])
     for values in [cp, worker, dispatcher, ch]:
         environment(values)

@@ -127,6 +127,7 @@ func main() {
 	bucket := flag.String("bucket", "", "exact dedicated CAS bucket")
 	region := flag.String("region", "", "AWS region of the dedicated bucket")
 	hold := flag.Duration("hold", 360*time.Second, "delay before failing the first armed memory upload")
+	replies := flag.Bool("replies", false, "relay dedicated Worker Control Plane traffic and one source vsock endpoint")
 	flag.Parse()
 	host, _, err := net.SplitHostPort(*listen)
 	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() || *bucket == "" || strings.ContainsAny(*bucket, "/:") || *region == "" || strings.ContainsAny(*region, "/:") || *hold <= 0 || *hold > 10*time.Minute {
@@ -143,6 +144,20 @@ func main() {
 	}, Transport: signedTransport{cfg.Credentials, *region}, ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) { http.Error(w, "S3 forwarding failed", 502) }}
 	f := &fault{delay: *hold, forward: proxy}
 	handler := bucketHandler(*bucket, f)
+	if *replies {
+		reply := &replyFault{jailRoot: "/var/lib/helmr/jailer/firecracker"}
+		go func() {
+			log.Fatal((&http.Server{Addr: "127.0.0.1:58088", Handler: reply.proxy("127.0.0.1:58080"), ReadHeaderTimeout: 10 * time.Second}).ListenAndServe())
+		}()
+		ordinary := handler
+		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/__replies" {
+				reply.control(w, r)
+				return
+			}
+			ordinary.ServeHTTP(w, r)
+		})
+	}
 	log.Printf("capture verification proxy listening on %s", *listen)
 	log.Fatal((&http.Server{Addr: *listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second}).ListenAndServe())
 }

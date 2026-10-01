@@ -3,6 +3,8 @@ import { promisify } from "node:util"
 import { setTimeout as delay } from "node:timers/promises"
 import { verify, assert, assertEqual, deadline, readTelemetry, waitRun } from "../../support/context"
 import type { captureAbortTask } from "./task"
+import { hostObservation } from "../../support/host-observation"
+import { replyFault, assertReplyLosses } from "../../support/reply-fault"
 
 await verify("capture-abort", async ({ client, marker, objects, computer, cleanup }) => {
   assertEqual(process.env.HELMR_API_URL?.replace(/\/$/, ""), "http://127.0.0.1:58080", "Run on the dedicated host")
@@ -51,6 +53,17 @@ await verify("capture-abort", async ({ client, marker, objects, computer, cleanu
     }
   }
   const started = await waitFault("started", 180_000)
+  const loseReplies = process.env.HELMR_CAPTURE_REPLY_LOSS === "1"
+  if (loseReplies) {
+    const path = await hostObservation("run-path", { run_id: run.id })
+    assert.equal(path.checkpoints.length, 1, "expected the first held capture")
+    const capture = path.checkpoints[0]
+    assertEqual(capture.members.map((m: any) => m.run_id).sort(), [run.id, cancelled.id].sort(), "wrong sealed member set")
+    await replyFault("POST", { mode: "drop", computer_id: ref.id,
+      instance_id: capture.source_computer_instance_id, checkpoint_id: capture.id,
+      run_ids: [run.id, cancelled.id] })
+    cleanup(async () => { await replyFault("DELETE") })
+  }
   // Keep both CP leases renewing while their old guest grants expire. Cancelling
   // earlier would eventually end the cancelled member's lease and interrupt the
   // upload before the intended delayed S3 response.
@@ -80,6 +93,26 @@ await verify("capture-abort", async ({ client, marker, objects, computer, cleanu
   assert(Date.parse(failed.failed) > firstCompletionConfirmedAt, "Token did not resolve before the upload failure")
   assert(Date.parse(failed.failed) - Date.parse(started.started) > 300_000, "Capture did not exceed the old guest grant")
   const aborted = await observe("wait-aborted", run.id)
+  let replies
+  if (loseReplies) {
+    const settled = deadline(120_000)
+    for (;;) {
+      settled.throwIfAborted()
+      replies = await replyFault()
+      assert.equal(replies.failure, "")
+      if (replies.relay?.restored && replies.events?.some(e =>
+        e.kind === "cp-abort" && e.disposition === "acknowledged" && !e.dropped)) break
+      // DB acknowledgment precedes the deliberately lost completion response.
+      // Wait for the Worker's subsequent reconciliation, not just that DB write.
+      await delay(200, undefined, { signal: settled })
+    }
+  }
+  if (replies) {
+    assertReplyLosses(replies, run.id, cancelled.id)
+    assert.equal(replies.target?.checkpoint_id, aborted.checkpoint_id)
+    assert.equal(replies.target?.instance_id, aborted.source_instance_id)
+    assert.equal(replies.target?.computer_id, ref.id)
+  }
   assertEqual([...aborted.captured_run_ids].sort(), [run.id, cancelled.id].sort(), "Both members must belong to the failed capture")
   const cancelledRun = await waitRun(client, cancelled.id, ["cancelled"], 120_000)
   const signal = deadline(120_000)
@@ -106,5 +139,5 @@ await verify("capture-abort", async ({ client, marker, objects, computer, cleanu
   assertEqual(output, { marker, nonce, runId: run.id, computerId: ref.id }, "Restore lost memory, files or Run identity")
   const restored = await observe("verify-restored", run.id)
   assertEqual(restored.checkpoint_id, parked.checkpoint_id, "Wrong checkpoint restored")
-  return { started, failed, cancelledCounter, cancellationConfirmedAt, firstCompletionConfirmedAt, aborted, cancelledRun, parked, restored, output }
+  return { started, failed, replies, cancelledCounter, cancellationConfirmedAt, firstCompletionConfirmedAt, aborted, cancelledRun, parked, restored, output }
 })

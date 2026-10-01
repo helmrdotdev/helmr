@@ -35,6 +35,14 @@ def config():
 
 
 class ProfileTests(unittest.TestCase):
+    def test_reply_fault_profile_routes_only_worker_through_fixed_loopback_proxy(self):
+        cfg = host.compile_config(config() | {'capture_reply_faults': True})
+        self.assertEqual(cfg['worker']['CONTROL_PLANE_URL'], 'http://127.0.0.1:58088')
+        self.assertEqual(cfg['dispatcher']['CONTROL_PLANE_URL'], 'http://127.0.0.1:58080')
+        for invalid in ['true', 1, None, 'http://elsewhere']:
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                host.compile_config(config() | {'capture_reply_faults': invalid})
+
     def test_abort_observation_rejects_replacement_and_unacknowledged_source(self):
         evidence = dict(attempt_number=1, acknowledged=True, source_reclaimed=False,
                         source_state='ready', other_instances=0, lease_on_source=True,

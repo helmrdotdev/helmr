@@ -403,6 +403,58 @@ An interrupted proxy, expired request or unobserved failure is a failed case.
 This case covers delayed upload failure, cancellation and resolution during
 capture; it does not alone qualify lost guest/Control Plane replies.
 
+### Lost capture-abort replies
+
+For this separate exclusive-host case, create a fresh profile with
+`"capture_reply_faults": true` and the same S3 fault endpoint above. Start
+`capturefault --bucket SCOPE_CAS_BUCKET --region us-east-1 --hold 360s --replies` as root
+before starting the profile. Only Worker uses the additional loopback relay at
+58088; Dispatcher and user clients continue to use CP directly at 58080.
+The runtime binaries are ordinary source-bound builds, with no fault switches.
+
+Deploy `cases/control-plane-outage` and `cases/capture-abort` in the selected
+fixture project. First run `cases/reply-relay/run.ts` with ordinary API credentials
+and a fresh evidence directory. It interposes the original source vsock socket,
+starts a real Computer Command through that relay, restores the original socket
+name while a stream remains active, and requires the same Command/Instance to
+finish with its marker. A failed passthrough preflight is not permission to arm
+reply loss. Finish normal fixture reclamation, then restart only the proxy to
+clear its one-case state.
+
+Run the ordinary `cases/capture-abort/run.ts` with
+`HELMR_CAPTURE_REPLY_LOSS=1`. During the existing upload hold it arms the relay
+for that exact Computer, Instance, checkpoint and both sealed Run identities.
+The relay consumes a complete successful upstream response before losing one CP
+abort/grant reply, one guest prepare reply, one guest activation reply and one CP
+completion reply, in that order. It forwards all other traffic. Evidence records
+identity, timestamps, grants' expiry/disposition and whether a reply was dropped;
+it never records authentication headers or write capabilities.
+
+The case requires all four drops, real successful retries, current unexpired
+grants, stable cancelled disposition, and a final acknowledged abort receipt.
+All memory/file/Run identity, cancellation-counter and later restore assertions
+still apply. An unreached drop, upstream failure or incomplete response is not
+qualification. Unit checks for the tool and assertions are:
+
+```sh
+nix develop -c go test -race ./dev/runtime/capturefault
+nix develop -c bun test tests/e2e/support/reply-fault.test.ts
+```
+
+The Unix socket listener is restored before forwarding the final acknowledged
+abort reply. Existing relayed Program streams remain open until their normal
+close, so keep the proxy running through fixture/source reclamation. The source
+socket is renamed only under its exact dedicated jail path, with inode and
+ownership checks; a changed or missing endpoint is a failed restoration, never
+overwritten. After an interrupted case, inspect its receipts and request
+`DELETE http://127.0.0.1:58089/__replies` before stopping the proxy. Complete ordinary
+Run/Computer cleanup and confirm source reclamation before proxy/profile shutdown.
+Do not rename sockets on a shared host or reuse an interrupted case.
+There is no process-crash recovery: if the proxy dies while interposed, the source
+socket name still points at the dead listener. Preserve the sibling original socket
+and case evidence; use the normal operator cleanup path before recreating the
+profile. Do not stop the proxy as a shortcut while a source still uses its streams.
+
 ## Actor Turn continuity
 
 After deploying the same small project with normal credentials, run on the host:
