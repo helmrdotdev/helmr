@@ -14,7 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 )
 
-func writableFixture(t *testing.T, limit int) (*WritableGeneration, blockformat.Writer, GenerationRoot) {
+func writableFixture(t *testing.T, limit int) (*WritableVersion, blockformat.Writer, VersionRoot) {
 	t.Helper()
 	store, err := cas.NewFile(t.TempDir())
 	if err != nil {
@@ -30,11 +30,11 @@ func writableFixture(t *testing.T, limit int) (*WritableGeneration, blockformat.
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := NewGenerationRoot(locator, 1<<20)
+	root, err := NewVersionRoot(locator, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	disk, err := OpenWritableGeneration(t.Context(), writer, root, limit, 32<<20)
+	disk, err := OpenWritableVersion(t.Context(), writer, root, limit, 32<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func writableFixture(t *testing.T, limit int) (*WritableGeneration, blockformat.
 	return disk, writer, root
 }
 
-func readWritable(t *testing.T, d *WritableGeneration, offset int64, length int) []byte {
+func readWritable(t *testing.T, d *WritableVersion, offset int64, length int) []byte {
 	t.Helper()
 	out := make([]byte, length)
 	if n, err := d.ReadAt(t.Context(), out, offset); err != nil || n != length {
@@ -51,7 +51,7 @@ func readWritable(t *testing.T, d *WritableGeneration, offset int64, length int)
 	return out
 }
 
-func TestWritableGenerationPartialWritesCaptureAndTrim(t *testing.T) {
+func TestWritableVersionPartialWritesCaptureAndTrim(t *testing.T) {
 	disk, writer, base := writableFixture(t, 8)
 	changed := bytes.Repeat([]byte{9}, 17)
 	if n, err := disk.WriteAt(t.Context(), changed, 4090); err != nil || n != len(changed) {
@@ -66,7 +66,7 @@ func TestWritableGenerationPartialWritesCaptureAndTrim(t *testing.T) {
 	if err != nil || captured == base {
 		t.Fatalf("capture: %v", err)
 	}
-	tree, err := OpenGeneration(t.Context(), writer.Source, writer.Scope, writer.Keys, captured, captured.LogicalBytes)
+	tree, err := OpenVersion(t.Context(), writer.Source, writer.Scope, writer.Keys, captured, captured.LogicalBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestWritableGenerationPartialWritesCaptureAndTrim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	zero, err := OpenGeneration(t.Context(), writer.Source, writer.Scope, writer.Keys, zeroRoot, zeroRoot.LogicalBytes)
+	zero, err := OpenVersion(t.Context(), writer.Source, writer.Scope, writer.Keys, zeroRoot, zeroRoot.LogicalBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestWritableGenerationPartialWritesCaptureAndTrim(t *testing.T) {
 	if err != nil || !bytes.Equal(got, make([]byte, 8192)) {
 		t.Fatal("trim was not captured as holes", err)
 	}
-	old, err := OpenGeneration(t.Context(), writer.Source, writer.Scope, writer.Keys, captured, captured.LogicalBytes)
+	old, err := OpenVersion(t.Context(), writer.Source, writer.Scope, writer.Keys, captured, captured.LogicalBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,10 +99,10 @@ func TestWritableGenerationPartialWritesCaptureAndTrim(t *testing.T) {
 	}
 }
 
-func TestWritableGenerationBoundsAndBackpressure(t *testing.T) {
+func TestWritableVersionBoundsAndBackpressure(t *testing.T) {
 	disk, writer, root := writableFixture(t, 1)
 	before := readWritable(t, disk, 0, 8192)
-	if n, err := disk.WriteAt(t.Context(), []byte{9, 9}, 4095); n != 0 || !errors.Is(err, ErrGenerationBufferFull) {
+	if n, err := disk.WriteAt(t.Context(), []byte{9, 9}, 4095); n != 0 || !errors.Is(err, ErrVersionBufferFull) {
 		t.Fatalf("limit accepted %d %v", n, err)
 	}
 	if got := readWritable(t, disk, 0, 8192); !bytes.Equal(got, before) {
@@ -111,7 +111,7 @@ func TestWritableGenerationBoundsAndBackpressure(t *testing.T) {
 	if _, err := disk.WriteAt(t.Context(), []byte{7}, 4096); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := disk.WriteAt(t.Context(), []byte{8}, 8192); !errors.Is(err, ErrGenerationBufferFull) {
+	if _, err := disk.WriteAt(t.Context(), []byte{8}, 8192); !errors.Is(err, ErrVersionBufferFull) {
 		t.Fatal("dirty capacity not enforced", err)
 	}
 	if _, err := disk.Capture(t.Context()); err != nil {
@@ -128,7 +128,7 @@ func TestWritableGenerationBoundsAndBackpressure(t *testing.T) {
 	if got := readWritable(t, disk, 8192, 1); got[0] != 8 {
 		t.Fatal("cancellation changed data")
 	}
-	tiny, err := OpenWritableGeneration(t.Context(), writer, root, 2, 1)
+	tiny, err := OpenWritableVersion(t.Context(), writer, root, 2, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestWritableGenerationBoundsAndBackpressure(t *testing.T) {
 	if _, err = tiny.WriteAt(t.Context(), []byte{4}, 8192); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = tiny.Capture(t.Context()); !errors.Is(err, ErrGenerationStagingFull) {
+	if _, err = tiny.Capture(t.Context()); !errors.Is(err, ErrVersionStagingFull) {
 		t.Fatal("staging not bounded", err)
 	}
 	if got := readWritable(t, tiny, 8192, 1); got[0] != 4 {
@@ -156,13 +156,13 @@ func TestWritableGenerationBoundsAndBackpressure(t *testing.T) {
 	}
 }
 
-type gatedGenerationSink struct {
+type gatedVersionSink struct {
 	blockformat.ObjectSink
 	entered, release chan struct{}
 	fail             bool
 }
 
-func (s *gatedGenerationSink) StoreObject(ctx context.Context, digest [32]byte, raw []byte) error {
+func (s *gatedVersionSink) StoreObject(ctx context.Context, digest [32]byte, raw []byte) error {
 	if s.entered != nil {
 		close(s.entered)
 		s.entered = nil
@@ -178,14 +178,14 @@ func (s *gatedGenerationSink) StoreObject(ctx context.Context, digest [32]byte, 
 	return s.ObjectSink.StoreObject(ctx, digest, raw)
 }
 
-func TestWritableGenerationCaptureKeepsConcurrentWrites(t *testing.T) {
+func TestWritableVersionCaptureKeepsConcurrentWrites(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(map[bool]string{false: "success", true: "failure"}[fail], func(t *testing.T) {
 			_, writer, root := writableFixture(t, 4)
 			entered, release := make(chan struct{}), make(chan struct{})
-			gate := &gatedGenerationSink{ObjectSink: writer.Sink, entered: entered, release: release, fail: fail}
+			gate := &gatedVersionSink{ObjectSink: writer.Sink, entered: entered, release: release, fail: fail}
 			writer.Sink = gate
-			disk, err := OpenWritableGeneration(t.Context(), writer, root, 4, 32<<20)
+			disk, err := OpenWritableVersion(t.Context(), writer, root, 4, 32<<20)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -226,7 +226,7 @@ func TestWritableGenerationCaptureKeepsConcurrentWrites(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			tree, err := OpenGeneration(t.Context(), writer.Source, writer.Scope, writer.Keys, next, next.LogicalBytes)
+			tree, err := OpenVersion(t.Context(), writer.Source, writer.Scope, writer.Keys, next, next.LogicalBytes)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -238,12 +238,12 @@ func TestWritableGenerationCaptureKeepsConcurrentWrites(t *testing.T) {
 	}
 }
 
-func TestWritableGenerationRejectsUnpublishableWriteKey(t *testing.T) {
+func TestWritableVersionRejectsUnpublishableWriteKey(t *testing.T) {
 	_, writer, root := writableFixture(t, 4)
 	id := uuid.New().String()
 	writer.Keys[id] = bytes.Repeat([]byte{3}, 32)
 	writer.ActiveKey = id
-	if disk, err := OpenWritableGeneration(t.Context(), writer, root, 4, 32<<20); err == nil {
+	if disk, err := OpenWritableVersion(t.Context(), writer, root, 4, 32<<20); err == nil {
 		disk.Close()
 		t.Fatal("non-v7 write key accepted")
 	}
@@ -260,11 +260,11 @@ func (s *failingWritableSource) GetRange(ctx context.Context, digest string, siz
 	}
 	return s.RangeSource.GetRange(ctx, digest, size, offset, length)
 }
-func TestWritableGenerationSourceFailureIsAtomic(t *testing.T) {
+func TestWritableVersionSourceFailureIsAtomic(t *testing.T) {
 	_, writer, root := writableFixture(t, 4)
 	source := &failingWritableSource{RangeSource: writer.Source}
 	writer.Source = source
-	disk, err := OpenWritableGeneration(t.Context(), writer, root, 4, 32<<20)
+	disk, err := OpenWritableVersion(t.Context(), writer, root, 4, 32<<20)
 	if err != nil {
 		t.Fatal(err)
 	}

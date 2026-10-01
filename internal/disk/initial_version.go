@@ -12,11 +12,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 )
 
-// GenerationCapture describes a host-owned, quiescent initial disk. The caller
+// VersionCapture describes a host-owned, quiescent initial disk. The caller
 // reserves MaxStagedBytes before capture and exclusively owns the unchanged Disk
 // until it returns. Capture uses its seek position to skip filesystem holes.
 // This is initialization only, not a running disk snapshot or a continuation.
-type GenerationCapture struct {
+type VersionCapture struct {
 	Disk              *os.File
 	Capacity          int64
 	StagingParent     string
@@ -27,18 +27,18 @@ type GenerationCapture struct {
 	MaxObjects        int
 }
 
-// GenerationPublication is consumed by the candidate; an execution adapter binds
+// VersionPublication is consumed by the candidate; an execution adapter binds
 // these operations to its authenticated Runtime. Upload must verify exact bytes.
-type GenerationPublication interface {
+type VersionPublication interface {
 	Register(context.Context, blockformat.ObjectInspection) error
 	Upload(context.Context, cas.Descriptor, *os.File) (cas.Object, error)
 	Certify(context.Context, blockformat.ObjectInspection) error
 }
 
-// InitialGeneration owns private staged bytes and a copy of its scoped key.
+// InitialVersion owns private staged bytes and a copy of its scoped key.
 // Methods require exclusive ownership. Retry Publish on the same candidate after
 // uncertainty; recapturing creates new ciphertext. Close removes only local state.
-type InitialGeneration struct {
+type InitialVersion struct {
 	directory    string
 	store        *cas.File
 	root         blockformat.Locator
@@ -48,15 +48,15 @@ type InitialGeneration struct {
 	maxObjects   int
 }
 
-type generationStaging struct {
+type versionStaging struct {
 	store     *cas.File
 	remaining int64
 	objects   int
 }
 
-func (s *generationStaging) StoreObject(ctx context.Context, digest [32]byte, raw []byte) error {
+func (s *versionStaging) StoreObject(ctx context.Context, digest [32]byte, raw []byte) error {
 	if s.objects <= 0 || int64(len(raw)) > s.remaining {
-		return errors.New("generation staging budget exceeded")
+		return errors.New("version staging budget exceeded")
 	}
 	if err := s.store.StoreObject(ctx, digest, raw); err != nil {
 		return err
@@ -66,9 +66,9 @@ func (s *generationStaging) StoreObject(ctx context.Context, digest [32]byte, ra
 	return nil
 }
 
-func CaptureInitialGeneration(ctx context.Context, request GenerationCapture) (_ *InitialGeneration, retErr error) {
+func CaptureInitialVersion(ctx context.Context, request VersionCapture) (_ *InitialVersion, retErr error) {
 	if request.Disk == nil || request.StagingParent == "" || request.MaxStagedBytes <= 0 || request.MaxObjects <= 0 || request.MaxObjects > 1<<20 {
-		return nil, errors.New("initial generation source and finite staging admission required")
+		return nil, errors.New("initial version source and finite staging admission required")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -80,11 +80,11 @@ func CaptureInitialGeneration(ctx context.Context, request GenerationCapture) (_
 	if !info.Mode().IsRegular() || info.Size() != request.Capacity {
 		return nil, errors.New("initial disk differs from admitted capacity")
 	}
-	directory, err := os.MkdirTemp(request.StagingParent, "generation-")
+	directory, err := os.MkdirTemp(request.StagingParent, "version-")
 	if err != nil {
 		return nil, err
 	}
-	candidate := &InitialGeneration{directory: directory, capacity: request.Capacity, scope: request.Scope, keyID: request.KeyID, key: bytes.Clone(request.Key), maxObjects: request.MaxObjects}
+	candidate := &InitialVersion{directory: directory, capacity: request.Capacity, scope: request.Scope, keyID: request.KeyID, key: bytes.Clone(request.Key), maxObjects: request.MaxObjects}
 	defer func() {
 		if retErr != nil {
 			retErr = errors.Join(retErr, candidate.Close())
@@ -94,7 +94,7 @@ func CaptureInitialGeneration(ctx context.Context, request GenerationCapture) (_
 	if err != nil {
 		return nil, err
 	}
-	stage := &generationStaging{store: candidate.store, remaining: request.MaxStagedBytes, objects: request.MaxObjects}
+	stage := &versionStaging{store: candidate.store, remaining: request.MaxStagedBytes, objects: request.MaxObjects}
 	writer := blockformat.Writer{Source: candidate.store, Sink: stage, Scope: request.Scope, ActiveKey: request.KeyID, Keys: map[string][]byte{request.KeyID: candidate.key}, PackLimit: request.PackLimit}
 	candidate.root, err = writer.Empty(ctx, request.Capacity, request.Fanout)
 	if err != nil {
@@ -139,7 +139,7 @@ func CaptureInitialGeneration(ctx context.Context, request GenerationCapture) (_
 	return candidate, nil
 }
 
-func (c *InitialGeneration) Close() error {
+func (c *InitialVersion) Close() error {
 	clear(c.key)
 	c.key = nil
 	if c.directory == "" {
@@ -154,14 +154,14 @@ func (c *InitialGeneration) Close() error {
 
 // Publish inspects and publishes the final physical closure child-first. Private
 // intermediate roots are never registered. The returned root is object-certified,
-// not a committed Computer head; the caller still owns generation publication.
-func (c *InitialGeneration) Publish(ctx context.Context, publisher GenerationPublication) (blockformat.Locator, error) {
+// not a committed Computer head; the caller still owns version publication.
+func (c *InitialVersion) Publish(ctx context.Context, publisher VersionPublication) (blockformat.Locator, error) {
 	fail := blockformat.Locator{}
 	if c.directory == "" || len(c.key) != 32 {
 		return fail, os.ErrClosed
 	}
 	if publisher == nil {
-		return fail, errors.New("generation publisher required")
+		return fail, errors.New("version publisher required")
 	}
-	return publishGeneration(ctx, c.store, c.store, c.scope, map[string][]byte{c.keyID: c.key}, c.root, c.capacity, c.maxObjects, publisher, nil)
+	return publishVersion(ctx, c.store, c.store, c.scope, map[string][]byte{c.keyID: c.key}, c.root, c.capacity, c.maxObjects, publisher, nil)
 }

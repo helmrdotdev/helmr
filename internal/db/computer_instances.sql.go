@@ -618,7 +618,7 @@ SELECT i.id, i.org_id, i.worker_group_id, i.project_id, i.environment_id, i.regi
  spec.seed_digest AS computer_image_digest,spec.seed_size_bytes AS computer_image_size_bytes,
  spec.seed_media_type AS computer_image_media_type,
  source.id AS preparation_disk_version_id,
- c.initial_config AS computer_initial_config,root.locator AS computer_generation_locator,
+ c.initial_config AS computer_initial_config,root.locator AS computer_version_locator,
  source.status AS computer_disk_version_status,source.root_pack_digest AS computer_content_digest,
  source.logical_bytes AS computer_logical_size_bytes,
  platform.arch AS computer_architecture,platform.rootfs_digest,platform.contract AS vm_contract,
@@ -714,7 +714,7 @@ type ListComputerInstanceReconcileTargetsRow struct {
 	ComputerImageMediaType          string             `json:"computer_image_media_type"`
 	PreparationDiskVersionID        pgtype.UUID        `json:"preparation_disk_version_id"`
 	ComputerInitialConfig           []byte             `json:"computer_initial_config"`
-	ComputerGenerationLocator       []byte             `json:"computer_generation_locator"`
+	ComputerVersionLocator          []byte             `json:"computer_version_locator"`
 	ComputerDiskVersionStatus       pgtype.Text        `json:"computer_disk_version_status"`
 	ComputerContentDigest           pgtype.Text        `json:"computer_content_digest"`
 	ComputerLogicalSizeBytes        pgtype.Int8        `json:"computer_logical_size_bytes"`
@@ -810,7 +810,7 @@ func (q *Queries) ListComputerInstanceReconcileTargets(ctx context.Context, arg 
 			&i.ComputerImageMediaType,
 			&i.PreparationDiskVersionID,
 			&i.ComputerInitialConfig,
-			&i.ComputerGenerationLocator,
+			&i.ComputerVersionLocator,
 			&i.ComputerDiskVersionStatus,
 			&i.ComputerContentDigest,
 			&i.ComputerLogicalSizeBytes,

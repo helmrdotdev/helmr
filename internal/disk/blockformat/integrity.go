@@ -4,7 +4,7 @@ import "errors"
 
 // ErrIntegrity marks invalid authenticated content, not transport or cancellation.
 // It does not identify whether the bytes came from local or published storage.
-var ErrIntegrity = errors.New("generation content integrity failure")
+var ErrIntegrity = errors.New("version content integrity failure")
 
 func integrity(err error) error {
 	if err == nil {
@@ -15,4 +15,4 @@ func integrity(err error) error {
 
 // ErrAuthentication can mean corrupt ciphertext or unavailable/wrong key material.
 // It stops an active device but alone cannot prove remote data loss.
-var ErrAuthentication = errors.New("generation authentication failure")
+var ErrAuthentication = errors.New("version authentication failure")

@@ -19,13 +19,13 @@ import (
 // and joined every consumer. This is local retention, not remote durability.
 type LocalCapture struct {
 	mu        sync.Mutex
-	owner     *LocalGeneration
-	root      GenerationRoot
+	owner     *LocalVersion
+	root      VersionRoot
 	released  bool
 	published bool
 }
 
-func (c *LocalCapture) Root() GenerationRoot { return c.root }
+func (c *LocalCapture) Root() VersionRoot { return c.root }
 
 func (c *LocalCapture) Publish(ctx context.Context, publisher ContinuationPublication) error {
 	c.mu.Lock()
@@ -45,7 +45,7 @@ func (c *LocalCapture) Publish(ctx context.Context, publisher ContinuationPublic
 	if err != nil {
 		return err
 	}
-	_, err = publishGeneration(ctx, p.store, p.disk.writer.Source, p.disk.writer.Scope, p.disk.writer.Keys, locator, c.root.LogicalBytes, 1<<20, publisher, publisher)
+	_, err = publishVersion(ctx, p.store, p.disk.writer.Source, p.disk.writer.Scope, p.disk.writer.Keys, locator, c.root.LogicalBytes, 1<<20, publisher, publisher)
 	if err == nil {
 		c.published = true
 	}
@@ -66,7 +66,7 @@ func (c *LocalCapture) Release() {
 
 // Capture flushes and pins atomically with respect to local collection. A bare
 // Flush is for the block protocol's durability acknowledgment, not retained cuts.
-func (p *LocalGeneration) Capture(ctx context.Context) (*LocalCapture, error) {
+func (p *LocalVersion) Capture(ctx context.Context) (*LocalCapture, error) {
 	p.life.RLock()
 	defer p.life.RUnlock()
 	if p.closed {
@@ -88,7 +88,7 @@ func (p *LocalGeneration) Capture(ctx context.Context) (*LocalCapture, error) {
 // Flush/capture is serialized; ordinary guest reads and writes may continue.
 // The finite object budget bounds traversal and directory work. Failure before
 // deletion leaves all bytes intact; partial deletion never returns space credit.
-func (p *LocalGeneration) Collect(ctx context.Context, maxObjects int) (int64, error) {
+func (p *LocalVersion) Collect(ctx context.Context, maxObjects int) (int64, error) {
 	p.life.RLock()
 	defer p.life.RUnlock()
 	if p.closed {
@@ -129,10 +129,10 @@ func (p *LocalGeneration) Collect(ctx context.Context, maxObjects int) (int64, e
 	// Force the latest installed root directory entry durable before deleting
 	// any candidate from an earlier ambiguous rename. Until this succeeds, a
 	// crash could expose an intermediate root from consecutive failed flushes.
-	if err := syncGenerationDirectory(p.directory); err != nil {
+	if err := syncVersionDirectory(p.directory); err != nil {
 		return 0, err
 	}
-	roots := []GenerationRoot{p.head.Root, p.installedRoot, current}
+	roots := []VersionRoot{p.head.Root, p.installedRoot, current}
 	for _, root := range p.captures {
 		roots = append(roots, root)
 	}
@@ -157,7 +157,7 @@ func (p *LocalGeneration) Collect(ctx context.Context, maxObjects int) (int64, e
 			return errors.New("unexpected local collection entry")
 		}
 		if info.Size() > p.stagedBytes-used {
-			return ErrGenerationStagingFull
+			return ErrVersionStagingFull
 		}
 		used += info.Size()
 		if !keep[digest] || remote[digest] {
@@ -184,16 +184,16 @@ func (p *LocalGeneration) Collect(ctx context.Context, maxObjects int) (int64, e
 		}
 	}
 	// Also sync a prior partially completed deletion before returning its credit.
-	if err = syncGenerationDirectory(filepath.Join(objects, "sha256")); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err = syncVersionDirectory(filepath.Join(objects, "sha256")); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return removed, err
 	}
 	// This owner serializes every sink write with commit. Recounting also recovers
 	// conservative charges from failed I/O and duplicate immutable writes.
-	p.disk.writer.Sink.(*reservedGenerationSink).remaining = p.stagedBytes - (used - removed)
+	p.disk.writer.Sink.(*reservedVersionSink).remaining = p.stagedBytes - (used - removed)
 	return removed, nil
 }
 
-func (p *LocalGeneration) localReachable(ctx context.Context, roots []GenerationRoot, budget int) (map[string]bool, error) {
+func (p *LocalVersion) localReachable(ctx context.Context, roots []VersionRoot, budget int) (map[string]bool, error) {
 	keep := make(map[string]bool)
 	visited := make(map[blockformat.PackRef]bool)
 	charge := func(digest string) error {
@@ -211,7 +211,7 @@ func (p *LocalGeneration) localReachable(ctx context.Context, roots []Generation
 		if err := charge(digest); err != nil {
 			return err
 		}
-		local, err := generationObjectLocal(ctx, p.store, ref.Digest, ref.Size)
+		local, err := versionObjectLocal(ctx, p.store, ref.Digest, ref.Size)
 		if err != nil {
 			return err
 		}

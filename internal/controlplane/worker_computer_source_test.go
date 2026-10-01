@@ -56,11 +56,11 @@ func committedComputerSourceRow(t *testing.T) db.ListComputerInstanceReconcileTa
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := disk.NewGenerationRoot(locator, disk.SeedCapacity)
+	root, err := disk.NewVersionRoot(locator, disk.SeedCapacity)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.ComputerGenerationLocator, err = json.Marshal(root)
+	r.ComputerVersionLocator, err = json.Marshal(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,12 +118,12 @@ func TestRuntimeComputerSourceRejectsMissingOrConflictingAuthority(t *testing.T)
 		}},
 		{"initial-restore", false, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.SourceCheckpointID = pgvalue.UUID(uuid.NewV7()) }},
 		{"initial-config", false, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.ComputerInitialConfig = []byte(`{}`) }},
-		{"initial-disk", false, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.ComputerGenerationLocator = []byte(`{}`) }},
-		{"missing-generation", true, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.ComputerGenerationLocator = nil }},
+		{"initial-disk", false, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.ComputerVersionLocator = []byte(`{}`) }},
+		{"missing-version", true, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.ComputerVersionLocator = nil }},
 		{"disk-conflict", true, func(r *db.ListComputerInstanceReconcileTargetsRow) {
 			r.ComputerContentDigest = pgvalue.Text(dbtest.Digest("other"))
 		}},
-		{"generation-format", true, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.ComputerGenerationLocator = []byte(`{}`) }},
+		{"version-format", true, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.ComputerVersionLocator = []byte(`{}`) }},
 		{"disk-capacity", true, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.ComputerLogicalSizeBytes.Int64 /= 2 }},
 		{"missing-config", true, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.ComputerInitialConfig = nil }},
 		{"null-config", true, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.ComputerInitialConfig = []byte(`null`) }},

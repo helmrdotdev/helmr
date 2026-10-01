@@ -18,7 +18,7 @@ import (
 )
 
 type continuationTestPublication struct {
-	*generationTestPublication
+	*versionTestPublication
 	reused      int
 	rejectReuse bool
 }
@@ -38,23 +38,23 @@ func (p *continuationTestPublication) Reuse(ctx context.Context, e blockformat.O
 	return nil
 }
 
-func TestLocalGenerationPublicationRetainsOldSnapshotAcrossNewFlush(t *testing.T) {
+func TestLocalVersionPublicationRetainsOldSnapshotAcrossNewFlush(t *testing.T) {
 	for _, failure := range []string{"", "register", "upload", "certify", "reuse"} {
 		t.Run(failure, func(t *testing.T) {
-			cfg, _ := localGenerationFixture(t)
+			cfg, _ := localVersionFixture(t)
 			remote := cfg.BaseSource.(*cas.File)
-			publisher := &continuationTestPublication{generationTestPublication: &generationTestPublication{remote: remote, registered: map[string]blockformat.ObjectInspection{}, certified: map[string]blockformat.ObjectInspection{}}}
+			publisher := &continuationTestPublication{versionTestPublication: &versionTestPublication{remote: remote, registered: map[string]blockformat.ObjectInspection{}, certified: map[string]blockformat.ObjectInspection{}}}
 			locator, err := cfg.Base.Locator(cfg.Base.LogicalBytes)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err = publishGeneration(t.Context(), remote, remote, cfg.Scope, cfg.Keys, locator, cfg.Base.LogicalBytes, 1000, publisher, nil); err != nil {
+			if _, err = publishVersion(t.Context(), remote, remote, cfg.Scope, cfg.Keys, locator, cfg.Base.LogicalBytes, 1000, publisher, nil); err != nil {
 				t.Fatal(err)
 			}
 			// Retained bytes use one key; new writes use another.
 			cfg.ActiveKey = uuid.NewV7().String()
 			cfg.Keys[cfg.ActiveKey] = bytes.Repeat([]byte{9}, 32)
-			disk, err := CreateLocalGeneration(t.Context(), cfg)
+			disk, err := CreateLocalVersion(t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -93,7 +93,7 @@ func TestLocalGenerationPublicationRetainsOldSnapshotAcrossNewFlush(t *testing.T
 			if publisher.reused == 0 {
 				t.Fatal("no retained source reuse")
 			}
-			tree, err := OpenGeneration(t.Context(), remote, cfg.Scope, cfg.Keys, saved, saved.LogicalBytes)
+			tree, err := OpenVersion(t.Context(), remote, cfg.Scope, cfg.Keys, saved, saved.LogicalBytes)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -109,21 +109,21 @@ func TestLocalGenerationPublicationRetainsOldSnapshotAcrossNewFlush(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err = publishGeneration(t.Context(), disk.store, disk.disk.writer.Source, cfg.Scope, cfg.Keys, savedLocator, saved.LogicalBytes, 1, publisher, publisher); err == nil {
+			if _, err = publishVersion(t.Context(), disk.store, disk.disk.writer.Source, cfg.Scope, cfg.Keys, savedLocator, saved.LogicalBytes, 1, publisher, publisher); err == nil {
 				t.Fatal("object budget not enforced")
 			}
 		})
 	}
 }
 
-type blockedGenerationPublication struct {
+type blockedVersionPublication struct {
 	*continuationTestPublication
 	entered chan struct{}
 	resume  chan struct{}
 	once    sync.Once
 }
 
-func (p *blockedGenerationPublication) Register(ctx context.Context, e blockformat.ObjectInspection) error {
+func (p *blockedVersionPublication) Register(ctx context.Context, e blockformat.ObjectInspection) error {
 	p.once.Do(func() { close(p.entered) })
 	select {
 	case <-p.resume:
@@ -133,18 +133,18 @@ func (p *blockedGenerationPublication) Register(ctx context.Context, e blockform
 	return p.continuationTestPublication.Register(ctx, e)
 }
 
-func TestLocalGenerationPublicationAllowsConcurrentFlush(t *testing.T) {
-	cfg, _ := localGenerationFixture(t)
+func TestLocalVersionPublicationAllowsConcurrentFlush(t *testing.T) {
+	cfg, _ := localVersionFixture(t)
 	remote := cfg.BaseSource.(*cas.File)
-	base := &continuationTestPublication{generationTestPublication: &generationTestPublication{remote: remote, registered: map[string]blockformat.ObjectInspection{}, certified: map[string]blockformat.ObjectInspection{}}}
+	base := &continuationTestPublication{versionTestPublication: &versionTestPublication{remote: remote, registered: map[string]blockformat.ObjectInspection{}, certified: map[string]blockformat.ObjectInspection{}}}
 	locator, err := cfg.Base.Locator(cfg.Base.LogicalBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = publishGeneration(t.Context(), remote, remote, cfg.Scope, cfg.Keys, locator, cfg.Base.LogicalBytes, 1000, base, nil); err != nil {
+	if _, err = publishVersion(t.Context(), remote, remote, cfg.Scope, cfg.Keys, locator, cfg.Base.LogicalBytes, 1000, base, nil); err != nil {
 		t.Fatal(err)
 	}
-	disk, err := CreateLocalGeneration(t.Context(), cfg)
+	disk, err := CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestLocalGenerationPublicationAllowsConcurrentFlush(t *testing.T) {
 	}
 	defer capture.Release()
 	saved := capture.Root()
-	publisher := &blockedGenerationPublication{continuationTestPublication: base, entered: make(chan struct{}), resume: make(chan struct{})}
+	publisher := &blockedVersionPublication{continuationTestPublication: base, entered: make(chan struct{}), resume: make(chan struct{})}
 	done := make(chan error, 1)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -180,7 +180,7 @@ func TestLocalGenerationPublicationAllowsConcurrentFlush(t *testing.T) {
 	if err = <-done; err != nil {
 		t.Fatal(err)
 	}
-	tree, err := OpenGeneration(ctx, remote, cfg.Scope, cfg.Keys, saved, saved.LogicalBytes)
+	tree, err := OpenVersion(ctx, remote, cfg.Scope, cfg.Keys, saved, saved.LogicalBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,18 +190,18 @@ func TestLocalGenerationPublicationAllowsConcurrentFlush(t *testing.T) {
 	}
 }
 
-func TestLocalGenerationPublicationRejectsMissingUnpublishedSegment(t *testing.T) {
-	cfg, _ := localGenerationFixture(t)
+func TestLocalVersionPublicationRejectsMissingUnpublishedSegment(t *testing.T) {
+	cfg, _ := localVersionFixture(t)
 	remote := cfg.BaseSource.(*cas.File)
-	publisher := &continuationTestPublication{generationTestPublication: &generationTestPublication{remote: remote, registered: map[string]blockformat.ObjectInspection{}, certified: map[string]blockformat.ObjectInspection{}}}
+	publisher := &continuationTestPublication{versionTestPublication: &versionTestPublication{remote: remote, registered: map[string]blockformat.ObjectInspection{}, certified: map[string]blockformat.ObjectInspection{}}}
 	locator, err := cfg.Base.Locator(cfg.Base.LogicalBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = publishGeneration(t.Context(), remote, remote, cfg.Scope, cfg.Keys, locator, cfg.Base.LogicalBytes, 1000, publisher, nil); err != nil {
+	if _, err = publishVersion(t.Context(), remote, remote, cfg.Scope, cfg.Keys, locator, cfg.Base.LogicalBytes, 1000, publisher, nil); err != nil {
 		t.Fatal(err)
 	}
-	disk, err := CreateLocalGeneration(t.Context(), cfg)
+	disk, err := CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

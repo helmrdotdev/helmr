@@ -16,7 +16,7 @@ func (f cacheRangeSource) GetRange(ctx context.Context, digest string, size, off
 	return f(ctx, digest, size, offset, length)
 }
 
-func readCachedRange(t *testing.T, c *generationRangeCache, digest string, size, offset, length int64) []byte {
+func readCachedRange(t *testing.T, c *versionRangeCache, digest string, size, offset, length int64) []byte {
 	t.Helper()
 	r, err := c.GetRange(t.Context(), digest, size, offset, length)
 	if err != nil {
@@ -29,9 +29,9 @@ func readCachedRange(t *testing.T, c *generationRangeCache, digest string, size,
 	return b
 }
 
-func TestGenerationRangeCacheExactIdentityAndIndependentReaders(t *testing.T) {
+func TestVersionRangeCacheExactIdentityAndIndependentReaders(t *testing.T) {
 	calls := 0
-	c := newGenerationRangeCache(cacheRangeSource(func(_ context.Context, _ string, _, _, length int64) (io.ReadCloser, error) {
+	c := newVersionRangeCache(cacheRangeSource(func(_ context.Context, _ string, _, _, length int64) (io.ReadCloser, error) {
 		calls++
 		return io.NopCloser(bytes.NewReader(bytes.Repeat([]byte{byte(calls)}, int(length)))), nil
 	}))
@@ -45,7 +45,7 @@ func TestGenerationRangeCacheExactIdentityAndIndependentReaders(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("calls=%d", calls)
 	}
-	for _, k := range []generationRangeKey{{"b", 100, 2, 4}, {"a", 101, 2, 4}, {"a", 100, 3, 4}, {"a", 100, 2, 5}} {
+	for _, k := range []versionRangeKey{{"b", 100, 2, 4}, {"a", 101, 2, 4}, {"a", 100, 3, 4}, {"a", 100, 2, 5}} {
 		readCachedRange(t, c, k.digest, k.size, k.offset, k.length)
 	}
 	if calls != 5 {
@@ -62,13 +62,13 @@ type cacheCloseError struct{ io.Reader }
 
 func (cacheCloseError) Close() error { return errors.New("close failed") }
 
-func TestGenerationRangeCacheDoesNotRetainFailedResponses(t *testing.T) {
+func TestVersionRangeCacheDoesNotRetainFailedResponses(t *testing.T) {
 	for _, failure := range []string{"short", "long", "close", "cancel"} {
 		t.Run(failure, func(t *testing.T) {
 			calls := 0
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			c := newGenerationRangeCache(cacheRangeSource(func(_ context.Context, _ string, _, _, _ int64) (io.ReadCloser, error) {
+			c := newVersionRangeCache(cacheRangeSource(func(_ context.Context, _ string, _, _, _ int64) (io.ReadCloser, error) {
 				calls++
 				if calls > 1 {
 					return io.NopCloser(bytes.NewReader([]byte("good"))), nil
@@ -95,8 +95,8 @@ func TestGenerationRangeCacheDoesNotRetainFailedResponses(t *testing.T) {
 	}
 }
 
-func TestGenerationRangeCacheBoundsAndConcurrentReads(t *testing.T) {
-	c := newGenerationRangeCache(cacheRangeSource(func(_ context.Context, _ string, _, _, length int64) (io.ReadCloser, error) {
+func TestVersionRangeCacheBoundsAndConcurrentReads(t *testing.T) {
+	c := newVersionRangeCache(cacheRangeSource(func(_ context.Context, _ string, _, _, length int64) (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader(make([]byte, length))), nil
 	}))
 	var wg sync.WaitGroup
@@ -108,13 +108,13 @@ func TestGenerationRangeCacheBoundsAndConcurrentReads(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	if c.bytes > generationReadCacheBytes || len(c.entries) > generationReadCacheEntries {
+	if c.bytes > versionReadCacheBytes || len(c.entries) > versionReadCacheEntries {
 		t.Fatalf("unbounded bytes=%d entries=%d", c.bytes, len(c.entries))
 	}
-	for i := range generationReadCacheEntries + 1 {
+	for i := range versionReadCacheEntries + 1 {
 		readCachedRange(t, c, fmt.Sprint(i), 1, 0, 1)
 	}
-	if len(c.entries) > generationReadCacheEntries {
+	if len(c.entries) > versionReadCacheEntries {
 		t.Fatal("entry limit exceeded")
 	}
 	c.clear()

@@ -26,7 +26,7 @@ type ComputerSourceRequest struct {
 type ComputerSourceMaterial struct {
 	WriteKeyID string                `json:"write_key_id"`
 	VersionID  string                `json:"version_id"`
-	Root       disk.GenerationRoot   `json:"root"`
+	Root       disk.VersionRoot      `json:"root"`
 	Keys       []ComputerKeyMaterial `json:"keys"`
 }
 

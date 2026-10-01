@@ -53,11 +53,11 @@ func (c *LocalCapture) Adopt(ctx context.Context, maxObjects int) error {
 // Traverse only locally present packs; an absent pack is an already retained
 // remote boundary. Inspect every incoming position even for a visited pack.
 // The result is bounded, temporary evidence, never a second durable object index.
-func (p *LocalGeneration) remoteBacked(ctx context.Context, root GenerationRoot, budget int) (map[string]bool, error) {
+func (p *LocalVersion) remoteBacked(ctx context.Context, root VersionRoot, budget int) (map[string]bool, error) {
 	if budget <= 0 || budget > 1<<20 {
 		return nil, errors.New("bounded source adoption required")
 	}
-	remote := p.disk.writer.Source.(localGenerationSource).base
+	remote := p.disk.writer.Source.(localVersionSource).base
 	backed := make(map[string]bool)
 	visited := make(map[blockformat.PackRef]bool)
 	charge := func(digest string) error {
@@ -90,7 +90,7 @@ func (p *LocalGeneration) remoteBacked(ctx context.Context, root GenerationRoot,
 		if err != nil {
 			return err
 		}
-		local, err := generationObjectLocal(ctx, p.store, ref.Digest, ref.Size)
+		local, err := versionObjectLocal(ctx, p.store, ref.Digest, ref.Size)
 		if err != nil || !local || visited[ref] {
 			return err
 		}
@@ -104,7 +104,7 @@ func (p *LocalGeneration) remoteBacked(ctx context.Context, root GenerationRoot,
 				if err = charge(digest); err != nil {
 					return err
 				}
-				local, err := generationObjectLocal(ctx, p.store, segment.Digest, segment.Size)
+				local, err := versionObjectLocal(ctx, p.store, segment.Digest, segment.Size)
 				if err != nil {
 					return err
 				}
@@ -132,7 +132,7 @@ func (p *LocalGeneration) remoteBacked(ctx context.Context, root GenerationRoot,
 }
 
 // Collect reclaims local staging after the Runtime settles publication. It may
-// run after Release; the Runtime must retain the generation until it returns.
+// run after Release; the Runtime must retain the version until it returns.
 func (c *LocalCapture) Collect(ctx context.Context, maxObjects int) (int64, error) {
 	return c.owner.Collect(ctx, maxObjects)
 }

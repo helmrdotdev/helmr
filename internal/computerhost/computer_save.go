@@ -29,7 +29,7 @@ type ComputerSaveClient interface {
 }
 
 type computerSaveCapture interface {
-	disk.CapturedGeneration
+	disk.CapturedVersion
 	Adopt(context.Context, int) error
 	Collect(context.Context, int) (int64, error)
 }
@@ -41,7 +41,7 @@ type computerSaveCapture interface {
 // the Runtime owner must retry within its deadline or use physical reclamation.
 type computerSave struct {
 	client     ComputerSaveClient
-	objects    generationObjectPublisher
+	objects    versionObjectPublisher
 	request    workerapi.ComputerSaveBeginRequest
 	runtimeID  string
 	computerID string
@@ -63,7 +63,7 @@ type computerSave struct {
 // only after restoring normal guest/device dispatch; ambiguous capture failure
 // belongs to the Runtime stop path. The caller owns the lifetime of client,
 // objects and capture dependencies until Quiesce has joined this operation.
-func startComputerSave(ctx context.Context, client ComputerSaveClient, objects generationObjectPublisher, request workerapi.ComputerSaveBeginRequest, runtimeID, computerID string, capture func(context.Context) (computerSaveCapture, error)) (*computerSave, error) {
+func startComputerSave(ctx context.Context, client ComputerSaveClient, objects versionObjectPublisher, request workerapi.ComputerSaveBeginRequest, runtimeID, computerID string, capture func(context.Context) (computerSaveCapture, error)) (*computerSave, error) {
 	if client == nil || objects == nil || capture == nil || ids.Validate(runtimeID) != nil || ids.Validate(computerID) != nil || ids.Validate(request.SaveID) != nil || request.Sequence <= 0 || ids.Validate(request.EnvironmentID) != nil || request.ComputerInstanceID != runtimeID || request.WriterGeneration <= 0 {
 		return nil, errors.New("computer save dependencies and identities required")
 	}
@@ -213,7 +213,7 @@ func (s *computerSave) abandon(ctx context.Context) error {
 
 type computerSavePublisher struct {
 	client  ComputerSaveClient
-	objects generationObjectPublisher
+	objects versionObjectPublisher
 	save    workerapi.ComputerSaveBeginRequest
 }
 

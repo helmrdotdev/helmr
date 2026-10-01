@@ -9,15 +9,15 @@ import (
 	"os"
 )
 
-// GenerationReuse confirms an already certified object with the exact inspection
+// VersionReuse confirms an already certified object with the exact inspection
 // in the same retained Computer scope. Missing local bytes alone never establish
 // remote durability. Implementations must reject absent or uncertified objects,
 // validate source authority and retain references through publication.
-type GenerationReuse interface {
+type VersionReuse interface {
 	Reuse(context.Context, blockformat.ObjectInspection) error
 }
 
-func generationObjectLocal(ctx context.Context, local *cas.File, digest [32]byte, size int64) (bool, error) {
+func versionObjectLocal(ctx context.Context, local *cas.File, digest [32]byte, size int64) (bool, error) {
 	file, err := local.OpenImmutable(ctx, cas.Descriptor{Digest: sha256sum.FormatDigest(digest[:]), SizeBytes: size, MediaType: "application/octet-stream"})
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
@@ -31,10 +31,10 @@ func generationObjectLocal(ctx context.Context, local *cas.File, digest [32]byte
 // Visit local dependencies child-first, authenticating every incoming pack
 // position. A retained certified subtree can be reused at its boundary without
 // reading its data or uploading it again. Publication never advances a head.
-func publishGeneration(ctx context.Context, local *cas.File, source blockformat.RangeSource, scope string, keys map[string][]byte, root blockformat.Locator, capacity int64, maxObjects int, publisher GenerationPublication, reuse GenerationReuse) (blockformat.Locator, error) {
+func publishVersion(ctx context.Context, local *cas.File, source blockformat.RangeSource, scope string, keys map[string][]byte, root blockformat.Locator, capacity int64, maxObjects int, publisher VersionPublication, reuse VersionReuse) (blockformat.Locator, error) {
 	fail := blockformat.Locator{}
 	if publisher == nil || maxObjects <= 0 || maxObjects > 1<<20 {
-		return fail, errors.New("bounded generation publisher required")
+		return fail, errors.New("bounded version publisher required")
 	}
 	packs := make(map[blockformat.PackRef]bool)
 	segments := make(map[blockformat.Ref]bool)
@@ -42,7 +42,7 @@ func publishGeneration(ctx context.Context, local *cas.File, source blockformat.
 	charge := func() error {
 		remaining--
 		if remaining < 0 {
-			return errors.New("generation publication object budget exceeded")
+			return errors.New("version publication object budget exceeded")
 		}
 		return ctx.Err()
 	}
@@ -64,7 +64,7 @@ func publishGeneration(ctx context.Context, local *cas.File, source blockformat.
 			return err
 		}
 		if object.Digest != descriptor.Digest || object.SizeBytes != descriptor.SizeBytes || object.MediaType != descriptor.MediaType {
-			return errors.New("uploaded generation object differs from candidate")
+			return errors.New("uploaded version object differs from candidate")
 		}
 		if err = ctx.Err(); err != nil {
 			return err
@@ -93,7 +93,7 @@ func publishGeneration(ctx context.Context, local *cas.File, source blockformat.
 			return nil
 		}
 		if reuse != nil {
-			exists, err := generationObjectLocal(ctx, local, ref.Digest, ref.Size)
+			exists, err := versionObjectLocal(ctx, local, ref.Digest, ref.Size)
 			if err != nil {
 				return err
 			}
@@ -121,7 +121,7 @@ func publishGeneration(ctx context.Context, local *cas.File, source blockformat.
 					return err
 				}
 				if reuse != nil {
-					exists, err := generationObjectLocal(ctx, local, segment.Digest, segment.Size)
+					exists, err := versionObjectLocal(ctx, local, segment.Digest, segment.Size)
 					if err != nil {
 						return err
 					}
@@ -143,7 +143,7 @@ func publishGeneration(ctx context.Context, local *cas.File, source blockformat.
 			}
 			for _, child := range page.Children {
 				if child.Locator.Pack.Rank >= ref.Rank {
-					return errors.New("invalid generation dependency rank")
+					return errors.New("invalid version dependency rank")
 				}
 				children[child.Locator.Pack] = append(children[child.Locator.Pack], child)
 			}
@@ -171,6 +171,6 @@ func publishGeneration(ctx context.Context, local *cas.File, source blockformat.
 
 // ContinuationPublication binds new and reused objects to one live publication owner.
 type ContinuationPublication interface {
-	GenerationPublication
-	GenerationReuse
+	VersionPublication
+	VersionReuse
 }

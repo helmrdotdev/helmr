@@ -146,8 +146,8 @@ func (p Publisher) inInitialPreparation(ctx context.Context, principal workergro
 // InitialVersion is the initial disk version an Instance publishes: its
 // certified root and the image configuration the Computer keeps.
 type InitialVersion struct {
-	Root   disk.GenerationRoot `json:"root"`
-	Config oci.RuntimeConfig   `json:"config"`
+	Root   disk.VersionRoot  `json:"root"`
+	Config oci.RuntimeConfig `json:"config"`
 }
 
 // PublishInitialVersion publishes the initializing head of an initial
@@ -160,7 +160,7 @@ type InitialVersion struct {
 func (p Publisher) PublishInitialVersion(ctx context.Context, principal workergroup.HostPrincipal, ref PreparationRef, input InitialVersion) (Publication, error) {
 	locator, err := input.Root.Locator(input.Root.LogicalBytes)
 	if err != nil {
-		return Publication{}, invalidInput("invalid computer generation root: %v", err)
+		return Publication{}, invalidInput("invalid computer disk version root: %v", err)
 	}
 	canonical, err := json.Marshal(input)
 	if err != nil {
@@ -262,7 +262,7 @@ func (p initialPreparation) publishVersion(ctx context.Context, input InitialVer
 		return Publication{}, err
 	}
 	if pinned != 1 {
-		return Publication{}, objectConflict("initial generation has no matching Runtime source reservation")
+		return Publication{}, objectConflict("initial version has no matching Runtime source reservation")
 	}
 	if err = p.checkDeadlines(ctx); err != nil {
 		return Publication{}, err

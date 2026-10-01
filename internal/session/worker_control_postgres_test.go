@@ -251,7 +251,7 @@ func controlChild(t *testing.T, parent *sessiontest.Execution, detached bool) *s
 	dbtest.MustExec(t, t.Context(), tx, `SET CONSTRAINTS ALL DEFERRED`)
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computers(id,environment_id,region_id,sandbox_declared_id,head_disk_version_id, computer_spec_id, creation_deployment_id) VALUES($1,$2,'us-east-1','test-computer',$4, (SELECT computer_spec_id FROM deployment_definitions WHERE environment_id=$2 AND id=$3), (SELECT deployment_id FROM deployment_definitions WHERE environment_id=$2 AND id=$3))`, f.ComputerID, f.EnvironmentID, f.ComputerDefinitionID, f.RootID)
 	dbtest.InsertCommittedComputerRoot(t, t.Context(), tx, f.RootID, f.EnvironmentID, f.ComputerID)
-	dbtest.InsertComputerGeneration(t, t.Context(), tx, f.EnvironmentID, f.ComputerID, f.RootID)
+	dbtest.InsertComputerVersion(t, t.Context(), tx, f.EnvironmentID, f.ComputerID, f.RootID)
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}

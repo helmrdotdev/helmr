@@ -7,18 +7,18 @@ import (
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 )
 
-// NewGenerationRoot converts a byte verifier's locator and authenticated capacity
+// NewVersionRoot converts a byte verifier's locator and authenticated capacity
 // into the persisted descriptor. This conversion validates framing only; callers
 // must obtain both inputs from verified bytes before publishing them.
-func NewGenerationRoot(locator blockformat.Locator, capacity int64) (GenerationRoot, error) {
-	root := GenerationRoot{
+func NewVersionRoot(locator blockformat.Locator, capacity int64) (VersionRoot, error) {
+	root := VersionRoot{
 		FormatVersion: 1, LogicalBytes: capacity, Offset: locator.Offset,
-		Pack: GenerationPack{Digest: "sha256:" + hex.EncodeToString(locator.Pack.Digest[:]), SizeBytes: locator.Pack.Size, Rank: locator.Pack.Rank},
-		Page: GenerationPage{Digest: "sha256:" + hex.EncodeToString(locator.Page.Digest[:]), Salt: hex.EncodeToString(locator.Page.Salt[:]),
+		Pack: VersionPack{Digest: "sha256:" + hex.EncodeToString(locator.Pack.Digest[:]), SizeBytes: locator.Pack.Size, Rank: locator.Pack.Rank},
+		Page: VersionPage{Digest: "sha256:" + hex.EncodeToString(locator.Page.Digest[:]), Salt: hex.EncodeToString(locator.Page.Salt[:]),
 			KeyID: locator.Page.Key, Kind: int(locator.Page.Kind), Count: int(locator.Page.Count), SizeBytes: locator.Page.Size},
 	}
 	if err := root.Validate(capacity); err != nil {
-		return GenerationRoot{}, err
+		return VersionRoot{}, err
 	}
 	return root, nil
 }
@@ -26,7 +26,7 @@ func NewGenerationRoot(locator blockformat.Locator, capacity int64) (GenerationR
 // Locator validates the persisted descriptor before converting it for byte reads.
 // The reader must authenticate membership and compare the decrypted capacity with
 // LogicalBytes. A valid descriptor alone does not prove either property.
-func (r GenerationRoot) Locator(capacity int64) (blockformat.Locator, error) {
+func (r VersionRoot) Locator(capacity int64) (blockformat.Locator, error) {
 	if err := r.Validate(capacity); err != nil {
 		return blockformat.Locator{}, err
 	}

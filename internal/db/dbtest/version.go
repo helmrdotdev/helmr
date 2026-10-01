@@ -10,17 +10,17 @@ import (
 	"uuid"
 )
 
-// InsertComputerGeneration supplies scoped graph authority for DB-only fixtures.
+// InsertComputerVersion supplies scoped graph authority for DB-only fixtures.
 // Its synthetic bytes are not evidence of cryptographic verification or VM I/O.
-func InsertComputerGeneration(t *testing.T, ctx context.Context, tx interface {
+func InsertComputerVersion(t *testing.T, ctx context.Context, tx interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 }, environment, computerID, version any) {
 	t.Helper()
 	key := uuid.NewV7().String()
 	digest := Digest(key)
-	root := disk.GenerationRoot{FormatVersion: 1, LogicalBytes: disk.SeedCapacity, Offset: 128,
-		Pack: disk.GenerationPack{Digest: digest, SizeBytes: 512, Rank: 2},
-		Page: disk.GenerationPage{Digest: Digest(key + "page"), Salt: strings.Repeat("aa", 32), KeyID: key, Kind: 3, Count: 1, SizeBytes: 64}}
+	root := disk.VersionRoot{FormatVersion: 1, LogicalBytes: disk.SeedCapacity, Offset: 128,
+		Pack: disk.VersionPack{Digest: digest, SizeBytes: 512, Rank: 2},
+		Page: disk.VersionPage{Digest: Digest(key + "page"), Salt: strings.Repeat("aa", 32), KeyID: key, Kind: 3, Count: 1, SizeBytes: 64}}
 	locator, err := json.Marshal(root)
 	if err != nil {
 		t.Fatal(err)

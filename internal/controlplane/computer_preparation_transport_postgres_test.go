@@ -114,16 +114,16 @@ func newServedClaimsRace(t *testing.T, f initialPublicationFixture, raced string
 
 func TestInitialComputerPreparationReauthenticatesAcrossPrimaryPoolSwitch(t *testing.T) {
 	const (
-		keyPath        = "/worker/v1/run/computer-instances/initialization/key"
-		registerPath   = "/worker/v1/run/computer-instances/initialization/objects/register"
-		certifyPath    = "/worker/v1/run/computer-instances/initialization/objects/certify"
-		generationPath = "/worker/v1/run/computer-instances/initialization/generation"
+		keyPath      = "/worker/v1/run/computer-instances/initialization/key"
+		registerPath = "/worker/v1/run/computer-instances/initialization/objects/register"
+		certifyPath  = "/worker/v1/run/computer-instances/initialization/objects/certify"
+		versionPath  = "/worker/v1/run/computer-instances/initialization/version"
 	)
-	for name, raced := range map[string]string{"key": keyPath, "object registration": registerPath, "object certification": certifyPath, "generation publication": generationPath} {
+	for name, raced := range map[string]string{"key": keyPath, "object registration": registerPath, "object certification": certifyPath, "version publication": versionPath} {
 		t.Run(name, func(t *testing.T) {
 			f := newInitialPublicationFixture(t)
 			race := newServedClaimsRace(t, f, raced, switchPrimaryPool(t, f.Fixture))
-			_, _, published := f.publishInitialGeneration(t, race.client, oci.RuntimeConfig{User: "root"})
+			_, _, published := f.publishInitialVersion(t, race.client, oci.RuntimeConfig{User: "root"})
 			race.requireReplayed(t, raced)
 			var head string
 			if err := f.Pool.QueryRow(t.Context(), `SELECT c.head_disk_version_id::text FROM computers c JOIN computer_instances i ON i.computer_id=c.id WHERE i.id=$1`, f.runtime).Scan(&head); err != nil || head != published.VersionID {

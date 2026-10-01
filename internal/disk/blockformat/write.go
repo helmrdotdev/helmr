@@ -12,7 +12,7 @@ import (
 
 // MaxChangedBlocks bounds one capture batch to 4 MiB of changed input,
 // independently of disk capacity. Metadata computer also depends on the touched paths.
-// Larger captures can be staged as multiple private generations before publication.
+// Larger captures can be staged as multiple private versions before publication.
 const MaxChangedBlocks = MaxRecords
 
 // MinPackLimit accommodates a full 256-entry node, including distinct segment
@@ -38,7 +38,7 @@ type Writer struct {
 
 func (w Writer) validate() error {
 	if w.Source == nil || w.Sink == nil || len(w.Scope) == 0 || len(w.Scope) > 256 || len(w.ActiveKey) == 0 || len(w.ActiveKey) > 128 || len(w.Keys[w.ActiveKey]) != 32 || w.PackLimit < MinPackLimit || w.PackLimit > 4<<20 {
-		return errors.New("invalid generation writer configuration")
+		return errors.New("invalid version writer configuration")
 	}
 	return nil
 }

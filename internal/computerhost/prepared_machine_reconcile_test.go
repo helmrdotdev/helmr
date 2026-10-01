@@ -736,7 +736,7 @@ func retryableWarmTarget() workerapi.RuntimeReconcileTarget {
 			ComputerID:           "019c10d5-a6f7-7af1-8f5f-000000000702",
 			ComputerSpecID:       "019c10d5-a6f7-7af1-8f5f-000000000703",
 			ComputerArchitecture: "x86_64", ReservedCPUMillis: 1000, ReservedMemoryMiB: 512, ReservedDiskMiB: disk.SeedCapacity / mebibyte, ReservedExecutionSlots: 1,
-			Computer: &workerapi.RuntimeComputerSource{VersionID: "019c10d5-a6f7-7af1-8f5f-000000000704", LogicalBytes: disk.SeedCapacity, Root: ptrGenerationRoot(disk.SeedCapacity)},
+			Computer: &workerapi.RuntimeComputerSource{VersionID: "019c10d5-a6f7-7af1-8f5f-000000000704", LogicalBytes: disk.SeedCapacity, Root: ptrVersionRoot(disk.SeedCapacity)},
 		},
 	}
 }

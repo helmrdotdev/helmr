@@ -13,7 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 )
 
-type generationTestPublication struct {
+type versionTestPublication struct {
 	remote     *cas.File
 	registered map[string]blockformat.ObjectInspection
 	certified  map[string]blockformat.ObjectInspection
@@ -27,7 +27,7 @@ func inspectionDescriptor(e blockformat.ObjectInspection) cas.Descriptor {
 	p := e.Pack.Pages[0].Locator.Pack
 	return cas.Descriptor{Digest: digestOf(p.Digest), SizeBytes: p.Size, MediaType: "application/octet-stream"}
 }
-func (p *generationTestPublication) Register(_ context.Context, e blockformat.ObjectInspection) error {
+func (p *versionTestPublication) Register(_ context.Context, e blockformat.ObjectInspection) error {
 	if e.Pack != nil {
 		for _, page := range e.Pack.Pages {
 			for _, child := range page.Children {
@@ -54,7 +54,7 @@ func (p *generationTestPublication) Register(_ context.Context, e blockformat.Ob
 	}
 	return nil
 }
-func (p *generationTestPublication) Upload(ctx context.Context, d cas.Descriptor, file *os.File) (cas.Object, error) {
+func (p *versionTestPublication) Upload(ctx context.Context, d cas.Descriptor, file *os.File) (cas.Object, error) {
 	if _, ok := p.registered[d.Digest]; !ok {
 		return cas.Object{}, errors.New("upload before registration")
 	}
@@ -71,7 +71,7 @@ func (p *generationTestPublication) Upload(ctx context.Context, d cas.Descriptor
 	}
 	return stored, nil
 }
-func (p *generationTestPublication) Certify(ctx context.Context, e blockformat.ObjectInspection) error {
+func (p *versionTestPublication) Certify(ctx context.Context, e blockformat.ObjectInspection) error {
 	d := inspectionDescriptor(e)
 	o, err := p.remote.Stat(ctx, d.Digest)
 	if err != nil || o.SizeBytes != d.SizeBytes {
@@ -84,7 +84,7 @@ func (p *generationTestPublication) Certify(ctx context.Context, e blockformat.O
 	}
 	return nil
 }
-func TestInitialGenerationMultiBatchAndPublicationRetry(t *testing.T) {
+func TestInitialVersionMultiBatchAndPublicationRetry(t *testing.T) {
 	for _, failure := range []string{"register", "upload", "certify"} {
 		t.Run(failure, func(t *testing.T) {
 			disk, err := os.CreateTemp(t.TempDir(), "disk")
@@ -102,7 +102,7 @@ func TestInitialGenerationMultiBatchAndPublicationRetry(t *testing.T) {
 			}
 			parent := t.TempDir()
 			key := bytes.Repeat([]byte{3}, 32)
-			candidate, err := CaptureInitialGeneration(t.Context(), GenerationCapture{Disk: disk, Capacity: capacity, StagingParent: parent, Scope: "scope", KeyID: "key", Key: key, Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 64 << 20, MaxObjects: 1000})
+			candidate, err := CaptureInitialVersion(t.Context(), VersionCapture{Disk: disk, Capacity: capacity, StagingParent: parent, Scope: "scope", KeyID: "key", Key: key, Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 64 << 20, MaxObjects: 1000})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -112,14 +112,14 @@ func TestInitialGenerationMultiBatchAndPublicationRetry(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			publisher := &generationTestPublication{remote: remote, registered: map[string]blockformat.ObjectInspection{}, certified: map[string]blockformat.ObjectInspection{}, fail: failure}
+			publisher := &versionTestPublication{remote: remote, registered: map[string]blockformat.ObjectInspection{}, certified: map[string]blockformat.ObjectInspection{}, fail: failure}
 			root, err := candidate.Publish(t.Context(), publisher)
 			if err == nil || root != (blockformat.Locator{}) {
 				t.Fatal("uncertain publication returned root")
 			}
 			root, err = candidate.Publish(t.Context(), publisher)
 			if err != nil || root != original {
-				t.Fatalf("retry changed generation: %v", err)
+				t.Fatalf("retry changed version: %v", err)
 			}
 			roots := 0
 			for _, e := range publisher.registered {
@@ -152,7 +152,7 @@ func TestInitialGenerationMultiBatchAndPublicationRetry(t *testing.T) {
 				// The largest unaligned VM read spans 1,025 encryption blocks.
 				data, err := tree.ReadRange(t.Context(), 1, blockformat.MaxReadBytes)
 				if err != nil || !bytes.Equal(data, content[1:1+blockformat.MaxReadBytes]) {
-					t.Fatalf("maximum unaligned generation range: %v", err)
+					t.Fatalf("maximum unaligned version range: %v", err)
 				}
 			}
 			if err = candidate.Close(); err != nil {
@@ -174,7 +174,7 @@ func TestInitialGenerationMultiBatchAndPublicationRetry(t *testing.T) {
 		})
 	}
 }
-func TestInitialGenerationAdmissionAndCancellation(t *testing.T) {
+func TestInitialVersionAdmissionAndCancellation(t *testing.T) {
 	disk, err := os.CreateTemp(t.TempDir(), "disk")
 	if err != nil {
 		t.Fatal(err)
@@ -186,7 +186,7 @@ func TestInitialGenerationAdmissionAndCancellation(t *testing.T) {
 	for _, name := range []string{"budget", "capacity", "cancel"} {
 		t.Run(name, func(t *testing.T) {
 			parent := t.TempDir()
-			request := GenerationCapture{Disk: disk, Capacity: 8192, StagingParent: parent, Scope: "scope", KeyID: "key", Key: bytes.Repeat([]byte{1}, 32), Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 1 << 20, MaxObjects: 10}
+			request := VersionCapture{Disk: disk, Capacity: 8192, StagingParent: parent, Scope: "scope", KeyID: "key", Key: bytes.Repeat([]byte{1}, 32), Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 1 << 20, MaxObjects: 10}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			switch name {
@@ -197,7 +197,7 @@ func TestInitialGenerationAdmissionAndCancellation(t *testing.T) {
 			case "cancel":
 				cancel()
 			}
-			if c, err := CaptureInitialGeneration(ctx, request); err == nil || c != nil {
+			if c, err := CaptureInitialVersion(ctx, request); err == nil || c != nil {
 				t.Fatal("invalid capture admitted")
 			}
 			entries, _ := os.ReadDir(parent)

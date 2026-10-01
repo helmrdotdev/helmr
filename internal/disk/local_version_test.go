@@ -22,7 +22,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func localGenerationFixture(t *testing.T) (LocalGenerationConfig, string) {
+func localVersionFixture(t *testing.T) (LocalVersionConfig, string) {
 	t.Helper()
 	parent := t.TempDir()
 	basePath := filepath.Join(parent, "base")
@@ -40,14 +40,14 @@ func localGenerationFixture(t *testing.T) (LocalGenerationConfig, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := NewGenerationRoot(locator, 1<<20)
+	root, err := NewVersionRoot(locator, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return LocalGenerationConfig{Directory: filepath.Join(parent, "local"), Base: root, BaseSource: store, Scope: writer.Scope, ActiveKey: key, Keys: writer.Keys, DirtyBlocks: 8, StagedBytes: 32 << 20, PackLimit: blockformat.MinPackLimit}, basePath
+	return LocalVersionConfig{Directory: filepath.Join(parent, "local"), Base: root, BaseSource: store, Scope: writer.Scope, ActiveKey: key, Keys: writer.Keys, DirtyBlocks: 8, StagedBytes: 32 << 20, PackLimit: blockformat.MinPackLimit}, basePath
 }
 
-func localByte(t *testing.T, p *LocalGeneration) byte {
+func localByte(t *testing.T, p *LocalVersion) byte {
 	t.Helper()
 	data := make([]byte, 1)
 	if n, err := p.ReadAt(t.Context(), data, 7); err != nil || n != 1 {
@@ -56,13 +56,13 @@ func localByte(t *testing.T, p *LocalGeneration) byte {
 	return data[0]
 }
 
-func TestLocalGenerationFlushReopenAndUnflushedClose(t *testing.T) {
-	cfg, _ := localGenerationFixture(t)
-	p, err := CreateLocalGeneration(t.Context(), cfg)
+func TestLocalVersionFlushReopenAndUnflushedClose(t *testing.T) {
+	cfg, _ := localVersionFixture(t)
+	p, err := CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = OpenLocalGeneration(t.Context(), cfg); !errors.Is(err, unix.EWOULDBLOCK) {
+	if _, err = OpenLocalVersion(t.Context(), cfg); !errors.Is(err, unix.EWOULDBLOCK) {
 		t.Fatal("concurrent owner accepted", err)
 	}
 	if _, err = p.WriteAt(t.Context(), []byte{2}, 7); err != nil {
@@ -78,7 +78,7 @@ func TestLocalGenerationFlushReopenAndUnflushedClose(t *testing.T) {
 	if err = p.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := OpenLocalGeneration(t.Context(), cfg)
+	reopened, err := OpenLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,28 +88,28 @@ func TestLocalGenerationFlushReopenAndUnflushedClose(t *testing.T) {
 	reopened.Close()
 	changed := cfg
 	changed.Scope = "different"
-	if _, err = OpenLocalGeneration(t.Context(), changed); err == nil {
+	if _, err = OpenLocalVersion(t.Context(), changed); err == nil {
 		t.Fatal("changed source scope adopted")
 	}
 	changed = cfg
 	changed.StagedBytes = 1
-	if _, err = OpenLocalGeneration(t.Context(), changed); !errors.Is(err, ErrGenerationStagingFull) {
+	if _, err = OpenLocalVersion(t.Context(), changed); !errors.Is(err, ErrVersionStagingFull) {
 		t.Fatal("reopen reset used staging bytes", err)
 	}
-	if _, err = CreateLocalGeneration(t.Context(), cfg); err == nil {
+	if _, err = CreateLocalVersion(t.Context(), cfg); err == nil {
 		t.Fatal("creation replaced local evidence")
 	}
 	if err = os.WriteFile(filepath.Join(cfg.Directory, "root"), []byte("broken"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = OpenLocalGeneration(t.Context(), cfg); err == nil {
+	if _, err = OpenLocalVersion(t.Context(), cfg); err == nil {
 		t.Fatal("corrupt root silently reinitialized")
 	}
 }
 
-func TestLocalGenerationFlushFailureCanRetry(t *testing.T) {
-	cfg, _ := localGenerationFixture(t)
-	p, err := CreateLocalGeneration(t.Context(), cfg)
+func TestLocalVersionFlushFailureCanRetry(t *testing.T) {
+	cfg, _ := localVersionFixture(t)
+	p, err := CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestLocalGenerationFlushFailureCanRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.Close()
-	reopened, err := OpenLocalGeneration(t.Context(), cfg)
+	reopened, err := OpenLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,9 +141,9 @@ func TestLocalGenerationFlushFailureCanRetry(t *testing.T) {
 	}
 }
 
-func TestLocalGenerationFlushOrder(t *testing.T) {
-	cfg, _ := localGenerationFixture(t)
-	p, err := CreateLocalGeneration(t.Context(), cfg)
+func TestLocalVersionFlushOrder(t *testing.T) {
+	cfg, _ := localVersionFixture(t)
+	p, err := CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestLocalGenerationFlushOrder(t *testing.T) {
 		}
 	}
 	p.Close()
-	reopened, err := OpenLocalGeneration(t.Context(), cfg)
+	reopened, err := OpenLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,27 +196,27 @@ func TestLocalGenerationFlushOrder(t *testing.T) {
 }
 
 type localCrashConfig struct {
-	Config          LocalGenerationConfig
+	Config          LocalVersionConfig
 	BasePath, Phase string
 }
 
-func runLocalHelper(t *testing.T, cfg LocalGenerationConfig, basePath, phase string) {
+func runLocalHelper(t *testing.T, cfg LocalVersionConfig, basePath, phase string) {
 	t.Helper()
 	cfg.BaseSource = nil
 	raw, err := json.Marshal(localCrashConfig{cfg, basePath, phase})
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(os.Args[0], "-test.run=^TestLocalGenerationCrashHelper$")
-	cmd.Env = append(os.Environ(), "HELMR_LOCAL_GENERATION_TEST="+string(raw))
+	cmd := exec.Command(os.Args[0], "-test.run=^TestLocalVersionCrashHelper$")
+	cmd.Env = append(os.Environ(), "HELMR_LOCAL_VERSION_TEST="+string(raw))
 	output, err := cmd.CombinedOutput()
 	var exit *exec.ExitError
 	if !errors.As(err, &exit) || exit.ExitCode() != 42 {
 		t.Fatalf("helper did not reach %s: %v %s", phase, err, output)
 	}
 }
-func TestLocalGenerationCrashHelper(t *testing.T) {
-	raw := os.Getenv("HELMR_LOCAL_GENERATION_TEST")
+func TestLocalVersionCrashHelper(t *testing.T) {
+	raw := os.Getenv("HELMR_LOCAL_VERSION_TEST")
 	if raw == "" {
 		return
 	}
@@ -229,7 +229,7 @@ func TestLocalGenerationCrashHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.Config.BaseSource = store
-	p, err := OpenLocalGeneration(t.Context(), cfg.Config)
+	p, err := OpenLocalVersion(t.Context(), cfg.Config)
 	if cfg.Phase == "locked" {
 		if errors.Is(err, unix.EWOULDBLOCK) {
 			os.Exit(42)
@@ -253,11 +253,11 @@ func TestLocalGenerationCrashHelper(t *testing.T) {
 	}
 	t.Fatal("crash boundary never reached")
 }
-func TestLocalGenerationProcessCrashBoundaries(t *testing.T) {
+func TestLocalVersionProcessCrashBoundaries(t *testing.T) {
 	for _, phase := range []string{"objects-staged", "root-synced", "root-renamed", "root-committed"} {
 		t.Run(phase, func(t *testing.T) {
-			cfg, basePath := localGenerationFixture(t)
-			p, err := CreateLocalGeneration(t.Context(), cfg)
+			cfg, basePath := localVersionFixture(t)
+			p, err := CreateLocalVersion(t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -266,7 +266,7 @@ func TestLocalGenerationProcessCrashBoundaries(t *testing.T) {
 			}
 			p.Close()
 			runLocalHelper(t, cfg, basePath, phase)
-			reopened, err := OpenLocalGeneration(t.Context(), cfg)
+			reopened, err := OpenLocalVersion(t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -282,9 +282,9 @@ func TestLocalGenerationProcessCrashBoundaries(t *testing.T) {
 	}
 }
 
-func TestLocalGenerationExhaustedBudgetReopens(t *testing.T) {
-	cfg, _ := localGenerationFixture(t)
-	p, err := CreateLocalGeneration(t.Context(), cfg)
+func TestLocalVersionExhaustedBudgetReopens(t *testing.T) {
+	cfg, _ := localVersionFixture(t)
+	p, err := CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +313,7 @@ func TestLocalGenerationExhaustedBudgetReopens(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.StagedBytes = used
-	p, err = OpenLocalGeneration(t.Context(), cfg)
+	p, err = OpenLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,14 +327,14 @@ func TestLocalGenerationExhaustedBudgetReopens(t *testing.T) {
 	if _, err = p.WriteAt(t.Context(), []byte{3}, 7); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = p.Flush(t.Context()); !errors.Is(err, ErrGenerationStagingFull) {
+	if _, err = p.Flush(t.Context()); !errors.Is(err, ErrVersionStagingFull) {
 		t.Fatal("new staging accepted", err)
 	}
 }
 
-func TestLocalGenerationReclaimsCrashScratch(t *testing.T) {
-	cfg, basePath := localGenerationFixture(t)
-	p, err := CreateLocalGeneration(t.Context(), cfg)
+func TestLocalVersionReclaimsCrashScratch(t *testing.T) {
+	cfg, basePath := localVersionFixture(t)
+	p, err := CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,7 +345,7 @@ func TestLocalGenerationReclaimsCrashScratch(t *testing.T) {
 		if err = os.WriteFile(scratch, []byte("incomplete"), 0600); err != nil {
 			t.Fatal(err)
 		}
-		p, err = OpenLocalGeneration(t.Context(), cfg)
+		p, err = OpenLocalVersion(t.Context(), cfg)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -368,11 +368,11 @@ func TestLocalGenerationReclaimsCrashScratch(t *testing.T) {
 	}
 }
 
-func TestLocalGenerationSourceLossStopsAllDiskOperations(t *testing.T) {
+func TestLocalVersionSourceLossStopsAllDiskOperations(t *testing.T) {
 	for _, op := range []string{"read", "partial write", "partial trim", "flush"} {
 		t.Run(op, func(t *testing.T) {
-			cfg, base := localGenerationFixture(t)
-			p, err := CreateLocalGeneration(t.Context(), cfg)
+			cfg, base := localVersionFixture(t)
+			p, err := CreateLocalVersion(t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -407,8 +407,8 @@ func TestLocalGenerationSourceLossStopsAllDiskOperations(t *testing.T) {
 	}
 }
 
-func TestLocalGenerationCachesReadsWithoutCachingPublicationProof(t *testing.T) {
-	cfg, _ := localGenerationFixture(t)
+func TestLocalVersionCachesReadsWithoutCachingPublicationProof(t *testing.T) {
+	cfg, _ := localVersionFixture(t)
 	remote := cfg.BaseSource
 	calls := 0
 	unavailable := false
@@ -420,7 +420,7 @@ func TestLocalGenerationCachesReadsWithoutCachingPublicationProof(t *testing.T) 
 		}
 		return remote.GetRange(ctx, digest, size, offset, length)
 	})
-	p, err := CreateLocalGeneration(t.Context(), cfg)
+	p, err := CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

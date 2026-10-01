@@ -82,7 +82,7 @@ type KeyMaterial struct {
 // write key and the plaintext read keys of its closure.
 type SourceMaterial struct {
 	VersionID, Scope, WriteKeyID string
-	Root                         disk.GenerationRoot
+	Root                         disk.VersionRoot
 	Keys                         []KeyMaterial
 }
 
@@ -360,7 +360,7 @@ func (b *KeyBroker) sourceEnvelopes(ctx context.Context, principal workergroup.H
 func (p sourcePreparation) envelopes(ctx context.Context) (SourceMaterial, []db.ComputerDataKey, error) {
 	q := db.New(p.tx)
 	runtimeID := p.instance.ID
-	retained, root, keys, err := loadRetainedGeneration(ctx, q, runtimeID)
+	retained, root, keys, err := loadRetainedVersion(ctx, q, runtimeID)
 	if err != nil {
 		return SourceMaterial{}, nil, err
 	}
@@ -398,36 +398,36 @@ func (p sourcePreparation) envelopes(ctx context.Context) (SourceMaterial, []db.
 	return SourceMaterial{VersionID: pgvalue.UUIDString(retained.VersionID), Scope: scope, Root: root, WriteKeyID: pgvalue.UUIDString(writeKey.ID)}, keys, nil
 }
 
-// loadRetainedGeneration reads one retained generation and its complete
+// loadRetainedVersion reads one retained disk version and its complete
 // certified key closure inside the caller's fenced transaction. Retention is
 // not permission: it neither authorizes delivery nor unwraps keys, and
 // callers revalidate live authority after any provider operation. An absent,
-// invalid or incomplete retained generation reports ErrKeyUnavailable.
-func loadRetainedGeneration(ctx context.Context, q *db.Queries, runtimeID pgtype.UUID) (db.GetInstanceComputerSourceRootRow, disk.GenerationRoot, []db.ComputerDataKey, error) {
+// invalid or incomplete retained disk version reports ErrKeyUnavailable.
+func loadRetainedVersion(ctx context.Context, q *db.Queries, runtimeID pgtype.UUID) (db.GetInstanceComputerSourceRootRow, disk.VersionRoot, []db.ComputerDataKey, error) {
 	source, err := q.GetInstanceComputerSourceRoot(ctx, runtimeID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return source, disk.GenerationRoot{}, nil, keyUnavailable("computer source is not retained")
+		return source, disk.VersionRoot{}, nil, keyUnavailable("computer source is not retained")
 	}
 	if err != nil {
-		return source, disk.GenerationRoot{}, nil, fmt.Errorf("read retained computer source: %w", err)
+		return source, disk.VersionRoot{}, nil, fmt.Errorf("read retained computer source: %w", err)
 	}
-	root, err := disk.ParseGenerationRoot(source.Locator, source.LogicalBytes)
+	root, err := disk.ParseVersionRoot(source.Locator, source.LogicalBytes)
 	if err != nil {
-		return source, disk.GenerationRoot{}, nil, keyUnavailable("retained computer source root is invalid: %v", err)
+		return source, disk.VersionRoot{}, nil, keyUnavailable("retained computer source root is invalid: %v", err)
 	}
 	keys, err := q.ListInstanceComputerSourceKeys(ctx, runtimeID)
 	if err != nil {
-		return source, disk.GenerationRoot{}, nil, fmt.Errorf("read retained computer source keys: %w", err)
+		return source, disk.VersionRoot{}, nil, fmt.Errorf("read retained computer source keys: %w", err)
 	}
 	hasRootKey := false
 	for _, key := range keys {
 		if !key.Available.Valid || !key.Available.Bool || len(key.WrappedKey) == 0 {
-			return source, disk.GenerationRoot{}, nil, keyUnavailable("retained computer source key is unavailable")
+			return source, disk.VersionRoot{}, nil, keyUnavailable("retained computer source key is unavailable")
 		}
 		hasRootKey = hasRootKey || pgvalue.UUIDString(key.ID) == root.Page.KeyID
 	}
 	if !hasRootKey {
-		return source, disk.GenerationRoot{}, nil, keyUnavailable("retained computer root key is missing")
+		return source, disk.VersionRoot{}, nil, keyUnavailable("retained computer root key is missing")
 	}
 	return source, root, keys, nil
 }

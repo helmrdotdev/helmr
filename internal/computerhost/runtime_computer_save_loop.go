@@ -37,7 +37,7 @@ func (s *runtimeComputerSaves) authority() (*workerapi.ComputerSaveBeginRequest,
 // the Worker preservation policy; Turn completion and idleTimeout never tick it.
 // The returned channel reports completion, including failure requiring source
 // cleanup. Quiesce cancels and joins this loop before settling its pending save.
-func (s *runtimeComputerSaves) run(ctx context.Context, interval time.Duration, client ComputerSaveClient, objects generationObjectPublisher, capture func(context.Context) (computerSaveCapture, error), onFailure func(error)) (<-chan error, error) {
+func (s *runtimeComputerSaves) run(ctx context.Context, interval time.Duration, client ComputerSaveClient, objects versionObjectPublisher, capture func(context.Context) (computerSaveCapture, error), onFailure func(error)) (<-chan error, error) {
 	if interval <= 0 || client == nil || objects == nil || capture == nil || onFailure == nil {
 		return nil, errors.New("computer save loop dependencies and positive interval required")
 	}
@@ -65,7 +65,7 @@ func (s *runtimeComputerSaves) run(ctx context.Context, interval time.Duration, 
 	return result, nil
 }
 
-func (s *runtimeComputerSaves) loop(ctx context.Context, ticks <-chan time.Time, client ComputerSaveClient, objects generationObjectPublisher, capture func(context.Context) (computerSaveCapture, error)) error {
+func (s *runtimeComputerSaves) loop(ctx context.Context, ticks <-chan time.Time, client ComputerSaveClient, objects versionObjectPublisher, capture func(context.Context) (computerSaveCapture, error)) error {
 	var observed *computerSave
 	for {
 		s.mu.Lock()

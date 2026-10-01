@@ -29,7 +29,7 @@ type computerPreparationTransport struct {
 	cas.Store
 	mu           sync.Mutex
 	targets      map[string]workerapi.RuntimeReconcileTarget
-	root         disk.GenerationRoot
+	root         disk.VersionRoot
 	fail         string
 	key          []byte
 	publications int
@@ -55,16 +55,16 @@ func (s *computerPreparationTransport) CertifyInitialComputerObject(context.Cont
 func (s *computerPreparationTransport) InitialComputerKey(context.Context, workerapi.InitialComputerKeyRequest) (workerapi.ComputerKeyMaterial, error) {
 	return workerapi.ComputerKeyMaterial{Scope: "fixture", ID: preparationKey, Key: bytes.Clone(s.key)}, nil
 }
-func (s *computerPreparationTransport) PublishInitialComputerGeneration(_ context.Context, r workerapi.InitialComputerGenerationRequest) (workerapi.InitialComputerGenerationResponse, error) {
+func (s *computerPreparationTransport) PublishInitialComputerVersion(_ context.Context, r workerapi.InitialComputerVersionRequest) (workerapi.InitialComputerVersionResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.fail == "commit" {
-		return workerapi.InitialComputerGenerationResponse{}, errors.New("commit failed")
+		return workerapi.InitialComputerVersionResponse{}, errors.New("commit failed")
 	}
 	s.root = r.Root
 	s.publications++
 	target := s.targets[r.ComputerInstanceID]
-	return workerapi.InitialComputerGenerationResponse{ComputerID: target.Source.ComputerID, VersionID: target.Source.Computer.VersionID}, nil
+	return workerapi.InitialComputerVersionResponse{ComputerID: target.Source.ComputerID, VersionID: target.Source.Computer.VersionID}, nil
 }
 func (s *computerPreparationTransport) ComputerSource(_ context.Context, r workerapi.ComputerSourceRequest) (workerapi.ComputerSourceMaterial, error) {
 	s.mu.Lock()
@@ -118,10 +118,10 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 			}
 			client := &computerPreparationTransport{Store: objects, targets: map[string]workerapi.RuntimeReconcileTarget{target.ID: target}, fail: failure, key: bytes.Repeat([]byte{7}, 32)}
 			machines := &PreparedMachines{TempDir: t.TempDir(), CAS: objects, ComputerRanges: objects, ComputerObjects: client, ComputerPreparation: client, ComputerStagingBytes: budget, Reservations: ledger}
-			prepared, err := machines.prepareComputerGeneration(t.Context(), target)
+			prepared, err := machines.prepareComputerVersion(t.Context(), target)
 			if failure != "" {
 				if err == nil || prepared != nil {
-					t.Fatal("failed preparation exposed generation")
+					t.Fatal("failed preparation exposed version")
 				}
 			} else {
 				if err != nil {
@@ -142,7 +142,7 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 				source.Seed = nil
 				source.Root = &client.root
 				continuation.Source.Computer = &source
-				prepared, err = machines.prepareComputerGeneration(t.Context(), continuation)
+				prepared, err = machines.prepareComputerVersion(t.Context(), continuation)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -312,7 +312,7 @@ func TestWarmRuntimeRejectsMachineWithoutLiveCapture(t *testing.T) {
 	items := []workerapi.RuntimeReconcileTarget{target}
 	configureComputerPreparationTest(t, machines, items)
 	target = items[0]
-	// Continue from the transport's published generation so preparation
+	// Continue from the transport's published version so preparation
 	// attaches the Computer device and reaches materialization.
 	source := *target.Source.Computer
 	source.Root = &machines.ComputerPreparation.(*computerPreparationTransport).root
@@ -367,7 +367,7 @@ func configureComputerPreparationTest(t *testing.T, machines *PreparedMachines, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := disk.NewGenerationRoot(locator, disk.SeedCapacity)
+	root, err := disk.NewVersionRoot(locator, disk.SeedCapacity)
 	if err != nil {
 		t.Fatal(err)
 	}

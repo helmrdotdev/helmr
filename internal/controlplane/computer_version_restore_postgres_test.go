@@ -17,7 +17,7 @@ import (
 
 // This boundary test uses actual encrypted object bytes, certification, version
 // publication and authenticated source delivery. Local reopen is not host-loss
-// recovery: only the original published generation exists in remote storage.
+// recovery: only the original published version exists in remote storage.
 func TestPublishedComputerSourceLocalRestore(t *testing.T) {
 	f := newInitialPublicationFixture(t)
 	remote := f.store
@@ -41,7 +41,7 @@ func TestPublishedComputerSourceLocalRestore(t *testing.T) {
 	if _, err := seedFile.WriteAt(initial, offset); err != nil {
 		t.Fatal(err)
 	}
-	candidate, err := disk.CaptureInitialGeneration(t.Context(), disk.GenerationCapture{
+	candidate, err := disk.CaptureInitialVersion(t.Context(), disk.VersionCapture{
 		Disk: seedFile, Capacity: f.logicalBytes, StagingParent: t.TempDir(), Scope: key.Scope, KeyID: key.ID, Key: key.Key,
 		Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 32 << 20, MaxObjects: 1000,
 	})
@@ -49,7 +49,7 @@ func TestPublishedComputerSourceLocalRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer candidate.Close()
-	publisher, err := computerhost.NewInitialGenerationPublisher(client, initialTestObjectPublisher{remote}, runtimeID, 1)
+	publisher, err := computerhost.NewInitialVersionPublisher(client, initialTestObjectPublisher{remote}, runtimeID, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,25 +57,25 @@ func TestPublishedComputerSourceLocalRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := disk.NewGenerationRoot(locator, f.logicalBytes)
+	root, err := disk.NewVersionRoot(locator, f.logicalBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	version, err := client.PublishInitialComputerGeneration(t.Context(), workerapi.InitialComputerGenerationRequest{ComputerInstanceID: runtimeID, DesiredVersion: 1, Root: root})
+	version, err := client.PublishInitialComputerVersion(t.Context(), workerapi.InitialComputerVersionRequest{ComputerInstanceID: runtimeID, DesiredVersion: 1, Root: root})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// A lost response can be retried exactly, but cannot publish different bytes.
-	replay, err := client.PublishInitialComputerGeneration(t.Context(), workerapi.InitialComputerGenerationRequest{ComputerInstanceID: runtimeID, DesiredVersion: 1, Root: root})
+	replay, err := client.PublishInitialComputerVersion(t.Context(), workerapi.InitialComputerVersionRequest{ComputerInstanceID: runtimeID, DesiredVersion: 1, Root: root})
 	if err != nil || replay != version {
 		t.Fatalf("publication replay: %v", err)
 	}
 	changedRoot := root
 	changedRoot.LogicalBytes *= 2
-	if _, err := client.PublishInitialComputerGeneration(t.Context(), workerapi.InitialComputerGenerationRequest{ComputerInstanceID: runtimeID, DesiredVersion: 1, Root: changedRoot}); err == nil {
+	if _, err := client.PublishInitialComputerVersion(t.Context(), workerapi.InitialComputerVersionRequest{ComputerInstanceID: runtimeID, DesiredVersion: 1, Root: changedRoot}); err == nil {
 		t.Fatal("different publication accepted after commit")
 	}
-	if _, err := client.PublishInitialComputerGeneration(t.Context(), workerapi.InitialComputerGenerationRequest{ComputerInstanceID: runtimeID, DesiredVersion: 2, Root: root}); err == nil {
+	if _, err := client.PublishInitialComputerVersion(t.Context(), workerapi.InitialComputerVersionRequest{ComputerInstanceID: runtimeID, DesiredVersion: 2, Root: root}); err == nil {
 		t.Fatal("different preparation published")
 	}
 	fetch := func() workerapi.ComputerSourceMaterial {
@@ -95,15 +95,15 @@ func TestPublishedComputerSourceLocalRestore(t *testing.T) {
 	for _, k := range source.Keys {
 		keys[k.ID] = k.Key
 	}
-	cfg := disk.LocalGenerationConfig{Directory: filepath.Join(t.TempDir(), "working"), Base: source.Root, BaseSource: remote,
+	cfg := disk.LocalVersionConfig{Directory: filepath.Join(t.TempDir(), "working"), Base: source.Root, BaseSource: remote,
 		Scope: source.Keys[0].Scope, ActiveKey: source.WriteKeyID, Keys: keys, DirtyBlocks: 8, StagedBytes: 32 << 20, PackLimit: blockformat.MinPackLimit}
-	local, err := disk.CreateLocalGeneration(t.Context(), cfg)
+	local, err := disk.CreateLocalVersion(t.Context(), cfg)
 	source.Clear()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer local.Close()
-	read := func(d *disk.LocalGeneration, want []byte) {
+	read := func(d *disk.LocalVersion, want []byte) {
 		t.Helper()
 		data := make([]byte, len(want))
 		if _, err := d.ReadAt(t.Context(), data, offset); err != nil || !bytes.Equal(data, want) {
@@ -129,13 +129,13 @@ func TestPublishedComputerSourceLocalRestore(t *testing.T) {
 	for _, k := range source.Keys {
 		cfg.Keys[k.ID] = k.Key
 	}
-	reopened, err := disk.OpenLocalGeneration(t.Context(), cfg)
+	reopened, err := disk.OpenLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
 	read(reopened, changed)
-	tree, err := disk.OpenGeneration(t.Context(), remote, cfg.Scope, cfg.Keys, root, root.LogicalBytes)
+	tree, err := disk.OpenVersion(t.Context(), remote, cfg.Scope, cfg.Keys, root, root.LogicalBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestPublishedComputerSourceLocalRestore(t *testing.T) {
 	if err != nil || !bytes.Equal(original[:len(initial)], initial) {
 		t.Fatalf("local writes changed published source: %v", err)
 	}
-	if _, err := disk.OpenGeneration(t.Context(), remote, cfg.Scope, cfg.Keys, updated, updated.LogicalBytes); err == nil {
+	if _, err := disk.OpenVersion(t.Context(), remote, cfg.Scope, cfg.Keys, updated, updated.LogicalBytes); err == nil {
 		t.Fatal("local flush claimed remote persistence")
 	}
 }

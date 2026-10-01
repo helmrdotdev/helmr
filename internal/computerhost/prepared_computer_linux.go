@@ -17,25 +17,25 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-// Preparation has one storage format: a retained authenticated generation.
+// Preparation has one storage format: a retained authenticated disk version.
 // The seed is decoded only for initial publication and never used for recovery.
 func (p *PreparedMachines) prepareComputerDevice(ctx context.Context, target workerapi.RuntimeReconcileTarget) (vm.ComputerDevice, error) {
 	if !filepath.IsAbs(p.ComputerHelper) || len(p.ComputerDevices) == 0 {
 		return nil, errors.New("computer helper and explicit device allowlist required")
 	}
-	generation, err := p.prepareComputerGeneration(ctx, target)
+	local, err := p.prepareComputerVersion(ctx, target)
 	if err != nil {
 		return nil, err
 	}
 	dir := p.computerPreparationDirectory(target.ID, target.WorkerEpoch)
-	device, err := disk.AttachDevice(ctx, generation, nbd.Config{Helper: p.ComputerHelper, Devices: p.ComputerDevices, Arena: dir, Socket: filepath.Join(dir, "nbd.sock"), Size: target.Source.Computer.LogicalBytes})
+	device, err := disk.AttachDevice(ctx, local, nbd.Config{Helper: p.ComputerHelper, Devices: p.ComputerDevices, Arena: dir, Socket: filepath.Join(dir, "nbd.sock"), Size: target.Source.Computer.LogicalBytes})
 	if device != nil {
 		p.retainComputerDevice(target.ID, target.WorkerEpoch, device)
 	}
 	return device, err
 }
 
-func (p *PreparedMachines) prepareComputerGeneration(ctx context.Context, target workerapi.RuntimeReconcileTarget) (*disk.LocalGeneration, error) {
+func (p *PreparedMachines) prepareComputerVersion(ctx context.Context, target workerapi.RuntimeReconcileTarget) (*disk.LocalVersion, error) {
 	if err := validateComputerPreparationSource(target); err != nil {
 		return nil, err
 	}
@@ -66,7 +66,7 @@ func (p *PreparedMachines) prepareComputerGeneration(ctx context.Context, target
 	}
 	defer material.Clear()
 	if source.Seed == nil && (source.Root == nil || material.Root != *source.Root) {
-		return nil, errors.New("computer generation differs from runtime reservation")
+		return nil, errors.New("computer disk version differs from runtime reservation")
 	}
 	if material.VersionID != source.VersionID || material.Root.LogicalBytes != source.LogicalBytes || len(material.Keys) == 0 {
 		return nil, errors.New("computer source differs from runtime reservation")
@@ -79,10 +79,10 @@ func (p *PreparedMachines) prepareComputerGeneration(ctx context.Context, target
 		}
 		keys[key.ID] = key.Key
 	}
-	if _, err := disk.OpenGeneration(ctx, p.ComputerRanges, scope, keys, material.Root, source.LogicalBytes); err != nil {
+	if _, err := disk.OpenVersion(ctx, p.ComputerRanges, scope, keys, material.Root, source.LogicalBytes); err != nil {
 		return nil, disk.PublishedSourceFailure(err)
 	}
-	return disk.CreateLocalGeneration(ctx, disk.LocalGenerationConfig{Directory: filepath.Join(dir, "generation"), Base: material.Root, BaseSource: p.ComputerRanges, Scope: scope, ActiveKey: material.WriteKeyID, Keys: keys, DirtyBlocks: 256, StagedBytes: p.ComputerStagingBytes, PackLimit: blockformat.MinPackLimit})
+	return disk.CreateLocalVersion(ctx, disk.LocalVersionConfig{Directory: filepath.Join(dir, "version"), Base: material.Root, BaseSource: p.ComputerRanges, Scope: scope, ActiveKey: material.WriteKeyID, Keys: keys, DirtyBlocks: 256, StagedBytes: p.ComputerStagingBytes, PackLimit: blockformat.MinPackLimit})
 }
 
 func (p *PreparedMachines) publishComputerSeed(ctx context.Context, target workerapi.RuntimeReconcileTarget, dir string) (retErr error) {
@@ -104,12 +104,12 @@ func (p *PreparedMachines) publishComputerSeed(ctx context.Context, target worke
 		return err
 	}
 	defer clear(key.Key)
-	candidate, err := disk.CaptureInitialGeneration(ctx, disk.GenerationCapture{Disk: file, Capacity: source.LogicalBytes, StagingParent: dir, Scope: key.Scope, KeyID: key.ID, Key: key.Key, Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: p.ComputerStagingBytes, MaxObjects: 1 << 20})
+	candidate, err := disk.CaptureInitialVersion(ctx, disk.VersionCapture{Disk: file, Capacity: source.LogicalBytes, StagingParent: dir, Scope: key.Scope, KeyID: key.ID, Key: key.Key, Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: p.ComputerStagingBytes, MaxObjects: 1 << 20})
 	if err != nil {
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, candidate.Close()) }()
-	publisher, err := NewInitialGenerationPublisher(p.ComputerPreparation, p.ComputerObjects, target.ID, target.DesiredVersion)
+	publisher, err := NewInitialVersionPublisher(p.ComputerPreparation, p.ComputerObjects, target.ID, target.DesiredVersion)
 	if err != nil {
 		return err
 	}
@@ -117,16 +117,16 @@ func (p *PreparedMachines) publishComputerSeed(ctx context.Context, target worke
 	if err != nil {
 		return err
 	}
-	root, err := disk.NewGenerationRoot(locator, source.LogicalBytes)
+	root, err := disk.NewVersionRoot(locator, source.LogicalBytes)
 	if err != nil {
 		return err
 	}
-	published, err := p.ComputerPreparation.PublishInitialComputerGeneration(ctx, workerapi.InitialComputerGenerationRequest{ComputerInstanceID: target.ID, DesiredVersion: target.DesiredVersion, Root: root, Config: source.Config})
+	published, err := p.ComputerPreparation.PublishInitialComputerVersion(ctx, workerapi.InitialComputerVersionRequest{ComputerInstanceID: target.ID, DesiredVersion: target.DesiredVersion, Root: root, Config: source.Config})
 	if err != nil {
-		return fmt.Errorf("publish initial computer generation: %w", err)
+		return fmt.Errorf("publish initial computer version: %w", err)
 	}
 	if published.ComputerID != target.Source.ComputerID || published.VersionID != source.VersionID {
-		return errors.New("published computer generation identity mismatch")
+		return errors.New("published computer version identity mismatch")
 	}
 	return nil
 }
