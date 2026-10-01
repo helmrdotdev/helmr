@@ -210,9 +210,9 @@ func TestOwnedFinalizationBoundsRuntimePreparationForEveryRun(t *testing.T) {
 	ctx := context.Background()
 	fixture := newPostgresFixture(t)
 	work := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
-	var runtimeID uuid.UUID
+	var instanceID uuid.UUID
 	if err := fixture.pool.QueryRow(ctx, `
-SELECT computer_instance_id FROM run_leases WHERE id = $1`, work.leaseID).Scan(&runtimeID); err != nil {
+SELECT computer_instance_id FROM run_leases WHERE id = $1`, work.leaseID).Scan(&instanceID); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, ctx, fixture.pool, `
@@ -221,7 +221,7 @@ UPDATE runs
  WHERE id = $1`, work.runID)
 	dbtest.MustExec(t, ctx, fixture.pool,
 		`DELETE FROM run_leases WHERE id = $1`, work.leaseID)
-	dbtest.MustExec(t, ctx, fixture.pool, `UPDATE computer_instances SET observed_state='allocated',observed_version=2,observed_desired_version=0,ready_at=NULL,mount_state='pending',mounted_at=NULL WHERE id=$1`, runtimeID)
+	dbtest.MustExec(t, ctx, fixture.pool, `UPDATE computer_instances SET observed_state='allocated',observed_version=2,observed_desired_version=0,ready_at=NULL,mount_state='pending',mounted_at=NULL WHERE id=$1`, instanceID)
 
 	for failure := int32(1); failure <= 8; failure++ {
 		chargedAfter := time.Now()

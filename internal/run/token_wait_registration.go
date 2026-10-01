@@ -222,7 +222,7 @@ func tokenWaitInstanceError(err error) error {
 	if errors.As(err, &rejected) {
 		cause = rejected.Err
 		if rejected.Instance {
-			operation = "lock ready runtime"
+			operation = "lock ready instance"
 		}
 	}
 	return tokenWaitError(operation, cause)

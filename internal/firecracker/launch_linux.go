@@ -353,7 +353,7 @@ func (c *Connector) prepareMachine(ctx context.Context, mode launchMode, instanc
 		}
 	}()
 	// firecracker-go-sdk binds this context to the jailer/firecracker process.
-	// Keep it separate from the startup request so prepared sessions can outlive
+	// Keep it separate from the startup request so prepared machines can outlive
 	// a background warm command after boot succeeds.
 	machineCtx, machineCancel := context.WithCancel(context.Background())
 	phaseStarted = time.Now()

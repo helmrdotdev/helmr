@@ -112,9 +112,9 @@ func TestInitialComputerKeyRevocationDuringProviderIO(t *testing.T) {
 					case "close":
 						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, f.instance)
 					case "worker epoch":
-						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET current_epoch=current_epoch+1 WHERE id=$1`, f.runtimeWorker())
+						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET current_epoch=current_epoch+1 WHERE id=$1`, f.instanceWorker())
 					case "claim":
-						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, f.runtimeWorker())
+						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, f.instanceWorker())
 					case "group claim":
 						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET claim_version=claim_version+1 WHERE id=$1`, pgvalue.UUID(f.principal.GroupID))
 					case "expiry":
@@ -216,7 +216,7 @@ func TestInitialComputerKeyRejectsAnotherWorker(t *testing.T) {
 	}
 }
 
-func TestInitialComputerKeyRotationKeepsAdmittedRuntime(t *testing.T) {
+func TestInitialComputerKeyRotationKeepsAdmittedInstance(t *testing.T) {
 	f := newPreparationFixture(t)
 	b := f.broker
 	first, err := b.InitialKey(t.Context(), f.principal, f.ref)

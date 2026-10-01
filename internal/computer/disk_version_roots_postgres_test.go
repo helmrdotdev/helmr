@@ -22,7 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
+func TestComputerDiskVersionRootInstanceRetention(t *testing.T) {
 	f := newPreparationFixture(t)
 	b := f.broker
 	key := f.initialKey(t)
@@ -275,7 +275,7 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 			return
 		}
 		bumped = true
-		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, f.runtimeWorker())
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, f.instanceWorker())
 	}
 	b.wrapper = observer
 	if _, err = b.SourceKeys(t.Context(), f.principal, f.ref); !errors.Is(err, workergroup.ErrStaleClaims) {
@@ -284,7 +284,7 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 	if !bytes.Equal(observer.returned, make([]byte, len(observer.returned))) {
 		t.Fatal("stale-claims plaintext not cleared")
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET claim_version=claim_version-1 WHERE id=$1`, f.runtimeWorker())
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET claim_version=claim_version-1 WHERE id=$1`, f.instanceWorker())
 	b.wrapper = observer.KeyWrapper
 
 	// A database failure during final revalidation keeps its own cause, which

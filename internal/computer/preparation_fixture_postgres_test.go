@@ -85,7 +85,7 @@ func newPreparationFixture(t *testing.T) preparationFixture {
 		instance: instance.ID, logicalBytes: diskBytes, store: store, broker: broker, publisher: publisher}
 }
 
-func (f preparationFixture) runtimeWorker() any {
+func (f preparationFixture) instanceWorker() any {
 	return pgvalue.UUID(f.principal.HostID)
 }
 

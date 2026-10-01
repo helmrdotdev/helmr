@@ -201,12 +201,12 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		return fmt.Errorf("record worker startup recovery: %w", err)
 	}
 	capabilities := s.cfg.Capabilities
-	runtimeQuarantines, err := activationQuarantines(evidence)
+	instanceQuarantines, err := activationQuarantines(evidence)
 	if err != nil {
 		return err
 	}
-	if runtimeQuarantines != 0 {
-		capabilities.ExecutionSlotsAvailable -= int32(runtimeQuarantines)
+	if instanceQuarantines != 0 {
+		capabilities.ExecutionSlotsAvailable -= int32(instanceQuarantines)
 		if capabilities.ExecutionSlotsAvailable <= 0 {
 			return errors.New("all instance execution slots remain quarantined after startup recovery")
 		}
@@ -479,14 +479,14 @@ func activationQuarantines(evidence RecoveryEvidence) (int, error) {
 	if len(evidence.Quarantined) != len(evidence.QuarantinedOwners) {
 		return 0, errors.New("worker activation is blocked by residue without exact VM ownership")
 	}
-	runtimeCount := 0
+	instanceCount := 0
 	for _, owner := range evidence.QuarantinedOwners {
 		if owner.Kind != vm.OwnerRuntime {
 			return 0, errors.New("worker activation is blocked by unknown VM owner kind")
 		}
-		runtimeCount++
+		instanceCount++
 	}
-	return runtimeCount, nil
+	return instanceCount, nil
 }
 
 func (s *Supervisor) waitForDrainReady(ctx context.Context, evidence RecoveryEvidence) error {
