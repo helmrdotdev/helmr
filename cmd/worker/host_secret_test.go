@@ -72,7 +72,7 @@ func TestReadWorkerEnrollmentTokenRejectsUnsafeFiles(t *testing.T) {
 }
 
 // A control plane on another worker API version rejects the stored secret's
-// host hostSecret request with a 409, not a 401: the worker keeps its stored
+// host credential request with a 409, not a 401: the worker keeps its stored
 // secret and neither re-enrolls nor retries.
 func TestWorkerHostSecretSurvivesAPIVersionMismatch(t *testing.T) {
 	requests := map[string]int{}
@@ -105,7 +105,7 @@ func TestWorkerHostSecretSurvivesAPIVersionMismatch(t *testing.T) {
 	if kept, err := readWorkerHostSecret(path); err != nil || kept.WorkerHostID != stored.WorkerHostID || kept.WorkerHostSecret != stored.WorkerHostSecret {
 		t.Fatalf("stored host secret = %+v, err = %v; want it kept", kept, err)
 	}
-	if len(requests) != 1 || requests["/worker/v1/instance/hostSecret"] != 1 {
-		t.Fatalf("requests = %v, want one host hostSecret request", requests)
+	if len(requests) != 1 || requests["/worker/v1/instance/credential"] != 1 {
+		t.Fatalf("requests = %v, want one host credential request", requests)
 	}
 }
