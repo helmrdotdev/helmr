@@ -168,6 +168,9 @@
 //     Computer. Public cancellation acquires its idempotency claim and then
 //     updates the Command without Computer or Instance locks. Result
 //     retention prunes Command rows directly.
+//   - Secret revocation locks one Computer's Secrets, then either the Run's
+//     owned finalization graph or, for a Command, the Computer, its Instance
+//     and the Command, and recovers the Command in a separate transaction.
 //   - Session-level singleton locks are acquired before, and held around, the
 //     transactions their holder runs. The stale worker fencer runs its
 //     transaction on the guard's connection. A dispatcher run lane

@@ -50,3 +50,11 @@ func Pending(t *testing.T, f runtest.Fixture, leaseID uuid.UUID) (uuid.UUID, int
 	}
 	return id, revision
 }
+
+// ResolveSecret records that the Command resolved the Secret's current
+// version, placed as SECRET_0, at its current revocation generation.
+func ResolveSecret(t *testing.T, f runtest.Fixture, commandID, secretID uuid.UUID) {
+	t.Helper()
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secret_resolutions(id,computer_id,command_id,placement_kind,placement_target,secret_id,secret_version_id,revocation_generation)
+ SELECT $2,c.computer_id,c.id,'env','SECRET_0',s.id,s.current_version_id,s.revocation_generation FROM computer_commands c, secrets s WHERE c.id=$1 AND s.id=$3`, commandID, uuid.NewV7(), secretID)
+}
