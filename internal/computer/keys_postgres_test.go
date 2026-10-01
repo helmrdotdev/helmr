@@ -431,7 +431,7 @@ const (
 	claimReadSQL     = "SELECT w.claim_version,g.claim_version"
 	firstFenceSQL    = "SELECT environment_id,computer_id,region_id,observed_state FROM computer_instances"
 	deadlineSQL      = "-- name: GetComputerPreparationDeadlinesValid"
-	pinWriteSQL      = "-- name: PinRuntimeComputerKey"
+	pinWriteSQL      = "-- name: PinInstanceComputerKey"
 	sourceKeyReadSQL = "-- name: ListInstanceComputerSourceKeys"
 )
 

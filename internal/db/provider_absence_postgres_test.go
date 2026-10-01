@@ -25,11 +25,11 @@ func TestConfirmWorkerHostProviderAbsentReclaimsIndependentlyOfLiveLease(t *test
 		t.Fatal(err)
 	}
 	workSet, err := queries.ListCapacityWorkerHosts(ctx, ListCapacityWorkerHostsParams{
-		WorkerGroupID:         pgvalue.UUID(runtest.WorkerGroupID),
-		HasUnreclaimedRuntime: true,
-		ResourceIds:           []string{},
-		Statuses:              []string{},
-		RowLimit:              10,
+		WorkerGroupID:          pgvalue.UUID(runtest.WorkerGroupID),
+		HasUnreclaimedInstance: true,
+		ResourceIds:            []string{},
+		Statuses:               []string{},
+		RowLimit:               10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -148,11 +148,11 @@ func TestConfirmWorkerHostProviderAbsentReclaimsIndependentlyOfLiveLease(t *test
 	}
 
 	rows, err := queries.ListCapacityWorkerHosts(ctx, ListCapacityWorkerHostsParams{
-		WorkerGroupID:         pgvalue.UUID(runtest.WorkerGroupID),
-		HasUnreclaimedRuntime: true,
-		ResourceIds:           []string{},
-		Statuses:              []string{},
-		RowLimit:              10,
+		WorkerGroupID:          pgvalue.UUID(runtest.WorkerGroupID),
+		HasUnreclaimedInstance: true,
+		ResourceIds:            []string{},
+		Statuses:               []string{},
+		RowLimit:               10,
 	})
 	if err != nil {
 		t.Fatal(err)

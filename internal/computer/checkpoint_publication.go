@@ -64,7 +64,7 @@ func (p checkpointPublication) objects(ctx context.Context) (objectScope, error)
 	for _, key := range keys {
 		allowed[pgvalue.UUIDString(key.ID)] = true
 	}
-	write, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{ComputerInstanceID: instance.ID, EnvironmentID: instance.EnvironmentID, ComputerID: instance.ComputerID})
+	write, err := q.GetInstanceComputerWriteKey(ctx, db.GetInstanceComputerWriteKeyParams{ComputerInstanceID: instance.ID, EnvironmentID: instance.EnvironmentID, ComputerID: instance.ComputerID})
 	if err != nil {
 		return objectScope{}, err
 	}

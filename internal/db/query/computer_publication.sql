@@ -1,5 +1,5 @@
 -- The owner validates the exact certified root page and holds the preparation
--- locks. Publication records success once; pending uploads remain Runtime pins.
+-- locks. Publication records success once; pending uploads remain Instance pins.
 -- name: PublishInitialComputerDiskVersion :one
 WITH published AS (
     UPDATE computer_disk_versions v

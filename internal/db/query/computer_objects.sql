@@ -48,7 +48,7 @@ SELECT EXISTS (
  SELECT 1 FROM computer_instances r
  JOIN computer_object_pins p ON p.computer_instance_id=r.id AND p.publication_key=sqlc.arg(publication_key) AND p.instance_desired_version=r.desired_version
  JOIN computer_objects o ON o.environment_id=p.environment_id AND o.computer_id=p.computer_id AND o.digest=p.digest
- WHERE r.id=sqlc.arg(runtime_id) AND r.worker_host_id=sqlc.arg(worker_id)
+ WHERE r.id=sqlc.arg(computer_instance_id) AND r.worker_host_id=sqlc.arg(worker_id)
    AND r.worker_group_id=sqlc.arg(worker_group_id) AND r.worker_epoch=sqlc.arg(worker_epoch)
    AND r.desired_version=sqlc.arg(desired_version) AND r.reclaimed_at IS NULL
    AND o.digest=sqlc.arg(digest) AND o.inspection=sqlc.arg(inspection)::jsonb

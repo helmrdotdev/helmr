@@ -290,7 +290,7 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 	}
 	readiness := workerapi.Readiness{
 		Run:      workerRoleReadiness(state, state.RunReady, state.RunPausedReason),
-		Instance: workerRoleReadiness(state, state.RuntimeReady, state.VMPausedReason),
+		Instance: workerRoleReadiness(state, state.InstanceReady, state.VMPausedReason),
 	}
 	status, err := workerPublicStatus(state.Status)
 	if err != nil {
