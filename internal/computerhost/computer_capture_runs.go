@@ -157,9 +157,28 @@ func (r *CaptureRuns) capture(ctx context.Context, target workerapi.RuntimeRecon
 	entries := make([]*CaptureWait, 0, len(target.Capture.Runs))
 	for _, member := range target.Capture.Runs {
 		entry := r.waits[member.RunID]
-		if entry == nil || entry.lease.ID != member.RunLeaseID || entry.lease.AttemptNumber != member.AttemptNumber || entry.waitID != member.RunWaitID || entry.lease.ComputerInstanceID != target.ID || entry.lease.WorkerEpoch != target.WorkerEpoch || entry.lease.ComputerID != target.Source.ComputerID || entry.lease.WriterGeneration != target.Source.WriterGeneration {
+		mismatch := ""
+		switch {
+		case entry == nil:
+			mismatch = "local wait absent"
+		case entry.lease.ID != member.RunLeaseID:
+			mismatch = "lease"
+		case entry.lease.AttemptNumber != member.AttemptNumber:
+			mismatch = "attempt"
+		case entry.waitID != member.RunWaitID:
+			mismatch = "wait"
+		case entry.lease.ComputerInstanceID != target.ID:
+			mismatch = "instance"
+		case entry.lease.WorkerEpoch != target.WorkerEpoch:
+			mismatch = "worker epoch"
+		case entry.lease.ComputerID != target.Source.ComputerID:
+			mismatch = "computer"
+		case entry.lease.WriterGeneration != target.Source.WriterGeneration:
+			mismatch = "writer generation"
+		}
+		if mismatch != "" {
 			r.mu.Unlock()
-			return errors.New("computer capture member is not waiting on the exact local grant")
+			return fmt.Errorf("computer capture member is not waiting on the exact local grant: %s (run %s)", mismatch, member.RunID)
 		}
 		entries = append(entries, entry)
 		requests = append(requests, &MemberPause{ctx: captureCtx, abort: abort, target: target, member: member, ready: make(chan error, 1), finished: make(chan struct{})})
