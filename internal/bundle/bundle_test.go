@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
@@ -236,7 +237,7 @@ func testDeploymentBundle(t *testing.T) Manifest {
 			SizeBytes: 4096,
 			MediaType: artifact.ProgramArtifactMediaType,
 		},
-		Index: testProgramIndex(t),
+		Index: artifacttest.ProgramIndex(t),
 	}
 	program.Index.RuntimeDigest = "sha256:" + strings.Repeat("f", 64)
 	plan := Plan{

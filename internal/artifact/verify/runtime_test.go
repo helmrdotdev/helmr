@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
 	"github.com/helmrdotdev/helmr/internal/definition"
 )
 
@@ -48,55 +49,45 @@ func TestVerifyRuntimeArtifactRejectsNilContextAndSnapshot(t *testing.T) {
 }
 
 func TestRuntimeTopologyRejectsOpenOrDivergentLayout(t *testing.T) {
-	removePath := func(filePath string) func(*memoryArtifact) {
-		return func(artifact *memoryArtifact) {
-			for index := range artifact.entries {
-				if artifact.entries[index].Path != filePath {
-					continue
-				}
-				artifact.entries = append(
-					artifact.entries[:index],
-					artifact.entries[index+1:]...,
-				)
-				delete(artifact.files, filePath)
-				break
-			}
+	removePath := func(filePath string) func(*artifacttest.Memory) {
+		return func(artifact *artifacttest.Memory) {
+			artifact.Remove(filePath)
 		}
 	}
-	tests := map[string]func(*memoryArtifact){
-		"extra top level": func(artifact *memoryArtifact) {
-			artifact.addDirectory("etc")
+	tests := map[string]func(*artifacttest.Memory){
+		"extra top level": func(artifact *artifacttest.Memory) {
+			artifact.AddDirectory("etc")
 		},
-		"extra bin": func(artifact *memoryArtifact) {
-			artifact.addFile("bin/other", []byte("other"), 0755)
+		"extra bin": func(artifact *artifacttest.Memory) {
+			artifact.AddFile("bin/other", []byte("other"), 0755)
 		},
-		"extra helmr": func(artifact *memoryArtifact) {
-			artifact.addFile("helmr/other", []byte("other"), 0644)
+		"extra helmr": func(artifact *artifacttest.Memory) {
+			artifact.AddFile("helmr/other", []byte("other"), 0644)
 		},
-		"extra share": func(artifact *memoryArtifact) {
-			artifact.addFile("share/other", []byte("other"), 0644)
+		"extra share": func(artifact *artifacttest.Memory) {
+			artifact.AddFile("share/other", []byte("other"), 0644)
 		},
 		"missing entry":    removePath(runtimeEntryPath),
 		"missing metadata": removePath(runtimeMetadataPath),
 		"missing license":  removePath(runtimeLicensePath),
-		"node mode": func(memory *memoryArtifact) {
-			memory.mutate(runtimeNodePath, func(entry *artifact.Entry) {
+		"node mode": func(memory *artifacttest.Memory) {
+			memory.Mutate(runtimeNodePath, func(entry *artifact.Entry) {
 				entry.Mode = 0644
 			})
 		},
-		"entry mode": func(memory *memoryArtifact) {
-			memory.mutate(runtimeEntryPath, func(entry *artifact.Entry) {
+		"entry mode": func(memory *artifacttest.Memory) {
+			memory.Mutate(runtimeEntryPath, func(entry *artifact.Entry) {
 				entry.Mode = 0755
 			})
 		},
-		"metadata mode": func(memory *memoryArtifact) {
-			memory.mutate(runtimeMetadataPath, func(entry *artifact.Entry) {
+		"metadata mode": func(memory *artifacttest.Memory) {
+			memory.Mutate(runtimeMetadataPath, func(entry *artifact.Entry) {
 				entry.Mode = 0755
 			})
 		},
-		"metadata Node flags": func(memory *memoryArtifact) {
+		"metadata Node flags": func(memory *artifacttest.Memory) {
 			invalid := artifact.RuntimeMetadata{
-				ModulePolicyDigest: testDigest("preload"),
+				ModulePolicyDigest: artifacttest.Digest("preload"),
 				Architecture:       definition.ArchitectureX8664, FormatVersion: artifact.RuntimeMetadataFormatVersion,
 				NodeVersion:      "24.21.0",
 				ProgramNodeFlags: []string{"--no-experimental-strip-types", "--enable-source-maps"},
@@ -106,18 +97,18 @@ func TestRuntimeTopologyRejectsOpenOrDivergentLayout(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			memory.files[runtimeMetadataPath] = raw
-			memory.mutate(runtimeMetadataPath, func(entry *artifact.Entry) {
+			memory.Files[runtimeMetadataPath] = raw
+			memory.Mutate(runtimeMetadataPath, func(entry *artifact.Entry) {
 				entry.SizeBytes = int64(len(raw))
 			})
 		},
-		"libc mode": func(memory *memoryArtifact) {
-			memory.mutate(runtimeLibcPath, func(entry *artifact.Entry) {
+		"libc mode": func(memory *artifacttest.Memory) {
+			memory.Mutate(runtimeLibcPath, func(entry *artifact.Entry) {
 				entry.Mode = 0755
 			})
 		},
-		"license mode": func(memory *memoryArtifact) {
-			memory.mutate(runtimeLicensePath, func(entry *artifact.Entry) {
+		"license mode": func(memory *artifacttest.Memory) {
+			memory.Mutate(runtimeLicensePath, func(entry *artifact.Entry) {
 				entry.Mode = 0755
 			})
 		},
@@ -166,7 +157,7 @@ func TestRuntimeArtifactRoleUsesRuntimeBounds(t *testing.T) {
 }
 
 func TestVerifiedRuntimeResultMatchesDescriptor(t *testing.T) {
-	descriptor := testRuntimeDescriptor()
+	descriptor := artifacttest.RuntimeDescriptor()
 	index, err := verifiedRuntimeResult(canonicalVerifierRuntimeIndex(t), descriptor)
 	if err != nil {
 		t.Fatal(err)
@@ -199,37 +190,37 @@ func TestVerifiedRuntimeResultMatchesDescriptor(t *testing.T) {
 	}
 }
 
-func newRuntimeTopology(t *testing.T) (artifact.RuntimeDescriptor, *memoryArtifact) {
+func newRuntimeTopology(t *testing.T) (artifact.RuntimeDescriptor, *artifacttest.Memory) {
 	t.Helper()
 	metadata := artifact.RuntimeMetadata{
-		ModulePolicyDigest: testDigest("preload"),
+		ModulePolicyDigest: artifacttest.Digest("preload"),
 		Architecture:       definition.ArchitectureX8664,
 		FormatVersion:      artifact.RuntimeMetadataFormatVersion,
 		NodeVersion:        "24.21.0",
-		ProgramNodeFlags:   testNodeProgramFlags(),
+		ProgramNodeFlags:   artifacttest.NodeProgramFlags(),
 		RuntimeContract:    definition.RuntimeContract,
 	}
 	metadataRaw, err := artifact.CanonicalRuntimeMetadata(metadata)
 	if err != nil {
 		t.Fatal(err)
 	}
-	memory := newMemoryArtifact()
-	memory.addDirectory("bin")
-	memory.addDirectory("helmr")
-	memory.addDirectory("lib")
-	memory.addDirectory("share")
-	memory.addDirectory("share/licenses")
-	memory.addDirectory("share/licenses/node")
-	memory.addDirectory("share/licenses/debian")
+	memory := artifacttest.NewMemory()
+	memory.AddDirectory("bin")
+	memory.AddDirectory("helmr")
+	memory.AddDirectory("lib")
+	memory.AddDirectory("share")
+	memory.AddDirectory("share/licenses")
+	memory.AddDirectory("share/licenses/node")
+	memory.AddDirectory("share/licenses/debian")
 	for _, name := range []string{"libc6", "libgcc-s1", "libstdc++6"} {
-		memory.addFile("share/licenses/debian/"+name, []byte("copyright"), 0644)
+		memory.AddFile("share/licenses/debian/"+name, []byte("copyright"), 0644)
 	}
-	memory.addFile("helmr/module-preload.mjs", []byte("preload"), 0644)
-	memory.addFile(runtimeNodePath, []byte("node"), 0755)
-	memory.addFile(runtimeEntryPath, []byte("entry"), 0644)
-	memory.addFile(runtimeMetadataPath, metadataRaw, 0644)
-	memory.addFile(runtimeLibcPath, []byte("libc"), 0644)
-	memory.addFile(runtimeLicensePath, []byte("license"), 0644)
-	memory.addFile("lib/locale-archive", []byte("locale"), 0644)
-	return testRuntimeDescriptor(), memory
+	memory.AddFile("helmr/module-preload.mjs", []byte("preload"), 0644)
+	memory.AddFile(runtimeNodePath, []byte("node"), 0755)
+	memory.AddFile(runtimeEntryPath, []byte("entry"), 0644)
+	memory.AddFile(runtimeMetadataPath, metadataRaw, 0644)
+	memory.AddFile(runtimeLibcPath, []byte("libc"), 0644)
+	memory.AddFile(runtimeLicensePath, []byte("license"), 0644)
+	memory.AddFile("lib/locale-archive", []byte("locale"), 0644)
+	return artifacttest.RuntimeDescriptor(), memory
 }

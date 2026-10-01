@@ -1,11 +1,17 @@
-package builder
+// Package artifacttest supplies program artifact fixtures shared by the
+// packages that build, verify and bundle program artifacts: a reference build
+// plan, its declaration locator and program index, a runtime descriptor and an
+// in-memory SquashFS artifact.
+package artifacttest
 
 import (
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 )
 
-func testBuildPlan() definition.BuildPlan {
+// BuildPlan is a build plan declaring a scheduled Task, an Actor and the
+// Sandbox both use.
+func BuildPlan() definition.BuildPlan {
 	return definition.BuildPlan{
 		FormatVersion: definition.BuildPlanFormatVersion,
 		Definitions: []definition.Input{

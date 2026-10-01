@@ -8,9 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -19,7 +18,7 @@ func TestSnapshotRuntimeObjectBindsStoreMetadataAndBytes(t *testing.T) {
 		t.Skip("runtime snapshots require Linux")
 	}
 	body := []byte("managed runtime")
-	descriptor := testRuntimeDescriptor()
+	descriptor := artifacttest.RuntimeDescriptor()
 	descriptor.Digest = sha256sum.DigestBytes(body)
 	descriptor.SizeBytes = int64(len(body))
 	store := runtimeObjectStore{
@@ -56,7 +55,7 @@ func TestSnapshotRuntimeObjectBindsStoreMetadataAndBytes(t *testing.T) {
 
 func TestSnapshotRuntimeObjectRejectsDivergentMetadata(t *testing.T) {
 	body := []byte("managed runtime")
-	descriptor := testRuntimeDescriptor()
+	descriptor := artifacttest.RuntimeDescriptor()
 	descriptor.Digest = sha256sum.DigestBytes(body)
 	descriptor.SizeBytes = int64(len(body))
 	for name, mutate := range map[string]func(*cas.Object){
@@ -89,7 +88,7 @@ func TestSnapshotRuntimeObjectRequiresStore(t *testing.T) {
 		context.Background(),
 		nil,
 		t.TempDir(),
-		testRuntimeDescriptor(),
+		artifacttest.RuntimeDescriptor(),
 	); err == nil {
 		t.Fatal("nil runtime store was accepted")
 	}
@@ -113,14 +112,3 @@ func (s runtimeObjectStore) Get(context.Context, string) (io.ReadCloser, error) 
 }
 
 var _ cas.Reader = runtimeObjectStore{}
-
-func testRuntimeDescriptor() artifact.RuntimeDescriptor {
-	return artifact.RuntimeDescriptor{
-		Architecture:    definition.ArchitectureX8664,
-		Digest:          "sha256:" + strings.Repeat("a", 64),
-		FormatVersion:   artifact.RuntimeDescriptorFormatVersion,
-		MediaType:       artifact.RuntimeArtifactMediaType,
-		RuntimeContract: definition.RuntimeContract,
-		SizeBytes:       artifact.SquashFSPhysicalAlign,
-	}
-}

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
 	"github.com/helmrdotdev/helmr/internal/definition"
 )
 
@@ -122,8 +123,8 @@ func TestRuntimeELFChecksTransitiveClosureForEveryLibrary(t *testing.T) {
 func TestRuntimeELFResolvesDirectorySymlinkComponents(t *testing.T) {
 	memory := newValidRuntimeELFArtifact(t, definition.ArchitectureX8664)
 	machine, loader := testRuntimeELFTarget(t, definition.ArchitectureX8664)
-	memory.addDirectory("lib/real")
-	memory.addFile(
+	memory.AddDirectory("lib/real")
+	memory.AddFile(
 		"lib/real/libnode.so",
 		buildTestELF64(t, testELF64Spec{
 			machine:  machine,
@@ -132,9 +133,9 @@ func TestRuntimeELFResolvesDirectorySymlinkComponents(t *testing.T) {
 		}),
 		0644,
 	)
-	memory.addLink("lib/alias", "real")
-	delete(memory.files, "lib/libnode.so")
-	memory.mutate("lib/libnode.so", func(entry *artifact.Entry) {
+	memory.AddLink("lib/alias", "real")
+	delete(memory.Files, "lib/libnode.so")
+	memory.Mutate("lib/libnode.so", func(entry *artifact.Entry) {
 		entry.Kind = artifact.EntrySymlink
 		entry.Form = artifact.SquashFSBasicSymlinkForm
 		entry.Mode = 0777
@@ -350,7 +351,7 @@ func TestRuntimeELFRequiresExactLibraryModes(t *testing.T) {
 	for name, filePath := range tests {
 		t.Run(name, func(t *testing.T) {
 			memory := newValidRuntimeELFArtifact(t, definition.ArchitectureX8664)
-			memory.mutate(filePath, func(entry *artifact.Entry) {
+			memory.Mutate(filePath, func(entry *artifact.Entry) {
 				if filePath == strings.TrimPrefix(loader, artifact.RuntimeMountPath+"/") {
 					entry.Mode = 0644
 				} else {
@@ -558,31 +559,31 @@ func alignTestELFOffset(value, alignment int) int {
 func newValidRuntimeELFArtifact(
 	t *testing.T,
 	architecture definition.RuntimeArchitecture,
-) *memoryArtifact {
+) *artifacttest.Memory {
 	t.Helper()
 	machine, loader := testRuntimeELFTarget(t, architecture)
 	loaderPath := strings.TrimPrefix(loader, artifact.RuntimeMountPath+"/")
-	memory := newMemoryArtifact()
-	memory.addDirectory("bin")
-	memory.addDirectory("helmr")
-	memory.addDirectory("lib")
-	memory.addFile(runtimeNodePath, buildTestELF64(t, testELF64Spec{
+	memory := artifacttest.NewMemory()
+	memory.AddDirectory("bin")
+	memory.AddDirectory("helmr")
+	memory.AddDirectory("lib")
+	memory.AddFile(runtimeNodePath, buildTestELF64(t, testELF64Spec{
 		machine:      machine,
 		fileType:     elf.ET_DYN,
 		interpreters: []string{loader},
 		needed:       []string{"libnode.so"},
 		runpath:      []string{artifact.RuntimeMountPath + "/lib"},
 	}), 0755)
-	memory.addFile(loaderPath, buildTestELF64(t, testELF64Spec{
+	memory.AddFile(loaderPath, buildTestELF64(t, testELF64Spec{
 		machine:  machine,
 		fileType: elf.ET_DYN,
 	}), 0755)
-	memory.addFile("lib/libnode.so", buildTestELF64(t, testELF64Spec{
+	memory.AddFile("lib/libnode.so", buildTestELF64(t, testELF64Spec{
 		machine:  machine,
 		fileType: elf.ET_DYN,
 		runpath:  []string{artifact.RuntimeMountPath + "/lib"},
 	}), 0644)
-	memory.addFile(runtimeLibcPath, buildTestELF64(t, testELF64Spec{
+	memory.AddFile(runtimeLibcPath, buildTestELF64(t, testELF64Spec{
 		machine:      machine,
 		fileType:     elf.ET_DYN,
 		interpreters: []string{loader},
@@ -606,21 +607,21 @@ func testRuntimeELFTarget(
 
 func replaceMemoryArtifactFile(
 	t *testing.T,
-	memory *memoryArtifact,
+	memory *artifacttest.Memory,
 	filePath string,
 	raw []byte,
 ) {
 	t.Helper()
-	if _, exists := memory.files[filePath]; !exists {
+	if _, exists := memory.Files[filePath]; !exists {
 		t.Fatalf("test artifact file %q is absent", filePath)
 	}
-	memory.files[filePath] = append([]byte(nil), raw...)
-	memory.mutate(filePath, func(entry *artifact.Entry) {
+	memory.Files[filePath] = append([]byte(nil), raw...)
+	memory.Mutate(filePath, func(entry *artifact.Entry) {
 		entry.SizeBytes = int64(len(raw))
 	})
 }
 
-func inspectRuntimeELFArtifact(t *testing.T, memory *memoryArtifact) *artifact.Tree {
+func inspectRuntimeELFArtifact(t *testing.T, memory *artifacttest.Memory) *artifact.Tree {
 	t.Helper()
 	inspected, err := artifact.Inspect(
 		context.Background(),
