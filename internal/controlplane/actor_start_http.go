@@ -117,7 +117,7 @@ func (s *Server) startActorHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.startActor(r.Context(), startRequest)
 	if err != nil {
-		writeError(w, sessionError(err, sessionStartOperation))
+		s.writeSessionError(w, err, sessionStartOperation)
 		return
 	}
 	writeJSON(w, http.StatusCreated, api.StartActorResponse{

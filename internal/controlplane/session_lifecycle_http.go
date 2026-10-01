@@ -14,11 +14,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/session"
-	"github.com/jackc/pgx/v5"
 )
 
 const sessionDataBodyLimit = int64((6 << 20) + 8192)
@@ -51,7 +49,7 @@ func (s *Server) admitSessionHTTP(w http.ResponseWriter, r *http.Request, mode s
 	}
 	command, err := s.sessionCommand(r, auth.PermissionSessionsSend, body.IdempotencyKey)
 	if err != nil {
-		s.writeSessionOperationError(w, err)
+		s.writeSessionError(w, err, sessionPublicOperation)
 		return
 	}
 	request := session.AdmissionRequest{Target: command.Target, Mode: mode, Data: data, IdempotencyKey: command.IdempotencyKey}
@@ -64,12 +62,12 @@ func (s *Server) admitSessionHTTP(w http.ResponseWriter, r *http.Request, mode s
 	}
 	receipt, err := session.ApplyAdmission(r.Context(), s.tx, request)
 	if err != nil {
-		s.writeSessionOperationError(w, err)
+		s.writeSessionError(w, err, sessionPublicOperation)
 		return
 	}
 	if mode == session.ExactMessage {
 		if receipt.MessageID == nil {
-			s.writeSessionOperationError(w, errors.New("message admission lacks identity"))
+			s.writeSessionError(w, errors.New("message admission lacks identity"), sessionPublicOperation)
 			return
 		}
 		writeJSON(w, http.StatusAccepted, api.SessionMessageReceipt{ID: receipt.ID.String(), TurnID: receipt.TurnID.String(), MessageID: receipt.MessageID.String(), Status: "accepted"})
@@ -91,12 +89,12 @@ func (s *Server) closeSessionHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	request, err := s.sessionCommand(r, auth.PermissionSessionsClose, body.IdempotencyKey)
 	if err != nil {
-		s.writeSessionOperationError(w, err)
+		s.writeSessionError(w, err, sessionPublicOperation)
 		return
 	}
 	receipt, err := session.ApplyClose(r.Context(), s.tx, request)
 	if err != nil {
-		s.writeSessionOperationError(w, err)
+		s.writeSessionError(w, err, sessionPublicOperation)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, api.SessionCloseReceipt{ID: receipt.ID.String(), SessionID: receipt.SessionID.String(), Status: receipt.Status})
@@ -110,12 +108,12 @@ func (s *Server) cancelSessionHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	request, err := s.sessionCommand(r, auth.PermissionSessionsCancel, body.IdempotencyKey)
 	if err != nil {
-		s.writeSessionOperationError(w, err)
+		s.writeSessionError(w, err, sessionPublicOperation)
 		return
 	}
 	receipt, err := session.ApplyCancel(r.Context(), s.tx, request)
 	if err != nil {
-		s.writeSessionOperationError(w, err)
+		s.writeSessionError(w, err, sessionPublicOperation)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, api.SessionCancelReceipt{ID: receipt.ID.String(), SessionID: receipt.SessionID.String(), Status: receipt.Status})
@@ -129,7 +127,7 @@ func (s *Server) interruptSessionTurnHTTP(w http.ResponseWriter, r *http.Request
 	}
 	command, err := s.sessionCommand(r, auth.PermissionSessionsInterrupt, body.IdempotencyKey)
 	if err != nil {
-		s.writeSessionOperationError(w, err)
+		s.writeSessionError(w, err, sessionPublicOperation)
 		return
 	}
 	turnID, err := ids.Parse(chi.URLParam(r, "turnID"))
@@ -139,11 +137,11 @@ func (s *Server) interruptSessionTurnHTTP(w http.ResponseWriter, r *http.Request
 	}
 	receipt, err := session.ApplyInterrupt(r.Context(), s.tx, session.InterruptRequest{ControlRequest: command, TurnID: turnID})
 	if err != nil {
-		s.writeSessionOperationError(w, err)
+		s.writeSessionError(w, err, sessionPublicOperation)
 		return
 	}
 	if receipt.TurnID == nil || receipt.HoldID == nil {
-		s.writeSessionOperationError(w, errors.New("interruption receipt lacks target"))
+		s.writeSessionError(w, errors.New("interruption receipt lacks target"), sessionPublicOperation)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, api.TurnInterruptReceipt{ID: receipt.ID.String(), SessionID: receipt.SessionID.String(), TurnID: receipt.TurnID.String(), HoldID: receipt.HoldID.String(), Status: receipt.Status})
@@ -162,16 +160,16 @@ func (s *Server) resumeSessionHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	command, err := s.sessionCommand(r, auth.PermissionSessionsResume, body.IdempotencyKey)
 	if err != nil {
-		s.writeSessionOperationError(w, err)
+		s.writeSessionError(w, err, sessionPublicOperation)
 		return
 	}
 	receipt, err := session.ApplyResume(r.Context(), s.tx, session.ResumeRequest{ControlRequest: command, HoldID: holdID})
 	if err != nil {
-		s.writeSessionOperationError(w, err)
+		s.writeSessionError(w, err, sessionPublicOperation)
 		return
 	}
 	if receipt.HoldID == nil {
-		s.writeSessionOperationError(w, errors.New("resume receipt lacks hold identity"))
+		s.writeSessionError(w, errors.New("resume receipt lacks hold identity"), sessionPublicOperation)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, api.SessionResumeReceipt{ID: receipt.ID.String(), SessionID: receipt.SessionID.String(), HoldID: receipt.HoldID.String(), Status: receipt.Status})
@@ -258,55 +256,6 @@ func writeSessionRequestError(w http.ResponseWriter, err error) {
 	writeError(w, badRequest(codedError{code: "invalid_request", message: err.Error()}))
 }
 
-func (s *Server) writeSessionOperationError(w http.ResponseWriter, err error) {
-	var operation *session.OperationError
-	var expired idempotency.ExpiredError
-	if errors.As(err, &expired) {
-		writeError(w, gone(expired))
-		return
-	}
-	var collision idempotency.ConflictError
-	var transport apiError
-	switch {
-	case errors.As(err, &transport):
-		writeError(w, err)
-	case errors.As(err, &collision):
-		writeError(w, conflict(codedError{code: "idempotency_conflict", message: "idempotency key conflicts with an earlier operation"}))
-	case errors.As(err, &operation):
-		coded := codedError{code: operation.Code, message: operation.Code}
-		switch operation.Code {
-		case "session_not_found", "turn_not_found":
-			writeError(w, notFound(coded))
-		case "invalid_request", "invalid_cursor":
-			writeError(w, badRequest(coded))
-		case "forbidden":
-			writeError(w, forbidden(coded))
-		case "cursor_expired":
-			writeError(w, gone(sessionCursorExpiredError{codedError: coded, retainedAfter: operation.RetainedAfter}))
-		default:
-			writeError(w, conflict(coded))
-		}
-	case errors.Is(err, pgx.ErrNoRows), errors.Is(err, session.ErrComputerAuthority):
-		// A Session whose Computer cannot be locked for admission is reported
-		// as a missing Session.
-		writeError(w, notFound(codedError{code: "session_not_found", message: "Session not found"}))
-	default:
-		if s.log != nil {
-			s.log.Error("session operation failed", "error", err)
-		}
-		writeError(w, errors.New("session operation failed"))
-	}
-}
-
-type sessionCursorExpiredError struct {
-	codedError
-	retainedAfter int64
-}
-
-func (e sessionCursorExpiredError) ErrorDetails() map[string]json.RawMessage {
-	return map[string]json.RawMessage{"retained_after": json.RawMessage(strconv.FormatInt(e.retainedAfter, 10))}
-}
-
 func writeSessionLifecycleAuthError(w http.ResponseWriter, log *slog.Logger, err error) {
 	if errors.Is(err, auth.ErrUnauthenticated) {
 		writeError(w, unauthorized(codedError{code: "authentication_required", message: "authentication is required"}))
@@ -321,7 +270,7 @@ func writeSessionLifecycleAuthError(w http.ResponseWriter, log *slog.Logger, err
 func (s *Server) readSessionEventsHTTP(w http.ResponseWriter, r *http.Request) {
 	target, err := s.sessionOperationTarget(r, auth.PermissionSessionsRead)
 	if err != nil {
-		s.writeSessionOperationError(w, err)
+		s.writeSessionError(w, err, sessionPublicOperation)
 		return
 	}
 	after, limit, err := parseSessionEventPageOptions(r.URL.RawQuery)
@@ -331,7 +280,7 @@ func (s *Server) readSessionEventsHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	page, err := session.ReadEvents(r.Context(), s.db, target, after, limit)
 	if err != nil {
-		s.writeSessionOperationError(w, err)
+		s.writeSessionError(w, err, sessionPublicOperation)
 		return
 	}
 	response := api.SessionEventPage{Records: make([]api.SessionEvent, 0, len(page.Records)), NextAfter: page.NextAfter, HasMore: page.HasMore, RetainedAfter: page.RetainedAfter}
@@ -386,7 +335,7 @@ func parseSessionEventPageOptions(raw string) (int64, int32, error) {
 func (s *Server) getSessionTurnHTTP(w http.ResponseWriter, r *http.Request) {
 	target, err := s.sessionOperationTarget(r, auth.PermissionSessionsRead)
 	if err != nil {
-		s.writeSessionOperationError(w, err)
+		s.writeSessionError(w, err, sessionPublicOperation)
 		return
 	}
 	turnID, err := ids.Parse(chi.URLParam(r, "turnID"))
@@ -396,12 +345,12 @@ func (s *Server) getSessionTurnHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	view, err := session.GetTurn(r.Context(), s.db, target, turnID)
 	if err != nil {
-		s.writeSessionOperationError(w, err)
+		s.writeSessionError(w, err, sessionPublicOperation)
 		return
 	}
 	response, err := projectSessionTurn(view)
 	if err != nil {
-		s.writeSessionOperationError(w, err)
+		s.writeSessionError(w, err, sessionPublicOperation)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)

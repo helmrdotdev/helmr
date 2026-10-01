@@ -21,11 +21,13 @@ func TestPrunedOperationReceiptHasExplicitTransportOutcome(t *testing.T) {
 			server.writeComputerError(w, err, computerCreateOperation, "create Computer failed")
 		},
 		"actor start": func(w http.ResponseWriter, err error) {
-			writeError(w, sessionError(err, sessionStartOperation))
+			server.writeSessionError(w, err, sessionStartOperation)
 		},
 		"task start": server.writeTaskStartError,
-		"session":    server.writeSessionOperationError,
-		"token":      server.writeTokenError,
+		"session": func(w http.ResponseWriter, err error) {
+			server.writeSessionError(w, err, sessionPublicOperation)
+		},
+		"token": server.writeTokenError,
 	} {
 		t.Run(name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()

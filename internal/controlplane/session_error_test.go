@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
+	"github.com/jackc/pgx/v5"
 )
 
 type sessionErrorCase struct {
@@ -50,6 +51,57 @@ func TestSessionErrorMapsActorStart(t *testing.T) {
 		{"worker start authority", sessionWorkerStartOperation, session.ErrStartAuthority, http.StatusInternalServerError, "internal_error", "internal server error", false},
 		{"worker start failure", sessionWorkerStartOperation, unavailable, http.StatusInternalServerError, "internal_error", "internal server error", false},
 	})
+}
+
+func TestSessionErrorMapsPublicOperationsAndReads(t *testing.T) {
+	unavailable := errors.New("database is down")
+	transport := forbidden(codedError{code: "forbidden", message: "permission is required"})
+	assertSessionErrors(t, []sessionErrorCase{
+		{"expired", sessionPublicOperation, fmt.Errorf("send: %w", idempotency.ExpiredError{}), http.StatusGone, "operation_expired", idempotency.ExpiredError{}.Error(), false},
+		{"transport", sessionPublicOperation, transport, http.StatusForbidden, "forbidden", "permission is required", false},
+		{"transport bad request", sessionPublicOperation, badRequest(codedError{code: "invalid_request", message: "bad id"}), http.StatusBadRequest, "invalid_request", "bad id", false},
+		{"idempotency conflict", sessionPublicOperation, idempotency.ConflictError{}, http.StatusConflict, "idempotency_conflict", "idempotency key conflicts with an earlier operation", false},
+		{"session not found", sessionPublicOperation, &session.OperationError{Code: "session_not_found"}, http.StatusNotFound, "session_not_found", "session_not_found", false},
+		{"turn not found", sessionPublicOperation, &session.OperationError{Code: "turn_not_found"}, http.StatusNotFound, "turn_not_found", "turn_not_found", false},
+		{"invalid request", sessionPublicOperation, &session.OperationError{Code: "invalid_request"}, http.StatusBadRequest, "invalid_request", "invalid_request", false},
+		{"invalid cursor", sessionPublicOperation, &session.OperationError{Code: "invalid_cursor"}, http.StatusBadRequest, "invalid_cursor", "invalid_cursor", false},
+		{"forbidden", sessionPublicOperation, &session.OperationError{Code: "forbidden"}, http.StatusForbidden, "forbidden", "forbidden", false},
+		{"cursor expired", sessionPublicOperation, &session.OperationError{Code: "cursor_expired", RetainedAfter: 17}, http.StatusGone, "cursor_expired", "cursor_expired", false},
+		{"session held", sessionPublicOperation, &session.OperationError{Code: "session_held"}, http.StatusConflict, "session_held", "session_held", false},
+		{"session not open", sessionPublicOperation, &session.OperationError{Code: "session_not_open"}, http.StatusConflict, "session_not_open", "session_not_open", false},
+		{"no rows", sessionPublicOperation, fmt.Errorf("lock: %w", pgx.ErrNoRows), http.StatusNotFound, "session_not_found", "Session not found", false},
+		{"computer authority", sessionPublicOperation, fmt.Errorf("%w: %w", session.ErrComputerAuthority, computer.ErrNotFound), http.StatusNotFound, "session_not_found", "Session not found", false},
+		{"failure", sessionPublicOperation, unavailable, http.StatusInternalServerError, "internal_error", "internal server error", false},
+		{"get not found", sessionGetOperation, session.ErrNotFound, http.StatusNotFound, "session_not_found", "session was not found", false},
+		{"get no rows is unavailable", sessionGetOperation, pgx.ErrNoRows, http.StatusServiceUnavailable, "session_authority_unavailable", "Session authority is unavailable", true},
+		{"get failure", sessionGetOperation, unavailable, http.StatusServiceUnavailable, "session_authority_unavailable", "Session authority is unavailable", true},
+		{"list failure", sessionListOperation, unavailable, http.StatusServiceUnavailable, "session_authority_unavailable", "Session authority is unavailable", true},
+		{"list not found is unavailable", sessionListOperation, session.ErrNotFound, http.StatusServiceUnavailable, "session_authority_unavailable", "Session authority is unavailable", true},
+	})
+	recorder := httptest.NewRecorder()
+	writeError(recorder, sessionError(&session.OperationError{Code: "cursor_expired", RetainedAfter: 17}, sessionPublicOperation))
+	if body := decodeHTTPError(t, recorder.Body.Bytes()); string(body.Details["retained_after"]) != "17" {
+		t.Fatalf("cursor expiry details = %s", recorder.Body.String())
+	}
+}
+
+func TestWriteSessionErrorLogsInternalAndUnavailableCauses(t *testing.T) {
+	var logs bytes.Buffer
+	server := &Server{log: slog.New(slog.NewJSONHandler(&logs, nil))}
+	server.writeSessionError(httptest.NewRecorder(), &session.OperationError{Code: "session_held"}, sessionPublicOperation)
+	server.writeSessionError(httptest.NewRecorder(), session.ErrNotFound, sessionGetOperation)
+	server.writeSessionError(httptest.NewRecorder(), session.ErrStartAuthority, sessionStartOperation)
+	if logs.Len() != 0 {
+		t.Fatalf("handled outcomes logged: %s", logs.String())
+	}
+	server.writeSessionError(httptest.NewRecorder(), errors.New("public-sentinel"), sessionPublicOperation)
+	server.writeSessionError(httptest.NewRecorder(), errors.New("read-sentinel"), sessionListOperation)
+	for _, want := range []string{`"msg":"session operation failed"`, `public-sentinel`, `"msg":"read Session failed"`, `read-sentinel`} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("logs missing %s: %s", want, logs.String())
+		}
+	}
+	(&Server{}).writeSessionError(httptest.NewRecorder(), errors.New("unlogged"), sessionPublicOperation)
 }
 
 func assertSessionErrors(t *testing.T, cases []sessionErrorCase) {

@@ -18,7 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -83,22 +83,20 @@ func (s *Server) listSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response := api.ListSessionsResponse{Sessions: []api.Session{}}
+	readScope := session.Scope{OrgID: pgvalue.UUID(principal.OrgID), ProjectID: projectID, EnvironmentID: environmentID}
 	if query.exactKeyLookup {
-		row, err := s.db.GetSessionSnapshotByKey(r.Context(), db.GetSessionSnapshotByKeyParams{
-			OrgID: pgvalue.UUID(principal.OrgID), ProjectID: projectID, EnvironmentID: environmentID,
-			ActorDeclaredID: query.actorID, Key: pgvalue.Text(query.key),
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
+		row, err := session.GetByKey(r.Context(), s.db, readScope, query.actorID, query.key)
+		if errors.Is(err, session.ErrNotFound) {
 			writeJSON(w, http.StatusOK, response)
 			return
 		}
 		if err != nil {
-			s.writeSessionReadAuthorityError(w, err)
+			s.writeSessionError(w, err, sessionListOperation)
 			return
 		}
 		item, err := projectSession(sessionProjectionFromKeyRow(row))
 		if err != nil {
-			s.writeSessionReadAuthorityError(w, err)
+			s.writeSessionError(w, err, sessionListOperation)
 			return
 		}
 		response.Sessions = append(response.Sessions, item)
@@ -121,23 +119,18 @@ func (s *Server) listSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 		afterCreatedAt = pgvalue.Timestamptz(createdAt)
 		afterID = pgvalue.UUID(sessionID)
 	}
-	rows, err := s.db.ListSessionSnapshots(r.Context(), db.ListSessionSnapshotsParams{
-		OrgID: pgvalue.UUID(principal.OrgID), ProjectID: projectID, EnvironmentID: environmentID,
+	rows, hasMore, err := session.List(r.Context(), s.db, readScope, session.ListQuery{
 		Statuses:       sessionStorageStatuses(query.statuses),
-		AfterCreatedAt: afterCreatedAt, AfterID: afterID, LimitCount: query.limit + 1,
+		AfterCreatedAt: afterCreatedAt, AfterID: afterID, Limit: query.limit,
 	})
 	if err != nil {
-		s.writeSessionReadAuthorityError(w, err)
+		s.writeSessionError(w, err, sessionListOperation)
 		return
-	}
-	hasMore := len(rows) > int(query.limit)
-	if hasMore {
-		rows = rows[:query.limit]
 	}
 	for _, row := range rows {
 		item, err := projectSession(sessionProjectionFromListRow(row))
 		if err != nil {
-			s.writeSessionReadAuthorityError(w, err)
+			s.writeSessionError(w, err, sessionListOperation)
 			return
 		}
 		response.Sessions = append(response.Sessions, item)
@@ -151,7 +144,7 @@ func (s *Server) listSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 			SessionID: pgvalue.UUIDString(last.ID),
 		})
 		if err != nil {
-			s.writeSessionReadAuthorityError(w, err)
+			s.writeSessionError(w, err, sessionListOperation)
 			return
 		}
 	}
@@ -178,21 +171,14 @@ func (s *Server) getSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
 		return
 	}
-	row, err := s.db.GetSessionSnapshot(r.Context(), db.GetSessionSnapshotParams{
-		OrgID: pgvalue.UUID(principal.OrgID), ProjectID: projectID,
-		EnvironmentID: environmentID, ID: pgvalue.UUID(sessionID),
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, notFound(codedError{code: "session_not_found", message: "session was not found"}))
-		return
-	}
+	row, err := session.Get(r.Context(), s.db, session.Scope{OrgID: pgvalue.UUID(principal.OrgID), ProjectID: projectID, EnvironmentID: environmentID}, pgvalue.UUID(sessionID))
 	if err != nil {
-		s.writeSessionReadAuthorityError(w, err)
+		s.writeSessionError(w, err, sessionGetOperation)
 		return
 	}
 	item, err := projectSession(sessionProjectionFromGetRow(row))
 	if err != nil {
-		s.writeSessionReadAuthorityError(w, err)
+		s.writeSessionError(w, err, sessionGetOperation)
 		return
 	}
 	writeJSON(w, http.StatusOK, item)
@@ -372,9 +358,4 @@ func sessionProjectionFromKeyRow(row db.GetSessionSnapshotByKeyRow) sessionProje
 
 func sessionProjectionFromListRow(row db.ListSessionSnapshotsRow) sessionProjectionRow {
 	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, computerID: row.ComputerID, key: row.Key, status: row.Status, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, activeTurnID: row.ActiveTurnID, dispatchHoldID: row.DispatchHoldID, dispatchHoldReason: row.DispatchHoldReason, cancelRequestedAt: row.CancelRequestedAt, failure: row.Failure, failureRunID: row.FailureRunID}
-}
-
-func (s *Server) writeSessionReadAuthorityError(w http.ResponseWriter, err error) {
-	s.log.Error("read Session failed", "error", err)
-	writeError(w, unavailable(codedError{code: "session_authority_unavailable", message: "Session authority is unavailable", retryable: true}))
 }

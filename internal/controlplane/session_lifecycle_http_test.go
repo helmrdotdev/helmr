@@ -59,12 +59,6 @@ func TestSessionEventCursorValidatesClosedQueryAndSafeIntegers(t *testing.T) {
 	if _, _, err := parseSessionEventPageOptions("after=%zz"); err == nil || err.Error() != "query string is malformed" {
 		t.Fatalf("malformed query error = %v", err)
 	}
-	recorder := httptest.NewRecorder()
-	(&Server{}).writeSessionOperationError(recorder, &session.OperationError{Code: "cursor_expired", RetainedAfter: 17})
-	body := decodeHTTPError(t, recorder.Body.Bytes())
-	if recorder.Code != http.StatusGone || body.Code != "cursor_expired" || string(body.Details["retained_after"]) != "17" {
-		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
-	}
 }
 
 func TestSessionDataRequestBoundsCanonicalDataAndTransport(t *testing.T) {
