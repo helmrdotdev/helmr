@@ -65,7 +65,7 @@ func ReconcileClose(
 			if errors.Is(err, pgx.ErrNoRows) {
 				return session, true, nil
 			}
-			return db.Session{}, false, fmt.Errorf("create actor close continuation: %w", err)
+			return db.Session{}, false, fmt.Errorf("create session close continuation: %w", err)
 		}
 		updated, err := store.GetSession(ctx, db.GetSessionParams{
 			EnvironmentID: session.EnvironmentID,
@@ -88,7 +88,7 @@ func ReconcileClose(
 		if err == nil {
 			err = ErrAuthority
 		}
-		return db.Session{}, false, fmt.Errorf("load actor close time: %w", err)
+		return db.Session{}, false, fmt.Errorf("load session close time: %w", err)
 	}
 	if session.DispatchHoldID.Valid {
 		session, err = store.ClearSessionDispatchHold(ctx, db.ClearSessionDispatchHoldParams{EnvironmentID: session.EnvironmentID, ID: session.ID, DispatchHoldID: session.DispatchHoldID})
@@ -103,7 +103,7 @@ func ReconcileClose(
 		ComputerID:    session.ComputerID,
 	})
 	if err != nil {
-		return db.Session{}, false, fmt.Errorf("complete idle actor close: %w", err)
+		return db.Session{}, false, fmt.Errorf("complete idle session close: %w", err)
 	}
 	_, err = appendLifecycleEvent(ctx, store, closed, pgtype.UUID{}, pgtype.UUID{}, "session.closed", closeEventData(closed), pgtype.UUID{})
 	return closed, false, err
@@ -162,7 +162,7 @@ func reconcileCurrentRunClose(
 		return db.Session{}, false, err
 	}
 	if _, err := FailWait(ctx, tx, wait, "session_closed"); err != nil {
-		return db.Session{}, false, fmt.Errorf("complete actor close input wait: %w", err)
+		return db.Session{}, false, fmt.Errorf("complete session close input wait: %w", err)
 	}
 	return session, false, nil
 }

@@ -15,12 +15,12 @@ const (
 )
 
 type DeadlineWorker struct {
-	log           *slog.Logger
-	timerDue      RunWaitDeadlineReconcile
-	tokenTimeouts RunWaitDeadlineReconcile
+	log                  *slog.Logger
+	timerDue             RunWaitDeadlineReconcile
+	tokenTimeouts        RunWaitDeadlineReconcile
 	sessionInputTimeouts RunWaitDeadlineReconcile
-	interval      time.Duration
-	batchSize     int32
+	interval             time.Duration
+	batchSize            int32
 }
 
 func NewDeadlineWorker(

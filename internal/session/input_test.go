@@ -13,9 +13,9 @@ import (
 
 func TestCanStartContinuationIncludesClosingBacklog(t *testing.T) {
 	for _, test := range []struct {
-		name  string
+		name    string
 		session db.Session
-		want  bool
+		want    bool
 	}{
 		{name: "open", session: db.Session{Status: "open", NextInputSequence: 2}, want: true},
 		{name: "closing", session: db.Session{Status: "closing", NextInputSequence: 2}, want: true},

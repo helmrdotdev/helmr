@@ -279,7 +279,7 @@ func start(ctx context.Context, txb db.TxBeginner, claimRequest idempotency.Requ
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrStartAuthority
 			}
-			return fmt.Errorf("create actor: %w", err)
+			return fmt.Errorf("create session: %w", err)
 		}
 
 		bootRun, err := q.CreateActorStartRun(ctx, db.CreateActorStartRunParams{

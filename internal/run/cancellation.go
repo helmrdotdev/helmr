@@ -33,7 +33,7 @@ type CancellationRequest struct {
 }
 
 type CancellationResult struct {
-	Session         *SessionCancellationReceipt
+	Session       *SessionCancellationReceipt
 	RunID         uuid.UUID
 	Changed       bool
 	CancelledRuns int
@@ -49,7 +49,7 @@ type cancellationRun struct {
 	parentOwnsLifecycle      pgtype.Bool
 	environmentID            uuid.UUID
 	computerID               uuid.UUID
-	sessionID                  pgtype.UUID
+	sessionID                pgtype.UUID
 	status                   db.RunStatus
 	currentAttemptNumber     int32
 	currentRunLeaseID        pgtype.UUID
@@ -794,7 +794,7 @@ func lockCancellationRun(
 		parentOwnsLifecycle:      row.ParentOwnsLifecycle,
 		environmentID:            uuid.UUID(row.EnvironmentID.Bytes),
 		computerID:               uuid.UUID(row.ComputerID.Bytes),
-		sessionID:                  row.SessionID,
+		sessionID:                row.SessionID,
 		status:                   row.Status,
 		currentAttemptNumber:     row.CurrentAttemptNumber,
 		currentRunLeaseID:        row.CurrentRunLeaseID,

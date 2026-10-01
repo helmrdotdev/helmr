@@ -261,8 +261,8 @@ func validateCompletion(
 }
 
 type terminalDecision struct {
-	runStatus   db.RunStatus
-	runReason   pgtype.Text
+	runStatus     db.RunStatus
+	runReason     pgtype.Text
 	sessionStatus string
 }
 
@@ -279,7 +279,7 @@ func terminalStateOf(execution run.Execution) terminalState {
 
 func decideTerminal(state terminalState, completion ActorCompletion) terminalDecision {
 	decision := terminalDecision{
-		runStatus:   db.RunStatusSucceeded,
+		runStatus:     db.RunStatusSucceeded,
 		sessionStatus: state.session.Status,
 	}
 	if completion.Kind == ActorInterrupted {
