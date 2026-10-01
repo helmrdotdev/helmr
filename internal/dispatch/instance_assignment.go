@@ -8,10 +8,10 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -52,7 +52,7 @@ func discoverInstanceAssignment(ctx context.Context, tx pgx.Tx, environmentID, c
 	}
 	p.cpu = config.Resources.MilliCPU
 	p.memory = config.Resources.MemoryMiB * 1024 * 1024
-	p.disk = compute.ComputerGuestEphemeralDiskMiB * 1024 * 1024
+	p.disk = disk.SeedCapacity
 	var id pgtype.UUID
 	err = tx.QueryRow(ctx, `SELECT id FROM computer_instances WHERE environment_id=$1 AND computer_id=$2 AND reclaimed_at IS NULL`, environmentID, computerID).Scan(&id)
 	if err == nil {

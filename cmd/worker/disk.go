@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"golang.org/x/sys/unix"
 )
 
@@ -44,19 +43,19 @@ func admissionDiskFloorMiB(vmScratchMiB, reserveMiB int64) int64 {
 	return reserveMiB + vmScratchMiB
 }
 
-func capGuestEphemeralDiskCapacity(capacity compute.WorkerDiskCapacity, reserve, physicalCapacity uint64) (compute.WorkerDiskCapacity, error) {
+func capGuestEphemeralDiskCapacity(capacity workerDiskCapacity, reserve, physicalCapacity uint64) (workerDiskCapacity, error) {
 	if err := capacity.Validate(); err != nil {
-		return compute.WorkerDiskCapacity{}, err
+		return workerDiskCapacity{}, err
 	}
 	if reserve == 0 || reserve >= uint64(capacity.HostGuestEphemeralDiskBytes) {
-		return compute.WorkerDiskCapacity{}, errors.New("worker disk reserve consumes aggregate capacity")
+		return workerDiskCapacity{}, errors.New("worker disk reserve consumes aggregate capacity")
 	}
 	capacity.HostGuestEphemeralDiskBytes -= int64(reserve)
 	if physicalCapacity < uint64(capacity.HostGuestEphemeralDiskBytes) {
 		capacity.HostGuestEphemeralDiskBytes = int64(physicalCapacity)
 	}
 	if err := capacity.Validate(); err != nil {
-		return compute.WorkerDiskCapacity{}, err
+		return workerDiskCapacity{}, err
 	}
 	return capacity, nil
 }
@@ -85,4 +84,34 @@ func workerDerivedCacheBudgetBytes(hostDiskMiB int64, numerator int64, denominat
 		return 0
 	}
 	return budgetMiB * 1024 * 1024
+}
+
+// workerDiskCapacity keeps a single-VM shape separate from the aggregate host
+// pools consumed by dispatch. This prevents a worker with N VM slots from
+// advertising only one VM's disk as its total capacity.
+type workerDiskCapacity struct {
+	VMGuestEphemeralDiskBytes   int64
+	HostGuestEphemeralDiskBytes int64
+}
+
+func partitionWorkerDiskCapacity(hostMiB, vmMiB, cacheBytes int64) (workerDiskCapacity, error) {
+	const mib = int64(1024 * 1024)
+	if hostMiB <= 0 || vmMiB <= 0 || cacheBytes < 0 || cacheBytes > hostMiB*mib {
+		return workerDiskCapacity{}, errors.New("worker physical disk budget is invalid")
+	}
+	capacity := workerDiskCapacity{
+		VMGuestEphemeralDiskBytes:   vmMiB * mib,
+		HostGuestEphemeralDiskBytes: hostMiB*mib - cacheBytes,
+	}
+	return capacity, capacity.Validate()
+}
+
+func (c workerDiskCapacity) Validate() error {
+	if c.VMGuestEphemeralDiskBytes <= 0 || c.HostGuestEphemeralDiskBytes <= 0 {
+		return errors.New("worker disk capacity fields must be positive")
+	}
+	if c.VMGuestEphemeralDiskBytes > c.HostGuestEphemeralDiskBytes {
+		return errors.New("single-VM disk shape exceeds aggregate host capacity")
+	}
+	return nil
 }

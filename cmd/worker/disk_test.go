@@ -1,10 +1,6 @@
 package main
 
-import (
-	"testing"
-
-	"github.com/helmrdotdev/helmr/internal/compute"
-)
+import "testing"
 
 func TestAdvertisedWorkerDiskMiBUsesConfiguredValue(t *testing.T) {
 	got, err := advertisedWorkerDiskMiB(t.TempDir(), 1234, 234)
@@ -31,7 +27,7 @@ func TestAdvertisedWorkerDiskCapacityFitsNButNotNPlusOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	capacity, err := compute.PartitionWorkerDiskCapacity(hostMiB, 8192, 0)
+	capacity, err := partitionWorkerDiskCapacity(hostMiB, 8192, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +43,7 @@ func TestAdmissionDiskFloorMatchesWorkerFilesystemContract(t *testing.T) {
 }
 
 func TestCapGuestEphemeralDiskCapacityUsesStablePhysicalCapacity(t *testing.T) {
-	capacity := compute.WorkerDiskCapacity{
+	capacity := workerDiskCapacity{
 		VMGuestEphemeralDiskBytes:   32768 << 20,
 		HostGuestEphemeralDiskBytes: 65536 << 20,
 	}
@@ -96,5 +92,36 @@ func TestWorkerCacheBudgetShrinksForSmallDisk(t *testing.T) {
 	got := workerCacheBudgetBytes(0, 400, 1, 3, 4096, 32768)
 	if got != 200*1024*1024 {
 		t.Fatalf("budget bytes = %d, want half of small host disk", got)
+	}
+}
+
+func TestWorkerDiskCapacityValidatesSingleVMShapeAgainstAggregate(t *testing.T) {
+	capacity := workerDiskCapacity{
+		VMGuestEphemeralDiskBytes:   8192 << 20,
+		HostGuestEphemeralDiskBytes: 4 * (8192 << 20),
+	}
+	if err := capacity.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if got := capacity.HostGuestEphemeralDiskBytes / capacity.VMGuestEphemeralDiskBytes; got != 4 {
+		t.Fatalf("aggregate holds %d VMs, want exact fit of 4", got)
+	}
+	capacity.HostGuestEphemeralDiskBytes = capacity.VMGuestEphemeralDiskBytes - 1
+	if err := capacity.Validate(); err == nil {
+		t.Fatal("single-VM disk shape larger than aggregate host capacity was accepted")
+	}
+}
+
+func TestPartitionWorkerDiskCapacityDoesNotDoubleCountPhysicalDisk(t *testing.T) {
+	capacity, err := partitionWorkerDiskCapacity(80*1024, 8192, 16*1024*1024*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accounted := capacity.HostGuestEphemeralDiskBytes + 16*1024*1024*1024
+	if accounted > 80*1024*1024*1024 {
+		t.Fatalf("accounted bytes %d exceed host", accounted)
+	}
+	if got := capacity.HostGuestEphemeralDiskBytes / capacity.VMGuestEphemeralDiskBytes; got != 8 {
+		t.Fatalf("aggregate holds %d VMs, want eight-slot exact fit", got)
 	}
 }

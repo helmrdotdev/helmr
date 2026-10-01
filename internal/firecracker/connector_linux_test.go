@@ -32,7 +32,6 @@ import (
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
 	"github.com/firecracker-microvm/firecracker-go-sdk/vsock"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
@@ -561,7 +560,7 @@ func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 	var phases []vm.Phase
 
 	_, err := connector.restore(context.Background(), vm.RestoreRequest{
-		Topology: topology, Resources: compute.ResourceVector{MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.ScratchDiskMiB},
+		Topology: topology, Resources: vm.Resources{MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.ScratchDiskMiB},
 		ID:                 "checkpoint-1",
 		ComputerInstanceID: computerInstanceID,
 		OwnerKind:          vm.OwnerInstance,
@@ -1481,7 +1480,7 @@ func TestMaterializeAcceptsOnlyCompleteProgramDriveSet(t *testing.T) {
 		},
 		RootfsDigest:      rootfsDigest,
 		ComputerMountPath: "/workspace",
-		Resources:         compute.ResourceVector{MilliCPU: 1000},
+		Resources:         vm.Resources{MilliCPU: 1000},
 		VMVCPUCount:       1,
 		CPUConfigDigest:   testCPUConfigDigest(1),
 		ReadOnlyDrives:    testProgramDrives(source),
@@ -1532,7 +1531,7 @@ func TestMaterializeRecordsScratchDiskPhase(t *testing.T) {
 					ComputerInstanceID: computerInstanceID, VMPlatformID: vmPlatform.ID,
 				},
 				RootfsDigest:      connector.artifacts.Rootfs.Digest,
-				Resources:         compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 256, DiskMiB: 16, Slots: 1},
+				Resources:         vm.Resources{MilliCPU: 1000, MemoryMiB: 256, DiskMiB: 16, Slots: 1},
 				VMVCPUCount:       1,
 				CPUConfigDigest:   cpuConfigDigest,
 				ComputerMountPath: "/workspace",
@@ -1574,7 +1573,7 @@ func TestMaterializeRequiresActivationProbedCPUShape(t *testing.T) {
 		},
 		RootfsDigest:      rootfsDigest,
 		ComputerMountPath: "/workspace",
-		Resources:         compute.ResourceVector{MilliCPU: 1500},
+		Resources:         vm.Resources{MilliCPU: 1500},
 		VMVCPUCount:       2,
 		CPUConfigDigest:   testCPUConfigDigest(2),
 	}
@@ -1892,7 +1891,7 @@ func TestRuntimeSDKConfigurationUsesDescriptor(t *testing.T) {
 func TestConfigForMaterializeRequestUsesRequestedRuntimeResources(t *testing.T) {
 	connector := &Connector{cfg: Config{VCPUCount: 4, MemoryMiB: 4096, ScratchDiskMiB: 32768}}
 	cfg, err := connector.configForMaterializeRequest(vm.MaterializeRequest{
-		Resources: compute.ResourceVector{
+		Resources: vm.Resources{
 			MilliCPU:  1500,
 			MemoryMiB: 1024,
 			DiskMiB:   4096,
@@ -1915,7 +1914,7 @@ func TestConfigForMaterializeRequestUsesRequestedRuntimeResources(t *testing.T) 
 
 func TestConfigForMaterializeRequestRejectsOversizedRuntimeResources(t *testing.T) {
 	connector := &Connector{cfg: Config{VCPUCount: 2, MemoryMiB: 2048, ScratchDiskMiB: 8192}}
-	for name, resources := range map[string]compute.ResourceVector{
+	for name, resources := range map[string]vm.Resources{
 		"memory": {MilliCPU: 1000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 1},
 		"cpu":    {MilliCPU: 3000, MemoryMiB: 1024, DiskMiB: 4096, Slots: 1},
 		"disk":   {MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 16384, Slots: 1},
@@ -2152,7 +2151,7 @@ func TestRestoreRejectsResourceMismatchBeforeUnpack(t *testing.T) {
 	topology := testRestoreComputerTopology(t)
 	data, identity := testPairedRestoreManifest(t, cfg, "checkpoint", topology)
 	id := uuid.NewV7().String()
-	for _, resources := range []compute.ResourceVector{{MemoryMiB: cfg.MemoryMiB + 1, DiskMiB: cfg.ScratchDiskMiB}, {MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.ScratchDiskMiB + 1}} {
+	for _, resources := range []vm.Resources{{MemoryMiB: cfg.MemoryMiB + 1, DiskMiB: cfg.ScratchDiskMiB}, {MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.ScratchDiskMiB + 1}} {
 		_, err := connector.restore(t.Context(), vm.RestoreRequest{ID: "checkpoint", ComputerInstanceID: id, OwnerKind: vm.OwnerInstance,
 			Binding: vm.WorkloadBinding{WorkerEpoch: 1, OwnerID: id, Generation: 1, ComputerInstanceID: id, VMPlatformID: identity.RuntimeID}, Topology: topology, Resources: resources,
 			Manifest: data, Checkpoint: identity, VMState: "not-read", VMStateMediaType: cas.CheckpointVMStateMediaType, ScratchDisk: "not-read", ScratchDiskMediaType: cas.CheckpointScratchDiskMediaType, Memory: []string{"not-read"}, MemoryMediaTypes: []string{cas.CheckpointMemoryMediaType}})
