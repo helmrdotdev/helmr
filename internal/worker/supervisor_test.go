@@ -45,7 +45,7 @@ func (c *testControlPlane) ActivateWorker(_ context.Context, capabilities worker
 
 func (c *testControlPlane) ReportWorkerStartupRecovery(_ context.Context, request workerapi.StartupRecoveryRequest) error {
 	c.recoveryCalls.Add(1)
-	if !request.InventoryComplete || request.InventoryScope != "worker_runtime_state_roots_v0" || request.ObservedAt.IsZero() {
+	if !request.InventoryComplete || request.InventoryScope != "worker_instance_state_roots_v0" || request.ObservedAt.IsZero() {
 		return errors.New("incomplete startup recovery proof")
 	}
 	if c.recovery409s.Add(-1) >= 0 {
@@ -60,7 +60,7 @@ type testHTTPStatusError struct{ status int }
 func (e testHTTPStatusError) Error() string       { return "test HTTP status" }
 func (e testHTTPStatusError) HTTPStatusCode() int { return e.status }
 func (c *testControlPlane) CompleteWorkerDrain(_ context.Context, request workerapi.DrainCompletionRequest) (workerapi.StatusResponse, error) {
-	if !request.InventoryComplete || request.InventoryScope != "worker_runtime_state_roots_v0" || request.ObservedAt.IsZero() || len(request.Inventory) != 0 || len(request.Quarantined) != 0 || len(request.Errors) != 0 {
+	if !request.InventoryComplete || request.InventoryScope != "worker_instance_state_roots_v0" || request.ObservedAt.IsZero() || len(request.Inventory) != 0 || len(request.Quarantined) != 0 || len(request.Errors) != 0 {
 		return workerapi.StatusResponse{}, errors.New("incomplete worker drain proof")
 	}
 	c.completed.Add(1)

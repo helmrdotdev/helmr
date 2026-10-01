@@ -152,7 +152,7 @@ func validateWorkerStartupRecovery(
 	epochStartedAt time.Time,
 	now time.Time,
 ) error {
-	if !request.InventoryComplete || request.InventoryScope != "worker_runtime_state_roots_v0" || request.ObservedAt.IsZero() {
+	if !request.InventoryComplete || request.InventoryScope != "worker_instance_state_roots_v0" || request.ObservedAt.IsZero() {
 		return errors.New("a complete, timestamped physical inventory is required")
 	}
 	if request.ObservedAt.After(now.Add(time.Minute)) {
@@ -235,7 +235,7 @@ func (s *Server) workerCompleteDrain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if !request.InventoryComplete || request.InventoryScope != "worker_runtime_state_roots_v0" || request.ObservedAt.IsZero() {
+	if !request.InventoryComplete || request.InventoryScope != "worker_instance_state_roots_v0" || request.ObservedAt.IsZero() {
 		writeError(w, badRequest(errors.New("a complete, timestamped physical inventory is required")))
 		return
 	}
