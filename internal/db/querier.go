@@ -565,7 +565,6 @@ type Querier interface {
 	LockWorkerGroupMutation(ctx context.Context, lockKey int64) error
 	LockWorkerHostForActivation(ctx context.Context, arg LockWorkerHostForActivationParams) (WorkerHost, error)
 	LockWorkerPool(ctx context.Context, arg LockWorkerPoolParams) (WorkerPool, error)
-	LockWorkerSessionOperationSessions(ctx context.Context, arg LockWorkerSessionOperationSessionsParams) ([]Session, error)
 	// Only the instance coordinator may mark members after sealing the complete set.
 	MarkCheckpointMemberWaiting(ctx context.Context, arg MarkCheckpointMemberWaitingParams) (RunWait, error)
 	// The caller certifies artifact contents and the private disk root, then settles

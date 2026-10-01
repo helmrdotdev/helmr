@@ -154,12 +154,6 @@ SELECT ((r.session_id IS NULL OR EXISTS(SELECT 1 FROM sessions a WHERE a.id=r.se
  AND t.attempt_number=w.attempt_number AND t.status='running' AND t.interrupt_requested_at IS NULL)))::boolean AS current
 FROM run_waits w JOIN runs r ON r.id=w.run_id WHERE w.id=$1;
 
--- name: LockWorkerSessionOperationSessions :many
-SELECT s.* FROM sessions s
-WHERE s.environment_id=sqlc.arg(environment_id)
- AND (s.id=sqlc.arg(target_session_id) OR s.id=(SELECT r.session_id FROM runs r WHERE r.id=sqlc.arg(source_run_id) AND r.environment_id=sqlc.arg(environment_id)))
-ORDER BY s.id FOR UPDATE OF s;
-
 -- name: SessionRecoveryHeadCommitted :one
 SELECT EXISTS(SELECT 1 FROM computer_disk_versions
  WHERE environment_id=$1 AND computer_id=$2 AND id=$3 AND status='committed') AS committed;
