@@ -75,9 +75,22 @@ func TestLeaseReconcilerRecoversWithinTwoConnections(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	guard, locked, err := pglock.TryAcquire(t.Context(), f.pool, pglock.Key(leaseRecoveryLockName))
-	if err != nil || !locked {
-		t.Fatalf("singleton lock after join: locked=%v err=%v", locked, err)
+	// A connection closed while its lock query was cancelled keeps the session
+	// lock until its server process notices the closed socket.
+	var guard *pglock.Guard
+	for {
+		var locked bool
+		guard, locked, err = pglock.TryAcquire(t.Context(), f.pool, pglock.Key(leaseRecoveryLockName))
+		if err != nil {
+			t.Fatalf("singleton lock after join: %v", err)
+		}
+		if locked {
+			break
+		}
+		if time.Now().After(released) {
+			t.Fatal("singleton lock still held after join")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	if err := guard.Unlock(); err != nil {
 		t.Fatal(err)
