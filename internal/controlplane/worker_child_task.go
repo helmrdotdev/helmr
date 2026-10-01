@@ -155,7 +155,7 @@ func (s *Server) workerInvokeChildTask(w http.ResponseWriter, r *http.Request) {
 			RunID: pgvalue.UUIDString(call.ParentRunID), RunWaitID: call.RunWaitID.String(),
 			ResumeAttachID:     call.ResumeAttachID.String(),
 			ComputerInstanceID: pgvalue.UUIDString(call.ComputerInstanceID),
-			RuntimeEpoch:       call.RuntimeEpoch,
+			WorkerEpoch:        call.WorkerEpoch,
 		}
 		if call.Completed {
 			opened.ResolutionKind = "completed"

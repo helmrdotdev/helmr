@@ -32,7 +32,7 @@ func preparingInstance(t *testing.T, attempts int) (runtest.Fixture, runtest.Run
 // and the Run stays queued, and the report cannot be applied twice.
 func TestInstanceFailureIsDurableWithoutLogicalSettlement(t *testing.T) {
 	f, work, i := preparingInstance(t, 8)
-	failure := Failure{Observation: observationOf(i), Kind: FailureRuntime, Reason: "runtime_reconcile_failed"}
+	failure := Failure{Observation: observationOf(i), Kind: FailureInstance, Reason: "runtime_reconcile_failed"}
 	failed, err := RecordInstanceFailure(t.Context(), f.Pool, failure)
 	if err != nil {
 		t.Fatal(err)

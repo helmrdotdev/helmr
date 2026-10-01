@@ -58,7 +58,7 @@ func TestComputerGraphCollectionRetainsRootsAndLivePublishers(t *testing.T) {
 			if store.calls != 0 {
 				t.Fatal("live publisher collected")
 			}
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1,observed_state='failed',terminal_at=clock_timestamp(),terminal_reason_code='fixture' WHERE id=$1`, f.runtime)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1,observed_state='failed',terminal_at=clock_timestamp(),terminal_reason_code='fixture' WHERE id=$1`, f.instance)
 			if err = collector.Reconcile(t.Context()); err != nil {
 				t.Fatal(err)
 			}
@@ -66,7 +66,7 @@ func TestComputerGraphCollectionRetainsRootsAndLivePublishers(t *testing.T) {
 				t.Fatal("logical revocation collected live bytes")
 			}
 			// Explicit test evidence for the physical exclusion boundary.
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET admission_state='closed',mount_state='lost',reclaimed_at=clock_timestamp(),reclaim_evidence='{"proof":"fixture"}' WHERE id=$1`, f.runtime)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET admission_state='closed',mount_state='lost',reclaimed_at=clock_timestamp(),reclaim_evidence='{"proof":"fixture"}' WHERE id=$1`, f.instance)
 			if err = collector.Reconcile(t.Context()); err != nil {
 				t.Fatal(err)
 			}
@@ -94,7 +94,7 @@ func TestComputerGraphCollectionRetainsOtherOrganizationAndStorageRetry(t *testi
 					t.Fatal(err)
 				}
 			}
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1,observed_state='failed',terminal_at=clock_timestamp(),terminal_reason_code='fixture',admission_state='closed',mount_state='lost',reclaimed_at=clock_timestamp(),reclaim_evidence='{"proof":"fixture"}' WHERE id=$1`, f.runtime)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1,observed_state='failed',terminal_at=clock_timestamp(),terminal_reason_code='fixture',admission_state='closed',mount_state='lost',reclaimed_at=clock_timestamp(),reclaim_evidence='{"proof":"fixture"}' WHERE id=$1`, f.instance)
 			store := &computerGraphReclaimStore{t: t, q: db.New(f.Pool), fail: true}
 			collector, err := NewRetention(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			if err != nil {

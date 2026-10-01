@@ -14,27 +14,27 @@ import (
 // runtimeComputerSaves belongs to the physical mount, not to a borrowed Run
 // stream. A pending operation retains its original authority through settlement.
 // Quiesce irreversibly prevents admission before joining that operation.
-type runtimeComputerSaves struct {
-	mu                    sync.Mutex
-	writer                *workerapi.ComputerSaveBeginRequest
-	loopCancel            context.CancelFunc
-	loopDone              chan struct{}
-	sequence              int64
-	pending               *computerSave
-	stopped               bool
-	settling              bool
-	runtimeID, computerID string
+type instanceComputerSaves struct {
+	mu                     sync.Mutex
+	writer                 *workerapi.ComputerSaveBeginRequest
+	loopCancel             context.CancelFunc
+	loopDone               chan struct{}
+	sequence               int64
+	pending                *computerSave
+	stopped                bool
+	settling               bool
+	instanceID, computerID string
 }
 
 // start coalesces ticks while an operation is running. Failed operations must be
 // reconciled before another is admitted; they are never replaced by a new ID.
-func (s *runtimeComputerSaves) start(ctx context.Context, client ComputerSaveClient, objects versionObjectPublisher, authority workerapi.ComputerSaveBeginRequest, runtimeID, computerID string, capture func(context.Context) (computerSaveCapture, error)) (bool, error) {
+func (s *instanceComputerSaves) start(ctx context.Context, client ComputerSaveClient, objects versionObjectPublisher, authority workerapi.ComputerSaveBeginRequest, instanceID, computerID string, capture func(context.Context) (computerSaveCapture, error)) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.settling {
 		return false, nil
 	}
-	if s.runtimeID != "" && (s.runtimeID != runtimeID || s.computerID != computerID) {
+	if s.instanceID != "" && (s.instanceID != instanceID || s.computerID != computerID) {
 		return false, errors.New("computer save owner identity changed")
 	}
 	if s.stopped {
@@ -61,17 +61,17 @@ func (s *runtimeComputerSaves) start(ctx context.Context, client ComputerSaveCli
 	}
 	authority.SaveID = uuid.NewV7().String()
 	authority.Sequence = s.sequence + 1
-	pending, err := startComputerSave(ctx, client, objects, authority, runtimeID, computerID, capture)
+	pending, err := startComputerSave(ctx, client, objects, authority, instanceID, computerID, capture)
 	if err != nil {
 		return false, err
 	}
-	s.runtimeID, s.computerID = runtimeID, computerID
+	s.instanceID, s.computerID = instanceID, computerID
 	s.pending = pending
 	s.sequence = authority.Sequence
 	return true, nil
 }
 
-func (s *runtimeComputerSaves) Quiesce(ctx context.Context) error {
+func (s *instanceComputerSaves) Quiesce(ctx context.Context) error {
 	s.mu.Lock()
 	s.stopped = true
 	cancel, done := s.loopCancel, s.loopDone
@@ -99,7 +99,7 @@ func (s *runtimeComputerSaves) Quiesce(ctx context.Context) error {
 // joined reports whether the save loop and the pending save's producer have
 // finished, so neither can still use the machine. After Quiesce has stopped
 // admission this can only change from false to true.
-func (s *runtimeComputerSaves) joined() bool {
+func (s *instanceComputerSaves) joined() bool {
 	s.mu.Lock()
 	loopDone, pending := s.loopDone, s.pending
 	s.mu.Unlock()
@@ -129,8 +129,8 @@ type liveCaptureMachine interface {
 	CaptureComputer(context.Context) (*vm.ComputerSnapshot, error)
 }
 
-func captureComputerSave(ctx context.Context, session liveCaptureMachine, computerID string) (computerSaveCapture, error) {
-	snapshot, err := session.CaptureComputer(ctx)
+func captureComputerSave(ctx context.Context, machine liveCaptureMachine, computerID string) (computerSaveCapture, error) {
+	snapshot, err := machine.CaptureComputer(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +147,7 @@ func captureComputerSave(ctx context.Context, session liveCaptureMachine, comput
 
 // settle reconciles a failed background operation without stopping future ticks.
 // It never replaces an uncertain operation; terminal Quiesce can join it safely.
-func (s *runtimeComputerSaves) settle(ctx context.Context) error {
+func (s *instanceComputerSaves) settle(ctx context.Context) error {
 	s.mu.Lock()
 	if s.settling {
 		s.mu.Unlock()

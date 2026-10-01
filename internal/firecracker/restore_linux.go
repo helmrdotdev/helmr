@@ -79,7 +79,7 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 		kernelArgs,
 		request.ReadOnlyDrives,
 	)
-	recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_validate_identity", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)), ErrorClass: vm.RuntimeErrorClass(err)})
+	recordRuntimePhase(recordPhase, vm.Phase{Name: "restore_validate_identity", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)), ErrorClass: vm.RuntimeErrorClass(err)})
 	if err != nil {
 		return nil, err
 	}
@@ -141,18 +141,18 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	child.cfg = restoreCfg
 	child.kernelArgs = kernelArgs
 	transferred = true // prepareSession consumes the held restore guard.
-	session, err := child.start(ctx, workloadLaunch, request.ComputerInstanceID, request.OwnerKind, request.Binding, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network, request.Topology, request.ReadOnlyDrives, recordPhase, retained)
+	machine, err := child.start(ctx, workloadLaunch, request.ComputerInstanceID, request.OwnerKind, request.Binding, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network, request.Topology, request.ReadOnlyDrives, recordPhase, retained)
 	if err != nil {
 		return nil, err
 	}
-	return session, nil
+	return machine, nil
 }
 
 func (c *Connector) validateRestoreIdentity(
 	checkpointID string,
 	manifestBytes []byte,
 	identity vm.CheckpointIdentity,
-	topology vm.RuntimeTopology,
+	topology vm.Topology,
 	kernelArgs string,
 	readOnlyDrives []vm.ReadOnlyDrive,
 ) (snapshotManifest, Config, error) {
@@ -278,9 +278,9 @@ func (c *Connector) configForRestoreManifest(manifest snapshotManifest) (Config,
 	return cfg, nil
 }
 
-func (c *Connector) unpackRestoreArtifact(ctx context.Context, ownerDir string, artifactPath string, role string, suffix string, expectedLogicalSize int64, mediaType string) (string, vm.RuntimePhase, error) {
+func (c *Connector) unpackRestoreArtifact(ctx context.Context, ownerDir string, artifactPath string, role string, suffix string, expectedLogicalSize int64, mediaType string) (string, vm.Phase, error) {
 	started := time.Now()
-	phase := vm.RuntimePhase{
+	phase := vm.Phase{
 		Name:      "restore_unpack_" + strings.ReplaceAll(role, "-", "_") + "_filepack",
 		Role:      role,
 		MediaType: mediaType,
@@ -323,11 +323,11 @@ func removeFiles(paths []string) {
 }
 
 func withSnapshotRestore(memoryPath string, statePath string) firecracker.Opt {
-	return func(machine *firecracker.Machine) {
+	return func(sdkMachine *firecracker.Machine) {
 		firecracker.WithSnapshot(memoryPath, statePath, func(config *firecracker.SnapshotConfig) {
 			config.EnableDiffSnapshots = CanonicalVMRuntimeDescriptor().Snapshot.LoadEnableDiffSnapshots
 			config.ResumeVM = CanonicalVMRuntimeDescriptor().Snapshot.LoadResumeVM
-		})(machine)
-		machine.Handlers.FcInit = machine.Handlers.FcInit.Remove(firecracker.AddVsocksHandlerName)
+		})(sdkMachine)
+		sdkMachine.Handlers.FcInit = sdkMachine.Handlers.FcInit.Remove(firecracker.AddVsocksHandlerName)
 	}
 }

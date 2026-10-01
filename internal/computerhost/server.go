@@ -106,7 +106,7 @@ func (m Server) Serve(ctx context.Context, mount workerapi.ComputerInstanceAssig
 	startupCtx, cancelStartup := context.WithTimeout(renewal.ctx, m.startupTimeout())
 	defer cancelStartup()
 	phaseStarted := time.Now()
-	checkout, computerInstanceID, err := m.materializeSession(startupCtx, &mount)
+	checkout, computerInstanceID, err := m.materializeMachine(startupCtx, &mount)
 	m.logComputerMountPhase(mount, "computer mount session materialized", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorString(err))
 	if err != nil {
 		if renewalErr := renewal.stopAndWait(); renewalErr != nil {
@@ -115,7 +115,7 @@ func (m Server) Serve(ctx context.Context, mount workerapi.ComputerInstanceAssig
 		_ = m.failComputerMount(client, renewal.authority(mount), err)
 		return fmt.Errorf("checkout computer mount runtime: %w", err)
 	}
-	rawSession := checkout.Machine()
+	rawMachine := checkout.Machine()
 	instance := checkout.mount
 	defer func() {
 		if !checkout.beginTeardown() {
@@ -123,7 +123,7 @@ func (m Server) Serve(ctx context.Context, mount workerapi.ComputerInstanceAssig
 			// cleanup, which excludes the source and reports the Instance.
 			return
 		}
-		if closeErr := m.closeSession(instance); closeErr != nil {
+		if closeErr := m.closeMachine(instance); closeErr != nil {
 			failure := computerMountFailure{
 				code: "computer_mount_runtime_close_failed",
 				err:  errors.New("computer mount runtime cleanup failed"),
@@ -168,7 +168,7 @@ func (m Server) Serve(ctx context.Context, mount workerapi.ComputerInstanceAssig
 	}
 	saveFailure := make(chan error, 1)
 	saveResults, err := instance.saves.run(renewal.ctx, m.ComputerSaveEvery, m.ComputerSaves, m.ComputerObjects, func(ctx context.Context) (computerSaveCapture, error) {
-		return captureComputerSave(ctx, rawSession, mount.ComputerID)
+		return captureComputerSave(ctx, rawMachine, mount.ComputerID)
 	}, func(err error) { saveFailure <- err; renewal.cancel() })
 	if err != nil {
 		return fmt.Errorf("start Computer preservation: %w", err)
@@ -224,9 +224,9 @@ func (m Server) serveComputerMount(
 	// false means a cancellation RPC is in flight; true means Guest accepted it.
 	cancellations := make(map[string]bool)
 	cancellationResults := make(chan commandResult)
-	sessionExited := make(chan error, 1)
+	machineExited := make(chan error, 1)
 	go func() {
-		sessionExited <- instance.Wait(renewal.ctx)
+		machineExited <- instance.Wait(renewal.ctx)
 	}()
 	// Reporting a failure commits the Server to its own teardown; once capture
 	// or physical cleanup owns the claim, that owner reports the Instance.
@@ -294,8 +294,8 @@ func (m Server) serveComputerMount(
 			// Failed stop may leave Wait blocked forever. Report through the mount
 			// owner so runtime reconciliation retains and reclaims its checkout.
 			return checkpointReleased()
-		case err := <-sessionExited:
-			sessionExited = nil
+		case err := <-machineExited:
+			machineExited = nil
 			if released, _ := instance.CheckpointReleaseResult(context.Background()); released {
 				return checkpointReleased()
 			}
@@ -327,7 +327,7 @@ func (m Server) serveComputerMount(
 				code: "computer_mount_program_start_failed",
 				err:  errors.New("program process failed before start proof"),
 			}
-			closeErr := m.closeSession(instance)
+			closeErr := m.closeMachine(instance)
 			if closeErr != nil {
 				m.logComputerMountPhase(
 					mount,
@@ -500,7 +500,7 @@ func computerBasicExecProtocol(err error) error {
 
 func (m Server) dispatchComputerBasicExec(
 	ctx context.Context,
-	session vm.Machine,
+	machine vm.Machine,
 	mount workerapi.ComputerInstanceAssignment,
 	exec workerapi.ComputerCommand,
 	client workerapi.ComputerServerControlPlaneClient,
@@ -548,7 +548,7 @@ func (m Server) dispatchComputerBasicExec(
 		}
 		request.Secrets = append(request.Secrets, secret)
 	}
-	stream, err := session.OpenStream(ctx)
+	stream, err := machine.OpenStream(ctx)
 	if err != nil {
 		return workerapi.ComputerCommandCompleteRequest{}, fmt.Errorf("open computer exec stream: %w", err)
 	}
@@ -786,7 +786,7 @@ func (e computerMountFailure) Unwrap() error {
 	return e.err
 }
 
-func (m Server) materializeSession(ctx context.Context, mount *workerapi.ComputerInstanceAssignment) (*machineCheckout, string, error) {
+func (m Server) materializeMachine(ctx context.Context, mount *workerapi.ComputerInstanceAssignment) (*machineCheckout, string, error) {
 	if mount == nil {
 		return nil, "", computerMountFailure{code: "computer_mount_missing", err: errors.New("computer mount is required")}
 	}
@@ -794,7 +794,7 @@ func (m Server) materializeSession(ctx context.Context, mount *workerapi.Compute
 	if mount.ComputerInstanceID == "" {
 		return nil, "", computerMountFailure{code: "computer_instance_missing", err: errors.New("computer mount claim must include a runtime instance id")}
 	}
-	if mount.RuntimeEpoch <= 0 {
+	if mount.WorkerEpoch <= 0 {
 		return nil, "", computerMountFailure{code: "computer_instance_fence_missing", err: errors.New("computer mount claim must include the runtime epoch")}
 	}
 	target := mount.Target
@@ -811,11 +811,11 @@ func (m Server) materializeSession(ctx context.Context, mount *workerapi.Compute
 		}
 		return nil, key, computerMountFailure{
 			code: "computer_runtime_not_prepared",
-			err:  fmt.Errorf("computer runtime %q at epoch %d is not prepared", mount.ComputerInstanceID, mount.RuntimeEpoch),
+			err:  fmt.Errorf("computer runtime %q at epoch %d is not prepared", mount.ComputerInstanceID, mount.WorkerEpoch),
 		}
 	}
-	session := checkout.Machine()
-	if session == nil {
+	machine := checkout.Machine()
+	if machine == nil {
 		err := errors.New("prepared computer runtime session is unavailable")
 		if releaseErr := checkout.Release(); releaseErr != nil {
 			err = errors.Join(err, fmt.Errorf("release prepared computer runtime checkout: %w", releaseErr))
@@ -823,7 +823,7 @@ func (m Server) materializeSession(ctx context.Context, mount *workerapi.Compute
 		return nil, key, computerMountFailure{code: "computer_runtime_not_prepared", err: err}
 	}
 	releaseFailedCheckout := func(err error) error {
-		if closeErr := m.closeSession(checkout.mount); closeErr != nil {
+		if closeErr := m.closeMachine(checkout.mount); closeErr != nil {
 			checkout.Relinquish()
 			return errors.Join(err, computerMountFailure{
 				code: "computer_mount_runtime_close_failed",
@@ -1130,7 +1130,7 @@ func validateCachedArtifact(path string, artifact workerapi.CASObject) error {
 	return nil
 }
 
-func (m Server) registerComputerMount(ctx context.Context, session vm.Machine, mount workerapi.ComputerInstanceAssignment, computerInstanceID string) error {
+func (m Server) registerComputerMount(ctx context.Context, machine vm.Machine, mount workerapi.ComputerInstanceAssignment, computerInstanceID string) error {
 	channelCredential := m.channelCredential(mount)
 	if channelCredential == "" {
 		return errors.New("computer mount guest channel credential is required")
@@ -1138,7 +1138,7 @@ func (m Server) registerComputerMount(ctx context.Context, session vm.Machine, m
 	if strings.TrimSpace(mount.GuestChannelCredentialHash) == "" {
 		return errors.New("computer mount guest channel credential hash is required")
 	}
-	stream, err := session.OpenStream(ctx)
+	stream, err := machine.OpenStream(ctx)
 	if err != nil {
 		return fmt.Errorf("open prepared machine materialize stream: %w", err)
 	}
@@ -1179,7 +1179,7 @@ func (m Server) registerComputerMount(ctx context.Context, session vm.Machine, m
 	m.logComputerMountPhase(mount, "computer image transfer skipped", "prepared_machine_hit", true, "computer_instance_id", computerInstanceID, "size_bytes", mount.ComputerImage.SizeBytes)
 	var response computerv0.MaterializeComputerResponse
 	phaseStarted = time.Now()
-	if err := readProtoFrameFromReaderContext(ctx, session, stream, &response); err != nil {
+	if err := readProtoFrameFromReaderContext(ctx, machine, stream, &response); err != nil {
 		m.logComputerMountPhase(mount, "computer mount response read", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", err.Error())
 		return fmt.Errorf("read computer materialize response: %w", err)
 	}
@@ -1235,28 +1235,28 @@ func computerMountPhaseError(phases []*computerv0.ComputerMountPhase) string {
 	return ""
 }
 
-func (m Server) registerComputerMountContext(ctx context.Context, session vm.Machine, mount workerapi.ComputerInstanceAssignment, computerInstanceID string) error {
+func (m Server) registerComputerMountContext(ctx context.Context, machine vm.Machine, mount workerapi.ComputerInstanceAssignment, computerInstanceID string) error {
 	result := make(chan error, 1)
 	go func() {
-		result <- m.registerComputerMount(ctx, session, mount, computerInstanceID)
+		result <- m.registerComputerMount(ctx, machine, mount, computerInstanceID)
 	}()
 	select {
 	case err := <-result:
 		return err
 	case <-ctx.Done():
-		_ = m.closeSession(session)
+		_ = m.closeMachine(machine)
 		return ctx.Err()
 	}
 }
 
-func (m Server) stopControlledComputerMount(ctx context.Context, session vm.Machine, checkout *machineCheckout, mount workerapi.ComputerInstanceAssignment, client workerapi.ComputerServerControlPlaneClient) error {
+func (m Server) stopControlledComputerMount(ctx context.Context, machine vm.Machine, checkout *machineCheckout, mount workerapi.ComputerInstanceAssignment, client workerapi.ComputerServerControlPlaneClient) error {
 	// Persistence is completed by Instance save/checkpoint publication before
 	// its owner requests physical closure. Member completion cannot publish here.
 	if !checkout.beginTeardown() {
 		// The claim's current owner excludes the source and reports closure.
 		return nil
 	}
-	if err := m.closeSession(session); err != nil {
+	if err := m.closeMachine(machine); err != nil {
 		_ = m.failComputerMount(client, mount, computerMountFailure{
 			code: "computer_mount_runtime_close_failed",
 			err:  fmt.Errorf("close computer runtime: %w", err),
@@ -1268,13 +1268,13 @@ func (m Server) stopControlledComputerMount(ctx context.Context, session vm.Mach
 	}
 	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), m.failureTimeout())
 	defer cancel()
-	if mount.ComputerInstanceID == "" || mount.RuntimeEpoch <= 0 || mount.DesiredVersion <= 0 || mount.ObservedVersion < 0 {
+	if mount.ComputerInstanceID == "" || mount.WorkerEpoch <= 0 || mount.DesiredVersion <= 0 || mount.ObservedVersion < 0 {
 		return errors.New("computer Instance close requires its observed authority")
 	}
 	request := workerapi.ComputerInstanceStateRequest{
-		ID: mount.ComputerInstanceID, WorkerEpoch: mount.RuntimeEpoch,
+		ID: mount.ComputerInstanceID, WorkerEpoch: mount.WorkerEpoch,
 		DesiredVersion: mount.DesiredVersion, ExpectedObservedVersion: mount.ObservedVersion,
-		CleanupProof: &workerapi.RuntimeCleanupProof{Method: workerapi.RuntimeCleanupSessionClosed, CompletedAt: time.Now().UTC()},
+		CleanupProof: &workerapi.InstanceCleanupProof{Method: workerapi.InstanceCleanupMachineClosed, CompletedAt: time.Now().UTC()},
 	}
 	if err := retryControlRequest(stopCtx, func(ctx context.Context) error { _, err := client.MarkComputerInstanceClosed(ctx, request); return err }); err != nil {
 		return fmt.Errorf("stop computer mount: %w", err)
@@ -1296,10 +1296,10 @@ func (m Server) failureTimeout() time.Duration {
 	return 30 * time.Second
 }
 
-func (m Server) closeSession(session vm.Machine) error {
+func (m Server) closeMachine(machine vm.Machine) error {
 	ctx, cancel := context.WithTimeout(context.Background(), m.failureTimeout())
 	defer cancel()
-	return session.Close(ctx)
+	return machine.Close(ctx)
 }
 
 func (m Server) channelCredential(mount workerapi.ComputerInstanceAssignment) string {
@@ -1311,16 +1311,16 @@ func (m Server) channelCredential(mount workerapi.ComputerInstanceAssignment) st
 }
 
 func (m Server) failComputerMount(client workerapi.ComputerServerControlPlaneClient, mount workerapi.ComputerInstanceAssignment, cause error) error {
-	if mount.ComputerInstanceID == "" || mount.RuntimeEpoch <= 0 || mount.DesiredVersion <= 0 || mount.ObservedVersion < 0 {
+	if mount.ComputerInstanceID == "" || mount.WorkerEpoch <= 0 || mount.DesiredVersion <= 0 || mount.ObservedVersion < 0 {
 		return errors.New("computer Instance failure requires its observed authority")
 	}
 	body := computerMountError(cause)
 	ctx, cancel := context.WithTimeout(context.Background(), m.failureTimeout())
 	defer cancel()
 	_, err := client.MarkComputerInstanceFailed(ctx, workerapi.ComputerInstanceStateRequest{
-		ID: mount.ComputerInstanceID, WorkerEpoch: mount.RuntimeEpoch,
+		ID: mount.ComputerInstanceID, WorkerEpoch: mount.WorkerEpoch,
 		DesiredVersion: mount.DesiredVersion, ExpectedObservedVersion: mount.ObservedVersion,
-		ReasonCode: workerapi.RuntimeFailureReconcile, Error: body,
+		ReasonCode: workerapi.InstanceFailureReconcile, Error: body,
 	})
 	return err
 }

@@ -70,9 +70,9 @@ func (r ProgramRunner) validate() error {
 	return nil
 }
 
-func readResumeAck(ctx context.Context, session vm.Machine) (*programv0.ResumeAck, error) {
+func readResumeAck(ctx context.Context, machine vm.Machine) (*programv0.ResumeAck, error) {
 	var ack programv0.ResumeAck
-	if err := readProtoFrameContext(ctx, session, &ack); err != nil {
+	if err := readProtoFrameContext(ctx, machine, &ack); err != nil {
 		return nil, err
 	}
 	return &ack, nil
@@ -80,37 +80,37 @@ func readResumeAck(ctx context.Context, session vm.Machine) (*programv0.ResumeAc
 
 func readProtoFrameContext(
 	ctx context.Context,
-	session vm.Machine,
+	machine vm.Machine,
 	message proto.Message,
 ) error {
 	result := make(chan error, 1)
 	go func() {
-		result <- frameio.ReadProtoFrame(session.Stream(), message)
+		result <- frameio.ReadProtoFrame(machine.Stream(), message)
 	}()
 	select {
 	case err := <-result:
 		return err
 	case <-ctx.Done():
-		_ = session.Close(context.Background())
+		_ = machine.Close(context.Background())
 		return ctx.Err()
 	}
 }
 
 func readProtoFrameBoundedContext(
 	ctx context.Context,
-	session vm.Machine,
+	machine vm.Machine,
 	maxBytes uint32,
 	message proto.Message,
 ) error {
 	result := make(chan error, 1)
 	go func() {
-		result <- frameio.ReadProtoFrameBounded(session.Stream(), maxBytes, message)
+		result <- frameio.ReadProtoFrameBounded(machine.Stream(), maxBytes, message)
 	}()
 	select {
 	case err := <-result:
 		return err
 	case <-ctx.Done():
-		_ = session.Close(context.Background())
+		_ = machine.Close(context.Background())
 		return ctx.Err()
 	}
 }

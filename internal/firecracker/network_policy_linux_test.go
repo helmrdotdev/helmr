@@ -283,7 +283,7 @@ func TestWithNetworkBindingSurvivesSnapshotHandlerReplacement(t *testing.T) {
 		VMPlatformID:       "vm-platform",
 	}
 	var installed *installedNetworkBinding
-	machine, err := firecracker.NewMachine(
+	sdkMachine, err := firecracker.NewMachine(
 		context.Background(),
 		firecracker.Config{},
 		firecracker.WithSnapshot("/tmp/mem", "/tmp/state"),
@@ -297,7 +297,7 @@ func TestWithNetworkBindingSurvivesSnapshotHandlerReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !machine.Handlers.FcInit.Has("helmr.InstallNetworkBinding") {
+	if !sdkMachine.Handlers.FcInit.Has("helmr.InstallNetworkBinding") {
 		t.Fatal("network binding handler was not installed after snapshot handlers")
 	}
 }
@@ -392,16 +392,16 @@ func TestNetworkBindingStartupPurposePrivileged(t *testing.T) {
 						opts = append(opts, withSnapshotRestore("unused.mem", "unused.state"))
 					}
 					opts = append(opts, connector.withNetworkBinding(mode, owner, logical, &installed))
-					machine, err := firecracker.NewMachine(t.Context(), firecracker.Config{DisableValidation: true}, opts...)
+					sdkMachine, err := firecracker.NewMachine(t.Context(), firecracker.Config{DisableValidation: true}, opts...)
 					if err != nil {
 						t.Fatal(err)
 					}
-					machine.Handlers.FcInit = machine.Handlers.FcInit.Swap(firecracker.Handler{
+					sdkMachine.Handlers.FcInit = sdkMachine.Handlers.FcInit.Swap(firecracker.Handler{
 						Name: firecracker.SetupNetworkHandlerName,
 						Fn:   func(context.Context, *firecracker.Machine) error { return beforeVMM },
 					})
 					// The installed handler runs with an independent VM lifetime context.
-					err = machine.Start(runtimeCtx)
+					err = sdkMachine.Start(runtimeCtx)
 					wantCalls := 1
 					if test.probe || test.absent {
 						wantCalls = 0

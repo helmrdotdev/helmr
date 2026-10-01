@@ -51,12 +51,12 @@ type ComputerPreparationClient interface {
 	ComputerSource(context.Context, workerapi.ComputerSourceRequest) (workerapi.ComputerSourceMaterial, error)
 }
 
-type RuntimeReconcileClient interface {
+type InstanceReconcileClient interface {
 	PreparedComputerInstanceClient
-	ListRuntimeReconcileTargets(context.Context) (workerapi.RuntimeReconcileResponse, error)
+	ListInstanceReconcileTargets(context.Context) (workerapi.InstanceReconcileResponse, error)
 }
 
-type runtimeReconcileResult struct {
+type instanceReconcileResult struct {
 	ref preparedMachineRef
 	err error
 }
@@ -79,7 +79,7 @@ type PreparedMachines struct {
 	Size                  int
 	ComputerInstances     PreparedComputerInstanceClient
 	Log                   *slog.Logger
-	AdmitRuntimeStart     func(context.Context) error
+	AdmitInstanceStart    func(context.Context) error
 	Reservations          *reservation.Ledger
 	PlatformStore         cas.Reader
 	RuntimeArchitecture   definition.RuntimeArchitecture
@@ -107,11 +107,11 @@ type PreparedMachines struct {
 }
 
 type preparedMachineEntry struct {
-	session            liveCaptureMachine
+	machine            liveCaptureMachine
 	machineKey         string
 	computerInstanceID string
-	runtimeEpoch       int64
-	target             workerapi.RuntimeReconcileTarget
+	workerEpoch        int64
+	target             workerapi.InstanceReconcileTarget
 	exit               *preparedMachineSignal
 	ready              *preparedMachineSignal
 }
@@ -254,7 +254,7 @@ func (p *PreparedMachines) checkout(ctx context.Context, mount workerapi.Compute
 		p.logInfo("prepared machines miss", "reason", "computer_instance_missing")
 		return nil, key, false
 	}
-	if mount.RuntimeEpoch <= 0 {
+	if mount.WorkerEpoch <= 0 {
 		p.logInfo("prepared machines miss", "computer_instance_id", computerInstanceID, "reason", "runtime_epoch_missing")
 		return nil, key, false
 	}
@@ -266,14 +266,14 @@ func (p *PreparedMachines) checkout(ctx context.Context, mount workerapi.Compute
 	}
 	index := -1
 	for i := range entries {
-		if entries[i].computerInstanceID == computerInstanceID && entries[i].runtimeEpoch == mount.RuntimeEpoch {
+		if entries[i].computerInstanceID == computerInstanceID && entries[i].workerEpoch == mount.WorkerEpoch {
 			index = i
 			break
 		}
 	}
 	if index < 0 {
 		p.mu.Unlock()
-		p.logInfo("prepared machines miss", "computer_instance_id", computerInstanceID, "runtime_epoch", mount.RuntimeEpoch, "reason", "reserved_session_missing")
+		p.logInfo("prepared machines miss", "computer_instance_id", computerInstanceID, "runtime_epoch", mount.WorkerEpoch, "reason", "reserved_session_missing")
 		return nil, key, false
 	}
 	entry := entries[index]
@@ -313,14 +313,14 @@ func (p *PreparedMachines) checkout(ctx context.Context, mount workerapi.Compute
 	entries = p.entries[key]
 	index = -1
 	for i := range entries {
-		if entries[i].computerInstanceID == computerInstanceID && entries[i].runtimeEpoch == mount.RuntimeEpoch {
+		if entries[i].computerInstanceID == computerInstanceID && entries[i].workerEpoch == mount.WorkerEpoch {
 			index = i
 			break
 		}
 	}
 	if index < 0 {
 		p.mu.Unlock()
-		p.logInfo("prepared machines miss", "computer_instance_id", computerInstanceID, "runtime_epoch", mount.RuntimeEpoch, "reason", "reserved_session_claimed")
+		p.logInfo("prepared machines miss", "computer_instance_id", computerInstanceID, "runtime_epoch", mount.WorkerEpoch, "reason", "reserved_session_claimed")
 		return nil, key, false
 	}
 	entry = entries[index]
@@ -332,11 +332,11 @@ func (p *PreparedMachines) checkout(ctx context.Context, mount workerapi.Compute
 		return nil, key, false
 	}
 	p.removeReadyEntryAtLocked(key, entries, index)
-	ref := preparedMachineRef{id: computerInstanceID, epoch: mount.RuntimeEpoch}
+	ref := preparedMachineRef{id: computerInstanceID, epoch: mount.WorkerEpoch}
 	claim := p.claimLocked(ref, serverClaim, entry)
-	claim.mount = newInstanceMount(entry.session)
+	claim.mount = newInstanceMount(entry.machine)
 	checkout := &machineCheckout{
-		machines: p, ref: ref, gen: claim.gen, machine: entry.session, mount: claim.mount,
+		machines: p, ref: ref, gen: claim.gen, machine: entry.machine, mount: claim.mount,
 		writerGeneration: entry.target.Source.WriterGeneration,
 	}
 	if entry.target.Source.Restore != nil {
@@ -348,7 +348,7 @@ func (p *PreparedMachines) checkout(ctx context.Context, mount workerapi.Compute
 	return checkout, key, true
 }
 
-func (p *PreparedMachines) ReconcileDesiredRuntimes(ctx context.Context, client RuntimeReconcileClient) error {
+func (p *PreparedMachines) ReconcileDesiredInstances(ctx context.Context, client InstanceReconcileClient) error {
 	if p == nil || p.Size <= 0 {
 		<-ctx.Done()
 		return ctx.Err()
@@ -360,14 +360,14 @@ func (p *PreparedMachines) ReconcileDesiredRuntimes(ctx context.Context, client 
 	defer cancel()
 	active := make(map[preparedMachineRef]struct{}, p.Size)
 	decisions := make(chan bool, p.Size)
-	results := make(chan runtimeReconcileResult, p.Size)
+	results := make(chan instanceReconcileResult, p.Size)
 	var attempts sync.WaitGroup
 	stop := func(err error) error {
 		cancel()
 		attempts.Wait()
 		return err
 	}
-	handleResult := func(result runtimeReconcileResult) error {
+	handleResult := func(result instanceReconcileResult) error {
 		delete(active, result.ref)
 		if result.err == nil {
 			return nil
@@ -406,7 +406,7 @@ func (p *PreparedMachines) ReconcileDesiredRuntimes(ctx context.Context, client 
 			}
 		}
 
-		response, err := client.ListRuntimeReconcileTargets(workCtx)
+		response, err := client.ListInstanceReconcileTargets(workCtx)
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return stop(ctxErr)
 		}
@@ -427,14 +427,14 @@ func (p *PreparedMachines) ReconcileDesiredRuntimes(ctx context.Context, client 
 				launched++
 				attempts.Go(func() {
 					admitted := false
-					err := p.reconcileRuntimeTarget(workCtx, client, target, func() {
+					err := p.reconcileInstanceTarget(workCtx, client, target, func() {
 						admitted = true
 						decisions <- true
 					})
 					if !admitted {
 						decisions <- false
 					}
-					results <- runtimeReconcileResult{ref: ref, err: err}
+					results <- instanceReconcileResult{ref: ref, err: err}
 				})
 			}
 			productive := false
@@ -461,30 +461,30 @@ func (p *PreparedMachines) ReconcileDesiredRuntimes(ctx context.Context, client 
 	}
 }
 
-func (p *PreparedMachines) reconcileRuntimeTarget(
+func (p *PreparedMachines) reconcileInstanceTarget(
 	ctx context.Context,
 	client PreparedComputerInstanceClient,
-	target workerapi.RuntimeReconcileTarget,
+	target workerapi.InstanceReconcileTarget,
 	admitted func(),
 ) error {
 	switch {
-	case target.Action == workerapi.RuntimeReconcileCapture:
+	case target.Action == workerapi.InstanceReconcileCapture:
 		admitted()
-		return p.captureRuntimeTarget(ctx, client, target)
-	case target.Action == workerapi.RuntimeReconcileReclaim:
+		return p.captureInstanceTarget(ctx, client, target)
+	case target.Action == workerapi.InstanceReconcileReclaim:
 		admitted()
-		return p.reclaimFailedRuntimeTarget(ctx, client, target)
-	case target.Action == workerapi.RuntimeReconcileClose:
+		return p.reclaimFailedInstanceTarget(ctx, client, target)
+	case target.Action == workerapi.InstanceReconcileClose:
 		admitted()
-		return p.stopRuntimeTarget(ctx, client, target)
-	case target.Action == workerapi.RuntimeReconcilePrepare:
-		return p.warmRuntimeTarget(ctx, client, target, admitted)
+		return p.stopInstanceTarget(ctx, client, target)
+	case target.Action == workerapi.InstanceReconcilePrepare:
+		return p.warmInstanceTarget(ctx, client, target, admitted)
 	default:
 		return fmt.Errorf("unsupported runtime reconcile action %q", target.Action)
 	}
 }
 
-func (p *PreparedMachines) reclaimFailedRuntimeTarget(ctx context.Context, client PreparedComputerInstanceClient, target workerapi.RuntimeReconcileTarget) error {
+func (p *PreparedMachines) reclaimFailedInstanceTarget(ctx context.Context, client PreparedComputerInstanceClient, target workerapi.InstanceReconcileTarget) error {
 	if p == nil || client == nil {
 		return errors.New("failed runtime reclaim requires prepared machines and control plane client")
 	}
@@ -515,9 +515,9 @@ func (p *PreparedMachines) reclaimFailedRuntimeTarget(ctx context.Context, clien
 	entry, ready := p.claimReadyEntryLocked(computerInstanceID, target.WorkerEpoch)
 	p.mu.Unlock()
 	var closeErr error
-	if ready && entry.session != nil {
+	if ready && entry.machine != nil {
 		closeCtx, cancel := preparedMachineControlContext(ctx)
-		closeErr = entry.session.Close(closeCtx)
+		closeErr = entry.machine.Close(closeCtx)
 		cancel()
 	}
 	cleanupCtx, cancel := preparedMachineControlContext(ctx)
@@ -526,18 +526,18 @@ func (p *PreparedMachines) reclaimFailedRuntimeTarget(ctx context.Context, clien
 	if err != nil {
 		return fmt.Errorf("reconcile failed runtime physical cleanup: %w", errors.Join(closeErr, err))
 	}
-	if err := p.releaseRuntimeAfterPhysicalCleanup(ctx, computerInstanceID, target.WorkerEpoch); err != nil {
+	if err := p.releaseInstanceAfterPhysicalCleanup(ctx, computerInstanceID, target.WorkerEpoch); err != nil {
 		return err
 	}
-	request := runtimeTargetStatusRequest(target, errors.New("runtime physical cleanup reconciled"))
-	request.CleanupProof = &workerapi.RuntimeCleanupProof{Method: workerapi.RuntimeCleanupHostReconciled, CompletedAt: time.Now().UTC()}
+	request := instanceTargetStatusRequest(target, errors.New("runtime physical cleanup reconciled"))
+	request.CleanupProof = &workerapi.InstanceCleanupProof{Method: workerapi.InstanceCleanupHostReconciled, CompletedAt: time.Now().UTC()}
 	if _, err := client.MarkComputerInstanceFailed(ctx, request); err != nil {
 		return fmt.Errorf("persist failed runtime cleanup proof: %w", err)
 	}
 	return nil
 }
 
-func (p *PreparedMachines) stopRuntimeTarget(ctx context.Context, client PreparedComputerInstanceClient, target workerapi.RuntimeReconcileTarget) error {
+func (p *PreparedMachines) stopInstanceTarget(ctx context.Context, client PreparedComputerInstanceClient, target workerapi.InstanceReconcileTarget) error {
 	if p == nil {
 		return nil
 	}
@@ -561,11 +561,11 @@ func (p *PreparedMachines) stopRuntimeTarget(ctx context.Context, client Prepare
 		if err != nil {
 			return err
 		}
-		if err := p.releaseRuntimeAfterPhysicalCleanup(ctx, computerInstanceID, target.WorkerEpoch); err != nil {
+		if err := p.releaseInstanceAfterPhysicalCleanup(ctx, computerInstanceID, target.WorkerEpoch); err != nil {
 			return err
 		}
-		request := runtimeTargetStatusRequest(target, nil)
-		request.CleanupProof = &workerapi.RuntimeCleanupProof{Method: proofMethod, CompletedAt: time.Now().UTC()}
+		request := instanceTargetStatusRequest(target, nil)
+		request.CleanupProof = &workerapi.InstanceCleanupProof{Method: proofMethod, CompletedAt: time.Now().UTC()}
 		_, err = client.MarkComputerInstanceClosed(ctx, request)
 		return err
 	}
@@ -581,18 +581,18 @@ func (p *PreparedMachines) stopRuntimeTarget(ctx context.Context, client Prepare
 		if err != nil {
 			return fmt.Errorf("reconcile runtime physical cleanup: %w", err)
 		}
-		if err := p.releaseRuntimeAfterPhysicalCleanup(ctx, computerInstanceID, target.WorkerEpoch); err != nil {
+		if err := p.releaseInstanceAfterPhysicalCleanup(ctx, computerInstanceID, target.WorkerEpoch); err != nil {
 			return err
 		}
-		request := runtimeTargetStatusRequest(target, nil)
-		request.CleanupProof = &workerapi.RuntimeCleanupProof{Method: workerapi.RuntimeCleanupHostReconciled, CompletedAt: time.Now().UTC()}
+		request := instanceTargetStatusRequest(target, nil)
+		request.CleanupProof = &workerapi.InstanceCleanupProof{Method: workerapi.InstanceCleanupHostReconciled, CompletedAt: time.Now().UTC()}
 		_, err = client.MarkComputerInstanceClosed(ctx, request)
 		return err
 	}
 	stoppedEntry, ok := p.claimReadyEntry(computerInstanceID, target.WorkerEpoch)
 	proofMethod := ""
 	if !ok {
-		if p.runtimeCheckedOut(computerInstanceID, target.WorkerEpoch) {
+		if p.instanceCheckedOut(computerInstanceID, target.WorkerEpoch) {
 			return nil
 		}
 		if p.Backend == nil {
@@ -604,18 +604,18 @@ func (p *PreparedMachines) stopRuntimeTarget(ctx context.Context, client Prepare
 		if err != nil {
 			return fmt.Errorf("reconcile runtime physical cleanup: %w", err)
 		}
-		if err := p.releaseRuntimeCapacity(computerInstanceID, target.WorkerEpoch); err != nil {
+		if err := p.releaseInstanceCapacity(computerInstanceID, target.WorkerEpoch); err != nil {
 			return err
 		}
-		proofMethod = workerapi.RuntimeCleanupHostReconciled
-	} else if stoppedEntry.session != nil {
-		if err := stoppedEntry.session.Close(ctx); err != nil {
-			return p.markRuntimeTargetFailed(ctx, client, target, err)
+		proofMethod = workerapi.InstanceCleanupHostReconciled
+	} else if stoppedEntry.machine != nil {
+		if err := stoppedEntry.machine.Close(ctx); err != nil {
+			return p.markInstanceTargetFailed(ctx, client, target, err)
 		}
-		if err := p.releaseRuntimeCapacity(computerInstanceID, target.WorkerEpoch); err != nil {
+		if err := p.releaseInstanceCapacity(computerInstanceID, target.WorkerEpoch); err != nil {
 			return err
 		}
-		proofMethod = workerapi.RuntimeCleanupSessionClosed
+		proofMethod = workerapi.InstanceCleanupMachineClosed
 	} else {
 		if p.Backend == nil {
 			return errors.New("runtime connector does not support exact runtime cleanup")
@@ -626,13 +626,13 @@ func (p *PreparedMachines) stopRuntimeTarget(ctx context.Context, client Prepare
 		if err != nil {
 			return fmt.Errorf("reconcile runtime physical cleanup: %w", err)
 		}
-		if err := p.releaseRuntimeCapacity(computerInstanceID, target.WorkerEpoch); err != nil {
+		if err := p.releaseInstanceCapacity(computerInstanceID, target.WorkerEpoch); err != nil {
 			return err
 		}
-		proofMethod = workerapi.RuntimeCleanupHostReconciled
+		proofMethod = workerapi.InstanceCleanupHostReconciled
 	}
-	request := runtimeTargetStatusRequest(target, nil)
-	request.CleanupProof = &workerapi.RuntimeCleanupProof{Method: proofMethod, CompletedAt: time.Now().UTC()}
+	request := instanceTargetStatusRequest(target, nil)
+	request.CleanupProof = &workerapi.InstanceCleanupProof{Method: proofMethod, CompletedAt: time.Now().UTC()}
 	_, err := client.MarkComputerInstanceClosed(ctx, request)
 	if err != nil {
 		return err
@@ -641,10 +641,10 @@ func (p *PreparedMachines) stopRuntimeTarget(ctx context.Context, client Prepare
 	return nil
 }
 
-func (p *PreparedMachines) warmRuntimeTarget(
+func (p *PreparedMachines) warmInstanceTarget(
 	ctx context.Context,
 	client PreparedComputerInstanceClient,
-	target workerapi.RuntimeReconcileTarget,
+	target workerapi.InstanceReconcileTarget,
 	admitted func(),
 ) error {
 	if p == nil {
@@ -666,8 +666,8 @@ func (p *PreparedMachines) warmRuntimeTarget(
 	}
 	ctx, cancelPrepare := context.WithDeadline(ctx, target.PreparationExpiresAt)
 	defer cancelPrepare()
-	if p.AdmitRuntimeStart != nil {
-		if err := p.AdmitRuntimeStart(ctx); err != nil {
+	if p.AdmitInstanceStart != nil {
+		if err := p.AdmitInstanceStart(ctx); err != nil {
 			return err
 		}
 	}
@@ -678,8 +678,8 @@ func (p *PreparedMachines) warmRuntimeTarget(
 	mount.ComputerInstanceID = strings.TrimSpace(target.ID)
 	key := computerInstanceIDFromComputerMount(mount)
 	computerInstanceID := strings.TrimSpace(target.ID)
-	runtimeEpoch := target.WorkerEpoch
-	if computerInstanceID == "" || runtimeEpoch <= 0 {
+	workerEpoch := target.WorkerEpoch
+	if computerInstanceID == "" || workerEpoch <= 0 {
 		return errors.New("runtime reconcile target id and worker_epoch are required")
 	}
 	if p.Size <= 0 || p.Backend == nil || p.CAS == nil {
@@ -687,7 +687,7 @@ func (p *PreparedMachines) warmRuntimeTarget(
 		p.logInfo("prepared machine warm skipped", "computer_instance_id", key, "reason", reason.Error())
 		stateCtx, cancelState := preparedMachineControlContext(ctx)
 		defer cancelState()
-		return p.markRuntimeTargetFailedWithProof(stateCtx, client, target, reason, workerapi.RuntimeCleanupNotMaterialized)
+		return p.markInstanceTargetFailedWithProof(stateCtx, client, target, reason, workerapi.InstanceCleanupNotMaterialized)
 	}
 	refillCtx, cancelRefill := p.withMachinesContext(ctx)
 	defer cancelRefill()
@@ -698,7 +698,7 @@ func (p *PreparedMachines) warmRuntimeTarget(
 		p.logInfo("prepared machine warm skipped", "computer_instance_id", key, "reason", reason.Error())
 		stateCtx, cancelState := preparedMachineControlContext(ctx)
 		defer cancelState()
-		return p.markRuntimeTargetFailedWithProof(stateCtx, client, target, reason, workerapi.RuntimeCleanupNotMaterialized)
+		return p.markInstanceTargetFailedWithProof(stateCtx, client, target, reason, workerapi.InstanceCleanupNotMaterialized)
 	}
 	if p.reservedCountLocked() >= p.Size {
 		p.mu.Unlock()
@@ -736,16 +736,16 @@ func (p *PreparedMachines) Close(ctx context.Context) error {
 	p.mu.Unlock()
 	var err error
 	for _, entry := range closingEntries {
-		if closeErr := entry.session.Close(ctx); closeErr != nil {
-			transitionErr := p.transitionRuntimeTargetFailed(ctx, entry.target, closeErr)
+		if closeErr := entry.machine.Close(ctx); closeErr != nil {
+			transitionErr := p.transitionInstanceTargetFailed(ctx, entry.target, closeErr)
 			p.retainCloseRetry(entry)
 			err = errors.Join(err, closeErr, transitionErr)
 			continue
 		}
-		if releaseErr := p.releaseRuntimeCapacity(entry.computerInstanceID, entry.runtimeEpoch); releaseErr != nil {
+		if releaseErr := p.releaseInstanceCapacity(entry.computerInstanceID, entry.workerEpoch); releaseErr != nil {
 			err = errors.Join(err, releaseErr)
 		}
-		if closeErr := p.transitionRuntimeTargetFailed(ctx, entry.target, errors.New("runtime controller stopped")); closeErr != nil {
+		if closeErr := p.transitionInstanceTargetFailed(ctx, entry.target, errors.New("runtime controller stopped")); closeErr != nil {
 			p.retainCloseRetry(entry)
 			err = errors.Join(err, closeErr)
 		}
@@ -756,16 +756,16 @@ func (p *PreparedMachines) Close(ctx context.Context) error {
 	return err
 }
 
-func (p *PreparedMachines) transitionRuntimeTargetFailed(ctx context.Context, target workerapi.RuntimeReconcileTarget, failure error) error {
+func (p *PreparedMachines) transitionInstanceTargetFailed(ctx context.Context, target workerapi.InstanceReconcileTarget, failure error) error {
 	if p.ComputerInstances == nil {
 		return errors.New("prepared machine instance client is required")
 	}
-	_, err := p.ComputerInstances.MarkComputerInstanceFailed(ctx, runtimeTargetStatusRequest(target, failure))
+	_, err := p.ComputerInstances.MarkComputerInstanceFailed(ctx, instanceTargetStatusRequest(target, failure))
 	return err
 }
 
 func (p *PreparedMachines) retainCloseRetry(entry preparedMachineEntry) {
-	if entry.session == nil {
+	if entry.machine == nil {
 		return
 	}
 	p.mu.Lock()
@@ -816,11 +816,11 @@ func (p *PreparedMachines) prepareAndStore(
 	ctx context.Context,
 	key string,
 	mount workerapi.ComputerInstanceAssignment,
-	target workerapi.RuntimeReconcileTarget,
+	target workerapi.InstanceReconcileTarget,
 	admitted func(),
 ) (retErr error) {
 	computerInstanceID := strings.TrimSpace(target.ID)
-	runtimeEpoch := target.WorkerEpoch
+	workerEpoch := target.WorkerEpoch
 	materializeAttempted := false
 	failInstance := func(err error) error {
 		if err == nil {
@@ -830,13 +830,13 @@ func (p *PreparedMachines) prepareAndStore(
 		defer cancelState()
 		proofMethod := ""
 		if !materializeAttempted {
-			if closeErr := p.releaseComputerDevice(computerInstanceID, runtimeEpoch); closeErr != nil {
+			if closeErr := p.releaseComputerDevice(computerInstanceID, workerEpoch); closeErr != nil {
 				failure := errors.Join(err, closeErr)
-				return errors.Join(failure, p.reportRuntimeTargetFailedWithProof(stateCtx, p.ComputerInstances, target, failure, ""))
+				return errors.Join(failure, p.reportInstanceTargetFailedWithProof(stateCtx, p.ComputerInstances, target, failure, ""))
 			}
-			proofMethod = workerapi.RuntimeCleanupNotMaterialized
+			proofMethod = workerapi.InstanceCleanupNotMaterialized
 		}
-		if markErr := p.reportRuntimeTargetFailedWithProof(stateCtx, p.ComputerInstances, target, err, proofMethod); markErr != nil {
+		if markErr := p.reportInstanceTargetFailedWithProof(stateCtx, p.ComputerInstances, target, err, proofMethod); markErr != nil {
 			p.logInfo("prepared machines instance fail transition failed", "computer_instance_id", computerInstanceID, "error", markErr.Error())
 			return markErr
 		}
@@ -846,11 +846,11 @@ func (p *PreparedMachines) prepareAndStore(
 		}
 		return nil
 	}
-	topology := vm.RuntimeTopology{Computer: &vm.RuntimeComputer{
+	topology := vm.Topology{Computer: &vm.ComputerDisk{
 		ComputerID: target.Source.ComputerID,
 		VersionID:  target.Source.Computer.VersionID, SizeBytes: target.Source.Computer.LogicalBytes,
 	}}
-	if err := p.reserveRuntimeCapacity(target, topology); err != nil {
+	if err := p.reserveInstanceCapacity(target, topology); err != nil {
 		if errors.Is(err, errPreparedMachineCapacityBusy) {
 			return err
 		}
@@ -858,7 +858,7 @@ func (p *PreparedMachines) prepareAndStore(
 	}
 	defer func() {
 		if !materializeAttempted {
-			retErr = errors.Join(retErr, p.releaseRuntimeCapacity(computerInstanceID, runtimeEpoch))
+			retErr = errors.Join(retErr, p.releaseInstanceCapacity(computerInstanceID, workerEpoch))
 		}
 	}()
 	admitted()
@@ -895,17 +895,17 @@ func (p *PreparedMachines) prepareAndStore(
 	}()
 	started := time.Now()
 	materializeAttempted = true
-	var session vm.Machine
+	var machine vm.Machine
 	var materializeErr error
-	phases := &runtimePhaseCollector{}
+	phases := &phaseCollector{}
 	phaseLogMessage := "prepared machine phase"
 	if target.Source.Restore != nil {
 		phaseLogMessage = "prepared restored runtime phase"
-		session, materializeErr = p.restorePreparedMachine(ctx, target, topology, readOnlyDrives, phases.Record)
+		machine, materializeErr = p.restorePreparedMachine(ctx, target, topology, readOnlyDrives, phases.Record)
 	} else {
-		session, materializeErr = p.Backend.Materialize(ctx, vm.MaterializeRequest{
+		machine, materializeErr = p.Backend.Materialize(ctx, vm.MaterializeRequest{
 			ID: computerInstanceID, OwnerKind: vm.OwnerRuntime, RootfsDigest: mount.RootfsDigest,
-			Binding:           runtimeTargetWorkloadBinding(target),
+			Binding:           instanceTargetWorkloadBinding(target),
 			ComputerMountPath: mount.ComputerMountPath, BaseComputerDiskVersionID: mount.Target.BaseComputerDiskVersionID,
 			Resources: compute.ResourceVector{MilliCPU: mount.RequestedMilliCPU, MemoryMiB: mount.RequestedMemoryMiB,
 				DiskMiB: mount.RequestedDiskMiB, Slots: mount.RequestedExecutionSlots},
@@ -920,36 +920,36 @@ func (p *PreparedMachines) prepareAndStore(
 	closeProgramErr := closeProgram()
 	programArtifactsOpen = false
 	err = errors.Join(materializeErr, closeProgramErr)
-	if err != nil && session != nil {
-		err = errors.Join(err, p.closeSession(ctx, session))
+	if err != nil && machine != nil {
+		err = errors.Join(err, p.closeMachine(ctx, machine))
 	}
 	p.logInfo("prepared machines session materialized", "computer_instance_id", computerInstanceID, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
 	if err != nil {
 		return failInstance(err)
 	}
-	keepSession := false
+	keepMachine := false
 	defer func() {
-		if !keepSession {
-			if closeErr := p.closeSession(ctx, session); closeErr == nil {
-				_ = p.releaseRuntimeCapacity(computerInstanceID, runtimeEpoch)
+		if !keepMachine {
+			if closeErr := p.closeMachine(ctx, machine); closeErr == nil {
+				_ = p.releaseInstanceCapacity(computerInstanceID, workerEpoch)
 			}
 		}
 	}()
-	live, ok := session.(liveCaptureMachine)
+	live, ok := machine.(liveCaptureMachine)
 	if !ok {
 		return failInstance(errors.New("runtime cannot capture a live Computer"))
 	}
 	if target.Source.Restore == nil {
-		if err := p.prepareGuestRuntime(ctx, session, key, target.Source.WriterGeneration, mount, "", mountedImageConfig); err != nil {
+		if err := p.prepareGuestRuntime(ctx, machine, key, target.Source.WriterGeneration, mount, "", mountedImageConfig); err != nil {
 			p.logInfo("prepared machines guest prepare failed", "computer_instance_id", computerInstanceID, "error", err.Error())
 			return failInstance(err)
 		}
 	}
 	entry := preparedMachineEntry{
-		session:            live,
+		machine:            live,
 		machineKey:         key,
 		computerInstanceID: computerInstanceID,
-		runtimeEpoch:       runtimeEpoch,
+		workerEpoch:        workerEpoch,
 		target:             target,
 		exit:               newPreparedMachineSignal(),
 		ready:              newPreparedMachineSignal(),
@@ -961,21 +961,21 @@ func (p *PreparedMachines) prepareAndStore(
 		p.mu.Unlock()
 		if capacityBusy {
 			closeCtx, cancelClose := preparedMachineControlContext(ctx)
-			closeErr := session.Close(closeCtx)
+			closeErr := machine.Close(closeCtx)
 			cancelClose()
 			if closeErr != nil {
 				return failInstance(closeErr)
 			}
-			if err := p.releaseRuntimeCapacity(computerInstanceID, runtimeEpoch); err != nil {
+			if err := p.releaseInstanceCapacity(computerInstanceID, workerEpoch); err != nil {
 				return failInstance(err)
 			}
-			keepSession = true
+			keepMachine = true
 			p.logInfo("prepared machine warm deferred", "computer_instance_id", computerInstanceID, "reason", errPreparedMachineCapacityBusy.Error())
 			return errPreparedMachineCapacityBusy
 		}
 		stateCtx, cancelState := preparedMachineControlContext(ctx)
 		defer cancelState()
-		if err := p.markRuntimeTargetFailed(stateCtx, p.ComputerInstances, target, errors.New("prepared machines capacity changed")); err != nil {
+		if err := p.markInstanceTargetFailed(stateCtx, p.ComputerInstances, target, errors.New("prepared machines capacity changed")); err != nil {
 			p.logInfo("prepared machines instance close transition failed", "computer_instance_id", computerInstanceID, "error", err.Error())
 			return err
 		}
@@ -984,7 +984,7 @@ func (p *PreparedMachines) prepareAndStore(
 	p.entries[key] = append(p.entries[key], entry)
 	p.monitorReadyEntryLocked(key, entry)
 	p.mu.Unlock()
-	keepSession = true
+	keepMachine = true
 	if err, exited := entry.exit.finished(); exited {
 		entry.ready.finish(preparedMachineExitCause(err))
 		if failErr := p.removeReadyEntryAndFail(key, entry, preparedMachineExitCause(err), true); failErr != nil {
@@ -992,7 +992,7 @@ func (p *PreparedMachines) prepareAndStore(
 		}
 		return nil
 	}
-	readyRequest := runtimeTargetStatusRequest(target, nil)
+	readyRequest := instanceTargetStatusRequest(target, nil)
 	readyRequest.VMVCPUCount = target.Source.VMVCPUCount
 	readyRequest.CPUConfigDigest = target.Source.CPUConfigDigest
 	readyCtx, cancelReady := preparedMachineControlContext(ctx)
@@ -1012,7 +1012,7 @@ func (p *PreparedMachines) prepareAndStore(
 	available := p.readyCountLocked()
 	stillReady := false
 	for _, candidate := range p.entries[key] {
-		if candidate.computerInstanceID == entry.computerInstanceID && candidate.runtimeEpoch == entry.runtimeEpoch {
+		if candidate.computerInstanceID == entry.computerInstanceID && candidate.workerEpoch == entry.workerEpoch {
 			stillReady = true
 			break
 		}
@@ -1025,7 +1025,7 @@ func (p *PreparedMachines) prepareAndStore(
 	return nil
 }
 
-func runtimeTargetWorkloadBinding(target workerapi.RuntimeReconcileTarget) vm.WorkloadBinding {
+func instanceTargetWorkloadBinding(target workerapi.InstanceReconcileTarget) vm.WorkloadBinding {
 	return vm.WorkloadBinding{
 		WorkerEpoch:        target.WorkerEpoch,
 		OwnerID:            target.ID,
@@ -1038,7 +1038,7 @@ func runtimeTargetWorkloadBinding(target workerapi.RuntimeReconcileTarget) vm.Wo
 func (p *PreparedMachines) prepareProgram(
 	ctx context.Context,
 	tempDir string,
-	target workerapi.RuntimeReconcileTarget,
+	target workerapi.InstanceReconcileTarget,
 ) ([]vm.ReadOnlyDrive, func() error, error) {
 	program := target.Source.Program
 	if string(p.RuntimeArchitecture) != target.Source.ComputerArchitecture {
@@ -1231,7 +1231,7 @@ func verifyProgramIndexDigest(
 }
 
 func (p *PreparedMachines) monitorReadyEntryLocked(key string, entry preparedMachineEntry) {
-	if p == nil || p.closed || entry.session == nil || entry.exit == nil {
+	if p == nil || p.closed || entry.machine == nil || entry.exit == nil {
 		return
 	}
 	if !p.beginActivityLocked() {
@@ -1239,7 +1239,7 @@ func (p *PreparedMachines) monitorReadyEntryLocked(key string, entry preparedMac
 	}
 	go func() {
 		defer p.endActivity()
-		err := entry.session.Wait(p.ctx)
+		err := entry.machine.Wait(p.ctx)
 		entry.exit.finish(err)
 		entry.ready.finish(preparedMachineExitCause(err))
 		if p.ctx != nil && p.ctx.Err() != nil && errors.Is(err, context.Canceled) {
@@ -1296,13 +1296,13 @@ func (p *PreparedMachines) claimLocked(ref preparedMachineRef, kind machineClaim
 	return claim
 }
 
-func (p *PreparedMachines) runtimeCheckedOut(computerInstanceID string, runtimeEpoch int64) bool {
+func (p *PreparedMachines) instanceCheckedOut(computerInstanceID string, workerEpoch int64) bool {
 	if p == nil {
 		return false
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.claims[preparedMachineRef{id: computerInstanceID, epoch: runtimeEpoch}] != nil
+	return p.claims[preparedMachineRef{id: computerInstanceID, epoch: workerEpoch}] != nil
 }
 
 // machineCheckout is a Server's handle on its claim of a prepared machine taken
@@ -1374,7 +1374,7 @@ func (c *machineCheckout) Release() error {
 	}
 	release := claim.beginReleaseLocked()
 	p.mu.Unlock()
-	err := p.releaseRuntimeCapacity(c.ref.id, c.ref.epoch)
+	err := p.releaseInstanceCapacity(c.ref.id, c.ref.epoch)
 	p.finishRelease(c.ref, claim, release, err, true)
 	return err
 }
@@ -1430,13 +1430,13 @@ func (p *PreparedMachines) finishRelease(ref preparedMachineRef, claim *machineC
 	claim.release = nil
 }
 
-func (p *PreparedMachines) removeReadyEntryAndFail(key string, entry preparedMachineEntry, cause error, closeSession bool) error {
+func (p *PreparedMachines) removeReadyEntryAndFail(key string, entry preparedMachineEntry, cause error, closeMachine bool) error {
 	if !p.forgetReadyEntry(key, entry) {
 		return nil
 	}
-	if closeSession && entry.session != nil {
-		if closeErr := p.closeSession(context.Background(), entry.session); closeErr == nil {
-			if releaseErr := p.releaseRuntimeCapacity(entry.computerInstanceID, entry.runtimeEpoch); releaseErr != nil {
+	if closeMachine && entry.machine != nil {
+		if closeErr := p.closeMachine(context.Background(), entry.machine); closeErr == nil {
+			if releaseErr := p.releaseInstanceCapacity(entry.computerInstanceID, entry.workerEpoch); releaseErr != nil {
 				cause = errors.Join(cause, releaseErr)
 			}
 		} else {
@@ -1445,7 +1445,7 @@ func (p *PreparedMachines) removeReadyEntryAndFail(key string, entry preparedMac
 	}
 	stateCtx, cancelState := preparedMachineControlContext(context.Background())
 	defer cancelState()
-	if err := p.markRuntimeTargetFailed(stateCtx, p.ComputerInstances, entry.target, cause); err != nil {
+	if err := p.markInstanceTargetFailed(stateCtx, p.ComputerInstances, entry.target, cause); err != nil {
 		p.logInfo("prepared machines instance fail transition failed", "computer_instance_id", entry.computerInstanceID, "error", err.Error())
 		return err
 	}
@@ -1471,9 +1471,9 @@ func (p *PreparedMachines) cleanupClaimedEntryAsync(entry preparedMachineEntry, 
 }
 
 func (p *PreparedMachines) cleanupClaimedEntry(entry preparedMachineEntry, cause error) {
-	if entry.session != nil {
-		if closeErr := p.closeSession(context.Background(), entry.session); closeErr == nil {
-			if releaseErr := p.releaseRuntimeCapacity(entry.computerInstanceID, entry.runtimeEpoch); releaseErr != nil {
+	if entry.machine != nil {
+		if closeErr := p.closeMachine(context.Background(), entry.machine); closeErr == nil {
+			if releaseErr := p.releaseInstanceCapacity(entry.computerInstanceID, entry.workerEpoch); releaseErr != nil {
 				cause = errors.Join(cause, releaseErr)
 			}
 		} else {
@@ -1482,7 +1482,7 @@ func (p *PreparedMachines) cleanupClaimedEntry(entry preparedMachineEntry, cause
 	}
 	stateCtx, cancelState := preparedMachineControlContext(context.Background())
 	defer cancelState()
-	if err := p.markRuntimeTargetFailed(stateCtx, p.ComputerInstances, entry.target, cause); err != nil {
+	if err := p.markInstanceTargetFailed(stateCtx, p.ComputerInstances, entry.target, cause); err != nil {
 		p.logInfo("prepared machines instance fail transition failed", "computer_instance_id", entry.computerInstanceID, "error", err.Error())
 		return
 	}
@@ -1494,7 +1494,7 @@ func (p *PreparedMachines) forgetReadyEntry(key string, entry preparedMachineEnt
 	p.mu.Lock()
 	entries := p.entries[key]
 	for i := range entries {
-		if entries[i].computerInstanceID == entry.computerInstanceID && entries[i].runtimeEpoch == entry.runtimeEpoch {
+		if entries[i].computerInstanceID == entry.computerInstanceID && entries[i].workerEpoch == entry.workerEpoch {
 			p.removeReadyEntryAtLocked(key, entries, i)
 			removed = true
 			break
@@ -1504,16 +1504,16 @@ func (p *PreparedMachines) forgetReadyEntry(key string, entry preparedMachineEnt
 	return removed
 }
 
-func (p *PreparedMachines) claimReadyEntry(computerInstanceID string, runtimeEpoch int64) (preparedMachineEntry, bool) {
+func (p *PreparedMachines) claimReadyEntry(computerInstanceID string, workerEpoch int64) (preparedMachineEntry, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.claimReadyEntryLocked(computerInstanceID, runtimeEpoch)
+	return p.claimReadyEntryLocked(computerInstanceID, workerEpoch)
 }
 
-func (p *PreparedMachines) claimReadyEntryLocked(computerInstanceID string, runtimeEpoch int64) (preparedMachineEntry, bool) {
+func (p *PreparedMachines) claimReadyEntryLocked(computerInstanceID string, workerEpoch int64) (preparedMachineEntry, bool) {
 	for key, entries := range p.entries {
 		for i, entry := range entries {
-			if entry.computerInstanceID != computerInstanceID || entry.runtimeEpoch != runtimeEpoch {
+			if entry.computerInstanceID != computerInstanceID || entry.workerEpoch != workerEpoch {
 				continue
 			}
 			p.removeReadyEntryAtLocked(key, entries, i)
@@ -1532,7 +1532,7 @@ func (p *PreparedMachines) removeReadyEntryAtLocked(key string, entries []prepar
 	p.entries[key] = entries
 }
 
-func preparedMachineComputerMountFromSource(source workerapi.RuntimeSource) workerapi.ComputerInstanceAssignment {
+func preparedMachineComputerMountFromSource(source workerapi.InstanceSource) workerapi.ComputerInstanceAssignment {
 	return workerapi.ComputerInstanceAssignment{
 
 		ComputerID:              strings.TrimSpace(source.ComputerID),
@@ -1550,8 +1550,8 @@ func preparedMachineComputerMountFromSource(source workerapi.RuntimeSource) work
 	}
 }
 
-func (p *PreparedMachines) prepareGuestRuntime(ctx context.Context, session vm.Machine, key string, writerGeneration int64, mount workerapi.ComputerInstanceAssignment, computerImagePath string, mountedImageConfig *computerv0.RuntimeImageConfig) error {
-	stream, err := session.OpenStream(ctx)
+func (p *PreparedMachines) prepareGuestRuntime(ctx context.Context, machine vm.Machine, key string, writerGeneration int64, mount workerapi.ComputerInstanceAssignment, computerImagePath string, mountedImageConfig *computerv0.RuntimeImageConfig) error {
+	stream, err := machine.OpenStream(ctx)
 	if err != nil {
 		return fmt.Errorf("open prepared machine stream: %w", err)
 	}
@@ -1579,7 +1579,7 @@ func (p *PreparedMachines) prepareGuestRuntime(ctx context.Context, session vm.M
 	}
 	started := time.Now()
 	if mountedImageConfig == nil {
-		if err := writeFileFrameWithMetadataContext(ctx, session, stream, wire.StreamHeader{
+		if err := writeFileFrameWithMetadataContext(ctx, machine, stream, wire.StreamHeader{
 			Type:       wire.StreamTypeRunImage,
 			ComputerID: mount.ComputerID,
 		}, computerImagePath, strings.TrimSpace(mount.ComputerImage.Digest), mount.ComputerImage.SizeBytes); err != nil {
@@ -1589,7 +1589,7 @@ func (p *PreparedMachines) prepareGuestRuntime(ctx context.Context, session vm.M
 			responseCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			var response computerv0.PrepareComputerRuntimeResponse
-			if responseErr := readProtoFrameFromReaderContext(responseCtx, session, stream, &response); responseErr == nil {
+			if responseErr := readProtoFrameFromReaderContext(responseCtx, machine, stream, &response); responseErr == nil {
 				if phaseError := computerMountPhaseError(response.GetPhases()); phaseError != "" {
 					return fmt.Errorf("prepared machine rejected computer image: %s: %w", phaseError, err)
 				}
@@ -1602,7 +1602,7 @@ func (p *PreparedMachines) prepareGuestRuntime(ctx context.Context, session vm.M
 
 	var response computerv0.PrepareComputerRuntimeResponse
 	started = time.Now()
-	if err := readProtoFrameFromReaderContext(ctx, session, stream, &response); err != nil {
+	if err := readProtoFrameFromReaderContext(ctx, machine, stream, &response); err != nil {
 		return fmt.Errorf("read prepared machine response: %w", err)
 	}
 	p.logInfo("prepared machines response read", "computer_instance_id", key, "duration_ms", time.Since(started).Milliseconds(), "state", strings.TrimSpace(response.Status))
@@ -1655,9 +1655,9 @@ func preparedMachineControlContext(parent context.Context) (context.Context, con
 	return context.WithTimeout(parent, defaultPreparedMachineControlTimeout)
 }
 
-func (p *PreparedMachines) reserveRuntimeCapacity(
-	target workerapi.RuntimeReconcileTarget,
-	topologies ...vm.RuntimeTopology,
+func (p *PreparedMachines) reserveInstanceCapacity(
+	target workerapi.InstanceReconcileTarget,
+	topologies ...vm.Topology,
 ) error {
 	if p == nil || p.Reservations == nil {
 		return errors.New("prepared machine capacity ledger is required")
@@ -1677,7 +1677,7 @@ func (p *PreparedMachines) reserveRuntimeCapacity(
 		return reservation.ErrOverflow
 	}
 	projectionBytes += retained
-	request, err := runtimeReservationVectorWithProjection(
+	request, err := instanceReservationVectorWithProjection(
 		int64(target.Source.ReservedCPUMillis),
 		int64(target.Source.ReservedMemoryMiB),
 		target.Source.ReservedDiskMiB,
@@ -1686,7 +1686,7 @@ func (p *PreparedMachines) reserveRuntimeCapacity(
 	if err != nil {
 		return err
 	}
-	created, err := p.Reservations.Reserve(runtimeReservationKey(target.ID, target.WorkerEpoch), request)
+	created, err := p.Reservations.Reserve(instanceReservationKey(target.ID, target.WorkerEpoch), request)
 	if errors.Is(err, reservation.ErrCapacityExceeded) || err == nil && !created {
 		return errPreparedMachineCapacityBusy
 	}
@@ -1696,7 +1696,7 @@ func (p *PreparedMachines) reserveRuntimeCapacity(
 	if staging > 0 {
 		created, err = p.Reservations.Reserve(restoreStagingKey(target.ID, target.WorkerEpoch), reservation.Vector{GuestEphemeralDiskBytes: staging})
 		if err != nil || !created {
-			releaseErr := p.Reservations.Release(runtimeReservationKey(target.ID, target.WorkerEpoch))
+			releaseErr := p.Reservations.Release(instanceReservationKey(target.ID, target.WorkerEpoch))
 			if errors.Is(err, reservation.ErrCapacityExceeded) || err == nil {
 				err = errPreparedMachineCapacityBusy
 			}
@@ -1706,32 +1706,32 @@ func (p *PreparedMachines) reserveRuntimeCapacity(
 	return err
 }
 
-func (p *PreparedMachines) releaseRuntimeCapacity(computerInstanceID string, runtimeEpoch int64) error {
-	if err := p.releaseComputerDevice(computerInstanceID, runtimeEpoch); err != nil {
+func (p *PreparedMachines) releaseInstanceCapacity(computerInstanceID string, workerEpoch int64) error {
+	if err := p.releaseComputerDevice(computerInstanceID, workerEpoch); err != nil {
 		return err
 	}
 	if p == nil || p.Reservations == nil {
 		return nil
 	}
-	if ids.Validate(computerInstanceID) == nil && runtimeEpoch > 0 {
-		if err := os.RemoveAll(p.computerPreparationDirectory(computerInstanceID, runtimeEpoch)); err != nil {
+	if ids.Validate(computerInstanceID) == nil && workerEpoch > 0 {
+		if err := os.RemoveAll(p.computerPreparationDirectory(computerInstanceID, workerEpoch)); err != nil {
 			return err
 		}
-		if err := os.RemoveAll(p.restorePreparationDirectory(computerInstanceID, runtimeEpoch)); err != nil {
+		if err := os.RemoveAll(p.restorePreparationDirectory(computerInstanceID, workerEpoch)); err != nil {
 			return err
 		}
 	}
-	if err := p.Reservations.Release(computerStagingKey(computerInstanceID, runtimeEpoch)); err != nil {
+	if err := p.Reservations.Release(computerStagingKey(computerInstanceID, workerEpoch)); err != nil {
 		return err
 	}
-	if err := p.Reservations.Release(restoreStagingKey(computerInstanceID, runtimeEpoch)); err != nil {
+	if err := p.Reservations.Release(restoreStagingKey(computerInstanceID, workerEpoch)); err != nil {
 		return err
 	}
-	if err := p.Reservations.Release(runtimeReservationKey(computerInstanceID, runtimeEpoch)); err != nil {
+	if err := p.Reservations.Release(instanceReservationKey(computerInstanceID, workerEpoch)); err != nil {
 		return err
 	}
 	p.mu.Lock()
-	delete(p.computerDevices, preparedMachineRef{id: computerInstanceID, epoch: runtimeEpoch})
+	delete(p.computerDevices, preparedMachineRef{id: computerInstanceID, epoch: workerEpoch})
 	p.mu.Unlock()
 	return nil
 }
@@ -1754,14 +1754,14 @@ func (p *PreparedMachines) releaseRuntimeCapacity(computerInstanceID string, run
 // failed release keeps only a capture claim that retains checkpoint cleanup,
 // for a retry; any other claim ends, leaving its resources recorded for
 // unclaimed reconciliation.
-func (p *PreparedMachines) releaseRuntimeAfterPhysicalCleanup(ctx context.Context, computerInstanceID string, runtimeEpoch int64) error {
-	ref := preparedMachineRef{id: strings.TrimSpace(computerInstanceID), epoch: runtimeEpoch}
+func (p *PreparedMachines) releaseInstanceAfterPhysicalCleanup(ctx context.Context, computerInstanceID string, workerEpoch int64) error {
+	ref := preparedMachineRef{id: strings.TrimSpace(computerInstanceID), epoch: workerEpoch}
 	for {
 		p.mu.Lock()
 		claim := p.claims[ref]
 		if claim == nil {
 			p.mu.Unlock()
-			return p.releaseRuntimeCapacity(ref.id, ref.epoch)
+			return p.releaseInstanceCapacity(ref.id, ref.epoch)
 		}
 		if active := claim.release; active != nil {
 			p.mu.Unlock()
@@ -1783,7 +1783,7 @@ func (p *PreparedMachines) releaseRuntimeAfterPhysicalCleanup(ctx context.Contex
 			err = capture.cleanupAfterSourceStopped()
 		}
 		if err == nil {
-			err = p.releaseRuntimeCapacity(ref.id, ref.epoch)
+			err = p.releaseInstanceCapacity(ref.id, ref.epoch)
 		}
 		p.finishRelease(ref, claim, release, err, err == nil || capture == nil)
 		return err
@@ -1805,30 +1805,30 @@ func (p *PreparedMachines) joinSaveOwner(ctx context.Context, computerInstanceID
 	return nil
 }
 
-func (p *PreparedMachines) closeSession(parent context.Context, session vm.Machine) error {
-	if session == nil {
+func (p *PreparedMachines) closeMachine(parent context.Context, machine vm.Machine) error {
+	if machine == nil {
 		return nil
 	}
 	ctx, cancel := preparedMachineControlContext(parent)
 	defer cancel()
-	return session.Close(ctx)
+	return machine.Close(ctx)
 }
 
-func runtimeTargetStatusRequest(target workerapi.RuntimeReconcileTarget, failure error) workerapi.ComputerInstanceStateRequest {
+func instanceTargetStatusRequest(target workerapi.InstanceReconcileTarget, failure error) workerapi.ComputerInstanceStateRequest {
 	request := workerapi.ComputerInstanceStateRequest{
 		ID: target.ID, WorkerEpoch: target.WorkerEpoch, DesiredVersion: target.DesiredVersion,
 		ExpectedObservedVersion: target.ObservedVersion, ReasonCode: "desired_state_reconciled",
 	}
 	if failure != nil {
-		request.ReasonCode = workerapi.RuntimeFailureReconcile
+		request.ReasonCode = workerapi.InstanceFailureReconcile
 		message := failure.Error()
 		var sourceFailure *disk.SourceFailure
 		if errors.As(failure, &sourceFailure) {
-			request.ReasonCode = workerapi.RuntimeFailureComputerSource
+			request.ReasonCode = workerapi.InstanceFailureComputerSource
 		}
 		var fatal interface{ FatalWorker() bool }
 		if errors.As(failure, &fatal) && fatal.FatalWorker() {
-			request.ReasonCode = workerapi.RuntimeFailureWorkerInvalid
+			request.ReasonCode = workerapi.InstanceFailureWorkerInvalid
 			message = "worker runtime infrastructure failed"
 		}
 		request.Error, _ = json.Marshal(map[string]string{"message": message})
@@ -1836,21 +1836,21 @@ func runtimeTargetStatusRequest(target workerapi.RuntimeReconcileTarget, failure
 	return request
 }
 
-func (p *PreparedMachines) markRuntimeTargetFailed(ctx context.Context, client PreparedComputerInstanceClient, target workerapi.RuntimeReconcileTarget, failure error) error {
-	return p.markRuntimeTargetFailedWithProof(ctx, client, target, failure, "")
+func (p *PreparedMachines) markInstanceTargetFailed(ctx context.Context, client PreparedComputerInstanceClient, target workerapi.InstanceReconcileTarget, failure error) error {
+	return p.markInstanceTargetFailedWithProof(ctx, client, target, failure, "")
 }
 
-func (p *PreparedMachines) markRuntimeTargetFailedWithProof(ctx context.Context, client PreparedComputerInstanceClient, target workerapi.RuntimeReconcileTarget, failure error, proofMethod string) error {
-	if err := p.reportRuntimeTargetFailedWithProof(ctx, client, target, failure, proofMethod); err != nil {
+func (p *PreparedMachines) markInstanceTargetFailedWithProof(ctx context.Context, client PreparedComputerInstanceClient, target workerapi.InstanceReconcileTarget, failure error, proofMethod string) error {
+	if err := p.reportInstanceTargetFailedWithProof(ctx, client, target, failure, proofMethod); err != nil {
 		return errors.Join(failure, err)
 	}
 	return failure
 }
 
-func (p *PreparedMachines) reportRuntimeTargetFailedWithProof(ctx context.Context, client PreparedComputerInstanceClient, target workerapi.RuntimeReconcileTarget, failure error, proofMethod string) error {
-	request := runtimeTargetStatusRequest(target, failure)
+func (p *PreparedMachines) reportInstanceTargetFailedWithProof(ctx context.Context, client PreparedComputerInstanceClient, target workerapi.InstanceReconcileTarget, failure error, proofMethod string) error {
+	request := instanceTargetStatusRequest(target, failure)
 	if proofMethod != "" {
-		request.CleanupProof = &workerapi.RuntimeCleanupProof{Method: proofMethod, CompletedAt: time.Now().UTC()}
+		request.CleanupProof = &workerapi.InstanceCleanupProof{Method: proofMethod, CompletedAt: time.Now().UTC()}
 	}
 	_, err := client.MarkComputerInstanceFailed(ctx, request)
 	if err != nil {
@@ -1859,7 +1859,7 @@ func (p *PreparedMachines) reportRuntimeTargetFailedWithProof(ctx context.Contex
 	return nil
 }
 
-func writeFileFrameWithMetadataContext(ctx context.Context, session vm.Machine, w io.Writer, header wire.StreamHeader, path string, digest string, size int64) error {
+func writeFileFrameWithMetadataContext(ctx context.Context, machine vm.Machine, w io.Writer, header wire.StreamHeader, path string, digest string, size int64) error {
 	header.BodyDigest = &digest
 	if err := wire.WriteStreamFrameHeader(w, header, uint64(size)); err != nil {
 		return err
@@ -1880,7 +1880,7 @@ func writeFileFrameWithMetadataContext(ctx context.Context, session vm.Machine, 
 	case <-ctx.Done():
 		closeCtx, cancel := preparedMachineControlContext(ctx)
 		defer cancel()
-		_ = session.Close(closeCtx)
+		_ = machine.Close(closeCtx)
 		return ctx.Err()
 	}
 }
@@ -1892,12 +1892,12 @@ func (p *PreparedMachines) logInfo(message string, attrs ...any) {
 	p.Log.Info(message, attrs...)
 }
 
-type runtimePhaseCollector struct {
+type phaseCollector struct {
 	mu     sync.Mutex
-	phases []vm.RuntimePhase
+	phases []vm.Phase
 }
 
-func (c *runtimePhaseCollector) Record(phase vm.RuntimePhase) {
+func (c *phaseCollector) Record(phase vm.Phase) {
 	if c == nil || strings.TrimSpace(phase.Name) == "" {
 		return
 	}
@@ -1906,7 +1906,7 @@ func (c *runtimePhaseCollector) Record(phase vm.RuntimePhase) {
 	c.phases = append(c.phases, phase)
 }
 
-func (c *runtimePhaseCollector) Snapshot() []workerapi.CheckpointPhase {
+func (c *phaseCollector) Snapshot() []workerapi.CheckpointPhase {
 	if c == nil {
 		return nil
 	}
@@ -1921,7 +1921,7 @@ func (c *runtimePhaseCollector) Snapshot() []workerapi.CheckpointPhase {
 
 func readProtoFrameFromReaderContext(
 	ctx context.Context,
-	session vm.Machine,
+	machine vm.Machine,
 	reader io.Reader,
 	message proto.Message,
 ) error {
@@ -1933,7 +1933,7 @@ func readProtoFrameFromReaderContext(
 	case err := <-result:
 		return err
 	case <-ctx.Done():
-		_ = session.Close(context.Background())
+		_ = machine.Close(context.Background())
 		return ctx.Err()
 	}
 }

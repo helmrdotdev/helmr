@@ -305,16 +305,16 @@ func run(log *slog.Logger) error {
 		worker.ConsumerSpec{Name: "computer", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "computer", ContinueDuringDrain: true, BypassAdmissionDuringDrain: true, Consumer: worker.NewComputerConsumer(runner)},
 	)
 	background := []worker.BackgroundSpec{{Name: "runtime-controller", DrainEligible: true, Run: func(runCtx context.Context) error {
-		return preparedMachines.ReconcileDesiredRuntimes(runCtx, controlPlaneClient)
+		return preparedMachines.ReconcileDesiredInstances(runCtx, controlPlaneClient)
 	}}}
 	hardAdmission, err := worker.NewHardAdmission(worker.HardAdmissionConfig{
 		Probe: worker.SystemHostHealthProbe{
 			WorkDir: workDir, CgroupVersion: cfg.CgroupVersion, FirecrackerPath: cfg.FirecrackerPath,
 		},
-		DiskFloorBytes:   admissionDiskFloorMiB(cfg.VMScratchDiskMiB, cfg.WorkerDiskReserveMiB) * 1024 * 1024,
-		FDHeadroom:       256,
-		RuntimeSlotCount: cfg.WorkerExecutionSlots,
-		DatapathHealth:   connector.DatapathHealth,
+		DiskFloorBytes:    admissionDiskFloorMiB(cfg.VMScratchDiskMiB, cfg.WorkerDiskReserveMiB) * 1024 * 1024,
+		FDHeadroom:        256,
+		InstanceSlotCount: cfg.WorkerExecutionSlots,
+		DatapathHealth:    connector.DatapathHealth,
 	})
 	if err != nil {
 		return fmt.Errorf("configure worker hard admission: %w", err)
@@ -377,7 +377,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure worker supervisor: %w", err)
 	}
-	preparedMachines.AdmitRuntimeStart = supervisor.AdmitRuntimeStart
+	preparedMachines.AdmitInstanceStart = supervisor.AdmitInstanceStart
 	log.Info("Helmr worker listening", "controlplane_url", cfg.ControlPlaneURL, "worker_host_id", workerHostSecret.WorkerHostID)
 	if err := supervisor.Run(ctx); err != nil && err != context.Canceled {
 		return err

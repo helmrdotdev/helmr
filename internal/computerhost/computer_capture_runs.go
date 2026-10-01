@@ -39,8 +39,8 @@ type CaptureWait struct {
 type MemberPause struct {
 	ctx      context.Context
 	abort    context.CancelCauseFunc
-	target   workerapi.RuntimeReconcileTarget
-	member   workerapi.RuntimeCaptureRun
+	target   workerapi.InstanceReconcileTarget
+	member   workerapi.InstanceCaptureRun
 	ready    chan error
 	finished chan struct{}
 	result   error
@@ -50,10 +50,10 @@ type MemberPause struct {
 func (p *MemberPause) Context() context.Context { return p.ctx }
 
 // Target is the capture operation the member is paused for.
-func (p *MemberPause) Target() workerapi.RuntimeReconcileTarget { return p.target }
+func (p *MemberPause) Target() workerapi.InstanceReconcileTarget { return p.target }
 
 // Member is the exact local grant being paused.
-func (p *MemberPause) Member() workerapi.RuntimeCaptureRun { return p.member }
+func (p *MemberPause) Member() workerapi.InstanceCaptureRun { return p.member }
 
 // Abort cancels the capture with cause.
 func (p *MemberPause) Abort(cause error) { p.abort(cause) }
@@ -131,7 +131,7 @@ func (w *CaptureWait) Detach() error {
 // callback must prove source shutdown and runs after any dispatched pause, on
 // success or failure. Returning nil releases members as detached, never
 // as successfully completed Runs. Errors remain errors for every paused member.
-func (r *CaptureRuns) capture(ctx context.Context, target workerapi.RuntimeReconcileTarget, capture, exclude func(context.Context) error) (retErr error) {
+func (r *CaptureRuns) capture(ctx context.Context, target workerapi.InstanceReconcileTarget, capture, exclude func(context.Context) error) (retErr error) {
 	if _, err := computerFreezeRequest(target); err != nil {
 		return err
 	}

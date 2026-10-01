@@ -126,7 +126,7 @@ func TestInitialComputerPreparationReauthenticatesAcrossPrimaryPoolSwitch(t *tes
 			_, _, published := f.publishInitialVersion(t, race.client, oci.RuntimeConfig{User: "root"})
 			race.requireReplayed(t, raced)
 			var head string
-			if err := f.Pool.QueryRow(t.Context(), `SELECT c.head_disk_version_id::text FROM computers c JOIN computer_instances i ON i.computer_id=c.id WHERE i.id=$1`, f.runtime).Scan(&head); err != nil || head != published.VersionID {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT c.head_disk_version_id::text FROM computers c JOIN computer_instances i ON i.computer_id=c.id WHERE i.id=$1`, f.instance).Scan(&head); err != nil || head != published.VersionID {
 				t.Fatalf("published head=%s response=%s err=%v", head, published.VersionID, err)
 			}
 		})

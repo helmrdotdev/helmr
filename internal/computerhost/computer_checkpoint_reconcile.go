@@ -19,7 +19,7 @@ type ComputerCheckpointClient interface {
 	MarkCheckpointFailed(context.Context, workerapi.CheckpointFailedRequest) (workerapi.ComputerCheckpointResponse, error)
 }
 
-func (p *PreparedMachines) captureRuntimeTarget(ctx context.Context, instances PreparedComputerInstanceClient, target workerapi.RuntimeReconcileTarget) error {
+func (p *PreparedMachines) captureInstanceTarget(ctx context.Context, instances PreparedComputerInstanceClient, target workerapi.InstanceReconcileTarget) error {
 	if _, err := computerFreezeRequest(target); err != nil {
 		return err
 	}
@@ -33,7 +33,7 @@ func (p *PreparedMachines) captureRuntimeTarget(ctx context.Context, instances P
 		// An earlier capture began but could not prove source exclusion, or
 		// the source has no holder left; physical cleanup ends it.
 		p.mu.Unlock()
-		return p.reclaimFailedRuntimeTarget(ctx, instances, target)
+		return p.reclaimFailedInstanceTarget(ctx, instances, target)
 	}
 	if claim != nil && (claim.teardown || claim.release != nil) {
 		p.mu.Unlock()
@@ -43,7 +43,7 @@ func (p *PreparedMachines) captureRuntimeTarget(ctx context.Context, instances P
 	if claim == nil {
 		for key, entries := range p.entries {
 			for i, e := range entries {
-				if e.computerInstanceID == ref.id && e.runtimeEpoch == ref.epoch {
+				if e.computerInstanceID == ref.id && e.workerEpoch == ref.epoch {
 					p.removeReadyEntryAtLocked(key, entries, i)
 					claim = p.claimLocked(ref, captureClaim, e)
 					claimedReady = true
@@ -61,8 +61,8 @@ func (p *PreparedMachines) captureRuntimeTarget(ctx context.Context, instances P
 		entry, mount = claim.entry, claim.mount
 	}
 	p.mu.Unlock()
-	if claim == nil || entry.session == nil {
-		return p.reclaimFailedRuntimeTarget(ctx, instances, target)
+	if claim == nil || entry.machine == nil {
+		return p.reclaimFailedInstanceTarget(ctx, instances, target)
 	}
 	if claimedReady {
 		// A capture that never began physical work returns the prepared
@@ -72,11 +72,11 @@ func (p *PreparedMachines) captureRuntimeTarget(ctx context.Context, instances P
 	if entry.target.Source.ComputerID != target.Source.ComputerID || entry.target.Source.WriterGeneration != target.Source.WriterGeneration {
 		return errors.New("computer capture source ownership changed")
 	}
-	session, ok := entry.session.(vm.CheckpointableMachine)
+	machine, ok := entry.machine.(vm.CheckpointableMachine)
 	if !ok {
 		return errors.New("computer capture source cannot produce a checkpoint")
 	}
-	checkpointer := computerCheckpointer{session: session, mount: mount, reservations: p.Reservations, objects: p.ComputerObjects, encryptor: p.CheckpointEncryptor, tempDir: p.TempDir, computer: workerapi.CheckpointComputerBase{MountPath: "/workspace"}, publication: func(computerCheckpointRequest) disk.ContinuationPublication {
+	checkpointer := computerCheckpointer{machine: machine, mount: mount, reservations: p.Reservations, objects: p.ComputerObjects, encryptor: p.CheckpointEncryptor, tempDir: p.TempDir, computer: workerapi.CheckpointComputerBase{MountPath: "/workspace"}, publication: func(computerCheckpointRequest) disk.ContinuationPublication {
 		return checkpointComputerPublisher{client: p.Checkpoints, objects: p.ComputerObjects, request: workerapi.CheckpointComputerObjectRequest{ComputerInstanceID: target.ID, WorkerEpoch: target.WorkerEpoch, DesiredVersion: target.DesiredVersion, CheckpointID: target.Capture.CheckpointID}}
 	}}
 	// Once members are paused, capture owns the source: a Server's claim is
@@ -163,17 +163,17 @@ func (p *PreparedMachines) captureRuntimeTarget(ctx context.Context, instances P
 		if err != nil {
 			return err
 		}
-		if err := p.releaseRuntimeAfterPhysicalCleanup(excludeCtx, target.ID, target.WorkerEpoch); err != nil {
+		if err := p.releaseInstanceAfterPhysicalCleanup(excludeCtx, target.ID, target.WorkerEpoch); err != nil {
 			return err
 		}
 		if !knownClose {
-			return p.reportRuntimeTargetFailedWithProof(excludeCtx, instances, target, errors.New("checkpoint source excluded without a committed receipt"), proofMethod)
+			return p.reportInstanceTargetFailedWithProof(excludeCtx, instances, target, errors.New("checkpoint source excluded without a committed receipt"), proofMethod)
 		}
 		closed := target
 		closed.DesiredVersion++
-		closed.Action = workerapi.RuntimeReconcileClose
-		request := runtimeTargetStatusRequest(closed, nil)
-		request.CleanupProof = &workerapi.RuntimeCleanupProof{Method: proofMethod, CompletedAt: time.Now().UTC()}
+		closed.Action = workerapi.InstanceReconcileClose
+		request := instanceTargetStatusRequest(closed, nil)
+		request.CleanupProof = &workerapi.InstanceCleanupProof{Method: proofMethod, CompletedAt: time.Now().UTC()}
 		_, err = instances.MarkComputerInstanceClosed(excludeCtx, request)
 		return err
 	})
@@ -189,7 +189,7 @@ func (p *PreparedMachines) excludeCaptureSource(ctx context.Context, computerIns
 	err := capture.ReleaseCheckpointSource(releaseCtx)
 	cancel()
 	if err == nil {
-		return workerapi.RuntimeCleanupSessionClosed, nil
+		return workerapi.InstanceCleanupMachineClosed, nil
 	}
 	if capture.mount == nil || capture.mount.saves.joined() {
 		return "", err
@@ -203,7 +203,7 @@ func (p *PreparedMachines) excludeCaptureSource(ctx context.Context, computerIns
 	if cleanupErr != nil {
 		return "", fmt.Errorf("stop capture source physically: %w", errors.Join(err, cleanupErr))
 	}
-	return workerapi.RuntimeCleanupHostReconciled, nil
+	return workerapi.InstanceCleanupHostReconciled, nil
 }
 
 // sourceReleaseContext bounds one step of releasing a source: a release
@@ -258,7 +258,7 @@ func (p *PreparedMachines) returnUnstartedCapture(ref preparedMachineRef, claim 
 	p.cleanupClaimedEntryAsync(entry, cause)
 }
 
-func validateComputerCheckpointReceipt(target workerapi.RuntimeReconcileTarget, response workerapi.ComputerCheckpointResponse) error {
+func validateComputerCheckpointReceipt(target workerapi.InstanceReconcileTarget, response workerapi.ComputerCheckpointResponse) error {
 	if response.ComputerInstanceID != target.ID || response.WorkerEpoch != target.WorkerEpoch || response.DesiredVersion != target.DesiredVersion || response.CheckpointID != target.Capture.CheckpointID {
 		return fmt.Errorf("%w: checkpoint receipt does not match source operation", errForeignSourceReceipt)
 	}

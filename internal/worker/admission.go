@@ -18,15 +18,15 @@ import (
 type AdmissionReason string
 
 const (
-	AdmissionAllowed                 AdmissionReason = ""
-	AdmissionDiskFloor               AdmissionReason = "disk_floor"
-	AdmissionFileDescriptorPressure  AdmissionReason = "file_descriptor_pressure"
-	AdmissionCgroupUnavailable       AdmissionReason = "cgroup_unavailable"
-	AdmissionKVMUnavailable          AdmissionReason = "kvm_unavailable"
-	AdmissionFirecrackerUnavailable  AdmissionReason = "firecracker_unavailable"
-	AdmissionRuntimeSlotsQuarantined AdmissionReason = "runtime_slots_quarantined"
-	AdmissionProbeFailed             AdmissionReason = "host_probe_failed"
-	AdmissionDatapathUnverified      AdmissionReason = "datapath_unverified"
+	AdmissionAllowed                  AdmissionReason = ""
+	AdmissionDiskFloor                AdmissionReason = "disk_floor"
+	AdmissionFileDescriptorPressure   AdmissionReason = "file_descriptor_pressure"
+	AdmissionCgroupUnavailable        AdmissionReason = "cgroup_unavailable"
+	AdmissionKVMUnavailable           AdmissionReason = "kvm_unavailable"
+	AdmissionFirecrackerUnavailable   AdmissionReason = "firecracker_unavailable"
+	AdmissionInstanceSlotsQuarantined AdmissionReason = "runtime_slots_quarantined"
+	AdmissionProbeFailed              AdmissionReason = "host_probe_failed"
+	AdmissionDatapathUnverified       AdmissionReason = "datapath_unverified"
 )
 
 type HostHealth struct {
@@ -63,12 +63,12 @@ type AdmissionEvaluator interface {
 }
 
 type HardAdmissionConfig struct {
-	Probe            HostHealthProbe
-	DiskFloorBytes   int64
-	FDHeadroom       uint64
-	RuntimeSlotCount int32
-	DatapathHealth   func() error
-	Now              func() time.Time
+	Probe             HostHealthProbe
+	DiskFloorBytes    int64
+	FDHeadroom        uint64
+	InstanceSlotCount int32
+	DatapathHealth    func() error
+	Now               func() time.Time
 }
 
 type HardAdmission struct {
@@ -87,7 +87,7 @@ func NewHardAdmission(cfg HardAdmissionConfig) (*HardAdmission, error) {
 	if cfg.FDHeadroom == 0 {
 		return nil, errors.New("admission file descriptor headroom must be positive")
 	}
-	if cfg.RuntimeSlotCount <= 0 {
+	if cfg.InstanceSlotCount <= 0 {
 		return nil, errors.New("admission runtime slot count must be positive")
 	}
 	if cfg.Now == nil {
@@ -121,9 +121,9 @@ func (a *HardAdmission) Evaluate(ctx context.Context, check AdmissionCheck) Admi
 		decision.Reason = AdmissionKVMUnavailable
 	case !health.FirecrackerHealthy:
 		decision.Reason = AdmissionFirecrackerUnavailable
-	case runtimeSlotConsumer(check.Consumer) &&
-		int32(len(check.Recovery.Quarantined)+check.Snapshot.Active["computer"]) >= a.cfg.RuntimeSlotCount:
-		decision.Reason = AdmissionRuntimeSlotsQuarantined
+	case instanceSlotConsumer(check.Consumer) &&
+		int32(len(check.Recovery.Quarantined)+check.Snapshot.Active["computer"]) >= a.cfg.InstanceSlotCount:
+		decision.Reason = AdmissionInstanceSlotsQuarantined
 	default:
 		decision.Allowed = true
 	}
@@ -133,7 +133,7 @@ func (a *HardAdmission) Evaluate(ctx context.Context, check AdmissionCheck) Admi
 	return decision
 }
 
-func runtimeSlotConsumer(consumer string) bool {
+func instanceSlotConsumer(consumer string) bool {
 	return consumer == "computer" || consumer == "runtime"
 }
 
@@ -158,7 +158,7 @@ func (a *HardAdmission) Observation() workerapi.Observation {
 			continue
 		}
 		reason := string(current.Reason)
-		if current.Reason != AdmissionRuntimeSlotsQuarantined {
+		if current.Reason != AdmissionInstanceSlotsQuarantined {
 			observation.RunPausedReason, observation.VMPausedReason = reason, reason
 			break
 		}

@@ -98,7 +98,7 @@ SELECT worker_pools.status = 'active'
 // supply fence. Callers must already hold the worker host row lock. A VM pause
 // prevents creating or reclaiming VM state, but does not prevent a Run from
 // reusing an already-ready Computer Instance.
-func CheckHostRuntimeAdmission(ctx context.Context, tx pgx.Tx, hostID pgtype.UUID, epoch int64) error {
+func CheckHostInstanceAdmission(ctx context.Context, tx pgx.Tx, hostID pgtype.UUID, epoch int64) error {
 	var id pgtype.UUID
 	return tx.QueryRow(ctx, `
 SELECT id

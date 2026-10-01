@@ -46,7 +46,7 @@ func MountReleaseResult(ctx context.Context, mounts *Mounts, computerInstanceID 
 }
 
 // CaptureComputer runs the physical owner's capture protocol for target.
-func CaptureComputer(ctx context.Context, captures *CaptureRuns, target workerapi.RuntimeReconcileTarget, capture, exclude func(context.Context) error) error {
+func CaptureComputer(ctx context.Context, captures *CaptureRuns, target workerapi.InstanceReconcileTarget, capture, exclude func(context.Context) error) error {
 	return captures.capture(ctx, target, capture, exclude)
 }
 

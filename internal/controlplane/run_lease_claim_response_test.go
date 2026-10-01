@@ -46,7 +46,7 @@ func TestProjectRunLeaseClaimResponseOpensSecretsAfterVerifyingCapability(t *tes
 		t.Fatalf("response = %#v, Secret opens = %d", response, opener.calls)
 	}
 
-	authority.runtime.WriterTokenHash = make([]byte, 32)
+	authority.instance.WriterTokenHash = make([]byte, 32)
 	opener.calls = 0
 	if _, err := projectRunLeaseClaimResponse(
 		context.Background(),
@@ -140,17 +140,17 @@ func validRunLeaseClaimResponse(
 	physical.runLease.RunID = run.ID
 	physical.runLease.ComputerID = run.ComputerID
 	physical.runLease.AttemptNumber = attempt.Number
-	physical.runtime.EnvironmentID = run.EnvironmentID
+	physical.instance.EnvironmentID = run.EnvironmentID
 
 	key, err := disk.NewFencingKey(make([]byte, disk.FencingKeySize))
 	if err != nil {
 		t.Fatal(err)
 	}
-	capability, err := deriveComputerCapabilityInput(key, physical.runtime)
+	capability, err := deriveComputerCapabilityInput(key, physical.instance)
 	if err != nil {
 		t.Fatal(err)
 	}
-	physical.runtime.WriterTokenHash, err = hex.DecodeString(strings.TrimPrefix(capability.Hash, "sha256:"))
+	physical.instance.WriterTokenHash, err = hex.DecodeString(strings.TrimPrefix(capability.Hash, "sha256:"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func validRunLeaseClaimResponse(
 	return runLeaseClaimResponseAuthority{
 		run:      run,
 		attempt:  attempt,
-		runtime:  physical.runtime,
+		instance: physical.instance,
 		runLease: physical.runLease,
 		computer: physical.computer,
 	}, projection, key

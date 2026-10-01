@@ -23,7 +23,7 @@ import (
 // computerCheckpointRequest belongs to the physical Instance owner. Member
 // pausing is coordinated before the guest returns the whole-Computer proof.
 type computerCheckpointRequest struct {
-	Target   workerapi.RuntimeReconcileTarget
+	Target   workerapi.InstanceReconcileTarget
 	Register func(context.Context, workerapi.CheckpointManifest) error
 }
 
@@ -72,7 +72,7 @@ func checkpointStagingSize(shape vm.SnapshotLimits, cipher *CheckpointEncryptor)
 }
 
 func (c *computerCheckpointer) CreateCheckpoint(ctx context.Context, request computerCheckpointRequest) (result checkpointResult, retErr error) {
-	if c.session == nil {
+	if c.machine == nil {
 		return result, errors.New("checkpoint source session is required")
 	}
 	if _, err := computerFreezeRequest(request.Target); err != nil {
@@ -142,7 +142,7 @@ func (c *computerCheckpointer) CreateCheckpoint(ctx context.Context, request com
 	if c.reservations == nil || c.objects == nil || c.encryptor == nil || request.Register == nil || c.publication == nil {
 		return result, errors.New("checkpoint capacity, immutable storage, encryption and registration are required")
 	}
-	shape, err := c.session.SnapshotLimits()
+	shape, err := c.machine.SnapshotLimits()
 	if err != nil {
 		return result, err
 	}
@@ -178,11 +178,11 @@ func (c *computerCheckpointer) CreateCheckpoint(ctx context.Context, request com
 	// Source release still joins the mount's save owner before the machine
 	// closes, since a save's local completion can outlive its committed
 	// acknowledgement.
-	point, err := guestControl{machine: c.session}.freeze(ctx, request.Target)
+	point, err := guestControl{machine: c.machine}.freeze(ctx, request.Target)
 	if err != nil {
 		return result, err
 	}
-	artifact, err = c.session.CreateSnapshot(ctx, vm.SnapshotRequest{ID: request.Target.Capture.CheckpointID})
+	artifact, err = c.machine.CreateSnapshot(ctx, vm.SnapshotRequest{ID: request.Target.Capture.CheckpointID})
 	if err != nil {
 		return result, err
 	}

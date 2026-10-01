@@ -26,7 +26,7 @@ type runLeaseClaimResponseAuthority struct {
 	session  db.Session
 	run      db.Run
 	attempt  db.RunAttempt
-	runtime  db.ComputerInstance
+	instance db.ComputerInstance
 	runLease db.RunLease
 	computer db.LockRunLeaseClaimComputerRow
 }
@@ -86,7 +86,7 @@ func projectRunLeaseClaimResponse(
 	physical := runLeaseProjectionAuthority{
 		run:      authority.run,
 		attempt:  authority.attempt,
-		runtime:  authority.runtime,
+		instance: authority.instance,
 		runLease: authority.runLease,
 		computer: authority.computer,
 	}
@@ -110,7 +110,7 @@ func projectRunLeaseClaimResponse(
 	if err != nil {
 		return workerapi.RunLeaseClaimResponse{}, err
 	}
-	capability, err := computer.WriteCapability(fencingKey, authority.runtime)
+	capability, err := computer.WriteCapability(fencingKey, authority.instance)
 	if err != nil {
 		return workerapi.RunLeaseClaimResponse{}, err
 	}
@@ -145,7 +145,7 @@ func projectRunLeaseClaimResponse(
 func projectRestoredRunLeaseClaim(claim run.Claim, key disk.FencingKey) (workerapi.RunLeaseClaimResponse, error) {
 	wait, _ := claim.ResumeWait()
 	r, runtime := claim.Run(), claim.Instance()
-	lease, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{run: r, attempt: claim.Attempt(), runtime: runtime, runLease: claim.Lease(), computer: claim.Computer()})
+	lease, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{run: r, attempt: claim.Attempt(), instance: runtime, runLease: claim.Lease(), computer: claim.Computer()})
 	if err != nil {
 		return workerapi.RunLeaseClaimResponse{}, err
 	}

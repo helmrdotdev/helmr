@@ -35,7 +35,7 @@ type initialPublicationFixture struct {
 	keys         computer.KeyWrapper
 	worker       workergroup.HostPrincipal
 	logicalBytes int64
-	runtime      pgtype.UUID
+	instance     pgtype.UUID
 }
 
 func newInitialPublicationFixture(t *testing.T) initialPublicationFixture {
@@ -69,7 +69,7 @@ func newInitialPublicationFixture(t *testing.T) initialPublicationFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return initialPublicationFixture{Fixture: f, runtime: instance.ID, store: newTestUploadStore(t), keys: keys,
+	return initialPublicationFixture{Fixture: f, instance: instance.ID, store: newTestUploadStore(t), keys: keys,
 		worker: workergroup.HostPrincipal{HostID: f.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1}, logicalBytes: diskBytes}
 }
 
@@ -103,7 +103,7 @@ func inspectedPackDigest(inspection blockformat.ObjectInspection) string {
 func (f initialPublicationFixture) publishInitialVersion(t *testing.T, client *workerclient.Client, config oci.RuntimeConfig) (workerapi.ComputerKeyMaterial, disk.VersionRoot, workerapi.InitialComputerVersionResponse) {
 	t.Helper()
 	key, root, _ := f.certifyInitialRoot(t, client)
-	published, err := client.PublishInitialComputerVersion(t.Context(), workerapi.InitialComputerVersionRequest{ComputerInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 1, Root: root, Config: config})
+	published, err := client.PublishInitialComputerVersion(t.Context(), workerapi.InitialComputerVersionRequest{ComputerInstanceID: pgvalue.UUIDString(f.instance), DesiredVersion: 1, Root: root, Config: config})
 	if err != nil {
 		t.Fatalf("version publication: %v", err)
 	}
@@ -114,7 +114,7 @@ func (f initialPublicationFixture) publishInitialVersion(t *testing.T, client *w
 // uploads and certifies it, and returns the root with its object request.
 func (f initialPublicationFixture) certifyInitialRoot(t *testing.T, client *workerclient.Client) (workerapi.ComputerKeyMaterial, disk.VersionRoot, workerapi.InitialComputerObjectRequest) {
 	t.Helper()
-	runtime := pgvalue.UUIDString(f.runtime)
+	runtime := pgvalue.UUIDString(f.instance)
 	key, err := client.InitialComputerKey(t.Context(), workerapi.InitialComputerKeyRequest{ComputerInstanceID: runtime, DesiredVersion: 1})
 	if err != nil {
 		t.Fatalf("initial key: %v", err)
@@ -164,10 +164,10 @@ func TestInitialComputerPreparationOverHTTP(t *testing.T) {
 	client := f.client(t, f.serve(t))
 	key, root, published := f.publishInitialVersion(t, client, oci.RuntimeConfig{User: "root"})
 	var head string
-	if err := f.Pool.QueryRow(t.Context(), `SELECT c.head_disk_version_id::text FROM computers c JOIN computer_instances i ON i.computer_id=c.id WHERE i.id=$1`, f.runtime).Scan(&head); err != nil || head != published.VersionID {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT c.head_disk_version_id::text FROM computers c JOIN computer_instances i ON i.computer_id=c.id WHERE i.id=$1`, f.instance).Scan(&head); err != nil || head != published.VersionID {
 		t.Fatalf("published head=%s response=%s err=%v", head, published.VersionID, err)
 	}
-	source, err := client.ComputerSource(t.Context(), workerapi.ComputerSourceRequest{ComputerInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 1})
+	source, err := client.ComputerSource(t.Context(), workerapi.ComputerSourceRequest{ComputerInstanceID: pgvalue.UUIDString(f.instance), DesiredVersion: 1})
 	if err != nil {
 		t.Fatalf("source delivery: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestInitialComputerPreparationOverHTTP(t *testing.T) {
 	if source.VersionID != published.VersionID || source.Root != root || source.WriteKeyID != key.ID || len(source.Keys) != 1 || !bytes.Equal(source.Keys[0].Key, key.Key) {
 		t.Fatalf("source=%s root=%v write key=%s keys=%d", source.VersionID, source.Root == root, source.WriteKeyID, len(source.Keys))
 	}
-	if _, err := client.ComputerSource(t.Context(), workerapi.ComputerSourceRequest{ComputerInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 2}); err == nil {
+	if _, err := client.ComputerSource(t.Context(), workerapi.ComputerSourceRequest{ComputerInstanceID: pgvalue.UUIDString(f.instance), DesiredVersion: 2}); err == nil {
 		t.Fatal("stale source fence accepted")
 	}
 }
@@ -200,8 +200,8 @@ func TestComputerPreparationSourceTracksPublishedRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	specID := spec.ID
-	dbtest.MustExec(t, t.Context(), f.Pool, `WITH target AS (SELECT computer_id FROM computer_instances WHERE id=$1), updated AS (UPDATE computers SET computer_spec_id=$2 WHERE id=(SELECT computer_id FROM target)) UPDATE computer_instances SET computer_spec_id=$2 WHERE computer_id=(SELECT computer_id FROM target)`, f.runtime, specID)
-	read := func() workerapi.RuntimeComputerSource {
+	dbtest.MustExec(t, t.Context(), f.Pool, `WITH target AS (SELECT computer_id FROM computer_instances WHERE id=$1), updated AS (UPDATE computers SET computer_spec_id=$2 WHERE id=(SELECT computer_id FROM target)) UPDATE computer_instances SET computer_spec_id=$2 WHERE computer_id=(SELECT computer_id FROM target)`, f.instance, specID)
+	read := func() workerapi.InstanceComputerSource {
 		t.Helper()
 		rows, err := db.New(f.Pool).ListComputerInstanceReconcileTargets(t.Context(), db.ListComputerInstanceReconcileTargetsParams{
 			WorkerGroupID: pgvalue.UUID(f.worker.GroupID), WorkerHostID: pgvalue.UUID(f.worker.HostID),
@@ -213,7 +213,7 @@ func TestComputerPreparationSourceTracksPublishedRoot(t *testing.T) {
 		if len(rows) != 1 {
 			t.Fatalf("preparation rows: %d", len(rows))
 		}
-		source, err := projectRuntimeComputerSource(rows[0])
+		source, err := projectInstanceComputerSource(rows[0])
 		if err != nil {
 			t.Fatal(err)
 		}

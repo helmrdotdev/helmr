@@ -25,26 +25,26 @@ import (
 func TestStaleCheckoutReleaseCannotReleaseNewerClaim(t *testing.T) {
 	_, mount := testComputerMountArtifacts(t)
 	mount.ComputerID = "computer"
-	machines := computerPreparedMachines(t, mount, &closeTrackingRuntimeSession{})
-	machines.Backend = &cleanupRuntimeBackend{}
-	ref := preparedMachineRef{id: mount.ComputerInstanceID, epoch: mount.RuntimeEpoch}
+	machines := computerPreparedMachines(t, mount, &closeTrackingMachine{})
+	machines.Backend = &cleanupBackend{}
+	ref := preparedMachineRef{id: mount.ComputerInstanceID, epoch: mount.WorkerEpoch}
 	stale, _, ok := machines.checkout(t.Context(), mount)
 	if !ok {
 		t.Fatal("first checkout failed")
 	}
-	target := runtimeReservationTarget(ref.id, ref.epoch)
+	target := instanceReservationTarget(ref.id, ref.epoch)
 	target.Source.ComputerID = mount.ComputerID
 	target.Source.WriterGeneration = mount.WriterGeneration
-	target.Source.Computer = &workerapi.RuntimeComputerSource{VersionID: mount.Target.BaseComputerDiskVersionID}
-	if err := machines.reclaimFailedRuntimeTarget(t.Context(), &typedRuntimeClient{}, target); err != nil {
+	target.Source.Computer = &workerapi.InstanceComputerSource{VersionID: mount.Target.BaseComputerDiskVersionID}
+	if err := machines.reclaimFailedInstanceTarget(t.Context(), &typedInstanceClient{}, target); err != nil {
 		t.Fatal(err)
 	}
-	if machines.runtimeCheckedOut(ref.id, ref.epoch) || len(machines.Reservations.Snapshot().Reservations) != 0 {
+	if machines.instanceCheckedOut(ref.id, ref.epoch) || len(machines.Reservations.Snapshot().Reservations) != 0 {
 		t.Fatal("physical cleanup did not end the first claim")
 	}
 
 	// The same key is reserved and claimed again.
-	if err := machines.reserveRuntimeCapacity(target); err != nil {
+	if err := machines.reserveInstanceCapacity(target); err != nil {
 		t.Fatal(err)
 	}
 	key := computerInstanceIDFromComputerMount(mount)
@@ -52,8 +52,8 @@ func TestStaleCheckoutReleaseCannotReleaseNewerClaim(t *testing.T) {
 	ready.finish(nil)
 	machines.mu.Lock()
 	machines.entries[key] = []preparedMachineEntry{{
-		session: &closeTrackingRuntimeSession{}, machineKey: key, computerInstanceID: ref.id,
-		runtimeEpoch: ref.epoch, target: target, exit: newPreparedMachineSignal(), ready: ready,
+		machine: &closeTrackingMachine{}, machineKey: key, computerInstanceID: ref.id,
+		workerEpoch: ref.epoch, target: target, exit: newPreparedMachineSignal(), ready: ready,
 	}}
 	machines.mu.Unlock()
 	current, _, ok := machines.checkout(t.Context(), mount)
@@ -65,7 +65,7 @@ func TestStaleCheckoutReleaseCannotReleaseNewerClaim(t *testing.T) {
 		t.Fatalf("stale release = %v", err)
 	}
 	stale.Relinquish()
-	if !machines.runtimeCheckedOut(ref.id, ref.epoch) {
+	if !machines.instanceCheckedOut(ref.id, ref.epoch) {
 		t.Fatal("stale handle ended the newer claim")
 	}
 	if got := len(machines.Reservations.Snapshot().Reservations); got != 1 {
@@ -74,7 +74,7 @@ func TestStaleCheckoutReleaseCannotReleaseNewerClaim(t *testing.T) {
 	if err := current.Release(); err != nil {
 		t.Fatal(err)
 	}
-	if machines.runtimeCheckedOut(ref.id, ref.epoch) || len(machines.Reservations.Snapshot().Reservations) != 0 {
+	if machines.instanceCheckedOut(ref.id, ref.epoch) || len(machines.Reservations.Snapshot().Reservations) != 0 {
 		t.Fatal("current handle did not release its own claim")
 	}
 }
@@ -82,7 +82,7 @@ func TestStaleCheckoutReleaseCannotReleaseNewerClaim(t *testing.T) {
 // capturedServeMachine is a served prepared machine that can also produce a
 // checkpoint and live save cuts. Closing it ends Wait, as a stopped VM does.
 type capturedServeMachine struct {
-	*serverTestSession
+	*serverTestMachine
 	artifact    vm.SnapshotArtifact
 	save        computerSaveCapture
 	failSaves   atomic.Bool
@@ -99,7 +99,7 @@ func (m *capturedServeMachine) Close(ctx context.Context) error {
 	if m.beforeClose != nil {
 		m.beforeClose()
 	}
-	err := m.serverTestSession.Close(ctx)
+	err := m.serverTestMachine.Close(ctx)
 	m.exit()
 	return err
 }
@@ -141,7 +141,7 @@ func (m *capturedServeMachine) isClosed() bool {
 }
 
 type capturedServe struct {
-	target   workerapi.RuntimeReconcileTarget
+	target   workerapi.InstanceReconcileTarget
 	machine  *capturedServeMachine
 	machines *PreparedMachines
 	mounts   *Mounts
@@ -177,7 +177,7 @@ func startCapturedServe(ctx context.Context, t *testing.T, machine *capturedServ
 	}
 	store, mount := testComputerMountArtifacts(t)
 	target := checkpointCaptureTarget(members)
-	target.ID, target.WorkerEpoch = mount.ComputerInstanceID, mount.RuntimeEpoch
+	target.ID, target.WorkerEpoch = mount.ComputerInstanceID, mount.WorkerEpoch
 	mount.OrgID = uuid.NewV7().String()
 	mount.ComputerID = target.Source.ComputerID
 	mount.WriterGeneration = target.Source.WriterGeneration
@@ -186,29 +186,29 @@ func startCapturedServe(ctx context.Context, t *testing.T, machine *capturedServ
 	preparedClient, preparedServer := net.Pipe()
 	t.Cleanup(func() { _ = preparedServer.Close() })
 	go acknowledgePreparedComputerMount(t, preparedServer, mount, mount.ComputerInstanceID)
-	machine.serverTestSession = &serverTestSession{streams: []io.ReadWriteCloser{preparedClient}, operation: checkpointFreezeStream(t, target)}
+	machine.serverTestMachine = &serverTestMachine{streams: []io.ReadWriteCloser{preparedClient}, operation: checkpointFreezeStream(t, target)}
 	machine.artifact = checkpointArtifact(t)
 	machine.exited = make(chan struct{})
 
-	prepared := runtimeReservationTarget(target.ID, target.WorkerEpoch)
+	prepared := instanceReservationTarget(target.ID, target.WorkerEpoch)
 	prepared.Source.ComputerID = mount.ComputerID
 	prepared.Source.WriterGeneration = mount.WriterGeneration
-	prepared.Source.Computer = &workerapi.RuntimeComputerSource{VersionID: mount.Target.BaseComputerDiskVersionID}
+	prepared.Source.Computer = &workerapi.InstanceComputerSource{VersionID: mount.Target.BaseComputerDiskVersionID}
 	machines := NewPreparedMachines(nil, nil, 1, nil)
 	ledger, err := reservation.New(reservation.Vector{CPUMillis: 2000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 4 << 30, VMSlots: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
 	machines.Reservations = ledger
-	if err := machines.reserveRuntimeCapacity(prepared); err != nil {
+	if err := machines.reserveInstanceCapacity(prepared); err != nil {
 		t.Fatal(err)
 	}
 	key := computerInstanceIDFromComputerMount(mount)
 	ready := newPreparedMachineSignal()
 	ready.finish(nil)
 	machines.entries[key] = []preparedMachineEntry{{
-		session: machine, machineKey: key, computerInstanceID: target.ID,
-		runtimeEpoch: target.WorkerEpoch, target: prepared,
+		machine: machine, machineKey: key, computerInstanceID: target.ID,
+		workerEpoch: target.WorkerEpoch, target: prepared,
 		exit: newPreparedMachineSignal(), ready: ready,
 	}}
 	captures := &checkpointReconcileClient{target: target}
@@ -269,7 +269,7 @@ func TestCaptureExclusionEndsMountAsCheckpointRelease(t *testing.T) {
 		settled <- pause.Settle(nil)
 	}()
 
-	if err := s.machines.captureRuntimeTarget(ctx, s.captures, s.target); err != nil {
+	if err := s.machines.captureInstanceTarget(ctx, s.captures, s.target); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.awaitServed(ctx, t); err != nil {
@@ -292,7 +292,7 @@ func TestCaptureExclusionEndsMountAsCheckpointRelease(t *testing.T) {
 	if len(s.client.closed) != 0 || len(s.client.failures) != 0 || len(s.captures.instanceFailures) != 0 {
 		t.Fatalf("server closed=%+v server failures=%+v capture failures=%+v", s.client.closed, s.client.failures, s.captures.instanceFailures)
 	}
-	if s.machines.runtimeCheckedOut(s.target.ID, s.target.WorkerEpoch) || len(s.machines.Reservations.Snapshot().Reservations) != 0 {
+	if s.machines.instanceCheckedOut(s.target.ID, s.target.WorkerEpoch) || len(s.machines.Reservations.Snapshot().Reservations) != 0 {
 		t.Fatal("capture did not release the taken-over claim")
 	}
 }
@@ -398,7 +398,7 @@ func TestCaptureReleaseJoinsSaveOwnerBeforePhysicalClose(t *testing.T) {
 		t.Fatal("save did not reach its adoption acknowledgement")
 	}
 
-	if err := s.machines.captureRuntimeTarget(ctx, s.captures, s.target); err != nil {
+	if err := s.machines.captureInstanceTarget(ctx, s.captures, s.target); err != nil {
 		t.Fatal(err)
 	}
 	served := s.awaitServed(ctx, t)
@@ -507,7 +507,7 @@ func TestServerDefersToCaptureAfterTakeover(t *testing.T) {
 					t.Error("server did not end after capture took over its claim")
 				}
 			}
-			captureErr := s.machines.captureRuntimeTarget(ctx, s.captures, s.target)
+			captureErr := s.machines.captureInstanceTarget(ctx, s.captures, s.target)
 			if event == "save fails" {
 				// The failed cut cannot be settled, so the managed release reports
 				// it and capture keeps the claim for reconciliation.
@@ -532,7 +532,7 @@ func TestServerDefersToCaptureAfterTakeover(t *testing.T) {
 			if s.captures.ready != 1 || s.captures.closed != 1 || len(s.captures.instanceFailures) != 0 {
 				t.Fatalf("capture ready=%d closed=%d failures=%+v", s.captures.ready, s.captures.closed, s.captures.instanceFailures)
 			}
-			if s.machines.runtimeCheckedOut(ref.id, ref.epoch) || len(s.machines.Reservations.Snapshot().Reservations) != 0 {
+			if s.machines.instanceCheckedOut(ref.id, ref.epoch) || len(s.machines.Reservations.Snapshot().Reservations) != 0 {
 				t.Fatal("capture did not release the claim")
 			}
 		})
@@ -551,7 +551,7 @@ func TestCaptureOwnsFailedSourceRelease(t *testing.T) {
 	machine.mu.Lock()
 	machine.closeErr = stopErr
 	machine.mu.Unlock()
-	if err := s.machines.captureRuntimeTarget(ctx, s.captures, s.target); !errors.Is(err, stopErr) {
+	if err := s.machines.captureInstanceTarget(ctx, s.captures, s.target); !errors.Is(err, stopErr) {
 		t.Fatalf("capture = %v, want source release failure", err)
 	}
 	if err := s.awaitServed(ctx, t); err != nil {
@@ -613,7 +613,7 @@ func TestServerTeardownRefusesCaptureTakeover(t *testing.T) {
 				}()
 			}
 			captured := make(chan error, 1)
-			go func() { captured <- s.machines.captureRuntimeTarget(ctx, s.captures, s.target) }()
+			go func() { captured <- s.machines.captureInstanceTarget(ctx, s.captures, s.target) }()
 			select {
 			case err := <-captured:
 				if err == nil {
@@ -635,7 +635,7 @@ func TestServerTeardownRefusesCaptureTakeover(t *testing.T) {
 			if s.captures.registered != 0 || s.captures.ready != 0 || s.captures.closed != 0 {
 				t.Fatalf("capture acted on the source: %+v", s.captures)
 			}
-			if machine.closeCount() != 1 || s.machines.runtimeCheckedOut(s.target.ID, s.target.WorkerEpoch) || len(s.machines.Reservations.Snapshot().Reservations) != 0 {
+			if machine.closeCount() != 1 || s.machines.instanceCheckedOut(s.target.ID, s.target.WorkerEpoch) || len(s.machines.Reservations.Snapshot().Reservations) != 0 {
 				t.Fatalf("server teardown incomplete: closes=%d", machine.closeCount())
 			}
 		})
@@ -664,17 +664,17 @@ func TestClaimReleaseHasOneOwner(t *testing.T) {
 		t.Run(first+" first", func(t *testing.T) {
 			_, mount := testComputerMountArtifacts(t)
 			mount.ComputerID = "computer"
-			machines := computerPreparedMachines(t, mount, &closeTrackingRuntimeSession{})
+			machines := computerPreparedMachines(t, mount, &closeTrackingMachine{})
 			holder, _, ok := machines.checkout(t.Context(), mount)
 			if !ok {
 				t.Fatal("checkout failed")
 			}
-			ref := preparedMachineRef{id: mount.ComputerInstanceID, epoch: mount.RuntimeEpoch}
+			ref := preparedMachineRef{id: mount.ComputerInstanceID, epoch: mount.WorkerEpoch}
 			device := &barrierComputerDevice{entered: make(chan struct{}, 2), release: make(chan struct{})}
 			machines.computerDevices = map[preparedMachineRef]vm.ComputerDevice{ref: device}
 			held, reclaimed := make(chan error, 1), make(chan error, 1)
 			releaseHolder := func() { held <- holder.Release() }
-			reclaim := func() { reclaimed <- machines.releaseRuntimeAfterPhysicalCleanup(t.Context(), ref.id, ref.epoch) }
+			reclaim := func() { reclaimed <- machines.releaseInstanceAfterPhysicalCleanup(t.Context(), ref.id, ref.epoch) }
 			if first == "holder" {
 				go releaseHolder()
 				<-device.entered
@@ -693,7 +693,7 @@ func TestClaimReleaseHasOneOwner(t *testing.T) {
 					t.Fatal("holder began teardown of a claim physical cleanup is releasing")
 				}
 				holder.Relinquish()
-				if !machines.runtimeCheckedOut(ref.id, ref.epoch) {
+				if !machines.instanceCheckedOut(ref.id, ref.epoch) {
 					t.Fatal("holder relinquished a claim physical cleanup is releasing")
 				}
 				go releaseHolder()
@@ -716,22 +716,22 @@ func TestClaimReleaseHasOneOwner(t *testing.T) {
 			if err := <-reclaimed; err != nil {
 				t.Fatal(err)
 			}
-			if device.closes.Load() != 1 || machines.runtimeCheckedOut(ref.id, ref.epoch) || len(machines.Reservations.Snapshot().Reservations) != 0 {
+			if device.closes.Load() != 1 || machines.instanceCheckedOut(ref.id, ref.epoch) || len(machines.Reservations.Snapshot().Reservations) != 0 {
 				t.Fatalf("device closes=%d", device.closes.Load())
 			}
 
-			target := runtimeReservationTarget(ref.id, ref.epoch)
+			target := instanceReservationTarget(ref.id, ref.epoch)
 			target.Source.ComputerID = mount.ComputerID
 			target.Source.WriterGeneration = mount.WriterGeneration
-			target.Source.Computer = &workerapi.RuntimeComputerSource{VersionID: mount.Target.BaseComputerDiskVersionID}
-			if err := machines.reserveRuntimeCapacity(target); err != nil {
+			target.Source.Computer = &workerapi.InstanceComputerSource{VersionID: mount.Target.BaseComputerDiskVersionID}
+			if err := machines.reserveInstanceCapacity(target); err != nil {
 				t.Fatal(err)
 			}
 			key := computerInstanceIDFromComputerMount(mount)
 			ready := newPreparedMachineSignal()
 			ready.finish(nil)
 			machines.mu.Lock()
-			machines.entries[key] = []preparedMachineEntry{{session: &closeTrackingRuntimeSession{}, machineKey: key, computerInstanceID: ref.id, runtimeEpoch: ref.epoch, target: target, exit: newPreparedMachineSignal(), ready: ready}}
+			machines.entries[key] = []preparedMachineEntry{{machine: &closeTrackingMachine{}, machineKey: key, computerInstanceID: ref.id, workerEpoch: ref.epoch, target: target, exit: newPreparedMachineSignal(), ready: ready}}
 			machines.mu.Unlock()
 			if _, _, ok := machines.checkout(t.Context(), mount); !ok {
 				t.Fatal("key reuse checkout failed")
@@ -739,7 +739,7 @@ func TestClaimReleaseHasOneOwner(t *testing.T) {
 			if err := holder.Release(); err != nil {
 				t.Fatal(err)
 			}
-			if !machines.runtimeCheckedOut(ref.id, ref.epoch) || len(machines.Reservations.Snapshot().Reservations) != 1 {
+			if !machines.instanceCheckedOut(ref.id, ref.epoch) || len(machines.Reservations.Snapshot().Reservations) != 1 {
 				t.Fatal("a finished releaser touched the later claim")
 			}
 		})
@@ -753,18 +753,18 @@ func TestPhysicalCleanupReleaseFailure(t *testing.T) {
 	t.Run("server claim ends", func(t *testing.T) {
 		_, mount := testComputerMountArtifacts(t)
 		mount.ComputerID = "computer"
-		machines := computerPreparedMachines(t, mount, &closeTrackingRuntimeSession{})
+		machines := computerPreparedMachines(t, mount, &closeTrackingMachine{})
 		holder, _, ok := machines.checkout(t.Context(), mount)
 		if !ok {
 			t.Fatal("checkout failed")
 		}
-		ref := preparedMachineRef{id: mount.ComputerInstanceID, epoch: mount.RuntimeEpoch}
+		ref := preparedMachineRef{id: mount.ComputerInstanceID, epoch: mount.WorkerEpoch}
 		device := &countingCloseComputerDevice{err: errors.New("device cleanup failed")}
 		machines.computerDevices = map[preparedMachineRef]vm.ComputerDevice{ref: device}
-		if err := machines.releaseRuntimeAfterPhysicalCleanup(t.Context(), ref.id, ref.epoch); !errors.Is(err, device.err) {
+		if err := machines.releaseInstanceAfterPhysicalCleanup(t.Context(), ref.id, ref.epoch); !errors.Is(err, device.err) {
 			t.Fatalf("release = %v", err)
 		}
-		if machines.runtimeCheckedOut(ref.id, ref.epoch) || len(machines.Reservations.Snapshot().Reservations) != 1 {
+		if machines.instanceCheckedOut(ref.id, ref.epoch) || len(machines.Reservations.Snapshot().Reservations) != 1 {
 			t.Fatal("failed release must end the claim and keep its resources recorded")
 		}
 		if err := holder.Release(); err != nil || device.closeCount() != 1 {
@@ -773,9 +773,9 @@ func TestPhysicalCleanupReleaseFailure(t *testing.T) {
 		device.mu.Lock()
 		device.err = nil
 		device.mu.Unlock()
-		machines.Backend = &cleanupRuntimeBackend{}
-		control := &typedRuntimeClient{}
-		if err := machines.stopRuntimeTarget(t.Context(), control, runtimeReservationTarget(ref.id, ref.epoch)); err != nil {
+		machines.Backend = &cleanupBackend{}
+		control := &typedInstanceClient{}
+		if err := machines.stopInstanceTarget(t.Context(), control, instanceReservationTarget(ref.id, ref.epoch)); err != nil {
 			t.Fatal(err)
 		}
 		if len(control.closed) != 1 || len(machines.Reservations.Snapshot().Reservations) != 0 {
@@ -783,10 +783,10 @@ func TestPhysicalCleanupReleaseFailure(t *testing.T) {
 		}
 	})
 	t.Run("capture claim retained", func(t *testing.T) {
-		target := runtimeReservationTarget("019c10d5-a6f7-7af1-8f5f-000000000519", 7)
+		target := instanceReservationTarget("019c10d5-a6f7-7af1-8f5f-000000000519", 7)
 		machines := NewPreparedMachines(nil, nil, 1, nil)
 		machines.Reservations = newPreparedMachineReservations(t, 1)
-		if err := machines.reserveRuntimeCapacity(target); err != nil {
+		if err := machines.reserveInstanceCapacity(target); err != nil {
 			t.Fatal(err)
 		}
 		ref := preparedMachineRef{id: target.ID, epoch: target.WorkerEpoch}
@@ -795,17 +795,17 @@ func TestPhysicalCleanupReleaseFailure(t *testing.T) {
 		claim := machines.claimLocked(ref, captureClaim, preparedMachineEntry{})
 		claim.checkpointer = &computerCheckpointer{pendingCleanup: func() error { return cleanupErr }}
 		machines.mu.Unlock()
-		if err := machines.releaseRuntimeAfterPhysicalCleanup(t.Context(), ref.id, ref.epoch); !errors.Is(err, cleanupErr) {
+		if err := machines.releaseInstanceAfterPhysicalCleanup(t.Context(), ref.id, ref.epoch); !errors.Is(err, cleanupErr) {
 			t.Fatalf("release = %v", err)
 		}
 		if !captureRetained(machines, ref) || len(machines.Reservations.Snapshot().Reservations) != 1 {
 			t.Fatal("failed capture release lost its claim")
 		}
 		cleanupErr = nil
-		if err := machines.releaseRuntimeAfterPhysicalCleanup(t.Context(), ref.id, ref.epoch); err != nil {
+		if err := machines.releaseInstanceAfterPhysicalCleanup(t.Context(), ref.id, ref.epoch); err != nil {
 			t.Fatal(err)
 		}
-		if machines.runtimeCheckedOut(ref.id, ref.epoch) || len(machines.Reservations.Snapshot().Reservations) != 0 {
+		if machines.instanceCheckedOut(ref.id, ref.epoch) || len(machines.Reservations.Snapshot().Reservations) != 0 {
 			t.Fatal("retried capture release did not finish")
 		}
 	})
@@ -818,23 +818,23 @@ func TestUnstartedCaptureReturnsReadyMachine(t *testing.T) {
 		name    string
 		members int
 		match   bool
-		session func(*testing.T, workerapi.RuntimeReconcileTarget) liveCaptureMachine
+		session func(*testing.T, workerapi.InstanceReconcileTarget) liveCaptureMachine
 	}{
-		{name: "source mismatch", session: func(t *testing.T, target workerapi.RuntimeReconcileTarget) liveCaptureMachine {
-			return &checkpointSession{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
+		{name: "source mismatch", session: func(t *testing.T, target workerapi.InstanceReconcileTarget) liveCaptureMachine {
+			return &checkpointMachine{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
 		}},
-		{name: "not checkpointable", match: true, session: func(*testing.T, workerapi.RuntimeReconcileTarget) liveCaptureMachine {
-			return &closeTrackingRuntimeSession{}
+		{name: "not checkpointable", match: true, session: func(*testing.T, workerapi.InstanceReconcileTarget) liveCaptureMachine {
+			return &closeTrackingMachine{}
 		}},
-		{name: "member not waiting", members: 1, match: true, session: func(t *testing.T, target workerapi.RuntimeReconcileTarget) liveCaptureMachine {
-			return &checkpointSession{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
+		{name: "member not waiting", members: 1, match: true, session: func(t *testing.T, target workerapi.InstanceReconcileTarget) liveCaptureMachine {
+			return &checkpointMachine{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, mount := testComputerMountArtifacts(t)
 			mount.ComputerID = "computer"
 			target := checkpointCaptureTarget(tc.members)
-			target.ID, target.WorkerEpoch = mount.ComputerInstanceID, mount.RuntimeEpoch
+			target.ID, target.WorkerEpoch = mount.ComputerInstanceID, mount.WorkerEpoch
 			if tc.match {
 				target.Source.ComputerID = mount.ComputerID
 			}
@@ -846,10 +846,10 @@ func TestUnstartedCaptureReturnsReadyMachine(t *testing.T) {
 			machines.CheckpointEncryptor = testCheckpointEncryptor(t)
 			machines.ComputerObjects = &captureStore{}
 			machines.TempDir = t.TempDir()
-			if err := machines.captureRuntimeTarget(t.Context(), client, target); err == nil {
+			if err := machines.captureInstanceTarget(t.Context(), client, target); err == nil {
 				t.Fatal("capture unexpectedly succeeded")
 			}
-			if machines.runtimeCheckedOut(target.ID, target.WorkerEpoch) {
+			if machines.instanceCheckedOut(target.ID, target.WorkerEpoch) {
 				t.Fatal("unstarted capture kept the machine claimed")
 			}
 			if _, _, ok := machines.checkout(t.Context(), mount); !ok {
@@ -915,7 +915,7 @@ func (c *vmBoundSave) Collect(context.Context, int) (int64, error) { return 0, n
 type retainedTestDevice struct {
 	vm.ComputerDevice
 	t        *testing.T
-	saves    *runtimeComputerSaves
+	saves    *instanceComputerSaves
 	closed   chan struct{}
 	once     sync.Once
 	released atomic.Int32
@@ -981,9 +981,9 @@ func (c *deviceBoundSave) Collect(context.Context, int) (int64, error) { return 
 
 type retainedCapture struct {
 	machines *PreparedMachines
-	target   workerapi.RuntimeReconcileTarget
+	target   workerapi.InstanceReconcileTarget
 	ref      preparedMachineRef
-	raw      *closeTrackingRuntimeSession
+	raw      *closeTrackingMachine
 	mount    *instanceMount
 	device   *retainedTestDevice
 	backend  *deviceStopBackend
@@ -994,9 +994,9 @@ type retainedCapture struct {
 // whose mount's save producer is uploading on the VM's device.
 func newRetainedCapture(t *testing.T, hold <-chan struct{}) *retainedCapture {
 	t.Helper()
-	target := runtimeReservationTarget("019c10d5-a6f7-7af1-8f5f-000000000521", 7)
+	target := instanceReservationTarget("019c10d5-a6f7-7af1-8f5f-000000000521", 7)
 	target.DesiredVersion, target.ObservedVersion = 3, 2
-	raw := &closeTrackingRuntimeSession{}
+	raw := &closeTrackingMachine{}
 	mount := newInstanceMount(raw)
 	device := &retainedTestDevice{t: t, saves: &mount.saves, closed: make(chan struct{})}
 	save := &deviceBoundSave{device: device, hold: hold}
@@ -1016,13 +1016,13 @@ func newRetainedCapture(t *testing.T, hold <-chan struct{}) *retainedCapture {
 	machines := NewPreparedMachines(backend, nil, 1, nil)
 	machines.sourceReleaseTimeout = 50 * time.Millisecond
 	machines.Reservations = newPreparedMachineReservations(t, 1)
-	if err := machines.reserveRuntimeCapacity(target); err != nil {
+	if err := machines.reserveInstanceCapacity(target); err != nil {
 		t.Fatal(err)
 	}
 	ref := preparedMachineRef{id: target.ID, epoch: target.WorkerEpoch}
 	machines.computerDevices = map[preparedMachineRef]vm.ComputerDevice{ref: device}
 	machines.mu.Lock()
-	claim := machines.claimLocked(ref, captureClaim, preparedMachineEntry{target: target, session: raw})
+	claim := machines.claimLocked(ref, captureClaim, preparedMachineEntry{target: target, machine: raw})
 	claim.mount = mount
 	claim.checkpointer = &computerCheckpointer{mount: mount}
 	machines.mu.Unlock()
@@ -1031,39 +1031,39 @@ func newRetainedCapture(t *testing.T, hold <-chan struct{}) *retainedCapture {
 
 // escalationRuntimeClient serves a Close target once, then, after the close
 // is reported, a Reclaim target until it is reported.
-type escalationRuntimeClient struct {
+type escalationInstanceClient struct {
 	mu             sync.Mutex
-	closeTarget    workerapi.RuntimeReconcileTarget
-	reclaimTarget  workerapi.RuntimeReconcileTarget
+	closeTarget    workerapi.InstanceReconcileTarget
+	reclaimTarget  workerapi.InstanceReconcileTarget
 	closeServed    bool
 	closed, failed []workerapi.ComputerInstanceStateRequest
 	onClosed       func()
 	reclaimed      chan struct{}
 }
 
-func (c *escalationRuntimeClient) ListRuntimeReconcileTargets(context.Context) (workerapi.RuntimeReconcileResponse, error) {
+func (c *escalationInstanceClient) ListInstanceReconcileTargets(context.Context) (workerapi.InstanceReconcileResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	switch {
 	case !c.closeServed:
 		c.closeServed = true
-		return workerapi.RuntimeReconcileResponse{Items: []workerapi.RuntimeReconcileTarget{c.closeTarget}}, nil
+		return workerapi.InstanceReconcileResponse{Items: []workerapi.InstanceReconcileTarget{c.closeTarget}}, nil
 	case len(c.closed) > 0 && len(c.failed) == 0:
-		return workerapi.RuntimeReconcileResponse{Items: []workerapi.RuntimeReconcileTarget{c.reclaimTarget}}, nil
+		return workerapi.InstanceReconcileResponse{Items: []workerapi.InstanceReconcileTarget{c.reclaimTarget}}, nil
 	}
-	return workerapi.RuntimeReconcileResponse{Items: []workerapi.RuntimeReconcileTarget{}}, nil
+	return workerapi.InstanceReconcileResponse{Items: []workerapi.InstanceReconcileTarget{}}, nil
 }
-func (c *escalationRuntimeClient) MarkComputerInstanceReady(context.Context, workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
+func (c *escalationInstanceClient) MarkComputerInstanceReady(context.Context, workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
 	return workerapi.ComputerInstance{}, errors.New("unexpected ready")
 }
-func (c *escalationRuntimeClient) MarkComputerInstanceClosed(_ context.Context, r workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
+func (c *escalationInstanceClient) MarkComputerInstanceClosed(_ context.Context, r workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
 	c.onClosed()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.closed = append(c.closed, r)
 	return workerapi.ComputerInstance{ID: r.ID}, nil
 }
-func (c *escalationRuntimeClient) MarkComputerInstanceFailed(_ context.Context, r workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
+func (c *escalationInstanceClient) MarkComputerInstanceFailed(_ context.Context, r workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.failed = append(c.failed, r)
@@ -1086,19 +1086,19 @@ func TestCaptureSourceReleaseEscalatesToPhysicalCleanup(t *testing.T) {
 	close(hold)
 	r := newRetainedCapture(t, hold)
 	closeTarget := r.target
-	closeTarget.Action = workerapi.RuntimeReconcileClose
+	closeTarget.Action = workerapi.InstanceReconcileClose
 	reclaimTarget := r.target
 	reclaimTarget.DesiredVersion++
-	reclaimTarget.Action = workerapi.RuntimeReconcileReclaim
+	reclaimTarget.Action = workerapi.InstanceReconcileReclaim
 	var cleanupsAtClose int32
 	var reservationsAtClose int
-	client := &escalationRuntimeClient{closeTarget: closeTarget, reclaimTarget: reclaimTarget, reclaimed: make(chan struct{}), onClosed: func() {
+	client := &escalationInstanceClient{closeTarget: closeTarget, reclaimTarget: reclaimTarget, reclaimed: make(chan struct{}), onClosed: func() {
 		cleanupsAtClose = r.backend.cleaned.Load()
 		reservationsAtClose = len(r.machines.Reservations.Snapshot().Reservations)
 	}}
 	reconcileCtx, stopReconcile := context.WithCancel(ctx)
 	reconciled := make(chan error, 1)
-	go func() { reconciled <- r.machines.ReconcileDesiredRuntimes(reconcileCtx, client) }()
+	go func() { reconciled <- r.machines.ReconcileDesiredInstances(reconcileCtx, client) }()
 	select {
 	case <-client.reclaimed:
 	case <-ctx.Done():
@@ -1110,7 +1110,7 @@ func TestCaptureSourceReleaseEscalatesToPhysicalCleanup(t *testing.T) {
 	}
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if len(client.closed) != 1 || client.closed[0].CleanupProof == nil || client.closed[0].CleanupProof.Method != workerapi.RuntimeCleanupHostReconciled {
+	if len(client.closed) != 1 || client.closed[0].CleanupProof == nil || client.closed[0].CleanupProof.Method != workerapi.InstanceCleanupHostReconciled {
 		t.Fatalf("closed = %+v, want one host-reconciled closure", client.closed)
 	}
 	if !r.save.observed.Load() {
@@ -1119,7 +1119,7 @@ func TestCaptureSourceReleaseEscalatesToPhysicalCleanup(t *testing.T) {
 	if cleanupsAtClose != 1 || reservationsAtClose != 0 || r.device.released.Load() != 1 || r.raw.closed != 0 {
 		t.Fatalf("at close: cleanups=%d reservations=%d; device releases=%d machine closes=%d", cleanupsAtClose, reservationsAtClose, r.device.released.Load(), r.raw.closed)
 	}
-	if !r.mount.saves.joined() || r.machines.runtimeCheckedOut(r.ref.id, r.ref.epoch) {
+	if !r.mount.saves.joined() || r.machines.instanceCheckedOut(r.ref.id, r.ref.epoch) {
 		t.Fatal("escalation left the save owner or the claim behind")
 	}
 }
@@ -1130,32 +1130,32 @@ func TestCaptureSourceReleaseEscalatesToPhysicalCleanup(t *testing.T) {
 func TestReclaimJoinsSaveOwnerBeforeFinalization(t *testing.T) {
 	hold := make(chan struct{})
 	r := newRetainedCapture(t, hold)
-	client := &typedRuntimeClient{}
+	client := &typedInstanceClient{}
 	closeTarget := r.target
-	closeTarget.Action = workerapi.RuntimeReconcileClose
-	if err := r.machines.stopRuntimeTarget(t.Context(), client, closeTarget); err == nil {
+	closeTarget.Action = workerapi.InstanceReconcileClose
+	if err := r.machines.stopInstanceTarget(t.Context(), client, closeTarget); err == nil {
 		t.Fatal("close finalized while the save owner still runs")
 	}
 	reclaimTarget := r.target
 	reclaimTarget.DesiredVersion++
-	reclaimTarget.Action = workerapi.RuntimeReconcileReclaim
-	if err := r.machines.reclaimFailedRuntimeTarget(t.Context(), client, reclaimTarget); err == nil {
+	reclaimTarget.Action = workerapi.InstanceReconcileReclaim
+	if err := r.machines.reclaimFailedInstanceTarget(t.Context(), client, reclaimTarget); err == nil {
 		t.Fatal("reclaim finalized while the save owner still runs")
 	}
 	if !r.save.observed.Load() {
 		t.Fatal("physical cleanup did not close the device the producer uses")
 	}
-	if !r.machines.runtimeCheckedOut(r.ref.id, r.ref.epoch) || len(r.machines.Reservations.Snapshot().Reservations) != 1 || r.device.released.Load() != 0 || len(client.closed) != 0 || len(client.failed) != 0 {
+	if !r.machines.instanceCheckedOut(r.ref.id, r.ref.epoch) || len(r.machines.Reservations.Snapshot().Reservations) != 1 || r.device.released.Load() != 0 || len(client.closed) != 0 || len(client.failed) != 0 {
 		t.Fatalf("finalized or reported while the save owner runs: closed=%d failed=%d", len(client.closed), len(client.failed))
 	}
 	close(hold)
-	if err := r.machines.reclaimFailedRuntimeTarget(t.Context(), client, reclaimTarget); err != nil {
+	if err := r.machines.reclaimFailedInstanceTarget(t.Context(), client, reclaimTarget); err != nil {
 		t.Fatal(err)
 	}
-	if len(client.failed) != 1 || client.failed[0].CleanupProof == nil || client.failed[0].CleanupProof.Method != workerapi.RuntimeCleanupHostReconciled {
+	if len(client.failed) != 1 || client.failed[0].CleanupProof == nil || client.failed[0].CleanupProof.Method != workerapi.InstanceCleanupHostReconciled {
 		t.Fatalf("failed = %+v, want one host-reconciled report", client.failed)
 	}
-	if r.machines.runtimeCheckedOut(r.ref.id, r.ref.epoch) || len(r.machines.Reservations.Snapshot().Reservations) != 0 || r.device.released.Load() != 1 || len(client.closed) != 0 {
+	if r.machines.instanceCheckedOut(r.ref.id, r.ref.epoch) || len(r.machines.Reservations.Snapshot().Reservations) != 0 || r.device.released.Load() != 1 || len(client.closed) != 0 {
 		t.Fatal("reclaim did not finalize exactly once")
 	}
 }
@@ -1180,10 +1180,10 @@ func TestCaptureExclusionEscalatesWhenSaveOwnerWaitsOnVM(t *testing.T) {
 	backend := &vmStopBackend{stopped: stopped, onStop: machine.exit}
 	s.machines.Backend = backend
 	s.machines.sourceReleaseTimeout = 50 * time.Millisecond
-	if err := s.machines.captureRuntimeTarget(ctx, s.captures, s.target); err != nil {
+	if err := s.machines.captureInstanceTarget(ctx, s.captures, s.target); err != nil {
 		t.Fatal(err)
 	}
-	if s.captures.ready != 1 || s.captures.closed != 1 || s.captures.closedProof != workerapi.RuntimeCleanupHostReconciled {
+	if s.captures.ready != 1 || s.captures.closed != 1 || s.captures.closedProof != workerapi.InstanceCleanupHostReconciled {
 		t.Fatalf("ready=%d closed=%d proof=%q", s.captures.ready, s.captures.closed, s.captures.closedProof)
 	}
 	if backend.cleanups() != 1 || machine.closeCount() != 0 {
@@ -1195,7 +1195,7 @@ func TestCaptureExclusionEscalatesWhenSaveOwnerWaitsOnVM(t *testing.T) {
 	if len(s.client.failures) != 0 || len(s.client.closed) != 0 {
 		t.Fatalf("server failures=%+v closed=%+v", s.client.failures, s.client.closed)
 	}
-	if s.machines.runtimeCheckedOut(s.target.ID, s.target.WorkerEpoch) || len(s.machines.Reservations.Snapshot().Reservations) != 0 {
+	if s.machines.instanceCheckedOut(s.target.ID, s.target.WorkerEpoch) || len(s.machines.Reservations.Snapshot().Reservations) != 0 {
 		t.Fatal("escalated exclusion did not release the claim")
 	}
 }
@@ -1208,12 +1208,12 @@ func TestUnstartedCaptureCleansUpUnreturnableMachine(t *testing.T) {
 		t.Run(reason, func(t *testing.T) {
 			_, mount := testComputerMountArtifacts(t)
 			mount.ComputerID = "computer"
-			session := &closeTrackingRuntimeSession{}
-			machines := computerPreparedMachines(t, mount, session)
-			instances := &typedRuntimeClient{}
+			machine := &closeTrackingMachine{}
+			machines := computerPreparedMachines(t, mount, machine)
+			instances := &typedInstanceClient{}
 			machines.ComputerInstances = instances
 			target := checkpointCaptureTarget(0)
-			target.ID, target.WorkerEpoch = mount.ComputerInstanceID, mount.RuntimeEpoch
+			target.ID, target.WorkerEpoch = mount.ComputerInstanceID, mount.WorkerEpoch
 			client := &checkpointReconcileClient{target: target}
 			machines.ComputerCaptures = &CaptureRuns{}
 			machines.Checkpoints = client
@@ -1231,7 +1231,7 @@ func TestUnstartedCaptureCleansUpUnreturnableMachine(t *testing.T) {
 				exit.finish(errors.New("VM exited"))
 			}
 			// The source mismatch ends capture before it takes over the machine.
-			if err := machines.captureRuntimeTarget(t.Context(), client, target); err == nil {
+			if err := machines.captureInstanceTarget(t.Context(), client, target); err == nil {
 				t.Fatal("capture unexpectedly succeeded")
 			}
 			if err := machines.waitForActivity(t.Context()); err != nil {
@@ -1240,11 +1240,11 @@ func TestUnstartedCaptureCleansUpUnreturnableMachine(t *testing.T) {
 			machines.mu.Lock()
 			returned := len(machines.entries[key])
 			machines.mu.Unlock()
-			if returned != 0 || machines.runtimeCheckedOut(target.ID, target.WorkerEpoch) {
+			if returned != 0 || machines.instanceCheckedOut(target.ID, target.WorkerEpoch) {
 				t.Fatal("unreturnable machine went back to the ready entries")
 			}
-			if session.closed != 1 || len(machines.Reservations.Snapshot().Reservations) != 0 || len(instances.failed) != 1 {
-				t.Fatalf("closes=%d reservations=%d failures=%d", session.closed, len(machines.Reservations.Snapshot().Reservations), len(instances.failed))
+			if machine.closed != 1 || len(machines.Reservations.Snapshot().Reservations) != 0 || len(instances.failed) != 1 {
+				t.Fatalf("closes=%d reservations=%d failures=%d", machine.closed, len(machines.Reservations.Snapshot().Reservations), len(instances.failed))
 			}
 		})
 	}
@@ -1297,19 +1297,19 @@ func TestRelinquishedClaimFinalizesAfterSaveOwnerJoins(t *testing.T) {
 			if _, kind := claimState(s.machines, ref); kind != orphanClaim {
 				t.Fatalf("relinquished claim kind = %d, want orphan", kind)
 			}
-			client := &typedRuntimeClient{}
+			client := &typedInstanceClient{}
 			target := s.target
 			target.DesiredVersion++
 			attempt := func() error {
 				switch next {
 				case "reclaim":
-					target.Action = workerapi.RuntimeReconcileReclaim
-					return s.machines.reclaimFailedRuntimeTarget(ctx, client, target)
+					target.Action = workerapi.InstanceReconcileReclaim
+					return s.machines.reclaimFailedInstanceTarget(ctx, client, target)
 				case "close":
-					target.Action = workerapi.RuntimeReconcileClose
-					return s.machines.stopRuntimeTarget(ctx, client, target)
+					target.Action = workerapi.InstanceReconcileClose
+					return s.machines.stopInstanceTarget(ctx, client, target)
 				}
-				return s.machines.captureRuntimeTarget(ctx, client, s.target)
+				return s.machines.captureInstanceTarget(ctx, client, s.target)
 			}
 			if err := attempt(); err == nil {
 				t.Fatal("finalized while the save owner still runs")
@@ -1317,7 +1317,7 @@ func TestRelinquishedClaimFinalizesAfterSaveOwnerJoins(t *testing.T) {
 			if !save.observed.Load() {
 				t.Fatal("physical cleanup did not close the device the producer uses")
 			}
-			if !s.machines.runtimeCheckedOut(ref.id, ref.epoch) || len(s.machines.Reservations.Snapshot().Reservations) != 1 || device.released.Load() != 0 || len(client.closed)+len(client.failed) != 0 {
+			if !s.machines.instanceCheckedOut(ref.id, ref.epoch) || len(s.machines.Reservations.Snapshot().Reservations) != 1 || device.released.Load() != 0 || len(client.closed)+len(client.failed) != 0 {
 				t.Fatal("finalized or reported while the save owner runs")
 			}
 			close(hold)
@@ -1328,10 +1328,10 @@ func TestRelinquishedClaimFinalizesAfterSaveOwnerJoins(t *testing.T) {
 			if next == "close" {
 				reports = client.closed
 			}
-			if len(reports) != 1 || reports[0].CleanupProof == nil || reports[0].CleanupProof.Method != workerapi.RuntimeCleanupHostReconciled || len(client.closed)+len(client.failed) != 1 {
+			if len(reports) != 1 || reports[0].CleanupProof == nil || reports[0].CleanupProof.Method != workerapi.InstanceCleanupHostReconciled || len(client.closed)+len(client.failed) != 1 {
 				t.Fatalf("closed=%+v failed=%+v, want one host-reconciled report", client.closed, client.failed)
 			}
-			if s.machines.runtimeCheckedOut(ref.id, ref.epoch) || len(s.machines.Reservations.Snapshot().Reservations) != 0 || device.released.Load() != 1 {
+			if s.machines.instanceCheckedOut(ref.id, ref.epoch) || len(s.machines.Reservations.Snapshot().Reservations) != 0 || device.released.Load() != 1 {
 				t.Fatal("orphaned claim did not finalize exactly once")
 			}
 		})
@@ -1362,11 +1362,11 @@ func TestReclaimRevokesServerClaimBeforePhysicalCleanup(t *testing.T) {
 		case <-time.After(5 * time.Second):
 		}
 	}
-	client := &typedRuntimeClient{}
+	client := &typedInstanceClient{}
 	target := s.target
 	target.DesiredVersion++
-	target.Action = workerapi.RuntimeReconcileReclaim
-	if err := s.machines.reclaimFailedRuntimeTarget(ctx, client, target); err == nil {
+	target.Action = workerapi.InstanceReconcileReclaim
+	if err := s.machines.reclaimFailedInstanceTarget(ctx, client, target); err == nil {
 		t.Fatal("reclaim finalized while the save owner still runs")
 	}
 	if !serverEnded || served != nil {
@@ -1375,14 +1375,14 @@ func TestReclaimRevokesServerClaimBeforePhysicalCleanup(t *testing.T) {
 	if len(s.client.failures) != 0 || len(s.client.closed) != 0 {
 		t.Fatalf("server failures=%+v closed=%+v during reclaim", s.client.failures, s.client.closed)
 	}
-	if !s.machines.runtimeCheckedOut(ref.id, ref.epoch) || device.released.Load() != 0 || len(client.failed) != 0 {
+	if !s.machines.instanceCheckedOut(ref.id, ref.epoch) || device.released.Load() != 0 || len(client.failed) != 0 {
 		t.Fatal("finalized or reported while the save owner runs")
 	}
 	close(hold)
-	if err := s.machines.reclaimFailedRuntimeTarget(ctx, client, target); err != nil {
+	if err := s.machines.reclaimFailedInstanceTarget(ctx, client, target); err != nil {
 		t.Fatal(err)
 	}
-	if len(client.failed) != 1 || s.machines.runtimeCheckedOut(ref.id, ref.epoch) || len(s.machines.Reservations.Snapshot().Reservations) != 0 || device.released.Load() != 1 {
+	if len(client.failed) != 1 || s.machines.instanceCheckedOut(ref.id, ref.epoch) || len(s.machines.Reservations.Snapshot().Reservations) != 0 || device.released.Load() != 1 {
 		t.Fatalf("reclaim did not finalize exactly once: failed=%d", len(client.failed))
 	}
 }
@@ -1405,7 +1405,7 @@ func TestReclaimLeavesCommittedServerTeardown(t *testing.T) {
 		<-release
 	}
 	s := startCapturedServe(serveCtx, t, machine, capturedServeOptions{})
-	backend := &cleanupRuntimeBackend{}
+	backend := &cleanupBackend{}
 	s.machines.Backend = backend
 	stopServe()
 	select {
@@ -1413,11 +1413,11 @@ func TestReclaimLeavesCommittedServerTeardown(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("server teardown did not reach its close")
 	}
-	client := &typedRuntimeClient{}
+	client := &typedInstanceClient{}
 	target := s.target
 	target.DesiredVersion++
-	target.Action = workerapi.RuntimeReconcileReclaim
-	if err := s.machines.reclaimFailedRuntimeTarget(ctx, client, target); err == nil {
+	target.Action = workerapi.InstanceReconcileReclaim
+	if err := s.machines.reclaimFailedInstanceTarget(ctx, client, target); err == nil {
 		t.Fatal("reclaim raced the Server's committed teardown")
 	}
 	if len(backend.cleaned) != 0 || len(client.failed) != 0 || len(s.machines.Reservations.Snapshot().Reservations) != 1 {
@@ -1425,10 +1425,10 @@ func TestReclaimLeavesCommittedServerTeardown(t *testing.T) {
 	}
 	releaseOnce.Do(func() { close(release) })
 	_ = s.awaitServed(ctx, t)
-	if machine.closeCount() != 1 || s.machines.runtimeCheckedOut(s.target.ID, s.target.WorkerEpoch) || len(s.machines.Reservations.Snapshot().Reservations) != 0 {
+	if machine.closeCount() != 1 || s.machines.instanceCheckedOut(s.target.ID, s.target.WorkerEpoch) || len(s.machines.Reservations.Snapshot().Reservations) != 0 {
 		t.Fatal("server teardown did not close and release its runtime")
 	}
-	if err := s.machines.reclaimFailedRuntimeTarget(ctx, client, target); err != nil {
+	if err := s.machines.reclaimFailedInstanceTarget(ctx, client, target); err != nil {
 		t.Fatal(err)
 	}
 	if len(backend.cleaned) != 1 || len(client.failed) != 1 {
@@ -1466,13 +1466,13 @@ func TestReclaimArbitratesReadyMachineAgainstCheckout(t *testing.T) {
 	for i := range 1000 {
 		_, mount := testComputerMountArtifacts(t)
 		mount.ComputerID = "computer"
-		machines := computerPreparedMachines(t, mount, &closeTrackingRuntimeSession{})
-		ref := preparedMachineRef{id: mount.ComputerInstanceID, epoch: mount.RuntimeEpoch}
+		machines := computerPreparedMachines(t, mount, &closeTrackingMachine{})
+		ref := preparedMachineRef{id: mount.ComputerInstanceID, epoch: mount.WorkerEpoch}
 		backend := &claimCheckingBackend{machines: machines, ref: ref}
 		machines.Backend = backend
-		target := runtimeReservationTarget(ref.id, ref.epoch)
-		target.Action = workerapi.RuntimeReconcileReclaim
-		client := &typedRuntimeClient{}
+		target := instanceReservationTarget(ref.id, ref.epoch)
+		target.Action = workerapi.InstanceReconcileReclaim
+		client := &typedInstanceClient{}
 		start := make(chan struct{})
 		var checkout *machineCheckout
 		var checkedOut bool
@@ -1484,7 +1484,7 @@ func TestReclaimArbitratesReadyMachineAgainstCheckout(t *testing.T) {
 		})
 		wg.Go(func() {
 			<-start
-			reclaimErr = machines.reclaimFailedRuntimeTarget(t.Context(), client, target)
+			reclaimErr = machines.reclaimFailedInstanceTarget(t.Context(), client, target)
 		})
 		close(start)
 		wg.Wait()

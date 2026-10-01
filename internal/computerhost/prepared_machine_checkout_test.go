@@ -78,19 +78,19 @@ func (d *countingCloseComputerDevice) closeCount() int {
 
 // reportOrderRuntimeClient runs beforeReport ahead of recording each runtime
 // state report, so a test can observe local cleanup at report time.
-type reportOrderRuntimeClient struct {
-	typedRuntimeClient
+type reportOrderInstanceClient struct {
+	typedInstanceClient
 	beforeReport func()
 }
 
-func (c *reportOrderRuntimeClient) MarkComputerInstanceClosed(ctx context.Context, request workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
+func (c *reportOrderInstanceClient) MarkComputerInstanceClosed(ctx context.Context, request workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
 	c.beforeReport()
-	return c.typedRuntimeClient.MarkComputerInstanceClosed(ctx, request)
+	return c.typedInstanceClient.MarkComputerInstanceClosed(ctx, request)
 }
 
-func (c *reportOrderRuntimeClient) MarkComputerInstanceFailed(ctx context.Context, request workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
+func (c *reportOrderInstanceClient) MarkComputerInstanceFailed(ctx context.Context, request workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
 	c.beforeReport()
-	return c.typedRuntimeClient.MarkComputerInstanceFailed(ctx, request)
+	return c.typedInstanceClient.MarkComputerInstanceFailed(ctx, request)
 }
 
 func computerDeviceTracked(machines *PreparedMachines, ref preparedMachineRef) bool {
@@ -111,19 +111,19 @@ func TestFailedCheckoutCloseDefersToOwnerThenReconcileCleansUpOnce(t *testing.T)
 			mount.RestoreCheckpointID = "checkpoint-not-prepared"
 			machine := newBarrierCloseMachine()
 			machines := computerPreparedMachines(t, mount, machine)
-			ref := preparedMachineRef{id: mount.ComputerInstanceID, epoch: mount.RuntimeEpoch}
+			ref := preparedMachineRef{id: mount.ComputerInstanceID, epoch: mount.WorkerEpoch}
 			device := &countingCloseComputerDevice{}
 			machines.computerDevices = map[preparedMachineRef]vm.ComputerDevice{ref: device}
-			backend := &cleanupRuntimeBackend{}
+			backend := &cleanupBackend{}
 			machines.Backend = backend
-			target := runtimeReservationTarget(ref.id, ref.epoch)
+			target := instanceReservationTarget(ref.id, ref.epoch)
 			target.DesiredVersion = 2
 			target.ObservedVersion = 1
 
 			server := Server{Machines: machines, FailureTimeout: 5 * time.Second}
 			result := make(chan error, 1)
 			go func() {
-				_, _, err := server.materializeSession(t.Context(), &mount)
+				_, _, err := server.materializeMachine(t.Context(), &mount)
 				result <- err
 			}()
 			select {
@@ -133,15 +133,15 @@ func TestFailedCheckoutCloseDefersToOwnerThenReconcileCleansUpOnce(t *testing.T)
 			}
 
 			// While the server still owns the checkout, reconciliation defers.
-			early := &typedRuntimeClient{}
-			if err := machines.stopRuntimeTarget(t.Context(), early, target); err != nil {
+			early := &typedInstanceClient{}
+			if err := machines.stopInstanceTarget(t.Context(), early, target); err != nil {
 				t.Fatal(err)
 			}
 			if len(backend.cleaned) != 0 || len(early.closed) != 0 || len(early.failed) != 0 || device.closeCount() != 0 {
 				t.Fatalf("reconcile acted on a held checkout: cleaned=%v closed=%d failed=%d device=%d",
 					backend.cleaned, len(early.closed), len(early.failed), device.closeCount())
 			}
-			if !machines.runtimeCheckedOut(ref.id, ref.epoch) {
+			if !machines.instanceCheckedOut(ref.id, ref.epoch) {
 				t.Fatal("checkout released while its owner is closing it")
 			}
 
@@ -156,7 +156,7 @@ func TestFailedCheckoutCloseDefersToOwnerThenReconcileCleansUpOnce(t *testing.T)
 			if !errors.Is(err, closeErr) || !strings.Contains(err.Error(), "close prepared computer runtime") {
 				t.Fatalf("materialize error = %v, want close failure", err)
 			}
-			if machines.runtimeCheckedOut(ref.id, ref.epoch) {
+			if machines.instanceCheckedOut(ref.id, ref.epoch) {
 				t.Fatal("failed close must hand the checkout to reconciliation")
 			}
 			if got := len(machines.Reservations.Snapshot().Reservations); got != 1 {
@@ -167,7 +167,7 @@ func TestFailedCheckoutCloseDefersToOwnerThenReconcileCleansUpOnce(t *testing.T)
 			}
 
 			reports := 0
-			control := &reportOrderRuntimeClient{beforeReport: func() {
+			control := &reportOrderInstanceClient{beforeReport: func() {
 				reports++
 				if got := len(machines.Reservations.Snapshot().Reservations); got != 0 || computerDeviceTracked(machines, ref) || device.closeCount() != 1 {
 					t.Errorf("report before local release: reservations=%d device tracked=%t device closes=%d",
@@ -176,19 +176,19 @@ func TestFailedCheckoutCloseDefersToOwnerThenReconcileCleansUpOnce(t *testing.T)
 			}}
 			switch retry {
 			case "stop":
-				if err := machines.stopRuntimeTarget(t.Context(), control, target); err != nil {
+				if err := machines.stopInstanceTarget(t.Context(), control, target); err != nil {
 					t.Fatal(err)
 				}
 				if len(control.closed) != 1 || control.closed[0].CleanupProof == nil ||
-					control.closed[0].CleanupProof.Method != workerapi.RuntimeCleanupHostReconciled {
+					control.closed[0].CleanupProof.Method != workerapi.InstanceCleanupHostReconciled {
 					t.Fatalf("closed = %+v, want host reconciled proof", control.closed)
 				}
 			case "reclaim":
-				if err := machines.reclaimFailedRuntimeTarget(t.Context(), control, target); err != nil {
+				if err := machines.reclaimFailedInstanceTarget(t.Context(), control, target); err != nil {
 					t.Fatal(err)
 				}
 				if len(control.failed) != 1 || control.failed[0].CleanupProof == nil ||
-					control.failed[0].CleanupProof.Method != workerapi.RuntimeCleanupHostReconciled {
+					control.failed[0].CleanupProof.Method != workerapi.InstanceCleanupHostReconciled {
 					t.Fatalf("failed = %+v, want host reconciled proof", control.failed)
 				}
 			}
@@ -216,19 +216,19 @@ func TestFailedCheckoutCloseDefersToOwnerThenReconcileCleansUpOnce(t *testing.T)
 func TestReleaseCheckoutRelinquishesWhenDeviceCleanupFails(t *testing.T) {
 	_, mount := testComputerMountArtifacts(t)
 	mount.ComputerID = "computer"
-	machines := computerPreparedMachines(t, mount, &closeTrackingRuntimeSession{})
+	machines := computerPreparedMachines(t, mount, &closeTrackingMachine{})
 	checkout, _, ok := machines.checkout(t.Context(), mount)
 	if !ok {
 		t.Fatal("checkout failed")
 	}
-	ref := preparedMachineRef{id: mount.ComputerInstanceID, epoch: mount.RuntimeEpoch}
+	ref := preparedMachineRef{id: mount.ComputerInstanceID, epoch: mount.WorkerEpoch}
 	device := &countingCloseComputerDevice{err: errors.New("device cleanup failed")}
 	machines.computerDevices = map[preparedMachineRef]vm.ComputerDevice{ref: device}
 
 	if err := checkout.Release(); !errors.Is(err, device.err) {
 		t.Fatalf("release error = %v, want device failure", err)
 	}
-	if machines.runtimeCheckedOut(ref.id, ref.epoch) {
+	if machines.instanceCheckedOut(ref.id, ref.epoch) {
 		t.Fatal("release must relinquish the checkout even when capacity release fails")
 	}
 	if got := len(machines.Reservations.Snapshot().Reservations); got != 1 || !computerDeviceTracked(machines, ref) {
@@ -244,15 +244,15 @@ func TestReleaseCheckoutRelinquishesWhenDeviceCleanupFails(t *testing.T) {
 	device.mu.Lock()
 	device.err = nil
 	device.mu.Unlock()
-	backend := &cleanupRuntimeBackend{}
+	backend := &cleanupBackend{}
 	machines.Backend = backend
-	control := &reportOrderRuntimeClient{beforeReport: func() {
+	control := &reportOrderInstanceClient{beforeReport: func() {
 		if got := len(machines.Reservations.Snapshot().Reservations); got != 0 || computerDeviceTracked(machines, ref) || device.closeCount() != 2 {
 			t.Errorf("report before local release: reservations=%d device tracked=%t device closes=%d",
 				got, computerDeviceTracked(machines, ref), device.closeCount())
 		}
 	}}
-	if err := machines.stopRuntimeTarget(t.Context(), control, runtimeReservationTarget(ref.id, ref.epoch)); err != nil {
+	if err := machines.stopInstanceTarget(t.Context(), control, instanceReservationTarget(ref.id, ref.epoch)); err != nil {
 		t.Fatal(err)
 	}
 	if len(backend.cleaned) != 1 || len(control.closed) != 1 || device.closeCount() != 2 {

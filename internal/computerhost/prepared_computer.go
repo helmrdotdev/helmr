@@ -18,7 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func validateComputerPreparationSource(target workerapi.RuntimeReconcileTarget) error {
+func validateComputerPreparationSource(target workerapi.InstanceReconcileTarget) error {
 	if err := ids.Validate(target.ID); err != nil {
 		return fmt.Errorf("runtime preparation identity: %w", err)
 	}

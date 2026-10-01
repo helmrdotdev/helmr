@@ -8,11 +8,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func projectComputerInstanceCapture(cp db.ComputerCheckpoint, members []db.ComputerCheckpointRun) (*workerapi.RuntimeCapture, error) {
+func projectComputerInstanceCapture(cp db.ComputerCheckpoint, members []db.ComputerCheckpointRun) (*workerapi.InstanceCapture, error) {
 	if cp.Status != "creating" || !cp.ID.Valid || !cp.ComputerID.Valid || !cp.EnvironmentID.Valid || !cp.SourceComputerInstanceID.Valid || !cp.ComputerSpecID.Valid || cp.WriterGeneration <= 0 || cp.MembershipRevision < 0 || (len(members) > 0 && !cp.ProgramDeploymentID.Valid) {
 		return nil, errors.New("computer capture identity is incomplete")
 	}
-	result := &workerapi.RuntimeCapture{CheckpointID: pgvalue.UUIDString(cp.ID), MembershipRevision: cp.MembershipRevision, ProgramDeploymentID: pgvalue.UUIDString(cp.ProgramDeploymentID), Runs: make([]workerapi.RuntimeCaptureRun, 0, len(members))}
+	result := &workerapi.InstanceCapture{CheckpointID: pgvalue.UUIDString(cp.ID), MembershipRevision: cp.MembershipRevision, ProgramDeploymentID: pgvalue.UUIDString(cp.ProgramDeploymentID), Runs: make([]workerapi.InstanceCaptureRun, 0, len(members))}
 	seen := make(map[string]struct{}, len(members))
 	for _, member := range members {
 		id := pgvalue.UUIDString(member.RunID)
@@ -20,7 +20,7 @@ func projectComputerInstanceCapture(cp db.ComputerCheckpoint, members []db.Compu
 			return nil, errors.New("computer capture membership has inconsistent authority")
 		}
 		seen[id] = struct{}{}
-		run := workerapi.RuntimeCaptureRun{RunID: id, AttemptNumber: member.AttemptNumber, RunWaitID: pgvalue.UUIDString(member.RunWaitID), RunLeaseID: pgvalue.UUIDString(member.SourceRunLeaseID)}
+		run := workerapi.InstanceCaptureRun{RunID: id, AttemptNumber: member.AttemptNumber, RunWaitID: pgvalue.UUIDString(member.RunWaitID), RunLeaseID: pgvalue.UUIDString(member.SourceRunLeaseID)}
 		if member.ActorSpeculativeInputSequence.Valid {
 			cursor := member.ActorSpeculativeInputSequence.Int64
 			run.ActorSpeculativeInputSequence = &cursor

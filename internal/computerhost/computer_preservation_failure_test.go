@@ -24,7 +24,7 @@ func TestPreservationFailureSurvivesRenewalCancellation(t *testing.T) {
 	mount.GuestChannelCredential = "test-channel"
 	mount.GuestChannelCredentialHash = sha256sum.HexBytes([]byte(mount.GuestChannelCredential))
 	go acknowledgePreparedComputerMount(t, ps, mount, mount.ComputerInstanceID)
-	raw := &serverTestSession{streams: []io.ReadWriteCloser{pc}, operation: discardReadWriteCloser{}, exit: make(chan error)}
+	raw := &serverTestMachine{streams: []io.ReadWriteCloser{pc}, operation: discardReadWriteCloser{}, exit: make(chan error)}
 	machines := computerPreparedMachines(t, mount, raw)
 	client := &serverTestClient{}
 	m := Server{RestoreControl: unusedComputerRestoreControl{}, ComputerSaves: &saveHostFixture{runtime: mount.ComputerInstanceID, computer: mount.ComputerID}, ComputerSaveEvery: time.Millisecond, ComputerObjects: &checkpointCAS{}, CAS: store, TempDir: t.TempDir(), Heartbeat: time.Hour, PollEvery: time.Hour, Machines: machines, Mounts: NewMounts()}

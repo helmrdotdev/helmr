@@ -27,7 +27,7 @@ type preparationFixture struct {
 	runtest.Fixture
 	principal    workergroup.HostPrincipal
 	ref          PreparationRef
-	runtime      pgtype.UUID
+	instance     pgtype.UUID
 	logicalBytes int64
 	store        *cas.File
 	broker       *KeyBroker
@@ -82,7 +82,7 @@ func newPreparationFixture(t *testing.T) preparationFixture {
 		t.Fatal(err)
 	}
 	return preparationFixture{Fixture: f, principal: principal, ref: PreparationRef{InstanceID: pgvalue.MustUUIDValue(instance.ID), DesiredVersion: 1},
-		runtime: instance.ID, logicalBytes: diskBytes, store: store, broker: broker, publisher: publisher}
+		instance: instance.ID, logicalBytes: diskBytes, store: store, broker: broker, publisher: publisher}
 }
 
 func (f preparationFixture) runtimeWorker() any {

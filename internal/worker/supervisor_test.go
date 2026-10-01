@@ -513,7 +513,7 @@ func TestSupervisorHardAdmissionPausesClaimsButNotShutdown(t *testing.T) {
 	probe := &staticHealthProbe{health: healthyHost(now)}
 	probe.health.AvailableDiskBytes = 1
 	evaluator, err := NewHardAdmission(HardAdmissionConfig{
-		Probe: probe, DiskFloorBytes: 2, FDHeadroom: 1, RuntimeSlotCount: 1, Now: time.Now,
+		Probe: probe, DiskFloorBytes: 2, FDHeadroom: 1, InstanceSlotCount: 1, Now: time.Now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -634,7 +634,7 @@ func TestServerDirectedDrainContinuesBoundRunWithHardAdmission(t *testing.T) {
 	now := time.Now()
 	evaluator, err := NewHardAdmission(HardAdmissionConfig{
 		Probe: &staticHealthProbe{health: healthyHost(now)}, DiskFloorBytes: 1,
-		FDHeadroom: 1, RuntimeSlotCount: 1, Now: func() time.Time { return now },
+		FDHeadroom: 1, InstanceSlotCount: 1, Now: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -694,7 +694,7 @@ func TestServerDirectedDrainDoesNotBypassBoundRunAdmission(t *testing.T) {
 	probe := &staticHealthProbe{health: healthyHost(now)}
 	probe.health.KVMHealthy = false
 	evaluator, err := NewHardAdmission(HardAdmissionConfig{
-		Probe: probe, DiskFloorBytes: 1, FDHeadroom: 1, RuntimeSlotCount: 1, Now: func() time.Time { return now },
+		Probe: probe, DiskFloorBytes: 1, FDHeadroom: 1, InstanceSlotCount: 1, Now: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -746,7 +746,7 @@ func TestDrainingObservationPreservesHardHealthInsteadOfLifecyclePause(t *testin
 	now := time.Now()
 	evaluator, err := NewHardAdmission(HardAdmissionConfig{
 		Probe: &staticHealthProbe{health: healthyHost(now)}, DiskFloorBytes: 1,
-		FDHeadroom: 1, RuntimeSlotCount: 1, Now: func() time.Time { return now },
+		FDHeadroom: 1, InstanceSlotCount: 1, Now: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatal(err)

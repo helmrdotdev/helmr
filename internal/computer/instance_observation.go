@@ -41,7 +41,7 @@ type Closure struct {
 // Instance incarnation can still run.
 const (
 	// CleanupSessionClosed reports that the Instance's session closed.
-	CleanupSessionClosed = "session_closed"
+	CleanupMachineClosed = "session_closed"
 	// CleanupHostReconciled reports exact reconciliation of the host's VMs.
 	CleanupHostReconciled = "host_reconciled"
 	// CleanupNotMaterialized reports that the Instance never started a VM.
@@ -59,11 +59,11 @@ type CleanupProof struct {
 // requires a closed session or exact host reconciliation; a failed Instance
 // may also never have materialized.
 func (p CleanupProof) evidence(now time.Time, closed bool) ([]byte, error) {
-	if closed && p.Method != CleanupSessionClosed && p.Method != CleanupHostReconciled {
+	if closed && p.Method != CleanupMachineClosed && p.Method != CleanupHostReconciled {
 		return nil, invalidInput("closed runtime cleanup proof must confirm a closed session or exact host reconciliation")
 	}
 	switch p.Method {
-	case CleanupSessionClosed, CleanupHostReconciled, CleanupNotMaterialized:
+	case CleanupMachineClosed, CleanupHostReconciled, CleanupNotMaterialized:
 	default:
 		return nil, invalidInput("runtime cleanup proof method is unsupported")
 	}
@@ -83,7 +83,7 @@ type FailureKind uint8
 
 const (
 	// FailureRuntime is a failure of the Instance alone.
-	FailureRuntime FailureKind = iota
+	FailureInstance FailureKind = iota
 	// FailureWorkerInvalid reports that the host epoch itself is invalid; the
 	// host is drained.
 	FailureWorkerInvalid

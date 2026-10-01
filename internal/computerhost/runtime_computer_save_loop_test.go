@@ -36,8 +36,8 @@ func nextSaveRequest(t *testing.T, c *loopSaveClient) workerapi.ComputerSaveBegi
 		return workerapi.ComputerSaveBeginRequest{}
 	}
 }
-func TestRuntimeComputerSaveLoopPreservesIdleInstance(t *testing.T) {
-	s := &runtimeComputerSaves{}
+func TestInstanceComputerSaveLoopPreservesIdleInstance(t *testing.T) {
+	s := &instanceComputerSaves{}
 	f := &saveHostFixture{runtime: uuid.NewV7().String(), computer: uuid.NewV7().String()}
 	c := &loopSaveClient{saveHostFixture: f, begun: make(chan workerapi.ComputerSaveBeginRequest, 16)}
 	writer := workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: f.runtime, WriterGeneration: 2}
@@ -64,8 +64,8 @@ func TestRuntimeComputerSaveLoopPreservesIdleInstance(t *testing.T) {
 	}
 }
 
-func TestRuntimeComputerSaveLoopReusesRejectedSequence(t *testing.T) {
-	s := &runtimeComputerSaves{}
+func TestInstanceComputerSaveLoopReusesRejectedSequence(t *testing.T) {
+	s := &instanceComputerSaves{}
 	f := &saveHostFixture{runtime: uuid.NewV7().String(), computer: uuid.NewV7().String()}
 	c := &loopSaveClient{saveHostFixture: f, begun: make(chan workerapi.ComputerSaveBeginRequest, 16)}
 	c.reject.Store(true)
@@ -87,8 +87,8 @@ func TestRuntimeComputerSaveLoopReusesRejectedSequence(t *testing.T) {
 	<-result
 }
 
-func TestRuntimeComputerSaveLoopSignalsUnrecoverableCapture(t *testing.T) {
-	s := &runtimeComputerSaves{}
+func TestInstanceComputerSaveLoopSignalsUnrecoverableCapture(t *testing.T) {
+	s := &instanceComputerSaves{}
 	f := &saveHostFixture{runtime: uuid.NewV7().String(), computer: uuid.NewV7().String()}
 	err := s.bind(workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: f.runtime, WriterGeneration: 2}, f.computer)
 	if err != nil {
@@ -116,8 +116,8 @@ func TestRuntimeComputerSaveLoopSignalsUnrecoverableCapture(t *testing.T) {
 	}
 }
 
-func TestRuntimeComputerSaveLoopObservesFailureWithoutAnotherTick(t *testing.T) {
-	s := &runtimeComputerSaves{}
+func TestInstanceComputerSaveLoopObservesFailureWithoutAnotherTick(t *testing.T) {
+	s := &instanceComputerSaves{}
 	f := &saveHostFixture{runtime: uuid.NewV7().String(), computer: uuid.NewV7().String()}
 	err := s.bind(workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: f.runtime, WriterGeneration: 2}, f.computer)
 	if err != nil {

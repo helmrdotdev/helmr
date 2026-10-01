@@ -75,7 +75,7 @@ func (c *Connector) validateMaterializeRequest(request vm.MaterializeRequest) er
 	if !sha256sum.ValidDigest(request.CPUConfigDigest) {
 		return errors.New("materialize guest CPU configuration digest is not canonical")
 	}
-	targetRuntime, targetCPUConfigDigest, _, err := c.boundSessionRuntime(requestedVCPUs)
+	targetRuntime, targetCPUConfigDigest, _, err := c.boundMachineRuntime(requestedVCPUs)
 	if err != nil {
 		return fmt.Errorf("resolve materialize host runtime: %w", err)
 	}
@@ -98,7 +98,7 @@ func (c *Connector) validateMaterializeRequest(request vm.MaterializeRequest) er
 }
 
 func runtimeKernelArgs(
-	topology vm.RuntimeTopology,
+	topology vm.Topology,
 	readOnlyDrives []vm.ReadOnlyDrive,
 	resolverIPv4 string,
 ) string {
@@ -153,32 +153,32 @@ func (c *Connector) configForResources(resources compute.ResourceVector, operati
 
 func (c *Connector) kernelArgsValue() string {
 	if strings.TrimSpace(c.kernelArgs) == "" {
-		return runtimeKernelArgs(vm.RuntimeTopology{}, nil, c.cfg.NetworkResolverIPv4)
+		return runtimeKernelArgs(vm.Topology{}, nil, c.cfg.NetworkResolverIPv4)
 	}
 	return c.kernelArgs
 }
 
-func (c *Connector) start(ctx context.Context, mode launchMode, instanceID string, ownerKind vm.OwnerKind, binding vm.WorkloadBinding, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase), preparedOwner *computerDeviceOwner) (vm.CheckpointableMachine, error) {
-	session, err := c.prepareSession(ctx, mode, instanceID, ownerKind, binding, snapshotMemoryPath, snapshotStatePath, scratchDiskRestorePath, restoreNetwork, topology, readOnlyDrives, recordPhase, preparedOwner)
+func (c *Connector) start(ctx context.Context, mode launchMode, instanceID string, ownerKind vm.OwnerKind, binding vm.WorkloadBinding, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.Topology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.Phase), preparedOwner *computerDeviceOwner) (vm.CheckpointableMachine, error) {
+	machine, err := c.prepareMachine(ctx, mode, instanceID, ownerKind, binding, snapshotMemoryPath, snapshotStatePath, scratchDiskRestorePath, restoreNetwork, topology, readOnlyDrives, recordPhase, preparedOwner)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := session.Open(ctx); err != nil {
+	if _, err := machine.Open(ctx); err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), stopTimeout)
 		defer cancel()
-		return nil, errors.Join(err, session.Close(cleanupCtx))
+		return nil, errors.Join(err, machine.Close(cleanupCtx))
 	}
-	return session, nil
+	return machine, nil
 }
 
-func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanceID string, ownerKind vm.OwnerKind, binding vm.WorkloadBinding, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase), preparedOwner *computerDeviceOwner) (_ *guestSession, retErr error) {
+func (c *Connector) prepareMachine(ctx context.Context, mode launchMode, instanceID string, ownerKind vm.OwnerKind, binding vm.WorkloadBinding, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.Topology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.Phase), preparedOwner *computerDeviceOwner) (_ *guestMachine, retErr error) {
 	if preparedOwner != nil {
 		defer preparedOwner.mu.Unlock()
 	}
 	if err := validateCPUTemplateLaunch(c.cfg.CPUTemplateSelector); err != nil {
 		return nil, err
 	}
-	vmPlatform, cpuConfigDigest, firecrackerPath, err := c.boundSessionRuntime(c.cfg.VCPUCount)
+	vmPlatform, cpuConfigDigest, firecrackerPath, err := c.boundMachineRuntime(c.cfg.VCPUCount)
 	if err != nil {
 		return nil, err
 	}
@@ -236,17 +236,17 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 	} else {
 		phaseStarted := time.Now()
 		err := c.createScratchDisk(ctx, scratchDiskPath)
-		recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "materialize_create_scratch_disk", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
+		recordRuntimePhase(recordPhase, vm.Phase{Name: "materialize_create_scratch_disk", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 		if err != nil {
 			return nil, err
 		}
 	}
 	phaseStarted := time.Now()
 	if err := c.prepareScratchDiskForJailer(scratchDiskPath); err != nil {
-		recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_prepare_scratch_for_jailer", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
+		recordRuntimePhase(recordPhase, vm.Phase{Name: "restore_prepare_scratch_for_jailer", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 		return nil, err
 	}
-	recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_prepare_scratch_for_jailer", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
+	recordRuntimePhase(recordPhase, vm.Phase{Name: "restore_prepare_scratch_for_jailer", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
 	restoring := snapshotMemoryPath != "" || snapshotStatePath != ""
 	computerDiskPath := ""
 	if topology.Computer != nil {
@@ -357,8 +357,8 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 	// a background warm command after boot succeeds.
 	machineCtx, machineCancel := context.WithCancel(context.Background())
 	phaseStarted = time.Now()
-	machine, err := newSDKMachine(machineCtx, machineCfg, c.cfg.InitTimeout, opts...)
-	recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_create_firecracker_machine", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
+	sdkMachine, err := newSDKMachine(machineCtx, machineCfg, c.cfg.InitTimeout, opts...)
+	recordRuntimePhase(recordPhase, vm.Phase{Name: "restore_create_firecracker_machine", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 	if err != nil {
 		machineCancel()
 		return nil, fmt.Errorf("create Firecracker machine: %w", err)
@@ -373,20 +373,20 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 			}
 		}()
 	}
-	machine.Logger().Printf("starting Firecracker machine")
+	sdkMachine.Logger().Printf("starting Firecracker machine")
 	phaseStarted = time.Now()
-	if err := startMachineContext(ctx, machine, machineCtx, machineCancel); err != nil {
-		recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_start_firecracker_machine", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
-		stopErr := stopMachine(context.Background(), machine)
+	if err := startMachineContext(ctx, sdkMachine, machineCtx, machineCancel); err != nil {
+		recordRuntimePhase(recordPhase, vm.Phase{Name: "restore_start_firecracker_machine", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
+		stopErr := stopMachine(context.Background(), sdkMachine)
 		return nil, errors.Join(fmt.Errorf("start Firecracker machine: %w", err), stopErr)
 	}
-	recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_start_firecracker_machine", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
-	machineExit := watchMachineExit(machine)
-	machine.Logger().Printf("Firecracker machine start returned")
+	recordRuntimePhase(recordPhase, vm.Phase{Name: "restore_start_firecracker_machine", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
+	machineExit := watchMachineExit(sdkMachine)
+	sdkMachine.Logger().Printf("Firecracker machine start returned")
 	started := true
 	defer func() {
 		if !started {
-			stopErr := stopSessionMachine(context.Background(), machine, machineExit)
+			stopErr := stopSessionMachine(context.Background(), sdkMachine, machineExit)
 			machineCancel()
 			retErr = errors.Join(retErr, stopErr)
 		}
@@ -394,30 +394,30 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 	if restoring {
 		phaseStarted = time.Now()
 		if err := validateRestoredNetworkConfig(*restoreNetwork, snapshotNetworkConfig(c.cfg)); err != nil {
-			recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_validate_network", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
+			recordRuntimePhase(recordPhase, vm.Phase{Name: "restore_validate_network", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 			started = false
 			return nil, err
 		}
-		recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_validate_network", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
+		recordRuntimePhase(recordPhase, vm.Phase{Name: "restore_validate_network", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
 		phaseStarted = time.Now()
-		if err := machine.ResumeVM(ctx); err != nil {
-			recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_resume_firecracker_snapshot", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
+		if err := sdkMachine.ResumeVM(ctx); err != nil {
+			recordRuntimePhase(recordPhase, vm.Phase{Name: "restore_resume_firecracker_snapshot", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 			started = false
 			return nil, fmt.Errorf("resume restored Firecracker machine: %w", err)
 		}
-		recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_resume_firecracker_snapshot", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
+		recordRuntimePhase(recordPhase, vm.Phase{Name: "restore_resume_firecracker_snapshot", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
 	}
-	machine.Logger().Printf("waiting for guest health")
+	sdkMachine.Logger().Printf("waiting for guest health")
 	phaseStarted = time.Now()
-	err = c.waitForHealth(ctx, vsockHostPath, machineExit, machine.Logger().Printf)
-	recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_wait_guest_health", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
+	err = c.waitForHealth(ctx, vsockHostPath, machineExit, sdkMachine.Logger().Printf)
+	recordRuntimePhase(recordPhase, vm.Phase{Name: "restore_wait_guest_health", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 	if err != nil {
 		started = false
 		return nil, err
 	}
-	machine.Logger().Printf("guest health ready")
-	session := &guestSession{
-		machine:         machine,
+	sdkMachine.Logger().Printf("guest health ready")
+	machine := &guestMachine{
+		machine:         sdkMachine,
 		machineCancel:   machineCancel,
 		machineExit:     machineExit,
 		computerExport:  exportFailure,
@@ -436,11 +436,11 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 		cleaner:         connectorCleaner{connector: c},
 		networkBinding:  networkBinding,
 	}
-	session.watchNetworkFailure()
-	return session, nil
+	machine.watchNetworkFailure()
+	return machine, nil
 }
 
-func (c *Connector) boundSessionRuntime(vcpuCount int64) (vmplatform.Profile, string, string, error) {
+func (c *Connector) boundMachineRuntime(vcpuCount int64) (vmplatform.Profile, string, string, error) {
 	vmPlatform, err := c.hostRuntime.vmPlatform()
 	if err != nil {
 		return vmplatform.Profile{}, "", "", fmt.Errorf("resolve host runtime identity: %w", err)
@@ -456,10 +456,10 @@ func (c *Connector) boundSessionRuntime(vcpuCount int64) (vmplatform.Profile, st
 	return vmPlatform, cpuConfigDigest, firecrackerPath, nil
 }
 
-func startMachineContext(ctx context.Context, machine *firecracker.Machine, machineCtx context.Context, machineCancel context.CancelFunc) error {
+func startMachineContext(ctx context.Context, sdkMachine *firecracker.Machine, machineCtx context.Context, machineCancel context.CancelFunc) error {
 	result := make(chan error, 1)
 	go func() {
-		result <- machine.Start(machineCtx)
+		result <- sdkMachine.Start(machineCtx)
 	}()
 	select {
 	case err := <-result:
@@ -584,7 +584,7 @@ func runtimeVsockDevice(descriptor VMRuntimeDescriptor, guestCID uint32) firecra
 	}
 }
 
-func recordRuntimePhase(record func(vm.RuntimePhase), phase vm.RuntimePhase) {
+func recordRuntimePhase(record func(vm.Phase), phase vm.Phase) {
 	if record == nil || strings.TrimSpace(phase.Name) == "" {
 		return
 	}

@@ -79,7 +79,7 @@ func TestProbeGuestRequiresBoundRuntimeEvidence(t *testing.T) {
 func TestSnapshotRuntimeConfigIncludesNetworkTopology(t *testing.T) {
 	cfg := (Config{NetworkResolverIPv4: "10.0.0.2"}).WithDefaults()
 	runtimeID := testVMPlatform(t, "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333").ID
-	digest, manifestBytes, err := snapshotRuntimeConfig(cfg, "checkpoint-1", runtimeID, testCPUConfigDigest(cfg.VCPUCount), "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333", runtimeKernelArgs(vm.RuntimeTopology{}, nil, cfg.NetworkResolverIPv4), vm.RuntimeTopology{})
+	digest, manifestBytes, err := snapshotRuntimeConfig(cfg, "checkpoint-1", runtimeID, testCPUConfigDigest(cfg.VCPUCount), "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333", runtimeKernelArgs(vm.Topology{}, nil, cfg.NetworkResolverIPv4), vm.Topology{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestSnapshotRuntimeConfigBindsManagedProgramTopology(t *testing.T) {
 	drives := testProgramDrives(&recordingReadOnlyDriveSource{})
 	_, manifestBytes, err := snapshotRuntimeConfig(
 		cfg, "checkpoint-1", runtimeID, testCPUConfigDigest(cfg.VCPUCount), "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-		"sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333", runtimeKernelArgs(vm.RuntimeTopology{}, drives, cfg.NetworkResolverIPv4), vm.RuntimeTopology{}, drives,
+		"sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333", runtimeKernelArgs(vm.Topology{}, drives, cfg.NetworkResolverIPv4), vm.Topology{}, drives,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -145,7 +145,7 @@ func TestSnapshotRuntimeConfigBindsManagedProgramTopology(t *testing.T) {
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	if manifest.RecoveryPoint.Runtime.KernelArgs != runtimeKernelArgs(vm.RuntimeTopology{}, drives, cfg.NetworkResolverIPv4) {
+	if manifest.RecoveryPoint.Runtime.KernelArgs != runtimeKernelArgs(vm.Topology{}, drives, cfg.NetworkResolverIPv4) {
 		t.Fatalf("kernel args = %q", manifest.RecoveryPoint.Runtime.KernelArgs)
 	}
 	program := manifest.RecoveryPoint.Runtime.Program
@@ -273,7 +273,7 @@ func (e testWrappedErrors) WrappedErrors() []error {
 func TestSnapshotRuntimeConfigRequiresResolver(t *testing.T) {
 	cfg := (Config{}).WithDefaults()
 	runtimeID := testVMPlatform(t, "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333").ID
-	_, _, err := snapshotRuntimeConfig(cfg, "checkpoint-1", runtimeID, testCPUConfigDigest(cfg.VCPUCount), "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333", runtimeKernelArgs(vm.RuntimeTopology{}, nil, cfg.NetworkResolverIPv4), vm.RuntimeTopology{})
+	_, _, err := snapshotRuntimeConfig(cfg, "checkpoint-1", runtimeID, testCPUConfigDigest(cfg.VCPUCount), "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333", runtimeKernelArgs(vm.Topology{}, nil, cfg.NetworkResolverIPv4), vm.Topology{})
 	if err == nil {
 		t.Fatal("expected missing resolver error")
 	}
@@ -364,7 +364,7 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 				CPUConfigDigest:  testCPUConfigDigest(cfg.VCPUCount),
 				MemoryMiB:        cfg.MemoryMiB,
 				ScratchDiskMiB:   cfg.ScratchDiskMiB,
-				KernelArgs:       runtimeKernelArgs(vm.RuntimeTopology{}, nil, cfg.NetworkResolverIPv4),
+				KernelArgs:       runtimeKernelArgs(vm.Topology{}, nil, cfg.NetworkResolverIPv4),
 				KernelDigest:     kernelDigest,
 				InitramfsDigest:  initramfsDigest,
 				RootfsDigest:     rootfsDigest,
@@ -474,8 +474,8 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 				checkpointID,
 				manifestBytes,
 				identity,
-				vm.RuntimeTopology{},
-				runtimeKernelArgs(vm.RuntimeTopology{}, nil, cfg.NetworkResolverIPv4),
+				vm.Topology{},
+				runtimeKernelArgs(vm.Topology{}, nil, cfg.NetworkResolverIPv4),
 				nil,
 			)
 			if tt.want == "" {
@@ -515,8 +515,8 @@ func TestValidateRestoreIdentityUsesManifestRuntimeShape(t *testing.T) {
 		"checkpoint-1",
 		manifestBytes,
 		identity,
-		vm.RuntimeTopology{},
-		runtimeKernelArgs(vm.RuntimeTopology{}, nil, cfg.NetworkResolverIPv4),
+		vm.Topology{},
+		runtimeKernelArgs(vm.Topology{}, nil, cfg.NetworkResolverIPv4),
 		nil,
 	)
 	if err != nil {
@@ -558,7 +558,7 @@ func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 	manifestBytes, identity := testPairedRestoreManifest(t, cfg, "checkpoint-1", topology)
 	computerInstanceID := uuid.NewV7().String()
 	var mu sync.Mutex
-	var phases []vm.RuntimePhase
+	var phases []vm.Phase
 
 	_, err := connector.restore(context.Background(), vm.RestoreRequest{
 		Topology: topology, Resources: compute.ResourceVector{MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.ScratchDiskMiB},
@@ -577,7 +577,7 @@ func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 		MemoryMediaTypes:     []string{cas.CheckpointMemoryMediaType},
 		Manifest:             manifestBytes,
 		Checkpoint:           identity,
-		RecordPhase: func(phase vm.RuntimePhase) {
+		RecordPhase: func(phase vm.Phase) {
 			mu.Lock()
 			defer mu.Unlock()
 			phases = append(phases, phase)
@@ -1095,7 +1095,7 @@ func TestWithJailedRestoreFilesLinksComputerAndPreservesSnapshotInodes(t *testin
 		}
 	}
 
-	machine := &firecracker.Machine{
+	sdkMachine := &firecracker.Machine{
 		Cfg: firecracker.Config{
 			JailerCfg: &firecracker.JailerConfig{
 				ExecFile:      "/usr/bin/firecracker",
@@ -1125,21 +1125,21 @@ func TestWithJailedRestoreFilesLinksComputerAndPreservesSnapshotInodes(t *testin
 			}),
 		},
 	}
-	firecracker.WithLogger(logrus.NewEntry(logrus.New()))(machine)
+	firecracker.WithLogger(logrus.NewEntry(logrus.New()))(sdkMachine)
 	opt := withJailedRestoreFiles(rootfsPath, scratchDiskPath, computerDiskPath, memoryPath, statePath)
-	opt(machine)
-	if err := machine.Handlers.FcInit.Run(context.Background(), machine); err != nil {
+	opt(sdkMachine)
+	if err := sdkMachine.Handlers.FcInit.Run(context.Background(), sdkMachine); err != nil {
 		t.Fatal(err)
 	}
 
-	if got := firecracker.StringValue(machine.Cfg.Drives[0].PathOnHost); got != filepath.Base(rootfsPath) {
+	if got := firecracker.StringValue(sdkMachine.Cfg.Drives[0].PathOnHost); got != filepath.Base(rootfsPath) {
 		t.Fatalf("rootfs drive path = %q", got)
 	}
-	if got := firecracker.StringValue(machine.Cfg.Drives[1].PathOnHost); got != scratchDiskName {
+	if got := firecracker.StringValue(sdkMachine.Cfg.Drives[1].PathOnHost); got != scratchDiskName {
 		t.Fatalf("scratch drive path = %q", got)
 	}
 	computerName := "computer.ext4"
-	if got := firecracker.StringValue(machine.Cfg.Drives[2].PathOnHost); got != computerName {
+	if got := firecracker.StringValue(sdkMachine.Cfg.Drives[2].PathOnHost); got != computerName {
 		t.Fatalf("computer drive path = %q", got)
 	}
 	for _, name := range []string{filepath.Base(rootfsPath), scratchDiskName, computerName, filepath.Base(memoryPath), filepath.Base(statePath)} {
@@ -1239,7 +1239,7 @@ func TestRestoreReadOnlyDrivePathsSatisfySDKValidationAndBecomeJailedNames(t *te
 		t.Fatal(err)
 	}
 	strategy := sealedDriveChrootStrategy{kernelImagePath: kernelPath, drives: drives}
-	machine, err := firecracker.NewMachine(
+	sdkMachine, err := firecracker.NewMachine(
 		context.Background(),
 		firecracker.Config{
 			VMID:            vmID,
@@ -1259,7 +1259,7 @@ func TestRestoreReadOnlyDrivePathsSatisfySDKValidationAndBecomeJailedNames(t *te
 		withSnapshotRestore(memoryPath, statePath),
 		withJailedRestoreFiles(rootfsPath, scratchPath, "", memoryPath, statePath),
 		withRestoreSealedDrives(strategy),
-		func(machine *firecracker.Machine) {
+		func(sdkMachine *firecracker.Machine) {
 			for _, name := range []string{
 				firecracker.SetupNetworkHandlerName,
 				firecracker.StartVMMHandlerName,
@@ -1267,7 +1267,7 @@ func TestRestoreReadOnlyDrivePathsSatisfySDKValidationAndBecomeJailedNames(t *te
 				firecracker.BootstrapLoggingHandlerName,
 				firecracker.LoadSnapshotHandlerName,
 			} {
-				machine.Handlers.FcInit = machine.Handlers.FcInit.Swap(firecracker.Handler{
+				sdkMachine.Handlers.FcInit = sdkMachine.Handlers.FcInit.Swap(firecracker.Handler{
 					Name: name,
 					Fn:   func(context.Context, *firecracker.Machine) error { return nil },
 				})
@@ -1277,10 +1277,10 @@ func TestRestoreReadOnlyDrivePathsSatisfySDKValidationAndBecomeJailedNames(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := machine.Handlers.FcInit.Run(context.Background(), machine); err != nil {
+	if err := sdkMachine.Handlers.FcInit.Run(context.Background(), sdkMachine); err != nil {
 		t.Fatal(err)
 	}
-	for _, drive := range machine.Cfg.Drives {
+	for _, drive := range sdkMachine.Cfg.Drives {
 		id := firecracker.StringValue(drive.DriveID)
 		if id != vm.ProgramRuntimeDrive && id != vm.ProgramDrive {
 			continue
@@ -1386,17 +1386,17 @@ func TestRuntimeKernelArgsDescribeExactDriveTopology(t *testing.T) {
 		{ID: vm.ProgramRuntimeDrive, Source: source},
 		{ID: vm.ProgramDrive, Source: source},
 	}
-	if got := runtimeKernelArgs(vm.RuntimeTopology{}, nil, "10.0.0.2"); got != baseArgs {
+	if got := runtimeKernelArgs(vm.Topology{}, nil, "10.0.0.2"); got != baseArgs {
 		t.Fatalf("default args = %q", got)
 	}
 	if got := runtimeKernelArgs(
-		vm.RuntimeTopology{Computer: &vm.RuntimeComputer{}},
+		vm.Topology{Computer: &vm.ComputerDisk{}},
 		nil, "10.0.0.2",
 	); got != baseArgs+" helmr.computer=1" {
 		t.Fatalf("computer args = %q", got)
 	}
 	if got := runtimeKernelArgs(
-		vm.RuntimeTopology{Computer: &vm.RuntimeComputer{}},
+		vm.Topology{Computer: &vm.ComputerDisk{}},
 		program, "10.0.0.2",
 	); got != baseArgs+" helmr.computer=1 helmr.program=1" {
 		t.Fatalf("Program args = %q", got)
@@ -1405,14 +1405,14 @@ func TestRuntimeKernelArgsDescribeExactDriveTopology(t *testing.T) {
 
 func TestGuestNetworkArgsSurviveSDKSetupAndMatchRestore(t *testing.T) {
 	source := &recordingReadOnlyDriveSource{}
-	topology := vm.RuntimeTopology{Computer: &vm.RuntimeComputer{}}
+	topology := vm.Topology{Computer: &vm.ComputerDisk{}}
 	drives := []vm.ReadOnlyDrive{
 		{ID: vm.ProgramRuntimeDrive, Source: source},
 		{ID: vm.ProgramDrive, Source: source},
 	}
 	for _, test := range []struct {
 		name     string
-		topology vm.RuntimeTopology
+		topology vm.Topology
 		drives   []vm.ReadOnlyDrive
 	}{
 		{name: "qualification"},
@@ -1428,15 +1428,15 @@ func TestGuestNetworkArgsSurviveSDKSetupAndMatchRestore(t *testing.T) {
 			if connector.kernelArgsValue() != expectedRestoreArgs {
 				t.Fatal("launch and restore arguments differ")
 			}
-			machine := &firecracker.Machine{Cfg: firecracker.Config{
+			sdkMachine := &firecracker.Machine{Cfg: firecracker.Config{
 				KernelArgs:        connector.kernelArgsValue(),
 				NetworkInterfaces: firecracker.NetworkInterfaces{staticNetworkInterface()},
 			}}
-			if err := firecracker.SetupKernelArgsHandler.Fn(context.Background(), machine); err != nil {
+			if err := firecracker.SetupKernelArgsHandler.Fn(context.Background(), sdkMachine); err != nil {
 				t.Fatal(err)
 			}
 			tokens := make(map[string]int)
-			for _, token := range strings.Fields(machine.Cfg.KernelArgs) {
+			for _, token := range strings.Fields(sdkMachine.Cfg.KernelArgs) {
 				key, _, _ := strings.Cut(token, "=")
 				switch key {
 				case "ip", "nfsaddrs", "initcall_debug", "ignore_loglevel", "async.dyndbg":
@@ -1448,7 +1448,7 @@ func TestGuestNetworkArgsSurviveSDKSetupAndMatchRestore(t *testing.T) {
 				t.Fatalf("helmr.ip count = %d", tokens["helmr.ip"])
 			}
 			want := strings.Fields(expectedRestoreArgs)
-			got := strings.Fields(machine.Cfg.KernelArgs)
+			got := strings.Fields(sdkMachine.Cfg.KernelArgs)
 			slices.Sort(want)
 			slices.Sort(got)
 			if !slices.Equal(got, want) {
@@ -1522,7 +1522,7 @@ func TestMaterializeRecordsScratchDiskPhase(t *testing.T) {
 				t.Fatal(err)
 			}
 			computerInstanceID := uuid.NewV7().String()
-			var phases []vm.RuntimePhase
+			var phases []vm.Phase
 
 			_, err = connector.materialize(t.Context(), vm.MaterializeRequest{
 				ID:        computerInstanceID,
@@ -1536,7 +1536,7 @@ func TestMaterializeRecordsScratchDiskPhase(t *testing.T) {
 				VMVCPUCount:       1,
 				CPUConfigDigest:   cpuConfigDigest,
 				ComputerMountPath: "/workspace",
-				RecordPhase: func(phase vm.RuntimePhase) {
+				RecordPhase: func(phase vm.Phase) {
 					phases = append(phases, phase)
 				},
 			})
@@ -1546,7 +1546,7 @@ func TestMaterializeRecordsScratchDiskPhase(t *testing.T) {
 			if test.missingMkfs && !strings.Contains(err.Error(), "format scratch disk") {
 				t.Fatalf("materialize error = %v, want scratch format failure", err)
 			}
-			var scratchPhase *vm.RuntimePhase
+			var scratchPhase *vm.Phase
 			for i := range phases {
 				if phases[i].Name == "materialize_create_scratch_disk" {
 					scratchPhase = &phases[i]
@@ -1620,21 +1620,21 @@ func TestMaterializeRequiresActivationProbedCPUShape(t *testing.T) {
 	}
 }
 
-func TestSessionRuntimeFailsClosedUntilHostEvidenceIsBound(t *testing.T) {
+func TestMachineRuntimeFailsClosedUntilHostEvidenceIsBound(t *testing.T) {
 	artifacts := testProbeRuntimeArtifacts()
 	connector := &Connector{
 		cfg:         Config{VCPUCount: 2},
 		artifacts:   artifacts,
 		hostRuntime: newHostRuntimeEvidenceStore(),
 	}
-	if _, _, _, err := connector.boundSessionRuntime(2); err == nil || !strings.Contains(err.Error(), "not bound") {
+	if _, _, _, err := connector.boundMachineRuntime(2); err == nil || !strings.Contains(err.Error(), "not bound") {
 		t.Fatalf("unbound session runtime error = %v", err)
 	}
 	evidence := testHostRuntimeEvidence(t, 2, artifacts)
 	if err := connector.hostRuntime.bind(evidence, 2); err != nil {
 		t.Fatal(err)
 	}
-	identity, digest, firecrackerPath, err := connector.boundSessionRuntime(2)
+	identity, digest, firecrackerPath, err := connector.boundMachineRuntime(2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1653,7 +1653,7 @@ func TestSessionEntryPointsRejectWorkloadVMPlatformMismatch(t *testing.T) {
 		ComputerInstanceID: computerInstanceID,
 		VMPlatformID:       testCanonicalDigest("f"),
 	}
-	if _, err := connector.prepareSession(
+	if _, err := connector.prepareMachine(
 		context.Background(),
 		workloadLaunch,
 		computerInstanceID,
@@ -1663,7 +1663,7 @@ func TestSessionEntryPointsRejectWorkloadVMPlatformMismatch(t *testing.T) {
 		"",
 		"",
 		nil,
-		vm.RuntimeTopology{},
+		vm.Topology{},
 		nil,
 		nil,
 		nil,
@@ -1696,7 +1696,7 @@ func TestSealedDriveChrootStrategySeparatesSourceCapabilities(t *testing.T) {
 		}
 	}
 	source := &recordingReadOnlyDriveSource{}
-	machine := &firecracker.Machine{
+	sdkMachine := &firecracker.Machine{
 		Cfg: firecracker.Config{
 			KernelImagePath: kernelPath,
 			JailerCfg: &firecracker.JailerConfig{
@@ -1726,7 +1726,7 @@ func TestSealedDriveChrootStrategySeparatesSourceCapabilities(t *testing.T) {
 			}),
 		},
 	}
-	firecracker.WithLogger(logrus.NewEntry(logrus.New()))(machine)
+	firecracker.WithLogger(logrus.NewEntry(logrus.New()))(sdkMachine)
 	strategy := sealedDriveChrootStrategy{
 		kernelImagePath: kernelPath,
 		drives: []vm.ReadOnlyDrive{{
@@ -1734,10 +1734,10 @@ func TestSealedDriveChrootStrategySeparatesSourceCapabilities(t *testing.T) {
 			Source: source,
 		}},
 	}
-	if err := strategy.AdaptHandlers(&machine.Handlers); err != nil {
+	if err := strategy.AdaptHandlers(&sdkMachine.Handlers); err != nil {
 		t.Fatal(err)
 	}
-	if err := machine.Handlers.FcInit.Run(context.Background(), machine); err != nil {
+	if err := sdkMachine.Handlers.FcInit.Run(context.Background(), sdkMachine); err != nil {
 		t.Fatal(err)
 	}
 	if source.directory != root ||
@@ -1746,10 +1746,10 @@ func TestSealedDriveChrootStrategySeparatesSourceCapabilities(t *testing.T) {
 		source.gid != os.Getgid() {
 		t.Fatalf("link request = %+v", source)
 	}
-	if len(machine.Cfg.Drives) != 3 {
-		t.Fatalf("drive count = %d, want 3", len(machine.Cfg.Drives))
+	if len(sdkMachine.Cfg.Drives) != 3 {
+		t.Fatalf("drive count = %d, want 3", len(sdkMachine.Cfg.Drives))
 	}
-	if got := firecracker.StringValue(machine.Cfg.Drives[2].PathOnHost); got != "program.squashfs" {
+	if got := firecracker.StringValue(sdkMachine.Cfg.Drives[2].PathOnHost); got != "program.squashfs" {
 		t.Fatalf("program drive path = %q", got)
 	}
 	for _, name := range []string{
@@ -1846,27 +1846,27 @@ func (source *recordingReadOnlyDriveSource) LinkInto(
 }
 
 func TestWithSnapshotRestoreSkipsVsockReconfiguration(t *testing.T) {
-	machine := &firecracker.Machine{}
-	firecracker.WithLogger(logrus.NewEntry(logrus.New()))(machine)
+	sdkMachine := &firecracker.Machine{}
+	firecracker.WithLogger(logrus.NewEntry(logrus.New()))(sdkMachine)
 
-	withSnapshotRestore("/checkpoint.mem", "/checkpoint.vmstate")(machine)
+	withSnapshotRestore("/checkpoint.mem", "/checkpoint.vmstate")(sdkMachine)
 
-	if machine.Cfg.Snapshot.MemFilePath != "/checkpoint.mem" {
-		t.Fatalf("memory path = %q", machine.Cfg.Snapshot.MemFilePath)
+	if sdkMachine.Cfg.Snapshot.MemFilePath != "/checkpoint.mem" {
+		t.Fatalf("memory path = %q", sdkMachine.Cfg.Snapshot.MemFilePath)
 	}
-	if machine.Cfg.Snapshot.SnapshotPath != "/checkpoint.vmstate" {
-		t.Fatalf("state path = %q", machine.Cfg.Snapshot.SnapshotPath)
+	if sdkMachine.Cfg.Snapshot.SnapshotPath != "/checkpoint.vmstate" {
+		t.Fatalf("state path = %q", sdkMachine.Cfg.Snapshot.SnapshotPath)
 	}
-	if machine.Cfg.Snapshot.EnableDiffSnapshots {
+	if sdkMachine.Cfg.Snapshot.EnableDiffSnapshots {
 		t.Fatal("restore enabled differential snapshots")
 	}
-	if machine.Cfg.Snapshot.ResumeVM {
+	if sdkMachine.Cfg.Snapshot.ResumeVM {
 		t.Fatal("restore must load paused so network identity can be validated before resume")
 	}
-	if !machine.Handlers.FcInit.Has(firecracker.LoadSnapshotHandlerName) {
+	if !sdkMachine.Handlers.FcInit.Has(firecracker.LoadSnapshotHandlerName) {
 		t.Fatal("expected snapshot load handler")
 	}
-	if machine.Handlers.FcInit.Has(firecracker.AddVsocksHandlerName) {
+	if sdkMachine.Handlers.FcInit.Has(firecracker.AddVsocksHandlerName) {
 		t.Fatal("restore must not re-add vsock devices after loading a snapshot")
 	}
 }
@@ -2062,7 +2062,7 @@ func testRestoreManifestAndIdentity(t *testing.T, cfg Config, checkpointID strin
 				CPUConfigDigest:  testCPUConfigDigest(cfg.VCPUCount),
 				MemoryMiB:        cfg.MemoryMiB,
 				ScratchDiskMiB:   cfg.ScratchDiskMiB,
-				KernelArgs:       runtimeKernelArgs(vm.RuntimeTopology{}, nil, cfg.NetworkResolverIPv4),
+				KernelArgs:       runtimeKernelArgs(vm.Topology{}, nil, cfg.NetworkResolverIPv4),
 				KernelDigest:     kernelDigest,
 				InitramfsDigest:  initramfsDigest,
 				RootfsDigest:     rootfsDigest,
@@ -2102,7 +2102,7 @@ func createSparseTestFile(path string, size int64) error {
 	return errors.Join(truncateErr, closeErr)
 }
 
-func hasRuntimePhase(phases []vm.RuntimePhase, name string, errorClass string) bool {
+func hasRuntimePhase(phases []vm.Phase, name string, errorClass string) bool {
 	for _, phase := range phases {
 		if phase.Name != name {
 			continue
@@ -2119,7 +2119,7 @@ func testDigest(body []byte) string {
 	return sha256sum.FormatDigest(sum[:])
 }
 
-func testRestoreComputerTopology(t *testing.T) vm.RuntimeTopology {
+func testRestoreComputerTopology(t *testing.T) vm.Topology {
 	t.Helper()
 	file, err := os.CreateTemp(t.TempDir(), "computer-")
 	if err != nil {
@@ -2129,9 +2129,9 @@ func testRestoreComputerTopology(t *testing.T) vm.RuntimeTopology {
 	if err := file.Truncate(4096); err != nil {
 		t.Fatal(err)
 	}
-	return vm.RuntimeTopology{Computer: &vm.RuntimeComputer{ComputerID: uuid.NewV7().String(), VersionID: uuid.NewV7().String(), File: file, SizeBytes: 4096}}
+	return vm.Topology{Computer: &vm.ComputerDisk{ComputerID: uuid.NewV7().String(), VersionID: uuid.NewV7().String(), File: file, SizeBytes: 4096}}
 }
-func testPairedRestoreManifest(t *testing.T, cfg Config, id string, topology vm.RuntimeTopology) ([]byte, vm.CheckpointIdentity) {
+func testPairedRestoreManifest(t *testing.T, cfg Config, id string, topology vm.Topology) ([]byte, vm.CheckpointIdentity) {
 	t.Helper()
 	data, identity := testRestoreManifestAndIdentity(t, cfg, id)
 	var manifest snapshotManifest

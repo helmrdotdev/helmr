@@ -64,7 +64,7 @@ type ConnectRequest struct {
 	OwnerKind      OwnerKind
 	Binding        WorkloadBinding
 	Resources      compute.ResourceVector
-	Topology       RuntimeTopology
+	Topology       Topology
 	ReadOnlyDrives []ReadOnlyDrive
 }
 
@@ -85,8 +85,8 @@ type ReadOnlyDriveSource interface {
 	LinkInto(directory string, name string, uid int, gid int) error
 }
 
-type RuntimeTopology struct {
-	Computer *RuntimeComputer
+type Topology struct {
+	Computer *ComputerDisk
 }
 
 // RuntimeComputer transfers an exclusively owned working disk to the VM owner.
@@ -95,7 +95,7 @@ type RuntimeTopology struct {
 // attachment and export until the VMM and all device users are proven absent.
 // Device transfers that ownership to the backend when BindConsumer succeeds.
 // VersionID identifies the published source, not subsequent guest writes.
-type RuntimeComputer struct {
+type ComputerDisk struct {
 	ComputerID string
 	Path       string
 	File       *os.File
@@ -145,7 +145,7 @@ type SnapshotArtifact struct {
 	ScratchDisk       SnapshotFile
 	Memory            []SnapshotFile
 	Manifest          []byte
-	Phases            []RuntimePhase
+	Phases            []Phase
 }
 
 type SnapshotFile struct {
@@ -168,9 +168,9 @@ type RestoreRequest struct {
 	MemoryMediaTypes     []string
 	Manifest             []byte
 	Checkpoint           CheckpointIdentity
-	Topology             RuntimeTopology
+	Topology             Topology
 	ReadOnlyDrives       []ReadOnlyDrive
-	RecordPhase          func(RuntimePhase)
+	RecordPhase          func(Phase)
 }
 
 type MaterializeRequest struct {
@@ -183,9 +183,9 @@ type MaterializeRequest struct {
 	Resources                 compute.ResourceVector
 	VMVCPUCount               int32
 	CPUConfigDigest           string
-	Topology                  RuntimeTopology
+	Topology                  Topology
 	ReadOnlyDrives            []ReadOnlyDrive
-	RecordPhase               func(RuntimePhase)
+	RecordPhase               func(Phase)
 }
 
 // WorkloadBinding is the closed logical authority that a backend binds to
@@ -307,7 +307,7 @@ type CheckpointIdentity struct {
 	CPUConfigDigest   string
 }
 
-type RuntimePhase struct {
+type Phase struct {
 	Name       string
 	DurationMs int64
 	Role       string

@@ -19,7 +19,7 @@ func TestStartMachineContextJoinsCanceledStartup(t *testing.T) {
 		defer cancelMachine()
 		entered, release := make(chan struct{}), make(chan struct{})
 		finished := false
-		machine := startupTestMachine(t, machineCtx, func(ctx context.Context, _ *firecracker.Machine) error {
+		sdkMachine := startupTestMachine(t, machineCtx, func(ctx context.Context, _ *firecracker.Machine) error {
 			close(entered)
 			<-ctx.Done()
 			<-release // Cancellation is cooperative; cleanup must wait for this handler.
@@ -27,7 +27,7 @@ func TestStartMachineContextJoinsCanceledStartup(t *testing.T) {
 			return ctx.Err()
 		})
 		result := make(chan error, 1)
-		go func() { result <- startMachineContext(requestCtx, machine, machineCtx, cancelMachine) }()
+		go func() { result <- startMachineContext(requestCtx, sdkMachine, machineCtx, cancelMachine) }()
 		<-entered
 		cancelRequest()
 		synctest.Wait()
@@ -57,8 +57,8 @@ func TestStartMachineContextCancelsOnStartupError(t *testing.T) {
 	machineCtx, cancelMachine := context.WithCancel(context.Background())
 	defer cancelMachine()
 	want := errors.New("synthetic SDK handler failure")
-	machine := startupTestMachine(t, machineCtx, func(context.Context, *firecracker.Machine) error { return want })
-	if err := startMachineContext(t.Context(), machine, machineCtx, cancelMachine); !errors.Is(err, want) {
+	sdkMachine := startupTestMachine(t, machineCtx, func(context.Context, *firecracker.Machine) error { return want })
+	if err := startMachineContext(t.Context(), sdkMachine, machineCtx, cancelMachine); !errors.Is(err, want) {
 		t.Fatalf("startup error = %v, want %v", err, want)
 	}
 	if machineCtx.Err() != context.Canceled {
@@ -72,11 +72,11 @@ func TestStartMachineContextSuccessfulHandoffOwnsLifetime(t *testing.T) {
 	machineCtx, cancelMachine := context.WithCancel(context.Background())
 	defer cancelMachine()
 	var handlerCtx context.Context
-	machine := startupTestMachine(t, machineCtx, func(ctx context.Context, _ *firecracker.Machine) error {
+	sdkMachine := startupTestMachine(t, machineCtx, func(ctx context.Context, _ *firecracker.Machine) error {
 		handlerCtx = ctx
 		return nil
 	})
-	if err := startMachineContext(requestCtx, machine, machineCtx, cancelMachine); err != nil {
+	if err := startMachineContext(requestCtx, sdkMachine, machineCtx, cancelMachine); err != nil {
 		t.Fatal(err)
 	}
 	cancelRequest()
@@ -94,13 +94,13 @@ func TestStartMachineContextSuccessfulHandoffOwnsLifetime(t *testing.T) {
 // replaced by the controlled handler. This does not prove VM process lifetime.
 func startupTestMachine(t *testing.T, ctx context.Context, fn func(context.Context, *firecracker.Machine) error) *firecracker.Machine {
 	t.Helper()
-	machine, err := firecracker.NewMachine(ctx, firecracker.Config{DisableValidation: true},
+	sdkMachine, err := firecracker.NewMachine(ctx, firecracker.Config{DisableValidation: true},
 		withSnapshotRestore("unused.mem", "unused.state"),
-		func(machine *firecracker.Machine) {
-			machine.Handlers.FcInit = firecracker.HandlerList{}.Append(firecracker.Handler{Name: "test.Startup", Fn: fn})
+		func(sdkMachine *firecracker.Machine) {
+			sdkMachine.Handlers.FcInit = firecracker.HandlerList{}.Append(firecracker.Handler{Name: "test.Startup", Fn: fn})
 		})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return machine
+	return sdkMachine
 }

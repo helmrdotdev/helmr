@@ -43,7 +43,7 @@ type computerSave struct {
 	client     ComputerSaveClient
 	objects    versionObjectPublisher
 	request    workerapi.ComputerSaveBeginRequest
-	runtimeID  string
+	instanceID string
 	computerID string
 	capture    computerSaveCapture
 	cancel     context.CancelFunc
@@ -63,12 +63,12 @@ type computerSave struct {
 // only after restoring normal guest/device dispatch; ambiguous capture failure
 // belongs to the Runtime stop path. The caller owns the lifetime of client,
 // objects and capture dependencies until Quiesce has joined this operation.
-func startComputerSave(ctx context.Context, client ComputerSaveClient, objects versionObjectPublisher, request workerapi.ComputerSaveBeginRequest, runtimeID, computerID string, capture func(context.Context) (computerSaveCapture, error)) (*computerSave, error) {
-	if client == nil || objects == nil || capture == nil || ids.Validate(runtimeID) != nil || ids.Validate(computerID) != nil || ids.Validate(request.SaveID) != nil || request.Sequence <= 0 || ids.Validate(request.EnvironmentID) != nil || request.ComputerInstanceID != runtimeID || request.WriterGeneration <= 0 {
+func startComputerSave(ctx context.Context, client ComputerSaveClient, objects versionObjectPublisher, request workerapi.ComputerSaveBeginRequest, instanceID, computerID string, capture func(context.Context) (computerSaveCapture, error)) (*computerSave, error) {
+	if client == nil || objects == nil || capture == nil || ids.Validate(instanceID) != nil || ids.Validate(computerID) != nil || ids.Validate(request.SaveID) != nil || request.Sequence <= 0 || ids.Validate(request.EnvironmentID) != nil || request.ComputerInstanceID != instanceID || request.WriterGeneration <= 0 {
 		return nil, errors.New("computer save dependencies and identities required")
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	s := &computerSave{client: client, objects: objects, request: request, runtimeID: runtimeID, computerID: computerID, cancel: cancel, done: make(chan struct{}), settle: make(chan struct{}, 1)}
+	s := &computerSave{client: client, objects: objects, request: request, instanceID: instanceID, computerID: computerID, cancel: cancel, done: make(chan struct{}), settle: make(chan struct{}, 1)}
 	s.settle <- struct{}{}
 	go func() {
 		defer close(s.done)
@@ -83,7 +83,7 @@ func (s *computerSave) begin(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if response.ComputerInstanceID != s.runtimeID || response.SaveID != s.request.SaveID || response.Sequence != s.request.Sequence || response.WriterGeneration != s.request.WriterGeneration || ids.Validate(response.PredecessorID) != nil || response.DesiredVersion <= 0 {
+	if response.ComputerInstanceID != s.instanceID || response.SaveID != s.request.SaveID || response.Sequence != s.request.Sequence || response.WriterGeneration != s.request.WriterGeneration || ids.Validate(response.PredecessorID) != nil || response.DesiredVersion <= 0 {
 		return errors.New("computer save admission differs from operation")
 	}
 	s.admitted = true

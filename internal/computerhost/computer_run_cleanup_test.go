@@ -42,12 +42,12 @@ func (c *runCleanupClient) ReconcileComputerRun(context.Context, workerapi.Compu
 	return nil
 }
 
-type runCleanupSession struct {
-	serverTestSession
+type runCleanupMachine struct {
+	serverTestMachine
 	open func(context.Context) (vm.Stream, error)
 }
 
-func (s *runCleanupSession) OpenStream(ctx context.Context) (vm.Stream, error) {
+func (s *runCleanupMachine) OpenStream(ctx context.Context) (vm.Stream, error) {
 	return s.open(ctx)
 }
 
@@ -59,7 +59,7 @@ func TestComputerRunCleanupRetriesLostReplies(t *testing.T) {
 			client := &runCleanupClient{pending: true, cancel: cancel, transient: loss == "control plane"}
 			calls := 0
 			results := make(chan error, 3)
-			session := &runCleanupSession{open: func(context.Context) (vm.Stream, error) {
+			machine := &runCleanupMachine{open: func(context.Context) (vm.Stream, error) {
 				calls++
 				attempt := calls
 				host, guest := net.Pipe()
@@ -92,7 +92,7 @@ func TestComputerRunCleanupRetriesLostReplies(t *testing.T) {
 				return testVMStream(host), nil
 			}}
 			mount := workerapi.ComputerInstanceAssignment{ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 3, GuestChannelCredential: "token"}
-			err := (Server{}).reconcileComputerRuns(ctx, session, mount, client)
+			err := (Server{}).reconcileComputerRuns(ctx, machine, mount, client)
 			if !errors.Is(err, context.Canceled) || calls != 2 || client.pending {
 				t.Fatalf("err=%v calls=%d pending=%v", err, calls, client.pending)
 			}
@@ -111,14 +111,14 @@ func TestComputerRunCleanupRevalidatesBeforePhysicalFallback(t *testing.T) {
 			defer cancel()
 			client := &runCleanupClient{pending: true, cancel: cancel}
 			calls := 0
-			session := &runCleanupSession{open: func(context.Context) (vm.Stream, error) {
+			machine := &runCleanupMachine{open: func(context.Context) (vm.Stream, error) {
 				calls++
 				if settled {
 					client.pending = false
 				}
 				return nil, io.ErrUnexpectedEOF
 			}}
-			err := (Server{}).reconcileComputerRuns(ctx, session, workerapi.ComputerInstanceAssignment{}, client)
+			err := (Server{}).reconcileComputerRuns(ctx, machine, workerapi.ComputerInstanceAssignment{}, client)
 			if settled {
 				if !errors.Is(err, context.Canceled) || calls != 1 {
 					t.Fatalf("settled member failed Computer: %v (%d calls)", err, calls)

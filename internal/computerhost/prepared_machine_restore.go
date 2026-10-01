@@ -22,10 +22,10 @@ import (
 
 func (p *PreparedMachines) restorePreparedMachine(
 	ctx context.Context,
-	target workerapi.RuntimeReconcileTarget,
-	topology vm.RuntimeTopology,
+	target workerapi.InstanceReconcileTarget,
+	topology vm.Topology,
 	readOnlyDrives []vm.ReadOnlyDrive,
-	record func(vm.RuntimePhase),
+	record func(vm.Phase),
 ) (result vm.Machine, retErr error) {
 	restore := target.Source.Restore
 	if restore == nil {
@@ -60,7 +60,7 @@ func (p *PreparedMachines) restorePreparedMachine(
 		}
 		if cleanupErr != nil {
 			if result != nil {
-				cleanupErr = errors.Join(cleanupErr, p.closeSession(ctx, result))
+				cleanupErr = errors.Join(cleanupErr, p.closeMachine(ctx, result))
 				result = nil
 			}
 			retErr = errors.Join(retErr, cleanupErr)
@@ -97,10 +97,10 @@ func (p *PreparedMachines) restorePreparedMachine(
 		return nil, fmt.Errorf("read restored runtime manifest: %w", err)
 	}
 	runtimeInfo := checkpoint.RecoveryPoint.Runtime
-	session, err := p.Backend.Restore(ctx, vm.RestoreRequest{
+	machine, err := p.Backend.Restore(ctx, vm.RestoreRequest{
 		ID: restore.CheckpointID, ComputerInstanceID: target.ID, OwnerKind: vm.OwnerRuntime,
 		Resources: compute.ResourceVector{MilliCPU: int64(target.Source.ReservedCPUMillis), MemoryMiB: int64(target.Source.ReservedMemoryMiB), DiskMiB: target.Source.ReservedDiskMiB, Slots: target.Source.ReservedExecutionSlots},
-		Binding:   runtimeTargetWorkloadBinding(target),
+		Binding:   instanceTargetWorkloadBinding(target),
 		VMState:   paths[1], VMStateMediaType: runtimeState.VMStateArtifact.MediaType,
 		Memory: []string{paths[2]}, MemoryMediaTypes: []string{runtimeState.MemoryArtifacts[0].MediaType},
 		ScratchDisk: paths[3], ScratchDiskMediaType: runtimeState.ScratchDiskArtifact.MediaType,
@@ -124,12 +124,12 @@ func (p *PreparedMachines) restorePreparedMachine(
 		identity.Runs = append(identity.Runs, &computerv0.CapturedRun{RunId: member.RunID, AttemptNumber: uint32(member.AttemptNumber), RunWaitId: member.RunWaitID, RunLeaseId: member.RunLeaseID, CorrelationId: member.CorrelationID})
 	}
 	verify := &computerv0.VerifyComputerRestoreRequest{Identity: identity}
-	err = guestControl{machine: session}.verifyRestore(ctx, verify)
+	err = guestControl{machine: machine}.verifyRestore(ctx, verify)
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("verify restored frozen Computer: %w", err), p.closeSession(ctx, session))
+		return nil, errors.Join(fmt.Errorf("verify restored frozen Computer: %w", err), p.closeMachine(ctx, machine))
 	}
 
-	return session, nil
+	return machine, nil
 }
 
 func restoreStagingKey(id string, epoch int64) reservation.Key {
@@ -145,7 +145,7 @@ func (p *PreparedMachines) restorePreparationDirectory(id string, epoch int64) s
 
 // Retain raw RAM and state with the runtime; decrypted packed inputs live only
 // through materialization. Ciphertext sizes safely bound their plaintext files.
-func (p *PreparedMachines) checkpointRestoreCapacity(target workerapi.RuntimeReconcileTarget) (retained, staging int64, err error) {
+func (p *PreparedMachines) checkpointRestoreCapacity(target workerapi.InstanceReconcileTarget) (retained, staging int64, err error) {
 	restore := target.Source.Restore
 	if restore == nil {
 		return 0, 0, nil

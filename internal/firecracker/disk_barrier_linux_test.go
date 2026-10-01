@@ -116,12 +116,12 @@ func TestPausedDiskBarrierVerifiesActualDevices(t *testing.T) {
 				}
 				_ = json.NewEncoder(w).Encode(map[string]any{"drives": drives})
 			})
-			machine, err := sdk.NewMachine(context.Background(), sdk.Config{SocketPath: socket})
+			sdkMachine, err := sdk.NewMachine(context.Background(), sdk.Config{SocketPath: socket})
 			if err != nil {
 				t.Fatal(err)
 			}
-			session := &guestSession{diskFiles: files, machine: machine, jailRoot: jail, scratchDisk: scratch, topology: vm.RuntimeTopology{Computer: &vm.RuntimeComputer{Path: filepath.Join(root, "computer.ext4")}}}
-			err = session.syncPausedDisks(t.Context())
+			machine := &guestMachine{diskFiles: files, machine: sdkMachine, jailRoot: jail, scratchDisk: scratch, topology: vm.Topology{Computer: &vm.ComputerDisk{Path: filepath.Join(root, "computer.ext4")}}}
+			err = machine.syncPausedDisks(t.Context())
 			if (err == nil) != (scenario == "valid" || scenario == "restored") {
 				t.Fatalf("barrier result: %v", err)
 			}

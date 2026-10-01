@@ -45,7 +45,7 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 	server := httptest.NewServer(router)
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.worker.HostID).client(t, server.URL)
-	key, err := client.InitialComputerKey(t.Context(), workerapi.InitialComputerKeyRequest{ComputerInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 1})
+	key, err := client.InitialComputerKey(t.Context(), workerapi.InitialComputerKeyRequest{ComputerInstanceID: pgvalue.UUIDString(f.instance), DesiredVersion: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return workerapi.InitialComputerObjectRequest{ComputerInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 1, Inspection: blockformat.ObjectInspection{Pack: &evidence}}
+		return workerapi.InitialComputerObjectRequest{ComputerInstanceID: pgvalue.UUIDString(f.instance), DesiredVersion: 1, Inspection: blockformat.ObjectInspection{Pack: &evidence}}
 	}
 	upload := func(r workerapi.InitialComputerObjectRequest) {
 		t.Helper()
@@ -156,7 +156,7 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 	}
 	upload(next)
 	observed.after = func() {
-		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, f.runtime)
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, f.instance)
 	}
 	if err = client.CertifyInitialComputerObject(t.Context(), next); err == nil {
 		t.Fatal("revoked Runtime certified after storage I/O")
@@ -174,24 +174,24 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 		t.Fatal("live candidate collected")
 	}
 	var version int64
-	if err = f.Pool.QueryRow(t.Context(), `SELECT observed_version FROM computer_instances WHERE id=$1`, f.runtime).Scan(&version); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT observed_version FROM computer_instances WHERE id=$1`, f.instance).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
 	closure := computer.Closure{
 		Observation: computer.Observation{
 			Instance: computer.InstanceRef{
 				Host: computer.Host{GroupID: f.worker.GroupID, HostID: f.worker.HostID, Epoch: f.worker.Epoch},
-				ID:   pgvalue.MustUUIDValue(f.runtime), DesiredVersion: 2,
+				ID:   pgvalue.MustUUIDValue(f.instance), DesiredVersion: 2,
 			},
 			ExpectedObservedVersion: version,
 		},
-		Reason: "test_cleanup", CleanupProof: &computer.CleanupProof{Method: computer.CleanupSessionClosed, CompletedAt: time.Now()},
+		Reason: "test_cleanup", CleanupProof: &computer.CleanupProof{Method: computer.CleanupMachineClosed, CompletedAt: time.Now()},
 	}
 	if _, err = computer.RecordInstanceClosed(t.Context(), f.Pool, closure); err != nil {
 		t.Fatal(err)
 	}
 	var expectedRetained int
-	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_object_pins WHERE computer_instance_id=$1`, f.runtime).Scan(&expectedRetained); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_object_pins WHERE computer_instance_id=$1`, f.instance).Scan(&expectedRetained); err != nil {
 		t.Fatal(err)
 	}
 	for range expectedRetained {

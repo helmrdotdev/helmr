@@ -9,6 +9,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func (p *PreparedMachines) prepareComputerDevice(context.Context, workerapi.RuntimeReconcileTarget) (vm.ComputerDevice, error) {
+func (p *PreparedMachines) prepareComputerDevice(context.Context, workerapi.InstanceReconcileTarget) (vm.ComputerDevice, error) {
 	return nil, errors.New("computer runtime preparation requires Linux")
 }

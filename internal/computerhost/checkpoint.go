@@ -69,7 +69,7 @@ type computerCheckpointer struct {
 	publication    func(computerCheckpointRequest) disk.ContinuationPublication
 	reservations   *reservation.Ledger
 	objects        cas.ImmutableStore
-	session        vm.CheckpointableMachine
+	machine        vm.CheckpointableMachine
 	// mount is set when session is served; see ReleaseCheckpointSource.
 	mount     *instanceMount
 	encryptor *CheckpointEncryptor
@@ -86,7 +86,7 @@ func (c *computerCheckpointer) ReleaseCheckpointSource(ctx context.Context) erro
 	if c.mount != nil {
 		err = c.mount.ReleaseCheckpointSource(ctx)
 	} else {
-		err = c.session.Close(ctx)
+		err = c.machine.Close(ctx)
 	}
 	if err != nil {
 		return err
@@ -110,7 +110,7 @@ func checkpointPurpose(suffix string) string {
 	return "helmr.checkpoint." + suffix
 }
 
-func workerCheckpointPhases(phases []vm.RuntimePhase) []workerapi.CheckpointPhase {
+func workerCheckpointPhases(phases []vm.Phase) []workerapi.CheckpointPhase {
 	if len(phases) == 0 {
 		return nil
 	}
@@ -121,7 +121,7 @@ func workerCheckpointPhases(phases []vm.RuntimePhase) []workerapi.CheckpointPhas
 	return result
 }
 
-func workerCheckpointPhase(phase vm.RuntimePhase) workerapi.CheckpointPhase {
+func workerCheckpointPhase(phase vm.Phase) workerapi.CheckpointPhase {
 	return workerapi.CheckpointPhase{
 		Name:       phase.Name,
 		DurationMs: phase.DurationMs,

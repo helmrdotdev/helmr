@@ -13,27 +13,27 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-type computerFreezeSession struct {
+type computerFreezeMachine struct {
 	stream net.Conn
 	closed bool
 }
 
-func (s *computerFreezeSession) OpenStream(context.Context) (vm.Stream, error) { return s.stream, nil }
-func (s *computerFreezeSession) Stream() vm.Stream                             { return s.stream }
-func (s *computerFreezeSession) Wait(context.Context) error                    { return nil }
-func (s *computerFreezeSession) Close(context.Context) error {
+func (s *computerFreezeMachine) OpenStream(context.Context) (vm.Stream, error) { return s.stream, nil }
+func (s *computerFreezeMachine) Stream() vm.Stream                             { return s.stream }
+func (s *computerFreezeMachine) Wait(context.Context) error                    { return nil }
+func (s *computerFreezeMachine) Close(context.Context) error {
 	s.closed = true
 	return s.stream.Close()
 }
 
-func freezeTarget(count int) workerapi.RuntimeReconcileTarget {
-	target := workerapi.RuntimeReconcileTarget{ID: "instance", WorkerEpoch: 2, DesiredVersion: 5, Action: workerapi.RuntimeReconcileCapture, Source: workerapi.RuntimeSource{ComputerID: "computer", ComputerSpecID: "spec", WriterGeneration: 3}, Capture: &workerapi.RuntimeCapture{CheckpointID: "checkpoint", MembershipRevision: 7, Runs: []workerapi.RuntimeCaptureRun{}}}
+func freezeTarget(count int) workerapi.InstanceReconcileTarget {
+	target := workerapi.InstanceReconcileTarget{ID: "instance", WorkerEpoch: 2, DesiredVersion: 5, Action: workerapi.InstanceReconcileCapture, Source: workerapi.InstanceSource{ComputerID: "computer", ComputerSpecID: "spec", WriterGeneration: 3}, Capture: &workerapi.InstanceCapture{CheckpointID: "checkpoint", MembershipRevision: 7, Runs: []workerapi.InstanceCaptureRun{}}}
 	if count > 0 {
 		target.Capture.ProgramDeploymentID = "program"
 	}
 	for i := range count {
 		suffix := string(rune('a' + i))
-		target.Capture.Runs = append(target.Capture.Runs, workerapi.RuntimeCaptureRun{RunID: "run-" + suffix, AttemptNumber: 2, RunWaitID: "wait-" + suffix, RunLeaseID: "lease-" + suffix})
+		target.Capture.Runs = append(target.Capture.Runs, workerapi.InstanceCaptureRun{RunID: "run-" + suffix, AttemptNumber: 2, RunWaitID: "wait-" + suffix, RunLeaseID: "lease-" + suffix})
 	}
 	if count > 0 {
 		cursor := int64(9)
@@ -103,8 +103,8 @@ func TestComputerFreezeVerifiesWholeGuestProof(t *testing.T) {
 				}
 				done <- frameio.WriteProtoFrame(server, response)
 			}()
-			session := &computerFreezeSession{stream: client}
-			point, err := guestControl{machine: session}.freeze(ctx, target)
+			machine := &computerFreezeMachine{stream: client}
+			point, err := guestControl{machine: machine}.freeze(ctx, target)
 			wantError := test.change != nil && test.name != "reordered"
 			if (err != nil) != wantError {
 				t.Fatalf("freeze: %v", err)
@@ -128,7 +128,7 @@ func TestComputerFreezeVerifiesWholeGuestProof(t *testing.T) {
 					}
 				}
 			}
-			if session.closed {
+			if machine.closed {
 				t.Fatal("freeze RPC closed the physical session")
 			}
 			if err = <-done; err != nil {
@@ -139,14 +139,14 @@ func TestComputerFreezeVerifiesWholeGuestProof(t *testing.T) {
 }
 
 func TestComputerFreezeRejectsInvalidIntentBeforeOpeningStream(t *testing.T) {
-	for _, change := range []func(*workerapi.RuntimeReconcileTarget){
-		func(t *workerapi.RuntimeReconcileTarget) { t.Capture = nil },
-		func(t *workerapi.RuntimeReconcileTarget) { t.Action = workerapi.RuntimeReconcilePrepare },
-		func(t *workerapi.RuntimeReconcileTarget) { t.Source.WriterGeneration = 0 },
-		func(t *workerapi.RuntimeReconcileTarget) { t.Capture.ProgramDeploymentID = "" },
-		func(t *workerapi.RuntimeReconcileTarget) { t.Capture.Runs[1] = t.Capture.Runs[0] },
-		func(t *workerapi.RuntimeReconcileTarget) { t.Capture.Runs[0].AttemptNumber = -1 },
-		func(t *workerapi.RuntimeReconcileTarget) { t.Capture.Runs[0].RunLeaseID = "" },
+	for _, change := range []func(*workerapi.InstanceReconcileTarget){
+		func(t *workerapi.InstanceReconcileTarget) { t.Capture = nil },
+		func(t *workerapi.InstanceReconcileTarget) { t.Action = workerapi.InstanceReconcilePrepare },
+		func(t *workerapi.InstanceReconcileTarget) { t.Source.WriterGeneration = 0 },
+		func(t *workerapi.InstanceReconcileTarget) { t.Capture.ProgramDeploymentID = "" },
+		func(t *workerapi.InstanceReconcileTarget) { t.Capture.Runs[1] = t.Capture.Runs[0] },
+		func(t *workerapi.InstanceReconcileTarget) { t.Capture.Runs[0].AttemptNumber = -1 },
+		func(t *workerapi.InstanceReconcileTarget) { t.Capture.Runs[0].RunLeaseID = "" },
 	} {
 		target := freezeTarget(2)
 		change(&target)
@@ -164,9 +164,9 @@ func TestComputerFreezeCancellationClosesBlockedStreamOnly(t *testing.T) {
 			defer server.Close()
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			session := &computerFreezeSession{stream: client}
+			machine := &computerFreezeMachine{stream: client}
 			done := make(chan error, 1)
-			go func() { _, err := guestControl{machine: session}.freeze(ctx, freezeTarget(0)); done <- err }()
+			go func() { _, err := guestControl{machine: machine}.freeze(ctx, freezeTarget(0)); done <- err }()
 			if _, _, err := wire.ReadStreamFrameHeader(server); err != nil {
 				t.Fatal(err)
 			}
@@ -185,7 +185,7 @@ func TestComputerFreezeCancellationClosesBlockedStreamOnly(t *testing.T) {
 			case <-time.After(time.Second):
 				t.Fatal("blocked stream did not cancel")
 			}
-			if session.closed {
+			if machine.closed {
 				t.Fatal("RPC owns source exclusion")
 			}
 		})

@@ -8,7 +8,7 @@ import (
 
 func TestCleanupProofIsTypedAndTimeBounded(t *testing.T) {
 	now := time.Now().UTC()
-	for _, method := range []string{CleanupSessionClosed, CleanupHostReconciled, CleanupNotMaterialized} {
+	for _, method := range []string{CleanupMachineClosed, CleanupHostReconciled, CleanupNotMaterialized} {
 		if _, err := (CleanupProof{Method: method, CompletedAt: now}).evidence(now, false); err != nil {
 			t.Fatalf("method %q rejected: %v", method, err)
 		}
@@ -27,7 +27,7 @@ func TestCleanupProofIsTypedAndTimeBounded(t *testing.T) {
 
 func TestClosedCleanupProofRequiresPhysicalTeardown(t *testing.T) {
 	now := time.Now().UTC()
-	for _, method := range []string{CleanupSessionClosed, CleanupHostReconciled} {
+	for _, method := range []string{CleanupMachineClosed, CleanupHostReconciled} {
 		if _, err := (CleanupProof{Method: method, CompletedAt: now}).evidence(now, true); err != nil {
 			t.Fatalf("method %q rejected: %v", method, err)
 		}

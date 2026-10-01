@@ -10,11 +10,11 @@ import (
 
 const mebibyte = int64(1024 * 1024)
 
-func runtimeReservationKey(id string, epoch int64) reservation.Key {
+func instanceReservationKey(id string, epoch int64) reservation.Key {
 	return reservation.Key{Kind: "runtime", Epoch: epoch, ID: strings.TrimSpace(id)}
 }
 
-func runtimeReservationVector(cpuMillis, memoryMiB, guestEphemeralDiskMiB int64) (reservation.Vector, error) {
+func instanceReservationVector(cpuMillis, memoryMiB, guestEphemeralDiskMiB int64) (reservation.Vector, error) {
 	if memoryMiB < 0 || guestEphemeralDiskMiB < 0 ||
 		memoryMiB > math.MaxInt64/mebibyte ||
 		guestEphemeralDiskMiB > math.MaxInt64/mebibyte {
@@ -28,13 +28,13 @@ func runtimeReservationVector(cpuMillis, memoryMiB, guestEphemeralDiskMiB int64)
 	}, nil
 }
 
-func runtimeReservationVectorWithProjection(
+func instanceReservationVectorWithProjection(
 	cpuMillis,
 	memoryMiB,
 	guestEphemeralDiskMiB,
 	projectionBytes int64,
 ) (reservation.Vector, error) {
-	request, err := runtimeReservationVector(cpuMillis, memoryMiB, guestEphemeralDiskMiB)
+	request, err := instanceReservationVector(cpuMillis, memoryMiB, guestEphemeralDiskMiB)
 	if err != nil {
 		return reservation.Vector{}, err
 	}

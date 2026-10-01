@@ -27,7 +27,7 @@ func TestReconciliationSettlesDurableInstanceFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	failure := instanceFailure(i, computer.FailureRuntime, workerapi.RuntimeFailureReconcile, nil)
+	failure := instanceFailure(i, computer.FailureInstance, workerapi.InstanceFailureReconcile, nil)
 	if _, err = computer.RecordInstanceFailure(t.Context(), f.Pool, failure); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestSourceFailureReconcilesPendingMembersAfterReporterStops(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = computer.RecordInstanceFailure(t.Context(), f.Pool, instanceFailure(i, computer.FailureSourceUnavailable, workerapi.RuntimeFailureComputerSource, []byte(`{"code":"source_missing"}`))); err != nil {
+	if _, err = computer.RecordInstanceFailure(t.Context(), f.Pool, instanceFailure(i, computer.FailureSourceUnavailable, workerapi.InstanceFailureComputerSource, []byte(`{"code":"source_missing"}`))); err != nil {
 		t.Fatal(err)
 	}
 	var untouched bool

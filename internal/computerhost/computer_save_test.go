@@ -40,11 +40,11 @@ func (f *saveHostFixture) step(name string) error {
 }
 func (f *saveHostFixture) BeginComputerSave(_ context.Context, r workerapi.ComputerSaveBeginRequest) (workerapi.ComputerSaveBeginResponse, error) {
 	err := f.step("begin")
-	runtimeID := f.runtime
+	instanceID := f.runtime
 	if f.fail == "wrong admission" {
-		runtimeID = uuid.NewV7().String()
+		instanceID = uuid.NewV7().String()
 	}
-	return workerapi.ComputerSaveBeginResponse{ComputerInstanceID: runtimeID, SaveID: r.SaveID, Sequence: r.Sequence, WriterGeneration: r.WriterGeneration, PredecessorID: uuid.NewV7().String(), DesiredVersion: 1}, err
+	return workerapi.ComputerSaveBeginResponse{ComputerInstanceID: instanceID, SaveID: r.SaveID, Sequence: r.Sequence, WriterGeneration: r.WriterGeneration, PredecessorID: uuid.NewV7().String(), DesiredVersion: 1}, err
 }
 func (f *saveHostFixture) RegisterComputerSaveObject(context.Context, workerapi.ComputerSaveObjectRequest) error {
 	return nil

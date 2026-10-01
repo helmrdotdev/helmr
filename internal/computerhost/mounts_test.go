@@ -21,14 +21,14 @@ import (
 func TestInstanceMountClosesPhysicalMachineOnce(t *testing.T) {
 	closeErr := errors.New("close failed")
 	physical := &blockingCloseMachine{started: make(chan struct{}), release: make(chan struct{}), closeErr: closeErr}
-	session := newInstanceMount(physical)
+	machine := newInstanceMount(physical)
 
 	closeResult := make(chan error, 1)
-	go func() { closeResult <- session.Close(context.Background()) }()
+	go func() { closeResult <- machine.Close(context.Background()) }()
 	waitForTestSignal(t, physical.started, "physical close start")
 
 	releaseResult := make(chan error, 1)
-	go func() { releaseResult <- session.ReleaseCheckpointSource(context.Background()) }()
+	go func() { releaseResult <- machine.ReleaseCheckpointSource(context.Background()) }()
 	close(physical.release)
 
 	if err := waitForTestError(t, closeResult, "managed close"); !errors.Is(err, closeErr) {
@@ -40,7 +40,7 @@ func TestInstanceMountClosesPhysicalMachineOnce(t *testing.T) {
 	if got := physical.closeCount.Load(); got != 1 {
 		t.Fatalf("physical close count = %d, want 1", got)
 	}
-	released, err := session.CheckpointReleaseResult(context.Background())
+	released, err := machine.CheckpointReleaseResult(context.Background())
 	if !errors.Is(err, closeErr) {
 		t.Fatalf("checkpoint release result error = %v, want %v", err, closeErr)
 	}
@@ -51,20 +51,20 @@ func TestInstanceMountClosesPhysicalMachineOnce(t *testing.T) {
 
 func TestInstanceMountDuplicateReleaseObservesContext(t *testing.T) {
 	physical := &blockingCloseMachine{started: make(chan struct{}), release: make(chan struct{})}
-	session := newInstanceMount(physical)
+	machine := newInstanceMount(physical)
 
 	firstRelease := make(chan error, 1)
-	go func() { firstRelease <- session.ReleaseCheckpointSource(context.Background()) }()
+	go func() { firstRelease <- machine.ReleaseCheckpointSource(context.Background()) }()
 	waitForTestSignal(t, physical.started, "physical close start")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := session.ReleaseCheckpointSource(ctx); !errors.Is(err, context.Canceled) {
+	if err := machine.ReleaseCheckpointSource(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("duplicate release error = %v, want context.Canceled", err)
 	}
 
 	closeResult := make(chan error, 1)
-	go func() { closeResult <- session.Close(context.Background()) }()
+	go func() { closeResult <- machine.Close(context.Background()) }()
 	close(physical.release)
 	if err := waitForTestError(t, firstRelease, "first checkpoint release"); err != nil {
 		t.Fatal(err)
@@ -81,26 +81,26 @@ func TestInstanceMountDuplicateReleaseObservesContext(t *testing.T) {
 // timed out is attempted again, while the first result stays recorded.
 func TestInstanceMountRetriesTimedOutCheckpointRelease(t *testing.T) {
 	calls := 0
-	session := newInstanceMount(saveStopSession{stop: func(context.Context) error {
+	machine := newInstanceMount(saveStopMachine{stop: func(context.Context) error {
 		calls++
 		if calls == 1 {
 			return context.DeadlineExceeded
 		}
 		return nil
 	}})
-	if err := session.ReleaseCheckpointSource(t.Context()); !errors.Is(err, context.DeadlineExceeded) {
+	if err := machine.ReleaseCheckpointSource(t.Context()); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal(err)
 	}
-	if err := session.ReleaseCheckpointSource(t.Context()); err != nil {
+	if err := machine.ReleaseCheckpointSource(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.ReleaseCheckpointSource(t.Context()); err != nil {
+	if err := machine.ReleaseCheckpointSource(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 2 {
 		t.Fatalf("physical close calls = %d, want 2", calls)
 	}
-	if released, err := session.CheckpointReleaseResult(t.Context()); !released || !errors.Is(err, context.DeadlineExceeded) {
+	if released, err := machine.CheckpointReleaseResult(t.Context()); !released || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("recorded release = %v, %v", released, err)
 	}
 }
@@ -411,7 +411,7 @@ func (c *closeCountingConn) Close() error {
 	return c.Conn.Close()
 }
 
-func TestRenewComputerAuthorityCancellationPreservesMountedSession(t *testing.T) {
+func TestRenewComputerAuthorityCancellationPreservesMountedMachine(t *testing.T) {
 	host, guest := net.Pipe()
 	defer guest.Close()
 	parent := &mountedMachine{stream: discardReadWriteCloser{}, openStream: host}

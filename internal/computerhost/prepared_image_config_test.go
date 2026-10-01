@@ -79,7 +79,7 @@ func TestPrepareGuestRuntimeTransfersConfigOrImage(t *testing.T) {
 			}
 			stream := &scriptedGuestStream{read: bytes.NewReader(reply.Bytes())}
 			machines := &PreparedMachines{}
-			if err := machines.prepareGuestRuntime(context.Background(), fakeGuestSession{stream: stream}, "runtime", 2, mount, path, config); err != nil {
+			if err := machines.prepareGuestRuntime(context.Background(), fakeGuestMachine{stream: stream}, "runtime", 2, mount, path, config); err != nil {
 				t.Fatal(err)
 			}
 			input := bytes.NewReader(stream.written.Bytes())

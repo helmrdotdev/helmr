@@ -10,7 +10,7 @@ import (
 )
 
 // bind fixes the preservation loop to its physical writer for the checkout lifetime.
-func (s *runtimeComputerSaves) bind(request workerapi.ComputerSaveBeginRequest, computerID string) error {
+func (s *instanceComputerSaves) bind(request workerapi.ComputerSaveBeginRequest, computerID string) error {
 	if ids.Validate(request.EnvironmentID) != nil || ids.Validate(request.ComputerInstanceID) != nil || ids.Validate(computerID) != nil || request.WriterGeneration <= 0 {
 		return errors.New("computer save writer identity required")
 	}
@@ -19,25 +19,25 @@ func (s *runtimeComputerSaves) bind(request workerapi.ComputerSaveBeginRequest, 
 	if s.stopped || s.writer != nil {
 		return errors.New("computer save writer already bound or stopped")
 	}
-	s.runtimeID, s.computerID = request.ComputerInstanceID, computerID
+	s.instanceID, s.computerID = request.ComputerInstanceID, computerID
 	s.writer = &request
 	return nil
 }
-func (s *runtimeComputerSaves) authority() (*workerapi.ComputerSaveBeginRequest, string, string) {
+func (s *instanceComputerSaves) authority() (*workerapi.ComputerSaveBeginRequest, string, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.stopped || s.writer == nil {
-		return nil, s.runtimeID, s.computerID
+		return nil, s.instanceID, s.computerID
 	}
 	request := *s.writer
-	return &request, s.runtimeID, s.computerID
+	return &request, s.instanceID, s.computerID
 }
 
 // run starts exactly one loop per physical Runtime. The interval is supplied by
 // the Worker preservation policy; Turn completion and idleTimeout never tick it.
 // The returned channel reports completion, including failure requiring source
 // cleanup. Quiesce cancels and joins this loop before settling its pending save.
-func (s *runtimeComputerSaves) run(ctx context.Context, interval time.Duration, client ComputerSaveClient, objects versionObjectPublisher, capture func(context.Context) (computerSaveCapture, error), onFailure func(error)) (<-chan error, error) {
+func (s *instanceComputerSaves) run(ctx context.Context, interval time.Duration, client ComputerSaveClient, objects versionObjectPublisher, capture func(context.Context) (computerSaveCapture, error), onFailure func(error)) (<-chan error, error) {
 	if interval <= 0 || client == nil || objects == nil || capture == nil || onFailure == nil {
 		return nil, errors.New("computer save loop dependencies and positive interval required")
 	}
@@ -65,7 +65,7 @@ func (s *runtimeComputerSaves) run(ctx context.Context, interval time.Duration, 
 	return result, nil
 }
 
-func (s *runtimeComputerSaves) loop(ctx context.Context, ticks <-chan time.Time, client ComputerSaveClient, objects versionObjectPublisher, capture func(context.Context) (computerSaveCapture, error)) error {
+func (s *instanceComputerSaves) loop(ctx context.Context, ticks <-chan time.Time, client ComputerSaveClient, objects versionObjectPublisher, capture func(context.Context) (computerSaveCapture, error)) error {
 	var observed *computerSave
 	for {
 		s.mu.Lock()
@@ -103,11 +103,11 @@ func (s *runtimeComputerSaves) loop(ctx context.Context, ticks <-chan time.Time,
 			if pending != nil && pending != observed {
 				continue
 			}
-			request, runtimeID, computerID := s.authority()
+			request, instanceID, computerID := s.authority()
 			if request == nil {
 				continue
 			}
-			if _, err := s.start(ctx, client, objects, *request, runtimeID, computerID, capture); err != nil {
+			if _, err := s.start(ctx, client, objects, *request, instanceID, computerID, capture); err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}

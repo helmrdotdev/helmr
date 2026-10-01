@@ -36,7 +36,7 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 	mounts := newTestMounts()
 	mount := testComputerMount(claim.Lease)
 	mount.Target.BaseComputerDiskVersionID = "version-before-capture"
-	_, unregister := mounts.add(mount, fakeGuestSession{stream: host}, "channel-1")
+	_, unregister := mounts.add(mount, fakeGuestMachine{stream: host}, "channel-1")
 	defer unregister()
 	guestResult := make(chan error, 1)
 	go func() {
@@ -146,7 +146,7 @@ func TestStartFreshProgramDoesNotReleaseAfterStartRejection(t *testing.T) {
 	guest, host := net.Pipe()
 	defer guest.Close()
 	mounts := newTestMounts()
-	_, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestSession{stream: host}, "channel-1")
+	_, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestMachine{stream: host}, "channel-1")
 	defer unregister()
 	proofSent := make(chan error, 1)
 	go func() {
@@ -193,7 +193,7 @@ func TestStartFreshProgramFailsExactMountOnTypedStartFailure(t *testing.T) {
 	guest, host := net.Pipe()
 	defer guest.Close()
 	mounts := newTestMounts()
-	session, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestSession{stream: host}, "channel-1")
+	session, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestMachine{stream: host}, "channel-1")
 	defer unregister()
 	guestResult := make(chan error, 1)
 	go func() {
@@ -247,7 +247,7 @@ func TestStartFreshProgramRejectsNoncanonicalStartFailureDiagnosticWithoutFailin
 	guest, host := net.Pipe()
 	defer guest.Close()
 	mounts := newTestMounts()
-	session, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestSession{stream: host}, "channel-1")
+	session, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestMachine{stream: host}, "channel-1")
 	defer unregister()
 	go func() {
 		_ = readFreshProgramAdmission(guest, claim.Lease, testComputerMount(claim.Lease))
@@ -285,7 +285,7 @@ func TestStartFreshProgramRejectsMismatchedStartFailureProofWithoutFailingMount(
 	guest, host := net.Pipe()
 	defer guest.Close()
 	mounts := newTestMounts()
-	session, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestSession{stream: host}, "channel-1")
+	session, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestMachine{stream: host}, "channel-1")
 	defer unregister()
 	go func() {
 		_ = readFreshProgramAdmission(guest, claim.Lease, testComputerMount(claim.Lease))
@@ -321,7 +321,7 @@ func TestStartFreshProgramStopsBlockedAdmissionAtStartDeadline(t *testing.T) {
 	guest, host := net.Pipe()
 	defer guest.Close()
 	mounts := newTestMounts()
-	_, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestSession{stream: host}, "channel-1")
+	_, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestMachine{stream: host}, "channel-1")
 	defer unregister()
 	started := time.Now()
 	_, err := (ProgramRunner{
@@ -415,7 +415,7 @@ func TestAwaitTaskCompletionRequiresFinalMatchingQuiescenceProof(t *testing.T) {
 				}
 			}()
 			program := freshProgram{
-				channel: fakeGuestSession{stream: host},
+				channel: fakeGuestMachine{stream: host},
 				lease: workerapi.RunLeaseAssignment{
 					ID: "lease-1", RunID: "run-1", AttemptNumber: 2,
 				},
@@ -503,7 +503,7 @@ func TestFreshProgramDispatchesSessionSubmitForTaskAndActor(t *testing.T) {
 			}()
 			program := &freshProgram{
 				execution:  &programv0.SessionExecution{RunGeneration: 1},
-				channel:    fakeGuestSession{stream: host},
+				channel:    fakeGuestMachine{stream: host},
 				lease:      lease,
 				entrypoint: test.entrypoint,
 			}
@@ -558,7 +558,7 @@ func TestFreshProgramDispatchesTurnOutput(t *testing.T) {
 	}()
 	program := &freshProgram{
 		execution: &programv0.SessionExecution{RunGeneration: 1},
-		channel:   fakeGuestSession{stream: host},
+		channel:   fakeGuestMachine{stream: host},
 		lease:     lease,
 		entrypoint: &programv0.EntrypointIdentity{
 			Kind: &programv0.EntrypointIdentity_Actor{Actor: &programv0.ActorEntrypoint{}},
@@ -1014,7 +1014,7 @@ func TestStartFreshProgramSecretCollisionReachesCaller(t *testing.T) {
 	guest, host := net.Pipe()
 	defer guest.Close()
 	mounts := newTestMounts()
-	session, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestSession{stream: host}, "channel-1")
+	session, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestMachine{stream: host}, "channel-1")
 	defer unregister()
 	guestResult := make(chan error, 1)
 	go func() {
@@ -1075,7 +1075,7 @@ func TestFreshProgramWaitsForLocalMountRegistration(t *testing.T) {
 		guestResult := make(chan error, 1)
 		go func() {
 			time.Sleep(10 * time.Millisecond)
-			_, unregister := mounts.add(mount, fakeGuestSession{stream: host}, "channel-1")
+			_, unregister := mounts.add(mount, fakeGuestMachine{stream: host}, "channel-1")
 			defer unregister()
 			guestResult <- serveFreshProgramProtocol(guest, claim.Lease, mount, control)
 		}()

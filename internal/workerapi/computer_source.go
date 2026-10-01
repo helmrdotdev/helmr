@@ -9,7 +9,7 @@ import (
 // only for initialization. Continuation obtains the retained disk version and keys
 // through the authenticated source broker; missing state never causes reseeding.
 // This projection is not a grant to execute or to publish a version.
-type RuntimeComputerSource struct {
+type InstanceComputerSource struct {
 	VersionID    string            `json:"version_id"`
 	LogicalBytes int64             `json:"logical_bytes"`
 	Config       oci.RuntimeConfig `json:"config"`

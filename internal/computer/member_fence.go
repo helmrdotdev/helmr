@@ -153,7 +153,7 @@ func LockTokenWaitInstance(ctx context.Context, tx pgx.Tx, ref TokenWaitInstance
 		WorkerHostID: pgvalue.UUID(ref.Host.HostID), WorkerEpoch: ref.Host.Epoch, ComputerID: computerID,
 	})
 	if err != nil || i.VMPlatformID != ref.VMPlatformID ||
-		i.DesiredState != db.RuntimeDesiredStateReady || i.ObservedState != db.RuntimeObservedStateReady ||
+		i.DesiredState != db.InstanceDesiredStateReady || i.ObservedState != db.InstanceObservedStateReady ||
 		i.ObservedDesiredVersion != i.DesiredVersion || i.TerminalAt.Valid ||
 		i.ReclaimedAt.Valid || i.MountState != "mounted" || i.WriterGeneration != c.WriterGeneration ||
 		i.WriterGeneration != ref.WriterGeneration || (i.AdmissionState != "open" && i.AdmissionState != "draining") {

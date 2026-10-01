@@ -31,7 +31,7 @@ func TestRunAssignmentProjectsClaimedExecution(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			assignment, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{run: claimed.Run(), attempt: claimed.Attempt(), runtime: claimed.Instance(), runLease: claimed.Lease(), computer: claimed.Computer()})
+			assignment, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{run: claimed.Run(), attempt: claimed.Attempt(), instance: claimed.Instance(), runLease: claimed.Lease(), computer: claimed.Computer()})
 			if err != nil {
 				t.Fatal(err)
 			}

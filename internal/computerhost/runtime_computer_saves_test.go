@@ -11,9 +11,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func runtimeSaveFixture(t *testing.T) (*runtimeComputerSaves, *saveHostFixture, func() (bool, error)) {
+func instanceSaveFixture(t *testing.T) (*instanceComputerSaves, *saveHostFixture, func() (bool, error)) {
 	t.Helper()
-	owner := &runtimeComputerSaves{}
+	owner := &instanceComputerSaves{}
 	f := &saveHostFixture{runtime: uuid.NewV7().String(), computer: uuid.NewV7().String()}
 	start := func() (bool, error) {
 		return owner.start(t.Context(), f, f, workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: f.runtime, WriterGeneration: 2}, f.runtime, f.computer, func(context.Context) (computerSaveCapture, error) { return saveHostCapture{f}, nil })
@@ -21,8 +21,8 @@ func runtimeSaveFixture(t *testing.T) (*runtimeComputerSaves, *saveHostFixture, 
 	return owner, f, start
 }
 
-func TestRuntimeComputerSavesCoalescesConcurrentRequests(t *testing.T) {
-	owner, f, start := runtimeSaveFixture(t)
+func TestInstanceComputerSavesCoalescesConcurrentRequests(t *testing.T) {
+	owner, f, start := instanceSaveFixture(t)
 	f.blocked = make(chan struct{})
 	f.joined = make(chan struct{})
 	if ok, err := start(); !ok || err != nil {
@@ -55,8 +55,8 @@ func TestRuntimeComputerSavesCoalescesConcurrentRequests(t *testing.T) {
 	}
 }
 
-func TestRuntimeComputerSavesSettlesBeforeNextSequence(t *testing.T) {
-	owner, f, start := runtimeSaveFixture(t)
+func TestInstanceComputerSavesSettlesBeforeNextSequence(t *testing.T) {
+	owner, f, start := instanceSaveFixture(t)
 	f.fail = "commit"
 	if ok, err := start(); !ok || err != nil {
 		t.Fatal(err)
@@ -89,12 +89,12 @@ func TestRuntimeComputerSavesSettlesBeforeNextSequence(t *testing.T) {
 	}
 }
 
-type saveCutSession struct {
-	fakeGuestSession
+type saveCutMachine struct {
+	fakeGuestMachine
 	fixture *saveHostFixture
 }
 
-func (s saveCutSession) Close(context.Context) error {
+func (s saveCutMachine) Close(context.Context) error {
 	return s.fixture.step("physical-close")
 }
 
@@ -103,10 +103,10 @@ func TestManagedMountSettlesSaveBeforePhysicalRelease(t *testing.T) {
 	if err := pending.Wait(t.Context()); err == nil {
 		t.Fatal("expected lost acknowledgement")
 	}
-	session := newInstanceMount(saveCutSession{fixture: f})
-	session.saves.pending = pending
-	session.saves.sequence = 1
-	if err := session.ReleaseCheckpointSource(t.Context()); err != nil {
+	machine := newInstanceMount(saveCutMachine{fixture: f})
+	machine.saves.pending = pending
+	machine.saves.sequence = 1
+	if err := machine.ReleaseCheckpointSource(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	f.mu.Lock()
@@ -122,9 +122,9 @@ func TestManagedMountReportsUnsettledSaveOnPhysicalRelease(t *testing.T) {
 	if err := pending.Wait(t.Context()); err == nil {
 		t.Fatal("expected capture failure")
 	}
-	session := newInstanceMount(saveCutSession{fixture: f})
-	session.saves.pending = pending
-	if err := session.ReleaseCheckpointSource(t.Context()); err == nil {
+	machine := newInstanceMount(saveCutMachine{fixture: f})
+	machine.saves.pending = pending
+	if err := machine.ReleaseCheckpointSource(t.Context()); err == nil {
 		t.Fatal("unsettled save was not reported on physical release")
 	}
 	closes := 0
@@ -140,12 +140,12 @@ func TestManagedMountReportsUnsettledSaveOnPhysicalRelease(t *testing.T) {
 	}
 }
 
-type saveStopSession struct {
-	fakeGuestSession
+type saveStopMachine struct {
+	fakeGuestMachine
 	stop func(context.Context) error
 }
 
-func (s saveStopSession) Close(ctx context.Context) error { return s.stop(ctx) }
+func (s saveStopMachine) Close(ctx context.Context) error { return s.stop(ctx) }
 
 // A save producer still running when the release deadline expires keeps the
 // machine running; a later release closes it once the producer has finished.
@@ -153,24 +153,24 @@ func TestManagedMountDefersPhysicalReleaseUntilSaveOwnerJoins(t *testing.T) {
 	f, pending := newSaveHostFixture(t, "blocked")
 	<-f.blocked
 	stops := 0
-	session := newInstanceMount(saveStopSession{stop: func(context.Context) error {
+	machine := newInstanceMount(saveStopMachine{stop: func(context.Context) error {
 		stops++
 		return nil
 	}})
-	session.saves.pending = pending
+	machine.saves.pending = pending
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
 	defer cancel()
-	if err := session.ReleaseCheckpointSource(ctx); !errors.Is(err, context.DeadlineExceeded) {
+	if err := machine.ReleaseCheckpointSource(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("release before the save owner joined = %v", err)
 	}
 	if stops != 0 {
 		t.Fatal("machine closed while its save producer was still running")
 	}
-	if released, err := session.CheckpointReleaseResult(t.Context()); !released || !errors.Is(err, context.DeadlineExceeded) {
+	if released, err := machine.CheckpointReleaseResult(t.Context()); !released || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("recorded release = %v, %v", released, err)
 	}
 	close(f.joined)
-	if err := session.ReleaseCheckpointSource(t.Context()); err != nil {
+	if err := machine.ReleaseCheckpointSource(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if stops != 1 {
@@ -186,7 +186,7 @@ func TestManagedMountStopsAfterJoinedSaveSettlementDeadline(t *testing.T) {
 		t.Fatal("expected capture failure")
 	}
 	stopped := false
-	session := newInstanceMount(saveStopSession{stop: func(ctx context.Context) error {
+	machine := newInstanceMount(saveStopMachine{stop: func(ctx context.Context) error {
 		if ctx.Err() != nil {
 			t.Fatal("physical stop inherited expired settlement deadline")
 		}
@@ -196,10 +196,10 @@ func TestManagedMountStopsAfterJoinedSaveSettlementDeadline(t *testing.T) {
 		stopped = true
 		return nil
 	}})
-	session.saves.pending = pending
+	machine.saves.pending = pending
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := session.Close(ctx); err == nil {
+	if err := machine.Close(ctx); err == nil {
 		t.Fatal("lost settlement error")
 	}
 	if !stopped {
@@ -209,20 +209,20 @@ func TestManagedMountStopsAfterJoinedSaveSettlementDeadline(t *testing.T) {
 
 func TestManagedMountRetriesPhysicalCloseJoinTimeout(t *testing.T) {
 	calls := 0
-	session := newInstanceMount(saveStopSession{stop: func(context.Context) error {
+	machine := newInstanceMount(saveStopMachine{stop: func(context.Context) error {
 		calls++
 		if calls == 1 {
 			return context.DeadlineExceeded
 		}
 		return nil
 	}})
-	if err := session.Close(t.Context()); !errors.Is(err, context.DeadlineExceeded) {
+	if err := machine.Close(t.Context()); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal(err)
 	}
-	if err := session.Close(t.Context()); err != nil {
+	if err := machine.Close(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.Close(t.Context()); err != nil {
+	if err := machine.Close(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 2 {

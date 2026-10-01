@@ -10,7 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func captureRegistryWait(t *testing.T, registry *CaptureRuns, target workerapi.RuntimeReconcileTarget, member workerapi.RuntimeCaptureRun) *CaptureWait {
+func captureRegistryWait(t *testing.T, registry *CaptureRuns, target workerapi.InstanceReconcileTarget, member workerapi.InstanceCaptureRun) *CaptureWait {
 	t.Helper()
 	lease := workerapi.RunLeaseAssignment{LeaseSequence: 1, ExpiresAt: time.Now().Add(time.Minute).UTC()}
 	lease.ID, lease.RunID, lease.AttemptNumber = member.RunLeaseID, member.RunID, member.AttemptNumber
@@ -30,7 +30,7 @@ func captureRegistryWait(t *testing.T, registry *CaptureRuns, target workerapi.R
 func TestComputerCaptureSnapshotsOnceAndReleasesMembersAfterSourceRelease(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	c, request, session, _ := newCaptureTest(t)
+	c, request, machine, _ := newCaptureTest(t)
 	registry := &CaptureRuns{}
 	var paused atomic.Int32
 	results := make([]chan error, 0, len(request.Target.Capture.Runs))
@@ -90,8 +90,8 @@ func TestComputerCaptureSnapshotsOnceAndReleasesMembersAfterSourceRelease(t *tes
 			t.Fatal(ctx.Err())
 		}
 	}
-	if len(session.snapshotRequests) != 1 || session.closeCount != 1 {
-		t.Fatalf("physical snapshots=%d closes=%d", len(session.snapshotRequests), session.closeCount)
+	if len(machine.snapshotRequests) != 1 || machine.closeCount != 1 {
+		t.Fatalf("physical snapshots=%d closes=%d", len(machine.snapshotRequests), machine.closeCount)
 	}
 }
 

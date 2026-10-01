@@ -39,7 +39,7 @@ func (c collectedSaveCapture) Collect(ctx context.Context, budget int) (int64, e
 
 // Uses the actual coordinator and encrypted version store. The CP fixture
 // models receipt/retention acknowledgement; it does not prove remote GC policy.
-func TestRuntimeComputerSaveLoopReclaimsStagingAcrossSaves(t *testing.T) {
+func TestInstanceComputerSaveLoopReclaimsStagingAcrossSaves(t *testing.T) {
 	remote, err := cas.NewFile(filepath.Join(t.TempDir(), "remote"))
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestRuntimeComputerSaveLoopReclaimsStagingAcrossSaves(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer local.Close()
-	owner := &runtimeComputerSaves{}
+	owner := &instanceComputerSaves{}
 	client := &saveHostFixture{runtime: uuid.NewV7().String(), computer: uuid.NewV7().String()}
 	err = owner.bind(workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: client.runtime, WriterGeneration: 2}, client.computer)
 	if err != nil {

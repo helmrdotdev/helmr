@@ -46,11 +46,11 @@ func lockRestoreReceipt(ctx context.Context, tx pgx.Tx, ref InstanceRef) (observ
 // needs admitting supply unless a receipt only inspects an already committed
 // activation.
 func lockObservation(ctx context.Context, tx pgx.Tx, ref InstanceRef, receipt bool) (observedInstance, error) {
-	runtimeID, workerID, groupID := pgvalue.UUID(ref.ID), pgvalue.UUID(ref.Host.HostID), pgvalue.UUID(ref.Host.GroupID)
+	instanceID, workerID, groupID := pgvalue.UUID(ref.ID), pgvalue.UUID(ref.Host.HostID), pgvalue.UUID(ref.Host.GroupID)
 	var environmentID, computerID pgtype.UUID
 	var region, observed string
 	err := tx.QueryRow(ctx, `SELECT environment_id,computer_id,region_id,observed_state FROM computer_instances
- WHERE id=$1 AND worker_host_id=$2 AND worker_group_id=$3 AND worker_epoch=$4`, runtimeID, workerID, groupID, ref.Host.Epoch).Scan(&environmentID, &computerID, &region, &observed)
+ WHERE id=$1 AND worker_host_id=$2 AND worker_group_id=$3 AND worker_epoch=$4`, instanceID, workerID, groupID, ref.Host.Epoch).Scan(&environmentID, &computerID, &region, &observed)
 	if err != nil {
 		return observedInstance{}, err
 	}
@@ -74,7 +74,7 @@ func lockObservation(ctx context.Context, tx pgx.Tx, ref InstanceRef, receipt bo
 		return observedInstance{}, err
 	}
 	if c.Status != "active" || c.DesiredState != "active" || c.DeletedAt.Valid || len(c.RecoveryFailure) > 0 || len(c.PreparationFailure) > 0 || c.DirtyState == "dirty_state_lost" || c.DirtyState == "capture_failed" ||
-		i.ID != runtimeID || i.WorkerHostID != workerID || i.WorkerGroupID != groupID || i.WorkerEpoch != ref.Host.Epoch ||
+		i.ID != instanceID || i.WorkerHostID != workerID || i.WorkerGroupID != groupID || i.WorkerEpoch != ref.Host.Epoch ||
 		i.WriterGeneration != c.WriterGeneration || i.DesiredState != "ready" || i.DesiredVersion != ref.DesiredVersion ||
 		(i.ObservedState != "ready" && (continuation || i.ObservedState != "allocated")) ||
 		(i.AdmissionState != "open" && i.AdmissionState != "restoring" && !(continuation && i.AdmissionState == "draining")) ||

@@ -35,11 +35,11 @@ func TestCapacityWorkerHostFilterIsBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := workergroup.HostFilter{
-		GroupID:               controlplaneTestWorkerGroupID,
-		ResourceIDs:           []string{"host-1", "host-2"},
-		Statuses:              []workergroup.WorkerHostStatus{workergroup.WorkerHostStatusActive, workergroup.WorkerHostStatusDraining},
-		HasUnreclaimedRuntime: true,
-		Limit:                 50,
+		GroupID:                controlplaneTestWorkerGroupID,
+		ResourceIDs:            []string{"host-1", "host-2"},
+		Statuses:               []workergroup.WorkerHostStatus{workergroup.WorkerHostStatusActive, workergroup.WorkerHostStatusDraining},
+		HasUnreclaimedInstance: true,
+		Limit:                  50,
 	}
 	if !reflect.DeepEqual(filter, want) {
 		t.Fatalf("filter = %+v, want %+v", filter, want)

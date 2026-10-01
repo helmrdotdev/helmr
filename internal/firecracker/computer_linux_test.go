@@ -32,7 +32,7 @@ func TestComputerAttachmentOwnsExactInode(t *testing.T) {
 	if _, err := file.WriteAt([]byte("customer state"), 512); err != nil {
 		t.Fatal(err)
 	}
-	runtimeComputer := &vm.RuntimeComputer{File: file, SizeBytes: 4096, VersionID: "01950000-0000-7000-8000-000000000001"}
+	runtimeComputer := &vm.ComputerDisk{File: file, SizeBytes: 4096, VersionID: "01950000-0000-7000-8000-000000000001"}
 	destination, err := attachComputerDisk(t.Context(), runtimeComputer, dir, os.Getuid(), os.Getgid())
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +118,7 @@ func TestComputerBlockAttachmentAndPausedFlush(t *testing.T) {
 	if err := retainComputerDevice(retained, device); err != nil {
 		t.Fatal(err)
 	}
-	runtimeComputer := &vm.RuntimeComputer{Device: device, SizeBytes: size, VersionID: key}
+	runtimeComputer := &vm.ComputerDisk{Device: device, SizeBytes: size, VersionID: key}
 	attached, err := attachComputerDisk(ctx, runtimeComputer, dir, os.Getuid(), os.Getgid())
 	if err != nil {
 		t.Fatal(err)
@@ -144,7 +144,7 @@ func TestComputerBlockAttachmentAndPausedFlush(t *testing.T) {
 	}
 	retained.files = files
 	retained.mu.Unlock()
-	wrongCapacity := &vm.RuntimeComputer{File: files["computer"], SizeBytes: size * 2, VersionID: key}
+	wrongCapacity := &vm.ComputerDisk{File: files["computer"], SizeBytes: size * 2, VersionID: key}
 	if err := validateComputerDisk(wrongCapacity); err == nil {
 		t.Fatal("accepted wrong device capacity")
 	}

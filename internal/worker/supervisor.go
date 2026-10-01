@@ -639,7 +639,7 @@ func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, sta
 	}
 }
 
-func (s *Supervisor) AdmitRuntimeStart(ctx context.Context) error {
+func (s *Supervisor) AdmitInstanceStart(ctx context.Context) error {
 	if s.cfg.AdmissionEvaluator == nil {
 		return nil
 	}

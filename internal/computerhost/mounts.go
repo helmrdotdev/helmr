@@ -151,7 +151,7 @@ func validateComputerMountPhysicalAuthority(
 }
 
 type instanceMount struct {
-	saves                        runtimeComputerSaves
+	saves                        instanceComputerSaves
 	machine                      vm.Machine
 	mu                           sync.RWMutex
 	closeAttempt                 *instanceMountClose

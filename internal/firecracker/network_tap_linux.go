@@ -13,15 +13,15 @@ import (
 )
 
 func (c *Connector) withTapOwner() firecracker.Opt {
-	return func(machine *firecracker.Machine) {
-		machine.Handlers.FcInit = machine.Handlers.FcInit.AppendAfter(firecracker.SetupNetworkHandlerName, firecracker.Handler{
+	return func(sdkMachine *firecracker.Machine) {
+		sdkMachine.Handlers.FcInit = sdkMachine.Handlers.FcInit.AppendAfter(firecracker.SetupNetworkHandlerName, firecracker.Handler{
 			Name: "helmr.SetTapOwner",
-			Fn: func(ctx context.Context, machine *firecracker.Machine) error {
-				for _, iface := range machine.Cfg.NetworkInterfaces {
+			Fn: func(ctx context.Context, sdkMachine *firecracker.Machine) error {
+				for _, iface := range sdkMachine.Cfg.NetworkInterfaces {
 					if iface.StaticConfiguration == nil || iface.StaticConfiguration.HostDevName == "" {
 						continue
 					}
-					if err := setTapOwner(machine.Cfg.NetNS, iface.StaticConfiguration.HostDevName, c.cfg.JailerUID, c.cfg.JailerGID); err != nil {
+					if err := setTapOwner(sdkMachine.Cfg.NetNS, iface.StaticConfiguration.HostDevName, c.cfg.JailerUID, c.cfg.JailerGID); err != nil {
 						return err
 					}
 				}

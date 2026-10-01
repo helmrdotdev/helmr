@@ -28,7 +28,7 @@ import (
 
 const stopTimeout = 10 * time.Second
 
-type guestSession struct {
+type guestMachine struct {
 	mu              sync.Mutex
 	computerBarrier chan struct{}
 	computerCancel  context.CancelFunc
@@ -49,7 +49,7 @@ type guestSession struct {
 	jailRoot        string
 	scratchDisk     string
 	diskFiles       map[string]*os.File
-	topology        vm.RuntimeTopology
+	topology        vm.Topology
 	readOnlyDrives  []vm.ReadOnlyDrive
 	owner           vm.Owner
 	cleaner         vm.Cleaner
@@ -61,13 +61,13 @@ type guestSession struct {
 	err             error
 }
 
-func (s *guestSession) Stream() vm.Stream {
+func (s *guestMachine) Stream() vm.Stream {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.stream
 }
 
-func (s *guestSession) Open(ctx context.Context) (vm.Machine, error) {
+func (s *guestMachine) Open(ctx context.Context) (vm.Machine, error) {
 	if ctx == nil {
 		return nil, errors.New("prepared session open context is nil")
 	}
@@ -104,11 +104,11 @@ func (s *guestSession) Open(ctx context.Context) (vm.Machine, error) {
 	return s, nil
 }
 
-func (s *guestSession) OpenStream(ctx context.Context) (vm.Stream, error) {
+func (s *guestMachine) OpenStream(ctx context.Context) (vm.Stream, error) {
 	return (&Connector{cfg: s.cfg}).connectGuestPort(ctx, s.vsockHostPath, s.machineExit)
 }
 
-func (s *guestSession) Wait(ctx context.Context) error {
+func (s *guestMachine) Wait(ctx context.Context) error {
 	if s.machineExit == nil {
 		return errors.New("the Firecracker session exit watcher is not configured")
 	}
@@ -123,7 +123,7 @@ func (s *guestSession) Wait(ctx context.Context) error {
 	return errors.Join(waitErr, networkErr, exportErr)
 }
 
-func (s *guestSession) watchNetworkFailure() {
+func (s *guestMachine) watchNetworkFailure() {
 	if s.networkBinding == nil || s.machineExit == nil {
 		return
 	}
@@ -144,14 +144,14 @@ func (s *guestSession) watchNetworkFailure() {
 	}()
 }
 
-func (s *guestSession) stopMachine(ctx context.Context) error {
+func (s *guestMachine) stopMachine(ctx context.Context) error {
 	s.machineStopOnce.Do(func() {
 		s.machineStopErr = stopSessionMachine(ctx, s.machine, s.machineExit)
 	})
 	return s.machineStopErr
 }
 
-func (s *guestSession) Close(ctx context.Context) error {
+func (s *guestMachine) Close(ctx context.Context) error {
 	s.mu.Lock()
 	s.closed = true
 	if s.computerCancel != nil {
@@ -229,7 +229,7 @@ func closeGuestStream(ctx context.Context, stream io.Closer) error {
 	}
 }
 
-func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRequest) (vm.SnapshotArtifact, error) {
+func (s *guestMachine) CreateSnapshot(ctx context.Context, request vm.SnapshotRequest) (vm.SnapshotArtifact, error) {
 	limits, err := s.SnapshotLimits()
 	if err != nil {
 		return vm.SnapshotArtifact{}, err
@@ -239,9 +239,9 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 	stateName := checkpointID + snapshotStateSuffix
 	memPath := filepath.Join(s.jailRoot, memName)
 	statePath := filepath.Join(s.jailRoot, stateName)
-	var phases []vm.RuntimePhase
+	var phases []vm.Phase
 	recordPhase := func(name string, started time.Time) {
-		phases = append(phases, vm.RuntimePhase{Name: name, DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started))})
+		phases = append(phases, vm.Phase{Name: name, DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started))})
 	}
 	started := time.Now()
 	capturedComputer, err := s.PauseComputer(ctx)
@@ -302,8 +302,8 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 	recordPhase("vm_config_digest", started)
 	var scratchFile vm.SnapshotFile
 	var memoryFile vm.SnapshotFile
-	var scratchPhase vm.RuntimePhase
-	var memoryPhase vm.RuntimePhase
+	var scratchPhase vm.Phase
+	var memoryPhase vm.Phase
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.Go(func() error {
 		file, phase, err := s.packSnapshotRuntimeFile(groupCtx, s.scratchDisk, filepack.ScratchRole, checkpointID+snapshotScratchPackSuffix, cas.CheckpointScratchDiskMediaType)
@@ -353,19 +353,19 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 	}, nil
 }
 
-func (s *guestSession) packSnapshotRuntimeFile(ctx context.Context, sourcePath string, role string, name string, mediaType string) (vm.SnapshotFile, vm.RuntimePhase, error) {
+func (s *guestMachine) packSnapshotRuntimeFile(ctx context.Context, sourcePath string, role string, name string, mediaType string) (vm.SnapshotFile, vm.Phase, error) {
 	targetPath := filepath.Join(filepath.Dir(s.scratchDisk), name)
 	started := time.Now()
 	stats, err := filepack.Pack(ctx, sourcePath, targetPath, role)
 	if err != nil {
-		return vm.SnapshotFile{}, vm.RuntimePhase{}, err
+		return vm.SnapshotFile{}, vm.Phase{}, err
 	}
 	phaseName := "pack_" + strings.ReplaceAll(role, "-", "_") + "_filepack"
 	if role == filepack.ScratchRole {
 		phaseName = "pack_scratch_filepack"
 	}
 	measured := vm.FilepackStats(stats)
-	return vm.SnapshotFile{Path: targetPath, MediaType: mediaType, Filepack: &measured}, vm.RuntimePhase{
+	return vm.SnapshotFile{Path: targetPath, MediaType: mediaType, Filepack: &measured}, vm.Phase{
 		Name:       phaseName,
 		DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)),
 		Role:       role,
@@ -374,12 +374,12 @@ func (s *guestSession) packSnapshotRuntimeFile(ctx context.Context, sourcePath s
 	}, nil
 }
 
-func stopMachine(ctx context.Context, machine *firecracker.Machine) error {
-	pid, pidErr := machine.PID()
-	stopErr := machine.StopVMM()
+func stopMachine(ctx context.Context, sdkMachine *firecracker.Machine) error {
+	pid, pidErr := sdkMachine.PID()
+	stopErr := sdkMachine.StopVMM()
 	waitCtx, cancel := closeContext(ctx, stopTimeout)
 	defer cancel()
-	waitErr := machine.Wait(waitCtx)
+	waitErr := sdkMachine.Wait(waitCtx)
 	if errors.Is(waitErr, context.DeadlineExceeded) && pidErr == nil {
 		if process, err := os.FindProcess(pid); err != nil {
 			waitErr = errors.Join(waitErr, fmt.Errorf("find Firecracker process %d: %w", pid, err))
@@ -387,7 +387,7 @@ func stopMachine(ctx context.Context, machine *firecracker.Machine) error {
 			waitErr = errors.Join(waitErr, fmt.Errorf("kill Firecracker process %d: %w", pid, err))
 		} else {
 			killWaitCtx, killCancel := context.WithTimeout(context.Background(), stopTimeout)
-			waitErr = machine.Wait(killWaitCtx)
+			waitErr = sdkMachine.Wait(killWaitCtx)
 			killCancel()
 			waitErr = ignoreStopSignalError(waitErr, syscall.SIGKILL)
 		}
@@ -400,10 +400,10 @@ type machineExit struct {
 	err  error
 }
 
-func watchMachineExit(machine *firecracker.Machine) *machineExit {
+func watchMachineExit(sdkMachine *firecracker.Machine) *machineExit {
 	exit := &machineExit{done: make(chan struct{})}
 	go func() {
-		exit.err = machine.Wait(context.Background())
+		exit.err = sdkMachine.Wait(context.Background())
 		close(exit.done)
 	}()
 	return exit
@@ -433,9 +433,9 @@ func (e *machineExit) Err() (error, bool) {
 	}
 }
 
-func stopSessionMachine(ctx context.Context, machine *firecracker.Machine, exit *machineExit) error {
-	pid, pidErr := machine.PID()
-	stopErr := machine.StopVMM()
+func stopSessionMachine(ctx context.Context, sdkMachine *firecracker.Machine, exit *machineExit) error {
+	pid, pidErr := sdkMachine.PID()
+	stopErr := sdkMachine.StopVMM()
 	waitCtx, cancel := closeContext(ctx, stopTimeout)
 	defer cancel()
 	waitErr := exit.Wait(waitCtx)
@@ -498,7 +498,7 @@ func ignoreStopSignalError(err error, signal syscall.Signal) error {
 	return err
 }
 
-func (s *guestSession) SnapshotLimits() (vm.SnapshotLimits, error) {
+func (s *guestMachine) SnapshotLimits() (vm.SnapshotLimits, error) {
 	if s.topology.Computer == nil || s.topology.Computer.ComputerID == "" || s.topology.Computer.SizeBytes <= 0 || s.cfg.MemoryMiB <= 0 || s.cfg.ScratchDiskMiB <= 0 {
 		return vm.SnapshotLimits{}, errors.New("checkpoint requires a complete Computer runtime shape")
 	}

@@ -68,7 +68,7 @@ func TestOwnSessionRejectionDeliversStopBeforeFailure(t *testing.T) {
 					return workerapi.WriteOutputResponse{CorrelationID: r.CorrelationID, Failed: failure}
 				},
 			}
-			task := &guestRunLeaseTask{program: freshProgram{channel: fakeGuestSession{stream: host}, execution: execution.Session}, lease: lease, controlPlane: testControlPlane(t, cp)}
+			task := &guestRunLeaseTask{program: freshProgram{channel: fakeGuestMachine{stream: host}, execution: execution.Session}, lease: lease, controlPlane: testControlPlane(t, cp)}
 			done := make(chan error, 1)
 			go func() {
 				switch operation {
@@ -138,7 +138,7 @@ func TestHotWaitServesTurnCommandsAndKeepsFollowingEvent(t *testing.T) {
 	}}
 	protocol := newProgramProtocol(host)
 	defer protocol.Close()
-	task := &guestRunLeaseTask{program: freshProgram{channel: fakeGuestSession{stream: host}, protocol: protocol, execution: execution.Session}, lease: lease, controlPlane: testControlPlane(t, cp), captures: &computerhost.CaptureRuns{}}
+	task := &guestRunLeaseTask{program: freshProgram{channel: fakeGuestMachine{stream: host}, protocol: protocol, execution: execution.Session}, lease: lease, controlPlane: testControlPlane(t, cp), captures: &computerhost.CaptureRuns{}}
 	release := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
@@ -200,7 +200,7 @@ func TestSessionStopPrecedesStoppedWaitAndKeepsFirstDeadline(t *testing.T) {
 				reads++
 				return workerapi.SessionControlResponse{CorrelationID: r.CorrelationID, HoldID: &hold, TurnID: &execution.TurnId, Reason: &reason}
 			}}
-			task := &guestRunLeaseTask{program: freshProgram{channel: fakeGuestSession{stream: host}, execution: execution.Session}, lease: lease, controlPlane: testControlPlane(t, cp)}
+			task := &guestRunLeaseTask{program: freshProgram{channel: fakeGuestMachine{stream: host}, execution: execution.Session}, lease: lease, controlPlane: testControlPlane(t, cp)}
 			done := make(chan error, 1)
 			go func() {
 				done <- task.beforeWaitResume(t.Context(), WaitResumeDecision{Kind: kind, Data: json.RawMessage(`{"reason_code":"session_stopped"}`)})
@@ -254,7 +254,7 @@ func TestSessionStopBlockedWriteUsesCapturedLeaseDeadline(t *testing.T) {
 	cp := &sessionProtocolCP{testRunLeaseControlPlane: &testRunLeaseControlPlane{}, control: func(r workerapi.SessionControlRequest) workerapi.SessionControlResponse {
 		return workerapi.SessionControlResponse{CorrelationID: r.CorrelationID, HoldID: new("hold"), Reason: new("interrupt_requested")}
 	}}
-	task := &guestRunLeaseTask{program: freshProgram{channel: fakeGuestSession{stream: host}, execution: execution.Session}, lease: lease, controlPlane: testControlPlane(t, cp)}
+	task := &guestRunLeaseTask{program: freshProgram{channel: fakeGuestMachine{stream: host}, execution: execution.Session}, lease: lease, controlPlane: testControlPlane(t, cp)}
 	start := time.Now()
 	if _, err := task.deliverSessionStop(t.Context()); err == nil {
 		t.Fatal("blocked stop write succeeded")
@@ -275,7 +275,7 @@ func TestHotWaitKeepsNextOutcomeWhileResumeAcknowledgementIsPending(t *testing.T
 	defer guest.Close()
 	protocol := newProgramProtocol(host)
 	defer protocol.Close()
-	task := &guestRunLeaseTask{program: freshProgram{channel: fakeGuestSession{stream: host}, protocol: protocol}, lease: testFreshProgramClaim(t).Lease, captures: &computerhost.CaptureRuns{}}
+	task := &guestRunLeaseTask{program: freshProgram{channel: fakeGuestMachine{stream: host}, protocol: protocol}, lease: testFreshProgramClaim(t).Lease, captures: &computerhost.CaptureRuns{}}
 	resumeStarted := make(chan struct{})
 	ack := make(chan struct{})
 	done := make(chan error, 1)

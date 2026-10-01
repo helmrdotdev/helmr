@@ -31,7 +31,7 @@ func (d *liveCaptureDevice) Capture(ctx context.Context) (disk.CapturedVersion, 
 }
 
 // Exercises the actual SDK HTTP boundary, not a running VMM.
-func liveCaptureSession(t *testing.T, resumeFailure bool, delays ...time.Duration) (*guestSession, *liveCaptureDevice, func() []string) {
+func liveCaptureMachine(t *testing.T, resumeFailure bool, delays ...time.Duration) (*guestMachine, *liveCaptureDevice, func() []string) {
 	t.Helper()
 	root := t.TempDir()
 	for _, name := range []string{"computer.ext4", "scratch.ext4"} {
@@ -75,7 +75,7 @@ func liveCaptureSession(t *testing.T, resumeFailure bool, delays ...time.Duratio
 		}
 		w.WriteHeader(204)
 	})
-	machine, err := sdk.NewMachine(t.Context(), sdk.Config{SocketPath: socket})
+	sdkMachine, err := sdk.NewMachine(t.Context(), sdk.Config{SocketPath: socket})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,12 +85,12 @@ func liveCaptureSession(t *testing.T, resumeFailure bool, delays ...time.Duratio
 	}
 	t.Cleanup(func() { _ = closeRuntimeDiskFiles(files) })
 	device := &liveCaptureDevice{}
-	session := &guestSession{machine: machine, diskFiles: files, jailRoot: root, scratchDisk: filepath.Join(root, "scratch.ext4"), topology: vm.RuntimeTopology{Computer: &vm.RuntimeComputer{ComputerID: "computer", Path: filepath.Join(root, "computer.ext4"), Device: device}}}
-	return session, device, func() []string { mu.Lock(); defer mu.Unlock(); return append([]string(nil), states...) }
+	machine := &guestMachine{machine: sdkMachine, diskFiles: files, jailRoot: root, scratchDisk: filepath.Join(root, "scratch.ext4"), topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: "computer", Path: filepath.Join(root, "computer.ext4"), Device: device}}}
+	return machine, device, func() []string { mu.Lock(); defer mu.Unlock(); return append([]string(nil), states...) }
 }
 
 func TestLiveComputerCaptureResumesBeforePublication(t *testing.T) {
-	s, d, states := liveCaptureSession(t, false)
+	s, d, states := liveCaptureMachine(t, false)
 	cut, err := s.CaptureComputer(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -116,7 +116,7 @@ func TestLiveComputerCaptureResumesBeforePublication(t *testing.T) {
 }
 
 func TestLiveComputerCaptureResumeFailureRetainsHold(t *testing.T) {
-	s, d, _ := liveCaptureSession(t, true)
+	s, d, _ := liveCaptureMachine(t, true)
 	if _, err := s.CaptureComputer(t.Context()); err == nil {
 		t.Fatal("accepted failed resume")
 	}
@@ -129,7 +129,7 @@ func TestLiveComputerCaptureResumeFailureRetainsHold(t *testing.T) {
 }
 
 func TestLiveComputerCaptureCheckpointWaitsForResume(t *testing.T) {
-	s, d, states := liveCaptureSession(t, false)
+	s, d, states := liveCaptureMachine(t, false)
 	entered, release := make(chan struct{}), make(chan struct{})
 	d.capture = func(ctx context.Context) (disk.CapturedVersion, error) {
 		close(entered)
@@ -171,7 +171,7 @@ func TestLiveComputerCaptureCheckpointWaitsForResume(t *testing.T) {
 }
 
 func TestCloseCancelsCaptureBeforeReleasingBarrier(t *testing.T) {
-	s, d, states := liveCaptureSession(t, false)
+	s, d, states := liveCaptureMachine(t, false)
 	entered, release := make(chan struct{}), make(chan struct{})
 	d.capture = func(ctx context.Context) (disk.CapturedVersion, error) {
 		close(entered)
@@ -208,7 +208,7 @@ func TestCloseCancelsCaptureBeforeReleasingBarrier(t *testing.T) {
 func TestLiveComputerCaptureFailureNeverResumes(t *testing.T) {
 	for _, stage := range []string{"backing sync", "device capture"} {
 		t.Run(stage, func(t *testing.T) {
-			s, d, states := liveCaptureSession(t, false)
+			s, d, states := liveCaptureMachine(t, false)
 			if stage == "backing sync" {
 				if err := os.Remove(s.scratchDisk); err != nil {
 					t.Fatal(err)
@@ -232,7 +232,7 @@ func TestLiveComputerCaptureFailureNeverResumes(t *testing.T) {
 }
 
 func TestLiveComputerCaptureSerializesTerminalCut(t *testing.T) {
-	s, d, states := liveCaptureSession(t, false)
+	s, d, states := liveCaptureMachine(t, false)
 	entered, release := make(chan struct{}), make(chan struct{})
 	var first sync.Once
 	d.capture = func(ctx context.Context) (disk.CapturedVersion, error) {
@@ -262,7 +262,7 @@ func TestLiveComputerCaptureSerializesTerminalCut(t *testing.T) {
 }
 
 func TestLiveCaptureUsesOperationDeadlineForVMStateChanges(t *testing.T) {
-	s, _, states := liveCaptureSession(t, false, 600*time.Millisecond)
+	s, _, states := liveCaptureMachine(t, false, 600*time.Millisecond)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	cut, err := s.CaptureComputer(ctx)
@@ -276,7 +276,7 @@ func TestLiveCaptureUsesOperationDeadlineForVMStateChanges(t *testing.T) {
 }
 
 func TestLiveCaptureVMStateChangeHonorsCallerDeadline(t *testing.T) {
-	s, d, _ := liveCaptureSession(t, false, time.Second)
+	s, d, _ := liveCaptureMachine(t, false, time.Second)
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
 	if _, err := s.CaptureComputer(ctx); !errors.Is(err, context.DeadlineExceeded) {
@@ -291,7 +291,7 @@ func TestLiveCaptureVMStateChangeHonorsCallerDeadline(t *testing.T) {
 }
 
 func TestCaptureContextBoundsUnboundedCaller(t *testing.T) {
-	s := &guestSession{}
+	s := &guestMachine{}
 	started := time.Now()
 	ctx, done, err := s.captureContext(t.Context())
 	if err != nil {
