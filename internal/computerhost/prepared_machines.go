@@ -17,7 +17,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/artifact/snapshot"
 	"github.com/helmrdotdev/helmr/internal/artifact/verify"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
@@ -911,7 +910,7 @@ func (p *PreparedMachines) prepareAndStore(
 			ID: computerInstanceID, OwnerKind: vm.OwnerInstance, RootfsDigest: mount.RootfsDigest,
 			Binding:           instanceTargetWorkloadBinding(target),
 			ComputerMountPath: mount.ComputerMountPath, BaseComputerDiskVersionID: mount.Target.BaseComputerDiskVersionID,
-			Resources: compute.ResourceVector{MilliCPU: mount.RequestedMilliCPU, MemoryMiB: mount.RequestedMemoryMiB,
+			Resources: vm.Resources{MilliCPU: mount.RequestedMilliCPU, MemoryMiB: mount.RequestedMemoryMiB,
 				DiskMiB: mount.RequestedDiskMiB, Slots: mount.RequestedExecutionSlots},
 			VMVCPUCount: target.Source.VMVCPUCount, CPUConfigDigest: target.Source.CPUConfigDigest,
 			Topology: topology, ReadOnlyDrives: readOnlyDrives, RecordPhase: phases.Record,

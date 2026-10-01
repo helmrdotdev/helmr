@@ -18,7 +18,6 @@ import (
 
 	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
@@ -121,7 +120,7 @@ func (c *Connector) configForMaterializeRequest(request vm.MaterializeRequest) (
 	return c.configForResources(request.Resources, "materialize")
 }
 
-func (c *Connector) configForResources(resources compute.ResourceVector, operation string) (Config, error) {
+func (c *Connector) configForResources(resources vm.Resources, operation string) (Config, error) {
 	cfg := c.cfg
 	if err := resources.Validate(); err != nil {
 		return Config{}, fmt.Errorf("%s resources: %w", operation, err)

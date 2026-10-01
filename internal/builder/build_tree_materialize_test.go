@@ -6,25 +6,26 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
 	"github.com/helmrdotdev/helmr/internal/artifact/snapshot"
 )
 
 func TestMaterializeApplicationExcludesOnlyRootManagerNamespace(t *testing.T) {
-	artifact := newMemoryArtifact()
-	artifact.addDirectory("node_modules")
-	artifact.addDirectory("node_modules/root-package")
-	artifact.addFile("node_modules/root-package/index.js", []byte("root"), 0o644)
-	artifact.addDirectory("packages")
-	artifact.addDirectory("packages/app")
-	artifact.addDirectory("packages/app/node_modules")
-	artifact.addDirectory("packages/app/node_modules/nested-package")
-	artifact.addFile(
+	artifact := artifacttest.NewMemory()
+	artifact.AddDirectory("node_modules")
+	artifact.AddDirectory("node_modules/root-package")
+	artifact.AddFile("node_modules/root-package/index.js", []byte("root"), 0o644)
+	artifact.AddDirectory("packages")
+	artifact.AddDirectory("packages/app")
+	artifact.AddDirectory("packages/app/node_modules")
+	artifact.AddDirectory("packages/app/node_modules/nested-package")
+	artifact.AddFile(
 		"packages/app/node_modules/nested-package/index.js",
 		[]byte("nested"),
 		0o644,
 	)
-	artifact.addDirectory("packages/app/helmr")
-	artifact.addFile("packages/app/helmr/value.txt", []byte("nested helmr"), 0o644)
+	artifact.AddDirectory("packages/app/helmr")
+	artifact.AddFile("packages/app/helmr/value.txt", []byte("nested helmr"), 0o644)
 	inspected, err := inspectMemoryBuildTree(t, artifact)
 	if err != nil {
 		t.Fatal(err)

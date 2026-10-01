@@ -10,20 +10,21 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
 	"github.com/helmrdotdev/helmr/internal/artifact/snapshot"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 func TestBuildTreeImageSourceIsCanonicalAndExact(t *testing.T) {
-	tree := newMemoryArtifact()
-	tree.addFile("README.md", []byte("not selected\n"), 0o644)
-	tree.addDirectory("node_modules")
-	tree.addDirectory("node_modules/tool")
-	tree.addFile("node_modules/tool/index.js", []byte("dependency\n"), 0o644)
-	tree.addDirectory("packages")
-	tree.addDirectory("packages/app")
-	tree.addFile("packages/app/main.js", []byte("main\n"), 0o755)
+	tree := artifacttest.NewMemory()
+	tree.AddFile("README.md", []byte("not selected\n"), 0o644)
+	tree.AddDirectory("node_modules")
+	tree.AddDirectory("node_modules/tool")
+	tree.AddFile("node_modules/tool/index.js", []byte("dependency\n"), 0o644)
+	tree.AddDirectory("packages")
+	tree.AddDirectory("packages/app")
+	tree.AddFile("packages/app/main.js", []byte("main\n"), 0o755)
 	frozen := testFrozenBuildTree(t, tree)
 
 	plan := imageSourcePlan(
@@ -87,12 +88,12 @@ func TestBuildTreeImageSourceIsCanonicalAndExact(t *testing.T) {
 }
 
 func TestBuildTreeImageSourceRootSelectionKeepsNodeModules(t *testing.T) {
-	tree := newMemoryArtifact()
-	tree.addFile("app.js", []byte("app\n"), 0o644)
-	tree.addDirectory("node_modules")
-	tree.addDirectory("node_modules/tool")
-	tree.addLink("node_modules/tool/current", "index.js")
-	tree.addFile("node_modules/tool/index.js", []byte("dependency\n"), 0o644)
+	tree := artifacttest.NewMemory()
+	tree.AddFile("app.js", []byte("app\n"), 0o644)
+	tree.AddDirectory("node_modules")
+	tree.AddDirectory("node_modules/tool")
+	tree.AddLink("node_modules/tool/current", "index.js")
+	tree.AddFile("node_modules/tool/index.js", []byte("dependency\n"), 0o644)
 	frozen := testFrozenBuildTree(t, tree)
 
 	selection, err := frozen.selectImageSource(
@@ -119,9 +120,9 @@ func TestBuildTreeImageSourceRootSelectionKeepsNodeModules(t *testing.T) {
 }
 
 func TestBuildTreeImageSourceRejectsReservedMissingAndWrongKindRoots(t *testing.T) {
-	tree := newMemoryArtifact()
-	tree.addFile("file.txt", []byte("file\n"), 0o644)
-	tree.addDirectory("directory")
+	tree := artifacttest.NewMemory()
+	tree.AddFile("file.txt", []byte("file\n"), 0o644)
+	tree.AddDirectory("directory")
 	frozen := testFrozenBuildTree(t, tree)
 
 	tests := []struct {
@@ -150,8 +151,8 @@ func TestBuildTreeImageSourceRejectsReservedMissingAndWrongKindRoots(t *testing.
 }
 
 func TestBuildTreeImageSourceSupportsEmptySelection(t *testing.T) {
-	tree := newMemoryArtifact()
-	tree.addFile("app.js", []byte("app\n"), 0o644)
+	tree := artifacttest.NewMemory()
+	tree.AddFile("app.js", []byte("app\n"), 0o644)
 	frozen := testFrozenBuildTree(t, tree)
 	selection, err := frozen.selectImageSource(context.Background(), imageSourcePlan(nil, nil))
 	if err != nil {
@@ -172,14 +173,14 @@ func TestBuildTreeImageSourceSupportsEmptySelection(t *testing.T) {
 }
 
 func TestBuildTreeDescriptorPreservesVerifiedStreamIdentity(t *testing.T) {
-	tree := newMemoryArtifact()
-	tree.addFile("app.js", []byte("app\n"), 0o644)
+	tree := artifacttest.NewMemory()
+	tree.AddFile("app.js", []byte("app\n"), 0o644)
 	frozen := testFrozenBuildTree(t, tree)
 	descriptor, err := frozen.Descriptor()
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := buildTreeDescriptor{Digest: testDigest("build-tree-stream"), SizeBytes: 4096}
+	want := buildTreeDescriptor{Digest: artifacttest.Digest("build-tree-stream"), SizeBytes: 4096}
 	if descriptor != want {
 		t.Fatalf("buildTree descriptor = %+v, want %+v", descriptor, want)
 	}
@@ -191,7 +192,7 @@ func TestBuildTreeDescriptorPreservesVerifiedStreamIdentity(t *testing.T) {
 	}
 }
 
-func testFrozenBuildTree(t *testing.T, memory *memoryArtifact) *buildTree {
+func testFrozenBuildTree(t *testing.T, memory *artifacttest.Memory) *buildTree {
 	t.Helper()
 	inspected, err := inspectMemoryBuildTree(t, memory)
 	if err != nil {
@@ -200,7 +201,7 @@ func testFrozenBuildTree(t *testing.T, memory *memoryArtifact) *buildTree {
 	tree, err := newBuildTree(
 		&snapshot.Artifact{},
 		inspected,
-		buildTreeDescriptor{Digest: testDigest("build-tree-stream"), SizeBytes: 4096},
+		buildTreeDescriptor{Digest: artifacttest.Digest("build-tree-stream"), SizeBytes: 4096},
 	)
 	if err != nil {
 		t.Fatal(err)

@@ -10,20 +10,21 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
 )
 
 func TestProgramTreeEntriesEncodeOneFrozenTree(t *testing.T) {
-	tree := newMemoryArtifact()
-	tree.addFile("app.js", []byte("export const app = true\n"), 0644)
-	tree.addDirectory("packages")
-	tree.addDirectory("packages/app")
-	tree.addDirectory("packages/app/node_modules")
-	tree.addFile("packages/app/node_modules/local.js", []byte("nested\n"), 0644)
-	tree.addDirectory("node_modules")
-	tree.addDirectory("node_modules/.bin")
-	tree.addDirectory("node_modules/tool")
-	tree.addFile("node_modules/tool/index.js", []byte("dependency\n"), 0644)
-	tree.addLink("node_modules/.bin/tool", "../tool/index.js")
+	tree := artifacttest.NewMemory()
+	tree.AddFile("app.js", []byte("export const app = true\n"), 0644)
+	tree.AddDirectory("packages")
+	tree.AddDirectory("packages/app")
+	tree.AddDirectory("packages/app/node_modules")
+	tree.AddFile("packages/app/node_modules/local.js", []byte("nested\n"), 0644)
+	tree.AddDirectory("node_modules")
+	tree.AddDirectory("node_modules/.bin")
+	tree.AddDirectory("node_modules/tool")
+	tree.AddFile("node_modules/tool/index.js", []byte("dependency\n"), 0644)
+	tree.AddLink("node_modules/.bin/tool", "../tool/index.js")
 	inspected, err := inspectMemoryBuildTree(t, tree)
 	if err != nil {
 		t.Fatal(err)
@@ -67,8 +68,8 @@ func TestProgramTreeEntriesEncodeOneFrozenTree(t *testing.T) {
 }
 
 func TestProgramTreeEntriesCreateEmptyNodeModules(t *testing.T) {
-	tree := newMemoryArtifact()
-	tree.addFile("app.js", []byte("export {}\n"), 0644)
+	tree := artifacttest.NewMemory()
+	tree.AddFile("app.js", []byte("export {}\n"), 0644)
 	inspected, err := inspectMemoryBuildTree(t, tree)
 	if err != nil {
 		t.Fatal(err)

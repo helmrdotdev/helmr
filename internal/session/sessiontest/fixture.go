@@ -12,6 +12,7 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer/computerdbtest"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/definition"
@@ -125,7 +126,7 @@ func New(t *testing.T, computerCount int) Fixture {
 		    ($2, $4, $5, 'task', 'resize-image', 0, $9::jsonb, $10, NULL),
 		    ($3, $4, $5, 'sandbox', 'computer.v1', 0, '{}'::jsonb, decode(repeat('04', 32), 'hex'), $6)
 	`, actorDefinitionID, taskDefinitionID, computerDefinitionID,
-		fixture.EnvironmentID, deploymentID, dbtest.InsertDefaultComputerSpec(t, t.Context(), pool, imageID),
+		fixture.EnvironmentID, deploymentID, computerdbtest.InsertDefaultComputerSpec(t, t.Context(), pool, imageID),
 		actorManifest, actorManifestDigest[:], taskManifest, taskManifestDigest[:])
 	dbtest.MustExec(t, t.Context(), pool, `
 		UPDATE environments SET current_deployment_id = $1 WHERE id = $2
@@ -159,7 +160,7 @@ func New(t *testing.T, computerCount int) Fixture {
 			, computer_spec_id, creation_deployment_id) VALUES ($1, $2, 'us-east-1', 'computer.v1', $4, $5, (SELECT computer_spec_id FROM deployment_definitions WHERE environment_id=$2 AND id=$3), (SELECT deployment_id FROM deployment_definitions WHERE environment_id=$2 AND id=$3))
 		`, computerID, fixture.EnvironmentID, computerDefinitionID, versionID,
 			fixture.ComputerKeys[index])
-		dbtest.InsertCommittedComputerRoot(t, t.Context(), tx, versionID, fixture.EnvironmentID, computerID)
+		computerdbtest.InsertCommittedComputerRoot(t, t.Context(), tx, versionID, fixture.EnvironmentID, computerID)
 		dbtest.MustExec(t, t.Context(), tx, `
 			INSERT INTO computer_secrets (mode,
 			    computer_id, environment_id, placement_kind, placement_target, secret_id

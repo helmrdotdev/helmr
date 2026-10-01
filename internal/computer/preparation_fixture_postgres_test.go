@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -47,7 +46,7 @@ func newPreparationFixture(t *testing.T) preparationFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	diskBytes := int64(compute.ComputerGuestEphemeralDiskMiB) * 1048576
+	diskBytes := disk.SeedCapacity
 	instance, err := q.AllocateComputerInstance(t.Context(), db.AllocateComputerInstanceParams{
 		ID: pgvalue.NewUUIDv7(), EnvironmentID: c.EnvironmentID, ComputerID: c.ID, ComputerSpecID: c.ComputerSpecID,
 		WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerEpoch: 1,

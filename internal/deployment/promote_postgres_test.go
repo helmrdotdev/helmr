@@ -13,6 +13,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/computer/computerdbtest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
@@ -681,7 +682,7 @@ func prepareDeploymentPromotionScaleFixture(
 	params.DeclaredIds[0] = "reporting"
 	params.Manifests[0] = []byte(`{}`)
 	params.ManifestDigests[0] = make([]byte, 32)
-	params.ComputerSpecIds[0] = pgvalue.UUID(dbtest.InsertDefaultComputerSpec(t, t.Context(), fixture.pool, imageID))
+	params.ComputerSpecIds[0] = pgvalue.UUID(computerdbtest.InsertDefaultComputerSpec(t, t.Context(), fixture.pool, imageID))
 	for index := 1; index < definitionCount; index++ {
 		params.Ids[index] = pgvalue.UUID(uuid.NewV7())
 		params.Kinds[index] = string(definition.KindTask)
@@ -957,7 +958,7 @@ func newDeploymentPromotionPostgresFixture(t *testing.T) deploymentPromotionPost
 		) VALUES
 		    ($1, $3, $4, 'sandbox', 'reporting', 0, '{}'::jsonb, decode(repeat('04', 32), 'hex'), $5),
 		    ($2, $3, $4, 'task', 'daily-report', 0, $6::jsonb, $7, NULL)
-	`, sandboxID, taskID, fixture.environmentID, fixture.scheduledID, dbtest.InsertDefaultComputerSpec(t, t.Context(), pool, imageID),
+	`, sandboxID, taskID, fixture.environmentID, fixture.scheduledID, computerdbtest.InsertDefaultComputerSpec(t, t.Context(), pool, imageID),
 		canonical, digest[:])
 	dbtest.MustExec(t, t.Context(), pool, `
 		UPDATE environments SET current_deployment_id = $1 WHERE id = $2

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/ids"
 )
@@ -75,7 +74,7 @@ type ConnectRequest struct {
 	ID             string
 	OwnerKind      OwnerKind
 	Binding        WorkloadBinding
-	Resources      compute.ResourceVector
+	Resources      Resources
 	Topology       Topology
 	ReadOnlyDrives []ReadOnlyDrive
 }
@@ -167,7 +166,7 @@ type SnapshotFile struct {
 }
 
 type RestoreRequest struct {
-	Resources            compute.ResourceVector
+	Resources            Resources
 	ID                   string
 	ComputerInstanceID   string
 	OwnerKind            OwnerKind
@@ -192,7 +191,7 @@ type MaterializeRequest struct {
 	RootfsDigest              string
 	ComputerMountPath         string
 	BaseComputerDiskVersionID string
-	Resources                 compute.ResourceVector
+	Resources                 Resources
 	VMVCPUCount               int32
 	CPUConfigDigest           string
 	Topology                  Topology

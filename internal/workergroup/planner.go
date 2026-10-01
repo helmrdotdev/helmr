@@ -10,9 +10,9 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
@@ -622,7 +622,7 @@ func freshExecutionItem(key string, configJSON []byte) item {
 	}
 	resources := ResourceVector{
 		CPUMillis: manifest.Resources.MilliCPU, MemoryBytes: manifest.Resources.MemoryMiB * mebibyte,
-		GuestEphemeralDiskBytes: compute.ComputerGuestEphemeralDiskMiB * mebibyte,
+		GuestEphemeralDiskBytes: disk.SeedCapacity,
 		VMSlots:                 1,
 	}
 	result.resources = resources

@@ -12,6 +12,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/computer/computerdbtest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
@@ -97,7 +98,7 @@ VALUES ($1, $2, $3, $4, $5, $6,
     (SELECT computer_spec_id FROM deployment_definitions WHERE environment_id=$2 AND id=$7),
     (SELECT deployment_id FROM deployment_definitions WHERE environment_id=$2 AND id=$7))`,
 		computerID, f.EnvironmentID, runtest.Region, sourceSandbox, key, versionID, f.ComputerDefinitionID)
-	dbtest.InsertCommittedComputerRoot(t, t.Context(), tx, versionID, f.EnvironmentID, computerID)
+	computerdbtest.InsertCommittedComputerRoot(t, t.Context(), tx, versionID, f.EnvironmentID, computerID)
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}

@@ -18,22 +18,9 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/firecracker/datapath"
-	"github.com/helmrdotdev/helmr/internal/secretproxy"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
-
-// Only the connector-owned qualification probe has no control-plane reservation.
-// Every real runtime must complete preparation, including Computers with no bindings.
-func (c *Connector) prepareSecretTransport(ctx context.Context, mode launchMode, runtimeID string, blocked []netip.Prefix) (*secretproxy.Proxy, error) {
-	if mode == startupProbeLaunch {
-		return nil, nil
-	}
-	if c.cfg.PrepareSecretTransport == nil {
-		return nil, errors.New("computer Secret transport preparation is not configured")
-	}
-	return c.cfg.PrepareSecretTransport(ctx, runtimeID, blocked)
-}
 
 func (c *Connector) installRoutedPolicy(ctx context.Context, mode launchMode, binding *installedNetworkBinding) error {
 	m := binding.manifest

@@ -16,7 +16,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/artifact/verify"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/computerhost"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/definition"
@@ -186,11 +185,11 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("inspect worker disk capacity: %w", err)
 	}
 	artifactCacheMaxBytes := workerCacheBudgetBytes(cfg.ArtifactCacheMaxMiB, hostDiskMiB, 1, 6, 2048, 16384)
-	diskCapacity, err := compute.PartitionWorkerDiskCapacity(hostDiskMiB, vmResources.DiskMiB, artifactCacheMaxBytes)
+	diskCapacity, err := partitionWorkerDiskCapacity(hostDiskMiB, vmResources.DiskMiB, artifactCacheMaxBytes)
 	if err != nil {
 		return fmt.Errorf("partition worker physical disk capacity: %w", err)
 	}
-	allocatable := compute.ResourceVector{
+	allocatable := vm.Resources{
 		MilliCPU:  cfg.WorkerCapacityVCPUs * 1000,
 		MemoryMiB: cfg.WorkerCapacityMemoryMiB,
 	}
@@ -397,8 +396,8 @@ func deriveWorkerInstanceCapacity(executionSlots int32) workerInstanceCapacity {
 	}
 }
 
-func resolveVMResources(cfg config.Worker) compute.ResourceVector {
-	return compute.ResourceVector{
+func resolveVMResources(cfg config.Worker) vm.Resources {
+	return vm.Resources{
 		MilliCPU:  cfg.VMVCPUCount * 1000,
 		MemoryMiB: cfg.VMMemoryMiB,
 		DiskMiB:   cfg.VMScratchDiskMiB,

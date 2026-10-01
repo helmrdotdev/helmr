@@ -6,6 +6,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer/computerdbtest"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -127,7 +128,7 @@ func New(t *testing.T) Fixture {
 			decode(repeat('04', 32), 'hex'), $5
 		)
 	`, fixture.TaskDefinitionID, fixture.ComputerDefinitionID,
-		fixture.EnvironmentID, fixture.DeploymentID, dbtest.InsertDefaultComputerSpec(t, t.Context(), fixture.Pool, imageID))
+		fixture.EnvironmentID, fixture.DeploymentID, computerdbtest.InsertDefaultComputerSpec(t, t.Context(), fixture.Pool, imageID))
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO vm_platforms (
 			id, arch, contract, descriptor_digest,
@@ -217,8 +218,8 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, createdAt time.Ti
 		, (SELECT computer_spec_id FROM deployment_definitions WHERE environment_id=$2 AND id=$4), (SELECT deployment_id FROM deployment_definitions WHERE environment_id=$2 AND id=$4))
 	`, computerID, fixture.EnvironmentID, Region,
 		fixture.ComputerDefinitionID, versionID)
-	dbtest.InsertCommittedComputerRoot(t, ctx, tx, versionID, fixture.EnvironmentID, computerID)
-	dbtest.InsertComputerVersion(t, ctx, tx, fixture.EnvironmentID, computerID, versionID)
+	computerdbtest.InsertCommittedComputerRoot(t, ctx, tx, versionID, fixture.EnvironmentID, computerID)
+	computerdbtest.InsertComputerVersion(t, ctx, tx, fixture.EnvironmentID, computerID, versionID)
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO runs (
 			id, org_id, project_id, environment_id, deployment_id,

@@ -1,22 +1,16 @@
-package compute
+package vm
 
-import (
-	"errors"
-	"github.com/helmrdotdev/helmr/internal/disk"
-)
+import "errors"
 
-const (
-	ComputerGuestEphemeralDiskMiB = disk.SeedCapacity >> 20
-)
-
-type ResourceVector struct {
+// Resources is a VM resource shape; memory and disk are in MiB.
+type Resources struct {
 	MilliCPU  int64 `json:"milli_cpu"`
 	MemoryMiB int64 `json:"memory_mib"`
 	DiskMiB   int64 `json:"disk_mib"`
 	Slots     int32 `json:"execution_slots"`
 }
 
-func (r ResourceVector) Validate() error {
+func (r Resources) Validate() error {
 	var problems []error
 	if r.MilliCPU <= 0 {
 		problems = append(problems, errors.New("milli_cpu must be positive"))

@@ -1,4 +1,4 @@
-package builder
+package artifacttest
 
 import (
 	"bytes"
@@ -12,7 +12,13 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
-func exactTestFilesystem() artifact.Filesystem {
+// Digest is the SHA-256 digest of value.
+func Digest(value string) string {
+	digest := sha256.Sum256([]byte(value))
+	return sha256sum.FormatDigest(digest[:])
+}
+
+func exactFilesystem() artifact.Filesystem {
 	return artifact.Filesystem{
 		Magic:              artifact.SquashFSMagic,
 		InodeCount:         1,
@@ -33,18 +39,21 @@ func exactTestFilesystem() artifact.Filesystem {
 	}
 }
 
-type memoryArtifact struct {
-	files      map[string][]byte
+// Memory is an in-memory SquashFS artifact. Files holds regular file bodies by
+// path; writing it directly leaves the recorded entry unchanged.
+type Memory struct {
+	Files      map[string][]byte
 	entries    []artifact.Entry
 	nextInode  uint64
 	filesystem artifact.Filesystem
 }
 
-func newMemoryArtifact() *memoryArtifact {
-	memory := &memoryArtifact{
-		files:      make(map[string][]byte),
+// NewMemory returns an artifact holding only its root directory.
+func NewMemory() *Memory {
+	memory := &Memory{
+		Files:      make(map[string][]byte),
 		nextInode:  2,
-		filesystem: exactTestFilesystem(),
+		filesystem: exactFilesystem(),
 	}
 	memory.entries = append(memory.entries, artifact.Entry{
 		Path:        ".",
@@ -58,25 +67,25 @@ func newMemoryArtifact() *memoryArtifact {
 	return memory
 }
 
-func (memory *memoryArtifact) Filesystem() artifact.Filesystem {
+func (memory *Memory) Filesystem() artifact.Filesystem {
 	filesystem := memory.filesystem
 	filesystem.IDs = append([]uint32(nil), filesystem.IDs...)
 	return filesystem
 }
 
-func (memory *memoryArtifact) Entries(context.Context) ([]artifact.Entry, error) {
+func (memory *Memory) Entries(context.Context) ([]artifact.Entry, error) {
 	return append([]artifact.Entry(nil), memory.entries...), nil
 }
 
-func (memory *memoryArtifact) Open(_ context.Context, path string) (io.ReadCloser, error) {
-	raw, exists := memory.files[path]
+func (memory *Memory) Open(_ context.Context, path string) (io.ReadCloser, error) {
+	raw, exists := memory.Files[path]
 	if !exists {
 		return nil, fmt.Errorf("file %q is absent", path)
 	}
 	return io.NopCloser(bytes.NewReader(raw)), nil
 }
 
-func (memory *memoryArtifact) addDirectory(path string) {
+func (memory *Memory) AddDirectory(path string) {
 	inode := memory.takeInode()
 	memory.entries = append(memory.entries, artifact.Entry{
 		Path:        path,
@@ -89,8 +98,8 @@ func (memory *memoryArtifact) addDirectory(path string) {
 	})
 }
 
-func (memory *memoryArtifact) addFile(path string, raw []byte, mode uint32) {
-	memory.files[path] = append([]byte(nil), raw...)
+func (memory *Memory) AddFile(path string, raw []byte, mode uint32) {
+	memory.Files[path] = append([]byte(nil), raw...)
 	inode := memory.takeInode()
 	memory.entries = append(memory.entries, artifact.Entry{
 		Path:        path,
@@ -105,7 +114,7 @@ func (memory *memoryArtifact) addFile(path string, raw []byte, mode uint32) {
 	})
 }
 
-func (memory *memoryArtifact) addLink(path, target string) {
+func (memory *Memory) AddLink(path, target string) {
 	inode := memory.takeInode()
 	memory.entries = append(memory.entries, artifact.Entry{
 		Path:        path,
@@ -121,7 +130,8 @@ func (memory *memoryArtifact) addLink(path, target string) {
 	})
 }
 
-func (memory *memoryArtifact) mutate(path string, mutate func(*artifact.Entry)) {
+// Mutate edits the entry at path in place; the entry must exist.
+func (memory *Memory) Mutate(path string, mutate func(*artifact.Entry)) {
 	for position := range memory.entries {
 		if memory.entries[position].Path == path {
 			mutate(&memory.entries[position])
@@ -131,19 +141,28 @@ func (memory *memoryArtifact) mutate(path string, mutate func(*artifact.Entry)) 
 	panic("entry is absent: " + path)
 }
 
-func (memory *memoryArtifact) takeInode() uint64 {
+// ReplaceFile replaces the body at path and records its new size.
+func (memory *Memory) ReplaceFile(path string, raw []byte) {
+	memory.Files[path] = raw
+	memory.Mutate(path, func(entry *artifact.Entry) { entry.SizeBytes = int64(len(raw)) })
+}
+
+// Remove drops the entry at path and its body, leaving the inode count as is.
+// An absent path is left alone.
+func (memory *Memory) Remove(path string) {
+	for index := range memory.entries {
+		if memory.entries[index].Path != path {
+			continue
+		}
+		memory.entries = append(memory.entries[:index], memory.entries[index+1:]...)
+		delete(memory.Files, path)
+		return
+	}
+}
+
+func (memory *Memory) takeInode() uint64 {
 	inode := memory.nextInode
 	memory.nextInode++
 	memory.filesystem.InodeCount++
 	return inode
-}
-
-func testDigest(value string) string {
-	digest := sha256.Sum256([]byte(value))
-	return sha256sum.FormatDigest(digest[:])
-}
-
-func (memory *memoryArtifact) replaceFile(path string, raw []byte) {
-	memory.files[path] = raw
-	memory.mutate(path, func(entry *artifact.Entry) { entry.SizeBytes = int64(len(raw)) })
 }

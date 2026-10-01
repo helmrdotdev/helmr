@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
@@ -159,7 +160,7 @@ func TestVerificationResultVerifiesGeneratedFilesAgainstPlan(t *testing.T) {
 		{
 			name: "declaration identity mismatch",
 			change: func(result *VerificationResult) {
-				locator := testAnalysisDeclarationLocator()
+				locator := artifacttest.AnalysisDeclarationLocator()
 				locator.Declarations[0].DeclaredID = "different"
 				raw, err := artifact.CanonicalDeclarationLocator(locator)
 				if err != nil {
@@ -232,7 +233,7 @@ func TestVerificationFailureContract(t *testing.T) {
 
 func testComputerVerificationResult(t *testing.T) VerificationResult {
 	t.Helper()
-	plan := testBuildPlan()
+	plan := artifacttest.BuildPlan()
 	plan.Definitions = []definition.Input{plan.Definitions[2]}
 	plan.Queues = []definition.QueueInput{}
 	raw, err := definition.CanonicalBuildPlan(plan)
@@ -254,13 +255,13 @@ func testComputerVerificationResult(t *testing.T) VerificationResult {
 
 func testProgramVerificationResult(t *testing.T) VerificationResult {
 	t.Helper()
-	plan := testBuildPlan()
+	plan := artifacttest.BuildPlan()
 	planRaw, err := definition.CanonicalBuildPlan(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
 	locatorRaw, err := artifact.CanonicalDeclarationLocator(
-		testAnalysisDeclarationLocator(),
+		artifacttest.AnalysisDeclarationLocator(),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -289,28 +290,6 @@ func testFailedVerificationResult() VerificationResult {
 	}
 }
 
-func testAnalysisDeclarationLocator() artifact.DeclarationLocator {
-	return artifact.DeclarationLocator{
-		FormatVersion: artifact.DeclarationLocatorFormatVersion,
-		Declarations: []artifact.LocatedDeclaration{
-			{
-				Kind:       artifact.DeclarationKindTask,
-				DeclaredID: "build",
-				ModulePath: testModulePath("a"),
-				ExportName: "build",
-				Slot:       artifact.DeclarationSlotHandler,
-			},
-			{
-				Kind:       artifact.DeclarationKindActor,
-				DeclaredID: "chat",
-				ModulePath: testModulePath("b"),
-				ExportName: "chat",
-				Slot:       artifact.DeclarationSlotHandler,
-			},
-		},
-	}
-}
-
 func mutateVerificationResultJSON(
 	t *testing.T,
 	raw []byte,
@@ -331,11 +310,4 @@ func mutateVerificationResultJSON(
 		t.Fatal(err)
 	}
 	return canonical
-}
-
-func testModulePath(digit string) string {
-	if digit == "a" {
-		return "helmr/app/entry-0.mjs"
-	}
-	return "helmr/app/entry-1.mjs"
 }

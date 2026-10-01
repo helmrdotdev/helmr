@@ -7,6 +7,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer/computerdbtest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
@@ -46,7 +47,7 @@ INSERT INTO computers (
 , computer_spec_id, creation_deployment_id) VALUES ($1, $2, $3, 'test-computer', 'worker-delete-replay', $5, (SELECT computer_spec_id FROM deployment_definitions WHERE environment_id=$2 AND id=$4), (SELECT deployment_id FROM deployment_definitions WHERE environment_id=$2 AND id=$4))`,
 		computerID, fixture.EnvironmentID, runtest.Region,
 		fixture.ComputerDefinitionID, versionID)
-	dbtest.InsertCommittedComputerRoot(t, t.Context(), tx, versionID, fixture.EnvironmentID, computerID)
+	computerdbtest.InsertCommittedComputerRoot(t, t.Context(), tx, versionID, fixture.EnvironmentID, computerID)
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}

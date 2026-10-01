@@ -7,10 +7,11 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
 )
 
 func TestRuntimeDescriptorDomainIsIndependentFromArtifactAdmission(t *testing.T) {
-	descriptor := testRuntimeDescriptor()
+	descriptor := artifacttest.RuntimeDescriptor()
 	descriptor.SizeBytes = artifact.MaxRuntimePhysicalBytes + 1
 	if err := artifact.ValidateRuntimeDescriptor(descriptor); err != nil {
 		t.Fatalf("descriptor scalar domain rejected physical oversize: %v", err)

@@ -8,6 +8,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer/computerdbtest"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -181,7 +182,7 @@ func assertCheckpointArtifactBoundaries(t *testing.T, tx pgx.Tx, work runLeaseWo
 		SELECT $1,i.environment_id,i.computer_id,i.computer_spec_id,i.id,i.writer_generation,i.membership_revision,r.base_computer_disk_version_id
 		FROM run_leases l JOIN runs r ON r.id=l.run_id JOIN computer_instances i ON i.id=l.computer_instance_id WHERE l.id=$2
 	`, checkpointID, work.leaseID)
-	artifacts := dbtest.InsertCheckpointArtifacts(t, ctx, tx, work.runID, "schema-checkpoint")
+	artifacts := computerdbtest.InsertCheckpointArtifacts(t, ctx, tx, work.runID, "schema-checkpoint")
 	rejectSchemaRow(t, tx, "23514", `UPDATE computer_checkpoints SET vm_config_artifact_id=$2 WHERE id=$1`, checkpointID, artifacts.RuntimeConfig)
 	rejectSchemaRow(t, tx, "23514", `UPDATE computer_checkpoints SET status='ready', private_computer_disk_version_id=$2, ready_at=now(), ready_request_fingerprint='sha256:b24d6d33736ecd5604a4b17bc9c6481039fac362bb7df044ef1c10a2bfd21db6', manifest='{"version":0}' WHERE id=$1`, checkpointID, privateVersionID)
 	dbtest.MustExec(t, ctx, tx, `UPDATE computer_checkpoints SET vm_config_artifact_id=$2, vm_state_artifact_id=$3, memory_artifact_id=$4, scratch_disk_artifact_id=$5 WHERE id=$1`, checkpointID, artifacts.RuntimeConfig, artifacts.VMState, artifacts.Memory, artifacts.ScratchDisk)
@@ -192,7 +193,7 @@ func assertCheckpointArtifactBoundaries(t *testing.T, tx pgx.Tx, work runLeaseWo
 	}
 	dbtest.MustExec(t, ctx, tx, `UPDATE computer_checkpoints SET status='ready',private_computer_disk_version_id=$2,ready_at=now(),manifest='{"version":1}',ready_request_fingerprint=$3 WHERE id=$1`, checkpointID, privateVersionID, dbtest.Digest("checkpoint-ready"))
 	rejectSchemaRow(t, tx, "23001", `DELETE FROM cas_objects WHERE (org_id,digest) IN (SELECT org_id,digest FROM artifacts WHERE id=$1)`, artifacts.RuntimeConfig)
-	unattached := dbtest.InsertCheckpointArtifacts(t, ctx, tx, work.runID, "unattached-checkpoint")
+	unattached := computerdbtest.InsertCheckpointArtifacts(t, ctx, tx, work.runID, "unattached-checkpoint")
 	dbtest.MustExec(t, ctx, tx, `DELETE FROM cas_objects WHERE (org_id,digest) IN (SELECT org_id,digest FROM artifacts WHERE id=$1)`, unattached.RuntimeConfig)
 	var remaining int
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM artifacts WHERE id=$1`, unattached.RuntimeConfig).Scan(&remaining); err != nil || remaining != 0 {

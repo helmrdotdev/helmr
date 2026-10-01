@@ -18,7 +18,7 @@ func ValidDeclaredID(value string) bool {
 func ValidateSandboxDeclaredID(id string) error {
 	if !ValidDeclaredID(id) {
 		return fmt.Errorf(
-			"computer declared ID %q must match %s",
+			"sandbox declared ID %q must match %s",
 			id,
 			DeclaredIDGrammar,
 		)

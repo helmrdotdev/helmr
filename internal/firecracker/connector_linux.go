@@ -9,7 +9,6 @@ import (
 	"sync"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/firecracker/datapath"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
@@ -190,7 +189,7 @@ func (c *Connector) connectorForRequest(
 	if len(request.ReadOnlyDrives) != 0 {
 		return nil, errors.New("runtime attachment cannot add read-only drives")
 	}
-	if request.Resources != (compute.ResourceVector{}) {
+	if request.Resources != (vm.Resources{}) {
 		return nil, errors.New("runtime attachment cannot change resources")
 	}
 	child := *c
