@@ -93,7 +93,7 @@ func TestDecodeChildTaskReceiptRequiresCanonicalAuthority(t *testing.T) {
 // The child call wait fingerprint is part of each registered wait's replay
 // identity, so its digest must not drift.
 func TestChildCallWaitFingerprintIsStable(t *testing.T) {
-	got, err := terminalRequestFingerprint("worker.child-call.wait", struct {
+	got, err := RequestFingerprint("worker.child-call.wait", struct {
 		Claim      string
 		WaitID     string
 		AttachID   string

@@ -230,7 +230,7 @@ func StartTask(ctx context.Context, txb db.TxBeginner, claimRequest idempotency.
 			return fmt.Errorf("record task computer admission: %w", err)
 		}
 		if err := secret.CreateAttemptResolutions(
-			ctx, q, admitted.ID, created.ID, 1, admissionSecretResolutions(bindings),
+			ctx, q, admitted.ID, created.ID, 1, SecretResolutions(bindings),
 		); err != nil {
 			return fmt.Errorf("record task run secret resolutions: %w", err)
 		}
@@ -278,9 +278,9 @@ func admissionSecretsAvailable(bindings []db.LockComputerSecretsForAdmissionRow)
 	return true
 }
 
-// admissionSecretResolutions are the Secret resolutions a new Run's first
-// Attempt records from its Computer's locked bindings.
-func admissionSecretResolutions(bindings []db.LockComputerSecretsForAdmissionRow) []secret.Resolution {
+// SecretResolutions are the Secret resolutions a new member's first Attempt
+// records from its Computer's locked bindings.
+func SecretResolutions(bindings []db.LockComputerSecretsForAdmissionRow) []secret.Resolution {
 	resolutions := make([]secret.Resolution, len(bindings))
 	for index, binding := range bindings {
 		resolutions[index] = secret.Resolution{

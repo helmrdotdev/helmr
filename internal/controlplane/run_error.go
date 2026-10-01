@@ -166,8 +166,6 @@ func runError(err error, operation runOperation) error {
 		return cancelError(err)
 	case runChildInvokeOperation:
 		switch {
-		case errors.As(err, &expired):
-			return gone(expired)
 		case errors.Is(err, run.ErrChildInvokeStale):
 			point := childTaskInvokePointTransaction
 			if errors.Is(err, run.ErrChildInvokeSourceScope) {
@@ -243,23 +241,15 @@ func taskStartError(err error) error {
 }
 
 // childInvokeFailure is the failure a child Task invocation reports to the
-// worker in a 200 response, or false when the error is not one: Actor output
-// rejections first, then idempotency, deployment, Computer, Secret and
-// request rejections.
+// worker in a 200 response, or false when the error is not one. Actor output
+// failures are mapped first, including an expired or conflicting idempotency
+// claim and Turn rejections; then deployment, Computer, Secret and request
+// rejections.
 func childInvokeFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
 	if failure, ok := actorOutputAppendFailure(err); ok {
 		return failure, true
 	}
-	var expired idempotency.ExpiredError
-	if errors.As(err, &expired) {
-		return workerapi.RuntimeOperationFailure{}, false
-	}
-	var idempotencyConflict idempotency.ConflictError
 	switch {
-	case errors.As(err, &idempotencyConflict):
-		return workerapi.RuntimeOperationFailure{
-			Code: "idempotency_conflict", Message: "idempotency key conflicts with an earlier child Task invocation",
-		}, true
 	case errors.Is(err, run.ErrTaskNotDeployed):
 		return workerapi.RuntimeOperationFailure{Code: "task_not_deployed", Message: err.Error()}, true
 	case errors.Is(err, run.ErrTaskComputerNotFound):

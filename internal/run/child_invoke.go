@@ -310,7 +310,7 @@ func InvokeChild(ctx context.Context, txb db.TxBeginner, invoke ChildInvoke) (Ch
 			return fmt.Errorf("create child task run: %w", err)
 		}
 		if err := secret.CreateAttemptResolutions(
-			ctx, q, admitted.ID, child.ID, 1, admissionSecretResolutions(bindings),
+			ctx, q, admitted.ID, child.ID, 1, SecretResolutions(bindings),
 		); err != nil {
 			return fmt.Errorf("record child task secret resolutions: %w", err)
 		}
@@ -406,7 +406,7 @@ func registerChildCall(
 	if waitErr == nil && (existing.ID != pgvalue.UUID(invoke.RunWaitID)) {
 		return ChildCall{}, ErrChildInvokeStale
 	}
-	requestFingerprint, err := terminalRequestFingerprint("worker.child-call.wait", struct {
+	requestFingerprint, err := RequestFingerprint("worker.child-call.wait", struct {
 		Claim      string
 		WaitID     string
 		AttachID   string
@@ -626,9 +626,9 @@ func decodeChildTaskReceipt(raw []byte) (childTaskReceipt, error) {
 	return receipt, nil
 }
 
-// terminalRequestFingerprint is the digest of a request scope and its
-// canonical payload that a wait records to recognize its replay.
-func terminalRequestFingerprint(scope string, payload any) (string, error) {
+// RequestFingerprint is the digest of a request scope and its canonical
+// payload that an operation records to recognize its replay.
+func RequestFingerprint(scope string, payload any) (string, error) {
 	body, err := json.Marshal(struct {
 		Scope   string `json:"scope"`
 		Payload any    `json:"payload"`

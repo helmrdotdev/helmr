@@ -61,7 +61,7 @@ func parseActorTurnCommitRequest(request workerapi.CommitActorTurnRequest) (pars
 	} else {
 		request.Result = result
 	}
-	fingerprint, err := terminalRequestFingerprint("worker.turn.settle.v1", request)
+	fingerprint, err := run.RequestFingerprint("worker.turn.settle.v1", request)
 	if err != nil {
 		return parsedActorTurnCommit{}, err
 	}

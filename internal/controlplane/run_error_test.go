@@ -85,7 +85,6 @@ func TestRunErrorMapsWorkerOperations(t *testing.T) {
 		{"task start invalid", runTaskStartOperation, fmt.Errorf("%w: retry is invalid", run.ErrTaskStartInvalid), http.StatusBadRequest, "invalid_task_start", "task start request is invalid: retry is invalid", ""},
 		{"task start receipt", runTaskStartOperation, run.ErrTaskStartReceiptInvalid, http.StatusServiceUnavailable, "task_start_authority_unavailable", "task start authority is unavailable", ""},
 		{"child invoke claims first", runChildInvokeOperation, errors.Join(run.ErrChildInvokeStale, workergroup.ErrStaleClaims), http.StatusUnauthorized, "unauthorized", "worker authentication is required", ""},
-		{"child invoke expired", runChildInvokeOperation, idempotency.ExpiredError{}, http.StatusGone, "operation_expired", idempotency.ExpiredError{}.Error(), ""},
 		{"child invoke stale", runChildInvokeOperation, run.ErrChildInvokeStale, http.StatusConflict, "child_task_invoke_stale", "child task invocation authority is stale", "transaction_authority"},
 		{"child invoke stale source", runChildInvokeOperation, run.ErrChildInvokeSourceScope, http.StatusConflict, "child_task_invoke_stale", "child task invocation authority is stale", "source_scope"},
 		{"child invoke failure", runChildInvokeOperation, unavailable, http.StatusServiceUnavailable, "child_task_invoke_authority_unavailable", "child task invocation authority is unavailable", ""},

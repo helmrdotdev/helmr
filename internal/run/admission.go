@@ -55,7 +55,7 @@ func CreateTask(ctx context.Context, store Store, request TaskRequest) (db.Creat
 		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("record Computer admission: %w", err)
 	}
 
-	if err := secret.CreateAttemptResolutions(ctx, store, request.Run.ComputerID, run.ID, 1, admissionSecretResolutions(bindings)); err != nil {
+	if err := secret.CreateAttemptResolutions(ctx, store, request.Run.ComputerID, run.ID, 1, SecretResolutions(bindings)); err != nil {
 		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("record run secret resolutions: %w", err)
 	}
 	return run, nil

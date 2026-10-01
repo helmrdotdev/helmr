@@ -57,7 +57,7 @@ func (s *Server) workerCreateTimerRunWait(
 	}
 	normalized.Metadata = metadata
 	normalized.Tags = tags
-	fingerprint, err := terminalRequestFingerprint("worker.run-wait.create.v1", normalized)
+	fingerprint, err := run.RequestFingerprint("worker.run-wait.create.v1", normalized)
 	if err != nil {
 		writeError(w, badRequest(fmt.Errorf("fingerprint timer wait registration: %w", err)))
 		return

@@ -277,7 +277,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			return fmt.Errorf("create actor: %w", err)
 		}
 
-		run, err := work.q.CreateActorStartRun(ctx, db.CreateActorStartRunParams{
+		bootRun, err := work.q.CreateActorStartRun(ctx, db.CreateActorStartRunParams{
 			EnvironmentID: pgvalue.UUID(normalized.EnvironmentID), SessionID: pgvalue.UUID(actorID),
 			ComputerID: authority.ID, ClaimID: claimID,
 			ID:                        pgvalue.UUID(runID),
@@ -289,7 +289,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			return fmt.Errorf("create actor boot run: %w", err)
 		}
 		if _, err := work.q.SetActorCurrentRun(ctx, db.SetActorCurrentRunParams{
-			RunID: run.ID, EnvironmentID: run.EnvironmentID,
+			RunID: bootRun.ID, EnvironmentID: bootRun.EnvironmentID,
 			ID: pgvalue.UUID(actorID), ComputerID: authority.ID,
 		}); err != nil {
 			return fmt.Errorf("install actor boot run: %w", err)
@@ -304,7 +304,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			return fmt.Errorf("record actor computer admission: %w", err)
 		}
 		if err := secret.CreateAttemptResolutions(
-			ctx, work.q, authority.ID, run.ID, 1, computerSecretResolutions(bindings),
+			ctx, work.q, authority.ID, bootRun.ID, 1, run.SecretResolutions(bindings),
 		); err != nil {
 			return fmt.Errorf("record actor boot run secret resolutions: %w", err)
 		}

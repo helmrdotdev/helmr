@@ -129,7 +129,7 @@ func (s *Server) workerCreateTokenRunWait(
 		writeError(w, badRequest(fmt.Errorf("normalize token wait params: %w", err)))
 		return
 	}
-	fingerprint, err := terminalRequestFingerprint("worker.run-wait.create.v1", normalized)
+	fingerprint, err := run.RequestFingerprint("worker.run-wait.create.v1", normalized)
 	if err != nil {
 		writeError(w, badRequest(fmt.Errorf("fingerprint token wait registration: %w", err)))
 		return
