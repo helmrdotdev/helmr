@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/run"
+	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
@@ -43,7 +44,7 @@ func TestWorkerSourceErrorMappersRefreshClaimsBeforeDomainErrors(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			response := httptest.NewRecorder()
-			write(response, errors.Join(workergroup.ErrStaleClaims, run.ErrStaleSource, run.ErrChildInvokeStale, errTokenCreateAuthority))
+			write(response, errors.Join(workergroup.ErrStaleClaims, run.ErrStaleSource, run.ErrChildInvokeStale, token.ErrCreateAuthority))
 			if response.Code != http.StatusUnauthorized {
 				t.Fatalf("claims response status=%d body=%s", response.Code, response.Body.String())
 			}

@@ -42,15 +42,16 @@ func TestTurnStopDoesNotConsumeSharedTokenOrUnrelatedWait(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	registrar := newTestRegistrar(t, fixture.pool)
 	stopped := tokenWaitRegistrationRequest(t, ctx, fixture, actorWork, tokenID, uuid.NewV7())
 	stopped.ActorSpeculativeInputSequence = pgtype.Int8{Int64: 2, Valid: true}
 	stopped.TurnID = pgvalue.UUID(turnID)
 	stopped.RunGeneration = turn.RunGeneration
 	unrelated := tokenWaitRegistrationRequest(t, ctx, fixture, taskWork, tokenID, uuid.NewV7())
-	if _, err = reconciler.RegisterWait(ctx, stopped); err != nil {
+	if _, err = registrar.RegisterWait(ctx, stopped); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = reconciler.RegisterWait(ctx, unrelated); err != nil {
+	if _, err = registrar.RegisterWait(ctx, unrelated); err != nil {
 		t.Fatal(err)
 	}
 	tx, err = fixture.pool.Begin(ctx)

@@ -64,10 +64,23 @@ func NewWaitReconciler(database db.TxDB) (*WaitReconciler, error) {
 	return &WaitReconciler{db: database, queries: db.New(database)}, nil
 }
 
+// Registrar registers Token waits for worker requests. It reconciles only a
+// Token that is already terminal when its wait registers.
+type Registrar struct {
+	txb db.TxBeginner
+}
+
+func NewRegistrar(txb db.TxBeginner) (*Registrar, error) {
+	if txb == nil {
+		return nil, errors.New("token wait registration database is required")
+	}
+	return &Registrar{txb: txb}, nil
+}
+
 // RegisterWait serializes the Run-to-Token race. The Wait is inserted before
 // the Token is locked, so either registration observes a prior terminal Token
 // or a concurrent terminalization publishes an intent after this transaction.
-func (r *WaitReconciler) RegisterWait(
+func (r *Registrar) RegisterWait(
 	ctx context.Context,
 	request WaitRegistration,
 ) (WaitRegistrationResult, error) {
@@ -95,11 +108,25 @@ func (r *WaitReconciler) RegisterWait(
 		tags = []string{}
 	}
 
-	tx, err := r.db.Begin(ctx)
+	var result WaitRegistrationResult
+	err := db.RunTx(ctx, r.txb, func(tx pgx.Tx) error {
+		var err error
+		result, err = registerTokenWait(ctx, tx, request, metadata, tags)
+		return err
+	})
 	if err != nil {
-		return WaitRegistrationResult{}, fmt.Errorf("begin token wait registration: %w", err)
+		return WaitRegistrationResult{}, err
 	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
+	return result, nil
+}
+
+func registerTokenWait(
+	ctx context.Context,
+	tx pgx.Tx,
+	request WaitRegistration,
+	metadata json.RawMessage,
+	tags []string,
+) (WaitRegistrationResult, error) {
 	q := db.New(tx)
 	// An exact existing registration is immutable and may outlive its run
 	// lease. This read-only replay does not linearize creation; the mutable
@@ -108,9 +135,6 @@ func (r *WaitReconciler) RegisterWait(
 		if replay, found, err := replayTokenWaitRegistration(ctx, q, request, metadata, tags); err != nil {
 			return WaitRegistrationResult{}, err
 		} else if found {
-			if err := tx.Commit(ctx); err != nil {
-				return WaitRegistrationResult{}, fmt.Errorf("commit token wait registration replay: %w", err)
-			}
 			return replay, nil
 		}
 	}
@@ -128,9 +152,6 @@ func (r *WaitReconciler) RegisterWait(
 	if replay, found, err := replayTokenWaitRegistration(ctx, q, request, metadata, tags); err != nil {
 		return WaitRegistrationResult{}, err
 	} else if found {
-		if err := tx.Commit(ctx); err != nil {
-			return WaitRegistrationResult{}, fmt.Errorf("commit token wait registration replay: %w", err)
-		}
 		return replay, nil
 	}
 	attempt, err := stage.LockAttempt(ctx)
@@ -228,9 +249,6 @@ func (r *WaitReconciler) RegisterWait(
 		if resolution.reasonCode != nil {
 			result.ReasonCode = *resolution.reasonCode
 		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return WaitRegistrationResult{}, fmt.Errorf("commit token wait registration: %w", err)
 	}
 	return result, nil
 }
@@ -445,12 +463,30 @@ func (r *WaitReconciler) reconcileOne(
 	waitID uuid.UUID,
 	runID uuid.UUID,
 	timeout bool,
-) (resolved bool, deferred bool, returnErr error) {
-	tx, err := r.db.Begin(ctx)
+) (bool, bool, error) {
+	var resolved, deferred bool
+	err := db.RunTx(ctx, r.db, func(tx pgx.Tx) error {
+		var err error
+		resolved, deferred, err = reconcileTokenWait(ctx, tx, environmentID, tokenID, waitID, runID, timeout)
+		return err
+	})
 	if err != nil {
-		return false, false, fmt.Errorf("begin token wait reconciliation: %w", err)
+		return false, false, err
 	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
+	return resolved, deferred, nil
+}
+
+// reconcileTokenWait resolves one Token wait in tx. A wait that is gone,
+// converged, no longer current or not yet due commits without resolving.
+func reconcileTokenWait(
+	ctx context.Context,
+	tx pgx.Tx,
+	environmentID uuid.UUID,
+	tokenID uuid.UUID,
+	waitID uuid.UUID,
+	runID uuid.UUID,
+	timeout bool,
+) (resolved bool, deferred bool, err error) {
 	q := db.New(tx)
 
 	locator, err := q.GetTokenWaitLocator(
@@ -463,9 +499,6 @@ func (r *WaitReconciler) reconcileOne(
 		},
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if err := tx.Commit(ctx); err != nil {
-			return false, false, fmt.Errorf("commit stale token wait reconciliation: %w", err)
-		}
 		return false, false, nil
 	}
 	if err != nil {
@@ -512,9 +545,6 @@ func (r *WaitReconciler) reconcileOne(
 
 	wait, err := lockCurrentTokenWait(ctx, q, environmentID, tokenID, locator)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if err := tx.Commit(ctx); err != nil {
-			return false, false, fmt.Errorf("commit converged token wait reconciliation: %w", err)
-		}
 		return false, false, nil
 	}
 	if err != nil {
@@ -525,24 +555,18 @@ func (r *WaitReconciler) reconcileOne(
 		return false, false, err
 	}
 	if !current {
-		return false, false, tx.Commit(ctx)
+		return false, false, nil
 	}
 	if err := validateLockedTokenWait(addressedRun, wait); err != nil {
 		return false, false, err
 	}
 	if wait.conditionStatus != db.WaitStatusPending {
-		if err := tx.Commit(ctx); err != nil {
-			return false, false, fmt.Errorf("commit deferred token wait reconciliation: %w", err)
-		}
 		return false, true, nil
 	}
 
 	var resolution tokenWaitResolution
 	if timeout {
 		if !wait.timeoutAt.Valid || !wait.timedOut {
-			if err := tx.Commit(ctx); err != nil {
-				return false, false, fmt.Errorf("commit early token wait timeout reconciliation: %w", err)
-			}
 			return false, false, nil
 		}
 		reason := "wait_timeout"
@@ -586,9 +610,6 @@ func (r *WaitReconciler) reconcileOne(
 	}
 	if err != nil {
 		return false, false, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return false, false, fmt.Errorf("commit token wait reconciliation: %w", err)
 	}
 	return true, wait.suspensionStatus == db.RunWaitStatusCheckpointing, nil
 }
