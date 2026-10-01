@@ -1,7 +1,6 @@
 package controlplane
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -47,8 +46,8 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	worker := workerFromContext(r.Context())
-	source, err := s.workerRunSource(r.Context(), worker, request.Lease)
+	receipt := workerSourceReceipt(workerFromContext(r.Context()), request.Lease)
+	source, err := run.LockWorkerSource(r.Context(), s.tx, receipt)
 	if err != nil {
 		s.writeWorkerActorSourceError(w, "start", request.Lease.ID, err)
 		return
@@ -71,7 +70,7 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The source lock above parsed the same lease receipt.
-	fence, err := workerSourceFence(worker, request.Lease)
+	fence, err := receipt.Fence()
 	if err != nil {
 		s.writeWorkerActorSourceError(w, "start", request.Lease.ID, err)
 		return
@@ -104,14 +103,10 @@ func (s *Server) workerGetSessionStatus(w http.ResponseWriter, r *http.Request) 
 		writeError(w, badRequest(err))
 		return
 	}
-	fence, err := s.workerSourceFenceInTx(r.Context(), workerFromContext(r.Context()), request.Lease)
 	var status api.Session
+	row, err := session.GetFromRun(r.Context(), s.tx, workerSourceReceipt(workerFromContext(r.Context()), request.Lease), pgvalue.MustUUIDValue(sessionID))
 	if err == nil {
-		var row db.GetSessionSnapshotRow
-		row, err = session.GetFromRun(r.Context(), s.tx, fence, pgvalue.MustUUIDValue(sessionID))
-		if err == nil {
-			status, err = projectSession(sessionProjectionFromGetRow(row))
-		}
+		status, err = projectSession(sessionProjectionFromGetRow(row))
 	}
 	if err != nil {
 		if errors.Is(err, run.ErrStaleSource) || errors.Is(err, workergroup.ErrStaleClaims) {
@@ -207,32 +202,6 @@ func (s *Server) workerReadSessionEvents(w http.ResponseWriter, r *http.Request)
 		response.Records = append(response.Records, projectWorkerSessionEvent(db.SessionEvent{ID: row.ID, SessionID: row.SessionID, TurnID: row.TurnID, Sequence: row.Sequence, CreatedAt: row.CreatedAt, Kind: row.Kind, Data: row.Data, ProducerRunID: row.ProducerRunID, ProducerAttemptNumber: row.ProducerAttemptNumber, RunGeneration: row.RunGeneration}, row.DeploymentID))
 	}
 	writeJSON(w, http.StatusOK, workerapi.ReadSessionEventsResponse{CorrelationID: request.CorrelationID, Completed: &response})
-}
-
-func (s *Server) workerRunSource(
-	ctx context.Context,
-	worker workergroup.HostPrincipal,
-	lease workerapi.RunLeaseFence,
-) (run.LiveSource, error) {
-	var source run.LiveSource
-	err := s.inTx(ctx, func(work *txWork) error {
-		var err error
-		source, err = lockWorkerRunSource(ctx, work.tx, worker, lease)
-		return err
-	})
-	return source, err
-}
-
-// workerSourceFenceInTx is the execution fence of a worker's source Run
-// lease. A malformed lease receipt is a stale source reported from inside a
-// transaction, so a database that cannot begin one is reported first, as a
-// source lock that parses the receipt in its transaction reports it.
-func (s *Server) workerSourceFenceInTx(ctx context.Context, worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence) (run.ExecutionFence, error) {
-	fence, err := workerSourceFence(worker, lease)
-	if err != nil {
-		return run.ExecutionFence{}, s.inTx(ctx, func(*txWork) error { return err })
-	}
-	return fence, nil
 }
 
 func parseWorkerSessionReference(
