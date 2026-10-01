@@ -67,7 +67,7 @@ func (m Server) cleanupComputerRun(ctx context.Context, session vm.Machine, moun
 	if member.RunID == "" || member.RunLeaseID == "" || member.AttemptNumber == 0 {
 		return errors.New("incomplete Program cleanup identity")
 	}
-	return guestControl{machine: session}.cleanupRun(ctx, &computerv0.ComputerRunCleanupRequest{ComputerId: mount.ComputerID, ComputerInstanceId: mount.ComputerInstanceID, WriterGeneration: mount.WriterGeneration, ChannelToken: m.channelToken(mount), RunId: member.RunID, RunLeaseId: member.RunLeaseID, AttemptNumber: member.AttemptNumber})
+	return guestControl{machine: session}.cleanupRun(ctx, &computerv0.ComputerRunCleanupRequest{ComputerId: mount.ComputerID, ComputerInstanceId: mount.ComputerInstanceID, WriterGeneration: mount.WriterGeneration, ChannelCredential: m.channelCredential(mount), RunId: member.RunID, RunLeaseId: member.RunLeaseID, AttemptNumber: member.AttemptNumber})
 }
 
 // cleanupRun asks the guest to prove cleanup of one Program run. Cancellation

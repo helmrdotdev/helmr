@@ -65,7 +65,7 @@ func testLinuxComputerCommandImage(t *testing.T) (*computerMountEntry, *computer
 	}
 	entry.computerInstanceID = "instance-1"
 	entry.writerGeneration = 1
-	entry.channelToken = "channel-token"
+	entry.channelCredential = "channel-credential"
 	entry.imageRoot = image
 	entry.computerMount = "/workspace"
 	entry.runtimeUser = &resolvedRuntimeUser{UID: 0, GID: 0, Home: "/tmp"}

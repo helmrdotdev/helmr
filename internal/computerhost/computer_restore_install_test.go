@@ -66,7 +66,7 @@ func TestRestoreActivationOrdersGuestInstallationBeforeDurableAck(t *testing.T) 
 	for _, name := range []string{"success", "ack failure", "altered ack", "altered install"} {
 		t.Run(name, func(t *testing.T) {
 			h := &restoreActivationHarness{failAck: name == "ack failure", alterAck: name == "altered ack", alterInstall: name == "altered install"}
-			q := &computerv0.ComputerRestoreInstallation{Envelope: &computerv0.ComputerOperationEnvelope{ComputerId: "computer", ComputerInstanceId: "instance", WriterGeneration: 4, ChannelToken: "channel"}, CheckpointId: "checkpoint", DesiredVersion: 3}
+			q := &computerv0.ComputerRestoreInstallation{Envelope: &computerv0.ComputerOperationEnvelope{ComputerId: "computer", ComputerInstanceId: "instance", WriterGeneration: 4, ChannelCredential: "channel"}, CheckpointId: "checkpoint", DesiredVersion: 3}
 			err := activateRestoredComputerOnSession(t.Context(), h, h, q)
 			if (err == nil) != (name == "success") {
 				t.Fatalf("error=%v", err)
@@ -119,7 +119,7 @@ func (h *restorePlanHarness) AcknowledgeComputerRestore(ctx context.Context, q w
 }
 func TestServerRestoreRetriesSameInstallationAfterAckLoss(t *testing.T) {
 	expiry := time.Now().Add(time.Minute)
-	mount := workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance", ComputerID: "computer", RestoreCheckpointID: "checkpoint", WriterGeneration: 2, RuntimeEpoch: 3, VMPlatformID: "platform", DesiredVersion: 4, GuestdChannelToken: "channel", ExpiresAt: time.Now().Add(-time.Second)}
+	mount := workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance", ComputerID: "computer", RestoreCheckpointID: "checkpoint", WriterGeneration: 2, RuntimeEpoch: 3, VMPlatformID: "platform", DesiredVersion: 4, GuestChannelCredential: "channel", ExpiresAt: time.Now().Add(-time.Second)}
 	h := &restorePlanHarness{restoreActivationHarness: &restoreActivationHarness{}, plan: &workerapi.ComputerRestorePlan{ComputerInstanceID: "instance", ComputerID: "computer", CheckpointID: "checkpoint", WriterGeneration: 2, WorkerEpoch: 3, VMPlatformID: "platform", DesiredVersion: 4, WriteCapability: "capability", WorkerHostID: "worker", Members: []workerapi.ComputerRestoreMember{{RunID: "run", AttemptNumber: 1, Lease: workerapi.RunLeaseFence{ID: "lease", LeaseSequence: 2}, ExpiresAt: expiry}}}}
 	if err := (Server{RestoreControl: h}).activateRestore(t.Context(), h, mount); err != nil {
 		t.Fatal(err)

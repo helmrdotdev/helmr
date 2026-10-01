@@ -40,7 +40,7 @@ func TestComputerCommandReplayBindsPhysicalAuthority(t *testing.T) {
 	if got := framedBasicExec(t, t.Context(), registry, request); got.GetOutcome() != "exited" {
 		t.Fatal(got)
 	}
-	for _, change := range []func(*computerv0.ComputerBasicExecRequest){func(r *computerv0.ComputerBasicExecRequest) { r.Envelope.ComputerInstanceId = "other" }, func(r *computerv0.ComputerBasicExecRequest) { r.Envelope.WriterGeneration++ }, func(r *computerv0.ComputerBasicExecRequest) { r.Envelope.ChannelToken = "other" }} {
+	for _, change := range []func(*computerv0.ComputerBasicExecRequest){func(r *computerv0.ComputerBasicExecRequest) { r.Envelope.ComputerInstanceId = "other" }, func(r *computerv0.ComputerBasicExecRequest) { r.Envelope.WriterGeneration++ }, func(r *computerv0.ComputerBasicExecRequest) { r.Envelope.ChannelCredential = "other" }} {
 		altered := proto.Clone(request).(*computerv0.ComputerBasicExecRequest)
 		change(altered)
 		if got := framedBasicExec(t, t.Context(), registry, altered); got.GetOutcome() != "computer_command_fenced" {
@@ -64,7 +64,7 @@ func TestCommandPreservesActiveProgramAuthority(t *testing.T) {
 	}
 	defer release()
 	request := testComputerBasicExecRequest("command-1", strings.Repeat("a", 64))
-	request.Envelope.ChannelToken = authority.GetChannelToken()
+	request.Envelope.ChannelCredential = authority.GetChannelCredential()
 	request.Envelope.ComputerInstanceId = authority.GetFence().GetComputerInstanceId()
 	request.Envelope.WriterGeneration = authority.GetFence().GetWriterGeneration()
 	if result := framedBasicExec(t, t.Context(), registry, request); result.GetOutcome() != "exited" {

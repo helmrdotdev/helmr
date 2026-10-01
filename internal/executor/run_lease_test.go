@@ -231,7 +231,7 @@ func TestRenewRunLeaseAuthorityInstallsCommittedRenewalAfterCallerCancellation(t
 			RunId: previous.RunID, ExpiresAtUnixNano: previous.ExpiresAt.UnixNano(),
 			BaseComputerDiskVersionId: "version-1",
 		},
-		ChannelToken: "channel-1",
+		ChannelCredential: "channel-1",
 	}
 	got, fence, err := renewRunLeaseAuthority(ctx, controlPlane, registry, previous, authority)
 	if err != nil {

@@ -31,7 +31,7 @@ func (m Server) releaseComputerCommand(ctx context.Context, session vm.Machine, 
 			<-closed
 		}
 	}()
-	if _, err := writeGuestControlRequest(conn, wire.StreamHeader{Type: wire.StreamTypeComputerCommandRelease, OperationID: r.CommandID}, &computerv0.ComputerCommandReleaseRequest{Authority: &computerv0.ComputerCommandAuthority{OperationId: r.CommandID, ComputerId: release.ComputerID, ComputerInstanceId: r.ComputerInstanceID, WriterGeneration: r.WriterGeneration, ChannelToken: m.channelToken(mount), RequestFingerprint: release.RequestFingerprint}}); err != nil {
+	if _, err := writeGuestControlRequest(conn, wire.StreamHeader{Type: wire.StreamTypeComputerCommandRelease, OperationID: r.CommandID}, &computerv0.ComputerCommandReleaseRequest{Authority: &computerv0.ComputerCommandAuthority{OperationId: r.CommandID, ComputerId: release.ComputerID, ComputerInstanceId: r.ComputerInstanceID, WriterGeneration: r.WriterGeneration, ChannelCredential: m.channelCredential(mount), RequestFingerprint: release.RequestFingerprint}}); err != nil {
 		return err
 	}
 	var response computerv0.ComputerCommandReleaseResponse

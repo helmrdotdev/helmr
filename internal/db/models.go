@@ -534,8 +534,8 @@ type ComputerInstance struct {
 	MountState                      string             `json:"mount_state"`
 	MountedAt                       pgtype.Timestamptz `json:"mounted_at"`
 	UnmountedAt                     pgtype.Timestamptz `json:"unmounted_at"`
-	GuestChannelTokenHash           []byte             `json:"guest_channel_token_hash"`
-	GuestChannelTokenExpiresAt      pgtype.Timestamptz `json:"guest_channel_token_expires_at"`
+	GuestChannelCredentialHash      []byte             `json:"guest_channel_credential_hash"`
+	GuestChannelCredentialExpiresAt pgtype.Timestamptz `json:"guest_channel_credential_expires_at"`
 	FinalizationAction              pgtype.Text        `json:"finalization_action"`
 	FinalizationReasonCode          pgtype.Text        `json:"finalization_reason_code"`
 	FinalizationError               []byte             `json:"finalization_error"`

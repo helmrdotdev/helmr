@@ -1919,8 +1919,8 @@ CREATE TABLE computer_instances (
     mount_state TEXT NOT NULL DEFAULT 'pending' CHECK (mount_state IN ('pending','mounting','mounted','unmounting','unmounted','lost','failed')),
     mounted_at TIMESTAMPTZ,
     unmounted_at TIMESTAMPTZ,
-    guest_channel_token_hash BYTEA CHECK (octet_length(guest_channel_token_hash)=32),
-    guest_channel_token_expires_at TIMESTAMPTZ,
+    guest_channel_credential_hash BYTEA CHECK (octet_length(guest_channel_credential_hash)=32),
+    guest_channel_credential_expires_at TIMESTAMPTZ,
     finalization_action TEXT CHECK (finalization_action IN ('capture','discard')),
     finalization_reason_code TEXT,
     finalization_error JSONB CHECK (finalization_error IS NULL OR jsonb_typeof(finalization_error)='object'),
@@ -1929,7 +1929,7 @@ CREATE TABLE computer_instances (
     UNIQUE (environment_id,computer_id,id,program_deployment_id),
     CHECK (num_nonnulls(save_disk_version_id,save_base_disk_version_id) IN (0,2)),
     CHECK (save_disk_version_id IS NULL OR save_sequence > 0),
-    CHECK ((guest_channel_token_hash IS NULL) = (guest_channel_token_expires_at IS NULL)),
+    CHECK ((guest_channel_credential_hash IS NULL) = (guest_channel_credential_expires_at IS NULL)),
     CHECK (mount_state <> 'mounted' OR mounted_at IS NOT NULL),
     CHECK (mount_state <> 'unmounted' OR unmounted_at IS NOT NULL),
     CHECK (reclaimed_at IS NULL OR (mount_state IN ('unmounted','lost','failed') AND admission_state='closed')),
@@ -2997,7 +2997,7 @@ ALTER TABLE computer_checkpoint_runs ADD FOREIGN KEY (environment_id,computer_id
 ALTER TABLE computer_checkpoint_runs ADD FOREIGN KEY (run_id,attempt_number,computer_id,source_run_lease_id,source_computer_instance_id,writer_generation) REFERENCES run_leases(run_id,attempt_number,computer_id,id,computer_instance_id,writer_generation) ON DELETE RESTRICT;
 
 CREATE INDEX computer_instances_writer_expiry_idx ON computer_instances(writer_expires_at,id) WHERE reclaimed_at IS NULL;
-CREATE INDEX computer_instances_channel_expiry_idx ON computer_instances(guest_channel_token_expires_at,id) WHERE reclaimed_at IS NULL AND guest_channel_token_expires_at IS NOT NULL;
+CREATE INDEX computer_instances_channel_expiry_idx ON computer_instances(guest_channel_credential_expires_at,id) WHERE reclaimed_at IS NULL AND guest_channel_credential_expires_at IS NOT NULL;
 CREATE INDEX runs_computer_task_active_idx ON runs(computer_id,id) WHERE entrypoint_kind='task' AND status IN ('queued','running','waiting','retry_delayed','cancel_requested');
 CREATE INDEX computer_commands_payload_gc_idx ON computer_commands(result_expires_at,id) WHERE result_pruned_at IS NULL AND terminal_at IS NOT NULL;
 CREATE INDEX computer_specs_seed_idx ON computer_specs(environment_id,seed_artifact_id);

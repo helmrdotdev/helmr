@@ -192,7 +192,7 @@ func testComputerAuthorityEntry() *computerMountEntry {
 		computerInstanceID:        "runtime-1",
 		computerID:                "computer-1",
 		baseComputerDiskVersionID: "version-1",
-		channelToken:              "channel-1",
+		channelCredential:         "channel-1",
 		writerGeneration:          3,
 	}
 }
@@ -213,7 +213,7 @@ func testComputerRunAuthority(expiresAt time.Time) *computerv0.ComputerRunAuthor
 			ExpiresAtUnixNano:         expiresAt.UnixNano(),
 			BaseComputerDiskVersionId: "version-1",
 		},
-		ChannelToken:    "channel-1",
-		WriteCapability: "write-capability",
+		ChannelCredential: "channel-1",
+		WriteCapability:   "write-capability",
 	}
 }

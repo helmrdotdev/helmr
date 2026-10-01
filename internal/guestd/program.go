@@ -164,7 +164,7 @@ func handleProgramRunConnection(
 	entry, releaseMount, ok := registry.acquireAuthorityMount(
 		computerInstanceID,
 		computerID,
-		authority.GetChannelToken(),
+		authority.GetChannelCredential(),
 	)
 	if !ok {
 		return errors.New("program run authority is not valid for the computer mount")

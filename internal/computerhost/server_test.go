@@ -426,7 +426,7 @@ func TestServerDispatchesBasicExec(t *testing.T) {
 			return
 		}
 		if request.GetEnvelope().GetComputerInstanceId() != exec.ComputerInstanceID || request.GetEnvelope().GetWriterGeneration() != exec.WriterGeneration ||
-			request.GetEnvelope().GetChannelToken() != "channel-token" ||
+			request.GetEnvelope().GetChannelCredential() != "channel-credential" ||
 			string(request.GetStdin()) != "input" ||
 			len(request.GetSecrets()) != 1 ||
 			request.GetSecrets()[0].GetPlacementKind() != "env" ||
@@ -453,7 +453,7 @@ func TestServerDispatchesBasicExec(t *testing.T) {
 		session,
 		workerapi.ComputerInstanceAssignment{
 			OrgID: "org-1", ComputerID: "computer-1", ComputerInstanceID: "instance-1", WriterGeneration: 4,
-			GuestdChannelToken: "channel-token",
+			GuestChannelCredential: "channel-credential",
 		},
 		exec, client,
 	)
@@ -485,8 +485,8 @@ func TestServerRejectsMismatchedBasicExecClaim(t *testing.T) {
 		context.Background(),
 		&serverTestSession{},
 		workerapi.ComputerInstanceAssignment{
-			ComputerID:         "computer-1",
-			GuestdChannelToken: "channel-token",
+			ComputerID:             "computer-1",
+			GuestChannelCredential: "channel-credential",
 		},
 		workerapi.ComputerCommand{
 			CommandID: "process-1", ComputerInstanceID: "instance-2",
@@ -568,8 +568,8 @@ func TestServerFailsStartupWhenGuestDoesNotRegister(t *testing.T) {
 
 	computerMount.OrgID = "org-1"
 	computerMount.ComputerID = uuid.NewV7().String()
-	computerMount.GuestdChannelToken = "channel-token"
-	computerMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
+	computerMount.GuestChannelCredential = "channel-credential"
+	computerMount.GuestChannelCredentialHash = sha256sum.HexBytes([]byte("channel-credential"))
 	go func() {
 		_, _, err := wire.ReadStreamFrameHeader(preparedServer)
 		if err != nil {
@@ -620,8 +620,8 @@ func TestServerFailsComputerMountOnFatalHeartbeatError(t *testing.T) {
 
 	computerMount.OrgID = "org-1"
 	computerMount.ComputerID = uuid.NewV7().String()
-	computerMount.GuestdChannelToken = "channel-token"
-	computerMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
+	computerMount.GuestChannelCredential = "channel-credential"
+	computerMount.GuestChannelCredentialHash = sha256sum.HexBytes([]byte("channel-credential"))
 	go acknowledgePreparedComputerMount(t, preparedServer, computerMount, computerMount.ComputerInstanceID)
 	client := &serverTestClient{
 		renewErrors: []error{errors.New("renew failed")},
@@ -661,8 +661,8 @@ func TestServeCloseFailureReturnsOwnershipForPhysicalCleanup(t *testing.T) {
 
 			computerMount.OrgID = "org-1"
 			computerMount.ComputerID = uuid.NewV7().String()
-			computerMount.GuestdChannelToken = "channel-token"
-			computerMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
+			computerMount.GuestChannelCredential = "channel-credential"
+			computerMount.GuestChannelCredentialHash = sha256sum.HexBytes([]byte("channel-credential"))
 			target := runtimeReservationTarget(computerMount.ComputerInstanceID, computerMount.RuntimeEpoch)
 			target.Source.ComputerID = computerMount.ComputerID
 			target.Source.WriterGeneration = computerMount.WriterGeneration
@@ -756,8 +756,8 @@ func TestServerFailsComputerMountWhenSessionExits(t *testing.T) {
 
 	computerMount.OrgID = "org-1"
 	computerMount.ComputerID = uuid.NewV7().String()
-	computerMount.GuestdChannelToken = "channel-token"
-	computerMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
+	computerMount.GuestChannelCredential = "channel-credential"
+	computerMount.GuestChannelCredentialHash = sha256sum.HexBytes([]byte("channel-credential"))
 	go func() {
 		acknowledgePreparedComputerMount(t, preparedServer, computerMount, computerMount.ComputerInstanceID)
 		exit <- errors.New("the Firecracker exited")
@@ -796,8 +796,8 @@ func TestServerOwnsProgramStartFailureCleanup(t *testing.T) {
 
 	computerMount.OrgID = "org-1"
 	computerMount.ComputerID = uuid.NewV7().String()
-	computerMount.GuestdChannelToken = "channel-token"
-	computerMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
+	computerMount.GuestChannelCredential = "channel-credential"
+	computerMount.GuestChannelCredentialHash = sha256sum.HexBytes([]byte("channel-credential"))
 	go acknowledgePreparedComputerMount(
 		t,
 		preparedServer,
@@ -863,8 +863,8 @@ func TestServerProgramStartFailureKeepsCapacityWhenRuntimeCloseFails(t *testing.
 
 	computerMount.OrgID = "org-1"
 	computerMount.ComputerID = uuid.NewV7().String()
-	computerMount.GuestdChannelToken = "channel-token"
-	computerMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
+	computerMount.GuestChannelCredential = "channel-credential"
+	computerMount.GuestChannelCredentialHash = sha256sum.HexBytes([]byte("channel-credential"))
 	go acknowledgePreparedComputerMount(
 		t,
 		preparedServer,
@@ -933,8 +933,8 @@ func TestServerRegistersPreparedMachineOverOpenedStream(t *testing.T) {
 
 	computerMount.OrgID = "org-1"
 	computerMount.ComputerID = uuid.NewV7().String()
-	computerMount.GuestdChannelToken = "channel-token"
-	computerMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
+	computerMount.GuestChannelCredential = "channel-credential"
+	computerMount.GuestChannelCredentialHash = sha256sum.HexBytes([]byte("channel-credential"))
 	session := &serverTestSession{
 		streams: []io.ReadWriteCloser{preparedClient},
 	}
@@ -960,8 +960,8 @@ func TestServerValidatesSuccessReceiptsOnlyAfterRunningState(t *testing.T) {
 
 	computerMount.OrgID = "org-1"
 	computerMount.ComputerID = uuid.NewV7().String()
-	computerMount.GuestdChannelToken = "channel-token"
-	computerMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
+	computerMount.GuestChannelCredential = "channel-credential"
+	computerMount.GuestChannelCredentialHash = sha256sum.HexBytes([]byte("channel-credential"))
 
 	tests := []struct {
 		name     string
@@ -993,7 +993,7 @@ func TestServerValidatesSuccessReceiptsOnlyAfterRunningState(t *testing.T) {
 		{
 			name: "running without target",
 			response: func(*computerv0.MaterializeComputerRequest) *computerv0.MaterializeComputerResponse {
-				return &computerv0.MaterializeComputerResponse{Status: "running", GuestdChannelTokenHash: computerMount.GuestdChannelTokenHash}
+				return &computerv0.MaterializeComputerResponse{Status: "running", GuestChannelCredentialHash: computerMount.GuestChannelCredentialHash}
 			},
 			want: "target does not match",
 		},
@@ -1002,7 +1002,7 @@ func TestServerValidatesSuccessReceiptsOnlyAfterRunningState(t *testing.T) {
 			response: func(request *computerv0.MaterializeComputerRequest) *computerv0.MaterializeComputerResponse {
 				return &computerv0.MaterializeComputerResponse{Status: "running", Target: request.Target}
 			},
-			want: "guest channel token hash mismatch",
+			want: "guest channel credential hash mismatch",
 		},
 	}
 	for _, test := range tests {
@@ -1051,9 +1051,9 @@ func acknowledgePreparedComputerMount(t *testing.T, stream io.ReadWriteCloser, c
 			t.Errorf("prepared machine request use=%v computer_instance_id=%q", request.UsePreparedRuntime, request.GetEnvelope().GetComputerInstanceId())
 		}
 		return &computerv0.MaterializeComputerResponse{
-			Status:                 "running",
-			GuestdChannelTokenHash: computerMount.GuestdChannelTokenHash,
-			Target:                 request.Target,
+			Status:                     "running",
+			GuestChannelCredentialHash: computerMount.GuestChannelCredentialHash,
+			Target:                     request.Target,
 		}
 	})
 }
@@ -1418,8 +1418,8 @@ func TestCheckpointReleaseFailureReportsWithoutVMExit(t *testing.T) {
 	defer guest.Close()
 	store, mount := testComputerMountArtifacts(t)
 	mount.OrgID, mount.ComputerID = "org", uuid.NewV7().String()
-	mount.GuestdChannelToken = "channel-token"
-	mount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
+	mount.GuestChannelCredential = "channel-credential"
+	mount.GuestChannelCredentialHash = sha256sum.HexBytes([]byte("channel-credential"))
 	go acknowledgePreparedComputerMount(t, guest, mount, mount.ComputerInstanceID)
 	stopErr, reportErr := errors.New("VM stop unproved"), errors.New("failure acknowledgement lost")
 	raw := &serverTestSession{streams: []io.ReadWriteCloser{conn}, operation: discardReadWriteCloser{}, closeErr: stopErr}
@@ -1541,7 +1541,7 @@ func TestCommandCompletionLeavesComputerServing(t *testing.T) {
 	managed := newInstanceMount(physical)
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	mount := workerapi.ComputerInstanceAssignment{OrgID: "org-1", ComputerID: "computer-1", ComputerInstanceID: "instance-1", WriterGeneration: 2, GuestdChannelToken: "token"}
+	mount := workerapi.ComputerInstanceAssignment{OrgID: "org-1", ComputerID: "computer-1", ComputerInstanceID: "instance-1", WriterGeneration: 2, GuestChannelCredential: "token"}
 	command := workerapi.ComputerCommand{CommandID: "command-1", ComputerID: mount.ComputerID, ComputerInstanceID: mount.ComputerInstanceID, RequestFingerprint: strings.Repeat("a", 64), Request: json.RawMessage(`{"command":["true"]}`), WriterGeneration: 2, ExpiresAt: time.Now().Add(time.Minute)}
 	guestDone := make(chan error, 1)
 	go func() {

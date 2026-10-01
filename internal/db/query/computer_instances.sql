@@ -56,7 +56,7 @@ SELECT * FROM computer_instances WHERE id=sqlc.arg(id) AND org_id=sqlc.arg(org_i
 
 -- name: RenewComputerInstanceWriter :one
 UPDATE computer_instances SET writer_expires_at=clock_timestamp()+sqlc.arg(ttl_seconds)::bigint*interval '1 second',
- guest_channel_token_expires_at=CASE WHEN guest_channel_token_hash IS NOT NULL
+ guest_channel_credential_expires_at=CASE WHEN guest_channel_credential_hash IS NOT NULL
  THEN clock_timestamp()+sqlc.arg(ttl_seconds)::bigint*interval '1 second' END,
  updated_at=clock_timestamp()
  WHERE id=sqlc.arg(id) AND writer_generation=sqlc.arg(writer_generation)
@@ -195,17 +195,17 @@ SELECT id,environment_id,computer_id FROM computer_instances
  WHERE worker_group_id=sqlc.arg(worker_group_id) AND worker_host_id=sqlc.arg(worker_host_id)
  AND worker_epoch=sqlc.arg(worker_epoch) AND observed_state='ready' AND desired_state='ready'
  AND writer_expires_at>clock_timestamp() AND reclaimed_at IS NULL
- AND guest_channel_token_hash IS NULL AND admission_state IN ('open','restoring')
+ AND guest_channel_credential_hash IS NULL AND admission_state IN ('open','restoring')
  ORDER BY id LIMIT 64;
 
 -- Caller holds Secret bindings, Worker Group/Host, Computer and Instance locks.
 -- A channel is issued once per physical Instance. Lost delivery is reconciled by
 -- Instance expiry; it cannot rotate a live Guest's authority behind its owner.
 -- name: ClaimComputerInstanceChannel :one
-UPDATE computer_instances AS i SET guest_channel_token_hash=sqlc.arg(token_hash),
- guest_channel_token_expires_at=writer_expires_at,updated_at=clock_timestamp()
+UPDATE computer_instances AS i SET guest_channel_credential_hash=sqlc.arg(credential_hash),
+ guest_channel_credential_expires_at=writer_expires_at,updated_at=clock_timestamp()
  WHERE i.id=sqlc.arg(id) AND worker_host_id=sqlc.arg(worker_host_id) AND worker_epoch=sqlc.arg(worker_epoch)
- AND writer_generation=sqlc.arg(writer_generation) AND guest_channel_token_hash IS NULL
+ AND writer_generation=sqlc.arg(writer_generation) AND guest_channel_credential_hash IS NULL
  AND writer_expires_at>clock_timestamp() AND reclaimed_at IS NULL
  AND desired_state='ready' AND observed_state='ready' AND observed_desired_version=desired_version AND mount_state='mounted'
  AND EXISTS(SELECT 1 FROM worker_hosts h WHERE h.id=i.worker_host_id

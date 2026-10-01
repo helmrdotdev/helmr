@@ -82,7 +82,7 @@ func TestCommandCancellationBeforeLaunch(t *testing.T) {
 	request := testComputerBasicExecRequest("target", strings.Repeat("a", 64))
 	for _, change := range []func(*computerv0.ComputerCommandAuthority){
 		func(a *computerv0.ComputerCommandAuthority) { a.WriterGeneration++ },
-		func(a *computerv0.ComputerCommandAuthority) { a.ChannelToken = "wrong" },
+		func(a *computerv0.ComputerCommandAuthority) { a.ChannelCredential = "wrong" },
 		func(a *computerv0.ComputerCommandAuthority) {
 			a.OperationExpiresAtUnixNano = time.Now().Add(-time.Second).UnixNano()
 		},

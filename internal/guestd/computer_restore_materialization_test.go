@@ -16,12 +16,12 @@ func restoreSetFixture(t *testing.T) (*computerOperationRegistry, *waitingRunReg
 	r.entries[entry.computerInstanceID] = entry
 	entry.baseComputerDiskVersionID = "source-version"
 	entry.computerMount = "/workspace"
-	entry.channelToken = "source-token"
+	entry.channelCredential = "source-token"
 	r.captureRequest = &computerv0.FreezeComputerRequest{ComputerId: identity.ComputerId, ComputerInstanceId: identity.SourceComputerInstanceId, WriterGeneration: 3, CheckpointId: identity.CheckpointId, DesiredVersion: 2, MembershipRevision: 2}
 	for _, m := range identity.Runs {
 		r.captureRequest.Runs = append(r.captureRequest.Runs, &computerv0.ComputerCaptureRun{RunId: m.RunId, AttemptNumber: m.AttemptNumber, RunWaitId: m.RunWaitId, RunLeaseId: m.RunLeaseId})
 	}
-	request := &computerv0.MaterializeComputerRequest{Envelope: &computerv0.ComputerOperationEnvelope{ComputerId: identity.ComputerId, ComputerInstanceId: "destination", WriterGeneration: 4, ChannelToken: "destination-token"}, MountPath: "/workspace", Target: &computerv0.ComputerMountTarget{BaseComputerDiskVersionId: "destination-version"}, RestoredCheckpointId: identity.CheckpointId, UsePreparedRuntime: true}
+	request := &computerv0.MaterializeComputerRequest{Envelope: &computerv0.ComputerOperationEnvelope{ComputerId: identity.ComputerId, ComputerInstanceId: "destination", WriterGeneration: 4, ChannelCredential: "destination-token"}, MountPath: "/workspace", Target: &computerv0.ComputerMountTarget{BaseComputerDiskVersionId: "destination-version"}, RestoredCheckpointId: identity.CheckpointId, UsePreparedRuntime: true}
 	return r, w, entry, request
 }
 
@@ -56,7 +56,7 @@ func TestRestoreMaterializationValidatesAllFrozenProgramsBeforeRebind(t *testing
 			if _, err := r.materializeRestoredComputerMount(q, w); err == nil {
 				t.Fatal("incomplete capture rebound")
 			}
-			if entry.computerInstanceID != "source-instance" || entry.currentWriterGeneration() != 3 || entry.channelToken != "source-token" || entry.baseComputerDiskVersionID != "source-version" || r.restoredMaterialization != nil {
+			if entry.computerInstanceID != "source-instance" || entry.currentWriterGeneration() != 3 || entry.channelCredential != "source-token" || entry.baseComputerDiskVersionID != "source-version" || r.restoredMaterialization != nil {
 				t.Fatal("rejected restore mutated physical authority")
 			}
 		})
@@ -98,8 +98,8 @@ func TestRestoreMaterializationHandlerRebindsSetWithoutReleasingPrograms(t *test
 	if _, err := r.materializeRestoredComputerMount(changed, w); err == nil {
 		t.Fatal("changed replay accepted")
 	}
-	q.Envelope.ChannelToken = "mutated-caller"
-	if r.restoredMaterialization.Envelope.ChannelToken != "destination-token" {
+	q.Envelope.ChannelCredential = "mutated-caller"
+	if r.restoredMaterialization.Envelope.ChannelCredential != "destination-token" {
 		t.Fatal("receipt aliases request")
 	}
 }
@@ -113,7 +113,7 @@ func TestPreparedOnlyRestoreTransfersFilesystemOwnershipOnce(t *testing.T) {
 	cleaned := 0
 	prepared.cleanup = func() { cleaned++ }
 	r.captureRequest = &computerv0.FreezeComputerRequest{ComputerId: identity.ComputerId, ComputerInstanceId: identity.SourceComputerInstanceId, WriterGeneration: 3, CheckpointId: identity.CheckpointId, DesiredVersion: 1}
-	q := &computerv0.MaterializeComputerRequest{Envelope: &computerv0.ComputerOperationEnvelope{ComputerId: identity.ComputerId, ComputerInstanceId: "destination", WriterGeneration: 4, ChannelToken: "new-token"}, MountPath: "/workspace", Target: &computerv0.ComputerMountTarget{BaseComputerDiskVersionId: "restored-base"}, RestoredCheckpointId: identity.CheckpointId, UsePreparedRuntime: true}
+	q := &computerv0.MaterializeComputerRequest{Envelope: &computerv0.ComputerOperationEnvelope{ComputerId: identity.ComputerId, ComputerInstanceId: "destination", WriterGeneration: 4, ChannelCredential: "new-token"}, MountPath: "/workspace", Target: &computerv0.ComputerMountTarget{BaseComputerDiskVersionId: "restored-base"}, RestoredCheckpointId: identity.CheckpointId, UsePreparedRuntime: true}
 	invalid := proto.Clone(q).(*computerv0.MaterializeComputerRequest)
 	invalid.Envelope.WriterGeneration = 3
 	if _, err := r.materializeRestoredComputerMount(invalid, w); err == nil {

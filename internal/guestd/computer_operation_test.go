@@ -36,14 +36,14 @@ func TestRestoredComputerRebindPreservesPairedFilesystem(t *testing.T) {
 	request := &computerv0.MaterializeComputerRequest{
 		Envelope: &computerv0.ComputerOperationEnvelope{
 			ComputerInstanceId: "runtime-c", ComputerId: "computer-1",
-			ChannelToken: "channel-c", WriterGeneration: 2,
+			ChannelCredential: "channel-c", WriterGeneration: 2,
 		},
 		MountPath: "/workspace", Target: testComputerMountTarget("version-c"),
 		UsePreparedRuntime:   true,
 		RestoredCheckpointId: "checkpoint-b",
 	}
 	entry := &computerMountEntry{
-		computerID: "computer-1", channelToken: "channel-b",
+		computerID: "computer-1", channelCredential: "channel-b",
 		computerInstanceID: "runtime-b", computerMount: "/workspace", computerRoot: liveRoot,
 		baseComputerDiskVersionID: "version-a",
 	}
@@ -202,8 +202,8 @@ func TestComputerMaterializeReturnsFailureResponse(t *testing.T) {
 	if err := frameio.WriteProtoFrame(materializeClient, &computerv0.MaterializeComputerRequest{
 		Envelope: &computerv0.ComputerOperationEnvelope{
 			ComputerInstanceId: "computer-instance-1", ComputerId: "computer-1",
-			ChannelToken:     "channel-token",
-			WriterGeneration: 1,
+			ChannelCredential: "channel-credential",
+			WriterGeneration:  1,
 		},
 		MountPath: "relative",
 		Target:    testComputerMountTarget("version-1"),
@@ -220,8 +220,8 @@ func TestComputerMaterializeReturnsFailureResponse(t *testing.T) {
 	if response.Target != nil {
 		t.Fatalf("failed response target = %+v, want nil", response.Target)
 	}
-	if response.GuestdChannelTokenHash != "" {
-		t.Fatalf("failed response channel token hash = %q, want empty", response.GuestdChannelTokenHash)
+	if response.GuestChannelCredentialHash != "" {
+		t.Fatalf("failed response channel credential hash = %q, want empty", response.GuestChannelCredentialHash)
 	}
 	if got := testComputerMountPhaseError(response.Phases); !strings.Contains(got, "mount_path") {
 		t.Fatalf("phase error = %q, want mount_path", got)
@@ -264,22 +264,22 @@ func TestComputerOperationRegistryDefersRetiredCleanupUntilRelease(t *testing.T)
 	}
 	registry := newComputerOperationRegistry()
 	registry.register("mat-1", &computerMountEntry{
-		computerID:       "computer-1",
-		channelToken:     "token-1",
-		writerGeneration: 1,
-		computerRoot:     filepath.Join(oldRoot, "computer"),
-		cleanup:          func() { _ = os.RemoveAll(oldRoot) },
+		computerID:        "computer-1",
+		channelCredential: "token-1",
+		writerGeneration:  1,
+		computerRoot:      filepath.Join(oldRoot, "computer"),
+		cleanup:           func() { _ = os.RemoveAll(oldRoot) },
 	})
 	_, release, ok := registry.acquireExact("mat-1", "computer-1", "token-1", 1)
 	if !ok {
 		t.Fatal("expected registry acquire")
 	}
 	registry.register("mat-1", &computerMountEntry{
-		computerID:       "computer-1",
-		channelToken:     "token-2",
-		writerGeneration: 2,
-		computerRoot:     filepath.Join(tempRoot, "new", "computer"),
-		cleanup:          func() {},
+		computerID:        "computer-1",
+		channelCredential: "token-2",
+		writerGeneration:  2,
+		computerRoot:      filepath.Join(tempRoot, "new", "computer"),
+		cleanup:           func() {},
 	})
 	if _, err := os.Stat(oldRoot); err != nil {
 		t.Fatalf("old computer root was cleaned while acquired: %v", err)

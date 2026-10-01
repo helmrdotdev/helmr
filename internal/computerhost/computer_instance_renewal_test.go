@@ -105,8 +105,8 @@ func TestStartupFailureUsesLatestInstanceObservation(t *testing.T) {
 	defer cancel()
 	store, mount := testComputerMountArtifacts(t)
 	mount.ComputerInstanceID = "mount"
-	mount.GuestdChannelToken = "channel-token"
-	mount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte(mount.GuestdChannelToken))
+	mount.GuestChannelCredential = "channel-credential"
+	mount.GuestChannelCredentialHash = sha256sum.HexBytes([]byte(mount.GuestChannelCredential))
 	client := &startupRenewalClient{observed: make(chan struct{})}
 	host, guest := net.Pipe()
 	defer guest.Close()
