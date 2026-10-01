@@ -120,7 +120,7 @@ func (s *Server) workerMarkComputerInstanceFailed(w http.ResponseWriter, r *http
 	}
 	reason := strings.TrimSpace(request.ReasonCode)
 	if reason == "" {
-		reason = "runtime_reconcile_failed"
+		reason = "instance_reconcile_failed"
 	}
 	kind := computer.FailureInstance
 	switch reason {

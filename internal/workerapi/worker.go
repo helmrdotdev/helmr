@@ -209,7 +209,7 @@ type ComputerInstanceStateRequest struct {
 
 const (
 	InstanceFailureComputerSource = "computer_source_unavailable"
-	InstanceFailureReconcile      = "runtime_reconcile_failed"
+	InstanceFailureReconcile      = "instance_reconcile_failed"
 	InstanceFailureWorkerInvalid  = "worker_runtime_invalid"
 )
 
@@ -219,7 +219,7 @@ type InstanceCleanupProof struct {
 }
 
 const (
-	InstanceCleanupMachineClosed   = "session_closed"
+	InstanceCleanupMachineClosed   = "machine_closed"
 	InstanceCleanupHostReconciled  = "host_reconciled"
 	InstanceCleanupNotMaterialized = "not_materialized"
 )

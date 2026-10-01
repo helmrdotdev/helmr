@@ -24,7 +24,7 @@ const (
 	AdmissionCgroupUnavailable        AdmissionReason = "cgroup_unavailable"
 	AdmissionKVMUnavailable           AdmissionReason = "kvm_unavailable"
 	AdmissionFirecrackerUnavailable   AdmissionReason = "firecracker_unavailable"
-	AdmissionInstanceSlotsQuarantined AdmissionReason = "runtime_slots_quarantined"
+	AdmissionInstanceSlotsQuarantined AdmissionReason = "instance_slots_quarantined"
 	AdmissionProbeFailed              AdmissionReason = "host_probe_failed"
 	AdmissionDatapathUnverified       AdmissionReason = "datapath_unverified"
 )

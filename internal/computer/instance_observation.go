@@ -41,7 +41,7 @@ type Closure struct {
 // Instance incarnation can still run.
 const (
 	// CleanupMachineClosed reports that the Instance machine closed.
-	CleanupMachineClosed = "session_closed"
+	CleanupMachineClosed = "machine_closed"
 	// CleanupHostReconciled reports exact reconciliation of the host's VMs.
 	CleanupHostReconciled = "host_reconciled"
 	// CleanupNotMaterialized reports that the Instance never started a VM.

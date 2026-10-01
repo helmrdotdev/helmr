@@ -114,7 +114,7 @@ func testProgramReplacementPreservesCapturedDisk(t *testing.T, programless bool)
 	if _, err = a.AssignRun(t.Context(), candidate); err == nil {
 		t.Fatal("replacement before exclusion")
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='closed',observed_desired_version=desired_version,mount_state='unmounted',unmounted_at=now(),terminal_at=now(),reclaimed_at=now(),reclaim_evidence='{"method":"session_closed"}',terminal_reason_code='checkpointed' WHERE id=$1`, capture.InstanceID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='closed',observed_desired_version=desired_version,mount_state='unmounted',unmounted_at=now(),terminal_at=now(),reclaimed_at=now(),reclaim_evidence='{"method":"machine_closed"}',terminal_reason_code='checkpointed' WHERE id=$1`, capture.InstanceID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET writer_generation=writer_generation+1 WHERE id=$1`, computerID)
 	if _, err = a.AssignRun(t.Context(), candidate); !errors.Is(err, dispatch.ErrCandidateChanged) {
 		t.Fatalf("stale checkpoint generation=%v", err)

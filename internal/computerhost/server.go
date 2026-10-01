@@ -125,7 +125,7 @@ func (m Server) Serve(ctx context.Context, mount workerapi.ComputerInstanceAssig
 		}
 		if closeErr := m.closeMachine(instance); closeErr != nil {
 			failure := computerMountFailure{
-				code: "computer_mount_runtime_close_failed",
+				code: "computer_mount_instance_close_failed",
 				err:  errors.New("computer mount instance cleanup failed"),
 			}
 			m.logComputerMountPhase(mount, "computer mount machine close failed", "error", closeErr.Error())
@@ -335,7 +335,7 @@ func (m Server) serveComputerMount(
 					"error", closeErr.Error(),
 				)
 				failure = computerMountFailure{
-					code: "computer_mount_runtime_close_failed",
+					code: "computer_mount_instance_close_failed",
 					err:  errors.New("computer mount instance cleanup failed"),
 				}
 			}
@@ -810,7 +810,7 @@ func (m Server) materializeMachine(ctx context.Context, mount *workerapi.Compute
 			return nil, key, err
 		}
 		return nil, key, computerMountFailure{
-			code: "computer_runtime_not_prepared",
+			code: "computer_instance_not_prepared",
 			err:  fmt.Errorf("computer instance %q at worker epoch %d is not prepared", mount.ComputerInstanceID, mount.WorkerEpoch),
 		}
 	}
@@ -820,13 +820,13 @@ func (m Server) materializeMachine(ctx context.Context, mount *workerapi.Compute
 		if releaseErr := checkout.Release(); releaseErr != nil {
 			err = errors.Join(err, fmt.Errorf("release prepared computer instance checkout: %w", releaseErr))
 		}
-		return nil, key, computerMountFailure{code: "computer_runtime_not_prepared", err: err}
+		return nil, key, computerMountFailure{code: "computer_instance_not_prepared", err: err}
 	}
 	releaseFailedCheckout := func(err error) error {
 		if closeErr := m.closeMachine(checkout.mount); closeErr != nil {
 			checkout.Relinquish()
 			return errors.Join(err, computerMountFailure{
-				code: "computer_mount_runtime_close_failed",
+				code: "computer_mount_instance_close_failed",
 				err:  fmt.Errorf("close prepared computer instance: %w", closeErr),
 			})
 		}
@@ -1258,7 +1258,7 @@ func (m Server) stopControlledComputerMount(ctx context.Context, machine vm.Mach
 	}
 	if err := m.closeMachine(machine); err != nil {
 		_ = m.failComputerMount(client, mount, computerMountFailure{
-			code: "computer_mount_runtime_close_failed",
+			code: "computer_mount_instance_close_failed",
 			err:  fmt.Errorf("close computer instance: %w", err),
 		})
 		return fmt.Errorf("close computer instance: %w", err)
