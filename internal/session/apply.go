@@ -117,27 +117,27 @@ var noControlGraph run.OwnedFinalization
 // ErrAuthority.
 func lockControlGraph(ctx context.Context, tx pgx.Tx, target Target) (run.OwnedFinalization, error) {
 	q := db.New(tx)
-	actor, err := q.GetSession(ctx, db.GetSessionParams{EnvironmentID: pgvalue.UUID(target.EnvironmentID), ID: pgvalue.UUID(target.SessionID)})
+	session, err := q.GetSession(ctx, db.GetSessionParams{EnvironmentID: pgvalue.UUID(target.EnvironmentID), ID: pgvalue.UUID(target.SessionID)})
 	if err != nil {
 		return noControlGraph, err
 	}
-	if !actor.CurrentRunID.Valid {
-		current, err := q.LockSessionTurnAuthority(ctx, db.LockSessionTurnAuthorityParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
+	if !session.CurrentRunID.Valid {
+		current, err := q.LockSessionTurnAuthority(ctx, db.LockSessionTurnAuthorityParams{EnvironmentID: session.EnvironmentID, ID: session.ID})
 		if err != nil {
 			return noControlGraph, err
 		}
-		if current.CurrentRunID.Valid || current.RunGeneration != actor.RunGeneration {
+		if current.CurrentRunID.Valid || current.RunGeneration != session.RunGeneration {
 			return noControlGraph, ErrAuthority
 		}
 		return noControlGraph, nil
 	}
-	graph, err := run.LockOwnedFinalizationWithSecrets(ctx, tx, run.SessionRunSecrets{EnvironmentID: target.EnvironmentID, RunID: pgvalue.MustUUIDValue(actor.CurrentRunID), ComputerID: pgvalue.MustUUIDValue(actor.ComputerID)})
+	graph, err := run.LockOwnedFinalizationWithSecrets(ctx, tx, run.SessionRunSecrets{EnvironmentID: target.EnvironmentID, RunID: pgvalue.MustUUIDValue(session.CurrentRunID), ComputerID: pgvalue.MustUUIDValue(session.ComputerID)})
 	if err != nil {
 		return graph, err
 	}
-	current, err := q.GetSession(ctx, db.GetSessionParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
+	current, err := q.GetSession(ctx, db.GetSessionParams{EnvironmentID: session.EnvironmentID, ID: session.ID})
 	if err == nil && !current.CurrentRunID.Valid {
-		current, err = q.LockSessionTurnAuthority(ctx, db.LockSessionTurnAuthorityParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
+		current, err = q.LockSessionTurnAuthority(ctx, db.LockSessionTurnAuthorityParams{EnvironmentID: session.EnvironmentID, ID: session.ID})
 		if err != nil {
 			return graph, err
 		}
@@ -146,7 +146,7 @@ func lockControlGraph(ctx context.Context, tx pgx.Tx, target Target) (run.OwnedF
 		}
 		return noControlGraph, nil
 	}
-	if err == nil && (current.CurrentRunID != actor.CurrentRunID || current.RunGeneration != actor.RunGeneration) {
+	if err == nil && (current.CurrentRunID != session.CurrentRunID || current.RunGeneration != session.RunGeneration) {
 		err = ErrAuthority
 	}
 	return graph, err

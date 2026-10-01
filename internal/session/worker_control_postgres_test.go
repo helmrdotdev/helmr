@@ -22,7 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func secondControlActor(t *testing.T, first *sessiontest.Execution) *sessiontest.Execution {
+func secondControlSession(t *testing.T, first *sessiontest.Execution) *sessiontest.Execution {
 	t.Helper()
 	return executionOn(t, first.Fixture, json.RawMessage(`1`), true)
 }
@@ -62,7 +62,7 @@ func interruptInTx(ctx context.Context, tx pgx.Tx, source, target *sessiontest.E
 
 func TestWorkerSessionControlReciprocalInterruptPostgres(t *testing.T) {
 	a := newExecution(t, json.RawMessage(`{"sequence":1}`), true)
-	b := secondControlActor(t, a)
+	b := secondControlSession(t, a)
 	at, bt := receiveTurn(t, a, 1), receiveTurn(t, b, 1)
 	addControlSecret(t, a)
 	addControlSecret(t, b)
@@ -295,7 +295,7 @@ func controlChild(t *testing.T, parent *sessiontest.Execution, detached bool) *s
 
 func TestWorkerSessionControlOwnedChildrenReciprocalPostgres(t *testing.T) {
 	a := newExecution(t, json.RawMessage(`{"sequence":1}`), true)
-	b := secondControlActor(t, a)
+	b := secondControlSession(t, a)
 	at, bt := receiveTurn(t, a, 1), receiveTurn(t, b, 1)
 	ac, bc := controlChild(t, a, false), controlChild(t, b, false)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -363,7 +363,7 @@ func TestWorkerSessionControlChildAncestorFencePostgres(t *testing.T) {
 	for _, state := range []string{"held", "settling", "detached"} {
 		t.Run(state, func(t *testing.T) {
 			a := newExecution(t, json.RawMessage(`{"sequence":1}`), true)
-			b := secondControlActor(t, a)
+			b := secondControlSession(t, a)
 			scope := receiveTurn(t, a, 1)
 			child := controlChild(t, a, state == "detached")
 			if state == "settling" {

@@ -97,16 +97,16 @@ func completeActor(ctx context.Context, tx pgx.Tx, fence run.ExecutionFence, com
 	if err != nil {
 		return staleCompletion(err)
 	}
-	// actor is the locked Session. Before the terminal writes, an interruption
+	// session is the locked Session. Before the terminal writes, an interruption
 	// settles the held Turn and advances its input cursor.
-	actor, lease, instance := authority.Session(), authority.Lease(), authority.Instance()
+	session, lease, instance := authority.Session(), authority.Lease(), authority.Instance()
 
 	if err := validateCompletion(ctx, q, completion, authority); err != nil {
 		return err
 	}
 	// Stop admission can win after the worker has frozen its completion receipt.
 	// Keep that receipt's fingerprint, but honor the matching stop authority.
-	if completion.Kind != ActorInterrupted && actor.DispatchHoldID.Valid {
+	if completion.Kind != ActorInterrupted && session.DispatchHoldID.Valid {
 		completion.Kind = ActorInterrupted
 	}
 	if completion.Kind == ActorInterrupted {
@@ -139,23 +139,23 @@ func completeActor(ctx context.Context, tx pgx.Tx, fence run.ExecutionFence, com
 	}
 
 	if completion.Kind == ActorInterrupted {
-		if err := CompleteInterruption(ctx, tx, actor, authority.Computer().HeadDiskVersionID, completion.Fingerprint); err != nil {
+		if err := CompleteInterruption(ctx, tx, session, authority.Computer().HeadDiskVersionID, completion.Fingerprint); err != nil {
 			return err
 		}
-		settled, err := q.GetSession(ctx, db.GetSessionParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
+		settled, err := q.GetSession(ctx, db.GetSessionParams{EnvironmentID: session.EnvironmentID, ID: session.ID})
 		if err != nil {
 			return err
 		}
-		actor.CommittedInputSequence = settled.CommittedInputSequence
+		session.CommittedInputSequence = settled.CommittedInputSequence
 	}
 	if err := run.CompleteActorAttempt(ctx, tx, authority, run.ActorAttemptTerminal{
 		Status: decision.runStatus, Reason: decision.runReason.String, Error: completion.Error,
-		InputSequence: actor.CommittedInputSequence, Fingerprint: completion.Fingerprint, CompletedAt: completedAt,
+		InputSequence: session.CommittedInputSequence, Fingerprint: completion.Fingerprint, CompletedAt: completedAt,
 	}); err != nil {
 		return staleCompletion(err)
 	}
 
-	if err := finishRun(ctx, tx, authority, actor, completion, decision, completedAt); err != nil {
+	if err := finishRun(ctx, tx, authority, session, completion, decision, completedAt); err != nil {
 		return err
 	}
 	now, err := q.GetTaskCompletionTime(ctx)
@@ -196,8 +196,8 @@ func validateCompletion(
 	completion ActorCompletion,
 	authority run.Execution,
 ) error {
-	runRow, attempt, actor, lease, computerRow := authority.Run(), authority.Attempt(), authority.Session(), authority.Lease(), authority.Computer()
-	if completion.RunGeneration <= 0 || completion.RunGeneration != actor.RunGeneration {
+	runRow, attempt, session, lease, computerRow := authority.Run(), authority.Attempt(), authority.Session(), authority.Lease(), authority.Computer()
+	if completion.RunGeneration <= 0 || completion.RunGeneration != session.RunGeneration {
 		return ErrStaleCompletion
 	}
 	if completion.Kind == ActorInterrupted {
@@ -205,13 +205,13 @@ func validateCompletion(
 		if completion.TurnID != nil {
 			turnID = pgvalue.UUID(*completion.TurnID)
 		}
-		if actor.DispatchHoldID != pgvalue.UUID(completion.HoldID) || actor.DispatchHoldReason.String != "interrupt_requested" ||
-			actor.DispatchHoldRunID != runRow.ID || !actor.DispatchHoldAttemptNumber.Valid || actor.DispatchHoldAttemptNumber.Int32 != attempt.Number ||
-			!actor.DispatchHoldRunGeneration.Valid || actor.DispatchHoldRunGeneration.Int64 != completion.RunGeneration || actor.ActiveTurnID != turnID {
+		if session.DispatchHoldID != pgvalue.UUID(completion.HoldID) || session.DispatchHoldReason.String != "interrupt_requested" ||
+			session.DispatchHoldRunID != runRow.ID || !session.DispatchHoldAttemptNumber.Valid || session.DispatchHoldAttemptNumber.Int32 != attempt.Number ||
+			!session.DispatchHoldRunGeneration.Valid || session.DispatchHoldRunGeneration.Int64 != completion.RunGeneration || session.ActiveTurnID != turnID {
 			return ErrStaleCompletion
 		}
 		if turnID.Valid {
-			unsettled, err := store.SessionTurnHasUnsettledWork(ctx, db.SessionTurnHasUnsettledWorkParams{SessionID: actor.ID, TurnID: turnID})
+			unsettled, err := store.SessionTurnHasUnsettledWork(ctx, db.SessionTurnHasUnsettledWorkParams{SessionID: session.ID, TurnID: turnID})
 			if err != nil {
 				return err
 			}
@@ -220,30 +220,30 @@ func validateCompletion(
 			}
 		}
 	} else {
-		if actor.ActiveTurnID.Valid && completion.Kind != ActorFailed {
+		if session.ActiveTurnID.Valid && completion.Kind != ActorFailed {
 			return ErrStaleCompletion
 		}
-		if actor.DispatchHoldID.Valid && (actor.DispatchHoldReason.String != "interrupt_requested" ||
-			actor.DispatchHoldRunID != runRow.ID ||
-			!actor.DispatchHoldAttemptNumber.Valid || actor.DispatchHoldAttemptNumber.Int32 != attempt.Number ||
-			!actor.DispatchHoldRunGeneration.Valid || actor.DispatchHoldRunGeneration.Int64 != completion.RunGeneration) {
+		if session.DispatchHoldID.Valid && (session.DispatchHoldReason.String != "interrupt_requested" ||
+			session.DispatchHoldRunID != runRow.ID ||
+			!session.DispatchHoldAttemptNumber.Valid || session.DispatchHoldAttemptNumber.Int32 != attempt.Number ||
+			!session.DispatchHoldRunGeneration.Valid || session.DispatchHoldRunGeneration.Int64 != completion.RunGeneration) {
 			return ErrStaleCompletion
 		}
 	}
-	if runRow.EntrypointKind != "actor" || !runRow.SessionID.Valid || runRow.SessionID != actor.ID ||
+	if runRow.EntrypointKind != "actor" || !runRow.SessionID.Valid || runRow.SessionID != session.ID ||
 		runRow.ParentRunID.Valid || runRow.ParentOwnsLifecycle.Valid ||
 		lease.Status != db.RunLeaseStatusFinalizing || !attempt.EntrypointEnteredAt.Valid ||
 		runRow.ActiveStartedAt.Valid || !lease.FinalizationOperationID.Valid ||
 		!lease.FinalizationStartedAt.Valid ||
-		!lease.FinalizationRequestFingerprint.Valid || !actor.CurrentRunID.Valid || actor.CurrentRunID != runRow.ID ||
-		(actor.Status != "open" && actor.Status != "closing") ||
+		!lease.FinalizationRequestFingerprint.Valid || !session.CurrentRunID.Valid || session.CurrentRunID != runRow.ID ||
+		(session.Status != "open" && session.Status != "closing") ||
 		!computerRow.HeadDiskVersionID.Valid ||
 		!attempt.SessionInputStartSequence.Valid || !runRow.SessionInputStartSequence.Valid || !runRow.SessionInputHighWatermark.Valid {
 		return ErrStaleCompletion
 	}
 
-	cursor := actor.CommittedInputSequence
-	if cursor < attempt.SessionInputStartSequence.Int64 || cursor < actor.CommittedInputSequence || cursor >= actor.NextInputSequence {
+	cursor := session.CommittedInputSequence
+	if cursor < attempt.SessionInputStartSequence.Int64 || cursor < session.CommittedInputSequence || cursor >= session.NextInputSequence {
 		return ErrStaleCompletion
 	}
 	if lease.FinalizationOperationID != pgvalue.UUID(completion.OperationID) {
@@ -263,7 +263,7 @@ func validateCompletion(
 type terminalDecision struct {
 	runStatus   db.RunStatus
 	runReason   pgtype.Text
-	actorStatus string
+	sessionStatus string
 }
 
 // terminalState is the part of a locked Actor execution that decides its
@@ -280,7 +280,7 @@ func terminalStateOf(execution run.Execution) terminalState {
 func decideTerminal(state terminalState, completion ActorCompletion) terminalDecision {
 	decision := terminalDecision{
 		runStatus:   db.RunStatusSucceeded,
-		actorStatus: state.session.Status,
+		sessionStatus: state.session.Status,
 	}
 	if completion.Kind == ActorInterrupted {
 		decision.runStatus = db.RunStatusCancelled
@@ -308,7 +308,7 @@ func decideTerminal(state terminalState, completion ActorCompletion) terminalDec
 // Session (a failed execution, or a succeeded Run's Session with its
 // lifecycle reconciliation when it is closing or can continue), and appends
 // the Run's terminal event.
-func finishRun(ctx context.Context, tx pgx.Tx, authority run.Execution, actor db.Session, completion ActorCompletion, decision terminalDecision, completedAt pgtype.Timestamptz) error {
+func finishRun(ctx context.Context, tx pgx.Tx, authority run.Execution, session db.Session, completion ActorCompletion, decision terminalDecision, completedAt pgtype.Timestamptz) error {
 	runRow, computerRow := authority.Run(), authority.Computer()
 	store := db.New(tx)
 	var failure []byte
@@ -334,15 +334,15 @@ func finishRun(ctx context.Context, tx pgx.Tx, authority run.Execution, actor db
 		return staleCompletion(err)
 	}
 	if decision.runStatus == db.RunStatusFailed {
-		if err := FailExecution(ctx, tx, actor, failure, completion.Fingerprint, completedAt); err != nil {
+		if err := FailExecution(ctx, tx, session, failure, completion.Fingerprint, completedAt); err != nil {
 			return err
 		}
 	}
 	if decision.runStatus == db.RunStatusSucceeded {
 		reconciled, err := store.ReconcileSessionTerminalRun(ctx, db.ReconcileSessionTerminalRunParams{
-			Status:      decision.actorStatus,
-			CompletedAt: completedAt, EnvironmentID: actor.EnvironmentID, ID: actor.ID,
-			ComputerID: computerRow.ID, RunID: runRow.ID, ExpectedRunGeneration: actor.RunGeneration,
+			Status:      decision.sessionStatus,
+			CompletedAt: completedAt, EnvironmentID: session.EnvironmentID, ID: session.ID,
+			ComputerID: computerRow.ID, RunID: runRow.ID, ExpectedRunGeneration: session.RunGeneration,
 		})
 		if err != nil {
 			return staleCompletion(err)

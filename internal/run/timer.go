@@ -95,7 +95,7 @@ func (r *TimerWaitReconciler) reconcileOne(
 	}
 	residentComputer := residence.Computer()
 	if locator.SessionID.Valid {
-		actor, err := q.LockSessionForInputReconcile(ctx, db.LockSessionForInputReconcileParams{
+		session, err := q.LockSessionForInputReconcile(ctx, db.LockSessionForInputReconcileParams{
 			EnvironmentID: locator.EnvironmentID,
 			SessionID:     locator.SessionID,
 		})
@@ -105,8 +105,8 @@ func (r *TimerWaitReconciler) reconcileOne(
 		if err != nil {
 			return false, err
 		}
-		if actor.DispatchHoldID.Valid || !actor.CurrentRunID.Valid || actor.CurrentRunID != locator.ID ||
-			(actor.Status != "open" && actor.Status != "closing") {
+		if session.DispatchHoldID.Valid || !session.CurrentRunID.Valid || session.CurrentRunID != locator.ID ||
+			(session.Status != "open" && session.Status != "closing") {
 			return false, tx.Commit(ctx)
 		}
 	}

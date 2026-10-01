@@ -128,7 +128,7 @@ func (s *Server) cancelRunHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, runError(err, runCancelOperation))
 		return
 	}
-	if receipt := result.Actor; receipt != nil {
+	if receipt := result.Session; receipt != nil {
 		writeJSON(w, http.StatusAccepted, api.ActorRunCancellationReceipt{ID: receipt.ID.String(), RunID: receipt.RunID.String(), SessionID: receipt.SessionID.String(), HoldID: receipt.HoldID.String(), Status: receipt.Status})
 		return
 	}

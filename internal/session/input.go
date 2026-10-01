@@ -22,10 +22,10 @@ var ErrAuthority = errors.New("actor input durable authority is inconsistent")
 // CanStartContinuation is the common precondition for an idle Actor to consume
 // durable input. Closing Actors must continue until their close sequence is
 // committed; the SQL CAS remains the final authority for backlog and expiry.
-func CanStartContinuation(actor db.Session) bool {
-	return !actor.CurrentRunID.Valid &&
-		(actor.Status == "open" || actor.Status == "closing") &&
-		!actor.DispatchHoldID.Valid && !actor.ActiveTurnID.Valid && actor.CommittedInputSequence < actor.NextInputSequence-1
+func CanStartContinuation(session db.Session) bool {
+	return !session.CurrentRunID.Valid &&
+		(session.Status == "open" || session.Status == "closing") &&
+		!session.DispatchHoldID.Valid && !session.ActiveTurnID.Valid && session.CommittedInputSequence < session.NextInputSequence-1
 }
 
 func CompleteWait(ctx context.Context, tx pgx.Tx, wait db.RunWait, turn db.SessionTurn) (db.RunWait, error) {
@@ -83,17 +83,17 @@ func TurnResolution(turn db.SessionTurn) (json.RawMessage, error) {
 func CreateContinuation(
 	ctx context.Context,
 	tx pgx.Tx,
-	actor db.Session,
+	session db.Session,
 	computer db.Computer,
 	bindings []db.LockComputerSecretsForAdmissionRow,
 ) (pgtype.UUID, error) {
 	store := db.New(tx)
-	if actor.CancelRequestedAt.Valid {
+	if session.CancelRequestedAt.Valid {
 		return pgtype.UUID{}, ErrAuthority
 	}
 	// A continuation replaces the Session's previous execution scope. Other
 	// members sharing its Computer do not participate in this cleanup barrier.
-	activity, err := store.GetSessionCloseComputerActivity(ctx, actor.ID)
+	activity, err := store.GetSessionCloseComputerActivity(ctx, session.ID)
 	if err != nil {
 		return pgtype.UUID{}, err
 	}
@@ -116,15 +116,15 @@ func CreateContinuation(
 	run, err := store.CreateActorContinuationRun(ctx, db.CreateActorContinuationRunParams{
 		RunID: runID, QueueOriginAt: now,
 		TraceID: pgvalue.Text(traceID), RootSpanID: rootSpanID,
-		EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ComputerID: computer.ID,
-		ExpectedRunGeneration: actor.RunGeneration,
+		EnvironmentID: session.EnvironmentID, SessionID: session.ID, ComputerID: computer.ID,
+		ExpectedRunGeneration: session.RunGeneration,
 	})
 	if err != nil {
 		return pgtype.UUID{}, err
 	}
 	resolutions := make([]secret.Resolution, len(bindings))
 	for index, binding := range bindings {
-		if binding.ComputerID != computer.ID || binding.EnvironmentID != actor.EnvironmentID ||
+		if binding.ComputerID != computer.ID || binding.EnvironmentID != session.EnvironmentID ||
 			binding.SecretStatus != "active" || !binding.CurrentVersionID.Valid {
 			return pgtype.UUID{}, ErrAuthority
 		}

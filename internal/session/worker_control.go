@@ -87,23 +87,23 @@ func controlTargetError(err error) error {
 // a held one is session_held, and one whose active Turn began settlement is
 // turn_unsettled.
 func lockSourceControlSessions(ctx context.Context, q db.Querier, source run.LiveSource, targetID pgtype.UUID) error {
-	actors, err := q.LockWorkerControlSessions(ctx, db.LockWorkerControlSessionsParams{EnvironmentID: source.EnvironmentID(), SourceRunID: source.RunID(), TargetSessionID: targetID})
+	sessions, err := q.LockWorkerControlSessions(ctx, db.LockWorkerControlSessionsParams{EnvironmentID: source.EnvironmentID(), SourceRunID: source.RunID(), TargetSessionID: targetID})
 	if err != nil {
 		return err
 	}
-	for _, row := range actors {
+	for _, row := range sessions {
 		if !row.SourceOwnerRunID.Valid {
 			continue
 		}
-		actor := row.Session
-		if actor.CurrentRunID != row.SourceOwnerRunID {
+		session := row.Session
+		if session.CurrentRunID != row.SourceOwnerRunID {
 			return ErrAuthority
 		}
-		if actor.DispatchHoldID.Valid {
+		if session.DispatchHoldID.Valid {
 			return &OperationError{Code: "session_held"}
 		}
-		if actor.ActiveTurnID.Valid {
-			turn, err := q.GetSessionTurn(ctx, db.GetSessionTurnParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: actor.ActiveTurnID})
+		if session.ActiveTurnID.Valid {
+			turn, err := q.GetSessionTurn(ctx, db.GetSessionTurnParams{EnvironmentID: session.EnvironmentID, SessionID: session.ID, ID: session.ActiveTurnID})
 			if err != nil {
 				return err
 			}

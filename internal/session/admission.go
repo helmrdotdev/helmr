@@ -110,7 +110,7 @@ func Admit(ctx context.Context, tx pgx.Tx, request AdmissionRequest) (AdmissionR
 	if err != nil || len(data) > 1<<20 {
 		return AdmissionReceipt{}, &OperationError{Code: "invalid_request"}
 	}
-	actor, err := lockSession(ctx, tx, request.Target)
+	session, err := lockSession(ctx, tx, request.Target)
 	if err != nil {
 		return AdmissionReceipt{}, err
 	}
@@ -128,23 +128,23 @@ func Admit(ctx context.Context, tx pgx.Tx, request AdmissionRequest) (AdmissionR
 		return receipt, err
 	}
 	receipt.ID = pgvalue.MustUUIDValue(claim.ID)
-	if actor.CancelRequestedAt.Valid {
+	if session.CancelRequestedAt.Valid {
 		receipt.Code = "session_not_open"
-	} else if actor.NextEventSequence > 9007199254740991 {
+	} else if session.NextEventSequence > 9007199254740991 {
 		receipt.Code = "invalid_request"
-	} else if request.Mode != ExactMessage && actor.Status != "open" {
+	} else if request.Mode != ExactMessage && session.Status != "open" {
 		receipt.Code = "session_not_open"
-	} else if request.Mode != EnqueueOnly && actor.DispatchHoldID.Valid {
+	} else if request.Mode != EnqueueOnly && session.DispatchHoldID.Valid {
 		receipt.Code = "session_held"
-	} else if request.Mode == ExactMessage && actor.ActiveTurnID != pgvalue.UUID(request.TurnID) {
+	} else if request.Mode == ExactMessage && session.ActiveTurnID != pgvalue.UUID(request.TurnID) {
 		receipt.Code = "turn_not_active"
-	} else if request.Mode == ExactMessage || request.Mode == SendMessageOrEnqueue && actor.ActiveTurnID.Valid {
-		receipt.TurnID = pgvalue.MustUUIDValue(actor.ActiveTurnID)
-		accepts, err := q.SessionTurnAcceptsMessages(ctx, db.SessionTurnAcceptsMessagesParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: actor.ActiveTurnID})
+	} else if request.Mode == ExactMessage || request.Mode == SendMessageOrEnqueue && session.ActiveTurnID.Valid {
+		receipt.TurnID = pgvalue.MustUUIDValue(session.ActiveTurnID)
+		accepts, err := q.SessionTurnAcceptsMessages(ctx, db.SessionTurnAcceptsMessagesParams{EnvironmentID: session.EnvironmentID, SessionID: session.ID, ID: session.ActiveTurnID})
 		if err != nil {
 			return receipt, err
 		}
-		turn, err := q.GetSessionTurn(ctx, db.GetSessionTurnParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: actor.ActiveTurnID})
+		turn, err := q.GetSessionTurn(ctx, db.GetSessionTurnParams{EnvironmentID: session.EnvironmentID, SessionID: session.ID, ID: session.ActiveTurnID})
 		if err != nil {
 			return receipt, err
 		}
@@ -155,17 +155,17 @@ func Admit(ctx context.Context, tx pgx.Tx, request AdmissionRequest) (AdmissionR
 		} else {
 			messageID := uuid.NewV7()
 			// The locked event allocator gives message delivery its public order.
-			_, err = q.CreateSessionMessage(ctx, db.CreateSessionMessageParams{ID: pgvalue.UUID(messageID), EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, TurnID: turn.ID, RunID: turn.RunID, AttemptNumber: turn.AttemptNumber.Int32, RunGeneration: turn.RunGeneration.Int64, Data: data, AcceptedSequence: actor.NextEventSequence})
+			_, err = q.CreateSessionMessage(ctx, db.CreateSessionMessageParams{ID: pgvalue.UUID(messageID), EnvironmentID: session.EnvironmentID, SessionID: session.ID, TurnID: turn.ID, RunID: turn.RunID, AttemptNumber: turn.AttemptNumber.Int32, RunGeneration: turn.RunGeneration.Int64, Data: data, AcceptedSequence: session.NextEventSequence})
 			if err != nil {
 				return receipt, err
 			}
 			body, _ := json.Marshal(map[string]any{"message_id": messageID, "message": json.RawMessage(data)})
-			if _, err := appendLifecycleEvent(ctx, q, actor, turn.ID, pgvalue.UUID(messageID), "message.accepted", body, pgtype.UUID{}); err != nil {
+			if _, err := appendLifecycleEvent(ctx, q, session, turn.ID, pgvalue.UUID(messageID), "message.accepted", body, pgtype.UUID{}); err != nil {
 				return receipt, err
 			}
 			receipt.Kind, receipt.MessageID = "messaged", &messageID
 		}
-	} else if actor.NextInputSequence > 9007199254740991 || actor.NextEventSequence > 9007199254740991 {
+	} else if session.NextInputSequence > 9007199254740991 || session.NextEventSequence > 9007199254740991 {
 		receipt.Code = "invalid_request"
 	} else {
 		turnID := uuid.NewV7()
@@ -173,15 +173,15 @@ func Admit(ctx context.Context, tx pgx.Tx, request AdmissionRequest) (AdmissionR
 		if request.SourceRunID != uuid.Nil() {
 			source = pgvalue.UUID(request.SourceRunID)
 		}
-		turn, err := q.EnqueueSessionTurn(ctx, db.EnqueueSessionTurnParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: pgvalue.UUID(turnID), Data: data, SourceRunID: source})
+		turn, err := q.EnqueueSessionTurn(ctx, db.EnqueueSessionTurnParams{EnvironmentID: session.EnvironmentID, SessionID: session.ID, ID: pgvalue.UUID(turnID), Data: data, SourceRunID: source})
 		if err != nil {
 			return receipt, err
 		}
 		body, _ := json.Marshal(map[string]any{"input": json.RawMessage(data)})
-		if _, err := appendLifecycleEvent(ctx, q, actor, turn.ID, pgtype.UUID{}, "turn.enqueued", body, pgtype.UUID{}); err != nil {
+		if _, err := appendLifecycleEvent(ctx, q, session, turn.ID, pgtype.UUID{}, "turn.enqueued", body, pgtype.UUID{}); err != nil {
 			return receipt, err
 		}
-		if err := q.CreateSessionInputReconcileOutbox(ctx, db.CreateSessionInputReconcileOutboxParams{ID: turn.ID, SessionID: actor.ID, EnvironmentID: actor.EnvironmentID, TurnID: turn.ID}); err != nil {
+		if err := q.CreateSessionInputReconcileOutbox(ctx, db.CreateSessionInputReconcileOutboxParams{ID: turn.ID, SessionID: session.ID, EnvironmentID: session.EnvironmentID, TurnID: turn.ID}); err != nil {
 			return receipt, err
 		}
 		receipt.Kind, receipt.TurnID = "enqueued", turnID
@@ -189,15 +189,15 @@ func Admit(ctx context.Context, tx pgx.Tx, request AdmissionRequest) (AdmissionR
 	return receipt, finishOperation(ctx, tx, claim, receipt)
 }
 
-func appendLifecycleEvent(ctx context.Context, q db.Querier, actor db.Session, turnID, messageID pgtype.UUID, kind string, data json.RawMessage, version pgtype.UUID) (db.SessionEvent, error) {
-	return q.AppendSessionEvent(ctx, db.AppendSessionEventParams{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, TurnID: turnID, MessageID: messageID, Kind: kind, Data: data, ComputerDiskVersionID: version})
+func appendLifecycleEvent(ctx context.Context, q db.Querier, session db.Session, turnID, messageID pgtype.UUID, kind string, data json.RawMessage, version pgtype.UUID) (db.SessionEvent, error) {
+	return q.AppendSessionEvent(ctx, db.AppendSessionEventParams{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: session.EnvironmentID, SessionID: session.ID, TurnID: turnID, MessageID: messageID, Kind: kind, Data: data, ComputerDiskVersionID: version})
 }
 
 // sessionComputerRef addresses the Computer the Session runs on.
-func sessionComputerRef(actor db.Session) computer.SessionComputerRef {
+func sessionComputerRef(session db.Session) computer.SessionComputerRef {
 	return computer.SessionComputerRef{
-		EnvironmentID: pgvalue.MustUUIDValue(actor.EnvironmentID),
-		ComputerID:    pgvalue.MustUUIDValue(actor.ComputerID),
-		SessionID:     pgvalue.MustUUIDValue(actor.ID),
+		EnvironmentID: pgvalue.MustUUIDValue(session.EnvironmentID),
+		ComputerID:    pgvalue.MustUUIDValue(session.ComputerID),
+		SessionID:     pgvalue.MustUUIDValue(session.ID),
 	}
 }
