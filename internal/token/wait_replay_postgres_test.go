@@ -82,11 +82,11 @@ func TestTokenWaitRegistrationReplayConcurrentCommit(t *testing.T) {
 				t.Fatal(err)
 			}
 			barrier := &replayReadBarrier{TxDB: fixture.pool, read: make(chan error, 1), resume: make(chan struct{})}
-			second, err := NewWaitReconciler(barrier)
+			second, err := NewRegistrar(barrier)
 			if err != nil {
 				t.Fatal(err)
 			}
-			first, err := NewWaitReconciler(fixture.pool)
+			first, err := NewRegistrar(fixture.pool)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -156,7 +156,7 @@ func TestTokenWaitRegistrationReplayClassifiesConflicts(t *testing.T) {
 	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
 	request := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, uuid.NewV7())
 	request.Metadata, request.Tags = []byte(`{}`), []string{}
-	reconciler, err := NewWaitReconciler(fixture.pool)
+	registrar, err := NewRegistrar(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestTokenWaitRegistrationReplayClassifiesConflicts(t *testing.T) {
 	if row, err := query(request); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("absent replay = %+v, %v", row, err)
 	}
-	registered, err := reconciler.RegisterWait(ctx, request)
+	registered, err := registrar.RegisterWait(ctx, request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestTokenWaitRegistrationReplayClassifiesConflicts(t *testing.T) {
 			if row.RunRevision.Valid || row.ConditionStatus.Valid || row.SuspensionStatus.Valid {
 				t.Fatalf("conflict unexpectedly has replay values: %+v", row)
 			}
-			if _, err := reconciler.RegisterWait(ctx, changed); !errors.Is(err, ErrWaitAuthority) || err.Error() != ErrWaitAuthority.Error()+": token wait registration replay does not match" {
+			if _, err := registrar.RegisterWait(ctx, changed); !errors.Is(err, ErrWaitAuthority) || err.Error() != ErrWaitAuthority.Error()+": token wait registration replay does not match" {
 				t.Fatalf("conflict operation = %v", err)
 			}
 			if err := fixture.pool.QueryRow(ctx, snapshot, request.WaitID).Scan(&after); err != nil {

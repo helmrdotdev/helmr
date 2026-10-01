@@ -67,7 +67,8 @@ type Server struct {
 	deploymentMode        string
 	db                    db.Querier
 	tx                    db.TxBeginner
-	tokenWaits            *token.WaitReconciler
+	tokenWaits            *token.Registrar
+	tokens                *token.Tokens
 	readinessDB           db.DBTX
 	auth                  auth.Authenticator
 	cas                   cas.UploadStore
@@ -78,7 +79,6 @@ type Server struct {
 	secretProxy           *secret.Store
 	computers             computer.Creator
 	computerFencingKey    disk.FencingKey
-	tokenCredentialKey    auth.CredentialKey
 	eventStream           SubjectEventReader
 	telemetryReader       telemetry.Reader
 	hostCredentials       workergroup.CredentialConfig
@@ -87,7 +87,6 @@ type Server struct {
 	setupToken            string
 	authKeys              auth.Keys
 	publicURL             *url.URL
-	apiOrigin             *url.URL
 	authProvider          AuthProvider
 	mailer                email.Sender
 	magicLinkDelivery     *MagicLinkDelivery
@@ -224,7 +223,11 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	tokenWaits, err := token.NewWaitReconciler(cfg.TX)
+	tokenWaits, err := token.NewRegistrar(cfg.TX)
+	if err != nil {
+		return nil, err
+	}
+	tokens, err := token.New(cfg.TX, cfg.TokenCredentialKey, apiOrigin)
 	if err != nil {
 		return nil, err
 	}
@@ -236,6 +239,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		db:                    cfg.DB,
 		tx:                    cfg.TX,
 		tokenWaits:            tokenWaits,
+		tokens:                tokens,
 		readinessDB:           cfg.ReadinessDB,
 		auth:                  cfg.Auth,
 		cas:                   cfg.CAS,
@@ -246,7 +250,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		secretProxy:           cfg.SecretProxy,
 		computers:             computer.NewCreator(cfg.SecretProxy),
 		computerFencingKey:    cfg.ComputerFencingKey,
-		tokenCredentialKey:    cfg.TokenCredentialKey,
 		eventStream:           cfg.EventStream,
 		telemetryReader:       telemetryReader,
 		hostCredentials:       hostCredentials,
@@ -255,7 +258,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		setupToken:            cfg.SetupToken,
 		authKeys:              authKeys,
 		publicURL:             cfg.PublicURL,
-		apiOrigin:             apiOrigin,
 		authProvider:          cfg.AuthProvider,
 		mailer:                mailer,
 		magicLinkDelivery:     cfg.MagicLinkDelivery,

@@ -155,9 +155,14 @@
 //     Computer's Secrets and within the Run's scope, locking no Instance when
 //     the scope no longer matches), then the Session, Run, Attempt and Wait
 //     (Token: then the Token), without worker supply or lineage locks. Token
-//     wait registration, staged through the run owner, locks worker_groups
-//     and worker_hosts without comparing claim versions, then the Computer,
-//     its Instance, the Session, Run, Attempt, Run lease, Wait and Token.
+//     wait registration, through the token owner and staged through the run
+//     owner, locks worker_groups and worker_hosts without comparing claim
+//     versions, then the Computer, its Instance, the Session, Run, Attempt,
+//     Run lease, Wait and Token.
+//   - Runtime Token creation, through the token owner, reads the source
+//     lease's location without locking and acquires its idempotency claim
+//     before any execution lock, then locks the live execution through the
+//     run owner without Secrets before it creates the Token.
 //   - Command operations, through the command owner, lock Secrets first when
 //     they deliver or validate them (claim, recovery). Worker-reported
 //     operations then lock worker_groups and worker_hosts, comparing claim

@@ -35,6 +35,12 @@ func LocateLiveExecution(ctx context.Context, tx pgx.Tx, fence ExecutionFence) (
 	return LiveLocator{tx: tx, fence: fence, located: located}, nil
 }
 
+// OrgID is the located Run's organization.
+func (l LiveLocator) OrgID() pgtype.UUID { return l.located.OrgID }
+
+// ProjectID is the located Run's project.
+func (l LiveLocator) ProjectID() pgtype.UUID { return l.located.ProjectID }
+
 // EnvironmentID is the located Run's environment.
 func (l LiveLocator) EnvironmentID() pgtype.UUID { return l.located.EnvironmentID }
 

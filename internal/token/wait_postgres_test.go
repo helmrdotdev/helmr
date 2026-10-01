@@ -34,6 +34,7 @@ func TestTokenWaitRegistrationImmediatelyMatchesTerminalTokenAfterEmptyReconcile
 	if err != nil {
 		t.Fatal(err)
 	}
+	registrar := newTestRegistrar(t, fixture.pool)
 	batch, err := reconciler.ReconcileBatch(ctx, fixture.environmentID, tokenID, 100)
 	if err != nil || batch.Examined != 0 {
 		t.Fatalf("empty reconcile = %+v, %v", batch, err)
@@ -44,7 +45,7 @@ func TestTokenWaitRegistrationImmediatelyMatchesTerminalTokenAfterEmptyReconcile
 	}
 	waitID := uuid.NewV7()
 	registration := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, waitID)
-	registered, err := reconciler.RegisterWait(ctx, registration)
+	registered, err := registrar.RegisterWait(ctx, registration)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +53,7 @@ func TestTokenWaitRegistrationImmediatelyMatchesTerminalTokenAfterEmptyReconcile
 		registered.RunRevision != expectedRunVersion+2 || string(registered.Result) != `{"approved": true}` {
 		t.Fatalf("registration = %+v", registered)
 	}
-	replayed, err := reconciler.RegisterWait(ctx, registration)
+	replayed, err := registrar.RegisterWait(ctx, registration)
 	if err != nil || replayed.WaitID != registered.WaitID || replayed.ConditionStatus != registered.ConditionStatus ||
 		replayed.SuspensionStatus != registered.SuspensionStatus || string(replayed.Result) != string(registered.Result) {
 		t.Fatalf("registration replay = %+v, %v; first = %+v", replayed, err, registered)
@@ -87,9 +88,10 @@ func TestTokenWaitRegistrationBeforeCompletionIsReconciled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	registrar := newTestRegistrar(t, fixture.pool)
 	waitID := uuid.NewV7()
 	registration := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, waitID)
-	registered, err := reconciler.RegisterWait(ctx, registration)
+	registered, err := registrar.RegisterWait(ctx, registration)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,8 +133,9 @@ func TestTokenReconcileConvergesAfterControlOutboxPrune(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	registrar := newTestRegistrar(t, fixture.pool)
 	waitID := uuid.NewV7()
-	if _, err := reconciler.RegisterWait(ctx, tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, waitID)); err != nil {
+	if _, err := registrar.RegisterWait(ctx, tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, waitID)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fixture.queries.CompleteToken(ctx, tokenCompletionParams(
@@ -229,6 +232,7 @@ func TestTokenCompletionReconcilesEveryWaitingRunInBoundedBatches(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	registrar := newTestRegistrar(t, fixture.pool)
 	for _, work := range []runLeaseWork{first, second} {
 		request := tokenWaitRegistrationRequest(
 			t,
@@ -238,7 +242,7 @@ func TestTokenCompletionReconcilesEveryWaitingRunInBoundedBatches(t *testing.T) 
 			tokenID,
 			uuid.NewV7(),
 		)
-		registered, err := reconciler.RegisterWait(ctx, request)
+		registered, err := registrar.RegisterWait(ctx, request)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -362,7 +366,7 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 	}
 	authority := startTaskCompletionWork(t, ctx, fixture, work)
 	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
-	reconciler, err := NewWaitReconciler(fixture.pool)
+	registrar, err := NewRegistrar(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +374,7 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 	if actor {
 		registration.ActorSpeculativeInputSequence = pgtype.Int8{Int64: 1, Valid: true}
 	}
-	registered, err := reconciler.RegisterWait(ctx, registration)
+	registered, err := registrar.RegisterWait(ctx, registration)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,7 +392,7 @@ func TestTokenWaitRegistrationConcurrentReplayConverges(t *testing.T) {
 	startTaskCompletionWork(t, ctx, fixture, work)
 	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
 	request := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, uuid.NewV7())
-	reconciler, err := NewWaitReconciler(fixture.pool)
+	registrar, err := NewRegistrar(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +406,7 @@ func TestTokenWaitRegistrationConcurrentReplayConverges(t *testing.T) {
 	for range 2 {
 		workers.Go(func() {
 			<-start
-			result, err := reconciler.RegisterWait(ctx, request)
+			result, err := registrar.RegisterWait(ctx, request)
 			outcomes <- registrationOutcome{result: result, err: err}
 		})
 	}
@@ -436,7 +440,8 @@ func TestTokenWaitRegistrationReplaySurvivesParkedCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	registered, err := reconciler.RegisterWait(ctx, request)
+	registrar := newTestRegistrar(t, fixture.pool)
+	registered, err := registrar.RegisterWait(ctx, request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -448,7 +453,7 @@ func TestTokenWaitRegistrationReplaySurvivesParkedCompletion(t *testing.T) {
 	if err != nil || batch.Resolved != 1 {
 		t.Fatalf("parked completion = %+v, %v", batch, err)
 	}
-	replayed, err := reconciler.RegisterWait(ctx, request)
+	replayed, err := registrar.RegisterWait(ctx, request)
 	if err != nil || replayed.WaitID != request.WaitID || replayed.ConditionStatus != db.WaitStatusCancelled ||
 		replayed.SuspensionStatus != db.RunWaitStatusResumePending ||
 		replayed.ReasonCode != "token_cancelled" ||
@@ -457,12 +462,12 @@ func TestTokenWaitRegistrationReplaySurvivesParkedCompletion(t *testing.T) {
 	}
 	recomputed := request
 	recomputed.TimeoutAt = pgvalue.Timestamptz(time.Now().Add(10 * time.Minute))
-	if replayed, err := reconciler.RegisterWait(ctx, recomputed); err != nil || replayed.WaitID != request.WaitID {
+	if replayed, err := registrar.RegisterWait(ctx, recomputed); err != nil || replayed.WaitID != request.WaitID {
 		t.Fatalf("recomputed-deadline registration replay = %+v, %v", replayed, err)
 	}
 	changed := request
 	changed.RequestFingerprint = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	if _, err := reconciler.RegisterWait(ctx, changed); !errors.Is(err, ErrWaitAuthority) ||
+	if _, err := registrar.RegisterWait(ctx, changed); !errors.Is(err, ErrWaitAuthority) ||
 		err.Error() != ErrWaitAuthority.Error()+": token wait registration replay does not match" {
 		t.Fatalf("changed registration replay error = %v", err)
 	}
@@ -482,11 +487,11 @@ func TestTokenWaitRegistrationAllowsInFlightWorkerOnNonAdmittingGroup(t *testing
 			dbtest.MustExec(t, ctx, fixture.pool, `
 				UPDATE worker_hosts SET status = 'draining', draining_at = transaction_timestamp() WHERE id = $1
 			`, request.WorkerHostID)
-			reconciler, err := NewWaitReconciler(fixture.pool)
+			registrar, err := NewRegistrar(fixture.pool)
 			if err != nil {
 				t.Fatal(err)
 			}
-			registered, err := reconciler.RegisterWait(ctx, request)
+			registered, err := registrar.RegisterWait(ctx, request)
 			if err != nil || registered.WaitID != request.WaitID || registered.ConditionStatus != db.WaitStatusPending {
 				t.Fatalf("%s Group registration = %+v, %v", status, registered, err)
 			}
@@ -508,11 +513,11 @@ func TestTokenWaitRegistrationRejectsExpiredPhysicalAuthority(t *testing.T) {
 		       expires_at = transaction_timestamp() - interval '1 second'
 		 WHERE id = $1
 	`, work.leaseID)
-	reconciler, err := NewWaitReconciler(fixture.pool)
+	registrar, err := NewRegistrar(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := reconciler.RegisterWait(ctx, request); !errors.Is(err, ErrWaitAuthority) {
+	if _, err := registrar.RegisterWait(ctx, request); !errors.Is(err, ErrWaitAuthority) {
 		t.Fatalf("expired registration error = %v", err)
 	}
 	var status db.RunStatus
@@ -542,11 +547,11 @@ func TestTokenWaitRegistrationAcceptsChildRun(t *testing.T) {
 	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
 	waitID := uuid.NewV7()
 	request := tokenWaitRegistrationRequest(t, ctx, fixture, child, tokenID, waitID)
-	reconciler, err := NewWaitReconciler(fixture.pool)
+	registrar, err := NewRegistrar(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
-	registered, err := reconciler.RegisterWait(ctx, request)
+	registered, err := registrar.RegisterWait(ctx, request)
 	if err != nil {
 		t.Fatalf("register child Run Wait: %v", err)
 	}
@@ -1018,4 +1023,13 @@ func captureTokenWait(t *testing.T, f runLeaseClaimFixture, work runLeaseWork, p
 	}
 	ref, manifest := computertest.CaptureRequest(t, f.base, cp)
 	return computertest.Complete(t, f.base, ref, manifest, computertest.PrepareCapture(t, f.base, ref, manifest))
+}
+
+func newTestRegistrar(t *testing.T, txb db.TxBeginner) *Registrar {
+	t.Helper()
+	registrar, err := NewRegistrar(txb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return registrar
 }
