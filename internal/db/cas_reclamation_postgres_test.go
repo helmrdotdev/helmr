@@ -27,7 +27,7 @@ func requireFK(t *testing.T, err error) {
 }
 
 // Use a current checkpoint upload owner to exercise physical CAS retirement.
-// Computer generations use their own immutable object graph and retention pins.
+// Computer disk versions use their own immutable object graph and retention pins.
 type checkpointUploadCandidate struct {
 	ID        uuid.UUID
 	Digest    string

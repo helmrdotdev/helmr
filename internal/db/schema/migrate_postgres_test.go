@@ -634,7 +634,7 @@ func assertComputerDiskVersionAuthority(t *testing.T, ctx context.Context, pool 
 		t.Fatal(err)
 	}
 	if !oneRoot {
-		t.Fatal("computer versions do not enforce one generation-zero root")
+		t.Fatal("computer versions do not enforce one parentless root version")
 	}
 	var fencedSource bool
 	if err := pool.QueryRow(ctx, `

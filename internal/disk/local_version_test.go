@@ -208,7 +208,7 @@ func runLocalHelper(t *testing.T, cfg LocalVersionConfig, basePath, phase string
 		t.Fatal(err)
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=^TestLocalVersionCrashHelper$")
-	cmd.Env = append(os.Environ(), "HELMR_LOCAL_GENERATION_TEST="+string(raw))
+	cmd.Env = append(os.Environ(), "HELMR_LOCAL_VERSION_TEST="+string(raw))
 	output, err := cmd.CombinedOutput()
 	var exit *exec.ExitError
 	if !errors.As(err, &exit) || exit.ExitCode() != 42 {
@@ -216,7 +216,7 @@ func runLocalHelper(t *testing.T, cfg LocalVersionConfig, basePath, phase string
 	}
 }
 func TestLocalVersionCrashHelper(t *testing.T) {
-	raw := os.Getenv("HELMR_LOCAL_GENERATION_TEST")
+	raw := os.Getenv("HELMR_LOCAL_VERSION_TEST")
 	if raw == "" {
 		return
 	}

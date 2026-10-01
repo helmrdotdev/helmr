@@ -43,7 +43,7 @@ The host must provide an exclusive NBD device pool. Set
 this Worker (for example, `/dev/nbd0 /dev/nbd1`). Do not share these devices with
 another service. The Worker fails startup without an explicit allowlist.
 
-`WORKER_COMPUTER_STAGING_MIB` bounds local encrypted generation staging per
+`WORKER_COMPUTER_STAGING_MIB` bounds local encrypted disk version staging per
 Runtime (default: 65536 MiB). This host reservation is additional to guest disk
 capacity; admission waits when the local ledger cannot reserve it. It does not
 change the Computer's logical disk size or make local writes externally durable.
