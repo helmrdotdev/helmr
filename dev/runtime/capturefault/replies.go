@@ -72,7 +72,7 @@ func (f *replyFault) control(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := f.arm(target); err != nil {
-			http.Error(w, err.Error(), 409)
+			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
 	} else if r.Method == http.MethodDelete {
@@ -80,16 +80,16 @@ func (f *replyFault) control(w http.ResponseWriter, r *http.Request) {
 		relay := f.relay
 		f.mu.Unlock()
 		if relay == nil {
-			http.Error(w, "no relay", 409)
+			http.Error(w, "no relay", http.StatusConflict)
 			return
 		}
 		if err := relay.restore(); err != nil {
 			f.fail(err)
-			http.Error(w, err.Error(), 409)
+			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
 	} else if r.Method != http.MethodGet {
-		http.Error(w, "method", 405)
+		http.Error(w, "method", http.StatusMethodNotAllowed)
 		return
 	}
 	f.mu.Lock()

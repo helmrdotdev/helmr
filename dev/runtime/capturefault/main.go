@@ -35,12 +35,12 @@ func (f *fault) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer f.mu.Unlock()
 		if r.Method == http.MethodPost {
 			if f.armed || !f.started.IsZero() {
-				http.Error(w, "fault already armed", 409)
+				http.Error(w, "fault already armed", http.StatusConflict)
 				return
 			}
 			f.armed = true
 		} else if r.Method != http.MethodGet {
-			http.Error(w, "method", 405)
+			http.Error(w, "method", http.StatusMethodNotAllowed)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -115,7 +115,7 @@ func (t signedTransport) sign(r *http.Request) error {
 func bucketHandler(bucket string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/__fault" && r.URL.Path != "/"+bucket && !strings.HasPrefix(r.URL.Path, "/"+bucket+"/") {
-			http.Error(w, "outside dedicated bucket", 403)
+			http.Error(w, "outside dedicated bucket", http.StatusForbidden)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -141,7 +141,7 @@ func main() {
 		p.Out.URL.Scheme = "https"
 		p.Out.URL.Host = fmt.Sprintf("s3.%s.amazonaws.com", *region)
 		p.Out.Host = p.Out.URL.Host
-	}, Transport: signedTransport{cfg.Credentials, *region}, ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) { http.Error(w, "S3 forwarding failed", 502) }}
+	}, Transport: signedTransport{cfg.Credentials, *region}, ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) { http.Error(w, "S3 forwarding failed", http.StatusBadGateway) }}
 	f := &fault{delay: *hold, forward: proxy}
 	handler := bucketHandler(*bucket, f)
 	if *replies {
