@@ -199,11 +199,11 @@ func (c *Connector) connectorForRequest(
 	return &child, nil
 }
 
-func (runtime *QualifiedRuntime) Materialize(ctx context.Context, request vm.MaterializeRequest) (vm.Machine, error) {
+func (runtime *QualifiedRuntime) Materialize(ctx context.Context, request vm.MaterializeRequest) (vm.CheckpointableMachine, error) {
 	return runtime.connector.materialize(ctx, request)
 }
 
-func (c *Connector) materialize(ctx context.Context, request vm.MaterializeRequest) (vm.Machine, error) {
+func (c *Connector) materialize(ctx context.Context, request vm.MaterializeRequest) (vm.CheckpointableMachine, error) {
 	if err := c.validateMaterializeRequest(request); err != nil {
 		return nil, err
 	}

@@ -13,7 +13,7 @@ type limitedStartBackend struct {
 	peak    atomic.Int32
 }
 
-func (c *limitedStartBackend) start(ctx context.Context, kind string) (Machine, error) {
+func (c *limitedStartBackend) start(ctx context.Context, kind string) (CheckpointableMachine, error) {
 	active := c.active.Add(1)
 	defer c.active.Add(-1)
 	for {
@@ -31,10 +31,10 @@ func (c *limitedStartBackend) start(ctx context.Context, kind string) (Machine, 
 	}
 }
 
-func (c *limitedStartBackend) Restore(ctx context.Context, _ RestoreRequest) (Machine, error) {
+func (c *limitedStartBackend) Restore(ctx context.Context, _ RestoreRequest) (CheckpointableMachine, error) {
 	return c.start(ctx, "restore")
 }
-func (c *limitedStartBackend) Materialize(ctx context.Context, _ MaterializeRequest) (Machine, error) {
+func (c *limitedStartBackend) Materialize(ctx context.Context, _ MaterializeRequest) (CheckpointableMachine, error) {
 	return c.start(ctx, "materialize")
 }
 func (*limitedStartBackend) Cleanup(context.Context, Owner) error { return nil }

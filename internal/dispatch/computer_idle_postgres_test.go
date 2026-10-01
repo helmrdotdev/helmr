@@ -39,7 +39,7 @@ func TestIdleComputerReconcilerRequestsCapture(t *testing.T) {
 func TestIdleComputerReconcilerAdvancesPastRejectedCandidate(t *testing.T) {
 	f, _, _, request := computertest.Capture(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_waits SET idle_timeout_ms=1,created_at=clock_timestamp()-interval '1 minute'`)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET dirty_state='capture_failed' WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, request.InstanceID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET writer_generation=writer_generation+1 WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, request.InstanceID)
 	newer := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET status='running',started_at=now() WHERE id=$1`, newer.RunID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET status='cancelled',terminal_at=now(),terminal_reason_code='cancelled',process_reconciled_at=now() WHERE id=$1`, newer.LeaseID)

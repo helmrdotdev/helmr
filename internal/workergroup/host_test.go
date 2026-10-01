@@ -190,7 +190,7 @@ func TestPoolMatchesRejectsCPUShapeOrTemplateMismatch(t *testing.T) {
 
 func TestFenceHostRejectsDiagnosticCodesAsControlInputs(t *testing.T) {
 	// A call past validation has no database executor; these reasons must stop first.
-	for _, reason := range []string{"future_diagnostic", "worker_runtime_invalid", "checkpoint_failed", ""} {
+	for _, reason := range []string{"future_diagnostic", "worker_runtime_invalid", "capture_source_reclaimed", ""} {
 		t.Run(reason, func(t *testing.T) {
 			var input InputError
 			if err := FenceHost(t.Context(), db.New(nil), HostPrincipal{}, reason); !errors.As(err, &input) {

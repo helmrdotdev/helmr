@@ -15,6 +15,7 @@ import (
 // barrierCloseMachine blocks every Close until the test releases it and
 // returns the error queued for that attempt.
 type barrierCloseMachine struct {
+	unusedCheckpoint
 	entered chan struct{}
 	release chan error
 	mu      sync.Mutex

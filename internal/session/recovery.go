@@ -81,7 +81,7 @@ func reconcileLostExecution(ctx context.Context, tx pgx.Tx, actor db.Session, bi
 		return settleCancelledFailedExecution(ctx, tx, actor, current.Failure)
 	}
 	if ws.Status != db.ComputerStatusActive || ws.DesiredState != db.ComputerDesiredStateActive ||
-		ws.DirtyState == db.ComputerDirtyStateCaptureFailed || ws.DirtyState == db.ComputerDirtyStateDirtyStateLost {
+		ws.DirtyState == db.ComputerDirtyStateDirtyStateLost {
 		return actor, true, nil
 	}
 	committed, err := q.SessionRecoveryHeadCommitted(ctx, db.SessionRecoveryHeadCommittedParams{EnvironmentID: actor.EnvironmentID, ComputerID: actor.ComputerID, ID: source})

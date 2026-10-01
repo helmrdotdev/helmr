@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -194,5 +195,72 @@ func TestBoundedSnapshotStateCancellationWithWriter(t *testing.T) {
 	case <-finished:
 	case <-time.After(time.Second):
 		t.Fatal("API handler did not finish")
+	}
+}
+
+func TestUncertainSnapshotAPIKeepsFIFOForLateWriter(t *testing.T) {
+	root := t.TempDir()
+	lostReply, allowWrite, written := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	var allowOnce sync.Once
+	defer allowOnce.Do(func() { close(allowWrite) })
+	socket := serveSnapshotAPI(t, root, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			written <- err
+			return
+		}
+		_ = conn.Close()
+		close(lostReply)
+		<-allowWrite
+		state, err := os.OpenFile(filepath.Join(root, "state.pipe"), os.O_WRONLY, 0)
+		if err == nil {
+			_, err = state.Write(bytes.Repeat([]byte{42}, 1<<20))
+			err = errors.Join(err, state.Close())
+		}
+		written <- err
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { result <- captureSnapshotState(ctx, socket, root, "memory", "state", os.Getuid(), os.Getgid()) }()
+	select {
+	case <-lostReply:
+	case <-time.After(time.Second):
+		t.Fatal("snapshot request did not reach API")
+	}
+	select {
+	case err := <-result:
+		t.Fatalf("uncertain API discarded writer ownership: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if info, err := os.Stat(filepath.Join(root, "state.pipe")); err != nil || info.Mode()&os.ModeNamedPipe == 0 {
+		t.Fatalf("FIFO not retained: %v", err)
+	}
+	allowOnce.Do(func() { close(allowWrite) })
+	select {
+	case err := <-written:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("late writer stranded without FIFO reader")
+	}
+	select {
+	case err := <-result:
+		t.Fatalf("writer completion fabricated API authority: %v", err)
+	default:
+	}
+	cancel() // The owner has chosen terminal shutdown; an ordinary caller does not cancel this context.
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("terminal cancellation did not join FIFO")
+	}
+	if _, err := os.Stat(filepath.Join(root, "state.pipe")); !os.IsNotExist(err) {
+		t.Fatalf("joined FIFO retained: %v", err)
 	}
 }

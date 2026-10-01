@@ -156,7 +156,6 @@ const (
 	ComputerDirtyStateClean          ComputerDirtyState = "clean"
 	ComputerDirtyStateDirty          ComputerDirtyState = "dirty"
 	ComputerDirtyStateCapturing      ComputerDirtyState = "capturing"
-	ComputerDirtyStateCaptureFailed  ComputerDirtyState = "capture_failed"
 	ComputerDirtyStateDirtyStateLost ComputerDirtyState = "dirty_state_lost"
 )
 

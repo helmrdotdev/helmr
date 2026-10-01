@@ -15,11 +15,11 @@ import (
 )
 
 type RestoringBackend interface {
-	Restore(context.Context, RestoreRequest) (Machine, error)
+	Restore(context.Context, RestoreRequest) (CheckpointableMachine, error)
 }
 
 type MaterializingBackend interface {
-	Materialize(context.Context, MaterializeRequest) (Machine, error)
+	Materialize(context.Context, MaterializeRequest) (CheckpointableMachine, error)
 }
 
 type Cleaner interface {
@@ -45,10 +45,22 @@ type Machine interface {
 	Close(context.Context) error
 }
 
+// CheckpointCapture owns one reversible VM hold. ResumeGuestControl permits only
+// guest control processing: the caller must keep member cgroups sealed until it
+// installs the Control Plane's exact abort grants. CompleteAbort releases the
+// host hold only after the matching guest acknowledgment. Close remains the
+// separate terminal operation when the checkpoint has been adopted.
+type CheckpointCapture interface {
+	CreateSnapshot(context.Context) (SnapshotArtifact, error)
+	ResumeGuestControl(context.Context) error
+	CompleteAbort(context.Context) error
+}
+
 type CheckpointableMachine interface {
 	Machine
 	SnapshotLimits() (SnapshotLimits, error)
-	CreateSnapshot(context.Context, SnapshotRequest) (SnapshotArtifact, error)
+	BeginCheckpoint(context.Context, SnapshotRequest) (CheckpointCapture, error)
+	CaptureComputer(context.Context) (*ComputerSnapshot, error)
 }
 
 // ComputerCaptureMachine holds customer execution and device dispatch until
@@ -56,7 +68,7 @@ type CheckpointableMachine interface {
 type ComputerCaptureMachine interface {
 	Machine
 	SnapshotLimits() (SnapshotLimits, error)
-	PauseComputer(context.Context) (*ComputerSnapshot, error)
+	PauseComputerForTermination(context.Context) (*ComputerSnapshot, error)
 }
 
 type ConnectRequest struct {

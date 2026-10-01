@@ -20,11 +20,11 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func (runtime *QualifiedRuntime) Restore(ctx context.Context, request vm.RestoreRequest) (vm.Machine, error) {
+func (runtime *QualifiedRuntime) Restore(ctx context.Context, request vm.RestoreRequest) (vm.CheckpointableMachine, error) {
 	return runtime.connector.restore(ctx, request)
 }
 
-func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.Machine, error) {
+func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.CheckpointableMachine, error) {
 	if err := request.Binding.Validate(vm.Owner{Kind: request.OwnerKind, ID: request.ComputerInstanceID}); err != nil {
 		return nil, fmt.Errorf("the Firecracker workload binding: %w", err)
 	}

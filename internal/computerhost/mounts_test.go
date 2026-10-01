@@ -463,6 +463,7 @@ func TestRenewComputerAuthorityCancellationPreservesMountedSession(t *testing.T)
 }
 
 type mountedMachine struct {
+	unusedCheckpoint
 	stream     io.ReadWriteCloser
 	openStream io.ReadWriteCloser
 	artifact   vm.SnapshotArtifact
@@ -546,7 +547,7 @@ func (s *mountedMachine) SnapshotLimits() (vm.SnapshotLimits, error) {
 	return vm.SnapshotLimits{ComputerBytes: 4096, MemoryBytes: 4096, ScratchBytes: 4096, StateBytes: 10000000, ConfigBytes: 65536}, nil
 }
 
-func (s *mountedMachine) PauseComputer(context.Context) (*vm.ComputerSnapshot, error) {
+func (s *mountedMachine) PauseComputerForTermination(context.Context) (*vm.ComputerSnapshot, error) {
 	return s.artifact.Computer, nil
 }
 

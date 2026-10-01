@@ -72,9 +72,9 @@ func TestPendingComputerCommandCapacityCountsComputersAndPhysicalInstances(t *te
 		require(false, 0)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET desired_state='active' WHERE id=$1`, computerID)
-	for _, state := range []string{"dirty", "capturing", "capture_failed", "clean"} {
+	for _, state := range []string{"dirty", "capturing", "clean"} {
 		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET dirty_state=$2 WHERE id=$1`, computerID, state)
-		require(state != "capture_failed" && state != "dirty_state_lost", 1)
+		require(true, 1)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET status='recovery_required',desired_state='stopped',dirty_state='dirty_state_lost',recovery_id=$2,recovery_disk_version_id=head_disk_version_id,recovery_reason='worker_lost',recovery_started_at=now() WHERE id=$1`, computerID, uuid.NewV7())
 	require(false, 0)

@@ -93,7 +93,7 @@ func claimChannel(ctx context.Context, tx pgx.Tx, principal workergroup.HostPrin
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
-	if c.DirtyState == "dirty_state_lost" || c.DirtyState == "capture_failed" || c.Status != "active" || c.DesiredState != "active" || c.WriterGeneration != i.WriterGeneration || i.ComputerID != c.ID || i.EnvironmentID != c.EnvironmentID || !i.SourceDiskVersionID.Valid || token == "" {
+	if c.DirtyState == "dirty_state_lost" || c.Status != "active" || c.DesiredState != "active" || c.WriterGeneration != i.WriterGeneration || i.ComputerID != c.ID || i.EnvironmentID != c.EnvironmentID || !i.SourceDiskVersionID.Valid || token == "" {
 		return db.ComputerInstance{}, pgx.ErrNoRows
 	}
 	for _, b := range bindings {

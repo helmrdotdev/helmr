@@ -20,7 +20,7 @@ import (
 )
 
 // The API boundary is fake; these checks do not qualify VMM/device durability.
-func TestSnapshotFailureNeverResumesGuest(t *testing.T) {
+func TestSnapshotFailureRequiresExplicitAbortToResume(t *testing.T) {
 	for _, stage := range []string{"pause response lost", "snapshot rejected", "invalid runtime identity", "invalid manifest", "missing backing file"} {
 		t.Run(stage, func(t *testing.T) {
 			api := &snapshotFailureAPI{}
@@ -101,7 +101,11 @@ func TestSnapshotFailureNeverResumesGuest(t *testing.T) {
 			session.cfg.MemoryMiB = 4
 			session.cfg.ScratchDiskMiB = 4
 			session.cfg.JailerUID, session.cfg.JailerGID = os.Getuid(), os.Getgid()
-			_, err = session.CreateSnapshot(context.Background(), vm.SnapshotRequest{ID: "checkpoint"})
+			capture, beginErr := session.BeginCheckpoint(context.Background(), vm.SnapshotRequest{ID: "checkpoint"})
+			if beginErr != nil {
+				t.Fatal(beginErr)
+			}
+			_, err = capture.CreateSnapshot(context.Background())
 			if device.captures != device.releases {
 				t.Fatalf("capture retention leaked: %d/%d", device.captures, device.releases)
 			}
@@ -124,6 +128,37 @@ func TestSnapshotFailureNeverResumesGuest(t *testing.T) {
 			}
 			if api.pauseErr != nil && api.snapshots != 0 {
 				t.Fatal("snapshot attempted after ambiguous pause")
+			}
+			if err := capture.ResumeGuestControl(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if err := capture.ResumeGuestControl(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if api.paused || api.resumes != 1 || !session.computerHeld {
+				t.Fatal("guest-control resume released dispatch or repeated VMM resume")
+			}
+			if err := capture.CompleteAbort(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if session.computerHeld || session.checkpointHold != nil {
+				t.Fatal("acknowledged abort did not release capture hold")
+			}
+			next, err := session.BeginCheckpoint(t.Context(), vm.SnapshotRequest{ID: "next-checkpoint"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := capture.ResumeGuestControl(t.Context()); err == nil {
+				t.Fatal("old capture resumed newer hold")
+			}
+			if _, err := capture.CreateSnapshot(t.Context()); err == nil {
+				t.Fatal("old capture took another snapshot")
+			}
+			if err := capture.CompleteAbort(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if session.checkpointHold != next || !session.computerHeld {
+				t.Fatal("old acknowledgment released newer hold")
 			}
 		})
 	}

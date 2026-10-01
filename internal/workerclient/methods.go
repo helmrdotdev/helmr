@@ -509,14 +509,6 @@ func (c *Client) MarkCheckpointReady(ctx context.Context, request workerapi.Chec
 	return response, nil
 }
 
-func (c *Client) MarkCheckpointFailed(ctx context.Context, request workerapi.CheckpointFailedRequest) (workerapi.ComputerCheckpointResponse, error) {
-	var response workerapi.ComputerCheckpointResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/computer/checkpoints/failed", request, &response); err != nil {
-		return workerapi.ComputerCheckpointResponse{}, err
-	}
-	return response, nil
-}
-
 func (c *Client) EnqueueRunSession(ctx context.Context, request workerapi.SubmitSessionDataRequest) (workerapi.SubmitSessionDataResponse, error) {
 	var response workerapi.SubmitSessionDataResponse
 	if err := c.postWorkerJSON(ctx, "/worker/v1/run/sessions/enqueue", request, &response); err != nil {
@@ -649,4 +641,20 @@ func (c *Client) GetComputerRunCleanup(ctx context.Context, r workerapi.Computer
 }
 func (c *Client) ReconcileComputerRun(ctx context.Context, r workerapi.ComputerRunReconcileRequest) error {
 	return c.postWorkerJSON(ctx, "/worker/v1/run/computer-instances/runs/reconcile", r, nil)
+}
+
+func (c *Client) AbortCapture(ctx context.Context, request workerapi.CaptureAbortRequest) (workerapi.CaptureAbortResponse, error) {
+	var response workerapi.CaptureAbortResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/computer/checkpoints/abort", request, &response); err != nil {
+		return response, err
+	}
+	return response, nil
+}
+
+func (c *Client) CompleteCaptureAbort(ctx context.Context, request workerapi.CaptureAbortCompleteRequest) (workerapi.ComputerCheckpointResponse, error) {
+	var response workerapi.ComputerCheckpointResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/computer/checkpoints/abort/complete", request, &response); err != nil {
+		return response, err
+	}
+	return response, nil
 }

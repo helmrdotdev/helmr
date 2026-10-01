@@ -503,7 +503,7 @@ WITH candidates AS (
        AND run_attempts.terminal_at IS NULL
        AND EXISTS (SELECT 1 FROM computers c WHERE c.id=runs.computer_id AND c.status='active'
          AND c.desired_state='active' AND c.recovery_failure IS NULL
-         AND c.dirty_state NOT IN ('capture_failed','dirty_state_lost'))
+         AND c.dirty_state NOT IN ('dirty_state_lost'))
        AND NOT EXISTS (
             SELECT 1
               FROM run_leases

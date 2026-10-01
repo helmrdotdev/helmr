@@ -28,11 +28,11 @@ func (*Connector) Qualify(context.Context) (*QualifiedRuntime, error) {
 	return nil, ErrUnsupported
 }
 
-func (*QualifiedRuntime) Restore(context.Context, vm.RestoreRequest) (vm.Machine, error) {
+func (*QualifiedRuntime) Restore(context.Context, vm.RestoreRequest) (vm.CheckpointableMachine, error) {
 	return nil, ErrUnsupported
 }
 
-func (*QualifiedRuntime) Materialize(context.Context, vm.MaterializeRequest) (vm.Machine, error) {
+func (*QualifiedRuntime) Materialize(context.Context, vm.MaterializeRequest) (vm.CheckpointableMachine, error) {
 	return nil, ErrUnsupported
 }
 

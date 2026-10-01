@@ -25,7 +25,8 @@ const snapshotStateLimit int64 = 10_000_000
 // captureSnapshotState bounds writes before bytes reach the staging filesystem.
 // The FIFO keeper prevents a premature EOF before the VMM opens its writer. It
 // is closed after the API finishes; success requires both API and drain success.
-// The caller owns stopping the paused VMM on any error or uncertain response.
+// The capture owner keeps this context alive through an ordinary caller timeout.
+// Only physical shutdown cancels it; an uncertain API result retains the FIFO.
 func captureSnapshotState(ctx context.Context, socket, jailRoot, memoryName, stateName string, uid, gid int) (retErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -72,13 +73,22 @@ func captureSnapshotState(ctx context.Context, socket, jailRoot, memoryName, sta
 				err = readErr
 			}
 		}
-		_ = reader.Close()
-		if err != nil {
-			cancel()
+		// Continue consuming a rejected state. Closing the reader on overflow
+		// or disk failure can strand the VMM in snapshot serialization.
+		if err != nil && captureCtx.Err() == nil {
+			_, drainErr := io.Copy(io.Discard, reader)
+			err = errors.Join(err, drainErr)
 		}
+		_ = reader.Close()
 		drained <- err
 	}()
 	apiErr := createSnapshotWithoutFileSync(captureCtx, socket, path.Join("/", memoryName), path.Join("/", stateName+".pipe"))
+	var uncertain *snapshotAPIUncertainError
+	if errors.As(apiErr, &uncertain) && captureCtx.Err() == nil {
+		// No complete API response proves that its writer joined. Keep draining
+		// and retain the source until terminal shutdown supplies that proof.
+		<-captureCtx.Done()
+	}
 	keeperErr := keeper.Close()
 	if apiErr != nil {
 		cancel()
@@ -123,7 +133,7 @@ func createSnapshotWithoutFileSync(ctx context.Context, socket, memoryPath, stat
 	request.Header.Set("Content-Type", "application/json")
 	response, err := (&http.Client{Transport: transport}).Do(request)
 	if err != nil {
-		return err
+		return &snapshotAPIUncertainError{err}
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusNoContent {
@@ -131,3 +141,10 @@ func createSnapshotWithoutFileSync(ctx context.Context, socket, memoryPath, stat
 	}
 	return nil
 }
+
+type snapshotAPIUncertainError struct{ cause error }
+
+func (e *snapshotAPIUncertainError) Error() string {
+	return "snapshot API outcome is uncertain: " + e.cause.Error()
+}
+func (e *snapshotAPIUncertainError) Unwrap() error { return e.cause }

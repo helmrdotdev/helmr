@@ -259,10 +259,11 @@ type RuntimeReconcileTarget struct {
 }
 
 const (
-	RuntimeReconcileCapture = "capture"
-	RuntimeReconcilePrepare = "prepare"
-	RuntimeReconcileClose   = "close"
-	RuntimeReconcileReclaim = "reclaim"
+	RuntimeReconcileCapture      = "capture"
+	RuntimeReconcileAbortCapture = "abort_capture"
+	RuntimeReconcilePrepare      = "prepare"
+	RuntimeReconcileClose        = "close"
+	RuntimeReconcileReclaim      = "reclaim"
 )
 
 type RunLeaseClaimRequest struct {
@@ -967,14 +968,6 @@ type CheckpointReadyRequest struct {
 	DesiredVersion     int64              `json:"desired_version"`
 	CheckpointID       string             `json:"checkpoint_id"`
 	Manifest           CheckpointManifest `json:"manifest"`
-}
-
-type CheckpointFailedRequest struct {
-	ComputerInstanceID string `json:"computer_instance_id"`
-	WorkerEpoch        int64  `json:"worker_epoch"`
-	DesiredVersion     int64  `json:"desired_version"`
-	CheckpointID       string `json:"checkpoint_id"`
-	Error              string `json:"error"`
 }
 
 // Session output is scoped to the current Actor execution outside a Turn.

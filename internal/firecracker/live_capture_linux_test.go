@@ -102,7 +102,7 @@ func TestLiveComputerCaptureResumesBeforePublication(t *testing.T) {
 		t.Fatal("released caller's capture")
 	}
 	cut.Capture.Release()
-	terminal, err := s.PauseComputer(t.Context())
+	terminal, err := s.PauseComputerForTermination(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestLiveComputerCaptureCheckpointWaitsForResume(t *testing.T) {
 	<-entered
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
-	if _, err := s.PauseComputer(ctx); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := s.PauseComputerForTermination(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("wait: %v", err)
 	}
 	close(release)
@@ -159,7 +159,7 @@ func TestLiveComputerCaptureCheckpointWaitsForResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.capture = nil
-	cut, err := s.PauseComputer(t.Context())
+	cut, err := s.PauseComputerForTermination(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +244,7 @@ func TestLiveComputerCaptureSerializesTerminalCut(t *testing.T) {
 	errs := make(chan error, 2)
 	go func() { cut, err := s.CaptureComputer(t.Context()); live <- cut; errs <- err }()
 	<-entered
-	go func() { cut, err := s.PauseComputer(t.Context()); terminal <- cut; errs <- err }()
+	go func() { cut, err := s.PauseComputerForTermination(t.Context()); terminal <- cut; errs <- err }()
 	close(release)
 	for range 2 {
 		if err := <-errs; err != nil {
@@ -301,5 +301,95 @@ func TestCaptureContextBoundsUnboundedCaller(t *testing.T) {
 	deadline, ok := ctx.Deadline()
 	if !ok || deadline.Before(started) || deadline.After(started.Add(31*time.Second)) {
 		t.Fatalf("capture deadline %v, present %v", deadline, ok)
+	}
+}
+
+func TestCheckpointAbortBeforeSnapshotKeepsRunningVMM(t *testing.T) {
+	s, _, states := liveCaptureSession(t, false)
+	capture, err := s.BeginCheckpoint(t.Context(), vm.SnapshotRequest{ID: "checkpoint"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.BeginCheckpoint(t.Context(), vm.SnapshotRequest{ID: "overlap"}); err == nil {
+		t.Fatal("overlapping capture admitted")
+	}
+	if err := capture.CompleteAbort(t.Context()); err == nil {
+		t.Fatal("abort completed without guest-control handoff")
+	}
+	if err := capture.ResumeGuestControl(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(states()) != 0 {
+		t.Fatal("unpaused VMM received a resume request")
+	}
+	if err := capture.CompleteAbort(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if s.computerHeld {
+		t.Fatal("unstarted snapshot retained dispatch hold")
+	}
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
+	if _, err := s.BeginCheckpoint(t.Context(), vm.SnapshotRequest{ID: "after-close"}); err == nil {
+		t.Fatal("closed source admitted capture")
+	}
+	if err := capture.ResumeGuestControl(t.Context()); err == nil {
+		t.Fatal("closed source resumed")
+	}
+}
+
+func TestCheckpointCallerCancellationKeepsSnapshotOwnerUntilJoin(t *testing.T) {
+	s, device, states := liveCaptureSession(t, false)
+	s.cfg.MemoryMiB, s.cfg.ScratchDiskMiB = 4, 4
+	s.topology.Computer.SizeBytes = 4096
+	entered, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
+	device.capture = func(ctx context.Context) (disk.CapturedGeneration, error) {
+		close(entered)
+		select {
+		case <-release:
+			return nil, errors.New("injected capture failure after pause")
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	capture, err := s.BeginCheckpoint(t.Context(), vm.SnapshotRequest{ID: "checkpoint"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { _, err := capture.CreateSnapshot(ctx); result <- err }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("capture did not reach device")
+	}
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("caller=%v", err)
+	}
+	joinCtx, stop := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer stop()
+	if err := capture.ResumeGuestControl(joinCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("pending snapshot allowed resume: %v", err)
+	}
+	if got := states(); len(got) != 1 || got[0] != "Paused" {
+		t.Fatalf("states=%v", got)
+	}
+	releaseOnce.Do(func() { close(release) })
+	resumeCtx, stopResume := context.WithTimeout(t.Context(), time.Second)
+	defer stopResume()
+	if err := capture.ResumeGuestControl(resumeCtx); err != nil {
+		t.Fatal(err)
+	}
+	if err := capture.CompleteAbort(resumeCtx); err != nil {
+		t.Fatal(err)
+	}
+	if got := states(); len(got) != 2 || got[1] != "Resumed" {
+		t.Fatalf("states=%v", got)
 	}
 }

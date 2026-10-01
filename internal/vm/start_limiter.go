@@ -19,7 +19,7 @@ func NewStartLimiter(backend Backend, maximum int) (*StartLimiter, error) {
 	return &StartLimiter{backend: backend, permits: make(chan struct{}, maximum)}, nil
 }
 
-func (l *StartLimiter) withPermit(ctx context.Context, start func() (Machine, error)) (Machine, error) {
+func (l *StartLimiter) withPermit(ctx context.Context, start func() (CheckpointableMachine, error)) (CheckpointableMachine, error) {
 	select {
 	case l.permits <- struct{}{}:
 		defer func() { <-l.permits }()
@@ -29,12 +29,12 @@ func (l *StartLimiter) withPermit(ctx context.Context, start func() (Machine, er
 	return start()
 }
 
-func (l *StartLimiter) Restore(ctx context.Context, request RestoreRequest) (Machine, error) {
-	return l.withPermit(ctx, func() (Machine, error) { return l.backend.Restore(ctx, request) })
+func (l *StartLimiter) Restore(ctx context.Context, request RestoreRequest) (CheckpointableMachine, error) {
+	return l.withPermit(ctx, func() (CheckpointableMachine, error) { return l.backend.Restore(ctx, request) })
 }
 
-func (l *StartLimiter) Materialize(ctx context.Context, request MaterializeRequest) (Machine, error) {
-	return l.withPermit(ctx, func() (Machine, error) { return l.backend.Materialize(ctx, request) })
+func (l *StartLimiter) Materialize(ctx context.Context, request MaterializeRequest) (CheckpointableMachine, error) {
+	return l.withPermit(ctx, func() (CheckpointableMachine, error) { return l.backend.Materialize(ctx, request) })
 }
 
 func (l *StartLimiter) Cleanup(ctx context.Context, owner Owner) error {

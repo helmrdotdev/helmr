@@ -46,7 +46,7 @@ func checkpointUpload(t *testing.T, f runtest.Fixture) checkpointUploadCandidate
 }
 func abandonCheckpointUpload(t *testing.T, f runtest.Fixture, p checkpointUploadCandidate) {
 	t.Helper()
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_checkpoints SET status='invalid',invalidated_at=now(),invalidation_reason_code='checkpoint_failed' WHERE id=$1`, p.ID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_checkpoints SET status='invalid',invalidated_at=now(),invalidation_reason_code='capture_source_reclaimed' WHERE id=$1`, p.ID)
 }
 
 func TestCasRetirementPinsAndCrossOrganizationAdoption(t *testing.T) {

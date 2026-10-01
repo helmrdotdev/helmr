@@ -120,7 +120,7 @@ func testComputerMountArtifacts(t *testing.T) (*fakeCAS, workerapi.ComputerInsta
 	}
 }
 
-func computerPreparedMachines(t *testing.T, mount workerapi.ComputerInstanceAssignment, session liveCaptureMachine) *PreparedMachines {
+func computerPreparedMachines(t *testing.T, mount workerapi.ComputerInstanceAssignment, session vm.CheckpointableMachine) *PreparedMachines {
 	t.Helper()
 	target := runtimeReservationTarget(mount.ComputerInstanceID, mount.RuntimeEpoch)
 	target.Source.ComputerID = mount.ComputerID
@@ -1059,6 +1059,7 @@ func acknowledgePreparedComputerMount(t *testing.T, stream io.ReadWriteCloser, c
 }
 
 type serverTestSession struct {
+	unusedCheckpoint
 	mu        sync.Mutex
 	operation io.ReadWriteCloser
 	streams   []io.ReadWriteCloser
@@ -1560,7 +1561,7 @@ func TestCommandCompletionLeavesComputerServing(t *testing.T) {
 	client := &continuingCommandClient{serverTestClient: serverTestClient{computerCommand: &command}}
 	client.afterCompletion = func() { continued = true; cancel() }
 	m := Server{PollEvery: time.Millisecond}
-	renewal := m.startRenewalLoop(ctx, workerapi.ComputerInstanceRenewRequest{}, client, time.Hour)
+	renewal := m.startRenewalLoop(ctx, workerapi.ComputerInstanceRenewRequest{}, client, time.Hour, time.Now().Add(time.Hour))
 	err := m.serveComputerMount(ctx, renewal, managed, nil, mount, client, nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("serve exit=%v", err)

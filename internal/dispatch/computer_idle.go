@@ -24,6 +24,8 @@ func (d *Authority) captureIdleComputers(ctx context.Context, limit int32) (int,
  AND i.observed_state='ready' AND i.observed_desired_version=i.desired_version
  AND i.admission_state='open' AND i.reclaimed_at IS NULL AND i.writer_expires_at>clock_timestamp()
  AND i.capture_checkpoint_id IS NULL
+ AND NOT EXISTS(SELECT 1 FROM computer_checkpoints cp WHERE cp.computer_id=i.computer_id AND cp.source_computer_instance_id=i.id
+  AND cp.abort_acknowledged_at>clock_timestamp()-$4*interval '1 millisecond')
  AND (EXISTS(SELECT 1 FROM run_leases l WHERE l.computer_instance_id=i.id AND l.process_reconciled_at IS NULL)
   OR c.last_activity_at<=clock_timestamp()-$2*interval '1 millisecond')
  AND NOT EXISTS(SELECT 1 FROM run_leases l LEFT JOIN run_waits w ON w.current_run_lease_id=l.id AND w.suspension_status='hot'
@@ -33,7 +35,7 @@ func (d *Authority) captureIdleComputers(ctx context.Context, limit int32) (int,
  AND NOT EXISTS(SELECT 1 FROM computer_commands p WHERE p.computer_instance_id=i.id AND p.process_reconciled_at IS NULL)
  AND NOT EXISTS(SELECT 1 FROM runs r WHERE r.computer_id=i.computer_id AND r.status IN ('queued','retry_delayed'))
  AND NOT EXISTS(SELECT 1 FROM computer_commands p WHERE p.computer_id=i.computer_id AND p.status='pending')
- ORDER BY i.id LIMIT $1`, limit-int32(count), computer.IdleCaptureDelay.Milliseconds(), after)
+ ORDER BY i.id LIMIT $1`, limit-int32(count), computer.IdleCaptureDelay.Milliseconds(), after, computer.CaptureRetryDelay.Milliseconds())
 		if err != nil {
 			return count, errors.Join(append(failures, err)...)
 		}

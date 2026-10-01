@@ -221,7 +221,7 @@ func prepareCheckpointReady(ctx context.Context, tx pgx.Tx, ref CheckpointRef, m
 	if !bytes.Equal(raw, stored) {
 		return checkpointSource{}, nil, "", ErrCheckpointCandidate
 	}
-	fingerprint := sha256sum.DigestBytes(append([]byte(fmt.Sprintf("computer.checkpoint.ready\x00%s\x00%d\x00%d\x00", ref.InstanceID.String(), ref.WorkerEpoch, ref.DesiredVersion)), raw...))
+	fingerprint := checkpointReadyFingerprint(ref, raw)
 	if cp.Status == "ready" && cp.ReadyRequestFingerprint.String == fingerprint {
 		return source, raw, fingerprint, nil
 	}
@@ -229,4 +229,8 @@ func prepareCheckpointReady(ctx context.Context, tx pgx.Tx, ref CheckpointRef, m
 		return checkpointSource{}, nil, "", pgx.ErrNoRows
 	}
 	return source, raw, fingerprint, nil
+}
+
+func checkpointReadyFingerprint(ref CheckpointRef, raw []byte) string {
+	return sha256sum.DigestBytes(append([]byte(fmt.Sprintf("computer.checkpoint.ready\x00%s\x00%d\x00%d\x00", ref.InstanceID.String(), ref.WorkerEpoch, ref.DesiredVersion)), raw...))
 }

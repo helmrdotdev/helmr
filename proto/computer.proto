@@ -109,6 +109,28 @@ message FreezeComputerResponse {
   int64 membership_revision = 3;
 }
 
+// Installation replaces expired guest grants only for the same source capture.
+// Activation follows restoration of host-to-guest grant renewal and waits for
+// every captured member to thaw or finish its ordinary cancellation path.
+message ComputerCaptureAbortMember {
+  ComputerCaptureRun member = 1;
+  ComputerRunAuthority authority = 2;
+  bool cancelled = 3;
+}
+
+message ComputerCaptureAbortRequest {
+  FreezeComputerRequest capture = 1;
+  int64 abort_desired_version = 2;
+  repeated ComputerCaptureAbortMember members = 3;
+  bool activate = 4;
+}
+
+message ComputerCaptureAbortResponse {
+  string checkpoint_id = 1;
+  int64 abort_desired_version = 2;
+  bool activated = 3;
+}
+
 message VerifyComputerRestoreRequest {
   ComputerRestoreIdentity identity = 1;
 }

@@ -252,7 +252,7 @@ func InvokeChild(ctx context.Context, txb db.TxBeginner, invoke ChildInvoke) (Ch
 			admitted.Status != db.ComputerStatusActive ||
 			(admitted.DesiredState != db.ComputerDesiredStateActive &&
 				admitted.DesiredState != db.ComputerDesiredStateStopped) ||
-			admitted.DirtyState == db.ComputerDirtyStateCaptureFailed || admitted.DirtyState == db.ComputerDirtyStateDirtyStateLost ||
+			admitted.DirtyState == db.ComputerDirtyStateDirtyStateLost ||
 			!admitted.HeadDiskVersionID.Valid || len(admitted.PreparationFailure) > 0 || len(admitted.RecoveryFailure) > 0 {
 			return ErrTaskComputerUnavailable
 		}

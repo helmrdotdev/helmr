@@ -581,15 +581,6 @@ func TestWorkerRunWaitClient(t *testing.T) {
 				t.Fatalf("checkpoint manifest = %+v", request.Manifest)
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.ComputerCheckpointResponse{ComputerInstanceID: "instance-1", WorkerEpoch: 2, DesiredVersion: 42, CheckpointID: "checkpoint-1"})
-		case "/worker/v1/computer/checkpoints/failed":
-			var request workerapi.CheckpointFailedRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				t.Fatal(err)
-			}
-			if request.ComputerInstanceID != "instance-1" || request.WorkerEpoch != 2 || request.DesiredVersion != 43 || request.CheckpointID != "checkpoint-1" || request.Error != "snapshot failed" {
-				t.Fatalf("checkpoint failed request = %+v", request)
-			}
-			_ = json.NewEncoder(w).Encode(workerapi.ComputerCheckpointResponse{ComputerInstanceID: request.ComputerInstanceID, WorkerEpoch: request.WorkerEpoch, DesiredVersion: request.DesiredVersion, CheckpointID: request.CheckpointID})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -635,20 +626,7 @@ func TestWorkerRunWaitClient(t *testing.T) {
 	if ready.CheckpointID != "checkpoint-1" {
 		t.Fatalf("ready = %+v", ready)
 	}
-	failed, err := client.MarkCheckpointFailed(context.Background(), workerapi.CheckpointFailedRequest{
-		ComputerInstanceID: "instance-1",
-		WorkerEpoch:        2,
-		DesiredVersion:     43,
-		CheckpointID:       "checkpoint-1",
-		Error:              "snapshot failed",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if failed.CheckpointID != "checkpoint-1" || failed.ComputerInstanceID != "instance-1" || failed.WorkerEpoch != 2 || failed.DesiredVersion != 43 {
-		t.Fatalf("failed = %+v", failed)
-	}
-	if got := strings.Join(paths, ","); got != "/worker/v1/instance/token,/worker/v1/run/waits/create,/worker/v1/run/waits/poll,/worker/v1/run/waits/resume-ack,/worker/v1/computer/checkpoints/ready,/worker/v1/computer/checkpoints/failed" {
+	if got := strings.Join(paths, ","); got != "/worker/v1/instance/token,/worker/v1/run/waits/create,/worker/v1/run/waits/poll,/worker/v1/run/waits/resume-ack,/worker/v1/computer/checkpoints/ready" {
 		t.Fatalf("paths = %s", got)
 	}
 }

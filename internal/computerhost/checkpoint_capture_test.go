@@ -136,16 +136,16 @@ func TestCheckpointCapacityFailurePrecedesPauseAndWrites(t *testing.T) {
 	}
 }
 
-func TestCheckpointRegistrationFailureStopsBeforeUpload(t *testing.T) {
+func TestCheckpointRegistrationFailureRetainsSourceBeforeUpload(t *testing.T) {
 	c, request, session, store := newCaptureTest(t)
 	failure := errors.New("registration rejected")
 	request.Register = func(context.Context, workerapi.CheckpointManifest) error { return failure }
 	_, err := c.CreateCheckpoint(t.Context(), request)
-	if !errors.Is(err, failure) || session.closeCount != 1 || len(store.puts) != 0 {
+	if !errors.Is(err, failure) || session.closeCount != 0 || len(store.puts) != 0 {
 		t.Fatalf("err=%v closes=%d uploads=%d", err, session.closeCount, len(store.puts))
 	}
-	if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes != 0 {
-		t.Fatal("cleaned candidate retains reservation")
+	if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes == 0 || c.pendingCleanup == nil {
+		t.Fatal("failed candidate lost its retained staging owner")
 	}
 }
 
@@ -154,23 +154,31 @@ func TestCheckpointStopFailureRetainsChargeAndRawSnapshot(t *testing.T) {
 	session.closeErr = errors.New("VM exit unproved")
 	request.Register = func(context.Context, workerapi.CheckpointManifest) error { return errors.New("registration failed") }
 	_, err := c.CreateCheckpoint(t.Context(), request)
-	var cleanup *SourceReleaseError
-	if !errors.As(err, &cleanup) || session.closeCount != 1 {
-		t.Fatalf("err=%v closes=%d", err, session.closeCount)
+	if err == nil || session.closeCount != 0 {
+		t.Fatalf("capture closed source: %v", err)
+	}
+	if err = c.ReleaseCheckpointSource(t.Context()); !errors.Is(err, session.closeErr) || session.closeCount != 1 {
+		t.Fatalf("terminal close: %v count=%d", err, session.closeCount)
 	}
 	if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes == 0 {
 		t.Fatal("unproven cleanup released charge")
 	}
 	entries, _ := os.ReadDir(c.tempDir)
-	if len(entries) != 0 {
-		t.Fatal("joined ciphertext staging was not reclaimed")
+	if len(entries) == 0 {
+		t.Fatal("failed source release discarded retained staging")
 	}
+	session.closeErr = nil
+	t.Cleanup(func() {
+		if err := c.ReleaseCheckpointSource(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
 	if _, err := os.Stat(session.artifact.VMState.Path); err != nil {
 		t.Fatalf("unproven source raw state removed: %v", err)
 	}
 }
 
-func TestCheckpointCleanupFailureAfterUploadStopsSourceAndRetainsCharge(t *testing.T) {
+func TestCheckpointCleanupFailureAfterUploadRetainsSourceAndCharge(t *testing.T) {
 	c, request, session, store := newCaptureTest(t)
 	store.publish = func(d cas.Descriptor, f *os.File) error {
 		if len(store.puts) == 3 {
@@ -188,8 +196,7 @@ func TestCheckpointCleanupFailureAfterUploadStopsSourceAndRetainsCharge(t *testi
 		return nil
 	}
 	_, err := c.CreateCheckpoint(t.Context(), request)
-	var cleanup *SourceReleaseError
-	if !errors.As(err, &cleanup) || session.closeCount != 1 || len(store.puts) != 4 {
+	if err == nil || session.closeCount != 0 || len(store.puts) != 4 {
 		t.Fatalf("err=%v closes=%d uploads=%d", err, session.closeCount, len(store.puts))
 	}
 	if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes == 0 {
@@ -217,7 +224,7 @@ func TestCheckpointDuplicateCaptureDoesNotStopExistingOwner(t *testing.T) {
 	}
 }
 
-func TestCheckpointPermanentUploadFailureStopsSourceAndReclaimsStaging(t *testing.T) {
+func TestCheckpointPermanentUploadFailureRetainsSourceUntilSettlement(t *testing.T) {
 	for _, media := range []string{cas.CheckpointVMConfigMediaType, cas.CheckpointVMStateMediaType, cas.CheckpointScratchDiskMediaType, cas.CheckpointMemoryMediaType} {
 		t.Run(media, func(t *testing.T) {
 			c, request, session, store := newCaptureTest(t)
@@ -229,8 +236,20 @@ func TestCheckpointPermanentUploadFailureStopsSourceAndReclaimsStaging(t *testin
 				return nil
 			}
 			_, err := c.CreateCheckpoint(t.Context(), request)
-			if !errors.Is(err, failure) || session.closeCount != 1 || session.resumeCount != 0 {
+			if !errors.Is(err, failure) || session.closeCount != 0 || session.resumeCount != 0 {
 				t.Fatalf("err=%v closes=%d resumes=%d", err, session.closeCount, session.resumeCount)
+			}
+			if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes == 0 {
+				t.Fatal("failed capture released its staging before settlement")
+			}
+			if err := c.capture.ResumeGuestControl(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if err := c.capture.CompleteAbort(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if err := c.cleanupCheckpointStaging(); err != nil {
+				t.Fatal(err)
 			}
 			if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes != 0 {
 				t.Fatal("staging capacity leaked")

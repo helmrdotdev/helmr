@@ -132,7 +132,7 @@ WITH created_run AS (
        AND (sessions.status = 'open' OR sessions.committed_input_sequence < sessions.close_sequence)
        AND computers.status='active' AND computers.desired_state='active'
        AND computers.deleted_at IS NULL AND computers.recovery_failure IS NULL
-       AND computers.dirty_state NOT IN ('capture_failed','dirty_state_lost')
+       AND computers.dirty_state NOT IN ('dirty_state_lost')
        AND NOT EXISTS(SELECT 1 FROM run_leases l JOIN runs r ON r.id=l.run_id
          WHERE r.session_id=sessions.id AND l.process_reconciled_at IS NULL)
 	ON CONFLICT (session_id)

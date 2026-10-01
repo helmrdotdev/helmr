@@ -57,6 +57,12 @@ func handleConnection(ctx context.Context, conn io.ReadWriteCloser, logger *slog
 			return false, errors.New("program resume grant connection does not support deadlines")
 		}
 		return false, handleProgramResumeGrantConnection(programConn, start.bodyLen, computerRegistry, registry, time.Now)
+	case wire.StreamTypeComputerCaptureAbort:
+		programConn, ok := conn.(programConnection)
+		if !ok {
+			return false, errors.New("capture abort requires connection deadlines")
+		}
+		return false, handleComputerCaptureAbort(ctx, programConn, start.bodyLen, computerRegistry, registry)
 	case wire.StreamTypeComputerFreeze:
 		programConn, ok := conn.(programConnection)
 		if !ok {

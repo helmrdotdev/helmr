@@ -772,7 +772,7 @@ func (q *Queries) LockLiveRunLease(ctx context.Context, arg LockLiveRunLeasePara
 }
 
 const lockReadyComputerCheckpoint = `-- name: LockReadyComputerCheckpoint :one
-SELECT c.id, c.computer_id, c.base_computer_disk_version_id, c.private_computer_disk_version_id, c.vm_config_artifact_id, c.vm_state_artifact_id, c.memory_artifact_id, c.scratch_disk_artifact_id, c.status, c.manifest, c.phase_timings, c.ready_request_fingerprint, c.failed_request_fingerprint, c.expires_at, c.created_at, c.ready_at, c.invalidated_at, c.invalidation_reason_code, c.computer_payload_required, c.environment_id, c.source_computer_instance_id, c.writer_generation, c.membership_revision, c.program_deployment_id, c.resume_computer_instance_id, c.resume_committed_at, c.computer_spec_id FROM computer_checkpoints c JOIN computer_checkpoint_runs m ON m.checkpoint_id=c.id
+SELECT c.id, c.computer_id, c.base_computer_disk_version_id, c.private_computer_disk_version_id, c.vm_config_artifact_id, c.vm_state_artifact_id, c.memory_artifact_id, c.scratch_disk_artifact_id, c.status, c.manifest, c.phase_timings, c.ready_request_fingerprint, c.abort_desired_version, c.abort_acknowledged_at, c.expires_at, c.created_at, c.ready_at, c.invalidated_at, c.invalidation_reason_code, c.computer_payload_required, c.environment_id, c.source_computer_instance_id, c.writer_generation, c.membership_revision, c.program_deployment_id, c.resume_computer_instance_id, c.resume_committed_at, c.computer_spec_id FROM computer_checkpoints c JOIN computer_checkpoint_runs m ON m.checkpoint_id=c.id
 JOIN run_waits w ON w.id=m.run_wait_id AND w.suspend_checkpoint_id=c.id
 WHERE c.id=$1 AND c.computer_id=$2
  AND m.run_id=$3 AND m.attempt_number=$4 AND m.run_wait_id=$5
@@ -809,7 +809,8 @@ func (q *Queries) LockReadyComputerCheckpoint(ctx context.Context, arg LockReady
 		&i.Manifest,
 		&i.PhaseTimings,
 		&i.ReadyRequestFingerprint,
-		&i.FailedRequestFingerprint,
+		&i.AbortDesiredVersion,
+		&i.AbortAcknowledgedAt,
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.ReadyAt,

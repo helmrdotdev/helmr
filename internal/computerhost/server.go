@@ -101,7 +101,7 @@ func (m Server) Serve(ctx context.Context, mount workerapi.ComputerInstanceAssig
 	}
 	renewal := m.startRenewalLoop(ctx, workerapi.ComputerInstanceRenewRequest{
 		EnvironmentID: mount.EnvironmentID, ComputerInstanceID: mount.ComputerInstanceID, WriterGeneration: mount.WriterGeneration,
-	}, client, renewEvery)
+	}, client, renewEvery, mount.ExpiresAt)
 	defer renewal.stopAndWait()
 	startupCtx, cancelStartup := context.WithTimeout(renewal.ctx, m.startupTimeout())
 	defer cancelStartup()
@@ -732,7 +732,7 @@ func (r *computerMountRenewal) stopAndWait() error {
 	return r.err
 }
 
-func (m Server) startRenewalLoop(ctx context.Context, request workerapi.ComputerInstanceRenewRequest, client workerapi.ComputerServerControlPlaneClient, every time.Duration) *computerMountRenewal {
+func (m Server) startRenewalLoop(ctx context.Context, request workerapi.ComputerInstanceRenewRequest, client workerapi.ComputerServerControlPlaneClient, every time.Duration, expiresAt time.Time) *computerMountRenewal {
 	renewCtx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	updates := make(chan workerapi.ComputerInstanceRenewResponse, 1)
@@ -742,12 +742,46 @@ func (m Server) startRenewalLoop(ctx context.Context, request workerapi.Computer
 		defer func() { done <- err }()
 		ticker := time.NewTicker(every)
 		defer ticker.Stop()
+		var expiryTimer *time.Timer
+		var expired <-chan time.Time
+		resetExpiry := func() {
+			if expiryTimer != nil {
+				expiryTimer.Stop()
+			}
+			expired = nil
+			if !expiresAt.IsZero() {
+				expiryTimer = time.NewTimer(time.Until(expiresAt))
+				expired = expiryTimer.C
+			}
+		}
+		resetExpiry()
+		defer func() {
+			if expiryTimer != nil {
+				expiryTimer.Stop()
+			}
+		}()
 		for {
 			select {
 			case <-renewCtx.Done():
 				return
+			case <-expired:
+				err = errors.New("computer writer grant expired before renewal")
+				cancel()
+				return
 			case <-ticker.C:
-				response, renewErr := client.RenewComputerInstance(renewCtx, request)
+				callCtx, cancelCall := context.WithTimeout(renewCtx, every)
+				if !expiresAt.IsZero() {
+					deadlineCtx, cancelDeadline := context.WithDeadline(callCtx, expiresAt)
+					priorCancel := cancelCall
+					callCtx, cancelCall = deadlineCtx, func() { cancelDeadline(); priorCancel() }
+				}
+				response, renewErr := client.RenewComputerInstance(callCtx, request)
+				cancelCall()
+				// Unknown responses do not end an otherwise live writer. Retry
+				// only inside its last confirmed deadline; no local extension.
+				if renewErr != nil && !permanentControlRequestError(renewErr) && time.Now().Before(expiresAt) {
+					continue
+				}
 				if renewErr == nil {
 					renewErr = validateInstanceRenewal(request, response, time.Now())
 				}
@@ -758,10 +792,23 @@ func (m Server) startRenewalLoop(ctx context.Context, request workerapi.Computer
 				}
 				renewal.mu.Lock()
 				renewal.latest = response
+				expiresAt = response.WriterExpiresAt
 				renewal.mu.Unlock()
+				if response.DesiredState == "closed" {
+					expiresAt = time.Time{}
+				}
+				resetExpiry()
 				select {
 				case updates <- response:
 				default:
+					select {
+					case <-updates:
+					default:
+					}
+					select {
+					case updates <- response:
+					default:
+					}
 				}
 			}
 		}

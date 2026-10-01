@@ -615,6 +615,11 @@ def apply_services(cfg, directory, reset):
 
 
 def persistence_matches(value, action):
+    if action == 'wait-aborted':
+        return bool(value and value.get('attempt_number') == 1 and value.get('acknowledged')
+                    and not value.get('source_reclaimed') and value.get('source_state') != 'closed'
+                    and value.get('other_instances') == 0 and value.get('lease_on_source')
+                    and value.get('writer_generation') == value.get('captured_writer_generation'))
     if not value or value.get('attempt_number') != 1 or not value.get('checkpoint_id'):
         return False
     if value.get('prior_runtime_state') != 'closed' or value.get('prior_runtime_reclaimed') is not True:
@@ -628,7 +633,7 @@ def persistence_matches(value, action):
 def observe_persistence(cfg, run_id, action):
     if not run_id or str(uuid.UUID(run_id)) != run_id:
         raise ValueError('a canonical Run UUID is required')
-    query = Path(__file__).with_name('persistence.sql').read_text()
+    query = Path(__file__).with_name('capture_abort.sql' if action == 'wait-aborted' else 'persistence.sql').read_text()
     observed = None
     def check():
         nonlocal observed
@@ -672,7 +677,7 @@ def require_reset_runner():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['render', 'install', 'start', 'stop', 'inspect', 'apply-services', 'wait-parked', 'verify-restored'])
+    parser.add_argument('action', choices=['render', 'install', 'start', 'stop', 'inspect', 'apply-services', 'wait-parked', 'verify-restored', 'wait-aborted'])
     parser.add_argument('--config', type=Path, help='input JSON for render/install')
     parser.add_argument('--output', type=Path, help='new private directory for offline render')
     parser.add_argument('--candidate', type=Path, help='build_services.py output for apply-services')
@@ -723,7 +728,7 @@ def main():
             if args.candidate is None:
                 parser.error('--candidate is required')
             apply_services(cfg, args.candidate, args.reset_data)
-        elif args.action in ['wait-parked', 'verify-restored']:
+        elif args.action in ['wait-parked', 'verify-restored', 'wait-aborted']:
             observe_persistence(cfg, args.run_id, args.action)
         elif args.action == 'stop':
             stop(cfg)

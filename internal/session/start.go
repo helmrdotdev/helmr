@@ -207,7 +207,6 @@ func start(ctx context.Context, txb db.TxBeginner, claimRequest idempotency.Requ
 			authority.Status != db.ComputerStatusActive ||
 			(authority.DesiredState != db.ComputerDesiredStateActive &&
 				authority.DesiredState != db.ComputerDesiredStateStopped) ||
-			authority.DirtyState == db.ComputerDirtyStateCaptureFailed ||
 			authority.DirtyState == db.ComputerDirtyStateDirtyStateLost ||
 			!authority.HeadDiskVersionID.Valid {
 			return ErrStartComputerUnavailable

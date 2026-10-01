@@ -88,7 +88,7 @@ func ReconcileRun(ctx context.Context, txb db.TxBeginner, principal workergroup.
 
 // lockCleanupWriter locks group → host → Computer → Instance and requires the
 // principal to hold the Instance's current, unexpired writer of a mounted,
-// ready Instance whose admission is open or draining.
+// ready Instance, including during capture and acknowledged-source resumption.
 func lockCleanupWriter(ctx context.Context, tx pgx.Tx, principal workergroup.HostPrincipal, writer WriterRef) (db.ComputerInstance, error) {
 	if writer.WriterGeneration <= 0 {
 		return db.ComputerInstance{}, pgx.ErrNoRows
@@ -117,7 +117,7 @@ func lockCleanupWriter(ctx context.Context, tx pgx.Tx, principal workergroup.Hos
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
-	if i.WriterGeneration != writer.WriterGeneration || c.WriterGeneration != i.WriterGeneration || i.ReclaimedAt.Valid || i.DesiredState != "ready" || i.MountState != "mounted" || (i.AdmissionState != "open" && i.AdmissionState != "draining") || !i.WriterExpiresAt.Time.After(now.Time) {
+	if i.WriterGeneration != writer.WriterGeneration || c.WriterGeneration != i.WriterGeneration || i.ReclaimedAt.Valid || i.DesiredState != "ready" || i.MountState != "mounted" || (i.AdmissionState != "open" && i.AdmissionState != "draining" && i.AdmissionState != "checkpointing" && i.AdmissionState != "resuming_capture") || !i.WriterExpiresAt.Time.After(now.Time) {
 		return db.ComputerInstance{}, pgx.ErrNoRows
 	}
 	return i, nil

@@ -138,7 +138,18 @@ func (task *guestRunLeaseTask) programStream() io.ReadWriteCloser {
 
 // runHotWait lets bounded non-consuming operations proceed while the durable
 // wait is polled. Physical capture is owned by the Computer coordinator.
-func (task *guestRunLeaseTask) runHotWait(ctx context.Context, request WaitRequest, run func(context.Context, WaitRequest) error) (retErr error) {
+var errCaptureResumed = errors.New("capture aborted and source resumed")
+
+func (task *guestRunLeaseTask) runHotWait(ctx context.Context, request WaitRequest, run func(context.Context, WaitRequest) error) error {
+	for {
+		err := task.runHotWaitOnce(ctx, request, run)
+		if !errors.Is(err, errCaptureResumed) {
+			return err
+		}
+	}
+}
+
+func (task *guestRunLeaseTask) runHotWaitOnce(ctx context.Context, request WaitRequest, run func(context.Context, WaitRequest) error) (retErr error) {
 	if task.program.protocol == nil {
 		return run(ctx, request)
 	}
@@ -150,7 +161,7 @@ func (task *guestRunLeaseTask) runHotWait(ctx context.Context, request WaitReque
 		task.mu.Lock()
 		lease := task.lease
 		task.mu.Unlock()
-		captureWait, err := task.captures.Register(lease, request.RunWaitID)
+		captureWait, err := task.captures.Register(lease, request.RunWaitID, task.resumeCapturedMember)
 		if err != nil {
 			return err
 		}
@@ -189,6 +200,9 @@ func (task *guestRunLeaseTask) runHotWait(ctx context.Context, request WaitReque
 				stopAbort()
 				if result != nil {
 					return result
+				}
+				if pause.Resumed() {
+					return errCaptureResumed
 				}
 				return ErrDetached
 			}

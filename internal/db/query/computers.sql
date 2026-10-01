@@ -106,17 +106,17 @@ SELECT computers.id,
        computers.status,
        computers.preparation_failure,
        CASE
-         WHEN computers.status='recovery_required' OR computers.recovery_failure IS NOT NULL OR computers.preparation_failure IS NOT NULL OR computers.dirty_state IN ('dirty_state_lost','capture_failed') THEN 'unavailable'
+         WHEN computers.status='recovery_required' OR computers.recovery_failure IS NOT NULL OR computers.preparation_failure IS NOT NULL OR computers.dirty_state IN ('dirty_state_lost') THEN 'unavailable'
          WHEN residency_instance.observed_state='lost' THEN 'unavailable'
          WHEN residency_instance.admission_state='restoring' THEN 'restoring'
-         WHEN residency_instance.desired_state='closed' OR residency_instance.admission_state IN ('draining','checkpointing','closed') THEN 'parking'
+         WHEN residency_instance.desired_state='closed' OR residency_instance.admission_state IN ('draining','checkpointing','resuming_capture','closed') THEN 'parking'
          WHEN residency_instance.observed_state='ready' AND residency_instance.admission_state='open' THEN 'running'
          WHEN residency_instance.id IS NOT NULL THEN 'starting'
          WHEN EXISTS(SELECT 1 FROM computer_checkpoints cp WHERE cp.computer_id=computers.id AND cp.status='ready' AND cp.resume_committed_at IS NULL) THEN 'parked'
          ELSE 'cold'
        END::text AS residency,
        COALESCE(computers.preparation_failure,computers.recovery_failure,
-         CASE WHEN computers.status='recovery_required' OR computers.dirty_state IN ('dirty_state_lost','capture_failed') OR residency_instance.observed_state='lost'
+         CASE WHEN computers.status='recovery_required' OR computers.dirty_state IN ('dirty_state_lost') OR residency_instance.observed_state='lost'
          THEN '{"code":"computer_recovery_required","message":"Computer execution state is unavailable"}'::jsonb END) AS residency_error,
 
        computers.desired_state,
@@ -141,17 +141,17 @@ SELECT computers.id,
        computers.status,
        computers.preparation_failure,
        CASE
-         WHEN computers.status='recovery_required' OR computers.recovery_failure IS NOT NULL OR computers.preparation_failure IS NOT NULL OR computers.dirty_state IN ('dirty_state_lost','capture_failed') THEN 'unavailable'
+         WHEN computers.status='recovery_required' OR computers.recovery_failure IS NOT NULL OR computers.preparation_failure IS NOT NULL OR computers.dirty_state IN ('dirty_state_lost') THEN 'unavailable'
          WHEN residency_instance.observed_state='lost' THEN 'unavailable'
          WHEN residency_instance.admission_state='restoring' THEN 'restoring'
-         WHEN residency_instance.desired_state='closed' OR residency_instance.admission_state IN ('draining','checkpointing','closed') THEN 'parking'
+         WHEN residency_instance.desired_state='closed' OR residency_instance.admission_state IN ('draining','checkpointing','resuming_capture','closed') THEN 'parking'
          WHEN residency_instance.observed_state='ready' AND residency_instance.admission_state='open' THEN 'running'
          WHEN residency_instance.id IS NOT NULL THEN 'starting'
          WHEN EXISTS(SELECT 1 FROM computer_checkpoints cp WHERE cp.computer_id=computers.id AND cp.status='ready' AND cp.resume_committed_at IS NULL) THEN 'parked'
          ELSE 'cold'
        END::text AS residency,
        COALESCE(computers.preparation_failure,computers.recovery_failure,
-         CASE WHEN computers.status='recovery_required' OR computers.dirty_state IN ('dirty_state_lost','capture_failed') OR residency_instance.observed_state='lost'
+         CASE WHEN computers.status='recovery_required' OR computers.dirty_state IN ('dirty_state_lost') OR residency_instance.observed_state='lost'
          THEN '{"code":"computer_recovery_required","message":"Computer execution state is unavailable"}'::jsonb END) AS residency_error,
 
        computers.last_activity_at,
@@ -174,17 +174,17 @@ SELECT computers.id,
        computers.status,
        computers.preparation_failure,
        CASE
-         WHEN computers.status='recovery_required' OR computers.recovery_failure IS NOT NULL OR computers.preparation_failure IS NOT NULL OR computers.dirty_state IN ('dirty_state_lost','capture_failed') THEN 'unavailable'
+         WHEN computers.status='recovery_required' OR computers.recovery_failure IS NOT NULL OR computers.preparation_failure IS NOT NULL OR computers.dirty_state IN ('dirty_state_lost') THEN 'unavailable'
          WHEN residency_instance.observed_state='lost' THEN 'unavailable'
          WHEN residency_instance.admission_state='restoring' THEN 'restoring'
-         WHEN residency_instance.desired_state='closed' OR residency_instance.admission_state IN ('draining','checkpointing','closed') THEN 'parking'
+         WHEN residency_instance.desired_state='closed' OR residency_instance.admission_state IN ('draining','checkpointing','resuming_capture','closed') THEN 'parking'
          WHEN residency_instance.observed_state='ready' AND residency_instance.admission_state='open' THEN 'running'
          WHEN residency_instance.id IS NOT NULL THEN 'starting'
          WHEN EXISTS(SELECT 1 FROM computer_checkpoints cp WHERE cp.computer_id=computers.id AND cp.status='ready' AND cp.resume_committed_at IS NULL) THEN 'parked'
          ELSE 'cold'
        END::text AS residency,
        COALESCE(computers.preparation_failure,computers.recovery_failure,
-         CASE WHEN computers.status='recovery_required' OR computers.dirty_state IN ('dirty_state_lost','capture_failed') OR residency_instance.observed_state='lost'
+         CASE WHEN computers.status='recovery_required' OR computers.dirty_state IN ('dirty_state_lost') OR residency_instance.observed_state='lost'
          THEN '{"code":"computer_recovery_required","message":"Computer execution state is unavailable"}'::jsonb END) AS residency_error,
 
        computers.last_activity_at,
@@ -235,7 +235,7 @@ UPDATE computers SET desired_state='active',revision=revision+1,
  last_activity_at=clock_timestamp(),updated_at=clock_timestamp()
 WHERE computers.environment_id=sqlc.arg(environment_id) AND computers.id=sqlc.arg(id)
  AND revision=sqlc.arg(expected_revision) AND status='active' AND deleted_at IS NULL
- AND dirty_state NOT IN ('capture_failed','dirty_state_lost')
+ AND dirty_state NOT IN ('dirty_state_lost')
  AND preparation_failure IS NULL AND recovery_failure IS NULL
 RETURNING *;
 

@@ -16,7 +16,7 @@ func captureRegistryWait(t *testing.T, registry *CaptureRuns, target workerapi.R
 	lease.ID, lease.RunID, lease.AttemptNumber = member.RunLeaseID, member.RunID, member.AttemptNumber
 	lease.ComputerInstanceID, lease.WorkerEpoch = target.ID, target.WorkerEpoch
 	lease.ComputerID, lease.WriterGeneration = target.Source.ComputerID, target.Source.WriterGeneration
-	entry, err := registry.Register(lease, member.RunWaitID)
+	entry, err := registry.Register(lease, member.RunWaitID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestComputerCaptureFailureExcludesSourceBeforeReleasingMembers(t *testing.T
 			if pause.result == nil {
 				t.Fatal("failed capture reported member success")
 			}
-			if _, err := registry.Register(entry.lease, "new-wait"); err == nil {
+			if _, err := registry.Register(entry.lease, "new-wait", nil); err == nil {
 				t.Fatal("failed source reopened admission")
 			}
 		})

@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer/computertest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -21,7 +22,7 @@ import (
 const (
 	checkpointRegisterPath = "/worker/v1/computer/checkpoints/register"
 	checkpointReadyPath    = "/worker/v1/computer/checkpoints/ready"
-	checkpointFailedPath   = "/worker/v1/computer/checkpoints/failed"
+	checkpointAbortPath    = "/worker/v1/computer/checkpoints/abort"
 )
 
 // computerCheckpointFixture serves a registered capture's worker host
@@ -38,7 +39,16 @@ func checkpointRegistrationFixture(t *testing.T) (*computerCheckpointFixture, wo
 	base, ref, manifest := computertest.RegisteredCapture(t, false)
 	dbtest.MustExec(t, t.Context(), base.Pool, `UPDATE runs SET active_started_at=clock_timestamp(),max_active_duration_ms=3600000 WHERE current_run_lease_id IN (SELECT id FROM run_leases WHERE computer_instance_id=$1)`, ref.InstanceID)
 	store := newTestUploadStore(t)
-	handler := newPostgresServer(t, base.Pool, func(cfg *ServerConfig) { cfg.CAS = store })
+	key, err := disk.NewFencingKey(make([]byte, disk.FencingKeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := computer.WriterTokenHash(key, ref.InstanceID, uuid.MustParse(manifest.RecoveryPoint.ComputerID), manifest.RecoveryPoint.WriterGeneration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), base.Pool, `UPDATE computer_instances SET writer_token_hash=$2 WHERE id=$1`, ref.InstanceID, hash)
+	handler := newPostgresServer(t, base.Pool, func(cfg *ServerConfig) { cfg.CAS = store; cfg.ComputerFencingKey = key })
 	return &computerCheckpointFixture{Fixture: base, queries: db.New(base.Pool), store: store, worker: newWorkerHTTPClient(t, handler, base.Pool, base.WorkerID)},
 		workerRegisterCheckpointRequest(t, ref, manifest)
 }
@@ -83,8 +93,8 @@ func TestCheckpointRegistrationPinsCompleteCandidateUntilInvalidation(t *testing
 	changed := req
 	changed.Manifest.RuntimeState.Config = json.RawMessage(`{"different":true}`)
 	f.worker.post(t, checkpointRegisterPath, changed, http.StatusConflict, nil)
-	// Use the actual failed receipt path, not a test-only unpin operation.
-	f.worker.post(t, checkpointFailedPath, workerapi.CheckpointFailedRequest{ComputerInstanceID: req.ComputerInstanceID, WorkerEpoch: req.WorkerEpoch, DesiredVersion: req.DesiredVersion, CheckpointID: req.CheckpointID, Error: "upload failed"}, http.StatusOK, nil)
+	// The abort receipt releases unpublished objects while retaining the source.
+	f.worker.post(t, checkpointAbortPath, workerapi.CaptureAbortRequest{ComputerInstanceID: req.ComputerInstanceID, WorkerEpoch: req.WorkerEpoch, DesiredVersion: req.DesiredVersion, CheckpointID: req.CheckpointID}, http.StatusOK, nil)
 	collectible, err := f.queries.ListAbandonedCasBlobs(t.Context(), 100)
 	if err != nil || len(collectible) != 4 {
 		t.Fatalf("collector cannot discover failed set: %v %v", collectible, err)

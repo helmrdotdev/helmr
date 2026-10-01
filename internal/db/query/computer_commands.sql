@@ -171,7 +171,7 @@ LEFT JOIN LATERAL (
 ) source ON true
 WHERE c.region_id=sqlc.arg(region_id) AND c.status='active' AND c.desired_state='active'
  AND c.deleted_at IS NULL AND c.recovery_failure IS NULL AND c.preparation_failure IS NULL
- AND c.dirty_state NOT IN ('capture_failed','dirty_state_lost')
+ AND c.dirty_state NOT IN ('dirty_state_lost')
  AND EXISTS(SELECT 1 FROM computer_commands cmd WHERE cmd.computer_id=c.id
    AND cmd.status='pending' AND cmd.computer_instance_id IS NULL)
 ORDER BY c.created_at,c.id LIMIT sqlc.arg(row_limit);

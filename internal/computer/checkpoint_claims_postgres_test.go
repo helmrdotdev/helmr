@@ -45,12 +45,12 @@ func TestCheckpointLifecycleFencesEpochAndStatusNotClaims(t *testing.T) {
 			_, err := completeCheckpoint(t, f, ref, manifest, objects)
 			requireLifecycleFence(t, transition.name, transition.rejected, err)
 		})
-		t.Run(transition.name+"/failed", func(t *testing.T) {
-			f, ref, _ := computertest.RegisteredCapture(t, false)
+		t.Run(transition.name+"/abort", func(t *testing.T) {
+			f, ref, _, key := captureAbortFixture(t, false)
 			if err := transition.apply(t.Context(), f); err != nil {
 				t.Fatal(err)
 			}
-			_, err := computer.FailCheckpoint(t.Context(), f.Pool, ref, checkpointFailure)
+			_, err := computer.AbortCapture(t.Context(), f.Pool, key, ref)
 			requireLifecycleFence(t, transition.name, transition.rejected, err)
 		})
 	}

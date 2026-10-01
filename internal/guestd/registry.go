@@ -35,6 +35,9 @@ type waitingRunSlot struct {
 	checkpointRequestVersion int64
 	correlationID            string
 	retired                  chan struct{}
+	abortResume              chan struct{}
+	abortDone                chan struct{}
+	abortErr                 error
 	attached                 chan waitingRunAttachment
 	accepted                 *programv0.ResumeAttach
 	appliedDecision          *programv0.ResumeDecision
@@ -73,6 +76,8 @@ func (r *waitingRunRegistry) registerProgram(request *programv0.CheckpointPauseR
 		correlationID:            request.GetCorrelationId(),
 		attached:                 make(chan waitingRunAttachment, 1),
 		retired:                  make(chan struct{}),
+		abortResume:              make(chan struct{}),
+		abortDone:                make(chan struct{}),
 	}
 	r.retireAppliedWait(request)
 	r.mu.Lock()
@@ -217,6 +222,8 @@ func (r waitingRunRegistration) waitStream(ctx context.Context, stopped <-chan s
 		return nil, nil, errors.New("program resume receipt retired")
 	case <-stopped:
 		return nil, nil, errors.New("program stream stopped")
+	case <-r.slot.abortResume:
+		return nil, nil, errCaptureAborted
 	}
 }
 

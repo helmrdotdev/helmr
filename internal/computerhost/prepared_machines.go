@@ -107,7 +107,7 @@ type PreparedMachines struct {
 }
 
 type preparedMachineEntry struct {
-	session            liveCaptureMachine
+	session            vm.CheckpointableMachine
 	machineKey         string
 	computerInstanceID string
 	runtimeEpoch       int64
@@ -150,6 +150,7 @@ type machineClaim struct {
 	// checkpointer is retained from the start of physical capture until source
 	// exclusion and checkpoint staging cleanup have succeeded.
 	checkpointer *computerCheckpointer
+	ownerExited  bool
 	// teardown marks a Server claim whose holder has committed to closing the
 	// machine, releasing the claim and reporting the Instance itself. Capture
 	// may not take it over.
@@ -468,6 +469,9 @@ func (p *PreparedMachines) reconcileRuntimeTarget(
 	admitted func(),
 ) error {
 	switch {
+	case target.Action == workerapi.RuntimeReconcileAbortCapture:
+		admitted()
+		return p.reconcileCaptureAbortTarget(ctx, client, target)
 	case target.Action == workerapi.RuntimeReconcileCapture:
 		admitted()
 		return p.captureRuntimeTarget(ctx, client, target)
@@ -895,7 +899,7 @@ func (p *PreparedMachines) prepareAndStore(
 	}()
 	started := time.Now()
 	materializeAttempted = true
-	var session vm.Machine
+	var session vm.CheckpointableMachine
 	var materializeErr error
 	phases := &runtimePhaseCollector{}
 	phaseLogMessage := "prepared machine phase"
@@ -935,10 +939,7 @@ func (p *PreparedMachines) prepareAndStore(
 			}
 		}
 	}()
-	live, ok := session.(liveCaptureMachine)
-	if !ok {
-		return failInstance(errors.New("runtime cannot capture a live Computer"))
-	}
+
 	if target.Source.Restore == nil {
 		if err := p.prepareGuestRuntime(ctx, session, key, target.Source.WriterGeneration, mount, "", mountedImageConfig); err != nil {
 			p.logInfo("prepared machines guest prepare failed", "computer_instance_id", computerInstanceID, "error", err.Error())
@@ -946,7 +947,7 @@ func (p *PreparedMachines) prepareAndStore(
 		}
 	}
 	entry := preparedMachineEntry{
-		session:            live,
+		session:            session,
 		machineKey:         key,
 		computerInstanceID: computerInstanceID,
 		runtimeEpoch:       runtimeEpoch,
@@ -1347,6 +1348,10 @@ func (c *machineCheckout) beginTeardown() bool {
 	defer p.mu.Unlock()
 	claim := p.claims[c.ref]
 	if claim == nil || claim.gen != c.gen || claim.release != nil {
+		return false
+	}
+	if claim.checkpointer != nil {
+		claim.ownerExited = true
 		return false
 	}
 	claim.teardown = true
@@ -1780,7 +1785,7 @@ func (p *PreparedMachines) releaseRuntimeAfterPhysicalCleanup(ctx context.Contex
 		p.mu.Unlock()
 		var err error
 		if capture != nil {
-			err = capture.cleanupAfterSourceStopped()
+			err = capture.cleanupCheckpointStaging()
 		}
 		if err == nil {
 			err = p.releaseRuntimeCapacity(ref.id, ref.epoch)

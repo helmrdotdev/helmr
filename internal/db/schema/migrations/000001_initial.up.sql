@@ -650,7 +650,7 @@ CREATE TABLE computers (
         CHECK (desired_state IN ('active', 'stopped', 'deleted')),
     CONSTRAINT computers_recovery_state_check CHECK (status <> 'recovery_required' OR recovery_id IS NOT NULL),
     dirty_state TEXT NOT NULL DEFAULT 'clean'
-        CHECK (dirty_state IN ('clean', 'dirty', 'capturing', 'capture_failed', 'dirty_state_lost')),
+        CHECK (dirty_state IN ('clean', 'dirty', 'capturing', 'dirty_state_lost')),
     last_activity_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1584,11 +1584,13 @@ CREATE TABLE computer_checkpoints (
     memory_artifact_id UUID,
     scratch_disk_artifact_id UUID,
     status TEXT NOT NULL DEFAULT 'creating'
-        CHECK (status IN ('creating', 'ready', 'invalid', 'deleted')),
+        CHECK (status IN ('creating', 'ready', 'aborted', 'invalid', 'deleted')),
     manifest JSONB CHECK (manifest IS NULL OR jsonb_typeof(manifest) = 'object'),
     phase_timings JSONB CHECK (phase_timings IS NULL OR jsonb_typeof(phase_timings) = 'array'),
     ready_request_fingerprint TEXT,
-    failed_request_fingerprint TEXT,
+    abort_desired_version BIGINT CHECK (abort_desired_version > 1),
+    abort_acknowledged_at TIMESTAMPTZ,
+    CHECK (abort_acknowledged_at IS NULL OR abort_desired_version IS NOT NULL),
     expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     ready_at TIMESTAMPTZ,
@@ -1598,12 +1600,10 @@ CREATE TABLE computer_checkpoints (
     UNIQUE (id, computer_id),
     UNIQUE (id, status),
     CHECK (ready_request_fingerprint IS NULL OR ready_request_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
-    CHECK (failed_request_fingerprint IS NULL OR failed_request_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
     CONSTRAINT computer_checkpoints_readiness_shape_check CHECK (
         (status = 'creating'
          AND private_computer_disk_version_id IS NULL
          AND ready_request_fingerprint IS NULL
-         AND failed_request_fingerprint IS NULL
          AND ready_at IS NULL
          AND invalidated_at IS NULL
          AND invalidation_reason_code IS NULL)
@@ -1611,21 +1611,23 @@ CREATE TABLE computer_checkpoints (
         (status = 'ready'
          AND private_computer_disk_version_id IS NOT NULL
          AND ready_request_fingerprint IS NOT NULL
-         AND failed_request_fingerprint IS NULL
          AND ready_at IS NOT NULL
          AND manifest IS NOT NULL
          AND manifest <> '{}'::jsonb
          AND invalidated_at IS NULL
          AND invalidation_reason_code IS NULL)
         OR
+        (status = 'aborted'
+         AND abort_desired_version IS NOT NULL
+         AND private_computer_disk_version_id IS NULL
+         AND ready_request_fingerprint IS NULL
+         AND invalidated_at IS NOT NULL
+         AND invalidation_reason_code = 'capture_aborted')
+        OR
         (status IN ('invalid', 'deleted')
          AND invalidated_at IS NOT NULL
          AND invalidation_reason_code IS NOT NULL
          AND btrim(invalidation_reason_code) <> '')
-    ),
-    CONSTRAINT computer_checkpoints_failure_fingerprint_status_check CHECK (
-        failed_request_fingerprint IS NULL
-        OR (status = 'invalid' AND invalidation_reason_code = 'checkpoint_failed')
     ),
     CONSTRAINT computer_checkpoints_artifact_shape_check CHECK (
         (
@@ -1914,7 +1916,7 @@ CREATE TABLE computer_instances (
     writer_generation BIGINT NOT NULL CHECK (writer_generation > 0),
     writer_token_hash BYTEA NOT NULL CHECK (octet_length(writer_token_hash)=32),
     writer_expires_at TIMESTAMPTZ NOT NULL,
-    admission_state TEXT NOT NULL DEFAULT 'open' CHECK (admission_state IN ('open','draining','checkpointing','restoring','closed')),
+    admission_state TEXT NOT NULL DEFAULT 'open' CHECK (admission_state IN ('open','draining','checkpointing','resuming_capture','restoring','closed')),
     membership_revision BIGINT NOT NULL DEFAULT 0 CHECK (membership_revision >= 0),
     mount_state TEXT NOT NULL DEFAULT 'pending' CHECK (mount_state IN ('pending','mounting','mounted','unmounting','unmounted','lost','failed')),
     mounted_at TIMESTAMPTZ,
@@ -1938,7 +1940,7 @@ CREATE TABLE computer_instances (
     UNIQUE (source_checkpoint_id,id),
     spec_retention_required BOOLEAN GENERATED ALWAYS AS (CASE WHEN reclaimed_at IS NULL THEN true END) STORED,
     UNIQUE (environment_id,computer_id,id,computer_spec_id),
-    CHECK (capture_checkpoint_id IS NULL OR admission_state IN ('checkpointing','closed')),
+    CHECK (capture_checkpoint_id IS NULL OR admission_state IN ('checkpointing','resuming_capture','closed')),
     CHECK (admission_state<>'restoring' OR source_checkpoint_id IS NOT NULL)
 );
 

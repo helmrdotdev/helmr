@@ -28,6 +28,7 @@ const (
 	StreamTypeProgramResumeGrant      StreamType = "program-resume-grant"
 	StreamTypeComputerRestoreVerify   StreamType = "computer-restore-verify"
 	StreamTypeComputerFreeze          StreamType = "computer-freeze"
+	StreamTypeComputerCaptureAbort    StreamType = "computer-capture-abort"
 	StreamTypeComputerRestoreInstall  StreamType = "computer-restore-install"
 	StreamTypeComputerRestoreActivate StreamType = "computer-restore-activate"
 )

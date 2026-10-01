@@ -199,7 +199,8 @@ POST /v1/tasks/{taskDeclaredID}/start
 POST /v1/tokens
 POST /v1/tokens/{tokenID}/cancel
 POST /v1/tokens/{tokenID}/complete
-POST /worker/v1/computer/checkpoints/failed
+POST /worker/v1/computer/checkpoints/abort
+POST /worker/v1/computer/checkpoints/abort/complete
 POST /worker/v1/computer/checkpoints/objects/certify
 POST /worker/v1/computer/checkpoints/objects/register
 POST /worker/v1/computer/checkpoints/objects/reuse

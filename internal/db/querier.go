@@ -227,7 +227,6 @@ type Querier interface {
 	GetAuthSessionByTokenHash(ctx context.Context, tokenHash []byte) (GetAuthSessionByTokenHashRow, error)
 	GetCapacityWorkerHost(ctx context.Context, workerHostID pgtype.UUID) (GetCapacityWorkerHostRow, error)
 	GetCasObject(ctx context.Context, arg GetCasObjectParams) (CasObject, error)
-	GetCheckpointFailedReplay(ctx context.Context, arg GetCheckpointFailedReplayParams) (ComputerCheckpoint, error)
 	GetCheckpointReadyReplay(ctx context.Context, arg GetCheckpointReadyReplayParams) (ComputerCheckpoint, error)
 	GetChildCallAttemptWait(ctx context.Context, arg GetChildCallAttemptWaitParams) (RunWait, error)
 	GetChildCallRunWaitReplay(ctx context.Context, arg GetChildCallRunWaitReplayParams) (RunWait, error)
@@ -248,6 +247,8 @@ type Querier interface {
 	GetComputerDiskVersionRoot(ctx context.Context, arg GetComputerDiskVersionRootParams) ([]byte, error)
 	GetComputerInstance(ctx context.Context, arg GetComputerInstanceParams) (ComputerInstance, error)
 	GetComputerInstanceAssignmentSource(ctx context.Context, id pgtype.UUID) (GetComputerInstanceAssignmentSourceRow, error)
+	// Discovery retains the sealed membership while the same source acknowledges abort.
+	GetComputerInstanceCaptureAbort(ctx context.Context, arg GetComputerInstanceCaptureAbortParams) (ComputerCheckpoint, error)
 	// Capture discovery identifies a sealed physical operation, never one member's
 	// wait. Condition outcomes may change while this barrier remains closed.
 	GetComputerInstanceCaptureCheckpoint(ctx context.Context, arg GetComputerInstanceCaptureCheckpointParams) (ComputerCheckpoint, error)
@@ -381,8 +382,9 @@ type Querier interface {
 	// The preparation failure owner invalidates its source checkpoint in the same
 	// transaction as exhaustion, before logical members are settled separately.
 	InvalidateExhaustedComputerCheckpoint(ctx context.Context, arg InvalidateExhaustedComputerCheckpointParams) error
-	// Failure cannot reopen admission until the host proves thaw or physical reclaim.
-	InvalidateFailedComputerCheckpoint(ctx context.Context, arg InvalidateFailedComputerCheckpointParams) (ComputerCheckpoint, error)
+	// Actual source exclusion ends unfinished publication; it does not change a
+	// ready or aborted decision. The latter already permits abandoned-object GC.
+	InvalidateReclaimedComputerCaptures(ctx context.Context, instanceID pgtype.UUID) error
 	IsComputerInstanceSaveAdopted(ctx context.Context, arg IsComputerInstanceSaveAdoptedParams) (pgtype.Bool, error)
 	// Stable absence is distinct from a committed save's historical receipt.
 	IsComputerSaveAbandoned(ctx context.Context, arg IsComputerSaveAbandonedParams) (pgtype.Bool, error)

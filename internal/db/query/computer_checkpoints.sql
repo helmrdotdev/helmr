@@ -65,10 +65,6 @@ SELECT * FROM computer_checkpoint_runs WHERE environment_id=sqlc.arg(environment
 SELECT * FROM computer_checkpoints WHERE environment_id=sqlc.arg(environment_id)
  AND id=sqlc.arg(checkpoint_id) AND status='ready' AND ready_request_fingerprint IS NOT NULL;
 
--- name: GetCheckpointFailedReplay :one
-SELECT * FROM computer_checkpoints WHERE environment_id=sqlc.arg(environment_id)
- AND id=sqlc.arg(checkpoint_id) AND status='invalid'
- AND invalidation_reason_code='checkpoint_failed' AND failed_request_fingerprint IS NOT NULL;
 
 -- name: GetVMPlatformForCheckpoint :one
 SELECT * FROM vm_platforms WHERE id=sqlc.arg(id);
@@ -102,12 +98,6 @@ WHERE checkpoint.id=sqlc.arg(checkpoint_id) AND checkpoint.environment_id=sqlc.a
  AND instance.writer_expires_at>clock_timestamp()
 RETURNING checkpoint.*;
 
--- Failure cannot reopen admission until the host proves thaw or physical reclaim.
--- name: InvalidateFailedComputerCheckpoint :one
-UPDATE computer_checkpoints SET status='invalid',invalidated_at=clock_timestamp(),
- invalidation_reason_code='checkpoint_failed',failed_request_fingerprint=sqlc.arg(failed_request_fingerprint)
-WHERE id=sqlc.arg(checkpoint_id) AND environment_id=sqlc.arg(environment_id) AND status='creating'
-RETURNING *;
 
 -- name: GetReadyComputerCheckpoint :one
 SELECT checkpoint.* FROM computer_checkpoint_runs member JOIN computer_checkpoints checkpoint ON checkpoint.id=member.checkpoint_id
@@ -219,3 +209,36 @@ WHERE instance.id=sqlc.arg(computer_instance_id) AND instance.environment_id=sql
 SELECT COALESCE(observed_at>=clock_timestamp()-sqlc.arg(worker_freshness_seconds)::bigint*interval '1 second'
  AND (sqlc.narg(expires_at)::timestamptz IS NULL OR sqlc.narg(expires_at)>clock_timestamp()),false)::boolean AS fresh
  FROM worker_hosts WHERE id=sqlc.arg(id);
+
+
+-- Discovery retains the sealed membership while the same source acknowledges abort.
+-- name: GetComputerInstanceCaptureAbort :one
+SELECT checkpoint.* FROM computer_instances instance
+JOIN computers computer ON computer.id=instance.computer_id AND computer.environment_id=instance.environment_id
+JOIN computer_checkpoints checkpoint ON checkpoint.id=instance.capture_checkpoint_id
+ AND checkpoint.environment_id=instance.environment_id AND checkpoint.computer_id=instance.computer_id
+ AND checkpoint.source_computer_instance_id=instance.id AND checkpoint.writer_generation=instance.writer_generation
+ AND checkpoint.membership_revision=instance.membership_revision AND checkpoint.computer_spec_id=instance.computer_spec_id
+ AND checkpoint.program_deployment_id IS NOT DISTINCT FROM instance.program_deployment_id
+JOIN worker_hosts worker ON worker.id=instance.worker_host_id AND worker.worker_group_id=instance.worker_group_id
+ AND worker.current_epoch=instance.worker_epoch AND worker.vm_platform_id=instance.vm_platform_id
+JOIN worker_groups worker_group ON worker_group.id=instance.worker_group_id
+WHERE instance.id=sqlc.arg(computer_instance_id) AND instance.environment_id=sqlc.arg(environment_id)
+ AND instance.worker_group_id=sqlc.arg(worker_group_id) AND instance.worker_host_id=sqlc.arg(worker_host_id)
+ AND instance.worker_epoch=sqlc.arg(worker_epoch) AND instance.desired_version=sqlc.arg(desired_version)
+ AND instance.admission_state='resuming_capture' AND instance.desired_state='ready'
+ AND instance.observed_state='ready' AND instance.mount_state='mounted' AND instance.reclaimed_at IS NULL
+ AND instance.writer_generation=computer.writer_generation AND instance.writer_expires_at>clock_timestamp()
+ AND computer.status='active' AND computer.desired_state='active'
+ AND checkpoint.status='aborted' AND checkpoint.abort_desired_version=instance.desired_version AND checkpoint.abort_acknowledged_at IS NULL
+ AND worker.status IN ('active','draining') AND worker_group.status IN ('active','paused','draining')
+ AND worker.observed_at>=clock_timestamp()-sqlc.arg(worker_freshness_seconds)::bigint*interval '1 second';
+
+-- Actual source exclusion ends unfinished publication; it does not change a
+-- ready or aborted decision. The latter already permits abandoned-object GC.
+-- name: InvalidateReclaimedComputerCaptures :exec
+UPDATE computer_checkpoints cp SET status='invalid',invalidated_at=clock_timestamp(),
+ invalidation_reason_code='capture_source_reclaimed'
+FROM computer_instances i WHERE i.id=sqlc.arg(instance_id) AND i.reclaimed_at IS NOT NULL
+ AND cp.computer_id=i.computer_id AND cp.source_computer_instance_id=i.id
+ AND cp.writer_generation=i.writer_generation AND cp.status='creating';

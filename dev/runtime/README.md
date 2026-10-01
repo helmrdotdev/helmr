@@ -351,6 +351,58 @@ not prove host-loss isolation or cross-host compatibility. `persistence.json`
 retains assertions and fixture-cleanup outcomes. Terminal Tokens are not cancelled
 again. API deletion acknowledgement is not final host/S3 cleanup proof.
 
+## Recoverable capture failure case
+
+`cases/capture-abort` is a dedicated Linux/KVM qualification case. It requires
+matching CP, Worker and guest artifacts and a fresh profile when those inputs
+change. It has not yet passed live qualification. Installing it, privately
+publishing its matching artifacts, and running the host require the applicable
+environment authorization.
+
+Build `./dev/runtime/capturefault` with the pinned Go toolchain for the host.
+Run it only on the exclusive verification host, with its ordinary native S3
+credentials and the exact scope CAS bucket:
+
+```sh
+capturefault --bucket SCOPE_CAS_BUCKET --region us-east-1 --hold 360s
+```
+
+At profile creation, set its CAS URI to
+`s3://SCOPE_CAS_BUCKET?endpoint=http%3A%2F%2F127.0.0.1%3A58089` (retain any existing
+CAS prefix). This loopback proxy forwards requests only to that bucket. It uses
+the ordinary S3 protocol and native host authentication; it is not a file CAS or
+a production fault hook. Keep its process available until profile shutdown.
+Do not use it on a shared host. Restarting the proxy clears its one-shot state;
+restart only between fresh cases after the previous Run and cleanup settle.
+
+Prepare `cases/capture-abort` with `tests/e2e/prepare_project.py`, deploy through
+the normal authenticated CLI, and run its `run.ts` with the same API/key/evidence
+variables and `HELMR_RUNTIME_HOST_TOOL` as persistence. The case arms exactly one
+memory-upload failure, waits until that request has been held for 310 seconds,
+cancels one of two captured members, and completes the first Token while the source is sealed.
+The proxy delays a non-retryable S3 response
+for 360 seconds, longer than the five-minute guest grant. Both CP leases renew
+until the cancellation so an early cancellation does not end the upload before
+the intended injected response. The Task must continue
+with its original random in-memory nonce, file and Run. A read-only database
+observation requires both captured members, abort acknowledgment, the unchanged
+source writer and no replacement Instance. The cancelled Run must reach its
+cancelled outcome while the healthy member continues. Its active interval writes
+an increasing shared-file counter before emitting each structured log. While the
+proxy still holds the frozen upload, the driver reads the maximum delivered
+counter and passes that baseline through the first Token. The healthy member
+requires the file counter to remain exactly equal and a wait-finally marker to be
+absent after abort and restore. Missing/buffered final telemetry can conservatively
+fail the case. This sampled execution probe is not an exhaustive scheduler trace.
+A second Token wait then produces a successful checkpoint;
+the case requires source reclamation before completing that Token and verifies
+restoration from the new checkpoint with the same memory/files/Run identity.
+
+`HELMR_EVIDENCE_DIR/result.json` records the assertion results and normal fixture cleanup.
+An interrupted proxy, expired request or unobserved failure is a failed case.
+This case covers delayed upload failure, cancellation and resolution during
+capture; it does not alone qualify lost guest/Control Plane replies.
+
 ## Actor Turn continuity
 
 After deploying the same small project with normal credentials, run on the host:

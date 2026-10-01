@@ -68,21 +68,21 @@ func lockCheckpointSource(ctx context.Context, tx pgx.Tx, ref CheckpointRef) (ch
 		return checkpointSource{}, pgx.ErrNoRows
 	}
 	for _, query := range []string{
-		`SELECT s.id FROM sessions s JOIN runs r ON r.session_id=s.id JOIN run_leases l ON l.run_id=r.id WHERE l.computer_instance_id=$1 AND l.process_reconciled_at IS NULL ORDER BY s.id FOR UPDATE OF s`,
-		`SELECT r.id FROM runs r JOIN run_leases l ON l.run_id=r.id WHERE l.computer_instance_id=$1 AND l.process_reconciled_at IS NULL ORDER BY r.id FOR UPDATE OF r`,
-		`SELECT a.run_id FROM run_attempts a JOIN run_leases l ON l.run_id=a.run_id AND l.attempt_number=a.number WHERE l.computer_instance_id=$1 AND l.process_reconciled_at IS NULL ORDER BY a.run_id,a.number FOR UPDATE OF a`,
-		`SELECT id FROM run_leases WHERE computer_instance_id=$1 AND process_reconciled_at IS NULL ORDER BY run_id,id FOR UPDATE`,
-		`SELECT w.id FROM run_waits w JOIN run_leases l ON l.run_id=w.run_id AND l.attempt_number=w.attempt_number WHERE l.computer_instance_id=$1 AND l.process_reconciled_at IS NULL ORDER BY w.run_id,w.id FOR UPDATE OF w`,
+		`SELECT s.id FROM sessions s JOIN runs r ON r.session_id=s.id JOIN run_leases l ON l.run_id=r.id WHERE (l.computer_instance_id=$1 AND l.process_reconciled_at IS NULL OR l.id IN (SELECT source_run_lease_id FROM computer_checkpoint_runs WHERE checkpoint_id=$2)) ORDER BY s.id FOR UPDATE OF s`,
+		`SELECT r.id FROM runs r JOIN run_leases l ON l.run_id=r.id WHERE (l.computer_instance_id=$1 AND l.process_reconciled_at IS NULL OR l.id IN (SELECT source_run_lease_id FROM computer_checkpoint_runs WHERE checkpoint_id=$2)) ORDER BY r.id FOR UPDATE OF r`,
+		`SELECT a.run_id FROM run_attempts a JOIN run_leases l ON l.run_id=a.run_id AND l.attempt_number=a.number WHERE (l.computer_instance_id=$1 AND l.process_reconciled_at IS NULL OR l.id IN (SELECT source_run_lease_id FROM computer_checkpoint_runs WHERE checkpoint_id=$2)) ORDER BY a.run_id,a.number FOR UPDATE OF a`,
+		`SELECT id FROM run_leases WHERE (computer_instance_id=$1 AND process_reconciled_at IS NULL OR id IN (SELECT source_run_lease_id FROM computer_checkpoint_runs WHERE checkpoint_id=$2)) ORDER BY run_id,id FOR UPDATE`,
+		`SELECT w.id FROM run_waits w JOIN run_leases l ON l.run_id=w.run_id AND l.attempt_number=w.attempt_number WHERE (l.computer_instance_id=$1 AND l.process_reconciled_at IS NULL OR l.id IN (SELECT source_run_lease_id FROM computer_checkpoint_runs WHERE checkpoint_id=$2)) ORDER BY w.run_id,w.id FOR UPDATE OF w`,
 	} {
-		if _, err = tx.Exec(ctx, query, instance.ID); err != nil {
+		if _, err = tx.Exec(ctx, query, instance.ID, pgvalue.UUID(ref.CheckpointID)); err != nil {
 			return checkpointSource{}, err
 		}
 	}
-	cp, err := q.LockComputerCheckpoint(ctx, db.LockComputerCheckpointParams{EnvironmentID: environmentID, ComputerID: computerID, CheckpointID: instance.CaptureCheckpointID})
+	cp, err := q.LockComputerCheckpoint(ctx, db.LockComputerCheckpointParams{EnvironmentID: environmentID, ComputerID: computerID, CheckpointID: pgvalue.UUID(ref.CheckpointID)})
 	if err != nil {
 		return checkpointSource{}, err
 	}
-	if cp.ID != pgvalue.UUID(ref.CheckpointID) {
+	if cp.ID != pgvalue.UUID(ref.CheckpointID) || cp.SourceComputerInstanceID != instance.ID || cp.WriterGeneration != instance.WriterGeneration {
 		return checkpointSource{}, pgx.ErrNoRows
 	}
 	return checkpointSource{tx: tx, computer: c, instance: instance, checkpoint: cp}, nil

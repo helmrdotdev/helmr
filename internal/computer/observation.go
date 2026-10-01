@@ -73,7 +73,7 @@ func lockObservation(ctx context.Context, tx pgx.Tx, ref InstanceRef, receipt bo
 	if err != nil {
 		return observedInstance{}, err
 	}
-	if c.Status != "active" || c.DesiredState != "active" || c.DeletedAt.Valid || len(c.RecoveryFailure) > 0 || len(c.PreparationFailure) > 0 || c.DirtyState == "dirty_state_lost" || c.DirtyState == "capture_failed" ||
+	if c.Status != "active" || c.DesiredState != "active" || c.DeletedAt.Valid || len(c.RecoveryFailure) > 0 || len(c.PreparationFailure) > 0 || c.DirtyState == "dirty_state_lost" ||
 		i.ID != runtimeID || i.WorkerHostID != workerID || i.WorkerGroupID != groupID || i.WorkerEpoch != ref.Host.Epoch ||
 		i.WriterGeneration != c.WriterGeneration || i.DesiredState != "ready" || i.DesiredVersion != ref.DesiredVersion ||
 		(i.ObservedState != "ready" && (continuation || i.ObservedState != "allocated")) ||

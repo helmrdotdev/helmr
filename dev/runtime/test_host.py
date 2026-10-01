@@ -35,6 +35,18 @@ def config():
 
 
 class ProfileTests(unittest.TestCase):
+    def test_abort_observation_rejects_replacement_and_unacknowledged_source(self):
+        evidence = dict(attempt_number=1, acknowledged=True, source_reclaimed=False,
+                        source_state='ready', other_instances=0, lease_on_source=True,
+                        writer_generation=1, captured_writer_generation=1)
+        self.assertTrue(host.persistence_matches(evidence, 'wait-aborted'))
+        for key, value in [('acknowledged', False), ('source_reclaimed', True),
+                           ('source_state', 'closed'), ('other_instances', 1),
+                           ('lease_on_source', False), ('attempt_number', 2),
+                           ('writer_generation', 2)]:
+            with self.subTest(key=key):
+                self.assertFalse(host.persistence_matches(evidence | {key: value}, 'wait-aborted'))
+
     def test_real_composition_preserves_native_worker_service(self):
         cfg = host.compile_config(config())
         files = host.files(cfg)

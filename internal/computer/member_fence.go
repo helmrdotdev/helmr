@@ -72,7 +72,10 @@ func LockInstanceForRun(ctx context.Context, tx pgx.Tx, ref RunInstanceRef, acce
 	if err != nil {
 		return RunInstance{}, err
 	}
-	if c.Status != "active" || c.DesiredState != "active" || c.DeletedAt.Valid || c.DirtyState == "dirty_state_lost" || c.DirtyState == "capture_failed" || i.WriterGeneration != c.WriterGeneration || i.WriterGeneration != ref.WriterGeneration || (i.AdmissionState != "open" && !(access == RunLive && (i.AdmissionState == "draining" || i.AdmissionState == "checkpointing")) && !(access == RunResume && (i.AdmissionState == "restoring" || i.AdmissionState == "draining"))) || i.DesiredState != "ready" || i.ObservedState != "ready" || i.ObservedDesiredVersion != i.DesiredVersion || i.MountState != "mounted" || i.ReclaimedAt.Valid || i.TerminalAt.Valid {
+	// A capture hold retains existing execution authority while its physical
+	// acknowledgment is pending. It never admits a new Run.
+	captureHold := access == RunLive && (i.AdmissionState == "checkpointing" || i.AdmissionState == "resuming_capture")
+	if c.Status != "active" || c.DesiredState != "active" || c.DeletedAt.Valid || c.DirtyState == "dirty_state_lost" || i.WriterGeneration != c.WriterGeneration || i.WriterGeneration != ref.WriterGeneration || (i.AdmissionState != "open" && !(access == RunLive && (i.AdmissionState == "draining" || captureHold)) && !(access == RunResume && (i.AdmissionState == "restoring" || i.AdmissionState == "draining"))) || i.DesiredState != "ready" || i.ObservedState != "ready" || (i.ObservedDesiredVersion != i.DesiredVersion && !captureHold) || i.MountState != "mounted" || i.ReclaimedAt.Valid || i.TerminalAt.Valid {
 		return RunInstance{}, pgx.ErrNoRows
 	}
 	return RunInstance{tx: tx, computer: c, instance: i}, nil

@@ -116,7 +116,7 @@ func lockPreparationFence(ctx context.Context, tx pgx.Tx, principal workergroup.
 	if err != nil {
 		return preparationFence{}, err
 	}
-	if c.Status != "active" || c.DesiredState != "active" || c.DeletedAt.Valid || len(c.RecoveryFailure) > 0 || len(c.PreparationFailure) > 0 || c.DirtyState == "dirty_state_lost" || c.DirtyState == "capture_failed" ||
+	if c.Status != "active" || c.DesiredState != "active" || c.DeletedAt.Valid || len(c.RecoveryFailure) > 0 || len(c.PreparationFailure) > 0 || c.DirtyState == "dirty_state_lost" ||
 		i.ID != runtimeID || i.WorkerHostID != workerID || i.WorkerGroupID != groupID || i.WorkerEpoch != principal.Epoch ||
 		i.WriterGeneration != c.WriterGeneration || i.DesiredState != "ready" || i.DesiredVersion != ref.DesiredVersion ||
 		i.ObservedState != "allocated" || (i.AdmissionState != "open" && i.AdmissionState != "restoring") {

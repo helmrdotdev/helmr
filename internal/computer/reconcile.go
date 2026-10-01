@@ -19,6 +19,8 @@ const (
 	ReconcilePrepare ReconcileAction = iota
 	// ReconcileCapture captures the Instance's checkpoint.
 	ReconcileCapture
+	// ReconcileAbortCapture completes the same-source capture abort.
+	ReconcileAbortCapture
 	// ReconcileClose closes the Instance.
 	ReconcileClose
 	// ReconcileReclaim reclaims a failed or lost Instance.
@@ -64,7 +66,7 @@ func ReconcileTargets(ctx context.Context, q db.Querier, host Host, limit int32)
 	for _, row := range rows {
 		target := ReconcileTarget{Instance: row, Action: reconcileAction(row)}
 		switch {
-		case target.Action == ReconcileCapture:
+		case target.Action == ReconcileCapture || target.Action == ReconcileAbortCapture:
 			if target.Capture, err = loadCaptureSource(ctx, q, row); err != nil {
 				return nil, err
 			}
@@ -84,6 +86,8 @@ func reconcileAction(row db.ListComputerInstanceReconcileTargetsRow) ReconcileAc
 		return ReconcileReclaim
 	case row.DesiredState == "closed":
 		return ReconcileClose
+	case row.AdmissionState == "resuming_capture":
+		return ReconcileAbortCapture
 	case row.AdmissionState == "checkpointing":
 		return ReconcileCapture
 	default:
@@ -92,14 +96,21 @@ func reconcileAction(row db.ListComputerInstanceReconcileTargetsRow) ReconcileAc
 }
 
 func loadCaptureSource(ctx context.Context, q db.Querier, row db.ListComputerInstanceReconcileTargetsRow) (*CaptureSource, error) {
-	if row.AdmissionState != "checkpointing" || !row.CaptureCheckpointID.Valid {
+	if (row.AdmissionState != "checkpointing" && row.AdmissionState != "resuming_capture") || !row.CaptureCheckpointID.Valid {
 		return nil, errors.New("computer capture source is incomplete")
 	}
-	cp, err := q.GetComputerInstanceCaptureCheckpoint(ctx, db.GetComputerInstanceCaptureCheckpointParams{
+	params := db.GetComputerInstanceCaptureCheckpointParams{
 		ComputerInstanceID: row.ID, EnvironmentID: row.EnvironmentID, WorkerGroupID: row.WorkerGroupID,
 		WorkerHostID: row.WorkerHostID, WorkerEpoch: row.WorkerEpoch, DesiredVersion: row.DesiredVersion,
 		WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds,
-	})
+	}
+	var cp db.ComputerCheckpoint
+	var err error
+	if row.AdmissionState == "resuming_capture" {
+		cp, err = q.GetComputerInstanceCaptureAbort(ctx, db.GetComputerInstanceCaptureAbortParams(params))
+	} else {
+		cp, err = q.GetComputerInstanceCaptureCheckpoint(ctx, params)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("load computer capture checkpoint: %w", err)
 	}

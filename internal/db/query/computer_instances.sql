@@ -88,7 +88,7 @@ SELECT i.*,spec.config AS computer_config,spec.digest AS computer_spec_digest,
  WHERE i.worker_host_id=sqlc.arg(worker_host_id) AND i.worker_epoch=sqlc.arg(worker_epoch)
  AND i.worker_group_id=sqlc.arg(worker_group_id) AND i.reclaimed_at IS NULL
  AND (i.observed_desired_version<i.desired_version OR i.observed_state IN ('failed','lost')
-      OR i.admission_state='checkpointing')
+      OR i.admission_state IN ('checkpointing','resuming_capture'))
  ORDER BY i.desired_at,i.id LIMIT sqlc.arg(row_limit);
 
 -- name: MarkComputerInstanceMounting :one
@@ -105,6 +105,7 @@ UPDATE computer_instances SET observed_state='ready',observed_version=observed_v
  WHERE id=sqlc.arg(id) AND worker_host_id=sqlc.arg(worker_host_id) AND worker_epoch=sqlc.arg(worker_epoch)
  AND writer_generation=sqlc.arg(writer_generation) AND desired_version=sqlc.arg(desired_version)
  AND writer_expires_at>clock_timestamp() AND desired_state='ready'
+ AND admission_state<>'resuming_capture'
  AND observed_version=sqlc.arg(expected_observed_version)
  AND vm_vcpu_count=sqlc.arg(vm_vcpu_count) AND cpu_config_digest=sqlc.arg(cpu_config_digest)
  AND (observed_state='ready' OR (observed_state='allocated' AND preparation_expires_at>clock_timestamp()))
