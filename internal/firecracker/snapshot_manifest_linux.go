@@ -341,7 +341,7 @@ func validateRuntimeManifest(
 	return nil
 }
 
-func cloneRuntimeComputer(source *vm.ComputerDisk) *vm.ComputerDisk {
+func cloneComputerDisk(source *vm.ComputerDisk) *vm.ComputerDisk {
 	if source == nil {
 		return nil
 	}

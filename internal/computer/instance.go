@@ -24,7 +24,7 @@ const (
 )
 
 // ErrAuthorityChanged reports that the Instance, its Computer or the worker
-// worker epoch no longer holds the authority the operation requires: the
+// epoch no longer holds the authority the operation requires: the
 // Instance incarnation, writer generation, desired version or admission
 // changed, or a deadline passed.
 var ErrAuthorityChanged = errors.New("computer authority changed")

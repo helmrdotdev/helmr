@@ -206,7 +206,7 @@ SELECT runs.status,
 	}
 }
 
-func TestOwnedFinalizationBoundsRuntimePreparationForEveryRun(t *testing.T) {
+func TestOwnedFinalizationBoundsInstancePreparationForEveryRun(t *testing.T) {
 	ctx := context.Background()
 	fixture := newPostgresFixture(t)
 	work := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
@@ -237,7 +237,7 @@ UPDATE runs
 			_ = tx.Rollback(ctx)
 			t.Fatal(err)
 		}
-		exhausted, err := graph.ChargeRuntimePreparationFailure(ctx)
+		exhausted, err := graph.ChargeInstancePreparationFailure(ctx)
 		if err != nil {
 			_ = tx.Rollback(ctx)
 			t.Fatal(err)
@@ -293,7 +293,7 @@ SELECT run_attempts.terminal_outcome,
 	}
 }
 
-func TestOwnedFinalizationExhaustsActorRuntimePreparation(t *testing.T) {
+func TestOwnedFinalizationExhaustsActorInstancePreparation(t *testing.T) {
 	ctx := t.Context()
 	fixture := newPostgresFixture(t)
 	work := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
@@ -303,7 +303,7 @@ UPDATE runs
    SET current_run_lease_id = NULL
  WHERE id = $1`, work.runID)
 
-	exhaustRuntimePreparation(t, ctx, fixture, work.runID)
+	exhaustInstancePreparation(t, ctx, fixture, work.runID)
 
 	var runStatus, sessionStatus, holdReason string
 	var currentRun, holdRun pgtype.UUID
@@ -320,7 +320,7 @@ WHERE r.id=$1`, work.runID, sessionID).Scan(&runStatus, &sessionStatus, &holdRea
 	}
 }
 
-func TestOwnedFinalizationExhaustsDifferentComputerChildRuntimePreparation(t *testing.T) {
+func TestOwnedFinalizationExhaustsDifferentComputerChildInstancePreparation(t *testing.T) {
 	for _, actorParent := range []bool{false, true} {
 		name := "Task parent"
 		if actorParent {
@@ -367,7 +367,7 @@ SELECT $1, runs.environment_id, runs.id, runs.computer_id, 'child',
 				turnID = activateCancellationTurn(t, fixture, parent, sessionID)
 				dbtest.MustExec(t, ctx, fixture.pool, `UPDATE runs SET status='waiting' WHERE id=$1`, parent.runID)
 			}
-			exhaustRuntimePreparation(t, ctx, fixture, child.runID)
+			exhaustInstancePreparation(t, ctx, fixture, child.runID)
 			if actorParent {
 				var active, current, hold pgtype.UUID
 				var cursor int64
@@ -411,7 +411,7 @@ SELECT child.status, parent.status, wait.condition_status, wait.condition_result
 	}
 }
 
-func exhaustRuntimePreparation(
+func exhaustInstancePreparation(
 	t *testing.T,
 	ctx context.Context,
 	fixture postgresFixture,
@@ -431,7 +431,7 @@ func exhaustRuntimePreparation(
 			_ = tx.Rollback(ctx)
 			t.Fatal(err)
 		}
-		exhausted, err := graph.ChargeRuntimePreparationFailure(ctx)
+		exhausted, err := graph.ChargeInstancePreparationFailure(ctx)
 		if err != nil {
 			_ = tx.Rollback(ctx)
 			t.Fatal(err)

@@ -149,7 +149,7 @@ func TestComputerExportWatchJoinsNormalStop(t *testing.T) {
 }
 
 func TestComputerSnapshotDropsDeviceCapability(t *testing.T) {
-	copy := cloneRuntimeComputer(&vm.ComputerDisk{Device: &ownedComputerFixture{}})
+	copy := cloneComputerDisk(&vm.ComputerDisk{Device: &ownedComputerFixture{}})
 	if copy.Device != nil {
 		t.Fatal("snapshot retains live device authority")
 	}

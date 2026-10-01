@@ -71,7 +71,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure routed network reclaimer: %w", err)
 	}
-	runtimeCapacity := deriveWorkerRuntimeCapacity(cfg.WorkerExecutionSlots)
+	instanceCapacity := deriveWorkerInstanceCapacity(cfg.WorkerExecutionSlots)
 	var platformStore cas.ImmutableStore
 	verifierCgroupRoot, err := worker.PrepareVerifierHost()
 	if err != nil {
@@ -177,7 +177,7 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("configure CAS: %w", err)
 	}
 	vmResources := resolveVMResources(cfg)
-	runtimeBackend, err := vm.NewStartLimiter(connector, runtimeCapacity.hostStartLimit)
+	runtimeBackend, err := vm.NewStartLimiter(connector, instanceCapacity.hostStartLimit)
 	if err != nil {
 		return fmt.Errorf("configure host runtime start limit: %w", err)
 	}
@@ -218,7 +218,7 @@ func run(log *slog.Logger) error {
 	}
 	computerMounts := computerhost.NewMounts()
 	computerCaptures := &computerhost.CaptureRuns{}
-	preparedMachines := computerhost.NewPreparedMachines(runtimeBackend, store, runtimeCapacity.preparedMachineCount, log)
+	preparedMachines := computerhost.NewPreparedMachines(runtimeBackend, store, instanceCapacity.preparedMachineCount, log)
 	closePreparedMachine := retryableWorkerCloser{close: preparedMachines.Close}
 	defer func() {
 		if err := closePreparedMachine.Close(context.Background()); err != nil {
@@ -245,7 +245,7 @@ func run(log *slog.Logger) error {
 	preparedMachines.PlatformStore = platformStore
 	preparedMachines.RuntimeArchitecture = runtimeArchitecture
 	preparedMachines.VerifierCgroupRoot = verifierCgroupRoot
-	log.Info("prepared machines enabled", "count", runtimeCapacity.preparedMachineCount)
+	log.Info("prepared machines enabled", "count", instanceCapacity.preparedMachineCount)
 	runLeaseTasks, err := executor.NewProgramRunner(executor.ProgramRunner{
 		ControlPlane: executor.ControlPlane{
 			Leases:        controlPlaneClient,
@@ -385,13 +385,13 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
-type workerRuntimeCapacity struct {
+type workerInstanceCapacity struct {
 	preparedMachineCount int
 	hostStartLimit       int
 }
 
-func deriveWorkerRuntimeCapacity(executionSlots int32) workerRuntimeCapacity {
-	return workerRuntimeCapacity{
+func deriveWorkerInstanceCapacity(executionSlots int32) workerInstanceCapacity {
+	return workerInstanceCapacity{
 		preparedMachineCount: int(executionSlots),
 		hostStartLimit:       int(executionSlots),
 	}

@@ -146,7 +146,7 @@ func (s *guestMachine) watchNetworkFailure() {
 
 func (s *guestMachine) stopMachine(ctx context.Context) error {
 	s.machineStopOnce.Do(func() {
-		s.machineStopErr = stopSessionMachine(ctx, s.machine, s.machineExit)
+		s.machineStopErr = stopGuestMachine(ctx, s.machine, s.machineExit)
 	})
 	return s.machineStopErr
 }
@@ -433,7 +433,7 @@ func (e *machineExit) Err() (error, bool) {
 	}
 }
 
-func stopSessionMachine(ctx context.Context, sdkMachine *firecracker.Machine, exit *machineExit) error {
+func stopGuestMachine(ctx context.Context, sdkMachine *firecracker.Machine, exit *machineExit) error {
 	pid, pidErr := sdkMachine.PID()
 	stopErr := sdkMachine.StopVMM()
 	waitCtx, cancel := closeContext(ctx, stopTimeout)

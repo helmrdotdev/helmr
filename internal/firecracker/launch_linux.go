@@ -255,7 +255,7 @@ func (c *Connector) prepareMachine(ctx context.Context, mode launchMode, instanc
 			return nil, err
 		}
 		copy := *topology.Computer
-		// Keep the live publication owner; cloneRuntimeComputer strips it from persisted snapshots.
+		// Keep the live publication owner; cloneComputerDisk strips it from persisted snapshots.
 		copy.Path, copy.File = computerDiskPath, nil
 		topology.Computer = &copy
 	}
@@ -386,7 +386,7 @@ func (c *Connector) prepareMachine(ctx context.Context, mode launchMode, instanc
 	started := true
 	defer func() {
 		if !started {
-			stopErr := stopSessionMachine(context.Background(), sdkMachine, machineExit)
+			stopErr := stopGuestMachine(context.Background(), sdkMachine, machineExit)
 			machineCancel()
 			retErr = errors.Join(retErr, stopErr)
 		}

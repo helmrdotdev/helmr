@@ -110,7 +110,7 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 			if err := targetGraph.recordClearedExecutionPrestart(cleared); err != nil {
 				return false, err
 			}
-			if _, err := targetGraph.ChargeRuntimePreparationFailure(ctx); err != nil {
+			if _, err := targetGraph.ChargeInstancePreparationFailure(ctx); err != nil {
 				return false, err
 			}
 		}
