@@ -2,6 +2,7 @@ package guestd
 
 import (
 	"context"
+	"net"
 	"testing"
 	"time"
 
@@ -62,6 +63,7 @@ func TestCaptureAbortInstallsWholeSetBeforeActivation(t *testing.T) {
 		default:
 		}
 	}
+	prepareAbortFixtureStreams(t, r, waits, q)
 	q.Activate = true
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
@@ -104,6 +106,7 @@ func TestCaptureAbortCancellationJoinsCleanup(t *testing.T) {
 	if err := r.applyCaptureAbort(t.Context(), waits, q, time.Now); err != nil {
 		t.Fatal(err)
 	}
+	prepareAbortFixtureStreams(t, r, waits, q)
 	q.Activate = true
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
@@ -159,6 +162,7 @@ func completeAbortFixture(t *testing.T, r *computerOperationRegistry, waits *wai
 	for _, slot := range waits.slots {
 		close(slot.abortDone)
 	}
+	prepareAbortFixtureStreams(t, r, waits, q)
 	q.Activate = true
 	if err := r.applyCaptureAbort(t.Context(), waits, q, time.Now); err != nil {
 		t.Fatal(err)
@@ -220,5 +224,21 @@ func TestCaptureAbortBeforeSealAfterRestoration(t *testing.T) {
 				t.Fatal("early abort did not retire completed restore receipt")
 			}
 		})
+	}
+}
+
+func prepareAbortFixtureStreams(t *testing.T, r *computerOperationRegistry, waits *waitingRunRegistry, q *computerv0.ComputerCaptureAbortRequest) {
+	t.Helper()
+	for _, member := range q.Members {
+		if member.Cancelled || waits.slots[member.Member.RunWaitId] == nil {
+			continue
+		}
+		guest, host := net.Pipe()
+		t.Cleanup(func() { guest.Close(); host.Close() })
+		member.AttachSequence = waits.slots[member.Member.RunWaitId].abortSequence + 1
+		attach := &computerv0.ComputerCaptureAbortAttachRequest{CheckpointId: q.Capture.CheckpointId, AbortDesiredVersion: q.AbortDesiredVersion, Member: member.Member, Authority: member.Authority, AttachSequence: member.AttachSequence}
+		if err := r.parkCaptureAbortStream(waits, attach, guest, time.Now()); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

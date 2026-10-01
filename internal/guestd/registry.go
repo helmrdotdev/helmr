@@ -38,6 +38,8 @@ type waitingRunSlot struct {
 	abortResume              chan struct{}
 	abortDone                chan struct{}
 	abortErr                 error
+	abortStream              programConnection
+	abortSequence            uint64
 	attached                 chan waitingRunAttachment
 	accepted                 *programv0.ResumeAttach
 	appliedDecision          *programv0.ResumeDecision
@@ -254,6 +256,10 @@ func (r *waitingRunRegistry) retireSlotLocked(id string, slot *waitingRunSlot) {
 		return
 	}
 	delete(r.slots, id)
+	if slot.abortStream != nil {
+		_ = slot.abortStream.Close()
+		slot.abortStream = nil
+	}
 	if slot.retired != nil {
 		close(slot.retired)
 	}

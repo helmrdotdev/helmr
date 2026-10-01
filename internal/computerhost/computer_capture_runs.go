@@ -22,7 +22,7 @@ type CaptureRuns struct {
 // CaptureWait is one resident wait registered for capture. Its owner receives
 // dispatched member pauses from Pauses and must call Detach when the wait
 // ends; later calls return the first result.
-type CaptureMemberResume func(context.Context, workerapi.CaptureAbortMember, bool) (*computerv0.ComputerRunAuthority, error)
+type CaptureMemberResume func(context.Context, workerapi.RuntimeReconcileTarget, workerapi.CaptureAbortMember, bool) (*computerv0.ComputerRunAuthority, uint64, error)
 
 type CaptureWait struct {
 	resume   CaptureMemberResume
@@ -271,7 +271,7 @@ func (r *CaptureRuns) prepareAbortMembers(ctx context.Context, target workerapi.
 				return nil, errors.New("capture abort member renewal owner is missing")
 			}
 			var err error
-			m.Authority, err = entry.resume(ctx, member, restoreRenewal)
+			m.Authority, m.AttachSequence, err = entry.resume(ctx, target, member, restoreRenewal)
 			if err != nil {
 				return nil, err
 			}

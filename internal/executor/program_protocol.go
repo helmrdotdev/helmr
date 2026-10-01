@@ -26,6 +26,8 @@ type programProtocol struct {
 	done      chan struct{}
 	closeOnce sync.Once
 	writeMu   sync.Mutex
+	streamMu  sync.Mutex
+	paused    bool
 }
 type programRead struct {
 	event    *programv0.RunEvent
@@ -46,6 +48,9 @@ func (p *programProtocol) read() {
 			return
 		}
 		if frameio.IsStreamFramePrefix(prefix) {
+			p.writeMu.Lock()
+			p.paused = true
+			p.writeMu.Unlock()
 			if !p.deliver(programRead{physical: true}) {
 				return
 			}
@@ -75,12 +80,55 @@ func (p *programProtocol) Read(b []byte) (int, error) { return p.reader.Read(b) 
 func (p *programProtocol) Write(b []byte) (int, error) {
 	p.writeMu.Lock()
 	defer p.writeMu.Unlock()
-	return p.stream.Write(b)
+	p.streamMu.Lock()
+	stream := p.stream
+	p.streamMu.Unlock()
+	return stream.Write(b)
 }
 func (p *programProtocol) Close() error {
 	p.closeOnce.Do(func() { close(p.done) })
+	p.streamMu.Lock()
+	defer p.streamMu.Unlock()
 	return p.stream.Close()
 }
+
+// replacePausedStream transfers transport while the single reader is parked at
+// the physical handoff. No goroutine may read the replacement before this send.
+func (p *programProtocol) replacePausedStream(ctx context.Context, stream vm.Stream) error {
+	p.writeMu.Lock()
+	defer p.writeMu.Unlock()
+	if !p.paused || p.reader.Buffered() != 0 {
+		return errors.New("source protocol is not at an empty physical handoff")
+	}
+	p.streamMu.Lock()
+	select {
+	case <-p.done:
+		p.streamMu.Unlock()
+		return io.ErrClosedPipe
+	default:
+	}
+	old := p.stream
+	p.stream = stream
+	p.reader = bufio.NewReader(stream)
+	p.streamMu.Unlock()
+	_ = old.Close()
+	select {
+	case p.resume <- struct{}{}:
+		p.paused = false
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-p.done:
+		return io.ErrClosedPipe
+	}
+}
+
+func (p *programProtocol) currentStream() vm.Stream {
+	p.streamMu.Lock()
+	defer p.streamMu.Unlock()
+	return p.stream
+}
+
 func (p *programProtocol) next(ctx context.Context) (programRead, error) {
 	if p.pending != nil {
 		value := *p.pending
@@ -202,6 +250,9 @@ func (task *guestRunLeaseTask) runHotWaitOnce(ctx context.Context, request WaitR
 					return result
 				}
 				if pause.Resumed() {
+					task.mu.Lock()
+					task.capturePaused = false
+					task.mu.Unlock()
 					return errCaptureResumed
 				}
 				return ErrDetached

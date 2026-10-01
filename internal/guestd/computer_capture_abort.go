@@ -172,6 +172,15 @@ func (r *computerOperationRegistry) applyCaptureAbort(ctx context.Context, waits
 					return nil, errors.New("capture abort changed source grant")
 				}
 			}
+			if request.Activate && !m.Cancelled {
+				if member.slot != nil {
+					if m.AttachSequence == 0 || m.AttachSequence != member.slot.abortSequence || (!member.released && member.slot.abortStream == nil) {
+						return nil, errors.New("capture abort member transport is not prepared")
+					}
+				} else if m.AttachSequence != 0 {
+					return nil, errors.New("unpaused capture member has an attachment")
+				}
+			}
 			updates = append(updates, update{member, m.Authority, m.Cancelled})
 		}
 		// Reject local admissions absent from the CP's sealed set, even after a
@@ -211,10 +220,8 @@ func (r *computerOperationRegistry) applyCaptureAbort(ctx context.Context, waits
 						member.claim.stopRequested = true
 						member.claim.stop()
 					}
-				} else if !member.released && member.slot != nil {
-					close(member.slot.abortResume)
 				}
-				member.released = true
+
 			}
 		}
 		return installed, nil
@@ -239,7 +246,36 @@ func (r *computerOperationRegistry) applyCaptureAbort(ctx context.Context, waits
 			case <-ctx.Done():
 				return ctx.Err()
 			}
-		} else if member.slot != nil {
+		}
+	}
+	// Cancellation cleanup may acquire registry locks; join it before taking
+	// the locks again and before any healthy process can observe shared state.
+	r.mu.Lock()
+	waits.mu.Lock()
+	if r.captureAbort != installation {
+		waits.mu.Unlock()
+		r.mu.Unlock()
+		return errors.New("capture abort owner changed")
+	}
+	for _, member := range installation.members {
+		if !member.cancelled && !member.released {
+			if member.claim == nil || member.claim.stopRequested || member.claim.authority.GetFence().GetExpiresAtUnixNano() <= clock().UnixNano() {
+				waits.mu.Unlock()
+				r.mu.Unlock()
+				return errors.New("capture abort authority expired before activation")
+			}
+		}
+	}
+	for _, member := range installation.members {
+		if !member.cancelled && !member.released && member.slot != nil {
+			close(member.slot.abortResume)
+		}
+		member.released = true
+	}
+	waits.mu.Unlock()
+	r.mu.Unlock()
+	for _, member := range installation.members {
+		if !member.cancelled && member.slot != nil {
 			select {
 			case <-member.slot.abortDone:
 				if member.slot.abortErr != nil {

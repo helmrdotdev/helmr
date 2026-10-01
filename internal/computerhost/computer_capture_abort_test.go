@@ -155,12 +155,12 @@ func TestCaptureAbortRestoresHealthyMemberAndKeepsCancellation(t *testing.T) {
 				wait := captureRegistryWait(t, registry, target, member)
 				waits = append(waits, wait)
 				receipt.Members = append(receipt.Members, workerapi.CaptureAbortMember{RunID: member.RunID, AttemptNumber: member.AttemptNumber, RunWaitID: member.RunWaitID, Lease: workerapi.RunLeaseFence{ID: member.RunLeaseID, LeaseSequence: wait.lease.LeaseSequence}, ExpiresAt: wait.lease.ExpiresAt, Cancelled: index == 1})
-				wait.resume = func(_ context.Context, grant workerapi.CaptureAbortMember, restore bool) (*computerv0.ComputerRunAuthority, error) {
+				wait.resume = func(_ context.Context, _ workerapi.RuntimeReconcileTarget, grant workerapi.CaptureAbortMember, restore bool) (*computerv0.ComputerRunAuthority, uint64, error) {
 					if index != 0 || grant.Cancelled {
 						t.Error("cancelled member received renewal authority")
 					}
 					phases = append(phases, restore)
-					return &computerv0.ComputerRunAuthority{WriteCapability: receipt.WriteCapability, Fence: &computerv0.ComputerAuthorityFence{WorkerHostId: receipt.WorkerHostID}}, nil
+					return &computerv0.ComputerRunAuthority{WriteCapability: receipt.WriteCapability, Fence: &computerv0.ComputerAuthorityFence{WorkerHostId: receipt.WorkerHostID}}, 0, nil
 				}
 				go func() {
 					pause := <-wait.Pauses()

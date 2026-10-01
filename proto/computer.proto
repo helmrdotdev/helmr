@@ -116,6 +116,7 @@ message ComputerCaptureAbortMember {
   ComputerCaptureRun member = 1;
   ComputerRunAuthority authority = 2;
   bool cancelled = 3;
+  uint64 attach_sequence = 4;
 }
 
 message ComputerCaptureAbortRequest {
@@ -129,6 +130,22 @@ message ComputerCaptureAbortResponse {
   string checkpoint_id = 1;
   int64 abort_desired_version = 2;
   bool activated = 3;
+}
+
+// A fresh transport for an unchanged source member, authorized by abort installation.
+message ComputerCaptureAbortAttachRequest {
+  string checkpoint_id = 1;
+  int64 abort_desired_version = 2;
+  ComputerCaptureRun member = 3;
+  ComputerRunAuthority authority = 4;
+  uint64 attach_sequence = 5;
+}
+
+message ComputerCaptureAbortAttachResponse {
+  string checkpoint_id = 1;
+  int64 abort_desired_version = 2;
+  ComputerCaptureRun member = 3;
+  uint64 attach_sequence = 4;
 }
 
 message VerifyComputerRestoreRequest {

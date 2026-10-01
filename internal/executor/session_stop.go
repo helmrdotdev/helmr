@@ -14,10 +14,17 @@ import (
 )
 
 func (task *guestRunLeaseTask) deliverSessionStop(ctx context.Context) (time.Time, error) {
+	return task.deliverSessionStopWithCaptureBarrier(ctx, false)
+}
+
+// Only the independent poller needs to acquire the capture gate. Synchronous
+// event-drain callers already own it and must finish their runtime responses.
+func (task *guestRunLeaseTask) deliverSessionStopWithCaptureBarrier(ctx context.Context, independent bool) (time.Time, error) {
 	task.stopMu.Lock()
-	defer task.stopMu.Unlock()
-	if !task.stopDeadline.IsZero() {
-		return task.stopDeadline, nil
+	previous := task.stopDeadline
+	task.stopMu.Unlock()
+	if !previous.IsZero() {
+		return previous, nil
 	}
 	cp := task.controlPlane.Sessions
 	correlation := uuid.NewV7().String()
@@ -41,12 +48,38 @@ func (task *guestRunLeaseTask) deliverSessionStop(ctx context.Context) (time.Tim
 	if *response.HoldID == "" || response.Reason == nil || *response.Reason == "" || (response.TurnID != nil && *response.TurnID == "") {
 		return time.Time{}, errors.New("session stop identity is incomplete")
 	}
+	if independent {
+		task.renewalGate.Lock()
+		defer task.renewalGate.Unlock()
+		task.mu.Lock()
+		paused := task.capturePaused
+		task.mu.Unlock()
+		if paused {
+			return time.Time{}, nil
+		}
+	}
+	task.stopMu.Lock()
+	defer task.stopMu.Unlock()
+	if !task.stopDeadline.IsZero() {
+		return task.stopDeadline, nil
+	}
+	// A poll read may have waited behind capture. Re-read current authority on
+	// the next poll instead of closing a fresh transport with an expired read.
+	if !deadline.After(time.Now()) {
+		return time.Time{}, nil
+	}
+
 	stop := &programv0.SessionStop{Execution: proto.Clone(task.program.execution).(*programv0.SessionExecution), TurnId: response.TurnID, HoldId: *response.HoldID, Reason: *response.Reason}
 	writeCtx, cancelWrite := context.WithDeadline(ctx, deadline)
 	defer cancelWrite()
-	stopClose := context.AfterFunc(writeCtx, func() { _ = task.programStream().Close() })
+	stream := task.programStream()
+	closeStream := stream
+	if task.program.protocol != nil {
+		closeStream = task.program.protocol.currentStream()
+	}
+	stopClose := context.AfterFunc(writeCtx, func() { _ = closeStream.Close() })
 	defer stopClose()
-	if err := wire.WriteSessionStop(task.programStream(), stop); err != nil {
+	if err := wire.WriteSessionStop(stream, stop); err != nil {
 		return time.Time{}, err
 	}
 	task.stopDeadline = deadline
@@ -54,7 +87,7 @@ func (task *guestRunLeaseTask) deliverSessionStop(ctx context.Context) (time.Tim
 }
 func (task *guestRunLeaseTask) pollSessionStop(ctx context.Context) error {
 	for {
-		deadline, err := task.deliverSessionStop(ctx)
+		deadline, err := task.deliverSessionStopWithCaptureBarrier(ctx, true)
 		if err != nil {
 			return err
 		}

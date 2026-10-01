@@ -131,12 +131,16 @@ type guestRunLeaseTask struct {
 	waitComputer workerapi.Computer
 	orgID        string
 
-	renewalGate      sync.Mutex
-	mu               sync.Mutex
-	lease            workerapi.RunLeaseAssignment
-	authority        *computerv0.ComputerRunAuthority
-	checkpointFrozen bool
-	finished         bool
+	renewalGate             sync.Mutex
+	mu                      sync.Mutex
+	lease                   workerapi.RunLeaseAssignment
+	authority               *computerv0.ComputerRunAuthority
+	checkpointFrozen        bool
+	capturePaused           bool
+	captureCheckpoint       string
+	captureAttachSequence   uint64
+	capturePreparedSequence uint64
+	finished                bool
 }
 
 func (task *guestRunLeaseTask) callRunSourceRuntime(
@@ -487,15 +491,9 @@ func (events taskControlEvents) AppendRunLog(
 	sequence uint64,
 	content []byte,
 ) error {
-	events.task.mu.Lock()
-	defer events.task.mu.Unlock()
-	lease := events.task.lease
-	logCtx, cancel, err := runLeaseLogContext(ctx, lease.ExpiresAt)
-	if err != nil {
-		return err
-	}
-	defer cancel()
-	return events.task.controlPlane.Leases.AppendRunLog(logCtx, lease, stream, sequence, content)
+	return events.task.callRunSourceRuntime(ctx, func(callCtx context.Context, lease workerapi.RunLeaseAssignment) error {
+		return events.task.controlPlane.Leases.AppendRunLog(callCtx, lease, stream, sequence, content)
+	})
 }
 
 func (events taskControlEvents) ApplyRunMetadata(
