@@ -54,6 +54,8 @@ func TestComputerDeleteRetiresConsumedCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The acknowledgement and the Run cancellation build on the restore
+	// commit's uncommitted writes, so they run in the same transaction.
 	var generation int64
 	if err = tx.QueryRow(t.Context(), `SELECT writer_generation FROM computer_instances WHERE id=$1`, fence.ID).Scan(&generation); err != nil {
 		t.Fatal(err)

@@ -256,15 +256,7 @@ func TestRestorePlanAfterParkedWakeup(t *testing.T) {
 			for _, member := range plan.Members {
 				grants = append(grants, computer.RestoreGrant{RunID: pgvalue.UUID(uuid.MustParse(member.RunID)), LeaseID: pgvalue.UUID(uuid.MustParse(member.LeaseID)), LeaseSequence: member.LeaseSequence})
 			}
-			tx, err = f.Pool.Begin(t.Context())
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer tx.Rollback(context.Background())
-			if _, err := computer.AcknowledgeRestore(t.Context(), tx, f.ref, cp.ID, f.writer.WriterGeneration, grants); err != nil {
-				t.Fatal(err)
-			}
-			if err := tx.Commit(t.Context()); err != nil {
+			if _, err := computer.AcknowledgeRestore(t.Context(), f.Pool, f.ref, cp.ID, f.writer.WriterGeneration, grants); err != nil {
 				t.Fatal(err)
 			}
 			var resumed, completed, pending int

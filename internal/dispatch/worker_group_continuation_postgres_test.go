@@ -50,16 +50,7 @@ func (h *restoreHarness) commit(t *testing.T) (db.ComputerCheckpoint, error) {
 
 func (h *restoreHarness) acknowledge(t *testing.T) (db.ComputerInstance, error) {
 	t.Helper()
-	tx, err := h.f.Pool.Begin(t.Context())
-	if err != nil {
-		return db.ComputerInstance{}, err
-	}
-	defer tx.Rollback(t.Context())
-	i, err := computer.AcknowledgeRestore(t.Context(), tx, h.fence, h.cp.ID, h.cp.WriterGeneration+1, h.grants)
-	if err == nil {
-		err = tx.Commit(t.Context())
-	}
-	return i, err
+	return computer.AcknowledgeRestore(t.Context(), h.f.Pool, h.fence, h.cp.ID, h.cp.WriterGeneration+1, h.grants)
 }
 
 func (h *restoreHarness) admission(t *testing.T) string {

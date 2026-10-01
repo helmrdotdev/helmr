@@ -45,15 +45,8 @@ func TestRestoreFenceFencesEpochAndStatusNotClaims(t *testing.T) {
 			f := newRestorePlanFixture(t, false, false)
 			cp := f.commit(t)
 			acknowledge := func() error {
-				tx, err := f.Pool.Begin(t.Context())
-				if err != nil {
-					return err
-				}
-				defer tx.Rollback(t.Context())
-				if _, err = computer.AcknowledgeRestore(t.Context(), tx, f.ref, cp.ID, f.writer.WriterGeneration, restoreGrants(t, f.Fixture, f.ref)); err != nil {
-					return err
-				}
-				return tx.Commit(t.Context())
+				_, err := computer.AcknowledgeRestore(t.Context(), f.Pool, f.ref, cp.ID, f.writer.WriterGeneration, restoreGrants(t, f.Fixture, f.ref))
+				return err
 			}
 			if err := acknowledge(); err != nil {
 				t.Fatal(err)

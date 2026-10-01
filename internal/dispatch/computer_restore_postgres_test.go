@@ -171,20 +171,12 @@ func TestComputerRestoreAcknowledgesEntireSet(t *testing.T) {
 			}
 			grants := installedRestoreGrants(t, f, fence)
 			for pass := 0; pass < 2; pass++ {
-				tx, err = f.Pool.Begin(t.Context())
+				i, err := computer.AcknowledgeRestore(t.Context(), f.Pool, fence, cp.ID, cp.WriterGeneration+1, grants)
 				if err != nil {
-					t.Fatal(err)
-				}
-				i, err := computer.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants)
-				if err != nil {
-					tx.Rollback(t.Context())
 					t.Fatal(err)
 				}
 				if i.AdmissionState != "open" {
 					t.Fatal("admission did not open")
-				}
-				if err = tx.Commit(t.Context()); err != nil {
-					t.Fatal(err)
 				}
 			}
 			var delivered int
@@ -215,20 +207,12 @@ func TestComputerRestoreAcknowledgesEntireSet(t *testing.T) {
 			if _, err = db.New(f.Pool).DrainWorkerHost(t.Context(), db.DrainWorkerHostParams{ID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), ExpectedEpoch: pgtype.Int8{Int64: 1, Valid: true}, ExpectedClaimVersion: 1}); err != nil {
 				t.Fatal(err)
 			}
-			tx, err = f.Pool.Begin(t.Context())
+			replayed, err := computer.AcknowledgeRestore(t.Context(), f.Pool, fence, cp.ID, cp.WriterGeneration+1, grants)
 			if err != nil {
-				t.Fatal(err)
-			}
-			replayed, err := computer.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants)
-			if err != nil {
-				tx.Rollback(t.Context())
 				t.Fatal(err)
 			}
 			if replayed.AdmissionState != "draining" {
 				t.Fatal("receipt changed draining admission")
-			}
-			if err = tx.Commit(t.Context()); err != nil {
-				t.Fatal(err)
 			}
 			tx, err = f.Pool.Begin(t.Context())
 			if err != nil {
@@ -312,12 +296,7 @@ func TestComputerRestoreAcknowledgementRejectsPartialAuthority(t *testing.T) {
 			case "preparation expired":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET preparation_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, fence.ID)
 			}
-			tx, err = f.Pool.Begin(t.Context())
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = computer.AcknowledgeRestore(t.Context(), tx, fence, checkpoint, generation, grants)
-			tx.Rollback(t.Context())
+			_, err = computer.AcknowledgeRestore(t.Context(), f.Pool, fence, checkpoint, generation, grants)
 			if err == nil {
 				t.Fatal("invalid activation accepted")
 			}
@@ -391,26 +370,17 @@ func TestComputerRestoreAcknowledgementActorTurn(t *testing.T) {
 			if state == "cancel requested" {
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET cancel_requested_at=clock_timestamp() WHERE id=(SELECT session_id FROM session_turns WHERE id=$1)`, turn)
 			}
-			tx, err = f.Pool.Begin(t.Context())
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer tx.Rollback(t.Context())
-			_, err = computer.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants)
+			_, err = computer.AcknowledgeRestore(t.Context(), f.Pool, fence, cp.ID, cp.WriterGeneration+1, grants)
 			if state != "rebind" {
 				if err == nil {
 					t.Fatal("stopped Actor activated")
 				}
-				tx.Rollback(t.Context())
 				var unchanged bool
 				if err = f.Pool.QueryRow(t.Context(), `SELECT admission_state='restoring' AND NOT EXISTS(SELECT 1 FROM run_leases WHERE computer_instance_id=i.id AND status='running') FROM computer_instances i WHERE i.id=$1`, fence.ID).Scan(&unchanged); err != nil || !unchanged {
 					t.Fatalf("stopped Actor changed activation: %v %v", unchanged, err)
 				}
 			} else {
 				if err != nil {
-					t.Fatal(err)
-				}
-				if err = tx.Commit(t.Context()); err != nil {
 					t.Fatal(err)
 				}
 				var ready bool
@@ -449,16 +419,7 @@ func TestComputerRestoreAcknowledgementRechecksActiveBudget(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), blocker, `SELECT pg_advisory_xact_lock(91827365)`)
 	result := make(chan error, 1)
 	go func() {
-		tx, err := f.Pool.Begin(t.Context())
-		if err != nil {
-			result <- err
-			return
-		}
-		defer tx.Rollback(t.Context())
-		_, err = computer.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants)
-		if err == nil {
-			err = tx.Commit(t.Context())
-		}
+		_, err := computer.AcknowledgeRestore(t.Context(), f.Pool, fence, cp.ID, cp.WriterGeneration+1, grants)
 		result <- err
 	}()
 	blocked := false
@@ -549,6 +510,8 @@ func TestComputerRestoreReconciliationPreparationDeadline(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				// The acknowledgement replays the restore commit's uncommitted
+				// writes, so it runs in the same transaction.
 				var generation int64
 				if err = tx.QueryRow(t.Context(), `SELECT writer_generation FROM computer_instances WHERE id=$1`, fence.ID).Scan(&generation); err != nil {
 					t.Fatal(err)
@@ -682,15 +645,7 @@ func TestComputerRestoreAfterWakeDuringCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	grants := installedRestoreGrants(t, f, fence)
-	tx, err = f.Pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(t.Context())
-	if _, err := computer.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants); err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.Commit(t.Context()); err != nil {
+	if _, err := computer.AcknowledgeRestore(t.Context(), f.Pool, fence, cp.ID, cp.WriterGeneration+1, grants); err != nil {
 		t.Fatal(err)
 	}
 	var preserved bool
