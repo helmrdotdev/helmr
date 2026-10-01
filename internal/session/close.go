@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
@@ -38,17 +39,14 @@ func ReconcileClose(
 	if actor.CurrentRunID.Valid {
 		return reconcileCurrentRunClose(ctx, tx, actor)
 	}
-	computer, err := store.LockActorCloseComputer(ctx, db.LockActorCloseComputerParams{
-		EnvironmentID: actor.EnvironmentID,
-		ComputerID:    actor.ComputerID,
-		SessionID:     actor.ID,
-	})
+	locked, err := computer.LockSessionComputer(ctx, tx, sessionComputerRef(actor))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return actor, true, nil
 	}
 	if err != nil {
 		return db.Session{}, false, err
 	}
+	sessionComputer := locked.Computer()
 	activity, err := store.GetActorCloseComputerActivity(ctx, actor.ID)
 	if err != nil {
 		return db.Session{}, false, err
@@ -61,7 +59,7 @@ func ReconcileClose(
 			ctx,
 			tx,
 			actor,
-			db.Computer{ID: computer.ID},
+			db.Computer{ID: sessionComputer.ID},
 			bindings,
 		); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -128,21 +126,18 @@ func reconcileCurrentRunClose(
 	if err != nil {
 		return db.Session{}, false, err
 	}
-	computer, err := store.LockActorCloseComputer(ctx, db.LockActorCloseComputerParams{
-		EnvironmentID: actor.EnvironmentID,
-		ComputerID:    actor.ComputerID,
-		SessionID:     actor.ID,
-	})
+	locked, err := computer.LockSessionComputer(ctx, tx, sessionComputerRef(actor))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return actor, true, nil
 	}
 	if err != nil {
 		return db.Session{}, false, err
 	}
+	sessionComputer := locked.Computer()
 	attempt, err := store.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{
 		RunID:      run.ID,
 		Number:     run.CurrentAttemptNumber,
-		ComputerID: computer.ID,
+		ComputerID: sessionComputer.ID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return actor, true, nil
@@ -214,10 +209,11 @@ func reconcileCancellation(ctx context.Context, tx pgx.Tx, actor db.Session) (db
 		if !attempt.TerminalAt.Valid || attempt.EntrypointEnteredAt.Valid || actor.DispatchHoldReason.String != "interrupt_requested" {
 			return actor, true, nil
 		}
-		computer, err := q.LockActorCloseComputer(ctx, db.LockActorCloseComputerParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ComputerID: actor.ComputerID})
+		locked, err := computer.LockSessionComputer(ctx, tx, sessionComputerRef(actor))
 		if err != nil {
 			return actor, false, err
 		}
+		sessionComputer := locked.Computer()
 		excluded, err := q.SessionExecutionScopesReconciled(ctx, actor.ID)
 		if err != nil {
 			return actor, false, err
@@ -225,7 +221,7 @@ func reconcileCancellation(ctx context.Context, tx pgx.Tx, actor db.Session) (db
 		if !excluded {
 			return actor, true, nil
 		}
-		if err = CompleteInterruption(ctx, tx, actor, computer.HeadDiskVersionID, ""); err != nil {
+		if err = CompleteInterruption(ctx, tx, actor, sessionComputer.HeadDiskVersionID, ""); err != nil {
 			return actor, false, err
 		}
 		actor, err = q.GetActor(ctx, db.GetActorParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})

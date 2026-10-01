@@ -167,6 +167,42 @@ func TestExecutionHostClaimsDoNotReplaceEpochOrStateFences(t *testing.T) {
 	}
 }
 
+func TestExecutionHostWithoutClaimsKeepsEpochAndStateFences(t *testing.T) {
+	for _, test := range []struct {
+		name, sql string
+		want      error
+		host      bool
+	}{
+		{"current", ``, nil, false},
+		{"host claims", `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, nil, false},
+		{"group claims", `UPDATE worker_groups SET claim_version=claim_version+1 WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, nil, false},
+		{"draining host", `UPDATE worker_hosts SET status='draining',draining_at=now() WHERE id=$1`, nil, false},
+		{"paused group", `UPDATE worker_groups SET status='paused' WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, nil, false},
+		{"draining group", `UPDATE worker_groups SET status='draining',primary_pool_id=NULL WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, nil, false},
+		{"disabled group", `UPDATE worker_groups SET status='disabled',primary_pool_id=NULL WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, pgx.ErrNoRows, false},
+		{"new epoch", `UPDATE worker_hosts SET current_epoch=2 WHERE id=$1`, pgx.ErrNoRows, true},
+		{"lost host", `UPDATE worker_hosts SET status='lost',lost_at=now() WHERE id=$1`, pgx.ErrNoRows, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newSupplyFixture(t)
+			hostID := f.activeHost(t, f.activePool(t, "default"), "host-1")
+			if test.sql != "" {
+				dbtest.MustExec(t, t.Context(), f.pool, test.sql, hostID)
+			}
+			platform, err := LockExecutionHostWithoutClaims(t.Context(), db.New(f.begin(t)), ExecutionEpoch{
+				GroupID: f.group.ID, RegionID: fixtureRegionID, HostID: pgvalue.UUID(hostID), Epoch: 1,
+			})
+			if test.want == nil && (err != nil || platform != f.vmPlatformID) || test.want != nil && !errors.Is(err, test.want) {
+				t.Fatalf("execution host = %q, %v, want %v", platform, err, test.want)
+			}
+			var rejected *ExecutionHostError
+			if test.want != nil && (!errors.As(err, &rejected) || rejected.Host != test.host || rejected.Err != nil) {
+				t.Fatalf("execution host rejection = %#v, want a rejected row naming the host: %v", rejected, test.host)
+			}
+		})
+	}
+}
+
 func TestLockHostReportsStaleClaimsAndContinuation(t *testing.T) {
 	for _, test := range []struct {
 		name, sql string

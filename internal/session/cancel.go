@@ -16,7 +16,7 @@ import (
 // caller acquires the owned Run graph before entering Session authority.
 func Cancel(ctx context.Context, tx pgx.Tx, request ControlRequest, graph run.OwnedFinalization) (ControlReceipt, error) {
 	q := db.New(tx)
-	actor, err := lockSession(ctx, q, request.Target)
+	actor, err := lockSession(ctx, tx, request.Target)
 	if err != nil {
 		return ControlReceipt{}, err
 	}

@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -112,86 +114,17 @@ func (r *WaitReconciler) RegisterWait(
 			return replay, nil
 		}
 	}
-	locators, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
-		ID: pgvalue.UUID(request.RunLeaseID), LeaseSequence: request.LeaseSequence,
-		WorkerGroupID: pgvalue.UUID(request.WorkerGroupID), WorkerHostID: pgvalue.UUID(request.WorkerHostID),
-		WorkerEpoch: request.WorkerEpoch,
+	stage, err := run.BeginTokenWaitRegistration(ctx, tx, run.TokenWaitFence{
+		RunLeaseID: request.RunLeaseID, LeaseSequence: request.LeaseSequence,
+		WorkerGroupID: request.WorkerGroupID, WorkerHostID: request.WorkerHostID, WorkerEpoch: request.WorkerEpoch,
 	})
 	if err != nil {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("load token wait lease authority", err)
+		return WaitRegistrationResult{}, tokenWaitStageError(err)
 	}
-	environmentID := pgvalue.MustUUIDValue(locators.EnvironmentID)
+	locators, locator, lockedActor := stage.Lease(), stage.Owner(), stage.Session()
 	runID := pgvalue.MustUUIDValue(locators.RunID)
 	attemptNumber := locators.AttemptNumber
-	locator, err := q.GetTokenWaitRegistrationLocator(
-		ctx,
-		db.GetTokenWaitRegistrationLocatorParams{
-			EnvironmentID: locators.EnvironmentID,
-			RunID:         locators.RunID,
-		},
-	)
-	if err != nil {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("load token wait registration locator", err)
-	}
-	workerGroup, err := q.LockRunLeaseClaimWorkerGroup(ctx, db.LockRunLeaseClaimWorkerGroupParams{
-		ID: pgvalue.UUID(request.WorkerGroupID), RegionID: locators.RegionID,
-	})
-	if err != nil ||
-		(workerGroup.Status != db.WorkerGroupStatusActive && workerGroup.Status != db.WorkerGroupStatusPaused && workerGroup.Status != db.WorkerGroupStatusDraining) {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock worker group", err)
-	}
-	worker, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{
-		ID: pgtype.UUID{Bytes: request.WorkerHostID, Valid: true}, WorkerGroupID: pgvalue.UUID(request.WorkerGroupID),
-	})
-	if err != nil ||
-		(worker.Status != db.WorkerHostStatusActive && worker.Status != db.WorkerHostStatusDraining) ||
-		!worker.CurrentEpoch.Valid ||
-		worker.CurrentEpoch.Int64 != request.WorkerEpoch ||
-		!worker.VMPlatformID.Valid {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current worker epoch", err)
-	}
-	computer, err := q.LockTokenWaitComputer(ctx, db.LockTokenWaitComputerParams{
-		ComputerID: locator.ComputerID, EnvironmentID: locators.EnvironmentID,
-	})
-	if err != nil || computer.Status != db.ComputerStatusActive || computer.DesiredState != db.ComputerDesiredStateActive {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock active Computer", err)
-	}
-	runtime, err := q.LockRunLeaseClaimInstance(ctx, db.LockRunLeaseClaimInstanceParams{
-		ID: locators.ComputerInstanceID, OrgID: locator.OrgID,
-		ProjectID: locator.ProjectID, EnvironmentID: locators.EnvironmentID,
-		RegionID: locators.RegionID, WorkerGroupID: pgvalue.UUID(request.WorkerGroupID),
-		WorkerHostID: pgtype.UUID{Bytes: request.WorkerHostID, Valid: true}, WorkerEpoch: request.WorkerEpoch,
-		ComputerID: locator.ComputerID,
-	})
-	if err != nil || runtime.VMPlatformID != worker.VMPlatformID.String ||
-		runtime.DesiredState != db.RuntimeDesiredStateReady || runtime.ObservedState != db.RuntimeObservedStateReady ||
-		runtime.ObservedDesiredVersion != runtime.DesiredVersion || runtime.TerminalAt.Valid ||
-		runtime.ReclaimedAt.Valid || runtime.MountState != "mounted" || runtime.WriterGeneration != computer.WriterGeneration ||
-		runtime.WriterGeneration != locators.WriterGeneration || (runtime.AdmissionState != "open" && runtime.AdmissionState != "draining") {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock ready runtime", err)
-	}
-
-	var lockedActorCurrentRunID pgtype.UUID
-	var lockedActor db.Session
-	var lockedActorCommittedInputSequence, lockedActorNextInputSequence int64
-	if locator.SessionID.Valid {
-		actor, err := q.LockTokenWaitActor(ctx, locator.SessionID)
-		if err != nil {
-			return WaitRegistrationResult{}, tokenWaitAuthorityError("lock owning actor", err)
-		}
-		if actor.Status != "open" && actor.Status != "closing" {
-			return WaitRegistrationResult{}, tokenWaitAuthorityError("owning actor is not active", nil)
-		}
-		lockedActor = actor
-		lockedActorCurrentRunID = actor.CurrentRunID
-		lockedActorCommittedInputSequence = actor.CommittedInputSequence
-		lockedActorNextInputSequence = actor.NextInputSequence
-	}
-
-	run, err := lockTokenWaitRun(ctx, q, environmentID, runID)
-	if err != nil {
-		return WaitRegistrationResult{}, err
-	}
+	lockedRun := tokenWaitRunFromRow(stage.Run())
 	if replay, found, err := replayTokenWaitRegistration(ctx, q, request, metadata, tags); err != nil {
 		return WaitRegistrationResult{}, err
 	} else if found {
@@ -200,29 +133,19 @@ func (r *WaitReconciler) RegisterWait(
 		}
 		return replay, nil
 	}
-	if pgvalue.UUID(run.computerID) != locator.ComputerID || run.status != db.RunStatusRunning ||
-		run.currentAttempt != attemptNumber ||
-		!run.currentRunLeaseID.Valid || uuid.UUID(run.currentRunLeaseID.Bytes) != request.RunLeaseID ||
-		!run.activeStartedAt.Valid {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("run registration fence does not match", nil)
-	}
-	attempt, err := q.LockTokenWaitAttempt(ctx, db.LockTokenWaitAttemptParams{
-		RunID:         locators.RunID,
-		AttemptNumber: attemptNumber,
-		ComputerID:    locator.ComputerID,
-	})
-	if err != nil || attempt.TerminalAt.Valid {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current run attempt", err)
+	attempt, err := stage.LockAttempt(ctx)
+	if err != nil {
+		return WaitRegistrationResult{}, tokenWaitStageError(err)
 	}
 	if err := validateTokenWaitActorCursor(
-		request.ActorSpeculativeInputSequence, locator.SessionID, lockedActorCurrentRunID,
-		lockedActorCommittedInputSequence, lockedActorNextInputSequence,
-		run, attempt.EntrypointKind, attempt.SessionInputStartSequence,
+		request.ActorSpeculativeInputSequence, locator.SessionID, lockedActor.CurrentRunID,
+		lockedActor.CommittedInputSequence, lockedActor.NextInputSequence,
+		lockedRun, attempt.Attempt().EntrypointKind, attempt.Attempt().SessionInputStartSequence,
 	); err != nil {
 		return WaitRegistrationResult{}, err
 	}
-	if run.entrypointKind == "actor" {
-		want := lockedActorCommittedInputSequence
+	if lockedRun.entrypointKind == "actor" {
+		want := lockedActor.CommittedInputSequence
 		if request.TurnID.Valid {
 			want++
 		}
@@ -230,21 +153,8 @@ func (r *WaitReconciler) RegisterWait(
 			return WaitRegistrationResult{}, tokenWaitAuthorityError("Token wait cursor does not identify its admitted Turn", nil)
 		}
 	}
-	leaseStatus, err := q.LockTokenWaitRunLease(ctx, db.LockTokenWaitRunLeaseParams{
-		ID:                 pgvalue.UUID(request.RunLeaseID),
-		RunID:              locators.RunID,
-		AttemptNumber:      attemptNumber,
-		ComputerID:         locator.ComputerID,
-		LeaseSequence:      request.LeaseSequence,
-		WorkerGroupID:      pgvalue.UUID(request.WorkerGroupID),
-		WorkerHostID:       pgvalue.UUID(request.WorkerHostID),
-		WorkerEpoch:        request.WorkerEpoch,
-		ComputerInstanceID: locators.ComputerInstanceID,
-		VMPlatformID:       runtime.VMPlatformID,
-		RegionID:           locators.RegionID,
-	})
-	if err != nil || db.RunLeaseStatus(leaseStatus) != db.RunLeaseStatusRunning {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current unexpired run lease", err)
+	if err := attempt.LockLease(ctx); err != nil {
+		return WaitRegistrationResult{}, tokenWaitStageError(err)
 	}
 
 	registered, err := q.RegisterTokenWait(ctx, db.RegisterTokenWaitParams{
@@ -253,7 +163,7 @@ func (r *WaitReconciler) RegisterWait(
 		TimeoutAt:               request.TimeoutAt,
 		IdleTimeoutMs:           request.IdleTimeoutMS,
 		TokenID:                 pgvalue.UUID(request.TokenID),
-		ExpectedRunningRevision: run.revision,
+		ExpectedRunningRevision: lockedRun.revision,
 		RequestFingerprint:      request.RequestFingerprint,
 		AttemptNumber:           attemptNumber,
 		CurrentRunLeaseID:       pgvalue.UUID(request.RunLeaseID),
@@ -306,9 +216,9 @@ func (r *WaitReconciler) RegisterWait(
 			expectedRunRevision: waitingRevision, attemptNumber: attemptNumber,
 			currentRunLeaseID: pgtype.UUID{Bytes: request.RunLeaseID, Valid: true},
 		}
-		run.revision = waitingRevision
-		run.status = db.RunStatusWaiting
-		if err := reconcileHotTokenWait(ctx, q, run, wait, resolution); err != nil {
+		lockedRun.revision = waitingRevision
+		lockedRun.status = db.RunStatusWaiting
+		if err := reconcileHotTokenWait(ctx, q, lockedRun, wait, resolution); err != nil {
 			return WaitRegistrationResult{}, err
 		}
 		result.RunRevision = waitingRevision + 1
@@ -562,15 +472,8 @@ func (r *WaitReconciler) reconcileOne(
 		return false, false, err
 	}
 
-	if _, err := q.LockTokenWaitComputer(ctx, db.LockTokenWaitComputerParams{
-		ComputerID: locator.ComputerID, EnvironmentID: pgvalue.UUID(environmentID),
-	}); err != nil {
-		return false, false, tokenWaitAuthorityError("lock Computer", err)
-	}
-	if _, err := q.LockComputerInstance(ctx, db.LockComputerInstanceParams{
-		ComputerID: locator.ComputerID, EnvironmentID: pgvalue.UUID(environmentID),
-	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return false, false, tokenWaitAuthorityError("lock Computer Instance", err)
+	if err := computer.LockResidence(ctx, tx, environmentID, pgvalue.MustUUIDValue(locator.ComputerID)); err != nil {
+		return false, false, tokenWaitAuthorityError("lock Computer residence", err)
 	}
 
 	var lockedActorCurrentRunID pgtype.UUID
@@ -691,18 +594,22 @@ func (r *WaitReconciler) reconcileOne(
 }
 
 func lockTokenWaitRun(ctx context.Context, q *db.Queries, environmentID, runID uuid.UUID) (tokenWaitLockedRun, error) {
-	run, err := q.LockTokenWaitRun(ctx, db.LockTokenWaitRunParams{
+	locked, err := q.LockTokenWaitRun(ctx, db.LockTokenWaitRunParams{
 		EnvironmentID: pgvalue.UUID(environmentID), RunID: pgvalue.UUID(runID),
 	})
 	if err != nil {
 		return tokenWaitLockedRun{}, tokenWaitAuthorityError("lock Run", err)
 	}
+	return tokenWaitRunFromRow(locked), nil
+}
+
+func tokenWaitRunFromRow(locked db.Run) tokenWaitLockedRun {
 	return tokenWaitLockedRun{
-		id: pgvalue.MustUUIDValue(run.ID), computerID: pgvalue.MustUUIDValue(run.ComputerID),
-		actorID: run.SessionID, entrypointKind: run.EntrypointKind, status: db.RunStatus(run.Status),
-		revision: run.Revision, currentAttempt: run.CurrentAttemptNumber,
-		currentRunLeaseID: run.CurrentRunLeaseID, activeStartedAt: run.ActiveStartedAt,
-	}, nil
+		id: pgvalue.MustUUIDValue(locked.ID), computerID: pgvalue.MustUUIDValue(locked.ComputerID),
+		actorID: locked.SessionID, entrypointKind: locked.EntrypointKind, status: db.RunStatus(locked.Status),
+		revision: locked.Revision, currentAttempt: locked.CurrentAttemptNumber,
+		currentRunLeaseID: locked.CurrentRunLeaseID, activeStartedAt: locked.ActiveStartedAt,
+	}
 }
 
 func lockCurrentTokenWait(
@@ -876,6 +783,12 @@ func reconcileParkedTokenWait(
 		return tokenWaitAuthorityError("resolve parked token wait", err)
 	}
 	return nil
+}
+
+// tokenWaitStageError reports a rejected or failed registration stage as a
+// Token wait authority failure.
+func tokenWaitStageError(cause error) error {
+	return fmt.Errorf("%w: %w", ErrWaitAuthority, cause)
 }
 
 func tokenWaitAuthorityError(operation string, cause error) error {

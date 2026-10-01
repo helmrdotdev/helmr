@@ -43,6 +43,28 @@ func (a Admission) Row() db.LockComputerAdmissionAuthorityRow {
 	return a.row
 }
 
+// LockLiveInstance update-locks the admitted Computer's unreclaimed Instance
+// when it has one, so the caller's member operation holds the Computer and
+// its Instance in the global order before it locks member rows. A Computer
+// without an unreclaimed Instance is not an error.
+//
+// Equivalence: this is one statement, the unreclaimed Instance of the locked
+// Computer FOR UPDATE, addressed by the locked row's Environment and id,
+// with no admission, writer or readiness predicate; a missing Instance is
+// skipped and any other error is returned unchanged.
+func (a Admission) LockLiveInstance(ctx context.Context) error {
+	if a.tx == nil {
+		return errors.New("computer admission is not locked")
+	}
+	_, err := db.New(a.tx).LockComputerInstance(ctx, db.LockComputerInstanceParams{
+		EnvironmentID: a.row.EnvironmentID, ComputerID: a.row.ID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	return err
+}
+
 // Touch records the admission: the Computer becomes desired active and its
 // revision and activity advance. It fails with pgx.ErrNoRows unless the
 // locked Computer is still active, clean, free of preparation and recovery

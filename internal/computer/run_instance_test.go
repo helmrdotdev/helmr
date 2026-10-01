@@ -40,3 +40,17 @@ func TestRunInstanceRecordStartRequiresALockedInstance(t *testing.T) {
 		t.Fatal("an unlocked Run Instance recorded a start")
 	}
 }
+
+func TestSessionComputerAccessorReturnsIsolatedCopies(t *testing.T) {
+	var locked SessionComputer
+	dbtest.FillSlices(t, &locked.computer)
+	want := fmt.Sprintf("%#v", locked.Computer())
+	returned := locked.Computer()
+	dbtest.MutateSlices(t, &returned)
+	if fmt.Sprintf("%#v", returned) == want {
+		t.Fatal("mutation did not change the returned value")
+	}
+	if got := fmt.Sprintf("%#v", locked.Computer()); got != want {
+		t.Fatalf("mutating a returned value changed the next result:\ngot  %s\nwant %s", got, want)
+	}
+}

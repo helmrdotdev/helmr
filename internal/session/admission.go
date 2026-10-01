@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
@@ -14,7 +16,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func lockSession(ctx context.Context, q db.Querier, target Target) (db.Session, error) {
+// ErrComputerAuthority reports that a Session operation found its Session
+// but could not lock the Session's Computer for admission: the Computer is
+// gone from the Environment or has no initializing or committed head disk
+// version. It wraps computer.ErrNotFound.
+var ErrComputerAuthority = errors.New("session computer authority is unavailable")
+
+// lockSession locks the Session's Computer and its unreclaimed Instance,
+// then the Session. The Session is read without a lock first to find its
+// Computer.
+func lockSession(ctx context.Context, tx pgx.Tx, target Target) (db.Session, error) {
+	q := db.New(tx)
 	locator, err := q.GetActor(ctx, db.GetActorParams{EnvironmentID: pgvalue.UUID(target.EnvironmentID), ID: pgvalue.UUID(target.SessionID)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return db.Session{}, &OperationError{Code: "session_not_found"}
@@ -22,7 +34,7 @@ func lockSession(ctx context.Context, q db.Querier, target Target) (db.Session, 
 	if err != nil {
 		return db.Session{}, err
 	}
-	if err := lockSessionComputer(ctx, q, locator.EnvironmentID, locator.ComputerID); err != nil {
+	if err := lockSessionComputer(ctx, tx, locator.EnvironmentID, locator.ComputerID); err != nil {
 		return db.Session{}, err
 	}
 	s, err := q.LockSessionTurnAuthority(ctx, db.LockSessionTurnAuthorityParams{EnvironmentID: pgvalue.UUID(target.EnvironmentID), ID: pgvalue.UUID(target.SessionID)})
@@ -32,14 +44,18 @@ func lockSession(ctx context.Context, q db.Querier, target Target) (db.Session, 
 	return s, err
 }
 
-func lockSessionComputer(ctx context.Context, q db.Querier, environmentID, computerID pgtype.UUID) error {
-	if _, err := q.LockComputerAdmissionAuthority(ctx, db.LockComputerAdmissionAuthorityParams{EnvironmentID: environmentID, ID: computerID}); err != nil {
+// lockSessionComputer locks the Session's Computer for admission, then its
+// unreclaimed Instance when it has one. A Computer that cannot be locked for
+// admission returns ErrComputerAuthority.
+func lockSessionComputer(ctx context.Context, tx pgx.Tx, environmentID, computerID pgtype.UUID) error {
+	admission, err := computer.LockForAdmission(ctx, tx, pgvalue.MustUUIDValue(environmentID), pgvalue.MustUUIDValue(computerID))
+	if errors.Is(err, computer.ErrNotFound) {
+		return fmt.Errorf("%w: %w", ErrComputerAuthority, err)
+	}
+	if err != nil {
 		return err
 	}
-	if _, err := q.LockComputerInstance(ctx, db.LockComputerInstanceParams{EnvironmentID: environmentID, ComputerID: computerID}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return err
-	}
-	return nil
+	return admission.LockLiveInstance(ctx)
 }
 
 func claimOperation(ctx context.Context, tx pgx.Tx, request ControlRequest, name string, fingerprint any) (db.IdempotencyClaim, error) {
@@ -94,7 +110,7 @@ func Admit(ctx context.Context, tx pgx.Tx, request AdmissionRequest) (AdmissionR
 	if err != nil || len(data) > 1<<20 {
 		return AdmissionReceipt{}, &OperationError{Code: "invalid_request"}
 	}
-	actor, err := lockSession(ctx, q, request.Target)
+	actor, err := lockSession(ctx, tx, request.Target)
 	if err != nil {
 		return AdmissionReceipt{}, err
 	}
@@ -175,4 +191,13 @@ func Admit(ctx context.Context, tx pgx.Tx, request AdmissionRequest) (AdmissionR
 
 func appendLifecycleEvent(ctx context.Context, q db.Querier, actor db.Session, turnID, messageID pgtype.UUID, kind string, data json.RawMessage, version pgtype.UUID) (db.SessionEvent, error) {
 	return q.AppendSessionEvent(ctx, db.AppendSessionEventParams{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, TurnID: turnID, MessageID: messageID, Kind: kind, Data: data, ComputerDiskVersionID: version})
+}
+
+// sessionComputerRef addresses the Computer the Session runs on.
+func sessionComputerRef(actor db.Session) computer.SessionComputerRef {
+	return computer.SessionComputerRef{
+		EnvironmentID: pgvalue.MustUUIDValue(actor.EnvironmentID),
+		ComputerID:    pgvalue.MustUUIDValue(actor.ComputerID),
+		SessionID:     pgvalue.MustUUIDValue(actor.ID),
+	}
 }

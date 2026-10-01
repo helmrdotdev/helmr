@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -51,7 +52,7 @@ func (r *Reconciler) ReconcileLifecycle(
 	if err != nil {
 		return false, err
 	}
-	if err := lockSessionComputer(ctx, q, locator.EnvironmentID, locator.ComputerID); err != nil {
+	if err := lockSessionComputer(ctx, tx, locator.EnvironmentID, locator.ComputerID); err != nil {
 		return false, err
 	}
 	actor, err := q.LockActorClose(ctx, db.LockActorCloseParams{
@@ -84,14 +85,15 @@ func (r *Reconciler) ReconcileLifecycle(
 	// Completion commits before process cleanup. The same durable lifecycle
 	// intent admits a continuation only after the previous scopes are excluded.
 	if actor.Status == "open" && !actor.CancelRequestedAt.Valid && CanStartContinuation(actor) {
-		computer, err := q.LockActorCloseComputer(ctx, db.LockActorCloseComputerParams{EnvironmentID: actor.EnvironmentID, ComputerID: actor.ComputerID, SessionID: actor.ID})
+		locked, err := computer.LockSessionComputer(ctx, tx, sessionComputerRef(actor))
 		if err != nil {
 			return false, err
 		}
+		sessionComputer := locked.Computer()
 		if !bindingsCanAdmit(actor, bindings) {
 			return true, tx.Commit(ctx)
 		}
-		if _, err = CreateContinuation(ctx, tx, actor, computer, bindings); errors.Is(err, pgx.ErrNoRows) {
+		if _, err = CreateContinuation(ctx, tx, actor, sessionComputer, bindings); errors.Is(err, pgx.ErrNoRows) {
 			return true, tx.Commit(ctx)
 		} else if err != nil {
 			return false, err
@@ -136,7 +138,7 @@ func (r *Reconciler) ReconcileInput(
 	if err != nil {
 		return false, err
 	}
-	if err := lockSessionComputer(ctx, q, locator.EnvironmentID, locator.ComputerID); err != nil {
+	if err := lockSessionComputer(ctx, tx, locator.EnvironmentID, locator.ComputerID); err != nil {
 		return false, err
 	}
 	actor, err := q.LockActorForInputReconcile(ctx, db.LockActorForInputReconcileParams{
@@ -162,15 +164,14 @@ func (r *Reconciler) ReconcileInput(
 			return false, ErrAuthority
 		}
 	}
-	computer, err := q.LockActorInputComputer(ctx, db.LockActorInputComputerParams{
-		EnvironmentID: actor.EnvironmentID, ID: actor.ComputerID, SessionID: actor.ID,
-	})
+	locked, err := computer.LockOpenSessionComputer(ctx, tx, sessionComputerRef(actor))
 	if err != nil {
 		return false, ErrAuthority
 	}
+	sessionComputer := locked.Computer()
 	if actor.CurrentRunID.Valid {
 		attempt, err := q.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{
-			RunID: currentRun.ID, Number: currentRun.CurrentAttemptNumber, ComputerID: computer.ID,
+			RunID: currentRun.ID, Number: currentRun.CurrentAttemptNumber, ComputerID: sessionComputer.ID,
 		})
 		if err != nil || attempt.TerminalAt.Valid {
 			return false, ErrAuthority
@@ -198,7 +199,7 @@ func (r *Reconciler) ReconcileInput(
 		return false, err
 	}
 	if CanStartContinuation(actor) {
-		if _, err := CreateContinuation(ctx, tx, actor, computer, bindings); errors.Is(err, pgx.ErrNoRows) {
+		if _, err := CreateContinuation(ctx, tx, actor, sessionComputer, bindings); errors.Is(err, pgx.ErrNoRows) {
 			if err := tx.Commit(ctx); err != nil {
 				return false, err
 			}
@@ -236,7 +237,7 @@ func (r *Reconciler) ReconcileTimeouts(ctx context.Context, limit int32) (int, e
 			_ = tx.Rollback(context.Background())
 			return resolved, err
 		}
-		if err := lockSessionComputer(ctx, q, candidate.EnvironmentID, candidate.ComputerID); err != nil {
+		if err := lockSessionComputer(ctx, tx, candidate.EnvironmentID, candidate.ComputerID); err != nil {
 			_ = tx.Rollback(context.Background())
 			return resolved, err
 		}
@@ -262,15 +263,18 @@ func (r *Reconciler) ReconcileTimeouts(ctx context.Context, limit int32) (int, e
 			_ = tx.Rollback(context.Background())
 			return resolved, ErrAuthority
 		}
-		computer, err := q.LockActorInputComputer(ctx, db.LockActorInputComputerParams{
-			EnvironmentID: candidate.EnvironmentID, ID: candidate.ComputerID, SessionID: candidate.SessionID,
+		locked, err := computer.LockOpenSessionComputer(ctx, tx, computer.SessionComputerRef{
+			EnvironmentID: pgvalue.MustUUIDValue(candidate.EnvironmentID),
+			ComputerID:    pgvalue.MustUUIDValue(candidate.ComputerID),
+			SessionID:     pgvalue.MustUUIDValue(candidate.SessionID),
 		})
 		if err != nil {
 			_ = tx.Rollback(context.Background())
 			return resolved, ErrAuthority
 		}
+		sessionComputer := locked.Computer()
 		attempt, err := q.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{
-			RunID: run.ID, Number: run.CurrentAttemptNumber, ComputerID: computer.ID,
+			RunID: run.ID, Number: run.CurrentAttemptNumber, ComputerID: sessionComputer.ID,
 		})
 		if err != nil || attempt.TerminalAt.Valid {
 			_ = tx.Rollback(context.Background())

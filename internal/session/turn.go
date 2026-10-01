@@ -66,7 +66,7 @@ type InterruptReceipt struct {
 // Historical receipts admit no new retirement and prove no native quiescence.
 func InterruptTurn(ctx context.Context, tx pgx.Tx, environmentID, sessionID, turnID uuid.UUID, key string, graph run.OwnedFinalization) (InterruptReceipt, error) {
 	q := db.New(tx)
-	actor, err := lockSession(ctx, q, Target{EnvironmentID: environmentID, SessionID: sessionID})
+	actor, err := lockSession(ctx, tx, Target{EnvironmentID: environmentID, SessionID: sessionID})
 	if err != nil {
 		return InterruptReceipt{}, err
 	}

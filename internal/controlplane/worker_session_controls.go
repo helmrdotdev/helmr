@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
@@ -56,7 +57,7 @@ func lockWorkerSessionControl(ctx context.Context, work *txWork, worker workergr
 	}
 
 	if !interrupt && !target.CurrentRunID.Valid {
-		if _, err = work.q.LockActorCloseComputer(ctx, db.LockActorCloseComputerParams{EnvironmentID: target.EnvironmentID, ComputerID: target.ComputerID, SessionID: target.ID}); err != nil {
+		if _, err = computer.LockSessionComputer(ctx, work.tx, computer.SessionComputerRef{EnvironmentID: pgvalue.MustUUIDValue(target.EnvironmentID), ComputerID: pgvalue.MustUUIDValue(target.ComputerID), SessionID: pgvalue.MustUUIDValue(target.ID)}); err != nil {
 			return fail(err)
 		}
 	}

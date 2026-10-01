@@ -286,7 +286,9 @@ func (s *Server) writeSessionOperationError(w http.ResponseWriter, err error) {
 		default:
 			writeError(w, conflict(coded))
 		}
-	case errors.Is(err, pgx.ErrNoRows):
+	case errors.Is(err, pgx.ErrNoRows), errors.Is(err, session.ErrComputerAuthority):
+		// A Session whose Computer cannot be locked for admission is reported
+		// as a missing Session.
 		writeError(w, notFound(codedError{code: "session_not_found", message: "Session not found"}))
 	default:
 		if s.log != nil {
