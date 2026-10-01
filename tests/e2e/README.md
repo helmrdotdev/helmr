@@ -151,3 +151,14 @@ and the relevant selection guidance when deleting; keep neither obsolete aliases
 nor a compatibility runner. Run source checks for changed assertions, then the
 selected live case when the claim needs a real guest. An all-suite run is not a
 substitute for selecting the correct boundary.
+
+`cases/computer-restore` supplies a parent and child sharing one Computer for
+provider-controlled replacement verification. Both preserve independent memory
+nonces and files; the child enters a native token Wait while the parent awaits
+its call. A verifier must observe both members in the same ready checkpoint,
+source reclamation, the replacement Host and one destination Instance with exact
+checkpoint/disk lineage. Completing the child's token allows both to resume;
+the parent verifies the child's post-restore file write. Its one-hour Task and
+45-minute Wait budgets include bounded host replacement. Deployment owners own
+provider retirement, baseline restoration and cleanup; ordinary elapsed time or
+Task success does not establish a checkpoint restore.

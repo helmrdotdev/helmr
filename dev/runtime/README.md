@@ -457,3 +457,28 @@ Log replay can briefly return `telemetry_lagging`. The driver records and waits
 through only that condition within the existing phase deadline; other errors or
 a terminal Run still fail. The first live attempt exposed this condition and was
 cancelled with fixture cleanup before the corrected case passed.
+
+## Named database observations
+
+`observe.py OBSERVATION INPUTS_JSON` renders one fixed, read-only observation as
+psql input. The available observations cover Run placement/path and reclamation,
+Computer state, current Worker Hosts, regional Worker capacity/platforms,
+Deployment identity and environment API-key scope. Inputs contain exactly the
+fields declared in `observe.py`; SQL text, file names and query fragments are not
+accepted. Results are one JSON value. `run-path` includes exact checkpoint member
+identities, source reclamation, restored lease lineage and artifact byte sizes.
+
+Execute with the same Product source revision that created the database. When
+an initial schema changes, reset the disposable database through the host or
+deployment owner's normal greenfield reset before using these observations.
+A matching migration version alone does not establish that identity. The
+execution owner supplies authorized connectivity and enforces result bounds;
+the renderer enforces a read-only transaction and short statement/lock limits.
+No observation changes Product state or replaces native mutation APIs.
+
+The populated PostgreSQL regressions run with
+`nix run .#ci-postgres -- '^TestVerificationObservation' ./dev/runtime`.
+External Capacity consumers can run a separately compiled executable against the
+real HTTP router and disposable database through `TestCapacityExternalConsumer`;
+set `HELMR_CAPACITY_CONSUMER_TEST` to its absolute path. The fixture passes its
+endpoint and test-only credentials through the child process environment.
