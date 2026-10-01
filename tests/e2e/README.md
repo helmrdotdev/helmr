@@ -45,6 +45,7 @@ injection into an ordinary behavior case. External agent examples live in
 | `actor-continuity`, `child-tasks` (including `cancel-peer.run.ts`) | `cases/child-tasks` | Child modes, cancellation without stopping a shared-Computer peer, Actor continuation and ordered/paginated durable output |
 | `planned-drain` | `cases/planned-drain cases/control-plane-outage` | Warm Computer capture with a queued Command and fresh logical Host restore; dedicated host orchestration below |
 | `control-plane-outage` | `cases/control-plane-outage` | A live Run survives CP outage beyond the stale-Host window with Dispatcher continuously active |
+| `drain-renewal` | `cases/drain-renewal` | A resident Task remains on the same lease through more than 30 minutes of planned drain |
 | `timer`, `run-cancel` | `cases/timer` | Timer completion or explicit cancellation |
 | `network-egress` | `cases/network-egress` | Public IPv4 succeeds, no IPv6 default route |
 | `computer-overwrite`, `concurrent-wait`, `invalid-payload`, `expected-error` | `cases/computer-overwrite` | Filesystem overwrite and exact negative contracts |
@@ -201,6 +202,21 @@ Dispatcher identity, and checks the same Run attempt, lease, Instance, memory no
 and file afterward. It also requires the same active Host and fresh observations
 at least 130 seconds after readiness returns. Always restart CP after an orchestration failure before fixture
 cleanup; interrupted receipts contain the owned Run and Computer IDs.
+
+For `cases/drain-renewal/run.ts`, allow approximately 40 minutes on the already
+authorized host. After `ready-for-drain.json`, invoke native
+`worker drain --wait=false` using the profile's Worker environment. This returns
+after CP accepts the drain request. Keep Worker and all profile dependencies
+alive. The Task uses ordinary JavaScript timers for 36 minutes, preserving its
+memory/file marker; it never requests a managed wait. The driver requires the same
+running lease and Instance, fresh Host observations and uninterrupted Worker, CP and Dispatcher processes
+through at least 31 minutes after observing drain, then the same Task attempt's
+successful output. Require the result and ordinary Computer deletion to settle,
+then require the same Host's non-null `termination_ready_at` from the native
+`worker-state` observation and its matching local `drain-complete` marker before
+stopping/restarting Worker. On failure,
+cancel the owned Run and delete its Computer through normal APIs; a timeout never
+authorizes killing admitted work.
 
 After all fixtures are physically reclaimed, run
 `sudo python3 dev/runtime/check_fencing_outage.py --evidence /private/new-dead-host-case`.
