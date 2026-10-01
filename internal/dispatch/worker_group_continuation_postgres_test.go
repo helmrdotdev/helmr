@@ -114,7 +114,7 @@ func TestComputerRestoreCommittedReceiptBeforeActivationOnNonAdmittingSupply(t *
 			if cp, err := h.commit(t); err != nil || cp.ID != h.cp.ID {
 				t.Fatalf("committed receipt inspection: %v %v", cp.ID, err)
 			}
-			if _, err := h.acknowledge(t); !errors.Is(err, pgx.ErrNoRows) {
+			if _, err := h.acknowledge(t); !errors.Is(err, computer.ErrAuthorityChanged) {
 				t.Fatalf("first activation: %v", err)
 			}
 			if state := h.admission(t); state != "restoring" {
