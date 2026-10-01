@@ -25,7 +25,7 @@ WITH barrier AS (
  AND c.id=i.computer_id AND c.environment_id=i.environment_id AND c.status='active'
  AND c.writer_generation=i.writer_generation
  AND NOT EXISTS(SELECT 1 FROM computer_commands command WHERE command.computer_id=i.computer_id
-                 AND (command.terminal_at IS NULL OR (command.computer_instance_id IS NOT NULL AND command.process_reconciled_at IS NULL)))
+                 AND ((command.terminal_at IS NULL AND (command.status<>'pending' OR command.computer_instance_id IS NOT NULL)) OR (command.computer_instance_id IS NOT NULL AND command.process_reconciled_at IS NULL)))
  AND NOT EXISTS(
   SELECT 1 FROM run_leases lease WHERE lease.computer_instance_id=i.id AND lease.process_reconciled_at IS NULL
   AND NOT (lease.status='running' AND lease.expires_at>clock_timestamp() AND EXISTS(
@@ -40,7 +40,7 @@ INSERT INTO computer_checkpoints(id,environment_id,computer_id,computer_spec_id,
  base_computer_disk_version_id,expires_at)
 SELECT $1,environment_id,computer_id,computer_spec_id,id,
  writer_generation,membership_revision,program_deployment_id,head_disk_version_id,$2
-FROM barrier RETURNING id, computer_id, base_computer_disk_version_id, private_computer_disk_version_id, vm_config_artifact_id, vm_state_artifact_id, memory_artifact_id, scratch_disk_artifact_id, status, manifest, phase_timings, ready_request_fingerprint, failed_request_fingerprint, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code, computer_payload_required, environment_id, source_computer_instance_id, writer_generation, membership_revision, program_deployment_id, resume_computer_instance_id, resume_committed_at, computer_spec_id
+FROM barrier RETURNING id, computer_id, base_computer_disk_version_id, private_computer_disk_version_id, vm_config_artifact_id, vm_state_artifact_id, memory_artifact_id, scratch_disk_artifact_id, status, manifest, phase_timings, ready_request_fingerprint, abort_desired_version, abort_acknowledged_at, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code, computer_payload_required, environment_id, source_computer_instance_id, writer_generation, membership_revision, program_deployment_id, resume_computer_instance_id, resume_committed_at, computer_spec_id
 `
 
 type BeginComputerCheckpointParams struct {
@@ -80,7 +80,8 @@ func (q *Queries) BeginComputerCheckpoint(ctx context.Context, arg BeginComputer
 		&i.Manifest,
 		&i.PhaseTimings,
 		&i.ReadyRequestFingerprint,
-		&i.FailedRequestFingerprint,
+		&i.AbortDesiredVersion,
+		&i.AbortAcknowledgedAt,
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.ReadyAt,
@@ -116,7 +117,7 @@ WHERE checkpoint.id=$1 AND checkpoint.environment_id=$2
  AND destination.reclaimed_at IS NULL AND destination.admission_state='restoring'
  AND destination.desired_state='ready' AND destination.desired_version=$5
  AND destination.writer_expires_at>clock_timestamp()
-RETURNING checkpoint.id, checkpoint.computer_id, checkpoint.base_computer_disk_version_id, checkpoint.private_computer_disk_version_id, checkpoint.vm_config_artifact_id, checkpoint.vm_state_artifact_id, checkpoint.memory_artifact_id, checkpoint.scratch_disk_artifact_id, checkpoint.status, checkpoint.manifest, checkpoint.phase_timings, checkpoint.ready_request_fingerprint, checkpoint.failed_request_fingerprint, checkpoint.expires_at, checkpoint.created_at, checkpoint.ready_at, checkpoint.invalidated_at, checkpoint.invalidation_reason_code, checkpoint.computer_payload_required, checkpoint.environment_id, checkpoint.source_computer_instance_id, checkpoint.writer_generation, checkpoint.membership_revision, checkpoint.program_deployment_id, checkpoint.resume_computer_instance_id, checkpoint.resume_committed_at, checkpoint.computer_spec_id
+RETURNING checkpoint.id, checkpoint.computer_id, checkpoint.base_computer_disk_version_id, checkpoint.private_computer_disk_version_id, checkpoint.vm_config_artifact_id, checkpoint.vm_state_artifact_id, checkpoint.memory_artifact_id, checkpoint.scratch_disk_artifact_id, checkpoint.status, checkpoint.manifest, checkpoint.phase_timings, checkpoint.ready_request_fingerprint, checkpoint.abort_desired_version, checkpoint.abort_acknowledged_at, checkpoint.expires_at, checkpoint.created_at, checkpoint.ready_at, checkpoint.invalidated_at, checkpoint.invalidation_reason_code, checkpoint.computer_payload_required, checkpoint.environment_id, checkpoint.source_computer_instance_id, checkpoint.writer_generation, checkpoint.membership_revision, checkpoint.program_deployment_id, checkpoint.resume_computer_instance_id, checkpoint.resume_committed_at, checkpoint.computer_spec_id
 `
 
 type CommitComputerCheckpointRestoreParams struct {
@@ -151,7 +152,8 @@ func (q *Queries) CommitComputerCheckpointRestore(ctx context.Context, arg Commi
 		&i.Manifest,
 		&i.PhaseTimings,
 		&i.ReadyRequestFingerprint,
-		&i.FailedRequestFingerprint,
+		&i.AbortDesiredVersion,
+		&i.AbortAcknowledgedAt,
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.ReadyAt,
@@ -274,54 +276,8 @@ func (q *Queries) CreatePrivateCheckpointComputerDiskVersion(ctx context.Context
 	return i, err
 }
 
-const getCheckpointFailedReplay = `-- name: GetCheckpointFailedReplay :one
-SELECT id, computer_id, base_computer_disk_version_id, private_computer_disk_version_id, vm_config_artifact_id, vm_state_artifact_id, memory_artifact_id, scratch_disk_artifact_id, status, manifest, phase_timings, ready_request_fingerprint, failed_request_fingerprint, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code, computer_payload_required, environment_id, source_computer_instance_id, writer_generation, membership_revision, program_deployment_id, resume_computer_instance_id, resume_committed_at, computer_spec_id FROM computer_checkpoints WHERE environment_id=$1
- AND id=$2 AND status='invalid'
- AND invalidation_reason_code='checkpoint_failed' AND failed_request_fingerprint IS NOT NULL
-`
-
-type GetCheckpointFailedReplayParams struct {
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	CheckpointID  pgtype.UUID `json:"checkpoint_id"`
-}
-
-func (q *Queries) GetCheckpointFailedReplay(ctx context.Context, arg GetCheckpointFailedReplayParams) (ComputerCheckpoint, error) {
-	row := q.db.QueryRow(ctx, getCheckpointFailedReplay, arg.EnvironmentID, arg.CheckpointID)
-	var i ComputerCheckpoint
-	err := row.Scan(
-		&i.ID,
-		&i.ComputerID,
-		&i.BaseComputerDiskVersionID,
-		&i.PrivateComputerDiskVersionID,
-		&i.VMConfigArtifactID,
-		&i.VMStateArtifactID,
-		&i.MemoryArtifactID,
-		&i.ScratchDiskArtifactID,
-		&i.Status,
-		&i.Manifest,
-		&i.PhaseTimings,
-		&i.ReadyRequestFingerprint,
-		&i.FailedRequestFingerprint,
-		&i.ExpiresAt,
-		&i.CreatedAt,
-		&i.ReadyAt,
-		&i.InvalidatedAt,
-		&i.InvalidationReasonCode,
-		&i.ComputerPayloadRequired,
-		&i.EnvironmentID,
-		&i.SourceComputerInstanceID,
-		&i.WriterGeneration,
-		&i.MembershipRevision,
-		&i.ProgramDeploymentID,
-		&i.ResumeComputerInstanceID,
-		&i.ResumeCommittedAt,
-		&i.ComputerSpecID,
-	)
-	return i, err
-}
-
 const getCheckpointReadyReplay = `-- name: GetCheckpointReadyReplay :one
-SELECT id, computer_id, base_computer_disk_version_id, private_computer_disk_version_id, vm_config_artifact_id, vm_state_artifact_id, memory_artifact_id, scratch_disk_artifact_id, status, manifest, phase_timings, ready_request_fingerprint, failed_request_fingerprint, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code, computer_payload_required, environment_id, source_computer_instance_id, writer_generation, membership_revision, program_deployment_id, resume_computer_instance_id, resume_committed_at, computer_spec_id FROM computer_checkpoints WHERE environment_id=$1
+SELECT id, computer_id, base_computer_disk_version_id, private_computer_disk_version_id, vm_config_artifact_id, vm_state_artifact_id, memory_artifact_id, scratch_disk_artifact_id, status, manifest, phase_timings, ready_request_fingerprint, abort_desired_version, abort_acknowledged_at, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code, computer_payload_required, environment_id, source_computer_instance_id, writer_generation, membership_revision, program_deployment_id, resume_computer_instance_id, resume_committed_at, computer_spec_id FROM computer_checkpoints WHERE environment_id=$1
  AND id=$2 AND status='ready' AND ready_request_fingerprint IS NOT NULL
 `
 
@@ -346,7 +302,8 @@ func (q *Queries) GetCheckpointReadyReplay(ctx context.Context, arg GetCheckpoin
 		&i.Manifest,
 		&i.PhaseTimings,
 		&i.ReadyRequestFingerprint,
-		&i.FailedRequestFingerprint,
+		&i.AbortDesiredVersion,
+		&i.AbortAcknowledgedAt,
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.ReadyAt,
@@ -389,8 +346,86 @@ func (q *Queries) GetComputerCaptureWorkerFresh(ctx context.Context, arg GetComp
 	return fresh, err
 }
 
+const getComputerInstanceCaptureAbort = `-- name: GetComputerInstanceCaptureAbort :one
+SELECT checkpoint.id, checkpoint.computer_id, checkpoint.base_computer_disk_version_id, checkpoint.private_computer_disk_version_id, checkpoint.vm_config_artifact_id, checkpoint.vm_state_artifact_id, checkpoint.memory_artifact_id, checkpoint.scratch_disk_artifact_id, checkpoint.status, checkpoint.manifest, checkpoint.phase_timings, checkpoint.ready_request_fingerprint, checkpoint.abort_desired_version, checkpoint.abort_acknowledged_at, checkpoint.expires_at, checkpoint.created_at, checkpoint.ready_at, checkpoint.invalidated_at, checkpoint.invalidation_reason_code, checkpoint.computer_payload_required, checkpoint.environment_id, checkpoint.source_computer_instance_id, checkpoint.writer_generation, checkpoint.membership_revision, checkpoint.program_deployment_id, checkpoint.resume_computer_instance_id, checkpoint.resume_committed_at, checkpoint.computer_spec_id FROM computer_instances instance
+JOIN computers computer ON computer.id=instance.computer_id AND computer.environment_id=instance.environment_id
+JOIN computer_checkpoints checkpoint ON checkpoint.id=instance.capture_checkpoint_id
+ AND checkpoint.environment_id=instance.environment_id AND checkpoint.computer_id=instance.computer_id
+ AND checkpoint.source_computer_instance_id=instance.id AND checkpoint.writer_generation=instance.writer_generation
+ AND checkpoint.membership_revision=instance.membership_revision AND checkpoint.computer_spec_id=instance.computer_spec_id
+ AND checkpoint.program_deployment_id IS NOT DISTINCT FROM instance.program_deployment_id
+JOIN worker_hosts worker ON worker.id=instance.worker_host_id AND worker.worker_group_id=instance.worker_group_id
+ AND worker.current_epoch=instance.worker_epoch AND worker.vm_platform_id=instance.vm_platform_id
+JOIN worker_groups worker_group ON worker_group.id=instance.worker_group_id
+WHERE instance.id=$1 AND instance.environment_id=$2
+ AND instance.worker_group_id=$3 AND instance.worker_host_id=$4
+ AND instance.worker_epoch=$5 AND instance.desired_version=$6
+ AND instance.admission_state='resuming_capture' AND instance.desired_state='ready'
+ AND instance.observed_state='ready' AND instance.mount_state='mounted' AND instance.reclaimed_at IS NULL
+ AND instance.writer_generation=computer.writer_generation AND instance.writer_expires_at>clock_timestamp()
+ AND computer.status='active' AND computer.desired_state='active'
+ AND checkpoint.status='aborted' AND checkpoint.abort_desired_version=instance.desired_version AND checkpoint.abort_acknowledged_at IS NULL
+ AND worker.status IN ('active','draining') AND worker_group.status IN ('active','paused','draining')
+ AND worker.observed_at>=clock_timestamp()-$7::bigint*interval '1 second'
+`
+
+type GetComputerInstanceCaptureAbortParams struct {
+	ComputerInstanceID     pgtype.UUID `json:"computer_instance_id"`
+	EnvironmentID          pgtype.UUID `json:"environment_id"`
+	WorkerGroupID          pgtype.UUID `json:"worker_group_id"`
+	WorkerHostID           pgtype.UUID `json:"worker_host_id"`
+	WorkerEpoch            int64       `json:"worker_epoch"`
+	DesiredVersion         int64       `json:"desired_version"`
+	WorkerFreshnessSeconds int64       `json:"worker_freshness_seconds"`
+}
+
+// Discovery retains the sealed membership while the same source acknowledges abort.
+func (q *Queries) GetComputerInstanceCaptureAbort(ctx context.Context, arg GetComputerInstanceCaptureAbortParams) (ComputerCheckpoint, error) {
+	row := q.db.QueryRow(ctx, getComputerInstanceCaptureAbort,
+		arg.ComputerInstanceID,
+		arg.EnvironmentID,
+		arg.WorkerGroupID,
+		arg.WorkerHostID,
+		arg.WorkerEpoch,
+		arg.DesiredVersion,
+		arg.WorkerFreshnessSeconds,
+	)
+	var i ComputerCheckpoint
+	err := row.Scan(
+		&i.ID,
+		&i.ComputerID,
+		&i.BaseComputerDiskVersionID,
+		&i.PrivateComputerDiskVersionID,
+		&i.VMConfigArtifactID,
+		&i.VMStateArtifactID,
+		&i.MemoryArtifactID,
+		&i.ScratchDiskArtifactID,
+		&i.Status,
+		&i.Manifest,
+		&i.PhaseTimings,
+		&i.ReadyRequestFingerprint,
+		&i.AbortDesiredVersion,
+		&i.AbortAcknowledgedAt,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.ReadyAt,
+		&i.InvalidatedAt,
+		&i.InvalidationReasonCode,
+		&i.ComputerPayloadRequired,
+		&i.EnvironmentID,
+		&i.SourceComputerInstanceID,
+		&i.WriterGeneration,
+		&i.MembershipRevision,
+		&i.ProgramDeploymentID,
+		&i.ResumeComputerInstanceID,
+		&i.ResumeCommittedAt,
+		&i.ComputerSpecID,
+	)
+	return i, err
+}
+
 const getComputerInstanceCaptureCheckpoint = `-- name: GetComputerInstanceCaptureCheckpoint :one
-SELECT checkpoint.id, checkpoint.computer_id, checkpoint.base_computer_disk_version_id, checkpoint.private_computer_disk_version_id, checkpoint.vm_config_artifact_id, checkpoint.vm_state_artifact_id, checkpoint.memory_artifact_id, checkpoint.scratch_disk_artifact_id, checkpoint.status, checkpoint.manifest, checkpoint.phase_timings, checkpoint.ready_request_fingerprint, checkpoint.failed_request_fingerprint, checkpoint.expires_at, checkpoint.created_at, checkpoint.ready_at, checkpoint.invalidated_at, checkpoint.invalidation_reason_code, checkpoint.computer_payload_required, checkpoint.environment_id, checkpoint.source_computer_instance_id, checkpoint.writer_generation, checkpoint.membership_revision, checkpoint.program_deployment_id, checkpoint.resume_computer_instance_id, checkpoint.resume_committed_at, checkpoint.computer_spec_id FROM computer_instances instance
+SELECT checkpoint.id, checkpoint.computer_id, checkpoint.base_computer_disk_version_id, checkpoint.private_computer_disk_version_id, checkpoint.vm_config_artifact_id, checkpoint.vm_state_artifact_id, checkpoint.memory_artifact_id, checkpoint.scratch_disk_artifact_id, checkpoint.status, checkpoint.manifest, checkpoint.phase_timings, checkpoint.ready_request_fingerprint, checkpoint.abort_desired_version, checkpoint.abort_acknowledged_at, checkpoint.expires_at, checkpoint.created_at, checkpoint.ready_at, checkpoint.invalidated_at, checkpoint.invalidation_reason_code, checkpoint.computer_payload_required, checkpoint.environment_id, checkpoint.source_computer_instance_id, checkpoint.writer_generation, checkpoint.membership_revision, checkpoint.program_deployment_id, checkpoint.resume_computer_instance_id, checkpoint.resume_committed_at, checkpoint.computer_spec_id FROM computer_instances instance
 JOIN computers computer ON computer.id=instance.computer_id AND computer.environment_id=instance.environment_id
 JOIN computer_checkpoints checkpoint ON checkpoint.id=instance.capture_checkpoint_id
  AND checkpoint.environment_id=instance.environment_id AND checkpoint.computer_id=instance.computer_id
@@ -448,7 +483,8 @@ func (q *Queries) GetComputerInstanceCaptureCheckpoint(ctx context.Context, arg 
 		&i.Manifest,
 		&i.PhaseTimings,
 		&i.ReadyRequestFingerprint,
-		&i.FailedRequestFingerprint,
+		&i.AbortDesiredVersion,
+		&i.AbortAcknowledgedAt,
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.ReadyAt,
@@ -468,7 +504,7 @@ func (q *Queries) GetComputerInstanceCaptureCheckpoint(ctx context.Context, arg 
 }
 
 const getComputerInstanceRestoreCheckpoint = `-- name: GetComputerInstanceRestoreCheckpoint :one
-SELECT checkpoint.id, checkpoint.computer_id, checkpoint.base_computer_disk_version_id, checkpoint.private_computer_disk_version_id, checkpoint.vm_config_artifact_id, checkpoint.vm_state_artifact_id, checkpoint.memory_artifact_id, checkpoint.scratch_disk_artifact_id, checkpoint.status, checkpoint.manifest, checkpoint.phase_timings, checkpoint.ready_request_fingerprint, checkpoint.failed_request_fingerprint, checkpoint.expires_at, checkpoint.created_at, checkpoint.ready_at, checkpoint.invalidated_at, checkpoint.invalidation_reason_code, checkpoint.computer_payload_required, checkpoint.environment_id, checkpoint.source_computer_instance_id, checkpoint.writer_generation, checkpoint.membership_revision, checkpoint.program_deployment_id, checkpoint.resume_computer_instance_id, checkpoint.resume_committed_at, checkpoint.computer_spec_id,
+SELECT checkpoint.id, checkpoint.computer_id, checkpoint.base_computer_disk_version_id, checkpoint.private_computer_disk_version_id, checkpoint.vm_config_artifact_id, checkpoint.vm_state_artifact_id, checkpoint.memory_artifact_id, checkpoint.scratch_disk_artifact_id, checkpoint.status, checkpoint.manifest, checkpoint.phase_timings, checkpoint.ready_request_fingerprint, checkpoint.abort_desired_version, checkpoint.abort_acknowledged_at, checkpoint.expires_at, checkpoint.created_at, checkpoint.ready_at, checkpoint.invalidated_at, checkpoint.invalidation_reason_code, checkpoint.computer_payload_required, checkpoint.environment_id, checkpoint.source_computer_instance_id, checkpoint.writer_generation, checkpoint.membership_revision, checkpoint.program_deployment_id, checkpoint.resume_computer_instance_id, checkpoint.resume_committed_at, checkpoint.computer_spec_id,
  config.digest AS vm_config_digest,config.size_bytes AS vm_config_size_bytes,config.media_type AS vm_config_media_type,
  state.digest AS vm_state_digest,state.size_bytes AS vm_state_size_bytes,state.media_type AS vm_state_media_type,
  memory.digest AS memory_digest,memory.size_bytes AS memory_size_bytes,memory.media_type AS memory_media_type,
@@ -549,7 +585,8 @@ func (q *Queries) GetComputerInstanceRestoreCheckpoint(ctx context.Context, arg 
 		&i.ComputerCheckpoint.Manifest,
 		&i.ComputerCheckpoint.PhaseTimings,
 		&i.ComputerCheckpoint.ReadyRequestFingerprint,
-		&i.ComputerCheckpoint.FailedRequestFingerprint,
+		&i.ComputerCheckpoint.AbortDesiredVersion,
+		&i.ComputerCheckpoint.AbortAcknowledgedAt,
 		&i.ComputerCheckpoint.ExpiresAt,
 		&i.ComputerCheckpoint.CreatedAt,
 		&i.ComputerCheckpoint.ReadyAt,
@@ -581,7 +618,7 @@ func (q *Queries) GetComputerInstanceRestoreCheckpoint(ctx context.Context, arg 
 }
 
 const getReadyComputerCheckpoint = `-- name: GetReadyComputerCheckpoint :one
-SELECT checkpoint.id, checkpoint.computer_id, checkpoint.base_computer_disk_version_id, checkpoint.private_computer_disk_version_id, checkpoint.vm_config_artifact_id, checkpoint.vm_state_artifact_id, checkpoint.memory_artifact_id, checkpoint.scratch_disk_artifact_id, checkpoint.status, checkpoint.manifest, checkpoint.phase_timings, checkpoint.ready_request_fingerprint, checkpoint.failed_request_fingerprint, checkpoint.expires_at, checkpoint.created_at, checkpoint.ready_at, checkpoint.invalidated_at, checkpoint.invalidation_reason_code, checkpoint.computer_payload_required, checkpoint.environment_id, checkpoint.source_computer_instance_id, checkpoint.writer_generation, checkpoint.membership_revision, checkpoint.program_deployment_id, checkpoint.resume_computer_instance_id, checkpoint.resume_committed_at, checkpoint.computer_spec_id FROM computer_checkpoint_runs member JOIN computer_checkpoints checkpoint ON checkpoint.id=member.checkpoint_id
+SELECT checkpoint.id, checkpoint.computer_id, checkpoint.base_computer_disk_version_id, checkpoint.private_computer_disk_version_id, checkpoint.vm_config_artifact_id, checkpoint.vm_state_artifact_id, checkpoint.memory_artifact_id, checkpoint.scratch_disk_artifact_id, checkpoint.status, checkpoint.manifest, checkpoint.phase_timings, checkpoint.ready_request_fingerprint, checkpoint.abort_desired_version, checkpoint.abort_acknowledged_at, checkpoint.expires_at, checkpoint.created_at, checkpoint.ready_at, checkpoint.invalidated_at, checkpoint.invalidation_reason_code, checkpoint.computer_payload_required, checkpoint.environment_id, checkpoint.source_computer_instance_id, checkpoint.writer_generation, checkpoint.membership_revision, checkpoint.program_deployment_id, checkpoint.resume_computer_instance_id, checkpoint.resume_committed_at, checkpoint.computer_spec_id FROM computer_checkpoint_runs member JOIN computer_checkpoints checkpoint ON checkpoint.id=member.checkpoint_id
 JOIN run_waits wait ON wait.id=member.run_wait_id AND wait.run_id=member.run_id
  AND wait.attempt_number=member.attempt_number AND wait.suspend_checkpoint_id=checkpoint.id
 WHERE member.environment_id=$1 AND member.run_id=$2
@@ -617,7 +654,8 @@ func (q *Queries) GetReadyComputerCheckpoint(ctx context.Context, arg GetReadyCo
 		&i.Manifest,
 		&i.PhaseTimings,
 		&i.ReadyRequestFingerprint,
-		&i.FailedRequestFingerprint,
+		&i.AbortDesiredVersion,
+		&i.AbortAcknowledgedAt,
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.ReadyAt,
@@ -663,53 +701,19 @@ func (q *Queries) GetVMPlatformForCheckpoint(ctx context.Context, id string) (VM
 	return i, err
 }
 
-const invalidateFailedComputerCheckpoint = `-- name: InvalidateFailedComputerCheckpoint :one
-UPDATE computer_checkpoints SET status='invalid',invalidated_at=clock_timestamp(),
- invalidation_reason_code='checkpoint_failed',failed_request_fingerprint=$1
-WHERE id=$2 AND environment_id=$3 AND status='creating'
-RETURNING id, computer_id, base_computer_disk_version_id, private_computer_disk_version_id, vm_config_artifact_id, vm_state_artifact_id, memory_artifact_id, scratch_disk_artifact_id, status, manifest, phase_timings, ready_request_fingerprint, failed_request_fingerprint, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code, computer_payload_required, environment_id, source_computer_instance_id, writer_generation, membership_revision, program_deployment_id, resume_computer_instance_id, resume_committed_at, computer_spec_id
+const invalidateReclaimedComputerCaptures = `-- name: InvalidateReclaimedComputerCaptures :exec
+UPDATE computer_checkpoints cp SET status='invalid',invalidated_at=clock_timestamp(),
+ invalidation_reason_code='capture_source_reclaimed'
+FROM computer_instances i WHERE i.id=$1 AND i.reclaimed_at IS NOT NULL
+ AND cp.computer_id=i.computer_id AND cp.source_computer_instance_id=i.id
+ AND cp.writer_generation=i.writer_generation AND cp.status='creating'
 `
 
-type InvalidateFailedComputerCheckpointParams struct {
-	FailedRequestFingerprint pgtype.Text `json:"failed_request_fingerprint"`
-	CheckpointID             pgtype.UUID `json:"checkpoint_id"`
-	EnvironmentID            pgtype.UUID `json:"environment_id"`
-}
-
-// Failure cannot reopen admission until the host proves thaw or physical reclaim.
-func (q *Queries) InvalidateFailedComputerCheckpoint(ctx context.Context, arg InvalidateFailedComputerCheckpointParams) (ComputerCheckpoint, error) {
-	row := q.db.QueryRow(ctx, invalidateFailedComputerCheckpoint, arg.FailedRequestFingerprint, arg.CheckpointID, arg.EnvironmentID)
-	var i ComputerCheckpoint
-	err := row.Scan(
-		&i.ID,
-		&i.ComputerID,
-		&i.BaseComputerDiskVersionID,
-		&i.PrivateComputerDiskVersionID,
-		&i.VMConfigArtifactID,
-		&i.VMStateArtifactID,
-		&i.MemoryArtifactID,
-		&i.ScratchDiskArtifactID,
-		&i.Status,
-		&i.Manifest,
-		&i.PhaseTimings,
-		&i.ReadyRequestFingerprint,
-		&i.FailedRequestFingerprint,
-		&i.ExpiresAt,
-		&i.CreatedAt,
-		&i.ReadyAt,
-		&i.InvalidatedAt,
-		&i.InvalidationReasonCode,
-		&i.ComputerPayloadRequired,
-		&i.EnvironmentID,
-		&i.SourceComputerInstanceID,
-		&i.WriterGeneration,
-		&i.MembershipRevision,
-		&i.ProgramDeploymentID,
-		&i.ResumeComputerInstanceID,
-		&i.ResumeCommittedAt,
-		&i.ComputerSpecID,
-	)
-	return i, err
+// Actual source exclusion ends unfinished publication; it does not change a
+// ready or aborted decision. The latter already permits abandoned-object GC.
+func (q *Queries) InvalidateReclaimedComputerCaptures(ctx context.Context, instanceID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, invalidateReclaimedComputerCaptures, instanceID)
+	return err
 }
 
 const listComputerCheckpointRuns = `-- name: ListComputerCheckpointRuns :many
@@ -754,7 +758,7 @@ func (q *Queries) ListComputerCheckpointRuns(ctx context.Context, arg ListComput
 }
 
 const lockComputerCheckpoint = `-- name: LockComputerCheckpoint :one
-SELECT id, computer_id, base_computer_disk_version_id, private_computer_disk_version_id, vm_config_artifact_id, vm_state_artifact_id, memory_artifact_id, scratch_disk_artifact_id, status, manifest, phase_timings, ready_request_fingerprint, failed_request_fingerprint, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code, computer_payload_required, environment_id, source_computer_instance_id, writer_generation, membership_revision, program_deployment_id, resume_computer_instance_id, resume_committed_at, computer_spec_id FROM computer_checkpoints WHERE environment_id=$1
+SELECT id, computer_id, base_computer_disk_version_id, private_computer_disk_version_id, vm_config_artifact_id, vm_state_artifact_id, memory_artifact_id, scratch_disk_artifact_id, status, manifest, phase_timings, ready_request_fingerprint, abort_desired_version, abort_acknowledged_at, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code, computer_payload_required, environment_id, source_computer_instance_id, writer_generation, membership_revision, program_deployment_id, resume_computer_instance_id, resume_committed_at, computer_spec_id FROM computer_checkpoints WHERE environment_id=$1
  AND computer_id=$2 AND id=$3 FOR UPDATE
 `
 
@@ -780,7 +784,8 @@ func (q *Queries) LockComputerCheckpoint(ctx context.Context, arg LockComputerCh
 		&i.Manifest,
 		&i.PhaseTimings,
 		&i.ReadyRequestFingerprint,
-		&i.FailedRequestFingerprint,
+		&i.AbortDesiredVersion,
+		&i.AbortAcknowledgedAt,
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.ReadyAt,
@@ -815,7 +820,7 @@ WHERE checkpoint.id=$9 AND checkpoint.environment_id=$10
  AND instance.writer_generation=checkpoint.writer_generation AND instance.membership_revision=checkpoint.membership_revision
  AND instance.desired_version=$11 AND instance.reclaimed_at IS NULL
  AND instance.writer_expires_at>clock_timestamp()
-RETURNING checkpoint.id, checkpoint.computer_id, checkpoint.base_computer_disk_version_id, checkpoint.private_computer_disk_version_id, checkpoint.vm_config_artifact_id, checkpoint.vm_state_artifact_id, checkpoint.memory_artifact_id, checkpoint.scratch_disk_artifact_id, checkpoint.status, checkpoint.manifest, checkpoint.phase_timings, checkpoint.ready_request_fingerprint, checkpoint.failed_request_fingerprint, checkpoint.expires_at, checkpoint.created_at, checkpoint.ready_at, checkpoint.invalidated_at, checkpoint.invalidation_reason_code, checkpoint.computer_payload_required, checkpoint.environment_id, checkpoint.source_computer_instance_id, checkpoint.writer_generation, checkpoint.membership_revision, checkpoint.program_deployment_id, checkpoint.resume_computer_instance_id, checkpoint.resume_committed_at, checkpoint.computer_spec_id
+RETURNING checkpoint.id, checkpoint.computer_id, checkpoint.base_computer_disk_version_id, checkpoint.private_computer_disk_version_id, checkpoint.vm_config_artifact_id, checkpoint.vm_state_artifact_id, checkpoint.memory_artifact_id, checkpoint.scratch_disk_artifact_id, checkpoint.status, checkpoint.manifest, checkpoint.phase_timings, checkpoint.ready_request_fingerprint, checkpoint.abort_desired_version, checkpoint.abort_acknowledged_at, checkpoint.expires_at, checkpoint.created_at, checkpoint.ready_at, checkpoint.invalidated_at, checkpoint.invalidation_reason_code, checkpoint.computer_payload_required, checkpoint.environment_id, checkpoint.source_computer_instance_id, checkpoint.writer_generation, checkpoint.membership_revision, checkpoint.program_deployment_id, checkpoint.resume_computer_instance_id, checkpoint.resume_committed_at, checkpoint.computer_spec_id
 `
 
 type MarkComputerCheckpointReadyParams struct {
@@ -862,7 +867,8 @@ func (q *Queries) MarkComputerCheckpointReady(ctx context.Context, arg MarkCompu
 		&i.Manifest,
 		&i.PhaseTimings,
 		&i.ReadyRequestFingerprint,
-		&i.FailedRequestFingerprint,
+		&i.AbortDesiredVersion,
+		&i.AbortAcknowledgedAt,
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.ReadyAt,

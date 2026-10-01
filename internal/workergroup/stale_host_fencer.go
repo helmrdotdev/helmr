@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -62,11 +63,13 @@ type StaleHostFenceResult struct {
 }
 
 type StaleHostFenceCycle struct {
-	LockAcquired bool
-	Selected     int
-	Fenced       int
-	Skipped      int
-	Results      []StaleHostFenceResult
+	Suspended        bool
+	SuspensionReason string
+	LockAcquired     bool
+	Selected         int
+	Fenced           int
+	Skipped          int
+	Results          []StaleHostFenceResult
 }
 
 // StaleHostFencer fences worker hosts whose observations went stale. One
@@ -74,13 +77,19 @@ type StaleHostFenceCycle struct {
 // advisory lock; the cycle's READ COMMITTED transaction runs on the connection
 // that holds the lock.
 type StaleHostFencer struct {
-	transactions staleHostFenceTransactions
-	lockPool     *pgxpool.Pool
-	every        time.Duration
-	timeout      time.Duration
-	maxBackoff   time.Duration
-	log          *slog.Logger
-	clock        StaleHostFenceClock
+	mu                sync.Mutex
+	probeServing      func(context.Context) error
+	servingSince      time.Time
+	lastServingAt     time.Time
+	suspensionReason  string
+	lastSuspensionLog time.Time
+	transactions      staleHostFenceTransactions
+	lockPool          *pgxpool.Pool
+	every             time.Duration
+	timeout           time.Duration
+	maxBackoff        time.Duration
+	log               *slog.Logger
+	clock             StaleHostFenceClock
 }
 
 type StaleHostFencerOption func(*StaleHostFencer)
@@ -105,19 +114,27 @@ func WithStaleHostFenceClock(clock StaleHostFenceClock) StaleHostFencerOption {
 	return func(fencer *StaleHostFencer) { fencer.clock = clock }
 }
 
-func NewStaleHostFencer(pool *pgxpool.Pool, opts ...StaleHostFencerOption) (*StaleHostFencer, error) {
+func NewStaleHostFencer(pool *pgxpool.Pool, controlPlaneURL string, opts ...StaleHostFencerOption) (*StaleHostFencer, error) {
 	if pool == nil {
 		return nil, errors.New("database pool is required")
 	}
-	return newStaleHostFencer(pgxStaleHostFenceTransactions{beginner: pool}, pool, opts...)
+	probe, err := controlPlaneServingProbe(controlPlaneURL)
+	if err != nil {
+		return nil, err
+	}
+	return newStaleHostFencer(pgxStaleHostFenceTransactions{beginner: pool}, pool, probe, opts...)
 }
 
 // newStaleHostFencer runs cycles without the advisory lock when lockPool is nil.
-func newStaleHostFencer(transactions staleHostFenceTransactions, lockPool *pgxpool.Pool, opts ...StaleHostFencerOption) (*StaleHostFencer, error) {
+func newStaleHostFencer(transactions staleHostFenceTransactions, lockPool *pgxpool.Pool, probe func(context.Context) error, opts ...StaleHostFencerOption) (*StaleHostFencer, error) {
 	if transactions == nil {
 		return nil, errors.New("stale worker fence transactions are required")
 	}
+	if probe == nil {
+		return nil, errors.New("control plane serving probe is required")
+	}
 	fencer := &StaleHostFencer{
+		probeServing: probe,
 		transactions: transactions,
 		lockPool:     lockPool,
 		every:        DefaultStaleHostFenceEvery,
@@ -189,7 +206,29 @@ func (f *StaleHostFencer) Run(ctx context.Context) error {
 }
 
 func (f *StaleHostFencer) ReconcileOnce(ctx context.Context) (StaleHostFenceCycle, error) {
-	cycle := StaleHostFenceCycle{LockAcquired: f.lockPool == nil}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cycle := StaleHostFenceCycle{}
+	// Every replica collects its own evidence before competing for the cycle lock.
+	// A lock transfer never transfers a healthy window.
+	if err := f.probeServing(ctx); err != nil {
+		f.servingSince = time.Time{}
+		f.lastServingAt = time.Time{}
+		return f.suspendCycle(cycle, "control plane unavailable", "error", err), nil
+	}
+	now := f.clock.Now()
+	if f.lastServingAt.IsZero() || !servingSampleFresh(now.Sub(f.lastServingAt), now.Round(0).Sub(f.lastServingAt.Round(0)), f.servingEvidenceMaxAge()) {
+		f.servingSince = now
+	}
+	f.lastServingAt = now
+	if !f.servingWindowReady(now) {
+		return f.suspendCycle(cycle, "waiting for control plane recovery window"), nil
+	}
+	if f.suspensionReason != "" {
+		f.log.Info("stale worker fencing resumed", "healthy_since", f.servingSince)
+		f.suspensionReason = ""
+	}
+	cycle.LockAcquired = f.lockPool == nil
 	transactions := f.transactions
 	if f.lockPool != nil {
 		guard, locked, err := pglock.TryAcquire(ctx, f.lockPool, pglock.Key(staleHostFenceLockName))
@@ -208,8 +247,15 @@ func (f *StaleHostFencer) ReconcileOnce(ctx context.Context) (StaleHostFenceCycl
 		}()
 	}
 
+	// Do not let a slow transaction outlive the evidence that admitted it.
+	transactionCtx, cancel := context.WithTimeout(ctx, f.servingEvidenceMaxAge()-f.clock.Now().Sub(f.lastServingAt))
+	defer cancel()
+	ctx = transactionCtx
 	registrationStaleBefore := pgtype.Timestamptz{Time: f.clock.Now().Add(-DefaultWorkerRegistrationReadinessGrace), Valid: true}
 	err := transactions.withinStaleHostFenceTransaction(ctx, func(queries staleHostFenceQueries) error {
+		if !f.servingWindowReady(f.clock.Now()) {
+			return errServingEvidenceExpired
+		}
 		candidates, err := queries.ListStaleWorkerFenceCandidates(ctx, db.ListStaleWorkerFenceCandidatesParams{
 			RegistrationStaleBefore:     registrationStaleBefore,
 			ObservationFreshnessSeconds: ObservationFreshnessSeconds,
@@ -251,9 +297,23 @@ func (f *StaleHostFencer) ReconcileOnce(ctx context.Context) (StaleHostFenceCycl
 			}
 			cycle.Results = append(cycle.Results, result)
 		}
+		if !f.servingWindowReady(f.clock.Now()) {
+			return errServingEvidenceExpired
+		}
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, errServingEvidenceExpired) || (!f.servingWindowReady(f.clock.Now()) && ctx.Err() != nil) {
+			f.servingSince = time.Time{}
+			f.lastServingAt = time.Time{}
+			cycle = f.suspendCycle(StaleHostFenceCycle{LockAcquired: cycle.LockAcquired}, "control plane serving evidence expired during fence transaction")
+			if errors.Is(err, errServingEvidenceExpired) {
+				return cycle, nil
+			}
+			// A failed COMMIT response may follow durable changes. Preserve the
+			// error instead of presenting an uncertain outcome as a safe pause.
+			return cycle, err
+		}
 		return StaleHostFenceCycle{LockAcquired: cycle.LockAcquired}, err
 	}
 	for _, result := range cycle.Results {

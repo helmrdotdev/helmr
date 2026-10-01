@@ -66,7 +66,7 @@ type Server struct {
 	log                   *slog.Logger
 	deploymentMode        string
 	db                    db.Querier
-	tx                    db.TxBeginner
+	tx                    db.TxDB
 	tokenWaits            *token.Registrar
 	tokens                *token.Tokens
 	readinessDB           db.DBTX
@@ -658,7 +658,8 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/restores/plan", s.workerComputerRestorePlan)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/checkpoints/register", s.workerRegisterCheckpoint)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/checkpoints/ready", s.workerMarkCheckpointReady)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/checkpoints/failed", s.workerMarkCheckpointFailed)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/checkpoints/abort", s.workerAbortCapture)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/checkpoints/abort/complete", s.workerCompleteCaptureAbort)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/checkpoints/objects/register", s.workerRegisterCheckpointComputerObject)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/checkpoints/objects/certify", s.workerCertifyCheckpointComputerObject)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/checkpoints/objects/reuse", s.workerReuseCheckpointComputerObject)
@@ -703,6 +704,7 @@ func (s *Server) healthz(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if s.readinessDB == nil {
 		s.writeReadinessUnavailable(w, errors.New("database readiness is not configured"))
 		return
@@ -729,13 +731,13 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		s.writeReadinessUnavailable(w, fmt.Errorf("database schema version is %d, required %d", version, currentVersion))
 		return
 	}
-	var databaseReady int
-	if err := s.readinessDB.QueryRow(ctx, `SELECT 1`).Scan(&databaseReady); err != nil {
+	var databaseReady bool
+	if err := s.readinessDB.QueryRow(ctx, `SELECT NOT current_setting('transaction_read_only')::boolean`).Scan(&databaseReady); err != nil {
 		s.writeReadinessUnavailable(w, fmt.Errorf("regional control plane database is not ready: %w", err))
 		return
 	}
-	if databaseReady != 1 {
-		s.writeReadinessUnavailable(w, errors.New("regional control plane database is not ready"))
+	if !databaseReady {
+		s.writeReadinessUnavailable(w, errors.New("regional control plane database session is read only"))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})

@@ -125,7 +125,7 @@ func TestRecoveryReclaimsInstanceAndBuildFromExactOwnerMarkers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(evidence.Reclaimed, []string{owners[0].String(), owners[1].String()}) || len(evidence.Quarantined) != 0 {
+	if !reflect.DeepEqual(evidence.Reclaimed, []string{owners[0].ID, owners[1].ID}) || len(evidence.Quarantined) != 0 {
 		t.Fatalf("evidence = %+v", evidence)
 	}
 }
@@ -214,7 +214,7 @@ func TestRecoveryQuarantinePreservesStructuredBuildOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(evidence.QuarantinedOwners, []vm.Owner{owner}) || !reflect.DeepEqual(evidence.Quarantined, []string{owner.String()}) {
+	if !reflect.DeepEqual(evidence.QuarantinedOwners, []vm.Owner{owner}) || !reflect.DeepEqual(evidence.Quarantined, []string{owner.ID}) {
 		t.Fatalf("evidence = %+v", evidence)
 	}
 	if _, err := os.Stat(filepath.Join(statePath, "owner")); err != nil {

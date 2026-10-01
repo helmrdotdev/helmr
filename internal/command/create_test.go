@@ -104,7 +104,6 @@ func TestAdmitsReportsComputerState(t *testing.T) {
 		want   error
 	}{
 		"admits":          {func(*db.LockComputerAdmissionAuthorityRow) {}, nil},
-		"capture failed":  {func(r *db.LockComputerAdmissionAuthorityRow) { r.DirtyState = db.ComputerDirtyStateCaptureFailed }, computer.ErrRecoveryRequired},
 		"recovery failed": {func(r *db.LockComputerAdmissionAuthorityRow) { r.RecoveryFailure = []byte(`{}`) }, computer.ErrRecoveryRequired},
 		"recovery over delete": {func(r *db.LockComputerAdmissionAuthorityRow) {
 			r.Status, r.RecoveryFailure = db.ComputerStatusDeleting, []byte(`{}`)

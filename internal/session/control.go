@@ -107,7 +107,7 @@ func resumeWithLockedSecrets(ctx context.Context, tx pgx.Tx, request ResumeReque
 		if err != nil {
 			return receipt, err
 		}
-		if (!excluded) || (sessionComputer.DirtyState == db.ComputerDirtyStateCaptureFailed || sessionComputer.DirtyState == db.ComputerDirtyStateDirtyStateLost) || sessionComputer.Status != db.ComputerStatusActive || sessionComputer.DesiredState != db.ComputerDesiredStateActive || !sessionComputer.HeadDiskVersionID.Valid || !bindingsCanAdmit(session, bindings) {
+		if (!excluded) || (sessionComputer.DirtyState == db.ComputerDirtyStateDirtyStateLost) || sessionComputer.Status != db.ComputerStatusActive || sessionComputer.DesiredState != db.ComputerDesiredStateActive || !sessionComputer.HeadDiskVersionID.Valid || !bindingsCanAdmit(session, bindings) {
 			receipt.Code = "not_settled"
 			break
 		}

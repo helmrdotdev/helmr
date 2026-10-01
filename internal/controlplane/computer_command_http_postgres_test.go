@@ -174,14 +174,14 @@ func TestExecuteComputerHTTPReplaySurvivesComputerDeletion(t *testing.T) {
 	}
 }
 
-func TestExecuteComputerHTTPRejectsCaptureFailureWithoutRetry(t *testing.T) {
+func TestExecuteComputerHTTPRejectsLostStateWithoutRetry(t *testing.T) {
 	c := newCommandHTTP(t)
-	if _, err := c.Pool.Exec(t.Context(), `UPDATE computers SET dirty_state='capture_failed',desired_state='stopped' WHERE id=$1`, c.ComputerIDs[0]); err != nil {
+	if _, err := c.Pool.Exec(t.Context(), `UPDATE computers SET status='recovery_required',dirty_state='dirty_state_lost',desired_state='stopped',recovery_id=gen_random_uuid(),recovery_disk_version_id=head_disk_version_id,recovery_reason='worker_lost',recovery_started_at=clock_timestamp() WHERE id=$1`, c.ComputerIDs[0]); err != nil {
 		t.Fatal(err)
 	}
-	body := c.expect(t, c.key, http.MethodPost, "/v1/computers/"+c.ComputerIDs[0].String()+"/exec", `{"command":["true"],"idempotency_key":"failed-capture"}`, http.StatusConflict, "computer_recovery_required")
+	body := c.expect(t, c.key, http.MethodPost, "/v1/computers/"+c.ComputerIDs[0].String()+"/exec", `{"command":["true"],"idempotency_key":"lost-state"}`, http.StatusConflict, "computer_recovery_required")
 	if got := decodeHTTPError(t, body); got.Message != "computer requires recovery" || strings.Contains(string(body), `"retryable":true`) {
-		t.Fatalf("capture failure error=%s", body)
+		t.Fatalf("lost state error=%s", body)
 	}
 	var admitted int
 	if err := c.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_commands`).Scan(&admitted); err != nil || admitted != 0 {

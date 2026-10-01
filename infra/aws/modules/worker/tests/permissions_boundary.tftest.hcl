@@ -132,7 +132,7 @@ run "retained_external_boundary_rejects_input_switch" {
       health_check_grace_period_seconds               = 900
       launch_lifecycle_heartbeat_timeout_seconds      = 900
       termination_lifecycle_heartbeat_timeout_seconds = 180
-      termination_drain_timeout_seconds               = 1800
+      termination_wait_timeout_seconds                = 1800
       lifecycle_heartbeat_interval_seconds            = 60
       termination_policies                            = ["OldestLaunchTemplate", "OldestInstance"]
       protect_from_scale_in                           = true
@@ -167,7 +167,7 @@ run "retained_external_boundary_rejects_policy_drift" {
       health_check_grace_period_seconds               = 900
       launch_lifecycle_heartbeat_timeout_seconds      = 900
       termination_lifecycle_heartbeat_timeout_seconds = 180
-      termination_drain_timeout_seconds               = 1800
+      termination_wait_timeout_seconds                = 1800
       lifecycle_heartbeat_interval_seconds            = 60
       termination_policies                            = ["OldestLaunchTemplate", "OldestInstance"]
       protect_from_scale_in                           = true

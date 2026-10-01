@@ -102,7 +102,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.ReasonCode != "termination_drain_failed" {
+			if request.ReasonCode != "provider_termination" {
 				t.Fatalf("fence reason = %q", request.ReasonCode)
 			}
 			w.WriteHeader(http.StatusNoContent)
@@ -142,7 +142,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	}); err != nil || status.Status != workerapi.StatusTerminationReady {
 		t.Fatalf("complete worker drain status = %+v, err = %v", status, err)
 	}
-	if err := client.FenceWorker(context.Background(), "termination_drain_failed"); err != nil {
+	if err := client.FenceWorker(context.Background(), "provider_termination"); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(paths, ","); got != "/worker/v1/instance/credential,/worker/v1/run/leases/discover,/worker/v1/instance/activate,/worker/v1/instance/drain,/worker/v1/instance,/worker/v1/instance/drain/complete,/worker/v1/instance/fence" {
@@ -444,7 +444,7 @@ func TestFenceWorkerRetriesTheIdenticalRequestAfterAmbiguousResponse(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.FenceWorker(context.Background(), "termination_drain_failed"); err != nil {
+	if err := client.FenceWorker(context.Background(), "provider_termination"); err != nil {
 		t.Fatal(err)
 	}
 	if attempts != 2 || len(bodies) != 2 || !bytes.Equal(bodies[0], bodies[1]) {
@@ -581,15 +581,6 @@ func TestWorkerRunWaitClient(t *testing.T) {
 				t.Fatalf("checkpoint manifest = %+v", request.Manifest)
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.ComputerCheckpointResponse{ComputerInstanceID: "instance-1", WorkerEpoch: 2, DesiredVersion: 42, CheckpointID: "checkpoint-1"})
-		case "/worker/v1/computer/checkpoints/failed":
-			var request workerapi.CheckpointFailedRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				t.Fatal(err)
-			}
-			if request.ComputerInstanceID != "instance-1" || request.WorkerEpoch != 2 || request.DesiredVersion != 43 || request.CheckpointID != "checkpoint-1" || request.Error != "snapshot failed" {
-				t.Fatalf("checkpoint failed request = %+v", request)
-			}
-			_ = json.NewEncoder(w).Encode(workerapi.ComputerCheckpointResponse{ComputerInstanceID: request.ComputerInstanceID, WorkerEpoch: request.WorkerEpoch, DesiredVersion: request.DesiredVersion, CheckpointID: request.CheckpointID})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -635,20 +626,7 @@ func TestWorkerRunWaitClient(t *testing.T) {
 	if ready.CheckpointID != "checkpoint-1" {
 		t.Fatalf("ready = %+v", ready)
 	}
-	failed, err := client.MarkCheckpointFailed(context.Background(), workerapi.CheckpointFailedRequest{
-		ComputerInstanceID: "instance-1",
-		WorkerEpoch:        2,
-		DesiredVersion:     43,
-		CheckpointID:       "checkpoint-1",
-		Error:              "snapshot failed",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if failed.CheckpointID != "checkpoint-1" || failed.ComputerInstanceID != "instance-1" || failed.WorkerEpoch != 2 || failed.DesiredVersion != 43 {
-		t.Fatalf("failed = %+v", failed)
-	}
-	if got := strings.Join(paths, ","); got != "/worker/v1/instance/credential,/worker/v1/run/waits/create,/worker/v1/run/waits/poll,/worker/v1/run/waits/resume-ack,/worker/v1/computer/checkpoints/ready,/worker/v1/computer/checkpoints/failed" {
+	if got := strings.Join(paths, ","); got != "/worker/v1/instance/credential,/worker/v1/run/waits/create,/worker/v1/run/waits/poll,/worker/v1/run/waits/resume-ack,/worker/v1/computer/checkpoints/ready" {
 		t.Fatalf("paths = %s", got)
 	}
 }
@@ -790,5 +768,55 @@ func TestWorkerAPIVersionMismatchPreservesHTTPError(t *testing.T) {
 				t.Fatalf("calls=%d error=%v", calls, err)
 			}
 		})
+	}
+}
+
+func TestHostAuthorityRejectionClassification(t *testing.T) {
+	for _, code := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusServiceUnavailable} {
+		t.Run(fmt.Sprint(code), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "credential issuance rejected", code) }))
+			defer server.Close()
+			client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("00000000-0000-0000-0000-000000000401", "secret"), WithService("00000000-0000-0000-0000-000000000901"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.GetWorkerStatus(t.Context())
+			var rejected HostAuthorityRejectedError
+			if got, want := errors.As(err, &rejected), code != http.StatusServiceUnavailable; got != want {
+				t.Fatalf("authority rejection = %v, want %v: %v", got, want, err)
+			}
+			if !httpclient.IsStatus(err, code) {
+				t.Fatalf("HTTP status was lost: %v", err)
+			}
+		})
+	}
+}
+
+func TestRepeatedStaleClaimsRemainRecoverable(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/worker/v1/instance/credential" {
+			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "credential", ExpiresInSeconds: 3600})
+			return
+		}
+		requests++
+		if requests <= 2 {
+			http.Error(w, "stale claims", http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{Status: workerapi.StatusActive})
+	}))
+	defer server.Close()
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("00000000-0000-0000-0000-000000000401", "secret"), WithService("00000000-0000-0000-0000-000000000901"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.GetWorkerStatus(t.Context())
+	var rejected HostAuthorityRejectedError
+	if !httpclient.IsStatus(err, http.StatusUnauthorized) || errors.As(err, &rejected) {
+		t.Fatalf("repeated stale claims classified as authority rejection: %v", err)
+	}
+	if _, err := client.GetWorkerStatus(t.Context()); err != nil {
+		t.Fatalf("next observation did not recover: %v", err)
 	}
 }

@@ -70,7 +70,8 @@ type computerCheckpointer struct {
 	reservations   *reservation.Ledger
 	objects        cas.ImmutableStore
 	machine        vm.CheckpointableMachine
-	// mount is set when the machine is served; see ReleaseCheckpointSource.
+	capture        vm.CheckpointCapture
+	// mount is set when machine is served; see ReleaseCheckpointSource.
 	mount     *instanceMount
 	encryptor *CheckpointEncryptor
 	tempDir   string
@@ -91,11 +92,12 @@ func (c *computerCheckpointer) ReleaseCheckpointSource(ctx context.Context) erro
 	if err != nil {
 		return err
 	}
-	return c.cleanupAfterSourceStopped()
+	return c.cleanupCheckpointStaging()
 }
 
-// Serialized by the physical capture/reconcile owner; called only after exclusion.
-func (c *computerCheckpointer) cleanupAfterSourceStopped() error {
+// Serialized by the physical capture owner after snapshot I/O has joined,
+// either through guest-control resume or physical exclusion.
+func (c *computerCheckpointer) cleanupCheckpointStaging() error {
 	if c.pendingCleanup == nil {
 		return nil
 	}

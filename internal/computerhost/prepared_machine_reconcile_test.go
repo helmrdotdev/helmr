@@ -44,6 +44,7 @@ type blockingMaterializingBackend struct {
 }
 
 type onceBlockingCloseMachine struct {
+	unusedCheckpoint
 	started chan struct{}
 	release chan struct{}
 	once    sync.Once
@@ -61,11 +62,13 @@ type cleanupBackend struct {
 }
 
 type closeTrackingMachine struct {
+	unusedCheckpoint
 	closed int
 	err    error
 }
 
 type stuckPreparedMachine struct {
+	unusedCheckpoint
 	waitStarted chan struct{}
 	releaseWait chan struct{}
 }
@@ -172,7 +175,7 @@ func (c *countingBackend) Cleanup(context.Context, vm.Owner) error {
 }
 
 func (c *blockingMaterializingBackend) Cleanup(context.Context, vm.Owner) error { return nil }
-func (c *blockingMaterializingBackend) Materialize(ctx context.Context, request vm.MaterializeRequest) (vm.Machine, error) {
+func (c *blockingMaterializingBackend) Materialize(ctx context.Context, request vm.MaterializeRequest) (vm.CheckpointableMachine, error) {
 	request.RecordPhase(vm.Phase{Name: "test_materialize", DurationMs: 1})
 	c.started <- request.ID
 	if request.ID == c.failID {

@@ -35,3 +35,44 @@ test("case failure keeps its verdict and attempts every registered cleanup", asy
     await rm(root, { recursive: true, force: true })
   }
 })
+
+for (const [signal, status] of [["SIGTERM", 143], ["SIGINT", 130]] as const) {
+  test(`${signal} preserves owned resources for caller cleanup`, async () => {
+    const root = await mkdtemp(join(tmpdir(), "helmr-case-interrupt-"))
+    const output = join(root, "evidence")
+    const child = Bun.spawn([process.execPath, "-e", `
+      import { verify } from ${JSON.stringify(import.meta.dir + "/context.ts")};
+      await verify("interrupt", async ({ objects, cleanup }) => {
+        objects.computer_ids.push("computer-owned");
+        objects.secret_ids.push("secret-owned");
+        cleanup(async () => { throw new Error("must not race cleanup with the body"); });
+        console.log("ready");
+        await new Promise(() => { setInterval(() => {}, 1000); });
+      });
+    `], {
+      env: {
+        ...process.env,
+        HELMR_API_URL: "http://127.0.0.1:1", HELMR_API_KEY: "fixture",
+        HELMR_EVIDENCE_DIR: output, HELMR_EXPECTED_BUNDLE_DIGEST: "",
+      },
+      stdout: "pipe", stderr: "pipe",
+    })
+    try {
+      const reader = child.stdout.getReader()
+      const first = await reader.read()
+      expect(new TextDecoder().decode(first.value)).toContain("ready")
+      child.kill(signal)
+      expect(await child.exited).toBe(status)
+      const result = JSON.parse(await readFile(join(output, "result.json"), "utf8"))
+      expect(result.passed).toBe(false)
+      expect(result.failure).toBe(`Interrupted by ${signal}`)
+      expect(result.cleanup.status).toBe("interrupted")
+      expect(result.objects.computer_ids).toEqual(["computer-owned"])
+      expect(result.objects.secret_ids).toEqual(["secret-owned"])
+    } finally {
+      child.kill()
+      await child.exited
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+}

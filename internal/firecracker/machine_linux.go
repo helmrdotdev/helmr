@@ -32,7 +32,8 @@ type guestMachine struct {
 	mu              sync.Mutex
 	computerBarrier chan struct{}
 	computerCancel  context.CancelFunc
-	computerHeld    bool // protected by computerBarrier
+	computerHeld    bool               // protected by computerBarrier
+	checkpointHold  *checkpointCapture // protected by computerBarrier
 	stream          vm.Stream
 	opened          bool
 	closed          bool
@@ -164,6 +165,11 @@ func (s *guestMachine) Close(ctx context.Context) error {
 	}
 	defer unlock()
 	s.computerHeld = true
+	if s.checkpointHold != nil {
+		if err := s.checkpointHold.discardUndeliveredSnapshot(); err != nil {
+			return err
+		}
+	}
 	s.once.Do(func() {
 		s.mu.Lock()
 		s.closed = true
@@ -229,7 +235,8 @@ func closeGuestStream(ctx context.Context, stream io.Closer) error {
 	}
 }
 
-func (s *guestMachine) CreateSnapshot(ctx context.Context, request vm.SnapshotRequest) (vm.SnapshotArtifact, error) {
+// The checkpoint handle owns computerBarrier throughout serialization.
+func (s *guestMachine) createCheckpointSnapshot(ctx context.Context, request vm.SnapshotRequest) (vm.SnapshotArtifact, error) {
 	limits, err := s.SnapshotLimits()
 	if err != nil {
 		return vm.SnapshotArtifact{}, err
@@ -239,12 +246,19 @@ func (s *guestMachine) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 	stateName := checkpointID + snapshotStateSuffix
 	memPath := filepath.Join(s.jailRoot, memName)
 	statePath := filepath.Join(s.jailRoot, stateName)
+	cleanupRawSnapshot := true
+	defer func() {
+		if cleanupRawSnapshot {
+			_ = os.Remove(memPath)
+			_ = os.Remove(statePath)
+		}
+	}()
 	var phases []vm.Phase
 	recordPhase := func(name string, started time.Time) {
 		phases = append(phases, vm.Phase{Name: name, DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started))})
 	}
 	started := time.Now()
-	capturedComputer, err := s.PauseComputer(ctx)
+	capturedComputer, err := s.capturePausedComputer(ctx)
 	if err != nil {
 		return vm.SnapshotArtifact{}, err
 	}
@@ -260,13 +274,6 @@ func (s *guestMachine) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 		return vm.SnapshotArtifact{}, fmt.Errorf("create Firecracker snapshot: %w", err)
 	}
 	recordPhase("firecracker_create_snapshot", started)
-	cleanupRawSnapshot := true
-	defer func() {
-		if cleanupRawSnapshot {
-			_ = os.Remove(memPath)
-			_ = os.Remove(statePath)
-		}
-	}()
 	vmPlatform := s.vmPlatform
 	expectedRuntimeID, err := vmPlatform.ExpectedID()
 	if err != nil {

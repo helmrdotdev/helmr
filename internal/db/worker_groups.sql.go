@@ -178,6 +178,12 @@ WITH target AS (
 ), quarantined AS (
     SELECT value::uuid AS id
       FROM jsonb_array_elements_text($4::jsonb -> 'quarantined') AS value
+), locked_computers AS MATERIALIZED (
+    SELECT c.id FROM computers c WHERE EXISTS (
+      SELECT 1 FROM computer_instances i JOIN target ON target.id=i.worker_host_id
+      WHERE i.computer_id=c.id AND i.worker_epoch<target.current_epoch
+        AND i.reclaimed_at IS NULL AND i.id NOT IN (SELECT id FROM quarantined))
+    ORDER BY c.id FOR UPDATE OF c
 ), reclaimable_instances AS MATERIALIZED (
     SELECT computer_instances.id
       FROM computer_instances
@@ -186,6 +192,7 @@ WITH target AS (
      WHERE computer_instances.worker_epoch < target.current_epoch
        AND computer_instances.reclaimed_at IS NULL
        AND computer_instances.id NOT IN (SELECT id FROM quarantined)
+       AND computer_instances.computer_id IN (SELECT id FROM locked_computers)
      ORDER BY computer_instances.id
        FOR UPDATE OF computer_instances
 ), reclaimed_instances AS (
@@ -202,7 +209,11 @@ WITH target AS (
            ),
            mount_state='lost', admission_state='closed', updated_at=now()
      WHERE computer_instances.id IN (SELECT id FROM reclaimable_instances)
-    RETURNING computer_instances.id,computer_instances.writer_generation,computer_instances.reclaimed_at
+    RETURNING computer_instances.id,computer_instances.computer_id,computer_instances.writer_generation,computer_instances.reclaimed_at
+), invalidated_captures AS (
+ UPDATE computer_checkpoints cp SET status='invalid',invalidated_at=now(),invalidation_reason_code='capture_source_reclaimed'
+ FROM reclaimed_instances i WHERE cp.computer_id=i.computer_id AND cp.source_computer_instance_id=i.id
+ AND cp.writer_generation=i.writer_generation AND cp.status='creating' RETURNING cp.id
 ), reconciled_processes AS (
     UPDATE run_leases l SET process_reconciled_at=i.reclaimed_at,updated_at=now()
       FROM reclaimed_instances i
@@ -216,6 +227,7 @@ UPDATE worker_hosts
  WHERE worker_hosts.id = target.id
    AND (SELECT count(*) FROM reclaimed_instances) >= 0
    AND (SELECT count(*) FROM reconciled_processes) >= 0
+   AND (SELECT count(*) FROM invalidated_captures) >= 0
 RETURNING worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.run_paused_reason, worker_hosts.vm_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
 `
 
@@ -1506,9 +1518,15 @@ func (q *Queries) MarkWorkerHostLost(ctx context.Context, arg MarkWorkerHostLost
 }
 
 const reconcileProviderAbsentWorkerInstances = `-- name: ReconcileProviderAbsentWorkerInstances :one
-WITH candidates AS MATERIALIZED (
+WITH locked_computers AS MATERIALIZED (
+ SELECT c.id FROM computers c WHERE EXISTS (
+  SELECT 1 FROM computer_instances i JOIN worker_hosts h ON h.id=i.worker_host_id
+  WHERE i.computer_id=c.id AND h.id=$1 AND h.status='lost' AND i.reclaimed_at IS NULL)
+ ORDER BY c.id FOR UPDATE OF c
+), candidates AS MATERIALIZED (
  SELECT i.id FROM computer_instances i JOIN worker_hosts h ON h.id=i.worker_host_id
  WHERE h.id=$1 AND h.status='lost' AND i.reclaimed_at IS NULL
+ AND i.computer_id IN (SELECT id FROM locked_computers)
  ORDER BY i.id FOR UPDATE OF i
 ), reclaimed AS (
  UPDATE computer_instances i SET observed_state=CASE WHEN i.observed_state='failed' THEN 'failed' ELSE 'lost' END,
@@ -1516,13 +1534,17 @@ WITH candidates AS MATERIALIZED (
  terminal_reason_code=coalesce(i.terminal_reason_code,'external_instance_drift'),
  reclaimed_at=now(),reclaim_evidence=jsonb_build_object('method','provider_absent','completed_at',now()),
  mount_state='lost',admission_state='closed',updated_at=now()
- FROM candidates c WHERE i.id=c.id RETURNING i.id,i.writer_generation,i.reclaimed_at
+ FROM candidates c WHERE i.id=c.id RETURNING i.id,i.computer_id,i.writer_generation,i.reclaimed_at
+), invalidated_captures AS (
+ UPDATE computer_checkpoints cp SET status='invalid',invalidated_at=now(),invalidation_reason_code='capture_source_reclaimed'
+ FROM reclaimed i WHERE cp.computer_id=i.computer_id AND cp.source_computer_instance_id=i.id
+ AND cp.writer_generation=i.writer_generation AND cp.status='creating' RETURNING cp.id
 ), reconciled AS (
  UPDATE run_leases l SET process_reconciled_at=i.reclaimed_at,updated_at=now()
  FROM reclaimed i WHERE l.computer_instance_id=i.id AND l.writer_generation=i.writer_generation
  AND l.process_reconciled_at IS NULL RETURNING l.id
 )
-SELECT count(*) FROM reclaimed WHERE (SELECT count(*) FROM reconciled)>=0
+SELECT count(*) FROM reclaimed WHERE (SELECT count(*) FROM reconciled)>=0 AND (SELECT count(*) FROM invalidated_captures)>=0
 `
 
 // Provider absence is verified by the operation owner before this transaction.

@@ -3,7 +3,6 @@ package computer
 import (
 	"encoding/json"
 	"testing"
-	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/disk"
 )
@@ -40,18 +39,5 @@ func TestCheckpointManifestEncodingIsStable(t *testing.T) {
 	const emptyGolden = `{"recovery_point":{"id":"","computer_id":"","computer_instance_id":"","writer_generation":0,"membership_revision":0,"computer_spec_id":"","runs":[],"runtime":{"backend":"","id":"","arch":"","contract":"","kernel_digest":"","initramfs_digest":"","rootfs_digest":"","config_digest":"","vm_vcpu_count":0,"cpu_config_digest":""}},"runtime_state":{"config_artifact":{"digest":"","size_bytes":0,"media_type":""},"vm_state_artifact":{"digest":"","size_bytes":0,"media_type":""},"scratch_disk_artifact":{"digest":"","size_bytes":0,"media_type":""}},"computer_state":{"base":{"mount_path":""}}}`
 	if string(empty) != emptyGolden {
 		t.Fatalf("omitted manifest fields changed:\n%s\nwant\n%s", empty, emptyGolden)
-	}
-}
-
-// The failure receipt fingerprint is persisted and compared on replay; it
-// must stay byte-identical.
-func TestFailedCheckpointFingerprintIsStable(t *testing.T) {
-	ref := CheckpointRef{InstanceID: uuid.MustParse("0192a000-0000-7000-8000-000000000003"), WorkerEpoch: 3, DesiredVersion: 9, CheckpointID: uuid.MustParse("0192a000-0000-7000-8000-000000000001")}
-	fingerprint, err := failedCheckpointFingerprint(ref, "snapshot upload failed")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fingerprint != "sha256:cfd725b4a46aac871875f5af712d449a58a79bf72ae9217508e2540b3ee8bad3" {
-		t.Fatalf("failure fingerprint changed: %s", fingerprint)
 	}
 }

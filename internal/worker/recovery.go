@@ -239,11 +239,7 @@ func recoverLocalVMState(ctx context.Context, workDir string, jailerDir string, 
 			}
 		}
 		if len(cleanupErrs) == 0 {
-			label := id
-			if hasOwner {
-				label = owner.String()
-			}
-			evidence.Reclaimed = append(evidence.Reclaimed, label)
+			evidence.Reclaimed = append(evidence.Reclaimed, id)
 			continue
 		}
 		label := id
@@ -251,7 +247,7 @@ func recoverLocalVMState(ctx context.Context, workDir string, jailerDir string, 
 			label = owner.String()
 			evidence.QuarantinedOwners = append(evidence.QuarantinedOwners, owner)
 		}
-		evidence.Quarantined = append(evidence.Quarantined, label)
+		evidence.Quarantined = append(evidence.Quarantined, id)
 		evidence.QuarantineErrors = append(evidence.QuarantineErrors, label+": "+errors.Join(cleanupErrs...).Error())
 	}
 	return evidence, nil

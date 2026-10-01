@@ -359,7 +359,7 @@ func TestWorkerFencePublishesExactLostReceiptAndReplays(t *testing.T) {
 		WorkerGroupID:        dbtest.DefaultWorkerGroupID,
 		ExpectedEpoch:        pgtype.Int8{Int64: 1, Valid: true},
 		ExpectedClaimVersion: 1,
-		ReasonCode:           pgtype.Text{String: "termination_drain_failed", Valid: true},
+		ReasonCode:           pgtype.Text{String: "provider_termination", Valid: true},
 	}
 	lost, err := q.FenceWorkerHost(ctx, params)
 	if err != nil {

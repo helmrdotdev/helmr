@@ -111,6 +111,7 @@ func (s *Server) workerCreateSessionInputRunWait(
 			return
 		}
 	}
+	s.captureDrainingComputers(r.Context(), worker.HostID, pgvalue.MustUUIDValue(registrationLocators.ComputerInstanceID))
 	writeJSON(w, http.StatusOK, response)
 }
 

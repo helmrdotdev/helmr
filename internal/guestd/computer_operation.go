@@ -31,10 +31,12 @@ const (
 
 type computerOperationRegistry struct {
 	mu                      sync.RWMutex
+	captureAbortMu          sync.Mutex
 	entries                 map[string]*computerMountEntry
 	preparedRuntime         *preparedComputerRuntime
 	programClaims           []*managedProgramClaim
 	captureRequest          *computerv0.FreezeComputerRequest
+	captureAbort            *captureAbortInstallation
 	restoredMaterialization *computerv0.MaterializeComputerRequest
 	restoreInstallation     *computerv0.ComputerRestoreInstallation
 	restoreActivated        bool

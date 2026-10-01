@@ -24,7 +24,7 @@ import (
 // checkpoint memory serialization happens after this cut under its caller budget.
 const computerCaptureTimeout = 30 * time.Second
 
-// lockComputer serializes live disk cuts with irreversible checkpoint and close
+// lockComputer serializes live disk cuts with checkpoint and terminal close
 // holds. Waiting is cancellable; a timed-out Close can be retried.
 func (s *guestMachine) lockComputer(ctx context.Context) (func(), error) {
 	s.mu.Lock()
@@ -64,14 +64,15 @@ func (s *guestMachine) captureContext(ctx context.Context) (context.Context, fun
 	}, nil
 }
 
-// PauseComputer establishes an irreversible dispatch hold for checkpoint or
-// terminal capture. On any error the owner must stop the source.
-func (s *guestMachine) PauseComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
+// PauseComputerForTermination establishes an irreversible dispatch hold for terminal
+// capture. It revokes any reversible checkpoint handle; the source must stop.
+func (s *guestMachine) PauseComputerForTermination(ctx context.Context) (*vm.ComputerSnapshot, error) {
 	unlock, err := s.lockComputer(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
+	s.checkpointHold = nil
 	s.computerHeld = true
 	ctx, done, err := s.captureContext(ctx)
 	if err != nil {

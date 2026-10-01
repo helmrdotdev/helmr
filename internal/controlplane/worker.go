@@ -224,6 +224,7 @@ func (s *Server) workerDrain(w http.ResponseWriter, r *http.Request) {
 		s.writeWorkerHostError(w, "drain worker", err)
 		return
 	}
+	s.captureDrainingComputers(r.Context(), worker.HostID, uuid.Nil())
 	s.writeWorkerStatus(w, r, worker)
 }
 

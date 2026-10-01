@@ -99,7 +99,7 @@ func LockReplacement(ctx context.Context, tx pgx.Tx, ref ReplacementRef) (Replac
 	if err != nil {
 		return Replacement{}, err
 	}
-	if c.Status != "active" || c.DesiredState != "active" || c.DeletedAt.Valid || len(c.RecoveryFailure) > 0 || len(c.PreparationFailure) > 0 || c.DirtyState == "dirty_state_lost" || c.DirtyState == "capture_failed" {
+	if c.Status != "active" || c.DesiredState != "active" || c.DeletedAt.Valid || len(c.RecoveryFailure) > 0 || len(c.PreparationFailure) > 0 || c.DirtyState == "dirty_state_lost" {
 		return Replacement{}, ErrReplacementChanged
 	}
 	if _, err = tx.Exec(ctx, `SELECT id FROM computer_instances WHERE id=$1 FOR UPDATE`, instanceID); err != nil {

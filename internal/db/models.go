@@ -360,7 +360,8 @@ type ComputerCheckpoint struct {
 	Manifest                     []byte             `json:"manifest"`
 	PhaseTimings                 []byte             `json:"phase_timings"`
 	ReadyRequestFingerprint      pgtype.Text        `json:"ready_request_fingerprint"`
-	FailedRequestFingerprint     pgtype.Text        `json:"failed_request_fingerprint"`
+	AbortDesiredVersion          pgtype.Int8        `json:"abort_desired_version"`
+	AbortAcknowledgedAt          pgtype.Timestamptz `json:"abort_acknowledged_at"`
 	ExpiresAt                    pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
 	ReadyAt                      pgtype.Timestamptz `json:"ready_at"`

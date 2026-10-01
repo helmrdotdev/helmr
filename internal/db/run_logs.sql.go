@@ -42,7 +42,7 @@ current_run_lease AS (
        AND runs.current_attempt_number = run_leases.attempt_number
        AND (
             (runs.status = 'running' AND run_leases.status = 'running')
-         OR (runs.status = 'waiting' AND run_leases.status = 'checkpointing')
+         OR (runs.status = 'waiting' AND run_leases.status IN ('running', 'checkpointing'))
        )
        AND run_leases.expires_at > now()
      FOR NO KEY UPDATE OF runs

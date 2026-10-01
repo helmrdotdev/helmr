@@ -164,7 +164,6 @@ func StartTask(ctx context.Context, txb db.TxBeginner, claimRequest idempotency.
 			admitted.Status != db.ComputerStatusActive ||
 			(admitted.DesiredState != db.ComputerDesiredStateActive &&
 				admitted.DesiredState != db.ComputerDesiredStateStopped) ||
-			admitted.DirtyState == db.ComputerDirtyStateCaptureFailed ||
 			admitted.DirtyState == db.ComputerDirtyStateDirtyStateLost ||
 			!admitted.HeadDiskVersionID.Valid {
 			return ErrTaskComputerUnavailable

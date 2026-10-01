@@ -211,6 +211,8 @@ func TestNewCaptureRetiresPreviousMaterializationReceipt(t *testing.T) {
 	r, _, request := captureBarrierFixture(0)
 	receipt := &computerv0.MaterializeComputerRequest{RestoredCheckpointId: "previous-checkpoint"}
 	r.restoredMaterialization = receipt
+	r.restoreActivated = true
+	r.restoreInstallation = &computerv0.ComputerRestoreInstallation{DesiredVersion: request.DesiredVersion - 1}
 	invalid := proto.Clone(request).(*computerv0.FreezeComputerRequest)
 	invalid.WriterGeneration++
 	if err := r.sealComputerCapture(invalid, time.Now); err == nil {

@@ -5,14 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"time"
 
+	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 // CaptureRuns joins the resident wait owners with the physical capture
 // owner. Its zero value is usable. A capture seals the Instance until its source
-// has been excluded; a failed capture is never automatically reopened.
+// has been excluded or an abort has durably resumed the same source.
 type CaptureRuns struct {
 	mu     sync.Mutex
 	waits  map[string]*CaptureWait
@@ -22,7 +22,10 @@ type CaptureRuns struct {
 // CaptureWait is one resident wait registered for capture. Its owner receives
 // dispatched member pauses from Pauses and must call Detach when the wait
 // ends; later calls return the first result.
+type CaptureMemberResume func(context.Context, workerapi.InstanceReconcileTarget, workerapi.CaptureAbortMember, bool) (*computerv0.ComputerRunAuthority, uint64, error)
+
 type CaptureWait struct {
+	resume   CaptureMemberResume
 	runs     *CaptureRuns
 	lease    workerapi.RunLeaseAssignment
 	waitID   string
@@ -44,6 +47,7 @@ type MemberPause struct {
 	ready    chan error
 	finished chan struct{}
 	result   error
+	resumed  bool
 }
 
 // Context bounds the member's pause work; it ends when the capture is aborted.
@@ -65,12 +69,15 @@ func (p *MemberPause) Abort(cause error) { p.abort(cause) }
 func (p *MemberPause) Settle(err error) error {
 	p.ready <- err
 	<-p.finished
+	if p.resumed {
+		return err
+	}
 	return errors.Join(err, p.result)
 }
 
 // Register records a resident wait for capture. At most one wait per Run may be
 // registered, and none on an Instance whose capture has started.
-func (r *CaptureRuns) Register(lease workerapi.RunLeaseAssignment, waitID string) (*CaptureWait, error) {
+func (r *CaptureRuns) Register(lease workerapi.RunLeaseAssignment, waitID string, resume CaptureMemberResume) (*CaptureWait, error) {
 	if lease.ID == "" || lease.RunID == "" || lease.ComputerInstanceID == "" || lease.WorkerEpoch <= 0 || waitID == "" {
 		return nil, errors.New("capture wait identity is incomplete")
 	}
@@ -83,7 +90,7 @@ func (r *CaptureRuns) Register(lease workerapi.RunLeaseAssignment, waitID string
 	if r.waits == nil {
 		r.waits = make(map[string]*CaptureWait)
 	}
-	entry := &CaptureWait{runs: r, lease: lease, waitID: waitID, requests: make(chan *MemberPause, 1), closed: make(chan struct{})}
+	entry := &CaptureWait{resume: resume, runs: r, lease: lease, waitID: waitID, requests: make(chan *MemberPause, 1), closed: make(chan struct{})}
 	r.waits[lease.RunID] = entry
 	return entry, nil
 }
@@ -115,7 +122,9 @@ func (w *CaptureWait) Detach() error {
 			pause.abort(errors.New("computer capture member left its wait"))
 			<-pause.finished
 		}
-		w.detachErr = pause.result
+		if !pause.resumed {
+			w.detachErr = pause.result
+		}
 		r.mu.Lock()
 		if r.waits[w.lease.RunID] == w {
 			delete(r.waits, w.lease.RunID)
@@ -150,9 +159,28 @@ func (r *CaptureRuns) capture(ctx context.Context, target workerapi.InstanceReco
 	entries := make([]*CaptureWait, 0, len(target.Capture.Runs))
 	for _, member := range target.Capture.Runs {
 		entry := r.waits[member.RunID]
-		if entry == nil || entry.lease.ID != member.RunLeaseID || entry.lease.AttemptNumber != member.AttemptNumber || entry.waitID != member.RunWaitID || entry.lease.ComputerInstanceID != target.ID || entry.lease.WorkerEpoch != target.WorkerEpoch || entry.lease.ComputerID != target.Source.ComputerID || entry.lease.WriterGeneration != target.Source.WriterGeneration {
+		mismatch := ""
+		switch {
+		case entry == nil:
+			mismatch = "local wait absent"
+		case entry.lease.ID != member.RunLeaseID:
+			mismatch = "lease"
+		case entry.lease.AttemptNumber != member.AttemptNumber:
+			mismatch = "attempt"
+		case entry.waitID != member.RunWaitID:
+			mismatch = "wait"
+		case entry.lease.ComputerInstanceID != target.ID:
+			mismatch = "instance"
+		case entry.lease.WorkerEpoch != target.WorkerEpoch:
+			mismatch = "worker epoch"
+		case entry.lease.ComputerID != target.Source.ComputerID:
+			mismatch = "computer"
+		case entry.lease.WriterGeneration != target.Source.WriterGeneration:
+			mismatch = "writer generation"
+		}
+		if mismatch != "" {
 			r.mu.Unlock()
-			return errors.New("computer capture member is not waiting on the exact local grant")
+			return fmt.Errorf("computer capture member is not waiting on the exact local grant: %s (run %s)", mismatch, member.RunID)
 		}
 		entries = append(entries, entry)
 		requests = append(requests, &MemberPause{ctx: captureCtx, abort: abort, target: target, member: member, ready: make(chan error, 1), finished: make(chan struct{})})
@@ -188,11 +216,15 @@ func (r *CaptureRuns) capture(ctx context.Context, target workerapi.InstanceReco
 	retErr = errors.New("computer capture interrupted")
 	defer func() {
 		abort(retErr)
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cancel()
+		cleanupCtx := context.WithoutCancel(ctx)
 		if err := exclude(cleanupCtx); err != nil {
 			retErr = errors.Join(retErr, &SourceReleaseError{Err: err})
 		}
+		r.mu.Lock()
+		if !r.sealed[ref] {
+			delete(r.sealed, ref)
+		}
+		r.mu.Unlock()
 		for _, request := range requests {
 			request.result = retErr
 			close(request.finished)
@@ -210,6 +242,63 @@ func (r *CaptureRuns) capture(ctx context.Context, target workerapi.InstanceReco
 			return context.Cause(captureCtx)
 		}
 	}
+	if err := context.Cause(captureCtx); err != nil {
+		return err
+	}
 	err := capture(captureCtx)
 	return errors.Join(err, context.Cause(captureCtx))
+}
+
+// Resumed is valid after Settle and distinguishes a same-source abort from
+// successful capture and detachment.
+func (p *MemberPause) Resumed() bool { return p.resumed }
+
+func (r *CaptureRuns) prepareAbortMembers(ctx context.Context, target workerapi.InstanceReconcileTarget, response workerapi.CaptureAbortResponse, restoreRenewal bool) ([]*computerv0.ComputerCaptureAbortMember, error) {
+	r.mu.Lock()
+	entries := make(map[string]*CaptureWait, len(target.Capture.Runs))
+	expected := make(map[string]workerapi.InstanceCaptureRun, len(target.Capture.Runs))
+	for _, member := range target.Capture.Runs {
+		entries[member.RunID] = r.waits[member.RunID]
+		expected[member.RunID] = member
+	}
+	r.mu.Unlock()
+	result := make([]*computerv0.ComputerCaptureAbortMember, 0, len(response.Members))
+	for _, member := range response.Members {
+		sealed, ok := expected[member.RunID]
+		if !ok || sealed.RunLeaseID != member.Lease.ID || sealed.AttemptNumber != member.AttemptNumber || sealed.RunWaitID != member.RunWaitID {
+			return nil, errors.New("capture abort grant differs from sealed member")
+		}
+		delete(expected, member.RunID)
+		m := &computerv0.ComputerCaptureAbortMember{Member: &computerv0.ComputerCaptureRun{RunId: member.RunID, AttemptNumber: uint32(member.AttemptNumber), RunWaitId: member.RunWaitID, RunLeaseId: member.Lease.ID}, Cancelled: member.Cancelled}
+		if !member.Cancelled {
+			entry := entries[member.RunID]
+			if entry == nil || entry.pause == nil || entry.pause.target.Capture.CheckpointID != target.Capture.CheckpointID || entry.lease.ID != member.Lease.ID || entry.resume == nil {
+				return nil, errors.New("capture abort member renewal owner is missing")
+			}
+			var err error
+			m.Authority, m.AttachSequence, err = entry.resume(ctx, target, member, restoreRenewal)
+			if err != nil {
+				return nil, err
+			}
+			if m.Authority.GetWriteCapability() != response.WriteCapability || m.Authority.GetFence().GetWorkerHostId() != response.WorkerHostID {
+				return nil, errors.New("capture abort source grant differs from Control Plane")
+			}
+		}
+		result = append(result, m)
+	}
+	if len(expected) != 0 {
+		return nil, errors.New("capture abort omitted a member")
+	}
+	return result, nil
+}
+
+func (r *CaptureRuns) markCaptureResumed(target workerapi.InstanceReconcileTarget, members []workerapi.CaptureAbortMember) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sealed[preparedMachineRef{id: target.ID, epoch: target.WorkerEpoch}] = false
+	for _, member := range members {
+		if entry := r.waits[member.RunID]; entry != nil && entry.pause != nil && !member.Cancelled {
+			entry.pause.resumed = true
+		}
+	}
 }

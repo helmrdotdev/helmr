@@ -88,54 +88,37 @@ func (c *computerCheckpointer) CreateCheckpoint(ctx context.Context, request com
 		if otherOwner {
 			return
 		}
-		stopSource := func() error {
-			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-			defer cancel()
-			return c.ReleaseCheckpointSource(cleanupCtx)
-		}
-		var stopErr error
-		if retErr != nil {
-			stopErr = stopSource()
-		}
-		// All encoders and uploads have joined. These ciphertext files have no VMM
-		// writer, so close and reclaim them even when source shutdown is uncertain.
+		// Encoders and uploads have joined. Their files may be reclaimed while
+		// the intact VM and its reservations remain owned through an abort.
 		if artifact.Computer != nil && artifact.Computer.Capture != nil {
 			artifact.Computer.Capture.Release()
 		}
-		var cleanupErr error
-		for _, candidate := range candidates {
-			cleanupErr = errors.Join(cleanupErr, candidate.close())
-		}
-		if directory != "" {
-			cleanupErr = errors.Join(cleanupErr, os.RemoveAll(directory))
-		}
-		// Raw VM output is different: a failed capture response can leave a writer.
-		// Keep its instance-owned paths and full charge until exit is confirmed.
-		if stopErr == nil {
-			cleanupErr = errors.Join(cleanupErr, removeCheckpointSnapshot(artifact))
-		}
-		if cleanupErr != nil && retErr == nil {
-			stopErr = stopSource()
-		}
-		if cleanupErr == nil && stopErr == nil && reserved {
-			cleanupErr = c.reservations.Release(key)
-		}
-		if err := errors.Join(cleanupErr, stopErr); err != nil {
-			c.pendingCleanup = func() error {
-				var cleanup error
-				for _, candidate := range candidates {
-					cleanup = errors.Join(cleanup, candidate.close())
-				}
-				if directory != "" {
-					cleanup = errors.Join(cleanup, os.RemoveAll(directory))
-				}
-				cleanup = errors.Join(cleanup, removeCheckpointSnapshot(artifact))
-				if cleanup == nil && reserved {
-					cleanup = c.reservations.Release(key)
-				}
-				return cleanup
+		cleanup := func() error {
+			var err error
+			for _, candidate := range candidates {
+				err = errors.Join(err, candidate.close())
 			}
-			retErr = errors.Join(retErr, &SourceReleaseError{Err: err})
+			if directory != "" {
+				err = errors.Join(err, os.RemoveAll(directory))
+			}
+			err = errors.Join(err, removeCheckpointSnapshot(artifact))
+			if err == nil && reserved {
+				err = c.reservations.Release(key)
+				if err == nil {
+					reserved = false
+				}
+			}
+			return err
+		}
+		if retErr != nil {
+			// A failed snapshot reply can leave a VMM writer. ResumeGuestControl
+			// or physical source exclusion must join it before this cleanup.
+			c.pendingCleanup = cleanup
+			return
+		}
+		if err := cleanup(); err != nil {
+			c.pendingCleanup = cleanup
+			retErr = err
 		}
 	}()
 
@@ -178,11 +161,15 @@ func (c *computerCheckpointer) CreateCheckpoint(ctx context.Context, request com
 	// Source release still joins the mount's save owner before the machine
 	// closes, since a save's local completion can outlive its committed
 	// acknowledgement.
+	c.capture, err = c.machine.BeginCheckpoint(ctx, vm.SnapshotRequest{ID: request.Target.Capture.CheckpointID})
+	if err != nil {
+		return result, err
+	}
 	point, err := guestControl{machine: c.machine}.freeze(ctx, request.Target)
 	if err != nil {
 		return result, err
 	}
-	artifact, err = c.machine.CreateSnapshot(ctx, vm.SnapshotRequest{ID: request.Target.Capture.CheckpointID})
+	artifact, err = c.capture.CreateSnapshot(ctx)
 	if err != nil {
 		return result, err
 	}

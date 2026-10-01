@@ -35,6 +35,26 @@ def config():
 
 
 class ProfileTests(unittest.TestCase):
+    def test_reply_fault_profile_routes_only_worker_through_fixed_loopback_proxy(self):
+        cfg = host.compile_config(config() | {'capture_reply_faults': True})
+        self.assertEqual(cfg['worker']['CONTROL_PLANE_URL'], 'http://127.0.0.1:58088')
+        self.assertEqual(cfg['dispatcher']['CONTROL_PLANE_URL'], 'http://127.0.0.1:58080')
+        for invalid in ['true', 1, None, 'http://elsewhere']:
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                host.compile_config(config() | {'capture_reply_faults': invalid})
+
+    def test_abort_observation_rejects_replacement_and_unacknowledged_source(self):
+        evidence = dict(attempt_number=1, acknowledged=True, source_reclaimed=False,
+                        source_state='ready', other_instances=0, lease_on_source=True,
+                        writer_generation=1, captured_writer_generation=1)
+        self.assertTrue(host.persistence_matches(evidence, 'wait-aborted'))
+        for key, value in [('acknowledged', False), ('source_reclaimed', True),
+                           ('source_state', 'closed'), ('other_instances', 1),
+                           ('lease_on_source', False), ('attempt_number', 2),
+                           ('writer_generation', 2)]:
+            with self.subTest(key=key):
+                self.assertFalse(host.persistence_matches(evidence | {key: value}, 'wait-aborted'))
+
     def test_real_composition_preserves_native_worker_service(self):
         cfg = host.compile_config(config())
         files = host.files(cfg)
@@ -44,6 +64,7 @@ class ProfileTests(unittest.TestCase):
         self.assertNotIn('Delegate=', files['worker-override.conf'])
         self.assertEqual(cfg['worker']['CAS_URI'], cfg['control_plane']['CAS_URI'])
         self.assertEqual(cfg['dispatcher']['COMPUTER_FENCING_KEY'], cfg['control_plane']['COMPUTER_FENCING_KEY'])
+        self.assertEqual(cfg['dispatcher']['CONTROL_PLANE_URL'], cfg['worker']['CONTROL_PLANE_URL'])
         self.assertNotEqual(cfg['dispatcher']['CLICKHOUSE_USER'], cfg['control_plane']['CLICKHOUSE_USER'])
 
     def test_rejects_overrides_and_non_s3(self):
@@ -84,7 +105,7 @@ class ProfileTests(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 host.stop(host.compile_config(config()))
             self.assertEqual(run.call_count, 1)
-            self.assertEqual(run.call_args.args[:2], ('/usr/local/bin/worker', 'drain'))
+            self.assertEqual(run.call_args.args[:4], ('/usr/local/bin/worker', 'drain', '--wait-timeout', '5m'))
 
     def test_failed_worker_requires_inspection_not_dependency_stop(self):
         with patch.object(host, 'state', return_value='failed'), patch.object(host, 'run') as run:
@@ -96,7 +117,7 @@ class ProfileTests(unittest.TestCase):
         with patch.object(host, 'state', return_value='active'), patch.object(host, 'run') as run:
             host.stop(host.compile_config(config()))
             calls = [call.args for call in run.call_args_list]
-            self.assertEqual(calls[0][:2], ('/usr/local/bin/worker', 'drain'))
+            self.assertEqual(calls[0][:4], ('/usr/local/bin/worker', 'drain', '--wait-timeout', '5m'))
             self.assertEqual(calls[1], ('systemctl', 'stop', 'helmr-worker.service'))
             for call in run.call_args_list[1:]:
                 self.assertGreater(call.kwargs['timeout'], 120)

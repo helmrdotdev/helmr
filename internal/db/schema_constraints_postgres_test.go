@@ -206,9 +206,7 @@ func assertCheckpointArtifactBoundaries(t *testing.T, tx pgx.Tx, work runLeaseWo
 	}
 	for _, value := range []string{"fingerprint", "sha256:abc", "sha256:" + strings.Repeat("A", 64)} {
 		rejectSchemaRow(t, tx, "23514", `UPDATE computer_checkpoints SET ready_request_fingerprint=$2 WHERE id=$1`, checkpointID, value)
-		rejectSchemaRow(t, tx, "23514", `UPDATE computer_checkpoints SET status='invalid',invalidated_at=now(),invalidation_reason_code='checkpoint_failed',failed_request_fingerprint=$2 WHERE id=$1`, checkpointID, value)
 	}
-	dbtest.MustExec(t, ctx, tx, `UPDATE computer_checkpoints SET status='invalid',invalidated_at=now(),invalidation_reason_code='checkpoint_failed',failed_request_fingerprint=$2 WHERE id=$1`, checkpointID, dbtest.Digest("checkpoint-failure"))
 }
 
 func TestSchemaLeaseCreationBoundsAndExpiry(t *testing.T) {

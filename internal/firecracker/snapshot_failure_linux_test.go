@@ -20,7 +20,7 @@ import (
 )
 
 // The API boundary is fake; these checks do not qualify VMM/device durability.
-func TestSnapshotFailureNeverResumesGuest(t *testing.T) {
+func TestSnapshotFailureRequiresExplicitAbortToResume(t *testing.T) {
 	for _, stage := range []string{"pause response lost", "snapshot rejected", "invalid runtime identity", "invalid manifest", "missing backing file"} {
 		t.Run(stage, func(t *testing.T) {
 			api := &snapshotFailureAPI{}
@@ -30,7 +30,12 @@ func TestSnapshotFailureNeverResumesGuest(t *testing.T) {
 			case "snapshot rejected":
 				api.snapshotErr = errors.New("snapshot failed")
 			}
-			root := t.TempDir()
+			// Keep the Unix socket path below Linux's limit, even under CI's TMPDIR.
+			root, err := os.MkdirTemp("", "fc-failure-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.RemoveAll(root) })
 			for _, name := range []string{"computer.ext4", "scratch.ext4"} {
 				if err := os.WriteFile(filepath.Join(root, name), make([]byte, 4096), 0600); err != nil {
 					t.Fatal(err)
@@ -101,7 +106,11 @@ func TestSnapshotFailureNeverResumesGuest(t *testing.T) {
 			machine.cfg.MemoryMiB = 4
 			machine.cfg.ScratchDiskMiB = 4
 			machine.cfg.JailerUID, machine.cfg.JailerGID = os.Getuid(), os.Getgid()
-			_, err = machine.CreateSnapshot(context.Background(), vm.SnapshotRequest{ID: "checkpoint"})
+			capture, beginErr := machine.BeginCheckpoint(context.Background(), vm.SnapshotRequest{ID: "checkpoint"})
+			if beginErr != nil {
+				t.Fatal(beginErr)
+			}
+			_, err = capture.CreateSnapshot(context.Background())
 			if device.captures != device.releases {
 				t.Fatalf("capture retention leaked: %d/%d", device.captures, device.releases)
 			}
@@ -124,6 +133,37 @@ func TestSnapshotFailureNeverResumesGuest(t *testing.T) {
 			}
 			if api.pauseErr != nil && api.snapshots != 0 {
 				t.Fatal("snapshot attempted after ambiguous pause")
+			}
+			if err := capture.ResumeGuestControl(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if err := capture.ResumeGuestControl(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if api.paused || api.resumes != 1 || !machine.computerHeld {
+				t.Fatal("guest-control resume released dispatch or repeated VMM resume")
+			}
+			if err := capture.CompleteAbort(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if machine.computerHeld || machine.checkpointHold != nil {
+				t.Fatal("acknowledged abort did not release capture hold")
+			}
+			next, err := machine.BeginCheckpoint(t.Context(), vm.SnapshotRequest{ID: "next-checkpoint"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := capture.ResumeGuestControl(t.Context()); err == nil {
+				t.Fatal("old capture resumed newer hold")
+			}
+			if _, err := capture.CreateSnapshot(t.Context()); err == nil {
+				t.Fatal("old capture took another snapshot")
+			}
+			if err := capture.CompleteAbort(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if machine.checkpointHold != next || !machine.computerHeld {
+				t.Fatal("old acknowledgment released newer hold")
 			}
 		})
 	}

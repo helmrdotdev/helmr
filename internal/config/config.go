@@ -72,6 +72,7 @@ type Bootstrap struct {
 }
 
 type Dispatcher struct {
+	ControlPlaneURL    string
 	EncryptionKey      []byte
 	DatabaseURL        string
 	ClickHouseURL      string

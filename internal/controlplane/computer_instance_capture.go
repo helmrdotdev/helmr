@@ -9,7 +9,7 @@ import (
 )
 
 func projectComputerInstanceCapture(cp db.ComputerCheckpoint, members []db.ComputerCheckpointRun) (*workerapi.InstanceCapture, error) {
-	if cp.Status != "creating" || !cp.ID.Valid || !cp.ComputerID.Valid || !cp.EnvironmentID.Valid || !cp.SourceComputerInstanceID.Valid || !cp.ComputerSpecID.Valid || cp.WriterGeneration <= 0 || cp.MembershipRevision < 0 || (len(members) > 0 && !cp.ProgramDeploymentID.Valid) {
+	if (cp.Status != "creating" && cp.Status != "aborted") || !cp.ID.Valid || !cp.ComputerID.Valid || !cp.EnvironmentID.Valid || !cp.SourceComputerInstanceID.Valid || !cp.ComputerSpecID.Valid || cp.WriterGeneration <= 0 || cp.MembershipRevision < 0 || (len(members) > 0 && !cp.ProgramDeploymentID.Valid) {
 		return nil, errors.New("computer capture identity is incomplete")
 	}
 	result := &workerapi.InstanceCapture{CheckpointID: pgvalue.UUIDString(cp.ID), MembershipRevision: cp.MembershipRevision, ProgramDeploymentID: pgvalue.UUIDString(cp.ProgramDeploymentID), Runs: make([]workerapi.InstanceCaptureRun, 0, len(members))}

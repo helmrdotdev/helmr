@@ -33,7 +33,7 @@ const (
 	computerCheckpointRegisterOperation
 	computerCheckpointObjectOperation
 	computerCheckpointReadyOperation
-	computerCheckpointFailedOperation
+	computerCaptureAbortOperation
 	computerSaveOperation
 )
 
@@ -64,15 +64,15 @@ var computerAuthorityChanged = map[computerOperation]string{
 	computerInstanceRenewalOperation:        "Computer Instance writer is stale",
 	computerRunCleanupOperation:             "Run cleanup authority is stale",
 	computerRestorePlanOperation:            "Computer restore authority changed",
-	computerRestoreAcknowledgementOperation: "computer restore authority changed",
 	computerKeyDeliveryOperation:            "computer preparation authority changed",
 	computerInitialObjectOperation:          "computer preparation authority changed",
 	computerInitialVersionOperation:         "computer preparation authority changed",
 	computerCheckpointRegisterOperation:     "checkpoint registration is stale or differs from its candidate",
 	computerCheckpointObjectOperation:       "computer publication authority changed",
 	computerCheckpointReadyOperation:        "checkpoint ready source or candidate changed",
-	computerCheckpointFailedOperation:       "checkpoint failure is stale or differs from its committed receipt",
 	computerSaveOperation:                   "computer publication authority changed",
+	computerCaptureAbortOperation:           "capture abort source or receipt changed",
+	computerRestoreAcknowledgementOperation: "computer restore authority changed",
 }
 
 // computerError maps a Computer owner error to the API error the client is

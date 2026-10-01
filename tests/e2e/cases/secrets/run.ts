@@ -1,5 +1,5 @@
 import { verify, assert, assertEqual, deadline } from "../../support/context"
-await verify("secrets", async ({ client, marker, cleanup }) => {
+await verify("secrets", async ({ client, marker, objects, cleanup }) => {
   const secretName = `verification-${marker}`.replace(/[^A-Za-z0-9_.-]/g, "-")
   const secret = await client.secrets.create(
     {
@@ -9,6 +9,7 @@ await verify("secrets", async ({ client, marker, cleanup }) => {
     },
     { signal: AbortSignal.timeout(30_000) },
   )
+  objects.secret_ids.push(secret.id)
   cleanup(() =>
     client.secrets
       .ref(secret.id)

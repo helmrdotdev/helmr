@@ -47,24 +47,6 @@ func (s *Server) workerMarkCheckpointReady(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, workerapi.ComputerCheckpointResponse{ComputerInstanceID: request.ComputerInstanceID, WorkerEpoch: request.WorkerEpoch, DesiredVersion: request.DesiredVersion, CheckpointID: request.CheckpointID, ComputerDiskVersionID: pgvalue.UUIDString(checkpoint.PrivateComputerDiskVersionID)})
 }
 
-func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Request) {
-	var request workerapi.CheckpointFailedRequest
-	if err := decodeRequestJSON(r, &request); err != nil {
-		writeError(w, err)
-		return
-	}
-	ref, err := checkpointRef(workerFromContext(r.Context()), request.ComputerInstanceID, request.WorkerEpoch, request.DesiredVersion, request.CheckpointID)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	if _, err = computer.FailCheckpoint(r.Context(), s.tx, ref, request.Error); err != nil {
-		s.writeWorkerComputerError(w, err, computerCheckpointFailedOperation, "computer object publication failed")
-		return
-	}
-	writeJSON(w, http.StatusOK, workerapi.ComputerCheckpointResponse{ComputerInstanceID: request.ComputerInstanceID, WorkerEpoch: request.WorkerEpoch, DesiredVersion: request.DesiredVersion, CheckpointID: request.CheckpointID})
-}
-
 // checkpointRef addresses the capture checkpoint a worker request names on
 // the authenticated worker epoch. Malformed identifiers and non-positive
 // versions are rejected before any database access.

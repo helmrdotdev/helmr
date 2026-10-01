@@ -510,3 +510,67 @@ func TestUpdateMetadataAppliesOnceAndRejectsStaleReceipts(t *testing.T) {
 		t.Fatalf("stale claims=%v", err)
 	}
 }
+
+func TestUpdateMetadataRejectsWaitingWithoutLosingAuthority(t *testing.T) {
+	for _, leaseStatus := range []string{"running", "checkpointing"} {
+		t.Run(leaseStatus, func(t *testing.T) {
+			f, work, fence, _ := taskExecutionFixture(t)
+			completed := metadataUpdate(t, fence, uuid.NewV7(), "phase", json.RawMessage(`"before"`))
+			if err := run.UpdateMetadata(t.Context(), f.Pool, completed); err != nil {
+				t.Fatal(err)
+			}
+			wait, err := run.RegisterTimerWait(t.Context(), f.Pool, timerWait(fence, uuid.NewV7(), dbtest.Digest("metadata-wait")))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if leaseStatus == "checkpointing" {
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET status='checkpointing' WHERE id=$1`, work.LeaseID)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_waits SET suspension_status='checkpointing' WHERE id=$1`, wait.ID)
+			}
+			snapshot := func() string {
+				t.Helper()
+				var state string
+				err := f.Pool.QueryRow(t.Context(), `SELECT jsonb_build_array(to_jsonb(r),to_jsonb(w),to_jsonb(l),to_jsonb(a),(SELECT count(*) FROM idempotency_claims))::text FROM runs r JOIN run_waits w ON w.run_id=r.id JOIN run_leases l ON l.id=r.current_run_lease_id JOIN run_attempts a ON a.run_id=r.id AND a.number=r.current_attempt_number WHERE r.id=$1`, work.RunID).Scan(&state)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return state
+			}
+			before := snapshot()
+			rejected := metadataUpdate(t, fence, uuid.NewV7(), "phase", json.RawMessage(`"during"`))
+			err = run.UpdateMetadata(t.Context(), f.Pool, rejected)
+			if err == nil || errors.Is(err, run.ErrStale) || err.Error() != "run metadata cannot be updated while a managed wait is pending" {
+				t.Fatalf("waiting mutation=%v", err)
+			}
+			if err := run.UpdateMetadata(t.Context(), f.Pool, completed); err != nil {
+				t.Fatalf("completed replay=%v", err)
+			}
+			stale := rejected
+			stale.Fence.LeaseSequence++
+			if err := run.UpdateMetadata(t.Context(), f.Pool, stale); !errors.Is(err, run.ErrStale) {
+				t.Fatalf("stale receipt=%v", err)
+			}
+			if after := snapshot(); after != before {
+				t.Fatal("rejected mutation or completed replay changed execution, wait, metadata or claims")
+			}
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_waits SET due_at=now()-interval '1 second' WHERE id=$1`, wait.ID)
+			reconciler, err := run.NewTimerWaitReconciler(f.Pool)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if count, err := reconciler.ReconcileDue(t.Context(), 10); err != nil || count != 1 {
+				t.Fatalf("wait resolution count=%d err=%v", count, err)
+			}
+			if leaseStatus == "running" {
+				if err := run.UpdateMetadata(t.Context(), f.Pool, rejected); err != nil {
+					t.Fatalf("retry after wait=%v", err)
+				}
+			}
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET start_deadline_at=created_at,expires_at=clock_timestamp() WHERE id=$1`, work.LeaseID)
+			expired := metadataUpdate(t, fence, uuid.NewV7(), "phase", json.RawMessage(`"expired"`))
+			if err := run.UpdateMetadata(t.Context(), f.Pool, expired); !errors.Is(err, run.ErrStale) {
+				t.Fatalf("expired receipt=%v", err)
+			}
+		})
+	}
+}

@@ -55,20 +55,20 @@ type BackgroundSpec struct {
 }
 
 type Config struct {
-	ControlPlane       ControlPlane
-	Capabilities       workerapi.Capabilities
-	Recover            func(context.Context) (RecoveryEvidence, error)
-	FinalizeDrain      func(context.Context) (RecoveryEvidence, error)
-	DrainCompleted     func(workerapi.StatusResponse) error
-	Consumers          []ConsumerSpec
-	Admission          map[string]int
-	Background         []BackgroundSpec
-	ObservationEvery   time.Duration
-	PollEvery          time.Duration
-	DrainTimeout       time.Duration
-	Observation        func(Status, Snapshot, RecoveryEvidence) workerapi.Observation
-	AdmissionEvaluator AdmissionEvaluator
-	Log                *slog.Logger
+	ControlPlane         ControlPlane
+	Capabilities         workerapi.Capabilities
+	Recover              func(context.Context) (RecoveryEvidence, error)
+	FinalizeDrain        func(context.Context) (RecoveryEvidence, error)
+	DrainCompleted       func(workerapi.StatusResponse) error
+	Consumers            []ConsumerSpec
+	Admission            map[string]int
+	Background           []BackgroundSpec
+	ObservationEvery     time.Duration
+	PollEvery            time.Duration
+	ProcessShutdownGrace time.Duration
+	Observation          func(Status, Snapshot, RecoveryEvidence) workerapi.Observation
+	AdmissionEvaluator   AdmissionEvaluator
+	Log                  *slog.Logger
 }
 
 type Status string
@@ -145,8 +145,8 @@ func New(cfg Config) (*Supervisor, error) {
 	if cfg.PollEvery <= 0 {
 		cfg.PollEvery = 2 * time.Second
 	}
-	if cfg.DrainTimeout <= 0 {
-		cfg.DrainTimeout = 30 * time.Minute
+	if cfg.ProcessShutdownGrace <= 0 {
+		cfg.ProcessShutdownGrace = 30 * time.Minute
 	}
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
@@ -188,6 +188,10 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			return fmt.Errorf("recover local worker state: %w", err)
 		}
 	}
+	instanceQuarantines, err := activationQuarantines(evidence)
+	if err != nil {
+		return err
+	}
 	inventory := append(append(make([]string, 0, len(evidence.Reclaimed)+len(evidence.Quarantined)), evidence.Reclaimed...), evidence.Quarantined...)
 	if err := s.reportStartupRecovery(ctx, workerapi.StartupRecoveryRequest{
 		InventoryComplete: true,
@@ -201,10 +205,6 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		return fmt.Errorf("record worker startup recovery: %w", err)
 	}
 	capabilities := s.cfg.Capabilities
-	instanceQuarantines, err := activationQuarantines(evidence)
-	if err != nil {
-		return err
-	}
 	if instanceQuarantines != 0 {
 		capabilities.ExecutionSlotsAvailable -= int32(instanceQuarantines)
 		if capabilities.ExecutionSlotsAvailable <= 0 {
@@ -280,7 +280,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			})
 		}
 	}
-	observeWG.Go(func() { s.observe(observeCtx, evidence, signalDrain) })
+	observeWG.Go(func() { s.observe(observeCtx, evidence, signalDrain, fatalWork) })
 	signalDrain(status)
 	if status.Status == workerapi.StatusActive {
 		select {
@@ -291,7 +291,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			cancelDrainBackground()
 			cancelObserve()
 			cancelWork()
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), s.cfg.DrainTimeout)
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), s.cfg.ProcessShutdownGrace)
 			defer cancel()
 			if !waitGroup(shutdownCtx, &consumerWG) ||
 				!waitGroup(shutdownCtx, &backgroundWG) ||
@@ -361,7 +361,7 @@ func (s *Supervisor) shutdownProcess(
 	// Ordinary process shutdown is deliberately non-durable. It waits committed
 	// work but never submits a drain-completion proof, so systemd can restart the
 	// worker and establish a fresh recovery epoch.
-	drainCtx, cancel := context.WithTimeout(context.Background(), s.cfg.DrainTimeout)
+	drainCtx, cancel := context.WithTimeout(context.Background(), s.cfg.ProcessShutdownGrace)
 	defer cancel()
 	if !waitGroup(drainCtx, consumerWG) {
 		cancelWork()
@@ -390,14 +390,19 @@ func (s *Supervisor) completeServerDirectedDrain(
 	cancelActiveBackground()
 	// Once the control plane has durably requested draining, process signals can stop
 	// admission but cannot turn the operation back into a non-durable restart.
-	// The supervisor owns this bounded completion context.
-	drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.cfg.DrainTimeout)
-	defer cancel()
+	// Planned drain has no destructive deadline: admitted work and renewals
+	// continue until both physical and Control Plane authority are empty.
+	drainCtx := context.WithoutCancel(ctx)
 	fail := func(err error) error {
 		cancelDrainClaims()
 		cancelDrainBackground()
 		cancelObserve()
 		cancelWork()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), s.cfg.ProcessShutdownGrace)
+		defer cancel()
+		if !waitGroup(shutdownCtx, consumerWG) || !waitGroup(shutdownCtx, backgroundWG) || !waitGroup(shutdownCtx, observeWG) {
+			err = errors.Join(err, errors.New("worker drain failure did not stop all local work before process shutdown"))
+		}
 		s.state.Store(StatusStopped)
 		return err
 	}
@@ -412,7 +417,7 @@ func (s *Supervisor) completeServerDirectedDrain(
 	if err := checkFatalWork(); err != nil {
 		return fail(err)
 	}
-	if err := s.waitForDrainReady(drainCtx, startupEvidence); err != nil {
+	if err := s.waitForDrainReady(drainCtx, startupEvidence, fatalWork); err != nil {
 		return fail(err)
 	}
 	if err := checkFatalWork(); err != nil {
@@ -422,23 +427,17 @@ func (s *Supervisor) completeServerDirectedDrain(
 	// background reconcilers, then the finalizer gets exclusive ownership of
 	// local instance/process/netns cleanup.
 	cancelDrainClaims()
-	if !waitGroup(drainCtx, consumerWG) {
-		return fail(fmt.Errorf("worker durable drain timed out waiting for cleanup claims: %w", drainCtx.Err()))
-	}
+	consumerWG.Wait()
 	if err := checkFatalWork(); err != nil {
 		return fail(err)
 	}
 	cancelDrainBackground()
-	if !waitGroup(drainCtx, backgroundWG) {
-		return fail(fmt.Errorf("worker durable drain timed out waiting for cleanup services: %w", drainCtx.Err()))
-	}
-	if err := s.waitForDrainReady(drainCtx, startupEvidence); err != nil {
+	backgroundWG.Wait()
+	if err := s.waitForDrainReady(drainCtx, startupEvidence, fatalWork); err != nil {
 		return fail(err)
 	}
 	cancelObserve()
-	if !waitGroup(drainCtx, observeWG) {
-		return fail(fmt.Errorf("worker durable drain timed out stopping observations: %w", drainCtx.Err()))
-	}
+	observeWG.Wait()
 	if s.cfg.FinalizeDrain == nil {
 		return fail(errors.New("worker durable drain finalizer is required"))
 	}
@@ -489,22 +488,32 @@ func activationQuarantines(evidence RecoveryEvidence) (int, error) {
 	return instanceCount, nil
 }
 
-func (s *Supervisor) waitForDrainReady(ctx context.Context, evidence RecoveryEvidence) error {
+// Only credential-issuance rejection proves lost host authority. An ordinary
+// request can race another claim change even after the client's refresh retry.
+func workerAuthorityRejected(err error) bool {
+	var rejected interface{ WorkerAuthorityRejected() bool }
+	return errors.As(err, &rejected) && rejected.WorkerAuthorityRejected()
+}
+
+func (s *Supervisor) waitForDrainReady(ctx context.Context, evidence RecoveryEvidence, fatalWork <-chan error) error {
 	ticker := time.NewTicker(s.cfg.PollEvery)
 	defer ticker.Stop()
 	for {
 		if s.registry.empty() {
-			status, err := s.cfg.ControlPlane.ObserveWorker(ctx, s.observation(StatusDraining, evidence))
+			status, err := s.observeOnce(ctx, s.observation(StatusDraining, evidence))
 			if err == nil && status.Status == workerapi.StatusDraining && status.ActiveInstances == 0 {
 				return nil
 			}
-			if err != nil && ctx.Err() == nil {
+			if workerAuthorityRejected(err) {
+				return fmt.Errorf("worker drain authority rejected: %w", err)
+			}
+			if err != nil {
 				s.cfg.Log.Warn("worker drain status observation failed", "error", err)
 			}
 		}
 		select {
-		case <-ctx.Done():
-			return fmt.Errorf("worker durable drain timed out before local and server authority reached zero: %w", ctx.Err())
+		case err := <-fatalWork:
+			return fmt.Errorf("worker fatal execution during drain: %w", err)
 		case <-s.registry.wake:
 		case <-ticker.C:
 		}
@@ -621,7 +630,15 @@ func (s *Supervisor) acquireAdmission(ctx context.Context, name string) (func(),
 	}
 }
 
-func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, statusReturned func(workerapi.StatusResponse)) {
+// A black-holed request must not prevent fresh observations or drain completion
+// after recovery. One observation period leaves room for retries before staleness.
+func (s *Supervisor) observeOnce(ctx context.Context, observation workerapi.Observation) (workerapi.StatusResponse, error) {
+	observationCtx, cancel := context.WithTimeout(ctx, s.cfg.ObservationEvery)
+	defer cancel()
+	return s.cfg.ControlPlane.ObserveWorker(observationCtx, observation)
+}
+
+func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, statusReturned func(workerapi.StatusResponse), fatalWork chan<- error) {
 	ticker := time.NewTicker(s.cfg.ObservationEvery)
 	defer ticker.Stop()
 	for {
@@ -631,7 +648,15 @@ func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, sta
 		case <-ticker.C:
 		}
 		state := s.state.Load().(Status)
-		if status, err := s.cfg.ControlPlane.ObserveWorker(ctx, s.observation(state, evidence)); err != nil && ctx.Err() == nil {
+		status, err := s.observeOnce(ctx, s.observation(state, evidence))
+		if err != nil && ctx.Err() == nil {
+			if workerAuthorityRejected(err) {
+				select {
+				case fatalWork <- fmt.Errorf("worker observation authority rejected: %w", err):
+				default:
+				}
+				return
+			}
 			s.cfg.Log.Warn("worker observation failed", "error", err)
 		} else if err == nil {
 			statusReturned(status)

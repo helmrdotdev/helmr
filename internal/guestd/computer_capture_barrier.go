@@ -43,6 +43,9 @@ func (r *computerOperationRegistry) sealComputerCapture(request *computerv0.Free
 	if r.materializations != 0 {
 		return errors.New("computer materialization is still in progress")
 	}
+	if err := r.validateNextCaptureLocked(request); err != nil {
+		return err
+	}
 	var current *computerMountEntry
 	for _, candidate := range r.entries {
 		if candidate == nil || candidate.retired || (current != nil && current != candidate) {
@@ -84,7 +87,7 @@ func (r *computerOperationRegistry) sealComputerCapture(request *computerv0.Free
 	}
 	now := clock()
 	for _, claim := range r.programClaims {
-		if claim == nil || claim.entry != entry || claim.authority == nil {
+		if claim == nil || claim.entry != entry || claim.authority == nil || claim.stopRequested {
 			return errors.New("computer capture claim is incomplete")
 		}
 		fence := claim.authority.GetFence()
@@ -95,6 +98,7 @@ func (r *computerOperationRegistry) sealComputerCapture(request *computerv0.Free
 		delete(expected, member.RunId)
 	}
 	r.captureRequest = proto.Clone(request).(*computerv0.FreezeComputerRequest)
+	r.captureAbort = nil
 	r.restoredMaterialization = nil
 	r.restoreInstallation = nil
 	r.restoreActivated = false
@@ -116,4 +120,21 @@ func (r *computerOperationRegistry) reserveMaterialization() (func(), error) {
 	}
 	r.materializations++
 	return func() { r.mu.Lock(); r.materializations--; r.mu.Unlock() }, nil
+}
+
+// Completed receipts survive for replay until a strictly newer capture on the
+// current source is validated. A member pause can fail before whole-Computer
+// sealing, so abort installation and sealing share this ordering check.
+func (r *computerOperationRegistry) validateNextCaptureLocked(request *computerv0.FreezeComputerRequest) error {
+	if previous := r.captureAbort; previous != nil {
+		if !previous.activated || request.ComputerInstanceId != previous.capture.ComputerInstanceId || request.WriterGeneration != previous.capture.WriterGeneration || request.DesiredVersion <= previous.version {
+			return errors.New("capture does not follow the completed abort")
+		}
+	}
+	if r.restoredMaterialization != nil {
+		if !r.restoreActivated || r.restoreInstallation == nil || request.DesiredVersion <= r.restoreInstallation.DesiredVersion || request.CheckpointId == r.restoredMaterialization.RestoredCheckpointId {
+			return errors.New("capture does not follow completed restoration")
+		}
+	}
+	return nil
 }

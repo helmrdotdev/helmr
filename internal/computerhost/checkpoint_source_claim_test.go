@@ -117,6 +117,24 @@ func (m *capturedServeMachine) SnapshotLimits() (vm.SnapshotLimits, error) {
 	return vm.SnapshotLimits{ComputerBytes: 4096, MemoryBytes: 4096, ScratchBytes: 4096, StateBytes: 10000000, ConfigBytes: 65536}, nil
 }
 
+type servedCheckpointCapture struct {
+	machine *capturedServeMachine
+	request vm.SnapshotRequest
+}
+
+func (m *capturedServeMachine) BeginCheckpoint(_ context.Context, q vm.SnapshotRequest) (vm.CheckpointCapture, error) {
+	return &servedCheckpointCapture{m, q}, nil
+}
+func (c *servedCheckpointCapture) CreateSnapshot(ctx context.Context) (vm.SnapshotArtifact, error) {
+	return c.machine.CreateSnapshot(ctx, c.request)
+}
+func (*servedCheckpointCapture) ResumeGuestControl(context.Context) error {
+	return errors.New("unexpected source resume")
+}
+func (*servedCheckpointCapture) CompleteAbort(context.Context) error {
+	return errors.New("unexpected source abort completion")
+}
+
 func (m *capturedServeMachine) CreateSnapshot(context.Context, vm.SnapshotRequest) (vm.SnapshotArtifact, error) {
 	if m.onSnapshot != nil {
 		m.onSnapshot()
@@ -456,7 +474,7 @@ func claimState(p *PreparedMachines, ref preparedMachineRef) (uint64, machineCla
 // Once capture has taken the claim over, nothing the Server observes makes it
 // close the source or report the Instance; capture's exclusion is the one
 // closure report.
-func TestServerDefersToCaptureAfterTakeover(t *testing.T) {
+func TestServerDefersCleanupWhileCaptureHoldsSource(t *testing.T) {
 	for _, event := range []string{"vm exits", "renewal closes", "renewal fails", "save fails", "program start fails"} {
 		t.Run(event, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -484,8 +502,8 @@ func TestServerDefersToCaptureAfterTakeover(t *testing.T) {
 			serverGen, _ := claimState(s.machines, ref)
 			var served error
 			machine.onSnapshot = func() {
-				if gen, kind := claimState(s.machines, ref); gen == serverGen || kind != captureClaim {
-					t.Errorf("claim not taken over before the snapshot: gen=%d (server %d) kind=%d", gen, serverGen, kind)
+				if gen, kind := claimState(s.machines, ref); gen != serverGen || kind != serverClaim || !captureRetained(s.machines, ref) {
+					t.Errorf("original claim not held during snapshot: gen=%d (server %d) kind=%d", gen, serverGen, kind)
 				}
 				switch event {
 				case "vm exits":
@@ -569,76 +587,76 @@ func TestCaptureOwnsFailedSourceRelease(t *testing.T) {
 	}
 }
 
-// A Server that has begun closing its machine keeps the claim: capture
-// refuses the source instead of taking over mid-close, whether the teardown
-// began before capture started or while capture waited for its members.
+// Teardown committed before capture retains exclusive source ownership.
 func TestServerTeardownRefusesCaptureTakeover(t *testing.T) {
-	for _, when := range []string{"before capture", "during member pause"} {
-		t.Run(when, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-			defer cancel()
-			serveCtx, stopServe := context.WithCancel(ctx)
-			defer stopServe()
-			entered, release := make(chan struct{}), make(chan struct{})
-			var releaseOnce sync.Once
-			defer releaseOnce.Do(func() { close(release) })
-			machine := &capturedServeMachine{}
-			var enterOnce sync.Once
-			machine.beforeClose = func() {
-				enterOnce.Do(func() { close(entered) })
-				<-release
-			}
-			members := 0
-			if when == "during member pause" {
-				members = 1
-			}
-			s := startCapturedServe(serveCtx, t, machine, capturedServeOptions{members: members})
-			teardown := func() {
-				stopServe()
-				select {
-				case <-entered:
-				case <-ctx.Done():
-					t.Error("server teardown did not reach its close")
-				}
-			}
-			settled := make(chan error, 1)
-			if members == 0 {
-				teardown()
-			} else {
-				wait := captureRegistryWait(t, s.machines.ComputerCaptures, s.target, s.target.Capture.Runs[0])
-				go func() {
-					pause := <-wait.Pauses()
-					teardown()
-					settled <- pause.Settle(nil)
-				}()
-			}
-			captured := make(chan error, 1)
-			go func() { captured <- s.machines.captureInstanceTarget(ctx, s.captures, s.target) }()
-			select {
-			case err := <-captured:
-				if err == nil {
-					t.Fatal("capture took over a claim its Server was closing")
-				}
-			case <-time.After(2 * time.Second):
-				t.Fatal("capture did not refuse a claim its Server was closing")
-			}
-			releaseOnce.Do(func() { close(release) })
-			_ = s.awaitServed(ctx, t)
-			if members == 0 && s.captures.failed != 0 {
-				t.Fatal("capture refused before starting still failed the checkpoint")
-			}
-			if members != 0 {
-				if err := <-settled; err == nil {
-					t.Fatal("member detached from a capture that never owned the source")
-				}
-			}
-			if s.captures.registered != 0 || s.captures.ready != 0 || s.captures.closed != 0 {
-				t.Fatalf("capture acted on the source: %+v", s.captures)
-			}
-			if machine.closeCount() != 1 || s.machines.instanceCheckedOut(s.target.ID, s.target.WorkerEpoch) || len(s.machines.Reservations.Snapshot().Reservations) != 0 {
-				t.Fatalf("server teardown incomplete: closes=%d", machine.closeCount())
-			}
-		})
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	serveCtx, stopServe := context.WithCancel(ctx)
+	defer stopServe()
+	entered, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce, enterOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
+	machine := &capturedServeMachine{}
+	machine.beforeClose = func() { enterOnce.Do(func() { close(entered) }); <-release }
+	s := startCapturedServe(serveCtx, t, machine, capturedServeOptions{})
+	stopServe()
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal("server did not begin teardown")
+	}
+	if err := s.machines.captureInstanceTarget(ctx, s.captures, s.target); err == nil {
+		t.Fatal("capture stole closing source")
+	}
+	releaseOnce.Do(func() { close(release) })
+	_ = s.awaitServed(ctx, t)
+	if s.captures.registered != 0 || s.captures.ready != 0 || s.captures.closed != 0 {
+		t.Fatal("rejected capture changed durable state")
+	}
+	if machine.closeCount() != 1 || s.machines.instanceCheckedOut(s.target.ID, s.target.WorkerEpoch) || len(s.machines.Reservations.Snapshot().Reservations) != 0 {
+		t.Fatal("server teardown incomplete")
+	}
+}
+
+// Once capture has an hold, an Server exit defers physical cleanup to capture.
+// That is source loss, not an abort that may reactivate the original member.
+func TestCaptureSourceOwnerExitsDuringMemberPause(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	serveCtx, stopServe := context.WithCancel(ctx)
+	defer stopServe()
+	machine := &capturedServeMachine{}
+	s := startCapturedServe(serveCtx, t, machine, capturedServeOptions{members: 1})
+	ref := preparedMachineRef{id: s.target.ID, epoch: s.target.WorkerEpoch}
+	wait := captureRegistryWait(t, s.machines.ComputerCaptures, s.target, s.target.Capture.Runs[0])
+	captured := make(chan error, 1)
+	go func() { captured <- s.machines.captureInstanceTarget(ctx, s.captures, s.target) }()
+	var pause *MemberPause
+	select {
+	case pause = <-wait.Pauses():
+	case <-ctx.Done():
+		t.Fatal("member pause not dispatched")
+	}
+	stopServe()
+	_ = s.awaitServed(ctx, t)
+	if machine.closeCount() != 0 || !captureRetained(s.machines, ref) {
+		t.Fatal("Server bypassed the capture hold")
+	}
+	settled := make(chan error, 1)
+	go func() { settled <- pause.Settle(nil) }()
+	select {
+	case err := <-captured:
+		if err == nil {
+			t.Fatal("lost source accepted as captured")
+		}
+	case <-ctx.Done():
+		t.Fatal("capture did not join source loss")
+	}
+	if err := <-settled; err == nil || pause.Resumed() {
+		t.Fatal("lost member reported resumed")
+	}
+	if machine.closeCount() != 1 || s.captures.registered != 0 || s.captures.ready != 0 || s.captures.closed != 0 || len(s.captures.instanceFailures) != 1 || s.captures.instanceFailures[0].CleanupProof == nil || s.machines.instanceCheckedOut(ref.id, ref.epoch) {
+		t.Fatal("source loss did not retain proof through physical cleanup")
 	}
 }
 
@@ -818,15 +836,13 @@ func TestUnstartedCaptureReturnsReadyMachine(t *testing.T) {
 		name    string
 		members int
 		match   bool
-		machine func(*testing.T, workerapi.InstanceReconcileTarget) liveCaptureMachine
+		machine func(*testing.T, workerapi.InstanceReconcileTarget) vm.CheckpointableMachine
 	}{
-		{name: "source mismatch", machine: func(t *testing.T, target workerapi.InstanceReconcileTarget) liveCaptureMachine {
+		{name: "source mismatch", machine: func(t *testing.T, target workerapi.InstanceReconcileTarget) vm.CheckpointableMachine {
 			return &checkpointMachine{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
 		}},
-		{name: "not checkpointable", match: true, machine: func(*testing.T, workerapi.InstanceReconcileTarget) liveCaptureMachine {
-			return &closeTrackingMachine{}
-		}},
-		{name: "member not waiting", members: 1, match: true, machine: func(t *testing.T, target workerapi.InstanceReconcileTarget) liveCaptureMachine {
+
+		{name: "member not waiting", members: 1, match: true, machine: func(t *testing.T, target workerapi.InstanceReconcileTarget) vm.CheckpointableMachine {
 			return &checkpointMachine{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
 		}},
 	} {

@@ -117,7 +117,7 @@ inspection; it is not reported as an accepted environment. Read unit journals wi
 `journalctl -u helmr-verification-control-plane -u helmr-worker`, and the analogous
 backing-service units. Do not export private configuration with logs.
 
-`stop` first invokes native `worker drain --timeout 5m`, then stops Worker,
+`stop` first invokes native `worker drain --wait-timeout 5m`, then stops Worker,
 Dispatcher, CP and backing services in that order. Failed drain or unexpected
 Worker state stops the operation before dependencies are removed. Diagnose the
 retained environment; do not interpret a timeout as permission to erase it.
@@ -351,6 +351,110 @@ not prove host-loss isolation or cross-host compatibility. `persistence.json`
 retains assertions and fixture-cleanup outcomes. Terminal Tokens are not cancelled
 again. API deletion acknowledgement is not final host/S3 cleanup proof.
 
+## Recoverable capture failure case
+
+`cases/capture-abort` is a dedicated Linux/KVM qualification case. It requires
+matching CP, Worker and guest artifacts and a fresh profile when those inputs
+change. It has not yet passed live qualification. Installing it, privately
+publishing its matching artifacts, and running the host require the applicable
+environment authorization.
+
+Build `./dev/runtime/capturefault` with the pinned Go toolchain for the host.
+Run it only on the exclusive verification host, with its ordinary native S3
+credentials and the exact scope CAS bucket:
+
+```sh
+capturefault --bucket SCOPE_CAS_BUCKET --region us-east-1 --hold 360s
+```
+
+At profile creation, set its CAS URI to
+`s3://SCOPE_CAS_BUCKET?endpoint=http%3A%2F%2F127.0.0.1%3A58089` (retain any existing
+CAS prefix). This loopback proxy forwards requests only to that bucket. It uses
+the ordinary S3 protocol and native host authentication; it is not a file CAS or
+a production fault hook. Keep its process available until profile shutdown.
+Do not use it on a shared host. Restarting the proxy clears its one-shot state;
+restart only between fresh cases after the previous Run and cleanup settle.
+
+Prepare `cases/capture-abort` with `tests/e2e/prepare_project.py`, deploy through
+the normal authenticated CLI, and run its `run.ts` with the same API/key/evidence
+variables and `HELMR_RUNTIME_HOST_TOOL` as persistence. The case arms exactly one
+memory-upload failure, waits until that request has been held for 310 seconds,
+cancels one of two captured members, and completes the first Token while the source is sealed.
+The proxy delays a non-retryable S3 response
+for 360 seconds, longer than the five-minute guest grant. Both CP leases renew
+until the cancellation so an early cancellation does not end the upload before
+the intended injected response. The Task must continue
+with its original random in-memory nonce, file and Run. A read-only database
+observation requires both captured members, abort acknowledgment, the unchanged
+source writer and no replacement Instance. The cancelled Run must reach its
+cancelled outcome while the healthy member continues. Its active interval writes
+an increasing shared-file counter before emitting each structured log. While the
+proxy still holds the frozen upload, the driver reads the maximum delivered
+counter and passes that baseline through the first Token. The healthy member
+requires the file counter to remain exactly equal and a wait-finally marker to be
+absent after abort and restore. Missing/buffered final telemetry can conservatively
+fail the case. This sampled execution probe is not an exhaustive scheduler trace.
+A second Token wait then produces a successful checkpoint;
+the case requires source reclamation before completing that Token and verifies
+restoration from the new checkpoint with the same memory/files/Run identity.
+
+`HELMR_EVIDENCE_DIR/result.json` records the assertion results and normal fixture cleanup.
+An interrupted proxy, expired request or unobserved failure is a failed case.
+This case covers delayed upload failure, cancellation and resolution during
+capture; it does not alone qualify lost guest/Control Plane replies.
+
+### Lost capture-abort replies
+
+For this separate exclusive-host case, create a fresh profile with
+`"capture_reply_faults": true` and the same S3 fault endpoint above. Start
+`capturefault --bucket SCOPE_CAS_BUCKET --region us-east-1 --hold 360s --replies` as root
+before starting the profile. Only Worker uses the additional loopback relay at
+58088; Dispatcher and user clients continue to use CP directly at 58080.
+The runtime binaries are ordinary source-bound builds, with no fault switches.
+
+Deploy `cases/control-plane-outage` and `cases/capture-abort` in the selected
+fixture project. First run `cases/reply-relay/run.ts` with ordinary API credentials
+and a fresh evidence directory. It interposes the original source vsock socket,
+starts a real Computer Command through that relay, restores the original socket
+name while a stream remains active, and requires the same Command/Instance to
+finish with its marker. A failed passthrough preflight is not permission to arm
+reply loss. Finish normal fixture reclamation, then restart only the proxy to
+clear its one-case state.
+
+Run the ordinary `cases/capture-abort/run.ts` with
+`HELMR_CAPTURE_REPLY_LOSS=1`. During the existing upload hold it arms the relay
+for that exact Computer, Instance, checkpoint and both sealed Run identities.
+The relay consumes a complete successful upstream response before losing one CP
+abort/grant reply, one guest prepare reply, one guest activation reply and one CP
+completion reply, in that order. It forwards all other traffic. Evidence records
+identity, timestamps, grants' expiry/disposition and whether a reply was dropped;
+it never records authentication headers or write capabilities.
+
+The case requires all four drops, real successful retries, current unexpired
+grants, stable cancelled disposition, and a final acknowledged abort receipt.
+All memory/file/Run identity, cancellation-counter and later restore assertions
+still apply. An unreached drop, upstream failure or incomplete response is not
+qualification. Unit checks for the tool and assertions are:
+
+```sh
+nix develop -c go test -race ./dev/runtime/capturefault
+nix develop -c bun test tests/e2e/support/reply-fault.test.ts
+```
+
+The Unix socket listener is restored before forwarding the final acknowledged
+abort reply. Existing relayed Program streams remain open until their normal
+close, so keep the proxy running through fixture/source reclamation. The source
+socket is renamed only under its exact dedicated jail path, with inode and
+ownership checks; a changed or missing endpoint is a failed restoration, never
+overwritten. After an interrupted case, inspect its receipts and request
+`DELETE http://127.0.0.1:58089/__replies` before stopping the proxy. Complete ordinary
+Run/Computer cleanup and confirm source reclamation before proxy/profile shutdown.
+Do not rename sockets on a shared host or reuse an interrupted case.
+There is no process-crash recovery: if the proxy dies while interposed, the source
+socket name still points at the dead listener. Preserve the sibling original socket
+and case evidence; use the normal operator cleanup path before recreating the
+profile. Do not stop the proxy as a shortcut while a source still uses its streams.
+
 ## Actor Turn continuity
 
 After deploying the same small project with normal credentials, run on the host:
@@ -405,3 +509,37 @@ Log replay can briefly return `telemetry_lagging`. The driver records and waits
 through only that condition within the existing phase deadline; other errors or
 a terminal Run still fail. The first live attempt exposed this condition and was
 cancelled with fixture cleanup before the corrected case passed.
+
+## Named database observations
+
+`observe.py OBSERVATION INPUTS_JSON` renders one fixed, read-only observation as
+psql input. The available observations cover Run placement/path and reclamation,
+Computer state, current Worker Hosts, regional Worker capacity/platforms,
+Deployment identity and environment API-key scope. Inputs contain exactly the
+fields declared in `observe.py`; SQL text, file names and query fragments are not
+accepted. Results are one JSON value. `run-path` includes exact checkpoint member
+identities, source reclamation, restored lease lineage and artifact byte sizes.
+
+Execute with the same Product source revision that created the database. When
+an initial schema changes, reset the disposable database through the host or
+deployment owner's normal greenfield reset before using these observations.
+A matching migration version alone does not establish that identity. The
+execution owner supplies authorized connectivity and enforces result bounds;
+the renderer enforces a read-only transaction and short statement/lock limits.
+No observation changes Product state or replaces native mutation APIs.
+
+The populated PostgreSQL regressions run with
+`nix run .#ci-postgres -- '^TestVerificationObservation' ./dev/runtime`.
+External Capacity consumers can run a separately compiled executable against the
+real HTTP router and disposable database through `TestCapacityExternalConsumer`;
+set `HELMR_CAPACITY_CONSUMER_TEST` to its absolute path. The fixture passes its
+endpoint and test-only credentials through the child process environment.
+
+
+`host.py observe --observation NAME --inputs JSON` runs the fixed observation
+against this profile's local database. `computer-path` includes Computer Instances,
+checkpoint/disk lineage and Commands for planned-drain qualification. See the
+[ordinary drain/outage cases](../../tests/e2e/README.md#dedicated-host-drain-and-observation-outages)
+for their operator coordination and cleanup. The idle-Host
+`check_fencing_outage.py` is destructive fault injection within an authorized
+exclusive dev scope; it must not run against shared infrastructure.

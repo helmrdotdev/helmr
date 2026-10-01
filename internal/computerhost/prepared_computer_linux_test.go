@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 	"uuid"
@@ -21,7 +20,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/reservation"
-	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -264,78 +262,6 @@ func TestWarmInstancePreparationDeadlineCancelsBlockedMaterialization(t *testing
 	}
 	if err := machines.reclaimFailedInstanceTarget(t.Context(), client, target); err != nil {
 		t.Fatal(err)
-	}
-	if err := os.RemoveAll(machines.TempDir); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// uncapturableMachine is an instance machine that cannot capture its live
-// Computer, which the machines must reject before admitting it.
-type uncapturableMachine struct {
-	closed atomic.Int32
-}
-
-func (*uncapturableMachine) Stream() vm.Stream { return nil }
-func (*uncapturableMachine) OpenStream(context.Context) (vm.Stream, error) {
-	return nil, errors.New("uncapturable instance has no streams")
-}
-func (*uncapturableMachine) Wait(ctx context.Context) error {
-	<-ctx.Done()
-	return ctx.Err()
-}
-func (s *uncapturableMachine) Close(context.Context) error {
-	s.closed.Add(1)
-	return nil
-}
-
-type uncapturableMaterializingBackend struct {
-	unsupportedMachineStarts
-	machine *uncapturableMachine
-}
-
-func (b *uncapturableMaterializingBackend) Materialize(context.Context, vm.MaterializeRequest) (vm.Machine, error) {
-	return b.machine, nil
-}
-func (*uncapturableMaterializingBackend) Cleanup(context.Context, vm.Owner) error { return nil }
-
-func TestWarmInstanceRejectsMachineWithoutLiveCapture(t *testing.T) {
-	store, mount := testComputerMountArtifacts(t)
-	connector := &uncapturableMaterializingBackend{machine: &uncapturableMachine{}}
-	machines := NewPreparedMachines(connector, store, 1, nil)
-	machines.TempDir = t.TempDir()
-	machines.RuntimeArchitecture = definition.RuntimeArchitecture("x86_64")
-	machines.Reservations = newPreparedMachineReservations(t, 1)
-	client := &typedInstanceClient{}
-	machines.ComputerInstances = client
-	target := instancePreparationTarget(mount, uuid.NewV7().String(), 7)
-	items := []workerapi.InstanceReconcileTarget{target}
-	configureComputerPreparationTest(t, machines, items)
-	target = items[0]
-	// Continue from the transport's published version so preparation
-	// attaches the Computer device and reaches materialization.
-	source := *target.Source.Computer
-	source.Root = &machines.ComputerPreparation.(*computerPreparationTransport).root
-	target.Source.Computer = &source
-	if err := machines.warmInstanceTarget(t.Context(), client, target, func() {}); err != nil {
-		t.Fatal(err)
-	}
-	if len(client.failed) != 1 || client.failed[0].CleanupProof != nil ||
-		!strings.Contains(string(client.failed[0].Error), "machine cannot capture a live Computer") {
-		t.Fatalf("failure reports=%+v", client.failed)
-	}
-	if got := connector.machine.closed.Load(); got != 1 {
-		t.Fatalf("machine closes=%d, want 1", got)
-	}
-	ref := preparedMachineRef{id: target.ID, epoch: target.WorkerEpoch}
-	if got := len(machines.Reservations.Snapshot().Reservations); got != 0 || computerDeviceTracked(machines, ref) {
-		t.Fatalf("reservations=%d device tracked=%t after rejection", got, computerDeviceTracked(machines, ref))
-	}
-	machines.mu.Lock()
-	ready := machines.readyCountLocked()
-	machines.mu.Unlock()
-	if ready != 0 {
-		t.Fatalf("ready instances=%d after rejection", ready)
 	}
 	if err := os.RemoveAll(machines.TempDir); err != nil {
 		t.Fatal(err)

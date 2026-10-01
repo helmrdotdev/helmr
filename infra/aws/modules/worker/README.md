@@ -69,9 +69,12 @@ Deployment infrastructure is the only desired-capacity writer. Terraform enforce
 exact drain path. Fixed capacity is expressed with equal minimum and maximum values.
 
 When capacity is raised, the launch lifecycle hook keeps the instance out of service until the
-worker systemd unit is active. During scale-in or instance refresh, the termination
-lifecycle hook gives `worker drain` time to stop accepting leases and wait for active
-executions before the instance terminates.
+worker systemd unit is active. Planned removal first drains the exact host to
+`termination_ready`; `worker drain --wait-timeout` bounds observation only and
+leaves admitted work running when that wait expires. The termination lifecycle
+hook handles provider termination that has already begun. It verifies the local
+instance identity and termination state before bounded cleanup, then fences actual
+loss if cleanup cannot finish. That hook is not authority to force a planned drain.
 
 Launch-template changes do not start an automatic instance refresh. Drain the
 exact logical worker instance to `termination_ready` before provider deletion,
@@ -98,6 +101,12 @@ quickstart and standard roots round-trip this current sealed record.
 Computer storage requires explicit `computer_save_interval_seconds` and
 `computer_devices`. The interval schedules background saves; it is not an RPO or
 mandatory Turn-completion barrier. The device list is an exclusive NBD allowlist.
+Temporary API failures before save admission retry the same operation while its
+writer authority remains valid. Each request is bounded, and writer expiry or
+quiescing stops the retry. A continuing failure logs its elapsed time and attempt
+count once per minute; successful writer renewal can keep that retry alive.
+Capture and post-capture settlement failures retain
+their existing preservation-failure handling.
 Bootstrap loads NBD with enough device indices, persists that module configuration
 across reboot, and rejects connected devices before starting the Worker. Supply
 sufficient devices for concurrent Computers and preparation; they are not shared

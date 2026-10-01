@@ -18,11 +18,11 @@ import (
 // test backends satisfy vm.Backend; a fake may override either method.
 type unsupportedMachineStarts struct{}
 
-func (unsupportedMachineStarts) Restore(context.Context, vm.RestoreRequest) (vm.Machine, error) {
+func (unsupportedMachineStarts) Restore(context.Context, vm.RestoreRequest) (vm.CheckpointableMachine, error) {
 	return nil, errors.New("test backend does not restore machines")
 }
 
-func (unsupportedMachineStarts) Materialize(context.Context, vm.MaterializeRequest) (vm.Machine, error) {
+func (unsupportedMachineStarts) Materialize(context.Context, vm.MaterializeRequest) (vm.CheckpointableMachine, error) {
 	return nil, errors.New("test backend does not materialize machines")
 }
 
@@ -163,4 +163,15 @@ func testCheckpointEncryptor(t *testing.T) *CheckpointEncryptor {
 		t.Fatal(err)
 	}
 	return encryptor
+}
+
+// unusedCheckpoint implements the required machine capability for tests that
+// never capture. Calling it is a test fixture error, not a production fallback.
+type unusedCheckpoint struct{}
+
+func (unusedCheckpoint) SnapshotLimits() (vm.SnapshotLimits, error) {
+	return vm.SnapshotLimits{}, errors.New("unexpected checkpoint limits")
+}
+func (unusedCheckpoint) BeginCheckpoint(context.Context, vm.SnapshotRequest) (vm.CheckpointCapture, error) {
+	return nil, errors.New("unexpected checkpoint capture")
 }

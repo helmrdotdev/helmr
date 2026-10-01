@@ -93,7 +93,7 @@ func lockInstanceAssignment(ctx context.Context, tx pgx.Tx, p instanceAssignment
 	if err != nil {
 		return p, err
 	}
-	if c.Revision != p.computer.Revision || c.Status != "active" || c.DesiredState != "active" || c.DeletedAt.Valid || len(c.RecoveryFailure) > 0 || len(c.PreparationFailure) > 0 || c.DirtyState == "dirty_state_lost" || c.DirtyState == "capture_failed" {
+	if c.Revision != p.computer.Revision || c.Status != "active" || c.DesiredState != "active" || c.DeletedAt.Valid || len(c.RecoveryFailure) > 0 || len(c.PreparationFailure) > 0 || c.DirtyState == "dirty_state_lost" {
 		return p, ErrCandidateChanged
 	}
 	p.computer = c

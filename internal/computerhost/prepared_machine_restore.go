@@ -25,7 +25,7 @@ func (p *PreparedMachines) restorePreparedMachine(
 	topology vm.Topology,
 	readOnlyDrives []vm.ReadOnlyDrive,
 	record func(vm.Phase),
-) (result vm.Machine, retErr error) {
+) (result vm.CheckpointableMachine, retErr error) {
 	restore := target.Source.Restore
 	if restore == nil {
 		return nil, errors.New("prepared machine restore authority is required")

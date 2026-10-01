@@ -16,7 +16,7 @@ func captureRegistryWait(t *testing.T, registry *CaptureRuns, target workerapi.I
 	lease.ID, lease.RunID, lease.AttemptNumber = member.RunLeaseID, member.RunID, member.AttemptNumber
 	lease.ComputerInstanceID, lease.WorkerEpoch = target.ID, target.WorkerEpoch
 	lease.ComputerID, lease.WriterGeneration = target.Source.ComputerID, target.Source.WriterGeneration
-	entry, err := registry.Register(lease, member.RunWaitID)
+	entry, err := registry.Register(lease, member.RunWaitID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestComputerCaptureFailureExcludesSourceBeforeReleasingMembers(t *testing.T
 			if pause.result == nil {
 				t.Fatal("failed capture reported member success")
 			}
-			if _, err := registry.Register(entry.lease, "new-wait"); err == nil {
+			if _, err := registry.Register(entry.lease, "new-wait", nil); err == nil {
 				t.Fatal("failed source reopened admission")
 			}
 		})
@@ -205,5 +205,29 @@ func TestComputerCaptureEmptyInstanceAndDuplicateOwner(t *testing.T) {
 	unexpected := func(context.Context) error { t.Fatal("duplicate owner touched source"); return nil }
 	if err := registry.capture(t.Context(), target, unexpected, unexpected); err == nil {
 		t.Fatal("duplicate capture accepted")
+	}
+}
+
+func TestComputerCaptureDoesNotSnapshotAfterCoordinatedPauseCancellation(t *testing.T) {
+	// Exercise both ready-vs-cancellation selections without relying on their order.
+	for range 32 {
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		registry := &CaptureRuns{}
+		target := checkpointCaptureTarget(1)
+		wait := captureRegistryWait(t, registry, target, target.Capture.Runs[0])
+		settled := make(chan error, 1)
+		go func() { pause := <-wait.Pauses(); pause.Abort(context.Canceled); settled <- pause.Settle(nil) }()
+		err := registry.capture(ctx, target, func(context.Context) error {
+			t.Error("snapshot callback reached after coordinated cancellation")
+			return nil
+		}, func(context.Context) error { return nil })
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("capture=%v", err)
+		}
+		if err := <-settled; !errors.Is(err, context.Canceled) {
+			t.Fatalf("settled=%v", err)
+		}
+		_ = wait.Detach()
+		cancel()
 	}
 }

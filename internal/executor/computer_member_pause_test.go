@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/frameio"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -56,5 +58,104 @@ func TestComputerMemberPauseRejectsMismatchedReceipt(t *testing.T) {
 	err := task.pauseComputerMember(ctx, WaitRequest{RunWaitID: member.RunWaitID, ResumeAttachID: "attach", CorrelationID: "correlation"}, target, member)
 	if err == nil || task.checkpointFrozen {
 		t.Fatalf("err=%v frozen=%v", err, task.checkpointFrozen)
+	}
+}
+
+func TestComputerMemberPauseJoinsReceiptAfterCaptureCancellation(t *testing.T) {
+	host, guest := net.Pipe()
+	defer guest.Close()
+	target := memberCaptureTarget(1)
+	member := target.Capture.Runs[0]
+	lease := memberCaptureLease(target, member)
+	lease.ExpiresAt = time.Now().Add(3 * time.Second)
+	protocol := newProgramProtocol(host)
+	defer protocol.Close()
+	task := &guestRunLeaseTask{lease: lease, program: freshProgram{protocol: protocol}}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- task.pauseComputerMember(ctx, WaitRequest{RunWaitID: member.RunWaitID, ResumeAttachID: "attach", CorrelationID: "correlation"}, target, member)
+	}()
+	header, n, err := wire.ReadStreamFrameHeader(guest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wire.ReadCheckpointPauseRequest(header, guest, n); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		t.Fatalf("pause abandoned before receipt: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if task.renewalGate.TryLock() {
+		task.renewalGate.Unlock()
+		t.Fatal("abort activation can overtake pending pause")
+	}
+	if err := wire.WriteCheckpointPauseReady(guest, member.RunWaitID, target.Capture.CheckpointID); err != nil {
+		t.Fatalf("capture cancellation closed original stream: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !task.checkpointFrozen {
+		t.Fatal("late receipt did not record frozen member")
+	}
+	// The physical frame has been fully consumed. Releasing the same reader
+	// must permit subsequent protocol events on the original connection.
+	protocol.resume <- struct{}{}
+	writeDone := make(chan error, 1)
+	go func() { writeDone <- frameio.WriteProtoFrame(guest, &programv0.RunEvent{}) }()
+	readCtx, stop := context.WithTimeout(t.Context(), time.Second)
+	defer stop()
+	if err := task.program.readEvent(readCtx, new(programv0.RunEvent)); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-writeDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestComputerMemberPauseStalledReceiptEndsAtGrantExpiry(t *testing.T) {
+	host, guest := net.Pipe()
+	defer guest.Close()
+	target := memberCaptureTarget(1)
+	member := target.Capture.Runs[0]
+	lease := memberCaptureLease(target, member)
+	lease.ExpiresAt = time.Now().Add(50 * time.Millisecond)
+	protocol := newProgramProtocol(host)
+	defer protocol.Close()
+	task := &guestRunLeaseTask{lease: lease, program: freshProgram{protocol: protocol}}
+	done := make(chan error, 1)
+	go func() {
+		done <- task.pauseComputerMember(t.Context(), WaitRequest{RunWaitID: member.RunWaitID, ResumeAttachID: "attach", CorrelationID: "correlation"}, target, member)
+	}()
+	select {
+	case err := <-done:
+		if err == nil || task.checkpointFrozen {
+			t.Fatalf("err=%v frozen=%v", err, task.checkpointFrozen)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("grant expiry did not release stalled pause write")
+	}
+}
+
+func TestComputerMemberPauseCancellationBeforeDispatchKeepsHealthyMember(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	target := memberCaptureTarget(1)
+	member := target.Capture.Runs[0]
+	host, guest := net.Pipe()
+	defer guest.Close()
+	protocol := newProgramProtocol(host)
+	defer protocol.Close()
+	task := &guestRunLeaseTask{lease: memberCaptureLease(target, member), program: freshProgram{protocol: protocol}}
+	if err := task.pauseComputerMember(ctx, WaitRequest{RunWaitID: member.RunWaitID, ResumeAttachID: "attach", CorrelationID: "correlation"}, target, member); err != nil {
+		t.Fatalf("healthy member inherited capture cancellation: %v", err)
+	}
+	if task.capturePaused || task.checkpointFrozen {
+		t.Fatal("cancelled capture dispatched a pause")
 	}
 }

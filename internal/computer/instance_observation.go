@@ -331,6 +331,9 @@ func lockedReclaim(ctx context.Context, tx pgx.Tx, groupID uuid.UUID, params db.
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
+	if err := q.InvalidateReclaimedComputerCaptures(ctx, reclaimed.ID); err != nil {
+		return db.ComputerInstance{}, err
+	}
 	// Physical exclusion settles every process in this exact incarnation,
 	// including members whose scoped exit proof was lost. Logical outcomes are
 	// still owned by the Run and checkpoint reconciliation paths.

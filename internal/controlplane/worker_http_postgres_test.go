@@ -223,3 +223,18 @@ func TestWorkerHostActivationAndFenceHTTP(t *testing.T) {
 	}
 	assertAdminError(t, f.request(t, http.MethodGet, "/worker/v1/instance", hostCredential, ""), http.StatusUnauthorized, "unauthorized")
 }
+
+func TestProviderTerminationFenceUsesWorkerProtocolReason(t *testing.T) {
+	f := newWorkerHTTPFixture(t)
+	host := f.host(t, f.enroll(t, "default", "i-terminating"))
+	host.start(t, validWorkerCapabilities(t))
+	if err := host.client.FenceWorker(t.Context(), "termination_drain_failed"); !httpclient.IsStatus(err, http.StatusBadRequest) {
+		t.Fatalf("retired reason=%v", err)
+	}
+	if err := host.client.FenceWorker(t.Context(), workerapi.FenceReasonProviderTermination); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := host.client.ObserveWorker(t.Context(), workerapi.Observation{}); !httpclient.IsStatus(err, http.StatusUnauthorized) {
+		t.Fatalf("fenced host observation=%v", err)
+	}
+}

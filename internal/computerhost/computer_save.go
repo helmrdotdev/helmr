@@ -3,8 +3,12 @@ package computerhost
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 
@@ -90,15 +94,62 @@ func (s *computerSave) begin(ctx context.Context) error {
 	return nil
 }
 
-func (s *computerSave) run(ctx context.Context, capture func(context.Context) (computerSaveCapture, error)) error {
-	if err := s.begin(ctx); err != nil {
-		var response *httpclient.Error
-		if errors.As(err, &response) && response.StatusCode == http.StatusConflict {
-			// A definitive rejection of this first request allocated no slot.
-			// This does not apply to a replay after a lost admission response.
-			s.rejected = true
-			s.released = true
+// awaitAdmission keeps an intact guest alive through temporary API failure. The
+// owning writer's renewal context still ends this wait at its confirmed expiry.
+// Every attempt uses the same slot identity; no capture starts before admission.
+func (s *computerSave) awaitAdmission(ctx context.Context) error {
+	delay := controlRequestRetryEvery
+	started := time.Now()
+	var lastWarning time.Time
+	for attempt := 1; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
+		callCtx, cancel := context.WithTimeout(ctx, controlRequestTimeout)
+		err := s.begin(callCtx)
+		cancel()
+		if err == nil {
+			if attempt > 1 {
+				slog.Info("computer save admission resumed", "computer_instance_id", s.instanceID, "save_id", s.request.SaveID)
+			}
+			return nil
+		}
+		if attempt == 1 && httpclient.IsStatus(err, http.StatusConflict) {
+			// Only a definitive first rejection proves no slot was allocated.
+			// A conflict after a lost reply retains the original pending slot.
+			s.rejected, s.released = true, true
+		}
+		if !saveAdmissionRetryable(err) {
+			return err
+		}
+		if lastWarning.IsZero() || time.Since(lastWarning) >= time.Minute {
+			slog.Warn("computer save admission delayed", "computer_instance_id", s.instanceID, "save_id", s.request.SaveID,
+				"elapsed_ms", time.Since(started).Milliseconds(), "attempts", attempt, "error", err)
+			lastWarning = time.Now()
+		}
+		if err := sleepWithContext(ctx, delay); err != nil {
+			return err
+		}
+		if delay < time.Second {
+			delay = min(2*delay, time.Second)
+		}
+	}
+}
+
+func saveAdmissionRetryable(err error) bool {
+	var response *httpclient.Error
+	if errors.As(err, &response) {
+		return response.StatusCode == http.StatusRequestTimeout ||
+			response.StatusCode == http.StatusTooEarly || response.StatusCode == http.StatusTooManyRequests ||
+			response.StatusCode >= http.StatusInternalServerError
+	}
+	var transport net.Error
+	return errors.As(err, &transport) || errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+func (s *computerSave) run(ctx context.Context, capture func(context.Context) (computerSaveCapture, error)) error {
+	if err := s.awaitAdmission(ctx); err != nil {
 		return err
 	}
 	var err error

@@ -460,7 +460,7 @@ SELECT input_scopes.scope_ordinal,
 
        AND computers.status='active' AND computers.desired_state='active'
        AND computers.deleted_at IS NULL AND computers.recovery_failure IS NULL AND computers.preparation_failure IS NULL
-       AND computers.dirty_state NOT IN ('capture_failed','dirty_state_lost')
+       AND computers.dirty_state NOT IN ('dirty_state_lost')
        AND runs.active_elapsed_ms < runs.max_active_duration_ms
        AND EXISTS(SELECT 1 FROM run_attempts a WHERE a.run_id=runs.id
          AND a.number=runs.current_attempt_number AND a.terminal_at IS NULL)
@@ -572,7 +572,7 @@ WITH candidate_scopes AS (
 
        AND computers.status='active' AND computers.desired_state='active'
        AND computers.deleted_at IS NULL AND computers.recovery_failure IS NULL AND computers.preparation_failure IS NULL
-       AND computers.dirty_state NOT IN ('capture_failed','dirty_state_lost')
+       AND computers.dirty_state NOT IN ('dirty_state_lost')
        AND runs.active_elapsed_ms < runs.max_active_duration_ms
        AND EXISTS(SELECT 1 FROM run_attempts a WHERE a.run_id=runs.id
          AND a.number=runs.current_attempt_number AND a.terminal_at IS NULL)
@@ -775,7 +775,7 @@ SELECT runs.org_id,
 
        AND computers.status='active' AND computers.desired_state='active'
        AND computers.deleted_at IS NULL AND computers.recovery_failure IS NULL AND computers.preparation_failure IS NULL
-       AND computers.dirty_state NOT IN ('capture_failed','dirty_state_lost')
+       AND computers.dirty_state NOT IN ('dirty_state_lost')
        AND runs.active_elapsed_ms < runs.max_active_duration_ms
        AND EXISTS(SELECT 1 FROM run_attempts a WHERE a.run_id=runs.id
          AND a.number=runs.current_attempt_number AND a.terminal_at IS NULL)

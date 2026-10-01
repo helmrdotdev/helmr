@@ -193,6 +193,9 @@ let
               if [ "$module" = worker-image ]; then
                 bash tests/prepare-root.test.sh
               fi
+              if [ "$module" = worker ]; then
+                python3 tests/test_lifecycle.py
+              fi
               tofu init -backend=false -input=false
               tofu fmt -check -recursive
               tofu test

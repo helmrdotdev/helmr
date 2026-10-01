@@ -43,6 +43,9 @@ injection into an ordinary behavior case. External agent examples live in
 | `runtime`, `computer-command`, `program-replacement.run.ts` | `cases/runtime` | Runtime tools/files/logs; Computer idempotency/exec |
 | `token-wait`, `token-fanout` | `cases/token-wait` | Internal Token creation/resumption; shared Token fan-out and completion before wait |
 | `actor-continuity`, `child-tasks` (including `cancel-peer.run.ts`) | `cases/child-tasks` | Child modes, cancellation without stopping a shared-Computer peer, Actor continuation and ordered/paginated durable output |
+| `planned-drain` | `cases/planned-drain cases/control-plane-outage` | Warm Computer capture with a queued Command and fresh logical Host restore; dedicated host orchestration below |
+| `control-plane-outage` | `cases/control-plane-outage` | A live Run survives CP outage beyond the stale-Host window with Dispatcher continuously active |
+| `drain-renewal` | `cases/drain-renewal` | A resident Task remains on the same lease through more than 30 minutes of planned drain |
 | `timer`, `run-cancel` | `cases/timer` | Timer completion or explicit cancellation |
 | `network-egress` | `cases/network-egress` | Public IPv4 succeeds, no IPv6 default route |
 | `computer-overwrite`, `concurrent-wait`, `invalid-payload`, `expected-error` | `cases/computer-overwrite` | Filesystem overwrite and exact negative contracts |
@@ -86,7 +89,12 @@ permissions; do not broaden an existing key merely to run every case.
 The evidence directory must be new and its parent must exist. Most focused cases
 write `result.json`; Task, persistence, Actor and network retain their detailed
 `task.json`, `persistence.json`, `actor.json` and `network.json` receipts. Evidence
-contains exact created object IDs, assertions and cleanup outcomes. Accepted delete
+contains exact object IDs, assertions and cleanup outcomes. Deployment IDs may
+identify the current deployment read by a case; they do not imply ownership.
+The shared `verify` driver writes a failed receipt synchronously on SIGINT or
+SIGTERM, including known Secret IDs, then exits without racing cleanup against
+the interrupted body. Its caller must retain that receipt and finish cleanup of
+owned resources before discarding the evidence. Accepted delete
 requests do not establish storage reclamation or environment retirement. Preserve
 failure evidence and diagnose the actual boundary before retrying.
 
@@ -151,3 +159,76 @@ and the relevant selection guidance when deleting; keep neither obsolete aliases
 nor a compatibility runner. Run source checks for changed assertions, then the
 selected live case when the claim needs a real guest. An all-suite run is not a
 substitute for selecting the correct boundary.
+
+`cases/computer-restore` supplies a parent and child sharing one Computer for
+provider-controlled replacement verification. Both preserve independent memory
+nonces and files; the child enters a native token Wait while the parent awaits
+its call. A verifier must observe both members in the same ready checkpoint,
+source reclamation, the replacement Host and one destination Instance with exact
+checkpoint/disk lineage. Completing the child's token allows both to resume;
+the parent verifies the child's post-restore file write. Its one-hour Task and
+45-minute Wait budgets include bounded host replacement. Deployment owners own
+provider retirement, baseline restoration and cleanup; ordinary elapsed time or
+Task success does not establish a checkpoint restore.
+
+## Dedicated-host drain and observation outages
+
+These cases run on the dedicated host with `HELMR_RUNTIME_HOST_TOOL` naming the
+installed source's `dev/runtime/host.py`. The native `observe` command executes
+only named, typed, read-only Product observations. Match source and data generation
+before using it. Each case requires its own fresh evidence directory. Fault
+injection and cleanup are operator actions within the authorized exclusive scope.
+
+For `cases/planned-drain/run.ts`, launch the ordinary driver first. After
+`ready-for-pause.json`, stop `helmr-verification-dispatcher.service` and verify it
+is inactive. Write `dispatcher-paused.json` with exactly the observed `computerId`, using a
+private temporary file and atomic rename. Pause promptly: a source already captured
+by the ordinary idle path is rejected. Do not run competing `host.py` commands
+during a case; its observations use the existing exclusive profile lock.
+After `command-queued.json`, invoke native `worker drain --wait-timeout 10m` using
+the profile's Worker environment. Keep CP running. Require successful drain and
+`capture-observed.json`, then stop/start `helmr-worker.service` and start Dispatcher.
+The driver checks the pending Command survives capture, the source is reclaimed,
+and the completed Command reads the original file on a different logical Host,
+restored from that checkpoint and private disk version. A timeout is failure and
+never permission to terminate an undrained Worker. On failure restore Dispatcher,
+settle/cancel the recorded Command, and delete the Computer through native APIs.
+
+For `cases/control-plane-outage/run.ts`, wait for `ready-for-outage.json`, stop
+only `helmr-verification-control-plane.service`, hold it inactive for 150 seconds,
+then start it and require `/readyz`. Keep Dispatcher and Worker active throughout.
+The driver records Host observations during the real outage, requires uninterrupted
+Dispatcher identity, and checks the same Run attempt, lease, Instance, memory nonce
+and file afterward. It also requires the same active Host and fresh observations
+at least 130 seconds after readiness returns. Always restart CP after an orchestration failure before fixture
+cleanup; interrupted receipts contain the owned Run and Computer IDs.
+
+For `cases/drain-renewal/run.ts`, allow approximately 40 minutes on the already
+authorized host. After `ready-for-drain.json`, invoke native
+`worker drain --wait=false` using the profile's Worker environment. This returns
+after CP accepts the drain request. Keep Worker and all profile dependencies
+alive. The Task uses ordinary JavaScript timers for 36 minutes, preserving its
+memory/file marker; it never requests a managed wait. The driver requires the same
+running lease and Instance, fresh Host observations and uninterrupted Worker, CP and Dispatcher processes
+through at least 31 minutes after observing drain, then the same Task attempt's
+successful output. Require the result and ordinary Computer deletion to settle,
+then require the same Host's non-null `termination_ready_at` from the native
+`worker-state` observation and its matching local `drain-complete` marker before
+stopping/restarting Worker. On failure,
+cancel the owned Run and delete its Computer through normal APIs; a timeout never
+authorizes killing admitted work.
+
+After all fixtures are physically reclaimed, run
+`sudo python3 dev/runtime/check_fencing_outage.py --evidence /private/new-dead-host-case`.
+This is a separate all-dead outage after the live-Host case. It requires an idle,
+ready dedicated profile, stops CP and kills the idle Worker,
+keeps Dispatcher active for a 150-second outage, then proves the dead Host is fenced
+only after the new healthy observation window. It restores CP/Worker in `finally`, including SIGTERM, and persists an incomplete
+receipt before fault injection. Allow at least 900 seconds for native stop cleanup.
+A hard kill cannot run cleanup: read the incomplete receipt and restore the exact
+CP/Worker units before proceeding. The healthy-window assertion uses the same
+Dispatcher invocation’s recorded `healthy_since` and the database `lost_at`,
+rather than counting process startup or readiness polling as healthy time.
+Run this within an inspectable native systemd operation, not an untracked background
+shell. This check does not create a guest, change capacity or affect managed AWS.
+None of these source-prepared cases is live-qualified merely by passing typechecks.

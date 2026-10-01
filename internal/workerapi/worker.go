@@ -138,6 +138,9 @@ type RoleReadiness struct {
 	PausedReason string `json:"paused_reason,omitempty"`
 }
 
+// FenceReasonProviderTermination reports provider termination already in progress.
+const FenceReasonProviderTermination = "provider_termination"
+
 type FenceRequest struct {
 	ReasonCode string `json:"reason_code"`
 }
@@ -259,10 +262,11 @@ type InstanceReconcileTarget struct {
 }
 
 const (
-	InstanceReconcileCapture = "capture"
-	InstanceReconcilePrepare = "prepare"
-	InstanceReconcileClose   = "close"
-	InstanceReconcileReclaim = "reclaim"
+	InstanceReconcileCapture      = "capture"
+	InstanceReconcileAbortCapture = "abort_capture"
+	InstanceReconcilePrepare      = "prepare"
+	InstanceReconcileClose        = "close"
+	InstanceReconcileReclaim      = "reclaim"
 )
 
 type RunLeaseClaimRequest struct {
@@ -967,14 +971,6 @@ type CheckpointReadyRequest struct {
 	DesiredVersion     int64              `json:"desired_version"`
 	CheckpointID       string             `json:"checkpoint_id"`
 	Manifest           CheckpointManifest `json:"manifest"`
-}
-
-type CheckpointFailedRequest struct {
-	ComputerInstanceID string `json:"computer_instance_id"`
-	WorkerEpoch        int64  `json:"worker_epoch"`
-	DesiredVersion     int64  `json:"desired_version"`
-	CheckpointID       string `json:"checkpoint_id"`
-	Error              string `json:"error"`
 }
 
 // Session output is scoped to the current Actor execution outside a Turn.

@@ -160,6 +160,9 @@ func UpdateMetadata(ctx context.Context, txb db.TxBeginner, update MetadataUpdat
 		if r.EnvironmentID != scope.EnvironmentID || r.ID != scope.RunID || attempt.Number != scope.AttemptNumber {
 			return ErrStale
 		}
+		if r.Status == db.RunStatusWaiting {
+			return errors.New("run metadata cannot be updated while a managed wait is pending")
+		}
 		next, err := update.Mutation.apply(r.Metadata)
 		if err != nil {
 			return err

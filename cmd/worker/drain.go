@@ -15,24 +15,24 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/worker"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
 )
 
-const defaultDrainTimeout = 30 * time.Minute
+const defaultDrainWaitTimeout = 30 * time.Minute
 
-const terminationDrainFailedReason = "termination_drain_failed"
 const drainCompleteMarkerName = "drain-complete"
 
 func runDrain(log *slog.Logger, args []string) error {
 	flags := flag.NewFlagSet("drain", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
-	timeout := flags.Duration("timeout", defaultDrainTimeout, "maximum time to wait for active executions to finish")
+	timeout := flags.Duration("wait-timeout", defaultDrainWaitTimeout, "maximum time to wait for active executions to finish")
 	wait := flags.Bool("wait", true, "wait until this worker has no active executions")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if *timeout <= 0 {
-		return errors.New("timeout must be positive")
+		return errors.New("wait-timeout must be positive")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -94,7 +94,7 @@ func waitForDrainCompleteMarker(ctx context.Context, workDir, workerHostID strin
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline.C:
-			return errors.New("worker drain timed out waiting for supervisor completion")
+			return errors.New("worker drain is still blocked; observation wait expired and the worker continues draining")
 		case <-ticker.C:
 		}
 	}
@@ -139,7 +139,7 @@ func runFence() error {
 	if err != nil {
 		return err
 	}
-	if err := controlPlaneClient.FenceWorker(ctx, terminationDrainFailedReason); err != nil {
+	if err := controlPlaneClient.FenceWorker(ctx, workerapi.FenceReasonProviderTermination); err != nil {
 		return fmt.Errorf("persist worker fence: %w", err)
 	}
 	return nil

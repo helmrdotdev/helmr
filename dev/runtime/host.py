@@ -57,8 +57,11 @@ def merge_owned(supplied, owned):
 
 def compile_config(raw):
     """Generate stable per-scope credentials once, without accessing a host."""
-    if set(raw) != {'binaries', 'control_plane', 'worker', 'services_candidate', 'worker_host_receipt', 'worker_runtime_receipt'}:
+    if set(raw) - {'capture_reply_faults'} != {'binaries', 'control_plane', 'worker', 'services_candidate', 'worker_host_receipt', 'worker_runtime_receipt'}:
         raise ValueError('expected binaries, control_plane, worker, services_candidate, worker_host_receipt, worker_runtime_receipt')
+    reply_faults = raw.get('capture_reply_faults', False)
+    if type(reply_faults) is not bool:
+        raise ValueError('capture_reply_faults must be a boolean')
     binaries = raw['binaries']
     if set(binaries) != {'postgres', 'initdb', 'psql', 'redis-server', 'clickhouse'}:
         raise ValueError('binaries must name all backing-service tools')
@@ -103,7 +106,7 @@ def compile_config(raw):
     if not devices or len(set(devices)) != len(devices) or any(not re.fullmatch(r'/dev/nbd[0-9]+', d) for d in devices):
         raise ValueError('supply distinct operator-owned /dev/nbdN devices')
     worker = merge_owned(worker, {
-        'CONTROL_PLANE_URL': 'http://127.0.0.1:58080', 'WORKER_POOL_NAME': 'default',
+        'CONTROL_PLANE_URL': 'http://127.0.0.1:58088' if reply_faults else 'http://127.0.0.1:58080', 'WORKER_POOL_NAME': 'default',
         'CAS_URI': cp['CAS_URI'], 'PLATFORM_STORE_URI': cp['PLATFORM_STORE_URI'],
         'WORKER_ENROLLMENT_TOKEN_FILE': str(CONFIG / 'enrollment-token'),
         'WORKER_WORK_DIR': str(WORKER_DATA), 'WORKER_IMAGES_DIR': '/var/lib/helmr/images',
@@ -115,6 +118,7 @@ def compile_config(raw):
     })
     worker.setdefault('WORKER_COMPUTER_SAVE_EVERY', '30s')
     dispatcher = {key: cp[key] for key in ['DATABASE_URL', 'CLICKHOUSE_URL', 'COMPUTER_FENCING_KEY', 'ENCRYPTION_KEY']}
+    dispatcher['CONTROL_PLANE_URL'] = 'http://127.0.0.1:58080'
     dispatcher.update(CLICKHOUSE_USER=ch['CLICKHOUSE_INGESTER_USER'], CLICKHOUSE_PASSWORD=ch['CLICKHOUSE_INGESTER_PASSWORD'])
     for values in [cp, worker, dispatcher, ch]:
         environment(values)
@@ -334,7 +338,7 @@ def stop(cfg):
     active = state('helmr-worker.service')
     if active == 'active':
         # Keep CP and dispatcher alive until the native drain is acknowledged.
-        run('/usr/local/bin/worker', 'drain', '--timeout', '5m', env=dict(os.environ) | cfg['worker'], timeout=310)
+        run('/usr/local/bin/worker', 'drain', '--wait-timeout', '5m', env=dict(os.environ) | cfg['worker'], timeout=310)
         run('systemctl', 'stop', 'helmr-worker.service', timeout=180)
     elif active != 'inactive':
         raise RuntimeError('Worker is not inactive or active; inspect failure before stopping dependencies')
@@ -614,7 +618,23 @@ def apply_services(cfg, directory, reset):
     print(f'Service update complete; run selected cases. Evidence: {attempt}/result.json')
 
 
+def read_observation(cfg, name, inputs):
+    from observe import render
+    query = render(name, inputs)
+    result = service_run(cfg['binaries']['psql'], '-h', str(DATA), '-p', '55432',
+                         '-d', 'helmr', '-XqAt', '-v', 'ON_ERROR_STOP=1',
+                         input=query, capture_output=True, text=True, timeout=10)
+    if len(result.stdout.encode()) > 262144:
+        raise RuntimeError('observation exceeds 256 KiB')
+    return json.loads(result.stdout)
+
+
 def persistence_matches(value, action):
+    if action == 'wait-aborted':
+        return bool(value and value.get('attempt_number') == 1 and value.get('acknowledged')
+                    and not value.get('source_reclaimed') and value.get('source_state') != 'closed'
+                    and value.get('other_instances') == 0 and value.get('lease_on_source')
+                    and value.get('writer_generation') == value.get('captured_writer_generation'))
     if not value or value.get('attempt_number') != 1 or not value.get('checkpoint_id'):
         return False
     if value.get('prior_runtime_state') != 'closed' or value.get('prior_runtime_reclaimed') is not True:
@@ -628,7 +648,7 @@ def persistence_matches(value, action):
 def observe_persistence(cfg, run_id, action):
     if not run_id or str(uuid.UUID(run_id)) != run_id:
         raise ValueError('a canonical Run UUID is required')
-    query = Path(__file__).with_name('persistence.sql').read_text()
+    query = Path(__file__).with_name('capture_abort.sql' if action == 'wait-aborted' else 'persistence.sql').read_text()
     observed = None
     def check():
         nonlocal observed
@@ -672,12 +692,14 @@ def require_reset_runner():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['render', 'install', 'start', 'stop', 'inspect', 'apply-services', 'wait-parked', 'verify-restored'])
+    parser.add_argument('action', choices=['render', 'install', 'start', 'stop', 'inspect', 'apply-services', 'wait-parked', 'verify-restored', 'wait-aborted', 'observe'])
     parser.add_argument('--config', type=Path, help='input JSON for render/install')
     parser.add_argument('--output', type=Path, help='new private directory for offline render')
     parser.add_argument('--candidate', type=Path, help='build_services.py output for apply-services')
     parser.add_argument('--reset-data', action='store_true', help='explicitly discard private scope fixtures and recreate schema')
     parser.add_argument('--run-id', help='Run UUID for persistence evidence')
+    parser.add_argument('--observation', help='fixed named read-only observation')
+    parser.add_argument('--inputs', help='typed JSON observation inputs')
     parser.add_argument('--reset-runner', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.candidate is not None and args.action != 'apply-services':
@@ -723,8 +745,10 @@ def main():
             if args.candidate is None:
                 parser.error('--candidate is required')
             apply_services(cfg, args.candidate, args.reset_data)
-        elif args.action in ['wait-parked', 'verify-restored']:
+        elif args.action in ['wait-parked', 'verify-restored', 'wait-aborted']:
             observe_persistence(cfg, args.run_id, args.action)
+        elif args.action == 'observe':
+            print(json.dumps(read_observation(cfg, args.observation, json.loads(args.inputs or '{}'))))
         elif args.action == 'stop':
             stop(cfg)
         else:

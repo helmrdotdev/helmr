@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -92,7 +93,7 @@ func TestComputerRunCleanupRetriesLostReplies(t *testing.T) {
 				return testVMStream(host), nil
 			}}
 			mount := workerapi.ComputerInstanceAssignment{ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 3, GuestChannelCredential: "token"}
-			err := (Server{}).reconcileComputerRuns(ctx, machine, mount, client)
+			err := (Server{}).reconcileComputerRuns(ctx, machine, mount, nil, client)
 			if !errors.Is(err, context.Canceled) || calls != 2 || client.pending {
 				t.Fatalf("err=%v calls=%d pending=%v", err, calls, client.pending)
 			}
@@ -118,7 +119,7 @@ func TestComputerRunCleanupRevalidatesBeforePhysicalFallback(t *testing.T) {
 				}
 				return nil, io.ErrUnexpectedEOF
 			}}
-			err := (Server{}).reconcileComputerRuns(ctx, machine, workerapi.ComputerInstanceAssignment{}, client)
+			err := (Server{}).reconcileComputerRuns(ctx, machine, workerapi.ComputerInstanceAssignment{}, nil, client)
 			if settled {
 				if !errors.Is(err, context.Canceled) || calls != 1 {
 					t.Fatalf("settled member failed Computer: %v (%d calls)", err, calls)
@@ -133,5 +134,99 @@ func TestComputerRunCleanupRevalidatesBeforePhysicalFallback(t *testing.T) {
 				t.Fatal("unproven scope acknowledged")
 			}
 		})
+	}
+}
+
+func TestComputerRunCleanupWaitsForCaptureOwner(t *testing.T) {
+	for _, inFlight := range []bool{false, true} {
+		t.Run(map[bool]string{false: "capture already held", true: "capture starts during RPC"}[inFlight], func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ref := preparedMachineRef{id: "instance", epoch: 1}
+				claim := &machineClaim{gen: 1, entry: preparedMachineEntry{target: workerapi.InstanceReconcileTarget{DesiredVersion: 1}}}
+				p := &PreparedMachines{claims: map[preparedMachineRef]*machineClaim{ref: claim}}
+				checkout := &machineCheckout{machines: p, ref: ref, gen: 1}
+				if !inFlight {
+					claim.checkpointer = &computerCheckpointer{}
+				}
+				calls := 0
+				machine := &runCleanupMachine{open: func(context.Context) (vm.Stream, error) {
+					calls++
+					if inFlight && calls == 1 {
+						p.mu.Lock()
+						claim.checkpointer = &computerCheckpointer{}
+						p.mu.Unlock()
+						time.Sleep(35 * time.Second)
+					}
+					return nil, io.ErrUnexpectedEOF
+				}}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				result := make(chan error, 1)
+				go func() {
+					result <- (Server{}).reconcileComputerRuns(ctx, machine, workerapi.ComputerInstanceAssignment{}, checkout, &runCleanupClient{pending: true})
+				}()
+				time.Sleep(130 * time.Second)
+				synctest.Wait()
+				wantCalls := 0
+				if inFlight {
+					wantCalls = 1
+				}
+				if calls != wantCalls || claim.teardown || claim.ownerExited {
+					t.Fatalf("held source failed: calls=%d claim=%+v", calls, claim)
+				}
+				select {
+				case err := <-result:
+					t.Fatalf("cleanup ended while capture held: %v", err)
+				default:
+				}
+				p.mu.Lock()
+				claim.checkpointer = nil
+				claim.entry.target.DesiredVersion++
+				p.mu.Unlock()
+				var failure computerMountFailure
+				if err := <-result; !errors.As(err, &failure) || calls != wantCalls+3 || !claim.teardown || claim.ownerExited {
+					t.Fatalf("cleanup did not get a fresh failure budget: %v calls=%d claim=%+v", err, calls, claim)
+				}
+			})
+		})
+	}
+}
+
+func TestComputerRunCleanupDiscardsFailureAcrossCompletedAbort(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ref := preparedMachineRef{id: "instance", epoch: 1}
+		claim := &machineClaim{gen: 1, entry: preparedMachineEntry{target: workerapi.InstanceReconcileTarget{DesiredVersion: 1}}}
+		p := &PreparedMachines{claims: map[preparedMachineRef]*machineClaim{ref: claim}}
+		checkout := &machineCheckout{machines: p, ref: ref, gen: 1}
+		calls := 0
+		machine := &runCleanupMachine{open: func(context.Context) (vm.Stream, error) {
+			calls++
+			if calls == 3 {
+				p.mu.Lock()
+				claim.entry.target.DesiredVersion++
+				p.mu.Unlock()
+			}
+			return nil, io.ErrUnexpectedEOF
+		}}
+		var failure computerMountFailure
+		err := (Server{}).reconcileComputerRuns(t.Context(), machine, workerapi.ComputerInstanceAssignment{}, checkout, &runCleanupClient{pending: true})
+		if !errors.As(err, &failure) || calls != 6 || !claim.teardown || claim.ownerExited {
+			t.Fatalf("stale failure fenced resumed source: %v calls=%d claim=%+v", err, calls, claim)
+		}
+	})
+}
+
+func TestComputerRunCleanupCannotCommitFailureDuringCapture(t *testing.T) {
+	ref := preparedMachineRef{id: "instance", epoch: 1}
+	claim := &machineClaim{gen: 1, entry: preparedMachineEntry{target: workerapi.InstanceReconcileTarget{DesiredVersion: 1}}}
+	p := &PreparedMachines{claims: map[preparedMachineRef]*machineClaim{ref: claim}}
+	checkout := &machineCheckout{machines: p, ref: ref, gen: 1}
+	version, held := checkout.runCleanupHeld(0, false)
+	if held {
+		t.Fatal("idle source held")
+	}
+	claim.checkpointer = &computerCheckpointer{}
+	if _, held := checkout.runCleanupHeld(version, true); !held || claim.teardown || claim.ownerExited {
+		t.Fatal("cleanup committed failure after capture acquired ownership")
 	}
 }

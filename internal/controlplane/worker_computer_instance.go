@@ -44,10 +44,11 @@ func (s *Server) workerNextInstanceReconcileTarget(w http.ResponseWriter, r *htt
 }
 
 var instanceReconcileActions = map[computer.ReconcileAction]string{
-	computer.ReconcilePrepare: workerapi.InstanceReconcilePrepare,
-	computer.ReconcileCapture: workerapi.InstanceReconcileCapture,
-	computer.ReconcileClose:   workerapi.InstanceReconcileClose,
-	computer.ReconcileReclaim: workerapi.InstanceReconcileReclaim,
+	computer.ReconcilePrepare:      workerapi.InstanceReconcilePrepare,
+	computer.ReconcileCapture:      workerapi.InstanceReconcileCapture,
+	computer.ReconcileAbortCapture: workerapi.InstanceReconcileAbortCapture,
+	computer.ReconcileClose:        workerapi.InstanceReconcileClose,
+	computer.ReconcileReclaim:      workerapi.InstanceReconcileReclaim,
 }
 
 // instanceReconcileTarget projects a reconcile target onto the worker

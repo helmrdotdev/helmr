@@ -129,6 +129,35 @@ func TestAppendRunLogChunkRejectsSupersededAuthority(t *testing.T) {
 	}
 }
 
+func TestAppendRunLogChunkDuringHotWait(t *testing.T) {
+	ctx := t.Context()
+	fixture := newRunLeaseClaimFixture(t, ctx)
+	params := fixture.runningRunLogParams(t, ctx)
+	if _, err := fixture.pool.Exec(ctx, `UPDATE runs SET status = 'waiting' WHERE current_run_lease_id = $1`, params.RunLeaseID); err != nil {
+		t.Fatal(err)
+	}
+	first, err := fixture.queries.AppendRunLogChunk(ctx, params)
+	if err != nil {
+		t.Fatalf("append while hot waiting: %v", err)
+	}
+	replay, err := fixture.queries.AppendRunLogChunk(ctx, params)
+	if err != nil || !first.ReplayMatches || !replay.ReplayMatches || first.Seq != replay.Seq {
+		t.Fatalf("hot wait replay=%+v err=%v", replay, err)
+	}
+	params.ObservedSeq++
+	stale := params
+	stale.LeaseSequence++
+	if _, err := fixture.queries.AppendRunLogChunk(ctx, stale); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("stale hot wait append: %v", err)
+	}
+	if _, err := fixture.pool.Exec(ctx, `UPDATE run_leases SET start_deadline_at = now() - interval '2 seconds', expires_at = now() - interval '1 second' WHERE id = $1`, params.RunLeaseID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.queries.AppendRunLogChunk(ctx, params); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expired hot wait append: %v", err)
+	}
+}
+
 func TestAppendRunLogChunkRequiresCoherentRunAndLeaseState(t *testing.T) {
 	ctx := context.Background()
 
@@ -137,7 +166,6 @@ func TestAppendRunLogChunkRequiresCoherentRunAndLeaseState(t *testing.T) {
 		runStatus   string
 		leaseStatus string
 	}{
-		{name: "waiting Run with running lease", runStatus: "waiting", leaseStatus: "running"},
 		{name: "running Run with checkpointing lease", runStatus: "running", leaseStatus: "checkpointing"},
 		{name: "waiting Run with finalizing lease", runStatus: "waiting", leaseStatus: "finalizing"},
 		{name: "running Run with finalizing lease", runStatus: "running", leaseStatus: "finalizing"},

@@ -45,7 +45,14 @@ locals {
             name   = "InstallHelmrWorker"
             action = "ExecuteBash"
             inputs = {
-              commands = [local.build_script]
+              # Image Builder limits inline component documents to 16,000 bytes.
+              # Keep the source script intact and decode it only for execution.
+              commands = [<<-SCRIPT
+                set -euo pipefail
+                worker_build_script=$(printf '%s' '${base64gzip(local.build_script)}' | base64 --decode | gzip --decompress --stdout)
+                bash -c "$worker_build_script" </dev/null
+              SCRIPT
+              ]
             }
           }
         ]

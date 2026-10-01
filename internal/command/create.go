@@ -335,11 +335,10 @@ func admits(authority db.LockComputerAdmissionAuthorityRow, request CreateReques
 		authority.Status != db.ComputerStatusActive ||
 		(authority.DesiredState != db.ComputerDesiredStateActive &&
 			authority.DesiredState != db.ComputerDesiredStateStopped) ||
-		authority.DirtyState == db.ComputerDirtyStateCaptureFailed ||
 		authority.DirtyState == db.ComputerDirtyStateDirtyStateLost ||
 		len(authority.RecoveryFailure) > 0 ||
 		!authority.HeadDiskVersionID.Valid {
-		if authority.DirtyState == db.ComputerDirtyStateCaptureFailed || len(authority.RecoveryFailure) > 0 {
+		if len(authority.RecoveryFailure) > 0 {
 			return computer.ErrRecoveryRequired
 		}
 		switch authority.Status {

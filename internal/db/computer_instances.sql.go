@@ -635,7 +635,7 @@ SELECT i.id, i.org_id, i.worker_group_id, i.project_id, i.environment_id, i.regi
  WHERE i.worker_host_id=$1 AND i.worker_epoch=$2
  AND i.worker_group_id=$3 AND i.reclaimed_at IS NULL
  AND (i.observed_desired_version<i.desired_version OR i.observed_state IN ('failed','lost')
-      OR i.admission_state='checkpointing')
+      OR i.admission_state IN ('checkpointing','resuming_capture'))
  ORDER BY i.desired_at,i.id LIMIT $4
 `
 
@@ -1322,6 +1322,7 @@ UPDATE computer_instances SET observed_state='ready',observed_version=observed_v
  WHERE id=$2 AND worker_host_id=$3 AND worker_epoch=$4
  AND writer_generation=$5 AND desired_version=$1
  AND writer_expires_at>clock_timestamp() AND desired_state='ready'
+ AND admission_state<>'resuming_capture'
  AND observed_version=$6
  AND vm_vcpu_count=$7 AND cpu_config_digest=$8
  AND (observed_state='ready' OR (observed_state='allocated' AND preparation_expires_at>clock_timestamp()))

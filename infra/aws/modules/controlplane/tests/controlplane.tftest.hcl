@@ -100,6 +100,11 @@ run "controlplane_uses_execution_only_runtime_authority" {
   command = apply
 
   assert {
+    condition     = { for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name => item.value }.CONTROL_PLANE_URL == output.controlplane_url
+    error_message = "Dispatcher fencing must observe the same public Control Plane endpoint as Workers."
+  }
+
+  assert {
     condition     = contains([for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].secrets : item.name], "ENCRYPTION_KEY")
     error_message = "Scheduled protected Computer creation requires the existing encryption key in dispatcher."
   }
@@ -374,4 +379,24 @@ run "reject_computer_root_override" {
   command = plan
   variables { controlplane_environment = { COMPUTER_KMS_KEY_ARN = "other" } }
   expect_failures = [terraform_data.bootstrap_preconditions]
+}
+
+run "dispatcher_observes_cloudfront_viewer_endpoint" {
+  command = apply
+
+  variables {
+    enable_cloudfront             = true
+    cloudfront_origin_domain_name = "origin.example.test"
+    certificate_arn               = "arn:aws:acm:us-east-1:000000000000:certificate/00000000-0000-0000-0000-000000000000"
+  }
+
+  override_resource {
+    target = aws_cloudfront_distribution.controlplane
+    values = { domain_name = "viewer.cloudfront.net" }
+  }
+
+  assert {
+    condition     = { for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name => item.value }.CONTROL_PLANE_URL == "https://viewer.cloudfront.net"
+    error_message = "Dispatcher must probe the Worker-facing viewer URL, not the restricted ALB origin."
+  }
 }

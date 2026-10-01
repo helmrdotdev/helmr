@@ -16,6 +16,10 @@ import (
 // warm after the Computer's last activity before idle capture parks it.
 const IdleCaptureDelay = 30 * time.Second
 
+// CaptureRetryDelay lets a resumed source make progress before another capture
+// can freeze it. The durable abort acknowledgment starts this interval.
+const CaptureRetryDelay = 30 * time.Second
+
 // Capture addresses the Instance incarnation a capture seals: its writer
 // generation, membership revision and desired version as the caller observed
 // them, and the id of the new checkpoint.
@@ -94,7 +98,7 @@ func lockCaptureInstance(ctx context.Context, tx pgx.Tx, request db.BeginCompute
 	if err != nil {
 		return captureFence{}, err
 	}
-	if c.Status != "active" || c.DesiredState != "active" || c.DeletedAt.Valid || len(c.RecoveryFailure) > 0 || len(c.PreparationFailure) > 0 || c.DirtyState == "dirty_state_lost" || c.DirtyState == "capture_failed" ||
+	if c.Status != "active" || c.DesiredState != "active" || c.DeletedAt.Valid || len(c.RecoveryFailure) > 0 || len(c.PreparationFailure) > 0 || c.DirtyState == "dirty_state_lost" ||
 		i.ID != request.ComputerInstanceID || i.WorkerHostID != worker.ID || i.WorkerGroupID != worker.WorkerGroupID || i.WorkerEpoch != epoch || !worker.VMPlatformID.Valid || i.VMPlatformID != worker.VMPlatformID.String || i.WriterGeneration != c.WriterGeneration {
 		return captureFence{}, pgx.ErrNoRows
 	}
@@ -105,6 +109,13 @@ func lockCaptureInstance(ctx context.Context, tx pgx.Tx, request db.BeginCompute
 // creating checkpoint.
 func (f captureFence) seal(ctx context.Context) (db.ComputerCheckpoint, error) {
 	tx, request, worker, i := f.tx, f.request, f.worker, f.instance
+	var coolingDown bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_checkpoints WHERE source_computer_instance_id=$1 AND computer_id=$3 AND abort_acknowledged_at>clock_timestamp()-$2*interval '1 millisecond')`, i.ID, CaptureRetryDelay.Milliseconds(), i.ComputerID).Scan(&coolingDown); err != nil {
+		return db.ComputerCheckpoint{}, err
+	}
+	if coolingDown {
+		return db.ComputerCheckpoint{}, pgx.ErrNoRows
+	}
 	q := db.New(tx)
 	var err error
 	// Admissions and detachments take the Computer lock. Lock all resident owners
@@ -196,6 +207,20 @@ func (f captureFence) seal(ctx context.Context) (db.ComputerCheckpoint, error) {
 		}
 	}
 	return checkpoint, nil
+}
+
+// BeginDrainCapture captures a draining source without an idle deadline. Queued
+// work stays on the Computer; every resident member must still pass the shared
+// capture fence. The caller must roll back on rejection or any other error.
+func BeginDrainCapture(ctx context.Context, tx pgx.Tx, capture Capture) (db.ComputerCheckpoint, error) {
+	fence, err := lockCapture(ctx, tx, capture)
+	if err != nil {
+		return db.ComputerCheckpoint{}, err
+	}
+	if fence.worker.Status != db.WorkerHostStatusDraining || fence.instance.AdmissionState != "draining" {
+		return db.ComputerCheckpoint{}, pgx.ErrNoRows
+	}
+	return fence.seal(ctx)
 }
 
 // BeginIdleCapture is BeginCapture under the idle policy, checked under the

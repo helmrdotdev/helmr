@@ -15,21 +15,35 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pglock"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // The dispatcher runs both recovery singletons on the run dispatch pool. Each
 // holds its lock on one connection, so three connections leave the two
-// runners one working connection to share. Settling the failed checkpoint's
+// runners one working connection to share. Settling the lost capture source's
 // residents needs Run lease recovery before instance reconciliation, so both
 // runners must progress on that pool. Cancellation then arrives while both
 // hold their guards: one waiting on a table lock, the other on the pool.
 func TestLeaseAndInstanceReconcilersProgressOnConstrainedSharedPool(t *testing.T) {
 	f, ref, _ := computertest.RegisteredCapture(t, false)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET active_started_at=clock_timestamp(),max_active_duration_ms=3600000,retry_policy='{"enabled":true,"maxAttempts":2,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}'`)
-	if _, err := computer.FailCheckpoint(t.Context(), f.Pool, ref, "snapshot upload failed"); err != nil {
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET writer_expires_at=clock_timestamp() WHERE id=$1`, ref.InstanceID)
+	if err := db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error {
+		i, err := db.New(tx).GetComputerInstance(t.Context(), db.GetComputerInstanceParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: pgvalue.UUID(ref.InstanceID)})
+		if err != nil {
+			return err
+		}
+		_, err = computer.ExpireInstance(t.Context(), tx, i)
+		return err
+	}); err != nil {
 		t.Fatal(err)
 	}
+
+	// The retained head is independently unavailable. Writer loss by itself may
+	// retry from the committed head; this fixture exercises blocked retry settlement.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET status='recovery_required',desired_state='stopped',dirty_state='dirty_state_lost',recovery_id=gen_random_uuid(),recovery_disk_version_id=head_disk_version_id,recovery_reason='computer_source_unavailable',recovery_started_at=clock_timestamp(),recovery_failure='{"code":"computer_source_unavailable"}' WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, ref.InstanceID)
+
 	i, err := db.New(f.Pool).GetComputerInstance(t.Context(), db.GetComputerInstanceParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: pgvalue.UUID(ref.InstanceID)})
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +56,7 @@ func TestLeaseAndInstanceReconcilersProgressOnConstrainedSharedPool(t *testing.T
 			},
 			ExpectedObservedVersion: i.ObservedVersion,
 		},
-		Reason: "checkpoint_failed", CleanupProof: &computer.CleanupProof{Method: computer.CleanupHostReconciled, CompletedAt: time.Now()},
+		Reason: "computer_writer_expired", CleanupProof: &computer.CleanupProof{Method: computer.CleanupHostReconciled, CompletedAt: time.Now()},
 	}); err != nil {
 		t.Fatal(err)
 	}

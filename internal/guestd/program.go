@@ -1670,7 +1670,7 @@ func pauseAndResumeProgram(
 	outputs *programOutputCoordinator,
 	events <-chan *programv0.RunEvent,
 	controlErrors <-chan error,
-) (programConnection, bool, error) {
+) (resumedConn programConnection, waiting bool, retErr error) {
 	if registry == nil {
 		return nil, false, errors.New("waiting run registry is required")
 	}
@@ -1681,6 +1681,7 @@ func pauseAndResumeProgram(
 	if err != nil {
 		return nil, false, err
 	}
+	defer func() { registration.slot.abortErr = retErr; close(registration.slot.abortDone) }()
 	retainRegistration := false
 	defer func() {
 		if !retainRegistration {
@@ -1713,6 +1714,35 @@ func pauseAndResumeProgram(
 	var decision *programv0.ResumeDecision
 	for decision == nil {
 		attached, candidateAttach, err := registration.wait(ctx)
+		if errors.Is(err, errCaptureAborted) {
+			registry.mu.Lock()
+			conn := registration.slot.abortStream
+			original := registration.slot.abortOriginalStream
+			registration.slot.abortStream = nil
+			registry.mu.Unlock()
+			if original {
+				stream.mu.Lock()
+				conn = stream.conn
+				stream.mu.Unlock()
+			}
+			if conn == nil {
+				return nil, false, errors.New("aborted capture has no prepared source stream")
+			}
+			previous, adopted := stream.replaceConn(conn)
+			if !adopted {
+				_ = conn.Close()
+				return nil, false, errors.New("aborted capture source stream closed")
+			}
+			if previous != nil && previous != conn {
+				_ = previous.Close()
+			}
+			if err := process.cgroup.thaw(ctx); err != nil {
+				return nil, false, fmt.Errorf("thaw aborted capture: %w", err)
+			}
+			resumeOutputs()
+			outputsResumed = true
+			return conn, true, nil
+		}
 		if err != nil {
 			return nil, false, fmt.Errorf("wait for program resume attach: %w", err)
 		}

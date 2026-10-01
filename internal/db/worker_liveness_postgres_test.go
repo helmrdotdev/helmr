@@ -3,6 +3,8 @@ package db_test
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 	"uuid"
@@ -219,12 +221,21 @@ func TestFreshWorkerObservationWinsAgainstStaleFenceRecheck(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"status":"ready"}`)) }))
+	defer server.Close()
+	clock := &testFenceClock{now: now.Add(-120 * time.Second)}
 	fencer, err := workergroup.NewStaleHostFencer(
-		pool,
-		workergroup.WithStaleHostFenceClock(testFenceClock{now: now}),
+		pool, server.URL,
+		workergroup.WithStaleHostFenceClock(clock),
 	)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for clock.now.Before(now) {
+		if _, err := fencer.ReconcileOnce(ctx); err != nil {
+			t.Fatal(err)
+		}
+		clock.now = clock.now.Add(5 * time.Second)
 	}
 	cycle, err := fencer.ReconcileOnce(ctx)
 	if err != nil {

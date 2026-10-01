@@ -38,11 +38,15 @@ func (d *Authority) ReconcileComputerInstances(ctx context.Context, limit int32)
 	if err != nil {
 		failures = append(failures, err)
 	}
+	drained, err := d.captureDrainingComputers(ctx, limit)
+	if err != nil {
+		failures = append(failures, err)
+	}
 	captured, err := d.captureIdleComputers(ctx, limit)
 	if err != nil {
 		failures = append(failures, err)
 	}
-	return recovered + restored + captured, errors.Join(failures...)
+	return recovered + restored + captured + drained, errors.Join(failures...)
 }
 
 func (d *Authority) expireComputerInstance(ctx context.Context, candidate db.ComputerInstance) (bool, error) {

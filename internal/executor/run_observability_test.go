@@ -3,6 +3,10 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/computerhost"
+	"github.com/helmrdotdev/helmr/internal/frameio"
+	"github.com/helmrdotdev/helmr/internal/wire"
+	"net"
 	"net/http"
 	"testing"
 	"time"
@@ -301,5 +305,63 @@ func TestFreshAdmissionObservabilityRetriesTransientControlFailure(t *testing.T)
 		controlPlane.metadataRequests[0].Lease != lease.Fence() ||
 		controlPlane.metadataRequests[1].Lease != lease.Fence() {
 		t.Fatalf("metadata requests = %+v", controlPlane.metadataRequests)
+	}
+}
+
+func TestHotWaitMetadataRejectionRetainsCaptureRegistration(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	host, guest := net.Pipe()
+	defer guest.Close()
+	if err := guest.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	lease := testFreshProgramClaim(t).Lease
+	cp := &runObservabilityRetryControlPlane{testRunLeaseControlPlane: &testRunLeaseControlPlane{}, metadataErrors: []error{&httpclient.Error{StatusCode: http.StatusUnprocessableEntity, Code: "run_metadata_rejected", Message: "run metadata cannot be updated while a managed wait is pending"}}}
+	protocol := newProgramProtocol(host)
+	defer protocol.Close()
+	captures := &computerhost.CaptureRuns{}
+	task := &guestRunLeaseTask{program: freshProgram{channel: fakeGuestMachine{stream: host}, protocol: protocol}, lease: lease, controlPlane: testControlPlane(t, cp), captures: captures}
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- task.runHotWait(ctx, WaitRequest{RunWaitID: "wait"}, func(ctx context.Context, _ WaitRequest) error {
+			select {
+			case <-release:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		})
+	}()
+	correlation := "019c10d5-a6f7-7af1-8f5f-000000000133"
+	if err := frameio.WriteProtoFrame(guest, &programv0.RunEvent{Event: &programv0.RunEvent_MetadataUpdated{MetadataUpdated: &programv0.MetadataUpdated{CorrelationId: correlation, Operation: "set", Key: new("phase"), ValueJson: new(`"waiting"`)}}}); err != nil {
+		t.Fatal(err)
+	}
+	header, size, err := wire.ReadStreamFrameHeader(guest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := wire.ReadResumeDecision(header, guest, size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.GetKind() != "failed" || decision.GetCorrelationId() != correlation {
+		t.Fatalf("metadata decision=%v", decision)
+	}
+	if extra, err := captures.Register(lease, "another-wait", nil); err == nil {
+		_ = extra.Detach()
+		t.Fatal("metadata rejection detached the original capture wait")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	registration, err := captures.Register(lease, "next-wait", nil)
+	if err != nil {
+		t.Fatalf("resolved wait did not detach: %v", err)
+	}
+	if err := registration.Detach(); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -157,7 +157,7 @@ func TestStaleHostFencerPersistentFailureRetriesUntilCancellation(t *testing.T) 
 	}
 	transactions := &failingStaleHostFenceTransactions{err: errors.New("database unavailable")}
 	fencer, err := newStaleHostFencer(
-		transactions, nil,
+		transactions, nil, func(context.Context) error { return nil },
 		WithStaleHostFenceInterval(time.Millisecond),
 		WithStaleHostFenceTimeout(time.Second),
 		WithStaleHostFenceMaxBackoff(8*time.Millisecond),
@@ -168,6 +168,8 @@ func TestStaleHostFencerPersistentFailureRetriesUntilCancellation(t *testing.T) 
 		t.Fatal(err)
 	}
 
+	fencer.servingSince = clock.now.Add(-time.Duration(ObservationFreshnessSeconds) * time.Second)
+	fencer.lastServingAt = clock.now
 	err = fencer.Run(ctx)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run error = %v, want context cancellation", err)
@@ -207,13 +209,15 @@ func TestStaleHostFenceFailureRollsBackReportedResults(t *testing.T) {
 func newTestStaleHostFencer(t *testing.T, store *fakeStaleHostFenceQueries, now time.Time) *StaleHostFencer {
 	t.Helper()
 	fencer, err := newStaleHostFencer(
-		fakeStaleHostFenceTransactions{queries: store}, nil,
+		fakeStaleHostFenceTransactions{queries: store}, nil, func(context.Context) error { return nil },
 		WithStaleHostFenceLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 		WithStaleHostFenceClock(fixedStaleHostFenceClock{now: now}),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
+	fencer.servingSince = now.Add(-time.Duration(ObservationFreshnessSeconds) * time.Second)
+	fencer.lastServingAt = now
 	return fencer
 }
 
@@ -338,4 +342,20 @@ func equalDurations(left, right []time.Duration) bool {
 		}
 	}
 	return true
+}
+
+func TestStaleHostFencerWaitsForServingEvidence(t *testing.T) {
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	store := &fakeStaleHostFenceQueries{candidates: []db.ListStaleWorkerFenceCandidatesRow{staleHostCandidate(1, db.WorkerHostStatusActive, now.Add(-10*time.Minute), staleHostReasonCode)}}
+	fencer, err := newStaleHostFencer(fakeStaleHostFenceTransactions{queries: store}, nil, func(context.Context) error { return nil }, WithStaleHostFenceClock(fixedStaleHostFenceClock{now: now}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cycle, err := fencer.ReconcileOnce(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cycle.Fenced != 0 || len(store.listParams) != 0 {
+		t.Fatalf("fenced without a healthy serving window: %+v", cycle)
+	}
 }
