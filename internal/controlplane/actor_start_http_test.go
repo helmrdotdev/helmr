@@ -12,7 +12,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/idempotency"
 )
 
 func TestActorStartAPIKeyScopeRoundTrips(t *testing.T) {
@@ -81,43 +80,6 @@ func TestDecodeStartActorRequestIsClosedAndPresenceAware(t *testing.T) {
 		request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 		if _, err := decodeStartActorRequest(request); err == nil {
 			t.Fatalf("decodeStartActorRequest(%s) succeeded", body)
-		}
-	}
-}
-
-func TestWriteActorStartErrorUsesStableCodes(t *testing.T) {
-	server := &Server{}
-	for _, test := range []struct {
-		err    error
-		status int
-		code   string
-	}{
-		{err: conflict(codedError{code: "computer_preparation_exhausted", message: "Computer preparation limit reached"}), status: http.StatusConflict, code: "computer_preparation_exhausted"},
-		{
-			err:    idempotency.ConflictError{},
-			status: http.StatusConflict,
-			code:   "idempotency_conflict",
-		},
-		{
-			err:    ActorKeyConflictError{Key: "thread:1"},
-			status: http.StatusConflict,
-			code:   "actor_key_conflict",
-		},
-		{err: errActorStartNotDeployed, status: http.StatusNotFound, code: "actor_not_deployed"},
-		{err: errActorStartComputerNotFound, status: http.StatusNotFound, code: "computer_not_found"},
-		{err: errActorStartComputerConflict, status: http.StatusConflict, code: "computer_unavailable"},
-		{err: errActorStartSecretUnavailable, status: http.StatusConflict, code: "secret_unavailable"},
-		{
-			err:    errors.Join(errActorStartInvalid, errors.New("bad duration")),
-			status: http.StatusBadRequest,
-			code:   "invalid_actor_start",
-		},
-	} {
-		recorder := httptest.NewRecorder()
-		server.writeActorStartError(recorder, test.err)
-		response := decodeHTTPError(t, recorder.Body.Bytes())
-		if recorder.Code != test.status || response.Code != test.code {
-			t.Fatalf("error=%v status=%d body=%s", test.err, recorder.Code, recorder.Body.String())
 		}
 	}
 }

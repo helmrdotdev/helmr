@@ -12,8 +12,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -23,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -101,7 +100,7 @@ func TestActorStartPostgresCommitsReplaysAndRejectsConflicts(t *testing.T) {
 	}
 	keyCollision := fixture.request(1, &key, "start-2")
 	_, err = fixture.server.startActor(t.Context(), keyCollision)
-	var actorKeyConflict ActorKeyConflictError
+	var actorKeyConflict session.KeyConflictError
 	if !errors.As(err, &actorKeyConflict) {
 		t.Fatalf("Actor key conflict = %v", err)
 	}
@@ -262,7 +261,7 @@ func TestActorStartPostgresConcurrentKeyCollisionCreatesOneIdentity(t *testing.T
 	fixture := newActorStartPostgresFixture(t, 2)
 	key := "shared-key"
 	type outcome struct {
-		result actorStartResult
+		result session.Started
 		err    error
 	}
 	start := make(chan struct{})
@@ -281,7 +280,7 @@ func TestActorStartPostgresConcurrentKeyCollisionCreatesOneIdentity(t *testing.T
 	var successes, conflicts int
 	for range 2 {
 		value := <-outcomes
-		var conflict ActorKeyConflictError
+		var conflict session.KeyConflictError
 		switch {
 		case value.err == nil:
 			successes++
@@ -340,7 +339,7 @@ func actorStartHTTPPostgresRequest(
 	return request.WithContext(ctx)
 }
 
-func assertActorStartTuple(t *testing.T, fixture actorStartPostgresFixture, result actorStartResult) {
+func assertActorStartTuple(t *testing.T, fixture actorStartPostgresFixture, result session.Started) {
 	limit := int64(2)
 	assertActorStartTupleWithQueue(t, fixture, result, "default", &limit)
 }
@@ -348,7 +347,7 @@ func assertActorStartTuple(t *testing.T, fixture actorStartPostgresFixture, resu
 func assertActorStartTupleWithQueue(
 	t *testing.T,
 	fixture actorStartPostgresFixture,
-	result actorStartResult,
+	result session.Started,
 	wantQueue string,
 	wantQueueLimit *int64,
 ) {
@@ -582,43 +581,30 @@ func openActorStartPostgres(t *testing.T) *pgxpool.Pool {
 	return database.Pool
 }
 
-func TestActorStartOrdersPublicAndWorkerAdmission(t *testing.T) {
+// An admission holding the environment and then the Computer makes a public
+// start wait for the environment, rather than hold the environment while
+// waiting for that Computer.
+func TestActorStartWaitsForEnvironmentBeforeComputer(t *testing.T) {
 	f := newActorStartPostgresFixture(t, 1)
-	worker := f.request(0, nil, "worker-admission")
-	public := f.request(0, nil, "public-admission")
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	worker.Authorize = func(ctx context.Context, tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `SELECT id FROM computers WHERE id=$1 FOR UPDATE`, f.computerIDs[0]); err != nil {
-			return err
-		}
-		close(entered)
-		select {
-		case <-release:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	workerDone, publicDone := make(chan error, 1), make(chan error, 1)
-	go func() { _, err := f.server.startActor(ctx, worker); workerDone <- err }()
-	select {
-	case <-entered:
-	case err := <-workerDone:
-		t.Fatalf("worker admission=%v", err)
-	case <-ctx.Done():
-		t.Fatal(ctx.Err())
+	blocker, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
 	}
-	go func() { _, err := f.server.startActor(ctx, public); publicDone <- err }()
-	// The public operation must wait for the environment held by worker admission,
-	// rather than hold that environment while waiting for the worker's Computer.
+	defer blocker.Rollback(context.Background())
+	if _, err := blocker.Exec(ctx, `SELECT id FROM environments WHERE id=$1 FOR NO KEY UPDATE`, f.environmentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := blocker.Exec(ctx, `SELECT id FROM computers WHERE id=$1 FOR UPDATE`, f.computerIDs[0]); err != nil {
+		t.Fatal(err)
+	}
+	publicDone := make(chan error, 1)
+	go func() { _, err := f.server.startActor(ctx, f.request(0, nil, "public-admission")); publicDone <- err }()
 	for {
 		var waiting bool
 		err := f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%LockActorStartDeploymentAuthority%')`).Scan(&waiting)
 		if err != nil {
-			close(release)
 			t.Fatal(err)
 		}
 		if waiting {
@@ -626,16 +612,13 @@ func TestActorStartOrdersPublicAndWorkerAdmission(t *testing.T) {
 		}
 		select {
 		case err := <-publicDone:
-			close(release)
 			t.Fatalf("public admission did not serialize: %v", err)
 		case <-ctx.Done():
-			close(release)
 			t.Fatal(ctx.Err())
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
-	close(release)
-	if err := <-workerDone; err != nil {
+	if err := blocker.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-publicDone; err != nil {

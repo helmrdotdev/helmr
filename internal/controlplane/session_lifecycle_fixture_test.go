@@ -1,11 +1,14 @@
 package controlplane
 
-import "testing"
+import (
+	"github.com/helmrdotdev/helmr/internal/session"
+	"testing"
+)
 
 func settleActorBootRun(
 	t *testing.T,
 	fixture actorStartPostgresFixture,
-	started actorStartResult,
+	started session.Started,
 	committedInputSequence int64,
 ) {
 	t.Helper()

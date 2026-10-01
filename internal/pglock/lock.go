@@ -35,6 +35,15 @@
 //     claim, then locks its environment FOR NO KEY UPDATE with the current
 //     deployment's Task, then the Computer's secrets, then the Computer
 //     through the computer owner's admission lock.
+//   - Actor start, through the session owner, acquires its idempotency claim,
+//     then locks its environment FOR NO KEY UPDATE with the current
+//     deployment's Actor, then, for a keyed start, takes the transaction
+//     advisory lock on the environment, Actor and key, then locks the
+//     Computer's secrets and then the Computer through the computer owner's
+//     admission lock. A run-sourced start takes the worker Session operation
+//     locks below, with the start Computer addressed, after the key lock (on
+//     replay, right after the claim), and then locks the start Computer's
+//     secrets again without comparing them with the first lock.
 //   - Public Computer creation acquires its idempotency claim before secrets.
 //     Run-sourced creation locks secrets, then the live source Run, then the
 //     idempotency claim, including on replay.

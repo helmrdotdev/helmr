@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/session"
 	"uuid"
 )
 
@@ -66,17 +67,17 @@ func TestNormalizeActorStartRejectsInvalidCallerOverridesAndOversizeFields(t *te
 	tooLongTTL := maxQueuedRunTTLMS + 1
 	invalidTTL := base
 	invalidTTL.ManagedQueuedTTLMS = &tooLongTTL
-	if _, err := normalizeActorStart(invalidTTL); !errors.Is(err, errActorStartInvalid) {
+	if _, err := normalizeActorStart(invalidTTL); !errors.Is(err, session.ErrStartInvalid) {
 		t.Fatalf("queued TTL error = %v", err)
 	}
 	invalidRetry := base
 	invalidRetry.ManagedRetryPolicy = json.RawMessage(`{"enabled":true,"maxAttempts":3}`)
-	if _, err := normalizeActorStart(invalidRetry); !errors.Is(err, errActorStartInvalid) {
+	if _, err := normalizeActorStart(invalidRetry); !errors.Is(err, session.ErrStartInvalid) {
 		t.Fatalf("retry error = %v", err)
 	}
 	oversize := base
 	oversize.ManagedRunTags = []string{string(make([]byte, maxTagBytes+1))}
-	if _, err := normalizeActorStart(oversize); !errors.Is(err, errActorStartInvalid) {
+	if _, err := normalizeActorStart(oversize); !errors.Is(err, session.ErrStartInvalid) {
 		t.Fatalf("oversize tag error = %v", err)
 	}
 }
@@ -96,27 +97,8 @@ func TestNormalizeActorStartUsesExactConcurrencyKeyBoundaryDomain(t *testing.T) 
 	for _, value := range []string{" leading", "trailing\t", "nul\x00byte"} {
 		request := base
 		request.ManagedConcurrencyKey = &value
-		if _, err := normalizeActorStart(request); !errors.Is(err, errActorStartInvalid) {
+		if _, err := normalizeActorStart(request); !errors.Is(err, session.ErrStartInvalid) {
 			t.Fatalf("concurrency key %q error = %v", value, err)
 		}
-	}
-}
-
-func TestActorStartReceiptRoundTrip(t *testing.T) {
-	value := actorStartResult{
-		SessionID: uuid.NewV7(),
-		BootRunID: uuid.NewV7(),
-	}
-	raw, err := json.Marshal(actorStartReceiptFromResult(value))
-	if err != nil {
-		t.Fatal(err)
-	}
-	decoded, err := actorStartResultFromReceipt(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decoded.SessionID != value.SessionID ||
-		decoded.BootRunID != value.BootRunID {
-		t.Fatalf("decoded = %+v", decoded)
 	}
 }

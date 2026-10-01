@@ -21,27 +21,18 @@ import (
 // Source-only Secret locks precede physical authority; source and target
 // Sessions are then locked together, in UUID order, before the source Run
 // lineage.
-func authorizeWorkerSessionOperation(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence, targetID, targetComputerID pgtype.UUID) (run.LiveSource, error) {
+func authorizeWorkerSessionOperation(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence, targetID pgtype.UUID) (run.LiveSource, error) {
 	parsed, err := parseRunLeaseFence(lease)
 	if err != nil {
 		return run.LiveSource{}, err
 	}
-	fence := workerExecutionFence(worker, parsed, lease)
-	var secrets run.SourceSecrets
-	if targetID.Valid {
-		secrets, err = run.LockSourceSecretsForSession(ctx, tx, fence, targetID)
-	} else {
-		secrets, err = run.LockSourceSecretsForComputer(ctx, tx, fence, targetComputerID)
-	}
+	secrets, err := run.LockSourceSecretsForSession(ctx, tx, workerExecutionFence(worker, parsed, lease), targetID)
 	if err != nil {
 		return run.LiveSource{}, err
 	}
 	authority, source, err := secrets.LockLiveSource(ctx)
 	if errors.Is(err, run.ErrExecutionTargetNotFound) {
-		if targetID.Valid {
-			return run.LiveSource{}, &session.OperationError{Code: "session_not_found"}
-		}
-		return run.LiveSource{}, errActorStartComputerNotFound
+		return run.LiveSource{}, &session.OperationError{Code: "session_not_found"}
 	}
 	if err != nil {
 		return run.LiveSource{}, err
@@ -107,7 +98,7 @@ func (s *Server) workerAdmitSession(w http.ResponseWriter, r *http.Request, mode
 	}
 	var receipt session.AdmissionReceipt
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		source, err := authorizeWorkerSessionOperation(r.Context(), work.tx, workerFromContext(r.Context()), request.Lease, pgvalue.UUID(targetID), pgtype.UUID{})
+		source, err := authorizeWorkerSessionOperation(r.Context(), work.tx, workerFromContext(r.Context()), request.Lease, pgvalue.UUID(targetID))
 		if err != nil {
 			return err
 		}

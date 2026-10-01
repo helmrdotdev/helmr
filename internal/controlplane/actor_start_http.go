@@ -13,7 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
@@ -118,7 +117,7 @@ func (s *Server) startActorHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.startActor(r.Context(), startRequest)
 	if err != nil {
-		s.writeActorStartError(w, err)
+		writeError(w, sessionError(err, sessionStartOperation))
 		return
 	}
 	writeJSON(w, http.StatusCreated, api.StartActorResponse{
@@ -441,58 +440,4 @@ func actorStartRequestFromScope(
 		ManagedRunMetadata:    run.Metadata,
 		ManagedRunTags:        run.Tags,
 	}, nil
-}
-
-func (s *Server) writeActorStartError(w http.ResponseWriter, err error) {
-	var expired idempotency.ExpiredError
-	if errors.As(err, &expired) {
-		writeError(w, gone(expired))
-		return
-	}
-	var idempotencyConflict idempotency.ConflictError
-	var keyConflict ActorKeyConflictError
-	var classified apiError
-	switch {
-	case errors.As(err, &classified):
-		writeError(w, classified)
-	case errors.As(err, &idempotencyConflict):
-		writeError(w, conflict(codedError{
-			code:    "idempotency_conflict",
-			message: "idempotency key conflicts with an earlier actor start",
-		}))
-	case errors.As(err, &keyConflict):
-		writeError(w, conflict(codedError{code: "actor_key_conflict", message: keyConflict.Error()}))
-	case errors.Is(err, errActorStartNotDeployed):
-		writeError(w, notFound(codedError{code: "actor_not_deployed", message: errActorStartNotDeployed.Error()}))
-	case errors.Is(err, errActorStartComputerNotFound):
-		writeError(w, notFound(codedError{
-			code:    "computer_not_found",
-			message: errActorStartComputerNotFound.Error(),
-		}))
-	case errors.Is(err, errActorStartComputerConflict):
-		writeError(w, conflict(codedError{
-			code:      "computer_unavailable",
-			message:   errActorStartComputerConflict.Error(),
-			retryable: true,
-		}))
-	case errors.Is(err, errActorStartSecretUnavailable):
-		writeError(w, conflict(codedError{
-			code:    "secret_unavailable",
-			message: errActorStartSecretUnavailable.Error(),
-		}))
-	case errors.Is(err, errActorStartInvalid):
-		writeError(w, badRequest(codedError{code: "invalid_actor_start", message: err.Error()}))
-	case errors.Is(err, errActorStartAuthority):
-		writeError(w, unavailable(codedError{
-			code:      "actor_start_authority_unavailable",
-			message:   errActorStartAuthority.Error(),
-			retryable: true,
-		}))
-	default:
-		writeError(w, unavailable(codedError{
-			code:      "actor_start_authority_unavailable",
-			message:   "actor start authority is unavailable",
-			retryable: true,
-		}))
-	}
 }
