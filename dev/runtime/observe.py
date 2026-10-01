@@ -39,6 +39,7 @@ INPUTS = {
     'run-placements': {'run_ids': identifiers},
     'worker-state': {'resource_ids': resources},
     'computer-state': {'computer_id': identifier},
+    'computer-path': {'computer_id': identifier},
     'run-state': {'run_id': identifier},
     'run-path': {'run_id': identifier},
     'deployment-state': {'project': text, 'environment': text},

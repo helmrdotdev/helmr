@@ -482,3 +482,12 @@ External Capacity consumers can run a separately compiled executable against the
 real HTTP router and disposable database through `TestCapacityExternalConsumer`;
 set `HELMR_CAPACITY_CONSUMER_TEST` to its absolute path. The fixture passes its
 endpoint and test-only credentials through the child process environment.
+
+
+`host.py observe --observation NAME --inputs JSON` runs the fixed observation
+against this profile's local database. `computer-path` includes Computer Instances,
+checkpoint/disk lineage and Commands for planned-drain qualification. See the
+[ordinary drain/outage cases](../../tests/e2e/README.md#dedicated-host-drain-and-observation-outages)
+for their operator coordination and cleanup. The idle-Host
+`check_fencing_outage.py` is destructive fault injection within an authorized
+exclusive dev scope; it must not run against shared infrastructure.

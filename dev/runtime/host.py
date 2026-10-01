@@ -615,6 +615,17 @@ def apply_services(cfg, directory, reset):
     print(f'Service update complete; run selected cases. Evidence: {attempt}/result.json')
 
 
+def read_observation(cfg, name, inputs):
+    from observe import render
+    query = render(name, inputs)
+    result = service_run(cfg['binaries']['psql'], '-h', str(DATA), '-p', '55432',
+                         '-d', 'helmr', '-XqAt', '-v', 'ON_ERROR_STOP=1',
+                         input=query, capture_output=True, text=True, timeout=10)
+    if len(result.stdout.encode()) > 262144:
+        raise RuntimeError('observation exceeds 256 KiB')
+    return json.loads(result.stdout)
+
+
 def persistence_matches(value, action):
     if action == 'wait-aborted':
         return bool(value and value.get('attempt_number') == 1 and value.get('acknowledged')
@@ -678,12 +689,14 @@ def require_reset_runner():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['render', 'install', 'start', 'stop', 'inspect', 'apply-services', 'wait-parked', 'verify-restored', 'wait-aborted'])
+    parser.add_argument('action', choices=['render', 'install', 'start', 'stop', 'inspect', 'apply-services', 'wait-parked', 'verify-restored', 'wait-aborted', 'observe'])
     parser.add_argument('--config', type=Path, help='input JSON for render/install')
     parser.add_argument('--output', type=Path, help='new private directory for offline render')
     parser.add_argument('--candidate', type=Path, help='build_services.py output for apply-services')
     parser.add_argument('--reset-data', action='store_true', help='explicitly discard private scope fixtures and recreate schema')
     parser.add_argument('--run-id', help='Run UUID for persistence evidence')
+    parser.add_argument('--observation', help='fixed named read-only observation')
+    parser.add_argument('--inputs', help='typed JSON observation inputs')
     parser.add_argument('--reset-runner', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.candidate is not None and args.action != 'apply-services':
@@ -731,6 +744,8 @@ def main():
             apply_services(cfg, args.candidate, args.reset_data)
         elif args.action in ['wait-parked', 'verify-restored', 'wait-aborted']:
             observe_persistence(cfg, args.run_id, args.action)
+        elif args.action == 'observe':
+            print(json.dumps(read_observation(cfg, args.observation, json.loads(args.inputs or '{}'))))
         elif args.action == 'stop':
             stop(cfg)
         else:

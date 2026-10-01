@@ -388,3 +388,48 @@ func TestVerificationObservationWholeComputerMembership(t *testing.T) {
 		t.Fatalf("unproven checkpoint=%v", other)
 	}
 }
+
+func TestVerificationObservationComputerPath(t *testing.T) {
+	f := runtest.New(t)
+	work := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
+	_, lease := seedObservationRestore(t, f, work)
+	var computerID uuid.UUID
+	if err := f.Pool.QueryRow(t.Context(), `SELECT computer_id FROM runs WHERE id=$1`, work.RunID).Scan(&computerID); err != nil {
+		t.Fatal(err)
+	}
+	command, claim := uuid.NewV7(), uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO idempotency_claims(id,environment_id,operation,slot_hash,request_fingerprint,accepted_at) VALUES($1,$2,'computer.command.start',$3,$3,now())`, claim, f.EnvironmentID, dbtest.Hash(claim.String()))
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_commands(id,environment_id,computer_id,claim_id,argv,env,stdin,timeout_ms,created_by_subject_type,created_by_subject_id)
+ SELECT $2,environment_id,computer_id,$3,ARRAY['true'],'{}',''::bytea,60000,'api_key',run_id::text FROM run_leases WHERE id=$1`, work.LeaseID, command, claim)
+	got := observe(t, f.Pool, "computer-path", map[string]any{"computer_id": computerID.String()}).(map[string]any)
+	instances, checkpoints, commands := got["instances"].([]any), got["checkpoints"].([]any), got["commands"].([]any)
+	if len(instances) != 3 || len(checkpoints) != 1 || len(commands) != 1 {
+		t.Fatalf("path=%v", got)
+	}
+	checkpoint := checkpoints[0].(map[string]any)
+	var source, restored map[string]any
+	for _, value := range instances {
+		instance := value.(map[string]any)
+		if instance["id"] == checkpoint["source_computer_instance_id"] {
+			source = instance
+		}
+		if instance["id"] == checkpoint["resume_computer_instance_id"] {
+			restored = instance
+		}
+	}
+	if source == nil || restored == nil {
+		t.Fatalf("missing lineage: %v", got)
+	}
+	if source["reclaimed_at"] == nil || source["observed_state"] != "closed" || restored["source_checkpoint_id"] != checkpoint["id"] || restored["source_disk_version_id"] != checkpoint["private_computer_disk_version_id"] {
+		t.Fatalf("lineage=%v", got)
+	}
+	pending := commands[0].(map[string]any)
+	if pending["id"] != command.String() || pending["status"] != "pending" || pending["computer_instance_id"] != nil {
+		t.Fatalf("pending=%v", pending)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET status='running',computer_instance_id=l.computer_instance_id,writer_generation=l.writer_generation FROM run_leases l WHERE computer_commands.id=$1 AND l.id=$2`, command, lease)
+	bound := observe(t, f.Pool, "computer-path", map[string]any{"computer_id": computerID.String()}).(map[string]any)["commands"].([]any)[0].(map[string]any)
+	if bound["computer_instance_id"] != restored["id"] || bound["status"] != "running" {
+		t.Fatalf("bound=%v", bound)
+	}
+}
