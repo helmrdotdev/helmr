@@ -36,10 +36,8 @@ func CreateTask(ctx context.Context, store Store, request TaskRequest) (db.Creat
 	if err != nil {
 		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("lock computer secrets: %w", err)
 	}
-	for _, binding := range bindings {
-		if binding.SecretStatus != "active" || !binding.CurrentVersionID.Valid {
-			return db.CreateAdmittedRootTaskRunRow{}, ErrSecretUnavailable
-		}
+	if !admissionSecretsAvailable(bindings) {
+		return db.CreateAdmittedRootTaskRunRow{}, ErrSecretUnavailable
 	}
 
 	run, err := store.CreateAdmittedRootTaskRun(ctx, request.Run)
@@ -57,15 +55,7 @@ func CreateTask(ctx context.Context, store Store, request TaskRequest) (db.Creat
 		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("record Computer admission: %w", err)
 	}
 
-	resolutions := make([]secret.Resolution, len(bindings))
-	for index, binding := range bindings {
-		resolutions[index] = secret.Resolution{
-			PlacementKind: binding.PlacementKind, PlacementTarget: binding.PlacementTarget,
-			SecretID: binding.SecretID, SecretVersionID: binding.CurrentVersionID,
-			RevocationGeneration: binding.RevocationGeneration,
-		}
-	}
-	if err := secret.CreateAttemptResolutions(ctx, store, request.Run.ComputerID, run.ID, 1, resolutions); err != nil {
+	if err := secret.CreateAttemptResolutions(ctx, store, request.Run.ComputerID, run.ID, 1, SecretResolutions(bindings)); err != nil {
 		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("record run secret resolutions: %w", err)
 	}
 	return run, nil

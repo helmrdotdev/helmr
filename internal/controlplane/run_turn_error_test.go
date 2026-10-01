@@ -36,7 +36,8 @@ func TestRunTurnSentinelBoundaries(t *testing.T) {
 		{"unsettled", run.ErrTurnUnsettled, "turn_unsettled", "turn_unsettled", false, false, false},
 		{"wait cursor", run.ErrWaitCursor, "", "", true, true, false},
 		{"Session input authority", session.ErrAuthority, "", "", false, true, false},
-		{"stale lease", errStaleRunLeaseClaim, "", "", true, true, true},
+		{"stale lease", errStaleRunLeaseClaim, "", "", false, true, true},
+		{"stale run lease", run.ErrStale, "", "", true, false, false},
 		{"unrelated", unrelated, "", "", false, false, false},
 	} {
 		t.Run(test.boundary, func(t *testing.T) {
@@ -48,7 +49,7 @@ func TestRunTurnSentinelBoundaries(t *testing.T) {
 				if test.message != "" && failure.Message != test.message {
 					t.Fatalf("actor output failure(%v) message = %q, want %q", err, failure.Message, test.message)
 				}
-				if got := staleTimerWait(err); got != test.staleTimer {
+				if got := errorStatus(runError(err, runTimerWaitOperation)) == http.StatusConflict; got != test.staleTimer {
 					t.Fatalf("timer wait stale(%v) = %v", err, got)
 				}
 				if got := staleActorInputWait(err); got != test.staleInput {
@@ -75,7 +76,7 @@ func TestChildInvokeDuringSettlementKeepsOperationFailure(t *testing.T) {
 	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	for _, err := range []error{&session.OperationError{Code: "turn_unsettled"}, run.ErrTurnUnsettled, fmt.Errorf("validate child Turn: %w", run.ErrTurnUnsettled)} {
 		response := httptest.NewRecorder()
-		server.writeChildTaskInvokeError(response, "correlation", "call", err)
+		server.writeChildTaskInvokeError(response, "correlation", err)
 		var body workerapi.InvokeChildTaskResponse
 		if decodeErr := json.Unmarshal(response.Body.Bytes(), &body); decodeErr != nil {
 			t.Fatal(decodeErr)

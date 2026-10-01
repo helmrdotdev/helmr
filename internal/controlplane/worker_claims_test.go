@@ -35,7 +35,7 @@ func TestWorkerSourceErrorMappersRefreshClaimsBeforeDomainErrors(t *testing.T) {
 	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	for name, write := range map[string]func(http.ResponseWriter, error){
 		"token":      server.writeTokenError,
-		"child task": func(w http.ResponseWriter, err error) { server.writeChildTaskInvokeError(w, "test", "call", err) },
+		"child task": func(w http.ResponseWriter, err error) { server.writeChildTaskInvokeError(w, "test", err) },
 		"actor":      func(w http.ResponseWriter, err error) { server.writeWorkerActorSourceError(w, "start", "test", err) },
 		"computer": func(w http.ResponseWriter, err error) {
 			server.writeWorkerComputerSourceError(w, "create", "test", err)
@@ -43,7 +43,7 @@ func TestWorkerSourceErrorMappersRefreshClaimsBeforeDomainErrors(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			response := httptest.NewRecorder()
-			write(response, errors.Join(workergroup.ErrStaleClaims, run.ErrStaleSource, errChildTaskInvokeStale, errTokenCreateAuthority))
+			write(response, errors.Join(workergroup.ErrStaleClaims, run.ErrStaleSource, run.ErrChildInvokeStale, errTokenCreateAuthority))
 			if response.Code != http.StatusUnauthorized {
 				t.Fatalf("claims response status=%d body=%s", response.Code, response.Body.String())
 			}

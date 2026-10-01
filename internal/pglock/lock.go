@@ -31,6 +31,10 @@
 //   - Fresh Run admission and Computer restore take run queue-scope advisory
 //     transaction locks before secrets; restore takes the sorted union of its
 //     members' queue scopes.
+//   - Public Task start, through the run owner, acquires its idempotency
+//     claim, then locks its environment FOR NO KEY UPDATE with the current
+//     deployment's Task, then the Computer's secrets, then the Computer
+//     through the computer owner's admission lock.
 //   - Public Computer creation acquires its idempotency claim before secrets.
 //     Run-sourced creation locks secrets, then the live source Run, then the
 //     idempotency claim, including on replay.
@@ -106,6 +110,12 @@
 //     bindings again without comparing them with the first lock, so a
 //     binding added before the execution fence locks the source Computer is
 //     locked after the fence; these operations have no re-read check.
+//   - Child Task invocation, through the run owner, acquires its idempotency
+//     claim, then locks the target Computer's secrets, then the execution
+//     fence with the target Computer in the same ordered statements. A new
+//     child then re-locks the already-held target Computer through the
+//     computer owner's admission lock. The live execution is locked again
+//     before commit.
 //   - Worker Session controls (cancel, interrupt, resume) lock the sorted
 //     union of the source Computer's and the target Session's Computer's
 //     Secrets, then the execution fence, then re-read the union after the

@@ -16,10 +16,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 )
 
 const actorStartBodyLimit = int64(
-	maxRunMetadataBytes +
+	run.MaxMetadataBytes +
 		64<<10,
 )
 

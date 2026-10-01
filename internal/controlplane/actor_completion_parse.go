@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -81,7 +82,7 @@ func parseActorCompletionRequest(request workerapi.CompleteActorRequest) (parsed
 	}
 	normalized.OperationID = parsed.operationID.String()
 
-	parsed.fingerprint, err = terminalRequestFingerprint("actor.complete.v0", normalized)
+	parsed.fingerprint, err = run.RequestFingerprint("actor.complete.v0", normalized)
 	if err != nil {
 		return parsedActorCompletion{}, fmt.Errorf("fingerprint actor completion: %w", err)
 	}

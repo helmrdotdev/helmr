@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -42,7 +43,7 @@ func parseRunFinalization(request workerapi.BeginRunFinalizationRequest) (parsed
 	normalized.OperationID = operationID.String()
 	normalized.ProgramQuiesced.RunID = quiescedRunID.String()
 	normalized.ProgramQuiesced.RunLeaseID = quiescedLeaseID.String()
-	fingerprint, err := terminalRequestFingerprint("run.finalization.begin.v0", normalized)
+	fingerprint, err := run.RequestFingerprint("run.finalization.begin.v0", normalized)
 	if err != nil {
 		return parsedRunFinalization{}, fmt.Errorf("fingerprint run finalization: %w", err)
 	}

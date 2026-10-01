@@ -451,22 +451,20 @@ func TestCompleteTaskPreservesReceiptAndStaleOutcomes(t *testing.T) {
 	}
 }
 
-func metadataUpdate(fence run.ExecutionFence, operation uuid.UUID, key string, value json.RawMessage) run.MetadataUpdate {
-	mutation := json.RawMessage(`{"key":"` + key + `","value":` + string(value) + `}`)
+func metadataUpdate(t *testing.T, fence run.ExecutionFence, operation uuid.UUID, key string, value json.RawMessage) run.MetadataUpdate {
+	t.Helper()
+	mutation, err := run.NewMetadataMutation("set", key, value, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return metadataMutationUpdate(fence, operation, mutation)
+}
+
+func metadataMutationUpdate(fence run.ExecutionFence, operation uuid.UUID, mutation run.MetadataMutation) run.MetadataUpdate {
 	return run.MetadataUpdate{
 		Fence: fence, OperationID: operation, Mutation: mutation, FenceFingerprint: dbtest.Digest("metadata-fence"),
-		Apply: func(current json.RawMessage) (json.RawMessage, error) {
-			values := map[string]json.RawMessage{}
-			if len(current) != 0 {
-				if err := json.Unmarshal(current, &values); err != nil {
-					return nil, err
-				}
-			}
-			values[key] = value
-			return json.Marshal(values)
-		},
 		Event: func() (json.RawMessage, error) {
-			return json.Marshal(map[string]any{"operation": "set", "operation_id": operation.String(), "key": key})
+			return json.Marshal(map[string]any{"operation": mutation.Operation(), "operation_id": operation.String(), "key": mutation.Key()})
 		},
 	}
 }
@@ -474,7 +472,7 @@ func metadataUpdate(fence run.ExecutionFence, operation uuid.UUID, key string, v
 func TestUpdateMetadataAppliesOnceAndRejectsStaleReceipts(t *testing.T) {
 	f, work, fence, _ := taskExecutionFixture(t)
 	operation := uuid.NewV7()
-	update := metadataUpdate(fence, operation, "phase", json.RawMessage(`"running"`))
+	update := metadataUpdate(t, fence, operation, "phase", json.RawMessage(`"running"`))
 	for range 2 {
 		if err := run.UpdateMetadata(t.Context(), f.Pool, update); err != nil {
 			t.Fatal(err)
@@ -492,17 +490,21 @@ func TestUpdateMetadataAppliesOnceAndRejectsStaleReceipts(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT receipt::text FROM idempotency_claims WHERE status='completed' AND receipt->>'runId'=$1`, work.RunID.String()).Scan(&receipt); err != nil || !strings.Contains(receipt, `"revision"`) {
 		t.Fatalf("metadata receipt=%s %v", receipt, err)
 	}
-	rejected := metadataUpdate(fence, uuid.NewV7(), "phase", json.RawMessage(`"done"`))
-	rejected.Apply = func(json.RawMessage) (json.RawMessage, error) { return nil, errors.New("metadata is rejected") }
-	if err := run.UpdateMetadata(t.Context(), f.Pool, rejected); err == nil || err.Error() != "metadata is rejected" {
+	amount := 1.0
+	increment, err := run.NewMetadataMutation("increment", "phase", nil, nil, &amount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejected := metadataMutationUpdate(fence, uuid.NewV7(), increment)
+	if err := run.UpdateMetadata(t.Context(), f.Pool, rejected); err == nil || err.Error() != `run metadata key "phase" is not a finite number` {
 		t.Fatalf("rejected mutation=%v", err)
 	}
-	stale := metadataUpdate(fence, uuid.NewV7(), "phase", json.RawMessage(`"done"`))
+	stale := metadataUpdate(t, fence, uuid.NewV7(), "phase", json.RawMessage(`"done"`))
 	stale.Fence.LeaseSequence++
 	if err := run.UpdateMetadata(t.Context(), f.Pool, stale); !errors.Is(err, run.ErrStale) {
 		t.Fatalf("stale receipt=%v", err)
 	}
-	claims := metadataUpdate(fence, uuid.NewV7(), "phase", json.RawMessage(`"done"`))
+	claims := metadataUpdate(t, fence, uuid.NewV7(), "phase", json.RawMessage(`"done"`))
 	claims.Fence.HostClaimVersion++
 	if err := run.UpdateMetadata(t.Context(), f.Pool, claims); !errors.Is(err, workergroup.ErrStaleClaims) {
 		t.Fatalf("stale claims=%v", err)

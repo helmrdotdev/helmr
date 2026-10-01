@@ -13,7 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -35,12 +34,12 @@ func (s *Server) workerCreateTimerRunWait(
 		writeError(w, badRequest(err))
 		return
 	}
-	parsed, worker, registrationLocators, run, err := s.loadRunWaitRegistrationAuthority(r.Context(), request.Lease)
+	parsed, worker, registrationLocators, current, err := s.loadRunWaitRegistrationAuthority(r.Context(), request.Lease)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	idleDefault, err := s.runWaitIdleDefault(r.Context(), run)
+	idleDefault, err := s.runWaitIdleDefault(r.Context(), current)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -58,7 +57,7 @@ func (s *Server) workerCreateTimerRunWait(
 	}
 	normalized.Metadata = metadata
 	normalized.Tags = tags
-	fingerprint, err := terminalRequestFingerprint("worker.run-wait.create.v1", normalized)
+	fingerprint, err := run.RequestFingerprint("worker.run-wait.create.v1", normalized)
 	if err != nil {
 		writeError(w, badRequest(fmt.Errorf("fingerprint timer wait registration: %w", err)))
 		return
@@ -70,77 +69,18 @@ func (s *Server) workerCreateTimerRunWait(
 		actorCursor = pgtype.Int8{Int64: *request.ActorSpeculativeInputSequence, Valid: true}
 	}
 
-	var registered db.RunWait
-	err = s.inTx(r.Context(), func(work *txWork) error {
-		authority, err := lockWorkerWaitExecution(r.Context(), work.tx, worker, parsed, request.Lease)
-		if err != nil {
-			return err
-		}
-		turnID, generation, err := parseWorkerWaitTurn(request.TurnID, request.RunGeneration)
-		if err != nil {
-			return err
-		}
-		if err := authority.ValidateWaitCursor(db.RunWait{TurnID: turnID, TurnRunGeneration: generation, TurnSessionID: authority.Session().ID}, actorCursor); err != nil {
-			return err
-		}
-		if turnID.Valid {
-			if err := authority.ValidateTurnWork(r.Context(), work.tx, pgvalue.MustUUIDValue(turnID), generation.Int64); err != nil {
-				return err
-			}
-		}
-		registered, err = work.q.GetTimerRunWaitRegistrationReplay(
-			r.Context(),
-			db.GetTimerRunWaitRegistrationReplayParams{
-				ID: pgvalue.UUID(waitID), EnvironmentID: authority.Run().EnvironmentID,
-				RunID: authority.Run().ID, ComputerID: authority.Computer().ID,
-				AttemptNumber:                  authority.Attempt().Number,
-				RegistrationRequestFingerprint: pgvalue.Text(fingerprint),
-				Metadata:                       metadata, Tags: tags, RunLeaseID: authority.Lease().ID,
-			},
-		)
-		if err == nil {
-			return authority.ValidateWaitCursor(registered, actorCursor)
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return err
-		}
-		if _, existingErr := work.q.GetRunWait(r.Context(), db.GetRunWaitParams{
-			RunID: authority.Run().ID, AttemptNumber: authority.Attempt().Number,
-			ID: pgvalue.UUID(waitID),
-		}); existingErr == nil || !errors.Is(existingErr, pgx.ErrNoRows) {
-			return errStaleRunLeaseClaim
-		}
-		if authority.Run().Status != db.RunStatusRunning {
-			return errStaleRunLeaseClaim
-		}
-		registered, err = work.q.RegisterTimerRunWait(r.Context(), db.RegisterTimerRunWaitParams{
-			ID: pgvalue.UUID(waitID), EnvironmentID: authority.Run().EnvironmentID,
-			DueAt: pgvalue.Timestamptz(dueAt), IdleTimeoutMs: idleTimeout,
-			RegistrationRequestFingerprint: pgvalue.Text(fingerprint),
-			AttemptNumber:                  authority.Attempt().Number,
-			CurrentRunLeaseID:              authority.Lease().ID,
-			Metadata:                       metadata, Tags: tags,
-			RunID:                   authority.Run().ID,
-			ExpectedRunningRevision: authority.Run().Revision,
-		})
-		if err != nil {
-			return staleRunLeaseClaim(err)
-		}
-		if turnID.Valid {
-			_, err = work.q.BindRunWaitTurn(r.Context(), db.BindRunWaitTurnParams{SessionID: authority.Session().ID, TurnID: turnID, RunGeneration: generation, WaitID: registered.ID})
-		}
-		return err
+	registered, err := run.RegisterTimerWait(r.Context(), s.tx, run.TimerWait{
+		Fence:  workerExecutionFence(worker, parsed, request.Lease),
+		WaitID: waitID, TurnID: request.TurnID, RunGeneration: request.RunGeneration,
+		Cursor: actorCursor, Fingerprint: fingerprint,
+		DueAt: dueAt, IdleTimeout: idleTimeout, Metadata: metadata, Tags: tags,
 	})
-	if writeStaleWorkerClaims(w, err) {
-		return
-	}
-	if staleTimerWait(err) {
-		writeError(w, conflict(errors.New("worker timer wait receipt is stale")))
-		return
-	}
 	if err != nil {
-		s.log.Error("register worker timer Wait failed", "run_id", pgvalue.UUIDString(registrationLocators.RunID), "error", err)
-		writeError(w, errors.New("register worker timer wait"))
+		mapped := runError(err, runTimerWaitOperation)
+		if errorStatus(mapped) == http.StatusInternalServerError {
+			s.log.Error("register worker timer Wait failed", "run_id", pgvalue.UUIDString(registrationLocators.RunID), "error", err)
+		}
+		writeError(w, mapped)
 		return
 	}
 	response := workerapi.CreateRunWaitResponse{
@@ -242,10 +182,4 @@ func timerWaitDecision(wait db.RunWait) (string, json.RawMessage, error) {
 		return "", nil, errors.New("timer wait decision is not completed")
 	}
 	return "completed", json.RawMessage(`null`), nil
-}
-
-// staleTimerWait reports a timer wait registration whose execution, Turn or
-// input cursor is stale.
-func staleTimerWait(err error) bool {
-	return errors.Is(err, errStaleRunLeaseClaim) || errors.Is(err, run.ErrWaitCursor) || errors.Is(err, run.ErrTurnStopped) || errors.Is(err, run.ErrTurnScope)
 }

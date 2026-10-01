@@ -1,28 +1,20 @@
 package controlplane
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
-	"github.com/helmrdotdev/helmr/internal/secret"
-	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 var (
@@ -45,28 +37,6 @@ type childTaskOptions struct {
 	Retry          *api.StartActorRetryPolicy `json:"retry,omitempty"`
 	Metadata       json.RawMessage            `json:"metadata,omitempty"`
 	Tags           []string                   `json:"tags,omitempty"`
-}
-
-type childTaskReceipt struct {
-	RunID      string `json:"runId"`
-	ComputerID string `json:"computerId"`
-}
-
-type childTaskInvokeInput struct {
-	turnID           pgtype.UUID
-	runGeneration    pgtype.Int8
-	Request          workerapi.InvokeChildTaskRequest
-	Parsed           parsedRunLeaseFence
-	Worker           workergroup.HostPrincipal
-	SourceComputerID uuid.UUID
-	Normalized       normalizedTaskStart
-	RunWaitID        uuid.UUID
-	ResumeAttachID   uuid.UUID
-}
-
-type childTaskInvokeResult struct {
-	taskStartResult
-	openedWait *workerapi.CreateRunWaitResponse
 }
 
 func (s *Server) workerInvokeChildTask(w http.ResponseWriter, r *http.Request) {
@@ -129,13 +99,14 @@ func (s *Server) workerInvokeChildTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
-	locators, err := loadChildTaskInvokeLocators(r.Context(), s.db, worker, request.Lease, parsed)
+	fence := workerExecutionFence(worker, parsed, request.Lease)
+	locators, err := run.LocateChildInvocation(r.Context(), s.db, fence)
 	if err != nil {
-		if !errors.Is(err, errChildTaskInvokeStale) {
-			s.writeChildTaskInvokeError(w, request.CorrelationID, request.Method, err)
+		if !errors.Is(err, run.ErrChildInvokeStale) {
+			s.writeChildTaskInvokeError(w, request.CorrelationID, err)
 			return
 		}
-		stale := childTaskInvokeStaleAt(childTaskInvokePointLoadLease, errChildTaskInvokeStale)
+		stale := childTaskInvokeStaleAt(childTaskInvokePointLoadLease, run.ErrChildInvokeStale)
 		s.log.Warn(
 			"reject stale child Task invocation",
 			"failure_point", childTaskInvokePointLoadLease,
@@ -151,20 +122,46 @@ func (s *Server) workerInvokeChildTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_child_task_start", message: err.Error()}))
 		return
 	}
-	result, err := s.invokeChildTask(r.Context(), childTaskInvokeInput{
-		Request: request, Parsed: parsed, Worker: worker,
-		SourceComputerID: pgvalue.MustUUIDValue(locators.ComputerID),
-		Normalized:       normalized,
-		RunWaitID:        runWaitID,
-		ResumeAttachID:   resumeAttachID,
-	})
+	turnID, runGeneration, err := run.ParseWaitTurn(request.TurnID, request.RunGeneration)
 	if err != nil {
-		s.writeChildTaskInvokeError(w, request.CorrelationID, request.Method, err)
+		s.writeChildTaskInvokeError(w, request.CorrelationID, err)
 		return
 	}
-	response := workerapi.InvokeChildTaskResponse{
-		CorrelationID: request.CorrelationID,
-		OpenedWait:    result.openedWait,
+	result, err := run.InvokeChild(r.Context(), s.tx, run.ChildInvoke{
+		Fence: fence, Method: request.Method,
+		SourceComputerID: pgvalue.MustUUIDValue(locators.ComputerID),
+		Task:             normalized.runTaskStart(),
+		IdempotencyKey:   normalized.IdempotencyKey,
+		Fingerprint: idempotency.TaskChildInvokeFingerprint{
+			Method: request.Method, PayloadPresent: normalized.PayloadPresent,
+			Payload: normalized.Payload, Computer: normalized.fingerprint.Computer,
+			QueueName: normalized.QueueName, ConcurrencyKey: normalized.ConcurrencyKey,
+			Priority: normalized.Priority, QueuedTTLMS: normalized.QueuedTTLMS,
+			RetryPolicy: normalized.RetryPolicy, Metadata: normalized.Metadata,
+			Tags: normalized.Tags,
+		},
+		Cursor: request.ActorSpeculativeInputSequence,
+		TurnID: turnID, RunGeneration: runGeneration,
+		RunWaitID: runWaitID, ResumeAttachID: resumeAttachID,
+		ChildResult: childTaskResult,
+	})
+	if err != nil {
+		s.writeChildTaskInvokeError(w, request.CorrelationID, err)
+		return
+	}
+	response := workerapi.InvokeChildTaskResponse{CorrelationID: request.CorrelationID}
+	if call := result.Call; call != nil {
+		opened := workerapi.CreateRunWaitResponse{
+			RunID: pgvalue.UUIDString(call.ParentRunID), RunWaitID: call.RunWaitID.String(),
+			ResumeAttachID:     call.ResumeAttachID.String(),
+			ComputerInstanceID: pgvalue.UUIDString(call.ComputerInstanceID),
+			RuntimeEpoch:       call.RuntimeEpoch,
+		}
+		if call.Completed {
+			opened.ResolutionKind = "completed"
+			opened.Resolution = call.Resolution
+		}
+		response.OpenedWait = &opened
 	}
 	if result.RunID != uuid.Nil() {
 		response.Completed = &workerapi.ChildTaskStartResult{RunID: result.RunID.String()}
@@ -207,422 +204,28 @@ func normalizeWorkerChildTaskRequest(
 	})
 }
 
-func (s *Server) invokeChildTask(
-	ctx context.Context,
-	input childTaskInvokeInput,
-) (childTaskInvokeResult, error) {
-	var parseErr error
-	input.turnID, input.runGeneration, parseErr = parseWorkerWaitTurn(input.Request.TurnID, input.Request.RunGeneration)
-	if parseErr != nil {
-		return childTaskInvokeResult{}, parseErr
-	}
-
-	var result childTaskInvokeResult
-	err := s.inTx(ctx, func(work *txWork) (operationErr error) {
-		locators, err := loadChildTaskInvokeLocators(
-			ctx, work.q, input.Worker, input.Request.Lease, input.Parsed,
-		)
-		if err != nil {
-			return err
+// writeChildTaskInvokeError writes a child Task invocation's failure: a
+// rejection the worker handles is a 200 failure; stale claims, a stale
+// invocation and unavailability are errors.
+func (s *Server) writeChildTaskInvokeError(w http.ResponseWriter, correlationID string, err error) {
+	if !errors.Is(err, workergroup.ErrStaleClaims) {
+		if failure, ok := childInvokeFailure(err); ok {
+			writeJSON(w, http.StatusOK, workerapi.InvokeChildTaskResponse{CorrelationID: correlationID, Failed: &failure})
+			return
 		}
-		environmentID := input.Normalized.EnvironmentID
-		var claim *db.IdempotencyClaim
-		var edgeClaim *db.IdempotencyClaim
-		var replay *childTaskReceipt
-		var invocationFingerprint idempotency.TaskChildInvokeFingerprint
-		if input.Normalized.IdempotencyKey != "" {
-			claims, err := idempotency.TransactionFor(work.tx)
-			if err != nil {
-				return err
-			}
-			invocationFingerprint = idempotency.TaskChildInvokeFingerprint{
-				Method: input.Request.Method, PayloadPresent: input.Normalized.PayloadPresent,
-				Payload: input.Normalized.Payload, Computer: input.Normalized.fingerprint.Computer,
-				QueueName: input.Normalized.QueueName, ConcurrencyKey: input.Normalized.ConcurrencyKey,
-				Priority: input.Normalized.Priority, QueuedTTLMS: input.Normalized.QueuedTTLMS,
-				RetryPolicy: input.Normalized.RetryPolicy, Metadata: input.Normalized.Metadata,
-				Tags: input.Normalized.Tags,
-			}
-			request, err := idempotency.NewTaskChildInvokeRequest(
-				environmentID,
-				pgvalue.MustUUIDValue(locators.RunID),
-				input.Normalized.TaskDeclaredID,
-				input.Normalized.IdempotencyKey,
-				invocationFingerprint,
+	}
+	mapped := runError(err, runChildInvokeOperation)
+	switch errorStatus(mapped) {
+	case http.StatusConflict:
+		if point, ok := staleAuthorityPointOf(mapped); ok {
+			s.log.Warn(
+				"reject stale child Task invocation",
+				"failure_point", point,
+				"correlation_id", correlationID,
 			)
-			if err != nil {
-				return err
-			}
-			acquired, err := claims.Acquire(ctx, request)
-			if err != nil {
-				return err
-			}
-			if acquired.Claim.Status == "completed" {
-				edgeClaim = &acquired.Claim
-				value, err := decodeChildTaskReceipt(acquired.Claim.Receipt)
-				if err != nil {
-					return err
-				}
-				replay = &value
-			} else if acquired.Claim.Status == "pending" {
-				claim = &acquired.Claim
-				edgeClaim = &acquired.Claim
-			} else {
-				return errTaskStartReceiptInvalid
-			}
 		}
-
-		var targetComputerID uuid.UUID
-		if replay != nil {
-			targetComputerID = uuid.MustParse(replay.ComputerID)
-		} else {
-			targetComputerID = input.Normalized.ComputerID
-		}
-		// This also precedes source authority on same-Computer and replay paths.
-		bindings, err := work.q.LockComputerSecretsForAdmission(ctx, pgvalue.UUID(targetComputerID))
-		if err != nil {
-			return err
-		}
-		if err := computer.CheckSecretTarget(ctx, work.q, pgvalue.UUID(input.SourceComputerID), pgvalue.UUID(targetComputerID)); err != nil {
-			return err
-		}
-		authority, err := run.LockLiveExecutionForComputer(ctx, work.tx, workerExecutionFence(input.Worker, input.Parsed, input.Request.Lease), pgvalue.UUID(targetComputerID))
-		if errors.Is(err, run.ErrExecutionTargetNotFound) {
-			return errTaskComputerNotFound
-		}
-		if err != nil {
-			return staleChildTaskInvoke(err)
-		}
-		if (authority.Run().Status != db.RunStatusRunning && (input.Request.Method != "call" || authority.Run().Status != db.RunStatusWaiting)) ||
-			!authority.Run().ActiveStartedAt.Valid || !authority.Attempt().EntrypointEnteredAt.Valid || authority.Lease().FinalizationOperationID.Valid {
-			return errChildTaskInvokeStale
-		}
-		defer func() {
-			if operationErr != nil {
-				return
-			}
-			_, err := run.LockLiveExecution(ctx, work.tx, workerExecutionFence(input.Worker, input.Parsed, input.Request.Lease))
-			if err != nil {
-				operationErr = staleChildTaskInvoke(err)
-			}
-		}()
-		cursor := input.Request.ActorSpeculativeInputSequence
-		if authority.Run().EntrypointKind == "actor" {
-			want := authority.Session().CommittedInputSequence
-			if authority.Session().ActiveTurnID.Valid {
-				want++
-			}
-			if cursor == nil || *cursor != want {
-				return errChildTaskInvokeStale
-			}
-		} else if cursor != nil {
-			return errChildTaskInvokeStale
-		}
-		if err := validateWorkerWaitTurn(ctx, work.tx, authority, input.turnID, input.runGeneration); err != nil {
-			return err
-		}
-		if !childTaskInvokeScopeMatches(authority, input) {
-			return childTaskInvokeStaleAt(childTaskInvokePointSourceScope, errChildTaskInvokeStale)
-		}
-		if replay != nil {
-			result.taskStartResult = taskStartResult{
-				RunID: uuid.MustParse(replay.RunID), Replayed: true,
-			}
-			if input.Request.Method == "call" {
-				if edgeClaim == nil {
-					return errTaskStartReceiptInvalid
-				}
-				opened, err := registerChildCall(
-					ctx, work.q, input.callRegistration(), authority, *edgeClaim, invocationFingerprint,
-					result.RunID, targetComputerID,
-				)
-				if err != nil {
-					return err
-				}
-				if err := bindOrCheckChildWaitTurn(ctx, work.q, authority, input.callRegistration()); err != nil {
-					return err
-				}
-				result.openedWait = &opened
-			}
-			return nil
-		}
-
-		admission, err := loadChildTaskAdmission(ctx, work.q, authority.Run(), input.Normalized)
-		if err != nil {
-			return err
-		}
-		for _, binding := range bindings {
-			if binding.SecretStatus != "active" || !binding.CurrentVersionID.Valid {
-				return errTaskSecretUnavailable
-			}
-		}
-		admitted, err := work.q.LockComputerAdmissionAuthority(ctx, db.LockComputerAdmissionAuthorityParams{
-			EnvironmentID: authority.Run().EnvironmentID, ID: pgvalue.UUID(targetComputerID),
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errTaskComputerUnavailable
-		}
-		if err != nil {
-			return fmt.Errorf("lock child task computer authority: %w", err)
-		}
-		if admitted.OrgID != authority.Run().OrgID || admitted.ProjectID != authority.Run().ProjectID ||
-			admitted.Status != db.ComputerStatusActive ||
-			(admitted.DesiredState != db.ComputerDesiredStateActive &&
-				admitted.DesiredState != db.ComputerDesiredStateStopped) ||
-			admitted.DirtyState == db.ComputerDirtyStateCaptureFailed || admitted.DirtyState == db.ComputerDirtyStateDirtyStateLost || !admitted.HeadDiskVersionID.Valid || len(admitted.PreparationFailure) > 0 || len(admitted.RecoveryFailure) > 0 {
-			return errTaskComputerUnavailable
-		}
-		compatible, err := computer.CanAdmitProgram(ctx, work.q, admitted.EnvironmentID, admitted.ID, admitted.ComputerSpecID, authority.Run().DeploymentID)
-		if err != nil {
-			return err
-		}
-		if !compatible {
-			return errTaskComputerUnavailable
-		}
-		nowValue, err := work.q.GetRunAdmissionTime(ctx)
-		if err != nil || !nowValue.Valid {
-			return fmt.Errorf("load child task admission time: %w", err)
-		}
-		now := nowValue.Time.UTC()
-		queuedExpiresAt := pgtype.Timestamptz{}
-		if admission.QueuedTTLMS != nil {
-			queuedExpiresAt = pgvalue.Timestamptz(now.Add(time.Duration(*admission.QueuedTTLMS) * time.Millisecond))
-		}
-		runID := uuid.NewV7()
-		rootSpanID, err := tracing.NewSpanID()
-		if err != nil {
-			return err
-		}
-		claimID := pgtype.UUID{}
-		if claim != nil {
-			claimID = claim.ID
-		}
-		parentOwnsLifecycle := input.Request.Method == "call"
-		queueOriginAt := pgvalue.Timestamptz(now)
-		if parentOwnsLifecycle {
-			queueOriginAt = authority.Run().QueueOriginAt
-		}
-		queueScoreAt := pgvalue.Timestamptz(
-			queueOriginAt.Time.Add(-time.Duration(input.Normalized.Priority) * time.Second),
-		)
-		run, err := work.q.CreateChildRunFromParentDeployment(ctx, db.CreateChildRunFromParentDeploymentParams{
-			EntrypointDeclaredID: input.Normalized.TaskDeclaredID,
-			ComputerID:           pgvalue.UUID(targetComputerID), BaseComputerDiskVersionID: admitted.HeadDiskVersionID,
-			ClaimID: claimID, EnvironmentID: authority.Run().EnvironmentID, ParentRunID: authority.Run().ID,
-			ID:                  pgvalue.UUID(runID),
-			ParentOwnsLifecycle: pgtype.Bool{Bool: parentOwnsLifecycle, Valid: true},
-			Payload:             input.Normalized.Payload, Metadata: input.Normalized.Metadata, Tags: input.Normalized.Tags,
-			QueueName: admission.QueueName, ConcurrencyKey: pgvalue.TextPtr(input.Normalized.ConcurrencyKey),
-			QueueConcurrencyLimit: int8Ptr(admission.QueueConcurrencyLimit), Priority: input.Normalized.Priority,
-			QueueOriginAt:   queueOriginAt,
-			QueueScoreAt:    queueScoreAt,
-			QueuedExpiresAt: queuedExpiresAt, MaxActiveDurationMs: admission.MaxActiveDurationMS,
-			RetryPolicy: admission.RetryPolicy, TraceID: authority.Run().TraceID, RootSpanID: rootSpanID,
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errChildTaskInvokeStale
-		}
-		if err != nil {
-			return fmt.Errorf("create child task run: %w", err)
-		}
-		if err := secret.CreateAttemptResolutions(
-			ctx, work.q, admitted.ID, run.ID, 1, computerSecretResolutions(bindings),
-		); err != nil {
-			return fmt.Errorf("record child task secret resolutions: %w", err)
-		}
-		result.taskStartResult = taskStartResult{RunID: runID}
-		if input.Request.Method == "call" {
-			if edgeClaim == nil {
-				return errors.New("child task call claim is unavailable")
-			}
-			opened, err := registerChildCall(
-				ctx, work.q, input.callRegistration(), authority, *edgeClaim, invocationFingerprint,
-				result.RunID, targetComputerID,
-			)
-			if err != nil {
-				return err
-			}
-			result.openedWait = &opened
-		}
-		if claim != nil {
-			receiptValue := childTaskReceipt{
-				RunID: runID.String(), ComputerID: targetComputerID.String(),
-			}
-
-			receipt, err := json.Marshal(receiptValue)
-			if err != nil {
-				return err
-			}
-			claims, err := idempotency.TransactionFor(work.tx)
-			if err != nil {
-				return err
-			}
-			if _, err := claims.Complete(ctx, *claim, receipt); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	return result, err
-}
-
-func loadChildTaskAdmission(
-	ctx context.Context,
-	store db.Querier,
-	parent db.Run,
-	request normalizedTaskStart,
-) (definition.TaskRunAdmission, error) {
-	deploymentDefinition, err := store.GetDeploymentDefinition(ctx, db.GetDeploymentDefinitionParams{
-		EnvironmentID: parent.EnvironmentID,
-		DeploymentID:  parent.DeploymentID,
-		Kind:          "task",
-		DeclaredID:    request.TaskDeclaredID,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return definition.TaskRunAdmission{}, errTaskNotDeployed
-	}
-	if err != nil {
-		return definition.TaskRunAdmission{}, fmt.Errorf(
-			"load child task definition: %w",
-			err,
-		)
-	}
-	program, err := store.GetDeploymentProgramAuthority(
-		ctx,
-		db.GetDeploymentProgramAuthorityParams{
-			EnvironmentID: parent.EnvironmentID,
-			DeploymentID:  parent.DeploymentID,
-		},
-	)
-	if err != nil {
-		return definition.TaskRunAdmission{}, fmt.Errorf(
-			"load child task deployment authority: %w",
-			err,
-		)
-	}
-	admission, err := definition.ResolveTaskRunAdmission(
-		deploymentDefinition.ManifestVersion,
-		deploymentDefinition.DeclaredID,
-		deploymentDefinition.Manifest,
-		deploymentDefinition.ManifestDigest,
-		program.QueueConfig,
-		request.QueueName,
-		request.QueuedTTLMS,
-		request.RetryPolicy,
-	)
-	if err != nil {
-		return definition.TaskRunAdmission{}, fmt.Errorf(
-			"%w: %v",
-			errTaskStartAuthority,
-			err,
-		)
-	}
-	if admission.HasPayload != request.PayloadPresent {
-		return definition.TaskRunAdmission{}, errTaskPayloadPresenceInvalid
-	}
-	return admission, nil
-}
-
-func loadChildTaskInvokeLocators(
-	ctx context.Context,
-	q db.Querier,
-	worker workergroup.HostPrincipal,
-	lease workerapi.RunLeaseFence,
-	parsed parsedRunLeaseFence,
-) (db.GetLiveRunLeaseLocatorsRow, error) {
-	locators, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
-		ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence,
-		WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID),
-		WorkerEpoch: worker.Epoch})
-	if err != nil {
-		return db.GetLiveRunLeaseLocatorsRow{}, staleChildTaskInvoke(err)
-	}
-	return locators, nil
-}
-
-func childTaskInvokeScopeMatches(
-	authority run.Execution,
-	input childTaskInvokeInput,
-) bool {
-	return authority.Run().OrgID == pgvalue.UUID(input.Normalized.OrgID) &&
-		authority.Run().ProjectID == pgvalue.UUID(input.Normalized.ProjectID) &&
-		authority.Run().EnvironmentID == pgvalue.UUID(input.Normalized.EnvironmentID) &&
-		authority.Run().ComputerID == pgvalue.UUID(input.SourceComputerID)
-}
-
-func decodeChildTaskReceipt(raw []byte) (childTaskReceipt, error) {
-	var receipt childTaskReceipt
-	if err := decodeClosedJSON(raw, &receipt); err != nil {
-		return childTaskReceipt{}, errTaskStartReceiptInvalid
-	}
-	if _, err := ids.Parse(receipt.RunID); err != nil {
-		return childTaskReceipt{}, errTaskStartReceiptInvalid
-	}
-	if _, err := ids.Parse(receipt.ComputerID); err != nil {
-		return childTaskReceipt{}, errTaskStartReceiptInvalid
-	}
-
-	return receipt, nil
-}
-
-func (s *Server) writeChildTaskInvokeError(
-	w http.ResponseWriter,
-	correlationID string,
-	method string,
-	err error,
-) {
-	if writeStaleWorkerClaims(w, err) {
-		return
-	}
-	if failure, ok := actorOutputAppendFailure(err); ok {
-		writeJSON(w, http.StatusOK, workerapi.InvokeChildTaskResponse{CorrelationID: correlationID, Failed: &failure})
-		return
-	}
-	var expired idempotency.ExpiredError
-	if errors.As(err, &expired) {
-		writeError(w, gone(expired))
-		return
-	}
-	var idempotencyConflict idempotency.ConflictError
-	var failure workerapi.RuntimeOperationFailure
-	switch {
-	case errors.As(err, &idempotencyConflict):
-		failure = workerapi.RuntimeOperationFailure{
-			Code: "idempotency_conflict", Message: "idempotency key conflicts with an earlier child Task invocation",
-		}
-	case errors.Is(err, errTaskNotDeployed):
-		failure = workerapi.RuntimeOperationFailure{Code: "task_not_deployed", Message: err.Error()}
-	case errors.Is(err, errTaskComputerNotFound):
-		failure = workerapi.RuntimeOperationFailure{Code: "computer_not_found", Message: err.Error()}
-	case errors.Is(err, errTaskComputerUnavailable):
-		failure = workerapi.RuntimeOperationFailure{Code: "computer_unavailable", Message: err.Error(), Retryable: true}
-	case errors.Is(err, errTaskSecretUnavailable), errors.Is(err, computer.ErrSecretUnavailable):
-		failure = workerapi.RuntimeOperationFailure{Code: "secret_unavailable", Message: err.Error()}
-	case errors.Is(err, errTaskPayloadPresenceInvalid), errors.Is(err, errTaskStartInvalid):
-		failure = workerapi.RuntimeOperationFailure{Code: "invalid_child_task_invoke", Message: err.Error()}
-	case errors.Is(err, errChildTaskInvokeStale):
-		err = childTaskInvokeStaleAt(childTaskInvokePointTransaction, err)
-		point, _ := staleAuthorityPointOf(err)
-		s.log.Warn(
-			"reject stale child Task invocation",
-			"failure_point", point,
-			"correlation_id", correlationID,
-		)
-		writeError(w, conflict(err))
-		return
-	default:
+	case http.StatusServiceUnavailable:
 		s.log.Error("invoke child Task", "error", err)
-		writeError(w, unavailable(codedError{
-			code:    "child_task_invoke_authority_unavailable",
-			message: "child task invocation authority is unavailable", retryable: true,
-		}))
-		return
 	}
-	writeJSON(w, http.StatusOK, workerapi.InvokeChildTaskResponse{
-		CorrelationID: correlationID, Failed: &failure,
-	})
-}
-
-func (input childTaskInvokeInput) callRegistration() childCallRegistration {
-	return childCallRegistration{RunWaitID: input.RunWaitID, ResumeAttachID: input.ResumeAttachID, TurnID: input.turnID, RunGeneration: input.runGeneration, TaskDeclaredID: input.Normalized.TaskDeclaredID}
+	writeError(w, mapped)
 }

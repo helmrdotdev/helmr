@@ -103,12 +103,12 @@ func (s *Server) workerCreateTokenRunWait(
 	normalized := request
 	normalized.Metadata = metadata
 	normalized.Tags = tags
-	parsed, worker, locators, run, err := s.loadRunWaitRegistrationAuthority(r.Context(), normalized.Lease)
+	parsed, worker, locators, current, err := s.loadRunWaitRegistrationAuthority(r.Context(), normalized.Lease)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	idleDefault, err := s.runWaitIdleDefault(r.Context(), run)
+	idleDefault, err := s.runWaitIdleDefault(r.Context(), current)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -129,7 +129,7 @@ func (s *Server) workerCreateTokenRunWait(
 		writeError(w, badRequest(fmt.Errorf("normalize token wait params: %w", err)))
 		return
 	}
-	fingerprint, err := terminalRequestFingerprint("worker.run-wait.create.v1", normalized)
+	fingerprint, err := run.RequestFingerprint("worker.run-wait.create.v1", normalized)
 	if err != nil {
 		writeError(w, badRequest(fmt.Errorf("fingerprint token wait registration: %w", err)))
 		return
@@ -140,7 +140,7 @@ func (s *Server) workerCreateTokenRunWait(
 	if request.ActorSpeculativeInputSequence != nil {
 		actorCursor = pgtype.Int8{Int64: *request.ActorSpeculativeInputSequence, Valid: true}
 	}
-	turnID, generation, err := parseWorkerWaitTurn(request.TurnID, request.RunGeneration)
+	turnID, generation, err := run.ParseWaitTurn(request.TurnID, request.RunGeneration)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -198,43 +198,20 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	wait, err := s.db.GetRunWait(r.Context(), db.GetRunWaitParams{
-		RunID: locators.RunID, AttemptNumber: locators.AttemptNumber, ID: pgvalue.UUID(waitID),
-	})
-	if isNoRows(err) {
-		writeError(w, conflict(errors.New("worker run wait is stale")))
-		return
-	}
+	wait, stopped, err := run.PollWait(r.Context(), s.db, run.WaitPollScope{
+		RunID: locators.RunID, AttemptNumber: locators.AttemptNumber,
+		ComputerID: locators.ComputerID, LeaseID: pgvalue.UUID(parsed.leaseID),
+	}, pgvalue.UUID(waitID))
 	if err != nil {
-		writeError(w, errors.New("load worker run wait"))
+		writeError(w, runError(err, runWaitPollOperation))
 		return
 	}
-	if wait.AttemptNumber != locators.AttemptNumber ||
-		wait.ComputerID != locators.ComputerID ||
-		(wait.CurrentRunLeaseID != pgvalue.UUID(parsed.leaseID) && wait.PriorRunLeaseID != pgvalue.UUID(parsed.leaseID)) {
-		writeError(w, conflict(errors.New("worker run wait fence is stale")))
-		return
-	}
-	stopped, err := s.db.RunWaitSessionStopped(r.Context(), wait.ID)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	if stopped && wait.SuspensionStatus == db.RunWaitStatusReleased {
+	if stopped {
 		writeJSON(w, http.StatusOK, workerapi.RunWaitPollResponse{
 			RunID: pgvalue.UUIDString(locators.RunID), RunWaitID: waitID.String(),
 			Status: workerapi.RunWaitPollStatusResumeRequested, ResumeKind: "cancelled",
 			ResumePayload: []byte(`{"reason_code":"session_stopped"}`),
 		})
-		return
-	}
-	current, err := s.db.RunWaitTurnCurrent(r.Context(), wait.ID)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	if !current {
-		writeError(w, conflict(errors.New("turn wait authority was revoked")))
 		return
 	}
 	response := workerapi.RunWaitPollResponse{RunID: pgvalue.UUIDString(locators.RunID), RunWaitID: waitID.String()}
@@ -408,18 +385,4 @@ func tokenWaitDecision(state db.WaitStatus, result json.RawMessage, reason strin
 	default:
 		return "", nil, errors.New("run wait decision is not terminal")
 	}
-}
-
-func parseWorkerWaitTurn(id *string, generation *int64) (pgtype.UUID, pgtype.Int8, error) {
-	if id == nil && generation == nil {
-		return pgtype.UUID{}, pgtype.Int8{}, nil
-	}
-	if id == nil || generation == nil || *generation <= 0 {
-		return pgtype.UUID{}, pgtype.Int8{}, run.ErrTurnScope
-	}
-	parsed, err := parseCanonicalUUID("turn_id", *id)
-	if err != nil {
-		return pgtype.UUID{}, pgtype.Int8{}, err
-	}
-	return pgvalue.UUID(parsed), pgtype.Int8{Int64: *generation, Valid: true}, nil
 }

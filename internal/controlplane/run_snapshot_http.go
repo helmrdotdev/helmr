@@ -17,11 +17,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -78,16 +76,11 @@ func (s *Server) getRunSnapshotHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, notFound(codedError{code: "run_not_found", message: "run not found"}))
 		return
 	}
-	row, err := s.db.GetRunSnapshot(r.Context(), db.GetRunSnapshotParams{
-		OrgID: pgvalue.UUID(scope.OrgID), ProjectID: projectID,
-		EnvironmentID: environmentID, ID: pgvalue.UUID(runID),
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, notFound(codedError{code: "run_not_found", message: "run not found"}))
-		return
-	}
+	row, err := run.Get(r.Context(), s.db, run.Scope{
+		OrgID: pgvalue.UUID(scope.OrgID), ProjectID: projectID, EnvironmentID: environmentID,
+	}, pgvalue.UUID(runID))
 	if err != nil {
-		s.writeRunReadAuthorityError(w)
+		writeError(w, runError(err, runGetOperation))
 		return
 	}
 	snapshot, err := projectRunSnapshot(runSnapshotRecordFromGet(row))
@@ -131,43 +124,17 @@ func (s *Server) cancelRunHTTP(w http.ResponseWriter, r *http.Request) {
 		OrgID: scope.OrgID, ProjectID: projectUUID, EnvironmentID: environmentUUID,
 		RunID: runID, IdempotencyKey: body.IdempotencyKey,
 	})
-	if errors.Is(err, run.ErrCancellationNotFound) {
-		writeError(w, notFound(codedError{code: "run_not_found", message: "run not found"}))
-		return
-	}
-	if errors.Is(err, run.ErrCancellationConflict) {
-		writeError(w, conflict(codedError{
-			code: "run_lifecycle_conflict", message: "run already has another terminal outcome",
-		}))
-		return
-	}
-	var rejection *run.CancellationRejectionError
-	var expired idempotency.ExpiredError
-	if errors.As(err, &expired) {
-		writeError(w, gone(expired))
-		return
-	}
-	var collision idempotency.ConflictError
-	if errors.As(err, &rejection) {
-		writeError(w, conflict(codedError{code: rejection.Code, message: rejection.Code}))
-		return
-	}
-	if errors.As(err, &collision) {
-		writeError(w, conflict(codedError{code: "idempotency_conflict", message: "idempotency key conflicts with an earlier operation"}))
-		return
-	}
 	if err != nil {
-		s.writeRunCancellationAuthorityError(w)
+		writeError(w, runError(err, runCancelOperation))
 		return
 	}
 	if receipt := result.Actor; receipt != nil {
 		writeJSON(w, http.StatusAccepted, api.ActorRunCancellationReceipt{ID: receipt.ID.String(), RunID: receipt.RunID.String(), SessionID: receipt.SessionID.String(), HoldID: receipt.HoldID.String(), Status: receipt.Status})
 		return
 	}
-	row, err := s.db.GetRunSnapshot(r.Context(), db.GetRunSnapshotParams{
-		OrgID: pgvalue.UUID(scope.OrgID), ProjectID: projectID,
-		EnvironmentID: environmentID, ID: pgvalue.UUID(runID),
-	})
+	row, err := run.Get(r.Context(), s.db, run.Scope{
+		OrgID: pgvalue.UUID(scope.OrgID), ProjectID: projectID, EnvironmentID: environmentID,
+	}, pgvalue.UUID(runID))
 	if err != nil {
 		s.writeRunCancellationAuthorityError(w)
 		return
@@ -225,18 +192,15 @@ func (s *Server) listRunSnapshotsHTTP(w http.ResponseWriter, r *http.Request) {
 		afterCreatedAt = pgvalue.Timestamptz(cursor.createdAt)
 		afterID = pgvalue.UUID(cursor.runID)
 	}
-	rows, err := s.db.ListRunListItems(r.Context(), db.ListRunListItemsParams{
+	rows, hasMore, err := run.List(r.Context(), s.db, run.Scope{
 		OrgID: pgvalue.UUID(scope.OrgID), ProjectID: projectID, EnvironmentID: environmentID,
-		Statuses: statuses, EntrypointKinds: kinds, SessionID: sessionID,
-		AfterCreatedAt: afterCreatedAt, AfterID: afterID, LimitCount: limit + 1,
+	}, run.ListQuery{
+		Statuses: statuses, Kinds: kinds, SessionID: sessionID,
+		AfterCreatedAt: afterCreatedAt, AfterID: afterID, Limit: limit,
 	})
 	if err != nil {
-		s.writeRunReadAuthorityError(w)
+		writeError(w, runError(err, runListOperation))
 		return
-	}
-	hasMore := len(rows) > int(limit)
-	if hasMore {
-		rows = rows[:limit]
 	}
 	items := make([]api.RunListItem, 0, len(rows))
 	for _, row := range rows {

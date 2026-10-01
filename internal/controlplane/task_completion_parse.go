@@ -9,6 +9,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -88,7 +89,7 @@ func parseTaskCompletionRequest(request workerapi.CompleteTaskRequest) (parsedTa
 	}
 	normalized.OperationID = parsed.operationID.String()
 
-	parsed.fingerprint, err = terminalRequestFingerprint("task.complete.v0", normalized)
+	parsed.fingerprint, err = run.RequestFingerprint("task.complete.v0", normalized)
 	if err != nil {
 		return parsedTaskCompletion{}, fmt.Errorf("fingerprint task completion: %w", err)
 	}

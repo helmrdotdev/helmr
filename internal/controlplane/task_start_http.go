@@ -10,12 +10,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 )
 
-const taskStartBodyLimit = int64(maxTaskPayloadBytes + maxRunMetadataBytes + 64<<10)
+const taskStartBodyLimit = int64(maxTaskPayloadBytes + run.MaxMetadataBytes + 64<<10)
 
 func (s *Server) startTaskHTTP(w http.ResponseWriter, r *http.Request) {
 	request, payloadPresent, err := decodeStartTaskRequest(r)
@@ -228,37 +228,5 @@ func taskStartPolicyFromAPI(request api.StartTaskRequest) (*int64, json.RawMessa
 }
 
 func (s *Server) writeTaskStartError(w http.ResponseWriter, err error) {
-	var expired idempotency.ExpiredError
-	if errors.As(err, &expired) {
-		writeError(w, gone(expired))
-		return
-	}
-	var idempotencyConflict idempotency.ConflictError
-	var classified apiError
-	switch {
-	case errors.As(err, &classified):
-		writeError(w, classified)
-	case errors.As(err, &idempotencyConflict):
-		writeError(w, conflict(codedError{
-			code:    "idempotency_conflict",
-			message: "idempotency key conflicts with an earlier task start",
-		}))
-	case errors.Is(err, errTaskNotDeployed):
-		writeError(w, notFound(codedError{code: "task_not_deployed", message: err.Error()}))
-	case errors.Is(err, errTaskComputerNotFound):
-		writeError(w, notFound(codedError{code: "computer_not_found", message: err.Error()}))
-	case errors.Is(err, errTaskComputerUnavailable):
-		writeError(w, conflict(codedError{
-			code: "computer_unavailable", message: err.Error(), retryable: true,
-		}))
-	case errors.Is(err, errTaskSecretUnavailable):
-		writeError(w, conflict(codedError{code: "secret_unavailable", message: err.Error()}))
-	case errors.Is(err, errTaskPayloadPresenceInvalid), errors.Is(err, errTaskStartInvalid):
-		writeError(w, badRequest(codedError{code: "invalid_task_start", message: err.Error()}))
-	default:
-		writeError(w, unavailable(codedError{
-			code:    "task_start_authority_unavailable",
-			message: "task start authority is unavailable", retryable: true,
-		}))
-	}
+	writeError(w, runError(err, runTaskStartOperation))
 }

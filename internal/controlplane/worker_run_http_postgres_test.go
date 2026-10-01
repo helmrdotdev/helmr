@@ -103,3 +103,52 @@ func TestWorkerRunLeaseRenewalRouteProjectsReceipt(t *testing.T) {
 		t.Fatalf("renewal = %+v, want lease %+v base %s after %s", renewed, fence, base, expiry)
 	}
 }
+
+// Timer wait, wait poll and child Task routes answer an execution that no
+// longer admits their work through the run owner in each route's vocabulary,
+// and the routes that compare credential claims ask a stale host to
+// re-authenticate.
+func TestWorkerRunWaitAndChildRoutesMapStaleExecutions(t *testing.T) {
+	f := runtest.New(t)
+	work := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET status='running',started_at=now(),active_started_at=now() WHERE id=$1`, work.RunID)
+	var computerID string
+	if err := f.Pool.QueryRow(t.Context(), `SELECT computer_id::text FROM runs WHERE id=$1`, work.RunID).Scan(&computerID); err != nil {
+		t.Fatal(err)
+	}
+	worker := newWorkerHTTPClient(t, newPostgresServer(t, f.Pool), f.Pool, f.WorkerID)
+	lease := workerapi.RunLeaseFence{ID: work.LeaseID.String(), LeaseSequence: 1}
+	timeout := int64(1000)
+	timer := func() workerapi.CreateRunWaitRequest {
+		return workerapi.CreateRunWaitRequest{
+			Lease: lease, CorrelationID: uuid.NewV7().String(), RunWaitID: uuid.NewV7().String(), ResumeAttachID: uuid.NewV7().String(),
+			Kind: workerapi.RunWaitKindTimer, Params: json.RawMessage(`{"duration":"1s"}`), TimeoutMS: &timeout,
+		}
+	}
+	child := func() workerapi.InvokeChildTaskRequest {
+		return workerapi.InvokeChildTaskRequest{
+			Lease: lease, CorrelationID: uuid.NewV7().String(), TaskDeclaredID: "test-task", Method: "start",
+			Computer: json.RawMessage(`{"id":"` + computerID + `"}`), Options: json.RawMessage(`{}`),
+		}
+	}
+	// The attempt never entered its entrypoint, so the execution admits no
+	// wait or child.
+	for path, test := range map[string]struct {
+		body any
+		want string
+	}{
+		"/worker/v1/run/waits/create": {timer(), `"message":"worker timer wait receipt is stale"`},
+		"/worker/v1/run/waits/poll":   {workerapi.RunWaitPollRequest{Lease: lease, RunWaitID: uuid.NewV7().String()}, `"message":"worker run wait is stale"`},
+		"/worker/v1/run/tasks/invoke": {child(), `"code":"child_task_invoke_stale","message":"child task invocation authority is stale","details":{"point":"transaction_authority"}`},
+	} {
+		t.Run(path, func(t *testing.T) {
+			out := worker.post(t, path, test.body, http.StatusConflict, nil)
+			if !strings.Contains(out.Body.String(), test.want) {
+				t.Fatalf("body = %s, want %s", out.Body.String(), test.want)
+			}
+		})
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, f.WorkerID)
+	worker.post(t, "/worker/v1/run/waits/create", timer(), http.StatusUnauthorized, nil)
+	worker.post(t, "/worker/v1/run/tasks/invoke", child(), http.StatusUnauthorized, nil)
+}

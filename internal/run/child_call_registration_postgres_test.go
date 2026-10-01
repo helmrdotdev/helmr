@@ -1,7 +1,8 @@
-package controlplane
+package run
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -10,8 +11,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -44,8 +45,8 @@ func TestChildCallRegistrationRetainsParentWriter(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer tx.Rollback(t.Context())
-				fence := run.ExecutionFence{LeaseID: pgvalue.UUID(parent.LeaseID), LeaseSequence: 1, WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), WorkerEpoch: 1, GroupClaimVersion: 1, HostClaimVersion: 1}
-				a, err := run.LockLiveExecutionForComputer(t.Context(), tx, fence, computer)
+				fence := ExecutionFence{LeaseID: pgvalue.UUID(parent.LeaseID), LeaseSequence: 1, WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), WorkerEpoch: 1, GroupClaimVersion: 1, HostClaimVersion: 1}
+				a, err := LockLiveExecutionForComputer(t.Context(), tx, fence, computer)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -65,34 +66,40 @@ func TestChildCallRegistrationRetainsParentWriter(t *testing.T) {
 				if completed {
 					dbtest.MustExec(t, t.Context(), tx, `UPDATE runs SET status='succeeded',output='{"value":42}',terminal_at=now() WHERE id=$1`, child.ID)
 				}
-				input := childCallRegistration{RunWaitID: uuid.NewV7(), ResumeAttachID: uuid.NewV7(), TaskDeclaredID: "test-task"}
+				input := ChildInvoke{
+					Method: "call", RunWaitID: uuid.NewV7(), ResumeAttachID: uuid.NewV7(),
+					Task:        TaskStart{TaskDeclaredID: "test-task"},
+					Fingerprint: idempotency.TaskChildInvokeFingerprint{Method: "call", Computer: []byte(`{}`), Metadata: []byte(`{}`), Tags: []string{}},
+					ChildResult: func(r db.Run) (json.RawMessage, error) {
+						return json.Marshal(map[string]any{"ok": true, "output": json.RawMessage(r.Output), "run": map[string]string{"id": pgvalue.UUIDString(r.ID)}})
+					},
+				}
 				receipt := db.IdempotencyClaim{ID: claim, RequestFingerprint: dbtest.Hash(pgvalue.UUIDString(claim))}
-				fingerprint := idempotency.TaskChildInvokeFingerprint{Method: "call", Computer: []byte(`{}`), Metadata: []byte(`{}`), Tags: []string{}}
-				registered, err := registerChildCall(t.Context(), q, input, a, receipt, fingerprint, pgvalue.MustUUIDValue(child.ID), pgvalue.MustUUIDValue(computer))
+				registered, err := registerChildCall(t.Context(), q, input, a, receipt, pgvalue.MustUUIDValue(child.ID), pgvalue.MustUUIDValue(computer))
 				if err != nil {
 					t.Fatal(err)
 				}
-				replay, err := registerChildCall(t.Context(), q, input, a, receipt, fingerprint, pgvalue.MustUUIDValue(child.ID), pgvalue.MustUUIDValue(computer))
+				replay, err := registerChildCall(t.Context(), q, input, a, receipt, pgvalue.MustUUIDValue(child.ID), pgvalue.MustUUIDValue(computer))
 				if err != nil || replay.RunWaitID != registered.RunWaitID || replay.ResumeAttachID != registered.ResumeAttachID {
 					t.Fatalf("replay=%+v %v", replay, err)
 				}
 				if completed {
-					first, err := canonicalJSON(registered.Resolution)
+					first, err := jsoncanon.Transform(registered.Resolution)
 					if err != nil {
 						t.Fatal(err)
 					}
-					again, err := canonicalJSON(replay.Resolution)
+					again, err := jsoncanon.Transform(replay.Resolution)
 					if err != nil {
 						t.Fatal(err)
 					}
-					if registered.ResolutionKind != "completed" || replay.ResolutionKind != "completed" || !bytes.Equal(first, again) {
+					if !registered.Completed || !replay.Completed || !bytes.Equal(first, again) {
 						t.Fatalf("terminal receipt mismatch: %s / %s", first, again)
 					}
 				}
 
 				altered := input
 				altered.ResumeAttachID = uuid.NewV7()
-				if _, err := registerChildCall(t.Context(), q, altered, a, receipt, fingerprint, pgvalue.MustUUIDValue(child.ID), pgvalue.MustUUIDValue(computer)); !errors.Is(err, errChildTaskInvokeStale) {
+				if _, err := registerChildCall(t.Context(), q, altered, a, receipt, pgvalue.MustUUIDValue(child.ID), pgvalue.MustUUIDValue(computer)); !errors.Is(err, ErrChildInvokeStale) {
 					t.Fatalf("altered receipt accepted: %v", err)
 				}
 				wait, err := q.GetRunWait(t.Context(), db.GetRunWaitParams{RunID: a.Run().ID, AttemptNumber: a.Attempt().Number, ID: pgvalue.UUID(input.RunWaitID)})
@@ -104,7 +111,7 @@ func TestChildCallRegistrationRetainsParentWriter(t *testing.T) {
 					t.Fatalf("wait=%+v %v", wait, err)
 				}
 
-				if _, err = run.LockLiveExecution(t.Context(), tx, fence); err != nil {
+				if _, err = LockLiveExecution(t.Context(), tx, fence); err != nil {
 					t.Fatalf("parent lost live grant: %v", err)
 				}
 				if err = tx.Commit(t.Context()); err != nil {

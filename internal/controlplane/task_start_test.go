@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/run"
 )
 
 func TestNormalizeTaskStartCanonicalizesCallerSemantics(t *testing.T) {
@@ -45,13 +47,13 @@ func TestNormalizeTaskStartRejectsInvalidCallerValues(t *testing.T) {
 	invalidKey := " leading"
 	request := base
 	request.ConcurrencyKey = &invalidKey
-	if _, err := normalizeTaskStart(request); !errors.Is(err, errTaskStartInvalid) {
+	if _, err := normalizeTaskStart(request); !errors.Is(err, run.ErrTaskStartInvalid) {
 		t.Fatalf("concurrency key error = %v", err)
 	}
 	request = base
 	request.PayloadPresent = true
 	request.Payload = json.RawMessage(`{"broken"`)
-	if _, err := normalizeTaskStart(request); !errors.Is(err, errTaskStartInvalid) {
+	if _, err := normalizeTaskStart(request); !errors.Is(err, run.ErrTaskStartInvalid) {
 		t.Fatalf("payload error = %v", err)
 	}
 	request = base
@@ -59,22 +61,7 @@ func TestNormalizeTaskStartRejectsInvalidCallerValues(t *testing.T) {
 	for index := range request.Tags {
 		request.Tags[index] = string(rune('a' + index))
 	}
-	if _, err := normalizeTaskStart(request); !errors.Is(err, errTaskStartInvalid) {
+	if _, err := normalizeTaskStart(request); !errors.Is(err, run.ErrTaskStartInvalid) {
 		t.Fatalf("tags error = %v", err)
-	}
-}
-
-func TestTaskStartReceiptRoundTrip(t *testing.T) {
-	runID := uuid.NewV7()
-	raw, err := json.Marshal(taskStartReceipt{RunID: runID.String()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	decoded, err := taskStartResultFromReceipt(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decoded.RunID != runID {
-		t.Fatalf("decoded = %+v", decoded)
 	}
 }

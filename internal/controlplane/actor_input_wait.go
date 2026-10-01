@@ -51,16 +51,16 @@ func (s *Server) workerCreateActorInputRunWait(
 		writeError(w, badRequest(err))
 		return
 	}
-	parsed, worker, registrationLocators, run, err := s.loadRunWaitRegistrationAuthority(r.Context(), request.Lease)
+	parsed, worker, registrationLocators, current, err := s.loadRunWaitRegistrationAuthority(r.Context(), request.Lease)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	if run.EntrypointKind != "actor" || !run.SessionID.Valid || run.SessionID != pgvalue.UUID(sessionID) {
+	if current.EntrypointKind != "actor" || !current.SessionID.Valid || current.SessionID != pgvalue.UUID(sessionID) {
 		writeError(w, conflict(errors.New("actor input wait must target the owning actor")))
 		return
 	}
-	idleTimeoutDefault, err := s.runWaitIdleDefault(r.Context(), run)
+	idleTimeoutDefault, err := s.runWaitIdleDefault(r.Context(), current)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -82,7 +82,7 @@ func (s *Server) workerCreateActorInputRunWait(
 	}
 	normalized.Metadata = metadata
 	normalized.Tags = tags
-	fingerprint, err := terminalRequestFingerprint("worker.run-wait.create.v1", normalized)
+	fingerprint, err := run.RequestFingerprint("worker.run-wait.create.v1", normalized)
 	if err != nil {
 		writeError(w, badRequest(fmt.Errorf("fingerprint actor input wait registration: %w", err)))
 		return
