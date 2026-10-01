@@ -140,7 +140,7 @@ func ExchangeDeviceCode(ctx context.Context, txb db.TxBeginner, cfg Config, devi
 	if err != nil {
 		return "", ErrInvalidDeviceCode
 	}
-	var rawMachine string
+	var rawSession string
 	err = db.RunTx(ctx, txb, func(tx pgx.Tx) error {
 		q := db.New(tx)
 		device, err := q.GetDeviceCodeForPoll(ctx, hash)
@@ -168,13 +168,13 @@ func ExchangeDeviceCode(ctx context.Context, txb db.TxBeginner, cfg Config, devi
 		if err != nil {
 			return fmt.Errorf("consume device code: %w", err)
 		}
-		rawMachine, err = issueLoginSession(ctx, q, cfg, consumed.DecidedByUserID, consumed.OrgID)
+		rawSession, err = issueLoginSession(ctx, q, cfg, consumed.DecidedByUserID, consumed.OrgID)
 		return err
 	})
 	if err != nil {
 		return "", err
 	}
-	return rawMachine, nil
+	return rawSession, nil
 }
 
 func userCodeHash(cfg Config, userCode string) ([]byte, error) {

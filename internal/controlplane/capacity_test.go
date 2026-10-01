@@ -29,7 +29,7 @@ func TestHashCapacityTokenRequiresCanonicalHighEntropyValue(t *testing.T) {
 }
 
 func TestCapacityWorkerHostFilterIsBounded(t *testing.T) {
-	request := httptest.NewRequest(http.MethodGet, "/?worker_group_id="+controlplaneTestWorkerGroup+"&resource_id=host-1&resource_id=host-2&status=active&status=draining&has_unreclaimed_instance=true&limit=50", nil)
+	request := httptest.NewRequest(http.MethodGet, "/?worker_group_id="+controlplaneTestWorkerGroup+"&resource_id=host-1&resource_id=host-2&status=active&status=draining&has_unreclaimed_runtime=true&limit=50", nil)
 	filter, err := capacityWorkerHostFilter(request)
 	if err != nil {
 		t.Fatal(err)
@@ -47,7 +47,7 @@ func TestCapacityWorkerHostFilterIsBounded(t *testing.T) {
 	if filter, err := capacityWorkerHostFilter(httptest.NewRequest(http.MethodGet, "/", nil)); err != nil || filter.Limit != defaultCapacityInstanceLimit {
 		t.Fatalf("default filter = %+v, %v", filter, err)
 	}
-	for _, raw := range []string{"/?unsupported=active", "/?worker_group_id=", "/?worker_group_id=%20", "/?worker_group_id=%20" + controlplaneTestWorkerGroup + "%20", "/?worker_group_id=run-workers", "/?status=unknown", "/?resource_id=", "/?resource_id=host-1&resource_id=host-1", "/?has_unreclaimed_instance=false", "/?has_unreclaimed_instance=true&has_unreclaimed_instance=true", "/?limit=0", "/?limit=501"} {
+	for _, raw := range []string{"/?unsupported=active", "/?worker_group_id=", "/?worker_group_id=%20", "/?worker_group_id=%20" + controlplaneTestWorkerGroup + "%20", "/?worker_group_id=run-workers", "/?status=unknown", "/?resource_id=", "/?resource_id=host-1&resource_id=host-1", "/?has_unreclaimed_runtime=false", "/?has_unreclaimed_runtime=true&has_unreclaimed_runtime=true", "/?limit=0", "/?limit=501"} {
 		if _, err := capacityWorkerHostFilter(httptest.NewRequest(http.MethodGet, raw, nil)); err == nil {
 			t.Fatalf("filter for %q succeeded", raw)
 		}

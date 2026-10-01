@@ -53,20 +53,20 @@ func (i ExternalIdentity) Verifies(email string) bool {
 // and issues a login session that selects no organization in one
 // transaction. It returns the raw session token.
 func SignIn(ctx context.Context, txb db.TxBeginner, cfg Config, external ExternalIdentity) (string, error) {
-	var rawMachine string
+	var rawSession string
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
 		q := db.New(tx)
 		user, err := upsertExternalIdentity(ctx, q, cfg, external)
 		if err != nil {
 			return err
 		}
-		rawMachine, err = startLoginSession(ctx, q, cfg, user, external.DisplayName, nil)
+		rawSession, err = startLoginSession(ctx, q, cfg, user, external.DisplayName, nil)
 		return err
 	})
 	if err != nil {
 		return "", err
 	}
-	return rawMachine, nil
+	return rawSession, nil
 }
 
 // ResolveInvitation hashes a raw invitation token and loads the pending
@@ -92,7 +92,7 @@ func ResolveInvitation(ctx context.Context, q db.Querier, cfg Config, rawToken s
 // invitee email, and issues a login session for the invitation's organization.
 // It returns the raw session token.
 func SignInWithInvitation(ctx context.Context, txb db.TxBeginner, cfg Config, invitationTokenHash []byte, external ExternalIdentity) (string, error) {
-	var rawMachine string
+	var rawSession string
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
 		q := db.New(tx)
 		invitation, err := org.PendingInvitationByTokenHash(ctx, q, invitationTokenHash)
@@ -106,13 +106,13 @@ func SignInWithInvitation(ctx context.Context, txb db.TxBeginner, cfg Config, in
 		if err != nil {
 			return err
 		}
-		rawMachine, err = startLoginSession(ctx, q, cfg, user, external.DisplayName, &invitation)
+		rawSession, err = startLoginSession(ctx, q, cfg, user, external.DisplayName, &invitation)
 		return err
 	})
 	if err != nil {
 		return "", err
 	}
-	return rawMachine, nil
+	return rawSession, nil
 }
 
 // signedInUser is the user an identity upsert selected.
@@ -207,8 +207,8 @@ func issueLoginSession(ctx context.Context, q db.Querier, cfg Config, userID pgt
 // session, a disabled user, or a session whose selected membership is no
 // longer active is auth.ErrUnauthenticated. A session that selects no
 // organization takes the user's first active membership.
-func AuthenticateLoginSession(ctx context.Context, q db.Querier, cfg Config, rawMachine string) (auth.Principal, error) {
-	tokenHash, err := auth.HashToken(cfg.sessionKey, rawMachine)
+func AuthenticateLoginSession(ctx context.Context, q db.Querier, cfg Config, rawSession string) (auth.Principal, error) {
+	tokenHash, err := auth.HashToken(cfg.sessionKey, rawSession)
 	if err != nil {
 		return auth.Principal{}, err
 	}
@@ -252,8 +252,8 @@ func AuthenticateLoginSession(ctx context.Context, q db.Querier, cfg Config, raw
 
 // RevokeLoginSession revokes the login session with the raw token. An empty,
 // unknown or already revoked token revokes nothing.
-func RevokeLoginSession(ctx context.Context, q db.Querier, cfg Config, rawMachine string) error {
-	tokenHash, err := auth.HashToken(cfg.sessionKey, rawMachine)
+func RevokeLoginSession(ctx context.Context, q db.Querier, cfg Config, rawSession string) error {
+	tokenHash, err := auth.HashToken(cfg.sessionKey, rawSession)
 	if errors.Is(err, auth.ErrUnauthenticated) {
 		return nil
 	}
