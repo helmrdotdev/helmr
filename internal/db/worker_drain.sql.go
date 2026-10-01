@@ -34,10 +34,10 @@ WITH target AS MATERIALIZED (
        AND $5::timestamptz >= drain_target.epoch_started_at
        AND $5::timestamptz <= now() + interval '1 minute'
        AND EXISTS (
-           SELECT 1 FROM worker_host_credentials
-            WHERE worker_host_credentials.worker_host_id = drain_target.id
-              AND worker_host_credentials.claim_version = drain_target.claim_version
-              AND worker_host_credentials.revoked_at IS NULL
+           SELECT 1 FROM worker_host_secrets
+            WHERE worker_host_secrets.worker_host_id = drain_target.id
+              AND worker_host_secrets.claim_version = drain_target.claim_version
+              AND worker_host_secrets.revoked_at IS NULL
        )
        AND NOT EXISTS (
            SELECT 1 FROM run_leases
@@ -65,12 +65,12 @@ WITH target AS MATERIALIZED (
               worker_hosts.current_epoch, worker_hosts.status,
               worker_hosts.claim_version, worker_hosts.termination_ready_at
 ), revoked AS (
-    UPDATE worker_host_credentials
+    UPDATE worker_host_secrets
        SET revoked_at = now()
       FROM completed
-     WHERE worker_host_credentials.worker_host_id = completed.id
-       AND worker_host_credentials.revoked_at IS NULL
-    RETURNING worker_host_credentials.id
+     WHERE worker_host_secrets.worker_host_id = completed.id
+       AND worker_host_secrets.revoked_at IS NULL
+    RETURNING worker_host_secrets.id
 ), result AS (
     SELECT completed.id, completed.worker_group_id, completed.current_epoch, completed.status, completed.claim_version, completed.termination_ready_at
       FROM completed

@@ -32,7 +32,7 @@ func TestComputerInstanceClaimRouteProjectsFreshAuthority(t *testing.T) {
 	var response workerapi.ComputerInstanceClaimResponse
 	worker.post(t, "/worker/v1/run/computer-instances/claim", struct{}{}, http.StatusOK, &response)
 	i := response.Assignment
-	if i == nil || i.ComputerInstanceID != instance.ComputerInstanceID || i.WriterGeneration != instance.WriterGeneration || i.DesiredVersion != 1 || i.ObservedVersion != 1 || i.Target.BaseComputerDiskVersionID == "" || i.RestoreCheckpointID != "" || i.GuestdChannelToken == "" {
+	if i == nil || i.ComputerInstanceID != instance.ComputerInstanceID || i.WriterGeneration != instance.WriterGeneration || i.DesiredVersion != 1 || i.ObservedVersion != 1 || i.Target.BaseComputerDiskVersionID == "" || i.RestoreCheckpointID != "" || i.GuestChannelCredential == "" {
 		t.Fatal("fresh Instance authority incorrectly projected")
 	}
 	if out := worker.post(t, "/worker/v1/run/computer-instances/claim", struct{}{}, http.StatusOK, nil); out.Body.String() != "{}\n" {

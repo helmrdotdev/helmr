@@ -37,12 +37,12 @@ func TestConfirmWorkerHostProviderAbsentReclaimsIndependentlyOfLiveLease(t *test
 	if len(workSet) != 1 || workSet[0].ID != pgvalue.UUID(fixture.WorkerID) {
 		t.Fatalf("provider work set = %+v, want Worker %s", workSet, fixture.WorkerID)
 	}
-	credentialID := uuid.NewV7()
+	hostSecretID := uuid.NewV7()
 	if _, err := fixture.Pool.Exec(ctx, `
-		INSERT INTO worker_host_credentials (
+		INSERT INTO worker_host_secrets (
 			id, worker_group_id, worker_host_id, key_prefix, secret_hash
 		) VALUES ($1, $2, $3, $4, $5)
-	`, credentialID, runtest.WorkerGroup, fixture.WorkerID, uuid.New().String(), []byte("provider-absence-secret")); err != nil {
+	`, hostSecretID, runtest.WorkerGroup, fixture.WorkerID, uuid.New().String(), []byte("provider-absence-secret")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -73,15 +73,15 @@ func TestConfirmWorkerHostProviderAbsentReclaimsIndependentlyOfLiveLease(t *test
 	var credentialRevoked bool
 	if err := fixture.Pool.QueryRow(ctx, `
 		SELECT revoked_at IS NOT NULL
-		  FROM worker_host_credentials
+		  FROM worker_host_secrets
 		 WHERE id = $1
-	`, credentialID).Scan(&credentialRevoked); err != nil {
+	`, hostSecretID).Scan(&credentialRevoked); err != nil {
 		t.Fatal(err)
 	}
 	if !credentialRevoked {
 		t.Fatal("provider absence did not revoke the Worker credential")
 	}
-	if _, err := queries.AuthenticateWorkerHostCredential(ctx, AuthenticateWorkerHostCredentialParams{
+	if _, err := queries.AuthenticateWorkerHostSecret(ctx, AuthenticateWorkerHostSecretParams{
 		WorkerHostID: pgvalue.UUID(fixture.WorkerID),
 		SecretHash:   []byte("provider-absence-secret"),
 		ServiceID:    pgvalue.NewUUIDv7(),

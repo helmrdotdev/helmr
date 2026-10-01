@@ -32,7 +32,7 @@ The rolling order above applies when both releases use the same worker API versi
 
 For an incompatible release, drain the old workers to `termination_ready` against the old Control Plane, run the migration and Control Plane upgrade, then launch replacement workers from the target release's AMI. Plan the interruption until replacement capacity becomes active. The first release requiring the `api_version` field also requires replacing workers that do not send it.
 
-A `worker_api_version_mismatch` during connection or token refresh means the worker needs a compatible release. Rollback remains subject to the database and checkpoint limits below.
+A `worker_api_version_mismatch` during connection or credential refresh means the worker needs a compatible release. Rollback remains subject to the database and checkpoint limits below.
 
 Checkpoint restore validates runtime compatibility, including runtime and rootfs digests and resource shape. Existing checkpoints may not resume on an incompatible replacement worker; the checked-in flow does not promise cross-release checkpoint conversion.
 

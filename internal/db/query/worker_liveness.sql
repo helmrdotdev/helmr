@@ -51,13 +51,13 @@ WITH target AS (
                     - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second')
        )
     RETURNING workers.*
-), revoked_credentials AS (
-    UPDATE worker_host_credentials AS credentials
-       SET revoked_at = COALESCE(credentials.revoked_at, now())
+), revoked_host_secrets AS (
+    UPDATE worker_host_secrets AS host_secrets
+       SET revoked_at = COALESCE(host_secrets.revoked_at, now())
       FROM target
-     WHERE credentials.worker_host_id = target.id
-       AND credentials.revoked_at IS NULL
-    RETURNING credentials.id
+     WHERE host_secrets.worker_host_id = target.id
+       AND host_secrets.revoked_at IS NULL
+    RETURNING host_secrets.id
 ), lost_runtimes AS (
     UPDATE computer_instances AS runtimes
        SET observed_state = 'lost', observed_version = runtimes.observed_version + 1,
@@ -71,12 +71,12 @@ WITH target AS (
        AND runtimes.observed_state IN ('allocated', 'ready')
     RETURNING runtimes.id
 )
--- Immediate fencing revokes credentials and marks Instance observations lost.
+-- Immediate fencing revokes host secrets and marks Instance observations lost.
 -- Physical reclamation still requires independent exclusion evidence. Run/build/computer authority is recovered by its canonical
 -- expiry and recovery loops; this transition does not imply zero authority.
 SELECT target.id, target.worker_group_id, target.current_epoch, target.status
   FROM target
- WHERE (SELECT count(*) FROM revoked_credentials) >= 0
+ WHERE (SELECT count(*) FROM revoked_host_secrets) >= 0
    AND (SELECT count(*) FROM lost_runtimes) >= 0;
 
 -- Worker Host fence for dispatch and Computer preparation. The caller

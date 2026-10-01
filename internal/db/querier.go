@@ -38,12 +38,12 @@ type Querier interface {
 	AppendSessionEvent(ctx context.Context, arg AppendSessionEventParams) (SessionEvent, error)
 	ApproveDeviceCode(ctx context.Context, arg ApproveDeviceCodeParams) (DeviceCode, error)
 	ArchiveOmittedSchedules(ctx context.Context, arg ArchiveOmittedSchedulesParams) error
-	AuthenticateWorkerHostCredential(ctx context.Context, arg AuthenticateWorkerHostCredentialParams) (AuthenticateWorkerHostCredentialRow, error)
-	AuthorizeRecoveringWorkerHostCredential(ctx context.Context, arg AuthorizeRecoveringWorkerHostCredentialParams) (AuthorizeRecoveringWorkerHostCredentialRow, error)
-	AuthorizeWorkerActivationCredential(ctx context.Context, arg AuthorizeWorkerActivationCredentialParams) (AuthorizeWorkerActivationCredentialRow, error)
+	AuthenticateWorkerHostSecret(ctx context.Context, arg AuthenticateWorkerHostSecretParams) (AuthenticateWorkerHostSecretRow, error)
+	AuthorizeActivatingWorkerHostSecret(ctx context.Context, arg AuthorizeActivatingWorkerHostSecretParams) (AuthorizeActivatingWorkerHostSecretRow, error)
+	AuthorizeRecoveringWorkerHostSecret(ctx context.Context, arg AuthorizeRecoveringWorkerHostSecretParams) (AuthorizeRecoveringWorkerHostSecretRow, error)
 	AuthorizeWorkerDrainReplay(ctx context.Context, arg AuthorizeWorkerDrainReplayParams) (AuthorizeWorkerDrainReplayRow, error)
 	AuthorizeWorkerFenceReplay(ctx context.Context, arg AuthorizeWorkerFenceReplayParams) (AuthorizeWorkerFenceReplayRow, error)
-	AuthorizeWorkerHostCredential(ctx context.Context, arg AuthorizeWorkerHostCredentialParams) (AuthorizeWorkerHostCredentialRow, error)
+	AuthorizeWorkerHostSecret(ctx context.Context, arg AuthorizeWorkerHostSecretParams) (AuthorizeWorkerHostSecretRow, error)
 	// The coordinator holds the Computer and instance locks, followed by all resident
 	// Run/wait locks in stable order. Logical wait registration never calls this by
 	// itself. Any active or unreconciled non-waiting scope keeps the instance resident.
@@ -611,7 +611,7 @@ type Querier interface {
 	ReadWorkerControlSecrets(ctx context.Context, computerIds []pgtype.UUID) ([]ReadWorkerControlSecretsRow, error)
 	ReadWorkerSessionControl(ctx context.Context, arg ReadWorkerSessionControlParams) (ReadWorkerSessionControlRow, error)
 	ReadyRunRetries(ctx context.Context, rowLimit int32) ([]ReadyRunRetriesRow, error)
-	// Immediate fencing revokes credentials and marks Instance observations lost.
+	// Immediate fencing revokes host secrets and marks Instance observations lost.
 	// Physical reclamation still requires independent exclusion evidence. Run/build/computer authority is recovered by its canonical
 	// expiry and recovery loops; this transition does not imply zero authority.
 	RecheckAndFenceStaleWorkerHost(ctx context.Context, arg RecheckAndFenceStaleWorkerHostParams) (RecheckAndFenceStaleWorkerHostRow, error)

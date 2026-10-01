@@ -39,7 +39,7 @@ func (r ProgramRunner) startRestoredProgram(ctx context.Context, claim *workerap
 		if opened.Mount.RestoreCheckpointID != resume.CheckpointID {
 			return errors.New("program restore differs from local Computer")
 		}
-		authority := freshComputerAuthority(claim, opened.ChannelToken, opened.Mount)
+		authority := freshComputerAuthority(claim, opened.ChannelCredential, opened.Mount)
 		authority.Fence.BaseComputerDiskVersionId = claim.Lease.BaseComputerDiskVersionID
 		attach, err := opened.GrantProgramResume(attemptCtx, &computerv0.GrantProgramResumeRequest{Authority: authority, RunWaitId: resume.RunWaitID, CheckpointId: resume.CheckpointID})
 		if err != nil {

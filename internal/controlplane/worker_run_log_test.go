@@ -26,12 +26,12 @@ import (
 type workerLogReplayStore struct {
 	db.Querier
 	replayMatches bool
-	authorization *db.AuthorizeWorkerHostCredentialRow
+	authorization *db.AuthorizeWorkerHostSecretRow
 }
 
-func (s workerLogReplayStore) AuthorizeWorkerHostCredential(_ context.Context, _ db.AuthorizeWorkerHostCredentialParams) (db.AuthorizeWorkerHostCredentialRow, error) {
+func (s workerLogReplayStore) AuthorizeWorkerHostSecret(_ context.Context, _ db.AuthorizeWorkerHostSecretParams) (db.AuthorizeWorkerHostSecretRow, error) {
 	if s.authorization == nil {
-		return db.AuthorizeWorkerHostCredentialRow{}, pgx.ErrNoRows
+		return db.AuthorizeWorkerHostSecretRow{}, pgx.ErrNoRows
 	}
 	return *s.authorization, nil
 }
@@ -46,12 +46,12 @@ func (s workerLogReplayStore) AppendRunLogChunk(context.Context, db.AppendRunLog
 
 func TestMountedWorkerRunLogRouteAcceptsExactMaximumAndRejectsOneByteOver(t *testing.T) {
 	workerID := uuid.NewV7()
-	credentialID := uuid.NewV7()
+	hostSecretID := uuid.NewV7()
 	lease := validRunLeaseAssignment(workerID)
 	now := time.Now().UTC()
 	store := workerLogReplayStore{
 		replayMatches: true,
-		authorization: &db.AuthorizeWorkerHostCredentialRow{
+		authorization: &db.AuthorizeWorkerHostSecretRow{
 			WorkerGroupID: pgvalue.UUID(uuid.MustParse(lease.WorkerGroupID)), WorkerHostID: pgvalue.UUID(workerID),
 			ClaimVersion: 1, ResourceID: "test-resource", WorkerStatus: "active",
 			EpochStartedAt: pgtype.Timestamptz{Time: now, Valid: true},
@@ -65,7 +65,7 @@ func TestMountedWorkerRunLogRouteAcceptsExactMaximumAndRejectsOneByteOver(t *tes
 	}
 	// The store authorizes any credential, so this transport test signs the
 	// token the exchange would issue for the lease's host and epoch.
-	claims := rawWorkerJWTClaims(workerID.String(), lease.WorkerGroupID, credentialID.String())
+	claims := rawWorkerJWTClaims(workerID.String(), lease.WorkerGroupID, hostSecretID.String())
 	claims["worker_epoch"] = lease.WorkerEpoch
 	token := signRawWorkerJWT(t, claims)
 

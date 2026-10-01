@@ -42,7 +42,7 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		tokenHash = nil
 	}
-	enrolled, err := workergroup.EnrollHost(r.Context(), s.db, s.hostCredentials, workergroup.Enrollment{
+	enrolled, err := workergroup.EnrollHost(r.Context(), s.db, s.hostAuth, workergroup.Enrollment{
 		TokenHash: tokenHash, PoolName: request.PoolName, ResourceID: request.ResourceID,
 	})
 	if err != nil {
@@ -68,27 +68,27 @@ func strictWorkerEnrollmentBearer(values []string) ([]byte, error) {
 	return auth.ParseEnrollmentToken(raw)
 }
 
-func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
-	var request workerapi.TokenRequest
+func (s *Server) workerIssueHostCredential(w http.ResponseWriter, r *http.Request) {
+	var request workerapi.HostCredentialRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
-		writeError(w, fmt.Errorf("invalid worker token request JSON: %w", err))
+		writeError(w, fmt.Errorf("invalid worker host credential request JSON: %w", err))
 		return
 	}
 	if err := checkWorkerAPIVersion(request.APIVersion); err != nil {
 		writeError(w, err)
 		return
 	}
-	token, err := workergroup.ExchangeCredential(r.Context(), s.db, s.hostCredentials, workergroup.CredentialExchange{
+	credential, err := workergroup.IssueHostCredential(r.Context(), s.db, s.hostAuth, workergroup.HostCredentialRequest{
 		HostID: request.WorkerHostID, Secret: request.WorkerHostSecret, ServiceID: request.ServiceID,
 	}, time.Now)
 	if err != nil {
-		s.writeWorkerHostError(w, "worker authentication", err)
+		s.writeWorkerHostError(w, "issue worker host credential", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, workerapi.TokenResponse{
-		Token:            token.Token,
-		ExpiresInSeconds: int64(token.ExpiresIn / time.Second),
-		WorkerEpoch:      token.Epoch,
+	writeJSON(w, http.StatusOK, workerapi.HostCredentialResponse{
+		Credential:       credential.Value,
+		ExpiresInSeconds: int64(credential.ExpiresIn / time.Second),
+		WorkerEpoch:      credential.Epoch,
 	})
 }
 

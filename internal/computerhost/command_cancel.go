@@ -15,7 +15,7 @@ func (m Server) cancelComputerCommand(ctx context.Context, session vm.Machine, m
 	if request.ComputerID != mount.ComputerID || r.ComputerInstanceID != mount.ComputerInstanceID || r.WriterGeneration != mount.WriterGeneration || request.RequestFingerprint == "" {
 		return computerBasicExecProtocol(errors.New("command cancellation does not match the Instance"))
 	}
-	return guestControl{machine: session}.cancelCommand(ctx, &computerv0.ComputerCommandCancelRequest{Authority: &computerv0.ComputerCommandAuthority{OperationId: r.CommandID, ComputerId: request.ComputerID, ComputerInstanceId: r.ComputerInstanceID, WriterGeneration: r.WriterGeneration, ChannelToken: m.channelToken(mount), OperationExpiresAtUnixNano: request.ExpiresAt.UnixNano(), RequestFingerprint: request.RequestFingerprint}})
+	return guestControl{machine: session}.cancelCommand(ctx, &computerv0.ComputerCommandCancelRequest{Authority: &computerv0.ComputerCommandAuthority{OperationId: r.CommandID, ComputerId: request.ComputerID, ComputerInstanceId: r.ComputerInstanceID, WriterGeneration: r.WriterGeneration, ChannelCredential: m.channelCredential(mount), OperationExpiresAtUnixNano: request.ExpiresAt.UnixNano(), RequestFingerprint: request.RequestFingerprint}})
 }
 
 // cancelCommand asks the guest to cancel one Command. Cancellation closes the

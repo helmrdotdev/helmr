@@ -87,7 +87,7 @@ def compile_config(raw):
         'EMAIL_PROVIDER': 'none',
     }
     for key in ['AUTH_KEY', 'TOKEN_CREDENTIAL_KEY', 'COMPUTER_FENCING_KEY', 'ENCRYPTION_KEY',
-                'WORKER_TOKEN_SIGNING_KEY', 'COMPUTER_WRAPPING_KEY']:
+                'WORKER_HOST_CREDENTIAL_SIGNING_KEY', 'COMPUTER_WRAPPING_KEY']:
         owned[key] = base64.b64encode(secrets.token_bytes(32)).decode()
     ch = {}
     for role in ['BOOTSTRAP', 'READER', 'INGESTER', 'MIGRATION']:
@@ -107,7 +107,7 @@ def compile_config(raw):
         'CAS_URI': cp['CAS_URI'], 'PLATFORM_STORE_URI': cp['PLATFORM_STORE_URI'],
         'WORKER_ENROLLMENT_TOKEN_FILE': str(CONFIG / 'enrollment-token'),
         'WORKER_WORK_DIR': str(WORKER_DATA), 'WORKER_IMAGES_DIR': '/var/lib/helmr/images',
-        'WORKER_INSTANCE_CREDENTIAL_PATH': str(WORKER_DATA / 'worker-credential.json'),
+        'WORKER_HOST_SECRET_PATH': str(WORKER_DATA / 'worker-host-secret.json'),
         'JAILER_CHROOT_DIR': '/var/lib/helmr/jailer', 'JAILER_UID': '1001', 'JAILER_GID': '1001',
         'FIRECRACKER_PATH': '/usr/local/bin/firecracker', 'JAILER_PATH': '/usr/local/bin/jailer',
         'CPU_TEMPLATE_HELPER_PATH': '/usr/local/bin/cpu-template-helper',

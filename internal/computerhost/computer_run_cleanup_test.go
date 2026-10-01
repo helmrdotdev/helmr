@@ -79,7 +79,7 @@ func TestComputerRunCleanupRetriesLostReplies(t *testing.T) {
 						results <- err
 						return
 					}
-					if req.RunLeaseId != "lease" || req.WriterGeneration != 3 || req.ChannelToken != "token" || req.AttemptNumber != 2 {
+					if req.RunLeaseId != "lease" || req.WriterGeneration != 3 || req.ChannelCredential != "token" || req.AttemptNumber != 2 {
 						results <- errors.New("wrong identity")
 						return
 					}
@@ -91,7 +91,7 @@ func TestComputerRunCleanupRetriesLostReplies(t *testing.T) {
 				}()
 				return testVMStream(host), nil
 			}}
-			mount := workerapi.ComputerInstanceAssignment{ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 3, GuestdChannelToken: "token"}
+			mount := workerapi.ComputerInstanceAssignment{ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 3, GuestChannelCredential: "token"}
 			err := (Server{}).reconcileComputerRuns(ctx, session, mount, client)
 			if !errors.Is(err, context.Canceled) || calls != 2 || client.pending {
 				t.Fatalf("err=%v calls=%d pending=%v", err, calls, client.pending)

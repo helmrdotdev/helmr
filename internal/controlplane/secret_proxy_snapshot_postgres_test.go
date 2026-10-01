@@ -58,7 +58,7 @@ func newSnapshotFixture(t *testing.T, count int, root bool) *snapshotFixture {
 	}
 	f.worker = workergroup.HostPrincipal{HostID: f.fixture.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	f.server = &Server{db: f.q, tx: f.fixture.Pool, secretProxy: f.store, computers: computer.NewCreator(f.store), log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_instances SET guest_channel_token_hash=decode(repeat('01',32),'hex'),guest_channel_token_expires_at=now()+interval '10 minutes' WHERE id=$1", f.runtime)
+	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_instances SET guest_channel_credential_hash=decode(repeat('01',32),'hex'),guest_channel_credential_expires_at=now()+interval '10 minutes' WHERE id=$1", f.runtime)
 	for i := 0; i < count; i++ {
 		name := string(rune('a' + i))
 		record, err := f.store.Create(t.Context(), f.fixture.EnvironmentID, "token-"+name, []byte("old-"+name), "create-"+name)
@@ -139,7 +139,7 @@ func TestProtectedSnapshotBeforeAndAfterTransitions(t *testing.T) {
 					case "lease":
 						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_instances SET writer_expires_at=now()-interval '1 second' WHERE id=$1", f.runtime)
 					case "token":
-						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_instances SET guest_channel_token_expires_at=now()-interval '1 second' WHERE id=$1", f.runtime)
+						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_instances SET guest_channel_credential_expires_at=now()-interval '1 second' WHERE id=$1", f.runtime)
 					case "writer":
 						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computers SET writer_generation=writer_generation+1 WHERE id=$1", f.computer)
 					}
@@ -204,7 +204,7 @@ func TestProtectedSnapshotCoverageAndExpiry(t *testing.T) {
 	if err != nil || len(rows) != 0 {
 		t.Fatal("wrong runtime accepted")
 	}
-	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_instances SET guest_channel_token_expires_at=now()+interval '150 milliseconds' WHERE id=$1", f.runtime)
+	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_instances SET guest_channel_credential_expires_at=now()+interval '150 milliseconds' WHERE id=$1", f.runtime)
 	tx, err := f.fixture.Pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)

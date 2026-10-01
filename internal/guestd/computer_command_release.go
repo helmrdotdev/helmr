@@ -21,7 +21,7 @@ func (entry *computerMountEntry) hasUnreleasedCommands() bool {
 // Release follows durable Control Plane outcome acknowledgement. A tombstone
 // retains duplicate-launch protection for the remainder of this Instance.
 func (r *computerOperationRegistry) releaseCommand(a *computerv0.ComputerCommandAuthority) error {
-	entry, release, ok := r.acquireCommandInstance(a.GetComputerInstanceId(), a.GetComputerId(), a.GetChannelToken())
+	entry, release, ok := r.acquireCommandInstance(a.GetComputerInstanceId(), a.GetComputerId(), a.GetChannelCredential())
 	if !ok {
 		return errors.New("command Instance is unavailable")
 	}
@@ -30,7 +30,7 @@ func (r *computerOperationRegistry) releaseCommand(a *computerv0.ComputerCommand
 	defer entry.lifecycleMu.Unlock()
 	entry.finalizationMu.Lock()
 	defer entry.finalizationMu.Unlock()
-	if !r.currentMountLocked(entry, entry.computerInstanceID, a.GetComputerId(), a.GetChannelToken()) || entry.writerGeneration != a.GetWriterGeneration() {
+	if !r.currentMountLocked(entry, entry.computerInstanceID, a.GetComputerId(), a.GetChannelCredential()) || entry.writerGeneration != a.GetWriterGeneration() {
 		return errors.New("command writer changed")
 	}
 	command := entry.commands[a.GetOperationId()]

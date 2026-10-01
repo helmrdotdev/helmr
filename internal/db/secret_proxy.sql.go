@@ -26,7 +26,7 @@ WITH authority AS (
  AND h.observed_at>=statement_timestamp()-interval '120 seconds'
  AND c.status='active' AND c.desired_state='active' AND c.deleted_at IS NULL
  AND i.desired_state='ready' AND i.reclaimed_at IS NULL AND i.writer_expires_at>statement_timestamp()
- AND i.observed_state='ready' AND i.mount_state='mounted' AND i.guest_channel_token_expires_at>statement_timestamp()
+ AND i.observed_state='ready' AND i.mount_state='mounted' AND i.guest_channel_credential_expires_at>statement_timestamp()
  AND (EXISTS(SELECT 1 FROM run_leases l WHERE l.computer_instance_id=i.id AND l.writer_generation=i.writer_generation
              AND l.status IN ('starting','running') AND l.expires_at>statement_timestamp())
       OR EXISTS(SELECT 1 FROM computer_commands command WHERE command.computer_instance_id=i.id
@@ -128,7 +128,7 @@ WITH authority AS (
  AND ((i.observed_state='allocated' AND i.preparation_expires_at>statement_timestamp() AND h.status='active' AND g.status='active'
        AND h.run_paused_reason IS NULL AND h.vm_paused_reason IS NULL
        AND EXISTS(SELECT 1 FROM worker_pools p WHERE p.id=h.worker_pool_id AND p.status='active'))
-      OR (i.observed_state='ready' AND i.mount_state='mounted' AND i.guest_channel_token_expires_at>statement_timestamp()))
+      OR (i.observed_state='ready' AND i.mount_state='mounted' AND i.guest_channel_credential_expires_at>statement_timestamp()))
 )
 SELECT a.environment_id,a.computer_id,a.certificate,a.not_after,a.private_key_nonce,a.private_key_ciphertext,a.claims_current,
  ARRAY(SELECT DISTINCT unnest(b.allowed_origins) FROM computer_secrets b

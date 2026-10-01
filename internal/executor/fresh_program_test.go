@@ -736,7 +736,7 @@ func readFreshProgramAdmission(
 		return err
 	}
 	fence := authority.GetFence()
-	if authority.GetChannelToken() != "channel-1" ||
+	if authority.GetChannelCredential() != "channel-1" ||
 		authority.GetWriteCapability() != "write-capability" ||
 		fence.GetWorkerHostId() != lease.WorkerHostID ||
 		fence.GetWorkerEpoch() != lease.WorkerEpoch ||

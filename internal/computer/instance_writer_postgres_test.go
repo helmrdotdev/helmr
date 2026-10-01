@@ -58,7 +58,7 @@ func TestInstanceChannelHasOneOwner(t *testing.T) {
 			i, err := applyChannelClaim(t, f, principal, writer, token)
 			if err == nil {
 				hash := sha256.Sum256([]byte(token))
-				if !bytes.Equal(i.GuestChannelTokenHash, hash[:]) || i.WriterGeneration != writer.WriterGeneration || !i.GuestChannelTokenExpiresAt.Time.Equal(i.WriterExpiresAt.Time) {
+				if !bytes.Equal(i.GuestChannelCredentialHash, hash[:]) || i.WriterGeneration != writer.WriterGeneration || !i.GuestChannelCredentialExpiresAt.Time.Equal(i.WriterExpiresAt.Time) {
 					results <- errors.New("channel changed writer authority")
 					return
 				}
@@ -119,8 +119,8 @@ func TestClaimInstanceAssignsOnePreparedInstance(t *testing.T) {
 	if assignment == nil {
 		t.Fatal("prepared Instance not assigned")
 	}
-	hash := sha256.Sum256([]byte(assignment.ChannelToken))
-	if assignment.Instance.ID != pgvalue.UUID(writer.InstanceID) || !bytes.Equal(assignment.Instance.GuestChannelTokenHash, hash[:]) || assignment.Source.SeedDigest == "" {
+	hash := sha256.Sum256([]byte(assignment.ChannelCredential))
+	if assignment.Instance.ID != pgvalue.UUID(writer.InstanceID) || !bytes.Equal(assignment.Instance.GuestChannelCredentialHash, hash[:]) || assignment.Source.SeedDigest == "" {
 		t.Fatalf("assignment=%+v", assignment)
 	}
 	if again, err := ClaimInstance(t.Context(), db.New(f.Pool), f.Pool, principal); err != nil || again != nil {
@@ -134,23 +134,23 @@ func TestInstanceWriterRenewalDoesNotRenewMembers(t *testing.T) {
 			f := runtest.New(t)
 			work := f.AddRunLease(t, "running", time.Now())
 			principal, writer := writerFixture(t, f, work)
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET guest_channel_token_hash=decode(repeat('ab',32),'hex'),guest_channel_token_expires_at=clock_timestamp()+interval '30 seconds',writer_expires_at=clock_timestamp()+interval '30 seconds',admission_state=$2,desired_version=desired_version+CASE WHEN $2='closed' THEN 1 ELSE 0 END,desired_state=CASE WHEN $2='closed' THEN 'closed' ELSE 'ready' END WHERE id=$1`, writer.InstanceID, state)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET guest_channel_credential_hash=decode(repeat('ab',32),'hex'),guest_channel_credential_expires_at=clock_timestamp()+interval '30 seconds',writer_expires_at=clock_timestamp()+interval '30 seconds',admission_state=$2,desired_version=desired_version+CASE WHEN $2='closed' THEN 1 ELSE 0 END,desired_state=CASE WHEN $2='closed' THEN 'closed' ELSE 'ready' END WHERE id=$1`, writer.InstanceID, state)
 			var before, leaseBefore, channelBefore time.Time
-			if err := f.Pool.QueryRow(t.Context(), `SELECT i.writer_expires_at,l.expires_at,i.guest_channel_token_expires_at FROM computer_instances i JOIN run_leases l ON l.computer_instance_id=i.id WHERE l.id=$1`, work.LeaseID).Scan(&before, &leaseBefore, &channelBefore); err != nil {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT i.writer_expires_at,l.expires_at,i.guest_channel_credential_expires_at FROM computer_instances i JOIN run_leases l ON l.computer_instance_id=i.id WHERE l.id=$1`, work.LeaseID).Scan(&before, &leaseBefore, &channelBefore); err != nil {
 				t.Fatal(err)
 			}
 			result, err := RenewInstance(t.Context(), f.Pool, principal, writer)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if state != "closed" && (!result.GuestChannelTokenExpiresAt.Valid || !result.GuestChannelTokenExpiresAt.Time.After(before)) {
+			if state != "closed" && (!result.GuestChannelCredentialExpiresAt.Valid || !result.GuestChannelCredentialExpiresAt.Time.After(before)) {
 				t.Fatal("live Instance channel expired independently of renewed writer")
 			}
 			if result.AdmissionState != state {
 				t.Fatal("renewal changed admission")
 			}
 			if state == "closed" {
-				if !result.WriterExpiresAt.Time.Equal(before) || !result.GuestChannelTokenExpiresAt.Time.Equal(channelBefore) {
+				if !result.WriterExpiresAt.Time.Equal(before) || !result.GuestChannelCredentialExpiresAt.Time.Equal(channelBefore) {
 					t.Fatal("closed writer extended")
 				}
 			} else if !result.WriterExpiresAt.Time.After(before) {

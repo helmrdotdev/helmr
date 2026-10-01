@@ -62,7 +62,7 @@ func (r *computerOperationRegistry) startComputerBasicExec(ctx context.Context, 
 	if err := validateComputerBasicExecClaim(ctx, request); err != nil {
 		return nil, "computer_command_fenced", err
 	}
-	if !r.currentMountLocked(entry, entry.computerInstanceID, envelope.GetComputerId(), envelope.GetChannelToken()) || entry.computerInstanceID != envelope.GetComputerInstanceId() || entry.writerGeneration != envelope.GetWriterGeneration() {
+	if !r.currentMountLocked(entry, entry.computerInstanceID, envelope.GetComputerId(), envelope.GetChannelCredential()) || entry.computerInstanceID != envelope.GetComputerInstanceId() || entry.writerGeneration != envelope.GetWriterGeneration() {
 		return nil, "computer_command_fenced", errors.New("command does not match the live Computer instance")
 	}
 	entry.processesMu.Lock()
@@ -135,7 +135,7 @@ func validateComputerBasicExecClaim(ctx context.Context, request *computerv0.Com
 		return err
 	}
 	e := request.GetEnvelope()
-	if strings.TrimSpace(e.GetOperationId()) == "" || strings.TrimSpace(e.GetRequestFingerprint()) == "" || strings.TrimSpace(e.GetComputerInstanceId()) == "" || strings.TrimSpace(e.GetComputerId()) == "" || strings.TrimSpace(e.GetChannelToken()) == "" || e.GetWriterGeneration() <= 0 {
+	if strings.TrimSpace(e.GetOperationId()) == "" || strings.TrimSpace(e.GetRequestFingerprint()) == "" || strings.TrimSpace(e.GetComputerInstanceId()) == "" || strings.TrimSpace(e.GetComputerId()) == "" || strings.TrimSpace(e.GetChannelCredential()) == "" || e.GetWriterGeneration() <= 0 {
 		return errors.New("command authority is incomplete")
 	}
 	if time.Now().UnixNano() >= e.GetOperationExpiresAtUnixNano() {

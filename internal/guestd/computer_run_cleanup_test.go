@@ -11,7 +11,7 @@ import (
 
 func cleanupRequest(a *computerv0.ComputerRunAuthority) *computerv0.ComputerRunCleanupRequest {
 	f := a.GetFence()
-	return &computerv0.ComputerRunCleanupRequest{ComputerId: f.ComputerId, ComputerInstanceId: f.ComputerInstanceId, WriterGeneration: f.WriterGeneration, ChannelToken: a.ChannelToken, RunId: f.RunId, RunLeaseId: f.RunLeaseId, AttemptNumber: f.AttemptNumber}
+	return &computerv0.ComputerRunCleanupRequest{ComputerId: f.ComputerId, ComputerInstanceId: f.ComputerInstanceId, WriterGeneration: f.WriterGeneration, ChannelCredential: a.ChannelCredential, RunId: f.RunId, RunLeaseId: f.RunLeaseId, AttemptNumber: f.AttemptNumber}
 }
 func TestProgramCleanupWaitsForScopeAndPreservesPeer(t *testing.T) {
 	entry, r, a := testProgramMount(t)
@@ -70,7 +70,7 @@ func TestProgramCleanupBlocksDelayedAdmissionAndRejectsStaleIdentity(t *testing.
 	request := cleanupRequest(a)
 	for _, alter := range []func(*computerv0.ComputerRunCleanupRequest){
 		func(v *computerv0.ComputerRunCleanupRequest) { v.WriterGeneration++ },
-		func(v *computerv0.ComputerRunCleanupRequest) { v.ChannelToken = "wrong" },
+		func(v *computerv0.ComputerRunCleanupRequest) { v.ChannelCredential = "wrong" },
 		func(v *computerv0.ComputerRunCleanupRequest) { v.ComputerInstanceId = "wrong" },
 	} {
 		wrong := proto.Clone(request).(*computerv0.ComputerRunCleanupRequest)

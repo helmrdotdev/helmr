@@ -21,7 +21,7 @@ func TestWorkerEnrollmentTokenSelectsGroupAndRecordsUse(t *testing.T) {
 		TokenHash:    make([]byte, 32),
 		WorkerPoolID: pgvalue.UUID(uuid.MustParse(dbtest.DefaultWorkerPoolID)), PoolName: "default",
 		WorkerHostID: pgvalue.NewUUIDv7(), ResourceID: "enrollment-host",
-		CurrentServiceID: pgvalue.NewUUIDv7(), CredentialID: pgvalue.NewUUIDv7(),
+		CurrentServiceID: pgvalue.NewUUIDv7(), HostSecretID: pgvalue.NewUUIDv7(),
 		KeyPrefix: uuid.New().String(), SecretHash: []byte("instance-secret"),
 	}
 	credential, err := q.EnrollWorkerHost(ctx, params)
@@ -53,7 +53,7 @@ func TestWorkerEnrollmentRejectsUnknownTokenAndDrainingGroup(t *testing.T) {
 		TokenHash:    make([]byte, 32),
 		WorkerPoolID: pgvalue.UUID(uuid.MustParse(dbtest.DefaultWorkerPoolID)), PoolName: "default",
 		WorkerHostID: pgvalue.NewUUIDv7(), ResourceID: "unknown-token-host",
-		CurrentServiceID: pgvalue.NewUUIDv7(), CredentialID: pgvalue.NewUUIDv7(),
+		CurrentServiceID: pgvalue.NewUUIDv7(), HostSecretID: pgvalue.NewUUIDv7(),
 		KeyPrefix: uuid.New().String(), SecretHash: []byte("instance-secret"),
 	}
 	unknown := base
@@ -73,7 +73,7 @@ func TestWorkerEnrollmentRejectsUnknownTokenAndDrainingGroup(t *testing.T) {
 	}
 	draining := base
 	draining.WorkerHostID = pgvalue.NewUUIDv7()
-	draining.CredentialID = pgvalue.NewUUIDv7()
+	draining.HostSecretID = pgvalue.NewUUIDv7()
 	draining.ResourceID = "draining-host"
 	if _, err := q.EnrollWorkerHost(ctx, draining); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("draining group enrollment error = %v", err)

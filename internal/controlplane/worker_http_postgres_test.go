@@ -81,10 +81,10 @@ func (f workerHTTPFixture) host(t *testing.T, enrolled workerapi.EnrollmentRespo
 	return host
 }
 
-// token exchanges the host secret for an epoch token.
-func (h workerHost) token(t *testing.T, f workerHTTPFixture) string {
+// issue exchanges the host secret for a host credential.
+func (h workerHost) issue(t *testing.T, f workerHTTPFixture) string {
 	t.Helper()
-	return exchangeWorkerToken(t, f.handler, h.enrolled.WorkerHostID, h.enrolled.WorkerHostSecret, h.serviceID)
+	return issueWorkerHostCredential(t, f.handler, h.enrolled.WorkerHostID, h.enrolled.WorkerHostSecret, h.serviceID)
 }
 
 // start recovers the host and activates it with capabilities, as a worker
@@ -126,15 +126,15 @@ func TestWorkerHostLifecycleHTTP(t *testing.T) {
 	enrolled := f.enroll(t, "default", "i-lifecycle")
 	service := uuid.NewV7().String()
 	for name, test := range map[string]struct {
-		body   workerapi.TokenRequest
+		body   workerapi.HostCredentialRequest
 		status int
 		code   string
 	}{
-		"host missing":      {body: workerapi.TokenRequest{WorkerHostSecret: enrolled.WorkerHostSecret, ServiceID: service}, status: http.StatusBadRequest, code: "bad_request"},
-		"host malformed":    {body: workerapi.TokenRequest{WorkerHostID: "host", WorkerHostSecret: enrolled.WorkerHostSecret, ServiceID: service}, status: http.StatusBadRequest, code: "bad_request"},
-		"secret blank":      {body: workerapi.TokenRequest{WorkerHostID: enrolled.WorkerHostID, ServiceID: "service"}, status: http.StatusUnauthorized, code: "unauthorized"},
-		"service malformed": {body: workerapi.TokenRequest{WorkerHostID: enrolled.WorkerHostID, WorkerHostSecret: enrolled.WorkerHostSecret, ServiceID: "service"}, status: http.StatusBadRequest, code: "bad_request"},
-		"secret wrong":      {body: workerapi.TokenRequest{WorkerHostID: enrolled.WorkerHostID, WorkerHostSecret: "hlmr_wi_wrong", ServiceID: service}, status: http.StatusUnauthorized, code: "unauthorized"},
+		"host missing":      {body: workerapi.HostCredentialRequest{WorkerHostSecret: enrolled.WorkerHostSecret, ServiceID: service}, status: http.StatusBadRequest, code: "bad_request"},
+		"host malformed":    {body: workerapi.HostCredentialRequest{WorkerHostID: "host", WorkerHostSecret: enrolled.WorkerHostSecret, ServiceID: service}, status: http.StatusBadRequest, code: "bad_request"},
+		"secret blank":      {body: workerapi.HostCredentialRequest{WorkerHostID: enrolled.WorkerHostID, ServiceID: "service"}, status: http.StatusUnauthorized, code: "unauthorized"},
+		"service malformed": {body: workerapi.HostCredentialRequest{WorkerHostID: enrolled.WorkerHostID, WorkerHostSecret: enrolled.WorkerHostSecret, ServiceID: "service"}, status: http.StatusBadRequest, code: "bad_request"},
+		"secret wrong":      {body: workerapi.HostCredentialRequest{WorkerHostID: enrolled.WorkerHostID, WorkerHostSecret: "hlmr_wi_wrong", ServiceID: service}, status: http.StatusUnauthorized, code: "unauthorized"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			test.body.APIVersion = workerapi.APIVersion
@@ -142,14 +142,14 @@ func TestWorkerHostLifecycleHTTP(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			assertAdminError(t, f.request(t, http.MethodPost, "/worker/v1/instance/token", "", string(body)), test.status, test.code)
+			assertAdminError(t, f.request(t, http.MethodPost, "/worker/v1/instance/credential", "", string(body)), test.status, test.code)
 		})
 	}
 
 	host := f.host(t, enrolled)
-	token := host.token(t, f)
+	hostCredential := host.issue(t, f)
 	// A registering host is admitted only to recovery and activation.
-	assertAdminError(t, f.request(t, http.MethodGet, "/worker/v1/instance", token, ""), http.StatusUnauthorized, "unauthorized")
+	assertAdminError(t, f.request(t, http.MethodGet, "/worker/v1/instance", hostCredential, ""), http.StatusUnauthorized, "unauthorized")
 	activated := host.start(t, validWorkerCapabilities(t))
 	if activated.Status != workerapi.StatusActive || activated.WorkerHostID != enrolled.WorkerHostID || activated.WorkerGroupID != f.group.ID {
 		t.Fatalf("activated = %+v", activated)
@@ -165,27 +165,27 @@ func TestWorkerHostLifecycleHTTP(t *testing.T) {
 		t.Fatalf("diagnostic fence reason error = %v, want 400", err)
 	}
 
-	// Pausing the group advances its claim version: a token minted before the
+	// Pausing the group advances its claim version: a host credential minted before the
 	// transition no longer authenticates and the host re-exchanges its secret.
-	token = host.token(t, f)
-	if response := f.request(t, http.MethodGet, "/worker/v1/instance", token, ""); response.Code != http.StatusOK {
+	hostCredential = host.issue(t, f)
+	if response := f.request(t, http.MethodGet, "/worker/v1/instance", hostCredential, ""); response.Code != http.StatusOK {
 		t.Fatalf("status before pause = %d: %s", response.Code, response.Body.String())
 	}
 	group := decodeAdmin[api.AdminWorkerGroup](t, f.request(t, http.MethodGet, "/admin/api/v1/worker-groups/"+f.group.ID, f.admin, ""), http.StatusOK)
 	decodeAdmin[workergroup.GroupStatus](t, f.request(t, http.MethodPost, "/admin/api/v1/worker-groups/"+f.group.ID+"/pause", f.admin,
 		`{"expected_claim_version":`+strconv.FormatInt(group.ClaimVersion, 10)+`}`), http.StatusOK)
-	assertAdminError(t, f.request(t, http.MethodGet, "/worker/v1/instance", token, ""), http.StatusUnauthorized, "unauthorized")
+	assertAdminError(t, f.request(t, http.MethodGet, "/worker/v1/instance", hostCredential, ""), http.StatusUnauthorized, "unauthorized")
 	if status, err := host.client.GetWorkerStatus(t.Context()); err != nil || status.Status != workerapi.StatusActive {
 		t.Fatalf("status after pause = %+v, err = %v", status, err)
 	}
 
 	// Draining advances the host claim version in the same way.
-	token = host.token(t, f)
+	hostCredential = host.issue(t, f)
 	draining, err := host.client.DrainWorker(t.Context())
 	if err != nil || draining.Status != workerapi.StatusDraining {
 		t.Fatalf("drain = %+v, err = %v", draining, err)
 	}
-	assertAdminError(t, f.request(t, http.MethodGet, "/worker/v1/instance", token, ""), http.StatusUnauthorized, "unauthorized")
+	assertAdminError(t, f.request(t, http.MethodGet, "/worker/v1/instance", hostCredential, ""), http.StatusUnauthorized, "unauthorized")
 	completion := workerapi.DrainCompletionRequest{
 		InventoryComplete: true, InventoryScope: "worker_runtime_state_roots_v0",
 		ObservedAt: time.Now().UTC(), Inventory: []string{},
@@ -213,13 +213,13 @@ func TestWorkerHostActivationAndFenceHTTP(t *testing.T) {
 		t.Fatalf("mismatched activation error = %v, want 409", err)
 	}
 
-	token := first.token(t, f)
+	hostCredential := first.issue(t, f)
 	if err := first.client.FenceWorker(t.Context(), "worker_retired"); err != nil {
 		t.Fatal(err)
 	}
-	// A lost fence response is replayed with the same token.
-	if response := f.request(t, http.MethodPost, "/worker/v1/instance/fence", token, `{"reason_code":"worker_retired"}`); response.Code != http.StatusNoContent {
+	// A lost fence response is replayed with the same host credential.
+	if response := f.request(t, http.MethodPost, "/worker/v1/instance/fence", hostCredential, `{"reason_code":"worker_retired"}`); response.Code != http.StatusNoContent {
 		t.Fatalf("fence replay status = %d: %s", response.Code, response.Body.String())
 	}
-	assertAdminError(t, f.request(t, http.MethodGet, "/worker/v1/instance", token, ""), http.StatusUnauthorized, "unauthorized")
+	assertAdminError(t, f.request(t, http.MethodGet, "/worker/v1/instance", hostCredential, ""), http.StatusUnauthorized, "unauthorized")
 }

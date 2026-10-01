@@ -26,19 +26,19 @@ WITH transitioned AS (
     FROM target WHERE i.worker_host_id=target.id AND i.worker_epoch=target.current_epoch
       AND i.reclaimed_at IS NULL AND i.admission_state='open'
     RETURNING i.id
-), credential_fence AS (
-    UPDATE worker_host_credentials
+), host_secret_fence AS (
+    UPDATE worker_host_secrets
        SET claim_version = target.claim_version
       FROM target
-     WHERE worker_host_credentials.worker_host_id = target.id
-       AND worker_host_credentials.revoked_at IS NULL
-       AND worker_host_credentials.claim_version < target.claim_version
-    RETURNING worker_host_credentials.id
+     WHERE worker_host_secrets.worker_host_id = target.id
+       AND worker_host_secrets.revoked_at IS NULL
+       AND worker_host_secrets.claim_version < target.claim_version
+    RETURNING worker_host_secrets.id
 )
 SELECT target.*
   FROM target
  WHERE (SELECT count(*) FROM draining_instances) >= 0
-   AND (SELECT count(*) FROM credential_fence) >= 0;
+   AND (SELECT count(*) FROM host_secret_fence) >= 0;
 
 -- name: FenceWorkerHost :one
 WITH target AS (
@@ -51,13 +51,13 @@ WITH target AS (
        AND worker_hosts.claim_version = sqlc.arg(expected_claim_version)
        AND worker_hosts.status IN ('active', 'draining')
     RETURNING *
-), revoked_credentials AS (
-    UPDATE worker_host_credentials
+), revoked_host_secrets AS (
+    UPDATE worker_host_secrets
        SET revoked_at = COALESCE(revoked_at, now())
       FROM target
-     WHERE worker_host_credentials.worker_host_id = target.id
-       AND worker_host_credentials.revoked_at IS NULL
-    RETURNING worker_host_credentials.id
+     WHERE worker_host_secrets.worker_host_id = target.id
+       AND worker_host_secrets.revoked_at IS NULL
+    RETURNING worker_host_secrets.id
 ), lost_runtimes AS (
     UPDATE computer_instances
        SET observed_state = 'lost', observed_version = observed_version + 1,
@@ -73,7 +73,7 @@ WITH target AS (
 )
 SELECT target.*
   FROM target
- WHERE (SELECT count(*) FROM revoked_credentials) >= 0
+ WHERE (SELECT count(*) FROM revoked_host_secrets) >= 0
    AND (SELECT count(*) FROM lost_runtimes) >= 0
 UNION ALL
 SELECT worker_hosts.*

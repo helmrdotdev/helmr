@@ -32,7 +32,7 @@ func memberCaptureTarget(count int) workerapi.RuntimeReconcileTarget {
 
 // memberCaptureMount is target's restored Instance.
 func memberCaptureMount(target workerapi.RuntimeReconcileTarget) workerapi.ComputerInstanceAssignment {
-	return workerapi.ComputerInstanceAssignment{ComputerInstanceID: target.ID, ComputerID: target.Source.ComputerID, WriterGeneration: target.Source.WriterGeneration, RestoreCheckpointID: "restored-checkpoint", DesiredVersion: 4, RuntimeEpoch: target.WorkerEpoch, VMPlatformID: "platform", GuestdChannelToken: "channel", Target: workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "disk"}}
+	return workerapi.ComputerInstanceAssignment{ComputerInstanceID: target.ID, ComputerID: target.Source.ComputerID, WriterGeneration: target.Source.WriterGeneration, RestoreCheckpointID: "restored-checkpoint", DesiredVersion: 4, RuntimeEpoch: target.WorkerEpoch, VMPlatformID: "platform", GuestChannelCredential: "channel", Target: workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "disk"}}
 }
 
 // memberCaptureClaim is member's restored claim on target's Instance, whose

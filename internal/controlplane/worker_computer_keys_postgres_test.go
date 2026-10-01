@@ -17,11 +17,11 @@ import (
 func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
 	f := newInitialPublicationFixture(t)
 	handler := f.serve(t)
-	credential := seedHostCredential(t, f.Pool, f.worker.HostID)
+	hostSecret := seedHostSecret(t, f.Pool, f.worker.HostID)
 	httpServer := httptest.NewServer(handler)
 	defer httpServer.Close()
-	client := credential.client(t, httpServer.URL)
-	token := credential.token(t, handler)
+	client := hostSecret.client(t, httpServer.URL)
+	hostCredential := hostSecret.issue(t, handler)
 	request := workerapi.InitialComputerKeyRequest{ComputerInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 1}
 	first, err := client.InitialComputerKey(t.Context(), request)
 	if err != nil {
@@ -46,7 +46,7 @@ func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
 		handler.ServeHTTP(w, r)
 		return w
 	}
-	if w := call(token, payload); w.Code != 200 || w.Header().Get("Cache-Control") != "no-store" {
+	if w := call(hostCredential, payload); w.Code != 200 || w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("successful response status/cache policy: %d", w.Code)
 	}
 	// Tokens the exchange never issues: another host's, and an expired one.
@@ -66,7 +66,7 @@ func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
 		"oversized":  []byte(`{"computer_instance_id":"` + strings.Repeat("x", 1100) + `","desired_version":1}`),
 	} {
 		t.Run(name, func(t *testing.T) {
-			w := call(token, body)
+			w := call(hostCredential, body)
 			if w.Code != 400 && w.Code != 413 {
 				t.Fatalf("invalid input accepted status=%d", w.Code)
 			}
@@ -78,20 +78,20 @@ func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
 	wrongRuntime := request
 	wrongRuntime.ComputerInstanceID = uuid.NewV7().String()
 	wrongPayload, _ := json.Marshal(wrongRuntime)
-	if w := call(token, wrongPayload); w.Code != 409 {
+	if w := call(hostCredential, wrongPayload); w.Code != 409 {
 		t.Fatalf("unowned runtime status=%d", w.Code)
 	}
-	// Draining the host advances its claim version: the token minted before
+	// Draining the host advances its claim version: the host credential minted before
 	// the drain no longer authenticates.
 	drain := httptest.NewRequest("POST", "/worker/v1/instance/drain", nil)
-	drain.Header.Set("Authorization", "Bearer "+token)
+	drain.Header.Set("Authorization", "Bearer "+hostCredential)
 	drained := httptest.NewRecorder()
 	handler.ServeHTTP(drained, drain)
 	if drained.Code != 200 {
 		t.Fatalf("drain status=%d body=%s", drained.Code, drained.Body.String())
 	}
-	if w := call(token, payload); w.Code != 401 || strings.Contains(w.Body.String(), first.ID) {
-		t.Fatalf("pre-drain token key response status=%d", w.Code)
+	if w := call(hostCredential, payload); w.Code != 401 || strings.Contains(w.Body.String(), first.ID) {
+		t.Fatalf("pre-drain host credential key response status=%d", w.Code)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, f.runtime)
 	if material, err := client.InitialComputerKey(t.Context(), request); err == nil || len(material.Key) != 0 {

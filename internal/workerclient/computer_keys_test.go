@@ -29,8 +29,8 @@ func TestInitialComputerKeyRejectsMalformedAndSensitiveErrors(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/worker/v1/instance/token" {
-					_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{Token: "token", ExpiresInSeconds: 3600})
+				if r.URL.Path == "/worker/v1/instance/credential" {
+					_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "credential", ExpiresInSeconds: 3600})
 					return
 				}
 				w.WriteHeader(tc.status)
@@ -50,12 +50,12 @@ func TestInitialComputerKeyRejectsMalformedAndSensitiveErrors(t *testing.T) {
 }
 
 func TestInitialComputerKeyRefreshesAuthenticationOnce(t *testing.T) {
-	tokenCalls, keyCalls := 0, 0
+	credentialCalls, keyCalls := 0, 0
 	valid := workerapi.ComputerKeyMaterial{Scope: "scope", ID: uuid.NewV7().String(), Key: make([]byte, 32)}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/worker/v1/instance/token" {
-			tokenCalls++
-			_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{Token: "token", ExpiresInSeconds: 3600})
+		if r.URL.Path == "/worker/v1/instance/credential" {
+			credentialCalls++
+			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "credential", ExpiresInSeconds: 3600})
 			return
 		}
 		keyCalls++
@@ -72,8 +72,8 @@ func TestInitialComputerKeyRefreshesAuthenticationOnce(t *testing.T) {
 	}
 	material, err := c.InitialComputerKey(t.Context(), workerapi.InitialComputerKeyRequest{})
 	defer clear(material.Key)
-	if err != nil || tokenCalls != 2 || keyCalls != 2 || len(material.Key) != 32 {
-		t.Fatalf("refresh failed: token=%d key=%d err=%v", tokenCalls, keyCalls, err)
+	if err != nil || credentialCalls != 2 || keyCalls != 2 || len(material.Key) != 32 {
+		t.Fatalf("refresh failed: credential=%d key=%d err=%v", credentialCalls, keyCalls, err)
 	}
 }
 
@@ -104,8 +104,8 @@ func TestComputerSourceRejectsIncompleteKeys(t *testing.T) {
 				body = append(body, []byte("SECRET-MARKER")...)
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/worker/v1/instance/token" {
-					json.NewEncoder(w).Encode(workerapi.TokenResponse{Token: "token", ExpiresInSeconds: 3600})
+				if r.URL.Path == "/worker/v1/instance/credential" {
+					json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "credential", ExpiresInSeconds: 3600})
 					return
 				}
 				if tc == "error" {

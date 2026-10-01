@@ -690,7 +690,7 @@ func retryComputerAuthorityTransport(
 
 func (task *guestRunLeaseTask) clearCapabilities() {
 	if task.authority != nil {
-		task.authority.ChannelToken = ""
+		task.authority.ChannelCredential = ""
 		task.authority.WriteCapability = ""
 	}
 }

@@ -30,14 +30,14 @@ func validateComputerRunAuthority(entry *computerMountEntry, authority *computer
 		fence.GetWriterGeneration() <= 0 ||
 		fence.GetExpiresAtUnixNano() <= now.UnixNano() ||
 		strings.TrimSpace(fence.GetBaseComputerDiskVersionId()) == "" ||
-		strings.TrimSpace(authority.GetChannelToken()) == "" ||
+		strings.TrimSpace(authority.GetChannelCredential()) == "" ||
 		strings.TrimSpace(authority.GetWriteCapability()) == "" {
 		return errors.New("computer run authority is incomplete or expired")
 	}
 	if fence.GetWriterGeneration() != int64(entry.currentWriterGeneration()) ||
 		fence.GetComputerId() != entry.computerID ||
 		fence.GetComputerInstanceId() != entry.computerInstanceID ||
-		subtle.ConstantTimeCompare([]byte(authority.GetChannelToken()), []byte(entry.channelToken)) != 1 {
+		subtle.ConstantTimeCompare([]byte(authority.GetChannelCredential()), []byte(entry.channelCredential)) != 1 {
 		return errors.New("computer run authority does not match the mounted runtime")
 	}
 	return nil
@@ -67,7 +67,7 @@ func handleProgramResumeGrantConnection(
 	}
 	fence := authority.GetFence()
 	entry, release, ok := mounts.acquireAuthorityMount(
-		fence.GetComputerInstanceId(), fence.GetComputerId(), authority.GetChannelToken(),
+		fence.GetComputerInstanceId(), fence.GetComputerId(), authority.GetChannelCredential(),
 	)
 	if !ok {
 		return errors.New("program resume grant does not match the mounted runtime")
@@ -133,15 +133,15 @@ func computerRunAuthoritiesEqual(left, right *computerv0.ComputerRunAuthority) b
 	if left == nil || right == nil {
 		return false
 	}
-	if subtle.ConstantTimeCompare([]byte(left.GetChannelToken()), []byte(right.GetChannelToken())) != 1 ||
+	if subtle.ConstantTimeCompare([]byte(left.GetChannelCredential()), []byte(right.GetChannelCredential())) != 1 ||
 		subtle.ConstantTimeCompare([]byte(left.GetWriteCapability()), []byte(right.GetWriteCapability())) != 1 {
 		return false
 	}
 	leftCopy := proto.Clone(left).(*computerv0.ComputerRunAuthority)
 	rightCopy := proto.Clone(right).(*computerv0.ComputerRunAuthority)
-	leftCopy.ChannelToken = ""
+	leftCopy.ChannelCredential = ""
 	leftCopy.WriteCapability = ""
-	rightCopy.ChannelToken = ""
+	rightCopy.ChannelCredential = ""
 	rightCopy.WriteCapability = ""
 	return proto.Equal(leftCopy, rightCopy)
 }
@@ -168,7 +168,7 @@ func handleComputerAuthorityRenew(conn io.ReadWriter, registry *computerOperatio
 	entry, release, ok := registry.acquireExact(
 		fence.GetComputerInstanceId(),
 		fence.GetComputerId(),
-		previous.GetChannelToken(),
+		previous.GetChannelCredential(),
 		uint64(fence.GetWriterGeneration()),
 	)
 	if !ok {
@@ -233,7 +233,7 @@ func (r *computerOperationRegistry) renewCurrentComputerRunAuthority(entry *comp
 	defer entry.finalizationMu.Unlock()
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.entries[fence.GetComputerInstanceId()] != entry || !computerEntryMatches(entry, fence.GetComputerInstanceId(), fence.GetComputerId(), previous.GetChannelToken()) || entry.currentWriterGeneration() != uint64(fence.GetWriterGeneration()) {
+	if r.entries[fence.GetComputerInstanceId()] != entry || !computerEntryMatches(entry, fence.GetComputerInstanceId(), fence.GetComputerId(), previous.GetChannelCredential()) || entry.currentWriterGeneration() != uint64(fence.GetWriterGeneration()) {
 		return nil, errors.New("program authority is not current for the computer instance")
 	}
 	claim := r.programClaimLocked(entry, previous)

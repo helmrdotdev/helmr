@@ -23,21 +23,21 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// workerClaimsRace serves real token exchange and Worker authentication. Each
+// workerClaimsRace serves real host credential issue and Worker authentication. Each
 // raced route commits its transition once, after authentication accepted the
 // request and before the handler takes its authority locks.
 type workerClaimsRace struct {
-	client   *workerclient.Client
-	mu       sync.Mutex
-	tokens   int
-	statuses map[string][]int
-	bodies   map[string][][]byte
+	client          *workerclient.Client
+	mu              sync.Mutex
+	hostCredentials int
+	statuses        map[string][]int
+	bodies          map[string][][]byte
 }
 
 func newWorkerClaimsRace(t *testing.T, f runtest.Fixture, server *Server, handlers map[string]http.HandlerFunc, races map[string]func(context.Context) error) *workerClaimsRace {
 	t.Helper()
-	credential := seedHostCredential(t, f.Pool, f.WorkerID)
-	server.hostCredentials = testHostCredentials(t)
+	hostSecret := seedHostSecret(t, f.Pool, f.WorkerID)
+	server.hostAuth = testHostAuthConfig(t)
 	server.log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	race := &workerClaimsRace{statuses: map[string][]int{}, bodies: map[string][][]byte{}}
 	protected := map[string]http.Handler{}
@@ -58,9 +58,9 @@ func newWorkerClaimsRace(t *testing.T, f runtest.Fixture, server *Server, handle
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		race.mu.Lock()
 		defer race.mu.Unlock()
-		if r.URL.Path == "/worker/v1/instance/token" {
-			race.tokens++
-			server.workerAuthToken(w, r)
+		if r.URL.Path == "/worker/v1/instance/credential" {
+			race.hostCredentials++
+			server.workerIssueHostCredential(w, r)
 			return
 		}
 		handler, ok := protected[r.URL.Path]
@@ -85,7 +85,7 @@ func newWorkerClaimsRace(t *testing.T, f runtest.Fixture, server *Server, handle
 		_, _ = w.Write(response.Body.Bytes())
 	}))
 	t.Cleanup(httpServer.Close)
-	race.client = credential.client(t, httpServer.URL)
+	race.client = hostSecret.client(t, httpServer.URL)
 	return race
 }
 
@@ -96,8 +96,8 @@ func (r *workerClaimsRace) requireReplayed(t *testing.T, path string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	statuses := r.statuses[path]
-	if r.tokens != 2 || len(statuses) != 2 || statuses[0] != http.StatusUnauthorized || (statuses[1] != http.StatusOK && statuses[1] != http.StatusNoContent) {
-		t.Fatalf("%s: token requests=%d statuses=%v", path, r.tokens, statuses)
+	if r.hostCredentials != 2 || len(statuses) != 2 || statuses[0] != http.StatusUnauthorized || (statuses[1] != http.StatusOK && statuses[1] != http.StatusNoContent) {
+		t.Fatalf("%s: host credential requests=%d statuses=%v", path, r.hostCredentials, statuses)
 	}
 	if !bytes.Equal(r.bodies[path][0], r.bodies[path][1]) {
 		t.Fatalf("%s: replay changed the request", path)

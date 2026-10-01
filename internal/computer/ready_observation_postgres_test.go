@@ -30,7 +30,7 @@ func TestReadyObservationFencesAndPreparationCommit(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT computer_instance_id FROM run_leases WHERE id=$1`, work.LeaseID).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='allocated',observed_desired_version=0,ready_at=NULL,guest_channel_token_hash=decode(repeat('ab',32),'hex'),guest_channel_token_expires_at=now()+interval '5 minutes' WHERE id=$1`, id)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='allocated',observed_desired_version=0,ready_at=NULL,guest_channel_credential_hash=decode(repeat('ab',32),'hex'),guest_channel_credential_expires_at=now()+interval '5 minutes' WHERE id=$1`, id)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET preparation_attempt_count=3,preparation_instance_id=$1 WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, id)
 	i, err := db.New(f.Pool).GetComputerInstance(t.Context(), db.GetComputerInstanceParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: id})
 	if err != nil {
@@ -83,7 +83,7 @@ func TestReadyObservationFencesAndPreparationCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ready.ObservedState != "ready" || hex.EncodeToString(ready.GuestChannelTokenHash) != "abababababababababababababababababababababababababababababababab" {
+	if ready.ObservedState != "ready" || hex.EncodeToString(ready.GuestChannelCredentialHash) != "abababababababababababababababababababababababababababababababab" {
 		t.Fatalf("incorrect ready state: %+v", ready)
 	}
 	if err = f.Pool.QueryRow(t.Context(), `SELECT preparation_attempt_count FROM computers WHERE id=$1`, i.ComputerID).Scan(&count); err != nil || count != 0 {
@@ -242,7 +242,7 @@ func TestInitialReadinessRechecksDeadlineAfterComputerLock(t *testing.T) {
 			if err := f.Pool.QueryRow(t.Context(), `SELECT computer_instance_id FROM run_leases WHERE id=$1`, work.LeaseID).Scan(&id); err != nil {
 				t.Fatal(err)
 			}
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='allocated',observed_desired_version=0,ready_at=NULL,guest_channel_token_hash=decode(repeat('ab',32),'hex'),guest_channel_token_expires_at=now()+interval '5 minutes' WHERE id=$1`, id)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='allocated',observed_desired_version=0,ready_at=NULL,guest_channel_credential_hash=decode(repeat('ab',32),'hex'),guest_channel_credential_expires_at=now()+interval '5 minutes' WHERE id=$1`, id)
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET preparation_attempt_count=1,preparation_instance_id=$1 WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, id)
 			i, err := db.New(f.Pool).GetComputerInstance(t.Context(), db.GetComputerInstanceParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: id})
 			if err != nil {
@@ -338,7 +338,7 @@ func TestReadyObservationOnNonAdmittingSupply(t *testing.T) {
 					t.Fatal(err)
 				}
 				if allocated {
-					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='allocated',observed_desired_version=0,ready_at=NULL,guest_channel_token_hash=decode(repeat('ab',32),'hex'),guest_channel_token_expires_at=now()+interval '5 minutes' WHERE id=$1`, id)
+					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='allocated',observed_desired_version=0,ready_at=NULL,guest_channel_credential_hash=decode(repeat('ab',32),'hex'),guest_channel_credential_expires_at=now()+interval '5 minutes' WHERE id=$1`, id)
 				} else {
 					// A Program-ready acknowledgement on the resident Instance.
 					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_version=desired_version+1,preparation_expires_at=now()-interval '1 second' WHERE id=$1`, id)

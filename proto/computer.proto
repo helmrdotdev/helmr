@@ -10,7 +10,7 @@ message ComputerOperationEnvelope {
   string operation_id = 1;
   string computer_instance_id = 2;
   string computer_id = 3;
-  string channel_token = 4;
+  string channel_credential = 4;
   uint64 writer_generation = 5;
   string instance_lease_id = 6;
   string write_lease_id = 7;
@@ -44,7 +44,7 @@ message ComputerAuthorityFence {
 
 message ComputerRunAuthority {
   ComputerAuthorityFence fence = 1;
-  string channel_token = 2;
+  string channel_credential = 2;
   string write_capability = 3;
 }
 
@@ -136,7 +136,7 @@ message ComputerMountPhase {
 
 message MaterializeComputerResponse {
   string status = 1;
-  string guestd_channel_token_hash = 2;
+  string guest_channel_credential_hash = 2;
   repeated ComputerMountPhase phases = 3;
   ComputerMountTarget target = 4;
 }
@@ -187,7 +187,7 @@ message ComputerCommandAuthority {
   string operation_id = 1;
   string computer_instance_id = 2;
   string computer_id = 3;
-  string channel_token = 4;
+  string channel_credential = 4;
   int64 writer_generation = 5;
   int64 operation_expires_at_unix_nano = 6;
   string request_fingerprint = 7;
@@ -261,7 +261,7 @@ message ComputerRunCleanupRequest {
   string computer_id = 1;
   string computer_instance_id = 2;
   int64 writer_generation = 3;
-  string channel_token = 4;
+  string channel_credential = 4;
   string run_id = 5;
   uint32 attempt_number = 6;
   string run_lease_id = 7;

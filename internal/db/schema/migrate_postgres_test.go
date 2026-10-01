@@ -853,7 +853,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 
 func assertWorkerGroupUUIDSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
-	tables := []string{"worker_groups", "worker_pools", "worker_hosts", "worker_host_credentials", "run_leases", "computer_instances"}
+	tables := []string{"worker_groups", "worker_pools", "worker_hosts", "worker_host_secrets", "run_leases", "computer_instances"}
 	columns := []string{"id", "worker_group_id", "worker_group_id", "worker_group_id", "worker_group_id", "worker_group_id"}
 	nullability := []string{"NO", "NO", "NO", "NO", "NO", "NO"}
 	rows, err := pool.Query(ctx, `

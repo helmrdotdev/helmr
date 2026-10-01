@@ -16,8 +16,8 @@ func TestCommandLogRefreshPreservesChunkIdentityAndBytes(t *testing.T) {
 	var bodies [][]byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/worker/v1/instance/token":
-			_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{Token: "token", ExpiresInSeconds: 3600})
+		case "/worker/v1/instance/credential":
+			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "credential", ExpiresInSeconds: 3600})
 		case "/worker/v1/run/computer-commands/logs/append":
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
@@ -50,7 +50,7 @@ func TestCommandLogRefreshPreservesChunkIdentityAndBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(bodies) != 2 || !bytes.Equal(bodies[0], bodies[1]) {
-		t.Fatalf("token refresh changed log delivery: %q", bodies)
+		t.Fatalf("host credential refresh changed log delivery: %q", bodies)
 	}
 	var decoded workerapi.CommandLogAppendRequest
 	if err := json.Unmarshal(bodies[1], &decoded); err != nil {

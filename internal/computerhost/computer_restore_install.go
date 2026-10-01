@@ -85,7 +85,7 @@ func (m Server) activateRestore(ctx context.Context, session vm.Machine, mount w
 	if plan.ComputerInstanceID != mount.ComputerInstanceID || plan.ComputerID != mount.ComputerID || plan.CheckpointID != mount.RestoreCheckpointID || plan.WriterGeneration != mount.WriterGeneration || plan.WorkerEpoch != mount.RuntimeEpoch || plan.VMPlatformID != mount.VMPlatformID || plan.DesiredVersion != mount.DesiredVersion {
 		return errors.New("restore plan differs from materialized Instance")
 	}
-	installation := &computerv0.ComputerRestoreInstallation{Envelope: &computerv0.ComputerOperationEnvelope{ComputerInstanceId: mount.ComputerInstanceID, ComputerId: mount.ComputerID, WriterGeneration: uint64(mount.WriterGeneration), ChannelToken: m.channelToken(mount)}, CheckpointId: plan.CheckpointID, DesiredVersion: plan.DesiredVersion}
+	installation := &computerv0.ComputerRestoreInstallation{Envelope: &computerv0.ComputerOperationEnvelope{ComputerInstanceId: mount.ComputerInstanceID, ComputerId: mount.ComputerID, WriterGeneration: uint64(mount.WriterGeneration), ChannelCredential: m.channelCredential(mount)}, CheckpointId: plan.CheckpointID, DesiredVersion: plan.DesiredVersion}
 	// The caller owns writer renewal and cancels ctx if that authority is lost.
 	// Only member grants have immutable expiry during this installation.
 	var deadline time.Time
@@ -96,7 +96,7 @@ func (m Server) activateRestore(ctx context.Context, session vm.Machine, mount w
 		if deadline.IsZero() || member.ExpiresAt.Before(deadline) {
 			deadline = member.ExpiresAt
 		}
-		installation.Grants = append(installation.Grants, &computerv0.ComputerRunAuthority{ChannelToken: m.channelToken(mount), WriteCapability: plan.WriteCapability, Fence: &computerv0.ComputerAuthorityFence{WorkerHostId: plan.WorkerHostID, WorkerEpoch: plan.WorkerEpoch, ComputerInstanceId: plan.ComputerInstanceID, ComputerId: plan.ComputerID, VmPlatformId: plan.VMPlatformID, WriterGeneration: plan.WriterGeneration, RunId: member.RunID, AttemptNumber: uint32(member.AttemptNumber), RunLeaseId: member.Lease.ID, LeaseSequence: member.Lease.LeaseSequence, BaseComputerDiskVersionId: member.BaseComputerDiskVersionID, ExpiresAtUnixNano: member.ExpiresAt.UnixNano()}})
+		installation.Grants = append(installation.Grants, &computerv0.ComputerRunAuthority{ChannelCredential: m.channelCredential(mount), WriteCapability: plan.WriteCapability, Fence: &computerv0.ComputerAuthorityFence{WorkerHostId: plan.WorkerHostID, WorkerEpoch: plan.WorkerEpoch, ComputerInstanceId: plan.ComputerInstanceID, ComputerId: plan.ComputerID, VmPlatformId: plan.VMPlatformID, WriterGeneration: plan.WriterGeneration, RunId: member.RunID, AttemptNumber: uint32(member.AttemptNumber), RunLeaseId: member.Lease.ID, LeaseSequence: member.Lease.LeaseSequence, BaseComputerDiskVersionId: member.BaseComputerDiskVersionID, ExpiresAtUnixNano: member.ExpiresAt.UnixNano()}})
 	}
 	activationCtx := ctx
 	if !deadline.IsZero() {

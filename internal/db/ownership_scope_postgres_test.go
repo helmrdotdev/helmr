@@ -24,7 +24,7 @@ func TestOwnershipSurvivingScopePathsRejectAndRollback(t *testing.T) {
 	waitID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, tx, `INSERT INTO run_waits(id,environment_id,run_id,computer_id,kind,due_at,expected_run_revision,attempt_number,current_run_lease_id) SELECT $1,environment_id,id,computer_id,'timer',now()+interval '1 hour',revision,1,$2 FROM runs WHERE id=$3`, waitID, work.leaseID, work.runID)
 	credential := uuid.NewV7()
-	dbtest.MustExec(t, ctx, tx, "INSERT INTO worker_host_credentials(id,worker_group_id,worker_host_id,key_prefix,secret_hash) VALUES ($1,$2,$3,'ownership-test',decode('abcd','hex'))", credential, runLeaseTestWorkerGroup, f.workerID)
+	dbtest.MustExec(t, ctx, tx, "INSERT INTO worker_host_secrets(id,worker_group_id,worker_host_id,key_prefix,secret_hash) VALUES ($1,$2,$3,'ownership-test',decode('abcd','hex'))", credential, runLeaseTestWorkerGroup, f.workerID)
 	checkpointID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, tx, `INSERT INTO computer_checkpoints(id,environment_id,computer_id,computer_spec_id,source_computer_instance_id,writer_generation,membership_revision,base_computer_disk_version_id) SELECT $1,i.environment_id,i.computer_id,i.computer_spec_id,i.id,i.writer_generation,i.membership_revision,r.base_computer_disk_version_id FROM computer_instances i JOIN run_leases l ON l.computer_instance_id=i.id JOIN runs r ON r.id=l.run_id WHERE l.id=$2`, checkpointID, work.leaseID)
 	dbtest.MustExec(t, ctx, tx, `INSERT INTO computer_checkpoint_runs(checkpoint_id,environment_id,computer_id,run_id,attempt_number,run_wait_id,source_run_lease_id,source_computer_instance_id,writer_generation) SELECT $1,environment_id,computer_id,run_id,attempt_number,$2,id,computer_instance_id,writer_generation FROM run_leases WHERE id=$3`, checkpointID, waitID, work.leaseID)
@@ -32,7 +32,7 @@ func TestOwnershipSurvivingScopePathsRejectAndRollback(t *testing.T) {
 		table, column string
 		id            any
 	}{
-		{"worker_hosts", "worker_group_id", f.workerID}, {"worker_host_credentials", "worker_group_id", credential},
+		{"worker_hosts", "worker_group_id", f.workerID}, {"worker_host_secrets", "worker_group_id", credential},
 		{"computer_instances", "worker_group_id", instanceID}, {"computer_instances", "worker_host_id", instanceID},
 		{"run_leases", "worker_group_id", work.leaseID}, {"run_leases", "worker_host_id", work.leaseID},
 		{"run_leases", "environment_id", work.leaseID}, {"run_leases", "computer_instance_id", work.leaseID},

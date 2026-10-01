@@ -125,13 +125,13 @@ locals {
   }, local.bootstrap_environment, local.clickhouse_reader_environment, local.email_environment)
 
   controlplane_secret_defaults = merge({
-    DATABASE_URL               = aws_secretsmanager_secret.database_url.arn
-    WORKER_TOKEN_SIGNING_KEY   = aws_secretsmanager_secret.worker_token_signing_key.arn
-    AUTH_KEY                   = aws_secretsmanager_secret.auth_key.arn
-    ENCRYPTION_KEY             = aws_secretsmanager_secret.encryption_key.arn
-    COMPUTER_FENCING_KEY       = aws_secretsmanager_secret.computer_fencing_key.arn
-    TOKEN_CREDENTIAL_KEY       = aws_secretsmanager_secret.token_credential_key.arn
-    GITHUB_OAUTH_CLIENT_SECRET = aws_secretsmanager_secret.github_oauth_client_secret.arn
+    DATABASE_URL                       = aws_secretsmanager_secret.database_url.arn
+    WORKER_HOST_CREDENTIAL_SIGNING_KEY = aws_secretsmanager_secret.worker_host_credential_signing_key.arn
+    AUTH_KEY                           = aws_secretsmanager_secret.auth_key.arn
+    ENCRYPTION_KEY                     = aws_secretsmanager_secret.encryption_key.arn
+    COMPUTER_FENCING_KEY               = aws_secretsmanager_secret.computer_fencing_key.arn
+    TOKEN_CREDENTIAL_KEY               = aws_secretsmanager_secret.token_credential_key.arn
+    GITHUB_OAUTH_CLIENT_SECRET         = aws_secretsmanager_secret.github_oauth_client_secret.arn
     },
     var.deployment_mode == "self-hosted" ? {
       SETUP_TOKEN           = aws_secretsmanager_secret.setup_token[0].arn
@@ -1277,8 +1277,8 @@ resource "aws_secretsmanager_secret" "database_url" {
   tags                    = var.tags
 }
 
-resource "aws_secretsmanager_secret" "worker_token_signing_key" {
-  name                    = "${local.name}/controlplane/worker-token-signing-key"
+resource "aws_secretsmanager_secret" "worker_host_credential_signing_key" {
+  name                    = "${local.name}/controlplane/worker-host-credential-signing-key"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags

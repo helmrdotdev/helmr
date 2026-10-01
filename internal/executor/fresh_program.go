@@ -688,7 +688,7 @@ func (r ProgramRunner) startNewProgram(
 		func(stream vm.Stream) error {
 			return writeFreshProgramAdmission(
 				stream,
-				opened.ChannelToken,
+				opened.ChannelCredential,
 				opened.Mount,
 				claim,
 				admission.programStart,
@@ -794,7 +794,7 @@ func (r ProgramRunner) startNewProgram(
 	}
 	state := &freshAdmissionState{
 		lease:        claim.Lease,
-		authority:    freshComputerAuthority(claim, opened.ChannelToken, opened.Mount),
+		authority:    freshComputerAuthority(claim, opened.ChannelCredential, opened.Mount),
 		mounts:       r.Mounts,
 		controlPlane: controlPlane,
 		events:       events,
@@ -802,7 +802,7 @@ func (r ProgramRunner) startNewProgram(
 	retainAuthority := false
 	defer func() {
 		if !retainAuthority {
-			state.authority.ChannelToken = ""
+			state.authority.ChannelCredential = ""
 			state.authority.WriteCapability = ""
 		}
 	}()
@@ -1074,15 +1074,15 @@ func validateNewProgramMount(
 
 func writeFreshProgramAdmission(
 	stream vm.Stream,
-	channelToken string,
+	channelCredential string,
 	mount workerapi.ComputerInstanceAssignment,
 	claim *workerapi.RunLeaseClaimResponse,
 	programStart []byte,
 ) error {
 	lease := claim.Lease
-	channelToken = strings.TrimSpace(channelToken)
-	if channelToken == "" {
-		return errors.New("computer mount guest channel token is required")
+	channelCredential = strings.TrimSpace(channelCredential)
+	if channelCredential == "" {
+		return errors.New("computer mount guest channel credential is required")
 	}
 	if err := wire.WriteStreamFrameHeader(
 		stream,
@@ -1098,7 +1098,7 @@ func writeFreshProgramAdmission(
 	}
 	if err := frameio.WriteProtoFrame(
 		stream,
-		freshComputerAuthority(claim, channelToken, mount),
+		freshComputerAuthority(claim, channelCredential, mount),
 	); err != nil {
 		return fmt.Errorf("write program computer authority: %w", err)
 	}
@@ -1158,7 +1158,7 @@ func writeFreshProgramAdmission(
 
 func freshComputerAuthority(
 	claim *workerapi.RunLeaseClaimResponse,
-	channelToken string,
+	channelCredential string,
 	mount workerapi.ComputerInstanceAssignment,
 ) *computerv0.ComputerRunAuthority {
 	lease := claim.Lease
@@ -1177,8 +1177,8 @@ func freshComputerAuthority(
 			ExpiresAtUnixNano:         lease.ExpiresAt.UnixNano(),
 			BaseComputerDiskVersionId: mount.Target.BaseComputerDiskVersionID,
 		},
-		ChannelToken:    channelToken,
-		WriteCapability: claim.Computer.WriteCapability,
+		ChannelCredential: channelCredential,
+		WriteCapability:   claim.Computer.WriteCapability,
 	}
 }
 

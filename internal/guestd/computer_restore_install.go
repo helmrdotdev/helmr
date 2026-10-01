@@ -38,7 +38,7 @@ func (r *computerOperationRegistry) installComputerRestore(waits *waitingRunRegi
 		return errors.New("restore installation is incomplete")
 	}
 	envelope := request.Envelope
-	entry, release, ok := r.acquireExact(envelope.ComputerInstanceId, envelope.ComputerId, envelope.ChannelToken, envelope.WriterGeneration)
+	entry, release, ok := r.acquireExact(envelope.ComputerInstanceId, envelope.ComputerId, envelope.ChannelCredential, envelope.WriterGeneration)
 	if !ok {
 		return errors.New("restore installation does not match physical authority")
 	}

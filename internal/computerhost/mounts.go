@@ -27,7 +27,7 @@ type MountChannel struct {
 	ReleaseSource func(context.Context) error
 	// GrantProgramResume is always set by OpenChannel.
 	GrantProgramResume func(context.Context, *computerv0.GrantProgramResumeRequest) (*programv0.ResumeAttach, error)
-	ChannelToken       string
+	ChannelCredential  string
 	Mount              workerapi.ComputerInstanceAssignment
 }
 
@@ -41,16 +41,16 @@ type Mounts struct {
 }
 
 type mountEntry struct {
-	instance     *instanceMount
-	channelToken string
-	mount        workerapi.ComputerInstanceAssignment
+	instance          *instanceMount
+	channelCredential string
+	mount             workerapi.ComputerInstanceAssignment
 }
 
 func NewMounts() *Mounts {
 	return &Mounts{mounts: map[string]mountEntry{}}
 }
 
-func (s *Mounts) register(mount workerapi.ComputerInstanceAssignment, instance *instanceMount, channelToken string) func() {
+func (s *Mounts) register(mount workerapi.ComputerInstanceAssignment, instance *instanceMount, channelCredential string) func() {
 	id := strings.TrimSpace(mount.ComputerInstanceID)
 	if id == "" || instance == nil {
 		return func() {}
@@ -59,7 +59,7 @@ func (s *Mounts) register(mount workerapi.ComputerInstanceAssignment, instance *
 	if s.mounts == nil {
 		s.mounts = map[string]mountEntry{}
 	}
-	s.mounts[id] = mountEntry{instance: instance, channelToken: strings.TrimSpace(channelToken), mount: mount}
+	s.mounts[id] = mountEntry{instance: instance, channelCredential: strings.TrimSpace(channelCredential), mount: mount}
 	s.mu.Unlock()
 	return func() {
 		s.mu.Lock()
@@ -81,8 +81,8 @@ func (s *Mounts) OpenChannel(ctx context.Context, computerInstanceID string) (Mo
 	if entry.instance == nil {
 		return MountChannel{}, fmt.Errorf("%w: %s", ErrMountNotFound, id)
 	}
-	if entry.channelToken == "" {
-		return MountChannel{}, fmt.Errorf("computer mount session %s missing channel token", id)
+	if entry.channelCredential == "" {
+		return MountChannel{}, fmt.Errorf("computer mount session %s missing channel credential", id)
 	}
 	stream, err := entry.instance.OpenStream(ctx)
 	if err != nil {
@@ -94,8 +94,8 @@ func (s *Mounts) OpenChannel(ctx context.Context, computerInstanceID string) (Mo
 		GrantProgramResume: func(ctx context.Context, request *computerv0.GrantProgramResumeRequest) (*programv0.ResumeAttach, error) {
 			return guestControl{machine: entry.instance}.grantProgramResume(ctx, request)
 		},
-		ChannelToken: entry.channelToken,
-		Mount:        entry.mount,
+		ChannelCredential: entry.channelCredential,
+		Mount:             entry.mount,
 	}, nil
 }
 
@@ -128,8 +128,8 @@ func (s *Mounts) RenewComputerAuthority(ctx context.Context, request *computerv0
 	if entry.instance == nil {
 		return nil, fmt.Errorf("%w: %s", ErrMountNotFound, id)
 	}
-	if entry.channelToken == "" || request.GetPrevious().GetChannelToken() != entry.channelToken {
-		return nil, errors.New("computer authority channel token does not match the mount session")
+	if entry.channelCredential == "" || request.GetPrevious().GetChannelCredential() != entry.channelCredential {
+		return nil, errors.New("computer authority channel credential does not match the mount session")
 	}
 	if err := validateComputerMountPhysicalAuthority(fence, entry.mount); err != nil {
 		return nil, err

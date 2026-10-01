@@ -1,22 +1,22 @@
--- name: AuthenticateWorkerHostCredential :one
-WITH credential AS (
-    SELECT worker_host_credentials.*,
+-- name: AuthenticateWorkerHostSecret :one
+WITH host_secret AS (
+    SELECT worker_host_secrets.*,
            worker_groups.claim_version AS group_claim_version
-      FROM worker_host_credentials
-      JOIN worker_hosts ON worker_hosts.id = worker_host_credentials.worker_host_id
-                           AND worker_hosts.worker_group_id = worker_host_credentials.worker_group_id
-      JOIN worker_groups ON worker_groups.id = worker_host_credentials.worker_group_id
+      FROM worker_host_secrets
+      JOIN worker_hosts ON worker_hosts.id = worker_host_secrets.worker_host_id
+                           AND worker_hosts.worker_group_id = worker_host_secrets.worker_group_id
+      JOIN worker_groups ON worker_groups.id = worker_host_secrets.worker_group_id
       JOIN worker_pools ON worker_pools.id = worker_hosts.worker_pool_id
                        AND worker_pools.worker_group_id = worker_hosts.worker_group_id
-     WHERE worker_host_credentials.worker_host_id = sqlc.arg(worker_host_id)
-       AND worker_host_credentials.secret_hash = sqlc.arg(secret_hash)
-       AND worker_host_credentials.revoked_at IS NULL
-       AND (worker_host_credentials.expires_at IS NULL OR worker_host_credentials.expires_at > now())
-       AND worker_host_credentials.claim_version = worker_hosts.claim_version
+     WHERE worker_host_secrets.worker_host_id = sqlc.arg(worker_host_id)
+       AND worker_host_secrets.secret_hash = sqlc.arg(secret_hash)
+       AND worker_host_secrets.revoked_at IS NULL
+       AND (worker_host_secrets.expires_at IS NULL OR worker_host_secrets.expires_at > now())
+       AND worker_host_secrets.claim_version = worker_hosts.claim_version
        AND worker_hosts.status IN ('registering','active','draining')
        AND worker_groups.status IN ('active','paused','draining')
        AND worker_pools.status IN ('pending','active','draining')
-     FOR UPDATE OF worker_host_credentials, worker_hosts, worker_groups, worker_pools
+     FOR UPDATE OF worker_host_secrets, worker_hosts, worker_groups, worker_pools
 ), advanced AS (
     UPDATE worker_hosts
        SET current_epoch = CASE WHEN worker_hosts.current_service_id = sqlc.arg(service_id)
@@ -84,74 +84,74 @@ WITH credential AS (
            vm_paused_reason = CASE WHEN worker_hosts.current_service_id = sqlc.arg(service_id)
                                         THEN worker_hosts.vm_paused_reason ELSE NULL END,
            updated_at = now()
-      FROM credential
-     WHERE worker_hosts.id = credential.worker_host_id
+      FROM host_secret
+     WHERE worker_hosts.id = host_secret.worker_host_id
     RETURNING worker_hosts.*
 )
-SELECT credential.id, credential.worker_group_id,
-       credential.worker_host_id, credential.key_prefix, credential.claim_version,
-       credential.group_claim_version,
+SELECT host_secret.id, host_secret.worker_group_id,
+       host_secret.worker_host_id, host_secret.key_prefix, host_secret.claim_version,
+       host_secret.group_claim_version,
        advanced.current_epoch, advanced.current_service_id, advanced.status,
        advanced.resource_id
-  FROM credential JOIN advanced ON advanced.id = credential.worker_host_id;
+  FROM host_secret JOIN advanced ON advanced.id = host_secret.worker_host_id;
 
--- name: AuthorizeWorkerHostCredential :one
-UPDATE worker_host_credentials
+-- name: AuthorizeWorkerHostSecret :one
+UPDATE worker_host_secrets
    SET last_used_at = now()
   FROM worker_hosts, worker_groups, worker_pools
- WHERE worker_host_credentials.id = sqlc.arg(credential_id)
-   AND worker_hosts.id = worker_host_credentials.worker_host_id
-   AND worker_hosts.worker_group_id = worker_host_credentials.worker_group_id
-   AND worker_groups.id = worker_host_credentials.worker_group_id
+ WHERE worker_host_secrets.id = sqlc.arg(host_secret_id)
+   AND worker_hosts.id = worker_host_secrets.worker_host_id
+   AND worker_hosts.worker_group_id = worker_host_secrets.worker_group_id
+   AND worker_groups.id = worker_host_secrets.worker_group_id
    AND worker_pools.id = worker_hosts.worker_pool_id
    AND worker_pools.worker_group_id = worker_hosts.worker_group_id
-   AND worker_host_credentials.revoked_at IS NULL
-   AND worker_host_credentials.claim_version = sqlc.arg(claim_version)
-   AND worker_host_credentials.claim_version = worker_hosts.claim_version
+   AND worker_host_secrets.revoked_at IS NULL
+   AND worker_host_secrets.claim_version = sqlc.arg(claim_version)
+   AND worker_host_secrets.claim_version = worker_hosts.claim_version
 	AND worker_groups.claim_version = sqlc.arg(group_claim_version)
 	AND worker_hosts.current_epoch = sqlc.arg(worker_epoch)
 	AND worker_hosts.status IN ('active','draining')
    AND worker_groups.status IN ('active','paused','draining')
    AND worker_pools.status IN ('active','draining')
-RETURNING worker_host_credentials.*, worker_hosts.resource_id,
+RETURNING worker_host_secrets.*, worker_hosts.resource_id,
           worker_hosts.current_epoch, worker_hosts.status AS worker_status,
           worker_hosts.epoch_started_at;
 
--- name: AuthorizeWorkerActivationCredential :one
-UPDATE worker_host_credentials
+-- name: AuthorizeActivatingWorkerHostSecret :one
+UPDATE worker_host_secrets
    SET last_used_at = now()
   FROM worker_hosts, worker_groups, worker_pools
- WHERE worker_host_credentials.id = sqlc.arg(credential_id)
-   AND worker_hosts.id = worker_host_credentials.worker_host_id
-   AND worker_hosts.worker_group_id = worker_host_credentials.worker_group_id
-   AND worker_groups.id = worker_host_credentials.worker_group_id
+ WHERE worker_host_secrets.id = sqlc.arg(host_secret_id)
+   AND worker_hosts.id = worker_host_secrets.worker_host_id
+   AND worker_hosts.worker_group_id = worker_host_secrets.worker_group_id
+   AND worker_groups.id = worker_host_secrets.worker_group_id
    AND worker_pools.id = worker_hosts.worker_pool_id
    AND worker_pools.worker_group_id = worker_hosts.worker_group_id
-   AND worker_host_credentials.revoked_at IS NULL
-   AND worker_host_credentials.claim_version = sqlc.arg(claim_version)
-   AND worker_host_credentials.claim_version = worker_hosts.claim_version
+   AND worker_host_secrets.revoked_at IS NULL
+   AND worker_host_secrets.claim_version = sqlc.arg(claim_version)
+   AND worker_host_secrets.claim_version = worker_hosts.claim_version
    AND worker_groups.claim_version = sqlc.arg(group_claim_version)
    AND worker_hosts.current_epoch = sqlc.arg(worker_epoch)
    AND worker_hosts.status IN ('registering', 'active', 'draining')
    AND worker_groups.status IN ('active','paused','draining')
    AND worker_pools.status IN ('pending','active','draining')
-RETURNING worker_host_credentials.*, worker_hosts.resource_id,
+RETURNING worker_host_secrets.*, worker_hosts.resource_id,
           worker_hosts.current_epoch, worker_hosts.status AS worker_status,
           worker_hosts.epoch_started_at;
 
--- name: AuthorizeRecoveringWorkerHostCredential :one
-UPDATE worker_host_credentials
+-- name: AuthorizeRecoveringWorkerHostSecret :one
+UPDATE worker_host_secrets
    SET last_used_at = now()
   FROM worker_hosts, worker_groups, worker_pools
- WHERE worker_host_credentials.id = sqlc.arg(credential_id)
-   AND worker_hosts.id = worker_host_credentials.worker_host_id
-   AND worker_hosts.worker_group_id = worker_host_credentials.worker_group_id
-   AND worker_groups.id = worker_host_credentials.worker_group_id
+ WHERE worker_host_secrets.id = sqlc.arg(host_secret_id)
+   AND worker_hosts.id = worker_host_secrets.worker_host_id
+   AND worker_hosts.worker_group_id = worker_host_secrets.worker_group_id
+   AND worker_groups.id = worker_host_secrets.worker_group_id
    AND worker_pools.id = worker_hosts.worker_pool_id
    AND worker_pools.worker_group_id = worker_hosts.worker_group_id
-   AND worker_host_credentials.revoked_at IS NULL
-   AND worker_host_credentials.claim_version = sqlc.arg(claim_version)
-   AND worker_host_credentials.claim_version = worker_hosts.claim_version
+   AND worker_host_secrets.revoked_at IS NULL
+   AND worker_host_secrets.claim_version = sqlc.arg(claim_version)
+   AND worker_host_secrets.claim_version = worker_hosts.claim_version
    AND worker_groups.claim_version = sqlc.arg(group_claim_version)
    AND worker_hosts.current_epoch = sqlc.arg(worker_epoch)
 	AND (
@@ -163,40 +163,40 @@ UPDATE worker_host_credentials
    )
    AND worker_groups.status IN ('active','paused','draining')
    AND worker_pools.status IN ('pending','active','draining')
-RETURNING worker_host_credentials.*, worker_hosts.resource_id,
+RETURNING worker_host_secrets.*, worker_hosts.resource_id,
           worker_hosts.current_epoch, worker_hosts.status AS worker_status,
           worker_hosts.epoch_started_at;
 
 -- name: AuthorizeWorkerDrainReplay :one
-SELECT worker_host_credentials.*, worker_hosts.resource_id,
+SELECT worker_host_secrets.*, worker_hosts.resource_id,
        worker_hosts.current_epoch, worker_hosts.status AS worker_status,
        worker_hosts.epoch_started_at
-  FROM worker_host_credentials
+  FROM worker_host_secrets
   JOIN worker_hosts
-    ON worker_hosts.id = worker_host_credentials.worker_host_id
-   AND worker_hosts.worker_group_id = worker_host_credentials.worker_group_id
-  JOIN worker_groups ON worker_groups.id = worker_host_credentials.worker_group_id
- WHERE worker_host_credentials.id = sqlc.arg(credential_id)
-   AND worker_host_credentials.claim_version = sqlc.arg(claim_version)
-   AND worker_host_credentials.revoked_at IS NOT NULL
+    ON worker_hosts.id = worker_host_secrets.worker_host_id
+   AND worker_hosts.worker_group_id = worker_host_secrets.worker_group_id
+  JOIN worker_groups ON worker_groups.id = worker_host_secrets.worker_group_id
+ WHERE worker_host_secrets.id = sqlc.arg(host_secret_id)
+   AND worker_host_secrets.claim_version = sqlc.arg(claim_version)
+   AND worker_host_secrets.revoked_at IS NOT NULL
    AND worker_hosts.current_epoch = sqlc.arg(worker_epoch)
    AND worker_hosts.status = 'termination_ready'
-   AND worker_hosts.claim_version = worker_host_credentials.claim_version + 1;
+   AND worker_hosts.claim_version = worker_host_secrets.claim_version + 1;
 
 -- name: AuthorizeWorkerFenceReplay :one
-SELECT worker_host_credentials.*, worker_hosts.resource_id,
+SELECT worker_host_secrets.*, worker_hosts.resource_id,
        worker_hosts.current_epoch, worker_hosts.status AS worker_status,
        worker_hosts.epoch_started_at
-  FROM worker_host_credentials
+  FROM worker_host_secrets
   JOIN worker_hosts
-    ON worker_hosts.id = worker_host_credentials.worker_host_id
-   AND worker_hosts.worker_group_id = worker_host_credentials.worker_group_id
- WHERE worker_host_credentials.id = sqlc.arg(credential_id)
-   AND worker_host_credentials.claim_version = sqlc.arg(claim_version)
-   AND worker_host_credentials.revoked_at IS NOT NULL
+    ON worker_hosts.id = worker_host_secrets.worker_host_id
+   AND worker_hosts.worker_group_id = worker_host_secrets.worker_group_id
+ WHERE worker_host_secrets.id = sqlc.arg(host_secret_id)
+   AND worker_host_secrets.claim_version = sqlc.arg(claim_version)
+   AND worker_host_secrets.revoked_at IS NOT NULL
    AND worker_hosts.current_epoch = sqlc.arg(worker_epoch)
    AND worker_hosts.status = 'lost'
-   AND worker_hosts.claim_version = worker_host_credentials.claim_version + 1;
+   AND worker_hosts.claim_version = worker_host_secrets.claim_version + 1;
 
 -- name: EnrollWorkerHost :one
 WITH enrollment_token AS (
@@ -249,26 +249,26 @@ WITH enrollment_token AS (
        AND worker_hosts.worker_pool_id = (SELECT id FROM pool)
     RETURNING *
 ), revoked AS (
-    UPDATE worker_host_credentials SET revoked_at = now()
-      FROM worker WHERE worker_host_credentials.worker_host_id = worker.id
-                    AND worker_host_credentials.revoked_at IS NULL
-    RETURNING worker_host_credentials.id
-), credential AS (
-    INSERT INTO worker_host_credentials (
+    UPDATE worker_host_secrets SET revoked_at = now()
+      FROM worker WHERE worker_host_secrets.worker_host_id = worker.id
+                    AND worker_host_secrets.revoked_at IS NULL
+    RETURNING worker_host_secrets.id
+), host_secret AS (
+    INSERT INTO worker_host_secrets (
 	    id, worker_group_id, worker_host_id, key_prefix, secret_hash,
 	    claim_version, expires_at
 	)
-    SELECT sqlc.arg(credential_id), worker.worker_group_id, worker.id,
+    SELECT sqlc.arg(host_secret_id), worker.worker_group_id, worker.id,
 	       sqlc.arg(key_prefix), sqlc.arg(secret_hash), worker.claim_version,
-	       sqlc.narg(credential_expires_at)
+	       sqlc.narg(host_secret_expires_at)
       FROM worker WHERE (SELECT count(*) FROM revoked) >= 0
     RETURNING *
 ), touched AS (
     UPDATE worker_group_tokens
        SET last_used_at = now()
-      FROM credential
+      FROM host_secret
      WHERE worker_group_tokens.id = (SELECT token_id FROM enrollment_token)
     RETURNING worker_group_tokens.id
 )
-SELECT credential.*, pool.id AS worker_pool_id
-  FROM credential JOIN touched ON true JOIN pool ON pool.worker_group_id = credential.worker_group_id;
+SELECT host_secret.*, pool.id AS worker_pool_id
+  FROM host_secret JOIN touched ON true JOIN pool ON pool.worker_group_id = host_secret.worker_group_id;

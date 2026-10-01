@@ -32,20 +32,20 @@ func completeServerConfig(t *testing.T) ServerConfig {
 	}
 	store := newTestUploadStore(t)
 	return ServerConfig{
-		ComputerKeys:          constructionKeys{},
-		Log:                   discardTestLogger(),
-		DB:                    routeWorkerAuthStore{},
-		TX:                    constructionDB{},
-		Auth:                  identity.NewAPIKeyAuthenticator(routeWorkerAuthStore{}),
-		CAS:                   store,
-		BundleAdmission:       bundle.Admission{Runtime: claimResponseRuntimeDescriptor()},
-		PlatformStore:         store,
-		SecretDelivery:        claimHTTPSecrets{},
-		ComputerFencingKey:    fencingKey,
-		TokenCredentialKey:    credentialKey,
-		TelemetryReader:       constructionTelemetry{},
-		AuthKey:               testAuthRootKey(),
-		WorkerTokenSigningKey: testWorkerTokenSigningKey(),
+		ComputerKeys:                   constructionKeys{},
+		Log:                            discardTestLogger(),
+		DB:                             routeWorkerAuthStore{},
+		TX:                             constructionDB{},
+		Auth:                           identity.NewAPIKeyAuthenticator(routeWorkerAuthStore{}),
+		CAS:                            store,
+		BundleAdmission:                bundle.Admission{Runtime: claimResponseRuntimeDescriptor()},
+		PlatformStore:                  store,
+		SecretDelivery:                 claimHTTPSecrets{},
+		ComputerFencingKey:             fencingKey,
+		TokenCredentialKey:             credentialKey,
+		TelemetryReader:                constructionTelemetry{},
+		AuthKey:                        testAuthRootKey(),
+		WorkerHostCredentialSigningKey: testWorkerHostCredentialSigningKey(),
 	}
 }
 
@@ -90,11 +90,11 @@ func TestNewServerRequiresDeploymentBundleCollaborators(t *testing.T) {
 	}
 }
 
-func TestNewServerValidatesWorkerTokenSigningKey(t *testing.T) {
+func TestNewServerValidatesWorkerHostCredentialSigningKey(t *testing.T) {
 	cfg := completeServerConfig(t)
-	cfg.WorkerTokenSigningKey = make([]byte, workergroup.TokenSigningKeySize-1)
+	cfg.WorkerHostCredentialSigningKey = make([]byte, workergroup.HostCredentialSigningKeySize-1)
 	handler, err := NewServer(cfg)
-	if err == nil || handler != nil || !strings.Contains(err.Error(), "worker JWT signing key must be exactly 32 bytes") {
-		t.Fatalf("NewServer with a short worker token signing key = %v, %v", handler, err)
+	if err == nil || handler != nil || !strings.Contains(err.Error(), "worker host credential signing key must be exactly 32 bytes") {
+		t.Fatalf("NewServer with a short worker host credential signing key = %v, %v", handler, err)
 	}
 }

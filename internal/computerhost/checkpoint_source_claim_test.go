@@ -181,8 +181,8 @@ func startCapturedServe(ctx context.Context, t *testing.T, machine *capturedServ
 	mount.OrgID = uuid.NewV7().String()
 	mount.ComputerID = target.Source.ComputerID
 	mount.WriterGeneration = target.Source.WriterGeneration
-	mount.GuestdChannelToken = "channel-token"
-	mount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte(mount.GuestdChannelToken))
+	mount.GuestChannelCredential = "channel-credential"
+	mount.GuestChannelCredentialHash = sha256sum.HexBytes([]byte(mount.GuestChannelCredential))
 	preparedClient, preparedServer := net.Pipe()
 	t.Cleanup(func() { _ = preparedServer.Close() })
 	go acknowledgePreparedComputerMount(t, preparedServer, mount, mount.ComputerInstanceID)

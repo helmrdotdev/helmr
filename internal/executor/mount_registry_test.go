@@ -42,8 +42,8 @@ func newTestMounts() *testMounts {
 }
 
 // add mounts machine for Runs of mount and returns it with its unmount.
-func (m *testMounts) add(mount workerapi.ComputerInstanceAssignment, machine vm.Machine, channelToken string) (*testMount, func()) {
-	mounted := &testMount{machine: machine, mount: mount, token: channelToken, failures: make(chan testMountFailure, 1)}
+func (m *testMounts) add(mount workerapi.ComputerInstanceAssignment, machine vm.Machine, channelCredential string) (*testMount, func()) {
+	mounted := &testMount{machine: machine, mount: mount, token: channelCredential, failures: make(chan testMountFailure, 1)}
 	m.mu.Lock()
 	m.mounts[mount.ComputerInstanceID] = mounted
 	m.mu.Unlock()
@@ -81,8 +81,8 @@ func (m *testMounts) OpenChannel(ctx context.Context, id string) (computerhost.M
 		GrantProgramResume: func(context.Context, *computerv0.GrantProgramResumeRequest) (*programv0.ResumeAttach, error) {
 			return nil, errors.New("test mount does not grant Program resume")
 		},
-		ChannelToken: mounted.token,
-		Mount:        mounted.mount,
+		ChannelCredential: mounted.token,
+		Mount:             mounted.mount,
 	}, nil
 }
 
@@ -106,15 +106,15 @@ func (m *testMounts) RequestFailure(ctx context.Context, id string) error {
 }
 
 // RenewComputerAuthority accepts the requested expiry for the mount's channel
-// token, as a guest does, unless ctx has ended.
+// credential, as a guest does, unless ctx has ended.
 func (m *testMounts) RenewComputerAuthority(ctx context.Context, request *computerv0.RenewComputerAuthorityRequest) (*computerv0.ComputerAuthorityFence, error) {
 	fence := request.GetPrevious().GetFence()
 	mounted, err := m.lookup(fence.GetComputerInstanceId())
 	if err != nil {
 		return nil, err
 	}
-	if request.GetPrevious().GetChannelToken() != mounted.token {
-		return nil, errors.New("test mount channel token differs")
+	if request.GetPrevious().GetChannelCredential() != mounted.token {
+		return nil, errors.New("test mount channel credential differs")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err

@@ -162,13 +162,13 @@ WITH target AS (
                     - $5::bigint * interval '1 second')
        )
     RETURNING workers.id, workers.resource_id, workers.worker_group_id, workers.worker_pool_id, workers.status, workers.claim_version, workers.current_epoch, workers.current_service_id, workers.vm_platform_id, workers.epoch_cpu_millis, workers.epoch_memory_bytes, workers.epoch_guest_ephemeral_disk_bytes, workers.per_vm_cpu_millis, workers.per_vm_memory_bytes, workers.per_vm_guest_ephemeral_disk_bytes, workers.max_vm_slots, workers.max_vm_starts, workers.cpu_environment, workers.cpu_environment_digest, workers.observed_at, workers.run_paused_reason, workers.vm_paused_reason, workers.epoch_started_at, workers.activated_at, workers.draining_at, workers.termination_ready_at, workers.lost_at, workers.created_at, workers.updated_at
-), revoked_credentials AS (
-    UPDATE worker_host_credentials AS credentials
-       SET revoked_at = COALESCE(credentials.revoked_at, now())
+), revoked_host_secrets AS (
+    UPDATE worker_host_secrets AS host_secrets
+       SET revoked_at = COALESCE(host_secrets.revoked_at, now())
       FROM target
-     WHERE credentials.worker_host_id = target.id
-       AND credentials.revoked_at IS NULL
-    RETURNING credentials.id
+     WHERE host_secrets.worker_host_id = target.id
+       AND host_secrets.revoked_at IS NULL
+    RETURNING host_secrets.id
 ), lost_runtimes AS (
     UPDATE computer_instances AS runtimes
        SET observed_state = 'lost', observed_version = runtimes.observed_version + 1,
@@ -184,7 +184,7 @@ WITH target AS (
 )
 SELECT target.id, target.worker_group_id, target.current_epoch, target.status
   FROM target
- WHERE (SELECT count(*) FROM revoked_credentials) >= 0
+ WHERE (SELECT count(*) FROM revoked_host_secrets) >= 0
    AND (SELECT count(*) FROM lost_runtimes) >= 0
 `
 
@@ -204,7 +204,7 @@ type RecheckAndFenceStaleWorkerHostRow struct {
 	Status        string      `json:"status"`
 }
 
-// Immediate fencing revokes credentials and marks Instance observations lost.
+// Immediate fencing revokes host secrets and marks Instance observations lost.
 // Physical reclamation still requires independent exclusion evidence. Run/build/computer authority is recovered by its canonical
 // expiry and recovery loops; this transition does not imply zero authority.
 func (q *Queries) RecheckAndFenceStaleWorkerHost(ctx context.Context, arg RecheckAndFenceStaleWorkerHostParams) (RecheckAndFenceStaleWorkerHostRow, error) {

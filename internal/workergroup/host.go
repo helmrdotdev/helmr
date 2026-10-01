@@ -37,7 +37,7 @@ type EnrolledHost struct {
 // EnrollHost creates a registering worker host with a new host secret in the
 // named pool of the worker group that the enrollment token authorizes,
 // creating the pool when it does not exist, in one statement.
-func EnrollHost(ctx context.Context, q db.Querier, cfg CredentialConfig, enrollment Enrollment) (EnrolledHost, error) {
+func EnrollHost(ctx context.Context, q db.Querier, cfg HostAuthConfig, enrollment Enrollment) (EnrolledHost, error) {
 	if enrollment.ResourceID == "" || strings.TrimSpace(enrollment.ResourceID) != enrollment.ResourceID || len(enrollment.ResourceID) > MaxResourceIDBytes {
 		return EnrolledHost{}, invalidInput("resource_id is required and must not exceed %d bytes", MaxResourceIDBytes)
 	}
@@ -51,16 +51,16 @@ func EnrollHost(ctx context.Context, q db.Querier, cfg CredentialConfig, enrollm
 	if err != nil {
 		return EnrolledHost{}, fmt.Errorf("generate worker host secret: %w", err)
 	}
-	credential, err := q.EnrollWorkerHost(ctx, db.EnrollWorkerHostParams{
+	hostSecret, err := q.EnrollWorkerHost(ctx, db.EnrollWorkerHostParams{
 		TokenHash:        enrollment.TokenHash,
 		WorkerPoolID:     pgvalue.UUID(uuid.NewV7()),
 		PoolName:         enrollment.PoolName,
 		WorkerHostID:     pgvalue.UUID(uuid.NewV7()),
 		CurrentServiceID: pgvalue.UUID(uuid.NewV7()),
 		ResourceID:       enrollment.ResourceID,
-		CredentialID:     pgvalue.UUID(uuid.NewV7()),
+		HostSecretID:     pgvalue.UUID(uuid.NewV7()),
 		KeyPrefix:        generated.KeyPrefix,
-		SecretHash:       generated.TokenHash,
+		SecretHash:       generated.SecretHash,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return EnrolledHost{}, ErrInvalidEnrollmentToken
@@ -69,9 +69,9 @@ func EnrollHost(ctx context.Context, q db.Querier, cfg CredentialConfig, enrollm
 		return EnrolledHost{}, fmt.Errorf("enroll worker host %q: %w", enrollment.ResourceID, err)
 	}
 	return EnrolledHost{
-		HostID:  pgvalue.MustUUIDValue(credential.WorkerHostID),
-		GroupID: pgvalue.MustUUIDValue(credential.WorkerGroupID),
-		PoolID:  pgvalue.MustUUIDValue(credential.WorkerPoolID),
+		HostID:  pgvalue.MustUUIDValue(hostSecret.WorkerHostID),
+		GroupID: pgvalue.MustUUIDValue(hostSecret.WorkerGroupID),
+		PoolID:  pgvalue.MustUUIDValue(hostSecret.WorkerPoolID),
 		Secret:  generated.Raw,
 	}, nil
 }

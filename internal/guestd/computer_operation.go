@@ -53,7 +53,7 @@ type managedProgramClaim struct {
 
 type computerMountEntry struct {
 	writerGeneration          int64
-	channelToken              string
+	channelCredential         string
 	computerID                string
 	computerInstanceID        string
 	baseComputerDiskVersionID string
@@ -211,7 +211,7 @@ func (r *computerOperationRegistry) acquireExact(computerInstanceID string, comp
 		entry.computerID == computerID &&
 		entry.currentWriterGeneration() == writerGeneration &&
 		!entry.retired &&
-		subtle.ConstantTimeCompare([]byte(entry.channelToken), []byte(token)) == 1) {
+		subtle.ConstantTimeCompare([]byte(entry.channelCredential), []byte(token)) == 1) {
 		r.mu.Unlock()
 		return nil, func() {}, false
 	}
@@ -225,7 +225,7 @@ func computerEntryMatches(entry *computerMountEntry, computerInstanceID string, 
 		entry.computerInstanceID == computerInstanceID &&
 		entry.computerID == computerID &&
 		!entry.retired &&
-		subtle.ConstantTimeCompare([]byte(entry.channelToken), []byte(token)) == 1
+		subtle.ConstantTimeCompare([]byte(entry.channelCredential), []byte(token)) == 1
 }
 
 func (entry *computerMountEntry) currentWriterGeneration() uint64 {
@@ -406,8 +406,8 @@ func handleComputerMaterializeConnection(_ context.Context, conn io.ReadWriter, 
 	if strings.TrimSpace(envelope.ComputerId) == "" {
 		return errors.New("computer materialize computer_id is required")
 	}
-	if strings.TrimSpace(envelope.ChannelToken) == "" {
-		return errors.New("computer materialize channel_token is required")
+	if strings.TrimSpace(envelope.ChannelCredential) == "" {
+		return errors.New("computer materialize channel_credential is required")
 	}
 	if envelope.WriterGeneration == 0 {
 		return errors.New("computer materialize writer_generation is required")
@@ -428,7 +428,7 @@ func handleComputerMaterializeConnection(_ context.Context, conn io.ReadWriter, 
 			"computer_instance_id", computerInstanceID, "checkpoint_id", request.GetRestoredCheckpointId(),
 			"duration_ms", time.Since(totalStarted).Milliseconds())
 		return frameio.WriteProtoFrame(conn, &computerv0.MaterializeComputerResponse{
-			Status: "running", GuestdChannelTokenHash: sha256sum.HexBytes([]byte(strings.TrimSpace(envelope.ChannelToken))),
+			Status: "running", GuestChannelCredentialHash: sha256sum.HexBytes([]byte(strings.TrimSpace(envelope.ChannelCredential))),
 			Phases: phases, Target: proto.Clone(request.GetTarget()).(*computerv0.ComputerMountTarget),
 		})
 	}
@@ -445,7 +445,7 @@ func handleComputerMaterializeConnection(_ context.Context, conn io.ReadWriter, 
 		}
 		return fmt.Errorf("restore materialized computer: %w", err)
 	}
-	entry.channelToken = envelope.ChannelToken
+	entry.channelCredential = envelope.ChannelCredential
 	entry.computerID = computerID
 
 	registerStarted := time.Now()
@@ -458,10 +458,10 @@ func handleComputerMaterializeConnection(_ context.Context, conn io.ReadWriter, 
 	phases = append(phases, computerMountPhase("guest_register", registerStarted, 0, nil))
 	logger.Info("computer materialize registered", "computer_id", computerID, "computer_instance_id", computerInstanceID, "duration_ms", time.Since(totalStarted).Milliseconds())
 	return frameio.WriteProtoFrame(conn, &computerv0.MaterializeComputerResponse{
-		Status:                 "running",
-		GuestdChannelTokenHash: sha256sum.HexBytes([]byte(strings.TrimSpace(envelope.ChannelToken))),
-		Phases:                 phases,
-		Target:                 proto.Clone(request.GetTarget()).(*computerv0.ComputerMountTarget),
+		Status:                     "running",
+		GuestChannelCredentialHash: sha256sum.HexBytes([]byte(strings.TrimSpace(envelope.ChannelCredential))),
+		Phases:                     phases,
+		Target:                     proto.Clone(request.GetTarget()).(*computerv0.ComputerMountTarget),
 	})
 }
 
@@ -483,10 +483,10 @@ func (r *computerOperationRegistry) materializeRestoredComputerMount(
 	}
 	envelope := request.GetEnvelope()
 	computerID := strings.TrimSpace(envelope.GetComputerId())
-	channelToken := strings.TrimSpace(envelope.GetChannelToken())
+	channelCredential := strings.TrimSpace(envelope.GetChannelCredential())
 	computerInstanceID := strings.TrimSpace(envelope.GetComputerInstanceId())
 	mountPath := filepath.Clean(strings.TrimSpace(request.GetMountPath()))
-	if computerInstanceID == "" || computerID == "" || channelToken == "" ||
+	if computerInstanceID == "" || computerID == "" || channelCredential == "" ||
 		checkpointID == "" || envelope.GetWriterGeneration() == 0 || envelope.GetWriterGeneration() > math.MaxInt64 || mountPath == "." ||
 		mountPath == string(filepath.Separator) || !filepath.IsAbs(mountPath) {
 		return nil, errors.New("restored computer materialization authority is incomplete")
@@ -527,7 +527,7 @@ func (r *computerOperationRegistry) materializeRestoredComputerMount(
 		return nil, errors.New("restored computer does not match the sealed capture")
 	}
 	if r.restoredMaterialization != nil {
-		if !proto.Equal(r.restoredMaterialization, request) || r.entries[computerInstanceID] != entry || entry.computerInstanceID != computerInstanceID || entry.currentWriterGeneration() != envelope.GetWriterGeneration() || entry.channelToken != channelToken || entry.baseComputerDiskVersionID != target.GetBaseComputerDiskVersionId() {
+		if !proto.Equal(r.restoredMaterialization, request) || r.entries[computerInstanceID] != entry || entry.computerInstanceID != computerInstanceID || entry.currentWriterGeneration() != envelope.GetWriterGeneration() || entry.channelCredential != channelCredential || entry.baseComputerDiskVersionID != target.GetBaseComputerDiskVersionId() {
 			return nil, errors.New("restored computer materialization conflicts with its receipt")
 		}
 		return []*computerv0.ComputerMountPhase{computerMountPhase("guest_restore_materialize_replay", started, 0, nil)}, nil
@@ -570,7 +570,7 @@ func (r *computerOperationRegistry) materializeRestoredComputerMount(
 		entry.cleanup = prepared.cleanup
 		r.preparedRuntime = nil
 	}
-	entry.channelToken = channelToken
+	entry.channelCredential = channelCredential
 	entry.computerInstanceID = computerInstanceID
 	entry.baseComputerDiskVersionID = target.GetBaseComputerDiskVersionId()
 	entry.setWriterGeneration(envelope.GetWriterGeneration())
@@ -863,7 +863,7 @@ func handleComputerBasicExecConnection(
 	entry, release, ok := registry.acquireCommandInstance(
 		envelope.ComputerInstanceId,
 		envelope.ComputerId,
-		envelope.ChannelToken,
+		envelope.ChannelCredential,
 	)
 	if !ok {
 		return fail(

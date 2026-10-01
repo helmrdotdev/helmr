@@ -21,7 +21,7 @@ import (
 // MountComputer serves machine as the Computer Instance the physical Server
 // mounts after materialization: a pending restore is installed and activated
 // through the Server's own restore path, then the mount is registered for Runs
-// with the assignment's channel token.
+// with the assignment's channel credential.
 func MountComputer(ctx context.Context, mounts *Mounts, restore ComputerRestoreControl, machine vm.Machine, mount workerapi.ComputerInstanceAssignment) (func(), error) {
 	server := Server{RestoreControl: restore, Mounts: mounts}
 	instance := newInstanceMount(machine)
@@ -30,7 +30,7 @@ func MountComputer(ctx context.Context, mounts *Mounts, restore ComputerRestoreC
 			return nil, err
 		}
 	}
-	return mounts.register(mount, instance, server.channelToken(mount)), nil
+	return mounts.register(mount, instance, server.channelCredential(mount)), nil
 }
 
 // MountReleaseResult reads, without releasing, whether the mounted Instance

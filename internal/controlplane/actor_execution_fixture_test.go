@@ -19,15 +19,15 @@ import (
 )
 
 // actorExecutionHTTP serves the control plane built by NewServer over an
-// Actor execution's database. The execution's worker authenticates with an
-// epoch token exchanged for its seeded host credential; login sessions
+// Actor execution's database. The execution's worker authenticates with a
+// host credential issued for its seeded host secret; login sessions
 // authenticate as in production and API key bearer tokens as the principal
 // registered for them.
 type actorExecutionHTTP struct {
 	*sessiontest.Execution
 	httpPostgresFixture
-	principals  *principalAuthenticator
-	workerToken string
+	principals       *principalAuthenticator
+	workerCredential string
 }
 
 // newActorExecution builds an Actor execution whose Session holds the input
@@ -61,7 +61,7 @@ func newActorExecution(t *testing.T, input json.RawMessage, start bool, configur
 		Execution:           f,
 		httpPostgresFixture: httpPostgresFixture{pool: f.Pool, queries: db.New(f.Pool), handler: handler, keys: keys},
 		principals:          principals,
-		workerToken:         seedHostCredential(t, f.Pool, f.WorkerID).token(t, handler),
+		workerCredential:    seedHostSecret(t, f.Pool, f.WorkerID).issue(t, handler),
 	}
 }
 
@@ -93,7 +93,7 @@ func (f *actorExecutionHTTP) serveWorker(t *testing.T, w http.ResponseWriter, pa
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1"+path, strings.NewReader(string(raw)))
-	request.Header.Set("Authorization", "Bearer "+f.workerToken)
+	request.Header.Set("Authorization", "Bearer "+f.workerCredential)
 	request.Header.Set("Content-Type", "application/json")
 	f.handler.ServeHTTP(w, request)
 }
