@@ -481,7 +481,7 @@ func activationQuarantines(evidence RecoveryEvidence) (int, error) {
 	}
 	instanceCount := 0
 	for _, owner := range evidence.QuarantinedOwners {
-		if owner.Kind != vm.OwnerRuntime {
+		if owner.Kind != vm.OwnerInstance {
 			return 0, errors.New("worker activation is blocked by unknown VM owner kind")
 		}
 		instanceCount++

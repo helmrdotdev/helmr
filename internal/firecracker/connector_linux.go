@@ -134,7 +134,7 @@ func (c *Connector) probeGuest(ctx context.Context) error {
 	ownerID := uuid.NewV7().String()
 	machine, err := c.connect(probeCtx, startupProbeLaunch, vm.ConnectRequest{
 		ID:        ownerID,
-		OwnerKind: vm.OwnerRuntime,
+		OwnerKind: vm.OwnerInstance,
 		Binding: vm.WorkloadBinding{
 			WorkerEpoch:        1,
 			OwnerID:            ownerID,
@@ -184,7 +184,7 @@ func (c *Connector) connectorForRequest(
 	request vm.ConnectRequest,
 ) (*Connector, error) {
 	cfg := c.cfg
-	if request.OwnerKind != vm.OwnerRuntime {
+	if request.OwnerKind != vm.OwnerInstance {
 		return nil, errors.New("the Firecracker owner kind is invalid")
 	}
 	if len(request.ReadOnlyDrives) != 0 {

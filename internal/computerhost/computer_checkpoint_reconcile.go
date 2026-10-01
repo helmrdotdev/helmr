@@ -198,7 +198,7 @@ func (p *PreparedMachines) excludeCaptureSource(ctx context.Context, computerIns
 		return "", errors.Join(err, errors.New("VM backend does not support exact instance cleanup"))
 	}
 	cleanupCtx, cancel := preparedMachineControlContext(ctx)
-	cleanupErr := p.Backend.Cleanup(cleanupCtx, vm.Owner{Kind: vm.OwnerRuntime, ID: computerInstanceID})
+	cleanupErr := p.Backend.Cleanup(cleanupCtx, vm.Owner{Kind: vm.OwnerInstance, ID: computerInstanceID})
 	cancel()
 	if cleanupErr != nil {
 		return "", fmt.Errorf("stop capture source physically: %w", errors.Join(err, cleanupErr))

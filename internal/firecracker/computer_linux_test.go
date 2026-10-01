@@ -109,7 +109,7 @@ func TestComputerBlockAttachmentAndPausedFlush(t *testing.T) {
 	if err := os.Mkdir(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: key}
+	owner := vm.Owner{Kind: vm.OwnerInstance, ID: key}
 	connector := &Connector{cfg: Config{StateDir: filepath.Join(arena, "owners"), JailerChrootBaseDir: filepath.Join(arena, "jails"), IPPath: "/bin/true"}, computerDevices: &sync.Map{}}
 	if _, err := createOwnerStateRoot(connector.cfg.StateDir, owner); err != nil {
 		t.Fatal(err)
