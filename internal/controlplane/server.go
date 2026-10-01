@@ -124,13 +124,13 @@ type ServerConfig struct {
 	MagicLinkDelivery  *MagicLinkDelivery
 	AuthProvider       AuthProvider
 
-	WorkerTokenSigningKey []byte
-	WorkerTokenTTL        time.Duration
-	CapacityToken         string
-	SetupToken            string
-	AuthKey               []byte
-	PublicURL             *url.URL
-	APIOrigin             *url.URL
+	WorkerHostCredentialSigningKey []byte
+	WorkerHostCredentialTTL        time.Duration
+	CapacityToken                  string
+	SetupToken                     string
+	AuthKey                        []byte
+	PublicURL                      *url.URL
+	APIOrigin                      *url.URL
 
 	MagicLinkDebugURLs bool
 	AdminEmails        []string
@@ -187,7 +187,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	hostCredentials, err := workergroup.NewCredentialConfig(authKeys.WorkerHost, cfg.WorkerTokenSigningKey, cfg.WorkerTokenTTL)
+	hostCredentials, err := workergroup.NewCredentialConfig(authKeys.WorkerHost, cfg.WorkerHostCredentialSigningKey, cfg.WorkerHostCredentialTTL)
 	if err != nil {
 		return nil, err
 	}
@@ -607,7 +607,7 @@ func (s *Server) mountDeveloperRoutes(r chi.Router) {
 func (s *Server) mountWorkerRoutes(r chi.Router) {
 	r.Route("/worker/v1", func(r chi.Router) {
 		r.Post("/enrollment", s.workerEnroll)
-		r.Post("/instance/token", s.workerAuthToken)
+		r.Post("/instance/credential", s.workerIssueHostCredential)
 		r.With(s.requireRecoveringWorker).Post("/instance/recover", s.workerStartupRecovery)
 		r.With(s.requireWorkerActivation).Post("/instance/activate", s.workerActivate)
 		r.With(s.requireWorker).Get("/instance", s.workerStatus)

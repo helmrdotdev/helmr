@@ -71,9 +71,9 @@ func TestReadWorkerEnrollmentTokenRejectsUnsafeFiles(t *testing.T) {
 	}
 }
 
-// A control plane on another worker API version rejects the stored credential's
-// token exchange with a 409, not a 401: the worker keeps its credential and
-// neither re-enrolls nor retries.
+// A control plane on another worker API version rejects the stored secret's
+// host credential request with a 409, not a 401: the worker keeps its stored
+// secret and neither re-enrolls nor retries.
 func TestWorkerCredentialSurvivesAPIVersionMismatch(t *testing.T) {
 	requests := map[string]int{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -105,7 +105,7 @@ func TestWorkerCredentialSurvivesAPIVersionMismatch(t *testing.T) {
 	if kept, err := readWorkerHostCredential(path); err != nil || kept.WorkerHostID != stored.WorkerHostID || kept.WorkerHostSecret != stored.WorkerHostSecret {
 		t.Fatalf("stored credential = %+v, err = %v; want it kept", kept, err)
 	}
-	if len(requests) != 1 || requests["/worker/v1/instance/token"] != 1 {
-		t.Fatalf("requests = %v, want one token exchange", requests)
+	if len(requests) != 1 || requests["/worker/v1/instance/credential"] != 1 {
+		t.Fatalf("requests = %v, want one host credential request", requests)
 	}
 }

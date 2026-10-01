@@ -43,7 +43,7 @@ export HELMR_GITHUB_OAUTH_CLIENT_SECRET='...'
 
 Set `TOFU=terraform` if required. The helper creates locally generated values for:
 
-- `worker_token_signing_key`
+- `worker_host_credential_signing_key`
 - `auth_key`
 - `encryption_key`
 - `computer_fencing_key`

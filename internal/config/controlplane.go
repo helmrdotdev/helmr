@@ -80,7 +80,7 @@ func LoadControlPlane() (ControlPlane, error) {
 		{"TOKEN_CREDENTIAL_KEY", &cfg.TokenCredentialKey},
 		{"COMPUTER_FENCING_KEY", &cfg.ComputerFencingKey},
 		{"ENCRYPTION_KEY", &cfg.EncryptionKey},
-		{"WORKER_TOKEN_SIGNING_KEY", &cfg.WorkerTokenSigningKey},
+		{"WORKER_HOST_CREDENTIAL_SIGNING_KEY", &cfg.WorkerHostCredentialSigningKey},
 	} {
 		*root.target, err = rootKey(root.name)
 		if err != nil {

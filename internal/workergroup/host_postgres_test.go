@@ -17,10 +17,10 @@ import (
 // startedHost is a worker host enrolled and brought into service through the
 // credential and lifecycle operations, as a worker process does.
 type startedHost struct {
-	enrolled  EnrolledHost
-	serviceID string
-	token     HostToken
-	principal HostPrincipal
+	enrolled   EnrolledHost
+	serviceID  string
+	credential HostCredential
+	principal  HostPrincipal
 }
 
 func (f supplyFixture) enroll(t *testing.T, cfg CredentialConfig, poolName string, resourceID string) EnrolledHost {
@@ -39,20 +39,20 @@ func (f supplyFixture) enroll(t *testing.T, cfg CredentialConfig, poolName strin
 	return enrolled
 }
 
-func (f supplyFixture) exchange(t *testing.T, cfg CredentialConfig, enrolled EnrolledHost, serviceID string) HostToken {
+func (f supplyFixture) exchange(t *testing.T, cfg CredentialConfig, enrolled EnrolledHost, serviceID string) HostCredential {
 	t.Helper()
-	token, err := ExchangeCredential(t.Context(), f.q, cfg, CredentialExchange{
+	credential, err := IssueHostCredential(t.Context(), f.q, cfg, HostCredentialRequest{
 		HostID: enrolled.HostID.String(), Secret: enrolled.Secret, ServiceID: serviceID,
 	}, time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return token
+	return credential
 }
 
-func (f supplyFixture) authenticate(t *testing.T, authenticate func(context.Context, db.Querier, CredentialConfig, string, time.Time) (HostPrincipal, error), cfg CredentialConfig, token HostToken) HostPrincipal {
+func (f supplyFixture) authenticate(t *testing.T, authenticate func(context.Context, db.Querier, CredentialConfig, string, time.Time) (HostPrincipal, error), cfg CredentialConfig, credential HostCredential) HostPrincipal {
 	t.Helper()
-	principal, err := authenticate(t.Context(), f.q, cfg, token.Token, time.Now())
+	principal, err := authenticate(t.Context(), f.q, cfg, credential.Value, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,12 +88,12 @@ func startupEvidence(t *testing.T) []byte {
 func (f supplyFixture) start(t *testing.T, cfg CredentialConfig, poolName string, resourceID string, template Template) startedHost {
 	t.Helper()
 	host := startedHost{enrolled: f.enroll(t, cfg, poolName, resourceID), serviceID: uuid.NewV7().String()}
-	host.token = f.exchange(t, cfg, host.enrolled, host.serviceID)
-	recovering := f.authenticate(t, AuthenticateRecoveringHost, cfg, host.token)
+	host.credential = f.exchange(t, cfg, host.enrolled, host.serviceID)
+	recovering := f.authenticate(t, AuthenticateRecoveringHost, cfg, host.credential)
 	if err := RecordStartupRecovery(t.Context(), f.q, recovering, startupEvidence(t)); err != nil {
 		t.Fatal(err)
 	}
-	activating := f.authenticate(t, AuthenticateActivatingHost, cfg, host.token)
+	activating := f.authenticate(t, AuthenticateActivatingHost, cfg, host.credential)
 	if err := ActivateHost(t.Context(), f.pool, activating, Activation{
 		Template: template, CPUEnvironment: []byte(`{"vendor":"test"}`), CPUEnvironmentDigest: f.cpuConfigDigest,
 	}); err != nil {
@@ -101,8 +101,8 @@ func (f supplyFixture) start(t *testing.T, cfg CredentialConfig, poolName string
 	}
 	// Activation can advance the group claim version by selecting the initial
 	// primary pool, so the host exchanges its secret again.
-	host.token = f.exchange(t, cfg, host.enrolled, host.serviceID)
-	host.principal = f.authenticate(t, AuthenticateHost, cfg, host.token)
+	host.credential = f.exchange(t, cfg, host.enrolled, host.serviceID)
+	host.principal = f.authenticate(t, AuthenticateHost, cfg, host.credential)
 	return host
 }
 
@@ -111,15 +111,15 @@ func TestHostLifecycleThroughCredentials(t *testing.T) {
 	cfg := testCredentialConfig(t)
 	enrolled := f.enroll(t, cfg, "default", "i-lifecycle")
 	serviceID := uuid.NewV7().String()
-	token := f.exchange(t, cfg, enrolled, serviceID)
-	if token.Epoch != 1 || token.ExpiresIn != time.Hour {
-		t.Fatalf("token epoch = %d, expires in %s", token.Epoch, token.ExpiresIn)
+	credential := f.exchange(t, cfg, enrolled, serviceID)
+	if credential.Epoch != 1 || credential.ExpiresIn != time.Hour {
+		t.Fatalf("credential epoch = %d, expires in %s", credential.Epoch, credential.ExpiresIn)
 	}
-	if _, err := AuthenticateHost(t.Context(), f.q, cfg, token.Token, time.Now()); !errors.Is(err, ErrUnauthenticated) {
+	if _, err := AuthenticateHost(t.Context(), f.q, cfg, credential.Value, time.Now()); !errors.Is(err, ErrUnauthenticated) {
 		t.Fatalf("registering host authenticated for ordinary routes: %v", err)
 	}
 
-	recovering := f.authenticate(t, AuthenticateRecoveringHost, cfg, token)
+	recovering := f.authenticate(t, AuthenticateRecoveringHost, cfg, credential)
 	if recovering.HostID != enrolled.HostID || recovering.GroupID != f.groupID() || recovering.Epoch != 1 ||
 		recovering.ResourceID != "i-lifecycle" || recovering.Status != db.WorkerHostStatusRegistering || recovering.EpochStartedAt.IsZero() {
 		t.Fatalf("recovering principal = %+v", recovering)
@@ -135,7 +135,7 @@ func TestHostLifecycleThroughCredentials(t *testing.T) {
 	}
 
 	template := validHostTemplate(t)
-	activating := f.authenticate(t, AuthenticateActivatingHost, cfg, token)
+	activating := f.authenticate(t, AuthenticateActivatingHost, cfg, credential)
 	if err := ActivateHost(t.Context(), f.pool, activating, Activation{
 		Template: template, CPUEnvironment: []byte(`{"vendor":"test"}`), CPUEnvironmentDigest: f.cpuConfigDigest,
 	}); err != nil {
@@ -147,11 +147,11 @@ func TestHostLifecycleThroughCredentials(t *testing.T) {
 	}
 	// Selecting the initial primary pool advanced the group claim version, so
 	// the host exchanges its secret again for the same epoch.
-	if _, err := AuthenticateHost(t.Context(), f.q, cfg, token.Token, time.Now()); !errors.Is(err, ErrUnauthenticated) {
-		t.Fatalf("pre-activation token error = %v", err)
+	if _, err := AuthenticateHost(t.Context(), f.q, cfg, credential.Value, time.Now()); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("pre-activation credential error = %v", err)
 	}
-	token = f.exchange(t, cfg, enrolled, serviceID)
-	principal := f.authenticate(t, AuthenticateHost, cfg, token)
+	credential = f.exchange(t, cfg, enrolled, serviceID)
+	principal := f.authenticate(t, AuthenticateHost, cfg, credential)
 	state, err := ReadHost(t.Context(), f.q, principal)
 	if err != nil {
 		t.Fatal(err)
@@ -169,16 +169,16 @@ func TestHostLifecycleThroughCredentials(t *testing.T) {
 	if err := BeginHostDrain(t.Context(), f.q, principal); err != nil {
 		t.Fatal(err)
 	}
-	// Draining advanced the host claim version, so the token minted before it
+	// Draining advanced the host claim version, so the credential minted before it
 	// no longer authenticates; the same service re-exchanges the same epoch.
-	if _, err := AuthenticateHost(t.Context(), f.q, cfg, token.Token, time.Now()); !errors.Is(err, ErrUnauthenticated) {
-		t.Fatalf("pre-drain token error = %v", err)
+	if _, err := AuthenticateHost(t.Context(), f.q, cfg, credential.Value, time.Now()); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("pre-drain credential error = %v", err)
 	}
-	token = f.exchange(t, cfg, enrolled, serviceID)
-	if token.Epoch != 1 {
-		t.Fatalf("re-exchanged epoch = %d, want 1", token.Epoch)
+	credential = f.exchange(t, cfg, enrolled, serviceID)
+	if credential.Epoch != 1 {
+		t.Fatalf("reissued epoch = %d, want 1", credential.Epoch)
 	}
-	completing := f.authenticate(t, AuthenticateDrainCompletingHost, cfg, token)
+	completing := f.authenticate(t, AuthenticateDrainCompletingHost, cfg, credential)
 	if completing.Status != db.WorkerHostStatusDraining {
 		t.Fatalf("drain completing principal = %+v", completing)
 	}
@@ -189,17 +189,17 @@ func TestHostLifecycleThroughCredentials(t *testing.T) {
 	if completed.Status != db.WorkerHostStatusTerminationReady {
 		t.Fatalf("completed drain status = %s", completed.Status)
 	}
-	// A lost completion response is replayed with the same token.
-	replaying := f.authenticate(t, AuthenticateDrainCompletingHost, cfg, token)
+	// A lost completion response is replayed with the same credential.
+	replaying := f.authenticate(t, AuthenticateDrainCompletingHost, cfg, credential)
 	if _, err := CompleteHostDrain(t.Context(), f.pool, replaying, time.Now()); err != nil {
 		t.Fatalf("drain completion replay: %v", err)
 	}
-	if _, err := AuthenticateHost(t.Context(), f.q, cfg, token.Token, time.Now()); !errors.Is(err, ErrUnauthenticated) {
+	if _, err := AuthenticateHost(t.Context(), f.q, cfg, credential.Value, time.Now()); !errors.Is(err, ErrUnauthenticated) {
 		t.Fatalf("termination ready host authenticated for ordinary routes: %v", err)
 	}
 }
 
-func TestExchangeCredentialAdvancesEpochPerService(t *testing.T) {
+func TestIssueHostCredentialAdvancesEpochPerService(t *testing.T) {
 	f := newSupplyFixture(t)
 	cfg := testCredentialConfig(t)
 	enrolled := f.enroll(t, cfg, "default", "i-epochs")
@@ -210,12 +210,12 @@ func TestExchangeCredentialAdvancesEpochPerService(t *testing.T) {
 	if next := f.exchange(t, cfg, enrolled, uuid.NewV7().String()); next.Epoch != 2 {
 		t.Fatalf("new service epoch = %d, want 2", next.Epoch)
 	}
-	for name, exchange := range map[string]CredentialExchange{
+	for name, exchange := range map[string]HostCredentialRequest{
 		"wrong secret": {HostID: enrolled.HostID.String(), Secret: hostSecretPrefix + "wrong", ServiceID: service},
 		"other host":   {HostID: uuid.NewV7().String(), Secret: enrolled.Secret, ServiceID: service},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := ExchangeCredential(t.Context(), f.q, cfg, exchange, time.Now); !errors.Is(err, ErrUnauthenticated) {
+			if _, err := IssueHostCredential(t.Context(), f.q, cfg, exchange, time.Now); !errors.Is(err, ErrUnauthenticated) {
 				t.Fatalf("error = %v, want ErrUnauthenticated", err)
 			}
 		})
@@ -237,15 +237,15 @@ func TestEnrollHostRejectsRotatedEnrollmentToken(t *testing.T) {
 	}
 }
 
-func TestHostTokensGoStaleWithGroupTransitions(t *testing.T) {
+func TestHostCredentialsGoStaleWithGroupTransitions(t *testing.T) {
 	f := newSupplyFixture(t)
 	cfg := testCredentialConfig(t)
 	host := f.start(t, cfg, "default", "i-group", validHostTemplate(t))
 	if _, err := PauseGroup(t.Context(), f.pool, f.groupID(), f.currentGroup(t).ClaimVersion); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := AuthenticateHost(t.Context(), f.q, cfg, host.token.Token, time.Now()); !errors.Is(err, ErrUnauthenticated) {
-		t.Fatalf("pre-transition token error = %v", err)
+	if _, err := AuthenticateHost(t.Context(), f.q, cfg, host.credential.Value, time.Now()); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("pre-transition credential error = %v", err)
 	}
 	refreshed := f.authenticate(t, AuthenticateHost, cfg, f.exchange(t, cfg, host.enrolled, host.serviceID))
 	if refreshed.GroupClaimVersion != f.currentGroup(t).ClaimVersion || refreshed.HostClaimVersion != host.principal.HostClaimVersion {
@@ -282,11 +282,11 @@ func TestActivateHostRejectsTemplateMismatchWithSealedPool(t *testing.T) {
 	changed := template
 	changed.Capacity.VMSlots = 2
 	enrolled := f.enroll(t, cfg, "default", "i-second")
-	token := f.exchange(t, cfg, enrolled, uuid.NewV7().String())
-	if err := RecordStartupRecovery(t.Context(), f.q, f.authenticate(t, AuthenticateRecoveringHost, cfg, token), startupEvidence(t)); err != nil {
+	credential := f.exchange(t, cfg, enrolled, uuid.NewV7().String())
+	if err := RecordStartupRecovery(t.Context(), f.q, f.authenticate(t, AuthenticateRecoveringHost, cfg, credential), startupEvidence(t)); err != nil {
 		t.Fatal(err)
 	}
-	err := ActivateHost(t.Context(), f.pool, f.authenticate(t, AuthenticateActivatingHost, cfg, token), Activation{
+	err := ActivateHost(t.Context(), f.pool, f.authenticate(t, AuthenticateActivatingHost, cfg, credential), Activation{
 		Template: changed, CPUEnvironment: []byte(`{}`), CPUEnvironmentDigest: f.cpuConfigDigest,
 	})
 	var conflicting ConflictError
@@ -299,21 +299,21 @@ func TestFenceHostReplaysAfterFence(t *testing.T) {
 	f := newSupplyFixture(t)
 	cfg := testCredentialConfig(t)
 	host := f.start(t, cfg, "default", "i-fence", validHostTemplate(t))
-	fencing := f.authenticate(t, AuthenticateFencingHost, cfg, host.token)
+	fencing := f.authenticate(t, AuthenticateFencingHost, cfg, host.credential)
 	if err := FenceHost(t.Context(), f.q, fencing, " worker_retired "); err != nil {
 		t.Fatal(err)
 	}
 	if status, _ := f.hostState(t, host.enrolled.HostID); status != db.WorkerHostStatusLost {
 		t.Fatalf("fenced host status = %s", status)
 	}
-	replaying := f.authenticate(t, AuthenticateFencingHost, cfg, host.token)
+	replaying := f.authenticate(t, AuthenticateFencingHost, cfg, host.credential)
 	if err := FenceHost(t.Context(), f.q, replaying, "worker_retired"); err != nil {
 		t.Fatalf("fence replay: %v", err)
 	}
-	if _, err := AuthenticateHost(t.Context(), f.q, cfg, host.token.Token, time.Now()); !errors.Is(err, ErrUnauthenticated) {
+	if _, err := AuthenticateHost(t.Context(), f.q, cfg, host.credential.Value, time.Now()); !errors.Is(err, ErrUnauthenticated) {
 		t.Fatalf("fenced host authenticated for ordinary routes: %v", err)
 	}
-	if _, err := ExchangeCredential(t.Context(), f.q, cfg, CredentialExchange{
+	if _, err := IssueHostCredential(t.Context(), f.q, cfg, HostCredentialRequest{
 		HostID: host.enrolled.HostID.String(), Secret: host.enrolled.Secret, ServiceID: host.serviceID,
 	}, time.Now); !errors.Is(err, ErrUnauthenticated) {
 		t.Fatalf("fenced host exchanged its revoked credential: %v", err)
@@ -381,29 +381,29 @@ func (q lockWaitQuerier) AuthenticateWorkerHostCredential(ctx context.Context, p
 	return row, err
 }
 
-func TestExchangeCredentialIssuesAfterAuthentication(t *testing.T) {
+func TestIssueHostCredentialIssuesAfterAuthentication(t *testing.T) {
 	f := newSupplyFixture(t)
 	keys, err := auth.NewKeys(bytes.Repeat([]byte{1}, auth.RootKeySize))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := NewCredentialConfig(keys.WorkerHost, bytes.Repeat([]byte{2}, TokenSigningKeySize), 2*time.Minute)
+	cfg, err := NewCredentialConfig(keys.WorkerHost, bytes.Repeat([]byte{2}, HostCredentialSigningKeySize), 2*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	enrolled := f.enroll(t, cfg, "default", "i-lock-wait")
 	clock := time.Now()
 	authenticated := clock.Add(time.Minute)
-	token, err := ExchangeCredential(t.Context(), lockWaitQuerier{Querier: f.q, wait: func() { clock = authenticated }}, cfg, CredentialExchange{
+	credential, err := IssueHostCredential(t.Context(), lockWaitQuerier{Querier: f.q, wait: func() { clock = authenticated }}, cfg, HostCredentialRequest{
 		HostID: enrolled.HostID.String(), Secret: enrolled.Secret, ServiceID: uuid.NewV7().String(),
 	}, func() time.Time { return clock })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if token.ExpiresIn != 2*time.Minute {
-		t.Fatalf("expires in %s, want 2m", token.ExpiresIn)
+	if credential.ExpiresIn != 2*time.Minute {
+		t.Fatalf("expires in %s, want 2m", credential.ExpiresIn)
 	}
-	claims, err := verifyToken(cfg.signingKey, token.Token, authenticated)
+	claims, err := verifyHostCredential(cfg.signingKey, credential.Value, authenticated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -411,7 +411,7 @@ func TestExchangeCredentialIssuesAfterAuthentication(t *testing.T) {
 		t.Fatalf("issued at %s, expires at %s; authenticated at %s", claims.IssuedAt, claims.ExpiresAt, authenticated)
 	}
 	// The lock wait does not shorten the advertised lifetime.
-	if _, err := verifyToken(cfg.signingKey, token.Token, authenticated.Add(token.ExpiresIn-2*time.Second)); err != nil {
-		t.Fatalf("token expired before its advertised lifetime: %v", err)
+	if _, err := verifyHostCredential(cfg.signingKey, credential.Value, authenticated.Add(credential.ExpiresIn-2*time.Second)); err != nil {
+		t.Fatalf("credential expired before its advertised lifetime: %v", err)
 	}
 }

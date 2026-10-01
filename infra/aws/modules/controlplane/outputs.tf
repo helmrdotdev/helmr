@@ -126,14 +126,14 @@ output "database_master_user_secret_arn" {
 output "secret_arns" {
   description = "Secrets Manager container ARNs created by the controlplane module. Populate secret values out-of-band."
   value = merge({
-    database_url               = aws_secretsmanager_secret.database_url.arn
-    worker_token_signing_key   = aws_secretsmanager_secret.worker_token_signing_key.arn
-    auth_key                   = aws_secretsmanager_secret.auth_key.arn
-    encryption_key             = aws_secretsmanager_secret.encryption_key.arn
-    computer_fencing_key       = aws_secretsmanager_secret.computer_fencing_key.arn
-    token_credential_key       = aws_secretsmanager_secret.token_credential_key.arn
-    github_oauth_client_secret = aws_secretsmanager_secret.github_oauth_client_secret.arn
-    checkpoint_encryption_key  = aws_secretsmanager_secret.checkpoint_encryption_key.arn
+    database_url                       = aws_secretsmanager_secret.database_url.arn
+    worker_host_credential_signing_key = aws_secretsmanager_secret.worker_host_credential_signing_key.arn
+    auth_key                           = aws_secretsmanager_secret.auth_key.arn
+    encryption_key                     = aws_secretsmanager_secret.encryption_key.arn
+    computer_fencing_key               = aws_secretsmanager_secret.computer_fencing_key.arn
+    token_credential_key               = aws_secretsmanager_secret.token_credential_key.arn
+    github_oauth_client_secret         = aws_secretsmanager_secret.github_oauth_client_secret.arn
+    checkpoint_encryption_key          = aws_secretsmanager_secret.checkpoint_encryption_key.arn
     },
     var.deployment_mode == "self-hosted" ? {
       setup_token           = aws_secretsmanager_secret.setup_token[0].arn

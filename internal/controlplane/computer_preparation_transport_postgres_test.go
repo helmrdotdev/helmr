@@ -69,7 +69,7 @@ func (d *transitionTx) Begin(ctx context.Context) (pgx.Tx, error) {
 }
 
 // newServedClaimsRace serves the fixture's control plane through NewServer
-// with real token exchange and worker authentication. The first request to
+// with real host credential issue and worker authentication. The first request to
 // the raced route commits the transition after authentication accepted it and
 // before the handler takes its authority locks.
 func newServedClaimsRace(t *testing.T, f initialPublicationFixture, raced string, transition func(context.Context) error) *workerClaimsRace {
@@ -81,7 +81,7 @@ func newServedClaimsRace(t *testing.T, f initialPublicationFixture, raced string
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		race.mu.Lock()
 		defer race.mu.Unlock()
-		if r.URL.Path == "/worker/v1/instance/token" {
+		if r.URL.Path == "/worker/v1/instance/credential" {
 			race.tokens++
 			handler.ServeHTTP(w, r)
 			return

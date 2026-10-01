@@ -37,7 +37,7 @@ type ControlPlane struct {
 	CASURI                          string
 	DeploymentRuntimeDescriptorPath string
 	PlatformStoreURI                string
-	WorkerTokenSigningKey           []byte
+	WorkerHostCredentialSigningKey  []byte
 	Bootstrap                       Bootstrap
 	CapacityToken                   string
 	SetupToken                      string

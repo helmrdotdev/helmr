@@ -14,12 +14,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// DefaultTokenTTL is the lifetime of a worker host epoch token when the
+// DefaultHostCredentialTTL is the lifetime of a worker host credential when the
 // credential configuration does not set one.
-const DefaultTokenTTL = 15 * time.Minute
+const DefaultHostCredentialTTL = 15 * time.Minute
 
 // CredentialConfig holds the keys that hash worker host secrets and sign
-// worker host epoch tokens, and the epoch token lifetime.
+// worker host credentials, and the host credential lifetime.
 type CredentialConfig struct {
 	hostSecretKey []byte
 	signingKey    []byte
@@ -27,16 +27,16 @@ type CredentialConfig struct {
 }
 
 // NewCredentialConfig validates the host secret hashing key and the epoch
-// token signing key. A ttl that is not positive selects DefaultTokenTTL.
+// host credential signing key. A ttl that is not positive selects DefaultHostCredentialTTL.
 func NewCredentialConfig(hostSecretKey []byte, signingKey []byte, ttl time.Duration) (CredentialConfig, error) {
 	if err := auth.ValidateMACKey(hostSecretKey); err != nil {
 		return CredentialConfig{}, fmt.Errorf("worker host secret key: %w", err)
 	}
-	if err := validateTokenSigningKey(signingKey); err != nil {
+	if err := validateHostCredentialSigningKey(signingKey); err != nil {
 		return CredentialConfig{}, err
 	}
 	if ttl <= 0 {
-		ttl = DefaultTokenTTL
+		ttl = DefaultHostCredentialTTL
 	}
 	return CredentialConfig{
 		hostSecretKey: append([]byte(nil), hostSecretKey...),
@@ -45,43 +45,44 @@ func NewCredentialConfig(hostSecretKey []byte, signingKey []byte, ttl time.Durat
 	}, nil
 }
 
-// CredentialExchange is a worker host's request to exchange its host secret
-// for an epoch token. ServiceID identifies the worker service instance: a new
+// HostCredentialRequest is a worker host's request to exchange its host secret
+// for a host credential. ServiceID identifies the worker service instance: a new
 // service ID starts a new epoch, and repeating the current one keeps it.
-type CredentialExchange struct {
+type HostCredentialRequest struct {
 	HostID    string
 	Secret    string
 	ServiceID string
 }
 
-// HostToken is a signed worker host epoch token.
-type HostToken struct {
-	Token     string
+// HostCredential is a signed, short-lived worker host credential bound to one
+// host epoch.
+type HostCredential struct {
+	Value     string
 	ExpiresIn time.Duration
 	Epoch     int64
 }
 
-// ExchangeCredential authenticates a worker host secret, advancing the host's
-// epoch when the service ID changed, and signs an epoch token carrying the
+// IssueHostCredential authenticates a worker host secret, advancing the host's
+// epoch when the service ID changed, and signs a host credential carrying the
 // host and group claim versions. The credential, host, group and pool rows
-// are locked by the single authenticating statement. The token is issued at
+// are locked by the single authenticating statement. The credential is issued at
 // now() read after that statement returns, so waiting for its locks does
-// not shorten the lifetime the token advertises.
-func ExchangeCredential(ctx context.Context, q db.Querier, cfg CredentialConfig, exchange CredentialExchange, now func() time.Time) (HostToken, error) {
+// not shorten the lifetime the credential advertises.
+func IssueHostCredential(ctx context.Context, q db.Querier, cfg CredentialConfig, exchange HostCredentialRequest, now func() time.Time) (HostCredential, error) {
 	if exchange.HostID == "" {
-		return HostToken{}, invalidInput("worker_host_id is required")
+		return HostCredential{}, invalidInput("worker_host_id is required")
 	}
 	hostID, err := ids.Parse(exchange.HostID)
 	if err != nil {
-		return HostToken{}, invalidInput("worker_host_id must be a canonical UUIDv7")
+		return HostCredential{}, invalidInput("worker_host_id must be a canonical UUIDv7")
 	}
 	secretHash, err := auth.HashToken(cfg.hostSecretKey, exchange.Secret)
 	if err != nil {
-		return HostToken{}, ErrUnauthenticated
+		return HostCredential{}, ErrUnauthenticated
 	}
 	serviceID, err := ids.Parse(exchange.ServiceID)
 	if err != nil {
-		return HostToken{}, invalidInput("service_id must be a canonical UUIDv7")
+		return HostCredential{}, invalidInput("service_id must be a canonical UUIDv7")
 	}
 	credential, err := q.AuthenticateWorkerHostCredential(ctx, db.AuthenticateWorkerHostCredentialParams{
 		WorkerHostID: pgvalue.UUID(hostID),
@@ -89,20 +90,20 @@ func ExchangeCredential(ctx context.Context, q db.Querier, cfg CredentialConfig,
 		ServiceID:    pgvalue.UUID(serviceID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return HostToken{}, ErrUnauthenticated
+		return HostCredential{}, ErrUnauthenticated
 	}
 	if err != nil {
-		return HostToken{}, fmt.Errorf("authenticate worker host %s credential: %w", hostID, err)
+		return HostCredential{}, fmt.Errorf("authenticate worker host %s credential: %w", hostID, err)
 	}
 	credentialID, err := pgvalue.UUIDValue(credential.ID)
 	if err != nil {
-		return HostToken{}, fmt.Errorf("worker host credential id: %w", err)
+		return HostCredential{}, fmt.Errorf("worker host credential id: %w", err)
 	}
 	issuedAt := now()
 	if !credential.CurrentEpoch.Valid || credential.CurrentEpoch.Int64 <= 0 {
-		return HostToken{}, errors.New("worker epoch was not established")
+		return HostCredential{}, errors.New("worker epoch was not established")
 	}
-	claims, err := (tokenAuthority{
+	claims, err := (hostCredentialAuthority{
 		WorkerHostID:      pgvalue.MustUUIDValue(credential.WorkerHostID),
 		CredentialID:      credentialID,
 		WorkerGroupID:     pgvalue.MustUUIDValue(credential.WorkerGroupID),
@@ -113,22 +114,22 @@ func ExchangeCredential(ctx context.Context, q db.Querier, cfg CredentialConfig,
 		ServiceID: serviceID,
 	}, issuedAt, issuedAt.Add(cfg.ttl))
 	if err != nil {
-		return HostToken{}, fmt.Errorf("derive worker host %s token claims: %w", hostID, err)
+		return HostCredential{}, fmt.Errorf("derive worker host %s credential claims: %w", hostID, err)
 	}
-	signed, err := issueToken(cfg.signingKey, claims)
+	signed, err := signHostCredential(cfg.signingKey, claims)
 	if err != nil {
-		return HostToken{}, fmt.Errorf("sign worker host %s token: %w", hostID, err)
+		return HostCredential{}, fmt.Errorf("sign worker host %s credential: %w", hostID, err)
 	}
-	return HostToken{Token: signed, ExpiresIn: cfg.ttl, Epoch: credential.CurrentEpoch.Int64}, nil
+	return HostCredential{Value: signed, ExpiresIn: cfg.ttl, Epoch: credential.CurrentEpoch.Int64}, nil
 }
 
 type exchangeInput struct {
 	ServiceID uuid.UUID
 }
 
-// tokenAuthority is loaded by the epoch-exchange transaction. It keeps
+// hostCredentialAuthority is loaded by the epoch-exchange transaction. It keeps
 // identity and policy authority out of the supervisor request body.
-type tokenAuthority struct {
+type hostCredentialAuthority struct {
 	WorkerGroupID     uuid.UUID
 	WorkerHostID      uuid.UUID
 	CredentialID      uuid.UUID
@@ -147,24 +148,24 @@ func (input exchangeInput) Validate() error {
 // Claims validates the authority returned by the epoch-exchange transaction.
 // ServiceID is deliberately not copied into the JWT: it is the idempotency key
 // for the transaction that returned authority.WorkerEpoch.
-func (authority tokenAuthority) Claims(input exchangeInput, issuedAt, expiresAt time.Time) (tokenClaims, error) {
+func (authority hostCredentialAuthority) Claims(input exchangeInput, issuedAt, expiresAt time.Time) (hostCredentialClaims, error) {
 	if err := input.Validate(); err != nil {
-		return tokenClaims{}, err
+		return hostCredentialClaims{}, err
 	}
 	if authority.WorkerGroupID == uuid.Nil() {
-		return tokenClaims{}, errors.New("worker_group_id is required")
+		return hostCredentialClaims{}, errors.New("worker_group_id is required")
 	}
 	if authority.WorkerHostID == uuid.Nil() {
-		return tokenClaims{}, errors.New("worker_host_id is required")
+		return hostCredentialClaims{}, errors.New("worker_host_id is required")
 	}
 	if authority.CredentialID == uuid.Nil() {
-		return tokenClaims{}, errors.New("credential_id is required")
+		return hostCredentialClaims{}, errors.New("credential_id is required")
 	}
 	if authority.WorkerEpoch <= 0 || authority.ClaimVersion <= 0 || authority.GroupClaimVersion <= 0 {
-		return tokenClaims{}, errors.New("worker epoch and claim versions must be positive")
+		return hostCredentialClaims{}, errors.New("worker epoch and claim versions must be positive")
 	}
 
-	return tokenClaims{
+	return hostCredentialClaims{
 		WorkerGroupID: authority.WorkerGroupID.String(), WorkerHostID: authority.WorkerHostID.String(),
 		CredentialID: authority.CredentialID.String(), WorkerEpoch: authority.WorkerEpoch,
 		ClaimVersion: authority.ClaimVersion, GroupClaimVersion: authority.GroupClaimVersion,

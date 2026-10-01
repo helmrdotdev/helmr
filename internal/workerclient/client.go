@@ -15,7 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-const tokenRequestTimeout = 10 * time.Second
+const hostCredentialRequestTimeout = 10 * time.Second
 
 type Client struct {
 	transport *httpclient.Transport
@@ -26,7 +26,7 @@ type authentication struct {
 	workerHostID string
 	secret       string
 	serviceID    string
-	token        string
+	credential   string
 	expiresAt    time.Time
 	refreshDone  chan struct{}
 	mu           sync.Mutex
@@ -75,7 +75,7 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 }
 
 func (c *Client) AuthenticateWorker(ctx context.Context) error {
-	_, err := c.token(ctx)
+	_, err := c.hostCredential(ctx)
 	return err
 }
 
@@ -98,18 +98,18 @@ func (c *Client) postWorkerJSON(ctx context.Context, path string, in any, out an
 		return fmt.Errorf("encode request: %w", err)
 	}
 	for attempt := range 2 {
-		token, err := c.token(ctx)
+		credential, err := c.hostCredential(ctx)
 		if err != nil {
 			return err
 		}
-		req, err := c.transport.Request(ctx, http.MethodPost, path, bytes.NewReader(payload), token)
+		req, err := c.transport.Request(ctx, http.MethodPost, path, bytes.NewReader(payload), credential)
 		if err != nil {
 			return err
 		}
 		req.Header.Set("content-type", "application/json")
 		err = c.transport.DoJSON(req, out)
 		if attempt == 0 && httpclient.IsStatus(err, http.StatusUnauthorized) {
-			c.invalidateToken(token)
+			c.invalidateHostCredential(credential)
 			continue
 		}
 		return err
@@ -119,17 +119,17 @@ func (c *Client) postWorkerJSON(ctx context.Context, path string, in any, out an
 
 func (c *Client) getWorkerJSON(ctx context.Context, path string, out any) error {
 	for attempt := range 2 {
-		token, err := c.token(ctx)
+		credential, err := c.hostCredential(ctx)
 		if err != nil {
 			return err
 		}
-		req, err := c.transport.Request(ctx, http.MethodGet, path, nil, token)
+		req, err := c.transport.Request(ctx, http.MethodGet, path, nil, credential)
 		if err != nil {
 			return err
 		}
 		err = c.transport.DoJSON(req, out)
 		if attempt == 0 && httpclient.IsStatus(err, http.StatusUnauthorized) {
-			c.invalidateToken(token)
+			c.invalidateHostCredential(credential)
 			continue
 		}
 		return err
@@ -137,16 +137,16 @@ func (c *Client) getWorkerJSON(ctx context.Context, path string, out any) error 
 	return errors.New("worker request retry exhausted")
 }
 
-func (c *Client) invalidateToken(token string) {
+func (c *Client) invalidateHostCredential(credential string) {
 	c.auth.mu.Lock()
 	defer c.auth.mu.Unlock()
-	if c.auth.token == token {
-		c.auth.token = ""
+	if c.auth.credential == credential {
+		c.auth.credential = ""
 		c.auth.expiresAt = time.Time{}
 	}
 }
 
-func (c *Client) token(ctx context.Context) (string, error) {
+func (c *Client) hostCredential(ctx context.Context) (string, error) {
 	for {
 		c.auth.mu.Lock()
 		if strings.TrimSpace(c.auth.workerHostID) == "" {
@@ -157,10 +157,10 @@ func (c *Client) token(ctx context.Context) (string, error) {
 			c.auth.mu.Unlock()
 			return "", errors.New("worker secret is required")
 		}
-		if c.auth.token != "" && time.Now().Add(30*time.Second).Before(c.auth.expiresAt) {
-			token := c.auth.token
+		if c.auth.credential != "" && time.Now().Add(30*time.Second).Before(c.auth.expiresAt) {
+			credential := c.auth.credential
 			c.auth.mu.Unlock()
-			return token, nil
+			return credential, nil
 		}
 		if done := c.auth.refreshDone; done != nil {
 			c.auth.mu.Unlock()
@@ -175,46 +175,46 @@ func (c *Client) token(ctx context.Context) (string, error) {
 		c.auth.refreshDone = done
 		c.auth.mu.Unlock()
 
-		token, expiresAt, err := c.requestToken(ctx)
+		credential, expiresAt, err := c.requestHostCredential(ctx)
 		c.auth.mu.Lock()
 		if err == nil {
-			c.auth.token = token
+			c.auth.credential = credential
 			c.auth.expiresAt = expiresAt
 		}
 		close(done)
 		c.auth.refreshDone = nil
 		c.auth.mu.Unlock()
-		return token, err
+		return credential, err
 	}
 }
 
-func (c *Client) requestToken(ctx context.Context) (string, time.Time, error) {
+func (c *Client) requestHostCredential(ctx context.Context) (string, time.Time, error) {
 	if c.auth.serviceID == "" {
 		return "", time.Time{}, errors.New("worker service id is required")
 	}
 	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(workerapi.TokenRequest{
+	if err := json.NewEncoder(&body).Encode(workerapi.HostCredentialRequest{
 		WorkerHostID: c.auth.workerHostID, WorkerHostSecret: c.auth.secret,
 		ServiceID: c.auth.serviceID, APIVersion: workerapi.APIVersion,
 	}); err != nil {
-		return "", time.Time{}, fmt.Errorf("encode worker token request: %w", err)
+		return "", time.Time{}, fmt.Errorf("encode worker host credential request: %w", err)
 	}
-	tokenCtx, cancel := context.WithTimeout(ctx, tokenRequestTimeout)
+	credentialCtx, cancel := context.WithTimeout(ctx, hostCredentialRequestTimeout)
 	defer cancel()
-	req, err := c.transport.Request(tokenCtx, http.MethodPost, "/worker/v1/instance/token", &body, "")
+	req, err := c.transport.Request(credentialCtx, http.MethodPost, "/worker/v1/instance/credential", &body, "")
 	if err != nil {
 		return "", time.Time{}, err
 	}
 	req.Header.Set("content-type", "application/json")
-	var response workerapi.TokenResponse
+	var response workerapi.HostCredentialResponse
 	if err := c.transport.DoJSON(req, &response); err != nil {
 		return "", time.Time{}, err
 	}
-	if response.Token == "" {
-		return "", time.Time{}, errors.New("worker auth token is empty")
+	if response.Credential == "" {
+		return "", time.Time{}, errors.New("worker host credential is empty")
 	}
 	if response.ExpiresInSeconds <= 0 {
-		return "", time.Time{}, errors.New("worker auth response expires_in_seconds must be positive")
+		return "", time.Time{}, errors.New("worker host credential response expires_in_seconds must be positive")
 	}
-	return response.Token, time.Now().Add(time.Duration(response.ExpiresInSeconds) * time.Second), nil
+	return response.Credential, time.Now().Add(time.Duration(response.ExpiresInSeconds) * time.Second), nil
 }

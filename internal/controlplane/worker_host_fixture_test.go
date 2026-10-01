@@ -20,10 +20,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// testAuthRootKey and testWorkerTokenSigningKey are the keys of
+// testAuthRootKey and testWorkerHostCredentialSigningKey are the keys of
 // completeServerConfig.
-func testAuthRootKey() []byte           { return make([]byte, auth.RootKeySize) }
-func testWorkerTokenSigningKey() []byte { return make([]byte, workergroup.TokenSigningKeySize) }
+func testAuthRootKey() []byte { return make([]byte, auth.RootKeySize) }
+func testWorkerHostCredentialSigningKey() []byte {
+	return make([]byte, workergroup.HostCredentialSigningKeySize)
+}
 
 // testHostCredentials is the worker host credential configuration that
 // NewServer builds from completeServerConfig, for tests that serve worker
@@ -34,7 +36,7 @@ func testHostCredentials(t *testing.T) workergroup.CredentialConfig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	credentials, err := workergroup.NewCredentialConfig(keys.WorkerHost, testWorkerTokenSigningKey(), 0)
+	credentials, err := workergroup.NewCredentialConfig(keys.WorkerHost, testWorkerHostCredentialSigningKey(), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,8 +94,8 @@ func seedHostCredential(t *testing.T, pool *pgxpool.Pool, hostID uuid.UUID) seed
 	return seeded
 }
 
-// client returns a worker client that exchanges the secret for epoch tokens
-// at baseURL.
+// client returns a worker client that exchanges the secret for host
+// credentials at baseURL.
 func (c seededHostCredential) client(t *testing.T, baseURL string) *workerclient.Client {
 	t.Helper()
 	client, err := workerclient.New(baseURL, workerclient.WithAuth(c.hostID.String(), c.secret), workerclient.WithService(c.serviceID.String()))
@@ -103,55 +105,55 @@ func (c seededHostCredential) client(t *testing.T, baseURL string) *workerclient
 	return client
 }
 
-// token exchanges the secret for an epoch token through handler.
-func (c seededHostCredential) token(t *testing.T, handler http.Handler) string {
+// issue exchanges the secret for a host credential through handler.
+func (c seededHostCredential) issue(t *testing.T, handler http.Handler) string {
 	t.Helper()
-	return exchangeWorkerToken(t, handler, c.hostID.String(), c.secret, c.serviceID.String())
+	return issueWorkerHostCredential(t, handler, c.hostID.String(), c.secret, c.serviceID.String())
 }
 
-// exchangeWorkerToken exchanges a host secret for an epoch token through the
-// served token route.
-func exchangeWorkerToken(t *testing.T, handler http.Handler, hostID string, secret string, serviceID string) string {
+// issueWorkerHostCredential exchanges a host secret for a host credential
+// through the served credential route.
+func issueWorkerHostCredential(t *testing.T, handler http.Handler, hostID string, secret string, serviceID string) string {
 	t.Helper()
-	body, err := json.Marshal(workerapi.TokenRequest{APIVersion: workerapi.APIVersion, WorkerHostID: hostID, WorkerHostSecret: secret, ServiceID: serviceID})
+	body, err := json.Marshal(workerapi.HostCredentialRequest{APIVersion: workerapi.APIVersion, WorkerHostID: hostID, WorkerHostSecret: secret, ServiceID: serviceID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPost, "/worker/v1/instance/token", strings.NewReader(string(body)))
+	request := httptest.NewRequest(http.MethodPost, "/worker/v1/instance/credential", strings.NewReader(string(body)))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
-		t.Fatalf("token exchange status = %d: %s", response.Code, response.Body.String())
+		t.Fatalf("host credential issue status = %d: %s", response.Code, response.Body.String())
 	}
-	var token workerapi.TokenResponse
-	if err := json.Unmarshal(response.Body.Bytes(), &token); err != nil {
+	var issued workerapi.HostCredentialResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &issued); err != nil {
 		t.Fatal(err)
 	}
-	return token.Token
+	return issued.Credential
 }
 
 // signRawWorkerJWT signs claims with the completeServerConfig signing key for
-// transport tests of tokens that the token exchange never issues.
+// transport tests of host credentials that the credential route never issues.
 func signRawWorkerJWT(t *testing.T, claims jwt.MapClaims) string {
 	t.Helper()
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	token.Header["typ"] = "JWT"
-	raw, err := token.SignedString(testWorkerTokenSigningKey())
+	raw, err := token.SignedString(testWorkerHostCredentialSigningKey())
 	if err != nil {
 		t.Fatal(err)
 	}
 	return raw
 }
 
-// rawWorkerJWTClaims are well-formed epoch token claims for a host, group and
+// rawWorkerJWTClaims are well-formed host credential claims for a host, group and
 // credential, valid from a minute ago for an hour.
 func rawWorkerJWTClaims(hostID string, groupID string, credentialID string) jwt.MapClaims {
 	now := time.Now().UTC()
 	return jwt.MapClaims{
-		"iss":                 workergroup.TokenIssuer,
+		"iss":                 workergroup.HostCredentialIssuer,
 		"sub":                 hostID,
-		"aud":                 []string{workergroup.TokenAudience},
+		"aud":                 []string{workergroup.HostCredentialAudience},
 		"iat":                 now.Add(-time.Minute).Unix(),
 		"exp":                 now.Add(time.Hour).Unix(),
 		"worker_group_id":     groupID,

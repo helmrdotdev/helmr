@@ -46,16 +46,16 @@ import (
 )
 
 const (
-	defaultAddr                = ":8080"
-	defaultPublicURL           = "http://127.0.0.1:3000"
-	defaultRedisURL            = "redis://127.0.0.1:6379/0"
-	defaultAuthKey             = "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ="
-	defaultSetupToken          = "dev-setup-token"
-	defaultWorkerTokenKey      = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
-	defaultSecretEncryptionKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-	defaultComputerFencingKey  = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="
-	defaultTokenCredentialKey  = "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM="
-	defaultUserID              = "00000000-0000-7000-8000-000000000101"
+	defaultAddr                    = ":8080"
+	defaultPublicURL               = "http://127.0.0.1:3000"
+	defaultRedisURL                = "redis://127.0.0.1:6379/0"
+	defaultAuthKey                 = "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ="
+	defaultSetupToken              = "dev-setup-token"
+	defaultWorkerHostCredentialKey = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
+	defaultSecretEncryptionKey     = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	defaultComputerFencingKey      = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="
+	defaultTokenCredentialKey      = "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM="
+	defaultUserID                  = "00000000-0000-7000-8000-000000000101"
 )
 
 func main() {
@@ -184,28 +184,28 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("configure Computer wrapping key: %w", err)
 	}
 	app, err := controlplane.NewServer(controlplane.ServerConfig{
-		ComputerKeys:          computerKeys,
-		Log:                   log,
-		DeploymentMode:        cfg.deploymentMode,
-		DB:                    queries,
-		TX:                    pool,
-		ReadinessDB:           pool,
-		Auth:                  identity.NewAPIKeyAuthenticator(queries),
-		CAS:                   casStore,
-		BundleAdmission:       bundleAdmission,
-		PlatformStore:         platformStore,
-		Secrets:               secretStore,
-		SecretDelivery:        secretStore,
-		SecretProxy:           secretStore,
-		ComputerFencingKey:    computerFencingKey,
-		TokenCredentialKey:    tokenCredentialKey,
-		WorkerTokenSigningKey: cfg.workerTokenKey,
-		SetupToken:            cfg.setupToken,
-		AuthKey:               cfg.authKey,
-		PublicURL:             publicURL,
-		APIOrigin:             publicURL,
-		EventStream:           eventStream,
-		TelemetryReader:       telemetryReader,
+		ComputerKeys:                   computerKeys,
+		Log:                            log,
+		DeploymentMode:                 cfg.deploymentMode,
+		DB:                             queries,
+		TX:                             pool,
+		ReadinessDB:                    pool,
+		Auth:                           identity.NewAPIKeyAuthenticator(queries),
+		CAS:                            casStore,
+		BundleAdmission:                bundleAdmission,
+		PlatformStore:                  platformStore,
+		Secrets:                        secretStore,
+		SecretDelivery:                 secretStore,
+		SecretProxy:                    secretStore,
+		ComputerFencingKey:             computerFencingKey,
+		TokenCredentialKey:             tokenCredentialKey,
+		WorkerHostCredentialSigningKey: cfg.workerHostCredentialKey,
+		SetupToken:                     cfg.setupToken,
+		AuthKey:                        cfg.authKey,
+		PublicURL:                      publicURL,
+		APIOrigin:                      publicURL,
+		EventStream:                    eventStream,
+		TelemetryReader:                telemetryReader,
 	})
 	if err != nil {
 		return fmt.Errorf("configure control server: %w", err)
@@ -316,7 +316,7 @@ type devConfig struct {
 	publicURL                       string
 	authKey                         []byte
 	setupToken                      string
-	workerTokenKey                  []byte
+	workerHostCredentialKey         []byte
 	encryptionKey                   []byte
 	computerWrappingKey             []byte
 	computerFencingKey              []byte
@@ -353,7 +353,7 @@ func loadConfig() (devConfig, error) {
 		target   *[]byte
 	}{
 		{name: "AUTH_KEY", fallback: defaultAuthKey, target: &cfg.authKey},
-		{name: "WORKER_TOKEN_SIGNING_KEY", fallback: defaultWorkerTokenKey, target: &cfg.workerTokenKey},
+		{name: "WORKER_HOST_CREDENTIAL_SIGNING_KEY", fallback: defaultWorkerHostCredentialKey, target: &cfg.workerHostCredentialKey},
 		{name: "COMPUTER_WRAPPING_KEY", fallback: "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=", target: &cfg.computerWrappingKey},
 		{name: "ENCRYPTION_KEY", fallback: defaultSecretEncryptionKey, target: &cfg.encryptionKey},
 		{name: "COMPUTER_FENCING_KEY", fallback: defaultComputerFencingKey, target: &cfg.computerFencingKey},

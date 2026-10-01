@@ -55,9 +55,9 @@ func TestTaskCompletionRefreshesAuthenticationWithoutChangingReceipt(t *testing.
 			httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requestMu.Lock()
 				defer requestMu.Unlock()
-				if r.URL.Path == "/worker/v1/instance/token" {
+				if r.URL.Path == "/worker/v1/instance/credential" {
 					tokenRequests++
-					server.workerAuthToken(w, r)
+					server.workerIssueHostCredential(w, r)
 					return
 				}
 				body, err := io.ReadAll(r.Body)
@@ -67,7 +67,7 @@ func TestTaskCompletionRefreshesAuthenticationWithoutChangingReceipt(t *testing.
 				}
 				receiptBodies = append(receiptBodies, body)
 				r.Body = io.NopCloser(bytes.NewReader(body))
-				// Invalidate the issued Worker token before the first authenticated completion.
+				// Invalidate the issued worker host credential before the first authenticated completion.
 				if len(statuses) == 0 {
 					if err := drain(r.Context()); err != nil {
 						http.Error(w, err.Error(), 500)

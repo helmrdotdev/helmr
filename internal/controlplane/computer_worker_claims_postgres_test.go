@@ -23,7 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// workerClaimsRace serves real token exchange and Worker authentication. Each
+// workerClaimsRace serves real host credential issue and Worker authentication. Each
 // raced route commits its transition once, after authentication accepted the
 // request and before the handler takes its authority locks.
 type workerClaimsRace struct {
@@ -58,9 +58,9 @@ func newWorkerClaimsRace(t *testing.T, f runtest.Fixture, server *Server, handle
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		race.mu.Lock()
 		defer race.mu.Unlock()
-		if r.URL.Path == "/worker/v1/instance/token" {
+		if r.URL.Path == "/worker/v1/instance/credential" {
 			race.tokens++
-			server.workerAuthToken(w, r)
+			server.workerIssueHostCredential(w, r)
 			return
 		}
 		handler, ok := protected[r.URL.Path]

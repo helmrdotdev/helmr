@@ -87,7 +87,7 @@ def compile_config(raw):
         'EMAIL_PROVIDER': 'none',
     }
     for key in ['AUTH_KEY', 'TOKEN_CREDENTIAL_KEY', 'COMPUTER_FENCING_KEY', 'ENCRYPTION_KEY',
-                'WORKER_TOKEN_SIGNING_KEY', 'COMPUTER_WRAPPING_KEY']:
+                'WORKER_HOST_CREDENTIAL_SIGNING_KEY', 'COMPUTER_WRAPPING_KEY']:
         owned[key] = base64.b64encode(secrets.token_bytes(32)).decode()
     ch = {}
     for role in ['BOOTSTRAP', 'READER', 'INGESTER', 'MIGRATION']:

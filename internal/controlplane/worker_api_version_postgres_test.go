@@ -19,19 +19,19 @@ func TestWorkerConnectionAPIVersionLeavesLifecycleStateUnchanged(t *testing.T) {
 	f.AddRunLease(t, "running", time.Now())
 	handler := newPostgresServer(t, f.Pool)
 	credential := seedHostCredential(t, f.Pool, f.WorkerID)
-	token := exchangeWorkerToken(t, handler, credential.hostID.String(), credential.secret, credential.serviceID.String())
+	hostCredential := issueWorkerHostCredential(t, handler, credential.hostID.String(), credential.secret, credential.serviceID.String())
 	before := workerHostState(t, f.Pool, f.WorkerID)
 	for _, version := range []string{"", "helmr.worker-api.v1.r0"} {
 		for path, body := range map[string]any{
-			"/worker/v1/instance/token":    workerapi.TokenRequest{APIVersion: version, WorkerHostID: credential.hostID.String(), WorkerHostSecret: credential.secret, ServiceID: uuid.NewV7().String()},
-			"/worker/v1/instance/activate": workerapi.ActivateRequest{APIVersion: version, Capabilities: validWorkerCapabilities(t)},
+			"/worker/v1/instance/credential": workerapi.HostCredentialRequest{APIVersion: version, WorkerHostID: credential.hostID.String(), WorkerHostSecret: credential.secret, ServiceID: uuid.NewV7().String()},
+			"/worker/v1/instance/activate":   workerapi.ActivateRequest{APIVersion: version, Capabilities: validWorkerCapabilities(t)},
 		} {
 			raw, err := json.Marshal(body)
 			if err != nil {
 				t.Fatal(err)
 			}
 			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(string(raw)))
-			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("Authorization", "Bearer "+hostCredential)
 			out := httptest.NewRecorder()
 			handler.ServeHTTP(out, req)
 			assertAdminError(t, out, http.StatusConflict, workerapi.APIVersionMismatchCode)
@@ -42,9 +42,9 @@ func TestWorkerConnectionAPIVersionLeavesLifecycleStateUnchanged(t *testing.T) {
 	}
 	// Matching authentication advances the epoch without a version header.
 	restarted := uuid.NewV7().String()
-	exchangeWorkerToken(t, handler, credential.hostID.String(), credential.secret, restarted)
+	issueWorkerHostCredential(t, handler, credential.hostID.String(), credential.secret, restarted)
 	if workerHostState(t, f.Pool, f.WorkerID) == before {
-		t.Fatal("matching token exchange did not advance epoch")
+		t.Fatal("matching host credential issue did not advance epoch")
 	}
 }
 

@@ -17,16 +17,16 @@ import (
 )
 
 // workerHTTPClient calls /worker/v1 routes of a NewServer handler with an
-// epoch token exchanged for a seeded worker host's secret.
+// host credential issued for a seeded worker host's secret.
 type workerHTTPClient struct {
-	handler http.Handler
-	token   string
+	handler        http.Handler
+	hostCredential string
 }
 
 func newWorkerHTTPClient(t *testing.T, handler http.Handler, pool *pgxpool.Pool, hostID uuid.UUID) workerHTTPClient {
 	t.Helper()
 	credential := seedHostCredential(t, pool, hostID)
-	return workerHTTPClient{handler: handler, token: credential.token(t, handler)}
+	return workerHTTPClient{handler: handler, hostCredential: credential.issue(t, handler)}
 }
 
 // post sends body as JSON, requires the status and decodes a 200 response
@@ -53,7 +53,7 @@ func (c workerHTTPClient) send(t *testing.T, path string, body any) *httptest.Re
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(encoded))
-	request.Header.Set("Authorization", "Bearer "+c.token)
+	request.Header.Set("Authorization", "Bearer "+c.hostCredential)
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	c.handler.ServeHTTP(response, request)
