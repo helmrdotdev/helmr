@@ -321,8 +321,8 @@ SELECT runs.id AS run_id,
        computer_instances.writer_expires_at,
        computer_instances.reclaimed_at,
        computer_instances.mount_state,
-       sessions.run_generation AS actor_run_generation,
-       sessions.dispatch_hold_id AS actor_dispatch_hold_id,
+       sessions.run_generation AS session_run_generation,
+       sessions.dispatch_hold_id AS session_dispatch_hold_id,
        EXISTS (SELECT 1 FROM run_waits WHERE run_waits.run_id = runs.id
                 AND run_waits.current_run_lease_id = run_leases.id
                 AND run_waits.suspension_status = 'resuming') AS has_resume_wait,
@@ -422,8 +422,8 @@ type GetRunExecutionLeaseLossAuthorityRow struct {
 	WriterExpiresAt          pgtype.Timestamptz `json:"writer_expires_at"`
 	ReclaimedAt              pgtype.Timestamptz `json:"reclaimed_at"`
 	MountState               string             `json:"mount_state"`
-	ActorRunGeneration       pgtype.Int8        `json:"actor_run_generation"`
-	ActorDispatchHoldID      pgtype.UUID        `json:"actor_dispatch_hold_id"`
+	SessionRunGeneration     pgtype.Int8        `json:"session_run_generation"`
+	SessionDispatchHoldID    pgtype.UUID        `json:"session_dispatch_hold_id"`
 	HasResumeWait            bool               `json:"has_resume_wait"`
 	ObservedAt               pgtype.Timestamptz `json:"observed_at"`
 }
@@ -466,8 +466,8 @@ func (q *Queries) GetRunExecutionLeaseLossAuthority(ctx context.Context, arg Get
 		&i.WriterExpiresAt,
 		&i.ReclaimedAt,
 		&i.MountState,
-		&i.ActorRunGeneration,
-		&i.ActorDispatchHoldID,
+		&i.SessionRunGeneration,
+		&i.SessionDispatchHoldID,
 		&i.HasResumeWait,
 		&i.ObservedAt,
 	)
@@ -611,64 +611,6 @@ func (q *Queries) ListOwnedCancellationRuns(ctx context.Context, arg ListOwnedCa
 	for rows.Next() {
 		var i ListOwnedCancellationRunsRow
 		if err := rows.Scan(&i.ID, &i.Depth, &i.Cycle); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const lockCancellationActors = `-- name: LockCancellationActors :many
-SELECT sessions.id, runs.id AS run_id, sessions.active_turn_id, sessions.dispatch_hold_id
-  FROM runs
-  JOIN sessions
-    ON sessions.id = runs.session_id
-   AND sessions.environment_id = runs.environment_id
- WHERE runs.id = ANY($1::uuid[])
-   AND runs.org_id = $2
-   AND runs.project_id = $3
-   AND runs.environment_id = $4
- ORDER BY sessions.id
- FOR UPDATE OF sessions
-`
-
-type LockCancellationActorsParams struct {
-	RunIDs        []pgtype.UUID `json:"run_ids"`
-	OrgID         pgtype.UUID   `json:"org_id"`
-	ProjectID     pgtype.UUID   `json:"project_id"`
-	EnvironmentID pgtype.UUID   `json:"environment_id"`
-}
-
-type LockCancellationActorsRow struct {
-	ID             pgtype.UUID `json:"id"`
-	RunID          pgtype.UUID `json:"run_id"`
-	ActiveTurnID   pgtype.UUID `json:"active_turn_id"`
-	DispatchHoldID pgtype.UUID `json:"dispatch_hold_id"`
-}
-
-func (q *Queries) LockCancellationActors(ctx context.Context, arg LockCancellationActorsParams) ([]LockCancellationActorsRow, error) {
-	rows, err := q.db.Query(ctx, lockCancellationActors,
-		arg.RunIDs,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []LockCancellationActorsRow
-	for rows.Next() {
-		var i LockCancellationActorsRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.RunID,
-			&i.ActiveTurnID,
-			&i.DispatchHoldID,
-		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -860,6 +802,64 @@ func (q *Queries) LockCancellationRunLeases(ctx context.Context, runIds []pgtype
 			return nil, err
 		}
 		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockCancellationSessions = `-- name: LockCancellationSessions :many
+SELECT sessions.id, runs.id AS run_id, sessions.active_turn_id, sessions.dispatch_hold_id
+  FROM runs
+  JOIN sessions
+    ON sessions.id = runs.session_id
+   AND sessions.environment_id = runs.environment_id
+ WHERE runs.id = ANY($1::uuid[])
+   AND runs.org_id = $2
+   AND runs.project_id = $3
+   AND runs.environment_id = $4
+ ORDER BY sessions.id
+ FOR UPDATE OF sessions
+`
+
+type LockCancellationSessionsParams struct {
+	RunIDs        []pgtype.UUID `json:"run_ids"`
+	OrgID         pgtype.UUID   `json:"org_id"`
+	ProjectID     pgtype.UUID   `json:"project_id"`
+	EnvironmentID pgtype.UUID   `json:"environment_id"`
+}
+
+type LockCancellationSessionsRow struct {
+	ID             pgtype.UUID `json:"id"`
+	RunID          pgtype.UUID `json:"run_id"`
+	ActiveTurnID   pgtype.UUID `json:"active_turn_id"`
+	DispatchHoldID pgtype.UUID `json:"dispatch_hold_id"`
+}
+
+func (q *Queries) LockCancellationSessions(ctx context.Context, arg LockCancellationSessionsParams) ([]LockCancellationSessionsRow, error) {
+	rows, err := q.db.Query(ctx, lockCancellationSessions,
+		arg.RunIDs,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LockCancellationSessionsRow
+	for rows.Next() {
+		var i LockCancellationSessionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.ActiveTurnID,
+			&i.DispatchHoldID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

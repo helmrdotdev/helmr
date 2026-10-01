@@ -126,65 +126,65 @@ func TestDecideTerminal(t *testing.T) {
 		{
 			name: "successful progress remains open",
 			state: func() terminalState {
-				s := actorTerminalState("open", 2, 4)
+				s := sessionTerminalState("open", 2, 4)
 				s.session.CommittedInputSequence = 3
 				return s
 			}(),
 			completion: ActorCompletion{Kind: ActorSucceeded},
-			want:       terminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "open"},
+			want:       terminalDecision{runStatus: db.RunStatusSucceeded, sessionStatus: "open"},
 		},
 		{
 			name: "input arriving after idle admission belongs to continuation",
 			state: func() terminalState {
-				s := actorTerminalState("open", 2, 2)
+				s := sessionTerminalState("open", 2, 2)
 				s.session.NextInputSequence = 4
 				return s
 			}(),
 			completion: ActorCompletion{Kind: ActorSucceeded},
-			want:       terminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "open"},
+			want:       terminalDecision{runStatus: db.RunStatusSucceeded, sessionStatus: "open"},
 		},
 		{
 			name: "late close frontier does not make an idle return fail",
 			state: func() terminalState {
-				s := actorTerminalState("closing", 2, 2)
+				s := sessionTerminalState("closing", 2, 2)
 				s.session.NextInputSequence = 4
 				s.session.CloseSequence = pgtype.Int8{Int64: 3, Valid: true}
 				return s
 			}(),
 			completion: ActorCompletion{Kind: ActorSucceeded},
-			want:       terminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "closing"},
+			want:       terminalDecision{runStatus: db.RunStatusSucceeded, sessionStatus: "closing"},
 		},
 		{
 			name: "admission backlog without progress fails before close",
 			state: func() terminalState {
-				s := actorTerminalState("closing", 2, 4)
+				s := sessionTerminalState("closing", 2, 4)
 				s.session.CloseSequence = pgtype.Int8{Int64: 2, Valid: true}
 				return s
 			}(),
 			completion: ActorCompletion{Kind: ActorSucceeded},
-			want:       terminalDecision{runStatus: db.RunStatusFailed, actorStatus: "closing", runReason: pgvalue.Text("no_progress")},
+			want:       terminalDecision{runStatus: db.RunStatusFailed, sessionStatus: "closing", runReason: pgvalue.Text("no_progress")},
 		},
 		{
 			name: "closing waits for process reconciliation",
 			state: func() terminalState {
-				s := actorTerminalState("closing", 2, 2)
+				s := sessionTerminalState("closing", 2, 2)
 				s.session.CloseSequence = pgtype.Int8{Int64: 2, Valid: true}
 				return s
 			}(),
 			completion: ActorCompletion{Kind: ActorSucceeded},
-			want:       terminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "closing"},
+			want:       terminalDecision{runStatus: db.RunStatusSucceeded, sessionStatus: "closing"},
 		},
 		{
 			name:       "runtime failure rolls cursor back",
-			state:      actorTerminalState("open", 2, 4),
+			state:      sessionTerminalState("open", 2, 4),
 			completion: ActorCompletion{Kind: ActorFailed},
-			want:       terminalDecision{runStatus: db.RunStatusFailed, runReason: pgvalue.Text("actor_failed"), actorStatus: "open"},
+			want:       terminalDecision{runStatus: db.RunStatusFailed, runReason: pgvalue.Text("actor_failed"), sessionStatus: "open"},
 		},
 		{
 			name:       "interruption cancels the Run",
-			state:      actorTerminalState("open", 2, 4),
+			state:      sessionTerminalState("open", 2, 4),
 			completion: ActorCompletion{Kind: ActorInterrupted},
-			want:       terminalDecision{runStatus: db.RunStatusCancelled, runReason: pgvalue.Text("session_interrupted"), actorStatus: "open"},
+			want:       terminalDecision{runStatus: db.RunStatusCancelled, runReason: pgvalue.Text("session_interrupted"), sessionStatus: "open"},
 		},
 	}
 	for _, test := range tests {
@@ -197,7 +197,7 @@ func TestDecideTerminal(t *testing.T) {
 	}
 }
 
-func actorTerminalState(status string, start, highWatermark int64) terminalState {
+func sessionTerminalState(status string, start, highWatermark int64) terminalState {
 	return terminalState{
 		session: db.Session{Status: status, CommittedInputSequence: start, NextInputSequence: highWatermark + 1},
 		run: db.Run{

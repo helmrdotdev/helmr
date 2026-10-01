@@ -111,7 +111,7 @@ func BeginTokenWaitRegistration(ctx context.Context, tx pgx.Tx, fence TokenWaitF
 	}
 	var session db.Session
 	if owner.SessionID.Valid {
-		session, err = q.LockTokenWaitActor(ctx, owner.SessionID)
+		session, err = q.LockTokenWaitSession(ctx, owner.SessionID)
 		if err != nil {
 			return TokenWaitStage{}, tokenWaitError("lock owning actor", err)
 		}

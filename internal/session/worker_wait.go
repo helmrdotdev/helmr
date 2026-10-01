@@ -51,7 +51,7 @@ func RegisterInputWait(ctx context.Context, txb db.TxBeginner, fence run.Executi
 			return ErrStaleExecution
 		}
 		cursor := pgtype.Int8{Int64: wait.AfterInputSequence, Valid: true}
-		replayParams := db.GetActorInputRunWaitRegistrationReplayParams{
+		replayParams := db.GetSessionInputRunWaitRegistrationReplayParams{
 			ID: pgvalue.UUID(wait.WaitID), EnvironmentID: authority.Run().EnvironmentID, RunID: authority.Run().ID,
 			ComputerID: authority.Computer().ID, SessionID: authority.Session().ID,
 			AfterInputSequence:             cursor,
@@ -59,7 +59,7 @@ func RegisterInputWait(ctx context.Context, txb db.TxBeginner, fence run.Executi
 			RegistrationRequestFingerprint: pgvalue.Text(wait.Fingerprint), Metadata: wait.Metadata, Tags: wait.Tags,
 			RunLeaseID: authority.Lease().ID,
 		}
-		registered, err = q.GetActorInputRunWaitRegistrationReplay(ctx, replayParams)
+		registered, err = q.GetSessionInputRunWaitRegistrationReplay(ctx, replayParams)
 		if err == nil {
 			return authority.ValidateWaitCursor(registered, cursor)
 		}
@@ -77,7 +77,7 @@ func RegisterInputWait(ctx context.Context, txb db.TxBeginner, fence run.Executi
 		if authority.Run().Status != db.RunStatusRunning || authority.Session().ActiveTurnID.Valid || authority.Session().DispatchHoldID.Valid || wait.AfterInputSequence != authority.Session().CommittedInputSequence {
 			return ErrStaleExecution
 		}
-		registered, err = q.RegisterActorInputRunWait(ctx, db.RegisterActorInputRunWaitParams{
+		registered, err = q.RegisterSessionInputRunWait(ctx, db.RegisterSessionInputRunWaitParams{
 			ID: pgvalue.UUID(wait.WaitID), EnvironmentID: authority.Run().EnvironmentID, TimeoutAt: wait.TimeoutAt,
 			IdleTimeoutMs: wait.IdleTimeout, SessionID: authority.Session().ID, AfterInputSequence: cursor,
 			RegistrationRequestFingerprint: pgvalue.Text(wait.Fingerprint), AttemptNumber: authority.Attempt().Number,

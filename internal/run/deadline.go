@@ -15,19 +15,19 @@ const (
 )
 
 type DeadlineWorker struct {
-	log           *slog.Logger
-	timerDue      RunWaitDeadlineReconcile
-	tokenTimeouts RunWaitDeadlineReconcile
-	actorTimeouts RunWaitDeadlineReconcile
-	interval      time.Duration
-	batchSize     int32
+	log                  *slog.Logger
+	timerDue             RunWaitDeadlineReconcile
+	tokenTimeouts        RunWaitDeadlineReconcile
+	sessionInputTimeouts RunWaitDeadlineReconcile
+	interval             time.Duration
+	batchSize            int32
 }
 
 func NewDeadlineWorker(
 	log *slog.Logger,
 	timerDue RunWaitDeadlineReconcile,
 	tokenTimeouts RunWaitDeadlineReconcile,
-	actorTimeouts RunWaitDeadlineReconcile,
+	sessionInputTimeouts RunWaitDeadlineReconcile,
 ) (*DeadlineWorker, error) {
 	if timerDue == nil {
 		return nil, errors.New("timer wait reconciler is required")
@@ -35,7 +35,7 @@ func NewDeadlineWorker(
 	if tokenTimeouts == nil {
 		return nil, errors.New("token wait timeout reconciler is required")
 	}
-	if actorTimeouts == nil {
+	if sessionInputTimeouts == nil {
 		return nil, errors.New("actor input wait timeout reconciler is required")
 	}
 	if log == nil {
@@ -43,7 +43,7 @@ func NewDeadlineWorker(
 	}
 	return &DeadlineWorker{
 		log: log, timerDue: timerDue,
-		tokenTimeouts: tokenTimeouts, actorTimeouts: actorTimeouts,
+		tokenTimeouts: tokenTimeouts, sessionInputTimeouts: sessionInputTimeouts,
 		interval: deadlinePollInterval, batchSize: deadlineBatchLimit,
 	}, nil
 }
@@ -70,7 +70,7 @@ func (w *DeadlineWorker) tick(ctx context.Context) error {
 	if _, err := w.tokenTimeouts(ctx, w.batchSize); err != nil {
 		return err
 	}
-	if _, err := w.actorTimeouts(ctx, w.batchSize); err != nil {
+	if _, err := w.sessionInputTimeouts(ctx, w.batchSize); err != nil {
 		return err
 	}
 	return nil

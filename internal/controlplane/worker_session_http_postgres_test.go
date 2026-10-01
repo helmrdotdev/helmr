@@ -33,7 +33,7 @@ func TestWorkerSessionRoutesReportStaleLeasePostgres(t *testing.T) {
 	reference := workerapi.SessionReferenceRequest{Lease: stale, CorrelationID: correlation, SessionID: session}
 	command := workerapi.TurnExecutionRequest{Lease: stale, CorrelationID: correlation, TurnID: turn, RunGeneration: scope.RunGeneration}
 	after := int64(0)
-	waitParams, _ := json.Marshal(workerActorInputWaitParams{SessionID: session, AfterInputSequence: after})
+	waitParams, _ := json.Marshal(workerSessionInputWaitParams{SessionID: session, AfterInputSequence: after})
 	for _, test := range []struct {
 		path    string
 		body    any

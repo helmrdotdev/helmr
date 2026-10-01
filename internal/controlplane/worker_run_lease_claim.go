@@ -39,7 +39,7 @@ func (s *Server) workerClaimRunLease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	responseAuthority := runLeaseClaimResponseAuthority{
-		actor:    claim.Session(),
+		session:  claim.Session(),
 		run:      claim.Run(),
 		attempt:  claim.Attempt(),
 		runtime:  claim.Instance(),

@@ -69,7 +69,7 @@ func AppendTurnOutputFromRun(ctx context.Context, txb db.TxBeginner, locators Le
 	if err != nil {
 		return Output{}, ErrStaleOutput
 	}
-	actorID, err := pgvalue.UUIDValue(discovered.SessionID)
+	sessionID, err := pgvalue.UUIDValue(discovered.SessionID)
 	if err != nil {
 		return Output{}, ErrStaleOutput
 	}
@@ -109,7 +109,7 @@ func AppendTurnOutputFromRun(ctx context.Context, txb db.TxBeginner, locators Le
 			key = request.CorrelationID.String()
 		}
 		receipt, err := AppendTurnOutput(ctx, tx, run.TurnScope{
-			EnvironmentID: environmentID, SessionID: actorID, TurnID: request.TurnID,
+			EnvironmentID: environmentID, SessionID: sessionID, TurnID: request.TurnID,
 			RunID: pgvalue.MustUUIDValue(authority.Run().ID), AttemptNumber: authority.Attempt().Number, RunGeneration: request.RunGeneration, MessageDeliveryID: request.MessageDeliveryID,
 		}, key, request.Data)
 		if err != nil {
@@ -167,8 +167,8 @@ func CommitTurnFromRun(ctx context.Context, txb db.TxBeginner, fence run.Executi
 			return fmt.Errorf("lock actor turn secret authority: %w", err)
 		}
 		authority, err := secrets.LockExecution(ctx)
-		runRow, attempt, actor, lease, instance := authority.Run(), authority.Attempt(), authority.Session(), authority.Lease(), authority.Instance()
-		if err != nil || !actor.ID.Valid {
+		runRow, attempt, session, lease, instance := authority.Run(), authority.Attempt(), authority.Session(), authority.Lease(), authority.Instance()
+		if err != nil || !session.ID.Valid {
 			return staleTurnCommit(err)
 		}
 
@@ -176,7 +176,7 @@ func CommitTurnFromRun(ctx context.Context, txb db.TxBeginner, fence run.Executi
 			return err
 		}
 
-		if actor.CommittedInputSequence == commit.TargetInputSequence {
+		if session.CommittedInputSequence == commit.TargetInputSequence {
 			var replayed bool
 			eventID, replayed, err = replayTurnCommit(ctx, q, commit, authority)
 			if err != nil {
@@ -187,7 +187,7 @@ func CommitTurnFromRun(ctx context.Context, txb db.TxBeginner, fence run.Executi
 			}
 			return ErrStaleTurnCommit
 		}
-		scope := run.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(runRow.EnvironmentID), SessionID: pgvalue.MustUUIDValue(actor.ID), TurnID: commit.TurnID, RunID: pgvalue.MustUUIDValue(runRow.ID), AttemptNumber: attempt.Number, RunGeneration: commit.RunGeneration}
+		scope := run.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(runRow.EnvironmentID), SessionID: pgvalue.MustUUIDValue(session.ID), TurnID: commit.TurnID, RunID: pgvalue.MustUUIDValue(runRow.ID), AttemptNumber: attempt.Number, RunGeneration: commit.RunGeneration}
 		input, err := run.ValidateTurn(ctx, tx, scope)
 		if err != nil {
 			return staleTurnCommit(err)
@@ -195,8 +195,8 @@ func CommitTurnFromRun(ctx context.Context, txb db.TxBeginner, fence run.Executi
 		if input.Sequence != commit.TargetInputSequence {
 			return ErrStaleTurnCommit
 		}
-		if actor.CommittedInputSequence+1 != commit.TargetInputSequence ||
-			commit.TargetInputSequence >= actor.NextInputSequence {
+		if session.CommittedInputSequence+1 != commit.TargetInputSequence ||
+			commit.TargetInputSequence >= session.NextInputSequence {
 			return ErrStaleTurnCommit
 		}
 		committedAt, err := q.GetTaskCompletionTime(ctx)
@@ -225,15 +225,15 @@ func CommitTurnFromRun(ctx context.Context, txb db.TxBeginner, fence run.Executi
 }
 
 func validateTurnCommitAuthority(ctx context.Context, store db.Querier, authority run.Execution) error {
-	runRow, attempt, actor, lease, computerRow := authority.Run(), authority.Attempt(), authority.Session(), authority.Lease(), authority.Computer()
+	runRow, attempt, session, lease, computerRow := authority.Run(), authority.Attempt(), authority.Session(), authority.Lease(), authority.Computer()
 	if runRow.Status != db.RunStatusRunning || runRow.EntrypointKind != "actor" || !runRow.SessionID.Valid ||
-		runRow.SessionID != actor.ID || runRow.ParentRunID.Valid ||
+		runRow.SessionID != session.ID || runRow.ParentRunID.Valid ||
 		runRow.ParentOwnsLifecycle.Valid || lease.Status != db.RunLeaseStatusRunning ||
 		!runRow.ActiveStartedAt.Valid || !attempt.EntrypointEnteredAt.Valid ||
 		attempt.TerminalAt.Valid || !attempt.SessionInputStartSequence.Valid ||
 		!runRow.SessionInputStartSequence.Valid || !runRow.SessionInputHighWatermark.Valid ||
-		!actor.CurrentRunID.Valid || actor.CurrentRunID != runRow.ID ||
-		(actor.Status != "open" && actor.Status != "closing") ||
+		!session.CurrentRunID.Valid || session.CurrentRunID != runRow.ID ||
+		(session.Status != "open" && session.Status != "closing") ||
 		!computerRow.HeadDiskVersionID.Valid ||
 		lease.FinalizationOperationID.Valid ||
 		lease.FinalizationStartedAt.Valid || lease.FinalizationRequestFingerprint.Valid {
@@ -254,8 +254,8 @@ func validateTurnCommitAuthority(ctx context.Context, store db.Querier, authorit
 // replayTurnCommit returns the terminal event of a Turn the execution
 // already settled with the same disposition and fingerprint, or false.
 func replayTurnCommit(ctx context.Context, store db.Querier, commit TurnCommit, authority run.Execution) (pgtype.UUID, bool, error) {
-	runRow, attempt, actor := authority.Run(), authority.Attempt(), authority.Session()
-	input, err := store.LockSessionTurnInput(ctx, db.LockSessionTurnInputParams{EnvironmentID: runRow.EnvironmentID, SessionID: actor.ID, ID: pgvalue.UUID(commit.TurnID)})
+	runRow, attempt, session := authority.Run(), authority.Attempt(), authority.Session()
+	input, err := store.LockSessionTurnInput(ctx, db.LockSessionTurnInputParams{EnvironmentID: runRow.EnvironmentID, SessionID: session.ID, ID: pgvalue.UUID(commit.TurnID)})
 	if err != nil {
 		return pgtype.UUID{}, false, staleTurnCommit(err)
 	}

@@ -23,7 +23,7 @@ type runLeaseClaimProjection struct {
 }
 
 type runLeaseClaimResponseAuthority struct {
-	actor    db.Session
+	session  db.Session
 	run      db.Run
 	attempt  db.RunAttempt
 	runtime  db.ComputerInstance
@@ -102,11 +102,11 @@ func projectRunLeaseClaimResponse(
 		projection.program.EnvironmentID != authority.run.EnvironmentID {
 		return workerapi.RunLeaseClaimResponse{}, errors.New("run lease program authority is inconsistent")
 	}
-	var actor *db.Session
-	if authority.actor.ID.Valid {
-		actor = &authority.actor
+	var session *db.Session
+	if authority.session.ID.Valid {
+		session = &authority.session
 	}
-	start, err := encodeProgramStart(authority.run, authority.attempt, actor, projection.definition, projection.program.DeploymentVersion)
+	start, err := encodeProgramStart(authority.run, authority.attempt, session, projection.definition, projection.program.DeploymentVersion)
 	if err != nil {
 		return workerapi.RunLeaseClaimResponse{}, err
 	}

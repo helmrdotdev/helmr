@@ -12,7 +12,7 @@ import (
 
 func TestResourceReadsPreserveUnknownDiagnostics(t *testing.T) {
 	scheduleFailure := &api.ScheduleFailure{Code: "future_schedule_failure", Message: "diagnosis", Details: json.RawMessage(`{"custom":1}`)}
-	session := actorStatusFixture()
+	session := sessionStatusFixture()
 	session.Status = api.SessionStatusFailed
 	session.Failure = &api.SessionFailure{Code: "future_session_failure", Message: "diagnosis", Details: api.SessionFailureDetails{RunID: session.ComputerID}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

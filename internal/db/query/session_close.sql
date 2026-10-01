@@ -1,11 +1,11 @@
--- name: LockActorClose :one
+-- name: LockSessionClose :one
 SELECT *
   FROM sessions
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(session_id)
  FOR UPDATE;
 
--- name: BeginActorClose :one
+-- name: BeginSessionClose :one
 UPDATE sessions
    SET status = CASE WHEN status = 'open' THEN 'closing' ELSE status END,
        close_sequence = CASE
@@ -25,14 +25,14 @@ UPDATE sessions
    AND status IN ('open', 'closing')
 RETURNING *;
 
--- name: LockActorCloseComputer :one
+-- name: LockSessionCloseComputer :one
 SELECT c.* FROM computers c
 WHERE c.environment_id=sqlc.arg(environment_id) AND c.id=sqlc.arg(computer_id)
  AND EXISTS(SELECT 1 FROM sessions s WHERE s.id=sqlc.arg(session_id)
  AND s.environment_id=c.environment_id AND s.computer_id=c.id)
 FOR UPDATE OF c;
 
--- name: GetActorCloseComputerActivity :one
+-- name: GetSessionCloseComputerActivity :one
 WITH RECURSIVE owned(id) AS (
  SELECT r.id FROM runs r WHERE r.session_id=sqlc.arg(session_id)
  UNION
@@ -44,7 +44,7 @@ SELECT EXISTS(SELECT 1 FROM run_leases l JOIN owned o ON o.id=l.run_id
  WHERE r.session_id IS DISTINCT FROM sqlc.arg(session_id)
  AND r.status NOT IN ('succeeded','failed','cancelled','expired','system_failed')) AS has_active_child;
 
--- name: CompleteIdleActorClose :one
+-- name: CompleteIdleSessionClose :one
 UPDATE sessions
    SET status = 'closed',
        current_run_id = NULL,

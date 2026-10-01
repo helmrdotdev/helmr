@@ -68,7 +68,7 @@ UPDATE runs
    AND active_started_at IS NULL
 RETURNING *;
 
--- name: ReconcileActorTerminalRun :one
+-- name: ReconcileSessionTerminalRun :one
 UPDATE sessions
    SET status = sqlc.arg(status),
        current_run_id = NULL,
@@ -165,7 +165,7 @@ SELECT created_run.*
   FROM created_run
   JOIN claimed_actor ON claimed_actor.id = created_run.session_id;
 
--- name: FailActorSession :one
+-- name: FailSession :one
 UPDATE sessions
    SET status = 'failed',
        failure = sqlc.arg(failure)::jsonb,

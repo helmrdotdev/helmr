@@ -139,7 +139,7 @@ func TestComputerCaptureIdleAndActorCursor(t *testing.T) {
 
 func TestComputerCaptureActiveTurn(t *testing.T) {
 	f, work, _, request := computertest.Capture(t)
-	actorID := f.ConvertToActor(t, t.Context(), work, `{"enabled":false}`)
+	sessionID := f.ConvertToActor(t, t.Context(), work, `{"enabled":false}`)
 	turnID := uuid.NewV7()
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
@@ -147,9 +147,9 @@ func TestComputerCaptureActiveTurn(t *testing.T) {
 	}
 	defer tx.Rollback(t.Context())
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO session_turns(id,environment_id,session_id,sequence,data,status,run_generation,run_id,attempt_number,ready_run_lease_id)
- SELECT $2,environment_id,id,committed_input_sequence+1,'{}','running',run_generation,current_run_id,1,$3 FROM sessions WHERE id=$1`, actorID, turnID, work.LeaseID)
-	dbtest.MustExec(t, t.Context(), tx, `UPDATE sessions SET active_turn_id=$2 WHERE id=$1`, actorID, turnID)
-	bind := db.BindRunWaitTurnParams{SessionID: pgvalue.UUID(actorID), TurnID: pgvalue.UUID(turnID)}
+ SELECT $2,environment_id,id,committed_input_sequence+1,'{}','running',run_generation,current_run_id,1,$3 FROM sessions WHERE id=$1`, sessionID, turnID, work.LeaseID)
+	dbtest.MustExec(t, t.Context(), tx, `UPDATE sessions SET active_turn_id=$2 WHERE id=$1`, sessionID, turnID)
+	bind := db.BindRunWaitTurnParams{SessionID: pgvalue.UUID(sessionID), TurnID: pgvalue.UUID(turnID)}
 	if err = tx.QueryRow(t.Context(), `SELECT w.id,s.run_generation FROM run_waits w JOIN sessions s ON s.current_run_id=w.run_id WHERE w.run_id=$1`, work.RunID).Scan(&bind.WaitID, &bind.RunGeneration); err != nil {
 		t.Fatal(err)
 	}

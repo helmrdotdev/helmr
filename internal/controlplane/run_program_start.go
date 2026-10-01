@@ -20,7 +20,7 @@ import (
 func encodeProgramStart(
 	run db.Run,
 	attempt db.RunAttempt,
-	actor *db.Session,
+	session *db.Session,
 	definition db.DeploymentDefinition,
 	deploymentVersion string,
 ) ([]byte, error) {
@@ -76,13 +76,13 @@ func encodeProgramStart(
 
 	switch run.EntrypointKind {
 	case "task":
-		task, err := programStartTask(run, actor, definition)
+		task, err := programStartTask(run, session, definition)
 		if err != nil {
 			return nil, err
 		}
 		message.Entrypoint = &programv0.ProgramStart_Task{Task: task}
 	case "actor":
-		actorStart, err := programStartActor(run, attempt, actor)
+		actorStart, err := programStartActor(run, attempt, session)
 		if err != nil {
 			return nil, err
 		}
@@ -111,10 +111,10 @@ func encodeProgramStart(
 
 func programStartTask(
 	run db.Run,
-	actor *db.Session,
+	session *db.Session,
 	deploymentDefinition db.DeploymentDefinition,
 ) (*programv0.TaskStart, error) {
-	if actor != nil ||
+	if session != nil ||
 		run.SessionID.Valid ||
 		run.SessionInputStartSequence.Valid ||
 		run.SessionInputHighWatermark.Valid {
@@ -156,16 +156,16 @@ func programStartTask(
 func programStartActor(
 	run db.Run,
 	attempt db.RunAttempt,
-	actor *db.Session,
+	session *db.Session,
 ) (*programv0.ActorStart, error) {
-	if actor == nil ||
+	if session == nil ||
 		!run.SessionID.Valid ||
-		actor.ID != run.SessionID ||
-		actor.DeploymentDefinitionID != run.DeploymentDefinitionID ||
-		actor.ComputerID != run.ComputerID ||
-		actor.ActorDeclaredID != run.EntrypointDeclaredID ||
-		actor.CurrentRunID != run.ID || actor.RunGeneration <= 0 ||
-		actor.DispatchHoldID.Valid ||
+		session.ID != run.SessionID ||
+		session.DeploymentDefinitionID != run.DeploymentDefinitionID ||
+		session.ComputerID != run.ComputerID ||
+		session.ActorDeclaredID != run.EntrypointDeclaredID ||
+		session.CurrentRunID != run.ID || session.RunGeneration <= 0 ||
+		session.DispatchHoldID.Valid ||
 		run.Payload != nil ||
 		!attempt.SessionInputStartSequence.Valid ||
 		!run.SessionInputStartSequence.Valid ||
@@ -176,18 +176,18 @@ func programStartActor(
 		attempt.SessionInputStartSequence.Int64 > run.SessionInputHighWatermark.Int64 {
 		return nil, errors.New("actor program-start authority is inconsistent")
 	}
-	sessionID, err := requiredClaimUUIDString("session ID", actor.ID)
+	sessionID, err := requiredClaimUUIDString("session ID", session.ID)
 	if err != nil {
 		return nil, err
 	}
 	start := &programv0.ActorStart{
 		SessionId:          sessionID,
-		RunGeneration:      actor.RunGeneration,
+		RunGeneration:      session.RunGeneration,
 		StartInputSequence: attempt.SessionInputStartSequence.Int64,
 		InputHighWatermark: run.SessionInputHighWatermark.Int64,
 	}
-	if actor.Key.Valid {
-		key := actor.Key.String
+	if session.Key.Valid {
+		key := session.Key.String
 		start.Key = &key
 	}
 	return start, nil

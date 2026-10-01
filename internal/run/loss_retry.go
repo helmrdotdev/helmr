@@ -16,7 +16,7 @@ type lostTaskRetry struct {
 
 // A retry preserves the logical invocation; admission waits for the previous process scope to be reconciled.
 func (g OwnedFinalization) taskLossRetry(ctx context.Context, r cancellationRun, at time.Time) (*lostTaskRetry, error) {
-	if r.actorID.Valid || runStatusTerminal(r.status) || r.status == db.RunStatusCancelRequested {
+	if r.sessionID.Valid || runStatusTerminal(r.status) || r.status == db.RunStatusCancelRequested {
 		return nil, nil
 	}
 	q := db.New(g.tx)

@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createActor = `-- name: CreateActor :one
+const createSession = `-- name: CreateSession :one
 INSERT INTO sessions (
     id,
     environment_id,
@@ -68,7 +68,7 @@ SELECT $1,
 RETURNING id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
 `
 
-type CreateActorParams struct {
+type CreateSessionParams struct {
 	ID                       pgtype.UUID `json:"id"`
 	Key                      pgtype.Text `json:"key"`
 	RunQueueName             string      `json:"run_queue_name"`
@@ -88,8 +88,8 @@ type CreateActorParams struct {
 	ActorDeclaredID          string      `json:"actor_declared_id"`
 }
 
-func (q *Queries) CreateActor(ctx context.Context, arg CreateActorParams) (Session, error) {
-	row := q.db.QueryRow(ctx, createActor,
+func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error) {
+	row := q.db.QueryRow(ctx, createSession,
 		arg.ID,
 		arg.Key,
 		arg.RunQueueName,
@@ -151,20 +151,20 @@ func (q *Queries) CreateActor(ctx context.Context, arg CreateActorParams) (Sessi
 	return i, err
 }
 
-const getActor = `-- name: GetActor :one
+const getSession = `-- name: GetSession :one
 SELECT id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
   FROM sessions
  WHERE environment_id = $1
    AND id = $2
 `
 
-type GetActorParams struct {
+type GetSessionParams struct {
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
 }
 
-func (q *Queries) GetActor(ctx context.Context, arg GetActorParams) (Session, error) {
-	row := q.db.QueryRow(ctx, getActor, arg.EnvironmentID, arg.ID)
+func (q *Queries) GetSession(ctx context.Context, arg GetSessionParams) (Session, error) {
+	row := q.db.QueryRow(ctx, getSession, arg.EnvironmentID, arg.ID)
 	var i Session
 	err := row.Scan(
 		&i.ID,
@@ -208,7 +208,7 @@ func (q *Queries) GetActor(ctx context.Context, arg GetActorParams) (Session, er
 	return i, err
 }
 
-const getActorByKey = `-- name: GetActorByKey :one
+const getSessionByKey = `-- name: GetSessionByKey :one
 SELECT id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
   FROM sessions
  WHERE environment_id = $1
@@ -216,14 +216,14 @@ SELECT id, environment_id, actor_declared_id, deployment_definition_id, computer
    AND key = $3
 `
 
-type GetActorByKeyParams struct {
+type GetSessionByKeyParams struct {
 	EnvironmentID   pgtype.UUID `json:"environment_id"`
 	ActorDeclaredID string      `json:"actor_declared_id"`
 	Key             pgtype.Text `json:"key"`
 }
 
-func (q *Queries) GetActorByKey(ctx context.Context, arg GetActorByKeyParams) (Session, error) {
-	row := q.db.QueryRow(ctx, getActorByKey, arg.EnvironmentID, arg.ActorDeclaredID, arg.Key)
+func (q *Queries) GetSessionByKey(ctx context.Context, arg GetSessionByKeyParams) (Session, error) {
+	row := q.db.QueryRow(ctx, getSessionByKey, arg.EnvironmentID, arg.ActorDeclaredID, arg.Key)
 	var i Session
 	err := row.Scan(
 		&i.ID,
@@ -736,7 +736,7 @@ func (q *Queries) LockActorStartKey(ctx context.Context, arg LockActorStartKeyPa
 	return err
 }
 
-const setActorCurrentRun = `-- name: SetActorCurrentRun :one
+const setSessionCurrentRun = `-- name: SetSessionCurrentRun :one
 UPDATE sessions
    SET current_run_id = $1,
        revision = revision + 1,
@@ -751,15 +751,15 @@ UPDATE sessions
 RETURNING id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
 `
 
-type SetActorCurrentRunParams struct {
+type SetSessionCurrentRunParams struct {
 	RunID         pgtype.UUID `json:"run_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
 	ComputerID    pgtype.UUID `json:"computer_id"`
 }
 
-func (q *Queries) SetActorCurrentRun(ctx context.Context, arg SetActorCurrentRunParams) (Session, error) {
-	row := q.db.QueryRow(ctx, setActorCurrentRun,
+func (q *Queries) SetSessionCurrentRun(ctx context.Context, arg SetSessionCurrentRunParams) (Session, error) {
+	row := q.db.QueryRow(ctx, setSessionCurrentRun,
 		arg.RunID,
 		arg.EnvironmentID,
 		arg.ID,

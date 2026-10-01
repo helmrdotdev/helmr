@@ -11,9 +11,9 @@ import (
 )
 
 func TestChildWaitScopeUsesSessionMembership(t *testing.T) {
-	actorID, runID, computerID, turnID := pgvalue.UUID(uuid.NewV7()), pgvalue.UUID(uuid.NewV7()), pgvalue.UUID(uuid.NewV7()), pgvalue.UUID(uuid.NewV7())
-	scope := Execution{run: db.Run{ID: runID, ComputerID: computerID, SessionID: actorID, EntrypointKind: "actor"}, session: db.Session{ID: actorID, CurrentRunID: runID, ComputerID: computerID, Status: "open", ActiveTurnID: turnID, RunGeneration: 3}}
-	wait := db.RunWait{TurnID: turnID, TurnSessionID: actorID, TurnRunGeneration: pgtype.Int8{Int64: 3, Valid: true}}
+	sessionID, runID, computerID, turnID := pgvalue.UUID(uuid.NewV7()), pgvalue.UUID(uuid.NewV7()), pgvalue.UUID(uuid.NewV7()), pgvalue.UUID(uuid.NewV7())
+	scope := Execution{run: db.Run{ID: runID, ComputerID: computerID, SessionID: sessionID, EntrypointKind: "actor"}, session: db.Session{ID: sessionID, CurrentRunID: runID, ComputerID: computerID, Status: "open", ActiveTurnID: turnID, RunGeneration: 3}}
+	wait := db.RunWait{TurnID: turnID, TurnSessionID: sessionID, TurnRunGeneration: pgtype.Int8{Int64: 3, Valid: true}}
 	if err := scope.validateChildWaitScope(wait); err != nil {
 		t.Fatal(err)
 	}

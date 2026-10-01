@@ -352,7 +352,7 @@ func assertSessionJSON(t *testing.T, actual, want []byte) {
 	}
 }
 
-func actorStatusFixture() api.Session {
+func sessionStatusFixture() api.Session {
 	return api.Session{
 		ID: testSessionID, ActorID: "operator.v1", DeploymentID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
 		ComputerID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", Status: api.SessionStatusOpen,

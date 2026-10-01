@@ -33,7 +33,7 @@ type CancellationRequest struct {
 }
 
 type CancellationResult struct {
-	Actor         *ActorCancellationReceipt
+	Session       *SessionCancellationReceipt
 	RunID         uuid.UUID
 	Changed       bool
 	CancelledRuns int
@@ -49,7 +49,7 @@ type cancellationRun struct {
 	parentOwnsLifecycle      pgtype.Bool
 	environmentID            uuid.UUID
 	computerID               uuid.UUID
-	actorID                  pgtype.UUID
+	sessionID                pgtype.UUID
 	status                   db.RunStatus
 	currentAttemptNumber     int32
 	currentRunLeaseID        pgtype.UUID
@@ -238,7 +238,7 @@ func lockOwnedFinalization(
 		return OwnedFinalization{}, err
 	}
 	slices.SortFunc(lockOrder, func(a, b uuid.UUID) int { return slices.Compare(a[:], b[:]) })
-	if err := lockCancellationActors(ctx, tx, scope, lockOrder); err != nil {
+	if err := lockCancellationSessions(ctx, tx, scope, lockOrder); err != nil {
 		return OwnedFinalization{}, err
 	}
 	locked := make(map[uuid.UUID]cancellationRun, len(lockOrder))
@@ -582,11 +582,11 @@ func cancelInTx(ctx context.Context, tx pgx.Tx, request CancellationRequest) (Ca
 		if err != nil {
 			return CancellationResult{}, "", err
 		}
-		receipt, err := acceptActorRunCancellation(ctx, tx, request, targetRun, graph)
+		receipt, err := acceptSessionRunCancellation(ctx, tx, request, targetRun, graph)
 		if err != nil {
 			return CancellationResult{}, "", err
 		}
-		return CancellationResult{RunID: targetID, Actor: &receipt, Changed: receipt.Status == "accepted"}, receipt.Code, nil
+		return CancellationResult{RunID: targetID, Session: &receipt, Changed: receipt.Status == "accepted"}, receipt.Code, nil
 	}
 	lineage, err := cancellationLineage(ctx, tx, targetID)
 	if err != nil {
@@ -607,7 +607,7 @@ func cancelInTx(ctx context.Context, tx pgx.Tx, request CancellationRequest) (Ca
 		return CancellationResult{}, "", err
 	}
 	slices.SortFunc(lockOrder, func(a, b uuid.UUID) int { return slices.Compare(a[:], b[:]) })
-	if err := lockCancellationActors(ctx, tx, request, lockOrder); err != nil {
+	if err := lockCancellationSessions(ctx, tx, request, lockOrder); err != nil {
 		return CancellationResult{}, "", err
 	}
 	locked := make(map[uuid.UUID]cancellationRun, len(lockOrder))
@@ -755,13 +755,13 @@ func cancellationLineage(
 	return ids, nil
 }
 
-func lockCancellationActors(
+func lockCancellationSessions(
 	ctx context.Context,
 	tx pgx.Tx,
 	request CancellationRequest,
 	lineage []uuid.UUID,
 ) error {
-	_, err := db.New(tx).LockCancellationActors(ctx, db.LockCancellationActorsParams{
+	_, err := db.New(tx).LockCancellationSessions(ctx, db.LockCancellationSessionsParams{
 		RunIDs:        pgUUIDs(lineage),
 		OrgID:         pgvalue.UUID(request.OrgID),
 		ProjectID:     pgvalue.UUID(request.ProjectID),
@@ -794,7 +794,7 @@ func lockCancellationRun(
 		parentOwnsLifecycle:      row.ParentOwnsLifecycle,
 		environmentID:            uuid.UUID(row.EnvironmentID.Bytes),
 		computerID:               uuid.UUID(row.ComputerID.Bytes),
-		actorID:                  row.SessionID,
+		sessionID:                row.SessionID,
 		status:                   row.Status,
 		currentAttemptNumber:     row.CurrentAttemptNumber,
 		currentRunLeaseID:        row.CurrentRunLeaseID,
@@ -996,19 +996,19 @@ func terminateLockedRun(
 		return err
 	}
 	queries := db.New(tx)
-	if run.actorID.Valid {
-		actor, err := queries.LockSessionTurnAuthority(ctx, db.LockSessionTurnAuthorityParams{EnvironmentID: pgvalue.UUID(run.environmentID), ID: run.actorID})
+	if run.sessionID.Valid {
+		session, err := queries.LockSessionTurnAuthority(ctx, db.LockSessionTurnAuthorityParams{EnvironmentID: pgvalue.UUID(run.environmentID), ID: run.sessionID})
 		if err != nil {
 			return err
 		}
-		if actor.CurrentRunID != pgvalue.UUID(run.id) {
+		if session.CurrentRunID != pgvalue.UUID(run.id) {
 			return cancellationAuthority("stale Actor termination", nil)
 		}
 		// Explicit cancellation already has a durable stop hold. Keep its
 		// receipt address while retiring the execution; loss/failure establishes
 		// a new recovery hold because the reason and execution certainty changed.
-		if termination.runStatus != db.RunStatusCancelled || !actor.DispatchHoldID.Valid {
-			if _, err := HoldSessionExecution(ctx, queries, actor, run.currentAttemptNumber, "recovery_required"); err != nil {
+		if termination.runStatus != db.RunStatusCancelled || !session.DispatchHoldID.Valid {
+			if _, err := HoldSessionExecution(ctx, queries, session, run.currentAttemptNumber, "recovery_required"); err != nil {
 				return err
 			}
 		}

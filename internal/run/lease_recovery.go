@@ -97,7 +97,7 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 	}
 	if (authority.RunLeaseStatus == string(db.RunLeaseStatusAssigned) ||
 		authority.RunLeaseStatus == string(db.RunLeaseStatusStarting)) &&
-		!authority.HasResumeWait && !(target.actorID.Valid && authority.ActorDispatchHoldID.Valid) {
+		!authority.HasResumeWait && !(target.sessionID.Valid && authority.SessionDispatchHoldID.Valid) {
 		targetGraph, err := g.executionTarget(request.RunID)
 		if err != nil {
 			return false, err

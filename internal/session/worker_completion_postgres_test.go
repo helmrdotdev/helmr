@@ -69,9 +69,9 @@ func TestSessionInterruptedCompletionRejectsChangedHoldPostgres(t *testing.T) {
 			}
 		})
 	}
-	actor, err := db.New(f.Pool).GetActor(t.Context(), db.GetActorParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: pgvalue.UUID(f.SessionID)})
-	if err != nil || actor.CommittedInputSequence != 0 || actor.DispatchHoldReason.String != "interrupt_requested" {
-		t.Fatalf("rejected proof changed state: %+v %v", actor, err)
+	session, err := db.New(f.Pool).GetSession(t.Context(), db.GetSessionParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: pgvalue.UUID(f.SessionID)})
+	if err != nil || session.CommittedInputSequence != 0 || session.DispatchHoldReason.String != "interrupt_requested" {
+		t.Fatalf("rejected proof changed state: %+v %v", session, err)
 	}
 }
 

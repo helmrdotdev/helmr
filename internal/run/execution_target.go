@@ -72,7 +72,7 @@ func lockExecutionComputers(ctx context.Context, tx pgx.Tx, lineage []uuid.UUID,
 
 func lockExecutionSessions(ctx context.Context, tx pgx.Tx, scope CancellationRequest, lineage []uuid.UUID, target pgtype.UUID) error {
 	if !target.Valid {
-		return lockCancellationActors(ctx, tx, scope, lineage)
+		return lockCancellationSessions(ctx, tx, scope, lineage)
 	}
 	rows, err := tx.Query(ctx, `SELECT s.id FROM sessions s
  WHERE s.environment_id=$1 AND (s.id=$2 OR s.id IN

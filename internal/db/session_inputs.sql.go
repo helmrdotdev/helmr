@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createActorInputReconcileOutbox = `-- name: CreateActorInputReconcileOutbox :exec
+const createSessionInputReconcileOutbox = `-- name: CreateSessionInputReconcileOutbox :exec
 INSERT INTO control_outbox (id, topic, payload, available_at)
 VALUES (
     $1,
@@ -26,15 +26,15 @@ VALUES (
 ON CONFLICT (id) DO NOTHING
 `
 
-type CreateActorInputReconcileOutboxParams struct {
+type CreateSessionInputReconcileOutboxParams struct {
 	ID            pgtype.UUID `json:"id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	SessionID     pgtype.UUID `json:"session_id"`
 	TurnID        pgtype.UUID `json:"turn_id"`
 }
 
-func (q *Queries) CreateActorInputReconcileOutbox(ctx context.Context, arg CreateActorInputReconcileOutboxParams) error {
-	_, err := q.db.Exec(ctx, createActorInputReconcileOutbox,
+func (q *Queries) CreateSessionInputReconcileOutbox(ctx context.Context, arg CreateSessionInputReconcileOutboxParams) error {
+	_, err := q.db.Exec(ctx, createSessionInputReconcileOutbox,
 		arg.ID,
 		arg.EnvironmentID,
 		arg.SessionID,
@@ -121,7 +121,7 @@ func (q *Queries) GetSessionTurnByIDForUpdate(ctx context.Context, arg GetSessio
 	return i, err
 }
 
-const lockActorForInputReconcile = `-- name: LockActorForInputReconcile :one
+const lockSessionForInputReconcile = `-- name: LockSessionForInputReconcile :one
 SELECT id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
   FROM sessions
  WHERE environment_id = $1
@@ -129,13 +129,13 @@ SELECT id, environment_id, actor_declared_id, deployment_definition_id, computer
  FOR UPDATE
 `
 
-type LockActorForInputReconcileParams struct {
+type LockSessionForInputReconcileParams struct {
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	SessionID     pgtype.UUID `json:"session_id"`
 }
 
-func (q *Queries) LockActorForInputReconcile(ctx context.Context, arg LockActorForInputReconcileParams) (Session, error) {
-	row := q.db.QueryRow(ctx, lockActorForInputReconcile, arg.EnvironmentID, arg.SessionID)
+func (q *Queries) LockSessionForInputReconcile(ctx context.Context, arg LockSessionForInputReconcileParams) (Session, error) {
+	row := q.db.QueryRow(ctx, lockSessionForInputReconcile, arg.EnvironmentID, arg.SessionID)
 	var i Session
 	err := row.Scan(
 		&i.ID,
@@ -179,7 +179,7 @@ func (q *Queries) LockActorForInputReconcile(ctx context.Context, arg LockActorF
 	return i, err
 }
 
-const lockActorInputCurrentRun = `-- name: LockActorInputCurrentRun :one
+const lockSessionInputCurrentRun = `-- name: LockSessionInputCurrentRun :one
 SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.session_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.computer_id, runs.base_computer_disk_version_id, runs.session_input_start_sequence, runs.session_input_high_watermark, runs.payload, runs.output, runs.failure, runs.status, runs.revision, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.instance_preparation_count, runs.next_instance_preparation_at, runs.terminal_at, runs.computer_payload_required
   FROM runs
  WHERE runs.environment_id = $1
@@ -188,14 +188,14 @@ SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployme
  FOR UPDATE
 `
 
-type LockActorInputCurrentRunParams struct {
+type LockSessionInputCurrentRunParams struct {
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	RunID         pgtype.UUID `json:"run_id"`
 	SessionID     pgtype.UUID `json:"session_id"`
 }
 
-func (q *Queries) LockActorInputCurrentRun(ctx context.Context, arg LockActorInputCurrentRunParams) (Run, error) {
-	row := q.db.QueryRow(ctx, lockActorInputCurrentRun, arg.EnvironmentID, arg.RunID, arg.SessionID)
+func (q *Queries) LockSessionInputCurrentRun(ctx context.Context, arg LockSessionInputCurrentRunParams) (Run, error) {
+	row := q.db.QueryRow(ctx, lockSessionInputCurrentRun, arg.EnvironmentID, arg.RunID, arg.SessionID)
 	var i Run
 	err := row.Scan(
 		&i.ID,
