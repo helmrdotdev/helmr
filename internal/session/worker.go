@@ -11,14 +11,17 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// The FromRun operations act on a Session for a worker from the live source
-// Run its execution fence addresses, each in its own transaction. The
-// addressed Session is always in the source Run's environment: a Session
-// outside it is reported as session_not_found or ErrNotFound. A missing or
-// mismatched source is run.ErrStaleSource; stale worker claims are
-// workergroup.ErrStaleClaims. A business rejection commits with its receipt
-// and is then returned with that receipt as an *OperationError carrying the
-// rejection code.
+// The FromRun operations in this file and in worker_control.go act on a
+// Session for a worker from the live source Run its execution fence
+// addresses, each in its own transaction. The addressed Session is always in
+// the source Run's environment: a Session outside it is reported as
+// session_not_found or ErrNotFound. A missing or mismatched source is
+// run.ErrStaleSource; stale worker claims are workergroup.ErrStaleClaims. A
+// business rejection commits with its receipt and is then returned with that
+// receipt as an *OperationError carrying the rejection code. The operations
+// on the worker's own Actor execution report a lost or changed execution as
+// ErrStaleOutput or ErrStaleExecution, or with the stale error they
+// document.
 
 // authorizeFromRun locks the source Computer's Secrets, then the execution
 // fence together with the addressed Session, then the source attempt's
