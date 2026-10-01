@@ -27,7 +27,7 @@ var ErrComputerAuthority = errors.New("session computer authority is unavailable
 // Computer.
 func lockSession(ctx context.Context, tx pgx.Tx, target Target) (db.Session, error) {
 	q := db.New(tx)
-	locator, err := q.GetActor(ctx, db.GetActorParams{EnvironmentID: pgvalue.UUID(target.EnvironmentID), ID: pgvalue.UUID(target.SessionID)})
+	locator, err := q.GetSession(ctx, db.GetSessionParams{EnvironmentID: pgvalue.UUID(target.EnvironmentID), ID: pgvalue.UUID(target.SessionID)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return db.Session{}, &OperationError{Code: "session_not_found"}
 	}
@@ -181,7 +181,7 @@ func Admit(ctx context.Context, tx pgx.Tx, request AdmissionRequest) (AdmissionR
 		if _, err := appendLifecycleEvent(ctx, q, actor, turn.ID, pgtype.UUID{}, "turn.enqueued", body, pgtype.UUID{}); err != nil {
 			return receipt, err
 		}
-		if err := q.CreateActorInputReconcileOutbox(ctx, db.CreateActorInputReconcileOutboxParams{ID: turn.ID, SessionID: actor.ID, EnvironmentID: actor.EnvironmentID, TurnID: turn.ID}); err != nil {
+		if err := q.CreateSessionInputReconcileOutbox(ctx, db.CreateSessionInputReconcileOutboxParams{ID: turn.ID, SessionID: actor.ID, EnvironmentID: actor.EnvironmentID, TurnID: turn.ID}); err != nil {
 			return receipt, err
 		}
 		receipt.Kind, receipt.TurnID = "enqueued", turnID

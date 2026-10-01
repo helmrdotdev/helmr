@@ -15,7 +15,7 @@ func ReadEvents(ctx context.Context, q db.Querier, target Target, after int64, l
 	if after < 0 || limit < 1 || limit > 1000 {
 		return EventPage{}, &OperationError{Code: "invalid_cursor"}
 	}
-	actor, err := q.GetActor(ctx, db.GetActorParams{EnvironmentID: pgvalue.UUID(target.EnvironmentID), ID: pgvalue.UUID(target.SessionID)})
+	actor, err := q.GetSession(ctx, db.GetSessionParams{EnvironmentID: pgvalue.UUID(target.EnvironmentID), ID: pgvalue.UUID(target.SessionID)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return EventPage{}, &OperationError{Code: "session_not_found"}
 	}

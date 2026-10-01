@@ -15,9 +15,9 @@ WHERE l.worker_host_id=sqlc.arg(worker_host_id) AND l.worker_group_id=sqlc.arg(w
 -- name: GetRunLeaseClaimLocators :one
 SELECT l.org_id,l.project_id,l.environment_id,l.run_id,l.computer_id,l.attempt_number,
  l.region_id,l.computer_instance_id,l.writer_generation,i.source_checkpoint_id,
- r.session_id,s.run_generation AS actor_run_generation,r.parent_run_id,r.parent_owns_lifecycle,
+ r.session_id,s.run_generation AS session_run_generation,r.parent_run_id,r.parent_owns_lifecycle,
  parent.session_id AS parent_session_id,parent.current_attempt_number AS parent_attempt_number,
- parent_actor.run_generation AS parent_actor_run_generation,
+ parent_actor.run_generation AS parent_session_run_generation,
  wait.id AS run_wait_id,wait.suspend_checkpoint_id
 FROM run_leases l JOIN runs r ON r.id=l.run_id AND r.computer_id=l.computer_id
  AND r.current_attempt_number=l.attempt_number AND r.current_run_lease_id=l.id
@@ -40,9 +40,9 @@ WHERE l.id=sqlc.arg(id) AND l.lease_sequence=sqlc.arg(lease_sequence)
 -- name: GetRunLeaseStartLocators :one
 SELECT l.org_id,l.project_id,l.environment_id,l.run_id,l.computer_id,l.attempt_number,
  l.region_id,l.computer_instance_id,l.writer_generation,i.source_checkpoint_id,
- r.session_id,s.run_generation AS actor_run_generation,r.parent_run_id,r.parent_owns_lifecycle,
+ r.session_id,s.run_generation AS session_run_generation,r.parent_run_id,r.parent_owns_lifecycle,
  parent.session_id AS parent_session_id,parent.current_attempt_number AS parent_attempt_number,
- parent_actor.run_generation AS parent_actor_run_generation,
+ parent_actor.run_generation AS parent_session_run_generation,
  wait.id AS run_wait_id,wait.suspend_checkpoint_id
 FROM run_leases l JOIN runs r ON r.id=l.run_id AND r.computer_id=l.computer_id
  AND r.current_attempt_number=l.attempt_number AND r.current_run_lease_id=l.id
@@ -89,9 +89,9 @@ SELECT run_leases.environment_id,
 -- name: GetLiveRunLeaseLocators :one
 SELECT l.org_id,l.project_id,l.environment_id,l.run_id,l.computer_id,l.attempt_number,
  l.region_id,l.computer_instance_id,l.writer_generation,i.source_checkpoint_id,
- r.session_id,s.run_generation AS actor_run_generation,r.parent_run_id,r.parent_owns_lifecycle,
+ r.session_id,s.run_generation AS session_run_generation,r.parent_run_id,r.parent_owns_lifecycle,
  parent.session_id AS parent_session_id,parent.current_attempt_number AS parent_attempt_number,
- parent_actor.run_generation AS parent_actor_run_generation,
+ parent_actor.run_generation AS parent_session_run_generation,
  wait.id AS run_wait_id,wait.suspend_checkpoint_id
 FROM run_leases l JOIN runs r ON r.id=l.run_id AND r.computer_id=l.computer_id
  AND r.current_attempt_number=l.attempt_number AND r.current_run_lease_id=l.id
@@ -130,7 +130,7 @@ SELECT *
    AND environment_id = sqlc.arg(environment_id)
  FOR UPDATE;
 
--- name: LockRunLeaseClaimActor :one
+-- name: LockRunLeaseClaimSession :one
 SELECT *
   FROM sessions
  WHERE id = sqlc.arg(id)

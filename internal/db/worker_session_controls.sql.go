@@ -11,98 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const lockWorkerControlActors = `-- name: LockWorkerControlActors :many
-WITH RECURSIVE source_owners AS (
-    SELECT runs.id, runs.parent_run_id, runs.parent_owns_lifecycle, runs.session_id
-      FROM runs
-     WHERE runs.id = $3
-       AND runs.environment_id = $1
-    UNION
-    SELECT parent.id, parent.parent_run_id, parent.parent_owns_lifecycle, parent.session_id
-      FROM runs parent
-      JOIN source_owners child ON child.parent_run_id = parent.id
-     WHERE child.parent_owns_lifecycle IS TRUE
-       AND parent.environment_id = $1
-)
-SELECT s.id, s.environment_id, s.actor_declared_id, s.deployment_definition_id, s.computer_id, s.key, s.current_run_id, s.consecutive_execution_losses, s.run_generation, s.revision, s.active_turn_id, s.dispatch_hold_id, s.dispatch_hold_run_id, s.dispatch_hold_attempt_number, s.dispatch_hold_run_generation, s.dispatch_hold_reason, s.failure, s.failure_run_id, s.next_input_sequence, s.committed_input_sequence, s.next_event_sequence, s.run_queue_name, s.run_concurrency_key, s.run_queue_concurrency_limit, s.run_priority, s.run_queue_ttl_ms, s.run_max_active_duration_ms, s.run_retry_policy, s.run_metadata, s.run_tags, s.status, s.close_sequence, s.cancel_requested_at, s.created_at, s.updated_at, s.closed_at, s.failed_at, source_owners.id AS source_owner_run_id
-  FROM sessions s
-  LEFT JOIN source_owners ON source_owners.session_id = s.id
- WHERE s.environment_id = $1
-   AND (s.id = $2 OR source_owners.id IS NOT NULL)
- ORDER BY s.id
- FOR UPDATE OF s
-`
-
-type LockWorkerControlActorsParams struct {
-	EnvironmentID   pgtype.UUID `json:"environment_id"`
-	TargetSessionID pgtype.UUID `json:"target_session_id"`
-	SourceRunID     pgtype.UUID `json:"source_run_id"`
-}
-
-type LockWorkerControlActorsRow struct {
-	Session          Session     `json:"session"`
-	SourceOwnerRunID pgtype.UUID `json:"source_owner_run_id"`
-}
-
-func (q *Queries) LockWorkerControlActors(ctx context.Context, arg LockWorkerControlActorsParams) ([]LockWorkerControlActorsRow, error) {
-	rows, err := q.db.Query(ctx, lockWorkerControlActors, arg.EnvironmentID, arg.TargetSessionID, arg.SourceRunID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []LockWorkerControlActorsRow
-	for rows.Next() {
-		var i LockWorkerControlActorsRow
-		if err := rows.Scan(
-			&i.Session.ID,
-			&i.Session.EnvironmentID,
-			&i.Session.ActorDeclaredID,
-			&i.Session.DeploymentDefinitionID,
-			&i.Session.ComputerID,
-			&i.Session.Key,
-			&i.Session.CurrentRunID,
-			&i.Session.ConsecutiveExecutionLosses,
-			&i.Session.RunGeneration,
-			&i.Session.Revision,
-			&i.Session.ActiveTurnID,
-			&i.Session.DispatchHoldID,
-			&i.Session.DispatchHoldRunID,
-			&i.Session.DispatchHoldAttemptNumber,
-			&i.Session.DispatchHoldRunGeneration,
-			&i.Session.DispatchHoldReason,
-			&i.Session.Failure,
-			&i.Session.FailureRunID,
-			&i.Session.NextInputSequence,
-			&i.Session.CommittedInputSequence,
-			&i.Session.NextEventSequence,
-			&i.Session.RunQueueName,
-			&i.Session.RunConcurrencyKey,
-			&i.Session.RunQueueConcurrencyLimit,
-			&i.Session.RunPriority,
-			&i.Session.RunQueueTtlMs,
-			&i.Session.RunMaxActiveDurationMs,
-			&i.Session.RunRetryPolicy,
-			&i.Session.RunMetadata,
-			&i.Session.RunTags,
-			&i.Session.Status,
-			&i.Session.CloseSequence,
-			&i.Session.CancelRequestedAt,
-			&i.Session.CreatedAt,
-			&i.Session.UpdatedAt,
-			&i.Session.ClosedAt,
-			&i.Session.FailedAt,
-			&i.SourceOwnerRunID,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const lockWorkerControlSecrets = `-- name: LockWorkerControlSecrets :many
 SELECT
     computer_secrets.computer_id, computer_secrets.environment_id, computer_secrets.placement_kind, computer_secrets.placement_target, computer_secrets.secret_id, computer_secrets.mode, computer_secrets.allowed_origins, computer_secrets.placeholder, computer_secrets.created_at,
@@ -156,6 +64,98 @@ func (q *Queries) LockWorkerControlSecrets(ctx context.Context, computerIds []pg
 			&i.SecretRevision,
 			&i.CurrentVersionID,
 			&i.RevocationGeneration,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockWorkerControlSessions = `-- name: LockWorkerControlSessions :many
+WITH RECURSIVE source_owners AS (
+    SELECT runs.id, runs.parent_run_id, runs.parent_owns_lifecycle, runs.session_id
+      FROM runs
+     WHERE runs.id = $3
+       AND runs.environment_id = $1
+    UNION
+    SELECT parent.id, parent.parent_run_id, parent.parent_owns_lifecycle, parent.session_id
+      FROM runs parent
+      JOIN source_owners child ON child.parent_run_id = parent.id
+     WHERE child.parent_owns_lifecycle IS TRUE
+       AND parent.environment_id = $1
+)
+SELECT s.id, s.environment_id, s.actor_declared_id, s.deployment_definition_id, s.computer_id, s.key, s.current_run_id, s.consecutive_execution_losses, s.run_generation, s.revision, s.active_turn_id, s.dispatch_hold_id, s.dispatch_hold_run_id, s.dispatch_hold_attempt_number, s.dispatch_hold_run_generation, s.dispatch_hold_reason, s.failure, s.failure_run_id, s.next_input_sequence, s.committed_input_sequence, s.next_event_sequence, s.run_queue_name, s.run_concurrency_key, s.run_queue_concurrency_limit, s.run_priority, s.run_queue_ttl_ms, s.run_max_active_duration_ms, s.run_retry_policy, s.run_metadata, s.run_tags, s.status, s.close_sequence, s.cancel_requested_at, s.created_at, s.updated_at, s.closed_at, s.failed_at, source_owners.id AS source_owner_run_id
+  FROM sessions s
+  LEFT JOIN source_owners ON source_owners.session_id = s.id
+ WHERE s.environment_id = $1
+   AND (s.id = $2 OR source_owners.id IS NOT NULL)
+ ORDER BY s.id
+ FOR UPDATE OF s
+`
+
+type LockWorkerControlSessionsParams struct {
+	EnvironmentID   pgtype.UUID `json:"environment_id"`
+	TargetSessionID pgtype.UUID `json:"target_session_id"`
+	SourceRunID     pgtype.UUID `json:"source_run_id"`
+}
+
+type LockWorkerControlSessionsRow struct {
+	Session          Session     `json:"session"`
+	SourceOwnerRunID pgtype.UUID `json:"source_owner_run_id"`
+}
+
+func (q *Queries) LockWorkerControlSessions(ctx context.Context, arg LockWorkerControlSessionsParams) ([]LockWorkerControlSessionsRow, error) {
+	rows, err := q.db.Query(ctx, lockWorkerControlSessions, arg.EnvironmentID, arg.TargetSessionID, arg.SourceRunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LockWorkerControlSessionsRow
+	for rows.Next() {
+		var i LockWorkerControlSessionsRow
+		if err := rows.Scan(
+			&i.Session.ID,
+			&i.Session.EnvironmentID,
+			&i.Session.ActorDeclaredID,
+			&i.Session.DeploymentDefinitionID,
+			&i.Session.ComputerID,
+			&i.Session.Key,
+			&i.Session.CurrentRunID,
+			&i.Session.ConsecutiveExecutionLosses,
+			&i.Session.RunGeneration,
+			&i.Session.Revision,
+			&i.Session.ActiveTurnID,
+			&i.Session.DispatchHoldID,
+			&i.Session.DispatchHoldRunID,
+			&i.Session.DispatchHoldAttemptNumber,
+			&i.Session.DispatchHoldRunGeneration,
+			&i.Session.DispatchHoldReason,
+			&i.Session.Failure,
+			&i.Session.FailureRunID,
+			&i.Session.NextInputSequence,
+			&i.Session.CommittedInputSequence,
+			&i.Session.NextEventSequence,
+			&i.Session.RunQueueName,
+			&i.Session.RunConcurrencyKey,
+			&i.Session.RunQueueConcurrencyLimit,
+			&i.Session.RunPriority,
+			&i.Session.RunQueueTtlMs,
+			&i.Session.RunMaxActiveDurationMs,
+			&i.Session.RunRetryPolicy,
+			&i.Session.RunMetadata,
+			&i.Session.RunTags,
+			&i.Session.Status,
+			&i.Session.CloseSequence,
+			&i.Session.CancelRequestedAt,
+			&i.Session.CreatedAt,
+			&i.Session.UpdatedAt,
+			&i.Session.ClosedAt,
+			&i.Session.FailedAt,
+			&i.SourceOwnerRunID,
 		); err != nil {
 			return nil, err
 		}

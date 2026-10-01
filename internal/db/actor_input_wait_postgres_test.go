@@ -35,7 +35,7 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 			waitID := uuid.NewV7()
 			turnID := uuid.NewV7()
 			register := func() RunWait {
-				wait, err := fixture.queries.RegisterActorInputRunWait(ctx, RegisterActorInputRunWaitParams{
+				wait, err := fixture.queries.RegisterSessionInputRunWait(ctx, RegisterSessionInputRunWaitParams{
 					ID: pgvalue.UUID(waitID), EnvironmentID: pgvalue.UUID(fixture.EnvironmentID),
 					IdleTimeoutMs: pgtype.Int8{Int64: 30_000, Valid: true}, SessionID: pgvalue.UUID(actorID),
 					AfterInputSequence:             pgtype.Int8{Int64: 2, Valid: true},
@@ -71,7 +71,7 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 				wait = register()
 				record = appendRecord()
 			}
-			pending, err := fixture.queries.GetPendingActorInputRunWait(ctx, GetPendingActorInputRunWaitParams{
+			pending, err := fixture.queries.GetPendingSessionInputRunWait(ctx, GetPendingSessionInputRunWaitParams{
 				EnvironmentID: pgvalue.UUID(fixture.EnvironmentID), SessionID: pgvalue.UUID(actorID),
 				RunID: pgvalue.UUID(work.RunID), AttemptNumber: 1,
 				AfterInputSequence: pgtype.Int8{Int64: 2, Valid: true},
@@ -158,7 +158,7 @@ func TestSessionTurnEnqueueRollbackLeavesNoResidue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := q.CreateActorInputReconcileOutbox(ctx, CreateActorInputReconcileOutboxParams{
+	if err := q.CreateSessionInputReconcileOutbox(ctx, CreateSessionInputReconcileOutboxParams{
 		ID: pgvalue.UUID(outboxID), EnvironmentID: pgvalue.UUID(f.EnvironmentID), SessionID: pgvalue.UUID(sessionID), TurnID: turn.ID,
 	}); err != nil {
 		t.Fatal(err)
@@ -218,7 +218,7 @@ func TestActorInputWaitTimeoutReleasesHotRun(t *testing.T) {
 	if err := fixture.Pool.QueryRow(ctx, `SELECT revision FROM runs WHERE id = $1`, work.RunID).Scan(&runVersion); err != nil {
 		t.Fatal(err)
 	}
-	wait, err := fixture.queries.RegisterActorInputRunWait(ctx, RegisterActorInputRunWaitParams{
+	wait, err := fixture.queries.RegisterSessionInputRunWait(ctx, RegisterSessionInputRunWaitParams{
 		ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(fixture.EnvironmentID),
 		TimeoutAt:     pgvalue.Timestamptz(time.Now().Add(-time.Millisecond)),
 		IdleTimeoutMs: pgtype.Int8{Int64: 30_000, Valid: true}, SessionID: pgvalue.UUID(actorID),
@@ -231,7 +231,7 @@ func TestActorInputWaitTimeoutReleasesHotRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidates, err := fixture.queries.ListPendingActorInputWaitTimeouts(ctx, 10)
+	candidates, err := fixture.queries.ListPendingSessionInputWaitTimeouts(ctx, 10)
 	if err != nil || len(candidates) != 1 || candidates[0].ID != wait.ID {
 		t.Fatalf("timeout candidates = %+v, %v", candidates, err)
 	}

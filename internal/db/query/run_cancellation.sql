@@ -72,7 +72,7 @@ SELECT id, depth, cycle
  ORDER BY depth, id
  LIMIT sqlc.arg(limit_count);
 
--- name: LockCancellationActors :many
+-- name: LockCancellationSessions :many
 SELECT sessions.id, runs.id AS run_id, sessions.active_turn_id, sessions.dispatch_hold_id
   FROM runs
   JOIN sessions
@@ -330,8 +330,8 @@ SELECT runs.id AS run_id,
        computer_instances.writer_expires_at,
        computer_instances.reclaimed_at,
        computer_instances.mount_state,
-       sessions.run_generation AS actor_run_generation,
-       sessions.dispatch_hold_id AS actor_dispatch_hold_id,
+       sessions.run_generation AS session_run_generation,
+       sessions.dispatch_hold_id AS session_dispatch_hold_id,
        EXISTS (SELECT 1 FROM run_waits WHERE run_waits.run_id = runs.id
                 AND run_waits.current_run_lease_id = run_leases.id
                 AND run_waits.suspension_status = 'resuming') AS has_resume_wait,

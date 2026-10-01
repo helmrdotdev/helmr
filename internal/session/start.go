@@ -174,7 +174,7 @@ func start(ctx context.Context, txb db.TxBeginner, claimRequest idempotency.Requ
 			}); err != nil {
 				return fmt.Errorf("lock actor start key: %w", err)
 			}
-			_, err := q.GetActorByKey(ctx, db.GetActorByKeyParams{
+			_, err := q.GetSessionByKey(ctx, db.GetSessionByKeyParams{
 				EnvironmentID:   pgvalue.UUID(request.EnvironmentID),
 				ActorDeclaredID: request.ActorDeclaredID,
 				Key:             pgvalue.Text(*request.Key),
@@ -257,7 +257,7 @@ func start(ctx context.Context, txb db.TxBeginner, claimRequest idempotency.Requ
 		if claim != nil {
 			claimID = claim.ID
 		}
-		_, err = q.CreateActor(ctx, db.CreateActorParams{
+		_, err = q.CreateSession(ctx, db.CreateSessionParams{
 			ID:    pgvalue.UUID(sessionID),
 			OrgID: pgvalue.UUID(request.OrgID), ProjectID: pgvalue.UUID(request.ProjectID),
 			Key: pgvalue.TextPtr(request.Key), RunQueueName: runAuthority.QueueName,
@@ -293,7 +293,7 @@ func start(ctx context.Context, txb db.TxBeginner, claimRequest idempotency.Requ
 		if err != nil {
 			return fmt.Errorf("create actor boot run: %w", err)
 		}
-		if _, err := q.SetActorCurrentRun(ctx, db.SetActorCurrentRunParams{
+		if _, err := q.SetSessionCurrentRun(ctx, db.SetSessionCurrentRunParams{
 			RunID: bootRun.ID, EnvironmentID: bootRun.EnvironmentID,
 			ID: pgvalue.UUID(sessionID), ComputerID: authority.ID,
 		}); err != nil {

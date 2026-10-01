@@ -117,7 +117,7 @@ var noControlGraph run.OwnedFinalization
 // ErrAuthority.
 func lockControlGraph(ctx context.Context, tx pgx.Tx, target Target) (run.OwnedFinalization, error) {
 	q := db.New(tx)
-	actor, err := q.GetActor(ctx, db.GetActorParams{EnvironmentID: pgvalue.UUID(target.EnvironmentID), ID: pgvalue.UUID(target.SessionID)})
+	actor, err := q.GetSession(ctx, db.GetSessionParams{EnvironmentID: pgvalue.UUID(target.EnvironmentID), ID: pgvalue.UUID(target.SessionID)})
 	if err != nil {
 		return noControlGraph, err
 	}
@@ -135,7 +135,7 @@ func lockControlGraph(ctx context.Context, tx pgx.Tx, target Target) (run.OwnedF
 	if err != nil {
 		return graph, err
 	}
-	current, err := q.GetActor(ctx, db.GetActorParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
+	current, err := q.GetSession(ctx, db.GetSessionParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
 	if err == nil && !current.CurrentRunID.Valid {
 		current, err = q.LockSessionTurnAuthority(ctx, db.LockSessionTurnAuthorityParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
 		if err != nil {

@@ -26,7 +26,7 @@ func LockLiveExecutionForSessionInterruption(ctx context.Context, tx pgx.Tx, fen
 	if err != nil {
 		return fail(err)
 	}
-	target, err := q.GetActor(ctx, db.GetActorParams{EnvironmentID: loc.EnvironmentID, ID: targetID})
+	target, err := q.GetSession(ctx, db.GetSessionParams{EnvironmentID: loc.EnvironmentID, ID: targetID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fail(ErrExecutionTargetNotFound)
 	}
@@ -38,7 +38,7 @@ func LockLiveExecutionForSessionInterruption(ctx context.Context, tx pgx.Tx, fen
 		if err != nil {
 			return fail(err)
 		}
-		current, err := q.GetActor(ctx, db.GetActorParams{EnvironmentID: loc.EnvironmentID, ID: targetID})
+		current, err := q.GetSession(ctx, db.GetSessionParams{EnvironmentID: loc.EnvironmentID, ID: targetID})
 		if err != nil {
 			return fail(err)
 		}
@@ -76,7 +76,7 @@ func LockLiveExecutionForSessionInterruption(ctx context.Context, tx pgx.Tx, fen
 	if err = lockExecutionSessions(ctx, tx, scope, order, targetID); err != nil {
 		return fail(err)
 	}
-	current, err := q.GetActor(ctx, db.GetActorParams{EnvironmentID: loc.EnvironmentID, ID: targetID})
+	current, err := q.GetSession(ctx, db.GetSessionParams{EnvironmentID: loc.EnvironmentID, ID: targetID})
 	if err != nil {
 		return fail(err)
 	}

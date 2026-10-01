@@ -761,7 +761,7 @@ func lockCancellationActors(
 	request CancellationRequest,
 	lineage []uuid.UUID,
 ) error {
-	_, err := db.New(tx).LockCancellationActors(ctx, db.LockCancellationActorsParams{
+	_, err := db.New(tx).LockCancellationSessions(ctx, db.LockCancellationSessionsParams{
 		RunIDs:        pgUUIDs(lineage),
 		OrgID:         pgvalue.UUID(request.OrgID),
 		ProjectID:     pgvalue.UUID(request.ProjectID),

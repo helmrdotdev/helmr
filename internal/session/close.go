@@ -47,7 +47,7 @@ func ReconcileClose(
 		return db.Session{}, false, err
 	}
 	sessionComputer := locked.Computer()
-	activity, err := store.GetActorCloseComputerActivity(ctx, actor.ID)
+	activity, err := store.GetSessionCloseComputerActivity(ctx, actor.ID)
 	if err != nil {
 		return db.Session{}, false, err
 	}
@@ -67,7 +67,7 @@ func ReconcileClose(
 			}
 			return db.Session{}, false, fmt.Errorf("create actor close continuation: %w", err)
 		}
-		updated, err := store.GetActor(ctx, db.GetActorParams{
+		updated, err := store.GetSession(ctx, db.GetSessionParams{
 			EnvironmentID: actor.EnvironmentID,
 			ID:            actor.ID,
 		})
@@ -96,7 +96,7 @@ func ReconcileClose(
 			return db.Session{}, false, err
 		}
 	}
-	closed, err := store.CompleteIdleActorClose(ctx, db.CompleteIdleActorCloseParams{
+	closed, err := store.CompleteIdleSessionClose(ctx, db.CompleteIdleSessionCloseParams{
 		ClosedAt:      now,
 		EnvironmentID: actor.EnvironmentID,
 		SessionID:     actor.ID,
@@ -115,7 +115,7 @@ func reconcileCurrentRunClose(
 	actor db.Session,
 ) (db.Session, bool, error) {
 	store := db.New(tx)
-	run, err := store.LockActorInputCurrentRun(ctx, db.LockActorInputCurrentRunParams{
+	run, err := store.LockSessionInputCurrentRun(ctx, db.LockSessionInputCurrentRunParams{
 		EnvironmentID: actor.EnvironmentID,
 		RunID:         actor.CurrentRunID,
 		SessionID:     actor.ID,
@@ -148,7 +148,7 @@ func reconcileCurrentRunClose(
 	if attempt.TerminalAt.Valid || actor.CommittedInputSequence < actor.CloseSequence.Int64 {
 		return actor, false, nil
 	}
-	wait, err := store.GetPendingActorInputRunWait(ctx, db.GetPendingActorInputRunWaitParams{
+	wait, err := store.GetPendingSessionInputRunWait(ctx, db.GetPendingSessionInputRunWaitParams{
 		EnvironmentID:      actor.EnvironmentID,
 		RunID:              run.ID,
 		AttemptNumber:      run.CurrentAttemptNumber,
@@ -197,7 +197,7 @@ func reconcileCancellation(ctx context.Context, tx pgx.Tx, actor db.Session) (db
 		return actor, true, nil
 	}
 	if actor.CurrentRunID.Valid {
-		current, err := q.LockActorInputCurrentRun(ctx, db.LockActorInputCurrentRunParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, RunID: actor.CurrentRunID})
+		current, err := q.LockSessionInputCurrentRun(ctx, db.LockSessionInputCurrentRunParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, RunID: actor.CurrentRunID})
 		if err != nil {
 			return actor, false, err
 		}
@@ -224,7 +224,7 @@ func reconcileCancellation(ctx context.Context, tx pgx.Tx, actor db.Session) (db
 		if err = CompleteInterruption(ctx, tx, actor, sessionComputer.HeadDiskVersionID, ""); err != nil {
 			return actor, false, err
 		}
-		actor, err = q.GetActor(ctx, db.GetActorParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
+		actor, err = q.GetSession(ctx, db.GetSessionParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
 		if err != nil {
 			return actor, false, err
 		}

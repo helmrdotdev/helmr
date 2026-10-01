@@ -31,7 +31,7 @@ func Close(ctx context.Context, tx pgx.Tx, request ControlRequest) (ControlRecei
 	if actor.Status != "open" && actor.Status != "closing" && actor.Status != "closed" {
 		receipt.Code = "session_not_open"
 	} else if actor.Status == "open" {
-		actor, err = q.BeginActorClose(ctx, db.BeginActorCloseParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID})
+		actor, err = q.BeginSessionClose(ctx, db.BeginSessionCloseParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID})
 		if err != nil {
 			return receipt, err
 		}
@@ -51,7 +51,7 @@ func Close(ctx context.Context, tx pgx.Tx, request ControlRequest) (ControlRecei
 
 func resume(ctx context.Context, tx pgx.Tx, request ResumeRequest) (ControlReceipt, error) {
 	q := db.New(tx)
-	locator, err := q.GetActor(ctx, db.GetActorParams{EnvironmentID: pgvalue.UUID(request.EnvironmentID), ID: pgvalue.UUID(request.SessionID)})
+	locator, err := q.GetSession(ctx, db.GetSessionParams{EnvironmentID: pgvalue.UUID(request.EnvironmentID), ID: pgvalue.UUID(request.SessionID)})
 	if err != nil {
 		return ControlReceipt{}, err
 	}

@@ -241,7 +241,7 @@ func TestIdleSessionClosesOnStoppedComputer(t *testing.T) {
 	}
 	defer tx.Rollback(context.Background())
 	q := db.New(tx)
-	actor, err := q.GetActor(t.Context(), db.GetActorParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: pgvalue.UUID(actorID)})
+	actor, err := q.GetSession(t.Context(), db.GetSessionParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: pgvalue.UUID(actorID)})
 	if err != nil {
 		t.Fatal(err)
 	}

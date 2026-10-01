@@ -93,7 +93,7 @@ func CreateContinuation(
 	}
 	// A continuation replaces the Session's previous execution scope. Other
 	// members sharing its Computer do not participate in this cleanup barrier.
-	activity, err := store.GetActorCloseComputerActivity(ctx, actor.ID)
+	activity, err := store.GetSessionCloseComputerActivity(ctx, actor.ID)
 	if err != nil {
 		return pgtype.UUID{}, err
 	}

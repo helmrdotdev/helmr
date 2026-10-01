@@ -201,12 +201,12 @@ func lockExecution(ctx context.Context, tx pgx.Tx, request ExecutionFence, opera
 		return Execution{}, pgx.ErrNoRows
 	}
 	if r.SessionID.Valid {
-		result.session, err = q.LockRunLeaseClaimActor(ctx, db.LockRunLeaseClaimActorParams{ID: r.SessionID, ComputerID: c.ID})
+		result.session, err = q.LockRunLeaseClaimSession(ctx, db.LockRunLeaseClaimSessionParams{ID: r.SessionID, ComputerID: c.ID})
 		if err != nil {
 			return Execution{}, err
 		}
 		s := result.session
-		if r.EntrypointKind != "actor" || s.CurrentRunID != r.ID || !loc.ActorRunGeneration.Valid || s.RunGeneration != loc.ActorRunGeneration.Int64 || s.CancelRequestedAt.Valid || (operation != executionLive && r.Status == db.RunStatusQueued && s.ActiveTurnID.Valid) || (s.Status != "open" && s.Status != "closing") || s.DeploymentDefinitionID != r.DeploymentDefinitionID || s.ActorDeclaredID != r.EntrypointDeclaredID {
+		if r.EntrypointKind != "actor" || s.CurrentRunID != r.ID || !loc.SessionRunGeneration.Valid || s.RunGeneration != loc.SessionRunGeneration.Int64 || s.CancelRequestedAt.Valid || (operation != executionLive && r.Status == db.RunStatusQueued && s.ActiveTurnID.Valid) || (s.Status != "open" && s.Status != "closing") || s.DeploymentDefinitionID != r.DeploymentDefinitionID || s.ActorDeclaredID != r.EntrypointDeclaredID {
 			return Execution{}, pgx.ErrNoRows
 		}
 		// A stop hold blocks admission, but the exact running generation must

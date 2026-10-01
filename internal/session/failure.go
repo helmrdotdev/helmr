@@ -63,6 +63,6 @@ func FailExecution(ctx context.Context, tx pgx.Tx, actor db.Session, failure jso
 	if _, err = appendLifecycleEvent(ctx, q, actor, pgtype.UUID{}, pgtype.UUID{}, terminalEvent, body, pgtype.UUID{}); err != nil {
 		return err
 	}
-	_, err = q.FailActorSession(ctx, db.FailActorSessionParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, RunID: actor.CurrentRunID, RunGeneration: actor.RunGeneration, Failure: failure, CompletedAt: completedAt, InputSequence: sequence})
+	_, err = q.FailSession(ctx, db.FailSessionParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, RunID: actor.CurrentRunID, RunGeneration: actor.RunGeneration, Failure: failure, CompletedAt: completedAt, InputSequence: sequence})
 	return err
 }

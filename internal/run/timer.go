@@ -95,7 +95,7 @@ func (r *TimerWaitReconciler) reconcileOne(
 	}
 	residentComputer := residence.Computer()
 	if locator.SessionID.Valid {
-		actor, err := q.LockActorForInputReconcile(ctx, db.LockActorForInputReconcileParams{
+		actor, err := q.LockSessionForInputReconcile(ctx, db.LockSessionForInputReconcileParams{
 			EnvironmentID: locator.EnvironmentID,
 			SessionID:     locator.SessionID,
 		})

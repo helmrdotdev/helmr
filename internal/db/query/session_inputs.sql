@@ -14,7 +14,7 @@ SELECT *
    AND id = sqlc.arg(id)
  FOR UPDATE;
 
--- name: CreateActorInputReconcileOutbox :exec
+-- name: CreateSessionInputReconcileOutbox :exec
 INSERT INTO control_outbox (id, topic, payload, available_at)
 VALUES (
     sqlc.arg(id),
@@ -28,14 +28,14 @@ VALUES (
 )
 ON CONFLICT (id) DO NOTHING;
 
--- name: LockActorForInputReconcile :one
+-- name: LockSessionForInputReconcile :one
 SELECT *
   FROM sessions
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(session_id)
  FOR UPDATE;
 
--- name: LockActorInputCurrentRun :one
+-- name: LockSessionInputCurrentRun :one
 SELECT runs.*
   FROM runs
  WHERE runs.environment_id = sqlc.arg(environment_id)

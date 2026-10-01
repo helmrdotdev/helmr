@@ -29,7 +29,7 @@ func (r *Reconciler) ReconcileLifecycle(
 	environmentID uuid.UUID,
 	actorID uuid.UUID,
 ) (deferred bool, returnErr error) {
-	locator, err := db.New(r.db).GetActor(ctx, db.GetActorParams{
+	locator, err := db.New(r.db).GetSession(ctx, db.GetSessionParams{
 		EnvironmentID: pgvalue.UUID(environmentID),
 		ID:            pgvalue.UUID(actorID),
 	})
@@ -55,7 +55,7 @@ func (r *Reconciler) ReconcileLifecycle(
 	if err := lockSessionComputer(ctx, tx, locator.EnvironmentID, locator.ComputerID); err != nil {
 		return false, err
 	}
-	actor, err := q.LockActorClose(ctx, db.LockActorCloseParams{
+	actor, err := q.LockSessionClose(ctx, db.LockSessionCloseParams{
 		EnvironmentID: pgvalue.UUID(environmentID),
 		SessionID:     pgvalue.UUID(actorID),
 	})
@@ -119,7 +119,7 @@ func (r *Reconciler) ReconcileInput(
 	actorID uuid.UUID,
 	turnID uuid.UUID,
 ) (deferred bool, returnErr error) {
-	locator, err := db.New(r.db).GetActor(ctx, db.GetActorParams{
+	locator, err := db.New(r.db).GetSession(ctx, db.GetSessionParams{
 		EnvironmentID: pgvalue.UUID(environmentID), ID: pgvalue.UUID(actorID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -141,7 +141,7 @@ func (r *Reconciler) ReconcileInput(
 	if err := lockSessionComputer(ctx, tx, locator.EnvironmentID, locator.ComputerID); err != nil {
 		return false, err
 	}
-	actor, err := q.LockActorForInputReconcile(ctx, db.LockActorForInputReconcileParams{
+	actor, err := q.LockSessionForInputReconcile(ctx, db.LockSessionForInputReconcileParams{
 		EnvironmentID: pgvalue.UUID(environmentID), SessionID: pgvalue.UUID(actorID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -157,7 +157,7 @@ func (r *Reconciler) ReconcileInput(
 	}
 	var currentRun db.Run
 	if actor.CurrentRunID.Valid {
-		currentRun, err = q.LockActorInputCurrentRun(ctx, db.LockActorInputCurrentRunParams{
+		currentRun, err = q.LockSessionInputCurrentRun(ctx, db.LockSessionInputCurrentRunParams{
 			EnvironmentID: actor.EnvironmentID, RunID: actor.CurrentRunID, SessionID: actor.ID,
 		})
 		if err != nil {
@@ -186,7 +186,7 @@ func (r *Reconciler) ReconcileInput(
 	if err != nil || !turn.ID.Valid || uuid.UUID(turn.ID.Bytes) != turnID {
 		return false, ErrAuthority
 	}
-	wait, err := q.GetPendingActorInputRunWait(ctx, db.GetPendingActorInputRunWaitParams{
+	wait, err := q.GetPendingSessionInputRunWait(ctx, db.GetPendingSessionInputRunWaitParams{
 		EnvironmentID: actor.EnvironmentID, SessionID: actor.ID,
 		RunID: currentRun.ID, AttemptNumber: currentRun.CurrentAttemptNumber,
 		AfterInputSequence: pgtype.Int8{Int64: turn.Sequence - 1, Valid: true},
@@ -218,7 +218,7 @@ func (r *Reconciler) ReconcileTimeouts(ctx context.Context, limit int32) (int, e
 	if limit <= 0 {
 		return 0, nil
 	}
-	candidates, err := db.New(r.db).ListPendingActorInputWaitTimeouts(ctx, limit)
+	candidates, err := db.New(r.db).ListPendingSessionInputWaitTimeouts(ctx, limit)
 	if err != nil {
 		return 0, err
 	}
@@ -241,7 +241,7 @@ func (r *Reconciler) ReconcileTimeouts(ctx context.Context, limit int32) (int, e
 			_ = tx.Rollback(context.Background())
 			return resolved, err
 		}
-		actor, err := q.LockActorForInputReconcile(ctx, db.LockActorForInputReconcileParams{
+		actor, err := q.LockSessionForInputReconcile(ctx, db.LockSessionForInputReconcileParams{
 			EnvironmentID: candidate.EnvironmentID, SessionID: candidate.SessionID,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -256,7 +256,7 @@ func (r *Reconciler) ReconcileTimeouts(ctx context.Context, limit int32) (int, e
 			_ = tx.Rollback(context.Background())
 			continue
 		}
-		run, err := q.LockActorInputCurrentRun(ctx, db.LockActorInputCurrentRunParams{
+		run, err := q.LockSessionInputCurrentRun(ctx, db.LockSessionInputCurrentRunParams{
 			EnvironmentID: candidate.EnvironmentID, RunID: candidate.RunID, SessionID: candidate.SessionID,
 		})
 		if err != nil {
@@ -280,7 +280,7 @@ func (r *Reconciler) ReconcileTimeouts(ctx context.Context, limit int32) (int, e
 			_ = tx.Rollback(context.Background())
 			return resolved, ErrAuthority
 		}
-		wait, err := q.GetPendingActorInputRunWait(ctx, db.GetPendingActorInputRunWaitParams{
+		wait, err := q.GetPendingSessionInputRunWait(ctx, db.GetPendingSessionInputRunWaitParams{
 			EnvironmentID: candidate.EnvironmentID, SessionID: candidate.SessionID,
 			RunID: candidate.RunID, AttemptNumber: candidate.AttemptNumber,
 			AfterInputSequence: candidate.AfterInputSequence,

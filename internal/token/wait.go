@@ -513,7 +513,7 @@ func reconcileTokenWait(
 
 	var lockedActorCurrentRunID pgtype.UUID
 	if locator.SessionID.Valid {
-		actor, err := q.LockTokenWaitActor(ctx, locator.SessionID)
+		actor, err := q.LockTokenWaitSession(ctx, locator.SessionID)
 		if err != nil {
 			return false, false, tokenWaitAuthorityError("lock owning actor", err)
 		}

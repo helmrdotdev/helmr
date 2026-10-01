@@ -121,7 +121,7 @@ func TestCreationSelectsDefinitionKindAndDeclaredID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	params := CreateActorParams{ID: pgvalue.UUID(uuid.NewV7()), OrgID: computerParams.OrgID, ProjectID: computerParams.ProjectID, EnvironmentID: computerParams.EnvironmentID, ComputerID: computer.ID, DeploymentDefinitionID: pgvalue.UUID(actorID), ActorDeclaredID: "selection-actor", RunQueueName: "default", RunMaxActiveDurationMs: 5000, RunRetryPolicy: []byte(`{"enabled":false}`)}
+	params := CreateSessionParams{ID: pgvalue.UUID(uuid.NewV7()), OrgID: computerParams.OrgID, ProjectID: computerParams.ProjectID, EnvironmentID: computerParams.EnvironmentID, ComputerID: computer.ID, DeploymentDefinitionID: pgvalue.UUID(actorID), ActorDeclaredID: "selection-actor", RunQueueName: "default", RunMaxActiveDurationMs: 5000, RunRetryPolicy: []byte(`{"enabled":false}`)}
 	for _, tc := range []struct {
 		definition uuid.UUID
 		name       string
@@ -129,11 +129,11 @@ func TestCreationSelectsDefinitionKindAndDeclaredID(t *testing.T) {
 		p := params
 		p.DeploymentDefinitionID = pgvalue.UUID(tc.definition)
 		p.ActorDeclaredID = tc.name
-		if _, err := q.CreateActor(ctx, p); !errors.Is(err, pgx.ErrNoRows) {
+		if _, err := q.CreateSession(ctx, p); !errors.Is(err, pgx.ErrNoRows) {
 			t.Fatalf("actor selection = %v", err)
 		}
 	}
-	session, err := q.CreateActor(ctx, params)
+	session, err := q.CreateSession(ctx, params)
 	if err != nil {
 		t.Fatal(err)
 	}

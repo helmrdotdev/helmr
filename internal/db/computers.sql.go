@@ -564,64 +564,6 @@ func (q *Queries) ListComputerListItems(ctx context.Context, arg ListComputerLis
 	return items, nil
 }
 
-const lockActorInputComputer = `-- name: LockActorInputComputer :one
-SELECT c.id, c.environment_id, c.region_id, c.sandbox_declared_id, c.key, c.revision, c.writer_generation, c.head_disk_version_id, c.recovery_id, c.recovery_disk_version_id, c.recovery_reason, c.recovery_started_at, c.preparation_attempt_count, c.next_preparation_at, c.preparation_instance_id, c.recovery_completed_at, c.recovery_failure, c.computer_payload_required, c.recovery_payload_required, c.preparation_failure, c.initial_config, c.write_key_id, c.write_key_available, c.status, c.desired_state, c.dirty_state, c.last_activity_at, c.created_at, c.updated_at, c.deleted_at, c.secret_ca_certificate, c.secret_ca_private_key_nonce, c.secret_ca_private_key_ciphertext, c.secret_ca_not_after, c.computer_spec_id, c.creation_deployment_id, c.spec_retention_required FROM computers c JOIN sessions s ON s.environment_id=c.environment_id AND s.computer_id=c.id
-WHERE c.environment_id=$1 AND c.id=$2
- AND s.id=$3 AND s.status='open'
-FOR UPDATE OF c
-`
-
-type LockActorInputComputerParams struct {
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	ID            pgtype.UUID `json:"id"`
-	SessionID     pgtype.UUID `json:"session_id"`
-}
-
-func (q *Queries) LockActorInputComputer(ctx context.Context, arg LockActorInputComputerParams) (Computer, error) {
-	row := q.db.QueryRow(ctx, lockActorInputComputer, arg.EnvironmentID, arg.ID, arg.SessionID)
-	var i Computer
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.SandboxDeclaredID,
-		&i.Key,
-		&i.Revision,
-		&i.WriterGeneration,
-		&i.HeadDiskVersionID,
-		&i.RecoveryID,
-		&i.RecoveryDiskVersionID,
-		&i.RecoveryReason,
-		&i.RecoveryStartedAt,
-		&i.PreparationAttemptCount,
-		&i.NextPreparationAt,
-		&i.PreparationInstanceID,
-		&i.RecoveryCompletedAt,
-		&i.RecoveryFailure,
-		&i.ComputerPayloadRequired,
-		&i.RecoveryPayloadRequired,
-		&i.PreparationFailure,
-		&i.InitialConfig,
-		&i.WriteKeyID,
-		&i.WriteKeyAvailable,
-		&i.Status,
-		&i.DesiredState,
-		&i.DirtyState,
-		&i.LastActivityAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.DeletedAt,
-		&i.SecretCaCertificate,
-		&i.SecretCaPrivateKeyNonce,
-		&i.SecretCaPrivateKeyCiphertext,
-		&i.SecretCaNotAfter,
-		&i.ComputerSpecID,
-		&i.CreationDeploymentID,
-		&i.SpecRetentionRequired,
-	)
-	return i, err
-}
-
 const lockChildComputerPair = `-- name: LockChildComputerPair :many
 SELECT id, environment_id, region_id, sandbox_declared_id, key, revision, writer_generation, head_disk_version_id, recovery_id, recovery_disk_version_id, recovery_reason, recovery_started_at, preparation_attempt_count, next_preparation_at, preparation_instance_id, recovery_completed_at, recovery_failure, computer_payload_required, recovery_payload_required, preparation_failure, initial_config, write_key_id, write_key_available, status, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at, secret_ca_certificate, secret_ca_private_key_nonce, secret_ca_private_key_ciphertext, secret_ca_not_after, computer_spec_id, creation_deployment_id, spec_retention_required FROM computers WHERE environment_id=$1
  AND id=ANY($2::uuid[]) ORDER BY id FOR UPDATE
@@ -964,6 +906,64 @@ func (q *Queries) LockComputerForDelete(ctx context.Context, arg LockComputerFor
 		&i.SpecRetentionRequired,
 		&i.HasInstance,
 		&i.HasMembers,
+	)
+	return i, err
+}
+
+const lockSessionInputComputer = `-- name: LockSessionInputComputer :one
+SELECT c.id, c.environment_id, c.region_id, c.sandbox_declared_id, c.key, c.revision, c.writer_generation, c.head_disk_version_id, c.recovery_id, c.recovery_disk_version_id, c.recovery_reason, c.recovery_started_at, c.preparation_attempt_count, c.next_preparation_at, c.preparation_instance_id, c.recovery_completed_at, c.recovery_failure, c.computer_payload_required, c.recovery_payload_required, c.preparation_failure, c.initial_config, c.write_key_id, c.write_key_available, c.status, c.desired_state, c.dirty_state, c.last_activity_at, c.created_at, c.updated_at, c.deleted_at, c.secret_ca_certificate, c.secret_ca_private_key_nonce, c.secret_ca_private_key_ciphertext, c.secret_ca_not_after, c.computer_spec_id, c.creation_deployment_id, c.spec_retention_required FROM computers c JOIN sessions s ON s.environment_id=c.environment_id AND s.computer_id=c.id
+WHERE c.environment_id=$1 AND c.id=$2
+ AND s.id=$3 AND s.status='open'
+FOR UPDATE OF c
+`
+
+type LockSessionInputComputerParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ID            pgtype.UUID `json:"id"`
+	SessionID     pgtype.UUID `json:"session_id"`
+}
+
+func (q *Queries) LockSessionInputComputer(ctx context.Context, arg LockSessionInputComputerParams) (Computer, error) {
+	row := q.db.QueryRow(ctx, lockSessionInputComputer, arg.EnvironmentID, arg.ID, arg.SessionID)
+	var i Computer
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.SandboxDeclaredID,
+		&i.Key,
+		&i.Revision,
+		&i.WriterGeneration,
+		&i.HeadDiskVersionID,
+		&i.RecoveryID,
+		&i.RecoveryDiskVersionID,
+		&i.RecoveryReason,
+		&i.RecoveryStartedAt,
+		&i.PreparationAttemptCount,
+		&i.NextPreparationAt,
+		&i.PreparationInstanceID,
+		&i.RecoveryCompletedAt,
+		&i.RecoveryFailure,
+		&i.ComputerPayloadRequired,
+		&i.RecoveryPayloadRequired,
+		&i.PreparationFailure,
+		&i.InitialConfig,
+		&i.WriteKeyID,
+		&i.WriteKeyAvailable,
+		&i.Status,
+		&i.DesiredState,
+		&i.DirtyState,
+		&i.LastActivityAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.SecretCaCertificate,
+		&i.SecretCaPrivateKeyNonce,
+		&i.SecretCaPrivateKeyCiphertext,
+		&i.SecretCaNotAfter,
+		&i.ComputerSpecID,
+		&i.CreationDeploymentID,
+		&i.SpecRetentionRequired,
 	)
 	return i, err
 }

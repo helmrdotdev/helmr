@@ -23,7 +23,7 @@ JOIN secrets ON secrets.id = computer_secrets.secret_id
 WHERE computer_secrets.computer_id = ANY(sqlc.arg(computer_ids)::uuid[])
 ORDER BY computer_secrets.secret_id, computer_secrets.computer_id, computer_secrets.placement_kind, computer_secrets.placement_target;
 
--- name: LockWorkerControlActors :many
+-- name: LockWorkerControlSessions :many
 WITH RECURSIVE source_owners AS (
     SELECT runs.id, runs.parent_run_id, runs.parent_owns_lifecycle, runs.session_id
       FROM runs

@@ -142,7 +142,7 @@ func completeActor(ctx context.Context, tx pgx.Tx, fence run.ExecutionFence, com
 		if err := CompleteInterruption(ctx, tx, actor, authority.Computer().HeadDiskVersionID, completion.Fingerprint); err != nil {
 			return err
 		}
-		settled, err := q.GetActor(ctx, db.GetActorParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
+		settled, err := q.GetSession(ctx, db.GetSessionParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
 		if err != nil {
 			return err
 		}
@@ -339,7 +339,7 @@ func finishRun(ctx context.Context, tx pgx.Tx, authority run.Execution, actor db
 		}
 	}
 	if decision.runStatus == db.RunStatusSucceeded {
-		reconciled, err := store.ReconcileActorTerminalRun(ctx, db.ReconcileActorTerminalRunParams{
+		reconciled, err := store.ReconcileSessionTerminalRun(ctx, db.ReconcileSessionTerminalRunParams{
 			Status:      decision.actorStatus,
 			CompletedAt: completedAt, EnvironmentID: actor.EnvironmentID, ID: actor.ID,
 			ComputerID: computerRow.ID, RunID: runRow.ID, ExpectedRunGeneration: actor.RunGeneration,

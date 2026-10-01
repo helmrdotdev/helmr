@@ -20,7 +20,7 @@ func reconcileLostExecution(ctx context.Context, tx pgx.Tx, actor db.Session, bi
 		return actor, false, nil
 	}
 	q := db.New(tx)
-	current, err := q.LockActorInputCurrentRun(ctx, db.LockActorInputCurrentRunParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, RunID: actor.CurrentRunID})
+	current, err := q.LockSessionInputCurrentRun(ctx, db.LockSessionInputCurrentRunParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, RunID: actor.CurrentRunID})
 	if err != nil {
 		return actor, false, err
 	}
@@ -55,7 +55,7 @@ func reconcileLostExecution(ctx context.Context, tx pgx.Tx, actor db.Session, bi
 		if err = FailExecution(ctx, tx, actor, repairFailure, "", now); err != nil {
 			return actor, false, err
 		}
-		actor, err = q.GetActor(ctx, db.GetActorParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
+		actor, err = q.GetSession(ctx, db.GetSessionParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
 		return actor, false, err
 	}
 	if current.Status == db.RunStatusFailed {
@@ -74,7 +74,7 @@ func reconcileLostExecution(ctx context.Context, tx pgx.Tx, actor db.Session, bi
 		if err = FailExecution(ctx, tx, actor, current.Failure, "", now); err != nil {
 			return actor, false, err
 		}
-		actor, err = q.GetActor(ctx, db.GetActorParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
+		actor, err = q.GetSession(ctx, db.GetSessionParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
 		return actor, false, err
 	}
 	if actor.CancelRequestedAt.Valid {
@@ -102,7 +102,7 @@ func reconcileLostExecution(ctx context.Context, tx pgx.Tx, actor db.Session, bi
 		if err != nil {
 			return actor, false, err
 		}
-		actor, err = q.GetActor(ctx, db.GetActorParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
+		actor, err = q.GetSession(ctx, db.GetSessionParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
 		return actor, false, err
 	}
 	var sequence pgtype.Int8
@@ -156,7 +156,7 @@ func reconcileLostExecution(ctx context.Context, tx pgx.Tx, actor db.Session, bi
 	if err != nil {
 		return actor, false, err
 	}
-	actor, err = q.GetActor(ctx, db.GetActorParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
+	actor, err = q.GetSession(ctx, db.GetSessionParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
 	if err != nil {
 		return actor, false, err
 	}
@@ -175,7 +175,7 @@ func reconcileStoppedExecution(ctx context.Context, tx pgx.Tx, actor db.Session)
 		return actor, false, nil
 	}
 	q := db.New(tx)
-	current, err := q.LockActorInputCurrentRun(ctx, db.LockActorInputCurrentRunParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, RunID: actor.CurrentRunID})
+	current, err := q.LockSessionInputCurrentRun(ctx, db.LockSessionInputCurrentRunParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, RunID: actor.CurrentRunID})
 	if err != nil {
 		return actor, false, err
 	}
@@ -214,7 +214,7 @@ func reconcileStoppedExecution(ctx context.Context, tx pgx.Tx, actor db.Session)
 	if err = CompleteInterruption(ctx, tx, actor, versionID, ""); err != nil {
 		return actor, false, err
 	}
-	actor, err = q.GetActor(ctx, db.GetActorParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
+	actor, err = q.GetSession(ctx, db.GetSessionParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
 	return actor, false, err
 }
 
@@ -247,6 +247,6 @@ func settleCancelledFailedExecution(ctx context.Context, tx pgx.Tx, actor db.Ses
 	if _, err := tx.Exec(ctx, `UPDATE sessions SET current_run_id=NULL,active_turn_id=NULL,dispatch_hold_id=NULL,dispatch_hold_reason=NULL,dispatch_hold_run_id=NULL,dispatch_hold_attempt_number=NULL,dispatch_hold_run_generation=NULL,committed_input_sequence=$2,run_generation=run_generation+1,revision=revision+1,updated_at=now() WHERE id=$1 AND cancel_requested_at IS NOT NULL`, actor.ID, sequence); err != nil {
 		return actor, false, err
 	}
-	actor, err := q.GetActor(ctx, db.GetActorParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
+	actor, err := q.GetSession(ctx, db.GetSessionParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
 	return actor, false, err
 }

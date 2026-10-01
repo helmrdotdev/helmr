@@ -789,21 +789,21 @@ func (q *Queries) LockSessionMessage(ctx context.Context, arg LockSessionMessage
 	return i, err
 }
 
-const lockWorkerSessionOperationActors = `-- name: LockWorkerSessionOperationActors :many
+const lockWorkerSessionOperationSessions = `-- name: LockWorkerSessionOperationSessions :many
 SELECT s.id, s.environment_id, s.actor_declared_id, s.deployment_definition_id, s.computer_id, s.key, s.current_run_id, s.consecutive_execution_losses, s.run_generation, s.revision, s.active_turn_id, s.dispatch_hold_id, s.dispatch_hold_run_id, s.dispatch_hold_attempt_number, s.dispatch_hold_run_generation, s.dispatch_hold_reason, s.failure, s.failure_run_id, s.next_input_sequence, s.committed_input_sequence, s.next_event_sequence, s.run_queue_name, s.run_concurrency_key, s.run_queue_concurrency_limit, s.run_priority, s.run_queue_ttl_ms, s.run_max_active_duration_ms, s.run_retry_policy, s.run_metadata, s.run_tags, s.status, s.close_sequence, s.cancel_requested_at, s.created_at, s.updated_at, s.closed_at, s.failed_at FROM sessions s
 WHERE s.environment_id=$1
  AND (s.id=$2 OR s.id=(SELECT r.session_id FROM runs r WHERE r.id=$3 AND r.environment_id=$1))
 ORDER BY s.id FOR UPDATE OF s
 `
 
-type LockWorkerSessionOperationActorsParams struct {
+type LockWorkerSessionOperationSessionsParams struct {
 	EnvironmentID   pgtype.UUID `json:"environment_id"`
 	TargetSessionID pgtype.UUID `json:"target_session_id"`
 	SourceRunID     pgtype.UUID `json:"source_run_id"`
 }
 
-func (q *Queries) LockWorkerSessionOperationActors(ctx context.Context, arg LockWorkerSessionOperationActorsParams) ([]Session, error) {
-	rows, err := q.db.Query(ctx, lockWorkerSessionOperationActors, arg.EnvironmentID, arg.TargetSessionID, arg.SourceRunID)
+func (q *Queries) LockWorkerSessionOperationSessions(ctx context.Context, arg LockWorkerSessionOperationSessionsParams) ([]Session, error) {
+	rows, err := q.db.Query(ctx, lockWorkerSessionOperationSessions, arg.EnvironmentID, arg.TargetSessionID, arg.SourceRunID)
 	if err != nil {
 		return nil, err
 	}

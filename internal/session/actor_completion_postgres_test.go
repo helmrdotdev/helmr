@@ -288,11 +288,11 @@ func TestActorContinuationWaitsForOwnedScopeCleanup(t *testing.T) {
 				}
 				defer tx.Rollback(context.Background())
 				q := db.New(tx)
-				a, err := q.GetActor(t.Context(), db.GetActorParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: pgvalue.UUID(sid)})
+				a, err := q.GetSession(t.Context(), db.GetSessionParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: pgvalue.UUID(sid)})
 				if err != nil {
 					return false, err
 				}
-				c, err := q.LockActorInputComputer(t.Context(), db.LockActorInputComputerParams{EnvironmentID: a.EnvironmentID, ID: a.ComputerID, SessionID: a.ID})
+				c, err := q.LockSessionInputComputer(t.Context(), db.LockSessionInputComputerParams{EnvironmentID: a.EnvironmentID, ID: a.ComputerID, SessionID: a.ID})
 				if err != nil {
 					return false, err
 				}
