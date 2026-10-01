@@ -15,7 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-// InitialComputerKey retrieves the runtime's pinned initial write key. It is
+// InitialComputerKey retrieves the instance's pinned initial write key. It is
 // host-only; the caller owns clearing the returned Key after use.
 func (c *Client) InitialComputerKey(ctx context.Context, request workerapi.InitialComputerKeyRequest) (workerapi.ComputerKeyMaterial, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)

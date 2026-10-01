@@ -8,23 +8,23 @@ import (
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
-type fakeGuestSession struct {
+type fakeGuestMachine struct {
 	stream io.ReadWriteCloser
 }
 
-func (s fakeGuestSession) Stream() vm.Stream {
+func (s fakeGuestMachine) Stream() vm.Stream {
 	return testVMStream(s.stream)
 }
 
-func (s fakeGuestSession) OpenStream(context.Context) (vm.Stream, error) {
+func (s fakeGuestMachine) OpenStream(context.Context) (vm.Stream, error) {
 	return testVMStream(s.stream), nil
 }
 
-func (s fakeGuestSession) Close(context.Context) error {
+func (s fakeGuestMachine) Close(context.Context) error {
 	return s.stream.Close()
 }
 
-func (s fakeGuestSession) Wait(ctx context.Context) error {
+func (s fakeGuestMachine) Wait(ctx context.Context) error {
 	<-ctx.Done()
 	return ctx.Err()
 }

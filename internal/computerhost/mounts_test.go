@@ -21,14 +21,14 @@ import (
 func TestInstanceMountClosesPhysicalMachineOnce(t *testing.T) {
 	closeErr := errors.New("close failed")
 	physical := &blockingCloseMachine{started: make(chan struct{}), release: make(chan struct{}), closeErr: closeErr}
-	session := newInstanceMount(physical)
+	machine := newInstanceMount(physical)
 
 	closeResult := make(chan error, 1)
-	go func() { closeResult <- session.Close(context.Background()) }()
+	go func() { closeResult <- machine.Close(context.Background()) }()
 	waitForTestSignal(t, physical.started, "physical close start")
 
 	releaseResult := make(chan error, 1)
-	go func() { releaseResult <- session.ReleaseCheckpointSource(context.Background()) }()
+	go func() { releaseResult <- machine.ReleaseCheckpointSource(context.Background()) }()
 	close(physical.release)
 
 	if err := waitForTestError(t, closeResult, "managed close"); !errors.Is(err, closeErr) {
@@ -40,7 +40,7 @@ func TestInstanceMountClosesPhysicalMachineOnce(t *testing.T) {
 	if got := physical.closeCount.Load(); got != 1 {
 		t.Fatalf("physical close count = %d, want 1", got)
 	}
-	released, err := session.CheckpointReleaseResult(context.Background())
+	released, err := machine.CheckpointReleaseResult(context.Background())
 	if !errors.Is(err, closeErr) {
 		t.Fatalf("checkpoint release result error = %v, want %v", err, closeErr)
 	}
@@ -51,20 +51,20 @@ func TestInstanceMountClosesPhysicalMachineOnce(t *testing.T) {
 
 func TestInstanceMountDuplicateReleaseObservesContext(t *testing.T) {
 	physical := &blockingCloseMachine{started: make(chan struct{}), release: make(chan struct{})}
-	session := newInstanceMount(physical)
+	machine := newInstanceMount(physical)
 
 	firstRelease := make(chan error, 1)
-	go func() { firstRelease <- session.ReleaseCheckpointSource(context.Background()) }()
+	go func() { firstRelease <- machine.ReleaseCheckpointSource(context.Background()) }()
 	waitForTestSignal(t, physical.started, "physical close start")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := session.ReleaseCheckpointSource(ctx); !errors.Is(err, context.Canceled) {
+	if err := machine.ReleaseCheckpointSource(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("duplicate release error = %v, want context.Canceled", err)
 	}
 
 	closeResult := make(chan error, 1)
-	go func() { closeResult <- session.Close(context.Background()) }()
+	go func() { closeResult <- machine.Close(context.Background()) }()
 	close(physical.release)
 	if err := waitForTestError(t, firstRelease, "first checkpoint release"); err != nil {
 		t.Fatal(err)
@@ -81,26 +81,26 @@ func TestInstanceMountDuplicateReleaseObservesContext(t *testing.T) {
 // timed out is attempted again, while the first result stays recorded.
 func TestInstanceMountRetriesTimedOutCheckpointRelease(t *testing.T) {
 	calls := 0
-	session := newInstanceMount(saveStopSession{stop: func(context.Context) error {
+	machine := newInstanceMount(saveStopMachine{stop: func(context.Context) error {
 		calls++
 		if calls == 1 {
 			return context.DeadlineExceeded
 		}
 		return nil
 	}})
-	if err := session.ReleaseCheckpointSource(t.Context()); !errors.Is(err, context.DeadlineExceeded) {
+	if err := machine.ReleaseCheckpointSource(t.Context()); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal(err)
 	}
-	if err := session.ReleaseCheckpointSource(t.Context()); err != nil {
+	if err := machine.ReleaseCheckpointSource(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.ReleaseCheckpointSource(t.Context()); err != nil {
+	if err := machine.ReleaseCheckpointSource(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 2 {
 		t.Fatalf("physical close calls = %d, want 2", calls)
 	}
-	if released, err := session.CheckpointReleaseResult(t.Context()); !released || !errors.Is(err, context.DeadlineExceeded) {
+	if released, err := machine.CheckpointReleaseResult(t.Context()); !released || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("recorded release = %v, %v", released, err)
 	}
 }
@@ -129,9 +129,9 @@ func TestBorrowedChannelCloseLeavesMountedMachineRunning(t *testing.T) {
 	runStream := &countingReadWriteCloser{}
 	parent := &mountedMachine{stream: discardReadWriteCloser{}, openStream: runStream}
 	registry := NewMounts()
-	unregister := registry.register(workerapi.ComputerInstanceAssignment{ComputerInstanceID: "runtime-1"}, newInstanceMount(parent), "channel-1")
+	unregister := registry.register(workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance-1"}, newInstanceMount(parent), "channel-1")
 	defer unregister()
-	opened, err := registry.OpenChannel(context.Background(), "runtime-1")
+	opened, err := registry.OpenChannel(context.Background(), "instance-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,9 +156,9 @@ func TestOpenedComputerMountReleasesPhysicalSourceWithoutClosingRunStream(t *tes
 	parent := &mountedMachine{stream: discardReadWriteCloser{}, openStream: runStream}
 	managed := newInstanceMount(parent)
 	registry := NewMounts()
-	unregister := registry.register(workerapi.ComputerInstanceAssignment{ComputerInstanceID: "runtime-1"}, managed, "channel-1")
+	unregister := registry.register(workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance-1"}, managed, "channel-1")
 	defer unregister()
-	opened, err := registry.OpenChannel(context.Background(), "runtime-1")
+	opened, err := registry.OpenChannel(context.Background(), "instance-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,14 +185,14 @@ func TestRenewComputerAuthorityUsesMountedMachine(t *testing.T) {
 	registry.register(workerapi.ComputerInstanceAssignment{
 
 		ComputerID:         "computer-1",
-		ComputerInstanceID: "runtime-1",
+		ComputerInstanceID: "instance-1",
 		WriterGeneration:   3,
 		Target:             workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "version-1"},
 	}, newInstanceMount(parent), "channel-1")
 	request := &computerv0.RenewComputerAuthorityRequest{
 		Previous: &computerv0.ComputerRunAuthority{
 			Fence: &computerv0.ComputerAuthorityFence{
-				ComputerInstanceId:        "runtime-1",
+				ComputerInstanceId:        "instance-1",
 				ComputerId:                "computer-1",
 				WriterGeneration:          3,
 				RunId:                     "run-1",
@@ -213,7 +213,7 @@ func TestRenewComputerAuthorityUsesMountedMachine(t *testing.T) {
 		if header.Type != wire.StreamTypeComputerAuthorityRenew ||
 			header.RunID != "run-1" ||
 			header.ComputerID != "computer-1" ||
-			header.ComputerInstanceID != "runtime-1" || bodyLength != 0 {
+			header.ComputerInstanceID != "instance-1" || bodyLength != 0 {
 			serverResult <- errors.New("unexpected computer authority renewal header")
 			return
 		}
@@ -254,7 +254,7 @@ func TestMountChannelGrantProgramResumeUsesOpenedMount(t *testing.T) {
 	registry := NewMounts()
 	unregister := registry.register(testGrantMount(), newInstanceMount(machine), "channel-1")
 	defer unregister()
-	opened, err := registry.OpenChannel(context.Background(), "runtime-1")
+	opened, err := registry.OpenChannel(context.Background(), "instance-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +286,7 @@ func TestMountChannelGrantProgramResumeKeepsOpenedMountAfterReregistration(t *te
 	replacement := &queuedStreamMachine{}
 	registry := NewMounts()
 	unregister := registry.register(testGrantMount(), newInstanceMount(opened), "channel-1")
-	channel, err := registry.OpenChannel(context.Background(), "runtime-1")
+	channel, err := registry.OpenChannel(context.Background(), "instance-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,12 +310,12 @@ func TestMountChannelGrantProgramResumeKeepsOpenedMountAfterReregistration(t *te
 }
 
 func testGrantMount() workerapi.ComputerInstanceAssignment {
-	return workerapi.ComputerInstanceAssignment{ComputerID: "computer-1", ComputerInstanceID: "runtime-1", WriterGeneration: 3}
+	return workerapi.ComputerInstanceAssignment{ComputerID: "computer-1", ComputerInstanceID: "instance-1", WriterGeneration: 3}
 }
 
 func testProgramResumeGrant() (*computerv0.GrantProgramResumeRequest, *programv0.ResumeAttach) {
 	fence := &computerv0.ComputerAuthorityFence{
-		ComputerInstanceId: "runtime-1",
+		ComputerInstanceId: "instance-1",
 		ComputerId:         "computer-1",
 		WriterGeneration:   3,
 		RunId:              "run-1",
@@ -354,7 +354,7 @@ func serveProgramResumeGrant(guest net.Conn, request *computerv0.GrantProgramRes
 		if header.Type != wire.StreamTypeProgramResumeGrant ||
 			header.RunID != "run-1" ||
 			header.ComputerID != "computer-1" ||
-			header.ComputerInstanceID != "runtime-1" || bodyLength != 0 {
+			header.ComputerInstanceID != "instance-1" || bodyLength != 0 {
 			result <- errors.New("unexpected program resume grant header")
 			return
 		}
@@ -411,7 +411,7 @@ func (c *closeCountingConn) Close() error {
 	return c.Conn.Close()
 }
 
-func TestRenewComputerAuthorityCancellationPreservesMountedSession(t *testing.T) {
+func TestRenewComputerAuthorityCancellationPreservesMountedMachine(t *testing.T) {
 	host, guest := net.Pipe()
 	defer guest.Close()
 	parent := &mountedMachine{stream: discardReadWriteCloser{}, openStream: host}
@@ -419,14 +419,14 @@ func TestRenewComputerAuthorityCancellationPreservesMountedSession(t *testing.T)
 	registry.register(workerapi.ComputerInstanceAssignment{
 
 		ComputerID:         "computer-1",
-		ComputerInstanceID: "runtime-1",
+		ComputerInstanceID: "instance-1",
 		WriterGeneration:   4,
 		Target:             workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "version-1"},
 	}, newInstanceMount(parent), "channel-1")
 	request := &computerv0.RenewComputerAuthorityRequest{
 		Previous: &computerv0.ComputerRunAuthority{
 			Fence: &computerv0.ComputerAuthorityFence{
-				ComputerInstanceId:        "runtime-1",
+				ComputerInstanceId:        "instance-1",
 				ComputerId:                "computer-1",
 				WriterGeneration:          4,
 				RunId:                     "run-1",
@@ -458,7 +458,7 @@ func TestRenewComputerAuthorityCancellationPreservesMountedSession(t *testing.T)
 		t.Fatalf("renewal error = %v, want context.Canceled", err)
 	}
 	if parent.closeCount != 0 {
-		t.Fatalf("mounted session close count = %d, want 0", parent.closeCount)
+		t.Fatalf("mounted machine close count = %d, want 0", parent.closeCount)
 	}
 }
 

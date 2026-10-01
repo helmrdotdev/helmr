@@ -32,7 +32,7 @@ func RestoreReadyCapture(t *testing.T, f runtest.Fixture, ref computer.Checkpoin
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	dbtest.MustExec(t, t.Context(), tx, `UPDATE computer_instances SET observed_state='closed',observed_desired_version=desired_version,mount_state='unmounted',unmounted_at=now(),terminal_at=now(),reclaimed_at=now(),reclaim_evidence='{"method":"session_closed"}',terminal_reason_code='checkpointed' WHERE id=$1`, ref.InstanceID)
+	dbtest.MustExec(t, t.Context(), tx, `UPDATE computer_instances SET observed_state='closed',observed_desired_version=desired_version,mount_state='unmounted',unmounted_at=now(),terminal_at=now(),reclaimed_at=now(),reclaim_evidence='{"method":"machine_closed"}',terminal_reason_code='checkpointed' WHERE id=$1`, ref.InstanceID)
 	dbtest.MustExec(t, t.Context(), tx, `UPDATE run_leases SET process_reconciled_at=now() WHERE computer_instance_id=$1`, ref.InstanceID)
 	instance := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_instances(id,org_id,project_id,environment_id,region_id,worker_group_id,worker_host_id,worker_epoch,vm_platform_id,computer_spec_id,vm_vcpu_count,cpu_config_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_guest_ephemeral_disk_bytes,reserved_execution_slots,computer_id,program_deployment_id,preparation_expires_at,desired_reason,writer_generation,writer_token_hash,writer_expires_at,admission_state,source_checkpoint_id,source_disk_version_id,observed_state,observed_version,observed_desired_version,ready_at,mount_state,mounted_at)

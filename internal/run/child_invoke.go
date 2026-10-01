@@ -93,7 +93,7 @@ type ChildCall struct {
 	RunWaitID          uuid.UUID
 	ResumeAttachID     uuid.UUID
 	ComputerInstanceID pgtype.UUID
-	RuntimeEpoch       int64
+	WorkerEpoch        int64
 	// Completed reports a child that already finished; Resolution is then
 	// its result.
 	Completed  bool
@@ -428,7 +428,7 @@ func registerChildCall(
 		ParentRunID: parent.ID, RunWaitID: invoke.RunWaitID,
 		ResumeAttachID:     invoke.ResumeAttachID,
 		ComputerInstanceID: instance.ID,
-		RuntimeEpoch:       instance.WorkerEpoch,
+		WorkerEpoch:        instance.WorkerEpoch,
 	}
 	replayed, err := q.GetChildCallRunWaitReplay(ctx, db.GetChildCallRunWaitReplayParams{
 		EnvironmentID: parent.EnvironmentID, RunID: parent.ID,

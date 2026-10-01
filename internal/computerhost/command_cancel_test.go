@@ -53,8 +53,8 @@ func (c *cancellationClient) CompleteComputerCommand(_ context.Context, r worker
 	return nil
 }
 
-type cancellationSession struct {
-	serverTestSession
+type cancellationMachine struct {
+	serverTestMachine
 	canceled       chan struct{}
 	launchRead     chan struct{}
 	canceledOnce   sync.Once
@@ -65,7 +65,7 @@ type cancellationSession struct {
 	dropFirstAck   bool
 }
 
-func (s *cancellationSession) OpenStream(ctx context.Context) (vm.Stream, error) {
+func (s *cancellationMachine) OpenStream(ctx context.Context) (vm.Stream, error) {
 	host, guest := net.Pipe()
 	s.handlers.Add(1)
 	go func() {
@@ -114,22 +114,22 @@ func TestCommandCancellationDrainsOutputBeforeCompletion(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 			defer cancel()
-			session := &cancellationSession{canceled: make(chan struct{}), launchRead: make(chan struct{}), dropFirstAck: mode == "lost_ack"}
+			machine := &cancellationMachine{canceled: make(chan struct{}), launchRead: make(chan struct{}), dropFirstAck: mode == "lost_ack"}
 			mount := workerapi.ComputerInstanceAssignment{OrgID: "org", ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 2, GuestChannelCredential: "token"}
 			command := workerapi.ComputerCommand{CommandID: "target", ComputerID: mount.ComputerID, ComputerInstanceID: mount.ComputerInstanceID, WriterGeneration: 2, RequestFingerprint: "fingerprint", ExpiresAt: time.Now().Add(time.Minute), Request: json.RawMessage(`{"command":["sleep","30"]}`)}
-			client := &cancellationClient{command: command, grant: workerapi.ComputerCommandCancellation{CommandID: command.CommandID, ComputerID: command.ComputerID, ComputerInstanceID: command.ComputerInstanceID, WriterGeneration: command.WriterGeneration, RequestFingerprint: command.RequestFingerprint, ExpiresAt: command.ExpiresAt}, attached: mode == "attached", launchRead: session.launchRead, finish: cancel}
+			client := &cancellationClient{command: command, grant: workerapi.ComputerCommandCancellation{CommandID: command.CommandID, ComputerID: command.ComputerID, ComputerInstanceID: command.ComputerInstanceID, WriterGeneration: command.WriterGeneration, RequestFingerprint: command.RequestFingerprint, ExpiresAt: command.ExpiresAt}, attached: mode == "attached", launchRead: machine.launchRead, finish: cancel}
 			m := Server{PollEvery: time.Millisecond, ClaimErrorBackoff: time.Millisecond}
 			renewal := m.startRenewalLoop(ctx, workerapi.ComputerInstanceRenewRequest{}, client, time.Hour, time.Now().Add(time.Hour))
-			err := m.serveComputerMount(ctx, renewal, newInstanceMount(session), nil, mount, client, nil)
-			session.handlers.Wait()
+			err := m.serveComputerMount(ctx, renewal, newInstanceMount(machine), nil, mount, client, nil)
+			machine.handlers.Wait()
 			if !errors.Is(err, context.Canceled) {
 				t.Fatal(err)
 			}
-			if len(client.execCompletions) != 1 || session.closeCount() != 0 {
-				t.Fatalf("completions=%d closes=%d", len(client.execCompletions), session.closeCount())
+			if len(client.execCompletions) != 1 || machine.closeCount() != 0 {
+				t.Fatalf("completions=%d closes=%d", len(client.execCompletions), machine.closeCount())
 			}
-			if mode == "lost_ack" && session.cancelAttempts != 2 {
-				t.Fatalf("cancel attempts=%d", session.cancelAttempts)
+			if mode == "lost_ack" && machine.cancelAttempts != 2 {
+				t.Fatalf("cancel attempts=%d", machine.cancelAttempts)
 			}
 		})
 	}

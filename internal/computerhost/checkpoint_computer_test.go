@@ -43,7 +43,7 @@ func TestCheckpointComputerRequiresExactCapturedDisk(t *testing.T) {
 	}
 }
 
-func TestWarmRuntimeRejectsUnpairedCheckpointBeforeAdmission(t *testing.T) {
+func TestWarmInstanceRejectsUnpairedCheckpointBeforeAdmission(t *testing.T) {
 	target := retryableWarmTarget()
 	target.Source.VMVCPUCount = 2
 	target.Source.CPUConfigDigest = sha256sum.DigestBytes([]byte("cpu"))
@@ -65,13 +65,13 @@ func TestWarmRuntimeRejectsUnpairedCheckpointBeforeAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	target.Source.Restore = &workerapi.RuntimeRestore{CheckpointID: "checkpoint-1", Manifest: encoded}
+	target.Source.Restore = &workerapi.InstanceRestore{CheckpointID: "checkpoint-1", Manifest: encoded}
 	target.PreparationExpiresAt = time.Now().Add(time.Minute)
 	machines := NewPreparedMachines(nil, nil, 1, nil)
 	machines.RuntimeArchitecture = definition.ArchitectureX8664
 	admitted := false
-	machines.AdmitRuntimeStart = func(context.Context) error { admitted = true; return nil }
-	err = machines.warmRuntimeTarget(t.Context(), &typedRuntimeClient{}, target, func() { t.Fatal("unpaired checkpoint started preparation") })
+	machines.AdmitInstanceStart = func(context.Context) error { admitted = true; return nil }
+	err = machines.warmInstanceTarget(t.Context(), &typedInstanceClient{}, target, func() { t.Fatal("unpaired checkpoint started preparation") })
 	if err == nil || !strings.Contains(err.Error(), "paired Computer disk version") || admitted {
 		t.Fatalf("unsafe restore reached admission: admitted=%v err=%v", admitted, err)
 	}

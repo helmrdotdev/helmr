@@ -53,7 +53,7 @@ func NewConnector(cfg Config) (*Connector, error) {
 	return &Connector{
 		cfg:             cfg,
 		artifacts:       artifacts,
-		kernelArgs:      runtimeKernelArgs(vm.RuntimeTopology{}, nil, cfg.NetworkResolverIPv4),
+		kernelArgs:      runtimeKernelArgs(vm.Topology{}, nil, cfg.NetworkResolverIPv4),
 		datapath:        datapath.NewManager(),
 		hostRuntime:     newHostRuntimeEvidenceStore(),
 		computerDevices: &sync.Map{},
@@ -132,9 +132,9 @@ func (c *Connector) probeGuest(ctx context.Context) error {
 		return fmt.Errorf("resolve startup probe runtime identity: %w", err)
 	}
 	ownerID := uuid.NewV7().String()
-	session, err := c.connect(probeCtx, startupProbeLaunch, vm.ConnectRequest{
+	machine, err := c.connect(probeCtx, startupProbeLaunch, vm.ConnectRequest{
 		ID:        ownerID,
-		OwnerKind: vm.OwnerRuntime,
+		OwnerKind: vm.OwnerInstance,
 		Binding: vm.WorkloadBinding{
 			WorkerEpoch:        1,
 			OwnerID:            ownerID,
@@ -148,7 +148,7 @@ func (c *Connector) probeGuest(ctx context.Context) error {
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), stopTimeout)
 	defer cancel()
-	if err := session.Close(cleanupCtx); err != nil {
+	if err := machine.Close(cleanupCtx); err != nil {
 		return fmt.Errorf("clean the Firecracker startup probe Guest: %w", err)
 	}
 	return nil
@@ -184,7 +184,7 @@ func (c *Connector) connectorForRequest(
 	request vm.ConnectRequest,
 ) (*Connector, error) {
 	cfg := c.cfg
-	if request.OwnerKind != vm.OwnerRuntime {
+	if request.OwnerKind != vm.OwnerInstance {
 		return nil, errors.New("the Firecracker owner kind is invalid")
 	}
 	if len(request.ReadOnlyDrives) != 0 {

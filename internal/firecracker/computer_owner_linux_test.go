@@ -53,7 +53,7 @@ func (d *ownedComputerFixture) Close(context.Context) error {
 
 func TestComputerDeviceCleanupRetainsFailedOwner(t *testing.T) {
 	ctx := t.Context()
-	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: "01992000-0000-7000-8000-000000000002"}
+	owner := vm.Owner{Kind: vm.OwnerInstance, ID: "01992000-0000-7000-8000-000000000002"}
 	c := &Connector{cfg: Config{StateDir: t.TempDir(), JailerChrootBaseDir: t.TempDir(), IPPath: "/bin/true"}, computerDevices: &sync.Map{}}
 	state, err := createOwnerStateRoot(c.cfg.StateDir, owner)
 	if err != nil {
@@ -149,14 +149,14 @@ func TestComputerExportWatchJoinsNormalStop(t *testing.T) {
 }
 
 func TestComputerSnapshotDropsDeviceCapability(t *testing.T) {
-	copy := cloneRuntimeComputer(&vm.RuntimeComputer{Device: &ownedComputerFixture{}})
+	copy := cloneComputerDisk(&vm.ComputerDisk{Device: &ownedComputerFixture{}})
 	if copy.Device != nil {
 		t.Fatal("snapshot retains live device authority")
 	}
 }
 
 func TestComputerCleanupWaitsForStartupBeforeDeviceBinding(t *testing.T) {
-	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: "01992000-0000-7000-8000-000000000003"}
+	owner := vm.Owner{Kind: vm.OwnerInstance, ID: "01992000-0000-7000-8000-000000000003"}
 	c := &Connector{cfg: Config{StateDir: t.TempDir(), JailerChrootBaseDir: t.TempDir(), IPPath: "/bin/true"}, computerDevices: &sync.Map{}}
 	// Startup holds the same guard before state creation or device registration.
 	retained := c.lockComputerOwner(owner)

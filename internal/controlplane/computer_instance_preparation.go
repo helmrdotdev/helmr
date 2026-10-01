@@ -13,10 +13,10 @@ import (
 
 // Preparation belongs to the Instance; a Computer may be prepared before any
 // Program is selected. Checkpoint restoration attaches its captured state separately.
-func projectComputerInstancePreparation(ctx context.Context, store cas.Reader, row db.ListComputerInstanceReconcileTargetsRow) (workerapi.RuntimeSource, error) {
-	disk, err := projectRuntimeComputerSource(row)
+func projectComputerInstancePreparation(ctx context.Context, store cas.Reader, row db.ListComputerInstanceReconcileTargetsRow) (workerapi.InstanceSource, error) {
+	disk, err := projectInstanceComputerSource(row)
 	if err != nil {
-		return workerapi.RuntimeSource{
+		return workerapi.InstanceSource{
 			WriterGeneration: row.WriterGeneration}, err
 	}
 	source := computerInstanceSourceMetadata(row)
@@ -25,20 +25,20 @@ func projectComputerInstancePreparation(ctx context.Context, store cas.Reader, r
 		return source, nil
 	}
 	if !row.ProgramRuntimeDigest.Valid || !row.ProgramArtifactDigest.Valid || !row.ProgramArtifactSizeBytes.Valid || !row.ProgramArtifactMediaType.Valid {
-		return workerapi.RuntimeSource{
+		return workerapi.InstanceSource{
 			WriterGeneration: row.WriterGeneration}, errors.New("computer instance Program authority is incomplete")
 	}
 	program, err := projectRuntimeProgram(ctx, runtimeProgramAuthorityFromDeployment(row.ProgramDeploymentID, row.ProgramRuntimeDigest.String, row.ProgramArtifactDigest.String, row.ProgramArtifactSizeBytes.Int64, row.ProgramArtifactMediaType.String, row.ProgramIndexDigest), row.ComputerArchitecture, store)
 	if err != nil {
-		return workerapi.RuntimeSource{
+		return workerapi.InstanceSource{
 			WriterGeneration: row.WriterGeneration}, fmt.Errorf("project computer instance Program: %w", err)
 	}
 	source.Program = &program
 	return source, nil
 }
 
-func computerInstanceSourceMetadata(row db.ListComputerInstanceReconcileTargetsRow) workerapi.RuntimeSource {
-	return workerapi.RuntimeSource{
+func computerInstanceSourceMetadata(row db.ListComputerInstanceReconcileTargetsRow) workerapi.InstanceSource {
+	return workerapi.InstanceSource{
 		WriterGeneration: row.WriterGeneration,
 		ComputerSpecID:   pgvalue.UUIDString(row.ComputerSpecID), ComputerID: pgvalue.UUIDString(row.ComputerID),
 		VMPlatformID: row.VMPlatformID, VMVCPUCount: row.VMVCPUCount, CPUConfigDigest: row.CPUConfigDigest,

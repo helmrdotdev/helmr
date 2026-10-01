@@ -933,7 +933,7 @@ func (r ProgramRunner) startNewProgram(
 
 func writeFreshProgramContext(
 	ctx context.Context,
-	session vm.Machine,
+	machine vm.Machine,
 	write func(vm.Stream) error,
 ) error {
 	if err := ctx.Err(); err != nil {
@@ -941,10 +941,10 @@ func writeFreshProgramContext(
 	}
 	closed := make(chan struct{})
 	stop := context.AfterFunc(ctx, func() {
-		_ = session.Close(context.Background())
+		_ = machine.Close(context.Background())
 		close(closed)
 	})
-	err := write(session.Stream())
+	err := write(machine.Stream())
 	if !stop() {
 		<-closed
 	}
@@ -956,7 +956,7 @@ func writeFreshProgramContext(
 
 func readFreshEntrypointReady(
 	ctx context.Context,
-	session vm.Machine,
+	machine vm.Machine,
 	lease workerapi.RunLeaseAssignment,
 	events freshProgramEventSink,
 	observedEventSeq *uint64,
@@ -965,7 +965,7 @@ func readFreshEntrypointReady(
 		var event programv0.RunEvent
 		if err := readProtoFrameBoundedContext(
 			ctx,
-			session,
+			machine,
 			maxFreshProofFrameBytes,
 			&event,
 		); err != nil {
@@ -1067,7 +1067,7 @@ func validateNewProgramMount(
 		return errors.New("new program computer ID does not match the claimed physical authority")
 	}
 	if mount.ComputerInstanceID != lease.ComputerInstanceID {
-		return errors.New("new program Runtime Instance does not match the claimed physical authority")
+		return errors.New("new program Computer Instance does not match the claimed physical authority")
 	}
 	return nil
 }

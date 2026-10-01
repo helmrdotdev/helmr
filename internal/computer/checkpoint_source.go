@@ -12,7 +12,7 @@ import (
 )
 
 // CheckpointRef addresses the capture checkpoint of one Instance incarnation
-// on a worker host epoch. WorkerEpoch is the epoch the capture request names;
+// on a worker epoch. WorkerEpoch is the epoch the capture request names;
 // it must be the host's authenticated epoch.
 type CheckpointRef struct {
 	Host           Host

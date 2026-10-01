@@ -17,9 +17,9 @@ import (
 type checkpointReconcileClient struct {
 	onAbort         func(context.Context, workerapi.CaptureAbortRequest) (workerapi.CaptureAbortResponse, error)
 	onAbortComplete func(context.Context, workerapi.CaptureAbortCompleteRequest) (workerapi.ComputerCheckpointResponse, error)
-	onTargets       func(context.Context) (workerapi.RuntimeReconcileResponse, error)
+	onTargets       func(context.Context) (workerapi.InstanceReconcileResponse, error)
 
-	target                    workerapi.RuntimeReconcileTarget
+	target                    workerapi.InstanceReconcileTarget
 	registered, ready, closed int
 	registerError, readyError error
 	onReady                   func()
@@ -40,11 +40,11 @@ func (c *checkpointReconcileClient) CompleteCaptureAbort(ctx context.Context, q 
 	}
 	return workerapi.ComputerCheckpointResponse{}, errors.New("unexpected capture abort acknowledgment")
 }
-func (c *checkpointReconcileClient) ListRuntimeReconcileTargets(ctx context.Context) (workerapi.RuntimeReconcileResponse, error) {
+func (c *checkpointReconcileClient) ListInstanceReconcileTargets(ctx context.Context) (workerapi.InstanceReconcileResponse, error) {
 	if c.onTargets != nil {
 		return c.onTargets(ctx)
 	}
-	return workerapi.RuntimeReconcileResponse{}, errors.New("unexpected capture status read")
+	return workerapi.InstanceReconcileResponse{}, errors.New("unexpected capture status read")
 }
 
 func (c *checkpointReconcileClient) receipt() workerapi.ComputerCheckpointResponse {
@@ -92,12 +92,12 @@ func (c *checkpointReconcileClient) MarkComputerInstanceClosed(_ context.Context
 
 // allowCaptureAbort supplies the two guest acknowledgments and the matching
 // durable Control Plane receipt for an idle source.
-func allowCaptureAbort(t *testing.T, client *checkpointReconcileClient, session *checkpointSession) {
+func allowCaptureAbort(t *testing.T, client *checkpointReconcileClient, machine *checkpointMachine) {
 	t.Helper()
 	target := client.target
 	installed := newCheckpointStream(t, nil, &computerv0.ComputerCaptureAbortResponse{CheckpointId: target.Capture.CheckpointID, AbortDesiredVersion: target.DesiredVersion + 1})
 	activated := newCheckpointStream(t, nil, &computerv0.ComputerCaptureAbortResponse{CheckpointId: target.Capture.CheckpointID, AbortDesiredVersion: target.DesiredVersion + 1, Activated: true})
-	session.streams = []io.ReadWriteCloser{session.stream, installed, activated}
+	machine.streams = []io.ReadWriteCloser{machine.stream, installed, activated}
 	client.onAbort = func(context.Context, workerapi.CaptureAbortRequest) (workerapi.CaptureAbortResponse, error) {
 		return abortReceipt(target), nil
 	}
@@ -111,11 +111,11 @@ func allowCaptureAbort(t *testing.T, client *checkpointReconcileClient, session 
 // authorizeCaptureClose models a subsequent durable close intent, which may
 // exclude the source even when the preceding capture did not complete.
 func authorizeCaptureClose(client *checkpointReconcileClient) {
-	client.onTargets = func(context.Context) (workerapi.RuntimeReconcileResponse, error) {
+	client.onTargets = func(context.Context) (workerapi.InstanceReconcileResponse, error) {
 		target := client.target
 		target.DesiredVersion++
-		target.Action = workerapi.RuntimeReconcileClose
-		return workerapi.RuntimeReconcileResponse{Items: []workerapi.RuntimeReconcileTarget{target}}, nil
+		target.Action = workerapi.InstanceReconcileClose
+		return workerapi.InstanceReconcileResponse{Items: []workerapi.InstanceReconcileTarget{target}}, nil
 	}
 }
 
@@ -123,10 +123,10 @@ func TestPreparedMachinesCheckpointIdleSource(t *testing.T) {
 	for _, failure := range []string{"", "register", "ready"} {
 		t.Run(failure, func(t *testing.T) {
 			target := checkpointCaptureTarget(0)
-			session := &checkpointSession{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
+			machine := &checkpointMachine{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
 			client := &checkpointReconcileClient{target: target}
 			if failure != "" {
-				allowCaptureAbort(t, client, session)
+				allowCaptureAbort(t, client, machine)
 			}
 			if failure == "register" {
 				client.registerError = &httpclient.Error{StatusCode: 409, Message: "registration rejected"}
@@ -135,23 +135,23 @@ func TestPreparedMachinesCheckpointIdleSource(t *testing.T) {
 				client.readyError = &httpclient.Error{StatusCode: 409, Message: "readiness rejected"}
 			}
 			ref := preparedMachineRef{id: target.ID, epoch: target.WorkerEpoch}
-			p := &PreparedMachines{ComputerCaptures: &CaptureRuns{}, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), claims: unmountedCaptureClaim(ref, target, session)}
+			p := &PreparedMachines{ComputerCaptures: &CaptureRuns{}, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), claims: unmountedCaptureClaim(ref, target, machine)}
 			client.onReady = func() {
-				if session.closeCount != 0 {
+				if machine.closeCount != 0 {
 					t.Fatal("source excluded before ready receipt")
 				}
 			}
-			err := p.captureRuntimeTarget(t.Context(), client, target)
+			err := p.captureInstanceTarget(t.Context(), client, target)
 			if (err != nil) != (failure != "") {
 				t.Fatalf("capture=%v", err)
 			}
 			if client.registered != 1 {
 				t.Fatalf("registration=%d", client.registered)
 			}
-			if failure == "" && (client.closed != 1 || session.closeCount != 1 || p.runtimeCheckedOut(target.ID, target.WorkerEpoch)) {
+			if failure == "" && (client.closed != 1 || machine.closeCount != 1 || p.instanceCheckedOut(target.ID, target.WorkerEpoch)) {
 				t.Fatal("successful capture did not exclude source")
 			}
-			if failure != "" && (client.closed != 0 || session.closeCount != 0 || session.resumeCount != 1 || captureRetained(p, ref)) {
+			if failure != "" && (client.closed != 0 || machine.closeCount != 0 || machine.resumeCount != 1 || captureRetained(p, ref)) {
 				t.Fatal("failed capture did not resume same source")
 			}
 			if failure == "" && client.ready != 1 {
@@ -212,31 +212,31 @@ func TestPreparedMachinesCheckpointRetriesExclusionAndStagingCleanup(t *testing.
 		t.Run(name, func(t *testing.T) {
 			target := checkpointCaptureTarget(0)
 			artifact := checkpointArtifact(t)
-			session := &checkpointSession{stream: checkpointFreezeStream(t, target), artifact: artifact, closeErr: errors.New("stop temporarily unavailable")}
+			machine := &checkpointMachine{stream: checkpointFreezeStream(t, target), artifact: artifact, closeErr: errors.New("stop temporarily unavailable")}
 			client := &checkpointReconcileClient{target: target}
 			if failedCapture {
 				authorizeCaptureClose(client)
 				client.registerError = &httpclient.Error{StatusCode: 409, Message: "registration rejected"}
 			}
 			ref := preparedMachineRef{id: target.ID, epoch: target.WorkerEpoch}
-			p := &PreparedMachines{ComputerCaptures: &CaptureRuns{}, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), claims: unmountedCaptureClaim(ref, target, session)}
-			if err := p.captureRuntimeTarget(t.Context(), client, target); err == nil {
+			p := &PreparedMachines{ComputerCaptures: &CaptureRuns{}, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), claims: unmountedCaptureClaim(ref, target, machine)}
+			if err := p.captureInstanceTarget(t.Context(), client, target); err == nil {
 				t.Fatal("failed exclusion reported success")
 			}
-			if !p.runtimeCheckedOut(target.ID, target.WorkerEpoch) || !captureRetained(p, ref) || client.closed != 0 {
+			if !p.instanceCheckedOut(target.ID, target.WorkerEpoch) || !captureRetained(p, ref) || client.closed != 0 {
 				t.Fatal("failed exclusion lost its owner")
 			}
 			if failedCapture && p.Reservations.Snapshot().Used.GuestEphemeralDiskBytes == 0 {
 				t.Fatal("uncertain source lost staging charge")
 			}
-			session.closeErr = nil
+			machine.closeErr = nil
 			closeTarget := target
 			closeTarget.DesiredVersion++
-			closeTarget.Action = workerapi.RuntimeReconcileClose
-			if err := p.stopRuntimeTarget(t.Context(), client, closeTarget); err != nil {
+			closeTarget.Action = workerapi.InstanceReconcileClose
+			if err := p.stopInstanceTarget(t.Context(), client, closeTarget); err != nil {
 				t.Fatal(err)
 			}
-			if p.runtimeCheckedOut(target.ID, target.WorkerEpoch) || captureRetained(p, ref) || client.closed != 1 || p.Reservations.Snapshot().Used.GuestEphemeralDiskBytes != 0 {
+			if p.instanceCheckedOut(target.ID, target.WorkerEpoch) || captureRetained(p, ref) || client.closed != 1 || p.Reservations.Snapshot().Used.GuestEphemeralDiskBytes != 0 {
 				t.Fatalf("cleanup incomplete closed=%d capacity=%+v", client.closed, p.Reservations.Snapshot().Used)
 			}
 			assertRemoved(t, artifact.VMState.Path)
@@ -252,14 +252,14 @@ func TestPreparedMachinesCheckpointJoinsMembersAndPauseFailure(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			target := checkpointCaptureTarget(2)
-			session := &checkpointSession{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
+			machine := &checkpointMachine{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
 			client := &checkpointReconcileClient{target: target}
 			ref := preparedMachineRef{id: target.ID, epoch: target.WorkerEpoch}
 			registry := &CaptureRuns{}
 			if failPause {
 				authorizeCaptureClose(client)
 			}
-			p := &PreparedMachines{ComputerCaptures: registry, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), claims: unmountedCaptureClaim(ref, target, session)}
+			p := &PreparedMachines{ComputerCaptures: registry, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), claims: unmountedCaptureClaim(ref, target, machine)}
 			done := make(chan error, 2)
 			for index, member := range target.Capture.Runs {
 				wait := captureRegistryWait(t, registry, target, member)
@@ -275,7 +275,7 @@ func TestPreparedMachinesCheckpointJoinsMembersAndPauseFailure(t *testing.T) {
 				}()
 			}
 			admitted := false
-			err := p.reconcileRuntimeTarget(t.Context(), client, target, func() { admitted = true })
+			err := p.reconcileInstanceTarget(t.Context(), client, target, func() { admitted = true })
 			if !admitted || (err != nil) != failPause {
 				t.Fatalf("admitted=%v err=%v", admitted, err)
 			}
@@ -288,7 +288,7 @@ func TestPreparedMachinesCheckpointJoinsMembersAndPauseFailure(t *testing.T) {
 			if client.closed != 1 {
 				t.Fatal("members released without physical closure proof")
 			}
-			if failPause && (client.registered != 0 || len(session.snapshotRequests) != 0) {
+			if failPause && (client.registered != 0 || len(machine.snapshotRequests) != 0) {
 				t.Fatalf("failed pause captured: %+v", client)
 			}
 		})
@@ -297,7 +297,7 @@ func TestPreparedMachinesCheckpointJoinsMembersAndPauseFailure(t *testing.T) {
 
 func TestPreparedMachinesCheckpointKeepsPollingDuringCapture(t *testing.T) {
 	target := checkpointCaptureTarget(0)
-	session := &checkpointSession{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
+	machine := &checkpointMachine{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
 	registered := make(chan struct{})
 	checkpoints := &checkpointReconcileClient{target: target, onRegister: func(ctx context.Context) error {
 		close(registered)
@@ -305,11 +305,11 @@ func TestPreparedMachinesCheckpointKeepsPollingDuringCapture(t *testing.T) {
 		return ctx.Err()
 	}}
 	ref := preparedMachineRef{id: target.ID, epoch: target.WorkerEpoch}
-	p := &PreparedMachines{Size: 2, ComputerCaptures: &CaptureRuns{}, Checkpoints: checkpoints, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), claims: unmountedCaptureClaim(ref, target, session)}
-	client := &batchRuntimeClient{response: workerapi.RuntimeReconcileResponse{Items: []workerapi.RuntimeReconcileTarget{target}}, polled: make(chan struct{}, 8)}
+	p := &PreparedMachines{Size: 2, ComputerCaptures: &CaptureRuns{}, Checkpoints: checkpoints, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), claims: unmountedCaptureClaim(ref, target, machine)}
+	client := &batchInstanceClient{response: workerapi.InstanceReconcileResponse{Items: []workerapi.InstanceReconcileTarget{target}}, polled: make(chan struct{}, 8)}
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
-	go func() { done <- p.ReconcileDesiredRuntimes(ctx, client) }()
+	go func() { done <- p.ReconcileDesiredInstances(ctx, client) }()
 	defer func() {
 		cancel()
 		if err := <-done; !errors.Is(err, context.Canceled) {
@@ -332,11 +332,11 @@ func TestPreparedMachinesCheckpointKeepsPollingDuringCapture(t *testing.T) {
 
 func TestPreparedMachinesCheckpointRecoversUncertainReadyReceipt(t *testing.T) {
 	target := checkpointCaptureTarget(0)
-	session := &checkpointSession{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
+	machine := &checkpointMachine{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
 	// A definitive abort query discovers that the earlier ready request committed.
 	client := &checkpointReconcileClient{target: target, readyError: &httpclient.Error{StatusCode: 409, Message: "candidate no longer pending"}}
 	client.onAbort = func(context.Context, workerapi.CaptureAbortRequest) (workerapi.CaptureAbortResponse, error) {
-		if session.closeCount != 0 {
+		if machine.closeCount != 0 {
 			t.Error("source closed before adoption was known")
 		}
 		receipt := abortReceipt(target)
@@ -344,19 +344,19 @@ func TestPreparedMachinesCheckpointRecoversUncertainReadyReceipt(t *testing.T) {
 		return receipt, nil
 	}
 	ref := preparedMachineRef{id: target.ID, epoch: target.WorkerEpoch}
-	p := &PreparedMachines{ComputerCaptures: &CaptureRuns{}, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), claims: unmountedCaptureClaim(ref, target, session)}
-	if err := p.captureRuntimeTarget(t.Context(), client, target); err == nil {
+	p := &PreparedMachines{ComputerCaptures: &CaptureRuns{}, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), claims: unmountedCaptureClaim(ref, target, machine)}
+	if err := p.captureInstanceTarget(t.Context(), client, target); err == nil {
 		t.Fatal("lost readiness error")
 	}
-	if len(client.instanceFailures) != 0 || client.closed != 1 || session.closeCount != 1 || session.resumeCount != 0 || captureRetained(p, ref) || p.runtimeCheckedOut(target.ID, target.WorkerEpoch) {
-		t.Fatalf("adopted capture did not exclude exactly once: closed=%d physical=%d resumed=%d failures=%v", client.closed, session.closeCount, session.resumeCount, client.instanceFailures)
+	if len(client.instanceFailures) != 0 || client.closed != 1 || machine.closeCount != 1 || machine.resumeCount != 0 || captureRetained(p, ref) || p.instanceCheckedOut(target.ID, target.WorkerEpoch) {
+		t.Fatalf("adopted capture did not exclude exactly once: closed=%d physical=%d resumed=%d failures=%v", client.closed, machine.closeCount, machine.resumeCount, client.instanceFailures)
 	}
 }
 
 // unmountedCaptureClaim is capture's claim on a prepared machine that no
 // Server has mounted.
-func unmountedCaptureClaim(ref preparedMachineRef, target workerapi.RuntimeReconcileTarget, session vm.CheckpointableMachine) map[preparedMachineRef]*machineClaim {
-	return map[preparedMachineRef]*machineClaim{ref: {gen: 1, kind: captureClaim, entry: preparedMachineEntry{target: target, session: session}}}
+func unmountedCaptureClaim(ref preparedMachineRef, target workerapi.InstanceReconcileTarget, machine vm.CheckpointableMachine) map[preparedMachineRef]*machineClaim {
+	return map[preparedMachineRef]*machineClaim{ref: {gen: 1, kind: captureClaim, entry: preparedMachineEntry{target: target, machine: machine}}}
 }
 
 func captureRetained(p *PreparedMachines, ref preparedMachineRef) bool {
@@ -369,17 +369,17 @@ func captureRetained(p *PreparedMachines, ref preparedMachineRef) bool {
 func TestPreparedMachinesCheckpointReleasesSource(t *testing.T) {
 	t.Run("served through its mount", func(t *testing.T) {
 		target := checkpointCaptureTarget(0)
-		raw := &checkpointSession{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
+		raw := &checkpointMachine{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
 		client := &checkpointReconcileClient{target: target}
 		ref := preparedMachineRef{id: target.ID, epoch: target.WorkerEpoch}
 		mount := newInstanceMount(raw)
 		p := &PreparedMachines{ComputerCaptures: &CaptureRuns{}, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir()}
 		p.mu.Lock()
-		claim := p.claimLocked(ref, serverClaim, preparedMachineEntry{target: target, session: raw})
+		claim := p.claimLocked(ref, serverClaim, preparedMachineEntry{target: target, machine: raw})
 		claim.mount = mount
 		p.mu.Unlock()
 		server := &machineCheckout{machines: p, ref: ref, gen: claim.gen, machine: raw, mount: mount}
-		if err := p.captureRuntimeTarget(t.Context(), client, target); err != nil {
+		if err := p.captureInstanceTarget(t.Context(), client, target); err != nil {
 			t.Fatal(err)
 		}
 		if released, err := mount.CheckpointReleaseResult(t.Context()); !released || err != nil {
@@ -400,11 +400,11 @@ func TestPreparedMachinesCheckpointReleasesSource(t *testing.T) {
 	})
 	t.Run("unmounted directly", func(t *testing.T) {
 		target := checkpointCaptureTarget(0)
-		raw := &checkpointSession{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
+		raw := &checkpointMachine{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
 		client := &checkpointReconcileClient{target: target}
 		ref := preparedMachineRef{id: target.ID, epoch: target.WorkerEpoch}
 		p := &PreparedMachines{ComputerCaptures: &CaptureRuns{}, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), claims: unmountedCaptureClaim(ref, target, raw)}
-		if err := p.captureRuntimeTarget(t.Context(), client, target); err != nil {
+		if err := p.captureInstanceTarget(t.Context(), client, target); err != nil {
 			t.Fatal(err)
 		}
 		if raw.closeCount != 1 || client.ready != 1 || client.closed != 1 {

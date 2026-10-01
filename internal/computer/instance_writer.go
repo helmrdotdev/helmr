@@ -26,7 +26,7 @@ type Assignment struct {
 }
 
 // ClaimInstance claims the guest channel of one prepared, unclaimed Instance
-// on the principal's host epoch. Each candidate is tried in its own
+// on the principal's worker epoch. Each candidate is tried in its own
 // transaction with a fresh channel credential generated outside it; a candidate
 // whose authority changed is skipped. It returns nil when no candidate can be
 // claimed, and workergroup.ErrStaleClaims when the principal's claim

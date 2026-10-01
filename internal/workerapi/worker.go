@@ -73,7 +73,7 @@ type StartupRecoveryRequest struct {
 }
 
 // DrainCompletionRequest is the worker's proof that a server-directed
-// drain has removed both durable execution authority and local runtime state.
+// drain has removed both durable execution authority and local instance state.
 // The control plane must treat an identical proof as idempotent.
 type DrainCompletionRequest struct {
 	InventoryComplete bool      `json:"inventory_complete"`
@@ -129,8 +129,8 @@ type StatusResponse struct {
 }
 
 type Readiness struct {
-	Run     *RoleReadiness `json:"run,omitempty"`
-	Runtime *RoleReadiness `json:"runtime,omitempty"`
+	Run      *RoleReadiness `json:"run,omitempty"`
+	Instance *RoleReadiness `json:"instance,omitempty"`
 }
 
 type RoleReadiness struct {
@@ -148,7 +148,7 @@ type ComputerInstance struct {
 	ProjectID              string     `json:"project_id"`
 	EnvironmentID          string     `json:"environment_id"`
 	WorkerHostID           string     `json:"worker_host_id"`
-	RuntimeEpoch           int64      `json:"runtime_epoch"`
+	WorkerEpoch            int64      `json:"worker_epoch"`
 	RuntimeID              string     `json:"runtime_id"`
 	VMVCPUCount            int32      `json:"vm_vcpu_count"`
 	CPUConfigDigest        string     `json:"cpu_config_digest"`
@@ -162,27 +162,27 @@ type ComputerInstance struct {
 	ExpiresAt              *time.Time `json:"expires_at,omitempty"`
 }
 
-type RuntimeSource struct {
-	WriterGeneration       int64                  `json:"writer_generation"`
-	Computer               *RuntimeComputerSource `json:"computer,omitempty"`
-	ComputerSpecID         string                 `json:"computer_spec_id"`
-	ComputerID             string                 `json:"computer_id"`
-	VMPlatformID           string                 `json:"vm_platform_id"`
-	VMVCPUCount            int32                  `json:"vm_vcpu_count"`
-	CPUConfigDigest        string                 `json:"cpu_config_digest"`
-	ComputerImage          CASObject              `json:"computer_image"`
-	ComputerArchitecture   string                 `json:"computer_architecture"`
-	RootfsDigest           string                 `json:"rootfs_digest"`
-	ReservedCPUMillis      int32                  `json:"reserved_cpu_millis"`
-	ReservedMemoryMiB      int32                  `json:"reserved_memory_mib"`
-	ReservedDiskMiB        int64                  `json:"reserved_disk_mib"`
-	ReservedExecutionSlots int32                  `json:"reserved_execution_slots"`
-	VMRuntimeContract      string                 `json:"vm_runtime_contract"`
-	Program                *RuntimeProgram        `json:"program,omitempty"`
-	Restore                *RuntimeRestore        `json:"restore,omitempty"`
+type InstanceSource struct {
+	WriterGeneration       int64                   `json:"writer_generation"`
+	Computer               *InstanceComputerSource `json:"computer,omitempty"`
+	ComputerSpecID         string                  `json:"computer_spec_id"`
+	ComputerID             string                  `json:"computer_id"`
+	VMPlatformID           string                  `json:"vm_platform_id"`
+	VMVCPUCount            int32                   `json:"vm_vcpu_count"`
+	CPUConfigDigest        string                  `json:"cpu_config_digest"`
+	ComputerImage          CASObject               `json:"computer_image"`
+	ComputerArchitecture   string                  `json:"computer_architecture"`
+	RootfsDigest           string                  `json:"rootfs_digest"`
+	ReservedCPUMillis      int32                   `json:"reserved_cpu_millis"`
+	ReservedMemoryMiB      int32                   `json:"reserved_memory_mib"`
+	ReservedDiskMiB        int64                   `json:"reserved_disk_mib"`
+	ReservedExecutionSlots int32                   `json:"reserved_execution_slots"`
+	VMRuntimeContract      string                  `json:"vm_runtime_contract"`
+	Program                *RuntimeProgram         `json:"program,omitempty"`
+	Restore                *InstanceRestore        `json:"restore,omitempty"`
 }
 
-type RuntimeRestore struct {
+type InstanceRestore struct {
 	CheckpointID string                       `json:"checkpoint_id"`
 	Manifest     json.RawMessage              `json:"manifest"`
 	Artifacts    []RunLeaseCheckpointArtifact `json:"artifacts"`
@@ -196,50 +196,50 @@ type RuntimeProgram struct {
 }
 
 type ComputerInstanceStateRequest struct {
-	ID                      string               `json:"id"`
-	WorkerEpoch             int64                `json:"worker_epoch"`
-	DesiredVersion          int64                `json:"desired_version"`
-	ExpectedObservedVersion int64                `json:"expected_observed_version"`
-	VMVCPUCount             int32                `json:"vm_vcpu_count,omitempty"`
-	CPUConfigDigest         string               `json:"cpu_config_digest,omitempty"`
-	ReasonCode              string               `json:"reason_code,omitempty"`
-	Error                   json.RawMessage      `json:"error,omitempty"`
-	CleanupProof            *RuntimeCleanupProof `json:"cleanup_proof,omitempty"`
+	ID                      string                `json:"id"`
+	WorkerEpoch             int64                 `json:"worker_epoch"`
+	DesiredVersion          int64                 `json:"desired_version"`
+	ExpectedObservedVersion int64                 `json:"expected_observed_version"`
+	VMVCPUCount             int32                 `json:"vm_vcpu_count,omitempty"`
+	CPUConfigDigest         string                `json:"cpu_config_digest,omitempty"`
+	ReasonCode              string                `json:"reason_code,omitempty"`
+	Error                   json.RawMessage       `json:"error,omitempty"`
+	CleanupProof            *InstanceCleanupProof `json:"cleanup_proof,omitempty"`
 }
 
 const (
-	RuntimeFailureComputerSource = "computer_source_unavailable"
-	RuntimeFailureReconcile      = "runtime_reconcile_failed"
-	RuntimeFailureWorkerInvalid  = "worker_runtime_invalid"
+	InstanceFailureComputerSource = "computer_source_unavailable"
+	InstanceFailureReconcile      = "instance_reconcile_failed"
+	InstanceFailureWorkerInvalid  = "worker_runtime_invalid"
 )
 
-type RuntimeCleanupProof struct {
+type InstanceCleanupProof struct {
 	Method      string    `json:"method"`
 	CompletedAt time.Time `json:"completed_at"`
 }
 
 const (
-	RuntimeCleanupSessionClosed   = "session_closed"
-	RuntimeCleanupHostReconciled  = "host_reconciled"
-	RuntimeCleanupNotMaterialized = "not_materialized"
+	InstanceCleanupMachineClosed   = "machine_closed"
+	InstanceCleanupHostReconciled  = "host_reconciled"
+	InstanceCleanupNotMaterialized = "not_materialized"
 )
 
-type RuntimeReconcileRequest struct{}
+type InstanceReconcileRequest struct{}
 
-type RuntimeReconcileResponse struct {
-	Items []RuntimeReconcileTarget `json:"items"`
+type InstanceReconcileResponse struct {
+	Items []InstanceReconcileTarget `json:"items"`
 }
 
-// RuntimeCapture is the complete durable capture intent. Correlation IDs are
+// InstanceCapture is the complete durable capture intent. Correlation IDs are
 // resolved from the guest's admitted waits, not invented by the Control Plane.
-type RuntimeCapture struct {
-	CheckpointID        string              `json:"checkpoint_id"`
-	MembershipRevision  int64               `json:"membership_revision"`
-	ProgramDeploymentID string              `json:"program_deployment_id,omitempty"`
-	Runs                []RuntimeCaptureRun `json:"runs"`
+type InstanceCapture struct {
+	CheckpointID        string               `json:"checkpoint_id"`
+	MembershipRevision  int64                `json:"membership_revision"`
+	ProgramDeploymentID string               `json:"program_deployment_id,omitempty"`
+	Runs                []InstanceCaptureRun `json:"runs"`
 }
 
-type RuntimeCaptureRun struct {
+type InstanceCaptureRun struct {
 	RunID                         string `json:"run_id"`
 	AttemptNumber                 int32  `json:"attempt_number"`
 	RunWaitID                     string `json:"run_wait_id"`
@@ -247,23 +247,23 @@ type RuntimeCaptureRun struct {
 	ActorSpeculativeInputSequence *int64 `json:"actor_speculative_input_sequence,omitempty"`
 }
 
-type RuntimeReconcileTarget struct {
-	Capture              *RuntimeCapture `json:"capture,omitempty"`
-	ID                   string          `json:"id"`
-	WorkerEpoch          int64           `json:"worker_epoch"`
-	DesiredVersion       int64           `json:"desired_version"`
-	ObservedVersion      int64           `json:"observed_version"`
-	Action               string          `json:"action"`
-	PreparationExpiresAt time.Time       `json:"preparation_expires_at"`
-	Source               RuntimeSource   `json:"source"`
+type InstanceReconcileTarget struct {
+	Capture              *InstanceCapture `json:"capture,omitempty"`
+	ID                   string           `json:"id"`
+	WorkerEpoch          int64            `json:"worker_epoch"`
+	DesiredVersion       int64            `json:"desired_version"`
+	ObservedVersion      int64            `json:"observed_version"`
+	Action               string           `json:"action"`
+	PreparationExpiresAt time.Time        `json:"preparation_expires_at"`
+	Source               InstanceSource   `json:"source"`
 }
 
 const (
-	RuntimeReconcileCapture      = "capture"
-	RuntimeReconcileAbortCapture = "abort_capture"
-	RuntimeReconcilePrepare      = "prepare"
-	RuntimeReconcileClose        = "close"
-	RuntimeReconcileReclaim      = "reclaim"
+	InstanceReconcileCapture      = "capture"
+	InstanceReconcileAbortCapture = "abort_capture"
+	InstanceReconcilePrepare      = "prepare"
+	InstanceReconcileClose        = "close"
+	InstanceReconcileReclaim      = "reclaim"
 )
 
 type RunLeaseClaimRequest struct {
@@ -803,7 +803,7 @@ type CreateRunWaitResponse struct {
 	RunWaitID             string          `json:"run_wait_id"`
 	ResumeAttachID        string          `json:"resume_attach_id,omitempty"`
 	ComputerInstanceID    string          `json:"computer_instance_id,omitempty"`
-	RuntimeEpoch          int64           `json:"runtime_epoch,omitempty"`
+	WorkerEpoch           int64           `json:"worker_epoch,omitempty"`
 	ComputerDiskVersionID string          `json:"computer_disk_version_id,omitempty"`
 	ResolutionKind        string          `json:"resolution_kind,omitempty"`
 	Resolution            json.RawMessage `json:"resolution,omitempty"`

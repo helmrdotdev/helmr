@@ -22,13 +22,13 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
+func TestComputerDiskVersionRootInstanceRetention(t *testing.T) {
 	f := newPreparationFixture(t)
 	b := f.broker
 	key := f.initialKey(t)
 	defer clear(key.Key)
 	var computerID, versionID pgtype.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT i.computer_id,c.head_disk_version_id FROM computer_instances i JOIN computers c ON c.id=i.computer_id WHERE i.id=$1`, f.runtime).Scan(&computerID, &versionID); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT i.computer_id,c.head_disk_version_id FROM computer_instances i JOIN computers c ON c.id=i.computer_id WHERE i.id=$1`, f.instance).Scan(&computerID, &versionID); err != nil {
 		t.Fatal(err)
 	}
 	env := pgvalue.UUID(f.EnvironmentID)
@@ -120,10 +120,10 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 	if got, err := disk.ParseVersionRoot(raw, f.logicalBytes); err != nil || got != root {
 		t.Fatalf("stored full locator changed: %v", err)
 	}
-	if _, err := q.GetInstanceComputerSourceRoot(t.Context(), f.runtime); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := q.GetInstanceComputerSourceRoot(t.Context(), f.instance); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatal("unretained version exposed", err)
 	}
-	pin := db.PinInstanceComputerSourceParams{ComputerInstanceID: f.runtime, EnvironmentID: env, ComputerID: computerID, VersionID: versionID}
+	pin := db.PinInstanceComputerSourceParams{ComputerInstanceID: f.instance, EnvironmentID: env, ComputerID: computerID, VersionID: versionID}
 	// Physical deletion racing first admission must either lose to the FK pin
 	// or cause admission to fail. Force deletion to hold the root row first.
 	locker, err := f.Pool.Begin(t.Context())
@@ -161,7 +161,7 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 	}
 	integrity(<-result)
 	var pinned pgtype.UUID
-	if err = f.Pool.QueryRow(t.Context(), `SELECT source_disk_version_id FROM computer_instances WHERE id=$1`, f.runtime).Scan(&pinned); err != nil || pinned.Valid {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT source_disk_version_id FROM computer_instances WHERE id=$1`, f.instance).Scan(&pinned); err != nil || pinned.Valid {
 		t.Fatal("failed admission retained source")
 	}
 	// Recreate only the fixture root, with wrong capacity, before any owner pins it.
@@ -196,7 +196,7 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer tx.Rollback(context.Background())
-		source, parsed, sourceKeys, err := loadRetainedVersion(t.Context(), db.New(tx), f.runtime)
+		source, parsed, sourceKeys, err := loadRetainedVersion(t.Context(), db.New(tx), f.instance)
 		if err != nil || source.VersionID != versionID || parsed != root || len(sourceKeys) != 2 || pgvalue.UUIDString(sourceKeys[0].ID) != key.ID {
 			t.Fatalf("retained version mismatch: %v", err)
 		}
@@ -208,7 +208,7 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 	if _, err := b.SourceKeys(t.Context(), f.principal, f.ref); !errors.Is(err, ErrAuthorityChanged) {
 		t.Fatal("initial source key grant", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_disk_versions SET status='committed',published_at=clock_timestamp(),root_pack_digest=$2,logical_bytes=$3,publisher_computer_instance_id=$4,publisher_desired_version=1,publication_request_fingerprint=decode(repeat('ab',32),'hex') WHERE id=$1`, versionID, digest, root.LogicalBytes, f.runtime)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_disk_versions SET status='committed',published_at=clock_timestamp(),root_pack_digest=$2,logical_bytes=$3,publisher_computer_instance_id=$4,publisher_desired_version=1,publication_request_fingerprint=decode(repeat('ab',32),'hex') WHERE id=$1`, versionID, digest, root.LogicalBytes, f.instance)
 	delivered, err := b.SourceKeys(t.Context(), f.principal, f.ref)
 	if err != nil || delivered.Root != root || delivered.VersionID != pgvalue.UUIDString(versionID) || delivered.WriteKeyID != key.ID || len(delivered.Keys) != 2 || !bytes.Equal(delivered.Keys[0].Key, key.Key) {
 		t.Fatalf("source delivery: %v", err)
@@ -230,7 +230,7 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,$4,$5)`, writeID, env, computerID, writeEnvelope.WrappingKeyID, writeEnvelope.Ciphertext)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET write_key_id=NULL WHERE id=$1`, f.runtime)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET write_key_id=NULL WHERE id=$1`, f.instance)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET write_key_id=$2 WHERE id=$1`, computerID, writeID)
 	for i := range 2 {
 		delivery, err := b.SourceKeys(t.Context(), f.principal, f.ref)
@@ -243,11 +243,11 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 		}
 		delivery.Clear()
 		var pinned pgtype.UUID
-		if err := f.Pool.QueryRow(t.Context(), `SELECT write_key_id FROM computer_instances WHERE id=$1`, f.runtime).Scan(&pinned); err != nil || pgvalue.UUIDString(pinned) != writeID {
-			t.Fatal("runtime write key not pinned", err)
+		if err := f.Pool.QueryRow(t.Context(), `SELECT write_key_id FROM computer_instances WHERE id=$1`, f.instance).Scan(&pinned); err != nil || pgvalue.UUIDString(pinned) != writeID {
+			t.Fatal("instance write key not pinned", err)
 		}
 		if i == 0 {
-			// Changing the Computer's key cannot change an existing Runtime pin.
+			// Changing the Computer's key cannot change an existing Instance pin.
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET write_key_id=$2 WHERE id=$1`, computerID, key.ID)
 		}
 	}
@@ -275,7 +275,7 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 			return
 		}
 		bumped = true
-		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, f.runtimeWorker())
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, f.instanceWorker())
 	}
 	b.wrapper = observer
 	if _, err = b.SourceKeys(t.Context(), f.principal, f.ref); !errors.Is(err, workergroup.ErrStaleClaims) {
@@ -284,7 +284,7 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 	if !bytes.Equal(observer.returned, make([]byte, len(observer.returned))) {
 		t.Fatal("stale-claims plaintext not cleared")
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET claim_version=claim_version-1 WHERE id=$1`, f.runtimeWorker())
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET claim_version=claim_version-1 WHERE id=$1`, f.instanceWorker())
 	b.wrapper = observer.KeyWrapper
 
 	// A database failure during final revalidation keeps its own cause, which
@@ -325,9 +325,9 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 		}
 	}
 	replayed.Clear()
-	keys, err := q.ListInstanceComputerSourceKeys(t.Context(), f.runtime)
+	keys, err := q.ListInstanceComputerSourceKeys(t.Context(), f.instance)
 	if err != nil || len(keys) != 2 || pgvalue.UUIDString(keys[0].ID) != key.ID {
-		t.Fatalf("runtime source keys: count=%d err=%v", len(keys), err)
+		t.Fatalf("instance source keys: count=%d err=%v", len(keys), err)
 	}
 	deleteRoot := func() error {
 		_, e := f.Pool.Exec(t.Context(), `DELETE FROM computer_disk_version_roots WHERE environment_id=$1 AND computer_id=$2 AND version_id=$3`, env, computerID, versionID)
@@ -335,26 +335,26 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 	}
 	integrity(deleteRoot())
 	// Reservation loss is not physical exclusion. The immutable source remains pinned.
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='failed',terminal_at=clock_timestamp(),terminal_reason_code='fixture' WHERE id=$1`, f.runtime)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='failed',terminal_at=clock_timestamp(),terminal_reason_code='fixture' WHERE id=$1`, f.instance)
 	integrity(deleteRoot())
 	assertRetained()
-	keys, err = q.ListInstanceComputerSourceKeys(t.Context(), f.runtime)
+	keys, err = q.ListInstanceComputerSourceKeys(t.Context(), f.instance)
 	if err != nil || len(keys) != 2 {
 		t.Fatalf("source lost at terminal observation: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET admission_state='closed',mount_state='lost',reclaimed_at=clock_timestamp(),reclaim_evidence='{"proof":"fixture"}' WHERE id=$1`, f.runtime)
-	if _, err := q.GetInstanceComputerSourceRoot(t.Context(), f.runtime); !errors.Is(err, pgx.ErrNoRows) {
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET admission_state='closed',mount_state='lost',reclaimed_at=clock_timestamp(),reclaim_evidence='{"proof":"fixture"}' WHERE id=$1`, f.instance)
+	if _, err := q.GetInstanceComputerSourceRoot(t.Context(), f.instance); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatal("reclaimed source exposed", err)
 	}
-	keys, err = q.ListInstanceComputerSourceKeys(t.Context(), f.runtime)
+	keys, err = q.ListInstanceComputerSourceKeys(t.Context(), f.instance)
 	if err != nil || len(keys) != 0 {
-		t.Fatalf("released runtime retained key delivery: %v", err)
+		t.Fatalf("released instance retained key delivery: %v", err)
 	}
 	if err = deleteRoot(); err != nil {
 		t.Fatal(err)
 	}
 	var audit pgtype.UUID
-	if err = f.Pool.QueryRow(t.Context(), `SELECT source_disk_version_id FROM computer_instances WHERE id=$1`, f.runtime).Scan(&audit); err != nil || audit != versionID {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT source_disk_version_id FROM computer_instances WHERE id=$1`, f.instance).Scan(&audit); err != nil || audit != versionID {
 		t.Fatal("payload release lost audit identity")
 	}
 }

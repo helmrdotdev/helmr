@@ -26,7 +26,7 @@ import (
 type computerPreparationTransport struct {
 	cas.Store
 	mu           sync.Mutex
-	targets      map[string]workerapi.RuntimeReconcileTarget
+	targets      map[string]workerapi.InstanceReconcileTarget
 	root         disk.VersionRoot
 	fail         string
 	key          []byte
@@ -102,7 +102,7 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	target := workerapi.RuntimeReconcileTarget{ID: uuid.NewV7().String(), WorkerEpoch: 1, DesiredVersion: 1, Source: workerapi.RuntimeSource{ComputerID: uuid.NewV7().String(), ReservedDiskMiB: disk.SeedCapacity / mebibyte, Computer: &workerapi.RuntimeComputerSource{VersionID: uuid.NewV7().String(), LogicalBytes: disk.SeedCapacity, Seed: &workerapi.ComputerSeed{Profile: definition.ComputerSeedProfile, Object: workerapi.CASObject{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}}}}}
+	target := workerapi.InstanceReconcileTarget{ID: uuid.NewV7().String(), WorkerEpoch: 1, DesiredVersion: 1, Source: workerapi.InstanceSource{ComputerID: uuid.NewV7().String(), ReservedDiskMiB: disk.SeedCapacity / mebibyte, Computer: &workerapi.InstanceComputerSource{VersionID: uuid.NewV7().String(), LogicalBytes: disk.SeedCapacity, Seed: &workerapi.ComputerSeed{Profile: definition.ComputerSeedProfile, Object: workerapi.CASObject{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}}}}}
 	const budget = 64 << 20
 	for _, failure := range []string{"capacity", "register", "upload", "commit", ""} {
 		t.Run("failure="+failure, func(t *testing.T) {
@@ -114,7 +114,7 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			client := &computerPreparationTransport{Store: objects, targets: map[string]workerapi.RuntimeReconcileTarget{target.ID: target}, fail: failure, key: bytes.Repeat([]byte{7}, 32)}
+			client := &computerPreparationTransport{Store: objects, targets: map[string]workerapi.InstanceReconcileTarget{target.ID: target}, fail: failure, key: bytes.Repeat([]byte{7}, 32)}
 			machines := &PreparedMachines{TempDir: t.TempDir(), CAS: objects, ComputerRanges: objects, ComputerObjects: client, ComputerPreparation: client, ComputerStagingBytes: budget, Reservations: ledger}
 			prepared, err := machines.prepareComputerVersion(t.Context(), target)
 			if failure != "" {
@@ -132,7 +132,7 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 				if err := prepared.Close(); err != nil {
 					t.Fatal(err)
 				}
-				if err := machines.releaseRuntimeCapacity(target.ID, target.WorkerEpoch); err != nil {
+				if err := machines.releaseInstanceCapacity(target.ID, target.WorkerEpoch); err != nil {
 					t.Fatal(err)
 				}
 				continuation := target
@@ -157,7 +157,7 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 			if failure == "capacity" && !errors.Is(err, errPreparedMachineCapacityBusy) {
 				t.Fatal("capacity failure was not deferred")
 			}
-			if err := machines.releaseRuntimeCapacity(target.ID, target.WorkerEpoch); err != nil {
+			if err := machines.releaseInstanceCapacity(target.ID, target.WorkerEpoch); err != nil {
 				t.Fatal(err)
 			}
 			if len(ledger.Snapshot().Reservations) != 0 {
@@ -167,27 +167,27 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 	}
 }
 
-func TestReconcileDesiredRuntimesRunsBatchConcurrentlyAndWaitsForShutdown(t *testing.T) {
+func TestReconcileDesiredInstancesRunsBatchConcurrentlyAndWaitsForShutdown(t *testing.T) {
 	store, mount := testComputerMountArtifacts(t)
 	connector := &blockingMaterializingBackend{
-		started: make(chan string, 2), canceled: make(chan string, 2), failID: "runtime-0",
+		started: make(chan string, 2), canceled: make(chan string, 2), failID: "instance-0",
 	}
 	var logs bytes.Buffer
 	machines := NewPreparedMachines(connector, store, 2, slog.New(slog.NewTextHandler(&logs, nil)))
 	machines.TempDir = t.TempDir()
 	machines.RuntimeArchitecture = definition.RuntimeArchitecture("x86_64")
 	machines.Reservations = newPreparedMachineReservations(t, 2)
-	items := make([]workerapi.RuntimeReconcileTarget, 2)
+	items := make([]workerapi.InstanceReconcileTarget, 2)
 	for i := range items {
-		items[i] = runtimePreparationTarget(mount, uuid.NewV7().String(), 7)
+		items[i] = instancePreparationTarget(mount, uuid.NewV7().String(), 7)
 	}
 	configureComputerPreparationTest(t, machines, items)
 	connector.failID = items[0].ID
-	client := &batchRuntimeClient{response: workerapi.RuntimeReconcileResponse{Items: items}}
+	client := &batchInstanceClient{response: workerapi.InstanceReconcileResponse{Items: items}}
 	machines.ComputerInstances = client
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- machines.ReconcileDesiredRuntimes(ctx, client) }()
+	go func() { done <- machines.ReconcileDesiredInstances(ctx, client) }()
 	for range items {
 		select {
 		case <-connector.started:
@@ -210,7 +210,7 @@ func TestReconcileDesiredRuntimesRunsBatchConcurrentlyAndWaitsForShutdown(t *tes
 		t.Fatal("reconciler returned before its attempts drained")
 	}
 	for _, target := range items {
-		if err := machines.reclaimFailedRuntimeTarget(t.Context(), client, target); err != nil {
+		if err := machines.reclaimFailedInstanceTarget(t.Context(), client, target); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -223,22 +223,22 @@ func TestReconcileDesiredRuntimesRunsBatchConcurrentlyAndWaitsForShutdown(t *tes
 	}
 }
 
-func TestWarmRuntimePreparationDeadlineCancelsBlockedMaterialization(t *testing.T) {
+func TestWarmInstancePreparationDeadlineCancelsBlockedMaterialization(t *testing.T) {
 	store, mount := testComputerMountArtifacts(t)
 	connector := &blockingMaterializingBackend{started: make(chan string, 1), canceled: make(chan string, 1)}
 	machines := NewPreparedMachines(connector, store, 1, nil)
 	machines.TempDir = t.TempDir()
 	machines.RuntimeArchitecture = definition.RuntimeArchitecture("x86_64")
 	machines.Reservations = newPreparedMachineReservations(t, 1)
-	client := &typedRuntimeClient{}
+	client := &typedInstanceClient{}
 	machines.ComputerInstances = client
-	target := runtimePreparationTarget(mount, uuid.NewV7().String(), 7)
-	items := []workerapi.RuntimeReconcileTarget{target}
+	target := instancePreparationTarget(mount, uuid.NewV7().String(), 7)
+	items := []workerapi.InstanceReconcileTarget{target}
 	configureComputerPreparationTest(t, machines, items)
 	target = items[0]
 	target.PreparationExpiresAt = time.Now().Add(2 * time.Second)
 	done := make(chan error, 1)
-	go func() { done <- machines.warmRuntimeTarget(t.Context(), client, target, func() {}) }()
+	go func() { done <- machines.warmInstanceTarget(t.Context(), client, target, func() {}) }()
 	select {
 	case <-connector.started:
 	case <-time.After(3 * time.Second):
@@ -260,7 +260,7 @@ func TestWarmRuntimePreparationDeadlineCancelsBlockedMaterialization(t *testing.
 	if len(client.failed) != 1 {
 		t.Fatalf("failure reports=%d", len(client.failed))
 	}
-	if err := machines.reclaimFailedRuntimeTarget(t.Context(), client, target); err != nil {
+	if err := machines.reclaimFailedInstanceTarget(t.Context(), client, target); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.RemoveAll(machines.TempDir); err != nil {
@@ -268,7 +268,7 @@ func TestWarmRuntimePreparationDeadlineCancelsBlockedMaterialization(t *testing.
 	}
 }
 
-func configureComputerPreparationTest(t *testing.T, machines *PreparedMachines, targets []workerapi.RuntimeReconcileTarget) {
+func configureComputerPreparationTest(t *testing.T, machines *PreparedMachines, targets []workerapi.InstanceReconcileTarget) {
 	t.Helper()
 	if os.Getenv("HELMR_DISPOSABLE_NBD_PROOF") != "1" {
 		t.Skip("requires disposable NBD host")
@@ -297,7 +297,7 @@ func configureComputerPreparationTest(t *testing.T, machines *PreparedMachines, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := &computerPreparationTransport{Store: objects, root: root, key: key, targets: make(map[string]workerapi.RuntimeReconcileTarget)}
+	client := &computerPreparationTransport{Store: objects, root: root, key: key, targets: make(map[string]workerapi.InstanceReconcileTarget)}
 	for _, target := range targets {
 		client.targets[target.ID] = target
 	}

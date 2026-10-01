@@ -17,70 +17,70 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-const workerRuntimeReconcileLimit int32 = 64
+const workerInstanceReconcileLimit int32 = 64
 
-func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http.Request) {
-	var request workerapi.RuntimeReconcileRequest
+func (s *Server) workerNextInstanceReconcileTarget(w http.ResponseWriter, r *http.Request) {
+	var request workerapi.InstanceReconcileRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
-		writeError(w, fmt.Errorf("invalid runtime reconcile request JSON: %w", err))
+		writeError(w, fmt.Errorf("invalid instance reconcile request JSON: %w", err))
 		return
 	}
 	worker := workerFromContext(r.Context())
-	targets, err := computer.ReconcileTargets(r.Context(), s.db, computer.Host{GroupID: worker.GroupID, HostID: worker.HostID, Epoch: worker.Epoch}, workerRuntimeReconcileLimit)
+	targets, err := computer.ReconcileTargets(r.Context(), s.db, computer.Host{GroupID: worker.GroupID, HostID: worker.HostID, Epoch: worker.Epoch}, workerInstanceReconcileLimit)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	items := make([]workerapi.RuntimeReconcileTarget, 0, len(targets))
+	items := make([]workerapi.InstanceReconcileTarget, 0, len(targets))
 	for _, target := range targets {
-		item, err := runtimeReconcileTarget(r.Context(), s.platformStore, target)
+		item, err := instanceReconcileTarget(r.Context(), s.platformStore, target)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
 		items = append(items, item)
 	}
-	writeJSON(w, http.StatusOK, workerapi.RuntimeReconcileResponse{Items: items})
+	writeJSON(w, http.StatusOK, workerapi.InstanceReconcileResponse{Items: items})
 }
 
-var runtimeReconcileActions = map[computer.ReconcileAction]string{
-	computer.ReconcilePrepare:      workerapi.RuntimeReconcilePrepare,
-	computer.ReconcileCapture:      workerapi.RuntimeReconcileCapture,
-	computer.ReconcileAbortCapture: workerapi.RuntimeReconcileAbortCapture,
-	computer.ReconcileClose:        workerapi.RuntimeReconcileClose,
-	computer.ReconcileReclaim:      workerapi.RuntimeReconcileReclaim,
+var instanceReconcileActions = map[computer.ReconcileAction]string{
+	computer.ReconcilePrepare:      workerapi.InstanceReconcilePrepare,
+	computer.ReconcileCapture:      workerapi.InstanceReconcileCapture,
+	computer.ReconcileAbortCapture: workerapi.InstanceReconcileAbortCapture,
+	computer.ReconcileClose:        workerapi.InstanceReconcileClose,
+	computer.ReconcileReclaim:      workerapi.InstanceReconcileReclaim,
 }
 
-// runtimeReconcileTarget projects a reconcile target onto the worker
+// instanceReconcileTarget projects a reconcile target onto the worker
 // contract: its action, the capture it takes, and for preparation the
 // Computer and Program sources and the checkpoint it restores.
-func runtimeReconcileTarget(ctx context.Context, platform cas.Reader, target computer.ReconcileTarget) (workerapi.RuntimeReconcileTarget, error) {
+func instanceReconcileTarget(ctx context.Context, platform cas.Reader, target computer.ReconcileTarget) (workerapi.InstanceReconcileTarget, error) {
 	row := target.Instance
-	var capture *workerapi.RuntimeCapture
+	var capture *workerapi.InstanceCapture
 	if target.Capture != nil {
 		var err error
 		if capture, err = projectComputerInstanceCapture(target.Capture.Checkpoint, target.Capture.Members); err != nil {
-			return workerapi.RuntimeReconcileTarget{}, err
+			return workerapi.InstanceReconcileTarget{}, err
 		}
 	}
 	source := computerInstanceSourceMetadata(row)
 	if target.Action == computer.ReconcilePrepare {
 		var err error
 		if source, err = projectComputerInstancePreparation(ctx, platform, row); err != nil {
-			return workerapi.RuntimeReconcileTarget{}, err
+			return workerapi.InstanceReconcileTarget{}, err
 		}
 		if target.Restore != nil {
 			restore, err := projectComputerInstanceRestore(target.Restore.Checkpoint, target.Restore.Members)
 			if err != nil {
-				return workerapi.RuntimeReconcileTarget{}, err
+				return workerapi.InstanceReconcileTarget{}, err
 			}
 			source.Restore = &restore
 		}
 	}
-	return workerapi.RuntimeReconcileTarget{
+	return workerapi.InstanceReconcileTarget{
 		ID: pgvalue.UUIDString(row.ID), WorkerEpoch: row.WorkerEpoch,
 		DesiredVersion: row.DesiredVersion, ObservedVersion: row.ObservedVersion,
-		Action: runtimeReconcileActions[target.Action], Source: source, Capture: capture, PreparationExpiresAt: row.PreparationExpiresAt.Time,
+		Action: instanceReconcileActions[target.Action], Source: source, Capture: capture, PreparationExpiresAt: row.PreparationExpiresAt.Time,
 	}, nil
 }
 
@@ -121,13 +121,13 @@ func (s *Server) workerMarkComputerInstanceFailed(w http.ResponseWriter, r *http
 	}
 	reason := strings.TrimSpace(request.ReasonCode)
 	if reason == "" {
-		reason = "runtime_reconcile_failed"
+		reason = "instance_reconcile_failed"
 	}
-	kind := computer.FailureRuntime
+	kind := computer.FailureInstance
 	switch reason {
-	case workerapi.RuntimeFailureWorkerInvalid:
+	case workerapi.InstanceFailureWorkerInvalid:
 		kind = computer.FailureWorkerInvalid
-	case workerapi.RuntimeFailureComputerSource:
+	case workerapi.InstanceFailureComputerSource:
 		kind = computer.FailureSourceUnavailable
 	}
 	row, err := computer.RecordInstanceFailure(r.Context(), s.tx, computer.Failure{
@@ -138,11 +138,11 @@ func (s *Server) workerMarkComputerInstanceFailed(w http.ResponseWriter, r *http
 }
 
 // decodeComputerInstanceObservation decodes an Instance observation and
-// checks its fences against the authenticated host epoch.
+// checks its fences against the authenticated worker epoch.
 func decodeComputerInstanceObservation(w http.ResponseWriter, r *http.Request, state string) (workerapi.ComputerInstanceStateRequest, computer.Observation, bool) {
 	var request workerapi.ComputerInstanceStateRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
-		writeError(w, fmt.Errorf("invalid worker runtime instance %s request JSON: %w", state, err))
+		writeError(w, fmt.Errorf("invalid worker instance %s request JSON: %w", state, err))
 		return request, computer.Observation{}, false
 	}
 	id, err := ids.Parse(request.ID)
@@ -151,12 +151,12 @@ func decodeComputerInstanceObservation(w http.ResponseWriter, r *http.Request, s
 		return request, computer.Observation{}, false
 	}
 	if request.WorkerEpoch <= 0 || request.DesiredVersion <= 0 || request.ExpectedObservedVersion < 0 {
-		writeError(w, badRequest(errors.New("runtime epoch, desired version, and observed version fences are required")))
+		writeError(w, badRequest(errors.New("worker epoch, desired version, and observed version fences are required")))
 		return request, computer.Observation{}, false
 	}
 	worker := workerFromContext(r.Context())
 	if request.WorkerEpoch != worker.Epoch {
-		writeError(w, forbidden(errors.New("runtime instance belongs to another worker epoch")))
+		writeError(w, forbidden(errors.New("instance belongs to another worker epoch")))
 		return request, computer.Observation{}, false
 	}
 	return request, computer.Observation{
@@ -168,7 +168,7 @@ func decodeComputerInstanceObservation(w http.ResponseWriter, r *http.Request, s
 	}, true
 }
 
-func computerCleanupProof(proof *workerapi.RuntimeCleanupProof) *computer.CleanupProof {
+func computerCleanupProof(proof *workerapi.InstanceCleanupProof) *computer.CleanupProof {
 	if proof == nil {
 		return nil
 	}
@@ -197,7 +197,7 @@ func computerInstanceResponse(row db.ComputerInstance) workerapi.ComputerInstanc
 		ProjectID:              pgvalue.UUIDString(row.ProjectID),
 		EnvironmentID:          pgvalue.UUIDString(row.EnvironmentID),
 		WorkerHostID:           pgvalue.UUIDString(row.WorkerHostID),
-		RuntimeEpoch:           row.WorkerEpoch,
+		WorkerEpoch:            row.WorkerEpoch,
 		RuntimeID:              row.VMPlatformID,
 		VMVCPUCount:            row.VMVCPUCount,
 		CPUConfigDigest:        row.CPUConfigDigest,

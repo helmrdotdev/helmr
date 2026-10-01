@@ -22,7 +22,7 @@ func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
 	defer httpServer.Close()
 	client := hostSecret.client(t, httpServer.URL)
 	hostCredential := hostSecret.issue(t, handler)
-	request := workerapi.InitialComputerKeyRequest{ComputerInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 1}
+	request := workerapi.InitialComputerKeyRequest{ComputerInstanceID: pgvalue.UUIDString(f.instance), DesiredVersion: 1}
 	first, err := client.InitialComputerKey(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -75,11 +75,11 @@ func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
 			}
 		})
 	}
-	wrongRuntime := request
-	wrongRuntime.ComputerInstanceID = uuid.NewV7().String()
-	wrongPayload, _ := json.Marshal(wrongRuntime)
+	wrongInstance := request
+	wrongInstance.ComputerInstanceID = uuid.NewV7().String()
+	wrongPayload, _ := json.Marshal(wrongInstance)
 	if w := call(hostCredential, wrongPayload); w.Code != 409 {
-		t.Fatalf("unowned runtime status=%d", w.Code)
+		t.Fatalf("unowned instance status=%d", w.Code)
 	}
 	// Draining the host advances its claim version: the host credential minted before
 	// the drain no longer authenticates.
@@ -93,8 +93,8 @@ func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
 	if w := call(hostCredential, payload); w.Code != 401 || strings.Contains(w.Body.String(), first.ID) {
 		t.Fatalf("pre-drain host credential key response status=%d", w.Code)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, f.runtime)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, f.instance)
 	if material, err := client.InitialComputerKey(t.Context(), request); err == nil || len(material.Key) != 0 {
-		t.Fatal("revoked runtime delivered key")
+		t.Fatal("revoked instance delivered key")
 	}
 }

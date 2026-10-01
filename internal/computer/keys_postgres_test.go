@@ -64,13 +64,13 @@ func TestInitialComputerKeyRetryAndDurablePin(t *testing.T) {
 		t.Fatal("retry changed pinned key")
 	}
 	var count int
-	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_data_keys WHERE computer_id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, f.runtime).Scan(&count); err != nil || count != 1 {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_data_keys WHERE computer_id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, f.instance).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("duplicate keys %d %v", count, err)
 	}
 	_, err = f.Pool.Exec(t.Context(), `UPDATE computer_data_keys SET retired_at=now(),wrapped_key=NULL WHERE id=$1`, first.ID)
 	requireKeyFK(t, err)
-	// Removing the current pointer cannot release an unreclaimed runtime's key.
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET write_key_id=NULL WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, f.runtime)
+	// Removing the current pointer cannot release an unreclaimed instance's key.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET write_key_id=NULL WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, f.instance)
 	_, err = f.Pool.Exec(t.Context(), `UPDATE computer_data_keys SET retired_at=now(),wrapped_key=NULL WHERE id=$1`, first.ID)
 	requireKeyFK(t, err)
 }
@@ -86,10 +86,10 @@ func TestInitialComputerKeyProviderRunsOutsideLocks(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer tx.Rollback(context.Background())
-		if _, err = tx.Exec(ctx, `SELECT id FROM computer_instances WHERE id=$1 FOR UPDATE`, f.runtime); err != nil {
-			t.Fatal("provider called under runtime lock", err)
+		if _, err = tx.Exec(ctx, `SELECT id FROM computer_instances WHERE id=$1 FOR UPDATE`, f.instance); err != nil {
+			t.Fatal("provider called under instance lock", err)
 		}
-		if _, err = tx.Exec(ctx, `SELECT id FROM computers WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1) FOR UPDATE`, f.runtime); err != nil {
+		if _, err = tx.Exec(ctx, `SELECT id FROM computers WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1) FOR UPDATE`, f.instance); err != nil {
 			t.Fatal("provider called under Computer lock", err)
 		}
 	}
@@ -110,17 +110,17 @@ func TestInitialComputerKeyRevocationDuringProviderIO(t *testing.T) {
 				revoke := func() {
 					switch change {
 					case "close":
-						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, f.runtime)
+						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, f.instance)
 					case "worker epoch":
-						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET current_epoch=current_epoch+1 WHERE id=$1`, f.runtimeWorker())
+						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET current_epoch=current_epoch+1 WHERE id=$1`, f.instanceWorker())
 					case "claim":
-						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, f.runtimeWorker())
+						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, f.instanceWorker())
 					case "group claim":
 						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET claim_version=claim_version+1 WHERE id=$1`, pgvalue.UUID(f.principal.GroupID))
 					case "expiry":
-						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET preparation_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, f.runtime)
+						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET preparation_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, f.instance)
 					case "computer stop":
-						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET desired_state='stopped' WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, f.runtime)
+						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET desired_state='stopped' WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, f.instance)
 					}
 				}
 				observer := &observingKeyWrapper{KeyWrapper: b.wrapper}
@@ -216,7 +216,7 @@ func TestInitialComputerKeyRejectsAnotherWorker(t *testing.T) {
 	}
 }
 
-func TestInitialComputerKeyRotationKeepsAdmittedRuntime(t *testing.T) {
+func TestInitialComputerKeyRotationKeepsAdmittedInstance(t *testing.T) {
 	f := newPreparationFixture(t)
 	b := f.broker
 	first, err := b.InitialKey(t.Context(), f.principal, f.ref)
@@ -226,29 +226,29 @@ func TestInitialComputerKeyRotationKeepsAdmittedRuntime(t *testing.T) {
 	defer clear(first.Key)
 	next := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) SELECT $2,environment_id,computer_id,wrapping_key_id,wrapped_key FROM computer_data_keys WHERE id=$1`, first.ID, next)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET write_key_id=$2 WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, f.runtime, next)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET write_key_id=$2 WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, f.instance, next)
 	// The new current key is deliberately not decryptable under its new ID. A
-	// re-fetch must use the runtime's original pin, not mutable current state.
+	// re-fetch must use the instance's original pin, not mutable current state.
 	again, err := b.InitialKey(t.Context(), f.principal, f.ref)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer clear(again.Key)
 	if again.ID != first.ID || !bytes.Equal(again.Key, first.Key) {
-		t.Fatal("rotation changed admitted runtime key")
+		t.Fatal("rotation changed admitted instance key")
 	}
 	_, err = f.Pool.Exec(t.Context(), `UPDATE computer_data_keys SET retired_at=now(),wrapped_key=NULL WHERE id=$1`, first.ID)
 	requireKeyFK(t, err)
 	// Terminal observation alone is insufficient to release the key.
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='failed',terminal_at=clock_timestamp(),terminal_reason_code='test' WHERE id=$1`, f.runtime)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='failed',terminal_at=clock_timestamp(),terminal_reason_code='test' WHERE id=$1`, f.instance)
 	_, err = f.Pool.Exec(t.Context(), `UPDATE computer_data_keys SET retired_at=now(),wrapped_key=NULL WHERE id=$1`, first.ID)
 	requireKeyFK(t, err)
 	// This models the trusted reclaimer recording physical exclusion, not a VM test.
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET admission_state='closed',mount_state='lost',reclaimed_at=clock_timestamp(),reclaim_evidence='{"proof":"fixture"}' WHERE id=$1`, f.runtime)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET admission_state='closed',mount_state='lost',reclaimed_at=clock_timestamp(),reclaim_evidence='{"proof":"fixture"}' WHERE id=$1`, f.instance)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_data_keys SET retired_at=clock_timestamp(),wrapped_key=NULL WHERE id=$1`, first.ID)
 	var retained bool
 	var audit string
-	if err = f.Pool.QueryRow(t.Context(), `SELECT retained_write_key_id IS NOT NULL,write_key_id::text FROM computer_instances WHERE id=$1`, f.runtime).Scan(&retained, &audit); err != nil || retained || audit != first.ID {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT retained_write_key_id IS NOT NULL,write_key_id::text FROM computer_instances WHERE id=$1`, f.instance).Scan(&retained, &audit); err != nil || retained || audit != first.ID {
 		t.Fatalf("bad retention transfer: %v %s %v", retained, audit, err)
 	}
 }
@@ -293,14 +293,14 @@ func TestInitialComputerKeyForeignComputerPointersRejected(t *testing.T) {
 	clear(key.Key)
 	other := uuid.NewV7()
 	// A deleted sibling is sufficient to exercise scope FKs without inventing
-	// another active runtime/reservation or changing the fixture's head authority.
+	// another active instance/reservation or changing the fixture's head authority.
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computers(id,environment_id,region_id,status,desired_state,deleted_at, computer_spec_id, creation_deployment_id) SELECT $2,environment_id,region_id,'deleted','deleted',clock_timestamp(), computer_spec_id, creation_deployment_id
- FROM computers WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, f.runtime, other)
+ FROM computers WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, f.instance, other)
 	foreign := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'fixture',decode('00','hex'))`, foreign, pgvalue.UUID(f.EnvironmentID), other)
-	_, err := f.Pool.Exec(t.Context(), `UPDATE computer_instances SET write_key_id=$2 WHERE id=$1`, f.runtime, foreign)
+	_, err := f.Pool.Exec(t.Context(), `UPDATE computer_instances SET write_key_id=$2 WHERE id=$1`, f.instance, foreign)
 	requireKeyFK(t, err)
-	_, err = f.Pool.Exec(t.Context(), `UPDATE computers SET write_key_id=$2 WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, f.runtime, foreign)
+	_, err = f.Pool.Exec(t.Context(), `UPDATE computers SET write_key_id=$2 WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, f.instance, foreign)
 	requireKeyFK(t, err)
 }
 
@@ -316,7 +316,7 @@ func TestInitialComputerKeyTransientProviderFailureRetainsIdentity(t *testing.T)
 		t.Fatal("failed provider material not cleared")
 	}
 	var pinned string
-	if err := f.Pool.QueryRow(t.Context(), `SELECT write_key_id::text FROM computer_instances WHERE id=$1`, f.runtime).Scan(&pinned); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT write_key_id::text FROM computer_instances WHERE id=$1`, f.instance).Scan(&pinned); err != nil {
 		t.Fatal(err)
 	}
 	observer.unwrapErr = nil
@@ -431,7 +431,7 @@ const (
 	claimReadSQL     = "SELECT w.claim_version,g.claim_version"
 	firstFenceSQL    = "SELECT environment_id,computer_id,region_id,observed_state FROM computer_instances"
 	deadlineSQL      = "-- name: GetComputerPreparationDeadlinesValid"
-	pinWriteSQL      = "-- name: PinRuntimeComputerKey"
+	pinWriteSQL      = "-- name: PinInstanceComputerKey"
 	sourceKeyReadSQL = "-- name: ListInstanceComputerSourceKeys"
 )
 

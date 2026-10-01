@@ -34,7 +34,7 @@ const (
 )
 
 // RunInstanceRef addresses the Instance a Run lease was assigned: the lease's
-// Computer and Instance on the worker host epoch at the lease's writer
+// Computer and Instance on the worker epoch at the lease's writer
 // generation.
 type RunInstanceRef struct {
 	OrgID            uuid.UUID
@@ -156,7 +156,7 @@ func LockTokenWaitInstance(ctx context.Context, tx pgx.Tx, ref TokenWaitInstance
 		WorkerHostID: pgvalue.UUID(ref.Host.HostID), WorkerEpoch: ref.Host.Epoch, ComputerID: computerID,
 	})
 	if err != nil || i.VMPlatformID != ref.VMPlatformID ||
-		i.DesiredState != db.RuntimeDesiredStateReady || i.ObservedState != db.RuntimeObservedStateReady ||
+		i.DesiredState != db.InstanceDesiredStateReady || i.ObservedState != db.InstanceObservedStateReady ||
 		i.ObservedDesiredVersion != i.DesiredVersion || i.TerminalAt.Valid ||
 		i.ReclaimedAt.Valid || i.MountState != "mounted" || i.WriterGeneration != c.WriterGeneration ||
 		i.WriterGeneration != ref.WriterGeneration || (i.AdmissionState != "open" && i.AdmissionState != "draining") {
@@ -320,7 +320,7 @@ func (c CommandInstance) Bound() bool {
 }
 
 // On reports whether the bound Instance is the addressed incarnation on the
-// worker host epoch at the writer generation the host acts for.
+// worker epoch at the writer generation the host acts for.
 func (c CommandInstance) On(host Host, instanceID uuid.UUID, writerGeneration int64) bool {
 	i := c.instance
 	return c.bound && i.ID == pgvalue.UUID(instanceID) && i.WorkerHostID == pgvalue.UUID(host.HostID) && i.WorkerGroupID == pgvalue.UUID(host.GroupID) && i.WorkerEpoch == host.Epoch && i.WriterGeneration == writerGeneration
@@ -353,7 +353,7 @@ func (c CommandInstance) TouchActivity(ctx context.Context, orgID, projectID uui
 }
 
 // CommandInstanceRef addresses the Instance a Computer Command was bound to:
-// the Instance incarnation on the worker host epoch at the writer generation
+// the Instance incarnation on the worker epoch at the writer generation
 // the host acts for.
 type CommandInstanceRef struct {
 	EnvironmentID    uuid.UUID
@@ -368,7 +368,7 @@ type CommandInstanceRef struct {
 // LockCommandInstance for an operation that grants a worker host authority
 // over the Command. The worker host must already be locked. The Computer must
 // be active and its current writer the Instance, which must be the addressed
-// ready, mounted and unreclaimed incarnation on the host epoch. Admission
+// ready, mounted and unreclaimed incarnation on the worker epoch. Admission
 // checks stay with the caller's Command operation.
 func LockInstanceForCommand(ctx context.Context, tx pgx.Tx, ref CommandInstanceRef) (db.ComputerInstance, error) {
 	locked, err := LockCommandInstance(ctx, tx, CommandRef{EnvironmentID: ref.EnvironmentID, ComputerID: ref.ComputerID, CommandID: ref.CommandID})

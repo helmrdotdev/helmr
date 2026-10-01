@@ -16,7 +16,7 @@ import (
 // All state is protected by the machine's computerBarrier, including Close.
 // Pointer identity prevents an old capture from releasing a later hold.
 type checkpointCapture struct {
-	machine     *guestSession
+	machine     *guestMachine
 	request     vm.SnapshotRequest
 	attempted   bool
 	resumed     bool
@@ -26,7 +26,7 @@ type checkpointCapture struct {
 	snapshotErr error
 }
 
-func (s *guestSession) BeginCheckpoint(ctx context.Context, request vm.SnapshotRequest) (vm.CheckpointCapture, error) {
+func (s *guestMachine) BeginCheckpoint(ctx context.Context, request vm.SnapshotRequest) (vm.CheckpointCapture, error) {
 	if strings.TrimSpace(request.ID) == "" {
 		return nil, errors.New("checkpoint identity is required")
 	}

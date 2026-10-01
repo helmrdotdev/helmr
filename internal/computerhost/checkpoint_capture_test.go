@@ -33,19 +33,19 @@ type retryableCaptureError struct{}
 func (retryableCaptureError) Error() string   { return "storage response lost" }
 func (retryableCaptureError) Temporary() bool { return true }
 
-func newCaptureTest(t *testing.T) (computerCheckpointer, computerCheckpointRequest, *checkpointSession, *captureStore) {
+func newCaptureTest(t *testing.T) (computerCheckpointer, computerCheckpointRequest, *checkpointMachine, *captureStore) {
 	t.Helper()
 	target := checkpointCaptureTarget(2)
 	stream := checkpointFreezeStream(t, target)
-	session := &checkpointSession{stream: stream, artifact: checkpointArtifact(t)}
+	machine := &checkpointMachine{stream: stream, artifact: checkpointArtifact(t)}
 	store := &captureStore{}
-	c := computerCheckpointer{publication: testCheckpointPublication, session: session, objects: store, reservations: testCheckpointReservations(t), encryptor: testCheckpointEncryptor(t), tempDir: t.TempDir()}
+	c := computerCheckpointer{publication: testCheckpointPublication, machine: machine, objects: store, reservations: testCheckpointReservations(t), encryptor: testCheckpointEncryptor(t), tempDir: t.TempDir()}
 	request := computerCheckpointRequest{Target: target, Register: func(context.Context, workerapi.CheckpointManifest) error { return nil }}
-	return c, request, session, store
+	return c, request, machine, store
 }
 
 func TestCheckpointRegistersAllMembersBeforeRetryingExactCiphertext(t *testing.T) {
-	c, request, session, store := newCaptureTest(t)
+	c, request, machine, store := newCaptureTest(t)
 	var registered workerapi.CheckpointManifest
 	request.Register = func(_ context.Context, m workerapi.CheckpointManifest) error {
 		if len(store.puts) != 0 {
@@ -75,7 +75,7 @@ func TestCheckpointRegistersAllMembersBeforeRetryingExactCiphertext(t *testing.T
 		if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes == 0 {
 			t.Fatal("capacity released before upload")
 		}
-		if session.artifact.Computer.Capture.(*versionCaptureFixture).released {
+		if machine.artifact.Computer.Capture.(*versionCaptureFixture).released {
 			t.Fatal("capture released before uploads joined")
 		}
 		attempts = append(attempts, d)
@@ -92,7 +92,7 @@ func TestCheckpointRegistersAllMembersBeforeRetryingExactCiphertext(t *testing.T
 		}
 		return nil
 	}
-	session.snapshotHook = func() {
+	machine.snapshotHook = func() {
 		if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes == 0 {
 			t.Fatal("capture before capacity admission")
 		}
@@ -107,10 +107,10 @@ func TestCheckpointRegistersAllMembersBeforeRetryingExactCiphertext(t *testing.T
 	if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes != 0 {
 		t.Fatal("staging reservation leaked")
 	}
-	if !session.artifact.Computer.Capture.(*versionCaptureFixture).released {
+	if !machine.artifact.Computer.Capture.(*versionCaptureFixture).released {
 		t.Fatal("successful capture retention leaked")
 	}
-	if session.closeCount != 0 {
+	if machine.closeCount != 0 {
 		t.Fatal("successful source stopped before ready")
 	}
 
@@ -121,13 +121,13 @@ func TestCheckpointRegistersAllMembersBeforeRetryingExactCiphertext(t *testing.T
 }
 
 func TestCheckpointCapacityFailurePrecedesPauseAndWrites(t *testing.T) {
-	c, request, session, store := newCaptureTest(t)
+	c, request, machine, store := newCaptureTest(t)
 	c.reservations, _ = reservation.New(reservation.Vector{CPUMillis: 1, MemoryBytes: 1, GuestEphemeralDiskBytes: 1})
 	_, err := c.CreateCheckpoint(t.Context(), request)
 	if !errors.Is(err, reservation.ErrCapacityExceeded) {
 		t.Fatalf("error=%v", err)
 	}
-	if len(session.snapshotRequests) != 0 || len(store.puts) != 0 || session.stream.(*checkpointStream).written.Len() != 0 {
+	if len(machine.snapshotRequests) != 0 || len(store.puts) != 0 || machine.stream.(*checkpointStream).written.Len() != 0 {
 		t.Fatal("capture or upload before admission")
 	}
 	entries, _ := os.ReadDir(c.tempDir)
@@ -137,12 +137,12 @@ func TestCheckpointCapacityFailurePrecedesPauseAndWrites(t *testing.T) {
 }
 
 func TestCheckpointRegistrationFailureRetainsSourceBeforeUpload(t *testing.T) {
-	c, request, session, store := newCaptureTest(t)
+	c, request, machine, store := newCaptureTest(t)
 	failure := errors.New("registration rejected")
 	request.Register = func(context.Context, workerapi.CheckpointManifest) error { return failure }
 	_, err := c.CreateCheckpoint(t.Context(), request)
-	if !errors.Is(err, failure) || session.closeCount != 0 || len(store.puts) != 0 {
-		t.Fatalf("err=%v closes=%d uploads=%d", err, session.closeCount, len(store.puts))
+	if !errors.Is(err, failure) || machine.closeCount != 0 || len(store.puts) != 0 {
+		t.Fatalf("err=%v closes=%d uploads=%d", err, machine.closeCount, len(store.puts))
 	}
 	if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes == 0 || c.pendingCleanup == nil {
 		t.Fatal("failed candidate lost its retained staging owner")
@@ -150,15 +150,15 @@ func TestCheckpointRegistrationFailureRetainsSourceBeforeUpload(t *testing.T) {
 }
 
 func TestCheckpointStopFailureRetainsChargeAndRawSnapshot(t *testing.T) {
-	c, request, session, _ := newCaptureTest(t)
-	session.closeErr = errors.New("VM exit unproved")
+	c, request, machine, _ := newCaptureTest(t)
+	machine.closeErr = errors.New("VM exit unproved")
 	request.Register = func(context.Context, workerapi.CheckpointManifest) error { return errors.New("registration failed") }
 	_, err := c.CreateCheckpoint(t.Context(), request)
-	if err == nil || session.closeCount != 0 {
+	if err == nil || machine.closeCount != 0 {
 		t.Fatalf("capture closed source: %v", err)
 	}
-	if err = c.ReleaseCheckpointSource(t.Context()); !errors.Is(err, session.closeErr) || session.closeCount != 1 {
-		t.Fatalf("terminal close: %v count=%d", err, session.closeCount)
+	if err = c.ReleaseCheckpointSource(t.Context()); !errors.Is(err, machine.closeErr) || machine.closeCount != 1 {
+		t.Fatalf("terminal close: %v count=%d", err, machine.closeCount)
 	}
 	if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes == 0 {
 		t.Fatal("unproven cleanup released charge")
@@ -167,24 +167,24 @@ func TestCheckpointStopFailureRetainsChargeAndRawSnapshot(t *testing.T) {
 	if len(entries) == 0 {
 		t.Fatal("failed source release discarded retained staging")
 	}
-	session.closeErr = nil
+	machine.closeErr = nil
 	t.Cleanup(func() {
 		if err := c.ReleaseCheckpointSource(context.Background()); err != nil {
 			t.Error(err)
 		}
 	})
-	if _, err := os.Stat(session.artifact.VMState.Path); err != nil {
+	if _, err := os.Stat(machine.artifact.VMState.Path); err != nil {
 		t.Fatalf("unproven source raw state removed: %v", err)
 	}
 }
 
 func TestCheckpointCleanupFailureAfterUploadRetainsSourceAndCharge(t *testing.T) {
-	c, request, session, store := newCaptureTest(t)
+	c, request, machine, store := newCaptureTest(t)
 	store.publish = func(d cas.Descriptor, f *os.File) error {
 		if len(store.puts) == 3 {
 			// Replace a completed raw snapshot with a nonempty directory. This creates
 			// a real unlink failure after all uploads, without mocking the cleanup path.
-			p := session.artifact.VMState.Path
+			p := machine.artifact.VMState.Path
 			if err := os.Remove(p); err != nil {
 				return err
 			}
@@ -196,8 +196,8 @@ func TestCheckpointCleanupFailureAfterUploadRetainsSourceAndCharge(t *testing.T)
 		return nil
 	}
 	_, err := c.CreateCheckpoint(t.Context(), request)
-	if err == nil || session.closeCount != 0 || len(store.puts) != 4 {
-		t.Fatalf("err=%v closes=%d uploads=%d", err, session.closeCount, len(store.puts))
+	if err == nil || machine.closeCount != 0 || len(store.puts) != 4 {
+		t.Fatalf("err=%v closes=%d uploads=%d", err, machine.closeCount, len(store.puts))
 	}
 	if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes == 0 {
 		t.Fatal("failed cleanup released charge")
@@ -205,8 +205,8 @@ func TestCheckpointCleanupFailureAfterUploadRetainsSourceAndCharge(t *testing.T)
 }
 
 func TestCheckpointDuplicateCaptureDoesNotStopExistingOwner(t *testing.T) {
-	c, request, session, _ := newCaptureTest(t)
-	shape, _ := session.SnapshotLimits()
+	c, request, machine, _ := newCaptureTest(t)
+	shape, _ := machine.SnapshotLimits()
 	limits, err := checkpointStagingSize(shape, c.encryptor)
 	if err != nil {
 		t.Fatal(err)
@@ -216,8 +216,8 @@ func TestCheckpointDuplicateCaptureDoesNotStopExistingOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = c.CreateCheckpoint(t.Context(), request)
-	if err == nil || session.closeCount != 0 || len(session.snapshotRequests) != 0 {
-		t.Fatalf("err=%v closes=%d", err, session.closeCount)
+	if err == nil || machine.closeCount != 0 || len(machine.snapshotRequests) != 0 {
+		t.Fatalf("err=%v closes=%d", err, machine.closeCount)
 	}
 	if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes != limits.total {
 		t.Fatal("existing owner reservation changed")
@@ -227,7 +227,7 @@ func TestCheckpointDuplicateCaptureDoesNotStopExistingOwner(t *testing.T) {
 func TestCheckpointPermanentUploadFailureRetainsSourceUntilSettlement(t *testing.T) {
 	for _, media := range []string{cas.CheckpointVMConfigMediaType, cas.CheckpointVMStateMediaType, cas.CheckpointScratchDiskMediaType, cas.CheckpointMemoryMediaType} {
 		t.Run(media, func(t *testing.T) {
-			c, request, session, store := newCaptureTest(t)
+			c, request, machine, store := newCaptureTest(t)
 			failure := errors.New("permanent upload failure")
 			store.publish = func(d cas.Descriptor, _ *os.File) error {
 				if d.MediaType == media {
@@ -236,8 +236,8 @@ func TestCheckpointPermanentUploadFailureRetainsSourceUntilSettlement(t *testing
 				return nil
 			}
 			_, err := c.CreateCheckpoint(t.Context(), request)
-			if !errors.Is(err, failure) || session.closeCount != 0 || session.resumeCount != 0 {
-				t.Fatalf("err=%v closes=%d resumes=%d", err, session.closeCount, session.resumeCount)
+			if !errors.Is(err, failure) || machine.closeCount != 0 || machine.resumeCount != 0 {
+				t.Fatalf("err=%v closes=%d resumes=%d", err, machine.closeCount, machine.resumeCount)
 			}
 			if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes == 0 {
 				t.Fatal("failed capture released its staging before settlement")
@@ -254,11 +254,11 @@ func TestCheckpointPermanentUploadFailureRetainsSourceUntilSettlement(t *testing
 			if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes != 0 {
 				t.Fatal("staging capacity leaked")
 			}
-			if !session.artifact.Computer.Capture.(*versionCaptureFixture).released {
+			if !machine.artifact.Computer.Capture.(*versionCaptureFixture).released {
 				t.Fatal("capture retention leaked")
 			}
-			assertRemoved(t, session.artifact.VMState.Path)
-			for _, file := range session.artifact.Memory {
+			assertRemoved(t, machine.artifact.VMState.Path)
+			for _, file := range machine.artifact.Memory {
 				assertRemoved(t, file.Path)
 			}
 			entries, err := os.ReadDir(c.tempDir)

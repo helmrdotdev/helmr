@@ -85,7 +85,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if !request.InventoryComplete || request.InventoryScope != "worker_runtime_state_roots_v0" || request.ObservedAt.IsZero() || len(request.Inventory) != 0 {
+			if !request.InventoryComplete || request.InventoryScope != "worker_instance_state_roots_v0" || request.ObservedAt.IsZero() || len(request.Inventory) != 0 {
 				t.Fatalf("worker drain completion = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{WorkerHostID: "00000000-0000-0000-0000-000000000401", Status: workerapi.StatusTerminationReady})
@@ -136,7 +136,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	}
 	if status, err := client.CompleteWorkerDrain(context.Background(), workerapi.DrainCompletionRequest{
 		InventoryComplete: true,
-		InventoryScope:    "worker_runtime_state_roots_v0",
+		InventoryScope:    "worker_instance_state_roots_v0",
 		ObservedAt:        time.Now().UTC(),
 		Inventory:         []string{},
 	}); err != nil || status.Status != workerapi.StatusTerminationReady {
@@ -404,7 +404,7 @@ func TestCompleteWorkerDrainRetriesTheIdenticalProofAfterAmbiguousResponse(t *te
 		t.Fatal(err)
 	}
 	request := workerapi.DrainCompletionRequest{
-		InventoryComplete: true, InventoryScope: "worker_runtime_state_roots_v0",
+		InventoryComplete: true, InventoryScope: "worker_instance_state_roots_v0",
 		ObservedAt: time.Now().UTC(), Inventory: []string{},
 	}
 	status, err := client.CompleteWorkerDrain(context.Background(), request)

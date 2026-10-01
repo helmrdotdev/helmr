@@ -64,15 +64,15 @@ func TestComputerInstanceRoutesMapOwnerErrors(t *testing.T) {
 
 	observation := workerapi.ComputerInstanceStateRequest{ID: instance.ComputerInstanceID, WorkerEpoch: 1, DesiredVersion: 1, ExpectedObservedVersion: 1}
 	worker.post(t, "/worker/v1/run/computer-instances/closed", observation, http.StatusBadRequest, nil)
-	observation.CleanupProof = &workerapi.RuntimeCleanupProof{Method: workerapi.RuntimeCleanupNotMaterialized, CompletedAt: time.Now()}
+	observation.CleanupProof = &workerapi.InstanceCleanupProof{Method: workerapi.InstanceCleanupNotMaterialized, CompletedAt: time.Now()}
 	worker.post(t, "/worker/v1/run/computer-instances/closed", observation, http.StatusBadRequest, nil)
-	observation.CleanupProof.Method = workerapi.RuntimeCleanupSessionClosed
+	observation.CleanupProof.Method = workerapi.InstanceCleanupMachineClosed
 	worker.post(t, "/worker/v1/run/computer-instances/closed", observation, http.StatusConflict, nil)
 	observation.CleanupProof = nil
 	observation.ExpectedObservedVersion = 0
 	worker.post(t, "/worker/v1/run/computer-instances/failed", observation, http.StatusConflict, nil)
 	observation.ExpectedObservedVersion = 1
-	observation.ReasonCode = "runtime_reconcile_failed"
+	observation.ReasonCode = "instance_reconcile_failed"
 	var failed workerapi.ComputerInstance
 	worker.post(t, "/worker/v1/run/computer-instances/failed", observation, http.StatusOK, &failed)
 	if failed.Status != "failed" {

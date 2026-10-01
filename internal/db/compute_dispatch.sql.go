@@ -153,7 +153,7 @@ WITH target AS (
      WHERE worker_host_secrets.worker_host_id = target.id
        AND worker_host_secrets.revoked_at IS NULL
     RETURNING worker_host_secrets.id
-), lost_runtimes AS (
+), lost_instances AS (
     UPDATE computer_instances
        SET observed_state = 'lost', observed_version = observed_version + 1,
            observed_at = now(), terminal_at = now(),
@@ -169,7 +169,7 @@ WITH target AS (
 SELECT target.id, target.resource_id, target.worker_group_id, target.worker_pool_id, target.status, target.claim_version, target.current_epoch, target.current_service_id, target.vm_platform_id, target.epoch_cpu_millis, target.epoch_memory_bytes, target.epoch_guest_ephemeral_disk_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.max_vm_starts, target.cpu_environment, target.cpu_environment_digest, target.observed_at, target.run_paused_reason, target.vm_paused_reason, target.epoch_started_at, target.activated_at, target.draining_at, target.termination_ready_at, target.lost_at, target.created_at, target.updated_at
   FROM target
  WHERE (SELECT count(*) FROM revoked_host_secrets) >= 0
-   AND (SELECT count(*) FROM lost_runtimes) >= 0
+   AND (SELECT count(*) FROM lost_instances) >= 0
 UNION ALL
 SELECT worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.run_paused_reason, worker_hosts.vm_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
   FROM worker_hosts
@@ -283,7 +283,7 @@ SELECT worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, 
            AND worker_hosts.observed_at >= transaction_timestamp()
                - $1::bigint * interval '1 second'
            AND worker_hosts.vm_paused_reason IS NULL
-       ), false)::boolean AS runtime_ready,
+       ), false)::boolean AS instance_ready,
        COALESCE((
            worker_hosts.status = 'active'
            AND worker_groups.status = 'active'
@@ -342,7 +342,7 @@ type GetWorkerHostStatusRow struct {
 	Contract                     pgtype.Text        `json:"contract"`
 	Arch                         pgtype.Text        `json:"arch"`
 	RunReady                     bool               `json:"run_ready"`
-	RuntimeReady                 bool               `json:"runtime_ready"`
+	InstanceReady                bool               `json:"instance_ready"`
 	AllConfiguredRolesReady      bool               `json:"all_configured_roles_ready"`
 	ActiveInstances              int32              `json:"active_instances"`
 }
@@ -384,7 +384,7 @@ func (q *Queries) GetWorkerHostStatus(ctx context.Context, arg GetWorkerHostStat
 		&i.Contract,
 		&i.Arch,
 		&i.RunReady,
-		&i.RuntimeReady,
+		&i.InstanceReady,
 		&i.AllConfiguredRolesReady,
 		&i.ActiveInstances,
 	)

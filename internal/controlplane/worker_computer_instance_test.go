@@ -13,8 +13,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func TestRuntimeReconcileTargetProjectsActionAndComputerAuthority(t *testing.T) {
-	runtimeID := pgvalue.UUID(uuid.NewV7())
+func TestInstanceReconcileTargetProjectsActionAndComputerAuthority(t *testing.T) {
+	instanceID := pgvalue.UUID(uuid.NewV7())
 	baseComputerDiskVersionID := pgvalue.UUID(uuid.NewV7())
 	for _, test := range []struct {
 		name       string
@@ -22,34 +22,34 @@ func TestRuntimeReconcileTargetProjectsActionAndComputerAuthority(t *testing.T) 
 		wantAction string
 		wantTarget bool
 	}{
-		{name: "prepare", action: computer.ReconcilePrepare, wantAction: workerapi.RuntimeReconcilePrepare, wantTarget: true},
-		{name: "close", action: computer.ReconcileClose, wantAction: workerapi.RuntimeReconcileClose},
-		{name: "reclaim", action: computer.ReconcileReclaim, wantAction: workerapi.RuntimeReconcileReclaim},
+		{name: "prepare", action: computer.ReconcilePrepare, wantAction: workerapi.InstanceReconcilePrepare, wantTarget: true},
+		{name: "close", action: computer.ReconcileClose, wantAction: workerapi.InstanceReconcileClose},
+		{name: "reclaim", action: computer.ReconcileReclaim, wantAction: workerapi.InstanceReconcileReclaim},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			row := initializingComputerSourceRow(t)
-			row.ID, row.WorkerEpoch = runtimeID, 7
+			row.ID, row.WorkerEpoch = instanceID, 7
 			row.PreparationDiskVersionID = baseComputerDiskVersionID
-			item, err := runtimeReconcileTarget(t.Context(), nil, computer.ReconcileTarget{Instance: row, Action: test.action})
+			item, err := instanceReconcileTarget(t.Context(), nil, computer.ReconcileTarget{Instance: row, Action: test.action})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if item.ID != pgvalue.UUIDString(runtimeID) || item.WorkerEpoch != 7 || item.Action != test.wantAction || (item.Source.Computer != nil) != test.wantTarget || item.Capture != nil {
+			if item.ID != pgvalue.UUIDString(instanceID) || item.WorkerEpoch != 7 || item.Action != test.wantAction || (item.Source.Computer != nil) != test.wantTarget || item.Capture != nil {
 				t.Fatalf("item = %#v", item)
 			}
 		})
 	}
 }
 
-func TestRuntimeReconcileTargetProjectsEveryAction(t *testing.T) {
+func TestInstanceReconcileTargetProjectsEveryAction(t *testing.T) {
 	for _, action := range []computer.ReconcileAction{computer.ReconcilePrepare, computer.ReconcileCapture, computer.ReconcileClose, computer.ReconcileReclaim} {
-		if runtimeReconcileActions[action] == "" {
+		if instanceReconcileActions[action] == "" {
 			t.Fatalf("action %d has no worker projection", action)
 		}
 	}
 }
 
-func TestRuntimeReconcileTargetDoesNotReplayOpenedCheckpoint(t *testing.T) {
+func TestInstanceReconcileTargetDoesNotReplayOpenedCheckpoint(t *testing.T) {
 	row := committedComputerSourceRow(t)
 	row.ID = pgvalue.UUID(uuid.NewV7())
 	row.WorkerEpoch = 7
@@ -60,7 +60,7 @@ func TestRuntimeReconcileTargetDoesNotReplayOpenedCheckpoint(t *testing.T) {
 	row.ObservedDesiredVersion = 1
 	row.SourceCheckpointID = pgvalue.UUID(uuid.NewV7())
 	row.SourceDiskVersionID = row.PreparationDiskVersionID
-	item, err := runtimeReconcileTarget(t.Context(), nil, computer.ReconcileTarget{Instance: row, Action: computer.ReconcilePrepare})
+	item, err := instanceReconcileTarget(t.Context(), nil, computer.ReconcileTarget{Instance: row, Action: computer.ReconcilePrepare})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,10 +83,10 @@ func TestComputerInstanceResponsePreservesActualCPUShape(t *testing.T) {
 // The owner's cleanup proof is the stored reclaim evidence: it must encode
 // exactly as the worker contract's proof, with the same method vocabulary.
 func TestComputerCleanupProofEncodesAsWorkerProof(t *testing.T) {
-	if computer.CleanupSessionClosed != workerapi.RuntimeCleanupSessionClosed || computer.CleanupHostReconciled != workerapi.RuntimeCleanupHostReconciled || computer.CleanupNotMaterialized != workerapi.RuntimeCleanupNotMaterialized {
+	if computer.CleanupMachineClosed != workerapi.InstanceCleanupMachineClosed || computer.CleanupHostReconciled != workerapi.InstanceCleanupHostReconciled || computer.CleanupNotMaterialized != workerapi.InstanceCleanupNotMaterialized {
 		t.Fatal("cleanup proof methods differ from the worker contract")
 	}
-	proof := workerapi.RuntimeCleanupProof{Method: workerapi.RuntimeCleanupHostReconciled, CompletedAt: time.Date(2026, time.September, 30, 12, 0, 0, 123, time.UTC)}
+	proof := workerapi.InstanceCleanupProof{Method: workerapi.InstanceCleanupHostReconciled, CompletedAt: time.Date(2026, time.September, 30, 12, 0, 0, 123, time.UTC)}
 	worker, err := json.Marshal(proof)
 	if err != nil {
 		t.Fatal(err)

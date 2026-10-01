@@ -128,7 +128,7 @@ type snapshotNetworkManifest struct {
 	MTU                int      `json:"mtu"`
 }
 
-func snapshotRuntimeConfig(cfg Config, checkpointID string, runtimeID string, cpuConfigDigest string, kernelDigest string, initramfsDigest string, rootfsDigest string, kernelArgs string, topology vm.RuntimeTopology, readOnlyDrives ...[]vm.ReadOnlyDrive) (string, []byte, error) {
+func snapshotRuntimeConfig(cfg Config, checkpointID string, runtimeID string, cpuConfigDigest string, kernelDigest string, initramfsDigest string, rootfsDigest string, kernelArgs string, topology vm.Topology, readOnlyDrives ...[]vm.ReadOnlyDrive) (string, []byte, error) {
 	if !sha256sum.ValidDigest(runtimeID) {
 		return "", nil, errors.New("canonical bound host runtime ID is required for checkpoint restore")
 	}
@@ -341,7 +341,7 @@ func validateRuntimeManifest(
 	return nil
 }
 
-func cloneRuntimeComputer(source *vm.RuntimeComputer) *vm.RuntimeComputer {
+func cloneComputerDisk(source *vm.ComputerDisk) *vm.ComputerDisk {
 	if source == nil {
 		return nil
 	}

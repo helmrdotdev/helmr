@@ -74,7 +74,7 @@ func TestSnapshotFailureRequiresExplicitAbortToResume(t *testing.T) {
 				w.WriteHeader(204)
 			})
 			client := sdk.NewClient(filepath.Join(root, "api.sock"), logrus.NewEntry(logrus.New()), false, sdk.WithOpsClient(api))
-			machine, err := sdk.NewMachine(context.Background(), sdk.Config{SocketPath: filepath.Join(root, "api.sock")}, sdk.WithClient(client))
+			sdkMachine, err := sdk.NewMachine(context.Background(), sdk.Config{SocketPath: filepath.Join(root, "api.sock")}, sdk.WithClient(client))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -83,25 +83,25 @@ func TestSnapshotFailureRequiresExplicitAbortToResume(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = closeRuntimeDiskFiles(files) })
-			session := &guestSession{diskFiles: files, machine: machine, jailRoot: root, scratchDisk: filepath.Join(root, "scratch.ext4")}
+			machine := &guestMachine{diskFiles: files, machine: sdkMachine, jailRoot: root, scratchDisk: filepath.Join(root, "scratch.ext4")}
 			if stage == "invalid manifest" || stage == "missing backing file" {
-				session.vmPlatform = testVMPlatform(t, testDigest([]byte("kernel")), testDigest([]byte("initramfs")), testDigest([]byte("rootfs")))
+				machine.vmPlatform = testVMPlatform(t, testDigest([]byte("kernel")), testDigest([]byte("initramfs")), testDigest([]byte("rootfs")))
 			}
 			if stage == "missing backing file" {
-				session.cfg = testRestoreConfig(t)
-				session.cpuConfigDigest = testCPUConfigDigest(session.cfg.VCPUCount)
-				session.kernelArgs = runtimeKernelArgs(vm.RuntimeTopology{}, nil, session.cfg.NetworkResolverIPv4)
-				if err := os.Remove(session.scratchDisk); err != nil {
+				machine.cfg = testRestoreConfig(t)
+				machine.cpuConfigDigest = testCPUConfigDigest(machine.cfg.VCPUCount)
+				machine.kernelArgs = runtimeKernelArgs(vm.Topology{}, nil, machine.cfg.NetworkResolverIPv4)
+				if err := os.Remove(machine.scratchDisk); err != nil {
 					t.Fatal(err)
 				}
 			}
 
 			device := &ownedComputerFixture{}
-			session.topology.Computer = &vm.RuntimeComputer{ComputerID: "test-computer", SizeBytes: 4096, Path: filepath.Join(root, "computer.ext4"), Device: device}
-			session.cfg.MemoryMiB = 4
-			session.cfg.ScratchDiskMiB = 4
-			session.cfg.JailerUID, session.cfg.JailerGID = os.Getuid(), os.Getgid()
-			capture, beginErr := session.BeginCheckpoint(context.Background(), vm.SnapshotRequest{ID: "checkpoint"})
+			machine.topology.Computer = &vm.ComputerDisk{ComputerID: "test-computer", SizeBytes: 4096, Path: filepath.Join(root, "computer.ext4"), Device: device}
+			machine.cfg.MemoryMiB = 4
+			machine.cfg.ScratchDiskMiB = 4
+			machine.cfg.JailerUID, machine.cfg.JailerGID = os.Getuid(), os.Getgid()
+			capture, beginErr := machine.BeginCheckpoint(context.Background(), vm.SnapshotRequest{ID: "checkpoint"})
 			if beginErr != nil {
 				t.Fatal(beginErr)
 			}
@@ -135,16 +135,16 @@ func TestSnapshotFailureRequiresExplicitAbortToResume(t *testing.T) {
 			if err := capture.ResumeGuestControl(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if api.paused || api.resumes != 1 || !session.computerHeld {
+			if api.paused || api.resumes != 1 || !machine.computerHeld {
 				t.Fatal("guest-control resume released dispatch or repeated VMM resume")
 			}
 			if err := capture.CompleteAbort(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if session.computerHeld || session.checkpointHold != nil {
+			if machine.computerHeld || machine.checkpointHold != nil {
 				t.Fatal("acknowledged abort did not release capture hold")
 			}
-			next, err := session.BeginCheckpoint(t.Context(), vm.SnapshotRequest{ID: "next-checkpoint"})
+			next, err := machine.BeginCheckpoint(t.Context(), vm.SnapshotRequest{ID: "next-checkpoint"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -157,7 +157,7 @@ func TestSnapshotFailureRequiresExplicitAbortToResume(t *testing.T) {
 			if err := capture.CompleteAbort(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if session.checkpointHold != next || !session.computerHeld {
+			if machine.checkpointHold != next || !machine.computerHeld {
 				t.Fatal("old acknowledgment released newer hold")
 			}
 		})

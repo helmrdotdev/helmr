@@ -46,7 +46,7 @@ func TestRoutedNetworkLifecyclePrivileged(t *testing.T) {
 	if err := connector.datapath.VerifyKernel(); err != nil {
 		t.Fatal(err)
 	}
-	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: uuid.NewV7().String()}
+	owner := vm.Owner{Kind: vm.OwnerInstance, ID: uuid.NewV7().String()}
 	statePath := filepath.Join(stateDir, owner.ID)
 	if err := os.Mkdir(statePath, 0o700); err != nil {
 		t.Fatal(err)
@@ -126,7 +126,7 @@ func TestNetworkOwnerManifestIsExactAndAtomicallyReplaceable(t *testing.T) {
 		NetworkLinkPool: "198.18.0.0/29", NetworkTranslationPool: "198.19.0.0/30",
 		NetworkResolverIPv4: "1.1.1.1", NetworkCapacity: 2,
 	}}
-	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: "019c10d5-a6f7-7af1-8f5f-000000000021"}
+	owner := vm.Owner{Kind: vm.OwnerInstance, ID: "019c10d5-a6f7-7af1-8f5f-000000000021"}
 	manifest, err := connector.networkOwnerManifest(owner, 7, 1, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -192,8 +192,8 @@ func TestNetworkAllocationLockIsStableOutsideOwnerStateRoot(t *testing.T) {
 		NetworkCapacity: 2,
 	}}
 	owners := []vm.Owner{
-		{Kind: vm.OwnerRuntime, ID: uuid.NewV7().String()},
-		{Kind: vm.OwnerRuntime, ID: uuid.NewV7().String()},
+		{Kind: vm.OwnerInstance, ID: uuid.NewV7().String()},
+		{Kind: vm.OwnerInstance, ID: uuid.NewV7().String()},
 	}
 	for _, owner := range owners {
 		if _, err := createOwnerStateRoot(stateDir, owner); err != nil {
@@ -245,7 +245,7 @@ func TestNetworkAllocationLockIsStableOutsideOwnerStateRoot(t *testing.T) {
 
 func TestNetworkAllocationRejectsSymlinkLock(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "guest")
-	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: uuid.NewV7().String()}
+	owner := vm.Owner{Kind: vm.OwnerInstance, ID: uuid.NewV7().String()}
 	if _, err := createOwnerStateRoot(stateDir, owner); err != nil {
 		t.Fatal(err)
 	}
@@ -283,13 +283,13 @@ func TestWithNetworkBindingSurvivesSnapshotHandlerReplacement(t *testing.T) {
 		VMPlatformID:       "vm-platform",
 	}
 	var installed *installedNetworkBinding
-	machine, err := firecracker.NewMachine(
+	sdkMachine, err := firecracker.NewMachine(
 		context.Background(),
 		firecracker.Config{},
 		firecracker.WithSnapshot("/tmp/mem", "/tmp/state"),
 		connector.withNetworkBinding(
 			workloadLaunch,
-			vm.Owner{Kind: vm.OwnerRuntime, ID: logical.OwnerID},
+			vm.Owner{Kind: vm.OwnerInstance, ID: logical.OwnerID},
 			logical,
 			&installed,
 		),
@@ -297,7 +297,7 @@ func TestWithNetworkBindingSurvivesSnapshotHandlerReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !machine.Handlers.FcInit.Has("helmr.InstallNetworkBinding") {
+	if !sdkMachine.Handlers.FcInit.Has("helmr.InstallNetworkBinding") {
 		t.Fatal("network binding handler was not installed after snapshot handlers")
 	}
 }
@@ -344,7 +344,7 @@ func TestNetworkBindingStartupPurposePrivileged(t *testing.T) {
 					if err := connector.datapath.VerifyKernel(); err != nil {
 						t.Fatal(err)
 					}
-					owner := vm.Owner{Kind: vm.OwnerRuntime, ID: uuid.NewV7().String()}
+					owner := vm.Owner{Kind: vm.OwnerInstance, ID: uuid.NewV7().String()}
 					statePath, err := createOwnerStateRoot(connector.cfg.StateDir, owner)
 					if err != nil {
 						t.Fatal(err)
@@ -392,16 +392,16 @@ func TestNetworkBindingStartupPurposePrivileged(t *testing.T) {
 						opts = append(opts, withSnapshotRestore("unused.mem", "unused.state"))
 					}
 					opts = append(opts, connector.withNetworkBinding(mode, owner, logical, &installed))
-					machine, err := firecracker.NewMachine(t.Context(), firecracker.Config{DisableValidation: true}, opts...)
+					sdkMachine, err := firecracker.NewMachine(t.Context(), firecracker.Config{DisableValidation: true}, opts...)
 					if err != nil {
 						t.Fatal(err)
 					}
-					machine.Handlers.FcInit = machine.Handlers.FcInit.Swap(firecracker.Handler{
+					sdkMachine.Handlers.FcInit = sdkMachine.Handlers.FcInit.Swap(firecracker.Handler{
 						Name: firecracker.SetupNetworkHandlerName,
 						Fn:   func(context.Context, *firecracker.Machine) error { return beforeVMM },
 					})
 					// The installed handler runs with an independent VM lifetime context.
-					err = machine.Start(runtimeCtx)
+					err = sdkMachine.Start(runtimeCtx)
 					wantCalls := 1
 					if test.probe || test.absent {
 						wantCalls = 0

@@ -12,7 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func abortReceipt(target workerapi.RuntimeReconcileTarget) workerapi.CaptureAbortResponse {
+func abortReceipt(target workerapi.InstanceReconcileTarget) workerapi.CaptureAbortResponse {
 	return workerapi.CaptureAbortResponse{WorkerHostID: "worker", ComputerInstanceID: target.ID, ComputerID: target.Source.ComputerID, WorkerEpoch: target.WorkerEpoch, DesiredVersion: target.DesiredVersion, AbortDesiredVersion: target.DesiredVersion + 1, CheckpointID: target.Capture.CheckpointID, WriterGeneration: target.Source.WriterGeneration, MembershipRevision: target.Capture.MembershipRevision, VMPlatformID: target.Source.VMPlatformID, Disposition: workerapi.CaptureAborted}
 }
 
@@ -23,7 +23,7 @@ func TestCaptureAbortRetainsOriginalMachineAndCheckout(t *testing.T) {
 			freeze := checkpointFreezeStream(t, target)
 			installed := newCheckpointStream(t, nil, &computerv0.ComputerCaptureAbortResponse{CheckpointId: target.Capture.CheckpointID, AbortDesiredVersion: target.DesiredVersion + 1})
 			activated := newCheckpointStream(t, nil, &computerv0.ComputerCaptureAbortResponse{CheckpointId: target.Capture.CheckpointID, AbortDesiredVersion: target.DesiredVersion + 1, Activated: true})
-			session := &checkpointSession{stream: freeze, streams: []io.ReadWriteCloser{freeze, installed, activated}, artifact: checkpointArtifact(t)}
+			session := &checkpointMachine{stream: freeze, streams: []io.ReadWriteCloser{freeze, installed, activated}, artifact: checkpointArtifact(t)}
 			ref := preparedMachineRef{id: target.ID, epoch: target.WorkerEpoch}
 			client := &checkpointReconcileClient{target: target, registerError: &httpclient.Error{StatusCode: 409, Message: "candidate rejected"}}
 			p := &PreparedMachines{ComputerCaptures: &CaptureRuns{}, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), claims: unmountedCaptureClaim(ref, target, session)}
@@ -53,12 +53,12 @@ func TestCaptureAbortRetainsOriginalMachineAndCheckout(t *testing.T) {
 				}
 				return receipt, nil
 			}
-			client.onTargets = func(context.Context) (workerapi.RuntimeReconcileResponse, error) {
-				return workerapi.RuntimeReconcileResponse{}, errors.New("temporary control outage")
+			client.onTargets = func(context.Context) (workerapi.InstanceReconcileResponse, error) {
+				return workerapi.InstanceReconcileResponse{}, errors.New("temporary control outage")
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			err := p.captureRuntimeTarget(ctx, client, target)
+			err := p.captureInstanceTarget(ctx, client, target)
 			if err == nil || !completed || session.closeCount != 0 || session.resumeCount != 1 || client.closed != 0 {
 				t.Fatalf("capture=%v complete=%v closed=%d resumed=%d", err, completed, session.closeCount, session.resumeCount)
 			}
@@ -74,7 +74,7 @@ func TestCaptureAbortUnknownOutcomeRetainsSource(t *testing.T) {
 	freeze := checkpointFreezeStream(t, target)
 	installed := newCheckpointStream(t, nil, &computerv0.ComputerCaptureAbortResponse{CheckpointId: target.Capture.CheckpointID, AbortDesiredVersion: target.DesiredVersion + 1})
 	activated := newCheckpointStream(t, nil, &computerv0.ComputerCaptureAbortResponse{CheckpointId: target.Capture.CheckpointID, AbortDesiredVersion: target.DesiredVersion + 1, Activated: true})
-	session := &checkpointSession{stream: freeze, streams: []io.ReadWriteCloser{freeze, installed, activated}, artifact: checkpointArtifact(t)}
+	session := &checkpointMachine{stream: freeze, streams: []io.ReadWriteCloser{freeze, installed, activated}, artifact: checkpointArtifact(t)}
 	ref := preparedMachineRef{id: target.ID, epoch: target.WorkerEpoch}
 	client := &checkpointReconcileClient{target: target, registerError: &httpclient.Error{StatusCode: 409, Message: "candidate rejected"}}
 	p := &PreparedMachines{ComputerCaptures: &CaptureRuns{}, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), claims: unmountedCaptureClaim(ref, target, session)}
@@ -88,14 +88,14 @@ func TestCaptureAbortUnknownOutcomeRetainsSource(t *testing.T) {
 		}
 		return abortReceipt(target), nil
 	}
-	client.onTargets = func(ctx context.Context) (workerapi.RuntimeReconcileResponse, error) {
+	client.onTargets = func(ctx context.Context) (workerapi.InstanceReconcileResponse, error) {
 		close(uncertain)
 		select {
 		case <-recovered:
 		case <-ctx.Done():
-			return workerapi.RuntimeReconcileResponse{}, ctx.Err()
+			return workerapi.InstanceReconcileResponse{}, ctx.Err()
 		}
-		return workerapi.RuntimeReconcileResponse{}, errors.New("status unavailable")
+		return workerapi.InstanceReconcileResponse{}, errors.New("status unavailable")
 	}
 	client.onAbortComplete = func(context.Context, workerapi.CaptureAbortCompleteRequest) (workerapi.ComputerCheckpointResponse, error) {
 		receipt := client.receipt()
@@ -105,7 +105,7 @@ func TestCaptureAbortUnknownOutcomeRetainsSource(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- p.captureRuntimeTarget(ctx, client, target) }()
+	go func() { done <- p.captureInstanceTarget(ctx, client, target) }()
 	select {
 	case <-uncertain:
 	case <-ctx.Done():
@@ -132,7 +132,7 @@ func TestCaptureAbortRestoresHealthyMemberAndKeepsCancellation(t *testing.T) {
 	for _, partialPause := range []bool{false, true} {
 		t.Run(map[bool]string{false: "publication failure", true: "partial pause"}[partialPause], func(t *testing.T) {
 			target := checkpointCaptureTarget(2)
-			session := &checkpointSession{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
+			session := &checkpointMachine{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
 			client := &checkpointReconcileClient{target: target, registerError: &httpclient.Error{StatusCode: 409, Message: "candidate rejected"}}
 			allowCaptureAbort(t, client, session)
 			if partialPause {
@@ -155,7 +155,7 @@ func TestCaptureAbortRestoresHealthyMemberAndKeepsCancellation(t *testing.T) {
 				wait := captureRegistryWait(t, registry, target, member)
 				waits = append(waits, wait)
 				receipt.Members = append(receipt.Members, workerapi.CaptureAbortMember{RunID: member.RunID, AttemptNumber: member.AttemptNumber, RunWaitID: member.RunWaitID, Lease: workerapi.RunLeaseFence{ID: member.RunLeaseID, LeaseSequence: wait.lease.LeaseSequence}, ExpiresAt: wait.lease.ExpiresAt, Cancelled: index == 1})
-				wait.resume = func(_ context.Context, _ workerapi.RuntimeReconcileTarget, grant workerapi.CaptureAbortMember, restore bool) (*computerv0.ComputerRunAuthority, uint64, error) {
+				wait.resume = func(_ context.Context, _ workerapi.InstanceReconcileTarget, grant workerapi.CaptureAbortMember, restore bool) (*computerv0.ComputerRunAuthority, uint64, error) {
 					if index != 0 || grant.Cancelled {
 						t.Error("cancelled member received renewal authority")
 					}
@@ -192,7 +192,7 @@ func TestCaptureAbortRestoresHealthyMemberAndKeepsCancellation(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			if err := p.captureRuntimeTarget(ctx, client, target); err == nil {
+			if err := p.captureInstanceTarget(ctx, client, target); err == nil {
 				t.Fatal("original capture failure was lost")
 			}
 			for index, result := range results {

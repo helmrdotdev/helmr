@@ -18,7 +18,7 @@ import (
 // prevents a late guest renewal from overlapping the cgroup freeze. Control
 // Plane renewals continue after the frozen transition until the physical owner
 // finishes its operation.
-func (task *guestRunLeaseTask) pauseComputerMember(ctx context.Context, wait WaitRequest, target workerapi.RuntimeReconcileTarget, member workerapi.RuntimeCaptureRun) error {
+func (task *guestRunLeaseTask) pauseComputerMember(ctx context.Context, wait WaitRequest, target workerapi.InstanceReconcileTarget, member workerapi.InstanceCaptureRun) error {
 	task.renewalGate.Lock()
 	defer task.renewalGate.Unlock()
 	task.mu.Lock()
@@ -66,7 +66,7 @@ func (task *guestRunLeaseTask) pauseComputerMember(ctx context.Context, wait Wai
 	return nil
 }
 
-func (task *guestRunLeaseTask) resumeCapturedMember(ctx context.Context, target workerapi.RuntimeReconcileTarget, member workerapi.CaptureAbortMember, restoreRenewal bool) (*computerv0.ComputerRunAuthority, uint64, error) {
+func (task *guestRunLeaseTask) resumeCapturedMember(ctx context.Context, target workerapi.InstanceReconcileTarget, member workerapi.CaptureAbortMember, restoreRenewal bool) (*computerv0.ComputerRunAuthority, uint64, error) {
 	task.renewalGate.Lock()
 	defer task.renewalGate.Unlock()
 	task.mu.Lock()

@@ -142,12 +142,12 @@ func (s *Server) githubFinish(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("auth callback failed")))
 		return
 	}
-	rawSession, err := s.completeBrowserAuth(r, flow, external)
+	rawMachine, err := s.completeBrowserAuth(r, flow, external)
 	if err != nil {
 		writeError(w, identityError(err))
 		return
 	}
-	setSessionCookie(w, r, rawSession, s.identity.Lifetimes().Session)
+	setSessionCookie(w, r, rawMachine, s.identity.Lifetimes().Session)
 	writeJSON(w, http.StatusOK, api.GitHubAuthFinishResponse{RedirectAfter: validateRedirectAfter(flow.RedirectAfter)})
 }
 

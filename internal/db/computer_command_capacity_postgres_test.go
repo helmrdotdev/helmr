@@ -145,5 +145,5 @@ func addCapacityCommand(t *testing.T, f runtest.Fixture, computerID uuid.UUID) {
 
 func reclaimCapacityInstance(t *testing.T, f runtest.Fixture, instanceID uuid.UUID) {
 	t.Helper()
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1,observed_state='closed',observed_version=observed_version+1,observed_desired_version=desired_version+1,admission_state='closed',mount_state='unmounted',unmounted_at=now(),terminal_at=now(),terminal_reason_code='closed',reclaimed_at=now(),reclaim_evidence='{"method":"session_closed"}' WHERE id=$1`, instanceID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1,observed_state='closed',observed_version=observed_version+1,observed_desired_version=desired_version+1,admission_state='closed',mount_state='unmounted',unmounted_at=now(),terminal_at=now(),terminal_reason_code='closed',reclaimed_at=now(),reclaim_evidence='{"method":"machine_closed"}' WHERE id=$1`, instanceID)
 }

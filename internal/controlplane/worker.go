@@ -152,7 +152,7 @@ func validateWorkerStartupRecovery(
 	epochStartedAt time.Time,
 	now time.Time,
 ) error {
-	if !request.InventoryComplete || request.InventoryScope != "worker_runtime_state_roots_v0" || request.ObservedAt.IsZero() {
+	if !request.InventoryComplete || request.InventoryScope != "worker_instance_state_roots_v0" || request.ObservedAt.IsZero() {
 		return errors.New("a complete, timestamped physical inventory is required")
 	}
 	if request.ObservedAt.After(now.Add(time.Minute)) {
@@ -165,10 +165,10 @@ func validateWorkerStartupRecovery(
 	for _, value := range request.Inventory {
 		id, err := ids.Parse(value)
 		if err != nil {
-			return errors.New("inventory runtime id must be a canonical UUIDv7")
+			return errors.New("inventory instance id must be a canonical UUIDv7")
 		}
 		if _, exists := inventory[id]; exists {
-			return fmt.Errorf("inventory runtime id %s is duplicated", id)
+			return fmt.Errorf("inventory instance id %s is duplicated", id)
 		}
 		inventory[id] = struct{}{}
 	}
@@ -177,13 +177,13 @@ func validateWorkerStartupRecovery(
 		for _, value := range values {
 			id, err := ids.Parse(value)
 			if err != nil {
-				return fmt.Errorf("%s runtime id must be a canonical UUIDv7", kind)
+				return fmt.Errorf("%s instance id must be a canonical UUIDv7", kind)
 			}
 			if previous, exists := seen[id]; exists {
-				return fmt.Errorf("runtime id %s is reported as both %s and %s", id, previous, kind)
+				return fmt.Errorf("instance id %s is reported as both %s and %s", id, previous, kind)
 			}
 			if _, owned := inventory[id]; !owned {
-				return fmt.Errorf("%s runtime id %s is outside the owned inventory", kind, id)
+				return fmt.Errorf("%s instance id %s is outside the owned inventory", kind, id)
 			}
 			seen[id] = kind
 		}
@@ -196,7 +196,7 @@ func validateWorkerStartupRecovery(
 		return err
 	}
 	if len(seen) != len(inventory) {
-		return errors.New("every owned inventory runtime must have exactly one recovery outcome")
+		return errors.New("every owned inventory instance must have exactly one recovery outcome")
 	}
 	return nil
 }
@@ -235,7 +235,7 @@ func (s *Server) workerCompleteDrain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if !request.InventoryComplete || request.InventoryScope != "worker_runtime_state_roots_v0" || request.ObservedAt.IsZero() {
+	if !request.InventoryComplete || request.InventoryScope != "worker_instance_state_roots_v0" || request.ObservedAt.IsZero() {
 		writeError(w, badRequest(errors.New("a complete, timestamped physical inventory is required")))
 		return
 	}
@@ -289,8 +289,8 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 		return
 	}
 	readiness := workerapi.Readiness{
-		Run:     workerRoleReadiness(state, state.RunReady, state.RunPausedReason),
-		Runtime: workerRoleReadiness(state, state.RuntimeReady, state.VMPausedReason),
+		Run:      workerRoleReadiness(state, state.RunReady, state.RunPausedReason),
+		Instance: workerRoleReadiness(state, state.InstanceReady, state.VMPausedReason),
 	}
 	status, err := workerPublicStatus(state.Status)
 	if err != nil {

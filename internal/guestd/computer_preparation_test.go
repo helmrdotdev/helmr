@@ -51,7 +51,7 @@ func TestPreparedComputerMaterializationUsesMountedRoot(t *testing.T) {
 		Encoding: "oci-tar", SizeBytes: 79_664_879,
 	}
 	prepared, _, err := restorePreparedComputerRuntime(strings.NewReader("no image stream"), &computerv0.PrepareComputerRuntimeRequest{ComputerId: "computer-1", WriterGeneration: 2,
-		ComputerInstanceId: "runtime", MountPath: "/workspace", ComputerImage: artifact,
+		ComputerInstanceId: "instance", MountPath: "/workspace", ComputerImage: artifact,
 		MountedImageConfig: &computerv0.RuntimeImageConfig{WorkingDir: "/workspace", User: "0:0"},
 	}, slogDiscard())
 	if err != nil {
@@ -60,15 +60,15 @@ func TestPreparedComputerMaterializationUsesMountedRoot(t *testing.T) {
 	registry := newComputerOperationRegistry()
 	registry.setPreparedRuntime(prepared)
 	request := &computerv0.MaterializeComputerRequest{
-		Envelope:  &computerv0.ComputerOperationEnvelope{ComputerInstanceId: "runtime", ComputerId: "computer-1", WriterGeneration: 2},
+		Envelope:  &computerv0.ComputerOperationEnvelope{ComputerInstanceId: "instance", ComputerId: "computer-1", WriterGeneration: 2},
 		MountPath: "/workspace", Target: testComputerMountTarget("version"),
 		UsePreparedRuntime: true, ComputerImage: artifact,
 	}
 	for name, change := range map[string]func(*computerv0.MaterializeComputerRequest){
-		"writer":  func(r *computerv0.MaterializeComputerRequest) { r.Envelope.WriterGeneration++ },
-		"runtime": func(r *computerv0.MaterializeComputerRequest) { r.Envelope.ComputerInstanceId = "other" },
-		"digest":  func(r *computerv0.MaterializeComputerRequest) { r.ComputerImage.Digest = "sha256:other" },
-		"mount":   func(r *computerv0.MaterializeComputerRequest) { r.MountPath = "/other" },
+		"writer":   func(r *computerv0.MaterializeComputerRequest) { r.Envelope.WriterGeneration++ },
+		"instance": func(r *computerv0.MaterializeComputerRequest) { r.Envelope.ComputerInstanceId = "other" },
+		"digest":   func(r *computerv0.MaterializeComputerRequest) { r.ComputerImage.Digest = "sha256:other" },
+		"mount":    func(r *computerv0.MaterializeComputerRequest) { r.MountPath = "/other" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			mismatch := proto.Clone(request).(*computerv0.MaterializeComputerRequest)

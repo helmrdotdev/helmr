@@ -44,21 +44,21 @@ const (
 	PublicAccessTokenStatusExpired PublicAccessTokenStatus = "expired"
 )
 
-type RuntimeDesiredState = string
+type InstanceDesiredState = string
 
 const (
-	RuntimeDesiredStateReady  RuntimeDesiredState = "ready"
-	RuntimeDesiredStateClosed RuntimeDesiredState = "closed"
+	InstanceDesiredStateReady  InstanceDesiredState = "ready"
+	InstanceDesiredStateClosed InstanceDesiredState = "closed"
 )
 
-type RuntimeObservedState = string
+type InstanceObservedState = string
 
 const (
-	RuntimeObservedStateAllocated RuntimeObservedState = "allocated"
-	RuntimeObservedStateReady     RuntimeObservedState = "ready"
-	RuntimeObservedStateClosed    RuntimeObservedState = "closed"
-	RuntimeObservedStateFailed    RuntimeObservedState = "failed"
-	RuntimeObservedStateLost      RuntimeObservedState = "lost"
+	InstanceObservedStateAllocated InstanceObservedState = "allocated"
+	InstanceObservedStateReady     InstanceObservedState = "ready"
+	InstanceObservedStateClosed    InstanceObservedState = "closed"
+	InstanceObservedStateFailed    InstanceObservedState = "failed"
+	InstanceObservedStateLost      InstanceObservedState = "lost"
 )
 
 type TokenStatus = string

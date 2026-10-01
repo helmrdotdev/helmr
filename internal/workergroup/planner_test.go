@@ -209,10 +209,10 @@ func TestPlanComputerCommandSharesFreshRunBinConstraints(t *testing.T) {
 		{name: "run paused", mutate: func(row *db.ListWorkerCapacityBinsRow) {
 			row.RunPausedReason = pgtype.Text{String: "operator", Valid: true}
 		}},
-		{name: "runtime paused", mutate: func(row *db.ListWorkerCapacityBinsRow) {
+		{name: "instance paused", mutate: func(row *db.ListWorkerCapacityBinsRow) {
 			row.VMPausedReason = pgtype.Text{String: "operator", Valid: true}
 		}},
-		{name: "runtime start", mutate: func(row *db.ListWorkerCapacityBinsRow) {
+		{name: "instance start", mutate: func(row *db.ListWorkerCapacityBinsRow) {
 			row.AvailableInstanceStarts = 0
 		}},
 		{name: "VM slot", mutate: func(row *db.ListWorkerCapacityBinsRow) {

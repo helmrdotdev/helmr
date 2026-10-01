@@ -57,7 +57,7 @@ type HostCredentialRequest struct {
 }
 
 // HostCredential is a signed, short-lived worker host credential bound to one
-// host epoch.
+// worker epoch.
 type HostCredential struct {
 	Value     string
 	ExpiresIn time.Duration

@@ -76,7 +76,7 @@ type ConnectRequest struct {
 	OwnerKind      OwnerKind
 	Binding        WorkloadBinding
 	Resources      compute.ResourceVector
-	Topology       RuntimeTopology
+	Topology       Topology
 	ReadOnlyDrives []ReadOnlyDrive
 }
 
@@ -97,17 +97,17 @@ type ReadOnlyDriveSource interface {
 	LinkInto(directory string, name string, uid int, gid int) error
 }
 
-type RuntimeTopology struct {
-	Computer *RuntimeComputer
+type Topology struct {
+	Computer *ComputerDisk
 }
 
-// RuntimeComputer transfers an exclusively owned working disk to the VM owner.
+// ComputerDisk transfers an exclusively owned working disk to the VM owner.
 // File is a private backing inode, valid through Materialize; the backend
-// retains its own inode link. For a block device the Runtime must also retain its
+// retains its own inode link. For a block device the Instance must also retain its
 // attachment and export until the VMM and all device users are proven absent.
 // Device transfers that ownership to the backend when BindConsumer succeeds.
 // VersionID identifies the published source, not subsequent guest writes.
-type RuntimeComputer struct {
+type ComputerDisk struct {
 	ComputerID string
 	Path       string
 	File       *os.File
@@ -157,7 +157,7 @@ type SnapshotArtifact struct {
 	ScratchDisk       SnapshotFile
 	Memory            []SnapshotFile
 	Manifest          []byte
-	Phases            []RuntimePhase
+	Phases            []Phase
 }
 
 type SnapshotFile struct {
@@ -180,9 +180,9 @@ type RestoreRequest struct {
 	MemoryMediaTypes     []string
 	Manifest             []byte
 	Checkpoint           CheckpointIdentity
-	Topology             RuntimeTopology
+	Topology             Topology
 	ReadOnlyDrives       []ReadOnlyDrive
-	RecordPhase          func(RuntimePhase)
+	RecordPhase          func(Phase)
 }
 
 type MaterializeRequest struct {
@@ -195,14 +195,14 @@ type MaterializeRequest struct {
 	Resources                 compute.ResourceVector
 	VMVCPUCount               int32
 	CPUConfigDigest           string
-	Topology                  RuntimeTopology
+	Topology                  Topology
 	ReadOnlyDrives            []ReadOnlyDrive
-	RecordPhase               func(RuntimePhase)
+	RecordPhase               func(Phase)
 }
 
 // WorkloadBinding is the closed logical authority that a backend binds to
 // its locally owned network attachment before a guest can receive input or
-// network access. Runtime workloads use their immutable Runtime Instance ID
+// network access. Instance workloads use their immutable Computer Instance ID
 // with generation 1.
 type WorkloadBinding struct {
 	WorkerEpoch        int64
@@ -225,11 +225,11 @@ func (binding WorkloadBinding) Validate(owner Owner) error {
 	if strings.TrimSpace(binding.VMPlatformID) == "" {
 		return errors.New("workload binding runtime identity is required")
 	}
-	if owner.Kind != OwnerRuntime {
+	if owner.Kind != OwnerInstance {
 		return errors.New("workload binding owner kind is invalid")
 	}
 	if binding.ComputerInstanceID != owner.ID || binding.Generation != 1 {
-		return errors.New("runtime workload binding is incomplete")
+		return errors.New("instance workload binding is incomplete")
 	}
 	return nil
 }
@@ -237,7 +237,7 @@ func (binding WorkloadBinding) Validate(owner Owner) error {
 type OwnerKind string
 
 const (
-	OwnerRuntime OwnerKind = "runtime"
+	OwnerInstance OwnerKind = "instance"
 )
 
 type Owner struct {
@@ -246,8 +246,8 @@ type Owner struct {
 }
 
 func (o Owner) Validate() error {
-	if o.Kind != OwnerRuntime {
-		return errors.New("VM owner kind must be runtime")
+	if o.Kind != OwnerInstance {
+		return errors.New("VM owner kind must be instance")
 	}
 	if err := ids.Validate(o.ID); err != nil {
 		return errors.New("VM owner id must be a canonical UUIDv7")
@@ -319,7 +319,7 @@ type CheckpointIdentity struct {
 	CPUConfigDigest   string
 }
 
-type RuntimePhase struct {
+type Phase struct {
 	Name       string
 	DurationMs int64
 	Role       string
@@ -367,7 +367,7 @@ func RuntimeErrorClass(err error) string {
 }
 
 // SnapshotLimits describes stable source sizes and bounded raw metadata. The
-// caller reserves encoded staging in addition to the runtime-owned source disks.
+// caller reserves encoded staging in addition to the instance-owned source disks.
 type SnapshotLimits struct {
 	ComputerBytes int64
 	MemoryBytes   int64

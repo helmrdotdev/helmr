@@ -52,7 +52,7 @@ func TestCaptureAbortRebindRetriesLostReadyAfterTransportReset(t *testing.T) {
 		host, guest := net.Pipe()
 		defer host.Close()
 		defer guest.Close()
-		mounts.add(testComputerMount(lease), fakeGuestSession{stream: host}, "token")
+		mounts.add(testComputerMount(lease), fakeGuestMachine{stream: host}, "token")
 		served := make(chan error, 1)
 		go func() {
 			header, _, err := wire.ReadStreamFrameHeader(guest)

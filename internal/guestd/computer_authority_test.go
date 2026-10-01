@@ -189,7 +189,7 @@ func TestProgramResumeGrantPreservesFrozenScope(t *testing.T) {
 
 func testComputerAuthorityEntry() *computerMountEntry {
 	return &computerMountEntry{
-		computerInstanceID:        "runtime-1",
+		computerInstanceID:        "instance-1",
 		computerID:                "computer-1",
 		baseComputerDiskVersionID: "version-1",
 		channelCredential:         "channel-1",
@@ -202,7 +202,7 @@ func testComputerRunAuthority(expiresAt time.Time) *computerv0.ComputerRunAuthor
 		Fence: &computerv0.ComputerAuthorityFence{
 			WorkerHostId:              "worker-1",
 			WorkerEpoch:               7,
-			ComputerInstanceId:        "runtime-1",
+			ComputerInstanceId:        "instance-1",
 			VmPlatformId:              "vm-platform-1",
 			ComputerId:                "computer-1",
 			RunId:                     "run-1",

@@ -15,7 +15,7 @@ import (
 func computerPreparationRef(instanceID string, desiredVersion int64) (computer.PreparationRef, error) {
 	id, err := ids.Parse(instanceID)
 	if err != nil || desiredVersion <= 0 {
-		return computer.PreparationRef{}, badRequest(errors.New("runtime identity and desired version are required"))
+		return computer.PreparationRef{}, badRequest(errors.New("instance identity and desired version are required"))
 	}
 	return computer.PreparationRef{InstanceID: id, DesiredVersion: desiredVersion}, nil
 }

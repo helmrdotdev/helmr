@@ -125,7 +125,7 @@ func lockInstanceAssignment(ctx context.Context, tx pgx.Tx, p instanceAssignment
 	if !valid {
 		return p, ErrCandidateChanged
 	}
-	if err = workergroup.CheckHostRuntimeAdmission(ctx, tx, p.worker.WorkerHostID, p.worker.WorkerEpoch.Int64); err != nil {
+	if err = workergroup.CheckHostInstanceAdmission(ctx, tx, p.worker.WorkerHostID, p.worker.WorkerEpoch.Int64); err != nil {
 		return p, err
 	}
 	err = tx.QueryRow(ctx, `SELECT h.per_vm_cpu_millis >= $3 AND h.per_vm_memory_bytes >= $4 AND h.per_vm_guest_ephemeral_disk_bytes >= $5

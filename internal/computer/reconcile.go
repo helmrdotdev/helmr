@@ -51,7 +51,7 @@ type RestoreSource struct {
 	Members    []db.ComputerCheckpointRun
 }
 
-// ReconcileTargets reads up to limit Instances the host epoch must converge,
+// ReconcileTargets reads up to limit Instances the worker epoch must converge,
 // without locks. A capture or restore source that changed since the
 // Instance was read fails the read.
 func ReconcileTargets(ctx context.Context, q db.Querier, host Host, limit int32) ([]ReconcileTarget, error) {

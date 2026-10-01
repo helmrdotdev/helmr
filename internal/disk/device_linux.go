@@ -15,7 +15,7 @@ import (
 )
 
 // Device owns a local version, its export and its exclusive kernel attachment.
-// Source retention and capacity reservations remain with the Runtime owner.
+// Source retention and capacity reservations remain with the Instance owner.
 // Close never releases those reservations or deletes recovery evidence.
 type Device struct {
 	mu         sync.Mutex
@@ -82,7 +82,7 @@ func (d *Device) BindConsumer(exited <-chan struct{}) error {
 }
 
 // LinkInto exposes an owned private device node without changing the host's
-// global /dev node. The Runtime owns directory and must retain it until exit.
+// global /dev node. The Instance owns directory and must retain it until exit.
 func (d *Device) LinkInto(ctx context.Context, directory string, uid, gid int) (string, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()

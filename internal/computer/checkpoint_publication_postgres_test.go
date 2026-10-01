@@ -71,7 +71,7 @@ func registerEmptyCapture(t *testing.T, f runtest.Fixture, member runtest.RunLea
 	return cp, ref
 }
 
-// Capture fences the host epoch and status, never claim versions: a claim
+// Capture fences the worker epoch and status, never claim versions: a claim
 // bump or a drain does not stop a checkpoint from recording its objects, and
 // a new epoch or a lost host does.
 func TestCheckpointObjectsFenceEpochAndStatusNotClaims(t *testing.T) {

@@ -178,7 +178,7 @@ func TestCheckpointPublicationRollsBackAllMembershipsOnWriteFailure(t *testing.T
 	for i := 0; i < 4; i++ {
 		upload(i)
 	}
-	// Fail after inserting the Computer version and some runtime memberships.
+	// Fail after inserting the Computer version and some instance memberships.
 	_, err := f.Pool.Exec(t.Context(), `CREATE FUNCTION reject_checkpoint_memory() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.kind='computer_checkpoint_memory' THEN RAISE EXCEPTION 'injected storage failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_checkpoint_memory BEFORE INSERT ON artifacts FOR EACH ROW EXECUTE FUNCTION reject_checkpoint_memory()`)
 	if err != nil {
 		t.Fatal(err)

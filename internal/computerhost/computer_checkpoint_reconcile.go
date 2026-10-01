@@ -15,13 +15,13 @@ import (
 type ComputerCheckpointClient interface {
 	AbortCapture(context.Context, workerapi.CaptureAbortRequest) (workerapi.CaptureAbortResponse, error)
 	CompleteCaptureAbort(context.Context, workerapi.CaptureAbortCompleteRequest) (workerapi.ComputerCheckpointResponse, error)
-	ListRuntimeReconcileTargets(context.Context) (workerapi.RuntimeReconcileResponse, error)
+	ListInstanceReconcileTargets(context.Context) (workerapi.InstanceReconcileResponse, error)
 	CheckpointComputerPublicationClient
 	RegisterCheckpoint(context.Context, workerapi.RegisterCheckpointRequest) (workerapi.ComputerCheckpointResponse, error)
 	MarkCheckpointReady(context.Context, workerapi.CheckpointReadyRequest) (workerapi.ComputerCheckpointResponse, error)
 }
 
-func (p *PreparedMachines) captureRuntimeTarget(ctx context.Context, instances PreparedComputerInstanceClient, target workerapi.RuntimeReconcileTarget) error {
+func (p *PreparedMachines) captureInstanceTarget(ctx context.Context, instances PreparedComputerInstanceClient, target workerapi.InstanceReconcileTarget) error {
 	if _, err := computerFreezeRequest(target); err != nil {
 		return err
 	}
@@ -37,7 +37,7 @@ func (p *PreparedMachines) captureRuntimeTarget(ctx context.Context, instances P
 	}
 	if claim != nil && claim.kind == orphanClaim {
 		p.mu.Unlock()
-		return p.reclaimFailedRuntimeTarget(ctx, instances, target)
+		return p.reclaimFailedInstanceTarget(ctx, instances, target)
 	}
 	if claim != nil && (claim.teardown || claim.release != nil) {
 		p.mu.Unlock()
@@ -47,7 +47,7 @@ func (p *PreparedMachines) captureRuntimeTarget(ctx context.Context, instances P
 	if claim == nil {
 		for key, entries := range p.entries {
 			for i, e := range entries {
-				if e.computerInstanceID == ref.id && e.runtimeEpoch == ref.epoch {
+				if e.computerInstanceID == ref.id && e.workerEpoch == ref.epoch {
 					p.removeReadyEntryAtLocked(key, entries, i)
 					claim = p.claimLocked(ref, captureClaim, e)
 					claimedReady = true
@@ -65,8 +65,8 @@ func (p *PreparedMachines) captureRuntimeTarget(ctx context.Context, instances P
 		entry, mount = claim.entry, claim.mount
 	}
 	p.mu.Unlock()
-	if claim == nil || entry.session == nil {
-		return p.reclaimFailedRuntimeTarget(ctx, instances, target)
+	if claim == nil || entry.machine == nil {
+		return p.reclaimFailedInstanceTarget(ctx, instances, target)
 	}
 	if claimedReady {
 		// A capture that never began physical work returns the prepared
@@ -76,8 +76,8 @@ func (p *PreparedMachines) captureRuntimeTarget(ctx context.Context, instances P
 	if entry.target.Source.ComputerID != target.Source.ComputerID || entry.target.Source.WriterGeneration != target.Source.WriterGeneration {
 		return errors.New("computer capture source ownership changed")
 	}
-	session := entry.session
-	checkpointer := computerCheckpointer{session: session, mount: mount, reservations: p.Reservations, objects: p.ComputerObjects, encryptor: p.CheckpointEncryptor, tempDir: p.TempDir, computer: workerapi.CheckpointComputerBase{MountPath: "/workspace"}, publication: func(computerCheckpointRequest) disk.ContinuationPublication {
+	machine := entry.machine
+	checkpointer := computerCheckpointer{machine: machine, mount: mount, reservations: p.Reservations, objects: p.ComputerObjects, encryptor: p.CheckpointEncryptor, tempDir: p.TempDir, computer: workerapi.CheckpointComputerBase{MountPath: "/workspace"}, publication: func(computerCheckpointRequest) disk.ContinuationPublication {
 		return checkpointComputerPublisher{client: p.Checkpoints, objects: p.ComputerObjects, request: workerapi.CheckpointComputerObjectRequest{ComputerInstanceID: target.ID, WorkerEpoch: target.WorkerEpoch, DesiredVersion: target.DesiredVersion, CheckpointID: target.Capture.CheckpointID}}
 	}}
 	// The original Server keeps its checkout generation during a reversible
@@ -133,11 +133,11 @@ func (p *PreparedMachines) captureRuntimeTarget(ctx context.Context, instances P
 				// An uncertain reply retains every owner and reservation. Only a current
 				// close/reclaim intent for this exact Instance permits physical exclusion.
 				control, cancel = context.WithTimeout(excludeCtx, 15*time.Second)
-				targets, readErr := p.Checkpoints.ListRuntimeReconcileTargets(control)
+				targets, readErr := p.Checkpoints.ListInstanceReconcileTargets(control)
 				cancel()
 				if readErr == nil {
 					for _, current := range targets.Items {
-						if current.ID == target.ID && current.WorkerEpoch == target.WorkerEpoch && current.Source.ComputerID == target.Source.ComputerID && current.Source.WriterGeneration == target.Source.WriterGeneration && current.DesiredVersion >= target.DesiredVersion && (current.Action == workerapi.RuntimeReconcileClose || current.Action == workerapi.RuntimeReconcileReclaim) {
+						if current.ID == target.ID && current.WorkerEpoch == target.WorkerEpoch && current.Source.ComputerID == target.Source.ComputerID && current.Source.WriterGeneration == target.Source.WriterGeneration && current.DesiredVersion >= target.DesiredVersion && (current.Action == workerapi.InstanceReconcileClose || current.Action == workerapi.InstanceReconcileReclaim) {
 							finalTarget = current
 							knownClose = true
 							break
@@ -169,21 +169,21 @@ func (p *PreparedMachines) captureRuntimeTarget(ctx context.Context, instances P
 		if err != nil {
 			return err
 		}
-		if err = p.releaseRuntimeAfterPhysicalCleanup(excludeCtx, target.ID, target.WorkerEpoch); err != nil {
+		if err = p.releaseInstanceAfterPhysicalCleanup(excludeCtx, target.ID, target.WorkerEpoch); err != nil {
 			return err
 		}
 		if !knownClose {
 			if progress.receipt.AbortDesiredVersion > 0 {
 				finalTarget.DesiredVersion = progress.receipt.AbortDesiredVersion
 			}
-			return p.reportRuntimeTargetFailedWithProof(excludeCtx, instances, finalTarget, errors.New("checkpoint source stopped during worker shutdown or source exit"), proofMethod)
+			return p.reportInstanceTargetFailedWithProof(excludeCtx, instances, finalTarget, errors.New("checkpoint source stopped during worker shutdown or source exit"), proofMethod)
 		}
-		if finalTarget.Action == workerapi.RuntimeReconcileReclaim {
-			return p.reportRuntimeTargetFailedWithProof(excludeCtx, instances, finalTarget, errors.New("checkpoint source reclaimed by Control Plane"), proofMethod)
+		if finalTarget.Action == workerapi.InstanceReconcileReclaim {
+			return p.reportInstanceTargetFailedWithProof(excludeCtx, instances, finalTarget, errors.New("checkpoint source reclaimed by Control Plane"), proofMethod)
 		}
-		finalTarget.Action = workerapi.RuntimeReconcileClose
-		request := runtimeTargetStatusRequest(finalTarget, nil)
-		request.CleanupProof = &workerapi.RuntimeCleanupProof{Method: proofMethod, CompletedAt: time.Now().UTC()}
+		finalTarget.Action = workerapi.InstanceReconcileClose
+		request := instanceTargetStatusRequest(finalTarget, nil)
+		request.CleanupProof = &workerapi.InstanceCleanupProof{Method: proofMethod, CompletedAt: time.Now().UTC()}
 		_, err = instances.MarkComputerInstanceClosed(excludeCtx, request)
 		return err
 	}
@@ -246,28 +246,28 @@ func (p *PreparedMachines) captureRuntimeTarget(ctx context.Context, instances P
 // excludeCaptureSource stops a capture-owned source within the source release
 // bound and returns the cleanup proof method. A served source whose save owner
 // has not finished by then may be waiting on the VM itself, so the release
-// escalates to physical cleanup of the runtime; finalization then joins the
-// save owner first (see releaseRuntimeAfterPhysicalCleanup).
+// escalates to physical cleanup of the instance; finalization then joins the
+// save owner first (see releaseInstanceAfterPhysicalCleanup).
 func (p *PreparedMachines) excludeCaptureSource(ctx context.Context, computerInstanceID string, capture *computerCheckpointer) (string, error) {
 	releaseCtx, cancel := p.sourceReleaseContext(ctx)
 	err := capture.ReleaseCheckpointSource(releaseCtx)
 	cancel()
 	if err == nil {
-		return workerapi.RuntimeCleanupSessionClosed, nil
+		return workerapi.InstanceCleanupMachineClosed, nil
 	}
 	if capture.mount == nil || capture.mount.saves.joined() {
 		return "", err
 	}
 	if p.Backend == nil {
-		return "", errors.Join(err, errors.New("runtime connector does not support exact runtime cleanup"))
+		return "", errors.Join(err, errors.New("VM backend does not support exact instance cleanup"))
 	}
 	cleanupCtx, cancel := preparedMachineControlContext(ctx)
-	cleanupErr := p.Backend.Cleanup(cleanupCtx, vm.Owner{Kind: vm.OwnerRuntime, ID: computerInstanceID})
+	cleanupErr := p.Backend.Cleanup(cleanupCtx, vm.Owner{Kind: vm.OwnerInstance, ID: computerInstanceID})
 	cancel()
 	if cleanupErr != nil {
 		return "", fmt.Errorf("stop capture source physically: %w", errors.Join(err, cleanupErr))
 	}
-	return workerapi.RuntimeCleanupHostReconciled, nil
+	return workerapi.InstanceCleanupHostReconciled, nil
 }
 
 // sourceReleaseContext bounds one source release or owner join step. Detaching
@@ -296,7 +296,7 @@ func (p *PreparedMachines) returnUnstartedCapture(ref preparedMachineRef, claim 
 	if exitErr, exited := entry.exit.finished(); exited {
 		cause = preparedMachineExitCause(exitErr)
 	} else if p.closed {
-		cause = errors.New("runtime controller stopped")
+		cause = errors.New("instance controller stopped")
 	}
 	if cause == nil {
 		key := entry.machineKey
@@ -314,7 +314,7 @@ func (p *PreparedMachines) returnUnstartedCapture(ref preparedMachineRef, claim 
 	p.cleanupClaimedEntryAsync(entry, cause)
 }
 
-func validateComputerCheckpointReceipt(target workerapi.RuntimeReconcileTarget, response workerapi.ComputerCheckpointResponse) error {
+func validateComputerCheckpointReceipt(target workerapi.InstanceReconcileTarget, response workerapi.ComputerCheckpointResponse) error {
 	if response.ComputerInstanceID != target.ID || response.WorkerEpoch != target.WorkerEpoch || response.DesiredVersion != target.DesiredVersion || response.CheckpointID != target.Capture.CheckpointID {
 		return fmt.Errorf("%w: checkpoint receipt does not match source operation", errForeignSourceReceipt)
 	}
@@ -324,7 +324,7 @@ func validateComputerCheckpointReceipt(target workerapi.RuntimeReconcileTarget, 
 // A resuming target can outlive a lost acknowledgment or a Worker restart. An
 // existing local owner keeps the source; a restart without that owner is actual
 // source loss, reported before the normal reclaim path performs exclusion.
-func (p *PreparedMachines) reconcileCaptureAbortTarget(ctx context.Context, client PreparedComputerInstanceClient, target workerapi.RuntimeReconcileTarget) error {
+func (p *PreparedMachines) reconcileCaptureAbortTarget(ctx context.Context, client PreparedComputerInstanceClient, target workerapi.InstanceReconcileTarget) error {
 	ref := preparedMachineRef{id: target.ID, epoch: target.WorkerEpoch}
 	p.mu.Lock()
 	if p.claims[ref] != nil {
@@ -333,12 +333,12 @@ func (p *PreparedMachines) reconcileCaptureAbortTarget(ctx context.Context, clie
 	}
 	for _, entries := range p.entries {
 		for _, entry := range entries {
-			if entry.computerInstanceID == ref.id && entry.runtimeEpoch == ref.epoch {
+			if entry.computerInstanceID == ref.id && entry.workerEpoch == ref.epoch {
 				p.mu.Unlock()
 				return nil
 			}
 		}
 	}
 	p.mu.Unlock()
-	return p.markRuntimeTargetFailed(ctx, client, target, errors.New("capture source owner is absent after Worker restart"))
+	return p.markInstanceTargetFailed(ctx, client, target, errors.New("capture source owner is absent after Worker restart"))
 }

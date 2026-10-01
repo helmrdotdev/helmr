@@ -189,7 +189,7 @@ func lockPublishedSave(ctx context.Context, tx pgx.Tx, principal workergroup.Hos
 }
 
 // recheckWriter re-evaluates, after the save's writes and before commit, the
-// host epoch and statuses and the writer deadline: locks prevent credential
+// worker epoch and statuses and the writer deadline: locks prevent credential
 // changes, but elapsed time can still expire a writer.
 func (s lockedSave) recheckWriter(ctx context.Context) error {
 	var authorized bool
@@ -224,7 +224,7 @@ func (s unpublishedSave) objects(ctx context.Context) (objectScope, error) {
 	for _, k := range keys {
 		allowed[pgvalue.UUIDString(k.ID)] = true
 	}
-	write, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{ComputerInstanceID: i.ID, EnvironmentID: i.EnvironmentID, ComputerID: i.ComputerID})
+	write, err := q.GetInstanceComputerWriteKey(ctx, db.GetInstanceComputerWriteKeyParams{ComputerInstanceID: i.ID, EnvironmentID: i.EnvironmentID, ComputerID: i.ComputerID})
 	if err != nil {
 		return objectScope{}, err
 	}

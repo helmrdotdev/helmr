@@ -19,13 +19,13 @@ func lockCommandInstance(ctx context.Context, tx pgx.Tx, target db.GetComputerCo
 	})
 }
 
-// host is the worker host epoch the principal acts for.
+// host is the worker host and worker epoch the principal acts for.
 func host(worker workergroup.HostPrincipal) computer.Host {
 	return computer.Host{GroupID: worker.GroupID, HostID: worker.HostID, Epoch: worker.Epoch}
 }
 
 // producerStillAuthorized rechecks, after the operation's last lock and
-// write, that the Instance's worker host epoch is still admitted and its
+// write, that the Instance's worker epoch is still admitted and its
 // writer has not expired.
 func producerStillAuthorized(ctx context.Context, q *db.Queries, worker workergroup.HostPrincipal, i db.ComputerInstance) error {
 	authorized, err := q.CommandLogProducerStillAuthorized(ctx, db.CommandLogProducerStillAuthorizedParams{WorkerHostID: i.WorkerHostID, WorkerGroupID: i.WorkerGroupID, WorkerEpoch: worker.Epoch, ExpiresAt: i.WriterExpiresAt})

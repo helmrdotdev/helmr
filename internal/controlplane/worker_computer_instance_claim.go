@@ -28,7 +28,7 @@ func (s *Server) workerClaimComputerInstance(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, workerapi.ComputerInstanceClaimResponse{Assignment: &workerapi.ComputerInstanceAssignment{
 		ComputerInstanceID: pgvalue.UUIDString(i.ID), ComputerID: pgvalue.UUIDString(i.ComputerID), ComputerSpecID: pgvalue.UUIDString(i.ComputerSpecID),
 		OrgID: pgvalue.UUIDString(i.OrgID), ProjectID: pgvalue.UUIDString(i.ProjectID), EnvironmentID: pgvalue.UUIDString(i.EnvironmentID),
-		WriterGeneration: i.WriterGeneration, DesiredVersion: i.DesiredVersion, ObservedVersion: i.ObservedVersion, RuntimeEpoch: i.WorkerEpoch,
+		WriterGeneration: i.WriterGeneration, DesiredVersion: i.DesiredVersion, ObservedVersion: i.ObservedVersion, WorkerEpoch: i.WorkerEpoch,
 		Target:                 workerapi.ComputerMountTarget{BaseComputerDiskVersionID: pgvalue.UUIDString(i.SourceDiskVersionID)},
 		RestoreCheckpointID:    pgvalue.UUIDString(i.SourceCheckpointID),
 		GuestChannelCredential: claimed.ChannelCredential, GuestChannelCredentialHash: hex.EncodeToString(i.GuestChannelCredentialHash), ExpiresAt: i.WriterExpiresAt.Time,

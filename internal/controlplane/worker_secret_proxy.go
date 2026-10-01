@@ -23,7 +23,7 @@ func (s *Server) workerResolveSecretProxy(w http.ResponseWriter, r *http.Request
 	s.workerSecretProxy(w, r, true)
 }
 
-// Preparation proves the runtime reservation. Only resolution proves live mounted
+// Preparation proves the instance reservation. Only resolution proves live mounted
 // execution authority; a resumed guest can contact transport before that exists.
 func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resolve bool) {
 	var request workerapi.SecretProxyRequest
@@ -31,7 +31,7 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 		writeError(w, fmt.Errorf("invalid Secret transport request: %w", err))
 		return
 	}
-	runtimeID, err := ids.Parse(request.ComputerInstanceID)
+	instanceID, err := ids.Parse(request.ComputerInstanceID)
 	if err != nil || s.secretProxy == nil {
 		writeError(w, conflict(secret.ErrDeliveryUnavailable))
 		return
@@ -61,7 +61,7 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 		if err = secret.ValidateProtectedSelectors(request.Placeholders); err == nil {
 			var captured []db.CaptureProtectedSecretEnvelopesRow
 			captured, err = s.db.CaptureProtectedSecretEnvelopes(r.Context(), db.CaptureProtectedSecretEnvelopesParams{
-				ComputerInstanceID: pgvalue.UUID(runtimeID), WorkerHostID: pgvalue.UUID(worker.HostID),
+				ComputerInstanceID: pgvalue.UUID(instanceID), WorkerHostID: pgvalue.UUID(worker.HostID),
 				WorkerEpoch: worker.Epoch, WorkerGroupID: pgvalue.UUID(worker.GroupID),
 				ClaimVersion: worker.HostClaimVersion, GroupClaimVersion: worker.GroupClaimVersion,
 				Origin: request.Origin, Placeholders: request.Placeholders,
@@ -76,7 +76,7 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 	} else {
 		var captured db.CaptureSecretProxyPreparationRow
 		captured, err = s.db.CaptureSecretProxyPreparation(r.Context(), db.CaptureSecretProxyPreparationParams{
-			ComputerInstanceID: pgvalue.UUID(runtimeID), WorkerHostID: pgvalue.UUID(worker.HostID),
+			ComputerInstanceID: pgvalue.UUID(instanceID), WorkerHostID: pgvalue.UUID(worker.HostID),
 			WorkerEpoch: worker.Epoch, WorkerGroupID: pgvalue.UUID(worker.GroupID),
 			ClaimVersion: worker.HostClaimVersion, GroupClaimVersion: worker.GroupClaimVersion,
 		})

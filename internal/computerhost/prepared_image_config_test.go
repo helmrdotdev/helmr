@@ -74,12 +74,12 @@ func TestPrepareGuestRuntimeTransfersConfigOrImage(t *testing.T) {
 				path = "/does-not-exist"
 			}
 			var reply bytes.Buffer
-			if err := frameio.WriteProtoFrame(&reply, &computerv0.PrepareComputerRuntimeResponse{Status: "prepared", ComputerInstanceId: "runtime"}); err != nil {
+			if err := frameio.WriteProtoFrame(&reply, &computerv0.PrepareComputerRuntimeResponse{Status: "prepared", ComputerInstanceId: "instance"}); err != nil {
 				t.Fatal(err)
 			}
 			stream := &scriptedGuestStream{read: bytes.NewReader(reply.Bytes())}
 			machines := &PreparedMachines{}
-			if err := machines.prepareGuestRuntime(context.Background(), fakeGuestSession{stream: stream}, "runtime", 2, mount, path, config); err != nil {
+			if err := machines.prepareGuestRuntime(context.Background(), fakeGuestMachine{stream: stream}, "instance", 2, mount, path, config); err != nil {
 				t.Fatal(err)
 			}
 			input := bytes.NewReader(stream.written.Bytes())
@@ -90,7 +90,7 @@ func TestPrepareGuestRuntimeTransfersConfigOrImage(t *testing.T) {
 			if err := frameio.ReadProtoFrame(input, &request); err != nil {
 				t.Fatal(err)
 			}
-			if request.GetComputerId() != mount.ComputerID || request.GetWriterGeneration() != 2 || request.GetComputerInstanceId() != "runtime" {
+			if request.GetComputerId() != mount.ComputerID || request.GetWriterGeneration() != 2 || request.GetComputerInstanceId() != "instance" {
 				t.Fatal("prepared physical identity changed")
 			}
 			if !proto.Equal(request.GetMountedImageConfig(), config) {

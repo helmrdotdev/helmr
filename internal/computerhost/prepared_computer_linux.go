@@ -19,7 +19,7 @@ import (
 
 // Preparation has one storage format: a retained authenticated disk version.
 // The seed is decoded only for initial publication and never used for recovery.
-func (p *PreparedMachines) prepareComputerDevice(ctx context.Context, target workerapi.RuntimeReconcileTarget) (vm.ComputerDevice, error) {
+func (p *PreparedMachines) prepareComputerDevice(ctx context.Context, target workerapi.InstanceReconcileTarget) (vm.ComputerDevice, error) {
 	if !filepath.IsAbs(p.ComputerHelper) || len(p.ComputerDevices) == 0 {
 		return nil, errors.New("computer helper and explicit device allowlist required")
 	}
@@ -35,7 +35,7 @@ func (p *PreparedMachines) prepareComputerDevice(ctx context.Context, target wor
 	return device, err
 }
 
-func (p *PreparedMachines) prepareComputerVersion(ctx context.Context, target workerapi.RuntimeReconcileTarget) (*disk.LocalVersion, error) {
+func (p *PreparedMachines) prepareComputerVersion(ctx context.Context, target workerapi.InstanceReconcileTarget) (*disk.LocalVersion, error) {
 	if err := validateComputerPreparationSource(target); err != nil {
 		return nil, err
 	}
@@ -50,7 +50,7 @@ func (p *PreparedMachines) prepareComputerVersion(ctx context.Context, target wo
 		return nil, err
 	}
 	dir := p.computerPreparationDirectory(target.ID, target.WorkerEpoch)
-	// Cleanup belongs to the Runtime, including partially created device evidence.
+	// Cleanup belongs to the Instance, including partially created device evidence.
 	if err := os.Mkdir(dir, 0700); err != nil {
 		return nil, err
 	}
@@ -66,10 +66,10 @@ func (p *PreparedMachines) prepareComputerVersion(ctx context.Context, target wo
 	}
 	defer material.Clear()
 	if source.Seed == nil && (source.Root == nil || material.Root != *source.Root) {
-		return nil, errors.New("computer disk version differs from runtime reservation")
+		return nil, errors.New("computer disk version differs from instance reservation")
 	}
 	if material.VersionID != source.VersionID || material.Root.LogicalBytes != source.LogicalBytes || len(material.Keys) == 0 {
-		return nil, errors.New("computer source differs from runtime reservation")
+		return nil, errors.New("computer source differs from instance reservation")
 	}
 	keys := make(map[string][]byte, len(material.Keys))
 	scope := material.Keys[0].Scope
@@ -85,7 +85,7 @@ func (p *PreparedMachines) prepareComputerVersion(ctx context.Context, target wo
 	return disk.CreateLocalVersion(ctx, disk.LocalVersionConfig{Directory: filepath.Join(dir, "version"), Base: material.Root, BaseSource: p.ComputerRanges, Scope: scope, ActiveKey: material.WriteKeyID, Keys: keys, DirtyBlocks: 256, StagedBytes: p.ComputerStagingBytes, PackLimit: blockformat.MinPackLimit})
 }
 
-func (p *PreparedMachines) publishComputerSeed(ctx context.Context, target workerapi.RuntimeReconcileTarget, dir string) (retErr error) {
+func (p *PreparedMachines) publishComputerSeed(ctx context.Context, target workerapi.InstanceReconcileTarget, dir string) (retErr error) {
 	if p.ComputerObjects == nil {
 		return errors.New("computer object publication required")
 	}

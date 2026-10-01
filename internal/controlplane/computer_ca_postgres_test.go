@@ -26,7 +26,7 @@ func testComputerCAStore(t *testing.T, pool *pgxpool.Pool) *secret.Store {
 	return store
 }
 
-// Direct runtime fixtures deliberately attach protected bindings after their raw
+// Direct instance fixtures deliberately attach protected bindings after their raw
 // Computer insert. Production creation performs this write inside its insert tx.
 func createTestComputerCA(t *testing.T, pool *pgxpool.Pool, store *secret.Store, environmentID, computerID uuid.UUID) secret.ProxyTrust {
 	t.Helper()

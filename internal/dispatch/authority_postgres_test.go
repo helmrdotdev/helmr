@@ -109,6 +109,6 @@ SELECT count(*)
 		t.Fatal(err)
 	}
 	if reservations != 1 {
-		t.Fatalf("live runtime reservations = %d, want 1", reservations)
+		t.Fatalf("live instance reservations = %d, want 1", reservations)
 	}
 }

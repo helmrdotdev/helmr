@@ -18,11 +18,11 @@ const MaxResourceIDBytes = 512
 // HostFilter selects worker hosts for the capacity protocol. A zero GroupID
 // selects every group, and empty ResourceIDs or Statuses do not filter.
 type HostFilter struct {
-	GroupID               uuid.UUID
-	ResourceIDs           []string
-	Statuses              []WorkerHostStatus
-	HasUnreclaimedRuntime bool
-	Limit                 int32
+	GroupID                uuid.UUID
+	ResourceIDs            []string
+	Statuses               []WorkerHostStatus
+	HasUnreclaimedInstance bool
+	Limit                  int32
 }
 
 // ResolveGroup returns the capacity projection of the worker group with the
@@ -78,10 +78,10 @@ func ReconcilePrimaryPools(ctx context.Context, txb db.TxBeginner, groupID uuid.
 // ListHosts returns the worker hosts that match filter.
 func ListHosts(ctx context.Context, q db.Querier, filter HostFilter) (ListWorkerHostsResponse, error) {
 	params := db.ListCapacityWorkerHostsParams{
-		ResourceIds:           append([]string{}, filter.ResourceIDs...),
-		Statuses:              make([]string, 0, len(filter.Statuses)),
-		HasUnreclaimedRuntime: filter.HasUnreclaimedRuntime,
-		RowLimit:              filter.Limit,
+		ResourceIds:            append([]string{}, filter.ResourceIDs...),
+		Statuses:               make([]string, 0, len(filter.Statuses)),
+		HasUnreclaimedInstance: filter.HasUnreclaimedInstance,
+		RowLimit:               filter.Limit,
 	}
 	if filter.GroupID != uuid.Nil() {
 		params.WorkerGroupID = pgvalue.UUID(filter.GroupID)

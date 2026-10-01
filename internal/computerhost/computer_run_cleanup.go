@@ -15,7 +15,7 @@ import (
 // The Computer owner continues cleanup after a Run's own context/stream closes.
 // A failed CP acknowledgement is retried with the same Guest receipt; inability
 // to prove scoped termination instead requires the physical owner's failure path.
-func (m Server) reconcileComputerRuns(ctx context.Context, session vm.Machine, mount workerapi.ComputerInstanceAssignment, client workerapi.ComputerServerControlPlaneClient) error {
+func (m Server) reconcileComputerRuns(ctx context.Context, machine vm.Machine, mount workerapi.ComputerInstanceAssignment, client workerapi.ComputerServerControlPlaneClient) error {
 	request := workerapi.ComputerRunCleanupRequest{EnvironmentID: mount.EnvironmentID, ComputerInstanceID: mount.ComputerInstanceID, WriterGeneration: mount.WriterGeneration}
 	var failedLease string
 	var failures int
@@ -35,7 +35,7 @@ func (m Server) reconcileComputerRuns(ctx context.Context, session vm.Machine, m
 					return computerMountFailure{code: "computer_program_cleanup_failed", err: fmt.Errorf("reconcile Program processes: %w", cleanupErr)}
 				}
 				cleanupCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
-				cleanupErr = m.cleanupComputerRun(cleanupCtx, session, mount, *response.Run)
+				cleanupErr = m.cleanupComputerRun(cleanupCtx, machine, mount, *response.Run)
 				cancel()
 				if ctx.Err() != nil {
 					return ctx.Err()
@@ -63,11 +63,11 @@ func (m Server) reconcileComputerRuns(ctx context.Context, session vm.Machine, m
 	}
 }
 
-func (m Server) cleanupComputerRun(ctx context.Context, session vm.Machine, mount workerapi.ComputerInstanceAssignment, member workerapi.ComputerRunCleanup) error {
+func (m Server) cleanupComputerRun(ctx context.Context, machine vm.Machine, mount workerapi.ComputerInstanceAssignment, member workerapi.ComputerRunCleanup) error {
 	if member.RunID == "" || member.RunLeaseID == "" || member.AttemptNumber == 0 {
 		return errors.New("incomplete Program cleanup identity")
 	}
-	return guestControl{machine: session}.cleanupRun(ctx, &computerv0.ComputerRunCleanupRequest{ComputerId: mount.ComputerID, ComputerInstanceId: mount.ComputerInstanceID, WriterGeneration: mount.WriterGeneration, ChannelCredential: m.channelCredential(mount), RunId: member.RunID, RunLeaseId: member.RunLeaseID, AttemptNumber: member.AttemptNumber})
+	return guestControl{machine: machine}.cleanupRun(ctx, &computerv0.ComputerRunCleanupRequest{ComputerId: mount.ComputerID, ComputerInstanceId: mount.ComputerInstanceID, WriterGeneration: mount.WriterGeneration, ChannelCredential: m.channelCredential(mount), RunId: member.RunID, RunLeaseId: member.RunLeaseID, AttemptNumber: member.AttemptNumber})
 }
 
 // cleanupRun asks the guest to prove cleanup of one Program run. Cancellation

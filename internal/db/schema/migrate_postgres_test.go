@@ -651,7 +651,7 @@ func assertComputerDiskVersionAuthority(t *testing.T, ctx context.Context, pool 
 	if !fencedSource {
 		t.Fatal("computer versions do not bind their source instance and writer fence")
 	}
-	var runtimeProjectionColumns int
+	var instanceProjectionColumns int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
 		  FROM information_schema.columns
@@ -663,11 +663,11 @@ func assertComputerDiskVersionAuthority(t *testing.T, ctx context.Context, pool 
 		"vm_runtime_contract",
 		"guestd_abi",
 		"adapter_abi",
-	}).Scan(&runtimeProjectionColumns); err != nil {
+	}).Scan(&instanceProjectionColumns); err != nil {
 		t.Fatal(err)
 	}
-	if runtimeProjectionColumns != 0 {
-		t.Fatalf("runtime instance copied profile fields = %d, want 0", runtimeProjectionColumns)
+	if instanceProjectionColumns != 0 {
+		t.Fatalf("instance copied profile fields = %d, want 0", instanceProjectionColumns)
 	}
 }
 

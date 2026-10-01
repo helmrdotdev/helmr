@@ -39,7 +39,7 @@ const (
 	claimReadStatement   = "SELECT w.claim_version,g.claim_version"
 	firstFenceStatement  = "SELECT environment_id,computer_id,region_id,observed_state FROM computer_instances"
 	deadlineStatement    = "-- name: GetComputerPreparationDeadlinesValid"
-	pinWriteStatement    = "-- name: PinRuntimeComputerKey"
+	pinWriteStatement    = "-- name: PinInstanceComputerKey"
 	sourceKeysStatement  = "-- name: ListInstanceComputerSourceKeys"
 	registrationSQLMatch = "INSERT INTO computer_objects"
 )
@@ -283,7 +283,7 @@ type preparationErrorServer struct {
 func newPreparationErrorServer(t *testing.T, stage preparationStage) *preparationErrorServer {
 	t.Helper()
 	f := newInitialPublicationFixture(t)
-	s := &preparationErrorServer{f: f, faults: &sqlFaults{TxDB: f.Pool}, keys: &faultingKeys{KeyWrapper: f.keys}, objects: &faultingObjects{UploadStore: f.store}, logs: &lockedBuffer{}, instance: pgvalue.UUIDString(f.runtime)}
+	s := &preparationErrorServer{f: f, faults: &sqlFaults{TxDB: f.Pool}, keys: &faultingKeys{KeyWrapper: f.keys}, objects: &faultingObjects{UploadStore: f.store}, logs: &lockedBuffer{}, instance: pgvalue.UUIDString(f.instance)}
 	s.handler = f.serve(t, func(cfg *ServerConfig) {
 		cfg.TX = s.faults
 		cfg.ComputerKeys = s.keys
@@ -506,21 +506,21 @@ func TestComputerPreparationFailuresReportTheirClass(t *testing.T) {
 // plaintext in the response or the logs.
 func TestComputerPreparationRejectionsReportTheirClass(t *testing.T) {
 	expire := func(s *preparationErrorServer) {
-		dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_instances SET preparation_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, s.f.runtime)
+		dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_instances SET preparation_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, s.f.instance)
 	}
 	revoke := func(s *preparationErrorServer) {
-		dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, s.f.runtime)
+		dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, s.f.instance)
 	}
 	// corruptEnvelope flips one ciphertext byte of the Computer's persisted
 	// key, which keeps the envelope's shape but fails its authentication: a
 	// data-integrity failure that must be logged.
 	corruptEnvelope := func(s *preparationErrorServer) {
-		dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_data_keys SET wrapped_key=set_byte(wrapped_key,20,get_byte(wrapped_key,20)#255) WHERE computer_id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, s.f.runtime)
+		dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_data_keys SET wrapped_key=set_byte(wrapped_key,20,get_byte(wrapped_key,20)#255) WHERE computer_id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, s.f.instance)
 	}
 	// truncateEnvelope drops the last ciphertext byte of the Computer's
 	// persisted key: an envelope shape the provider cannot accept.
 	truncateEnvelope := func(s *preparationErrorServer) {
-		dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_data_keys SET wrapped_key=substring(wrapped_key from 1 for length(wrapped_key)-1) WHERE computer_id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, s.f.runtime)
+		dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_data_keys SET wrapped_key=substring(wrapped_key from 1 for length(wrapped_key)-1) WHERE computer_id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, s.f.instance)
 	}
 	staleClaims := func(s *preparationErrorServer) {
 		dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, pgvalue.UUID(s.f.worker.HostID))
@@ -555,7 +555,7 @@ func TestComputerPreparationRejectionsReportTheirClass(t *testing.T) {
 		{name: "source corrupt ciphertext", stage: preparationPublished, path: computerSourcePath, change: corruptEnvelope, status: http.StatusInternalServerError},
 		{name: "source envelope shape invalid", stage: preparationPublished, path: computerSourcePath, change: truncateEnvelope, status: http.StatusConflict},
 		{name: "source retained root invalid", stage: preparationPublished, path: computerSourcePath, change: func(s *preparationErrorServer) {
-			dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_disk_version_roots SET locator=jsonb_set(locator,'{page,salt}','"not-hex"') WHERE version_id=(SELECT retained_source_disk_version_id FROM computer_instances WHERE id=$1)`, s.f.runtime)
+			dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_disk_version_roots SET locator=jsonb_set(locator,'{page,salt}','"not-hex"') WHERE version_id=(SELECT retained_source_disk_version_id FROM computer_instances WHERE id=$1)`, s.f.instance)
 		}, status: http.StatusConflict},
 	} {
 		t.Run(test.name, func(t *testing.T) {

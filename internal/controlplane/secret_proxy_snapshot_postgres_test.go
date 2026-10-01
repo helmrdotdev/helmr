@@ -32,15 +32,15 @@ import (
 )
 
 type snapshotFixture struct {
-	fixture           runtest.Fixture
-	q                 *db.Queries
-	store             *secret.Store
-	server            *Server
-	worker            workergroup.HostPrincipal
-	computer, runtime uuid.UUID
-	run               runtest.RunLease
-	markers           []string
-	secrets           []pgtype.UUID
+	fixture            runtest.Fixture
+	q                  *db.Queries
+	store              *secret.Store
+	server             *Server
+	worker             workergroup.HostPrincipal
+	computer, instance uuid.UUID
+	run                runtest.RunLease
+	markers            []string
+	secrets            []pgtype.UUID
 }
 
 func newSnapshotFixture(t *testing.T, count int, root bool) *snapshotFixture {
@@ -53,12 +53,12 @@ func newSnapshotFixture(t *testing.T, count int, root bool) *snapshotFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.fixture.Pool.QueryRow(t.Context(), "SELECT r.computer_id,r.id FROM computer_instances r JOIN run_leases l ON l.computer_instance_id=r.id WHERE l.id=$1", f.run.LeaseID).Scan(&f.computer, &f.runtime); err != nil {
+	if err := f.fixture.Pool.QueryRow(t.Context(), "SELECT r.computer_id,r.id FROM computer_instances r JOIN run_leases l ON l.computer_instance_id=r.id WHERE l.id=$1", f.run.LeaseID).Scan(&f.computer, &f.instance); err != nil {
 		t.Fatal(err)
 	}
 	f.worker = workergroup.HostPrincipal{HostID: f.fixture.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	f.server = &Server{db: f.q, tx: f.fixture.Pool, secretProxy: f.store, computers: computer.NewCreator(f.store), log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_instances SET guest_channel_credential_hash=decode(repeat('01',32),'hex'),guest_channel_credential_expires_at=now()+interval '10 minutes' WHERE id=$1", f.runtime)
+	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_instances SET guest_channel_credential_hash=decode(repeat('01',32),'hex'),guest_channel_credential_expires_at=now()+interval '10 minutes' WHERE id=$1", f.instance)
 	for i := 0; i < count; i++ {
 		name := string(rune('a' + i))
 		record, err := f.store.Create(t.Context(), f.fixture.EnvironmentID, "token-"+name, []byte("old-"+name), "create-"+name)
@@ -77,12 +77,12 @@ func newSnapshotFixture(t *testing.T, count int, root bool) *snapshotFixture {
 	return f
 }
 func (f *snapshotFixture) params() db.CaptureProtectedSecretEnvelopesParams {
-	return db.CaptureProtectedSecretEnvelopesParams{ComputerInstanceID: pgvalue.UUID(f.runtime), WorkerHostID: pgvalue.UUID(f.worker.HostID), WorkerEpoch: 1, WorkerGroupID: pgvalue.UUID(f.worker.GroupID), ClaimVersion: 1, GroupClaimVersion: 1, Origin: "https://example.com", Placeholders: f.markers}
+	return db.CaptureProtectedSecretEnvelopesParams{ComputerInstanceID: pgvalue.UUID(f.instance), WorkerHostID: pgvalue.UUID(f.worker.HostID), WorkerEpoch: 1, WorkerGroupID: pgvalue.UUID(f.worker.GroupID), ClaimVersion: 1, GroupClaimVersion: 1, Origin: "https://example.com", Placeholders: f.markers}
 }
 func (f *snapshotFixture) invoke(ctx context.Context, resolve bool) *httptest.ResponseRecorder {
-	body, _ := json.Marshal(workerapi.SecretProxyRequest{ComputerInstanceID: f.runtime.String()})
+	body, _ := json.Marshal(workerapi.SecretProxyRequest{ComputerInstanceID: f.instance.String()})
 	if resolve {
-		body, _ = json.Marshal(workerapi.SecretProxyRequest{ComputerInstanceID: f.runtime.String(), Origin: "https://example.com", Placeholders: f.markers})
+		body, _ = json.Marshal(workerapi.SecretProxyRequest{ComputerInstanceID: f.instance.String(), Origin: "https://example.com", Placeholders: f.markers})
 	}
 	req := httptest.NewRequest("POST", "/", bytes.NewReader(body)).WithContext(context.WithValue(ctx, workerContextKey{}, f.worker))
 	response := httptest.NewRecorder()
@@ -113,7 +113,7 @@ func (h *snapshotCaptureHook) CaptureProtectedSecretEnvelopes(ctx context.Contex
 }
 func TestProtectedSnapshotBeforeAndAfterTransitions(t *testing.T) {
 	for _, when := range []string{"before", "after"} {
-		for _, change := range []string{"rotate", "revoke", "epoch", "claims", "group", "computer", "runtime", "lease", "token", "writer"} {
+		for _, change := range []string{"rotate", "revoke", "epoch", "claims", "group", "computer", "instance", "lease", "token", "writer"} {
 			t.Run(when+"/"+change, func(t *testing.T) {
 				f := newSnapshotFixture(t, 1, true)
 				mutate := func() {
@@ -134,12 +134,12 @@ func TestProtectedSnapshotBeforeAndAfterTransitions(t *testing.T) {
 						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE worker_groups SET claim_version=2 WHERE id=$1", f.worker.GroupID)
 					case "computer":
 						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computers SET desired_state='deleted' WHERE id=$1", f.computer)
-					case "runtime":
-						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1", f.runtime)
+					case "instance":
+						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1", f.instance)
 					case "lease":
-						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_instances SET writer_expires_at=now()-interval '1 second' WHERE id=$1", f.runtime)
+						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_instances SET writer_expires_at=now()-interval '1 second' WHERE id=$1", f.instance)
 					case "token":
-						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_instances SET guest_channel_credential_expires_at=now()-interval '1 second' WHERE id=$1", f.runtime)
+						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_instances SET guest_channel_credential_expires_at=now()-interval '1 second' WHERE id=$1", f.instance)
 					case "writer":
 						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computers SET writer_generation=writer_generation+1 WHERE id=$1", f.computer)
 					}
@@ -202,9 +202,9 @@ func TestProtectedSnapshotCoverageAndExpiry(t *testing.T) {
 	p.ComputerInstanceID = pgvalue.UUID(uuid.NewV7())
 	rows, err = f.q.CaptureProtectedSecretEnvelopes(t.Context(), p)
 	if err != nil || len(rows) != 0 {
-		t.Fatal("wrong runtime accepted")
+		t.Fatal("wrong instance accepted")
 	}
-	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_instances SET guest_channel_credential_expires_at=now()+interval '150 milliseconds' WHERE id=$1", f.runtime)
+	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_instances SET guest_channel_credential_expires_at=now()+interval '150 milliseconds' WHERE id=$1", f.instance)
 	tx, err := f.fixture.Pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -501,7 +501,7 @@ func TestSecretProxyHTTPRejectsUnactivatedHostAndUnknownInstance(t *testing.T) {
 		}
 	}
 	dbtest.MustExec(t, t.Context(), f.fixture.Pool, `UPDATE worker_hosts SET status='active',activated_at=clock_timestamp() WHERE id=$1`, f.fixture.WorkerID)
-	f.runtime = uuid.NewV7()
+	f.instance = uuid.NewV7()
 	for _, resolve := range []bool{false, true} {
 		if response := f.invoke(t.Context(), resolve); response.Code != http.StatusConflict {
 			t.Fatalf("unknown instance resolve=%v status=%d", resolve, response.Code)

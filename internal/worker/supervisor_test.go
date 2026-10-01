@@ -45,7 +45,7 @@ func (c *testControlPlane) ActivateWorker(_ context.Context, capabilities worker
 
 func (c *testControlPlane) ReportWorkerStartupRecovery(_ context.Context, request workerapi.StartupRecoveryRequest) error {
 	c.recoveryCalls.Add(1)
-	if !request.InventoryComplete || request.InventoryScope != "worker_runtime_state_roots_v0" || request.ObservedAt.IsZero() {
+	if !request.InventoryComplete || request.InventoryScope != "worker_instance_state_roots_v0" || request.ObservedAt.IsZero() {
 		return errors.New("incomplete startup recovery proof")
 	}
 	if c.recovery409s.Add(-1) >= 0 {
@@ -60,7 +60,7 @@ type testHTTPStatusError struct{ status int }
 func (e testHTTPStatusError) Error() string       { return "test HTTP status" }
 func (e testHTTPStatusError) HTTPStatusCode() int { return e.status }
 func (c *testControlPlane) CompleteWorkerDrain(_ context.Context, request workerapi.DrainCompletionRequest) (workerapi.StatusResponse, error) {
-	if !request.InventoryComplete || request.InventoryScope != "worker_runtime_state_roots_v0" || request.ObservedAt.IsZero() || len(request.Inventory) != 0 || len(request.Quarantined) != 0 || len(request.Errors) != 0 {
+	if !request.InventoryComplete || request.InventoryScope != "worker_instance_state_roots_v0" || request.ObservedAt.IsZero() || len(request.Inventory) != 0 || len(request.Quarantined) != 0 || len(request.Errors) != 0 {
 		return workerapi.StatusResponse{}, errors.New("incomplete worker drain proof")
 	}
 	c.completed.Add(1)
@@ -410,7 +410,7 @@ func TestSupervisorTerminatesEpochOnFatalBackgroundError(t *testing.T) {
 	s, err := New(Config{
 		ControlPlane: controlPlane,
 		PollEvery:    time.Millisecond,
-		Background: []BackgroundSpec{{Name: "runtime-controller", Run: func(context.Context) error {
+		Background: []BackgroundSpec{{Name: "instance-controller", Run: func(context.Context) error {
 			return &fatalWorkerError{err: errors.New("runtime verifier bootstrap failed")}
 		}}},
 	})
@@ -513,7 +513,7 @@ func TestSupervisorHardAdmissionPausesClaimsButNotShutdown(t *testing.T) {
 	probe := &staticHealthProbe{health: healthyHost(now)}
 	probe.health.AvailableDiskBytes = 1
 	evaluator, err := NewHardAdmission(HardAdmissionConfig{
-		Probe: probe, DiskFloorBytes: 2, FDHeadroom: 1, RuntimeSlotCount: 1, Now: time.Now,
+		Probe: probe, DiskFloorBytes: 2, FDHeadroom: 1, InstanceSlotCount: 1, Now: time.Now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -634,7 +634,7 @@ func TestServerDirectedDrainContinuesBoundRunWithHardAdmission(t *testing.T) {
 	now := time.Now()
 	evaluator, err := NewHardAdmission(HardAdmissionConfig{
 		Probe: &staticHealthProbe{health: healthyHost(now)}, DiskFloorBytes: 1,
-		FDHeadroom: 1, RuntimeSlotCount: 1, Now: func() time.Time { return now },
+		FDHeadroom: 1, InstanceSlotCount: 1, Now: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -694,7 +694,7 @@ func TestServerDirectedDrainDoesNotBypassBoundRunAdmission(t *testing.T) {
 	probe := &staticHealthProbe{health: healthyHost(now)}
 	probe.health.KVMHealthy = false
 	evaluator, err := NewHardAdmission(HardAdmissionConfig{
-		Probe: probe, DiskFloorBytes: 1, FDHeadroom: 1, RuntimeSlotCount: 1, Now: func() time.Time { return now },
+		Probe: probe, DiskFloorBytes: 1, FDHeadroom: 1, InstanceSlotCount: 1, Now: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -746,7 +746,7 @@ func TestDrainingObservationPreservesHardHealthInsteadOfLifecyclePause(t *testin
 	now := time.Now()
 	evaluator, err := NewHardAdmission(HardAdmissionConfig{
 		Probe: &staticHealthProbe{health: healthyHost(now)}, DiskFloorBytes: 1,
-		FDHeadroom: 1, RuntimeSlotCount: 1, Now: func() time.Time { return now },
+		FDHeadroom: 1, InstanceSlotCount: 1, Now: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -917,7 +917,7 @@ func TestServerDirectedDrainDoesNotCompleteOnTimeoutOrDirtyInventory(t *testing.
 		{
 			name: "quarantined local inventory", status: workerapi.StatusResponse{Status: workerapi.StatusDraining},
 			finalize: func(context.Context) (RecoveryEvidence, error) {
-				return RecoveryEvidence{ObservedAt: time.Now().UTC(), Quarantined: []string{"runtime"}, QuarantineErrors: []string{"busy"}}, nil
+				return RecoveryEvidence{ObservedAt: time.Now().UTC(), Quarantined: []string{"instance"}, QuarantineErrors: []string{"busy"}}, nil
 			},
 			wantError: "inventory is not clean",
 		},

@@ -262,13 +262,13 @@ func capacityWorkerHostFilter(r *http.Request) (workergroup.HostFilter, error) {
 	query := r.URL.Query()
 	for name := range query {
 		switch name {
-		case "worker_group_id", "resource_id", "status", "has_unreclaimed_runtime", "limit":
+		case "worker_group_id", "resource_id", "status", "has_unreclaimed_instance", "limit":
 		default:
 			return filter, fmt.Errorf("query parameter %q is not supported", name)
 		}
 	}
-	if len(query["worker_group_id"]) > 1 || len(query["has_unreclaimed_runtime"]) > 1 || len(query["limit"]) > 1 {
-		return filter, errors.New("worker_group_id, has_unreclaimed_runtime, and limit must not be repeated")
+	if len(query["worker_group_id"]) > 1 || len(query["has_unreclaimed_instance"]) > 1 || len(query["limit"]) > 1 {
+		return filter, errors.New("worker_group_id, has_unreclaimed_instance, and limit must not be repeated")
 	}
 	if groupIDs := query["worker_group_id"]; len(groupIDs) == 1 {
 		parsed, err := ids.Parse(groupIDs[0])
@@ -277,11 +277,11 @@ func capacityWorkerHostFilter(r *http.Request) (workergroup.HostFilter, error) {
 		}
 		filter.GroupID = parsed
 	}
-	if raw := strings.TrimSpace(query.Get("has_unreclaimed_runtime")); raw != "" {
+	if raw := strings.TrimSpace(query.Get("has_unreclaimed_instance")); raw != "" {
 		if raw != "true" {
-			return filter, errors.New("has_unreclaimed_runtime must be true when present")
+			return filter, errors.New("has_unreclaimed_instance must be true when present")
 		}
-		filter.HasUnreclaimedRuntime = true
+		filter.HasUnreclaimedInstance = true
 	}
 	for _, raw := range query["status"] {
 		status := workergroup.WorkerHostStatus(strings.TrimSpace(raw))

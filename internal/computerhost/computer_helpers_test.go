@@ -26,9 +26,9 @@ func (unsupportedMachineStarts) Materialize(context.Context, vm.MaterializeReque
 	return nil, errors.New("test backend does not materialize machines")
 }
 
-// errTestLiveCapture is what test runtimes return when the machines admits them as
+// errTestLiveCapture is what test instances return when the machines admits them as
 // live-capture machines but a test never expects a Computer save to succeed.
-var errTestLiveCapture = errors.New("test runtime does not capture a live Computer")
+var errTestLiveCapture = errors.New("test instance does not capture a live Computer")
 
 type scriptedGuestStream struct {
 	read    *bytes.Reader

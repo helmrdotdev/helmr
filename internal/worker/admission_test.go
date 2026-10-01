@@ -27,7 +27,7 @@ func TestHardAdmissionFailClosedChecks(t *testing.T) {
 	now := time.Date(2026, 7, 12, 0, 0, 0, 0, time.UTC)
 	probe := &staticHealthProbe{health: healthyHost(now)}
 	evaluator, err := NewHardAdmission(HardAdmissionConfig{
-		Probe: probe, DiskFloorBytes: 8 << 30, FDHeadroom: 256, RuntimeSlotCount: 2, Now: func() time.Time { return now },
+		Probe: probe, DiskFloorBytes: 8 << 30, FDHeadroom: 256, InstanceSlotCount: 2, Now: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -47,12 +47,12 @@ func TestHardAdmissionFailClosedChecks(t *testing.T) {
 		{name: "slots", mutate: func(_ *HostHealth, c *AdmissionCheck) {
 			c.Consumer = "computer"
 			c.Recovery.Quarantined = []string{"one", "two"}
-		}, want: AdmissionRuntimeSlotsQuarantined},
+		}, want: AdmissionInstanceSlotsQuarantined},
 		{name: "partial quarantine plus active slot", mutate: func(_ *HostHealth, c *AdmissionCheck) {
 			c.Consumer = "computer"
 			c.Recovery.Quarantined = []string{"one"}
 			c.Snapshot = Snapshot{Active: map[string]int{"computer": 1}}
-		}, want: AdmissionRuntimeSlotsQuarantined},
+		}, want: AdmissionInstanceSlotsQuarantined},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -75,7 +75,7 @@ func TestHardAdmissionFailsClosedWhenDatapathChanges(t *testing.T) {
 	datapathHealthy := true
 	evaluator, err := NewHardAdmission(HardAdmissionConfig{
 		Probe:          &staticHealthProbe{health: healthyHost(now)},
-		DiskFloorBytes: 1, FDHeadroom: 1, RuntimeSlotCount: 1,
+		DiskFloorBytes: 1, FDHeadroom: 1, InstanceSlotCount: 1,
 		Now: func() time.Time { return now },
 		DatapathHealth: func() error {
 			if datapathHealthy {
@@ -102,21 +102,21 @@ func TestHardAdmissionFailsClosedWhenDatapathChanges(t *testing.T) {
 	}
 }
 
-func TestHardAdmissionKeepsRuntimeSlotPressureInRuntimeDomain(t *testing.T) {
+func TestHardAdmissionKeepsInstanceSlotPressureInInstanceDomain(t *testing.T) {
 	now := time.Now()
 	probe := &staticHealthProbe{health: healthyHost(now)}
-	evaluator, err := NewHardAdmission(HardAdmissionConfig{Probe: probe, DiskFloorBytes: 1, FDHeadroom: 1, RuntimeSlotCount: 1, Now: func() time.Time { return now }})
+	evaluator, err := NewHardAdmission(HardAdmissionConfig{Probe: probe, DiskFloorBytes: 1, FDHeadroom: 1, InstanceSlotCount: 1, Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	check := AdmissionCheck{Status: StatusActive, Recovery: RecoveryEvidence{Quarantined: []string{"slot"}}}
 	check.Consumer = "run"
 	evaluator.Evaluate(context.Background(), check)
-	check.Consumer = "runtime"
+	check.Consumer = "instance"
 	evaluator.Evaluate(context.Background(), check)
 	observation := evaluator.Observation()
 	if observation.RunPausedReason != "" || observation.VMPausedReason == "" {
-		t.Fatalf("domain pauses = run:%q runtime:%q", observation.RunPausedReason, observation.VMPausedReason)
+		t.Fatalf("domain pauses = run:%q instance:%q", observation.RunPausedReason, observation.VMPausedReason)
 	}
 }
 
@@ -124,7 +124,7 @@ func TestHardAdmissionAllowsRunInsideActiveComputerSlot(t *testing.T) {
 	now := time.Now()
 	probe := &staticHealthProbe{health: healthyHost(now)}
 	evaluator, err := NewHardAdmission(HardAdmissionConfig{
-		Probe: probe, DiskFloorBytes: 1, FDHeadroom: 1, RuntimeSlotCount: 1,
+		Probe: probe, DiskFloorBytes: 1, FDHeadroom: 1, InstanceSlotCount: 1,
 		Now: func() time.Time { return now },
 	})
 	if err != nil {
@@ -143,7 +143,7 @@ func TestHardAdmissionAllowsOnlyExplicitDrainContinuation(t *testing.T) {
 	now := time.Now()
 	evaluator, err := NewHardAdmission(HardAdmissionConfig{
 		Probe: &staticHealthProbe{health: healthyHost(now)}, DiskFloorBytes: 1,
-		FDHeadroom: 1, RuntimeSlotCount: 1, Now: func() time.Time { return now },
+		FDHeadroom: 1, InstanceSlotCount: 1, Now: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatal(err)

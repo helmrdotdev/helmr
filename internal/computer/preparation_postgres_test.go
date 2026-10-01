@@ -19,7 +19,7 @@ import (
 func TestInitialPreparationFencesInitializingHead(t *testing.T) {
 	f := newPreparationFixture(t)
 	var head pgtype.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT c.head_disk_version_id FROM computers c JOIN computer_instances i ON i.computer_id=c.id WHERE i.id=$1`, f.runtime).Scan(&head); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT c.head_disk_version_id FROM computers c JOIN computer_instances i ON i.computer_id=c.id WHERE i.id=$1`, f.instance).Scan(&head); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := f.Pool.Begin(t.Context())
@@ -40,7 +40,7 @@ func TestInitialPreparationFencesInitializingHead(t *testing.T) {
 	if err = tx.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET writer_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, f.runtime)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET writer_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, f.instance)
 	tx, err = f.Pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)

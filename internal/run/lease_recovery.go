@@ -110,7 +110,7 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 			if err := targetGraph.recordClearedExecutionPrestart(cleared); err != nil {
 				return false, err
 			}
-			if _, err := targetGraph.ChargeRuntimePreparationFailure(ctx); err != nil {
+			if _, err := targetGraph.ChargeInstancePreparationFailure(ctx); err != nil {
 				return false, err
 			}
 		}
@@ -197,7 +197,7 @@ func decideExecutionLeaseLoss(
 	}
 	add(authority.WriterExpiresAt, "physical_loss", "computer_writer_expired", db.RunLeaseStatusLost)
 	add(authority.InstanceLostAt, "physical_loss", "worker_lost", db.RunLeaseStatusLost)
-	add(authority.InstanceFailedAt, "physical_failure", "runtime_failed", db.RunLeaseStatusLost)
+	add(authority.InstanceFailedAt, "physical_failure", "instance_failed", db.RunLeaseStatusLost)
 	if authority.InstanceObservedState == "closed" {
 		add(authority.ReclaimedAt, "physical_loss", "computer_instance_closed", db.RunLeaseStatusLost)
 	}
@@ -378,8 +378,8 @@ func executionLeaseLossMessage(reason string) string {
 	switch reason {
 	case "worker_lost":
 		return "Run Worker was lost"
-	case "runtime_failed":
-		return "Run runtime failed"
+	case "instance_failed":
+		return "Run instance failed"
 	case "lease_expired":
 		return "Run execution lease expired"
 	case "max_active_duration_exceeded":

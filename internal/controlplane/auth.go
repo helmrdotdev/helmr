@@ -57,7 +57,7 @@ func (s *Server) requirePrincipalWithErrorWriter(
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
 			return
 		}
-		principal, rawSession, err := s.sessionPrincipal(r)
+		principal, rawMachine, err := s.sessionPrincipal(r)
 		if err != nil {
 			if errors.Is(err, auth.ErrUnauthenticated) {
 				clearSessionCookie(w, r)
@@ -66,7 +66,7 @@ func (s *Server) requirePrincipalWithErrorWriter(
 			return
 		}
 		r = r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal))
-		recorder := newSessionRefreshResponseWriter(w, r, rawSession, s.identity.Lifetimes().Session)
+		recorder := newSessionRefreshResponseWriter(w, r, rawMachine, s.identity.Lifetimes().Session)
 		next.ServeHTTP(recorder, r)
 		recorder.finish()
 	})
@@ -153,14 +153,14 @@ func (s *Server) requireSessionWithErrorWriter(
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
 			return
 		}
-		principal, rawSession, err := s.sessionPrincipal(r)
+		principal, rawMachine, err := s.sessionPrincipal(r)
 		if err != nil {
 			clearSessionCookie(w, r)
 			writeAuthError(w, s.log, err)
 			return
 		}
 		r = r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal))
-		recorder := newSessionRefreshResponseWriter(w, r, rawSession, s.identity.Lifetimes().Session)
+		recorder := newSessionRefreshResponseWriter(w, r, rawMachine, s.identity.Lifetimes().Session)
 		next.ServeHTTP(recorder, r)
 		recorder.finish()
 	})
@@ -223,14 +223,14 @@ func (s *Server) sessionPrincipal(r *http.Request) (auth.Principal, string, erro
 	return principal, cookie.Value, err
 }
 
-func (s *Server) sessionPrincipalFromToken(r *http.Request, rawSession string) (auth.Principal, error) {
-	if strings.TrimSpace(rawSession) == "" {
+func (s *Server) sessionPrincipalFromToken(r *http.Request, rawMachine string) (auth.Principal, error) {
+	if strings.TrimSpace(rawMachine) == "" {
 		return auth.Principal{}, auth.ErrUnauthenticated
 	}
 	if err := s.userAuthConfigured(); err != nil {
 		return auth.Principal{}, err
 	}
-	return identity.AuthenticateLoginSession(r.Context(), s.db, s.identity, rawSession)
+	return identity.AuthenticateLoginSession(r.Context(), s.db, s.identity, rawMachine)
 }
 
 func (s *Server) requireWorker(next http.Handler) http.Handler {
@@ -299,16 +299,16 @@ func bearerToken(value string) (string, bool) {
 type sessionRefreshResponseWriter struct {
 	http.ResponseWriter
 	request     *http.Request
-	rawSession  string
+	rawMachine  string
 	ttl         time.Duration
 	wroteHeader bool
 }
 
-func newSessionRefreshResponseWriter(w http.ResponseWriter, r *http.Request, rawSession string, ttl time.Duration) *sessionRefreshResponseWriter {
+func newSessionRefreshResponseWriter(w http.ResponseWriter, r *http.Request, rawMachine string, ttl time.Duration) *sessionRefreshResponseWriter {
 	return &sessionRefreshResponseWriter{
 		ResponseWriter: w,
 		request:        r,
-		rawSession:     rawSession,
+		rawMachine:     rawMachine,
 		ttl:            ttl,
 	}
 }
@@ -346,7 +346,7 @@ func (w *sessionRefreshResponseWriter) finish() {
 
 func (w *sessionRefreshResponseWriter) ensureSessionCookie() {
 	if w.Header().Get("set-cookie") == "" {
-		setSessionCookie(w.ResponseWriter, w.request, w.rawSession, w.ttl)
+		setSessionCookie(w.ResponseWriter, w.request, w.rawMachine, w.ttl)
 	}
 }
 

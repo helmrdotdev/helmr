@@ -58,14 +58,14 @@ func (c *parallelCommandClient) CompleteComputerCommand(ctx context.Context, r w
 	return nil
 }
 
-type parallelCommandSession struct {
-	*serverTestSession
+type parallelCommandMachine struct {
+	*serverTestMachine
 	firstOpened chan struct{}
 	once        sync.Once
 }
 
-func (s *parallelCommandSession) OpenStream(ctx context.Context) (vm.Stream, error) {
-	stream, err := s.serverTestSession.OpenStream(ctx)
+func (s *parallelCommandMachine) OpenStream(ctx context.Context) (vm.Stream, error) {
+	stream, err := s.serverTestMachine.OpenStream(ctx)
 	s.once.Do(func() { close(s.firstOpened) })
 	return stream, err
 }
@@ -81,7 +81,7 @@ func TestCommandsProgressWhilePeerStreamIsBlocked(t *testing.T) {
 			defer guest1.Close()
 			host2, guest2 := net.Pipe()
 			defer guest2.Close()
-			physical := &parallelCommandSession{serverTestSession: &serverTestSession{streams: []io.ReadWriteCloser{host1, host2}}, firstOpened: make(chan struct{})}
+			physical := &parallelCommandMachine{serverTestMachine: &serverTestMachine{streams: []io.ReadWriteCloser{host1, host2}}, firstOpened: make(chan struct{})}
 			mount := workerapi.ComputerInstanceAssignment{OrgID: "org", ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 2, GuestChannelCredential: "token"}
 			commands := []workerapi.ComputerCommand{}
 			for _, id := range []string{"first", "second"} {

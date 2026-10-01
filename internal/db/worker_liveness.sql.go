@@ -169,23 +169,23 @@ WITH target AS (
      WHERE host_secrets.worker_host_id = target.id
        AND host_secrets.revoked_at IS NULL
     RETURNING host_secrets.id
-), lost_runtimes AS (
-    UPDATE computer_instances AS runtimes
-       SET observed_state = 'lost', observed_version = runtimes.observed_version + 1,
+), lost_instances AS (
+    UPDATE computer_instances AS instances
+       SET observed_state = 'lost', observed_version = instances.observed_version + 1,
            observed_at = now(), terminal_at = now(),
            terminal_reason_code = $6,
            mount_state='lost', admission_state='closed', updated_at=now()
       FROM target
-     WHERE runtimes.worker_host_id = target.id
-       AND runtimes.worker_epoch = target.current_epoch
-       AND runtimes.reclaimed_at IS NULL
-       AND runtimes.observed_state IN ('allocated', 'ready')
-    RETURNING runtimes.id
+     WHERE instances.worker_host_id = target.id
+       AND instances.worker_epoch = target.current_epoch
+       AND instances.reclaimed_at IS NULL
+       AND instances.observed_state IN ('allocated', 'ready')
+    RETURNING instances.id
 )
 SELECT target.id, target.worker_group_id, target.current_epoch, target.status
   FROM target
  WHERE (SELECT count(*) FROM revoked_host_secrets) >= 0
-   AND (SELECT count(*) FROM lost_runtimes) >= 0
+   AND (SELECT count(*) FROM lost_instances) >= 0
 `
 
 type RecheckAndFenceStaleWorkerHostParams struct {

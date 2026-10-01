@@ -15,13 +15,13 @@ import (
 // every member. The physical owner must exclude the source on an uncertain
 // response; freeze never thaws it or closes the whole VM. Cancellation closes
 // only the freeze stream, at any step of the exchange.
-func (g guestControl) freeze(ctx context.Context, target workerapi.RuntimeReconcileTarget) (workerapi.CheckpointRecoveryPoint, error) {
+func (g guestControl) freeze(ctx context.Context, target workerapi.InstanceReconcileTarget) (workerapi.CheckpointRecoveryPoint, error) {
 	request, err := computerFreezeRequest(target)
 	if err != nil {
 		return workerapi.CheckpointRecoveryPoint{}, err
 	}
 	if g.machine == nil {
-		return workerapi.CheckpointRecoveryPoint{}, errors.New("computer capture session is required")
+		return workerapi.CheckpointRecoveryPoint{}, errors.New("computer capture machine is required")
 	}
 	if err = ctx.Err(); err != nil {
 		return workerapi.CheckpointRecoveryPoint{}, err
@@ -42,9 +42,9 @@ func (g guestControl) freeze(ctx context.Context, target workerapi.RuntimeReconc
 	return computerFrozenRecoveryPoint(target, request, &response)
 }
 
-func computerFreezeRequest(target workerapi.RuntimeReconcileTarget) (*computerv0.FreezeComputerRequest, error) {
+func computerFreezeRequest(target workerapi.InstanceReconcileTarget) (*computerv0.FreezeComputerRequest, error) {
 	capture := target.Capture
-	if target.Action != workerapi.RuntimeReconcileCapture || strings.TrimSpace(target.ID) == "" || target.WorkerEpoch <= 0 || target.DesiredVersion <= 0 || strings.TrimSpace(target.Source.ComputerID) == "" || strings.TrimSpace(target.Source.ComputerSpecID) == "" || target.Source.WriterGeneration <= 0 || capture == nil || strings.TrimSpace(capture.CheckpointID) == "" || capture.MembershipRevision < 0 || (len(capture.Runs) > 0 && strings.TrimSpace(capture.ProgramDeploymentID) == "") {
+	if target.Action != workerapi.InstanceReconcileCapture || strings.TrimSpace(target.ID) == "" || target.WorkerEpoch <= 0 || target.DesiredVersion <= 0 || strings.TrimSpace(target.Source.ComputerID) == "" || strings.TrimSpace(target.Source.ComputerSpecID) == "" || target.Source.WriterGeneration <= 0 || capture == nil || strings.TrimSpace(capture.CheckpointID) == "" || capture.MembershipRevision < 0 || (len(capture.Runs) > 0 && strings.TrimSpace(capture.ProgramDeploymentID) == "") {
 		return nil, errors.New("computer capture intent is incomplete")
 	}
 	request := &computerv0.FreezeComputerRequest{ComputerId: target.Source.ComputerID, ComputerInstanceId: target.ID, WriterGeneration: target.Source.WriterGeneration, CheckpointId: capture.CheckpointID, DesiredVersion: target.DesiredVersion, MembershipRevision: capture.MembershipRevision, Runs: make([]*computerv0.ComputerCaptureRun, 0, len(capture.Runs))}
@@ -59,7 +59,7 @@ func computerFreezeRequest(target workerapi.RuntimeReconcileTarget) (*computerv0
 	return request, nil
 }
 
-func computerFrozenRecoveryPoint(target workerapi.RuntimeReconcileTarget, request *computerv0.FreezeComputerRequest, response *computerv0.FreezeComputerResponse) (workerapi.CheckpointRecoveryPoint, error) {
+func computerFrozenRecoveryPoint(target workerapi.InstanceReconcileTarget, request *computerv0.FreezeComputerRequest, response *computerv0.FreezeComputerResponse) (workerapi.CheckpointRecoveryPoint, error) {
 	identity := response.GetIdentity()
 	if identity == nil || identity.ComputerId != request.ComputerId || identity.SourceComputerInstanceId != request.ComputerInstanceId || identity.WriterGeneration != request.WriterGeneration || identity.CheckpointId != request.CheckpointId || response.GetDesiredVersion() != request.DesiredVersion || response.GetMembershipRevision() != request.MembershipRevision || len(identity.Runs) != len(request.Runs) {
 		return workerapi.CheckpointRecoveryPoint{}, errors.New("computer freeze proof changed the capture identity")

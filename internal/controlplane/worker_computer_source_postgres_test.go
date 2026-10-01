@@ -54,7 +54,7 @@ func TestInstanceSourceDiscoveryUsesExactDisk(t *testing.T) {
 	if !version.Valid || pinned.PreparationDiskVersionID != version || pinned.ComputerDiskVersionStatus.String != "committed" {
 		t.Fatalf("pinned source not selected: %+v", pinned.PreparationDiskVersionID)
 	}
-	projected, err := projectRuntimeComputerSource(pinned)
+	projected, err := projectInstanceComputerSource(pinned)
 	if err != nil || projected.Root == nil || projected.Seed != nil {
 		t.Fatalf("discovered continuation projection: %+v %v", projected, err)
 	}
@@ -80,7 +80,7 @@ func TestInstanceSourceDiscoveryUsesExactDisk(t *testing.T) {
 	if initial.SourceDiskVersionID.Valid || initial.PreparationDiskVersionID != version || initial.ComputerDiskVersionStatus.String != "initializing" || len(initial.ComputerVersionLocator) != 0 {
 		t.Fatal("initial source did not resolve the initializing head")
 	}
-	projected, err = projectRuntimeComputerSource(initial)
+	projected, err = projectInstanceComputerSource(initial)
 	if err != nil || projected.Seed == nil || projected.Root != nil {
 		t.Fatalf("discovered seed projection: %+v %v", projected, err)
 	}

@@ -32,7 +32,7 @@ func TestProjectSecretDeliveriesUsesCanonicalPlacementOrder(t *testing.T) {
 func TestProjectRunLeaseAssignmentAndComputer(t *testing.T) {
 	authority := validRunLeaseProjectionAuthority()
 	authority.run.BaseComputerDiskVersionID = pgvalue.UUID(uuid.NewV7())
-	authority.runtime.SourceDiskVersionID = pgvalue.UUID(uuid.NewV7())
+	authority.instance.SourceDiskVersionID = pgvalue.UUID(uuid.NewV7())
 	assignment, err := projectRunLeaseAssignment(authority)
 	if err != nil {
 		t.Fatalf("projectRunLeaseAssignment: %v", err)
@@ -40,7 +40,7 @@ func TestProjectRunLeaseAssignmentAndComputer(t *testing.T) {
 	if assignment.LeaseSequence != 2 ||
 		assignment.ComputerID != pgvalue.UUIDString(authority.computer.ID) ||
 		assignment.BaseComputerDiskVersionID != pgvalue.UUIDString(authority.attempt.BaseComputerDiskVersionID) ||
-		assignment.WriterGeneration != authority.runtime.WriterGeneration ||
+		assignment.WriterGeneration != authority.instance.WriterGeneration ||
 		assignment.MaxActiveDurationMs != authority.run.MaxActiveDurationMs {
 		t.Fatalf("unexpected Run Lease assignment: %#v", assignment)
 	}
@@ -59,13 +59,13 @@ func TestProjectRunLeaseAssignmentAndComputer(t *testing.T) {
 	}
 
 	for name, mutate := range map[string]func(*runLeaseProjectionAuthority){
-		"writer generation": func(a *runLeaseProjectionAuthority) { a.runtime.WriterGeneration++ },
-		"Instance":          func(a *runLeaseProjectionAuthority) { a.runtime.ID = pgvalue.UUID(uuid.New()) },
-		"Computer":          func(a *runLeaseProjectionAuthority) { a.runtime.ComputerID = pgvalue.UUID(uuid.New()) },
-		"Worker host":       func(a *runLeaseProjectionAuthority) { a.runtime.WorkerHostID = pgvalue.UUID(uuid.New()) },
-		"Worker group":      func(a *runLeaseProjectionAuthority) { a.runtime.WorkerGroupID = pgvalue.UUID(uuid.New()) },
-		"Worker epoch":      func(a *runLeaseProjectionAuthority) { a.runtime.WorkerEpoch++ },
-		"environment":       func(a *runLeaseProjectionAuthority) { a.runtime.EnvironmentID = pgvalue.UUID(uuid.New()) },
+		"writer generation": func(a *runLeaseProjectionAuthority) { a.instance.WriterGeneration++ },
+		"Instance":          func(a *runLeaseProjectionAuthority) { a.instance.ID = pgvalue.UUID(uuid.New()) },
+		"Computer":          func(a *runLeaseProjectionAuthority) { a.instance.ComputerID = pgvalue.UUID(uuid.New()) },
+		"Worker host":       func(a *runLeaseProjectionAuthority) { a.instance.WorkerHostID = pgvalue.UUID(uuid.New()) },
+		"Worker group":      func(a *runLeaseProjectionAuthority) { a.instance.WorkerGroupID = pgvalue.UUID(uuid.New()) },
+		"Worker epoch":      func(a *runLeaseProjectionAuthority) { a.instance.WorkerEpoch++ },
+		"environment":       func(a *runLeaseProjectionAuthority) { a.instance.EnvironmentID = pgvalue.UUID(uuid.New()) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := authority
@@ -106,7 +106,7 @@ func validRunLeaseProjectionAuthority() runLeaseProjectionAuthority {
 	computerID := pgvalue.UUID(uuid.NewV7())
 	versionID := pgvalue.UUID(uuid.NewV7())
 	attemptNumber := int32(1)
-	runtimeID := pgvalue.UUID(uuid.New())
+	instanceID := pgvalue.UUID(uuid.New())
 	workerID := pgvalue.UUID(uuid.New())
 	groupID := pgvalue.UUID(uuid.New())
 	runLeaseID := pgvalue.UUID(uuid.New())
@@ -116,13 +116,13 @@ func validRunLeaseProjectionAuthority() runLeaseProjectionAuthority {
 			ID: runID, ComputerID: computerID, BaseComputerDiskVersionID: versionID, CurrentAttemptNumber: attemptNumber,
 			MaxActiveDurationMs: 300000, ActiveElapsedMs: 1000,
 		},
-		attempt: db.RunAttempt{RunID: runID, Number: attemptNumber, ComputerID: computerID, BaseComputerDiskVersionID: versionID},
-		runtime: db.ComputerInstance{ID: runtimeID, ComputerID: computerID, WorkerGroupID: groupID, WorkerHostID: workerID, WorkerEpoch: 3, WriterGeneration: 6, VMPlatformID: "runtime"},
+		attempt:  db.RunAttempt{RunID: runID, Number: attemptNumber, ComputerID: computerID, BaseComputerDiskVersionID: versionID},
+		instance: db.ComputerInstance{ID: instanceID, ComputerID: computerID, WorkerGroupID: groupID, WorkerHostID: workerID, WorkerEpoch: 3, WriterGeneration: 6, VMPlatformID: "runtime"},
 		runLease: db.RunLease{
 			ID: runLeaseID, RunID: runID, ComputerID: computerID,
 			AttemptNumber: attemptNumber, LeaseSequence: 2,
 			WorkerGroupID: groupID, WorkerHostID: workerID,
-			WorkerEpoch: 3, ComputerInstanceID: runtimeID,
+			WorkerEpoch: 3, ComputerInstanceID: instanceID,
 			RequestedCPUMillis: 1000, RequestedMemoryBytes: 1024,
 			RequestedGuestEphemeralDiskBytes: 2048,
 			RequestedExecutionSlots:          1,

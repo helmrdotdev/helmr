@@ -43,7 +43,7 @@ func TestServerRenewsWhileAwaitingPreparedMachine(t *testing.T) {
 		t.Run(fmt.Sprint(fail), func(t *testing.T) {
 			store, mount := testComputerMountArtifacts(t)
 			mount.ComputerInstanceID, mount.OrgID = "mount-await-ready", "org-1"
-			machines := computerPreparedMachines(t, mount, &serverTestSession{})
+			machines := computerPreparedMachines(t, mount, &serverTestMachine{})
 			key := computerInstanceIDFromComputerMount(mount)
 			machines.entries[key][0].ready = newPreparedMachineSignal()
 			renewed := make(chan struct{})
@@ -60,7 +60,7 @@ func TestServerRenewsWhileAwaitingPreparedMachine(t *testing.T) {
 				select {
 				case <-renewed:
 				case <-time.After(time.Second):
-					t.Fatal("pending runtime admission did not renew")
+					t.Fatal("pending instance admission did not renew")
 				}
 				cancel()
 			}
@@ -70,7 +70,7 @@ func TestServerRenewsWhileAwaitingPreparedMachine(t *testing.T) {
 					t.Fatalf("renew failure=%v", err)
 				}
 			case <-time.After(time.Second):
-				t.Fatal("pending runtime admission did not cancel")
+				t.Fatal("pending instance admission did not cancel")
 			}
 		})
 	}
@@ -107,7 +107,7 @@ func testComputerMountArtifacts(t *testing.T) (*fakeCAS, workerapi.ComputerInsta
 		ComputerInstanceID: uuid.NewV7().String(),
 		EnvironmentID:      uuid.NewV7().String(),
 		ComputerID:         uuid.NewV7().String(),
-		RuntimeEpoch:       1,
+		WorkerEpoch:        1,
 		VMPlatformID:       "runtime-1",
 		ComputerImage: workerapi.CASObject{
 			Digest: imageObject.Digest, SizeBytes: imageObject.SizeBytes, MediaType: imageObject.MediaType,
@@ -120,23 +120,23 @@ func testComputerMountArtifacts(t *testing.T) (*fakeCAS, workerapi.ComputerInsta
 	}
 }
 
-func computerPreparedMachines(t *testing.T, mount workerapi.ComputerInstanceAssignment, session vm.CheckpointableMachine) *PreparedMachines {
+func computerPreparedMachines(t *testing.T, mount workerapi.ComputerInstanceAssignment, machine vm.CheckpointableMachine) *PreparedMachines {
 	t.Helper()
-	target := runtimeReservationTarget(mount.ComputerInstanceID, mount.RuntimeEpoch)
+	target := instanceReservationTarget(mount.ComputerInstanceID, mount.WorkerEpoch)
 	target.Source.ComputerID = mount.ComputerID
 	target.Source.WriterGeneration = mount.WriterGeneration
-	target.Source.Computer = &workerapi.RuntimeComputerSource{VersionID: mount.Target.BaseComputerDiskVersionID}
+	target.Source.Computer = &workerapi.InstanceComputerSource{VersionID: mount.Target.BaseComputerDiskVersionID}
 	machines := NewPreparedMachines(nil, nil, 1, nil)
 	machines.Reservations = newPreparedMachineReservations(t, 1)
-	if err := machines.reserveRuntimeCapacity(target); err != nil {
+	if err := machines.reserveInstanceCapacity(target); err != nil {
 		t.Fatal(err)
 	}
 	key := computerInstanceIDFromComputerMount(mount)
 	ready := newPreparedMachineSignal()
 	ready.finish(nil)
 	machines.entries[key] = []preparedMachineEntry{{
-		session: session, machineKey: key, computerInstanceID: target.ID,
-		runtimeEpoch: target.WorkerEpoch, target: target,
+		machine: machine, machineKey: key, computerInstanceID: target.ID,
+		workerEpoch: target.WorkerEpoch, target: target,
 		exit: newPreparedMachineSignal(), ready: ready,
 	}}
 	return machines
@@ -246,25 +246,25 @@ func TestEnforceArtifactCacheBudgetEvictsOldArtifacts(t *testing.T) {
 
 func TestServerChecksOutPreparedMachine(t *testing.T) {
 	store, computerMount := testComputerMountArtifacts(t)
-	wantSession := &serverTestSession{}
-	machines := computerPreparedMachines(t, computerMount, wantSession)
+	wantMachine := &serverTestMachine{}
+	machines := computerPreparedMachines(t, computerMount, wantMachine)
 	server := Server{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:      store,
 		TempDir:  t.TempDir(),
 		Machines: machines,
 	}
 
-	checkout, computerInstanceID, err := server.materializeSession(context.Background(), &computerMount)
+	checkout, computerInstanceID, err := server.materializeMachine(context.Background(), &computerMount)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if session := checkout.Machine(); session != wantSession {
-		t.Fatalf("session = %T %p, want %T %p", session, session, wantSession, wantSession)
+	if machine := checkout.Machine(); machine != wantMachine {
+		t.Fatalf("machine = %T %p, want %T %p", machine, machine, wantMachine, wantMachine)
 	}
 	if computerInstanceID != computerMount.ComputerInstanceID {
-		t.Fatalf("runtime instance id = %q, want %q", computerInstanceID, computerMount.ComputerInstanceID)
+		t.Fatalf("instance id = %q, want %q", computerInstanceID, computerMount.ComputerInstanceID)
 	}
-	if !machines.runtimeCheckedOut(computerMount.ComputerInstanceID, computerMount.RuntimeEpoch) {
+	if !machines.instanceCheckedOut(computerMount.ComputerInstanceID, computerMount.WorkerEpoch) {
 		t.Fatal("prepared machine was not checked out")
 	}
 	if got := store.getCalls[computerMount.ComputerImage.Digest]; got != 0 {
@@ -293,24 +293,24 @@ func TestServerReleasesCheckoutOnRestoreProvenanceFailure(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			store, mount := testComputerMountArtifacts(t)
 			mount.RestoreCheckpointID = test.mountCheckpointID
-			session := &serverTestSession{}
-			machines := computerPreparedMachines(t, mount, session)
+			machine := &serverTestMachine{}
+			machines := computerPreparedMachines(t, mount, machine)
 			key := computerInstanceIDFromComputerMount(mount)
-			machines.entries[key][0].target.Source.Restore = &workerapi.RuntimeRestore{
+			machines.entries[key][0].target.Source.Restore = &workerapi.InstanceRestore{
 				CheckpointID: "checkpoint-b",
 			}
 			server := Server{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}, CAS: store, Machines: machines}
 
-			_, _, err := server.materializeSession(context.Background(), &mount)
+			_, _, err := server.materializeMachine(context.Background(), &mount)
 			var failure computerMountFailure
 			if !errors.As(err, &failure) || failure.code != test.wantCode {
 				t.Fatalf("materialize error = %v, want %s", err, test.wantCode)
 			}
-			if session.closeCount() != 1 {
-				t.Fatalf("session close count = %d, want 1", session.closeCount())
+			if machine.closeCount() != 1 {
+				t.Fatalf("machine close count = %d, want 1", machine.closeCount())
 			}
-			if machines.runtimeCheckedOut(mount.ComputerInstanceID, mount.RuntimeEpoch) {
-				t.Fatal("failed restore provenance retained runtime checkout")
+			if machines.instanceCheckedOut(mount.ComputerInstanceID, mount.WorkerEpoch) {
+				t.Fatal("failed restore provenance retained instance checkout")
 			}
 			if got := len(machines.Reservations.Snapshot().Reservations); got != 0 {
 				t.Fatalf("capacity reservations = %d, want 0", got)
@@ -342,8 +342,8 @@ func TestServerFailsWhenPreparedMachineIsMissing(t *testing.T) {
 		t.Fatal("missing prepared machine was accepted")
 	}
 	var failure computerMountFailure
-	if !errors.As(err, &failure) || failure.code != "computer_runtime_not_prepared" {
-		t.Fatalf("error = %v, want computer_runtime_not_prepared", err)
+	if !errors.As(err, &failure) || failure.code != "computer_instance_not_prepared" {
+		t.Fatalf("error = %v, want computer_instance_not_prepared", err)
 	}
 	if len(client.failures) != 1 {
 		t.Fatalf("computer mount failures = %d, want 1", len(client.failures))
@@ -354,8 +354,8 @@ func TestServerFailsWhenPreparedMachineIsMissing(t *testing.T) {
 	if err := json.Unmarshal(client.failures[0].Error, &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.Code != "computer_runtime_not_prepared" {
-		t.Fatalf("computer mount failure code = %q, want computer_runtime_not_prepared", body.Code)
+	if body.Code != "computer_instance_not_prepared" {
+		t.Fatalf("computer mount failure code = %q, want computer_instance_not_prepared", body.Code)
 	}
 	if got := store.getCalls[computerMount.ComputerImage.Digest]; got != 0 {
 		t.Fatalf("computer image CAS gets = %d, want 0", got)
@@ -370,19 +370,19 @@ func TestServerPreparedComputerSkipsComputerCAS(t *testing.T) {
 	mount.Target = workerapi.ComputerMountTarget{
 		BaseComputerDiskVersionID: mount.Target.BaseComputerDiskVersionID,
 	}
-	session := &serverTestSession{}
-	machines := computerPreparedMachines(t, mount, session)
+	machine := &serverTestMachine{}
+	machines := computerPreparedMachines(t, mount, machine)
 	server := Server{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:      store,
 		Machines: machines,
 	}
 
-	checkout, _, err := server.materializeSession(context.Background(), &mount)
+	checkout, _, err := server.materializeMachine(context.Background(), &mount)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotSession := checkout.Machine(); gotSession != session {
-		t.Fatalf("session = %v, want prepared session", gotSession)
+	if gotMachine := checkout.Machine(); gotMachine != machine {
+		t.Fatalf("machine = %v, want prepared machine", gotMachine)
 	}
 	if got := store.getCalls[mount.ComputerImage.Digest]; got != 0 {
 		t.Fatalf("computer image CAS gets = %d, want 0", got)
@@ -395,7 +395,7 @@ func TestServerPreparedComputerSkipsComputerCAS(t *testing.T) {
 func TestServerDispatchesBasicExec(t *testing.T) {
 	clientStream, guestStream := net.Pipe()
 	defer guestStream.Close()
-	session := &serverTestSession{operation: clientStream}
+	machine := &serverTestMachine{operation: clientStream}
 	secretValue := []byte("secret-value")
 	exec := workerapi.ComputerCommand{
 		CommandID:          "process-1",
@@ -450,7 +450,7 @@ func TestServerDispatchesBasicExec(t *testing.T) {
 	client := &serverTestClient{}
 	completion, err := (Server{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}}).dispatchComputerBasicExec(
 		context.Background(),
-		session,
+		machine,
 		workerapi.ComputerInstanceAssignment{
 			OrgID: "org-1", ComputerID: "computer-1", ComputerInstanceID: "instance-1", WriterGeneration: 4,
 			GuestChannelCredential: "channel-credential",
@@ -483,7 +483,7 @@ func TestServerDispatchesBasicExec(t *testing.T) {
 func TestServerRejectsMismatchedBasicExecClaim(t *testing.T) {
 	_, err := (Server{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}}).dispatchComputerBasicExec(
 		context.Background(),
-		&serverTestSession{},
+		&serverTestMachine{},
 		workerapi.ComputerInstanceAssignment{
 			ComputerID:             "computer-1",
 			GuestChannelCredential: "channel-credential",
@@ -588,11 +588,11 @@ func TestServerFailsStartupWhenGuestDoesNotRegister(t *testing.T) {
 		_, _ = preparedServer.Read(buf[:])
 	}()
 	client := &serverTestClient{}
-	session := &serverTestSession{
+	machine := &serverTestMachine{
 		streams:   []io.ReadWriteCloser{preparedClient},
 		operation: discardReadWriteCloser{},
 	}
-	machines := computerPreparedMachines(t, computerMount, session)
+	machines := computerPreparedMachines(t, computerMount, machine)
 	server := Server{RestoreControl: unusedComputerRestoreControl{}, Mounts: NewMounts(), ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:            store,
 		TempDir:        t.TempDir(),
@@ -626,11 +626,11 @@ func TestServerFailsComputerMountOnFatalHeartbeatError(t *testing.T) {
 	client := &serverTestClient{
 		renewErrors: []error{errors.New("renew failed")},
 	}
-	session := &serverTestSession{
+	machine := &serverTestMachine{
 		streams:   []io.ReadWriteCloser{preparedClient},
 		operation: discardReadWriteCloser{},
 	}
-	machines := computerPreparedMachines(t, computerMount, session)
+	machines := computerPreparedMachines(t, computerMount, machine)
 	server := Server{RestoreControl: unusedComputerRestoreControl{}, Mounts: NewMounts(), ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:       store,
 		TempDir:   t.TempDir(),
@@ -663,30 +663,30 @@ func TestServeCloseFailureReturnsOwnershipForPhysicalCleanup(t *testing.T) {
 			computerMount.ComputerID = uuid.NewV7().String()
 			computerMount.GuestChannelCredential = "channel-credential"
 			computerMount.GuestChannelCredentialHash = sha256sum.HexBytes([]byte("channel-credential"))
-			target := runtimeReservationTarget(computerMount.ComputerInstanceID, computerMount.RuntimeEpoch)
+			target := instanceReservationTarget(computerMount.ComputerInstanceID, computerMount.WorkerEpoch)
 			target.Source.ComputerID = computerMount.ComputerID
 			target.Source.WriterGeneration = computerMount.WriterGeneration
-			target.Source.Computer = &workerapi.RuntimeComputerSource{VersionID: computerMount.Target.BaseComputerDiskVersionID}
+			target.Source.Computer = &workerapi.InstanceComputerSource{VersionID: computerMount.Target.BaseComputerDiskVersionID}
 			var closeFailure error = errors.New("prepared machine cleanup failed")
 			if preservationFailure {
 				closeFailure = nil
 			}
-			session := &serverTestSession{
+			machine := &serverTestMachine{
 				streams:   []io.ReadWriteCloser{preparedClient},
 				operation: discardReadWriteCloser{},
 				closeErr:  closeFailure,
 			}
 			machines := NewPreparedMachines(nil, nil, 1, nil)
 			machines.Reservations = newPreparedMachineReservations(t, 1)
-			if err := machines.reserveRuntimeCapacity(target); err != nil {
+			if err := machines.reserveInstanceCapacity(target); err != nil {
 				t.Fatal(err)
 			}
 			key := computerInstanceIDFromComputerMount(computerMount)
 			ready := newPreparedMachineSignal()
 			ready.finish(nil)
 			machines.entries[key] = []preparedMachineEntry{{
-				session: session, machineKey: key, computerInstanceID: target.ID,
-				runtimeEpoch: target.WorkerEpoch, target: target,
+				machine: machine, machineKey: key, computerInstanceID: target.ID,
+				workerEpoch: target.WorkerEpoch, target: target,
 				exit: newPreparedMachineSignal(), ready: ready,
 			}}
 			go acknowledgePreparedComputerMount(t, preparedServer, computerMount, key)
@@ -720,23 +720,23 @@ func TestServeCloseFailureReturnsOwnershipForPhysicalCleanup(t *testing.T) {
 			if !errors.Is(err, closeFailure) {
 				t.Fatalf("server error = %v, want close failure", err)
 			}
-			if machines.runtimeCheckedOut(target.ID, target.WorkerEpoch) {
+			if machines.instanceCheckedOut(target.ID, target.WorkerEpoch) {
 				t.Fatal("exited server retained checkout ownership")
 			}
 			if got := len(machines.Reservations.Snapshot().Reservations); got != 1 {
 				t.Fatalf("capacity reservations after close failure = %d, want 1", got)
 			}
-			connector := &cleanupRuntimeBackend{err: errors.New("process still alive")}
+			connector := &cleanupBackend{err: errors.New("process still alive")}
 			machines.Backend = connector
-			control := &typedRuntimeClient{}
-			if err := machines.stopRuntimeTarget(context.Background(), control, target); err == nil {
+			control := &typedInstanceClient{}
+			if err := machines.stopInstanceTarget(context.Background(), control, target); err == nil {
 				t.Fatal("unproved host cleanup succeeded")
 			}
 			if len(machines.Reservations.Snapshot().Reservations) != 1 || len(control.closed) != 0 {
 				t.Fatal("released capacity or published proof before physical cleanup")
 			}
 			connector.err = nil
-			if err := machines.stopRuntimeTarget(context.Background(), control, target); err != nil {
+			if err := machines.stopInstanceTarget(context.Background(), control, target); err != nil {
 				t.Fatal(err)
 			}
 			if len(machines.Reservations.Snapshot().Reservations) != 0 || len(control.closed) != 1 || control.closed[0].CleanupProof == nil {
@@ -747,7 +747,7 @@ func TestServeCloseFailureReturnsOwnershipForPhysicalCleanup(t *testing.T) {
 	}
 }
 
-func TestServerFailsComputerMountWhenSessionExits(t *testing.T) {
+func TestServerFailsComputerMountWhenMachineExits(t *testing.T) {
 	ctx := context.Background()
 	preparedClient, preparedServer := net.Pipe()
 	defer preparedServer.Close()
@@ -763,12 +763,12 @@ func TestServerFailsComputerMountWhenSessionExits(t *testing.T) {
 		exit <- errors.New("the Firecracker exited")
 	}()
 	client := &serverTestClient{}
-	session := &serverTestSession{
+	machine := &serverTestMachine{
 		streams:   []io.ReadWriteCloser{preparedClient},
 		operation: discardReadWriteCloser{},
 		exit:      exit,
 	}
-	machines := computerPreparedMachines(t, computerMount, session)
+	machines := computerPreparedMachines(t, computerMount, machine)
 	server := Server{RestoreControl: unusedComputerRestoreControl{}, Mounts: NewMounts(), ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:       store,
 		TempDir:   t.TempDir(),
@@ -804,11 +804,11 @@ func TestServerOwnsProgramStartFailureCleanup(t *testing.T) {
 		computerMount,
 		computerMount.ComputerInstanceID,
 	)
-	rawSession := &serverTestSession{
+	rawMachine := &serverTestMachine{
 		streams:   []io.ReadWriteCloser{preparedClient},
 		operation: discardReadWriteCloser{},
 	}
-	machines := computerPreparedMachines(t, computerMount, rawSession)
+	machines := computerPreparedMachines(t, computerMount, rawMachine)
 	mounts := NewMounts()
 	mounted := make(chan struct{})
 	client := &serverTestClient{onReady: func() { close(mounted) }}
@@ -840,7 +840,7 @@ func TestServerOwnsProgramStartFailureCleanup(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Computer Mount owner did not finish Program start failure")
 	}
-	if rawSession.closeCount() == 0 {
+	if rawMachine.closeCount() == 0 {
 		t.Fatal("Computer Mount VM was not closed")
 	}
 	if len(client.failures) != 1 {
@@ -855,7 +855,7 @@ func TestServerOwnsProgramStartFailureCleanup(t *testing.T) {
 	}
 }
 
-func TestServerProgramStartFailureKeepsCapacityWhenRuntimeCloseFails(t *testing.T) {
+func TestServerProgramStartFailureKeepsCapacityWhenInstanceCloseFails(t *testing.T) {
 	ctx := context.Background()
 	preparedClient, preparedServer := net.Pipe()
 	defer preparedServer.Close()
@@ -872,12 +872,12 @@ func TestServerProgramStartFailureKeepsCapacityWhenRuntimeCloseFails(t *testing.
 		computerMount.ComputerInstanceID,
 	)
 	rawCause := "signed-url-secret-sentinel"
-	rawSession := &serverTestSession{
+	rawMachine := &serverTestMachine{
 		streams:   []io.ReadWriteCloser{preparedClient},
 		operation: discardReadWriteCloser{},
 		closeErr:  errors.New(rawCause),
 	}
-	machines := computerPreparedMachines(t, computerMount, rawSession)
+	machines := computerPreparedMachines(t, computerMount, rawMachine)
 	mounts := NewMounts()
 	mounted := make(chan struct{})
 	client := &serverTestClient{onReady: func() { close(mounted) }}
@@ -904,7 +904,7 @@ func TestServerProgramStartFailureKeepsCapacityWhenRuntimeCloseFails(t *testing.
 	}
 	select {
 	case err := <-result:
-		if err == nil || !strings.Contains(err.Error(), "computer mount runtime cleanup failed") {
+		if err == nil || !strings.Contains(err.Error(), "computer mount instance cleanup failed") {
 			t.Fatalf("server error = %v, want static cleanup failure", err)
 		}
 	case <-time.After(5 * time.Second):
@@ -913,14 +913,14 @@ func TestServerProgramStartFailureKeepsCapacityWhenRuntimeCloseFails(t *testing.
 	if len(client.failures) != 1 {
 		t.Fatalf("failures = %+v", client.failures)
 	}
-	if got := string(client.failures[0].Error); !strings.Contains(got, "computer_mount_runtime_close_failed") ||
+	if got := string(client.failures[0].Error); !strings.Contains(got, "computer_mount_instance_close_failed") ||
 		strings.Contains(got, rawCause) {
 		t.Fatalf("failure error = %s", got)
 	}
 	if got := len(machines.Reservations.Snapshot().Reservations); got != 1 {
 		t.Fatalf("capacity reservations = %d, want 1 until cleanup is proven", got)
 	}
-	if machines.runtimeCheckedOut(computerMount.ComputerInstanceID, computerMount.RuntimeEpoch) {
+	if machines.instanceCheckedOut(computerMount.ComputerInstanceID, computerMount.WorkerEpoch) {
 		t.Fatal("close failure must hand checkout to reconciliation")
 	}
 }
@@ -935,21 +935,21 @@ func TestServerRegistersPreparedMachineOverOpenedStream(t *testing.T) {
 	computerMount.ComputerID = uuid.NewV7().String()
 	computerMount.GuestChannelCredential = "channel-credential"
 	computerMount.GuestChannelCredentialHash = sha256sum.HexBytes([]byte("channel-credential"))
-	session := &serverTestSession{
+	machine := &serverTestMachine{
 		streams: []io.ReadWriteCloser{preparedClient},
 	}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		acknowledgePreparedComputerMount(t, preparedServer, computerMount, "runtime-key")
+		acknowledgePreparedComputerMount(t, preparedServer, computerMount, "instance-key")
 	}()
 
-	err := (Server{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}}).registerComputerMount(ctx, session, computerMount, "runtime-key")
+	err := (Server{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}}).registerComputerMount(ctx, machine, computerMount, "instance-key")
 	if err != nil {
 		t.Fatal(err)
 	}
 	<-done
-	opened := session.openedStreams()
+	opened := machine.openedStreams()
 	if len(opened) != 1 || opened[0] != preparedClient {
 		t.Fatalf("opened streams = %+v, want prepared machine computerMount over OpenStream", opened)
 	}
@@ -1010,9 +1010,9 @@ func TestServerValidatesSuccessReceiptsOnlyAfterRunningState(t *testing.T) {
 			preparedClient, preparedServer := net.Pipe()
 			defer preparedServer.Close()
 			go respondToPreparedComputerMountWithRequest(t, preparedServer, test.response)
-			err := (Server{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}}).registerComputerMount(context.Background(), &serverTestSession{
+			err := (Server{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}}).registerComputerMount(context.Background(), &serverTestMachine{
 				streams: []io.ReadWriteCloser{preparedClient},
-			}, computerMount, "runtime-key")
+			}, computerMount, "instance-key")
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("register error = %v, want %q", err, test.want)
 			}
@@ -1044,10 +1044,10 @@ func respondToPreparedComputerMountWithRequest(t *testing.T, stream io.ReadWrite
 	}
 }
 
-func acknowledgePreparedComputerMount(t *testing.T, stream io.ReadWriteCloser, computerMount workerapi.ComputerInstanceAssignment, runtimeKey string) {
+func acknowledgePreparedComputerMount(t *testing.T, stream io.ReadWriteCloser, computerMount workerapi.ComputerInstanceAssignment, instanceKey string) {
 	t.Helper()
 	respondToPreparedComputerMountWithRequest(t, stream, func(request *computerv0.MaterializeComputerRequest) *computerv0.MaterializeComputerResponse {
-		if !request.UsePreparedRuntime || request.GetEnvelope().GetComputerInstanceId() != runtimeKey {
+		if !request.UsePreparedRuntime || request.GetEnvelope().GetComputerInstanceId() != instanceKey {
 			t.Errorf("prepared machine request use=%v computer_instance_id=%q", request.UsePreparedRuntime, request.GetEnvelope().GetComputerInstanceId())
 		}
 		return &computerv0.MaterializeComputerResponse{
@@ -1058,7 +1058,7 @@ func acknowledgePreparedComputerMount(t *testing.T, stream io.ReadWriteCloser, c
 	})
 }
 
-type serverTestSession struct {
+type serverTestMachine struct {
 	unusedCheckpoint
 	mu        sync.Mutex
 	operation io.ReadWriteCloser
@@ -1070,15 +1070,15 @@ type serverTestSession struct {
 	captures  int
 }
 
-func (s *serverTestSession) Stream() vm.Stream {
+func (s *serverTestMachine) Stream() vm.Stream {
 	return nil
 }
 
-func (s *serverTestSession) OpenStream(context.Context) (vm.Stream, error) {
+func (s *serverTestMachine) OpenStream(context.Context) (vm.Stream, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed > 0 {
-		return nil, errors.New("test session is closed")
+		return nil, errors.New("test machine is closed")
 	}
 	if len(s.streams) > 0 {
 		stream := s.streams[0]
@@ -1090,7 +1090,7 @@ func (s *serverTestSession) OpenStream(context.Context) (vm.Stream, error) {
 	return testVMStream(s.operation), nil
 }
 
-func (s *serverTestSession) Close(context.Context) error {
+func (s *serverTestMachine) Close(context.Context) error {
 	s.mu.Lock()
 	s.closed++
 	operation := s.operation
@@ -1112,32 +1112,32 @@ func (s *serverTestSession) Close(context.Context) error {
 	return closeErr
 }
 
-func (s *serverTestSession) CaptureComputer(context.Context) (*vm.ComputerSnapshot, error) {
+func (s *serverTestMachine) CaptureComputer(context.Context) (*vm.ComputerSnapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.captures++
 	return nil, errTestLiveCapture
 }
 
-func (s *serverTestSession) captureCount() int {
+func (s *serverTestMachine) captureCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.captures
 }
 
-func (s *serverTestSession) closeCount() int {
+func (s *serverTestMachine) closeCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.closed
 }
 
-func (s *serverTestSession) openedStreams() []io.ReadWriteCloser {
+func (s *serverTestMachine) openedStreams() []io.ReadWriteCloser {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]io.ReadWriteCloser(nil), s.opened...)
 }
 
-func (s *serverTestSession) Wait(ctx context.Context) error {
+func (s *serverTestMachine) Wait(ctx context.Context) error {
 	if s.exit == nil {
 		<-ctx.Done()
 		return ctx.Err()
@@ -1423,7 +1423,7 @@ func TestCheckpointReleaseFailureReportsWithoutVMExit(t *testing.T) {
 	mount.GuestChannelCredentialHash = sha256sum.HexBytes([]byte("channel-credential"))
 	go acknowledgePreparedComputerMount(t, guest, mount, mount.ComputerInstanceID)
 	stopErr, reportErr := errors.New("VM stop unproved"), errors.New("failure acknowledgement lost")
-	raw := &serverTestSession{streams: []io.ReadWriteCloser{conn}, operation: discardReadWriteCloser{}, closeErr: stopErr}
+	raw := &serverTestMachine{streams: []io.ReadWriteCloser{conn}, operation: discardReadWriteCloser{}, closeErr: stopErr}
 	machines := computerPreparedMachines(t, mount, raw)
 	mounts := NewMounts()
 	mounted := make(chan struct{})
@@ -1455,35 +1455,35 @@ func TestCheckpointReleaseFailureReportsWithoutVMExit(t *testing.T) {
 	if len(client.failures) != 2 {
 		t.Fatalf("failure reporting attempts = %d", len(client.failures))
 	}
-	if machines.runtimeCheckedOut(mount.ComputerInstanceID, mount.RuntimeEpoch) {
+	if machines.instanceCheckedOut(mount.ComputerInstanceID, mount.WorkerEpoch) {
 		t.Fatal("exited server retained checkout ownership")
 	}
 	if len(machines.Reservations.Snapshot().Reservations) != 1 {
 		t.Fatal("released capacity before physical reclaim")
 	}
 	if raw.closeCount() != 1 {
-		t.Fatal("retried cached session close instead of deferring physical reclaim")
+		t.Fatal("retried cached machine close instead of deferring physical reclaim")
 	}
 	// Reconciliation receives a CP-authorized target after active leases expire.
-	// It must use host cleanup, not retry the cached session Close failure.
-	connector := &cleanupRuntimeBackend{err: errors.New("process still alive")}
+	// It must use host cleanup, not retry the cached machine Close failure.
+	connector := &cleanupBackend{err: errors.New("process still alive")}
 	machines.Backend = connector
-	target := runtimeReservationTarget(mount.ComputerInstanceID, mount.RuntimeEpoch)
+	target := instanceReservationTarget(mount.ComputerInstanceID, mount.WorkerEpoch)
 	target.Source.ComputerID = mount.ComputerID
-	target.Source.Computer = &workerapi.RuntimeComputerSource{VersionID: mount.Target.BaseComputerDiskVersionID}
-	control := &typedRuntimeClient{}
-	if err := machines.reclaimFailedRuntimeTarget(ctx, control, target); err == nil {
+	target.Source.Computer = &workerapi.InstanceComputerSource{VersionID: mount.Target.BaseComputerDiskVersionID}
+	control := &typedInstanceClient{}
+	if err := machines.reclaimFailedInstanceTarget(ctx, control, target); err == nil {
 		t.Fatal("unproved host cleanup succeeded")
 	}
 	if len(machines.Reservations.Snapshot().Reservations) != 1 || len(control.failed) != 0 {
 		t.Fatal("released or published proof before physical cleanup")
 	}
 	connector.err = nil
-	if err := machines.reclaimFailedRuntimeTarget(ctx, control, target); err != nil {
+	if err := machines.reclaimFailedInstanceTarget(ctx, control, target); err != nil {
 		t.Fatal(err)
 	}
-	if machines.runtimeCheckedOut(mount.ComputerInstanceID, mount.RuntimeEpoch) || len(machines.Reservations.Snapshot().Reservations) != 0 {
-		t.Fatal("retained runtime after proved cleanup")
+	if machines.instanceCheckedOut(mount.ComputerInstanceID, mount.WorkerEpoch) || len(machines.Reservations.Snapshot().Reservations) != 0 {
+		t.Fatal("retained instance after proved cleanup")
 	}
 	if len(control.failed) != 1 || control.failed[0].CleanupProof == nil || raw.closeCount() != 1 {
 		t.Fatal("reclaim did not publish host proof independently of cached Close")
@@ -1493,8 +1493,8 @@ func TestCheckpointReleaseFailureReportsWithoutVMExit(t *testing.T) {
 func TestPreparedComputerCheckoutRejectsChangedIdentityWithoutConsuming(t *testing.T) {
 	_, mount := testComputerMountArtifacts(t)
 	mount.ComputerID = "computer-1"
-	session := &serverTestSession{}
-	machines := computerPreparedMachines(t, mount, session)
+	machine := &serverTestMachine{}
+	machines := computerPreparedMachines(t, mount, machine)
 	for _, change := range []func(*workerapi.ComputerInstanceAssignment){func(m *workerapi.ComputerInstanceAssignment) { m.ComputerID = "computer-2" }, func(m *workerapi.ComputerInstanceAssignment) { m.Target.BaseComputerDiskVersionID = "other-version" }} {
 		wrong := mount
 		change(&wrong)
@@ -1502,7 +1502,7 @@ func TestPreparedComputerCheckoutRejectsChangedIdentityWithoutConsuming(t *testi
 			t.Fatal("changed Computer source accepted")
 		}
 	}
-	if got, _, ok := machines.checkout(t.Context(), mount); !ok || got.Machine() != session {
+	if got, _, ok := machines.checkout(t.Context(), mount); !ok || got.Machine() != machine {
 		t.Fatal("valid source was consumed by mismatch")
 	}
 }
@@ -1538,7 +1538,7 @@ func (c *continuingCommandClient) ClaimComputerCommand(ctx context.Context, r wo
 func TestCommandCompletionLeavesComputerServing(t *testing.T) {
 	host, guest := net.Pipe()
 	defer guest.Close()
-	physical := &serverTestSession{operation: host}
+	physical := &serverTestMachine{operation: host}
 	managed := newInstanceMount(physical)
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()

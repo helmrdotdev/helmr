@@ -297,7 +297,7 @@ func BeginHostDrain(ctx context.Context, q db.Querier, principal HostPrincipal) 
 	return nil
 }
 
-// CompleteHostDrain marks a drained epoch termination ready once its runtime
+// CompleteHostDrain marks a drained epoch termination ready once its instance
 // state is gone, fenced by its host claim version. It locks the host's drain
 // completion authority before completing the drain.
 func CompleteHostDrain(ctx context.Context, txb db.TxBeginner, principal HostPrincipal, observedAt time.Time) (db.CompleteWorkerDrainRow, error) {
@@ -375,7 +375,7 @@ func ReadHost(ctx context.Context, q db.Querier, principal HostPrincipal) (db.Ge
 	return state, nil
 }
 
-// DrainInvalidEpoch drains a worker host epoch that reported its runtime
+// DrainInvalidEpoch drains a worker epoch that reported its runtime
 // invalid. It runs in its own transaction after the failed Computer
 // operation, locking the group, the host's pool and the host, and drains an
 // active host; a host that is already draining is left unchanged.

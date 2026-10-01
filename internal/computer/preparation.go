@@ -92,11 +92,11 @@ func lockInitialPreparation(ctx context.Context, tx pgx.Tx, principal workergrou
 // preparation deadlines are evaluated after the last lock. A fence that no
 // longer holds returns pgx.ErrNoRows.
 func lockPreparationFence(ctx context.Context, tx pgx.Tx, principal workergroup.HostPrincipal, ref PreparationRef, initial bool) (preparationFence, error) {
-	runtimeID, workerID, groupID := pgvalue.UUID(ref.InstanceID), pgvalue.UUID(principal.HostID), pgvalue.UUID(principal.GroupID)
+	instanceID, workerID, groupID := pgvalue.UUID(ref.InstanceID), pgvalue.UUID(principal.HostID), pgvalue.UUID(principal.GroupID)
 	var environmentID, computerID pgtype.UUID
 	var region, observed string
 	err := tx.QueryRow(ctx, `SELECT environment_id,computer_id,region_id,observed_state FROM computer_instances
- WHERE id=$1 AND worker_host_id=$2 AND worker_group_id=$3 AND worker_epoch=$4`, runtimeID, workerID, groupID, principal.Epoch).Scan(&environmentID, &computerID, &region, &observed)
+ WHERE id=$1 AND worker_host_id=$2 AND worker_group_id=$3 AND worker_epoch=$4`, instanceID, workerID, groupID, principal.Epoch).Scan(&environmentID, &computerID, &region, &observed)
 	if err != nil {
 		return preparationFence{}, err
 	}
@@ -117,7 +117,7 @@ func lockPreparationFence(ctx context.Context, tx pgx.Tx, principal workergroup.
 		return preparationFence{}, err
 	}
 	if c.Status != "active" || c.DesiredState != "active" || c.DeletedAt.Valid || len(c.RecoveryFailure) > 0 || len(c.PreparationFailure) > 0 || c.DirtyState == "dirty_state_lost" ||
-		i.ID != runtimeID || i.WorkerHostID != workerID || i.WorkerGroupID != groupID || i.WorkerEpoch != principal.Epoch ||
+		i.ID != instanceID || i.WorkerHostID != workerID || i.WorkerGroupID != groupID || i.WorkerEpoch != principal.Epoch ||
 		i.WriterGeneration != c.WriterGeneration || i.DesiredState != "ready" || i.DesiredVersion != ref.DesiredVersion ||
 		i.ObservedState != "allocated" || (i.AdmissionState != "open" && i.AdmissionState != "restoring") {
 		return preparationFence{}, pgx.ErrNoRows

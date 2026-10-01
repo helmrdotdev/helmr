@@ -9,7 +9,7 @@ import (
 )
 
 // Only unrooted graph objects are eligible. Root lifetime belongs to its head,
-// checkpoint, attempt and Runtime owners; this sweep never expires that history.
+// checkpoint, attempt and Instance owners; this sweep never expires that history.
 func (r *Retention) collectComputerObjects(ctx context.Context) error {
 	candidates, err := r.queries.ListUnreferencedComputerObjects(ctx, 100)
 	if err != nil {

@@ -17,7 +17,7 @@ type captureAbortProgress struct {
 	guestCompleted bool
 }
 
-func validateCaptureAbortReceipt(target workerapi.RuntimeReconcileTarget, response workerapi.CaptureAbortResponse) error {
+func validateCaptureAbortReceipt(target workerapi.InstanceReconcileTarget, response workerapi.CaptureAbortResponse) error {
 	if response.WorkerHostID == "" || response.ComputerInstanceID != target.ID || response.WorkerEpoch != target.WorkerEpoch || response.DesiredVersion != target.DesiredVersion || response.CheckpointID != target.Capture.CheckpointID || response.ComputerID != target.Source.ComputerID || response.WriterGeneration != target.Source.WriterGeneration || response.MembershipRevision != target.Capture.MembershipRevision || response.VMPlatformID != target.Source.VMPlatformID {
 		return fmt.Errorf("%w: capture abort receipt changed source", errForeignSourceReceipt)
 	}
@@ -52,7 +52,7 @@ func (g guestControl) abortCapture(ctx context.Context, request *computerv0.Comp
 // current member grants and cancellation dispositions; no cached grant extends
 // the Control Plane's authority. Installation precedes ordinary guest renewal,
 // which precedes activation and the durable acknowledgment.
-func (p *PreparedMachines) resumeCaptureStep(ctx context.Context, target workerapi.RuntimeReconcileTarget, c *computerCheckpointer, state *captureAbortProgress) (adopted bool, err error) {
+func (p *PreparedMachines) resumeCaptureStep(ctx context.Context, target workerapi.InstanceReconcileTarget, c *computerCheckpointer, state *captureAbortProgress) (adopted bool, err error) {
 	response, err := p.Checkpoints.AbortCapture(ctx, workerapi.CaptureAbortRequest{ComputerInstanceID: target.ID, WorkerEpoch: target.WorkerEpoch, DesiredVersion: target.DesiredVersion, CheckpointID: target.Capture.CheckpointID})
 	if err != nil {
 		return false, err
@@ -84,7 +84,7 @@ func (p *PreparedMachines) resumeCaptureStep(ctx context.Context, target workera
 		return false, err
 	}
 	request := &computerv0.ComputerCaptureAbortRequest{Capture: capture, AbortDesiredVersion: response.AbortDesiredVersion, Members: members}
-	control := guestControl{machine: c.session}
+	control := guestControl{machine: c.machine}
 	if err = control.abortCapture(ctx, request); err != nil {
 		return false, err
 	}

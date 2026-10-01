@@ -22,7 +22,7 @@ type CaptureRuns struct {
 // CaptureWait is one resident wait registered for capture. Its owner receives
 // dispatched member pauses from Pauses and must call Detach when the wait
 // ends; later calls return the first result.
-type CaptureMemberResume func(context.Context, workerapi.RuntimeReconcileTarget, workerapi.CaptureAbortMember, bool) (*computerv0.ComputerRunAuthority, uint64, error)
+type CaptureMemberResume func(context.Context, workerapi.InstanceReconcileTarget, workerapi.CaptureAbortMember, bool) (*computerv0.ComputerRunAuthority, uint64, error)
 
 type CaptureWait struct {
 	resume   CaptureMemberResume
@@ -42,8 +42,8 @@ type CaptureWait struct {
 type MemberPause struct {
 	ctx      context.Context
 	abort    context.CancelCauseFunc
-	target   workerapi.RuntimeReconcileTarget
-	member   workerapi.RuntimeCaptureRun
+	target   workerapi.InstanceReconcileTarget
+	member   workerapi.InstanceCaptureRun
 	ready    chan error
 	finished chan struct{}
 	result   error
@@ -54,10 +54,10 @@ type MemberPause struct {
 func (p *MemberPause) Context() context.Context { return p.ctx }
 
 // Target is the capture operation the member is paused for.
-func (p *MemberPause) Target() workerapi.RuntimeReconcileTarget { return p.target }
+func (p *MemberPause) Target() workerapi.InstanceReconcileTarget { return p.target }
 
 // Member is the exact local grant being paused.
-func (p *MemberPause) Member() workerapi.RuntimeCaptureRun { return p.member }
+func (p *MemberPause) Member() workerapi.InstanceCaptureRun { return p.member }
 
 // Abort cancels the capture with cause.
 func (p *MemberPause) Abort(cause error) { p.abort(cause) }
@@ -138,7 +138,7 @@ func (w *CaptureWait) Detach() error {
 // callback must prove source shutdown and runs after any dispatched pause, on
 // success or failure. Returning nil releases members as detached, never
 // as successfully completed Runs. Errors remain errors for every paused member.
-func (r *CaptureRuns) capture(ctx context.Context, target workerapi.RuntimeReconcileTarget, capture, exclude func(context.Context) error) (retErr error) {
+func (r *CaptureRuns) capture(ctx context.Context, target workerapi.InstanceReconcileTarget, capture, exclude func(context.Context) error) (retErr error) {
 	if _, err := computerFreezeRequest(target); err != nil {
 		return err
 	}
@@ -248,10 +248,10 @@ func (r *CaptureRuns) capture(ctx context.Context, target workerapi.RuntimeRecon
 // successful capture and detachment.
 func (p *MemberPause) Resumed() bool { return p.resumed }
 
-func (r *CaptureRuns) prepareAbortMembers(ctx context.Context, target workerapi.RuntimeReconcileTarget, response workerapi.CaptureAbortResponse, restoreRenewal bool) ([]*computerv0.ComputerCaptureAbortMember, error) {
+func (r *CaptureRuns) prepareAbortMembers(ctx context.Context, target workerapi.InstanceReconcileTarget, response workerapi.CaptureAbortResponse, restoreRenewal bool) ([]*computerv0.ComputerCaptureAbortMember, error) {
 	r.mu.Lock()
 	entries := make(map[string]*CaptureWait, len(target.Capture.Runs))
-	expected := make(map[string]workerapi.RuntimeCaptureRun, len(target.Capture.Runs))
+	expected := make(map[string]workerapi.InstanceCaptureRun, len(target.Capture.Runs))
 	for _, member := range target.Capture.Runs {
 		entries[member.RunID] = r.waits[member.RunID]
 		expected[member.RunID] = member
@@ -287,7 +287,7 @@ func (r *CaptureRuns) prepareAbortMembers(ctx context.Context, target workerapi.
 	return result, nil
 }
 
-func (r *CaptureRuns) markCaptureResumed(target workerapi.RuntimeReconcileTarget, members []workerapi.CaptureAbortMember) {
+func (r *CaptureRuns) markCaptureResumed(target workerapi.InstanceReconcileTarget, members []workerapi.CaptureAbortMember) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.sealed[preparedMachineRef{id: target.ID, epoch: target.WorkerEpoch}] = false

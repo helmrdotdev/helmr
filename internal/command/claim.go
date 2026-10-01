@@ -168,7 +168,7 @@ type commandClaimAuthority struct {
 }
 
 // instance addresses the Instance the claimed Command is bound to on the
-// principal's host epoch.
+// principal's worker epoch.
 func (c commandClaim) instance(target db.GetComputerCommandTargetRow, worker workergroup.HostPrincipal) computer.CommandInstanceRef {
 	return computer.CommandInstanceRef{
 		EnvironmentID: pgvalue.MustUUIDValue(target.EnvironmentID), ComputerID: pgvalue.MustUUIDValue(target.ComputerID),

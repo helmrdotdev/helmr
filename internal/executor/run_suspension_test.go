@@ -184,7 +184,7 @@ func (c *fakeRunWaitClient) AcknowledgeRunWaitResume(_ context.Context, request 
 func liveRunWaitResponse() workerapi.CreateRunWaitResponse {
 	return workerapi.CreateRunWaitResponse{
 		RunID: "run-1", RunWaitID: "run-wait-id-1", ResumeAttachID: "resume-attach-1",
-		ComputerInstanceID: "computer-instance-1", RuntimeEpoch: 42,
+		ComputerInstanceID: "computer-instance-1", WorkerEpoch: 42,
 	}
 }
 

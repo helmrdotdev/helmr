@@ -50,27 +50,27 @@ type instanceClosingClient struct{ serverTestClient }
 func (c *instanceClosingClient) RenewComputerInstance(_ context.Context, r workerapi.ComputerInstanceRenewRequest) (workerapi.ComputerInstanceRenewResponse, error) {
 	return workerapi.ComputerInstanceRenewResponse{ComputerInstanceID: r.ComputerInstanceID, WriterGeneration: r.WriterGeneration, DesiredState: "closed", DesiredVersion: 2, ObservedVersion: 1}, nil
 }
-func TestInstanceCloseObservationStopsPhysicalSession(t *testing.T) {
+func TestInstanceCloseObservationStopsPhysicalMachine(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	client := &instanceClosingClient{}
 	m := Server{PollEvery: time.Hour}
 	request := workerapi.ComputerInstanceRenewRequest{EnvironmentID: "environment", ComputerInstanceID: "instance", WriterGeneration: 3}
 	renewal := m.startRenewalLoop(ctx, request, client, time.Millisecond, time.Now().Add(time.Minute))
-	raw := &serverTestSession{exit: make(chan error)}
-	err := m.serveComputerMount(ctx, renewal, newInstanceMount(raw), nil, workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance", WriterGeneration: 3, RuntimeEpoch: 7}, client, nil)
+	raw := &serverTestMachine{exit: make(chan error)}
+	err := m.serveComputerMount(ctx, renewal, newInstanceMount(raw), nil, workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance", WriterGeneration: 3, WorkerEpoch: 7}, client, nil)
 	if err != nil || raw.closeCount() != 1 || client.stops != 1 {
 		t.Fatalf("err=%v close=%d stops=%d", err, raw.closeCount(), client.stops)
 	}
 	r := client.closed[0]
-	if r.ID != "instance" || r.WorkerEpoch != 7 || r.DesiredVersion != 2 || r.ExpectedObservedVersion != 1 || r.CleanupProof == nil || r.CleanupProof.Method != workerapi.RuntimeCleanupSessionClosed {
+	if r.ID != "instance" || r.WorkerEpoch != 7 || r.DesiredVersion != 2 || r.ExpectedObservedVersion != 1 || r.CleanupProof == nil || r.CleanupProof.Method != workerapi.InstanceCleanupMachineClosed {
 		t.Fatalf("close authority=%+v", r)
 	}
 }
 
 func TestInstanceFailureReportsPhysicalAuthorityWithoutCleanup(t *testing.T) {
 	client := &serverTestClient{}
-	mount := workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance", RuntimeEpoch: 7, DesiredVersion: 9, ObservedVersion: 5}
+	mount := workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance", WorkerEpoch: 7, DesiredVersion: 9, ObservedVersion: 5}
 	if err := (Server{}).failComputerMount(client, mount, context.DeadlineExceeded); err != nil {
 		t.Fatal(err)
 	}
@@ -123,8 +123,8 @@ func TestStartupFailureUsesLatestInstanceObservation(t *testing.T) {
 			return &computerv0.MaterializeComputerResponse{Status: "failed"}
 		})
 	}()
-	session := &serverTestSession{streams: []io.ReadWriteCloser{host}, closeErr: errors.New("cleanup failed")}
-	machines := computerPreparedMachines(t, mount, session)
+	machine := &serverTestMachine{streams: []io.ReadWriteCloser{host}, closeErr: errors.New("cleanup failed")}
+	machines := computerPreparedMachines(t, mount, machine)
 	m := Server{RestoreControl: unusedComputerRestoreControl{}, ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}, Mounts: NewMounts(), CAS: store, Machines: machines, Heartbeat: time.Millisecond}
 	err := m.Serve(ctx, mount, client)
 	<-done

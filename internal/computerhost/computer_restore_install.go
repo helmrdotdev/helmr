@@ -16,11 +16,11 @@ type computerRestoreAcknowledger interface {
 	AcknowledgeComputerRestore(context.Context, workerapi.ComputerRestoreAckRequest) (workerapi.ComputerRestoreAckResponse, error)
 }
 
-func activateRestoredComputerOnSession(ctx context.Context, session vm.Machine, control computerRestoreAcknowledger, request *computerv0.ComputerRestoreInstallation) error {
-	if session == nil || control == nil || request == nil || request.Envelope == nil || request.CheckpointId == "" || request.DesiredVersion <= 0 {
+func activateRestoredComputerOnMachine(ctx context.Context, machine vm.Machine, control computerRestoreAcknowledger, request *computerv0.ComputerRestoreInstallation) error {
+	if machine == nil || control == nil || request == nil || request.Envelope == nil || request.CheckpointId == "" || request.DesiredVersion <= 0 {
 		return errors.New("complete restore installation and control plane are required")
 	}
-	guest := guestControl{machine: session}
+	guest := guestControl{machine: machine}
 	if err := guest.sendRestoreInstallation(ctx, request, wire.StreamTypeComputerRestoreInstall); err != nil {
 		return err
 	}
@@ -67,7 +67,7 @@ type ComputerRestoreControl interface {
 	GetComputerRestorePlan(context.Context, workerapi.ComputerRestorePlanRequest) (workerapi.ComputerRestorePlanResponse, error)
 }
 
-func (m Server) activateRestore(ctx context.Context, session vm.Machine, mount workerapi.ComputerInstanceAssignment) error {
+func (m Server) activateRestore(ctx context.Context, machine vm.Machine, mount workerapi.ComputerInstanceAssignment) error {
 	var plan *workerapi.ComputerRestorePlan
 	if err := retryControlRequest(ctx, func(ctx context.Context) error {
 		response, err := m.RestoreControl.GetComputerRestorePlan(ctx, workerapi.ComputerRestorePlanRequest{EnvironmentID: mount.EnvironmentID, ComputerInstanceID: mount.ComputerInstanceID, WriterGeneration: mount.WriterGeneration})
@@ -82,7 +82,7 @@ func (m Server) activateRestore(ctx context.Context, session vm.Machine, mount w
 	}); err != nil {
 		return err
 	}
-	if plan.ComputerInstanceID != mount.ComputerInstanceID || plan.ComputerID != mount.ComputerID || plan.CheckpointID != mount.RestoreCheckpointID || plan.WriterGeneration != mount.WriterGeneration || plan.WorkerEpoch != mount.RuntimeEpoch || plan.VMPlatformID != mount.VMPlatformID || plan.DesiredVersion != mount.DesiredVersion {
+	if plan.ComputerInstanceID != mount.ComputerInstanceID || plan.ComputerID != mount.ComputerID || plan.CheckpointID != mount.RestoreCheckpointID || plan.WriterGeneration != mount.WriterGeneration || plan.WorkerEpoch != mount.WorkerEpoch || plan.VMPlatformID != mount.VMPlatformID || plan.DesiredVersion != mount.DesiredVersion {
 		return errors.New("restore plan differs from materialized Instance")
 	}
 	installation := &computerv0.ComputerRestoreInstallation{Envelope: &computerv0.ComputerOperationEnvelope{ComputerInstanceId: mount.ComputerInstanceID, ComputerId: mount.ComputerID, WriterGeneration: uint64(mount.WriterGeneration), ChannelCredential: m.channelCredential(mount)}, CheckpointId: plan.CheckpointID, DesiredVersion: plan.DesiredVersion}
@@ -105,6 +105,6 @@ func (m Server) activateRestore(ctx context.Context, session vm.Machine, mount w
 		defer cancel()
 	}
 	return retryControlRequest(activationCtx, func(ctx context.Context) error {
-		return activateRestoredComputerOnSession(ctx, session, m.RestoreControl, installation)
+		return activateRestoredComputerOnMachine(ctx, machine, m.RestoreControl, installation)
 	})
 }

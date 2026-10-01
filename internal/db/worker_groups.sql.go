@@ -184,7 +184,7 @@ WITH target AS (
       WHERE i.computer_id=c.id AND i.worker_epoch<target.current_epoch
         AND i.reclaimed_at IS NULL AND i.id NOT IN (SELECT id FROM quarantined))
     ORDER BY c.id FOR UPDATE OF c
-), reclaimable_runtimes AS MATERIALIZED (
+), reclaimable_instances AS MATERIALIZED (
     SELECT computer_instances.id
       FROM computer_instances
       JOIN target
@@ -195,7 +195,7 @@ WITH target AS (
        AND computer_instances.computer_id IN (SELECT id FROM locked_computers)
      ORDER BY computer_instances.id
        FOR UPDATE OF computer_instances
-), reclaimed_runtimes AS (
+), reclaimed_instances AS (
     UPDATE computer_instances
        SET observed_state = CASE WHEN observed_state IN ('closed','failed','lost') THEN observed_state ELSE 'lost' END,
            observed_version = observed_version + 1,
@@ -208,15 +208,15 @@ WITH target AS (
                'completed_at', $4::jsonb ->> 'observed_at'
            ),
            mount_state='lost', admission_state='closed', updated_at=now()
-     WHERE computer_instances.id IN (SELECT id FROM reclaimable_runtimes)
+     WHERE computer_instances.id IN (SELECT id FROM reclaimable_instances)
     RETURNING computer_instances.id,computer_instances.computer_id,computer_instances.writer_generation,computer_instances.reclaimed_at
 ), invalidated_captures AS (
  UPDATE computer_checkpoints cp SET status='invalid',invalidated_at=now(),invalidation_reason_code='capture_source_reclaimed'
- FROM reclaimed_runtimes i WHERE cp.computer_id=i.computer_id AND cp.source_computer_instance_id=i.id
+ FROM reclaimed_instances i WHERE cp.computer_id=i.computer_id AND cp.source_computer_instance_id=i.id
  AND cp.writer_generation=i.writer_generation AND cp.status='creating' RETURNING cp.id
 ), reconciled_processes AS (
     UPDATE run_leases l SET process_reconciled_at=i.reclaimed_at,updated_at=now()
-      FROM reclaimed_runtimes i
+      FROM reclaimed_instances i
      WHERE l.computer_instance_id=i.id AND l.writer_generation=i.writer_generation
        AND l.process_reconciled_at IS NULL
     RETURNING l.id
@@ -225,7 +225,7 @@ UPDATE worker_hosts
    SET updated_at = now()
   FROM target
  WHERE worker_hosts.id = target.id
-   AND (SELECT count(*) FROM reclaimed_runtimes) >= 0
+   AND (SELECT count(*) FROM reclaimed_instances) >= 0
    AND (SELECT count(*) FROM reconciled_processes) >= 0
    AND (SELECT count(*) FROM invalidated_captures) >= 0
 RETURNING worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.run_paused_reason, worker_hosts.vm_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
@@ -721,11 +721,11 @@ SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, 
 `
 
 type ListCapacityWorkerHostsParams struct {
-	Statuses              []string    `json:"statuses"`
-	RowLimit              int32       `json:"row_limit"`
-	WorkerGroupID         pgtype.UUID `json:"worker_group_id"`
-	HasUnreclaimedRuntime bool        `json:"has_unreclaimed_runtime"`
-	ResourceIds           []string    `json:"resource_ids"`
+	Statuses               []string    `json:"statuses"`
+	RowLimit               int32       `json:"row_limit"`
+	WorkerGroupID          pgtype.UUID `json:"worker_group_id"`
+	HasUnreclaimedInstance bool        `json:"has_unreclaimed_instance"`
+	ResourceIds            []string    `json:"resource_ids"`
 }
 
 type ListCapacityWorkerHostsRow struct {
@@ -748,7 +748,7 @@ func (q *Queries) ListCapacityWorkerHosts(ctx context.Context, arg ListCapacityW
 		arg.Statuses,
 		arg.RowLimit,
 		arg.WorkerGroupID,
-		arg.HasUnreclaimedRuntime,
+		arg.HasUnreclaimedInstance,
 		arg.ResourceIds,
 	)
 	if err != nil {
@@ -1445,7 +1445,7 @@ WITH target AS (
      WHERE worker_host_secrets.worker_host_id = target.id
        AND worker_host_secrets.revoked_at IS NULL
     RETURNING worker_host_secrets.id
-), lost_runtimes AS (
+), lost_instances AS (
     UPDATE computer_instances
        SET observed_state = 'lost', observed_version = observed_version + 1,
            observed_at = now(), terminal_at = now(),
@@ -1462,7 +1462,7 @@ WITH target AS (
            target.claim_version, target.current_epoch, true AS transition_applied
       FROM target
      WHERE (SELECT count(*) FROM revoked_host_secrets) >= 0
-       AND (SELECT count(*) FROM lost_runtimes) >= 0
+       AND (SELECT count(*) FROM lost_instances) >= 0
 )
 SELECT id, resource_id, worker_group_id, status, claim_version, current_epoch, transition_applied FROM completed
 UNION ALL

@@ -321,7 +321,7 @@ func TestHotWaitMetadataRejectionRetainsCaptureRegistration(t *testing.T) {
 	protocol := newProgramProtocol(host)
 	defer protocol.Close()
 	captures := &computerhost.CaptureRuns{}
-	task := &guestRunLeaseTask{program: freshProgram{channel: fakeGuestSession{stream: host}, protocol: protocol}, lease: lease, controlPlane: testControlPlane(t, cp), captures: captures}
+	task := &guestRunLeaseTask{program: freshProgram{channel: fakeGuestMachine{stream: host}, protocol: protocol}, lease: lease, controlPlane: testControlPlane(t, cp), captures: captures}
 	release := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {

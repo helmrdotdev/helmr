@@ -18,26 +18,26 @@ import (
 )
 
 // memberCaptureTarget is a capture of count waiting members of one Instance.
-func memberCaptureTarget(count int) workerapi.RuntimeReconcileTarget {
-	target := workerapi.RuntimeReconcileTarget{ID: "instance", WorkerEpoch: 2, DesiredVersion: 5, Action: workerapi.RuntimeReconcileCapture, Source: workerapi.RuntimeSource{ComputerID: "01912345-6789-7abc-8def-0123456789ab", ComputerSpecID: "spec", WriterGeneration: 3}, Capture: &workerapi.RuntimeCapture{CheckpointID: "checkpoint", MembershipRevision: 7, Runs: []workerapi.RuntimeCaptureRun{}}}
+func memberCaptureTarget(count int) workerapi.InstanceReconcileTarget {
+	target := workerapi.InstanceReconcileTarget{ID: "instance", WorkerEpoch: 2, DesiredVersion: 5, Action: workerapi.InstanceReconcileCapture, Source: workerapi.InstanceSource{ComputerID: "01912345-6789-7abc-8def-0123456789ab", ComputerSpecID: "spec", WriterGeneration: 3}, Capture: &workerapi.InstanceCapture{CheckpointID: "checkpoint", MembershipRevision: 7, Runs: []workerapi.InstanceCaptureRun{}}}
 	if count > 0 {
 		target.Capture.ProgramDeploymentID = "program"
 	}
 	for i := range count {
 		suffix := string(rune('a' + i))
-		target.Capture.Runs = append(target.Capture.Runs, workerapi.RuntimeCaptureRun{RunID: "run-" + suffix, AttemptNumber: 2, RunWaitID: "wait-" + suffix, RunLeaseID: "lease-" + suffix})
+		target.Capture.Runs = append(target.Capture.Runs, workerapi.InstanceCaptureRun{RunID: "run-" + suffix, AttemptNumber: 2, RunWaitID: "wait-" + suffix, RunLeaseID: "lease-" + suffix})
 	}
 	return target
 }
 
 // memberCaptureMount is target's restored Instance.
-func memberCaptureMount(target workerapi.RuntimeReconcileTarget) workerapi.ComputerInstanceAssignment {
-	return workerapi.ComputerInstanceAssignment{ComputerInstanceID: target.ID, ComputerID: target.Source.ComputerID, WriterGeneration: target.Source.WriterGeneration, RestoreCheckpointID: "restored-checkpoint", DesiredVersion: 4, RuntimeEpoch: target.WorkerEpoch, VMPlatformID: "platform", GuestChannelCredential: "channel", Target: workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "disk"}}
+func memberCaptureMount(target workerapi.InstanceReconcileTarget) workerapi.ComputerInstanceAssignment {
+	return workerapi.ComputerInstanceAssignment{ComputerInstanceID: target.ID, ComputerID: target.Source.ComputerID, WriterGeneration: target.Source.WriterGeneration, RestoreCheckpointID: "restored-checkpoint", DesiredVersion: 4, WorkerEpoch: target.WorkerEpoch, VMPlatformID: "platform", GuestChannelCredential: "channel", Target: workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "disk"}}
 }
 
 // memberCaptureClaim is member's restored claim on target's Instance, whose
 // restored wait is the one the capture pauses.
-func memberCaptureClaim(target workerapi.RuntimeReconcileTarget, member workerapi.RuntimeCaptureRun) *workerapi.RunLeaseClaimResponse {
+func memberCaptureClaim(target workerapi.InstanceReconcileTarget, member workerapi.InstanceCaptureRun) *workerapi.RunLeaseClaimResponse {
 	lease := workerapi.RunLeaseAssignment{ID: member.RunLeaseID, RunID: member.RunID, AttemptNumber: member.AttemptNumber, LeaseSequence: 2, ComputerInstanceID: target.ID, ComputerID: target.Source.ComputerID, WriterGeneration: target.Source.WriterGeneration, WorkerEpoch: target.WorkerEpoch, WorkerHostID: "worker", VMPlatformID: "platform", BaseComputerDiskVersionID: "disk", ExpiresAt: time.Now().Add(time.Minute)}
 	return restoredClaim(memberCaptureMount(target), lease, member.RunWaitID, "task")
 }
@@ -45,7 +45,7 @@ func memberCaptureClaim(target workerapi.RuntimeReconcileTarget, member workerap
 // memberCaptureRun mounts target's restored Instance on h and starts each
 // member's Run in its reattached hot wait. Each result channel receives that
 // Run's Wait result under ctx.
-func memberCaptureRun(ctx context.Context, t *testing.T, h *restoredProgramHarness, target workerapi.RuntimeReconcileTarget, registry *computerhost.CaptureRuns, claims []*workerapi.RunLeaseClaimResponse, fakes ...any) []<-chan error {
+func memberCaptureRun(ctx context.Context, t *testing.T, h *restoredProgramHarness, target workerapi.InstanceReconcileTarget, registry *computerhost.CaptureRuns, claims []*workerapi.RunLeaseClaimResponse, fakes ...any) []<-chan error {
 	t.Helper()
 	mounts := computerhost.NewMounts()
 	unregister, err := computerhost.MountComputer(ctx, mounts, h, h, memberCaptureMount(target))
@@ -92,7 +92,7 @@ func TestComputerCaptureJoinsTwoWaitsBeforePhysicalCapture(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		var member workerapi.RuntimeCaptureRun
+		var member workerapi.InstanceCaptureRun
 		for _, run := range target.Capture.Runs {
 			if run.RunID == attach.RunId {
 				member = run

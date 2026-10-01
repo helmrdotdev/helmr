@@ -70,9 +70,9 @@ func committedComputerSourceRow(t *testing.T) db.ListComputerInstanceReconcileTa
 	return r
 }
 
-func TestRuntimeComputerSourceSeparatesInitializationAndContinuation(t *testing.T) {
+func TestInstanceComputerSourceSeparatesInitializationAndContinuation(t *testing.T) {
 	initial := initializingComputerSourceRow(t)
-	source, err := projectRuntimeComputerSource(initial)
+	source, err := projectInstanceComputerSource(initial)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestRuntimeComputerSourceSeparatesInitializationAndContinuation(t *testing.
 		// Deployment changes cannot reseed a Computer or replace its initial config.
 		r.ComputerConfig = []byte(`{"invalid":"unused"}`)
 		r.ComputerImageDigest = ""
-		source, err := projectRuntimeComputerSource(r)
+		source, err := projectInstanceComputerSource(r)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -95,7 +95,7 @@ func TestRuntimeComputerSourceSeparatesInitializationAndContinuation(t *testing.
 	}
 }
 
-func TestRuntimeComputerSourceRejectsMissingOrConflictingAuthority(t *testing.T) {
+func TestInstanceComputerSourceRejectsMissingOrConflictingAuthority(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		committed bool
@@ -137,7 +137,7 @@ func TestRuntimeComputerSourceRejectsMissingOrConflictingAuthority(t *testing.T)
 				r = committedComputerSourceRow(t)
 			}
 			test.change(&r)
-			if _, err := projectRuntimeComputerSource(r); err == nil {
+			if _, err := projectInstanceComputerSource(r); err == nil {
 				t.Fatal("invalid authority accepted")
 			}
 		})

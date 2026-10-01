@@ -94,11 +94,11 @@ SELECT worker_pools.status = 'active'
 	return groupActive && poolActive && hostAdmitting, nil
 }
 
-// CheckHostRuntimeAdmission keeps VM-slot admission separate from the Run
+// CheckHostInstanceAdmission keeps VM-slot admission separate from the Run
 // supply fence. Callers must already hold the worker host row lock. A VM pause
 // prevents creating or reclaiming VM state, but does not prevent a Run from
 // reusing an already-ready Computer Instance.
-func CheckHostRuntimeAdmission(ctx context.Context, tx pgx.Tx, hostID pgtype.UUID, epoch int64) error {
+func CheckHostInstanceAdmission(ctx context.Context, tx pgx.Tx, hostID pgtype.UUID, epoch int64) error {
 	var id pgtype.UUID
 	return tx.QueryRow(ctx, `
 SELECT id
@@ -153,7 +153,7 @@ func LockExecutionHost(ctx context.Context, q db.Querier, host ExecutionHost) er
 	return nil
 }
 
-// ExecutionEpoch identifies the worker host epoch a Run lease was assigned,
+// ExecutionEpoch identifies the worker epoch a Run lease was assigned,
 // in the Group's region.
 type ExecutionEpoch struct {
 	GroupID  pgtype.UUID
@@ -281,7 +281,7 @@ func LockHostUnchecked(ctx context.Context, q db.Querier, groupID uuid.UUID, reg
 }
 
 // LockHostIgnoringClaims is LockHostUnchecked for operations that continue
-// admitted work on a host epoch. The Group must be active, paused or draining
+// admitted work on a worker epoch. The Group must be active, paused or draining
 // and the Host active or draining at the epoch; otherwise it returns
 // pgx.ErrNoRows. It checks only after both locks, so a disabled Group still
 // takes the Host lock before returning pgx.ErrNoRows and may briefly wait on

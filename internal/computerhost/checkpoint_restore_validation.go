@@ -71,7 +71,7 @@ func requireCheckpointArtifact(artifact workerapi.CheckpointArtifact, field stri
 }
 
 func validatePreparedMachineRestore(
-	target workerapi.RuntimeReconcileTarget,
+	target workerapi.InstanceReconcileTarget,
 	workerArchitecture definition.RuntimeArchitecture,
 ) (workerapi.CheckpointManifest, error) {
 	restore := target.Source.Restore
@@ -149,7 +149,7 @@ func validatePreparedMachineRestore(
 	return checkpoint, nil
 }
 
-func validateCheckpointComputerSource(source workerapi.RuntimeSource, captured *workerapi.CheckpointComputer) error {
+func validateCheckpointComputerSource(source workerapi.InstanceSource, captured *workerapi.CheckpointComputer) error {
 	reserved := source.Computer
 	if reserved == nil || reserved.Seed != nil || reserved.Root == nil || captured == nil {
 		return errors.New("checkpoint restore requires a paired Computer disk version")
