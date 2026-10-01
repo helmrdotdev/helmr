@@ -1,7 +1,6 @@
 package controlplane
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,15 +9,10 @@ import (
 	"net/http"
 	"unicode/utf8"
 
-	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/idempotency"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
@@ -62,135 +56,32 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 		writeError(w, badRequest(err))
 		return
 	}
-	err = s.inTx(r.Context(), func(work *txWork) error {
-		replayContext, err := work.q.GetRunMetadataClaimScope(
-			r.Context(),
-			runMetadataClaimScopeParams(request.Lease, parsed, worker),
-		)
-		if err != nil {
-			return staleRunLeaseClaim(err)
-		}
-		environmentID := pgvalue.MustUUIDValue(replayContext.EnvironmentID)
-		runID := pgvalue.MustUUIDValue(replayContext.RunID)
-		claimRequest, err := idempotency.NewRunMetadataRequest(
-			environmentID,
-			runID,
-			replayContext.AttemptNumber,
-			operationID.String(),
-			mutation.canonical,
-			leaseFenceFingerprint,
-		)
-		if err != nil {
-			return err
-		}
-		claims, err := idempotency.TransactionFor(work.tx)
-		if err != nil {
-			return err
-		}
-		acquired, err := claims.Acquire(r.Context(), claimRequest)
-		if err != nil {
-			return err
-		}
-		if !acquired.New {
-			if acquired.Claim.Status != "completed" {
-				return fmt.Errorf(
-					"run metadata mutation claim is %s",
-					acquired.Claim.Status,
-				)
+	err = run.UpdateMetadata(r.Context(), s.tx, run.MetadataUpdate{
+		Fence:            workerExecutionFence(worker, parsed, request.Lease),
+		OperationID:      operationID,
+		Mutation:         mutation.canonical,
+		FenceFingerprint: leaseFenceFingerprint,
+		Apply: func(current json.RawMessage) (json.RawMessage, error) {
+			next, err := applyRunMetadataMutation(current, mutation)
+			if err != nil {
+				return nil, err
 			}
-			return nil
-		}
-		authority, err := lockReceiptRunMutation(
-			r.Context(),
-			work.tx,
-			worker,
-			request.Lease,
-			parsed,
-		)
-		if err != nil {
-			return err
-		}
-		if authority.Run().EnvironmentID != replayContext.EnvironmentID ||
-			authority.Run().ID != replayContext.RunID ||
-			authority.Attempt().Number != replayContext.AttemptNumber {
-			return errStaleRunLeaseClaim
-		}
-		next, err := applyRunMetadataMutation(authority.Run().Metadata, mutation)
-		if err != nil {
-			return err
-		}
-		next, err = normalizeMetadata(next, maxRunMetadataBytes, "run")
-		if err != nil {
-			return err
-		}
-		revision, err := work.q.UpdateRunMetadata(
-			r.Context(),
-			db.UpdateRunMetadataParams{
-				Metadata: next, RunID: authority.Run().ID,
-				AttemptNumber: authority.Attempt().Number,
-				RunLeaseID:    authority.Lease().ID,
-			},
-		)
-		if err != nil {
-			return staleRunLeaseClaim(err)
-		}
-		payload, err := json.Marshal(map[string]any{
-			"operation":    mutation.operation,
-			"operation_id": operationID.String(),
-			"key":          mutation.key,
-		})
-		if err != nil {
-			return err
-		}
-		if err := telemetry.ValidateEvent("Run metadata updated", payload); err != nil {
-			return err
-		}
-		if _, err := work.q.CreateRunMetadataEvent(
-			r.Context(),
-			db.CreateRunMetadataEventParams{
-				OrgID: authority.Run().OrgID, RunID: authority.Run().ID,
-				IdempotencyKey: pgvalue.Text("metadata:" + operationID.String()),
-				ProjectID:      authority.Run().ProjectID, EnvironmentID: authority.Run().EnvironmentID,
-				RunLeaseID:    authority.Lease().ID,
-				AttemptNumber: pgtype.Int4{Int32: authority.Attempt().Number, Valid: true},
-				TraceID:       authority.Lease().TraceID, SpanID: authority.Lease().SpanID,
-				ParentSpanID: authority.Lease().ParentSpanID, Traceparent: authority.Lease().Traceparent,
-				Payload:         payload,
-				SnapshotVersion: pgtype.Int8{Int64: revision, Valid: true},
-			},
-		); err != nil {
-			return err
-		}
-		receipt, err := json.Marshal(map[string]any{
-			"runId": runID.String(), "revision": revision,
-		})
-		if err != nil {
-			return err
-		}
-		_, err = claims.Complete(r.Context(), acquired.Claim, receipt)
-		return err
+			return normalizeMetadata(next, maxRunMetadataBytes, "run")
+		},
+		Event: func() (json.RawMessage, error) {
+			payload, err := json.Marshal(map[string]any{
+				"operation":    mutation.operation,
+				"operation_id": operationID.String(),
+				"key":          mutation.key,
+			})
+			if err != nil {
+				return nil, err
+			}
+			return payload, telemetry.ValidateEvent("Run metadata updated", payload)
+		},
 	})
 	if err != nil {
-		var expired idempotency.ExpiredError
-		if errors.As(err, &expired) {
-			writeError(w, gone(expired))
-			return
-		}
-		var conflictErr idempotency.ConflictError
-		if writeStaleWorkerClaims(w, err) {
-			return
-		}
-		switch {
-		case errors.As(err, &conflictErr):
-			writeError(w, conflict(conflictErr))
-		case errors.Is(err, errStaleRunLeaseClaim), errors.Is(err, pgx.ErrNoRows):
-			writeError(w, conflict(errors.New("worker run lease fence is stale")))
-		default:
-			s.log.Error("update Run metadata failed", "run_lease_id", request.Lease.ID, "error", err)
-			writeError(w, apiError{kind: errUnprocessable, err: codedError{
-				code: "run_metadata_rejected", message: err.Error(),
-			}})
-		}
+		s.writeRunError(w, err, runMetadataOperation, worker, request.Lease)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -255,32 +146,19 @@ func (s *Server) workerAppendStructuredLog(w http.ResponseWriter, r *http.Reques
 		writeError(w, errors.New("encode structured log"))
 		return
 	}
-	row, err := s.appendRunLog(
-		r.Context(),
-		worker,
-		request.Lease,
-		parsed,
-		db.AppendRunLogChunkParams{
-			Kind: "log.structured", Payload: payload, Severity: request.Level,
-			Stream:      string(workerapi.LogStreamStructured),
-			ObservedSeq: int64(request.ObservedSeq), Content: content,
-		},
-	)
-	if isNoRows(err) || errors.Is(err, errStaleRunLeaseClaim) {
-		writeError(w, conflict(errors.New(
-			"worker run lease is stale or the structured log sequence contains different content",
-		)))
-		return
-	}
+	fenceFingerprint, err := runLeaseFenceFingerprint(request.Lease)
 	if err != nil {
-		s.log.Error("append structured Run log failed", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("append structured run log"))
+		s.writeRunError(w, err, runStructuredLogAppendOperation, worker, request.Lease)
 		return
 	}
-	if !row.ReplayMatches {
-		writeError(w, conflict(errors.New(
-			"structured log sequence already contains different content",
-		)))
+	if err := run.AppendLog(r.Context(), s.db, run.LogChunk{
+		Fence:            workerExecutionFence(worker, parsed, request.Lease),
+		FenceFingerprint: fenceFingerprint,
+		Kind:             "log.structured", Payload: payload, Severity: request.Level,
+		Stream:      string(workerapi.LogStreamStructured),
+		ObservedSeq: int64(request.ObservedSeq), Content: content,
+	}); err != nil {
+		s.writeRunError(w, err, runStructuredLogAppendOperation, worker, request.Lease)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -296,14 +174,6 @@ func (s *Server) parseWorkerRunMutation(
 	}
 	worker := workerFromContext(r.Context())
 	return parsed, worker, nil
-}
-
-func lockReceiptRunMutation(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence, parsed parsedRunLeaseFence) (run.Execution, error) {
-	authority, err := run.LockLiveExecution(ctx, tx, run.ExecutionFence{LeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.HostClaimVersion})
-	if err != nil {
-		return run.Execution{}, staleRunLeaseClaim(err)
-	}
-	return authority, nil
 }
 
 func normalizeRunMetadataMutation(

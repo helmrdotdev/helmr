@@ -29,22 +29,14 @@ func taskHTTPExecutionFixture(t *testing.T) (runtest.Fixture, runtest.RunLease, 
 	if err := f.Pool.QueryRow(t.Context(), `SELECT h.claim_version,g.claim_version FROM worker_hosts h JOIN worker_groups g ON g.id=h.worker_group_id WHERE h.id=$1`, f.WorkerID).Scan(&fence.HostClaimVersion, &fence.GroupClaimVersion); err != nil {
 		t.Fatal(err)
 	}
-	tx, err := f.Pool.Begin(t.Context())
+	claim, err := run.ClaimLease(t.Context(), f.Pool, fence)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback(context.Background())
-	a, err := run.ClaimExecution(t.Context(), tx, fence)
-	if err != nil {
+	if err = run.StartLease(t.Context(), f.Pool, fence); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = run.StartExecution(t.Context(), tx, fence); err != nil {
-		t.Fatal(err)
-	}
-	if err = run.EnterExecution(t.Context(), tx, fence, a.Run().EntrypointKind, a.Run().EntrypointDeclaredID); err != nil {
-		t.Fatal(err)
-	}
-	if err = tx.Commit(t.Context()); err != nil {
+	if err = run.EnterEntrypoint(t.Context(), f.Pool, fence, claim.Run().EntrypointKind, claim.Run().EntrypointDeclaredID); err != nil {
 		t.Fatal(err)
 	}
 	request := workerapi.CompleteTaskRequest{Lease: workerapi.RunLeaseFence{ID: work.LeaseID.String(), LeaseSequence: 1}, OperationID: uuid.NewV7().String(), Outcome: workerapi.TaskOutcome{Succeeded: &workerapi.TaskSucceeded{Output: json.RawMessage(`{"answer":42}`)}}}
@@ -72,15 +64,8 @@ func TestTaskCompletionHTTPPreservesReceiptAndStaleDiagnostics(t *testing.T) {
 	if out.Code != http.StatusConflict || !strings.Contains(out.Body.String(), `"code":"task_completion_stale"`) || !strings.Contains(out.Body.String(), `"point":"execution"`) {
 		t.Fatalf("running lease response=%d %s", out.Code, out.Body.String())
 	}
-	tx, err := f.Pool.Begin(t.Context())
+	_, err := run.BeginFinalization(t.Context(), f.Pool, run.ExecutionFinalization{Fence: fence, RunID: pgvalue.UUID(work.RunID), AttemptNumber: 1, OperationID: pgvalue.UUID(uuid.MustParse(request.OperationID)), Fingerprint: dbtest.Digest("finalization")})
 	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(context.Background())
-	if _, err = run.BeginExecutionFinalization(t.Context(), tx, run.ExecutionFinalization{Fence: fence, RunID: pgvalue.UUID(work.RunID), AttemptNumber: 1, OperationID: pgvalue.UUID(uuid.MustParse(request.OperationID)), Fingerprint: dbtest.Digest("finalization")}); err != nil {
-		t.Fatal(err)
-	}
-	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET retry_policy='{"enabled":true}' WHERE id=$1`, work.RunID)

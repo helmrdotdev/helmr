@@ -1,8 +1,6 @@
 package controlplane
 
 import (
-	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -11,13 +9,9 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func (s *Server) workerAppendRunLogs(w http.ResponseWriter, r *http.Request) {
@@ -63,90 +57,25 @@ func (s *Server) workerAppendRunLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("encode worker log event"))
 		return
 	}
-	row, err := s.appendRunLog(r.Context(), worker, request.Lease, parsed, db.AppendRunLogChunkParams{
-		Kind:        kind,
-		Payload:     payload,
-		Severity:    "info",
-		Stream:      string(request.Stream),
-		ObservedSeq: int64(request.ObservedSeq),
-		Content:     content,
-	})
-	if isNoRows(err) || errors.Is(err, errStaleRunLeaseClaim) {
-		writeError(w, conflict(errors.New("worker run lease is stale or the log chunk sequence contains different content")))
-		return
-	}
+	fenceFingerprint, err := runLeaseFenceFingerprint(request.Lease)
 	if err != nil {
-		s.log.Error("append worker logs failed", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("append worker logs"))
+		s.writeRunError(w, err, runLogAppendOperation, worker, request.Lease)
 		return
 	}
-	if !row.ReplayMatches {
-		writeError(w, conflict(errors.New("worker log chunk sequence already contains different content")))
+	if err := run.AppendLog(r.Context(), s.db, run.LogChunk{
+		Fence:            workerExecutionFence(worker, parsed, request.Lease),
+		FenceFingerprint: fenceFingerprint,
+		Kind:             kind,
+		Payload:          payload,
+		Severity:         "info",
+		Stream:           string(request.Stream),
+		ObservedSeq:      int64(request.ObservedSeq),
+		Content:          content,
+	}); err != nil {
+		s.writeRunError(w, err, runLogAppendOperation, worker, request.Lease)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *Server) appendRunLog(
-	ctx context.Context,
-	worker workergroup.HostPrincipal,
-	lease workerapi.RunLeaseFence,
-	parsed parsedRunLeaseFence,
-	input db.AppendRunLogChunkParams,
-) (db.AppendRunLogChunkRow, error) {
-	fenceFingerprint, err := runLeaseFenceFingerprint(lease)
-	if err != nil {
-		return db.AppendRunLogChunkRow{}, err
-	}
-	replay, err := s.db.GetRunLogChunkReplay(ctx, db.GetRunLogChunkReplayParams{
-		RunLeaseID: pgvalue.UUID(parsed.leaseID),
-		Stream:     input.Stream,
-		ObservedSeq: pgtype.Int8{
-			Int64: input.ObservedSeq,
-			Valid: true,
-		},
-	})
-	switch {
-	case err == nil:
-		payloadMatches, compareErr := equalJSON(
-			[]byte(replay.EventPayload),
-			input.Payload,
-		)
-		if compareErr != nil {
-			return db.AppendRunLogChunkRow{}, compareErr
-		}
-		return db.AppendRunLogChunkRow{
-			OrgID: replay.OrgID, RunID: replay.RunID,
-			RunLeaseID: replay.RunLeaseID, AttemptNumber: replay.AttemptNumber,
-			Stream: replay.Stream, Seq: replay.Seq, ObservedSeq: replay.ObservedSeq,
-			Content: replay.Content, SizeBytes: replay.SizeBytes, CreatedAt: replay.CreatedAt,
-			ReplayMatches: bytes.Equal(replay.Content, input.Content) &&
-				payloadMatches &&
-				replay.LeaseFenceFingerprint == fenceFingerprint,
-		}, nil
-	case !errors.Is(err, pgx.ErrNoRows):
-		return db.AppendRunLogChunkRow{}, err
-	}
-	input.RunLeaseID = pgvalue.UUID(parsed.leaseID)
-	input.LeaseSequence = lease.LeaseSequence
-	input.WorkerGroupID = pgvalue.UUID(worker.GroupID)
-	input.WorkerHostID = pgvalue.UUID(worker.HostID)
-	input.WorkerEpoch = worker.Epoch
-	input.LeaseFenceFingerprint = fenceFingerprint
-	return s.db.AppendRunLogChunk(ctx, input)
-}
-
-func runMetadataClaimScopeParams(
-	lease workerapi.RunLeaseFence,
-	parsed parsedRunLeaseFence,
-	worker workergroup.HostPrincipal,
-) db.GetRunMetadataClaimScopeParams {
-	return db.GetRunMetadataClaimScopeParams{
-		RunLeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence,
-		WorkerGroupID: pgvalue.UUID(worker.GroupID),
-		WorkerHostID:  pgvalue.UUID(worker.HostID),
-		WorkerEpoch:   worker.Epoch,
-	}
 }
 
 func runLeaseFenceFingerprint(lease workerapi.RunLeaseFence) (string, error) {
@@ -156,18 +85,6 @@ func runLeaseFenceFingerprint(lease workerapi.RunLeaseFence) (string, error) {
 	}
 	digest := sha256.Sum256(canonical)
 	return hex.EncodeToString(digest[:]), nil
-}
-
-func equalJSON(left, right []byte) (bool, error) {
-	leftCanonical, err := canonicalJSON(left)
-	if err != nil {
-		return false, fmt.Errorf("canonicalize stored run log payload: %w", err)
-	}
-	rightCanonical, err := canonicalJSON(right)
-	if err != nil {
-		return false, fmt.Errorf("canonicalize run log payload: %w", err)
-	}
-	return bytes.Equal(leftCanonical, rightCanonical), nil
 }
 
 type workerLogChunkPayload struct {

@@ -26,7 +26,7 @@ func TestChildTaskInvokeStaleResponseIncludesClosedFailurePoint(t *testing.T) {
 		response,
 		"0198b960-7818-7a77-9d7d-4ebf163e15b1",
 		"call",
-		staleAuthority(staleAuthorityChildTask, childTaskInvokePointSourceScope, errChildTaskInvokeStale),
+		childTaskInvokeStaleAt(childTaskInvokePointSourceScope, errChildTaskInvokeStale),
 	)
 
 	if response.Code != http.StatusConflict {

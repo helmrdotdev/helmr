@@ -23,40 +23,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestStaleRunStartPreservesPublicSentinelAndFailurePoint(t *testing.T) {
-	err := staleAuthority(staleAuthorityRunStart, "execution", errStaleRunLeaseClaim)
-	if !errors.Is(err, errStaleRunLeaseClaim) {
-		t.Fatal("typed start failure did not preserve stale Run Lease sentinel")
-	}
-	point, ok := staleAuthorityPointOf(err)
-	if !ok || point != string("execution") {
-		t.Fatalf("failure point = %q, %v; want %q, true", point, ok, "execution")
-	}
-	if err.Error() != "run start authority is stale" {
-		t.Fatalf("error = %q; want operation-owned stale diagnostic", err)
-	}
-}
-
-func TestStaleRunStartDoesNotClassifyUnrelatedErrors(t *testing.T) {
-	original := errors.New("storage unavailable")
-	err := staleAuthority(staleAuthorityRunStart, "outer", original)
-	if !errors.Is(err, original) {
-		t.Fatal("unrelated error was replaced")
-	}
-	if _, ok := staleAuthorityPointOf(err); ok {
-		t.Fatal("unrelated error received a start failure point")
-	}
-}
-
-func TestStaleRunStartKeepsInnermostFailurePoint(t *testing.T) {
-	err := staleAuthority(staleAuthorityRunStart, "inner", errStaleRunLeaseClaim)
-	err = staleAuthority(staleAuthorityRunStart, "outer", err)
-	point, ok := staleAuthorityPointOf(err)
-	if !ok || point != string("inner") {
-		t.Fatalf("failure point = %q, %v; want %q, true", point, ok, "inner")
-	}
-}
-
 func TestWorkerStartLogsOnlyTypedFailurePointAndKeepsPublicConflict(t *testing.T) {
 	f := runtest.New(t)
 	work := f.AddRunLease(t, "starting", time.Now())

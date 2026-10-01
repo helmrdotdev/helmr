@@ -25,15 +25,8 @@ func TestTaskCompletionRefreshesAuthenticationWithoutChangingReceipt(t *testing.
 		t.Run(transition, func(t *testing.T) {
 			f, work, fence, request := taskHTTPExecutionFixture(t)
 			ctx := t.Context()
-			tx, err := f.Pool.Begin(ctx)
+			_, err := run.BeginFinalization(ctx, f.Pool, run.ExecutionFinalization{Fence: fence, RunID: pgvalue.UUID(work.RunID), AttemptNumber: 1, OperationID: pgvalue.UUID(uuid.MustParse(request.OperationID)), Fingerprint: dbtest.Digest("auth-finalization")})
 			if err != nil {
-				t.Fatal(err)
-			}
-			defer tx.Rollback(context.Background())
-			if _, err = run.BeginExecutionFinalization(ctx, tx, run.ExecutionFinalization{Fence: fence, RunID: pgvalue.UUID(work.RunID), AttemptNumber: 1, OperationID: pgvalue.UUID(uuid.MustParse(request.OperationID)), Fingerprint: dbtest.Digest("auth-finalization")}); err != nil {
-				t.Fatal(err)
-			}
-			if err = tx.Commit(ctx); err != nil {
 				t.Fatal(err)
 			}
 			server := &Server{db: db.New(f.Pool), tx: f.Pool}

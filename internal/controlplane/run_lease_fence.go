@@ -14,6 +14,19 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// errStaleRunLeaseClaim reports a worker receipt that no longer addresses
+// the live execution an operation locks.
+var errStaleRunLeaseClaim = errors.New("run lease claim is stale")
+
+// staleRunLeaseClaim reports a receipt that addresses no execution as
+// errStaleRunLeaseClaim.
+func staleRunLeaseClaim(err error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errStaleRunLeaseClaim
+	}
+	return err
+}
+
 type parsedRunLeaseFence struct {
 	leaseID uuid.UUID
 }

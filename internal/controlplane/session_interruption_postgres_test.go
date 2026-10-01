@@ -18,13 +18,13 @@ import (
 func interruptedCompletionRequest(t *testing.T, f *actorExecutionFixture, hold uuid.UUID, turn *uuid.UUID) workerapi.CompleteActorRequest {
 	t.Helper()
 	operation := uuid.NewV7().String()
-	f.workerCall(t, f.server.workerBeginRunFinalization, workerapi.BeginRunFinalizationRequest{Lease: f.fence(), OperationID: operation, ProgramQuiesced: workerapi.RunQuiescenceProof{RunID: f.runID.String(), AttemptNumber: f.claim.attempt.Number, RunLeaseID: f.fence().ID}}, nil)
+	f.workerCall(t, f.server.workerBeginRunFinalization, workerapi.BeginRunFinalizationRequest{Lease: f.fence(), OperationID: operation, ProgramQuiesced: workerapi.RunQuiescenceProof{RunID: f.runID.String(), AttemptNumber: f.claim.Attempt().Number, RunLeaseID: f.fence().ID}}, nil)
 	interrupted := &workerapi.ActorInterrupted{HoldID: hold.String()}
 	if turn != nil {
 		id := turn.String()
 		interrupted.TurnID = &id
 	}
-	return workerapi.CompleteActorRequest{Lease: f.fence(), OperationID: operation, Outcome: workerapi.ActorOutcome{RunGeneration: f.claim.actor.RunGeneration, Interrupted: interrupted}}
+	return workerapi.CompleteActorRequest{Lease: f.fence(), OperationID: operation, Outcome: workerapi.ActorOutcome{RunGeneration: f.claim.Session().RunGeneration, Interrupted: interrupted}}
 }
 
 func TestSessionInterruptedCompletionRejectsChangedHoldPostgres(t *testing.T) {
@@ -178,7 +178,7 @@ func TestSessionControlObservationDoesNotLockWorkerSupplyPostgres(t *testing.T) 
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
-	state, err := f.server.db.ReadWorkerSessionControl(ctx, db.ReadWorkerSessionControlParams{RunLeaseID: f.claim.runLease.ID, LeaseSequence: f.fence().LeaseSequence, WorkerGroupID: pgvalue.UUID(f.worker.GroupID), WorkerHostID: pgvalue.UUID(f.worker.HostID), WorkerEpoch: f.worker.Epoch, RunGeneration: scope.RunGeneration})
+	state, err := f.server.db.ReadWorkerSessionControl(ctx, db.ReadWorkerSessionControlParams{RunLeaseID: f.claim.Lease().ID, LeaseSequence: f.fence().LeaseSequence, WorkerGroupID: pgvalue.UUID(f.worker.GroupID), WorkerHostID: pgvalue.UUID(f.worker.HostID), WorkerEpoch: f.worker.Epoch, RunGeneration: scope.RunGeneration})
 	if err != nil {
 		t.Fatalf("advisory read blocked on supply mutation: %v", err)
 	}

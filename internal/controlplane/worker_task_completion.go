@@ -1,10 +1,11 @@
 package controlplane
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -20,32 +21,12 @@ func (s *Server) workerCompleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if err := s.completeTask(r.Context(), worker, request, completion); err != nil {
-		if writeStaleWorkerClaims(w, err) {
-			return
-		}
-		if errors.Is(err, errStaleTaskCompletion) {
-			if point, ok := staleAuthorityPointOf(err); ok {
-				s.log.Warn(
-					"task completion receipt rejected",
-					"failure_point", point,
-					"run_lease_id", request.Lease.ID,
-					"lease_sequence", request.Lease.LeaseSequence,
-					"worker_host_id", worker.HostID,
-					"worker_group_id", worker.GroupID,
-					"worker_epoch", worker.Epoch,
-				)
-			}
-			writeError(w, conflict(err))
-			return
-		}
-		if isDeterministicWorkerAdmission(err) {
-			s.log.Warn("task completion admission rejected", "run_lease_id", request.Lease.ID, "error", err)
-			writeError(w, apiError{kind: errUnprocessable, err: errors.New("task completion admission is invalid")})
-			return
-		}
-		s.log.Error("complete Task failed", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("complete task"))
+	if err := run.CompleteTask(r.Context(), s.tx, s.db, run.TaskCompletion{
+		Fence:       workerExecutionFence(worker, completion.lease, request.Lease),
+		OperationID: pgvalue.UUID(completion.operationID), Fingerprint: completion.fingerprint,
+		Kind: string(completion.kind), Output: completion.output, Error: completion.errorObject,
+	}); err != nil {
+		s.writeRunError(w, err, runTaskCompletionOperation, worker, request.Lease)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
