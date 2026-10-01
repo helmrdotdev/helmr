@@ -500,7 +500,7 @@ func (s *Supervisor) waitForDrainReady(ctx context.Context, evidence RecoveryEvi
 	defer ticker.Stop()
 	for {
 		if s.registry.empty() {
-			status, err := s.cfg.ControlPlane.ObserveWorker(ctx, s.observation(StatusDraining, evidence))
+			status, err := s.observeOnce(ctx, s.observation(StatusDraining, evidence))
 			if err == nil && status.Status == workerapi.StatusDraining && status.ActiveInstances == 0 {
 				return nil
 			}
@@ -630,6 +630,14 @@ func (s *Supervisor) acquireAdmission(ctx context.Context, name string) (func(),
 	}
 }
 
+// A black-holed request must not prevent fresh observations or drain completion
+// after recovery. One observation period leaves room for retries before staleness.
+func (s *Supervisor) observeOnce(ctx context.Context, observation workerapi.Observation) (workerapi.StatusResponse, error) {
+	observationCtx, cancel := context.WithTimeout(ctx, s.cfg.ObservationEvery)
+	defer cancel()
+	return s.cfg.ControlPlane.ObserveWorker(observationCtx, observation)
+}
+
 func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, statusReturned func(workerapi.StatusResponse), fatalWork chan<- error) {
 	ticker := time.NewTicker(s.cfg.ObservationEvery)
 	defer ticker.Stop()
@@ -640,7 +648,8 @@ func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, sta
 		case <-ticker.C:
 		}
 		state := s.state.Load().(Status)
-		if status, err := s.cfg.ControlPlane.ObserveWorker(ctx, s.observation(state, evidence)); err != nil && ctx.Err() == nil {
+		status, err := s.observeOnce(ctx, s.observation(state, evidence))
+		if err != nil && ctx.Err() == nil {
 			if workerAuthorityRejected(err) {
 				select {
 				case fatalWork <- fmt.Errorf("worker observation authority rejected: %w", err):

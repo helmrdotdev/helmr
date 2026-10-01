@@ -137,7 +137,13 @@ administrative credentials.
 
 ## Dispatcher
 
-Required: `DATABASE_URL`, `CLICKHOUSE_URL`, `COMPUTER_FENCING_KEY`, and `ENCRYPTION_KEY`.
+Required: `DATABASE_URL`, `CLICKHOUSE_URL`, `COMPUTER_FENCING_KEY`,
+`ENCRYPTION_KEY`, and `CONTROL_PLANE_URL`.
+
+`CONTROL_PLANE_URL` must be the same reachable Control Plane endpoint used by
+Workers. Each Dispatcher probes its `/readyz` endpoint and requires 120 seconds
+of uninterrupted healthy samples before fencing stale Worker observations.
+Failures, missed samples and Dispatcher restarts reset this recovery window.
 
 The dispatcher uses the same `ENCRYPTION_KEY` as the Control Plane to encrypt
 CA signers when it creates protected Computers for scheduled tasks.

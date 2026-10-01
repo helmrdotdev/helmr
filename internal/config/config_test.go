@@ -76,7 +76,7 @@ func TestLoadDispatcherReadsConnectionConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DatabaseURL != "postgres://example" ||
+	if cfg.ControlPlaneURL != "https://api.example.test" || cfg.DatabaseURL != "postgres://example" ||
 		cfg.ClickHouseURL != "https://clickhouse.example.test" {
 		t.Fatalf("config = %+v", cfg)
 	}
@@ -95,6 +95,7 @@ func TestLoadDispatcherRejectsInvalidComputerFencingKey(t *testing.T) {
 
 func setDispatcherFencing(t *testing.T) {
 	t.Helper()
+	t.Setenv("CONTROL_PLANE_URL", "https://api.example.test")
 	t.Setenv("ENCRYPTION_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 	t.Setenv("COMPUTER_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 }
@@ -735,5 +736,15 @@ func TestLoadWorkerRequiresExplicitComputerSaveInterval(t *testing.T) {
 				t.Fatalf("interval %q: %v", value, err)
 			}
 		})
+	}
+}
+
+func TestLoadDispatcherRequiresControlPlaneURL(t *testing.T) {
+	setDispatcherFencing(t)
+	t.Setenv("DATABASE_URL", "postgres://example")
+	t.Setenv("CLICKHOUSE_URL", "https://clickhouse.example.test")
+	t.Setenv("CONTROL_PLANE_URL", "")
+	if _, err := LoadDispatcher(); err == nil || !strings.Contains(err.Error(), "CONTROL_PLANE_URL") {
+		t.Fatalf("missing serving endpoint: %v", err)
 	}
 }

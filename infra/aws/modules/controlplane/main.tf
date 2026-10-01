@@ -178,8 +178,10 @@ locals {
   controlplane_environment           = merge(var.controlplane_environment, local.controlplane_environment_defaults)
   controlplane_secrets               = local.controlplane_secret_defaults
 
-  dispatcher_environment_defaults = local.clickhouse_ingester_environment
-  dispatcher_environment          = merge(var.dispatcher_environment, local.dispatcher_environment_defaults)
+  dispatcher_environment_defaults = merge(local.clickhouse_ingester_environment, {
+    CONTROL_PLANE_URL = local.controlplane_url
+  })
+  dispatcher_environment = merge(var.dispatcher_environment, local.dispatcher_environment_defaults)
 
   dispatcher_secrets = merge({
     ENCRYPTION_KEY       = aws_secretsmanager_secret.encryption_key.arn

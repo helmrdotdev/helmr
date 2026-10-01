@@ -115,6 +115,7 @@ def compile_config(raw):
     })
     worker.setdefault('WORKER_COMPUTER_SAVE_EVERY', '30s')
     dispatcher = {key: cp[key] for key in ['DATABASE_URL', 'CLICKHOUSE_URL', 'COMPUTER_FENCING_KEY', 'ENCRYPTION_KEY']}
+    dispatcher['CONTROL_PLANE_URL'] = worker['CONTROL_PLANE_URL']
     dispatcher.update(CLICKHOUSE_USER=ch['CLICKHOUSE_INGESTER_USER'], CLICKHOUSE_PASSWORD=ch['CLICKHOUSE_INGESTER_PASSWORD'])
     for values in [cp, worker, dispatcher, ch]:
         environment(values)

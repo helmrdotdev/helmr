@@ -125,7 +125,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure telemetry ingester: %w", err)
 	}
-	staleHostFencer, err := workergroup.NewStaleHostFencer(pool, workergroup.WithStaleHostFenceLogger(log))
+	staleHostFencer, err := workergroup.NewStaleHostFencer(pool, cfg.ControlPlaneURL, workergroup.WithStaleHostFenceLogger(log))
 	if err != nil {
 		return fmt.Errorf("configure stale worker fencer: %w", err)
 	}

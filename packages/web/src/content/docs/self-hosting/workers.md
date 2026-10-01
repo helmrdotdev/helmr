@@ -10,6 +10,29 @@ verified Deployment bundles. The AWS compositions create immutable execution
 Pool generations so old restore-compatible capacity can remain available at
 scale zero during a rollout.
 
+## Control Plane outages and host loss
+
+The Dispatcher requires `CONTROL_PLANE_URL` to be the same public API endpoint
+used by Workers. The AWS compositions and dedicated development profile set this
+automatically. It must remain reachable from the Dispatcher, including through
+CloudFront when enabled.
+
+The Dispatcher suspends observation-age fencing when that endpoint's `/readyz`
+check fails. Readiness includes database connectivity, schema readiness and a
+check that the Control Plane database session is not read only. After an outage,
+a missed check or a Dispatcher restart, readiness checks must succeed for 120
+seconds before stale-host fencing resumes. Live Workers can report again during
+that window; Hosts that remain stale are fenced under their current epoch and
+claim. Logs report fencing suspension and recovery.
+
+This protects against shared API availability failures visible from the
+Dispatcher. It does not detect a failure confined to Worker authentication or the
+observation handler, inconsistent credentials between API replicas, a hidden bad
+replica, or a network partition that only affects Workers. Readiness is not proof
+that every observation can commit. Existing ownership expiry and actual provider
+loss remain separate; an outage does not extend execution leases indefinitely.
+All Dispatcher replicas must run this behavior before relying on the protection.
+
 ## Evaluation worker
 
 The evaluation profile has workers and NAT disabled by default. For a bounded end-to-end smoke test:
