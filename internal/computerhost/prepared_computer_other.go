@@ -10,5 +10,5 @@ import (
 )
 
 func (p *PreparedMachines) prepareComputerDevice(context.Context, workerapi.InstanceReconcileTarget) (vm.ComputerDevice, error) {
-	return nil, errors.New("computer runtime preparation requires Linux")
+	return nil, errors.New("computer instance preparation requires Linux")
 }

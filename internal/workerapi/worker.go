@@ -73,7 +73,7 @@ type StartupRecoveryRequest struct {
 }
 
 // DrainCompletionRequest is the worker's proof that a server-directed
-// drain has removed both durable execution authority and local runtime state.
+// drain has removed both durable execution authority and local instance state.
 // The control plane must treat an identical proof as idempotent.
 type DrainCompletionRequest struct {
 	InventoryComplete bool      `json:"inventory_complete"`
@@ -129,8 +129,8 @@ type StatusResponse struct {
 }
 
 type Readiness struct {
-	Run     *RoleReadiness `json:"run,omitempty"`
-	Runtime *RoleReadiness `json:"runtime,omitempty"`
+	Run      *RoleReadiness `json:"run,omitempty"`
+	Instance *RoleReadiness `json:"instance,omitempty"`
 }
 
 type RoleReadiness struct {
@@ -148,7 +148,7 @@ type ComputerInstance struct {
 	ProjectID              string     `json:"project_id"`
 	EnvironmentID          string     `json:"environment_id"`
 	WorkerHostID           string     `json:"worker_host_id"`
-	WorkerEpoch            int64      `json:"runtime_epoch"`
+	WorkerEpoch            int64      `json:"worker_epoch"`
 	RuntimeID              string     `json:"runtime_id"`
 	VMVCPUCount            int32      `json:"vm_vcpu_count"`
 	CPUConfigDigest        string     `json:"cpu_config_digest"`
@@ -230,7 +230,7 @@ type InstanceReconcileResponse struct {
 	Items []InstanceReconcileTarget `json:"items"`
 }
 
-// RuntimeCapture is the complete durable capture intent. Correlation IDs are
+// InstanceCapture is the complete durable capture intent. Correlation IDs are
 // resolved from the guest's admitted waits, not invented by the Control Plane.
 type InstanceCapture struct {
 	CheckpointID        string               `json:"checkpoint_id"`
@@ -802,7 +802,7 @@ type CreateRunWaitResponse struct {
 	RunWaitID             string          `json:"run_wait_id"`
 	ResumeAttachID        string          `json:"resume_attach_id,omitempty"`
 	ComputerInstanceID    string          `json:"computer_instance_id,omitempty"`
-	WorkerEpoch           int64           `json:"runtime_epoch,omitempty"`
+	WorkerEpoch           int64           `json:"worker_epoch,omitempty"`
 	ComputerDiskVersionID string          `json:"computer_disk_version_id,omitempty"`
 	ResolutionKind        string          `json:"resolution_kind,omitempty"`
 	Resolution            json.RawMessage `json:"resolution,omitempty"`

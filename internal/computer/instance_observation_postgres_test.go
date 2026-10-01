@@ -32,7 +32,7 @@ func runningInstance(t *testing.T) (runtest.Fixture, runtest.RunLease, db.Comput
 }
 
 // observationOf observes the Instance at its current desired and observed
-// versions on its host epoch.
+// versions on its worker epoch.
 func observationOf(i db.ComputerInstance) Observation {
 	return Observation{
 		Instance: InstanceRef{
@@ -136,7 +136,7 @@ func TestFatalInstanceFailureDrainsWorkerWithoutReclaim(t *testing.T) {
 	}
 }
 
-// A failure report of an invalid host epoch drains the host before any
+// A failure report of an invalid worker epoch drains the host before any
 // Instance fence, even when the report's cleanup proof is invalid.
 func TestWorkerInvalidFailureDrainsBeforeValidatingCleanupProof(t *testing.T) {
 	f, _, i := runningInstance(t)

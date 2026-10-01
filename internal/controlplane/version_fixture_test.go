@@ -15,7 +15,7 @@ import (
 )
 
 // retainedTestVersion uploads real authenticated root bytes for a
-// Runtime's retained writer key and records them as a certified root of its
+// Instance's retained writer key and records them as a certified root of its
 // Computer, returning the root and its inspection. It supplies certified
 // database state for the checkpoint fixtures, which pin it through the
 // owner's object reuse and exercise their own live commit fences; object

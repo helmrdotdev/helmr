@@ -27,7 +27,7 @@ func TestPreservationFailureSurvivesRenewalCancellation(t *testing.T) {
 	raw := &serverTestMachine{streams: []io.ReadWriteCloser{pc}, operation: discardReadWriteCloser{}, exit: make(chan error)}
 	machines := computerPreparedMachines(t, mount, raw)
 	client := &serverTestClient{}
-	m := Server{RestoreControl: unusedComputerRestoreControl{}, ComputerSaves: &saveHostFixture{runtime: mount.ComputerInstanceID, computer: mount.ComputerID}, ComputerSaveEvery: time.Millisecond, ComputerObjects: &checkpointCAS{}, CAS: store, TempDir: t.TempDir(), Heartbeat: time.Hour, PollEvery: time.Hour, Machines: machines, Mounts: NewMounts()}
+	m := Server{RestoreControl: unusedComputerRestoreControl{}, ComputerSaves: &saveHostFixture{instance: mount.ComputerInstanceID, computer: mount.ComputerID}, ComputerSaveEvery: time.Millisecond, ComputerObjects: &checkpointCAS{}, CAS: store, TempDir: t.TempDir(), Heartbeat: time.Hour, PollEvery: time.Hour, Machines: machines, Mounts: NewMounts()}
 	err := m.Serve(ctx, mount, client)
 	if err == nil || !strings.Contains(err.Error(), errTestLiveCapture.Error()) {
 		t.Fatalf("original failure lost: %v", err)
@@ -40,6 +40,6 @@ func TestPreservationFailureSurvivesRenewalCancellation(t *testing.T) {
 		t.Fatalf("live captures=%d", raw.captureCount())
 	}
 	if raw.closeCount() != 1 {
-		t.Fatalf("runtime cleanup=%d", raw.closeCount())
+		t.Fatalf("instance cleanup=%d", raw.closeCount())
 	}
 }

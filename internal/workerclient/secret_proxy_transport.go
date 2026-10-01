@@ -13,7 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-// PrepareSecretTransport is host-only. The immutable runtime locator is closed
+// PrepareSecretTransport is host-only. The immutable instance locator is closed
 // over by every callback; no guest identity or decrypted value is cached.
 func (c *Client) PrepareSecretTransport(ctx context.Context, instanceID string, blocked []netip.Prefix) (*secretproxy.Proxy, error) {
 	request := workerapi.SecretProxyRequest{ComputerInstanceID: instanceID}

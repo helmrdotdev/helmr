@@ -60,7 +60,7 @@ func TestActivationParamsDeriveEpochCapacityFromTemplate(t *testing.T) {
 		VMPlatformID:   pgtype.Text{String: template.Runtime.ID, Valid: true},
 		EpochCPUMillis: 8_000, EpochMemoryBytes: 16 << 30, EpochGuestEphemeralDiskBytes: 64 << 30,
 		PerVMCPUMillis: 2_000, PerVMMemoryBytes: 2 << 30, PerVMGuestEphemeralDiskBytes: 8 << 30,
-		// Runtime starts are bounded by the run slots the host reported.
+		// Instance starts are bounded by the run slots the host reported.
 		MaxVMSlots: 4, MaxVMStarts: 4,
 		CPUEnvironment: []byte(`{}`), CPUEnvironmentDigest: pgtype.Text{String: "sha256:" + strings.Repeat("7", 64), Valid: true},
 		WorkerHostID: pgvalue.UUID(principal.HostID), WorkerGroupID: pgvalue.UUID(hostTestGroupID),

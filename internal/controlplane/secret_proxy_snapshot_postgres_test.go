@@ -113,7 +113,7 @@ func (h *snapshotCaptureHook) CaptureProtectedSecretEnvelopes(ctx context.Contex
 }
 func TestProtectedSnapshotBeforeAndAfterTransitions(t *testing.T) {
 	for _, when := range []string{"before", "after"} {
-		for _, change := range []string{"rotate", "revoke", "epoch", "claims", "group", "computer", "runtime", "lease", "token", "writer"} {
+		for _, change := range []string{"rotate", "revoke", "epoch", "claims", "group", "computer", "instance", "lease", "token", "writer"} {
 			t.Run(when+"/"+change, func(t *testing.T) {
 				f := newSnapshotFixture(t, 1, true)
 				mutate := func() {
@@ -134,7 +134,7 @@ func TestProtectedSnapshotBeforeAndAfterTransitions(t *testing.T) {
 						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE worker_groups SET claim_version=2 WHERE id=$1", f.worker.GroupID)
 					case "computer":
 						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computers SET desired_state='deleted' WHERE id=$1", f.computer)
-					case "runtime":
+					case "instance":
 						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1", f.instance)
 					case "lease":
 						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_instances SET writer_expires_at=now()-interval '1 second' WHERE id=$1", f.instance)
@@ -202,7 +202,7 @@ func TestProtectedSnapshotCoverageAndExpiry(t *testing.T) {
 	p.ComputerInstanceID = pgvalue.UUID(uuid.NewV7())
 	rows, err = f.q.CaptureProtectedSecretEnvelopes(t.Context(), p)
 	if err != nil || len(rows) != 0 {
-		t.Fatal("wrong runtime accepted")
+		t.Fatal("wrong instance accepted")
 	}
 	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_instances SET guest_channel_credential_expires_at=now()+interval '150 milliseconds' WHERE id=$1", f.instance)
 	tx, err := f.fixture.Pool.Begin(t.Context())

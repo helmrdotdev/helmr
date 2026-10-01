@@ -120,7 +120,7 @@ func TestValidateNewProgramMountSeparatesPhysicalIdentityFromLogicalFence(t *tes
 	}{
 		{name: "writer generation", mutate: func(mount *workerapi.ComputerInstanceAssignment) { mount.WriterGeneration++ }},
 		{name: "Computer ID", mutate: func(mount *workerapi.ComputerInstanceAssignment) { mount.ComputerID = "other-computer" }},
-		{name: "Runtime Instance", mutate: func(mount *workerapi.ComputerInstanceAssignment) { mount.ComputerInstanceID = "other-runtime" }},
+		{name: "Computer Instance", mutate: func(mount *workerapi.ComputerInstanceAssignment) { mount.ComputerInstanceID = "other-instance" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -193,7 +193,7 @@ func TestStartFreshProgramFailsExactMountOnTypedStartFailure(t *testing.T) {
 	guest, host := net.Pipe()
 	defer guest.Close()
 	mounts := newTestMounts()
-	session, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestMachine{stream: host}, "channel-1")
+	mount, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestMachine{stream: host}, "channel-1")
 	defer unregister()
 	guestResult := make(chan error, 1)
 	go func() {
@@ -215,7 +215,7 @@ func TestStartFreshProgramFailsExactMountOnTypedStartFailure(t *testing.T) {
 	}()
 	failureRequested := make(chan struct{}, 1)
 	go func() {
-		request := <-session.failures
+		request := <-mount.failures
 		failureRequested <- struct{}{}
 		request.result <- nil
 	}()
@@ -247,7 +247,7 @@ func TestStartFreshProgramRejectsNoncanonicalStartFailureDiagnosticWithoutFailin
 	guest, host := net.Pipe()
 	defer guest.Close()
 	mounts := newTestMounts()
-	session, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestMachine{stream: host}, "channel-1")
+	mount, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestMachine{stream: host}, "channel-1")
 	defer unregister()
 	go func() {
 		_ = readFreshProgramAdmission(guest, claim.Lease, testComputerMount(claim.Lease))
@@ -274,7 +274,7 @@ func TestStartFreshProgramRejectsNoncanonicalStartFailureDiagnosticWithoutFailin
 		t.Fatalf("startNewProgram() error = %v", err)
 	}
 	select {
-	case <-session.failures:
+	case <-mount.failures:
 		t.Fatal("noncanonical guest diagnostic redirected Computer Mount cleanup")
 	case <-time.After(50 * time.Millisecond):
 	}
@@ -285,7 +285,7 @@ func TestStartFreshProgramRejectsMismatchedStartFailureProofWithoutFailingMount(
 	guest, host := net.Pipe()
 	defer guest.Close()
 	mounts := newTestMounts()
-	session, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestMachine{stream: host}, "channel-1")
+	mount, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestMachine{stream: host}, "channel-1")
 	defer unregister()
 	go func() {
 		_ = readFreshProgramAdmission(guest, claim.Lease, testComputerMount(claim.Lease))
@@ -309,7 +309,7 @@ func TestStartFreshProgramRejectsMismatchedStartFailureProofWithoutFailingMount(
 		t.Fatalf("startNewProgram() error = %v", err)
 	}
 	select {
-	case <-session.failures:
+	case <-mount.failures:
 		t.Fatal("mismatched guest proof redirected Computer Mount cleanup")
 	case <-time.After(50 * time.Millisecond):
 	}
@@ -828,7 +828,7 @@ func testFreshProgramClaim(
 			LeaseSequence:             3,
 			WorkerHostID:              "worker-1",
 			WorkerEpoch:               7,
-			ComputerInstanceID:        "runtime-1",
+			ComputerInstanceID:        "instance-1",
 			VMPlatformID:              "vm-platform-1",
 			ComputerID:                "computer-1",
 			BaseComputerDiskVersionID: "version-1",
@@ -1014,7 +1014,7 @@ func TestStartFreshProgramSecretCollisionReachesCaller(t *testing.T) {
 	guest, host := net.Pipe()
 	defer guest.Close()
 	mounts := newTestMounts()
-	session, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestMachine{stream: host}, "channel-1")
+	mount, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestMachine{stream: host}, "channel-1")
 	defer unregister()
 	guestResult := make(chan error, 1)
 	go func() {
@@ -1036,7 +1036,7 @@ func TestStartFreshProgramSecretCollisionReachesCaller(t *testing.T) {
 	}()
 	failureRequested := make(chan struct{}, 1)
 	go func() {
-		request := <-session.failures
+		request := <-mount.failures
 		failureRequested <- struct{}{}
 		request.result <- nil
 	}()

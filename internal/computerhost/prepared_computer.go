@@ -20,23 +20,23 @@ import (
 
 func validateComputerPreparationSource(target workerapi.InstanceReconcileTarget) error {
 	if err := ids.Validate(target.ID); err != nil {
-		return fmt.Errorf("runtime preparation identity: %w", err)
+		return fmt.Errorf("instance preparation identity: %w", err)
 	}
 	if target.WorkerEpoch <= 0 || target.DesiredVersion <= 0 {
-		return errors.New("runtime preparation fence is required")
+		return errors.New("instance preparation fence is required")
 	}
 	if err := ids.Validate(target.Source.ComputerID); err != nil {
 		return fmt.Errorf("computer identity: %w", err)
 	}
 	source := target.Source.Computer
 	if source == nil {
-		return errors.New("runtime computer source is required")
+		return errors.New("instance computer source is required")
 	}
 	if err := ids.Validate(source.VersionID); err != nil {
 		return fmt.Errorf("computer version: %w", err)
 	}
 	if source.LogicalBytes != disk.SeedCapacity || target.Source.ReservedDiskMiB != source.LogicalBytes/mebibyte {
-		return errors.New("computer capacity does not match runtime reservation")
+		return errors.New("computer capacity does not match instance reservation")
 	}
 	if source.Seed != nil {
 		if source.Seed.Profile != definition.ComputerSeedProfile || target.Source.Restore != nil {

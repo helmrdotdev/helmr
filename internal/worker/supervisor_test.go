@@ -410,7 +410,7 @@ func TestSupervisorTerminatesEpochOnFatalBackgroundError(t *testing.T) {
 	s, err := New(Config{
 		ControlPlane: controlPlane,
 		PollEvery:    time.Millisecond,
-		Background: []BackgroundSpec{{Name: "runtime-controller", Run: func(context.Context) error {
+		Background: []BackgroundSpec{{Name: "instance-controller", Run: func(context.Context) error {
 			return &fatalWorkerError{err: errors.New("runtime verifier bootstrap failed")}
 		}}},
 	})
@@ -917,7 +917,7 @@ func TestServerDirectedDrainDoesNotCompleteOnTimeoutOrDirtyInventory(t *testing.
 		{
 			name: "quarantined local inventory", status: workerapi.StatusResponse{Status: workerapi.StatusDraining},
 			finalize: func(context.Context) (RecoveryEvidence, error) {
-				return RecoveryEvidence{ObservedAt: time.Now().UTC(), Quarantined: []string{"runtime"}, QuarantineErrors: []string{"busy"}}, nil
+				return RecoveryEvidence{ObservedAt: time.Now().UTC(), Quarantined: []string{"instance"}, QuarantineErrors: []string{"busy"}}, nil
 			},
 			wantError: "inventory is not clean",
 		},

@@ -14,7 +14,7 @@ import (
 )
 
 // TokenWaitFence is the Run lease a worker host registers a Token wait for,
-// on the host epoch it authenticated.
+// on the worker epoch it authenticated.
 type TokenWaitFence struct {
 	RunLeaseID    uuid.UUID
 	LeaseSequence int64

@@ -1067,7 +1067,7 @@ func validateNewProgramMount(
 		return errors.New("new program computer ID does not match the claimed physical authority")
 	}
 	if mount.ComputerInstanceID != lease.ComputerInstanceID {
-		return errors.New("new program Runtime Instance does not match the claimed physical authority")
+		return errors.New("new program Computer Instance does not match the claimed physical authority")
 	}
 	return nil
 }

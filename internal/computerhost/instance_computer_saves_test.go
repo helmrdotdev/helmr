@@ -14,9 +14,9 @@ import (
 func instanceSaveFixture(t *testing.T) (*instanceComputerSaves, *saveHostFixture, func() (bool, error)) {
 	t.Helper()
 	owner := &instanceComputerSaves{}
-	f := &saveHostFixture{runtime: uuid.NewV7().String(), computer: uuid.NewV7().String()}
+	f := &saveHostFixture{instance: uuid.NewV7().String(), computer: uuid.NewV7().String()}
 	start := func() (bool, error) {
-		return owner.start(t.Context(), f, f, workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: f.runtime, WriterGeneration: 2}, f.runtime, f.computer, func(context.Context) (computerSaveCapture, error) { return saveHostCapture{f}, nil })
+		return owner.start(t.Context(), f, f, workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: f.instance, WriterGeneration: 2}, f.instance, f.computer, func(context.Context) (computerSaveCapture, error) { return saveHostCapture{f}, nil })
 	}
 	return owner, f, start
 }

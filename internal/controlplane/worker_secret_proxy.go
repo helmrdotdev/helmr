@@ -23,7 +23,7 @@ func (s *Server) workerResolveSecretProxy(w http.ResponseWriter, r *http.Request
 	s.workerSecretProxy(w, r, true)
 }
 
-// Preparation proves the runtime reservation. Only resolution proves live mounted
+// Preparation proves the instance reservation. Only resolution proves live mounted
 // execution authority; a resumed guest can contact transport before that exists.
 func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resolve bool) {
 	var request workerapi.SecretProxyRequest

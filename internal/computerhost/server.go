@@ -75,7 +75,7 @@ func (m Server) validate() error {
 		return errors.New("computer object store is required")
 	}
 	if m.Mounts == nil {
-		return errors.New("computer mount session registry is required")
+		return errors.New("computer mount registry is required")
 	}
 	if m.Machines == nil {
 		return errors.New("computer server prepared machines are required")
@@ -107,13 +107,13 @@ func (m Server) Serve(ctx context.Context, mount workerapi.ComputerInstanceAssig
 	defer cancelStartup()
 	phaseStarted := time.Now()
 	checkout, computerInstanceID, err := m.materializeMachine(startupCtx, &mount)
-	m.logComputerMountPhase(mount, "computer mount session materialized", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorString(err))
+	m.logComputerMountPhase(mount, "computer mount machine materialized", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorString(err))
 	if err != nil {
 		if renewalErr := renewal.stopAndWait(); renewalErr != nil {
 			err = renewalErr
 		}
 		_ = m.failComputerMount(client, renewal.authority(mount), err)
-		return fmt.Errorf("checkout computer mount runtime: %w", err)
+		return fmt.Errorf("checkout computer mount instance: %w", err)
 	}
 	rawMachine := checkout.Machine()
 	instance := checkout.mount
@@ -126,21 +126,21 @@ func (m Server) Serve(ctx context.Context, mount workerapi.ComputerInstanceAssig
 		if closeErr := m.closeMachine(instance); closeErr != nil {
 			failure := computerMountFailure{
 				code: "computer_mount_runtime_close_failed",
-				err:  errors.New("computer mount runtime cleanup failed"),
+				err:  errors.New("computer mount instance cleanup failed"),
 			}
-			m.logComputerMountPhase(mount, "computer mount session close failed", "error", closeErr.Error())
-			// The Server no longer owns this session. Retain its resources
+			m.logComputerMountPhase(mount, "computer mount machine close failed", "error", closeErr.Error())
+			// The Server no longer owns this machine. Retain its resources
 			// until reconciliation proves physical cleanup.
 			checkout.Relinquish()
 			var priorFailure computerMountFailure
 			if !errors.As(runErr, &priorFailure) || !priorFailure.reported {
 				runErr = errors.Join(runErr, m.failComputerMount(client, renewal.authority(mount), failure))
 			}
-			runErr = errors.Join(runErr, fmt.Errorf("close computer mount runtime: %w", closeErr))
+			runErr = errors.Join(runErr, fmt.Errorf("close computer mount instance: %w", closeErr))
 			return
 		}
 		if releaseErr := checkout.Release(); releaseErr != nil {
-			runErr = errors.Join(runErr, fmt.Errorf("release computer mount runtime checkout: %w", releaseErr))
+			runErr = errors.Join(runErr, fmt.Errorf("release computer mount instance checkout: %w", releaseErr))
 		}
 	}()
 	writerGeneration := checkout.writerGeneration
@@ -292,7 +292,7 @@ func (m Server) serveComputerMount(
 			}
 		case <-instance.releaseForCheckpointDone:
 			// Failed stop may leave Wait blocked forever. Report through the mount
-			// owner so runtime reconciliation retains and reclaims its checkout.
+			// owner so instance reconciliation retains and reclaims its checkout.
 			return checkpointReleased()
 		case err := <-machineExited:
 			machineExited = nil
@@ -312,7 +312,7 @@ func (m Server) serveComputerMount(
 				return stopAndReturn()
 			}
 			if err == nil {
-				err = errors.New("computer mount session exited")
+				err = errors.New("computer mount machine exited")
 			}
 			return failAndReturn(computerMountFailure{
 				code: "computer_mount_vm_exited",
@@ -336,7 +336,7 @@ func (m Server) serveComputerMount(
 				)
 				failure = computerMountFailure{
 					code: "computer_mount_runtime_close_failed",
-					err:  errors.New("computer mount runtime cleanup failed"),
+					err:  errors.New("computer mount instance cleanup failed"),
 				}
 			}
 			reportErr := m.failComputerMount(client, renewal.authority(mount), failure)
@@ -792,10 +792,10 @@ func (m Server) materializeMachine(ctx context.Context, mount *workerapi.Compute
 	}
 	mount.ComputerInstanceID = strings.TrimSpace(mount.ComputerInstanceID)
 	if mount.ComputerInstanceID == "" {
-		return nil, "", computerMountFailure{code: "computer_instance_missing", err: errors.New("computer mount claim must include a runtime instance id")}
+		return nil, "", computerMountFailure{code: "computer_instance_missing", err: errors.New("computer mount claim must include an instance id")}
 	}
 	if mount.WorkerEpoch <= 0 {
-		return nil, "", computerMountFailure{code: "computer_instance_fence_missing", err: errors.New("computer mount claim must include the runtime epoch")}
+		return nil, "", computerMountFailure{code: "computer_instance_fence_missing", err: errors.New("computer mount claim must include the worker epoch")}
 	}
 	target := mount.Target
 	if strings.TrimSpace(target.BaseComputerDiskVersionID) == "" {
@@ -811,14 +811,14 @@ func (m Server) materializeMachine(ctx context.Context, mount *workerapi.Compute
 		}
 		return nil, key, computerMountFailure{
 			code: "computer_runtime_not_prepared",
-			err:  fmt.Errorf("computer runtime %q at epoch %d is not prepared", mount.ComputerInstanceID, mount.WorkerEpoch),
+			err:  fmt.Errorf("computer instance %q at worker epoch %d is not prepared", mount.ComputerInstanceID, mount.WorkerEpoch),
 		}
 	}
 	machine := checkout.Machine()
 	if machine == nil {
-		err := errors.New("prepared computer runtime session is unavailable")
+		err := errors.New("prepared computer instance machine is unavailable")
 		if releaseErr := checkout.Release(); releaseErr != nil {
-			err = errors.Join(err, fmt.Errorf("release prepared computer runtime checkout: %w", releaseErr))
+			err = errors.Join(err, fmt.Errorf("release prepared computer instance checkout: %w", releaseErr))
 		}
 		return nil, key, computerMountFailure{code: "computer_runtime_not_prepared", err: err}
 	}
@@ -827,11 +827,11 @@ func (m Server) materializeMachine(ctx context.Context, mount *workerapi.Compute
 			checkout.Relinquish()
 			return errors.Join(err, computerMountFailure{
 				code: "computer_mount_runtime_close_failed",
-				err:  fmt.Errorf("close prepared computer runtime: %w", closeErr),
+				err:  fmt.Errorf("close prepared computer instance: %w", closeErr),
 			})
 		}
 		if releaseErr := checkout.Release(); releaseErr != nil {
-			return errors.Join(err, fmt.Errorf("release prepared computer runtime checkout: %w", releaseErr))
+			return errors.Join(err, fmt.Errorf("release prepared computer instance checkout: %w", releaseErr))
 		}
 		return err
 	}
@@ -1259,9 +1259,9 @@ func (m Server) stopControlledComputerMount(ctx context.Context, machine vm.Mach
 	if err := m.closeMachine(machine); err != nil {
 		_ = m.failComputerMount(client, mount, computerMountFailure{
 			code: "computer_mount_runtime_close_failed",
-			err:  fmt.Errorf("close computer runtime: %w", err),
+			err:  fmt.Errorf("close computer instance: %w", err),
 		})
-		return fmt.Errorf("close computer runtime: %w", err)
+		return fmt.Errorf("close computer instance: %w", err)
 	}
 	if err := checkout.Release(); err != nil {
 		return fmt.Errorf("release computer mount resources: %w", err)

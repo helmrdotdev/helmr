@@ -182,8 +182,8 @@ func (p *PreparedMachines) captureInstanceTarget(ctx context.Context, instances 
 // excludeCaptureSource stops a capture-owned source within the source release
 // bound and returns the cleanup proof method. A served source whose save owner
 // has not finished by then may be waiting on the VM itself, so the release
-// escalates to physical cleanup of the runtime; finalization then joins the
-// save owner first (see releaseRuntimeAfterPhysicalCleanup).
+// escalates to physical cleanup of the instance; finalization then joins the
+// save owner first (see releaseInstanceAfterPhysicalCleanup).
 func (p *PreparedMachines) excludeCaptureSource(ctx context.Context, computerInstanceID string, capture *computerCheckpointer) (string, error) {
 	releaseCtx, cancel := p.sourceReleaseContext(ctx)
 	err := capture.ReleaseCheckpointSource(releaseCtx)
@@ -195,7 +195,7 @@ func (p *PreparedMachines) excludeCaptureSource(ctx context.Context, computerIns
 		return "", err
 	}
 	if p.Backend == nil {
-		return "", errors.Join(err, errors.New("runtime connector does not support exact runtime cleanup"))
+		return "", errors.Join(err, errors.New("VM backend does not support exact instance cleanup"))
 	}
 	cleanupCtx, cancel := preparedMachineControlContext(ctx)
 	cleanupErr := p.Backend.Cleanup(cleanupCtx, vm.Owner{Kind: vm.OwnerRuntime, ID: computerInstanceID})
@@ -240,7 +240,7 @@ func (p *PreparedMachines) returnUnstartedCapture(ref preparedMachineRef, claim 
 	if exitErr, exited := entry.exit.finished(); exited {
 		cause = preparedMachineExitCause(exitErr)
 	} else if p.closed {
-		cause = errors.New("runtime controller stopped")
+		cause = errors.New("instance controller stopped")
 	}
 	if cause == nil {
 		key := entry.machineKey

@@ -52,7 +52,7 @@ func checkpointStagingSize(shape vm.SnapshotLimits, cipher *CheckpointEncryptor)
 		return checkpointStagingLimits{}, err
 	}
 	limits := checkpointStagingLimits{memory: memory, scratch: scratch, state: shape.StateBytes, config: shape.ConfigBytes}
-	// Working Computer and scratch are already charged to the runtime. Raw RAM,
+	// Working Computer and scratch are already charged to the instance. Raw RAM,
 	// raw state, packed intermediates and all ciphertexts may coexist here.
 	sizes := []int64{shape.MemoryBytes, shape.StateBytes, memory, scratch}
 	for _, n := range []int64{memory, scratch, shape.StateBytes, shape.ConfigBytes} {
@@ -73,7 +73,7 @@ func checkpointStagingSize(shape vm.SnapshotLimits, cipher *CheckpointEncryptor)
 
 func (c *computerCheckpointer) CreateCheckpoint(ctx context.Context, request computerCheckpointRequest) (result checkpointResult, retErr error) {
 	if c.machine == nil {
-		return result, errors.New("checkpoint source session is required")
+		return result, errors.New("checkpoint source machine is required")
 	}
 	if _, err := computerFreezeRequest(request.Target); err != nil {
 		return result, err
@@ -110,7 +110,7 @@ func (c *computerCheckpointer) CreateCheckpoint(ctx context.Context, request com
 			cleanupErr = errors.Join(cleanupErr, os.RemoveAll(directory))
 		}
 		// Raw VM output is different: a failed capture response can leave a writer.
-		// Keep its runtime-owned paths and full charge until exit is confirmed.
+		// Keep its instance-owned paths and full charge until exit is confirmed.
 		if stopErr == nil {
 			cleanupErr = errors.Join(cleanupErr, removeCheckpointSnapshot(artifact))
 		}

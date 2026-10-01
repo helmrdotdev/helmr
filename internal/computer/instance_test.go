@@ -33,6 +33,6 @@ func TestClosedCleanupProofRequiresPhysicalTeardown(t *testing.T) {
 		}
 	}
 	if _, err := (CleanupProof{Method: CleanupNotMaterialized, CompletedAt: now}).evidence(now, true); err == nil {
-		t.Fatal("not_materialized proof released a closed runtime")
+		t.Fatal("not_materialized proof released a closed instance")
 	}
 }

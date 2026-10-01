@@ -208,7 +208,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	if runtimeQuarantines != 0 {
 		capabilities.ExecutionSlotsAvailable -= int32(runtimeQuarantines)
 		if capabilities.ExecutionSlotsAvailable <= 0 {
-			return errors.New("all runtime execution slots remain quarantined after startup recovery")
+			return errors.New("all instance execution slots remain quarantined after startup recovery")
 		}
 	}
 	status, err := s.cfg.ControlPlane.ActivateWorker(ctx, capabilities)
@@ -420,7 +420,7 @@ func (s *Supervisor) completeServerDirectedDrain(
 	}
 	// Freeze cleanup admission before final proof. Claim consumers finish before
 	// background reconcilers, then the finalizer gets exclusive ownership of
-	// local runtime/process/netns cleanup.
+	// local instance/process/netns cleanup.
 	cancelDrainClaims()
 	if !waitGroup(drainCtx, consumerWG) {
 		return fail(fmt.Errorf("worker durable drain timed out waiting for cleanup claims: %w", drainCtx.Err()))
@@ -644,10 +644,10 @@ func (s *Supervisor) AdmitInstanceStart(ctx context.Context) error {
 		return nil
 	}
 	decision := s.cfg.AdmissionEvaluator.Evaluate(ctx, AdmissionCheck{
-		Consumer: "runtime", Status: s.state.Load().(Status), Snapshot: s.registry.snapshot(), Recovery: s.recovery,
+		Consumer: "instance", Status: s.state.Load().(Status), Snapshot: s.registry.snapshot(), Recovery: s.recovery,
 	})
 	if !decision.Allowed {
-		return fmt.Errorf("runtime start admission paused: %s", decision.Reason)
+		return fmt.Errorf("instance start admission paused: %s", decision.Reason)
 	}
 	return nil
 }

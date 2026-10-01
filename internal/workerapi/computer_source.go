@@ -5,7 +5,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/oci"
 )
 
-// RuntimeComputerSource pins preparation to one reserved version. Seed is present
+// InstanceComputerSource pins preparation to one reserved version. Seed is present
 // only for initialization. Continuation obtains the retained disk version and keys
 // through the authenticated source broker; missing state never causes reseeding.
 // This projection is not a grant to execute or to publish a version.

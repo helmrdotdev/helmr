@@ -119,7 +119,7 @@ func TestInitialComputerObjectInspectedRegistration(t *testing.T) {
 		t.Fatalf("certified closure: %d %v", count, err)
 	}
 	// Reuse is exact even after certification. A stored receipt never authorizes a
-	// changed declaration or stale Worker/Runtime authority.
+	// changed declaration or stale Worker/Instance authority.
 	encoded, _ := json.Marshal(rootEvidence)
 	var changed blockformat.ObjectInspection
 	if err = json.Unmarshal(encoded, &changed); err != nil {
@@ -137,7 +137,7 @@ func TestInitialComputerObjectInspectedRegistration(t *testing.T) {
 	staleRef := f.ref
 	staleRef.DesiredVersion++
 	if err = f.recordInitialObject(t.Context(), f.principal, staleRef, rootEvidence, false); err == nil {
-		t.Fatal("stale runtime accepted")
+		t.Fatal("stale instance accepted")
 	}
 	// A new parent referring to a real child at the wrong node position must not
 	// reuse that child's digest as its entire proof.

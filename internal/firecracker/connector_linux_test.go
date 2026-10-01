@@ -1628,7 +1628,7 @@ func TestMachineRuntimeFailsClosedUntilHostEvidenceIsBound(t *testing.T) {
 		hostRuntime: newHostRuntimeEvidenceStore(),
 	}
 	if _, _, _, err := connector.boundMachineRuntime(2); err == nil || !strings.Contains(err.Error(), "not bound") {
-		t.Fatalf("unbound session runtime error = %v", err)
+		t.Fatalf("unbound machine runtime error = %v", err)
 	}
 	evidence := testHostRuntimeEvidence(t, 2, artifacts)
 	if err := connector.hostRuntime.bind(evidence, 2); err != nil {
@@ -1639,7 +1639,7 @@ func TestMachineRuntimeFailsClosedUntilHostEvidenceIsBound(t *testing.T) {
 		t.Fatal(err)
 	}
 	if identity.ID != evidence.RuntimeID || digest != evidence.CPUShapes[1].CPUConfigDigest || firecrackerPath != evidence.firecrackerPath {
-		t.Fatalf("bound session identity = %+v digest=%q executable=%q evidence=%+v", identity, digest, firecrackerPath, evidence)
+		t.Fatalf("bound machine identity = %+v digest=%q executable=%q evidence=%+v", identity, digest, firecrackerPath, evidence)
 	}
 }
 
@@ -1668,7 +1668,7 @@ func TestSessionEntryPointsRejectWorkloadVMPlatformMismatch(t *testing.T) {
 		nil,
 		nil,
 	); err == nil || !strings.Contains(err.Error(), "does not match bound host runtime") {
-		t.Fatalf("prepare session runtime identity error = %v", err)
+		t.Fatalf("prepare machine runtime identity error = %v", err)
 	}
 	if _, err := connector.restore(context.Background(), vm.RestoreRequest{
 		ComputerInstanceID: computerInstanceID,

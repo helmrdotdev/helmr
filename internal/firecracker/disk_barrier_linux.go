@@ -52,7 +52,7 @@ func (s *guestMachine) captureContext(ctx context.Context) (context.Context, fun
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil, nil, errors.New("computer session is closed")
+		return nil, nil, errors.New("computer machine is closed")
 	}
 	ctx, cancel := context.WithTimeout(ctx, computerCaptureTimeout)
 	s.computerCancel = cancel

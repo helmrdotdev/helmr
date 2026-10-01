@@ -143,7 +143,7 @@ func (p *PreparedMachines) restorePreparationDirectory(id string, epoch int64) s
 	return filepath.Join(root, "restore-"+id+"-"+strconv.FormatInt(epoch, 10))
 }
 
-// Retain raw RAM and state with the runtime; decrypted packed inputs live only
+// Retain raw RAM and state with the instance; decrypted packed inputs live only
 // through materialization. Ciphertext sizes safely bound their plaintext files.
 func (p *PreparedMachines) checkpointRestoreCapacity(target workerapi.InstanceReconcileTarget) (retained, staging int64, err error) {
 	restore := target.Source.Restore

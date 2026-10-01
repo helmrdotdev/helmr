@@ -70,7 +70,7 @@ type computerCheckpointer struct {
 	reservations   *reservation.Ledger
 	objects        cas.ImmutableStore
 	machine        vm.CheckpointableMachine
-	// mount is set when session is served; see ReleaseCheckpointSource.
+	// mount is set when the machine is served; see ReleaseCheckpointSource.
 	mount     *instanceMount
 	encryptor *CheckpointEncryptor
 	tempDir   string

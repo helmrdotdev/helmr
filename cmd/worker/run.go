@@ -304,7 +304,7 @@ func run(log *slog.Logger) error {
 		worker.ConsumerSpec{Name: "run", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "run", ContinueDuringDrain: true, Consumer: worker.NewRunConsumer(runner)},
 		worker.ConsumerSpec{Name: "computer", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "computer", ContinueDuringDrain: true, BypassAdmissionDuringDrain: true, Consumer: worker.NewComputerConsumer(runner)},
 	)
-	background := []worker.BackgroundSpec{{Name: "runtime-controller", DrainEligible: true, Run: func(runCtx context.Context) error {
+	background := []worker.BackgroundSpec{{Name: "instance-controller", DrainEligible: true, Run: func(runCtx context.Context) error {
 		return preparedMachines.ReconcileDesiredInstances(runCtx, controlPlaneClient)
 	}}}
 	hardAdmission, err := worker.NewHardAdmission(worker.HardAdmissionConfig{
@@ -347,10 +347,10 @@ func run(log *slog.Logger) error {
 					},
 				)
 				if err != nil {
-					return evidence, fmt.Errorf("reserve quarantined runtime capacity: %w", err)
+					return evidence, fmt.Errorf("reserve quarantined instance capacity: %w", err)
 				}
 				if !created {
-					return evidence, errors.New("quarantined runtime is already reserved")
+					return evidence, errors.New("quarantined instance is already reserved")
 				}
 			}
 			return evidence, nil

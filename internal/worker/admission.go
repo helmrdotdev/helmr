@@ -88,7 +88,7 @@ func NewHardAdmission(cfg HardAdmissionConfig) (*HardAdmission, error) {
 		return nil, errors.New("admission file descriptor headroom must be positive")
 	}
 	if cfg.InstanceSlotCount <= 0 {
-		return nil, errors.New("admission runtime slot count must be positive")
+		return nil, errors.New("admission instance slot count must be positive")
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -134,7 +134,7 @@ func (a *HardAdmission) Evaluate(ctx context.Context, check AdmissionCheck) Admi
 }
 
 func instanceSlotConsumer(consumer string) bool {
-	return consumer == "computer" || consumer == "runtime"
+	return consumer == "computer" || consumer == "instance"
 }
 
 func (a *HardAdmission) Observation() workerapi.Observation {
@@ -165,7 +165,7 @@ func (a *HardAdmission) Observation() workerapi.Observation {
 		if domain == "run" {
 			observation.RunPausedReason = reason
 		}
-		if domain == "runtime" {
+		if domain == "instance" {
 			observation.VMPausedReason = reason
 		}
 	}

@@ -33,7 +33,7 @@ func (s *instanceComputerSaves) authority() (*workerapi.ComputerSaveBeginRequest
 	return &request, s.instanceID, s.computerID
 }
 
-// run starts exactly one loop per physical Runtime. The interval is supplied by
+// run starts exactly one loop per physical Instance. The interval is supplied by
 // the Worker preservation policy; Turn completion and idleTimeout never tick it.
 // The returned channel reports completion, including failure requiring source
 // cleanup. Quiesce cancels and joins this loop before settling its pending save.

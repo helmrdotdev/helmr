@@ -65,7 +65,7 @@ func (r ProgramRunner) validate() error {
 		return errors.New("run lease task Computer capture registry is required")
 	}
 	if r.Mounts == nil {
-		return errors.New("computer mount session registry is required")
+		return errors.New("computer mount registry is required")
 	}
 	return nil
 }

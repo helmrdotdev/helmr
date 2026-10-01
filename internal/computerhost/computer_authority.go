@@ -18,7 +18,7 @@ var ErrControlTransport = errors.New("computer control transport")
 
 func (g guestControl) renewAuthority(ctx context.Context, request *computerv0.RenewComputerAuthorityRequest) (*computerv0.ComputerAuthorityFence, error) {
 	if g.machine == nil {
-		return nil, errors.New("computer mount session is required")
+		return nil, errors.New("computer mount machine is required")
 	}
 	if request == nil || request.GetPrevious() == nil || request.GetPrevious().GetFence() == nil {
 		return nil, errors.New("previous computer authority is required")

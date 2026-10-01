@@ -54,9 +54,9 @@ func TestRecoveryQuarantinesMalformedOwnedProcess(t *testing.T) {
 	evidence, err := recoverLocalVMState(context.Background(), t.TempDir(), t.TempDir(), vmRecoveryOps{
 		ownerCandidates: func(context.Context) ([]ownerCandidate, error) { return nil, nil },
 		ownedProcesses: func(context.Context) ([]ownedVMProcess, error) {
-			return []ownedVMProcess{{PID: 43, ID: "not-a-runtime", Problem: "owned jailer process has non-canonical --id"}}, nil
+			return []ownedVMProcess{{PID: 43, ID: "not-an-instance", Problem: "owned jailer process has non-canonical --id"}}, nil
 		},
-		netnsNames:     func(context.Context) ([]string, error) { return []string{"not-a-runtime"}, nil },
+		netnsNames:     func(context.Context) ([]string, error) { return []string{"not-an-instance"}, nil },
 		matchingPIDs:   func(string) ([]int, error) { t.Fatal("unsafe residue was selected for cleanup"); return nil, nil },
 		stopPID:        func(context.Context, int) error { return nil },
 		netnsExists:    func(context.Context, string) (bool, error) { return false, nil },

@@ -11,7 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-// runtimeComputerSaves belongs to the physical mount, not to a borrowed Run
+// instanceComputerSaves belongs to the physical mount, not to a borrowed Run
 // stream. A pending operation retains its original authority through settlement.
 // Quiesce irreversibly prevents admission before joining that operation.
 type instanceComputerSaves struct {
@@ -120,7 +120,7 @@ func (s *instanceComputerSaves) joined() bool {
 	return true
 }
 
-// liveCaptureMachine is a runtime machine whose Computer can be cut live for a
+// liveCaptureMachine is an instance machine whose Computer can be cut live for a
 // save. PreparedMachines admits only such machines. A live cut resumes
 // before upload. The concrete retained capture must also support durable local
 // source adoption after the CP commits its receipt.

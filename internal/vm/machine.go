@@ -89,9 +89,9 @@ type Topology struct {
 	Computer *ComputerDisk
 }
 
-// RuntimeComputer transfers an exclusively owned working disk to the VM owner.
+// ComputerDisk transfers an exclusively owned working disk to the VM owner.
 // File is a private backing inode, valid through Materialize; the backend
-// retains its own inode link. For a block device the Runtime must also retain its
+// retains its own inode link. For a block device the Instance must also retain its
 // attachment and export until the VMM and all device users are proven absent.
 // Device transfers that ownership to the backend when BindConsumer succeeds.
 // VersionID identifies the published source, not subsequent guest writes.
@@ -190,7 +190,7 @@ type MaterializeRequest struct {
 
 // WorkloadBinding is the closed logical authority that a backend binds to
 // its locally owned network attachment before a guest can receive input or
-// network access. Runtime workloads use their immutable Runtime Instance ID
+// network access. Instance workloads use their immutable Computer Instance ID
 // with generation 1.
 type WorkloadBinding struct {
 	WorkerEpoch        int64
@@ -217,7 +217,7 @@ func (binding WorkloadBinding) Validate(owner Owner) error {
 		return errors.New("workload binding owner kind is invalid")
 	}
 	if binding.ComputerInstanceID != owner.ID || binding.Generation != 1 {
-		return errors.New("runtime workload binding is incomplete")
+		return errors.New("instance workload binding is incomplete")
 	}
 	return nil
 }
@@ -355,7 +355,7 @@ func RuntimeErrorClass(err error) string {
 }
 
 // SnapshotLimits describes stable source sizes and bounded raw metadata. The
-// caller reserves encoded staging in addition to the runtime-owned source disks.
+// caller reserves encoded staging in addition to the instance-owned source disks.
 type SnapshotLimits struct {
 	ComputerBytes int64
 	MemoryBytes   int64

@@ -353,7 +353,7 @@ func TestWriterOperationsReportStaleClaims(t *testing.T) {
 	}
 }
 
-// Instance observations carry no claim versions: the locked host epoch and
+// Instance observations carry no claim versions: the locked worker epoch and
 // status are their worker authority, so a claim-only bump is ignored.
 func TestObservationsIgnoreClaimBumps(t *testing.T) {
 	for _, bump := range claimBumps {

@@ -24,7 +24,7 @@ const MarkerPrefix = "hlmr_protected_"
 const Port = 3128 // Namespace-local TPROXY target; never a guest proxy endpoint.
 const maxHeaderBytes = 64 << 10
 
-// These are per-runtime host allocation bounds for captured traffic only.
+// These are per-instance host allocation bounds for captured traffic only.
 // Kernel-forwarded ports and guest loopback do not consume admissions.
 // See resource_test.go for overload, release, cancellation and isolation.
 const maxCapturedConnections = 256
@@ -124,7 +124,7 @@ func (p *Proxy) Serve(listener net.Listener) error {
 			continue
 		}
 		// No user-space waiting room: do not allocate a worker or upstream for
-		// a socket beyond this runtime's capture envelope.
+		// a socket beyond this instance's capture envelope.
 		select {
 		case p.captured <- struct{}{}:
 		default:

@@ -62,7 +62,7 @@ SELECT computer_instances.desired_state, computer_instances.mount_state
 		t.Fatal(err)
 	}
 	if desiredState != "ready" || mountStatus != "mounted" {
-		t.Fatalf("cleanup state = runtime:%s mount:%s", desiredState, mountStatus)
+		t.Fatalf("cleanup state = instance:%s mount:%s", desiredState, mountStatus)
 	}
 
 	replay, err := canceler.Cancel(ctx, CancellationRequest{

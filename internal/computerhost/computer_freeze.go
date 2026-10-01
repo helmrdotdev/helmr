@@ -21,7 +21,7 @@ func (g guestControl) freeze(ctx context.Context, target workerapi.InstanceRecon
 		return workerapi.CheckpointRecoveryPoint{}, err
 	}
 	if g.machine == nil {
-		return workerapi.CheckpointRecoveryPoint{}, errors.New("computer capture session is required")
+		return workerapi.CheckpointRecoveryPoint{}, errors.New("computer capture machine is required")
 	}
 	if err = ctx.Err(); err != nil {
 		return workerapi.CheckpointRecoveryPoint{}, err

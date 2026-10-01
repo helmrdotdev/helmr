@@ -38,9 +38,9 @@ func nextSaveRequest(t *testing.T, c *loopSaveClient) workerapi.ComputerSaveBegi
 }
 func TestInstanceComputerSaveLoopPreservesIdleInstance(t *testing.T) {
 	s := &instanceComputerSaves{}
-	f := &saveHostFixture{runtime: uuid.NewV7().String(), computer: uuid.NewV7().String()}
+	f := &saveHostFixture{instance: uuid.NewV7().String(), computer: uuid.NewV7().String()}
 	c := &loopSaveClient{saveHostFixture: f, begun: make(chan workerapi.ComputerSaveBeginRequest, 16)}
-	writer := workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: f.runtime, WriterGeneration: 2}
+	writer := workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: f.instance, WriterGeneration: 2}
 	if err := s.bind(writer, f.computer); err != nil {
 		t.Fatal(err)
 	}
@@ -66,10 +66,10 @@ func TestInstanceComputerSaveLoopPreservesIdleInstance(t *testing.T) {
 
 func TestInstanceComputerSaveLoopReusesRejectedSequence(t *testing.T) {
 	s := &instanceComputerSaves{}
-	f := &saveHostFixture{runtime: uuid.NewV7().String(), computer: uuid.NewV7().String()}
+	f := &saveHostFixture{instance: uuid.NewV7().String(), computer: uuid.NewV7().String()}
 	c := &loopSaveClient{saveHostFixture: f, begun: make(chan workerapi.ComputerSaveBeginRequest, 16)}
 	c.reject.Store(true)
-	err := s.bind(workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: f.runtime, WriterGeneration: 2}, f.computer)
+	err := s.bind(workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: f.instance, WriterGeneration: 2}, f.computer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,8 +89,8 @@ func TestInstanceComputerSaveLoopReusesRejectedSequence(t *testing.T) {
 
 func TestInstanceComputerSaveLoopSignalsUnrecoverableCapture(t *testing.T) {
 	s := &instanceComputerSaves{}
-	f := &saveHostFixture{runtime: uuid.NewV7().String(), computer: uuid.NewV7().String()}
-	err := s.bind(workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: f.runtime, WriterGeneration: 2}, f.computer)
+	f := &saveHostFixture{instance: uuid.NewV7().String(), computer: uuid.NewV7().String()}
+	err := s.bind(workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: f.instance, WriterGeneration: 2}, f.computer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,8 +118,8 @@ func TestInstanceComputerSaveLoopSignalsUnrecoverableCapture(t *testing.T) {
 
 func TestInstanceComputerSaveLoopObservesFailureWithoutAnotherTick(t *testing.T) {
 	s := &instanceComputerSaves{}
-	f := &saveHostFixture{runtime: uuid.NewV7().String(), computer: uuid.NewV7().String()}
-	err := s.bind(workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: f.runtime, WriterGeneration: 2}, f.computer)
+	f := &saveHostFixture{instance: uuid.NewV7().String(), computer: uuid.NewV7().String()}
+	err := s.bind(workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: f.instance, WriterGeneration: 2}, f.computer)
 	if err != nil {
 		t.Fatal(err)
 	}

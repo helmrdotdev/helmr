@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-func TestRuntimeFailurePreservesSourceProvenance(t *testing.T) {
-	target := workerapi.InstanceReconcileTarget{ID: "runtime", WorkerEpoch: 3, DesiredVersion: 4, ObservedVersion: 2}
+func TestInstanceFailurePreservesSourceProvenance(t *testing.T) {
+	target := workerapi.InstanceReconcileTarget{ID: "instance", WorkerEpoch: 3, DesiredVersion: 4, ObservedVersion: 2}
 	for _, tc := range []struct {
 		err  error
 		code string

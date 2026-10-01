@@ -50,7 +50,7 @@ func (p *PreparedMachines) prepareComputerVersion(ctx context.Context, target wo
 		return nil, err
 	}
 	dir := p.computerPreparationDirectory(target.ID, target.WorkerEpoch)
-	// Cleanup belongs to the Runtime, including partially created device evidence.
+	// Cleanup belongs to the Instance, including partially created device evidence.
 	if err := os.Mkdir(dir, 0700); err != nil {
 		return nil, err
 	}
@@ -66,10 +66,10 @@ func (p *PreparedMachines) prepareComputerVersion(ctx context.Context, target wo
 	}
 	defer material.Clear()
 	if source.Seed == nil && (source.Root == nil || material.Root != *source.Root) {
-		return nil, errors.New("computer disk version differs from runtime reservation")
+		return nil, errors.New("computer disk version differs from instance reservation")
 	}
 	if material.VersionID != source.VersionID || material.Root.LogicalBytes != source.LogicalBytes || len(material.Keys) == 0 {
-		return nil, errors.New("computer source differs from runtime reservation")
+		return nil, errors.New("computer source differs from instance reservation")
 	}
 	keys := make(map[string][]byte, len(material.Keys))
 	scope := material.Keys[0].Scope

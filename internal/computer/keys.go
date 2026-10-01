@@ -243,11 +243,11 @@ func (p initialPreparation) pinKey(ctx context.Context, candidate *db.ComputerDa
 		// A missing row is initialization only when both authoritative
 		// pointers are empty. Never replace an unavailable or corrupt
 		// persisted key with a fresh one.
-		var current, runtime pgtype.UUID
-		if err = p.tx.QueryRow(ctx, `SELECT c.write_key_id,r.write_key_id FROM computers c JOIN computer_instances r ON r.environment_id=c.environment_id AND r.computer_id=c.id WHERE r.id=$1`, instanceID).Scan(&current, &runtime); err != nil {
+		var current, pinned pgtype.UUID
+		if err = p.tx.QueryRow(ctx, `SELECT c.write_key_id,r.write_key_id FROM computers c JOIN computer_instances r ON r.environment_id=c.environment_id AND r.computer_id=c.id WHERE r.id=$1`, instanceID).Scan(&current, &pinned); err != nil {
 			return initialKeyPin{}, fmt.Errorf("read computer write key pointers: %w", err)
 		}
-		if current.Valid || runtime.Valid {
+		if current.Valid || pinned.Valid {
 			return initialKeyPin{}, keyUnavailable("persisted computer write key is unavailable")
 		}
 		if candidate == nil {

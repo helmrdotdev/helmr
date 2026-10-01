@@ -129,7 +129,7 @@ func TestComputerFreezeVerifiesWholeGuestProof(t *testing.T) {
 				}
 			}
 			if machine.closed {
-				t.Fatal("freeze RPC closed the physical session")
+				t.Fatal("freeze RPC closed the physical machine")
 			}
 			if err = <-done; err != nil {
 				t.Fatal(err)

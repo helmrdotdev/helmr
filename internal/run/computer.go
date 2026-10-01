@@ -42,7 +42,7 @@ func CreateComputer(ctx context.Context, txb db.TxBeginner, creator computer.Cre
 	}
 	var created computer.Created
 	err = db.RunTx(ctx, txb, func(tx pgx.Tx) error {
-		// Secret rows precede mutable source runtime authority, including replays.
+		// Secret rows precede mutable source instance authority, including replays.
 		if err := computer.LockSecretsWithinCeiling(ctx, db.New(tx), source.ComputerID(), source.EnvironmentID(), creation.Secrets); err != nil {
 			return err
 		}

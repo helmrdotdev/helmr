@@ -129,9 +129,9 @@ func TestBorrowedChannelCloseLeavesMountedMachineRunning(t *testing.T) {
 	runStream := &countingReadWriteCloser{}
 	parent := &mountedMachine{stream: discardReadWriteCloser{}, openStream: runStream}
 	registry := NewMounts()
-	unregister := registry.register(workerapi.ComputerInstanceAssignment{ComputerInstanceID: "runtime-1"}, newInstanceMount(parent), "channel-1")
+	unregister := registry.register(workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance-1"}, newInstanceMount(parent), "channel-1")
 	defer unregister()
-	opened, err := registry.OpenChannel(context.Background(), "runtime-1")
+	opened, err := registry.OpenChannel(context.Background(), "instance-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,9 +156,9 @@ func TestOpenedComputerMountReleasesPhysicalSourceWithoutClosingRunStream(t *tes
 	parent := &mountedMachine{stream: discardReadWriteCloser{}, openStream: runStream}
 	managed := newInstanceMount(parent)
 	registry := NewMounts()
-	unregister := registry.register(workerapi.ComputerInstanceAssignment{ComputerInstanceID: "runtime-1"}, managed, "channel-1")
+	unregister := registry.register(workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance-1"}, managed, "channel-1")
 	defer unregister()
-	opened, err := registry.OpenChannel(context.Background(), "runtime-1")
+	opened, err := registry.OpenChannel(context.Background(), "instance-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,14 +185,14 @@ func TestRenewComputerAuthorityUsesMountedMachine(t *testing.T) {
 	registry.register(workerapi.ComputerInstanceAssignment{
 
 		ComputerID:         "computer-1",
-		ComputerInstanceID: "runtime-1",
+		ComputerInstanceID: "instance-1",
 		WriterGeneration:   3,
 		Target:             workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "version-1"},
 	}, newInstanceMount(parent), "channel-1")
 	request := &computerv0.RenewComputerAuthorityRequest{
 		Previous: &computerv0.ComputerRunAuthority{
 			Fence: &computerv0.ComputerAuthorityFence{
-				ComputerInstanceId:        "runtime-1",
+				ComputerInstanceId:        "instance-1",
 				ComputerId:                "computer-1",
 				WriterGeneration:          3,
 				RunId:                     "run-1",
@@ -213,7 +213,7 @@ func TestRenewComputerAuthorityUsesMountedMachine(t *testing.T) {
 		if header.Type != wire.StreamTypeComputerAuthorityRenew ||
 			header.RunID != "run-1" ||
 			header.ComputerID != "computer-1" ||
-			header.ComputerInstanceID != "runtime-1" || bodyLength != 0 {
+			header.ComputerInstanceID != "instance-1" || bodyLength != 0 {
 			serverResult <- errors.New("unexpected computer authority renewal header")
 			return
 		}
@@ -254,7 +254,7 @@ func TestMountChannelGrantProgramResumeUsesOpenedMount(t *testing.T) {
 	registry := NewMounts()
 	unregister := registry.register(testGrantMount(), newInstanceMount(machine), "channel-1")
 	defer unregister()
-	opened, err := registry.OpenChannel(context.Background(), "runtime-1")
+	opened, err := registry.OpenChannel(context.Background(), "instance-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +286,7 @@ func TestMountChannelGrantProgramResumeKeepsOpenedMountAfterReregistration(t *te
 	replacement := &queuedStreamMachine{}
 	registry := NewMounts()
 	unregister := registry.register(testGrantMount(), newInstanceMount(opened), "channel-1")
-	channel, err := registry.OpenChannel(context.Background(), "runtime-1")
+	channel, err := registry.OpenChannel(context.Background(), "instance-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,12 +310,12 @@ func TestMountChannelGrantProgramResumeKeepsOpenedMountAfterReregistration(t *te
 }
 
 func testGrantMount() workerapi.ComputerInstanceAssignment {
-	return workerapi.ComputerInstanceAssignment{ComputerID: "computer-1", ComputerInstanceID: "runtime-1", WriterGeneration: 3}
+	return workerapi.ComputerInstanceAssignment{ComputerID: "computer-1", ComputerInstanceID: "instance-1", WriterGeneration: 3}
 }
 
 func testProgramResumeGrant() (*computerv0.GrantProgramResumeRequest, *programv0.ResumeAttach) {
 	fence := &computerv0.ComputerAuthorityFence{
-		ComputerInstanceId: "runtime-1",
+		ComputerInstanceId: "instance-1",
 		ComputerId:         "computer-1",
 		WriterGeneration:   3,
 		RunId:              "run-1",
@@ -354,7 +354,7 @@ func serveProgramResumeGrant(guest net.Conn, request *computerv0.GrantProgramRes
 		if header.Type != wire.StreamTypeProgramResumeGrant ||
 			header.RunID != "run-1" ||
 			header.ComputerID != "computer-1" ||
-			header.ComputerInstanceID != "runtime-1" || bodyLength != 0 {
+			header.ComputerInstanceID != "instance-1" || bodyLength != 0 {
 			result <- errors.New("unexpected program resume grant header")
 			return
 		}
@@ -419,14 +419,14 @@ func TestRenewComputerAuthorityCancellationPreservesMountedMachine(t *testing.T)
 	registry.register(workerapi.ComputerInstanceAssignment{
 
 		ComputerID:         "computer-1",
-		ComputerInstanceID: "runtime-1",
+		ComputerInstanceID: "instance-1",
 		WriterGeneration:   4,
 		Target:             workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "version-1"},
 	}, newInstanceMount(parent), "channel-1")
 	request := &computerv0.RenewComputerAuthorityRequest{
 		Previous: &computerv0.ComputerRunAuthority{
 			Fence: &computerv0.ComputerAuthorityFence{
-				ComputerInstanceId:        "runtime-1",
+				ComputerInstanceId:        "instance-1",
 				ComputerId:                "computer-1",
 				WriterGeneration:          4,
 				RunId:                     "run-1",
@@ -458,7 +458,7 @@ func TestRenewComputerAuthorityCancellationPreservesMountedMachine(t *testing.T)
 		t.Fatalf("renewal error = %v, want context.Canceled", err)
 	}
 	if parent.closeCount != 0 {
-		t.Fatalf("mounted session close count = %d, want 0", parent.closeCount)
+		t.Fatalf("mounted machine close count = %d, want 0", parent.closeCount)
 	}
 }
 

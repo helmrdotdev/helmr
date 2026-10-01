@@ -61,8 +61,8 @@ func TestInstanceComputerSaveLoopReclaimsStagingAcrossSaves(t *testing.T) {
 	}
 	defer local.Close()
 	owner := &instanceComputerSaves{}
-	client := &saveHostFixture{runtime: uuid.NewV7().String(), computer: uuid.NewV7().String()}
-	err = owner.bind(workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: client.runtime, WriterGeneration: 2}, client.computer)
+	client := &saveHostFixture{instance: uuid.NewV7().String(), computer: uuid.NewV7().String()}
+	err = owner.bind(workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: client.instance, WriterGeneration: 2}, client.computer)
 	if err != nil {
 		t.Fatal(err)
 	}

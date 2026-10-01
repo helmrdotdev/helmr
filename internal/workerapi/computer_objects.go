@@ -4,7 +4,7 @@ import "github.com/helmrdotdev/helmr/internal/disk/blockformat"
 
 // InitialComputerObjectRequest is a host-only attestation of inspected bytes.
 // Worker identity, Computer scope and key authority come from authentication and
-// the Runtime reservation, never from guest-supplied identifiers.
+// the Instance reservation, never from guest-supplied identifiers.
 type InitialComputerObjectRequest struct {
 	ComputerInstanceID string                       `json:"computer_instance_id"`
 	DesiredVersion     int64                        `json:"desired_version"`

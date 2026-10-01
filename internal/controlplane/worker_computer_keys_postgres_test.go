@@ -79,7 +79,7 @@ func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
 	wrongInstance.ComputerInstanceID = uuid.NewV7().String()
 	wrongPayload, _ := json.Marshal(wrongInstance)
 	if w := call(hostCredential, wrongPayload); w.Code != 409 {
-		t.Fatalf("unowned runtime status=%d", w.Code)
+		t.Fatalf("unowned instance status=%d", w.Code)
 	}
 	// Draining the host advances its claim version: the host credential minted before
 	// the drain no longer authenticates.
@@ -95,6 +95,6 @@ func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, f.instance)
 	if material, err := client.InitialComputerKey(t.Context(), request); err == nil || len(material.Key) != 0 {
-		t.Fatal("revoked runtime delivered key")
+		t.Fatal("revoked instance delivered key")
 	}
 }

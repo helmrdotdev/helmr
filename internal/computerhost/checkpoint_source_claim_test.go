@@ -300,15 +300,15 @@ func TestCaptureExclusionEndsMountAsCheckpointRelease(t *testing.T) {
 // delayedAckSaves commits the first save's adoption acknowledgement but holds
 // its response until the caller gives up; replays answer immediately.
 type delayedAckSaves struct {
-	runtime, computer string
-	mu                sync.Mutex
-	acks              int
-	inFlight          bool
-	acked             chan struct{}
+	instance, computer string
+	mu                 sync.Mutex
+	acks               int
+	inFlight           bool
+	acked              chan struct{}
 }
 
 func (s *delayedAckSaves) BeginComputerSave(_ context.Context, r workerapi.ComputerSaveBeginRequest) (workerapi.ComputerSaveBeginResponse, error) {
-	return workerapi.ComputerSaveBeginResponse{ComputerInstanceID: s.runtime, SaveID: r.SaveID, Sequence: r.Sequence, WriterGeneration: r.WriterGeneration, PredecessorID: uuid.NewV7().String(), DesiredVersion: 1}, nil
+	return workerapi.ComputerSaveBeginResponse{ComputerInstanceID: s.instance, SaveID: r.SaveID, Sequence: r.Sequence, WriterGeneration: r.WriterGeneration, PredecessorID: uuid.NewV7().String(), DesiredVersion: 1}, nil
 }
 func (s *delayedAckSaves) RegisterComputerSaveObject(context.Context, workerapi.ComputerSaveObjectRequest) error {
 	return nil
@@ -389,7 +389,7 @@ func TestCaptureReleaseJoinsSaveOwnerBeforePhysicalClose(t *testing.T) {
 		}
 	}
 	s := startCapturedServe(ctx, t, machine, capturedServeOptions{saveEvery: time.Millisecond, saves: func(mount workerapi.ComputerInstanceAssignment) ComputerSaveClient {
-		saves.runtime, saves.computer = mount.ComputerInstanceID, mount.ComputerID
+		saves.instance, saves.computer = mount.ComputerInstanceID, mount.ComputerID
 		return saves
 	}})
 	select {
@@ -473,7 +473,7 @@ func TestServerDefersToCaptureAfterTakeover(t *testing.T) {
 				heartbeat: 5 * time.Millisecond,
 				saveEvery: saveEvery,
 				saves: func(mount workerapi.ComputerInstanceAssignment) ComputerSaveClient {
-					return &saveHostFixture{runtime: mount.ComputerInstanceID, computer: mount.ComputerID}
+					return &saveHostFixture{instance: mount.ComputerInstanceID, computer: mount.ComputerID}
 				},
 				control: func(client *serverTestClient) workerapi.ComputerServerControlPlaneClient {
 					control = &switchedRenewal{serverTestClient: client}
@@ -818,15 +818,15 @@ func TestUnstartedCaptureReturnsReadyMachine(t *testing.T) {
 		name    string
 		members int
 		match   bool
-		session func(*testing.T, workerapi.InstanceReconcileTarget) liveCaptureMachine
+		machine func(*testing.T, workerapi.InstanceReconcileTarget) liveCaptureMachine
 	}{
-		{name: "source mismatch", session: func(t *testing.T, target workerapi.InstanceReconcileTarget) liveCaptureMachine {
+		{name: "source mismatch", machine: func(t *testing.T, target workerapi.InstanceReconcileTarget) liveCaptureMachine {
 			return &checkpointMachine{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
 		}},
-		{name: "not checkpointable", match: true, session: func(*testing.T, workerapi.InstanceReconcileTarget) liveCaptureMachine {
+		{name: "not checkpointable", match: true, machine: func(*testing.T, workerapi.InstanceReconcileTarget) liveCaptureMachine {
 			return &closeTrackingMachine{}
 		}},
-		{name: "member not waiting", members: 1, match: true, session: func(t *testing.T, target workerapi.InstanceReconcileTarget) liveCaptureMachine {
+		{name: "member not waiting", members: 1, match: true, machine: func(t *testing.T, target workerapi.InstanceReconcileTarget) liveCaptureMachine {
 			return &checkpointMachine{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
 		}},
 	} {
@@ -839,7 +839,7 @@ func TestUnstartedCaptureReturnsReadyMachine(t *testing.T) {
 				target.Source.ComputerID = mount.ComputerID
 			}
 			mount.WriterGeneration = target.Source.WriterGeneration
-			machines := computerPreparedMachines(t, mount, tc.session(t, target))
+			machines := computerPreparedMachines(t, mount, tc.machine(t, target))
 			client := &checkpointReconcileClient{target: target}
 			machines.ComputerCaptures = &CaptureRuns{}
 			machines.Checkpoints = client
@@ -859,7 +859,7 @@ func TestUnstartedCaptureReturnsReadyMachine(t *testing.T) {
 	}
 }
 
-// vmStopBackend physically stops a runtime: whatever waits on the VM is
+// vmStopBackend physically stops an instance: whatever waits on the VM is
 // released by its cleanup.
 type vmStopBackend struct {
 	unsupportedMachineStarts
@@ -908,7 +908,7 @@ func (c *vmBoundSave) Release()                                    {}
 func (c *vmBoundSave) Adopt(context.Context, int) error            { return nil }
 func (c *vmBoundSave) Collect(context.Context, int) (int64, error) { return 0, nil }
 
-// retainedTestDevice is a runtime's retained Computer device. Backend cleanup
+// retainedTestDevice is an instance's retained Computer device. Backend cleanup
 // closes it physically, as Firecracker cleanup closes the retained device;
 // Close is finalization of the device record, which must wait for the save
 // owner's join.
@@ -932,8 +932,8 @@ func (d *retainedTestDevice) Close(context.Context) error {
 	return nil
 }
 
-// deviceStopBackend models production runtime cleanup: it stops the VM and
-// closes the runtime's retained device.
+// deviceStopBackend models production instance cleanup: it stops the VM and
+// closes the instance's retained device.
 type deviceStopBackend struct {
 	unsupportedMachineStarts
 	device  *retainedTestDevice
@@ -1000,10 +1000,10 @@ func newRetainedCapture(t *testing.T, hold <-chan struct{}) *retainedCapture {
 	mount := newInstanceMount(raw)
 	device := &retainedTestDevice{t: t, saves: &mount.saves, closed: make(chan struct{})}
 	save := &deviceBoundSave{device: device, hold: hold}
-	f := &saveHostFixture{runtime: uuid.NewV7().String(), computer: uuid.NewV7().String()}
+	f := &saveHostFixture{instance: uuid.NewV7().String(), computer: uuid.NewV7().String()}
 	uploading := make(chan struct{})
-	request := workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: f.runtime, WriterGeneration: 2, SaveID: uuid.NewV7().String(), Sequence: 1}
-	pending, err := startComputerSave(t.Context(), f, f, request, f.runtime, f.computer, func(context.Context) (computerSaveCapture, error) {
+	request := workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: f.instance, WriterGeneration: 2, SaveID: uuid.NewV7().String(), Sequence: 1}
+	pending, err := startComputerSave(t.Context(), f, f, request, f.instance, f.computer, func(context.Context) (computerSaveCapture, error) {
 		close(uploading)
 		return save, nil
 	})
@@ -1029,7 +1029,7 @@ func newRetainedCapture(t *testing.T, hold <-chan struct{}) *retainedCapture {
 	return &retainedCapture{machines: machines, target: target, ref: ref, raw: raw, mount: mount, device: device, backend: backend, save: save}
 }
 
-// escalationRuntimeClient serves a Close target once, then, after the close
+// escalationInstanceClient serves a Close target once, then, after the close
 // is reported, a Reclaim target until it is reported.
 type escalationInstanceClient struct {
 	mu             sync.Mutex
@@ -1170,7 +1170,7 @@ func TestCaptureExclusionEscalatesWhenSaveOwnerWaitsOnVM(t *testing.T) {
 	save := &vmBoundSave{stopped: stopped, uploading: make(chan struct{})}
 	machine.save = save
 	s := startCapturedServe(ctx, t, machine, capturedServeOptions{saveEvery: time.Millisecond, saves: func(mount workerapi.ComputerInstanceAssignment) ComputerSaveClient {
-		return &saveHostFixture{runtime: mount.ComputerInstanceID, computer: mount.ComputerID}
+		return &saveHostFixture{instance: mount.ComputerInstanceID, computer: mount.ComputerID}
 	}})
 	select {
 	case <-save.uploading:
@@ -1259,7 +1259,7 @@ func startDeviceBoundServe(ctx context.Context, t *testing.T, hold <-chan struct
 	save := &deviceBoundSave{device: device, hold: hold, uploading: make(chan struct{})}
 	machine.save = save
 	s := startCapturedServe(ctx, t, machine, capturedServeOptions{saveEvery: time.Millisecond, failureTimeout: 50 * time.Millisecond, saves: func(mount workerapi.ComputerInstanceAssignment) ComputerSaveClient {
-		return &saveHostFixture{runtime: mount.ComputerInstanceID, computer: mount.ComputerID}
+		return &saveHostFixture{instance: mount.ComputerInstanceID, computer: mount.ComputerID}
 	}})
 	select {
 	case <-save.uploading:
@@ -1340,7 +1340,7 @@ func TestRelinquishedClaimFinalizesAfterSaveOwnerJoins(t *testing.T) {
 
 // Forced reclaim revokes a live Server's claim before stopping its machine:
 // the Server observes the VM exit during physical cleanup without reporting a
-// failure or releasing the runtime, and reclaim finalizes after the save join.
+// failure or releasing the instance, and reclaim finalizes after the save join.
 func TestReclaimRevokesServerClaimBeforePhysicalCleanup(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -1387,7 +1387,7 @@ func TestReclaimRevokesServerClaimBeforePhysicalCleanup(t *testing.T) {
 	}
 }
 
-// A Server that has committed to its own teardown keeps its runtime: reclaim
+// A Server that has committed to its own teardown keeps its instance: reclaim
 // neither stops the machine nor releases or reports it until the Server's
 // teardown has ended the claim.
 func TestReclaimLeavesCommittedServerTeardown(t *testing.T) {
@@ -1426,7 +1426,7 @@ func TestReclaimLeavesCommittedServerTeardown(t *testing.T) {
 	releaseOnce.Do(func() { close(release) })
 	_ = s.awaitServed(ctx, t)
 	if machine.closeCount() != 1 || s.machines.instanceCheckedOut(s.target.ID, s.target.WorkerEpoch) || len(s.machines.Reservations.Snapshot().Reservations) != 0 {
-		t.Fatal("server teardown did not close and release its runtime")
+		t.Fatal("server teardown did not close and release its instance")
 	}
 	if err := s.machines.reclaimFailedInstanceTarget(ctx, client, target); err != nil {
 		t.Fatal(err)
@@ -1437,7 +1437,7 @@ func TestReclaimLeavesCommittedServerTeardown(t *testing.T) {
 }
 
 // claimCheckingBackend records whether physical cleanup ever ran while a live
-// Server claim still held the runtime.
+// Server claim still held the instance.
 type claimCheckingBackend struct {
 	unsupportedMachineStarts
 	machines *PreparedMachines
@@ -1458,7 +1458,7 @@ func (b *claimCheckingBackend) Cleanup(context.Context, vm.Owner) error {
 
 // Reclaim arbitrates ownership of a ready machine in one step: however a
 // concurrent checkout and reclaim interleave, physical cleanup never runs
-// while a live Server claim holds the runtime, and a checkout that won ends up
+// while a live Server claim holds the instance, and a checkout that won ends up
 // with a stale handle. Arbitration is a single critical section, so no
 // deterministic barrier can separate its parts; the race detector's scheduling
 // reliably exposes a split arbitration within these iterations.
@@ -1492,10 +1492,10 @@ func TestReclaimArbitratesReadyMachineAgainstCheckout(t *testing.T) {
 			t.Fatalf("iteration %d: reclaim = %v", i, reclaimErr)
 		}
 		if backend.live.Load() {
-			t.Fatalf("iteration %d: physical cleanup ran while a live Server claim held the runtime", i)
+			t.Fatalf("iteration %d: physical cleanup ran while a live Server claim held the instance", i)
 		}
 		if checkedOut && checkout.beginTeardown() {
-			t.Fatalf("iteration %d: checkout kept a live claim on a reclaimed runtime", i)
+			t.Fatalf("iteration %d: checkout kept a live claim on a reclaimed instance", i)
 		}
 		if backend.cleaned.Load() != 1 || len(client.failed) != 1 || len(machines.Reservations.Snapshot().Reservations) != 0 {
 			t.Fatalf("iteration %d: cleaned=%d failed=%d", i, backend.cleaned.Load(), len(client.failed))

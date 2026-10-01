@@ -73,7 +73,7 @@ type bin struct {
 	runtimeContract string
 	vmPlatformID    string
 	runPaused       bool
-	runtimePaused   bool
+	instancePaused  bool
 	perVM           ResourceVector
 	cpuShapes       []vmplatform.CPUShape
 }
@@ -660,8 +660,8 @@ func binFromRow(row db.ListWorkerCapacityBinsRow) bin {
 		instanceStarts: row.AvailableInstanceStarts, supportsRun: true,
 		runtimeArch:     row.Arch,
 		runtimeContract: row.Contract, vmPlatformID: row.VMPlatformID.String,
-		runPaused:     row.RunPausedReason.Valid,
-		runtimePaused: row.VMPausedReason.Valid,
+		runPaused:      row.RunPausedReason.Valid,
+		instancePaused: row.VMPausedReason.Valid,
 		perVM: ResourceVector{
 			CPUMillis: row.PerVMCPUMillis, MemoryBytes: row.PerVMMemoryBytes,
 			GuestEphemeralDiskBytes: row.PerVMGuestEphemeralDiskBytes,
@@ -701,7 +701,7 @@ func place(target *bin, candidate item) bool {
 	if incompatibility(candidate, *target) != "" {
 		return false
 	}
-	if candidate.role == "run" && (target.runPaused || target.runtimePaused || target.instanceStarts <= 0) {
+	if candidate.role == "run" && (target.runPaused || target.instancePaused || target.instanceStarts <= 0) {
 		return false
 	}
 	target.resources.CPUMillis -= candidate.resources.CPUMillis

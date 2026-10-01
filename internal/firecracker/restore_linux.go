@@ -140,7 +140,7 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	child := *c
 	child.cfg = restoreCfg
 	child.kernelArgs = kernelArgs
-	transferred = true // prepareSession consumes the held restore guard.
+	transferred = true // prepareMachine consumes the held restore guard.
 	machine, err := child.start(ctx, workloadLaunch, request.ComputerInstanceID, request.OwnerKind, request.Binding, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network, request.Topology, request.ReadOnlyDrives, recordPhase, retained)
 	if err != nil {
 		return nil, err

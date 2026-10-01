@@ -94,20 +94,20 @@ func (unavailableRuntimeCAS) Delete(context.Context, string) error { return erro
 func TestInstanceTargetFailureScrubsFatalWorkerDiagnostic(t *testing.T) {
 	const sentinel = "signed-url-secret-sentinel"
 	request := instanceTargetStatusRequest(
-		workerapi.InstanceReconcileTarget{ID: "runtime", WorkerEpoch: 1, DesiredVersion: 2},
+		workerapi.InstanceReconcileTarget{ID: "instance", WorkerEpoch: 1, DesiredVersion: 2},
 		fatalRuntimeInfrastructureError{secret: sentinel},
 	)
 	if request.ReasonCode != workerapi.InstanceFailureWorkerInvalid ||
 		strings.Contains(string(request.Error), sentinel) ||
 		!strings.Contains(string(request.Error), "worker runtime infrastructure failed") {
-		t.Fatalf("fatal runtime request = reason:%q error:%s", request.ReasonCode, request.Error)
+		t.Fatalf("fatal instance request = reason:%q error:%s", request.ReasonCode, request.Error)
 	}
 }
 
 func TestFatalRuntimeFailureWaitsForControlAcknowledgement(t *testing.T) {
 	client := &typedInstanceClient{failedErrors: []error{errors.New("control unavailable")}}
 	machines := &PreparedMachines{}
-	target := workerapi.InstanceReconcileTarget{ID: "runtime", WorkerEpoch: 1, DesiredVersion: 2}
+	target := workerapi.InstanceReconcileTarget{ID: "instance", WorkerEpoch: 1, DesiredVersion: 2}
 	err := machines.reportInstanceTargetFailedWithProof(
 		t.Context(), client, target,
 		fatalRuntimeInfrastructureError{secret: "local-secret-sentinel"},
@@ -204,8 +204,8 @@ func TestPreparedMachinesCloseHonorsDeadlineWhileMonitorIsStuck(t *testing.T) {
 	machines := NewPreparedMachines(nil, nil, 1, nil)
 	machines.ComputerInstances = &typedInstanceClient{}
 	entry := preparedMachineEntry{
-		machine: machine, machineKey: "runtime-key", computerInstanceID: "runtime-1", workerEpoch: 7,
-		target: workerapi.InstanceReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, DesiredVersion: 1, ObservedVersion: 0},
+		machine: machine, machineKey: "instance-key", computerInstanceID: "instance-1", workerEpoch: 7,
+		target: workerapi.InstanceReconcileTarget{ID: "instance-1", WorkerEpoch: 7, DesiredVersion: 1, ObservedVersion: 0},
 		exit:   newPreparedMachineSignal(), ready: newPreparedMachineSignal(),
 	}
 	machines.mu.Lock()
@@ -283,46 +283,46 @@ func (c *typedInstanceClient) MarkComputerInstanceFailed(_ context.Context, requ
 func TestStopInstanceTargetRequiresExclusiveMatchingLocalEpoch(t *testing.T) {
 	machine := &closeTrackingMachine{}
 	machines := NewPreparedMachines(nil, nil, 1, nil)
-	machines.entries["runtime-key"] = []preparedMachineEntry{{machine: machine, computerInstanceID: "runtime-1", workerEpoch: 7}}
+	machines.entries["instance-key"] = []preparedMachineEntry{{machine: machine, computerInstanceID: "instance-1", workerEpoch: 7}}
 	client := &typedInstanceClient{}
-	target := workerapi.InstanceReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, DesiredVersion: 2, ObservedVersion: 1}
+	target := workerapi.InstanceReconcileTarget{ID: "instance-1", WorkerEpoch: 7, DesiredVersion: 2, ObservedVersion: 1}
 	if err := machines.stopInstanceTarget(context.Background(), client, target); err != nil {
 		t.Fatal(err)
 	}
-	if len(client.closed) != 1 || client.closed[0].ID != "runtime-1" || client.closed[0].WorkerEpoch != 7 {
+	if len(client.closed) != 1 || client.closed[0].ID != "instance-1" || client.closed[0].WorkerEpoch != 7 {
 		t.Fatalf("closed = %+v", client.closed)
 	}
 	if proof := client.closed[0].CleanupProof; proof == nil || proof.Method != workerapi.InstanceCleanupMachineClosed || proof.CompletedAt.IsZero() {
-		t.Fatalf("cleanup proof = %+v, want closed session", proof)
+		t.Fatalf("cleanup proof = %+v, want closed machine", proof)
 	}
 	if machine.closed != 1 {
-		t.Fatalf("session close count = %d, want 1", machine.closed)
+		t.Fatalf("machine close count = %d, want 1", machine.closed)
 	}
 	if err := machines.stopInstanceTarget(context.Background(), client, target); err == nil {
-		t.Fatal("second controller teardown unexpectedly acquired the same runtime")
+		t.Fatal("second controller teardown unexpectedly acquired the same instance")
 	}
 }
 
 func TestStopInstanceTargetDefersToCheckedOutInstance(t *testing.T) {
 	machines := NewPreparedMachines(nil, nil, 1, nil)
-	ref := preparedMachineRef{id: "runtime-1", epoch: 7}
+	ref := preparedMachineRef{id: "instance-1", epoch: 7}
 	machines.mu.Lock()
 	claim := machines.claimLocked(ref, serverClaim, preparedMachineEntry{})
 	machines.mu.Unlock()
 	checkout := &machineCheckout{machines: machines, ref: ref, gen: claim.gen}
 	client := &typedInstanceClient{}
-	target := workerapi.InstanceReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, DesiredVersion: 2, ObservedVersion: 1}
+	target := workerapi.InstanceReconcileTarget{ID: "instance-1", WorkerEpoch: 7, DesiredVersion: 2, ObservedVersion: 1}
 	if err := machines.stopInstanceTarget(context.Background(), client, target); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.closed) != 0 {
-		t.Fatalf("checked-out runtime was closed by the machines reconciler: %+v", client.closed)
+		t.Fatalf("checked-out instance was closed by the machines reconciler: %+v", client.closed)
 	}
 	if err := checkout.Release(); err != nil {
 		t.Fatal(err)
 	}
 	if err := machines.stopInstanceTarget(context.Background(), client, target); err == nil {
-		t.Fatal("untracked runtime teardown unexpectedly succeeded")
+		t.Fatal("untracked instance teardown unexpectedly succeeded")
 	}
 }
 
@@ -330,7 +330,7 @@ func TestStopInstanceTargetReconcilesMissingLocalInstanceExactly(t *testing.T) {
 	cleaner := &cleanupBackend{}
 	machines := NewPreparedMachines(cleaner, nil, 1, nil)
 	client := &typedInstanceClient{}
-	target := workerapi.InstanceReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, DesiredVersion: 2, ObservedVersion: 1}
+	target := workerapi.InstanceReconcileTarget{ID: "instance-1", WorkerEpoch: 7, DesiredVersion: 2, ObservedVersion: 1}
 
 	if err := machines.stopInstanceTarget(context.Background(), client, target); err != nil {
 		t.Fatal(err)
@@ -351,10 +351,10 @@ func TestStopInstanceTargetDoesNotCloseWhenExactCleanupFails(t *testing.T) {
 	cleaner := &cleanupBackend{err: errors.New("cleanup failed")}
 	machines := NewPreparedMachines(cleaner, nil, 1, nil)
 	client := &typedInstanceClient{}
-	target := workerapi.InstanceReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, DesiredVersion: 2, ObservedVersion: 1}
+	target := workerapi.InstanceReconcileTarget{ID: "instance-1", WorkerEpoch: 7, DesiredVersion: 2, ObservedVersion: 1}
 
 	if err := machines.stopInstanceTarget(context.Background(), client, target); err == nil {
-		t.Fatal("cleanup failure unexpectedly closed runtime")
+		t.Fatal("cleanup failure unexpectedly closed instance")
 	}
 	if len(client.closed) != 0 {
 		t.Fatalf("closed = %+v, want no transition", client.closed)
@@ -374,7 +374,7 @@ func TestReconcileDesiredInstancesStopsCleanly(t *testing.T) {
 			t.Fatalf("error = %v", err)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("typed runtime reconciler did not stop")
+		t.Fatal("typed instance reconciler did not stop")
 	}
 }
 
@@ -382,7 +382,7 @@ func TestReconcileDesiredInstancesSkipsActiveRedelivery(t *testing.T) {
 	connector := &countingBackend{}
 	machines := NewPreparedMachines(connector, nil, 2, nil)
 	machine := &onceBlockingCloseMachine{started: make(chan struct{}), release: make(chan struct{})}
-	target := workerapi.InstanceReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, Action: workerapi.InstanceReconcileClose}
+	target := workerapi.InstanceReconcileTarget{ID: "instance-1", WorkerEpoch: 7, Action: workerapi.InstanceReconcileClose}
 	machines.entries[target.ID] = []preparedMachineEntry{{machine: machine, computerInstanceID: target.ID, workerEpoch: 7}}
 	client := &batchInstanceClient{
 		response: workerapi.InstanceReconcileResponse{Items: []workerapi.InstanceReconcileTarget{target}},
@@ -400,7 +400,7 @@ func TestReconcileDesiredInstancesSkipsActiveRedelivery(t *testing.T) {
 		}
 	}
 	if connector.calls.Load() != 0 {
-		t.Fatal("active runtime redelivery started duplicate cleanup")
+		t.Fatal("active instance redelivery started duplicate cleanup")
 	}
 	cancel()
 	if err := <-done; err != context.Canceled {
@@ -439,7 +439,7 @@ func TestReconcileDesiredInstancesBacksOffWhenCapacityIsFull(t *testing.T) {
 	}
 	select {
 	case id := <-connector.started:
-		t.Fatalf("capacity-rejected runtime %q reached materialization", id)
+		t.Fatalf("capacity-rejected instance %q reached materialization", id)
 	default:
 	}
 	cancel()
@@ -458,11 +458,11 @@ func TestWarmInstanceTargetRejectsMissingComputerBeforeAdmission(t *testing.T) {
 	target := retryableWarmTarget()
 	target.Source.Computer = nil
 	err := machines.warmInstanceTarget(context.Background(), &typedInstanceClient{}, target, func() {})
-	if err == nil || !strings.Contains(err.Error(), "runtime computer source is required") {
+	if err == nil || !strings.Contains(err.Error(), "instance computer source is required") {
 		t.Fatalf("error = %v, want missing Computer source", err)
 	}
 	if admissionCalls != 0 {
-		t.Fatalf("runtime admission calls = %d, want 0", admissionCalls)
+		t.Fatalf("instance admission calls = %d, want 0", admissionCalls)
 	}
 }
 
@@ -498,7 +498,7 @@ func TestWarmInstanceTargetStartsWhileUnrelatedRunIsBorrowed(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(client.failed) != 1 {
-		t.Fatalf("runtime preparation attempts = %d, want 1", len(client.failed))
+		t.Fatalf("instance preparation attempts = %d, want 1", len(client.failed))
 	}
 }
 
@@ -510,7 +510,7 @@ func TestWarmInstanceTargetRetriesCapacityBackpressureWithoutDurableFailure(t *t
 	err := machines.warmInstanceTarget(context.Background(), client, retryableWarmTarget(), func() {})
 	assertInstanceCapacityBackpressure(t, err)
 	if len(client.failed) != 0 {
-		t.Fatalf("capacity backpressure mutated durable runtime: %+v", client.failed)
+		t.Fatalf("capacity backpressure mutated durable instance: %+v", client.failed)
 	}
 
 	machines.mu.Lock()
@@ -552,7 +552,7 @@ func TestPreparedMachineCapacityReservationLivesThroughCheckout(t *testing.T) {
 
 	checkout, _, ok := machines.checkout(context.Background(), mount)
 	if !ok {
-		t.Fatal("reserved runtime was not checked out")
+		t.Fatal("reserved instance was not checked out")
 	}
 	if got := len(machines.Reservations.Snapshot().Reservations); got != 1 {
 		t.Fatalf("reservations after checkout = %d, want 1", got)
@@ -676,8 +676,8 @@ func TestPreparedMachineCloseFailureRetainsCapacityUntilReclaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	machine := &closeTrackingMachine{err: errors.New("close failed")}
-	machines.entries["runtime-key"] = []preparedMachineEntry{{
-		machine: machine, machineKey: "runtime-key",
+	machines.entries["instance-key"] = []preparedMachineEntry{{
+		machine: machine, machineKey: "instance-key",
 		computerInstanceID: target.ID, workerEpoch: target.WorkerEpoch, target: target,
 	}}
 	client := &typedInstanceClient{}
@@ -800,7 +800,7 @@ func TestReclaimFailedCheckedOutInstanceClearsExactCheckoutAfterPhysicalCleanup(
 		t.Fatal(err)
 	}
 	if machines.instanceCheckedOut(target.ID, target.WorkerEpoch) {
-		t.Fatal("reclaimed runtime remains checked out")
+		t.Fatal("reclaimed instance remains checked out")
 	}
 	if !machines.instanceCheckedOut("019c10d5-a6f7-7af1-8f5f-000000000516", target.WorkerEpoch) {
 		t.Fatal("reclaim cleared a different checkout")
@@ -809,7 +809,7 @@ func TestReclaimFailedCheckedOutInstanceClearsExactCheckoutAfterPhysicalCleanup(
 		t.Fatalf("reservations after reclaim = %d, want 0", got)
 	}
 	if len(connector.cleaned) != 1 || connector.cleaned[0] != target.ID {
-		t.Fatalf("cleaned = %v, want exact runtime", connector.cleaned)
+		t.Fatalf("cleaned = %v, want exact instance", connector.cleaned)
 	}
 	if len(client.failed) != 1 || client.failed[0].CleanupProof == nil ||
 		client.failed[0].CleanupProof.Method != workerapi.InstanceCleanupHostReconciled {
@@ -819,7 +819,7 @@ func TestReclaimFailedCheckedOutInstanceClearsExactCheckoutAfterPhysicalCleanup(
 
 func TestReclaimFailedCheckedOutInstanceRetainsCheckoutWhenPhysicalCleanupFails(t *testing.T) {
 	target := instanceReservationTarget("019c10d5-a6f7-7af1-8f5f-000000000517", 7)
-	connector := &cleanupBackend{err: errors.New("runtime still exists")}
+	connector := &cleanupBackend{err: errors.New("instance still exists")}
 	machines := NewPreparedMachines(connector, nil, 1, nil)
 	machines.Reservations = newPreparedMachineReservations(t, 1)
 	if err := machines.reserveInstanceCapacity(target); err != nil {
@@ -831,7 +831,7 @@ func TestReclaimFailedCheckedOutInstanceRetainsCheckoutWhenPhysicalCleanupFails(
 	client := &typedInstanceClient{}
 
 	if err := machines.reclaimFailedInstanceTarget(context.Background(), client, target); err == nil {
-		t.Fatal("cleanup failure unexpectedly reclaimed runtime")
+		t.Fatal("cleanup failure unexpectedly reclaimed instance")
 	}
 	if !machines.instanceCheckedOut(target.ID, target.WorkerEpoch) {
 		t.Fatal("cleanup failure cleared checkout")

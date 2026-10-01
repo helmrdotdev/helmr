@@ -35,10 +35,10 @@ type computerSaveCapture interface {
 }
 
 // computerSave owns one fixed operation, including uncertain responses. Its
-// Runtime owner serializes operations and supplies the monotonically increasing
+// Instance owner serializes operations and supplies the monotonically increasing
 // sequence. It must Quiesce before checkpoint/terminal capture or source release.
 // A failed Quiesce does not authorize continuing the guest or dropping retention;
-// the Runtime owner must retry within its deadline or use physical reclamation.
+// the Instance owner must retry within its deadline or use physical reclamation.
 type computerSave struct {
 	client     ComputerSaveClient
 	objects    versionObjectPublisher
@@ -61,7 +61,7 @@ type computerSave struct {
 
 // startComputerSave returns before remote work completes. Capture must return
 // only after restoring normal guest/device dispatch; ambiguous capture failure
-// belongs to the Runtime stop path. The caller owns the lifetime of client,
+// belongs to the Instance stop path. The caller owns the lifetime of client,
 // objects and capture dependencies until Quiesce has joined this operation.
 func startComputerSave(ctx context.Context, client ComputerSaveClient, objects versionObjectPublisher, request workerapi.ComputerSaveBeginRequest, instanceID, computerID string, capture func(context.Context) (computerSaveCapture, error)) (*computerSave, error) {
 	if client == nil || objects == nil || capture == nil || ids.Validate(instanceID) != nil || ids.Validate(computerID) != nil || ids.Validate(request.SaveID) != nil || request.Sequence <= 0 || ids.Validate(request.EnvironmentID) != nil || request.ComputerInstanceID != instanceID || request.WriterGeneration <= 0 {

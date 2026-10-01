@@ -18,7 +18,7 @@ type ComputerInstanceAssignment struct {
 	Target                     ComputerMountTarget `json:"target"`
 	ComputerInstanceID         string              `json:"computer_instance_id,omitempty"`
 	RestoreCheckpointID        string              `json:"restore_checkpoint_id,omitempty"`
-	WorkerEpoch                int64               `json:"runtime_epoch"`
+	WorkerEpoch                int64               `json:"worker_epoch"`
 	GuestChannelCredential     string              `json:"guest_channel_credential"`
 	GuestChannelCredentialHash string              `json:"guest_channel_credential_hash"`
 	VMPlatformID               string              `json:"vm_platform_id"`

@@ -69,7 +69,7 @@ func TestInitialComputerKeyRetryAndDurablePin(t *testing.T) {
 	}
 	_, err = f.Pool.Exec(t.Context(), `UPDATE computer_data_keys SET retired_at=now(),wrapped_key=NULL WHERE id=$1`, first.ID)
 	requireKeyFK(t, err)
-	// Removing the current pointer cannot release an unreclaimed runtime's key.
+	// Removing the current pointer cannot release an unreclaimed instance's key.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET write_key_id=NULL WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, f.instance)
 	_, err = f.Pool.Exec(t.Context(), `UPDATE computer_data_keys SET retired_at=now(),wrapped_key=NULL WHERE id=$1`, first.ID)
 	requireKeyFK(t, err)
@@ -87,7 +87,7 @@ func TestInitialComputerKeyProviderRunsOutsideLocks(t *testing.T) {
 		}
 		defer tx.Rollback(context.Background())
 		if _, err = tx.Exec(ctx, `SELECT id FROM computer_instances WHERE id=$1 FOR UPDATE`, f.instance); err != nil {
-			t.Fatal("provider called under runtime lock", err)
+			t.Fatal("provider called under instance lock", err)
 		}
 		if _, err = tx.Exec(ctx, `SELECT id FROM computers WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1) FOR UPDATE`, f.instance); err != nil {
 			t.Fatal("provider called under Computer lock", err)
@@ -228,14 +228,14 @@ func TestInitialComputerKeyRotationKeepsAdmittedRuntime(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) SELECT $2,environment_id,computer_id,wrapping_key_id,wrapped_key FROM computer_data_keys WHERE id=$1`, first.ID, next)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET write_key_id=$2 WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, f.instance, next)
 	// The new current key is deliberately not decryptable under its new ID. A
-	// re-fetch must use the runtime's original pin, not mutable current state.
+	// re-fetch must use the instance's original pin, not mutable current state.
 	again, err := b.InitialKey(t.Context(), f.principal, f.ref)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer clear(again.Key)
 	if again.ID != first.ID || !bytes.Equal(again.Key, first.Key) {
-		t.Fatal("rotation changed admitted runtime key")
+		t.Fatal("rotation changed admitted instance key")
 	}
 	_, err = f.Pool.Exec(t.Context(), `UPDATE computer_data_keys SET retired_at=now(),wrapped_key=NULL WHERE id=$1`, first.ID)
 	requireKeyFK(t, err)
@@ -293,7 +293,7 @@ func TestInitialComputerKeyForeignComputerPointersRejected(t *testing.T) {
 	clear(key.Key)
 	other := uuid.NewV7()
 	// A deleted sibling is sufficient to exercise scope FKs without inventing
-	// another active runtime/reservation or changing the fixture's head authority.
+	// another active instance/reservation or changing the fixture's head authority.
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computers(id,environment_id,region_id,status,desired_state,deleted_at, computer_spec_id, creation_deployment_id) SELECT $2,environment_id,region_id,'deleted','deleted',clock_timestamp(), computer_spec_id, creation_deployment_id
  FROM computers WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, f.instance, other)
 	foreign := uuid.NewV7()

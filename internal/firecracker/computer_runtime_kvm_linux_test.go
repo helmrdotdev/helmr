@@ -175,7 +175,7 @@ func TestComputerRuntimeKVM(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			identity, cpu, _, err := connector.boundSessionRuntime(cfg.VCPUCount)
+			identity, cpu, _, err := connector.boundMachineRuntime(cfg.VCPUCount)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -189,7 +189,7 @@ func TestComputerRuntimeKVM(t *testing.T) {
 				}
 			}()
 			start := time.Now()
-			session, err := runtime.Materialize(t.Context(), vm.MaterializeRequest{ID: id, OwnerKind: owner.Kind, Binding: vm.WorkloadBinding{WorkerEpoch: 1, OwnerID: id, Generation: 1, ComputerInstanceID: id, VMPlatformID: identity.ID}, RootfsDigest: connector.artifacts.Rootfs.Digest, ComputerMountPath: "/workspace", Resources: compute.ResourceVector{MilliCPU: cfg.VCPUCount * 1000, MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.ScratchDiskMiB, Slots: 1}, VMVCPUCount: int32(cfg.VCPUCount), CPUConfigDigest: cpu, Topology: vm.RuntimeTopology{Computer: &vm.RuntimeComputer{ComputerID: uuid.NewV7().String(), VersionID: uuid.NewV7().String(), SizeBytes: capacity, Device: device}}})
+			machine, err := runtime.Materialize(t.Context(), vm.MaterializeRequest{ID: id, OwnerKind: owner.Kind, Binding: vm.WorkloadBinding{WorkerEpoch: 1, OwnerID: id, Generation: 1, ComputerInstanceID: id, VMPlatformID: identity.ID}, RootfsDigest: connector.artifacts.Rootfs.Digest, ComputerMountPath: "/workspace", Resources: compute.ResourceVector{MilliCPU: cfg.VCPUCount * 1000, MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.ScratchDiskMiB, Slots: 1}, VMVCPUCount: int32(cfg.VCPUCount), CPUConfigDigest: cpu, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: uuid.NewV7().String(), VersionID: uuid.NewV7().String(), SizeBytes: capacity, Device: device}}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -197,8 +197,8 @@ func TestComputerRuntimeKVM(t *testing.T) {
 			defer func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
-				if err := session.Close(ctx); err != nil {
-					t.Errorf("session close: %v", err)
+				if err := machine.Close(ctx); err != nil {
+					t.Errorf("machine close: %v", err)
 				}
 			}()
 			if len(wantMarker) != 0 {
@@ -208,7 +208,7 @@ func TestComputerRuntimeKVM(t *testing.T) {
 					t.Fatalf("cold marker mismatch: %d %v", n, err)
 				}
 			}
-			live := session.(interface {
+			live := machine.(interface {
 				CaptureComputer(context.Context) (*vm.ComputerSnapshot, error)
 			})
 			for i := 0; i < 2; i++ {
@@ -225,7 +225,7 @@ func TestComputerRuntimeKVM(t *testing.T) {
 				pause := time.Since(start)
 				// Require a fresh application health response before publication; a
 				// successful host-side resume response alone is not guest progress.
-				guest := session.(*guestSession)
+				guest := machine.(*guestMachine)
 				err = connector.waitForHealth(t.Context(), guest.vsockHostPath, guest.machineExit, t.Logf)
 				if err != nil {
 					cut.Capture.Release()
@@ -241,7 +241,7 @@ func TestComputerRuntimeKVM(t *testing.T) {
 				t.Logf("%s capture=%d pause_and_capture=%s publish=%s", name, i, pause, time.Since(start))
 				verifyMarker(root)
 			}
-			cut, err := session.(vm.ComputerCaptureMachine).PauseComputer(t.Context())
+			cut, err := machine.(vm.ComputerCaptureMachine).PauseComputer(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}

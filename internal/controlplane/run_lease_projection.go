@@ -67,7 +67,7 @@ func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (workerapi
 	if err != nil {
 		return workerapi.RunLeaseAssignment{}, err
 	}
-	instanceID, err := requiredClaimUUIDString("runtime instance ID", lease.ComputerInstanceID)
+	instanceID, err := requiredClaimUUIDString("instance ID", lease.ComputerInstanceID)
 	if err != nil {
 		return workerapi.RunLeaseAssignment{}, err
 	}

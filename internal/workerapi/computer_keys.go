@@ -16,7 +16,7 @@ type ComputerKeyMaterial struct {
 	Key   []byte `json:"key"`
 }
 
-// ComputerSourceRequest selects the preparing Runtime; source/key identities are
+// ComputerSourceRequest selects the preparing Instance; source/key identities are
 // resolved by the Control Plane, never chosen by the caller.
 type ComputerSourceRequest struct {
 	ComputerInstanceID string `json:"computer_instance_id"`

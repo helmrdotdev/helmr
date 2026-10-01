@@ -23,7 +23,7 @@ type Restore struct {
 
 // LockRestore locks worker supply, the Computer and the destination Instance
 // in that order and checks the restore receipt fence: the Instance is the
-// ready incarnation at the host epoch and desired version, and the Computer's
+// ready incarnation at the worker epoch and desired version, and the Computer's
 // current writer. It accepts paused or draining supply so a committed
 // restore can be inspected and acknowledged after its reply was lost;
 // Admitting reports whether new activation authority may be created. A fence

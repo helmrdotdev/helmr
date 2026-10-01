@@ -27,7 +27,7 @@ func preparingInstance(t *testing.T, attempts int) (runtest.Fixture, runtest.Run
 	return f, work, i
 }
 
-// A runtime failure report is durable but settles no logical work: the
+// An instance failure report is durable but settles no logical work: the
 // failed Instance keeps its reservation, the Computer its preparation budget
 // and the Run stays queued, and the report cannot be applied twice.
 func TestInstanceFailureIsDurableWithoutLogicalSettlement(t *testing.T) {

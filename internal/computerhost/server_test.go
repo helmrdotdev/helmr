@@ -60,7 +60,7 @@ func TestServerRenewsWhileAwaitingPreparedMachine(t *testing.T) {
 				select {
 				case <-renewed:
 				case <-time.After(time.Second):
-					t.Fatal("pending runtime admission did not renew")
+					t.Fatal("pending instance admission did not renew")
 				}
 				cancel()
 			}
@@ -70,7 +70,7 @@ func TestServerRenewsWhileAwaitingPreparedMachine(t *testing.T) {
 					t.Fatalf("renew failure=%v", err)
 				}
 			case <-time.After(time.Second):
-				t.Fatal("pending runtime admission did not cancel")
+				t.Fatal("pending instance admission did not cancel")
 			}
 		})
 	}
@@ -259,10 +259,10 @@ func TestServerChecksOutPreparedMachine(t *testing.T) {
 		t.Fatal(err)
 	}
 	if machine := checkout.Machine(); machine != wantMachine {
-		t.Fatalf("session = %T %p, want %T %p", machine, machine, wantMachine, wantMachine)
+		t.Fatalf("machine = %T %p, want %T %p", machine, machine, wantMachine, wantMachine)
 	}
 	if computerInstanceID != computerMount.ComputerInstanceID {
-		t.Fatalf("runtime instance id = %q, want %q", computerInstanceID, computerMount.ComputerInstanceID)
+		t.Fatalf("instance id = %q, want %q", computerInstanceID, computerMount.ComputerInstanceID)
 	}
 	if !machines.instanceCheckedOut(computerMount.ComputerInstanceID, computerMount.WorkerEpoch) {
 		t.Fatal("prepared machine was not checked out")
@@ -307,10 +307,10 @@ func TestServerReleasesCheckoutOnRestoreProvenanceFailure(t *testing.T) {
 				t.Fatalf("materialize error = %v, want %s", err, test.wantCode)
 			}
 			if machine.closeCount() != 1 {
-				t.Fatalf("session close count = %d, want 1", machine.closeCount())
+				t.Fatalf("machine close count = %d, want 1", machine.closeCount())
 			}
 			if machines.instanceCheckedOut(mount.ComputerInstanceID, mount.WorkerEpoch) {
-				t.Fatal("failed restore provenance retained runtime checkout")
+				t.Fatal("failed restore provenance retained instance checkout")
 			}
 			if got := len(machines.Reservations.Snapshot().Reservations); got != 0 {
 				t.Fatalf("capacity reservations = %d, want 0", got)
@@ -382,7 +382,7 @@ func TestServerPreparedComputerSkipsComputerCAS(t *testing.T) {
 		t.Fatal(err)
 	}
 	if gotMachine := checkout.Machine(); gotMachine != machine {
-		t.Fatalf("session = %v, want prepared session", gotMachine)
+		t.Fatalf("machine = %v, want prepared machine", gotMachine)
 	}
 	if got := store.getCalls[mount.ComputerImage.Digest]; got != 0 {
 		t.Fatalf("computer image CAS gets = %d, want 0", got)
@@ -855,7 +855,7 @@ func TestServerOwnsProgramStartFailureCleanup(t *testing.T) {
 	}
 }
 
-func TestServerProgramStartFailureKeepsCapacityWhenRuntimeCloseFails(t *testing.T) {
+func TestServerProgramStartFailureKeepsCapacityWhenInstanceCloseFails(t *testing.T) {
 	ctx := context.Background()
 	preparedClient, preparedServer := net.Pipe()
 	defer preparedServer.Close()
@@ -904,7 +904,7 @@ func TestServerProgramStartFailureKeepsCapacityWhenRuntimeCloseFails(t *testing.
 	}
 	select {
 	case err := <-result:
-		if err == nil || !strings.Contains(err.Error(), "computer mount runtime cleanup failed") {
+		if err == nil || !strings.Contains(err.Error(), "computer mount instance cleanup failed") {
 			t.Fatalf("server error = %v, want static cleanup failure", err)
 		}
 	case <-time.After(5 * time.Second):
@@ -941,10 +941,10 @@ func TestServerRegistersPreparedMachineOverOpenedStream(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		acknowledgePreparedComputerMount(t, preparedServer, computerMount, "runtime-key")
+		acknowledgePreparedComputerMount(t, preparedServer, computerMount, "instance-key")
 	}()
 
-	err := (Server{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}}).registerComputerMount(ctx, machine, computerMount, "runtime-key")
+	err := (Server{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}}).registerComputerMount(ctx, machine, computerMount, "instance-key")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1012,7 +1012,7 @@ func TestServerValidatesSuccessReceiptsOnlyAfterRunningState(t *testing.T) {
 			go respondToPreparedComputerMountWithRequest(t, preparedServer, test.response)
 			err := (Server{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}}).registerComputerMount(context.Background(), &serverTestMachine{
 				streams: []io.ReadWriteCloser{preparedClient},
-			}, computerMount, "runtime-key")
+			}, computerMount, "instance-key")
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("register error = %v, want %q", err, test.want)
 			}
@@ -1077,7 +1077,7 @@ func (s *serverTestMachine) OpenStream(context.Context) (vm.Stream, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed > 0 {
-		return nil, errors.New("test session is closed")
+		return nil, errors.New("test machine is closed")
 	}
 	if len(s.streams) > 0 {
 		stream := s.streams[0]
@@ -1461,10 +1461,10 @@ func TestCheckpointReleaseFailureReportsWithoutVMExit(t *testing.T) {
 		t.Fatal("released capacity before physical reclaim")
 	}
 	if raw.closeCount() != 1 {
-		t.Fatal("retried cached session close instead of deferring physical reclaim")
+		t.Fatal("retried cached machine close instead of deferring physical reclaim")
 	}
 	// Reconciliation receives a CP-authorized target after active leases expire.
-	// It must use host cleanup, not retry the cached session Close failure.
+	// It must use host cleanup, not retry the cached machine Close failure.
 	connector := &cleanupBackend{err: errors.New("process still alive")}
 	machines.Backend = connector
 	target := instanceReservationTarget(mount.ComputerInstanceID, mount.WorkerEpoch)
@@ -1482,7 +1482,7 @@ func TestCheckpointReleaseFailureReportsWithoutVMExit(t *testing.T) {
 		t.Fatal(err)
 	}
 	if machines.instanceCheckedOut(mount.ComputerInstanceID, mount.WorkerEpoch) || len(machines.Reservations.Snapshot().Reservations) != 0 {
-		t.Fatal("retained runtime after proved cleanup")
+		t.Fatal("retained instance after proved cleanup")
 	}
 	if len(control.failed) != 1 || control.failed[0].CleanupProof == nil || raw.closeCount() != 1 {
 		t.Fatal("reclaim did not publish host proof independently of cached Close")

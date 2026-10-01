@@ -37,7 +37,7 @@ func TestInitialVersionPublicationReplay(t *testing.T) {
 	versionID := pgvalue.UUID(first.result.VersionID)
 	var retained bool
 	if err := f.Pool.QueryRow(t.Context(), `SELECT source_disk_version_id=$2 AND retained_source_disk_version_id=$2 FROM computer_instances WHERE id=$1`, f.instance, versionID).Scan(&retained); err != nil || !retained {
-		t.Fatalf("published version is not retained by runtime: %v %v", retained, err)
+		t.Fatalf("published version is not retained by the instance: %v %v", retained, err)
 	}
 	var config []byte
 	var roots, audits int
@@ -136,7 +136,7 @@ func TestInitialVersionPublicationRejectsInvalidCandidate(t *testing.T) {
 				}
 			}
 			var unchanged bool
-			if err := f.Pool.QueryRow(t.Context(), `SELECT runtime.source_disk_version_id IS NULL AND v.status='initializing' AND v.publication_request_fingerprint IS NULL AND c.initial_config IS NULL AND NOT EXISTS(SELECT 1 FROM computer_disk_version_roots r WHERE r.version_id=v.id) FROM computer_instances runtime JOIN computer_disk_versions v ON v.computer_id=runtime.computer_id AND v.status='initializing' JOIN computers c ON c.id=v.computer_id WHERE runtime.id=$1`, f.instance).Scan(&unchanged); err != nil || !unchanged {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT instance.source_disk_version_id IS NULL AND v.status='initializing' AND v.publication_request_fingerprint IS NULL AND c.initial_config IS NULL AND NOT EXISTS(SELECT 1 FROM computer_disk_version_roots r WHERE r.version_id=v.id) FROM computer_instances instance JOIN computer_disk_versions v ON v.computer_id=instance.computer_id AND v.status='initializing' JOIN computers c ON c.id=v.computer_id WHERE instance.id=$1`, f.instance).Scan(&unchanged); err != nil || !unchanged {
 				t.Fatalf("partial publication survived: %v %v", unchanged, err)
 			}
 		})

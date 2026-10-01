@@ -34,7 +34,7 @@ func TestNewProgramRunnerRejectsIncompleteWiring(t *testing.T) {
 		"children":        {func(r *ProgramRunner) { r.ControlPlane.Children = nil }, "child task control plane is required"},
 		"cas":             {func(r *ProgramRunner) { r.CAS = nil }, "run lease task CAS is required"},
 		"captures":        {func(r *ProgramRunner) { r.ComputerCaptures = nil }, "run lease task Computer capture registry is required"},
-		"computer mounts": {func(r *ProgramRunner) { r.Mounts = nil }, "computer mount session registry is required"},
+		"computer mounts": {func(r *ProgramRunner) { r.Mounts = nil }, "computer mount registry is required"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			runner := complete
@@ -61,7 +61,7 @@ func TestStartRunLeaseTaskRejectsUnvalidatedRunner(t *testing.T) {
 		}, "run wait control plane is required"},
 		"missing computer mounts": {ProgramRunner{
 			ControlPlane: complete, CAS: unusedCAS{}, ComputerCaptures: &computerhost.CaptureRuns{},
-		}, "computer mount session registry is required"},
+		}, "computer mount registry is required"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			task, err := test.runner.StartRunLeaseTask(t.Context(), &workerapi.RunLeaseClaimResponse{})

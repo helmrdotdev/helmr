@@ -172,7 +172,7 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 func TestReconcileDesiredInstancesRunsBatchConcurrentlyAndWaitsForShutdown(t *testing.T) {
 	store, mount := testComputerMountArtifacts(t)
 	connector := &blockingMaterializingBackend{
-		started: make(chan string, 2), canceled: make(chan string, 2), failID: "runtime-0",
+		started: make(chan string, 2), canceled: make(chan string, 2), failID: "instance-0",
 	}
 	var logs bytes.Buffer
 	machines := NewPreparedMachines(connector, store, 2, slog.New(slog.NewTextHandler(&logs, nil)))
@@ -270,7 +270,7 @@ func TestWarmInstancePreparationDeadlineCancelsBlockedMaterialization(t *testing
 	}
 }
 
-// uncapturableRuntimeSession is a runtime machine that cannot capture its live
+// uncapturableMachine is an instance machine that cannot capture its live
 // Computer, which the machines must reject before admitting it.
 type uncapturableMachine struct {
 	closed atomic.Int32
@@ -278,7 +278,7 @@ type uncapturableMachine struct {
 
 func (*uncapturableMachine) Stream() vm.Stream { return nil }
 func (*uncapturableMachine) OpenStream(context.Context) (vm.Stream, error) {
-	return nil, errors.New("uncapturable runtime has no streams")
+	return nil, errors.New("uncapturable instance has no streams")
 }
 func (*uncapturableMachine) Wait(ctx context.Context) error {
 	<-ctx.Done()
@@ -321,7 +321,7 @@ func TestWarmInstanceRejectsMachineWithoutLiveCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(client.failed) != 1 || client.failed[0].CleanupProof != nil ||
-		!strings.Contains(string(client.failed[0].Error), "runtime cannot capture a live Computer") {
+		!strings.Contains(string(client.failed[0].Error), "machine cannot capture a live Computer") {
 		t.Fatalf("failure reports=%+v", client.failed)
 	}
 	if got := connector.machine.closed.Load(); got != 1 {
@@ -335,7 +335,7 @@ func TestWarmInstanceRejectsMachineWithoutLiveCapture(t *testing.T) {
 	ready := machines.readyCountLocked()
 	machines.mu.Unlock()
 	if ready != 0 {
-		t.Fatalf("ready runtimes=%d after rejection", ready)
+		t.Fatalf("ready instances=%d after rejection", ready)
 	}
 	if err := os.RemoveAll(machines.TempDir); err != nil {
 		t.Fatal(err)

@@ -27,7 +27,7 @@ type InitialVersionPublisher struct {
 
 func NewInitialVersionPublisher(client InitialVersionClient, objects versionObjectPublisher, instanceID string, desiredVersion int64) (*InitialVersionPublisher, error) {
 	if client == nil || objects == nil || instanceID == "" || desiredVersion <= 0 {
-		return nil, errors.New("initial version publication dependencies and Runtime identity required")
+		return nil, errors.New("initial version publication dependencies and Instance identity required")
 	}
 	return &InitialVersionPublisher{client: client, objects: objects, instanceID: instanceID, desiredVersion: desiredVersion}, nil
 }

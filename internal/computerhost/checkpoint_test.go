@@ -46,13 +46,13 @@ func TestComputerCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T)
 	manifest := result.Manifest
 
 	if machine.resumeCount != 0 || machine.closeCount != 0 || len(machine.snapshotRequests) != 1 || machine.snapshotRequests[0].ID != "checkpoint" {
-		t.Fatalf("session = %+v", machine)
+		t.Fatalf("machine = %+v", machine)
 	}
 	if err := (&computerCheckpointer{publication: testCheckpointPublication, machine: machine}).ReleaseCheckpointSource(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if machine.closeCount != 1 {
-		t.Fatalf("session close count = %d, want 1", machine.closeCount)
+		t.Fatalf("machine close count = %d, want 1", machine.closeCount)
 	}
 	if stream.closed != 1 {
 		t.Fatalf("stream closed %d times", stream.closed)

@@ -28,7 +28,7 @@ type VersionCapture struct {
 }
 
 // VersionPublication is consumed by the candidate; an execution adapter binds
-// these operations to its authenticated Runtime. Upload must verify exact bytes.
+// these operations to its authenticated Instance. Upload must verify exact bytes.
 type VersionPublication interface {
 	Register(context.Context, blockformat.ObjectInspection) error
 	Upload(context.Context, cas.Descriptor, *os.File) (cas.Object, error)

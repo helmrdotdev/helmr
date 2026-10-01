@@ -24,21 +24,22 @@ const (
 )
 
 // ErrAuthorityChanged reports that the Instance, its Computer or the worker
-// host epoch no longer holds the authority the operation requires: the
+// worker epoch no longer holds the authority the operation requires: the
 // Instance incarnation, writer generation, desired version or admission
 // changed, or a deadline passed.
 var ErrAuthorityChanged = errors.New("computer authority changed")
 
-// Host is a worker host epoch. Operations that take a Host fence the locked
-// host row's epoch and status and never compare credential claim versions;
-// operations that compare claims take a workergroup.HostPrincipal.
+// Host is a worker host at one worker epoch. Operations that take a Host
+// fence the locked host row's epoch and status and never compare credential
+// claim versions; operations that compare claims take a
+// workergroup.HostPrincipal.
 type Host struct {
 	GroupID uuid.UUID
 	HostID  uuid.UUID
 	Epoch   int64
 }
 
-// InstanceRef addresses one Instance incarnation on a worker host epoch at the
+// InstanceRef addresses one Instance incarnation on a worker epoch at the
 // desired version its observer acted on.
 type InstanceRef struct {
 	Host           Host

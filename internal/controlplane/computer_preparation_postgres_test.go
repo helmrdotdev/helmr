@@ -114,8 +114,8 @@ func (f initialPublicationFixture) publishInitialVersion(t *testing.T, client *w
 // uploads and certifies it, and returns the root with its object request.
 func (f initialPublicationFixture) certifyInitialRoot(t *testing.T, client *workerclient.Client) (workerapi.ComputerKeyMaterial, disk.VersionRoot, workerapi.InitialComputerObjectRequest) {
 	t.Helper()
-	runtime := pgvalue.UUIDString(f.instance)
-	key, err := client.InitialComputerKey(t.Context(), workerapi.InitialComputerKeyRequest{ComputerInstanceID: runtime, DesiredVersion: 1})
+	instanceID := pgvalue.UUIDString(f.instance)
+	key, err := client.InitialComputerKey(t.Context(), workerapi.InitialComputerKeyRequest{ComputerInstanceID: instanceID, DesiredVersion: 1})
 	if err != nil {
 		t.Fatalf("initial key: %v", err)
 	}
@@ -133,7 +133,7 @@ func (f initialPublicationFixture) certifyInitialRoot(t *testing.T, client *work
 	if err != nil {
 		t.Fatal(err)
 	}
-	object := workerapi.InitialComputerObjectRequest{ComputerInstanceID: runtime, DesiredVersion: 1, Inspection: blockformat.ObjectInspection{Pack: &inspected}}
+	object := workerapi.InitialComputerObjectRequest{ComputerInstanceID: instanceID, DesiredVersion: 1, Inspection: blockformat.ObjectInspection{Pack: &inspected}}
 	if err = client.RegisterInitialComputerObject(t.Context(), object); err != nil {
 		t.Fatalf("object registration: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestInitialComputerPreparationOverHTTP(t *testing.T) {
 func TestComputerPreparationSourceTracksPublishedRoot(t *testing.T) {
 	f := newInitialPublicationFixture(t)
 	seed := initializingComputerSourceRow(t)
-	// Bind a valid admitted deployment to this reserved runtime. The existing
+	// Bind a valid admitted deployment to this reserved instance. The existing
 	// publication fixture's opaque candidate isolates the database protocol;
 	// disk encoding/authentication is exercised by the disk package.
 	dbtest.MustExec(t, t.Context(), f.Pool, `WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, $3) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id,digest,size_bytes,media_type) VALUES ($1,$2,$3,$4)`,

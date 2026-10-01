@@ -69,16 +69,16 @@ func (s *guestMachine) Stream() vm.Stream {
 
 func (s *guestMachine) Open(ctx context.Context) (vm.Machine, error) {
 	if ctx == nil {
-		return nil, errors.New("prepared session open context is nil")
+		return nil, errors.New("prepared machine open context is nil")
 	}
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		return nil, errors.New("the Firecracker prepared session is closed")
+		return nil, errors.New("the Firecracker prepared machine is closed")
 	}
 	if s.opened {
 		s.mu.Unlock()
-		return nil, errors.New("the Firecracker prepared session is already opened")
+		return nil, errors.New("the Firecracker prepared machine is already opened")
 	}
 	s.opened = true
 	s.mu.Unlock()
@@ -95,7 +95,7 @@ func (s *guestMachine) Open(ctx context.Context) (vm.Machine, error) {
 	if s.closed {
 		s.mu.Unlock()
 		return nil, errors.Join(
-			errors.New("the Firecracker prepared session closed while opening"),
+			errors.New("the Firecracker prepared machine closed while opening"),
 			stream.Close(),
 		)
 	}
@@ -110,7 +110,7 @@ func (s *guestMachine) OpenStream(ctx context.Context) (vm.Stream, error) {
 
 func (s *guestMachine) Wait(ctx context.Context) error {
 	if s.machineExit == nil {
-		return errors.New("the Firecracker session exit watcher is not configured")
+		return errors.New("the Firecracker machine exit watcher is not configured")
 	}
 	waitErr := s.machineExit.Wait(ctx)
 	s.mu.Lock()
@@ -198,7 +198,7 @@ func (s *guestMachine) Close(ctx context.Context) error {
 			if s.cleaner != nil {
 				cleanupErr = s.cleaner.Cleanup(ctx, s.owner)
 			} else {
-				cleanupErr = cleanupUnproven(s.owner, errors.New("the Firecracker session cleaner is not configured"))
+				cleanupErr = cleanupUnproven(s.owner, errors.New("the Firecracker machine cleaner is not configured"))
 			}
 		}
 		s.err = errors.Join(

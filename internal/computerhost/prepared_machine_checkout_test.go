@@ -76,7 +76,7 @@ func (d *countingCloseComputerDevice) closeCount() int {
 	return d.closes
 }
 
-// reportOrderRuntimeClient runs beforeReport ahead of recording each runtime
+// reportOrderInstanceClient runs beforeReport ahead of recording each instance
 // state report, so a test can observe local cleanup at report time.
 type reportOrderInstanceClient struct {
 	typedInstanceClient
@@ -153,7 +153,7 @@ func TestFailedCheckoutCloseDefersToOwnerThenReconcileCleansUpOnce(t *testing.T)
 			case <-time.After(5 * time.Second):
 				t.Fatal("server did not finish")
 			}
-			if !errors.Is(err, closeErr) || !strings.Contains(err.Error(), "close prepared computer runtime") {
+			if !errors.Is(err, closeErr) || !strings.Contains(err.Error(), "close prepared computer instance") {
 				t.Fatalf("materialize error = %v, want close failure", err)
 			}
 			if machines.instanceCheckedOut(ref.id, ref.epoch) {

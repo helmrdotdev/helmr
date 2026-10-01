@@ -112,11 +112,11 @@ func TestHardAdmissionKeepsInstanceSlotPressureInInstanceDomain(t *testing.T) {
 	check := AdmissionCheck{Status: StatusActive, Recovery: RecoveryEvidence{Quarantined: []string{"slot"}}}
 	check.Consumer = "run"
 	evaluator.Evaluate(context.Background(), check)
-	check.Consumer = "runtime"
+	check.Consumer = "instance"
 	evaluator.Evaluate(context.Background(), check)
 	observation := evaluator.Observation()
 	if observation.RunPausedReason != "" || observation.VMPausedReason == "" {
-		t.Fatalf("domain pauses = run:%q runtime:%q", observation.RunPausedReason, observation.VMPausedReason)
+		t.Fatalf("domain pauses = run:%q instance:%q", observation.RunPausedReason, observation.VMPausedReason)
 	}
 }
 

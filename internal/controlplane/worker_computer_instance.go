@@ -22,7 +22,7 @@ const workerInstanceReconcileLimit int32 = 64
 func (s *Server) workerNextInstanceReconcileTarget(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.InstanceReconcileRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
-		writeError(w, fmt.Errorf("invalid runtime reconcile request JSON: %w", err))
+		writeError(w, fmt.Errorf("invalid instance reconcile request JSON: %w", err))
 		return
 	}
 	worker := workerFromContext(r.Context())
@@ -50,7 +50,7 @@ var instanceReconcileActions = map[computer.ReconcileAction]string{
 	computer.ReconcileReclaim: workerapi.InstanceReconcileReclaim,
 }
 
-// runtimeReconcileTarget projects a reconcile target onto the worker
+// instanceReconcileTarget projects a reconcile target onto the worker
 // contract: its action, the capture it takes, and for preparation the
 // Computer and Program sources and the checkpoint it restores.
 func instanceReconcileTarget(ctx context.Context, platform cas.Reader, target computer.ReconcileTarget) (workerapi.InstanceReconcileTarget, error) {
@@ -137,11 +137,11 @@ func (s *Server) workerMarkComputerInstanceFailed(w http.ResponseWriter, r *http
 }
 
 // decodeComputerInstanceObservation decodes an Instance observation and
-// checks its fences against the authenticated host epoch.
+// checks its fences against the authenticated worker epoch.
 func decodeComputerInstanceObservation(w http.ResponseWriter, r *http.Request, state string) (workerapi.ComputerInstanceStateRequest, computer.Observation, bool) {
 	var request workerapi.ComputerInstanceStateRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
-		writeError(w, fmt.Errorf("invalid worker runtime instance %s request JSON: %w", state, err))
+		writeError(w, fmt.Errorf("invalid worker instance %s request JSON: %w", state, err))
 		return request, computer.Observation{}, false
 	}
 	id, err := ids.Parse(request.ID)
@@ -150,12 +150,12 @@ func decodeComputerInstanceObservation(w http.ResponseWriter, r *http.Request, s
 		return request, computer.Observation{}, false
 	}
 	if request.WorkerEpoch <= 0 || request.DesiredVersion <= 0 || request.ExpectedObservedVersion < 0 {
-		writeError(w, badRequest(errors.New("runtime epoch, desired version, and observed version fences are required")))
+		writeError(w, badRequest(errors.New("worker epoch, desired version, and observed version fences are required")))
 		return request, computer.Observation{}, false
 	}
 	worker := workerFromContext(r.Context())
 	if request.WorkerEpoch != worker.Epoch {
-		writeError(w, forbidden(errors.New("runtime instance belongs to another worker epoch")))
+		writeError(w, forbidden(errors.New("instance belongs to another worker epoch")))
 		return request, computer.Observation{}, false
 	}
 	return request, computer.Observation{

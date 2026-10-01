@@ -66,7 +66,7 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 }
 
 // checkpointRef addresses the capture checkpoint a worker request names on
-// the authenticated host epoch. Malformed identifiers and non-positive
+// the authenticated worker epoch. Malformed identifiers and non-positive
 // versions are rejected before any database access.
 func checkpointRef(worker workergroup.HostPrincipal, instance string, workerEpoch, desiredVersion int64, checkpoint string) (computer.CheckpointRef, error) {
 	instanceID, err := parseCanonicalUUID("computer_instance_id", instance)

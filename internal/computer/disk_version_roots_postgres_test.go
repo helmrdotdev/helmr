@@ -244,10 +244,10 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 		delivery.Clear()
 		var pinned pgtype.UUID
 		if err := f.Pool.QueryRow(t.Context(), `SELECT write_key_id FROM computer_instances WHERE id=$1`, f.instance).Scan(&pinned); err != nil || pgvalue.UUIDString(pinned) != writeID {
-			t.Fatal("runtime write key not pinned", err)
+			t.Fatal("instance write key not pinned", err)
 		}
 		if i == 0 {
-			// Changing the Computer's key cannot change an existing Runtime pin.
+			// Changing the Computer's key cannot change an existing Instance pin.
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET write_key_id=$2 WHERE id=$1`, computerID, key.ID)
 		}
 	}
@@ -327,7 +327,7 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 	replayed.Clear()
 	keys, err := q.ListInstanceComputerSourceKeys(t.Context(), f.instance)
 	if err != nil || len(keys) != 2 || pgvalue.UUIDString(keys[0].ID) != key.ID {
-		t.Fatalf("runtime source keys: count=%d err=%v", len(keys), err)
+		t.Fatalf("instance source keys: count=%d err=%v", len(keys), err)
 	}
 	deleteRoot := func() error {
 		_, e := f.Pool.Exec(t.Context(), `DELETE FROM computer_disk_version_roots WHERE environment_id=$1 AND computer_id=$2 AND version_id=$3`, env, computerID, versionID)
@@ -348,7 +348,7 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 	}
 	keys, err = q.ListInstanceComputerSourceKeys(t.Context(), f.instance)
 	if err != nil || len(keys) != 0 {
-		t.Fatalf("released runtime retained key delivery: %v", err)
+		t.Fatalf("released instance retained key delivery: %v", err)
 	}
 	if err = deleteRoot(); err != nil {
 		t.Fatal(err)
