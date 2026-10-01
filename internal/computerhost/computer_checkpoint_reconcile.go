@@ -99,6 +99,7 @@ func (p *PreparedMachines) captureInstanceTarget(ctx context.Context, instances 
 	knownClose := false
 	finalTarget := target
 	var progress captureAbortProgress
+	sourceFailure := errors.New("checkpoint source stopped during worker shutdown or source exit")
 	settle := func(excludeCtx context.Context) error {
 		if !knownClose {
 			for {
@@ -129,6 +130,10 @@ func (p *PreparedMachines) captureInstanceTarget(ctx context.Context, instances 
 					p.mu.Unlock()
 					p.ComputerCaptures.markCaptureResumed(target, progress.receipt.Members)
 					return nil
+				}
+				if errors.Is(err, errCaptureAbortCleanupFailed) {
+					sourceFailure = err
+					break
 				}
 				// An uncertain reply retains every owner and reservation. Only a current
 				// close/reclaim intent for this exact Instance permits physical exclusion.
@@ -176,7 +181,7 @@ func (p *PreparedMachines) captureInstanceTarget(ctx context.Context, instances 
 			if progress.receipt.AbortDesiredVersion > 0 {
 				finalTarget.DesiredVersion = progress.receipt.AbortDesiredVersion
 			}
-			return p.reportInstanceTargetFailedWithProof(excludeCtx, instances, finalTarget, errors.New("checkpoint source stopped during worker shutdown or source exit"), proofMethod)
+			return p.reportInstanceTargetFailedWithProof(excludeCtx, instances, finalTarget, sourceFailure, proofMethod)
 		}
 		if finalTarget.Action == workerapi.InstanceReconcileReclaim {
 			return p.reportInstanceTargetFailedWithProof(excludeCtx, instances, finalTarget, errors.New("checkpoint source reclaimed by Control Plane"), proofMethod)

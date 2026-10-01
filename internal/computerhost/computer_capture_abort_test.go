@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -216,6 +217,121 @@ func TestCaptureAbortRestoresHealthyMemberAndKeepsCancellation(t *testing.T) {
 				t.Fatalf("healthy original wait cannot continue: %v", err)
 			}
 			_ = wait.Detach()
+		})
+	}
+}
+
+func TestCaptureAbortCleanupFailureRequiresExactActivationResponse(t *testing.T) {
+	for _, changed := range []string{"none", "checkpoint", "version", "prepare", "activated"} {
+		t.Run(changed, func(t *testing.T) {
+			target := checkpointCaptureTarget(1)
+			capture, err := computerFreezeRequest(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := &computerv0.ComputerCaptureAbortRequest{Capture: capture, AbortDesiredVersion: target.DesiredVersion + 1, Activate: true}
+			response := &computerv0.ComputerCaptureAbortResponse{CheckpointId: capture.CheckpointId, AbortDesiredVersion: request.AbortDesiredVersion, CleanupFailed: true}
+			switch changed {
+			case "checkpoint":
+				response.CheckpointId = "foreign"
+			case "version":
+				response.AbortDesiredVersion++
+			case "prepare":
+				request.Activate = false
+			case "activated":
+				response.Activated = true
+			}
+			stream := newCheckpointStream(t, nil, response)
+			err = (guestControl{machine: &checkpointMachine{stream: stream}}).abortCapture(t.Context(), request)
+			if err == nil || errors.Is(err, errCaptureAbortCleanupFailed) != (changed == "none") {
+				t.Fatalf("incorrect failure authority: %v", err)
+			}
+		})
+	}
+}
+
+type cleanupFailureClient struct {
+	*checkpointReconcileClient
+	checkFailure func(workerapi.ComputerInstanceStateRequest)
+}
+
+func (c *cleanupFailureClient) MarkComputerInstanceFailed(_ context.Context, request workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
+	c.checkFailure(request)
+	c.instanceFailures = append(c.instanceFailures, request)
+	return workerapi.ComputerInstance{}, nil
+}
+
+func TestCaptureAbortCleanupFailureExcludesBeforeReporting(t *testing.T) {
+	for _, firstReply := range []string{"none", "lost", "checkpoint", "version", "activated", "prepare"} {
+		t.Run(firstReply, func(t *testing.T) {
+			target := checkpointCaptureTarget(1)
+			freeze := checkpointFreezeStream(t, target)
+			session := &checkpointMachine{stream: freeze, streams: []io.ReadWriteCloser{freeze}, artifact: checkpointArtifact(t)}
+			prepare := func() io.ReadWriteCloser {
+				return newCheckpointStream(t, nil, &computerv0.ComputerCaptureAbortResponse{CheckpointId: target.Capture.CheckpointID, AbortDesiredVersion: target.DesiredVersion + 1})
+			}
+			if firstReply != "none" {
+				negative := &computerv0.ComputerCaptureAbortResponse{CheckpointId: target.Capture.CheckpointID, AbortDesiredVersion: target.DesiredVersion + 1, CleanupFailed: true}
+				switch firstReply {
+				case "checkpoint":
+					negative.CheckpointId = "foreign"
+				case "version":
+					negative.AbortDesiredVersion++
+				case "activated":
+					negative.Activated = true
+				}
+				if firstReply != "prepare" {
+					session.streams = append(session.streams, prepare())
+				}
+				if firstReply == "lost" {
+					session.streams = append(session.streams, newCheckpointStream(t, nil))
+				} else {
+					session.streams = append(session.streams, newCheckpointStream(t, nil, negative))
+				}
+			}
+			session.streams = append(session.streams, prepare(), newCheckpointStream(t, nil, &computerv0.ComputerCaptureAbortResponse{CheckpointId: target.Capture.CheckpointID, AbortDesiredVersion: target.DesiredVersion + 1, CleanupFailed: true}))
+			registry := &CaptureRuns{}
+			member := target.Capture.Runs[0]
+			wait := captureRegistryWait(t, registry, target, member)
+			result := make(chan bool, 1)
+			go func() { pause := <-wait.Pauses(); _ = pause.Settle(nil); result <- pause.Resumed() }()
+			ref := preparedMachineRef{id: target.ID, epoch: target.WorkerEpoch}
+			client := &cleanupFailureClient{checkpointReconcileClient: &checkpointReconcileClient{target: target, registerError: &httpclient.Error{StatusCode: 409, Message: "candidate rejected"}}}
+			p := &PreparedMachines{ComputerCaptures: registry, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), claims: unmountedCaptureClaim(ref, target, session)}
+			client.onAbort = func(context.Context, workerapi.CaptureAbortRequest) (workerapi.CaptureAbortResponse, error) {
+				receipt := abortReceipt(target)
+				receipt.Members = []workerapi.CaptureAbortMember{{RunID: member.RunID, AttemptNumber: member.AttemptNumber, RunWaitID: member.RunWaitID, Lease: workerapi.RunLeaseFence{ID: member.RunLeaseID}, Cancelled: true}}
+				return receipt, nil
+			}
+			unknown := 0
+			client.onTargets = func(context.Context) (workerapi.InstanceReconcileResponse, error) {
+				unknown++
+				if session.closeCount != 0 || !captureRetained(p, ref) {
+					t.Error("lost negative reply excluded source")
+				}
+				return workerapi.InstanceReconcileResponse{}, errors.New("unavailable")
+			}
+			client.onAbortComplete = func(context.Context, workerapi.CaptureAbortCompleteRequest) (workerapi.ComputerCheckpointResponse, error) {
+				t.Error("failed cleanup acknowledged as abort")
+				return workerapi.ComputerCheckpointResponse{}, nil
+			}
+			client.checkFailure = func(q workerapi.ComputerInstanceStateRequest) {
+				if session.closeCount != 1 || p.claims[ref] != nil || q.CleanupProof == nil || q.DesiredVersion != target.DesiredVersion+1 || !strings.Contains(string(q.Error), errCaptureAbortCleanupFailed.Error()) {
+					t.Errorf("failure preceded exact physical cleanup: %+v closes=%d", q, session.closeCount)
+				}
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			if err := p.captureInstanceTarget(ctx, client, target); err == nil {
+				t.Fatal("original upload failure lost")
+			}
+			if <-result {
+				t.Fatal("member resumed after failed cleanup")
+			}
+			_ = wait.Detach()
+			if len(client.instanceFailures) != 1 || session.closeCount != 1 || client.closed != 0 || p.Reservations.Snapshot().Used.GuestEphemeralDiskBytes != 0 || (unknown == 1) != (firstReply != "none") {
+				t.Fatalf("incomplete cleanup: failures=%d closes=%d unknown=%d", len(client.instanceFailures), session.closeCount, unknown)
+			}
 		})
 	}
 }

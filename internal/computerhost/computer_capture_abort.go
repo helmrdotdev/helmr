@@ -10,6 +10,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
+var errCaptureAbortCleanupFailed = errors.New("capture abort cancellation cleanup failed")
+
 // captureAbortProgress belongs to the active physical capture owner. A durable
 // acknowledgment with no local activation proof cannot authorize a new source.
 type captureAbortProgress struct {
@@ -42,8 +44,17 @@ func (g guestControl) abortCapture(ctx context.Context, request *computerv0.Comp
 	if err != nil {
 		return err
 	}
-	if response.CheckpointId != request.Capture.CheckpointId || response.AbortDesiredVersion != request.AbortDesiredVersion || response.Activated != request.Activate {
+	if response.CheckpointId != request.Capture.CheckpointId || response.AbortDesiredVersion != request.AbortDesiredVersion {
 		return errors.New("guest capture abort acknowledgment changed identity")
+	}
+	if response.CleanupFailed {
+		if !request.Activate || response.Activated {
+			return errors.New("guest capture abort cleanup result has invalid phase")
+		}
+		return errCaptureAbortCleanupFailed
+	}
+	if response.Activated != request.Activate {
+		return errors.New("guest capture abort acknowledgment changed phase")
 	}
 	return nil
 }

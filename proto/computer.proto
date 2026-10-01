@@ -130,6 +130,8 @@ message ComputerCaptureAbortResponse {
   string checkpoint_id = 1;
   int64 abort_desired_version = 2;
   bool activated = 3;
+  // Definitive completed cancellation cleanup failure; the source cannot thaw.
+  bool cleanup_failed = 4;
 }
 
 // A fresh transport for an unchanged source member, authorized by abort installation.

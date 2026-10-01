@@ -1139,8 +1139,10 @@ type ComputerCaptureAbortResponse struct {
 	CheckpointId        string                 `protobuf:"bytes,1,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
 	AbortDesiredVersion int64                  `protobuf:"varint,2,opt,name=abort_desired_version,json=abortDesiredVersion,proto3" json:"abort_desired_version,omitempty"`
 	Activated           bool                   `protobuf:"varint,3,opt,name=activated,proto3" json:"activated,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// Definitive completed cancellation cleanup failure; the source cannot thaw.
+	CleanupFailed bool `protobuf:"varint,4,opt,name=cleanup_failed,json=cleanupFailed,proto3" json:"cleanup_failed,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ComputerCaptureAbortResponse) Reset() {
@@ -1190,6 +1192,13 @@ func (x *ComputerCaptureAbortResponse) GetAbortDesiredVersion() int64 {
 func (x *ComputerCaptureAbortResponse) GetActivated() bool {
 	if x != nil {
 		return x.Activated
+	}
+	return false
+}
+
+func (x *ComputerCaptureAbortResponse) GetCleanupFailed() bool {
+	if x != nil {
+		return x.CleanupFailed
 	}
 	return false
 }
@@ -3039,11 +3048,12 @@ const file_computer_proto_rawDesc = "" +
 	"\acapture\x18\x01 \x01(\v2(.helmr.computer.v0.FreezeComputerRequestR\acapture\x122\n" +
 	"\x15abort_desired_version\x18\x02 \x01(\x03R\x13abortDesiredVersion\x12G\n" +
 	"\amembers\x18\x03 \x03(\v2-.helmr.computer.v0.ComputerCaptureAbortMemberR\amembers\x12\x1a\n" +
-	"\bactivate\x18\x04 \x01(\bR\bactivate\"\x95\x01\n" +
+	"\bactivate\x18\x04 \x01(\bR\bactivate\"\xbc\x01\n" +
 	"\x1cComputerCaptureAbortResponse\x12#\n" +
 	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\x122\n" +
 	"\x15abort_desired_version\x18\x02 \x01(\x03R\x13abortDesiredVersion\x12\x1c\n" +
-	"\tactivated\x18\x03 \x01(\bR\tactivated\"\xab\x02\n" +
+	"\tactivated\x18\x03 \x01(\bR\tactivated\x12%\n" +
+	"\x0ecleanup_failed\x18\x04 \x01(\bR\rcleanupFailed\"\xab\x02\n" +
 	"!ComputerCaptureAbortAttachRequest\x12#\n" +
 	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\x122\n" +
 	"\x15abort_desired_version\x18\x02 \x01(\x03R\x13abortDesiredVersion\x12=\n" +

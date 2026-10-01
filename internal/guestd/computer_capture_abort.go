@@ -11,6 +11,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+var errCaptureAbortCleanupFailed = errors.New("capture abort cancellation cleanup failed")
+
 var errCaptureAborted = errors.New("checkpoint capture aborted on its source")
 
 type captureAbortInstallation struct {
@@ -44,10 +46,11 @@ func handleComputerCaptureAbort(ctx context.Context, conn programConnection, bod
 	if err := frameio.ReadProtoFrameBounded(conn, maxProgramControlFrameBytes, &request); err != nil {
 		return err
 	}
-	if err := mounts.applyCaptureAbort(ctx, waits, &request, time.Now); err != nil {
+	err := mounts.applyCaptureAbort(ctx, waits, &request, time.Now)
+	if err != nil && !errors.Is(err, errCaptureAbortCleanupFailed) {
 		return err
 	}
-	return frameio.WriteProtoFrame(conn, &computerv0.ComputerCaptureAbortResponse{CheckpointId: request.Capture.CheckpointId, AbortDesiredVersion: request.AbortDesiredVersion, Activated: request.Activate})
+	return frameio.WriteProtoFrame(conn, &computerv0.ComputerCaptureAbortResponse{CheckpointId: request.Capture.CheckpointId, AbortDesiredVersion: request.AbortDesiredVersion, Activated: request.Activate && err == nil, CleanupFailed: err != nil})
 }
 
 // Grant installation and member release are separate so the host can restore
@@ -149,6 +152,16 @@ func (r *computerOperationRegistry) applyCaptureAbort(ctx context.Context, waits
 					if f.GetComputerInstanceId() != capture.ComputerInstanceId || f.GetComputerId() != capture.ComputerId || f.GetWriterGeneration() != capture.WriterGeneration || f.GetRunLeaseId() != m.Member.RunLeaseId || f.GetAttemptNumber() != m.Member.AttemptNumber {
 						return nil, errors.New("capture abort source claim changed")
 					}
+				} else if m.Cancelled && entry != nil {
+					// Ordinary cleanup can finish before the first abort request.
+					// Its tombstone retains the scoped result, not an execution grant.
+					claim = entry.programCleanup[m.Member.RunLeaseId]
+					if claim != nil {
+						f := claim.authority.GetFence()
+						if claim.entry != entry || f.GetRunId() != m.Member.RunId || f.GetRunLeaseId() != m.Member.RunLeaseId || f.GetAttemptNumber() != m.Member.AttemptNumber {
+							return nil, errors.New("capture abort cleanup claim changed")
+						}
+					}
 				}
 				if slot != nil && (slot.checkpointID != capture.CheckpointId || slot.checkpointRequestVersion != capture.DesiredVersion || slot.runLeaseID != m.Member.RunLeaseId || slot.runID != m.Member.RunId || slot.attemptNumber != m.Member.AttemptNumber || slot.granted != nil || slot.accepted != nil) {
 					return nil, errors.New("capture abort wait changed")
@@ -163,7 +176,12 @@ func (r *computerOperationRegistry) applyCaptureAbort(ctx context.Context, waits
 					return nil, errors.New("cancelled capture member cannot receive authority")
 				}
 				if member.claim != nil && member.claim.stop == nil {
-					return nil, errors.New("cancelled capture member has no cleanup owner")
+					select {
+					case <-member.claim.done:
+						// Completed cleanup remains authoritative across lost replies.
+					default:
+						return nil, errors.New("cancelled capture member has no cleanup owner")
+					}
 				}
 			} else {
 				if err := validateComputerRunAuthority(entry, m.Authority, clock()); err != nil {
@@ -218,7 +236,7 @@ func (r *computerOperationRegistry) applyCaptureAbort(ctx context.Context, waits
 		if request.Activate {
 			for _, member := range installed.members {
 				if member.cancelled {
-					if member.claim != nil && !member.claim.stopRequested {
+					if member.claim != nil && !member.claim.stopRequested && member.claim.stop != nil {
 						member.claim.stopRequested = true
 						member.claim.stop()
 					}
@@ -243,7 +261,7 @@ func (r *computerOperationRegistry) applyCaptureAbort(ctx context.Context, waits
 			select {
 			case <-member.claim.done:
 				if member.claim.cleanupErr != nil {
-					return member.claim.cleanupErr
+					return errors.Join(errCaptureAbortCleanupFailed, member.claim.cleanupErr)
 				}
 			case <-ctx.Done():
 				return ctx.Err()

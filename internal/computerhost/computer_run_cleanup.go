@@ -15,11 +15,12 @@ import (
 // The Computer owner continues cleanup after a Run's own context/stream closes.
 // A failed CP acknowledgement is retried with the same Guest receipt; inability
 // to prove scoped termination instead requires the physical owner's failure path.
-func (m Server) reconcileComputerRuns(ctx context.Context, machine vm.Machine, mount workerapi.ComputerInstanceAssignment, client workerapi.ComputerServerControlPlaneClient) error {
+func (m Server) reconcileComputerRuns(ctx context.Context, machine vm.Machine, mount workerapi.ComputerInstanceAssignment, checkout *machineCheckout, client workerapi.ComputerServerControlPlaneClient) error {
 	request := workerapi.ComputerRunCleanupRequest{EnvironmentID: mount.EnvironmentID, ComputerInstanceID: mount.ComputerInstanceID, WriterGeneration: mount.WriterGeneration}
 	var failedLease string
 	var failures int
 	var cleanupErr error
+	var cleanupVersion int64
 	for {
 		response, err := client.GetComputerRunCleanup(ctx, request)
 		if err == nil {
@@ -28,10 +29,18 @@ func (m Server) reconcileComputerRuns(ctx context.Context, machine vm.Machine, m
 				failures = 0
 				cleanupErr = nil
 			}
-			if response.Run != nil {
+			version, held := checkout.runCleanupHeld(cleanupVersion, false)
+			cleanupVersion = version
+			if held {
+				failedLease, failures, cleanupErr = "", 0, nil
+			} else if response.Run != nil {
 				// Revalidate after the last failed RPC before fencing the physical owner:
 				// finalization/capture may have reconciled this member in the meantime.
 				if failures >= 3 {
+					if _, held := checkout.runCleanupHeld(cleanupVersion, true); held {
+						failedLease, failures, cleanupErr = "", 0, nil
+						continue
+					}
 					return computerMountFailure{code: "computer_program_cleanup_failed", err: fmt.Errorf("reconcile Program processes: %w", cleanupErr)}
 				}
 				cleanupCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
@@ -40,7 +49,9 @@ func (m Server) reconcileComputerRuns(ctx context.Context, machine vm.Machine, m
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
-				if cleanupErr != nil {
+				if _, held := checkout.runCleanupHeld(cleanupVersion, false); held {
+					failedLease, failures, cleanupErr = "", 0, nil
+				} else if cleanupErr != nil {
 					failedLease = response.Run.RunLeaseID
 					failures++
 				} else {
@@ -86,4 +97,31 @@ func (g guestControl) cleanupRun(ctx context.Context, request *computerv0.Comput
 		return fmt.Errorf("program cleanup not proven: %s", response.Error)
 	}
 	return nil
+}
+
+// Capture holds the same physical owner across pause and abort. Its unreachable
+// guest is not a failed cleanup proof. The final failure decision shares the
+// capture ownership lock so capture cannot start between that decision and the
+// Server's teardown. No lock is held across a guest RPC.
+func (c *machineCheckout) runCleanupHeld(previousVersion int64, failed bool) (int64, bool) {
+	if c == nil {
+		return 0, false
+	}
+	p := c.machines
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	claim := p.claims[c.ref]
+	if claim == nil || claim.gen != c.gen || claim.release != nil || claim.checkpointer != nil {
+		return previousVersion, true
+	}
+	version := claim.entry.target.DesiredVersion
+	// A whole abort may finish during the RPC; its advanced desired version
+	// invalidates failures from the preceding capture even after the hold clears.
+	if previousVersion != 0 && version != previousVersion {
+		return version, true
+	}
+	if failed {
+		claim.teardown = true
+	}
+	return version, false
 }

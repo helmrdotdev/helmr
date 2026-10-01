@@ -217,7 +217,7 @@ func (m Server) serveComputerMount(
 	commands.Add(1)
 	go func() {
 		defer commands.Done()
-		runCleanupResult <- m.reconcileComputerRuns(commandCtx, instance, mount, client)
+		runCleanupResult <- m.reconcileComputerRuns(commandCtx, instance, mount, checkout, client)
 	}()
 	commandResults := make(chan commandResult)
 	activeCommands := make(map[string]struct{})

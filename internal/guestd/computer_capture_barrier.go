@@ -87,7 +87,7 @@ func (r *computerOperationRegistry) sealComputerCapture(request *computerv0.Free
 	}
 	now := clock()
 	for _, claim := range r.programClaims {
-		if claim == nil || claim.entry != entry || claim.authority == nil {
+		if claim == nil || claim.entry != entry || claim.authority == nil || claim.stopRequested {
 			return errors.New("computer capture claim is incomplete")
 		}
 		fence := claim.authority.GetFence()

@@ -342,3 +342,39 @@ func TestCaptureAbortBackoffStartsAtAcknowledgment(t *testing.T) {
 		t.Fatalf("capture after backoff=%v", err)
 	}
 }
+
+func TestCaptureAbortCleanupFailureUsesOrdinarySourceLossRecovery(t *testing.T) {
+	f, ref, _, key := captureAbortFixture(t, false)
+	plan, err := computer.AbortCapture(t.Context(), f.Pool, key, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelled, healthy := plan.Members[0], plan.Members[1]
+	canceler, err := run.NewCanceler(f.Pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = canceler.Cancel(t.Context(), run.CancellationRequest{IdempotencyKey: uuid.NewV7().String(), OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.EnvironmentID, RunID: uuid.MustParse(cancelled.RunID)}); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET active_started_at=clock_timestamp()-interval '1 minute',retry_policy='{"enabled":true,"maxAttempts":2,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}' WHERE id=$1`, healthy.RunID)
+	failed, err := computer.RecordInstanceFailure(t.Context(), f.Pool, computer.Failure{
+		Observation: computer.Observation{Instance: computer.InstanceRef{Host: ref.Host, ID: ref.InstanceID, DesiredVersion: plan.Instance.DesiredVersion}, ExpectedObservedVersion: plan.Instance.ObservedVersion},
+		Kind:        computer.FailureInstance, Reason: "instance_reconcile_failed", Error: []byte(`{"message":"capture abort cancellation cleanup failed"}`), CleanupProof: &computer.CleanupProof{Method: computer.CleanupMachineClosed, CompletedAt: time.Now()},
+	})
+	if err != nil || !failed.ReclaimedAt.Valid {
+		t.Fatalf("physical failure report: %+v %v", failed, err)
+	}
+	if n, err := run.RecoverExecutionLeases(t.Context(), f.Pool, 10); err != nil || n != 1 {
+		t.Fatalf("recover source loss: %d %v", n, err)
+	}
+	var settled bool
+	err = f.Pool.QueryRow(t.Context(), `SELECT c.status='aborted' AND c.abort_acknowledged_at IS NULL AND i.observed_state='failed' AND i.reclaimed_at IS NOT NULL AND cancelled.status='cancelled' AND cancelled.terminal_at IS NOT NULL AND healthy.status='retry_delayed' AND healthy.terminal_at IS NULL AND l.terminal_at IS NOT NULL
+	FROM computer_checkpoints c JOIN computer_instances i ON i.id=c.source_computer_instance_id JOIN runs cancelled ON cancelled.id=$2 JOIN runs healthy ON healthy.id=$3 JOIN run_leases l ON l.id=$4 WHERE c.id=$1`, ref.CheckpointID, cancelled.RunID, healthy.RunID, healthy.LeaseID).Scan(&settled)
+	if err != nil || !settled {
+		t.Fatalf("abort source loss did not preserve cancellation/retry: %v %v", settled, err)
+	}
+	if _, err := computer.CompleteCaptureAbort(t.Context(), f.Pool, ref, plan.Instance.DesiredVersion, []uuid.UUID{uuid.MustParse(cancelled.LeaseID)}); !errors.Is(err, computer.ErrAuthorityChanged) {
+		t.Fatalf("failed source acknowledged abort: %v", err)
+	}
+}
