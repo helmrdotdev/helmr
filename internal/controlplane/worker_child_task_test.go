@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -131,7 +132,7 @@ func TestDecodeChildTaskReceiptRequiresCanonicalAuthority(t *testing.T) {
 	if _, err := decodeChildTaskReceipt([]byte(
 		`{"runId":"` + runID.String() +
 			`","computerId":"00000000-0000-0000-0000-000000000000"}`,
-	)); !errors.Is(err, errTaskStartReceiptInvalid) {
+	)); !errors.Is(err, run.ErrTaskStartReceiptInvalid) {
 		t.Fatalf("nil Computer receipt error = %v", err)
 	}
 }

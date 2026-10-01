@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -165,7 +166,7 @@ func TestTaskStartPostgresCommitsAndReplaysOneAdmission(t *testing.T) {
 func TestTaskStartPostgresConcurrentClaimsDoNotDeadlockDeploymentAuthority(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 2)
 	type outcome struct {
-		result taskStartResult
+		result run.TaskStarted
 		err    error
 	}
 	start := make(chan struct{})

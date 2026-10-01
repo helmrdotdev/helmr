@@ -11,8 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// runOperation selects the vocabulary of a worker Run lease operation's
-// errors.
+// runOperation selects the vocabulary of a Run operation's errors.
 type runOperation int
 
 const (
@@ -27,13 +26,19 @@ const (
 	runStructuredLogAppendOperation
 	runMetadataOperation
 	runWaitResumeOperation
+	runTaskStartOperation
 )
 
 // claims reports whether the operation compares the worker's credential
 // claims. Discovery and log appends fence the lease only in their
-// statements.
+// statements; public operations have no worker claims.
 func (o runOperation) claims() bool {
-	return o != runLeaseDiscoveryOperation && o != runLogAppendOperation && o != runStructuredLogAppendOperation
+	switch o {
+	case runLeaseDiscoveryOperation, runLogAppendOperation, runStructuredLogAppendOperation, runTaskStartOperation:
+		return false
+	default:
+		return true
+	}
 }
 
 // runStale is the conflict each operation reports when its receipt no longer
@@ -79,11 +84,13 @@ var runStalePointLog = map[runOperation]string{
 	runTaskCompletionOperation: "task completion receipt rejected",
 }
 
-// runError maps a run owner error to the API error the worker is told about.
+// runError maps a run owner error to the API error the caller is told about.
 // Stale credential claims ask a worker to re-authenticate before anything
 // else is considered. A start or task completion receipt that is stale
-// carries its failure point. Metadata rejections are 422 with their cause;
-// errors an operation does not describe are internal.
+// carries its failure point. Metadata rejections are 422 with their cause.
+// A public Task start the run owner could not admit for another reason is
+// retryable unavailability; errors any other operation does not describe are
+// internal.
 func runError(err error, operation runOperation) error {
 	if operation.claims() && errors.Is(err, workergroup.ErrStaleClaims) {
 		return unauthorized(errors.New("worker authentication is required"))
@@ -122,12 +129,43 @@ func runError(err error, operation runOperation) error {
 		default:
 			return apiError{kind: errUnprocessable, err: codedError{code: "run_metadata_rejected", message: err.Error()}}
 		}
+	case runTaskStartOperation:
+		return taskStartError(err)
 	default:
 		if errors.Is(err, run.ErrStale) && runStale[operation] != "" {
 			return conflict(errors.New(runStale[operation]))
 		}
 	}
 	return errors.New(runFailed[operation].public)
+}
+
+func taskStartError(err error) error {
+	var expired idempotency.ExpiredError
+	var idempotencyConflict idempotency.ConflictError
+	switch {
+	case errors.As(err, &expired):
+		return gone(expired)
+	case errors.Is(err, run.ErrComputerPreparationExhausted):
+		return conflict(codedError{code: "computer_preparation_exhausted", message: "Computer preparation limit reached"})
+	case errors.As(err, &idempotencyConflict):
+		return conflict(codedError{
+			code:    "idempotency_conflict",
+			message: "idempotency key conflicts with an earlier task start",
+		})
+	case errors.Is(err, run.ErrTaskNotDeployed):
+		return notFound(codedError{code: "task_not_deployed", message: err.Error()})
+	case errors.Is(err, run.ErrTaskComputerUnavailable):
+		return conflict(codedError{code: "computer_unavailable", message: err.Error(), retryable: true})
+	case errors.Is(err, run.ErrTaskSecretUnavailable):
+		return conflict(codedError{code: "secret_unavailable", message: err.Error()})
+	case errors.Is(err, run.ErrTaskPayloadPresenceInvalid), errors.Is(err, run.ErrTaskStartInvalid):
+		return badRequest(codedError{code: "invalid_task_start", message: err.Error()})
+	default:
+		return unavailable(codedError{
+			code:    "task_start_authority_unavailable",
+			message: "task start authority is unavailable", retryable: true,
+		})
+	}
 }
 
 // writeRunError writes a worker Run lease operation's failure. It logs a

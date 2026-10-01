@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -72,6 +73,17 @@ func TestRunErrorMapsWorkerOperations(t *testing.T) {
 		{"wait resume claims first", runWaitResumeOperation, errors.Join(pgx.ErrNoRows, workergroup.ErrStaleClaims), http.StatusUnauthorized, "unauthorized", "worker authentication is required", ""},
 		{"wait resume no rows", runWaitResumeOperation, pgx.ErrNoRows, http.StatusConflict, "conflict", "run wait resume acknowledgement is stale", ""},
 		{"wait resume failure", runWaitResumeOperation, unavailable, http.StatusInternalServerError, "internal_error", "internal server error", ""},
+		{"task start claims are not compared", runTaskStartOperation, workergroup.ErrStaleClaims, http.StatusServiceUnavailable, "task_start_authority_unavailable", "task start authority is unavailable", ""},
+		{"task start expired", runTaskStartOperation, fmt.Errorf("start: %w", idempotency.ExpiredError{}), http.StatusGone, "operation_expired", idempotency.ExpiredError{}.Error(), ""},
+		{"task start preparation exhausted", runTaskStartOperation, run.ErrComputerPreparationExhausted, http.StatusConflict, "computer_preparation_exhausted", "Computer preparation limit reached", ""},
+		{"task start idempotency conflict", runTaskStartOperation, idempotency.ConflictError{}, http.StatusConflict, "idempotency_conflict", "idempotency key conflicts with an earlier task start", ""},
+		{"task start not deployed", runTaskStartOperation, run.ErrTaskNotDeployed, http.StatusNotFound, "task_not_deployed", "task declaration is not deployed", ""},
+		{"task start computer unavailable", runTaskStartOperation, run.ErrTaskComputerUnavailable, http.StatusConflict, "computer_unavailable", "task start computer cannot accept execution", ""},
+		{"task start secret unavailable", runTaskStartOperation, run.ErrTaskSecretUnavailable, http.StatusConflict, "secret_unavailable", "task start computer secret is unavailable", ""},
+		{"task start payload presence", runTaskStartOperation, run.ErrTaskPayloadPresenceInvalid, http.StatusBadRequest, "invalid_task_start", "task payload presence does not match its declaration", ""},
+		{"task start invalid", runTaskStartOperation, fmt.Errorf("%w: retry is invalid", run.ErrTaskStartInvalid), http.StatusBadRequest, "invalid_task_start", "task start request is invalid: retry is invalid", ""},
+		{"task start receipt", runTaskStartOperation, run.ErrTaskStartReceiptInvalid, http.StatusServiceUnavailable, "task_start_authority_unavailable", "task start authority is unavailable", ""},
+		{"task start failure", runTaskStartOperation, unavailable, http.StatusServiceUnavailable, "task_start_authority_unavailable", "task start authority is unavailable", ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()

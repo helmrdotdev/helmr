@@ -31,6 +31,10 @@
 //   - Fresh Run admission and Computer restore take run queue-scope advisory
 //     transaction locks before secrets; restore takes the sorted union of its
 //     members' queue scopes.
+//   - Public Task start, through the run owner, acquires its idempotency
+//     claim, then locks its environment FOR NO KEY UPDATE with the current
+//     deployment's Task, then the Computer's secrets, then the Computer
+//     through the computer owner's admission lock.
 //   - Public Computer creation acquires its idempotency claim before secrets.
 //     Run-sourced creation locks secrets, then the live source Run, then the
 //     idempotency claim, including on replay.

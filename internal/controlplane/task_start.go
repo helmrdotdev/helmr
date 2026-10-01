@@ -3,38 +3,18 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
-	"time"
 	"unicode/utf8"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
-	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/secret"
-	"github.com/helmrdotdev/helmr/internal/tracing"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/helmrdotdev/helmr/internal/run"
 )
 
 const maxTaskPayloadBytes = 16 << 20
-
-var (
-	errTaskStartInvalid           = errors.New("task start request is invalid")
-	errTaskNotDeployed            = errors.New("task declaration is not deployed")
-	errTaskComputerNotFound       = errors.New("task start computer was not found")
-	errTaskComputerUnavailable    = errors.New("task start computer cannot accept execution")
-	errTaskSecretUnavailable      = errors.New("task start computer secret is unavailable")
-	errTaskStartAuthority         = errors.New("task start authority is unavailable")
-	errTaskStartReceiptInvalid    = errors.New("task start idempotency receipt is invalid")
-	errTaskPayloadPresenceInvalid = errors.New("task payload presence does not match its declaration")
-)
 
 type taskStartRequest struct {
 	OrgID          uuid.UUID
@@ -54,247 +34,67 @@ type taskStartRequest struct {
 	Tags           []string
 }
 
-type taskStartResult struct {
-	RunID    uuid.UUID
-	Replayed bool
-}
-
-type taskStartReceipt struct {
-	RunID string `json:"run_id"`
-}
-
 type normalizedTaskStart struct {
 	taskStartRequest
 	fingerprint idempotency.TaskStartFingerprint
 }
 
-func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskStartResult, error) {
+func (s *Server) startTask(ctx context.Context, request taskStartRequest) (run.TaskStarted, error) {
 	normalized, err := normalizeTaskStart(request)
 	if err != nil {
-		return taskStartResult{}, err
+		return run.TaskStarted{}, err
 	}
-	var claimRequest idempotency.Request
+	start := normalized.runTaskStart()
 	if normalized.IdempotencyKey != "" {
-		claimRequest, err = idempotency.NewTaskStartRequest(
+		start.Claim, err = idempotency.NewTaskStartRequest(
 			normalized.EnvironmentID,
 			normalized.TaskDeclaredID,
 			normalized.IdempotencyKey,
 			normalized.fingerprint,
 		)
 		if err != nil {
-			return taskStartResult{}, fmt.Errorf("%w: %v", errTaskStartInvalid, err)
+			return run.TaskStarted{}, fmt.Errorf("%w: %v", run.ErrTaskStartInvalid, err)
 		}
 	}
+	return run.StartTask(ctx, s.tx, start)
+}
 
-	var result taskStartResult
-	err = s.inTx(ctx, func(work *txWork) error {
-		var claim *db.IdempotencyClaim
-		if claimRequest != nil {
-			claims, err := idempotency.TransactionFor(work.tx)
-			if err != nil {
-				return err
-			}
-			acquired, err := claims.Acquire(ctx, claimRequest)
-			if err != nil {
-				return err
-			}
-			if acquired.Claim.Status == "completed" {
-				replayed, err := taskStartResultFromReceipt(acquired.Claim.Receipt)
-				if err != nil {
-					return err
-				}
-				replayed.Replayed = true
-				result = replayed
-				return nil
-			}
-			if acquired.Claim.Status != "pending" {
-				return errTaskStartReceiptInvalid
-			}
-			claim = &acquired.Claim
-		}
-
-		program, err := work.q.LockTaskStartDeploymentAuthority(
-			ctx,
-			db.LockTaskStartDeploymentAuthorityParams{
-				TaskDeclaredID: normalized.TaskDeclaredID,
-				OrgID:          pgvalue.UUID(normalized.OrgID),
-				ProjectID:      pgvalue.UUID(normalized.ProjectID),
-				EnvironmentID:  pgvalue.UUID(normalized.EnvironmentID),
-			},
-		)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errTaskNotDeployed
-		}
-		if err != nil {
-			return fmt.Errorf("lock task start deployment authority: %w", err)
-		}
-		admission, err := definition.ResolveTaskRunAdmission(
-			program.TaskManifestVersion,
-			normalized.TaskDeclaredID,
-			program.TaskManifest,
-			program.TaskManifestDigest,
-			program.QueueConfig,
-			normalized.QueueName,
-			normalized.QueuedTTLMS,
-			normalized.RetryPolicy,
-		)
-		if err != nil {
-			return fmt.Errorf("%w: %v", errTaskStartAuthority, err)
-		}
-		if admission.HasPayload != normalized.PayloadPresent {
-			return errTaskPayloadPresenceInvalid
-		}
-
-		computerID := pgvalue.UUID(normalized.ComputerID)
-		bindings, err := work.q.LockComputerSecretsForAdmission(ctx, computerID)
-		if err != nil {
-			return fmt.Errorf("lock task start computer secrets: %w", err)
-		}
-		for _, binding := range bindings {
-			if binding.SecretStatus != "active" || !binding.CurrentVersionID.Valid {
-				return errTaskSecretUnavailable
-			}
-		}
-		admitted, err := work.q.LockComputerAdmissionAuthority(
-			ctx,
-			db.LockComputerAdmissionAuthorityParams{
-				EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
-				ID:            computerID,
-			},
-		)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errTaskComputerUnavailable
-		}
-		if err != nil {
-			return fmt.Errorf("lock task start computer authority: %w", err)
-		}
-		if admitted.OrgID != pgvalue.UUID(normalized.OrgID) ||
-			admitted.ProjectID != pgvalue.UUID(normalized.ProjectID) ||
-			admitted.Status != db.ComputerStatusActive ||
-			(admitted.DesiredState != db.ComputerDesiredStateActive &&
-				admitted.DesiredState != db.ComputerDesiredStateStopped) ||
-			admitted.DirtyState == db.ComputerDirtyStateCaptureFailed ||
-			admitted.DirtyState == db.ComputerDirtyStateDirtyStateLost ||
-			!admitted.HeadDiskVersionID.Valid {
-			return errTaskComputerUnavailable
-		}
-		if len(admitted.PreparationFailure) > 0 {
-			return conflict(codedError{code: "computer_preparation_exhausted", message: "Computer preparation limit reached"})
-		}
-		canAdmit, err := computer.CanAdmitProgram(ctx, work.q, admitted.EnvironmentID, admitted.ID,
-			admitted.ComputerSpecID, program.DeploymentID)
-		if err != nil {
-			return err
-		}
-		if !canAdmit {
-			return errTaskComputerUnavailable
-		}
-		runID := uuid.NewV7()
-		rootSpanID, err := tracing.NewSpanID()
-		if err != nil {
-			return err
-		}
-		claimID := pgtype.UUID{}
-		if claim != nil {
-			claimID = claim.ID
-		}
-		admissionTime, err := work.q.GetRunAdmissionTime(ctx)
-		if err != nil {
-			return fmt.Errorf("get task run admission time: %w", err)
-		}
-		now := admissionTime.Time.UTC()
-		queuedExpiresAt := pgtype.Timestamptz{}
-		if admission.QueuedTTLMS != nil {
-			queuedExpiresAt = pgvalue.Timestamptz(now.Add(
-				time.Duration(*admission.QueuedTTLMS) * time.Millisecond,
-			))
-		}
-		run, err := work.q.CreateRootRunFromCurrentDeployment(
-			ctx,
-			db.CreateRootRunFromCurrentDeploymentParams{
-				EntrypointDeclaredID: normalized.TaskDeclaredID,
-				ComputerID:           admitted.ID,
-				OrgID:                pgvalue.UUID(normalized.OrgID), ProjectID: pgvalue.UUID(normalized.ProjectID),
-				BaseComputerDiskVersionID: admitted.HeadDiskVersionID,
-				EnvironmentID:             pgvalue.UUID(normalized.EnvironmentID), ClaimID: claimID,
-				ID: pgvalue.UUID(runID), CauseKind: "api",
-				Payload: normalized.Payload, Metadata: normalized.Metadata, Tags: normalized.Tags,
-				QueueName: admission.QueueName, ConcurrencyKey: pgvalue.TextPtr(normalized.ConcurrencyKey),
-				QueueConcurrencyLimit: int8Ptr(admission.QueueConcurrencyLimit),
-				Priority:              normalized.Priority,
-				QueueOriginAt:         pgvalue.Timestamptz(now),
-				QueueScoreAt:          pgvalue.Timestamptz(now.Add(-time.Duration(normalized.Priority) * time.Second)),
-				QueuedExpiresAt:       queuedExpiresAt,
-				MaxActiveDurationMs:   admission.MaxActiveDurationMS,
-				RetryPolicy:           admission.RetryPolicy, RootSpanID: rootSpanID,
-			},
-		)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errTaskStartAuthority
-		}
-		if err != nil {
-			return fmt.Errorf("create task run: %w", err)
-		}
-		if _, err := work.q.TouchComputerForAdmission(ctx, db.TouchComputerForAdmissionParams{
-			EnvironmentID: run.EnvironmentID, ID: admitted.ID,
-			ExpectedRevision: admitted.Revision,
-		}); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return errTaskComputerUnavailable
-			}
-			return fmt.Errorf("record task computer admission: %w", err)
-		}
-		if err := secret.CreateAttemptResolutions(
-			ctx, work.q, admitted.ID, run.ID, 1, computerSecretResolutions(bindings),
-		); err != nil {
-			return fmt.Errorf("record task run secret resolutions: %w", err)
-		}
-		result = taskStartResult{RunID: runID}
-		if claim != nil {
-			receipt, err := json.Marshal(taskStartReceipt{
-				RunID: runID.String(),
-			})
-			if err != nil {
-				return err
-			}
-			claims, err := idempotency.TransactionFor(work.tx)
-			if err != nil {
-				return err
-			}
-			if _, err := claims.Complete(ctx, *claim, receipt); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	return result, err
+// runTaskStart is the normalized start the run owner admits.
+func (n normalizedTaskStart) runTaskStart() run.TaskStart {
+	return run.TaskStart{
+		OrgID: n.OrgID, ProjectID: n.ProjectID, EnvironmentID: n.EnvironmentID,
+		TaskDeclaredID: n.TaskDeclaredID, PayloadPresent: n.PayloadPresent, Payload: n.Payload,
+		ComputerID: n.ComputerID, QueueName: n.QueueName, ConcurrencyKey: n.ConcurrencyKey,
+		Priority: n.Priority, QueuedTTLMS: n.QueuedTTLMS, RetryPolicy: n.RetryPolicy,
+		Metadata: n.Metadata, Tags: n.Tags,
+	}
 }
 
 func normalizeTaskStart(request taskStartRequest) (normalizedTaskStart, error) {
 	if request.OrgID == uuid.Nil() || request.ProjectID == uuid.Nil() ||
 		request.EnvironmentID == uuid.Nil() {
-		return normalizedTaskStart{}, errTaskStartInvalid
+		return normalizedTaskStart{}, run.ErrTaskStartInvalid
 	}
 	if err := api.ValidateDefinitionID(request.TaskDeclaredID); err != nil {
-		return normalizedTaskStart{}, fmt.Errorf("%w: %v", errTaskStartInvalid, err)
+		return normalizedTaskStart{}, fmt.Errorf("%w: %v", run.ErrTaskStartInvalid, err)
 	}
 	if request.ComputerID == uuid.Nil() {
-		return normalizedTaskStart{}, errTaskStartInvalid
+		return normalizedTaskStart{}, run.ErrTaskStartInvalid
 	}
 	computerRaw, err := json.Marshal(api.ComputerIDTarget{ID: request.ComputerID.String()})
 	if err != nil {
-		return normalizedTaskStart{}, fmt.Errorf("%w: encode computer", errTaskStartInvalid)
+		return normalizedTaskStart{}, fmt.Errorf("%w: encode computer", run.ErrTaskStartInvalid)
 	}
 	computer, err := canonicalJSON(computerRaw)
 	if err != nil {
-		return normalizedTaskStart{}, fmt.Errorf("%w: canonicalize computer", errTaskStartInvalid)
+		return normalizedTaskStart{}, fmt.Errorf("%w: canonicalize computer", run.ErrTaskStartInvalid)
 	}
 	if request.PayloadPresent {
 		payload, err := canonicalJSON(request.Payload)
 		if err != nil || len(payload) > maxTaskPayloadBytes {
 			return normalizedTaskStart{}, fmt.Errorf(
 				"%w: payload must be unambiguous JSON no larger than %d bytes",
-				errTaskStartInvalid,
+				run.ErrTaskStartInvalid,
 				maxTaskPayloadBytes,
 			)
 		}
@@ -304,36 +104,36 @@ func normalizeTaskStart(request taskStartRequest) (normalizedTaskStart, error) {
 	}
 	request.Metadata, err = normalizeMetadata(request.Metadata, maxRunMetadataBytes, "run")
 	if err != nil {
-		return normalizedTaskStart{}, fmt.Errorf("%w: %v", errTaskStartInvalid, err)
+		return normalizedTaskStart{}, fmt.Errorf("%w: %v", run.ErrTaskStartInvalid, err)
 	}
 	request.Tags, err = normalizeTags(request.Tags, maxTags, "run")
 	if err != nil {
-		return normalizedTaskStart{}, fmt.Errorf("%w: %v", errTaskStartInvalid, err)
+		return normalizedTaskStart{}, fmt.Errorf("%w: %v", run.ErrTaskStartInvalid, err)
 	}
 	if request.QueueName != "" {
 		if err := definition.ValidateQueueName(request.QueueName); err != nil {
-			return normalizedTaskStart{}, fmt.Errorf("%w: %v", errTaskStartInvalid, err)
+			return normalizedTaskStart{}, fmt.Errorf("%w: %v", run.ErrTaskStartInvalid, err)
 		}
 	}
 	if request.ConcurrencyKey != nil {
 		value := *request.ConcurrencyKey
 		if len(value) == 0 || len(value) > 512 || !utf8.ValidString(value) ||
 			strings.IndexByte(value, 0) >= 0 || hasInvalidConcurrencyKeyEdge(value) {
-			return normalizedTaskStart{}, fmt.Errorf("%w: concurrency key is invalid", errTaskStartInvalid)
+			return normalizedTaskStart{}, fmt.Errorf("%w: concurrency key is invalid", run.ErrTaskStartInvalid)
 		}
 		request.ConcurrencyKey = &value
 	}
 	if request.QueuedTTLMS != nil &&
 		(*request.QueuedTTLMS < 1 || *request.QueuedTTLMS > maxQueuedRunTTLMS) {
-		return normalizedTaskStart{}, fmt.Errorf("%w: queued TTL is invalid", errTaskStartInvalid)
+		return normalizedTaskStart{}, fmt.Errorf("%w: queued TTL is invalid", run.ErrTaskStartInvalid)
 	}
 	if len(request.RetryPolicy) > 0 {
 		retryPolicy, err := canonicalJSON(request.RetryPolicy)
 		if err != nil {
-			return normalizedTaskStart{}, fmt.Errorf("%w: retry is invalid", errTaskStartInvalid)
+			return normalizedTaskStart{}, fmt.Errorf("%w: retry is invalid", run.ErrTaskStartInvalid)
 		}
 		if _, err := definition.ParseRetry(retryPolicy); err != nil {
-			return normalizedTaskStart{}, fmt.Errorf("%w: retry is invalid: %v", errTaskStartInvalid, err)
+			return normalizedTaskStart{}, fmt.Errorf("%w: retry is invalid: %v", run.ErrTaskStartInvalid, err)
 		}
 		request.RetryPolicy = retryPolicy
 	}
@@ -347,16 +147,4 @@ func normalizeTaskStart(request taskStartRequest) (normalizedTaskStart, error) {
 			Metadata: request.Metadata, Tags: request.Tags,
 		},
 	}, nil
-}
-
-func taskStartResultFromReceipt(raw []byte) (taskStartResult, error) {
-	var receipt taskStartReceipt
-	if err := json.Unmarshal(raw, &receipt); err != nil {
-		return taskStartResult{}, errTaskStartReceiptInvalid
-	}
-	runID, err := ids.Parse(receipt.RunID)
-	if err != nil {
-		return taskStartResult{}, errTaskStartReceiptInvalid
-	}
-	return taskStartResult{RunID: runID}, nil
 }

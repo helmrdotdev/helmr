@@ -65,7 +65,7 @@ type childTaskInvokeInput struct {
 }
 
 type childTaskInvokeResult struct {
-	taskStartResult
+	run.TaskStarted
 	openedWait *workerapi.CreateRunWaitResponse
 }
 
@@ -268,7 +268,7 @@ func (s *Server) invokeChildTask(
 				claim = &acquired.Claim
 				edgeClaim = &acquired.Claim
 			} else {
-				return errTaskStartReceiptInvalid
+				return run.ErrTaskStartReceiptInvalid
 			}
 		}
 
@@ -288,7 +288,7 @@ func (s *Server) invokeChildTask(
 		}
 		authority, err := run.LockLiveExecutionForComputer(ctx, work.tx, workerExecutionFence(input.Worker, input.Parsed, input.Request.Lease), pgvalue.UUID(targetComputerID))
 		if errors.Is(err, run.ErrExecutionTargetNotFound) {
-			return errTaskComputerNotFound
+			return run.ErrTaskComputerNotFound
 		}
 		if err != nil {
 			return staleChildTaskInvoke(err)
@@ -325,12 +325,12 @@ func (s *Server) invokeChildTask(
 			return childTaskInvokeStaleAt(childTaskInvokePointSourceScope, errChildTaskInvokeStale)
 		}
 		if replay != nil {
-			result.taskStartResult = taskStartResult{
+			result.TaskStarted = run.TaskStarted{
 				RunID: uuid.MustParse(replay.RunID), Replayed: true,
 			}
 			if input.Request.Method == "call" {
 				if edgeClaim == nil {
-					return errTaskStartReceiptInvalid
+					return run.ErrTaskStartReceiptInvalid
 				}
 				opened, err := registerChildCall(
 					ctx, work.q, input.callRegistration(), authority, *edgeClaim, invocationFingerprint,
@@ -353,14 +353,14 @@ func (s *Server) invokeChildTask(
 		}
 		for _, binding := range bindings {
 			if binding.SecretStatus != "active" || !binding.CurrentVersionID.Valid {
-				return errTaskSecretUnavailable
+				return run.ErrTaskSecretUnavailable
 			}
 		}
 		admitted, err := work.q.LockComputerAdmissionAuthority(ctx, db.LockComputerAdmissionAuthorityParams{
 			EnvironmentID: authority.Run().EnvironmentID, ID: pgvalue.UUID(targetComputerID),
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
-			return errTaskComputerUnavailable
+			return run.ErrTaskComputerUnavailable
 		}
 		if err != nil {
 			return fmt.Errorf("lock child task computer authority: %w", err)
@@ -370,14 +370,14 @@ func (s *Server) invokeChildTask(
 			(admitted.DesiredState != db.ComputerDesiredStateActive &&
 				admitted.DesiredState != db.ComputerDesiredStateStopped) ||
 			admitted.DirtyState == db.ComputerDirtyStateCaptureFailed || admitted.DirtyState == db.ComputerDirtyStateDirtyStateLost || !admitted.HeadDiskVersionID.Valid || len(admitted.PreparationFailure) > 0 || len(admitted.RecoveryFailure) > 0 {
-			return errTaskComputerUnavailable
+			return run.ErrTaskComputerUnavailable
 		}
 		compatible, err := computer.CanAdmitProgram(ctx, work.q, admitted.EnvironmentID, admitted.ID, admitted.ComputerSpecID, authority.Run().DeploymentID)
 		if err != nil {
 			return err
 		}
 		if !compatible {
-			return errTaskComputerUnavailable
+			return run.ErrTaskComputerUnavailable
 		}
 		nowValue, err := work.q.GetRunAdmissionTime(ctx)
 		if err != nil || !nowValue.Valid {
@@ -405,7 +405,7 @@ func (s *Server) invokeChildTask(
 		queueScoreAt := pgvalue.Timestamptz(
 			queueOriginAt.Time.Add(-time.Duration(input.Normalized.Priority) * time.Second),
 		)
-		run, err := work.q.CreateChildRunFromParentDeployment(ctx, db.CreateChildRunFromParentDeploymentParams{
+		child, err := work.q.CreateChildRunFromParentDeployment(ctx, db.CreateChildRunFromParentDeploymentParams{
 			EntrypointDeclaredID: input.Normalized.TaskDeclaredID,
 			ComputerID:           pgvalue.UUID(targetComputerID), BaseComputerDiskVersionID: admitted.HeadDiskVersionID,
 			ClaimID: claimID, EnvironmentID: authority.Run().EnvironmentID, ParentRunID: authority.Run().ID,
@@ -426,11 +426,11 @@ func (s *Server) invokeChildTask(
 			return fmt.Errorf("create child task run: %w", err)
 		}
 		if err := secret.CreateAttemptResolutions(
-			ctx, work.q, admitted.ID, run.ID, 1, computerSecretResolutions(bindings),
+			ctx, work.q, admitted.ID, child.ID, 1, computerSecretResolutions(bindings),
 		); err != nil {
 			return fmt.Errorf("record child task secret resolutions: %w", err)
 		}
-		result.taskStartResult = taskStartResult{RunID: runID}
+		result.TaskStarted = run.TaskStarted{RunID: runID}
 		if input.Request.Method == "call" {
 			if edgeClaim == nil {
 				return errors.New("child task call claim is unavailable")
@@ -479,7 +479,7 @@ func loadChildTaskAdmission(
 		DeclaredID:    request.TaskDeclaredID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return definition.TaskRunAdmission{}, errTaskNotDeployed
+		return definition.TaskRunAdmission{}, run.ErrTaskNotDeployed
 	}
 	if err != nil {
 		return definition.TaskRunAdmission{}, fmt.Errorf(
@@ -513,12 +513,12 @@ func loadChildTaskAdmission(
 	if err != nil {
 		return definition.TaskRunAdmission{}, fmt.Errorf(
 			"%w: %v",
-			errTaskStartAuthority,
+			run.ErrTaskStartAuthority,
 			err,
 		)
 	}
 	if admission.HasPayload != request.PayloadPresent {
-		return definition.TaskRunAdmission{}, errTaskPayloadPresenceInvalid
+		return definition.TaskRunAdmission{}, run.ErrTaskPayloadPresenceInvalid
 	}
 	return admission, nil
 }
@@ -553,13 +553,13 @@ func childTaskInvokeScopeMatches(
 func decodeChildTaskReceipt(raw []byte) (childTaskReceipt, error) {
 	var receipt childTaskReceipt
 	if err := decodeClosedJSON(raw, &receipt); err != nil {
-		return childTaskReceipt{}, errTaskStartReceiptInvalid
+		return childTaskReceipt{}, run.ErrTaskStartReceiptInvalid
 	}
 	if _, err := ids.Parse(receipt.RunID); err != nil {
-		return childTaskReceipt{}, errTaskStartReceiptInvalid
+		return childTaskReceipt{}, run.ErrTaskStartReceiptInvalid
 	}
 	if _, err := ids.Parse(receipt.ComputerID); err != nil {
-		return childTaskReceipt{}, errTaskStartReceiptInvalid
+		return childTaskReceipt{}, run.ErrTaskStartReceiptInvalid
 	}
 
 	return receipt, nil
@@ -590,15 +590,15 @@ func (s *Server) writeChildTaskInvokeError(
 		failure = workerapi.RuntimeOperationFailure{
 			Code: "idempotency_conflict", Message: "idempotency key conflicts with an earlier child Task invocation",
 		}
-	case errors.Is(err, errTaskNotDeployed):
+	case errors.Is(err, run.ErrTaskNotDeployed):
 		failure = workerapi.RuntimeOperationFailure{Code: "task_not_deployed", Message: err.Error()}
-	case errors.Is(err, errTaskComputerNotFound):
+	case errors.Is(err, run.ErrTaskComputerNotFound):
 		failure = workerapi.RuntimeOperationFailure{Code: "computer_not_found", Message: err.Error()}
-	case errors.Is(err, errTaskComputerUnavailable):
+	case errors.Is(err, run.ErrTaskComputerUnavailable):
 		failure = workerapi.RuntimeOperationFailure{Code: "computer_unavailable", Message: err.Error(), Retryable: true}
-	case errors.Is(err, errTaskSecretUnavailable), errors.Is(err, computer.ErrSecretUnavailable):
+	case errors.Is(err, run.ErrTaskSecretUnavailable), errors.Is(err, computer.ErrSecretUnavailable):
 		failure = workerapi.RuntimeOperationFailure{Code: "secret_unavailable", Message: err.Error()}
-	case errors.Is(err, errTaskPayloadPresenceInvalid), errors.Is(err, errTaskStartInvalid):
+	case errors.Is(err, run.ErrTaskPayloadPresenceInvalid), errors.Is(err, run.ErrTaskStartInvalid):
 		failure = workerapi.RuntimeOperationFailure{Code: "invalid_child_task_invoke", Message: err.Error()}
 	case errors.Is(err, errChildTaskInvokeStale):
 		err = childTaskInvokeStaleAt(childTaskInvokePointTransaction, err)
