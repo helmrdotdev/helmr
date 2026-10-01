@@ -147,7 +147,7 @@ and retry from current state when the claim fence is stale.
 | `worker_group_id` | Limit results to one group. |
 | repeated `resource_id` | Match provider resource IDs. Each value is at most 512 bytes. |
 | repeated `status` | Match `registering`, `active`, `draining`, `termination_ready`, or `lost`. |
-| `has_unreclaimed_instance=true` | Return worker instances that still own unreclaimed Computer Instance state. |
+| `has_unreclaimed_instance=true` | Return worker hosts that still own unreclaimed Computer Instance state. |
 | `limit` | Result limit; default 200, maximum 500. |
 
 The response contains `worker_hosts`. Each item includes `id`,
