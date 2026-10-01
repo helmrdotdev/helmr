@@ -1,10 +1,12 @@
-import { task, tokens, logger, sandbox } from "@helmr/sdk"
+import { task, tokens, logger, sandbox, image } from "@helmr/sdk"
 import { randomUUID } from "node:crypto"
 import { writeFileSync } from "node:fs"
 import { readFile, writeFile, access } from "node:fs/promises"
 import { z } from "zod"
 
 export const captureAbortSandbox = sandbox({ id: "capture-abort-verification" })
+  .image(image("capture-abort-verification").from("node:24-bookworm-slim").workdir("/sandbox"))
+  .resources({ cpu: 1, memory: "1GiB" })
 
 export const captureAbortTask = task({
   id: "verification-capture-abort",
