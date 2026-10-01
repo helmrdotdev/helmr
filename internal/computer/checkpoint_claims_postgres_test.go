@@ -11,7 +11,7 @@ import (
 )
 
 // The checkpoint lifecycle carries no claim versions. Its worker authority is
-// the locked host epoch and status: a claim bump or a drain does not stop a
+// the locked worker epoch and status: a claim bump or a drain does not stop a
 // capture from beginning, registering, completing or failing, and a new epoch
 // or a lost host does.
 func TestCheckpointLifecycleFencesEpochAndStatusNotClaims(t *testing.T) {

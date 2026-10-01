@@ -14,7 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-var ErrMountNotFound = errors.New("computer mount session not found")
+var ErrMountNotFound = errors.New("computer mount not found")
 
 // MountChannel is one Run's view of a mounted Computer. Channel carries
 // only the Run's borrowed stream; closing it never stops the machine.
@@ -82,7 +82,7 @@ func (s *Mounts) OpenChannel(ctx context.Context, computerInstanceID string) (Mo
 		return MountChannel{}, fmt.Errorf("%w: %s", ErrMountNotFound, id)
 	}
 	if entry.channelCredential == "" {
-		return MountChannel{}, fmt.Errorf("computer mount session %s missing channel credential", id)
+		return MountChannel{}, fmt.Errorf("computer mount %s missing channel credential", id)
 	}
 	stream, err := entry.instance.OpenStream(ctx)
 	if err != nil {
@@ -129,7 +129,7 @@ func (s *Mounts) RenewComputerAuthority(ctx context.Context, request *computerv0
 		return nil, fmt.Errorf("%w: %s", ErrMountNotFound, id)
 	}
 	if entry.channelCredential == "" || request.GetPrevious().GetChannelCredential() != entry.channelCredential {
-		return nil, errors.New("computer authority channel credential does not match the mount session")
+		return nil, errors.New("computer authority channel credential does not match the mount")
 	}
 	if err := validateComputerMountPhysicalAuthority(fence, entry.mount); err != nil {
 		return nil, err
@@ -145,13 +145,13 @@ func validateComputerMountPhysicalAuthority(
 		fence.GetComputerId() != mount.ComputerID ||
 		fence.GetWriterGeneration() <= 0 ||
 		fence.GetWriterGeneration() != mount.WriterGeneration {
-		return errors.New("computer authority fence does not match the mount session")
+		return errors.New("computer authority fence does not match the mount")
 	}
 	return nil
 }
 
 type instanceMount struct {
-	saves                        runtimeComputerSaves
+	saves                        instanceComputerSaves
 	machine                      vm.Machine
 	mu                           sync.RWMutex
 	closeAttempt                 *instanceMountClose
@@ -327,7 +327,7 @@ func (s *borrowedChannel) Stream() vm.Stream {
 }
 
 func (s *borrowedChannel) OpenStream(context.Context) (vm.Stream, error) {
-	return nil, errors.New("borrowed run session does not support opening nested streams")
+	return nil, errors.New("borrowed run channel does not support opening nested streams")
 }
 
 func (s *borrowedChannel) Wait(ctx context.Context) error {

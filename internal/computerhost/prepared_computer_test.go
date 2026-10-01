@@ -25,7 +25,7 @@ func TestLostComputerOwnerRetainsAttachmentEvidenceAndCapacity(t *testing.T) {
 	if err = os.WriteFile(evidence, []byte("retained helper claim"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err = machines.releaseRuntimeCapacity(id, 1); err == nil {
+	if err = machines.releaseInstanceCapacity(id, 1); err == nil {
 		t.Fatal("missing map treated as helper exclusion")
 	}
 	if _, err = os.Stat(evidence); err != nil {

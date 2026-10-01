@@ -69,7 +69,7 @@ func (p checkpointPublication) objects(ctx context.Context) (objectScope, error)
 		return objectScope{}, err
 	}
 	if !instance.WriteKeyID.Valid || instance.WriteKeyID != write.ID {
-		return objectScope{}, objectConflict("runtime write key is not pinned")
+		return objectScope{}, objectConflict("instance write key is not pinned")
 	}
 	allowed[pgvalue.UUIDString(write.ID)] = true
 	return objectScope{

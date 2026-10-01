@@ -15,23 +15,23 @@ import (
 )
 
 // retainedTestVersion uploads real authenticated root bytes for a
-// Runtime's retained writer key and records them as a certified root of its
+// Instance's retained writer key and records them as a certified root of its
 // Computer, returning the root and its inspection. It supplies certified
 // database state for the checkpoint fixtures, which pin it through the
 // owner's object reuse and exercise their own live commit fences; object
 // recording and its authority are tested by the computer owner.
-func retainedTestVersion(t *testing.T, pool *pgxpool.Pool, objects cas.Store, runtimeID string) (disk.VersionRoot, blockformat.ObjectInspection) {
+func retainedTestVersion(t *testing.T, pool *pgxpool.Pool, objects cas.Store, instanceID string) (disk.VersionRoot, blockformat.ObjectInspection) {
 	t.Helper()
 	ctx := t.Context()
 	var orgID, projectID, environmentID, computerID, pinned pgtype.UUID
 	var logicalBytes int64
-	if err := pool.QueryRow(ctx, `SELECT org_id,project_id,environment_id,computer_id,reserved_guest_ephemeral_disk_bytes,write_key_id FROM computer_instances WHERE id=$1`, runtimeID).Scan(&orgID, &projectID, &environmentID, &computerID, &logicalBytes, &pinned); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT org_id,project_id,environment_id,computer_id,reserved_guest_ephemeral_disk_bytes,write_key_id FROM computer_instances WHERE id=$1`, instanceID).Scan(&orgID, &projectID, &environmentID, &computerID, &logicalBytes, &pinned); err != nil {
 		t.Fatal(err)
 	}
 	if !pinned.Valid {
 		pinned = pgvalue.NewUUIDv7()
 		dbtest.MustExec(t, ctx, pool, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'fixture',decode('01','hex'))`, pinned, environmentID, computerID)
-		dbtest.MustExec(t, ctx, pool, `UPDATE computer_instances SET write_key_id=$2 WHERE id=$1`, runtimeID, pinned)
+		dbtest.MustExec(t, ctx, pool, `UPDATE computer_instances SET write_key_id=$2 WHERE id=$1`, instanceID, pinned)
 	}
 	key := make([]byte, 32)
 	key[0] = 42

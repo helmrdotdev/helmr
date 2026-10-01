@@ -22,15 +22,15 @@ func testProgramMount(t *testing.T) (*computerMountEntry, *computerOperationRegi
 	entry.computerRoot = computerRoot
 	authority := testComputerRunAuthority(time.Now().Add(time.Minute))
 	registry := newComputerOperationRegistry()
-	registry.register("runtime-1", entry)
-	t.Cleanup(func() { registry.retire("runtime-1", entry) })
+	registry.register("instance-1", entry)
+	t.Cleanup(func() { registry.retire("instance-1", entry) })
 	return entry, registry, authority
 }
 
 func TestComputerProgramAdmissionRejectsRetiredMount(t *testing.T) {
 	entry, registry, authority := testProgramMount(t)
 	replacement := testComputerAuthorityEntry()
-	registry.register("runtime-1", replacement)
+	registry.register("instance-1", replacement)
 	if _, err := registry.admitProgram(entry, authority, time.Now); err == nil {
 		t.Fatal("Program was admitted on a retired Mount")
 	}

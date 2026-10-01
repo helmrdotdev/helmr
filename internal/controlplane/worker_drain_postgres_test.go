@@ -48,6 +48,6 @@ func TestWorkerDrainReauthenticatesDuringActiveWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	if leaseStatus != "starting" || desiredState != "ready" {
-		t.Fatalf("drain changed active execution: lease=%s runtime=%s", leaseStatus, desiredState)
+		t.Fatalf("drain changed active execution: lease=%s instance=%s", leaseStatus, desiredState)
 	}
 }

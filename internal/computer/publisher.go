@@ -59,20 +59,20 @@ func publicationOf(computerID, versionID pgtype.UUID) Publication {
 // initial version may use.
 func (p initialPreparation) objects(ctx context.Context) (objectScope, error) {
 	q := db.New(p.tx)
-	runtimeID := p.instance.ID
-	key, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{ComputerInstanceID: runtimeID, EnvironmentID: p.environmentID, ComputerID: p.computerID})
+	instanceID := p.instance.ID
+	key, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{ComputerInstanceID: instanceID, EnvironmentID: p.environmentID, ComputerID: p.computerID})
 	if err != nil {
 		return objectScope{}, err
 	}
 	var pinned bool
-	if err = p.tx.QueryRow(ctx, `SELECT write_key_id=$2 FROM computer_instances WHERE id=$1`, runtimeID, key.ID).Scan(&pinned); err != nil {
+	if err = p.tx.QueryRow(ctx, `SELECT write_key_id=$2 FROM computer_instances WHERE id=$1`, instanceID, key.ID).Scan(&pinned); err != nil {
 		return objectScope{}, err
 	}
 	if !pinned {
 		return objectScope{}, objectConflict("initial writer key is not pinned")
 	}
 	return objectScope{
-		objectRetention: objectRetention{environmentID: p.environmentID, computerID: p.computerID, instanceID: runtimeID, desiredVersion: p.instance.DesiredVersion, key: initialPublicationKey(pgvalue.MustUUIDValue(runtimeID))},
+		objectRetention: objectRetention{environmentID: p.environmentID, computerID: p.computerID, instanceID: instanceID, desiredVersion: p.instance.DesiredVersion, key: initialPublicationKey(pgvalue.MustUUIDValue(instanceID))},
 		orgID:           p.orgID, projectID: p.projectID, logicalBytes: p.logicalBytes, allowedKeys: map[string]bool{pgvalue.UUIDString(key.ID): true},
 	}, nil
 }
@@ -102,8 +102,8 @@ func (p Publisher) CertifyInitialObject(ctx context.Context, principal workergro
 	// Restrict storage lookup to an exact registration belonging to this
 	// physical Instance's Computer. This is not a commit grant: the recording
 	// transaction rechecks live preparation authority and exact facts.
-	runtimeID := pgvalue.UUID(ref.InstanceID)
-	registered, err := db.New(p.db).HasRegisteredInitialComputerObject(ctx, db.HasRegisteredInitialComputerObjectParams{RuntimeID: runtimeID, PublicationKey: initialPublicationKey(ref.InstanceID), WorkerID: pgvalue.UUID(principal.HostID), WorkerGroupID: pgvalue.UUID(principal.GroupID), WorkerEpoch: principal.Epoch, DesiredVersion: ref.DesiredVersion, Digest: object.digest, Inspection: object.encoded})
+	instanceID := pgvalue.UUID(ref.InstanceID)
+	registered, err := db.New(p.db).HasRegisteredInitialComputerObject(ctx, db.HasRegisteredInitialComputerObjectParams{RuntimeID: instanceID, PublicationKey: initialPublicationKey(ref.InstanceID), WorkerID: pgvalue.UUID(principal.HostID), WorkerGroupID: pgvalue.UUID(principal.GroupID), WorkerEpoch: principal.Epoch, DesiredVersion: ref.DesiredVersion, Digest: object.digest, Inspection: object.encoded})
 	if err != nil {
 		return fmt.Errorf("read initial computer object registration: %w", err)
 	}
@@ -167,9 +167,9 @@ func (p Publisher) PublishInitialVersion(ctx context.Context, principal workergr
 		return Publication{}, fmt.Errorf("encode initial computer version: %w", err)
 	}
 	fingerprint := sha256.Sum256(canonical)
-	runtimeID := pgvalue.UUID(ref.InstanceID)
+	instanceID := pgvalue.UUID(ref.InstanceID)
 	replay := func() (Publication, error) {
-		v, err := db.New(p.db).GetWorkerInitialComputerDiskVersion(ctx, db.GetWorkerInitialComputerDiskVersionParams{ComputerInstanceID: runtimeID, DesiredVersion: pgtype.Int8{Int64: ref.DesiredVersion, Valid: true}, WorkerHostID: pgvalue.UUID(principal.HostID), WorkerGroupID: pgvalue.UUID(principal.GroupID), WorkerEpoch: principal.Epoch})
+		v, err := db.New(p.db).GetWorkerInitialComputerDiskVersion(ctx, db.GetWorkerInitialComputerDiskVersionParams{ComputerInstanceID: instanceID, DesiredVersion: pgtype.Int8{Int64: ref.DesiredVersion, Valid: true}, WorkerHostID: pgvalue.UUID(principal.HostID), WorkerGroupID: pgvalue.UUID(principal.GroupID), WorkerEpoch: principal.Epoch})
 		if err != nil {
 			return Publication{}, fmt.Errorf("read initial computer publication: %w", err)
 		}
@@ -217,7 +217,7 @@ func (p Publisher) PublishInitialVersion(ctx context.Context, principal workergr
 // reclaimed between publication and preparation.
 func (p initialPreparation) publishVersion(ctx context.Context, input InitialVersion, locator blockformat.Locator, fingerprint []byte) (Publication, error) {
 	q := db.New(p.tx)
-	runtimeID := p.instance.ID
+	instanceID := p.instance.ID
 	object, err := q.LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: p.environmentID, ComputerID: p.computerID, Digest: input.Root.Pack.Digest})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Publication{}, objectConflict("initial root is not registered")
@@ -239,7 +239,7 @@ func (p initialPreparation) publishVersion(ctx context.Context, input InitialVer
 		return Publication{}, objectConflict("initial root differs from its inspection: %v", err)
 	}
 	var retained bool
-	if err = p.tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_object_pins WHERE computer_instance_id=$1 AND publication_key=$4 AND instance_desired_version=$2 AND digest=$3)`, runtimeID, p.instance.DesiredVersion, input.Root.Pack.Digest, []byte(initialPublicationKey(pgvalue.MustUUIDValue(runtimeID)))).Scan(&retained); err != nil {
+	if err = p.tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_object_pins WHERE computer_instance_id=$1 AND publication_key=$4 AND instance_desired_version=$2 AND digest=$3)`, instanceID, p.instance.DesiredVersion, input.Root.Pack.Digest, []byte(initialPublicationKey(pgvalue.MustUUIDValue(instanceID)))).Scan(&retained); err != nil {
 		return Publication{}, err
 	}
 	if !retained {
@@ -253,11 +253,11 @@ func (p initialPreparation) publishVersion(ctx context.Context, input InitialVer
 	if err != nil {
 		return Publication{}, err
 	}
-	version, err := q.PublishInitialComputerDiskVersion(ctx, db.PublishInitialComputerDiskVersionParams{EnvironmentID: p.environmentID, ComputerID: p.computerID, VersionID: p.versionID, ComputerInstanceID: runtimeID, DesiredVersion: pgtype.Int8{Int64: p.instance.DesiredVersion, Valid: true}, Fingerprint: fingerprint, RootPackDigest: pgvalue.Text(input.Root.Pack.Digest), LogicalBytes: p.logicalBytes, Locator: rawRoot, InitialConfig: rawConfig})
+	version, err := q.PublishInitialComputerDiskVersion(ctx, db.PublishInitialComputerDiskVersionParams{EnvironmentID: p.environmentID, ComputerID: p.computerID, VersionID: p.versionID, ComputerInstanceID: instanceID, DesiredVersion: pgtype.Int8{Int64: p.instance.DesiredVersion, Valid: true}, Fingerprint: fingerprint, RootPackDigest: pgvalue.Text(input.Root.Pack.Digest), LogicalBytes: p.logicalBytes, Locator: rawRoot, InitialConfig: rawConfig})
 	if err != nil {
 		return Publication{}, err
 	}
-	pinned, err := q.PinInstanceComputerSource(ctx, db.PinInstanceComputerSourceParams{ComputerInstanceID: runtimeID, EnvironmentID: p.environmentID, ComputerID: p.computerID, VersionID: version.ID})
+	pinned, err := q.PinInstanceComputerSource(ctx, db.PinInstanceComputerSourceParams{ComputerInstanceID: instanceID, EnvironmentID: p.environmentID, ComputerID: p.computerID, VersionID: version.ID})
 	if err != nil {
 		return Publication{}, err
 	}

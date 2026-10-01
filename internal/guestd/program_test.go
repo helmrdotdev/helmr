@@ -1786,12 +1786,12 @@ func TestProgramEventStreamWriteDeadline(t *testing.T) {
 
 func TestProgramAdmissionDoesNotClaimBeforeSecretSequence(t *testing.T) {
 	registry := newComputerOperationRegistry()
-	registry.register("runtime-1", &computerMountEntry{
+	registry.register("instance-1", &computerMountEntry{
 		computerID:                "computer-1",
 		baseComputerDiskVersionID: "version-1",
 		channelCredential:         "channel-1",
 		writerGeneration:          1,
-		computerInstanceID:        "runtime-1",
+		computerInstanceID:        "instance-1",
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1810,7 +1810,7 @@ func TestProgramAdmissionDoesNotClaimBeforeSecretSequence(t *testing.T) {
 				Type:               wire.StreamTypeProgramRun,
 				RunID:              "run-1",
 				ComputerID:         "computer-1",
-				ComputerInstanceID: "runtime-1",
+				ComputerInstanceID: "instance-1",
 			},
 			0,
 		)
@@ -1821,7 +1821,7 @@ func TestProgramAdmissionDoesNotClaimBeforeSecretSequence(t *testing.T) {
 			Fence: &computerv0.ComputerAuthorityFence{
 				WorkerHostId:              "worker-1",
 				WorkerEpoch:               1,
-				ComputerInstanceId:        "runtime-1",
+				ComputerInstanceId:        "instance-1",
 				VmPlatformId:              "vm-platform-1",
 				ComputerId:                "computer-1",
 				RunId:                     "run-1",
@@ -1866,12 +1866,12 @@ func TestProgramAdmissionDoesNotClaimBeforeSecretSequence(t *testing.T) {
 
 func TestProgramAdmissionReportsPrepareFailureWithExactFence(t *testing.T) {
 	registry := newComputerOperationRegistry()
-	registry.register("runtime-1", &computerMountEntry{
+	registry.register("instance-1", &computerMountEntry{
 		computerID:                "computer-1",
 		baseComputerDiskVersionID: "version-1",
 		channelCredential:         "channel-1",
 		writerGeneration:          1,
-		computerInstanceID:        "runtime-1",
+		computerInstanceID:        "instance-1",
 		// A missing runtime user deterministically fails newProgramProcess after
 		// the exact authority and Secret sequence have been admitted.
 		runtimeUser: nil,
@@ -1891,7 +1891,7 @@ func TestProgramAdmissionReportsPrepareFailureWithExactFence(t *testing.T) {
 				Type:               wire.StreamTypeProgramRun,
 				RunID:              "run-1",
 				ComputerID:         "computer-1",
-				ComputerInstanceID: "runtime-1",
+				ComputerInstanceID: "instance-1",
 			},
 			0,
 		)
@@ -1900,7 +1900,7 @@ func TestProgramAdmissionReportsPrepareFailureWithExactFence(t *testing.T) {
 		Fence: &computerv0.ComputerAuthorityFence{
 			WorkerHostId:              "worker-1",
 			WorkerEpoch:               1,
-			ComputerInstanceId:        "runtime-1",
+			ComputerInstanceId:        "instance-1",
 			VmPlatformId:              "vm-platform-1",
 			ComputerId:                "computer-1",
 			RunId:                     "run-1",

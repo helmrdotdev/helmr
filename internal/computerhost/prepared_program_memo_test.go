@@ -200,7 +200,7 @@ func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T)
 	if _, err := machines.verifyProgram(t.Context(), descriptor, func() (artifact.ProgramIndex, error) { return index, nil }); err != nil {
 		t.Fatal(err)
 	}
-	target := workerapi.RuntimeReconcileTarget{ID: "memo-test", Source: workerapi.RuntimeSource{ComputerArchitecture: string(definition.ArchitectureX8664), Program: &workerapi.RuntimeProgram{DeploymentID: "deployment", Runtime: workerapi.CASObject{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType}, Artifact: workerapi.CASObject{Digest: programObject.Digest, SizeBytes: programObject.SizeBytes, MediaType: programObject.MediaType}, IndexDigest: sha256sum.DigestBytes(canonical)}}}
+	target := workerapi.InstanceReconcileTarget{ID: "memo-test", Source: workerapi.InstanceSource{ComputerArchitecture: string(definition.ArchitectureX8664), Program: &workerapi.RuntimeProgram{DeploymentID: "deployment", Runtime: workerapi.CASObject{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType}, Artifact: workerapi.CASObject{Digest: programObject.Digest, SizeBytes: programObject.SizeBytes, MediaType: programObject.MediaType}, IndexDigest: sha256sum.DigestBytes(canonical)}}}
 	run := func(want string) {
 		t.Helper()
 		dir := t.TempDir()

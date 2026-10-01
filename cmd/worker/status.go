@@ -45,8 +45,8 @@ func runStatus(log *slog.Logger) error {
 	if status.Readiness.Run == nil || !status.Readiness.Run.Ready {
 		return fmt.Errorf("worker run role is not ready: %s", workerPauseReason(status.Readiness.Run))
 	}
-	if status.Readiness.Runtime == nil || !status.Readiness.Runtime.Ready {
-		return fmt.Errorf("worker runtime role is not ready: %s", workerPauseReason(status.Readiness.Runtime))
+	if status.Readiness.Instance == nil || !status.Readiness.Instance.Ready {
+		return fmt.Errorf("worker instance role is not ready: %s", workerPauseReason(status.Readiness.Instance))
 	}
 	log.Info("worker ready", "worker_host_id", status.WorkerHostID, "active_instances", status.ActiveInstances)
 	return nil

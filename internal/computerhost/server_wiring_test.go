@@ -43,13 +43,13 @@ func TestNewServerRejectsIncompleteWiring(t *testing.T) {
 		mutate func(*Server)
 		want   string
 	}{
-		"restore control":  {func(m *Server) { m.RestoreControl = nil }, "computer restore control plane is required"},
-		"saves":            {func(m *Server) { m.ComputerSaves = nil }, "computer save control plane is required"},
-		"save interval":    {func(m *Server) { m.ComputerSaveEvery = 0 }, "computer save interval must be positive"},
-		"cas":              {func(m *Server) { m.CAS = nil }, "computer server CAS is required"},
-		"computer objects": {func(m *Server) { m.ComputerObjects = nil }, "computer object store is required"},
-		"sessions":         {func(m *Server) { m.Mounts = nil }, "computer mount session registry is required"},
-		"runtime machines": {func(m *Server) { m.Machines = nil }, "computer server prepared machines are required"},
+		"restore control":   {func(m *Server) { m.RestoreControl = nil }, "computer restore control plane is required"},
+		"saves":             {func(m *Server) { m.ComputerSaves = nil }, "computer save control plane is required"},
+		"save interval":     {func(m *Server) { m.ComputerSaveEvery = 0 }, "computer save interval must be positive"},
+		"cas":               {func(m *Server) { m.CAS = nil }, "computer server CAS is required"},
+		"computer objects":  {func(m *Server) { m.ComputerObjects = nil }, "computer object store is required"},
+		"mounts":            {func(m *Server) { m.Mounts = nil }, "computer mount registry is required"},
+		"instance machines": {func(m *Server) { m.Machines = nil }, "computer server prepared machines are required"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			server := complete
@@ -68,8 +68,8 @@ func TestServeRejectsUnvalidatedServer(t *testing.T) {
 		server Server
 		want   string
 	}{
-		"zero value":               {Server{}, "computer restore control plane is required"},
-		"missing runtime machines": {withoutMachines, "computer server prepared machines are required"},
+		"zero value":                {Server{}, "computer restore control plane is required"},
+		"missing instance machines": {withoutMachines, "computer server prepared machines are required"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, mount := testComputerMountArtifacts(t)

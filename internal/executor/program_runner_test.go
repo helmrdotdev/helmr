@@ -80,7 +80,7 @@ func TestHandleWaitReturnsExactWaitIdentity(t *testing.T) {
 	defer guest.Close()
 	defer host.Close()
 	task := &guestRunLeaseTask{
-		program: freshProgram{channel: fakeGuestSession{stream: guest}},
+		program: freshProgram{channel: fakeGuestMachine{stream: guest}},
 		lease:   workerapi.RunLeaseAssignment{ID: "lease-1", RunID: "run-1"},
 		controlPlane: testControlPlane(t, &fakeRunWaitClient{
 			created: workerapi.CreateRunWaitResponse{

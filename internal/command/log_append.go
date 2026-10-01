@@ -77,7 +77,7 @@ func appendLog(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal,
 	}
 	instance := authority.ComputerInstance
 	if instance.ID != pgvalue.UUID(chunk.InstanceID) || instance.WorkerGroupID != pgvalue.UUID(worker.GroupID) ||
-		instance.ReclaimedAt.Valid || instance.DesiredState != db.RuntimeDesiredStateReady ||
+		instance.ReclaimedAt.Valid || instance.DesiredState != db.InstanceDesiredStateReady ||
 		instance.WriterGeneration != chunk.WriterGeneration ||
 		(authority.ComputerCommand.Status != "running" && authority.ComputerCommand.Status != "stopping") {
 		return pgx.ErrNoRows

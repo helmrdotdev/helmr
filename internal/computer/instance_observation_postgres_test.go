@@ -32,7 +32,7 @@ func runningInstance(t *testing.T) (runtest.Fixture, runtest.RunLease, db.Comput
 }
 
 // observationOf observes the Instance at its current desired and observed
-// versions on its host epoch.
+// versions on its worker epoch.
 func observationOf(i db.ComputerInstance) Observation {
 	return Observation{
 		Instance: InstanceRef{
@@ -82,7 +82,7 @@ func TestInstanceReclaimRequiresCurrentCloseAndKeepsFailure(t *testing.T) {
 	if _, err := reclaim(params); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("unreported failure reclaimed: %v", err)
 	}
-	failed, err := applyFailure(t, f, Failure{Observation: observationOf(i), Kind: FailureRuntime, Reason: "runtime_reconcile_failed", Error: []byte(`{"code":"test_failure"}`)})
+	failed, err := applyFailure(t, f, Failure{Observation: observationOf(i), Kind: FailureInstance, Reason: "runtime_reconcile_failed", Error: []byte(`{"code":"test_failure"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestFatalInstanceFailureDrainsWorkerWithoutReclaim(t *testing.T) {
 	}
 }
 
-// A failure report of an invalid host epoch drains the host before any
+// A failure report of an invalid worker epoch drains the host before any
 // Instance fence, even when the report's cleanup proof is invalid.
 func TestWorkerInvalidFailureDrainsBeforeValidatingCleanupProof(t *testing.T) {
 	f, _, i := runningInstance(t)
@@ -155,7 +155,7 @@ func TestWorkerInvalidFailureDrainsBeforeValidatingCleanupProof(t *testing.T) {
 // separate transactions.
 func TestFailureWithCleanupProofReclaimsAndReplays(t *testing.T) {
 	f, work, i := runningInstance(t)
-	failure := Failure{Observation: observationOf(i), Kind: FailureRuntime, Reason: "runtime_reconcile_failed", Error: []byte(`{}`), CleanupProof: &CleanupProof{Method: CleanupNotMaterialized, CompletedAt: time.Now()}}
+	failure := Failure{Observation: observationOf(i), Kind: FailureInstance, Reason: "runtime_reconcile_failed", Error: []byte(`{}`), CleanupProof: &CleanupProof{Method: CleanupNotMaterialized, CompletedAt: time.Now()}}
 	reclaimed, err := RecordInstanceFailure(t.Context(), f.Pool, failure)
 	if err != nil {
 		t.Fatal(err)
@@ -180,7 +180,7 @@ func TestClosedObservationRequiresPhysicalTeardownProof(t *testing.T) {
 			t.Fatalf("closure without teardown proof=%v", err)
 		}
 	}
-	if _, err := RecordInstanceClosed(t.Context(), f.Pool, Closure{Observation: observationOf(i), Reason: "closed", CleanupProof: &CleanupProof{Method: CleanupSessionClosed, CompletedAt: time.Now()}}); !errors.Is(err, ErrAuthorityChanged) {
+	if _, err := RecordInstanceClosed(t.Context(), f.Pool, Closure{Observation: observationOf(i), Reason: "closed", CleanupProof: &CleanupProof{Method: CleanupMachineClosed, CompletedAt: time.Now()}}); !errors.Is(err, ErrAuthorityChanged) {
 		t.Fatalf("closure of a ready Instance=%v", err)
 	}
 }

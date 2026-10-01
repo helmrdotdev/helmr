@@ -13,14 +13,14 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-type restoreVerificationSession struct{ stream net.Conn }
+type restoreVerificationMachine struct{ stream net.Conn }
 
-func (s restoreVerificationSession) OpenStream(context.Context) (vm.Stream, error) {
+func (s restoreVerificationMachine) OpenStream(context.Context) (vm.Stream, error) {
 	return s.stream, nil
 }
-func (s restoreVerificationSession) Stream() vm.Stream           { return s.stream }
-func (s restoreVerificationSession) Wait(context.Context) error  { return nil }
-func (s restoreVerificationSession) Close(context.Context) error { return s.stream.Close() }
+func (s restoreVerificationMachine) Stream() vm.Stream           { return s.stream }
+func (s restoreVerificationMachine) Wait(context.Context) error  { return nil }
+func (s restoreVerificationMachine) Close(context.Context) error { return s.stream.Close() }
 
 func TestRestoreVerificationChecksCompleteGuestResponse(t *testing.T) {
 	for _, test := range []struct {
@@ -72,7 +72,7 @@ func TestRestoreVerificationChecksCompleteGuestResponse(t *testing.T) {
 				}
 				done <- frameio.WriteProtoFrame(server, &computerv0.VerifyComputerRestoreResponse{Identity: response})
 			}()
-			err := guestControl{machine: restoreVerificationSession{client}}.verifyRestore(ctx, &computerv0.VerifyComputerRestoreRequest{Identity: identity})
+			err := guestControl{machine: restoreVerificationMachine{client}}.verifyRestore(ctx, &computerv0.VerifyComputerRestoreRequest{Identity: identity})
 			if (err != nil) != (test.change != nil) {
 				t.Fatalf("verification: %v", err)
 			}

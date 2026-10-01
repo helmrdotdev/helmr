@@ -14,7 +14,7 @@ import (
 )
 
 // TokenWaitFence is the Run lease a worker host registers a Token wait for,
-// on the host epoch it authenticated.
+// on the worker epoch it authenticated.
 type TokenWaitFence struct {
 	RunLeaseID    uuid.UUID
 	LeaseSequence int64
@@ -222,7 +222,7 @@ func tokenWaitInstanceError(err error) error {
 	if errors.As(err, &rejected) {
 		cause = rejected.Err
 		if rejected.Instance {
-			operation = "lock ready runtime"
+			operation = "lock ready instance"
 		}
 	}
 	return tokenWaitError(operation, cause)

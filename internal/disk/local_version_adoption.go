@@ -131,8 +131,8 @@ func (p *LocalVersion) remoteBacked(ctx context.Context, root VersionRoot, budge
 	return backed, nil
 }
 
-// Collect reclaims local staging after the Runtime settles publication. It may
-// run after Release; the Runtime must retain the version until it returns.
+// Collect reclaims local staging after the Instance settles publication. It may
+// run after Release; the Instance must retain the version until it returns.
 func (c *LocalCapture) Collect(ctx context.Context, maxObjects int) (int64, error) {
 	return c.owner.Collect(ctx, maxObjects)
 }

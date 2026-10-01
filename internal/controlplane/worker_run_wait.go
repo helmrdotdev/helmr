@@ -167,7 +167,7 @@ func (s *Server) workerCreateTokenRunWait(
 	response := workerapi.CreateRunWaitResponse{
 		RunID: pgvalue.UUIDString(locators.RunID), RunWaitID: registered.WaitID.String(),
 		ResumeAttachID: resumeAttachID.String(), ComputerInstanceID: pgvalue.UUIDString(locators.ComputerInstanceID),
-		RuntimeEpoch: worker.Epoch,
+		WorkerEpoch: worker.Epoch,
 	}
 	if registered.SuspensionStatus == db.RunWaitStatusReleased {
 		response.ResolutionKind, response.Resolution, err = tokenWaitDecision(

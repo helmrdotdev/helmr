@@ -26,7 +26,7 @@ const computerCaptureTimeout = 30 * time.Second
 
 // lockComputer serializes live disk cuts with irreversible checkpoint and close
 // holds. Waiting is cancellable; a timed-out Close can be retried.
-func (s *guestSession) lockComputer(ctx context.Context) (func(), error) {
+func (s *guestMachine) lockComputer(ctx context.Context) (func(), error) {
 	s.mu.Lock()
 	if s.computerBarrier == nil {
 		s.computerBarrier = make(chan struct{}, 1)
@@ -48,11 +48,11 @@ func (s *guestSession) lockComputer(ctx context.Context) (func(), error) {
 // captureContext lets Close cancel and join a disk operation before releasing
 // its device or backing descriptors. The caller owns computerBarrier. The finite
 // capture budget also covers synchronous disk I/O delaying VMM API dispatch.
-func (s *guestSession) captureContext(ctx context.Context) (context.Context, func(), error) {
+func (s *guestMachine) captureContext(ctx context.Context) (context.Context, func(), error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil, nil, errors.New("computer session is closed")
+		return nil, nil, errors.New("computer machine is closed")
 	}
 	ctx, cancel := context.WithTimeout(ctx, computerCaptureTimeout)
 	s.computerCancel = cancel
@@ -66,7 +66,7 @@ func (s *guestSession) captureContext(ctx context.Context) (context.Context, fun
 
 // PauseComputer establishes an irreversible dispatch hold for checkpoint or
 // terminal capture. On any error the owner must stop the source.
-func (s *guestSession) PauseComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
+func (s *guestMachine) PauseComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
 	unlock, err := s.lockComputer(ctx)
 	if err != nil {
 		return nil, err
@@ -85,12 +85,12 @@ func (s *guestSession) PauseComputer(ctx context.Context) (*vm.ComputerSnapshot,
 // Computer for saves.
 var _ interface {
 	CaptureComputer(context.Context) (*vm.ComputerSnapshot, error)
-} = (*guestSession)(nil)
+} = (*guestMachine)(nil)
 
 // CaptureComputer briefly holds dispatch and resumes before returning the owned
 // disk cut. It captures no memory. Any error forbids further live captures and
 // requires the owner to stop the source, including an ambiguous resume reply.
-func (s *guestSession) CaptureComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
+func (s *guestMachine) CaptureComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
 	unlock, err := s.lockComputer(ctx)
 	if err != nil {
 		return nil, err
@@ -122,7 +122,7 @@ func (s *guestSession) CaptureComputer(ctx context.Context) (*vm.ComputerSnapsho
 	return cut, nil
 }
 
-func (s *guestSession) capturePausedComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
+func (s *guestMachine) capturePausedComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
 	if err := s.machine.PauseVM(ctx, func(params *operations.PatchVMParams) { params.SetContext(ctx) }); err != nil {
 		return nil, fmt.Errorf("pause Firecracker vm: %w", err)
 	}
@@ -144,7 +144,7 @@ func (s *guestSession) capturePausedComputer(ctx context.Context) (*vm.ComputerS
 // engines leave no submitted asynchronous device I/O outside that hold. Validate
 // the actual device configuration, including restored devices, before relying on
 // it. Snapshot API success does not report backing-file synchronization errors.
-func (s *guestSession) syncPausedDisks(ctx context.Context) error {
+func (s *guestMachine) syncPausedDisks(ctx context.Context) error {
 	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", s.machine.Cfg.SocketPath)
 	}}

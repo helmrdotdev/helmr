@@ -158,7 +158,7 @@ func TestWorkerHostLifecycleHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if observed.Readiness.Runtime == nil || observed.Readiness.Runtime.Ready || observed.Readiness.Runtime.PausedReason != "maintenance" {
+	if observed.Readiness.Instance == nil || observed.Readiness.Instance.Ready || observed.Readiness.Instance.PausedReason != "maintenance" {
 		t.Fatalf("observed readiness = %+v", observed.Readiness)
 	}
 	if err := host.client.FenceWorker(t.Context(), "future_diagnostic"); !httpclient.IsStatus(err, http.StatusBadRequest) {

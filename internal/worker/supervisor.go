@@ -201,14 +201,14 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		return fmt.Errorf("record worker startup recovery: %w", err)
 	}
 	capabilities := s.cfg.Capabilities
-	runtimeQuarantines, err := activationQuarantines(evidence)
+	instanceQuarantines, err := activationQuarantines(evidence)
 	if err != nil {
 		return err
 	}
-	if runtimeQuarantines != 0 {
-		capabilities.ExecutionSlotsAvailable -= int32(runtimeQuarantines)
+	if instanceQuarantines != 0 {
+		capabilities.ExecutionSlotsAvailable -= int32(instanceQuarantines)
 		if capabilities.ExecutionSlotsAvailable <= 0 {
-			return errors.New("all runtime execution slots remain quarantined after startup recovery")
+			return errors.New("all instance execution slots remain quarantined after startup recovery")
 		}
 	}
 	status, err := s.cfg.ControlPlane.ActivateWorker(ctx, capabilities)
@@ -420,7 +420,7 @@ func (s *Supervisor) completeServerDirectedDrain(
 	}
 	// Freeze cleanup admission before final proof. Claim consumers finish before
 	// background reconcilers, then the finalizer gets exclusive ownership of
-	// local runtime/process/netns cleanup.
+	// local instance/process/netns cleanup.
 	cancelDrainClaims()
 	if !waitGroup(drainCtx, consumerWG) {
 		return fail(fmt.Errorf("worker durable drain timed out waiting for cleanup claims: %w", drainCtx.Err()))
@@ -479,14 +479,14 @@ func activationQuarantines(evidence RecoveryEvidence) (int, error) {
 	if len(evidence.Quarantined) != len(evidence.QuarantinedOwners) {
 		return 0, errors.New("worker activation is blocked by residue without exact VM ownership")
 	}
-	runtimeCount := 0
+	instanceCount := 0
 	for _, owner := range evidence.QuarantinedOwners {
 		if owner.Kind != vm.OwnerRuntime {
 			return 0, errors.New("worker activation is blocked by unknown VM owner kind")
 		}
-		runtimeCount++
+		instanceCount++
 	}
-	return runtimeCount, nil
+	return instanceCount, nil
 }
 
 func (s *Supervisor) waitForDrainReady(ctx context.Context, evidence RecoveryEvidence) error {
@@ -639,15 +639,15 @@ func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, sta
 	}
 }
 
-func (s *Supervisor) AdmitRuntimeStart(ctx context.Context) error {
+func (s *Supervisor) AdmitInstanceStart(ctx context.Context) error {
 	if s.cfg.AdmissionEvaluator == nil {
 		return nil
 	}
 	decision := s.cfg.AdmissionEvaluator.Evaluate(ctx, AdmissionCheck{
-		Consumer: "runtime", Status: s.state.Load().(Status), Snapshot: s.registry.snapshot(), Recovery: s.recovery,
+		Consumer: "instance", Status: s.state.Load().(Status), Snapshot: s.registry.snapshot(), Recovery: s.recovery,
 	})
 	if !decision.Allowed {
-		return fmt.Errorf("runtime start admission paused: %s", decision.Reason)
+		return fmt.Errorf("instance start admission paused: %s", decision.Reason)
 	}
 	return nil
 }

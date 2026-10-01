@@ -48,7 +48,7 @@ func projectSecretDeliveries(materials []secret.DeliveryMaterial) ([]workerapi.S
 type runLeaseProjectionAuthority struct {
 	run      db.Run
 	attempt  db.RunAttempt
-	runtime  db.ComputerInstance
+	instance db.ComputerInstance
 	runLease db.RunLease
 	computer db.LockRunLeaseClaimComputerRow
 }
@@ -67,7 +67,7 @@ func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (workerapi
 	if err != nil {
 		return workerapi.RunLeaseAssignment{}, err
 	}
-	runtimeID, err := requiredClaimUUIDString("runtime instance ID", lease.ComputerInstanceID)
+	instanceID, err := requiredClaimUUIDString("instance ID", lease.ComputerInstanceID)
 	if err != nil {
 		return workerapi.RunLeaseAssignment{}, err
 	}
@@ -87,19 +87,19 @@ func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (workerapi
 		authority.attempt.RunID != authority.run.ID ||
 		authority.attempt.ComputerID != authority.computer.ID ||
 		lease.ComputerID != authority.computer.ID ||
-		lease.ComputerInstanceID != authority.runtime.ID ||
-		authority.runtime.ComputerID != lease.ComputerID ||
-		authority.runtime.WorkerGroupID != lease.WorkerGroupID ||
-		authority.runtime.WorkerHostID != lease.WorkerHostID ||
-		authority.runtime.WorkerEpoch != lease.WorkerEpoch ||
-		authority.runtime.EnvironmentID != authority.run.EnvironmentID ||
-		authority.runtime.WriterGeneration != authority.computer.WriterGeneration {
+		lease.ComputerInstanceID != authority.instance.ID ||
+		authority.instance.ComputerID != lease.ComputerID ||
+		authority.instance.WorkerGroupID != lease.WorkerGroupID ||
+		authority.instance.WorkerHostID != lease.WorkerHostID ||
+		authority.instance.WorkerEpoch != lease.WorkerEpoch ||
+		authority.instance.EnvironmentID != authority.run.EnvironmentID ||
+		authority.instance.WriterGeneration != authority.computer.WriterGeneration {
 		return workerapi.RunLeaseAssignment{}, errors.New("run lease assignment authority is inconsistent")
 	}
 	if lease.AttemptNumber <= 0 ||
 		lease.LeaseSequence <= 0 ||
 		lease.WorkerEpoch <= 0 ||
-		authority.runtime.WriterGeneration <= 0 ||
+		authority.instance.WriterGeneration <= 0 ||
 		lease.RequestedCPUMillis <= 0 ||
 		lease.RequestedMemoryBytes <= 0 ||
 		lease.RequestedGuestEphemeralDiskBytes <= 0 ||
@@ -115,7 +115,7 @@ func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (workerapi
 		return workerapi.RunLeaseAssignment{}, errors.New("worker group ID is required")
 	}
 	for name, value := range map[string]string{
-		"VM platform ID": authority.runtime.VMPlatformID,
+		"VM platform ID": authority.instance.VMPlatformID,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return workerapi.RunLeaseAssignment{}, fmt.Errorf("%s is required", name)
@@ -129,11 +129,11 @@ func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (workerapi
 		WorkerGroupID:                    pgvalue.UUIDString(lease.WorkerGroupID),
 		WorkerHostID:                     workerID,
 		WorkerEpoch:                      lease.WorkerEpoch,
-		ComputerInstanceID:               runtimeID,
-		VMPlatformID:                     authority.runtime.VMPlatformID,
+		ComputerInstanceID:               instanceID,
+		VMPlatformID:                     authority.instance.VMPlatformID,
 		ComputerID:                       computerID,
 		BaseComputerDiskVersionID:        baseComputerDiskVersionID,
-		WriterGeneration:                 authority.runtime.WriterGeneration,
+		WriterGeneration:                 authority.instance.WriterGeneration,
 		RequestedCPUMillis:               lease.RequestedCPUMillis,
 		RequestedMemoryBytes:             lease.RequestedMemoryBytes,
 		RequestedGuestEphemeralDiskBytes: lease.RequestedGuestEphemeralDiskBytes,

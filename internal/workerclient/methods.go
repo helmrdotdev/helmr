@@ -220,10 +220,10 @@ func (c *Client) GetWorkerStatus(ctx context.Context) (workerapi.StatusResponse,
 	return response, nil
 }
 
-func (c *Client) ListRuntimeReconcileTargets(ctx context.Context) (workerapi.RuntimeReconcileResponse, error) {
-	var response workerapi.RuntimeReconcileResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/computer-instances/reconcile", workerapi.RuntimeReconcileRequest{}, &response); err != nil {
-		return workerapi.RuntimeReconcileResponse{}, err
+func (c *Client) ListInstanceReconcileTargets(ctx context.Context) (workerapi.InstanceReconcileResponse, error) {
+	var response workerapi.InstanceReconcileResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/computer-instances/reconcile", workerapi.InstanceReconcileRequest{}, &response); err != nil {
+		return workerapi.InstanceReconcileResponse{}, err
 	}
 	return response, nil
 }

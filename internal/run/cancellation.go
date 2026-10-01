@@ -118,7 +118,7 @@ var secretRevokedTermination = termination{
 	eventMessage:   "Run failed",
 }
 
-var runtimePreparationTermination = termination{
+var instancePreparationTermination = termination{
 	reasonCode:     "runtime_preparation_failed",
 	errorCode:      "runtime_preparation_failed",
 	errorMessage:   "Run runtime preparation failed",
@@ -373,19 +373,19 @@ func (g OwnedFinalization) FailCurrentForSecretRevocation(
 	return cancelled + 1, nil
 }
 
-// ChargeRuntimePreparationFailure records one infrastructure delivery failure.
+// ChargeInstancePreparationFailure records one infrastructure delivery failure.
 // Exhaustion terminalizes the exact Run and its owned graph without consuming
 // the user execution RetryPolicy.
-func (g OwnedFinalization) ChargeRuntimePreparationFailure(
+func (g OwnedFinalization) ChargeInstancePreparationFailure(
 	ctx context.Context,
 ) (bool, error) {
 	if g.tx == nil || g.currentRun == uuid.Nil() || len(g.descendants) == 0 ||
 		g.descendants[0].id != g.currentRun {
-		return false, errors.New("runtime preparation failure authority is invalid")
+		return false, errors.New("instance preparation failure authority is invalid")
 	}
 	target := g.descendants[0]
 	if target.status != db.RunStatusQueued || target.currentRunLeaseID.Valid {
-		return false, cancellationAuthority("runtime preparation target is not queued", nil)
+		return false, cancellationAuthority("instance preparation target is not queued", nil)
 	}
 	var preparationPending, sourceFailure bool
 	var failure []byte
@@ -404,7 +404,7 @@ func (g OwnedFinalization) ChargeRuntimePreparationFailure(
 		return false, nil
 	}
 	if target.instancePreparationCount < 0 || target.instancePreparationCount > 7 {
-		return false, cancellationAuthority("runtime preparation count is invalid", nil)
+		return false, cancellationAuthority("instance preparation count is invalid", nil)
 	}
 	queries := db.New(g.tx)
 	if target.instancePreparationCount < 7 {
@@ -416,7 +416,7 @@ func (g OwnedFinalization) ChargeRuntimePreparationFailure(
 				ExpectedCount: target.instancePreparationCount,
 			},
 		); err != nil {
-			return false, cancellationAuthority("charge runtime preparation failure", err)
+			return false, cancellationAuthority("charge instance preparation failure", err)
 		}
 		return false, nil
 	}
@@ -427,16 +427,16 @@ func (g OwnedFinalization) ChargeRuntimePreparationFailure(
 			AttemptNumber: target.currentAttemptNumber,
 		},
 	); err != nil {
-		return false, cancellationAuthority("exhaust runtime preparation", err)
+		return false, cancellationAuthority("exhaust instance preparation", err)
 	}
-	if err := g.failCurrentForRuntimePreparation(ctx); err != nil {
+	if err := g.failCurrentForInstancePreparation(ctx); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
-func (g OwnedFinalization) failCurrentForRuntimePreparation(ctx context.Context) error {
-	return g.failCurrentPreparation(ctx, runtimePreparationTermination)
+func (g OwnedFinalization) failCurrentForInstancePreparation(ctx context.Context) error {
+	return g.failCurrentPreparation(ctx, instancePreparationTermination)
 }
 
 // FailComputerPreparation settles unstarted work or members of an invalidated
@@ -473,7 +473,7 @@ func (g OwnedFinalization) FailComputerPreparation(ctx context.Context) (bool, e
 	return true, g.failCurrentForComputerPreparation(ctx)
 }
 func (g OwnedFinalization) failCurrentForComputerPreparation(ctx context.Context) error {
-	failure := runtimePreparationTermination
+	failure := instancePreparationTermination
 	failure.reasonCode = "computer_preparation_exhausted"
 	failure.errorCode = failure.reasonCode
 	failure.errorMessage = "Computer preparation limit reached"
@@ -481,7 +481,7 @@ func (g OwnedFinalization) failCurrentForComputerPreparation(ctx context.Context
 }
 
 func (g OwnedFinalization) failCurrentForComputerSource(ctx context.Context) error {
-	failure := runtimePreparationTermination
+	failure := instancePreparationTermination
 	failure.reasonCode = "computer_source_unavailable"
 	failure.errorCode = failure.reasonCode
 	failure.errorMessage = "Published Computer source is unavailable"

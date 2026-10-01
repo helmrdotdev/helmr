@@ -15,8 +15,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func projectRuntimeComputerSource(row db.ListComputerInstanceReconcileTargetsRow) (workerapi.RuntimeComputerSource, error) {
-	var source workerapi.RuntimeComputerSource
+func projectInstanceComputerSource(row db.ListComputerInstanceReconcileTargetsRow) (workerapi.InstanceComputerSource, error) {
+	var source workerapi.InstanceComputerSource
 	if !row.PreparationDiskVersionID.Valid || !row.ComputerDiskVersionStatus.Valid {
 		return source, errors.New("computer instance has no exact computer version")
 	}

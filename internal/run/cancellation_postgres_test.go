@@ -62,7 +62,7 @@ SELECT computer_instances.desired_state, computer_instances.mount_state
 		t.Fatal(err)
 	}
 	if desiredState != "ready" || mountStatus != "mounted" {
-		t.Fatalf("cleanup state = runtime:%s mount:%s", desiredState, mountStatus)
+		t.Fatalf("cleanup state = instance:%s mount:%s", desiredState, mountStatus)
 	}
 
 	replay, err := canceler.Cancel(ctx, CancellationRequest{
@@ -206,13 +206,13 @@ SELECT runs.status,
 	}
 }
 
-func TestOwnedFinalizationBoundsRuntimePreparationForEveryRun(t *testing.T) {
+func TestOwnedFinalizationBoundsInstancePreparationForEveryRun(t *testing.T) {
 	ctx := context.Background()
 	fixture := newPostgresFixture(t)
 	work := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
-	var runtimeID uuid.UUID
+	var instanceID uuid.UUID
 	if err := fixture.pool.QueryRow(ctx, `
-SELECT computer_instance_id FROM run_leases WHERE id = $1`, work.leaseID).Scan(&runtimeID); err != nil {
+SELECT computer_instance_id FROM run_leases WHERE id = $1`, work.leaseID).Scan(&instanceID); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, ctx, fixture.pool, `
@@ -221,7 +221,7 @@ UPDATE runs
  WHERE id = $1`, work.runID)
 	dbtest.MustExec(t, ctx, fixture.pool,
 		`DELETE FROM run_leases WHERE id = $1`, work.leaseID)
-	dbtest.MustExec(t, ctx, fixture.pool, `UPDATE computer_instances SET observed_state='allocated',observed_version=2,observed_desired_version=0,ready_at=NULL,mount_state='pending',mounted_at=NULL WHERE id=$1`, runtimeID)
+	dbtest.MustExec(t, ctx, fixture.pool, `UPDATE computer_instances SET observed_state='allocated',observed_version=2,observed_desired_version=0,ready_at=NULL,mount_state='pending',mounted_at=NULL WHERE id=$1`, instanceID)
 
 	for failure := int32(1); failure <= 8; failure++ {
 		chargedAfter := time.Now()
@@ -237,7 +237,7 @@ UPDATE runs
 			_ = tx.Rollback(ctx)
 			t.Fatal(err)
 		}
-		exhausted, err := graph.ChargeRuntimePreparationFailure(ctx)
+		exhausted, err := graph.ChargeInstancePreparationFailure(ctx)
 		if err != nil {
 			_ = tx.Rollback(ctx)
 			t.Fatal(err)
@@ -293,7 +293,7 @@ SELECT run_attempts.terminal_outcome,
 	}
 }
 
-func TestOwnedFinalizationExhaustsActorRuntimePreparation(t *testing.T) {
+func TestOwnedFinalizationExhaustsActorInstancePreparation(t *testing.T) {
 	ctx := t.Context()
 	fixture := newPostgresFixture(t)
 	work := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
@@ -303,7 +303,7 @@ UPDATE runs
    SET current_run_lease_id = NULL
  WHERE id = $1`, work.runID)
 
-	exhaustRuntimePreparation(t, ctx, fixture, work.runID)
+	exhaustInstancePreparation(t, ctx, fixture, work.runID)
 
 	var runStatus, sessionStatus, holdReason string
 	var currentRun, holdRun pgtype.UUID
@@ -320,7 +320,7 @@ WHERE r.id=$1`, work.runID, sessionID).Scan(&runStatus, &sessionStatus, &holdRea
 	}
 }
 
-func TestOwnedFinalizationExhaustsDifferentComputerChildRuntimePreparation(t *testing.T) {
+func TestOwnedFinalizationExhaustsDifferentComputerChildInstancePreparation(t *testing.T) {
 	for _, actorParent := range []bool{false, true} {
 		name := "Task parent"
 		if actorParent {
@@ -367,7 +367,7 @@ SELECT $1, runs.environment_id, runs.id, runs.computer_id, 'child',
 				turnID = activateCancellationTurn(t, fixture, parent, sessionID)
 				dbtest.MustExec(t, ctx, fixture.pool, `UPDATE runs SET status='waiting' WHERE id=$1`, parent.runID)
 			}
-			exhaustRuntimePreparation(t, ctx, fixture, child.runID)
+			exhaustInstancePreparation(t, ctx, fixture, child.runID)
 			if actorParent {
 				var active, current, hold pgtype.UUID
 				var cursor int64
@@ -411,7 +411,7 @@ SELECT child.status, parent.status, wait.condition_status, wait.condition_result
 	}
 }
 
-func exhaustRuntimePreparation(
+func exhaustInstancePreparation(
 	t *testing.T,
 	ctx context.Context,
 	fixture postgresFixture,
@@ -431,7 +431,7 @@ func exhaustRuntimePreparation(
 			_ = tx.Rollback(ctx)
 			t.Fatal(err)
 		}
-		exhausted, err := graph.ChargeRuntimePreparationFailure(ctx)
+		exhausted, err := graph.ChargeInstancePreparationFailure(ctx)
 		if err != nil {
 			_ = tx.Rollback(ctx)
 			t.Fatal(err)

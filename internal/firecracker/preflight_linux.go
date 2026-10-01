@@ -103,7 +103,7 @@ func checkHardLinkLayout(cfg Config) error {
 			_ = os.Remove(source)
 			return fmt.Errorf("close Firecracker hard-link probe: %w", err)
 		}
-		linkErr := proveHardLink("the Firecracker session source", source, cfg.JailerChrootBaseDir)
+		linkErr := proveHardLink("the Firecracker machine source", source, cfg.JailerChrootBaseDir)
 		removeErr := os.Remove(source)
 		if err := errors.Join(linkErr, removeErr); err != nil {
 			return err

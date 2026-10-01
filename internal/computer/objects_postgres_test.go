@@ -26,7 +26,7 @@ func TestComputerObjectOwnershipAndCertification(t *testing.T) {
 	defer clear(material.Key)
 	env := pgvalue.UUID(f.EnvironmentID)
 	var computerID pgtype.UUID
-	if err = f.Pool.QueryRow(t.Context(), `SELECT computer_id FROM computer_instances WHERE id=$1`, f.runtime).Scan(&computerID); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT computer_id FROM computer_instances WHERE id=$1`, f.instance).Scan(&computerID); err != nil {
 		t.Fatal(err)
 	}
 	key1 := pgvalue.UUID(uuid.MustParse(material.ID))
@@ -204,7 +204,7 @@ func TestComputerObjectCertificationRollback(t *testing.T) {
 	}
 	defer clear(material.Key)
 	var computerID pgtype.UUID
-	if err = f.Pool.QueryRow(t.Context(), `SELECT computer_id FROM computer_instances WHERE id=$1`, f.runtime).Scan(&computerID); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT computer_id FROM computer_instances WHERE id=$1`, f.instance).Scan(&computerID); err != nil {
 		t.Fatal(err)
 	}
 	digest := dbtest.Digest("rollback-root")

@@ -14,12 +14,12 @@ import (
 // releaseComputerCommand owns its guest stream beyond the guest response: the
 // control plane reconciles the release while that stream is still open, and
 // cancellation closes the stream at any point and is awaited before returning.
-func (m Server) releaseComputerCommand(ctx context.Context, session vm.Machine, mount workerapi.ComputerInstanceAssignment, release workerapi.ComputerCommandRelease, client workerapi.ComputerServerControlPlaneClient) error {
+func (m Server) releaseComputerCommand(ctx context.Context, machine vm.Machine, mount workerapi.ComputerInstanceAssignment, release workerapi.ComputerCommandRelease, client workerapi.ComputerServerControlPlaneClient) error {
 	r := release.Completion
 	if release.ComputerID != mount.ComputerID || r.ComputerInstanceID != mount.ComputerInstanceID || r.WriterGeneration != mount.WriterGeneration || r.OrgID != mount.OrgID || release.RequestFingerprint == "" {
 		return computerBasicExecProtocol(errors.New("command release does not match the Instance"))
 	}
-	conn, err := session.OpenStream(ctx)
+	conn, err := machine.OpenStream(ctx)
 	if err != nil {
 		return err
 	}

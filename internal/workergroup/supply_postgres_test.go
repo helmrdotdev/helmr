@@ -74,7 +74,7 @@ UPDATE worker_groups SET status = 'paused' WHERE id = $1`, f.group.ID)
 	}
 }
 
-func TestHostRuntimeAdmissionRejectsVMPausedHost(t *testing.T) {
+func TestHostInstanceAdmissionRejectsVMPausedHost(t *testing.T) {
 	f := newSupplyFixture(t)
 	hostID := f.activeHost(t, f.activePool(t, "default"), "host-1")
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET vm_paused_reason = 'runtime_health' WHERE id = $1`, hostID)
@@ -83,7 +83,7 @@ func TestHostRuntimeAdmissionRejectsVMPausedHost(t *testing.T) {
 	if _, err := LockDispatchSupply(t.Context(), tx, f.dispatchSupply(hostID)); err != nil {
 		t.Fatalf("Run supply fence rejected a VM-only pause: %v", err)
 	}
-	if err := CheckHostRuntimeAdmission(t.Context(), tx, pgvalue.UUID(hostID), 1); err == nil {
+	if err := CheckHostInstanceAdmission(t.Context(), tx, pgvalue.UUID(hostID), 1); err == nil {
 		t.Fatal("VM-paused host remained eligible for VM admission")
 	}
 }

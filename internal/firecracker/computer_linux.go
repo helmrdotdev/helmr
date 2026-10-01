@@ -15,7 +15,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func validateComputerDisk(disk *vm.RuntimeComputer) error {
+func validateComputerDisk(disk *vm.ComputerDisk) error {
 	if disk == nil || (disk.File == nil) == (disk.Device == nil) || disk.Path != "" || disk.SizeBytes <= 0 || disk.SizeBytes%4096 != 0 {
 		return errors.New("computer working disk is incomplete")
 	}
@@ -42,7 +42,7 @@ func validateComputerDisk(disk *vm.RuntimeComputer) error {
 // Link the exact host-owned inode, not a caller-controlled pathname or a shared
 // cache object or global device node. The Runtime owns this backing inode and,
 // for block devices, its exclusive attachment and export through VMM exit.
-func attachComputerDisk(ctx context.Context, disk *vm.RuntimeComputer, directory string, uid, gid int) (string, error) {
+func attachComputerDisk(ctx context.Context, disk *vm.ComputerDisk, directory string, uid, gid int) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}

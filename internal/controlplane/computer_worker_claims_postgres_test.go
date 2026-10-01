@@ -199,7 +199,7 @@ func TestSecretProxyReauthenticatesAcrossDrain(t *testing.T) {
 			}
 			race := newWorkerClaimsRace(t, f.fixture, f.server, map[string]http.HandlerFunc{path: handler}, map[string]func(context.Context) error{path: drainWorkerHost(f.fixture)})
 			if resolve {
-				resolution, err := race.client.ResolveSecretProxy(t.Context(), workerapi.SecretProxyRequest{ComputerInstanceID: f.runtime.String(), Origin: "https://example.com", Placeholders: f.markers})
+				resolution, err := race.client.ResolveSecretProxy(t.Context(), workerapi.SecretProxyRequest{ComputerInstanceID: f.instance.String(), Origin: "https://example.com", Placeholders: f.markers})
 				if err != nil {
 					t.Fatalf("resolve across drain: %v", err)
 				}
@@ -207,7 +207,7 @@ func TestSecretProxyReauthenticatesAcrossDrain(t *testing.T) {
 					t.Fatal("replayed resolution returned different material")
 				}
 			} else {
-				preparation, err := race.client.PrepareSecretProxy(t.Context(), workerapi.SecretProxyRequest{ComputerInstanceID: f.runtime.String()})
+				preparation, err := race.client.PrepareSecretProxy(t.Context(), workerapi.SecretProxyRequest{ComputerInstanceID: f.instance.String()})
 				if err != nil {
 					t.Fatalf("prepare across drain: %v", err)
 				}

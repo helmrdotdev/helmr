@@ -223,7 +223,7 @@ func TestRenewRunLeaseAuthorityInstallsCommittedRenewalAfterCallerCancellation(t
 	_, unregister := registry.add(workerapi.ComputerInstanceAssignment{
 		ComputerID: "computer-1", ComputerInstanceID: "runtime-1",
 		WriterGeneration: 4, Target: workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "version-1"},
-	}, fakeGuestSession{}, "channel-1")
+	}, fakeGuestMachine{}, "channel-1")
 	defer unregister()
 	authority := &computerv0.ComputerRunAuthority{
 		Fence: &computerv0.ComputerAuthorityFence{

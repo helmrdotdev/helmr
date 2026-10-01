@@ -19,7 +19,7 @@ import (
 )
 
 // ErrChanged reports that the Command, its Instance, its Computer or the
-// worker host epoch no longer holds the authority the operation requires, or
+// worker epoch no longer holds the authority the operation requires, or
 // that a reported result or log record differs from the one already
 // recorded. Stale worker credential claims are reported as
 // workergroup.ErrStaleClaims instead.

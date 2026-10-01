@@ -41,12 +41,12 @@ func TestValidatePreparedMachineRestoreExactTupleAndMembership(t *testing.T) {
 	object := func(value workerapi.CheckpointArtifact) workerapi.CASObject {
 		return workerapi.CASObject(value)
 	}
-	target := workerapi.RuntimeReconcileTarget{Source: workerapi.RuntimeSource{
+	target := workerapi.InstanceReconcileTarget{Source: workerapi.InstanceSource{
 		VMVCPUCount: 2, CPUConfigDigest: cpuConfigDigest,
 		WriterGeneration: 2, ComputerSpecID: "spec", VMPlatformID: "runtime-shape", VMRuntimeContract: "abi-1", RootfsDigest: "rootfs", Program: &workerapi.RuntimeProgram{DeploymentID: "program"},
 		ComputerID: checkpoint.RuntimeState.Computer.ComputerID,
-		Computer:   &workerapi.RuntimeComputerSource{VersionID: "01950000-0000-7000-8000-000000000002", LogicalBytes: disk.SeedCapacity, Root: ptrVersionRoot(disk.SeedCapacity)},
-		Restore: &workerapi.RuntimeRestore{
+		Computer:   &workerapi.InstanceComputerSource{VersionID: "01950000-0000-7000-8000-000000000002", LogicalBytes: disk.SeedCapacity, Root: ptrVersionRoot(disk.SeedCapacity)},
+		Restore: &workerapi.InstanceRestore{
 			CheckpointID: "checkpoint-1",
 			Manifest:     manifest,
 			Artifacts: []workerapi.RunLeaseCheckpointArtifact{

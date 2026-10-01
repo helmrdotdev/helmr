@@ -71,7 +71,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure routed network reclaimer: %w", err)
 	}
-	runtimeCapacity := deriveWorkerRuntimeCapacity(cfg.WorkerExecutionSlots)
+	instanceCapacity := deriveWorkerInstanceCapacity(cfg.WorkerExecutionSlots)
 	var platformStore cas.ImmutableStore
 	verifierCgroupRoot, err := worker.PrepareVerifierHost()
 	if err != nil {
@@ -177,7 +177,7 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("configure CAS: %w", err)
 	}
 	vmResources := resolveVMResources(cfg)
-	runtimeBackend, err := vm.NewStartLimiter(connector, runtimeCapacity.hostStartLimit)
+	runtimeBackend, err := vm.NewStartLimiter(connector, instanceCapacity.hostStartLimit)
 	if err != nil {
 		return fmt.Errorf("configure host runtime start limit: %w", err)
 	}
@@ -218,7 +218,7 @@ func run(log *slog.Logger) error {
 	}
 	computerMounts := computerhost.NewMounts()
 	computerCaptures := &computerhost.CaptureRuns{}
-	preparedMachines := computerhost.NewPreparedMachines(runtimeBackend, store, runtimeCapacity.preparedMachineCount, log)
+	preparedMachines := computerhost.NewPreparedMachines(runtimeBackend, store, instanceCapacity.preparedMachineCount, log)
 	closePreparedMachine := retryableWorkerCloser{close: preparedMachines.Close}
 	defer func() {
 		if err := closePreparedMachine.Close(context.Background()); err != nil {
@@ -245,7 +245,7 @@ func run(log *slog.Logger) error {
 	preparedMachines.PlatformStore = platformStore
 	preparedMachines.RuntimeArchitecture = runtimeArchitecture
 	preparedMachines.VerifierCgroupRoot = verifierCgroupRoot
-	log.Info("prepared machines enabled", "count", runtimeCapacity.preparedMachineCount)
+	log.Info("prepared machines enabled", "count", instanceCapacity.preparedMachineCount)
 	runLeaseTasks, err := executor.NewProgramRunner(executor.ProgramRunner{
 		ControlPlane: executor.ControlPlane{
 			Leases:        controlPlaneClient,
@@ -304,17 +304,17 @@ func run(log *slog.Logger) error {
 		worker.ConsumerSpec{Name: "run", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "run", ContinueDuringDrain: true, Consumer: worker.NewRunConsumer(runner)},
 		worker.ConsumerSpec{Name: "computer", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "computer", ContinueDuringDrain: true, BypassAdmissionDuringDrain: true, Consumer: worker.NewComputerConsumer(runner)},
 	)
-	background := []worker.BackgroundSpec{{Name: "runtime-controller", DrainEligible: true, Run: func(runCtx context.Context) error {
-		return preparedMachines.ReconcileDesiredRuntimes(runCtx, controlPlaneClient)
+	background := []worker.BackgroundSpec{{Name: "instance-controller", DrainEligible: true, Run: func(runCtx context.Context) error {
+		return preparedMachines.ReconcileDesiredInstances(runCtx, controlPlaneClient)
 	}}}
 	hardAdmission, err := worker.NewHardAdmission(worker.HardAdmissionConfig{
 		Probe: worker.SystemHostHealthProbe{
 			WorkDir: workDir, CgroupVersion: cfg.CgroupVersion, FirecrackerPath: cfg.FirecrackerPath,
 		},
-		DiskFloorBytes:   admissionDiskFloorMiB(cfg.VMScratchDiskMiB, cfg.WorkerDiskReserveMiB) * 1024 * 1024,
-		FDHeadroom:       256,
-		RuntimeSlotCount: cfg.WorkerExecutionSlots,
-		DatapathHealth:   connector.DatapathHealth,
+		DiskFloorBytes:    admissionDiskFloorMiB(cfg.VMScratchDiskMiB, cfg.WorkerDiskReserveMiB) * 1024 * 1024,
+		FDHeadroom:        256,
+		InstanceSlotCount: cfg.WorkerExecutionSlots,
+		DatapathHealth:    connector.DatapathHealth,
 	})
 	if err != nil {
 		return fmt.Errorf("configure worker hard admission: %w", err)
@@ -347,10 +347,10 @@ func run(log *slog.Logger) error {
 					},
 				)
 				if err != nil {
-					return evidence, fmt.Errorf("reserve quarantined runtime capacity: %w", err)
+					return evidence, fmt.Errorf("reserve quarantined instance capacity: %w", err)
 				}
 				if !created {
-					return evidence, errors.New("quarantined runtime is already reserved")
+					return evidence, errors.New("quarantined instance is already reserved")
 				}
 			}
 			return evidence, nil
@@ -377,7 +377,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure worker supervisor: %w", err)
 	}
-	preparedMachines.AdmitRuntimeStart = supervisor.AdmitRuntimeStart
+	preparedMachines.AdmitInstanceStart = supervisor.AdmitInstanceStart
 	log.Info("Helmr worker listening", "controlplane_url", cfg.ControlPlaneURL, "worker_host_id", workerHostSecret.WorkerHostID)
 	if err := supervisor.Run(ctx); err != nil && err != context.Canceled {
 		return err
@@ -385,13 +385,13 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
-type workerRuntimeCapacity struct {
+type workerInstanceCapacity struct {
 	preparedMachineCount int
 	hostStartLimit       int
 }
 
-func deriveWorkerRuntimeCapacity(executionSlots int32) workerRuntimeCapacity {
-	return workerRuntimeCapacity{
+func deriveWorkerInstanceCapacity(executionSlots int32) workerInstanceCapacity {
+	return workerInstanceCapacity{
 		preparedMachineCount: int(executionSlots),
 		hostStartLimit:       int(executionSlots),
 	}

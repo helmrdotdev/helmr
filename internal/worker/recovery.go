@@ -179,7 +179,7 @@ func recoverLocalVMState(ctx context.Context, workDir string, jailerDir string, 
 		}
 		// A UUID-shaped namespace alone is not ownership evidence. Namespaces
 		// are reconciled only after an independently owned root or process has
-		// established the exact runtime ID, avoiding unrelated host netns.
+		// established the exact instance ID, avoiding unrelated host netns.
 	}
 	candidates = candidates[:0]
 	for id := range seen {

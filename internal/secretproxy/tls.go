@@ -109,7 +109,7 @@ func (p *Proxy) serveConn(conn net.Conn) {
 	protocols.SetHTTP2(true)
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { p.forward(w, r, target, destination, dialRequest) }),
 		// Bound pre-handler H2 streams/headers as well as DATA buffering. A
-		// runtime request admission alone cannot bound library-parsed streams.
+		// instance request admission alone cannot bound library-parsed streams.
 		HTTP2:     &http.HTTP2Config{MaxConcurrentStreams: 4, MaxReadFrameSize: 64 << 10, MaxReceiveBufferPerConnection: 256 << 10, MaxReceiveBufferPerStream: 64 << 10},
 		Protocols: protocols, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}},
 		ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: maxHeaderBytes, ErrorLog: discardLogger(),

@@ -12,7 +12,7 @@ import (
 )
 
 // ComputerArtifact is the product-managed artifact used to seed a writable
-// runtime computer volume.
+// instance computer volume.
 type ComputerArtifact struct {
 	Path       string
 	Digest     string

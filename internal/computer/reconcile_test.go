@@ -42,7 +42,7 @@ func (s *reconcileTargetStore) ListComputerInstanceReconcileTargets(_ context.Co
 }
 
 // Close and reclaim targets need no capture or restore source.
-func TestReconcileTargetsReadsBoundedBatchOfHostEpoch(t *testing.T) {
+func TestReconcileTargetsReadsBoundedBatchOfWorkerEpoch(t *testing.T) {
 	host := Host{GroupID: uuid.NewV7(), HostID: uuid.NewV7(), Epoch: 7}
 	store := &reconcileTargetStore{rows: []db.ListComputerInstanceReconcileTargetsRow{
 		{ID: pgvalue.UUID(uuid.NewV7()), WorkerEpoch: 7, DesiredState: "closed", ObservedState: "ready"},

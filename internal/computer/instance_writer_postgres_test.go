@@ -353,7 +353,7 @@ func TestWriterOperationsReportStaleClaims(t *testing.T) {
 	}
 }
 
-// Instance observations carry no claim versions: the locked host epoch and
+// Instance observations carry no claim versions: the locked worker epoch and
 // status are their worker authority, so a claim-only bump is ignored.
 func TestObservationsIgnoreClaimBumps(t *testing.T) {
 	for _, bump := range claimBumps {
@@ -367,7 +367,7 @@ func TestObservationsIgnoreClaimBumps(t *testing.T) {
 			if err != nil {
 				t.Fatalf("readiness after %s: %v", bump.name, err)
 			}
-			failed, err := RecordInstanceFailure(t.Context(), f.Pool, Failure{Observation: observationOf(row), Kind: FailureRuntime, Reason: "runtime_reconcile_failed", Error: []byte(`{}`)})
+			failed, err := RecordInstanceFailure(t.Context(), f.Pool, Failure{Observation: observationOf(row), Kind: FailureInstance, Reason: "runtime_reconcile_failed", Error: []byte(`{}`)})
 			if err != nil || failed.ObservedState != "failed" {
 				t.Fatalf("failure after %s: %v %v", bump.name, failed.ObservedState, err)
 			}

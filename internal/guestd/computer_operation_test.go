@@ -35,7 +35,7 @@ func TestRestoredComputerRebindPreservesPairedFilesystem(t *testing.T) {
 	}
 	request := &computerv0.MaterializeComputerRequest{
 		Envelope: &computerv0.ComputerOperationEnvelope{
-			ComputerInstanceId: "runtime-c", ComputerId: "computer-1",
+			ComputerInstanceId: "instance-c", ComputerId: "computer-1",
 			ChannelCredential: "channel-c", WriterGeneration: 2,
 		},
 		MountPath: "/workspace", Target: testComputerMountTarget("version-c"),
@@ -44,16 +44,16 @@ func TestRestoredComputerRebindPreservesPairedFilesystem(t *testing.T) {
 	}
 	entry := &computerMountEntry{
 		computerID: "computer-1", channelCredential: "channel-b",
-		computerInstanceID: "runtime-b", computerMount: "/workspace", computerRoot: liveRoot,
+		computerInstanceID: "instance-b", computerMount: "/workspace", computerRoot: liveRoot,
 		baseComputerDiskVersionID: "version-a",
 	}
 	entry.setWriterGeneration(1)
 	registry := newComputerOperationRegistry()
-	registry.entries["runtime-b"] = entry
+	registry.entries["instance-b"] = entry
 	registry.programClaims = []*managedProgramClaim{{
 		entry: entry,
 		authority: &computerv0.ComputerRunAuthority{Fence: &computerv0.ComputerAuthorityFence{
-			RunId: "run-1", AttemptNumber: 1, RunLeaseId: "lease-b", ComputerId: "computer-1", ComputerInstanceId: "runtime-b", WriterGeneration: 1,
+			RunId: "run-1", AttemptNumber: 1, RunLeaseId: "lease-b", ComputerId: "computer-1", ComputerInstanceId: "instance-b", WriterGeneration: 1,
 		}},
 	}}
 	waits := newWaitingRunRegistry()
@@ -65,7 +65,7 @@ func TestRestoredComputerRebindPreservesPairedFilesystem(t *testing.T) {
 		t.Fatal(err)
 	}
 	registration.markFrozen()
-	registry.captureRequest = &computerv0.FreezeComputerRequest{ComputerId: "computer-1", ComputerInstanceId: "runtime-b", WriterGeneration: 1, CheckpointId: "checkpoint-b", Runs: []*computerv0.ComputerCaptureRun{{RunId: "run-1", AttemptNumber: 1, RunLeaseId: "lease-b", RunWaitId: "wait-1"}}}
+	registry.captureRequest = &computerv0.FreezeComputerRequest{ComputerId: "computer-1", ComputerInstanceId: "instance-b", WriterGeneration: 1, CheckpointId: "checkpoint-b", Runs: []*computerv0.ComputerCaptureRun{{RunId: "run-1", AttemptNumber: 1, RunLeaseId: "lease-b", RunWaitId: "wait-1"}}}
 	invalid := proto.Clone(request).(*computerv0.MaterializeComputerRequest)
 	invalid.Envelope.ComputerInstanceId = entry.computerInstanceID
 	if _, err := registry.materializeRestoredComputerMount(invalid, waits); err == nil {
@@ -84,7 +84,7 @@ func TestRestoredComputerRebindPreservesPairedFilesystem(t *testing.T) {
 	if content, err := os.ReadFile(filepath.Join(liveRoot, "retained.txt")); err != nil || string(content) != "paired" {
 		t.Fatalf("paired file = %q, %v", content, err)
 	}
-	if registry.entries["runtime-b"] != nil || registry.entries["runtime-c"] != entry ||
+	if registry.entries["instance-b"] != nil || registry.entries["instance-c"] != entry ||
 		entry.baseComputerDiskVersionID != "version-c" || entry.currentWriterGeneration() != 2 {
 		t.Fatalf("rebinding state = %+v", entry)
 	}
@@ -309,8 +309,8 @@ func TestPreparedComputerMountPreservesFilesAndSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	registry := newComputerOperationRegistry()
-	registry.setPreparedRuntime(&preparedComputerRuntime{computerID: "computer-1", writerGeneration: 2, computerInstanceID: "runtime", computerImageDigest: "image", computerMount: "/workspace", imageRoot: root, computerRoot: root, cleanup: func() {}})
-	entry, err := restoreComputerMount(&computerv0.MaterializeComputerRequest{Envelope: &computerv0.ComputerOperationEnvelope{ComputerInstanceId: "runtime", ComputerId: "computer-1", WriterGeneration: 2}, MountPath: "/workspace", Target: testComputerMountTarget("version"), UsePreparedRuntime: true, ComputerImage: &computerv0.ComputerArtifact{Digest: "image", MediaType: computerImageMediaType, Encoding: computerImageEncoding, SizeBytes: 1}}, registry)
+	registry.setPreparedRuntime(&preparedComputerRuntime{computerID: "computer-1", writerGeneration: 2, computerInstanceID: "instance", computerImageDigest: "image", computerMount: "/workspace", imageRoot: root, computerRoot: root, cleanup: func() {}})
+	entry, err := restoreComputerMount(&computerv0.MaterializeComputerRequest{Envelope: &computerv0.ComputerOperationEnvelope{ComputerInstanceId: "instance", ComputerId: "computer-1", WriterGeneration: 2}, MountPath: "/workspace", Target: testComputerMountTarget("version"), UsePreparedRuntime: true, ComputerImage: &computerv0.ComputerArtifact{Digest: "image", MediaType: computerImageMediaType, Encoding: computerImageEncoding, SizeBytes: 1}}, registry)
 	if err != nil {
 		t.Fatal(err)
 	}

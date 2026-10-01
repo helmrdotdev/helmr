@@ -23,7 +23,7 @@ func TestComputerSourceFailureEpisodeIsStablePostgres(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='allocated',ready_at=NULL,observed_version=0,observed_desired_version=0 WHERE id=$1`, instance)
 	failure := computer.Failure{
 		Observation: computer.Observation{Instance: computer.InstanceRef{Host: computer.Host{GroupID: runtest.WorkerGroupID, HostID: f.WorkerID, Epoch: 1}, ID: instance, DesiredVersion: 1}},
-		Kind:        computer.FailureSourceUnavailable, Reason: workerapi.RuntimeFailureComputerSource, Error: []byte(`{"code":"source_unavailable"}`),
+		Kind:        computer.FailureSourceUnavailable, Reason: workerapi.InstanceFailureComputerSource, Error: []byte(`{"code":"source_unavailable"}`),
 	}
 	report := func() error {
 		_, err := computer.RecordInstanceFailure(t.Context(), f.Pool, failure)

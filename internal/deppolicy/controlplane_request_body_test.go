@@ -67,7 +67,7 @@ var controlPlaneDecodersOutsideOwner = map[string]string{
 	"projectRunFailure":                  "stored run failure",
 	"projectRunLogRecord":                "stored telemetry record",
 	"projectRunSnapshot":                 "stored run metadata",
-	"projectRuntimeComputerSource":       "stored Computer configuration",
+	"projectInstanceComputerSource":      "stored Computer configuration",
 	"projectSessionStatus":               "stored Session failure",
 	"projectSessionTurn":                 "stored Session event",
 	"rejectActorStartEmptyString":        "canonical request member, fixed message",

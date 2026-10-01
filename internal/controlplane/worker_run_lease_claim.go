@@ -42,7 +42,7 @@ func (s *Server) workerClaimRunLease(w http.ResponseWriter, r *http.Request) {
 		session:  claim.Session(),
 		run:      claim.Run(),
 		attempt:  claim.Attempt(),
-		runtime:  claim.Instance(),
+		instance: claim.Instance(),
 		runLease: claim.Lease(),
 		computer: claim.Computer(),
 	}

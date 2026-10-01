@@ -16,7 +16,7 @@ import (
 
 // Observation is a worker host's physical observation of one Instance
 // incarnation, fenced by the observed version it acted on. Observations
-// carry no claim versions: the locked host epoch and status are their worker
+// carry no claim versions: the locked worker epoch and status are their worker
 // authority.
 type Observation struct {
 	Instance                InstanceRef
@@ -40,8 +40,8 @@ type Closure struct {
 // Cleanup proof methods: how the host established that no process of the
 // Instance incarnation can still run.
 const (
-	// CleanupSessionClosed reports that the Instance's session closed.
-	CleanupSessionClosed = "session_closed"
+	// CleanupMachineClosed reports that the Instance machine closed.
+	CleanupMachineClosed = "session_closed"
 	// CleanupHostReconciled reports exact reconciliation of the host's VMs.
 	CleanupHostReconciled = "host_reconciled"
 	// CleanupNotMaterialized reports that the Instance never started a VM.
@@ -56,23 +56,23 @@ type CleanupProof struct {
 }
 
 // evidence validates the proof at now and encodes it. A closed Instance
-// requires a closed session or exact host reconciliation; a failed Instance
+// requires a closed machine or exact host reconciliation; a failed Instance
 // may also never have materialized.
 func (p CleanupProof) evidence(now time.Time, closed bool) ([]byte, error) {
-	if closed && p.Method != CleanupSessionClosed && p.Method != CleanupHostReconciled {
-		return nil, invalidInput("closed runtime cleanup proof must confirm a closed session or exact host reconciliation")
+	if closed && p.Method != CleanupMachineClosed && p.Method != CleanupHostReconciled {
+		return nil, invalidInput("closed instance cleanup proof must confirm a closed machine or exact host reconciliation")
 	}
 	switch p.Method {
-	case CleanupSessionClosed, CleanupHostReconciled, CleanupNotMaterialized:
+	case CleanupMachineClosed, CleanupHostReconciled, CleanupNotMaterialized:
 	default:
-		return nil, invalidInput("runtime cleanup proof method is unsupported")
+		return nil, invalidInput("instance cleanup proof method is unsupported")
 	}
 	if p.CompletedAt.IsZero() || p.CompletedAt.After(now.Add(time.Minute)) {
-		return nil, invalidInput("runtime cleanup proof completed_at is required and cannot be in the future")
+		return nil, invalidInput("instance cleanup proof completed_at is required and cannot be in the future")
 	}
 	encoded, err := json.Marshal(p)
 	if err != nil {
-		return nil, invalidInput("encode runtime cleanup proof")
+		return nil, invalidInput("encode instance cleanup proof")
 	}
 	return encoded, nil
 }
@@ -82,9 +82,9 @@ func (p CleanupProof) evidence(now time.Time, closed bool) ([]byte, error) {
 type FailureKind uint8
 
 const (
-	// FailureRuntime is a failure of the Instance alone.
-	FailureRuntime FailureKind = iota
-	// FailureWorkerInvalid reports that the host epoch itself is invalid; the
+	// FailureInstance is a failure of the Instance alone.
+	FailureInstance FailureKind = iota
+	// FailureWorkerInvalid reports that the worker epoch itself is invalid; the
 	// host is drained.
 	FailureWorkerInvalid
 	// FailureSourceUnavailable reports that the Computer's committed source
@@ -144,7 +144,7 @@ func recordReady(ctx context.Context, tx pgx.Tx, readiness Readiness) (db.Comput
 // original fence returns the durable receipt.
 func RecordInstanceClosed(ctx context.Context, txb db.TxBeginner, closure Closure) (db.ComputerInstance, error) {
 	if closure.CleanupProof == nil {
-		return db.ComputerInstance{}, invalidInput("runtime cleanup proof is required when marking a runtime closed")
+		return db.ComputerInstance{}, invalidInput("instance cleanup proof is required when marking an instance closed")
 	}
 	evidence, err := closure.CleanupProof.evidence(time.Now(), true)
 	if err != nil {
@@ -166,14 +166,14 @@ func reclaimParams(o Observation, reason string, evidence []byte, requireFailure
 // RecordInstanceFailure records a reported Instance failure as a sequence of
 // transactions:
 //
-//  1. A FailureWorkerInvalid report first drains the host epoch in its own
+//  1. A FailureWorkerInvalid report first drains the worker epoch in its own
 //     transaction; a failed drain fails the report. The drain precedes
 //     validation of the cleanup proof.
 //  2. With CleanupProof, it validates the proof; an Instance already failed
 //     at the reported fences is reclaimed and the report ends there.
 //  3. It records the failure under supply → Computer → Instance locks. When
 //     that fence no longer holds for a FailureWorkerInvalid report, it drains
-//     the host epoch again in its own transaction.
+//     the worker epoch again in its own transaction.
 //  4. With CleanupProof, it reclaims the Instance it just failed.
 //
 // Logical failure settlement of the Instance's members remains with their

@@ -269,7 +269,7 @@ func (s objectScope) admit(inspection blockformat.ObjectInspection) (inspectedOb
 	}
 	for _, id := range object.keys {
 		if !s.allowedKeys[id] {
-			return inspectedObject{}, objectConflict("computer object key is not retained by Runtime")
+			return inspectedObject{}, objectConflict("computer object key is not retained by the Instance")
 		}
 	}
 	return object, nil
@@ -308,7 +308,7 @@ func (s objectScope) requireRetained(ctx context.Context, tx pgx.Tx, object insp
 		return err
 	}
 	if !retained {
-		return objectConflict("computer object candidate is not retained by Runtime")
+		return objectConflict("computer object candidate is not retained by the Instance")
 	}
 	return nil
 }
@@ -378,7 +378,7 @@ func (s objectScope) checkKeyClosure(ctx context.Context, tx pgx.Tx, object insp
 			return err
 		}
 		if !s.allowedKeys[pgvalue.UUIDString(id)] {
-			return objectConflict("computer object depends on a key not retained by Runtime")
+			return objectConflict("computer object depends on a key not retained by the Instance")
 		}
 	}
 	return rows.Err()

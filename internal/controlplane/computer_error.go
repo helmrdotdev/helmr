@@ -60,7 +60,7 @@ func (o computerOperation) recordsObjects() bool {
 // computerAuthorityChanged is the conflict each Instance operation reports
 // when the authority it fences changed.
 var computerAuthorityChanged = map[computerOperation]string{
-	computerInstanceObservationOperation:    "runtime instance fence is stale",
+	computerInstanceObservationOperation:    "instance fence is stale",
 	computerInstanceRenewalOperation:        "Computer Instance writer is stale",
 	computerRunCleanupOperation:             "Run cleanup authority is stale",
 	computerRestorePlanOperation:            "Computer restore authority changed",

@@ -201,7 +201,7 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	if activated.ObservedAt.Valid || activated.RunPausedReason.Valid || activated.VMPausedReason.Valid {
-		t.Fatalf("initial activation liveness = observed:%+v run:%+v runtime:%+v", activated.ObservedAt, activated.RunPausedReason, activated.VMPausedReason)
+		t.Fatalf("initial activation liveness = observed:%+v run:%+v vm:%+v", activated.ObservedAt, activated.RunPausedReason, activated.VMPausedReason)
 	}
 	bins, err := q.ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{
 		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
@@ -252,7 +252,7 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 	}
 	if !replayed.ObservedAt.Valid || !replayed.ObservedAt.Time.Equal(sentinel) || replayed.RunPausedReason.Valid ||
 		!replayed.VMPausedReason.Valid || replayed.VMPausedReason.String != "startup_recovery_leak" {
-		t.Fatalf("activation replay changed liveness = observed:%+v run:%+v runtime:%+v", replayed.ObservedAt, replayed.RunPausedReason, replayed.VMPausedReason)
+		t.Fatalf("activation replay changed liveness = observed:%+v run:%+v vm:%+v", replayed.ObservedAt, replayed.RunPausedReason, replayed.VMPausedReason)
 	}
 
 	sameEpoch := authenticate(serviceID)
@@ -260,12 +260,12 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 		t.Fatalf("same service epoch = %+v, want %+v", sameEpoch.CurrentEpoch, firstEpoch.CurrentEpoch)
 	}
 	var preservedObservedAt pgtype.Timestamptz
-	var preservedRuntimePause pgtype.Text
-	if err := pool.QueryRow(ctx, `SELECT observed_at, vm_paused_reason FROM worker_hosts WHERE id = $1`, workerID).Scan(&preservedObservedAt, &preservedRuntimePause); err != nil {
+	var preservedVMPause pgtype.Text
+	if err := pool.QueryRow(ctx, `SELECT observed_at, vm_paused_reason FROM worker_hosts WHERE id = $1`, workerID).Scan(&preservedObservedAt, &preservedVMPause); err != nil {
 		t.Fatal(err)
 	}
-	if !preservedObservedAt.Valid || !preservedObservedAt.Time.Equal(sentinel) || preservedRuntimePause.String != "startup_recovery_leak" {
-		t.Fatalf("same service changed liveness = observed:%+v runtime:%+v", preservedObservedAt, preservedRuntimePause)
+	if !preservedObservedAt.Valid || !preservedObservedAt.Time.Equal(sentinel) || preservedVMPause.String != "startup_recovery_leak" {
+		t.Fatalf("same service changed liveness = observed:%+v vm:%+v", preservedObservedAt, preservedVMPause)
 	}
 
 	nextEpoch := authenticate(uuid.NewV7())
@@ -273,12 +273,12 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 		t.Fatalf("new service epoch = %+v", nextEpoch)
 	}
 	var observedAt pgtype.Timestamptz
-	var runPause, runtimePause pgtype.Text
-	if err := pool.QueryRow(ctx, `SELECT observed_at, run_paused_reason, vm_paused_reason FROM worker_hosts WHERE id = $1`, workerID).Scan(&observedAt, &runPause, &runtimePause); err != nil {
+	var runPause, vmPause pgtype.Text
+	if err := pool.QueryRow(ctx, `SELECT observed_at, run_paused_reason, vm_paused_reason FROM worker_hosts WHERE id = $1`, workerID).Scan(&observedAt, &runPause, &vmPause); err != nil {
 		t.Fatal(err)
 	}
-	if observedAt.Valid || runPause.Valid || runtimePause.Valid {
-		t.Fatalf("new epoch retained liveness = observed:%+v run:%+v runtime:%+v", observedAt, runPause, runtimePause)
+	if observedAt.Valid || runPause.Valid || vmPause.Valid {
+		t.Fatalf("new epoch retained liveness = observed:%+v run:%+v vm:%+v", observedAt, runPause, vmPause)
 	}
 }
 

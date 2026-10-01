@@ -212,7 +212,7 @@ func (strategy sealedDriveChrootStrategy) AdaptHandlers(
 }
 
 func withRestoreSealedDrives(strategy sealedDriveChrootStrategy) firecracker.Opt {
-	return func(machine *firecracker.Machine) {
+	return func(sdkMachine *firecracker.Machine) {
 		// firecracker.WithSnapshot replaces FcInit after the jailer chroot
 		// strategy has adapted it. Restore the sealed-drive handler after the
 		// snapshot and ordinary restore-file options have established their
@@ -220,7 +220,7 @@ func withRestoreSealedDrives(strategy sealedDriveChrootStrategy) firecracker.Opt
 		// restore-file handler, so its SDK link step still sees absolute paths.
 		base := firecracker.LinkFilesHandler(filepath.Base(strategy.kernelImagePath))
 		base.Fn = strategy.linkFiles(base.Fn)
-		machine.Handlers.FcInit = machine.Handlers.FcInit.AppendAfter(
+		sdkMachine.Handlers.FcInit = sdkMachine.Handlers.FcInit.AppendAfter(
 			firecracker.CreateLogFilesHandlerName,
 			base,
 		)
@@ -230,14 +230,14 @@ func withRestoreSealedDrives(strategy sealedDriveChrootStrategy) firecracker.Opt
 func (strategy sealedDriveChrootStrategy) linkFiles(
 	linkOrdinary func(context.Context, *firecracker.Machine) error,
 ) func(context.Context, *firecracker.Machine) error {
-	return func(ctx context.Context, machine *firecracker.Machine) error {
+	return func(ctx context.Context, sdkMachine *firecracker.Machine) error {
 		sources := make(map[string]vm.ReadOnlyDriveSource, len(strategy.drives))
 		for _, drive := range strategy.drives {
 			sources[drive.ID] = drive.Source
 		}
-		ordinary := make([]models.Drive, 0, len(machine.Cfg.Drives))
+		ordinary := make([]models.Drive, 0, len(sdkMachine.Cfg.Drives))
 		sealed := make(map[string]models.Drive, len(strategy.drives))
-		for _, drive := range machine.Cfg.Drives {
+		for _, drive := range sdkMachine.Cfg.Drives {
 			id := firecracker.StringValue(drive.DriveID)
 			if _, exists := sources[id]; exists {
 				sealed[id] = drive
@@ -245,15 +245,15 @@ func (strategy sealedDriveChrootStrategy) linkFiles(
 			}
 			ordinary = append(ordinary, drive)
 		}
-		machine.Cfg.Drives = ordinary
-		if err := linkOrdinary(ctx, machine); err != nil {
+		sdkMachine.Cfg.Drives = ordinary
+		if err := linkOrdinary(ctx, sdkMachine); err != nil {
 			return err
 		}
 
 		root := jailRootPath(Config{
-			FirecrackerPath:     machine.Cfg.JailerCfg.ExecFile,
-			JailerChrootBaseDir: machine.Cfg.JailerCfg.ChrootBaseDir,
-		}, machine.Cfg.JailerCfg.ID)
+			FirecrackerPath:     sdkMachine.Cfg.JailerCfg.ExecFile,
+			JailerChrootBaseDir: sdkMachine.Cfg.JailerCfg.ChrootBaseDir,
+		}, sdkMachine.Cfg.JailerCfg.ID)
 		for _, id := range readOnlyDriveOrder {
 			source, exists := sources[id]
 			if !exists {
@@ -267,62 +267,62 @@ func (strategy sealedDriveChrootStrategy) linkFiles(
 			if err := source.LinkInto(
 				root,
 				name,
-				*machine.Cfg.JailerCfg.UID,
-				*machine.Cfg.JailerCfg.GID,
+				*sdkMachine.Cfg.JailerCfg.UID,
+				*sdkMachine.Cfg.JailerCfg.GID,
 			); err != nil {
 				return fmt.Errorf("link sealed drive %q into jail: %w", id, err)
 			}
 			drive.PathOnHost = firecracker.String(name)
-			machine.Cfg.Drives = append(machine.Cfg.Drives, drive)
+			sdkMachine.Cfg.Drives = append(sdkMachine.Cfg.Drives, drive)
 		}
 		return nil
 	}
 }
 
 func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, computerDiskPath string, memoryPath string, statePath string) firecracker.Opt {
-	return func(machine *firecracker.Machine) {
-		machine.Handlers.Validation = machine.Handlers.Validation.Append(firecracker.JailerConfigValidationHandler)
-		machine.Handlers.FcInit = machine.Handlers.FcInit.AppendAfter(firecracker.CreateLogFilesHandlerName, firecracker.Handler{
+	return func(sdkMachine *firecracker.Machine) {
+		sdkMachine.Handlers.Validation = sdkMachine.Handlers.Validation.Append(firecracker.JailerConfigValidationHandler)
+		sdkMachine.Handlers.FcInit = sdkMachine.Handlers.FcInit.AppendAfter(firecracker.CreateLogFilesHandlerName, firecracker.Handler{
 			Name: "fcinit.LinkHelmrRestoreFilesToRootFS",
-			Fn: func(ctx context.Context, machine *firecracker.Machine) error {
+			Fn: func(ctx context.Context, sdkMachine *firecracker.Machine) error {
 				root := jailRootPath(Config{
-					FirecrackerPath:     machine.Cfg.JailerCfg.ExecFile,
-					JailerChrootBaseDir: machine.Cfg.JailerCfg.ChrootBaseDir,
-				}, machine.Cfg.JailerCfg.ID)
+					FirecrackerPath:     sdkMachine.Cfg.JailerCfg.ExecFile,
+					JailerChrootBaseDir: sdkMachine.Cfg.JailerCfg.ChrootBaseDir,
+				}, sdkMachine.Cfg.JailerCfg.ID)
 				if err := linkIntoJail(rootfsPath, root, filepath.Base(rootfsPath)); err != nil {
 					return fmt.Errorf("link rootfs into jail: %w", err)
 				}
-				for i := range machine.Cfg.Drives {
-					if firecracker.StringValue(machine.Cfg.Drives[i].PathOnHost) == rootfsPath {
-						machine.Cfg.Drives[i].PathOnHost = firecracker.String(filepath.Base(rootfsPath))
+				for i := range sdkMachine.Cfg.Drives {
+					if firecracker.StringValue(sdkMachine.Cfg.Drives[i].PathOnHost) == rootfsPath {
+						sdkMachine.Cfg.Drives[i].PathOnHost = firecracker.String(filepath.Base(rootfsPath))
 					}
 				}
-				if err := linkWritableDiskIntoJail(scratchDiskPath, root, scratchDiskName, *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID, false); err != nil {
+				if err := linkWritableDiskIntoJail(scratchDiskPath, root, scratchDiskName, *sdkMachine.Cfg.JailerCfg.UID, *sdkMachine.Cfg.JailerCfg.GID, false); err != nil {
 					return fmt.Errorf("link scratch disk into jail: %w", err)
 				}
-				for i := range machine.Cfg.Drives {
-					if firecracker.StringValue(machine.Cfg.Drives[i].PathOnHost) == scratchDiskPath {
-						machine.Cfg.Drives[i].PathOnHost = firecracker.String(scratchDiskName)
+				for i := range sdkMachine.Cfg.Drives {
+					if firecracker.StringValue(sdkMachine.Cfg.Drives[i].PathOnHost) == scratchDiskPath {
+						sdkMachine.Cfg.Drives[i].PathOnHost = firecracker.String(scratchDiskName)
 					}
 				}
 				if computerDiskPath != "" {
-					if err := linkWritableDiskIntoJail(computerDiskPath, root, "computer.ext4", *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID, true); err != nil {
+					if err := linkWritableDiskIntoJail(computerDiskPath, root, "computer.ext4", *sdkMachine.Cfg.JailerCfg.UID, *sdkMachine.Cfg.JailerCfg.GID, true); err != nil {
 						return fmt.Errorf("link Computer into restore jail: %w", err)
 					}
-					for i := range machine.Cfg.Drives {
-						if firecracker.StringValue(machine.Cfg.Drives[i].PathOnHost) == computerDiskPath {
-							machine.Cfg.Drives[i].PathOnHost = firecracker.String("computer.ext4")
+					for i := range sdkMachine.Cfg.Drives {
+						if firecracker.StringValue(sdkMachine.Cfg.Drives[i].PathOnHost) == computerDiskPath {
+							sdkMachine.Cfg.Drives[i].PathOnHost = firecracker.String("computer.ext4")
 						}
 					}
 				}
-				if err := linkWritableDiskIntoJail(memoryPath, root, filepath.Base(memoryPath), *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID, false); err != nil {
+				if err := linkWritableDiskIntoJail(memoryPath, root, filepath.Base(memoryPath), *sdkMachine.Cfg.JailerCfg.UID, *sdkMachine.Cfg.JailerCfg.GID, false); err != nil {
 					return fmt.Errorf("link snapshot memory into jail: %w", err)
 				}
-				if err := linkWritableDiskIntoJail(statePath, root, filepath.Base(statePath), *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID, false); err != nil {
+				if err := linkWritableDiskIntoJail(statePath, root, filepath.Base(statePath), *sdkMachine.Cfg.JailerCfg.UID, *sdkMachine.Cfg.JailerCfg.GID, false); err != nil {
 					return fmt.Errorf("link snapshot state into jail: %w", err)
 				}
-				machine.Cfg.Snapshot.MemFilePath = path.Join("/", filepath.Base(memoryPath))
-				machine.Cfg.Snapshot.SnapshotPath = path.Join("/", filepath.Base(statePath))
+				sdkMachine.Cfg.Snapshot.MemFilePath = path.Join("/", filepath.Base(memoryPath))
+				sdkMachine.Cfg.Snapshot.SnapshotPath = path.Join("/", filepath.Base(statePath))
 				return nil
 			},
 		})

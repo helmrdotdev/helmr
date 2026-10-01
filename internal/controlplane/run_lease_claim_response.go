@@ -26,7 +26,7 @@ type runLeaseClaimResponseAuthority struct {
 	session  db.Session
 	run      db.Run
 	attempt  db.RunAttempt
-	runtime  db.ComputerInstance
+	instance db.ComputerInstance
 	runLease db.RunLease
 	computer db.LockRunLeaseClaimComputerRow
 }
@@ -86,7 +86,7 @@ func projectRunLeaseClaimResponse(
 	physical := runLeaseProjectionAuthority{
 		run:      authority.run,
 		attempt:  authority.attempt,
-		runtime:  authority.runtime,
+		instance: authority.instance,
 		runLease: authority.runLease,
 		computer: authority.computer,
 	}
@@ -110,7 +110,7 @@ func projectRunLeaseClaimResponse(
 	if err != nil {
 		return workerapi.RunLeaseClaimResponse{}, err
 	}
-	capability, err := computer.WriteCapability(fencingKey, authority.runtime)
+	capability, err := computer.WriteCapability(fencingKey, authority.instance)
 	if err != nil {
 		return workerapi.RunLeaseClaimResponse{}, err
 	}
@@ -144,14 +144,14 @@ func projectRunLeaseClaimResponse(
 
 func projectRestoredRunLeaseClaim(claim run.Claim, key disk.FencingKey) (workerapi.RunLeaseClaimResponse, error) {
 	wait, _ := claim.ResumeWait()
-	r, runtime := claim.Run(), claim.Instance()
-	lease, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{run: r, attempt: claim.Attempt(), runtime: runtime, runLease: claim.Lease(), computer: claim.Computer()})
+	r, instance := claim.Run(), claim.Instance()
+	lease, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{run: r, attempt: claim.Attempt(), instance: instance, runLease: claim.Lease(), computer: claim.Computer()})
 	if err != nil {
 		return workerapi.RunLeaseClaimResponse{}, err
 	}
-	capability, err := computer.WriteCapability(key, runtime)
+	capability, err := computer.WriteCapability(key, instance)
 	if err != nil {
 		return workerapi.RunLeaseClaimResponse{}, err
 	}
-	return workerapi.RunLeaseClaimResponse{Lease: lease, Computer: workerapi.ComputerAttachment{WriteCapability: capability.Token, Target: workerapi.ComputerMountTarget{BaseComputerDiskVersionID: lease.BaseComputerDiskVersionID}}, ProgramResume: &workerapi.ProgramResume{CheckpointID: pgvalue.UUIDString(runtime.SourceCheckpointID), RunWaitID: pgvalue.UUIDString(wait.ID), EntrypointKind: r.EntrypointKind}}, nil
+	return workerapi.RunLeaseClaimResponse{Lease: lease, Computer: workerapi.ComputerAttachment{WriteCapability: capability.Token, Target: workerapi.ComputerMountTarget{BaseComputerDiskVersionID: lease.BaseComputerDiskVersionID}}, ProgramResume: &workerapi.ProgramResume{CheckpointID: pgvalue.UUIDString(instance.SourceCheckpointID), RunWaitID: pgvalue.UUIDString(wait.ID), EntrypointKind: r.EntrypointKind}}, nil
 }

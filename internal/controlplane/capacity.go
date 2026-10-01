@@ -281,7 +281,7 @@ func capacityWorkerHostFilter(r *http.Request) (workergroup.HostFilter, error) {
 		if raw != "true" {
 			return filter, errors.New("has_unreclaimed_runtime must be true when present")
 		}
-		filter.HasUnreclaimedRuntime = true
+		filter.HasUnreclaimedInstance = true
 	}
 	for _, raw := range query["status"] {
 		status := workergroup.WorkerHostStatus(strings.TrimSpace(raw))

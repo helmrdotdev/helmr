@@ -66,10 +66,10 @@ func TestCapturedAdmissionPartialHelloReleaseAndIsolation(t *testing.T) {
 	if dials.Load() != maxCapturedConnections {
 		t.Fatal("overload allocated speculative upstream")
 	}
-	// Admission is runtime-owned: another live runtime still mediates requests.
+	// Admission is instance-owned: another live instance still mediates requests.
 	other := newFixture(t, nil)
 	if request(t, other, "https://api.github.com/", testMarker) != 200 {
-		t.Fatal("one runtime exhausted another")
+		t.Fatal("one instance exhausted another")
 	}
 	held[0].Close()
 	awaitResource(t, func() bool { return len(f.proxy.captured) < maxCapturedConnections })

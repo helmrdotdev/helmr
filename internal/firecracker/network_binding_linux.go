@@ -56,8 +56,8 @@ func (c *Connector) withNetworkBinding(
 	logical vm.WorkloadBinding,
 	installed **installedNetworkBinding,
 ) firecracker.Opt {
-	return func(machine *firecracker.Machine) {
-		machine.Handlers.FcInit = machine.Handlers.FcInit.Prepend(firecracker.Handler{
+	return func(sdkMachine *firecracker.Machine) {
+		sdkMachine.Handlers.FcInit = sdkMachine.Handlers.FcInit.Prepend(firecracker.Handler{
 			Name: "helmr.InstallNetworkBinding",
 			Fn: func(ctx context.Context, _ *firecracker.Machine) error {
 				binding, err := c.prepareNetworkBinding(ctx, mode, owner, logical)
