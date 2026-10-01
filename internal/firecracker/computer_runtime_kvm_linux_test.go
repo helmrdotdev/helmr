@@ -153,7 +153,7 @@ func TestComputerRuntimeKVM(t *testing.T) {
 			if err := os.Mkdir(dir, 0700); err != nil {
 				t.Fatal(err)
 			}
-			local, err := disk.CreateLocalVersion(t.Context(), disk.LocalVersionConfig{Directory: filepath.Join(dir, "generation"), Base: root, BaseSource: store, Scope: "kvm-qualification", ActiveKey: keyID, Keys: keys, DirtyBlocks: 256, StagedBytes: 256 << 20, PackLimit: blockformat.MinPackLimit})
+			local, err := disk.CreateLocalVersion(t.Context(), disk.LocalVersionConfig{Directory: filepath.Join(dir, "version"), Base: root, BaseSource: store, Scope: "kvm-qualification", ActiveKey: keyID, Keys: keys, DirtyBlocks: 256, StagedBytes: 256 << 20, PackLimit: blockformat.MinPackLimit})
 			if err != nil {
 				t.Fatal(err)
 			}

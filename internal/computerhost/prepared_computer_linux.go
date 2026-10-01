@@ -82,7 +82,7 @@ func (p *PreparedMachines) prepareComputerVersion(ctx context.Context, target wo
 	if _, err := disk.OpenVersion(ctx, p.ComputerRanges, scope, keys, material.Root, source.LogicalBytes); err != nil {
 		return nil, disk.PublishedSourceFailure(err)
 	}
-	return disk.CreateLocalVersion(ctx, disk.LocalVersionConfig{Directory: filepath.Join(dir, "generation"), Base: material.Root, BaseSource: p.ComputerRanges, Scope: scope, ActiveKey: material.WriteKeyID, Keys: keys, DirtyBlocks: 256, StagedBytes: p.ComputerStagingBytes, PackLimit: blockformat.MinPackLimit})
+	return disk.CreateLocalVersion(ctx, disk.LocalVersionConfig{Directory: filepath.Join(dir, "version"), Base: material.Root, BaseSource: p.ComputerRanges, Scope: scope, ActiveKey: material.WriteKeyID, Keys: keys, DirtyBlocks: 256, StagedBytes: p.ComputerStagingBytes, PackLimit: blockformat.MinPackLimit})
 }
 
 func (p *PreparedMachines) publishComputerSeed(ctx context.Context, target workerapi.RuntimeReconcileTarget, dir string) (retErr error) {

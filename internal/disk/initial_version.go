@@ -80,7 +80,7 @@ func CaptureInitialVersion(ctx context.Context, request VersionCapture) (_ *Init
 	if !info.Mode().IsRegular() || info.Size() != request.Capacity {
 		return nil, errors.New("initial disk differs from admitted capacity")
 	}
-	directory, err := os.MkdirTemp(request.StagingParent, "generation-")
+	directory, err := os.MkdirTemp(request.StagingParent, "version-")
 	if err != nil {
 		return nil, err
 	}
