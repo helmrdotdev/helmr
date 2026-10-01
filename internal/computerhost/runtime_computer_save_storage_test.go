@@ -37,7 +37,7 @@ func (c collectedSaveCapture) Collect(ctx context.Context, budget int) (int64, e
 	return n, err
 }
 
-// Uses the actual coordinator and encrypted generation store. The CP fixture
+// Uses the actual coordinator and encrypted version store. The CP fixture
 // models receipt/retention acknowledgement; it does not prove remote GC policy.
 func TestRuntimeComputerSaveLoopReclaimsStagingAcrossSaves(t *testing.T) {
 	remote, err := cas.NewFile(filepath.Join(t.TempDir(), "remote"))
@@ -50,12 +50,12 @@ func TestRuntimeComputerSaveLoopReclaimsStagingAcrossSaves(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := disk.NewGenerationRoot(locator, 1<<20)
+	root, err := disk.NewVersionRoot(locator, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := disk.LocalGenerationConfig{Directory: filepath.Join(t.TempDir(), "local"), Base: root, BaseSource: remote, Scope: writer.Scope, ActiveKey: key, Keys: writer.Keys, DirtyBlocks: 8, StagedBytes: 96 << 10, PackLimit: blockformat.MinPackLimit}
-	local, err := disk.CreateLocalGeneration(t.Context(), cfg)
+	cfg := disk.LocalVersionConfig{Directory: filepath.Join(t.TempDir(), "local"), Base: root, BaseSource: remote, Scope: writer.Scope, ActiveKey: key, Keys: writer.Keys, DirtyBlocks: 8, StagedBytes: 96 << 10, PackLimit: blockformat.MinPackLimit}
+	local, err := disk.CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

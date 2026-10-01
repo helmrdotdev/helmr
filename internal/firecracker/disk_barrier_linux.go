@@ -131,7 +131,7 @@ func (s *guestSession) capturePausedComputer(ctx context.Context) (*vm.ComputerS
 		return nil, err
 	}
 	if s.topology.Computer.Device == nil {
-		return nil, errors.New("owned generation device required for capture")
+		return nil, errors.New("owned disk version device required for capture")
 	}
 	capture, err := s.topology.Computer.Device.Capture(ctx)
 	if err != nil {

@@ -41,7 +41,7 @@ func (s *computerGraphReclaimStore) ReclaimVersions(ctx context.Context, digest 
 func TestComputerGraphCollectionRetainsRootsAndLivePublishers(t *testing.T) {
 	for _, published := range []bool{false, true} {
 		t.Run(map[bool]string{false: "abandoned", true: "published"}[published], func(t *testing.T) {
-			f, input := newGenerationFixture(t)
+			f, input := newVersionFixture(t)
 			if published {
 				if _, err := f.publisher.PublishInitialVersion(t.Context(), f.principal, f.ref, input); err != nil {
 					t.Fatal(err)
@@ -88,7 +88,7 @@ func TestComputerGraphCollectionRetainsRootsAndLivePublishers(t *testing.T) {
 func TestComputerGraphCollectionRetainsOtherOrganizationAndStorageRetry(t *testing.T) {
 	for _, shared := range []bool{false, true} {
 		t.Run(map[bool]string{false: "remote retry", true: "shared membership"}[shared], func(t *testing.T) {
-			f, input := newGenerationFixture(t)
+			f, input := newVersionFixture(t)
 			if shared {
 				if _, err := db.New(f.Pool).UpsertCasObject(t.Context(), db.UpsertCasObjectParams{OrgID: pgvalue.NewUUIDv7(), Digest: input.Root.Pack.Digest, SizeBytes: input.Root.Pack.SizeBytes, MediaType: "application/octet-stream"}); err != nil {
 					t.Fatal(err)

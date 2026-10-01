@@ -225,10 +225,10 @@ POST /worker/v1/run/computer-instances/claim
 POST /worker/v1/run/computer-instances/closed
 POST /worker/v1/run/computer-instances/computer-source
 POST /worker/v1/run/computer-instances/failed
-POST /worker/v1/run/computer-instances/initialization/generation
 POST /worker/v1/run/computer-instances/initialization/key
 POST /worker/v1/run/computer-instances/initialization/objects/certify
 POST /worker/v1/run/computer-instances/initialization/objects/register
+POST /worker/v1/run/computer-instances/initialization/version
 POST /worker/v1/run/computer-instances/ready
 POST /worker/v1/run/computer-instances/reconcile
 POST /worker/v1/run/computer-instances/renew

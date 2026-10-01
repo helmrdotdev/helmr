@@ -53,7 +53,7 @@ func ExpireParentOwnedChild(
 	}
 	lockOrder := slices.Clone(lineage)
 	slices.SortFunc(lockOrder, func(a, b uuid.UUID) int { return slices.Compare(a[:], b[:]) })
-	if err := lockCancellationActors(ctx, tx, scope, lineage); err != nil {
+	if err := lockCancellationSessions(ctx, tx, scope, lineage); err != nil {
 		return false, err
 	}
 	locked := make(map[uuid.UUID]cancellationRun, len(lineage))

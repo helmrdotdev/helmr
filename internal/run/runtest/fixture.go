@@ -218,7 +218,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, createdAt time.Ti
 	`, computerID, fixture.EnvironmentID, Region,
 		fixture.ComputerDefinitionID, versionID)
 	dbtest.InsertCommittedComputerRoot(t, ctx, tx, versionID, fixture.EnvironmentID, computerID)
-	dbtest.InsertComputerGeneration(t, ctx, tx, fixture.EnvironmentID, computerID, versionID)
+	dbtest.InsertComputerVersion(t, ctx, tx, fixture.EnvironmentID, computerID, versionID)
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO runs (
 			id, org_id, project_id, environment_id, deployment_id,
@@ -302,7 +302,7 @@ func (fixture Fixture) ConvertToActor(
 ) uuid.UUID {
 	t.Helper()
 	actorDefinitionID := uuid.NewV7()
-	actorID := uuid.NewV7()
+	sessionID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, fixture.Pool, `
 ALTER TABLE run_attempts
 ALTER CONSTRAINT run_attempts_run_id_entrypoint_kind_computer_id_fkey
@@ -340,7 +340,7 @@ INSERT INTO sessions (
     $1, $2,
     'test-actor', $3, $4, $5,
     3, 1, 'default', 300000, $6::jsonb
-)`, actorID, fixture.EnvironmentID, actorDefinitionID, computerID, work.RunID, retryPolicy)
+)`, sessionID, fixture.EnvironmentID, actorDefinitionID, computerID, work.RunID, retryPolicy)
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE runs
    SET deployment_definition_id = $1,
@@ -348,7 +348,7 @@ UPDATE runs
        session_id = $2, cause_kind = 'actor_start',
        session_input_start_sequence = 1, session_input_high_watermark = 2,
        payload = NULL, retry_policy = $3::jsonb
- WHERE id = $4`, actorDefinitionID, actorID, retryPolicy, work.RunID)
+ WHERE id = $4`, actorDefinitionID, sessionID, retryPolicy, work.RunID)
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE run_attempts
    SET entrypoint_kind = 'actor',
@@ -357,5 +357,5 @@ UPDATE run_attempts
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	return actorID
+	return sessionID
 }

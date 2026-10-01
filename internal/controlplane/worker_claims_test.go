@@ -9,27 +9,9 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/run"
+	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
-
-func TestWorkerClaimsSurviveStaleErrorTranslation(t *testing.T) {
-	for name, translate := range map[string]func(error) error{
-		"actor":        staleActorCompletion,
-		"actor turn":   staleActorTurnCommit,
-		"actor output": staleActorOutputAppend,
-	} {
-		t.Run(name, func(t *testing.T) {
-			response := httptest.NewRecorder()
-			if !writeStaleWorkerClaims(response, translate(workergroup.ErrStaleClaims)) || response.Code != http.StatusUnauthorized {
-				t.Fatalf("claims error did not request authentication: status=%d", response.Code)
-			}
-		})
-	}
-	response := httptest.NewRecorder()
-	if writeStaleWorkerClaims(response, errStaleRunLeaseClaim) || response.Body.Len() != 0 {
-		t.Fatal("a stale lease was translated into an authentication refresh")
-	}
-}
 
 func TestWorkerSourceErrorMappersRefreshClaimsBeforeDomainErrors(t *testing.T) {
 	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -43,7 +25,7 @@ func TestWorkerSourceErrorMappersRefreshClaimsBeforeDomainErrors(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			response := httptest.NewRecorder()
-			write(response, errors.Join(workergroup.ErrStaleClaims, run.ErrStaleSource, run.ErrChildInvokeStale, errTokenCreateAuthority))
+			write(response, errors.Join(workergroup.ErrStaleClaims, run.ErrStaleSource, run.ErrChildInvokeStale, token.ErrCreateAuthority))
 			if response.Code != http.StatusUnauthorized {
 				t.Fatalf("claims response status=%d body=%s", response.Code, response.Body.String())
 			}

@@ -10,7 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 )
 
-func TestInitialGenerationSparseDisk(t *testing.T) {
+func TestInitialVersionSparseDisk(t *testing.T) {
 	disk, err := os.CreateTemp(t.TempDir(), "disk")
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +48,7 @@ func TestInitialGenerationSparseDisk(t *testing.T) {
 		t.Fatalf("sparse source did not skip holes: read %d of %d bytes", scanned, capacity)
 	}
 	t.Logf("extent scan: %d bytes of %d logical bytes", scanned, capacity)
-	candidate, err := CaptureInitialGeneration(t.Context(), GenerationCapture{Disk: disk, Capacity: capacity, StagingParent: t.TempDir(), Scope: "scope", KeyID: "key", Key: bytes.Repeat([]byte{3}, 32), Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 4 << 20, MaxObjects: 100})
+	candidate, err := CaptureInitialVersion(t.Context(), VersionCapture{Disk: disk, Capacity: capacity, StagingParent: t.TempDir(), Scope: "scope", KeyID: "key", Key: bytes.Repeat([]byte{3}, 32), Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 4 << 20, MaxObjects: 100})
 	if err != nil {
 		t.Fatal(err)
 	}

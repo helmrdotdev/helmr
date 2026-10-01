@@ -75,7 +75,7 @@ func TestCheckpointRegistersAllMembersBeforeRetryingExactCiphertext(t *testing.T
 		if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes == 0 {
 			t.Fatal("capacity released before upload")
 		}
-		if session.artifact.Computer.Capture.(*generationCaptureFixture).released {
+		if session.artifact.Computer.Capture.(*versionCaptureFixture).released {
 			t.Fatal("capture released before uploads joined")
 		}
 		attempts = append(attempts, d)
@@ -107,7 +107,7 @@ func TestCheckpointRegistersAllMembersBeforeRetryingExactCiphertext(t *testing.T
 	if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes != 0 {
 		t.Fatal("staging reservation leaked")
 	}
-	if !session.artifact.Computer.Capture.(*generationCaptureFixture).released {
+	if !session.artifact.Computer.Capture.(*versionCaptureFixture).released {
 		t.Fatal("successful capture retention leaked")
 	}
 	if session.closeCount != 0 {
@@ -254,7 +254,7 @@ func TestCheckpointPermanentUploadFailureRetainsSourceUntilSettlement(t *testing
 			if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes != 0 {
 				t.Fatal("staging capacity leaked")
 			}
-			if !session.artifact.Computer.Capture.(*generationCaptureFixture).released {
+			if !session.artifact.Computer.Capture.(*versionCaptureFixture).released {
 				t.Fatal("capture retention leaked")
 			}
 			assertRemoved(t, session.artifact.VMState.Path)

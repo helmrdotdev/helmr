@@ -18,19 +18,19 @@ func TestTurnStopDoesNotConsumeSharedTokenOrUnrelatedWait(t *testing.T) {
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	actorWork := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 	taskWork := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
-	actorID := fixture.base.ConvertToActor(t, ctx, runtest.RunLease{RunID: actorWork.runID, LeaseID: actorWork.leaseID}, `{"enabled":false}`)
+	sessionID := fixture.base.ConvertToActor(t, ctx, runtest.RunLease{RunID: actorWork.runID, LeaseID: actorWork.leaseID}, `{"enabled":false}`)
 	startTaskCompletionWork(t, ctx, fixture, actorWork)
 	startTaskCompletionWork(t, ctx, fixture, taskWork)
 	turnID := uuid.NewV7()
 	// ConvertToActor seeds cursor1 and input high-watermark2. Supply that owed
 	// input, then use the real activation owner to bind its execution.
-	dbtest.MustExec(t, ctx, fixture.pool, `INSERT INTO session_turns(id,environment_id,session_id,sequence,data) VALUES($1,$2,$3,2,'{}')`, turnID, fixture.environmentID, actorID)
+	dbtest.MustExec(t, ctx, fixture.pool, `INSERT INTO session_turns(id,environment_id,session_id,sequence,data) VALUES($1,$2,$3,2,'{}')`, turnID, fixture.environmentID, sessionID)
 	tx, err := fixture.pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(context.Background())
-	turn, err := session.ActivateTurn(ctx, tx, run.TurnScope{EnvironmentID: fixture.environmentID, SessionID: actorID, TurnID: turnID, RunID: actorWork.runID, AttemptNumber: 1})
+	turn, err := session.ActivateTurn(ctx, tx, run.TurnScope{EnvironmentID: fixture.environmentID, SessionID: sessionID, TurnID: turnID, RunID: actorWork.runID, AttemptNumber: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,15 +42,16 @@ func TestTurnStopDoesNotConsumeSharedTokenOrUnrelatedWait(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	registrar := newTestRegistrar(t, fixture.pool)
 	stopped := tokenWaitRegistrationRequest(t, ctx, fixture, actorWork, tokenID, uuid.NewV7())
 	stopped.ActorSpeculativeInputSequence = pgtype.Int8{Int64: 2, Valid: true}
 	stopped.TurnID = pgvalue.UUID(turnID)
 	stopped.RunGeneration = turn.RunGeneration
 	unrelated := tokenWaitRegistrationRequest(t, ctx, fixture, taskWork, tokenID, uuid.NewV7())
-	if _, err = reconciler.RegisterWait(ctx, stopped); err != nil {
+	if _, err = registrar.RegisterWait(ctx, stopped); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = reconciler.RegisterWait(ctx, unrelated); err != nil {
+	if _, err = registrar.RegisterWait(ctx, unrelated); err != nil {
 		t.Fatal(err)
 	}
 	tx, err = fixture.pool.Begin(ctx)
@@ -62,7 +63,7 @@ func TestTurnStopDoesNotConsumeSharedTokenOrUnrelatedWait(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = session.InterruptTurn(ctx, tx, fixture.environmentID, actorID, turnID, "stop-shared-token-wait", graph); err != nil {
+	if _, err = session.InterruptTurn(ctx, tx, fixture.environmentID, sessionID, turnID, "stop-shared-token-wait", graph); err != nil {
 		t.Fatal(err)
 	}
 	if err = tx.Commit(ctx); err != nil {

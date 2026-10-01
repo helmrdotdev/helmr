@@ -104,13 +104,13 @@ func CompleteMessage(ctx context.Context, tx pgx.Tx, scope run.TurnScope, leaseI
 	if err != nil {
 		return db.SessionMessage{}, err
 	}
-	actor, turn := locked.Session(), locked.Turn()
+	session, turn := locked.Session(), locked.Turn()
 	// An already admitted callback may acknowledge completion during stop or
 	// settlement. That acknowledgment admits no output or new native operation.
-	if actor.CurrentRunID != pgvalue.UUID(scope.RunID) || actor.RunGeneration != scope.RunGeneration || actor.ActiveTurnID != turn.ID || turn.Status != "running" {
+	if session.CurrentRunID != pgvalue.UUID(scope.RunID) || session.RunGeneration != scope.RunGeneration || session.ActiveTurnID != turn.ID || turn.Status != "running" {
 		return db.SessionMessage{}, run.ErrTurnScope
 	}
-	message, err := q.LockSessionMessage(ctx, db.LockSessionMessageParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: pgvalue.UUID(messageID)})
+	message, err := q.LockSessionMessage(ctx, db.LockSessionMessageParams{EnvironmentID: session.EnvironmentID, SessionID: session.ID, ID: pgvalue.UUID(messageID)})
 	if err != nil {
 		return message, err
 	}
@@ -125,7 +125,7 @@ func CompleteMessage(ctx context.Context, tx pgx.Tx, scope run.TurnScope, leaseI
 		}
 		return message, nil
 	}
-	message, err = finishMessage(ctx, q, actor, message, outcome, raw)
+	message, err = finishMessage(ctx, q, session, message, outcome, raw)
 	if err != nil {
 		return message, err
 	}
@@ -135,18 +135,18 @@ func CompleteMessage(ctx context.Context, tx pgx.Tx, scope run.TurnScope, leaseI
 		// and publishes its captured failure. Keep any existing stop intent.
 		if !turn.InterruptRequestedAt.Valid {
 			if _, err = q.BeginSessionTurnSettlement(ctx, db.BeginSessionTurnSettlementParams{
-				EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: turn.ID,
+				EnvironmentID: session.EnvironmentID, SessionID: session.ID, ID: turn.ID,
 			}); err != nil {
 				return message, err
 			}
 		}
-		err = rejectQueuedMessages(ctx, q, actor, turn.ID, "handler_failed")
+		err = rejectQueuedMessages(ctx, q, session, turn.ID, "handler_failed")
 	}
 	return message, err
 }
 
-func finishMessage(ctx context.Context, q db.Querier, actor db.Session, message db.SessionMessage, outcome MessageOutcome, raw []byte) (db.SessionMessage, error) {
-	updated, err := q.FinishSessionMessage(ctx, db.FinishSessionMessageParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: message.ID, ExpectedStatus: message.Status, Status: outcome.Status, Outcome: raw})
+func finishMessage(ctx context.Context, q db.Querier, session db.Session, message db.SessionMessage, outcome MessageOutcome, raw []byte) (db.SessionMessage, error) {
+	updated, err := q.FinishSessionMessage(ctx, db.FinishSessionMessageParams{EnvironmentID: session.EnvironmentID, SessionID: session.ID, ID: message.ID, ExpectedStatus: message.Status, Status: outcome.Status, Outcome: raw})
 	if err != nil {
 		return updated, err
 	}
@@ -155,12 +155,12 @@ func finishMessage(ctx context.Context, q db.Querier, actor db.Session, message 
 		Code      string          `json:"code,omitempty"`
 		Details   json.RawMessage `json:"details,omitempty"`
 	}{pgvalue.MustUUIDValue(message.ID), outcome.Code, outcome.Details})
-	_, err = appendLifecycleEvent(ctx, q, actor, message.TurnID, message.ID, "message."+outcome.Status, body, pgtype.UUID{})
+	_, err = appendLifecycleEvent(ctx, q, session, message.TurnID, message.ID, "message."+outcome.Status, body, pgtype.UUID{})
 	return updated, err
 }
 
-func rejectQueuedMessages(ctx context.Context, q db.Querier, actor db.Session, turnID pgtype.UUID, code string) error {
-	messages, err := q.ListUnsettledSessionMessages(ctx, db.ListUnsettledSessionMessagesParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, TurnID: turnID})
+func rejectQueuedMessages(ctx context.Context, q db.Querier, session db.Session, turnID pgtype.UUID, code string) error {
+	messages, err := q.ListUnsettledSessionMessages(ctx, db.ListUnsettledSessionMessagesParams{EnvironmentID: session.EnvironmentID, SessionID: session.ID, TurnID: turnID})
 	if err != nil {
 		return err
 	}
@@ -170,7 +170,7 @@ func rejectQueuedMessages(ctx context.Context, q db.Querier, actor db.Session, t
 		}
 		outcome := MessageOutcome{Status: "rejected", Code: code}
 		raw, _ := json.Marshal(outcome)
-		if _, err := finishMessage(ctx, q, actor, message, outcome, raw); err != nil {
+		if _, err := finishMessage(ctx, q, session, message, outcome, raw); err != nil {
 			return err
 		}
 	}
@@ -183,15 +183,15 @@ func BeginSettlement(ctx context.Context, tx pgx.Tx, scope run.TurnScope) (db.Se
 	if err != nil {
 		return db.SessionTurn{}, err
 	}
-	actor, turn := locked.Session(), locked.Turn()
+	session, turn := locked.Session(), locked.Turn()
 	if _, err = locked.Validate(); err != nil {
 		return turn, err
 	}
-	turn, err = q.BeginSessionTurnSettlement(ctx, db.BeginSessionTurnSettlementParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: turn.ID})
+	turn, err = q.BeginSessionTurnSettlement(ctx, db.BeginSessionTurnSettlementParams{EnvironmentID: session.EnvironmentID, SessionID: session.ID, ID: turn.ID})
 	if err != nil {
 		return turn, err
 	}
-	return turn, rejectQueuedMessages(ctx, q, actor, turn.ID, "turn_settling")
+	return turn, rejectQueuedMessages(ctx, q, session, turn.ID, "turn_settling")
 }
 
 func jsonEqual(a, b []byte) bool {
@@ -208,8 +208,8 @@ func jsonEqual(a, b []byte) bool {
 
 // Reconciliation never retries an admitted callback. After writer exclusion,
 // an unacknowledged delivery remains unknown and unstarted work is rejected.
-func finishUnsettledMessages(ctx context.Context, q db.Querier, actor db.Session, turnID pgtype.UUID, reason string) error {
-	messages, err := q.ListUnsettledSessionMessages(ctx, db.ListUnsettledSessionMessagesParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, TurnID: turnID})
+func finishUnsettledMessages(ctx context.Context, q db.Querier, session db.Session, turnID pgtype.UUID, reason string) error {
+	messages, err := q.ListUnsettledSessionMessages(ctx, db.ListUnsettledSessionMessagesParams{EnvironmentID: session.EnvironmentID, SessionID: session.ID, TurnID: turnID})
 	if err != nil {
 		return err
 	}
@@ -219,7 +219,7 @@ func finishUnsettledMessages(ctx context.Context, q db.Querier, actor db.Session
 			outcome = MessageOutcome{Status: "unknown", Code: reason}
 		}
 		raw, _ := json.Marshal(outcome)
-		if _, err = finishMessage(ctx, q, actor, message, outcome, raw); err != nil {
+		if _, err = finishMessage(ctx, q, session, message, outcome, raw); err != nil {
 			return err
 		}
 	}

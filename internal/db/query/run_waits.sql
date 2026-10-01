@@ -66,7 +66,7 @@ SELECT runs.computer_id,
  WHERE runs.environment_id = sqlc.arg(environment_id)
    AND runs.id = sqlc.arg(run_id);
 
--- name: LockTokenWaitActor :one
+-- name: LockTokenWaitSession :one
 SELECT *
   FROM sessions
  WHERE id = sqlc.arg(session_id)
@@ -646,7 +646,7 @@ SELECT run_waits.*
  ORDER BY due_at, run_waits.id
  LIMIT sqlc.arg(limit_count);
 
--- name: RegisterActorInputRunWait :one
+-- name: RegisterSessionInputRunWait :one
 WITH moved_run AS (
     UPDATE runs
        SET status = 'waiting',
@@ -679,7 +679,7 @@ SELECT sqlc.arg(id), sqlc.arg(environment_id), moved_run.id, moved_run.computer_
   FROM moved_run
 RETURNING *;
 
--- name: GetActorInputRunWaitRegistrationReplay :one
+-- name: GetSessionInputRunWaitRegistrationReplay :one
 SELECT *
   FROM run_waits
  WHERE id = sqlc.arg(id)
@@ -696,7 +696,7 @@ SELECT *
    AND (current_run_lease_id = sqlc.arg(run_lease_id)
         OR prior_run_lease_id = sqlc.arg(run_lease_id));
 
--- name: GetPendingActorInputRunWait :one
+-- name: GetPendingSessionInputRunWait :one
 SELECT *
   FROM run_waits
  WHERE environment_id = sqlc.arg(environment_id)
@@ -893,7 +893,7 @@ UPDATE run_waits
  WHERE run_waits.id = eligible_wait.id
 RETURNING run_waits.*;
 
--- name: ListPendingActorInputWaitTimeouts :many
+-- name: ListPendingSessionInputWaitTimeouts :many
 SELECT run_waits.*
   FROM run_waits
  WHERE kind = 'actor_input'

@@ -11,7 +11,7 @@ import (
 
 // FailExecution terminalizes an excluded Actor execution in the caller's
 // transaction. The caller owns Computer disposition; this settles Session history.
-func FailExecution(ctx context.Context, tx pgx.Tx, actor db.Session, failure json.RawMessage, fingerprint string, completedAt pgtype.Timestamptz) error {
+func FailExecution(ctx context.Context, tx pgx.Tx, session db.Session, failure json.RawMessage, fingerprint string, completedAt pgtype.Timestamptz) error {
 	q := db.New(tx)
 	terminalEvent, queueReason := "session.failed", "session_failed"
 	queuedBody, err := json.Marshal(map[string]string{"reason": queueReason})
@@ -19,40 +19,40 @@ func FailExecution(ctx context.Context, tx pgx.Tx, actor db.Session, failure jso
 		return err
 	}
 	var sequence pgtype.Int8
-	if actor.ActiveTurnID.Valid {
-		turn, err := q.LockSessionTurnInput(ctx, db.LockSessionTurnInputParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: actor.ActiveTurnID})
+	if session.ActiveTurnID.Valid {
+		turn, err := q.LockSessionTurnInput(ctx, db.LockSessionTurnInputParams{EnvironmentID: session.EnvironmentID, SessionID: session.ID, ID: session.ActiveTurnID})
 		if err != nil {
 			return err
 		}
-		if turn.Status != "running" || turn.Sequence != actor.CommittedInputSequence+1 {
+		if turn.Status != "running" || turn.Sequence != session.CommittedInputSequence+1 {
 			return ErrAuthority
 		}
-		if err = finishUnsettledMessages(ctx, q, actor, turn.ID, "session_failed"); err != nil {
+		if err = finishUnsettledMessages(ctx, q, session, turn.ID, "session_failed"); err != nil {
 			return err
 		}
 		body, err := json.Marshal(map[string]any{"error": failure})
 		if err != nil {
 			return err
 		}
-		event, err := appendLifecycleEvent(ctx, q, actor, turn.ID, pgtype.UUID{}, "turn.failed", body, pgtype.UUID{})
+		event, err := appendLifecycleEvent(ctx, q, session, turn.ID, pgtype.UUID{}, "turn.failed", body, pgtype.UUID{})
 		if err != nil {
 			return err
 		}
-		if _, err = q.SettleHeldSessionTurn(ctx, db.SettleHeldSessionTurnParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, TurnID: turn.ID, Status: "failed", EventID: event.ID, Fingerprint: pgtype.Text{String: fingerprint, Valid: true}}); err != nil {
+		if _, err = q.SettleHeldSessionTurn(ctx, db.SettleHeldSessionTurnParams{EnvironmentID: session.EnvironmentID, SessionID: session.ID, TurnID: turn.ID, Status: "failed", EventID: event.ID, Fingerprint: pgtype.Text{String: fingerprint, Valid: true}}); err != nil {
 			return err
 		}
 		sequence = pgtype.Int8{Int64: turn.Sequence, Valid: true}
 	}
-	queued, err := q.LockQueuedSessionTurns(ctx, db.LockQueuedSessionTurnsParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID})
+	queued, err := q.LockQueuedSessionTurns(ctx, db.LockQueuedSessionTurnsParams{EnvironmentID: session.EnvironmentID, SessionID: session.ID})
 	if err != nil {
 		return err
 	}
 	for _, turn := range queued {
-		event, err := appendLifecycleEvent(ctx, q, actor, turn.ID, pgtype.UUID{}, "turn.cancelled", queuedBody, pgtype.UUID{})
+		event, err := appendLifecycleEvent(ctx, q, session, turn.ID, pgtype.UUID{}, "turn.cancelled", queuedBody, pgtype.UUID{})
 		if err != nil {
 			return err
 		}
-		if _, err = q.CancelQueuedSessionTurn(ctx, db.CancelQueuedSessionTurnParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, TurnID: turn.ID, EventID: event.ID}); err != nil {
+		if _, err = q.CancelQueuedSessionTurn(ctx, db.CancelQueuedSessionTurnParams{EnvironmentID: session.EnvironmentID, SessionID: session.ID, TurnID: turn.ID, EventID: event.ID}); err != nil {
 			return err
 		}
 	}
@@ -60,9 +60,9 @@ func FailExecution(ctx context.Context, tx pgx.Tx, actor db.Session, failure jso
 	if err != nil {
 		return err
 	}
-	if _, err = appendLifecycleEvent(ctx, q, actor, pgtype.UUID{}, pgtype.UUID{}, terminalEvent, body, pgtype.UUID{}); err != nil {
+	if _, err = appendLifecycleEvent(ctx, q, session, pgtype.UUID{}, pgtype.UUID{}, terminalEvent, body, pgtype.UUID{}); err != nil {
 		return err
 	}
-	_, err = q.FailActorSession(ctx, db.FailActorSessionParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, RunID: actor.CurrentRunID, RunGeneration: actor.RunGeneration, Failure: failure, CompletedAt: completedAt, InputSequence: sequence})
+	_, err = q.FailSession(ctx, db.FailSessionParams{EnvironmentID: session.EnvironmentID, SessionID: session.ID, RunID: session.CurrentRunID, RunGeneration: session.RunGeneration, Failure: failure, CompletedAt: completedAt, InputSequence: sequence})
 	return err
 }

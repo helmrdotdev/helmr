@@ -28,9 +28,9 @@ func TestClaimBumpsReportStaleClaimsOnComparingPaths(t *testing.T) {
 		t.Run(bump.name+"/preparation", func(t *testing.T) {
 			f := newPreparationFixture(t)
 			dbtest.MustExec(t, t.Context(), f.Pool, bump.sql)
-			root := disk.GenerationRoot{FormatVersion: 1, LogicalBytes: f.logicalBytes,
-				Pack: disk.GenerationPack{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 1024, Rank: 2},
-				Page: disk.GenerationPage{Digest: "sha256:" + strings.Repeat("b", 64), Salt: strings.Repeat("c", 64), KeyID: "01912345-6789-7abc-8def-0123456789ab", Kind: 3, Count: 1, SizeBytes: 128}, Offset: 8}
+			root := disk.VersionRoot{FormatVersion: 1, LogicalBytes: f.logicalBytes,
+				Pack: disk.VersionPack{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 1024, Rank: 2},
+				Page: disk.VersionPage{Digest: "sha256:" + strings.Repeat("b", 64), Salt: strings.Repeat("c", 64), KeyID: "01912345-6789-7abc-8def-0123456789ab", Kind: 3, Count: 1, SizeBytes: 128}, Offset: 8}
 			for name, operation := range map[string]func() error{
 				"initial key": func() error {
 					_, err := f.broker.InitialKey(t.Context(), f.principal, f.ref)
@@ -66,7 +66,7 @@ func TestClaimBumpsReportStaleClaimsOnComparingPaths(t *testing.T) {
 				"object certification": func() error { return publisher.CertifySaveObject(t.Context(), worker, ref, inspection) },
 				"object reuse":         func() error { return publisher.ReuseSaveObject(t.Context(), worker, ref, inspection) },
 				"publication": func() error {
-					_, err := publisher.PublishSave(t.Context(), worker, ref, disk.GenerationRoot{FormatVersion: 1, LogicalBytes: 1 << 30, Pack: disk.GenerationPack{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 1024, Rank: 2}, Page: disk.GenerationPage{Digest: "sha256:" + strings.Repeat("b", 64), Salt: strings.Repeat("c", 64), KeyID: "01912345-6789-7abc-8def-0123456789ab", Kind: 3, Count: 1, SizeBytes: 128}, Offset: 8})
+					_, err := publisher.PublishSave(t.Context(), worker, ref, disk.VersionRoot{FormatVersion: 1, LogicalBytes: 1 << 30, Pack: disk.VersionPack{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 1024, Rank: 2}, Page: disk.VersionPage{Digest: "sha256:" + strings.Repeat("b", 64), Salt: strings.Repeat("c", 64), KeyID: "01912345-6789-7abc-8def-0123456789ab", Kind: 3, Count: 1, SizeBytes: 128}, Offset: 8})
 					return err
 				},
 				"abandonment": func() error { return publisher.AbandonSave(t.Context(), worker, ref) },

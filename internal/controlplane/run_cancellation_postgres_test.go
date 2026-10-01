@@ -3,10 +3,8 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"uuid"
 
@@ -50,20 +48,17 @@ func TestCancelRunHTTPAcceptsExactActorStopAndReplaysReceipt(t *testing.T) {
 }
 
 func TestCancelRunHTTPRejectsActiveTurnWithoutMutatingItsAuthority(t *testing.T) {
-	f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
+	f := newActorExecution(t, json.RawMessage(`{"sequence":1}`), true)
 	scope := f.receiveTurn(t, 1)
-	principal := auth.Principal{OrgID: f.OrgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper, ProjectID: f.ProjectID.String(), EnvironmentID: f.EnvironmentID.String(), Permissions: []auth.Permission{auth.PermissionRunsManage}}
-	request := runCancellationRequest(t, f.runID.String(), principal)
-	request.Body = io.NopCloser(strings.NewReader(`{"idempotency_key":"stale-run-only-cancel"}`))
-	w := httptest.NewRecorder()
-	f.server.cancelRunHTTP(w, request)
+	token := f.apiKey(auth.Principal{OrgID: f.OrgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper, ProjectID: f.ProjectID.String(), EnvironmentID: f.EnvironmentID.String(), Permissions: []auth.Permission{auth.PermissionRunsManage}})
+	w := f.request(t, http.MethodPost, "/v1/runs/"+f.RunID.String()+"/cancel", token, `{"idempotency_key":"stale-run-only-cancel"}`)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("active cancel=%d %s", w.Code, w.Body.String())
 	}
 	var active uuid.UUID
 	var hold *uuid.UUID
 	var interrupted bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT s.active_turn_id,s.dispatch_hold_id,t.interrupt_requested_at IS NOT NULL FROM sessions s JOIN session_turns t ON t.id=s.active_turn_id WHERE s.id=$1`, f.sessionID).Scan(&active, &hold, &interrupted); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT s.active_turn_id,s.dispatch_hold_id,t.interrupt_requested_at IS NOT NULL FROM sessions s JOIN session_turns t ON t.id=s.active_turn_id WHERE s.id=$1`, f.SessionID).Scan(&active, &hold, &interrupted); err != nil {
 		t.Fatal(err)
 	}
 	if active != scope.TurnID || hold != nil || interrupted {
@@ -91,18 +86,4 @@ func TestCancelRunHTTPDeniesBeforeRunValidation(t *testing.T) {
 	if response.Code != "permission_required" {
 		t.Fatalf("unexpected response: %s", recorder.Body.String())
 	}
-}
-
-func runCancellationRequest(
-	t *testing.T,
-	runID string,
-	principal auth.Principal,
-) *http.Request {
-	t.Helper()
-	request := httptest.NewRequest(http.MethodPost, "/v1/runs/"+runID+"/cancel", nil)
-	route := chi.NewRouteContext()
-	route.URLParams.Add("runID", runID)
-	ctx := context.WithValue(request.Context(), chi.RouteCtxKey, route)
-	ctx = context.WithValue(ctx, principalContextKey{}, principal)
-	return request.WithContext(ctx)
 }

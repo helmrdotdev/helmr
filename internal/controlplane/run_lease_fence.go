@@ -1,9 +1,7 @@
 package controlplane
 
 import (
-	"context"
 	"errors"
-	"fmt"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -11,21 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5"
 )
-
-// errStaleRunLeaseClaim reports a worker receipt that no longer addresses
-// the live execution an operation locks.
-var errStaleRunLeaseClaim = errors.New("run lease claim is stale")
-
-// staleRunLeaseClaim reports a receipt that addresses no execution as
-// errStaleRunLeaseClaim.
-func staleRunLeaseClaim(err error) error {
-	if errors.Is(err, pgx.ErrNoRows) {
-		return errStaleRunLeaseClaim
-	}
-	return err
-}
 
 type parsedRunLeaseFence struct {
 	leaseID uuid.UUID
@@ -46,22 +30,18 @@ func workerExecutionFence(worker workergroup.HostPrincipal, parsed parsedRunLeas
 	return run.ExecutionFence{LeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.HostClaimVersion}
 }
 
-// workerSourceFence is the execution fence of a worker's source Run lease; a
-// malformed lease receipt is a stale source.
-func workerSourceFence(worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence) (run.ExecutionFence, error) {
+// workerLeaseFence is the execution fence of a worker's Run lease; a
+// malformed lease receipt is returned as its parse error.
+func workerLeaseFence(worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence) (run.ExecutionFence, error) {
 	parsed, err := parseRunLeaseFence(lease)
 	if err != nil {
-		return run.ExecutionFence{}, fmt.Errorf("%w: invalid receipt", run.ErrStaleSource)
+		return run.ExecutionFence{}, err
 	}
 	return workerExecutionFence(worker, parsed, lease), nil
 }
 
-// lockWorkerRunSource locks a worker's live source Run in the caller's
-// transaction.
-func lockWorkerRunSource(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence) (run.LiveSource, error) {
-	fence, err := workerSourceFence(worker, lease)
-	if err != nil {
-		return run.LiveSource{}, err
-	}
-	return run.LockLiveSource(ctx, tx, fence)
+// workerSourceReceipt is the worker's receipt for its source Run lease, as
+// the run owner checks it.
+func workerSourceReceipt(worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence) run.SourceReceipt {
+	return run.SourceReceipt{Worker: worker, LeaseID: lease.ID, LeaseSequence: lease.LeaseSequence}
 }

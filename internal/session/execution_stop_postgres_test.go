@@ -17,7 +17,7 @@ import (
 func TestHeldExecutionCompletesAdmittedMessage(t *testing.T) {
 	f := runtest.New(t)
 	work := f.AddRunLease(t, "assigned", time.Now())
-	actorID := f.ConvertToActor(t, t.Context(), work, `{"enabled":false}`)
+	sessionID := f.ConvertToActor(t, t.Context(), work, `{"enabled":false}`)
 	fence := run.ExecutionFence{LeaseID: pgvalue.UUID(work.LeaseID), LeaseSequence: 1, WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerEpoch: 1}
 	if err := f.Pool.QueryRow(t.Context(), `SELECT h.claim_version,g.claim_version FROM worker_hosts h JOIN worker_groups g ON g.id=h.worker_group_id WHERE h.id=$1`, f.WorkerID).Scan(&fence.HostClaimVersion, &fence.GroupClaimVersion); err != nil {
 		t.Fatal(err)
@@ -41,21 +41,21 @@ func TestHeldExecutionCompletesAdmittedMessage(t *testing.T) {
 	}
 	holdID, turnID, messageID, deliveryID := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	var generation int64
-	if err := f.Pool.QueryRow(t.Context(), `SELECT run_generation FROM sessions WHERE id=$1`, actorID).Scan(&generation); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT run_generation FROM sessions WHERE id=$1`, sessionID).Scan(&generation); err != nil {
 		t.Fatal(err)
 	}
-	scope := run.TurnScope{EnvironmentID: f.EnvironmentID, SessionID: actorID, TurnID: turnID, RunID: work.RunID, AttemptNumber: 1, RunGeneration: generation}
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_turns (id,environment_id,session_id,sequence,data,status,run_generation,run_id,attempt_number,ready_run_lease_id) VALUES ($1,$2,$3,2,'{}','running',$4,$5,1,$6)`, turnID, f.EnvironmentID, actorID, generation, work.RunID, work.LeaseID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET active_turn_id=$2 WHERE id=$1`, actorID, turnID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_messages (id,environment_id,session_id,turn_id,run_id,attempt_number,run_generation,data,accepted_sequence,status,delivery_id,delivery_run_lease_id,handling_at) VALUES ($1,$2,$3,$4,$5,1,$6,'{}',1,'handling',$7,$8,clock_timestamp())`, messageID, f.EnvironmentID, actorID, turnID, work.RunID, generation, deliveryID, work.LeaseID)
+	scope := run.TurnScope{EnvironmentID: f.EnvironmentID, SessionID: sessionID, TurnID: turnID, RunID: work.RunID, AttemptNumber: 1, RunGeneration: generation}
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_turns (id,environment_id,session_id,sequence,data,status,run_generation,run_id,attempt_number,ready_run_lease_id) VALUES ($1,$2,$3,2,'{}','running',$4,$5,1,$6)`, turnID, f.EnvironmentID, sessionID, generation, work.RunID, work.LeaseID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET active_turn_id=$2 WHERE id=$1`, sessionID, turnID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_messages (id,environment_id,session_id,turn_id,run_id,attempt_number,run_generation,data,accepted_sequence,status,delivery_id,delivery_run_lease_id,handling_at) VALUES ($1,$2,$3,$4,$5,1,$6,'{}',1,'handling',$7,$8,clock_timestamp())`, messageID, f.EnvironmentID, sessionID, turnID, work.RunID, generation, deliveryID, work.LeaseID)
 	setHold := func() {
-		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET dispatch_hold_id=$2,dispatch_hold_run_id=current_run_id,dispatch_hold_attempt_number=1,dispatch_hold_run_generation=run_generation,dispatch_hold_reason='interrupt_requested' WHERE id=$1`, actorID, holdID)
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET dispatch_hold_id=$2,dispatch_hold_run_id=current_run_id,dispatch_hold_attempt_number=1,dispatch_hold_run_generation=run_generation,dispatch_hold_reason='interrupt_requested' WHERE id=$1`, sessionID, holdID)
 	}
 	setHold()
 	if err := transact(func(tx pgx.Tx) error { return run.EnterExecution(t.Context(), tx, fence, "actor", "test-actor") }); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("first entry under hold: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET dispatch_hold_id=NULL,dispatch_hold_run_id=NULL,dispatch_hold_attempt_number=NULL,dispatch_hold_run_generation=NULL,dispatch_hold_reason=NULL WHERE id=$1`, actorID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET dispatch_hold_id=NULL,dispatch_hold_run_id=NULL,dispatch_hold_attempt_number=NULL,dispatch_hold_run_generation=NULL,dispatch_hold_reason=NULL WHERE id=$1`, sessionID)
 	if err := transact(func(tx pgx.Tx) error { return run.EnterExecution(t.Context(), tx, fence, "actor", "test-actor") }); err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestHeldExecutionCompletesAdmittedMessage(t *testing.T) {
 		t.Fatalf("completion events=%d: %v", events, err)
 	}
 	for _, change := range []string{"dispatch_hold_run_generation=run_generation+1", "dispatch_hold_reason='recovery_required'"} {
-		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET `+change+` WHERE id=$1`, actorID)
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET `+change+` WHERE id=$1`, sessionID)
 		err := transact(func(tx pgx.Tx) error { _, err := run.LockLiveExecution(t.Context(), tx, fence); return err })
 		if !errors.Is(err, pgx.ErrNoRows) {
 			t.Fatalf("invalid hold accepted: %v", err)

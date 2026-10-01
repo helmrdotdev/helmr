@@ -129,9 +129,9 @@ func (f preparationFixture) upload(t *testing.T, local cas.Reader, inspection bl
 	}
 }
 
-// newGenerationFixture delivers the initial key, records and certifies an
+// newVersionFixture delivers the initial key, records and certifies an
 // empty root under it, and returns the initial version that publishes it.
-func newGenerationFixture(t *testing.T) (preparationFixture, InitialVersion) {
+func newVersionFixture(t *testing.T) (preparationFixture, InitialVersion) {
 	t.Helper()
 	f := newPreparationFixture(t)
 	key := f.initialKey(t)
@@ -150,7 +150,7 @@ func newGenerationFixture(t *testing.T) (preparationFixture, InitialVersion) {
 		t.Fatal(err)
 	}
 	f.certifyInitialObject(t, local, blockformat.ObjectInspection{Pack: &inspected})
-	root, err := disk.NewGenerationRoot(locator, f.logicalBytes)
+	root, err := disk.NewVersionRoot(locator, f.logicalBytes)
 	if err != nil {
 		t.Fatal(err)
 	}

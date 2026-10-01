@@ -37,7 +37,7 @@ func TestComputerRestoreDiscovery(t *testing.T) {
 	if err = tx.QueryRow(t.Context(), `SELECT computer_id FROM computer_instances WHERE id=$1`, source).Scan(&computerID); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.InsertComputerGeneration(t, t.Context(), tx, f.EnvironmentID, computerID, private)
+	dbtest.InsertComputerVersion(t, t.Context(), tx, f.EnvironmentID, computerID, private)
 	artifacts := dbtest.InsertCheckpointArtifacts(t, t.Context(), tx, work.RunID, "restore-discovery")
 	dbtest.MustExec(t, t.Context(), tx, `UPDATE computer_checkpoints SET status='ready',ready_at=now(),private_computer_disk_version_id=$2,ready_request_fingerprint=$3,manifest='{"version":1}',vm_config_artifact_id=$4,vm_state_artifact_id=$5,memory_artifact_id=$6,scratch_disk_artifact_id=$7 WHERE id=$1`, checkpoint, private, dbtest.Digest("restore-discovery"), artifacts.RuntimeConfig, artifacts.VMState, artifacts.Memory, artifacts.ScratchDisk)
 	dbtest.MustExec(t, t.Context(), tx, `UPDATE computer_instances SET desired_state='closed',desired_version=2,admission_state='closed',observed_state='closed',mount_state='unmounted',unmounted_at=now(),terminal_at=now(),reclaimed_at=now(),reclaim_evidence='{}',terminal_reason_code='checkpointed' WHERE id=$1`, source)

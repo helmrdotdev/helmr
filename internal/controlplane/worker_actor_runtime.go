@@ -1,7 +1,6 @@
 package controlplane
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -16,7 +15,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -48,8 +46,8 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	worker := workerFromContext(r.Context())
-	source, err := s.workerRunSource(r.Context(), worker, request.Lease)
+	receipt := workerSourceReceipt(workerFromContext(r.Context()), request.Lease)
+	source, err := run.LockWorkerSource(r.Context(), s.tx, receipt)
 	if err != nil {
 		s.writeWorkerActorSourceError(w, "start", request.Lease.ID, err)
 		return
@@ -72,7 +70,7 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The source lock above parsed the same lease receipt.
-	fence, err := workerSourceFence(worker, request.Lease)
+	fence, err := receipt.Fence()
 	if err != nil {
 		s.writeWorkerActorSourceError(w, "start", request.Lease.ID, err)
 		return
@@ -105,29 +103,17 @@ func (s *Server) workerGetSessionStatus(w http.ResponseWriter, r *http.Request) 
 		writeError(w, badRequest(err))
 		return
 	}
-	worker := workerFromContext(r.Context())
 	var status api.Session
-	err = s.inTx(r.Context(), func(work *txWork) error {
-		source, err := lockWorkerRunSource(r.Context(), work.tx, worker, request.Lease)
-		if err != nil {
-			return err
-		}
-		row, err := work.q.GetSessionSnapshot(r.Context(), db.GetSessionSnapshotParams{
-			OrgID: source.OrgID(), ProjectID: source.ProjectID(),
-			EnvironmentID: source.EnvironmentID(), ID: sessionID,
-		})
-		if err != nil {
-			return err
-		}
+	row, err := session.GetFromRun(r.Context(), s.tx, workerSourceReceipt(workerFromContext(r.Context()), request.Lease), pgvalue.MustUUIDValue(sessionID))
+	if err == nil {
 		status, err = projectSession(sessionProjectionFromGetRow(row))
-		return err
-	})
+	}
 	if err != nil {
 		if errors.Is(err, run.ErrStaleSource) || errors.Is(err, workergroup.ErrStaleClaims) {
 			s.writeWorkerActorSourceError(w, "status", request.Lease.ID, err)
 			return
 		}
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, session.ErrNotFound) {
 			writeJSON(w, http.StatusOK, failedWorkerSessionReference(
 				request.CorrelationID, "session_not_found", "Session was not found",
 			))
@@ -153,16 +139,9 @@ func (s *Server) workerCloseSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var receipt session.ControlReceipt
-	err = s.inTx(r.Context(), func(work *txWork) error {
-		source, err := authorizeWorkerSessionOperation(r.Context(), work.tx, workerFromContext(r.Context()), request.Lease, targetID)
-		if err != nil {
-			return err
-		}
-		receipt, err = session.Close(r.Context(), work.tx, session.ControlRequest{Target: session.Target{EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID()), SessionID: pgvalue.MustUUIDValue(targetID)}, IdempotencyKey: request.IdempotencyKey})
-		return err
-	})
-	if err == nil && receipt.Code != "" {
-		err = &session.OperationError{Code: receipt.Code}
+	fence, err := workerLeaseFence(workerFromContext(r.Context()), request.Lease)
+	if err == nil {
+		receipt, err = session.CloseFromRun(r.Context(), s.tx, fence, session.ControlRequest{Target: session.Target{SessionID: pgvalue.MustUUIDValue(targetID)}, IdempotencyKey: request.IdempotencyKey})
 	}
 	if err != nil {
 		s.writeWorkerSessionCommand(w, request.CorrelationID, err)
@@ -183,16 +162,9 @@ func (s *Server) workerCancelSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var receipt session.ControlReceipt
-	err = s.inTx(r.Context(), func(work *txWork) error {
-		source, graph, _, err := lockWorkerSessionControl(r.Context(), work, workerFromContext(r.Context()), request.Lease, targetID, true)
-		if err != nil {
-			return err
-		}
-		receipt, err = session.Cancel(r.Context(), work.tx, session.ControlRequest{Target: session.Target{EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID()), SessionID: pgvalue.MustUUIDValue(targetID)}, IdempotencyKey: request.IdempotencyKey}, graph)
-		return err
-	})
-	if err == nil && receipt.Code != "" {
-		err = &session.OperationError{Code: receipt.Code}
+	fence, err := workerLeaseFence(workerFromContext(r.Context()), request.Lease)
+	if err == nil {
+		receipt, err = session.CancelFromRun(r.Context(), s.tx, fence, session.ControlRequest{Target: session.Target{SessionID: pgvalue.MustUUIDValue(targetID)}, IdempotencyKey: request.IdempotencyKey})
 	}
 	if err != nil {
 		s.writeWorkerSessionCommand(w, request.CorrelationID, err)
@@ -217,14 +189,10 @@ func (s *Server) workerReadSessionEvents(w http.ResponseWriter, r *http.Request)
 	if request.After != nil {
 		after = *request.After
 	}
-	err = s.inTx(r.Context(), func(work *txWork) error {
-		source, err := authorizeWorkerSessionOperation(r.Context(), work.tx, workerFromContext(r.Context()), request.Lease, targetID)
-		if err != nil {
-			return err
-		}
-		page, err = session.ReadEvents(r.Context(), work.q, session.Target{EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID()), SessionID: pgvalue.MustUUIDValue(targetID)}, after, request.Limit)
-		return err
-	})
+	fence, err := workerLeaseFence(workerFromContext(r.Context()), request.Lease)
+	if err == nil {
+		page, err = session.ReadEventsFromRun(r.Context(), s.tx, fence, pgvalue.MustUUIDValue(targetID), after, request.Limit)
+	}
 	if err != nil {
 		s.writeWorkerSessionCommand(w, request.CorrelationID, err)
 		return
@@ -234,20 +202,6 @@ func (s *Server) workerReadSessionEvents(w http.ResponseWriter, r *http.Request)
 		response.Records = append(response.Records, projectWorkerSessionEvent(db.SessionEvent{ID: row.ID, SessionID: row.SessionID, TurnID: row.TurnID, Sequence: row.Sequence, CreatedAt: row.CreatedAt, Kind: row.Kind, Data: row.Data, ProducerRunID: row.ProducerRunID, ProducerAttemptNumber: row.ProducerAttemptNumber, RunGeneration: row.RunGeneration}, row.DeploymentID))
 	}
 	writeJSON(w, http.StatusOK, workerapi.ReadSessionEventsResponse{CorrelationID: request.CorrelationID, Completed: &response})
-}
-
-func (s *Server) workerRunSource(
-	ctx context.Context,
-	worker workergroup.HostPrincipal,
-	lease workerapi.RunLeaseFence,
-) (run.LiveSource, error) {
-	var source run.LiveSource
-	err := s.inTx(ctx, func(work *txWork) error {
-		var err error
-		source, err = lockWorkerRunSource(ctx, work.tx, worker, lease)
-		return err
-	})
-	return source, err
 }
 
 func parseWorkerSessionReference(

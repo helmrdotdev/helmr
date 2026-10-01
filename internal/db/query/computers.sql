@@ -287,7 +287,7 @@ UPDATE computers SET key=NULL,head_disk_version_id=NULL,
  dirty_state='clean',status='deleted',revision=revision+1,deleted_at=clock_timestamp(),updated_at=clock_timestamp()
 FROM eligible WHERE computers.id=eligible.id RETURNING computers.id;
 
--- name: LockActorInputComputer :one
+-- name: LockSessionInputComputer :one
 SELECT c.* FROM computers c JOIN sessions s ON s.environment_id=c.environment_id AND s.computer_id=c.id
 WHERE c.environment_id=sqlc.arg(environment_id) AND c.id=sqlc.arg(id)
  AND s.id=sqlc.arg(session_id) AND s.status='open'

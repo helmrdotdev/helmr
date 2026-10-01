@@ -27,18 +27,10 @@ func (s *Server) workerGetSessionTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var result api.SessionTurn
-	err = s.inTx(r.Context(), func(work *txWork) error {
-		source, err := lockWorkerRunSource(r.Context(), work.tx, workerFromContext(r.Context()), request.Lease)
-		if err != nil {
-			return err
-		}
-		view, err := session.GetTurn(r.Context(), work.q, session.Target{EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID()), SessionID: pgvalue.MustUUIDValue(sessionID)}, turnID)
-		if err != nil {
-			return err
-		}
+	view, err := session.GetTurnFromRun(r.Context(), s.tx, workerSourceReceipt(workerFromContext(r.Context()), request.Lease), pgvalue.MustUUIDValue(sessionID), turnID)
+	if err == nil {
 		result, err = projectSessionTurn(view)
-		return err
-	})
+	}
 	if err != nil {
 		s.writeWorkerSessionCommand(w, request.CorrelationID, err)
 		return

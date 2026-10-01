@@ -64,10 +64,25 @@ func NewWaitReconciler(database db.TxDB) (*WaitReconciler, error) {
 	return &WaitReconciler{db: database, queries: db.New(database)}, nil
 }
 
+// Registrar registers Token waits for worker requests. It reconciles only a
+// Token that is already terminal when its wait registers.
+type Registrar struct {
+	txb db.TxBeginner
+}
+
+// NewRegistrar returns a Registrar whose registrations each run in one
+// transaction begun from txb.
+func NewRegistrar(txb db.TxBeginner) (*Registrar, error) {
+	if txb == nil {
+		return nil, errors.New("token wait registration database is required")
+	}
+	return &Registrar{txb: txb}, nil
+}
+
 // RegisterWait serializes the Run-to-Token race. The Wait is inserted before
 // the Token is locked, so either registration observes a prior terminal Token
 // or a concurrent terminalization publishes an intent after this transaction.
-func (r *WaitReconciler) RegisterWait(
+func (r *Registrar) RegisterWait(
 	ctx context.Context,
 	request WaitRegistration,
 ) (WaitRegistrationResult, error) {
@@ -95,11 +110,25 @@ func (r *WaitReconciler) RegisterWait(
 		tags = []string{}
 	}
 
-	tx, err := r.db.Begin(ctx)
+	var result WaitRegistrationResult
+	err := db.RunTx(ctx, r.txb, func(tx pgx.Tx) error {
+		var err error
+		result, err = registerTokenWait(ctx, tx, request, metadata, tags)
+		return err
+	})
 	if err != nil {
-		return WaitRegistrationResult{}, fmt.Errorf("begin token wait registration: %w", err)
+		return WaitRegistrationResult{}, err
 	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
+	return result, nil
+}
+
+func registerTokenWait(
+	ctx context.Context,
+	tx pgx.Tx,
+	request WaitRegistration,
+	metadata json.RawMessage,
+	tags []string,
+) (WaitRegistrationResult, error) {
 	q := db.New(tx)
 	// An exact existing registration is immutable and may outlive its run
 	// lease. This read-only replay does not linearize creation; the mutable
@@ -108,9 +137,6 @@ func (r *WaitReconciler) RegisterWait(
 		if replay, found, err := replayTokenWaitRegistration(ctx, q, request, metadata, tags); err != nil {
 			return WaitRegistrationResult{}, err
 		} else if found {
-			if err := tx.Commit(ctx); err != nil {
-				return WaitRegistrationResult{}, fmt.Errorf("commit token wait registration replay: %w", err)
-			}
 			return replay, nil
 		}
 	}
@@ -121,31 +147,28 @@ func (r *WaitReconciler) RegisterWait(
 	if err != nil {
 		return WaitRegistrationResult{}, tokenWaitStageError(err)
 	}
-	locators, locator, lockedActor := stage.Lease(), stage.Owner(), stage.Session()
+	locators, locator, lockedSession := stage.Lease(), stage.Owner(), stage.Session()
 	runID := pgvalue.MustUUIDValue(locators.RunID)
 	attemptNumber := locators.AttemptNumber
 	lockedRun := tokenWaitRunFromRow(stage.Run())
 	if replay, found, err := replayTokenWaitRegistration(ctx, q, request, metadata, tags); err != nil {
 		return WaitRegistrationResult{}, err
 	} else if found {
-		if err := tx.Commit(ctx); err != nil {
-			return WaitRegistrationResult{}, fmt.Errorf("commit token wait registration replay: %w", err)
-		}
 		return replay, nil
 	}
 	attempt, err := stage.LockAttempt(ctx)
 	if err != nil {
 		return WaitRegistrationResult{}, tokenWaitStageError(err)
 	}
-	if err := validateTokenWaitActorCursor(
-		request.ActorSpeculativeInputSequence, locator.SessionID, lockedActor.CurrentRunID,
-		lockedActor.CommittedInputSequence, lockedActor.NextInputSequence,
+	if err := validateTokenWaitSessionCursor(
+		request.ActorSpeculativeInputSequence, locator.SessionID, lockedSession.CurrentRunID,
+		lockedSession.CommittedInputSequence, lockedSession.NextInputSequence,
 		lockedRun, attempt.Attempt().EntrypointKind, attempt.Attempt().SessionInputStartSequence,
 	); err != nil {
 		return WaitRegistrationResult{}, err
 	}
 	if lockedRun.entrypointKind == "actor" {
-		want := lockedActor.CommittedInputSequence
+		want := lockedSession.CommittedInputSequence
 		if request.TurnID.Valid {
 			want++
 		}
@@ -175,11 +198,11 @@ func (r *WaitReconciler) RegisterWait(
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("insert token wait", err)
 	}
 	if locators.SessionID.Valid {
-		if lockedActor.DispatchHoldID.Valid || lockedActor.ActiveTurnID != request.TurnID || lockedActor.RunGeneration != request.RunGeneration.Int64 && request.TurnID.Valid {
+		if lockedSession.DispatchHoldID.Valid || lockedSession.ActiveTurnID != request.TurnID || lockedSession.RunGeneration != request.RunGeneration.Int64 && request.TurnID.Valid {
 			return WaitRegistrationResult{}, ErrWaitAuthority
 		}
 		if request.TurnID.Valid {
-			_, err = q.BindRunWaitTurn(ctx, db.BindRunWaitTurnParams{SessionID: lockedActor.ID, TurnID: request.TurnID, RunGeneration: request.RunGeneration, WaitID: registered.ID})
+			_, err = q.BindRunWaitTurn(ctx, db.BindRunWaitTurnParams{SessionID: lockedSession.ID, TurnID: request.TurnID, RunGeneration: request.RunGeneration, WaitID: registered.ID})
 			if err != nil {
 				return WaitRegistrationResult{}, tokenWaitAuthorityError("bind Token wait to active Turn", err)
 			}
@@ -228,9 +251,6 @@ func (r *WaitReconciler) RegisterWait(
 		if resolution.reasonCode != nil {
 			result.ReasonCode = *resolution.reasonCode
 		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return WaitRegistrationResult{}, fmt.Errorf("commit token wait registration: %w", err)
 	}
 	return result, nil
 }
@@ -371,30 +391,30 @@ func (r *WaitReconciler) ReconcileTimeouts(
 	return resolved, nil
 }
 
-func validateTokenWaitActorCursor(
+func validateTokenWaitSessionCursor(
 	cursor pgtype.Int8,
 	ownerSessionID pgtype.UUID,
-	actorCurrentRunID pgtype.UUID,
-	actorCommittedInputSequence int64,
-	actorNextInputSequence int64,
+	sessionCurrentRunID pgtype.UUID,
+	sessionCommittedInputSequence int64,
+	sessionNextInputSequence int64,
 	run tokenWaitLockedRun,
 	attemptEntrypointKind string,
 	attemptSessionInputStartSequence pgtype.Int8,
 ) error {
 	switch run.entrypointKind {
 	case "task":
-		if run.actorID.Valid || cursor.Valid || attemptEntrypointKind != "task" ||
+		if run.sessionID.Valid || cursor.Valid || attemptEntrypointKind != "task" ||
 			attemptSessionInputStartSequence.Valid {
 			return tokenWaitAuthorityError("task token wait carries actor authority", nil)
 		}
 	case "actor":
-		if !run.actorID.Valid || run.actorID != ownerSessionID || !actorCurrentRunID.Valid ||
-			uuid.UUID(actorCurrentRunID.Bytes) != run.id || attemptEntrypointKind != "actor" ||
+		if !run.sessionID.Valid || run.sessionID != ownerSessionID || !sessionCurrentRunID.Valid ||
+			uuid.UUID(sessionCurrentRunID.Bytes) != run.id || attemptEntrypointKind != "actor" ||
 			!attemptSessionInputStartSequence.Valid || !cursor.Valid ||
-			attemptSessionInputStartSequence.Int64 > actorCommittedInputSequence ||
-			cursor.Int64 < actorCommittedInputSequence ||
-			cursor.Int64 > actorCommittedInputSequence+1 ||
-			cursor.Int64 >= actorNextInputSequence {
+			attemptSessionInputStartSequence.Int64 > sessionCommittedInputSequence ||
+			cursor.Int64 < sessionCommittedInputSequence ||
+			cursor.Int64 > sessionCommittedInputSequence+1 ||
+			cursor.Int64 >= sessionNextInputSequence {
 			return tokenWaitAuthorityError("actor token wait cursor authority does not match", nil)
 		}
 	default:
@@ -406,7 +426,7 @@ func validateTokenWaitActorCursor(
 type tokenWaitLockedRun struct {
 	id                uuid.UUID
 	computerID        uuid.UUID
-	actorID           pgtype.UUID
+	sessionID         pgtype.UUID
 	entrypointKind    string
 	status            db.RunStatus
 	revision          int64
@@ -445,12 +465,30 @@ func (r *WaitReconciler) reconcileOne(
 	waitID uuid.UUID,
 	runID uuid.UUID,
 	timeout bool,
-) (resolved bool, deferred bool, returnErr error) {
-	tx, err := r.db.Begin(ctx)
+) (bool, bool, error) {
+	var resolved, deferred bool
+	err := db.RunTx(ctx, r.db, func(tx pgx.Tx) error {
+		var err error
+		resolved, deferred, err = reconcileTokenWait(ctx, tx, environmentID, tokenID, waitID, runID, timeout)
+		return err
+	})
 	if err != nil {
-		return false, false, fmt.Errorf("begin token wait reconciliation: %w", err)
+		return false, false, err
 	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
+	return resolved, deferred, nil
+}
+
+// reconcileTokenWait resolves one Token wait in tx. A wait that is gone,
+// converged, no longer current or not yet due commits without resolving.
+func reconcileTokenWait(
+	ctx context.Context,
+	tx pgx.Tx,
+	environmentID uuid.UUID,
+	tokenID uuid.UUID,
+	waitID uuid.UUID,
+	runID uuid.UUID,
+	timeout bool,
+) (resolved bool, deferred bool, err error) {
 	q := db.New(tx)
 
 	locator, err := q.GetTokenWaitLocator(
@@ -463,9 +501,6 @@ func (r *WaitReconciler) reconcileOne(
 		},
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if err := tx.Commit(ctx); err != nil {
-			return false, false, fmt.Errorf("commit stale token wait reconciliation: %w", err)
-		}
 		return false, false, nil
 	}
 	if err != nil {
@@ -476,16 +511,16 @@ func (r *WaitReconciler) reconcileOne(
 		return false, false, tokenWaitAuthorityError("lock Computer residence", err)
 	}
 
-	var lockedActorCurrentRunID pgtype.UUID
+	var lockedSessionCurrentRunID pgtype.UUID
 	if locator.SessionID.Valid {
-		actor, err := q.LockTokenWaitActor(ctx, locator.SessionID)
+		session, err := q.LockTokenWaitSession(ctx, locator.SessionID)
 		if err != nil {
 			return false, false, tokenWaitAuthorityError("lock owning actor", err)
 		}
-		if actor.Status != "open" && actor.Status != "closing" {
+		if session.Status != "open" && session.Status != "closing" {
 			return false, false, tokenWaitAuthorityError("owning actor is not active", nil)
 		}
-		lockedActorCurrentRunID = actor.CurrentRunID
+		lockedSessionCurrentRunID = session.CurrentRunID
 	}
 
 	addressedRun, err := lockTokenWaitRun(ctx, q, environmentID, runID)
@@ -497,7 +532,7 @@ func (r *WaitReconciler) reconcileOne(
 		addressedRun.currentAttempt != locator.AttemptNumber {
 		return false, false, tokenWaitAuthorityError("run locator changed", nil)
 	}
-	if locator.SessionID.Valid && (!lockedActorCurrentRunID.Valid || lockedActorCurrentRunID != locator.RunID) {
+	if locator.SessionID.Valid && (!lockedSessionCurrentRunID.Valid || lockedSessionCurrentRunID != locator.RunID) {
 		return false, false, tokenWaitAuthorityError("Session current Run changed", nil)
 	}
 
@@ -512,9 +547,6 @@ func (r *WaitReconciler) reconcileOne(
 
 	wait, err := lockCurrentTokenWait(ctx, q, environmentID, tokenID, locator)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if err := tx.Commit(ctx); err != nil {
-			return false, false, fmt.Errorf("commit converged token wait reconciliation: %w", err)
-		}
 		return false, false, nil
 	}
 	if err != nil {
@@ -525,24 +557,18 @@ func (r *WaitReconciler) reconcileOne(
 		return false, false, err
 	}
 	if !current {
-		return false, false, tx.Commit(ctx)
+		return false, false, nil
 	}
 	if err := validateLockedTokenWait(addressedRun, wait); err != nil {
 		return false, false, err
 	}
 	if wait.conditionStatus != db.WaitStatusPending {
-		if err := tx.Commit(ctx); err != nil {
-			return false, false, fmt.Errorf("commit deferred token wait reconciliation: %w", err)
-		}
 		return false, true, nil
 	}
 
 	var resolution tokenWaitResolution
 	if timeout {
 		if !wait.timeoutAt.Valid || !wait.timedOut {
-			if err := tx.Commit(ctx); err != nil {
-				return false, false, fmt.Errorf("commit early token wait timeout reconciliation: %w", err)
-			}
 			return false, false, nil
 		}
 		reason := "wait_timeout"
@@ -587,9 +613,6 @@ func (r *WaitReconciler) reconcileOne(
 	if err != nil {
 		return false, false, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return false, false, fmt.Errorf("commit token wait reconciliation: %w", err)
-	}
 	return true, wait.suspensionStatus == db.RunWaitStatusCheckpointing, nil
 }
 
@@ -606,7 +629,7 @@ func lockTokenWaitRun(ctx context.Context, q *db.Queries, environmentID, runID u
 func tokenWaitRunFromRow(locked db.Run) tokenWaitLockedRun {
 	return tokenWaitLockedRun{
 		id: pgvalue.MustUUIDValue(locked.ID), computerID: pgvalue.MustUUIDValue(locked.ComputerID),
-		actorID: locked.SessionID, entrypointKind: locked.EntrypointKind, status: db.RunStatus(locked.Status),
+		sessionID: locked.SessionID, entrypointKind: locked.EntrypointKind, status: db.RunStatus(locked.Status),
 		revision: locked.Revision, currentAttempt: locked.CurrentAttemptNumber,
 		currentRunLeaseID: locked.CurrentRunLeaseID, activeStartedAt: locked.ActiveStartedAt,
 	}

@@ -70,34 +70,19 @@ func (q *Queries) AdvanceCancelledSessionInputs(ctx context.Context, arg Advance
 	return i, err
 }
 
-const beginActorClose = `-- name: BeginActorClose :one
-UPDATE sessions
-   SET status = CASE WHEN status = 'open' THEN 'closing' ELSE status END,
-       close_sequence = CASE
-           WHEN status = 'open' THEN next_input_sequence - 1
-           ELSE close_sequence
-       END,
-       revision = revision + CASE
-           WHEN status = 'open' THEN 1
-           ELSE 0
-       END,
-       updated_at = CASE
-           WHEN status = 'open' THEN transaction_timestamp()
-           ELSE updated_at
-       END
- WHERE environment_id = $1
-   AND id = $2
-   AND status IN ('open', 'closing')
-RETURNING id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
+const beginSessionCancellation = `-- name: BeginSessionCancellation :one
+UPDATE sessions SET status='closing',close_sequence=coalesce(close_sequence,next_input_sequence-1),
+ cancel_requested_at=coalesce(cancel_requested_at,now()),revision=revision+1,updated_at=now()
+WHERE environment_id=$1 AND id=$2 AND status IN ('open','closing') RETURNING id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
 `
 
-type BeginActorCloseParams struct {
+type BeginSessionCancellationParams struct {
 	EnvironmentID pgtype.UUID `json:"environment_id"`
-	SessionID     pgtype.UUID `json:"session_id"`
+	ID            pgtype.UUID `json:"id"`
 }
 
-func (q *Queries) BeginActorClose(ctx context.Context, arg BeginActorCloseParams) (Session, error) {
-	row := q.db.QueryRow(ctx, beginActorClose, arg.EnvironmentID, arg.SessionID)
+func (q *Queries) BeginSessionCancellation(ctx context.Context, arg BeginSessionCancellationParams) (Session, error) {
+	row := q.db.QueryRow(ctx, beginSessionCancellation, arg.EnvironmentID, arg.ID)
 	var i Session
 	err := row.Scan(
 		&i.ID,
@@ -141,19 +126,34 @@ func (q *Queries) BeginActorClose(ctx context.Context, arg BeginActorCloseParams
 	return i, err
 }
 
-const beginSessionCancellation = `-- name: BeginSessionCancellation :one
-UPDATE sessions SET status='closing',close_sequence=coalesce(close_sequence,next_input_sequence-1),
- cancel_requested_at=coalesce(cancel_requested_at,now()),revision=revision+1,updated_at=now()
-WHERE environment_id=$1 AND id=$2 AND status IN ('open','closing') RETURNING id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
+const beginSessionClose = `-- name: BeginSessionClose :one
+UPDATE sessions
+   SET status = CASE WHEN status = 'open' THEN 'closing' ELSE status END,
+       close_sequence = CASE
+           WHEN status = 'open' THEN next_input_sequence - 1
+           ELSE close_sequence
+       END,
+       revision = revision + CASE
+           WHEN status = 'open' THEN 1
+           ELSE 0
+       END,
+       updated_at = CASE
+           WHEN status = 'open' THEN transaction_timestamp()
+           ELSE updated_at
+       END
+ WHERE environment_id = $1
+   AND id = $2
+   AND status IN ('open', 'closing')
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
 `
 
-type BeginSessionCancellationParams struct {
+type BeginSessionCloseParams struct {
 	EnvironmentID pgtype.UUID `json:"environment_id"`
-	ID            pgtype.UUID `json:"id"`
+	SessionID     pgtype.UUID `json:"session_id"`
 }
 
-func (q *Queries) BeginSessionCancellation(ctx context.Context, arg BeginSessionCancellationParams) (Session, error) {
-	row := q.db.QueryRow(ctx, beginSessionCancellation, arg.EnvironmentID, arg.ID)
+func (q *Queries) BeginSessionClose(ctx context.Context, arg BeginSessionCloseParams) (Session, error) {
+	row := q.db.QueryRow(ctx, beginSessionClose, arg.EnvironmentID, arg.SessionID)
 	var i Session
 	err := row.Scan(
 		&i.ID,
@@ -239,7 +239,7 @@ func (q *Queries) CancelQueuedSessionTurn(ctx context.Context, arg CancelQueuedS
 	return i, err
 }
 
-const completeIdleActorClose = `-- name: CompleteIdleActorClose :one
+const completeIdleSessionClose = `-- name: CompleteIdleSessionClose :one
 UPDATE sessions
    SET status = 'closed',
        current_run_id = NULL,
@@ -258,15 +258,15 @@ UPDATE sessions
 RETURNING id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
 `
 
-type CompleteIdleActorCloseParams struct {
+type CompleteIdleSessionCloseParams struct {
 	ClosedAt      pgtype.Timestamptz `json:"closed_at"`
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
 	SessionID     pgtype.UUID        `json:"session_id"`
 	ComputerID    pgtype.UUID        `json:"computer_id"`
 }
 
-func (q *Queries) CompleteIdleActorClose(ctx context.Context, arg CompleteIdleActorCloseParams) (Session, error) {
-	row := q.db.QueryRow(ctx, completeIdleActorClose,
+func (q *Queries) CompleteIdleSessionClose(ctx context.Context, arg CompleteIdleSessionCloseParams) (Session, error) {
+	row := q.db.QueryRow(ctx, completeIdleSessionClose,
 		arg.ClosedAt,
 		arg.EnvironmentID,
 		arg.SessionID,
@@ -340,7 +340,7 @@ func (q *Queries) CreateSessionLifecycleReconcileOutbox(ctx context.Context, arg
 	return err
 }
 
-const getActorCloseComputerActivity = `-- name: GetActorCloseComputerActivity :one
+const getSessionCloseComputerActivity = `-- name: GetSessionCloseComputerActivity :one
 WITH RECURSIVE owned(id) AS (
  SELECT r.id FROM runs r WHERE r.session_id=$1
  UNION
@@ -353,132 +353,15 @@ SELECT EXISTS(SELECT 1 FROM run_leases l JOIN owned o ON o.id=l.run_id
  AND r.status NOT IN ('succeeded','failed','cancelled','expired','system_failed')) AS has_active_child
 `
 
-type GetActorCloseComputerActivityRow struct {
+type GetSessionCloseComputerActivityRow struct {
 	HasActiveLease bool `json:"has_active_lease"`
 	HasActiveChild bool `json:"has_active_child"`
 }
 
-func (q *Queries) GetActorCloseComputerActivity(ctx context.Context, sessionID pgtype.UUID) (GetActorCloseComputerActivityRow, error) {
-	row := q.db.QueryRow(ctx, getActorCloseComputerActivity, sessionID)
-	var i GetActorCloseComputerActivityRow
+func (q *Queries) GetSessionCloseComputerActivity(ctx context.Context, sessionID pgtype.UUID) (GetSessionCloseComputerActivityRow, error) {
+	row := q.db.QueryRow(ctx, getSessionCloseComputerActivity, sessionID)
+	var i GetSessionCloseComputerActivityRow
 	err := row.Scan(&i.HasActiveLease, &i.HasActiveChild)
-	return i, err
-}
-
-const lockActorClose = `-- name: LockActorClose :one
-SELECT id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
-  FROM sessions
- WHERE environment_id = $1
-   AND id = $2
- FOR UPDATE
-`
-
-type LockActorCloseParams struct {
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	SessionID     pgtype.UUID `json:"session_id"`
-}
-
-func (q *Queries) LockActorClose(ctx context.Context, arg LockActorCloseParams) (Session, error) {
-	row := q.db.QueryRow(ctx, lockActorClose, arg.EnvironmentID, arg.SessionID)
-	var i Session
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.ActorDeclaredID,
-		&i.DeploymentDefinitionID,
-		&i.ComputerID,
-		&i.Key,
-		&i.CurrentRunID,
-		&i.ConsecutiveExecutionLosses,
-		&i.RunGeneration,
-		&i.Revision,
-		&i.ActiveTurnID,
-		&i.DispatchHoldID,
-		&i.DispatchHoldRunID,
-		&i.DispatchHoldAttemptNumber,
-		&i.DispatchHoldRunGeneration,
-		&i.DispatchHoldReason,
-		&i.Failure,
-		&i.FailureRunID,
-		&i.NextInputSequence,
-		&i.CommittedInputSequence,
-		&i.NextEventSequence,
-		&i.RunQueueName,
-		&i.RunConcurrencyKey,
-		&i.RunQueueConcurrencyLimit,
-		&i.RunPriority,
-		&i.RunQueueTtlMs,
-		&i.RunMaxActiveDurationMs,
-		&i.RunRetryPolicy,
-		&i.RunMetadata,
-		&i.RunTags,
-		&i.Status,
-		&i.CloseSequence,
-		&i.CancelRequestedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.ClosedAt,
-		&i.FailedAt,
-	)
-	return i, err
-}
-
-const lockActorCloseComputer = `-- name: LockActorCloseComputer :one
-SELECT c.id, c.environment_id, c.region_id, c.sandbox_declared_id, c.key, c.revision, c.writer_generation, c.head_disk_version_id, c.recovery_id, c.recovery_disk_version_id, c.recovery_reason, c.recovery_started_at, c.preparation_attempt_count, c.next_preparation_at, c.preparation_instance_id, c.recovery_completed_at, c.recovery_failure, c.computer_payload_required, c.recovery_payload_required, c.preparation_failure, c.initial_config, c.write_key_id, c.write_key_available, c.status, c.desired_state, c.dirty_state, c.last_activity_at, c.created_at, c.updated_at, c.deleted_at, c.secret_ca_certificate, c.secret_ca_private_key_nonce, c.secret_ca_private_key_ciphertext, c.secret_ca_not_after, c.computer_spec_id, c.creation_deployment_id, c.spec_retention_required FROM computers c
-WHERE c.environment_id=$1 AND c.id=$2
- AND EXISTS(SELECT 1 FROM sessions s WHERE s.id=$3
- AND s.environment_id=c.environment_id AND s.computer_id=c.id)
-FOR UPDATE OF c
-`
-
-type LockActorCloseComputerParams struct {
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	ComputerID    pgtype.UUID `json:"computer_id"`
-	SessionID     pgtype.UUID `json:"session_id"`
-}
-
-func (q *Queries) LockActorCloseComputer(ctx context.Context, arg LockActorCloseComputerParams) (Computer, error) {
-	row := q.db.QueryRow(ctx, lockActorCloseComputer, arg.EnvironmentID, arg.ComputerID, arg.SessionID)
-	var i Computer
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.SandboxDeclaredID,
-		&i.Key,
-		&i.Revision,
-		&i.WriterGeneration,
-		&i.HeadDiskVersionID,
-		&i.RecoveryID,
-		&i.RecoveryDiskVersionID,
-		&i.RecoveryReason,
-		&i.RecoveryStartedAt,
-		&i.PreparationAttemptCount,
-		&i.NextPreparationAt,
-		&i.PreparationInstanceID,
-		&i.RecoveryCompletedAt,
-		&i.RecoveryFailure,
-		&i.ComputerPayloadRequired,
-		&i.RecoveryPayloadRequired,
-		&i.PreparationFailure,
-		&i.InitialConfig,
-		&i.WriteKeyID,
-		&i.WriteKeyAvailable,
-		&i.Status,
-		&i.DesiredState,
-		&i.DirtyState,
-		&i.LastActivityAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.DeletedAt,
-		&i.SecretCaCertificate,
-		&i.SecretCaPrivateKeyNonce,
-		&i.SecretCaPrivateKeyCiphertext,
-		&i.SecretCaNotAfter,
-		&i.ComputerSpecID,
-		&i.CreationDeploymentID,
-		&i.SpecRetentionRequired,
-	)
 	return i, err
 }
 
@@ -527,4 +410,121 @@ func (q *Queries) LockQueuedSessionTurns(ctx context.Context, arg LockQueuedSess
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockSessionClose = `-- name: LockSessionClose :one
+SELECT id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
+  FROM sessions
+ WHERE environment_id = $1
+   AND id = $2
+ FOR UPDATE
+`
+
+type LockSessionCloseParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	SessionID     pgtype.UUID `json:"session_id"`
+}
+
+func (q *Queries) LockSessionClose(ctx context.Context, arg LockSessionCloseParams) (Session, error) {
+	row := q.db.QueryRow(ctx, lockSessionClose, arg.EnvironmentID, arg.SessionID)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.ActorDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.ComputerID,
+		&i.Key,
+		&i.CurrentRunID,
+		&i.ConsecutiveExecutionLosses,
+		&i.RunGeneration,
+		&i.Revision,
+		&i.ActiveTurnID,
+		&i.DispatchHoldID,
+		&i.DispatchHoldRunID,
+		&i.DispatchHoldAttemptNumber,
+		&i.DispatchHoldRunGeneration,
+		&i.DispatchHoldReason,
+		&i.Failure,
+		&i.FailureRunID,
+		&i.NextInputSequence,
+		&i.CommittedInputSequence,
+		&i.NextEventSequence,
+		&i.RunQueueName,
+		&i.RunConcurrencyKey,
+		&i.RunQueueConcurrencyLimit,
+		&i.RunPriority,
+		&i.RunQueueTtlMs,
+		&i.RunMaxActiveDurationMs,
+		&i.RunRetryPolicy,
+		&i.RunMetadata,
+		&i.RunTags,
+		&i.Status,
+		&i.CloseSequence,
+		&i.CancelRequestedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ClosedAt,
+		&i.FailedAt,
+	)
+	return i, err
+}
+
+const lockSessionCloseComputer = `-- name: LockSessionCloseComputer :one
+SELECT c.id, c.environment_id, c.region_id, c.sandbox_declared_id, c.key, c.revision, c.writer_generation, c.head_disk_version_id, c.recovery_id, c.recovery_disk_version_id, c.recovery_reason, c.recovery_started_at, c.preparation_attempt_count, c.next_preparation_at, c.preparation_instance_id, c.recovery_completed_at, c.recovery_failure, c.computer_payload_required, c.recovery_payload_required, c.preparation_failure, c.initial_config, c.write_key_id, c.write_key_available, c.status, c.desired_state, c.dirty_state, c.last_activity_at, c.created_at, c.updated_at, c.deleted_at, c.secret_ca_certificate, c.secret_ca_private_key_nonce, c.secret_ca_private_key_ciphertext, c.secret_ca_not_after, c.computer_spec_id, c.creation_deployment_id, c.spec_retention_required FROM computers c
+WHERE c.environment_id=$1 AND c.id=$2
+ AND EXISTS(SELECT 1 FROM sessions s WHERE s.id=$3
+ AND s.environment_id=c.environment_id AND s.computer_id=c.id)
+FOR UPDATE OF c
+`
+
+type LockSessionCloseComputerParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ComputerID    pgtype.UUID `json:"computer_id"`
+	SessionID     pgtype.UUID `json:"session_id"`
+}
+
+func (q *Queries) LockSessionCloseComputer(ctx context.Context, arg LockSessionCloseComputerParams) (Computer, error) {
+	row := q.db.QueryRow(ctx, lockSessionCloseComputer, arg.EnvironmentID, arg.ComputerID, arg.SessionID)
+	var i Computer
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.SandboxDeclaredID,
+		&i.Key,
+		&i.Revision,
+		&i.WriterGeneration,
+		&i.HeadDiskVersionID,
+		&i.RecoveryID,
+		&i.RecoveryDiskVersionID,
+		&i.RecoveryReason,
+		&i.RecoveryStartedAt,
+		&i.PreparationAttemptCount,
+		&i.NextPreparationAt,
+		&i.PreparationInstanceID,
+		&i.RecoveryCompletedAt,
+		&i.RecoveryFailure,
+		&i.ComputerPayloadRequired,
+		&i.RecoveryPayloadRequired,
+		&i.PreparationFailure,
+		&i.InitialConfig,
+		&i.WriteKeyID,
+		&i.WriteKeyAvailable,
+		&i.Status,
+		&i.DesiredState,
+		&i.DirtyState,
+		&i.LastActivityAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.SecretCaCertificate,
+		&i.SecretCaPrivateKeyNonce,
+		&i.SecretCaPrivateKeyCiphertext,
+		&i.SecretCaNotAfter,
+		&i.ComputerSpecID,
+		&i.CreationDeploymentID,
+		&i.SpecRetentionRequired,
+	)
+	return i, err
 }

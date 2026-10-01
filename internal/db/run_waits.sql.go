@@ -1178,98 +1178,6 @@ func (q *Queries) FailParkedRunWait(ctx context.Context, arg FailParkedRunWaitPa
 	return i, err
 }
 
-const getActorInputRunWaitRegistrationReplay = `-- name: GetActorInputRunWaitRegistrationReplay :one
-SELECT id, environment_id, run_id, computer_id, turn_session_id, turn_id, turn_run_generation, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_turn_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, current_run_lease_id, prior_run_lease_id, suspend_checkpoint_id, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at, computer_payload_required
-  FROM run_waits
- WHERE id = $1
-   AND environment_id = $2
-   AND run_id = $3
-   AND computer_id = $4
-   AND kind = 'actor_input'
-   AND session_id = $5
-   AND after_input_sequence = $6
-   AND attempt_number = $7
-   AND registration_request_fingerprint = $8
-   AND metadata = $9
-   AND tags = $10
-   AND (current_run_lease_id = $11
-        OR prior_run_lease_id = $11)
-`
-
-type GetActorInputRunWaitRegistrationReplayParams struct {
-	ID                             pgtype.UUID `json:"id"`
-	EnvironmentID                  pgtype.UUID `json:"environment_id"`
-	RunID                          pgtype.UUID `json:"run_id"`
-	ComputerID                     pgtype.UUID `json:"computer_id"`
-	SessionID                      pgtype.UUID `json:"session_id"`
-	AfterInputSequence             pgtype.Int8 `json:"after_input_sequence"`
-	AttemptNumber                  int32       `json:"attempt_number"`
-	RegistrationRequestFingerprint pgtype.Text `json:"registration_request_fingerprint"`
-	Metadata                       []byte      `json:"metadata"`
-	Tags                           []string    `json:"tags"`
-	RunLeaseID                     pgtype.UUID `json:"run_lease_id"`
-}
-
-func (q *Queries) GetActorInputRunWaitRegistrationReplay(ctx context.Context, arg GetActorInputRunWaitRegistrationReplayParams) (RunWait, error) {
-	row := q.db.QueryRow(ctx, getActorInputRunWaitRegistrationReplay,
-		arg.ID,
-		arg.EnvironmentID,
-		arg.RunID,
-		arg.ComputerID,
-		arg.SessionID,
-		arg.AfterInputSequence,
-		arg.AttemptNumber,
-		arg.RegistrationRequestFingerprint,
-		arg.Metadata,
-		arg.Tags,
-		arg.RunLeaseID,
-	)
-	var i RunWait
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.RunID,
-		&i.ComputerID,
-		&i.TurnSessionID,
-		&i.TurnID,
-		&i.TurnRunGeneration,
-		&i.Kind,
-		&i.ConditionStatus,
-		&i.DueAt,
-		&i.TimeoutAt,
-		&i.IdleTimeoutMs,
-		&i.TokenID,
-		&i.ChildRunID,
-		&i.ChildTargetDeclaredID,
-		&i.ChildClaimID,
-		&i.ChildRequest,
-		&i.SessionID,
-		&i.AfterInputSequence,
-		&i.ConditionResult,
-		&i.ConditionError,
-		&i.ConditionTerminalAt,
-		&i.ConditionReasonCode,
-		&i.CompletedTurnID,
-		&i.SuspensionStatus,
-		&i.TokenRegistrationRunRevision,
-		&i.RegistrationRequestFingerprint,
-		&i.ExpectedRunRevision,
-		&i.AttemptNumber,
-		&i.CurrentRunLeaseID,
-		&i.PriorRunLeaseID,
-		&i.SuspendCheckpointID,
-		&i.Metadata,
-		&i.Tags,
-		&i.SuspensionTerminalAt,
-		&i.SuspensionReasonCode,
-		&i.SuspensionError,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.ComputerPayloadRequired,
-	)
-	return i, err
-}
-
 const getChildCallAttemptWait = `-- name: GetChildCallAttemptWait :one
 SELECT id, environment_id, run_id, computer_id, turn_session_id, turn_id, turn_run_generation, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_turn_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, current_run_lease_id, prior_run_lease_id, suspend_checkpoint_id, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at, computer_payload_required FROM run_waits
 WHERE environment_id=$1 AND run_id=$2
@@ -1417,7 +1325,7 @@ func (q *Queries) GetChildCallRunWaitReplay(ctx context.Context, arg GetChildCal
 	return i, err
 }
 
-const getPendingActorInputRunWait = `-- name: GetPendingActorInputRunWait :one
+const getPendingSessionInputRunWait = `-- name: GetPendingSessionInputRunWait :one
 SELECT id, environment_id, run_id, computer_id, turn_session_id, turn_id, turn_run_generation, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_turn_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, current_run_lease_id, prior_run_lease_id, suspend_checkpoint_id, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at, computer_payload_required
   FROM run_waits
  WHERE environment_id = $1
@@ -1433,7 +1341,7 @@ SELECT id, environment_id, run_id, computer_id, turn_session_id, turn_id, turn_r
  FOR UPDATE
 `
 
-type GetPendingActorInputRunWaitParams struct {
+type GetPendingSessionInputRunWaitParams struct {
 	EnvironmentID      pgtype.UUID `json:"environment_id"`
 	RunID              pgtype.UUID `json:"run_id"`
 	AttemptNumber      int32       `json:"attempt_number"`
@@ -1441,8 +1349,8 @@ type GetPendingActorInputRunWaitParams struct {
 	AfterInputSequence pgtype.Int8 `json:"after_input_sequence"`
 }
 
-func (q *Queries) GetPendingActorInputRunWait(ctx context.Context, arg GetPendingActorInputRunWaitParams) (RunWait, error) {
-	row := q.db.QueryRow(ctx, getPendingActorInputRunWait,
+func (q *Queries) GetPendingSessionInputRunWait(ctx context.Context, arg GetPendingSessionInputRunWaitParams) (RunWait, error) {
+	row := q.db.QueryRow(ctx, getPendingSessionInputRunWait,
 		arg.EnvironmentID,
 		arg.RunID,
 		arg.AttemptNumber,
@@ -1511,6 +1419,98 @@ type GetRunWaitParams struct {
 
 func (q *Queries) GetRunWait(ctx context.Context, arg GetRunWaitParams) (RunWait, error) {
 	row := q.db.QueryRow(ctx, getRunWait, arg.RunID, arg.AttemptNumber, arg.ID)
+	var i RunWait
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.ComputerID,
+		&i.TurnSessionID,
+		&i.TurnID,
+		&i.TurnRunGeneration,
+		&i.Kind,
+		&i.ConditionStatus,
+		&i.DueAt,
+		&i.TimeoutAt,
+		&i.IdleTimeoutMs,
+		&i.TokenID,
+		&i.ChildRunID,
+		&i.ChildTargetDeclaredID,
+		&i.ChildClaimID,
+		&i.ChildRequest,
+		&i.SessionID,
+		&i.AfterInputSequence,
+		&i.ConditionResult,
+		&i.ConditionError,
+		&i.ConditionTerminalAt,
+		&i.ConditionReasonCode,
+		&i.CompletedTurnID,
+		&i.SuspensionStatus,
+		&i.TokenRegistrationRunRevision,
+		&i.RegistrationRequestFingerprint,
+		&i.ExpectedRunRevision,
+		&i.AttemptNumber,
+		&i.CurrentRunLeaseID,
+		&i.PriorRunLeaseID,
+		&i.SuspendCheckpointID,
+		&i.Metadata,
+		&i.Tags,
+		&i.SuspensionTerminalAt,
+		&i.SuspensionReasonCode,
+		&i.SuspensionError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ComputerPayloadRequired,
+	)
+	return i, err
+}
+
+const getSessionInputRunWaitRegistrationReplay = `-- name: GetSessionInputRunWaitRegistrationReplay :one
+SELECT id, environment_id, run_id, computer_id, turn_session_id, turn_id, turn_run_generation, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_turn_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, current_run_lease_id, prior_run_lease_id, suspend_checkpoint_id, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at, computer_payload_required
+  FROM run_waits
+ WHERE id = $1
+   AND environment_id = $2
+   AND run_id = $3
+   AND computer_id = $4
+   AND kind = 'actor_input'
+   AND session_id = $5
+   AND after_input_sequence = $6
+   AND attempt_number = $7
+   AND registration_request_fingerprint = $8
+   AND metadata = $9
+   AND tags = $10
+   AND (current_run_lease_id = $11
+        OR prior_run_lease_id = $11)
+`
+
+type GetSessionInputRunWaitRegistrationReplayParams struct {
+	ID                             pgtype.UUID `json:"id"`
+	EnvironmentID                  pgtype.UUID `json:"environment_id"`
+	RunID                          pgtype.UUID `json:"run_id"`
+	ComputerID                     pgtype.UUID `json:"computer_id"`
+	SessionID                      pgtype.UUID `json:"session_id"`
+	AfterInputSequence             pgtype.Int8 `json:"after_input_sequence"`
+	AttemptNumber                  int32       `json:"attempt_number"`
+	RegistrationRequestFingerprint pgtype.Text `json:"registration_request_fingerprint"`
+	Metadata                       []byte      `json:"metadata"`
+	Tags                           []string    `json:"tags"`
+	RunLeaseID                     pgtype.UUID `json:"run_lease_id"`
+}
+
+func (q *Queries) GetSessionInputRunWaitRegistrationReplay(ctx context.Context, arg GetSessionInputRunWaitRegistrationReplayParams) (RunWait, error) {
+	row := q.db.QueryRow(ctx, getSessionInputRunWaitRegistrationReplay,
+		arg.ID,
+		arg.EnvironmentID,
+		arg.RunID,
+		arg.ComputerID,
+		arg.SessionID,
+		arg.AfterInputSequence,
+		arg.AttemptNumber,
+		arg.RegistrationRequestFingerprint,
+		arg.Metadata,
+		arg.Tags,
+		arg.RunLeaseID,
+	)
 	var i RunWait
 	err := row.Scan(
 		&i.ID,
@@ -1912,7 +1912,7 @@ func (q *Queries) ListDueTimerRunWaits(ctx context.Context, limitCount int32) ([
 	return items, nil
 }
 
-const listPendingActorInputWaitTimeouts = `-- name: ListPendingActorInputWaitTimeouts :many
+const listPendingSessionInputWaitTimeouts = `-- name: ListPendingSessionInputWaitTimeouts :many
 SELECT run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.computer_id, run_waits.turn_session_id, run_waits.turn_id, run_waits.turn_run_generation, run_waits.kind, run_waits.condition_status, run_waits.due_at, run_waits.timeout_at, run_waits.idle_timeout_ms, run_waits.token_id, run_waits.child_run_id, run_waits.child_target_declared_id, run_waits.child_claim_id, run_waits.child_request, run_waits.session_id, run_waits.after_input_sequence, run_waits.condition_result, run_waits.condition_error, run_waits.condition_terminal_at, run_waits.condition_reason_code, run_waits.completed_turn_id, run_waits.suspension_status, run_waits.token_registration_run_revision, run_waits.registration_request_fingerprint, run_waits.expected_run_revision, run_waits.attempt_number, run_waits.current_run_lease_id, run_waits.prior_run_lease_id, run_waits.suspend_checkpoint_id, run_waits.metadata, run_waits.tags, run_waits.suspension_terminal_at, run_waits.suspension_reason_code, run_waits.suspension_error, run_waits.created_at, run_waits.updated_at, run_waits.computer_payload_required
   FROM run_waits
  WHERE kind = 'actor_input'
@@ -1924,8 +1924,8 @@ SELECT run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.compu
  LIMIT $1
 `
 
-func (q *Queries) ListPendingActorInputWaitTimeouts(ctx context.Context, limitCount int32) ([]RunWait, error) {
-	rows, err := q.db.Query(ctx, listPendingActorInputWaitTimeouts, limitCount)
+func (q *Queries) ListPendingSessionInputWaitTimeouts(ctx context.Context, limitCount int32) ([]RunWait, error) {
+	rows, err := q.db.Query(ctx, listPendingSessionInputWaitTimeouts, limitCount)
 	if err != nil {
 		return nil, err
 	}
@@ -2272,58 +2272,6 @@ func (q *Queries) LockTokenWait(ctx context.Context, arg LockTokenWaitParams) (L
 	return i, err
 }
 
-const lockTokenWaitActor = `-- name: LockTokenWaitActor :one
-SELECT id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
-  FROM sessions
- WHERE id = $1
- FOR UPDATE
-`
-
-func (q *Queries) LockTokenWaitActor(ctx context.Context, sessionID pgtype.UUID) (Session, error) {
-	row := q.db.QueryRow(ctx, lockTokenWaitActor, sessionID)
-	var i Session
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.ActorDeclaredID,
-		&i.DeploymentDefinitionID,
-		&i.ComputerID,
-		&i.Key,
-		&i.CurrentRunID,
-		&i.ConsecutiveExecutionLosses,
-		&i.RunGeneration,
-		&i.Revision,
-		&i.ActiveTurnID,
-		&i.DispatchHoldID,
-		&i.DispatchHoldRunID,
-		&i.DispatchHoldAttemptNumber,
-		&i.DispatchHoldRunGeneration,
-		&i.DispatchHoldReason,
-		&i.Failure,
-		&i.FailureRunID,
-		&i.NextInputSequence,
-		&i.CommittedInputSequence,
-		&i.NextEventSequence,
-		&i.RunQueueName,
-		&i.RunConcurrencyKey,
-		&i.RunQueueConcurrencyLimit,
-		&i.RunPriority,
-		&i.RunQueueTtlMs,
-		&i.RunMaxActiveDurationMs,
-		&i.RunRetryPolicy,
-		&i.RunMetadata,
-		&i.RunTags,
-		&i.Status,
-		&i.CloseSequence,
-		&i.CancelRequestedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.ClosedAt,
-		&i.FailedAt,
-	)
-	return i, err
-}
-
 const lockTokenWaitAttempt = `-- name: LockTokenWaitAttempt :one
 SELECT entrypoint_kind, session_input_start_sequence, terminal_at
   FROM run_attempts
@@ -2559,6 +2507,58 @@ func (q *Queries) LockTokenWaitRunLease(ctx context.Context, arg LockTokenWaitRu
 	return status, err
 }
 
+const lockTokenWaitSession = `-- name: LockTokenWaitSession :one
+SELECT id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
+  FROM sessions
+ WHERE id = $1
+ FOR UPDATE
+`
+
+func (q *Queries) LockTokenWaitSession(ctx context.Context, sessionID pgtype.UUID) (Session, error) {
+	row := q.db.QueryRow(ctx, lockTokenWaitSession, sessionID)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.ActorDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.ComputerID,
+		&i.Key,
+		&i.CurrentRunID,
+		&i.ConsecutiveExecutionLosses,
+		&i.RunGeneration,
+		&i.Revision,
+		&i.ActiveTurnID,
+		&i.DispatchHoldID,
+		&i.DispatchHoldRunID,
+		&i.DispatchHoldAttemptNumber,
+		&i.DispatchHoldRunGeneration,
+		&i.DispatchHoldReason,
+		&i.Failure,
+		&i.FailureRunID,
+		&i.NextInputSequence,
+		&i.CommittedInputSequence,
+		&i.NextEventSequence,
+		&i.RunQueueName,
+		&i.RunConcurrencyKey,
+		&i.RunQueueConcurrencyLimit,
+		&i.RunPriority,
+		&i.RunQueueTtlMs,
+		&i.RunMaxActiveDurationMs,
+		&i.RunRetryPolicy,
+		&i.RunMetadata,
+		&i.RunTags,
+		&i.Status,
+		&i.CloseSequence,
+		&i.CancelRequestedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ClosedAt,
+		&i.FailedAt,
+	)
+	return i, err
+}
+
 const markCheckpointMemberWaiting = `-- name: MarkCheckpointMemberWaiting :one
 UPDATE run_waits w SET suspension_status='checkpointing',suspend_checkpoint_id=m.checkpoint_id,updated_at=clock_timestamp()
 FROM computer_checkpoint_runs m,computer_checkpoints c,computer_instances i
@@ -2578,118 +2578,6 @@ type MarkCheckpointMemberWaitingParams struct {
 // Only the instance coordinator may mark members after sealing the complete set.
 func (q *Queries) MarkCheckpointMemberWaiting(ctx context.Context, arg MarkCheckpointMemberWaitingParams) (RunWait, error) {
 	row := q.db.QueryRow(ctx, markCheckpointMemberWaiting, arg.CheckpointID, arg.WaitID)
-	var i RunWait
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.RunID,
-		&i.ComputerID,
-		&i.TurnSessionID,
-		&i.TurnID,
-		&i.TurnRunGeneration,
-		&i.Kind,
-		&i.ConditionStatus,
-		&i.DueAt,
-		&i.TimeoutAt,
-		&i.IdleTimeoutMs,
-		&i.TokenID,
-		&i.ChildRunID,
-		&i.ChildTargetDeclaredID,
-		&i.ChildClaimID,
-		&i.ChildRequest,
-		&i.SessionID,
-		&i.AfterInputSequence,
-		&i.ConditionResult,
-		&i.ConditionError,
-		&i.ConditionTerminalAt,
-		&i.ConditionReasonCode,
-		&i.CompletedTurnID,
-		&i.SuspensionStatus,
-		&i.TokenRegistrationRunRevision,
-		&i.RegistrationRequestFingerprint,
-		&i.ExpectedRunRevision,
-		&i.AttemptNumber,
-		&i.CurrentRunLeaseID,
-		&i.PriorRunLeaseID,
-		&i.SuspendCheckpointID,
-		&i.Metadata,
-		&i.Tags,
-		&i.SuspensionTerminalAt,
-		&i.SuspensionReasonCode,
-		&i.SuspensionError,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.ComputerPayloadRequired,
-	)
-	return i, err
-}
-
-const registerActorInputRunWait = `-- name: RegisterActorInputRunWait :one
-WITH moved_run AS (
-    UPDATE runs
-       SET status = 'waiting',
-           revision = revision + 1,
-           updated_at = transaction_timestamp()
-     WHERE runs.id = $12
-       AND runs.environment_id = $2
-       AND runs.session_id = $5
-       AND runs.status = 'running'
-       AND runs.revision = $13
-       AND runs.current_attempt_number = $8
-       AND runs.current_run_lease_id = $9
-       AND runs.active_started_at IS NOT NULL
-       AND transaction_timestamp() < runs.active_started_at
-             + ((runs.max_active_duration_ms - runs.active_elapsed_ms) * interval '1 millisecond')
-    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, computer_id, base_computer_disk_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, instance_preparation_count, next_instance_preparation_at, terminal_at, computer_payload_required
-)
-INSERT INTO run_waits (
-    id, environment_id, run_id, computer_id, kind, timeout_at,
-    idle_timeout_ms, session_id, after_input_sequence,
-    registration_request_fingerprint, expected_run_revision, attempt_number,
-    current_run_lease_id,
-    metadata, tags
-)
-SELECT $1, $2, moved_run.id, moved_run.computer_id,
-       'actor_input', $3, $4,
-       $5, $6,
-       $7, moved_run.revision,
-       $8, $9, $10, $11
-  FROM moved_run
-RETURNING id, environment_id, run_id, computer_id, turn_session_id, turn_id, turn_run_generation, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_turn_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, current_run_lease_id, prior_run_lease_id, suspend_checkpoint_id, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at, computer_payload_required
-`
-
-type RegisterActorInputRunWaitParams struct {
-	ID                             pgtype.UUID        `json:"id"`
-	EnvironmentID                  pgtype.UUID        `json:"environment_id"`
-	TimeoutAt                      pgtype.Timestamptz `json:"timeout_at"`
-	IdleTimeoutMs                  pgtype.Int8        `json:"idle_timeout_ms"`
-	SessionID                      pgtype.UUID        `json:"session_id"`
-	AfterInputSequence             pgtype.Int8        `json:"after_input_sequence"`
-	RegistrationRequestFingerprint pgtype.Text        `json:"registration_request_fingerprint"`
-	AttemptNumber                  int32              `json:"attempt_number"`
-	CurrentRunLeaseID              pgtype.UUID        `json:"current_run_lease_id"`
-	Metadata                       []byte             `json:"metadata"`
-	Tags                           []string           `json:"tags"`
-	RunID                          pgtype.UUID        `json:"run_id"`
-	ExpectedRunningRevision        int64              `json:"expected_running_revision"`
-}
-
-func (q *Queries) RegisterActorInputRunWait(ctx context.Context, arg RegisterActorInputRunWaitParams) (RunWait, error) {
-	row := q.db.QueryRow(ctx, registerActorInputRunWait,
-		arg.ID,
-		arg.EnvironmentID,
-		arg.TimeoutAt,
-		arg.IdleTimeoutMs,
-		arg.SessionID,
-		arg.AfterInputSequence,
-		arg.RegistrationRequestFingerprint,
-		arg.AttemptNumber,
-		arg.CurrentRunLeaseID,
-		arg.Metadata,
-		arg.Tags,
-		arg.RunID,
-		arg.ExpectedRunningRevision,
-	)
 	var i RunWait
 	err := row.Scan(
 		&i.ID,
@@ -2914,6 +2802,118 @@ func (q *Queries) RegisterResolvedChildCall(ctx context.Context, arg RegisterRes
 		arg.CurrentRunLeaseID,
 		arg.ChildRunID,
 		arg.EnvironmentID,
+		arg.RunID,
+		arg.ExpectedRunningRevision,
+	)
+	var i RunWait
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.ComputerID,
+		&i.TurnSessionID,
+		&i.TurnID,
+		&i.TurnRunGeneration,
+		&i.Kind,
+		&i.ConditionStatus,
+		&i.DueAt,
+		&i.TimeoutAt,
+		&i.IdleTimeoutMs,
+		&i.TokenID,
+		&i.ChildRunID,
+		&i.ChildTargetDeclaredID,
+		&i.ChildClaimID,
+		&i.ChildRequest,
+		&i.SessionID,
+		&i.AfterInputSequence,
+		&i.ConditionResult,
+		&i.ConditionError,
+		&i.ConditionTerminalAt,
+		&i.ConditionReasonCode,
+		&i.CompletedTurnID,
+		&i.SuspensionStatus,
+		&i.TokenRegistrationRunRevision,
+		&i.RegistrationRequestFingerprint,
+		&i.ExpectedRunRevision,
+		&i.AttemptNumber,
+		&i.CurrentRunLeaseID,
+		&i.PriorRunLeaseID,
+		&i.SuspendCheckpointID,
+		&i.Metadata,
+		&i.Tags,
+		&i.SuspensionTerminalAt,
+		&i.SuspensionReasonCode,
+		&i.SuspensionError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ComputerPayloadRequired,
+	)
+	return i, err
+}
+
+const registerSessionInputRunWait = `-- name: RegisterSessionInputRunWait :one
+WITH moved_run AS (
+    UPDATE runs
+       SET status = 'waiting',
+           revision = revision + 1,
+           updated_at = transaction_timestamp()
+     WHERE runs.id = $12
+       AND runs.environment_id = $2
+       AND runs.session_id = $5
+       AND runs.status = 'running'
+       AND runs.revision = $13
+       AND runs.current_attempt_number = $8
+       AND runs.current_run_lease_id = $9
+       AND runs.active_started_at IS NOT NULL
+       AND transaction_timestamp() < runs.active_started_at
+             + ((runs.max_active_duration_ms - runs.active_elapsed_ms) * interval '1 millisecond')
+    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, computer_id, base_computer_disk_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, instance_preparation_count, next_instance_preparation_at, terminal_at, computer_payload_required
+)
+INSERT INTO run_waits (
+    id, environment_id, run_id, computer_id, kind, timeout_at,
+    idle_timeout_ms, session_id, after_input_sequence,
+    registration_request_fingerprint, expected_run_revision, attempt_number,
+    current_run_lease_id,
+    metadata, tags
+)
+SELECT $1, $2, moved_run.id, moved_run.computer_id,
+       'actor_input', $3, $4,
+       $5, $6,
+       $7, moved_run.revision,
+       $8, $9, $10, $11
+  FROM moved_run
+RETURNING id, environment_id, run_id, computer_id, turn_session_id, turn_id, turn_run_generation, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_turn_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, current_run_lease_id, prior_run_lease_id, suspend_checkpoint_id, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at, computer_payload_required
+`
+
+type RegisterSessionInputRunWaitParams struct {
+	ID                             pgtype.UUID        `json:"id"`
+	EnvironmentID                  pgtype.UUID        `json:"environment_id"`
+	TimeoutAt                      pgtype.Timestamptz `json:"timeout_at"`
+	IdleTimeoutMs                  pgtype.Int8        `json:"idle_timeout_ms"`
+	SessionID                      pgtype.UUID        `json:"session_id"`
+	AfterInputSequence             pgtype.Int8        `json:"after_input_sequence"`
+	RegistrationRequestFingerprint pgtype.Text        `json:"registration_request_fingerprint"`
+	AttemptNumber                  int32              `json:"attempt_number"`
+	CurrentRunLeaseID              pgtype.UUID        `json:"current_run_lease_id"`
+	Metadata                       []byte             `json:"metadata"`
+	Tags                           []string           `json:"tags"`
+	RunID                          pgtype.UUID        `json:"run_id"`
+	ExpectedRunningRevision        int64              `json:"expected_running_revision"`
+}
+
+func (q *Queries) RegisterSessionInputRunWait(ctx context.Context, arg RegisterSessionInputRunWaitParams) (RunWait, error) {
+	row := q.db.QueryRow(ctx, registerSessionInputRunWait,
+		arg.ID,
+		arg.EnvironmentID,
+		arg.TimeoutAt,
+		arg.IdleTimeoutMs,
+		arg.SessionID,
+		arg.AfterInputSequence,
+		arg.RegistrationRequestFingerprint,
+		arg.AttemptNumber,
+		arg.CurrentRunLeaseID,
+		arg.Metadata,
+		arg.Tags,
 		arg.RunID,
 		arg.ExpectedRunningRevision,
 	)

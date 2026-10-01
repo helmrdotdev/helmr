@@ -28,7 +28,7 @@ type runtimeComputerSaves struct {
 
 // start coalesces ticks while an operation is running. Failed operations must be
 // reconciled before another is admitted; they are never replaced by a new ID.
-func (s *runtimeComputerSaves) start(ctx context.Context, client ComputerSaveClient, objects generationObjectPublisher, authority workerapi.ComputerSaveBeginRequest, runtimeID, computerID string, capture func(context.Context) (computerSaveCapture, error)) (bool, error) {
+func (s *runtimeComputerSaves) start(ctx context.Context, client ComputerSaveClient, objects versionObjectPublisher, authority workerapi.ComputerSaveBeginRequest, runtimeID, computerID string, capture func(context.Context) (computerSaveCapture, error)) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.settling {

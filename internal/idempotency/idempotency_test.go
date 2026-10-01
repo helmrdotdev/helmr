@@ -72,10 +72,10 @@ func TestTransactionCreateReplayAndConflict(t *testing.T) {
 	store := &claimMemory{}
 	transaction := &Transaction{store: store}
 	environmentID := uuid.New()
-	actorID := uuid.New()
+	sessionID := uuid.New()
 	first, err := NewSessionOperationRequest(
 		environmentID,
-		actorID,
+		sessionID,
 		"message-1",
 		"session.send", json.RawMessage(`{"b":2,"a":1}`),
 	)
@@ -101,7 +101,7 @@ func TestTransactionCreateReplayAndConflict(t *testing.T) {
 
 	equivalent, err := NewSessionOperationRequest(
 		environmentID,
-		actorID,
+		sessionID,
 		"message-1",
 		"session.send", json.RawMessage("{\n\"a\":1.0,\"b\":2}"),
 	)
@@ -119,7 +119,7 @@ func TestTransactionCreateReplayAndConflict(t *testing.T) {
 
 	conflicting, err := NewSessionOperationRequest(
 		environmentID,
-		actorID,
+		sessionID,
 		"message-1",
 		"session.send", json.RawMessage(`{"a":1,"b":3}`),
 	)

@@ -14,7 +14,7 @@ import (
 // StoreObject stages exact immutable bytes in a local object store. It never
 // replaces an existing object, and verifies existing content before reusing it.
 // Callers own the private staging directory and candidate cleanup. This operation
-// does not publish a generation, register a remote object or advance a head.
+// does not publish a disk version, register a remote object or advance a head.
 func (c *File) StoreObject(ctx context.Context, digest [32]byte, raw []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err

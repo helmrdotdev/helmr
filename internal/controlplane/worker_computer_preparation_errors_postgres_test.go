@@ -34,7 +34,7 @@ const (
 	computerSourcePath   = "/worker/v1/run/computer-instances/computer-source"
 	objectRegisterPath   = "/worker/v1/run/computer-instances/initialization/objects/register"
 	objectCertifyPath    = "/worker/v1/run/computer-instances/initialization/objects/certify"
-	initialVersionPath   = "/worker/v1/run/computer-instances/initialization/generation"
+	initialVersionPath   = "/worker/v1/run/computer-instances/initialization/version"
 	injectedFailureText  = "injected preparation failure"
 	claimReadStatement   = "SELECT w.claim_version,g.claim_version"
 	firstFenceStatement  = "SELECT environment_id,computer_id,region_id,observed_state FROM computer_instances"
@@ -276,7 +276,7 @@ type preparationErrorServer struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	object   workerapi.InitialComputerObjectRequest
-	version  workerapi.InitialComputerGenerationRequest
+	version  workerapi.InitialComputerVersionRequest
 	instance string
 }
 
@@ -297,9 +297,9 @@ func newPreparationErrorServer(t *testing.T, stage preparationStage) *preparatio
 		client := credential.client(t, server.URL)
 		_, root, object := f.certifyInitialRoot(t, client)
 		s.object = object
-		s.version = workerapi.InitialComputerGenerationRequest{ComputerInstanceID: s.instance, DesiredVersion: 1, Root: root, Config: oci.RuntimeConfig{User: "root"}}
+		s.version = workerapi.InitialComputerVersionRequest{ComputerInstanceID: s.instance, DesiredVersion: 1, Root: root, Config: oci.RuntimeConfig{User: "root"}}
 		if stage >= preparationPublished {
-			if _, err := client.PublishInitialComputerGeneration(t.Context(), s.version); err != nil {
+			if _, err := client.PublishInitialComputerVersion(t.Context(), s.version); err != nil {
 				t.Fatal(err)
 			}
 		}

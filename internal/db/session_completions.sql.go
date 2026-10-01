@@ -288,7 +288,7 @@ func (q *Queries) CreateActorContinuationRun(ctx context.Context, arg CreateActo
 	return i, err
 }
 
-const failActorSession = `-- name: FailActorSession :one
+const failSession = `-- name: FailSession :one
 UPDATE sessions
    SET status = 'failed',
        failure = $1::jsonb,
@@ -308,7 +308,7 @@ UPDATE sessions
 RETURNING id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
 `
 
-type FailActorSessionParams struct {
+type FailSessionParams struct {
 	Failure       []byte             `json:"failure"`
 	RunID         pgtype.UUID        `json:"run_id"`
 	CompletedAt   pgtype.Timestamptz `json:"completed_at"`
@@ -318,8 +318,8 @@ type FailActorSessionParams struct {
 	RunGeneration int64              `json:"run_generation"`
 }
 
-func (q *Queries) FailActorSession(ctx context.Context, arg FailActorSessionParams) (Session, error) {
-	row := q.db.QueryRow(ctx, failActorSession,
+func (q *Queries) FailSession(ctx context.Context, arg FailSessionParams) (Session, error) {
+	row := q.db.QueryRow(ctx, failSession,
 		arg.Failure,
 		arg.RunID,
 		arg.CompletedAt,
@@ -527,7 +527,7 @@ func (q *Queries) GetActorCompletionReplay(ctx context.Context, arg GetActorComp
 	return terminal_request_fingerprint, err
 }
 
-const reconcileActorTerminalRun = `-- name: ReconcileActorTerminalRun :one
+const reconcileSessionTerminalRun = `-- name: ReconcileSessionTerminalRun :one
 UPDATE sessions
    SET status = $1,
        current_run_id = NULL,
@@ -545,7 +545,7 @@ UPDATE sessions
 RETURNING id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
 `
 
-type ReconcileActorTerminalRunParams struct {
+type ReconcileSessionTerminalRunParams struct {
 	Status                string             `json:"status"`
 	CompletedAt           pgtype.Timestamptz `json:"completed_at"`
 	EnvironmentID         pgtype.UUID        `json:"environment_id"`
@@ -555,8 +555,8 @@ type ReconcileActorTerminalRunParams struct {
 	ExpectedRunGeneration int64              `json:"expected_run_generation"`
 }
 
-func (q *Queries) ReconcileActorTerminalRun(ctx context.Context, arg ReconcileActorTerminalRunParams) (Session, error) {
-	row := q.db.QueryRow(ctx, reconcileActorTerminalRun,
+func (q *Queries) ReconcileSessionTerminalRun(ctx context.Context, arg ReconcileSessionTerminalRunParams) (Session, error) {
+	row := q.db.QueryRow(ctx, reconcileSessionTerminalRun,
 		arg.Status,
 		arg.CompletedAt,
 		arg.EnvironmentID,

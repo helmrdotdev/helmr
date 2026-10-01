@@ -14,7 +14,7 @@ type directNode struct {
 	ref      Ref
 }
 
-// Capture stages a new immutable generation. It never advances a durable head.
+// Capture stages a new immutable version. It never advances a durable head.
 // The source, scoped keys and input blocks must remain unchanged during the call.
 // Failure returns no root and can leave unreferenced staged objects; the owning
 // candidate must retain or discard them. Empty changes preserve the exact root.
@@ -251,7 +251,7 @@ func (w Writer) Capture(ctx context.Context, base Locator, capacity int64, chang
 	return p.converted[ref], nil
 }
 
-// Empty stages an empty generation. It does not initialize or publish a Computer.
+// Empty stages an empty version. It does not initialize or publish a Computer.
 func (w Writer) Empty(ctx context.Context, capacity int64, fanout int) (Locator, error) {
 	if capacity <= 0 || capacity%BlockSize != 0 || capacity/BlockSize > MaxBlocks || (fanout != 64 && fanout != 256) {
 		return Locator{}, errors.New("unsupported geometry")

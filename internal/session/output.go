@@ -16,18 +16,18 @@ func validateOutput(ctx context.Context, q db.Querier, locked run.LockedTurn, sc
 	if _, err := locked.Validate(); err != nil {
 		return err
 	}
-	actor, turn := locked.Session(), locked.Turn()
+	session, turn := locked.Session(), locked.Turn()
 	if scope.MessageDeliveryID == uuid.Nil() {
 		if turn.SettlementStartedAt.Valid {
 			return &OperationError{Code: "turn_unsettled"}
 		}
 		return nil
 	}
-	message, err := q.GetSessionMessageDelivery(ctx, db.GetSessionMessageDeliveryParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, DeliveryID: pgvalue.UUID(scope.MessageDeliveryID)})
+	message, err := q.GetSessionMessageDelivery(ctx, db.GetSessionMessageDeliveryParams{EnvironmentID: session.EnvironmentID, SessionID: session.ID, DeliveryID: pgvalue.UUID(scope.MessageDeliveryID)})
 	if err != nil {
 		return turnError(err)
 	}
-	current, err := q.GetRun(ctx, db.GetRunParams{EnvironmentID: actor.EnvironmentID, ID: actor.CurrentRunID})
+	current, err := q.GetRun(ctx, db.GetRunParams{EnvironmentID: session.EnvironmentID, ID: session.CurrentRunID})
 	if err != nil {
 		return err
 	}
@@ -48,7 +48,7 @@ func AppendSessionOutput(ctx context.Context, tx pgx.Tx, scope run.TurnScope, ke
 	if err != nil {
 		return OutputReceipt{}, &OperationError{Code: "invalid_request"}
 	}
-	actor, err := lockSession(ctx, tx, Target{EnvironmentID: scope.EnvironmentID, SessionID: scope.SessionID})
+	session, err := lockSession(ctx, tx, Target{EnvironmentID: scope.EnvironmentID, SessionID: scope.SessionID})
 	if err != nil {
 		return OutputReceipt{}, err
 	}
@@ -70,18 +70,18 @@ func AppendSessionOutput(ctx context.Context, tx pgx.Tx, scope run.TurnScope, ke
 			return receipt, nil
 		}
 	}
-	current, err := q.GetRun(ctx, db.GetRunParams{EnvironmentID: actor.EnvironmentID, ID: pgvalue.UUID(scope.RunID)})
+	current, err := q.GetRun(ctx, db.GetRunParams{EnvironmentID: session.EnvironmentID, ID: pgvalue.UUID(scope.RunID)})
 	if err != nil {
 		return receipt, err
 	}
 	switch {
-	case actor.CurrentRunID != current.ID || actor.RunGeneration != scope.RunGeneration || current.CurrentAttemptNumber != scope.AttemptNumber:
+	case session.CurrentRunID != current.ID || session.RunGeneration != scope.RunGeneration || current.CurrentAttemptNumber != scope.AttemptNumber:
 		receipt.Code = "stale_execution"
-	case actor.DispatchHoldID.Valid:
+	case session.DispatchHoldID.Valid:
 		receipt.Code = "session_held"
-	case actor.ActiveTurnID.Valid:
+	case session.ActiveTurnID.Valid:
 		receipt.Code = "turn_active"
-	case actor.Status != "open" && actor.Status != "closing":
+	case session.Status != "open" && session.Status != "closing":
 		receipt.Code = "session_not_open"
 	}
 	if receipt.Code != "" {
@@ -91,7 +91,7 @@ func AppendSessionOutput(ctx context.Context, tx pgx.Tx, scope run.TurnScope, ke
 		return receipt, err
 	}
 	if claim.Status == "completed" {
-		receipt.Event, err = q.GetSessionEvent(ctx, db.GetSessionEventParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: pgvalue.UUID(receipt.EventID)})
+		receipt.Event, err = q.GetSessionEvent(ctx, db.GetSessionEventParams{EnvironmentID: session.EnvironmentID, SessionID: session.ID, ID: pgvalue.UUID(receipt.EventID)})
 		return receipt, err
 	}
 	event, err := appendEvent(ctx, q, scope, "output", data)

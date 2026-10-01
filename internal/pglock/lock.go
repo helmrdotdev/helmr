@@ -111,25 +111,26 @@
 //     Secrets, finalization begin, task completion and waits) lock the source
 //     attempt's Secrets through the run owner before the execution host.
 //   - Worker Session operations that address another Session or Computer
-//     (send, enqueue, close, event reads, run-sourced Actor start) lock the
-//     source Computer's Secrets, plus an addressed Computer's (never an
-//     addressed Session's Computer's), then the execution fence with the
-//     target in the same ordered statements, then the source attempt's
-//     delivery Secrets. That delivery lock reads the source Computer's
-//     bindings again without comparing them with the first lock, so a
-//     binding added before the execution fence locks the source Computer is
-//     locked after the fence; these operations have no re-read check.
+//     (send, enqueue, close, event reads, run-sourced Actor start), through
+//     the session owner, lock the source Computer's Secrets, plus an
+//     addressed Computer's (never an addressed Session's Computer's), then
+//     the execution fence with the target in the same ordered statements,
+//     then the source attempt's delivery Secrets. That delivery lock reads
+//     the source Computer's bindings again without comparing them with the
+//     first lock, so a binding added before the execution fence locks the
+//     source Computer is locked after the fence; these operations have no
+//     re-read check.
 //   - Child Task invocation, through the run owner, acquires its idempotency
 //     claim, then locks the target Computer's secrets, then the execution
 //     fence with the target Computer in the same ordered statements. A new
 //     child then re-locks the already-held target Computer through the
 //     computer owner's admission lock. The live execution is locked again
 //     before commit.
-//   - Worker Session controls (cancel, interrupt, resume) lock the sorted
-//     union of the source Computer's and the target Session's Computer's
-//     Secrets, then the execution fence, then re-read the union after the
-//     Session and Computer fences and fail if a binding changed, re-locking
-//     only the same Secrets.
+//   - Worker Session controls (cancel, interrupt, resume), through the
+//     session owner, lock the sorted union of the source Computer's and the
+//     target Session's Computer's Secrets, then the execution fence, then
+//     re-read the union after the Session and Computer fences and fail if a
+//     binding changed, re-locking only the same Secrets.
 //   - Public Session operations run through the session owner. Send, enqueue,
 //     Turn messages and close lock the Session's Computer through the
 //     admission lock, its Instance and then the Session before their
@@ -155,9 +156,14 @@
 //     Computer's Secrets and within the Run's scope, locking no Instance when
 //     the scope no longer matches), then the Session, Run, Attempt and Wait
 //     (Token: then the Token), without worker supply or lineage locks. Token
-//     wait registration, staged through the run owner, locks worker_groups
-//     and worker_hosts without comparing claim versions, then the Computer,
-//     its Instance, the Session, Run, Attempt, Run lease, Wait and Token.
+//     wait registration, through the token owner and staged through the run
+//     owner, locks worker_groups and worker_hosts without comparing claim
+//     versions, then the Computer, its Instance, the Session, Run, Attempt,
+//     Run lease, Wait and Token.
+//   - Runtime Token creation, through the token owner, reads the source
+//     lease's location without locking and acquires its idempotency claim
+//     before any execution lock, then locks the live execution through the
+//     run owner without Secrets before it creates the Token.
 //   - Command operations, through the command owner, lock Secrets first when
 //     they deliver or validate them (claim, recovery). Worker-reported
 //     operations then lock worker_groups and worker_hosts, comparing claim

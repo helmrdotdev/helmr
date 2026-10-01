@@ -1,123 +1,110 @@
 package controlplane
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
-	"errors"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
-	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
-	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type actorExecutionFixture struct {
-	runtest.Fixture
-	server                               *Server
-	worker                               workergroup.HostPrincipal
-	computerID, rootID, sessionID, runID uuid.UUID
-	claim                                run.Claim
-	leaseID                              uuid.UUID
+// actorExecutionHTTP serves the control plane built by NewServer over an
+// Actor execution's database. The execution's worker authenticates with an
+// epoch token exchanged for its seeded host credential; login sessions
+// authenticate as in production and API key bearer tokens as the principal
+// registered for them.
+type actorExecutionHTTP struct {
+	*sessiontest.Execution
+	httpPostgresFixture
+	principals  *principalAuthenticator
+	workerToken string
 }
 
-func newActorExecutionFixture(t *testing.T, input json.RawMessage, start bool) *actorExecutionFixture {
+// newActorExecution builds an Actor execution whose Session holds the input
+// as its first enqueued Turn, when there is one, and whose lease the worker
+// claimed, started and entered when start is set, and serves it with the
+// configuration adjustments applied.
+func newActorExecution(t *testing.T, input json.RawMessage, start bool, configure ...func(*ServerConfig)) *actorExecutionHTTP {
 	t.Helper()
-	base := runtest.New(t)
-	dbtest.MustExec(t, t.Context(), base.Pool, `UPDATE deployments SET queue_config='{"formatVersion":0,"queues":[{"concurrencyLimit":8,"name":"default"},{"name":"priority"}]}' WHERE id=$1`, base.DeploymentID)
-	dbtest.MustExec(t, t.Context(), base.Pool, `UPDATE worker_pools SET per_vm_guest_ephemeral_disk_bytes=34359738368,capacity_guest_ephemeral_disk_bytes=274877906944 WHERE id=$1`, base.WorkerPoolID)
-	dbtest.MustExec(t, t.Context(), base.Pool, `UPDATE worker_hosts SET per_vm_guest_ephemeral_disk_bytes=34359738368,epoch_guest_ephemeral_disk_bytes=274877906944 WHERE id=$1`, base.WorkerID)
-	return actorExecutionOnFixture(t, base, input, start)
-}
-
-func actorExecutionOnFixture(t *testing.T, base runtest.Fixture, input json.RawMessage, start bool) *actorExecutionFixture {
-	t.Helper()
-	work := base.AddRunLease(t, "assigned", time.Now())
-	sid := base.ConvertToActor(t, t.Context(), work, `{"enabled":false}`)
-	dbtest.MustExec(t, t.Context(), base.Pool, `UPDATE runs SET queue_concurrency_limit=8 WHERE id=$1`, work.RunID)
-	manifest, digest, err := definition.CanonicalManifestAndDigest([]byte(`{"idleTimeoutMs":1000,"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	dbtest.MustExec(t, t.Context(), base.Pool, `UPDATE deployment_definitions SET manifest=$2,manifest_digest=$3 WHERE id=(SELECT deployment_definition_id FROM sessions WHERE id=$1)`, sid, manifest, digest[:])
-	dbtest.MustExec(t, t.Context(), base.Pool, `UPDATE sessions SET committed_input_sequence=0,next_input_sequence=1 WHERE id=$1`, sid)
-	dbtest.MustExec(t, t.Context(), base.Pool, `UPDATE runs SET session_input_start_sequence=0,session_input_high_watermark=0 WHERE id=$1`, work.RunID)
-	dbtest.MustExec(t, t.Context(), base.Pool, `UPDATE run_attempts SET session_input_start_sequence=0 WHERE run_id=$1`, work.RunID)
-	f := &actorExecutionFixture{Fixture: base, sessionID: sid, runID: work.RunID, leaseID: work.LeaseID,
-		server: &Server{db: db.New(base.Pool), tx: base.Pool, log: slog.Default()},
-		worker: workergroup.HostPrincipal{HostID: base.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}}
-	if err := base.Pool.QueryRow(t.Context(), `SELECT computer_id,base_computer_disk_version_id FROM runs WHERE id=$1`, work.RunID).Scan(&f.computerID, &f.rootID); err != nil {
-		t.Fatal(err)
-	}
+	f := sessiontest.NewExecution(t)
 	if input != nil {
-		if _, err := session.ApplyAdmission(t.Context(), f.server.tx, session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: sid}, Mode: session.EnqueueOnly, Data: input}); err != nil {
+		if _, err := session.ApplyAdmission(t.Context(), f.Pool, session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.SessionID}, Mode: session.EnqueueOnly, Data: input}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if start {
-		f.claimAndStart(t)
+		f.ClaimAndStart(t)
 	}
-	return f
-}
-func (f *actorExecutionFixture) claimLease(t *testing.T) {
-	t.Helper()
-	var err error
-	f.claim, err = run.ClaimLease(t.Context(), f.Pool, f.executionFence(1))
+	keys, err := auth.NewKeys(testAuthRootKey())
 	if err != nil {
 		t.Fatal(err)
 	}
-}
-func (f *actorExecutionFixture) claimAndStart(t *testing.T) {
-	t.Helper()
-	f.claimLease(t)
-	f.startClaim(t)
-}
-func (f *actorExecutionFixture) startClaim(t *testing.T) {
-	t.Helper()
-	f.startLease(t, "actor", "test-actor")
-}
-
-// startLease starts the claimed lease and enters its entrypoint.
-func (f *actorExecutionFixture) startLease(t *testing.T, kind, declaredID string) {
-	t.Helper()
-	fence := f.executionFence(f.claim.Lease().LeaseSequence)
-	if err := run.StartLease(t.Context(), f.Pool, fence); err != nil {
-		t.Fatal(err)
-	}
-	if err := run.EnterEntrypoint(t.Context(), f.Pool, fence, kind, declaredID); err != nil {
-		t.Fatal(err)
+	principals := &principalAuthenticator{principals: map[string]auth.Principal{}}
+	handler := newPostgresServer(t, f.Pool, func(cfg *ServerConfig) {
+		cfg.Auth = principals
+		cfg.PublicURL = &url.URL{Scheme: "https", Host: "console.example.test"}
+		for _, apply := range configure {
+			apply(cfg)
+		}
+	})
+	return &actorExecutionHTTP{
+		Execution:           f,
+		httpPostgresFixture: httpPostgresFixture{pool: f.Pool, queries: db.New(f.Pool), handler: handler, keys: keys},
+		principals:          principals,
+		workerToken:         seedHostCredential(t, f.Pool, f.WorkerID).token(t, handler),
 	}
 }
 
-// executionFence is the fixture worker's fence on its lease.
-func (f *actorExecutionFixture) executionFence(sequence int64) run.ExecutionFence {
-	return run.ExecutionFence{LeaseID: pgvalue.UUID(f.leaseID), LeaseSequence: sequence, WorkerGroupID: pgvalue.UUID(f.worker.GroupID), WorkerHostID: pgvalue.UUID(f.worker.HostID), WorkerEpoch: f.worker.Epoch, GroupClaimVersion: f.worker.GroupClaimVersion, HostClaimVersion: f.worker.HostClaimVersion}
+// fence is the worker's receipt for its claimed lease.
+func (f *actorExecutionHTTP) fence() workerapi.RunLeaseFence {
+	lease := f.Claim.Lease()
+	return workerapi.RunLeaseFence{ID: pgvalue.UUIDString(lease.ID), LeaseSequence: lease.LeaseSequence}
 }
-func (f *actorExecutionFixture) workerCall(t *testing.T, handler http.HandlerFunc, body any, result any) {
+
+// apiKey registers an API key bearer token that authenticates as principal.
+func (f *actorExecutionHTTP) apiKey(principal auth.Principal) string {
+	return f.principals.apiKey(principal)
+}
+
+// worker posts the body to the worker route as the execution's worker.
+func (f *actorExecutionHTTP) worker(t *testing.T, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	f.serveWorker(t, recorder, path, body)
+	return recorder
+}
+
+// serveWorker posts the body to the worker route as the execution's worker
+// and writes the response to w.
+func (f *actorExecutionHTTP) serveWorker(t *testing.T, w http.ResponseWriter, path string, body any) {
 	t.Helper()
 	raw, err := json.Marshal(body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(raw))
-	r = r.WithContext(context.WithValue(t.Context(), workerContextKey{}, f.worker))
-	w := httptest.NewRecorder()
-	handler(w, r)
+	request := httptest.NewRequest(http.MethodPost, "/worker/v1"+path, strings.NewReader(string(raw)))
+	request.Header.Set("Authorization", "Bearer "+f.workerToken)
+	request.Header.Set("Content-Type", "application/json")
+	f.handler.ServeHTTP(w, request)
+}
+
+// workerCall posts the body to the worker route, requires success and
+// decodes the response into result when it is not nil.
+func (f *actorExecutionHTTP) workerCall(t *testing.T, path string, body any, result any) {
+	t.Helper()
+	w := f.worker(t, path, body)
 	if w.Code != http.StatusOK && w.Code != http.StatusNoContent {
-		t.Fatalf("Worker request %T: status=%d body=%s", body, w.Code, w.Body.String())
+		t.Fatalf("worker request %s: status=%d body=%s", path, w.Code, w.Body.String())
 	}
 	if result != nil {
 		if err := json.Unmarshal(w.Body.Bytes(), result); err != nil {
@@ -126,23 +113,21 @@ func (f *actorExecutionFixture) workerCall(t *testing.T, handler http.HandlerFun
 	}
 }
 
-func (f *actorExecutionFixture) fence() workerapi.RunLeaseFence {
-	lease := f.claim.Lease()
-	return workerapi.RunLeaseFence{ID: pgvalue.UUIDString(lease.ID), LeaseSequence: lease.LeaseSequence}
-}
-
-func (f *actorExecutionFixture) receiveTurn(t *testing.T, sequence int64) run.TurnScope {
+// receiveTurn activates the Turn at the input sequence, registering the
+// worker's Actor input wait after the previous sequence while it is queued,
+// and returns the Turn's producer scope.
+func (f *actorExecutionHTTP) receiveTurn(t *testing.T, sequence int64) run.TurnScope {
 	t.Helper()
-	var input db.SessionTurn
-	input, err := f.server.db.GetSessionTurnAtSequenceForUpdate(t.Context(), db.GetSessionTurnAtSequenceForUpdateParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), SessionID: pgvalue.UUID(f.sessionID), Sequence: sequence})
+	params := db.GetSessionTurnAtSequenceForUpdateParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), SessionID: pgvalue.UUID(f.SessionID), Sequence: sequence}
+	input, err := f.queries.GetSessionTurnAtSequenceForUpdate(t.Context(), params)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if input.Status == "queued" {
 		after := sequence - 1
-		params, _ := json.Marshal(workerActorInputWaitParams{SessionID: f.sessionID.String(), AfterInputSequence: after})
-		f.workerCall(t, f.server.workerCreateRunWait, workerapi.CreateRunWaitRequest{CorrelationID: uuid.NewV7().String(), Lease: f.fence(), RunWaitID: uuid.NewV7().String(), ResumeAttachID: uuid.NewV7().String(), Kind: "actor_input", Params: params, ActorSpeculativeInputSequence: &after}, nil)
-		input, err = f.server.db.GetSessionTurnAtSequenceForUpdate(t.Context(), db.GetSessionTurnAtSequenceForUpdateParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), SessionID: pgvalue.UUID(f.sessionID), Sequence: sequence})
+		waitParams, _ := json.Marshal(workerSessionInputWaitParams{SessionID: f.SessionID.String(), AfterInputSequence: after})
+		f.workerCall(t, "/run/waits/create", workerapi.CreateRunWaitRequest{CorrelationID: uuid.NewV7().String(), Lease: f.fence(), RunWaitID: uuid.NewV7().String(), ResumeAttachID: uuid.NewV7().String(), Kind: "actor_input", Params: waitParams, ActorSpeculativeInputSequence: &after}, nil)
+		input, err = f.queries.GetSessionTurnAtSequenceForUpdate(t.Context(), params)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -150,49 +135,34 @@ func (f *actorExecutionFixture) receiveTurn(t *testing.T, sequence int64) run.Tu
 	if input.Status != "running" || !input.RunGeneration.Valid {
 		t.Fatalf("input was not activated: %+v", input)
 	}
-	return run.TurnScope{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID, TurnID: pgvalue.MustUUIDValue(input.ID), RunID: f.runID, AttemptNumber: input.AttemptNumber.Int32, RunGeneration: input.RunGeneration.Int64}
+	return run.TurnScope{EnvironmentID: f.EnvironmentID, SessionID: f.SessionID, TurnID: pgvalue.MustUUIDValue(input.ID), RunID: f.RunID, AttemptNumber: input.AttemptNumber.Int32, RunGeneration: input.RunGeneration.Int64}
 }
 
-func (f *actorExecutionFixture) turn(t *testing.T, sequence int64) workerapi.CommitActorTurnResponse {
-	t.Helper()
-	var headBefore, baseBefore uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT w.head_disk_version_id,a.base_computer_disk_version_id FROM computers w JOIN run_leases l ON l.computer_id=w.id JOIN run_attempts a ON a.run_id=l.run_id AND a.number=l.attempt_number WHERE w.id=$1 AND l.id=$2`, f.computerID, f.claim.Lease().ID).Scan(&headBefore, &baseBefore); err != nil {
-		t.Fatal(err)
-	}
-	scope := f.receiveTurn(t, sequence)
-	f.beginSettlement(t, scope)
-	req := workerapi.CommitActorTurnRequest{TurnID: scope.TurnID.String(), RunGeneration: scope.RunGeneration, Disposition: "completed", Result: json.RawMessage(`null`), Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TargetInputSequence: sequence}
-	parsed, err := parseActorTurnCommitRequest(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, err := f.server.commitActorTurn(t.Context(), f.worker, req, parsed)
-	if err != nil {
-		t.Fatalf("commit Turn %d: %v", sequence, err)
-	}
-	replayed, err := f.server.commitActorTurn(t.Context(), f.worker, req, parsed)
-	if err != nil || replayed != out {
-		t.Fatalf("Turn replay: %+v %v", replayed, err)
-	}
-	conflicting := req
-	conflicting.Result = json.RawMessage(`{"different":true}`)
-	conflictingParsed, err := parseActorTurnCommitRequest(conflicting)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.server.commitActorTurn(t.Context(), f.worker, conflicting, conflictingParsed); !errors.Is(err, errStaleActorTurnCommit) {
-		t.Fatalf("conflicting replay: %v", err)
-	}
+// turnCommand addresses the scope's Turn work with a new correlation.
+func (f *actorExecutionHTTP) turnCommand(scope run.TurnScope) workerapi.TurnExecutionRequest {
+	return workerapi.TurnExecutionRequest{Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TurnID: scope.TurnID.String(), RunGeneration: scope.RunGeneration}
+}
 
-	var head, base uuid.UUID
-	var cursor int64
-	var version pgtype.UUID
-	var data []byte
-	if err := f.Pool.QueryRow(t.Context(), `SELECT w.head_disk_version_id,a.base_computer_disk_version_id,s.committed_input_sequence,e.computer_disk_version_id,e.data FROM computers w JOIN run_leases l ON l.computer_id=w.id JOIN run_attempts a ON a.run_id=l.run_id AND a.number=l.attempt_number JOIN sessions s ON s.id=$3 JOIN session_events e ON e.id=$4 WHERE w.id=$1 AND l.id=$2`, f.computerID, f.claim.Lease().ID, f.sessionID, uuid.MustParse(out.EventID)).Scan(&head, &base, &cursor, &version, &data); err != nil {
-		t.Fatal(err)
+// turnCommitRequest begins the Turn's settlement and returns the worker's
+// commit of a completed result at the first input sequence.
+func (f *actorExecutionHTTP) turnCommitRequest(t *testing.T, scope run.TurnScope) workerapi.CommitActorTurnRequest {
+	t.Helper()
+	f.workerCall(t, "/run/turns/settlement/begin", f.turnCommand(scope), nil)
+	return workerapi.CommitActorTurnRequest{Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TurnID: scope.TurnID.String(), RunGeneration: scope.RunGeneration, Disposition: "completed", Result: json.RawMessage(`{"answer":42}`), TargetInputSequence: 1}
+}
+
+// outputRequest is the worker's keyed output on the scope's Turn.
+func (f *actorExecutionHTTP) outputRequest(scope run.TurnScope) workerapi.WriteTurnOutputRequest {
+	return workerapi.WriteTurnOutputRequest{Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TurnID: scope.TurnID.String(), RunGeneration: scope.RunGeneration, Data: json.RawMessage(`{"type":"permission_granted","requestId":"native-1","actionBinding":"command-1"}`), IdempotencyKey: "permission-1"}
+}
+
+// interruptTurn interrupts the Turn through the public Session operation and
+// returns a committed rejection as its receipt.
+func (f *actorExecutionHTTP) interruptTurn(t *testing.T, scope run.TurnScope, key string) session.ControlReceipt {
+	t.Helper()
+	receipt, err := session.ApplyInterrupt(t.Context(), f.Pool, session.InterruptRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: scope.EnvironmentID, SessionID: scope.SessionID}, IdempotencyKey: key}, TurnID: scope.TurnID})
+	if err != nil {
+		t.Fatalf("interrupt: %+v %v", receipt, err)
 	}
-	if head != headBefore || base != baseBefore || cursor != sequence || version.Valid || strings.Contains(string(data), "computer_disk_version_id") {
-		t.Fatalf("Turn changed persistence or failed to advance cursor: head=%s base=%s cursor=%d version=%v data=%s", head, base, cursor, version, data)
-	}
-	return out
+	return receipt
 }

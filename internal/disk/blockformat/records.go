@@ -29,7 +29,7 @@ func Header(scope string, r Ref) ([]byte, error) {
 		return nil, errors.New("invalid object context")
 	}
 	var b bytes.Buffer
-	field(&b, []byte("helmr-computer-generation-v1"))
+	field(&b, []byte("helmr-computer-disk-version-v1"))
 	field(&b, []byte(scope))
 	field(&b, []byte(r.Key))
 	b.WriteByte(r.Kind)

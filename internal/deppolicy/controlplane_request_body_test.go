@@ -73,7 +73,6 @@ var controlPlaneDecodersOutsideOwner = map[string]string{
 	"rejectActorStartEmptyString":        "canonical request member, fixed message",
 	"rejectActorStartNullTagElements":    "canonical request member, fixed message",
 	"rejectActorStartNulls":              "canonical request member, fixed message",
-	"runFailureFromCompletion":           "stored run completion",
 	"scheduleResponse":                   "stored schedule failure",
 	"validateActorStartIdempotencyWire":  "canonical request member, fixed message",
 }

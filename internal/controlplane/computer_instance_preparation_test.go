@@ -70,7 +70,7 @@ func TestComputerCleanupMetadataDoesNotReadDiskOrProgram(t *testing.T) {
 	row := initializingComputerSourceRow(t)
 	row.ComputerID = pgvalue.UUID(uuid.NewV7())
 	row.ComputerSpecID = pgvalue.UUID(uuid.NewV7())
-	row.ComputerGenerationLocator = []byte(`invalid`)
+	row.ComputerVersionLocator = []byte(`invalid`)
 	row.ProgramDeploymentID = pgvalue.UUID(uuid.NewV7())
 	row.VMPlatformID = "platform"
 	row.VMVCPUCount = 3

@@ -1,22 +1,14 @@
 package controlplane
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5"
 )
-
-var errStaleActorTurnCommit = errors.New("actor turn commit is stale")
 
 type parsedActorTurnCommit struct {
 	turnID              uuid.UUID
@@ -82,126 +74,12 @@ func parseActorTurnCommitRequest(request workerapi.CommitActorTurnRequest) (pars
 	}, nil
 }
 
-func (s *Server) commitActorTurn(
-	ctx context.Context,
-	worker workergroup.HostPrincipal,
-	request workerapi.CommitActorTurnRequest,
-	commit parsedActorTurnCommit,
-) (workerapi.CommitActorTurnResponse, error) {
-	var response workerapi.CommitActorTurnResponse
-	err := s.inTx(ctx, func(work *txWork) error {
-		locator, err := run.LocateLiveExecution(ctx, work.tx, workerExecutionFence(worker, commit.lease, request.Lease))
-		if err != nil {
-			return staleActorTurnCommit(err)
-		}
-		secrets, err := locator.LockSecrets(ctx)
-		if err != nil {
-			return fmt.Errorf("lock actor turn secret authority: %w", err)
-		}
-		authority, err := secrets.LockExecution(ctx)
-		runRow, attempt, actor, lease, instance := authority.Run(), authority.Attempt(), authority.Session(), authority.Lease(), authority.Instance()
-		if err != nil || !actor.ID.Valid {
-			return staleActorTurnCommit(err)
-		}
-
-		if err := validateActorTurnAuthority(ctx, work.q, authority); err != nil {
-			return err
-		}
-
-		if actor.CommittedInputSequence == commit.targetInputSequence {
-			var replayed bool
-			response, replayed, err = replayActorTurnCommit(ctx, work.q, request, commit, authority)
-			if err != nil {
-				return err
-			}
-			if replayed {
-				return nil
-			}
-			return errStaleActorTurnCommit
-		}
-		scope := run.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(runRow.EnvironmentID), SessionID: pgvalue.MustUUIDValue(actor.ID), TurnID: commit.turnID, RunID: pgvalue.MustUUIDValue(runRow.ID), AttemptNumber: attempt.Number, RunGeneration: commit.generation}
-		input, err := run.ValidateTurn(ctx, work.tx, scope)
-		if err != nil {
-			return staleActorTurnCommit(err)
-		}
-		if input.Sequence != commit.targetInputSequence {
-			return errStaleActorTurnCommit
-		}
-		if actor.CommittedInputSequence+1 != commit.targetInputSequence ||
-			commit.targetInputSequence >= actor.NextInputSequence {
-			return errStaleActorTurnCommit
-		}
-		committedAt, err := work.q.GetTaskCompletionTime(ctx)
-		if err != nil || !committedAt.Valid {
-			if err == nil {
-				err = errors.New("database actor turn commit time is unavailable")
-			}
-			return err
-		}
-		if !committedAt.Time.Before(lease.ExpiresAt.Time) ||
-			!committedAt.Time.Before(instance.WriterExpiresAt.Time) {
-			return errStaleActorTurnCommit
-		}
-		event, err := session.SettleTurn(ctx, work.tx, scope, commit.disposition, commit.result, commit.fingerprint)
-		if err != nil {
-			return staleActorTurnCommit(err)
-		}
-		response = projectActorTurnResponse(request, commit)
-		response.EventID = pgvalue.UUIDString(event.ID)
-		_, err = run.LockLiveExecution(ctx, work.tx, workerExecutionFence(worker, commit.lease, request.Lease))
-		if err != nil {
-			return staleActorTurnCommit(err)
-		}
-		return nil
-	})
-	return response, err
-}
-
-func validateActorTurnAuthority(ctx context.Context, store db.Querier, authority run.Execution) error {
-	runRow, attempt, actor, lease, computerRow := authority.Run(), authority.Attempt(), authority.Session(), authority.Lease(), authority.Computer()
-	if runRow.Status != db.RunStatusRunning || runRow.EntrypointKind != "actor" || !runRow.SessionID.Valid ||
-		runRow.SessionID != actor.ID || runRow.ParentRunID.Valid ||
-		runRow.ParentOwnsLifecycle.Valid || lease.Status != db.RunLeaseStatusRunning ||
-		!runRow.ActiveStartedAt.Valid || !attempt.EntrypointEnteredAt.Valid ||
-		attempt.TerminalAt.Valid || !attempt.SessionInputStartSequence.Valid ||
-		!runRow.SessionInputStartSequence.Valid || !runRow.SessionInputHighWatermark.Valid ||
-		!actor.CurrentRunID.Valid || actor.CurrentRunID != runRow.ID ||
-		(actor.Status != "open" && actor.Status != "closing") ||
-		!computerRow.HeadDiskVersionID.Valid ||
-		lease.FinalizationOperationID.Valid ||
-		lease.FinalizationStartedAt.Valid || lease.FinalizationRequestFingerprint.Valid {
-		return errStaleActorTurnCommit
+// turnCommit is the session owner's commit of the parsed request.
+func (c parsedActorTurnCommit) turnCommit() session.TurnCommit {
+	return session.TurnCommit{
+		TurnID: c.turnID, RunGeneration: c.generation, Disposition: c.disposition,
+		Result: c.result, Fingerprint: c.fingerprint, TargetInputSequence: c.targetInputSequence,
 	}
-	clear, err := store.RunFinalizationScopeIsClear(ctx, db.RunFinalizationScopeIsClearParams{
-		RunID: runRow.ID, AttemptNumber: attempt.Number, ComputerID: computerRow.ID,
-	})
-	if err != nil {
-		return err
-	}
-	if !clear {
-		return errStaleActorTurnCommit
-	}
-	return nil
-}
-
-func replayActorTurnCommit(
-	ctx context.Context,
-	store db.Querier,
-	request workerapi.CommitActorTurnRequest,
-	commit parsedActorTurnCommit,
-	authority run.Execution,
-) (workerapi.CommitActorTurnResponse, bool, error) {
-	runRow, attempt, actor := authority.Run(), authority.Attempt(), authority.Session()
-	input, err := store.LockSessionTurnInput(ctx, db.LockSessionTurnInputParams{EnvironmentID: runRow.EnvironmentID, SessionID: actor.ID, ID: pgvalue.UUID(commit.turnID)})
-	if err != nil {
-		return workerapi.CommitActorTurnResponse{}, false, staleActorTurnCommit(err)
-	}
-	if input.Status != commit.disposition || input.TerminalRequestFingerprint.String != commit.fingerprint || input.RunID != runRow.ID || input.AttemptNumber.Int32 != attempt.Number || input.RunGeneration.Int64 != commit.generation || !input.TerminalEventID.Valid {
-		return workerapi.CommitActorTurnResponse{}, false, nil
-	}
-	response := projectActorTurnResponse(request, commit)
-	response.EventID = pgvalue.UUIDString(input.TerminalEventID)
-	return response, true, nil
 }
 
 func projectActorTurnResponse(
@@ -212,20 +90,4 @@ func projectActorTurnResponse(
 		Lease: request.Lease, CorrelationID: commit.correlationID.String(),
 		CommittedInputSequence: commit.targetInputSequence,
 	}
-}
-
-func staleActorTurnCommit(err error) error {
-	var operation *session.OperationError
-	if errors.As(err, &operation) {
-		return errors.Join(errStaleActorTurnCommit, err)
-	}
-	if errors.Is(err, workergroup.ErrStaleClaims) {
-		return err
-	}
-	if err == nil || errors.Is(err, pgx.ErrNoRows) || errors.Is(err, errStaleRunLeaseClaim) ||
-		errors.Is(err, errStaleActorCompletion) ||
-		errors.Is(err, run.ErrTurnStopped) || errors.Is(err, run.ErrTurnNotActive) || errors.Is(err, run.ErrTurnScope) {
-		return errStaleActorTurnCommit
-	}
-	return err
 }

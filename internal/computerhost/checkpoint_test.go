@@ -343,7 +343,7 @@ func checkpointArtifact(t *testing.T) vm.SnapshotArtifact {
 		t.Fatal(err)
 	}
 	return vm.SnapshotArtifact{
-		Computer:          &vm.ComputerSnapshot{ComputerID: "01912345-6789-7abc-8def-0123456789ab", Capture: &generationCaptureFixture{root: testGenerationRoot(4096)}},
+		Computer:          &vm.ComputerSnapshot{ComputerID: "01912345-6789-7abc-8def-0123456789ab", Capture: &versionCaptureFixture{root: testVersionRoot(4096)}},
 		RuntimeBackend:    "firecracker",
 		RuntimeID:         "sha256:runtime",
 		RuntimeArch:       "x86_64",
@@ -420,15 +420,15 @@ func testCheckpointPublication(computerCheckpointRequest) disk.ContinuationPubli
 	return nil
 }
 
-type generationCaptureFixture struct {
-	root     disk.GenerationRoot
+type versionCaptureFixture struct {
+	root     disk.VersionRoot
 	publish  func(context.Context, disk.ContinuationPublication) error
 	release  func()
 	released bool
 }
 
-func (c *generationCaptureFixture) Root() disk.GenerationRoot { return c.root }
-func (c *generationCaptureFixture) Publish(ctx context.Context, p disk.ContinuationPublication) error {
+func (c *versionCaptureFixture) Root() disk.VersionRoot { return c.root }
+func (c *versionCaptureFixture) Publish(ctx context.Context, p disk.ContinuationPublication) error {
 	if c.released {
 		return errors.New("capture already released")
 	}
@@ -437,7 +437,7 @@ func (c *generationCaptureFixture) Publish(ctx context.Context, p disk.Continuat
 	}
 	return nil
 }
-func (c *generationCaptureFixture) Release() {
+func (c *versionCaptureFixture) Release() {
 	if !c.released {
 		c.released = true
 		if c.release != nil {

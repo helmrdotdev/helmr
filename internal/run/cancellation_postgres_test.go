@@ -361,17 +361,17 @@ SELECT $1, runs.environment_id, runs.id, runs.computer_id, 'child',
  WHERE runs.id = $4`,
 				waitID, child.runID, claimID, parent.runID)
 
-			var actorID, turnID uuid.UUID
+			var sessionID, turnID uuid.UUID
 			if actorParent {
-				actorID = fixture.convertToActor(t, ctx, parent, `{"enabled":false}`)
-				turnID = activateCancellationTurn(t, fixture, parent, actorID)
+				sessionID = fixture.convertToActor(t, ctx, parent, `{"enabled":false}`)
+				turnID = activateCancellationTurn(t, fixture, parent, sessionID)
 				dbtest.MustExec(t, ctx, fixture.pool, `UPDATE runs SET status='waiting' WHERE id=$1`, parent.runID)
 			}
 			exhaustRuntimePreparation(t, ctx, fixture, child.runID)
 			if actorParent {
 				var active, current, hold pgtype.UUID
 				var cursor int64
-				if err := fixture.pool.QueryRow(ctx, `SELECT active_turn_id,current_run_id,dispatch_hold_id,committed_input_sequence FROM sessions WHERE id=$1`, actorID).Scan(&active, &current, &hold, &cursor); err != nil {
+				if err := fixture.pool.QueryRow(ctx, `SELECT active_turn_id,current_run_id,dispatch_hold_id,committed_input_sequence FROM sessions WHERE id=$1`, sessionID).Scan(&active, &current, &hold, &cursor); err != nil {
 					t.Fatal(err)
 				}
 				if active != pgvalue.UUID(turnID) || current != pgvalue.UUID(parent.runID) || hold.Valid || cursor != 1 {
@@ -551,10 +551,10 @@ SELECT $1, runs.environment_id, runs.id, runs.computer_id, 'child',
 				parent.runID,
 			)
 
-			var actorID, turnID uuid.UUID
+			var sessionID, turnID uuid.UUID
 			if test.actor {
-				actorID = fixture.convertToActor(t, ctx, parent, `{"enabled":false}`)
-				turnID = activateCancellationTurn(t, fixture, parent, actorID)
+				sessionID = fixture.convertToActor(t, ctx, parent, `{"enabled":false}`)
+				turnID = activateCancellationTurn(t, fixture, parent, sessionID)
 				dbtest.MustExec(t, ctx, fixture.pool, `UPDATE runs SET status='waiting' WHERE id=$1`, parent.runID)
 			}
 			canceler, err := NewCanceler(fixture.pool)
@@ -616,7 +616,7 @@ SELECT runs.status,
 			if test.actor {
 				var active, current, hold pgtype.UUID
 				var cursor int64
-				if err := fixture.pool.QueryRow(ctx, `SELECT active_turn_id,current_run_id,dispatch_hold_id,committed_input_sequence FROM sessions WHERE id=$1`, actorID).Scan(&active, &current, &hold, &cursor); err != nil {
+				if err := fixture.pool.QueryRow(ctx, `SELECT active_turn_id,current_run_id,dispatch_hold_id,committed_input_sequence FROM sessions WHERE id=$1`, sessionID).Scan(&active, &current, &hold, &cursor); err != nil {
 					t.Fatal(err)
 				}
 				if active != pgvalue.UUID(turnID) || current != pgvalue.UUID(parent.runID) || hold.Valid || cursor != 1 {

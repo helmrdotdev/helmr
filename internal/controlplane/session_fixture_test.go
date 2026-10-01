@@ -79,11 +79,7 @@ func newSessionHTTP(t *testing.T, f sessiontest.Fixture) sessionHTTP {
 
 // apiKey registers an API key bearer token that authenticates as principal.
 func (h sessionHTTP) apiKey(principal auth.Principal) string {
-	token := auth.APIKeyPrefix + uuid.NewV7().String()
-	h.principals.mu.Lock()
-	defer h.principals.mu.Unlock()
-	h.principals.principals[token] = principal
-	return token
+	return h.principals.apiKey(principal)
 }
 
 // memberSession returns the login session token of a new member of the
@@ -104,6 +100,15 @@ func (h sessionHTTP) environmentPath(suffix string) string {
 type principalAuthenticator struct {
 	mu         sync.Mutex
 	principals map[string]auth.Principal
+}
+
+// apiKey registers an API key bearer token that authenticates as principal.
+func (a *principalAuthenticator) apiKey(principal auth.Principal) string {
+	token := auth.APIKeyPrefix + uuid.NewV7().String()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.principals[token] = principal
+	return token
 }
 
 func (a *principalAuthenticator) Authenticate(_ context.Context, token string) (auth.Principal, error) {

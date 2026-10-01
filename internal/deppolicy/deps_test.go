@@ -56,7 +56,7 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		"secretbinding":     {"api", "db", "definition", "deployment", "disk"},
 		"session":           {"api", "command", "controlplane", "deployment", "dispatch", "identity", "org", "scheduler", "telemetry", "token", "workerapi"},
 		"telemetry":         {"clickhouse"},
-		"token":             {"api", "command", "controlplane", "deployment", "dispatch", "identity", "org", "scheduler", "telemetry", "workerapi"},
+		"token":             {"api", "command", "controlplane", "deployment", "dispatch", "identity", "org", "scheduler", "session", "telemetry", "workerapi"},
 		"workerapi":         {"controlplane", "db", "deployment", "firecracker", "identity", "org"},
 		"workerclient":      {"client"},
 		// Worker supply sits beneath the Computer owner, which run composes
@@ -304,7 +304,7 @@ func TestComputerRowLocksStayBehindComputerFences(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, query := range []string{
-		"LockActorCloseComputer", "LockActorInputComputer", "LockCancellationComputers", "LockCancellationInstances",
+		"LockSessionCloseComputer", "LockSessionInputComputer", "LockCancellationComputers", "LockCancellationInstances",
 		"LockChildComputerPair", "LockComputer", "LockComputerAdmissionAuthority", "LockComputerCommandInstance",
 		"LockComputerCommandWorkerAuthority", "LockComputerForDelete", "LockComputerInstance", "LockRunLeaseClaimComputer",
 		"LockRunLeaseClaimInstance", "LockTokenWaitComputer", "LockWorkerComputerInstance",

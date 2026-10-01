@@ -24,8 +24,8 @@ func request(cmd, flags uint16, off uint64, n uint32, body []byte) []byte {
 	return append(b, body...)
 }
 func TestTransmissionSocket(t *testing.T) {
-	cfg, _ := localGenerationFixture(t)
-	d, err := CreateLocalGeneration(t.Context(), cfg)
+	cfg, _ := localVersionFixture(t)
+	d, err := CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestTransmissionSocket(t *testing.T) {
 		t.Fatal(e)
 	}
 	d.Close()
-	reopened, err := OpenLocalGeneration(t.Context(), cfg)
+	reopened, err := OpenLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,8 +97,8 @@ func TestTransmissionSocket(t *testing.T) {
 	}
 }
 func TestTransmissionRejectsOversizedAndMalformed(t *testing.T) {
-	cfg, _ := localGenerationFixture(t)
-	d, err := CreateLocalGeneration(t.Context(), cfg)
+	cfg, _ := localVersionFixture(t)
+	d, err := CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,15 +110,15 @@ func TestTransmissionRejectsOversizedAndMalformed(t *testing.T) {
 	}
 }
 
-func TestGenerationDeviceWritesBeyondDirtyBudget(t *testing.T) {
-	cfg, _ := localGenerationFixture(t)
+func TestVersionDeviceWritesBeyondDirtyBudget(t *testing.T) {
+	cfg, _ := localVersionFixture(t)
 	cfg.DirtyBlocks = 1
-	p, err := CreateLocalGeneration(t.Context(), cfg)
+	p, err := CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer p.Close()
-	d := generationDevice{p}
+	d := versionDevice{p}
 	data := bytes.Repeat([]byte{9}, 3*4096)
 	if n, err := d.WriteAt(t.Context(), data, 3); err != nil || n != len(data) {
 		t.Fatalf("write %d: %v", n, err)
@@ -134,7 +134,7 @@ func TestGenerationDeviceWritesBeyondDirtyBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.Close()
-	reopened, err := OpenLocalGeneration(t.Context(), cfg)
+	reopened, err := OpenLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

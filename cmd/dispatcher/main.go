@@ -175,15 +175,15 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure timer wait reconciler: %w", err)
 	}
-	actorReconciler, err := session.NewReconciler(pool)
+	sessionReconciler, err := session.NewReconciler(pool)
 	if err != nil {
 		return fmt.Errorf("configure actor input reconciler: %w", err)
 	}
-	actorInputDelivery, err := session.NewDeliveryWorker(
+	sessionInputDelivery, err := session.NewDeliveryWorker(
 		log,
 		queries,
-		actorReconciler.ReconcileInput,
-		actorReconciler.ReconcileLifecycle,
+		sessionReconciler.ReconcileInput,
+		sessionReconciler.ReconcileLifecycle,
 	)
 	if err != nil {
 		return fmt.Errorf("configure actor input reconciliation delivery: %w", err)
@@ -192,7 +192,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		log,
 		timerWaitReconciler.ReconcileDue,
 		tokenWaitReconciler.ReconcileTimeouts,
-		actorReconciler.ReconcileTimeouts,
+		sessionReconciler.ReconcileTimeouts,
 	)
 	if err != nil {
 		return fmt.Errorf("configure run wait deadline reconciliation delivery: %w", err)
@@ -212,7 +212,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		{name: "token reconciliation delivery", run: tokenReconcileDelivery.Run},
 		{name: "secret revocation delivery", run: secretRevocationDelivery.Run},
 		{name: "run wait deadline delivery", run: runWaitDeadlineDelivery.Run},
-		{name: "actor input delivery", run: actorInputDelivery.Run},
+		{name: "actor input delivery", run: sessionInputDelivery.Run},
 		{name: "telemetry ingestor", run: telemetryIngestor.Run},
 		{name: "control outbox lifecycle", run: controlOutboxLifecycle.Run},
 	}

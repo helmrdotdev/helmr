@@ -59,10 +59,10 @@ type saveFingerprintRequest struct {
 
 // saveFingerprint is the persisted publication fingerprint of a save and its
 // root.
-func saveFingerprint(ref SaveRef, root disk.GenerationRoot) ([32]byte, error) {
+func saveFingerprint(ref SaveRef, root disk.VersionRoot) ([32]byte, error) {
 	raw, err := json.Marshal(struct {
 		Request saveFingerprintRequest
-		Root    disk.GenerationRoot
+		Root    disk.VersionRoot
 	}{saveFingerprintRequest{EnvironmentID: ref.EnvironmentID.String(), ComputerInstanceID: ref.InstanceID.String(), WriterGeneration: ref.WriterGeneration, SaveID: ref.SaveID.String(), Sequence: ref.Sequence}, root})
 	if err != nil {
 		return [32]byte{}, err
@@ -355,7 +355,7 @@ func (p Publisher) inUnpublishedSave(ctx context.Context, principal workergroup.
 // leaves the save slot and object pins in place: upload success does not
 // prove that the worker host adopted its durable source. An exact committed
 // publication replays, before the transaction and again after it fails.
-func (p Publisher) PublishSave(ctx context.Context, principal workergroup.HostPrincipal, ref SaveRef, root disk.GenerationRoot) (Publication, error) {
+func (p Publisher) PublishSave(ctx context.Context, principal workergroup.HostPrincipal, ref SaveRef, root disk.VersionRoot) (Publication, error) {
 	if err := ref.validate(); err != nil {
 		return Publication{}, err
 	}
@@ -396,7 +396,7 @@ func (p Publisher) PublishSave(ctx context.Context, principal workergroup.HostPr
 	return result, nil
 }
 
-func (s unpublishedSave) publish(ctx context.Context, root disk.GenerationRoot, locator blockformat.Locator, fingerprint []byte) (Publication, error) {
+func (s unpublishedSave) publish(ctx context.Context, root disk.VersionRoot, locator blockformat.Locator, fingerprint []byte) (Publication, error) {
 	r := s.instance
 	q := db.New(s.tx)
 	if root.LogicalBytes != r.ReservedGuestEphemeralDiskBytes {
@@ -439,7 +439,7 @@ func (s unpublishedSave) publish(ctx context.Context, root disk.GenerationRoot, 
 // retention and releases only this save's pins atomically, without rewriting
 // execution origins or the Computer head. A historical acknowledgement is
 // evidence only and grants no new mutation.
-func (p Publisher) AdoptSave(ctx context.Context, principal workergroup.HostPrincipal, ref SaveRef, root disk.GenerationRoot) error {
+func (p Publisher) AdoptSave(ctx context.Context, principal workergroup.HostPrincipal, ref SaveRef, root disk.VersionRoot) error {
 	if err := ref.validate(); err != nil {
 		return err
 	}

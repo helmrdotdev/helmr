@@ -42,17 +42,17 @@ func decodeTree(raw []byte, out any) error {
 }
 func validateRoot(r Root) error {
 	if r.Capacity <= 0 || r.Capacity%BlockSize != 0 || r.Capacity/BlockSize > MaxBlocks || (r.Fanout != 64 && r.Fanout != 256) {
-		return errors.New("invalid generation geometry")
+		return errors.New("invalid version geometry")
 	}
 	level := 0
 	for span := int64(r.Fanout); span < r.Capacity/BlockSize; span *= int64(r.Fanout) {
 		level++
 	}
 	if r.Level != level {
-		return errors.New("invalid generation depth")
+		return errors.New("invalid version depth")
 	}
 	if r.Index != nil && (r.Index.Page.Kind != NodeKind || r.Index.Pack.Rank != level+1) {
-		return errors.New("invalid generation index")
+		return errors.New("invalid version index")
 	}
 	return nil
 }
@@ -62,7 +62,7 @@ func validateRoot(r Root) error {
 func ReadRoot(ctx context.Context, source RangeSource, scope string, keys map[string][]byte, l Locator) (Root, error) {
 	var r Root
 	if l.Page.Kind != RootKind {
-		return r, errors.New("generation root required")
+		return r, errors.New("version root required")
 	}
 	b, err := ReadPage(ctx, source, scope, keys[l.Page.Key], l)
 	if err != nil {
@@ -75,7 +75,7 @@ func ReadRoot(ctx context.Context, source RangeSource, scope string, keys map[st
 		return Root{}, integrity(err)
 	}
 	if l.Pack.Rank != r.Level+2 {
-		return Root{}, integrity(errors.New("generation root rank mismatch"))
+		return Root{}, integrity(errors.New("version root rank mismatch"))
 	}
 	return r, nil
 }
@@ -142,7 +142,7 @@ func ReadNode(ctx context.Context, source RangeSource, scope string, keys map[st
 	return n, nil
 }
 
-// Tree is a read-only view of one authenticated generation. The caller owns the
+// Tree is a read-only view of one authenticated version. The caller owns the
 // source and scoped keys and must keep them unchanged and live during reads.
 // It has no mutable page cache and is safe for concurrent reads if the source is.
 type Tree struct {
@@ -162,7 +162,7 @@ func OpenTree(ctx context.Context, source RangeSource, scope string, keys map[st
 func (t *Tree) Capacity() int64 { return t.shape.Capacity }
 func (t *Tree) ReadBlock(ctx context.Context, block uint64) ([]byte, error) {
 	if block >= uint64(t.shape.Capacity/BlockSize) {
-		return nil, errors.New("generation block bounds")
+		return nil, errors.New("version block bounds")
 	}
 	return t.ReadRange(ctx, int64(block)*BlockSize, BlockSize)
 }

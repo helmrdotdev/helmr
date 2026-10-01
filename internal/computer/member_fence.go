@@ -233,7 +233,7 @@ func cloneComputer(c db.Computer) db.Computer {
 // Computer, with no status predicate. Its errors, including pgx.ErrNoRows,
 // are returned unchanged.
 func LockSessionComputer(ctx context.Context, tx pgx.Tx, ref SessionComputerRef) (SessionComputer, error) {
-	c, err := db.New(tx).LockActorCloseComputer(ctx, db.LockActorCloseComputerParams{
+	c, err := db.New(tx).LockSessionCloseComputer(ctx, db.LockSessionCloseComputerParams{
 		EnvironmentID: pgvalue.UUID(ref.EnvironmentID), ComputerID: pgvalue.UUID(ref.ComputerID), SessionID: pgvalue.UUID(ref.SessionID),
 	})
 	if err != nil {
@@ -251,7 +251,7 @@ func LockSessionComputer(ctx context.Context, tx pgx.Tx, ref SessionComputerRef)
 // id, the Session and the Session's open status. Its errors, including
 // pgx.ErrNoRows, are returned unchanged.
 func LockOpenSessionComputer(ctx context.Context, tx pgx.Tx, ref SessionComputerRef) (SessionComputer, error) {
-	c, err := db.New(tx).LockActorInputComputer(ctx, db.LockActorInputComputerParams{
+	c, err := db.New(tx).LockSessionInputComputer(ctx, db.LockSessionInputComputerParams{
 		EnvironmentID: pgvalue.UUID(ref.EnvironmentID), ID: pgvalue.UUID(ref.ComputerID), SessionID: pgvalue.UUID(ref.SessionID),
 	})
 	if err != nil {

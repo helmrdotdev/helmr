@@ -57,9 +57,9 @@ func TestSaveOperationsValidateBeforeDatabaseAccess(t *testing.T) {
 	}
 	principal := workergroup.HostPrincipal{HostID: uuid.NewV7(), GroupID: uuid.NewV7(), Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	inspection := segmentInspection("invalid save", uuid.NewV7().String())
-	root := disk.GenerationRoot{FormatVersion: 1, LogicalBytes: 1 << 30,
-		Pack: disk.GenerationPack{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 1024, Rank: 2},
-		Page: disk.GenerationPage{Digest: "sha256:" + strings.Repeat("b", 64), Salt: strings.Repeat("c", 64), KeyID: "01912345-6789-7abc-8def-0123456789ab", Kind: 3, Count: 1, SizeBytes: 128}, Offset: 8}
+	root := disk.VersionRoot{FormatVersion: 1, LogicalBytes: 1 << 30,
+		Pack: disk.VersionPack{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 1024, Rank: 2},
+		Page: disk.VersionPage{Digest: "sha256:" + strings.Repeat("b", 64), Salt: strings.Repeat("c", 64), KeyID: "01912345-6789-7abc-8def-0123456789ab", Kind: 3, Count: 1, SizeBytes: 128}, Offset: 8}
 	for name, ref := range map[string]SaveRef{
 		"sequence":   {EnvironmentID: uuid.NewV7(), InstanceID: uuid.NewV7(), SaveID: uuid.NewV7(), Sequence: 0, WriterGeneration: 1},
 		"generation": {EnvironmentID: uuid.NewV7(), InstanceID: uuid.NewV7(), SaveID: uuid.NewV7(), Sequence: 1, WriterGeneration: 0},

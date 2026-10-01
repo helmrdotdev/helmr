@@ -137,7 +137,7 @@ func restoringTimer(t *testing.T, f runtest.Fixture, work runtest.RunLease) (uui
  FROM computer_instances i JOIN computers c ON c.id=i.computer_id WHERE i.id=$1`, sourceID, checkpoint)
 	dbtest.MustExec(t, ctx, tx, `INSERT INTO computer_disk_versions(id,environment_id,computer_id,parent_version_id,root_pack_digest,logical_bytes,status,source_computer_instance_id,writer_generation)
  SELECT $2,environment_id,computer_id,base_computer_disk_version_id,$3,4096,'private',source_computer_instance_id,writer_generation FROM computer_checkpoints WHERE id=$1`, checkpoint, private, dbtest.Digest("restored-private"))
-	dbtest.InsertComputerGeneration(t, ctx, tx, f.EnvironmentID, computerID, private)
+	dbtest.InsertComputerVersion(t, ctx, tx, f.EnvironmentID, computerID, private)
 	artifacts := dbtest.InsertCheckpointArtifacts(t, ctx, tx, work.RunID, "restore-timer")
 	dbtest.MustExec(t, ctx, tx, `UPDATE computer_checkpoints SET status='ready',ready_at=now(),private_computer_disk_version_id=$2,
  ready_request_fingerprint=$3,manifest='{"version":1}',vm_config_artifact_id=$4,vm_state_artifact_id=$5,memory_artifact_id=$6,scratch_disk_artifact_id=$7 WHERE id=$1`, checkpoint, private, dbtest.Digest("restore-ready"), artifacts.RuntimeConfig, artifacts.VMState, artifacts.Memory, artifacts.ScratchDisk)
@@ -230,10 +230,10 @@ func TestRestoringParentAcceptsChildCancellation(t *testing.T) {
 func TestIdleSessionClosesOnStoppedComputer(t *testing.T) {
 	f := runtest.New(t)
 	work := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
-	actorID := f.ConvertToActor(t, t.Context(), work, `{"enabled":false}`)
+	sessionID := f.ConvertToActor(t, t.Context(), work, `{"enabled":false}`)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET status='completed',terminal_at=now(),terminal_reason_code='completed',process_reconciled_at=now() WHERE id=$1`, work.LeaseID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET status='succeeded',terminal_at=now(),current_run_lease_id=NULL WHERE id=$1`, work.RunID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET status='closing',close_sequence=1,next_input_sequence=2,current_run_id=NULL WHERE id=$1`, actorID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET status='closing',close_sequence=1,next_input_sequence=2,current_run_id=NULL WHERE id=$1`, sessionID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET desired_state='stopped' WHERE id=(SELECT computer_id FROM runs WHERE id=$1)`, work.RunID)
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
@@ -241,11 +241,11 @@ func TestIdleSessionClosesOnStoppedComputer(t *testing.T) {
 	}
 	defer tx.Rollback(context.Background())
 	q := db.New(tx)
-	actor, err := q.GetActor(t.Context(), db.GetActorParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: pgvalue.UUID(actorID)})
+	sessionRow, err := q.GetSession(t.Context(), db.GetSessionParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: pgvalue.UUID(sessionID)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	closed, deferred, err := session.ReconcileClose(t.Context(), tx, actor, nil)
+	closed, deferred, err := session.ReconcileClose(t.Context(), tx, sessionRow, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,17 +260,17 @@ func TestIdleSessionClosesOnStoppedComputer(t *testing.T) {
 func TestUnenteredSessionCancellationDoesNotWaitForInitialDisk(t *testing.T) {
 	f := runtest.New(t)
 	work := f.AddRunLease(t, "assigned", time.Now().Add(-time.Minute))
-	actorID := f.ConvertToActor(t, t.Context(), work, `{"enabled":false}`)
+	sessionID := f.ConvertToActor(t, t.Context(), work, `{"enabled":false}`)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET status='cancelled',terminal_at=now(),terminal_reason_code='run_cancelled',process_reconciled_at=now() WHERE id=$1`, work.LeaseID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET status='cancelled',terminal_at=now(),current_run_lease_id=NULL,failure='{"code":"run_cancelled","message":"Run was cancelled","details":{}}' WHERE id=$1`, work.RunID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_attempts SET terminal_outcome='cancelled',terminal_at=now(),terminal_reason_code='run_cancelled' WHERE run_id=$1`, work.RunID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET status='closing',close_sequence=1,next_input_sequence=2,cancel_requested_at=now(),dispatch_hold_id=$2,dispatch_hold_reason='interrupt_requested',dispatch_hold_run_id=current_run_id,dispatch_hold_attempt_number=1,dispatch_hold_run_generation=run_generation WHERE id=$1`, actorID, uuid.NewV7())
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET status='closing',close_sequence=1,next_input_sequence=2,cancel_requested_at=now(),dispatch_hold_id=$2,dispatch_hold_reason='interrupt_requested',dispatch_hold_run_id=current_run_id,dispatch_hold_attempt_number=1,dispatch_hold_run_generation=run_generation WHERE id=$1`, sessionID, uuid.NewV7())
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_disk_versions SET status='initializing',root_pack_digest=NULL,logical_bytes=0,published_at=NULL,publisher_computer_instance_id=NULL,publisher_desired_version=NULL,publication_request_fingerprint=NULL WHERE id=(SELECT base_computer_disk_version_id FROM runs WHERE id=$1)`, work.RunID)
 	reconciler, err := session.NewReconciler(f.Pool)
 	if err != nil {
 		t.Fatal(err)
 	}
-	deferred, err := reconciler.ReconcileLifecycle(t.Context(), f.EnvironmentID, actorID)
+	deferred, err := reconciler.ReconcileLifecycle(t.Context(), f.EnvironmentID, sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +279,7 @@ func TestUnenteredSessionCancellationDoesNotWaitForInitialDisk(t *testing.T) {
 	}
 	var status string
 	var claimedDisk bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT s.status,EXISTS(SELECT 1 FROM session_events e WHERE e.session_id=s.id AND e.kind='session.held' AND e.computer_disk_version_id IS NOT NULL) FROM sessions s WHERE s.id=$1`, actorID).Scan(&status, &claimedDisk); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT s.status,EXISTS(SELECT 1 FROM session_events e WHERE e.session_id=s.id AND e.kind='session.held' AND e.computer_disk_version_id IS NOT NULL) FROM sessions s WHERE s.id=$1`, sessionID).Scan(&status, &claimedDisk); err != nil {
 		t.Fatal(err)
 	}
 	if status != "closed" || claimedDisk {

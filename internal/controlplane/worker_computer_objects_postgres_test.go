@@ -128,20 +128,20 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 	if _, err = diskFile.WriteAt(bytes.Repeat([]byte{9}, 4096), (4<<20)+4096); err != nil {
 		t.Fatal(err)
 	}
-	generation, err := disk.CaptureInitialGeneration(t.Context(), disk.GenerationCapture{Disk: diskFile, Capacity: f.logicalBytes, StagingParent: t.TempDir(), Scope: key.Scope, KeyID: key.ID, Key: key.Key, Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 32 << 20, MaxObjects: 1000})
+	initial, err := disk.CaptureInitialVersion(t.Context(), disk.VersionCapture{Disk: diskFile, Capacity: f.logicalBytes, StagingParent: t.TempDir(), Scope: key.Scope, KeyID: key.ID, Key: key.Key, Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 32 << 20, MaxObjects: 1000})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer generation.Close()
-	publication, err := computerhost.NewInitialGenerationPublisher(client, initialTestObjectPublisher{remote}, request.ComputerInstanceID, request.DesiredVersion)
+	defer initial.Close()
+	publication, err := computerhost.NewInitialVersionPublisher(client, initialTestObjectPublisher{remote}, request.ComputerInstanceID, request.DesiredVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
-	generationRoot, err := generation.Publish(t.Context(), publication)
+	versionRoot, err := initial.Publish(t.Context(), publication)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tree, err := blockformat.OpenTree(t.Context(), remote, key.Scope, writer.Keys, generationRoot)
+	tree, err := blockformat.OpenTree(t.Context(), remote, key.Scope, writer.Keys, versionRoot)
 	if err != nil {
 		t.Fatal(err)
 	}

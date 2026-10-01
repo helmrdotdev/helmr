@@ -267,9 +267,9 @@ func (q *Queries) DiscoverWorkerRunLeaseWork(ctx context.Context, arg DiscoverWo
 const getLiveRunLeaseLocators = `-- name: GetLiveRunLeaseLocators :one
 SELECT l.org_id,l.project_id,l.environment_id,l.run_id,l.computer_id,l.attempt_number,
  l.region_id,l.computer_instance_id,l.writer_generation,i.source_checkpoint_id,
- r.session_id,s.run_generation AS actor_run_generation,r.parent_run_id,r.parent_owns_lifecycle,
+ r.session_id,s.run_generation AS session_run_generation,r.parent_run_id,r.parent_owns_lifecycle,
  parent.session_id AS parent_session_id,parent.current_attempt_number AS parent_attempt_number,
- parent_actor.run_generation AS parent_actor_run_generation,
+ parent_actor.run_generation AS parent_session_run_generation,
  wait.id AS run_wait_id,wait.suspend_checkpoint_id
 FROM run_leases l JOIN runs r ON r.id=l.run_id AND r.computer_id=l.computer_id
  AND r.current_attempt_number=l.attempt_number AND r.current_run_lease_id=l.id
@@ -299,25 +299,25 @@ type GetLiveRunLeaseLocatorsParams struct {
 }
 
 type GetLiveRunLeaseLocatorsRow struct {
-	OrgID                    pgtype.UUID `json:"org_id"`
-	ProjectID                pgtype.UUID `json:"project_id"`
-	EnvironmentID            pgtype.UUID `json:"environment_id"`
-	RunID                    pgtype.UUID `json:"run_id"`
-	ComputerID               pgtype.UUID `json:"computer_id"`
-	AttemptNumber            int32       `json:"attempt_number"`
-	RegionID                 string      `json:"region_id"`
-	ComputerInstanceID       pgtype.UUID `json:"computer_instance_id"`
-	WriterGeneration         int64       `json:"writer_generation"`
-	SourceCheckpointID       pgtype.UUID `json:"source_checkpoint_id"`
-	SessionID                pgtype.UUID `json:"session_id"`
-	ActorRunGeneration       pgtype.Int8 `json:"actor_run_generation"`
-	ParentRunID              pgtype.UUID `json:"parent_run_id"`
-	ParentOwnsLifecycle      pgtype.Bool `json:"parent_owns_lifecycle"`
-	ParentSessionID          pgtype.UUID `json:"parent_session_id"`
-	ParentAttemptNumber      pgtype.Int4 `json:"parent_attempt_number"`
-	ParentActorRunGeneration pgtype.Int8 `json:"parent_actor_run_generation"`
-	RunWaitID                pgtype.UUID `json:"run_wait_id"`
-	SuspendCheckpointID      pgtype.UUID `json:"suspend_checkpoint_id"`
+	OrgID                      pgtype.UUID `json:"org_id"`
+	ProjectID                  pgtype.UUID `json:"project_id"`
+	EnvironmentID              pgtype.UUID `json:"environment_id"`
+	RunID                      pgtype.UUID `json:"run_id"`
+	ComputerID                 pgtype.UUID `json:"computer_id"`
+	AttemptNumber              int32       `json:"attempt_number"`
+	RegionID                   string      `json:"region_id"`
+	ComputerInstanceID         pgtype.UUID `json:"computer_instance_id"`
+	WriterGeneration           int64       `json:"writer_generation"`
+	SourceCheckpointID         pgtype.UUID `json:"source_checkpoint_id"`
+	SessionID                  pgtype.UUID `json:"session_id"`
+	SessionRunGeneration       pgtype.Int8 `json:"session_run_generation"`
+	ParentRunID                pgtype.UUID `json:"parent_run_id"`
+	ParentOwnsLifecycle        pgtype.Bool `json:"parent_owns_lifecycle"`
+	ParentSessionID            pgtype.UUID `json:"parent_session_id"`
+	ParentAttemptNumber        pgtype.Int4 `json:"parent_attempt_number"`
+	ParentSessionRunGeneration pgtype.Int8 `json:"parent_session_run_generation"`
+	RunWaitID                  pgtype.UUID `json:"run_wait_id"`
+	SuspendCheckpointID        pgtype.UUID `json:"suspend_checkpoint_id"`
 }
 
 func (q *Queries) GetLiveRunLeaseLocators(ctx context.Context, arg GetLiveRunLeaseLocatorsParams) (GetLiveRunLeaseLocatorsRow, error) {
@@ -341,12 +341,12 @@ func (q *Queries) GetLiveRunLeaseLocators(ctx context.Context, arg GetLiveRunLea
 		&i.WriterGeneration,
 		&i.SourceCheckpointID,
 		&i.SessionID,
-		&i.ActorRunGeneration,
+		&i.SessionRunGeneration,
 		&i.ParentRunID,
 		&i.ParentOwnsLifecycle,
 		&i.ParentSessionID,
 		&i.ParentAttemptNumber,
-		&i.ParentActorRunGeneration,
+		&i.ParentSessionRunGeneration,
 		&i.RunWaitID,
 		&i.SuspendCheckpointID,
 	)
@@ -367,9 +367,9 @@ func (q *Queries) GetRunFinalizationTime(ctx context.Context) (pgtype.Timestampt
 const getRunLeaseClaimLocators = `-- name: GetRunLeaseClaimLocators :one
 SELECT l.org_id,l.project_id,l.environment_id,l.run_id,l.computer_id,l.attempt_number,
  l.region_id,l.computer_instance_id,l.writer_generation,i.source_checkpoint_id,
- r.session_id,s.run_generation AS actor_run_generation,r.parent_run_id,r.parent_owns_lifecycle,
+ r.session_id,s.run_generation AS session_run_generation,r.parent_run_id,r.parent_owns_lifecycle,
  parent.session_id AS parent_session_id,parent.current_attempt_number AS parent_attempt_number,
- parent_actor.run_generation AS parent_actor_run_generation,
+ parent_actor.run_generation AS parent_session_run_generation,
  wait.id AS run_wait_id,wait.suspend_checkpoint_id
 FROM run_leases l JOIN runs r ON r.id=l.run_id AND r.computer_id=l.computer_id
  AND r.current_attempt_number=l.attempt_number AND r.current_run_lease_id=l.id
@@ -399,25 +399,25 @@ type GetRunLeaseClaimLocatorsParams struct {
 }
 
 type GetRunLeaseClaimLocatorsRow struct {
-	OrgID                    pgtype.UUID `json:"org_id"`
-	ProjectID                pgtype.UUID `json:"project_id"`
-	EnvironmentID            pgtype.UUID `json:"environment_id"`
-	RunID                    pgtype.UUID `json:"run_id"`
-	ComputerID               pgtype.UUID `json:"computer_id"`
-	AttemptNumber            int32       `json:"attempt_number"`
-	RegionID                 string      `json:"region_id"`
-	ComputerInstanceID       pgtype.UUID `json:"computer_instance_id"`
-	WriterGeneration         int64       `json:"writer_generation"`
-	SourceCheckpointID       pgtype.UUID `json:"source_checkpoint_id"`
-	SessionID                pgtype.UUID `json:"session_id"`
-	ActorRunGeneration       pgtype.Int8 `json:"actor_run_generation"`
-	ParentRunID              pgtype.UUID `json:"parent_run_id"`
-	ParentOwnsLifecycle      pgtype.Bool `json:"parent_owns_lifecycle"`
-	ParentSessionID          pgtype.UUID `json:"parent_session_id"`
-	ParentAttemptNumber      pgtype.Int4 `json:"parent_attempt_number"`
-	ParentActorRunGeneration pgtype.Int8 `json:"parent_actor_run_generation"`
-	RunWaitID                pgtype.UUID `json:"run_wait_id"`
-	SuspendCheckpointID      pgtype.UUID `json:"suspend_checkpoint_id"`
+	OrgID                      pgtype.UUID `json:"org_id"`
+	ProjectID                  pgtype.UUID `json:"project_id"`
+	EnvironmentID              pgtype.UUID `json:"environment_id"`
+	RunID                      pgtype.UUID `json:"run_id"`
+	ComputerID                 pgtype.UUID `json:"computer_id"`
+	AttemptNumber              int32       `json:"attempt_number"`
+	RegionID                   string      `json:"region_id"`
+	ComputerInstanceID         pgtype.UUID `json:"computer_instance_id"`
+	WriterGeneration           int64       `json:"writer_generation"`
+	SourceCheckpointID         pgtype.UUID `json:"source_checkpoint_id"`
+	SessionID                  pgtype.UUID `json:"session_id"`
+	SessionRunGeneration       pgtype.Int8 `json:"session_run_generation"`
+	ParentRunID                pgtype.UUID `json:"parent_run_id"`
+	ParentOwnsLifecycle        pgtype.Bool `json:"parent_owns_lifecycle"`
+	ParentSessionID            pgtype.UUID `json:"parent_session_id"`
+	ParentAttemptNumber        pgtype.Int4 `json:"parent_attempt_number"`
+	ParentSessionRunGeneration pgtype.Int8 `json:"parent_session_run_generation"`
+	RunWaitID                  pgtype.UUID `json:"run_wait_id"`
+	SuspendCheckpointID        pgtype.UUID `json:"suspend_checkpoint_id"`
 }
 
 func (q *Queries) GetRunLeaseClaimLocators(ctx context.Context, arg GetRunLeaseClaimLocatorsParams) (GetRunLeaseClaimLocatorsRow, error) {
@@ -441,12 +441,12 @@ func (q *Queries) GetRunLeaseClaimLocators(ctx context.Context, arg GetRunLeaseC
 		&i.WriterGeneration,
 		&i.SourceCheckpointID,
 		&i.SessionID,
-		&i.ActorRunGeneration,
+		&i.SessionRunGeneration,
 		&i.ParentRunID,
 		&i.ParentOwnsLifecycle,
 		&i.ParentSessionID,
 		&i.ParentAttemptNumber,
-		&i.ParentActorRunGeneration,
+		&i.ParentSessionRunGeneration,
 		&i.RunWaitID,
 		&i.SuspendCheckpointID,
 	)
@@ -552,9 +552,9 @@ func (q *Queries) GetRunLeaseSecretDeliveryLocators(ctx context.Context, arg Get
 const getRunLeaseStartLocators = `-- name: GetRunLeaseStartLocators :one
 SELECT l.org_id,l.project_id,l.environment_id,l.run_id,l.computer_id,l.attempt_number,
  l.region_id,l.computer_instance_id,l.writer_generation,i.source_checkpoint_id,
- r.session_id,s.run_generation AS actor_run_generation,r.parent_run_id,r.parent_owns_lifecycle,
+ r.session_id,s.run_generation AS session_run_generation,r.parent_run_id,r.parent_owns_lifecycle,
  parent.session_id AS parent_session_id,parent.current_attempt_number AS parent_attempt_number,
- parent_actor.run_generation AS parent_actor_run_generation,
+ parent_actor.run_generation AS parent_session_run_generation,
  wait.id AS run_wait_id,wait.suspend_checkpoint_id
 FROM run_leases l JOIN runs r ON r.id=l.run_id AND r.computer_id=l.computer_id
  AND r.current_attempt_number=l.attempt_number AND r.current_run_lease_id=l.id
@@ -584,25 +584,25 @@ type GetRunLeaseStartLocatorsParams struct {
 }
 
 type GetRunLeaseStartLocatorsRow struct {
-	OrgID                    pgtype.UUID `json:"org_id"`
-	ProjectID                pgtype.UUID `json:"project_id"`
-	EnvironmentID            pgtype.UUID `json:"environment_id"`
-	RunID                    pgtype.UUID `json:"run_id"`
-	ComputerID               pgtype.UUID `json:"computer_id"`
-	AttemptNumber            int32       `json:"attempt_number"`
-	RegionID                 string      `json:"region_id"`
-	ComputerInstanceID       pgtype.UUID `json:"computer_instance_id"`
-	WriterGeneration         int64       `json:"writer_generation"`
-	SourceCheckpointID       pgtype.UUID `json:"source_checkpoint_id"`
-	SessionID                pgtype.UUID `json:"session_id"`
-	ActorRunGeneration       pgtype.Int8 `json:"actor_run_generation"`
-	ParentRunID              pgtype.UUID `json:"parent_run_id"`
-	ParentOwnsLifecycle      pgtype.Bool `json:"parent_owns_lifecycle"`
-	ParentSessionID          pgtype.UUID `json:"parent_session_id"`
-	ParentAttemptNumber      pgtype.Int4 `json:"parent_attempt_number"`
-	ParentActorRunGeneration pgtype.Int8 `json:"parent_actor_run_generation"`
-	RunWaitID                pgtype.UUID `json:"run_wait_id"`
-	SuspendCheckpointID      pgtype.UUID `json:"suspend_checkpoint_id"`
+	OrgID                      pgtype.UUID `json:"org_id"`
+	ProjectID                  pgtype.UUID `json:"project_id"`
+	EnvironmentID              pgtype.UUID `json:"environment_id"`
+	RunID                      pgtype.UUID `json:"run_id"`
+	ComputerID                 pgtype.UUID `json:"computer_id"`
+	AttemptNumber              int32       `json:"attempt_number"`
+	RegionID                   string      `json:"region_id"`
+	ComputerInstanceID         pgtype.UUID `json:"computer_instance_id"`
+	WriterGeneration           int64       `json:"writer_generation"`
+	SourceCheckpointID         pgtype.UUID `json:"source_checkpoint_id"`
+	SessionID                  pgtype.UUID `json:"session_id"`
+	SessionRunGeneration       pgtype.Int8 `json:"session_run_generation"`
+	ParentRunID                pgtype.UUID `json:"parent_run_id"`
+	ParentOwnsLifecycle        pgtype.Bool `json:"parent_owns_lifecycle"`
+	ParentSessionID            pgtype.UUID `json:"parent_session_id"`
+	ParentAttemptNumber        pgtype.Int4 `json:"parent_attempt_number"`
+	ParentSessionRunGeneration pgtype.Int8 `json:"parent_session_run_generation"`
+	RunWaitID                  pgtype.UUID `json:"run_wait_id"`
+	SuspendCheckpointID        pgtype.UUID `json:"suspend_checkpoint_id"`
 }
 
 func (q *Queries) GetRunLeaseStartLocators(ctx context.Context, arg GetRunLeaseStartLocatorsParams) (GetRunLeaseStartLocatorsRow, error) {
@@ -626,12 +626,12 @@ func (q *Queries) GetRunLeaseStartLocators(ctx context.Context, arg GetRunLeaseS
 		&i.WriterGeneration,
 		&i.SourceCheckpointID,
 		&i.SessionID,
-		&i.ActorRunGeneration,
+		&i.SessionRunGeneration,
 		&i.ParentRunID,
 		&i.ParentOwnsLifecycle,
 		&i.ParentSessionID,
 		&i.ParentAttemptNumber,
-		&i.ParentActorRunGeneration,
+		&i.ParentSessionRunGeneration,
 		&i.RunWaitID,
 		&i.SuspendCheckpointID,
 	)
@@ -908,64 +908,6 @@ func (q *Queries) LockRunFinalizationParentRun(ctx context.Context, arg LockRunF
 		&i.NextInstancePreparationAt,
 		&i.TerminalAt,
 		&i.ComputerPayloadRequired,
-	)
-	return i, err
-}
-
-const lockRunLeaseClaimActor = `-- name: LockRunLeaseClaimActor :one
-SELECT id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
-  FROM sessions
- WHERE id = $1
-   AND computer_id = $2
- FOR UPDATE
-`
-
-type LockRunLeaseClaimActorParams struct {
-	ID         pgtype.UUID `json:"id"`
-	ComputerID pgtype.UUID `json:"computer_id"`
-}
-
-func (q *Queries) LockRunLeaseClaimActor(ctx context.Context, arg LockRunLeaseClaimActorParams) (Session, error) {
-	row := q.db.QueryRow(ctx, lockRunLeaseClaimActor, arg.ID, arg.ComputerID)
-	var i Session
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.ActorDeclaredID,
-		&i.DeploymentDefinitionID,
-		&i.ComputerID,
-		&i.Key,
-		&i.CurrentRunID,
-		&i.ConsecutiveExecutionLosses,
-		&i.RunGeneration,
-		&i.Revision,
-		&i.ActiveTurnID,
-		&i.DispatchHoldID,
-		&i.DispatchHoldRunID,
-		&i.DispatchHoldAttemptNumber,
-		&i.DispatchHoldRunGeneration,
-		&i.DispatchHoldReason,
-		&i.Failure,
-		&i.FailureRunID,
-		&i.NextInputSequence,
-		&i.CommittedInputSequence,
-		&i.NextEventSequence,
-		&i.RunQueueName,
-		&i.RunConcurrencyKey,
-		&i.RunQueueConcurrencyLimit,
-		&i.RunPriority,
-		&i.RunQueueTtlMs,
-		&i.RunMaxActiveDurationMs,
-		&i.RunRetryPolicy,
-		&i.RunMetadata,
-		&i.RunTags,
-		&i.Status,
-		&i.CloseSequence,
-		&i.CancelRequestedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.ClosedAt,
-		&i.FailedAt,
 	)
 	return i, err
 }
@@ -1418,6 +1360,64 @@ func (q *Queries) LockRunLeaseClaimRun(ctx context.Context, arg LockRunLeaseClai
 		&i.NextInstancePreparationAt,
 		&i.TerminalAt,
 		&i.ComputerPayloadRequired,
+	)
+	return i, err
+}
+
+const lockRunLeaseClaimSession = `-- name: LockRunLeaseClaimSession :one
+SELECT id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
+  FROM sessions
+ WHERE id = $1
+   AND computer_id = $2
+ FOR UPDATE
+`
+
+type LockRunLeaseClaimSessionParams struct {
+	ID         pgtype.UUID `json:"id"`
+	ComputerID pgtype.UUID `json:"computer_id"`
+}
+
+func (q *Queries) LockRunLeaseClaimSession(ctx context.Context, arg LockRunLeaseClaimSessionParams) (Session, error) {
+	row := q.db.QueryRow(ctx, lockRunLeaseClaimSession, arg.ID, arg.ComputerID)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.ActorDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.ComputerID,
+		&i.Key,
+		&i.CurrentRunID,
+		&i.ConsecutiveExecutionLosses,
+		&i.RunGeneration,
+		&i.Revision,
+		&i.ActiveTurnID,
+		&i.DispatchHoldID,
+		&i.DispatchHoldRunID,
+		&i.DispatchHoldAttemptNumber,
+		&i.DispatchHoldRunGeneration,
+		&i.DispatchHoldReason,
+		&i.Failure,
+		&i.FailureRunID,
+		&i.NextInputSequence,
+		&i.CommittedInputSequence,
+		&i.NextEventSequence,
+		&i.RunQueueName,
+		&i.RunConcurrencyKey,
+		&i.RunQueueConcurrencyLimit,
+		&i.RunPriority,
+		&i.RunQueueTtlMs,
+		&i.RunMaxActiveDurationMs,
+		&i.RunRetryPolicy,
+		&i.RunMetadata,
+		&i.RunTags,
+		&i.Status,
+		&i.CloseSequence,
+		&i.CancelRequestedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ClosedAt,
+		&i.FailedAt,
 	)
 	return i, err
 }

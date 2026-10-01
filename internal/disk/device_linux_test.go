@@ -14,9 +14,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/nbd"
 )
 
-func TestDeviceFailedClaimJoinsExportBeforeClosingGeneration(t *testing.T) {
-	cfg, _ := localGenerationFixture(t)
-	disk, err := CreateLocalGeneration(t.Context(), cfg)
+func TestDeviceFailedClaimJoinsExportBeforeClosingVersion(t *testing.T) {
+	cfg, _ := localVersionFixture(t)
+	disk, err := CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestDeviceFailedClaimJoinsExportBeforeClosingGeneration(t *testing.T) {
 	if err := device.Wait(t.Context()); !errors.Is(err, context.Canceled) {
 		t.Fatalf("export not canceled/joined: %v", err)
 	}
-	reopened, err := OpenLocalGeneration(t.Context(), cfg)
+	reopened, err := OpenLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,8 +54,8 @@ func TestDeviceOwnedKernelLifecycle(t *testing.T) {
 	if !filepath.IsAbs(helper) {
 		t.Fatal("absolute helper required")
 	}
-	cfg, _ := localGenerationFixture(t)
-	disk, err := CreateLocalGeneration(t.Context(), cfg)
+	cfg, _ := localVersionFixture(t)
+	disk, err := CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestDeviceOwnedKernelLifecycle(t *testing.T) {
 	if err := device.Close(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := OpenLocalGeneration(t.Context(), cfg)
+	reopened, err := OpenLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

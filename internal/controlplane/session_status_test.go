@@ -11,14 +11,14 @@ import (
 
 func TestProjectSessionStatusPreservesLifecycleAndFailure(t *testing.T) {
 	now := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	actorID := uuid.NewV7()
+	sessionID := uuid.NewV7()
 	for status, want := range map[string]api.SessionStatus{
 		"open":    api.SessionStatusOpen,
 		"closing": api.SessionStatusClosing,
 		"closed":  api.SessionStatusClosed,
 	} {
 		record := sessionReadRecord{
-			id: pgvalue.UUID(actorID), status: status,
+			id: pgvalue.UUID(sessionID), status: status,
 			createdAt: pgvalue.Timestamptz(now), updatedAt: pgvalue.Timestamptz(now),
 		}
 
@@ -33,7 +33,7 @@ func TestProjectSessionStatusPreservesLifecycleAndFailure(t *testing.T) {
 
 	runID := uuid.NewV7()
 	failed, err := projectSessionStatus(sessionReadRecord{
-		id: pgvalue.UUID(actorID), status: "failed",
+		id: pgvalue.UUID(sessionID), status: "failed",
 		createdAt: pgvalue.Timestamptz(now), updatedAt: pgvalue.Timestamptz(now),
 		failure:      []byte(`{"code":"future_session_failure","message":"Session run failed","details":{"run_id":"` + runID.String() + `"}}`),
 		failureRunID: pgvalue.UUID(runID),

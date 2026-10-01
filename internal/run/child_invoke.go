@@ -542,23 +542,23 @@ func bindOrCheckChildWaitTurn(ctx context.Context, q db.Querier, a Execution, in
 // validateChildWaitScope checks a child wait's Turn binding against the
 // locked execution's Session membership.
 func (e Execution) validateChildWaitScope(wait db.RunWait) error {
-	r, actor := e.run, e.session
+	r, session := e.run, e.session
 	if r.EntrypointKind == "task" {
 		if r.SessionID.Valid || wait.TurnID.Valid || wait.TurnSessionID.Valid || wait.TurnRunGeneration.Valid {
 			return ErrTurnScope
 		}
 		return nil
 	}
-	if r.EntrypointKind != "actor" || !actor.ID.Valid || r.SessionID != actor.ID || actor.CurrentRunID != r.ID || actor.ComputerID != r.ComputerID || (actor.Status != "open" && actor.Status != "closing") {
+	if r.EntrypointKind != "actor" || !session.ID.Valid || r.SessionID != session.ID || session.CurrentRunID != r.ID || session.ComputerID != r.ComputerID || (session.Status != "open" && session.Status != "closing") {
 		return ErrTurnScope
 	}
-	if actor.DispatchHoldID.Valid {
+	if session.DispatchHoldID.Valid {
 		return ErrTurnStopped
 	}
-	if actor.ActiveTurnID != wait.TurnID {
+	if session.ActiveTurnID != wait.TurnID {
 		return ErrTurnScope
 	}
-	if wait.TurnID.Valid && (wait.TurnSessionID != actor.ID || !wait.TurnRunGeneration.Valid || wait.TurnRunGeneration.Int64 != actor.RunGeneration) {
+	if wait.TurnID.Valid && (wait.TurnSessionID != session.ID || !wait.TurnRunGeneration.Valid || wait.TurnRunGeneration.Int64 != session.RunGeneration) {
 		return ErrTurnScope
 	}
 	if !wait.TurnID.Valid && (wait.TurnSessionID.Valid || wait.TurnRunGeneration.Valid) {

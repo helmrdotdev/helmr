@@ -1,7 +1,6 @@
 package controlplane
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,9 +8,7 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/session"
@@ -109,20 +106,4 @@ func TestSessionTurnProjectionPreservesAbsentResultAndJSONNull(t *testing.T) {
 			t.Fatalf("terminal view lost presence: %s", raw)
 		}
 	}
-}
-
-func sessionLifecycleRequest(body string, principal auth.Principal, sessionID, turnID string) *http.Request {
-	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	route := chi.NewRouteContext()
-	route.URLParams.Add("sessionID", sessionID)
-	if turnID != "" {
-		route.URLParams.Add("turnID", turnID)
-	}
-	if principal.Kind == auth.PrincipalKindSession {
-		route.URLParams.Add("projectID", principal.ProjectID)
-		route.URLParams.Add("environmentID", principal.EnvironmentID)
-	}
-	ctx := context.WithValue(r.Context(), chi.RouteCtxKey, route)
-	ctx = context.WithValue(ctx, principalContextKey{}, principal)
-	return r.WithContext(ctx)
 }

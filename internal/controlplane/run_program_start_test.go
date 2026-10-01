@@ -57,10 +57,10 @@ func TestEncodeProgramStartPreservesTaskPayloadPresence(t *testing.T) {
 
 func TestEncodeProgramStartActorAndScheduleCause(t *testing.T) {
 	run, attempt, deploymentDefinition := validTaskProgramStart(t, definition.SchemaKindNone)
-	actorID := pgvalue.UUID(uuid.New())
+	sessionID := pgvalue.UUID(uuid.New())
 	run.EntrypointKind = "actor"
 	run.EntrypointDeclaredID = "reviewer"
-	run.SessionID = actorID
+	run.SessionID = sessionID
 	run.CauseKind = "continuation"
 	run.SessionInputStartSequence = pgtype.Int8{Int64: 4, Valid: true}
 	run.SessionInputHighWatermark = pgtype.Int8{Int64: 7, Valid: true}
@@ -69,8 +69,8 @@ func TestEncodeProgramStartActorAndScheduleCause(t *testing.T) {
 	deploymentDefinition.Kind = "actor"
 	deploymentDefinition.DeclaredID = "reviewer"
 	key := "repository-17"
-	actor := db.Session{
-		ID:                     actorID,
+	session := db.Session{
+		ID:                     sessionID,
 		CurrentRunID:           run.ID,
 		RunGeneration:          3,
 		ActorDeclaredID:        "reviewer",
@@ -78,7 +78,7 @@ func TestEncodeProgramStartActorAndScheduleCause(t *testing.T) {
 		ComputerID:             run.ComputerID,
 		Key:                    pgtype.Text{String: key, Valid: true},
 	}
-	body, err := encodeProgramStart(run, attempt, &actor, deploymentDefinition, "v42")
+	body, err := encodeProgramStart(run, attempt, &session, deploymentDefinition, "v42")
 	if err != nil {
 		t.Fatalf("encodeProgramStart Actor: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestEncodeProgramStartActorAndScheduleCause(t *testing.T) {
 	if err := frameio.ReadProtoFrame(bytes.NewReader(body), &message); err != nil {
 		t.Fatalf("read Actor Program-start frame: %v", err)
 	}
-	if message.GetActor().GetSessionId() != pgvalue.UUIDString(actorID) ||
+	if message.GetActor().GetSessionId() != pgvalue.UUIDString(sessionID) ||
 		message.GetActor().GetKey() != key ||
 		message.GetActor().GetRunGeneration() != 3 ||
 		message.GetActor().GetStartInputSequence() != 5 ||

@@ -100,7 +100,7 @@ func LockControlSecrets(ctx context.Context, tx pgx.Tx, fence ExecutionFence, ta
 	if err != nil {
 		return ControlSecrets{}, staleSource(err)
 	}
-	session, err := q.GetActor(ctx, db.GetActorParams{EnvironmentID: located.EnvironmentID, ID: target})
+	session, err := q.GetSession(ctx, db.GetSessionParams{EnvironmentID: located.EnvironmentID, ID: target})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ControlSecrets{}, ErrExecutionTargetNotFound
 	}

@@ -1,4 +1,4 @@
--- name: CreateActor :one
+-- name: CreateSession :one
 INSERT INTO sessions (
     id,
     environment_id,
@@ -93,7 +93,7 @@ SELECT pg_advisory_xact_lock(
     )
 );
 
--- name: SetActorCurrentRun :one
+-- name: SetSessionCurrentRun :one
 UPDATE sessions
    SET current_run_id = sqlc.arg(run_id),
        revision = revision + 1,
@@ -107,7 +107,7 @@ UPDATE sessions
    AND revision = 1
 RETURNING *;
 
--- name: GetActor :one
+-- name: GetSession :one
 SELECT *
   FROM sessions
  WHERE environment_id = sqlc.arg(environment_id)
@@ -174,7 +174,7 @@ SELECT sessions.*,
  ORDER BY sessions.created_at DESC, sessions.id DESC
  LIMIT sqlc.arg(limit_count);
 
--- name: GetActorByKey :one
+-- name: GetSessionByKey :one
 SELECT *
   FROM sessions
  WHERE environment_id = sqlc.arg(environment_id)

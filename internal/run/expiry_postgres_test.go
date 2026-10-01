@@ -93,17 +93,17 @@ UPDATE run_waits
 				t.Fatal(err)
 			}
 
-			var actorID, inputID uuid.UUID
+			var sessionID, inputID uuid.UUID
 			if test.actor {
-				actorID = fixture.convertToActor(t, ctx, leasedRun{runID: parent.runID, leaseID: parent.leaseID}, `{"enabled":false}`)
+				sessionID = fixture.convertToActor(t, ctx, leasedRun{runID: parent.runID, leaseID: parent.leaseID}, `{"enabled":false}`)
 				inputID = uuid.NewV7()
-				dbtest.MustExec(t, ctx, fixture.pool, `INSERT INTO session_turns(id,environment_id,session_id,sequence,data) VALUES($1,$2,$3,2,'{}')`, inputID, fixture.environmentID, actorID)
+				dbtest.MustExec(t, ctx, fixture.pool, `INSERT INTO session_turns(id,environment_id,session_id,sequence,data) VALUES($1,$2,$3,2,'{}')`, inputID, fixture.environmentID, sessionID)
 				admission, err := fixture.pool.Begin(ctx)
 				if err != nil {
 					t.Fatal(err)
 				}
 				defer admission.Rollback(context.Background())
-				if _, err := db.New(admission).ActivateSessionTurn(ctx, db.ActivateSessionTurnParams{EnvironmentID: pgvalue.UUID(fixture.environmentID), SessionID: pgvalue.UUID(actorID), TurnID: pgvalue.UUID(inputID), RunID: pgvalue.UUID(parent.runID), AttemptNumber: pgtype.Int4{Int32: 1, Valid: true}, InputSequence: 2}); err != nil {
+				if _, err := db.New(admission).ActivateSessionTurn(ctx, db.ActivateSessionTurnParams{EnvironmentID: pgvalue.UUID(fixture.environmentID), SessionID: pgvalue.UUID(sessionID), TurnID: pgvalue.UUID(inputID), RunID: pgvalue.UUID(parent.runID), AttemptNumber: pgtype.Int4{Int32: 1, Valid: true}, InputSequence: 2}); err != nil {
 					t.Fatal(err)
 				}
 				if err := admission.Commit(ctx); err != nil {
@@ -178,7 +178,7 @@ SELECT condition_result, condition_status, suspension_status
 				var active uuid.UUID
 				var cursor int64
 				var status, turnStatus string
-				if err := fixture.pool.QueryRow(ctx, `SELECT s.active_turn_id,s.committed_input_sequence,s.status,r.status FROM sessions s JOIN session_turns r ON r.id=s.active_turn_id WHERE s.id=$1`, actorID).Scan(&active, &cursor, &status, &turnStatus); err != nil {
+				if err := fixture.pool.QueryRow(ctx, `SELECT s.active_turn_id,s.committed_input_sequence,s.status,r.status FROM sessions s JOIN session_turns r ON r.id=s.active_turn_id WHERE s.id=$1`, sessionID).Scan(&active, &cursor, &status, &turnStatus); err != nil {
 					t.Fatal(err)
 				}
 				if active != inputID || cursor != 1 || status != "open" || turnStatus != "running" {

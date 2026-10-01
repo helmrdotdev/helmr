@@ -13,18 +13,18 @@ import (
 
 func TestCanStartContinuationIncludesClosingBacklog(t *testing.T) {
 	for _, test := range []struct {
-		name  string
-		actor db.Session
-		want  bool
+		name    string
+		session db.Session
+		want    bool
 	}{
-		{name: "open", actor: db.Session{Status: "open", NextInputSequence: 2}, want: true},
-		{name: "closing", actor: db.Session{Status: "closing", NextInputSequence: 2}, want: true},
-		{name: "closed", actor: db.Session{Status: "closed"}},
-		{name: "held", actor: db.Session{Status: "open", DispatchHoldID: pgvalue.UUID(uuid.NewV7())}},
-		{name: "current Run", actor: db.Session{Status: "open", CurrentRunID: pgtype.UUID{Valid: true}}},
+		{name: "open", session: db.Session{Status: "open", NextInputSequence: 2}, want: true},
+		{name: "closing", session: db.Session{Status: "closing", NextInputSequence: 2}, want: true},
+		{name: "closed", session: db.Session{Status: "closed"}},
+		{name: "held", session: db.Session{Status: "open", DispatchHoldID: pgvalue.UUID(uuid.NewV7())}},
+		{name: "current Run", session: db.Session{Status: "open", CurrentRunID: pgtype.UUID{Valid: true}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := CanStartContinuation(test.actor); got != test.want {
+			if got := CanStartContinuation(test.session); got != test.want {
 				t.Fatalf("CanStartContinuation() = %v, want %v", got, test.want)
 			}
 		})

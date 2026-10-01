@@ -123,7 +123,7 @@ type RuntimeComputer struct {
 // Wait must return when its context is canceled. A rejected bind leaves ownership
 // with the caller; successful binding retains ownership even if launch fails.
 type ComputerDevice interface {
-	Capture(context.Context) (disk.CapturedGeneration, error)
+	Capture(context.Context) (disk.CapturedVersion, error)
 	BindConsumer(<-chan struct{}) error
 	LinkInto(context.Context, string, int, int) (string, error)
 	Wait(context.Context) error
@@ -138,7 +138,7 @@ type SnapshotRequest struct {
 // The receiver releases Capture after all publishers have joined.
 type ComputerSnapshot struct {
 	ComputerID string
-	Capture    disk.CapturedGeneration
+	Capture    disk.CapturedVersion
 }
 
 type SnapshotArtifact struct {

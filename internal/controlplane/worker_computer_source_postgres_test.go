@@ -77,7 +77,7 @@ func TestInstanceSourceDiscoveryUsesExactDisk(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_disk_versions SET status='initializing',publisher_computer_instance_id=NULL,publisher_desired_version=NULL,publication_request_fingerprint=NULL,root_pack_digest=NULL,logical_bytes=0,published_at=NULL WHERE id=$1`, version)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET initial_config=NULL WHERE id=$1`, computerID)
 	initial := read()
-	if initial.SourceDiskVersionID.Valid || initial.PreparationDiskVersionID != version || initial.ComputerDiskVersionStatus.String != "initializing" || len(initial.ComputerGenerationLocator) != 0 {
+	if initial.SourceDiskVersionID.Valid || initial.PreparationDiskVersionID != version || initial.ComputerDiskVersionStatus.String != "initializing" || len(initial.ComputerVersionLocator) != 0 {
 		t.Fatal("initial source did not resolve the initializing head")
 	}
 	projected, err = projectRuntimeComputerSource(initial)

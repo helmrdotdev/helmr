@@ -73,7 +73,7 @@ func (s *Server) workerCreateRunWait(w http.ResponseWriter, r *http.Request) {
 	case workerapi.RunWaitKindTimer:
 		s.workerCreateTimerRunWait(w, r, request, identity)
 	case workerapi.RunWaitKindActorInput:
-		s.workerCreateActorInputRunWait(w, r, request, identity)
+		s.workerCreateSessionInputRunWait(w, r, request, identity)
 	default:
 		writeError(w, badRequest(fmt.Errorf("run wait kind %q is not implemented by the durable runtime", request.Kind)))
 	}
@@ -219,7 +219,7 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 	case db.RunWaitStatusReleased:
 		response.Status = workerapi.RunWaitPollStatusResumeRequested
 		if wait.Kind == db.WaitKindActorInput {
-			response.ResumeKind, response.ResumePayload, err = actorInputWaitDecision(wait)
+			response.ResumeKind, response.ResumePayload, err = sessionInputWaitDecision(wait)
 		} else if wait.Kind == db.WaitKindTimer {
 			response.ResumeKind, response.ResumePayload, err = timerWaitDecision(wait)
 		} else if wait.Kind == db.WaitKindChild {

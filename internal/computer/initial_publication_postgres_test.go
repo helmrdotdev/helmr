@@ -17,8 +17,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-func TestInitialGenerationPublicationReplay(t *testing.T) {
-	f, input := newGenerationFixture(t)
+func TestInitialVersionPublicationReplay(t *testing.T) {
+	f, input := newVersionFixture(t)
 	type outcome struct {
 		result Publication
 		err    error
@@ -37,7 +37,7 @@ func TestInitialGenerationPublicationReplay(t *testing.T) {
 	versionID := pgvalue.UUID(first.result.VersionID)
 	var retained bool
 	if err := f.Pool.QueryRow(t.Context(), `SELECT source_disk_version_id=$2 AND retained_source_disk_version_id=$2 FROM computer_instances WHERE id=$1`, f.runtime, versionID).Scan(&retained); err != nil || !retained {
-		t.Fatalf("published generation is not retained by runtime: %v %v", retained, err)
+		t.Fatalf("published version is not retained by runtime: %v %v", retained, err)
 	}
 	var config []byte
 	var roots, audits int
@@ -81,10 +81,10 @@ func TestInitialGenerationPublicationReplay(t *testing.T) {
 	}
 }
 
-func TestInitialGenerationPublicationRejectsInvalidCandidate(t *testing.T) {
+func TestInitialVersionPublicationRejectsInvalidCandidate(t *testing.T) {
 	for _, kind := range []string{"malformed", "page", "capacity", "claim", "pin", "closed", "atomic failure", "source pin failure"} {
 		t.Run(kind, func(t *testing.T) {
-			f, input := newGenerationFixture(t)
+			f, input := newVersionFixture(t)
 			principal := f.principal
 			switch kind {
 			case "malformed":
@@ -143,8 +143,8 @@ func TestInitialGenerationPublicationRejectsInvalidCandidate(t *testing.T) {
 	}
 }
 
-func TestInitialGenerationPublicationDeadlineAfterLockWait(t *testing.T) {
-	f, input := newGenerationFixture(t)
+func TestInitialVersionPublicationDeadlineAfterLockWait(t *testing.T) {
+	f, input := newVersionFixture(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET preparation_expires_at=clock_timestamp()+interval '1 second' WHERE id=$1`, f.runtime)
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
@@ -190,8 +190,8 @@ func TestInitialGenerationPublicationDeadlineAfterLockWait(t *testing.T) {
 	}
 }
 
-func TestInitialGenerationPublicationRevocationWinsLockWait(t *testing.T) {
-	f, input := newGenerationFixture(t)
+func TestInitialVersionPublicationRevocationWinsLockWait(t *testing.T) {
+	f, input := newVersionFixture(t)
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -238,7 +238,7 @@ func TestInitialGenerationPublicationRevocationWinsLockWait(t *testing.T) {
 }
 
 func TestComputerPublicationPinsRejectOtherOwnerAndReleaseOneAtATime(t *testing.T) {
-	f, input := newGenerationFixture(t)
+	f, input := newVersionFixture(t)
 	other := bytes.Repeat([]byte{0xab}, 32)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_object_pins SET publication_key=$2 WHERE computer_instance_id=$1`, f.runtime, other)
 	if _, err := f.publisher.PublishInitialVersion(t.Context(), f.principal, f.ref, input); err == nil {
