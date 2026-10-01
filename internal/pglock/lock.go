@@ -111,11 +111,11 @@
 //     Secrets, finalization begin, task completion and waits) lock the source
 //     attempt's Secrets through the run owner before the execution host.
 //   - Worker Session operations that address another Session or Computer
-//     (send, enqueue, close, event reads, run-sourced Actor start) lock the
-//     source Computer's Secrets, plus an addressed Computer's (never an
-//     addressed Session's Computer's), then the execution fence with the
-//     target in the same ordered statements, then the source attempt's
-//     delivery Secrets. That delivery lock reads the source Computer's
+//     (send, enqueue, close, event reads, run-sourced Actor start), through
+//     the session owner, lock the source Computer's Secrets, plus an
+//     addressed Computer's (never an addressed Session's Computer's), then
+//     the execution fence with the target in the same ordered statements,
+//     then the source attempt's delivery Secrets. That delivery lock reads the source Computer's
 //     bindings again without comparing them with the first lock, so a
 //     binding added before the execution fence locks the source Computer is
 //     locked after the fence; these operations have no re-read check.
@@ -125,11 +125,11 @@
 //     child then re-locks the already-held target Computer through the
 //     computer owner's admission lock. The live execution is locked again
 //     before commit.
-//   - Worker Session controls (cancel, interrupt, resume) lock the sorted
-//     union of the source Computer's and the target Session's Computer's
-//     Secrets, then the execution fence, then re-read the union after the
-//     Session and Computer fences and fail if a binding changed, re-locking
-//     only the same Secrets.
+//   - Worker Session controls (cancel, interrupt, resume), through the
+//     session owner, lock the sorted union of the source Computer's and the
+//     target Session's Computer's Secrets, then the execution fence, then
+//     re-read the union after the Session and Computer fences and fail if a
+//     binding changed, re-locking only the same Secrets.
 //   - Public Session operations run through the session owner. Send, enqueue,
 //     Turn messages and close lock the Session's Computer through the
 //     admission lock, its Instance and then the Session before their

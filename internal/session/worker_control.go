@@ -169,7 +169,7 @@ func ResumeFromRun(ctx context.Context, txb db.TxBeginner, fence run.ExecutionFe
 			return err
 		}
 		request.Target = sourceTarget(source, request.SessionID)
-		receipt, err = ResumeWithLockedSecrets(ctx, tx, request, target.ComputerID, bindings)
+		receipt, err = resumeWithLockedSecrets(ctx, tx, request, target.ComputerID, bindings)
 		return err
 	})
 	if err == nil && receipt.Code != "" {

@@ -27,36 +27,33 @@ func TestRunTurnSentinelBoundaries(t *testing.T) {
 		// semantic failure.
 		failure string
 		// message is the exact 200 failure message where it is fixed.
-		message                                 string
-		staleTimer, staleInput, staleTurnCommit bool
+		message                string
+		staleTimer, staleInput bool
 	}{
-		{"scope", run.ErrTurnScope, "stale_execution", "", true, true, true},
-		{"not active", run.ErrTurnNotActive, "turn_not_active", "", false, false, true},
-		{"stopped", run.ErrTurnStopped, "turn_stopping", "", true, true, true},
-		{"unsettled", run.ErrTurnUnsettled, "turn_unsettled", "turn_unsettled", false, false, false},
-		{"wait cursor", run.ErrWaitCursor, "", "", true, true, false},
-		{"Session input authority", session.ErrAuthority, "", "", false, true, false},
-		{"stale lease", errStaleRunLeaseClaim, "", "", false, true, true},
-		{"stale run lease", run.ErrStale, "", "", true, false, false},
-		{"unrelated", unrelated, "", "", false, false, false},
+		{"scope", run.ErrTurnScope, "stale_execution", "", true, true},
+		{"not active", run.ErrTurnNotActive, "turn_not_active", "", false, false},
+		{"stopped", run.ErrTurnStopped, "turn_stopping", "", true, true},
+		{"unsettled", run.ErrTurnUnsettled, "turn_unsettled", "turn_unsettled", false, false},
+		{"wait cursor", run.ErrWaitCursor, "", "", true, true},
+		{"Session input authority", session.ErrAuthority, "", "", false, true},
+		{"stale execution", session.ErrStaleExecution, "", "", false, true},
+		{"stale run lease", run.ErrStale, "", "", true, false},
+		{"unrelated", unrelated, "", "", false, false},
 	} {
 		t.Run(test.boundary, func(t *testing.T) {
 			for _, err := range []error{test.err, fmt.Errorf("wrapped: %w", test.err)} {
-				failure, ok := actorOutputAppendFailure(err)
+				failure, ok := sessionWorkerFailure(err)
 				if ok != (test.failure != "") || failure.Code != test.failure || failure.Retryable {
-					t.Fatalf("actor output failure(%v) = %+v, %v", err, failure, ok)
+					t.Fatalf("worker Session failure(%v) = %+v, %v", err, failure, ok)
 				}
 				if test.message != "" && failure.Message != test.message {
-					t.Fatalf("actor output failure(%v) message = %q, want %q", err, failure.Message, test.message)
+					t.Fatalf("worker Session failure(%v) message = %q, want %q", err, failure.Message, test.message)
 				}
 				if got := errorStatus(runError(err, runTimerWaitOperation)) == http.StatusConflict; got != test.staleTimer {
 					t.Fatalf("timer wait stale(%v) = %v", err, got)
 				}
-				if got := staleActorInputWait(err); got != test.staleInput {
+				if got := errorStatus(sessionError(err, sessionWorkerWaitOperation)) == http.StatusConflict; got != test.staleInput {
 					t.Fatalf("Actor input wait stale(%v) = %v", err, got)
-				}
-				if got := errors.Is(staleActorTurnCommit(err), errStaleActorTurnCommit); got != test.staleTurnCommit {
-					t.Fatalf("turn commit stale(%v) = %v", err, got)
 				}
 			}
 		})

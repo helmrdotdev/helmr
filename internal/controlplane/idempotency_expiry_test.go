@@ -56,7 +56,7 @@ func TestPrunedOperationReceiptHasExplicitTransportOutcome(t *testing.T) {
 		"computer delete": func(err error) (workerapi.RuntimeOperationFailure, bool) {
 			return workerComputerFailure(err, computerDeleteOperation)
 		},
-		"actor start": actorStartFailure, "actor output": actorOutputAppendFailure,
+		"actor start": actorStartFailure, "worker Session": sessionWorkerFailure,
 	} {
 		t.Run(name+" worker", func(t *testing.T) {
 			result, ok := convert(idempotency.ExpiredError{})

@@ -26,6 +26,15 @@ const (
 	sessionListOperation
 	sessionStartOperation
 	sessionWorkerStartOperation
+	// sessionWorkerOperation is a worker Session command that answers 200
+	// with its failure: send, enqueue, Turn message, close, event read,
+	// cancel, interrupt, resume, Turn retrieve, Turn message readiness, claim
+	// and completion, settlement begin, Session output and control poll.
+	sessionWorkerOperation
+	sessionWorkerOutputOperation
+	sessionWorkerCommitOperation
+	sessionWorkerCompleteOperation
+	sessionWorkerWaitOperation
 )
 
 // sessionError maps a session owner error to the API error the caller is
@@ -39,6 +48,16 @@ const (
 // unavailability. A run-sourced Actor start asks the worker to
 // re-authenticate on stale credential claims and reports a stale source as a
 // conflict; its other undescribed errors are internal.
+//
+// Worker Session operations ask the worker to re-authenticate on stale
+// credential claims first. A worker Session command reports a stale
+// execution as a conflict carrying the error and passes every other error
+// through as internal, including inconsistent Session authority and
+// unavailable Secret deliveries. Turn output, Turn commit, Actor completion
+// and Actor input wait report their stale receipt as a conflict with a
+// fixed message; an Actor completion still cleaning up owned executions is
+// unavailable, and one with unavailable Secret deliveries or a rejected
+// constraint is unprocessable. Their other errors are internal.
 func sessionError(err error, operation sessionOperation) error {
 	switch operation {
 	case sessionPublicOperation:
@@ -58,8 +77,108 @@ func sessionError(err error, operation sessionOperation) error {
 			return conflict(run.ErrStaleSource)
 		}
 		return errors.New("start run-sourced actor")
+	case sessionWorkerOperation, sessionWorkerOutputOperation, sessionWorkerCommitOperation, sessionWorkerCompleteOperation, sessionWorkerWaitOperation:
+		if errors.Is(err, workergroup.ErrStaleClaims) {
+			return unauthorized(errors.New("worker authentication is required"))
+		}
+		return sessionWorkerError(err, operation)
 	}
 	return errors.New("session operation failed")
+}
+
+func sessionWorkerError(err error, operation sessionOperation) error {
+	switch operation {
+	case sessionWorkerOperation:
+		if errors.Is(err, session.ErrStaleOutput) || errors.Is(err, session.ErrStaleExecution) {
+			return conflict(err)
+		}
+		return err
+	case sessionWorkerOutputOperation:
+		if errors.Is(err, session.ErrStaleOutput) {
+			return conflict(session.ErrStaleOutput)
+		}
+		return errors.New("append actor output")
+	case sessionWorkerCommitOperation:
+		if errors.Is(err, session.ErrStaleTurnCommit) {
+			return conflict(session.ErrStaleTurnCommit)
+		}
+		return errors.New("commit actor turn")
+	case sessionWorkerCompleteOperation:
+		switch {
+		case errors.Is(err, session.ErrStopCleanupPending):
+			return unavailable(err)
+		case errors.Is(err, session.ErrStaleCompletion):
+			return conflict(session.ErrStaleCompletion)
+		case errors.Is(err, session.ErrCompletionAdmission), isDeterministicWorkerAdmission(err):
+			return apiError{kind: errUnprocessable, err: errors.New("actor completion admission is invalid")}
+		}
+		return errors.New("complete actor")
+	default:
+		if errors.Is(err, session.ErrStaleExecution) || errors.Is(err, run.ErrWaitCursor) || errors.Is(err, session.ErrAuthority) ||
+			errors.Is(err, run.ErrTurnStopped) || errors.Is(err, run.ErrTurnScope) {
+			return conflict(errors.New("worker actor input wait receipt is stale"))
+		}
+		return errors.New("register worker actor input wait")
+	}
+}
+
+// sessionWorkerFailure is the failure a worker Session command, Turn output
+// or child Task invocation reports to the worker in a 200 response, or false
+// when the error is not one: an expired or conflicting idempotency claim, a
+// committed Session rejection, a settling, stopping or inactive Turn, a
+// stale producer scope and oversized output.
+func sessionWorkerFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
+	var expired idempotency.ExpiredError
+	if errors.As(err, &expired) {
+		return workerapi.RuntimeOperationFailure{Code: expired.ErrorCode(), Message: expired.Error()}, true
+	}
+	var conflictError idempotency.ConflictError
+	var operation *session.OperationError
+	switch {
+	case errors.As(err, &operation):
+		return runtimeOperationFailure(operation.Code, operation.Error(), false), true
+	case errors.Is(err, run.ErrTurnUnsettled):
+		// The operation code is also the message, as for the equivalent
+		// OperationError.
+		return runtimeOperationFailure("turn_unsettled", "turn_unsettled", false), true
+	case errors.Is(err, run.ErrTurnStopped):
+		return workerapi.RuntimeOperationFailure{Code: "turn_stopping", Message: err.Error()}, true
+	case errors.Is(err, run.ErrTurnNotActive):
+		return workerapi.RuntimeOperationFailure{Code: "turn_not_active", Message: err.Error()}, true
+	case errors.Is(err, run.ErrTurnScope):
+		return workerapi.RuntimeOperationFailure{Code: "stale_execution", Message: err.Error()}, true
+	case errors.As(err, &conflictError):
+		return workerapi.RuntimeOperationFailure{
+			Code: "idempotency_conflict", Message: "idempotency key conflicts with an earlier Actor output",
+		}, true
+	case errors.Is(err, session.ErrOutputTooLarge):
+		return workerapi.RuntimeOperationFailure{Code: "actor_output_too_large", Message: err.Error()}, true
+	default:
+		return workerapi.RuntimeOperationFailure{}, false
+	}
+}
+
+// writeWorkerSessionCommand writes a worker Session command's outcome: 200
+// accepted, 200 with its failure, where a stale source is a stale_execution
+// failure, or the mapped error. It logs the cause of an internal failure.
+func (s *Server) writeWorkerSessionCommand(w http.ResponseWriter, correlation string, err error) {
+	if errors.Is(err, run.ErrStaleSource) {
+		err = &session.OperationError{Code: "stale_execution"}
+	}
+	response := workerapi.TurnCommandResponse{CorrelationID: correlation, Accepted: err == nil}
+	if err != nil {
+		failure, ok := sessionWorkerFailure(err)
+		if !ok {
+			mapped := sessionError(err, sessionWorkerOperation)
+			if errorStatus(mapped) == http.StatusInternalServerError {
+				s.log.Error("Session worker command", "error", err)
+			}
+			writeError(w, mapped)
+			return
+		}
+		response.Failed = &failure
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func sessionPublicError(err error) error {

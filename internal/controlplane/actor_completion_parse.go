@@ -1,32 +1,19 @@
 package controlplane
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/run"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-type actorCompletionKind string
-
-const (
-	actorCompletionSucceeded   actorCompletionKind = "succeeded"
-	actorCompletionFailed      actorCompletionKind = "failed"
-	actorCompletionInterrupted actorCompletionKind = "interrupted"
-)
-
+// parsedActorCompletion is a decoded Actor completion: the worker's lease
+// and the session owner's completion.
 type parsedActorCompletion struct {
-	lease         parsedRunLeaseFence
-	kind          actorCompletionKind
-	runGeneration int64
-	holdID        uuid.UUID
-	turnID        *uuid.UUID
-	errorObject   json.RawMessage
-	operationID   uuid.UUID
-	fingerprint   string
+	lease      parsedRunLeaseFence
+	completion session.ActorCompletion
 }
 
 func parseActorCompletionRequest(request workerapi.CompleteActorRequest) (parsedActorCompletion, error) {
@@ -39,28 +26,27 @@ func parseActorCompletionRequest(request workerapi.CompleteActorRequest) (parsed
 		return parsedActorCompletion{}, errors.New("outcome.run_generation must be positive")
 	}
 	normalized := request
-	parsed := parsedActorCompletion{
-		lease:         lease,
-		runGeneration: request.Outcome.RunGeneration,
-	}
+	parsed := parsedActorCompletion{lease: lease}
+	completion := &parsed.completion
+	completion.RunGeneration = request.Outcome.RunGeneration
 	variants := 0
 	if request.Outcome.Succeeded != nil {
 		variants++
-		parsed.kind = actorCompletionSucceeded
+		completion.Kind = session.ActorSucceeded
 		normalized.Outcome.Succeeded = &workerapi.ActorSucceeded{}
 	}
 	if request.Outcome.Failed != nil {
 		variants++
-		parsed.kind = actorCompletionFailed
-		parsed.errorObject, normalized.Outcome.Failed, err = normalizeTaskFailure("outcome.failed", request.Outcome.Failed)
+		completion.Kind = session.ActorFailed
+		completion.Error, normalized.Outcome.Failed, err = normalizeTaskFailure("outcome.failed", request.Outcome.Failed)
 		if err != nil {
 			return parsedActorCompletion{}, err
 		}
 	}
 	if stopped := request.Outcome.Interrupted; stopped != nil {
 		variants++
-		parsed.kind = actorCompletionInterrupted
-		parsed.holdID, err = parseCanonicalUUID("outcome.interrupted.hold_id", stopped.HoldID)
+		completion.Kind = session.ActorInterrupted
+		completion.HoldID, err = parseCanonicalUUID("outcome.interrupted.hold_id", stopped.HoldID)
 		if err != nil {
 			return parsedActorCompletion{}, err
 		}
@@ -69,20 +55,20 @@ func parseActorCompletionRequest(request workerapi.CompleteActorRequest) (parsed
 			if err != nil {
 				return parsedActorCompletion{}, err
 			}
-			parsed.turnID = &id
+			completion.TurnID = &id
 		}
 	}
 	if variants != 1 {
 		return parsedActorCompletion{}, errors.New("outcome must contain exactly one variant")
 	}
 
-	parsed.operationID, err = parseCanonicalUUID("operation_id", request.OperationID)
+	completion.OperationID, err = parseCanonicalUUID("operation_id", request.OperationID)
 	if err != nil {
 		return parsedActorCompletion{}, err
 	}
-	normalized.OperationID = parsed.operationID.String()
+	normalized.OperationID = completion.OperationID.String()
 
-	parsed.fingerprint, err = run.RequestFingerprint("actor.complete.v0", normalized)
+	completion.Fingerprint, err = run.RequestFingerprint("actor.complete.v0", normalized)
 	if err != nil {
 		return parsedActorCompletion{}, fmt.Errorf("fingerprint actor completion: %w", err)
 	}

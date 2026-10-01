@@ -1,10 +1,10 @@
 package controlplane
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -20,25 +20,12 @@ func (s *Server) workerCompleteActor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if err := s.completeActor(r.Context(), worker, request, completion); err != nil {
-		if writeStaleWorkerClaims(w, err) {
-			return
+	if err := session.CompleteActorFromRun(r.Context(), s.tx, s.db, workerExecutionFence(worker, completion.lease, request.Lease), completion.completion); err != nil {
+		mapped := sessionError(err, sessionWorkerCompleteOperation)
+		if errorStatus(mapped) == http.StatusInternalServerError {
+			s.log.Error("complete Actor failed", "run_lease_id", request.Lease.ID, "error", err)
 		}
-		if errors.Is(err, errActorStopCleanupPending) {
-			writeError(w, unavailable(err))
-			return
-		}
-		if errors.Is(err, errStaleActorCompletion) {
-			writeError(w, conflict(errStaleActorCompletion))
-			return
-		}
-		if isDeterministicWorkerAdmission(err) {
-			writeError(w, apiError{kind: errUnprocessable, err: errors.New("actor completion admission is invalid")})
-			return
-		}
-
-		s.log.Error("complete Actor failed", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("complete actor"))
+		writeError(w, mapped)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

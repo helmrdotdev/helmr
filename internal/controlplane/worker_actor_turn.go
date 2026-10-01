@@ -1,10 +1,11 @@
 package controlplane
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -20,18 +21,16 @@ func (s *Server) workerCommitActorTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
-	response, err := s.commitActorTurn(r.Context(), worker, request, commit)
-	if writeStaleWorkerClaims(w, err) {
-		return
-	}
-	if errors.Is(err, errStaleActorTurnCommit) {
-		writeError(w, conflict(errStaleActorTurnCommit))
-		return
-	}
+	eventID, err := session.CommitTurnFromRun(r.Context(), s.tx, workerExecutionFence(worker, commit.lease, request.Lease), commit.turnCommit())
 	if err != nil {
-		s.log.Error("commit Actor turn failed", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("commit actor turn"))
+		mapped := sessionError(err, sessionWorkerCommitOperation)
+		if errorStatus(mapped) == http.StatusInternalServerError {
+			s.log.Error("commit Actor turn failed", "run_lease_id", request.Lease.ID, "error", err)
+		}
+		writeError(w, mapped)
 		return
 	}
+	response := projectActorTurnResponse(request, commit)
+	response.EventID = pgvalue.UUIDString(eventID)
 	writeJSON(w, http.StatusOK, response)
 }

@@ -14,19 +14,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// errStaleRunLeaseClaim reports a worker receipt that no longer addresses
-// the live execution an operation locks.
-var errStaleRunLeaseClaim = errors.New("run lease claim is stale")
-
-// staleRunLeaseClaim reports a receipt that addresses no execution as
-// errStaleRunLeaseClaim.
-func staleRunLeaseClaim(err error) error {
-	if errors.Is(err, pgx.ErrNoRows) {
-		return errStaleRunLeaseClaim
-	}
-	return err
-}
-
 type parsedRunLeaseFence struct {
 	leaseID uuid.UUID
 }
@@ -44,6 +31,16 @@ func parseRunLeaseFence(fence workerapi.RunLeaseFence) (parsedRunLeaseFence, err
 
 func workerExecutionFence(worker workergroup.HostPrincipal, parsed parsedRunLeaseFence, lease workerapi.RunLeaseFence) run.ExecutionFence {
 	return run.ExecutionFence{LeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.HostClaimVersion}
+}
+
+// workerLeaseFence is the execution fence of a worker's Run lease; a
+// malformed lease receipt is returned as its parse error.
+func workerLeaseFence(worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence) (run.ExecutionFence, error) {
+	parsed, err := parseRunLeaseFence(lease)
+	if err != nil {
+		return run.ExecutionFence{}, err
+	}
+	return workerExecutionFence(worker, parsed, lease), nil
 }
 
 // workerSourceFence is the execution fence of a worker's source Run lease; a
