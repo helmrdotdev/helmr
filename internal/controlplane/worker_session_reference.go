@@ -27,13 +27,9 @@ func (s *Server) workerGetSessionTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var result api.SessionTurn
-	fence, err := s.workerSourceFenceInTx(r.Context(), workerFromContext(r.Context()), request.Lease)
+	view, err := session.GetTurnFromRun(r.Context(), s.tx, workerSourceReceipt(workerFromContext(r.Context()), request.Lease), pgvalue.MustUUIDValue(sessionID), turnID)
 	if err == nil {
-		var view session.TurnView
-		view, err = session.GetTurnFromRun(r.Context(), s.tx, fence, pgvalue.MustUUIDValue(sessionID), turnID)
-		if err == nil {
-			result, err = projectSessionTurn(view)
-		}
+		result, err = projectSessionTurn(view)
 	}
 	if err != nil {
 		s.writeWorkerSessionCommand(w, request.CorrelationID, err)

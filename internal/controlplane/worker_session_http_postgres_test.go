@@ -1,12 +1,18 @@
 package controlplane
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/jackc/pgx/v5"
 )
 
 // workerOutcome is the part of a worker Session route's 200 response that
@@ -216,5 +222,77 @@ func TestWorkerSessionRoutesServeSessionOperationsPostgres(t *testing.T) {
 	f.workerCall(t, "/run/sessions/close", workerapi.CloseSessionRequest{SessionReferenceRequest: reference(self)}, &closed)
 	if closed.Failed == nil || closed.Failed.Code != "session_held" {
 		t.Fatalf("close from a held Session = %+v", closed)
+	}
+}
+
+// beginGate is a transactional database whose Begin fails while it is
+// closed.
+type beginGate struct {
+	db.TxDB
+	closed atomic.Bool
+}
+
+var errBeginUnavailable = errors.New("begin unavailable")
+
+func (g *beginGate) Begin(ctx context.Context) (pgx.Tx, error) {
+	if g.closed.Load() {
+		return nil, errBeginUnavailable
+	}
+	return g.TxDB.Begin(ctx)
+}
+
+// The worker routes that act from a source Run check its lease receipt inside
+// the source lock's transaction: a database that cannot begin one is an
+// internal error even for a malformed receipt, and a malformed receipt is
+// otherwise the route's stale-source outcome.
+func TestWorkerSourceRoutesCheckTheReceiptInTheirTransactionPostgres(t *testing.T) {
+	gate := &beginGate{}
+	f := newActorExecution(t, json.RawMessage(`{"sequence":1}`), true, func(cfg *ServerConfig) {
+		gate.TxDB = cfg.TX
+		cfg.TX = gate
+	})
+	scope := f.receiveTurn(t, 1)
+	start := func(lease workerapi.RunLeaseFence) workerapi.StartActorRequest {
+		return workerapi.StartActorRequest{Lease: lease, CorrelationID: uuid.NewV7().String(), ActorDeclaredID: "helper", IdempotencyKey: "start-1", Computer: api.ComputerIDTarget{ID: uuid.NewV7().String()}}
+	}
+	reference := func(lease workerapi.RunLeaseFence) workerapi.SessionReferenceRequest {
+		return workerapi.SessionReferenceRequest{Lease: lease, CorrelationID: uuid.NewV7().String(), SessionID: f.SessionID.String()}
+	}
+	turn := func(lease workerapi.RunLeaseFence) workerapi.TurnReferenceRequest {
+		return workerapi.TurnReferenceRequest{SessionReferenceRequest: reference(lease), TurnID: scope.TurnID.String()}
+	}
+	stale := f.fence()
+	stale.LeaseSequence++
+	for name, lease := range map[string]workerapi.RunLeaseFence{
+		"malformed lease ID":       {ID: "not-a-lease", LeaseSequence: 1},
+		"malformed lease sequence": {ID: f.fence().ID, LeaseSequence: 0},
+		"stale lease":              stale,
+	} {
+		t.Run(name, func(t *testing.T) {
+			for path, body := range map[string]any{"/run/actors/start": start(lease), "/run/sessions/retrieve": reference(lease)} {
+				w := f.worker(t, path, body)
+				if got := decodeHTTPError(t, w.Body.Bytes()); w.Code != http.StatusConflict || got.Code != "conflict" || got.Message != "run source authority is stale" {
+					t.Fatalf("%s = %d %s", path, w.Code, w.Body.String())
+				}
+			}
+			var outcome workerOutcome
+			f.workerCall(t, "/run/turns/retrieve", turn(lease), &outcome)
+			if outcome.Accepted || outcome.Completed != nil || outcome.Failed == nil || outcome.Failed.Code != "stale_execution" {
+				t.Fatalf("Turn retrieve = %+v", outcome)
+			}
+		})
+	}
+	malformed := workerapi.RunLeaseFence{ID: "not-a-lease", LeaseSequence: 1}
+	gate.closed.Store(true)
+	for path, body := range map[string]any{"/run/actors/start": start(malformed), "/run/sessions/retrieve": reference(malformed), "/run/turns/retrieve": turn(malformed)} {
+		if w := f.worker(t, path, body); w.Code != http.StatusInternalServerError {
+			t.Fatalf("%s without a transaction = %d %s", path, w.Code, w.Body.String())
+		}
+	}
+	gate.closed.Store(false)
+	var status workerapi.SessionStatusResponse
+	f.workerCall(t, "/run/sessions/retrieve", reference(f.fence()), &status)
+	if status.Completed == nil || status.Completed.ID != f.SessionID.String() {
+		t.Fatalf("Session retrieve = %+v", status)
 	}
 }

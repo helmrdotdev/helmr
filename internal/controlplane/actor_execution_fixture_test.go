@@ -32,8 +32,9 @@ type actorExecutionHTTP struct {
 
 // newActorExecution builds an Actor execution whose Session holds the input
 // as its first enqueued Turn, when there is one, and whose lease the worker
-// claimed, started and entered when start is set, and serves it.
-func newActorExecution(t *testing.T, input json.RawMessage, start bool) *actorExecutionHTTP {
+// claimed, started and entered when start is set, and serves it with the
+// configuration adjustments applied.
+func newActorExecution(t *testing.T, input json.RawMessage, start bool, configure ...func(*ServerConfig)) *actorExecutionHTTP {
 	t.Helper()
 	f := sessiontest.NewExecution(t)
 	if input != nil {
@@ -52,6 +53,9 @@ func newActorExecution(t *testing.T, input json.RawMessage, start bool) *actorEx
 	handler := newPostgresServer(t, f.Pool, func(cfg *ServerConfig) {
 		cfg.Auth = principals
 		cfg.PublicURL = &url.URL{Scheme: "https", Host: "console.example.test"}
+		for _, apply := range configure {
+			apply(cfg)
+		}
 	})
 	return &actorExecutionHTTP{
 		Execution:           f,

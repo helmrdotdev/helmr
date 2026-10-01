@@ -37,7 +37,7 @@ func (s *Server) workerCreateComputer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	fence, err := workerSourceFence(workerFromContext(r.Context()), request.Lease)
+	fence, err := workerSourceReceipt(workerFromContext(r.Context()), request.Lease).Fence()
 	if err != nil {
 		s.writeWorkerComputerSourceError(w, "create", request.Lease.ID, err)
 		return
@@ -78,7 +78,7 @@ func (s *Server) workerRetrieveComputer(w http.ResponseWriter, r *http.Request) 
 		writeError(w, badRequest(err))
 		return
 	}
-	fence, err := workerSourceFence(workerFromContext(r.Context()), request.Lease)
+	fence, err := workerSourceReceipt(workerFromContext(r.Context()), request.Lease).Fence()
 	if err != nil {
 		s.writeWorkerComputerSourceError(w, "retrieve", request.Lease.ID, err)
 		return
@@ -104,7 +104,7 @@ func (s *Server) workerListComputerMembers(w http.ResponseWriter, r *http.Reques
 		writeError(w, badRequest(err))
 		return
 	}
-	fence, err := workerSourceFence(workerFromContext(r.Context()), request.Lease)
+	fence, err := workerSourceReceipt(workerFromContext(r.Context()), request.Lease).Fence()
 	if err != nil {
 		s.writeWorkerComputerSourceError(w, "members", request.Lease.ID, err)
 		return
@@ -143,7 +143,7 @@ func (s *Server) workerDeleteComputer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	fence, err := workerSourceFence(workerFromContext(r.Context()), request.Lease)
+	fence, err := workerSourceReceipt(workerFromContext(r.Context()), request.Lease).Fence()
 	if err != nil {
 		s.writeWorkerComputerSourceError(w, "delete", request.Lease.ID, err)
 		return

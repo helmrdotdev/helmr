@@ -108,13 +108,15 @@ func ReadEventsFromRun(ctx context.Context, txb db.TxBeginner, fence run.Executi
 	return page, err
 }
 
-// GetFromRun locks the live source Run and then reads the snapshot of the
-// Session in the source's organization, project and environment. A Session
-// outside that scope is ErrNotFound.
-func GetFromRun(ctx context.Context, txb db.TxBeginner, fence run.ExecutionFence, sessionID uuid.UUID) (db.GetSessionSnapshotRow, error) {
+// GetFromRun checks the worker's source receipt and locks the live source Run
+// it addresses, then reads the snapshot of the Session in the source's
+// organization, project and environment. The receipt is checked inside the
+// transaction, as run.LockReceiptSource checks it. A Session outside that
+// scope is ErrNotFound.
+func GetFromRun(ctx context.Context, txb db.TxBeginner, receipt run.SourceReceipt, sessionID uuid.UUID) (db.GetSessionSnapshotRow, error) {
 	var row db.GetSessionSnapshotRow
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
-		source, err := run.LockLiveSource(ctx, tx, fence)
+		source, err := run.LockReceiptSource(ctx, tx, receipt)
 		if err != nil {
 			return err
 		}
@@ -124,12 +126,13 @@ func GetFromRun(ctx context.Context, txb db.TxBeginner, fence run.ExecutionFence
 	return row, err
 }
 
-// GetTurnFromRun locks the live source Run and then reads the Turn of the
+// GetTurnFromRun checks the worker's source receipt and locks the live
+// source Run it addresses, as GetFromRun does, then reads the Turn of the
 // Session in the source's environment, as GetTurn does.
-func GetTurnFromRun(ctx context.Context, txb db.TxBeginner, fence run.ExecutionFence, sessionID, turnID uuid.UUID) (TurnView, error) {
+func GetTurnFromRun(ctx context.Context, txb db.TxBeginner, receipt run.SourceReceipt, sessionID, turnID uuid.UUID) (TurnView, error) {
 	var view TurnView
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
-		source, err := run.LockLiveSource(ctx, tx, fence)
+		source, err := run.LockReceiptSource(ctx, tx, receipt)
 		if err != nil {
 			return err
 		}
