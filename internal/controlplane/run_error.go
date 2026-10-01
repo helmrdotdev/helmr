@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -27,6 +28,7 @@ const (
 	runMetadataOperation
 	runWaitResumeOperation
 	runTaskStartOperation
+	runChildInvokeOperation
 )
 
 // claims reports whether the operation compares the worker's credential
@@ -131,6 +133,22 @@ func runError(err error, operation runOperation) error {
 		}
 	case runTaskStartOperation:
 		return taskStartError(err)
+	case runChildInvokeOperation:
+		switch {
+		case errors.As(err, &expired):
+			return gone(expired)
+		case errors.Is(err, run.ErrChildInvokeStale):
+			point := childTaskInvokePointTransaction
+			if errors.Is(err, run.ErrChildInvokeSourceScope) {
+				point = childTaskInvokePointSourceScope
+			}
+			return conflict(childTaskInvokeStaleAt(point, err))
+		default:
+			return unavailable(codedError{
+				code:    "child_task_invoke_authority_unavailable",
+				message: "child task invocation authority is unavailable", retryable: true,
+			})
+		}
 	default:
 		if errors.Is(err, run.ErrStale) && runStale[operation] != "" {
 			return conflict(errors.New(runStale[operation]))
@@ -165,6 +183,39 @@ func taskStartError(err error) error {
 			code:    "task_start_authority_unavailable",
 			message: "task start authority is unavailable", retryable: true,
 		})
+	}
+}
+
+// childInvokeFailure is the failure a child Task invocation reports to the
+// worker in a 200 response, or false when the error is not one: Actor output
+// rejections first, then idempotency, deployment, Computer, Secret and
+// request rejections.
+func childInvokeFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
+	if failure, ok := actorOutputAppendFailure(err); ok {
+		return failure, true
+	}
+	var expired idempotency.ExpiredError
+	if errors.As(err, &expired) {
+		return workerapi.RuntimeOperationFailure{}, false
+	}
+	var idempotencyConflict idempotency.ConflictError
+	switch {
+	case errors.As(err, &idempotencyConflict):
+		return workerapi.RuntimeOperationFailure{
+			Code: "idempotency_conflict", Message: "idempotency key conflicts with an earlier child Task invocation",
+		}, true
+	case errors.Is(err, run.ErrTaskNotDeployed):
+		return workerapi.RuntimeOperationFailure{Code: "task_not_deployed", Message: err.Error()}, true
+	case errors.Is(err, run.ErrTaskComputerNotFound):
+		return workerapi.RuntimeOperationFailure{Code: "computer_not_found", Message: err.Error()}, true
+	case errors.Is(err, run.ErrTaskComputerUnavailable):
+		return workerapi.RuntimeOperationFailure{Code: "computer_unavailable", Message: err.Error(), Retryable: true}, true
+	case errors.Is(err, run.ErrTaskSecretUnavailable), errors.Is(err, computer.ErrSecretUnavailable):
+		return workerapi.RuntimeOperationFailure{Code: "secret_unavailable", Message: err.Error()}, true
+	case errors.Is(err, run.ErrTaskPayloadPresenceInvalid), errors.Is(err, run.ErrTaskStartInvalid):
+		return workerapi.RuntimeOperationFailure{Code: "invalid_child_task_invoke", Message: err.Error()}, true
+	default:
+		return workerapi.RuntimeOperationFailure{}, false
 	}
 }
 

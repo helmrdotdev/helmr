@@ -44,9 +44,9 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (run.T
 	if err != nil {
 		return run.TaskStarted{}, err
 	}
-	start := normalized.runTaskStart()
+	var claim idempotency.Request
 	if normalized.IdempotencyKey != "" {
-		start.Claim, err = idempotency.NewTaskStartRequest(
+		claim, err = idempotency.NewTaskStartRequest(
 			normalized.EnvironmentID,
 			normalized.TaskDeclaredID,
 			normalized.IdempotencyKey,
@@ -56,7 +56,7 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (run.T
 			return run.TaskStarted{}, fmt.Errorf("%w: %v", run.ErrTaskStartInvalid, err)
 		}
 	}
-	return run.StartTask(ctx, s.tx, start)
+	return run.StartTask(ctx, s.tx, claim, normalized.runTaskStart())
 }
 
 // runTaskStart is the normalized start the run owner admits.

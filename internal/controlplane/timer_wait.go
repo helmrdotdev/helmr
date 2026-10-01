@@ -35,12 +35,12 @@ func (s *Server) workerCreateTimerRunWait(
 		writeError(w, badRequest(err))
 		return
 	}
-	parsed, worker, registrationLocators, run, err := s.loadRunWaitRegistrationAuthority(r.Context(), request.Lease)
+	parsed, worker, registrationLocators, current, err := s.loadRunWaitRegistrationAuthority(r.Context(), request.Lease)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	idleDefault, err := s.runWaitIdleDefault(r.Context(), run)
+	idleDefault, err := s.runWaitIdleDefault(r.Context(), current)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -76,7 +76,7 @@ func (s *Server) workerCreateTimerRunWait(
 		if err != nil {
 			return err
 		}
-		turnID, generation, err := parseWorkerWaitTurn(request.TurnID, request.RunGeneration)
+		turnID, generation, err := run.ParseWaitTurn(request.TurnID, request.RunGeneration)
 		if err != nil {
 			return err
 		}

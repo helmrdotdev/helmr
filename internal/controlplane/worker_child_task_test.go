@@ -3,7 +3,6 @@ package controlplane
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -26,8 +25,7 @@ func TestChildTaskInvokeStaleResponseIncludesClosedFailurePoint(t *testing.T) {
 	server.writeChildTaskInvokeError(
 		response,
 		"0198b960-7818-7a77-9d7d-4ebf163e15b1",
-		"call",
-		childTaskInvokeStaleAt(childTaskInvokePointSourceScope, errChildTaskInvokeStale),
+		run.ErrChildInvokeSourceScope,
 	)
 
 	if response.Code != http.StatusConflict {
@@ -112,27 +110,5 @@ func TestNormalizeWorkerChildTaskRequestUsesParentScopeAndCallerOptions(t *testi
 		normalized.Tags[0] != "image" ||
 		normalized.Tags[1] != "resize" {
 		t.Fatalf("tags = %#v", normalized.Tags)
-	}
-}
-
-func TestDecodeChildTaskReceiptRequiresCanonicalAuthority(t *testing.T) {
-	runID := uuid.NewV7()
-	computerID := uuid.NewV7()
-	receipt, err := decodeChildTaskReceipt([]byte(
-		`{"runId":"` + runID.String() +
-			`","computerId":"` + computerID.String() + `"}`,
-	))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if receipt.RunID != runID.String() ||
-		receipt.ComputerID != computerID.String() {
-		t.Fatalf("receipt = %+v", receipt)
-	}
-	if _, err := decodeChildTaskReceipt([]byte(
-		`{"runId":"` + runID.String() +
-			`","computerId":"00000000-0000-0000-0000-000000000000"}`,
-	)); !errors.Is(err, run.ErrTaskStartReceiptInvalid) {
-		t.Fatalf("nil Computer receipt error = %v", err)
 	}
 }

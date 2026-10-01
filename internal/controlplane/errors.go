@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -87,7 +88,7 @@ func (e *staleAuthorityError) ErrorDetails() map[string]json.RawMessage {
 // where it was found stale. The innermost point is kept; other errors are
 // returned unchanged.
 func childTaskInvokeStaleAt[P ~string](point P, err error) error {
-	if err == nil || point == "" || !errors.Is(err, errChildTaskInvokeStale) {
+	if err == nil || point == "" || !errors.Is(err, run.ErrChildInvokeStale) {
 		return err
 	}
 	var existing *staleAuthorityError

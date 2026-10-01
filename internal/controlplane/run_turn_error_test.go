@@ -75,7 +75,7 @@ func TestChildInvokeDuringSettlementKeepsOperationFailure(t *testing.T) {
 	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	for _, err := range []error{&session.OperationError{Code: "turn_unsettled"}, run.ErrTurnUnsettled, fmt.Errorf("validate child Turn: %w", run.ErrTurnUnsettled)} {
 		response := httptest.NewRecorder()
-		server.writeChildTaskInvokeError(response, "correlation", "call", err)
+		server.writeChildTaskInvokeError(response, "correlation", err)
 		var body workerapi.InvokeChildTaskResponse
 		if decodeErr := json.Unmarshal(response.Body.Bytes(), &body); decodeErr != nil {
 			t.Fatal(decodeErr)

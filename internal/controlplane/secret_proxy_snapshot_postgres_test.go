@@ -421,7 +421,10 @@ func TestProtectedGuestIngressCeilingsBeforeReplay(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				seed(claim, childTaskReceipt{RunID: other.RunID.String(), ComputerID: targetID.String()})
+				seed(claim, struct {
+					RunID      string `json:"runId"`
+					ComputerID string `json:"computerId"`
+				}{RunID: other.RunID.String(), ComputerID: targetID.String()})
 			}
 			invoke(t, f.server.workerInvokeChildTask, request)
 		}

@@ -66,8 +66,6 @@ type TaskStart struct {
 	RetryPolicy    json.RawMessage
 	Metadata       json.RawMessage
 	Tags           []string
-	// Claim makes the start replayable; a nil Claim starts without one.
-	Claim idempotency.Request
 }
 
 // TaskStarted is the Run a Task start admitted, or replayed from its
@@ -81,24 +79,24 @@ type taskStartReceipt struct {
 	RunID string `json:"run_id"`
 }
 
-// StartTask admits a root Task Run in its own transaction. It acquires the
-// start's idempotency claim first and replays a completed claim's receipt
+// StartTask admits a root Task Run in its own transaction. A non-nil claim
+// makes the start replayable: StartTask acquires it first and replays a completed claim's receipt
 // {"run_id"}. A new start then locks the environment's current deployment of
 // the Task, the Computer's Secrets and then the Computer through the computer
 // owner's admission lock, creates the Run and its first Attempt, records the
 // Computer admission and the Attempt's Secret resolutions, and completes the
 // claim.
-func StartTask(ctx context.Context, txb db.TxBeginner, start TaskStart) (TaskStarted, error) {
+func StartTask(ctx context.Context, txb db.TxBeginner, claimRequest idempotency.Request, start TaskStart) (TaskStarted, error) {
 	var started TaskStarted
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
 		q := db.New(tx)
 		var claim *db.IdempotencyClaim
-		if start.Claim != nil {
+		if claimRequest != nil {
 			claims, err := idempotency.TransactionFor(tx)
 			if err != nil {
 				return err
 			}
-			acquired, err := claims.Acquire(ctx, start.Claim)
+			acquired, err := claims.Acquire(ctx, claimRequest)
 			if err != nil {
 				return err
 			}

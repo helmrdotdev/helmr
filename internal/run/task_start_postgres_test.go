@@ -25,16 +25,8 @@ type taskStartFixture struct {
 func newTaskStartFixture(t *testing.T) taskStartFixture {
 	t.Helper()
 	f := taskStartFixture{postgresFixture: newPostgresFixture(t)}
-	manifest := []byte(`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`)
-	_, digest, err := definition.CanonicalManifestAndDigest(manifest)
-	if err != nil {
-		t.Fatal(err)
-	}
+	declareTestTask(t, f.postgresFixture)
 	ctx := t.Context()
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE deployment_definitions SET manifest=$2::jsonb, manifest_digest=$3 WHERE id=$1`,
-		f.base.TaskDefinitionID, manifest, digest[:])
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE deployments SET queue_config='{"formatVersion":0,"queues":[{"concurrencyLimit":2,"name":"default"}]}'::jsonb WHERE id=$1`,
-		f.base.DeploymentID)
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.environmentID, f.base.DeploymentID)
 	created, err := computer.NewCreator(nil).Create(ctx, f.pool, computer.Request{
 		Scope:      computer.Scope{OrgID: f.orgID, ProjectID: f.projectID, EnvironmentID: f.environmentID},
@@ -64,6 +56,21 @@ func newTaskStartFixture(t *testing.T) taskStartFixture {
 	return f
 }
 
+// declareTestTask gives the fixture deployment's Task "test-task" a payload
+// and its default queue.
+func declareTestTask(t *testing.T, f postgresFixture) {
+	t.Helper()
+	manifest := []byte(`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`)
+	_, digest, err := definition.CanonicalManifestAndDigest(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE deployment_definitions SET manifest=$2::jsonb, manifest_digest=$3 WHERE id=$1`,
+		f.base.TaskDefinitionID, manifest, digest[:])
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE deployments SET queue_config='{"formatVersion":0,"queues":[{"concurrencyLimit":2,"name":"default"}]}'::jsonb WHERE id=$1`,
+		f.base.DeploymentID)
+}
+
 func (f taskStartFixture) start(payload string) TaskStart {
 	return TaskStart{
 		OrgID: f.orgID, ProjectID: f.projectID, EnvironmentID: f.environmentID,
@@ -72,7 +79,7 @@ func (f taskStartFixture) start(payload string) TaskStart {
 	}
 }
 
-func (f taskStartFixture) claimed(t *testing.T, start TaskStart, key string) TaskStart {
+func (f taskStartFixture) claim(t *testing.T, start TaskStart, key string) idempotency.Request {
 	t.Helper()
 	claim, err := idempotency.NewTaskStartRequest(f.environmentID, start.TaskDeclaredID, key, idempotency.TaskStartFingerprint{
 		PayloadPresent: start.PayloadPresent, Payload: start.Payload,
@@ -82,8 +89,7 @@ func (f taskStartFixture) claimed(t *testing.T, start TaskStart, key string) Tas
 	if err != nil {
 		t.Fatal(err)
 	}
-	start.Claim = claim
-	return start
+	return claim
 }
 
 func TestStartTaskCommitsAndReplaysOneAdmission(t *testing.T) {
@@ -92,12 +98,13 @@ func TestStartTaskCommitsAndReplaysOneAdmission(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT revision FROM computers WHERE id=$1`, f.computerID).Scan(&revision); err != nil {
 		t.Fatal(err)
 	}
-	start := f.claimed(t, f.start(`{"imageId":"one"}`), "one")
-	created, err := StartTask(t.Context(), f.pool, start)
+	start := f.start(`{"imageId":"one"}`)
+	claim := f.claim(t, start, "one")
+	created, err := StartTask(t.Context(), f.pool, claim, start)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replayed, err := StartTask(t.Context(), f.pool, start)
+	replayed, err := StartTask(t.Context(), f.pool, claim, start)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +112,7 @@ func TestStartTaskCommitsAndReplaysOneAdmission(t *testing.T) {
 		t.Fatalf("created=%+v replayed=%+v", created, replayed)
 	}
 	var conflict idempotency.ConflictError
-	if _, err := StartTask(t.Context(), f.pool, f.claimed(t, f.start(`{"imageId":"two"}`), "one")); !errors.As(err, &conflict) {
+	if _, err := StartTask(t.Context(), f.pool, f.claim(t, f.start(`{"imageId":"two"}`), "one"), f.start(`{"imageId":"two"}`)); !errors.As(err, &conflict) {
 		t.Fatalf("changed replay = %v", err)
 	}
 	var status, cause string
@@ -126,11 +133,11 @@ func TestStartTaskCommitsAndReplaysOneAdmission(t *testing.T) {
 
 func TestStartTaskWithoutClaimAdmitsEachStart(t *testing.T) {
 	f := newTaskStartFixture(t)
-	first, err := StartTask(t.Context(), f.pool, f.start(`{"imageId":"one"}`))
+	first, err := StartTask(t.Context(), f.pool, nil, f.start(`{"imageId":"one"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := StartTask(t.Context(), f.pool, f.start(`{"imageId":"one"}`))
+	second, err := StartTask(t.Context(), f.pool, nil, f.start(`{"imageId":"one"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +165,7 @@ func TestStartTaskRejectsWithoutAdmitting(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			start := f.start(`{"imageId":"rejected"}`)
 			test.prepare(t, &start)
-			if _, err := StartTask(t.Context(), f.pool, start); !errors.Is(err, test.want) {
+			if _, err := StartTask(t.Context(), f.pool, nil, start); !errors.Is(err, test.want) {
 				t.Fatalf("start error = %v, want %v", err, test.want)
 			}
 		})

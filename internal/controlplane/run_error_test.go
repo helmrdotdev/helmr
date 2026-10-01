@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -83,6 +84,11 @@ func TestRunErrorMapsWorkerOperations(t *testing.T) {
 		{"task start payload presence", runTaskStartOperation, run.ErrTaskPayloadPresenceInvalid, http.StatusBadRequest, "invalid_task_start", "task payload presence does not match its declaration", ""},
 		{"task start invalid", runTaskStartOperation, fmt.Errorf("%w: retry is invalid", run.ErrTaskStartInvalid), http.StatusBadRequest, "invalid_task_start", "task start request is invalid: retry is invalid", ""},
 		{"task start receipt", runTaskStartOperation, run.ErrTaskStartReceiptInvalid, http.StatusServiceUnavailable, "task_start_authority_unavailable", "task start authority is unavailable", ""},
+		{"child invoke claims first", runChildInvokeOperation, errors.Join(run.ErrChildInvokeStale, workergroup.ErrStaleClaims), http.StatusUnauthorized, "unauthorized", "worker authentication is required", ""},
+		{"child invoke expired", runChildInvokeOperation, idempotency.ExpiredError{}, http.StatusGone, "operation_expired", idempotency.ExpiredError{}.Error(), ""},
+		{"child invoke stale", runChildInvokeOperation, run.ErrChildInvokeStale, http.StatusConflict, "child_task_invoke_stale", "child task invocation authority is stale", "transaction_authority"},
+		{"child invoke stale source", runChildInvokeOperation, run.ErrChildInvokeSourceScope, http.StatusConflict, "child_task_invoke_stale", "child task invocation authority is stale", "source_scope"},
+		{"child invoke failure", runChildInvokeOperation, unavailable, http.StatusServiceUnavailable, "child_task_invoke_authority_unavailable", "child task invocation authority is unavailable", ""},
 		{"task start failure", runTaskStartOperation, unavailable, http.StatusServiceUnavailable, "task_start_authority_unavailable", "task start authority is unavailable", ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -126,5 +132,36 @@ func TestWriteRunErrorLogsStalePointsWithoutTheirCause(t *testing.T) {
 	}
 	if strings.Contains(logs.String(), "secret-sentinel") || strings.Contains(logs.String(), `"error"`) {
 		t.Fatalf("stale point logs included their cause: %s", logs.String())
+	}
+}
+
+func TestChildInvokeFailureReportsWorkerHandledRejections(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want workerapi.RuntimeOperationFailure
+	}{
+		{"expired", idempotency.ExpiredError{}, workerapi.RuntimeOperationFailure{Code: "operation_expired", Message: idempotency.ExpiredError{}.Error()}},
+		{"idempotency conflict", idempotency.ConflictError{}, workerapi.RuntimeOperationFailure{Code: "idempotency_conflict", Message: "idempotency key conflicts with an earlier Actor output"}},
+		{"turn scope", run.ErrTurnScope, workerapi.RuntimeOperationFailure{Code: "stale_execution", Message: run.ErrTurnScope.Error()}},
+		{"not deployed", run.ErrTaskNotDeployed, workerapi.RuntimeOperationFailure{Code: "task_not_deployed", Message: "task declaration is not deployed"}},
+		{"computer not found", run.ErrTaskComputerNotFound, workerapi.RuntimeOperationFailure{Code: "computer_not_found", Message: "task start computer was not found"}},
+		{"computer unavailable", run.ErrTaskComputerUnavailable, workerapi.RuntimeOperationFailure{Code: "computer_unavailable", Message: "task start computer cannot accept execution", Retryable: true}},
+		{"secret unavailable", run.ErrTaskSecretUnavailable, workerapi.RuntimeOperationFailure{Code: "secret_unavailable", Message: "task start computer secret is unavailable"}},
+		{"secret target", computer.ErrSecretUnavailable, workerapi.RuntimeOperationFailure{Code: "secret_unavailable", Message: computer.ErrSecretUnavailable.Error()}},
+		{"payload presence", run.ErrTaskPayloadPresenceInvalid, workerapi.RuntimeOperationFailure{Code: "invalid_child_task_invoke", Message: "task payload presence does not match its declaration"}},
+		{"invalid", run.ErrTaskStartInvalid, workerapi.RuntimeOperationFailure{Code: "invalid_child_task_invoke", Message: "task start request is invalid"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := childInvokeFailure(test.err)
+			if !ok || got != test.want {
+				t.Fatalf("failure = %+v %v, want %+v", got, ok, test.want)
+			}
+		})
+	}
+	for _, err := range []error{run.ErrChildInvokeStale, run.ErrTaskStartReceiptInvalid, errors.New("database is down")} {
+		if got, ok := childInvokeFailure(err); ok {
+			t.Fatalf("%v reported failure %+v", err, got)
+		}
 	}
 }

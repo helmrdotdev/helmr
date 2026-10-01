@@ -103,12 +103,12 @@ func (s *Server) workerCreateTokenRunWait(
 	normalized := request
 	normalized.Metadata = metadata
 	normalized.Tags = tags
-	parsed, worker, locators, run, err := s.loadRunWaitRegistrationAuthority(r.Context(), normalized.Lease)
+	parsed, worker, locators, current, err := s.loadRunWaitRegistrationAuthority(r.Context(), normalized.Lease)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	idleDefault, err := s.runWaitIdleDefault(r.Context(), run)
+	idleDefault, err := s.runWaitIdleDefault(r.Context(), current)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -140,7 +140,7 @@ func (s *Server) workerCreateTokenRunWait(
 	if request.ActorSpeculativeInputSequence != nil {
 		actorCursor = pgtype.Int8{Int64: *request.ActorSpeculativeInputSequence, Valid: true}
 	}
-	turnID, generation, err := parseWorkerWaitTurn(request.TurnID, request.RunGeneration)
+	turnID, generation, err := run.ParseWaitTurn(request.TurnID, request.RunGeneration)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -408,18 +408,4 @@ func tokenWaitDecision(state db.WaitStatus, result json.RawMessage, reason strin
 	default:
 		return "", nil, errors.New("run wait decision is not terminal")
 	}
-}
-
-func parseWorkerWaitTurn(id *string, generation *int64) (pgtype.UUID, pgtype.Int8, error) {
-	if id == nil && generation == nil {
-		return pgtype.UUID{}, pgtype.Int8{}, nil
-	}
-	if id == nil || generation == nil || *generation <= 0 {
-		return pgtype.UUID{}, pgtype.Int8{}, run.ErrTurnScope
-	}
-	parsed, err := parseCanonicalUUID("turn_id", *id)
-	if err != nil {
-		return pgtype.UUID{}, pgtype.Int8{}, err
-	}
-	return pgvalue.UUID(parsed), pgtype.Int8{Int64: *generation, Valid: true}, nil
 }
