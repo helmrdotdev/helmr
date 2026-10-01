@@ -14,7 +14,7 @@ await verify("planned-drain", async ({ client, marker, computer, cleanup }) => {
   const directory = process.env.HELMR_EVIDENCE_DIR!
   const record = (name: string, value: unknown) => writeFile(join(directory, name),
     JSON.stringify(value, null, 2) + "\n", { mode: 0o600, flag: "wx" })
-  const shared = await computer("helmr-runtime-smoke", "planned-drain")
+  const shared = await computer("verification-outage", "planned-drain")
   const target = client.computers.ref(shared.id)
   const initial = await target.exec({ command: ["sh", "-ceu", 'printf %s "$MARKER" > /workspace/drain-marker'],
     env: { MARKER: marker }, idempotencyKey: `${marker}:write` })

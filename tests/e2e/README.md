@@ -43,7 +43,7 @@ injection into an ordinary behavior case. External agent examples live in
 | `runtime`, `computer-command`, `program-replacement.run.ts` | `cases/runtime` | Runtime tools/files/logs; Computer idempotency/exec |
 | `token-wait`, `token-fanout` | `cases/token-wait` | Internal Token creation/resumption; shared Token fan-out and completion before wait |
 | `actor-continuity`, `child-tasks` (including `cancel-peer.run.ts`) | `cases/child-tasks` | Child modes, cancellation without stopping a shared-Computer peer, Actor continuation and ordered/paginated durable output |
-| `runtime/planned-drain.run.ts` | `cases/runtime` | Warm Computer capture with a queued Command and fresh logical Host restore; dedicated host orchestration below |
+| `planned-drain` | `cases/planned-drain cases/control-plane-outage` | Warm Computer capture with a queued Command and fresh logical Host restore; dedicated host orchestration below |
 | `control-plane-outage` | `cases/control-plane-outage` | A live Run survives CP outage beyond the stale-Host window with Dispatcher continuously active |
 | `timer`, `run-cancel` | `cases/timer` | Timer completion or explicit cancellation |
 | `network-egress` | `cases/network-egress` | Public IPv4 succeeds, no IPv6 default route |
@@ -178,7 +178,7 @@ only named, typed, read-only Product observations. Match source and data generat
 before using it. Each case requires its own fresh evidence directory. Fault
 injection and cleanup are operator actions within the authorized exclusive scope.
 
-For `cases/runtime/planned-drain.run.ts`, launch the ordinary driver first. After
+For `cases/planned-drain/run.ts`, launch the ordinary driver first. After
 `ready-for-pause.json`, stop `helmr-verification-dispatcher.service` and verify it
 is inactive. Write `dispatcher-paused.json` with exactly the observed `computerId`, using a
 private temporary file and atomic rename. Pause promptly: a source already captured
