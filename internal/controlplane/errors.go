@@ -83,18 +83,18 @@ func (e *staleAuthorityError) ErrorDetails() map[string]json.RawMessage {
 	return map[string]json.RawMessage{"point": point}
 }
 
-func staleAuthority[P ~string](operation staleAuthorityOperation, point P, err error) error {
-	if err == nil || point == "" {
-		return err
-	}
-	if operation != staleAuthorityChildTask || !errors.Is(err, errChildTaskInvokeStale) {
+// childTaskInvokeStaleAt marks a stale child task invocation with the point
+// where it was found stale. The innermost point is kept; other errors are
+// returned unchanged.
+func childTaskInvokeStaleAt[P ~string](point P, err error) error {
+	if err == nil || point == "" || !errors.Is(err, errChildTaskInvokeStale) {
 		return err
 	}
 	var existing *staleAuthorityError
 	if errors.As(err, &existing) {
 		return err
 	}
-	return &staleAuthorityError{operation: operation, point: string(point), cause: err}
+	return &staleAuthorityError{operation: staleAuthorityChildTask, point: string(point), cause: err}
 }
 
 func staleAuthorityPointOf(err error) (string, bool) {

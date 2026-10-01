@@ -135,7 +135,7 @@ func (s *Server) workerInvokeChildTask(w http.ResponseWriter, r *http.Request) {
 			s.writeChildTaskInvokeError(w, request.CorrelationID, request.Method, err)
 			return
 		}
-		stale := staleAuthority(staleAuthorityChildTask, childTaskInvokePointLoadLease, errChildTaskInvokeStale)
+		stale := childTaskInvokeStaleAt(childTaskInvokePointLoadLease, errChildTaskInvokeStale)
 		s.log.Warn(
 			"reject stale child Task invocation",
 			"failure_point", childTaskInvokePointLoadLease,
@@ -322,7 +322,7 @@ func (s *Server) invokeChildTask(
 			return err
 		}
 		if !childTaskInvokeScopeMatches(authority, input) {
-			return staleAuthority(staleAuthorityChildTask, childTaskInvokePointSourceScope, errChildTaskInvokeStale)
+			return childTaskInvokeStaleAt(childTaskInvokePointSourceScope, errChildTaskInvokeStale)
 		}
 		if replay != nil {
 			result.taskStartResult = taskStartResult{
@@ -601,7 +601,7 @@ func (s *Server) writeChildTaskInvokeError(
 	case errors.Is(err, errTaskPayloadPresenceInvalid), errors.Is(err, errTaskStartInvalid):
 		failure = workerapi.RuntimeOperationFailure{Code: "invalid_child_task_invoke", Message: err.Error()}
 	case errors.Is(err, errChildTaskInvokeStale):
-		err = staleAuthority(staleAuthorityChildTask, childTaskInvokePointTransaction, err)
+		err = childTaskInvokeStaleAt(childTaskInvokePointTransaction, err)
 		point, _ := staleAuthorityPointOf(err)
 		s.log.Warn(
 			"reject stale child Task invocation",

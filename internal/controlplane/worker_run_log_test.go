@@ -26,10 +26,6 @@ import (
 type workerLogReplayStore struct {
 	db.Querier
 	replayMatches bool
-	called        *bool
-	workerID      pgtype.UUID
-	params        *db.AppendRunLogChunkParams
-	replay        *db.GetRunLogChunkReplayRow
 	authorization *db.AuthorizeWorkerHostCredentialRow
 }
 
@@ -40,23 +36,11 @@ func (s workerLogReplayStore) AuthorizeWorkerHostCredential(_ context.Context, _
 	return *s.authorization, nil
 }
 
-func (s workerLogReplayStore) GetRunLogChunkReplay(_ context.Context, _ db.GetRunLogChunkReplayParams) (db.GetRunLogChunkReplayRow, error) {
-	if s.replay == nil {
-		return db.GetRunLogChunkReplayRow{}, pgx.ErrNoRows
-	}
-	return *s.replay, nil
+func (workerLogReplayStore) GetRunLogChunkReplay(context.Context, db.GetRunLogChunkReplayParams) (db.GetRunLogChunkReplayRow, error) {
+	return db.GetRunLogChunkReplayRow{}, pgx.ErrNoRows
 }
 
-func (s workerLogReplayStore) AppendRunLogChunk(_ context.Context, params db.AppendRunLogChunkParams) (db.AppendRunLogChunkRow, error) {
-	if s.called != nil {
-		*s.called = true
-	}
-	if s.params != nil {
-		*s.params = params
-	}
-	if s.workerID.Valid && params.WorkerHostID != s.workerID {
-		return db.AppendRunLogChunkRow{}, pgx.ErrNoRows
-	}
+func (s workerLogReplayStore) AppendRunLogChunk(context.Context, db.AppendRunLogChunkParams) (db.AppendRunLogChunkRow, error) {
 	return db.AppendRunLogChunkRow{ReplayMatches: s.replayMatches}, nil
 }
 

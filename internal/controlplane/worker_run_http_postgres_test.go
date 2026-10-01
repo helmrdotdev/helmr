@@ -82,3 +82,24 @@ func TestWorkerRunLeaseRoutesRejectStaleClaims(t *testing.T) {
 		})
 	}
 }
+
+// A renewal through NewServer projects the receipt it renewed, the renewed
+// expiry and the attempt's base version.
+func TestWorkerRunLeaseRenewalRouteProjectsReceipt(t *testing.T) {
+	f := runtest.New(t)
+	work := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET status='running',started_at=now(),active_started_at=now(),max_active_duration_ms=3600000 WHERE id=$1`, work.RunID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET start_deadline_at=clock_timestamp()-interval '1 millisecond',expires_at=clock_timestamp()+interval '2 seconds' WHERE id=$1`, work.LeaseID)
+	var expiry time.Time
+	var base string
+	if err := f.Pool.QueryRow(t.Context(), `SELECT l.expires_at,a.base_computer_disk_version_id::text FROM run_leases l JOIN run_attempts a ON a.run_id=l.run_id AND a.number=l.attempt_number WHERE l.id=$1`, work.LeaseID).Scan(&expiry, &base); err != nil {
+		t.Fatal(err)
+	}
+	worker := newWorkerHTTPClient(t, newPostgresServer(t, f.Pool), f.Pool, f.WorkerID)
+	fence := workerapi.RunLeaseFence{ID: work.LeaseID.String(), LeaseSequence: 1}
+	var renewed workerapi.RunLeaseRenewResponse
+	worker.post(t, "/worker/v1/run/leases/renew", workerapi.RunLeaseRenewRequest{Lease: fence, ExpectedExpiresAt: expiry}, http.StatusOK, &renewed)
+	if renewed.Lease != fence || renewed.BaseComputerDiskVersionID != base || !renewed.ExpiresAt.After(expiry) || renewed.ExpiresAt.Location() != time.UTC {
+		t.Fatalf("renewal = %+v, want lease %+v base %s after %s", renewed, fence, base, expiry)
+	}
+}
