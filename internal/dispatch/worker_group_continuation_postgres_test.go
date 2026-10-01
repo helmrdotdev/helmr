@@ -31,7 +31,7 @@ type restoreHarness struct {
 	authority *dispatch.Authority
 	fence     computer.InstanceRef
 	cp        db.ComputerCheckpoint
-	grants    []dispatch.RestoreGrant
+	grants    []computer.RestoreGrant
 }
 
 func (h *restoreHarness) commit(t *testing.T) (db.ComputerCheckpoint, error) {
@@ -50,16 +50,7 @@ func (h *restoreHarness) commit(t *testing.T) (db.ComputerCheckpoint, error) {
 
 func (h *restoreHarness) acknowledge(t *testing.T) (db.ComputerInstance, error) {
 	t.Helper()
-	tx, err := h.f.Pool.Begin(t.Context())
-	if err != nil {
-		return db.ComputerInstance{}, err
-	}
-	defer tx.Rollback(t.Context())
-	i, err := dispatch.AcknowledgeRestore(t.Context(), tx, h.fence, h.cp.ID, h.cp.WriterGeneration+1, h.grants)
-	if err == nil {
-		err = tx.Commit(t.Context())
-	}
-	return i, err
+	return computer.AcknowledgeRestore(t.Context(), h.f.Pool, h.fence, h.cp.ID, h.cp.WriterGeneration+1, h.grants)
 }
 
 func (h *restoreHarness) admission(t *testing.T) string {
@@ -114,7 +105,7 @@ func TestComputerRestoreCommittedReceiptBeforeActivationOnNonAdmittingSupply(t *
 			if cp, err := h.commit(t); err != nil || cp.ID != h.cp.ID {
 				t.Fatalf("committed receipt inspection: %v %v", cp.ID, err)
 			}
-			if _, err := h.acknowledge(t); !errors.Is(err, pgx.ErrNoRows) {
+			if _, err := h.acknowledge(t); !errors.Is(err, computer.ErrAuthorityChanged) {
 				t.Fatalf("first activation: %v", err)
 			}
 			if state := h.admission(t); state != "restoring" {

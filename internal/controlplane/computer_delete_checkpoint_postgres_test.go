@@ -7,7 +7,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer/computertest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/dispatch/dispatchtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
@@ -55,11 +54,13 @@ func TestComputerDeleteRetiresConsumedCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The acknowledgement and the Run cancellation build on the restore
+	// commit's uncommitted writes, so they run in the same transaction.
 	var generation int64
 	if err = tx.QueryRow(t.Context(), `SELECT writer_generation FROM computer_instances WHERE id=$1`, fence.ID).Scan(&generation); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = dispatch.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, generation, nil); err != nil {
+	if _, err = computer.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, generation, nil); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), tx, `UPDATE runs SET status='cancelled',terminal_at=now(),failure='{"code":"cancelled","message":"Cancelled","details":{}}',current_run_lease_id=NULL,active_started_at=NULL WHERE computer_id=$1`, cp.ComputerID)

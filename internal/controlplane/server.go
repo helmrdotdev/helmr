@@ -100,11 +100,6 @@ const (
 	deploymentModeManagedCloud = "managed-cloud"
 )
 
-// inTx owns the PostgreSQL transaction for a request's durable unit of work.
-func (s *Server) inTx(ctx context.Context, fn func(*txWork) error) error {
-	return inTxWith(ctx, s.tx, fn)
-}
-
 type ServerConfig struct {
 	ComputerKeys   computer.KeyWrapper
 	Log            *slog.Logger

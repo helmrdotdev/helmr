@@ -3,22 +3,17 @@ package controlplane
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
-
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -26,32 +21,25 @@ import (
 func TestWorkerStartLogsOnlyTypedFailurePointAndKeepsPublicConflict(t *testing.T) {
 	f := runtest.New(t)
 	work := f.AddRunLease(t, "starting", time.Now())
-	worker := workergroup.HostPrincipal{HostID: f.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	const secretSentinel = "https://signed.invalid/object?credential=secret-sentinel"
 	store := &staleRunStartStore{
-		pool:    f.Pool,
+		Pool:    f.Pool,
 		failure: errors.Join(pgx.ErrNoRows, errors.New(secretSentinel)),
 	}
 	var logs bytes.Buffer
-	server := &Server{
-		log: slog.New(slog.NewJSONHandler(&logs, nil)),
-		db:  db.New(f.Pool),
-		tx:  store,
-	}
-	body, err := json.Marshal(workerapi.RunStartRequest{
+	handler := newPostgresServer(t, f.Pool, func(cfg *ServerConfig) {
+		cfg.Log = slog.New(slog.NewJSONHandler(&logs, nil))
+		cfg.TX = store
+	})
+	worker := newWorkerHTTPClient(t, handler, f.Pool, f.WorkerID)
+	const epoch = 1
+
+	response := worker.send(t, "/worker/v1/run/leases/start", workerapi.RunStartRequest{
 		Lease: workerapi.RunLeaseFence{
 			ID:            pgvalue.UUIDString(pgvalue.UUID(work.LeaseID)),
 			LeaseSequence: 1,
 		},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/start", bytes.NewReader(body))
-	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, worker))
-	response := httptest.NewRecorder()
-
-	server.workerStart(response, request)
 
 	if response.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want %d; body=%s", response.Code, http.StatusConflict, response.Body)
@@ -77,7 +65,7 @@ func TestWorkerStartLogsOnlyTypedFailurePointAndKeepsPublicConflict(t *testing.T
 		`"failure_point":"execution"`,
 		`"run_lease_id":"` + pgvalue.UUIDString(pgvalue.UUID(work.LeaseID)) + `"`,
 		`"lease_sequence":1`,
-		fmt.Sprintf(`"worker_epoch":%d`, worker.Epoch),
+		fmt.Sprintf(`"worker_epoch":%d`, epoch),
 	} {
 		if !strings.Contains(logs.String(), want) {
 			t.Fatalf("structured log missing %s: %s", want, logs.String())
@@ -88,14 +76,16 @@ func TestWorkerStartLogsOnlyTypedFailurePointAndKeepsPublicConflict(t *testing.T
 	}
 }
 
+// staleRunStartStore serves the pool, except that every query in a
+// transaction it begins fails.
 type staleRunStartStore struct {
-	pool                  *pgxpool.Pool
+	*pgxpool.Pool
 	failure               error
 	committed, rolledBack bool
 }
 
 func (s *staleRunStartStore) Begin(ctx context.Context) (pgx.Tx, error) {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}

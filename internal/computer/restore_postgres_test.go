@@ -7,7 +7,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/jackc/pgx/v5"
@@ -46,15 +45,8 @@ func TestRestoreFenceFencesEpochAndStatusNotClaims(t *testing.T) {
 			f := newRestorePlanFixture(t, false, false)
 			cp := f.commit(t)
 			acknowledge := func() error {
-				tx, err := f.Pool.Begin(t.Context())
-				if err != nil {
-					return err
-				}
-				defer tx.Rollback(t.Context())
-				if _, err = dispatch.AcknowledgeRestore(t.Context(), tx, f.ref, cp.ID, f.writer.WriterGeneration, restoreGrants(t, f.Fixture, f.ref)); err != nil {
-					return err
-				}
-				return tx.Commit(t.Context())
+				_, err := computer.AcknowledgeRestore(t.Context(), f.Pool, f.ref, cp.ID, f.writer.WriterGeneration, restoreGrants(t, f.Fixture, f.ref))
+				return err
 			}
 			if err := acknowledge(); err != nil {
 				t.Fatal(err)
@@ -116,14 +108,14 @@ func TestRestoreFenceReportsAdmission(t *testing.T) {
 	}
 }
 
-func restoreGrants(t *testing.T, f runtest.Fixture, ref computer.InstanceRef) []dispatch.RestoreGrant {
+func restoreGrants(t *testing.T, f runtest.Fixture, ref computer.InstanceRef) []computer.RestoreGrant {
 	t.Helper()
 	rows, err := f.Pool.Query(t.Context(), `SELECT run_id,id,lease_sequence FROM run_leases WHERE computer_instance_id=$1 ORDER BY run_id`, ref.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	grants, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (dispatch.RestoreGrant, error) {
-		var g dispatch.RestoreGrant
+	grants, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (computer.RestoreGrant, error) {
+		var g computer.RestoreGrant
 		err := row.Scan(&g.RunID, &g.LeaseID, &g.LeaseSequence)
 		return g, err
 	})

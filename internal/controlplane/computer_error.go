@@ -26,6 +26,7 @@ const (
 	computerInstanceRenewalOperation
 	computerRunCleanupOperation
 	computerRestorePlanOperation
+	computerRestoreAcknowledgementOperation
 	computerKeyDeliveryOperation
 	computerInitialObjectOperation
 	computerInitialVersionOperation
@@ -59,18 +60,19 @@ func (o computerOperation) recordsObjects() bool {
 // computerAuthorityChanged is the conflict each Instance operation reports
 // when the authority it fences changed.
 var computerAuthorityChanged = map[computerOperation]string{
-	computerInstanceObservationOperation: "runtime instance fence is stale",
-	computerInstanceRenewalOperation:     "Computer Instance writer is stale",
-	computerRunCleanupOperation:          "Run cleanup authority is stale",
-	computerRestorePlanOperation:         "Computer restore authority changed",
-	computerKeyDeliveryOperation:         "computer preparation authority changed",
-	computerInitialObjectOperation:       "computer preparation authority changed",
-	computerInitialVersionOperation:      "computer preparation authority changed",
-	computerCheckpointRegisterOperation:  "checkpoint registration is stale or differs from its candidate",
-	computerCheckpointObjectOperation:    "computer publication authority changed",
-	computerCheckpointReadyOperation:     "checkpoint ready source or candidate changed",
-	computerSaveOperation:                "computer publication authority changed",
-	computerCaptureAbortOperation:        "capture abort source or receipt changed",
+	computerInstanceObservationOperation:    "runtime instance fence is stale",
+	computerInstanceRenewalOperation:        "Computer Instance writer is stale",
+	computerRunCleanupOperation:             "Run cleanup authority is stale",
+	computerRestorePlanOperation:            "Computer restore authority changed",
+	computerKeyDeliveryOperation:            "computer preparation authority changed",
+	computerInitialObjectOperation:          "computer preparation authority changed",
+	computerInitialVersionOperation:         "computer preparation authority changed",
+	computerCheckpointRegisterOperation:     "checkpoint registration is stale or differs from its candidate",
+	computerCheckpointObjectOperation:       "computer publication authority changed",
+	computerCheckpointReadyOperation:        "checkpoint ready source or candidate changed",
+	computerSaveOperation:                   "computer publication authority changed",
+	computerCaptureAbortOperation:           "capture abort source or receipt changed",
+	computerRestoreAcknowledgementOperation: "computer restore authority changed",
 }
 
 // computerError maps a Computer owner error to the API error the client is
