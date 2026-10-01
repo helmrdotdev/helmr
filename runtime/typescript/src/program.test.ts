@@ -859,6 +859,43 @@ describe("runProgram", () => {
     }
   })
 
+  test("metadata rejection leaves a concurrent managed wait pending", async () => {
+    let completed = false
+    const rejected = Promise.withResolvers<void>()
+    const definition = task({ id: "deploy", async run() {
+      const wait = timers.waitFor("1m").then(() => { completed = true })
+      await assert.rejects(metadata.set("phase", "waiting"), { code: "run_metadata_rejected" })
+      rejected.resolve()
+      await wait
+      return null
+    } })
+    const start = taskStart("noPayload")
+    const output: Uint8Array[] = []
+    const requests = Promise.withResolvers<void>()
+    async function* input(): AsyncIterable<Uint8Array> {
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
+      await requests.promise
+      const events = output.map(frame => readEvent(frame).event)
+      const wait = events.find(event => event.case === "runWaitRequested")
+      const mutation = events.find(event => event.case === "metadataUpdated")
+      assert(wait?.case === "runWaitRequested")
+      assert(mutation?.case === "metadataUpdated")
+      yield runtimeDecision(mutation.value.correlationId, "failed", JSON.stringify({ code: "run_metadata_rejected", message: "run metadata cannot be updated while a managed wait is pending", retryable: false }))
+      await rejected.promise
+      assert.equal(completed, false)
+      yield frameMessage(programProto.ResumeDecisionSchema, create(programProto.ResumeDecisionSchema, {
+        runWaitId: wait.value.runWaitId, correlationId: wait.value.correlationId,
+        resumeAttachId: wait.value.resumeAttachId, kind: "completed", dataJson: "null",
+      }))
+    }
+    await runProgram(locatorURL, programIO({ input: input(), definition, output, onWrite: () => {
+      if (output.length === 3) requests.resolve()
+    } }))
+    assert.equal(completed, true)
+    assert.equal(readEvent(output.at(-1)!).event.case, "taskOutcome")
+  })
+
   test("physical reattachment preserves an unresolved timer Wait", async () => {
     let completed = false
     const definition = task({ id: "deploy", async run() {
