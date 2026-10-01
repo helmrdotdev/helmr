@@ -21,7 +21,7 @@ func TestWorkerConnectionAPIVersionLeavesLifecycleStateUnchanged(t *testing.T) {
 	credential := seedHostCredential(t, f.Pool, f.WorkerID)
 	token := exchangeWorkerToken(t, handler, credential.hostID.String(), credential.secret, credential.serviceID.String())
 	before := workerHostState(t, f.Pool, f.WorkerID)
-	for _, version := range []string{"", "helmr.worker-api.v1.r0"} {
+	for _, version := range []string{"", "helmr.worker-api.v1.r1"} {
 		for path, body := range map[string]any{
 			"/worker/v1/instance/token":    workerapi.TokenRequest{APIVersion: version, WorkerHostID: credential.hostID.String(), WorkerHostSecret: credential.secret, ServiceID: uuid.NewV7().String()},
 			"/worker/v1/instance/activate": workerapi.ActivateRequest{APIVersion: version, Capabilities: validWorkerCapabilities(t)},

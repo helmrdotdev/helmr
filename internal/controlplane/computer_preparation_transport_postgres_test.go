@@ -117,7 +117,7 @@ func TestInitialComputerPreparationReauthenticatesAcrossPrimaryPoolSwitch(t *tes
 		keyPath      = "/worker/v1/run/computer-instances/initialization/key"
 		registerPath = "/worker/v1/run/computer-instances/initialization/objects/register"
 		certifyPath  = "/worker/v1/run/computer-instances/initialization/objects/certify"
-		versionPath  = "/worker/v1/run/computer-instances/initialization/generation"
+		versionPath  = "/worker/v1/run/computer-instances/initialization/version"
 	)
 	for name, raced := range map[string]string{"key": keyPath, "object registration": registerPath, "object certification": certifyPath, "version publication": versionPath} {
 		t.Run(name, func(t *testing.T) {

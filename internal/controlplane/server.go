@@ -627,7 +627,7 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.With(limitRequestBody(16384)).Post("/run/secret-proxy/resolve", s.workerResolveSecretProxy)
 				r.Post("/run/computer-instances/reconcile", s.workerNextRuntimeReconcileTarget)
 				r.Post("/run/computer-instances/ready", s.workerMarkComputerInstanceReady)
-				r.With(limitRequestBody(1<<20)).Post("/run/computer-instances/initialization/generation", s.workerPublishInitialComputerGeneration)
+				r.With(limitRequestBody(1<<20)).Post("/run/computer-instances/initialization/version", s.workerPublishInitialComputerVersion)
 				r.With(limitRequestBody(1024)).Post("/run/computer-instances/initialization/key", s.workerInitialComputerKey)
 				r.With(limitRequestBody(1024)).Post("/run/computer-instances/computer-source", s.workerComputerSource)
 				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/computer-instances/initialization/objects/register", s.workerRegisterInitialComputerObject)

@@ -8,9 +8,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func (s *Server) workerPublishInitialComputerGeneration(w http.ResponseWriter, r *http.Request) {
+func (s *Server) workerPublishInitialComputerVersion(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	var request workerapi.InitialComputerGenerationRequest
+	var request workerapi.InitialComputerVersionRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
 		writeError(w, fmt.Errorf("invalid computer version request: %w", err))
 		return
@@ -25,5 +25,5 @@ func (s *Server) workerPublishInitialComputerGeneration(w http.ResponseWriter, r
 		s.writeWorkerComputerError(w, err, computerInitialVersionOperation, "initial computer version publication failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, workerapi.InitialComputerGenerationResponse{ComputerID: published.ComputerID.String(), VersionID: published.VersionID.String()})
+	writeJSON(w, http.StatusOK, workerapi.InitialComputerVersionResponse{ComputerID: published.ComputerID.String(), VersionID: published.VersionID.String()})
 }

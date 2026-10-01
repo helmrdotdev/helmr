@@ -121,7 +121,7 @@ func (p *PreparedMachines) publishComputerSeed(ctx context.Context, target worke
 	if err != nil {
 		return err
 	}
-	published, err := p.ComputerPreparation.PublishInitialComputerGeneration(ctx, workerapi.InitialComputerGenerationRequest{ComputerInstanceID: target.ID, DesiredVersion: target.DesiredVersion, Root: root, Config: source.Config})
+	published, err := p.ComputerPreparation.PublishInitialComputerVersion(ctx, workerapi.InitialComputerVersionRequest{ComputerInstanceID: target.ID, DesiredVersion: target.DesiredVersion, Root: root, Config: source.Config})
 	if err != nil {
 		return fmt.Errorf("publish initial computer version: %w", err)
 	}

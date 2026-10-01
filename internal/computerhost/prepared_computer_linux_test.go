@@ -55,16 +55,16 @@ func (s *computerPreparationTransport) CertifyInitialComputerObject(context.Cont
 func (s *computerPreparationTransport) InitialComputerKey(context.Context, workerapi.InitialComputerKeyRequest) (workerapi.ComputerKeyMaterial, error) {
 	return workerapi.ComputerKeyMaterial{Scope: "fixture", ID: preparationKey, Key: bytes.Clone(s.key)}, nil
 }
-func (s *computerPreparationTransport) PublishInitialComputerGeneration(_ context.Context, r workerapi.InitialComputerGenerationRequest) (workerapi.InitialComputerGenerationResponse, error) {
+func (s *computerPreparationTransport) PublishInitialComputerVersion(_ context.Context, r workerapi.InitialComputerVersionRequest) (workerapi.InitialComputerVersionResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.fail == "commit" {
-		return workerapi.InitialComputerGenerationResponse{}, errors.New("commit failed")
+		return workerapi.InitialComputerVersionResponse{}, errors.New("commit failed")
 	}
 	s.root = r.Root
 	s.publications++
 	target := s.targets[r.ComputerInstanceID]
-	return workerapi.InitialComputerGenerationResponse{ComputerID: target.Source.ComputerID, VersionID: target.Source.Computer.VersionID}, nil
+	return workerapi.InitialComputerVersionResponse{ComputerID: target.Source.ComputerID, VersionID: target.Source.Computer.VersionID}, nil
 }
 func (s *computerPreparationTransport) ComputerSource(_ context.Context, r workerapi.ComputerSourceRequest) (workerapi.ComputerSourceMaterial, error) {
 	s.mu.Lock()

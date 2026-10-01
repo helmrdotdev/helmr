@@ -100,10 +100,10 @@ func inspectedPackDigest(inspection blockformat.ObjectInspection) string {
 // publishInitialVersion prepares the Instance as its worker host does:
 // it certifies an empty root under the initial key and publishes it as the
 // initial version with config.
-func (f initialPublicationFixture) publishInitialVersion(t *testing.T, client *workerclient.Client, config oci.RuntimeConfig) (workerapi.ComputerKeyMaterial, disk.VersionRoot, workerapi.InitialComputerGenerationResponse) {
+func (f initialPublicationFixture) publishInitialVersion(t *testing.T, client *workerclient.Client, config oci.RuntimeConfig) (workerapi.ComputerKeyMaterial, disk.VersionRoot, workerapi.InitialComputerVersionResponse) {
 	t.Helper()
 	key, root, _ := f.certifyInitialRoot(t, client)
-	published, err := client.PublishInitialComputerGeneration(t.Context(), workerapi.InitialComputerGenerationRequest{ComputerInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 1, Root: root, Config: config})
+	published, err := client.PublishInitialComputerVersion(t.Context(), workerapi.InitialComputerVersionRequest{ComputerInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 1, Root: root, Config: config})
 	if err != nil {
 		t.Fatalf("version publication: %v", err)
 	}
