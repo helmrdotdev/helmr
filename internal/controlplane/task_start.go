@@ -102,7 +102,7 @@ func normalizeTaskStart(request taskStartRequest) (normalizedTaskStart, error) {
 	} else {
 		request.Payload = nil
 	}
-	request.Metadata, err = normalizeMetadata(request.Metadata, maxRunMetadataBytes, "run")
+	request.Metadata, err = run.NormalizeMetadata(request.Metadata, run.MaxMetadataBytes, "run")
 	if err != nil {
 		return normalizedTaskStart{}, fmt.Errorf("%w: %v", run.ErrTaskStartInvalid, err)
 	}

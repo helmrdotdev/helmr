@@ -12,9 +12,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 )
 
-const taskStartBodyLimit = int64(maxTaskPayloadBytes + maxRunMetadataBytes + 64<<10)
+const taskStartBodyLimit = int64(maxTaskPayloadBytes + run.MaxMetadataBytes + 64<<10)
 
 func (s *Server) startTaskHTTP(w http.ResponseWriter, r *http.Request) {
 	request, payloadPresent, err := decodeStartTaskRequest(r)

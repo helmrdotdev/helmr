@@ -95,18 +95,18 @@ func equalJSON(left, right []byte) (bool, error) {
 type MetadataUpdate struct {
 	Fence       ExecutionFence
 	OperationID uuid.UUID
-	// Mutation is the canonical mutation the idempotency claim fingerprints.
-	Mutation json.RawMessage
+	// Mutation is applied to the Run's metadata; the idempotency claim
+	// fingerprints its canonical form.
+	Mutation MetadataMutation
 	// FenceFingerprint identifies the receipt the mutation was sent under.
 	FenceFingerprint string
-	// Apply returns the Run's next metadata from its current metadata.
-	Apply func(current json.RawMessage) (json.RawMessage, error)
 	// Event returns the validated payload of the metadata event the update
 	// records.
 	Event func() (json.RawMessage, error)
 }
 
-// UpdateMetadata applies a metadata mutation in its own transaction. It reads
+// UpdateMetadata applies a metadata mutation in its own transaction and
+// normalizes the Run's next metadata. It reads
 // the lease's claim scope without locking, acquires the mutation's
 // idempotency claim before any worker supply lock, and returns a completed
 // replay there. A new mutation then locks the live execution, writes the
@@ -132,7 +132,7 @@ func UpdateMetadata(ctx context.Context, txb db.TxBeginner, update MetadataUpdat
 			runID,
 			scope.AttemptNumber,
 			update.OperationID.String(),
-			update.Mutation,
+			update.Mutation.canonical,
 			update.FenceFingerprint,
 		)
 		if err != nil {
@@ -160,7 +160,7 @@ func UpdateMetadata(ctx context.Context, txb db.TxBeginner, update MetadataUpdat
 		if r.EnvironmentID != scope.EnvironmentID || r.ID != scope.RunID || attempt.Number != scope.AttemptNumber {
 			return ErrStale
 		}
-		next, err := update.Apply(r.Metadata)
+		next, err := update.Mutation.apply(r.Metadata)
 		if err != nil {
 			return err
 		}

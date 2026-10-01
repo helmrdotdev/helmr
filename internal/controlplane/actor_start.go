@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
@@ -25,9 +26,8 @@ import (
 )
 
 const (
-	maxRunMetadataBytes = 256 << 10
-	maxTags             = 10
-	maxQueuedRunTTLMS   = int64(31_536_000_000)
+	maxTags           = 10
+	maxQueuedRunTTLMS = int64(31_536_000_000)
 )
 
 var (
@@ -356,7 +356,7 @@ func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error
 	if err != nil {
 		return normalizedActorStart{}, fmt.Errorf("%w: canonicalize computer address", errActorStartInvalid)
 	}
-	request.ManagedRunMetadata, err = normalizeMetadata(request.ManagedRunMetadata, maxRunMetadataBytes, "managed run")
+	request.ManagedRunMetadata, err = run.NormalizeMetadata(request.ManagedRunMetadata, run.MaxMetadataBytes, "managed run")
 	if err != nil {
 		return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
 	}
@@ -406,20 +406,6 @@ func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error
 	return normalizedActorStart{actorStartRequest: request, fingerprint: fingerprint}, nil
 }
 
-func normalizeMetadata(raw json.RawMessage, limit int, label string) ([]byte, error) {
-	if len(raw) == 0 {
-		raw = json.RawMessage(`{}`)
-	}
-	canonical, err := canonicalJSON(raw)
-	if err != nil || !jsonObject(canonical) {
-		return nil, fmt.Errorf("%s metadata must be an unambiguous JSON object", label)
-	}
-	if len(canonical) > limit {
-		return nil, fmt.Errorf("%s metadata exceeds %d bytes", label, limit)
-	}
-	return canonical, nil
-}
-
 func normalizeTags(raw []string, limit int, label string) ([]string, error) {
 	seen := make(map[string]struct{}, len(raw))
 	tags := make([]string, 0, len(raw))
@@ -439,11 +425,6 @@ func normalizeTags(raw []string, limit int, label string) ([]string, error) {
 	}
 	sort.Strings(tags)
 	return tags, nil
-}
-
-func jsonObject(raw []byte) bool {
-	var object map[string]json.RawMessage
-	return json.Unmarshal(raw, &object) == nil && object != nil
 }
 
 func hasInvalidConcurrencyKeyEdge(value string) bool {
