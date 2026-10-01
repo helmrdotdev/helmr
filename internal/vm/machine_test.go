@@ -31,14 +31,14 @@ func TestRuntimeErrorClass(t *testing.T) {
 }
 
 func TestOwnerValidation(t *testing.T) {
-	valid := Owner{Kind: OwnerRuntime, ID: "019c10d5-a6f7-7af1-8f5f-000000000001"}
+	valid := Owner{Kind: OwnerInstance, ID: "019c10d5-a6f7-7af1-8f5f-000000000001"}
 	if err := valid.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	for _, owner := range []Owner{
 		{Kind: "other", ID: valid.ID},
-		{Kind: OwnerRuntime, ID: "not-a-uuid"},
-		{Kind: OwnerRuntime, ID: "019c10d5-a6f7-7af1-8f5f-000000000ABC"},
+		{Kind: OwnerInstance, ID: "not-a-uuid"},
+		{Kind: OwnerInstance, ID: "019c10d5-a6f7-7af1-8f5f-000000000ABC"},
 	} {
 		if err := owner.Validate(); err == nil {
 			t.Fatalf("Owner.Validate() accepted %+v", owner)
@@ -47,7 +47,7 @@ func TestOwnerValidation(t *testing.T) {
 }
 
 func TestWorkloadBindingValidation(t *testing.T) {
-	instanceOwner := Owner{Kind: OwnerRuntime, ID: "019c10d5-a6f7-7af1-8f5f-000000000010"}
+	instanceOwner := Owner{Kind: OwnerInstance, ID: "019c10d5-a6f7-7af1-8f5f-000000000010"}
 	instanceBinding := WorkloadBinding{
 		WorkerEpoch:        4,
 		OwnerID:            instanceOwner.ID,
@@ -89,7 +89,7 @@ func TestWorkloadBindingValidation(t *testing.T) {
 
 func TestCleanupUnprovenErrorPreservesOwnerAndCause(t *testing.T) {
 	cause := errors.New("marker mismatch")
-	owner := Owner{Kind: OwnerRuntime, ID: "019c10d5-a6f7-7af1-8f5f-000000000002"}
+	owner := Owner{Kind: OwnerInstance, ID: "019c10d5-a6f7-7af1-8f5f-000000000002"}
 	err := &CleanupUnprovenError{Owner: owner, Cause: cause}
 	var got *CleanupUnprovenError
 	if !errors.As(err, &got) || got.Owner != owner || !errors.Is(err, cause) {

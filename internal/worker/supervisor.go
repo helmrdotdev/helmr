@@ -191,7 +191,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	inventory := append(append(make([]string, 0, len(evidence.Reclaimed)+len(evidence.Quarantined)), evidence.Reclaimed...), evidence.Quarantined...)
 	if err := s.reportStartupRecovery(ctx, workerapi.StartupRecoveryRequest{
 		InventoryComplete: true,
-		InventoryScope:    "worker_runtime_state_roots_v0",
+		InventoryScope:    "worker_instance_state_roots_v0",
 		ObservedAt:        evidence.ObservedAt,
 		Inventory:         inventory,
 		Reclaimed:         evidence.Reclaimed,
@@ -451,7 +451,7 @@ func (s *Supervisor) completeServerDirectedDrain(
 	}
 	request := workerapi.DrainCompletionRequest{
 		InventoryComplete: true,
-		InventoryScope:    "worker_runtime_state_roots_v0",
+		InventoryScope:    "worker_instance_state_roots_v0",
 		ObservedAt:        finalEvidence.ObservedAt,
 		Inventory:         []string{},
 		Reclaimed:         finalEvidence.Reclaimed,
@@ -481,7 +481,7 @@ func activationQuarantines(evidence RecoveryEvidence) (int, error) {
 	}
 	instanceCount := 0
 	for _, owner := range evidence.QuarantinedOwners {
-		if owner.Kind != vm.OwnerRuntime {
+		if owner.Kind != vm.OwnerInstance {
 			return 0, errors.New("worker activation is blocked by unknown VM owner kind")
 		}
 		instanceCount++

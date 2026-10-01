@@ -287,7 +287,7 @@ SELECT run_attempts.terminal_outcome,
 	 WHERE runs.id = $1`, work.runID).Scan(&attemptOutcome, &attemptReason, &attemptNumber); err != nil {
 		t.Fatal(err)
 	}
-	if attemptOutcome != "failed" || attemptReason != "runtime_preparation_failed" ||
+	if attemptOutcome != "failed" || attemptReason != "instance_preparation_failed" ||
 		attemptNumber != 1 {
 		t.Fatalf("terminal preparation authority = attempt:%d/%s/%s", attemptNumber, attemptOutcome, attemptReason)
 	}
@@ -401,7 +401,7 @@ SELECT child.status, parent.status, wait.condition_status, wait.condition_result
 			}
 			if childStatus != db.RunStatusSystemFailed || parentStatus != db.RunStatusRunning ||
 				condition != db.WaitStatusCompleted || payload.OK ||
-				payload.Failure.Code != "runtime_preparation_failed" {
+				payload.Failure.Code != "instance_preparation_failed" {
 				t.Fatalf(
 					"different-computer preparation exhaustion = child:%s parent:%s wait:%s result:%+v",
 					childStatus, parentStatus, condition, payload,

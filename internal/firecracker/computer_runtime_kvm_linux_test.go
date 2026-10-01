@@ -180,7 +180,7 @@ func TestComputerRuntimeKVM(t *testing.T) {
 				t.Fatal(err)
 			}
 			id := uuid.NewV7().String()
-			owner := vm.Owner{Kind: vm.OwnerRuntime, ID: id}
+			owner := vm.Owner{Kind: vm.OwnerInstance, ID: id}
 			defer func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()

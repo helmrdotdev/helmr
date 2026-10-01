@@ -72,7 +72,7 @@ func TestComputerInstanceRoutesMapOwnerErrors(t *testing.T) {
 	observation.ExpectedObservedVersion = 0
 	worker.post(t, "/worker/v1/run/computer-instances/failed", observation, http.StatusConflict, nil)
 	observation.ExpectedObservedVersion = 1
-	observation.ReasonCode = "runtime_reconcile_failed"
+	observation.ReasonCode = "instance_reconcile_failed"
 	var failed workerapi.ComputerInstance
 	worker.post(t, "/worker/v1/run/computer-instances/failed", observation, http.StatusOK, &failed)
 	if failed.Status != "failed" {

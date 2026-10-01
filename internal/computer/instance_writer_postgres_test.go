@@ -367,7 +367,7 @@ func TestObservationsIgnoreClaimBumps(t *testing.T) {
 			if err != nil {
 				t.Fatalf("readiness after %s: %v", bump.name, err)
 			}
-			failed, err := RecordInstanceFailure(t.Context(), f.Pool, Failure{Observation: observationOf(row), Kind: FailureInstance, Reason: "runtime_reconcile_failed", Error: []byte(`{}`)})
+			failed, err := RecordInstanceFailure(t.Context(), f.Pool, Failure{Observation: observationOf(row), Kind: FailureInstance, Reason: "instance_reconcile_failed", Error: []byte(`{}`)})
 			if err != nil || failed.ObservedState != "failed" {
 				t.Fatalf("failure after %s: %v %v", bump.name, failed.ObservedState, err)
 			}

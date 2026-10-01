@@ -521,7 +521,7 @@ func (p *PreparedMachines) reclaimFailedInstanceTarget(ctx context.Context, clie
 		cancel()
 	}
 	cleanupCtx, cancel := preparedMachineControlContext(ctx)
-	err := p.Backend.Cleanup(cleanupCtx, vm.Owner{Kind: vm.OwnerRuntime, ID: computerInstanceID})
+	err := p.Backend.Cleanup(cleanupCtx, vm.Owner{Kind: vm.OwnerInstance, ID: computerInstanceID})
 	cancel()
 	if err != nil {
 		return fmt.Errorf("reconcile failed instance physical cleanup: %w", errors.Join(closeErr, err))
@@ -576,7 +576,7 @@ func (p *PreparedMachines) stopInstanceTarget(ctx context.Context, client Prepar
 			return errors.New("VM backend does not support exact instance cleanup")
 		}
 		cleanupCtx, cancel := preparedMachineControlContext(ctx)
-		err := p.Backend.Cleanup(cleanupCtx, vm.Owner{Kind: vm.OwnerRuntime, ID: computerInstanceID})
+		err := p.Backend.Cleanup(cleanupCtx, vm.Owner{Kind: vm.OwnerInstance, ID: computerInstanceID})
 		cancel()
 		if err != nil {
 			return fmt.Errorf("reconcile instance physical cleanup: %w", err)
@@ -599,7 +599,7 @@ func (p *PreparedMachines) stopInstanceTarget(ctx context.Context, client Prepar
 			return errors.New("VM backend does not support exact instance cleanup")
 		}
 		cleanupCtx, cancel := preparedMachineControlContext(ctx)
-		err := p.Backend.Cleanup(cleanupCtx, vm.Owner{Kind: vm.OwnerRuntime, ID: computerInstanceID})
+		err := p.Backend.Cleanup(cleanupCtx, vm.Owner{Kind: vm.OwnerInstance, ID: computerInstanceID})
 		cancel()
 		if err != nil {
 			return fmt.Errorf("reconcile instance physical cleanup: %w", err)
@@ -621,7 +621,7 @@ func (p *PreparedMachines) stopInstanceTarget(ctx context.Context, client Prepar
 			return errors.New("VM backend does not support exact instance cleanup")
 		}
 		cleanupCtx, cancel := preparedMachineControlContext(ctx)
-		err := p.Backend.Cleanup(cleanupCtx, vm.Owner{Kind: vm.OwnerRuntime, ID: computerInstanceID})
+		err := p.Backend.Cleanup(cleanupCtx, vm.Owner{Kind: vm.OwnerInstance, ID: computerInstanceID})
 		cancel()
 		if err != nil {
 			return fmt.Errorf("reconcile instance physical cleanup: %w", err)
@@ -904,7 +904,7 @@ func (p *PreparedMachines) prepareAndStore(
 		machine, materializeErr = p.restorePreparedMachine(ctx, target, topology, readOnlyDrives, phases.Record)
 	} else {
 		machine, materializeErr = p.Backend.Materialize(ctx, vm.MaterializeRequest{
-			ID: computerInstanceID, OwnerKind: vm.OwnerRuntime, RootfsDigest: mount.RootfsDigest,
+			ID: computerInstanceID, OwnerKind: vm.OwnerInstance, RootfsDigest: mount.RootfsDigest,
 			Binding:           instanceTargetWorkloadBinding(target),
 			ComputerMountPath: mount.ComputerMountPath, BaseComputerDiskVersionID: mount.Target.BaseComputerDiskVersionID,
 			Resources: compute.ResourceVector{MilliCPU: mount.RequestedMilliCPU, MemoryMiB: mount.RequestedMemoryMiB,

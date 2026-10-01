@@ -114,7 +114,7 @@ func TestReplacementPromotionLocksSourceInstanceBeforeCheckpoint(t *testing.T) {
 	if _, err = lockReplacement(t, t.Context(), f, ref, captureStep); err == nil {
 		t.Fatal("replacement before source exclusion")
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='closed',observed_desired_version=desired_version,mount_state='unmounted',unmounted_at=now(),terminal_at=now(),reclaimed_at=now(),reclaim_evidence='{"method":"session_closed"}',terminal_reason_code='checkpointed' WHERE id=$1`, request.InstanceID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='closed',observed_desired_version=desired_version,mount_state='unmounted',unmounted_at=now(),terminal_at=now(),reclaimed_at=now(),reclaim_evidence='{"method":"machine_closed"}',terminal_reason_code='checkpointed' WHERE id=$1`, request.InstanceID)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()

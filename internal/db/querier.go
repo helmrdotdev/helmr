@@ -285,6 +285,9 @@ type Querier interface {
 	// This is retention evidence, not live authorization; callers hold/recheck their
 	// Instance and Worker fences before granting source or key access.
 	GetInstanceComputerSourceRoot(ctx context.Context, computerInstanceID pgtype.UUID) (GetInstanceComputerSourceRootRow, error)
+	// The owning operation holds Computer and Instance authority. No caller-provided
+	// key selection is accepted. Provider I/O happens only after committing these pins.
+	GetInstanceComputerWriteKey(ctx context.Context, arg GetInstanceComputerWriteKeyParams) (ComputerDataKey, error)
 	GetLiveRunLeaseLocators(ctx context.Context, arg GetLiveRunLeaseLocatorsParams) (GetLiveRunLeaseLocatorsRow, error)
 	GetOrgMemberForManagement(ctx context.Context, arg GetOrgMemberForManagementParams) (GetOrgMemberForManagementRow, error)
 	GetPendingInvitationByEmail(ctx context.Context, arg GetPendingInvitationByEmailParams) (GetPendingInvitationByEmailRow, error)
@@ -315,9 +318,6 @@ type Querier interface {
 	GetRunSnapshot(ctx context.Context, arg GetRunSnapshotParams) (GetRunSnapshotRow, error)
 	GetRunTelemetryFrontier(ctx context.Context, arg GetRunTelemetryFrontierParams) (GetRunTelemetryFrontierRow, error)
 	GetRunWait(ctx context.Context, arg GetRunWaitParams) (RunWait, error)
-	// The owning operation holds Computer and Runtime authority. No caller-provided
-	// key selection is accepted. Provider I/O happens only after committing these pins.
-	GetRuntimeComputerWriteKey(ctx context.Context, arg GetRuntimeComputerWriteKeyParams) (ComputerDataKey, error)
 	GetSchedule(ctx context.Context, arg GetScheduleParams) (Schedule, error)
 	GetScheduleByID(ctx context.Context, arg GetScheduleByIDParams) (Schedule, error)
 	GetScheduledRunReceipt(ctx context.Context, arg GetScheduledRunReceiptParams) (Run, error)
@@ -454,7 +454,7 @@ type Querier interface {
 	// discovery only avoids repeatedly selecting retained roots in the bounded sweep.
 	ListUnreferencedComputerDiskVersionRoots(ctx context.Context, rowLimit int32) ([]ListUnreferencedComputerDiskVersionRootsRow, error)
 	// A key remains available while any object, current writer or unreclaimed
-	// Runtime needs it. Restrictive availability FKs arbitrate concurrent adoption.
+	// Instance needs it. Restrictive availability FKs arbitrate concurrent adoption.
 	ListUnreferencedComputerKeys(ctx context.Context, rowLimit int32) ([]pgtype.UUID, error)
 	// Roots, active publications and parent objects are the availability owners.
 	// Version history is not deleted. The final DELETE's FKs arbitrate concurrent
@@ -595,8 +595,8 @@ type Querier interface {
 	// destination. Losing it after commit cannot make this checkpoint reusable.
 	OpenRestoredComputerInstance(ctx context.Context, arg OpenRestoredComputerInstanceParams) (ComputerInstance, error)
 	OwnedRunScopesReconciled(ctx context.Context, runID pgtype.UUID) (bool, error)
+	PinInstanceComputerKey(ctx context.Context, arg PinInstanceComputerKeyParams) (int64, error)
 	PinInstanceComputerSource(ctx context.Context, arg PinInstanceComputerSourceParams) (int64, error)
-	PinRuntimeComputerKey(ctx context.Context, arg PinRuntimeComputerKeyParams) (int64, error)
 	PromoteDeployment(ctx context.Context, arg PromoteDeploymentParams) error
 	PruneDeliveredControlOutbox(ctx context.Context, arg PruneDeliveredControlOutboxParams) (int64, error)
 	PruneExpiredComputerCommandResults(ctx context.Context, rowLimit int32) (int64, error)
@@ -606,7 +606,7 @@ type Querier interface {
 	// Computer/instance locks. Head publication and root retention commit atomically.
 	PublishComputerInstanceSave(ctx context.Context, arg PublishComputerInstanceSaveParams) (PublishComputerInstanceSaveRow, error)
 	// The owner validates the exact certified root page and holds the preparation
-	// locks. Publication records success once; pending uploads remain Runtime pins.
+	// locks. Publication records success once; pending uploads remain Instance pins.
 	PublishInitialComputerDiskVersion(ctx context.Context, arg PublishInitialComputerDiskVersionParams) (PublishInitialComputerDiskVersionRow, error)
 	ReadWorkerControlSecrets(ctx context.Context, computerIds []pgtype.UUID) ([]ReadWorkerControlSecretsRow, error)
 	ReadWorkerSessionControl(ctx context.Context, arg ReadWorkerSessionControlParams) (ReadWorkerSessionControlRow, error)

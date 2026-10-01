@@ -98,7 +98,7 @@ func (p *PreparedMachines) restorePreparedMachine(
 	}
 	runtimeInfo := checkpoint.RecoveryPoint.Runtime
 	machine, err := p.Backend.Restore(ctx, vm.RestoreRequest{
-		ID: restore.CheckpointID, ComputerInstanceID: target.ID, OwnerKind: vm.OwnerRuntime,
+		ID: restore.CheckpointID, ComputerInstanceID: target.ID, OwnerKind: vm.OwnerInstance,
 		Resources: compute.ResourceVector{MilliCPU: int64(target.Source.ReservedCPUMillis), MemoryMiB: int64(target.Source.ReservedMemoryMiB), DiskMiB: target.Source.ReservedDiskMiB, Slots: target.Source.ReservedExecutionSlots},
 		Binding:   instanceTargetWorkloadBinding(target),
 		VMState:   paths[1], VMStateMediaType: runtimeState.VMStateArtifact.MediaType,

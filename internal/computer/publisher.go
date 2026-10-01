@@ -60,7 +60,7 @@ func publicationOf(computerID, versionID pgtype.UUID) Publication {
 func (p initialPreparation) objects(ctx context.Context) (objectScope, error) {
 	q := db.New(p.tx)
 	instanceID := p.instance.ID
-	key, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{ComputerInstanceID: instanceID, EnvironmentID: p.environmentID, ComputerID: p.computerID})
+	key, err := q.GetInstanceComputerWriteKey(ctx, db.GetInstanceComputerWriteKeyParams{ComputerInstanceID: instanceID, EnvironmentID: p.environmentID, ComputerID: p.computerID})
 	if err != nil {
 		return objectScope{}, err
 	}
@@ -103,7 +103,7 @@ func (p Publisher) CertifyInitialObject(ctx context.Context, principal workergro
 	// physical Instance's Computer. This is not a commit grant: the recording
 	// transaction rechecks live preparation authority and exact facts.
 	instanceID := pgvalue.UUID(ref.InstanceID)
-	registered, err := db.New(p.db).HasRegisteredInitialComputerObject(ctx, db.HasRegisteredInitialComputerObjectParams{RuntimeID: instanceID, PublicationKey: initialPublicationKey(ref.InstanceID), WorkerID: pgvalue.UUID(principal.HostID), WorkerGroupID: pgvalue.UUID(principal.GroupID), WorkerEpoch: principal.Epoch, DesiredVersion: ref.DesiredVersion, Digest: object.digest, Inspection: object.encoded})
+	registered, err := db.New(p.db).HasRegisteredInitialComputerObject(ctx, db.HasRegisteredInitialComputerObjectParams{ComputerInstanceID: instanceID, PublicationKey: initialPublicationKey(ref.InstanceID), WorkerID: pgvalue.UUID(principal.HostID), WorkerGroupID: pgvalue.UUID(principal.GroupID), WorkerEpoch: principal.Epoch, DesiredVersion: ref.DesiredVersion, Digest: object.digest, Inspection: object.encoded})
 	if err != nil {
 		return fmt.Errorf("read initial computer object registration: %w", err)
 	}

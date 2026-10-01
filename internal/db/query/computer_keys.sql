@@ -1,7 +1,7 @@
--- The owning operation holds Computer and Runtime authority. No caller-provided
+-- The owning operation holds Computer and Instance authority. No caller-provided
 -- key selection is accepted. Provider I/O happens only after committing these pins.
 
--- name: GetRuntimeComputerWriteKey :one
+-- name: GetInstanceComputerWriteKey :one
 SELECT k.*
   FROM computer_instances r
   JOIN computers c ON c.environment_id=r.environment_id AND c.id=r.computer_id
@@ -19,14 +19,14 @@ RETURNING *;
 UPDATE computers SET write_key_id=sqlc.arg(key_id)
  WHERE environment_id=sqlc.arg(environment_id) AND id=sqlc.arg(computer_id) AND write_key_id IS NULL;
 
--- name: PinRuntimeComputerKey :execrows
+-- name: PinInstanceComputerKey :execrows
 UPDATE computer_instances SET write_key_id=sqlc.arg(key_id)
  WHERE id=sqlc.arg(computer_instance_id) AND environment_id=sqlc.arg(environment_id)
    AND computer_id=sqlc.arg(computer_id) AND reclaimed_at IS NULL
    AND (write_key_id IS NULL OR write_key_id=sqlc.arg(key_id));
 
 -- A key remains available while any object, current writer or unreclaimed
--- Runtime needs it. Restrictive availability FKs arbitrate concurrent adoption.
+-- Instance needs it. Restrictive availability FKs arbitrate concurrent adoption.
 -- name: ListUnreferencedComputerKeys :many
 SELECT k.id FROM computer_data_keys k
 WHERE k.available

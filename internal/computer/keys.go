@@ -238,7 +238,7 @@ func (p initialPreparation) pinKey(ctx context.Context, candidate *db.ComputerDa
 	}
 	q := db.New(p.tx)
 	instanceID := p.instance.ID
-	row, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{ComputerInstanceID: instanceID, EnvironmentID: p.environmentID, ComputerID: p.computerID})
+	row, err := q.GetInstanceComputerWriteKey(ctx, db.GetInstanceComputerWriteKeyParams{ComputerInstanceID: instanceID, EnvironmentID: p.environmentID, ComputerID: p.computerID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		// A missing row is initialization only when both authoritative
 		// pointers are empty. Never replace an unavailable or corrupt
@@ -270,7 +270,7 @@ func (p initialPreparation) pinKey(ctx context.Context, candidate *db.ComputerDa
 	} else if err != nil {
 		return initialKeyPin{}, fmt.Errorf("read computer write key: %w", err)
 	}
-	n, err := q.PinRuntimeComputerKey(ctx, db.PinRuntimeComputerKeyParams{KeyID: row.ID, ComputerInstanceID: instanceID, EnvironmentID: row.EnvironmentID, ComputerID: row.ComputerID})
+	n, err := q.PinInstanceComputerKey(ctx, db.PinInstanceComputerKeyParams{KeyID: row.ID, ComputerInstanceID: instanceID, EnvironmentID: row.EnvironmentID, ComputerID: row.ComputerID})
 	if err != nil {
 		return initialKeyPin{}, fmt.Errorf("pin computer write key: %w", err)
 	}
@@ -367,14 +367,14 @@ func (p sourcePreparation) envelopes(ctx context.Context) (SourceMaterial, []db.
 	if retained.VersionID != p.versionID || root.LogicalBytes != p.logicalBytes {
 		return SourceMaterial{}, nil, keyUnavailable("retained computer source differs from preparation")
 	}
-	writeKey, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{ComputerInstanceID: instanceID, EnvironmentID: p.environmentID, ComputerID: p.computerID})
+	writeKey, err := q.GetInstanceComputerWriteKey(ctx, db.GetInstanceComputerWriteKeyParams{ComputerInstanceID: instanceID, EnvironmentID: p.environmentID, ComputerID: p.computerID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SourceMaterial{}, nil, keyUnavailable("computer write key is absent")
 	}
 	if err != nil {
 		return SourceMaterial{}, nil, fmt.Errorf("read computer write key: %w", err)
 	}
-	n, err := q.PinRuntimeComputerKey(ctx, db.PinRuntimeComputerKeyParams{KeyID: writeKey.ID, ComputerInstanceID: instanceID, EnvironmentID: p.environmentID, ComputerID: p.computerID})
+	n, err := q.PinInstanceComputerKey(ctx, db.PinInstanceComputerKeyParams{KeyID: writeKey.ID, ComputerInstanceID: instanceID, EnvironmentID: p.environmentID, ComputerID: p.computerID})
 	if err != nil {
 		return SourceMaterial{}, nil, fmt.Errorf("pin computer write key: %w", err)
 	}

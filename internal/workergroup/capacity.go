@@ -78,10 +78,10 @@ func ReconcilePrimaryPools(ctx context.Context, txb db.TxBeginner, groupID uuid.
 // ListHosts returns the worker hosts that match filter.
 func ListHosts(ctx context.Context, q db.Querier, filter HostFilter) (ListWorkerHostsResponse, error) {
 	params := db.ListCapacityWorkerHostsParams{
-		ResourceIds:           append([]string{}, filter.ResourceIDs...),
-		Statuses:              make([]string, 0, len(filter.Statuses)),
-		HasUnreclaimedRuntime: filter.HasUnreclaimedInstance,
-		RowLimit:              filter.Limit,
+		ResourceIds:            append([]string{}, filter.ResourceIDs...),
+		Statuses:               make([]string, 0, len(filter.Statuses)),
+		HasUnreclaimedInstance: filter.HasUnreclaimedInstance,
+		RowLimit:               filter.Limit,
 	}
 	if filter.GroupID != uuid.Nil() {
 		params.WorkerGroupID = pgvalue.UUID(filter.GroupID)

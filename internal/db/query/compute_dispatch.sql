@@ -58,7 +58,7 @@ WITH target AS (
      WHERE worker_host_secrets.worker_host_id = target.id
        AND worker_host_secrets.revoked_at IS NULL
     RETURNING worker_host_secrets.id
-), lost_runtimes AS (
+), lost_instances AS (
     UPDATE computer_instances
        SET observed_state = 'lost', observed_version = observed_version + 1,
            observed_at = now(), terminal_at = now(),
@@ -74,7 +74,7 @@ WITH target AS (
 SELECT target.*
   FROM target
  WHERE (SELECT count(*) FROM revoked_host_secrets) >= 0
-   AND (SELECT count(*) FROM lost_runtimes) >= 0
+   AND (SELECT count(*) FROM lost_instances) >= 0
 UNION ALL
 SELECT worker_hosts.*
   FROM worker_hosts
@@ -104,7 +104,7 @@ SELECT worker_hosts.*,
            AND worker_hosts.observed_at >= transaction_timestamp()
                - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
            AND worker_hosts.vm_paused_reason IS NULL
-       ), false)::boolean AS runtime_ready,
+       ), false)::boolean AS instance_ready,
        COALESCE((
            worker_hosts.status = 'active'
            AND worker_groups.status = 'active'

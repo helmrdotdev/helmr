@@ -29,7 +29,7 @@ assert value['attempt'] == 1
 runtime = value['runtime_id']
 assert str(uuid.UUID(runtime)) == runtime
 state = profile.WORKER_DATA / 'vms/guest' / runtime
-assert (state / 'owner').read_text() == f'runtime\n{runtime}\n'
+assert (state / 'owner').read_text() == f'instance\n{runtime}\n'
 manifest = json.loads((state / 'network.json').read_text())
 assert manifest['owner_id'] == runtime and manifest['namespace_name'] == runtime and manifest['installed']
 policy = json.loads(subprocess.check_output(['ip', 'netns', 'exec', runtime, 'nft', '-j', 'list', 'table',

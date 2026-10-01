@@ -35,7 +35,7 @@ func TestDecideExecutionLeaseLossUsesExactPhysicalReason(t *testing.T) {
 			row.InstanceObservedState = "closed"
 			row.ReclaimedAt = timestamp(now)
 		}, reason: "computer_instance_closed"},
-		{name: "instance failed", mutate: func(row *db.GetRunExecutionLeaseLossAuthorityRow) { row.InstanceFailedAt = timestamp(now) }, reason: "runtime_failed"},
+		{name: "instance failed", mutate: func(row *db.GetRunExecutionLeaseLossAuthorityRow) { row.InstanceFailedAt = timestamp(now) }, reason: "instance_failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			row := base

@@ -36,8 +36,8 @@ func (c *Connector) validateMaterializeRequest(request vm.MaterializeRequest) er
 			return err
 		}
 	}
-	if request.OwnerKind != vm.OwnerRuntime {
-		return errors.New("the Firecracker materialize owner must be runtime")
+	if request.OwnerKind != vm.OwnerInstance {
+		return errors.New("the Firecracker materialize owner must be an Instance")
 	}
 	if err := request.Binding.Validate(vm.Owner{Kind: request.OwnerKind, ID: request.ID}); err != nil {
 		return fmt.Errorf("the Firecracker workload binding: %w", err)

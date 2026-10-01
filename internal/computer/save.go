@@ -224,7 +224,7 @@ func (s unpublishedSave) objects(ctx context.Context) (objectScope, error) {
 	for _, k := range keys {
 		allowed[pgvalue.UUIDString(k.ID)] = true
 	}
-	write, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{ComputerInstanceID: i.ID, EnvironmentID: i.EnvironmentID, ComputerID: i.ComputerID})
+	write, err := q.GetInstanceComputerWriteKey(ctx, db.GetInstanceComputerWriteKeyParams{ComputerInstanceID: i.ID, EnvironmentID: i.EnvironmentID, ComputerID: i.ComputerID})
 	if err != nil {
 		return objectScope{}, err
 	}
