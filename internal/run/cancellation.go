@@ -527,6 +527,12 @@ func (g OwnedFinalization) failCurrentPreparation(ctx context.Context, failure t
 	return resolveChildResult(ctx, g.tx, parent, wait, result)
 }
 
+// Cancel cancels the addressed Run in its own transaction. An Actor Run's
+// cancellation locks the Run's owned graph, re-locks its Session and acquires
+// the idempotency claim last; a committed rejection is returned with its
+// result as a CancellationRejectionError. A Task Run's cancellation locks its
+// lineage's Computers, Sessions and Runs in order and cancels its owned
+// descendants, resolving a parent-owned boundary's wait.
 func (c *Canceler) Cancel(
 	ctx context.Context,
 	request CancellationRequest,
@@ -536,22 +542,35 @@ func (c *Canceler) Cancel(
 		request.RunID == uuid.Nil() {
 		return CancellationResult{}, errors.New("run cancellation scope and ID are required")
 	}
-	tx, err := c.db.Begin(ctx)
+	var result CancellationResult
+	var rejection string
+	err := db.RunTx(ctx, c.db, func(tx pgx.Tx) error {
+		var err error
+		result, rejection, err = cancelInTx(ctx, tx, request)
+		return err
+	})
 	if err != nil {
-		return CancellationResult{}, fmt.Errorf("begin run cancellation: %w", err)
+		return CancellationResult{}, err
 	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
+	if rejection != "" {
+		return result, &CancellationRejectionError{Code: rejection}
+	}
+	return result, nil
+}
 
+// cancelInTx is Cancel's transaction. An accepted Actor cancellation that the
+// Session rejects commits and reports the rejection code.
+func cancelInTx(ctx context.Context, tx pgx.Tx, request CancellationRequest) (CancellationResult, string, error) {
 	targetID, err := findCancellationTarget(ctx, tx, request)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return CancellationResult{}, ErrCancellationNotFound
+		return CancellationResult{}, "", ErrCancellationNotFound
 	}
 	if err != nil {
-		return CancellationResult{}, cancellationAuthority("resolve target run", err)
+		return CancellationResult{}, "", cancellationAuthority("resolve target run", err)
 	}
 	targetRun, err := db.New(tx).GetRun(ctx, db.GetRunParams{EnvironmentID: pgvalue.UUID(request.EnvironmentID), ID: pgvalue.UUID(targetID)})
 	if err != nil {
-		return CancellationResult{}, err
+		return CancellationResult{}, "", err
 	}
 	if targetRun.SessionID.Valid {
 		// Acquire the owned graph before Session admission/claim mutation. A
@@ -561,72 +580,62 @@ func (c *Canceler) Cancel(
 			EnvironmentID: request.EnvironmentID, RunID: targetID,
 		})
 		if err != nil {
-			return CancellationResult{}, err
+			return CancellationResult{}, "", err
 		}
 		receipt, err := acceptActorRunCancellation(ctx, tx, request, targetRun, graph)
 		if err != nil {
-			return CancellationResult{}, err
+			return CancellationResult{}, "", err
 		}
-		if err = tx.Commit(ctx); err != nil {
-			return CancellationResult{}, err
-		}
-		result := CancellationResult{RunID: targetID, Actor: &receipt, Changed: receipt.Status == "accepted"}
-		if receipt.Code != "" {
-			return result, &CancellationRejectionError{Code: receipt.Code}
-		}
-		return result, nil
+		return CancellationResult{RunID: targetID, Actor: &receipt, Changed: receipt.Status == "accepted"}, receipt.Code, nil
 	}
 	lineage, err := cancellationLineage(ctx, tx, targetID)
 	if err != nil {
-		return CancellationResult{}, err
+		return CancellationResult{}, "", err
 	}
 	descendants, err := discoverOwnedCancellationRuns(ctx, tx, request, targetID)
 	if err != nil {
-		return CancellationResult{}, err
+		return CancellationResult{}, "", err
 	}
 	lockOrder := append(slices.Clone(lineage), descendants[1:]...)
 	if len(lockOrder) > maxCancellationGraphSize {
-		return CancellationResult{}, cancellationAuthority(
+		return CancellationResult{}, "", cancellationAuthority(
 			"run cancellation graph exceeds the transaction bound",
 			nil,
 		)
 	}
 	if err := lockCancellationComputers(ctx, tx, lockOrder, nil); err != nil {
-		return CancellationResult{}, err
+		return CancellationResult{}, "", err
 	}
 	slices.SortFunc(lockOrder, func(a, b uuid.UUID) int { return slices.Compare(a[:], b[:]) })
 	if err := lockCancellationActors(ctx, tx, request, lockOrder); err != nil {
-		return CancellationResult{}, err
+		return CancellationResult{}, "", err
 	}
 	locked := make(map[uuid.UUID]cancellationRun, len(lockOrder))
 	for _, id := range lockOrder {
 		run, err := lockCancellationRun(ctx, tx, request, id)
 		if err != nil {
-			return CancellationResult{}, cancellationAuthority("lock run graph", err)
+			return CancellationResult{}, "", cancellationAuthority("lock run graph", err)
 		}
 		locked[id] = run
 	}
 	target, ok := locked[targetID]
 	if !ok {
-		return CancellationResult{}, cancellationAuthority("target run was not locked", nil)
+		return CancellationResult{}, "", cancellationAuthority("target run was not locked", nil)
 	}
 	result := CancellationResult{RunID: target.id}
 	if runStatusTerminal(target.status) {
 		if target.status != db.RunStatusCancelled {
-			return CancellationResult{}, ErrCancellationConflict
+			return CancellationResult{}, "", ErrCancellationConflict
 		}
-		if err := tx.Commit(ctx); err != nil {
-			return CancellationResult{}, fmt.Errorf("commit run cancellation replay: %w", err)
-		}
-		return result, nil
+		return result, "", nil
 	}
 
 	reloaded, err := discoverOwnedCancellationRuns(ctx, tx, request, targetID)
 	if err != nil {
-		return CancellationResult{}, err
+		return CancellationResult{}, "", err
 	}
 	if !slices.Equal(descendants, reloaded) {
-		return CancellationResult{}, cancellationAuthority(
+		return CancellationResult{}, "", cancellationAuthority(
 			"run cancellation graph changed during lock acquisition",
 			nil,
 		)
@@ -636,7 +645,7 @@ func (c *Canceler) Cancel(
 	for depth, id := range descendants {
 		run, found := locked[id]
 		if !found {
-			return CancellationResult{}, cancellationAuthority(
+			return CancellationResult{}, "", cancellationAuthority(
 				"parent-owned run was not locked",
 				nil,
 			)
@@ -647,7 +656,7 @@ func (c *Canceler) Cancel(
 	}
 	waitsByChild, err := lockCancellationResources(ctx, tx, lockOrder, runs)
 	if err != nil {
-		return CancellationResult{}, err
+		return CancellationResult{}, "", err
 	}
 	var boundaryParent cancellationRun
 	var boundaryWait cancellationWait
@@ -659,20 +668,20 @@ func (c *Canceler) Cancel(
 			var found bool
 			boundaryParent, found = locked[parentID]
 			if !found {
-				return CancellationResult{}, cancellationAuthority(
+				return CancellationResult{}, "", cancellationAuthority(
 					"parent-owned run parent was not locked",
 					nil,
 				)
 			}
 			boundaryWait, found = waitsByChild[target.id]
 			if !found {
-				return CancellationResult{}, cancellationAuthority(
+				return CancellationResult{}, "", cancellationAuthority(
 					"parent-owned run wait was not locked",
 					nil,
 				)
 			}
 			if err := validateCancellationBoundary(boundaryParent, target, boundaryWait); err != nil {
-				return CancellationResult{}, err
+				return CancellationResult{}, "", err
 			}
 			resolveBoundaryParent = true
 		}
@@ -685,7 +694,7 @@ func (c *Canceler) Cancel(
 	})
 	for _, run := range runs {
 		if err := cancelLockedRun(ctx, tx, run); err != nil {
-			return CancellationResult{}, err
+			return CancellationResult{}, "", err
 		}
 		if resolveBoundaryParent && run.id == target.id {
 			if err := resolveCancelledChildWait(
@@ -695,16 +704,13 @@ func (c *Canceler) Cancel(
 				run,
 				boundaryWait,
 			); err != nil {
-				return CancellationResult{}, err
+				return CancellationResult{}, "", err
 			}
 		}
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return CancellationResult{}, fmt.Errorf("commit run cancellation: %w", err)
-	}
 	result.Changed = true
 	result.CancelledRuns = len(runs)
-	return result, nil
+	return result, "", nil
 }
 
 func findCancellationTarget(

@@ -36,7 +36,8 @@ func TestRunTurnSentinelBoundaries(t *testing.T) {
 		{"unsettled", run.ErrTurnUnsettled, "turn_unsettled", "turn_unsettled", false, false, false},
 		{"wait cursor", run.ErrWaitCursor, "", "", true, true, false},
 		{"Session input authority", session.ErrAuthority, "", "", false, true, false},
-		{"stale lease", errStaleRunLeaseClaim, "", "", true, true, true},
+		{"stale lease", errStaleRunLeaseClaim, "", "", false, true, true},
+		{"stale run lease", run.ErrStale, "", "", true, false, false},
 		{"unrelated", unrelated, "", "", false, false, false},
 	} {
 		t.Run(test.boundary, func(t *testing.T) {
@@ -48,7 +49,7 @@ func TestRunTurnSentinelBoundaries(t *testing.T) {
 				if test.message != "" && failure.Message != test.message {
 					t.Fatalf("actor output failure(%v) message = %q, want %q", err, failure.Message, test.message)
 				}
-				if got := staleTimerWait(err); got != test.staleTimer {
+				if got := errorStatus(runError(err, runTimerWaitOperation)) == http.StatusConflict; got != test.staleTimer {
 					t.Fatalf("timer wait stale(%v) = %v", err, got)
 				}
 				if got := staleActorInputWait(err); got != test.staleInput {

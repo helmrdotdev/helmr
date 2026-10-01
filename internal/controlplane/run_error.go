@@ -29,6 +29,11 @@ const (
 	runWaitResumeOperation
 	runTaskStartOperation
 	runChildInvokeOperation
+	runTimerWaitOperation
+	runWaitPollOperation
+	runListOperation
+	runGetOperation
+	runCancelOperation
 )
 
 // claims reports whether the operation compares the worker's credential
@@ -36,7 +41,8 @@ const (
 // statements; public operations have no worker claims.
 func (o runOperation) claims() bool {
 	switch o {
-	case runLeaseDiscoveryOperation, runLogAppendOperation, runStructuredLogAppendOperation, runTaskStartOperation:
+	case runLeaseDiscoveryOperation, runLogAppendOperation, runStructuredLogAppendOperation, runWaitPollOperation,
+		runTaskStartOperation, runListOperation, runGetOperation, runCancelOperation:
 		return false
 	default:
 		return true
@@ -54,6 +60,7 @@ var runStale = map[runOperation]string{
 	runStructuredLogAppendOperation: "worker run lease is stale or the structured log sequence contains different content",
 	runMetadataOperation:            "worker run lease fence is stale",
 	runWaitResumeOperation:          "run wait resume acknowledgement is stale",
+	runTimerWaitOperation:           "worker timer wait receipt is stale",
 }
 
 // runLogDiffers is the conflict each log append reports for a sequence that
@@ -77,6 +84,8 @@ var runFailed = map[runOperation]struct{ public, log string }{
 	runStructuredLogAppendOperation: {"append structured run log", "append structured Run log failed"},
 	runMetadataOperation:            {"update run metadata", "update Run metadata failed"},
 	runWaitResumeOperation:          {"acknowledge run wait resume", "acknowledge Run wait resume failed"},
+	runTimerWaitOperation:           {"register worker timer wait", "register worker timer Wait failed"},
+	runWaitPollOperation:            {"load worker run wait", "load worker Run wait failed"},
 }
 
 // runStalePointLog is the warning an operation logs with the failure point
@@ -131,8 +140,30 @@ func runError(err error, operation runOperation) error {
 		default:
 			return apiError{kind: errUnprocessable, err: codedError{code: "run_metadata_rejected", message: err.Error()}}
 		}
+	case runTimerWaitOperation:
+		if errors.Is(err, run.ErrStale) || errors.Is(err, run.ErrWaitCursor) || errors.Is(err, run.ErrTurnStopped) || errors.Is(err, run.ErrTurnScope) {
+			return conflict(errors.New(runStale[operation]))
+		}
+	case runWaitPollOperation:
+		switch {
+		case errors.Is(err, run.ErrWaitNotFound):
+			return conflict(errors.New("worker run wait is stale"))
+		case errors.Is(err, run.ErrWaitFenceStale):
+			return conflict(errors.New("worker run wait fence is stale"))
+		case errors.Is(err, run.ErrWaitTurnRevoked):
+			return conflict(errors.New("turn wait authority was revoked"))
+		}
 	case runTaskStartOperation:
 		return taskStartError(err)
+	case runListOperation, runGetOperation:
+		if operation == runGetOperation && errors.Is(err, run.ErrNotFound) {
+			return notFound(codedError{code: "run_not_found", message: "run not found"})
+		}
+		return unavailable(codedError{
+			code: "run_authority_unavailable", message: "run authority is unavailable", retryable: true,
+		})
+	case runCancelOperation:
+		return cancelError(err)
 	case runChildInvokeOperation:
 		switch {
 		case errors.As(err, &expired):
@@ -155,6 +186,31 @@ func runError(err error, operation runOperation) error {
 		}
 	}
 	return errors.New(runFailed[operation].public)
+}
+
+func cancelError(err error) error {
+	var rejection *run.CancellationRejectionError
+	var expired idempotency.ExpiredError
+	var collision idempotency.ConflictError
+	switch {
+	case errors.Is(err, run.ErrCancellationNotFound):
+		return notFound(codedError{code: "run_not_found", message: "run not found"})
+	case errors.Is(err, run.ErrCancellationConflict):
+		return conflict(codedError{
+			code: "run_lifecycle_conflict", message: "run already has another terminal outcome",
+		})
+	case errors.As(err, &expired):
+		return gone(expired)
+	case errors.As(err, &rejection):
+		return conflict(codedError{code: rejection.Code, message: rejection.Code})
+	case errors.As(err, &collision):
+		return conflict(codedError{code: "idempotency_conflict", message: "idempotency key conflicts with an earlier operation"})
+	default:
+		return unavailable(codedError{
+			code: "run_cancellation_unavailable", message: "run cancellation is unavailable",
+			retryable: true,
+		})
+	}
 }
 
 func taskStartError(err error) error {

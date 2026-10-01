@@ -5,10 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
@@ -280,5 +285,43 @@ func TestCreateKeylessDetachedChildTaskRunFromParentDeployment(t *testing.T) {
 				t.Fatalf("attempts = %d", attempts)
 			}
 		})
+	}
+}
+
+// A Task start through NewServer admits the Run with 201 and replays the same
+// Run with 201 for the same idempotency key.
+func TestTaskStartHTTPAdmitsAndReplays(t *testing.T) {
+	fixture := newActorStartPostgresFixture(t, 1)
+	keys, err := auth.NewKeys(completeServerConfig(t).AuthKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httpPostgresFixture{pool: fixture.pool, queries: db.New(fixture.pool), handler: newPostgresServer(t, fixture.pool, func(cfg *ServerConfig) {
+		cfg.PublicURL = &url.URL{Scheme: "https", Host: "console.example.test"}
+	}), keys: keys}
+	userID := server.user(t, "Owner")
+	server.member(t, fixture.orgID, userID, db.OrgMemberRoleOwner)
+	token := server.session(t, userID, fixture.orgID)
+	path := fmt.Sprintf("/api/projects/%s/environments/%s/tasks/resize-image/start", fixture.projectID, fixture.environmentID)
+	body := `{"payload":{"imageId":"http"},"computer":{"id":"` + fixture.computerIDs[0].String() + `"},"idempotency_key":"http-start"}`
+	var runIDs []string
+	for range 2 {
+		response := server.request(t, http.MethodPost, path, token, body)
+		if response.Code != http.StatusCreated {
+			t.Fatalf("start = %d %s", response.Code, response.Body.String())
+		}
+		var started api.StartTaskResponse
+		if err := json.Unmarshal(response.Body.Bytes(), &started); err != nil {
+			t.Fatal(err)
+		}
+		runIDs = append(runIDs, started.RunID)
+	}
+	if runIDs[0] == "" || runIDs[0] != runIDs[1] {
+		t.Fatalf("started Runs = %v", runIDs)
+	}
+	missing := server.request(t, http.MethodPost, fmt.Sprintf("/api/projects/%s/environments/%s/tasks/missing-task/start", fixture.projectID, fixture.environmentID), token,
+		`{"payload":{},"computer":{"id":"`+fixture.computerIDs[0].String()+`"}}`)
+	if missing.Code != http.StatusNotFound || !strings.Contains(missing.Body.String(), `"code":"task_not_deployed"`) {
+		t.Fatalf("undeployed start = %d %s", missing.Code, missing.Body.String())
 	}
 }
