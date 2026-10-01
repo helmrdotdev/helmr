@@ -56,7 +56,7 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		"secretbinding":     {"api", "db", "definition", "deployment", "disk"},
 		"session":           {"api", "command", "controlplane", "deployment", "dispatch", "identity", "org", "scheduler", "telemetry", "token", "workerapi"},
 		"telemetry":         {"clickhouse"},
-		"token":             {"api", "command", "controlplane", "deployment", "dispatch", "identity", "org", "scheduler", "telemetry", "workerapi"},
+		"token":             {"api", "command", "controlplane", "deployment", "dispatch", "identity", "org", "scheduler", "session", "telemetry", "workerapi"},
 		"workerapi":         {"controlplane", "db", "deployment", "firecracker", "identity", "org"},
 		"workerclient":      {"client"},
 		// Worker supply sits beneath the Computer owner, which run composes

@@ -162,16 +162,14 @@ func (s *Server) writeTokenCreated(w http.ResponseWriter, created token.Created,
 	writeJSON(w, status, response)
 }
 
-func normalizeTokenTimeout(raw *int64) (*int64, error) {
+func normalizeTokenTimeout(raw *int64) (int64, error) {
 	if raw == nil {
-		value := defaultTokenTimeout.Milliseconds()
-		return &value, nil
+		return defaultTokenTimeout.Milliseconds(), nil
 	}
 	if *raw < 1 || *raw > maxTokenTimeout.Milliseconds() {
-		return nil, fmt.Errorf("timeout_ms must be between 1 and %d", maxTokenTimeout.Milliseconds())
+		return 0, fmt.Errorf("timeout_ms must be between 1 and %d", maxTokenTimeout.Milliseconds())
 	}
-	value := *raw
-	return &value, nil
+	return *raw, nil
 }
 
 func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {

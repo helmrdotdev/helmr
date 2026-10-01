@@ -37,7 +37,7 @@ type CreateRequest struct {
 // IdempotencyKey is required.
 type RunCreateRequest struct {
 	Fence          run.ExecutionFence
-	TimeoutMS      *int64
+	TimeoutMS      int64
 	Metadata       json.RawMessage
 	Tags           []string
 	IdempotencyKey string
@@ -128,7 +128,7 @@ func (t *Tokens) CreateForRun(ctx context.Context, request RunCreateRequest) (cr
 			pgvalue.MustUUIDValue(located.RunID()),
 			request.IdempotencyKey,
 			idempotency.TokenCreateFingerprint{
-				TimeoutMS: request.TimeoutMS,
+				TimeoutMS: &request.TimeoutMS,
 				Metadata:  request.Metadata,
 				Tags:      request.Tags,
 			},
@@ -160,7 +160,7 @@ func (t *Tokens) CreateForRun(ctx context.Context, request RunCreateRequest) (cr
 		var receipt json.RawMessage
 		created, receipt, err = t.create(ctx, q, createInput{
 			scope:     Scope{OrgID: located.OrgID(), ProjectID: located.ProjectID(), EnvironmentID: located.EnvironmentID()},
-			timeoutMS: *request.TimeoutMS, metadata: request.Metadata, tags: request.Tags,
+			timeoutMS: request.TimeoutMS, metadata: request.Metadata, tags: request.Tags,
 			createdBy: json.RawMessage(`{"kind":"runtime"}`),
 		})
 		if err != nil {

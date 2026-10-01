@@ -70,6 +70,8 @@ type Registrar struct {
 	txb db.TxBeginner
 }
 
+// NewRegistrar returns a Registrar whose registrations each run in one
+// transaction begun from txb.
 func NewRegistrar(txb db.TxBeginner) (*Registrar, error) {
 	if txb == nil {
 		return nil, errors.New("token wait registration database is required")

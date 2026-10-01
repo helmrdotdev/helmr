@@ -87,7 +87,6 @@ type Server struct {
 	setupToken            string
 	authKeys              auth.Keys
 	publicURL             *url.URL
-	apiOrigin             *url.URL
 	authProvider          AuthProvider
 	mailer                email.Sender
 	magicLinkDelivery     *MagicLinkDelivery
@@ -259,7 +258,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		setupToken:            cfg.SetupToken,
 		authKeys:              authKeys,
 		publicURL:             cfg.PublicURL,
-		apiOrigin:             apiOrigin,
 		authProvider:          cfg.AuthProvider,
 		mailer:                mailer,
 		magicLinkDelivery:     cfg.MagicLinkDelivery,

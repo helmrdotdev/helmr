@@ -213,8 +213,24 @@ func TestTokenExternalCreateRoutes(t *testing.T) {
 	if sessionReplayed.ID != sessionCreated.ID || sessionReplayed.PublicAccessToken != sessionCreated.PublicAccessToken {
 		t.Fatalf("session replay = %+v, want %+v", sessionReplayed, sessionCreated)
 	}
-	if response := f.serve(t, http.MethodPost, "/api/projects/"+uuid.NewV7().String()+"/environments/"+f.run.EnvironmentID.String()+"/tokens", session, `{}`); response.Code < 400 || response.Code >= 500 {
-		t.Fatalf("foreign project create status = %d: %s", response.Code, response.Body.String())
+	assertTokenHTTPError(t, f.serve(t, http.MethodPost, "/api/projects/"+uuid.NewV7().String()+"/environments/"+f.run.EnvironmentID.String()+"/tokens", session, `{}`),
+		http.StatusBadRequest, "bad_request", "project_id must reference an active project")
+}
+
+// A creation with no API origin to serve its callback URL fails internally
+// and creates nothing.
+func TestTokenCreateWithoutAPIOriginCreatesNothing(t *testing.T) {
+	fixture := runtest.New(t)
+	handler := newPostgresServer(t, fixture.Pool)
+	key := issueEnvironmentAPIKey(t, fixture.Pool, fixture.OrgID, fixture.ProjectID, fixture.EnvironmentID, auth.PermissionTokensCreate)
+	assertTokenHTTPError(t, serveAPIKey(handler, http.MethodPost, "/v1/tokens", key, `{"idempotency_key":"no-origin"}`),
+		http.StatusInternalServerError, "internal_error", "internal server error")
+	var tokens, credentials, claims int
+	if err := fixture.Pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM tokens), (SELECT count(*) FROM public_access_tokens), (SELECT count(*) FROM idempotency_claims)`).Scan(&tokens, &credentials, &claims); err != nil {
+		t.Fatal(err)
+	}
+	if tokens != 0 || credentials != 0 || claims != 0 {
+		t.Fatalf("failed creation left tokens=%d credentials=%d claims=%d", tokens, credentials, claims)
 	}
 }
 
@@ -385,6 +401,13 @@ func TestTokenManagementCompleteAndCancelRoutes(t *testing.T) {
 	if completedBySession.Status != api.TokenStatusCompleted {
 		t.Fatalf("session completion = %+v", completedBySession)
 	}
+	assertTokenHTTPError(t, f.serve(t, http.MethodPost, f.environmentPath()+"/tokens/"+pending.ID+"/cancel", session, `{}`),
+		http.StatusConflict, "token_completed", "token is already completed")
+	sessionCancelled := f.create(t, `{}`)
+	cancelledBySession := decodeTokenStatus(t, f.serve(t, http.MethodPost, f.environmentPath()+"/tokens/"+sessionCancelled.ID+"/cancel", session, `{"idempotency_key":"session-cancel"}`), http.StatusOK)
+	if cancelledBySession.ID != sessionCancelled.ID || cancelledBySession.Status != api.TokenStatusCancelled {
+		t.Fatalf("session cancellation = %+v", cancelledBySession)
+	}
 
 	failing := f.create(t, `{}`)
 	f.failControlOutbox(t)
@@ -438,7 +461,11 @@ func TestTokenPublicCompletionRoutes(t *testing.T) {
 		token := f.create(t, `{}`)
 		other := f.create(t, `{}`)
 		scopeDenied(t, f.bearerComplete(t, token.ID, "", `{"result":true}`))
-		scopeDenied(t, f.bearerComplete(t, token.ID, "hlmr_pub_wrong", `{"result":true}`))
+		denied := f.bearerComplete(t, token.ID, "hlmr_pub_wrong", `{"result":true}`)
+		scopeDenied(t, denied)
+		if denied.Header().Get("Access-Control-Allow-Origin") != "*" || denied.Header().Get("Vary") != "Origin" {
+			t.Fatalf("denied bearer headers = %v", denied.Header())
+		}
 		scopeDenied(t, f.bearerComplete(t, token.ID, other.PublicAccessToken, `{"result":true}`))
 		scopeDenied(t, f.bearerComplete(t, "not-a-token", token.PublicAccessToken, `{"result":true}`))
 		scopeDenied(t, f.bearerComplete(t, token.ID, token.PublicAccessToken, `{"result":{"a":1,"a":2}}`))
