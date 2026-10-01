@@ -401,14 +401,14 @@ func TestValidateBuildPlanSchedule(t *testing.T) {
 			change: func(manifest *ScheduleManifest) {
 				manifest.Computer.SandboxDeclaredID = ""
 			},
-			errMsg: "computer declared ID",
+			errMsg: "sandbox declared ID",
 		},
 		{
 			name: "computer sandbox invalid",
 			change: func(manifest *ScheduleManifest) {
 				manifest.Computer.SandboxDeclaredID = "invalid sandbox"
 			},
-			errMsg: "computer declared ID",
+			errMsg: "sandbox declared ID",
 		},
 		{
 			name: "computer secrets nil",
