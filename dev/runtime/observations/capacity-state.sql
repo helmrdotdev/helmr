@@ -1,3 +1,4 @@
+-- Mirrors Product ListWorkerCapacityBins in internal/db/query/worker_groups.sql.
 , live_workers AS (
     SELECT worker_groups.id AS worker_group_id,
            worker_groups.primary_pool_id,

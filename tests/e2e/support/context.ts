@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
-import { mkdir, writeFile } from "node:fs/promises"
+import { mkdir } from "node:fs/promises"
+import { writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { HelmrClient, type Run, type ComputerRef } from "@helmr/sdk"
@@ -78,7 +79,7 @@ export async function verify(
     client: HelmrClient
     marker: string
     objects: Record<
-      "run_ids" | "computer_ids" | "session_ids" | "token_ids" | "deployment_ids" | "schedule_ids",
+      "run_ids" | "computer_ids" | "session_ids" | "token_ids" | "secret_ids" | "deployment_ids" | "schedule_ids",
       string[]
     >
     cleanup: (action: () => Promise<unknown>) => void
@@ -105,6 +106,7 @@ export async function verify(
     computer_ids: [] as string[],
     session_ids: [] as string[],
     token_ids: [] as string[],
+    secret_ids: [] as string[],
     deployment_ids: [] as string[],
     schedule_ids: [] as string[],
   }
@@ -116,6 +118,23 @@ export async function verify(
     passed: false,
     objects,
   }
+  // The invoking process owns recovery after interruption. Persist known IDs
+  // synchronously before exiting so it can finish cleanup without racing a body
+  // that may still be blocked in an API request.
+  const writeEvidence = () => writeFileSync(
+    join(output, "result.json"), JSON.stringify(evidence, null, 2) + "\n", { mode: 0o600 },
+  )
+  const interrupted = (signal: "SIGINT" | "SIGTERM", status: number) => {
+    evidence.passed = false
+    evidence.failure = `Interrupted by ${signal}`
+    evidence.cleanup = { status: "interrupted" }
+    evidence.finishedAt = new Date().toISOString()
+    try { writeEvidence() } finally { process.exit(status) }
+  }
+  const onInterrupt = () => interrupted("SIGINT", 130)
+  const onTerminate = () => interrupted("SIGTERM", 143)
+  process.once("SIGINT", onInterrupt)
+  process.once("SIGTERM", onTerminate)
   let failure: unknown
   try {
     if (process.env.HELMR_EXPECTED_BUNDLE_DIGEST) {
@@ -186,9 +205,10 @@ export async function verify(
     : { status: "requests-accepted" }
   evidence.passed = failure === undefined
   evidence.finishedAt = new Date().toISOString()
-  await writeFile(join(output, "result.json"), JSON.stringify(evidence, null, 2) + "\n", {
-    mode: 0o600,
-  })
+  try { writeEvidence() } finally {
+    process.removeListener("SIGINT", onInterrupt)
+    process.removeListener("SIGTERM", onTerminate)
+  }
   if (failure) throw failure
   console.log(`${name}: passed (${output}/result.json)`)
 }

@@ -86,7 +86,12 @@ permissions; do not broaden an existing key merely to run every case.
 The evidence directory must be new and its parent must exist. Most focused cases
 write `result.json`; Task, persistence, Actor and network retain their detailed
 `task.json`, `persistence.json`, `actor.json` and `network.json` receipts. Evidence
-contains exact created object IDs, assertions and cleanup outcomes. Accepted delete
+contains exact object IDs, assertions and cleanup outcomes. Deployment IDs may
+identify the current deployment read by a case; they do not imply ownership.
+The shared `verify` driver writes a failed receipt synchronously on SIGINT or
+SIGTERM, including known Secret IDs, then exits without racing cleanup against
+the interrupted body. Its caller must retain that receipt and finish cleanup of
+owned resources before discarding the evidence. Accepted delete
 requests do not establish storage reclamation or environment retirement. Preserve
 failure evidence and diagnose the actual boundary before retrying.
 
