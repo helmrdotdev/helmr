@@ -46,7 +46,7 @@ func retainComputerDevice(retained *computerDeviceOwner, device vm.ComputerDevic
 		return errors.New("computer device ownership is not configured")
 	}
 	if retained.device != nil {
-		return errors.New("runtime already owns a computer device")
+		return errors.New("instance already owns a computer device")
 	}
 	excluded := make(chan struct{})
 	if err := device.BindConsumer(excluded); err != nil {

@@ -269,7 +269,7 @@ func (c *Connector) validateNetworkOwnerManifest(manifest networkOwnerManifest, 
 		return errors.New("network owner manifest authority is incomplete")
 	}
 	if owner.Kind == vm.OwnerInstance && manifest.Generation != 1 {
-		return errors.New("runtime network owner generation must be one")
+		return errors.New("instance network owner generation must be one")
 	}
 	if int(manifest.AllocationIndex) >= c.cfg.NetworkCapacity {
 		return errors.New("network owner allocation is outside configured capacity")
