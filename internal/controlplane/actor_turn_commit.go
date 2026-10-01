@@ -223,7 +223,7 @@ func staleActorTurnCommit(err error) error {
 		return err
 	}
 	if err == nil || errors.Is(err, pgx.ErrNoRows) || errors.Is(err, errStaleRunLeaseClaim) ||
-		errors.Is(err, errStaleRunFinalization) || errors.Is(err, errStaleActorCompletion) ||
+		errors.Is(err, errStaleActorCompletion) ||
 		errors.Is(err, run.ErrTurnStopped) || errors.Is(err, run.ErrTurnNotActive) || errors.Is(err, run.ErrTurnScope) {
 		return errStaleActorTurnCommit
 	}

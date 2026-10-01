@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -27,22 +27,10 @@ func (s *Server) workerEnterRunEntrypoint(w http.ResponseWriter, r *http.Request
 		writeError(w, badRequest(errors.New("entrypoint_kind must be task or actor and entrypoint_declared_id is required")))
 		return
 	}
-	if err := enterRunEntrypoint(
-		r.Context(),
-		s.tx,
-		workerFromContext(r.Context()),
-		pgvalue.UUID(leaseID),
-		request,
-	); err != nil {
-		if writeStaleWorkerClaims(w, err) {
-			return
-		}
-		if errors.Is(err, errStaleRunLeaseClaim) {
-			writeError(w, conflict(errors.New("run entrypoint acknowledgement is stale")))
-			return
-		}
-		s.log.Error("enter Run entrypoint failed", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("enter run entrypoint"))
+	worker := workerFromContext(r.Context())
+	fence := workerExecutionFence(worker, parsedRunLeaseFence{leaseID: leaseID}, request.Lease)
+	if err := run.EnterEntrypoint(r.Context(), s.tx, fence, request.EntrypointKind, request.EntrypointDeclaredID); err != nil {
+		s.writeRunError(w, err, runEntrypointOperation, worker, request.Lease)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

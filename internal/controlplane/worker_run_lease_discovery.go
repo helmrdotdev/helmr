@@ -1,11 +1,10 @@
 package controlplane
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -17,21 +16,14 @@ func (s *Server) workerDiscoverRunLeases(w http.ResponseWriter, r *http.Request)
 	}
 
 	worker := workerFromContext(r.Context())
-	response, err := discoverWorkerRunLeases(
-		r.Context(),
-		s.db,
-		worker.GroupID,
-		pgvalue.UUID(worker.HostID),
-		worker.Epoch,
-	)
+	work, err := run.DiscoverLeases(r.Context(), s.db, worker.GroupID, worker.HostID, worker.Epoch)
 	if err != nil {
-		s.log.Error("discover worker run leases failed",
-			"worker_host_id", worker.HostID.String(),
-			"worker_epoch", worker.Epoch,
-			"error", err,
-		)
-		writeError(w, errors.New("discover worker run leases"))
+		s.writeRunError(w, err, runLeaseDiscoveryOperation, worker, workerapi.RunLeaseFence{})
 		return
 	}
-	writeJSON(w, http.StatusOK, response)
+	items := make([]workerapi.RunLeaseWork, 0, len(work))
+	for _, lease := range work {
+		items = append(items, workerapi.RunLeaseWork{LeaseID: lease.LeaseID.String(), LeaseSequence: lease.LeaseSequence})
+	}
+	writeJSON(w, http.StatusOK, workerapi.RunLeaseDiscoveryResponse{Items: items})
 }

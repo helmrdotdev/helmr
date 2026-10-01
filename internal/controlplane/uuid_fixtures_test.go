@@ -1,14 +1,7 @@
 package controlplane
 
-import (
-	"uuid"
-
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
-)
+import "uuid"
 
 const controlplaneTestWorkerGroup = "01900000-0000-7000-8000-000000000701"
 
-var (
-	controlplaneTestWorkerGroupID   = uuid.MustParse(controlplaneTestWorkerGroup)
-	controlplaneTestWorkerGroupDBID = pgvalue.UUID(controlplaneTestWorkerGroupID)
-)
+var controlplaneTestWorkerGroupID = uuid.MustParse(controlplaneTestWorkerGroup)

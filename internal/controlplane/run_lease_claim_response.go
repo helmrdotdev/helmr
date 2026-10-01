@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -141,14 +142,16 @@ func projectRunLeaseClaimResponse(
 	}, nil
 }
 
-func projectRestoredRunLeaseClaim(a runLeaseClaimAuthority, key disk.FencingKey) (workerapi.RunLeaseClaimResponse, error) {
-	lease, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{run: a.run, attempt: a.attempt, runtime: a.runtime, runLease: a.runLease, computer: a.computer})
+func projectRestoredRunLeaseClaim(claim run.Claim, key disk.FencingKey) (workerapi.RunLeaseClaimResponse, error) {
+	wait, _ := claim.ResumeWait()
+	r, runtime := claim.Run(), claim.Instance()
+	lease, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{run: r, attempt: claim.Attempt(), runtime: runtime, runLease: claim.Lease(), computer: claim.Computer()})
 	if err != nil {
 		return workerapi.RunLeaseClaimResponse{}, err
 	}
-	capability, err := computer.WriteCapability(key, a.runtime)
+	capability, err := computer.WriteCapability(key, runtime)
 	if err != nil {
 		return workerapi.RunLeaseClaimResponse{}, err
 	}
-	return workerapi.RunLeaseClaimResponse{Lease: lease, Computer: workerapi.ComputerAttachment{WriteCapability: capability.Token, Target: workerapi.ComputerMountTarget{BaseComputerDiskVersionID: lease.BaseComputerDiskVersionID}}, ProgramResume: &workerapi.ProgramResume{CheckpointID: pgvalue.UUIDString(a.runtime.SourceCheckpointID), RunWaitID: pgvalue.UUIDString(a.resumeWait.ID), EntrypointKind: a.run.EntrypointKind}}, nil
+	return workerapi.RunLeaseClaimResponse{Lease: lease, Computer: workerapi.ComputerAttachment{WriteCapability: capability.Token, Target: workerapi.ComputerMountTarget{BaseComputerDiskVersionID: lease.BaseComputerDiskVersionID}}, ProgramResume: &workerapi.ProgramResume{CheckpointID: pgvalue.UUIDString(runtime.SourceCheckpointID), RunWaitID: pgvalue.UUIDString(wait.ID), EntrypointKind: r.EntrypointKind}}, nil
 }

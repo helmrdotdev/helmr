@@ -64,3 +64,18 @@ func TestWorkerDiscoverRunLeasesRejectsAuthorityFields(t *testing.T) {
 		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
 	}
 }
+
+type runLeaseDiscoveryStore struct {
+	db.Querier
+	rows   []db.DiscoverWorkerRunLeaseWorkRow
+	err    error
+	params db.DiscoverWorkerRunLeaseWorkParams
+}
+
+func (s *runLeaseDiscoveryStore) DiscoverWorkerRunLeaseWork(
+	_ context.Context,
+	params db.DiscoverWorkerRunLeaseWorkParams,
+) ([]db.DiscoverWorkerRunLeaseWorkRow, error) {
+	s.params = params
+	return s.rows, s.err
+}

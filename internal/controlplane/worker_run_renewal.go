@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -25,20 +26,14 @@ func (s *Server) workerRenewRunLease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
-	renewed, err := s.renewRunLease(
-		r.Context(), worker, pgvalue.UUID(parsed.leaseID), request.Lease, request.ExpectedExpiresAt,
-	)
-	if writeStaleWorkerClaims(w, err) {
-		return
-	}
-	if errors.Is(err, errStaleRunLeaseClaim) {
-		writeError(w, conflict(errors.New("worker run lease fence is stale")))
-		return
-	}
+	renewal, err := run.RenewLease(r.Context(), s.tx, workerExecutionFence(worker, parsed, request.Lease), request.ExpectedExpiresAt)
 	if err != nil {
-		s.log.Error("renew worker Run Lease failed", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("renew worker run lease"))
+		s.writeRunError(w, err, runLeaseRenewalOperation, worker, request.Lease)
 		return
 	}
-	writeJSON(w, http.StatusOK, renewed)
+	writeJSON(w, http.StatusOK, workerapi.RunLeaseRenewResponse{
+		Lease:                     request.Lease,
+		ExpiresAt:                 renewal.ExpiresAt.UTC(),
+		BaseComputerDiskVersionID: pgvalue.UUIDString(renewal.BaseComputerDiskVersionID),
+	})
 }

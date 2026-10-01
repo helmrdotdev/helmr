@@ -7,6 +7,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -21,77 +22,63 @@ func (s *Server) workerClaimRunLease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("lease_id must be a canonical UUIDv7 and lease_sequence must be positive")))
 		return
 	}
-	leaseID := pgvalue.UUID(leaseIDValue)
-
-	authority, envelopes, err := s.claimRunLease(
-		r.Context(),
-		workerFromContext(r.Context()),
-		leaseID,
-		request.LeaseSequence,
-	)
+	lease := workerapi.RunLeaseFence{ID: request.LeaseID, LeaseSequence: request.LeaseSequence}
+	worker := workerFromContext(r.Context())
+	claim, err := run.ClaimLease(r.Context(), s.tx, workerExecutionFence(worker, parsedRunLeaseFence{leaseID: leaseIDValue}, lease))
 	if err != nil {
-		if writeStaleWorkerClaims(w, err) {
-			return
-		}
-		if errors.Is(err, errStaleRunLeaseClaim) {
-			writeError(w, conflict(errors.New("run lease claim is stale")))
-			return
-		}
-		s.writeRunLeaseClaimFailure(w, authority, err)
+		s.writeRunError(w, err, runLeaseClaimOperation, worker, lease)
 		return
 	}
-	if authority.resumeWait != nil {
-		response, err := projectRestoredRunLeaseClaim(authority, s.computerFencingKey)
+	if _, restored := claim.ResumeWait(); restored {
+		response, err := projectRestoredRunLeaseClaim(claim, s.computerFencingKey)
 		if err != nil {
-			s.writeRunLeaseClaimFailure(w, authority, err)
+			s.writeRunLeaseClaimFailure(w, claim, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
 	responseAuthority := runLeaseClaimResponseAuthority{
-		actor:    authority.actor,
-		run:      authority.run,
-		attempt:  authority.attempt,
-		runtime:  authority.runtime,
-		runLease: authority.runLease,
-		computer: authority.computer,
+		actor:    claim.Session(),
+		run:      claim.Run(),
+		attempt:  claim.Attempt(),
+		runtime:  claim.Instance(),
+		runLease: claim.Lease(),
+		computer: claim.Computer(),
 	}
 	projection, err := loadRunLeaseClaimProjection(r.Context(), s.db, responseAuthority)
 	if err != nil {
-		s.writeRunLeaseClaimFailure(w, authority, err)
+		s.writeRunLeaseClaimFailure(w, claim, err)
 		return
 	}
 	response, err := projectRunLeaseClaimResponse(
 		r.Context(),
 		responseAuthority,
-		envelopes,
+		claim.DeliverySecrets(),
 		projection,
 		s.platformStore,
 		s.secretDelivery,
 		s.computerFencingKey,
 	)
 	if err != nil {
-		s.writeRunLeaseClaimFailure(w, authority, err)
+		s.writeRunLeaseClaimFailure(w, claim, err)
 		return
 	}
-	response.ProtectedEnv, err = workerProtectedEnv(r.Context(), s.db, authority.computer.EnvironmentID, authority.computer.ID)
+	response.ProtectedEnv, err = workerProtectedEnv(r.Context(), s.db, responseAuthority.computer.EnvironmentID, responseAuthority.computer.ID)
 	if err != nil {
-		s.writeRunLeaseClaimFailure(w, authority, err)
+		s.writeRunLeaseClaimFailure(w, claim, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (s *Server) writeRunLeaseClaimFailure(
-	w http.ResponseWriter,
-	authority runLeaseClaimAuthority,
-	err error,
-) {
+// writeRunLeaseClaimFailure writes the failure to project a committed claim,
+// which the worker may claim again.
+func (s *Server) writeRunLeaseClaimFailure(w http.ResponseWriter, claim run.Claim, err error) {
 	s.log.Error(
 		"serve worker Run Lease claim failed",
-		"run_id", pgvalue.UUIDString(authority.run.ID),
-		"run_lease_id", pgvalue.UUIDString(authority.runLease.ID),
+		"run_id", pgvalue.UUIDString(claim.Run().ID),
+		"run_lease_id", pgvalue.UUIDString(claim.Lease().ID),
 		"error", err,
 	)
 	writeError(w, errors.New("serve worker run lease claim"))

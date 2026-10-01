@@ -49,7 +49,7 @@ func TestPausedWorkerGroupKeepsStartedWorkerAuthority(t *testing.T) {
 		f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 		scope := f.receiveTurn(t, 1)
 		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET status='paused' WHERE id=$1`, f.worker.GroupID)
-		state, err := f.server.db.ReadWorkerSessionControl(t.Context(), db.ReadWorkerSessionControlParams{RunLeaseID: f.claim.runLease.ID, LeaseSequence: f.fence().LeaseSequence, WorkerGroupID: pgvalue.UUID(f.worker.GroupID), WorkerHostID: pgvalue.UUID(f.worker.HostID), WorkerEpoch: f.worker.Epoch, RunGeneration: scope.RunGeneration})
+		state, err := f.server.db.ReadWorkerSessionControl(t.Context(), db.ReadWorkerSessionControlParams{RunLeaseID: f.claim.Lease().ID, LeaseSequence: f.fence().LeaseSequence, WorkerGroupID: pgvalue.UUID(f.worker.GroupID), WorkerHostID: pgvalue.UUID(f.worker.HostID), WorkerEpoch: f.worker.Epoch, RunGeneration: scope.RunGeneration})
 		if err != nil || state.ActiveTurnID != pgvalue.UUID(scope.TurnID) {
 			t.Fatalf("Session control on paused Group: %+v %v", state, err)
 		}

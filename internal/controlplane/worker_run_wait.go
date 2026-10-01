@@ -287,21 +287,10 @@ func (s *Server) workerAcknowledgeRunWaitResume(w http.ResponseWriter, r *http.R
 		writeError(w, badRequest(err))
 		return
 	}
-	var wait db.RunWait
-	err = s.inTx(r.Context(), func(work *txWork) error {
-		var err error
-		wait, err = run.AcknowledgeWaitResume(r.Context(), work.tx, workerExecutionFence(workerFromContext(r.Context()), parsed, request.Lease), pgvalue.UUID(waitID), pgvalue.UUID(checkpointID))
-		return err
-	})
-	if writeStaleWorkerClaims(w, err) {
-		return
-	}
-	if isNoRows(err) {
-		writeError(w, conflict(errors.New("run wait resume acknowledgement is stale")))
-		return
-	}
+	worker := workerFromContext(r.Context())
+	wait, err := run.AcknowledgeWaitResume(r.Context(), s.tx, workerExecutionFence(worker, parsed, request.Lease), pgvalue.UUID(waitID), pgvalue.UUID(checkpointID))
 	if err != nil {
-		writeError(w, err)
+		s.writeRunError(w, err, runWaitResumeOperation, worker, request.Lease)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.RunWaitResumeAckResponse{RunID: pgvalue.UUIDString(wait.RunID), RunWaitID: request.RunWaitID, CheckpointID: request.CheckpointID})

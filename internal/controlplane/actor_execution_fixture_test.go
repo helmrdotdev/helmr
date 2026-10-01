@@ -30,7 +30,7 @@ type actorExecutionFixture struct {
 	server                               *Server
 	worker                               workergroup.HostPrincipal
 	computerID, rootID, sessionID, runID uuid.UUID
-	claim                                runLeaseClaimAuthority
+	claim                                run.Claim
 	leaseID                              uuid.UUID
 }
 
@@ -75,7 +75,7 @@ func actorExecutionOnFixture(t *testing.T, base runtest.Fixture, input json.RawM
 func (f *actorExecutionFixture) claimLease(t *testing.T) {
 	t.Helper()
 	var err error
-	f.claim, _, err = f.server.claimRunLease(t.Context(), f.worker, pgvalue.UUID(f.leaseID), 1)
+	f.claim, err = run.ClaimLease(t.Context(), f.Pool, f.executionFence(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,8 +87,24 @@ func (f *actorExecutionFixture) claimAndStart(t *testing.T) {
 }
 func (f *actorExecutionFixture) startClaim(t *testing.T) {
 	t.Helper()
-	f.workerCall(t, f.server.workerStart, workerapi.RunStartRequest{Lease: f.fence()}, nil)
-	f.workerCall(t, f.server.workerEnterRunEntrypoint, workerapi.RunEntrypointRequest{Lease: f.fence(), EntrypointKind: "actor", EntrypointDeclaredID: "test-actor"}, nil)
+	f.startLease(t, "actor", "test-actor")
+}
+
+// startLease starts the claimed lease and enters its entrypoint.
+func (f *actorExecutionFixture) startLease(t *testing.T, kind, declaredID string) {
+	t.Helper()
+	fence := f.executionFence(f.claim.Lease().LeaseSequence)
+	if err := run.StartLease(t.Context(), f.Pool, fence); err != nil {
+		t.Fatal(err)
+	}
+	if err := run.EnterEntrypoint(t.Context(), f.Pool, fence, kind, declaredID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// executionFence is the fixture worker's fence on its lease.
+func (f *actorExecutionFixture) executionFence(sequence int64) run.ExecutionFence {
+	return run.ExecutionFence{LeaseID: pgvalue.UUID(f.leaseID), LeaseSequence: sequence, WorkerGroupID: pgvalue.UUID(f.worker.GroupID), WorkerHostID: pgvalue.UUID(f.worker.HostID), WorkerEpoch: f.worker.Epoch, GroupClaimVersion: f.worker.GroupClaimVersion, HostClaimVersion: f.worker.HostClaimVersion}
 }
 func (f *actorExecutionFixture) workerCall(t *testing.T, handler http.HandlerFunc, body any, result any) {
 	t.Helper()
@@ -111,7 +127,8 @@ func (f *actorExecutionFixture) workerCall(t *testing.T, handler http.HandlerFun
 }
 
 func (f *actorExecutionFixture) fence() workerapi.RunLeaseFence {
-	return workerapi.RunLeaseFence{ID: pgvalue.UUIDString(f.claim.runLease.ID), LeaseSequence: f.claim.runLease.LeaseSequence}
+	lease := f.claim.Lease()
+	return workerapi.RunLeaseFence{ID: pgvalue.UUIDString(lease.ID), LeaseSequence: lease.LeaseSequence}
 }
 
 func (f *actorExecutionFixture) receiveTurn(t *testing.T, sequence int64) run.TurnScope {
@@ -139,7 +156,7 @@ func (f *actorExecutionFixture) receiveTurn(t *testing.T, sequence int64) run.Tu
 func (f *actorExecutionFixture) turn(t *testing.T, sequence int64) workerapi.CommitActorTurnResponse {
 	t.Helper()
 	var headBefore, baseBefore uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT w.head_disk_version_id,a.base_computer_disk_version_id FROM computers w JOIN run_leases l ON l.computer_id=w.id JOIN run_attempts a ON a.run_id=l.run_id AND a.number=l.attempt_number WHERE w.id=$1 AND l.id=$2`, f.computerID, f.claim.runLease.ID).Scan(&headBefore, &baseBefore); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT w.head_disk_version_id,a.base_computer_disk_version_id FROM computers w JOIN run_leases l ON l.computer_id=w.id JOIN run_attempts a ON a.run_id=l.run_id AND a.number=l.attempt_number WHERE w.id=$1 AND l.id=$2`, f.computerID, f.claim.Lease().ID).Scan(&headBefore, &baseBefore); err != nil {
 		t.Fatal(err)
 	}
 	scope := f.receiveTurn(t, sequence)
@@ -171,7 +188,7 @@ func (f *actorExecutionFixture) turn(t *testing.T, sequence int64) workerapi.Com
 	var cursor int64
 	var version pgtype.UUID
 	var data []byte
-	if err := f.Pool.QueryRow(t.Context(), `SELECT w.head_disk_version_id,a.base_computer_disk_version_id,s.committed_input_sequence,e.computer_disk_version_id,e.data FROM computers w JOIN run_leases l ON l.computer_id=w.id JOIN run_attempts a ON a.run_id=l.run_id AND a.number=l.attempt_number JOIN sessions s ON s.id=$3 JOIN session_events e ON e.id=$4 WHERE w.id=$1 AND l.id=$2`, f.computerID, f.claim.runLease.ID, f.sessionID, uuid.MustParse(out.EventID)).Scan(&head, &base, &cursor, &version, &data); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT w.head_disk_version_id,a.base_computer_disk_version_id,s.committed_input_sequence,e.computer_disk_version_id,e.data FROM computers w JOIN run_leases l ON l.computer_id=w.id JOIN run_attempts a ON a.run_id=l.run_id AND a.number=l.attempt_number JOIN sessions s ON s.id=$3 JOIN session_events e ON e.id=$4 WHERE w.id=$1 AND l.id=$2`, f.computerID, f.claim.Lease().ID, f.sessionID, uuid.MustParse(out.EventID)).Scan(&head, &base, &cursor, &version, &data); err != nil {
 		t.Fatal(err)
 	}
 	if head != headBefore || base != baseBefore || cursor != sequence || version.Valid || strings.Contains(string(data), "computer_disk_version_id") {

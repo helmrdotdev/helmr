@@ -97,16 +97,7 @@ func TestRestoredWaitAcknowledgementAuthenticatedReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	ack := func(id pgtype.UUID) (db.RunWait, error) {
-		tx, err := f.Pool.Begin(t.Context())
-		if err != nil {
-			return db.RunWait{}, err
-		}
-		defer tx.Rollback(t.Context())
-		w, err := run.AcknowledgeWaitResume(t.Context(), tx, fence, pgvalue.UUID(waitID), id)
-		if err == nil {
-			err = tx.Commit(t.Context())
-		}
-		return w, err
+		return run.AcknowledgeWaitResume(t.Context(), f.Pool, fence, pgvalue.UUID(waitID), id)
 	}
 	if _, err = ack(pgvalue.UUID(uuid.NewV7())); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("wrong checkpoint=%v", err)

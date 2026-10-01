@@ -203,20 +203,12 @@ func TestComputerRestoreAcknowledgesEntireSet(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				tx, err = f.Pool.Begin(t.Context())
+				resumed, err := run.AcknowledgeWaitResume(t.Context(), f.Pool, execution, wait, checkpoint)
 				if err != nil {
-					t.Fatal(err)
-				}
-				resumed, err := run.AcknowledgeWaitResume(t.Context(), tx, execution, wait, checkpoint)
-				if err != nil {
-					tx.Rollback(t.Context())
 					t.Fatal(err)
 				}
 				if resumed.SuspensionStatus != db.RunWaitStatusHot {
 					t.Fatalf("pending member status=%s", resumed.SuspensionStatus)
-				}
-				if err = tx.Commit(t.Context()); err != nil {
-					t.Fatal(err)
 				}
 			}
 

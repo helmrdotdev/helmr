@@ -258,8 +258,7 @@ func workerControlChild(t *testing.T, parent *actorExecutionFixture, detached bo
 	}
 	f.leaseID = pgvalue.MustUUIDValue(assigned.Lease.ID)
 	f.claimLease(t)
-	f.workerCall(t, f.server.workerStart, workerapi.RunStartRequest{Lease: f.fence()}, nil)
-	f.workerCall(t, f.server.workerEnterRunEntrypoint, workerapi.RunEntrypointRequest{Lease: f.fence(), EntrypointKind: "task", EntrypointDeclaredID: "test-task"}, nil)
+	f.startLease(t, "task", "test-task")
 	return &f
 }
 

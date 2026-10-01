@@ -1,10 +1,11 @@
 package controlplane
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -20,18 +21,19 @@ func (s *Server) workerBeginRunFinalization(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	worker := workerFromContext(r.Context())
-	response, err := s.beginRunFinalization(r.Context(), worker, request, parsed)
+	finalization, err := run.BeginFinalization(r.Context(), s.tx, run.ExecutionFinalization{
+		Fence: workerExecutionFence(worker, parsed.lease, request.Lease),
+		RunID: pgvalue.UUID(parsed.runID), AttemptNumber: parsed.attempt,
+		OperationID: pgvalue.UUID(parsed.operationID), Fingerprint: parsed.fingerprint,
+	})
 	if err != nil {
-		if writeStaleWorkerClaims(w, err) {
-			return
-		}
-		if errors.Is(err, errStaleRunFinalization) {
-			writeError(w, conflict(errStaleRunFinalization))
-			return
-		}
-		s.log.Error("begin Run finalization failed", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("begin run finalization"))
+		s.writeRunError(w, err, runFinalizationOperation, worker, request.Lease)
 		return
 	}
-	writeJSON(w, http.StatusOK, response)
+	writeJSON(w, http.StatusOK, workerapi.BeginRunFinalizationResponse{
+		Lease:       request.Lease,
+		ExpiresAt:   finalization.ExpiresAt.UTC(),
+		OperationID: parsed.operationID.String(),
+		StartedAt:   finalization.StartedAt.UTC(),
+	})
 }

@@ -87,18 +87,7 @@ func staleAuthority[P ~string](operation staleAuthorityOperation, point P, err e
 	if err == nil || point == "" {
 		return err
 	}
-	var sentinel error
-	switch operation {
-	case staleAuthorityRunStart:
-		sentinel = errStaleRunLeaseClaim
-	case staleAuthorityTaskCompletion:
-		sentinel = errStaleTaskCompletion
-	case staleAuthorityChildTask:
-		sentinel = errChildTaskInvokeStale
-	default:
-		return err
-	}
-	if !errors.Is(err, sentinel) {
+	if operation != staleAuthorityChildTask || !errors.Is(err, errChildTaskInvokeStale) {
 		return err
 	}
 	var existing *staleAuthorityError

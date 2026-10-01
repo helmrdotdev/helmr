@@ -82,6 +82,20 @@ func activateRestorePlanFixture(t *testing.T, f runtest.Fixture, w workergroup.H
 	}
 }
 
+// claimRestoredLease claims a restored member's lease as the worker host.
+func claimRestoredLease(t *testing.T, f runtest.Fixture, w workergroup.HostPrincipal, leaseID uuid.UUID, sequence int64) (run.Claim, error) {
+	t.Helper()
+	return run.ClaimLease(t.Context(), f.Pool, run.ExecutionFence{LeaseID: pgvalue.UUID(leaseID), LeaseSequence: sequence, WorkerGroupID: pgvalue.UUID(w.GroupID), WorkerHostID: pgvalue.UUID(w.HostID), WorkerEpoch: w.Epoch, GroupClaimVersion: w.GroupClaimVersion, HostClaimVersion: w.HostClaimVersion})
+}
+
+// acknowledgeRestoredWait acknowledges the wait a restored claim resumes.
+func acknowledgeRestoredWait(t *testing.T, f runtest.Fixture, w workergroup.HostPrincipal, claim run.Claim) (db.RunWait, error) {
+	t.Helper()
+	wait, _ := claim.ResumeWait()
+	lease := claim.Lease()
+	return run.AcknowledgeWaitResume(t.Context(), f.Pool, run.ExecutionFence{LeaseID: lease.ID, LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(w.GroupID), WorkerHostID: pgvalue.UUID(w.HostID), WorkerEpoch: w.Epoch, GroupClaimVersion: w.GroupClaimVersion, HostClaimVersion: w.HostClaimVersion}, wait.ID, claim.Instance().SourceCheckpointID)
+}
+
 func TestRestoredClaimDiscoversAndAttachesWithoutStartingAnotherProgram(t *testing.T) {
 	f, w, r, k := restorePlanFixture(t, false, true)
 	plan, err := readRestorePlan(t, f, w, r, k)
@@ -96,14 +110,13 @@ func TestRestoredClaimDiscoversAndAttachesWithoutStartingAnotherProgram(t *testi
 	if len(work) != len(plan.Members) {
 		t.Fatalf("restored leases discovered=%d", len(work))
 	}
-	server := &Server{tx: f.Pool}
 	for _, member := range plan.Members {
 		for range 2 {
-			a, secrets, err := server.claimRunLease(t.Context(), w, pgvalue.UUID(uuid.MustParse(member.Lease.ID)), member.Lease.LeaseSequence)
+			a, err := claimRestoredLease(t, f, w, uuid.MustParse(member.Lease.ID), member.Lease.LeaseSequence)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if a.resumeWait == nil || a.run.Status != "waiting" || a.runLease.Status != "running" || len(secrets) != 0 {
+			if _, restored := a.ResumeWait(); !restored || a.Run().Status != "waiting" || a.Lease().Status != "running" || len(a.DeliverySecrets()) != 0 {
 				t.Fatal("restored claim changed execution or reinjected secrets")
 			}
 			response, err := projectRestoredRunLeaseClaim(a, k)
@@ -127,25 +140,16 @@ func TestRestoredClaimRejectsUnactivatedAndAlreadyAcknowledgedMembers(t *testing
 			member := plan.Members[0]
 			if activated {
 				activateRestorePlanFixture(t, f, w, plan)
-				a, _, err := (&Server{tx: f.Pool}).claimRunLease(t.Context(), w, pgvalue.UUID(uuid.MustParse(member.Lease.ID)), member.Lease.LeaseSequence)
+				a, err := claimRestoredLease(t, f, w, uuid.MustParse(member.Lease.ID), member.Lease.LeaseSequence)
 				if err != nil {
 					t.Fatal(err)
 				}
-				tx, err := f.Pool.Begin(t.Context())
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer tx.Rollback(context.Background())
-				_, err = run.AcknowledgeWaitResume(t.Context(), tx, run.ExecutionFence{LeaseID: a.runLease.ID, LeaseSequence: member.Lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(w.GroupID), WorkerHostID: pgvalue.UUID(w.HostID), WorkerEpoch: w.Epoch, GroupClaimVersion: w.GroupClaimVersion, HostClaimVersion: w.HostClaimVersion}, a.resumeWait.ID, a.runtime.SourceCheckpointID)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := tx.Commit(t.Context()); err != nil {
+				if _, err = acknowledgeRestoredWait(t, f, w, a); err != nil {
 					t.Fatal(err)
 				}
 			}
-			_, _, err = (&Server{tx: f.Pool}).claimRunLease(t.Context(), w, pgvalue.UUID(uuid.MustParse(member.Lease.ID)), member.Lease.LeaseSequence)
-			if !errors.Is(err, errStaleRunLeaseClaim) {
+			_, err = claimRestoredLease(t, f, w, uuid.MustParse(member.Lease.ID), member.Lease.LeaseSequence)
+			if !errors.Is(err, run.ErrStale) {
 				t.Fatalf("unsafe restore claim: %v", err)
 			}
 		})
@@ -160,7 +164,7 @@ func TestRestoredClaimSurvivesDrain(t *testing.T) {
 	}
 	activateRestorePlanFixture(t, f, w, plan)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET admission_state='draining' WHERE id=$1`, r.ComputerInstanceID)
-	_, _, err = (&Server{tx: f.Pool}).claimRunLease(t.Context(), w, pgvalue.UUID(uuid.MustParse(plan.Members[0].Lease.ID)), plan.Members[0].Lease.LeaseSequence)
+	_, err = claimRestoredLease(t, f, w, uuid.MustParse(plan.Members[0].Lease.ID), plan.Members[0].Lease.LeaseSequence)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,27 +194,19 @@ func TestRestoredActorCanAcknowledgeStopBeforeAndAfterClaim(t *testing.T) {
 					if stopBeforeClaim {
 						stop()
 					}
-					a, _, err := (&Server{tx: f.Pool}).claimRunLease(t.Context(), w, pgvalue.UUID(leaseID), 2)
+					a, err := claimRestoredLease(t, f, w, leaseID, 2)
 					if err != nil {
 						t.Fatal(err)
 					}
 					if !stopBeforeClaim {
 						stop()
 					}
-					tx, err := f.Pool.Begin(t.Context())
-					if err != nil {
-						t.Fatal(err)
-					}
-					defer tx.Rollback(context.Background())
-					wait, err := run.AcknowledgeWaitResume(t.Context(), tx, run.ExecutionFence{LeaseID: a.runLease.ID, LeaseSequence: 2, WorkerGroupID: pgvalue.UUID(w.GroupID), WorkerHostID: pgvalue.UUID(w.HostID), WorkerEpoch: w.Epoch, GroupClaimVersion: w.GroupClaimVersion, HostClaimVersion: w.HostClaimVersion}, a.resumeWait.ID, a.runtime.SourceCheckpointID)
+					wait, err := acknowledgeRestoredWait(t, f, w, a)
 					if err != nil {
 						t.Fatal(err)
 					}
 					if wait.SuspensionStatus != "released" || wait.ConditionReasonCode.String != "session_stopped" {
 						t.Fatalf("stopped wait was not released: state=%s reason=%s", wait.SuspensionStatus, wait.ConditionReasonCode.String)
-					}
-					if err := tx.Commit(t.Context()); err != nil {
-						t.Fatal(err)
 					}
 				})
 			}
@@ -253,8 +249,8 @@ func TestRestoredActorRejectsStaleStopScope(t *testing.T) {
 			if err := f.Pool.QueryRow(t.Context(), `SELECT r.current_run_lease_id FROM runs r JOIN sessions s ON s.current_run_id=r.id WHERE s.id=$1`, session).Scan(&leaseID); err != nil {
 				t.Fatal(err)
 			}
-			_, _, err = (&Server{tx: f.Pool}).claimRunLease(t.Context(), w, pgvalue.UUID(leaseID), 2)
-			if !errors.Is(err, errStaleRunLeaseClaim) {
+			_, err = claimRestoredLease(t, f, w, leaseID, 2)
+			if !errors.Is(err, run.ErrStale) {
 				t.Fatalf("stale stop claim=%v", err)
 			}
 		})

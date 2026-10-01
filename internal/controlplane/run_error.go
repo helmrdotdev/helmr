@@ -1,0 +1,162 @@
+package controlplane
+
+import (
+	"errors"
+	"net/http"
+
+	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/run"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
+	"github.com/jackc/pgx/v5"
+)
+
+// runOperation selects the vocabulary of a worker Run lease operation's
+// errors.
+type runOperation int
+
+const (
+	runLeaseDiscoveryOperation runOperation = iota + 1
+	runLeaseClaimOperation
+	runStartOperation
+	runEntrypointOperation
+	runLeaseRenewalOperation
+	runFinalizationOperation
+	runTaskCompletionOperation
+	runLogAppendOperation
+	runStructuredLogAppendOperation
+	runMetadataOperation
+	runWaitResumeOperation
+)
+
+// claims reports whether the operation compares the worker's credential
+// claims. Discovery and log appends fence the lease only in their
+// statements.
+func (o runOperation) claims() bool {
+	return o != runLeaseDiscoveryOperation && o != runLogAppendOperation && o != runStructuredLogAppendOperation
+}
+
+// runStale is the conflict each operation reports when its receipt no longer
+// addresses the live execution.
+var runStale = map[runOperation]string{
+	runLeaseClaimOperation:          "run lease claim is stale",
+	runEntrypointOperation:          "run entrypoint acknowledgement is stale",
+	runLeaseRenewalOperation:        "worker run lease fence is stale",
+	runFinalizationOperation:        "run finalization authority is stale",
+	runLogAppendOperation:           "worker run lease is stale or the log chunk sequence contains different content",
+	runStructuredLogAppendOperation: "worker run lease is stale or the structured log sequence contains different content",
+	runMetadataOperation:            "worker run lease fence is stale",
+	runWaitResumeOperation:          "run wait resume acknowledgement is stale",
+}
+
+// runLogDiffers is the conflict each log append reports for a sequence that
+// already holds a different chunk.
+var runLogDiffers = map[runOperation]string{
+	runLogAppendOperation:           "worker log chunk sequence already contains different content",
+	runStructuredLogAppendOperation: "structured log sequence already contains different content",
+}
+
+// runFailed names each operation's internal failure: the public error and
+// its log message.
+var runFailed = map[runOperation]struct{ public, log string }{
+	runLeaseDiscoveryOperation:      {"discover worker run leases", "discover worker run leases failed"},
+	runLeaseClaimOperation:          {"serve worker run lease claim", "serve worker Run Lease claim failed"},
+	runStartOperation:               {"start run", "start Run failed"},
+	runEntrypointOperation:          {"enter run entrypoint", "enter Run entrypoint failed"},
+	runLeaseRenewalOperation:        {"renew worker run lease", "renew worker Run Lease failed"},
+	runFinalizationOperation:        {"begin run finalization", "begin Run finalization failed"},
+	runTaskCompletionOperation:      {"complete task", "complete Task failed"},
+	runLogAppendOperation:           {"append worker logs", "append worker logs failed"},
+	runStructuredLogAppendOperation: {"append structured run log", "append structured Run log failed"},
+	runMetadataOperation:            {"update run metadata", "update Run metadata failed"},
+	runWaitResumeOperation:          {"acknowledge run wait resume", "acknowledge Run wait resume failed"},
+}
+
+// runStalePointLog is the warning an operation logs with the failure point
+// of its stale receipt.
+var runStalePointLog = map[runOperation]string{
+	runStartOperation:          "run start acknowledgement is stale",
+	runTaskCompletionOperation: "task completion receipt rejected",
+}
+
+// runError maps a run owner error to the API error the worker is told about.
+// Stale credential claims ask a worker to re-authenticate before anything
+// else is considered. A start or task completion receipt that is stale
+// carries its failure point. Metadata rejections are 422 with their cause;
+// errors an operation does not describe are internal.
+func runError(err error, operation runOperation) error {
+	if operation.claims() && errors.Is(err, workergroup.ErrStaleClaims) {
+		return unauthorized(errors.New("worker authentication is required"))
+	}
+	var expired idempotency.ExpiredError
+	var idempotencyConflict idempotency.ConflictError
+	switch operation {
+	case runStartOperation:
+		if errors.Is(err, run.ErrStale) {
+			return conflict(&staleAuthorityError{operation: staleAuthorityRunStart, point: "execution", cause: err})
+		}
+	case runTaskCompletionOperation:
+		switch {
+		case errors.Is(err, run.ErrTaskCompletionReplayDiffers):
+			return conflict(&staleAuthorityError{operation: staleAuthorityTaskCompletion, point: "replay", cause: err})
+		case errors.Is(err, run.ErrStale):
+			return conflict(&staleAuthorityError{operation: staleAuthorityTaskCompletion, point: "execution", cause: err})
+		case errors.Is(err, run.ErrTaskCompletionAdmission), isDeterministicWorkerAdmission(err):
+			return apiError{kind: errUnprocessable, err: errors.New("task completion admission is invalid")}
+		}
+	case runLogAppendOperation, runStructuredLogAppendOperation, runWaitResumeOperation:
+		if errors.Is(err, pgx.ErrNoRows) {
+			return conflict(errors.New(runStale[operation]))
+		}
+		if errors.Is(err, run.ErrLogChunkDiffers) && runLogDiffers[operation] != "" {
+			return conflict(errors.New(runLogDiffers[operation]))
+		}
+	case runMetadataOperation:
+		switch {
+		case errors.As(err, &expired):
+			return gone(expired)
+		case errors.As(err, &idempotencyConflict):
+			return conflict(idempotencyConflict)
+		case errors.Is(err, run.ErrStale), errors.Is(err, pgx.ErrNoRows):
+			return conflict(errors.New(runStale[operation]))
+		default:
+			return apiError{kind: errUnprocessable, err: codedError{code: "run_metadata_rejected", message: err.Error()}}
+		}
+	default:
+		if errors.Is(err, run.ErrStale) && runStale[operation] != "" {
+			return conflict(errors.New(runStale[operation]))
+		}
+	}
+	return errors.New(runFailed[operation].public)
+}
+
+// writeRunError writes a worker Run lease operation's failure. It logs a
+// stale receipt's failure point without the cause, and the cause of a
+// failure the worker is not told about, of a rejected task completion
+// admission and of a rejected metadata mutation.
+func (s *Server) writeRunError(w http.ResponseWriter, err error, operation runOperation, worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence) {
+	mapped := runError(err, operation)
+	status := errorStatus(mapped)
+	switch {
+	case status == http.StatusConflict && runStalePointLog[operation] != "":
+		if point, ok := staleAuthorityPointOf(mapped); ok {
+			s.log.Warn(
+				runStalePointLog[operation],
+				"failure_point", point,
+				"run_lease_id", lease.ID,
+				"lease_sequence", lease.LeaseSequence,
+				"worker_group_id", worker.GroupID,
+				"worker_host_id", worker.HostID,
+				"worker_epoch", worker.Epoch,
+			)
+		}
+	case status == http.StatusUnprocessableEntity && operation == runTaskCompletionOperation:
+		s.log.Warn("task completion admission rejected", "run_lease_id", lease.ID, "error", err)
+	case status == http.StatusUnprocessableEntity && operation == runMetadataOperation,
+		status == http.StatusInternalServerError && operation != runLeaseDiscoveryOperation:
+		s.log.Error(runFailed[operation].log, "run_lease_id", lease.ID, "error", err)
+	case status == http.StatusInternalServerError:
+		s.log.Error(runFailed[operation].log, "worker_host_id", worker.HostID.String(), "worker_epoch", worker.Epoch, "error", err)
+	}
+	writeError(w, mapped)
+}

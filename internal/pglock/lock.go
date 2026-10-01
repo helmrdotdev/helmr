@@ -87,8 +87,8 @@
 //     restored members after it: Session, Run, Attempt, Wait, then the
 //     checkpoint. A restore acknowledgement adds the Run leases after the
 //     Attempts and the Session turns after the Waits, before the checkpoint.
-//   - Run lease operations lock the execution host (a lease claim first locks
-//     its attempt's Secrets through the run owner), then every Computer the
+//   - Run lease operations, through the run owner, lock the execution host (a
+//     lease claim first locks its attempt's Secrets), then every Computer the
 //     Run lineage reaches in id order (with an addressed target Computer in
 //     the same statement), then those Computers' unreclaimed Instances in id
 //     order, before re-locking the lease's own Computer and Instance and the

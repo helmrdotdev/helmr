@@ -9,9 +9,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// AcknowledgeWaitResume releases one restored waiter after physical activation.
-// It neither opens the Instance to new work nor consumes another checkpoint.
-func AcknowledgeWaitResume(ctx context.Context, tx pgx.Tx, fence ExecutionFence, waitID, checkpointID pgtype.UUID) (db.RunWait, error) {
+// acknowledgeWaitResume releases one restored waiter in the caller's
+// transaction.
+func acknowledgeWaitResume(ctx context.Context, tx pgx.Tx, fence ExecutionFence, waitID, checkpointID pgtype.UUID) (db.RunWait, error) {
 	a, err := lockExecution(ctx, tx, fence, executionResume, executionTarget{})
 	if err != nil {
 		return db.RunWait{}, err
