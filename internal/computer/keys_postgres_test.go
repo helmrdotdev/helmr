@@ -500,7 +500,7 @@ func TestComputerKeyDeliveryDatabaseFaultsKeepTheirCause(t *testing.T) {
 			var f preparationFixture
 			if fault.source {
 				var input InitialVersion
-				f, input = newGenerationFixture(t)
+				f, input = newVersionFixture(t)
 				if _, err := f.publisher.PublishInitialVersion(t.Context(), f.principal, f.ref, input); err != nil {
 					t.Fatal(err)
 				}

@@ -97,22 +97,22 @@ func inspectedPackDigest(inspection blockformat.ObjectInspection) string {
 	return "sha256:" + hex.EncodeToString(inspection.Pack.Pages[0].Locator.Pack.Digest[:])
 }
 
-// publishInitialGeneration prepares the Instance as its worker host does:
+// publishInitialVersion prepares the Instance as its worker host does:
 // it certifies an empty root under the initial key and publishes it as the
 // initial version with config.
-func (f initialPublicationFixture) publishInitialGeneration(t *testing.T, client *workerclient.Client, config oci.RuntimeConfig) (workerapi.ComputerKeyMaterial, disk.GenerationRoot, workerapi.InitialComputerGenerationResponse) {
+func (f initialPublicationFixture) publishInitialVersion(t *testing.T, client *workerclient.Client, config oci.RuntimeConfig) (workerapi.ComputerKeyMaterial, disk.VersionRoot, workerapi.InitialComputerGenerationResponse) {
 	t.Helper()
 	key, root, _ := f.certifyInitialRoot(t, client)
 	published, err := client.PublishInitialComputerGeneration(t.Context(), workerapi.InitialComputerGenerationRequest{ComputerInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 1, Root: root, Config: config})
 	if err != nil {
-		t.Fatalf("generation publication: %v", err)
+		t.Fatalf("version publication: %v", err)
 	}
 	return key, root, published
 }
 
 // certifyInitialRoot fetches the initial key, registers an empty root,
 // uploads and certifies it, and returns the root with its object request.
-func (f initialPublicationFixture) certifyInitialRoot(t *testing.T, client *workerclient.Client) (workerapi.ComputerKeyMaterial, disk.GenerationRoot, workerapi.InitialComputerObjectRequest) {
+func (f initialPublicationFixture) certifyInitialRoot(t *testing.T, client *workerclient.Client) (workerapi.ComputerKeyMaterial, disk.VersionRoot, workerapi.InitialComputerObjectRequest) {
 	t.Helper()
 	runtime := pgvalue.UUIDString(f.runtime)
 	key, err := client.InitialComputerKey(t.Context(), workerapi.InitialComputerKeyRequest{ComputerInstanceID: runtime, DesiredVersion: 1})
@@ -149,7 +149,7 @@ func (f initialPublicationFixture) certifyInitialRoot(t *testing.T, client *work
 	if err = client.CertifyInitialComputerObject(t.Context(), object); err != nil {
 		t.Fatalf("object certification: %v", err)
 	}
-	root, err := disk.NewGenerationRoot(locator, f.logicalBytes)
+	root, err := disk.NewVersionRoot(locator, f.logicalBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func (f initialPublicationFixture) certifyInitialRoot(t *testing.T, client *work
 func TestInitialComputerPreparationOverHTTP(t *testing.T) {
 	f := newInitialPublicationFixture(t)
 	client := f.client(t, f.serve(t))
-	key, root, published := f.publishInitialGeneration(t, client, oci.RuntimeConfig{User: "root"})
+	key, root, published := f.publishInitialVersion(t, client, oci.RuntimeConfig{User: "root"})
 	var head string
 	if err := f.Pool.QueryRow(t.Context(), `SELECT c.head_disk_version_id::text FROM computers c JOIN computer_instances i ON i.computer_id=c.id WHERE i.id=$1`, f.runtime).Scan(&head); err != nil || head != published.VersionID {
 		t.Fatalf("published head=%s response=%s err=%v", head, published.VersionID, err)
@@ -223,7 +223,7 @@ func TestComputerPreparationSourceTracksPublishedRoot(t *testing.T) {
 	if initial.Seed == nil || initial.Root != nil || initial.Config.User != "1000" {
 		t.Fatalf("initial: %+v", initial)
 	}
-	_, _, published := f.publishInitialGeneration(t, f.client(t, f.serve(t)), oci.RuntimeConfig{User: "root", WorkingDir: "/workspace"})
+	_, _, published := f.publishInitialVersion(t, f.client(t, f.serve(t)), oci.RuntimeConfig{User: "root", WorkingDir: "/workspace"})
 	continued := read()
 	if continued.Seed != nil || continued.Root == nil || continued.Config.User != "root" || continued.VersionID != initial.VersionID || continued.VersionID != published.VersionID {
 		t.Fatalf("published: %+v", continued)

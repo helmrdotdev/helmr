@@ -177,7 +177,7 @@ message HeartbeatComputerResponse {
   bool stop_requested = 2;
 }
 
-// The host has already materialized the retained Computer generation.
+// The host has already materialized the retained Computer disk version.
 message ComputerMountTarget {
   string base_computer_disk_version_id = 1;
 }

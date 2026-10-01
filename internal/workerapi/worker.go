@@ -890,11 +890,11 @@ type CheckpointRuntime struct {
 }
 
 // CheckpointComputer binds the writable disk captured with the VM state and RAM.
-// Its exact authenticated generation also serves as a cold continuation.
+// Its exact authenticated disk version also serves as a cold continuation.
 type CheckpointComputer struct {
-	ComputerID   string              `json:"computer_id"`
-	LogicalBytes int64               `json:"logical_bytes"`
-	Root         disk.GenerationRoot `json:"root"`
+	ComputerID   string           `json:"computer_id"`
+	LogicalBytes int64            `json:"logical_bytes"`
+	Root         disk.VersionRoot `json:"root"`
 }
 
 type CheckpointRuntimeState struct {

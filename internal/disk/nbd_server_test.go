@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-func generationListener(t *testing.T) net.Listener {
+func versionListener(t *testing.T) net.Listener {
 	t.Helper()
 	// Short path also works on hosts with small Unix socket address limits.
 	dir, err := os.MkdirTemp("", "nbd-")
@@ -30,7 +30,7 @@ func generationListener(t *testing.T) net.Listener {
 	return listener
 }
 
-func generationHello(t *testing.T, conn net.Conn) {
+func versionHello(t *testing.T, conn net.Conn) {
 	t.Helper()
 	conn.SetDeadline(time.Now().Add(5 * time.Second))
 	var hello [18]byte
@@ -42,9 +42,9 @@ func generationHello(t *testing.T, conn net.Conn) {
 	}
 }
 
-func generationNegotiate(t *testing.T, conn net.Conn, size int64) {
+func versionNegotiate(t *testing.T, conn net.Conn, size int64) {
 	t.Helper()
-	generationHello(t, conn)
+	versionHello(t, conn)
 	var option [20]byte
 	binary.BigEndian.PutUint32(option[:4], 3)
 	binary.BigEndian.PutUint64(option[4:12], 0x49484156454f5054)
@@ -61,14 +61,14 @@ func generationNegotiate(t *testing.T, conn net.Conn, size int64) {
 	}
 }
 
-func TestGenerationNBDServerNegotiatesAndFlushes(t *testing.T) {
-	cfg, _ := localGenerationFixture(t)
-	p, err := CreateLocalGeneration(t.Context(), cfg)
+func TestVersionNBDServerNegotiatesAndFlushes(t *testing.T) {
+	cfg, _ := localVersionFixture(t)
+	p, err := CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer p.Close()
-	listener := generationListener(t)
+	listener := versionListener(t)
 	done := make(chan error, 1)
 	go func() { done <- p.ServeNBD(t.Context(), listener) }()
 	conn, err := net.Dial("unix", listener.Addr().String())
@@ -76,7 +76,7 @@ func TestGenerationNBDServerNegotiatesAndFlushes(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	generationNegotiate(t, conn, cfg.Base.LogicalBytes)
+	versionNegotiate(t, conn, cfg.Base.LogicalBytes)
 	for _, raw := range [][]byte{request(1, 0, 7, 1, []byte{8}), request(3, 0, 0, 0, nil)} {
 		if _, err = conn.Write(raw); err != nil {
 			t.Fatal(err)
@@ -101,7 +101,7 @@ func TestGenerationNBDServerNegotiatesAndFlushes(t *testing.T) {
 		t.Fatal("server did not join")
 	}
 	p.Close()
-	p, err = OpenLocalGeneration(t.Context(), cfg)
+	p, err = OpenLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,16 +111,16 @@ func TestGenerationNBDServerNegotiatesAndFlushes(t *testing.T) {
 	}
 }
 
-func TestGenerationNBDServerCancellation(t *testing.T) {
+func TestVersionNBDServerCancellation(t *testing.T) {
 	for _, phase := range []string{"accept", "negotiation", "transmission", "write-payload"} {
 		t.Run(phase, func(t *testing.T) {
-			cfg, _ := localGenerationFixture(t)
-			p, err := CreateLocalGeneration(t.Context(), cfg)
+			cfg, _ := localVersionFixture(t)
+			p, err := CreateLocalVersion(t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer p.Close()
-			listener := generationListener(t)
+			listener := versionListener(t)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			done := make(chan error, 1)
@@ -132,9 +132,9 @@ func TestGenerationNBDServerCancellation(t *testing.T) {
 				}
 				defer conn.Close()
 				if phase == "negotiation" {
-					generationHello(t, conn)
+					versionHello(t, conn)
 				} else {
-					generationNegotiate(t, conn, cfg.Base.LogicalBytes)
+					versionNegotiate(t, conn, cfg.Base.LogicalBytes)
 				}
 				if phase == "write-payload" {
 					if _, err = conn.Write(request(1, 0, 0, 4096, nil)); err != nil {

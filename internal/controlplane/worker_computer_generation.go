@@ -12,7 +12,7 @@ func (s *Server) workerPublishInitialComputerGeneration(w http.ResponseWriter, r
 	w.Header().Set("Cache-Control", "no-store")
 	var request workerapi.InitialComputerGenerationRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
-		writeError(w, fmt.Errorf("invalid computer generation request: %w", err))
+		writeError(w, fmt.Errorf("invalid computer version request: %w", err))
 		return
 	}
 	ref, err := computerPreparationRef(request.ComputerInstanceID, request.DesiredVersion)

@@ -61,9 +61,9 @@ type CheckpointRuntime struct {
 // CheckpointComputer binds the writable disk captured with the VM state and
 // memory.
 type CheckpointComputer struct {
-	ComputerID   string              `json:"computer_id"`
-	LogicalBytes int64               `json:"logical_bytes"`
-	Root         disk.GenerationRoot `json:"root"`
+	ComputerID   string           `json:"computer_id"`
+	LogicalBytes int64            `json:"logical_bytes"`
+	Root         disk.VersionRoot `json:"root"`
 }
 
 // CheckpointRuntimeState is the captured runtime state: the disk and the VM

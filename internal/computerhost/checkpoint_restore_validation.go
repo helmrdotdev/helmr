@@ -152,10 +152,10 @@ func validatePreparedMachineRestore(
 func validateCheckpointComputerSource(source workerapi.RuntimeSource, captured *workerapi.CheckpointComputer) error {
 	reserved := source.Computer
 	if reserved == nil || reserved.Seed != nil || reserved.Root == nil || captured == nil {
-		return errors.New("checkpoint restore requires a paired Computer generation")
+		return errors.New("checkpoint restore requires a paired Computer disk version")
 	}
 	if captured.ComputerID != source.ComputerID || captured.LogicalBytes != reserved.LogicalBytes || captured.Root != *reserved.Root {
-		return errors.New("checkpoint generation differs from retained Computer source")
+		return errors.New("checkpoint disk version differs from retained Computer source")
 	}
 	return captured.Root.Validate(reserved.LogicalBytes)
 }

@@ -14,12 +14,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Device owns a local generation, its export and its exclusive kernel attachment.
+// Device owns a local version, its export and its exclusive kernel attachment.
 // Source retention and capacity reservations remain with the Runtime owner.
 // Close never releases those reservations or deletes recovery evidence.
 type Device struct {
 	mu         sync.Mutex
-	disk       *LocalGeneration
+	disk       *LocalVersion
 	attachment *nbd.Attachment
 	cancel     context.CancelFunc
 	done       chan struct{}
@@ -31,9 +31,9 @@ type Device struct {
 // be closed successfully before its arena or source reservations can be removed.
 // An uncertain helper claim leaves the export alive for explicit reconciliation.
 // cfg.Arena must be a private existing directory independent of the VMM jail.
-func AttachDevice(ctx context.Context, disk *LocalGeneration, cfg nbd.Config) (*Device, error) {
+func AttachDevice(ctx context.Context, disk *LocalVersion, cfg nbd.Config) (*Device, error) {
 	if disk == nil {
-		return nil, errors.New("local generation required")
+		return nil, errors.New("local version required")
 	}
 	d := &Device{disk: disk}
 	if err := ctx.Err(); err != nil {
@@ -47,7 +47,7 @@ func AttachDevice(ctx context.Context, disk *LocalGeneration, cfg nbd.Config) (*
 		return d, errors.Join(errors.New("private absolute device arena required"), arenaErr)
 	}
 	if closed || cfg.Size != size || filepath.Dir(cfg.Socket) != cfg.Arena {
-		return d, errors.New("device geometry or arena differs from generation")
+		return d, errors.New("device geometry or arena differs from version")
 	}
 	// ListenUnix must not unlink an earlier owner's socket on failed setup.
 	listener, err := net.Listen("unix", cfg.Socket)
@@ -118,7 +118,7 @@ func (d *Device) LinkInto(ctx context.Context, directory string, uid, gid int) (
 
 // Capture requires the VMM dispatch hold. It drains the kernel device, then
 // atomically flushes and retains the exact cut through subsequent collection.
-func (d *Device) Capture(ctx context.Context) (CapturedGeneration, error) {
+func (d *Device) Capture(ctx context.Context) (CapturedVersion, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed || d.attachment == nil {
@@ -149,7 +149,7 @@ func (d *Device) Wait(ctx context.Context) error {
 }
 
 // Close is retryable after an unproven consumer/helper exit. It never cancels the
-// export or closes the generation while the kernel attachment may still use it.
+// export or closes the version while the kernel attachment may still use it.
 func (d *Device) Close(ctx context.Context) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()

@@ -14,13 +14,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// retainedTestGeneration uploads real authenticated root bytes for a
+// retainedTestVersion uploads real authenticated root bytes for a
 // Runtime's retained writer key and records them as a certified root of its
 // Computer, returning the root and its inspection. It supplies certified
 // database state for the checkpoint fixtures, which pin it through the
 // owner's object reuse and exercise their own live commit fences; object
 // recording and its authority are tested by the computer owner.
-func retainedTestGeneration(t *testing.T, pool *pgxpool.Pool, objects cas.Store, runtimeID string) (disk.GenerationRoot, blockformat.ObjectInspection) {
+func retainedTestVersion(t *testing.T, pool *pgxpool.Pool, objects cas.Store, runtimeID string) (disk.VersionRoot, blockformat.ObjectInspection) {
 	t.Helper()
 	ctx := t.Context()
 	var orgID, projectID, environmentID, computerID, pinned pgtype.UUID
@@ -56,7 +56,7 @@ func retainedTestGeneration(t *testing.T, pool *pgxpool.Pool, objects cas.Store,
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := disk.NewGenerationRoot(locator, logicalBytes)
+	root, err := disk.NewVersionRoot(locator, logicalBytes)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -33,14 +33,14 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 	}
 	env := pgvalue.UUID(f.EnvironmentID)
 	q := db.New(f.Pool)
-	digest := dbtest.Digest("generation-root-pack")
-	root := disk.GenerationRoot{FormatVersion: 1, LogicalBytes: f.logicalBytes, Offset: 128,
-		Pack: disk.GenerationPack{Digest: digest, SizeBytes: 512, Rank: 2},
-		Page: disk.GenerationPage{Digest: dbtest.Digest("generation-root-page"), Salt: strings.Repeat("aa", 32), KeyID: key.ID, Kind: 3, Count: 1, SizeBytes: 64}}
+	digest := dbtest.Digest("version-root-pack")
+	root := disk.VersionRoot{FormatVersion: 1, LogicalBytes: f.logicalBytes, Offset: 128,
+		Pack: disk.VersionPack{Digest: digest, SizeBytes: 512, Rank: 2},
+		Page: disk.VersionPage{Digest: dbtest.Digest("version-root-page"), Salt: strings.Repeat("aa", 32), KeyID: key.ID, Kind: 3, Count: 1, SizeBytes: 64}}
 	if err := root.Validate(f.logicalBytes); err != nil {
 		t.Fatal(err)
 	}
-	encode := func(r disk.GenerationRoot) []byte {
+	encode := func(r disk.VersionRoot) []byte {
 		t.Helper()
 		v, e := json.Marshal(r)
 		if e != nil {
@@ -71,7 +71,7 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 	if n, err := q.CertifyComputerObject(t.Context(), db.CertifyComputerObjectParams{EnvironmentID: env, ComputerID: computerID, Digest: digest}); err != nil || n != 1 {
 		t.Fatalf("certify root: %d %v", n, err)
 	}
-	for _, mutate := range []func(*disk.GenerationRoot){func(r *disk.GenerationRoot) { r.Pack.SizeBytes++ }, func(r *disk.GenerationRoot) { r.Pack.Rank++ }, func(r *disk.GenerationRoot) { r.Page.KeyID = uuid.NewV7().String() }} {
+	for _, mutate := range []func(*disk.VersionRoot){func(r *disk.VersionRoot) { r.Pack.SizeBytes++ }, func(r *disk.VersionRoot) { r.Pack.Rank++ }, func(r *disk.VersionRoot) { r.Page.KeyID = uuid.NewV7().String() }} {
 		bad := root
 		mutate(&bad)
 		p := params
@@ -117,7 +117,7 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := disk.ParseGenerationRoot(raw, f.logicalBytes); err != nil || got != root {
+	if got, err := disk.ParseVersionRoot(raw, f.logicalBytes); err != nil || got != root {
 		t.Fatalf("stored full locator changed: %v", err)
 	}
 	if _, err := q.GetInstanceComputerSourceRoot(t.Context(), f.runtime); !errors.Is(err, pgx.ErrNoRows) {
@@ -196,9 +196,9 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer tx.Rollback(context.Background())
-		source, parsed, sourceKeys, err := loadRetainedGeneration(t.Context(), db.New(tx), f.runtime)
+		source, parsed, sourceKeys, err := loadRetainedVersion(t.Context(), db.New(tx), f.runtime)
 		if err != nil || source.VersionID != versionID || parsed != root || len(sourceKeys) != 2 || pgvalue.UUIDString(sourceKeys[0].ID) != key.ID {
-			t.Fatalf("retained generation mismatch: %v", err)
+			t.Fatalf("retained version mismatch: %v", err)
 		}
 	}
 	assertRetained()

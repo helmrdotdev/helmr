@@ -12,7 +12,7 @@ import (
 
 func instanceRestoreValidationFixture(t *testing.T, count int) (workerapi.RuntimeReconcileTarget, workerapi.CheckpointManifest) {
 	t.Helper()
-	source := workerapi.RuntimeSource{WriterGeneration: 5, ComputerID: "computer", ComputerSpecID: "spec", VMPlatformID: "platform", VMRuntimeContract: "contract", RootfsDigest: "rootfs", VMVCPUCount: 2, CPUConfigDigest: sha256sum.DigestBytes([]byte("cpu")), Computer: &workerapi.RuntimeComputerSource{LogicalBytes: disk.SeedCapacity, Root: ptrGenerationRoot(disk.SeedCapacity)}}
+	source := workerapi.RuntimeSource{WriterGeneration: 5, ComputerID: "computer", ComputerSpecID: "spec", VMPlatformID: "platform", VMRuntimeContract: "contract", RootfsDigest: "rootfs", VMVCPUCount: 2, CPUConfigDigest: sha256sum.DigestBytes([]byte("cpu")), Computer: &workerapi.RuntimeComputerSource{LogicalBytes: disk.SeedCapacity, Root: ptrVersionRoot(disk.SeedCapacity)}}
 	point := workerapi.CheckpointRecoveryPoint{ID: "checkpoint", ComputerID: source.ComputerID, ComputerSpecID: source.ComputerSpecID, ComputerInstanceID: "captured", WriterGeneration: 4, MembershipRevision: 2, Runtime: workerapi.CheckpointRuntime{Backend: "firecracker", ID: source.VMPlatformID, Arch: string(definition.ArchitectureX8664), Contract: source.VMRuntimeContract, RootfsDigest: source.RootfsDigest, KernelDigest: "kernel", InitramfsDigest: "initramfs", ConfigDigest: "config", VMVCPUCount: 2, CPUConfigDigest: source.CPUConfigDigest}}
 	if count > 0 {
 		source.Program = &workerapi.RuntimeProgram{DeploymentID: "program"}

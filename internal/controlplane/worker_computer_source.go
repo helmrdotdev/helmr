@@ -30,7 +30,7 @@ func projectRuntimeComputerSource(row db.ListComputerInstanceReconcileTargetsRow
 	source.LogicalBytes = row.ReservedGuestEphemeralDiskBytes
 	switch row.ComputerDiskVersionStatus.String {
 	case "initializing":
-		if len(row.ComputerGenerationLocator) != 0 || row.SourceCheckpointID.Valid || row.ComputerContentDigest.Valid ||
+		if len(row.ComputerVersionLocator) != 0 || row.SourceCheckpointID.Valid || row.ComputerContentDigest.Valid ||
 			!row.ComputerLogicalSizeBytes.Valid || row.ComputerLogicalSizeBytes.Int64 != 0 ||
 			len(row.ComputerInitialConfig) != 0 {
 			return source, errors.New("initializing computer has persisted disk or continuation state")
@@ -55,12 +55,12 @@ func projectRuntimeComputerSource(row db.ListComputerInstanceReconcileTargetsRow
 			Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType,
 		}}
 	case "committed", "private":
-		root, err := disk.ParseGenerationRoot(row.ComputerGenerationLocator, source.LogicalBytes)
+		root, err := disk.ParseVersionRoot(row.ComputerVersionLocator, source.LogicalBytes)
 		if err != nil {
-			return source, fmt.Errorf("project computer generation: %w", err)
+			return source, fmt.Errorf("project computer disk version: %w", err)
 		}
 		if !row.ComputerLogicalSizeBytes.Valid || row.ComputerLogicalSizeBytes.Int64 != source.LogicalBytes || !row.ComputerContentDigest.Valid || row.ComputerContentDigest.String != root.Pack.Digest {
-			return source, errors.New("computer generation identity is incomplete")
+			return source, errors.New("computer disk version identity is incomplete")
 		}
 		source.Root = &root
 		// The original configuration belongs to the Computer, not the current

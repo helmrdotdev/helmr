@@ -31,7 +31,7 @@ type ComputerSaveObjectRequest struct {
 
 type ComputerSavePublicationRequest struct {
 	Save ComputerSaveBeginRequest `json:"save"`
-	Root disk.GenerationRoot      `json:"root"`
+	Root disk.VersionRoot         `json:"root"`
 }
 
 type ComputerSavePublicationResponse struct {

@@ -45,7 +45,7 @@ type PreparedComputerInstanceClient interface {
 }
 
 type ComputerPreparationClient interface {
-	InitialGenerationClient
+	InitialVersionClient
 	InitialComputerKey(context.Context, workerapi.InitialComputerKeyRequest) (workerapi.ComputerKeyMaterial, error)
 	PublishInitialComputerGeneration(context.Context, workerapi.InitialComputerGenerationRequest) (workerapi.InitialComputerGenerationResponse, error)
 	ComputerSource(context.Context, workerapi.ComputerSourceRequest) (workerapi.ComputerSourceMaterial, error)

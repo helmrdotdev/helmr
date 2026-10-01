@@ -14,9 +14,9 @@ import (
 )
 
 func TestLocalCollectionReusesBudgetAcrossOverwritesAndReopen(t *testing.T) {
-	cfg, _ := localGenerationFixture(t)
+	cfg, _ := localVersionFixture(t)
 	cfg.StagedBytes = 128 << 10
-	p, err := CreateLocalGeneration(t.Context(), cfg)
+	p, err := CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestLocalCollectionReusesBudgetAcrossOverwritesAndReopen(t *testing.T) {
 			if err = p.Close(); err != nil {
 				t.Fatal(err)
 			}
-			p, err = OpenLocalGeneration(t.Context(), cfg)
+			p, err = OpenLocalVersion(t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -53,8 +53,8 @@ func TestLocalCollectionReusesBudgetAcrossOverwritesAndReopen(t *testing.T) {
 }
 
 func TestLocalCollectionRetainsCapturedAndDirtySuccessor(t *testing.T) {
-	cfg, _ := localGenerationFixture(t)
-	p, err := CreateLocalGeneration(t.Context(), cfg)
+	cfg, _ := localVersionFixture(t)
+	p, err := CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestLocalCollectionRetainsCapturedAndDirtySuccessor(t *testing.T) {
 	if _, err = p.Collect(t.Context(), 1000); err != nil {
 		t.Fatal(err)
 	}
-	tree, err := OpenGeneration(t.Context(), p.disk.writer.Source, cfg.Scope, cfg.Keys, capture.Root(), cfg.Base.LogicalBytes)
+	tree, err := OpenVersion(t.Context(), p.disk.writer.Source, cfg.Scope, cfg.Keys, capture.Root(), cfg.Base.LogicalBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,8 +108,8 @@ func TestLocalCollectionRetainsCapturedAndDirtySuccessor(t *testing.T) {
 }
 
 func TestLocalCollectionFailedRootCommitRetainsBothRoots(t *testing.T) {
-	cfg, _ := localGenerationFixture(t)
-	p, err := CreateLocalGeneration(t.Context(), cfg)
+	cfg, _ := localVersionFixture(t)
+	p, err := CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestLocalCollectionFailedRootCommitRetainsBothRoots(t *testing.T) {
 		t.Fatal("in-memory tree lost")
 	}
 	p.Close()
-	p, err = OpenLocalGeneration(t.Context(), cfg)
+	p, err = OpenLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,8 +147,8 @@ func TestLocalCollectionFailedRootCommitRetainsBothRoots(t *testing.T) {
 }
 
 func TestLocalCollectionFailureAndBudgetDoNotReleaseCredit(t *testing.T) {
-	cfg, _ := localGenerationFixture(t)
-	p, err := CreateLocalGeneration(t.Context(), cfg)
+	cfg, _ := localVersionFixture(t)
+	p, err := CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,11 +159,11 @@ func TestLocalCollectionFailureAndBudgetDoNotReleaseCredit(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	before := p.disk.writer.Sink.(*reservedGenerationSink).remaining
+	before := p.disk.writer.Sink.(*reservedVersionSink).remaining
 	if _, err = p.Collect(t.Context(), 1); err == nil {
 		t.Fatal("ignored graph budget")
 	}
-	if p.disk.writer.Sink.(*reservedGenerationSink).remaining != before {
+	if p.disk.writer.Sink.(*reservedVersionSink).remaining != before {
 		t.Fatal("credited failed traversal")
 	}
 	p.phase = func(phase string) error {
@@ -175,14 +175,14 @@ func TestLocalCollectionFailureAndBudgetDoNotReleaseCredit(t *testing.T) {
 	if _, err = p.Collect(t.Context(), 1000); err == nil {
 		t.Fatal("ignored unlink durability error")
 	}
-	if p.disk.writer.Sink.(*reservedGenerationSink).remaining != before {
+	if p.disk.writer.Sink.(*reservedVersionSink).remaining != before {
 		t.Fatal("credited non-durable unlink")
 	}
 	p.phase = nil
 	if _, err = p.Collect(t.Context(), 1000); err != nil {
 		t.Fatal(err)
 	}
-	if p.disk.writer.Sink.(*reservedGenerationSink).remaining <= before {
+	if p.disk.writer.Sink.(*reservedVersionSink).remaining <= before {
 		t.Fatal("retry did not reclaim credit")
 	}
 	if localByte(t, p) != 3 {
@@ -191,14 +191,14 @@ func TestLocalCollectionFailureAndBudgetDoNotReleaseCredit(t *testing.T) {
 }
 
 func TestLocalCollectionDuringPublication(t *testing.T) {
-	cfg, _ := localGenerationFixture(t)
+	cfg, _ := localVersionFixture(t)
 	remote := cfg.BaseSource.(*cas.File)
-	base := &continuationTestPublication{generationTestPublication: &generationTestPublication{remote: remote, registered: map[string]blockformat.ObjectInspection{}, certified: map[string]blockformat.ObjectInspection{}}}
+	base := &continuationTestPublication{versionTestPublication: &versionTestPublication{remote: remote, registered: map[string]blockformat.ObjectInspection{}, certified: map[string]blockformat.ObjectInspection{}}}
 	loc, _ := cfg.Base.Locator(cfg.Base.LogicalBytes)
-	if _, err := publishGeneration(t.Context(), remote, remote, cfg.Scope, cfg.Keys, loc, cfg.Base.LogicalBytes, 1000, base, nil); err != nil {
+	if _, err := publishVersion(t.Context(), remote, remote, cfg.Scope, cfg.Keys, loc, cfg.Base.LogicalBytes, 1000, base, nil); err != nil {
 		t.Fatal(err)
 	}
-	p, err := CreateLocalGeneration(t.Context(), cfg)
+	p, err := CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestLocalCollectionDuringPublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer capture.Release()
-	publisher := &blockedGenerationPublication{continuationTestPublication: base, entered: make(chan struct{}), resume: make(chan struct{})}
+	publisher := &blockedVersionPublication{continuationTestPublication: base, entered: make(chan struct{}), resume: make(chan struct{})}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
@@ -226,7 +226,7 @@ func TestLocalCollectionDuringPublication(t *testing.T) {
 	if err = <-done; err != nil {
 		t.Fatal(err)
 	}
-	tree, err := OpenGeneration(t.Context(), remote, cfg.Scope, cfg.Keys, capture.Root(), cfg.Base.LogicalBytes)
+	tree, err := OpenVersion(t.Context(), remote, cfg.Scope, cfg.Keys, capture.Root(), cfg.Base.LogicalBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,8 +239,8 @@ func TestLocalCollectionDuringPublication(t *testing.T) {
 func TestLocalCollectionRetainsRootBetweenConsecutivePersistFailures(t *testing.T) {
 	for _, afterRename := range []string{"root-renamed", "root-committed"} {
 		t.Run(afterRename, func(t *testing.T) {
-			cfg, _ := localGenerationFixture(t)
-			p, err := CreateLocalGeneration(t.Context(), cfg)
+			cfg, _ := localVersionFixture(t)
+			p, err := CreateLocalVersion(t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -277,7 +277,7 @@ func TestLocalCollectionRetainsRootBetweenConsecutivePersistFailures(t *testing.
 				t.Fatal("memory root lost")
 			}
 			p.Close()
-			p, err = OpenLocalGeneration(t.Context(), cfg)
+			p, err = OpenLocalVersion(t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
 			}

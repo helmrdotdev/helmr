@@ -1645,7 +1645,7 @@ func (x *HeartbeatComputerResponse) GetStopRequested() bool {
 	return false
 }
 
-// The host has already materialized the retained Computer generation.
+// The host has already materialized the retained Computer disk version.
 type ComputerMountTarget struct {
 	state                     protoimpl.MessageState `protogen:"open.v1"`
 	BaseComputerDiskVersionId string                 `protobuf:"bytes,1,opt,name=base_computer_disk_version_id,json=baseComputerDiskVersionId,proto3" json:"base_computer_disk_version_id,omitempty"`

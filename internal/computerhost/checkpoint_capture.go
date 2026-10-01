@@ -354,7 +354,7 @@ func removeCheckpointSnapshot(artifact vm.SnapshotArtifact) error {
 func checkpointDescriptor(d cas.Descriptor) workerapi.CheckpointArtifact {
 	return workerapi.CheckpointArtifact{Digest: d.Digest, SizeBytes: d.SizeBytes, MediaType: d.MediaType}
 }
-func (c computerCheckpointer) checkpointManifest(point workerapi.CheckpointRecoveryPoint, artifact vm.SnapshotArtifact, root disk.GenerationRoot, candidates []*checkpointCandidate) workerapi.CheckpointManifest {
+func (c computerCheckpointer) checkpointManifest(point workerapi.CheckpointRecoveryPoint, artifact vm.SnapshotArtifact, root disk.VersionRoot, candidates []*checkpointCandidate) workerapi.CheckpointManifest {
 	point.Runtime = workerapi.CheckpointRuntime{
 		Backend:         artifact.RuntimeBackend,
 		ID:              artifact.RuntimeID,

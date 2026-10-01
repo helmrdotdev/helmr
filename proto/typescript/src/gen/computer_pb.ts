@@ -792,7 +792,7 @@ export const HeartbeatComputerResponseSchema: GenMessage<HeartbeatComputerRespon
   messageDesc(file_computer, 22);
 
 /**
- * The host has already materialized the retained Computer generation.
+ * The host has already materialized the retained Computer disk version.
  *
  * @generated from message helmr.computer.v0.ComputerMountTarget
  */

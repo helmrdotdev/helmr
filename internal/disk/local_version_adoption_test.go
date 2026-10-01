@@ -15,25 +15,25 @@ import (
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 )
 
-func adoptionPublisher(t *testing.T, cfg LocalGenerationConfig) *continuationTestPublication {
+func adoptionPublisher(t *testing.T, cfg LocalVersionConfig) *continuationTestPublication {
 	t.Helper()
 	remote := cfg.BaseSource.(*cas.File)
-	p := &continuationTestPublication{generationTestPublication: &generationTestPublication{remote: remote, registered: map[string]blockformat.ObjectInspection{}, certified: map[string]blockformat.ObjectInspection{}}}
+	p := &continuationTestPublication{versionTestPublication: &versionTestPublication{remote: remote, registered: map[string]blockformat.ObjectInspection{}, certified: map[string]blockformat.ObjectInspection{}}}
 	locator, err := cfg.Base.Locator(cfg.Base.LogicalBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = publishGeneration(t.Context(), remote, remote, cfg.Scope, cfg.Keys, locator, cfg.Base.LogicalBytes, 1000, p, nil); err != nil {
+	if _, err = publishVersion(t.Context(), remote, remote, cfg.Scope, cfg.Keys, locator, cfg.Base.LogicalBytes, 1000, p, nil); err != nil {
 		t.Fatal(err)
 	}
 	return p
 }
 
 func TestLocalAdoptionReclaimsSavedBytesPreservingSuccessorsAndReopen(t *testing.T) {
-	cfg, _ := localGenerationFixture(t)
+	cfg, _ := localVersionFixture(t)
 	cfg.StagedBytes = 96 << 10
 	pub := adoptionPublisher(t, cfg)
-	p, err := CreateLocalGeneration(t.Context(), cfg)
+	p, err := CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestLocalAdoptionReclaimsSavedBytesPreservingSuccessorsAndReopen(t *testing
 			if err = p.Close(); err != nil {
 				t.Fatal(err)
 			}
-			p, err = OpenLocalGeneration(t.Context(), cfg)
+			p, err = OpenLocalVersion(t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -113,9 +113,9 @@ func TestLocalAdoptionReclaimsSavedBytesPreservingSuccessorsAndReopen(t *testing
 func TestLocalAdoptionFailurePreservesLocalData(t *testing.T) {
 	for _, failure := range []string{"missing remote", "missing remote segment", "budget", "root-synced", "root-renamed", "root-committed"} {
 		t.Run(failure, func(t *testing.T) {
-			cfg, remotePath := localGenerationFixture(t)
+			cfg, remotePath := localVersionFixture(t)
 			pub := adoptionPublisher(t, cfg)
-			p, err := CreateLocalGeneration(t.Context(), cfg)
+			p, err := CreateLocalVersion(t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -141,7 +141,7 @@ func TestLocalAdoptionFailurePreservesLocalData(t *testing.T) {
 						continue
 					}
 					segment := inspection.Segment
-					local, e := generationObjectLocal(t.Context(), p.store, segment.Digest, segment.Size)
+					local, e := versionObjectLocal(t.Context(), p.store, segment.Digest, segment.Size)
 					if e != nil {
 						t.Fatal(e)
 					}
@@ -184,7 +184,7 @@ func TestLocalAdoptionFailurePreservesLocalData(t *testing.T) {
 			if err = p.Close(); err != nil {
 				t.Fatal(err)
 			}
-			reopened, err := OpenLocalGeneration(t.Context(), cfg)
+			reopened, err := OpenLocalVersion(t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -201,9 +201,9 @@ func TestLocalAdoptionFailurePreservesLocalData(t *testing.T) {
 }
 
 func TestLocalAdoptionCollectionSkipsEvictionUntilPublisherJoins(t *testing.T) {
-	cfg, _ := localGenerationFixture(t)
+	cfg, _ := localVersionFixture(t)
 	pub := adoptionPublisher(t, cfg)
-	p, err := CreateLocalGeneration(t.Context(), cfg)
+	p, err := CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func TestLocalAdoptionCollectionSkipsEvictionUntilPublisherJoins(t *testing.T) {
 	if err = capture.Adopt(t.Context(), 1000); err != nil {
 		t.Fatal(err)
 	}
-	blocked := &blockedGenerationPublication{continuationTestPublication: pub, entered: make(chan struct{}), resume: make(chan struct{})}
+	blocked := &blockedVersionPublication{continuationTestPublication: pub, entered: make(chan struct{}), resume: make(chan struct{})}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	done := make(chan error, 1)

@@ -92,16 +92,16 @@ func TestComputerBlockAttachmentAndPausedFlush(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := disk.NewGenerationRoot(locator, size)
+	root, err := disk.NewVersionRoot(locator, size)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := disk.LocalGenerationConfig{Directory: filepath.Join(arena, "local"), Base: root, BaseSource: store, Scope: "fixture", ActiveKey: key, Keys: keys, DirtyBlocks: 8, StagedBytes: 32 << 20, PackLimit: blockformat.MinPackLimit}
-	generation, err := disk.CreateLocalGeneration(ctx, cfg)
+	cfg := disk.LocalVersionConfig{Directory: filepath.Join(arena, "local"), Base: root, BaseSource: store, Scope: "fixture", ActiveKey: key, Keys: keys, DirtyBlocks: 8, StagedBytes: 32 << 20, PackLimit: blockformat.MinPackLimit}
+	local, err := disk.CreateLocalVersion(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	device, err := disk.AttachDevice(ctx, generation, nbd.Config{Helper: helper, Arena: arena, Socket: filepath.Join(arena, "nbd"), Size: size, Devices: []string{"/dev/nbd15", "/dev/nbd14"}})
+	device, err := disk.AttachDevice(ctx, local, nbd.Config{Helper: helper, Arena: arena, Socket: filepath.Join(arena, "nbd"), Size: size, Devices: []string{"/dev/nbd15", "/dev/nbd14"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,13 +166,13 @@ func TestComputerBlockAttachmentAndPausedFlush(t *testing.T) {
 	if err := connector.cleanup(ctx, owner); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := disk.OpenLocalGeneration(ctx, cfg)
+	reopened, err := disk.OpenLocalVersion(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := make([]byte, len(data))
 	if _, err := reopened.ReadAt(ctx, got, 4096); err != nil || !bytes.Equal(got, data) {
-		t.Fatalf("paused barrier did not persist generation: %v", err)
+		t.Fatalf("paused barrier did not persist version: %v", err)
 	}
 	if err := reopened.Close(); err != nil {
 		t.Fatal(err)

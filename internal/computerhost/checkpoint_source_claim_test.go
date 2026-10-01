@@ -349,22 +349,22 @@ func (s *delayedAckSaves) ackInFlight() bool {
 	return s.inFlight
 }
 
-// closedGenerationSave is a live save cut whose local maintenance fails once
-// its machine's disk generation has been closed.
-type closedGenerationSave struct {
+// closedVersionSave is a live save cut whose local maintenance fails once
+// its machine's disk version has been closed.
+type closedVersionSave struct {
 	machine         *capturedServeMachine
 	collectedClosed atomic.Bool
 }
 
-func (c *closedGenerationSave) Root() disk.GenerationRoot {
-	return disk.GenerationRoot{FormatVersion: 1, LogicalBytes: 1 << 20}
+func (c *closedVersionSave) Root() disk.VersionRoot {
+	return disk.VersionRoot{FormatVersion: 1, LogicalBytes: 1 << 20}
 }
-func (c *closedGenerationSave) Publish(context.Context, disk.ContinuationPublication) error {
+func (c *closedVersionSave) Publish(context.Context, disk.ContinuationPublication) error {
 	return nil
 }
-func (c *closedGenerationSave) Release()                         {}
-func (c *closedGenerationSave) Adopt(context.Context, int) error { return nil }
-func (c *closedGenerationSave) Collect(context.Context, int) (int64, error) {
+func (c *closedVersionSave) Release()                         {}
+func (c *closedVersionSave) Adopt(context.Context, int) error { return nil }
+func (c *closedVersionSave) Collect(context.Context, int) (int64, error) {
 	if c.machine.isClosed() {
 		c.collectedClosed.Store(true)
 		return 0, os.ErrClosed
@@ -374,12 +374,12 @@ func (c *closedGenerationSave) Collect(context.Context, int) (int64, error) {
 
 // A save whose adoption was committed but whose response is still in flight
 // must be joined before the checkpoint source is physically closed, so its
-// local completion never runs against a closed generation.
+// local completion never runs against a closed version.
 func TestCaptureReleaseJoinsSaveOwnerBeforePhysicalClose(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	machine := &capturedServeMachine{}
-	save := &closedGenerationSave{machine: machine}
+	save := &closedVersionSave{machine: machine}
 	machine.save = save
 	saves := &delayedAckSaves{acked: make(chan struct{})}
 	var closedDuringSave atomic.Bool
@@ -414,7 +414,7 @@ func TestCaptureReleaseJoinsSaveOwnerBeforePhysicalClose(t *testing.T) {
 		}
 	}
 	if save.collectedClosed.Load() {
-		t.Fatal("save maintenance ran against the closed generation")
+		t.Fatal("save maintenance ran against the closed version")
 	}
 	if closes := machine.closeCount(); closes != 1 {
 		t.Fatalf("physical closes = %d, want 1", closes)
@@ -465,7 +465,7 @@ func TestServerDefersToCaptureAfterTakeover(t *testing.T) {
 			// Only the save failure case runs a live save loop.
 			saveEvery := time.Hour
 			if event == "save fails" {
-				machine.save = &closedGenerationSave{machine: machine}
+				machine.save = &closedVersionSave{machine: machine}
 				saveEvery = time.Millisecond
 			}
 			var control *switchedRenewal
@@ -896,8 +896,8 @@ type vmBoundSave struct {
 	once      sync.Once
 }
 
-func (c *vmBoundSave) Root() disk.GenerationRoot {
-	return disk.GenerationRoot{FormatVersion: 1, LogicalBytes: 1 << 20}
+func (c *vmBoundSave) Root() disk.VersionRoot {
+	return disk.VersionRoot{FormatVersion: 1, LogicalBytes: 1 << 20}
 }
 func (c *vmBoundSave) Publish(context.Context, disk.ContinuationPublication) error {
 	c.once.Do(func() { close(c.uploading) })
@@ -961,8 +961,8 @@ type deviceBoundSave struct {
 	observed  atomic.Bool
 }
 
-func (c *deviceBoundSave) Root() disk.GenerationRoot {
-	return disk.GenerationRoot{FormatVersion: 1, LogicalBytes: 1 << 20}
+func (c *deviceBoundSave) Root() disk.VersionRoot {
+	return disk.VersionRoot{FormatVersion: 1, LogicalBytes: 1 << 20}
 }
 func (c *deviceBoundSave) Publish(context.Context, disk.ContinuationPublication) error {
 	if c.uploading != nil {

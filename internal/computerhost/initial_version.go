@@ -11,38 +11,38 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-type InitialGenerationClient interface {
+type InitialVersionClient interface {
 	RegisterInitialComputerObject(context.Context, workerapi.InitialComputerObjectRequest) error
 	CertifyInitialComputerObject(context.Context, workerapi.InitialComputerObjectRequest) error
 }
 
-// InitialGenerationPublisher binds object publication to one initial preparation.
+// InitialVersionPublisher binds object publication to one initial preparation.
 // It cannot publish a continuation or advance the Computer head.
-type InitialGenerationPublisher struct {
-	client         InitialGenerationClient
-	objects        generationObjectPublisher
+type InitialVersionPublisher struct {
+	client         InitialVersionClient
+	objects        versionObjectPublisher
 	runtimeID      string
 	desiredVersion int64
 }
 
-func NewInitialGenerationPublisher(client InitialGenerationClient, objects generationObjectPublisher, runtimeID string, desiredVersion int64) (*InitialGenerationPublisher, error) {
+func NewInitialVersionPublisher(client InitialVersionClient, objects versionObjectPublisher, runtimeID string, desiredVersion int64) (*InitialVersionPublisher, error) {
 	if client == nil || objects == nil || runtimeID == "" || desiredVersion <= 0 {
-		return nil, errors.New("initial generation publication dependencies and Runtime identity required")
+		return nil, errors.New("initial version publication dependencies and Runtime identity required")
 	}
-	return &InitialGenerationPublisher{client: client, objects: objects, runtimeID: runtimeID, desiredVersion: desiredVersion}, nil
+	return &InitialVersionPublisher{client: client, objects: objects, runtimeID: runtimeID, desiredVersion: desiredVersion}, nil
 }
-func (p InitialGenerationPublisher) Register(ctx context.Context, e blockformat.ObjectInspection) error {
+func (p InitialVersionPublisher) Register(ctx context.Context, e blockformat.ObjectInspection) error {
 	return p.client.RegisterInitialComputerObject(ctx, workerapi.InitialComputerObjectRequest{ComputerInstanceID: p.runtimeID, DesiredVersion: p.desiredVersion, Inspection: e})
 }
-func (p InitialGenerationPublisher) Upload(ctx context.Context, d cas.Descriptor, file *os.File) (cas.Object, error) {
+func (p InitialVersionPublisher) Upload(ctx context.Context, d cas.Descriptor, file *os.File) (cas.Object, error) {
 	return p.objects.Publish(ctx, d, file)
 }
-func (p InitialGenerationPublisher) Certify(ctx context.Context, e blockformat.ObjectInspection) error {
+func (p InitialVersionPublisher) Certify(ctx context.Context, e blockformat.ObjectInspection) error {
 	return p.client.CertifyInitialComputerObject(ctx, workerapi.InitialComputerObjectRequest{ComputerInstanceID: p.runtimeID, DesiredVersion: p.desiredVersion, Inspection: e})
 }
 
-var _ disk.GenerationPublication = InitialGenerationPublisher{}
+var _ disk.VersionPublication = InitialVersionPublisher{}
 
-type generationObjectPublisher interface {
+type versionObjectPublisher interface {
 	Publish(context.Context, cas.Descriptor, *os.File) (cas.Object, error)
 }

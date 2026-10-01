@@ -14,7 +14,7 @@ func (c *Client) PublishInitialComputerGeneration(ctx context.Context, request w
 		return workerapi.InitialComputerGenerationResponse{}, err
 	}
 	if ids.Validate(response.ComputerID) != nil || ids.Validate(response.VersionID) != nil {
-		return workerapi.InitialComputerGenerationResponse{}, errors.New("invalid computer generation publication response")
+		return workerapi.InitialComputerGenerationResponse{}, errors.New("invalid computer version publication response")
 	}
 	return response, nil
 }

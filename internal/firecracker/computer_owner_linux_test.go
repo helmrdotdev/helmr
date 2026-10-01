@@ -188,7 +188,7 @@ func TestComputerCleanupWaitsForStartupBeforeDeviceBinding(t *testing.T) {
 	}
 }
 
-func (d *ownedComputerFixture) Capture(context.Context) (disk.CapturedGeneration, error) {
+func (d *ownedComputerFixture) Capture(context.Context) (disk.CapturedVersion, error) {
 	d.captures++
 	return &ownedCaptureFixture{owner: d}, nil
 }
@@ -198,7 +198,7 @@ type ownedCaptureFixture struct {
 	released bool
 }
 
-func (*ownedCaptureFixture) Root() disk.GenerationRoot { return disk.GenerationRoot{} }
+func (*ownedCaptureFixture) Root() disk.VersionRoot { return disk.VersionRoot{} }
 func (*ownedCaptureFixture) Publish(context.Context, disk.ContinuationPublication) error {
 	return errors.New("unexpected publication")
 }

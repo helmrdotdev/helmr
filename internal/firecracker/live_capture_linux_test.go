@@ -20,10 +20,10 @@ import (
 
 type liveCaptureDevice struct {
 	ownedComputerFixture
-	capture func(context.Context) (disk.CapturedGeneration, error)
+	capture func(context.Context) (disk.CapturedVersion, error)
 }
 
-func (d *liveCaptureDevice) Capture(ctx context.Context) (disk.CapturedGeneration, error) {
+func (d *liveCaptureDevice) Capture(ctx context.Context) (disk.CapturedVersion, error) {
 	if d.capture != nil {
 		return d.capture(ctx)
 	}
@@ -131,7 +131,7 @@ func TestLiveComputerCaptureResumeFailureRetainsHold(t *testing.T) {
 func TestLiveComputerCaptureCheckpointWaitsForResume(t *testing.T) {
 	s, d, states := liveCaptureSession(t, false)
 	entered, release := make(chan struct{}), make(chan struct{})
-	d.capture = func(ctx context.Context) (disk.CapturedGeneration, error) {
+	d.capture = func(ctx context.Context) (disk.CapturedVersion, error) {
 		close(entered)
 		select {
 		case <-release:
@@ -173,7 +173,7 @@ func TestLiveComputerCaptureCheckpointWaitsForResume(t *testing.T) {
 func TestCloseCancelsCaptureBeforeReleasingBarrier(t *testing.T) {
 	s, d, states := liveCaptureSession(t, false)
 	entered, release := make(chan struct{}), make(chan struct{})
-	d.capture = func(ctx context.Context) (disk.CapturedGeneration, error) {
+	d.capture = func(ctx context.Context) (disk.CapturedVersion, error) {
 		close(entered)
 		<-ctx.Done()
 		<-release
@@ -214,7 +214,7 @@ func TestLiveComputerCaptureFailureNeverResumes(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				d.capture = func(context.Context) (disk.CapturedGeneration, error) {
+				d.capture = func(context.Context) (disk.CapturedVersion, error) {
 					return nil, errors.New("device capture failed")
 				}
 			}
@@ -235,7 +235,7 @@ func TestLiveComputerCaptureSerializesTerminalCut(t *testing.T) {
 	s, d, states := liveCaptureSession(t, false)
 	entered, release := make(chan struct{}), make(chan struct{})
 	var first sync.Once
-	d.capture = func(ctx context.Context) (disk.CapturedGeneration, error) {
+	d.capture = func(ctx context.Context) (disk.CapturedVersion, error) {
 		first.Do(func() { close(entered); <-release })
 		return &ownedCaptureFixture{owner: &d.ownedComputerFixture}, nil
 	}

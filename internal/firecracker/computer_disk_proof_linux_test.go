@@ -22,7 +22,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// This opt-in proof exercises the authenticated generation codec against a real offline
+// This opt-in proof exercises the authenticated version codec against a real offline
 // ext4 filesystem through encrypted local CAS. It does not exercise guest mounts,
 // remote upload, live writer exclusion, memory restore, or fenced publication.
 func TestComputerDiskProof(t *testing.T) {
@@ -106,7 +106,7 @@ func TestComputerDiskProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidate, err := disk.CaptureInitialGeneration(t.Context(), disk.GenerationCapture{Disk: file, Capacity: logicalSize, StagingParent: root, Scope: "filesystem-proof", KeyID: keyID, Key: key, Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 256 << 20, MaxObjects: 10000})
+	candidate, err := disk.CaptureInitialVersion(t.Context(), disk.VersionCapture{Disk: file, Capacity: logicalSize, StagingParent: root, Scope: "filesystem-proof", KeyID: keyID, Key: key, Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 256 << 20, MaxObjects: 10000})
 	file.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -116,7 +116,7 @@ func TestComputerDiskProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	generation, err := disk.NewGenerationRoot(locator, logicalSize)
+	versionRoot, err := disk.NewVersionRoot(locator, logicalSize)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestComputerDiskProof(t *testing.T) {
 		t.Fatal(err)
 	}
 	start = time.Now()
-	tree, err := disk.OpenGeneration(t.Context(), storage, "filesystem-proof", map[string][]byte{keyID: key}, generation, logicalSize)
+	tree, err := disk.OpenVersion(t.Context(), storage, "filesystem-proof", map[string][]byte{keyID: key}, versionRoot, logicalSize)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestComputerDiskProof(t *testing.T) {
 	if got := computerProofCommand(t, "debugfs", "-R", "cat /opt/agent/cache", restored); got != string(payload) {
 		t.Fatal("cache content differs")
 	}
-	t.Logf("logical_bytes=%d root_pack_bytes=%d save=%s restore=%s", logicalSize, generation.Pack.SizeBytes, packTime, restoreTime)
+	t.Logf("logical_bytes=%d root_pack_bytes=%d save=%s restore=%s", logicalSize, versionRoot.Pack.SizeBytes, packTime, restoreTime)
 }
 
 func computerProofCommand(t *testing.T, name string, args ...string) string {

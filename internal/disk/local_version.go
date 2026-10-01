@@ -18,13 +18,13 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// LocalGenerationConfig binds one private host directory to its retained source.
+// LocalVersionConfig binds one private host directory to its retained source.
 // The caller keeps BaseSource and all supplied key references retained, supplies
 // stable keys during construction, and reserves StagedBytes for local ciphertext.
 // Parent directory durability and exclusive host ownership are prerequisites.
-type LocalGenerationConfig struct {
+type LocalVersionConfig struct {
 	Directory        string
-	Base             GenerationRoot
+	Base             VersionRoot
 	BaseSource       blockformat.RangeSource
 	Scope, ActiveKey string
 	Keys             map[string][]byte
@@ -33,21 +33,21 @@ type LocalGenerationConfig struct {
 	PackLimit        int
 }
 
-type localGenerationHead struct {
-	FormatVersion int            `json:"format_version"`
-	Scope         string         `json:"scope"`
-	Base          GenerationRoot `json:"base"`
-	Root          GenerationRoot `json:"root"`
-	Saved         GenerationRoot `json:"saved"`
+type localVersionHead struct {
+	FormatVersion int         `json:"format_version"`
+	Scope         string      `json:"scope"`
+	Base          VersionRoot `json:"base"`
+	Root          VersionRoot `json:"root"`
+	Saved         VersionRoot `json:"saved"`
 }
 
-type localGenerationSource struct {
+type localVersionSource struct {
 	local *cas.File
 	base  blockformat.RangeSource
-	reads *generationRangeCache
+	reads *versionRangeCache
 }
 
-func (s localGenerationSource) GetRange(ctx context.Context, digest string, size, offset, length int64) (io.ReadCloser, error) {
+func (s localVersionSource) GetRange(ctx context.Context, digest string, size, offset, length int64) (io.ReadCloser, error) {
 	r, err := s.local.GetRange(ctx, digest, size, offset, length)
 	if errors.Is(err, os.ErrNotExist) {
 		return s.reads.GetRange(ctx, digest, size, offset, length)
@@ -55,28 +55,28 @@ func (s localGenerationSource) GetRange(ctx context.Context, digest string, size
 	return r, err
 }
 
-// LocalGeneration owns an exclusive process lock and a crash-recoverable local
+// LocalVersion owns an exclusive process lock and a crash-recoverable local
 // root. Flush success means ciphertext and the selected root are fsynced locally;
 // it is not external durability and does not tolerate loss of the host's disk.
 // Do not unlink/replace the directory or owner.lock while any owner can use it.
-type LocalGeneration struct {
+type LocalVersion struct {
 	life          sync.RWMutex
 	commit        sync.Mutex
 	publication   sync.RWMutex // Joins local-file publishers before reachable eviction.
 	store         *cas.File
-	reads         *generationRangeCache
-	disk          *WritableGeneration
+	reads         *versionRangeCache
+	disk          *WritableVersion
 	directory     string
-	head          localGenerationHead
-	installedRoot GenerationRoot
+	head          localVersionHead
+	installedRoot VersionRoot
 	lock          *os.File
 	closed        bool
 	stagedBytes   int64
-	captures      map[*LocalCapture]GenerationRoot
+	captures      map[*LocalCapture]VersionRoot
 	phase         func(string) error // Deterministic test crash/fault injection, set before use.
 }
 
-func syncGenerationDirectory(path string) error {
+func syncVersionDirectory(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -84,38 +84,38 @@ func syncGenerationDirectory(path string) error {
 	return errors.Join(f.Sync(), f.Close())
 }
 
-func lockLocalGeneration(path string) (*os.File, error) {
+func lockLocalVersion(path string) (*os.File, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
 	}
 	if !info.IsDir() || info.Mode().Perm() != 0700 {
-		return nil, errors.New("local generation requires private existing directory")
+		return nil, errors.New("local version requires private existing directory")
 	}
 	fd, err := unix.Open(filepath.Join(path, "owner.lock"), unix.O_CREAT|unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
 	if err != nil {
 		return nil, err
 	}
-	f := os.NewFile(uintptr(fd), "generation owner")
+	f := os.NewFile(uintptr(fd), "version owner")
 	if err = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		return nil, errors.Join(err, f.Close())
 	}
 	return f, nil
 }
 
-// CreateLocalGeneration requires a new directory. Failed creation leaves its
+// CreateLocalVersion requires a new directory. Failed creation leaves its
 // evidence for explicit owner cleanup; it never adopts an existing local root.
-func CreateLocalGeneration(ctx context.Context, cfg LocalGenerationConfig) (_ *LocalGeneration, retErr error) {
+func CreateLocalVersion(ctx context.Context, cfg LocalVersionConfig) (_ *LocalVersion, retErr error) {
 	if !filepath.IsAbs(cfg.Directory) || cfg.BaseSource == nil {
 		return nil, errors.New("absolute private directory and retained source required")
 	}
 	if err := os.Mkdir(cfg.Directory, 0700); err != nil {
 		return nil, err
 	}
-	if err := syncGenerationDirectory(filepath.Dir(cfg.Directory)); err != nil {
+	if err := syncVersionDirectory(filepath.Dir(cfg.Directory)); err != nil {
 		return nil, err
 	}
-	lock, err := lockLocalGeneration(cfg.Directory)
+	lock, err := lockLocalVersion(cfg.Directory)
 	if err != nil {
 		return nil, err
 	}
@@ -128,10 +128,10 @@ func CreateLocalGeneration(ctx context.Context, cfg LocalGenerationConfig) (_ *L
 	if err = os.Mkdir(objects, 0700); err != nil {
 		return nil, err
 	}
-	if err = syncGenerationDirectory(cfg.Directory); err != nil {
+	if err = syncVersionDirectory(cfg.Directory); err != nil {
 		return nil, err
 	}
-	p, err := newLocalGeneration(ctx, cfg, lock, localGenerationHead{FormatVersion: 1, Scope: cfg.Scope, Base: cfg.Base, Root: cfg.Base, Saved: cfg.Base})
+	p, err := newLocalVersion(ctx, cfg, lock, localVersionHead{FormatVersion: 1, Scope: cfg.Scope, Base: cfg.Base, Root: cfg.Base, Saved: cfg.Base})
 	if err != nil {
 		return nil, err
 	}
@@ -142,13 +142,13 @@ func CreateLocalGeneration(ctx context.Context, cfg LocalGenerationConfig) (_ *L
 	return p, nil
 }
 
-// OpenLocalGeneration authenticates the recorded root and checks its admitted
+// OpenLocalVersion authenticates the recorded root and checks its admitted
 // base/scope; missing or corrupt state is an error, never fresh initialization.
-func OpenLocalGeneration(ctx context.Context, cfg LocalGenerationConfig) (_ *LocalGeneration, retErr error) {
+func OpenLocalVersion(ctx context.Context, cfg LocalVersionConfig) (_ *LocalVersion, retErr error) {
 	if !filepath.IsAbs(cfg.Directory) || cfg.BaseSource == nil {
 		return nil, errors.New("absolute private directory and retained source required")
 	}
-	lock, err := lockLocalGeneration(cfg.Directory)
+	lock, err := lockLocalVersion(cfg.Directory)
 	if err != nil {
 		return nil, err
 	}
@@ -163,11 +163,11 @@ func OpenLocalGeneration(ctx context.Context, cfg LocalGenerationConfig) (_ *Loc
 	}
 	decoder := json.NewDecoder(io.LimitReader(file, 16385))
 	decoder.DisallowUnknownFields()
-	var head localGenerationHead
+	var head localVersionHead
 	err = decoder.Decode(&head)
 	if err == nil {
 		if e := decoder.Decode(new(any)); e != io.EOF {
-			err = errors.New("local generation root has trailing data")
+			err = errors.New("local version root has trailing data")
 		}
 	}
 	err = errors.Join(err, file.Close())
@@ -175,12 +175,12 @@ func OpenLocalGeneration(ctx context.Context, cfg LocalGenerationConfig) (_ *Loc
 		return nil, err
 	}
 	if head.FormatVersion != 1 || head.Scope != cfg.Scope || head.Base != cfg.Base || head.Root.LogicalBytes != cfg.Base.LogicalBytes || head.Saved.Validate(cfg.Base.LogicalBytes) != nil {
-		return nil, errors.New("local generation admission differs from recorded source")
+		return nil, errors.New("local version admission differs from recorded source")
 	}
-	return newLocalGeneration(ctx, cfg, lock, head)
+	return newLocalVersion(ctx, cfg, lock, head)
 }
 
-func newLocalGeneration(ctx context.Context, cfg LocalGenerationConfig, lock *os.File, head localGenerationHead) (*LocalGeneration, error) {
+func newLocalVersion(ctx context.Context, cfg LocalVersionConfig, lock *os.File, head localVersionHead) (*LocalVersion, error) {
 	objects := filepath.Join(cfg.Directory, "objects")
 	info, err := os.Lstat(objects)
 	if err != nil {
@@ -203,7 +203,7 @@ func newLocalGeneration(ctx context.Context, cfg LocalGenerationConfig, lock *os
 			if err = os.Remove(filepath.Join(cfg.Directory, entry.Name())); err != nil {
 				return nil, err
 			}
-			if err = syncGenerationDirectory(cfg.Directory); err != nil {
+			if err = syncVersionDirectory(cfg.Directory); err != nil {
 				return nil, err
 			}
 		}
@@ -232,10 +232,10 @@ func newLocalGeneration(ctx context.Context, cfg LocalGenerationConfig, lock *os
 			if e = os.Remove(path); e != nil {
 				return e
 			}
-			return syncGenerationDirectory(filepath.Dir(path))
+			return syncVersionDirectory(filepath.Dir(path))
 		}
 		if stat.Size() > remaining {
-			return ErrGenerationStagingFull
+			return ErrVersionStagingFull
 		}
 		remaining -= stat.Size()
 		return nil
@@ -244,28 +244,28 @@ func newLocalGeneration(ctx context.Context, cfg LocalGenerationConfig, lock *os
 		return nil, err
 	}
 	if remaining < 0 {
-		return nil, ErrGenerationStagingFull
+		return nil, ErrVersionStagingFull
 	}
 	store, err := cas.NewFile(objects)
 	if err != nil {
 		return nil, err
 	}
-	reads := newGenerationRangeCache(cfg.BaseSource)
-	writer := blockformat.Writer{Source: localGenerationSource{local: store, base: cfg.BaseSource, reads: reads}, Sink: store, Scope: cfg.Scope, ActiveKey: cfg.ActiveKey, Keys: cfg.Keys, PackLimit: cfg.PackLimit}
-	disk, err := OpenWritableGeneration(ctx, writer, head.Root, cfg.DirtyBlocks, remaining)
+	reads := newVersionRangeCache(cfg.BaseSource)
+	writer := blockformat.Writer{Source: localVersionSource{local: store, base: cfg.BaseSource, reads: reads}, Sink: store, Scope: cfg.Scope, ActiveKey: cfg.ActiveKey, Keys: cfg.Keys, PackLimit: cfg.PackLimit}
+	disk, err := OpenWritableVersion(ctx, writer, head.Root, cfg.DirtyBlocks, remaining)
 	if err != nil {
 		return nil, err
 	}
-	return &LocalGeneration{store: store, reads: reads, disk: disk, directory: cfg.Directory, head: head, installedRoot: head.Root, lock: lock, stagedBytes: cfg.StagedBytes, captures: make(map[*LocalCapture]GenerationRoot)}, nil
+	return &LocalVersion{store: store, reads: reads, disk: disk, directory: cfg.Directory, head: head, installedRoot: head.Root, lock: lock, stagedBytes: cfg.StagedBytes, captures: make(map[*LocalCapture]VersionRoot)}, nil
 }
 
-func (p *LocalGeneration) step(phase string) error {
+func (p *LocalVersion) step(phase string) error {
 	if p.phase != nil {
 		return p.phase(phase)
 	}
 	return nil
 }
-func (p *LocalGeneration) persist(ctx context.Context, head localGenerationHead) error {
+func (p *LocalVersion) persist(ctx context.Context, head localVersionHead) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -299,13 +299,13 @@ func (p *LocalGeneration) persist(ctx context.Context, head localGenerationHead)
 	if err = p.step("root-renamed"); err != nil {
 		return err
 	}
-	if err = syncGenerationDirectory(p.directory); err != nil {
+	if err = syncVersionDirectory(p.directory); err != nil {
 		return err
 	}
 	return p.step("root-committed")
 }
 
-func (p *LocalGeneration) ReadAt(ctx context.Context, b []byte, off int64) (int, error) {
+func (p *LocalVersion) ReadAt(ctx context.Context, b []byte, off int64) (int, error) {
 	p.life.RLock()
 	defer p.life.RUnlock()
 	if p.closed {
@@ -314,7 +314,7 @@ func (p *LocalGeneration) ReadAt(ctx context.Context, b []byte, off int64) (int,
 	n, err := p.disk.ReadAt(ctx, b, off)
 	return n, deviceFailure(err)
 }
-func (p *LocalGeneration) WriteAt(ctx context.Context, b []byte, off int64) (int, error) {
+func (p *LocalVersion) WriteAt(ctx context.Context, b []byte, off int64) (int, error) {
 	p.life.RLock()
 	defer p.life.RUnlock()
 	if p.closed {
@@ -323,7 +323,7 @@ func (p *LocalGeneration) WriteAt(ctx context.Context, b []byte, off int64) (int
 	n, err := p.disk.WriteAt(ctx, b, off)
 	return n, deviceFailure(err)
 }
-func (p *LocalGeneration) Trim(ctx context.Context, off int64, n int) error {
+func (p *LocalVersion) Trim(ctx context.Context, off int64, n int) error {
 	p.life.RLock()
 	defer p.life.RUnlock()
 	if p.closed {
@@ -332,11 +332,11 @@ func (p *LocalGeneration) Trim(ctx context.Context, off int64, n int) error {
 	return deviceFailure(p.disk.Trim(ctx, off, n))
 }
 
-func (p *LocalGeneration) Flush(ctx context.Context) (GenerationRoot, error) {
+func (p *LocalVersion) Flush(ctx context.Context) (VersionRoot, error) {
 	p.life.RLock()
 	defer p.life.RUnlock()
 	if p.closed {
-		return GenerationRoot{}, os.ErrClosed
+		return VersionRoot{}, os.ErrClosed
 	}
 	p.commit.Lock()
 	defer p.commit.Unlock()
@@ -344,25 +344,25 @@ func (p *LocalGeneration) Flush(ctx context.Context) (GenerationRoot, error) {
 	return root, deviceFailure(err)
 }
 
-func (p *LocalGeneration) flushLocked(ctx context.Context) (GenerationRoot, error) {
+func (p *LocalVersion) flushLocked(ctx context.Context) (VersionRoot, error) {
 	root, err := p.disk.Capture(ctx)
 	if err != nil {
-		return GenerationRoot{}, err
+		return VersionRoot{}, err
 	}
 	if err = p.step("objects-staged"); err != nil {
-		return GenerationRoot{}, err
+		return VersionRoot{}, err
 	}
 	head := p.head
 	head.Root = root
 	if err = p.persist(ctx, head); err != nil {
-		return GenerationRoot{}, err
+		return VersionRoot{}, err
 	}
 	p.head = head
 	return root, nil
 }
 
 // Close does not flush unacknowledged writes or remove any recovery evidence.
-func (p *LocalGeneration) Close() error {
+func (p *LocalVersion) Close() error {
 	p.life.Lock()
 	defer p.life.Unlock()
 	if p.closed {

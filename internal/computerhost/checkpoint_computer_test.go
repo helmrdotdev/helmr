@@ -72,7 +72,7 @@ func TestWarmRuntimeRejectsUnpairedCheckpointBeforeAdmission(t *testing.T) {
 	admitted := false
 	machines.AdmitRuntimeStart = func(context.Context) error { admitted = true; return nil }
 	err = machines.warmRuntimeTarget(t.Context(), &typedRuntimeClient{}, target, func() { t.Fatal("unpaired checkpoint started preparation") })
-	if err == nil || !strings.Contains(err.Error(), "paired Computer generation") || admitted {
+	if err == nil || !strings.Contains(err.Error(), "paired Computer disk version") || admitted {
 		t.Fatalf("unsafe restore reached admission: admitted=%v err=%v", admitted, err)
 	}
 }

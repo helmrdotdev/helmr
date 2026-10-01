@@ -7,7 +7,7 @@ import (
 
 const MaxReadBytes = 4 << 20
 
-// ReadRange returns an authenticated byte range of this exact generation. Only
+// ReadRange returns an authenticated byte range of this exact version. Only
 // intersecting paths are read, each node once per request; absent entries are
 // holes. Requests are bounded independently of disk capacity. Unaligned requests
 // authenticate complete boundary blocks before copying the requested bytes.
@@ -18,7 +18,7 @@ func (t *Tree) ReadRange(ctx context.Context, offset int64, length int) ([]byte,
 		return nil, err
 	}
 	if length < 0 || length > MaxReadBytes || offset < 0 || offset > t.shape.Capacity-int64(length) {
-		return nil, errors.New("generation read range bounds")
+		return nil, errors.New("version read range bounds")
 	}
 	out := make([]byte, length)
 	if length == 0 {

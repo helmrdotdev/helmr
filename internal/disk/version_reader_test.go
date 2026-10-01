@@ -15,25 +15,25 @@ import (
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 )
 
-type countedGenerationSource struct {
+type countedVersionSource struct {
 	*cas.File
 	calls int
 }
 
-func (s *countedGenerationSource) GetRange(ctx context.Context, digest string, size, offset, length int64) (io.ReadCloser, error) {
+func (s *countedVersionSource) GetRange(ctx context.Context, digest string, size, offset, length int64) (io.ReadCloser, error) {
 	s.calls++
 	return s.File.GetRange(ctx, digest, size, offset, length)
 }
 
-type generationFixture struct {
+type versionFixture struct {
 	t      *testing.T
-	source *countedGenerationSource
+	source *countedVersionSource
 	key    []byte
 	keyID  string
 	keys   map[string][]byte
 }
 
-func newGenerationFixture(t *testing.T) *generationFixture {
+func newVersionFixture(t *testing.T) *versionFixture {
 	t.Helper()
 	store, err := cas.NewFile(t.TempDir())
 	if err != nil {
@@ -41,9 +41,9 @@ func newGenerationFixture(t *testing.T) *generationFixture {
 	}
 	key := bytes.Repeat([]byte{7}, 32)
 	id := uuid.NewV7().String()
-	return &generationFixture{t, &countedGenerationSource{File: store}, key, id, map[string][]byte{id: key}}
+	return &versionFixture{t, &countedVersionSource{File: store}, key, id, map[string][]byte{id: key}}
 }
-func (f *generationFixture) seal(kind byte, records [][]byte) (blockformat.Ref, []byte) {
+func (f *versionFixture) seal(kind byte, records [][]byte) (blockformat.Ref, []byte) {
 	f.t.Helper()
 	ref := blockformat.Ref{Key: f.keyID, Kind: kind, Count: uint32(len(records))}
 	if _, err := rand.Read(ref.Salt[:]); err != nil {
@@ -55,7 +55,7 @@ func (f *generationFixture) seal(kind byte, records [][]byte) (blockformat.Ref, 
 	}
 	return ref, raw
 }
-func (f *generationFixture) page(kind byte, rank int, value any) blockformat.Locator {
+func (f *versionFixture) page(kind byte, rank int, value any) blockformat.Locator {
 	f.t.Helper()
 	raw, err := json.Marshal(value)
 	if err != nil {
@@ -70,7 +70,7 @@ func (f *generationFixture) page(kind byte, rank int, value any) blockformat.Loc
 	}
 	return blockformat.Locator{Pack: blockformat.PackRef{Digest: sha256.Sum256(pack), Size: int64(len(pack)), Rank: rank}, Page: page, Offset: 64}
 }
-func (f *generationFixture) segment() blockformat.Ref {
+func (f *versionFixture) segment() blockformat.Ref {
 	f.t.Helper()
 	ref, raw := f.seal(blockformat.SegmentKind, [][]byte{bytes.Repeat([]byte{9}, 4096)})
 	if _, err := f.source.Put(f.t.Context(), "application/octet-stream", bytes.NewReader(raw)); err != nil {
@@ -78,23 +78,23 @@ func (f *generationFixture) segment() blockformat.Ref {
 	}
 	return ref
 }
-func (f *generationFixture) root(shape blockformat.Root) GenerationRoot {
+func (f *versionFixture) root(shape blockformat.Root) VersionRoot {
 	f.t.Helper()
 	locator := f.page(blockformat.RootKind, shape.Level+2, shape)
-	root, err := NewGenerationRoot(locator, shape.Capacity)
+	root, err := NewVersionRoot(locator, shape.Capacity)
 	if err != nil {
 		f.t.Fatal(err)
 	}
 	return root
 }
-func TestGenerationTreeFileReads(t *testing.T) {
-	f := newGenerationFixture(t)
+func TestVersionTreeFileReads(t *testing.T) {
+	f := newVersionFixture(t)
 	const capacity = 128 * 4096
 	segment := f.segment()
 	leaf := f.page(blockformat.NodeKind, 1, blockformat.Node{Capacity: capacity, Fanout: 64, Level: 0, Start: 64, Segments: []blockformat.Ref{segment}, Entries: []blockformat.Entry{{Slot: 3}}})
 	index := f.page(blockformat.NodeKind, 2, blockformat.Node{Capacity: capacity, Fanout: 64, Level: 1, Entries: []blockformat.Entry{{Slot: 1, Child: &leaf}}})
 	root := f.root(blockformat.Root{Capacity: capacity, Fanout: 64, Level: 1, Index: &index})
-	tree, err := OpenGeneration(t.Context(), f.source, "scope", f.keys, root, capacity)
+	tree, err := OpenVersion(t.Context(), f.source, "scope", f.keys, root, capacity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestGenerationTreeFileReads(t *testing.T) {
 	// Correctly framed admission capacity cannot override authenticated capacity.
 	changed := root
 	changed.LogicalBytes = 2 * capacity
-	if _, err = OpenGeneration(t.Context(), f.source, "scope", f.keys, changed, 2*capacity); err == nil {
+	if _, err = OpenVersion(t.Context(), f.source, "scope", f.keys, changed, 2*capacity); err == nil {
 		t.Fatal("authenticated capacity mismatch accepted")
 	}
 	// An authenticated pointer to a missing object must never become a sparse hole.
@@ -134,10 +134,10 @@ func TestGenerationTreeFileReads(t *testing.T) {
 		t.Fatal("missing child became data")
 	}
 }
-func TestGenerationTreeRejectsAuthenticatedMalformedNodes(t *testing.T) {
+func TestVersionTreeRejectsAuthenticatedMalformedNodes(t *testing.T) {
 	for _, name := range []string{"capacity", "fanout", "level", "position", "negative slot", "duplicate slot", "outside slot", "segment index", "record", "child in leaf", "unused segment", "missing segment", "missing key"} {
 		t.Run(name, func(t *testing.T) {
-			f := newGenerationFixture(t)
+			f := newVersionFixture(t)
 			const capacity = 64 * 4096
 			segment := f.segment()
 			n := blockformat.Node{Capacity: capacity, Fanout: 64, Segments: []blockformat.Ref{segment}, Entries: []blockformat.Entry{{Slot: 0}}}
@@ -167,7 +167,7 @@ func TestGenerationTreeRejectsAuthenticatedMalformedNodes(t *testing.T) {
 			}
 			index := f.page(blockformat.NodeKind, 1, n)
 			root := f.root(blockformat.Root{Capacity: capacity, Fanout: 64, Index: &index})
-			tree, err := OpenGeneration(t.Context(), f.source, "scope", f.keys, root, capacity)
+			tree, err := OpenVersion(t.Context(), f.source, "scope", f.keys, root, capacity)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -186,10 +186,10 @@ func TestGenerationTreeRejectsAuthenticatedMalformedNodes(t *testing.T) {
 	}
 }
 
-func TestGenerationTreeRejectsMalformedRoots(t *testing.T) {
+func TestVersionTreeRejectsMalformedRoots(t *testing.T) {
 	for _, name := range []string{"zero capacity", "oversize", "unaligned", "fanout", "negative level", "excessive level", "rank", "index rank", "index kind", "unknown field", "wrong JSON type"} {
 		t.Run(name, func(t *testing.T) {
-			f := newGenerationFixture(t)
+			f := newVersionFixture(t)
 			shape := blockformat.Root{Capacity: 64 * 4096, Fanout: 64}
 			rank := 2
 			switch name {
@@ -229,15 +229,15 @@ func TestGenerationTreeRejectsMalformedRoots(t *testing.T) {
 	}
 }
 
-func TestGenerationRangeReads(t *testing.T) {
-	f := newGenerationFixture(t)
+func TestVersionRangeReads(t *testing.T) {
+	f := newVersionFixture(t)
 	const capacity = 128 * 4096
 	segment := f.segment()
 	left := f.page(blockformat.NodeKind, 1, blockformat.Node{Capacity: capacity, Fanout: 64, Segments: []blockformat.Ref{segment}, Entries: []blockformat.Entry{{Slot: 63}}})
 	right := f.page(blockformat.NodeKind, 1, blockformat.Node{Capacity: capacity, Fanout: 64, Start: 64, Segments: []blockformat.Ref{segment}, Entries: []blockformat.Entry{{Slot: 1}}})
 	index := f.page(blockformat.NodeKind, 2, blockformat.Node{Capacity: capacity, Fanout: 64, Level: 1, Entries: []blockformat.Entry{{Slot: 0, Child: &left}, {Slot: 1, Child: &right}}})
 	root := f.root(blockformat.Root{Capacity: capacity, Fanout: 64, Level: 1, Index: &index})
-	tree, err := OpenGeneration(t.Context(), f.source, "scope", f.keys, root, capacity)
+	tree, err := OpenVersion(t.Context(), f.source, "scope", f.keys, root, capacity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,10 +289,10 @@ func TestGenerationRangeReads(t *testing.T) {
 	}
 }
 
-func TestGenerationRangeBatchesConsecutiveFrames(t *testing.T) {
+func TestVersionRangeBatchesConsecutiveFrames(t *testing.T) {
 	for _, fragmented := range []bool{false, true} {
 		t.Run(map[bool]string{false: "contiguous", true: "holes and segments"}[fragmented], func(t *testing.T) {
-			f := newGenerationFixture(t)
+			f := newVersionFixture(t)
 			const capacity = 64 * blockformat.BlockSize
 			records := make([][]byte, 66)
 			for i := range records {
@@ -322,7 +322,7 @@ func TestGenerationRangeBatchesConsecutiveFrames(t *testing.T) {
 				copy(want[entry.Slot*blockformat.BlockSize:], data)
 			}
 			leaf := f.page(blockformat.NodeKind, 1, blockformat.Node{Capacity: capacity, Fanout: 64, Segments: segments, Entries: entries})
-			tree, err := OpenGeneration(t.Context(), f.source, "scope", f.keys, f.root(blockformat.Root{Capacity: capacity, Fanout: 64, Index: &leaf}), capacity)
+			tree, err := OpenVersion(t.Context(), f.source, "scope", f.keys, f.root(blockformat.Root{Capacity: capacity, Fanout: 64, Index: &leaf}), capacity)
 			if err != nil {
 				t.Fatal(err)
 			}

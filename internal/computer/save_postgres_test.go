@@ -25,9 +25,9 @@ func TestSaveFingerprintIsStable(t *testing.T) {
 		EnvironmentID: uuid.MustParse("01997f91-0564-7000-a000-000000000003"), InstanceID: uuid.MustParse("01997f91-0564-7000-a000-000000000004"),
 		WriterGeneration: 3, SaveID: uuid.MustParse("01997f91-0564-7000-a000-000000000005"), Sequence: 7,
 	}
-	root := disk.GenerationRoot{FormatVersion: 1, LogicalBytes: 1 << 30,
-		Pack: disk.GenerationPack{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 1024, Rank: 2},
-		Page: disk.GenerationPage{Digest: "sha256:" + strings.Repeat("b", 64), Salt: strings.Repeat("c", 64), KeyID: "01912345-6789-7abc-8def-0123456789ab", Kind: 3, Count: 1, SizeBytes: 128}, Offset: 8}
+	root := disk.VersionRoot{FormatVersion: 1, LogicalBytes: 1 << 30,
+		Pack: disk.VersionPack{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 1024, Rank: 2},
+		Page: disk.VersionPage{Digest: "sha256:" + strings.Repeat("b", 64), Salt: strings.Repeat("c", 64), KeyID: "01912345-6789-7abc-8def-0123456789ab", Kind: 3, Count: 1, SizeBytes: 128}, Offset: 8}
 	fingerprint, err := saveFingerprint(ref, root)
 	if err != nil {
 		t.Fatal(err)

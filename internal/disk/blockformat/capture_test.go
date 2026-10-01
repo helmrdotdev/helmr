@@ -54,7 +54,7 @@ func readWritten(t *testing.T, w blockformat.Writer, root blockformat.Locator, b
 		t.Fatalf("read block %d: %v", block, err)
 	}
 }
-func TestCaptureGenerations(t *testing.T) {
+func TestCaptureVersions(t *testing.T) {
 	for _, fanout := range []int{64, 256} {
 		t.Run(fmt.Sprint(fanout), func(t *testing.T) {
 			w, sink := writerFixture(t)

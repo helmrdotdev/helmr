@@ -102,7 +102,7 @@ func TestComputerRuntimeKVM(t *testing.T) {
 	computerProofCommand(t, "mke2fs", "-q", "-t", "ext4", "-F", source)
 	// The final block is outside ext4. Host-injected synthetic markers identify
 	// consecutive captures without modifying a mounted guest filesystem. This
-	// tests generation freshness, not guest application write/fsync semantics.
+	// tests version freshness, not guest application write/fsync semantics.
 	if err := os.Truncate(source, capacity); err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestComputerRuntimeKVM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	initial, err := disk.CaptureInitialGeneration(t.Context(), disk.GenerationCapture{Disk: f, Capacity: capacity, StagingParent: input.Arena, Scope: "kvm-qualification", KeyID: keyID, Key: keys[keyID], Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 256 << 20, MaxObjects: 10000})
+	initial, err := disk.CaptureInitialVersion(t.Context(), disk.VersionCapture{Disk: f, Capacity: capacity, StagingParent: input.Arena, Scope: "kvm-qualification", KeyID: keyID, Key: keys[keyID], Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 256 << 20, MaxObjects: 10000})
 	f.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +127,7 @@ func TestComputerRuntimeKVM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := disk.NewGenerationRoot(locator, capacity)
+	root, err := disk.NewVersionRoot(locator, capacity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,8 +135,8 @@ func TestComputerRuntimeKVM(t *testing.T) {
 		t.Fatal(err)
 	}
 	var wantMarker []byte
-	verifyMarker := func(root disk.GenerationRoot) {
-		tree, err := disk.OpenGeneration(t.Context(), store, "kvm-qualification", keys, root, capacity)
+	verifyMarker := func(root disk.VersionRoot) {
+		tree, err := disk.OpenVersion(t.Context(), store, "kvm-qualification", keys, root, capacity)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -145,7 +145,7 @@ func TestComputerRuntimeKVM(t *testing.T) {
 			t.Fatalf("published marker mismatch: %v", err)
 		}
 	}
-	// Each iteration uses a fresh local generation; only published objects cross
+	// Each iteration uses a fresh local version; only published objects cross
 	// the boundary. No previous mutable directory or device is reused.
 	for _, name := range []string{"initial", "cold"} {
 		func() {
@@ -153,7 +153,7 @@ func TestComputerRuntimeKVM(t *testing.T) {
 			if err := os.Mkdir(dir, 0700); err != nil {
 				t.Fatal(err)
 			}
-			local, err := disk.CreateLocalGeneration(t.Context(), disk.LocalGenerationConfig{Directory: filepath.Join(dir, "generation"), Base: root, BaseSource: store, Scope: "kvm-qualification", ActiveKey: keyID, Keys: keys, DirtyBlocks: 256, StagedBytes: 256 << 20, PackLimit: blockformat.MinPackLimit})
+			local, err := disk.CreateLocalVersion(t.Context(), disk.LocalVersionConfig{Directory: filepath.Join(dir, "generation"), Base: root, BaseSource: store, Scope: "kvm-qualification", ActiveKey: keyID, Keys: keys, DirtyBlocks: 256, StagedBytes: 256 << 20, PackLimit: blockformat.MinPackLimit})
 			if err != nil {
 				t.Fatal(err)
 			}
