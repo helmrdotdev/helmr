@@ -9,6 +9,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer/computerdbtest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
@@ -338,7 +339,7 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 		)
 		VALUES ($1, $2, $3, 'sandbox', 'scheduler', 0, '{}',
 		        decode(repeat('05', 32), 'hex'), $4)
-	`, computerDefinitionID, environmentID, deploymentID, dbtest.InsertDefaultComputerSpec(t, t.Context(), pool, imageArtifactID))
+	`, computerDefinitionID, environmentID, deploymentID, computerdbtest.InsertDefaultComputerSpec(t, t.Context(), pool, imageArtifactID))
 	dbtest.MustExec(t, t.Context(), pool, `
 		UPDATE environments SET current_deployment_id = $1 WHERE id = $2
 	`, deploymentID, environmentID)

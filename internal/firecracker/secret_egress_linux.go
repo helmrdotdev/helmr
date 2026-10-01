@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -20,6 +21,18 @@ import (
 
 const secretRouteTable = 100
 const secretRoutePriority = 100
+
+// Only the connector-owned qualification probe has no control-plane reservation.
+// Every real runtime must complete preparation, including Computers with no bindings.
+func (c *Connector) prepareSecretTransport(ctx context.Context, mode launchMode, runtimeID string, blocked []netip.Prefix) (*secretproxy.Proxy, error) {
+	if mode == startupProbeLaunch {
+		return nil, nil
+	}
+	if c.cfg.PrepareSecretTransport == nil {
+		return nil, errors.New("computer Secret transport preparation is not configured")
+	}
+	return c.cfg.PrepareSecretTransport(ctx, runtimeID, blocked)
+}
 
 func protectedPorts(proxy *secretproxy.Proxy) []uint16 {
 	if proxy == nil {

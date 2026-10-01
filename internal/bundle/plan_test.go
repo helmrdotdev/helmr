@@ -4,12 +4,13 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 )
 
 func TestDeploymentPlanFromProgramIndex(t *testing.T) {
-	index := testProgramIndex(t)
+	index := artifacttest.ProgramIndex(t)
 	plan, err := PlanFromProgramIndex(index)
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +70,7 @@ func TestDeploymentPlanFromProgramIndex(t *testing.T) {
 }
 
 func TestDeploymentPlanFromProgramIndexRejectsInvalidIndex(t *testing.T) {
-	index := testProgramIndex(t)
+	index := artifacttest.ProgramIndex(t)
 	index.RuntimeContract = "helmr.runtime.unsupported"
 	if _, err := PlanFromProgramIndex(index); err == nil {
 		t.Fatal("DeploymentPlanFromProgramIndex accepted an invalid index")
@@ -77,7 +78,7 @@ func TestDeploymentPlanFromProgramIndexRejectsInvalidIndex(t *testing.T) {
 }
 
 func TestDeploymentPlanFromProgramIndexPreservesEmptyQueueArray(t *testing.T) {
-	index := testProgramIndex(t)
+	index := artifacttest.ProgramIndex(t)
 	for _, declaration := range index.Declarations {
 		if declaration.Kind == definition.KindSandbox {
 			index.Declarations = []artifact.ProgramIndexDeclaration{declaration}

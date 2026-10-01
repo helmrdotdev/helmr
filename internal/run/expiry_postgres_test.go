@@ -8,6 +8,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer/computerdbtest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -275,7 +276,7 @@ func newQueuedChildParent(
         SELECT $2,i.computer_id,i.environment_id,i.computer_spec_id,i.id,i.writer_generation,i.membership_revision,i.program_deployment_id,r.base_computer_disk_version_id FROM run_leases l JOIN computer_instances i ON i.id=l.computer_instance_id JOIN runs r ON r.id=l.run_id WHERE l.id=$1`, parent.leaseID, checkpointID)
 		dbtest.MustExec(t, ctx, tx, `INSERT INTO computer_disk_versions(id,environment_id,computer_id,parent_version_id,root_pack_digest,logical_bytes,status,source_computer_instance_id,writer_generation)
         SELECT $2,environment_id,computer_id,base_computer_disk_version_id,$3,4096,'private',source_computer_instance_id,writer_generation FROM computer_checkpoints WHERE id=$1`, checkpointID, privateID, dbtest.Digest("parked-root"))
-		artifacts := dbtest.InsertCheckpointArtifacts(t, ctx, tx, parent.runID, checkpointID.String())
+		artifacts := computerdbtest.InsertCheckpointArtifacts(t, ctx, tx, parent.runID, checkpointID.String())
 		dbtest.MustExec(t, ctx, tx, `UPDATE computer_checkpoints SET status='ready',ready_at=now(),private_computer_disk_version_id=$2,manifest='{"version":1}',ready_request_fingerprint=$3,vm_config_artifact_id=$4,vm_state_artifact_id=$5,memory_artifact_id=$6,scratch_disk_artifact_id=$7 WHERE id=$1`, checkpointID, privateID, dbtest.Digest("ready-parked"), artifacts.RuntimeConfig, artifacts.VMState, artifacts.Memory, artifacts.ScratchDisk)
 		dbtest.MustExec(t, ctx, tx, `INSERT INTO computer_checkpoint_runs(checkpoint_id,environment_id,computer_id,run_id,attempt_number,run_wait_id,source_run_lease_id,source_computer_instance_id,writer_generation)
         SELECT $2,environment_id,computer_id,run_id,attempt_number,$3,id,computer_instance_id,writer_generation FROM run_leases WHERE id=$1`, parent.leaseID, checkpointID, parent.waitID)

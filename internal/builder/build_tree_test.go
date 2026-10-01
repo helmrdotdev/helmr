@@ -7,17 +7,18 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
 	"github.com/helmrdotdev/helmr/internal/safepath"
 )
 
 func TestBuildTreeAcceptsManagerNativeOutput(t *testing.T) {
-	tree := newMemoryArtifact()
-	tree.addFile("package.json", []byte(`{"packageManager":"bun@1.3.13"}`), 0644)
-	tree.addDirectory("node_modules")
-	tree.addDirectory("node_modules/.bin")
-	tree.addDirectory("node_modules/tool")
-	tree.addFile("node_modules/tool/index.js", []byte("export {}\n"), 0644)
-	tree.addLink("node_modules/.bin/tool", "../tool/index.js")
+	tree := artifacttest.NewMemory()
+	tree.AddFile("package.json", []byte(`{"packageManager":"bun@1.3.13"}`), 0644)
+	tree.AddDirectory("node_modules")
+	tree.AddDirectory("node_modules/.bin")
+	tree.AddDirectory("node_modules/tool")
+	tree.AddFile("node_modules/tool/index.js", []byte("export {}\n"), 0644)
+	tree.AddLink("node_modules/.bin/tool", "../tool/index.js")
 
 	if _, err := inspectMemoryBuildTree(t, tree); err != nil {
 		t.Fatal(err)
@@ -25,20 +26,20 @@ func TestBuildTreeAcceptsManagerNativeOutput(t *testing.T) {
 }
 
 func TestBuildTreeRejectsReservedOrInvalidRoots(t *testing.T) {
-	tests := map[string]func(*memoryArtifact){
-		"generated output": func(tree *memoryArtifact) {
-			tree.addDirectory("helmr")
+	tests := map[string]func(*artifacttest.Memory){
+		"generated output": func(tree *artifacttest.Memory) {
+			tree.AddDirectory("helmr")
 		},
-		"dependency file": func(tree *memoryArtifact) {
-			tree.addFile("node_modules", []byte("not a directory"), 0644)
+		"dependency file": func(tree *artifacttest.Memory) {
+			tree.AddFile("node_modules", []byte("not a directory"), 0644)
 		},
-		"escaping link": func(tree *memoryArtifact) {
-			tree.addLink("escape", "../outside")
+		"escaping link": func(tree *artifacttest.Memory) {
+			tree.AddLink("escape", "../outside")
 		},
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
-			tree := newMemoryArtifact()
+			tree := artifacttest.NewMemory()
 			mutate(tree)
 			if _, err := inspectMemoryBuildTree(t, tree); err == nil {
 				t.Fatal("build tree was accepted")
@@ -48,12 +49,12 @@ func TestBuildTreeRejectsReservedOrInvalidRoots(t *testing.T) {
 }
 
 func TestBuildTreeAcceptsConfinedDanglingAndNestedReservedNames(t *testing.T) {
-	tree := newMemoryArtifact()
-	tree.addDirectory("packages")
-	tree.addDirectory("packages/app")
-	tree.addDirectory("packages/app/helmr")
-	tree.addDirectory("packages/app/node_modules")
-	tree.addLink("packages/current", "missing")
+	tree := artifacttest.NewMemory()
+	tree.AddDirectory("packages")
+	tree.AddDirectory("packages/app")
+	tree.AddDirectory("packages/app/helmr")
+	tree.AddDirectory("packages/app/node_modules")
+	tree.AddLink("packages/current", "missing")
 
 	if _, err := inspectMemoryBuildTree(t, tree); err != nil {
 		t.Fatal(err)
@@ -61,13 +62,13 @@ func TestBuildTreeAcceptsConfinedDanglingAndNestedReservedNames(t *testing.T) {
 }
 
 func TestBuildTreeRejectsLinkCyclePastBound(t *testing.T) {
-	tree := newMemoryArtifact()
+	tree := artifacttest.NewMemory()
 	for index := 0; index <= safepath.TreeLinkHops; index++ {
 		name := "link-" + strings.Repeat("x", index)
 		target := "link-" + strings.Repeat("x", index+1)
-		tree.addLink(name, target)
+		tree.AddLink(name, target)
 	}
-	tree.addLink(
+	tree.AddLink(
 		"link-"+strings.Repeat("x", safepath.TreeLinkHops+1),
 		"link-",
 	)
@@ -78,7 +79,7 @@ func TestBuildTreeRejectsLinkCyclePastBound(t *testing.T) {
 
 func inspectMemoryBuildTree(
 	t *testing.T,
-	tree *memoryArtifact,
+	tree *artifacttest.Memory,
 ) (*artifact.Tree, error) {
 	t.Helper()
 	inspected, err := artifact.Inspect(
@@ -98,14 +99,14 @@ func inspectMemoryBuildTree(
 
 func TestBuildTreeLinkHopBoundary(t *testing.T) {
 	for _, count := range []int{40, 41} {
-		tree := newMemoryArtifact()
-		tree.addFile("file", []byte("content"), 0644)
+		tree := artifacttest.NewMemory()
+		tree.AddFile("file", []byte("content"), 0644)
 		for i := 0; i < count; i++ {
 			target := "file"
 			if i+1 < count {
 				target = fmt.Sprintf("link-%02d", i+1)
 			}
-			tree.addLink(fmt.Sprintf("link-%02d", i), target)
+			tree.AddLink(fmt.Sprintf("link-%02d", i), target)
 		}
 		_, err := inspectMemoryBuildTree(t, tree)
 		if (err == nil) != (count == 40) {

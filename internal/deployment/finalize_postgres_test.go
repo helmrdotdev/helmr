@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer/computerdbtest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
@@ -428,7 +429,7 @@ func TestCreateDeploymentDefinitionsPostgresRejectsMalformedBatchesAtomically(t 
 		}
 		params := deploymentDefinitionBatchParams(fixture.environmentID, pgvalue.UUID(deploymentUUID), 1)
 		params.Kinds[0] = "sandbox"
-		params.ComputerSpecIds[0] = pgvalue.UUID(dbtest.InsertDefaultComputerSpec(t, t.Context(), fixture.pool, artifact.ID))
+		params.ComputerSpecIds[0] = pgvalue.UUID(computerdbtest.InsertDefaultComputerSpec(t, t.Context(), fixture.pool, artifact.ID))
 		if _, err := queries.CreateDeploymentDefinitions(t.Context(), params); err == nil {
 			t.Fatal("cross-scope spec succeeded")
 		}

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
 	"github.com/helmrdotdev/helmr/internal/definition"
 )
 
@@ -264,7 +265,7 @@ func canonicalVerifierProgramIndex(t *testing.T) []byte {
 			},
 			Locator: &artifact.ProgramLocator{
 				ExportName: "verify",
-				ModulePath: testModulePath("a"),
+				ModulePath: artifacttest.ModulePath("a"),
 				Slot:       artifact.DeclarationSlotHandler,
 			},
 		}},

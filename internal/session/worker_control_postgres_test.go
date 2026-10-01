@@ -8,6 +8,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer/computerdbtest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/definition"
@@ -250,8 +251,8 @@ func controlChild(t *testing.T, parent *sessiontest.Execution, detached bool) *s
 	defer tx.Rollback(context.Background())
 	dbtest.MustExec(t, t.Context(), tx, `SET CONSTRAINTS ALL DEFERRED`)
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computers(id,environment_id,region_id,sandbox_declared_id,head_disk_version_id, computer_spec_id, creation_deployment_id) VALUES($1,$2,'us-east-1','test-computer',$4, (SELECT computer_spec_id FROM deployment_definitions WHERE environment_id=$2 AND id=$3), (SELECT deployment_id FROM deployment_definitions WHERE environment_id=$2 AND id=$3))`, f.ComputerID, f.EnvironmentID, f.ComputerDefinitionID, f.RootID)
-	dbtest.InsertCommittedComputerRoot(t, t.Context(), tx, f.RootID, f.EnvironmentID, f.ComputerID)
-	dbtest.InsertComputerVersion(t, t.Context(), tx, f.EnvironmentID, f.ComputerID, f.RootID)
+	computerdbtest.InsertCommittedComputerRoot(t, t.Context(), tx, f.RootID, f.EnvironmentID, f.ComputerID)
+	computerdbtest.InsertComputerVersion(t, t.Context(), tx, f.EnvironmentID, f.ComputerID, f.RootID)
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
