@@ -30,7 +30,12 @@ func TestSnapshotFailureRequiresExplicitAbortToResume(t *testing.T) {
 			case "snapshot rejected":
 				api.snapshotErr = errors.New("snapshot failed")
 			}
-			root := t.TempDir()
+			// Keep the Unix socket path below Linux's limit, even under CI's TMPDIR.
+			root, err := os.MkdirTemp("", "fc-failure-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.RemoveAll(root) })
 			for _, name := range []string{"computer.ext4", "scratch.ext4"} {
 				if err := os.WriteFile(filepath.Join(root, name), make([]byte, 4096), 0600); err != nil {
 					t.Fatal(err)
