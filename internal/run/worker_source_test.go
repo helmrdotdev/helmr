@@ -65,8 +65,9 @@ func TestLockWorkerSourceChecksTheReceiptInsideItsTransaction(t *testing.T) {
 	if _, err := LockWorkerSource(t.Context(), sourceTxBeginner{err: unavailable}, malformed); !errors.Is(err, unavailable) || errors.Is(err, ErrStaleSource) {
 		t.Fatalf("Begin failure with a malformed receipt = %v", err)
 	}
-	// The embedded nil transaction fails any statement, so the malformed
-	// receipt is reported before the source lock runs.
+	// The embedded nil transaction would panic on any statement, so this
+	// passes only if the malformed receipt is reported before the source
+	// lock runs.
 	tx := &sourceTx{}
 	if _, err := LockWorkerSource(t.Context(), sourceTxBeginner{tx: tx}, malformed); !errors.Is(err, ErrStaleSource) {
 		t.Fatalf("malformed receipt = %v", err)
