@@ -3,7 +3,6 @@ package controlplane
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -11,24 +10,22 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
 func TestSessionListPostgresFiltersByPublicStatus(t *testing.T) {
-	fixture := newActorStartPostgresFixture(t, 3)
+	fixture := newSessionHTTP(t, sessiontest.New(t, 3))
 	keys := []string{"list:open", "list:closing", "list:failed"}
 	sessions := make([]string, len(keys))
 	var failedRunID string
 	for index, key := range keys {
-		result, err := fixture.server.startActor(t.Context(), fixture.request(index, &keys[index], "list-"+key))
-		if err != nil {
-			t.Fatal(err)
-		}
+		result := startSession(t, fixture.Fixture, index, &keys[index], "list-"+key)
 		sessions[index] = result.SessionID.String()
 		if index == 2 {
 			failedRunID = result.BootRunID.String()
 		}
 	}
-	if _, err := fixture.pool.Exec(t.Context(), `
+	if _, err := fixture.Pool.Exec(t.Context(), `
 		UPDATE sessions
 		   SET status = 'closing',
 		       updated_at = now()
@@ -37,7 +34,7 @@ func TestSessionListPostgresFiltersByPublicStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	failedAt := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	if _, err := fixture.pool.Exec(t.Context(), `
+	if _, err := fixture.Pool.Exec(t.Context(), `
 		UPDATE sessions
 		   SET status = 'failed',
 		       current_run_id = NULL,
@@ -54,46 +51,46 @@ func TestSessionListPostgresFiltersByPublicStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	principal := auth.Principal{
-		OrgID: fixture.orgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper,
-		ProjectID: fixture.projectID.String(), EnvironmentID: fixture.environmentID.String(),
+	token := fixture.apiKey(auth.Principal{
+		OrgID: fixture.OrgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper,
+		ProjectID: fixture.ProjectID.String(), EnvironmentID: fixture.EnvironmentID.String(),
 		Permissions: []auth.Permission{auth.PermissionSessionsRead},
-	}
+	})
 
-	all := listSessionsPostgresHTTP(t, fixture, principal, "/v1/sessions")
+	all := listSessionsPostgresHTTP(t, fixture, token, "/v1/sessions")
 	if sessionListIDs(all) != sessions[2]+","+sessions[1]+","+sessions[0] {
 		t.Fatalf("unfiltered Sessions = %+v", all)
 	}
-	open := listSessionsPostgresHTTP(t, fixture, principal, "/v1/sessions?status=open")
+	open := listSessionsPostgresHTTP(t, fixture, token, "/v1/sessions?status=open")
 	if sessionListIDs(open) != sessions[0] ||
 		open.Sessions[0].Status != api.SessionStatusOpen {
 		t.Fatalf("open Sessions = %+v", open)
 	}
-	closing := listSessionsPostgresHTTP(t, fixture, principal, "/v1/sessions?status=closing")
+	closing := listSessionsPostgresHTTP(t, fixture, token, "/v1/sessions?status=closing")
 	if sessionListIDs(closing) != sessions[1] || closing.Sessions[0].Status != api.SessionStatusClosing {
 		t.Fatalf("closing Sessions = %+v", closing)
 	}
-	failed := listSessionsPostgresHTTP(t, fixture, principal, "/v1/sessions?status=failed")
+	failed := listSessionsPostgresHTTP(t, fixture, token, "/v1/sessions?status=failed")
 	if sessionListIDs(failed) != sessions[2] || failed.Sessions[0].Status != api.SessionStatusFailed ||
 		failed.Sessions[0].Failure == nil || failed.Sessions[0].Failure.Details.RunID != failedRunID {
 		t.Fatalf("failed Sessions = %+v", failed)
 	}
 	if closed := listSessionsPostgresHTTP(
-		t, fixture, principal, "/v1/sessions?status=closed",
+		t, fixture, token, "/v1/sessions?status=closed",
 	); len(closed.Sessions) != 0 || closed.NextCursor != "" {
 		t.Fatalf("closed Sessions = %+v", closed)
 	}
-	both := listSessionsPostgresHTTP(t, fixture, principal, "/v1/sessions?status=open&status=failed")
+	both := listSessionsPostgresHTTP(t, fixture, token, "/v1/sessions?status=open&status=failed")
 	if sessionListIDs(both) != sessions[2]+","+sessions[0] {
 		t.Fatalf("open and failed Sessions = %+v", both)
 	}
 
-	page := listSessionsPostgresHTTP(t, fixture, principal, "/v1/sessions?status=open&status=closing&limit=1")
+	page := listSessionsPostgresHTTP(t, fixture, token, "/v1/sessions?status=open&status=closing&limit=1")
 	if sessionListIDs(page) != sessions[1] || page.NextCursor == "" {
 		t.Fatalf("first page = %+v", page)
 	}
 	next := listSessionsPostgresHTTP(
-		t, fixture, principal, "/v1/sessions?status=open&status=closing&limit=1&cursor="+page.NextCursor,
+		t, fixture, token, "/v1/sessions?status=open&status=closing&limit=1&cursor="+page.NextCursor,
 	)
 	if sessionListIDs(next) != sessions[0] || next.NextCursor != "" {
 		t.Fatalf("next page = %+v", next)
@@ -103,8 +100,7 @@ func TestSessionListPostgresFiltersByPublicStatus(t *testing.T) {
 		"/v1/sessions?limit=1&cursor=" + page.NextCursor,
 		"/v1/sessions?actor_id=operator.v1&key=" + url.QueryEscape(keys[1]) + "&status=open",
 	} {
-		recorder := httptest.NewRecorder()
-		fixture.server.listSessionsHTTP(recorder, sessionReadPostgresRequest(target, "", principal))
+		recorder := fixture.request(t, http.MethodGet, target, token, "")
 		if recorder.Code != http.StatusBadRequest ||
 			!strings.Contains(recorder.Body.String(), `"code":"invalid_session_query"`) {
 			t.Fatalf("%s response = %d %s", target, recorder.Code, recorder.Body.String())
@@ -112,14 +108,14 @@ func TestSessionListPostgresFiltersByPublicStatus(t *testing.T) {
 	}
 
 	exact := listSessionsPostgresHTTP(
-		t, fixture, principal, "/v1/sessions?actor_id=operator.v1&key="+url.QueryEscape(keys[1]),
+		t, fixture, token, "/v1/sessions?actor_id=operator.v1&key="+url.QueryEscape(keys[1]),
 	)
 	if sessionListIDs(exact) != sessions[1] || exact.Sessions[0].Status != api.SessionStatusClosing ||
-		exact.Sessions[0].ComputerID != fixture.computerIDs[1].String() || exact.NextCursor != "" {
+		exact.Sessions[0].ComputerID != fixture.ComputerIDs[1].String() || exact.NextCursor != "" {
 		t.Fatalf("exact lookup = %+v", exact)
 	}
 	for index, item := range all.Sessions {
-		if item.ComputerID != fixture.computerIDs[len(all.Sessions)-1-index].String() {
+		if item.ComputerID != fixture.ComputerIDs[len(all.Sessions)-1-index].String() {
 			t.Fatalf("Session %s Computer = %q", item.ID, item.ComputerID)
 		}
 	}
@@ -135,13 +131,12 @@ func sessionListIDs(response api.ListSessionsResponse) string {
 
 func listSessionsPostgresHTTP(
 	t *testing.T,
-	fixture actorStartPostgresFixture,
-	principal auth.Principal,
+	fixture sessionHTTP,
+	token string,
 	target string,
 ) api.ListSessionsResponse {
 	t.Helper()
-	recorder := httptest.NewRecorder()
-	fixture.server.listSessionsHTTP(recorder, sessionReadPostgresRequest(target, "", principal))
+	recorder := fixture.request(t, http.MethodGet, target, token, "")
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("%s HTTP = %d body=%s", target, recorder.Code, recorder.Body.String())
 	}

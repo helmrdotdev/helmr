@@ -34,7 +34,7 @@ func TestSessionInterruptedCompletionRejectsChangedHoldPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := interruptedCompletionRequest(t, f, stopped.HoldID, &scope.TurnID)
+	req := interruptedCompletionRequest(t, f, *stopped.HoldID, &scope.TurnID)
 	for _, change := range []string{"hold", "generation", "turn", "success"} {
 		t.Run(change, func(t *testing.T) {
 			copy := req
@@ -111,7 +111,7 @@ func TestSessionInterruptedCompletionRejectsUnacknowledgedMessagePostgres(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := interruptedCompletionRequest(t, f, stopped.HoldID, &scope.TurnID)
+	req := interruptedCompletionRequest(t, f, *stopped.HoldID, &scope.TurnID)
 	parsed, err := parseActorCompletionRequest(req)
 	if err != nil {
 		t.Fatal(err)
@@ -151,7 +151,7 @@ func TestSessionHotChildCallStopConvergesPostgres(t *testing.T) {
 	if childState != "cancelled" || rootState != "running" {
 		t.Fatalf("owned stop: root=%s child=%s", rootState, childState)
 	}
-	req := interruptedCompletionRequest(t, f, stopped.HoldID, &scope.TurnID)
+	req := interruptedCompletionRequest(t, f, *stopped.HoldID, &scope.TurnID)
 	parsed, err := parseActorCompletionRequest(req)
 	if err != nil {
 		t.Fatal(err)
@@ -182,7 +182,7 @@ func TestSessionControlObservationDoesNotLockWorkerSupplyPostgres(t *testing.T) 
 	if err != nil {
 		t.Fatalf("advisory read blocked on supply mutation: %v", err)
 	}
-	if state.DispatchHoldID != pgvalue.UUID(stopped.HoldID) || state.ActiveTurnID != pgvalue.UUID(scope.TurnID) {
+	if state.DispatchHoldID != pgvalue.UUID(*stopped.HoldID) || state.ActiveTurnID != pgvalue.UUID(scope.TurnID) {
 		t.Fatalf("wrong control: %+v", state)
 	}
 }

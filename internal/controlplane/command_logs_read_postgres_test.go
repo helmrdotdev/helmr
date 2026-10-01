@@ -11,6 +11,7 @@ import (
 	commandowner "github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -34,33 +35,33 @@ func (r *commandLogTestReader) ListCommandLogChunks(_ context.Context, q telemet
 }
 
 func TestCommandLogsReadDeliveryCursorAndExpiry(t *testing.T) {
-	f := newActorStartPostgresFixture(t, 1)
-	command, err := commandowner.Create(t.Context(), f.pool, commandowner.CreateRequest{OrgID: f.orgID, ProjectID: f.projectID, EnvironmentID: f.environmentID, ComputerID: f.computerIDs[0], Creator: commandowner.Creator{SubjectType: "api_key", SubjectID: uuid.NewV7().String()}, Argv: []string{"true"}, IdempotencyKey: "read-logs"})
+	f := sessiontest.New(t, 1)
+	command, err := commandowner.Create(t.Context(), f.Pool, commandowner.CreateRequest{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.EnvironmentID, ComputerID: f.ComputerIDs[0], Creator: commandowner.Creator{SubjectType: "api_key", SubjectID: uuid.NewV7().String()}, Argv: []string{"true"}, IdempotencyKey: "read-logs"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.server.authKeys = auth.Keys{TelemetryCursor: make([]byte, auth.RootKeySize)}
+	server := &Server{db: db.New(f.Pool), authKeys: auth.Keys{TelemetryCursor: make([]byte, auth.RootKeySize)}}
 	sink := &commandLogTestReader{chunks: map[string][]telemetry.CommandLogChunk{}}
-	f.server.telemetryReader = sink
+	server.telemetryReader = sink
 	at := time.Now().UTC().Truncate(time.Microsecond)
 	appendChunk := func(stream string, seq int64) {
 		t.Helper()
-		_, err := f.server.db.InsertCommandLogChunk(t.Context(), db.InsertCommandLogChunkParams{OrgID: pgvalue.UUID(f.orgID), ProjectID: pgvalue.UUID(f.projectID), EnvironmentID: command.EnvironmentID, CommandID: command.ID, StreamName: stream, Content: []byte{0, 255}, ObservedSeq: seq, ObservedAt: pgtype.Timestamptz{Time: at, Valid: true}})
+		_, err := db.New(f.Pool).InsertCommandLogChunk(t.Context(), db.InsertCommandLogChunkParams{OrgID: pgvalue.UUID(f.OrgID), ProjectID: pgvalue.UUID(f.ProjectID), EnvironmentID: command.EnvironmentID, CommandID: command.ID, StreamName: stream, Content: []byte{0, 255}, ObservedSeq: seq, ObservedAt: pgtype.Timestamptz{Time: at, Valid: true}})
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
 	markWritten := func(stream string, seq int64) {
 		t.Helper()
-		if _, err := f.pool.Exec(t.Context(), `UPDATE telemetry_outbox SET status='written', written_at=now() WHERE command_id=$1 AND stream_name=$2 AND observed_seq=$3`, command.ID, stream, seq); err != nil {
+		if _, err := f.Pool.Exec(t.Context(), `UPDATE telemetry_outbox SET status='written', written_at=now() WHERE command_id=$1 AND stream_name=$2 AND observed_seq=$3`, command.ID, stream, seq); err != nil {
 			t.Fatal(err)
 		}
 	}
 	read := func(cursor string) (int, string, error) {
-		page, err := f.server.readCommandLogs(t.Context(), pgvalue.UUID(f.orgID), command, cursor, 10)
+		page, err := server.readCommandLogs(t.Context(), pgvalue.UUID(f.OrgID), command, cursor, 10)
 		return len(page.Logs), page.NextCursor, err
 	}
-	page, err := f.server.readCommandLogs(t.Context(), pgvalue.UUID(f.orgID), command, "", 10)
+	page, err := server.readCommandLogs(t.Context(), pgvalue.UUID(f.OrgID), command, "", 10)
 	if err != nil || len(page.Logs) != 0 || page.OutputState != "open" {
 		t.Fatalf("initial page=%+v %v", page, err)
 	}
@@ -91,7 +92,7 @@ func TestCommandLogsReadDeliveryCursorAndExpiry(t *testing.T) {
 	}
 	wrong := command
 	wrong.ID = pgvalue.UUID(uuid.NewV7())
-	if _, err := f.server.readCommandLogs(t.Context(), pgvalue.UUID(f.orgID), wrong, next, 10); !errors.Is(err, errTelemetryInvalidCursor) {
+	if _, err := server.readCommandLogs(t.Context(), pgvalue.UUID(f.OrgID), wrong, next, 10); !errors.Is(err, errTelemetryInvalidCursor) {
 		t.Fatalf("wrong command cursor=%v", err)
 	}
 	if _, _, err = read(next + "x"); !errors.Is(err, errTelemetryInvalidCursor) {
@@ -105,21 +106,21 @@ func TestCommandLogsReadDeliveryCursorAndExpiry(t *testing.T) {
 }
 
 func TestCommandLogsGapWaitsUntilProducerIsFenced(t *testing.T) {
-	f := newActorStartPostgresFixture(t, 1)
-	f.server.authKeys = auth.Keys{TelemetryCursor: make([]byte, auth.RootKeySize)}
+	f := sessiontest.New(t, 1)
+	server := &Server{db: db.New(f.Pool), authKeys: auth.Keys{TelemetryCursor: make([]byte, auth.RootKeySize)}}
 	now := time.Now().UTC()
-	command := db.ComputerCommand{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(f.environmentID), CreatedAt: pgtype.Timestamptz{Time: now, Valid: true}}
-	f.server.telemetryReader = &commandLogTestReader{chunks: map[string][]telemetry.CommandLogChunk{"stdout": {{ObservedSeq: 2, Content: []byte("tail"), ObservedAt: now}}}}
+	command := db.ComputerCommand{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(f.EnvironmentID), CreatedAt: pgtype.Timestamptz{Time: now, Valid: true}}
+	server.telemetryReader = &commandLogTestReader{chunks: map[string][]telemetry.CommandLogChunk{"stdout": {{ObservedSeq: 2, Content: []byte("tail"), ObservedAt: now}}}}
 	var lag telemetry.LaggingError
-	if _, err := f.server.readCommandLogs(t.Context(), pgvalue.UUID(f.orgID), command, "", 1); !errors.As(err, &lag) {
+	if _, err := server.readCommandLogs(t.Context(), pgvalue.UUID(f.OrgID), command, "", 1); !errors.As(err, &lag) {
 		t.Fatalf("live missing sequence=%v", err)
 	}
 	command.TerminalAt = pgtype.Timestamptz{Time: now, Valid: true}
-	page, err := f.server.readCommandLogs(t.Context(), pgvalue.UUID(f.orgID), command, "", 1)
+	page, err := server.readCommandLogs(t.Context(), pgvalue.UUID(f.OrgID), command, "", 1)
 	if err != nil || len(page.Logs) != 1 || page.Logs[0].Kind != "gap" || page.Logs[0].FromSequence != "0" || page.Logs[0].ThroughSequence != "1" {
 		t.Fatalf("gap=%+v %v", page, err)
 	}
-	tail, err := f.server.readCommandLogs(t.Context(), pgvalue.UUID(f.orgID), command, page.NextCursor, 1)
+	tail, err := server.readCommandLogs(t.Context(), pgvalue.UUID(f.OrgID), command, page.NextCursor, 1)
 	if err != nil || len(tail.Logs) != 1 || tail.Logs[0].Kind != "output" {
 		t.Fatalf("tail=%+v %v", tail, err)
 	}

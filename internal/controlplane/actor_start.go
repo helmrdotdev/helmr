@@ -3,7 +3,6 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -11,42 +10,16 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
-	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
-	"github.com/helmrdotdev/helmr/internal/secret"
-	"github.com/helmrdotdev/helmr/internal/tracing"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/helmrdotdev/helmr/internal/session"
 )
 
 const (
 	maxTags           = 10
 	maxQueuedRunTTLMS = int64(31_536_000_000)
 )
-
-var (
-	errActorStartInvalid            = errors.New("actor start request is invalid")
-	errActorStartNotDeployed        = errors.New("actor declaration is not deployed")
-	errActorStartComputerNotFound   = errors.New("actor start computer was not found")
-	errActorStartAuthority          = errors.New("actor start authority is unavailable")
-	errActorStartComputerConflict   = errors.New("actor start computer cannot accept execution")
-	errActorStartSecretUnavailable  = errors.New("actor start computer secret is unavailable")
-	errActorStartIdempotencyReceipt = errors.New("actor start idempotency receipt is invalid")
-)
-
-type ActorKeyConflictError struct {
-	Key string
-}
-
-func (e ActorKeyConflictError) Error() string {
-	return fmt.Sprintf("actor key %q already belongs to another actor", e.Key)
-}
 
 type actorStartRequest struct {
 	OrgID                 uuid.UUID
@@ -63,18 +36,6 @@ type actorStartRequest struct {
 	ManagedRetryPolicy    json.RawMessage
 	ManagedRunMetadata    json.RawMessage
 	ManagedRunTags        []string
-	Authorize             func(context.Context, pgx.Tx) error
-}
-
-type actorStartResult struct {
-	SessionID uuid.UUID
-	BootRunID uuid.UUID
-	Replayed  bool
-}
-
-type actorStartReceipt struct {
-	SessionID string `json:"actorId"`
-	BootRunID string `json:"bootRunId"`
 }
 
 type normalizedActorStart struct {
@@ -82,298 +43,89 @@ type normalizedActorStart struct {
 	fingerprint idempotency.ActorStartFingerprint
 }
 
-// startActor is the durable Actor creation primitive. Claim replay, promoted
-// declaration and Computer authority, Actor/input/boot-Run creation,
-// Computer ownership, Secret resolution, and the queued Run commit as one
-// primary-database transaction.
-func (s *Server) startActor(ctx context.Context, request actorStartRequest) (actorStartResult, error) {
+// startActor normalizes a public Actor start and admits it through the
+// session owner.
+func (s *Server) startActor(ctx context.Context, request actorStartRequest) (session.Started, error) {
+	start, claim, err := prepareActorStart(request)
+	if err != nil {
+		return session.Started{}, err
+	}
+	return session.Start(ctx, s.tx, claim, start)
+}
+
+// prepareActorStart normalizes an Actor start and builds its idempotency
+// claim when the request carries a key.
+func prepareActorStart(request actorStartRequest) (session.StartRequest, idempotency.Request, error) {
 	normalized, err := normalizeActorStart(request)
 	if err != nil {
-		return actorStartResult{}, err
+		return session.StartRequest{}, nil, err
 	}
-	var claimRequest idempotency.Request
+	var claim idempotency.Request
 	if normalized.IdempotencyKey != "" {
-		claimRequest, err = idempotency.NewActorStartRequest(
+		claim, err = idempotency.NewActorStartRequest(
 			normalized.EnvironmentID,
 			normalized.ActorDeclaredID,
 			normalized.IdempotencyKey,
 			normalized.fingerprint,
 		)
 		if err != nil {
-			return actorStartResult{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
+			return session.StartRequest{}, nil, fmt.Errorf("%w: %v", session.ErrStartInvalid, err)
 		}
 	}
-
-	var result actorStartResult
-	err = s.inTx(ctx, func(work *txWork) error {
-		var claim *db.IdempotencyClaim
-		if claimRequest != nil {
-			claims, err := idempotency.TransactionFor(work.tx)
-			if err != nil {
-				return err
-			}
-			acquired, err := claims.Acquire(ctx, claimRequest)
-			if err != nil {
-				return err
-			}
-			if acquired.Claim.Status == "completed" {
-				if normalized.Authorize != nil {
-					if err := normalized.Authorize(ctx, work.tx); err != nil {
-						return err
-					}
-				}
-
-				replayed, err := actorStartResultFromReceipt(acquired.Claim.Receipt)
-				if err != nil {
-					return err
-				}
-				replayed.Replayed = true
-				result = replayed
-				return nil
-			}
-			if acquired.Claim.Status != "pending" {
-				return errActorStartIdempotencyReceipt
-			}
-			claim = &acquired.Claim
-		}
-
-		deploymentAuthority, err := work.q.LockActorStartDeploymentAuthority(
-			ctx,
-			db.LockActorStartDeploymentAuthorityParams{
-				ActorDeclaredID: normalized.ActorDeclaredID,
-				OrgID:           pgvalue.UUID(normalized.OrgID),
-				ProjectID:       pgvalue.UUID(normalized.ProjectID),
-				EnvironmentID:   pgvalue.UUID(normalized.EnvironmentID),
-			},
-		)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errActorStartNotDeployed
-		}
-		if err != nil {
-			return fmt.Errorf("lock actor start deployment authority: %w", err)
-		}
-		computerID := pgvalue.UUID(normalized.ComputerID)
-
-		if normalized.Key != nil {
-			if err := work.q.LockActorStartKey(ctx, db.LockActorStartKeyParams{
-				EnvironmentID:   pgvalue.UUID(normalized.EnvironmentID),
-				ActorDeclaredID: normalized.ActorDeclaredID,
-				Key:             *normalized.Key,
-			}); err != nil {
-				return fmt.Errorf("lock actor start key: %w", err)
-			}
-			_, err := work.q.GetActorByKey(ctx, db.GetActorByKeyParams{
-				EnvironmentID:   pgvalue.UUID(normalized.EnvironmentID),
-				ActorDeclaredID: normalized.ActorDeclaredID,
-				Key:             pgvalue.Text(*normalized.Key),
-			})
-			if err == nil {
-				return ActorKeyConflictError{Key: *normalized.Key}
-			}
-			if !errors.Is(err, pgx.ErrNoRows) {
-				return fmt.Errorf("check actor start key: %w", err)
-			}
-		}
-
-		if normalized.Authorize != nil {
-			if err := normalized.Authorize(ctx, work.tx); err != nil {
-				return err
-			}
-		}
-		bindings, err := work.q.LockComputerSecretsForAdmission(ctx, computerID)
-		if err != nil {
-			return fmt.Errorf("lock actor start computer secrets: %w", err)
-		}
-		authority, err := work.q.LockComputerAdmissionAuthority(
-			ctx,
-			db.LockComputerAdmissionAuthorityParams{
-				EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
-				ID:            computerID,
-			},
-		)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errActorStartComputerConflict
-		}
-		if err != nil {
-			return fmt.Errorf("lock actor start computer authority: %w", err)
-		}
-		if authority.OrgID != pgvalue.UUID(normalized.OrgID) ||
-			authority.ProjectID != pgvalue.UUID(normalized.ProjectID) ||
-			authority.Status != db.ComputerStatusActive ||
-			(authority.DesiredState != db.ComputerDesiredStateActive &&
-				authority.DesiredState != db.ComputerDesiredStateStopped) ||
-			authority.DirtyState == db.ComputerDirtyStateCaptureFailed ||
-			authority.DirtyState == db.ComputerDirtyStateDirtyStateLost ||
-			!authority.HeadDiskVersionID.Valid {
-			return errActorStartComputerConflict
-		}
-		if len(authority.PreparationFailure) > 0 {
-			return conflict(codedError{code: "computer_preparation_exhausted", message: "Computer preparation limit reached"})
-		}
-		canAdmit, err := computer.CanAdmitProgram(ctx, work.q, authority.EnvironmentID, authority.ID,
-			authority.ComputerSpecID, deploymentAuthority.DeploymentID)
-		if err != nil {
-			return err
-		}
-		if !canAdmit {
-			return errActorStartComputerConflict
-		}
-		for _, binding := range bindings {
-			if binding.SecretStatus != "active" || !binding.CurrentVersionID.Valid {
-				return errActorStartSecretUnavailable
-			}
-		}
-		runAuthority, err := definition.ResolveActorRunAdmission(
-			deploymentAuthority.ActorManifestVersion,
-			normalized.ActorDeclaredID,
-			deploymentAuthority.ActorManifest,
-			deploymentAuthority.ActorManifestDigest,
-			deploymentAuthority.QueueConfig,
-			normalized.ManagedQueueName,
-		)
-		if err != nil {
-			return fmt.Errorf("%w: %v", errActorStartAuthority, err)
-		}
-		managedQueuedTTL := normalized.ManagedQueuedTTLMS
-		if managedQueuedTTL == nil {
-			managedQueuedTTL = runAuthority.QueuedTTLMS
-		}
-		managedRetryPolicy := normalized.ManagedRetryPolicy
-		if len(managedRetryPolicy) == 0 {
-			managedRetryPolicy = runAuthority.RetryPolicy
-		}
-		actorID := uuid.NewV7()
-		runID := uuid.NewV7()
-		rootSpanID, err := tracing.NewSpanID()
-		if err != nil {
-			return err
-		}
-		claimID := pgtype.UUID{}
-		if claim != nil {
-			claimID = claim.ID
-		}
-		_, err = work.q.CreateActor(ctx, db.CreateActorParams{
-			ID:    pgvalue.UUID(actorID),
-			OrgID: pgvalue.UUID(normalized.OrgID), ProjectID: pgvalue.UUID(normalized.ProjectID),
-			Key: pgvalue.TextPtr(normalized.Key), RunQueueName: runAuthority.QueueName,
-			RunConcurrencyKey:        pgvalue.TextPtr(normalized.ManagedConcurrencyKey),
-			RunQueueConcurrencyLimit: int8Ptr(runAuthority.QueueConcurrencyLimit),
-			RunPriority:              normalized.ManagedPriority, RunQueueTtlMs: int8Ptr(managedQueuedTTL),
-			RunMaxActiveDurationMs: runAuthority.MaxActiveDurationMS,
-			RunRetryPolicy:         managedRetryPolicy,
-			RunMetadata:            normalized.ManagedRunMetadata, RunTags: normalized.ManagedRunTags,
-			ComputerID: authority.ID, EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
-			DeploymentDefinitionID: deploymentAuthority.ActorDefinitionID, ActorDeclaredID: normalized.ActorDeclaredID,
-		})
-		if err != nil {
-			var postgresError *pgconn.PgError
-			if errors.As(err, &postgresError) &&
-				postgresError.ConstraintName == "sessions_environment_declared_id_key_uidx" {
-				return ActorKeyConflictError{Key: stringPtrValue(normalized.Key)}
-			}
-			if errors.Is(err, pgx.ErrNoRows) {
-				return errActorStartAuthority
-			}
-			return fmt.Errorf("create actor: %w", err)
-		}
-
-		bootRun, err := work.q.CreateActorStartRun(ctx, db.CreateActorStartRunParams{
-			EnvironmentID: pgvalue.UUID(normalized.EnvironmentID), SessionID: pgvalue.UUID(actorID),
-			ComputerID: authority.ID, ClaimID: claimID,
-			ID:                        pgvalue.UUID(runID),
-			BaseComputerDiskVersionID: authority.HeadDiskVersionID,
-			InputHighWatermark:        pgtype.Int8{Int64: 0, Valid: true},
-			RootSpanID:                rootSpanID,
-		})
-		if err != nil {
-			return fmt.Errorf("create actor boot run: %w", err)
-		}
-		if _, err := work.q.SetActorCurrentRun(ctx, db.SetActorCurrentRunParams{
-			RunID: bootRun.ID, EnvironmentID: bootRun.EnvironmentID,
-			ID: pgvalue.UUID(actorID), ComputerID: authority.ID,
-		}); err != nil {
-			return fmt.Errorf("install actor boot run: %w", err)
-		}
-		if _, err := work.q.TouchComputerForAdmission(ctx, db.TouchComputerForAdmissionParams{
-			EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
-			ID:            authority.ID, ExpectedRevision: authority.Revision,
-		}); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return errActorStartComputerConflict
-			}
-			return fmt.Errorf("record actor computer admission: %w", err)
-		}
-		if err := secret.CreateAttemptResolutions(
-			ctx, work.q, authority.ID, bootRun.ID, 1, run.SecretResolutions(bindings),
-		); err != nil {
-			return fmt.Errorf("record actor boot run secret resolutions: %w", err)
-		}
-		result = actorStartResult{
-			SessionID: actorID,
-			BootRunID: runID,
-		}
-		if claim != nil {
-			receipt, err := json.Marshal(actorStartReceiptFromResult(result))
-			if err != nil {
-				return err
-			}
-			claims, err := idempotency.TransactionFor(work.tx)
-			if err != nil {
-				return err
-			}
-			if _, err := claims.Complete(ctx, *claim, receipt); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	return result, err
+	return session.StartRequest{
+		OrgID: normalized.OrgID, ProjectID: normalized.ProjectID, EnvironmentID: normalized.EnvironmentID,
+		ActorDeclaredID: normalized.ActorDeclaredID, ComputerID: normalized.ComputerID, Key: normalized.Key,
+		QueueName: normalized.ManagedQueueName, ConcurrencyKey: normalized.ManagedConcurrencyKey,
+		Priority: normalized.ManagedPriority, QueuedTTLMS: normalized.ManagedQueuedTTLMS,
+		RetryPolicy: normalized.ManagedRetryPolicy, Metadata: normalized.ManagedRunMetadata,
+		Tags: normalized.ManagedRunTags,
+	}, claim, nil
 }
 
 func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error) {
 	if request.OrgID == uuid.Nil() || request.ProjectID == uuid.Nil() ||
 		request.EnvironmentID == uuid.Nil() {
-		return normalizedActorStart{}, errActorStartInvalid
+		return normalizedActorStart{}, session.ErrStartInvalid
 	}
 	if err := api.ValidateActorDeclaredID(request.ActorDeclaredID); err != nil {
-		return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
+		return normalizedActorStart{}, fmt.Errorf("%w: %v", session.ErrStartInvalid, err)
 	}
 	if request.Key != nil {
 		if err := api.ValidateActorKey(*request.Key); err != nil {
-			return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
+			return normalizedActorStart{}, fmt.Errorf("%w: %v", session.ErrStartInvalid, err)
 		}
 		key := *request.Key
 		request.Key = &key
 	}
 	if request.ComputerID == uuid.Nil() {
-		return normalizedActorStart{}, errActorStartInvalid
+		return normalizedActorStart{}, session.ErrStartInvalid
 	}
 	computerRaw, err := json.Marshal(api.ComputerIDTarget{ID: request.ComputerID.String()})
 	if err != nil {
-		return normalizedActorStart{}, fmt.Errorf("%w: encode computer address", errActorStartInvalid)
+		return normalizedActorStart{}, fmt.Errorf("%w: encode computer address", session.ErrStartInvalid)
 	}
 	computer, err := canonicalJSON(computerRaw)
 	if err != nil {
-		return normalizedActorStart{}, fmt.Errorf("%w: canonicalize computer address", errActorStartInvalid)
+		return normalizedActorStart{}, fmt.Errorf("%w: canonicalize computer address", session.ErrStartInvalid)
 	}
 	request.ManagedRunMetadata, err = run.NormalizeMetadata(request.ManagedRunMetadata, run.MaxMetadataBytes, "managed run")
 	if err != nil {
-		return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
+		return normalizedActorStart{}, fmt.Errorf("%w: %v", session.ErrStartInvalid, err)
 	}
 	request.ManagedRunTags, err = normalizeTags(request.ManagedRunTags, maxTags, "managed run")
 	if err != nil {
-		return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
+		return normalizedActorStart{}, fmt.Errorf("%w: %v", session.ErrStartInvalid, err)
 	}
 	if request.ManagedQueueName != "" {
 		if err := definition.ValidateQueueName(request.ManagedQueueName); err != nil {
-			return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
+			return normalizedActorStart{}, fmt.Errorf("%w: %v", session.ErrStartInvalid, err)
 		}
 	}
 	if request.ManagedConcurrencyKey != nil {
 		value := *request.ManagedConcurrencyKey
 		if len(value) == 0 || len(value) > 512 || !utf8.ValidString(value) ||
 			strings.IndexByte(value, 0) >= 0 || hasInvalidConcurrencyKeyEdge(value) {
-			return normalizedActorStart{}, fmt.Errorf("%w: managed run concurrency key is invalid", errActorStartInvalid)
+			return normalizedActorStart{}, fmt.Errorf("%w: managed run concurrency key is invalid", session.ErrStartInvalid)
 		}
 		request.ManagedConcurrencyKey = &value
 	}
@@ -381,17 +133,17 @@ func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error
 		(*request.ManagedQueuedTTLMS < 1 || *request.ManagedQueuedTTLMS > maxQueuedRunTTLMS) {
 		return normalizedActorStart{}, fmt.Errorf(
 			"%w: managed run queued TTL must be between 1 and %d ms",
-			errActorStartInvalid,
+			session.ErrStartInvalid,
 			maxQueuedRunTTLMS,
 		)
 	}
 	if len(request.ManagedRetryPolicy) > 0 {
 		canonicalRetry, err := canonicalJSON(request.ManagedRetryPolicy)
 		if err != nil {
-			return normalizedActorStart{}, fmt.Errorf("%w: retry must be unambiguous JSON", errActorStartInvalid)
+			return normalizedActorStart{}, fmt.Errorf("%w: retry must be unambiguous JSON", session.ErrStartInvalid)
 		}
 		if _, err := definition.ParseRetry(canonicalRetry); err != nil {
-			return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
+			return normalizedActorStart{}, fmt.Errorf("%w: %v", session.ErrStartInvalid, err)
 		}
 		request.ManagedRetryPolicy = canonicalRetry
 	}
@@ -432,45 +184,4 @@ func hasInvalidConcurrencyKeyEdge(value string) bool {
 		return value == 0x20 || (value >= 0x09 && value <= 0x0d)
 	}
 	return invalid(value[0]) || invalid(value[len(value)-1])
-}
-
-func int8Ptr(value *int64) pgtype.Int8 {
-	if value == nil {
-		return pgtype.Int8{}
-	}
-	return pgtype.Int8{Int64: *value, Valid: true}
-}
-
-func stringPtrValue(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
-}
-
-func actorStartReceiptFromResult(result actorStartResult) actorStartReceipt {
-	receipt := actorStartReceipt{
-		SessionID: result.SessionID.String(),
-		BootRunID: result.BootRunID.String(),
-	}
-	return receipt
-}
-
-func actorStartResultFromReceipt(raw []byte) (actorStartResult, error) {
-	var receipt actorStartReceipt
-	if err := json.Unmarshal(raw, &receipt); err != nil {
-		return actorStartResult{}, errActorStartIdempotencyReceipt
-	}
-	actorID, err := ids.Parse(receipt.SessionID)
-	if err != nil {
-		return actorStartResult{}, errActorStartIdempotencyReceipt
-	}
-	runID, err := ids.Parse(receipt.BootRunID)
-	if err != nil {
-		return actorStartResult{}, errActorStartIdempotencyReceipt
-	}
-	return actorStartResult{
-		SessionID: actorID,
-		BootRunID: runID,
-	}, nil
 }

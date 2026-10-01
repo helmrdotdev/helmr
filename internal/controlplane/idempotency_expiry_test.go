@@ -20,10 +20,14 @@ func TestPrunedOperationReceiptHasExplicitTransportOutcome(t *testing.T) {
 		"computer create": func(w http.ResponseWriter, err error) {
 			server.writeComputerError(w, err, computerCreateOperation, "create Computer failed")
 		},
-		"actor start": server.writeActorStartError,
-		"task start":  server.writeTaskStartError,
-		"session":     server.writeSessionOperationError,
-		"token":       server.writeTokenError,
+		"actor start": func(w http.ResponseWriter, err error) {
+			server.writeSessionError(w, err, sessionStartOperation)
+		},
+		"task start": server.writeTaskStartError,
+		"session": func(w http.ResponseWriter, err error) {
+			server.writeSessionError(w, err, sessionPublicOperation)
+		},
+		"token": server.writeTokenError,
 	} {
 		t.Run(name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
@@ -52,7 +56,7 @@ func TestPrunedOperationReceiptHasExplicitTransportOutcome(t *testing.T) {
 		"computer delete": func(err error) (workerapi.RuntimeOperationFailure, bool) {
 			return workerComputerFailure(err, computerDeleteOperation)
 		},
-		"actor start": workerActorStartFailure, "actor output": actorOutputAppendFailure,
+		"actor start": actorStartFailure, "actor output": actorOutputAppendFailure,
 	} {
 		t.Run(name+" worker", func(t *testing.T) {
 			result, ok := convert(idempotency.ExpiredError{})

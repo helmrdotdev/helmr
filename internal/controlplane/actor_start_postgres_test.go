@@ -1,149 +1,32 @@
 package controlplane
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
-	"time"
-	"uuid"
 
-	"github.com/jackc/pgx/v5"
-
-	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/db/schema"
-	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
-type actorStartPostgresFixture struct {
-	pool          *pgxpool.Pool
-	server        *Server
-	orgID         uuid.UUID
-	projectID     uuid.UUID
-	environmentID uuid.UUID
-	deploymentID  uuid.UUID
-	computerIDs   []uuid.UUID
-	computerRefs  []string
-	computerKeys  []string
-}
-
-func TestActorStartPostgresCommitsReplaysAndRejectsConflicts(t *testing.T) {
-	fixture := newActorStartPostgresFixture(t, 2)
-	key := "thread:42"
-	request := fixture.request(0, &key, "start-1")
-	request.ManagedRunMetadata = json.RawMessage(`{"kind":"boot"}`)
-	request.ManagedRunTags = []string{"managed"}
-
-	created, err := fixture.server.startActor(t.Context(), request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if created.Replayed {
-		t.Fatalf("created = %+v", created)
-	}
-	assertActorStartTuple(t, fixture, created)
-
-	if _, err := fixture.pool.Exec(t.Context(), `
-		UPDATE sessions
-		   SET status = 'closing'
-		 WHERE id = $1
-	`, created.SessionID); err != nil {
-		t.Fatal(err)
-	}
-	replayed, err := fixture.server.startActor(t.Context(), request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !replayed.Replayed || replayed.SessionID != created.SessionID ||
-		replayed.BootRunID != created.BootRunID {
-		t.Fatalf("replayed = %+v, created = %+v", replayed, created)
-	}
-	if _, err := fixture.pool.Exec(t.Context(), `
-		UPDATE environments SET current_deployment_id = NULL WHERE id = $1
-	`, fixture.environmentID); err != nil {
-		t.Fatal(err)
-	}
-	replayedAfterUndeploy, err := fixture.server.startActor(t.Context(), request)
-	if err != nil {
-		t.Fatalf("replay after undeploy: %v", err)
-	}
-	if !replayedAfterUndeploy.Replayed || replayedAfterUndeploy.SessionID != created.SessionID {
-		t.Fatalf("undeployed replay = %+v, created = %+v", replayedAfterUndeploy, created)
-	}
-	if _, err := fixture.pool.Exec(t.Context(), `
-		UPDATE environments SET current_deployment_id = $1 WHERE id = $2
-	`, fixture.deploymentID, fixture.environmentID); err != nil {
-		t.Fatal(err)
-	}
-
-	changed := request
-	changed.ManagedRunMetadata = json.RawMessage(`{"kind":"different"}`)
-	var idempotencyConflict idempotency.ConflictError
-	if _, err := fixture.server.startActor(t.Context(), changed); !errors.As(err, &idempotencyConflict) {
-		t.Fatalf("fingerprint conflict = %v", err)
-	}
-
-	if _, err := fixture.pool.Exec(t.Context(), `
-		UPDATE computers SET dirty_state = 'dirty' WHERE id = $1
-	`, fixture.computerIDs[1]); err != nil {
-		t.Fatal(err)
-	}
-	keyCollision := fixture.request(1, &key, "start-2")
-	_, err = fixture.server.startActor(t.Context(), keyCollision)
-	var actorKeyConflict ActorKeyConflictError
-	if !errors.As(err, &actorKeyConflict) {
-		t.Fatalf("Actor key conflict = %v", err)
-	}
-	var claimCount, actorCount, runCount int
-	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT
-		    (SELECT count(*) FROM idempotency_claims WHERE operation = 'actor.start'),
-		    (SELECT count(*) FROM sessions),
-		    (SELECT count(*) FROM runs WHERE cause_kind = 'actor_start')
-	`).Scan(&claimCount, &actorCount, &runCount); err != nil {
-		t.Fatal(err)
-	}
-	if claimCount != 1 || actorCount != 1 || runCount != 1 {
-		t.Fatalf("counts after conflicts = claims %d sessions %d runs %d", claimCount, actorCount, runCount)
-	}
-
-	if _, err := fixture.pool.Exec(t.Context(), `
-		UPDATE computers SET dirty_state = 'clean' WHERE id = $1
-	`, fixture.computerIDs[1]); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestActorStartHTTPPostgresCreatesAndReplaysIDs(t *testing.T) {
-	fixture := newActorStartPostgresFixture(t, 1)
+	h := newSessionHTTP(t, sessiontest.New(t, 1))
 	body := fmt.Sprintf(
 		`{"computer":{"id":%q},"idempotency_key":"http-start-1","run":{"ttl":"30m","retry":{"max_attempts":3}}}`,
-		fixture.computerRefs[0],
+		h.ComputerIDs[0],
 	)
-	principal := auth.Principal{
-		OrgID:         fixture.orgID,
-		Kind:          auth.PrincipalKindAPIKey,
-		Role:          auth.RoleDeveloper,
-		ProjectID:     fixture.projectID.String(),
-		EnvironmentID: fixture.environmentID.String(),
-		Permissions:   []auth.Permission{auth.PermissionActorsStart},
-	}
+	token := h.apiKey(auth.Principal{
+		OrgID: h.OrgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper,
+		ProjectID: h.ProjectID.String(), EnvironmentID: h.EnvironmentID.String(),
+		Permissions: []auth.Permission{auth.PermissionActorsStart},
+	})
 	var first api.StartActorResponse
 	for attempt := range 2 {
-		request := actorStartHTTPPostgresRequest(body, principal, "", "", "operator.v1")
-		recorder := httptest.NewRecorder()
-		fixture.server.startActorHTTP(recorder, request)
+		recorder := h.request(t, http.MethodPost, "/v1/actors/operator.v1/start", token, body)
 		if recorder.Code != http.StatusCreated {
 			t.Fatalf("attempt %d status=%d body=%s", attempt, recorder.Code, recorder.Body.String())
 		}
@@ -163,28 +46,24 @@ func TestActorStartHTTPPostgresCreatesAndReplaysIDs(t *testing.T) {
 			t.Fatalf("replay response = %+v, first = %+v", response, first)
 		}
 	}
+	missing := h.request(t, http.MethodPost, "/v1/actors/missing.v1/start", token, fmt.Sprintf(`{"computer":{"id":%q}}`, h.ComputerIDs[0]))
+	if missing.Code != http.StatusNotFound || decodeHTTPError(t, missing.Body.Bytes()).Code != "actor_not_deployed" {
+		t.Fatalf("undeployed start = %d %s", missing.Code, missing.Body.String())
+	}
 }
 
 func TestActorStartHTTPPostgresDeniesBeforeAdmission(t *testing.T) {
-	fixture := newActorStartPostgresFixture(t, 1)
-	body := fmt.Sprintf(`{"computer":{"id":%q}}`, fixture.computerRefs[0])
-	principal := auth.Principal{
-		OrgID:         fixture.orgID,
-		Kind:          auth.PrincipalKindAPIKey,
-		Role:          auth.RoleDeveloper,
-		ProjectID:     fixture.projectID.String(),
-		EnvironmentID: fixture.environmentID.String(),
-	}
-	recorder := httptest.NewRecorder()
-	fixture.server.startActorHTTP(
-		recorder,
-		actorStartHTTPPostgresRequest(body, principal, "", "", "operator.v1"),
-	)
+	h := newSessionHTTP(t, sessiontest.New(t, 1))
+	token := h.apiKey(auth.Principal{
+		OrgID: h.OrgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper,
+		ProjectID: h.ProjectID.String(), EnvironmentID: h.EnvironmentID.String(),
+	})
+	recorder := h.request(t, http.MethodPost, "/v1/actors/operator.v1/start", token, fmt.Sprintf(`{"computer":{"id":%q}}`, h.ComputerIDs[0]))
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 	var sessions int
-	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM sessions`).Scan(&sessions); err != nil {
+	if err := h.Pool.QueryRow(t.Context(), `SELECT count(*) FROM sessions`).Scan(&sessions); err != nil {
 		t.Fatal(err)
 	}
 	if sessions != 0 {
@@ -193,24 +72,9 @@ func TestActorStartHTTPPostgresDeniesBeforeAdmission(t *testing.T) {
 }
 
 func TestActorStartHTTPSessionPostgresCreates(t *testing.T) {
-	fixture := newActorStartPostgresFixture(t, 1)
-	body := fmt.Sprintf(`{"computer":{"id":%q}}`, fixture.computerRefs[0])
-	principal := auth.Principal{
-		OrgID: fixture.orgID,
-		Kind:  auth.PrincipalKindSession,
-		Role:  auth.RoleDeveloper,
-	}
-	recorder := httptest.NewRecorder()
-	fixture.server.startActorHTTP(
-		recorder,
-		actorStartHTTPPostgresRequest(
-			body,
-			principal,
-			fixture.projectID.String(),
-			fixture.environmentID.String(),
-			"operator.v1",
-		),
-	)
+	h := newSessionHTTP(t, sessiontest.New(t, 1))
+	token := h.memberSession(t, db.OrgMemberRoleDeveloper)
+	recorder := h.request(t, http.MethodPost, h.environmentPath("/actors/operator.v1/start"), token, fmt.Sprintf(`{"computer":{"id":%q}}`, h.ComputerIDs[0]))
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -220,425 +84,5 @@ func TestActorStartHTTPSessionPostgresCreates(t *testing.T) {
 	}
 	if err := ids.Validate(response.SessionID); err != nil {
 		t.Fatalf("Actor ID: %v", err)
-	}
-}
-
-func TestActorStartPostgresUsesSelectedQueueAndEmptyBoot(t *testing.T) {
-	fixture := newActorStartPostgresFixture(t, 1)
-	key := "no-input"
-	request := fixture.request(0, &key, "no-input-1")
-	request.ManagedQueueName = "priority"
-	created, err := fixture.server.startActor(t.Context(), request)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	assertActorStartTupleWithQueue(t, fixture, created, "priority", nil)
-}
-
-func TestActorStartPostgresKeylessRequestsRemainAtLeastOnce(t *testing.T) {
-	fixture := newActorStartPostgresFixture(t, 2)
-	for index := range 2 {
-		if _, err := fixture.server.startActor(t.Context(), fixture.request(index, nil, "")); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var claims, sessions, runs, owned int
-	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT
-		    (SELECT count(*) FROM idempotency_claims WHERE operation = 'actor.start'),
-		    (SELECT count(*) FROM sessions),
-		    (SELECT count(*) FROM runs WHERE cause_kind = 'actor_start'),
-		    (SELECT count(*) FROM computers c WHERE EXISTS (SELECT 1 FROM sessions s WHERE s.computer_id=c.id))
-	`).Scan(&claims, &sessions, &runs, &owned); err != nil {
-		t.Fatal(err)
-	}
-	if claims != 0 || sessions != 2 || runs != 2 || owned != 2 {
-		t.Fatalf("keyless counts claims=%d sessions=%d runs=%d owned=%d", claims, sessions, runs, owned)
-	}
-}
-
-func TestActorStartPostgresConcurrentKeyCollisionCreatesOneIdentity(t *testing.T) {
-	fixture := newActorStartPostgresFixture(t, 2)
-	key := "shared-key"
-	type outcome struct {
-		result actorStartResult
-		err    error
-	}
-	start := make(chan struct{})
-	outcomes := make(chan outcome, 2)
-	for index := range 2 {
-		go func() {
-			<-start
-			result, err := fixture.server.startActor(
-				context.Background(),
-				fixture.request(index, &key, fmt.Sprintf("race-%d", index)),
-			)
-			outcomes <- outcome{result: result, err: err}
-		}()
-	}
-	close(start)
-	var successes, conflicts int
-	for range 2 {
-		value := <-outcomes
-		var conflict ActorKeyConflictError
-		switch {
-		case value.err == nil:
-			successes++
-		case errors.As(value.err, &conflict):
-			conflicts++
-		default:
-			t.Fatalf("race error = %v", value.err)
-		}
-	}
-	var claimCount, actorCount, runCount, ownedCount int
-	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT
-		    (SELECT count(*) FROM idempotency_claims WHERE operation = 'actor.start'),
-		    (SELECT count(*) FROM sessions),
-		    (SELECT count(*) FROM runs WHERE cause_kind = 'actor_start'),
-		    (SELECT count(*) FROM computers c WHERE EXISTS (SELECT 1 FROM sessions s WHERE s.computer_id=c.id))
-	`).Scan(&claimCount, &actorCount, &runCount, &ownedCount); err != nil {
-		t.Fatal(err)
-	}
-	if successes != 1 || conflicts != 1 ||
-		claimCount != 1 || actorCount != 1 || runCount != 1 || ownedCount != 1 {
-		t.Fatalf(
-			"race successes=%d conflicts=%d claims=%d sessions=%d runs=%d owned=%d",
-			successes, conflicts, claimCount, actorCount, runCount, ownedCount,
-		)
-	}
-}
-
-func (fixture actorStartPostgresFixture) request(index int, key *string, idempotencyKey string) actorStartRequest {
-	return actorStartRequest{
-		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
-		ActorDeclaredID: "operator.v1",
-		ComputerID:      fixture.computerIDs[index],
-		Key:             key, IdempotencyKey: idempotencyKey,
-	}
-}
-
-func actorStartHTTPPostgresRequest(
-	body string,
-	principal auth.Principal,
-	projectID string,
-	environmentID string,
-	actorDeclaredID string,
-) *http.Request {
-	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-	route := chi.NewRouteContext()
-	if projectID != "" {
-		route.URLParams.Add("projectID", projectID)
-	}
-	if environmentID != "" {
-		route.URLParams.Add("environmentID", environmentID)
-	}
-	route.URLParams.Add("actorDeclaredID", actorDeclaredID)
-	ctx := context.WithValue(request.Context(), chi.RouteCtxKey, route)
-	ctx = context.WithValue(ctx, principalContextKey{}, principal)
-	return request.WithContext(ctx)
-}
-
-func assertActorStartTuple(t *testing.T, fixture actorStartPostgresFixture, result actorStartResult) {
-	limit := int64(2)
-	assertActorStartTupleWithQueue(t, fixture, result, "default", &limit)
-}
-
-func assertActorStartTupleWithQueue(
-	t *testing.T,
-	fixture actorStartPostgresFixture,
-	result actorStartResult,
-	wantQueue string,
-	wantQueueLimit *int64,
-) {
-	t.Helper()
-	var actorCurrentRun uuid.UUID
-	var actorNextInput, actorCommitted int64
-	var actorQueue string
-	var actorQueueLimit *int64
-	var actorMaxDuration int64
-	var actorRetry []byte
-	var sessionComputer uuid.UUID
-	var runActor uuid.UUID
-	var runCause string
-	var runStart, runHigh int64
-	var attemptStart int64
-	var turnCount int
-	var claimStatus string
-	var resolutionCount int
-	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT current_run_id, next_input_sequence, committed_input_sequence,
-		       run_queue_name, run_queue_concurrency_limit,
-		       run_max_active_duration_ms, run_retry_policy
-		  FROM sessions
-		 WHERE id = $1
-	`, result.SessionID).Scan(
-		&actorCurrentRun,
-		&actorNextInput,
-		&actorCommitted,
-		&actorQueue,
-		&actorQueueLimit,
-		&actorMaxDuration,
-		&actorRetry,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT computer_id FROM sessions WHERE id = $1
-	`, result.SessionID).Scan(&sessionComputer); err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT session_id, cause_kind, session_input_start_sequence, session_input_high_watermark
-		  FROM runs
-		 WHERE id = $1
-	`, result.BootRunID).Scan(&runActor, &runCause, &runStart, &runHigh); err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT session_input_start_sequence FROM run_attempts WHERE run_id = $1 AND number = 1
-	`, result.BootRunID).Scan(&attemptStart); err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_turns WHERE session_id=$1`, result.SessionID).Scan(&turnCount); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT status
-		  FROM idempotency_claims
-		 WHERE operation = 'actor.start'
-	`).Scan(&claimStatus); err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT count(*) FROM secret_resolutions WHERE run_id = $1 AND attempt_number = 1
-	`, result.BootRunID).Scan(&resolutionCount); err != nil {
-		t.Fatal(err)
-	}
-	queueLimitValid := (wantQueueLimit == nil && actorQueueLimit == nil) ||
-		(wantQueueLimit != nil && actorQueueLimit != nil && *wantQueueLimit == *actorQueueLimit)
-	if actorCurrentRun != result.BootRunID || sessionComputer != fixture.computerIDs[0] ||
-		runActor != result.SessionID || runCause != "actor_start" ||
-		runStart != 0 || runHigh != 0 || attemptStart != 0 ||
-		actorNextInput != 1 || actorCommitted != 0 ||
-		actorQueue != wantQueue || !queueLimitValid || actorMaxDuration != 300_000 ||
-		string(actorRetry) != `{"enabled": false}` ||
-		turnCount != 0 ||
-		claimStatus != "completed" || resolutionCount != 1 {
-		t.Fatalf(
-			"Actor start tuple actorRun=%s next=%d committed=%d queue=%s/%v max=%d retry=%s owner=%s runActor=%s cause=%s cursor=%d high=%d attempt=%d turns=%d claim=%s resolutions=%d",
-			actorCurrentRun, actorNextInput, actorCommitted,
-			actorQueue, actorQueueLimit, actorMaxDuration, actorRetry,
-			sessionComputer, runActor, runCause,
-			runStart, runHigh, attemptStart, turnCount, claimStatus, resolutionCount,
-		)
-	}
-}
-
-func newActorStartPostgresFixture(t *testing.T, computerCount int) actorStartPostgresFixture {
-	t.Helper()
-	pool := openActorStartPostgres(t)
-	fixture := actorStartPostgresFixture{
-		pool: pool, orgID: uuid.NewV7(), projectID: uuid.NewV7(),
-		environmentID: uuid.NewV7(), computerIDs: make([]uuid.UUID, computerCount),
-		computerRefs: make([]string, computerCount), computerKeys: make([]string, computerCount),
-	}
-	deploymentID := uuid.NewV7()
-	fixture.deploymentID = deploymentID
-	actorDefinitionID := uuid.NewV7()
-	taskDefinitionID := uuid.NewV7()
-	computerDefinitionID := uuid.NewV7()
-	programID, imageID := uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), pool, `
-		INSERT INTO regions (id, display_name)
-		VALUES ('us-east-1', 'Actor Start Test')
-	`)
-	dbtest.MustExec(t, t.Context(), pool, `
-		INSERT INTO organizations (id, name, slug)
-		VALUES ($1, 'Actor Start Test', $2)
-	`, fixture.orgID, "actor-start-"+fixture.orgID.String())
-	dbtest.MustExec(t, t.Context(), pool, `
-		INSERT INTO projects (id, org_id, default_region_id, slug, name)
-		VALUES ($1, $2, 'us-east-1', $3, 'Actor Start Test')
-	`, fixture.projectID, fixture.orgID, "actor-start-"+fixture.projectID.String())
-	dbtest.MustExec(t, t.Context(), pool, `
-		INSERT INTO environments (id, org_id, project_id, slug, name, color_hex)
-		VALUES ($1, $2, $3, $4, 'Actor Start Test', '#3366ff')
-	`, fixture.environmentID, fixture.orgID, fixture.projectID,
-		"actor-start-"+fixture.environmentID.String())
-
-	digests := []string{
-		"sha256:" + fmt.Sprintf("%064x", 1),
-		"sha256:" + fmt.Sprintf("%064x", 2),
-		"sha256:" + fmt.Sprintf("%064x", 3),
-		"sha256:" + fmt.Sprintf("%064x", 4),
-	}
-	actorManifest := []byte(
-		`{"idleTimeoutMs":30000,"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`,
-	)
-	taskManifest := []byte(
-		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`,
-	)
-	_, actorManifestDigest, err := definition.CanonicalManifestAndDigest(actorManifest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, taskManifestDigest, err := definition.CanonicalManifestAndDigest(taskManifest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	queueConfig := []byte(
-		`{"formatVersion":0,"queues":[{"concurrencyLimit":2,"name":"default"},{"name":"priority"}]}`,
-	)
-	dbtest.MustExec(t, t.Context(), pool, `
-		WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1), ($3, 1), ($4, 1), ($5, 1) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
-		VALUES ($1, $2, 1, 'application/vnd.helmr.deployment-bundle.v0+json'),
-		       ($1, $3, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
-		       ($1, $4, 1, 'application/vnd.helmr.computer.seed.v0+filepack'),
-		       ($1, $5, 1, 'application/vnd.helmr.runtime.v0+squashfs')
-	`, fixture.orgID, digests[0], digests[1], digests[2], digests[3])
-	dbtest.MustExec(t, t.Context(), pool, `
-		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
-		VALUES ($1, $3, $4, $5, $6, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
-		       ($2, $3, $4, $5, $7, 'computer_image', 1, 'application/vnd.helmr.computer.seed.v0+filepack')
-	`, programID, imageID, fixture.orgID, fixture.projectID,
-		fixture.environmentID, digests[1], digests[2])
-	dbtest.MustExec(t, t.Context(), pool, `
-		INSERT INTO deployments (
-		    id, org_id, project_id, environment_id, version, bundle_digest,
-		    runtime_artifact_digest, program_artifact_id, program_index_digest, queue_config
-		) VALUES (
-		    $1, $2, $3, $4, 'actor-start-test', $5, $6, $7,
-		    decode(repeat('03', 32), 'hex'), $8::jsonb
-		)
-	`, deploymentID, fixture.orgID, fixture.projectID,
-		fixture.environmentID, digests[0], digests[3], programID, queueConfig)
-	dbtest.MustExec(t, t.Context(), pool, `
-		INSERT INTO deployment_definitions (
-		    id, environment_id, deployment_id, kind, declared_id,
-		    manifest_version, manifest, manifest_digest, computer_spec_id
-		) VALUES
-		    ($1, $4, $5, 'actor', 'operator.v1', 0, $7::jsonb, $8, NULL),
-		    ($2, $4, $5, 'task', 'resize-image', 0, $9::jsonb, $10, NULL),
-		    ($3, $4, $5, 'sandbox', 'computer.v1', 0, '{}'::jsonb, decode(repeat('04', 32), 'hex'), $6)
-	`, actorDefinitionID, taskDefinitionID, computerDefinitionID,
-		fixture.environmentID, deploymentID, dbtest.InsertDefaultComputerSpec(t, t.Context(), pool, imageID),
-		actorManifest, actorManifestDigest[:], taskManifest, taskManifestDigest[:])
-	dbtest.MustExec(t, t.Context(), pool, `
-		UPDATE environments SET current_deployment_id = $1 WHERE id = $2
-	`, deploymentID, fixture.environmentID)
-
-	secretID, secretVersionID := uuid.NewV7(), uuid.NewV7()
-	tx, err := pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(context.Background())
-	dbtest.MustExec(t, t.Context(), tx, `SET CONSTRAINTS ALL DEFERRED`)
-	dbtest.MustExec(t, t.Context(), tx, `
-		INSERT INTO secrets (id, environment_id, name, current_version_id)
-		VALUES ($1, $2, 'API_TOKEN', $3)
-	`, secretID, fixture.environmentID, secretVersionID)
-	dbtest.MustExec(t, t.Context(), tx, `
-		INSERT INTO secret_versions (
-		    id, secret_id, version, nonce, ciphertext
-		) VALUES ($1, $2, 1, decode(repeat('01', 12), 'hex'),
-		          decode(repeat('02', 16), 'hex'))
-	`, secretVersionID, secretID)
-	for index := range computerCount {
-		computerID, versionID := uuid.NewV7(), uuid.NewV7()
-		fixture.computerIDs[index] = computerID
-		fixture.computerRefs[index] = computerID.String()
-		fixture.computerKeys[index] = fmt.Sprintf("computer:%d", index)
-		dbtest.MustExec(t, t.Context(), tx, `
-			INSERT INTO computers (
-			    id, environment_id, region_id,
-			    sandbox_declared_id, head_disk_version_id, key
-			, computer_spec_id, creation_deployment_id) VALUES ($1, $2, 'us-east-1', 'computer.v1', $4, $5, (SELECT computer_spec_id FROM deployment_definitions WHERE environment_id=$2 AND id=$3), (SELECT deployment_id FROM deployment_definitions WHERE environment_id=$2 AND id=$3))
-		`, computerID, fixture.environmentID, computerDefinitionID, versionID,
-			fixture.computerKeys[index])
-		dbtest.InsertCommittedComputerRoot(t, t.Context(), tx, versionID, fixture.environmentID, computerID)
-		dbtest.MustExec(t, t.Context(), tx, `
-			INSERT INTO computer_secrets (mode,
-			    computer_id, environment_id, placement_kind, placement_target, secret_id
-			) VALUES ('raw', $1, $2, 'env', 'API_TOKEN', $3)
-		`, computerID, fixture.environmentID, secretID)
-	}
-	if err := tx.Commit(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	fixture.server = &Server{db: db.New(pool), tx: pool}
-	return fixture
-}
-
-func openActorStartPostgres(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-	database := dbtest.Open(t)
-	if err := schema.Up(t.Context(), database.DSN); err != nil {
-		t.Fatal(err)
-	}
-	return database.Pool
-}
-
-func TestActorStartOrdersPublicAndWorkerAdmission(t *testing.T) {
-	f := newActorStartPostgresFixture(t, 1)
-	worker := f.request(0, nil, "worker-admission")
-	public := f.request(0, nil, "public-admission")
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	worker.Authorize = func(ctx context.Context, tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `SELECT id FROM computers WHERE id=$1 FOR UPDATE`, f.computerIDs[0]); err != nil {
-			return err
-		}
-		close(entered)
-		select {
-		case <-release:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	workerDone, publicDone := make(chan error, 1), make(chan error, 1)
-	go func() { _, err := f.server.startActor(ctx, worker); workerDone <- err }()
-	select {
-	case <-entered:
-	case err := <-workerDone:
-		t.Fatalf("worker admission=%v", err)
-	case <-ctx.Done():
-		t.Fatal(ctx.Err())
-	}
-	go func() { _, err := f.server.startActor(ctx, public); publicDone <- err }()
-	// The public operation must wait for the environment held by worker admission,
-	// rather than hold that environment while waiting for the worker's Computer.
-	for {
-		var waiting bool
-		err := f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%LockActorStartDeploymentAuthority%')`).Scan(&waiting)
-		if err != nil {
-			close(release)
-			t.Fatal(err)
-		}
-		if waiting {
-			break
-		}
-		select {
-		case err := <-publicDone:
-			close(release)
-			t.Fatalf("public admission did not serialize: %v", err)
-		case <-ctx.Done():
-			close(release)
-			t.Fatal(ctx.Err())
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
-	close(release)
-	if err := <-workerDone; err != nil {
-		t.Fatal(err)
-	}
-	if err := <-publicDone; err != nil {
-		t.Fatal(err)
 	}
 }

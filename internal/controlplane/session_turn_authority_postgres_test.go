@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -26,16 +27,15 @@ func turnCommitRequest(t *testing.T, f *actorExecutionFixture, scope run.TurnSco
 	f.beginSettlement(t, scope)
 	return workerapi.CommitActorTurnRequest{Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TurnID: scope.TurnID.String(), RunGeneration: scope.RunGeneration, Disposition: "completed", Result: json.RawMessage(`{"answer":42}`), TargetInputSequence: 1}
 }
-func interruptTurn(ctx context.Context, f *actorExecutionFixture, scope run.TurnScope, key string) (session.InterruptReceipt, error) {
-	var receipt session.InterruptReceipt
-	err := f.server.inTx(ctx, func(w *txWork) error {
-		graph, err := lockSessionControlGraph(ctx, w, session.Target{EnvironmentID: scope.EnvironmentID, SessionID: scope.SessionID})
-		if err != nil {
-			return err
-		}
-		receipt, err = session.InterruptTurn(ctx, w.tx, scope.EnvironmentID, scope.SessionID, scope.TurnID, key, graph)
-		return err
-	})
+
+// interruptTurn interrupts the Turn through the public Session operation and
+// returns a committed rejection as its receipt.
+func interruptTurn(ctx context.Context, f *actorExecutionFixture, scope run.TurnScope, key string) (session.ControlReceipt, error) {
+	receipt, err := session.ApplyInterrupt(ctx, f.server.tx, session.InterruptRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: scope.EnvironmentID, SessionID: scope.SessionID}, IdempotencyKey: key}, TurnID: scope.TurnID})
+	var rejection *session.OperationError
+	if errors.As(err, &rejection) && rejection.Code == receipt.Code {
+		err = nil
+	}
 	return receipt, err
 }
 func assertTurnStopped(t *testing.T, f *actorExecutionFixture, scope run.TurnScope) {
@@ -60,36 +60,45 @@ func TestSessionTurnStopSettlementPostgres(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Hold the actual Session owner transaction across the competing worker call.
-		tx, err := f.Pool.Begin(t.Context())
+		// Hold the Session owner's interruption, after it locked the Session,
+		// across the competing worker call.
+		gate, err := f.Pool.Begin(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer tx.Rollback(context.Background())
-		graph, err := lockSessionControlGraph(t.Context(), &txWork{q: db.New(tx), tx: tx}, session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID})
-		if err != nil {
+		defer gate.Rollback(context.Background())
+		var gatePID int
+		if err := gate.QueryRow(t.Context(), `SELECT pg_backend_pid(),pg_advisory_xact_lock(918274)`).Scan(&gatePID, new(any)); err != nil {
 			t.Fatal(err)
 		}
-		receipt, err := session.InterruptTurn(t.Context(), tx, scope.EnvironmentID, scope.SessionID, scope.TurnID, "stop-1", graph)
-		if err != nil || receipt.Status != "accepted" {
-			t.Fatalf("interrupt: %+v %v", receipt, err)
+		dbtest.MustExec(t, t.Context(), f.Pool, `CREATE FUNCTION block_interrupt_event() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.kind='turn.interrupt_requested' THEN PERFORM pg_advisory_xact_lock(918274); END IF; RETURN NEW; END $$; CREATE TRIGGER block_interrupt_event BEFORE INSERT ON session_events FOR EACH ROW EXECUTE FUNCTION block_interrupt_event()`)
+		type interruptResult struct {
+			receipt session.ControlReceipt
+			err     error
 		}
+		stopped := make(chan interruptResult, 1)
+		go func() {
+			receipt, err := interruptTurn(t.Context(), f, scope, "stop-1")
+			stopped <- interruptResult{receipt, err}
+		}()
+		interruptPID := waitForTurnAuthorityBlock(t, f, gatePID)
 		settled := make(chan error, 1)
 		go func() { _, err := f.server.commitActorTurn(t.Context(), f.worker, req, parsed); settled <- err }()
-		var blockerPID int
-		if err := tx.QueryRow(t.Context(), `SELECT pg_backend_pid()`).Scan(&blockerPID); err != nil {
+		waitForTurnAuthorityBlock(t, f, interruptPID)
+		if err := gate.Commit(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		waitForTurnAuthorityBlock(t, f, blockerPID)
-		if err := tx.Commit(t.Context()); err != nil {
-			t.Fatal(err)
+		out := <-stopped
+		receipt := out.receipt
+		if out.err != nil || receipt.Status != "accepted" || receipt.HoldID == nil {
+			t.Fatalf("interrupt: %+v %v", receipt, out.err)
 		}
 		if err := <-settled; !errors.Is(err, errStaleActorTurnCommit) {
 			t.Fatalf("settlement after stop: %v", err)
 		}
 		assertTurnStopped(t, f, scope)
 		var holdID string
-		if err := f.Pool.QueryRow(t.Context(), `SELECT data->>'hold_id' FROM session_events WHERE id=$1`, receipt.EventID).Scan(&holdID); err != nil || holdID != receipt.HoldID.String() {
+		if err := f.Pool.QueryRow(t.Context(), `SELECT data->>'hold_id' FROM session_events WHERE turn_id=$1 AND kind='turn.interrupt_requested'`, scope.TurnID).Scan(&holdID); err != nil || holdID != receipt.HoldID.String() {
 			t.Fatalf("interrupt event hold: %s %v", holdID, err)
 		}
 		body, _ := json.Marshal(req)
@@ -101,7 +110,7 @@ func TestSessionTurnStopSettlementPostgres(t *testing.T) {
 			t.Fatalf("stopped settlement HTTP %d: %s", response.Code, response.Body.String())
 		}
 		replay, err := interruptTurn(t.Context(), f, scope, "stop-1")
-		if err != nil || replay != receipt {
+		if err != nil || !reflect.DeepEqual(replay, receipt) {
 			t.Fatalf("stop replay: %+v %v", replay, err)
 		}
 	})
@@ -127,7 +136,7 @@ func TestSessionTurnStopSettlementPostgres(t *testing.T) {
 		go func() { _, err := f.server.commitActorTurn(t.Context(), f.worker, req, parsed); settled <- err }()
 		settlementPID := waitForTurnAuthorityBlock(t, f, gatePID)
 		type interruptResult struct {
-			receipt session.InterruptReceipt
+			receipt session.ControlReceipt
 			err     error
 		}
 		stopped := make(chan interruptResult, 1)
@@ -148,7 +157,7 @@ func TestSessionTurnStopSettlementPostgres(t *testing.T) {
 			t.Fatalf("late stop: %+v %v", receipt, err)
 		}
 		replay, err := interruptTurn(t.Context(), f, scope, "late-stop")
-		if err != nil || replay != receipt {
+		if err != nil || !reflect.DeepEqual(replay, receipt) {
 			t.Fatalf("rejected replay: %+v %v", replay, err)
 		}
 		var status string
@@ -290,7 +299,7 @@ func TestSessionTurnDelayedOutputResponsePostgres(t *testing.T) {
 func TestSessionTurnIdentityAndRejectedReceiptPostgres(t *testing.T) {
 	f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 	first := f.receiveTurn(t, 1)
-	queued, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"sequence":2}`)})
+	queued, err := session.ApplyAdmission(t.Context(), f.server.tx, session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"sequence":2}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +318,7 @@ func TestSessionTurnIdentityAndRejectedReceiptPostgres(t *testing.T) {
 		t.Fatalf("ordinary next input incorrectly changes execution: %+v %+v", first, second)
 	}
 	replay, err := interruptTurn(t.Context(), f, second, "queued-stop")
-	if err != nil || replay != receipt {
+	if err != nil || !reflect.DeepEqual(replay, receipt) {
 		t.Fatalf("rejected operation became accepted after activation: %+v %v", replay, err)
 	}
 	req.TurnID = second.TurnID.String()

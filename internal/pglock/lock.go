@@ -35,6 +35,15 @@
 //     claim, then locks its environment FOR NO KEY UPDATE with the current
 //     deployment's Task, then the Computer's secrets, then the Computer
 //     through the computer owner's admission lock.
+//   - Actor start, through the session owner, acquires its idempotency claim,
+//     then locks its environment FOR NO KEY UPDATE with the current
+//     deployment's Actor, then, for a keyed start, takes the transaction
+//     advisory lock on the environment, Actor and key, then locks the
+//     Computer's secrets and then the Computer through the computer owner's
+//     admission lock. A run-sourced start takes the worker Session operation
+//     locks below, with the start Computer addressed, after the key lock (on
+//     replay, right after the claim), and then locks the start Computer's
+//     secrets again without comparing them with the first lock.
 //   - Public Computer creation acquires its idempotency claim before secrets.
 //     Run-sourced creation locks secrets, then the live source Run, then the
 //     idempotency claim, including on replay.
@@ -121,15 +130,18 @@
 //     Secrets, then the execution fence, then re-read the union after the
 //     Session and Computer fences and fail if a binding changed, re-locking
 //     only the same Secrets.
-//   - Public Session cancel and interrupt with a current Run lock that Run's
-//     attempt Secrets, then its owned finalization graph, then re-lock the
-//     Session's Computer (already locked by the graph) and its Instance, then
-//     the Session. With no current Run they lock the Session before its
+//   - Public Session operations run through the session owner. Send, enqueue,
+//     Turn messages and close lock the Session's Computer through the
+//     admission lock, its Instance and then the Session before their
+//     idempotency claim. Cancel and interrupt with a current Run lock that
+//     Run's attempt Secrets, then its owned finalization graph, then re-lock
+//     the Session's Computer (already locked by the graph) and its Instance,
+//     then the Session. With no current Run they lock the Session before its
 //     Computer and Instance, an inversion of the order above. Public resume
-//     takes its own admission path: it locks the Session's Computer's
-//     Secrets, then the Computer, its Instance and the Session, then its
-//     idempotency claim, and then re-locks the already-held Computer through
-//     the Session predicate.
+//     takes its own admission path: it locks the Session's Computer's Secrets,
+//     then the Computer, its Instance and the Session, then its idempotency
+//     claim, and then re-locks the already-held Computer through the Session
+//     predicate.
 //   - Session timeout reconciliation locks the Computer's Secrets, the
 //     Computer and its Instance, then the Session and Run, re-locks the
 //     already-held Computer through the open-Session predicate, then locks

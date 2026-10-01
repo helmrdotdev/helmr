@@ -10,7 +10,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
@@ -72,24 +71,19 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 		))
 		return
 	}
-	normalized.Authorize = func(ctx context.Context, tx pgx.Tx) error {
-		_, err := authorizeWorkerSessionOperation(ctx, tx, worker, request.Lease, pgtype.UUID{}, pgvalue.UUID(normalized.ComputerID))
-		return err
-	}
-	result, err := s.startActor(r.Context(), normalized)
+	// The source lock above parsed the same lease receipt.
+	fence, err := workerSourceFence(worker, request.Lease)
 	if err != nil {
-		if errors.Is(err, run.ErrStaleSource) || errors.Is(err, workergroup.ErrStaleClaims) {
-			s.writeWorkerActorSourceError(w, "start", request.Lease.ID, err)
-			return
-		}
-		if failure, ok := workerActorStartFailure(err); ok {
-			writeJSON(w, http.StatusOK, workerapi.StartActorResponse{
-				CorrelationID: request.CorrelationID, Failed: &failure,
-			})
-			return
-		}
-		s.log.Error("start run-sourced Actor", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("start run-sourced actor"))
+		s.writeWorkerActorSourceError(w, "start", request.Lease.ID, err)
+		return
+	}
+	startRequest, claim, err := prepareActorStart(normalized)
+	var result session.Started
+	if err == nil {
+		result, err = session.StartFromRun(r.Context(), s.tx, fence, claim, startRequest)
+	}
+	if err != nil {
+		s.writeWorkerActorStartError(w, request.CorrelationID, request.Lease.ID, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.StartActorResponse{
@@ -160,7 +154,7 @@ func (s *Server) workerCloseSession(w http.ResponseWriter, r *http.Request) {
 	}
 	var receipt session.ControlReceipt
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		source, err := authorizeWorkerSessionOperation(r.Context(), work.tx, workerFromContext(r.Context()), request.Lease, targetID, pgtype.UUID{})
+		source, err := authorizeWorkerSessionOperation(r.Context(), work.tx, workerFromContext(r.Context()), request.Lease, targetID)
 		if err != nil {
 			return err
 		}
@@ -224,7 +218,7 @@ func (s *Server) workerReadSessionEvents(w http.ResponseWriter, r *http.Request)
 		after = *request.After
 	}
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		source, err := authorizeWorkerSessionOperation(r.Context(), work.tx, workerFromContext(r.Context()), request.Lease, targetID, pgtype.UUID{})
+		source, err := authorizeWorkerSessionOperation(r.Context(), work.tx, workerFromContext(r.Context()), request.Lease, targetID)
 		if err != nil {
 			return err
 		}
@@ -267,37 +261,6 @@ func parseWorkerSessionReference(
 		return pgtype.UUID{}, err
 	}
 	return pgvalue.UUID(id), nil
-}
-
-func workerActorStartFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
-	var operation *session.OperationError
-	if errors.As(err, &operation) {
-		return runtimeOperationFailure(operation.Code, operation.Code, false), true
-	}
-	var expired idempotency.ExpiredError
-	if errors.As(err, &expired) {
-		return workerapi.RuntimeOperationFailure{Code: expired.ErrorCode(), Message: expired.Error()}, true
-	}
-	var claimConflict idempotency.ConflictError
-	var keyConflict ActorKeyConflictError
-	switch {
-	case errors.As(err, &claimConflict):
-		return runtimeOperationFailure("idempotency_conflict", "idempotency key conflicts with an earlier Actor start", false), true
-	case errors.As(err, &keyConflict):
-		return runtimeOperationFailure("actor_key_conflict", keyConflict.Error(), false), true
-	case errors.Is(err, errActorStartNotDeployed):
-		return runtimeOperationFailure("actor_not_deployed", err.Error(), false), true
-	case errors.Is(err, errActorStartComputerNotFound):
-		return runtimeOperationFailure("computer_not_found", err.Error(), false), true
-	case errors.Is(err, errActorStartComputerConflict):
-		return runtimeOperationFailure("computer_unavailable", err.Error(), true), true
-	case errors.Is(err, errActorStartSecretUnavailable):
-		return runtimeOperationFailure("secret_unavailable", err.Error(), false), true
-	case errors.Is(err, errActorStartInvalid):
-		return runtimeOperationFailure("invalid_actor_start", err.Error(), false), true
-	default:
-		return workerapi.RuntimeOperationFailure{}, false
-	}
 }
 
 func runtimeOperationFailure(code, message string, retryable bool) workerapi.RuntimeOperationFailure {

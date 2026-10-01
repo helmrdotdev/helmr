@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 	"uuid"
@@ -14,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
 func TestSessionCloseSettlesStoppedExecutionThroughDeliveryPostgres(t *testing.T) {
@@ -23,20 +23,16 @@ func TestSessionCloseSettlesStoppedExecutionThroughDeliveryPostgres(t *testing.T
 			name = "queued work resumes after delivered close"
 		}
 		t.Run(name, func(t *testing.T) {
-			f := newActorStartPostgresFixture(t, 1)
-			started, err := f.server.startActor(t.Context(), f.request(0, nil, ""))
-			if err != nil {
-				t.Fatal(err)
-			}
-			principal := auth.Principal{OrgID: f.orgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleOwner, ProjectID: f.projectID.String(), EnvironmentID: f.environmentID.String(), Permissions: []auth.Permission{auth.PermissionRunsManage, auth.PermissionSessionsSend, auth.PermissionSessionsClose, auth.PermissionSessionsResume}}
-			call := func(handler http.HandlerFunc, raw any, result any) {
+			f := newSessionHTTP(t, sessiontest.New(t, 1))
+			started := startSession(t, f.Fixture, 0, nil, "")
+			token := f.apiKey(auth.Principal{OrgID: f.OrgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleOwner, ProjectID: f.ProjectID.String(), EnvironmentID: f.EnvironmentID.String(), Permissions: []auth.Permission{auth.PermissionRunsManage, auth.PermissionSessionsSend, auth.PermissionSessionsClose, auth.PermissionSessionsResume}})
+			call := func(route string, raw any, result any) {
 				t.Helper()
 				body, err := json.Marshal(raw)
 				if err != nil {
 					t.Fatal(err)
 				}
-				w := httptest.NewRecorder()
-				handler(w, sessionLifecycleRequest(string(body), principal, started.SessionID.String(), ""))
+				w := f.request(t, http.MethodPost, "/v1/sessions/"+started.SessionID.String()+route, token, string(body))
 				if w.Code != http.StatusAccepted {
 					t.Fatalf("operation=%d %s", w.Code, w.Body.String())
 				}
@@ -47,10 +43,9 @@ func TestSessionCloseSettlesStoppedExecutionThroughDeliveryPostgres(t *testing.T
 				}
 			}
 			if queued {
-				call(f.server.enqueueSessionHTTP, api.SessionDataRequest{Data: json.RawMessage(`"next"`), IdempotencyKey: "next"}, nil)
+				call("/enqueue", api.SessionDataRequest{Data: json.RawMessage(`"next"`), IdempotencyKey: "next"}, nil)
 			}
-			w := httptest.NewRecorder()
-			f.server.cancelRunHTTP(w, runCancellationRequest(t, started.BootRunID.String(), principal))
+			w := f.request(t, http.MethodPost, "/v1/runs/"+started.BootRunID.String()+"/cancel", token, "")
 			if w.Code != http.StatusAccepted {
 				t.Fatalf("cancel=%d %s", w.Code, w.Body.String())
 			}
@@ -59,13 +54,13 @@ func TestSessionCloseSettlesStoppedExecutionThroughDeliveryPostgres(t *testing.T
 				t.Fatal(err)
 			}
 			var closeReceipt api.SessionCloseReceipt
-			call(f.server.closeSessionHTTP, api.CloseSessionRequest{IdempotencyKey: "close"}, &closeReceipt)
+			call("/close", api.CloseSessionRequest{IdempotencyKey: "close"}, &closeReceipt)
 
-			reconciler, err := session.NewReconciler(f.pool)
+			reconciler, err := session.NewReconciler(f.Pool)
 			if err != nil {
 				t.Fatal(err)
 			}
-			worker, err := session.NewDeliveryWorker(nil, db.New(f.pool), reconciler.ReconcileInput, reconciler.ReconcileLifecycle)
+			worker, err := session.NewDeliveryWorker(nil, db.New(f.Pool), reconciler.ReconcileInput, reconciler.ReconcileLifecycle)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -83,7 +78,7 @@ func TestSessionCloseSettlesStoppedExecutionThroughDeliveryPostgres(t *testing.T
 				deadline := time.Now().Add(10 * time.Second)
 				for {
 					var status string
-					if err := f.pool.QueryRow(ctx, `SELECT status FROM control_outbox WHERE id=$1 AND topic='session.lifecycle.reconcile'`, id).Scan(&status); err != nil {
+					if err := f.Pool.QueryRow(ctx, `SELECT status FROM control_outbox WHERE id=$1 AND topic='session.lifecycle.reconcile'`, id).Scan(&status); err != nil {
 						t.Fatal(err)
 					}
 					if status == "delivered" {
@@ -100,7 +95,7 @@ func TestSessionCloseSettlesStoppedExecutionThroughDeliveryPostgres(t *testing.T
 			var hold, current, sessionComputer *uuid.UUID
 			read := func() {
 				t.Helper()
-				if err := f.pool.QueryRow(ctx, `SELECT s.status,s.dispatch_hold_id,s.current_run_id,s.computer_id FROM sessions s JOIN computers w ON w.id=s.computer_id WHERE s.id=$1`, started.SessionID).Scan(&status, &hold, &current, &sessionComputer); err != nil {
+				if err := f.Pool.QueryRow(ctx, `SELECT s.status,s.dispatch_hold_id,s.current_run_id,s.computer_id FROM sessions s JOIN computers w ON w.id=s.computer_id WHERE s.id=$1`, started.SessionID).Scan(&status, &hold, &current, &sessionComputer); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -110,7 +105,7 @@ func TestSessionCloseSettlesStoppedExecutionThroughDeliveryPostgres(t *testing.T
 					t.Fatalf("stopped execution dispatched held input: %s hold=%v run=%v sessionComputer=%v", status, hold, current, sessionComputer)
 				}
 				var resumed api.SessionResumeReceipt
-				call(f.server.resumeSessionHTTP, api.ResumeSessionRequest{HoldID: hold.String(), IdempotencyKey: "resume"}, &resumed)
+				call("/resume", api.ResumeSessionRequest{HoldID: hold.String(), IdempotencyKey: "resume"}, &resumed)
 				waitDelivered(resumed.ID)
 				read()
 				if status != "closing" || hold != nil || current == nil || *current == started.BootRunID || sessionComputer == nil {

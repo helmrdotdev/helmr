@@ -9,18 +9,19 @@ import (
 	"github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestCommandLogOutboxScopeReplayAndCollection(t *testing.T) {
-	f := newActorStartPostgresFixture(t, 1)
-	admitted, err := command.Create(t.Context(), f.pool, command.CreateRequest{OrgID: f.orgID, ProjectID: f.projectID, EnvironmentID: f.environmentID, ComputerID: f.computerIDs[0], Creator: command.Creator{SubjectType: "api_key", SubjectID: uuid.NewV7().String()}, Argv: []string{"true"}, IdempotencyKey: "log-test"})
+	f := sessiontest.New(t, 1)
+	admitted, err := command.Create(t.Context(), f.Pool, command.CreateRequest{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.EnvironmentID, ComputerID: f.ComputerIDs[0], Creator: command.Creator{SubjectType: "api_key", SubjectID: uuid.NewV7().String()}, Argv: []string{"true"}, IdempotencyKey: "log-test"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	q := f.server.db
-	p := db.InsertCommandLogChunkParams{OrgID: pgvalue.UUID(f.orgID), ProjectID: pgvalue.UUID(f.projectID), EnvironmentID: pgvalue.UUID(f.environmentID), CommandID: admitted.ID, StreamName: "stdout", Content: []byte{0, 255, 128}, ObservedSeq: 0, ObservedAt: pgtype.Timestamptz{Time: time.Now().UTC().Truncate(time.Microsecond), Valid: true}}
+	q := db.New(f.Pool)
+	p := db.InsertCommandLogChunkParams{OrgID: pgvalue.UUID(f.OrgID), ProjectID: pgvalue.UUID(f.ProjectID), EnvironmentID: pgvalue.UUID(f.EnvironmentID), CommandID: admitted.ID, StreamName: "stdout", Content: []byte{0, 255, 128}, ObservedSeq: 0, ObservedAt: pgtype.Timestamptz{Time: time.Now().UTC().Truncate(time.Microsecond), Valid: true}}
 	first, err := q.InsertCommandLogChunk(t.Context(), p)
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +58,7 @@ func TestCommandLogOutboxScopeReplayAndCollection(t *testing.T) {
 	if count, err := q.PruneTelemetryOutboxWritten(t.Context(), db.PruneTelemetryOutboxWrittenParams{RetainFor: pgvalue.Interval(0), RowLimit: 100}); err != nil || count != 0 {
 		t.Fatalf("live execution prune=%d, %v", count, err)
 	}
-	if _, err := f.pool.Exec(t.Context(), "UPDATE computer_commands SET status = 'failed', failure_reason='dispatch_failed', terminal_at = now(), terminal_reason_code = 'cancelled', result_expires_at = now() + interval '30 days' WHERE id = $1", admitted.ID); err != nil {
+	if _, err := f.Pool.Exec(t.Context(), "UPDATE computer_commands SET status = 'failed', failure_reason='dispatch_failed', terminal_at = now(), terminal_reason_code = 'cancelled', result_expires_at = now() + interval '30 days' WHERE id = $1", admitted.ID); err != nil {
 		t.Fatal(err)
 	}
 	if count, err := q.PruneTelemetryOutboxWritten(t.Context(), db.PruneTelemetryOutboxWrittenParams{RetainFor: pgvalue.Interval(0), RowLimit: 100}); err != nil || count != 1 {

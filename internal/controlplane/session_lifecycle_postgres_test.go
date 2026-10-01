@@ -4,29 +4,24 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"testing"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
 func TestSessionHTTPPostgresAdmissionEventsScopeAndClose(t *testing.T) {
-	f := newActorStartPostgresFixture(t, 1)
-	started, err := f.server.startActor(t.Context(), f.request(0, nil, ""))
-	if err != nil {
-		t.Fatal(err)
-	}
-	principal := auth.Principal{OrgID: f.orgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper, ProjectID: f.projectID.String(), EnvironmentID: f.environmentID.String()}
-	call := func(handler http.HandlerFunc, raw, turnID, query string) *httptest.ResponseRecorder {
+	f := newSessionHTTP(t, sessiontest.New(t, 1))
+	started := startSession(t, f.Fixture, 0, nil, "")
+	principal := auth.Principal{OrgID: f.OrgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper, ProjectID: f.ProjectID.String(), EnvironmentID: f.EnvironmentID.String()}
+	token := f.apiKey(principal)
+	call := func(method, route, raw string) *httptest.ResponseRecorder {
 		t.Helper()
-		r := sessionLifecycleRequest(raw, principal, started.SessionID.String(), turnID)
-		r.URL.RawQuery = query
-		w := httptest.NewRecorder()
-		handler(w, r)
-		return w
+		return f.request(t, method, "/v1/sessions/"+started.SessionID.String()+route, token, raw)
 	}
 	assert := func(w *httptest.ResponseRecorder, status int) {
 		t.Helper()
@@ -35,13 +30,14 @@ func TestSessionHTTPPostgresAdmissionEventsScopeAndClose(t *testing.T) {
 		}
 	}
 	raw := `{"data":null,"idempotency_key":"first"}`
-	assert(call(f.server.sendSessionHTTP, raw, "", ""), http.StatusForbidden)
+	assert(call(http.MethodPost, "/send", raw), http.StatusForbidden)
 	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_turns WHERE session_id=$1`, started.SessionID).Scan(&count); err != nil || count != 0 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM session_turns WHERE session_id=$1`, started.SessionID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("denied admission residue=%d err=%v", count, err)
 	}
 	principal.Permissions = []auth.Permission{auth.PermissionSessionsSend, auth.PermissionSessionsRead, auth.PermissionSessionsClose, auth.PermissionSessionsInterrupt}
-	w := call(f.server.sendSessionHTTP, raw, "", "")
+	token = f.apiKey(principal)
+	w := call(http.MethodPost, "/send", raw)
 	assert(w, http.StatusAccepted)
 	var first api.SessionAdmissionReceipt
 	if err := json.Unmarshal(w.Body.Bytes(), &first); err != nil {
@@ -50,17 +46,17 @@ func TestSessionHTTPPostgresAdmissionEventsScopeAndClose(t *testing.T) {
 	if first.Kind != "enqueued" || first.ID == "" || first.TurnID == "" || first.MessageID != nil {
 		t.Fatalf("first=%+v", first)
 	}
-	replay := call(f.server.sendSessionHTTP, raw, "", "")
+	replay := call(http.MethodPost, "/send", raw)
 	assert(replay, http.StatusAccepted)
 	if replay.Body.String() != w.Body.String() {
 		t.Fatalf("replay retargeted: %s vs %s", replay.Body.String(), w.Body.String())
 	}
-	w = call(f.server.sendSessionHTTP, `{"data":1,"idempotency_key":"first"}`, "", "")
+	w = call(http.MethodPost, "/send", `{"data":1,"idempotency_key":"first"}`)
 	assert(w, http.StatusConflict)
 	if decodeHTTPError(t, w.Body.Bytes()).Code != "idempotency_conflict" {
 		t.Fatalf("conflict=%s", w.Body.String())
 	}
-	w = call(f.server.enqueueSessionHTTP, `{"data":{"type":"next"},"idempotency_key":"second"}`, "", "")
+	w = call(http.MethodPost, "/enqueue", `{"data":{"type":"next"},"idempotency_key":"second"}`)
 	assert(w, http.StatusAccepted)
 	var second api.SessionAdmissionReceipt
 	if err := json.Unmarshal(w.Body.Bytes(), &second); err != nil {
@@ -69,12 +65,12 @@ func TestSessionHTTPPostgresAdmissionEventsScopeAndClose(t *testing.T) {
 	if second.TurnID == first.TurnID {
 		t.Fatal("two admissions share one Turn")
 	}
-	w = call(f.server.interruptSessionTurnHTTP, `{"idempotency_key":"missing-turn"}`, uuid.NewV7().String(), "")
+	w = call(http.MethodPost, "/turns/"+uuid.NewV7().String()+"/interrupt", `{"idempotency_key":"missing-turn"}`)
 	assert(w, http.StatusNotFound)
 	if decodeHTTPError(t, w.Body.Bytes()).Code != "turn_not_found" {
 		t.Fatalf("missing Turn=%s", w.Body.String())
 	}
-	w = call(f.server.getSessionTurnHTTP, "", first.TurnID, "")
+	w = call(http.MethodGet, "/turns/"+first.TurnID, "")
 	assert(w, http.StatusOK)
 	var turn api.SessionTurn
 	if err := json.Unmarshal(w.Body.Bytes(), &turn); err != nil {
@@ -83,7 +79,7 @@ func TestSessionHTTPPostgresAdmissionEventsScopeAndClose(t *testing.T) {
 	if turn.Status != "queued" || turn.Sequence != 1 || string(turn.Input) != "null" || turn.AcceptsMessages {
 		t.Fatalf("turn=%+v", turn)
 	}
-	w = call(f.server.readSessionEventsHTTP, "", "", "after=0&limit=1")
+	w = call(http.MethodGet, "/events?after=0&limit=1", "")
 	assert(w, http.StatusOK)
 	var page api.SessionEventPage
 	if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
@@ -92,7 +88,7 @@ func TestSessionHTTPPostgresAdmissionEventsScopeAndClose(t *testing.T) {
 	if len(page.Records) != 1 || page.NextAfter != 1 || !page.HasMore || page.RetainedAfter != 0 || page.Records[0].Kind != "turn.enqueued" || page.Records[0].TurnID == nil || *page.Records[0].TurnID != first.TurnID || page.Records[0].Provenance != nil {
 		t.Fatalf("page=%+v", page)
 	}
-	w = call(f.server.readSessionEventsHTTP, "", "", "after=2")
+	w = call(http.MethodGet, "/events?after=2", "")
 	assert(w, http.StatusOK)
 	if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
 		t.Fatal(err)
@@ -100,17 +96,19 @@ func TestSessionHTTPPostgresAdmissionEventsScopeAndClose(t *testing.T) {
 	if page.Records == nil || len(page.Records) != 0 || page.NextAfter != 2 || page.HasMore {
 		t.Fatalf("empty=%+v", page)
 	}
-	w = call(f.server.readSessionEventsHTTP, "", "", "after=999")
+	w = call(http.MethodGet, "/events?after=999", "")
 	assert(w, http.StatusBadRequest)
 	if decodeHTTPError(t, w.Body.Bytes()).Code != "invalid_cursor" {
 		t.Fatalf("future=%s", w.Body.String())
 	}
+	allowed := token
 	principal.EnvironmentID = uuid.NewV7().String()
-	assert(call(f.server.readSessionEventsHTTP, "", "", ""), http.StatusNotFound)
-	principal.EnvironmentID = f.environmentID.String()
-	w = call(f.server.closeSessionHTTP, `{"idempotency_key":"close"}`, "", "")
+	token = f.apiKey(principal)
+	assert(call(http.MethodGet, "/events", ""), http.StatusNotFound)
+	token = allowed
+	w = call(http.MethodPost, "/close", `{"idempotency_key":"close"}`)
 	assert(w, http.StatusAccepted)
-	w = call(f.server.getSessionHTTP, "", "", "")
+	w = call(http.MethodGet, "", "")
 	assert(w, http.StatusOK)
 	var snapshot api.Session
 	if err := json.Unmarshal(w.Body.Bytes(), &snapshot); err != nil {
@@ -119,13 +117,13 @@ func TestSessionHTTPPostgresAdmissionEventsScopeAndClose(t *testing.T) {
 	if snapshot.Status != api.SessionStatusClosing || snapshot.Dispatch.State != "ready" || snapshot.ActiveTurnID != nil {
 		t.Fatalf("closing=%+v", snapshot)
 	}
-	w = call(f.server.sendSessionHTTP, `{"data":3,"idempotency_key":"after-close"}`, "", "")
+	w = call(http.MethodPost, "/send", `{"data":3,"idempotency_key":"after-close"}`)
 	assert(w, http.StatusConflict)
 	if decodeHTTPError(t, w.Body.Bytes()).Code != "session_not_open" {
 		t.Fatalf("closed admission=%s", w.Body.String())
 	}
 	// An admitted operation retains its exact receipt even after close.
-	w = call(f.server.sendSessionHTTP, raw, "", "")
+	w = call(http.MethodPost, "/send", raw)
 	assert(w, http.StatusAccepted)
 	var afterClose api.SessionAdmissionReceipt
 	if err := json.Unmarshal(w.Body.Bytes(), &afterClose); err != nil {
@@ -134,7 +132,7 @@ func TestSessionHTTPPostgresAdmissionEventsScopeAndClose(t *testing.T) {
 	if afterClose.ID != first.ID || afterClose.TurnID != first.TurnID {
 		t.Fatalf("after close=%+v", afterClose)
 	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_turns WHERE session_id=$1`, started.SessionID).Scan(&count); err != nil || count != 2 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM session_turns WHERE session_id=$1`, started.SessionID).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("turns=%d err=%v", count, err)
 	}
 }
@@ -219,40 +217,39 @@ func TestSessionHTTPPostgresStopKeepsFIFOAndRequiresExactHold(t *testing.T) {
 }
 
 func TestSessionHTTPPostgresIdleCloseReleasesComputer(t *testing.T) {
-	f := newActorStartPostgresFixture(t, 1)
-	started, err := f.server.startActor(t.Context(), f.request(0, nil, ""))
-	if err != nil {
-		t.Fatal(err)
-	}
-	settleActorBootRun(t, f, started, 0)
-	principal := auth.Principal{OrgID: f.orgID, Kind: auth.PrincipalKindSession, Role: auth.RoleDeveloper, ProjectID: f.projectID.String(), EnvironmentID: f.environmentID.String()}
-	r := sessionLifecycleRequest(`{"idempotency_key":"close-idle"}`, principal, started.SessionID.String(), "")
-	w := httptest.NewRecorder()
-	f.server.closeSessionHTTP(w, r)
+	f := newSessionHTTP(t, sessiontest.New(t, 1))
+	started := startSession(t, f.Fixture, 0, nil, "")
+	settleActorBootRun(t, f.Fixture, started, 0)
+	token := f.memberSession(t, db.OrgMemberRoleDeveloper)
+	w := f.request(t, http.MethodPost, f.environmentPath("/sessions/"+started.SessionID.String()+"/close"), token, `{"idempotency_key":"close-idle"}`)
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
-	reconciler, err := session.NewReconciler(f.pool)
+	reconciler, err := session.NewReconciler(f.Pool)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deferred, err := reconciler.ReconcileLifecycle(t.Context(), f.environmentID, started.SessionID); err != nil || deferred {
+	if deferred, err := reconciler.ReconcileLifecycle(t.Context(), f.EnvironmentID, started.SessionID); err != nil || deferred {
 		t.Fatalf("close reconciliation deferred=%v err=%v", deferred, err)
 	}
 	var status string
 	var sessionComputer *uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT s.status,s.computer_id FROM sessions s JOIN computers w ON w.id=s.computer_id WHERE s.id=$1`, started.SessionID).Scan(&status, &sessionComputer); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT s.status,s.computer_id FROM sessions s JOIN computers w ON w.id=s.computer_id WHERE s.id=$1`, started.SessionID).Scan(&status, &sessionComputer); err != nil {
 		t.Fatal(err)
 	}
 	if status != "closed" || sessionComputer == nil {
 		t.Fatalf("close=%s sessionComputer=%v", status, sessionComputer)
 	}
 	// The console route reads the closed Session through the same scope.
-	r = sessionLifecycleRequest("", principal, started.SessionID.String(), "")
-	r.URL = &url.URL{RawQuery: "status=closed"}
-	w = httptest.NewRecorder()
-	f.server.listSessionsHTTP(w, r)
+	w = f.request(t, http.MethodGet, f.environmentPath("/sessions?status=closed"), token, "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("list=%d %s", w.Code, w.Body.String())
+	}
+	var listed api.ListSessionsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Sessions) != 1 || listed.Sessions[0].ID != started.SessionID.String() {
+		t.Fatalf("closed Sessions = %+v", listed.Sessions)
 	}
 }

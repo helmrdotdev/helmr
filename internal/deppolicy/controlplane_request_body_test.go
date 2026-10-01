@@ -44,7 +44,6 @@ var controlPlaneDecodersOutsideOwner = map[string]string{
 	"Server.parseCommandLogCursor":       "signed cursor, fixed message",
 	"Server.parseRunTelemetryCursor":     "signed cursor, fixed message",
 	"Server.workerClaimComputerCommand":  "stored command environment",
-	"actorStartResultFromReceipt":        "stored idempotency receipt",
 	"actorWaitIdleTimeout":               "stored definition manifest",
 	"decodeAPIKeyListCursor":             "opaque cursor, fixed message",
 	"decodeActorStartObject":             "canonical request member, fixed message",
