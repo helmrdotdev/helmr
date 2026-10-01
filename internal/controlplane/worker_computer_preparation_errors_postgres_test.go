@@ -39,7 +39,7 @@ const (
 	claimReadStatement   = "SELECT w.claim_version,g.claim_version"
 	firstFenceStatement  = "SELECT environment_id,computer_id,region_id,observed_state FROM computer_instances"
 	deadlineStatement    = "-- name: GetComputerPreparationDeadlinesValid"
-	pinWriteStatement    = "-- name: PinRuntimeComputerKey"
+	pinWriteStatement    = "-- name: PinInstanceComputerKey"
 	sourceKeysStatement  = "-- name: ListInstanceComputerSourceKeys"
 	registrationSQLMatch = "INSERT INTO computer_objects"
 )

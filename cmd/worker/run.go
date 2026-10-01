@@ -334,7 +334,7 @@ func run(log *slog.Logger) error {
 				return evidence, errors.New("startup recovery found VM residue without exact ownership")
 			}
 			for _, owner := range evidence.QuarantinedOwners {
-				if owner.Kind != vm.OwnerRuntime {
+				if owner.Kind != vm.OwnerInstance {
 					continue
 				}
 				created, err := hostReservations.Reserve(

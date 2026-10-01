@@ -47,7 +47,7 @@ func (q *Queries) CreateComputerKey(ctx context.Context, arg CreateComputerKeyPa
 	return i, err
 }
 
-const getRuntimeComputerWriteKey = `-- name: GetRuntimeComputerWriteKey :one
+const getInstanceComputerWriteKey = `-- name: GetInstanceComputerWriteKey :one
 
 SELECT k.id, k.environment_id, k.computer_id, k.wrapping_key_id, k.wrapped_key, k.created_at, k.retired_at, k.available
   FROM computer_instances r
@@ -58,16 +58,16 @@ SELECT k.id, k.environment_id, k.computer_id, k.wrapping_key_id, k.wrapped_key, 
    AND r.computer_id=$3 AND r.reclaimed_at IS NULL
 `
 
-type GetRuntimeComputerWriteKeyParams struct {
+type GetInstanceComputerWriteKeyParams struct {
 	ComputerInstanceID pgtype.UUID `json:"computer_instance_id"`
 	EnvironmentID      pgtype.UUID `json:"environment_id"`
 	ComputerID         pgtype.UUID `json:"computer_id"`
 }
 
-// The owning operation holds Computer and Runtime authority. No caller-provided
+// The owning operation holds Computer and Instance authority. No caller-provided
 // key selection is accepted. Provider I/O happens only after committing these pins.
-func (q *Queries) GetRuntimeComputerWriteKey(ctx context.Context, arg GetRuntimeComputerWriteKeyParams) (ComputerDataKey, error) {
-	row := q.db.QueryRow(ctx, getRuntimeComputerWriteKey, arg.ComputerInstanceID, arg.EnvironmentID, arg.ComputerID)
+func (q *Queries) GetInstanceComputerWriteKey(ctx context.Context, arg GetInstanceComputerWriteKeyParams) (ComputerDataKey, error) {
+	row := q.db.QueryRow(ctx, getInstanceComputerWriteKey, arg.ComputerInstanceID, arg.EnvironmentID, arg.ComputerID)
 	var i ComputerDataKey
 	err := row.Scan(
 		&i.ID,
@@ -111,7 +111,7 @@ ORDER BY k.id LIMIT $1
 `
 
 // A key remains available while any object, current writer or unreclaimed
-// Runtime needs it. Restrictive availability FKs arbitrate concurrent adoption.
+// Instance needs it. Restrictive availability FKs arbitrate concurrent adoption.
 func (q *Queries) ListUnreferencedComputerKeys(ctx context.Context, rowLimit int32) ([]pgtype.UUID, error) {
 	rows, err := q.db.Query(ctx, listUnreferencedComputerKeys, rowLimit)
 	if err != nil {
@@ -132,22 +132,22 @@ func (q *Queries) ListUnreferencedComputerKeys(ctx context.Context, rowLimit int
 	return items, nil
 }
 
-const pinRuntimeComputerKey = `-- name: PinRuntimeComputerKey :execrows
+const pinInstanceComputerKey = `-- name: PinInstanceComputerKey :execrows
 UPDATE computer_instances SET write_key_id=$1
  WHERE id=$2 AND environment_id=$3
    AND computer_id=$4 AND reclaimed_at IS NULL
    AND (write_key_id IS NULL OR write_key_id=$1)
 `
 
-type PinRuntimeComputerKeyParams struct {
+type PinInstanceComputerKeyParams struct {
 	KeyID              pgtype.UUID `json:"key_id"`
 	ComputerInstanceID pgtype.UUID `json:"computer_instance_id"`
 	EnvironmentID      pgtype.UUID `json:"environment_id"`
 	ComputerID         pgtype.UUID `json:"computer_id"`
 }
 
-func (q *Queries) PinRuntimeComputerKey(ctx context.Context, arg PinRuntimeComputerKeyParams) (int64, error) {
-	result, err := q.db.Exec(ctx, pinRuntimeComputerKey,
+func (q *Queries) PinInstanceComputerKey(ctx context.Context, arg PinInstanceComputerKeyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, pinInstanceComputerKey,
 		arg.KeyID,
 		arg.ComputerInstanceID,
 		arg.EnvironmentID,

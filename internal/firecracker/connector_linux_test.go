@@ -172,24 +172,24 @@ func TestCleanupRequiresCanonicalExactOwnership(t *testing.T) {
 	if err := os.MkdirAll(statePath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte(string(vm.OwnerRuntime)+"\n"+strings.ToUpper(id)+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte(string(vm.OwnerInstance)+"\n"+strings.ToUpper(id)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	connector := &Connector{cfg: Config{StateDir: stateDir, JailerChrootBaseDir: jailerDir, IPPath: "/bin/true"}}
-	err := connector.cleanup(context.Background(), vm.Owner{Kind: vm.OwnerRuntime, ID: id})
+	err := connector.cleanup(context.Background(), vm.Owner{Kind: vm.OwnerInstance, ID: id})
 	var unproven *vm.CleanupUnprovenError
-	if !errors.As(err, &unproven) || unproven.Owner != (vm.Owner{Kind: vm.OwnerRuntime, ID: id}) || !strings.Contains(err.Error(), "ownership marker") {
+	if !errors.As(err, &unproven) || unproven.Owner != (vm.Owner{Kind: vm.OwnerInstance, ID: id}) || !strings.Contains(err.Error(), "ownership marker") {
 		t.Fatalf("Cleanup() error = %v, want typed exact ownership rejection", err)
 	}
 	if _, err := os.Stat(statePath); err != nil {
 		t.Fatalf("mismatched owner state was removed: %v", err)
 	}
-	if err := connector.cleanup(context.Background(), vm.Owner{Kind: vm.OwnerRuntime, ID: strings.ToUpper(id)}); !errors.As(err, &unproven) {
+	if err := connector.cleanup(context.Background(), vm.Owner{Kind: vm.OwnerInstance, ID: strings.ToUpper(id)}); !errors.As(err, &unproven) {
 		t.Fatal("non-canonical owner id was accepted")
 	}
 }
 
-func TestCleanupRemovesExactRuntimeOwnerAndMarkerLast(t *testing.T) {
+func TestCleanupRemovesExactInstanceOwnerAndMarkerLast(t *testing.T) {
 	stateDir := t.TempDir()
 	jailerDir := t.TempDir()
 	id := "019fc619-8443-77f6-9498-8c348c25f702"
@@ -201,14 +201,14 @@ func TestCleanupRemovesExactRuntimeOwnerAndMarkerLast(t *testing.T) {
 	if err := os.MkdirAll(jailerPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte(string(vm.OwnerRuntime)+"\n"+id+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte(string(vm.OwnerInstance)+"\n"+id+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(statePath, "scratch"), []byte("state"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	connector := &Connector{cfg: Config{StateDir: stateDir, JailerChrootBaseDir: jailerDir, IPPath: "/bin/true"}}
-	if err := connector.cleanup(context.Background(), vm.Owner{Kind: vm.OwnerRuntime, ID: id}); err != nil {
+	if err := connector.cleanup(context.Background(), vm.Owner{Kind: vm.OwnerInstance, ID: id}); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{statePath, jailerPath} {
@@ -564,7 +564,7 @@ func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 		Topology: topology, Resources: compute.ResourceVector{MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.ScratchDiskMiB},
 		ID:                 "checkpoint-1",
 		ComputerInstanceID: computerInstanceID,
-		OwnerKind:          vm.OwnerRuntime,
+		OwnerKind:          vm.OwnerInstance,
 		Binding: vm.WorkloadBinding{
 			WorkerEpoch: 1, OwnerID: computerInstanceID, Generation: 1,
 			ComputerInstanceID: computerInstanceID, VMPlatformID: identity.RuntimeID,
@@ -615,7 +615,7 @@ func TestUnpackRestoreArtifactReturnsFilepackStats(t *testing.T) {
 	if _, err := filepack.Pack(context.Background(), raw, pack, filepack.ScratchRole); err != nil {
 		t.Fatal(err)
 	}
-	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: uuid.NewV7().String()}
+	owner := vm.Owner{Kind: vm.OwnerInstance, ID: uuid.NewV7().String()}
 	ownerDir, err := createOwnerStateRoot(cfg.StateDir, owner)
 	if err != nil {
 		t.Fatal(err)
@@ -1474,7 +1474,7 @@ func TestMaterializeAcceptsOnlyCompleteProgramDriveSet(t *testing.T) {
 	}
 	request := vm.MaterializeRequest{
 		ID:        computerInstanceID,
-		OwnerKind: vm.OwnerRuntime,
+		OwnerKind: vm.OwnerInstance,
 		Binding: vm.WorkloadBinding{
 			WorkerEpoch: 1, OwnerID: computerInstanceID, Generation: 1,
 			ComputerInstanceID: computerInstanceID, VMPlatformID: evidence.RuntimeID,
@@ -1526,7 +1526,7 @@ func TestMaterializeRecordsScratchDiskPhase(t *testing.T) {
 
 			_, err = connector.materialize(t.Context(), vm.MaterializeRequest{
 				ID:        computerInstanceID,
-				OwnerKind: vm.OwnerRuntime,
+				OwnerKind: vm.OwnerInstance,
 				Binding: vm.WorkloadBinding{
 					WorkerEpoch: 1, OwnerID: computerInstanceID, Generation: 1,
 					ComputerInstanceID: computerInstanceID, VMPlatformID: vmPlatform.ID,
@@ -1567,7 +1567,7 @@ func TestMaterializeRequiresActivationProbedCPUShape(t *testing.T) {
 	artifacts.Rootfs.Digest = rootfsDigest
 	validRequest := vm.MaterializeRequest{
 		ID:        computerInstanceID,
-		OwnerKind: vm.OwnerRuntime,
+		OwnerKind: vm.OwnerInstance,
 		Binding: vm.WorkloadBinding{
 			WorkerEpoch: 1, OwnerID: computerInstanceID, Generation: 1,
 			ComputerInstanceID: computerInstanceID,
@@ -1657,7 +1657,7 @@ func TestSessionEntryPointsRejectWorkloadVMPlatformMismatch(t *testing.T) {
 		context.Background(),
 		workloadLaunch,
 		computerInstanceID,
-		vm.OwnerRuntime,
+		vm.OwnerInstance,
 		binding,
 		"",
 		"",
@@ -1672,7 +1672,7 @@ func TestSessionEntryPointsRejectWorkloadVMPlatformMismatch(t *testing.T) {
 	}
 	if _, err := connector.restore(context.Background(), vm.RestoreRequest{
 		ComputerInstanceID: computerInstanceID,
-		OwnerKind:          vm.OwnerRuntime,
+		OwnerKind:          vm.OwnerInstance,
 		Binding:            binding,
 	}); err == nil || !strings.Contains(err.Error(), "does not match target host runtime") {
 		t.Fatalf("restore runtime identity error = %v", err)
@@ -2153,7 +2153,7 @@ func TestRestoreRejectsResourceMismatchBeforeUnpack(t *testing.T) {
 	data, identity := testPairedRestoreManifest(t, cfg, "checkpoint", topology)
 	id := uuid.NewV7().String()
 	for _, resources := range []compute.ResourceVector{{MemoryMiB: cfg.MemoryMiB + 1, DiskMiB: cfg.ScratchDiskMiB}, {MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.ScratchDiskMiB + 1}} {
-		_, err := connector.restore(t.Context(), vm.RestoreRequest{ID: "checkpoint", ComputerInstanceID: id, OwnerKind: vm.OwnerRuntime,
+		_, err := connector.restore(t.Context(), vm.RestoreRequest{ID: "checkpoint", ComputerInstanceID: id, OwnerKind: vm.OwnerInstance,
 			Binding: vm.WorkloadBinding{WorkerEpoch: 1, OwnerID: id, Generation: 1, ComputerInstanceID: id, VMPlatformID: identity.RuntimeID}, Topology: topology, Resources: resources,
 			Manifest: data, Checkpoint: identity, VMState: "not-read", VMStateMediaType: cas.CheckpointVMStateMediaType, ScratchDisk: "not-read", ScratchDiskMediaType: cas.CheckpointScratchDiskMediaType, Memory: []string{"not-read"}, MemoryMediaTypes: []string{cas.CheckpointMemoryMediaType}})
 		if err == nil || !strings.Contains(err.Error(), "does not match runtime reservation") {

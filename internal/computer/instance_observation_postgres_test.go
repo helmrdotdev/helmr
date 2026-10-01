@@ -82,7 +82,7 @@ func TestInstanceReclaimRequiresCurrentCloseAndKeepsFailure(t *testing.T) {
 	if _, err := reclaim(params); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("unreported failure reclaimed: %v", err)
 	}
-	failed, err := applyFailure(t, f, Failure{Observation: observationOf(i), Kind: FailureInstance, Reason: "runtime_reconcile_failed", Error: []byte(`{"code":"test_failure"}`)})
+	failed, err := applyFailure(t, f, Failure{Observation: observationOf(i), Kind: FailureInstance, Reason: "instance_reconcile_failed", Error: []byte(`{"code":"test_failure"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,12 +155,12 @@ func TestWorkerInvalidFailureDrainsBeforeValidatingCleanupProof(t *testing.T) {
 // separate transactions.
 func TestFailureWithCleanupProofReclaimsAndReplays(t *testing.T) {
 	f, work, i := runningInstance(t)
-	failure := Failure{Observation: observationOf(i), Kind: FailureInstance, Reason: "runtime_reconcile_failed", Error: []byte(`{}`), CleanupProof: &CleanupProof{Method: CleanupNotMaterialized, CompletedAt: time.Now()}}
+	failure := Failure{Observation: observationOf(i), Kind: FailureInstance, Reason: "instance_reconcile_failed", Error: []byte(`{}`), CleanupProof: &CleanupProof{Method: CleanupNotMaterialized, CompletedAt: time.Now()}}
 	reclaimed, err := RecordInstanceFailure(t.Context(), f.Pool, failure)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reclaimed.ReclaimedAt.Valid || reclaimed.ObservedState != "failed" || reclaimed.TerminalReasonCode.String != "runtime_reconcile_failed" || string(reclaimed.ReclaimEvidence) == "" {
+	if !reclaimed.ReclaimedAt.Valid || reclaimed.ObservedState != "failed" || reclaimed.TerminalReasonCode.String != "instance_reconcile_failed" || string(reclaimed.ReclaimEvidence) == "" {
 		t.Fatalf("failed Instance not reclaimed: %+v", reclaimed)
 	}
 	var reconciled bool

@@ -37,7 +37,7 @@ func readyInstanceParams(i ComputerInstance) MarkComputerInstanceReadyParams {
 	return MarkComputerInstanceReadyParams{ID: i.ID, WorkerHostID: i.WorkerHostID, WorkerEpoch: i.WorkerEpoch, WriterGeneration: i.WriterGeneration, DesiredVersion: i.DesiredVersion, ExpectedObservedVersion: i.ObservedVersion, VMVCPUCount: i.VMVCPUCount, CPUConfigDigest: i.CPUConfigDigest}
 }
 func reclaimInstanceParams(i ComputerInstance) ReclaimComputerInstanceParams {
-	return ReclaimComputerInstanceParams{ID: i.ID, WorkerHostID: i.WorkerHostID, WorkerEpoch: i.WorkerEpoch, WriterGeneration: i.WriterGeneration, DesiredVersion: i.DesiredVersion, ExpectedObservedVersion: i.ObservedVersion, ObservedState: "closed", MountState: "unmounted", Reason: pgvalue.Text("closed"), Evidence: []byte(`{"method":"session_closed"}`)}
+	return ReclaimComputerInstanceParams{ID: i.ID, WorkerHostID: i.WorkerHostID, WorkerEpoch: i.WorkerEpoch, WriterGeneration: i.WriterGeneration, DesiredVersion: i.DesiredVersion, ExpectedObservedVersion: i.ObservedVersion, ObservedState: "closed", MountState: "unmounted", Reason: pgvalue.Text("closed"), Evidence: []byte(`{"method":"machine_closed"}`)}
 }
 func TestComputerInstanceAllocatedReadyClosedPath(t *testing.T) {
 	f, i := instanceFixture(t, true)

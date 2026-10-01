@@ -342,8 +342,8 @@ func TestServerFailsWhenPreparedMachineIsMissing(t *testing.T) {
 		t.Fatal("missing prepared machine was accepted")
 	}
 	var failure computerMountFailure
-	if !errors.As(err, &failure) || failure.code != "computer_runtime_not_prepared" {
-		t.Fatalf("error = %v, want computer_runtime_not_prepared", err)
+	if !errors.As(err, &failure) || failure.code != "computer_instance_not_prepared" {
+		t.Fatalf("error = %v, want computer_instance_not_prepared", err)
 	}
 	if len(client.failures) != 1 {
 		t.Fatalf("computer mount failures = %d, want 1", len(client.failures))
@@ -354,8 +354,8 @@ func TestServerFailsWhenPreparedMachineIsMissing(t *testing.T) {
 	if err := json.Unmarshal(client.failures[0].Error, &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.Code != "computer_runtime_not_prepared" {
-		t.Fatalf("computer mount failure code = %q, want computer_runtime_not_prepared", body.Code)
+	if body.Code != "computer_instance_not_prepared" {
+		t.Fatalf("computer mount failure code = %q, want computer_instance_not_prepared", body.Code)
 	}
 	if got := store.getCalls[computerMount.ComputerImage.Digest]; got != 0 {
 		t.Fatalf("computer image CAS gets = %d, want 0", got)
@@ -913,7 +913,7 @@ func TestServerProgramStartFailureKeepsCapacityWhenInstanceCloseFails(t *testing
 	if len(client.failures) != 1 {
 		t.Fatalf("failures = %+v", client.failures)
 	}
-	if got := string(client.failures[0].Error); !strings.Contains(got, "computer_mount_runtime_close_failed") ||
+	if got := string(client.failures[0].Error); !strings.Contains(got, "computer_mount_instance_close_failed") ||
 		strings.Contains(got, rawCause) {
 		t.Fatalf("failure error = %s", got)
 	}

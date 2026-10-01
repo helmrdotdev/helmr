@@ -73,7 +73,7 @@ func (f supplyFixture) hostState(t *testing.T, hostID uuid.UUID) (db.WorkerHostS
 func startupEvidence(t *testing.T) []byte {
 	t.Helper()
 	evidence, err := json.Marshal(map[string]any{
-		"inventory_complete": true, "inventory_scope": "worker_runtime_state_roots_v0",
+		"inventory_complete": true, "inventory_scope": "worker_instance_state_roots_v0",
 		"observed_at": time.Now().UTC(), "inventory": []string{},
 	})
 	if err != nil {

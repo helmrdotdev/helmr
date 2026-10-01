@@ -20,7 +20,7 @@ func TestComputerDeleteRetiresParkedCheckpoint(t *testing.T) {
 	}
 	defer tx.Rollback(t.Context())
 	dbtest.MustExec(t, t.Context(), tx, `UPDATE runs SET status='cancelled',terminal_at=now(),failure='{"code":"cancelled","message":"Cancelled","details":{}}',current_run_lease_id=NULL,active_started_at=NULL WHERE computer_id=$1`, cp.ComputerID)
-	dbtest.MustExec(t, t.Context(), tx, `UPDATE computer_instances SET observed_state='closed',observed_desired_version=desired_version,mount_state='unmounted',unmounted_at=now(),terminal_at=now(),reclaimed_at=now(),reclaim_evidence='{"method":"session_closed"}',terminal_reason_code='checkpointed' WHERE id=$1`, ref.InstanceID)
+	dbtest.MustExec(t, t.Context(), tx, `UPDATE computer_instances SET observed_state='closed',observed_desired_version=desired_version,mount_state='unmounted',unmounted_at=now(),terminal_at=now(),reclaimed_at=now(),reclaim_evidence='{"method":"machine_closed"}',terminal_reason_code='checkpointed' WHERE id=$1`, ref.InstanceID)
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}

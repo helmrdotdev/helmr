@@ -213,7 +213,7 @@ func (binding WorkloadBinding) Validate(owner Owner) error {
 	if strings.TrimSpace(binding.VMPlatformID) == "" {
 		return errors.New("workload binding runtime identity is required")
 	}
-	if owner.Kind != OwnerRuntime {
+	if owner.Kind != OwnerInstance {
 		return errors.New("workload binding owner kind is invalid")
 	}
 	if binding.ComputerInstanceID != owner.ID || binding.Generation != 1 {
@@ -225,7 +225,7 @@ func (binding WorkloadBinding) Validate(owner Owner) error {
 type OwnerKind string
 
 const (
-	OwnerRuntime OwnerKind = "runtime"
+	OwnerInstance OwnerKind = "instance"
 )
 
 type Owner struct {
@@ -234,8 +234,8 @@ type Owner struct {
 }
 
 func (o Owner) Validate() error {
-	if o.Kind != OwnerRuntime {
-		return errors.New("VM owner kind must be runtime")
+	if o.Kind != OwnerInstance {
+		return errors.New("VM owner kind must be instance")
 	}
 	if err := ids.Validate(o.ID); err != nil {
 		return errors.New("VM owner id must be a canonical UUIDv7")

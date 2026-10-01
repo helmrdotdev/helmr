@@ -107,7 +107,7 @@ func (h workerHost) recover(t *testing.T) {
 		t.Fatalf("authenticate: %v", err)
 	}
 	if err := h.client.ReportWorkerStartupRecovery(t.Context(), workerapi.StartupRecoveryRequest{
-		InventoryComplete: true, InventoryScope: "worker_runtime_state_roots_v0",
+		InventoryComplete: true, InventoryScope: "worker_instance_state_roots_v0",
 		ObservedAt: time.Now().UTC(), Inventory: []string{},
 	}); err != nil {
 		t.Fatalf("startup recovery: %v", err)
@@ -187,7 +187,7 @@ func TestWorkerHostLifecycleHTTP(t *testing.T) {
 	}
 	assertAdminError(t, f.request(t, http.MethodGet, "/worker/v1/instance", hostCredential, ""), http.StatusUnauthorized, "unauthorized")
 	completion := workerapi.DrainCompletionRequest{
-		InventoryComplete: true, InventoryScope: "worker_runtime_state_roots_v0",
+		InventoryComplete: true, InventoryScope: "worker_instance_state_roots_v0",
 		ObservedAt: time.Now().UTC(), Inventory: []string{},
 	}
 	completed, err := host.client.CompleteWorkerDrain(t.Context(), completion)

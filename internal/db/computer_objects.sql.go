@@ -108,20 +108,20 @@ SELECT EXISTS (
 `
 
 type HasRegisteredInitialComputerObjectParams struct {
-	PublicationKey []byte      `json:"publication_key"`
-	RuntimeID      pgtype.UUID `json:"runtime_id"`
-	WorkerID       pgtype.UUID `json:"worker_id"`
-	WorkerGroupID  pgtype.UUID `json:"worker_group_id"`
-	WorkerEpoch    int64       `json:"worker_epoch"`
-	DesiredVersion int64       `json:"desired_version"`
-	Digest         string      `json:"digest"`
-	Inspection     []byte      `json:"inspection"`
+	PublicationKey     []byte      `json:"publication_key"`
+	ComputerInstanceID pgtype.UUID `json:"computer_instance_id"`
+	WorkerID           pgtype.UUID `json:"worker_id"`
+	WorkerGroupID      pgtype.UUID `json:"worker_group_id"`
+	WorkerEpoch        int64       `json:"worker_epoch"`
+	DesiredVersion     int64       `json:"desired_version"`
+	Digest             string      `json:"digest"`
+	Inspection         []byte      `json:"inspection"`
 }
 
 func (q *Queries) HasRegisteredInitialComputerObject(ctx context.Context, arg HasRegisteredInitialComputerObjectParams) (bool, error) {
 	row := q.db.QueryRow(ctx, hasRegisteredInitialComputerObject,
 		arg.PublicationKey,
-		arg.RuntimeID,
+		arg.ComputerInstanceID,
 		arg.WorkerID,
 		arg.WorkerGroupID,
 		arg.WorkerEpoch,

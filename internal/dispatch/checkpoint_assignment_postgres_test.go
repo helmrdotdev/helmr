@@ -22,7 +22,7 @@ func TestCheckpointAssignmentAllocatesRestoringInstance(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer tx.Rollback(t.Context())
-			dbtest.MustExec(t, t.Context(), tx, `UPDATE computer_instances SET observed_state='closed',observed_desired_version=desired_version,mount_state='unmounted',unmounted_at=now(),terminal_at=now(),reclaimed_at=now(),reclaim_evidence='{"method":"session_closed"}',terminal_reason_code='checkpointed' WHERE id=$1`, ref.InstanceID)
+			dbtest.MustExec(t, t.Context(), tx, `UPDATE computer_instances SET observed_state='closed',observed_desired_version=desired_version,mount_state='unmounted',unmounted_at=now(),terminal_at=now(),reclaimed_at=now(),reclaim_evidence='{"method":"machine_closed"}',terminal_reason_code='checkpointed' WHERE id=$1`, ref.InstanceID)
 			dbtest.MustExec(t, t.Context(), tx, `UPDATE run_leases SET process_reconciled_at=now() WHERE computer_instance_id=$1`, ref.InstanceID)
 			if err = tx.Commit(t.Context()); err != nil {
 				t.Fatal(err)

@@ -519,7 +519,7 @@ WITH current_instances AS (
      FROM worker_hosts
      WHERE (sqlc.narg(worker_group_id)::uuid IS NULL OR worker_group_id = sqlc.narg(worker_group_id))
        AND (
-           NOT sqlc.arg(has_unreclaimed_runtime)::boolean
+           NOT sqlc.arg(has_unreclaimed_instance)::boolean
            OR EXISTS (
                SELECT 1
                  FROM computer_instances
@@ -823,7 +823,7 @@ WITH target AS (
      WHERE worker_host_secrets.worker_host_id = target.id
        AND worker_host_secrets.revoked_at IS NULL
     RETURNING worker_host_secrets.id
-), lost_runtimes AS (
+), lost_instances AS (
     UPDATE computer_instances
        SET observed_state = 'lost', observed_version = observed_version + 1,
            observed_at = now(), terminal_at = now(),
@@ -840,7 +840,7 @@ WITH target AS (
            target.claim_version, target.current_epoch, true AS transition_applied
       FROM target
      WHERE (SELECT count(*) FROM revoked_host_secrets) >= 0
-       AND (SELECT count(*) FROM lost_runtimes) >= 0
+       AND (SELECT count(*) FROM lost_instances) >= 0
 )
 SELECT * FROM completed
 UNION ALL
@@ -1036,7 +1036,7 @@ WITH target AS (
 ), quarantined AS (
     SELECT value::uuid AS id
       FROM jsonb_array_elements_text(sqlc.arg(recovery_evidence)::jsonb -> 'quarantined') AS value
-), reclaimable_runtimes AS MATERIALIZED (
+), reclaimable_instances AS MATERIALIZED (
     SELECT computer_instances.id
       FROM computer_instances
       JOIN target
@@ -1046,7 +1046,7 @@ WITH target AS (
        AND computer_instances.id NOT IN (SELECT id FROM quarantined)
      ORDER BY computer_instances.id
        FOR UPDATE OF computer_instances
-), reclaimed_runtimes AS (
+), reclaimed_instances AS (
     UPDATE computer_instances
        SET observed_state = CASE WHEN observed_state IN ('closed','failed','lost') THEN observed_state ELSE 'lost' END,
            observed_version = observed_version + 1,
@@ -1059,11 +1059,11 @@ WITH target AS (
                'completed_at', sqlc.arg(recovery_evidence)::jsonb ->> 'observed_at'
            ),
            mount_state='lost', admission_state='closed', updated_at=now()
-     WHERE computer_instances.id IN (SELECT id FROM reclaimable_runtimes)
+     WHERE computer_instances.id IN (SELECT id FROM reclaimable_instances)
     RETURNING computer_instances.id,computer_instances.writer_generation,computer_instances.reclaimed_at
 ), reconciled_processes AS (
     UPDATE run_leases l SET process_reconciled_at=i.reclaimed_at,updated_at=now()
-      FROM reclaimed_runtimes i
+      FROM reclaimed_instances i
      WHERE l.computer_instance_id=i.id AND l.writer_generation=i.writer_generation
        AND l.process_reconciled_at IS NULL
     RETURNING l.id
@@ -1072,6 +1072,6 @@ UPDATE worker_hosts
    SET updated_at = now()
   FROM target
  WHERE worker_hosts.id = target.id
-   AND (SELECT count(*) FROM reclaimed_runtimes) >= 0
+   AND (SELECT count(*) FROM reclaimed_instances) >= 0
    AND (SELECT count(*) FROM reconciled_processes) >= 0
 RETURNING worker_hosts.*;

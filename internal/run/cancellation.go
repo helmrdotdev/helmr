@@ -119,16 +119,16 @@ var secretRevokedTermination = termination{
 }
 
 var instancePreparationTermination = termination{
-	reasonCode:     "runtime_preparation_failed",
-	errorCode:      "runtime_preparation_failed",
-	errorMessage:   "Run runtime preparation failed",
+	reasonCode:     "instance_preparation_failed",
+	errorCode:      "instance_preparation_failed",
+	errorMessage:   "Run instance preparation failed",
 	runStatus:      db.RunStatusSystemFailed,
 	runLeaseStatus: db.RunLeaseStatusFailed,
 	attemptOutcome: "failed",
 	waitCondition:  db.WaitStatusFailed,
 	waitSuspension: db.RunWaitStatusFailed,
 	eventKind:      "run.system_failed",
-	eventMessage:   "Run runtime preparation failed",
+	eventMessage:   "Run instance preparation failed",
 }
 
 func NewCanceler(database db.TxBeginner) (*Canceler, error) {
@@ -514,7 +514,7 @@ func (g OwnedFinalization) failCurrentPreparation(ctx context.Context, failure t
 	}
 	wait, found := g.waitsByChild[target.id]
 	if !found {
-		return cancellationAuthority("runtime preparation child wait is missing", nil)
+		return cancellationAuthority("instance preparation child wait is missing", nil)
 	}
 	result, err := marshalChildFailureResult(
 		target.id,
