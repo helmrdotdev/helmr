@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
@@ -37,23 +36,8 @@ func workerGroupError(err error) error {
 	}
 }
 
-// regionError maps errors of the region owner to HTTP errors.
-func regionError(err error) error {
-	var input region.InputError
-	switch {
-	case errors.As(err, &input):
-		return badRequest(err)
-	case errors.Is(err, region.ErrNotFound):
-		return notFound(err)
-	case errors.Is(err, region.ErrExists):
-		return conflict(err)
-	default:
-		return err
-	}
-}
-
-// writeWorkerGroupError writes a workergroup or region owner error, logging
-// the failures it does not describe to the client.
+// writeWorkerGroupError writes a workergroup owner error, including the region
+// errors it surfaces, logging the failures it does not describe to the client.
 func (s *Server) writeWorkerGroupError(w http.ResponseWriter, err error) {
 	mapped := workerGroupError(err)
 	if errorStatus(mapped) != http.StatusInternalServerError {

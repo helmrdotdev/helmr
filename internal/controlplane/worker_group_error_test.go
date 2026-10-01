@@ -16,7 +16,6 @@ import (
 func TestWorkerGroupErrorMapsHTTPContract(t *testing.T) {
 	var input workergroup.InputError
 	var conflicting workergroup.ConflictError
-	var regionInput region.InputError
 	for _, test := range []struct {
 		name    string
 		err     error
@@ -36,9 +35,7 @@ func TestWorkerGroupErrorMapsHTTPContract(t *testing.T) {
 		{name: "host not found", err: workergroup.ErrHostNotFound, status: http.StatusNotFound, code: "not_found", message: "worker host not found"},
 		{name: "queued demand", err: workergroup.ErrQueuedDemand, status: http.StatusConflict, code: "queued_demand_present", message: "queued demand is present"},
 		{name: "conflict", err: conflicting, status: http.StatusConflict, code: "conflict"},
-		{name: "region input", err: regionInput, status: http.StatusBadRequest, code: "bad_request"},
-		{name: "region not found", err: region.ErrNotFound, status: http.StatusNotFound, code: "not_found", message: "region not found"},
-		{name: "region exists", err: region.ErrExists, status: http.StatusConflict, code: "conflict", message: "region identity is already in use"},
+		{name: "region surfaced", err: fmt.Errorf("create group: %w", region.ErrNotFound), status: http.StatusNotFound, code: "not_found", message: "create group: region not found"},
 		{name: "wrapped", err: fmt.Errorf("lock: %w", workergroup.ErrGroupNotFound), status: http.StatusNotFound, code: "not_found", message: "lock: worker group not found"},
 		{name: "unmapped", err: errors.New("database is down"), status: http.StatusInternalServerError, code: "internal_error", message: "internal server error"},
 	} {

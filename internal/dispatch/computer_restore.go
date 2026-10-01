@@ -103,7 +103,7 @@ func (d *Authority) CommitRestore(ctx context.Context, tx pgx.Tx, destination co
 		if wait.ExpectedRunRevision != r.Revision || wait.CurrentRunLeaseID.Valid || r.ActiveElapsedMs >= r.MaxActiveDurationMs {
 			return checkpoint, pgx.ErrNoRows
 		}
-		current, err := restoreWaitIsCurrent(ctx, tx, m.RunWaitID)
+		current, err := restore.WaitCurrent(ctx, m.RunWaitID)
 		if err != nil {
 			return checkpoint, err
 		}
@@ -158,15 +158,4 @@ func (d *Authority) CommitRestore(ctx context.Context, tx pgx.Tx, destination co
 		return checkpoint, pgx.ErrNoRows
 	}
 	return checkpoint, nil
-}
-
-// Called with the captured Session, Run and wait locked. Session cancellation
-// can precede asynchronous Run cancellation; neither admission stage may cross it.
-func restoreWaitIsCurrent(ctx context.Context, tx pgx.Tx, waitID pgtype.UUID) (bool, error) {
-	current, err := db.New(tx).RunWaitTurnCurrent(ctx, waitID)
-	if err != nil || !current {
-		return current, err
-	}
-	err = tx.QueryRow(ctx, `SELECT r.session_id IS NULL OR EXISTS(SELECT 1 FROM sessions s WHERE s.id=r.session_id AND s.current_run_id=r.id AND s.status IN ('open','closing') AND s.cancel_requested_at IS NULL) FROM run_waits w JOIN runs r ON r.id=w.run_id WHERE w.id=$1`, waitID).Scan(&current)
-	return current, err
 }

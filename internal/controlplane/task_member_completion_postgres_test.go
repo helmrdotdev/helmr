@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -12,13 +11,11 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 func taskHTTPExecutionFixture(t *testing.T) (runtest.Fixture, runtest.RunLease, run.ExecutionFence, workerapi.CompleteTaskRequest) {
@@ -46,19 +43,13 @@ func taskHTTPExecutionFixture(t *testing.T) (runtest.Fixture, runtest.RunLease, 
 func TestTaskCompletionHTTPPreservesReceiptAndStaleDiagnostics(t *testing.T) {
 	f, work, fence, request := taskHTTPExecutionFixture(t)
 	var logs bytes.Buffer
-	s := &Server{db: db.New(f.Pool), tx: f.Pool, log: slog.New(slog.NewTextHandler(&logs, nil))}
-	worker := workergroup.HostPrincipal{HostID: f.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1, HostClaimVersion: fence.HostClaimVersion, GroupClaimVersion: fence.GroupClaimVersion}
+	handler := newPostgresServer(t, f.Pool, func(cfg *ServerConfig) {
+		cfg.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	})
+	worker := newWorkerHTTPClient(t, handler, f.Pool, f.WorkerID)
 	invoke := func(r workerapi.CompleteTaskRequest) *httptest.ResponseRecorder {
 		t.Helper()
-		body, e := json.Marshal(r)
-		if e != nil {
-			t.Fatal(e)
-		}
-		req := httptest.NewRequest(http.MethodPost, "/worker/v1/run/tasks/complete", bytes.NewReader(body))
-		req = req.WithContext(context.WithValue(req.Context(), workerContextKey{}, worker))
-		out := httptest.NewRecorder()
-		s.workerCompleteTask(out, req)
-		return out
+		return worker.send(t, "/worker/v1/run/tasks/complete", r)
 	}
 	out := invoke(request)
 	if out.Code != http.StatusConflict || !strings.Contains(out.Body.String(), `"code":"task_completion_stale"`) || !strings.Contains(out.Body.String(), `"point":"execution"`) {
@@ -94,7 +85,9 @@ func TestTaskCompletionHTTPPreservesReceiptAndStaleDiagnostics(t *testing.T) {
 		return value
 	}
 	receipt = snapshot()
-	worker.Epoch++
+	// The host's next epoch replays the receipt its previous epoch recorded.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET current_epoch=current_epoch+1 WHERE id=$1`, f.WorkerID)
+	worker = newWorkerHTTPClient(t, handler, f.Pool, f.WorkerID)
 	out = invoke(request)
 	if out.Code != http.StatusNoContent {
 		t.Fatalf("previous-epoch replay=%d %s", out.Code, out.Body.String())

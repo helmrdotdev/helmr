@@ -9,7 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +16,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/disk"
@@ -25,15 +23,13 @@ import (
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 func discardTestLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 func TestWorkerRunLeaseClaimAuthorizesTransitionsAndReplays(t *testing.T) {
-	server, f, work, worker, body, _ := newWorkerRunLeaseClaimHTTPFixture(t)
-	handler := http.HandlerFunc(server.workerClaimRunLease)
-	first := runWorkerLeaseClaimRequest(handler, worker, body)
+	f, work, worker, body, _ := newWorkerRunLeaseClaimHTTPFixture(t)
+	first := worker.send(t, workerRunLeaseClaimPath, body)
 	if first.Code != http.StatusOK {
 		t.Fatalf("first claim=%d %s", first.Code, first.Body)
 	}
@@ -41,7 +37,7 @@ func TestWorkerRunLeaseClaimAuthorizesTransitionsAndReplays(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT to_jsonb(l)::text FROM run_leases l WHERE id=$1`, work.LeaseID).Scan(&receipt); err != nil {
 		t.Fatal(err)
 	}
-	replay := runWorkerLeaseClaimRequest(handler, worker, body)
+	replay := worker.send(t, workerRunLeaseClaimPath, body)
 	if replay.Code != http.StatusOK {
 		t.Fatalf("replay=%d %s", replay.Code, replay.Body)
 	}
@@ -62,10 +58,9 @@ func TestWorkerRunLeaseClaimAuthorizesTransitionsAndReplays(t *testing.T) {
 }
 
 func TestWorkerRunLeaseClaimRemainsReplayableAfterProjectionFailure(t *testing.T) {
-	server, f, work, worker, body, store := newWorkerRunLeaseClaimHTTPFixture(t)
-	handler := http.HandlerFunc(server.workerClaimRunLease)
+	f, work, worker, body, store := newWorkerRunLeaseClaimHTTPFixture(t)
 	store.fail = true
-	failed := runWorkerLeaseClaimRequest(handler, worker, body)
+	failed := worker.send(t, workerRunLeaseClaimPath, body)
 	if failed.Code != http.StatusInternalServerError {
 		t.Fatalf("projection failure=%d %s", failed.Code, failed.Body)
 	}
@@ -74,7 +69,7 @@ func TestWorkerRunLeaseClaimRemainsReplayableAfterProjectionFailure(t *testing.T
 		t.Fatal(err)
 	}
 	store.fail = false
-	replay := runWorkerLeaseClaimRequest(handler, worker, body)
+	replay := worker.send(t, workerRunLeaseClaimPath, body)
 	if replay.Code != http.StatusOK {
 		t.Fatalf("retry=%d %s", replay.Code, replay.Body)
 	}
@@ -84,7 +79,12 @@ func TestWorkerRunLeaseClaimRemainsReplayableAfterProjectionFailure(t *testing.T
 	}
 }
 
-func newWorkerRunLeaseClaimHTTPFixture(t *testing.T) (*Server, runtest.Fixture, runtest.RunLease, workergroup.HostPrincipal, []byte, *claimHTTPPlatformStore) {
+const workerRunLeaseClaimPath = "/worker/v1/run/leases/claim"
+
+// newWorkerRunLeaseClaimHTTPFixture serves NewServer, reading platform
+// artifacts from the returned store, to the worker host of an assigned lease
+// whose Computer Instance holds the configured fencing key's writer token.
+func newWorkerRunLeaseClaimHTTPFixture(t *testing.T) (runtest.Fixture, runtest.RunLease, workerHTTPClient, json.RawMessage, *claimHTTPPlatformStore) {
 	t.Helper()
 	f := runtest.New(t)
 	work := f.AddRunLease(t, "assigned", time.Now())
@@ -123,10 +123,12 @@ func newWorkerRunLeaseClaimHTTPFixture(t *testing.T) (*Server, runtest.Fixture, 
 		}
 		return nil
 	}}
-	server := &Server{tx: f.Pool, db: db.New(f.Pool), log: discardTestLogger(), platformStore: store, secretDelivery: claimHTTPSecrets{}, computerFencingKey: key}
-	worker := workergroup.HostPrincipal{HostID: f.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
-	body := []byte(`{"lease_id":"` + pgvalue.UUIDString(pgvalue.UUID(work.LeaseID)) + `","lease_sequence":1}`)
-	return server, f, work, worker, body, store
+	handler := newPostgresServer(t, f.Pool, func(cfg *ServerConfig) {
+		cfg.PlatformStore = store
+		cfg.ComputerFencingKey = key
+	})
+	body := json.RawMessage(`{"lease_id":"` + pgvalue.UUIDString(pgvalue.UUID(work.LeaseID)) + `","lease_sequence":1}`)
+	return f, work, newWorkerHTTPClient(t, handler, f.Pool, f.WorkerID), body, store
 }
 
 type claimHTTPPlatformStore struct {
@@ -151,12 +153,4 @@ type claimHTTPSecrets struct{}
 
 func (claimHTTPSecrets) OpenDeliveries(uuid.UUID, []secret.DeliveryEnvelope) ([]secret.DeliveryMaterial, error) {
 	return nil, nil
-}
-
-func runWorkerLeaseClaimRequest(handler http.Handler, worker workergroup.HostPrincipal, body []byte) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/leases/claim", bytes.NewReader(body))
-	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, worker))
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	return response
 }

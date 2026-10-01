@@ -1,9 +1,8 @@
-package dispatch
+package computer
 
 import (
 	"context"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -17,11 +16,24 @@ type RestoreGrant struct {
 }
 
 // AcknowledgeRestore records installation of the entire destination's
-// grants on the computer.Restore fence before opening admission. Logical wait
-// outcomes are acknowledged by each member separately. The caller owns
-// rollback on error and commit on success.
-func AcknowledgeRestore(ctx context.Context, tx pgx.Tx, destination computer.InstanceRef, checkpointID pgtype.UUID, writerGeneration int64, grants []RestoreGrant) (db.ComputerInstance, error) {
-	restore, err := computer.LockRestore(ctx, tx, destination)
+// grants on the Restore fence before opening admission, in one transaction.
+// Logical wait outcomes are acknowledged by each member separately. A fence,
+// grant, lease or member that no longer matches reports ErrAuthorityChanged.
+func AcknowledgeRestore(ctx context.Context, txb db.TxBeginner, destination InstanceRef, checkpointID pgtype.UUID, writerGeneration int64, grants []RestoreGrant) (db.ComputerInstance, error) {
+	var instance db.ComputerInstance
+	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
+		var err error
+		instance, err = acknowledgeRestore(ctx, tx, destination, checkpointID, writerGeneration, grants)
+		return err
+	})
+	if err != nil {
+		return db.ComputerInstance{}, authorityChanged(err)
+	}
+	return instance, nil
+}
+
+func acknowledgeRestore(ctx context.Context, tx pgx.Tx, destination InstanceRef, checkpointID pgtype.UUID, writerGeneration int64, grants []RestoreGrant) (db.ComputerInstance, error) {
+	restore, err := LockRestore(ctx, tx, destination)
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
@@ -82,7 +94,7 @@ func AcknowledgeRestore(ctx context.Context, tx pgx.Tx, destination computer.Ins
 	}
 	for _, m := range members {
 		g := installed[m.RunID]
-		current, err := restoreWaitIsCurrent(ctx, tx, m.RunWaitID)
+		current, err := restore.WaitCurrent(ctx, m.RunWaitID)
 		if err != nil {
 			return db.ComputerInstance{}, err
 		}

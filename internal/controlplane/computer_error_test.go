@@ -110,6 +110,9 @@ func TestComputerErrorMapsInstanceOperations(t *testing.T) {
 		{"restore plan changed", computer.ErrAuthorityChanged, computerRestorePlanOperation, http.StatusConflict, "conflict"},
 		{"restore plan stale claims", workergroup.ErrStaleClaims, computerRestorePlanOperation, http.StatusUnauthorized, "unauthorized"},
 		{"restore plan internal", internal, computerRestorePlanOperation, http.StatusInternalServerError, "internal_error"},
+		{"restore acknowledgement changed", computer.ErrAuthorityChanged, computerRestoreAcknowledgementOperation, http.StatusConflict, "conflict"},
+		{"restore acknowledgement stale claims", workergroup.ErrStaleClaims, computerRestoreAcknowledgementOperation, http.StatusUnauthorized, "unauthorized"},
+		{"restore acknowledgement internal", internal, computerRestoreAcknowledgementOperation, http.StatusInternalServerError, "internal_error"},
 		{"key delivery stale claims", workergroup.ErrStaleClaims, computerKeyDeliveryOperation, http.StatusUnauthorized, "unauthorized"},
 		{"key delivery stale claims before provider", errors.Join(workergroup.ErrStaleClaims, provider), computerKeyDeliveryOperation, http.StatusUnauthorized, "unauthorized"},
 		{"key delivery changed", computer.ErrAuthorityChanged, computerKeyDeliveryOperation, http.StatusConflict, "conflict"},
@@ -172,6 +175,20 @@ func TestComputerErrorMapsInstanceOperations(t *testing.T) {
 	for _, operation := range []computerOperation{computerCreateOperation, computerDeleteOperation, computerReadOperation} {
 		if failure, ok := workerComputerFailure(workergroup.ErrStaleClaims, operation); ok {
 			t.Fatalf("run-sourced operation %d described stale claims as %+v", operation, failure)
+		}
+	}
+}
+
+// Each Instance operation names the authority that changed in its conflict.
+func TestComputerErrorNamesChangedRestoreAuthority(t *testing.T) {
+	for operation, message := range map[computerOperation]string{
+		computerRestorePlanOperation:            "Computer restore authority changed",
+		computerRestoreAcknowledgementOperation: "computer restore authority changed",
+	} {
+		recorder := httptest.NewRecorder()
+		writeError(recorder, computerError(fmt.Errorf("operation: %w", computer.ErrAuthorityChanged), operation))
+		if got := decodeHTTPError(t, recorder.Body.Bytes()); recorder.Code != http.StatusConflict || got.Code != "conflict" || got.Message != message {
+			t.Fatalf("operation %d mapped = %d %+v, want 409 conflict %q", operation, recorder.Code, got, message)
 		}
 	}
 }
