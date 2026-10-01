@@ -63,7 +63,7 @@ func actorExecutionOnFixture(t *testing.T, base runtest.Fixture, input json.RawM
 		t.Fatal(err)
 	}
 	if input != nil {
-		if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: sid}, Mode: session.EnqueueOnly, Data: input}); err != nil {
+		if _, err := session.ApplyAdmission(t.Context(), f.server.tx, session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: sid}, Mode: session.EnqueueOnly, Data: input}); err != nil {
 			t.Fatal(err)
 		}
 	}

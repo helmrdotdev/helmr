@@ -25,7 +25,7 @@ func readyMessages(t *testing.T, f *actorExecutionFixture, s run.TurnScope) {
 }
 func admitMessage(t *testing.T, f *actorExecutionFixture, key string) session.AdmissionReceipt {
 	t.Helper()
-	r, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.SendMessageOrEnqueue, Data: json.RawMessage(`{"text":"steer"}`), IdempotencyKey: key})
+	r, err := session.ApplyAdmission(t.Context(), f.server.tx, session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.SendMessageOrEnqueue, Data: json.RawMessage(`{"text":"steer"}`), IdempotencyKey: key})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestSessionMessageSettlementBarrierPostgres(t *testing.T) {
 	f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 	scope := f.receiveTurn(t, 1)
 	request := session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.SendMessageOrEnqueue, Data: json.RawMessage(`null`), IdempotencyKey: "not-ready"}
-	first, err := f.server.applySessionAdmission(t.Context(), request)
+	first, err := session.ApplyAdmission(t.Context(), f.server.tx, request)
 	if err != nil || first.Kind != "messaged" {
 		t.Fatalf("pre-handler admission: %+v %v", first, err)
 	}
@@ -62,12 +62,12 @@ func TestSessionMessageSettlementBarrierPostgres(t *testing.T) {
 		t.Fatalf("pre-handler read view: %+v %v", view, err)
 	}
 	readyMessages(t, f, scope)
-	repeated, err := f.server.applySessionAdmission(t.Context(), request)
+	repeated, err := session.ApplyAdmission(t.Context(), f.server.tx, request)
 	if err != nil || repeated.ID != first.ID || *repeated.MessageID != *first.MessageID {
 		t.Fatalf("accepted receipt changed after readiness: %+v %v", repeated, err)
 	}
 	second := admitMessage(t, f, "message-2")
-	queued, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: request.Target, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"next":true}`)})
+	queued, err := session.ApplyAdmission(t.Context(), f.server.tx, session.AdmissionRequest{Target: request.Target, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"next":true}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestSessionMessageSettlementBarrierPostgres(t *testing.T) {
 	commit := turnCommitRequest(t, f, scope) // Begins settlement before committing the result.
 	request.IdempotencyKey = "settling"
 	var operation *session.OperationError
-	if _, err = f.server.applySessionAdmission(t.Context(), request); !errors.As(err, &operation) || operation.Code != "turn_settling" {
+	if _, err = session.ApplyAdmission(t.Context(), f.server.tx, request); !errors.As(err, &operation) || operation.Code != "turn_settling" {
 		t.Fatalf("admission after settlement cutoff: %v", err)
 	}
 	var secondStatus string

@@ -18,26 +18,26 @@ func TestSessionCancellationBeforeStartPostgres(t *testing.T) {
 	target := session.Target{EnvironmentID: f.environmentID, SessionID: started.SessionID}
 	var queuedIDs []uuid.UUID
 	for range 2 {
-		receipt, admitErr := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: target, Mode: session.EnqueueOnly, Data: json.RawMessage(`"queued"`)})
+		receipt, admitErr := session.ApplyAdmission(t.Context(), f.server.tx, session.AdmissionRequest{Target: target, Mode: session.EnqueueOnly, Data: json.RawMessage(`"queued"`)})
 		if admitErr != nil {
 			t.Fatal(admitErr)
 		}
 		queuedIDs = append(queuedIDs, receipt.TurnID)
 	}
 
-	if _, err = f.server.applySessionClose(t.Context(), session.ControlRequest{Target: target, IdempotencyKey: "drain-first"}); err != nil {
+	if _, err = session.ApplyClose(t.Context(), f.server.tx, session.ControlRequest{Target: target, IdempotencyKey: "drain-first"}); err != nil {
 		t.Fatal(err)
 	}
 	request := session.ControlRequest{Target: target, IdempotencyKey: "cancel"}
-	first, err := f.server.applySessionCancel(t.Context(), request)
+	first, err := session.ApplyCancel(t.Context(), f.server.tx, request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := f.server.applySessionCancel(t.Context(), request)
+	again, err := session.ApplyCancel(t.Context(), f.server.tx, request)
 	if err != nil || first.ID != again.ID {
 		t.Fatalf("replay: %+v %v", again, err)
 	}
-	if _, err = f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: target, Mode: session.EnqueueOnly, Data: json.RawMessage(`"rejected"`)}); err == nil {
+	if _, err = session.ApplyAdmission(t.Context(), f.server.tx, session.AdmissionRequest{Target: target, Mode: session.EnqueueOnly, Data: json.RawMessage(`"rejected"`)}); err == nil {
 		t.Fatal("admitted input after cancellation")
 	}
 	reconciler, err := session.NewReconciler(f.pool)
@@ -73,12 +73,12 @@ func TestSessionCancellationRacingAdmissionPostgres(t *testing.T) {
 	cancelled := make(chan error, 1)
 	go func() {
 		<-start
-		_, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: target, Mode: session.EnqueueOnly, Data: json.RawMessage(`"racing"`)})
+		_, err := session.ApplyAdmission(t.Context(), f.server.tx, session.AdmissionRequest{Target: target, Mode: session.EnqueueOnly, Data: json.RawMessage(`"racing"`)})
 		admitted <- err
 	}()
 	go func() {
 		<-start
-		_, err := f.server.applySessionCancel(t.Context(), session.ControlRequest{Target: target, IdempotencyKey: "cancel"})
+		_, err := session.ApplyCancel(t.Context(), f.server.tx, session.ControlRequest{Target: target, IdempotencyKey: "cancel"})
 		cancelled <- err
 	}()
 	close(start)

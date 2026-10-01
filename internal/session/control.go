@@ -49,7 +49,7 @@ func Close(ctx context.Context, tx pgx.Tx, request ControlRequest) (ControlRecei
 	return receipt, finishOperation(ctx, tx, claim, receipt)
 }
 
-func Resume(ctx context.Context, tx pgx.Tx, request ResumeRequest) (ControlReceipt, error) {
+func resume(ctx context.Context, tx pgx.Tx, request ResumeRequest) (ControlReceipt, error) {
 	q := db.New(tx)
 	locator, err := q.GetActor(ctx, db.GetActorParams{EnvironmentID: pgvalue.UUID(request.EnvironmentID), ID: pgvalue.UUID(request.SessionID)})
 	if err != nil {

@@ -105,7 +105,7 @@ func TestWorkerSessionControlSourceFencePostgres(t *testing.T) {
 			case "settling":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE session_turns SET settlement_started_at=now() WHERE id=$1`, scope.TurnID)
 			case "held":
-				if _, err := f.server.applySessionInterrupt(t.Context(), session.InterruptRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}}, TurnID: scope.TurnID}); err != nil {
+				if _, err := session.ApplyInterrupt(t.Context(), f.server.tx, session.InterruptRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}}, TurnID: scope.TurnID}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -346,7 +346,7 @@ func TestWorkerSessionControlChildAncestorFencePostgres(t *testing.T) {
 			if state == "settling" {
 				dbtest.MustExec(t, t.Context(), a.Pool, `UPDATE session_turns SET settlement_started_at=now() WHERE id=$1`, scope.TurnID)
 			} else {
-				if _, err := a.server.applySessionInterrupt(t.Context(), session.InterruptRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: a.EnvironmentID, SessionID: a.sessionID}}, TurnID: scope.TurnID}); err != nil {
+				if _, err := session.ApplyInterrupt(t.Context(), a.server.tx, session.InterruptRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: a.EnvironmentID, SessionID: a.sessionID}}, TurnID: scope.TurnID}); err != nil {
 					t.Fatal(err)
 				}
 			}

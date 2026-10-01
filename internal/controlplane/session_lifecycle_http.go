@@ -62,7 +62,7 @@ func (s *Server) admitSessionHTTP(w http.ResponseWriter, r *http.Request, mode s
 			return
 		}
 	}
-	receipt, err := s.applySessionAdmission(r.Context(), request)
+	receipt, err := session.ApplyAdmission(r.Context(), s.tx, request)
 	if err != nil {
 		s.writeSessionOperationError(w, err)
 		return
@@ -94,7 +94,7 @@ func (s *Server) closeSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeSessionOperationError(w, err)
 		return
 	}
-	receipt, err := s.applySessionClose(r.Context(), request)
+	receipt, err := session.ApplyClose(r.Context(), s.tx, request)
 	if err != nil {
 		s.writeSessionOperationError(w, err)
 		return
@@ -113,7 +113,7 @@ func (s *Server) cancelSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeSessionOperationError(w, err)
 		return
 	}
-	receipt, err := s.applySessionCancel(r.Context(), request)
+	receipt, err := session.ApplyCancel(r.Context(), s.tx, request)
 	if err != nil {
 		s.writeSessionOperationError(w, err)
 		return
@@ -137,7 +137,7 @@ func (s *Server) interruptSessionTurnHTTP(w http.ResponseWriter, r *http.Request
 		writeSessionRequestError(w, err)
 		return
 	}
-	receipt, err := s.applySessionInterrupt(r.Context(), session.InterruptRequest{ControlRequest: command, TurnID: turnID})
+	receipt, err := session.ApplyInterrupt(r.Context(), s.tx, session.InterruptRequest{ControlRequest: command, TurnID: turnID})
 	if err != nil {
 		s.writeSessionOperationError(w, err)
 		return
@@ -165,7 +165,7 @@ func (s *Server) resumeSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeSessionOperationError(w, err)
 		return
 	}
-	receipt, err := s.applySessionResume(r.Context(), session.ResumeRequest{ControlRequest: command, HoldID: holdID})
+	receipt, err := session.ApplyResume(r.Context(), s.tx, session.ResumeRequest{ControlRequest: command, HoldID: holdID})
 	if err != nil {
 		s.writeSessionOperationError(w, err)
 		return

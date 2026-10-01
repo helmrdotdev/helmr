@@ -59,7 +59,7 @@ SELECT sessions.next_input_sequence,
 		return value
 	}
 	before := readState()
-	_, err = fixture.server.applySessionAdmission(t.Context(), session.AdmissionRequest{
+	_, err = session.ApplyAdmission(t.Context(), fixture.server.tx, session.AdmissionRequest{
 		Target: session.Target{EnvironmentID: fixture.environmentID, SessionID: started.SessionID}, Mode: session.EnqueueOnly,
 		Data:           data,
 		IdempotencyKey: "oversized-input",
