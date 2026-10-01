@@ -111,9 +111,9 @@ func TestLightProgramsDoNotReachDatabase(t *testing.T) {
 	}
 }
 
-// The worker exchanges its host secret for epoch tokens it never verifies;
+// The worker exchanges its host secret for host credentials it never verifies;
 // signing and verifying them is workergroup's, in the control plane.
-func TestWorkerDoesNotLinkTokenSigning(t *testing.T) {
+func TestWorkerDoesNotLinkHostCredentialSigning(t *testing.T) {
 	root := repositoryRoot(t)
 	for _, goos := range []string{"linux", "darwin"} {
 		cmd := exec.Command("go", "list", "-buildvcs=false", "-deps", "./cmd/worker")

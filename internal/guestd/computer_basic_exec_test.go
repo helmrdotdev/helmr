@@ -140,7 +140,7 @@ func testComputerBasicExecRequest(
 	return &computerv0.ComputerBasicExecRequest{
 		Envelope: &computerv0.ComputerCommandAuthority{
 			OperationId: commandID, RequestFingerprint: fingerprint,
-			ComputerInstanceId: "instance-1", ComputerId: "computer-1", ChannelToken: "channel-token",
+			ComputerInstanceId: "instance-1", ComputerId: "computer-1", ChannelCredential: "channel-credential",
 			WriterGeneration: 1, OperationExpiresAtUnixNano: time.Now().Add(time.Minute).UnixNano(),
 		},
 		RequestJson: `{"command":["true"],"cwd":"/workspace","env":{},"timeout_ms":1000}`,
@@ -152,7 +152,7 @@ func testComputerBasicExecRegistry(t *testing.T, entry *computerMountEntry) *com
 	entry.computerID = "computer-1"
 	entry.computerInstanceID = "instance-1"
 	entry.writerGeneration = 1
-	entry.channelToken = "channel-token"
+	entry.channelCredential = "channel-credential"
 	entry.baseComputerDiskVersionID = "version-1"
 	entry.writerGeneration = 1
 	registry := newComputerOperationRegistry()

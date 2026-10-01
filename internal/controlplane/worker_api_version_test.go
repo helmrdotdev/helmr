@@ -14,7 +14,7 @@ func TestWorkerConnectionAPIVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/worker/v1/enrollment", "/worker/v1/instance/token"} {
+	for _, path := range []string{"/worker/v1/enrollment", "/worker/v1/instance/credential"} {
 		for _, body := range []string{`{}`, `{"api_version":"different"}`} {
 			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 			out := httptest.NewRecorder()

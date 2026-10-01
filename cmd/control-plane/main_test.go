@@ -48,23 +48,23 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler, err := controlplane.NewServer(controlplane.ServerConfig{
-		ComputerKeys:          computerKeys,
-		Log:                   log,
-		DB:                    store,
-		TX:                    panicDatabase{},
-		Auth:                  identity.NewAPIKeyAuthenticator(store),
-		CAS:                   unusedUploadStore{},
-		BundleAdmission:       bundle.Admission{Runtime: smokeRuntimeDescriptor()},
-		PlatformStore:         unusedUploadStore{},
-		SecretDelivery:        controlplanetestSecretDeliveryOpener{},
-		ComputerFencingKey:    controlplanetestComputerFencingKey(),
-		TokenCredentialKey:    controlplanetestTokenCredentialKey(),
-		AuthKey:               make([]byte, auth.RootKeySize),
-		WorkerTokenSigningKey: make([]byte, workergroup.TokenSigningKeySize),
-		PublicURL:             publicURL,
-		TelemetryReader:       controlplanetestTelemetryReader{store: store},
-		MagicLinkDebugURLs:    true,
-		Mailer:                configuredEmailSender(log, config.ControlPlane{EmailProvider: config.EmailProviderNone}),
+		ComputerKeys:                   computerKeys,
+		Log:                            log,
+		DB:                             store,
+		TX:                             panicDatabase{},
+		Auth:                           identity.NewAPIKeyAuthenticator(store),
+		CAS:                            unusedUploadStore{},
+		BundleAdmission:                bundle.Admission{Runtime: smokeRuntimeDescriptor()},
+		PlatformStore:                  unusedUploadStore{},
+		SecretDelivery:                 controlplanetestSecretDeliveryOpener{},
+		ComputerFencingKey:             controlplanetestComputerFencingKey(),
+		TokenCredentialKey:             controlplanetestTokenCredentialKey(),
+		AuthKey:                        make([]byte, auth.RootKeySize),
+		WorkerHostCredentialSigningKey: make([]byte, workergroup.HostCredentialSigningKeySize),
+		PublicURL:                      publicURL,
+		TelemetryReader:                controlplanetestTelemetryReader{store: store},
+		MagicLinkDebugURLs:             true,
+		Mailer:                         configuredEmailSender(log, config.ControlPlane{EmailProvider: config.EmailProviderNone}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -287,7 +287,7 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	t.Setenv("CAS_URI", "s3://helmr-smoke")
 	t.Setenv("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH", runtimeDescriptorPath)
 	t.Setenv("PLATFORM_STORE_URI", "s3://helmr-smoke-runtime")
-	t.Setenv("WORKER_TOKEN_SIGNING_KEY", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
+	t.Setenv("WORKER_HOST_CREDENTIAL_SIGNING_KEY", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
 	t.Setenv("TOKEN_CREDENTIAL_KEY", "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=")
 	t.Setenv("SETUP_TOKEN", "setup-token")
 	t.Setenv("AUTH_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")

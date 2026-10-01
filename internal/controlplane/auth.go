@@ -254,7 +254,7 @@ func (s *Server) requireWorkerFence(next http.Handler) http.Handler {
 }
 
 // hostAuthenticator is one of the workergroup worker host authenticators.
-type hostAuthenticator func(context.Context, db.Querier, workergroup.CredentialConfig, string, time.Time) (workergroup.HostPrincipal, error)
+type hostAuthenticator func(context.Context, db.Querier, workergroup.HostAuthConfig, string, time.Time) (workergroup.HostPrincipal, error)
 
 func (s *Server) requireWorkerHost(authenticate hostAuthenticator, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -263,7 +263,7 @@ func (s *Server) requireWorkerHost(authenticate hostAuthenticator, next http.Han
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}
-		worker, err := authenticate(r.Context(), s.db, s.hostCredentials, token, time.Now())
+		worker, err := authenticate(r.Context(), s.db, s.hostAuth, token, time.Now())
 		if errors.Is(err, workergroup.ErrUnauthenticated) {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return

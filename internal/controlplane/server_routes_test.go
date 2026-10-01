@@ -210,12 +210,12 @@ POST /worker/v1/computer/restores/ack
 POST /worker/v1/computer/restores/plan
 POST /worker/v1/enrollment
 POST /worker/v1/instance/activate
+POST /worker/v1/instance/credential
 POST /worker/v1/instance/drain
 POST /worker/v1/instance/drain/complete
 POST /worker/v1/instance/fence
 POST /worker/v1/instance/observations
 POST /worker/v1/instance/recover
-POST /worker/v1/instance/token
 POST /worker/v1/run/actors/start
 POST /worker/v1/run/computer-commands/claim
 POST /worker/v1/run/computer-commands/complete

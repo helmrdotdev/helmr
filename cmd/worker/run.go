@@ -98,9 +98,9 @@ func run(log *slog.Logger) error {
 	}
 	artifactCacheDir := filepath.Join(workDir, "artifact-cache")
 	var controlPlaneClient *workerclient.Client
-	workerCredential, err := resolveAuthenticatedWorkerCredential(ctx, cfg, workDir, func(credential workerCredentialFile) error {
+	workerHostSecret, err := resolveAuthenticatedWorkerHostSecret(ctx, cfg, workDir, func(hostSecret workerHostSecretFile) error {
 		candidate, candidateErr := workerclient.New(cfg.ControlPlaneURL,
-			workerclient.WithAuth(credential.WorkerHostID, credential.WorkerHostSecret),
+			workerclient.WithAuth(hostSecret.WorkerHostID, hostSecret.WorkerHostSecret),
 			workerclient.WithService(serviceID),
 		)
 		if candidateErr != nil {
@@ -378,7 +378,7 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("configure worker supervisor: %w", err)
 	}
 	preparedMachines.AdmitRuntimeStart = supervisor.AdmitRuntimeStart
-	log.Info("Helmr worker listening", "controlplane_url", cfg.ControlPlaneURL, "worker_host_id", workerCredential.WorkerHostID)
+	log.Info("Helmr worker listening", "controlplane_url", cfg.ControlPlaneURL, "worker_host_id", workerHostSecret.WorkerHostID)
 	if err := supervisor.Run(ctx); err != nil && err != context.Canceled {
 		return err
 	}

@@ -13,7 +13,7 @@ set -euo pipefail
 case "$*" in
   'output -json secret_arns')
     jq -n --arg setup "${MOCK_SETUP_TOKEN_PRESENT:-1}" '{
-      worker_token_signing_key:"arn:worker-token-signing-key",
+      worker_host_credential_signing_key:"arn:worker-host-credential-signing-key",
       auth_key:"arn:auth-key",
       encryption_key:"arn:encryption-key",
       computer_fencing_key:"arn:computer-fencing-key",

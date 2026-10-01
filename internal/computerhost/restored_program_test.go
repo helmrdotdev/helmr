@@ -248,7 +248,7 @@ func testRestoredProgram(t *testing.T, kind string) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	mounts := computerhost.NewMounts()
-	mount := workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance", ComputerID: "computer", WriterGeneration: 2, RestoreCheckpointID: "checkpoint", DesiredVersion: 4, RuntimeEpoch: 1, VMPlatformID: "platform", GuestdChannelToken: "channel", Target: workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "private-disk"}}
+	mount := workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance", ComputerID: "computer", WriterGeneration: 2, RestoreCheckpointID: "checkpoint", DesiredVersion: 4, RuntimeEpoch: 1, VMPlatformID: "platform", GuestChannelCredential: "channel", Target: workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "private-disk"}}
 	claim := restoredClaim(mount, workerapi.RunLeaseAssignment{ID: "lease", RunID: "run", AttemptNumber: 1, LeaseSequence: 2, ComputerInstanceID: "instance", ComputerID: "computer", WriterGeneration: 2, WorkerEpoch: 1, WorkerHostID: "worker", VMPlatformID: "platform", BaseComputerDiskVersionID: "disk", ExpiresAt: time.Now().Add(time.Minute)}, "wait", kind)
 	h := newRestoredProgramHarness(mount, claim)
 	h.actor, h.resume = kind == "actor", true

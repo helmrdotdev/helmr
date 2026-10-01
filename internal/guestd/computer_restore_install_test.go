@@ -15,7 +15,7 @@ func restoreInstallFixture(t *testing.T) (*computerOperationRegistry, *waitingRu
 	install := &computerv0.ComputerRestoreInstallation{Envelope: proto.Clone(q.Envelope).(*computerv0.ComputerOperationEnvelope), CheckpointId: q.RestoredCheckpointId, DesiredVersion: 3}
 	for _, m := range r.captureRequest.Runs {
 		grant := testComputerRunAuthority(time.Now().Add(time.Minute))
-		grant.ChannelToken = q.Envelope.ChannelToken
+		grant.ChannelCredential = q.Envelope.ChannelCredential
 		f := grant.Fence
 		f.ComputerId = q.Envelope.ComputerId
 		f.ComputerInstanceId = q.Envelope.ComputerInstanceId

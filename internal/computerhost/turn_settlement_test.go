@@ -32,7 +32,7 @@ func TestTurnSettlementFailureReleasesMountedComputerThroughBoundSource(t *testi
 	defer cancel()
 	commitErr, releaseErr := &httpclient.Error{StatusCode: http.StatusConflict}, errors.New("physical stop failed")
 	mounts := computerhost.NewMounts()
-	mount := workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance", ComputerID: "computer", WriterGeneration: 2, RestoreCheckpointID: "checkpoint", DesiredVersion: 4, RuntimeEpoch: 1, VMPlatformID: "platform", GuestdChannelToken: "channel-1", Target: workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "disk"}}
+	mount := workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance", ComputerID: "computer", WriterGeneration: 2, RestoreCheckpointID: "checkpoint", DesiredVersion: 4, RuntimeEpoch: 1, VMPlatformID: "platform", GuestChannelCredential: "channel-1", Target: workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "disk"}}
 	claim := restoredClaim(mount, workerapi.RunLeaseAssignment{ID: "lease", RunID: "run", AttemptNumber: 1, LeaseSequence: 2, ComputerInstanceID: "instance", ComputerID: "computer", WriterGeneration: 2, WorkerEpoch: 1, WorkerHostID: "worker", VMPlatformID: "platform", BaseComputerDiskVersionID: "disk", ExpiresAt: time.Now().Add(time.Minute)}, "wait", "actor")
 	h := newRestoredProgramHarness(mount, claim)
 	h.actor, h.resume, h.closeErr = true, true, releaseErr

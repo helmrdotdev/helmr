@@ -16,7 +16,7 @@ func (r *computerOperationRegistry) cancelCommand(ctx context.Context, a *comput
 	if err := validateComputerBasicExecClaim(ctx, &computerv0.ComputerBasicExecRequest{Envelope: a}); err != nil {
 		return err
 	}
-	entry, release, ok := r.acquireCommandInstance(a.GetComputerInstanceId(), a.GetComputerId(), a.GetChannelToken())
+	entry, release, ok := r.acquireCommandInstance(a.GetComputerInstanceId(), a.GetComputerId(), a.GetChannelCredential())
 	if !ok {
 		return errors.New("command Instance is unavailable")
 	}
@@ -25,7 +25,7 @@ func (r *computerOperationRegistry) cancelCommand(ctx context.Context, a *comput
 	defer entry.lifecycleMu.Unlock()
 	entry.finalizationMu.Lock()
 	defer entry.finalizationMu.Unlock()
-	if !r.currentMountLocked(entry, entry.computerInstanceID, a.GetComputerId(), a.GetChannelToken()) || entry.writerGeneration != a.GetWriterGeneration() {
+	if !r.currentMountLocked(entry, entry.computerInstanceID, a.GetComputerId(), a.GetChannelCredential()) || entry.writerGeneration != a.GetWriterGeneration() {
 		return errors.New("command writer changed")
 	}
 	if err := validateComputerBasicExecClaim(ctx, &computerv0.ComputerBasicExecRequest{Envelope: a}); err != nil {

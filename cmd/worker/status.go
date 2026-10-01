@@ -21,7 +21,7 @@ func runStatus(log *slog.Logger) error {
 	if workDir == "" {
 		workDir = defaultWorkDir()
 	}
-	workerCredential, err := resolveWorkerControlPlaneCredential(cfg, workDir)
+	workerHostSecret, err := resolveWorkerControlPlaneHostSecret(cfg, workDir)
 	if err != nil {
 		return err
 	}
@@ -29,7 +29,7 @@ func runStatus(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerCredential.WorkerHostID, workerCredential.WorkerHostSecret), workerclient.WithService(identity.ServiceID))
+	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerHostSecret.WorkerHostID, workerHostSecret.WorkerHostSecret), workerclient.WithService(identity.ServiceID))
 	if err != nil {
 		return fmt.Errorf("configure control client: %w", err)
 	}

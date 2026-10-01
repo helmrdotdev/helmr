@@ -199,7 +199,7 @@ func TestRenewComputerAuthorityUsesMountedMachine(t *testing.T) {
 				ExpiresAtUnixNano:         100,
 				BaseComputerDiskVersionId: "version-2",
 			},
-			ChannelToken: "channel-1",
+			ChannelCredential: "channel-1",
 		},
 		NewExpiresAtUnixNano: 200,
 	}
@@ -323,7 +323,7 @@ func testProgramResumeGrant() (*computerv0.GrantProgramResumeRequest, *programv0
 		RunLeaseId:         "lease-1",
 	}
 	request := &computerv0.GrantProgramResumeRequest{
-		Authority:    &computerv0.ComputerRunAuthority{Fence: fence, ChannelToken: "channel-1"},
+		Authority:    &computerv0.ComputerRunAuthority{Fence: fence, ChannelCredential: "channel-1"},
 		RunWaitId:    "wait-1",
 		CheckpointId: "checkpoint-1",
 	}
@@ -433,7 +433,7 @@ func TestRenewComputerAuthorityCancellationPreservesMountedSession(t *testing.T)
 				ExpiresAtUnixNano:         100,
 				BaseComputerDiskVersionId: "version-1",
 			},
-			ChannelToken: "channel-1",
+			ChannelCredential: "channel-1",
 		},
 		NewExpiresAtUnixNano: 200,
 	}
@@ -559,7 +559,7 @@ func TestRenewComputerAuthorityRejectsDifferentPhysicalWriterBeforeOpeningStream
 			ComputerID: "computer-1", ComputerInstanceID: "instance-1", WriterGeneration: 3,
 		}, newInstanceMount(parent), "channel-1")
 		_, err := registry.RenewComputerAuthority(t.Context(), &computerv0.RenewComputerAuthorityRequest{
-			Previous: &computerv0.ComputerRunAuthority{ChannelToken: "channel-1", Fence: &computerv0.ComputerAuthorityFence{
+			Previous: &computerv0.ComputerRunAuthority{ChannelCredential: "channel-1", Fence: &computerv0.ComputerAuthorityFence{
 				ComputerId: "computer-1", ComputerInstanceId: "instance-1", WriterGeneration: generation,
 				RunId: "run-1", ExpiresAtUnixNano: 100,
 			}}, NewExpiresAtUnixNano: 200,

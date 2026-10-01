@@ -1037,7 +1037,7 @@ func (q *Queries) LockRunLeaseClaimComputer(ctx context.Context, arg LockRunLeas
 }
 
 const lockRunLeaseClaimInstance = `-- name: LockRunLeaseClaimInstance :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_token_hash, guest_channel_token_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required
+SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required
   FROM computer_instances
  WHERE id = $1
    AND org_id = $2
@@ -1130,8 +1130,8 @@ func (q *Queries) LockRunLeaseClaimInstance(ctx context.Context, arg LockRunLeas
 		&i.MountState,
 		&i.MountedAt,
 		&i.UnmountedAt,
-		&i.GuestChannelTokenHash,
-		&i.GuestChannelTokenExpiresAt,
+		&i.GuestChannelCredentialHash,
+		&i.GuestChannelCredentialExpiresAt,
 		&i.FinalizationAction,
 		&i.FinalizationReasonCode,
 		&i.FinalizationError,

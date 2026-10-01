@@ -10,15 +10,15 @@ import (
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
 )
 
-type TokenRequest struct {
+type HostCredentialRequest struct {
 	APIVersion       string `json:"api_version"`
 	WorkerHostID     string `json:"worker_host_id"`
 	WorkerHostSecret string `json:"worker_host_secret"`
 	ServiceID        string `json:"service_id"`
 }
 
-type TokenResponse struct {
-	Token            string `json:"token"`
+type HostCredentialResponse struct {
+	Credential       string `json:"credential"`
 	ExpiresInSeconds int64  `json:"expires_in_seconds"`
 	WorkerEpoch      int64  `json:"worker_epoch"`
 }

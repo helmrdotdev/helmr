@@ -25,18 +25,18 @@ func (c *Client) InitialComputerKey(ctx context.Context, request workerapi.Initi
 		return workerapi.ComputerKeyMaterial{}, errors.New("invalid computer key request")
 	}
 	for attempt := range 2 {
-		token, err := c.token(ctx)
+		credential, err := c.hostCredential(ctx)
 		if err != nil {
 			return workerapi.ComputerKeyMaterial{}, errors.New("computer key authentication failed")
 		}
-		req, err := c.transport.Request(ctx, http.MethodPost, "/worker/v1/run/computer-instances/initialization/key", bytes.NewReader(payload), token)
+		req, err := c.transport.Request(ctx, http.MethodPost, "/worker/v1/run/computer-instances/initialization/key", bytes.NewReader(payload), credential)
 		if err != nil {
 			return workerapi.ComputerKeyMaterial{}, errors.New("invalid computer key endpoint")
 		}
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := c.transport.DoSensitive(req)
 		if attempt == 0 && httpclient.IsStatus(err, http.StatusUnauthorized) {
-			c.invalidateToken(token)
+			c.invalidateHostCredential(credential)
 			continue
 		}
 		if err != nil {
@@ -74,18 +74,18 @@ func (c *Client) ComputerSource(ctx context.Context, request workerapi.ComputerS
 		return workerapi.ComputerSourceMaterial{}, errors.New("invalid computer key request")
 	}
 	for attempt := range 2 {
-		token, err := c.token(ctx)
+		credential, err := c.hostCredential(ctx)
 		if err != nil {
 			return workerapi.ComputerSourceMaterial{}, errors.New("computer key authentication failed")
 		}
-		req, err := c.transport.Request(ctx, http.MethodPost, "/worker/v1/run/computer-instances/computer-source", bytes.NewReader(payload), token)
+		req, err := c.transport.Request(ctx, http.MethodPost, "/worker/v1/run/computer-instances/computer-source", bytes.NewReader(payload), credential)
 		if err != nil {
 			return workerapi.ComputerSourceMaterial{}, errors.New("invalid computer key endpoint")
 		}
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := c.transport.DoSensitive(req)
 		if attempt == 0 && httpclient.IsStatus(err, http.StatusUnauthorized) {
-			c.invalidateToken(token)
+			c.invalidateHostCredential(credential)
 			continue
 		}
 		if err != nil {

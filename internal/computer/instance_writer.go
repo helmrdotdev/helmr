@@ -18,16 +18,16 @@ import (
 
 // Assignment is a prepared Instance whose guest channel a worker host
 // claimed: the Instance, its image and VM runtime source, and the channel
-// token whose hash the Instance recorded.
+// credential whose hash the Instance recorded.
 type Assignment struct {
-	Instance     db.ComputerInstance
-	Source       db.GetComputerInstanceAssignmentSourceRow
-	ChannelToken string
+	Instance          db.ComputerInstance
+	Source            db.GetComputerInstanceAssignmentSourceRow
+	ChannelCredential string
 }
 
 // ClaimInstance claims the guest channel of one prepared, unclaimed Instance
 // on the principal's host epoch. Each candidate is tried in its own
-// transaction with a fresh channel token generated outside it; a candidate
+// transaction with a fresh channel credential generated outside it; a candidate
 // whose authority changed is skipped. It returns nil when no candidate can be
 // claimed, and workergroup.ErrStaleClaims when the principal's claim
 // versions changed. Allocation and Program or Run admission are independent
@@ -38,13 +38,13 @@ func ClaimInstance(ctx context.Context, q db.Querier, txb db.TxBeginner, princip
 		return nil, fmt.Errorf("list prepared computer instances: %w", err)
 	}
 	for _, target := range targets {
-		token, err := auth.GenerateOpaque(32)
+		credential, err := auth.GenerateOpaque(32)
 		if err != nil {
 			return nil, fmt.Errorf("generate computer instance channel: %w", err)
 		}
 		var assignment *Assignment
 		err = db.RunTx(ctx, txb, func(tx pgx.Tx) error {
-			i, err := claimChannel(ctx, tx, principal, target.ID, target.EnvironmentID, token)
+			i, err := claimChannel(ctx, tx, principal, target.ID, target.EnvironmentID, credential)
 			if err != nil {
 				return err
 			}
@@ -52,7 +52,7 @@ func ClaimInstance(ctx context.Context, q db.Querier, txb db.TxBeginner, princip
 			if err != nil {
 				return err
 			}
-			assignment = &Assignment{Instance: i, Source: source, ChannelToken: token}
+			assignment = &Assignment{Instance: i, Source: source, ChannelCredential: credential}
 			return nil
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -68,7 +68,7 @@ func ClaimInstance(ctx context.Context, q db.Querier, txb db.TxBeginner, princip
 
 // claimChannel claims the channel of an already prepared physical Instance
 // under secrets → group → host → Computer → Instance locks.
-func claimChannel(ctx context.Context, tx pgx.Tx, principal workergroup.HostPrincipal, instanceID, environmentID pgtype.UUID, token string) (db.ComputerInstance, error) {
+func claimChannel(ctx context.Context, tx pgx.Tx, principal workergroup.HostPrincipal, instanceID, environmentID pgtype.UUID, credential string) (db.ComputerInstance, error) {
 	q := db.New(tx)
 	target, err := q.GetComputerInstance(ctx, db.GetComputerInstanceParams{ID: instanceID, EnvironmentID: environmentID})
 	if err != nil {
@@ -93,7 +93,7 @@ func claimChannel(ctx context.Context, tx pgx.Tx, principal workergroup.HostPrin
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
-	if c.DirtyState == "dirty_state_lost" || c.Status != "active" || c.DesiredState != "active" || c.WriterGeneration != i.WriterGeneration || i.ComputerID != c.ID || i.EnvironmentID != c.EnvironmentID || !i.SourceDiskVersionID.Valid || token == "" {
+	if c.DirtyState == "dirty_state_lost" || c.Status != "active" || c.DesiredState != "active" || c.WriterGeneration != i.WriterGeneration || i.ComputerID != c.ID || i.EnvironmentID != c.EnvironmentID || !i.SourceDiskVersionID.Valid || credential == "" {
 		return db.ComputerInstance{}, pgx.ErrNoRows
 	}
 	for _, b := range bindings {
@@ -101,8 +101,8 @@ func claimChannel(ctx context.Context, tx pgx.Tx, principal workergroup.HostPrin
 			return db.ComputerInstance{}, pgx.ErrNoRows
 		}
 	}
-	hash := sha256.Sum256([]byte(token))
-	return q.ClaimComputerInstanceChannel(ctx, db.ClaimComputerInstanceChannelParams{ID: i.ID, WorkerHostID: locked.Host.ID, WorkerEpoch: principal.Epoch, WriterGeneration: i.WriterGeneration, TokenHash: hash[:], WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds})
+	hash := sha256.Sum256([]byte(credential))
+	return q.ClaimComputerInstanceChannel(ctx, db.ClaimComputerInstanceChannelParams{ID: i.ID, WorkerHostID: locked.Host.ID, WorkerEpoch: principal.Epoch, WriterGeneration: i.WriterGeneration, CredentialHash: hash[:], WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds})
 }
 
 // WriterRef addresses the writer generation of one Instance a worker host

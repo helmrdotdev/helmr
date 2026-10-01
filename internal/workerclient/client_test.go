@@ -27,27 +27,27 @@ func TestWorkerLifecycleClient(t *testing.T) {
 		AttemptNumber: 1, ExpiresAt: time.Date(2026, 5, 8, 12, 5, 0, 0, time.UTC),
 	}
 	paths := []string{}
-	workerToken := "worker-token"
+	workerCredential := "worker-credential"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
 		switch r.URL.Path {
-		case "/worker/v1/instance/token":
+		case "/worker/v1/instance/credential":
 			if got := r.Header.Get("authorization"); got != "" {
-				t.Fatalf("worker token request auth = %s", got)
+				t.Fatalf("worker host credential request auth = %s", got)
 			}
-			var request workerapi.TokenRequest
+			var request workerapi.HostCredentialRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
 			if request.WorkerHostID != "00000000-0000-0000-0000-000000000401" || request.WorkerHostSecret != "worker-secret" || request.ServiceID != "00000000-0000-0000-0000-000000000901" {
-				t.Fatalf("worker token request = %+v", request)
+				t.Fatalf("worker host credential request = %+v", request)
 			}
-			_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{
-				Token:            workerToken,
+			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{
+				Credential:       workerCredential,
 				ExpiresInSeconds: int64(time.Hour / time.Second),
 			})
 		case "/worker/v1/run/leases/discover":
-			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
+			if got := r.Header.Get("authorization"); got != "Bearer "+workerCredential {
 				t.Fatalf("worker auth = %s", got)
 			}
 			var request workerapi.RunLeaseDiscoveryRequest
@@ -61,7 +61,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 				}},
 			})
 		case "/worker/v1/instance/activate":
-			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
+			if got := r.Header.Get("authorization"); got != "Bearer "+workerCredential {
 				t.Fatalf("worker auth = %s", got)
 			}
 			var request workerapi.ActivateRequest
@@ -73,12 +73,12 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{WorkerHostID: "00000000-0000-0000-0000-000000000401", Status: workerapi.StatusActive})
 		case "/worker/v1/instance/drain":
-			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
+			if got := r.Header.Get("authorization"); got != "Bearer "+workerCredential {
 				t.Fatalf("worker auth = %s", got)
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{WorkerHostID: "00000000-0000-0000-0000-000000000401", Status: workerapi.StatusDraining, ActiveInstances: 1})
 		case "/worker/v1/instance/drain/complete":
-			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
+			if got := r.Header.Get("authorization"); got != "Bearer "+workerCredential {
 				t.Fatalf("worker auth = %s", got)
 			}
 			var request workerapi.DrainCompletionRequest
@@ -90,12 +90,12 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{WorkerHostID: "00000000-0000-0000-0000-000000000401", Status: workerapi.StatusTerminationReady})
 		case "/worker/v1/instance":
-			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
+			if got := r.Header.Get("authorization"); got != "Bearer "+workerCredential {
 				t.Fatalf("worker auth = %s", got)
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{WorkerHostID: "00000000-0000-0000-0000-000000000401", Status: workerapi.StatusDraining, ActiveInstances: 1})
 		case "/worker/v1/instance/fence":
-			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
+			if got := r.Header.Get("authorization"); got != "Bearer "+workerCredential {
 				t.Fatalf("worker auth = %s", got)
 			}
 			var request workerapi.FenceRequest
@@ -145,7 +145,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	if err := client.FenceWorker(context.Background(), "termination_drain_failed"); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(paths, ","); got != "/worker/v1/instance/token,/worker/v1/run/leases/discover,/worker/v1/instance/activate,/worker/v1/instance/drain,/worker/v1/instance,/worker/v1/instance/drain/complete,/worker/v1/instance/fence" {
+	if got := strings.Join(paths, ","); got != "/worker/v1/instance/credential,/worker/v1/run/leases/discover,/worker/v1/instance/activate,/worker/v1/instance/drain,/worker/v1/instance,/worker/v1/instance/drain/complete,/worker/v1/instance/fence" {
 		t.Fatalf("paths = %s", got)
 	}
 }
@@ -164,9 +164,9 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 		func(w http.ResponseWriter, r *http.Request) {
 			paths = append(paths, r.URL.Path)
 			switch r.URL.Path {
-			case "/worker/v1/instance/token":
-				_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{
-					Token:            "worker-token",
+			case "/worker/v1/instance/credential":
+				_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{
+					Credential:       "worker-credential",
 					ExpiresInSeconds: 3600,
 				})
 			case "/worker/v1/run/leases/claim":
@@ -367,7 +367,7 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := strings.Join(paths, ","); got !=
-		"/worker/v1/instance/token,/worker/v1/run/leases/claim,"+
+		"/worker/v1/instance/credential,/worker/v1/run/leases/claim,"+
 			"/worker/v1/run/leases/start,/worker/v1/run/leases/entrypoint,/worker/v1/run/leases/renew,"+
 			"/worker/v1/run/finalization/begin,/worker/v1/run/tasks/complete,"+
 			"/worker/v1/run/logs/append" {
@@ -380,8 +380,8 @@ func TestCompleteWorkerDrainRetriesTheIdenticalProofAfterAmbiguousResponse(t *te
 	var bodies [][]byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/worker/v1/instance/token":
-			_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{Token: "worker-token", ExpiresInSeconds: 3600})
+		case "/worker/v1/instance/credential":
+			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "worker-credential", ExpiresInSeconds: 3600})
 		case "/worker/v1/instance/drain/complete":
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
@@ -421,8 +421,8 @@ func TestFenceWorkerRetriesTheIdenticalRequestAfterAmbiguousResponse(t *testing.
 	var bodies [][]byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/worker/v1/instance/token":
-			_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{Token: "worker-token", ExpiresInSeconds: 3600})
+		case "/worker/v1/instance/credential":
+			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "worker-credential", ExpiresInSeconds: 3600})
 		case "/worker/v1/instance/fence":
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
@@ -452,16 +452,16 @@ func TestFenceWorkerRetriesTheIdenticalRequestAfterAmbiguousResponse(t *testing.
 	}
 }
 
-func TestWorkerClientRefreshesTokenAndReplaysBufferedRequestAfterUnauthorized(t *testing.T) {
-	var tokenRequests int
+func TestWorkerClientRefreshesHostCredentialAndReplaysBufferedRequestAfterUnauthorized(t *testing.T) {
+	var credentialRequests int
 	var activateBodies [][]byte
 	var statusRequests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/worker/v1/instance/token":
-			tokenRequests++
-			_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{
-				Token: fmt.Sprintf("worker-token-%d", tokenRequests), ExpiresInSeconds: 3600,
+		case "/worker/v1/instance/credential":
+			credentialRequests++
+			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{
+				Credential: fmt.Sprintf("worker-credential-%d", credentialRequests), ExpiresInSeconds: 3600,
 			})
 		case "/worker/v1/instance/activate":
 			body, err := io.ReadAll(r.Body)
@@ -469,8 +469,8 @@ func TestWorkerClientRefreshesTokenAndReplaysBufferedRequestAfterUnauthorized(t 
 				t.Fatal(err)
 			}
 			activateBodies = append(activateBodies, body)
-			if r.Header.Get("authorization") == "Bearer worker-token-1" {
-				http.Error(w, `{"error":"stale token"}`, http.StatusUnauthorized)
+			if r.Header.Get("authorization") == "Bearer worker-credential-1" {
+				http.Error(w, `{"error":"stale credential"}`, http.StatusUnauthorized)
 				return
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{Status: workerapi.StatusActive})
@@ -480,7 +480,7 @@ func TestWorkerClientRefreshesTokenAndReplaysBufferedRequestAfterUnauthorized(t 
 				http.Error(w, `{"error":"stale group claims"}`, http.StatusUnauthorized)
 				return
 			}
-			if got := r.Header.Get("authorization"); got != "Bearer worker-token-3" {
+			if got := r.Header.Get("authorization"); got != "Bearer worker-credential-3" {
 				t.Fatalf("refreshed status authorization = %q", got)
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{Status: workerapi.StatusActive})
@@ -505,8 +505,8 @@ func TestWorkerClientRefreshesTokenAndReplaysBufferedRequestAfterUnauthorized(t 
 	if _, err := client.GetWorkerStatus(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if tokenRequests != 3 || statusRequests != 2 {
-		t.Fatalf("token requests=%d status requests=%d, want 3 and 2", tokenRequests, statusRequests)
+	if credentialRequests != 3 || statusRequests != 2 {
+		t.Fatalf("credential requests=%d status requests=%d, want 3 and 2", credentialRequests, statusRequests)
 	}
 }
 
@@ -529,11 +529,11 @@ func TestWorkerRunWaitClient(t *testing.T) {
 	paths := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
-		if r.URL.Path == "/worker/v1/instance/token" {
-			_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{Token: "worker-token", ExpiresInSeconds: int64(time.Hour / time.Second)})
+		if r.URL.Path == "/worker/v1/instance/credential" {
+			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "worker-credential", ExpiresInSeconds: int64(time.Hour / time.Second)})
 			return
 		}
-		if got := r.Header.Get("authorization"); got != "Bearer worker-token" {
+		if got := r.Header.Get("authorization"); got != "Bearer worker-credential" {
 			t.Fatalf("worker auth = %s", got)
 		}
 		switch r.URL.Path {
@@ -626,7 +626,7 @@ func TestWorkerRunWaitClient(t *testing.T) {
 	if ready.CheckpointID != "checkpoint-1" {
 		t.Fatalf("ready = %+v", ready)
 	}
-	if got := strings.Join(paths, ","); got != "/worker/v1/instance/token,/worker/v1/run/waits/create,/worker/v1/run/waits/poll,/worker/v1/run/waits/resume-ack,/worker/v1/computer/checkpoints/ready" {
+	if got := strings.Join(paths, ","); got != "/worker/v1/instance/credential,/worker/v1/run/waits/create,/worker/v1/run/waits/poll,/worker/v1/run/waits/resume-ack,/worker/v1/computer/checkpoints/ready" {
 		t.Fatalf("paths = %s", got)
 	}
 }
@@ -688,7 +688,7 @@ func TestWorkerConnectionAPIVersion(t *testing.T) {
 			}
 		}
 		switch r.URL.Path {
-		case "/worker/v1/enrollment", "/worker/v1/instance/token", "/worker/v1/instance/activate":
+		case "/worker/v1/enrollment", "/worker/v1/instance/credential", "/worker/v1/instance/activate":
 			var version string
 			if err := json.Unmarshal(body["api_version"], &version); err != nil || version != workerapi.APIVersion {
 				t.Errorf("%s version = %q, error = %v", r.URL.Path, version, err)
@@ -701,8 +701,8 @@ func TestWorkerConnectionAPIVersion(t *testing.T) {
 		switch r.URL.Path {
 		case "/worker/v1/enrollment":
 			_ = json.NewEncoder(w).Encode(workerapi.EnrollmentResponse{})
-		case "/worker/v1/instance/token":
-			_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{Token: "worker-token", ExpiresInSeconds: 3600})
+		case "/worker/v1/instance/credential":
+			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "worker-credential", ExpiresInSeconds: 3600})
 		case "/worker/v1/instance/recover":
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -732,18 +732,18 @@ func TestWorkerConnectionAPIVersion(t *testing.T) {
 	if _, err = client.GetWorkerStatus(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if seen["/worker/v1/instance/token"] != 1 {
-		t.Fatalf("token exchanges = %d", seen["/worker/v1/instance/token"])
+	if seen["/worker/v1/instance/credential"] != 1 {
+		t.Fatalf("host credential issues = %d", seen["/worker/v1/instance/credential"])
 	}
 }
 
 func TestWorkerAPIVersionMismatchPreservesHTTPError(t *testing.T) {
-	for _, phase := range []string{"enrollment", "token", "activation"} {
+	for _, phase := range []string{"enrollment", "credential", "activation"} {
 		t.Run(phase, func(t *testing.T) {
 			calls := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if phase == "activation" && r.URL.Path == "/worker/v1/instance/token" {
-					_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{Token: "token", ExpiresInSeconds: 3600})
+				if phase == "activation" && r.URL.Path == "/worker/v1/instance/credential" {
+					_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "credential", ExpiresInSeconds: 3600})
 					return
 				}
 				calls++
@@ -758,7 +758,7 @@ func TestWorkerAPIVersionMismatchPreservesHTTPError(t *testing.T) {
 			switch phase {
 			case "enrollment":
 				_, err = client.EnrollWorker(t.Context(), "token", workerapi.EnrollmentRequest{})
-			case "token":
+			case "credential":
 				err = client.AuthenticateWorker(t.Context())
 			case "activation":
 				_, err = client.ActivateWorker(t.Context(), workerClientCapabilities())

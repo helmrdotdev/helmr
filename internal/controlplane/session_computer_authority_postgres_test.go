@@ -27,7 +27,7 @@ func TestSessionComputerAuthorityStatusByCaller(t *testing.T) {
 	ownerID := web.user(t, "Owner")
 	web.member(t, f.OrgID, ownerID, db.OrgMemberRoleOwner)
 	owner := web.session(t, ownerID, f.OrgID)
-	workerToken := f.workerToken
+	workerCredential := f.workerCredential
 	var generation int64
 	if err := f.Pool.QueryRow(t.Context(), `SELECT run_generation FROM sessions WHERE id=$1`, f.SessionID).Scan(&generation); err != nil {
 		t.Fatal(err)
@@ -41,7 +41,7 @@ func TestSessionComputerAuthorityStatusByCaller(t *testing.T) {
 			t.Fatal(err)
 		}
 		request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/sessions/output/write", strings.NewReader(string(body)))
-		request.Header.Set("Authorization", "Bearer "+workerToken)
+		request.Header.Set("Authorization", "Bearer "+workerCredential)
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)

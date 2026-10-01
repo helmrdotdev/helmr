@@ -12,14 +12,14 @@ import (
 
 func captureBarrierFixture(count int) (*computerOperationRegistry, *computerMountEntry, *computerv0.FreezeComputerRequest) {
 	r := newComputerOperationRegistry()
-	entry := &computerMountEntry{computerID: "computer", computerInstanceID: "instance", writerGeneration: 3, channelToken: "token"}
+	entry := &computerMountEntry{computerID: "computer", computerInstanceID: "instance", writerGeneration: 3, channelCredential: "token"}
 	r.entries["instance"] = entry
 	request := &computerv0.FreezeComputerRequest{ComputerId: "computer", ComputerInstanceId: "instance", WriterGeneration: 3, CheckpointId: "checkpoint", DesiredVersion: 5, MembershipRevision: 7}
 	for i := range count {
 		suffix := string(rune('a' + i))
 		member := &computerv0.ComputerCaptureRun{RunId: "run-" + suffix, AttemptNumber: 2, RunWaitId: "wait-" + suffix, RunLeaseId: "lease-" + suffix}
 		request.Runs = append(request.Runs, member)
-		r.programClaims = append(r.programClaims, &managedProgramClaim{entry: entry, authority: &computerv0.ComputerRunAuthority{ChannelToken: "token", Fence: &computerv0.ComputerAuthorityFence{ComputerId: "computer", ComputerInstanceId: "instance", WriterGeneration: 3, RunId: member.RunId, AttemptNumber: 2, RunLeaseId: member.RunLeaseId, ExpiresAtUnixNano: time.Now().Add(time.Minute).UnixNano()}}})
+		r.programClaims = append(r.programClaims, &managedProgramClaim{entry: entry, authority: &computerv0.ComputerRunAuthority{ChannelCredential: "token", Fence: &computerv0.ComputerAuthorityFence{ComputerId: "computer", ComputerInstanceId: "instance", WriterGeneration: 3, RunId: member.RunId, AttemptNumber: 2, RunLeaseId: member.RunLeaseId, ExpiresAtUnixNano: time.Now().Add(time.Minute).UnixNano()}}})
 	}
 	return r, entry, request
 }
@@ -54,7 +54,7 @@ func TestComputerCaptureSealsCompleteClaims(t *testing.T) {
 		if err := r.register("mount", &computerMountEntry{}); err == nil {
 			t.Fatal("mount replaced source")
 		}
-		authority := &computerv0.ComputerRunAuthority{ChannelToken: "token", Fence: &computerv0.ComputerAuthorityFence{ComputerInstanceId: "instance", ComputerId: "computer"}}
+		authority := &computerv0.ComputerRunAuthority{ChannelCredential: "token", Fence: &computerv0.ComputerAuthorityFence{ComputerInstanceId: "instance", ComputerId: "computer"}}
 		if _, err := r.admitProgram(entry, authority, time.Now); err == nil || !strings.Contains(err.Error(), "sealed") {
 			t.Fatalf("Program admission: %v", err)
 		}

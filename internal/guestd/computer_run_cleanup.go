@@ -29,7 +29,7 @@ func (r *computerOperationRegistry) cleanupProgram(ctx context.Context, request 
 	if request.GetRunId() == "" || request.GetRunLeaseId() == "" || request.GetAttemptNumber() == 0 || request.GetWriterGeneration() <= 0 {
 		return errors.New("program cleanup identity is incomplete")
 	}
-	entry, release, ok := r.acquireCommandInstance(request.GetComputerInstanceId(), request.GetComputerId(), request.GetChannelToken())
+	entry, release, ok := r.acquireCommandInstance(request.GetComputerInstanceId(), request.GetComputerId(), request.GetChannelCredential())
 	if !ok {
 		return errors.New("program cleanup Instance is unavailable")
 	}

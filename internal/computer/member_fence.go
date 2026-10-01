@@ -97,7 +97,7 @@ func cloneInstance(i db.ComputerInstance) db.ComputerInstance {
 	i.ReclaimEvidence = bytes.Clone(i.ReclaimEvidence)
 	i.TerminalError = bytes.Clone(i.TerminalError)
 	i.WriterTokenHash = bytes.Clone(i.WriterTokenHash)
-	i.GuestChannelTokenHash = bytes.Clone(i.GuestChannelTokenHash)
+	i.GuestChannelCredentialHash = bytes.Clone(i.GuestChannelCredentialHash)
 	i.FinalizationError = bytes.Clone(i.FinalizationError)
 	return i
 }

@@ -1789,7 +1789,7 @@ func TestProgramAdmissionDoesNotClaimBeforeSecretSequence(t *testing.T) {
 	registry.register("runtime-1", &computerMountEntry{
 		computerID:                "computer-1",
 		baseComputerDiskVersionID: "version-1",
-		channelToken:              "channel-1",
+		channelCredential:         "channel-1",
 		writerGeneration:          1,
 		computerInstanceID:        "runtime-1",
 	})
@@ -1832,8 +1832,8 @@ func TestProgramAdmissionDoesNotClaimBeforeSecretSequence(t *testing.T) {
 				ExpiresAtUnixNano:         time.Now().Add(time.Minute).UnixNano(),
 				BaseComputerDiskVersionId: "version-1",
 			},
-			ChannelToken:    "channel-1",
-			WriteCapability: "write-capability",
+			ChannelCredential: "channel-1",
+			WriteCapability:   "write-capability",
 		},
 	); err != nil {
 		t.Fatal(err)
@@ -1869,7 +1869,7 @@ func TestProgramAdmissionReportsPrepareFailureWithExactFence(t *testing.T) {
 	registry.register("runtime-1", &computerMountEntry{
 		computerID:                "computer-1",
 		baseComputerDiskVersionID: "version-1",
-		channelToken:              "channel-1",
+		channelCredential:         "channel-1",
 		writerGeneration:          1,
 		computerInstanceID:        "runtime-1",
 		// A missing runtime user deterministically fails newProgramProcess after
@@ -1911,8 +1911,8 @@ func TestProgramAdmissionReportsPrepareFailureWithExactFence(t *testing.T) {
 			ExpiresAtUnixNano:         time.Now().Add(time.Minute).UnixNano(),
 			BaseComputerDiskVersionId: "version-1",
 		},
-		ChannelToken:    "channel-1",
-		WriteCapability: "write-capability",
+		ChannelCredential: "channel-1",
+		WriteCapability:   "write-capability",
 	}
 	if err := frameio.WriteProtoFrame(host, authority); err != nil {
 		t.Fatal(err)

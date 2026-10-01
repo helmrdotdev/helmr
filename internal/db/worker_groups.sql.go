@@ -305,13 +305,13 @@ WITH target AS MATERIALIZED (
               worker_hosts.current_epoch, worker_hosts.draining_at,
               worker_hosts.termination_ready_at, worker_hosts.lost_at,
               worker_hosts.created_at, worker_hosts.updated_at
-), revoked_credentials AS (
-    UPDATE worker_host_credentials
-       SET revoked_at = COALESCE(worker_host_credentials.revoked_at, now())
+), revoked_host_secrets AS (
+    UPDATE worker_host_secrets
+       SET revoked_at = COALESCE(worker_host_secrets.revoked_at, now())
       FROM transitioned
-     WHERE worker_host_credentials.worker_host_id = transitioned.id
-       AND worker_host_credentials.revoked_at IS NULL
-    RETURNING worker_host_credentials.id
+     WHERE worker_host_secrets.worker_host_id = transitioned.id
+       AND worker_host_secrets.revoked_at IS NULL
+    RETURNING worker_host_secrets.id
 
 )
 SELECT transitioned.id, transitioned.resource_id,
@@ -321,7 +321,7 @@ SELECT transitioned.id, transitioned.resource_id,
        transitioned.termination_ready_at, transitioned.lost_at,
        transitioned.created_at, transitioned.updated_at
   FROM transitioned
- WHERE (SELECT count(*) FROM revoked_credentials) >= 0
+ WHERE (SELECT count(*) FROM revoked_host_secrets) >= 0
 `
 
 type ConfirmWorkerHostProviderAbsentRow struct {
@@ -1438,13 +1438,13 @@ WITH target AS (
     RETURNING worker_hosts.id, worker_hosts.resource_id,
               worker_hosts.worker_group_id, worker_hosts.status,
               worker_hosts.claim_version, worker_hosts.current_epoch
-), revoked_credentials AS (
-    UPDATE worker_host_credentials
+), revoked_host_secrets AS (
+    UPDATE worker_host_secrets
        SET revoked_at = COALESCE(revoked_at, now())
       FROM target
-     WHERE worker_host_credentials.worker_host_id = target.id
-       AND worker_host_credentials.revoked_at IS NULL
-    RETURNING worker_host_credentials.id
+     WHERE worker_host_secrets.worker_host_id = target.id
+       AND worker_host_secrets.revoked_at IS NULL
+    RETURNING worker_host_secrets.id
 ), lost_runtimes AS (
     UPDATE computer_instances
        SET observed_state = 'lost', observed_version = observed_version + 1,
@@ -1461,7 +1461,7 @@ WITH target AS (
     SELECT target.id, target.resource_id, target.worker_group_id, target.status,
            target.claim_version, target.current_epoch, true AS transition_applied
       FROM target
-     WHERE (SELECT count(*) FROM revoked_credentials) >= 0
+     WHERE (SELECT count(*) FROM revoked_host_secrets) >= 0
        AND (SELECT count(*) FROM lost_runtimes) >= 0
 )
 SELECT id, resource_id, worker_group_id, status, claim_version, current_epoch, transition_applied FROM completed

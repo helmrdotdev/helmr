@@ -266,18 +266,18 @@ const (
 // preparationErrorServer serves an initial preparation fixture through
 // NewServer with injectable database, key provider and storage failures.
 type preparationErrorServer struct {
-	f        initialPublicationFixture
-	handler  http.Handler
-	faults   *sqlFaults
-	keys     *faultingKeys
-	objects  *faultingObjects
-	logs     *lockedBuffer
-	token    string
-	ctx      context.Context
-	cancel   context.CancelFunc
-	object   workerapi.InitialComputerObjectRequest
-	version  workerapi.InitialComputerVersionRequest
-	instance string
+	f              initialPublicationFixture
+	handler        http.Handler
+	faults         *sqlFaults
+	keys           *faultingKeys
+	objects        *faultingObjects
+	logs           *lockedBuffer
+	hostCredential string
+	ctx            context.Context
+	cancel         context.CancelFunc
+	object         workerapi.InitialComputerObjectRequest
+	version        workerapi.InitialComputerVersionRequest
+	instance       string
 }
 
 func newPreparationErrorServer(t *testing.T, stage preparationStage) *preparationErrorServer {
@@ -290,11 +290,11 @@ func newPreparationErrorServer(t *testing.T, stage preparationStage) *preparatio
 		cfg.CAS = s.objects
 		cfg.Log = slog.New(slog.NewJSONHandler(s.logs, nil))
 	})
-	credential := seedHostCredential(t, f.Pool, f.worker.HostID)
+	hostSecret := seedHostSecret(t, f.Pool, f.worker.HostID)
 	if stage >= preparationRootCertified {
 		server := httptest.NewServer(s.handler)
 		t.Cleanup(server.Close)
-		client := credential.client(t, server.URL)
+		client := hostSecret.client(t, server.URL)
 		_, root, object := f.certifyInitialRoot(t, client)
 		s.object = object
 		s.version = workerapi.InitialComputerVersionRequest{ComputerInstanceID: s.instance, DesiredVersion: 1, Root: root, Config: oci.RuntimeConfig{User: "root"}}
@@ -304,7 +304,7 @@ func newPreparationErrorServer(t *testing.T, stage preparationStage) *preparatio
 			}
 		}
 	}
-	s.token = credential.token(t, s.handler)
+	s.hostCredential = hostSecret.issue(t, s.handler)
 	s.ctx, s.cancel = context.WithCancel(t.Context())
 	t.Cleanup(s.cancel)
 	s.keys.mu.Lock()
@@ -334,7 +334,7 @@ func (s *preparationErrorServer) post(t *testing.T, path string) *httptest.Respo
 		t.Fatal(err)
 	}
 	request := httptest.NewRequestWithContext(s.ctx, http.MethodPost, path, bytes.NewReader(raw))
-	request.Header.Set("Authorization", "Bearer "+s.token)
+	request.Header.Set("Authorization", "Bearer "+s.hostCredential)
 	response := httptest.NewRecorder()
 	s.handler.ServeHTTP(response, request)
 	return response

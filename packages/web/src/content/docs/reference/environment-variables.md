@@ -39,7 +39,7 @@ key from your application's configuration to its constructor.
 
 Required: `DATABASE_URL`, `CAS_URI`, `CLICKHOUSE_URL`,
 `DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH`, `PLATFORM_STORE_URI`,
-`WORKER_TOKEN_SIGNING_KEY`, `AUTH_KEY`, `ENCRYPTION_KEY`,
+`WORKER_HOST_CREDENTIAL_SIGNING_KEY`, `AUTH_KEY`, `ENCRYPTION_KEY`,
 `COMPUTER_FENCING_KEY`, `TOKEN_CREDENTIAL_KEY`,
 `GITHUB_OAUTH_CLIENT_ID`, and `GITHUB_OAUTH_CLIENT_SECRET`.
 
@@ -88,7 +88,7 @@ scaling](/docs/self-hosting/capacity-scaling) for setup and rotation.
 ClickHouse telemetry: `CLICKHOUSE_URL` is required. Set `CLICKHOUSE_USER` when the service user is not `default`, and set `CLICKHOUSE_PASSWORD` when the service requires a password.
 
 `AUTH_KEY`, `TOKEN_CREDENTIAL_KEY`, `COMPUTER_FENCING_KEY`,
-`ENCRYPTION_KEY`, and `WORKER_TOKEN_SIGNING_KEY` are distinct single roots.
+`ENCRYPTION_KEY`, and `WORKER_HOST_CREDENTIAL_SIGNING_KEY` are distinct single roots.
 Each must be base64 and decode to exactly 32 bytes. Every Control Plane replica uses
 the same values. Online rotation and multi-key verification are not supported.
 
@@ -164,8 +164,9 @@ The Worker reads its Worker Group enrollment token from the strict-permission
 token file and presents it as a Bearer credential over TLS. The token selects
 the Worker Group; the Worker does not configure a group ID. Control Plane
 validates the Pool enrollment against that group, records token use, creates
-the authoritative Worker-instance identity, and issues a renewable
-per-instance credential stored at `WORKER_INSTANCE_CREDENTIAL_PATH`.
+the authoritative Worker-instance identity, and issues a per-instance host
+secret stored at `WORKER_HOST_SECRET_PATH`. The Worker exchanges that host
+secret for short-lived host credentials that authenticate its requests.
 `WORKER_RESOURCE_ID` remains an opaque deployment-owned locator for the
 physical Worker. Provider identity and infrastructure inventory are deployment
 responsibilities rather than Control Plane authentication inputs.

@@ -17,7 +17,7 @@ func captureAbortFixture(t *testing.T, count int) (*computerOperationRegistry, *
 	for i, claim := range r.programClaims {
 		old := claim.authority.Fence
 		grant := testComputerRunAuthority(time.Now().Add(time.Minute))
-		grant.ChannelToken = "token"
+		grant.ChannelCredential = "token"
 		grant.Fence.ComputerId = old.ComputerId
 		grant.Fence.ComputerInstanceId = old.ComputerInstanceId
 		grant.Fence.WriterGeneration = old.WriterGeneration

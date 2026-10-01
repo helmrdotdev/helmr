@@ -201,7 +201,7 @@ func TestFenceHostRejectsDiagnosticCodesAsControlInputs(t *testing.T) {
 }
 
 func TestEnrollHostValidatesInputBeforeTheEnrollmentToken(t *testing.T) {
-	cfg := testCredentialConfig(t)
+	cfg := testHostAuthConfig(t)
 	for _, test := range []struct {
 		name       string
 		enrollment Enrollment

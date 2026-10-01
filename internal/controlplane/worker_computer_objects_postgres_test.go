@@ -44,7 +44,7 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 	router := f.serve(t, func(cfg *ServerConfig) { cfg.CAS = observed })
 	server := httptest.NewServer(router)
 	defer server.Close()
-	client := seedHostCredential(t, f.Pool, f.worker.HostID).client(t, server.URL)
+	client := seedHostSecret(t, f.Pool, f.worker.HostID).client(t, server.URL)
 	key, err := client.InitialComputerKey(t.Context(), workerapi.InitialComputerKeyRequest{ComputerInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 1})
 	if err != nil {
 		t.Fatal(err)

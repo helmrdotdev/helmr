@@ -189,7 +189,7 @@ func (m Server) Serve(ctx context.Context, mount workerapi.ComputerInstanceAssig
 		default:
 		}
 	}()
-	unregisterMount := m.Mounts.register(mount, instance, m.channelToken(mount))
+	unregisterMount := m.Mounts.register(mount, instance, m.channelCredential(mount))
 	defer unregisterMount()
 
 	m.logComputerMountPhase(mount, "computer mount ready", "duration_ms", time.Since(totalStarted).Milliseconds())
@@ -511,10 +511,10 @@ func (m Server) dispatchComputerBasicExec(
 			clear(exec.Secrets[index].Value)
 		}
 	}()
-	channelToken := m.channelToken(mount)
-	if channelToken == "" {
+	channelCredential := m.channelCredential(mount)
+	if channelCredential == "" {
 		return workerapi.ComputerCommandCompleteRequest{}, computerBasicExecProtocol(
-			errors.New("computer mount guest channel token is required"),
+			errors.New("computer mount guest channel credential is required"),
 		)
 	}
 	if strings.TrimSpace(exec.CommandID) == "" || strings.TrimSpace(exec.RequestFingerprint) == "" {
@@ -524,7 +524,7 @@ func (m Server) dispatchComputerBasicExec(
 		return workerapi.ComputerCommandCompleteRequest{}, computerBasicExecProtocol(errors.New("command claim does not match the live Instance"))
 	}
 	request := &computerv0.ComputerBasicExecRequest{
-		Envelope:    &computerv0.ComputerCommandAuthority{OperationId: exec.CommandID, ComputerInstanceId: exec.ComputerInstanceID, ComputerId: exec.ComputerID, ChannelToken: channelToken, WriterGeneration: exec.WriterGeneration, OperationExpiresAtUnixNano: exec.ExpiresAt.UnixNano(), RequestFingerprint: exec.RequestFingerprint},
+		Envelope:    &computerv0.ComputerCommandAuthority{OperationId: exec.CommandID, ComputerInstanceId: exec.ComputerInstanceID, ComputerId: exec.ComputerID, ChannelCredential: channelCredential, WriterGeneration: exec.WriterGeneration, OperationExpiresAtUnixNano: exec.ExpiresAt.UnixNano(), RequestFingerprint: exec.RequestFingerprint},
 		RequestJson: string(exec.Request), ProtectedEnv: exec.ProtectedEnv.Values(), ProxyCa: exec.ProtectedEnv.PublicCA(), Stdin: exec.Stdin,
 	}
 	for _, delivery := range exec.Secrets {
@@ -1178,12 +1178,12 @@ func validateCachedArtifact(path string, artifact workerapi.CASObject) error {
 }
 
 func (m Server) registerComputerMount(ctx context.Context, session vm.Machine, mount workerapi.ComputerInstanceAssignment, computerInstanceID string) error {
-	channelToken := m.channelToken(mount)
-	if channelToken == "" {
-		return errors.New("computer mount guest channel token is required")
+	channelCredential := m.channelCredential(mount)
+	if channelCredential == "" {
+		return errors.New("computer mount guest channel credential is required")
 	}
-	if strings.TrimSpace(mount.GuestdChannelTokenHash) == "" {
-		return errors.New("computer mount guest channel token hash is required")
+	if strings.TrimSpace(mount.GuestChannelCredentialHash) == "" {
+		return errors.New("computer mount guest channel credential hash is required")
 	}
 	stream, err := session.OpenStream(ctx)
 	if err != nil {
@@ -1202,8 +1202,8 @@ func (m Server) registerComputerMount(ctx context.Context, session vm.Machine, m
 	request := &computerv0.MaterializeComputerRequest{
 		Envelope: &computerv0.ComputerOperationEnvelope{
 			ComputerInstanceId: strings.TrimSpace(computerInstanceID), ComputerId: mount.ComputerID,
-			ChannelToken:     channelToken,
-			WriterGeneration: uint64(mount.WriterGeneration),
+			ChannelCredential: channelCredential,
+			WriterGeneration:  uint64(mount.WriterGeneration),
 		},
 		MountPath: strings.TrimSpace(mount.ComputerMountPath),
 		Target:    computerMountTargetProto(mount.Target),
@@ -1252,9 +1252,9 @@ func (m Server) registerComputerMount(ctx context.Context, session vm.Machine, m
 	if !proto.Equal(response.GetTarget(), request.GetTarget()) {
 		return errors.New("computer materialize response target does not match the requested exact target")
 	}
-	expectedHash := strings.TrimSpace(mount.GuestdChannelTokenHash)
-	if strings.TrimSpace(response.GuestdChannelTokenHash) != expectedHash {
-		return errors.New("computer materialize guest channel token hash mismatch")
+	expectedHash := strings.TrimSpace(mount.GuestChannelCredentialHash)
+	if strings.TrimSpace(response.GuestChannelCredentialHash) != expectedHash {
+		return errors.New("computer materialize guest channel credential hash mismatch")
 	}
 	return nil
 }
@@ -1349,8 +1349,8 @@ func (m Server) closeSession(session vm.Machine) error {
 	return session.Close(ctx)
 }
 
-func (m Server) channelToken(mount workerapi.ComputerInstanceAssignment) string {
-	token := strings.TrimSpace(mount.GuestdChannelToken)
+func (m Server) channelCredential(mount workerapi.ComputerInstanceAssignment) string {
+	token := strings.TrimSpace(mount.GuestChannelCredential)
 	if token == "" {
 		return ""
 	}

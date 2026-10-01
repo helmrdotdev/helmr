@@ -27,7 +27,7 @@ type ComputerOperationEnvelope struct {
 	OperationId                string                 `protobuf:"bytes,1,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
 	ComputerInstanceId         string                 `protobuf:"bytes,2,opt,name=computer_instance_id,json=computerInstanceId,proto3" json:"computer_instance_id,omitempty"`
 	ComputerId                 string                 `protobuf:"bytes,3,opt,name=computer_id,json=computerId,proto3" json:"computer_id,omitempty"`
-	ChannelToken               string                 `protobuf:"bytes,4,opt,name=channel_token,json=channelToken,proto3" json:"channel_token,omitempty"`
+	ChannelCredential          string                 `protobuf:"bytes,4,opt,name=channel_credential,json=channelCredential,proto3" json:"channel_credential,omitempty"`
 	WriterGeneration           uint64                 `protobuf:"varint,5,opt,name=writer_generation,json=writerGeneration,proto3" json:"writer_generation,omitempty"`
 	InstanceLeaseId            string                 `protobuf:"bytes,6,opt,name=instance_lease_id,json=instanceLeaseId,proto3" json:"instance_lease_id,omitempty"`
 	WriteLeaseId               string                 `protobuf:"bytes,7,opt,name=write_lease_id,json=writeLeaseId,proto3" json:"write_lease_id,omitempty"`
@@ -89,9 +89,9 @@ func (x *ComputerOperationEnvelope) GetComputerId() string {
 	return ""
 }
 
-func (x *ComputerOperationEnvelope) GetChannelToken() string {
+func (x *ComputerOperationEnvelope) GetChannelCredential() string {
 	if x != nil {
-		return x.ChannelToken
+		return x.ChannelCredential
 	}
 	return ""
 }
@@ -347,12 +347,12 @@ func (x *ComputerAuthorityFence) GetBaseComputerDiskVersionId() string {
 }
 
 type ComputerRunAuthority struct {
-	state           protoimpl.MessageState  `protogen:"open.v1"`
-	Fence           *ComputerAuthorityFence `protobuf:"bytes,1,opt,name=fence,proto3" json:"fence,omitempty"`
-	ChannelToken    string                  `protobuf:"bytes,2,opt,name=channel_token,json=channelToken,proto3" json:"channel_token,omitempty"`
-	WriteCapability string                  `protobuf:"bytes,3,opt,name=write_capability,json=writeCapability,proto3" json:"write_capability,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state             protoimpl.MessageState  `protogen:"open.v1"`
+	Fence             *ComputerAuthorityFence `protobuf:"bytes,1,opt,name=fence,proto3" json:"fence,omitempty"`
+	ChannelCredential string                  `protobuf:"bytes,2,opt,name=channel_credential,json=channelCredential,proto3" json:"channel_credential,omitempty"`
+	WriteCapability   string                  `protobuf:"bytes,3,opt,name=write_capability,json=writeCapability,proto3" json:"write_capability,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *ComputerRunAuthority) Reset() {
@@ -392,9 +392,9 @@ func (x *ComputerRunAuthority) GetFence() *ComputerAuthorityFence {
 	return nil
 }
 
-func (x *ComputerRunAuthority) GetChannelToken() string {
+func (x *ComputerRunAuthority) GetChannelCredential() string {
 	if x != nil {
-		return x.ChannelToken
+		return x.ChannelCredential
 	}
 	return ""
 }
@@ -1435,13 +1435,13 @@ func (x *ComputerMountPhase) GetError() string {
 }
 
 type MaterializeComputerResponse struct {
-	state                  protoimpl.MessageState `protogen:"open.v1"`
-	Status                 string                 `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
-	GuestdChannelTokenHash string                 `protobuf:"bytes,2,opt,name=guestd_channel_token_hash,json=guestdChannelTokenHash,proto3" json:"guestd_channel_token_hash,omitempty"`
-	Phases                 []*ComputerMountPhase  `protobuf:"bytes,3,rep,name=phases,proto3" json:"phases,omitempty"`
-	Target                 *ComputerMountTarget   `protobuf:"bytes,4,opt,name=target,proto3" json:"target,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	state                      protoimpl.MessageState `protogen:"open.v1"`
+	Status                     string                 `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
+	GuestChannelCredentialHash string                 `protobuf:"bytes,2,opt,name=guest_channel_credential_hash,json=guestChannelCredentialHash,proto3" json:"guest_channel_credential_hash,omitempty"`
+	Phases                     []*ComputerMountPhase  `protobuf:"bytes,3,rep,name=phases,proto3" json:"phases,omitempty"`
+	Target                     *ComputerMountTarget   `protobuf:"bytes,4,opt,name=target,proto3" json:"target,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
 }
 
 func (x *MaterializeComputerResponse) Reset() {
@@ -1481,9 +1481,9 @@ func (x *MaterializeComputerResponse) GetStatus() string {
 	return ""
 }
 
-func (x *MaterializeComputerResponse) GetGuestdChannelTokenHash() string {
+func (x *MaterializeComputerResponse) GetGuestChannelCredentialHash() string {
 	if x != nil {
-		return x.GuestdChannelTokenHash
+		return x.GuestChannelCredentialHash
 	}
 	return ""
 }
@@ -1886,7 +1886,7 @@ type ComputerCommandAuthority struct {
 	OperationId                string                 `protobuf:"bytes,1,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
 	ComputerInstanceId         string                 `protobuf:"bytes,2,opt,name=computer_instance_id,json=computerInstanceId,proto3" json:"computer_instance_id,omitempty"`
 	ComputerId                 string                 `protobuf:"bytes,3,opt,name=computer_id,json=computerId,proto3" json:"computer_id,omitempty"`
-	ChannelToken               string                 `protobuf:"bytes,4,opt,name=channel_token,json=channelToken,proto3" json:"channel_token,omitempty"`
+	ChannelCredential          string                 `protobuf:"bytes,4,opt,name=channel_credential,json=channelCredential,proto3" json:"channel_credential,omitempty"`
 	WriterGeneration           int64                  `protobuf:"varint,5,opt,name=writer_generation,json=writerGeneration,proto3" json:"writer_generation,omitempty"`
 	OperationExpiresAtUnixNano int64                  `protobuf:"varint,6,opt,name=operation_expires_at_unix_nano,json=operationExpiresAtUnixNano,proto3" json:"operation_expires_at_unix_nano,omitempty"`
 	RequestFingerprint         string                 `protobuf:"bytes,7,opt,name=request_fingerprint,json=requestFingerprint,proto3" json:"request_fingerprint,omitempty"`
@@ -1945,9 +1945,9 @@ func (x *ComputerCommandAuthority) GetComputerId() string {
 	return ""
 }
 
-func (x *ComputerCommandAuthority) GetChannelToken() string {
+func (x *ComputerCommandAuthority) GetChannelCredential() string {
 	if x != nil {
-		return x.ChannelToken
+		return x.ChannelCredential
 	}
 	return ""
 }
@@ -2645,7 +2645,7 @@ type ComputerRunCleanupRequest struct {
 	ComputerId         string                 `protobuf:"bytes,1,opt,name=computer_id,json=computerId,proto3" json:"computer_id,omitempty"`
 	ComputerInstanceId string                 `protobuf:"bytes,2,opt,name=computer_instance_id,json=computerInstanceId,proto3" json:"computer_instance_id,omitempty"`
 	WriterGeneration   int64                  `protobuf:"varint,3,opt,name=writer_generation,json=writerGeneration,proto3" json:"writer_generation,omitempty"`
-	ChannelToken       string                 `protobuf:"bytes,4,opt,name=channel_token,json=channelToken,proto3" json:"channel_token,omitempty"`
+	ChannelCredential  string                 `protobuf:"bytes,4,opt,name=channel_credential,json=channelCredential,proto3" json:"channel_credential,omitempty"`
 	RunId              string                 `protobuf:"bytes,5,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	AttemptNumber      uint32                 `protobuf:"varint,6,opt,name=attempt_number,json=attemptNumber,proto3" json:"attempt_number,omitempty"`
 	RunLeaseId         string                 `protobuf:"bytes,7,opt,name=run_lease_id,json=runLeaseId,proto3" json:"run_lease_id,omitempty"`
@@ -2704,9 +2704,9 @@ func (x *ComputerRunCleanupRequest) GetWriterGeneration() int64 {
 	return 0
 }
 
-func (x *ComputerRunCleanupRequest) GetChannelToken() string {
+func (x *ComputerRunCleanupRequest) GetChannelCredential() string {
 	if x != nil {
-		return x.ChannelToken
+		return x.ChannelCredential
 	}
 	return ""
 }
@@ -2788,13 +2788,13 @@ var File_computer_proto protoreflect.FileDescriptor
 
 const file_computer_proto_rawDesc = "" +
 	"\n" +
-	"\x0ecomputer.proto\x12\x11helmr.computer.v0\x1a\rprogram.proto\"\xcf\x03\n" +
+	"\x0ecomputer.proto\x12\x11helmr.computer.v0\x1a\rprogram.proto\"\xd9\x03\n" +
 	"\x19ComputerOperationEnvelope\x12!\n" +
 	"\foperation_id\x18\x01 \x01(\tR\voperationId\x120\n" +
 	"\x14computer_instance_id\x18\x02 \x01(\tR\x12computerInstanceId\x12\x1f\n" +
 	"\vcomputer_id\x18\x03 \x01(\tR\n" +
-	"computerId\x12#\n" +
-	"\rchannel_token\x18\x04 \x01(\tR\fchannelToken\x12+\n" +
+	"computerId\x12-\n" +
+	"\x12channel_credential\x18\x04 \x01(\tR\x11channelCredential\x12+\n" +
 	"\x11writer_generation\x18\x05 \x01(\x04R\x10writerGeneration\x12*\n" +
 	"\x11instance_lease_id\x18\x06 \x01(\tR\x0finstanceLeaseId\x12$\n" +
 	"\x0ewrite_lease_id\x18\a \x01(\tR\fwriteLeaseId\x12#\n" +
@@ -2826,10 +2826,10 @@ const file_computer_proto_rawDesc = "" +
 	" \x01(\x03R\rleaseSequence\x12+\n" +
 	"\x11writer_generation\x18\r \x01(\x03R\x10writerGeneration\x12/\n" +
 	"\x14expires_at_unix_nano\x18\x0f \x01(\x03R\x11expiresAtUnixNano\x12@\n" +
-	"\x1dbase_computer_disk_version_id\x18\x10 \x01(\tR\x19baseComputerDiskVersionId\"\xa7\x01\n" +
+	"\x1dbase_computer_disk_version_id\x18\x10 \x01(\tR\x19baseComputerDiskVersionId\"\xb1\x01\n" +
 	"\x14ComputerRunAuthority\x12?\n" +
-	"\x05fence\x18\x01 \x01(\v2).helmr.computer.v0.ComputerAuthorityFenceR\x05fence\x12#\n" +
-	"\rchannel_token\x18\x02 \x01(\tR\fchannelToken\x12)\n" +
+	"\x05fence\x18\x01 \x01(\v2).helmr.computer.v0.ComputerAuthorityFenceR\x05fence\x12-\n" +
+	"\x12channel_credential\x18\x02 \x01(\tR\x11channelCredential\x12)\n" +
 	"\x10write_capability\x18\x03 \x01(\tR\x0fwriteCapability\"\x9c\x01\n" +
 	"\x1dRenewComputerAuthorityRequest\x12C\n" +
 	"\bprevious\x18\x01 \x01(\v2'.helmr.computer.v0.ComputerRunAuthorityR\bprevious\x126\n" +
@@ -2910,10 +2910,10 @@ const file_computer_proto_rawDesc = "" +
 	"size_bytes\x18\x03 \x01(\x04R\tsizeBytes\x12\x1f\n" +
 	"\ventry_count\x18\x04 \x01(\rR\n" +
 	"entryCount\x12\x14\n" +
-	"\x05error\x18\x05 \x01(\tR\x05error\"\xef\x01\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\"\xf7\x01\n" +
 	"\x1bMaterializeComputerResponse\x12\x16\n" +
-	"\x06status\x18\x01 \x01(\tR\x06status\x129\n" +
-	"\x19guestd_channel_token_hash\x18\x02 \x01(\tR\x16guestdChannelTokenHash\x12=\n" +
+	"\x06status\x18\x01 \x01(\tR\x06status\x12A\n" +
+	"\x1dguest_channel_credential_hash\x18\x02 \x01(\tR\x1aguestChannelCredentialHash\x12=\n" +
 	"\x06phases\x18\x03 \x03(\v2%.helmr.computer.v0.ComputerMountPhaseR\x06phases\x12>\n" +
 	"\x06target\x18\x04 \x01(\v2&.helmr.computer.v0.ComputerMountTargetR\x06target\"\x8d\x01\n" +
 	"\x12RuntimeImageConfig\x12\x10\n" +
@@ -2946,13 +2946,13 @@ const file_computer_proto_rawDesc = "" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12%\n" +
 	"\x0estop_requested\x18\x02 \x01(\bR\rstopRequested\"W\n" +
 	"\x13ComputerMountTarget\x12@\n" +
-	"\x1dbase_computer_disk_version_id\x18\x01 \x01(\tR\x19baseComputerDiskVersionId\"\xd7\x02\n" +
+	"\x1dbase_computer_disk_version_id\x18\x01 \x01(\tR\x19baseComputerDiskVersionId\"\xe1\x02\n" +
 	"\x18ComputerCommandAuthority\x12!\n" +
 	"\foperation_id\x18\x01 \x01(\tR\voperationId\x120\n" +
 	"\x14computer_instance_id\x18\x02 \x01(\tR\x12computerInstanceId\x12\x1f\n" +
 	"\vcomputer_id\x18\x03 \x01(\tR\n" +
-	"computerId\x12#\n" +
-	"\rchannel_token\x18\x04 \x01(\tR\fchannelToken\x12+\n" +
+	"computerId\x12-\n" +
+	"\x12channel_credential\x18\x04 \x01(\tR\x11channelCredential\x12+\n" +
 	"\x11writer_generation\x18\x05 \x01(\x03R\x10writerGeneration\x12B\n" +
 	"\x1eoperation_expires_at_unix_nano\x18\x06 \x01(\x03R\x1aoperationExpiresAtUnixNano\x12/\n" +
 	"\x13request_fingerprint\x18\a \x01(\tR\x12requestFingerprint\"\xa1\x03\n" +
@@ -3001,13 +3001,13 @@ const file_computer_proto_rawDesc = "" +
 	"\x0fdesired_version\x18\x03 \x01(\x03R\x0edesiredVersion\x12?\n" +
 	"\x06grants\x18\x04 \x03(\v2'.helmr.computer.v0.ComputerRunAuthorityR\x06grants\"y\n" +
 	"#ComputerRestoreInstallationResponse\x12R\n" +
-	"\finstallation\x18\x01 \x01(\v2..helmr.computer.v0.ComputerRestoreInstallationR\finstallation\"\xa0\x02\n" +
+	"\finstallation\x18\x01 \x01(\v2..helmr.computer.v0.ComputerRestoreInstallationR\finstallation\"\xaa\x02\n" +
 	"\x19ComputerRunCleanupRequest\x12\x1f\n" +
 	"\vcomputer_id\x18\x01 \x01(\tR\n" +
 	"computerId\x120\n" +
 	"\x14computer_instance_id\x18\x02 \x01(\tR\x12computerInstanceId\x12+\n" +
-	"\x11writer_generation\x18\x03 \x01(\x03R\x10writerGeneration\x12#\n" +
-	"\rchannel_token\x18\x04 \x01(\tR\fchannelToken\x12\x15\n" +
+	"\x11writer_generation\x18\x03 \x01(\x03R\x10writerGeneration\x12-\n" +
+	"\x12channel_credential\x18\x04 \x01(\tR\x11channelCredential\x12\x15\n" +
 	"\x06run_id\x18\x05 \x01(\tR\x05runId\x12%\n" +
 	"\x0eattempt_number\x18\x06 \x01(\rR\rattemptNumber\x12 \n" +
 	"\frun_lease_id\x18\a \x01(\tR\n" +

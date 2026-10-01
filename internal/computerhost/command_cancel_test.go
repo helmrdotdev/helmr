@@ -115,7 +115,7 @@ func TestCommandCancellationDrainsOutputBeforeCompletion(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 			defer cancel()
 			session := &cancellationSession{canceled: make(chan struct{}), launchRead: make(chan struct{}), dropFirstAck: mode == "lost_ack"}
-			mount := workerapi.ComputerInstanceAssignment{OrgID: "org", ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 2, GuestdChannelToken: "token"}
+			mount := workerapi.ComputerInstanceAssignment{OrgID: "org", ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 2, GuestChannelCredential: "token"}
 			command := workerapi.ComputerCommand{CommandID: "target", ComputerID: mount.ComputerID, ComputerInstanceID: mount.ComputerInstanceID, WriterGeneration: 2, RequestFingerprint: "fingerprint", ExpiresAt: time.Now().Add(time.Minute), Request: json.RawMessage(`{"command":["sleep","30"]}`)}
 			client := &cancellationClient{command: command, grant: workerapi.ComputerCommandCancellation{CommandID: command.CommandID, ComputerID: command.ComputerID, ComputerInstanceID: command.ComputerInstanceID, WriterGeneration: command.WriterGeneration, RequestFingerprint: command.RequestFingerprint, ExpiresAt: command.ExpiresAt}, attached: mode == "attached", launchRead: session.launchRead, finish: cancel}
 			m := Server{PollEvery: time.Millisecond, ClaimErrorBackoff: time.Millisecond}

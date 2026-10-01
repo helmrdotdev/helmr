@@ -27,7 +27,7 @@ var runSideComputerHostSurface = map[string]bool{
 	"MountChannel.Channel":            true,
 	"MountChannel.ReleaseSource":      true,
 	"MountChannel.GrantProgramResume": true,
-	"MountChannel.ChannelToken":       true,
+	"MountChannel.ChannelCredential":  true,
 	"MountChannel.Mount":              true,
 	"ErrMountNotFound":                true,
 	"ErrControlTransport":             true,

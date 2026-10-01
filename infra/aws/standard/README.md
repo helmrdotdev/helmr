@@ -55,10 +55,10 @@ Required secret value formats:
 
 - `database_url`: Postgres connection URL for the `helmr_app` application role and `helmr` database with SSL required
 - `setup_token`: high-entropy string used only in self-hosted mode; read it from Secrets Manager for first organization setup
-- `worker_token_signing_key`, `auth_key`, `encryption_key`, `checkpoint_encryption_key`, `computer_fencing_key`, `token_credential_key`: base64-encoded 32-byte keys
+- `worker_host_credential_signing_key`, `auth_key`, `encryption_key`, `checkpoint_encryption_key`, `computer_fencing_key`, `token_credential_key`: base64-encoded 32-byte keys
 - `github_oauth_client_secret`: GitHub OAuth client secret
 
-The helper script generates `worker_token_signing_key`, `auth_key`, `encryption_key`,
+The helper script generates `worker_host_credential_signing_key`, `auth_key`, `encryption_key`,
 `computer_fencing_key`, `token_credential_key`, `checkpoint_encryption_key`, and `setup_token` locally and writes them
 directly to Secrets Manager:
 

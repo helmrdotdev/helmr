@@ -236,12 +236,12 @@ func TestRestoredProgramGrantOnlyChangesMatchingClaim(t *testing.T) {
 	registry.mu.Lock()
 	delete(registry.entries, entry.computerInstanceID)
 	entry.computerInstanceID = "restored-instance"
-	entry.channelToken = "restored-channel"
+	entry.channelCredential = "restored-channel"
 	entry.setWriterGeneration(4)
 	registry.entries[entry.computerInstanceID] = entry
 	registry.mu.Unlock()
 	grant := proto.Clone(first).(*computerv0.ComputerRunAuthority)
-	grant.ChannelToken = entry.channelToken
+	grant.ChannelCredential = entry.channelCredential
 	grant.Fence.ComputerInstanceId = entry.computerInstanceID
 	grant.Fence.WriterGeneration = 4
 	grant.Fence.RunLeaseId = "restored-lease"

@@ -74,7 +74,7 @@ random_base64url_32() {
   openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n'
 }
 
-put_secret worker_token_signing_key "$(random_base64_32)"
+put_secret worker_host_credential_signing_key "$(random_base64_32)"
 put_secret auth_key "$(random_base64_32)"
 put_secret encryption_key "$(random_base64_32)"
 put_secret computer_fencing_key "$(random_base64_32)"

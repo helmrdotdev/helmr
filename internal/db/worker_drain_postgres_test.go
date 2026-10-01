@@ -22,13 +22,13 @@ func TestWorkerDrainPublishesExactTerminalReceiptAndReplays(t *testing.T) {
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
 	workerID := insertActiveWorkerWithObservation(t, ctx, pool, time.Now().UTC())
-	credentialID := uuid.NewV7()
+	hostSecretID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, pool, `
-		INSERT INTO worker_host_credentials (
+		INSERT INTO worker_host_secrets (
 			id, worker_group_id, worker_host_id, key_prefix, claim_version,
 			secret_hash
 		) VALUES ($1, $2, $3, $4, 1, $5)
-	`, credentialID, dbtest.DefaultWorkerGroupID, workerID, uuid.New().String(), []byte("drain-secret"))
+	`, hostSecretID, dbtest.DefaultWorkerGroupID, workerID, uuid.New().String(), []byte("drain-secret"))
 
 	draining, err := q.DrainWorkerHost(ctx, db.DrainWorkerHostParams{
 		ID:                   pgvalue.UUID(workerID),
@@ -72,9 +72,9 @@ func TestWorkerDrainPublishesExactTerminalReceiptAndReplays(t *testing.T) {
 	var revoked bool
 	if err := pool.QueryRow(ctx, `
 		SELECT revoked_at IS NOT NULL
-		  FROM worker_host_credentials
+		  FROM worker_host_secrets
 		 WHERE id = $1
-	`, credentialID).Scan(&revoked); err != nil {
+	`, hostSecretID).Scan(&revoked); err != nil {
 		t.Fatal(err)
 	}
 	if !revoked {
@@ -346,13 +346,13 @@ func TestWorkerFencePublishesExactLostReceiptAndReplays(t *testing.T) {
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
 	workerID := insertActiveWorkerWithObservation(t, ctx, pool, time.Now().UTC())
-	credentialID := uuid.NewV7()
+	hostSecretID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, pool, `
-		INSERT INTO worker_host_credentials (
+		INSERT INTO worker_host_secrets (
 			id, worker_group_id, worker_host_id, key_prefix, claim_version,
 			secret_hash
 		) VALUES ($1, $2, $3, $4, 1, $5)
-	`, credentialID, dbtest.DefaultWorkerGroupID, workerID, uuid.New().String(), []byte("fence-secret"))
+	`, hostSecretID, dbtest.DefaultWorkerGroupID, workerID, uuid.New().String(), []byte("fence-secret"))
 
 	params := db.FenceWorkerHostParams{
 		ID:                   pgvalue.UUID(workerID),
@@ -381,7 +381,7 @@ func TestWorkerFencePublishesExactLostReceiptAndReplays(t *testing.T) {
 	}
 
 	if _, err := q.AuthorizeWorkerFenceReplay(ctx, db.AuthorizeWorkerFenceReplayParams{
-		CredentialID: pgvalue.UUID(credentialID), ClaimVersion: 1,
+		HostSecretID: pgvalue.UUID(hostSecretID), ClaimVersion: 1,
 		WorkerEpoch: pgtype.Int8{Int64: 1, Valid: true},
 	}); err != nil {
 		t.Fatalf("authorize exact fence replay: %v", err)
@@ -398,7 +398,7 @@ func TestWorkerDrainRequiresEveryPriorEpochPhysicalScopeReconciled(t *testing.T)
 				t.Fatal(err)
 			}
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET current_epoch=2 WHERE id=$1`, f.WorkerID)
-			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_host_credentials(id,worker_group_id,worker_host_id,key_prefix,claim_version,secret_hash) VALUES($1,$2,$3,$4,1,$5)`, uuid.NewV7(), runtest.WorkerGroupID, f.WorkerID, uuid.NewV7().String(), []byte("drain-test"))
+			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_host_secrets(id,worker_group_id,worker_host_id,key_prefix,claim_version,secret_hash) VALUES($1,$2,$3,$4,1,$5)`, uuid.NewV7(), runtest.WorkerGroupID, f.WorkerID, uuid.NewV7().String(), []byte("drain-test"))
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET status='cancelled',terminal_at=now(),terminal_reason_code='cancelled' WHERE id=$1`, work.LeaseID)
 			if blocker != "run" {
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET process_reconciled_at=now() WHERE id=$1`, work.LeaseID)

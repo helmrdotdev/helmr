@@ -44,7 +44,7 @@ func runDrain(log *slog.Logger, args []string) error {
 	if workDir == "" {
 		workDir = defaultWorkDir()
 	}
-	workerCredential, err := resolveWorkerControlPlaneCredential(cfg, workDir)
+	workerHostSecret, err := resolveWorkerControlPlaneHostSecret(cfg, workDir)
 	if err != nil {
 		return err
 	}
@@ -52,7 +52,7 @@ func runDrain(log *slog.Logger, args []string) error {
 	if err != nil {
 		return err
 	}
-	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerCredential.WorkerHostID, workerCredential.WorkerHostSecret), workerclient.WithService(identity.ServiceID))
+	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerHostSecret.WorkerHostID, workerHostSecret.WorkerHostSecret), workerclient.WithService(identity.ServiceID))
 	if err != nil {
 		return fmt.Errorf("configure control client: %w", err)
 	}
@@ -65,12 +65,12 @@ func runDrain(log *slog.Logger, args []string) error {
 		return nil
 	}
 	// The supervisor persists this receipt only after Control Plane confirms
-	// termination_ready. That transition revokes credentials, so polling the
+	// termination_ready. That transition revokes host secrets, so polling the
 	// authenticated status endpoint cannot reliably observe it.
-	if err := waitForDrainCompleteMarker(ctx, workDir, workerCredential.WorkerHostID, *timeout, cfg.PollEvery); err != nil {
+	if err := waitForDrainCompleteMarker(ctx, workDir, workerHostSecret.WorkerHostID, *timeout, cfg.PollEvery); err != nil {
 		return err
 	}
-	log.Info("worker drain completed", "worker_host_id", workerCredential.WorkerHostID)
+	log.Info("worker drain completed", "worker_host_id", workerHostSecret.WorkerHostID)
 	return nil
 }
 
@@ -154,7 +154,7 @@ func workerControlPlaneClient() (*workerclient.Client, error) {
 	if workDir == "" {
 		workDir = defaultWorkDir()
 	}
-	workerCredential, err := resolveWorkerControlPlaneCredential(cfg, workDir)
+	workerHostSecret, err := resolveWorkerControlPlaneHostSecret(cfg, workDir)
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +162,7 @@ func workerControlPlaneClient() (*workerclient.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerCredential.WorkerHostID, workerCredential.WorkerHostSecret), workerclient.WithService(identity.ServiceID))
+	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerHostSecret.WorkerHostID, workerHostSecret.WorkerHostSecret), workerclient.WithService(identity.ServiceID))
 	if err != nil {
 		return nil, fmt.Errorf("configure control client: %w", err)
 	}
