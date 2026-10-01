@@ -63,7 +63,7 @@ func ApplyResume(ctx context.Context, txb db.TxBeginner, request ResumeRequest) 
 func ApplyCancel(ctx context.Context, txb db.TxBeginner, request ControlRequest) (ControlReceipt, error) {
 	var receipt ControlReceipt
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
-		graph, _, err := lockControlGraph(ctx, tx, request.Target)
+		graph, err := lockControlGraph(ctx, tx, request.Target)
 		if err != nil {
 			return err
 		}
@@ -82,7 +82,7 @@ func ApplyCancel(ctx context.Context, txb db.TxBeginner, request ControlRequest)
 func ApplyInterrupt(ctx context.Context, txb db.TxBeginner, request InterruptRequest) (ControlReceipt, error) {
 	var receipt InterruptReceipt
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
-		graph, _, err := lockControlGraph(ctx, tx, request.Target)
+		graph, err := lockControlGraph(ctx, tx, request.Target)
 		if err != nil {
 			return err
 		}
@@ -99,6 +99,11 @@ func ApplyInterrupt(ctx context.Context, txb db.TxBeginner, request InterruptReq
 	return result, err
 }
 
+// noControlGraph is the control graph of a Session with no current Run. Cancel
+// and InterruptTurn request a held execution's stop only for a current Run,
+// so they never use it.
+var noControlGraph run.OwnedFinalization
+
 // lockControlGraph acquires, before any Session or operation claim, the
 // owned graph of the Session's current Run, so a control that may retire a
 // parked execution never acquires descendant Run locks after it entered the
@@ -107,42 +112,42 @@ func ApplyInterrupt(ctx context.Context, txb db.TxBeginner, request InterruptReq
 // again so a concurrent replacement cannot inherit the graph's authority.
 // With no current Run, or when a concurrent control retired the Run while
 // the graph was locking, it locks the Session before its Computer, so a
-// resume cannot admit a new Run before the control, and reports no graph:
-// locked is false and the graph is the zero value. A Session whose current
-// Run or generation changed is ErrAuthority.
-func lockControlGraph(ctx context.Context, tx pgx.Tx, target Target) (graph run.OwnedFinalization, locked bool, err error) {
+// resume cannot admit a new Run before the control, and returns
+// noControlGraph. A Session whose current Run or generation changed is
+// ErrAuthority.
+func lockControlGraph(ctx context.Context, tx pgx.Tx, target Target) (run.OwnedFinalization, error) {
 	q := db.New(tx)
 	actor, err := q.GetActor(ctx, db.GetActorParams{EnvironmentID: pgvalue.UUID(target.EnvironmentID), ID: pgvalue.UUID(target.SessionID)})
 	if err != nil {
-		return run.OwnedFinalization{}, false, err
+		return noControlGraph, err
 	}
 	if !actor.CurrentRunID.Valid {
 		current, err := q.LockSessionTurnAuthority(ctx, db.LockSessionTurnAuthorityParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
 		if err != nil {
-			return run.OwnedFinalization{}, false, err
+			return noControlGraph, err
 		}
 		if current.CurrentRunID.Valid || current.RunGeneration != actor.RunGeneration {
-			return run.OwnedFinalization{}, false, ErrAuthority
+			return noControlGraph, ErrAuthority
 		}
-		return run.OwnedFinalization{}, false, nil
+		return noControlGraph, nil
 	}
-	graph, err = run.LockOwnedFinalizationWithSecrets(ctx, tx, run.SessionRunSecrets{EnvironmentID: target.EnvironmentID, RunID: pgvalue.MustUUIDValue(actor.CurrentRunID), ComputerID: pgvalue.MustUUIDValue(actor.ComputerID)})
+	graph, err := run.LockOwnedFinalizationWithSecrets(ctx, tx, run.SessionRunSecrets{EnvironmentID: target.EnvironmentID, RunID: pgvalue.MustUUIDValue(actor.CurrentRunID), ComputerID: pgvalue.MustUUIDValue(actor.ComputerID)})
 	if err != nil {
-		return graph, true, err
+		return graph, err
 	}
 	current, err := q.GetActor(ctx, db.GetActorParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
 	if err == nil && !current.CurrentRunID.Valid {
 		current, err = q.LockSessionTurnAuthority(ctx, db.LockSessionTurnAuthorityParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
 		if err != nil {
-			return graph, true, err
+			return graph, err
 		}
 		if current.CurrentRunID.Valid {
-			return graph, true, ErrAuthority
+			return graph, ErrAuthority
 		}
-		return run.OwnedFinalization{}, false, nil
+		return noControlGraph, nil
 	}
 	if err == nil && (current.CurrentRunID != actor.CurrentRunID || current.RunGeneration != actor.RunGeneration) {
 		err = ErrAuthority
 	}
-	return graph, true, err
+	return graph, err
 }

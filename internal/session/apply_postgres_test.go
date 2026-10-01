@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestApplyCancelBeforeStart(t *testing.T) {
@@ -172,24 +175,47 @@ SELECT sessions.next_input_sequence,
 	}
 }
 
-func TestLockControlGraphReportsWhetherItLockedAGraph(t *testing.T) {
+// The control graph locks the current Run's graph, or the Session itself when
+// there is no current Run.
+func TestLockControlGraphLocksTheCurrentRunOrTheSession(t *testing.T) {
 	f := sessiontest.New(t, 1)
 	started, err := Start(t.Context(), f.Pool, nil, startRequest(f, 0, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
 	target := Target{EnvironmentID: f.EnvironmentID, SessionID: started.SessionID}
-	lock := func() (bool, error) {
+	held := func(query string, id uuid.UUID) bool {
+		t.Helper()
+		_, err := f.Pool.Exec(t.Context(), query, id)
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "55P03" {
+			return true
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return false
+	}
+	const runLocked = `SELECT 1 FROM runs WHERE id=$1 FOR UPDATE NOWAIT`
+	const sessionLocked = `SELECT 1 FROM sessions WHERE id=$1 FOR UPDATE NOWAIT`
+	lock := func(check func(graph run.OwnedFinalization)) error {
 		tx, err := f.Pool.Begin(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer tx.Rollback(context.Background())
-		_, locked, err := lockControlGraph(t.Context(), tx, target)
-		return locked, err
+		graph, err := lockControlGraph(t.Context(), tx, target)
+		if err == nil {
+			check(graph)
+		}
+		return err
 	}
-	if locked, err := lock(); err != nil || !locked {
-		t.Fatalf("current Run graph locked=%v err=%v", locked, err)
+	if err := lock(func(graph run.OwnedFinalization) {
+		if reflect.DeepEqual(graph, noControlGraph) || !held(runLocked, started.BootRunID) {
+			t.Fatal("current Run graph was not locked")
+		}
+	}); err != nil {
+		t.Fatal(err)
 	}
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
@@ -203,11 +229,15 @@ func TestLockControlGraphReportsWhetherItLockedAGraph(t *testing.T) {
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if locked, err := lock(); err != nil || locked {
-		t.Fatalf("no current Run graph locked=%v err=%v", locked, err)
+	if err := lock(func(graph run.OwnedFinalization) {
+		if !reflect.DeepEqual(graph, noControlGraph) || !held(sessionLocked, started.SessionID) || held(runLocked, started.BootRunID) {
+			t.Fatal("Session without a current Run was not locked alone")
+		}
+	}); err != nil {
+		t.Fatal(err)
 	}
 	target.SessionID = uuid.NewV7()
-	if locked, err := lock(); err == nil || locked {
-		t.Fatalf("missing Session locked=%v err=%v", locked, err)
+	if err := lock(func(run.OwnedFinalization) {}); err == nil {
+		t.Fatal("missing Session locked a graph")
 	}
 }

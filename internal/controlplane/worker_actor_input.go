@@ -40,20 +40,8 @@ func authorizeWorkerSessionOperation(ctx context.Context, tx pgx.Tx, worker work
 	if err = secrets.ValidateSourceDelivery(ctx); err != nil {
 		return run.LiveSource{}, err
 	}
-	actor := authority.Session()
-	if actor.ID.Valid {
-		if actor.DispatchHoldID.Valid {
-			return run.LiveSource{}, &session.OperationError{Code: "session_held"}
-		}
-		if actor.ActiveTurnID.Valid {
-			turn, err := db.New(tx).GetSessionTurn(ctx, db.GetSessionTurnParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: actor.ActiveTurnID})
-			if err != nil {
-				return run.LiveSource{}, err
-			}
-			if turn.SettlementStartedAt.Valid {
-				return run.LiveSource{}, &session.OperationError{Code: "turn_unsettled"}
-			}
-		}
+	if err = session.CheckSourceSession(ctx, db.New(tx), authority.Session()); err != nil {
+		return run.LiveSource{}, err
 	}
 	return source, nil
 }

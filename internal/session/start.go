@@ -331,8 +331,8 @@ func start(ctx context.Context, txb db.TxBeginner, claimRequest idempotency.Requ
 
 // authorizeStartSource locks the source Computer's and the start Computer's
 // Secrets, the execution fence with the start Computer and the source
-// attempt's delivery Secrets, then rejects a source Session that is held or
-// is settling its active Turn.
+// attempt's delivery Secrets, then checks the source Session as
+// CheckSourceSession does.
 func authorizeStartSource(ctx context.Context, tx pgx.Tx, fence run.ExecutionFence, computerID pgtype.UUID) error {
 	secrets, err := run.LockSourceSecretsForComputer(ctx, tx, fence, computerID)
 	if err != nil {
@@ -348,15 +348,22 @@ func authorizeStartSource(ctx context.Context, tx pgx.Tx, fence run.ExecutionFen
 	if err = secrets.ValidateSourceDelivery(ctx); err != nil {
 		return err
 	}
-	actor := authority.Session()
-	if !actor.ID.Valid {
+	return CheckSourceSession(ctx, db.New(tx), authority.Session())
+}
+
+// CheckSourceSession admits a worker operation from a source Run's Session:
+// a held Session is rejected with session_held, and then a Session whose
+// active Turn has begun settlement with turn_unsettled. A source Run without
+// a Session passes.
+func CheckSourceSession(ctx context.Context, q db.Querier, source db.Session) error {
+	if !source.ID.Valid {
 		return nil
 	}
-	if actor.DispatchHoldID.Valid {
+	if source.DispatchHoldID.Valid {
 		return &OperationError{Code: "session_held"}
 	}
-	if actor.ActiveTurnID.Valid {
-		turn, err := db.New(tx).GetSessionTurn(ctx, db.GetSessionTurnParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: actor.ActiveTurnID})
+	if source.ActiveTurnID.Valid {
+		turn, err := q.GetSessionTurn(ctx, db.GetSessionTurnParams{EnvironmentID: source.EnvironmentID, SessionID: source.ID, ID: source.ActiveTurnID})
 		if err != nil {
 			return err
 		}

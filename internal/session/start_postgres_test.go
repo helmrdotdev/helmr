@@ -303,12 +303,21 @@ type runSourcedStart struct {
 	work     runtest.RunLease
 	fence    run.ExecutionFence
 	computer uuid.UUID
+	session  uuid.UUID
 }
 
-func newRunSourcedStart(t *testing.T) runSourcedStart {
+// newRunSourcedStart enters a source Task Run, or with actor a source Actor
+// Run with a Session.
+func newRunSourcedStart(t *testing.T, actor bool) runSourcedStart {
 	t.Helper()
 	f := runtest.New(t)
 	work := f.AddRunLease(t, "assigned", time.Now())
+	kind, declaredID := "task", "test-task"
+	var sessionID uuid.UUID
+	if actor {
+		sessionID = f.ConvertToActor(t, t.Context(), work, `{"enabled":false}`)
+		kind, declaredID = "actor", "test-actor"
+	}
 	fence := run.ExecutionFence{LeaseID: pgvalue.UUID(work.LeaseID), LeaseSequence: 1, WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerEpoch: 1}
 	if err := f.Pool.QueryRow(t.Context(), `SELECT h.claim_version,g.claim_version FROM worker_hosts h JOIN worker_groups g ON g.id=h.worker_group_id WHERE h.id=$1`, f.WorkerID).Scan(&fence.HostClaimVersion, &fence.GroupClaimVersion); err != nil {
 		t.Fatal(err)
@@ -329,7 +338,7 @@ func newRunSourcedStart(t *testing.T) runSourcedStart {
 	}
 	transact(func(tx pgx.Tx) error { _, err := run.ClaimExecution(t.Context(), tx, fence); return err })
 	transact(func(tx pgx.Tx) error { _, err := run.StartExecution(t.Context(), tx, fence); return err })
-	transact(func(tx pgx.Tx) error { return run.EnterExecution(t.Context(), tx, fence, "task", "test-task") })
+	transact(func(tx pgx.Tx) error { return run.EnterExecution(t.Context(), tx, fence, kind, declaredID) })
 	manifest := []byte(`{"idleTimeoutMs":30000,"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`)
 	_, digest, err := definition.CanonicalManifestAndDigest(manifest)
 	if err != nil {
@@ -345,7 +354,7 @@ func newRunSourcedStart(t *testing.T) runSourcedStart {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT computer_id FROM runs WHERE id = $1`, work.RunID).Scan(&computerID); err != nil {
 		t.Fatal(err)
 	}
-	return runSourcedStart{Fixture: f, work: work, fence: fence, computer: computerID}
+	return runSourcedStart{Fixture: f, work: work, fence: fence, computer: computerID, session: sessionID}
 }
 
 func (s runSourcedStart) request(computerID uuid.UUID) StartRequest {
@@ -355,7 +364,7 @@ func (s runSourcedStart) request(computerID uuid.UUID) StartRequest {
 // A run-sourced start authorizes its live source with the start Computer
 // addressed, both when it admits a new Session and when it replays one.
 func TestStartFromRunAuthorizesTheSource(t *testing.T) {
-	s := newRunSourcedStart(t)
+	s := newRunSourcedStart(t, false)
 	request := s.request(s.computer)
 	claim := startClaim(t, request, "run-sourced")
 	created, err := StartFromRun(t.Context(), s.Pool, s.fence, claim, request)
@@ -384,5 +393,102 @@ func TestStartFromRunAuthorizesTheSource(t *testing.T) {
 	var sessions int
 	if err := s.Pool.QueryRow(t.Context(), `SELECT count(*) FROM sessions`).Scan(&sessions); err != nil || sessions != 1 {
 		t.Fatalf("sessions = %d, %v", sessions, err)
+	}
+}
+
+// A run-sourced start rejects a held source Session, and then a source
+// Session whose active Turn has begun settlement, without admitting.
+func TestStartFromRunChecksTheSourceSession(t *testing.T) {
+	s := newRunSourcedStart(t, true)
+	request := s.request(s.computer)
+	dbtest.MustExec(t, t.Context(), s.Pool, `UPDATE sessions SET dispatch_hold_id=$2,dispatch_hold_run_id=current_run_id,dispatch_hold_attempt_number=1,dispatch_hold_run_generation=run_generation,dispatch_hold_reason='interrupt_requested' WHERE id=$1`, s.session, uuid.NewV7())
+	var operation *OperationError
+	if _, err := StartFromRun(t.Context(), s.Pool, s.fence, nil, request); !errors.As(err, &operation) || operation.Code != "session_held" {
+		t.Fatalf("held source = %v", err)
+	}
+	dbtest.MustExec(t, t.Context(), s.Pool, `UPDATE sessions SET dispatch_hold_id=NULL,dispatch_hold_run_id=NULL,dispatch_hold_attempt_number=NULL,dispatch_hold_run_generation=NULL,dispatch_hold_reason=NULL WHERE id=$1`, s.session)
+	turnID := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), s.Pool, `INSERT INTO session_turns (id,environment_id,session_id,sequence,data,status,run_generation,run_id,attempt_number,ready_run_lease_id,settlement_started_at) SELECT $1,environment_id,id,2,'{}','running',run_generation,current_run_id,1,$3,clock_timestamp() FROM sessions WHERE id=$2`, turnID, s.session, s.work.LeaseID)
+	dbtest.MustExec(t, t.Context(), s.Pool, `UPDATE sessions SET active_turn_id=$2 WHERE id=$1`, s.session, turnID)
+	if _, err := StartFromRun(t.Context(), s.Pool, s.fence, nil, request); !errors.As(err, &operation) || operation.Code != "turn_unsettled" {
+		t.Fatalf("settling source Turn = %v", err)
+	}
+	dbtest.MustExec(t, t.Context(), s.Pool, `UPDATE session_turns SET settlement_started_at=NULL WHERE id=$1`, turnID)
+	if _, err := StartFromRun(t.Context(), s.Pool, s.fence, nil, request); err != nil {
+		t.Fatalf("unsettled source Turn = %v", err)
+	}
+	var sessions int
+	if err := s.Pool.QueryRow(t.Context(), `SELECT count(*) FROM sessions WHERE actor_declared_id='starter'`).Scan(&sessions); err != nil || sessions != 1 {
+		t.Fatalf("started Sessions = %d, %v", sessions, err)
+	}
+}
+
+// A run-sourced start authorizes its source while it holds the environment
+// lock and before it locks the start Computer: with its authorization held at
+// the worker host lock, the start Computer stays unlocked and a concurrent
+// public start waits for the environment.
+func TestStartFromRunAuthorizesUnderTheEnvironmentLock(t *testing.T) {
+	s := newRunSourcedStart(t, false)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	blocker, err := s.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocker.Rollback(context.Background())
+	var blockerPID int
+	if err := blocker.QueryRow(ctx, `SELECT pg_backend_pid() FROM worker_hosts WHERE id=$1 FOR UPDATE`, s.WorkerID).Scan(&blockerPID); err != nil {
+		t.Fatal(err)
+	}
+	workerDone := make(chan error, 1)
+	go func() {
+		_, err := StartFromRun(ctx, s.Pool, s.fence, nil, s.request(s.computer))
+		workerDone <- err
+	}()
+	workerPID := waitForLockWait(ctx, t, s.Pool, blockerPID, "", workerDone)
+	if _, err := s.Pool.Exec(ctx, `SELECT 1 FROM computers WHERE id=$1 FOR UPDATE NOWAIT`, s.computer); err != nil {
+		t.Fatalf("start Computer locked before source authorization: %v", err)
+	}
+	publicDone := make(chan error, 1)
+	go func() {
+		_, err := Start(ctx, s.Pool, nil, s.request(s.computer))
+		publicDone <- err
+	}()
+	waitForLockWait(ctx, t, s.Pool, workerPID, "LockActorStartDeploymentAuthority", publicDone)
+	if err := blocker.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, done := range []<-chan error{workerDone, publicDone} {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// waitForLockWait returns the backend that waits for blocker, running a query
+// that names query when it is set, and fails if the waiting operation
+// finishes first.
+func waitForLockWait(ctx context.Context, t *testing.T, pool interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, blocker int, query string, done <-chan error) int {
+	t.Helper()
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var pid int
+		err := pool.QueryRow(ctx, `SELECT COALESCE(max(pid),0) FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)) AND query LIKE '%'||$2||'%'`, blocker, query).Scan(&pid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pid != 0 {
+			return pid
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("operation finished before it waited on %d for %q: %v", blocker, query, err)
+		case <-ticker.C:
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
 	}
 }
