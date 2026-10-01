@@ -101,6 +101,12 @@ quickstart and standard roots round-trip this current sealed record.
 Computer storage requires explicit `computer_save_interval_seconds` and
 `computer_devices`. The interval schedules background saves; it is not an RPO or
 mandatory Turn-completion barrier. The device list is an exclusive NBD allowlist.
+Temporary API failures before save admission retry the same operation while its
+writer authority remains valid. Each request is bounded, and writer expiry or
+quiescing stops the retry. A continuing failure logs its elapsed time and attempt
+count once per minute; successful writer renewal can keep that retry alive.
+Capture and post-capture settlement failures retain
+their existing preservation-failure handling.
 Bootstrap loads NBD with enough device indices, persists that module configuration
 across reboot, and rejects connected devices before starting the Worker. Supply
 sufficient devices for concurrent Computers and preparation; they are not shared
