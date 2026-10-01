@@ -29,7 +29,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -163,56 +162,11 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure token reconciliation delivery: %w", err)
 	}
-	secretRevocationReconciler, err := secret.NewRevocationReconciler(
-		runDispatchPool,
-		// Temporary: secret stops revoked Commands itself and reaches the
-		// command owner through this callback, because command imports
-		// secret. The revocation fan-out moves to its outer owners in step 9.
-		secret.ComputerCommandRecoverer(func(
-			ctx context.Context,
-			candidate secret.ComputerCommandCandidate,
-		) error {
-			err := command.Recover(ctx, runDispatchPool, command.RecoveryCandidate{
-				OrgID:            uuid.UUID(candidate.OrgID.Bytes),
-				CommandID:        uuid.UUID(candidate.CommandID.Bytes),
-				ComputerID:       uuid.UUID(candidate.ComputerID.Bytes),
-				ExpectedRevision: candidate.ExpectedRevision,
-			})
-			if errors.Is(err, command.ErrChanged) {
-				return nil
-			}
-			return err
-		}),
-		secret.RunFinalizer(func(
-			ctx context.Context,
-			tx pgx.Tx,
-			finalization secret.RunFinalization,
-		) error {
-			graph, err := run.LockOwnedFinalization(
-				ctx,
-				tx,
-				run.OwnedFinalizationRequest{
-					OrgID:         finalization.OrgID,
-					ProjectID:     finalization.ProjectID,
-					EnvironmentID: finalization.EnvironmentID,
-					RunID:         finalization.RunID,
-				},
-			)
-			if err != nil {
-				return err
-			}
-			_, err = graph.FailCurrentForSecretRevocation(ctx)
-			return err
-		}),
-	)
-	if err != nil {
-		return fmt.Errorf("configure secret revocation reconciler: %w", err)
-	}
 	secretRevocationDelivery, err :=
 		secret.NewRevocationDeliveryWorker(
 			log,
 			queries,
-			secretRevocationReconciler.ReconcileBatch,
+			reconcileSecretRevocation(runDispatchPool),
 		)
 	if err != nil {
 		return fmt.Errorf("configure secret revocation delivery: %w", err)
@@ -327,4 +281,34 @@ func newDispatchPool(ctx context.Context, databaseURL string, maxConns int32) (*
 		return nil, err
 	}
 	return pool, nil
+}
+
+// reconcileSecretRevocation fails the Runs a Secret revocation affects and,
+// with the batch limit they leave, stops the affected Commands. It returns
+// the candidates examined.
+func reconcileSecretRevocation(database db.TxDB) secret.RevocationReconcileBatch {
+	return func(
+		ctx context.Context,
+		environmentID uuid.UUID,
+		secretID uuid.UUID,
+		revocationGeneration int64,
+		limit int32,
+	) (int, error) {
+		revocation := secret.Revocation{
+			EnvironmentID: environmentID,
+			SecretID:      secretID,
+			Generation:    revocationGeneration,
+		}
+		runs, err := run.FailSecretRevokedRuns(ctx, database, revocation, limit)
+		if err != nil || runs >= int(limit) {
+			return runs, err
+		}
+		commands, err := command.StopSecretRevokedCommands(
+			ctx,
+			database,
+			revocation,
+			limit-int32(runs),
+		)
+		return runs + commands, err
+	}
 }
