@@ -1,8 +1,11 @@
 """Exercise real archive validation without root, cloud access or host mutation."""
+import base64
+import gzip
 import hashlib
 import io
 import json
 from pathlib import Path
+import re
 import subprocess
 import tarfile
 import tempfile
@@ -109,6 +112,35 @@ class InstallArtifacts(unittest.TestCase):
         self.assertIn(digest(INSTALL.read_bytes()), rendered)
         result = subprocess.run(['bash', '-n'], input=rendered, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def image_command(self, script):
+        # Evaluate the exact production command with an inert build script.
+        source = (INSTALL.parent.parent / 'main.tf').read_text()
+        match = re.search(r'commands = \[<<-SCRIPT\n(.*?)\n\s*SCRIPT', source, re.S)
+        self.assertIsNotNone(match)
+        (self.root / 'main.tf').write_text(
+            'locals {\n build_script = ' + json.dumps(script) +
+            '\n command = <<-SCRIPT\n' + match.group(1) + '\nSCRIPT\n}\n')
+        result = subprocess.run(['tofu', 'console', '-no-color'], cwd=self.root,
+                                input='jsonencode(local.command)\n',
+                                text=True, capture_output=True, check=True)
+        return json.loads(json.loads(result.stdout))
+
+    def test_image_command_isolates_script_from_child_stdin(self):
+        command = self.image_command('set -eu\ncat >/dev/null\nprintf "completed\\n"\n')
+        result = subprocess.run(['bash', '-c', command], text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, 'completed\n')
+
+    def test_image_command_rejects_corrupt_stream_before_execution(self):
+        script = 'printf "must-not-execute\\n"\n'
+        command = self.image_command(script)
+        # Retain the entire decoded script but corrupt the gzip trailer.
+        truncated = base64.b64encode(gzip.compress(script.encode())[:-4]).decode()
+        command = re.sub(r"printf '%s' '[^']+'", "printf '%s' '" + truncated + "'", command)
+        result = subprocess.run(['bash', '-c', command], text=True, capture_output=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('must-not-execute', result.stdout)
 
     def test_transport_digest_mismatch(self):
         self.assertNotEqual(self.verify(host_sha='0' * 64).returncode, 0)

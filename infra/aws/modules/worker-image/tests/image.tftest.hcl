@@ -59,12 +59,12 @@ run "image_installs_verified_worker_artifacts" {
       strcontains(aws_imagebuilder_component.worker.data, "root:root:755") &&
       strcontains(aws_imagebuilder_component.worker.data, "gpgv") &&
       strcontains(aws_imagebuilder_component.worker.data, "mksquashfs") &&
-      strcontains(aws_imagebuilder_component.worker.data, "cloud-guest-utils") &&
+      strcontains(local.build_script, "cloud-guest-utils") &&
       strcontains(aws_imagebuilder_component.worker.data, "command -v blockdev fallocate findmnt growpart losetup lsblk mountpoint blkid") &&
       strcontains(aws_imagebuilder_component.worker.data, "readlink resize2fs >/dev/null") &&
-      strcontains(aws_imagebuilder_component.worker.data, "aws_cli_version=2.31.39") &&
-      strcontains(aws_imagebuilder_component.worker.data, "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-") &&
-      strcontains(aws_imagebuilder_component.worker.data, "5a2ad4e63f8f687d735f8e7a132b3622a1cf08fa884c53e3423c9b83a3c0d663")
+      strcontains(local.build_script, "aws_cli_version=2.31.39") &&
+      strcontains(local.build_script, "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-") &&
+      strcontains(local.build_script, "5a2ad4e63f8f687d735f8e7a132b3622a1cf08fa884c53e3423c9b83a3c0d663")
     )
     error_message = "Worker AMI must contain the execution host and runtime verification tools."
   }
@@ -72,7 +72,7 @@ run "image_installs_verified_worker_artifacts" {
   assert {
     condition = (
       strcontains(aws_imagebuilder_component.worker.data, "/usr/local/sbin/helmr-prepare-root") &&
-      strcontains(aws_imagebuilder_component.worker.data, "usage: helmr-prepare-root EXPECTED_DEVICE_BYTES") &&
+      strcontains(local.build_script, "usage: helmr-prepare-root EXPECTED_DEVICE_BYTES") &&
       strcontains(aws_imagebuilder_component.worker.data, filesha256("${path.module}/templates/prepare-root.sh")) &&
       strcontains(aws_imagebuilder_component.worker.data, "stat -c %a /usr/local/sbin/helmr-prepare-root") &&
       strcontains(local.build_script, "<<'HELMR_PREPARE_ROOT'\n${file("${path.module}/templates/prepare-root.sh")}HELMR_PREPARE_ROOT") &&
@@ -85,13 +85,13 @@ run "image_installs_verified_worker_artifacts" {
 
   assert {
     condition = (
-      strcontains(aws_imagebuilder_component.worker.data, "s3://helmr-test/runtime/worker-runtime.tar") &&
-      strcontains(aws_imagebuilder_component.worker.data, "s3://helmr-test/host/worker-host.tar") &&
-      strcontains(aws_imagebuilder_component.worker.data, "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd") &&
+      strcontains(local.build_script, "s3://helmr-test/runtime/worker-runtime.tar") &&
+      strcontains(local.build_script, "s3://helmr-test/host/worker-host.tar") &&
+      strcontains(local.build_script, "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd") &&
       strcontains(aws_imagebuilder_component.worker.data, "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc") &&
-      strcontains(aws_imagebuilder_component.worker.data, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") &&
+      strcontains(local.build_script, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") &&
       strcontains(aws_imagebuilder_component.worker.data, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") &&
-      strcontains(aws_imagebuilder_component.worker.data, "install -m 0444 \"$work/runtime/$name\"") &&
+      strcontains(local.build_script, "install -m 0444 \"$work/runtime/$name\"") &&
       strcontains(aws_imagebuilder_component.worker.data, "stat -c %U:%G:%a /var/lib/helmr/images/guest/out/vmlinuz") &&
       strcontains(aws_imagebuilder_component.worker.data, "stat -c %U:%G:%a /var/lib/helmr/images/guest/out/initramfs") &&
       strcontains(aws_imagebuilder_component.worker.data, "stat -c %U:%G:%a /var/lib/helmr/images/guest/out/rootfs.squashfs") &&
@@ -199,8 +199,11 @@ run "changed_host_artifact_changes_definitions" {
         schema = "helmr.worker-image-component-definition.v0"
         document = replace(
           local.component_document,
-          "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-          "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          base64gzip(local.build_script),
+          base64gzip(replace(local.build_script,
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          ))
         )
       }))}" &&
       local.image_definition.componentDefinitionDigest == local.component_definition_digest
