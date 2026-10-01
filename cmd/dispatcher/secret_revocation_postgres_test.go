@@ -83,6 +83,68 @@ func TestSecretRevocationBatchReturnsPartialCountOnCommandFailure(t *testing.T) 
 	}
 }
 
+// A batch the Runs fill does not reach the Commands.
+func TestSecretRevocationBatchFilledByRunsLeavesCommands(t *testing.T) {
+	f := runtest.New(t)
+	secretID := f.AddSecret(t, "revoked-secret")
+	first := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
+	second := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
+	host := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
+	for _, work := range []runtest.RunLease{first, second, host} {
+		f.PlaceSecret(t, work.LeaseID, secretID, 1)
+	}
+	f.ResolveRunSecret(t, first, secretID)
+	f.ResolveRunSecret(t, second, secretID)
+	bound := commandtest.Bound(t, f, host.LeaseID, "running")
+	commandtest.ResolveSecret(t, f, bound.ID, secretID)
+	f.RevokeSecret(t, secretID, 1)
+
+	examined, err := reconcileSecretRevocation(f.Pool)(t.Context(), f.EnvironmentID, secretID, 1, 2)
+	if err != nil || examined != 2 {
+		t.Fatalf("batch = %d, %v", examined, err)
+	}
+	for _, work := range []runtest.RunLease{first, second} {
+		if status := runStatus(t, f, work.RunID); status != "failed" {
+			t.Fatalf("revoked Run status = %s", status)
+		}
+	}
+	if status := commandStatus(t, f, bound.ID); status != "running" {
+		t.Fatalf("Command beyond a full batch status = %s", status)
+	}
+}
+
+// A Run failure returns the Runs examined before it and leaves the Commands
+// unchanged.
+func TestSecretRevocationBatchReturnsPartialCountOnRunFailure(t *testing.T) {
+	f := runtest.New(t)
+	secretID := f.AddSecret(t, "revoked-secret")
+	first := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
+	overplaced := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
+	host := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
+	f.PlaceSecret(t, first.LeaseID, secretID, 1)
+	f.PlaceSecret(t, overplaced.LeaseID, secretID, 65)
+	f.PlaceSecret(t, host.LeaseID, secretID, 1)
+	f.ResolveRunSecret(t, first, secretID)
+	f.ResolveRunSecret(t, overplaced, secretID)
+	bound := commandtest.Bound(t, f, host.LeaseID, "running")
+	commandtest.ResolveSecret(t, f, bound.ID, secretID)
+	f.RevokeSecret(t, secretID, 1)
+
+	examined, err := reconcileSecretRevocation(f.Pool)(t.Context(), f.EnvironmentID, secretID, 1, 10)
+	if err == nil || examined != 1 {
+		t.Fatalf("batch = %d, %v", examined, err)
+	}
+	if status := runStatus(t, f, first.RunID); status != "failed" {
+		t.Fatalf("first revoked Run status = %s", status)
+	}
+	if status := runStatus(t, f, overplaced.RunID); status == "failed" {
+		t.Fatalf("failing Run status = %s", status)
+	}
+	if status := commandStatus(t, f, bound.ID); status != "running" {
+		t.Fatalf("Command after a Run failure status = %s", status)
+	}
+}
+
 func runStatus(t *testing.T, f runtest.Fixture, runID uuid.UUID) string {
 	t.Helper()
 	var status string
