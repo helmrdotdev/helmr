@@ -53,10 +53,10 @@ type ActorCompletion struct {
 
 // CompleteActorFromRun terminates the worker's finalizing Actor execution in
 // one transaction as completeActor does. When the transaction fails, it reads
-// the completion's durable receipt from replays, outside the transaction, so an uncertain
-// commit or a concurrent identical completion still succeeds; a different
-// receipt is ErrStaleCompletion. Unavailable Secret deliveries are then
-// ErrCompletionAdmission.
+// the completion's durable receipt from replays, outside the transaction, so
+// an uncertain commit or a concurrent identical completion still succeeds; a
+// different receipt is ErrStaleCompletion. Unavailable Secret deliveries are
+// then ErrCompletionAdmission.
 func CompleteActorFromRun(ctx context.Context, txb db.TxBeginner, replays CompletionReplays, fence run.ExecutionFence, completion ActorCompletion) error {
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error { return completeActor(ctx, tx, fence, completion) })
 	if err == nil {

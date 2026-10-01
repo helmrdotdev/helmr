@@ -46,15 +46,14 @@ type TurnOutput struct {
 // AppendTurnOutputFromRun appends a worker's Turn output, as
 // AppendTurnOutput does, from its live Actor execution. Oversized data is
 // ErrOutputTooLarge. It reads the lease's locators from locators, outside
-// the transaction,
-// then in one transaction locates the lease again and requires the same
-// environment and Session, locks the attempt's Secret deliveries and the
-// execution, requires the execution to be the running, entered,
-// non-finalizing top-level Actor execution of its open or closing Session's
-// current Run, appends the output and locks the live execution again. A lost
-// or changed execution is ErrStaleOutput; stale worker claims are
-// workergroup.ErrStaleClaims. A rejection commits with its receipt and is
-// returned as an *OperationError.
+// the transaction, then in one transaction locates the lease again and
+// requires the same environment and Session, locks the attempt's Secret
+// deliveries and the execution, requires the execution to be the running,
+// entered, non-finalizing top-level Actor execution of its open or closing
+// Session's current Run, appends the output and locks the live execution
+// again. A lost or changed execution is ErrStaleOutput; stale worker claims
+// are workergroup.ErrStaleClaims. A rejection commits with its receipt and
+// is returned as an *OperationError.
 func AppendTurnOutputFromRun(ctx context.Context, txb db.TxBeginner, locators LeaseLocators, fence run.ExecutionFence, request TurnOutput) (Output, error) {
 	if len(request.Data) > maxTurnOutputBytes {
 		return Output{}, ErrOutputTooLarge

@@ -115,10 +115,11 @@
 //     the session owner, lock the source Computer's Secrets, plus an
 //     addressed Computer's (never an addressed Session's Computer's), then
 //     the execution fence with the target in the same ordered statements,
-//     then the source attempt's delivery Secrets. That delivery lock reads the source Computer's
-//     bindings again without comparing them with the first lock, so a
-//     binding added before the execution fence locks the source Computer is
-//     locked after the fence; these operations have no re-read check.
+//     then the source attempt's delivery Secrets. That delivery lock reads
+//     the source Computer's bindings again without comparing them with the
+//     first lock, so a binding added before the execution fence locks the
+//     source Computer is locked after the fence; these operations have no
+//     re-read check.
 //   - Child Task invocation, through the run owner, acquires its idempotency
 //     claim, then locks the target Computer's secrets, then the execution
 //     fence with the target Computer in the same ordered statements. A new
