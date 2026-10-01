@@ -1,4 +1,7 @@
-package dbtest
+// Package computerdbtest inserts Computer rows directly into a test database:
+// Computer specs, committed disk versions and their roots, and checkpoint
+// artifacts. It sits beneath the Run and Session fixtures that compose them.
+package computerdbtest
 
 import (
 	"context"

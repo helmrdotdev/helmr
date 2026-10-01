@@ -6,6 +6,7 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer/computerdbtest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -67,7 +68,7 @@ INSERT INTO computers (
     (SELECT computer_spec_id FROM deployment_definitions WHERE environment_id=$2 AND id=$7),
     (SELECT deployment_id FROM deployment_definitions WHERE environment_id=$2 AND id=$7))`,
 		computerID, f.EnvironmentID, runtest.Region, declaredID, key, versionID, f.ComputerDefinitionID)
-	dbtest.InsertCommittedComputerRoot(t, t.Context(), tx, versionID, f.EnvironmentID, computerID)
+	computerdbtest.InsertCommittedComputerRoot(t, t.Context(), tx, versionID, f.EnvironmentID, computerID)
 	dbtest.MustExec(t, t.Context(), tx, `
 INSERT INTO computer_secrets (mode, computer_id, environment_id, placement_kind, placement_target, secret_id)
 VALUES ('raw', $1, $2, 'env', 'API_TOKEN', $3)`, computerID, f.EnvironmentID, f.secretID)
