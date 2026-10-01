@@ -587,13 +587,13 @@ func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "unpack checkpoint memory") {
 		t.Fatalf("err = %v, want memory unpack failure", err)
 	}
-	if !hasRuntimePhase(phases, "restore_validate_identity", "") {
+	if !hasPhase(phases, "restore_validate_identity", "") {
 		t.Fatalf("missing validate phase: %+v", phases)
 	}
-	if !hasRuntimePhase(phases, "restore_unpack_scratch_filepack", "") {
+	if !hasPhase(phases, "restore_unpack_scratch_filepack", "") {
 		t.Fatalf("missing scratch unpack phase: %+v", phases)
 	}
-	if !hasRuntimePhase(phases, "restore_unpack_memory_filepack", "io") {
+	if !hasPhase(phases, "restore_unpack_memory_filepack", "io") {
 		t.Fatalf("missing memory unpack failure phase: %+v", phases)
 	}
 	entries, readErr := os.ReadDir(cfg.StateDir)
@@ -2102,7 +2102,7 @@ func createSparseTestFile(path string, size int64) error {
 	return errors.Join(truncateErr, closeErr)
 }
 
-func hasRuntimePhase(phases []vm.Phase, name string, errorClass string) bool {
+func hasPhase(phases []vm.Phase, name string, errorClass string) bool {
 	for _, phase := range phases {
 		if phase.Name != name {
 			continue

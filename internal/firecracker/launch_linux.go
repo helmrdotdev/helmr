@@ -236,17 +236,17 @@ func (c *Connector) prepareMachine(ctx context.Context, mode launchMode, instanc
 	} else {
 		phaseStarted := time.Now()
 		err := c.createScratchDisk(ctx, scratchDiskPath)
-		recordRuntimePhase(recordPhase, vm.Phase{Name: "materialize_create_scratch_disk", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
+		reportPhase(recordPhase, vm.Phase{Name: "materialize_create_scratch_disk", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 		if err != nil {
 			return nil, err
 		}
 	}
 	phaseStarted := time.Now()
 	if err := c.prepareScratchDiskForJailer(scratchDiskPath); err != nil {
-		recordRuntimePhase(recordPhase, vm.Phase{Name: "restore_prepare_scratch_for_jailer", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
+		reportPhase(recordPhase, vm.Phase{Name: "restore_prepare_scratch_for_jailer", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 		return nil, err
 	}
-	recordRuntimePhase(recordPhase, vm.Phase{Name: "restore_prepare_scratch_for_jailer", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
+	reportPhase(recordPhase, vm.Phase{Name: "restore_prepare_scratch_for_jailer", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
 	restoring := snapshotMemoryPath != "" || snapshotStatePath != ""
 	computerDiskPath := ""
 	if topology.Computer != nil {
@@ -358,7 +358,7 @@ func (c *Connector) prepareMachine(ctx context.Context, mode launchMode, instanc
 	machineCtx, machineCancel := context.WithCancel(context.Background())
 	phaseStarted = time.Now()
 	sdkMachine, err := newSDKMachine(machineCtx, machineCfg, c.cfg.InitTimeout, opts...)
-	recordRuntimePhase(recordPhase, vm.Phase{Name: "restore_create_firecracker_machine", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
+	reportPhase(recordPhase, vm.Phase{Name: "restore_create_firecracker_machine", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 	if err != nil {
 		machineCancel()
 		return nil, fmt.Errorf("create Firecracker machine: %w", err)
@@ -376,11 +376,11 @@ func (c *Connector) prepareMachine(ctx context.Context, mode launchMode, instanc
 	sdkMachine.Logger().Printf("starting Firecracker machine")
 	phaseStarted = time.Now()
 	if err := startMachineContext(ctx, sdkMachine, machineCtx, machineCancel); err != nil {
-		recordRuntimePhase(recordPhase, vm.Phase{Name: "restore_start_firecracker_machine", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
+		reportPhase(recordPhase, vm.Phase{Name: "restore_start_firecracker_machine", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 		stopErr := stopMachine(context.Background(), sdkMachine)
 		return nil, errors.Join(fmt.Errorf("start Firecracker machine: %w", err), stopErr)
 	}
-	recordRuntimePhase(recordPhase, vm.Phase{Name: "restore_start_firecracker_machine", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
+	reportPhase(recordPhase, vm.Phase{Name: "restore_start_firecracker_machine", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
 	machineExit := watchMachineExit(sdkMachine)
 	sdkMachine.Logger().Printf("Firecracker machine start returned")
 	started := true
@@ -394,23 +394,23 @@ func (c *Connector) prepareMachine(ctx context.Context, mode launchMode, instanc
 	if restoring {
 		phaseStarted = time.Now()
 		if err := validateRestoredNetworkConfig(*restoreNetwork, snapshotNetworkConfig(c.cfg)); err != nil {
-			recordRuntimePhase(recordPhase, vm.Phase{Name: "restore_validate_network", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
+			reportPhase(recordPhase, vm.Phase{Name: "restore_validate_network", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 			started = false
 			return nil, err
 		}
-		recordRuntimePhase(recordPhase, vm.Phase{Name: "restore_validate_network", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
+		reportPhase(recordPhase, vm.Phase{Name: "restore_validate_network", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
 		phaseStarted = time.Now()
 		if err := sdkMachine.ResumeVM(ctx); err != nil {
-			recordRuntimePhase(recordPhase, vm.Phase{Name: "restore_resume_firecracker_snapshot", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
+			reportPhase(recordPhase, vm.Phase{Name: "restore_resume_firecracker_snapshot", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 			started = false
 			return nil, fmt.Errorf("resume restored Firecracker machine: %w", err)
 		}
-		recordRuntimePhase(recordPhase, vm.Phase{Name: "restore_resume_firecracker_snapshot", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
+		reportPhase(recordPhase, vm.Phase{Name: "restore_resume_firecracker_snapshot", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
 	}
 	sdkMachine.Logger().Printf("waiting for guest health")
 	phaseStarted = time.Now()
 	err = c.waitForHealth(ctx, vsockHostPath, machineExit, sdkMachine.Logger().Printf)
-	recordRuntimePhase(recordPhase, vm.Phase{Name: "restore_wait_guest_health", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
+	reportPhase(recordPhase, vm.Phase{Name: "restore_wait_guest_health", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 	if err != nil {
 		started = false
 		return nil, err
@@ -584,7 +584,7 @@ func runtimeVsockDevice(descriptor VMRuntimeDescriptor, guestCID uint32) firecra
 	}
 }
 
-func recordRuntimePhase(record func(vm.Phase), phase vm.Phase) {
+func reportPhase(record func(vm.Phase), phase vm.Phase) {
 	if record == nil || strings.TrimSpace(phase.Name) == "" {
 		return
 	}

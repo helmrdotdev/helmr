@@ -79,7 +79,7 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 		kernelArgs,
 		request.ReadOnlyDrives,
 	)
-	recordRuntimePhase(recordPhase, vm.Phase{Name: "restore_validate_identity", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)), ErrorClass: vm.RuntimeErrorClass(err)})
+	reportPhase(recordPhase, vm.Phase{Name: "restore_validate_identity", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)), ErrorClass: vm.RuntimeErrorClass(err)})
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +117,7 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.Go(func() error {
 		path, phase, err := c.unpackRestoreArtifact(groupCtx, ownerDir, request.ScratchDisk, filepack.ScratchRole, scratchDiskName, expectedScratchSize, cas.CheckpointScratchDiskMediaType)
-		recordRuntimePhase(recordPhase, phase)
+		reportPhase(recordPhase, phase)
 		if err != nil {
 			return fmt.Errorf("unpack checkpoint scratch disk: %w", err)
 		}
@@ -126,7 +126,7 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	})
 	group.Go(func() error {
 		path, phase, err := c.unpackRestoreArtifact(groupCtx, ownerDir, request.Memory[0], filepack.MemoryRole, restoreMemoryName, expectedMemorySize, cas.CheckpointMemoryMediaType)
-		recordRuntimePhase(recordPhase, phase)
+		reportPhase(recordPhase, phase)
 		if err != nil {
 			return fmt.Errorf("unpack checkpoint memory: %w", err)
 		}
