@@ -188,6 +188,10 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			return fmt.Errorf("recover local worker state: %w", err)
 		}
 	}
+	instanceQuarantines, err := activationQuarantines(evidence)
+	if err != nil {
+		return err
+	}
 	inventory := append(append(make([]string, 0, len(evidence.Reclaimed)+len(evidence.Quarantined)), evidence.Reclaimed...), evidence.Quarantined...)
 	if err := s.reportStartupRecovery(ctx, workerapi.StartupRecoveryRequest{
 		InventoryComplete: true,
@@ -201,10 +205,6 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		return fmt.Errorf("record worker startup recovery: %w", err)
 	}
 	capabilities := s.cfg.Capabilities
-	instanceQuarantines, err := activationQuarantines(evidence)
-	if err != nil {
-		return err
-	}
 	if instanceQuarantines != 0 {
 		capabilities.ExecutionSlotsAvailable -= int32(instanceQuarantines)
 		if capabilities.ExecutionSlotsAvailable <= 0 {

@@ -446,8 +446,8 @@ func TestSupervisorRefusesActivationWithUnownedResidue(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "without exact VM ownership") {
 		t.Fatalf("error = %v, want unowned residue rejection", err)
 	}
-	if controlPlane.activated.Load() {
-		t.Fatal("worker activated with unowned residue")
+	if controlPlane.activated.Load() || controlPlane.recoveryCalls.Load() != 0 {
+		t.Fatal("worker reported or activated with unowned residue")
 	}
 }
 
