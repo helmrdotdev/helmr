@@ -1,8 +1,9 @@
-// Package sessiontest builds a Session test database: an environment whose
-// current deployment declares the Actor operator.v1 (queues default, with a
-// concurrency limit of two, and priority), the Task resize-image and the
-// sandbox computer.v1, and active Computers with committed heads that each
-// bind the environment's active Secret API_TOKEN.
+// Package sessiontest builds Session test databases. Fixture is an
+// environment whose current deployment declares the Actor operator.v1
+// (queues default, with a concurrency limit of two, and priority), the Task
+// resize-image and the sandbox computer.v1, and active Computers with
+// committed heads that each bind the environment's active Secret API_TOKEN.
+// Execution is an Actor execution of a worker on a run test database.
 package sessiontest
 
 import (
