@@ -224,7 +224,7 @@ func TestTaskExecutionCompletionKeepsFailureDetailsExact(t *testing.T) {
 	}
 }
 
-func TestTaskExecutionCompletionConcurrentReplay(t *testing.T) {
+func TestTaskCompletionConcurrentReplay(t *testing.T) {
 	f, begin := finalizationExecutionFixture(t, false)
 	if _, err := finalizeExecutionTest(t, f, begin, true); err != nil {
 		t.Fatal(err)
@@ -232,8 +232,10 @@ func TestTaskExecutionCompletionConcurrentReplay(t *testing.T) {
 	r := completionRequest(begin)
 	start := make(chan struct{})
 	results := make(chan error, 2)
+	// CompleteTask owns replay reconciliation when another completion commits
+	// between the initial receipt lookup and the live execution lookup.
 	for range 2 {
-		go func() { <-start; results <- completeExecutionTest(t, f, r, true) }()
+		go func() { <-start; results <- CompleteTask(t.Context(), f.Pool, db.New(f.Pool), r) }()
 	}
 	close(start)
 	for range 2 {
