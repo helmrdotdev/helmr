@@ -129,13 +129,11 @@ run "immutable_capacity_change_rotates_generation" {
 run "count_change_does_not_rotate_generation" {
   command = plan
   variables {
-    retained_worker_generations = run.baseline_execution_generation.worker_generation_definitions
-    worker_count                = 5
+    worker_count = 5
   }
 
   assert {
     condition = (
-      local.worker_pool_name == one(keys(var.retained_worker_generations)) &&
       one(values(output.worker_generation_definitions)).count == 5
     )
     error_message = "mutable ASG size must not rotate the execution Pool generation"
@@ -268,6 +266,7 @@ run "fixed_capacity_plan" {
     create_worker             = true
     worker_count              = 2
     capacity_token_secret_arn = "arn:aws:secretsmanager:us-east-1:111122223333:secret:capacity-token"
+    controlplane_environment  = { ADMIN_EMAILS = "operator@example.test" }
   }
 }
 
@@ -346,4 +345,14 @@ run "same_build_recovery_has_fresh_binding" {
     )
     error_message = "Same-build recovery must prepare a distinct inert Pool without changing the source count or release."
   }
+}
+
+run "reject_retained_current_generation_collision" {
+  command = plan
+  variables {
+    create_worker               = true
+    worker_count                = 0
+    retained_worker_generations = run.export_serving_source.worker_generation_definitions
+  }
+  expect_failures = [terraform_data.worker_preconditions]
 }

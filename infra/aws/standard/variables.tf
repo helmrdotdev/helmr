@@ -798,3 +798,9 @@ variable "capacity_token_kms_key_arn" {
     error_message = "capacity_token_kms_key_arn must be a KMS key ARN."
   }
 }
+
+variable "controlplane_environment" {
+  description = "Additional non-secret environment variables for helmr-controlplane, including ADMIN_EMAILS for first-login deployment administrator setup. Managed variables cannot be overridden."
+  type        = map(string)
+  default     = {}
+}

@@ -71,7 +71,9 @@ enforces its min/max guardrails. New instances start protected from scale-in.
 Protection does not stop health replacement or manual termination and is not a
 substitute for the Product drain gate. Native maintenance owns
 `suspended_processes`; Terraform ignores changes to that field so applying a
-count change does not silently lift launch/refresh inhibition.
+count change does not silently lift launch/refresh inhibition. The provider capacity
+waiter is disabled: a count apply can complete with launches suspended, and the
+operator separately verifies provider convergence and Product readiness.
 
 When capacity is raised, the launch lifecycle hook keeps the instance out of service until the
 worker systemd unit is active. Planned removal first drains the exact host to

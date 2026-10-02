@@ -11,6 +11,12 @@ helmr_version = "replace-with-helmr-release-version"
 
 certificate_arn = "<acm-certificate-arn>"
 
+# Set verified operator emails before their first login for Pool retirement.
+controlplane_environment = {
+  # ADMIN_EMAILS = "operator@example.com"
+}
+# capacity_token_secret_arn = "<existing-deployment-capacity-secret-arn>"
+
 github_oauth_client_id = "<github-oauth-client-id>"
 
 clickhouse_url  = "https://replace-me.clickhouse.cloud:8443"
@@ -62,8 +68,8 @@ worker_network_blocked_ipv4_cidrs = [
 
 create_worker = false
 # Copy prior entries from `tofu output -json worker_generation_definitions`
-# here before an immutable Worker generation change; keep every retained entry
-# at min_size=0 until its Product restore authority is explicitly retired.
+# here unchanged, including count, before an immutable generation change.
+# Reduce source count only after the full-stop gate; delete only after Pool disable.
 retained_worker_generations = {}
 worker_count            = 1
 worker_root_volume_size_gb    = 500

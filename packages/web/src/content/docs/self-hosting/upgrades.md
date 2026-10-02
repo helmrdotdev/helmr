@@ -22,11 +22,22 @@ evidence for the exact released artifacts before using them for production.
 ## Prepare artifacts, recovery and authentication
 
 Record the exact source and target `helmr_version`, digest-pinned
-`controlplane_image`, `worker_ami_id`, release manifest, worker runtime/rootfs
+`controlplane_image`, `worker_ami_id`, signed release index, worker runtime/rootfs
 profile, database schema, Terraform state and recovery point. Retain the storage,
 checkpoint and root encryption keys. Rehearse restoring data separately; an image
 rollback cannot undo a database migration. A custom AMI ID is a locator, not a
-Control Plane attestation of its contents.
+Control Plane attestation of its contents. Follow the
+[release artifact requirements](/docs/self-hosting/requirements#release-artifacts):
+common releases provide a signed index and host/runtime bundles, not an AWS AMI
+or `aws-artifacts.json`. Prepare the AMI from those verified bytes and supply
+explicit image/AMI inputs. Do not rebuild different binaries and call that a
+public-artifact installation.
+
+Before the operators' first verified-email login, configure their `controlplane_environment.ADMIN_EMAILS`
+in the reference root. This bootstraps ordinary deployment administrator authority
+for the separate Pool retirement operations below. It does not promote existing
+users or change existing grants; an organization owner is not automatically a
+deployment administrator. Keep this login session separate from the Capacity token.
 
 Use the deployment [Capacity API](/docs/self-hosting/capacity-scaling) credential
 through an authorized operator session. In Standard or Quickstart, configure
@@ -138,13 +149,15 @@ these hold together:
 - Every present non-lost Host is at the recorded epoch and `termination_ready`.
   Its `drain_blockers` are zero and local cleanup has been acknowledged. Zero
   blocker counts alone are insufficient.
-- Every actually absent Host has a recorded loss disposition and Product loss
-  recovery has reconciled. Report loss and its retry or state-loss outcome as loss,
+- Every actually absent Host either already reached `termination_ready` at the
+  recorded epoch, or has a recorded loss disposition and reconciled Product loss
+  recovery. A ready Host that subsequently disappeared needs no `/lost` call;
+  that operation does not accept `termination_ready`. Report loss and its retry or state-loss outcome as loss,
   never as graceful drain.
 - Re-read retained profiles and dependencies; they remain complete and covered by
   the target or retained restoration authority.
 
-For confirmed provider absence, call `POST /capacity/v1/worker-hosts/{id}/lost`
+For confirmed provider absence without an existing `termination_ready` record, call `POST /capacity/v1/worker-hosts/{id}/lost`
 with the same header-input authentication and no request body. Confirm absence
 from both ASG membership and exact EC2 state first. Do not use this operation to
 turn an active or draining present Host into an acceptable loss.
@@ -189,6 +202,8 @@ that image to services. Verify `/healthz` and `/readyz` and the live deployment
 metadata. Database rollback is a separate recovery procedure.
 
 Configure the explicit positive target `worker_count`, review and apply its plan.
+The ASG provider capacity waiter is disabled so this configuration apply does not
+wait for hosts while launches are suspended. Apply success is not readiness.
 For reuse of the same ASG, configure this count only after the source is empty,
 then resume only the processes this maintenance session suspended. For example,
 if neither was suspended beforehand:
@@ -221,6 +236,35 @@ configuration. This is not service readiness. Selecting a release at zero is
 configuration only; its first positive activation still needs qualification,
 readiness and primary selection. Pending work remains subject to normal deadlines,
 cancellation and retention while it waits.
+
+## Retire an old Pool separately
+
+Retirement withdraws restoration authority; it is not part of routine host drain.
+Keep an old generation while recovery or retained execution needs its profile.
+A zero count does not authorize removing its definition, artifacts, IAM or keys.
+
+Using an authenticated deployment administrator session, resolve the old Pool and
+its current claim, then call
+`POST /admin/api/v1/worker-groups/{groupID}/pools/{poolID}/drain`
+with `{"expected_pool_claim_version": <current claim>}`. This withdraws an active
+Pool from new enrollment and restoration eligibility. Product rejects retirement
+of the current primary or removal of a required last restoration path. A pending,
+never-activated Pool can proceed directly to the disable check.
+
+Keep launches inhibited. Confirm no pending launch and exact physical absence,
+then re-read the Pool's claim and call
+`POST /admin/api/v1/worker-groups/{groupID}/pools/{poolID}/disable`
+with the new `expected_pool_claim_version`. Preserve the successful response with
+`status: "disabled"` for that exact Pool. On a conflict, re-observe and preserve
+the generation; do not bypass the predicate. The Capacity token does not authorize
+these administrator operations.
+
+The disabled response is irreversible Product authorization for cleanup, not
+proof that AWS is empty. Recheck provider inventory and pending launches again
+before removing the matching `retained_worker_generations` entry and reviewing
+its deletion plan. A disabled identity cannot be revived by reapply or rollback;
+use a new qualified generation for future capacity. Never delete shared artifacts
+or keys still referenced by another retained generation or recovery point.
 
 ## Interrupted sessions and recovery
 

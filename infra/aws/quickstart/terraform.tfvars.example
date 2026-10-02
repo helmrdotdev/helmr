@@ -17,6 +17,12 @@ certificate_arn   = "arn:aws:acm:us-east-1:123456789012:certificate/replace-me"
 enable_nat_gateway       = false
 controlplane_assign_public_ip = true
 
+# Set verified operator emails before their first login for Pool retirement.
+controlplane_environment = {
+  # ADMIN_EMAILS = "operator@example.com"
+}
+# capacity_token_secret_arn = "<existing-deployment-capacity-secret-arn>"
+
 github_oauth_client_id = "replace-with-github-oauth-client-id"
 
 clickhouse_url  = "https://replace-me.clickhouse.cloud:8443"
@@ -61,8 +67,8 @@ worker_network_blocked_ipv4_cidrs = [
 # and aws_region. NAT Gateway is required because workers run in private subnets.
 create_worker                       = false
 # Copy prior entries from `tofu output -json worker_generation_definitions`
-# here before an immutable Worker generation change; keep every retained entry
-# at min_size=0 until its Product restore authority is explicitly retired.
+# here unchanged, including count, before an immutable generation change.
+# Reduce source count only after the full-stop gate; delete only after Pool disable.
 retained_worker_generations         = {}
 worker_host_type                = "c8i.xlarge"
 worker_enable_nested_virtualization = true

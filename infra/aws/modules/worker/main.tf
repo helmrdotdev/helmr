@@ -407,6 +407,7 @@ resource "aws_autoscaling_group" "worker" {
   min_size                  = var.min_size
   max_size                  = var.max_size
   desired_capacity          = var.desired_capacity
+  wait_for_capacity_timeout = "0"
   protect_from_scale_in     = local.worker_protect_from_scale_in
   vpc_zone_identifier       = var.subnet_ids
   health_check_type         = local.worker_health_check_type

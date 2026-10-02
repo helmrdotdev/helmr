@@ -142,8 +142,9 @@ derives the worker Control Plane URL from `public_url` for direct ALB mode or fr
 `cloudfront_origin_domain_name` for CloudFront mode, then resolves that hostname to an internal ALB
 inside the VPC.
 
-The official worker AMI is resolved from `helmr_version` and `aws_region`. Set `worker_ami_id` only
-for custom builds; custom AMIs must satisfy the `modules/worker` contract: Firecracker, jailer,
+Supply a digest-pinned `controlplane_image` from the verified public release
+index and a `worker_ami_id` prepared from its exact host/runtime bundles. Common
+releases do not publish AWS AMIs or an AWS manifest; custom AMIs must satisfy the `modules/worker` contract: Firecracker, jailer,
 `ip`, `nft`, certified guest boot artifacts, AWS CLI,
 `worker`, and the executable `/usr/local/sbin/helmr-prepare-root` matching
 `modules/worker-image/templates/prepare-root.sh` installed. Keep NAT enabled
@@ -166,9 +167,9 @@ during preparation. Do not reduce the retained source count until the full-stop
 gate in the [maintenance procedure](../../../packages/web/src/content/docs/self-hosting/upgrades.md)
 has passed. The exported entry includes the realized user data, IAM
 documents, SSM choice, and exact launch-template version, so the retained ASG
-does not follow a newer template. Remove a retained entry only after Product
-restore authority no longer references that Pool and its exact drain-to-
-`termination_ready` retirement has completed. Control Plane does not
+does not follow a newer template. Remove a retained entry only after the separate fenced Product Pool retirement
+returns `status = disabled`, with no pending launches and exact provider absence
+confirmed again before cleanup. Host `termination_ready` alone does not retire a Pool. Control Plane does not
 authenticate or allowlist the AMI; `worker_generation_bindings` records the
 exact Product Pool to provider binding.
 
@@ -180,6 +181,10 @@ profile. Every reduction, including zero, and every worker update uses the
 There is no automatic instance refresh. Keep Control Plane, dispatcher, network,
 storage and keys available throughout drain. Explicit worker capacity and
 disk/cache partitions remain required when workers are created.
+
+Configure `controlplane_environment.ADMIN_EMAILS` before the named operators first log in so they can use
+the separate administrator Pool retirement API. The list does not promote existing
+users. Keep the Capacity credential separate from administrator login sessions.
 
 For native maintenance requests, set `capacity_token_secret_arn` to an existing
 Secrets Manager secret containing the deployment Capacity token. For a customer

@@ -148,6 +148,7 @@ module "release_artifacts" {
 }
 
 module "controlplane" {
+  controlplane_environment   = var.controlplane_environment
   capacity_token_secret_arn  = var.capacity_token_secret_arn
   capacity_token_kms_key_arn = var.capacity_token_kms_key_arn
   enable_deployment_rollback = var.enable_deployment_rollback
@@ -278,6 +279,11 @@ resource "terraform_data" "worker_preconditions" {
   }
 
   lifecycle {
+    precondition {
+      condition     = !contains(keys(var.retained_worker_generations), local.worker_pool_name)
+      error_message = "A retained generation must differ from the current generation. Keep the source unchanged and choose a distinct target before setting target capacity to zero."
+    }
+
     precondition {
       condition     = var.enable_cloudfront || var.public_url != null
       error_message = "public_url is required when enable_cloudfront is false."
