@@ -46,7 +46,7 @@ func TestWorkerObservationRecoversAfterHungRequest(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			s, err := New(Config{ControlPlane: client, ObservationEvery: 100 * time.Millisecond, PollEvery: 10 * time.Millisecond, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+			s, err := New(Config{Recover: emptyPhysicalRecovery, ControlPlane: client, ObservationEvery: 100 * time.Millisecond, PollEvery: 10 * time.Millisecond, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 			if err != nil {
 				t.Fatal(err)
 			}

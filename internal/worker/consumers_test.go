@@ -426,7 +426,7 @@ func TestRunConsumerSharedDiscoveryKeepsIdleAndErrorBackoffDuringDrain(t *testin
 					return workerapi.RunLeaseDiscoveryResponse{}, nil
 				}}
 				consumer := NewRunConsumer(&Runner{client: client, runLeaseExecutor: &runConsumerTestExecutor{}})
-				s, err := New(Config{ControlPlane: &testControlPlane{}, PollEvery: 2 * time.Second, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+				s, err := New(Config{Recover: emptyPhysicalRecovery, ControlPlane: &testControlPlane{}, PollEvery: 2 * time.Second, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
 				if err != nil {
 					t.Fatal(err)
 				}

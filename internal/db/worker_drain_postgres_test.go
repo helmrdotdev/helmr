@@ -48,7 +48,6 @@ func TestWorkerDrainPublishesExactTerminalReceiptAndReplays(t *testing.T) {
 		WorkerGroupID:        dbtest.DefaultWorkerGroupID,
 		WorkerEpoch:          pgtype.Int8{Int64: 1, Valid: true},
 		ExpectedClaimVersion: draining.ClaimVersion,
-		ObservedAt:           pgvalue.Timestamptz(time.Now().UTC()),
 	}
 	completed, err := q.CompleteWorkerDrain(ctx, params)
 	if err != nil {
@@ -182,7 +181,7 @@ func TestWorkerStartupRecoveryReclaimsPriorInstanceAtomicallyAndReplays(t *testi
 		t.Fatal(err)
 	}
 	var exact bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT observed_state='lost' AND mount_state='lost' AND admission_state='closed' AND reclaimed_at IS NOT NULL AND terminal_at IS NOT NULL AND terminal_reason_code='worker_startup_reclaimed' AND finalization_action='discard' AND finalization_reason_code='worker_draining' AND reclaim_evidence->>'method'='host_reconciled' AND reclaim_evidence->>'completed_at'='2026-08-17T00:00:00Z' FROM computer_instances WHERE id=$1`, prepared.instanceID).Scan(&exact); err != nil || !exact {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT observed_state='lost' AND mount_state='lost' AND admission_state='closed' AND reclaimed_at IS NOT NULL AND terminal_at IS NOT NULL AND terminal_reason_code='worker_startup_reclaimed' AND finalization_action='discard' AND finalization_reason_code='worker_draining' AND reclaim_evidence->>'method'='host_reconciled' AND (reclaim_evidence->>'completed_at')::timestamptz=reclaimed_at FROM computer_instances WHERE id=$1`, prepared.instanceID).Scan(&exact); err != nil || !exact {
 		t.Fatalf("startup exclusion=%v err=%v", exact, err)
 	}
 	var reconciled bool
@@ -301,7 +300,7 @@ func TestWorkerStartupRecoveryPreservesQuarantinedAndCurrentInstances(t *testing
 		t.Fatal(err)
 	}
 	before, currentBefore := instanceSnapshot(t, p.fixture, p.instanceID), instanceSnapshot(t, p.fixture, currentID)
-	p.params.RecoveryEvidence = []byte(fmt.Sprintf(`{"observed_at":"2026-08-17T00:00:00Z","quarantined":[%q]}`, p.instanceID.String()))
+	p.params.RecoveryEvidence = []byte(fmt.Sprintf(`{"quarantined":[%q]}`, p.instanceID.String()))
 	if _, err := db.New(p.fixture.Pool).CompleteWorkerStartupRecovery(t.Context(), p.params); err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +328,7 @@ func prepareOldEpochStartupRecovery(t *testing.T) oldEpochStartupRecovery {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET status='registering',current_epoch=2,current_service_id=$2,epoch_started_at=now(),activated_at=NULL,vm_platform_id=NULL,epoch_cpu_millis=0,epoch_memory_bytes=0,epoch_guest_ephemeral_disk_bytes=0,per_vm_cpu_millis=0,per_vm_memory_bytes=0,per_vm_guest_ephemeral_disk_bytes=0,max_vm_slots=0,max_vm_starts=0,cpu_environment=NULL,cpu_environment_digest=NULL,observed_at=NULL,run_paused_reason=NULL,vm_paused_reason=NULL WHERE id=$1`, f.WorkerID, uuid.NewV7())
-	return oldEpochStartupRecovery{fixture: f, instanceID: instanceID, params: db.CompleteWorkerStartupRecoveryParams{WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), WorkerEpoch: pgtype.Int8{Int64: 2, Valid: true}, RecoveryEvidence: []byte(`{"observed_at":"2026-08-17T00:00:00Z","quarantined":[]}`)}}
+	return oldEpochStartupRecovery{fixture: f, instanceID: instanceID, params: db.CompleteWorkerStartupRecoveryParams{WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), WorkerEpoch: pgtype.Int8{Int64: 2, Valid: true}, RecoveryEvidence: []byte(`{"quarantined":[]}`)}}
 }
 
 func instanceSnapshot(t *testing.T, f runtest.Fixture, id uuid.UUID) []byte {
@@ -415,7 +414,7 @@ func TestWorkerDrainRequiresEveryPriorEpochPhysicalScopeReconciled(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			params := db.CompleteWorkerDrainParams{WorkerHostID: row.ID, WorkerGroupID: row.WorkerGroupID, WorkerEpoch: row.CurrentEpoch, ExpectedClaimVersion: row.ClaimVersion, ObservedAt: pgvalue.Timestamptz(time.Now())}
+			params := db.CompleteWorkerDrainParams{WorkerHostID: row.ID, WorkerGroupID: row.WorkerGroupID, WorkerEpoch: row.CurrentEpoch, ExpectedClaimVersion: row.ClaimVersion}
 			if _, err = q.CompleteWorkerDrain(t.Context(), params); !errors.Is(err, pgx.ErrNoRows) {
 				t.Fatalf("unreconciled %s allowed drain: %v", blocker, err)
 			}

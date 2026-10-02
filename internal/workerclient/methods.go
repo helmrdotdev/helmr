@@ -147,12 +147,12 @@ func (c *Client) DrainWorker(ctx context.Context) (workerapi.StatusResponse, err
 	return response, nil
 }
 
-func (c *Client) CompleteWorkerDrain(ctx context.Context, request workerapi.DrainCompletionRequest) (workerapi.StatusResponse, error) {
+func (c *Client) CompleteWorkerDrain(ctx context.Context) (workerapi.StatusResponse, error) {
 	const attempts = 3
 	var lastErr error
 	for attempt := range attempts {
 		var response workerapi.StatusResponse
-		lastErr = c.postWorkerJSON(ctx, "/worker/v1/instance/drain/complete", request, &response)
+		lastErr = c.postWorkerJSON(ctx, "/worker/v1/instance/drain/complete", nil, &response)
 		if lastErr == nil {
 			return response, nil
 		}

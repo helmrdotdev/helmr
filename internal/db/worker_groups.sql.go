@@ -213,7 +213,7 @@ WITH target AS (
            reclaimed_at = now(),
            reclaim_evidence = jsonb_build_object(
                'method', 'host_reconciled',
-               'completed_at', $4::jsonb ->> 'observed_at'
+               'completed_at', now()
            ),
            mount_state='lost', admission_state='closed', updated_at=now()
      WHERE computer_instances.id IN (SELECT id FROM reclaimable_instances)

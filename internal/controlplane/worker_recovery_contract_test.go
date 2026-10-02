@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 
@@ -19,6 +20,9 @@ import (
 // Exercise production recovery and Supervisor request construction against the
 // actual Control Plane validator, rather than independently authored DTOs.
 func TestWorkerRecoveryEvidenceSatisfiesStartupContract(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("production recovery requires Linux procfs")
+	}
 	for _, quarantine := range []bool{false, true} {
 		name := "reclaimed"
 		if quarantine {
@@ -39,7 +43,7 @@ func TestWorkerRecoveryEvidenceSatisfiesStartupContract(t *testing.T) {
 				t.Fatal(err)
 			}
 			reachedActivation := errors.New("validated recovery reached activation")
-			cp := &startupRecoveryContractCP{epochStartedAt: time.Now().Add(-time.Minute), stop: reachedActivation}
+			cp := &startupRecoveryContractCP{stop: reachedActivation}
 			supervisor, err := worker.New(worker.Config{ControlPlane: cp, Capabilities: workerapi.Capabilities{ExecutionSlotsAvailable: 2}, Recover: func(ctx context.Context) (worker.RecoveryEvidence, error) {
 				return worker.RecoverLocalVMState(ctx, work, jailer, ip, func(_ context.Context, got vm.Owner) error {
 					if got != owner {
@@ -60,14 +64,12 @@ func TestWorkerRecoveryEvidenceSatisfiesStartupContract(t *testing.T) {
 				t.Fatalf("startup rejected real recovery evidence: %v", err)
 			}
 			want := []string{owner.ID}
-			if !reflect.DeepEqual(cp.request.Inventory, want) {
-				t.Fatalf("inventory=%v", cp.request.Inventory)
-			}
+
 			if quarantine {
-				if !reflect.DeepEqual(cp.request.Quarantined, want) || len(cp.request.Reclaimed) != 0 || cp.slots != 1 {
+				if !reflect.DeepEqual(cp.request.Quarantined, want) || cp.slots != 1 {
 					t.Fatalf("quarantine=%+v slots=%d", cp.request, cp.slots)
 				}
-			} else if !reflect.DeepEqual(cp.request.Reclaimed, want) || len(cp.request.Quarantined) != 0 || cp.slots != 2 {
+			} else if len(cp.request.Quarantined) != 0 || cp.slots != 2 {
 				t.Fatalf("reclaimed=%+v slots=%d", cp.request, cp.slots)
 			}
 		})
@@ -76,15 +78,14 @@ func TestWorkerRecoveryEvidenceSatisfiesStartupContract(t *testing.T) {
 
 type startupRecoveryContractCP struct {
 	worker.ControlPlane
-	epochStartedAt time.Time
-	request        workerapi.StartupRecoveryRequest
-	slots          int32
-	stop           error
+	request workerapi.StartupRecoveryRequest
+	slots   int32
+	stop    error
 }
 
 func (*startupRecoveryContractCP) AuthenticateWorker(context.Context) error { return nil }
 func (c *startupRecoveryContractCP) ReportWorkerStartupRecovery(_ context.Context, q workerapi.StartupRecoveryRequest) error {
-	if err := validateWorkerStartupRecovery(q, c.epochStartedAt, time.Now()); err != nil {
+	if err := validateWorkerStartupRecovery(q); err != nil {
 		return &httpclient.Error{StatusCode: 400, Message: err.Error()}
 	}
 	c.request = q

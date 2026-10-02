@@ -49,7 +49,7 @@ func (c *testControlPlane) ActivateWorker(_ context.Context, capabilities worker
 
 func (c *testControlPlane) ReportWorkerStartupRecovery(_ context.Context, request workerapi.StartupRecoveryRequest) error {
 	c.recoveryCalls.Add(1)
-	if !request.InventoryComplete || request.InventoryScope != "worker_instance_state_roots_v0" || request.ObservedAt.IsZero() {
+	if request.Quarantined == nil {
 		return errors.New("incomplete startup recovery proof")
 	}
 	if c.recovery409s.Add(-1) >= 0 {
@@ -68,10 +68,7 @@ type testHTTPStatusError struct{ status int }
 
 func (e testHTTPStatusError) Error() string       { return "test HTTP status" }
 func (e testHTTPStatusError) HTTPStatusCode() int { return e.status }
-func (c *testControlPlane) CompleteWorkerDrain(_ context.Context, request workerapi.DrainCompletionRequest) (workerapi.StatusResponse, error) {
-	if !request.InventoryComplete || request.InventoryScope != "worker_instance_state_roots_v0" || request.ObservedAt.IsZero() || len(request.Inventory) != 0 || len(request.Quarantined) != 0 || len(request.Errors) != 0 {
-		return workerapi.StatusResponse{}, errors.New("incomplete worker drain proof")
-	}
+func (c *testControlPlane) CompleteWorkerDrain(_ context.Context) (workerapi.StatusResponse, error) {
 	c.completed.Add(1)
 	if c.completeErr != nil {
 		return workerapi.StatusResponse{}, c.completeErr
@@ -136,7 +133,7 @@ func (c *successfulRejectionConsumer) Claim(context.Context) (Work, bool, error)
 func TestSupervisorRetriesStartupRecoveryConflictWithExactProof(t *testing.T) {
 	controlPlane := &testControlPlane{}
 	controlPlane.recovery409s.Store(2)
-	s, err := New(Config{ControlPlane: controlPlane, PollEvery: time.Millisecond})
+	s, err := New(Config{Recover: emptyPhysicalRecovery, ControlPlane: controlPlane, PollEvery: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +203,7 @@ func (c *queuedConsumer) Claim(context.Context) (Work, bool, error) {
 func TestSupervisorAcceptsSuccessfulClaimWithoutWork(t *testing.T) {
 	controlPlane := &testControlPlane{}
 	consumer := &successfulRejectionConsumer{claimed: make(chan struct{})}
-	s, err := New(Config{
+	s, err := New(Config{Recover: emptyPhysicalRecovery,
 		ControlPlane: controlPlane, PollEvery: time.Millisecond,
 		Consumers: []ConsumerSpec{{Name: "build", Concurrency: 1, Consumer: consumer}},
 	})
@@ -240,7 +237,7 @@ func TestSupervisorRunsConcurrentWorkAndDrainsLocally(t *testing.T) {
 		func(context.Context) error { started <- struct{}{}; <-release; return nil },
 		func(context.Context) error { started <- struct{}{}; <-release; return nil },
 	}}
-	s, err := New(Config{
+	s, err := New(Config{Recover: emptyPhysicalRecovery,
 		ControlPlane: controlPlane, Capabilities: workerapi.Capabilities{}, PollEvery: time.Millisecond,
 		ProcessShutdownGrace: time.Second, Consumers: []ConsumerSpec{{Name: "run", Concurrency: 2, Consumer: consumer}},
 	})
@@ -298,7 +295,7 @@ func TestSupervisorDelaysRetryAfterNonfatalWorkFailure(t *testing.T) {
 		},
 	}}
 	pollEvery := 50 * time.Millisecond
-	s, err := New(Config{
+	s, err := New(Config{Recover: emptyPhysicalRecovery,
 		ControlPlane: controlPlane, PollEvery: pollEvery,
 		Consumers: []ConsumerSpec{{Name: "run", Concurrency: 1, Consumer: consumer}},
 	})
@@ -340,7 +337,7 @@ func TestSupervisorProcessShutdownGraceBoundsHungWork(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	consumer := &queuedConsumer{work: []Work{func(context.Context) error { close(started); <-release; return nil }}}
-	s, err := New(Config{ControlPlane: controlPlane, PollEvery: time.Millisecond, ProcessShutdownGrace: 30 * time.Millisecond, Consumers: []ConsumerSpec{{Name: "run", Concurrency: 1, Consumer: consumer}}})
+	s, err := New(Config{Recover: emptyPhysicalRecovery, ControlPlane: controlPlane, PollEvery: time.Millisecond, ProcessShutdownGrace: 30 * time.Millisecond, Consumers: []ConsumerSpec{{Name: "run", Concurrency: 1, Consumer: consumer}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +360,7 @@ func TestSupervisorProcessShutdownGraceBoundsHungWork(t *testing.T) {
 func TestSupervisorShutdownCancelsOutstandingClaims(t *testing.T) {
 	controlPlane := &testControlPlane{}
 	consumer := &blockingClaimConsumer{entered: make(chan struct{}), canceled: make(chan struct{})}
-	s, err := New(Config{
+	s, err := New(Config{Recover: emptyPhysicalRecovery,
 		ControlPlane: controlPlane, PollEvery: time.Millisecond,
 		Consumers: []ConsumerSpec{{Name: "run", Concurrency: 1, Consumer: consumer}},
 	})
@@ -401,7 +398,7 @@ func TestSupervisorTerminatesEpochOnFatalWorkError(t *testing.T) {
 			return &fatalWorkerError{err: errors.New("cleanup unproven")}
 		},
 	}}
-	s, err := New(Config{
+	s, err := New(Config{Recover: emptyPhysicalRecovery,
 		ControlPlane: controlPlane,
 		PollEvery:    time.Millisecond,
 		Consumers:    []ConsumerSpec{{Name: "build", Concurrency: 1, Consumer: consumer}},
@@ -422,7 +419,7 @@ func TestSupervisorTerminatesEpochOnFatalWorkError(t *testing.T) {
 
 func TestSupervisorTerminatesEpochOnFatalBackgroundError(t *testing.T) {
 	controlPlane := &testControlPlane{}
-	s, err := New(Config{
+	s, err := New(Config{Recover: emptyPhysicalRecovery,
 		ControlPlane: controlPlane,
 		PollEvery:    time.Millisecond,
 		Background: []BackgroundSpec{{Name: "instance-controller", Run: func(context.Context) error {
@@ -472,7 +469,7 @@ func TestSupervisorShutdownWaitsForClaimThatReturnsCommittedWork(t *testing.T) {
 		entered: make(chan struct{}), allowReturn: make(chan struct{}),
 		workStarted: make(chan struct{}), releaseWork: make(chan struct{}),
 	}
-	s, err := New(Config{
+	s, err := New(Config{Recover: emptyPhysicalRecovery,
 		ControlPlane: controlPlane, PollEvery: time.Millisecond, ProcessShutdownGrace: time.Second,
 		Consumers: []ConsumerSpec{{Name: "run", Concurrency: 1, Consumer: consumer}},
 	})
@@ -534,7 +531,7 @@ func TestSupervisorHardAdmissionPausesClaimsButNotShutdown(t *testing.T) {
 		t.Fatal(err)
 	}
 	consumer := &queuedConsumer{work: []Work{func(context.Context) error { return nil }}}
-	s, err := New(Config{
+	s, err := New(Config{Recover: emptyPhysicalRecovery,
 		ControlPlane: controlPlane, PollEvery: time.Millisecond,
 		AdmissionEvaluator: evaluator,
 		Consumers:          []ConsumerSpec{{Name: "run", Concurrency: 1, Consumer: consumer}},
@@ -581,7 +578,7 @@ func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T)
 		return nil
 	}}}}
 	finalized := make(chan struct{})
-	s, err := New(Config{
+	s, err := New(Config{Recover: emptyPhysicalRecovery,
 		ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond, ProcessShutdownGrace: time.Second,
 		Consumers: []ConsumerSpec{
 			{Name: "run", Concurrency: 1, Consumer: runs},
@@ -661,7 +658,7 @@ func TestServerDirectedDrainContinuesBoundRunWithHardAdmission(t *testing.T) {
 		<-releaseWork
 		return nil
 	}}}}
-	s, err := New(Config{
+	s, err := New(Config{Recover: emptyPhysicalRecovery,
 		ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond,
 		ProcessShutdownGrace: time.Second, AdmissionEvaluator: evaluator,
 		Consumers: []ConsumerSpec{{
@@ -715,7 +712,7 @@ func TestServerDirectedDrainDoesNotBypassBoundRunAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	consumer := &enabledConsumer{inner: &queuedConsumer{work: []Work{func(context.Context) error { return nil }}}}
-	s, err := New(Config{
+	s, err := New(Config{Recover: emptyPhysicalRecovery,
 		ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond,
 		ProcessShutdownGrace: time.Second, AdmissionEvaluator: evaluator,
 		Consumers: []ConsumerSpec{{
@@ -780,7 +777,7 @@ func TestActivationCanResumePreviouslyRequestedDrain(t *testing.T) {
 	controlPlane := &testControlPlane{}
 	controlPlane.activateStatus.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
 	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
-	s, err := New(Config{
+	s, err := New(Config{Recover: emptyPhysicalRecovery,
 		ControlPlane: controlPlane, PollEvery: time.Millisecond, ProcessShutdownGrace: time.Second,
 		FinalizeDrain: func(context.Context) (RecoveryEvidence, error) {
 			return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
@@ -801,7 +798,7 @@ func TestDurableDrainLatchWinsWhenShutdownIsAlsoReady(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	controlPlane := &testControlPlane{}
 	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
-	s, err := New(Config{
+	s, err := New(Config{Recover: emptyPhysicalRecovery,
 		ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Hour, ProcessShutdownGrace: time.Second,
 		FinalizeDrain: func(context.Context) (RecoveryEvidence, error) {
 			return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
@@ -840,7 +837,7 @@ func TestSignalDuringDurableDrainDoesNotCancelCompletion(t *testing.T) {
 	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
 	finalizeStarted := make(chan struct{})
 	releaseFinalize := make(chan struct{})
-	s, err := New(Config{
+	s, err := New(Config{Recover: emptyPhysicalRecovery,
 		ControlPlane: controlPlane, PollEvery: time.Millisecond, ProcessShutdownGrace: time.Second,
 		FinalizeDrain: func(finalizeCtx context.Context) (RecoveryEvidence, error) {
 			close(finalizeStarted)
@@ -895,7 +892,7 @@ func TestObservationResponseTriggersDurableDrain(t *testing.T) {
 			controlPlane := &testControlPlane{}
 			controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
 			tt.setup(controlPlane)
-			s, err := New(Config{
+			s, err := New(Config{Recover: emptyPhysicalRecovery,
 				ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond, ProcessShutdownGrace: time.Second,
 				FinalizeDrain: func(context.Context) (RecoveryEvidence, error) {
 					return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
@@ -951,7 +948,7 @@ func TestServerDirectedDrainDoesNotCompleteWithDirtyInventoryOrFailedReceipt(t *
 			controlPlane.completeErr = tt.completeErr
 			controlPlane.activateStatus.Store(tt.status)
 			controlPlane.status.Store(tt.status)
-			s, err := New(Config{ControlPlane: controlPlane, PollEvery: time.Millisecond, ProcessShutdownGrace: 20 * time.Millisecond, FinalizeDrain: tt.finalize})
+			s, err := New(Config{Recover: emptyPhysicalRecovery, ControlPlane: controlPlane, PollEvery: time.Millisecond, ProcessShutdownGrace: 20 * time.Millisecond, FinalizeDrain: tt.finalize})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1007,7 +1004,7 @@ func TestPlannedDrainBeyondFormerDeadlineKeepsAdmittedWorkAndRenewals(t *testing
 				}
 			}
 		}}}
-		s, err := New(Config{ControlPlane: controlPlane, PollEvery: time.Second, ObservationEvery: time.Second, ProcessShutdownGrace: 30 * time.Minute,
+		s, err := New(Config{Recover: emptyPhysicalRecovery, ControlPlane: controlPlane, PollEvery: time.Second, ObservationEvery: time.Second, ProcessShutdownGrace: 30 * time.Minute,
 			Consumers:     []ConsumerSpec{{Name: "admitted run", Concurrency: 1, Consumer: consumer}},
 			FinalizeDrain: func(context.Context) (RecoveryEvidence, error) { return RecoveryEvidence{ObservedAt: time.Now()}, nil },
 		})
@@ -1055,7 +1052,7 @@ func TestDrainingAuthorityRejectionStopsButServingFailureDoesNot(t *testing.T) {
 				draining := workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveInstances: 1}
 				started := make(chan struct{})
 				workStopped := make(chan struct{})
-				cfg := Config{ControlPlane: cp, PollEvery: time.Second, ObservationEvery: time.Second}
+				cfg := Config{Recover: emptyPhysicalRecovery, ControlPlane: cp, PollEvery: time.Second, ObservationEvery: time.Second}
 				if admitted {
 					cfg.Consumers = []ConsumerSpec{{Name: "run", Concurrency: 1, Consumer: &queuedConsumer{work: []Work{func(ctx context.Context) error { close(started); <-ctx.Done(); close(workStopped); return ctx.Err() }}}}}
 				} else {
@@ -1112,7 +1109,7 @@ func TestActiveAuthorityRejectionStopsAdmittedWork(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		cp := &testControlPlane{}
 		started, stopped := make(chan struct{}), make(chan struct{})
-		s, err := New(Config{ControlPlane: cp, PollEvery: time.Second, ObservationEvery: time.Second, Consumers: []ConsumerSpec{{Name: "run", Concurrency: 1, Consumer: &queuedConsumer{work: []Work{func(ctx context.Context) error { close(started); <-ctx.Done(); close(stopped); return ctx.Err() }}}}}})
+		s, err := New(Config{Recover: emptyPhysicalRecovery, ControlPlane: cp, PollEvery: time.Second, ObservationEvery: time.Second, Consumers: []ConsumerSpec{{Name: "run", Concurrency: 1, Consumer: &queuedConsumer{work: []Work{func(ctx context.Context) error { close(started); <-ctx.Done(); close(stopped); return ctx.Err() }}}}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1128,4 +1125,29 @@ func TestActiveAuthorityRejectionStopsAdmittedWork(t *testing.T) {
 			t.Fatal("authority rejection claimed graceful completion")
 		}
 	})
+}
+
+func TestSupervisorRequiresPhysicalRecovery(t *testing.T) {
+	if _, err := New(Config{ControlPlane: &testControlPlane{}}); err == nil {
+		t.Fatal("supervisor accepted missing physical recovery")
+	}
+}
+
+func emptyPhysicalRecovery(context.Context) (RecoveryEvidence, error) {
+	return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
+}
+
+func TestSupervisorRecoveryFailurePreventsReportingAndActivation(t *testing.T) {
+	cp := &testControlPlane{}
+	failure := errors.New("physical roots could not be enumerated")
+	s, err := New(Config{ControlPlane: cp, Recover: func(context.Context) (RecoveryEvidence, error) { return RecoveryEvidence{}, failure }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Run(t.Context()); !errors.Is(err, failure) {
+		t.Fatalf("recovery failure=%v", err)
+	}
+	if cp.activated.Load() || cp.recoveryCalls.Load() != 0 {
+		t.Fatal("failed enumeration was reported as completed recovery")
+	}
 }

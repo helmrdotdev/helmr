@@ -7,7 +7,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -99,6 +101,9 @@ func TestOwnedVMProcessDetectionIgnoresUnrelatedResources(t *testing.T) {
 }
 
 func TestRecoveryReclaimsInstanceAndBuildFromExactOwnerMarkers(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("production recovery requires Linux procfs")
+	}
 	workDir := t.TempDir()
 	jailerDir := t.TempDir()
 	owners := []vm.Owner{
@@ -131,6 +136,9 @@ func TestRecoveryReclaimsInstanceAndBuildFromExactOwnerMarkers(t *testing.T) {
 }
 
 func TestRecoveryDoesNotGuessOwnerFromJailerRoot(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("production recovery requires Linux procfs")
+	}
 	workDir := t.TempDir()
 	jailerDir := t.TempDir()
 	id := "019c10d5-a6f7-7af1-8f5f-000000000203"
@@ -219,5 +227,104 @@ func TestRecoveryQuarantinePreservesStructuredBuildOwner(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(statePath, "owner")); err != nil {
 		t.Fatalf("quarantined owner marker was removed: %v", err)
+	}
+}
+
+func TestProcessInventoryFailurePreventsStartupRecovery(t *testing.T) {
+	for _, failure := range []string{"missing procfs", "unreadable cmdline", "missing live cmdline", "unreadable firecracker root"} {
+		t.Run(failure, func(t *testing.T) {
+			procDir := t.TempDir()
+			pidDir := filepath.Join(procDir, "42")
+			if failure == "missing procfs" {
+				procDir = filepath.Join(procDir, "missing")
+			} else {
+				if err := os.Mkdir(pidDir, 0700); err != nil {
+					t.Fatal(err)
+				}
+				switch failure {
+				case "unreadable cmdline":
+					if err := os.Mkdir(filepath.Join(pidDir, "cmdline"), 0700); err != nil {
+						t.Fatal(err)
+					}
+				case "unreadable firecracker root":
+					if err := os.WriteFile(filepath.Join(pidDir, "cmdline"), []byte("/usr/bin/firecracker\x00"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(pidDir, "root"), nil, 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			cp := &testControlPlane{}
+			work, jailer := t.TempDir(), t.TempDir()
+			supervisor, err := New(Config{ControlPlane: cp, Recover: func(ctx context.Context) (RecoveryEvidence, error) {
+				return recoverLocalVMState(ctx, work, jailer, vmRecoveryOps{
+					ownerCandidates: func(context.Context) ([]ownerCandidate, error) { return nil, nil },
+					ownedProcesses:  func(context.Context) ([]ownedVMProcess, error) { return ownedVMProcessesAt(procDir, jailer) },
+				})
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = supervisor.Run(t.Context()); err == nil || !strings.Contains(err.Error(), "inventory owned VM processes") {
+				t.Fatalf("incomplete process scan error=%v", err)
+			}
+			if cp.activated.Load() || cp.recoveryCalls.Load() != 0 {
+				t.Fatal("incomplete process inventory authorized startup recovery")
+			}
+		})
+	}
+}
+
+func TestProcessInventoryReadsRootOnlyForFirecracker(t *testing.T) {
+	procDir, jailer := t.TempDir(), t.TempDir()
+	id := "019c10d5-a6f7-7af1-8f5f-000000000107"
+	for pid, command := range map[string]string{
+		"42": "/usr/bin/jailer\x00--id\x00" + id + "\x00--chroot-base-dir\x00" + jailer + "\x00",
+		"43": "/usr/bin/firecracker\x00",
+		"44": "/usr/bin/unrelated\x00",
+	} {
+		path := filepath.Join(procDir, pid)
+		if err := os.Mkdir(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "cmdline"), []byte(command), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if pid == "43" {
+			if err := os.Symlink(filepath.Join(jailer, "firecracker", id, "root"), filepath.Join(path, "root")); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	got, err := ownedVMProcessesAt(procDir, jailer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ownedVMProcess{{PID: 42, ID: id}, {PID: 43, ID: id}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("owned processes=%+v", got)
+	}
+}
+
+func TestProcessDisappearanceDistinguishesReadFailures(t *testing.T) {
+	live := t.TempDir()
+	missing := filepath.Join(live, "gone")
+	for _, tc := range []struct {
+		name, path string
+		err        error
+		gone       bool
+	}{
+		{"dead procfs task", live, &os.PathError{Op: "read", Path: filepath.Join(live, "cmdline"), Err: syscall.ESRCH}, true},
+		{"disappeared process", missing, os.ErrNotExist, true},
+		{"missing live command line", live, os.ErrNotExist, false},
+		{"denied live process", live, os.ErrPermission, false},
+		{"failed process read", missing, syscall.EIO, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := processDisappeared(tc.path, tc.err); got != tc.gone {
+				t.Fatalf("disappeared=%v", got)
+			}
+		})
 	}
 }

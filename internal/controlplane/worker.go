@@ -131,7 +131,7 @@ func (s *Server) workerStartupRecovery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if err := validateWorkerStartupRecovery(request, worker.EpochStartedAt, time.Now()); err != nil {
+	if err := validateWorkerStartupRecovery(request); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
@@ -147,56 +147,20 @@ func (s *Server) workerStartupRecovery(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func validateWorkerStartupRecovery(
-	request workerapi.StartupRecoveryRequest,
-	epochStartedAt time.Time,
-	now time.Time,
-) error {
-	if !request.InventoryComplete || request.InventoryScope != "worker_instance_state_roots_v0" || request.ObservedAt.IsZero() {
-		return errors.New("a complete, timestamped physical inventory is required")
+func validateWorkerStartupRecovery(request workerapi.StartupRecoveryRequest) error {
+	if request.Quarantined == nil {
+		return errors.New("quarantined must be an array")
 	}
-	if request.ObservedAt.After(now.Add(time.Minute)) {
-		return errors.New("startup inventory observed_at is in the future")
-	}
-	if request.ObservedAt.Before(epochStartedAt) {
-		return errors.New("startup inventory observed_at predates the current worker epoch")
-	}
-	inventory := make(map[uuid.UUID]struct{}, len(request.Inventory))
-	for _, value := range request.Inventory {
+	seen := make(map[uuid.UUID]struct{}, len(request.Quarantined))
+	for _, value := range request.Quarantined {
 		id, err := ids.Parse(value)
 		if err != nil {
-			return errors.New("inventory instance id must be a canonical UUIDv7")
+			return errors.New("quarantined instance id must be a canonical UUIDv7")
 		}
-		if _, exists := inventory[id]; exists {
-			return fmt.Errorf("inventory instance id %s is duplicated", id)
+		if _, exists := seen[id]; exists {
+			return fmt.Errorf("quarantined instance id %s is duplicated", id)
 		}
-		inventory[id] = struct{}{}
-	}
-	seen := make(map[uuid.UUID]string, len(request.Reclaimed)+len(request.Quarantined))
-	validateIDs := func(kind string, values []string) error {
-		for _, value := range values {
-			id, err := ids.Parse(value)
-			if err != nil {
-				return fmt.Errorf("%s instance id must be a canonical UUIDv7", kind)
-			}
-			if previous, exists := seen[id]; exists {
-				return fmt.Errorf("instance id %s is reported as both %s and %s", id, previous, kind)
-			}
-			if _, owned := inventory[id]; !owned {
-				return fmt.Errorf("%s instance id %s is outside the owned inventory", kind, id)
-			}
-			seen[id] = kind
-		}
-		return nil
-	}
-	if err := validateIDs("reclaimed", request.Reclaimed); err != nil {
-		return err
-	}
-	if err := validateIDs("quarantined", request.Quarantined); err != nil {
-		return err
-	}
-	if len(seen) != len(inventory) {
-		return errors.New("every owned inventory instance must have exactly one recovery outcome")
+		seen[id] = struct{}{}
 	}
 	return nil
 }
@@ -229,31 +193,12 @@ func (s *Server) workerDrain(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerCompleteDrain(w http.ResponseWriter, r *http.Request) {
-	limitRequestBodySize(w, r, 16<<10)
-	var request workerapi.DrainCompletionRequest
-	if err := decodeRequestJSON(r, &request); err != nil {
-		writeError(w, fmt.Errorf("invalid worker drain completion JSON: %w", err))
+	if r.ContentLength != 0 {
+		writeError(w, badRequest(errors.New("drain completion must have no request body")))
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if !request.InventoryComplete || request.InventoryScope != "worker_instance_state_roots_v0" || request.ObservedAt.IsZero() {
-		writeError(w, badRequest(errors.New("a complete, timestamped physical inventory is required")))
-		return
-	}
-	now := time.Now()
-	if request.ObservedAt.After(now.Add(time.Minute)) {
-		writeError(w, badRequest(errors.New("drain inventory observed_at is in the future")))
-		return
-	}
-	if worker.EpochStartedAt.IsZero() || request.ObservedAt.Before(worker.EpochStartedAt) {
-		writeError(w, badRequest(errors.New("drain inventory observed_at predates the current worker epoch")))
-		return
-	}
-	if len(request.Inventory) != 0 || len(request.Reclaimed) != 0 || len(request.Quarantined) != 0 || len(request.Errors) != 0 {
-		writeError(w, badRequest(errors.New("drain completion requires empty inventory, reclaimed, quarantined, and errors lists")))
-		return
-	}
-	completed, err := workergroup.CompleteHostDrain(r.Context(), s.tx, worker, request.ObservedAt)
+	completed, err := workergroup.CompleteHostDrain(r.Context(), s.tx, worker)
 	if err != nil {
 		s.writeWorkerHostError(w, "complete worker drain", err)
 		return

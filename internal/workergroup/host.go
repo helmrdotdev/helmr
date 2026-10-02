@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -318,13 +317,12 @@ func BeginHostDrain(ctx context.Context, txb db.TxBeginner, principal HostPrinci
 // CompleteHostDrain marks a drained epoch termination ready once its instance
 // state is gone, fenced by its host claim version. It locks the host's drain
 // completion authority before completing the drain.
-func CompleteHostDrain(ctx context.Context, txb db.TxBeginner, principal HostPrincipal, observedAt time.Time) (db.CompleteWorkerDrainRow, error) {
+func CompleteHostDrain(ctx context.Context, txb db.TxBeginner, principal HostPrincipal) (db.CompleteWorkerDrainRow, error) {
 	params := db.CompleteWorkerDrainParams{
 		WorkerHostID:         pgvalue.UUID(principal.HostID),
 		WorkerGroupID:        pgvalue.UUID(principal.GroupID),
 		WorkerEpoch:          pgtype.Int8{Int64: principal.Epoch, Valid: true},
 		ExpectedClaimVersion: principal.HostClaimVersion,
-		ObservedAt:           pgvalue.Timestamptz(observedAt),
 	}
 	var completed db.CompleteWorkerDrainRow
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {

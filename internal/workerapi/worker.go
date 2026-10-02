@@ -62,27 +62,11 @@ type ObserveRequest struct {
 	Observation Observation `json:"observation"`
 }
 
+// StartupRecoveryRequest is sent only after enumerating guest state, jailer
+// state, owned processes and exact-owner network state. Enumeration failure
+// prevents reporting; quarantined Instance IDs are not physical reclaim proof.
 type StartupRecoveryRequest struct {
-	InventoryComplete bool      `json:"inventory_complete"`
-	InventoryScope    string    `json:"inventory_scope"`
-	ObservedAt        time.Time `json:"observed_at"`
-	Inventory         []string  `json:"inventory"`
-	Reclaimed         []string  `json:"reclaimed,omitempty"`
-	Quarantined       []string  `json:"quarantined,omitempty"`
-	Errors            []string  `json:"errors,omitempty"`
-}
-
-// DrainCompletionRequest is the worker's proof that a server-directed
-// drain has removed both durable execution authority and local instance state.
-// The control plane must treat an identical proof as idempotent.
-type DrainCompletionRequest struct {
-	InventoryComplete bool      `json:"inventory_complete"`
-	InventoryScope    string    `json:"inventory_scope"`
-	ObservedAt        time.Time `json:"observed_at"`
-	Inventory         []string  `json:"inventory"`
-	Reclaimed         []string  `json:"reclaimed,omitempty"`
-	Quarantined       []string  `json:"quarantined,omitempty"`
-	Errors            []string  `json:"errors,omitempty"`
+	Quarantined []string `json:"quarantined"`
 }
 
 type Observation struct {

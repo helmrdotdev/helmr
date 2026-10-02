@@ -31,8 +31,6 @@ WITH target AS MATERIALIZED (
       FROM target AS drain_target
      WHERE drain_target.status = 'draining'
        AND drain_target.epoch_started_at IS NOT NULL
-       AND $5::timestamptz >= drain_target.epoch_started_at
-       AND $5::timestamptz <= now() + interval '1 minute'
        AND EXISTS (
            SELECT 1 FROM worker_host_secrets
             WHERE worker_host_secrets.worker_host_id = drain_target.id
@@ -88,11 +86,10 @@ SELECT id, worker_group_id, current_epoch, status, claim_version, termination_re
 `
 
 type CompleteWorkerDrainParams struct {
-	WorkerHostID         pgtype.UUID        `json:"worker_host_id"`
-	WorkerGroupID        pgtype.UUID        `json:"worker_group_id"`
-	WorkerEpoch          pgtype.Int8        `json:"worker_epoch"`
-	ExpectedClaimVersion int64              `json:"expected_claim_version"`
-	ObservedAt           pgtype.Timestamptz `json:"observed_at"`
+	WorkerHostID         pgtype.UUID `json:"worker_host_id"`
+	WorkerGroupID        pgtype.UUID `json:"worker_group_id"`
+	WorkerEpoch          pgtype.Int8 `json:"worker_epoch"`
+	ExpectedClaimVersion int64       `json:"expected_claim_version"`
 }
 
 type CompleteWorkerDrainRow struct {
@@ -110,7 +107,6 @@ func (q *Queries) CompleteWorkerDrain(ctx context.Context, arg CompleteWorkerDra
 		arg.WorkerGroupID,
 		arg.WorkerEpoch,
 		arg.ExpectedClaimVersion,
-		arg.ObservedAt,
 	)
 	var i CompleteWorkerDrainRow
 	err := row.Scan(

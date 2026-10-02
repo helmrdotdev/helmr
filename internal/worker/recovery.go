@@ -269,10 +269,11 @@ func vmNetNSNames(ctx context.Context, ipPath string) ([]string, error) {
 }
 
 func ownedVMProcesses(jailerDir string) ([]ownedVMProcess, error) {
-	entries, err := os.ReadDir("/proc")
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
+	return ownedVMProcessesAt("/proc", jailerDir)
+}
+
+func ownedVMProcessesAt(procDir, jailerDir string) ([]ownedVMProcess, error) {
+	entries, err := os.ReadDir(procDir)
 	if err != nil {
 		return nil, err
 	}
@@ -282,17 +283,43 @@ func ownedVMProcesses(jailerDir string) ([]ownedVMProcess, error) {
 		if parseErr != nil {
 			continue
 		}
-		cmdline, readErr := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
+		processDir := filepath.Join(procDir, entry.Name())
+		cmdline, readErr := os.ReadFile(filepath.Join(processDir, "cmdline"))
 		if readErr != nil {
-			continue
+			if processDisappeared(processDir, readErr) {
+				continue
+			}
+			return nil, fmt.Errorf("read process %d command line: %w", pid, readErr)
 		}
-		root, _ := os.Readlink(filepath.Join("/proc", entry.Name(), "root"))
+		var root string
+		if filepath.Base(strings.SplitN(string(cmdline), "\x00", 2)[0]) == "firecracker" {
+			root, readErr = os.Readlink(filepath.Join(processDir, "root"))
+			if readErr != nil {
+				if processDisappeared(processDir, readErr) {
+					continue
+				}
+				return nil, fmt.Errorf("read process %d root: %w", pid, readErr)
+			}
+		}
 		id, owned, problem := helmrOwnedVMProcess(cmdline, root, jailerDir)
 		if owned {
 			processes = append(processes, ownedVMProcess{PID: pid, ID: id, Problem: problem})
 		}
 	}
 	return processes, nil
+}
+
+// ESRCH identifies a dead task behind an open procfs file even if its PID was
+// reused. ENOENT requires checking that the entire process disappeared.
+func processDisappeared(processDir string, err error) bool {
+	if errors.Is(err, syscall.ESRCH) {
+		return true
+	}
+	if os.IsNotExist(err) {
+		_, statErr := os.Stat(processDir)
+		return os.IsNotExist(statErr)
+	}
+	return false
 }
 
 func helmrOwnedVMProcess(cmdline []byte, processRoot string, jailerDir string) (string, bool, string) {

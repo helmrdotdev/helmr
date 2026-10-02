@@ -93,9 +93,13 @@ func (c *Client) postJSON(ctx context.Context, path string, bearer string, in an
 }
 
 func (c *Client) postWorkerJSON(ctx context.Context, path string, in any, out any) error {
-	payload, err := json.Marshal(in)
-	if err != nil {
-		return fmt.Errorf("encode request: %w", err)
+	var payload []byte
+	if in != nil {
+		var err error
+		payload, err = json.Marshal(in)
+		if err != nil {
+			return fmt.Errorf("encode request: %w", err)
+		}
 	}
 	for attempt := range 2 {
 		credential, err := c.hostCredential(ctx)
@@ -106,7 +110,9 @@ func (c *Client) postWorkerJSON(ctx context.Context, path string, in any, out an
 		if err != nil {
 			return err
 		}
-		req.Header.Set("content-type", "application/json")
+		if in != nil {
+			req.Header.Set("content-type", "application/json")
+		}
 		err = c.transport.DoJSON(req, out)
 		if attempt == 0 && httpclient.IsStatus(err, http.StatusUnauthorized) {
 			c.invalidateHostCredential(credential)
