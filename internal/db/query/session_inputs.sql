@@ -6,14 +6,6 @@ SELECT *
    AND sequence = sqlc.arg(sequence)
  FOR UPDATE;
 
--- name: GetSessionTurnByIDForUpdate :one
-SELECT *
-  FROM session_turns
- WHERE environment_id = sqlc.arg(environment_id)
-   AND session_id = sqlc.arg(session_id)
-   AND id = sqlc.arg(id)
- FOR UPDATE;
-
 -- name: CreateSessionInputReconcileOutbox :exec
 INSERT INTO control_outbox (id, topic, payload, available_at)
 VALUES (

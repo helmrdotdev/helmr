@@ -82,45 +82,6 @@ func (q *Queries) GetSessionTurnAtSequenceForUpdate(ctx context.Context, arg Get
 	return i, err
 }
 
-const getSessionTurnByIDForUpdate = `-- name: GetSessionTurnByIDForUpdate :one
-SELECT id, environment_id, session_id, sequence, data, source_run_id, status, run_generation, run_id, attempt_number, ready_run_lease_id, settlement_started_at, interrupt_requested_at, terminal_event_id, terminal_request_fingerprint, created_at
-  FROM session_turns
- WHERE environment_id = $1
-   AND session_id = $2
-   AND id = $3
- FOR UPDATE
-`
-
-type GetSessionTurnByIDForUpdateParams struct {
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	SessionID     pgtype.UUID `json:"session_id"`
-	ID            pgtype.UUID `json:"id"`
-}
-
-func (q *Queries) GetSessionTurnByIDForUpdate(ctx context.Context, arg GetSessionTurnByIDForUpdateParams) (SessionTurn, error) {
-	row := q.db.QueryRow(ctx, getSessionTurnByIDForUpdate, arg.EnvironmentID, arg.SessionID, arg.ID)
-	var i SessionTurn
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.SessionID,
-		&i.Sequence,
-		&i.Data,
-		&i.SourceRunID,
-		&i.Status,
-		&i.RunGeneration,
-		&i.RunID,
-		&i.AttemptNumber,
-		&i.ReadyRunLeaseID,
-		&i.SettlementStartedAt,
-		&i.InterruptRequestedAt,
-		&i.TerminalEventID,
-		&i.TerminalRequestFingerprint,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const lockSessionForInputReconcile = `-- name: LockSessionForInputReconcile :one
 SELECT id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
   FROM sessions

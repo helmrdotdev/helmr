@@ -910,64 +910,6 @@ func (q *Queries) LockComputerForDelete(ctx context.Context, arg LockComputerFor
 	return i, err
 }
 
-const lockSessionInputComputer = `-- name: LockSessionInputComputer :one
-SELECT c.id, c.environment_id, c.region_id, c.sandbox_declared_id, c.key, c.revision, c.writer_generation, c.head_disk_version_id, c.recovery_id, c.recovery_disk_version_id, c.recovery_reason, c.recovery_started_at, c.preparation_attempt_count, c.next_preparation_at, c.preparation_instance_id, c.recovery_completed_at, c.recovery_failure, c.computer_payload_required, c.recovery_payload_required, c.preparation_failure, c.initial_config, c.write_key_id, c.write_key_available, c.status, c.desired_state, c.dirty_state, c.last_activity_at, c.created_at, c.updated_at, c.deleted_at, c.secret_ca_certificate, c.secret_ca_private_key_nonce, c.secret_ca_private_key_ciphertext, c.secret_ca_not_after, c.computer_spec_id, c.creation_deployment_id, c.spec_retention_required FROM computers c JOIN sessions s ON s.environment_id=c.environment_id AND s.computer_id=c.id
-WHERE c.environment_id=$1 AND c.id=$2
- AND s.id=$3 AND s.status='open'
-FOR UPDATE OF c
-`
-
-type LockSessionInputComputerParams struct {
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	ID            pgtype.UUID `json:"id"`
-	SessionID     pgtype.UUID `json:"session_id"`
-}
-
-func (q *Queries) LockSessionInputComputer(ctx context.Context, arg LockSessionInputComputerParams) (Computer, error) {
-	row := q.db.QueryRow(ctx, lockSessionInputComputer, arg.EnvironmentID, arg.ID, arg.SessionID)
-	var i Computer
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.SandboxDeclaredID,
-		&i.Key,
-		&i.Revision,
-		&i.WriterGeneration,
-		&i.HeadDiskVersionID,
-		&i.RecoveryID,
-		&i.RecoveryDiskVersionID,
-		&i.RecoveryReason,
-		&i.RecoveryStartedAt,
-		&i.PreparationAttemptCount,
-		&i.NextPreparationAt,
-		&i.PreparationInstanceID,
-		&i.RecoveryCompletedAt,
-		&i.RecoveryFailure,
-		&i.ComputerPayloadRequired,
-		&i.RecoveryPayloadRequired,
-		&i.PreparationFailure,
-		&i.InitialConfig,
-		&i.WriteKeyID,
-		&i.WriteKeyAvailable,
-		&i.Status,
-		&i.DesiredState,
-		&i.DirtyState,
-		&i.LastActivityAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.DeletedAt,
-		&i.SecretCaCertificate,
-		&i.SecretCaPrivateKeyNonce,
-		&i.SecretCaPrivateKeyCiphertext,
-		&i.SecretCaNotAfter,
-		&i.ComputerSpecID,
-		&i.CreationDeploymentID,
-		&i.SpecRetentionRequired,
-	)
-	return i, err
-}
-
 const markComputerDeleting = `-- name: MarkComputerDeleting :one
 UPDATE computers SET status='deleting',desired_state='deleted',
  dirty_state=CASE WHEN dirty_state='dirty_state_lost' THEN 'clean' ELSE dirty_state END,

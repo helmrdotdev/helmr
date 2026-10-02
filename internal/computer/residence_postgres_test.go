@@ -151,27 +151,20 @@ func TestSessionComputerFencesKeepTheirSessionPredicates(t *testing.T) {
 	ref := SessionComputerRef{EnvironmentID: f.EnvironmentID, ComputerID: computerID, SessionID: sessionID}
 	other := ref
 	other.SessionID = uuid.NewV7()
-	for name, lock := range map[string]func(context.Context, pgx.Tx, SessionComputerRef) (SessionComputer, error){
-		"session": LockSessionComputer, "open session": LockOpenSessionComputer,
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, err := lock(t.Context(), f.beginFence(t), other); !errors.Is(err, pgx.ErrNoRows) {
-				t.Fatalf("another Session's fence = %v, want pgx.ErrNoRows", err)
-			}
-			locked, err := lock(t.Context(), f.beginFence(t), ref)
-			if err != nil || locked.Computer().ID != pgvalue.UUID(computerID) {
-				t.Fatalf("Session's Computer = %v, %v", locked.Computer().ID, err)
-			}
-			if !f.locked(t, "computers", computerID) {
-				t.Fatal("the fence did not lock the Computer")
-			}
-		})
-	}
+	t.Run("open", func(t *testing.T) {
+		if _, err := LockSessionComputer(t.Context(), f.beginFence(t), other); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("another Session's fence = %v, want pgx.ErrNoRows", err)
+		}
+		locked, err := LockSessionComputer(t.Context(), f.beginFence(t), ref)
+		if err != nil || locked.Computer().ID != pgvalue.UUID(computerID) {
+			t.Fatalf("Session's Computer = %v, %v", locked.Computer().ID, err)
+		}
+		if !f.locked(t, "computers", computerID) {
+			t.Fatal("the fence did not lock the Computer")
+		}
+	})
 
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET status='closing',close_sequence=0 WHERE id=$1`, sessionID)
-	if _, err := LockOpenSessionComputer(t.Context(), f.beginFence(t), ref); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("a closing Session's open fence = %v, want pgx.ErrNoRows", err)
-	}
 	if _, err := LockSessionComputer(t.Context(), f.beginFence(t), ref); err != nil {
 		t.Fatalf("a closing Session's Computer = %v", err)
 	}

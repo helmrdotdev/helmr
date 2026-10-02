@@ -292,7 +292,7 @@ func TestActorContinuationWaitsForOwnedScopeCleanup(t *testing.T) {
 				if err != nil {
 					return false, err
 				}
-				c, err := q.LockSessionInputComputer(t.Context(), db.LockSessionInputComputerParams{EnvironmentID: a.EnvironmentID, ID: a.ComputerID, SessionID: a.ID})
+				c, err := q.LockSessionCloseComputer(t.Context(), db.LockSessionCloseComputerParams{EnvironmentID: a.EnvironmentID, ComputerID: a.ComputerID, SessionID: a.ID})
 				if err != nil {
 					return false, err
 				}

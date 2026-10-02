@@ -30,13 +30,13 @@ type InputWait struct {
 // execution, or replays its registration, in one transaction. It locates the
 // lease, locks the attempt's Secret deliveries and then the running, entered,
 // non-finalizing execution, which must be the Actor execution of the
-// addressed Session. A replay with the same fingerprint validates the wait
-// cursor; a new wait requires the cursor at the Session's committed input
-// with no active Turn or hold, registers the wait, and then locks the
-// Session's Turn at the next input sequence: it completes the wait with that
-// Turn, fails it when the closing Session has committed its close sequence,
-// or leaves it pending. A stale execution or a wait already registered with
-// a different request is ErrStaleExecution; stale cursors, stopped Turns and
+// addressed Session. A replay with the same fingerprint validates the original
+// cursor and may resolve a pending wait. A new wait requires the cursor at the
+// Session's committed input with no active Turn or hold. Both paths resolve in
+// order: the next accepted Turn, drained closing EOF, then elapsed timeout;
+// otherwise the wait remains pending. Terminal results are replayed unchanged.
+// A stale execution or a wait registered with a different request is
+// ErrStaleExecution; stale cursors, stopped Turns and
 // Turn scopes are run's errors, inconsistent Session input is ErrAuthority,
 // and stale worker claims are workergroup.ErrStaleClaims.
 func RegisterInputWait(ctx context.Context, txb db.TxBeginner, fence run.ExecutionFence, wait InputWait) (db.RunWait, error) {
@@ -61,7 +61,11 @@ func RegisterInputWait(ctx context.Context, txb db.TxBeginner, fence run.Executi
 		}
 		registered, err = q.GetSessionInputRunWaitRegistrationReplay(ctx, replayParams)
 		if err == nil {
-			return authority.ValidateWaitCursor(registered, cursor)
+			if err := authority.ValidateWaitCursor(registered, cursor); err != nil {
+				return err
+			}
+			registered, err = resolveInputWait(ctx, tx, authority.Session(), registered)
+			return err
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
@@ -88,22 +92,7 @@ func RegisterInputWait(ctx context.Context, txb db.TxBeginner, fence run.Executi
 		if err != nil {
 			return staleExecution(err)
 		}
-		record, err := q.GetSessionTurnAtSequenceForUpdate(ctx, db.GetSessionTurnAtSequenceForUpdateParams{
-			EnvironmentID: authority.Run().EnvironmentID, SessionID: authority.Session().ID,
-			Sequence: wait.AfterInputSequence + 1,
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			if authority.Session().Status == "closing" && authority.Session().CloseSequence.Valid &&
-				wait.AfterInputSequence >= authority.Session().CloseSequence.Int64 {
-				registered, err = FailWait(ctx, tx, registered, "session_closed")
-				return err
-			}
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		registered, err = CompleteWait(ctx, tx, registered, record)
+		registered, err = resolveInputWait(ctx, tx, authority.Session(), registered)
 		return err
 	})
 	return registered, err

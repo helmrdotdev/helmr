@@ -112,7 +112,7 @@ func (r *Reconciler) ReconcileLifecycle(
 
 // ReconcileInput repairs append delivery after the append transaction. It is safe to
 // run after an in-transaction match or continuation because every transition is
-// guarded by the Actor current-Run CAS and the pending Wait CAS.
+// guarded by the Session current-Run CAS and the pending Wait CAS.
 func (r *Reconciler) ReconcileInput(
 	ctx context.Context,
 	environmentID uuid.UUID,
@@ -147,12 +147,15 @@ func (r *Reconciler) ReconcileInput(
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, tx.Commit(ctx)
 	}
-	if err != nil || session.ComputerID != locator.ComputerID {
+	if err != nil {
+		return false, err
+	}
+	if session.ComputerID != locator.ComputerID {
 		return false, ErrAuthority
 	}
-	// Cancellation terminalizes queued input atomically under this same owner.
-	// Its prior delivery records no longer need execution or Computer authority.
-	if session.CancelRequestedAt.Valid {
+	// Cancellation, holds and terminal Sessions leave settlement to their owners.
+	// Their lifecycle or resume path arranges any subsequent input delivery.
+	if session.CancelRequestedAt.Valid || session.DispatchHoldID.Valid || (session.Status != "open" && session.Status != "closing") {
 		return false, tx.Commit(ctx)
 	}
 	var currentRun db.Run
@@ -161,38 +164,41 @@ func (r *Reconciler) ReconcileInput(
 			EnvironmentID: session.EnvironmentID, RunID: session.CurrentRunID, SessionID: session.ID,
 		})
 		if err != nil {
-			return false, ErrAuthority
+			return false, err
 		}
 	}
-	locked, err := computer.LockOpenSessionComputer(ctx, tx, sessionComputerRef(session))
+	locked, err := computer.LockSessionComputer(ctx, tx, sessionComputerRef(session))
 	if err != nil {
-		return false, ErrAuthority
+		return false, err
 	}
 	sessionComputer := locked.Computer()
 	if session.CurrentRunID.Valid {
 		attempt, err := q.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{
 			RunID: currentRun.ID, Number: currentRun.CurrentAttemptNumber, ComputerID: sessionComputer.ID,
 		})
-		if err != nil || attempt.TerminalAt.Valid {
-			return false, ErrAuthority
+		if err != nil {
+			return false, err
+		}
+		if attempt.TerminalAt.Valid {
+			return false, tx.Commit(ctx)
 		}
 	}
-	turn, err := q.GetSessionTurnByIDForUpdate(ctx, db.GetSessionTurnByIDForUpdateParams{
+	_, err = q.GetSessionTurn(ctx, db.GetSessionTurnParams{
 		EnvironmentID: session.EnvironmentID, SessionID: session.ID, ID: pgvalue.UUID(turnID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, tx.Commit(ctx)
 	}
-	if err != nil || !turn.ID.Valid || uuid.UUID(turn.ID.Bytes) != turnID {
-		return false, ErrAuthority
+	if err != nil {
+		return false, err
 	}
 	wait, err := q.GetPendingSessionInputRunWait(ctx, db.GetPendingSessionInputRunWaitParams{
 		EnvironmentID: session.EnvironmentID, SessionID: session.ID,
 		RunID: currentRun.ID, AttemptNumber: currentRun.CurrentAttemptNumber,
-		AfterInputSequence: pgtype.Int8{Int64: turn.Sequence - 1, Valid: true},
+		AfterInputSequence: pgtype.Int8{Int64: session.CommittedInputSequence, Valid: true},
 	})
 	if err == nil {
-		if _, err := CompleteWait(ctx, tx, wait, turn); err != nil {
+		if _, err := resolveInputWait(ctx, tx, session, wait); err != nil {
 			return false, err
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -214,6 +220,8 @@ func (r *Reconciler) ReconcileInput(
 	return false, nil
 }
 
+// ReconcileTimeouts also delivers ready input and drained close before considering
+// an elapsed timeout. Its count includes only newly committed timeout failures.
 func (r *Reconciler) ReconcileTimeouts(ctx context.Context, limit int32) (int, error) {
 	if limit <= 0 {
 		return 0, nil
@@ -224,104 +232,75 @@ func (r *Reconciler) ReconcileTimeouts(ctx context.Context, limit int32) (int, e
 	}
 	resolved := 0
 	for _, candidate := range candidates {
-		if !candidate.SessionID.Valid || !candidate.AfterInputSequence.Valid {
-			return resolved, ErrAuthority
-		}
-		tx, err := r.db.Begin(ctx)
-		if err != nil {
-			return resolved, err
-		}
-		q := db.New(tx)
-		_, err = q.LockComputerSecretsForAdmission(ctx, candidate.ComputerID)
-		if err != nil {
-			_ = tx.Rollback(context.Background())
-			return resolved, err
-		}
-		if err := lockSessionComputer(ctx, tx, candidate.EnvironmentID, candidate.ComputerID); err != nil {
-			_ = tx.Rollback(context.Background())
-			return resolved, err
-		}
-		session, err := q.LockSessionForInputReconcile(ctx, db.LockSessionForInputReconcileParams{
-			EnvironmentID: candidate.EnvironmentID, SessionID: candidate.SessionID,
+		timedOut := false
+		err := db.RunTx(ctx, r.db, func(tx pgx.Tx) error {
+			if !candidate.SessionID.Valid || !candidate.AfterInputSequence.Valid {
+				return ErrAuthority
+			}
+			q := db.New(tx)
+			if _, err := q.LockComputerSecretsForAdmission(ctx, candidate.ComputerID); err != nil {
+				return err
+			}
+			if err := lockSessionComputer(ctx, tx, candidate.EnvironmentID, candidate.ComputerID); err != nil {
+				return err
+			}
+			session, err := q.LockSessionForInputReconcile(ctx, db.LockSessionForInputReconcileParams{
+				EnvironmentID: candidate.EnvironmentID, SessionID: candidate.SessionID,
+			})
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if session.ComputerID != candidate.ComputerID {
+				return ErrAuthority
+			}
+			if session.DispatchHoldID.Valid || session.CancelRequestedAt.Valid || session.CurrentRunID != candidate.RunID {
+				return nil
+			}
+			current, err := q.LockSessionInputCurrentRun(ctx, db.LockSessionInputCurrentRunParams{
+				EnvironmentID: candidate.EnvironmentID, RunID: candidate.RunID, SessionID: candidate.SessionID,
+			})
+			if err != nil {
+				return err
+			}
+			attempt, err := q.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{
+				RunID: current.ID, Number: current.CurrentAttemptNumber, ComputerID: session.ComputerID,
+			})
+			if err != nil {
+				return err
+			}
+			if attempt.TerminalAt.Valid || current.CurrentAttemptNumber != candidate.AttemptNumber {
+				return nil
+			}
+			wait, err := q.GetPendingSessionInputRunWait(ctx, db.GetPendingSessionInputRunWaitParams{
+				EnvironmentID: candidate.EnvironmentID, SessionID: candidate.SessionID,
+				RunID: candidate.RunID, AttemptNumber: candidate.AttemptNumber,
+				AfterInputSequence: candidate.AfterInputSequence,
+			})
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if wait.ID != candidate.ID {
+				return nil
+			}
+			settled, err := resolveInputWait(ctx, tx, session, wait)
+			if err != nil {
+				return err
+			}
+			timedOut = settled.ConditionStatus == "failed" && settled.ConditionReasonCode.String == "wait_timeout"
+			return nil
 		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			_ = tx.Rollback(context.Background())
-			continue
-		}
 		if err != nil {
-			_ = tx.Rollback(context.Background())
 			return resolved, err
 		}
-		if session.DispatchHoldID.Valid || !session.CurrentRunID.Valid || session.CurrentRunID != candidate.RunID {
-			_ = tx.Rollback(context.Background())
-			continue
+		if timedOut {
+			resolved++
 		}
-		run, err := q.LockSessionInputCurrentRun(ctx, db.LockSessionInputCurrentRunParams{
-			EnvironmentID: candidate.EnvironmentID, RunID: candidate.RunID, SessionID: candidate.SessionID,
-		})
-		if err != nil {
-			_ = tx.Rollback(context.Background())
-			return resolved, ErrAuthority
-		}
-		locked, err := computer.LockOpenSessionComputer(ctx, tx, computer.SessionComputerRef{
-			EnvironmentID: pgvalue.MustUUIDValue(candidate.EnvironmentID),
-			ComputerID:    pgvalue.MustUUIDValue(candidate.ComputerID),
-			SessionID:     pgvalue.MustUUIDValue(candidate.SessionID),
-		})
-		if err != nil {
-			_ = tx.Rollback(context.Background())
-			return resolved, ErrAuthority
-		}
-		sessionComputer := locked.Computer()
-		attempt, err := q.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{
-			RunID: run.ID, Number: run.CurrentAttemptNumber, ComputerID: sessionComputer.ID,
-		})
-		if err != nil || attempt.TerminalAt.Valid {
-			_ = tx.Rollback(context.Background())
-			return resolved, ErrAuthority
-		}
-		wait, err := q.GetPendingSessionInputRunWait(ctx, db.GetPendingSessionInputRunWaitParams{
-			EnvironmentID: candidate.EnvironmentID, SessionID: candidate.SessionID,
-			RunID: candidate.RunID, AttemptNumber: candidate.AttemptNumber,
-			AfterInputSequence: candidate.AfterInputSequence,
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			_ = tx.Rollback(context.Background())
-			continue
-		}
-		if err != nil {
-			_ = tx.Rollback(context.Background())
-			return resolved, err
-		}
-		if wait.ID != candidate.ID {
-			_ = tx.Rollback(context.Background())
-			continue
-		}
-		if !wait.TimeoutAt.Valid {
-			_ = tx.Rollback(context.Background())
-			return resolved, ErrAuthority
-		}
-		now, err := q.GetRunLeaseRenewalTime(ctx)
-		if err != nil {
-			_ = tx.Rollback(context.Background())
-			return resolved, err
-		}
-		if !now.Valid {
-			_ = tx.Rollback(context.Background())
-			return resolved, ErrAuthority
-		}
-		if now.Time.Before(wait.TimeoutAt.Time) {
-			_ = tx.Rollback(context.Background())
-			continue
-		}
-		if _, err := FailWait(ctx, tx, wait, "wait_timeout"); err != nil {
-			_ = tx.Rollback(context.Background())
-			return resolved, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return resolved, err
-		}
-		resolved++
 	}
 	return resolved, nil
 }

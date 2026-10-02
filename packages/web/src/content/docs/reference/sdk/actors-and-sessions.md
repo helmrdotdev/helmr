@@ -35,8 +35,11 @@ of work, and the Session is their stable interaction address.
 
 - `session.receive({ timeout?, idleTimeout?, metadata?, tags? })` returns a Turn,
   or `null` after a closing Session has drained. Timeout rejects; it is not a
-  successful empty receive. The Actor idle timeout controls the warm wait before
-  managed suspension, not the Session lifetime.
+  successful empty receive. Accepted FIFO input takes precedence over drained
+  close and timeout until the receive result commits, including input accepted
+  after the nominal deadline. A timeout leaves later input queued for a subsequent
+  receive if the Actor continues. The Actor idle timeout controls the warm wait
+  before managed suspension, not the Session lifetime.
 - A Turn has `id`, `sequence`, `input`, `source`, `createdAt`, and `signal`.
 - `await turn.onMessage(handler)` registers one sequential handler and acknowledges
   readiness. Each callback receives `{ id, data }`; application fields such as
