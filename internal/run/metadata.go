@@ -120,6 +120,12 @@ func (m MetadataMutation) Operation() string { return m.operation }
 // Key is the key a set or increment addresses; it is empty for a patch.
 func (m MetadataMutation) Key() string { return m.key }
 
+// MetadataRejectionError reports a valid mutation rejected by the current
+// metadata or its size bound. Database and stored-state failures are distinct.
+type MetadataRejectionError struct{ Reason string }
+
+func (e MetadataRejectionError) Error() string { return e.Reason }
+
 // apply returns the metadata the mutation makes of current, normalized.
 func (m MetadataMutation) apply(current json.RawMessage) (json.RawMessage, error) {
 	values := make(map[string]json.RawMessage)
@@ -138,12 +144,12 @@ func (m MetadataMutation) apply(current json.RawMessage) (json.RawMessage, error
 		if raw, ok := values[m.key]; ok {
 			if err := json.Unmarshal(raw, &currentValue); err != nil ||
 				math.IsNaN(currentValue) || math.IsInf(currentValue, 0) {
-				return nil, fmt.Errorf("run metadata key %q is not a finite number", m.key)
+				return nil, MetadataRejectionError{Reason: fmt.Sprintf("run metadata key %q is not a finite number", m.key)}
 			}
 		}
 		next := currentValue + *m.amount
 		if math.IsNaN(next) || math.IsInf(next, 0) {
-			return nil, fmt.Errorf("run metadata increment for key %q is not finite", m.key)
+			return nil, MetadataRejectionError{Reason: fmt.Sprintf("run metadata increment for key %q is not finite", m.key)}
 		}
 		raw, err := json.Marshal(next)
 		if err != nil {
@@ -157,7 +163,11 @@ func (m MetadataMutation) apply(current json.RawMessage) (json.RawMessage, error
 	if err != nil {
 		return nil, err
 	}
-	return NormalizeMetadata(next, MaxMetadataBytes, "run")
+	normalized, err := NormalizeMetadata(next, MaxMetadataBytes, "run")
+	if err != nil {
+		return nil, MetadataRejectionError{Reason: err.Error()}
+	}
+	return normalized, nil
 }
 
 func validateMetadataKey(value string) error {

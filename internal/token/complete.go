@@ -5,6 +5,8 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -48,11 +50,16 @@ func (t *Tokens) CompleteWithCallback(ctx context.Context, tokenID uuid.UUID, ca
 			ID: pgvalue.UUID(tokenID), CallbackSecretFingerprint: fingerprint,
 		})
 		if err != nil {
-			return Target{}, nil, ErrCredentialDenied
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Target{}, nil, ErrCredentialDenied
+			}
+			return Target{}, nil, fmt.Errorf("read callback credential: %w", err)
 		}
 		credentials, err := t.key.Derive(pgvalue.MustUUIDValue(row.ID))
-		if err != nil ||
-			!hmac.Equal(credentials.CallbackFingerprint, row.CallbackSecretFingerprint) ||
+		if err != nil {
+			return Target{}, nil, fmt.Errorf("derive callback credential: %w", err)
+		}
+		if !hmac.Equal(credentials.CallbackFingerprint, row.CallbackSecretFingerprint) ||
 			!hmac.Equal(credentials.CallbackFingerprint, fingerprint) {
 			return Target{}, nil, ErrCredentialDenied
 		}
@@ -69,17 +76,26 @@ func (t *Tokens) CompleteWithBearer(ctx context.Context, tokenID uuid.UUID, bear
 	return t.complete(ctx, Target{}, result, "", func(ctx context.Context, q *db.Queries) (Target, *db.PublicAccessToken, error) {
 		publicAccess, err := q.LockPublicAccessTokenByHash(ctx, auth.HashCredential(bearer))
 		if err != nil {
-			return Target{}, nil, ErrCredentialDenied
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Target{}, nil, ErrCredentialDenied
+			}
+			return Target{}, nil, fmt.Errorf("read public access credential: %w", err)
 		}
 		row, err := q.GetTokenByID(ctx, pgvalue.UUID(tokenID))
 		if err != nil {
-			return Target{}, nil, ErrCredentialDenied
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Target{}, nil, ErrCredentialDenied
+			}
+			return Target{}, nil, fmt.Errorf("read public completion token: %w", err)
 		}
 		if publicAccess.TokenID != row.ID {
 			return Target{}, nil, ErrCredentialDenied
 		}
 		credentials, err := t.key.Derive(pgvalue.MustUUIDValue(row.ID))
-		if err != nil || !hmac.Equal(credentials.PublicAccessHash, publicAccess.TokenHash) ||
+		if err != nil {
+			return Target{}, nil, fmt.Errorf("derive public access credential: %w", err)
+		}
+		if !hmac.Equal(credentials.PublicAccessHash, publicAccess.TokenHash) ||
 			!hmac.Equal(credentials.PublicAccessHash, auth.HashCredential(bearer)) {
 			return Target{}, nil, ErrCredentialDenied
 		}
@@ -160,7 +176,7 @@ func (t *Tokens) complete(
 		completed = tokenFromCompleteRow(row)
 		if publicAccess != nil && row.ReconciliationEnqueued {
 			if _, err := q.MarkPublicAccessTokenUsed(ctx, publicAccess.ID); err != nil {
-				return ErrCredentialDenied
+				return fmt.Errorf("record public access credential usage: %w", err)
 			}
 		}
 		if claim != nil {

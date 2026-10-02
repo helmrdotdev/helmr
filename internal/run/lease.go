@@ -196,15 +196,15 @@ type Finalization struct {
 // BeginFinalization begins the fenced member's finalization in its own
 // transaction and records its Program quiescence. It runs the staged live
 // prologue: the located lease must belong to the requested Run attempt
-// before its Secrets and then its execution are locked. Every error locating
-// the lease or beginning the finalization, except stale claims, is ErrStale;
-// a Secret lock or quiescence write failure is returned as is.
+// before its Secrets and then its execution are locked. Missing or superseded
+// execution authority is ErrStale; stale claims and backend failures retain
+// their own classification.
 func BeginFinalization(ctx context.Context, txb db.TxBeginner, request ExecutionFinalization) (Finalization, error) {
 	var finalization Finalization
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
 		locator, err := LocateLiveExecution(ctx, tx, request.Fence)
 		if err != nil {
-			return staleFinalization(err)
+			return stale(err)
 		}
 		if locator.RunID() != request.RunID || locator.AttemptNumber() != request.AttemptNumber {
 			return ErrStale
@@ -214,7 +214,7 @@ func BeginFinalization(ctx context.Context, txb db.TxBeginner, request Execution
 		}
 		begun, err := BeginExecutionFinalization(ctx, tx, request)
 		if err != nil {
-			return staleFinalization(err)
+			return stale(err)
 		}
 		lease := begun.Lease()
 		// Guest emits ProgramQuiesced only after the scoped cgroup is empty and
@@ -229,13 +229,6 @@ func BeginFinalization(ctx context.Context, txb db.TxBeginner, request Execution
 		return nil
 	})
 	return finalization, err
-}
-
-func staleFinalization(err error) error {
-	if errors.Is(err, workergroup.ErrStaleClaims) {
-		return err
-	}
-	return errors.Join(ErrStale, err)
 }
 
 // TaskCompletionReplays reads the completion a Run lease recorded.
