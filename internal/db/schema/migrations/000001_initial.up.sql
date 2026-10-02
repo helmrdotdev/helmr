@@ -3014,6 +3014,11 @@ CREATE INDEX computer_commands_pending_idx ON computer_commands(created_at,id) W
 CREATE INDEX computer_commands_unreconciled_idx ON computer_commands(computer_instance_id,id) WHERE computer_instance_id IS NOT NULL AND process_reconciled_at IS NULL;
 CREATE INDEX sessions_computer_attached_idx ON sessions(computer_id,id) WHERE status IN ('open','closing');
 CREATE INDEX computer_checkpoints_history_idx ON computer_checkpoints(computer_id,created_at DESC,id);
+CREATE INDEX computer_checkpoints_payload_gc_idx ON computer_checkpoints(id) WHERE status IN ('invalid','deleted','aborted') AND vm_config_artifact_id IS NOT NULL;
+CREATE INDEX computer_checkpoints_vm_config_artifact_idx ON computer_checkpoints(vm_config_artifact_id) WHERE vm_config_artifact_id IS NOT NULL;
+CREATE INDEX computer_checkpoints_vm_state_artifact_idx ON computer_checkpoints(vm_state_artifact_id) WHERE vm_state_artifact_id IS NOT NULL;
+CREATE INDEX computer_checkpoints_memory_artifact_idx ON computer_checkpoints(memory_artifact_id) WHERE memory_artifact_id IS NOT NULL;
+CREATE INDEX computer_checkpoints_scratch_disk_artifact_idx ON computer_checkpoints(scratch_disk_artifact_id) WHERE scratch_disk_artifact_id IS NOT NULL;
 CREATE UNIQUE INDEX computer_checkpoints_capture_uidx ON computer_checkpoints(source_computer_instance_id) WHERE status='creating';
 CREATE INDEX computer_checkpoint_runs_wait_idx ON computer_checkpoint_runs(run_wait_id,checkpoint_id);
 CREATE INDEX idempotency_claims_receipt_gc_idx ON idempotency_claims(receipt_expires_at,id) WHERE receipt_pruned_at IS NULL AND status<>'pending';
