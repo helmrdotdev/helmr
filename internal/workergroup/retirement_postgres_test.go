@@ -121,7 +121,7 @@ func TestPoolRetirementPostgresWaitsForCaptureFence(t *testing.T) {
 		t.Fatalf("profiles=%+v: %v", profiles, err)
 	}
 	profile := profiles.RetainedProfiles.Profiles[0]
-	if profile.CapturingCheckpoints != 1 || profile.EligiblePools != 1 {
+	if profile.LiveInstances != 1 || profile.CapturingCheckpoints != 1 || profile.EligiblePools != 1 {
 		t.Fatalf("capture dependency=%+v", profile)
 	}
 }

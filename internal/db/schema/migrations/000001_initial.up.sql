@@ -3018,3 +3018,7 @@ CREATE UNIQUE INDEX computer_checkpoints_capture_uidx ON computer_checkpoints(so
 CREATE INDEX computer_checkpoint_runs_wait_idx ON computer_checkpoint_runs(run_wait_id,checkpoint_id);
 CREATE INDEX idempotency_claims_receipt_gc_idx ON idempotency_claims(receipt_expires_at,id) WHERE receipt_pruned_at IS NULL AND status<>'pending';
 CREATE UNIQUE INDEX telemetry_outbox_command_log_observed_idx ON telemetry_outbox(environment_id,command_id,stream_name,observed_seq) WHERE stream_kind='command_log';
+
+CREATE INDEX computer_checkpoints_retained_source_idx
+    ON computer_checkpoints(source_computer_instance_id)
+    WHERE status IN ('creating','ready') AND resume_committed_at IS NULL;

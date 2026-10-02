@@ -1235,7 +1235,16 @@ func (q *Queries) ListWorkerCapacityBins(ctx context.Context, arg ListWorkerCapa
 }
 
 const listWorkerGroupRetainedProfiles = `-- name: ListWorkerGroupRetainedProfiles :many
-WITH retained AS (
+WITH retained_ids AS (
+ SELECT i.id FROM computer_instances i
+ WHERE i.worker_group_id=$1 AND i.reclaimed_at IS NULL
+ UNION
+ SELECT c.source_computer_instance_id FROM computer_checkpoints c
+ JOIN computer_instances i ON i.id=c.source_computer_instance_id
+ WHERE i.worker_group_id=$1
+   AND c.status IN ('creating','ready') AND c.resume_committed_at IS NULL
+   AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp())
+), retained AS (
  SELECT i.id, i.org_id, i.worker_group_id, i.project_id, i.environment_id, i.region_id, i.worker_host_id, i.vm_platform_id, i.worker_epoch, i.vm_vcpu_count, i.cpu_config_digest, i.reserved_cpu_millis, i.reserved_memory_bytes, i.reserved_guest_ephemeral_disk_bytes, i.reserved_execution_slots, i.computer_id, i.program_deployment_id, i.source_checkpoint_id, i.source_disk_version_id, i.save_sequence, i.save_disk_version_id, i.save_base_disk_version_id, i.computer_payload_required, i.retained_source_disk_version_id, i.write_key_id, i.retained_write_key_id, i.computer_key_available, i.preparation_expires_at, i.desired_state, i.desired_version, i.desired_at, i.desired_reason, i.observed_state, i.observed_version, i.observed_desired_version, i.observed_at, i.allocated_at, i.ready_at, i.terminal_at, i.reclaimed_at, i.reclaim_evidence, i.terminal_reason_code, i.terminal_error, i.updated_at, i.computer_spec_id, i.writer_generation, i.writer_token_hash, i.writer_expires_at, i.admission_state, i.membership_revision, i.mount_state, i.mounted_at, i.unmounted_at, i.guest_channel_credential_hash, i.guest_channel_credential_expires_at, i.finalization_action, i.finalization_reason_code, i.finalization_error, i.capture_checkpoint_id, i.spec_retention_required,
    (SELECT count(*) FROM computer_checkpoints c WHERE c.source_computer_instance_id=i.id
      AND c.status='creating' AND c.resume_committed_at IS NULL
@@ -1243,7 +1252,7 @@ WITH retained AS (
    (SELECT count(*) FROM computer_checkpoints c WHERE c.source_computer_instance_id=i.id
      AND c.status='ready' AND c.resume_committed_at IS NULL
      AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp()))::bigint AS parked
- FROM computer_instances i WHERE i.worker_group_id=$1
+ FROM retained_ids r JOIN computer_instances i ON i.id=r.id
 ), profiles AS (
  SELECT vm_platform_id, vm_vcpu_count, cpu_config_digest,
    reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes,
@@ -2288,9 +2297,15 @@ WITH restore_profiles AS MATERIALIZED (
    i.reserved_guest_ephemeral_disk_bytes AS requested_guest_ephemeral_disk_bytes
  FROM computer_instances i
  WHERE i.worker_group_id=$3
-   AND (i.reclaimed_at IS NULL OR EXISTS(SELECT 1 FROM computer_checkpoints c
-   WHERE c.source_computer_instance_id=i.id AND c.status IN ('creating','ready') AND c.resume_committed_at IS NULL
-     AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp())))
+   AND i.reclaimed_at IS NULL
+ UNION
+ SELECT i.worker_group_id,i.vm_platform_id,i.vm_vcpu_count,i.cpu_config_digest,
+   i.reserved_cpu_millis,i.reserved_memory_bytes,i.reserved_guest_ephemeral_disk_bytes
+ FROM computer_checkpoints c
+ JOIN computer_instances i ON i.id=c.source_computer_instance_id
+ WHERE i.worker_group_id=$3
+   AND c.status IN ('creating','ready') AND c.resume_committed_at IS NULL
+   AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp())
 )
 UPDATE worker_pools AS target
  SET status = $1::text,

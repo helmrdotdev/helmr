@@ -120,9 +120,15 @@ WITH restore_profiles AS MATERIALIZED (
    i.reserved_guest_ephemeral_disk_bytes AS requested_guest_ephemeral_disk_bytes
  FROM computer_instances i
  WHERE i.worker_group_id=sqlc.arg(worker_group_id)
-   AND (i.reclaimed_at IS NULL OR EXISTS(SELECT 1 FROM computer_checkpoints c
-   WHERE c.source_computer_instance_id=i.id AND c.status IN ('creating','ready') AND c.resume_committed_at IS NULL
-     AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp())))
+   AND i.reclaimed_at IS NULL
+ UNION
+ SELECT i.worker_group_id,i.vm_platform_id,i.vm_vcpu_count,i.cpu_config_digest,
+   i.reserved_cpu_millis,i.reserved_memory_bytes,i.reserved_guest_ephemeral_disk_bytes
+ FROM computer_checkpoints c
+ JOIN computer_instances i ON i.id=c.source_computer_instance_id
+ WHERE i.worker_group_id=sqlc.arg(worker_group_id)
+   AND c.status IN ('creating','ready') AND c.resume_committed_at IS NULL
+   AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp())
 )
 UPDATE worker_pools AS target
  SET status = sqlc.arg(target_status)::text,
@@ -1040,7 +1046,16 @@ UPDATE worker_hosts
 RETURNING worker_hosts.*;
 
 -- name: ListWorkerGroupRetainedProfiles :many
-WITH retained AS (
+WITH retained_ids AS (
+ SELECT i.id FROM computer_instances i
+ WHERE i.worker_group_id=sqlc.arg(worker_group_id) AND i.reclaimed_at IS NULL
+ UNION
+ SELECT c.source_computer_instance_id FROM computer_checkpoints c
+ JOIN computer_instances i ON i.id=c.source_computer_instance_id
+ WHERE i.worker_group_id=sqlc.arg(worker_group_id)
+   AND c.status IN ('creating','ready') AND c.resume_committed_at IS NULL
+   AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp())
+), retained AS (
  SELECT i.*,
    (SELECT count(*) FROM computer_checkpoints c WHERE c.source_computer_instance_id=i.id
      AND c.status='creating' AND c.resume_committed_at IS NULL
@@ -1048,7 +1063,7 @@ WITH retained AS (
    (SELECT count(*) FROM computer_checkpoints c WHERE c.source_computer_instance_id=i.id
      AND c.status='ready' AND c.resume_committed_at IS NULL
      AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp()))::bigint AS parked
- FROM computer_instances i WHERE i.worker_group_id=sqlc.arg(worker_group_id)
+ FROM retained_ids r JOIN computer_instances i ON i.id=r.id
 ), profiles AS (
  SELECT vm_platform_id, vm_vcpu_count, cpu_config_digest,
    reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes,

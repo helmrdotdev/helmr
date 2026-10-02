@@ -144,7 +144,8 @@ it does not establish current fleet health.
 
 Group and Pool resolution includes `retained_profiles`: up to 100 distinct
 profiles with live Instance, creating checkpoint, parked checkpoint and eligible
-Pool counts. `complete: false` means more profiles exist; a truncated result is
+Pool counts. Eligible Pool counts include the inspected Pool when it is active;
+they are not a count of alternatives after its retirement. `complete: false` means more profiles exist; a truncated result is
 not proof that retirement is safe. Valid parked checkpoints retain their profile
 when waits resolve or Commands queue. A Pool also reports its claim version and
 seal time. Retirement checks the complete database state atomically.
