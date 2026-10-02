@@ -304,7 +304,7 @@ func TestComputerRowLocksStayBehindComputerFences(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, query := range []string{
-		"LockSessionCloseComputer", "LockSessionInputComputer", "LockCancellationComputers", "LockCancellationInstances",
+		"LockSessionCloseComputer", "LockCancellationComputers", "LockCancellationInstances",
 		"LockChildComputerPair", "LockComputer", "LockComputerAdmissionAuthority", "LockComputerCommandInstance",
 		"LockComputerCommandWorkerAuthority", "LockComputerForDelete", "LockComputerInstance", "LockRunLeaseClaimComputer",
 		"LockRunLeaseClaimInstance", "LockTokenWaitComputer", "LockWorkerComputerInstance",

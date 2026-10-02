@@ -145,7 +145,7 @@ func reconcileCurrentRunClose(
 	if err != nil {
 		return db.Session{}, false, err
 	}
-	if attempt.TerminalAt.Valid || session.CommittedInputSequence < session.CloseSequence.Int64 {
+	if attempt.TerminalAt.Valid {
 		return session, false, nil
 	}
 	wait, err := store.GetPendingSessionInputRunWait(ctx, db.GetPendingSessionInputRunWaitParams{
@@ -153,7 +153,7 @@ func reconcileCurrentRunClose(
 		RunID:              run.ID,
 		AttemptNumber:      run.CurrentAttemptNumber,
 		SessionID:          session.ID,
-		AfterInputSequence: session.CloseSequence,
+		AfterInputSequence: pgtype.Int8{Int64: session.CommittedInputSequence, Valid: true},
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return session, false, nil
@@ -161,7 +161,7 @@ func reconcileCurrentRunClose(
 	if err != nil {
 		return db.Session{}, false, err
 	}
-	if _, err := FailWait(ctx, tx, wait, "session_closed"); err != nil {
+	if _, err := resolveInputWait(ctx, tx, session, wait); err != nil {
 		return db.Session{}, false, fmt.Errorf("complete session close input wait: %w", err)
 	}
 	return session, false, nil

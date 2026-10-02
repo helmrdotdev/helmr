@@ -55,5 +55,14 @@ a particular Token waiter can have an earlier timeout. Reaching an idle deadline
 does not complete or fail the Token or Turn. A Token wait within a Turn keeps that
 Turn active; `session.receive()` waits for the next Turn after settlement.
 
+A Session receive resolves in this order: the next accepted FIFO Turn, `null`
+after closing has drained, then `wait_timeout` if its deadline has elapsed.
+Input accepted after the nominal deadline can still be delivered if timeout has
+not committed. Once a receive result commits, later input cannot change it; that
+input remains queued for a subsequent receive if the Actor continues.
+
+A receive timeout does not itself delete queued Turns or close the Session. An
+uncaught timeout still follows the Actor's normal failure and retry policy.
+
 Hot-wait duration is not a hard billing cap: checkpoint work takes time, and
 resource lifecycle constraints affect when compute can actually be released.

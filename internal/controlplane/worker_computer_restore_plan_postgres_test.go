@@ -92,8 +92,12 @@ func TestRestoredClaimDiscoversAndAttachesWithoutStartingAnotherProgram(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	activateRestorePlanFixture(t, f, w, plan)
 	work, err := db.New(f.Pool).DiscoverWorkerRunLeaseWork(t.Context(), db.DiscoverWorkerRunLeaseWorkParams{WorkerHostID: pgvalue.UUID(w.HostID), WorkerGroupID: pgvalue.UUID(w.GroupID), WorkerEpoch: w.Epoch, RowLimit: 100})
+	if err != nil || len(work) != 0 {
+		t.Fatalf("unactivated restored leases discovered=%d err=%v", len(work), err)
+	}
+	activateRestorePlanFixture(t, f, w, plan)
+	work, err = db.New(f.Pool).DiscoverWorkerRunLeaseWork(t.Context(), db.DiscoverWorkerRunLeaseWorkParams{WorkerHostID: pgvalue.UUID(w.HostID), WorkerGroupID: pgvalue.UUID(w.GroupID), WorkerEpoch: w.Epoch, RowLimit: 100})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -200,7 +200,7 @@ type SessionComputerRef struct {
 }
 
 // SessionComputer is the Computer a Session runs on, locked by
-// LockSessionComputer or LockOpenSessionComputer. It is valid only inside
+// LockSessionComputer. It is valid only inside
 // the transaction that locked it.
 type SessionComputer struct {
 	computer db.Computer
@@ -235,24 +235,6 @@ func cloneComputer(c db.Computer) db.Computer {
 func LockSessionComputer(ctx context.Context, tx pgx.Tx, ref SessionComputerRef) (SessionComputer, error) {
 	c, err := db.New(tx).LockSessionCloseComputer(ctx, db.LockSessionCloseComputerParams{
 		EnvironmentID: pgvalue.UUID(ref.EnvironmentID), ComputerID: pgvalue.UUID(ref.ComputerID), SessionID: pgvalue.UUID(ref.SessionID),
-	})
-	if err != nil {
-		return SessionComputer{}, err
-	}
-	return SessionComputer{computer: c}, nil
-}
-
-// LockOpenSessionComputer update-locks the Session's Computer for input
-// delivery while the Session is open. The Computer must be the one the open
-// Session runs on in the Environment; the Session row itself is not locked.
-//
-// Equivalence: this is one statement, the Computer FOR UPDATE joined to the
-// Session on its Environment and Computer, filtered by the Environment, the
-// id, the Session and the Session's open status. Its errors, including
-// pgx.ErrNoRows, are returned unchanged.
-func LockOpenSessionComputer(ctx context.Context, tx pgx.Tx, ref SessionComputerRef) (SessionComputer, error) {
-	c, err := db.New(tx).LockSessionInputComputer(ctx, db.LockSessionInputComputerParams{
-		EnvironmentID: pgvalue.UUID(ref.EnvironmentID), ID: pgvalue.UUID(ref.ComputerID), SessionID: pgvalue.UUID(ref.SessionID),
 	})
 	if err != nil {
 		return SessionComputer{}, err
