@@ -423,6 +423,11 @@ resource "terraform_data" "network_preconditions" {
     }
 
     precondition {
+      condition     = var.worker_disk_mib == null || coalesce(var.worker_disk_mib, 0) <= var.root_volume_size_gb * 1024
+      error_message = "worker_disk_mib must not exceed the provisioned root volume capacity."
+    }
+
+    precondition {
       condition     = var.worker_disk_mib == null || var.worker_disk_mib > var.worker_disk_reserve_mib
       error_message = "worker_disk_mib must exceed worker_disk_reserve_mib when an explicit filesystem capacity is configured."
     }

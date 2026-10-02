@@ -289,6 +289,7 @@ run "reject_underfunded_lifecycle_slots" {
 run "funded_lifecycle_slots_propagate_staging" {
   command = plan
   variables {
+    root_volume_size_gb     = 512
     worker_disk_mib         = 491520
     worker_disk_reserve_mib = 8192
     worker_execution_slots  = 2
@@ -306,5 +307,53 @@ run "funded_lifecycle_slots_propagate_staging" {
 run "staging_environment_override_is_rejected" {
   command = plan
   variables { worker_environment = { WORKER_COMPUTER_STAGING_MIB = "1" } }
+  expect_failures = [terraform_data.network_preconditions]
+}
+
+run "lifecycle_capacity_at_mib_boundary" {
+  command = plan
+  variables {
+    root_volume_size_gb     = 512
+    worker_disk_mib         = 467018
+    worker_disk_reserve_mib = 8192
+    worker_execution_slots  = 2
+    vm_scratch_disk_mib     = 32768
+    vm_memory_mib           = 2048
+    artifact_cache_max_mib  = 16384
+    computer_staging_mib    = 65536
+  }
+  assert {
+    condition     = var.worker_disk_mib == ceil(2 * local.worker_slot_disk_bytes / 1048576) + var.worker_disk_reserve_mib + var.artifact_cache_max_mib
+    error_message = "Fixture must exercise the first funded MiB."
+  }
+}
+
+run "reject_lifecycle_capacity_one_mib_short" {
+  command = plan
+  variables {
+    root_volume_size_gb     = 512
+    worker_disk_mib         = 467017
+    worker_disk_reserve_mib = 8192
+    worker_execution_slots  = 2
+    vm_scratch_disk_mib     = 32768
+    vm_memory_mib           = 2048
+    artifact_cache_max_mib  = 16384
+    computer_staging_mib    = 65536
+  }
+  expect_failures = [terraform_data.network_preconditions]
+}
+
+run "reject_disk_ceiling_above_root_volume" {
+  command = plan
+  variables {
+    root_volume_size_gb     = 512
+    worker_disk_mib         = 524289
+    worker_disk_reserve_mib = 8192
+    worker_execution_slots  = 2
+    vm_scratch_disk_mib     = 32768
+    vm_memory_mib           = 2048
+    artifact_cache_max_mib  = 16384
+    computer_staging_mib    = 65536
+  }
   expect_failures = [terraform_data.network_preconditions]
 }

@@ -9,7 +9,6 @@ locals {
   }))
 
   worker_artifact_cache_mib       = coalesce(var.worker_artifact_cache_max_mib, 0)
-  worker_shared_disk_mib          = coalesce(var.worker_disk_mib, 0) - var.worker_disk_reserve_mib - local.worker_artifact_cache_mib
   worker_guest_ephemeral_disk_mib = coalesce(var.worker_execution_slots, 0) * var.worker_vm_scratch_disk_mib
   worker_generation_inputs = {
     generation_key        = var.worker_generation_key
@@ -309,8 +308,7 @@ resource "terraform_data" "worker_preconditions" {
         coalesce(var.worker_capacity_vcpus, 0) > 0 &&
         coalesce(var.worker_capacity_memory_mib, 0) > 0 &&
         coalesce(var.worker_execution_slots, 0) > 0 &&
-        local.worker_artifact_cache_mib > 0 &&
-        local.worker_guest_ephemeral_disk_mib >= var.worker_vm_scratch_disk_mib
+        local.worker_artifact_cache_mib > 0
       )
       error_message = "worker groups require configured CPU, memory, cache, disk, and execution-slot capacity."
     }

@@ -151,7 +151,7 @@ func (p *PreparedMachines) checkpointRestoreCapacity(target workerapi.InstanceRe
 		return 0, 0, nil
 	}
 	if target.Source.ReservedMemoryMiB <= 0 || target.Source.ReservedDiskMiB <= 0 || target.Source.ReservedDiskMiB > math.MaxInt64/mebibyte {
-		return 0, 0, errors.New("restore memory reservation is required")
+		return 0, 0, errors.New("invalid restore memory or scratch reservation")
 	}
 	retained = int64(target.Source.ReservedMemoryMiB) * mebibyte
 	var checkpoint workerapi.CheckpointManifest

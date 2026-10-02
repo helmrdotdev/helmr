@@ -84,7 +84,15 @@ configured ceiling, then requires a complete lifecycle envelope for every slot.
 After local recovery it checks fresh filesystem availability with the same reserve,
 cache and original slot count, including quarantined owners. Unaccounted temporary
 files reduce that availability. A shortfall prevents activation and reports the
-required and available bytes; it does not admit an impossible preparation.
+required and available bytes and the affected work and temporary directories.
+Stop the Worker and establish file ownership before manually removing residue;
+unknown temporary files are preserved automatically. Alternatively, provision
+enough capacity for the retained files and the configured slots.
+
+The AWS module rejects a `worker_disk_mib` ceiling larger than
+`root_volume_size_gb * 1024`. That nominal volume capacity is not all available
+space: filesystem metadata, reserved blocks and image contents reduce fresh
+availability. Leave headroom for these costs when sizing the volume.
 
 ## Computer storage
 

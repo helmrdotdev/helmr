@@ -361,10 +361,10 @@ func run(log *slog.Logger) error {
 			}
 			available, err := availableWorkerDiskBytes(workDir, cfg.WorkerDiskReserveMiB*(1<<20), artifactCacheMaxBytes)
 			if err != nil {
-				return evidence, fmt.Errorf("inspect recovered worker disk: %w", err)
+				return evidence, fmt.Errorf("inspect recovered worker disk at %s: %w", workDir, err)
 			}
 			if err := validateWorkerDiskFunding(available, perSlotDisk, cfg.WorkerExecutionSlots); err != nil {
-				return evidence, err
+				return evidence, fmt.Errorf("recovered worker disk at %s (temporary files at %s): %w", workDir, filepath.Join(workDir, "tmp"), err)
 			}
 			return evidence, nil
 		},

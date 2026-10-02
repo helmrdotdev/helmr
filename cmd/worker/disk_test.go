@@ -42,31 +42,6 @@ func TestAdmissionDiskFloorMatchesWorkerFilesystemContract(t *testing.T) {
 	}
 }
 
-func TestCapGuestEphemeralDiskCapacityUsesStablePhysicalCapacity(t *testing.T) {
-	capacity := workerDiskCapacity{
-		VMGuestEphemeralDiskBytes: 32768 << 20,
-		HostDiskBytes:             65536 << 20,
-	}
-	got, err := capGuestEphemeralDiskCapacity(capacity, 2048<<20, 32768<<20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.HostDiskBytes != 32768<<20 {
-		t.Fatalf("guest disk capacity = %d, want %d", got.HostDiskBytes, int64(32768<<20))
-	}
-	capacity.HostDiskBytes = 34816 << 20
-	got, err = capGuestEphemeralDiskCapacity(capacity, 2048<<20, 33000<<20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.HostDiskBytes != 32768<<20 {
-		t.Fatalf("reserved guest disk capacity = %d, want %d", got.HostDiskBytes, int64(32768<<20))
-	}
-	if _, err := capGuestEphemeralDiskCapacity(capacity, 2048<<20, (32768<<20)-1); err == nil {
-		t.Fatal("physical capacity below one VM was accepted")
-	}
-}
-
 func TestWorkerCacheBudgetUsesConfiguredValue(t *testing.T) {
 	got := workerCacheBudgetBytes(123, 10000, 1, 3, 4096, 32768)
 	if got != 123*1024*1024 {

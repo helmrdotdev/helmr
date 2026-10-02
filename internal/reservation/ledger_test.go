@@ -24,7 +24,7 @@ func TestNewValidatesCapacity(t *testing.T) {
 		{name: "negative cpu", mutate: func(vector *Vector) { vector.CPUMillis = -1 }},
 		{name: "zero memory", mutate: func(vector *Vector) { vector.MemoryBytes = 0 }},
 		{name: "negative memory", mutate: func(vector *Vector) { vector.MemoryBytes = -1 }},
-		{name: "negative guest ephemeral disk", mutate: func(vector *Vector) { vector.HostDiskBytes = -1 }},
+		{name: "negative host disk", mutate: func(vector *Vector) { vector.HostDiskBytes = -1 }},
 		{name: "negative VM slots", mutate: func(vector *Vector) { vector.VMSlots = -1 }},
 	}
 	for _, test := range tests {
@@ -90,7 +90,7 @@ func TestReserveAccountsForEveryDimension(t *testing.T) {
 	}{
 		{name: "cpu", vector: Vector{CPUMillis: 1}},
 		{name: "memory", vector: Vector{MemoryBytes: 1}},
-		{name: "guest ephemeral disk", vector: Vector{HostDiskBytes: 1}},
+		{name: "host disk", vector: Vector{HostDiskBytes: 1}},
 		{name: "VM slots", vector: Vector{VMSlots: 1}},
 	}
 	for _, test := range tests {

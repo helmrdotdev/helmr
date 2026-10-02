@@ -156,7 +156,7 @@ func add(left, right Vector) (Vector, error) {
 	}{
 		{"cpu", left.CPUMillis, right.CPUMillis},
 		{"memory", left.MemoryBytes, right.MemoryBytes},
-		{"guest ephemeral disk", left.HostDiskBytes, right.HostDiskBytes},
+		{"host disk", left.HostDiskBytes, right.HostDiskBytes},
 		{"VM slots", left.VMSlots, right.VMSlots},
 	}
 	sums := [len(fields)]int64{}

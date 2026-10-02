@@ -11,7 +11,7 @@ import (
 
 func advertisedWorkerDiskMiB(workDir string, configuredMiB int64, reserveMiB int64) (int64, error) {
 	if reserveMiB <= 0 || reserveMiB > math.MaxInt64/(1<<20) || configuredMiB < 0 || configuredMiB > math.MaxInt64/(1<<20) {
-		return 0, errors.New("worker disk reserve must be positive")
+		return 0, errors.New("invalid worker disk capacity or reserve")
 	}
 	totalMiB := configuredMiB
 	if configuredMiB > 0 {
@@ -43,23 +43,6 @@ func advertisedWorkerDiskMiB(workDir string, configuredMiB int64, reserveMiB int
 
 func admissionDiskFloorMiB(vmScratchMiB, reserveMiB int64) int64 {
 	return reserveMiB + vmScratchMiB
-}
-
-func capGuestEphemeralDiskCapacity(capacity workerDiskCapacity, reserve, physicalCapacity uint64) (workerDiskCapacity, error) {
-	if err := capacity.Validate(); err != nil {
-		return workerDiskCapacity{}, err
-	}
-	if reserve == 0 || reserve >= uint64(capacity.HostDiskBytes) {
-		return workerDiskCapacity{}, errors.New("worker disk reserve consumes aggregate capacity")
-	}
-	capacity.HostDiskBytes -= int64(reserve)
-	if physicalCapacity < uint64(capacity.HostDiskBytes) {
-		capacity.HostDiskBytes = int64(physicalCapacity)
-	}
-	if err := capacity.Validate(); err != nil {
-		return workerDiskCapacity{}, err
-	}
-	return capacity, nil
 }
 
 func workerCacheBudgetBytes(configuredMiB int64, hostDiskMiB int64, numerator int64, denominator int64, floorMiB int64, ceilingMiB int64) int64 {

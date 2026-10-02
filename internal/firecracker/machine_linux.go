@@ -166,7 +166,7 @@ func (s *guestMachine) Close(ctx context.Context) error {
 	defer unlock()
 	s.computerHeld = true
 	if s.checkpointHold != nil {
-		if err := s.checkpointHold.discardUndeliveredSnapshot(); err != nil {
+		if err := s.checkpointHold.discardUntransferredSnapshot(); err != nil {
 			return err
 		}
 	}
