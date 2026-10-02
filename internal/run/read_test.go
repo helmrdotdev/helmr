@@ -9,7 +9,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type readStore struct {
@@ -69,24 +68,14 @@ func TestListReadsOneExtraRowToReportMore(t *testing.T) {
 }
 
 type pollStore struct {
-	wait       db.RunWait
-	waitErr    error
-	stopped    bool
-	current    bool
-	turnChecks int
+	wait    db.RunWait
+	waitErr error
+	stopped bool
+	current bool
 }
 
-func (s *pollStore) GetRunWait(context.Context, db.GetRunWaitParams) (db.RunWait, error) {
-	return s.wait, s.waitErr
-}
-
-func (s *pollStore) RunWaitSessionStopped(context.Context, pgtype.UUID) (bool, error) {
-	return s.stopped, nil
-}
-
-func (s *pollStore) RunWaitTurnCurrent(context.Context, pgtype.UUID) (bool, error) {
-	s.turnChecks++
-	return s.current, nil
+func (s *pollStore) GetRunWaitPoll(context.Context, db.GetRunWaitPollParams) (db.GetRunWaitPollRow, error) {
+	return db.GetRunWaitPollRow{RunWait: s.wait, Stopped: s.stopped, Current: s.current}, s.waitErr
 }
 
 func TestPollWaitChecksFenceSessionAndTurn(t *testing.T) {
@@ -96,27 +85,26 @@ func TestPollWaitChecksFenceSessionAndTurn(t *testing.T) {
 	for name, test := range map[string]struct {
 		store   pollStore
 		stopped bool
-		turns   int
 		want    error
 	}{
-		"current":        {store: pollStore{wait: wait, current: true}, turns: 1},
+		"current":        {store: pollStore{wait: wait, current: true}},
 		"missing":        {store: pollStore{waitErr: pgx.ErrNoRows}, want: ErrWaitNotFound},
 		"other computer": {store: pollStore{wait: func() db.RunWait { w := wait; w.ComputerID = pgvalue.UUID(uuid.NewV7()); return w }()}, want: ErrWaitFenceStale},
 		"prior lease": {store: pollStore{wait: func() db.RunWait {
 			w := wait
 			w.CurrentRunLeaseID, w.PriorRunLeaseID = pgvalue.UUID(uuid.NewV7()), scope.LeaseID
 			return w
-		}(), current: true}, turns: 1},
+		}(), current: true}},
 		"other lease":     {store: pollStore{wait: func() db.RunWait { w := wait; w.CurrentRunLeaseID = pgvalue.UUID(uuid.NewV7()); return w }()}, want: ErrWaitFenceStale},
-		"turn revoked":    {store: pollStore{wait: wait}, turns: 1, want: ErrWaitTurnRevoked},
-		"stopped hot":     {store: pollStore{wait: wait, stopped: true, current: true}, turns: 1},
+		"turn revoked":    {store: pollStore{wait: wait}, want: ErrWaitTurnRevoked},
+		"stopped hot":     {store: pollStore{wait: wait, stopped: true, current: true}},
 		"stopped release": {store: pollStore{wait: func() db.RunWait { w := wait; w.SuspensionStatus = db.RunWaitStatusReleased; return w }(), stopped: true}, stopped: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			store := test.store
 			got, stopped, err := PollWait(t.Context(), &store, scope, waitID)
-			if !errors.Is(err, test.want) || (test.want == nil && (got.ID != waitID || stopped != test.stopped)) || store.turnChecks != test.turns {
-				t.Fatalf("PollWait = %+v stopped=%v %v turn checks=%d", got, stopped, err, store.turnChecks)
+			if !errors.Is(err, test.want) || (test.want == nil && (got.ID != waitID || stopped != test.stopped)) {
+				t.Fatalf("PollWait = %+v stopped=%v %v", got, stopped, err)
 			}
 		})
 	}

@@ -58,6 +58,12 @@ func TestTimerWaitReconcilerCompletesDueHotWait(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	scope := WaitPollScope{RunID: wait.RunID, AttemptNumber: wait.AttemptNumber, ComputerID: wait.ComputerID, LeaseID: wait.CurrentRunLeaseID}
+	pending, stopped, err := PollWait(ctx, fixture.queries, scope, wait.ID)
+	if err != nil || stopped || pending.SuspensionStatus != db.RunWaitStatusHot {
+		t.Fatalf("pending timer poll: %+v stopped=%v err=%v", pending, stopped, err)
+	}
+
 	reconciler, err := NewTimerWaitReconciler(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
@@ -95,6 +101,11 @@ func TestTimerWaitReconcilerCompletesDueHotWait(t *testing.T) {
 			"reconciled timer = run status %s version %d, condition %s suspension %s wait version %d",
 			runStatus, runVersion, conditionStatus, suspensionStatus, waitVersion,
 		)
+	}
+
+	completed, stopped, err := PollWait(ctx, fixture.queries, scope, wait.ID)
+	if err != nil || stopped || completed.SuspensionStatus != db.RunWaitStatusReleased || completed.ConditionStatus != db.WaitStatusCompleted {
+		t.Fatalf("completed timer poll: %+v stopped=%v err=%v", completed, stopped, err)
 	}
 
 	resolved, err = reconciler.ReconcileDue(ctx, 100)

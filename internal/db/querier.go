@@ -321,6 +321,9 @@ type Querier interface {
 	GetRunSnapshot(ctx context.Context, arg GetRunSnapshotParams) (GetRunSnapshotRow, error)
 	GetRunTelemetryFrontier(ctx context.Context, arg GetRunTelemetryFrontierParams) (GetRunTelemetryFrontierRow, error)
 	GetRunWait(ctx context.Context, arg GetRunWaitParams) (RunWait, error)
+	// Wait resolution and its Session/Turn predicates must share one statement
+	// snapshot; interruption releases the wait and holds its Session atomically.
+	GetRunWaitPoll(ctx context.Context, arg GetRunWaitPollParams) (GetRunWaitPollRow, error)
 	GetSchedule(ctx context.Context, arg GetScheduleParams) (Schedule, error)
 	GetScheduleByID(ctx context.Context, arg GetScheduleByIDParams) (Schedule, error)
 	GetScheduledRunReceipt(ctx context.Context, arg GetScheduledRunReceiptParams) (Run, error)
