@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/jackc/pgx/v5"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -239,5 +241,65 @@ func TestLockControlGraphLocksTheCurrentRunOrTheSession(t *testing.T) {
 	target.SessionID = uuid.NewV7()
 	if err := lock(func(run.OwnedFinalization) {}); err == nil {
 		t.Fatal("missing Session locked a graph")
+	}
+}
+
+func TestIdleSessionControlLocksComputerBeforeSession(t *testing.T) {
+	for _, operation := range []string{"cancel", "interrupt"} {
+		t.Run(operation, func(t *testing.T) {
+			f := sessiontest.New(t, 1)
+			started, err := Start(t.Context(), f.Pool, nil, startRequest(f, 0, nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET current_run_id=NULL WHERE id=$1`, started.SessionID)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			blocker, err := f.Pool.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer blocker.Rollback(context.Background())
+			dbtest.MustExec(t, ctx, blocker, `SELECT id FROM computers WHERE id=$1 FOR UPDATE`, f.ComputerIDs[0])
+			done := make(chan error, 1)
+			target := Target{EnvironmentID: f.EnvironmentID, SessionID: started.SessionID}
+			go func() {
+				if operation == "cancel" {
+					_, err := ApplyCancel(ctx, f.Pool, ControlRequest{Target: target, IdempotencyKey: "ordered-cancel"})
+					done <- err
+				} else {
+					_, err := ApplyInterrupt(ctx, f.Pool, InterruptRequest{Target: target, TurnID: uuid.NewV7(), IdempotencyKey: "ordered-interrupt"})
+					done <- err
+				}
+			}()
+			for {
+				var waiting bool
+				if err = f.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%computers%')`).Scan(&waiting); err != nil {
+					t.Fatal(err)
+				}
+				if waiting {
+					break
+				}
+				select {
+				case err := <-done:
+					t.Fatalf("control bypassed Computer lock: %v", err)
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				case <-time.After(time.Millisecond):
+				}
+			}
+			// The blocked control must not already own the opposing Session lock.
+			_, err = blocker.Exec(ctx, `SELECT id FROM sessions WHERE id=$1 FOR UPDATE NOWAIT`, started.SessionID)
+			if err != nil {
+				t.Fatalf("control locked Session before Computer: %v", err)
+			}
+			if err = blocker.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+				t.Fatal(err)
+			}
+			var rejected *OperationError
+			if err = <-done; err != nil && !errors.As(err, &rejected) {
+				t.Fatal(err)
+			}
+		})
 	}
 }

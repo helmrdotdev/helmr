@@ -111,7 +111,7 @@ var noControlGraph run.OwnedFinalization
 // Run's attempt Secrets and owned finalization graph, and reads the Session
 // again so a concurrent replacement cannot inherit the graph's authority.
 // With no current Run, or when a concurrent control retired the Run while
-// the graph was locking, it locks the Session before its Computer, so a
+// the graph was locking, it locks the Computer and live Instance before the Session, so a
 // resume cannot admit a new Run before the control, and returns
 // noControlGraph. A Session whose current Run or generation changed is
 // ErrAuthority.
@@ -122,7 +122,7 @@ func lockControlGraph(ctx context.Context, tx pgx.Tx, target Target) (run.OwnedF
 		return noControlGraph, err
 	}
 	if !session.CurrentRunID.Valid {
-		current, err := q.LockSessionTurnAuthority(ctx, db.LockSessionTurnAuthorityParams{EnvironmentID: session.EnvironmentID, ID: session.ID})
+		current, err := lockSession(ctx, tx, target)
 		if err != nil {
 			return noControlGraph, err
 		}
@@ -137,11 +137,11 @@ func lockControlGraph(ctx context.Context, tx pgx.Tx, target Target) (run.OwnedF
 	}
 	current, err := q.GetSession(ctx, db.GetSessionParams{EnvironmentID: session.EnvironmentID, ID: session.ID})
 	if err == nil && !current.CurrentRunID.Valid {
-		current, err = q.LockSessionTurnAuthority(ctx, db.LockSessionTurnAuthorityParams{EnvironmentID: session.EnvironmentID, ID: session.ID})
+		current, err = lockSession(ctx, tx, target)
 		if err != nil {
 			return graph, err
 		}
-		if current.CurrentRunID.Valid {
+		if current.CurrentRunID.Valid || current.RunGeneration != session.RunGeneration {
 			return graph, ErrAuthority
 		}
 		return noControlGraph, nil
