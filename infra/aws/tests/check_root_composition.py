@@ -39,3 +39,51 @@ assert roles == {'module.worker_image.aws_iam_role.image_builder':
                  plan['variables']['permissions_boundary_arn']['value']}, roles
 assert plan['variables']['permissions_boundary_arn']['value'], 'non-null caller ceiling required'
 print('ok - generic worker-image root forwards caller ceiling to actual image-builder role')
+
+# Inspect the actual nested ASG and task-definition plans, not only root locals.
+for filename in sys.argv[1:3]:
+    plans = {event['@testrun']: event['test_plan']
+             for line in Path(filename).read_text().splitlines()
+             if (event := json.loads(line)).get('type') == 'test_plan'}
+    baseline = next(event['test_state']['values']['outputs']['worker_generation_definitions']['value']
+                    for line in Path(filename).read_text().splitlines()
+                    if (event := json.loads(line)).get('type') == 'test_state'
+                    and event['@testrun'] == 'baseline_execution_generation')
+    resized = plans['count_change_does_not_rotate_generation']['output_changes']['worker_generation_definitions']['after']
+    assert baseline.keys() == resized.keys(), (filename, 'count change must preserve Pool identity')
+    for run, expected_counts in (
+        ('fixed_capacity_plan', [2]),
+        ('prepare_inert_target', [0, 2]),
+        ('activate_after_full_stop', [0, 1]),
+        ('same_build_recovery_has_fresh_binding', [0, 2]),
+    ):
+        resources = plans[run]['resource_changes']
+        groups = [r for r in resources if r['type'] == 'aws_autoscaling_group']
+        after = [r['change']['after'] for r in groups]
+        assert all(g is not None for g in after), (filename, run, 'unexpected ASG deletion')
+        assert sorted(g['desired_capacity'] for g in after) == expected_counts, (filename, run, after)
+        assert all(g['min_size'] == 0 and g['desired_capacity'] == g['max_size'] for g in after), (filename, run)
+        assert all(not g.get('instance_refresh') and g['protect_from_scale_in'] and g['wait_for_capacity_timeout'] == '0' for g in after), (filename, run)
+        if run in ('prepare_inert_target', 'same_build_recovery_has_fresh_binding'):
+            source = next(r for r in groups if r['change']['after']['desired_capacity'] == 2)
+            before = source['change']['before']
+            assert before is not None, (filename, 'serving source must already exist')
+            assert 'delete' not in source['change']['actions'], (filename, source)
+            source_module = source['module_address']
+            source_resources = [r for r in resources if r.get('module_address') == source_module]
+            assert source_resources and all(r['change']['actions'] == ['no-op'] for r in source_resources), (filename, run, source_resources)
+            for key in ('name', 'min_size', 'desired_capacity', 'max_size', 'launch_template'):
+                assert before[key] == source['change']['after'][key], (filename, key, source)
+        if run == 'fixed_capacity_plan':
+            tasks = {r['name']: json.loads(r['change']['after']['container_definitions'])
+                     for r in resources if r['type'] == 'aws_ecs_task_definition'}
+            expected = plans[run]['variables']['capacity_token_secret_arn']['value']
+            assert any(env['name'] == 'ADMIN_EMAILS' and env['value'] == 'operator@example.test'
+                       for container in tasks['controlplane'] for env in container.get('environment', [])), filename
+            assert all(env['name'] != 'ADMIN_EMAILS'
+                       for container in tasks['dispatcher'] for env in container.get('environment', [])), filename
+            assert any(secret['name'] == 'CAPACITY_TOKEN' and secret['valueFrom'] == expected
+                       for container in tasks['controlplane'] for secret in container.get('secrets', [])), filename
+            assert all(secret['name'] != 'CAPACITY_TOKEN'
+                       for container in tasks['dispatcher'] for secret in container.get('secrets', [])), filename
+    print(f'ok - {filename}: explicit count, inert preparation, retained source, target activation and Capacity credential')

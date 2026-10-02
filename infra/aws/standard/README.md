@@ -48,8 +48,8 @@ by the migration task, then set `create_controlplane_service=true` and apply aga
 empty secret containers; it does not generate or store Helmr internal secret values in Terraform
 state. This starts separate
 `helmr-controlplane` and `helmr-dispatcher` ECS services using `controlplane_desired_count` and
-`dispatcher_desired_count`. The official Control Plane image is resolved from `helmr_version`; set
-`controlplane_image` only for digest-pinned custom builds.
+`dispatcher_desired_count`. Set `controlplane_image` to the digest-pinned image in the verified
+common release index; common releases do not publish the resolver's default AWS manifest.
 
 Required secret value formats:
 
@@ -124,9 +124,10 @@ VPC, so do not reuse the CloudFront viewer hostname as the origin.
 
 ## Workers
 
-Worker resources are not created until `create_worker=true`. The official worker AMI is resolved
-from `helmr_version` and `aws_region`; set `worker_ami_id` only for custom builds. Increase
-`worker_min_size` when you are ready to keep warm hosts.
+Worker resources are not created until `create_worker=true`. Use the verified public release index and prepare a Worker AMI from its exact
+host/runtime bundles, then supply `worker_ami_id` and digest-pinned
+`controlplane_image`. Common releases do not publish AWS AMIs or an AWS manifest. Set an explicit
+`worker_count` whenever `create_worker=true`, including `0` for an inert generation.
 
 Workers launch in private subnets, use SSM Session Manager by default, and do not require inbound
 SSH rules. The default worker instance type is a metal host for production isolation; nested
@@ -138,23 +139,40 @@ The stack derives each Worker Pool generation name from the complete immutable
 supply definition: Worker module/user-data contract,
 resolved AMI, instance/runtime class, network/store/cache policy,
 root-volume shape, roles, and advertised capacity shape. Changing one of those
-sealed inputs creates a new Pool name; changing only ASG minimum or maximum
-size does not. Each Pool name keys a distinct Auto Scaling Group and launch
+sealed inputs creates a new Pool name; changing only `worker_count`
+does not. `worker_generation_key` also creates a fresh binding for explicitly qualified
+same-build recovery; retain its old definition before changing the key.
+Each Pool name keys a distinct Auto Scaling Group and launch
 template. Before changing an immutable input, copy the old entry from
-`worker_generation_definitions` into `retained_worker_generations` with
-`min_size = 0`. The exported entry includes the realized user data, IAM
+`worker_generation_definitions` into `retained_worker_generations` unchanged,
+including its current `count`. Set the new generation's `worker_count = 0`
+during preparation. Do not reduce the retained source count until the full-stop
+gate in the [maintenance procedure](../../../packages/web/src/content/docs/self-hosting/upgrades.md)
+has passed. The exported entry includes the realized user data, IAM
 documents, SSM choice, and exact launch-template version, so the retained ASG
-does not follow a newer template. Remove a retained entry only after Product
-restore authority no longer references that Pool and its exact drain-to-
-`termination_ready` retirement has completed. Control Plane does not
+does not follow a newer template. Remove a retained entry only after the separate fenced Product Pool retirement
+returns `status = disabled`, with no pending launches and exact provider absence
+confirmed again before cleanup. Host `termination_ready` alone does not retire a Pool. Control Plane does not
 authenticate or allowlist the AMI; `worker_generation_bindings` records the
 exact Product Pool to provider binding.
 
-Deployment infrastructure owns desired execution capacity. Terraform continues
-enforcing ASG min/max; `max_size` is the hard spend guardrail and equal min/max
-values provide fixed capacity. Explicit CPU, memory, disk, cache, and VM-slot
-capacities are required when workers are created. Demand observations may guide
-scale-out, but scale-in must use the exact claim-fenced drain contract.
+The reference stack owns fixed capacity: each generation has explicit desired
+and maximum counts, with minimum zero so an exact lost host can be removed
+without replenishing capacity during maintenance. Supply increases use the same qualified build and
+profile. Every reduction, including zero, and every worker update uses the
+[full-stop maintenance procedure](../../../packages/web/src/content/docs/self-hosting/upgrades.md).
+There is no automatic instance refresh. Keep Control Plane, dispatcher, network,
+storage and keys available throughout drain. Explicit worker capacity and
+disk/cache partitions remain required when workers are created.
+
+Configure `controlplane_environment.ADMIN_EMAILS` before the named operators first log in so they can use
+the separate administrator Pool retirement API. The list does not promote existing
+users. Keep the Capacity credential separate from administrator login sessions.
+
+For native maintenance requests, set `capacity_token_secret_arn` to an existing
+Secrets Manager secret containing the deployment Capacity token. For a customer
+KMS key, also set `capacity_token_kms_key_arn`. These inputs contain ARNs, never
+the credential value; only the Control Plane service receives the token.
 
 ## Deployment recovery
 

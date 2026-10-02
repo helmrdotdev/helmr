@@ -10,7 +10,8 @@ Build a provider-specific scaler against the Capacity deployment protocol at
 Your scaler owns provider policy and mutations, including creating and
 terminating hosts.
 
-This is a deployment infrastructure protocol for one trusted scaler. It is not
+This is a deployment infrastructure protocol for a trusted capacity owner,
+including an operator performing [full-stop maintenance](/docs/self-hosting/upgrades). It is not
 the tenant Developer REST API. Its credential grants every Capacity operation
 and Worker group in the deployment.
 
@@ -42,6 +43,7 @@ The Control Plane base URL is shown as `$CONTROL_PLANE_URL` below.
 
 | Method and path | Purpose |
 | --- | --- |
+| `GET /capacity/v1/deployment` | Read the live deployment release, worker API and database schema. |
 | `GET /capacity/v1/worker-groups/resolve?region_id=...&name=...` | Resolve a Worker group by canonical Region ID and name. |
 | `GET /capacity/v1/worker-groups/{group_id}/pools/resolve?name=...` | Resolve a pool in a Worker group. |
 | `PUT /capacity/v1/worker-groups/{group_id}/primary-pool` | Select the primary pool with a group claim-version fence and a positive minimum of ready hosts. |

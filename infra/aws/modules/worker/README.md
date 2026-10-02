@@ -64,9 +64,16 @@ infrastructure responsibilities.
 
 ## Lifecycle
 
-Deployment infrastructure is the only desired-capacity writer. Terraform enforces `min_size` and
-`max_size`, and new instances start protected from scale in so provider policy cannot bypass the
-exact drain path. Fixed capacity is expressed with equal minimum and maximum values.
+One deployment owner controls capacity. The Standard and Quickstart roots set
+`desired_capacity` and `max_size` to the explicit count and `min_size` to zero. A custom
+external capacity owner may leave `desired_capacity = null`; the module still
+enforces its min/max guardrails. New instances start protected from scale-in.
+Protection does not stop health replacement or manual termination and is not a
+substitute for the Product drain gate. Native maintenance owns
+`suspended_processes`; Terraform ignores changes to that field so applying a
+count change does not silently lift launch/refresh inhibition. The provider capacity
+waiter is disabled: a count apply can complete with launches suspended, and the
+operator separately verifies provider convergence and Product readiness.
 
 When capacity is raised, the launch lifecycle hook keeps the instance out of service until the
 worker systemd unit is active. Planned removal first drains the exact host to
@@ -76,10 +83,13 @@ hook handles provider termination that has already begun. It verifies the local
 instance identity and termination state before bounded cleanup, then fences actual
 loss if cleanup cannot finish. That hook is not authority to force a planned drain.
 
-Launch-template changes do not start an automatic instance refresh. Drain the
-exact logical worker instance to `termination_ready` before provider deletion,
-then explicitly start or coordinate the Auto Scaling instance refresh. Control Plane
-does not maintain an AMI allowlist.
+Launch-template changes do not start an automatic instance refresh. Worker
+updates require a new immutable Pool/provider generation; preserve the old
+sealed definition and prepare the new generation with zero capacity. The
+[reference maintenance procedure](../../../../packages/web/src/content/docs/self-hosting/upgrades.md)
+drains the entire source population, verifies the gate, empties the source,
+and then activates explicit target capacity. Do not start an instance refresh
+as a shortcut. Control Plane does not maintain an AMI allowlist.
 
 ## Permissions boundary and retained authority
 

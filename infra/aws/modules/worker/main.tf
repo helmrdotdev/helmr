@@ -210,12 +210,6 @@ locals {
   worker_termination_policies                            = var.sealed_provider_definition == null ? ["OldestLaunchTemplate", "OldestInstance"] : var.sealed_provider_definition.termination_policies
   worker_protect_from_scale_in                           = var.sealed_provider_definition == null ? true : var.sealed_provider_definition.protect_from_scale_in
   worker_health_check_type                               = var.sealed_provider_definition == null ? "EC2" : var.sealed_provider_definition.health_check_type
-  worker_host_refresh_strategy                           = var.sealed_provider_definition == null ? "Rolling" : var.sealed_provider_definition.instance_refresh_strategy
-  worker_host_refresh_min_healthy_percentage             = var.sealed_provider_definition == null ? 100 : var.sealed_provider_definition.instance_refresh_min_healthy_percentage
-  worker_host_refresh_max_healthy_percentage             = var.sealed_provider_definition == null ? 100 : var.sealed_provider_definition.instance_refresh_max_healthy_percentage
-  worker_host_refresh_scale_in_protected_instances       = var.sealed_provider_definition == null ? "Refresh" : var.sealed_provider_definition.instance_refresh_scale_in_protected_instances
-  worker_host_refresh_standby_instances                  = var.sealed_provider_definition == null ? "Terminate" : var.sealed_provider_definition.instance_refresh_standby_instances
-  worker_host_refresh_skip_matching                      = var.sealed_provider_definition == null ? true : var.sealed_provider_definition.instance_refresh_skip_matching
   worker_launch_lifecycle_transition                     = var.sealed_provider_definition == null ? "autoscaling:EC2_INSTANCE_LAUNCHING" : var.sealed_provider_definition.launch_lifecycle_transition
   worker_launch_lifecycle_default_result                 = var.sealed_provider_definition == null ? "ABANDON" : var.sealed_provider_definition.launch_lifecycle_default_result
   worker_termination_lifecycle_transition                = var.sealed_provider_definition == null ? "autoscaling:EC2_INSTANCE_TERMINATING" : var.sealed_provider_definition.termination_lifecycle_transition
@@ -412,7 +406,8 @@ resource "aws_autoscaling_group" "worker" {
   name                      = local.asg_name
   min_size                  = var.min_size
   max_size                  = var.max_size
-  desired_capacity          = null
+  desired_capacity          = var.desired_capacity
+  wait_for_capacity_timeout = "0"
   protect_from_scale_in     = local.worker_protect_from_scale_in
   vpc_zone_identifier       = var.subnet_ids
   health_check_type         = local.worker_health_check_type
@@ -424,17 +419,6 @@ resource "aws_autoscaling_group" "worker" {
     version = var.sealed_provider_definition == null ? aws_launch_template.worker.latest_version : var.sealed_provider_definition.launch_template_version
   }
 
-  instance_refresh {
-    strategy = local.worker_host_refresh_strategy
-
-    preferences {
-      min_healthy_percentage       = local.worker_host_refresh_min_healthy_percentage
-      max_healthy_percentage       = local.worker_host_refresh_max_healthy_percentage
-      scale_in_protected_instances = local.worker_host_refresh_scale_in_protected_instances
-      standby_instances            = local.worker_host_refresh_standby_instances
-      skip_matching                = local.worker_host_refresh_skip_matching
-    }
-  }
 
   initial_lifecycle_hook {
     name                 = local.launch_hook_name
@@ -457,9 +441,18 @@ resource "aws_autoscaling_group" "worker" {
   }
 
   lifecycle {
+    # Native maintenance owns temporary launch/refresh inhibition across applies.
+    ignore_changes = [suspended_processes]
+
     precondition {
       condition     = var.min_size <= var.max_size
       error_message = "worker capacity must satisfy min_size <= max_size."
+    }
+    precondition {
+      condition = var.desired_capacity == null ? true : (
+        var.desired_capacity >= var.min_size && var.desired_capacity <= var.max_size
+      )
+      error_message = "desired_capacity must be within min_size and max_size."
     }
   }
 }

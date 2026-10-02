@@ -159,7 +159,9 @@ func testRelayProgramCaptureAbortTransport(t *testing.T, reset bool) {
 	request.RunLeaseId = m.RunLeaseId
 	request.AttemptNumber = m.AttemptNumber
 	original := proto.Clone(request)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	// Checkpoint pause includes a host-wide filesystem sync. Let the test
+	// runner bound that operation instead of racing shared-runner I/O at 5s.
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	result := make(chan error, 1)
 	go func() {

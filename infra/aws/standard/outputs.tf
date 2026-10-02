@@ -139,8 +139,7 @@ output "worker_generation_definitions" {
     for pool_name, generation in local.worker_generations :
     pool_name => {
       generation_inputs = generation.generation_inputs
-      min_size          = generation.min_size
-      max_size          = generation.max_size
+      count             = generation.count
       sealed_provider_definition = try(
         module.worker_group[pool_name].sealed_provider_definition,
         generation.sealed_provider_definition,
@@ -160,8 +159,7 @@ output "worker_generation_bindings" {
       launch_template_id      = try(module.worker_group[pool_name].launch_template_id, null)
       launch_template_version = try(module.worker_group[pool_name].launch_template_version, null)
       ami_id                  = generation.ami_id
-      min_size                = generation.min_size
-      max_size                = generation.max_size
+      count                   = generation.count
     }
   }
 }

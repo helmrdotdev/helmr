@@ -30,3 +30,13 @@ Self-hosted mode requires a high-entropy `setup_token`. The bootstrap helper gen
 Once `/readyz` succeeds, sign in through GitHub. If the environment has no organization, enter the setup token to create the first organization. The self-hosted instance supports a single organization; after it exists, an owner must invite additional users.
 
 The setup token is a bootstrap credential, not a substitute for user authentication. Restrict access to its secret and logs. The checked-in helper initializes missing secret values only; it does not rotate an existing setup token.
+
+## Deployment administrators
+
+The AWS reference roots accept `controlplane_environment.ADMIN_EMAILS`, a comma-separated list of verified login emails
+that receive deployment administrator authority when those users first sign in.
+Set it before the intended operators' first login. It does not promote existing
+users or revoke existing grants when edited. Organization ownership and deployment
+administrator authority are separate. Administrator sessions authorize the
+fenced Pool retirement API used after [maintenance](/docs/self-hosting/upgrades#retire-an-old-pool-separately);
+the deployment Capacity token does not grant administrator-session access.

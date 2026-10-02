@@ -11,6 +11,12 @@ helmr_version = "replace-with-helmr-release-version"
 
 certificate_arn = "<acm-certificate-arn>"
 
+# Set verified operator emails before their first login for Pool retirement.
+controlplane_environment = {
+  # ADMIN_EMAILS = "operator@example.com"
+}
+# capacity_token_secret_arn = "<existing-deployment-capacity-secret-arn>"
+
 github_oauth_client_id = "<github-oauth-client-id>"
 
 clickhouse_url  = "https://replace-me.clickhouse.cloud:8443"
@@ -52,7 +58,9 @@ database_deletion_protection   = true
 database_backup_retention_days = 14
 database_skip_final_snapshot   = false
 
-# Optional custom builds. Leave null to use the official release artifacts.
+# Supply the digest-pinned image from the verified common release index and
+# an AMI prepared from its exact host/runtime bundles before enabling workers.
+# Common releases do not publish the resolver's default AWS manifest.
 controlplane_image = null
 worker_ami_id = null
 worker_network_blocked_ipv4_cidrs = [
@@ -62,10 +70,10 @@ worker_network_blocked_ipv4_cidrs = [
 
 create_worker = false
 # Copy prior entries from `tofu output -json worker_generation_definitions`
-# here before an immutable Worker generation change; keep every retained entry
-# at min_size=0 until its Product restore authority is explicitly retired.
+# here unchanged, including count, before an immutable generation change.
+# Reduce source count only after the full-stop gate; delete only after Pool disable.
 retained_worker_generations = {}
-worker_min_size         = 0
+worker_count            = 1
 worker_root_volume_size_gb    = 500
 worker_root_volume_iops       = 12000
 worker_root_volume_throughput = 500

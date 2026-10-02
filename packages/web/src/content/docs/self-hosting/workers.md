@@ -42,8 +42,7 @@ enable_nat_gateway                  = true
 create_worker                       = true
 worker_host_type                = "c8i.xlarge"
 worker_enable_nested_virtualization = true
-worker_min_size                     = 1
-worker_max_size                     = 1
+worker_count                        = 1
 worker_root_volume_size_gb          = 256
 worker_disk_mib                     = null
 ```
@@ -87,7 +86,7 @@ missing process-local state is not proof that the attachment was released.
 
 ## AMI and enrollment contract
 
-The official AMI is selected from the release manifest by `helmr_version` and `aws_region`. A custom AMI must contain the worker binary and unit, Firecracker, jailer, `ip`, `nft`, AWS CLI v2, curl, KVM support, and certified guest boot artifacts under the configured images directory.
+Prepare `worker_ami_id` from the verified public release's host/runtime bundles as described in [release artifact requirements](/docs/self-hosting/requirements#release-artifacts). Common releases do not publish AWS AMIs. The prepared AMI must contain the worker binary and unit, Firecracker, jailer, `ip`, `nft`, AWS CLI v2, curl, KVM support, and certified guest boot artifacts under the configured images directory.
 
 At boot, the module fetches the worker-group enrollment token into a root-only volatile file. The token selects the logical group. AWS identity, AMI provenance, instance profile, Auto Scaling membership, and fleet policy remain infrastructure responsibilities; the Control Plane does not authenticate or allowlist the AMI.
 
@@ -102,15 +101,20 @@ prefix. SSM Session Manager is enabled by default, and no inbound SSH rule is re
 
 ## Drain and replace
 
-New instances start protected from scale-in. Launch-template changes do not automatically refresh instances. Before provider deletion or an AMI rollout, drain the exact logical worker until it reaches `termination_ready`, then explicitly coordinate the Auto Scaling instance refresh.
+Set an explicit `worker_count` when enabling workers. The reference stacks set
+ASG desired and maximum capacity to this count, with minimum zero; there is no automatic
+instance refresh. New hosts start protected from scale-in, but protection does
+not prevent health replacement or manual termination.
 
-For a manual diagnostic drain:
+Every update and count reduction uses the [full-stop maintenance procedure](/docs/self-hosting/upgrades).
+Drain the whole source population with the deployment Capacity API, wait for all
+exact Host epochs to become `termination_ready`, and only then remove that
+population. Keep Control Plane, dispatcher and networking available during drain.
+Group drain, Pool retirement and on-host `worker drain` have different purposes
+and do not implement this procedure. A long-running Task can postpone maintenance
+indefinitely; an observation timeout does not authorize cancellation or deletion.
 
-```sh
-worker drain --wait-timeout 30m
-```
-
-Do not reduce desired capacity or terminate a host first: provider scaling must not bypass the claim-fenced drain path. Check connectivity and activation with:
+Check connectivity and activation with:
 
 ```sh
 worker status

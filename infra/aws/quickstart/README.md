@@ -40,7 +40,7 @@ tofu apply
 ```
 
 The first apply should usually keep `create_controlplane_service=false`. It creates infrastructure,
-resolves the official release artifacts, creates empty Secrets Manager containers, and creates the
+uses the explicitly supplied release image, creates empty Secrets Manager containers, and creates the
 migration task definition without trying to start a service that cannot yet read populated secrets.
 
 This example intentionally has no backend block. Add your own backend configuration in the
@@ -132,8 +132,7 @@ enable_nat_gateway                  = true
 create_worker                       = true
 worker_host_type                = "c8i.xlarge"
 worker_enable_nested_virtualization = true
-worker_min_size                     = 1
-worker_max_size                     = 1
+worker_count                        = 1
 worker_root_volume_size_gb          = 120
 worker_disk_mib                     = null
 ```
@@ -143,8 +142,9 @@ derives the worker Control Plane URL from `public_url` for direct ALB mode or fr
 `cloudfront_origin_domain_name` for CloudFront mode, then resolves that hostname to an internal ALB
 inside the VPC.
 
-The official worker AMI is resolved from `helmr_version` and `aws_region`. Set `worker_ami_id` only
-for custom builds; custom AMIs must satisfy the `modules/worker` contract: Firecracker, jailer,
+Supply a digest-pinned `controlplane_image` from the verified public release
+index and a `worker_ami_id` prepared from its exact host/runtime bundles. Common
+releases do not publish AWS AMIs or an AWS manifest; custom AMIs must satisfy the `modules/worker` contract: Firecracker, jailer,
 `ip`, `nft`, certified guest boot artifacts, AWS CLI,
 `worker`, and the executable `/usr/local/sbin/helmr-prepare-root` matching
 `modules/worker-image/templates/prepare-root.sh` installed. Keep NAT enabled
@@ -156,23 +156,40 @@ The stack derives each Worker Pool generation name from the complete immutable
 supply definition: Worker module/user-data contract, resolved AMI,
 instance/runtime class, network/store/cache policy, root-volume shape, and
 advertised capacity shape. Changing one of those sealed inputs
-creates a new Pool name; changing only ASG minimum or maximum size does not.
+creates a new Pool name; changing only `worker_count` does not.
+`worker_generation_key` also creates a fresh binding for explicitly qualified
+same-build recovery; retain its old definition before changing the key.
 Each Pool name keys a distinct Auto Scaling Group and launch template. Before
 changing an immutable input, copy the old entry from
-`worker_generation_definitions` into `retained_worker_generations` with
-`min_size = 0`. The exported entry includes the realized user data, IAM
+`worker_generation_definitions` into `retained_worker_generations` unchanged,
+including its current `count`. Set the new generation's `worker_count = 0`
+during preparation. Do not reduce the retained source count until the full-stop
+gate in the [maintenance procedure](../../../packages/web/src/content/docs/self-hosting/upgrades.md)
+has passed. The exported entry includes the realized user data, IAM
 documents, SSM choice, and exact launch-template version, so the retained ASG
-does not follow a newer template. Remove a retained entry only after Product
-restore authority no longer references that Pool and its exact drain-to-
-`termination_ready` retirement has completed. Control Plane does not
+does not follow a newer template. Remove a retained entry only after the separate fenced Product Pool retirement
+returns `status = disabled`, with no pending launches and exact provider absence
+confirmed again before cleanup. Host `termination_ready` alone does not retire a Pool. Control Plane does not
 authenticate or allowlist the AMI; `worker_generation_bindings` records the
 exact Product Pool to provider binding.
 
-Deployment infrastructure owns desired capacity for execution groups.
-Terraform retains the ASG min/max guardrails, and equal min/max values provide
-fixed capacity. Worker capacity and disk/cache partitions must be explicit when
-workers are created. Demand observations may guide scale-out, but scale-in must
-use the exact claim-fenced drain contract.
+The reference stack owns fixed capacity: each generation has explicit desired
+and maximum counts, with minimum zero so an exact lost host can be removed
+without replenishing capacity during maintenance. Supply increases use the same qualified build and
+profile. Every reduction, including zero, and every worker update uses the
+[full-stop maintenance procedure](../../../packages/web/src/content/docs/self-hosting/upgrades.md).
+There is no automatic instance refresh. Keep Control Plane, dispatcher, network,
+storage and keys available throughout drain. Explicit worker capacity and
+disk/cache partitions remain required when workers are created.
+
+Configure `controlplane_environment.ADMIN_EMAILS` before the named operators first log in so they can use
+the separate administrator Pool retirement API. The list does not promote existing
+users. Keep the Capacity credential separate from administrator login sessions.
+
+For native maintenance requests, set `capacity_token_secret_arn` to an existing
+Secrets Manager secret containing the deployment Capacity token. For a customer
+KMS key, also set `capacity_token_kms_key_arn`. These inputs contain ARNs, never
+the credential value; only the Control Plane service receives the token.
 
 ## Destroy
 

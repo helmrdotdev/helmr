@@ -137,12 +137,6 @@ run "retained_external_boundary_rejects_input_switch" {
       termination_policies                            = ["OldestLaunchTemplate", "OldestInstance"]
       protect_from_scale_in                           = true
       health_check_type                               = "EC2"
-      instance_refresh_strategy                       = "Rolling"
-      instance_refresh_min_healthy_percentage         = 100
-      instance_refresh_max_healthy_percentage         = 100
-      instance_refresh_scale_in_protected_instances   = "Refresh"
-      instance_refresh_standby_instances              = "Terminate"
-      instance_refresh_skip_matching                  = true
       launch_lifecycle_transition                     = "autoscaling:EC2_INSTANCE_LAUNCHING"
       launch_lifecycle_default_result                 = "ABANDON"
       termination_lifecycle_transition                = "autoscaling:EC2_INSTANCE_TERMINATING"
@@ -172,12 +166,6 @@ run "retained_external_boundary_rejects_policy_drift" {
       termination_policies                            = ["OldestLaunchTemplate", "OldestInstance"]
       protect_from_scale_in                           = true
       health_check_type                               = "EC2"
-      instance_refresh_strategy                       = "Rolling"
-      instance_refresh_min_healthy_percentage         = 100
-      instance_refresh_max_healthy_percentage         = 100
-      instance_refresh_scale_in_protected_instances   = "Refresh"
-      instance_refresh_standby_instances              = "Terminate"
-      instance_refresh_skip_matching                  = true
       launch_lifecycle_transition                     = "autoscaling:EC2_INSTANCE_LAUNCHING"
       launch_lifecycle_default_result                 = "ABANDON"
       termination_lifecycle_transition                = "autoscaling:EC2_INSTANCE_TERMINATING"
