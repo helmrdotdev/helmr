@@ -51,7 +51,7 @@ Use only an EC2 family that supports nested virtualization. Keep NAT enabled whi
 
 ## Production capacity
 
-The standard profile defaults to a metal worker instance type, nested virtualization off, and zero minimum capacity. Set explicit minimums, maximums, instance types, root-volume performance, VM sizing, cache limits, and execution slots for your workload. `max_size` is the infrastructure spend guardrail; equal minimum and maximum values express fixed capacity.
+The standard profile defaults to a metal worker instance type and nested virtualization off. Set an explicit `worker_count` when enabling Workers, along with the instance type, root-volume performance, VM sizing, cache limits, and execution slots for your workload. The reference roots set desired and maximum capacity to that count and minimum capacity to zero.
 
 Workers are filesystem-first. Their root EBS volume holds runtime data, staged
 artifacts, and cache. Leave `worker_disk_mib = null` to advertise detected
@@ -86,7 +86,7 @@ missing process-local state is not proof that the attachment was released.
 
 ## AMI and enrollment contract
 
-Prepare `worker_ami_id` from the verified public release's host/runtime bundles as described in [release artifact requirements](/docs/self-hosting/requirements#release-artifacts). Common releases do not publish AWS AMIs. The prepared AMI must contain the worker binary and unit, Firecracker, jailer, `ip`, `nft`, AWS CLI v2, curl, KVM support, and certified guest boot artifacts under the configured images directory.
+Prepare `worker_ami_id` from the verified public release's host/runtime bundles as described in [release artifact requirements](/docs/self-hosting/requirements#release-artifacts). Common releases do not publish AWS AMIs. Use the public checkout's [`infra/aws/stacks/worker-image/README.md`](https://github.com/helmrdotdev/helmr/blob/main/infra/aws/stacks/worker-image/README.md) for the complete input, build and cleanup procedure; use the documentation from your selected source commit when reproducing an older release. The prepared AMI must contain the worker binary and unit, Firecracker, jailer, `ip`, `nft`, AWS CLI v2, curl, KVM support, and certified guest boot artifacts under the configured images directory.
 
 At boot, the module fetches the worker-group enrollment token into a root-only volatile file. The token selects the logical group. AWS identity, AMI provenance, instance profile, Auto Scaling membership, and fleet policy remain infrastructure responsibilities; the Control Plane does not authenticate or allowlist the AMI.
 
