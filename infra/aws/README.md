@@ -24,10 +24,13 @@ release does not guarantee a safe downgrade of runtime or persisted data.
 
 ## Release artifacts
 
-Run release-build foundation and Worker image operations through
-`scripts/aws-release-artifacts.sh`.
-The release workflow publishes a digest-pinned Control Plane image, regional Worker
-AMIs, and the signed Platform release. The Control Plane image contains only
+The release workflow publishes a digest-pinned Control Plane image, signed
+Platform release, and host/runtime bundles. Common releases do not publish
+regional Worker AMIs. Operators can use the public
+[Worker image stack](stacks/worker-image/README.md) to build a private AMI from
+those verified bundles. `scripts/aws-release-artifacts.sh` owns release-publisher foundation operations
+and Product-owned image builds from the current checkout. Its image commands
+are not the operator path for consuming already published bundles. The Control Plane image contains only
 `control-plane` and `dispatcher`; deployment capacity automation is not a
 Product release artifact. The Control Plane and bundle-builder GHCR packages
 are public and should be consumed by immutable digest.
