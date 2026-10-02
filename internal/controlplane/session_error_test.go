@@ -42,7 +42,7 @@ func TestSessionErrorMapsActorStart(t *testing.T) {
 		{"start computer unavailable", sessionStartOperation, session.ErrStartComputerUnavailable, http.StatusConflict, "computer_unavailable", "actor start computer cannot accept execution", true},
 		{"start secret unavailable", sessionStartOperation, session.ErrStartSecretUnavailable, http.StatusConflict, "secret_unavailable", "actor start computer secret is unavailable", false},
 		{"start invalid", sessionStartOperation, fmt.Errorf("%w: bad duration", session.ErrStartInvalid), http.StatusBadRequest, "invalid_actor_start", "actor start request is invalid: bad duration", false},
-		{"start authority", sessionStartOperation, fmt.Errorf("%w: manifest", session.ErrStartAuthority), http.StatusServiceUnavailable, "actor_start_authority_unavailable", "actor start authority is unavailable", true},
+		{"start authority", sessionStartOperation, fmt.Errorf("%w: manifest", session.ErrStartAuthority), http.StatusInternalServerError, "internal_error", "internal server error", false},
 		{"start receipt", sessionStartOperation, session.ErrStartReceiptInvalid, http.StatusServiceUnavailable, "actor_start_authority_unavailable", "actor start authority is unavailable", true},
 		{"start failure", sessionStartOperation, unavailable, http.StatusServiceUnavailable, "actor_start_authority_unavailable", "actor start authority is unavailable", true},
 		{"worker start claims first", sessionWorkerStartOperation, errors.Join(run.ErrStaleSource, workergroup.ErrStaleClaims), http.StatusUnauthorized, "unauthorized", "worker authentication is required", false},
@@ -90,7 +90,6 @@ func TestWriteSessionErrorLogsInternalAndUnavailableCauses(t *testing.T) {
 	server := &Server{log: slog.New(slog.NewJSONHandler(&logs, nil))}
 	server.writeSessionError(httptest.NewRecorder(), &session.OperationError{Code: "session_held"}, sessionPublicOperation)
 	server.writeSessionError(httptest.NewRecorder(), session.ErrNotFound, sessionGetOperation)
-	server.writeSessionError(httptest.NewRecorder(), session.ErrStartAuthority, sessionStartOperation)
 	if logs.Len() != 0 {
 		t.Fatalf("handled outcomes logged: %s", logs.String())
 	}
@@ -155,7 +154,7 @@ func TestActorStartFailureReportsWorkerHandledRejections(t *testing.T) {
 			}
 		})
 	}
-	for _, err := range []error{computer.ErrPreparationExhausted, session.ErrStartAuthority, session.ErrStartReceiptInvalid, run.ErrStaleSource, errors.New("database is down")} {
+	for _, err := range []error{session.ErrStartAuthority, session.ErrStartReceiptInvalid, run.ErrStaleSource, errors.New("database is down")} {
 		if got, ok := actorStartFailure(err); ok {
 			t.Fatalf("%v reported failure %+v", err, got)
 		}
@@ -186,5 +185,28 @@ func TestWriteWorkerActorStartErrorKeepsStaleSourceOutOfFailures(t *testing.T) {
 	server.writeWorkerActorStartError(httptest.NewRecorder(), "correlation", "lease", errors.New("credential=sentinel"))
 	if !strings.Contains(logs.String(), `"msg":"start run-sourced Actor"`) || !strings.Contains(logs.String(), `"run_lease_id":"lease"`) {
 		t.Fatalf("internal failure logs = %s", logs.String())
+	}
+}
+
+func TestActorStartPreparationExhaustionIsAHandledFailure(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	server := &Server{log: slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))}
+	server.writeWorkerActorStartError(recorder, "correlation", "lease", computer.ErrPreparationExhausted)
+	var response workerapi.StartActorResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.Code != http.StatusOK || response.CorrelationID != "correlation" || response.Completed != nil || response.Failed == nil || response.Failed.Code != "computer_preparation_exhausted" || response.Failed.Retryable {
+		t.Fatalf("preparation exhaustion response: %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestActorStartStoredAuthorityFailureIsInternal(t *testing.T) {
+	var logs bytes.Buffer
+	server := &Server{log: slog.New(slog.NewJSONHandler(&logs, nil))}
+	recorder := httptest.NewRecorder()
+	server.writeSessionError(recorder, fmt.Errorf("%w: digest-sentinel", session.ErrStartAuthority), sessionStartOperation)
+	if recorder.Code != http.StatusInternalServerError || strings.Contains(recorder.Body.String(), "digest-sentinel") || !strings.Contains(logs.String(), "digest-sentinel") {
+		t.Fatalf("internal response=%d %s logs=%s", recorder.Code, recorder.Body.String(), logs.String())
 	}
 }

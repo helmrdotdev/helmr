@@ -236,6 +236,9 @@ func start(ctx context.Context, txb db.TxBeginner, claimRequest idempotency.Requ
 			request.QueueName,
 		)
 		if err != nil {
+			if errors.Is(err, definition.ErrActorRunSelection) {
+				return fmt.Errorf("%w: %v", ErrStartInvalid, err)
+			}
 			return fmt.Errorf("%w: %v", ErrStartAuthority, err)
 		}
 		queuedTTL := request.QueuedTTLMS

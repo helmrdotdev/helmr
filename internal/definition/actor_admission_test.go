@@ -1,6 +1,9 @@
 package definition
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestResolveActorRunAdmissionPinsDefinitionAndQueueAuthority(t *testing.T) {
 	manifest := []byte(`{"idleTimeoutMs":30000,"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false},"ttlMs":60000}}`)
@@ -37,14 +40,14 @@ func TestResolveActorRunAdmissionRejectsUndefinedQueueAndDigestMismatch(t *testi
 	queueConfig := []byte(`{"formatVersion":0,"queues":[{"name":"default"}]}`)
 	if _, err := ResolveActorRunAdmission(
 		DeploymentPlanFormatVersion, "operator.v1", manifest, digest[:], queueConfig, "missing",
-	); err == nil {
-		t.Fatal("undefined queue was accepted")
+	); !errors.Is(err, ErrActorRunSelection) {
+		t.Fatalf("undefined queue classification = %v", err)
 	}
 	digest[0] ^= 0xff
 	if _, err := ResolveActorRunAdmission(
 		DeploymentPlanFormatVersion, "operator.v1", manifest, digest[:], queueConfig, "",
-	); err == nil {
-		t.Fatal("manifest digest mismatch was accepted")
+	); err == nil || errors.Is(err, ErrActorRunSelection) {
+		t.Fatalf("manifest digest classification = %v", err)
 	}
 }
 
@@ -57,7 +60,7 @@ func TestResolveActorRunAdmissionOverrideDoesNotMaskInvalidStoredDefault(t *test
 	queueConfig := []byte(`{"formatVersion":0,"queues":[{"name":"priority"}]}`)
 	if _, err := ResolveActorRunAdmission(
 		DeploymentPlanFormatVersion, "operator.v1", manifest, digest[:], queueConfig, "priority",
-	); err == nil {
-		t.Fatal("queue override masked an invalid stored default")
+	); err == nil || errors.Is(err, ErrActorRunSelection) {
+		t.Fatalf("stored default classification = %v", err)
 	}
 }

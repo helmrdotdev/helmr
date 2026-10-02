@@ -9,6 +9,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
@@ -490,5 +491,72 @@ func waitForLockWait(ctx context.Context, t *testing.T, pool interface {
 		case <-ctx.Done():
 			t.Fatal(ctx.Err())
 		}
+	}
+}
+
+func TestActorStartRejectsInvalidQueueWithoutAdmittingPostgres(t *testing.T) {
+	for _, worker := range []bool{false, true} {
+		name := "public"
+		if worker {
+			name = "worker"
+		}
+		t.Run(name, func(t *testing.T) {
+			s := newRunSourcedStart(t, false)
+			request := s.request(s.computer)
+			request.QueueName = "undeclared"
+			claim := startClaim(t, request, "invalid-selection")
+			var err error
+			if worker {
+				_, err = StartFromRun(t.Context(), s.Pool, s.fence, claim, request)
+			} else {
+				_, err = Start(t.Context(), s.Pool, claim, request)
+			}
+			if !errors.Is(err, ErrStartInvalid) {
+				t.Fatalf("invalid queue outcome: %v", err)
+			}
+			assertNoActorStartAdmission(t, s)
+		})
+	}
+}
+
+func TestActorStartStoredCorruptionDoesNotAdmitPostgres(t *testing.T) {
+	for _, worker := range []bool{false, true} {
+		t.Run(fmt.Sprint(worker), func(t *testing.T) {
+			s := newRunSourcedStart(t, false)
+			dbtest.MustExec(t, t.Context(), s.Pool, `UPDATE deployment_definitions SET manifest_digest=decode(repeat('01',32),'hex') WHERE environment_id=$1 AND declared_id='starter'`, s.EnvironmentID)
+			request := s.request(s.computer)
+			claim := startClaim(t, request, "corrupt-definition")
+			var err error
+			if worker {
+				_, err = StartFromRun(t.Context(), s.Pool, s.fence, claim, request)
+			} else {
+				_, err = Start(t.Context(), s.Pool, claim, request)
+			}
+			if !errors.Is(err, ErrStartAuthority) || errors.Is(err, ErrStartInvalid) {
+				t.Fatalf("stored corruption classification: %v", err)
+			}
+			assertNoActorStartAdmission(t, s)
+		})
+	}
+}
+
+func TestActorStartPreparationExhaustionDoesNotAdmitPostgres(t *testing.T) {
+	s := newRunSourcedStart(t, false)
+	dbtest.MustExec(t, t.Context(), s.Pool, `UPDATE computers SET preparation_attempt_count=8,preparation_instance_id=(SELECT computer_instance_id FROM run_leases WHERE id=$2),preparation_failure='{"code":"computer_preparation_exhausted"}',desired_state='stopped' WHERE id=$1`, s.computer, s.work.LeaseID)
+	request := s.request(s.computer)
+	if _, err := Start(t.Context(), s.Pool, startClaim(t, request, "exhausted"), request); !errors.Is(err, computer.ErrPreparationExhausted) {
+		t.Fatalf("exhaustion: %v", err)
+	}
+	assertNoActorStartAdmission(t, s)
+}
+
+func assertNoActorStartAdmission(t *testing.T, s runSourcedStart) {
+	t.Helper()
+	var sessions, runs, claims int
+	if err := s.Pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM sessions),(SELECT count(*) FROM runs WHERE cause_kind='actor_start'),(SELECT count(*) FROM idempotency_claims WHERE operation='actor.start')`).Scan(&sessions, &runs, &claims); err != nil {
+		t.Fatal(err)
+	}
+	if sessions != 0 || runs != 0 || claims != 0 {
+		t.Fatalf("rejected start committed: sessions=%d runs=%d claims=%d", sessions, runs, claims)
 	}
 }
