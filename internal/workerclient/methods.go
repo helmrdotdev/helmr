@@ -598,10 +598,10 @@ func (c *Client) ResumeRunSession(ctx context.Context, request workerapi.ResumeS
 }
 
 func (c *Client) RegisterInitialComputerObject(ctx context.Context, request workerapi.InitialComputerObjectRequest) error {
-	return c.postWorkerJSON(ctx, "/worker/v1/run/computer-instances/initialization/objects/register", request, &struct{}{})
+	return c.postPreparationJSON(ctx, "/worker/v1/run/computer-instances/initialization/objects/register", request, &struct{}{})
 }
 func (c *Client) CertifyInitialComputerObject(ctx context.Context, request workerapi.InitialComputerObjectRequest) error {
-	return c.postWorkerJSON(ctx, "/worker/v1/run/computer-instances/initialization/objects/certify", request, &struct{}{})
+	return c.postPreparationJSON(ctx, "/worker/v1/run/computer-instances/initialization/objects/certify", request, &struct{}{})
 }
 
 func (c *Client) RegisterCheckpointComputerObject(ctx context.Context, request workerapi.CheckpointComputerObjectRequest) error {
