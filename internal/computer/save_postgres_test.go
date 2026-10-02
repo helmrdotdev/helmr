@@ -155,14 +155,18 @@ func TestComputerInstanceSavePublishesThenAdoptsSource(t *testing.T) {
 	var digest string
 	var logical int64
 	var locator []byte
-	if err := f.Pool.QueryRow(t.Context(), `SELECT v.version_id::text,v.root_pack_digest,v.logical_bytes,v.locator FROM computer_instances i JOIN computer_disk_version_roots v ON v.version_id=i.source_disk_version_id WHERE i.id=$1`, instanceID).Scan(&parent, &digest, &logical, &locator); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT v.version_id::text,r.root_pack_digest,r.logical_bytes,r.locator FROM computer_instances i JOIN computer_disk_version_roots v ON v.version_id=i.source_disk_version_id JOIN computer_disk_roots r ON r.id=v.root_id WHERE i.id=$1`, instanceID).Scan(&parent, &digest, &logical, &locator); err != nil {
 		t.Fatal(err)
 	}
 	if err := inSave(t, f, func(ctx context.Context, tx pgx.Tx) (unpublishedSave, error) {
 		return lockUnpublishedSave(ctx, tx, worker, ref)
 	}, func(tx pgx.Tx, s unpublishedSave) error {
 		i := s.instance
-		_, err := db.New(tx).PublishComputerInstanceSave(t.Context(), db.PublishComputerInstanceSaveParams{ComputerInstanceID: i.ID, EnvironmentID: i.EnvironmentID, WorkerHostID: i.WorkerHostID, WorkerEpoch: i.WorkerEpoch, WriterGeneration: i.WriterGeneration, WriterTokenHash: i.WriterTokenHash, DesiredVersion: i.DesiredVersion, SaveID: pgvalue.UUID(ref.SaveID), Sequence: ref.Sequence, RootPackDigest: pgvalue.Text(digest), LogicalBytes: logical, Fingerprint: dbtest.Hash(ref.SaveID.String()), Locator: locator})
+		rootID, err := db.New(tx).RetainComputerDiskRoot(t.Context(), db.RetainComputerDiskRootParams{ID: pgvalue.NewUUIDv7(), EnvironmentID: pgvalue.UUID(f.EnvironmentID), Locator: locator})
+		if err != nil {
+			return err
+		}
+		_, err = db.New(tx).PublishComputerInstanceSave(t.Context(), db.PublishComputerInstanceSaveParams{ComputerInstanceID: i.ID, EnvironmentID: i.EnvironmentID, WorkerHostID: i.WorkerHostID, WorkerEpoch: i.WorkerEpoch, WriterGeneration: i.WriterGeneration, WriterTokenHash: i.WriterTokenHash, DesiredVersion: i.DesiredVersion, SaveID: pgvalue.UUID(ref.SaveID), Sequence: ref.Sequence, RootID: rootID, Fingerprint: dbtest.Hash(ref.SaveID.String())})
 		return err
 	}); err != nil {
 		t.Fatal(err)

@@ -12,8 +12,7 @@ import (
 )
 
 const createComputerDiskVersionRoot = `-- name: CreateComputerDiskVersionRoot :exec
-
-INSERT INTO computer_disk_version_roots(environment_id,computer_id,version_id,locator)
+INSERT INTO computer_disk_version_roots(environment_id,computer_id,version_id,root_id)
 VALUES($1,$2,$3,$4)
 `
 
@@ -21,19 +20,37 @@ type CreateComputerDiskVersionRootParams struct {
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ComputerID    pgtype.UUID `json:"computer_id"`
 	VersionID     pgtype.UUID `json:"version_id"`
-	Locator       []byte      `json:"locator"`
+	RootID        pgtype.UUID `json:"root_id"`
 }
 
-// These operations run only under the owning Computer/Instance fence. Locator
-// framing, authenticated page membership and upload correspondence are prerequisites.
 func (q *Queries) CreateComputerDiskVersionRoot(ctx context.Context, arg CreateComputerDiskVersionRootParams) error {
 	_, err := q.db.Exec(ctx, createComputerDiskVersionRoot,
 		arg.EnvironmentID,
 		arg.ComputerID,
 		arg.VersionID,
-		arg.Locator,
+		arg.RootID,
 	)
 	return err
+}
+
+const deleteUnreferencedComputerDiskRoots = `-- name: DeleteUnreferencedComputerDiskRoots :execrows
+WITH candidates AS (
+ SELECT r.id FROM computer_disk_roots r
+ WHERE NOT EXISTS (SELECT 1 FROM computer_disk_version_roots v WHERE v.root_id=r.id)
+ AND NOT EXISTS (SELECT 1 FROM computer_seeds s WHERE s.root_id=r.id)
+ AND NOT EXISTS (SELECT 1 FROM computer_snapshots s WHERE s.root_id=r.id)
+ ORDER BY r.id LIMIT $1 FOR UPDATE SKIP LOCKED
+)
+DELETE FROM computer_disk_roots r USING candidates c WHERE r.id=c.id
+`
+
+// The shared descriptor may be removed only after all independent owners release it.
+func (q *Queries) DeleteUnreferencedComputerDiskRoots(ctx context.Context, rowLimit int32) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteUnreferencedComputerDiskRoots, rowLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteUnreferencedComputerDiskVersionRoot = `-- name: DeleteUnreferencedComputerDiskVersionRoot :execrows
@@ -65,9 +82,10 @@ func (q *Queries) DeleteUnreferencedComputerDiskVersionRoot(ctx context.Context,
 }
 
 const getComputerDiskVersionRoot = `-- name: GetComputerDiskVersionRoot :one
-SELECT locator FROM computer_disk_version_roots
- WHERE environment_id=$1 AND computer_id=$2
-   AND version_id=$3
+SELECT r.locator FROM computer_disk_version_roots v
+ JOIN computer_disk_roots r ON r.environment_id=v.environment_id AND r.id=v.root_id
+ WHERE v.environment_id=$1 AND v.computer_id=$2
+   AND v.version_id=$3
 `
 
 type GetComputerDiskVersionRootParams struct {
@@ -84,10 +102,11 @@ func (q *Queries) GetComputerDiskVersionRoot(ctx context.Context, arg GetCompute
 }
 
 const getInstanceComputerSourceRoot = `-- name: GetInstanceComputerSourceRoot :one
-SELECT v.version_id, v.locator, v.logical_bytes
+SELECT v.version_id, root.locator, root.logical_bytes
 FROM computer_instances r
 JOIN computer_disk_version_roots v ON v.environment_id=r.environment_id
  AND v.computer_id=r.computer_id AND v.version_id=r.retained_source_disk_version_id
+JOIN computer_disk_roots root ON root.environment_id=v.environment_id AND root.id=v.root_id
 WHERE r.id=$1
 `
 
@@ -108,13 +127,14 @@ func (q *Queries) GetInstanceComputerSourceRoot(ctx context.Context, computerIns
 }
 
 const listInstanceComputerSourceKeys = `-- name: ListInstanceComputerSourceKeys :many
-SELECT k.id, k.environment_id, k.computer_id, k.wrapping_key_id, k.wrapped_key, k.created_at, k.retired_at, k.available FROM computer_instances r
+SELECT k.id, k.environment_id, k.writer_computer_id, k.wrapping_key_id, k.wrapped_key, k.created_at, k.retired_at, k.available, k.is_seed_key FROM computer_instances r
  JOIN computer_disk_version_roots v ON v.environment_id=r.environment_id AND v.computer_id=r.computer_id
    AND v.version_id=r.retained_source_disk_version_id
- JOIN computer_object_keys dependency ON dependency.environment_id=v.environment_id
-   AND dependency.computer_id=v.computer_id AND dependency.digest=v.root_pack_digest
+ JOIN computer_disk_roots root ON root.environment_id=v.environment_id AND root.id=v.root_id
+ JOIN computer_object_keys dependency ON dependency.environment_id=root.environment_id
+   AND dependency.digest=root.root_pack_digest
  JOIN computer_data_keys k ON k.environment_id=dependency.environment_id
-   AND k.computer_id=dependency.computer_id AND k.id=dependency.key_id
+   AND k.id=dependency.key_id
  WHERE r.id=$1
  ORDER BY k.id
 `
@@ -133,12 +153,13 @@ func (q *Queries) ListInstanceComputerSourceKeys(ctx context.Context, computerIn
 		if err := rows.Scan(
 			&i.ID,
 			&i.EnvironmentID,
-			&i.ComputerID,
+			&i.WriterComputerID,
 			&i.WrappingKeyID,
 			&i.WrappedKey,
 			&i.CreatedAt,
 			&i.RetiredAt,
 			&i.Available,
+			&i.IsSeedKey,
 		); err != nil {
 			return nil, err
 		}
@@ -196,9 +217,9 @@ const pinInstanceComputerSource = `-- name: PinInstanceComputerSource :execrows
 UPDATE computer_instances r SET source_disk_version_id=$1
  WHERE r.id=$2 AND r.environment_id=$3
    AND r.computer_id=$4 AND r.reclaimed_at IS NULL
-   AND EXISTS(SELECT 1 FROM computer_disk_version_roots v WHERE v.environment_id=r.environment_id
+   AND EXISTS(SELECT 1 FROM computer_disk_version_roots v JOIN computer_disk_roots root ON root.environment_id=v.environment_id AND root.id=v.root_id WHERE v.environment_id=r.environment_id
       AND v.computer_id=r.computer_id AND v.version_id=$1
-      AND v.logical_bytes=r.reserved_guest_ephemeral_disk_bytes)
+      AND root.logical_bytes=r.reserved_guest_ephemeral_disk_bytes)
    AND (r.source_disk_version_id IS NULL OR r.source_disk_version_id=$1)
 `
 
@@ -247,6 +268,31 @@ func (q *Queries) RequireComputerObjectPin(ctx context.Context, arg RequireCompu
 	var digest string
 	err := row.Scan(&digest)
 	return digest, err
+}
+
+const retainComputerDiskRoot = `-- name: RetainComputerDiskRoot :one
+
+INSERT INTO computer_disk_roots(id,environment_id,locator)
+VALUES($1,$2,$3)
+ON CONFLICT (environment_id,root_pack_digest,root_page_offset) DO UPDATE
+ SET locator=EXCLUDED.locator
+ WHERE computer_disk_roots.locator=EXCLUDED.locator
+RETURNING id
+`
+
+type RetainComputerDiskRootParams struct {
+	ID            pgtype.UUID `json:"id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	Locator       []byte      `json:"locator"`
+}
+
+// These operations run only under the owning Computer/Instance fence. Locator
+// framing, authenticated page membership and upload correspondence are prerequisites.
+func (q *Queries) RetainComputerDiskRoot(ctx context.Context, arg RetainComputerDiskRootParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, retainComputerDiskRoot, arg.ID, arg.EnvironmentID, arg.Locator)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const retireComputerDiskVersionPayload = `-- name: RetireComputerDiskVersionPayload :execrows

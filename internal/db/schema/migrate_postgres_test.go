@@ -335,7 +335,7 @@ func assertNoBusinessDatabaseLogic(
 	`).Scan(&generatedColumns); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(generatedColumns, ",") != "cas_blobs.not_retired:s,cas_objects.availability_required:s,computer_checkpoint_objects.availability_required:s,computer_checkpoints.computer_payload_required:s,computer_commands.outcome_kind:s,computer_data_keys.available:s,computer_disk_version_roots.certification_required:s,computer_disk_version_roots.direct_key_required:s,computer_disk_version_roots.logical_bytes:s,computer_disk_version_roots.payload_required:s,computer_disk_version_roots.root_kind:s,computer_disk_version_roots.root_pack_digest:s,computer_disk_version_roots.root_pack_rank:s,computer_disk_version_roots.root_pack_size_bytes:s,computer_disk_version_roots.root_page_key_id:s,computer_disk_versions.payload_not_retired:s,computer_instances.computer_key_available:s,computer_instances.computer_payload_required:s,computer_instances.retained_source_disk_version_id:s,computer_instances.retained_write_key_id:s,computer_instances.spec_retention_required:s,computer_object_edges.certification_required:s,computer_object_keys.availability_required:s,computer_objects.availability_required:s,computer_objects.certified:s,computer_objects.certified_org_id:s,computer_specs.seed_available:s,computer_specs.seed_kind:s,computers.computer_payload_required:s,computers.recovery_payload_required:s,computers.spec_retention_required:s,computers.write_key_available:s,run_attempts.computer_payload_required:s,run_waits.computer_payload_required:s,runs.computer_payload_required:s,telemetry_outbox.ingest_size_bytes:s" {
+	if strings.Join(generatedColumns, ",") != "cas_blobs.not_retired:s,cas_objects.availability_required:s,computer_checkpoint_objects.availability_required:s,computer_checkpoints.computer_payload_required:s,computer_commands.outcome_kind:s,computer_data_keys.available:s,computer_data_keys.is_seed_key:s,computer_disk_roots.certification_required:s,computer_disk_roots.direct_key_required:s,computer_disk_roots.logical_bytes:s,computer_disk_roots.root_kind:s,computer_disk_roots.root_pack_digest:s,computer_disk_roots.root_pack_rank:s,computer_disk_roots.root_pack_size_bytes:s,computer_disk_roots.root_page_key_id:s,computer_disk_roots.root_page_offset:s,computer_disk_version_roots.payload_required:s,computer_disk_versions.payload_not_retired:s,computer_disk_versions.retained_root_version_id:s,computer_instances.computer_key_available:s,computer_instances.computer_payload_required:s,computer_instances.retained_seed_key_id:s,computer_instances.retained_source_disk_version_id:s,computer_instances.retained_write_key_id:s,computer_instances.seed_key_required:s,computer_instances.spec_retention_required:s,computer_object_edges.certification_required:s,computer_object_keys.availability_required:s,computer_objects.availability_required:s,computer_objects.certified:s,computer_objects.certified_org_id:s,computer_seeds.source_kind:s,computer_snapshots.capturing_id:s,computer_specs.seed_available:s,computer_specs.seed_kind:s,computers.computer_payload_required:s,computers.recovery_payload_required:s,computers.snapshot_capture_status:s,computers.spec_retention_required:s,computers.write_key_available:s,run_attempts.computer_payload_required:s,run_waits.computer_payload_required:s,runs.computer_payload_required:s,telemetry_outbox.ingest_size_bytes:s" {
 		t.Fatalf("unexpected generated storage columns: %v", generatedColumns)
 	}
 
@@ -608,7 +608,6 @@ func assertComputerDiskVersionAuthority(t *testing.T, ctx context.Context, pool 
 		   AND column_name = ANY($1::text[])
 	`, []string{
 		"parent_version_id",
-		"root_pack_digest",
 		"source_computer_instance_id",
 		"writer_generation",
 		"published_at",
@@ -616,8 +615,8 @@ func assertComputerDiskVersionAuthority(t *testing.T, ctx context.Context, pool 
 	}).Scan(&authorityColumns); err != nil {
 		t.Fatal(err)
 	}
-	if authorityColumns != 6 {
-		t.Fatalf("computer version authority columns = %d, want 6", authorityColumns)
+	if authorityColumns != 5 {
+		t.Fatalf("computer version authority columns = %d, want 5", authorityColumns)
 	}
 	var oneRoot bool
 	if err := pool.QueryRow(ctx, `

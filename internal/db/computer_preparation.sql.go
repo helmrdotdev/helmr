@@ -25,7 +25,7 @@ WHERE c.id=$1 AND i.id=$2 AND i.computer_id=c.id
  AND (c.preparation_attempt_count=0 OR c.next_preparation_at<=clock_timestamp())
  AND (c.recovery_id IS NULL OR c.recovery_completed_at IS NOT NULL OR c.recovery_disk_version_id=i.source_disk_version_id)
  AND NOT EXISTS(SELECT 1 FROM computer_instances prior WHERE prior.computer_id=c.id AND prior.id<>i.id AND prior.reclaimed_at IS NULL)
-RETURNING c.id, c.environment_id, c.region_id, c.sandbox_declared_id, c.key, c.revision, c.writer_generation, c.head_disk_version_id, c.recovery_id, c.recovery_disk_version_id, c.recovery_reason, c.recovery_started_at, c.preparation_attempt_count, c.next_preparation_at, c.preparation_instance_id, c.recovery_completed_at, c.recovery_failure, c.computer_payload_required, c.recovery_payload_required, c.preparation_failure, c.initial_config, c.write_key_id, c.write_key_available, c.status, c.desired_state, c.dirty_state, c.last_activity_at, c.created_at, c.updated_at, c.deleted_at, c.secret_ca_certificate, c.secret_ca_private_key_nonce, c.secret_ca_private_key_ciphertext, c.secret_ca_not_after, c.computer_spec_id, c.creation_deployment_id, c.spec_retention_required
+RETURNING c.id, c.environment_id, c.region_id, c.sandbox_declared_id, c.key, c.revision, c.writer_generation, c.head_disk_version_id, c.recovery_id, c.recovery_disk_version_id, c.recovery_reason, c.recovery_started_at, c.preparation_attempt_count, c.next_preparation_at, c.preparation_instance_id, c.recovery_completed_at, c.recovery_failure, c.computer_payload_required, c.recovery_payload_required, c.preparation_failure, c.initial_config, c.write_key_id, c.write_key_available, c.status, c.desired_state, c.dirty_state, c.last_activity_at, c.created_at, c.updated_at, c.deleted_at, c.secret_ca_certificate, c.secret_ca_private_key_nonce, c.secret_ca_private_key_ciphertext, c.secret_ca_not_after, c.computer_spec_id, c.creation_deployment_id, c.spec_retention_required, c.snapshot_capture_id, c.snapshot_capture_status
 `
 
 type ChargeComputerPreparationParams struct {
@@ -75,6 +75,8 @@ func (q *Queries) ChargeComputerPreparation(ctx context.Context, arg ChargeCompu
 		&i.ComputerSpecID,
 		&i.CreationDeploymentID,
 		&i.SpecRetentionRequired,
+		&i.SnapshotCaptureID,
+		&i.SnapshotCaptureStatus,
 	)
 	return i, err
 }
@@ -95,7 +97,7 @@ WHERE c.environment_id=$1 AND c.id=$2
  AND (c.recovery_id IS NULL OR c.recovery_completed_at IS NOT NULL OR c.recovery_disk_version_id=i.retained_source_disk_version_id)
  AND (i.source_checkpoint_id IS NULL OR EXISTS(SELECT 1 FROM computer_checkpoints cp
       WHERE cp.id=i.source_checkpoint_id AND cp.resume_computer_instance_id=i.id AND cp.resume_committed_at IS NOT NULL))
-RETURNING c.id, c.environment_id, c.region_id, c.sandbox_declared_id, c.key, c.revision, c.writer_generation, c.head_disk_version_id, c.recovery_id, c.recovery_disk_version_id, c.recovery_reason, c.recovery_started_at, c.preparation_attempt_count, c.next_preparation_at, c.preparation_instance_id, c.recovery_completed_at, c.recovery_failure, c.computer_payload_required, c.recovery_payload_required, c.preparation_failure, c.initial_config, c.write_key_id, c.write_key_available, c.status, c.desired_state, c.dirty_state, c.last_activity_at, c.created_at, c.updated_at, c.deleted_at, c.secret_ca_certificate, c.secret_ca_private_key_nonce, c.secret_ca_private_key_ciphertext, c.secret_ca_not_after, c.computer_spec_id, c.creation_deployment_id, c.spec_retention_required
+RETURNING c.id, c.environment_id, c.region_id, c.sandbox_declared_id, c.key, c.revision, c.writer_generation, c.head_disk_version_id, c.recovery_id, c.recovery_disk_version_id, c.recovery_reason, c.recovery_started_at, c.preparation_attempt_count, c.next_preparation_at, c.preparation_instance_id, c.recovery_completed_at, c.recovery_failure, c.computer_payload_required, c.recovery_payload_required, c.preparation_failure, c.initial_config, c.write_key_id, c.write_key_available, c.status, c.desired_state, c.dirty_state, c.last_activity_at, c.created_at, c.updated_at, c.deleted_at, c.secret_ca_certificate, c.secret_ca_private_key_nonce, c.secret_ca_private_key_ciphertext, c.secret_ca_not_after, c.computer_spec_id, c.creation_deployment_id, c.spec_retention_required, c.snapshot_capture_id, c.snapshot_capture_status
 `
 
 type CompleteComputerPreparationParams struct {
@@ -151,6 +153,8 @@ func (q *Queries) CompleteComputerPreparation(ctx context.Context, arg CompleteC
 		&i.ComputerSpecID,
 		&i.CreationDeploymentID,
 		&i.SpecRetentionRequired,
+		&i.SnapshotCaptureID,
+		&i.SnapshotCaptureStatus,
 	)
 	return i, err
 }
@@ -259,7 +263,7 @@ WHERE c.environment_id=$1 AND c.id=$2
  AND i.writer_generation=c.writer_generation
  AND c.preparation_attempt_count>0 AND c.next_preparation_at IS NULL AND c.preparation_failure IS NULL
  AND (i.desired_state='closed' OR i.observed_state IN ('failed','lost','closed') OR i.reclaimed_at IS NOT NULL)
-RETURNING c.id, c.environment_id, c.region_id, c.sandbox_declared_id, c.key, c.revision, c.writer_generation, c.head_disk_version_id, c.recovery_id, c.recovery_disk_version_id, c.recovery_reason, c.recovery_started_at, c.preparation_attempt_count, c.next_preparation_at, c.preparation_instance_id, c.recovery_completed_at, c.recovery_failure, c.computer_payload_required, c.recovery_payload_required, c.preparation_failure, c.initial_config, c.write_key_id, c.write_key_available, c.status, c.desired_state, c.dirty_state, c.last_activity_at, c.created_at, c.updated_at, c.deleted_at, c.secret_ca_certificate, c.secret_ca_private_key_nonce, c.secret_ca_private_key_ciphertext, c.secret_ca_not_after, c.computer_spec_id, c.creation_deployment_id, c.spec_retention_required
+RETURNING c.id, c.environment_id, c.region_id, c.sandbox_declared_id, c.key, c.revision, c.writer_generation, c.head_disk_version_id, c.recovery_id, c.recovery_disk_version_id, c.recovery_reason, c.recovery_started_at, c.preparation_attempt_count, c.next_preparation_at, c.preparation_instance_id, c.recovery_completed_at, c.recovery_failure, c.computer_payload_required, c.recovery_payload_required, c.preparation_failure, c.initial_config, c.write_key_id, c.write_key_available, c.status, c.desired_state, c.dirty_state, c.last_activity_at, c.created_at, c.updated_at, c.deleted_at, c.secret_ca_certificate, c.secret_ca_private_key_nonce, c.secret_ca_private_key_ciphertext, c.secret_ca_not_after, c.computer_spec_id, c.creation_deployment_id, c.spec_retention_required, c.snapshot_capture_id, c.snapshot_capture_status
 `
 
 type SettleComputerPreparationFailureParams struct {
@@ -309,6 +313,8 @@ func (q *Queries) SettleComputerPreparationFailure(ctx context.Context, arg Sett
 		&i.ComputerSpecID,
 		&i.CreationDeploymentID,
 		&i.SpecRetentionRequired,
+		&i.SnapshotCaptureID,
+		&i.SnapshotCaptureStatus,
 	)
 	return i, err
 }

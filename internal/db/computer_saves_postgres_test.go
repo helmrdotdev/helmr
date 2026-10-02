@@ -96,7 +96,7 @@ func TestReclaimedComputerSaveCleanupRequiresPhysicalExclusion(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := pgvalue.UUID(uuid.NewV7())
-	if _, err := f.Pool.Exec(ctx, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) SELECT $2,environment_id,computer_id,'fixture',decode('01','hex') FROM computer_instances WHERE id=$1`, p.ComputerInstanceID, key); err != nil {
+	if _, err := f.Pool.Exec(ctx, `INSERT INTO computer_data_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) SELECT $2,environment_id,computer_id,'fixture',decode('01','hex') FROM computer_instances WHERE id=$1`, p.ComputerInstanceID, key); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.Pool.Exec(ctx, `UPDATE computer_instances SET write_key_id=$2 WHERE id=$1`, p.ComputerInstanceID, key); err != nil {

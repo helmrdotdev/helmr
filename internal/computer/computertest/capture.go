@@ -82,14 +82,9 @@ func PrepareCapture(t *testing.T, f runtest.Fixture, ref computer.CheckpointRef,
 	computerID := manifest.RecoveryPoint.ComputerID
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,$2)`, root.Pack.Digest, root.Pack.SizeBytes)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,$3,'application/octet-stream')`, f.OrgID, root.Pack.Digest, root.Pack.SizeBytes)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) VALUES($1,$2,$3,$4,$5,$6,'application/octet-stream','root',2,$7)`, f.EnvironmentID, computerID, root.Pack.Digest, f.OrgID, f.ProjectID, root.Pack.SizeBytes, raw)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'fixture',decode('01','hex'))`, root.Page.KeyID, f.EnvironmentID, computerID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id,is_direct) VALUES($1,$2,$3,$4,true)`, f.EnvironmentID, computerID, root.Pack.Digest, root.Page.KeyID)
-	if n, err := db.New(f.Pool).CertifyComputerObject(t.Context(), db.CertifyComputerObjectParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ComputerID: pgvalue.UUID(uuid.MustParse(computerID)), Digest: root.Pack.Digest}); err != nil || n != 1 {
-		t.Fatalf("certify root n=%d err=%v", n, err)
-	}
-	// The capture pins the certified root through the owner's reuse, under the
-	// Instance's write key, which encrypts the root page.
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) VALUES($1,$2,$3,$4,$5,'application/octet-stream','root',2,$6)`, f.EnvironmentID, root.Pack.Digest, f.OrgID, f.ProjectID, root.Pack.SizeBytes, raw)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'fixture',decode('01','hex'))`, root.Page.KeyID, f.EnvironmentID, computerID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_keys(environment_id,digest,key_id,is_direct) VALUES($1,$2,$3,true)`, f.EnvironmentID, root.Pack.Digest, root.Page.KeyID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET write_key_id=$2 WHERE id=$1`, ref.InstanceID, root.Page.KeyID)
 	store, err := cas.NewFile(t.TempDir())
 	if err != nil {
@@ -99,8 +94,11 @@ func PrepareCapture(t *testing.T, f runtest.Fixture, ref computer.CheckpointRef,
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = publisher.ReuseCheckpointObject(t.Context(), ref, inspection); err != nil {
+	if err = publisher.RegisterCheckpointObject(t.Context(), ref, inspection); err != nil {
 		t.Fatalf("pin capture root: %v", err)
+	}
+	if n, err := db.New(f.Pool).CertifyComputerObject(t.Context(), db.CertifyComputerObjectParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), Digest: root.Pack.Digest}); err != nil || n != 1 {
+		t.Fatalf("certify root n=%d err=%v", n, err)
 	}
 	state := manifest.RuntimeState
 	var objects Objects

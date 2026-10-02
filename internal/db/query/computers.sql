@@ -45,8 +45,6 @@ WITH selected_definition AS (
         environment_id,
         computer_id,
         status,
-        root_pack_digest,
-        logical_bytes,
         writer_generation,
         published_at
     )
@@ -54,8 +52,6 @@ WITH selected_definition AS (
            created_computer.environment_id,
            created_computer.id,
            'initializing',
-           NULL,
-           0,
            0,
            NULL
       FROM created_computer

@@ -21,11 +21,11 @@ func TestSessionOperationsReportLostComputerAuthority(t *testing.T) {
 	// authority while the Session remains.
 	head := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `WITH head AS (
- INSERT INTO computer_disk_versions(id,environment_id,computer_id,parent_version_id,root_pack_digest,logical_bytes,status,writer_generation,source_computer_instance_id)
- SELECT $2,v.environment_id,v.computer_id,v.id,v.root_pack_digest,v.logical_bytes,'private',i.writer_generation,i.id FROM sessions s JOIN computers c ON c.id=s.computer_id JOIN computer_disk_versions v ON v.id=c.head_disk_version_id JOIN computer_instances i ON i.computer_id=c.id AND i.reclaimed_at IS NULL WHERE s.id=$1
+ INSERT INTO computer_disk_versions(id,environment_id,computer_id,parent_version_id,status,writer_generation,source_computer_instance_id)
+ SELECT $2,v.environment_id,v.computer_id,v.id,'private',i.writer_generation,i.id FROM sessions s JOIN computers c ON c.id=s.computer_id JOIN computer_disk_versions v ON v.id=c.head_disk_version_id JOIN computer_instances i ON i.computer_id=c.id AND i.reclaimed_at IS NULL WHERE s.id=$1
  RETURNING id,environment_id,computer_id,parent_version_id
 ), root AS (
- INSERT INTO computer_disk_version_roots(environment_id,computer_id,version_id,locator) SELECT head.environment_id,head.computer_id,head.id,r.locator FROM head JOIN computer_disk_version_roots r ON r.version_id=head.parent_version_id
+ INSERT INTO computer_disk_version_roots(environment_id,computer_id,version_id,root_id) SELECT head.environment_id,head.computer_id,head.id,r.root_id FROM head JOIN computer_disk_version_roots r ON r.version_id=head.parent_version_id
 )
 UPDATE computers SET head_disk_version_id=(SELECT id FROM head) WHERE id=(SELECT computer_id FROM head)`, sessionID, head)
 

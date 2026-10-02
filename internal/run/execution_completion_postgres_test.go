@@ -127,9 +127,9 @@ func TestTaskExecutionCompletionFailureAndRetryCleanup(t *testing.T) {
 				}
 				defer tx.Rollback(context.Background())
 				dbtest.MustExec(t, t.Context(), tx, `SET CONSTRAINTS ALL DEFERRED`)
-				dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_disk_versions(id,environment_id,computer_id,parent_version_id,root_pack_digest,logical_bytes,status,writer_generation,source_computer_instance_id,publisher_computer_instance_id,publisher_desired_version,publisher_save_sequence,publication_request_fingerprint,published_at)
-                 SELECT $2,v.environment_id,v.computer_id,v.id,v.root_pack_digest,v.logical_bytes,'committed',i.writer_generation,i.id,i.id,i.desired_version,1,$3,now() FROM run_leases l JOIN computer_instances i ON i.id=l.computer_instance_id JOIN computers c ON c.id=i.computer_id JOIN computer_disk_versions v ON v.id=c.head_disk_version_id WHERE l.id=$1`, begin.Fence.LeaseID, newHead, dbtest.Hash(newHead.String()))
-				dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_disk_version_roots(environment_id,computer_id,version_id,locator) SELECT environment_id,computer_id,$2,locator FROM computer_disk_version_roots WHERE version_id=$1`, originalBase, newHead)
+				dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_disk_versions(id,environment_id,computer_id,parent_version_id,status,writer_generation,source_computer_instance_id,publisher_computer_instance_id,publisher_desired_version,publisher_save_sequence,publication_request_fingerprint,published_at)
+                 SELECT $2,v.environment_id,v.computer_id,v.id,'committed',i.writer_generation,i.id,i.id,i.desired_version,1,$3,now()   FROM run_leases l JOIN computer_instances i ON i.id=l.computer_instance_id JOIN computers c ON c.id=i.computer_id JOIN computer_disk_versions v ON v.id=c.head_disk_version_id WHERE l.id=$1`, begin.Fence.LeaseID, newHead, dbtest.Hash(newHead.String()))
+				dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_disk_version_roots(environment_id,computer_id,version_id,root_id) SELECT environment_id,computer_id,$2,root_id FROM computer_disk_version_roots WHERE version_id=$1`, originalBase, newHead)
 				dbtest.MustExec(t, t.Context(), tx, `UPDATE computers SET head_disk_version_id=$2 WHERE id=(SELECT computer_id FROM runs WHERE id=$1)`, begin.RunID, newHead)
 				if err = tx.Commit(t.Context()); err != nil {
 					t.Fatal(err)

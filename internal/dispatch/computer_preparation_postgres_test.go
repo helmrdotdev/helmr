@@ -71,16 +71,16 @@ func TestComputerInitialPreparationNeedsNoMember(t *testing.T) {
 		t.Fatal(err)
 	}
 	ref := computer.PreparationRef{InstanceID: pgvalue.MustUUIDValue(i.ID), DesiredVersion: i.DesiredVersion}
-	material, err := broker.InitialKey(t.Context(), principal, ref)
+	material, err := broker.PrepareSeed(t.Context(), principal, ref)
 	if err != nil {
 		t.Fatalf("initial preparation: %v", err)
 	}
-	clear(material.Key)
+	clear(material.Key.Key)
 	if _, err = broker.SourceKeys(t.Context(), principal, ref); !errors.Is(err, computer.ErrAuthorityChanged) {
 		t.Fatalf("unpublished source authorized: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET writer_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, i.ID)
-	if _, err = broker.InitialKey(t.Context(), principal, ref); !errors.Is(err, computer.ErrAuthorityChanged) {
+	if _, err = broker.PrepareSeed(t.Context(), principal, ref); !errors.Is(err, computer.ErrAuthorityChanged) {
 		t.Fatalf("expired writer authorized: %v", err)
 	}
 }

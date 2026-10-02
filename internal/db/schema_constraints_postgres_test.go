@@ -102,12 +102,11 @@ func TestSchemaComputerDiskVersionAndCheckpointAuthority(t *testing.T) {
 	}
 	defer tx.Rollback(ctx)
 	versionID := uuid.NewV7()
-	digest := dbtest.Digest("schema-computer-version")
 	dbtest.MustExec(t, ctx, tx, `
-		INSERT INTO computer_disk_versions (id,environment_id,computer_id,parent_version_id,root_pack_digest,source_computer_instance_id,writer_generation)
-		SELECT $1,i.environment_id,i.computer_id,r.base_computer_disk_version_id,$2,i.id,i.writer_generation
-		FROM run_leases l JOIN runs r ON r.id=l.run_id JOIN computer_instances i ON i.id=l.computer_instance_id WHERE l.id=$3
-	`, versionID, digest, work.leaseID)
+		INSERT INTO computer_disk_versions (id,environment_id,computer_id,parent_version_id,source_computer_instance_id,writer_generation)
+		SELECT $1,i.environment_id,i.computer_id,r.base_computer_disk_version_id,i.id,i.writer_generation
+		 FROM run_leases l JOIN runs r ON r.id=l.run_id JOIN computer_instances i ON i.id=l.computer_instance_id WHERE l.id=$2
+	`, versionID, work.leaseID)
 	for _, set := range []string{
 		"parent_version_id=NULL",
 		"source_computer_instance_id=NULL",

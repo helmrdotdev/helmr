@@ -32,11 +32,13 @@ func preparationCalls() []preparationCall {
 	key := workerapi.ComputerKeyMaterial{Scope: "scope", ID: id, Key: bytes.Repeat([]byte{1}, 32)}
 	root := disk.VersionRoot{FormatVersion: 1, LogicalBytes: 4096, Offset: 128, Pack: disk.VersionPack{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 512, Rank: 2}, Page: disk.VersionPage{Digest: "sha256:" + strings.Repeat("b", 64), Salt: strings.Repeat("c", 64), KeyID: id, Kind: 3, Count: 1, SizeBytes: 64}}
 	return []preparationCall{
-		{"key", "/worker/v1/run/computer-instances/initialization/key", key, func(ctx context.Context, c *Client) error {
-			m, e := c.InitialComputerKey(ctx, workerapi.InitialComputerKeyRequest{ComputerInstanceID: id, DesiredVersion: 7})
-			defer clear(m.Key)
-			if e == nil && (m.ID != id || len(m.Key) != 32) {
-				return errors.New("wrong key")
+		{"seed", "/worker/v1/run/computer-instances/initialization/seed", workerapi.ComputerSeedPreparation{Status: "convert", Key: &key}, func(ctx context.Context, c *Client) error {
+			m, e := c.PrepareComputerSeed(ctx, workerapi.PrepareComputerSeedRequest{ComputerInstanceID: id, DesiredVersion: 7})
+			if m.Key != nil {
+				defer clear(m.Key.Key)
+			}
+			if e == nil && (m.Status != "convert" || m.Key == nil || m.Key.ID != id || len(m.Key.Key) != 32) {
+				return errors.New("wrong seed key")
 			}
 			return e
 		}},

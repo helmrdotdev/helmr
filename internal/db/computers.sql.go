@@ -58,8 +58,6 @@ WITH selected_definition AS (
         environment_id,
         computer_id,
         status,
-        root_pack_digest,
-        logical_bytes,
         writer_generation,
         published_at
     )
@@ -67,8 +65,6 @@ WITH selected_definition AS (
            created_computer.environment_id,
            created_computer.id,
            'initializing',
-           NULL,
-           0,
            0,
            NULL
       FROM created_computer
@@ -565,7 +561,7 @@ func (q *Queries) ListComputerListItems(ctx context.Context, arg ListComputerLis
 }
 
 const lockChildComputerPair = `-- name: LockChildComputerPair :many
-SELECT id, environment_id, region_id, sandbox_declared_id, key, revision, writer_generation, head_disk_version_id, recovery_id, recovery_disk_version_id, recovery_reason, recovery_started_at, preparation_attempt_count, next_preparation_at, preparation_instance_id, recovery_completed_at, recovery_failure, computer_payload_required, recovery_payload_required, preparation_failure, initial_config, write_key_id, write_key_available, status, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at, secret_ca_certificate, secret_ca_private_key_nonce, secret_ca_private_key_ciphertext, secret_ca_not_after, computer_spec_id, creation_deployment_id, spec_retention_required FROM computers WHERE environment_id=$1
+SELECT id, environment_id, region_id, sandbox_declared_id, key, revision, writer_generation, head_disk_version_id, recovery_id, recovery_disk_version_id, recovery_reason, recovery_started_at, preparation_attempt_count, next_preparation_at, preparation_instance_id, recovery_completed_at, recovery_failure, computer_payload_required, recovery_payload_required, preparation_failure, initial_config, write_key_id, write_key_available, status, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at, secret_ca_certificate, secret_ca_private_key_nonce, secret_ca_private_key_ciphertext, secret_ca_not_after, computer_spec_id, creation_deployment_id, spec_retention_required, snapshot_capture_id, snapshot_capture_status FROM computers WHERE environment_id=$1
  AND id=ANY($2::uuid[]) ORDER BY id FOR UPDATE
 `
 
@@ -621,6 +617,8 @@ func (q *Queries) LockChildComputerPair(ctx context.Context, arg LockChildComput
 			&i.ComputerSpecID,
 			&i.CreationDeploymentID,
 			&i.SpecRetentionRequired,
+			&i.SnapshotCaptureID,
+			&i.SnapshotCaptureStatus,
 		); err != nil {
 			return nil, err
 		}
@@ -633,7 +631,7 @@ func (q *Queries) LockChildComputerPair(ctx context.Context, arg LockChildComput
 }
 
 const lockComputer = `-- name: LockComputer :one
-SELECT id, environment_id, region_id, sandbox_declared_id, key, revision, writer_generation, head_disk_version_id, recovery_id, recovery_disk_version_id, recovery_reason, recovery_started_at, preparation_attempt_count, next_preparation_at, preparation_instance_id, recovery_completed_at, recovery_failure, computer_payload_required, recovery_payload_required, preparation_failure, initial_config, write_key_id, write_key_available, status, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at, secret_ca_certificate, secret_ca_private_key_nonce, secret_ca_private_key_ciphertext, secret_ca_not_after, computer_spec_id, creation_deployment_id, spec_retention_required FROM computers WHERE environment_id=$1
+SELECT id, environment_id, region_id, sandbox_declared_id, key, revision, writer_generation, head_disk_version_id, recovery_id, recovery_disk_version_id, recovery_reason, recovery_started_at, preparation_attempt_count, next_preparation_at, preparation_instance_id, recovery_completed_at, recovery_failure, computer_payload_required, recovery_payload_required, preparation_failure, initial_config, write_key_id, write_key_available, status, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at, secret_ca_certificate, secret_ca_private_key_nonce, secret_ca_private_key_ciphertext, secret_ca_not_after, computer_spec_id, creation_deployment_id, spec_retention_required, snapshot_capture_id, snapshot_capture_status FROM computers WHERE environment_id=$1
  AND id=$2 FOR UPDATE
 `
 
@@ -683,12 +681,14 @@ func (q *Queries) LockComputer(ctx context.Context, arg LockComputerParams) (Com
 		&i.ComputerSpecID,
 		&i.CreationDeploymentID,
 		&i.SpecRetentionRequired,
+		&i.SnapshotCaptureID,
+		&i.SnapshotCaptureStatus,
 	)
 	return i, err
 }
 
 const lockComputerAdmissionAuthority = `-- name: LockComputerAdmissionAuthority :one
-SELECT computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.key, computers.revision, computers.writer_generation, computers.head_disk_version_id, computers.recovery_id, computers.recovery_disk_version_id, computers.recovery_reason, computers.recovery_started_at, computers.preparation_attempt_count, computers.next_preparation_at, computers.preparation_instance_id, computers.recovery_completed_at, computers.recovery_failure, computers.computer_payload_required, computers.recovery_payload_required, computers.preparation_failure, computers.initial_config, computers.write_key_id, computers.write_key_available, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at, computers.secret_ca_certificate, computers.secret_ca_private_key_nonce, computers.secret_ca_private_key_ciphertext, computers.secret_ca_not_after, computers.computer_spec_id, computers.creation_deployment_id, computers.spec_retention_required,environments.org_id,environments.project_id
+SELECT computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.key, computers.revision, computers.writer_generation, computers.head_disk_version_id, computers.recovery_id, computers.recovery_disk_version_id, computers.recovery_reason, computers.recovery_started_at, computers.preparation_attempt_count, computers.next_preparation_at, computers.preparation_instance_id, computers.recovery_completed_at, computers.recovery_failure, computers.computer_payload_required, computers.recovery_payload_required, computers.preparation_failure, computers.initial_config, computers.write_key_id, computers.write_key_available, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at, computers.secret_ca_certificate, computers.secret_ca_private_key_nonce, computers.secret_ca_private_key_ciphertext, computers.secret_ca_not_after, computers.computer_spec_id, computers.creation_deployment_id, computers.spec_retention_required, computers.snapshot_capture_id, computers.snapshot_capture_status,environments.org_id,environments.project_id
 FROM computers JOIN environments ON environments.id=computers.environment_id
 JOIN computer_disk_versions head ON head.computer_id=computers.id
  AND head.id=computers.head_disk_version_id AND head.status IN ('initializing','committed')
@@ -739,6 +739,8 @@ type LockComputerAdmissionAuthorityRow struct {
 	ComputerSpecID               pgtype.UUID        `json:"computer_spec_id"`
 	CreationDeploymentID         pgtype.UUID        `json:"creation_deployment_id"`
 	SpecRetentionRequired        pgtype.Bool        `json:"spec_retention_required"`
+	SnapshotCaptureID            pgtype.UUID        `json:"snapshot_capture_id"`
+	SnapshotCaptureStatus        pgtype.Text        `json:"snapshot_capture_status"`
 	OrgID                        pgtype.UUID        `json:"org_id"`
 	ProjectID                    pgtype.UUID        `json:"project_id"`
 }
@@ -786,6 +788,8 @@ func (q *Queries) LockComputerAdmissionAuthority(ctx context.Context, arg LockCo
 		&i.ComputerSpecID,
 		&i.CreationDeploymentID,
 		&i.SpecRetentionRequired,
+		&i.SnapshotCaptureID,
+		&i.SnapshotCaptureStatus,
 		&i.OrgID,
 		&i.ProjectID,
 	)
@@ -793,7 +797,7 @@ func (q *Queries) LockComputerAdmissionAuthority(ctx context.Context, arg LockCo
 }
 
 const lockComputerForDelete = `-- name: LockComputerForDelete :one
-SELECT computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.key, computers.revision, computers.writer_generation, computers.head_disk_version_id, computers.recovery_id, computers.recovery_disk_version_id, computers.recovery_reason, computers.recovery_started_at, computers.preparation_attempt_count, computers.next_preparation_at, computers.preparation_instance_id, computers.recovery_completed_at, computers.recovery_failure, computers.computer_payload_required, computers.recovery_payload_required, computers.preparation_failure, computers.initial_config, computers.write_key_id, computers.write_key_available, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at, computers.secret_ca_certificate, computers.secret_ca_private_key_nonce, computers.secret_ca_private_key_ciphertext, computers.secret_ca_not_after, computers.computer_spec_id, computers.creation_deployment_id, computers.spec_retention_required,
+SELECT computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.key, computers.revision, computers.writer_generation, computers.head_disk_version_id, computers.recovery_id, computers.recovery_disk_version_id, computers.recovery_reason, computers.recovery_started_at, computers.preparation_attempt_count, computers.next_preparation_at, computers.preparation_instance_id, computers.recovery_completed_at, computers.recovery_failure, computers.computer_payload_required, computers.recovery_payload_required, computers.preparation_failure, computers.initial_config, computers.write_key_id, computers.write_key_available, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at, computers.secret_ca_certificate, computers.secret_ca_private_key_nonce, computers.secret_ca_private_key_ciphertext, computers.secret_ca_not_after, computers.computer_spec_id, computers.creation_deployment_id, computers.spec_retention_required, computers.snapshot_capture_id, computers.snapshot_capture_status,
  EXISTS(SELECT 1 FROM computer_instances i WHERE i.computer_id=computers.id
          AND i.reclaimed_at IS NULL) AS has_instance,
  (EXISTS(SELECT 1 FROM sessions s WHERE s.computer_id=computers.id AND s.status IN ('open','closing'))
@@ -854,6 +858,8 @@ type LockComputerForDeleteRow struct {
 	ComputerSpecID               pgtype.UUID        `json:"computer_spec_id"`
 	CreationDeploymentID         pgtype.UUID        `json:"creation_deployment_id"`
 	SpecRetentionRequired        pgtype.Bool        `json:"spec_retention_required"`
+	SnapshotCaptureID            pgtype.UUID        `json:"snapshot_capture_id"`
+	SnapshotCaptureStatus        pgtype.Text        `json:"snapshot_capture_status"`
 	HasInstance                  bool               `json:"has_instance"`
 	HasMembers                   pgtype.Bool        `json:"has_members"`
 }
@@ -904,6 +910,8 @@ func (q *Queries) LockComputerForDelete(ctx context.Context, arg LockComputerFor
 		&i.ComputerSpecID,
 		&i.CreationDeploymentID,
 		&i.SpecRetentionRequired,
+		&i.SnapshotCaptureID,
+		&i.SnapshotCaptureStatus,
 		&i.HasInstance,
 		&i.HasMembers,
 	)
@@ -922,7 +930,7 @@ WHERE computers.environment_id=$1 AND computers.id=$2
  AND NOT EXISTS(SELECT 1 FROM run_leases l WHERE l.computer_id=computers.id AND l.process_reconciled_at IS NULL)
  AND NOT EXISTS(SELECT 1 FROM computer_commands c WHERE c.computer_id=computers.id
                  AND (c.terminal_at IS NULL OR (c.computer_instance_id IS NOT NULL AND c.process_reconciled_at IS NULL)))
-RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.key, computers.revision, computers.writer_generation, computers.head_disk_version_id, computers.recovery_id, computers.recovery_disk_version_id, computers.recovery_reason, computers.recovery_started_at, computers.preparation_attempt_count, computers.next_preparation_at, computers.preparation_instance_id, computers.recovery_completed_at, computers.recovery_failure, computers.computer_payload_required, computers.recovery_payload_required, computers.preparation_failure, computers.initial_config, computers.write_key_id, computers.write_key_available, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at, computers.secret_ca_certificate, computers.secret_ca_private_key_nonce, computers.secret_ca_private_key_ciphertext, computers.secret_ca_not_after, computers.computer_spec_id, computers.creation_deployment_id, computers.spec_retention_required
+RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.key, computers.revision, computers.writer_generation, computers.head_disk_version_id, computers.recovery_id, computers.recovery_disk_version_id, computers.recovery_reason, computers.recovery_started_at, computers.preparation_attempt_count, computers.next_preparation_at, computers.preparation_instance_id, computers.recovery_completed_at, computers.recovery_failure, computers.computer_payload_required, computers.recovery_payload_required, computers.preparation_failure, computers.initial_config, computers.write_key_id, computers.write_key_available, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at, computers.secret_ca_certificate, computers.secret_ca_private_key_nonce, computers.secret_ca_private_key_ciphertext, computers.secret_ca_not_after, computers.computer_spec_id, computers.creation_deployment_id, computers.spec_retention_required, computers.snapshot_capture_id, computers.snapshot_capture_status
 `
 
 type MarkComputerDeletingParams struct {
@@ -974,6 +982,8 @@ func (q *Queries) MarkComputerDeleting(ctx context.Context, arg MarkComputerDele
 		&i.ComputerSpecID,
 		&i.CreationDeploymentID,
 		&i.SpecRetentionRequired,
+		&i.SnapshotCaptureID,
+		&i.SnapshotCaptureStatus,
 	)
 	return i, err
 }
@@ -1061,7 +1071,7 @@ WHERE computers.environment_id=$1 AND computers.id=$2
  AND revision=$3 AND status='active' AND deleted_at IS NULL
  AND dirty_state NOT IN ('dirty_state_lost')
  AND preparation_failure IS NULL AND recovery_failure IS NULL
-RETURNING id, environment_id, region_id, sandbox_declared_id, key, revision, writer_generation, head_disk_version_id, recovery_id, recovery_disk_version_id, recovery_reason, recovery_started_at, preparation_attempt_count, next_preparation_at, preparation_instance_id, recovery_completed_at, recovery_failure, computer_payload_required, recovery_payload_required, preparation_failure, initial_config, write_key_id, write_key_available, status, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at, secret_ca_certificate, secret_ca_private_key_nonce, secret_ca_private_key_ciphertext, secret_ca_not_after, computer_spec_id, creation_deployment_id, spec_retention_required
+RETURNING id, environment_id, region_id, sandbox_declared_id, key, revision, writer_generation, head_disk_version_id, recovery_id, recovery_disk_version_id, recovery_reason, recovery_started_at, preparation_attempt_count, next_preparation_at, preparation_instance_id, recovery_completed_at, recovery_failure, computer_payload_required, recovery_payload_required, preparation_failure, initial_config, write_key_id, write_key_available, status, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at, secret_ca_certificate, secret_ca_private_key_nonce, secret_ca_private_key_ciphertext, secret_ca_not_after, computer_spec_id, creation_deployment_id, spec_retention_required, snapshot_capture_id, snapshot_capture_status
 `
 
 type TouchComputerForAdmissionParams struct {
@@ -1111,6 +1121,8 @@ func (q *Queries) TouchComputerForAdmission(ctx context.Context, arg TouchComput
 		&i.ComputerSpecID,
 		&i.CreationDeploymentID,
 		&i.SpecRetentionRequired,
+		&i.SnapshotCaptureID,
+		&i.SnapshotCaptureStatus,
 	)
 	return i, err
 }

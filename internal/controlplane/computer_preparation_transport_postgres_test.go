@@ -12,7 +12,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/jackc/pgx/v5"
@@ -114,16 +113,16 @@ func newServedClaimsRace(t *testing.T, f initialPublicationFixture, raced string
 
 func TestInitialComputerPreparationReauthenticatesAcrossPrimaryPoolSwitch(t *testing.T) {
 	const (
-		keyPath      = "/worker/v1/run/computer-instances/initialization/key"
+		keyPath      = "/worker/v1/run/computer-instances/initialization/seed"
 		registerPath = "/worker/v1/run/computer-instances/initialization/objects/register"
 		certifyPath  = "/worker/v1/run/computer-instances/initialization/objects/certify"
 		versionPath  = "/worker/v1/run/computer-instances/initialization/version"
 	)
-	for name, raced := range map[string]string{"key": keyPath, "object registration": registerPath, "object certification": certifyPath, "version publication": versionPath} {
+	for name, raced := range map[string]string{"seed": keyPath, "object registration": registerPath, "object certification": certifyPath, "version publication": versionPath} {
 		t.Run(name, func(t *testing.T) {
 			f := newInitialPublicationFixture(t)
 			race := newServedClaimsRace(t, f, raced, switchPrimaryPool(t, f.Fixture))
-			_, _, published := f.publishInitialVersion(t, race.client, oci.RuntimeConfig{User: "root"})
+			_, _, published := f.publishInitialVersion(t, race.client)
 			race.requireReplayed(t, raced)
 			var head string
 			if err := f.Pool.QueryRow(t.Context(), `SELECT c.head_disk_version_id::text FROM computers c JOIN computer_instances i ON i.computer_id=c.id WHERE i.id=$1`, f.instance).Scan(&head); err != nil || head != published.VersionID {

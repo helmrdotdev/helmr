@@ -23,10 +23,7 @@ func TestPublishedComputerSourceLocalRestore(t *testing.T) {
 	remote := f.store
 	client := f.client(t, f.serve(t))
 	instanceID := pgvalue.UUIDString(f.instance)
-	key, err := client.InitialComputerKey(t.Context(), workerapi.InitialComputerKeyRequest{ComputerInstanceID: instanceID, DesiredVersion: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
+	key := f.prepareSeedKey(t, client)
 	defer clear(key.Key)
 	seedFile, err := os.CreateTemp(t.TempDir(), "seed")
 	if err != nil {
@@ -61,21 +58,21 @@ func TestPublishedComputerSourceLocalRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	version, err := client.PublishInitialComputerVersion(t.Context(), workerapi.InitialComputerVersionRequest{ComputerInstanceID: instanceID, DesiredVersion: 1, Root: root})
+	version, err := client.PublishInitialComputerVersion(t.Context(), workerapi.InitialComputerVersionRequest{ComputerInstanceID: instanceID, DesiredVersion: 1, Root: root, Config: f.initialConfig(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// A lost response can be retried exactly, but cannot publish different bytes.
-	replay, err := client.PublishInitialComputerVersion(t.Context(), workerapi.InitialComputerVersionRequest{ComputerInstanceID: instanceID, DesiredVersion: 1, Root: root})
+	replay, err := client.PublishInitialComputerVersion(t.Context(), workerapi.InitialComputerVersionRequest{ComputerInstanceID: instanceID, DesiredVersion: 1, Root: root, Config: f.initialConfig(t)})
 	if err != nil || replay != version {
 		t.Fatalf("publication replay: %v", err)
 	}
 	changedRoot := root
 	changedRoot.LogicalBytes *= 2
-	if _, err := client.PublishInitialComputerVersion(t.Context(), workerapi.InitialComputerVersionRequest{ComputerInstanceID: instanceID, DesiredVersion: 1, Root: changedRoot}); err == nil {
+	if _, err := client.PublishInitialComputerVersion(t.Context(), workerapi.InitialComputerVersionRequest{ComputerInstanceID: instanceID, DesiredVersion: 1, Root: changedRoot, Config: f.initialConfig(t)}); err == nil {
 		t.Fatal("different publication accepted after commit")
 	}
-	if _, err := client.PublishInitialComputerVersion(t.Context(), workerapi.InitialComputerVersionRequest{ComputerInstanceID: instanceID, DesiredVersion: 2, Root: root}); err == nil {
+	if _, err := client.PublishInitialComputerVersion(t.Context(), workerapi.InitialComputerVersionRequest{ComputerInstanceID: instanceID, DesiredVersion: 2, Root: root, Config: f.initialConfig(t)}); err == nil {
 		t.Fatal("different preparation published")
 	}
 	fetch := func() workerapi.ComputerSourceMaterial {

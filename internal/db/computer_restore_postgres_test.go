@@ -32,8 +32,8 @@ func TestComputerRestoreDiscovery(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), tx, `SET CONSTRAINTS ALL DEFERRED`)
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_checkpoints(id,computer_id,environment_id,computer_spec_id,source_computer_instance_id,writer_generation,membership_revision,program_deployment_id,base_computer_disk_version_id)
  SELECT $2,i.computer_id,i.environment_id,i.computer_spec_id,i.id,i.writer_generation,i.membership_revision,i.program_deployment_id,c.head_disk_version_id FROM computer_instances i JOIN computers c ON c.id=i.computer_id WHERE i.id=$1`, source, checkpoint)
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_disk_versions(id,environment_id,computer_id,parent_version_id,root_pack_digest,logical_bytes,status,source_computer_instance_id,writer_generation)
- SELECT $2,environment_id,computer_id,base_computer_disk_version_id,$3,4096,'private',source_computer_instance_id,writer_generation FROM computer_checkpoints WHERE id=$1`, checkpoint, private, dbtest.Digest("restore-discovery"))
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_disk_versions(id,environment_id,computer_id,parent_version_id,status,source_computer_instance_id,writer_generation)
+ SELECT $2,environment_id,computer_id,base_computer_disk_version_id,'private',source_computer_instance_id,writer_generation   FROM computer_checkpoints WHERE id=$1`, checkpoint, private)
 	var computerID uuid.UUID
 	if err = tx.QueryRow(t.Context(), `SELECT computer_id FROM computer_instances WHERE id=$1`, source).Scan(&computerID); err != nil {
 		t.Fatal(err)

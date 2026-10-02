@@ -47,15 +47,15 @@ func (w *observingKeyWrapper) Unwrap(ctx context.Context, scope, id string, e co
 	return key, err
 }
 
-func TestInitialComputerKeyRetryAndDurablePin(t *testing.T) {
+func TestComputerSeedKeyRetryAndDurablePin(t *testing.T) {
 	f := newPreparationFixture(t)
 	b := f.broker
-	first, err := b.InitialKey(t.Context(), f.principal, f.ref)
+	first, err := conversionKey(b, t.Context(), f.principal, f.ref)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer clear(first.Key)
-	again, err := b.InitialKey(t.Context(), f.principal, f.ref)
+	again, err := conversionKey(b, t.Context(), f.principal, f.ref)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestInitialComputerKeyRetryAndDurablePin(t *testing.T) {
 		t.Fatal("retry changed pinned key")
 	}
 	var count int
-	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_data_keys WHERE computer_id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, f.instance).Scan(&count); err != nil || count != 1 {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_data_keys WHERE writer_computer_id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, f.instance).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("duplicate keys %d %v", count, err)
 	}
 	_, err = f.Pool.Exec(t.Context(), `UPDATE computer_data_keys SET retired_at=now(),wrapped_key=NULL WHERE id=$1`, first.ID)
@@ -75,7 +75,7 @@ func TestInitialComputerKeyRetryAndDurablePin(t *testing.T) {
 	requireKeyFK(t, err)
 }
 
-func TestInitialComputerKeyProviderRunsOutsideLocks(t *testing.T) {
+func TestComputerSeedKeyProviderRunsOutsideLocks(t *testing.T) {
 	f := newPreparationFixture(t)
 	b := f.broker
 	check := func() {
@@ -94,14 +94,14 @@ func TestInitialComputerKeyProviderRunsOutsideLocks(t *testing.T) {
 		}
 	}
 	b.wrapper = &observingKeyWrapper{KeyWrapper: b.wrapper, wrap: check, unwrap: check}
-	key, err := b.InitialKey(t.Context(), f.principal, f.ref)
+	key, err := conversionKey(b, t.Context(), f.principal, f.ref)
 	if err != nil {
 		t.Fatal(err)
 	}
 	clear(key.Key)
 }
 
-func TestInitialComputerKeyRevocationDuringProviderIO(t *testing.T) {
+func TestComputerSeedKeyRevocationDuringProviderIO(t *testing.T) {
 	for _, phase := range []string{"wrap", "unwrap"} {
 		for _, change := range []string{"close", "worker epoch", "claim", "group claim", "expiry", "computer stop"} {
 			t.Run(phase+"/"+change, func(t *testing.T) {
@@ -130,7 +130,7 @@ func TestInitialComputerKeyRevocationDuringProviderIO(t *testing.T) {
 					observer.unwrap = revoke
 				}
 				b.wrapper = observer
-				result, err := b.InitialKey(t.Context(), f.principal, f.ref)
+				result, err := conversionKey(b, t.Context(), f.principal, f.ref)
 				if err == nil || len(result.Key) != 0 {
 					t.Fatal("revoked authority received key")
 				}
@@ -149,7 +149,7 @@ func TestInitialComputerKeyRevocationDuringProviderIO(t *testing.T) {
 	}
 }
 
-func TestInitialComputerKeyConcurrentFirstFetch(t *testing.T) {
+func TestComputerSeedKeyConcurrentFirstFetch(t *testing.T) {
 	f := newPreparationFixture(t)
 	b := f.broker
 	// Hold both requests in provider I/O after their authorized no-key discovery.
@@ -163,7 +163,7 @@ func TestInitialComputerKeyConcurrentFirstFetch(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := range 2 {
 		wg.Add(1)
-		go func() { defer wg.Done(); results[i], errs[i] = b.InitialKey(ctx, f.principal, f.ref) }()
+		go func() { defer wg.Done(); results[i], errs[i] = conversionKey(b, ctx, f.principal, f.ref) }()
 	}
 	for range 2 {
 		select {
@@ -186,7 +186,7 @@ func TestInitialComputerKeyConcurrentFirstFetch(t *testing.T) {
 		t.Fatal("racing requests returned different keys")
 	}
 	var count int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_data_keys`).Scan(&count); err != nil || count != 1 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_data_keys`).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("orphan keys %d %v", count, err)
 	}
 }
@@ -207,29 +207,32 @@ func (w *barrierKeyWrapper) Wrap(ctx context.Context, scope, id string, key []by
 	return w.KeyWrapper.Wrap(ctx, scope, id, key)
 }
 
-func TestInitialComputerKeyRejectsAnotherWorker(t *testing.T) {
+func TestComputerSeedKeyRejectsAnotherWorker(t *testing.T) {
 	f := newPreparationFixture(t)
 	foreign := f.principal
 	foreign.HostID = uuid.NewV7()
-	if result, err := f.broker.InitialKey(t.Context(), foreign, f.ref); err == nil || len(result.Key) > 0 {
+	if result, err := conversionKey(f.broker, t.Context(), foreign, f.ref); err == nil || len(result.Key) > 0 {
 		t.Fatal("foreign Worker received key")
 	}
 }
 
-func TestInitialComputerKeyRotationKeepsAdmittedInstance(t *testing.T) {
-	f := newPreparationFixture(t)
+func TestComputerSourceWriterRotationKeepsAdmittedInstance(t *testing.T) {
+	f, input := newVersionFixture(t)
+	if _, err := f.publisher.PublishInitialVersion(t.Context(), f.principal, f.ref, input); err != nil {
+		t.Fatal(err)
+	}
 	b := f.broker
-	first, err := b.InitialKey(t.Context(), f.principal, f.ref)
+	first, err := sourceWriterKey(b, t.Context(), f.principal, f.ref)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer clear(first.Key)
 	next := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) SELECT $2,environment_id,computer_id,wrapping_key_id,wrapped_key FROM computer_data_keys WHERE id=$1`, first.ID, next)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) SELECT $2,environment_id,writer_computer_id,wrapping_key_id,wrapped_key FROM computer_data_keys WHERE id=$1`, first.ID, next)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET write_key_id=$2 WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, f.instance, next)
 	// The new current key is deliberately not decryptable under its new ID. A
 	// re-fetch must use the instance's original pin, not mutable current state.
-	again, err := b.InitialKey(t.Context(), f.principal, f.ref)
+	again, err := sourceWriterKey(b, t.Context(), f.principal, f.ref)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +260,7 @@ func TestInitialComputerKeyRotationKeepsAdmittedInstance(t *testing.T) {
 // unavailable key; ciphertext of a valid shape that fails authentication is
 // a data-integrity failure that keeps its cause, so it is logged. Neither
 // replaces the persisted key.
-func TestInitialComputerKeyCorruptEnvelopeDoesNotReinitialize(t *testing.T) {
+func TestComputerSeedKeyCorruptEnvelopeDoesNotReinitialize(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		corrupt    string
@@ -269,25 +272,25 @@ func TestInitialComputerKeyCorruptEnvelopeDoesNotReinitialize(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			f := newPreparationFixture(t)
 			b := f.broker
-			first, err := b.InitialKey(t.Context(), f.principal, f.ref)
+			first, err := conversionKey(b, t.Context(), f.principal, f.ref)
 			if err != nil {
 				t.Fatal(err)
 			}
 			clear(first.Key)
 			dbtest.MustExec(t, t.Context(), f.Pool, test.corrupt, first.ID)
-			result, err := b.InitialKey(t.Context(), f.principal, f.ref)
+			result, err := conversionKey(b, t.Context(), f.principal, f.ref)
 			if err == nil || errors.Is(err, ErrKeyUnavailable) != test.keyMissing || errors.Is(err, ErrKeyProviderUnavailable) || errors.Is(err, ErrAuthorityChanged) || len(result.Key) > 0 {
 				t.Fatalf("corrupt envelope = %v", err)
 			}
 			var count int
-			if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_data_keys`).Scan(&count); err != nil || count != 1 {
+			if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_data_keys`).Scan(&count); err != nil || count != 2 {
 				t.Fatal("corruption generated replacement", err)
 			}
 		})
 	}
 }
 
-func TestInitialComputerKeyForeignComputerPointersRejected(t *testing.T) {
+func TestComputerSeedKeyForeignComputerPointersRejected(t *testing.T) {
 	f := newPreparationFixture(t)
 	key := f.initialKey(t)
 	clear(key.Key)
@@ -297,30 +300,30 @@ func TestInitialComputerKeyForeignComputerPointersRejected(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computers(id,environment_id,region_id,status,desired_state,deleted_at, computer_spec_id, creation_deployment_id) SELECT $2,environment_id,region_id,'deleted','deleted',clock_timestamp(), computer_spec_id, creation_deployment_id
  FROM computers WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, f.instance, other)
 	foreign := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'fixture',decode('00','hex'))`, foreign, pgvalue.UUID(f.EnvironmentID), other)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'fixture',decode('00','hex'))`, foreign, pgvalue.UUID(f.EnvironmentID), other)
 	_, err := f.Pool.Exec(t.Context(), `UPDATE computer_instances SET write_key_id=$2 WHERE id=$1`, f.instance, foreign)
 	requireKeyFK(t, err)
 	_, err = f.Pool.Exec(t.Context(), `UPDATE computers SET write_key_id=$2 WHERE id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, f.instance, foreign)
 	requireKeyFK(t, err)
 }
 
-func TestInitialComputerKeyTransientProviderFailureRetainsIdentity(t *testing.T) {
+func TestComputerSeedKeyTransientProviderFailureRetainsIdentity(t *testing.T) {
 	f := newPreparationFixture(t)
 	b := f.broker
 	observer := &observingKeyWrapper{KeyWrapper: b.wrapper, unwrapErr: fmt.Errorf("%w: provider timeout", computerkey.ErrUnavailable)}
 	b.wrapper = observer
-	if result, err := b.InitialKey(t.Context(), f.principal, f.ref); !errors.Is(err, ErrKeyProviderUnavailable) || len(result.Key) != 0 {
+	if result, err := conversionKey(b, t.Context(), f.principal, f.ref); !errors.Is(err, ErrKeyProviderUnavailable) || len(result.Key) != 0 {
 		t.Fatalf("provider error = %v", err)
 	}
 	if !bytes.Equal(observer.returned, make([]byte, 32)) {
 		t.Fatal("failed provider material not cleared")
 	}
 	var pinned string
-	if err := f.Pool.QueryRow(t.Context(), `SELECT write_key_id::text FROM computer_instances WHERE id=$1`, f.instance).Scan(&pinned); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT seed_key_id::text FROM computer_instances WHERE id=$1`, f.instance).Scan(&pinned); err != nil {
 		t.Fatal(err)
 	}
 	observer.unwrapErr = nil
-	result, err := b.InitialKey(t.Context(), f.principal, f.ref)
+	result, err := conversionKey(b, t.Context(), f.principal, f.ref)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,11 +460,11 @@ func finalClaimReadFailure(b *KeyBroker) (*observingKeyWrapper, func()) {
 // A database failure during the final revalidation keeps its own cause,
 // which the worker is told is an internal failure, and the unwrapped
 // plaintext is cleared.
-func TestInitialComputerKeyFinalClaimReadFailureIsNotAuthority(t *testing.T) {
+func TestComputerSeedKeyFinalClaimReadFailureIsNotAuthority(t *testing.T) {
 	f := newPreparationFixture(t)
 	observer, restore := finalClaimReadFailure(f.broker)
 	defer restore()
-	result, err := f.broker.InitialKey(t.Context(), f.principal, f.ref)
+	result, err := conversionKey(f.broker, t.Context(), f.principal, f.ref)
 	if !errors.Is(err, errInjectedSQL) || errors.Is(err, ErrKeyUnavailable) || errors.Is(err, ErrAuthorityChanged) || len(result.Key) != 0 {
 		t.Fatalf("final claim read failure = %v", err)
 	}
@@ -538,7 +541,7 @@ func TestComputerKeyDeliveryDatabaseFaultsKeepTheirCause(t *testing.T) {
 				material.Clear()
 			} else {
 				var material KeyMaterial
-				material, err = f.broker.InitialKey(t.Context(), f.principal, f.ref)
+				material, err = conversionKey(f.broker, t.Context(), f.principal, f.ref)
 				delivered = len(material.Key)
 				clear(material.Key)
 			}
@@ -587,7 +590,7 @@ func TestComputerKeyProviderFailuresKeepTheirClass(t *testing.T) {
 				wrapper.before = cancel
 			}
 			f.broker.wrapper = wrapper
-			result, err := f.broker.InitialKey(ctx, f.principal, f.ref)
+			result, err := conversionKey(f.broker, ctx, f.principal, f.ref)
 			if err == nil || len(result.Key) != 0 {
 				t.Fatal("provider failure delivered a key")
 			}

@@ -2383,7 +2383,7 @@ func (q *Queries) LockTokenWaitAttempt(ctx context.Context, arg LockTokenWaitAtt
 }
 
 const lockTokenWaitComputer = `-- name: LockTokenWaitComputer :one
-SELECT id, environment_id, region_id, sandbox_declared_id, key, revision, writer_generation, head_disk_version_id, recovery_id, recovery_disk_version_id, recovery_reason, recovery_started_at, preparation_attempt_count, next_preparation_at, preparation_instance_id, recovery_completed_at, recovery_failure, computer_payload_required, recovery_payload_required, preparation_failure, initial_config, write_key_id, write_key_available, status, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at, secret_ca_certificate, secret_ca_private_key_nonce, secret_ca_private_key_ciphertext, secret_ca_not_after, computer_spec_id, creation_deployment_id, spec_retention_required FROM computers WHERE id=$1 AND environment_id=$2 FOR UPDATE
+SELECT id, environment_id, region_id, sandbox_declared_id, key, revision, writer_generation, head_disk_version_id, recovery_id, recovery_disk_version_id, recovery_reason, recovery_started_at, preparation_attempt_count, next_preparation_at, preparation_instance_id, recovery_completed_at, recovery_failure, computer_payload_required, recovery_payload_required, preparation_failure, initial_config, write_key_id, write_key_available, status, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at, secret_ca_certificate, secret_ca_private_key_nonce, secret_ca_private_key_ciphertext, secret_ca_not_after, computer_spec_id, creation_deployment_id, spec_retention_required, snapshot_capture_id, snapshot_capture_status FROM computers WHERE id=$1 AND environment_id=$2 FOR UPDATE
 `
 
 type LockTokenWaitComputerParams struct {
@@ -2432,6 +2432,8 @@ func (q *Queries) LockTokenWaitComputer(ctx context.Context, arg LockTokenWaitCo
 		&i.ComputerSpecID,
 		&i.CreationDeploymentID,
 		&i.SpecRetentionRequired,
+		&i.SnapshotCaptureID,
+		&i.SnapshotCaptureStatus,
 	)
 	return i, err
 }

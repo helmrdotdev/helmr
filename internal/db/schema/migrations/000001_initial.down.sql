@@ -2,6 +2,9 @@
 DROP TABLE IF EXISTS
     computer_checkpoint_runs,
     computer_specs,
+    computer_seeds,
+    computer_snapshots,
+    computer_disk_roots,
     computer_object_pins,
     computer_instances,
     run_waits,

@@ -152,5 +152,5 @@ func (f preparationFence) checkDeadlines(ctx context.Context) error {
 
 // encryptionScope is the key-wrapping scope of the prepared Computer.
 func (f preparationFence) encryptionScope() (string, error) {
-	return encryptionScope(pgvalue.UUIDString(f.orgID), pgvalue.UUIDString(f.environmentID), pgvalue.UUIDString(f.computerID))
+	return encryptionScope(pgvalue.UUIDString(f.orgID), pgvalue.UUIDString(f.environmentID))
 }

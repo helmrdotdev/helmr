@@ -47,11 +47,11 @@ WHERE v.id=sqlc.arg(save_id) AND v.publisher_save_sequence=sqlc.arg(sequence)
 -- name: PublishComputerInstanceSave :one
 WITH created AS (
  INSERT INTO computer_disk_versions(id,environment_id,computer_id,parent_version_id,
- root_pack_digest,logical_bytes,status,source_computer_instance_id,writer_generation,
+ status,source_computer_instance_id,writer_generation,
  publisher_computer_instance_id,publisher_desired_version,publisher_save_sequence,
  publication_request_fingerprint,published_at)
  SELECT i.save_disk_version_id,i.environment_id,i.computer_id,i.save_base_disk_version_id,
- sqlc.arg(root_pack_digest),sqlc.arg(logical_bytes),'committed',i.id,i.writer_generation,
+ 'committed',i.id,i.writer_generation,
  i.id,i.desired_version,i.save_sequence,sqlc.arg(fingerprint),clock_timestamp()
  FROM computer_instances i JOIN computers c ON c.id=i.computer_id AND c.environment_id=i.environment_id
  WHERE i.id=sqlc.arg(computer_instance_id) AND i.environment_id=sqlc.arg(environment_id)
@@ -65,8 +65,8 @@ WITH created AS (
  AND c.writer_generation=i.writer_generation
  RETURNING *
 ), retained AS (
- INSERT INTO computer_disk_version_roots(environment_id,computer_id,version_id,locator)
- SELECT environment_id,computer_id,id,sqlc.arg(locator) FROM created RETURNING version_id
+ INSERT INTO computer_disk_version_roots(environment_id,computer_id,version_id,root_id)
+ SELECT environment_id,computer_id,id,sqlc.arg(root_id) FROM created RETURNING version_id
 ), advanced AS (
  UPDATE computers c SET head_disk_version_id=v.id,revision=revision+1,updated_at=v.published_at
  FROM created v,retained root WHERE c.id=v.computer_id AND root.version_id=v.id

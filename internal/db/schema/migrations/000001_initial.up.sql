@@ -1151,7 +1151,7 @@ CREATE TABLE computer_commands (
 CREATE TABLE computer_data_keys (
     id UUID PRIMARY KEY,
     environment_id UUID NOT NULL,
-    computer_id UUID NOT NULL,
+    writer_computer_id UUID,
     wrapping_key_id TEXT NOT NULL CHECK (octet_length(wrapping_key_id) BETWEEN 1 AND 2048),
     wrapped_key BYTEA,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1161,13 +1161,14 @@ CREATE TABLE computer_data_keys (
         (retired_at IS NULL AND wrapped_key IS NOT NULL AND octet_length(wrapped_key) BETWEEN 1 AND 6144)
         OR (retired_at IS NOT NULL AND wrapped_key IS NULL)
     ),
-    UNIQUE (environment_id, computer_id, id),
-    UNIQUE (environment_id, computer_id, id, available)
+    UNIQUE (environment_id, id, available),
+    UNIQUE (environment_id, writer_computer_id, id),
+    UNIQUE (environment_id, writer_computer_id, id, available),
+    FOREIGN KEY (environment_id, writer_computer_id) REFERENCES computers(environment_id,id) ON DELETE RESTRICT
 );
 
 CREATE TABLE computer_objects (
     environment_id UUID NOT NULL,
-    computer_id UUID NOT NULL,
     digest TEXT NOT NULL CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
@@ -1180,33 +1181,31 @@ CREATE TABLE computer_objects (
     certified BOOLEAN GENERATED ALWAYS AS (certified_at IS NOT NULL) STORED,
     certified_org_id UUID GENERATED ALWAYS AS (CASE WHEN certified_at IS NOT NULL THEN org_id END) STORED,
     availability_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
-    PRIMARY KEY (environment_id, computer_id, digest),
-    UNIQUE (environment_id, computer_id, digest, rank),
-    UNIQUE (environment_id, computer_id, digest, rank, certified),
-    UNIQUE (environment_id, computer_id, digest, size_bytes, rank, certified, kind),
-    UNIQUE (environment_id, computer_id, digest, certified)
+    PRIMARY KEY (environment_id, digest),
+    UNIQUE (environment_id, digest, rank),
+    UNIQUE (environment_id, digest, rank, certified),
+    UNIQUE (environment_id, digest, size_bytes, rank, certified, kind),
+    UNIQUE (environment_id, digest, certified)
 );
 
 CREATE TABLE computer_object_keys (
     environment_id UUID NOT NULL,
-    computer_id UUID NOT NULL,
     digest TEXT NOT NULL,
     key_id UUID NOT NULL,
     is_direct BOOLEAN NOT NULL,
     availability_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
-    PRIMARY KEY (environment_id, computer_id, digest, key_id),
-    UNIQUE (environment_id, computer_id, digest, key_id, is_direct)
+    PRIMARY KEY (environment_id, digest, key_id),
+    UNIQUE (environment_id, digest, key_id, is_direct)
 );
 
 CREATE TABLE computer_object_edges (
     environment_id UUID NOT NULL,
-    computer_id UUID NOT NULL,
     parent_digest TEXT NOT NULL,
     child_digest TEXT NOT NULL,
     parent_rank INTEGER NOT NULL,
     child_rank INTEGER NOT NULL,
     certification_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
-    PRIMARY KEY (environment_id, computer_id, parent_digest, child_digest),
+    PRIMARY KEY (environment_id, parent_digest, child_digest),
     CHECK (child_rank < parent_rank)
 );
 
@@ -1215,8 +1214,6 @@ CREATE TABLE computer_disk_versions (
     environment_id UUID NOT NULL,
     computer_id UUID NOT NULL,
     parent_version_id UUID,
-    root_pack_digest TEXT CHECK (root_pack_digest ~ '^sha256:[0-9a-f]{64}$'),
-    logical_bytes BIGINT NOT NULL DEFAULT 0 CHECK (logical_bytes >= 0),
     status TEXT NOT NULL DEFAULT 'private'
         CHECK (status IN ('initializing', 'private', 'committed', 'discarded')),
     publisher_computer_instance_id UUID,
@@ -1237,8 +1234,7 @@ CREATE TABLE computer_disk_versions (
             AND publisher_desired_version > 0 AND publication_request_fingerprint IS NOT NULL
             AND octet_length(publication_request_fingerprint) = 32
             AND status = 'committed'
-            AND ((publisher_save_sequence IS NULL AND parent_version_id IS NULL)
-                 OR (publisher_save_sequence IS NOT NULL AND parent_version_id IS NOT NULL)))
+            AND publisher_save_sequence IS NOT NULL AND parent_version_id IS NOT NULL)
     ),
     UNIQUE (computer_id, id),
     UNIQUE (environment_id, computer_id, id),
@@ -1248,16 +1244,13 @@ CREATE TABLE computer_disk_versions (
         OR (status = 'discarded' AND published_at IS NULL AND discarded_at IS NOT NULL)
     ),
     source_computer_instance_id UUID,
-    CHECK ((parent_version_id IS NULL AND source_computer_instance_id IS NULL AND writer_generation=0
- AND ((status='initializing' AND root_pack_digest IS NULL AND logical_bytes=0)
- OR (status='committed' AND publisher_computer_instance_id IS NOT NULL AND root_pack_digest IS NOT NULL AND logical_bytes>0 AND logical_bytes%4096=0)))
- OR (parent_version_id IS NOT NULL AND root_pack_digest IS NOT NULL AND source_computer_instance_id IS NOT NULL AND writer_generation>0 AND status<>'initializing'))
+    CHECK ((parent_version_id IS NULL AND source_computer_instance_id IS NULL AND writer_generation=0 AND publisher_computer_instance_id IS NULL AND status IN ('initializing','committed'))
+ OR (parent_version_id IS NOT NULL AND source_computer_instance_id IS NOT NULL AND writer_generation>0 AND status<>'initializing'))
 );
 
-CREATE TABLE computer_disk_version_roots (
+CREATE TABLE computer_disk_roots (
     environment_id UUID NOT NULL,
-    computer_id UUID NOT NULL,
-    version_id UUID NOT NULL,
+    id UUID PRIMARY KEY,
     locator JSONB NOT NULL CHECK ((jsonb_typeof(locator) = 'object' AND locator->>'format_version' = '1') IS TRUE),
     logical_bytes BIGINT GENERATED ALWAYS AS ((locator->>'logical_bytes')::bigint) STORED NOT NULL CHECK (logical_bytes > 0 AND logical_bytes % 4096 = 0),
     root_kind TEXT GENERATED ALWAYS AS ('root'::text) STORED,
@@ -1267,6 +1260,17 @@ CREATE TABLE computer_disk_version_roots (
     root_page_key_id UUID GENERATED ALWAYS AS ((locator->'page'->>'key_id')::uuid) STORED NOT NULL,
     direct_key_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
     certification_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
+    root_page_offset BIGINT GENERATED ALWAYS AS ((locator->>'offset')::bigint) STORED NOT NULL CHECK (root_page_offset >= 8),
+    UNIQUE (environment_id, id),
+    UNIQUE (environment_id, id, logical_bytes),
+    UNIQUE (environment_id, root_pack_digest, root_page_offset)
+);
+
+CREATE TABLE computer_disk_version_roots (
+    environment_id UUID NOT NULL,
+    computer_id UUID NOT NULL,
+    version_id UUID NOT NULL,
+    root_id UUID NOT NULL,
     payload_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
     PRIMARY KEY (environment_id, computer_id, version_id)
 );
@@ -1851,6 +1855,12 @@ CREATE TABLE run_waits (
 );
 
 CREATE TABLE computer_instances (
+    seed_id UUID,
+    seed_preparation_generation BIGINT CHECK (seed_preparation_generation > 0),
+    seed_key_id UUID,
+    retained_seed_key_id UUID GENERATED ALWAYS AS (CASE WHEN reclaimed_at IS NULL THEN seed_key_id END) STORED,
+    CHECK (num_nonnulls(seed_id,seed_preparation_generation,seed_key_id) IN (0,3)),
+    UNIQUE (environment_id,id,seed_id,seed_preparation_generation,seed_key_id),
     id UUID PRIMARY KEY,
     org_id UUID NOT NULL,
     worker_group_id UUID NOT NULL,
@@ -1869,6 +1879,11 @@ CREATE TABLE computer_instances (
     computer_id UUID NOT NULL,
     program_deployment_id UUID,
     source_checkpoint_id UUID,
+    initial_disk_version_id UUID,
+    initial_publication_desired_version BIGINT,
+    initial_publication_fingerprint BYTEA,
+    CHECK (num_nonnulls(initial_disk_version_id,initial_publication_desired_version,initial_publication_fingerprint) IN (0,3)),
+    CHECK (initial_publication_desired_version > 0 AND octet_length(initial_publication_fingerprint)=32),
     source_disk_version_id UUID,
     save_sequence BIGINT NOT NULL DEFAULT 0 CHECK (save_sequence >= 0),
     save_disk_version_id UUID,
@@ -2132,20 +2147,16 @@ CREATE INDEX runs_retry_ready_idx
 
 CREATE INDEX computer_objects_digest_idx ON computer_objects(digest);
 
-CREATE INDEX computer_object_keys_key_idx ON computer_object_keys(environment_id, computer_id, key_id);
+CREATE INDEX computer_object_keys_key_idx ON computer_object_keys(environment_id, key_id);
 
 CREATE INDEX computer_object_edges_child_idx
-    ON computer_object_edges(environment_id, computer_id, child_digest);
-
-CREATE UNIQUE INDEX computer_disk_versions_initial_publisher_uidx
-    ON computer_disk_versions(publisher_computer_instance_id)
-    WHERE publisher_save_sequence IS NULL;
+    ON computer_object_edges(environment_id, child_digest);
 
 CREATE UNIQUE INDEX computer_disk_versions_save_publisher_uidx
     ON computer_disk_versions(publisher_computer_instance_id, publisher_save_sequence)
     WHERE publisher_save_sequence IS NOT NULL;
 
-CREATE INDEX computer_disk_version_roots_object_idx ON computer_disk_version_roots(environment_id, computer_id, root_pack_digest);
+CREATE INDEX computer_disk_version_roots_root_idx ON computer_disk_version_roots(environment_id, root_id);
 
 CREATE UNIQUE INDEX computer_disk_versions_root_uidx
     ON computer_disk_versions (computer_id)
@@ -2262,7 +2273,7 @@ CREATE UNIQUE INDEX run_waits_same_computer_child_active_uidx
       AND suspension_status IN ('hot', 'checkpointing', 'parked', 'resume_pending', 'resuming');
 
 CREATE INDEX computer_object_pins_object_idx
-    ON computer_object_pins(environment_id, computer_id, digest);
+    ON computer_object_pins(environment_id, digest);
 
 CREATE INDEX computer_instances_worker_active_idx
     ON computer_instances (worker_host_id, worker_epoch, observed_state, id)
@@ -2404,7 +2415,7 @@ ALTER TABLE environments ADD CONSTRAINT environments_current_deployment_fk
 
 ALTER TABLE computers ADD CONSTRAINT computers_write_key_fkey
     FOREIGN KEY (environment_id, id, write_key_id, write_key_available)
-    REFERENCES computer_data_keys(environment_id, computer_id, id, available) ON DELETE RESTRICT;
+    REFERENCES computer_data_keys(environment_id, writer_computer_id, id, available) ON DELETE RESTRICT;
 
 ALTER TABLE computers ADD CONSTRAINT computers_head_disk_version_id_fkey
     FOREIGN KEY (environment_id, id, head_disk_version_id)
@@ -2746,28 +2757,28 @@ ALTER TABLE computer_commands ADD FOREIGN KEY (environment_id,claim_id) REFERENC
 
 ALTER TABLE computer_commands ADD FOREIGN KEY (environment_id,computer_id,computer_instance_id,writer_generation) REFERENCES computer_instances(environment_id,computer_id,id,writer_generation) ON DELETE RESTRICT;
 
-ALTER TABLE computer_data_keys ADD FOREIGN KEY (environment_id, computer_id) REFERENCES computers(environment_id, id) ON DELETE RESTRICT;
+ALTER TABLE computer_data_keys ADD FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE RESTRICT;
 
 ALTER TABLE computer_objects ADD FOREIGN KEY (org_id, project_id, environment_id) REFERENCES environments(org_id, project_id, id) ON DELETE RESTRICT;
 
-ALTER TABLE computer_objects ADD FOREIGN KEY (environment_id, computer_id) REFERENCES computers(environment_id, id) ON DELETE RESTRICT;
+
 
 ALTER TABLE computer_objects ADD FOREIGN KEY (digest, size_bytes, availability_required) REFERENCES cas_blobs(digest, size_bytes, not_retired) ON DELETE RESTRICT;
 
 ALTER TABLE computer_objects ADD FOREIGN KEY (certified_org_id, digest, size_bytes, media_type)
         REFERENCES cas_objects(org_id, digest, size_bytes, media_type) ON DELETE RESTRICT;
 
-ALTER TABLE computer_object_keys ADD FOREIGN KEY (environment_id, computer_id, digest)
-        REFERENCES computer_objects(environment_id, computer_id, digest) ON DELETE CASCADE;
+ALTER TABLE computer_object_keys ADD FOREIGN KEY (environment_id, digest)
+        REFERENCES computer_objects(environment_id, digest) ON DELETE CASCADE;
 
-ALTER TABLE computer_object_keys ADD FOREIGN KEY (environment_id, computer_id, key_id, availability_required)
-        REFERENCES computer_data_keys(environment_id, computer_id, id, available) ON DELETE RESTRICT;
+ALTER TABLE computer_object_keys ADD FOREIGN KEY (environment_id, key_id, availability_required)
+        REFERENCES computer_data_keys(environment_id, id, available) ON DELETE RESTRICT;
 
-ALTER TABLE computer_object_edges ADD FOREIGN KEY (environment_id, computer_id, parent_digest, parent_rank)
-        REFERENCES computer_objects(environment_id, computer_id, digest, rank) ON DELETE CASCADE;
+ALTER TABLE computer_object_edges ADD FOREIGN KEY (environment_id, parent_digest, parent_rank)
+        REFERENCES computer_objects(environment_id, digest, rank) ON DELETE CASCADE;
 
-ALTER TABLE computer_object_edges ADD FOREIGN KEY (environment_id, computer_id, child_digest, child_rank, certification_required)
-        REFERENCES computer_objects(environment_id, computer_id, digest, rank, certified) ON DELETE RESTRICT;
+ALTER TABLE computer_object_edges ADD FOREIGN KEY (environment_id, child_digest, child_rank, certification_required)
+        REFERENCES computer_objects(environment_id, digest, rank, certified) ON DELETE RESTRICT;
 
 ALTER TABLE computer_disk_versions ADD FOREIGN KEY (environment_id, computer_id)
         REFERENCES computers(environment_id, id)
@@ -2782,11 +2793,11 @@ ALTER TABLE computer_disk_versions ADD FOREIGN KEY (environment_id,computer_id,s
 ALTER TABLE computer_disk_version_roots ADD FOREIGN KEY (environment_id, computer_id, version_id)
         REFERENCES computer_disk_versions(environment_id, computer_id, id) ON DELETE RESTRICT;
 
-ALTER TABLE computer_disk_version_roots ADD FOREIGN KEY (environment_id, computer_id, root_pack_digest, root_pack_size_bytes, root_pack_rank, certification_required, root_kind)
-        REFERENCES computer_objects(environment_id, computer_id, digest, size_bytes, rank, certified, kind) ON DELETE RESTRICT;
+ALTER TABLE computer_disk_roots ADD FOREIGN KEY (environment_id, root_pack_digest, root_pack_size_bytes, root_pack_rank, certification_required, root_kind)
+        REFERENCES computer_objects(environment_id, digest, size_bytes, rank, certified, kind) ON DELETE RESTRICT;
 
-ALTER TABLE computer_disk_version_roots ADD FOREIGN KEY (environment_id, computer_id, root_pack_digest, root_page_key_id, direct_key_required)
-        REFERENCES computer_object_keys(environment_id, computer_id, digest, key_id, is_direct) ON DELETE RESTRICT;
+ALTER TABLE computer_disk_roots ADD FOREIGN KEY (environment_id, root_pack_digest, root_page_key_id, direct_key_required)
+        REFERENCES computer_object_keys(environment_id, digest, key_id, is_direct) ON DELETE RESTRICT;
 
 ALTER TABLE computer_disk_version_roots ADD CONSTRAINT computer_disk_version_roots_available_fkey FOREIGN KEY (computer_id,version_id,payload_required)
  REFERENCES computer_disk_versions(computer_id,id,payload_not_retired) ON DELETE RESTRICT;
@@ -2950,10 +2961,10 @@ ALTER TABLE computer_instances ADD CONSTRAINT computer_instances_retained_comput
         REFERENCES computer_disk_version_roots(environment_id, computer_id, version_id) ON DELETE RESTRICT;
 
 ALTER TABLE computer_instances ADD CONSTRAINT computer_instances_computer_write_key_fkey FOREIGN KEY (environment_id, computer_id, write_key_id)
-        REFERENCES computer_data_keys(environment_id, computer_id, id) ON DELETE RESTRICT;
+        REFERENCES computer_data_keys(environment_id, writer_computer_id, id) ON DELETE RESTRICT;
 
 ALTER TABLE computer_instances ADD CONSTRAINT computer_instances_retained_computer_key_fkey FOREIGN KEY (environment_id, computer_id, retained_write_key_id, computer_key_available)
-        REFERENCES computer_data_keys(environment_id, computer_id, id, available) ON DELETE RESTRICT;
+        REFERENCES computer_data_keys(environment_id, writer_computer_id, id, available) ON DELETE RESTRICT;
 
 ALTER TABLE computer_instances ADD FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
@@ -2986,8 +2997,8 @@ ALTER TABLE computer_instances ADD FOREIGN KEY (environment_id,computer_spec_id,
 ALTER TABLE computer_object_pins ADD FOREIGN KEY (environment_id, computer_id, computer_instance_id)
         REFERENCES computer_instances(environment_id, computer_id, id) ON DELETE RESTRICT;
 
-ALTER TABLE computer_object_pins ADD FOREIGN KEY (environment_id, computer_id, digest)
-        REFERENCES computer_objects(environment_id, computer_id, digest) ON DELETE RESTRICT;
+ALTER TABLE computer_object_pins ADD FOREIGN KEY (environment_id, digest)
+        REFERENCES computer_objects(environment_id, digest) ON DELETE RESTRICT;
 
 ALTER TABLE computer_specs ADD FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE RESTRICT;
 
@@ -3024,6 +3035,133 @@ CREATE INDEX computer_checkpoint_runs_wait_idx ON computer_checkpoint_runs(run_w
 CREATE INDEX idempotency_claims_receipt_gc_idx ON idempotency_claims(receipt_expires_at,id) WHERE receipt_pruned_at IS NULL AND status<>'pending';
 CREATE UNIQUE INDEX telemetry_outbox_command_log_observed_idx ON telemetry_outbox(environment_id,command_id,stream_name,observed_seq) WHERE stream_kind='command_log';
 
+ALTER TABLE computer_disk_roots ADD FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE RESTRICT;
+ALTER TABLE computer_disk_version_roots ADD FOREIGN KEY (environment_id,root_id) REFERENCES computer_disk_roots(environment_id,id) ON DELETE RESTRICT;
+
+CREATE TABLE computer_seeds (
+    id UUID PRIMARY KEY,
+    environment_id UUID NOT NULL REFERENCES environments(id) ON DELETE RESTRICT,
+    seed_digest TEXT NOT NULL CHECK (seed_digest ~ '^sha256:[0-9a-f]{64}$'),
+    seed_size_bytes BIGINT NOT NULL CHECK (seed_size_bytes > 0),
+    seed_media_type TEXT NOT NULL CHECK (btrim(seed_media_type) <> ''),
+    format_version INTEGER NOT NULL CHECK (format_version = 1),
+    logical_bytes BIGINT NOT NULL CHECK (logical_bytes > 0 AND logical_bytes % 4096 = 0),
+    source_artifact_id UUID,
+    source_kind artifact_kind GENERATED ALWAYS AS ('computer_image'::artifact_kind) STORED,
+    root_id UUID,
+    ready_at TIMESTAMPTZ,
+    payload_retired_at TIMESTAMPTZ,
+    preparation_generation BIGINT NOT NULL DEFAULT 0 CHECK (preparation_generation >= 0),
+    preparation_instance_id UUID,
+    preparation_key_id UUID,
+    lease_expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (environment_id,id),
+    UNIQUE (environment_id,seed_digest,format_version,logical_bytes),
+    CHECK (root_id IS NULL OR source_artifact_id IS NOT NULL),
+    CHECK (num_nonnulls(preparation_instance_id,preparation_key_id,lease_expires_at) IN (0,3)),
+    CHECK (preparation_instance_id IS NULL OR (preparation_generation > 0 AND root_id IS NULL AND ready_at IS NULL AND payload_retired_at IS NULL AND source_artifact_id IS NOT NULL)),
+    CHECK ((root_id IS NOT NULL AND ready_at IS NOT NULL AND payload_retired_at IS NULL)
+        OR (root_id IS NULL AND ready_at IS NULL AND payload_retired_at IS NULL)
+        OR (root_id IS NULL AND payload_retired_at IS NOT NULL AND preparation_instance_id IS NULL AND source_artifact_id IS NULL)),
+    FOREIGN KEY (environment_id,source_artifact_id,source_kind,seed_digest,seed_size_bytes,seed_media_type)
+      REFERENCES artifacts(environment_id,id,kind,digest,size_bytes,media_type) ON DELETE RESTRICT,
+    FOREIGN KEY (environment_id,root_id,logical_bytes) REFERENCES computer_disk_roots(environment_id,id,logical_bytes) ON DELETE RESTRICT,
+    FOREIGN KEY (environment_id,preparation_instance_id,id,preparation_generation,preparation_key_id)
+      REFERENCES computer_instances(environment_id,id,seed_id,seed_preparation_generation,seed_key_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
+);
+CREATE INDEX computer_seeds_root_idx ON computer_seeds(environment_id,root_id) WHERE root_id IS NOT NULL;
+CREATE INDEX computer_seeds_artifact_idx ON computer_seeds(environment_id,source_artifact_id) WHERE source_artifact_id IS NOT NULL;
+CREATE INDEX computer_seeds_claim_idx ON computer_seeds(environment_id,preparation_instance_id) WHERE preparation_instance_id IS NOT NULL;
+CREATE INDEX computer_seeds_lease_idx ON computer_seeds(lease_expires_at) WHERE preparation_instance_id IS NOT NULL;
+ALTER TABLE computer_instances ADD FOREIGN KEY (environment_id,seed_id) REFERENCES computer_seeds(environment_id,id) ON DELETE RESTRICT;
+ALTER TABLE computer_instances ADD FOREIGN KEY (environment_id,retained_seed_key_id,computer_key_available) REFERENCES computer_data_keys(environment_id,id,available) ON DELETE RESTRICT;
+CREATE INDEX computer_instances_seed_idx ON computer_instances(environment_id,seed_id) WHERE seed_id IS NOT NULL;
+CREATE INDEX computer_instances_seed_key_idx ON computer_instances(environment_id,seed_key_id) WHERE seed_key_id IS NOT NULL;
+CREATE INDEX computer_instances_retained_seed_key_idx ON computer_instances(environment_id,retained_seed_key_id) WHERE retained_seed_key_id IS NOT NULL;
+
+CREATE TABLE computer_snapshots (
+    id UUID PRIMARY KEY,
+    environment_id UUID NOT NULL REFERENCES environments(id) ON DELETE RESTRICT,
+    source_computer_id UUID NOT NULL,
+    source_version_id UUID,
+    capture_instance_id UUID,
+    capture_writer_generation BIGINT,
+    capture_desired_version BIGINT CHECK (capture_desired_version > 0),
+    capture_save_id UUID,
+    claim_id UUID NOT NULL,
+    request_fingerprint BYTEA NOT NULL CHECK (octet_length(request_fingerprint)=32),
+    status TEXT NOT NULL CHECK (status IN ('capturing','ready','failed','expired','deleted')),
+    root_id UUID,
+    retention_seconds BIGINT CHECK (retention_seconds > 0),
+    requested_retain_until TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    capture_deadline TIMESTAMPTZ NOT NULL,
+    ready_at TIMESTAMPTZ,
+    settled_at TIMESTAMPTZ,
+    failure_code TEXT,
+    UNIQUE (environment_id,source_computer_id,id,status),
+    UNIQUE (environment_id,claim_id),
+    CHECK (num_nonnulls(capture_instance_id,capture_writer_generation,capture_desired_version,capture_save_id) IN (0,4)),
+    CHECK (source_version_id IS NULL OR capture_save_id IS NULL OR source_version_id=capture_save_id),
+    CHECK ((source_version_id IS NULL) = (root_id IS NULL) OR status IN ('expired','deleted','failed')),
+    CHECK (capture_writer_generation IS NULL OR capture_writer_generation > 0),
+    CHECK (retention_seconds IS NULL OR requested_retain_until IS NULL),
+    CHECK (capture_deadline > created_at),
+    CHECK (status <> 'ready' OR expires_at IS NOT DISTINCT FROM COALESCE(requested_retain_until, ready_at + retention_seconds * interval '1 second')),
+    CHECK ((status='capturing' AND ready_at IS NULL AND settled_at IS NULL AND failure_code IS NULL AND expires_at IS NULL)
+      OR (status='ready' AND root_id IS NOT NULL AND source_version_id IS NOT NULL AND ready_at IS NOT NULL AND settled_at IS NOT NULL AND failure_code IS NULL AND (expires_at IS NULL OR expires_at > ready_at))
+      OR (status='failed' AND root_id IS NULL AND ready_at IS NULL AND settled_at IS NOT NULL AND failure_code IS NOT NULL)
+      OR (status IN ('expired','deleted') AND root_id IS NULL AND settled_at IS NOT NULL)),
+    FOREIGN KEY (environment_id,source_computer_id) REFERENCES computers(environment_id,id) ON DELETE RESTRICT,
+    FOREIGN KEY (environment_id,source_computer_id,source_version_id) REFERENCES computer_disk_versions(environment_id,computer_id,id) ON DELETE RESTRICT,
+    FOREIGN KEY (environment_id,source_computer_id,capture_instance_id,capture_writer_generation) REFERENCES computer_instances(environment_id,computer_id,id,writer_generation) ON DELETE RESTRICT,
+    FOREIGN KEY (environment_id,claim_id) REFERENCES idempotency_claims(environment_id,id) ON DELETE RESTRICT,
+    FOREIGN KEY (environment_id,root_id) REFERENCES computer_disk_roots(environment_id,id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX computer_snapshots_active_capture_idx ON computer_snapshots(environment_id,source_computer_id) WHERE status='capturing';
+CREATE INDEX computer_snapshots_source_version_idx ON computer_snapshots(environment_id,source_computer_id,source_version_id) WHERE source_version_id IS NOT NULL;
+CREATE INDEX computer_snapshots_instance_idx ON computer_snapshots(environment_id,source_computer_id,capture_instance_id,capture_writer_generation) WHERE capture_instance_id IS NOT NULL;
+CREATE INDEX computer_snapshots_root_idx ON computer_snapshots(environment_id,root_id) WHERE root_id IS NOT NULL;
+CREATE INDEX computer_snapshots_expiry_idx ON computer_snapshots(expires_at,id) WHERE status='ready' AND expires_at IS NOT NULL;
+CREATE INDEX computer_snapshots_list_idx ON computer_snapshots(environment_id,created_at DESC,id DESC);
+ALTER TABLE computers ADD COLUMN snapshot_capture_id UUID;
+ALTER TABLE computers ADD COLUMN snapshot_capture_status TEXT GENERATED ALWAYS AS (CASE WHEN snapshot_capture_id IS NOT NULL THEN 'capturing' END) STORED;
+ALTER TABLE computers ADD FOREIGN KEY (environment_id,id,snapshot_capture_id,snapshot_capture_status) REFERENCES computer_snapshots(environment_id,source_computer_id,id,status) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
+
+-- A live committed version cannot lose its retention join independently.
+ALTER TABLE computer_disk_versions ADD COLUMN retained_root_version_id UUID GENERATED ALWAYS AS
+ (CASE WHEN status='committed' AND payload_retired_at IS NULL THEN id END) STORED;
+ALTER TABLE computer_disk_versions ADD CONSTRAINT computer_disk_versions_retained_root_fk
+ FOREIGN KEY (environment_id,computer_id,retained_root_version_id)
+ REFERENCES computer_disk_version_roots(environment_id,computer_id,version_id)
+ ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED;
+CREATE INDEX computer_disk_versions_retained_root_idx ON computer_disk_versions(environment_id,computer_id,retained_root_version_id)
+ WHERE retained_root_version_id IS NOT NULL;
+
+-- Reverse lookups for environment-scoped key retirement.
+CREATE INDEX computers_write_key_idx ON computers(environment_id, write_key_id) WHERE write_key_id IS NOT NULL;
+CREATE INDEX computer_instances_write_key_idx ON computer_instances(environment_id, write_key_id) WHERE write_key_id IS NOT NULL;
+CREATE INDEX computer_instances_retained_write_key_idx ON computer_instances(environment_id, retained_write_key_id) WHERE retained_write_key_id IS NOT NULL;
+
+
+-- Seed preparation cannot reuse a Computer's private writer key.
+ALTER TABLE computer_data_keys ADD COLUMN is_seed_key BOOLEAN GENERATED ALWAYS AS (writer_computer_id IS NULL) STORED;
+ALTER TABLE computer_data_keys ADD UNIQUE (environment_id,id,is_seed_key);
+ALTER TABLE computer_instances ADD COLUMN seed_key_required BOOLEAN GENERATED ALWAYS AS (true) STORED;
+ALTER TABLE computer_instances ADD FOREIGN KEY (environment_id,seed_key_id,seed_key_required)
+ REFERENCES computer_data_keys(environment_id,id,is_seed_key) ON DELETE RESTRICT;
+
+-- Capture and admission barrier are installed/cleared in the same transaction.
+ALTER TABLE computers ADD UNIQUE (environment_id,id,snapshot_capture_id);
+ALTER TABLE computer_snapshots ADD COLUMN capturing_id UUID GENERATED ALWAYS AS (CASE WHEN status='capturing' THEN id END) STORED;
+ALTER TABLE computer_snapshots ADD FOREIGN KEY (environment_id,source_computer_id,capturing_id)
+ REFERENCES computers(environment_id,id,snapshot_capture_id)
+ ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED;
 CREATE INDEX computer_checkpoints_retained_source_idx
     ON computer_checkpoints(source_computer_instance_id)
     WHERE status IN ('creating','ready') AND resume_committed_at IS NULL;
+
+ALTER TABLE computer_instances ADD FOREIGN KEY (environment_id,computer_id,initial_disk_version_id)
+ REFERENCES computer_disk_versions(environment_id,computer_id,id) ON DELETE RESTRICT;

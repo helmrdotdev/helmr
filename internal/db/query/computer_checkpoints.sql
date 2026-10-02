@@ -71,9 +71,9 @@ SELECT * FROM vm_platforms WHERE id=sqlc.arg(id);
 
 -- name: CreatePrivateCheckpointComputerDiskVersion :one
 INSERT INTO computer_disk_versions(id,environment_id,computer_id,parent_version_id,
- root_pack_digest,logical_bytes,status,source_computer_instance_id,writer_generation)
+ status,source_computer_instance_id,writer_generation)
 SELECT sqlc.arg(id),checkpoint.environment_id,checkpoint.computer_id,checkpoint.base_computer_disk_version_id,
- sqlc.arg(root_pack_digest),sqlc.arg(logical_bytes),'private',checkpoint.source_computer_instance_id,checkpoint.writer_generation
+ 'private',checkpoint.source_computer_instance_id,checkpoint.writer_generation
 FROM computer_checkpoints checkpoint WHERE checkpoint.id=sqlc.arg(checkpoint_id)
  AND checkpoint.environment_id=sqlc.arg(environment_id) AND checkpoint.status='creating'
 RETURNING *;

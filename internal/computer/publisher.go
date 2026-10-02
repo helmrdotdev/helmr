@@ -55,25 +55,23 @@ func publicationOf(computerID, versionID pgtype.UUID) Publication {
 }
 
 // objects is the initial preparation's object scope: its initial
-// publication key and the Instance's pinned write key, the only key an
-// initial version may use.
+// publication key and the exclusive seed conversion key. Each Computer's
+// subsequent writes use its separate private write key.
 func (p initialPreparation) objects(ctx context.Context) (objectScope, error) {
-	q := db.New(p.tx)
-	instanceID := p.instance.ID
-	key, err := q.GetInstanceComputerWriteKey(ctx, db.GetInstanceComputerWriteKeyParams{ComputerInstanceID: instanceID, EnvironmentID: p.environmentID, ComputerID: p.computerID})
+	seed, err := p.lockSeed(ctx)
 	if err != nil {
 		return objectScope{}, err
 	}
-	var pinned bool
-	if err = p.tx.QueryRow(ctx, `SELECT write_key_id=$2 FROM computer_instances WHERE id=$1`, instanceID, key.ID).Scan(&pinned); err != nil {
+	if err = p.checkSeedClaim(ctx, seed); err != nil {
 		return objectScope{}, err
 	}
-	if !pinned {
-		return objectScope{}, objectConflict("initial writer key is not pinned")
+	key, err := db.New(p.tx).GetComputerSeedKey(ctx, p.instance.ID)
+	if err != nil {
+		return objectScope{}, err
 	}
 	return objectScope{
-		objectRetention: objectRetention{environmentID: p.environmentID, computerID: p.computerID, instanceID: instanceID, desiredVersion: p.instance.DesiredVersion, key: initialPublicationKey(pgvalue.MustUUIDValue(instanceID))},
-		orgID:           p.orgID, projectID: p.projectID, logicalBytes: p.logicalBytes, allowedKeys: map[string]bool{pgvalue.UUIDString(key.ID): true},
+		objectRetention: objectRetention{environmentID: p.environmentID, computerID: p.computerID, instanceID: p.instance.ID, desiredVersion: p.instance.DesiredVersion, key: initialPublicationKey(pgvalue.MustUUIDValue(p.instance.ID))},
+		orgID:           p.orgID, projectID: p.projectID, logicalBytes: p.logicalBytes, allowedKeys: map[string]bool{pgvalue.UUIDString(key.ID): true}, writeKey: pgvalue.UUIDString(key.ID),
 	}, nil
 }
 
@@ -218,7 +216,14 @@ func (p Publisher) PublishInitialVersion(ctx context.Context, principal workergr
 func (p initialPreparation) publishVersion(ctx context.Context, input InitialVersion, locator blockformat.Locator, fingerprint []byte) (Publication, error) {
 	q := db.New(p.tx)
 	instanceID := p.instance.ID
-	object, err := q.LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: p.environmentID, ComputerID: p.computerID, Digest: input.Root.Pack.Digest})
+	seed, err := p.lockSeed(ctx)
+	if err != nil {
+		return Publication{}, err
+	}
+	if err = p.checkSeedClaim(ctx, seed); err != nil {
+		return Publication{}, err
+	}
+	object, err := q.LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: p.environmentID, Digest: input.Root.Pack.Digest})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Publication{}, objectConflict("initial root is not registered")
 	}
@@ -253,7 +258,26 @@ func (p initialPreparation) publishVersion(ctx context.Context, input InitialVer
 	if err != nil {
 		return Publication{}, err
 	}
-	version, err := q.PublishInitialComputerDiskVersion(ctx, db.PublishInitialComputerDiskVersionParams{EnvironmentID: p.environmentID, ComputerID: p.computerID, VersionID: p.versionID, ComputerInstanceID: instanceID, DesiredVersion: pgtype.Int8{Int64: p.instance.DesiredVersion, Valid: true}, Fingerprint: fingerprint, RootPackDigest: pgvalue.Text(input.Root.Pack.Digest), LogicalBytes: p.logicalBytes, Locator: rawRoot, InitialConfig: rawConfig})
+	rootID, err := q.RetainComputerDiskRoot(ctx, db.RetainComputerDiskRootParams{ID: pgvalue.NewUUIDv7(), EnvironmentID: p.environmentID, Locator: rawRoot})
+	if err != nil {
+		return Publication{}, err
+	}
+	admittedConfig, err := p.initialConfig(ctx)
+	if err != nil {
+		return Publication{}, err
+	}
+	if !bytes.Equal(admittedConfig, rawConfig) {
+		return Publication{}, objectConflict("initial configuration differs from admitted specification")
+	}
+	if err = p.checkSeedClaim(ctx, seed); err != nil {
+		return Publication{}, err
+	}
+	_, err = p.tx.Exec(ctx, `UPDATE computer_seeds SET root_id=$2,ready_at=clock_timestamp(),preparation_instance_id=NULL,
+ preparation_key_id=NULL,lease_expires_at=NULL WHERE id=$1`, seed.ID, rootID)
+	if err != nil {
+		return Publication{}, err
+	}
+	version, err := q.PublishInitialComputerDiskVersion(ctx, db.PublishInitialComputerDiskVersionParams{EnvironmentID: p.environmentID, ComputerID: p.computerID, VersionID: p.versionID, ComputerInstanceID: instanceID, DesiredVersion: pgtype.Int8{Int64: p.instance.DesiredVersion, Valid: true}, Fingerprint: fingerprint, RootID: rootID, InitialConfig: rawConfig})
 	if err != nil {
 		return Publication{}, err
 	}

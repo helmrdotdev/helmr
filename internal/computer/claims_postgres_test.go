@@ -33,7 +33,7 @@ func TestClaimBumpsReportStaleClaimsOnComparingPaths(t *testing.T) {
 				Page: disk.VersionPage{Digest: "sha256:" + strings.Repeat("b", 64), Salt: strings.Repeat("c", 64), KeyID: "01912345-6789-7abc-8def-0123456789ab", Kind: 3, Count: 1, SizeBytes: 128}, Offset: 8}
 			for name, operation := range map[string]func() error{
 				"initial key": func() error {
-					_, err := f.broker.InitialKey(t.Context(), f.principal, f.ref)
+					_, err := f.broker.PrepareSeed(t.Context(), f.principal, f.ref)
 					return err
 				},
 				"initial object": func() error {
@@ -100,7 +100,7 @@ func (unavailableObjects) Stat(context.Context, string) (cas.Object, error) {
 // after verifying the registration, so the worker is told to retry.
 func TestInitialObjectCertificationReportsUnavailableStorage(t *testing.T) {
 	f := newPreparationFixture(t)
-	key := f.initialKey(t)
+	key := f.seedKey(t)
 	defer clear(key.Key)
 	local, err := cas.NewFile(t.TempDir())
 	if err != nil {

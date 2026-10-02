@@ -74,7 +74,7 @@ func (p checkpointPublication) objects(ctx context.Context) (objectScope, error)
 	allowed[pgvalue.UUIDString(write.ID)] = true
 	return objectScope{
 		objectRetention: objectRetention{environmentID: instance.EnvironmentID, computerID: instance.ComputerID, instanceID: instance.ID, desiredVersion: instance.DesiredVersion, key: checkpointPublicationKey(pgvalue.MustUUIDValue(p.source.checkpoint.ID))},
-		orgID:           instance.OrgID, projectID: instance.ProjectID, logicalBytes: instance.ReservedGuestEphemeralDiskBytes, allowedKeys: allowed,
+		orgID:           instance.OrgID, projectID: instance.ProjectID, logicalBytes: instance.ReservedGuestEphemeralDiskBytes, allowedKeys: allowed, writeKey: pgvalue.UUIDString(write.ID),
 	}, nil
 }
 

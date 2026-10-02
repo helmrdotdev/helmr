@@ -563,6 +563,9 @@ func registerComputerSpecs(
 	// Deployments can name the same specs in different orders. Acquire their
 	// unique-key locks in content order to avoid a cross-deployment deadlock.
 	slices.SortFunc(ordered, func(left, right preparedDefinition) int {
+		if order := strings.Compare(left.computerSpec.Seed.Digest, right.computerSpec.Seed.Digest); order != 0 {
+			return order
+		}
 		return bytes.Compare(left.computerSpec.Digest[:], right.computerSpec.Digest[:])
 	})
 	for _, prepared := range ordered {
@@ -572,7 +575,8 @@ func registerComputerSpecs(
 			return nil, fmt.Errorf("computer seed %q is not registered", spec.Seed.Digest)
 		}
 		stored, err := q.RegisterComputerSpec(ctx, db.RegisterComputerSpecParams{
-			ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: environmentID,
+			LogicalBytes: disk.SeedCapacity,
+			ID:           pgvalue.UUID(uuid.NewV7()), EnvironmentID: environmentID,
 			Config: spec.Config, Digest: spec.Digest[:], SeedArtifactID: seed.ID,
 			SeedDigest: spec.Seed.Digest, SeedSizeBytes: spec.Seed.SizeBytes, SeedMediaType: spec.Seed.MediaType,
 		})
@@ -589,7 +593,7 @@ func registerComputerSpecs(
 			!bytes.Equal(roundTrip.Config, spec.Config) {
 			return nil, fmt.Errorf("registered computer spec has different canonical content")
 		}
-		specs[prepared.declaredID] = stored
+		specs[prepared.declaredID] = db.ComputerSpec(stored)
 	}
 	return specs, nil
 }

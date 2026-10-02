@@ -31,7 +31,7 @@ func projectInstanceComputerSource(row db.ListComputerInstanceReconcileTargetsRo
 	switch row.ComputerDiskVersionStatus.String {
 	case "initializing":
 		if len(row.ComputerVersionLocator) != 0 || row.SourceCheckpointID.Valid || row.ComputerContentDigest.Valid ||
-			!row.ComputerLogicalSizeBytes.Valid || row.ComputerLogicalSizeBytes.Int64 != 0 ||
+			row.ComputerLogicalSizeBytes.Valid ||
 			len(row.ComputerInitialConfig) != 0 {
 			return source, errors.New("initializing computer has persisted disk or continuation state")
 		}

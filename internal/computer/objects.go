@@ -131,6 +131,7 @@ type objectScope struct {
 	orgID, projectID pgtype.UUID
 	logicalBytes     int64
 	allowedKeys      map[string]bool
+	writeKey         string
 }
 
 // verifyRegistered checks, before storage I/O, that the object is registered
@@ -141,7 +142,7 @@ func (r objectRetention) verifyRegistered(ctx context.Context, tx pgx.Tx, inspec
 		return err
 	}
 	q := db.New(tx)
-	row, err := q.LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: r.environmentID, ComputerID: r.computerID, Digest: object.digest})
+	row, err := q.LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: r.environmentID, Digest: object.digest})
 	if err != nil {
 		return err
 	}
@@ -159,7 +160,7 @@ func (r objectRetention) verifyRegistered(ctx context.Context, tx pgx.Tx, inspec
 // registerObject records an object before its upload: the blob lifetime and
 // the Computer object with its inspection, the publication's pin, and, when
 // the object is not yet certified, its dependency edges and key closure.
-// Every child must already be certified in the same Computer.
+// Every child must be certified and admitted by this Instance or its retained source.
 func (s objectScope) registerObject(ctx context.Context, tx pgx.Tx, inspection blockformat.ObjectInspection) error {
 	object, err := s.admit(inspection)
 	if err != nil {
@@ -168,12 +169,17 @@ func (s objectScope) registerObject(ctx context.Context, tx pgx.Tx, inspection b
 	if _, err = tx.Exec(ctx, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,$2) ON CONFLICT DO NOTHING`, object.digest, object.size); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) VALUES($1,$2,$3,$4,$5,$6,'application/octet-stream',$7,$8,$9) ON CONFLICT DO NOTHING`, s.environmentID, s.computerID, object.digest, s.orgID, s.projectID, object.size, object.kind, object.rank, object.encoded); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) VALUES($1,$2,$3,$4,$5,'application/octet-stream',$6,$7,$8) ON CONFLICT DO NOTHING`, s.environmentID, object.digest, s.orgID, s.projectID, object.size, object.kind, object.rank, object.encoded); err != nil {
 		return err
 	}
 	row, err := s.lockMatching(ctx, tx, object, inspection)
 	if err != nil {
 		return err
+	}
+	if row.Certified.Bool {
+		if err = s.requireAdmittedObject(ctx, tx, object.digest); err != nil {
+			return err
+		}
 	}
 	if err = s.pin(ctx, tx, object); err != nil {
 		return err
@@ -219,7 +225,7 @@ func (s objectScope) certifyObject(ctx context.Context, tx pgx.Tx, inspection bl
 		if _, err = q.UpsertCasObject(ctx, db.UpsertCasObjectParams{OrgID: s.orgID, Digest: uploaded.Digest, SizeBytes: uploaded.SizeBytes, MediaType: uploaded.MediaType}); err != nil {
 			return err
 		}
-		n, err := q.CertifyComputerObject(ctx, db.CertifyComputerObjectParams{EnvironmentID: s.environmentID, ComputerID: s.computerID, Digest: object.digest})
+		n, err := q.CertifyComputerObject(ctx, db.CertifyComputerObjectParams{EnvironmentID: s.environmentID, Digest: object.digest})
 		if err != nil {
 			return err
 		}
@@ -230,7 +236,7 @@ func (s objectScope) certifyObject(ctx context.Context, tx pgx.Tx, inspection bl
 	return s.checkKeyClosure(ctx, tx, object)
 }
 
-// reuseObject pins an already certified object of the same Computer for this
+// reuseObject pins an already certified object of the admitted source for this
 // publication without uploading it again.
 func (s objectScope) reuseObject(ctx context.Context, tx pgx.Tx, inspection blockformat.ObjectInspection) error {
 	object, err := s.admit(inspection)
@@ -243,6 +249,9 @@ func (s objectScope) reuseObject(ctx context.Context, tx pgx.Tx, inspection bloc
 	}
 	if !row.Certified.Bool {
 		return objectConflict("referenced computer object is not certified")
+	}
+	if err = s.requireAdmittedObject(ctx, tx, object.digest); err != nil {
+		return err
 	}
 	if err = s.pin(ctx, tx, object); err != nil {
 		return err
@@ -278,7 +287,7 @@ func (s objectScope) admit(inspection blockformat.ObjectInspection) (inspectedOb
 // lockMatching locks the Computer object and requires its stored facts to be
 // exactly the described object.
 func (s objectScope) lockMatching(ctx context.Context, tx pgx.Tx, object inspectedObject, inspection blockformat.ObjectInspection) (db.ComputerObject, error) {
-	row, err := db.New(tx).LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: s.environmentID, ComputerID: s.computerID, Digest: object.digest})
+	row, err := db.New(tx).LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: s.environmentID, Digest: object.digest})
 	if err != nil {
 		return db.ComputerObject{}, err
 	}
@@ -314,11 +323,16 @@ func (s objectScope) requireRetained(ctx context.Context, tx pgx.Tx, object insp
 }
 
 // recordGraph resolves every physical reference of an uncertified object,
-// including unselected pages, to a certified child in the same Computer and
+// including unselected pages, to an admitted certified child and
 // records the edges and the object's direct keys. Missing dependencies fail
 // before certification. Co-packed child pages share one read, and only one
 // child's decoded evidence is retained at a time.
 func (s objectScope) recordGraph(ctx context.Context, tx pgx.Tx, object inspectedObject) error {
+	for _, key := range object.keys {
+		if key != s.writeKey {
+			return objectConflict("new computer object must use the active write key")
+		}
+	}
 	packs := make(map[blockformat.PackRef][]blockformat.NodeReference)
 	for _, child := range object.nodes {
 		packs[child.Locator.Pack] = append(packs[child.Locator.Pack], child)
@@ -357,7 +371,7 @@ func (s objectScope) recordGraph(ctx context.Context, tx pgx.Tx, object inspecte
 		}
 	}
 	for _, id := range object.keys {
-		if _, err := tx.Exec(ctx, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id,is_direct) VALUES($1,$2,$3,$4,true) ON CONFLICT DO NOTHING`, s.environmentID, s.computerID, object.digest, id); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO computer_object_keys(environment_id,digest,key_id,is_direct) VALUES($1,$2,$3,true) ON CONFLICT DO NOTHING`, s.environmentID, object.digest, id); err != nil {
 			return err
 		}
 	}
@@ -367,7 +381,7 @@ func (s objectScope) recordGraph(ctx context.Context, tx pgx.Tx, object inspecte
 // checkKeyClosure requires every key the object depends on to be retained by
 // the publishing Instance.
 func (s objectScope) checkKeyClosure(ctx context.Context, tx pgx.Tx, object inspectedObject) error {
-	rows, err := tx.Query(ctx, `SELECT key_id FROM computer_object_keys WHERE environment_id=$1 AND computer_id=$2 AND digest=$3`, s.environmentID, s.computerID, object.digest)
+	rows, err := tx.Query(ctx, `SELECT key_id FROM computer_object_keys WHERE environment_id=$1 AND digest=$2`, s.environmentID, object.digest)
 	if err != nil {
 		return err
 	}
@@ -387,8 +401,11 @@ func (s objectScope) checkKeyClosure(ctx context.Context, tx pgx.Tx, object insp
 func (s objectScope) loadChild(ctx context.Context, tx pgx.Tx, digest string, size int64, rank int) (blockformat.ObjectInspection, error) {
 	var raw []byte
 	// KEY SHARE prevents collection until the edge's restrictive FK takes over.
-	err := tx.QueryRow(ctx, `SELECT inspection FROM computer_objects WHERE environment_id=$1 AND computer_id=$2 AND digest=$3 AND size_bytes=$4 AND rank=$5 AND certified FOR KEY SHARE`, s.environmentID, s.computerID, digest, size, rank).Scan(&raw)
+	err := tx.QueryRow(ctx, `SELECT inspection FROM computer_objects WHERE environment_id=$1 AND digest=$2 AND size_bytes=$3 AND rank=$4 AND certified FOR KEY SHARE`, s.environmentID, digest, size, rank).Scan(&raw)
 	if err != nil {
+		return blockformat.ObjectInspection{}, err
+	}
+	if err = s.requireAdmittedObject(ctx, tx, digest); err != nil {
 		return blockformat.ObjectInspection{}, err
 	}
 	var evidence blockformat.ObjectInspection
@@ -399,10 +416,54 @@ func (s objectScope) loadChild(ctx context.Context, tx pgx.Tx, digest string, si
 }
 
 func (s objectScope) insertEdge(ctx context.Context, tx pgx.Tx, parent inspectedObject, digest string, rank int) error {
-	_, err := tx.Exec(ctx, `INSERT INTO computer_object_edges(environment_id,computer_id,parent_digest,child_digest,parent_rank,child_rank) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`, s.environmentID, s.computerID, parent.digest, digest, parent.rank, rank)
+	_, err := tx.Exec(ctx, `INSERT INTO computer_object_edges(environment_id,parent_digest,child_digest,parent_rank,child_rank) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, s.environmentID, parent.digest, digest, parent.rank, rank)
 	return err
 }
 
 func storageUnavailable(err error) error {
 	return fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
+}
+
+// Environment membership is not publication authority. A reused child must be
+// reachable from this Instance's retained source, or retained by its own earlier
+// registration. An abandoned save's local bytes can be selected again by a later
+// save or checkpoint while that physical Instance is alive. The new publication
+// still establishes its own exact pin before it can publish a root.
+// Probe a small ancestor prefix first: privately written descendants usually
+// reach the source in a few indexed steps. If the prefix is inconclusive, walk
+// the source's physical closure down to the requested object's stored rank.
+// The prefix limits yielded ancestors, not a correctness decision or a SQL work
+// guarantee. Both directions require the exact retained source; UNION deduplicates
+// co-packed dependencies. CASE skips both traversals for an existing own pin.
+func (s objectScope) requireAdmittedObject(ctx context.Context, tx pgx.Tx, digest string) error {
+	var admitted bool
+	err := tx.QueryRow(ctx, `WITH RECURSIVE retained(digest,rank) AS (
+ SELECT r.root_pack_digest,o.rank FROM computer_instances i
+ JOIN computer_disk_version_roots v ON v.environment_id=i.environment_id AND v.computer_id=i.computer_id AND v.version_id=i.retained_source_disk_version_id
+ JOIN computer_disk_roots r ON r.environment_id=v.environment_id AND r.id=v.root_id
+ JOIN computer_objects o ON o.environment_id=r.environment_id AND o.digest=r.root_pack_digest
+ WHERE i.id=$3 AND i.environment_id=$1
+), ancestors(digest) AS (
+ SELECT $2::text
+ UNION
+ SELECT e.parent_digest FROM computer_object_edges e JOIN ancestors a ON e.child_digest=a.digest
+ WHERE e.environment_id=$1
+), source(digest,rank) AS (
+ SELECT digest,rank FROM retained
+ UNION
+ SELECT e.child_digest,e.child_rank FROM source s JOIN computer_object_edges e ON e.environment_id=$1 AND e.parent_digest=s.digest
+ WHERE s.rank>(SELECT rank FROM computer_objects WHERE environment_id=$1 AND digest=$2)
+)
+SELECT CASE
+ WHEN EXISTS(SELECT 1 FROM computer_object_pins WHERE computer_instance_id=$3 AND environment_id=$1 AND digest=$2) THEN true
+ WHEN EXISTS(SELECT 1 FROM (SELECT digest FROM ancestors LIMIT 128) a JOIN retained r ON r.digest=a.digest) THEN true
+ ELSE EXISTS(SELECT 1 FROM source WHERE digest=$2)
+END`, s.environmentID, digest, s.instanceID).Scan(&admitted)
+	if err != nil {
+		return err
+	}
+	if !admitted {
+		return objectConflict("object is outside the admitted source and publication")
+	}
+	return nil
 }

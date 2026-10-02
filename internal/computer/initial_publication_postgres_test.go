@@ -32,7 +32,7 @@ func TestInitialVersionPublicationReplay(t *testing.T) {
 	}
 	first, second := <-results, <-results
 	if first.err != nil || second.err != nil || first.result != second.result {
-		t.Fatalf("concurrent publication: %+v %+v", first, second)
+		t.Fatalf("concurrent publication: %v %v (%+v %+v)", first.err, second.err, first.result, second.result)
 	}
 	versionID := pgvalue.UUID(first.result.VersionID)
 	var retained bool
@@ -41,22 +41,23 @@ func TestInitialVersionPublicationReplay(t *testing.T) {
 	}
 	var config []byte
 	var roots, audits int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT initial_config,(SELECT count(*) FROM computer_disk_version_roots WHERE version_id=$1),(SELECT count(*) FROM computer_disk_versions WHERE id=$1 AND publication_request_fingerprint IS NOT NULL) FROM computers WHERE id=$2`, versionID, pgvalue.UUID(first.result.ComputerID)).Scan(&config, &roots, &audits); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT initial_config,(SELECT count(*) FROM computer_disk_version_roots WHERE version_id=$1),(SELECT count(*) FROM computer_instances WHERE initial_disk_version_id=$1 AND initial_publication_fingerprint IS NOT NULL) FROM computers WHERE id=$2`, versionID, pgvalue.UUID(first.result.ComputerID)).Scan(&config, &roots, &audits); err != nil {
 		t.Fatal(err)
 	}
 	var got oci.RuntimeConfig
-	if err := json.Unmarshal(config, &got); err != nil || got.User != "root" || roots != 1 || audits != 1 {
+	if err := json.Unmarshal(config, &got); err != nil || got.User != "" || roots != 1 || audits != 1 {
 		t.Fatalf("incomplete publication: %s %d %d %v", config, roots, audits, err)
 	}
 	// The fixture supplies physical exclusion evidence; this test exercises
 	// retention/replay after that boundary, not the Worker's cleanup mechanism.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1,observed_state='failed',terminal_at=clock_timestamp(),terminal_reason_code='fixture',admission_state='closed',mount_state='lost',reclaimed_at=clock_timestamp(),reclaim_evidence='{"proof":"fixture"}' WHERE id=$1`, f.instance)
-	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM computer_disk_version_roots WHERE version_id=$1`, versionID)
+
 	q := db.New(f.Pool)
 	if n, err := q.ReleaseReclaimedComputerObjects(t.Context(), 10); err != nil || n != 1 {
 		t.Fatalf("release reclaimed pins: %d %v", n, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET initial_config='{}',head_disk_version_id=NULL,status='deleted',desired_state='deleted',deleted_at=clock_timestamp(),sandbox_declared_id=NULL WHERE id=$1`, pgvalue.UUID(first.result.ComputerID))
+	dbtest.MustExec(t, t.Context(), f.Pool, `WITH retired AS (UPDATE computer_disk_versions SET payload_retired_at=clock_timestamp() WHERE id=$1 RETURNING id) DELETE FROM computer_disk_version_roots r USING retired v WHERE r.version_id=v.id`, versionID)
 	replay, err := f.publisher.PublishInitialVersion(t.Context(), f.principal, f.ref, input)
 	if err != nil || replay != first.result {
 		t.Fatalf("historical replay: %+v %v", replay, err)

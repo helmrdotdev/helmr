@@ -5,7 +5,7 @@
 
 -- name: LockComputerObject :one
 SELECT * FROM computer_objects
- WHERE environment_id=sqlc.arg(environment_id) AND computer_id=sqlc.arg(computer_id)
+ WHERE environment_id=sqlc.arg(environment_id)
    AND digest=sqlc.arg(digest)
  FOR UPDATE;
 
@@ -14,40 +14,31 @@ SELECT * FROM computer_objects
 -- name: CertifyComputerObject :execrows
 WITH object AS MATERIALIZED (
  SELECT o.* FROM computer_objects o
- WHERE o.environment_id=sqlc.arg(environment_id) AND o.computer_id=sqlc.arg(computer_id)
+ WHERE o.environment_id=sqlc.arg(environment_id)
    AND o.digest=sqlc.arg(digest) AND NOT o.certified
-   AND EXISTS(SELECT 1 FROM computer_object_keys k WHERE k.environment_id=o.environment_id AND k.computer_id=o.computer_id AND k.digest=o.digest AND k.is_direct)
+   AND EXISTS(SELECT 1 FROM computer_object_keys k WHERE k.environment_id=o.environment_id AND k.digest=o.digest AND k.is_direct)
  FOR UPDATE
 ), summary AS (
- INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id,is_direct)
- SELECT DISTINCT o.environment_id,o.computer_id,o.digest,k.key_id,false
+ INSERT INTO computer_object_keys(environment_id,digest,key_id,is_direct)
+ SELECT DISTINCT o.environment_id,o.digest,k.key_id,false
  FROM object o
  JOIN computer_object_edges e ON e.environment_id=o.environment_id
-   AND e.computer_id=o.computer_id AND e.parent_digest=o.digest
+   AND e.parent_digest=o.digest
  JOIN computer_object_keys k ON k.environment_id=e.environment_id
-   AND k.computer_id=e.computer_id AND k.digest=e.child_digest
- ON CONFLICT (environment_id,computer_id,digest,key_id) DO NOTHING
+   AND k.digest=e.child_digest
+ ON CONFLICT (environment_id,digest,key_id) DO NOTHING
  RETURNING key_id
 )
 UPDATE computer_objects o SET certified_at=clock_timestamp()
  FROM object selected
- WHERE o.environment_id=selected.environment_id AND o.computer_id=selected.computer_id
+ WHERE o.environment_id=selected.environment_id
    AND o.digest=selected.digest;
-
--- The root comes from the exact retained owner, never an arbitrary HTTP key list.
--- name: ListComputerObjectReadKeys :many
-SELECT k.* FROM computer_object_keys r
- JOIN computer_objects o USING(environment_id,computer_id,digest)
- JOIN computer_data_keys k ON k.environment_id=r.environment_id AND k.computer_id=r.computer_id AND k.id=r.key_id
- WHERE r.environment_id=sqlc.arg(environment_id) AND r.computer_id=sqlc.arg(computer_id)
-   AND r.digest=sqlc.arg(digest) AND o.certified AND k.available
- ORDER BY k.id;
 
 -- name: HasRegisteredInitialComputerObject :one
 SELECT EXISTS (
  SELECT 1 FROM computer_instances r
  JOIN computer_object_pins p ON p.computer_instance_id=r.id AND p.publication_key=sqlc.arg(publication_key) AND p.instance_desired_version=r.desired_version
- JOIN computer_objects o ON o.environment_id=p.environment_id AND o.computer_id=p.computer_id AND o.digest=p.digest
+ JOIN computer_objects o ON o.environment_id=p.environment_id AND o.digest=p.digest
  WHERE r.id=sqlc.arg(computer_instance_id) AND r.worker_host_id=sqlc.arg(worker_id)
    AND r.worker_group_id=sqlc.arg(worker_group_id) AND r.worker_epoch=sqlc.arg(worker_epoch)
    AND r.desired_version=sqlc.arg(desired_version) AND r.reclaimed_at IS NULL
@@ -71,20 +62,20 @@ DELETE FROM computer_object_pins p USING released r
 -- Version history is not deleted. The final DELETE's FKs arbitrate concurrent
 -- adoption after this discovery snapshot.
 -- name: ListUnreferencedComputerObjects :many
-SELECT o.environment_id,o.computer_id,o.digest,o.org_id
+SELECT o.environment_id,o.digest,o.org_id
  FROM computer_objects o
- WHERE NOT EXISTS (SELECT 1 FROM computer_disk_version_roots r WHERE r.environment_id=o.environment_id AND r.computer_id=o.computer_id AND r.root_pack_digest=o.digest)
- AND NOT EXISTS (SELECT 1 FROM computer_object_pins p WHERE p.environment_id=o.environment_id AND p.computer_id=o.computer_id AND p.digest=o.digest)
- AND NOT EXISTS (SELECT 1 FROM computer_object_edges e WHERE e.environment_id=o.environment_id AND e.computer_id=o.computer_id AND e.child_digest=o.digest)
- ORDER BY o.rank DESC,o.environment_id,o.computer_id,o.digest
+ WHERE NOT EXISTS (SELECT 1 FROM computer_disk_roots r WHERE r.environment_id=o.environment_id AND r.root_pack_digest=o.digest)
+ AND NOT EXISTS (SELECT 1 FROM computer_object_pins p WHERE p.environment_id=o.environment_id AND p.digest=o.digest)
+ AND NOT EXISTS (SELECT 1 FROM computer_object_edges e WHERE e.environment_id=o.environment_id AND e.child_digest=o.digest)
+ ORDER BY o.rank DESC,o.environment_id,o.digest
  LIMIT sqlc.arg(row_limit);
 
 -- name: DeleteUnreferencedComputerObject :execrows
 DELETE FROM computer_objects o
- WHERE o.environment_id=sqlc.arg(environment_id) AND o.computer_id=sqlc.arg(computer_id) AND o.digest=sqlc.arg(digest)
- AND NOT EXISTS (SELECT 1 FROM computer_disk_version_roots r WHERE r.environment_id=o.environment_id AND r.computer_id=o.computer_id AND r.root_pack_digest=o.digest)
- AND NOT EXISTS (SELECT 1 FROM computer_object_pins p WHERE p.environment_id=o.environment_id AND p.computer_id=o.computer_id AND p.digest=o.digest)
- AND NOT EXISTS (SELECT 1 FROM computer_object_edges e WHERE e.environment_id=o.environment_id AND e.computer_id=o.computer_id AND e.child_digest=o.digest);
+ WHERE o.environment_id=sqlc.arg(environment_id) AND o.digest=sqlc.arg(digest)
+ AND NOT EXISTS (SELECT 1 FROM computer_disk_roots r WHERE r.environment_id=o.environment_id AND r.root_pack_digest=o.digest)
+ AND NOT EXISTS (SELECT 1 FROM computer_object_pins p WHERE p.environment_id=o.environment_id AND p.digest=o.digest)
+ AND NOT EXISTS (SELECT 1 FROM computer_object_edges e WHERE e.environment_id=o.environment_id AND e.child_digest=o.digest);
 
 -- Run only after deleting the selected Computer object in the same transaction.
 -- Other Computers and artifact kinds may still own the shared physical bytes.

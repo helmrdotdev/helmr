@@ -72,8 +72,8 @@ SELECT i.*,spec.config AS computer_config,spec.digest AS computer_spec_digest,
  spec.seed_media_type AS computer_image_media_type,
  source.id AS preparation_disk_version_id,
  c.initial_config AS computer_initial_config,root.locator AS computer_version_locator,
- source.status AS computer_disk_version_status,source.root_pack_digest AS computer_content_digest,
- source.logical_bytes AS computer_logical_size_bytes,
+ source.status AS computer_disk_version_status,root.root_pack_digest AS computer_content_digest,
+ root.logical_bytes AS computer_logical_size_bytes,
  platform.arch AS computer_architecture,platform.rootfs_digest,platform.contract AS vm_contract,
  program.runtime_artifact_digest AS program_runtime_digest,program.program_index_digest,
  artifact.digest AS program_artifact_digest,artifact.size_bytes AS program_artifact_size_bytes,
@@ -82,7 +82,8 @@ SELECT i.*,spec.config AS computer_config,spec.digest AS computer_spec_digest,
  JOIN computer_specs spec ON spec.id=i.computer_spec_id AND spec.environment_id=i.environment_id
  JOIN vm_platforms platform ON platform.id=i.vm_platform_id
  LEFT JOIN computer_disk_versions source ON source.id=COALESCE(i.source_disk_version_id,c.head_disk_version_id) AND source.computer_id=i.computer_id
- LEFT JOIN computer_disk_version_roots root ON root.version_id=source.id AND root.computer_id=i.computer_id
+ LEFT JOIN computer_disk_version_roots retained ON retained.version_id=source.id AND retained.computer_id=i.computer_id
+ LEFT JOIN computer_disk_roots root ON root.environment_id=retained.environment_id AND root.id=retained.root_id
  LEFT JOIN deployments program ON program.id=i.program_deployment_id AND program.environment_id=i.environment_id
  LEFT JOIN artifacts artifact ON artifact.id=program.program_artifact_id AND artifact.environment_id=i.environment_id
  WHERE i.worker_host_id=sqlc.arg(worker_host_id) AND i.worker_epoch=sqlc.arg(worker_epoch)

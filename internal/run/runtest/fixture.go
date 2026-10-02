@@ -219,7 +219,6 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, createdAt time.Ti
 	`, computerID, fixture.EnvironmentID, Region,
 		fixture.ComputerDefinitionID, versionID)
 	computerdbtest.InsertCommittedComputerRoot(t, ctx, tx, versionID, fixture.EnvironmentID, computerID)
-	computerdbtest.InsertComputerVersion(t, ctx, tx, fixture.EnvironmentID, computerID, versionID)
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO runs (
 			id, org_id, project_id, environment_id, deployment_id,

@@ -111,7 +111,7 @@ func completeCheckpoint(ctx context.Context, tx pgx.Tx, ref CheckpointRef, manif
 	if err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
-	root, err := q.LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: instance.EnvironmentID, ComputerID: instance.ComputerID, Digest: runtimeComputer.Root.Pack.Digest})
+	root, err := q.LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: instance.EnvironmentID, Digest: runtimeComputer.Root.Pack.Digest})
 	if err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
@@ -125,7 +125,7 @@ func completeCheckpoint(ctx context.Context, tx pgx.Tx, ref CheckpointRef, manif
 	if err = source.requireRootPinned(ctx, ref.DesiredVersion, root.Digest); err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
-	version, err := q.CreatePrivateCheckpointComputerDiskVersion(ctx, db.CreatePrivateCheckpointComputerDiskVersionParams{ID: pgvalue.NewUUIDv7(), EnvironmentID: instance.EnvironmentID, CheckpointID: cp.ID, RootPackDigest: pgvalue.Text(runtimeComputer.Root.Pack.Digest), LogicalBytes: runtimeComputer.LogicalBytes})
+	version, err := q.CreatePrivateCheckpointComputerDiskVersion(ctx, db.CreatePrivateCheckpointComputerDiskVersionParams{ID: pgvalue.NewUUIDv7(), EnvironmentID: instance.EnvironmentID, CheckpointID: cp.ID})
 	if err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
@@ -133,7 +133,11 @@ func completeCheckpoint(ctx context.Context, tx pgx.Tx, ref CheckpointRef, manif
 	if err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
-	if err = q.CreateComputerDiskVersionRoot(ctx, db.CreateComputerDiskVersionRootParams{EnvironmentID: instance.EnvironmentID, ComputerID: instance.ComputerID, VersionID: version.ID, Locator: rootJSON}); err != nil {
+	rootID, err := q.RetainComputerDiskRoot(ctx, db.RetainComputerDiskRootParams{ID: pgvalue.NewUUIDv7(), EnvironmentID: instance.EnvironmentID, Locator: rootJSON})
+	if err != nil {
+		return db.ComputerCheckpoint{}, err
+	}
+	if err = q.CreateComputerDiskVersionRoot(ctx, db.CreateComputerDiskVersionRootParams{EnvironmentID: instance.EnvironmentID, ComputerID: instance.ComputerID, VersionID: version.ID, RootID: rootID}); err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
 	kinds := []string{"computer_checkpoint_vm_config", "computer_checkpoint_vm_state", "computer_checkpoint_memory", "computer_checkpoint_scratch_disk"}
