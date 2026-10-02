@@ -143,28 +143,25 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 			t.Fatalf("decision = %+v request = %+v", decision, controlPlane.startRequest)
 		}
 	})
-	t.Run("domain failure", func(t *testing.T) {
-		controlPlane := &actorRuntimeContractControlPlane{
-			testRunLeaseControlPlane: &testRunLeaseControlPlane{},
-			startResponse: workerapi.StartActorResponse{
-				CorrelationID: correlationID,
-				Failed: &workerapi.RuntimeOperationFailure{
-					Code: "actor_key_conflict", Message: "Actor key is in use",
-				},
-			},
-		}
-		decision, err := runActorRuntimeContract(t, event, controlPlane)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var failure workerapi.RuntimeOperationFailure
-		if err := json.Unmarshal([]byte(decision.GetDataJson()), &failure); err != nil {
-			t.Fatal(err)
-		}
-		if decision.GetKind() != "failed" || failure.Code != "actor_key_conflict" {
-			t.Fatalf("decision = %+v failure = %+v", decision, failure)
-		}
-	})
+	for _, code := range []string{"actor_key_conflict", "computer_preparation_exhausted", "invalid_actor_start"} {
+		t.Run(code, func(t *testing.T) {
+			controlPlane := &actorRuntimeContractControlPlane{
+				testRunLeaseControlPlane: &testRunLeaseControlPlane{},
+				startResponse:            workerapi.StartActorResponse{CorrelationID: correlationID, Failed: &workerapi.RuntimeOperationFailure{Code: code, Message: "Actor start rejected"}},
+			}
+			decision, err := runActorRuntimeContract(t, event, controlPlane)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var failure workerapi.RuntimeOperationFailure
+			if err = json.Unmarshal([]byte(decision.GetDataJson()), &failure); err != nil {
+				t.Fatal(err)
+			}
+			if decision.GetKind() != "failed" || failure.Code != code || failure.Retryable || len(controlPlane.startRequests) != 1 {
+				t.Fatalf("decision=%+v failure=%+v requests=%d", decision, failure, len(controlPlane.startRequests))
+			}
+		})
+	}
 	t.Run("stale source fence", func(t *testing.T) {
 		controlPlane := &actorRuntimeContractControlPlane{
 			testRunLeaseControlPlane: &testRunLeaseControlPlane{},

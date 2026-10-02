@@ -9,6 +9,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
+// ErrActorRunSelection rejects a caller queue override after the stored
+// Actor definition and queue configuration have been validated.
+var ErrActorRunSelection = errors.New("actor run queue selection is invalid")
+
 type ActorRunAdmission struct {
 	QueueName             string
 	QueueConcurrencyLimit *int64
@@ -79,7 +83,7 @@ func ResolveActorRunAdmission(
 		manifest.Run.Queue = queueOverride
 	}
 	if err := validate(manifest); err != nil {
-		return ActorRunAdmission{}, fmt.Errorf("validate actor admission selection: %w", err)
+		return ActorRunAdmission{}, fmt.Errorf("%w: %v", ErrActorRunSelection, err)
 	}
 	var queueLimit *int64
 	for _, queue := range queueConfig.Queues {

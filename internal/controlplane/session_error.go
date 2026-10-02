@@ -45,7 +45,8 @@ const (
 // errors are internal. Session reads report a missing Session as not found
 // and other errors as retryable unavailability. A public Actor start the
 // session owner could not admit for an undescribed reason is retryable
-// unavailability. A run-sourced Actor start asks the worker to
+// unavailability. Stored Actor start authority failures are internal.
+// A run-sourced Actor start asks the worker to
 // re-authenticate on stale credential claims and reports a stale source as a
 // conflict; its other undescribed errors are internal.
 //
@@ -229,7 +230,7 @@ func (e sessionCursorExpiredError) ErrorDetails() map[string]json.RawMessage {
 func (s *Server) writeSessionError(w http.ResponseWriter, err error, operation sessionOperation) {
 	mapped := sessionError(err, operation)
 	switch status := errorStatus(mapped); {
-	case operation == sessionPublicOperation && status == http.StatusInternalServerError && s.log != nil:
+	case (operation == sessionPublicOperation || operation == sessionStartOperation) && status == http.StatusInternalServerError && s.log != nil:
 		s.log.Error("session operation failed", "error", err)
 	case (operation == sessionGetOperation || operation == sessionListOperation) && status == http.StatusServiceUnavailable:
 		s.log.Error("read Session failed", "error", err)
@@ -268,11 +269,7 @@ func actorStartError(err error) error {
 	case errors.Is(err, session.ErrStartInvalid):
 		return badRequest(codedError{code: "invalid_actor_start", message: err.Error()})
 	case errors.Is(err, session.ErrStartAuthority):
-		return unavailable(codedError{
-			code:      "actor_start_authority_unavailable",
-			message:   session.ErrStartAuthority.Error(),
-			retryable: true,
-		})
+		return errors.New("actor start stored authority is invalid")
 	default:
 		return unavailable(codedError{
 			code:      "actor_start_authority_unavailable",
@@ -306,6 +303,8 @@ func actorStartFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
 		return runtimeOperationFailure("actor_not_deployed", err.Error(), false), true
 	case errors.Is(err, session.ErrStartComputerNotFound):
 		return runtimeOperationFailure("computer_not_found", err.Error(), false), true
+	case errors.Is(err, computer.ErrPreparationExhausted):
+		return runtimeOperationFailure("computer_preparation_exhausted", "Computer preparation limit reached", false), true
 	case errors.Is(err, session.ErrStartComputerUnavailable):
 		return runtimeOperationFailure("computer_unavailable", err.Error(), true), true
 	case errors.Is(err, session.ErrStartSecretUnavailable):
