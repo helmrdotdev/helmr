@@ -10,7 +10,7 @@ locals {
 
   worker_artifact_cache_mib       = coalesce(var.worker_artifact_cache_max_mib, 0)
   worker_shared_disk_mib          = coalesce(var.worker_disk_mib, 0) - var.worker_disk_reserve_mib - local.worker_artifact_cache_mib
-  worker_guest_ephemeral_disk_mib = local.worker_shared_disk_mib
+  worker_guest_ephemeral_disk_mib = coalesce(var.worker_execution_slots, 0) * var.worker_vm_scratch_disk_mib
   worker_generation_inputs = {
     generation_key        = var.worker_generation_key
     ami_id                = local.worker_ami_id
@@ -40,9 +40,10 @@ locals {
         throughput = var.worker_root_volume_throughput
       }
       disk = {
-        total_mib          = var.worker_disk_mib
-        reserve_mib        = var.worker_disk_reserve_mib
-        artifact_cache_mib = var.worker_artifact_cache_max_mib
+        total_mib            = var.worker_disk_mib
+        reserve_mib          = var.worker_disk_reserve_mib
+        artifact_cache_mib   = var.worker_artifact_cache_max_mib
+        computer_staging_mib = var.worker_computer_staging_mib
       }
       lifecycle = {
         health_check_grace_period_seconds               = 900
@@ -101,6 +102,7 @@ locals {
       worker_capacity_memory_mib   = spec.generation_inputs.capacity.memory_mib
       worker_execution_slots       = spec.generation_inputs.capacity.vm_slots
       artifact_cache_max_mib       = spec.generation_inputs.supply.disk.artifact_cache_mib
+      computer_staging_mib         = spec.generation_inputs.supply.disk.computer_staging_mib
       lifecycle                    = spec.generation_inputs.supply.lifecycle
       sealed_provider_definition   = spec.sealed_provider_definition
     }))
@@ -255,6 +257,7 @@ module "worker_group" {
   worker_capacity_memory_mib                      = local.worker_generations[each.key].worker_capacity_memory_mib
   worker_execution_slots                          = local.worker_generations[each.key].worker_execution_slots
   artifact_cache_max_mib                          = local.worker_generations[each.key].artifact_cache_max_mib
+  computer_staging_mib                            = local.worker_generations[each.key].computer_staging_mib
   worker_controlplane_url                         = local.worker_controlplane_url
   cas_uri                                         = module.controlplane.cas_uri
   cas_bucket_arn                                  = module.controlplane.cas_bucket_arn

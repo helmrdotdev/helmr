@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Check native self-host and image root plans, without test-only outputs."""
+import base64
 import json
 import sys
 from pathlib import Path
@@ -87,3 +88,12 @@ for filename in sys.argv[1:3]:
             assert all(secret['name'] != 'CAPACITY_TOKEN'
                        for container in tasks['dispatcher'] for secret in container.get('secrets', [])), filename
     print(f'ok - {filename}: explicit count, inert preparation, retained source, target activation and Capacity credential')
+
+    staging_plan = plans['computer_staging_rotates_and_retains_generation']
+    templates = [r['change']['after'] for r in staging_plan['resource_changes']
+                 if r['type'] == 'aws_launch_template']
+    environments = [base64.b64decode(t['user_data']).decode() for t in templates]
+    assert len(environments) == 2, (filename, len(environments))
+    assert sum('WORKER_COMPUTER_STAGING_MIB=65536' in env for env in environments) == 1, filename
+    assert sum('WORKER_COMPUTER_STAGING_MIB=32768' in env for env in environments) == 1, filename
+    print(f'ok - {filename}: new and retained Computer staging reach actual launch templates')

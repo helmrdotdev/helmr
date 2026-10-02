@@ -462,3 +462,13 @@ variable "computer_devices" {
     error_message = "computer_devices must contain unique absolute NBD paths with indices 0-9999."
   }
 }
+
+variable "computer_staging_mib" {
+  description = "Per-Instance physical Computer storage staging budget, included in the lifecycle disk envelope."
+  type        = number
+  default     = 65536
+  validation {
+    condition     = var.computer_staging_mib > 0 && floor(var.computer_staging_mib) == var.computer_staging_mib && var.computer_staging_mib <= 8796093022207
+    error_message = "computer_staging_mib must be a positive whole MiB size representable in int64 bytes."
+  }
+}

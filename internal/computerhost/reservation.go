@@ -21,10 +21,10 @@ func instanceReservationVector(cpuMillis, memoryMiB, guestEphemeralDiskMiB int64
 		return reservation.Vector{}, errors.New("instance capacity vector is invalid")
 	}
 	return reservation.Vector{
-		CPUMillis:               cpuMillis,
-		MemoryBytes:             memoryMiB * mebibyte,
-		GuestEphemeralDiskBytes: guestEphemeralDiskMiB * mebibyte,
-		VMSlots:                 1,
+		CPUMillis:     cpuMillis,
+		MemoryBytes:   memoryMiB * mebibyte,
+		HostDiskBytes: guestEphemeralDiskMiB * mebibyte,
+		VMSlots:       1,
 	}, nil
 }
 
@@ -38,9 +38,9 @@ func instanceReservationVectorWithProjection(
 	if err != nil {
 		return reservation.Vector{}, err
 	}
-	if projectionBytes < 0 || request.GuestEphemeralDiskBytes > math.MaxInt64-projectionBytes {
+	if projectionBytes < 0 || request.HostDiskBytes > math.MaxInt64-projectionBytes {
 		return reservation.Vector{}, errors.New("instance arena projection capacity is invalid")
 	}
-	request.GuestEphemeralDiskBytes += projectionBytes
+	request.HostDiskBytes += projectionBytes
 	return request, nil
 }

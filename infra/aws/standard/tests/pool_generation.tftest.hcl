@@ -85,7 +85,7 @@ variables {
   worker_capacity_vcpus               = 8
   worker_capacity_memory_mib          = 16384
   worker_execution_slots              = 4
-  worker_disk_mib                     = 262144
+  worker_disk_mib                     = 1048576
   worker_disk_reserve_mib             = 1024
   worker_vm_vcpus                     = 2
   worker_vm_memory_mib                = 4096
@@ -355,4 +355,22 @@ run "reject_retained_current_generation_collision" {
     retained_worker_generations = run.export_serving_source.worker_generation_definitions
   }
   expect_failures = [terraform_data.worker_preconditions]
+}
+
+run "computer_staging_rotates_and_retains_generation" {
+  command = plan
+  variables {
+    create_worker               = true
+    worker_computer_staging_mib = 32768
+    retained_worker_generations = run.export_serving_source.worker_generation_definitions
+  }
+  assert {
+    condition = (
+      local.worker_pool_name != one(keys(var.retained_worker_generations)) &&
+      local.worker_generation_inputs.capacity.guest_ephemeral_disk_mib == var.worker_execution_slots * var.worker_vm_scratch_disk_mib &&
+      one(values(var.retained_worker_generations)).generation_inputs.supply.disk.computer_staging_mib == 65536 &&
+      local.worker_generation_inputs.supply.disk.computer_staging_mib == 32768
+    )
+    error_message = "Staging must rotate the Pool, preserve retained staging, and keep guest capacity separate from host files."
+  }
 }

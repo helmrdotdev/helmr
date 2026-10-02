@@ -226,7 +226,7 @@ func TestPreparedMachinesCheckpointRetriesExclusionAndStagingCleanup(t *testing.
 			if !p.instanceCheckedOut(target.ID, target.WorkerEpoch) || !captureRetained(p, ref) || client.closed != 0 {
 				t.Fatal("failed exclusion lost its owner")
 			}
-			if failedCapture && p.Reservations.Snapshot().Used.GuestEphemeralDiskBytes == 0 {
+			if failedCapture && p.Reservations.Snapshot().Used.HostDiskBytes == 0 {
 				t.Fatal("uncertain source lost staging charge")
 			}
 			machine.closeErr = nil
@@ -236,7 +236,7 @@ func TestPreparedMachinesCheckpointRetriesExclusionAndStagingCleanup(t *testing.
 			if err := p.stopInstanceTarget(t.Context(), client, closeTarget); err != nil {
 				t.Fatal(err)
 			}
-			if p.instanceCheckedOut(target.ID, target.WorkerEpoch) || captureRetained(p, ref) || client.closed != 1 || p.Reservations.Snapshot().Used.GuestEphemeralDiskBytes != 0 {
+			if p.instanceCheckedOut(target.ID, target.WorkerEpoch) || captureRetained(p, ref) || client.closed != 1 || p.Reservations.Snapshot().Used.HostDiskBytes != 0 {
 				t.Fatalf("cleanup incomplete closed=%d capacity=%+v", client.closed, p.Reservations.Snapshot().Used)
 			}
 			assertRemoved(t, artifact.VMState.Path)

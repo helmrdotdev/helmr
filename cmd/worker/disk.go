@@ -2,13 +2,15 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"math"
 	"os"
 
 	"golang.org/x/sys/unix"
 )
 
 func advertisedWorkerDiskMiB(workDir string, configuredMiB int64, reserveMiB int64) (int64, error) {
-	if reserveMiB <= 0 {
+	if reserveMiB <= 0 || reserveMiB > math.MaxInt64/(1<<20) || configuredMiB < 0 || configuredMiB > math.MaxInt64/(1<<20) {
 		return 0, errors.New("worker disk reserve must be positive")
 	}
 	totalMiB := configuredMiB
@@ -47,12 +49,12 @@ func capGuestEphemeralDiskCapacity(capacity workerDiskCapacity, reserve, physica
 	if err := capacity.Validate(); err != nil {
 		return workerDiskCapacity{}, err
 	}
-	if reserve == 0 || reserve >= uint64(capacity.HostGuestEphemeralDiskBytes) {
+	if reserve == 0 || reserve >= uint64(capacity.HostDiskBytes) {
 		return workerDiskCapacity{}, errors.New("worker disk reserve consumes aggregate capacity")
 	}
-	capacity.HostGuestEphemeralDiskBytes -= int64(reserve)
-	if physicalCapacity < uint64(capacity.HostGuestEphemeralDiskBytes) {
-		capacity.HostGuestEphemeralDiskBytes = int64(physicalCapacity)
+	capacity.HostDiskBytes -= int64(reserve)
+	if physicalCapacity < uint64(capacity.HostDiskBytes) {
+		capacity.HostDiskBytes = int64(physicalCapacity)
 	}
 	if err := capacity.Validate(); err != nil {
 		return workerDiskCapacity{}, err
@@ -86,32 +88,63 @@ func workerDerivedCacheBudgetBytes(hostDiskMiB int64, numerator int64, denominat
 	return budgetMiB * 1024 * 1024
 }
 
-// workerDiskCapacity keeps a single-VM shape separate from the aggregate host
-// pools consumed by dispatch. This prevents a worker with N VM slots from
-// advertising only one VM's disk as its total capacity.
+// workerDiskCapacity distinguishes the guest scratch shape from the physical
+// supply shared by every stage of an Instance's lifetime.
 type workerDiskCapacity struct {
-	VMGuestEphemeralDiskBytes   int64
-	HostGuestEphemeralDiskBytes int64
+	VMGuestEphemeralDiskBytes int64
+	HostDiskBytes             int64
 }
 
 func partitionWorkerDiskCapacity(hostMiB, vmMiB, cacheBytes int64) (workerDiskCapacity, error) {
 	const mib = int64(1024 * 1024)
-	if hostMiB <= 0 || vmMiB <= 0 || cacheBytes < 0 || cacheBytes > hostMiB*mib {
+	if hostMiB <= 0 || vmMiB <= 0 || hostMiB > math.MaxInt64/mib || vmMiB > math.MaxInt64/mib || cacheBytes < 0 || cacheBytes > hostMiB*mib {
 		return workerDiskCapacity{}, errors.New("worker physical disk budget is invalid")
 	}
 	capacity := workerDiskCapacity{
-		VMGuestEphemeralDiskBytes:   vmMiB * mib,
-		HostGuestEphemeralDiskBytes: hostMiB*mib - cacheBytes,
+		VMGuestEphemeralDiskBytes: vmMiB * mib,
+		HostDiskBytes:             hostMiB*mib - cacheBytes,
 	}
 	return capacity, capacity.Validate()
 }
 
 func (c workerDiskCapacity) Validate() error {
-	if c.VMGuestEphemeralDiskBytes <= 0 || c.HostGuestEphemeralDiskBytes <= 0 {
+	if c.VMGuestEphemeralDiskBytes <= 0 || c.HostDiskBytes <= 0 {
 		return errors.New("worker disk capacity fields must be positive")
 	}
-	if c.VMGuestEphemeralDiskBytes > c.HostGuestEphemeralDiskBytes {
+	if c.VMGuestEphemeralDiskBytes > c.HostDiskBytes {
 		return errors.New("single-VM disk shape exceeds aggregate host capacity")
 	}
 	return nil
+}
+
+// Validate every configured slot, even when recovery quarantines some owners.
+// Available bytes already exclude residue; funding the original slot count also
+// leaves room for uncertain writers to finish within their lifecycle bounds.
+func validateWorkerDiskFunding(supply, perSlot int64, slots int32) error {
+	if supply < 0 || perSlot <= 0 || slots <= 0 || perSlot > math.MaxInt64/int64(slots) {
+		return errors.New("invalid worker lifecycle disk capacity")
+	}
+	required := perSlot * int64(slots)
+	if supply < required {
+		return fmt.Errorf("worker lifecycle disk capacity: have %d bytes, require %d bytes for %d slots", supply, required, slots)
+	}
+	return nil
+}
+
+func availableWorkerDiskBytes(workDir string, reserveBytes, cacheBytes int64) (int64, error) {
+	var stat unix.Statfs_t
+	if err := unix.Statfs(workDir, &stat); err != nil {
+		return 0, err
+	}
+	if stat.Bsize <= 0 || uint64(stat.Bavail) > uint64(math.MaxInt64)/uint64(stat.Bsize) {
+		return 0, errors.New("worker filesystem available capacity overflow")
+	}
+	return usableWorkerDiskBytes(int64(stat.Bavail)*int64(stat.Bsize), reserveBytes, cacheBytes)
+}
+
+func usableWorkerDiskBytes(available, reserve, cache int64) (int64, error) {
+	if available < 0 || reserve <= 0 || cache < 0 || reserve > available || cache > available-reserve {
+		return 0, errors.New("worker filesystem cannot fund reserve and cache")
+	}
+	return available - reserve - cache, nil
 }

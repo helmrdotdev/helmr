@@ -189,6 +189,13 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("partition worker physical disk capacity: %w", err)
 	}
+	perSlotDisk, err := computerhost.HostDiskPerSlot(vmResources.MemoryMiB, vmResources.DiskMiB, cfg.ComputerStagingMiB*(1<<20), checkpointEncryptor)
+	if err != nil {
+		return fmt.Errorf("calculate worker lifecycle disk: %w", err)
+	}
+	if err := validateWorkerDiskFunding(diskCapacity.HostDiskBytes, perSlotDisk, cfg.WorkerExecutionSlots); err != nil {
+		return err
+	}
 	allocatable := vm.Resources{
 		MilliCPU:  cfg.WorkerCapacityVCPUs * 1000,
 		MemoryMiB: cfg.WorkerCapacityMemoryMiB,
@@ -202,15 +209,15 @@ func run(log *slog.Logger) error {
 		MaxMemoryMiB:              allocatable.MemoryMiB,
 		VMMilliCPU:                vmResources.MilliCPU,
 		VMMemoryMiB:               vmResources.MemoryMiB,
-		GuestEphemeralDiskBytes:   diskCapacity.HostGuestEphemeralDiskBytes,
+		GuestEphemeralDiskBytes:   int64(cfg.WorkerExecutionSlots) * diskCapacity.VMGuestEphemeralDiskBytes,
 		VMGuestEphemeralDiskBytes: diskCapacity.VMGuestEphemeralDiskBytes,
 		ExecutionSlotsAvailable:   int32(allocatable.Slots),
 	}
 	hostReservations, err := reservation.New(reservation.Vector{
-		CPUMillis:               workerCapabilities.MaxVCPUs * 1000,
-		MemoryBytes:             workerCapabilities.MaxMemoryMiB * 1024 * 1024,
-		GuestEphemeralDiskBytes: workerCapabilities.GuestEphemeralDiskBytes,
-		VMSlots:                 int64(workerCapabilities.ExecutionSlotsAvailable),
+		CPUMillis:     workerCapabilities.MaxVCPUs * 1000,
+		MemoryBytes:   workerCapabilities.MaxMemoryMiB * 1024 * 1024,
+		HostDiskBytes: diskCapacity.HostDiskBytes,
+		VMSlots:       int64(workerCapabilities.ExecutionSlotsAvailable),
 	})
 	if err != nil {
 		return fmt.Errorf("configure worker capacity: %w", err)
@@ -339,10 +346,10 @@ func run(log *slog.Logger) error {
 				created, err := hostReservations.Reserve(
 					reservation.Key{Kind: "quarantine", Epoch: 1, ID: owner.ID},
 					reservation.Vector{
-						CPUMillis:               workerCapabilities.VMMilliCPU,
-						MemoryBytes:             workerCapabilities.VMMemoryMiB * 1024 * 1024,
-						GuestEphemeralDiskBytes: workerCapabilities.VMGuestEphemeralDiskBytes,
-						VMSlots:                 1,
+						CPUMillis:     workerCapabilities.VMMilliCPU,
+						MemoryBytes:   workerCapabilities.VMMemoryMiB * 1024 * 1024,
+						HostDiskBytes: perSlotDisk,
+						VMSlots:       1,
 					},
 				)
 				if err != nil {
@@ -351,6 +358,13 @@ func run(log *slog.Logger) error {
 				if !created {
 					return evidence, errors.New("quarantined instance is already reserved")
 				}
+			}
+			available, err := availableWorkerDiskBytes(workDir, cfg.WorkerDiskReserveMiB*(1<<20), artifactCacheMaxBytes)
+			if err != nil {
+				return evidence, fmt.Errorf("inspect recovered worker disk: %w", err)
+			}
+			if err := validateWorkerDiskFunding(available, perSlotDisk, cfg.WorkerExecutionSlots); err != nil {
+				return evidence, err
 			}
 			return evidence, nil
 		},

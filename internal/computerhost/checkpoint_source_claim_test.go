@@ -213,7 +213,7 @@ func startCapturedServe(ctx context.Context, t *testing.T, machine *capturedServ
 	prepared.Source.WriterGeneration = mount.WriterGeneration
 	prepared.Source.Computer = &workerapi.InstanceComputerSource{VersionID: mount.Target.BaseComputerDiskVersionID}
 	machines := NewPreparedMachines(nil, nil, 1, nil)
-	ledger, err := reservation.New(reservation.Vector{CPUMillis: 2000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 4 << 30, VMSlots: 1})
+	ledger, err := reservation.New(reservation.Vector{CPUMillis: 2000, MemoryBytes: 2 << 30, HostDiskBytes: 4 << 30, VMSlots: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

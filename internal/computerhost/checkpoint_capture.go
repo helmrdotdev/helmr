@@ -134,7 +134,7 @@ func (c *computerCheckpointer) CreateCheckpoint(ctx context.Context, request com
 		return result, err
 	}
 	key = reservation.Key{Kind: "checkpoint-staging", ID: request.Target.Capture.CheckpointID, Epoch: request.Target.DesiredVersion}
-	reserved, err = c.reservations.Reserve(key, reservation.Vector{GuestEphemeralDiskBytes: limits.total})
+	reserved, err = c.reservations.Reserve(key, reservation.Vector{HostDiskBytes: limits.total})
 	if err != nil {
 		if errors.Is(err, reservation.ErrDuplicateReservation) {
 			otherOwner = true

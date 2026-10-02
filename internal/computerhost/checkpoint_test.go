@@ -399,7 +399,7 @@ func (s *checkpointMachine) SnapshotLimits() (vm.SnapshotLimits, error) {
 
 func testCheckpointReservations(t *testing.T) *reservation.Ledger {
 	t.Helper()
-	ledger, err := reservation.New(reservation.Vector{CPUMillis: 1000, MemoryBytes: 1 << 30, GuestEphemeralDiskBytes: 1 << 30})
+	ledger, err := reservation.New(reservation.Vector{CPUMillis: 1000, MemoryBytes: 1 << 30, HostDiskBytes: 1 << 30})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -55,17 +55,20 @@ worker_artifact_cache_max_mib         = 16384
 worker_vm_vcpus                       = 1
 worker_vm_memory_mib                  = 2048
 worker_vm_scratch_disk_mib            = 32768
+worker_computer_staging_mib           = 65536
 worker_computer_save_interval_seconds = 60
 worker_computer_devices               = ["/dev/nbd0", "/dev/nbd1", "/dev/nbd2", "/dev/nbd3"]
 ```
 
-This bounds a sequential smoke test; it does not qualify concurrent capture and
-restore on both slots. The explicit 480-GiB disk ceiling leaves 456 GiB after the
-8-GiB reserve and 16-GiB cache. A single cold Computer with 32-GiB guest scratch
-can reserve another 32 GiB for its local projection and 64 GiB for default staging:
-128 GiB in total before other instances and restore/capture overhead. A 120-GiB
-root cannot satisfy that reservation. Allow additional shared capacity for all
-concurrent work and keep the disk ceiling below the actual filesystem capacity.
+This profile was qualified with sequential smoke workloads; concurrent capture
+and restore on both slots remain a separate runtime qualification. The explicit
+480-GiB disk ceiling leaves 456 GiB after the 8-GiB reserve and 16-GiB cache.
+Each slot now needs just over 216 GiB for its full lifecycle: scratch, Computer
+projection and staging, runtime and program files, retained restored memory/state,
+and simultaneous checkpoint intermediates. Both slots fit the configured supply.
+The Worker also checks fresh available filesystem space before activation; existing
+files can make an otherwise sufficient configured disk fail startup. Keep the
+ceiling below actual filesystem capacity and fund every configured slot.
 
 Use only an EC2 family that supports nested virtualization. Keep NAT enabled while a private worker is running or draining.
 
@@ -76,9 +79,12 @@ The standard profile defaults to a metal worker instance type and nested virtual
 Workers are filesystem-first. Their root EBS volume holds runtime data, staged
 artifacts, and cache. The AWS reference roots require explicit CPU, memory,
 execution-slot, cache and disk capacity when Workers are enabled, including a
-non-null `worker_disk_mib`. The Worker trusts this explicit ceiling and subtracts
-its reserve and cache before certifying shared capacity. Keep the ceiling below
-the actual filesystem size; the Worker does not correct an oversized ceiling.
+non-null `worker_disk_mib`. The Worker subtracts its reserve and cache from the
+configured ceiling, then requires a complete lifecycle envelope for every slot.
+After local recovery it checks fresh filesystem availability with the same reserve,
+cache and original slot count, including quarantined owners. Unaccounted temporary
+files reduce that availability. A shortfall prevents activation and reports the
+required and available bytes; it does not admit an impossible preparation.
 
 ## Computer storage
 
@@ -88,16 +94,18 @@ this Worker (for example, `/dev/nbd0 /dev/nbd1`). Do not share these devices wit
 another service. The Worker fails startup without an explicit allowlist.
 
 `WORKER_COMPUTER_STAGING_MIB` bounds local encrypted disk version staging per
-Runtime (default: 65536 MiB). This host reservation is additional to guest disk
-capacity; admission waits when the local ledger cannot reserve it. It does not
-change the Computer's logical disk size or make local writes externally durable.
+Instance (default: 65536 MiB). It is additional to guest scratch and the Computer
+projection, and does not change the Computer's logical disk size or make local
+writes externally durable. The AWS roots expose `worker_computer_staging_mib`;
+the Worker module exposes `computer_staging_mib`. The value is part of each
+immutable generation, including retained generations.
 
-The current AWS roots neither expose this staging setting nor validate its full
-reservation with the Computer projection. The planner's guest-disk admission can
-therefore accept work that the local ledger cannot fit. Such work can keep retrying
-with a local-capacity refusal instead of reaching a terminal failure. The explicit
-smoke sizing above avoids the observed undersized-host case; it is not a fix to
-that admission mismatch. Inspect Worker capacity logs when a Run remains queued.
+Host disk supply and advertised guest disk are distinct. Guest supply is the
+configured slot count multiplied by per-VM scratch; physical disk also funds
+Program/runtime files, restore inputs and later capture. Incoming checkpoint
+artifacts must fit the admitted VM shape before materialization. AWS planning
+rejects explicit disk configurations that cannot fund these files. Genuine
+preparation failures retain their existing bounded retry and exhaustion behavior.
 
 `WORKER_COMPUTER_SAVE_EVERY` is required and must be a positive Go duration.
 It controls background disk preservation while an execution is running. Choose

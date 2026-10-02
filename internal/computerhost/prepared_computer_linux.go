@@ -43,7 +43,7 @@ func (p *PreparedMachines) prepareComputerVersion(ctx context.Context, target wo
 	if p.CAS == nil || p.ComputerRanges == nil || p.ComputerPreparation == nil || p.Reservations == nil || p.ComputerStagingBytes <= 0 {
 		return nil, errors.New("computer preparation requires storage, source authority and bounded staging admission")
 	}
-	created, err := p.Reservations.Reserve(computerStagingKey(target.ID, target.WorkerEpoch), reservation.Vector{GuestEphemeralDiskBytes: p.ComputerStagingBytes})
+	created, err := p.Reservations.Reserve(computerStagingKey(target.ID, target.WorkerEpoch), reservation.Vector{HostDiskBytes: p.ComputerStagingBytes})
 	if errors.Is(err, reservation.ErrCapacityExceeded) || err == nil && !created {
 		return nil, errPreparedMachineCapacityBusy
 	}

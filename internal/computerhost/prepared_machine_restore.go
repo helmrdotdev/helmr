@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/reservation"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -45,7 +46,7 @@ func (p *PreparedMachines) restorePreparedMachine(
 		return nil, err
 	}
 	key := restoreStagingKey(target.ID, target.WorkerEpoch)
-	if p.Reservations.Snapshot().Reservations[key].GuestEphemeralDiskBytes != staging {
+	if p.Reservations.Snapshot().Reservations[key].HostDiskBytes != staging {
 		return nil, errors.New("checkpoint restore staging was not reserved")
 	}
 	directory := p.restorePreparationDirectory(target.ID, target.WorkerEpoch)
@@ -149,7 +150,7 @@ func (p *PreparedMachines) checkpointRestoreCapacity(target workerapi.InstanceRe
 	if restore == nil {
 		return 0, 0, nil
 	}
-	if target.Source.ReservedMemoryMiB <= 0 {
+	if target.Source.ReservedMemoryMiB <= 0 || target.Source.ReservedDiskMiB <= 0 || target.Source.ReservedDiskMiB > math.MaxInt64/mebibyte {
 		return 0, 0, errors.New("restore memory reservation is required")
 	}
 	retained = int64(target.Source.ReservedMemoryMiB) * mebibyte
@@ -170,12 +171,22 @@ func (p *PreparedMachines) checkpointRestoreCapacity(target workerapi.InstanceRe
 		}
 		staging += artifact.SizeBytes
 	}
-	configLimit, err := p.CheckpointEncryptor.EncryptedSize(64 << 10)
+	limits, err := checkpointStagingSize(vm.SnapshotLimits{
+		ComputerBytes: disk.SeedCapacity, MemoryBytes: retained,
+		ScratchBytes: target.Source.ReservedDiskMiB * mebibyte,
+		StateBytes:   vm.SnapshotStateLimit, ConfigBytes: vm.SnapshotConfigLimit,
+	}, p.CheckpointEncryptor)
 	if err != nil {
 		return 0, 0, err
 	}
-	if checkpoint.RuntimeState.ConfigArtifact.SizeBytes > configLimit {
-		return 0, 0, errors.New("restore config artifact exceeds supported size")
+	for i, plaintext := range []int64{limits.config, limits.state, limits.scratch, limits.memory} {
+		bound, err := p.CheckpointEncryptor.EncryptedSize(plaintext)
+		if err != nil {
+			return 0, 0, err
+		}
+		if artifacts[i].SizeBytes > bound {
+			return 0, 0, errors.New("restore artifact exceeds admitted VM shape")
+		}
 	}
 	state := checkpoint.RuntimeState.VMStateArtifact.SizeBytes
 	if state > math.MaxInt64-retained {

@@ -201,3 +201,110 @@ run "desired_capacity_rejects_outside_bounds" {
   variables { desired_capacity = 2 }
   expect_failures = [aws_autoscaling_group.worker]
 }
+
+run "lifecycle_format_bound_0" {
+  command = plan
+  variables {
+    vm_memory_mib        = 1
+    vm_scratch_disk_mib  = 1
+    computer_staging_mib = 1
+  }
+  assert {
+    condition = (
+      local.worker_slot_disk_bytes >= jsondecode(file("../../../../internal/computerhost/testdata/host_disk_bounds.json"))[0].bytes &&
+      var.vm_memory_mib == jsondecode(file("../../../../internal/computerhost/testdata/host_disk_bounds.json"))[0].memory_mib &&
+      var.vm_scratch_disk_mib == jsondecode(file("../../../../internal/computerhost/testdata/host_disk_bounds.json"))[0].scratch_mib &&
+      var.computer_staging_mib == jsondecode(file("../../../../internal/computerhost/testdata/host_disk_bounds.json"))[0].staging_mib
+    )
+    error_message = "Infrastructure must bound the Worker's actual lifecycle format bytes."
+  }
+}
+
+run "lifecycle_format_bound_1" {
+  command = plan
+  variables {
+    vm_memory_mib        = 2048
+    vm_scratch_disk_mib  = 32768
+    computer_staging_mib = 65536
+  }
+  assert {
+    condition = (
+      local.worker_slot_disk_bytes >= jsondecode(file("../../../../internal/computerhost/testdata/host_disk_bounds.json"))[1].bytes &&
+      var.vm_memory_mib == jsondecode(file("../../../../internal/computerhost/testdata/host_disk_bounds.json"))[1].memory_mib &&
+      var.vm_scratch_disk_mib == jsondecode(file("../../../../internal/computerhost/testdata/host_disk_bounds.json"))[1].scratch_mib &&
+      var.computer_staging_mib == jsondecode(file("../../../../internal/computerhost/testdata/host_disk_bounds.json"))[1].staging_mib
+    )
+    error_message = "Infrastructure must bound the Worker's actual lifecycle format bytes."
+  }
+}
+
+run "lifecycle_format_bound_2" {
+  command = plan
+  variables {
+    vm_memory_mib        = 4096
+    vm_scratch_disk_mib  = 32768
+    computer_staging_mib = 65536
+  }
+  assert {
+    condition = (
+      local.worker_slot_disk_bytes >= jsondecode(file("../../../../internal/computerhost/testdata/host_disk_bounds.json"))[2].bytes &&
+      var.vm_memory_mib == jsondecode(file("../../../../internal/computerhost/testdata/host_disk_bounds.json"))[2].memory_mib &&
+      var.vm_scratch_disk_mib == jsondecode(file("../../../../internal/computerhost/testdata/host_disk_bounds.json"))[2].scratch_mib &&
+      var.computer_staging_mib == jsondecode(file("../../../../internal/computerhost/testdata/host_disk_bounds.json"))[2].staging_mib
+    )
+    error_message = "Infrastructure must bound the Worker's actual lifecycle format bytes."
+  }
+}
+
+run "lifecycle_format_bound_3" {
+  command = plan
+  variables {
+    vm_memory_mib        = 1048576
+    vm_scratch_disk_mib  = 1048576
+    computer_staging_mib = 65536
+  }
+  assert {
+    condition = (
+      local.worker_slot_disk_bytes >= jsondecode(file("../../../../internal/computerhost/testdata/host_disk_bounds.json"))[3].bytes &&
+      var.vm_memory_mib == jsondecode(file("../../../../internal/computerhost/testdata/host_disk_bounds.json"))[3].memory_mib &&
+      var.vm_scratch_disk_mib == jsondecode(file("../../../../internal/computerhost/testdata/host_disk_bounds.json"))[3].scratch_mib &&
+      var.computer_staging_mib == jsondecode(file("../../../../internal/computerhost/testdata/host_disk_bounds.json"))[3].staging_mib
+    )
+    error_message = "Infrastructure must bound the Worker's actual lifecycle format bytes."
+  }
+}
+
+run "reject_underfunded_lifecycle_slots" {
+  command = plan
+  variables {
+    worker_disk_mib        = 131072
+    worker_execution_slots = 2
+    vm_scratch_disk_mib    = 32768
+    vm_memory_mib          = 2048
+    artifact_cache_max_mib = 16384
+  }
+  expect_failures = [terraform_data.network_preconditions]
+}
+
+run "funded_lifecycle_slots_propagate_staging" {
+  command = plan
+  variables {
+    worker_disk_mib         = 491520
+    worker_disk_reserve_mib = 8192
+    worker_execution_slots  = 2
+    vm_scratch_disk_mib     = 32768
+    vm_memory_mib           = 2048
+    artifact_cache_max_mib  = 16384
+    computer_staging_mib    = 65536
+  }
+  assert {
+    condition     = strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_COMPUTER_STAGING_MIB=65536")
+    error_message = "Computer staging must reach the Worker as a module-owned setting."
+  }
+}
+
+run "staging_environment_override_is_rejected" {
+  command = plan
+  variables { worker_environment = { WORKER_COMPUTER_STAGING_MIB = "1" } }
+  expect_failures = [terraform_data.network_preconditions]
+}

@@ -149,7 +149,7 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 			if failure == "capacity" {
 				admitted--
 			}
-			ledger, err := reservation.New(reservation.Vector{CPUMillis: 1, MemoryBytes: 1, GuestEphemeralDiskBytes: admitted})
+			ledger, err := reservation.New(reservation.Vector{CPUMillis: 1, MemoryBytes: 1, HostDiskBytes: admitted})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -349,7 +349,7 @@ func configureComputerPreparationTest(t *testing.T, machines *PreparedMachines, 
 	machines.CAS = objects
 	machines.ComputerStagingBytes = 64 << 20
 	n := int64(len(targets))
-	machines.Reservations, err = reservation.New(reservation.Vector{CPUMillis: 1000 * n, MemoryBytes: n * 512 << 20, GuestEphemeralDiskBytes: n * (2*disk.SeedCapacity + machines.ComputerStagingBytes), VMSlots: n})
+	machines.Reservations, err = reservation.New(reservation.Vector{CPUMillis: 1000 * n, MemoryBytes: n * 512 << 20, HostDiskBytes: n * (2*disk.SeedCapacity + machines.ComputerStagingBytes), VMSlots: n})
 	if err != nil {
 		t.Fatal(err)
 	}

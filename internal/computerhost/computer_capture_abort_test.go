@@ -43,7 +43,7 @@ func TestCaptureAbortRetainsOriginalMachineAndCheckout(t *testing.T) {
 				return receipt, nil
 			}
 			client.onAbortComplete = func(context.Context, workerapi.CaptureAbortCompleteRequest) (workerapi.ComputerCheckpointResponse, error) {
-				if session.resumeCount != 1 || activated.written.Len() == 0 || p.Reservations.Snapshot().Used.GuestEphemeralDiskBytes != 0 {
+				if session.resumeCount != 1 || activated.written.Len() == 0 || p.Reservations.Snapshot().Used.HostDiskBytes != 0 {
 					t.Error("acknowledgment preceded source resume/staging join")
 				}
 				completed = true
@@ -112,7 +112,7 @@ func TestCaptureAbortUnknownOutcomeRetainsSource(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("abort did not reach uncertain result")
 	}
-	if session.closeCount != 0 || session.resumeCount != 0 || !captureRetained(p, ref) || p.Reservations.Snapshot().Used.GuestEphemeralDiskBytes == 0 {
+	if session.closeCount != 0 || session.resumeCount != 0 || !captureRetained(p, ref) || p.Reservations.Snapshot().Used.HostDiskBytes == 0 {
 		t.Error("unknown outcome changed source ownership")
 	}
 	select {
@@ -329,7 +329,7 @@ func TestCaptureAbortCleanupFailureExcludesBeforeReporting(t *testing.T) {
 				t.Fatal("member resumed after failed cleanup")
 			}
 			_ = wait.Detach()
-			if len(client.instanceFailures) != 1 || session.closeCount != 1 || client.closed != 0 || p.Reservations.Snapshot().Used.GuestEphemeralDiskBytes != 0 || (unknown == 1) != (firstReply != "none") {
+			if len(client.instanceFailures) != 1 || session.closeCount != 1 || client.closed != 0 || p.Reservations.Snapshot().Used.HostDiskBytes != 0 || (unknown == 1) != (firstReply != "none") {
 				t.Fatalf("incomplete cleanup: failures=%d closes=%d unknown=%d", len(client.instanceFailures), session.closeCount, unknown)
 			}
 		})
