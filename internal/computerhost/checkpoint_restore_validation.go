@@ -111,7 +111,7 @@ func validatePreparedMachineRestore(
 	for _, member := range point.Runs {
 		if strings.TrimSpace(member.RunID) == "" || strings.TrimSpace(member.RunWaitID) == "" ||
 			strings.TrimSpace(member.RunLeaseID) == "" || strings.TrimSpace(member.CorrelationID) == "" ||
-			member.AttemptNumber <= 0 || (member.ActorSpeculativeInputSequence != nil && *member.ActorSpeculativeInputSequence < 0) ||
+			member.AttemptNumber <= 0 || (member.SessionSpeculativeInputSequence != nil && *member.SessionSpeculativeInputSequence < 0) ||
 			runs[member.RunID] || waits[member.RunWaitID] || leases[member.RunLeaseID] {
 			return workerapi.CheckpointManifest{}, errors.New("computer restore member identity is invalid")
 		}

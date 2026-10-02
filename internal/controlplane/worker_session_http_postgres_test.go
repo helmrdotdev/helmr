@@ -65,7 +65,7 @@ func TestWorkerSessionRoutesReportStaleLeasePostgres(t *testing.T) {
 		{"/run/turns/output/write", workerapi.WriteTurnOutputRequest{Lease: stale, CorrelationID: correlation, TurnID: turn, RunGeneration: scope.RunGeneration, Data: json.RawMessage(`1`)}, http.StatusConflict, "actor output append source authority is stale"},
 		{"/run/sessions/turns/commit", workerapi.CommitActorTurnRequest{Lease: stale, CorrelationID: correlation, TurnID: turn, RunGeneration: scope.RunGeneration, Disposition: "completed", Result: json.RawMessage(`1`), TargetInputSequence: 1}, http.StatusConflict, "actor turn commit is stale"},
 		{"/run/sessions/complete", workerapi.CompleteActorRequest{Lease: stale, OperationID: uuid.NewV7().String(), Outcome: workerapi.ActorOutcome{RunGeneration: scope.RunGeneration, Succeeded: &workerapi.ActorSucceeded{}}}, http.StatusConflict, "actor completion receipt is stale"},
-		{"/run/waits/create", workerapi.CreateRunWaitRequest{CorrelationID: correlation, Lease: stale, RunWaitID: uuid.NewV7().String(), ResumeAttachID: uuid.NewV7().String(), Kind: "actor_input", Params: waitParams, ActorSpeculativeInputSequence: &after}, http.StatusConflict, "worker run wait receipt is stale"},
+		{"/run/waits/create", workerapi.CreateRunWaitRequest{CorrelationID: correlation, Lease: stale, RunWaitID: uuid.NewV7().String(), ResumeAttachID: uuid.NewV7().String(), Kind: "session_input", Params: waitParams, SessionSpeculativeInputSequence: &after}, http.StatusConflict, "worker run wait receipt is stale"},
 	} {
 		t.Run(test.path, func(t *testing.T) {
 			w := f.worker(t, test.path, test.body)

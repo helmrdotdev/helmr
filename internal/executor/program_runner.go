@@ -188,17 +188,17 @@ func parseWaitRequest(
 	}
 	return WaitRequest{
 		Execution: wait.GetExecution(), TurnID: wait.TurnId,
-		Lease:                         leases.CurrentWorkerRunLease(),
-		CorrelationID:                 correlationID,
-		RunWaitID:                     runWaitID,
-		ResumeAttachID:                resumeAttachID,
-		Kind:                          kind,
-		Params:                        []byte(paramsJSON),
-		Metadata:                      []byte(metadataJSON),
-		Tags:                          tags,
-		TimeoutMS:                     timeout,
-		IdleTimeoutMS:                 idleTimeout,
-		ActorSpeculativeInputSequence: wait.ActorSpeculativeInputSequence,
+		Lease:                           leases.CurrentWorkerRunLease(),
+		CorrelationID:                   correlationID,
+		RunWaitID:                       runWaitID,
+		ResumeAttachID:                  resumeAttachID,
+		Kind:                            kind,
+		Params:                          []byte(paramsJSON),
+		Metadata:                        []byte(metadataJSON),
+		Tags:                            tags,
+		TimeoutMS:                       timeout,
+		IdleTimeoutMS:                   idleTimeout,
+		SessionSpeculativeInputSequence: wait.SessionSpeculativeInputSequence,
 	}, nil
 }
 

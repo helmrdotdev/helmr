@@ -59,7 +59,7 @@ func TestCheckpointRegistersAllMembersBeforeRetryingExactCiphertext(t *testing.T
 		}
 		for i, member := range m.RecoveryPoint.Runs {
 			expected := request.Target.Capture.Runs[i]
-			if member.RunID != expected.RunID || member.RunLeaseID != expected.RunLeaseID || member.RunWaitID != expected.RunWaitID || member.CorrelationID != "correlation-"+expected.RunID || !reflect.DeepEqual(member.ActorSpeculativeInputSequence, expected.ActorSpeculativeInputSequence) {
+			if member.RunID != expected.RunID || member.RunLeaseID != expected.RunLeaseID || member.RunWaitID != expected.RunWaitID || member.CorrelationID != "correlation-"+expected.RunID || !reflect.DeepEqual(member.SessionSpeculativeInputSequence, expected.SessionSpeculativeInputSequence) {
 				t.Fatalf("changed member: %+v", member)
 			}
 		}

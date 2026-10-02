@@ -72,7 +72,7 @@ func (s *Server) workerCreateRunWait(w http.ResponseWriter, r *http.Request) {
 		s.workerCreateTokenRunWait(w, r, request, identity)
 	case workerapi.RunWaitKindTimer:
 		s.workerCreateTimerRunWait(w, r, request, identity)
-	case workerapi.RunWaitKindActorInput:
+	case workerapi.RunWaitKindSessionInput:
 		s.workerCreateSessionInputRunWait(w, r, request, identity)
 	default:
 		writeError(w, badRequest(fmt.Errorf("run wait kind %q is not implemented by the durable runtime", request.Kind)))
@@ -137,8 +137,8 @@ func (s *Server) workerCreateTokenRunWait(
 	waitID := identity.waitID
 	resumeAttachID := identity.resumeAttachID
 	actorCursor := pgtype.Int8{}
-	if request.ActorSpeculativeInputSequence != nil {
-		actorCursor = pgtype.Int8{Int64: *request.ActorSpeculativeInputSequence, Valid: true}
+	if request.SessionSpeculativeInputSequence != nil {
+		actorCursor = pgtype.Int8{Int64: *request.SessionSpeculativeInputSequence, Valid: true}
 	}
 	turnID, generation, err := run.ParseWaitTurn(request.TurnID, request.RunGeneration)
 	if err != nil {
@@ -151,8 +151,8 @@ func (s *Server) workerCreateTokenRunWait(
 		RunLeaseID: parsed.leaseID, LeaseSequence: request.Lease.LeaseSequence,
 		WorkerGroupID: worker.GroupID, WorkerHostID: worker.HostID,
 		WorkerEpoch: worker.Epoch, RequestFingerprint: fingerprint,
-		ActorSpeculativeInputSequence: actorCursor,
-		TimeoutAt:                     timeoutAt, IdleTimeoutMS: idleTimeout,
+		SessionSpeculativeInputSequence: actorCursor,
+		TimeoutAt:                       timeoutAt, IdleTimeoutMS: idleTimeout,
 		Metadata: metadata, Tags: tags,
 	})
 	if errors.Is(err, token.ErrWaitAuthority) {
@@ -218,7 +218,7 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 	switch wait.SuspensionStatus {
 	case db.RunWaitStatusReleased:
 		response.Status = workerapi.RunWaitPollStatusResumeRequested
-		if wait.Kind == db.WaitKindActorInput {
+		if wait.Kind == db.WaitKindSessionInput {
 			response.ResumeKind, response.ResumePayload, err = sessionInputWaitDecision(wait)
 		} else if wait.Kind == db.WaitKindTimer {
 			response.ResumeKind, response.ResumePayload, err = timerWaitDecision(wait)

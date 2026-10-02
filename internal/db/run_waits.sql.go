@@ -276,7 +276,7 @@ WITH eligible_wait AS MATERIALIZED (
        AND w.current_run_lease_id = $6
        AND (
            (w.kind = 'timer' AND $2::uuid IS NULL)
-           OR (w.kind = 'actor_input' AND EXISTS (
+           OR (w.kind = 'session_input' AND EXISTS (
                SELECT 1 FROM session_turns AS record
                 WHERE record.id = $2
                   AND record.session_id = w.session_id
@@ -479,7 +479,7 @@ WITH locked_run AS MATERIALIZED (
        AND w.current_run_lease_id = $6
        AND (
            (w.kind = 'timer' AND $2::uuid IS NULL)
-           OR (w.kind = 'actor_input' AND EXISTS (
+           OR (w.kind = 'session_input' AND EXISTS (
                SELECT 1 FROM session_turns AS record
                 WHERE record.id = $2
                   AND record.session_id = w.session_id
@@ -500,7 +500,7 @@ WITH locked_run AS MATERIALIZED (
        AND w.current_run_lease_id = $6
        AND (
            (w.kind = 'timer' AND $2::uuid IS NULL)
-           OR (w.kind = 'actor_input' AND EXISTS (
+           OR (w.kind = 'session_input' AND EXISTS (
                SELECT 1 FROM session_turns AS record
                 WHERE record.id = $2
                   AND record.session_id = w.session_id
@@ -726,7 +726,7 @@ WITH locked_run AS MATERIALIZED (
        AND w.suspend_checkpoint_id = $8
        AND (
            (w.kind = 'timer' AND $2::uuid IS NULL)
-           OR (w.kind = 'actor_input' AND EXISTS (
+           OR (w.kind = 'session_input' AND EXISTS (
                SELECT 1 FROM session_turns AS record
                 WHERE record.id = $2
                   AND record.session_id = w.session_id
@@ -749,7 +749,7 @@ WITH locked_run AS MATERIALIZED (
        AND w.suspend_checkpoint_id = $8
        AND (
            (w.kind = 'timer' AND $2::uuid IS NULL)
-           OR (w.kind = 'actor_input' AND EXISTS (
+           OR (w.kind = 'session_input' AND EXISTS (
                SELECT 1 FROM session_turns AS record
                 WHERE record.id = $2
                   AND record.session_id = w.session_id
@@ -1332,7 +1332,7 @@ SELECT id, environment_id, run_id, computer_id, turn_session_id, turn_id, turn_r
    AND run_id = $2
    AND attempt_number = $3
    AND session_id = $4
-   AND kind = 'actor_input'
+   AND kind = 'session_input'
    AND after_input_sequence = $5
    AND condition_status = 'pending'
    AND suspension_status IN ('hot', 'checkpointing', 'parked', 'resuming')
@@ -1472,7 +1472,7 @@ SELECT id, environment_id, run_id, computer_id, turn_session_id, turn_id, turn_r
    AND environment_id = $2
    AND run_id = $3
    AND computer_id = $4
-   AND kind = 'actor_input'
+   AND kind = 'session_input'
    AND session_id = $5
    AND after_input_sequence = $6
    AND attempt_number = $7
@@ -1915,7 +1915,7 @@ func (q *Queries) ListDueTimerRunWaits(ctx context.Context, limitCount int32) ([
 const listPendingSessionInputWaitTimeouts = `-- name: ListPendingSessionInputWaitTimeouts :many
 SELECT run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.computer_id, run_waits.turn_session_id, run_waits.turn_id, run_waits.turn_run_generation, run_waits.kind, run_waits.condition_status, run_waits.due_at, run_waits.timeout_at, run_waits.idle_timeout_ms, run_waits.token_id, run_waits.child_run_id, run_waits.child_target_declared_id, run_waits.child_claim_id, run_waits.child_request, run_waits.session_id, run_waits.after_input_sequence, run_waits.condition_result, run_waits.condition_error, run_waits.condition_terminal_at, run_waits.condition_reason_code, run_waits.completed_turn_id, run_waits.suspension_status, run_waits.token_registration_run_revision, run_waits.registration_request_fingerprint, run_waits.expected_run_revision, run_waits.attempt_number, run_waits.current_run_lease_id, run_waits.prior_run_lease_id, run_waits.suspend_checkpoint_id, run_waits.metadata, run_waits.tags, run_waits.suspension_terminal_at, run_waits.suspension_reason_code, run_waits.suspension_error, run_waits.created_at, run_waits.updated_at, run_waits.computer_payload_required
   FROM run_waits
- WHERE kind = 'actor_input'
+ WHERE kind = 'session_input'
    AND condition_status = 'pending'
    AND timeout_at IS NOT NULL
    AND timeout_at <= transaction_timestamp()
@@ -2877,7 +2877,7 @@ INSERT INTO run_waits (
     metadata, tags
 )
 SELECT $1, $2, moved_run.id, moved_run.computer_id,
-       'actor_input', $3, $4,
+       'session_input', $3, $4,
        $5, $6,
        $7, moved_run.revision,
        $8, $9, $10, $11
@@ -3385,9 +3385,9 @@ WHERE w.id=$6 AND w.run_id=$7
  AND i.id=l.computer_instance_id AND i.writer_generation=l.writer_generation
  AND i.reclaimed_at IS NULL AND i.admission_state IN ('restoring','open','draining')
  AND c.id=w.suspend_checkpoint_id AND c.resume_computer_instance_id=i.id AND c.resume_committed_at IS NOT NULL
- AND ((w.kind='actor_input' AND $5::uuid IS NOT NULL AND EXISTS(
+ AND ((w.kind='session_input' AND $5::uuid IS NOT NULL AND EXISTS(
     SELECT 1 FROM session_turns t WHERE t.id=$5 AND t.session_id=w.session_id
-    AND t.environment_id=w.environment_id)) OR (w.kind<>'actor_input' AND $5::uuid IS NULL)
+    AND t.environment_id=w.environment_id)) OR (w.kind<>'session_input' AND $5::uuid IS NULL)
     OR ($1::text<>'completed' AND $5::uuid IS NULL))
 RETURNING w.id, w.environment_id, w.run_id, w.computer_id, w.turn_session_id, w.turn_id, w.turn_run_generation, w.kind, w.condition_status, w.due_at, w.timeout_at, w.idle_timeout_ms, w.token_id, w.child_run_id, w.child_target_declared_id, w.child_claim_id, w.child_request, w.session_id, w.after_input_sequence, w.condition_result, w.condition_error, w.condition_terminal_at, w.condition_reason_code, w.completed_turn_id, w.suspension_status, w.token_registration_run_revision, w.registration_request_fingerprint, w.expected_run_revision, w.attempt_number, w.current_run_lease_id, w.prior_run_lease_id, w.suspend_checkpoint_id, w.metadata, w.tags, w.suspension_terminal_at, w.suspension_reason_code, w.suspension_error, w.created_at, w.updated_at, w.computer_payload_required
 `

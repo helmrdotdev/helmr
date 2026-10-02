@@ -17,7 +17,7 @@ func TestComputerCheckpointManifestEncodesAsWorkerManifest(t *testing.T) {
 	full := workerapi.CheckpointManifest{
 		RecoveryPoint: workerapi.CheckpointRecoveryPoint{ID: "0192a000-0000-7000-8000-000000000001", ComputerID: "0192a000-0000-7000-8000-000000000002", ComputerInstanceID: "0192a000-0000-7000-8000-000000000003", WriterGeneration: 4, MembershipRevision: 5, ComputerSpecID: "0192a000-0000-7000-8000-000000000004", ProgramDeploymentID: "0192a000-0000-7000-8000-000000000005",
 			Runs: []workerapi.CheckpointRun{
-				{RunID: "0192a000-0000-7000-8000-000000000006", AttemptNumber: 2, RunWaitID: "0192a000-0000-7000-8000-000000000007", RunLeaseID: "0192a000-0000-7000-8000-000000000008", ActorSpeculativeInputSequence: &sequence, CorrelationID: "corr"},
+				{RunID: "0192a000-0000-7000-8000-000000000006", AttemptNumber: 2, RunWaitID: "0192a000-0000-7000-8000-000000000007", RunLeaseID: "0192a000-0000-7000-8000-000000000008", SessionSpeculativeInputSequence: &sequence, CorrelationID: "corr"},
 				{RunID: "0192a000-0000-7000-8000-000000000009", AttemptNumber: 1, RunWaitID: "0192a000-0000-7000-8000-00000000000a", RunLeaseID: "0192a000-0000-7000-8000-00000000000b", CorrelationID: "other"},
 			},
 			Runtime: workerapi.CheckpointRuntime{Backend: "firecracker", ID: "platform", Arch: "x86_64", Contract: "v1", KernelDigest: "sha256:k", InitramfsDigest: "sha256:i", RootfsDigest: "sha256:r", ConfigDigest: "sha256:c", VMVCPUCount: 2, CPUConfigDigest: "sha256:cpu"}},

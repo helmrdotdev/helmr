@@ -15,7 +15,7 @@ import (
 )
 
 func TestCaptureAbortDeliversConditionsResolvedWhileHeld(t *testing.T) {
-	for _, kind := range []string{"timer", "token", "child", "actor_input"} {
+	for _, kind := range []string{"timer", "token", "child", "session_input"} {
 		for _, abortFirst := range []bool{false, true} {
 			t.Run(kind+map[bool]string{false: "/checkpointing", true: "/resuming_capture"}[abortFirst], func(t *testing.T) {
 				var work runtest.RunLease
@@ -33,10 +33,10 @@ func TestCaptureAbortDeliversConditionsResolvedWhileHeld(t *testing.T) {
 						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET cause_kind='child',parent_run_id=$2,parent_owns_lifecycle=false WHERE id=$1`, child, target.RunID)
 						dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO idempotency_claims(id,environment_id,operation,slot_hash,request_fingerprint,accepted_at) VALUES($1,$2,'child',decode(repeat('01',32),'hex'),decode(repeat('02',32),'hex'),clock_timestamp())`, claim, f.EnvironmentID)
 						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_waits SET kind='child',due_at=NULL,child_run_id=$2,child_target_declared_id='child',child_claim_id=$3,child_request='{}' WHERE run_id=$1`, target.RunID, child, claim)
-					case "actor_input":
+					case "session_input":
 						session := f.ConvertToActor(t, t.Context(), target, `{"enabled":false}`)
 						completedTurn = pgvalue.UUID(uuid.NewV7())
-						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_waits SET kind='actor_input',due_at=NULL,session_id=$2,after_input_sequence=2 WHERE run_id=$1`, target.RunID, session)
+						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_waits SET kind='session_input',due_at=NULL,session_id=$2,after_input_sequence=2 WHERE run_id=$1`, target.RunID, session)
 						dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_turns(id,environment_id,session_id,sequence,data) VALUES($1,$2,$3,3,'{}')`, completedTurn, f.EnvironmentID, session)
 					}
 				})

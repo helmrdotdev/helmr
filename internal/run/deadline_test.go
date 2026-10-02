@@ -21,7 +21,7 @@ func TestRunWaitDeadlineDeliveryReconcilesEveryDeadlineKind(t *testing.T) {
 		nil,
 		reconcile("timer"),
 		reconcile("token"),
-		reconcile("actor_input"),
+		reconcile("session_input"),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -30,7 +30,7 @@ func TestRunWaitDeadlineDeliveryReconcilesEveryDeadlineKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(order) != 3 || order[0] != "timer" ||
-		order[1] != "token" || order[2] != "actor_input" {
+		order[1] != "token" || order[2] != "session_input" {
 		t.Fatalf("deadline reconciliation order = %v", order)
 	}
 }

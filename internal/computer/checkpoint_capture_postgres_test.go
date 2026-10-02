@@ -125,10 +125,10 @@ func TestComputerCaptureIdleAndActorCursor(t *testing.T) {
 		}
 		for _, m := range members {
 			if m.RunID == pgvalue.UUID(work.RunID) {
-				if !m.ActorSpeculativeInputSequence.Valid || m.ActorSpeculativeInputSequence.Int64 != 1 {
-					t.Fatalf("cursor=%v", m.ActorSpeculativeInputSequence)
+				if !m.SessionSpeculativeInputSequence.Valid || m.SessionSpeculativeInputSequence.Int64 != 1 {
+					t.Fatalf("cursor=%v", m.SessionSpeculativeInputSequence)
 				}
-			} else if m.ActorSpeculativeInputSequence.Valid {
+			} else if m.SessionSpeculativeInputSequence.Valid {
 				t.Fatal("task has Actor cursor")
 			}
 		}
@@ -174,7 +174,7 @@ func TestComputerCaptureActiveTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cursor int64
-	if err = tx.QueryRow(t.Context(), `SELECT actor_speculative_input_sequence FROM computer_checkpoint_runs WHERE checkpoint_id=$1 AND run_id=$2`, cp.ID, work.RunID).Scan(&cursor); err != nil || cursor != 2 {
+	if err = tx.QueryRow(t.Context(), `SELECT session_speculative_input_sequence FROM computer_checkpoint_runs WHERE checkpoint_id=$1 AND run_id=$2`, cp.ID, work.RunID).Scan(&cursor); err != nil || cursor != 2 {
 		t.Fatalf("cursor=%d err=%v", cursor, err)
 	}
 	if err = tx.Rollback(t.Context()); err != nil {

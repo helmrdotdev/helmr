@@ -174,7 +174,7 @@ func (q *Queries) CommitComputerCheckpointRestore(ctx context.Context, arg Commi
 
 const createComputerCheckpointRun = `-- name: CreateComputerCheckpointRun :one
 INSERT INTO computer_checkpoint_runs(checkpoint_id,environment_id,computer_id,run_id,
- attempt_number,run_wait_id,source_run_lease_id,actor_speculative_input_sequence,
+ attempt_number,run_wait_id,source_run_lease_id,session_speculative_input_sequence,
  source_computer_instance_id,writer_generation)
 SELECT checkpoint.id,checkpoint.environment_id,checkpoint.computer_id,lease.run_id,
  lease.attempt_number,wait.id,lease.id,$1,
@@ -189,22 +189,22 @@ WHERE checkpoint.id=$2 AND checkpoint.environment_id=$3
  AND checkpoint.status='creating' AND instance.admission_state='checkpointing'
  AND lease.id=$4 AND lease.status='running' AND lease.process_reconciled_at IS NULL
  AND wait.id=$5 AND wait.suspension_status='hot' AND wait.condition_status='pending'
-RETURNING checkpoint_id, environment_id, computer_id, run_id, attempt_number, run_wait_id, source_run_lease_id, actor_speculative_input_sequence, source_computer_instance_id, writer_generation
+RETURNING checkpoint_id, environment_id, computer_id, run_id, attempt_number, run_wait_id, source_run_lease_id, session_speculative_input_sequence, source_computer_instance_id, writer_generation
 `
 
 type CreateComputerCheckpointRunParams struct {
-	ActorSpeculativeInputSequence pgtype.Int8 `json:"actor_speculative_input_sequence"`
-	CheckpointID                  pgtype.UUID `json:"checkpoint_id"`
-	EnvironmentID                 pgtype.UUID `json:"environment_id"`
-	RunLeaseID                    pgtype.UUID `json:"run_lease_id"`
-	RunWaitID                     pgtype.UUID `json:"run_wait_id"`
+	SessionSpeculativeInputSequence pgtype.Int8 `json:"session_speculative_input_sequence"`
+	CheckpointID                    pgtype.UUID `json:"checkpoint_id"`
+	EnvironmentID                   pgtype.UUID `json:"environment_id"`
+	RunLeaseID                      pgtype.UUID `json:"run_lease_id"`
+	RunWaitID                       pgtype.UUID `json:"run_wait_id"`
 }
 
 // Capture membership is inserted in the same transaction as the barrier. The
 // coordinator compares the complete resident set before committing capture intent.
 func (q *Queries) CreateComputerCheckpointRun(ctx context.Context, arg CreateComputerCheckpointRunParams) (ComputerCheckpointRun, error) {
 	row := q.db.QueryRow(ctx, createComputerCheckpointRun,
-		arg.ActorSpeculativeInputSequence,
+		arg.SessionSpeculativeInputSequence,
 		arg.CheckpointID,
 		arg.EnvironmentID,
 		arg.RunLeaseID,
@@ -219,7 +219,7 @@ func (q *Queries) CreateComputerCheckpointRun(ctx context.Context, arg CreateCom
 		&i.AttemptNumber,
 		&i.RunWaitID,
 		&i.SourceRunLeaseID,
-		&i.ActorSpeculativeInputSequence,
+		&i.SessionSpeculativeInputSequence,
 		&i.SourceComputerInstanceID,
 		&i.WriterGeneration,
 	)
@@ -717,7 +717,7 @@ func (q *Queries) InvalidateReclaimedComputerCaptures(ctx context.Context, insta
 }
 
 const listComputerCheckpointRuns = `-- name: ListComputerCheckpointRuns :many
-SELECT checkpoint_id, environment_id, computer_id, run_id, attempt_number, run_wait_id, source_run_lease_id, actor_speculative_input_sequence, source_computer_instance_id, writer_generation FROM computer_checkpoint_runs WHERE environment_id=$1
+SELECT checkpoint_id, environment_id, computer_id, run_id, attempt_number, run_wait_id, source_run_lease_id, session_speculative_input_sequence, source_computer_instance_id, writer_generation FROM computer_checkpoint_runs WHERE environment_id=$1
  AND checkpoint_id=$2 ORDER BY run_id
 `
 
@@ -743,7 +743,7 @@ func (q *Queries) ListComputerCheckpointRuns(ctx context.Context, arg ListComput
 			&i.AttemptNumber,
 			&i.RunWaitID,
 			&i.SourceRunLeaseID,
-			&i.ActorSpeculativeInputSequence,
+			&i.SessionSpeculativeInputSequence,
 			&i.SourceComputerInstanceID,
 			&i.WriterGeneration,
 		); err != nil {

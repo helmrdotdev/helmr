@@ -48,7 +48,7 @@ func TestControlPlaneRunWaitsDeliversLogicalResume(t *testing.T) {
 		}},
 	}
 	var got WaitResumeDecision
-	request := testWaitRequest(workerapi.RunWaitKindActorInput)
+	request := testWaitRequest(workerapi.RunWaitKindSessionInput)
 	request.Resume = func(_ context.Context, decision WaitResumeDecision) error {
 		got = decision
 		return nil
@@ -74,7 +74,7 @@ func TestControlPlaneRunWaitsReturnsImmediateResumeDecision(t *testing.T) {
 	immediate.Resolution = json.RawMessage(`{"approved":true}`)
 	client := &fakeRunWaitClient{created: immediate}
 	var got WaitResumeDecision
-	request := testWaitRequest(workerapi.RunWaitKindActorInput)
+	request := testWaitRequest(workerapi.RunWaitKindSessionInput)
 	request.Resume = func(_ context.Context, decision WaitResumeDecision) error {
 		got = decision
 		return nil

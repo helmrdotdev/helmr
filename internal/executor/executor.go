@@ -20,24 +20,24 @@ type Executor struct {
 }
 
 type WaitRequest struct {
-	Execution                     *programv0.SessionExecution
-	TurnID                        *string
-	Leases                        workerapi.RunLeaseAssignmentProvider
-	Lease                         workerapi.RunLease
-	LeaseAssignment               workerapi.RunLeaseAssignment
-	CorrelationID                 string
-	RunWaitID                     string
-	ResumeAttachID                string
-	Kind                          workerapi.RunWaitKind
-	Params                        json.RawMessage
-	Metadata                      json.RawMessage
-	Tags                          []string
-	TimeoutMS                     *int64
-	IdleTimeoutMS                 *int64
-	ActorSpeculativeInputSequence *int64
-	ActiveDuration                time.Duration
-	Computer                      workerapi.Computer
-	Resume                        func(context.Context, WaitResumeDecision) error
+	Execution                       *programv0.SessionExecution
+	TurnID                          *string
+	Leases                          workerapi.RunLeaseAssignmentProvider
+	Lease                           workerapi.RunLease
+	LeaseAssignment                 workerapi.RunLeaseAssignment
+	CorrelationID                   string
+	RunWaitID                       string
+	ResumeAttachID                  string
+	Kind                            workerapi.RunWaitKind
+	Params                          json.RawMessage
+	Metadata                        json.RawMessage
+	Tags                            []string
+	TimeoutMS                       *int64
+	IdleTimeoutMS                   *int64
+	SessionSpeculativeInputSequence *int64
+	ActiveDuration                  time.Duration
+	Computer                        workerapi.Computer
+	Resume                          func(context.Context, WaitResumeDecision) error
 }
 
 type WaitResumeDecision struct {

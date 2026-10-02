@@ -879,7 +879,7 @@ function programRuntimeOperations(
           correlationId,
           declaredId: target.declaredId,
           method: "start",
-          ...(actor === undefined ? {} : { actorSpeculativeInputSequence: actor.cursor.value, execution: actor.execution, ...(actor.active === undefined ? {} : { turnId: actor.active.scope.turnId }) }),
+          ...(actor === undefined ? {} : { sessionSpeculativeInputSequence: actor.cursor.value, execution: actor.execution, ...(actor.active === undefined ? {} : { turnId: actor.active.scope.turnId }) }),
           payloadPresent: target.payloadPresent,
           ...(payloadJson === undefined ? {} : { payloadJson }),
           computerJson,
@@ -969,7 +969,7 @@ function programRuntimeOperations(
               idempotencyKey: options.idempotencyKey,
               ...(actor === undefined
                 ? {}
-                : { actorSpeculativeInputSequence: actor.cursor.value, execution: actor.execution, ...(actor.active === undefined ? {} : { turnId: actor.active.scope.turnId }) }),
+                : { sessionSpeculativeInputSequence: actor.cursor.value, execution: actor.execution, ...(actor.active === undefined ? {} : { turnId: actor.active.scope.turnId }) }),
             }),
           },
         )
@@ -1023,7 +1023,7 @@ function programRuntimeOperations(
           timeoutMs: BigInt(timeoutMs),
           ...(actor === undefined
             ? {}
-            : { actorSpeculativeInputSequence: actor.cursor.value, execution: actor.execution, ...(actor.active === undefined ? {} : { turnId: actor.active.scope.turnId }) }),
+            : { sessionSpeculativeInputSequence: actor.cursor.value, execution: actor.execution, ...(actor.active === undefined ? {} : { turnId: actor.active.scope.turnId }) }),
         }),
       })
       requireWaitDecision(
@@ -1319,7 +1319,7 @@ function programRuntimeOperations(
           tags: options.tags === undefined ? [] : [...options.tags],
           ...(actor === undefined
             ? {}
-            : { actorSpeculativeInputSequence: actor.cursor.value, execution: actor.execution, ...(actor.active === undefined ? {} : { turnId: actor.active.scope.turnId }) }),
+            : { sessionSpeculativeInputSequence: actor.cursor.value, execution: actor.execution, ...(actor.active === undefined ? {} : { turnId: actor.active.scope.turnId }) }),
         }),
       })
       requireWaitDecision(
@@ -1979,13 +1979,13 @@ class ActorRuntime {
             correlationId,
             runWaitId,
             resumeAttachId,
-            kind: "actor_input",
+            kind: "session_input",
             execution: this.execution,
             paramsJson: JSON.stringify({
               session_id: this.execution.sessionId,
               after_input_sequence: Number(this.cursor.value),
             }),
-            actorSpeculativeInputSequence: this.cursor.value,
+            sessionSpeculativeInputSequence: this.cursor.value,
             ...(options?.timeout === undefined
               ? {}
               : { timeoutMs: BigInt(durationMilliseconds(options.timeout)) }),

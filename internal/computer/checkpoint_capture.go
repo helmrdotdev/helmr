@@ -199,7 +199,7 @@ func (f captureFence) seal(ctx context.Context) (db.ComputerCheckpoint, error) {
 		return db.ComputerCheckpoint{}, err
 	}
 	for _, m := range members {
-		if _, err = q.CreateComputerCheckpointRun(ctx, db.CreateComputerCheckpointRunParams{CheckpointID: checkpoint.ID, EnvironmentID: checkpoint.EnvironmentID, RunLeaseID: m.leaseID, RunWaitID: m.waitID, ActorSpeculativeInputSequence: m.cursor}); err != nil {
+		if _, err = q.CreateComputerCheckpointRun(ctx, db.CreateComputerCheckpointRunParams{CheckpointID: checkpoint.ID, EnvironmentID: checkpoint.EnvironmentID, RunLeaseID: m.leaseID, RunWaitID: m.waitID, SessionSpeculativeInputSequence: m.cursor}); err != nil {
 			return db.ComputerCheckpoint{}, err
 		}
 	}

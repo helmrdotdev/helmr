@@ -62,10 +62,10 @@ export function runNativeProgram(bridge: string, config: any, definition: any, i
         }))
         const scope = { correlation_id: value.correlationId, turn_id: value.execution?.turnId,
           run_generation: config.runGeneration }
-        if (event.case === "runWaitRequested" && value.kind === "actor_input") {
+        if (event.case === "runWaitRequested" && value.kind === "session_input") {
           const result = await worker("receive", { correlation_id: value.correlationId,
-            run_wait_id: value.runWaitId, resume_attach_id: value.resumeAttachId, kind: "actor_input",
-            params: JSON.parse(value.paramsJson), actor_speculative_input_sequence: Number(value.actorSpeculativeInputSequence) })
+            run_wait_id: value.runWaitId, resume_attach_id: value.resumeAttachId, kind: "session_input",
+            params: JSON.parse(value.paramsJson), session_speculative_input_sequence: Number(value.sessionSpeculativeInputSequence) })
           if (!result.resolution_kind) throw new Error("Qualification expected an immediately resolved input wait")
           await hooks.received?.(result)
           reply(result.resolution, result.resolution_kind); return

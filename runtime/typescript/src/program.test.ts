@@ -430,7 +430,7 @@ describe("runProgram", () => {
       assert.equal(event.case, "taskChildInvokeRequested")
       if (event.case !== "taskChildInvokeRequested") return
       assert.equal(event.value.method, "call")
-      assert.equal(event.value.actorSpeculativeInputSequence, undefined)
+      assert.equal(event.value.sessionSpeculativeInputSequence, undefined)
       assert.equal(event.value.idempotencyKey, "resize:image-1")
       yield runtimeDecision(
         event.value.correlationId,
@@ -491,7 +491,7 @@ describe("runProgram", () => {
       const event = readEvent(output[1]!).event
       if (event.case !== "taskChildInvokeRequested") return
       assert.equal(event.value.method, "call")
-      assert.equal(event.value.actorSpeculativeInputSequence, undefined)
+      assert.equal(event.value.sessionSpeculativeInputSequence, undefined)
       yield runtimeDecision(
         event.value.correlationId,
         "completed",

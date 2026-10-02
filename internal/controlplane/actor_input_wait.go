@@ -39,8 +39,8 @@ func (s *Server) workerCreateSessionInputRunWait(
 		writeError(w, badRequest(err))
 		return
 	}
-	if params.AfterInputSequence < 0 || request.ActorSpeculativeInputSequence == nil ||
-		params.AfterInputSequence != *request.ActorSpeculativeInputSequence {
+	if params.AfterInputSequence < 0 || request.SessionSpeculativeInputSequence == nil ||
+		params.AfterInputSequence != *request.SessionSpeculativeInputSequence {
 		writeError(w, badRequest(errors.New("actor input wait cursors must be present, non-negative, and equal")))
 		return
 	}

@@ -4530,21 +4530,21 @@ func (x *ProgramQuiesced) GetRunLeaseId() string {
 }
 
 type RunWaitRequested struct {
-	state                         protoimpl.MessageState `protogen:"open.v1"`
-	CorrelationId                 string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
-	Kind                          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
-	ParamsJson                    string                 `protobuf:"bytes,3,opt,name=params_json,json=paramsJson,proto3" json:"params_json,omitempty"`
-	MetadataJson                  *string                `protobuf:"bytes,4,opt,name=metadata_json,json=metadataJson,proto3,oneof" json:"metadata_json,omitempty"`
-	TimeoutMs                     *uint64                `protobuf:"varint,5,opt,name=timeout_ms,json=timeoutMs,proto3,oneof" json:"timeout_ms,omitempty"`
-	Tags                          []string               `protobuf:"bytes,6,rep,name=tags,proto3" json:"tags,omitempty"`
-	RunWaitId                     string                 `protobuf:"bytes,7,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
-	ResumeAttachId                string                 `protobuf:"bytes,8,opt,name=resume_attach_id,json=resumeAttachId,proto3" json:"resume_attach_id,omitempty"`
-	IdleTimeoutMs                 *uint64                `protobuf:"varint,9,opt,name=idle_timeout_ms,json=idleTimeoutMs,proto3,oneof" json:"idle_timeout_ms,omitempty"`
-	ActorSpeculativeInputSequence *int64                 `protobuf:"varint,10,opt,name=actor_speculative_input_sequence,json=actorSpeculativeInputSequence,proto3,oneof" json:"actor_speculative_input_sequence,omitempty"`
-	Execution                     *SessionExecution      `protobuf:"bytes,11,opt,name=execution,proto3" json:"execution,omitempty"`
-	TurnId                        *string                `protobuf:"bytes,12,opt,name=turn_id,json=turnId,proto3,oneof" json:"turn_id,omitempty"`
-	unknownFields                 protoimpl.UnknownFields
-	sizeCache                     protoimpl.SizeCache
+	state                           protoimpl.MessageState `protogen:"open.v1"`
+	CorrelationId                   string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	Kind                            string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	ParamsJson                      string                 `protobuf:"bytes,3,opt,name=params_json,json=paramsJson,proto3" json:"params_json,omitempty"`
+	MetadataJson                    *string                `protobuf:"bytes,4,opt,name=metadata_json,json=metadataJson,proto3,oneof" json:"metadata_json,omitempty"`
+	TimeoutMs                       *uint64                `protobuf:"varint,5,opt,name=timeout_ms,json=timeoutMs,proto3,oneof" json:"timeout_ms,omitempty"`
+	Tags                            []string               `protobuf:"bytes,6,rep,name=tags,proto3" json:"tags,omitempty"`
+	RunWaitId                       string                 `protobuf:"bytes,7,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
+	ResumeAttachId                  string                 `protobuf:"bytes,8,opt,name=resume_attach_id,json=resumeAttachId,proto3" json:"resume_attach_id,omitempty"`
+	IdleTimeoutMs                   *uint64                `protobuf:"varint,9,opt,name=idle_timeout_ms,json=idleTimeoutMs,proto3,oneof" json:"idle_timeout_ms,omitempty"`
+	SessionSpeculativeInputSequence *int64                 `protobuf:"varint,10,opt,name=session_speculative_input_sequence,json=sessionSpeculativeInputSequence,proto3,oneof" json:"session_speculative_input_sequence,omitempty"`
+	Execution                       *SessionExecution      `protobuf:"bytes,11,opt,name=execution,proto3" json:"execution,omitempty"`
+	TurnId                          *string                `protobuf:"bytes,12,opt,name=turn_id,json=turnId,proto3,oneof" json:"turn_id,omitempty"`
+	unknownFields                   protoimpl.UnknownFields
+	sizeCache                       protoimpl.SizeCache
 }
 
 func (x *RunWaitRequested) Reset() {
@@ -4640,9 +4640,9 @@ func (x *RunWaitRequested) GetIdleTimeoutMs() uint64 {
 	return 0
 }
 
-func (x *RunWaitRequested) GetActorSpeculativeInputSequence() int64 {
-	if x != nil && x.ActorSpeculativeInputSequence != nil {
-		return *x.ActorSpeculativeInputSequence
+func (x *RunWaitRequested) GetSessionSpeculativeInputSequence() int64 {
+	if x != nil && x.SessionSpeculativeInputSequence != nil {
+		return *x.SessionSpeculativeInputSequence
 	}
 	return 0
 }
@@ -4738,22 +4738,22 @@ func (x *TokenCreateRequested) GetMetadataJson() string {
 }
 
 type TaskChildInvokeRequested struct {
-	state                         protoimpl.MessageState `protogen:"open.v1"`
-	CorrelationId                 string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
-	DeclaredId                    string                 `protobuf:"bytes,2,opt,name=declared_id,json=declaredId,proto3" json:"declared_id,omitempty"`
-	Method                        string                 `protobuf:"bytes,3,opt,name=method,proto3" json:"method,omitempty"`
-	PayloadPresent                bool                   `protobuf:"varint,4,opt,name=payload_present,json=payloadPresent,proto3" json:"payload_present,omitempty"`
-	PayloadJson                   *string                `protobuf:"bytes,5,opt,name=payload_json,json=payloadJson,proto3,oneof" json:"payload_json,omitempty"`
-	ComputerJson                  string                 `protobuf:"bytes,6,opt,name=computer_json,json=computerJson,proto3" json:"computer_json,omitempty"`
-	OptionsJson                   string                 `protobuf:"bytes,7,opt,name=options_json,json=optionsJson,proto3" json:"options_json,omitempty"`
-	IdempotencyKey                *string                `protobuf:"bytes,8,opt,name=idempotency_key,json=idempotencyKey,proto3,oneof" json:"idempotency_key,omitempty"`
-	ActorSpeculativeInputSequence *int64                 `protobuf:"varint,9,opt,name=actor_speculative_input_sequence,json=actorSpeculativeInputSequence,proto3,oneof" json:"actor_speculative_input_sequence,omitempty"`
-	RunWaitId                     string                 `protobuf:"bytes,10,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
-	ResumeAttachId                string                 `protobuf:"bytes,11,opt,name=resume_attach_id,json=resumeAttachId,proto3" json:"resume_attach_id,omitempty"`
-	Execution                     *SessionExecution      `protobuf:"bytes,12,opt,name=execution,proto3" json:"execution,omitempty"`
-	TurnId                        *string                `protobuf:"bytes,13,opt,name=turn_id,json=turnId,proto3,oneof" json:"turn_id,omitempty"`
-	unknownFields                 protoimpl.UnknownFields
-	sizeCache                     protoimpl.SizeCache
+	state                           protoimpl.MessageState `protogen:"open.v1"`
+	CorrelationId                   string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	DeclaredId                      string                 `protobuf:"bytes,2,opt,name=declared_id,json=declaredId,proto3" json:"declared_id,omitempty"`
+	Method                          string                 `protobuf:"bytes,3,opt,name=method,proto3" json:"method,omitempty"`
+	PayloadPresent                  bool                   `protobuf:"varint,4,opt,name=payload_present,json=payloadPresent,proto3" json:"payload_present,omitempty"`
+	PayloadJson                     *string                `protobuf:"bytes,5,opt,name=payload_json,json=payloadJson,proto3,oneof" json:"payload_json,omitempty"`
+	ComputerJson                    string                 `protobuf:"bytes,6,opt,name=computer_json,json=computerJson,proto3" json:"computer_json,omitempty"`
+	OptionsJson                     string                 `protobuf:"bytes,7,opt,name=options_json,json=optionsJson,proto3" json:"options_json,omitempty"`
+	IdempotencyKey                  *string                `protobuf:"bytes,8,opt,name=idempotency_key,json=idempotencyKey,proto3,oneof" json:"idempotency_key,omitempty"`
+	SessionSpeculativeInputSequence *int64                 `protobuf:"varint,9,opt,name=session_speculative_input_sequence,json=sessionSpeculativeInputSequence,proto3,oneof" json:"session_speculative_input_sequence,omitempty"`
+	RunWaitId                       string                 `protobuf:"bytes,10,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
+	ResumeAttachId                  string                 `protobuf:"bytes,11,opt,name=resume_attach_id,json=resumeAttachId,proto3" json:"resume_attach_id,omitempty"`
+	Execution                       *SessionExecution      `protobuf:"bytes,12,opt,name=execution,proto3" json:"execution,omitempty"`
+	TurnId                          *string                `protobuf:"bytes,13,opt,name=turn_id,json=turnId,proto3,oneof" json:"turn_id,omitempty"`
+	unknownFields                   protoimpl.UnknownFields
+	sizeCache                       protoimpl.SizeCache
 }
 
 func (x *TaskChildInvokeRequested) Reset() {
@@ -4842,9 +4842,9 @@ func (x *TaskChildInvokeRequested) GetIdempotencyKey() string {
 	return ""
 }
 
-func (x *TaskChildInvokeRequested) GetActorSpeculativeInputSequence() int64 {
-	if x != nil && x.ActorSpeculativeInputSequence != nil {
-		return *x.ActorSpeculativeInputSequence
+func (x *TaskChildInvokeRequested) GetSessionSpeculativeInputSequence() int64 {
+	if x != nil && x.SessionSpeculativeInputSequence != nil {
+		return *x.SessionSpeculativeInputSequence
 	}
 	return 0
 }
@@ -5911,7 +5911,7 @@ const file_program_proto_rawDesc = "" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12%\n" +
 	"\x0eattempt_number\x18\x02 \x01(\rR\rattemptNumber\x12 \n" +
 	"\frun_lease_id\x18\x03 \x01(\tR\n" +
-	"runLeaseId\"\xdb\x04\n" +
+	"runLeaseId\"\xe1\x04\n" +
 	"\x10RunWaitRequested\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x1f\n" +
@@ -5923,15 +5923,15 @@ const file_program_proto_rawDesc = "" +
 	"\x04tags\x18\x06 \x03(\tR\x04tags\x12\x1e\n" +
 	"\vrun_wait_id\x18\a \x01(\tR\trunWaitId\x12(\n" +
 	"\x10resume_attach_id\x18\b \x01(\tR\x0eresumeAttachId\x12+\n" +
-	"\x0fidle_timeout_ms\x18\t \x01(\x04H\x02R\ridleTimeoutMs\x88\x01\x01\x12L\n" +
-	" actor_speculative_input_sequence\x18\n" +
-	" \x01(\x03H\x03R\x1dactorSpeculativeInputSequence\x88\x01\x01\x12@\n" +
+	"\x0fidle_timeout_ms\x18\t \x01(\x04H\x02R\ridleTimeoutMs\x88\x01\x01\x12P\n" +
+	"\"session_speculative_input_sequence\x18\n" +
+	" \x01(\x03H\x03R\x1fsessionSpeculativeInputSequence\x88\x01\x01\x12@\n" +
 	"\texecution\x18\v \x01(\v2\".helmr.program.v0.SessionExecutionR\texecution\x12\x1c\n" +
 	"\aturn_id\x18\f \x01(\tH\x04R\x06turnId\x88\x01\x01B\x10\n" +
 	"\x0e_metadata_jsonB\r\n" +
 	"\v_timeout_msB\x12\n" +
-	"\x10_idle_timeout_msB#\n" +
-	"!_actor_speculative_input_sequenceB\n" +
+	"\x10_idle_timeout_msB%\n" +
+	"#_session_speculative_input_sequenceB\n" +
 	"\n" +
 	"\b_turn_id\"\x82\x02\n" +
 	"\x14TokenCreateRequested\x12\"\n" +
@@ -5943,7 +5943,7 @@ const file_program_proto_rawDesc = "" +
 	"\rmetadata_json\x18\x05 \x01(\tH\x02R\fmetadataJson\x88\x01\x01B\r\n" +
 	"\v_timeout_msB\x12\n" +
 	"\x10_idempotency_keyB\x10\n" +
-	"\x0e_metadata_json\"\x8f\x05\n" +
+	"\x0e_metadata_json\"\x95\x05\n" +
 	"\x18TaskChildInvokeRequested\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1f\n" +
 	"\vdeclared_id\x18\x02 \x01(\tR\n" +
@@ -5953,16 +5953,16 @@ const file_program_proto_rawDesc = "" +
 	"\fpayload_json\x18\x05 \x01(\tH\x00R\vpayloadJson\x88\x01\x01\x12#\n" +
 	"\rcomputer_json\x18\x06 \x01(\tR\fcomputerJson\x12!\n" +
 	"\foptions_json\x18\a \x01(\tR\voptionsJson\x12,\n" +
-	"\x0fidempotency_key\x18\b \x01(\tH\x01R\x0eidempotencyKey\x88\x01\x01\x12L\n" +
-	" actor_speculative_input_sequence\x18\t \x01(\x03H\x02R\x1dactorSpeculativeInputSequence\x88\x01\x01\x12\x1e\n" +
+	"\x0fidempotency_key\x18\b \x01(\tH\x01R\x0eidempotencyKey\x88\x01\x01\x12P\n" +
+	"\"session_speculative_input_sequence\x18\t \x01(\x03H\x02R\x1fsessionSpeculativeInputSequence\x88\x01\x01\x12\x1e\n" +
 	"\vrun_wait_id\x18\n" +
 	" \x01(\tR\trunWaitId\x12(\n" +
 	"\x10resume_attach_id\x18\v \x01(\tR\x0eresumeAttachId\x12@\n" +
 	"\texecution\x18\f \x01(\v2\".helmr.program.v0.SessionExecutionR\texecution\x12\x1c\n" +
 	"\aturn_id\x18\r \x01(\tH\x03R\x06turnId\x88\x01\x01B\x0f\n" +
 	"\r_payload_jsonB\x12\n" +
-	"\x10_idempotency_keyB#\n" +
-	"!_actor_speculative_input_sequenceB\n" +
+	"\x10_idempotency_keyB%\n" +
+	"#_session_speculative_input_sequenceB\n" +
 	"\n" +
 	"\b_turn_id\"\xb8\x03\n" +
 	"\x16CheckpointPauseRequest\x12\x1e\n" +

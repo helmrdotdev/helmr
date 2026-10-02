@@ -145,18 +145,18 @@ func (w ControlPlaneRunWaits) AddRunWait(ctx context.Context, request WaitReques
 		return workerapi.CreateRunWaitResponse{}, err
 	}
 	return w.Client.CreateRunWait(ctx, workerapi.CreateRunWaitRequest{
-		Lease:                         lease.Fence(),
-		CorrelationID:                 request.CorrelationID,
-		RunWaitID:                     request.RunWaitID,
-		ResumeAttachID:                request.ResumeAttachID,
-		Kind:                          request.Kind,
-		Params:                        request.Params,
-		Metadata:                      request.Metadata,
-		Tags:                          request.Tags,
-		TimeoutMS:                     request.TimeoutMS,
-		IdleTimeoutMS:                 request.IdleTimeoutMS,
-		ActorSpeculativeInputSequence: request.ActorSpeculativeInputSequence,
-		TurnID:                        request.TurnID, RunGeneration: executionGeneration(request.Execution),
+		Lease:                           lease.Fence(),
+		CorrelationID:                   request.CorrelationID,
+		RunWaitID:                       request.RunWaitID,
+		ResumeAttachID:                  request.ResumeAttachID,
+		Kind:                            request.Kind,
+		Params:                          request.Params,
+		Metadata:                        request.Metadata,
+		Tags:                            request.Tags,
+		TimeoutMS:                       request.TimeoutMS,
+		IdleTimeoutMS:                   request.IdleTimeoutMS,
+		SessionSpeculativeInputSequence: request.SessionSpeculativeInputSequence,
+		TurnID:                          request.TurnID, RunGeneration: executionGeneration(request.Execution),
 	})
 }
 

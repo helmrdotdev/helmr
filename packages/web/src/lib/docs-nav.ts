@@ -82,6 +82,7 @@ export const docsNav = [
           "reference/cli/deployment",
           "reference/cli/task",
           "reference/cli/actor",
+          "reference/cli/session",
           "reference/cli/computer",
           "reference/cli/run",
           "reference/cli/secret",

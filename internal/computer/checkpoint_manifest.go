@@ -35,12 +35,12 @@ type CheckpointRecoveryPoint struct {
 
 // CheckpointRun is one sealed member of the recovery point.
 type CheckpointRun struct {
-	RunID                         string `json:"run_id"`
-	AttemptNumber                 int32  `json:"attempt_number"`
-	RunWaitID                     string `json:"run_wait_id"`
-	RunLeaseID                    string `json:"run_lease_id"`
-	ActorSpeculativeInputSequence *int64 `json:"actor_speculative_input_sequence,omitempty"`
-	CorrelationID                 string `json:"correlation_id"`
+	RunID                           string `json:"run_id"`
+	AttemptNumber                   int32  `json:"attempt_number"`
+	RunWaitID                       string `json:"run_wait_id"`
+	RunLeaseID                      string `json:"run_lease_id"`
+	SessionSpeculativeInputSequence *int64 `json:"session_speculative_input_sequence,omitempty"`
+	CorrelationID                   string `json:"correlation_id"`
 }
 
 // CheckpointRuntime identifies the VM platform and CPU shape the runtime

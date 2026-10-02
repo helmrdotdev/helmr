@@ -121,7 +121,7 @@ func TestSessionCommandsUseSessionID(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"actor", "get", testSessionID})
+	cmd.SetArgs([]string{"session", "get", testSessionID})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestSessionCommandsUseSessionID(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{
-		"actor", "send", testSessionID,
+		"session", "send", testSessionID,
 		"--data-json", "null",
 		"--idempotency-key", "input:1",
 	})
@@ -154,7 +154,7 @@ func TestSessionCommandsUseSessionID(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{
-		"actor", "close", testSessionID,
+		"session", "close", testSessionID,
 		"--idempotency-key", "close:1",
 	})
 	if err := cmd.Execute(); err != nil {
@@ -166,7 +166,7 @@ func TestSessionCommandsUseSessionID(t *testing.T) {
 	}
 }
 
-func TestActorEventsReadFiniteSequencePage(t *testing.T) {
+func TestSessionEventsReadFiniteSequencePage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/sessions/"+testSessionID+"/events" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
@@ -195,7 +195,7 @@ func TestActorEventsReadFiniteSequencePage(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{
-		"actor", "events", testSessionID,
+		"session", "events", testSessionID,
 		"--after", "7",
 		"--limit", "1",
 	})
@@ -214,11 +214,11 @@ func TestSessionCommandsRejectInvalidArgumentsAndMissingData(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"actor", "get"}, "accepts 1 arg"},
-		{[]string{"actor", "get", "invalid"}, "invalid UUIDv7"},
-		{[]string{"actor", "send", testSessionID}, "--data-file or --data-json is required"},
-		{[]string{"actor", "events", testSessionID, "--limit", "0"}, "--limit must be in [1,1000]"},
-		{[]string{"actor", "events", testSessionID, "--limit", "1001"}, "limit must be in [1,1000]"},
+		{[]string{"session", "get"}, "accepts 1 arg"},
+		{[]string{"session", "get", "invalid"}, "invalid UUIDv7"},
+		{[]string{"session", "send", testSessionID}, "--data-file or --data-json is required"},
+		{[]string{"session", "events", testSessionID, "--limit", "0"}, "--limit must be in [1,1000]"},
+		{[]string{"session", "events", testSessionID, "--limit", "1001"}, "limit must be in [1,1000]"},
 	} {
 		cmd := newRootCommand()
 		cmd.SetOut(&bytes.Buffer{})

@@ -422,7 +422,7 @@ message RunWaitRequested {
   string run_wait_id = 7;
   string resume_attach_id = 8;
   optional uint64 idle_timeout_ms = 9;
-  optional int64 actor_speculative_input_sequence = 10;
+  optional int64 session_speculative_input_sequence = 10;
   SessionExecution execution = 11;
   optional string turn_id = 12;
 }
@@ -444,7 +444,7 @@ message TaskChildInvokeRequested {
   string computer_json = 6;
   string options_json = 7;
   optional string idempotency_key = 8;
-  optional int64 actor_speculative_input_sequence = 9;
+  optional int64 session_speculative_input_sequence = 9;
   string run_wait_id = 10;
   string resume_attach_id = 11;
   SessionExecution execution = 12;

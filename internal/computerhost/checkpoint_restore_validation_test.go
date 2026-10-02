@@ -72,7 +72,7 @@ func TestInstanceRestoreValidationRejectsChangedIdentity(t *testing.T) {
 		{"missing correlation", func(m *workerapi.CheckpointManifest) { m.RecoveryPoint.Runs[0].CorrelationID = "" }},
 		{"negative cursor", func(m *workerapi.CheckpointManifest) {
 			v := int64(-1)
-			m.RecoveryPoint.Runs[0].ActorSpeculativeInputSequence = &v
+			m.RecoveryPoint.Runs[0].SessionSpeculativeInputSequence = &v
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

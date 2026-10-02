@@ -8,10 +8,10 @@ sidebarLabel: Overview
 
 `helmr` talks to the Control Plane over HTTP(S). `-a, --api-url` overrides the
 origin. API-key commands otherwise use `HELMR_API_URL` or
-`https://api.helmr.dev`; session commands use the origin saved by `helmr login`.
+`https://api.helmr.dev`; commands using your saved login use its origin.
 
 Authenticate with `HELMR_API_KEY` or `helmr login [URL] [--no-browser]`.
-`helmr logout [URL]` revokes a saved session and `helmr whoami [--json]` reports
+`helmr logout [URL]` revokes a saved login and `helmr whoami [--json]` reports
 the active source. `HELMR_CONFIG_DIR` overrides the saved CLI state directory.
 
 Browser login returns you to the CLI approval request after any required sign-in

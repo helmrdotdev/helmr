@@ -42,10 +42,10 @@ func projectComputerInstanceRestore(authority db.GetComputerInstanceRestoreCheck
 	for _, captured := range point.Runs {
 		member, ok := expected[captured.RunID]
 		if !ok || captured.AttemptNumber != member.AttemptNumber || captured.RunWaitID != pgvalue.UUIDString(member.RunWaitID) || captured.RunLeaseID != pgvalue.UUIDString(member.SourceRunLeaseID) || strings.TrimSpace(captured.CorrelationID) == "" ||
-			(captured.ActorSpeculativeInputSequence != nil) != member.ActorSpeculativeInputSequence.Valid {
+			(captured.SessionSpeculativeInputSequence != nil) != member.SessionSpeculativeInputSequence.Valid {
 			return workerapi.InstanceRestore{}, errors.New("computer checkpoint manifest contains an unexpected member")
 		}
-		if captured.ActorSpeculativeInputSequence != nil && *captured.ActorSpeculativeInputSequence != member.ActorSpeculativeInputSequence.Int64 {
+		if captured.SessionSpeculativeInputSequence != nil && *captured.SessionSpeculativeInputSequence != member.SessionSpeculativeInputSequence.Int64 {
 			return workerapi.InstanceRestore{}, errors.New("computer checkpoint Actor cursor does not match captured authority")
 		}
 		delete(expected, captured.RunID)

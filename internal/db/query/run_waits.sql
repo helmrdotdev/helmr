@@ -672,7 +672,7 @@ INSERT INTO run_waits (
     metadata, tags
 )
 SELECT sqlc.arg(id), sqlc.arg(environment_id), moved_run.id, moved_run.computer_id,
-       'actor_input', sqlc.narg(timeout_at), sqlc.arg(idle_timeout_ms),
+       'session_input', sqlc.narg(timeout_at), sqlc.arg(idle_timeout_ms),
        sqlc.arg(session_id), sqlc.arg(after_input_sequence),
        sqlc.arg(registration_request_fingerprint), moved_run.revision,
        sqlc.arg(attempt_number), sqlc.arg(current_run_lease_id), sqlc.arg(metadata), sqlc.arg(tags)
@@ -686,7 +686,7 @@ SELECT *
    AND environment_id = sqlc.arg(environment_id)
    AND run_id = sqlc.arg(run_id)
    AND computer_id = sqlc.arg(computer_id)
-   AND kind = 'actor_input'
+   AND kind = 'session_input'
    AND session_id = sqlc.arg(session_id)
    AND after_input_sequence = sqlc.arg(after_input_sequence)
    AND attempt_number = sqlc.arg(attempt_number)
@@ -703,7 +703,7 @@ SELECT *
    AND run_id = sqlc.arg(run_id)
    AND attempt_number = sqlc.arg(attempt_number)
    AND session_id = sqlc.arg(session_id)
-   AND kind = 'actor_input'
+   AND kind = 'session_input'
    AND after_input_sequence = sqlc.arg(after_input_sequence)
    AND condition_status = 'pending'
    AND suspension_status IN ('hot', 'checkpointing', 'parked', 'resuming')
@@ -729,7 +729,7 @@ WITH locked_run AS MATERIALIZED (
        AND w.current_run_lease_id = sqlc.arg(current_run_lease_id)
        AND (
            (w.kind = 'timer' AND sqlc.narg(completed_turn_id)::uuid IS NULL)
-           OR (w.kind = 'actor_input' AND EXISTS (
+           OR (w.kind = 'session_input' AND EXISTS (
                SELECT 1 FROM session_turns AS record
                 WHERE record.id = sqlc.narg(completed_turn_id)
                   AND record.session_id = w.session_id
@@ -750,7 +750,7 @@ WITH locked_run AS MATERIALIZED (
        AND w.current_run_lease_id = sqlc.arg(current_run_lease_id)
        AND (
            (w.kind = 'timer' AND sqlc.narg(completed_turn_id)::uuid IS NULL)
-           OR (w.kind = 'actor_input' AND EXISTS (
+           OR (w.kind = 'session_input' AND EXISTS (
                SELECT 1 FROM session_turns AS record
                 WHERE record.id = sqlc.narg(completed_turn_id)
                   AND record.session_id = w.session_id
@@ -797,7 +797,7 @@ WITH eligible_wait AS MATERIALIZED (
        AND w.current_run_lease_id = sqlc.arg(current_run_lease_id)
        AND (
            (w.kind = 'timer' AND sqlc.narg(completed_turn_id)::uuid IS NULL)
-           OR (w.kind = 'actor_input' AND EXISTS (
+           OR (w.kind = 'session_input' AND EXISTS (
                SELECT 1 FROM session_turns AS record
                 WHERE record.id = sqlc.narg(completed_turn_id)
                   AND record.session_id = w.session_id
@@ -836,7 +836,7 @@ WITH locked_run AS MATERIALIZED (
        AND w.suspend_checkpoint_id = sqlc.arg(suspend_checkpoint_id)
        AND (
            (w.kind = 'timer' AND sqlc.narg(completed_turn_id)::uuid IS NULL)
-           OR (w.kind = 'actor_input' AND EXISTS (
+           OR (w.kind = 'session_input' AND EXISTS (
                SELECT 1 FROM session_turns AS record
                 WHERE record.id = sqlc.narg(completed_turn_id)
                   AND record.session_id = w.session_id
@@ -859,7 +859,7 @@ WITH locked_run AS MATERIALIZED (
        AND w.suspend_checkpoint_id = sqlc.arg(suspend_checkpoint_id)
        AND (
            (w.kind = 'timer' AND sqlc.narg(completed_turn_id)::uuid IS NULL)
-           OR (w.kind = 'actor_input' AND EXISTS (
+           OR (w.kind = 'session_input' AND EXISTS (
                SELECT 1 FROM session_turns AS record
                 WHERE record.id = sqlc.narg(completed_turn_id)
                   AND record.session_id = w.session_id
@@ -896,7 +896,7 @@ RETURNING run_waits.*;
 -- name: ListPendingSessionInputWaitTimeouts :many
 SELECT run_waits.*
   FROM run_waits
- WHERE kind = 'actor_input'
+ WHERE kind = 'session_input'
    AND condition_status = 'pending'
    AND timeout_at IS NOT NULL
    AND timeout_at <= transaction_timestamp()
@@ -1053,8 +1053,8 @@ WHERE w.id=sqlc.arg(wait_id) AND w.run_id=sqlc.arg(run_id)
  AND i.id=l.computer_instance_id AND i.writer_generation=l.writer_generation
  AND i.reclaimed_at IS NULL AND i.admission_state IN ('restoring','open','draining')
  AND c.id=w.suspend_checkpoint_id AND c.resume_computer_instance_id=i.id AND c.resume_committed_at IS NOT NULL
- AND ((w.kind='actor_input' AND sqlc.narg(completed_turn_id)::uuid IS NOT NULL AND EXISTS(
+ AND ((w.kind='session_input' AND sqlc.narg(completed_turn_id)::uuid IS NOT NULL AND EXISTS(
     SELECT 1 FROM session_turns t WHERE t.id=sqlc.narg(completed_turn_id) AND t.session_id=w.session_id
-    AND t.environment_id=w.environment_id)) OR (w.kind<>'actor_input' AND sqlc.narg(completed_turn_id)::uuid IS NULL)
+    AND t.environment_id=w.environment_id)) OR (w.kind<>'session_input' AND sqlc.narg(completed_turn_id)::uuid IS NULL)
     OR (sqlc.arg(condition_status)::text<>'completed' AND sqlc.narg(completed_turn_id)::uuid IS NULL))
 RETURNING w.*;

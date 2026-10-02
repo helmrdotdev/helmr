@@ -71,7 +71,7 @@ func RegisterInputWait(ctx context.Context, txb db.TxBeginner, fence run.Executi
 		}); existingErr == nil || !errors.Is(existingErr, pgx.ErrNoRows) {
 			return ErrStaleExecution
 		}
-		if err := authority.ValidateWaitCursor(db.RunWait{Kind: db.WaitKindActorInput}, cursor); err != nil {
+		if err := authority.ValidateWaitCursor(db.RunWait{Kind: db.WaitKindSessionInput}, cursor); err != nil {
 			return err
 		}
 		if authority.Run().Status != db.RunStatusRunning || authority.Session().ActiveTurnID.Valid || authority.Session().DispatchHoldID.Valid || wait.AfterInputSequence != authority.Session().CommittedInputSequence {

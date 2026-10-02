@@ -372,7 +372,7 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 	}
 	registration := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, uuid.NewV7())
 	if actor {
-		registration.ActorSpeculativeInputSequence = pgtype.Int8{Int64: 1, Valid: true}
+		registration.SessionSpeculativeInputSequence = pgtype.Int8{Int64: 1, Valid: true}
 	}
 	registered, err := registrar.RegisterWait(ctx, registration)
 	if err != nil {

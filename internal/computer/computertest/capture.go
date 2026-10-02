@@ -156,9 +156,9 @@ func CaptureRequest(t *testing.T, f runtest.Fixture, cp db.ComputerCheckpoint) (
 	point := computer.CheckpointRecoveryPoint{ID: pgvalue.UUIDString(cp.ID), ComputerID: pgvalue.UUIDString(cp.ComputerID), ComputerInstanceID: pgvalue.UUIDString(cp.SourceComputerInstanceID), ComputerSpecID: pgvalue.UUIDString(cp.ComputerSpecID), ProgramDeploymentID: pgvalue.UUIDString(cp.ProgramDeploymentID), WriterGeneration: cp.WriterGeneration, MembershipRevision: cp.MembershipRevision, Runs: []computer.CheckpointRun{}, Runtime: computer.CheckpointRuntime{Backend: "firecracker", ID: platform.ID, Arch: platform.Arch, Contract: platform.Contract, KernelDigest: platform.KernelDigest, InitramfsDigest: platform.InitramfsDigest, RootfsDigest: platform.RootfsDigest, ConfigDigest: dbtest.Digest("config"), VMVCPUCount: instance.VMVCPUCount, CPUConfigDigest: instance.CPUConfigDigest}}
 	for _, member := range members {
 		captured := computer.CheckpointRun{RunID: pgvalue.UUIDString(member.RunID), RunLeaseID: pgvalue.UUIDString(member.SourceRunLeaseID), RunWaitID: pgvalue.UUIDString(member.RunWaitID), AttemptNumber: member.AttemptNumber, CorrelationID: uuid.NewV7().String()}
-		if member.ActorSpeculativeInputSequence.Valid {
-			sequence := member.ActorSpeculativeInputSequence.Int64
-			captured.ActorSpeculativeInputSequence = &sequence
+		if member.SessionSpeculativeInputSequence.Valid {
+			sequence := member.SessionSpeculativeInputSequence.Int64
+			captured.SessionSpeculativeInputSequence = &sequence
 		}
 		point.Runs = append(point.Runs, captured)
 	}

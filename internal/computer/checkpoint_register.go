@@ -89,7 +89,7 @@ func (s checkpointSource) register(ctx context.Context, ref CheckpointRef, manif
 	manifest.RecoveryPoint.Runs = make([]CheckpointRun, 0, len(members))
 	for _, member := range members {
 		supplied, exists := byRun[pgvalue.UUIDString(member.RunID)]
-		if !exists || supplied.AttemptNumber != member.AttemptNumber || supplied.RunLeaseID != pgvalue.UUIDString(member.SourceRunLeaseID) || supplied.RunWaitID != pgvalue.UUIDString(member.RunWaitID) || (supplied.ActorSpeculativeInputSequence != nil) != member.ActorSpeculativeInputSequence.Valid || (supplied.ActorSpeculativeInputSequence != nil && *supplied.ActorSpeculativeInputSequence != member.ActorSpeculativeInputSequence.Int64) {
+		if !exists || supplied.AttemptNumber != member.AttemptNumber || supplied.RunLeaseID != pgvalue.UUIDString(member.SourceRunLeaseID) || supplied.RunWaitID != pgvalue.UUIDString(member.RunWaitID) || (supplied.SessionSpeculativeInputSequence != nil) != member.SessionSpeculativeInputSequence.Valid || (supplied.SessionSpeculativeInputSequence != nil && *supplied.SessionSpeculativeInputSequence != member.SessionSpeculativeInputSequence.Int64) {
 			return db.ComputerCheckpoint{}, ErrCheckpointCandidate
 		}
 		manifest.RecoveryPoint.Runs = append(manifest.RecoveryPoint.Runs, supplied)

@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestActorControlsPreserveExactTargetsAndReceipts(t *testing.T) {
+func TestSessionControlsPreserveExactTargetsAndReceipts(t *testing.T) {
 	const turnID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34"
 	const holdID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35"
 	for _, tc := range []struct {
@@ -52,7 +52,7 @@ func TestActorControlsPreserveExactTargetsAndReceipts(t *testing.T) {
 			cmd := newRootCommand()
 			cmd.SetOut(&out)
 			cmd.SetErr(&bytes.Buffer{})
-			cmd.SetArgs(append([]string{"actor"}, tc.args...))
+			cmd.SetArgs(append([]string{"session"}, tc.args...))
 			if err := cmd.Execute(); err != nil {
 				t.Fatal(err)
 			}
@@ -68,7 +68,7 @@ func TestActorControlsPreserveExactTargetsAndReceipts(t *testing.T) {
 	}
 }
 
-func TestActorResumePinsObservedHoldWithoutRetargeting(t *testing.T) {
+func TestSessionResumePinsObservedHoldWithoutRetargeting(t *testing.T) {
 	const holdID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35"
 	for _, outcome := range []string{"resumed", "stale", "recovery", "no-hold"} {
 		t.Run(outcome, func(t *testing.T) {
@@ -111,7 +111,7 @@ func TestActorResumePinsObservedHoldWithoutRetargeting(t *testing.T) {
 			cmd := newRootCommand()
 			cmd.SetOut(&bytes.Buffer{})
 			cmd.SetErr(&bytes.Buffer{})
-			cmd.SetArgs([]string{"actor", "resume", testSessionID})
+			cmd.SetArgs([]string{"session", "resume", testSessionID})
 			err := cmd.Execute()
 			if (err == nil) != (outcome == "resumed") {
 				t.Fatalf("outcome %s, error %v", outcome, err)
