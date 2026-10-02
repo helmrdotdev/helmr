@@ -30,8 +30,6 @@ WITH target AS MATERIALIZED (
       FROM target AS drain_target
      WHERE drain_target.status = 'draining'
        AND drain_target.epoch_started_at IS NOT NULL
-       AND sqlc.arg(observed_at)::timestamptz >= drain_target.epoch_started_at
-       AND sqlc.arg(observed_at)::timestamptz <= now() + interval '1 minute'
        AND EXISTS (
            SELECT 1 FROM worker_host_secrets
             WHERE worker_host_secrets.worker_host_id = drain_target.id

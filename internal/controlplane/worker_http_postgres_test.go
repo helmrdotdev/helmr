@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -106,10 +105,7 @@ func (h workerHost) recover(t *testing.T) {
 	if err := h.client.AuthenticateWorker(t.Context()); err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}
-	if err := h.client.ReportWorkerStartupRecovery(t.Context(), workerapi.StartupRecoveryRequest{
-		InventoryComplete: true, InventoryScope: "worker_instance_state_roots_v0",
-		ObservedAt: time.Now().UTC(), Inventory: []string{},
-	}); err != nil {
+	if err := h.client.ReportWorkerStartupRecovery(t.Context(), workerapi.StartupRecoveryRequest{Quarantined: []string{}}); err != nil {
 		t.Fatalf("startup recovery: %v", err)
 	}
 }
@@ -186,15 +182,14 @@ func TestWorkerHostLifecycleHTTP(t *testing.T) {
 		t.Fatalf("drain = %+v, err = %v", draining, err)
 	}
 	assertAdminError(t, f.request(t, http.MethodGet, "/worker/v1/instance", hostCredential, ""), http.StatusUnauthorized, "unauthorized")
-	completion := workerapi.DrainCompletionRequest{
-		InventoryComplete: true, InventoryScope: "worker_instance_state_roots_v0",
-		ObservedAt: time.Now().UTC(), Inventory: []string{},
-	}
-	completed, err := host.client.CompleteWorkerDrain(t.Context(), completion)
+	// The completion contract has no body; a legacy JSON proof is rejected.
+	hostCredential = host.issue(t, f)
+	assertAdminError(t, f.request(t, http.MethodPost, "/worker/v1/instance/drain/complete", hostCredential, `{}`), http.StatusBadRequest, "bad_request")
+	completed, err := host.client.CompleteWorkerDrain(t.Context())
 	if err != nil || completed.Status != workerapi.StatusTerminationReady {
 		t.Fatalf("complete drain = %+v, err = %v", completed, err)
 	}
-	if replayed, err := host.client.CompleteWorkerDrain(t.Context(), completion); err != nil || replayed.Status != workerapi.StatusTerminationReady {
+	if replayed, err := host.client.CompleteWorkerDrain(t.Context()); err != nil || replayed.Status != workerapi.StatusTerminationReady {
 		t.Fatalf("complete drain replay = %+v, err = %v", replayed, err)
 	}
 }

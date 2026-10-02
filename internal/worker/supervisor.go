@@ -18,7 +18,7 @@ import (
 type ControlPlane interface {
 	AuthenticateWorker(context.Context) error
 	ReportWorkerStartupRecovery(context.Context, workerapi.StartupRecoveryRequest) error
-	CompleteWorkerDrain(context.Context, workerapi.DrainCompletionRequest) (workerapi.StatusResponse, error)
+	CompleteWorkerDrain(context.Context) (workerapi.StatusResponse, error)
 	ActivateWorker(context.Context, workerapi.Capabilities) (workerapi.StatusResponse, error)
 	ObserveWorker(context.Context, workerapi.Observation) (workerapi.StatusResponse, error)
 }
@@ -136,6 +136,9 @@ type Supervisor struct {
 }
 
 func New(cfg Config) (*Supervisor, error) {
+	if cfg.Recover == nil {
+		return nil, errors.New("supervisor physical recovery is required")
+	}
 	if cfg.ControlPlane == nil {
 		return nil, errors.New("supervisor control plane client is required")
 	}
@@ -180,28 +183,18 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	if err := s.cfg.ControlPlane.AuthenticateWorker(ctx); err != nil {
 		return fmt.Errorf("establish worker epoch: %w", err)
 	}
-	evidence := RecoveryEvidence{ObservedAt: time.Now().UTC()}
-	if s.cfg.Recover != nil {
-		var err error
-		evidence, err = s.cfg.Recover(ctx)
-		if err != nil {
-			return fmt.Errorf("recover local worker state: %w", err)
-		}
+	evidence, err := s.cfg.Recover(ctx)
+	if err != nil {
+		return fmt.Errorf("recover local worker state: %w", err)
+	}
+	for _, diagnostic := range evidence.QuarantineErrors {
+		s.cfg.Log.WarnContext(ctx, "worker state quarantined", "error", diagnostic)
 	}
 	instanceQuarantines, err := activationQuarantines(evidence)
 	if err != nil {
 		return err
 	}
-	inventory := append(append(make([]string, 0, len(evidence.Reclaimed)+len(evidence.Quarantined)), evidence.Reclaimed...), evidence.Quarantined...)
-	if err := s.reportStartupRecovery(ctx, workerapi.StartupRecoveryRequest{
-		InventoryComplete: true,
-		InventoryScope:    "worker_instance_state_roots_v0",
-		ObservedAt:        evidence.ObservedAt,
-		Inventory:         inventory,
-		Reclaimed:         evidence.Reclaimed,
-		Quarantined:       evidence.Quarantined,
-		Errors:            evidence.QuarantineErrors,
-	}); err != nil {
+	if err := s.reportStartupRecovery(ctx, workerapi.StartupRecoveryRequest{Quarantined: append([]string{}, evidence.Quarantined...)}); err != nil {
 		return fmt.Errorf("record worker startup recovery: %w", err)
 	}
 	capabilities := s.cfg.Capabilities
@@ -448,16 +441,7 @@ func (s *Supervisor) completeServerDirectedDrain(
 	if finalEvidence.ObservedAt.IsZero() || len(finalEvidence.Reclaimed) != 0 || len(finalEvidence.Quarantined) != 0 || len(finalEvidence.QuarantineErrors) != 0 {
 		return fail(fmt.Errorf("final worker drain inventory is not clean: reclaimed=%d quarantined=%d errors=%d", len(finalEvidence.Reclaimed), len(finalEvidence.Quarantined), len(finalEvidence.QuarantineErrors)))
 	}
-	request := workerapi.DrainCompletionRequest{
-		InventoryComplete: true,
-		InventoryScope:    "worker_instance_state_roots_v0",
-		ObservedAt:        finalEvidence.ObservedAt,
-		Inventory:         []string{},
-		Reclaimed:         finalEvidence.Reclaimed,
-		Quarantined:       finalEvidence.Quarantined,
-		Errors:            finalEvidence.QuarantineErrors,
-	}
-	status, err := s.cfg.ControlPlane.CompleteWorkerDrain(drainCtx, request)
+	status, err := s.cfg.ControlPlane.CompleteWorkerDrain(drainCtx)
 	if err != nil {
 		return fail(fmt.Errorf("complete worker drain with clean local inventory: %w", err))
 	}

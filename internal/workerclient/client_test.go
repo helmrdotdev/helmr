@@ -81,13 +81,10 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerCredential {
 				t.Fatalf("worker auth = %s", got)
 			}
-			var request workerapi.DrainCompletionRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				t.Fatal(err)
+			if r.ContentLength != 0 {
+				t.Fatalf("drain completion body length=%d", r.ContentLength)
 			}
-			if !request.InventoryComplete || request.InventoryScope != "worker_instance_state_roots_v0" || request.ObservedAt.IsZero() || len(request.Inventory) != 0 {
-				t.Fatalf("worker drain completion = %+v", request)
-			}
+
 			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{WorkerHostID: "00000000-0000-0000-0000-000000000401", Status: workerapi.StatusTerminationReady})
 		case "/worker/v1/instance":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerCredential {
@@ -134,12 +131,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	if status, err := client.GetWorkerStatus(context.Background()); err != nil || status.Status != workerapi.StatusDraining || status.ActiveInstances != 1 {
 		t.Fatalf("worker status = %+v err=%v", status, err)
 	}
-	if status, err := client.CompleteWorkerDrain(context.Background(), workerapi.DrainCompletionRequest{
-		InventoryComplete: true,
-		InventoryScope:    "worker_instance_state_roots_v0",
-		ObservedAt:        time.Now().UTC(),
-		Inventory:         []string{},
-	}); err != nil || status.Status != workerapi.StatusTerminationReady {
+	if status, err := client.CompleteWorkerDrain(context.Background()); err != nil || status.Status != workerapi.StatusTerminationReady {
 		t.Fatalf("complete worker drain status = %+v, err = %v", status, err)
 	}
 	if err := client.FenceWorker(context.Background(), "provider_termination"); err != nil {
@@ -403,11 +395,7 @@ func TestCompleteWorkerDrainRetriesTheIdenticalProofAfterAmbiguousResponse(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := workerapi.DrainCompletionRequest{
-		InventoryComplete: true, InventoryScope: "worker_instance_state_roots_v0",
-		ObservedAt: time.Now().UTC(), Inventory: []string{},
-	}
-	status, err := client.CompleteWorkerDrain(context.Background(), request)
+	status, err := client.CompleteWorkerDrain(context.Background())
 	if err != nil || status.Status != workerapi.StatusTerminationReady {
 		t.Fatalf("status = %+v, err = %v", status, err)
 	}
@@ -720,7 +708,7 @@ func TestWorkerConnectionAPIVersion(t *testing.T) {
 	if err = client.AuthenticateWorker(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err = client.ReportWorkerStartupRecovery(t.Context(), workerapi.StartupRecoveryRequest{}); err != nil {
+	if err = client.ReportWorkerStartupRecovery(t.Context(), workerapi.StartupRecoveryRequest{Quarantined: []string{}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = client.ActivateWorker(t.Context(), workerClientCapabilities()); err != nil {

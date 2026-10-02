@@ -73,8 +73,7 @@ func (f supplyFixture) hostState(t *testing.T, hostID uuid.UUID) (db.WorkerHostS
 func startupEvidence(t *testing.T) []byte {
 	t.Helper()
 	evidence, err := json.Marshal(map[string]any{
-		"inventory_complete": true, "inventory_scope": "worker_instance_state_roots_v0",
-		"observed_at": time.Now().UTC(), "inventory": []string{},
+		"quarantined": []string{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -182,7 +181,7 @@ func TestHostLifecycleThroughCredentials(t *testing.T) {
 	if completing.Status != db.WorkerHostStatusDraining {
 		t.Fatalf("drain completing principal = %+v", completing)
 	}
-	completed, err := CompleteHostDrain(t.Context(), f.pool, completing, time.Now())
+	completed, err := CompleteHostDrain(t.Context(), f.pool, completing)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +190,7 @@ func TestHostLifecycleThroughCredentials(t *testing.T) {
 	}
 	// A lost completion response is replayed with the same credential.
 	replaying := f.authenticate(t, AuthenticateDrainCompletingHost, cfg, credential)
-	if _, err := CompleteHostDrain(t.Context(), f.pool, replaying, time.Now()); err != nil {
+	if _, err := CompleteHostDrain(t.Context(), f.pool, replaying); err != nil {
 		t.Fatalf("drain completion replay: %v", err)
 	}
 	if _, err := AuthenticateHost(t.Context(), f.q, cfg, credential.Value, time.Now()); !errors.Is(err, ErrUnauthenticated) {
