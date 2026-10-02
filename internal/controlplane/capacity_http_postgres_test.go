@@ -2,6 +2,10 @@ package controlplane
 
 import (
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/run/runtest"
+	"github.com/helmrdotdev/helmr/internal/version"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -63,12 +67,12 @@ func TestCapacityHTTPResolveAndPlan(t *testing.T) {
 	f.sealWorkerPool(t, group.ID, pool.ID)
 
 	resolved := capacityJSON(t, f.request(t, http.MethodGet, "/capacity/v1/worker-groups/resolve?region_id=aws-us-east-1&name=default", token, ""), http.StatusOK)
-	assertCapacityJSONKeys(t, resolved, "claim_version", "id", "name", "region_id", "status")
+	assertCapacityJSONKeys(t, resolved, "claim_version", "id", "name", "region_id", "retained_profiles", "status")
 	if resolved["id"] != group.ID || resolved["status"] != "active" {
 		t.Fatalf("resolved group = %#v", resolved)
 	}
 	resolvedPool := capacityJSON(t, f.request(t, http.MethodGet, "/capacity/v1/worker-groups/"+group.ID+"/pools/resolve?name=run-current", token, ""), http.StatusOK)
-	assertCapacityJSONKeys(t, resolvedPool, "id", "name", "status", "worker_group_id")
+	assertCapacityJSONKeys(t, resolvedPool, "claim_version", "id", "name", "retained_profiles", "sealed_at", "status", "worker_group_id")
 	if resolvedPool["id"] != pool.ID || resolvedPool["status"] != "active" {
 		t.Fatalf("resolved pool = %#v", resolvedPool)
 	}
@@ -90,16 +94,17 @@ func TestCapacityHTTPResolveAndPlan(t *testing.T) {
 	assertAdminError(t, f.request(t, http.MethodPost, "/capacity/v1/worker-groups/"+uuid.NewV7().String()+"/plan", token,
 		fmt.Sprintf(`{"pools":[{"pool_id":%q,"max_additional_workers":2}]}`, pool.ID)), http.StatusNotFound, "not_found")
 
-	primaries := capacityJSON(t, f.request(t, http.MethodPut, "/capacity/v1/worker-groups/"+group.ID+"/primary-pools", token,
-		fmt.Sprintf(`{"expected_group_claim_version":%d,"pool_id":%q}`, group.ClaimVersion, pool.ID)), http.StatusOK)
+	f.readyWorkerHost(t, group.ID, pool.ID)
+	primaries := capacityJSON(t, f.request(t, http.MethodPut, "/capacity/v1/worker-groups/"+group.ID+"/primary-pool", token,
+		fmt.Sprintf(`{"expected_group_claim_version":%d,"pool_id":%q,"minimum_ready_hosts":1}`, group.ClaimVersion, pool.ID)), http.StatusOK)
 	assertCapacityJSONKeys(t, primaries, "applied", "worker_group")
 	if primaries["applied"] != true || capacityJSONObject(t, primaries["worker_group"])["primary_pool_id"] != pool.ID {
 		t.Fatalf("primary pools = %#v", primaries)
 	}
-	assertAdminError(t, f.request(t, http.MethodPut, "/capacity/v1/worker-groups/"+group.ID+"/primary-pools", token,
-		fmt.Sprintf(`{"expected_group_claim_version":%d,"pool_id":""}`, group.ClaimVersion+1)), http.StatusBadRequest, "bad_request")
-	assertAdminError(t, f.request(t, http.MethodPut, "/capacity/v1/worker-groups/"+uuid.NewV7().String()+"/primary-pools", token,
-		`{"expected_group_claim_version":1,"pool_id":""}`), http.StatusNotFound, "not_found")
+	assertAdminError(t, f.request(t, http.MethodPut, "/capacity/v1/worker-groups/"+group.ID+"/primary-pool", token,
+		fmt.Sprintf(`{"expected_group_claim_version":%d,"pool_id":"","minimum_ready_hosts":1}`, group.ClaimVersion+1)), http.StatusBadRequest, "bad_request")
+	assertAdminError(t, f.request(t, http.MethodPut, "/capacity/v1/worker-groups/"+uuid.NewV7().String()+"/primary-pool", token,
+		`{"expected_group_claim_version":1,"pool_id":"","minimum_ready_hosts":1}`), http.StatusNotFound, "not_found")
 
 	for _, test := range []struct {
 		method string
@@ -112,7 +117,7 @@ func TestCapacityHTTPResolveAndPlan(t *testing.T) {
 		{method: http.MethodGet, path: "/capacity/v1/worker-hosts?worker_group_id=%20" + group.ID + "%20"},
 		{method: http.MethodPost, path: "/capacity/v1/worker-groups/not-a-group/plan", body: `{}`},
 		{method: http.MethodPost, path: "/capacity/v1/worker-groups/" + group.ID + "/plan", body: `{}`},
-		{method: http.MethodPut, path: "/capacity/v1/worker-groups/" + group.ID + "/primary-pools", body: `{"expected_group_claim_version":0,"pool_id":""}`},
+		{method: http.MethodPut, path: "/capacity/v1/worker-groups/" + group.ID + "/primary-pool", body: `{"expected_group_claim_version":0,"pool_id":"","minimum_ready_hosts":1}`},
 	} {
 		assertAdminError(t, f.request(t, test.method, test.path, token, test.body), http.StatusBadRequest, "bad_request")
 	}
@@ -153,7 +158,7 @@ INSERT INTO worker_hosts (
 		t.Fatalf("worker_hosts = %#v", list["worker_hosts"])
 	}
 	listed := capacityJSONObject(t, hosts[0])
-	assertCapacityJSONKeys(t, listed, "claim_version", "created_at", "current_epoch", "id", "resource_id", "status", "updated_at", "worker_group_id", "worker_pool_id")
+	assertCapacityJSONKeys(t, listed, "claim_version", "created_at", "current_epoch", "drain_blockers", "id", "resource_id", "status", "updated_at", "worker_group_id", "worker_pool_id")
 	if listed["id"] != hostID.String() || listed["resource_id"] != "host-opaque-1" ||
 		listed["worker_group_id"] != group.ID || listed["worker_pool_id"] != pool.ID ||
 		listed["status"] != "active" || listed["claim_version"] != float64(7) || listed["current_epoch"] != float64(4) {
@@ -170,8 +175,8 @@ INSERT INTO worker_hosts (
 
 	drainPath := "/capacity/v1/worker-hosts/" + hostID.String() + "/drain"
 	assertAdminError(t, f.request(t, http.MethodPost, drainPath, token, `{"expected_epoch":0,"expected_claim_version":7}`), http.StatusBadRequest, "bad_request")
-	assertAdminError(t, f.request(t, http.MethodPost, drainPath, token, `{"expected_epoch":4,"expected_claim_version":6}`), http.StatusConflict, "conflict")
-	drained := capacityJSON(t, f.request(t, http.MethodPost, drainPath, token, `{"expected_epoch":4,"expected_claim_version":7,"require_zero_queued_demand":true}`), http.StatusOK)
+	assertAdminError(t, f.request(t, http.MethodPost, drainPath, token, `{"expected_epoch":4,"expected_claim_version":6,"reason":"replacement"}`), http.StatusConflict, "conflict")
+	drained := capacityJSON(t, f.request(t, http.MethodPost, drainPath, token, `{"expected_epoch":4,"expected_claim_version":7,"reason":"idle_scale_in"}`), http.StatusOK)
 	if drained["status"] != "draining" || drained["claim_version"] != float64(8) || drained["draining_at"] == nil {
 		t.Fatalf("drained host = %#v", drained)
 	}
@@ -183,4 +188,22 @@ INSERT INTO worker_hosts (
 		t.Fatalf("lost host = %#v", lost)
 	}
 	assertAdminError(t, f.request(t, http.MethodPost, "/capacity/v1/worker-hosts/"+uuid.NewV7().String()+"/lost", token, ""), http.StatusNotFound, "not_found")
+}
+
+func TestCapacityHTTPDeploymentAppliedSchema(t *testing.T) {
+	f := runtest.New(t)
+	server := &Server{readinessDB: f.Pool, log: slog.Default()}
+	// Deliberately differs from the embedded migration maximum.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE schema_migrations SET version=12345, dirty=true`)
+	response := httptest.NewRecorder()
+	server.capacityDeployment(response, httptest.NewRequest(http.MethodGet, "/capacity/v1/deployment", nil))
+	result := capacityJSON(t, response, http.StatusOK)
+	if result["applied_schema_version"] != float64(12345) || result["schema_dirty"] != true || result["release"] != version.Version || result["worker_revision"] != workerapi.APIVersion {
+		t.Fatalf("deployment = %#v", result)
+	}
+	if response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("deployment response is cacheable")
+	}
+	auth := newSupplyHTTPFixture(t)
+	assertAdminError(t, auth.request(t, http.MethodGet, "/capacity/v1/deployment", "", ""), http.StatusUnauthorized, "unauthorized")
 }

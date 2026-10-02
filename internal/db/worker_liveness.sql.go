@@ -161,7 +161,7 @@ WITH target AS (
                 < transaction_timestamp()
                     - $5::bigint * interval '1 second')
        )
-    RETURNING workers.id, workers.resource_id, workers.worker_group_id, workers.worker_pool_id, workers.status, workers.claim_version, workers.current_epoch, workers.current_service_id, workers.vm_platform_id, workers.epoch_cpu_millis, workers.epoch_memory_bytes, workers.epoch_guest_ephemeral_disk_bytes, workers.per_vm_cpu_millis, workers.per_vm_memory_bytes, workers.per_vm_guest_ephemeral_disk_bytes, workers.max_vm_slots, workers.max_vm_starts, workers.cpu_environment, workers.cpu_environment_digest, workers.observed_at, workers.run_paused_reason, workers.vm_paused_reason, workers.epoch_started_at, workers.activated_at, workers.draining_at, workers.termination_ready_at, workers.lost_at, workers.created_at, workers.updated_at
+    RETURNING workers.id, workers.resource_id, workers.worker_group_id, workers.worker_pool_id, workers.status, workers.claim_version, workers.current_epoch, workers.current_service_id, workers.vm_platform_id, workers.epoch_cpu_millis, workers.epoch_memory_bytes, workers.epoch_guest_ephemeral_disk_bytes, workers.per_vm_cpu_millis, workers.per_vm_memory_bytes, workers.per_vm_guest_ephemeral_disk_bytes, workers.max_vm_slots, workers.max_vm_starts, workers.cpu_environment, workers.cpu_environment_digest, workers.observed_at, workers.run_paused_reason, workers.vm_paused_reason, workers.epoch_started_at, workers.activated_at, workers.draining_at, workers.drain_reason, workers.termination_ready_at, workers.lost_at, workers.created_at, workers.updated_at
 ), revoked_host_secrets AS (
     UPDATE worker_host_secrets AS host_secrets
        SET revoked_at = COALESCE(host_secrets.revoked_at, now())

@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -19,6 +21,20 @@ func TestRunStartsAndStopsWithConfiguredDependencies(t *testing.T) {
 	ctx := context.Background()
 	databaseURL := newSmokeDatabase(t, ctx)
 	t.Setenv("DATABASE_URL", databaseURL)
+	ready := make(chan struct{}, 1)
+	cp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/readyz" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		select {
+		case ready <- struct{}{}:
+		default:
+		}
+	}))
+	defer cp.Close()
+	t.Setenv("CONTROL_PLANE_URL", cp.URL)
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:1")
 	t.Setenv("COMPUTER_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 	t.Setenv("ENCRYPTION_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
@@ -34,7 +50,9 @@ func TestRunStartsAndStopsWithConfiguredDependencies(t *testing.T) {
 			t.Fatalf("dispatcher run returned before cancel: %v", err)
 		}
 		t.Fatal("dispatcher run returned before cancel")
-	case <-time.After(500 * time.Millisecond):
+	case <-ready:
+	case <-time.After(10 * time.Second):
+		t.Fatal("dispatcher did not check Control Plane readiness")
 	}
 	cancel()
 	select {

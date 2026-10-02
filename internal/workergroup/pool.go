@@ -12,6 +12,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+var ErrInsufficientReadyHosts = errors.New("selected worker pool has fewer than minimum_ready_hosts ready hosts")
+
 // PrimarySelection is the worker group after a primary pool selection and the
 // selected pool. Applied is false when the pool already was the primary.
 type PrimarySelection struct {
@@ -82,9 +84,12 @@ func CreatePool(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, name 
 // cannot drift. Selecting the current primary again is a replay that succeeds
 // unless the expected claim version is ahead of the group's. A zero poolID is
 // rejected after the group is locked and found selectable.
-func SelectPrimaryPool(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, poolID uuid.UUID, expectedGroupClaimVersion int64) (PrimarySelection, error) {
+func SelectPrimaryPool(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, poolID uuid.UUID, expectedGroupClaimVersion int64, minimumReadyHosts int32) (PrimarySelection, error) {
 	if expectedGroupClaimVersion <= 0 {
 		return PrimarySelection{}, invalidInput("expected_group_claim_version must be positive")
+	}
+	if minimumReadyHosts <= 0 {
+		return PrimarySelection{}, invalidInput("minimum_ready_hosts must be positive")
 	}
 	var selection PrimarySelection
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
@@ -116,6 +121,23 @@ func SelectPrimaryPool(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID
 		}
 		if expectedGroupClaimVersion != group.ClaimVersion {
 			return conflict("worker group state, claim version, or primary selection changed")
+		}
+		hosts, err := q.LockWorkerPoolActiveHosts(ctx, db.LockWorkerPoolActiveHostsParams{
+			WorkerGroupID: group.ID, WorkerPoolID: pool.ID,
+		})
+		if err != nil {
+			return fmt.Errorf("lock primary pool readiness: %w", err)
+		}
+		// Evaluate wall-clock freshness after every potentially blocking Host
+		// lock, not while the locking query is still acquiring its rows.
+		ready, err := q.CountReadyWorkerPoolHosts(ctx, db.CountReadyWorkerPoolHostsParams{
+			WorkerHostIds: hosts, ObservationFreshnessSeconds: ObservationFreshnessSeconds,
+		})
+		if err != nil {
+			return fmt.Errorf("count primary pool readiness: %w", err)
+		}
+		if ready < int64(minimumReadyHosts) {
+			return ErrInsufficientReadyHosts
 		}
 		group, err = q.SetWorkerGroupPrimaryPool(ctx, db.SetWorkerGroupPrimaryPoolParams{
 			PoolID: pgvalue.UUID(poolID), WorkerGroupID: pgvalue.UUID(groupID),

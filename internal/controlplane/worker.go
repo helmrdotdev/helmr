@@ -220,7 +220,7 @@ func (s *Server) workerObserve(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) workerDrain(w http.ResponseWriter, r *http.Request) {
 	worker := workerFromContext(r.Context())
-	if err := workergroup.BeginHostDrain(r.Context(), s.db, worker); err != nil {
+	if err := workergroup.BeginHostDrain(r.Context(), s.tx, worker); err != nil {
 		s.writeWorkerHostError(w, "drain worker", err)
 		return
 	}

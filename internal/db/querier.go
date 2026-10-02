@@ -129,6 +129,7 @@ type Querier interface {
 	ConsumeMagicLink(ctx context.Context, arg ConsumeMagicLinkParams) (int64, error)
 	ControlOutboxLifecycle(ctx context.Context, deadLetterLimit int64) (ControlOutboxLifecycleRow, error)
 	CountOrganizations(ctx context.Context) (int64, error)
+	CountReadyWorkerPoolHosts(ctx context.Context, arg CountReadyWorkerPoolHostsParams) (int64, error)
 	CountRecentMagicLinks(ctx context.Context, arg CountRecentMagicLinksParams) (int64, error)
 	CreateActorContinuationRun(ctx context.Context, arg CreateActorContinuationRunParams) (CreateActorContinuationRunRow, error)
 	CreateActorStartRun(ctx context.Context, arg CreateActorStartRunParams) (CreateActorStartRunRow, error)
@@ -464,6 +465,7 @@ type Querier interface {
 	ListUnreferencedComputerObjects(ctx context.Context, rowLimit int32) ([]ListUnreferencedComputerObjectsRow, error)
 	ListUnsettledSessionMessages(ctx context.Context, arg ListUnsettledSessionMessagesParams) ([]SessionMessage, error)
 	ListWorkerCapacityBins(ctx context.Context, arg ListWorkerCapacityBinsParams) ([]ListWorkerCapacityBinsRow, error)
+	ListWorkerGroupRetainedProfiles(ctx context.Context, arg ListWorkerGroupRetainedProfilesParams) ([]ListWorkerGroupRetainedProfilesRow, error)
 	ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsParams) ([]WorkerGroup, error)
 	ListWorkerPoolCPUShapes(ctx context.Context, workerPoolID pgtype.UUID) ([]WorkerPoolCpuShape, error)
 	ListWorkerPools(ctx context.Context, workerGroupID pgtype.UUID) ([]WorkerPool, error)
@@ -567,6 +569,7 @@ type Querier interface {
 	LockWorkerGroupMutation(ctx context.Context, lockKey int64) error
 	LockWorkerHostForActivation(ctx context.Context, arg LockWorkerHostForActivationParams) (WorkerHost, error)
 	LockWorkerPool(ctx context.Context, arg LockWorkerPoolParams) (WorkerPool, error)
+	LockWorkerPoolActiveHosts(ctx context.Context, arg LockWorkerPoolActiveHostsParams) ([]pgtype.UUID, error)
 	// Only the instance coordinator may mark members after sealing the complete set.
 	MarkCheckpointMemberWaiting(ctx context.Context, arg MarkCheckpointMemberWaitingParams) (RunWait, error)
 	// The caller certifies artifact contents and the private disk root, then settles

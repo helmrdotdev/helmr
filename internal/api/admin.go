@@ -76,10 +76,6 @@ type CreateAdminWorkerPoolRequest struct {
 	ExpectedGroupClaimVersion int64  `json:"expected_group_claim_version"`
 }
 
-type SwitchAdminWorkerPoolPrimaryRequest struct {
-	ExpectedGroupClaimVersion int64 `json:"expected_group_claim_version"`
-}
-
 type SwitchAdminWorkerPoolPrimaryResponse struct {
 	WorkerGroup AdminWorkerGroup `json:"worker_group"`
 	WorkerPool  AdminWorkerPool  `json:"worker_pool"`

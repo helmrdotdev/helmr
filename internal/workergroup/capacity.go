@@ -35,7 +35,13 @@ func ResolveGroup(ctx context.Context, q db.Querier, regionID string, name strin
 	if err != nil {
 		return Group{}, fmt.Errorf("resolve worker group %q in region %q: %w", name, regionID, err)
 	}
-	return projectGroup(group)
+	result, err := projectGroup(group)
+	if err != nil {
+		return Group{}, err
+	}
+	profiles, err := retainedProfiles(ctx, q, group.ID, pgtype.UUID{})
+	result.RetainedProfiles = &profiles
+	return result, err
 }
 
 // ResolvePool returns the capacity projection of the worker group's pool with
@@ -54,25 +60,34 @@ func ResolvePool(ctx context.Context, q db.Querier, groupID uuid.UUID, name stri
 	if err != nil {
 		return WorkerPool{}, err
 	}
-	return WorkerPool{
+	profiles, err := retainedProfiles(ctx, q, pool.WorkerGroupID, pool.ID)
+	if err != nil {
+		return WorkerPool{}, err
+	}
+	result := WorkerPool{
+		ClaimVersion: pool.ClaimVersion, RetainedProfiles: profiles,
 		ID: pgvalue.UUIDString(pool.ID), WorkerGroupID: pgvalue.UUIDString(pool.WorkerGroupID),
 		Name: pool.Name, Status: status,
-	}, nil
+	}
+	if pool.SealedAt.Valid {
+		result.SealedAt = &pool.SealedAt.Time
+	}
+	return result, nil
 }
 
-// ReconcilePrimaryPools selects the provider controller's primary pool through
+// SelectPrimary selects the provider controller's primary pool through
 // SelectPrimaryPool and returns the group's capacity projection. A zero poolID
 // is rejected as SelectPrimaryPool describes.
-func ReconcilePrimaryPools(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, poolID uuid.UUID, expectedGroupClaimVersion int64) (ReconcilePrimaryPoolsResponse, error) {
-	selection, err := SelectPrimaryPool(ctx, txb, groupID, poolID, expectedGroupClaimVersion)
+func SelectPrimary(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, poolID uuid.UUID, expectedGroupClaimVersion int64, minimumReadyHosts int32) (PrimarySelectionResponse, error) {
+	selection, err := SelectPrimaryPool(ctx, txb, groupID, poolID, expectedGroupClaimVersion, minimumReadyHosts)
 	if err != nil {
-		return ReconcilePrimaryPoolsResponse{}, err
+		return PrimarySelectionResponse{}, err
 	}
 	group, err := projectGroup(selection.Group)
 	if err != nil {
-		return ReconcilePrimaryPoolsResponse{}, err
+		return PrimarySelectionResponse{}, err
 	}
-	return ReconcilePrimaryPoolsResponse{WorkerGroup: group, Applied: selection.Applied}, nil
+	return PrimarySelectionResponse{WorkerGroup: group, Applied: selection.Applied}, nil
 }
 
 // ListHosts returns the worker hosts that match filter.
@@ -113,45 +128,55 @@ func GetHost(ctx context.Context, q db.Querier, hostID uuid.UUID) (WorkerHost, e
 	return projectHost(row)
 }
 
-// DrainHost starts the provider-requested drain of an active worker host fenced
-// by its epoch and claim version. With RequireZeroQueuedDemand, an active host
-// is not drained while its group's region has queued demand.
-func DrainHost(ctx context.Context, q db.Querier, hostID uuid.UUID, request DrainWorkerHostRequest) (WorkerHost, error) {
+// DrainHost commits a reasoned provider drain under the Group, Pool and Host
+// fences. Idle scale-in checks advisory demand; other planned drains do not.
+func DrainHost(ctx context.Context, txb db.TxBeginner, hostID uuid.UUID, request DrainWorkerHostRequest) (WorkerHost, error) {
 	if request.ExpectedEpoch <= 0 || request.ExpectedClaimVersion <= 0 {
 		return WorkerHost{}, invalidInput("expected_epoch and expected_claim_version must be positive")
 	}
-	host, err := getCapacityHost(ctx, q, hostID)
-	if err != nil {
-		return WorkerHost{}, err
+	switch request.Reason {
+	case DrainReasonReplacement, DrainReasonCapacityReduction, DrainReasonIdleScaleIn:
+	default:
+		return WorkerHost{}, invalidInput("reason must be replacement, capacity_reduction or idle_scale_in")
 	}
-	if request.RequireZeroQueuedDemand && host.Status == string(db.WorkerHostStatusActive) {
-		present, err := HasQueuedDemand(ctx, q, pgvalue.MustUUIDValue(host.WorkerGroupID))
+	var result WorkerHost
+	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
+		q := db.New(tx)
+		host, err := getCapacityHost(ctx, q, hostID)
 		if err != nil {
-			return WorkerHost{}, fmt.Errorf("check queued demand for worker host %s drain: %w", hostID.String(), err)
+			return err
 		}
-		if present {
-			return WorkerHost{}, ErrQueuedDemand
+		locked, err := LockHostWithPool(ctx, q, pgvalue.MustUUIDValue(host.WorkerGroupID), pgvalue.MustUUIDValue(host.WorkerPoolID), hostID, request.ExpectedEpoch)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return conflict("worker drain fence is stale or the worker host is not active")
 		}
-	}
-	drained, err := q.DrainWorkerHost(ctx, db.DrainWorkerHostParams{
-		ID:                   pgvalue.UUID(hostID),
-		WorkerGroupID:        host.WorkerGroupID,
-		ExpectedEpoch:        pgtype.Int8{Int64: request.ExpectedEpoch, Valid: true},
-		ExpectedClaimVersion: request.ExpectedClaimVersion,
+		if err != nil {
+			return fmt.Errorf("lock worker host drain: %w", err)
+		}
+		if request.Reason == DrainReasonIdleScaleIn && locked.Host.Status == db.WorkerHostStatusActive {
+			present, err := HasQueuedDemand(ctx, q, pgvalue.MustUUIDValue(host.WorkerGroupID))
+			if err != nil {
+				return fmt.Errorf("check queued demand for worker host drain: %w", err)
+			}
+			if present {
+				return ErrQueuedDemand
+			}
+		}
+		_, err = q.DrainWorkerHost(ctx, db.DrainWorkerHostParams{
+			ID: pgvalue.UUID(hostID), WorkerGroupID: host.WorkerGroupID,
+			ExpectedEpoch:        pgtype.Int8{Int64: request.ExpectedEpoch, Valid: true},
+			ExpectedClaimVersion: request.ExpectedClaimVersion, DrainReason: string(request.Reason),
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return conflict("worker drain fence is stale or the worker host is not active")
+		}
+		if err != nil {
+			return fmt.Errorf("drain worker host %s: %w", hostID.String(), err)
+		}
+		result, err = GetHost(ctx, q, hostID)
+		return err
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return WorkerHost{}, conflict("worker drain fence is stale or the worker host is not active")
-	}
-	if err != nil {
-		return WorkerHost{}, fmt.Errorf("drain worker host %s: %w", hostID.String(), err)
-	}
-	return projectHost(db.GetCapacityWorkerHostRow{
-		ID: drained.ID, ResourceID: drained.ResourceID, WorkerGroupID: drained.WorkerGroupID,
-		WorkerPoolID: drained.WorkerPoolID, Status: drained.Status, ClaimVersion: drained.ClaimVersion,
-		CurrentEpoch: drained.CurrentEpoch, DrainingAt: drained.DrainingAt,
-		TerminationReadyAt: drained.TerminationReadyAt, LostAt: drained.LostAt,
-		CreatedAt: drained.CreatedAt, UpdatedAt: drained.UpdatedAt,
-	})
+	return result, err
 }
 
 // ConfirmHostProviderAbsent records the provider's confirmation that a worker
@@ -186,7 +211,7 @@ func ConfirmHostProviderAbsent(ctx context.Context, q db.Querier, txb db.TxBegin
 	if confirmed.WorkerGroupID != host.WorkerGroupID || confirmed.WorkerPoolID != host.WorkerPoolID || confirmed.ResourceID != host.ResourceID {
 		return WorkerHost{}, fmt.Errorf("provider absence changed worker host %s identity", hostID.String())
 	}
-	return projectHost(db.GetCapacityWorkerHostRow(confirmed))
+	return GetHost(ctx, q, hostID)
 }
 
 func getCapacityHost(ctx context.Context, q db.Querier, hostID uuid.UUID) (db.GetCapacityWorkerHostRow, error) {
@@ -218,9 +243,10 @@ func projectHost(row db.GetCapacityWorkerHostRow) (WorkerHost, error) {
 		return WorkerHost{}, err
 	}
 	host := WorkerHost{
-		ID: pgvalue.UUIDString(row.ID), ResourceID: row.ResourceID,
+		DrainBlockers: HostDrainBlockers{UnreclaimedInstances: row.UnreclaimedInstances, UnreconciledRunProcesses: row.UnreconciledRunProcesses, UnreconciledCommandProcesses: row.UnreconciledCommandProcesses},
+		ID:            pgvalue.UUIDString(row.ID), ResourceID: row.ResourceID,
 		WorkerGroupID: pgvalue.UUIDString(row.WorkerGroupID), WorkerPoolID: pgvalue.UUIDString(row.WorkerPoolID),
-		Status: status, ClaimVersion: row.ClaimVersion,
+		Status: status, ClaimVersion: row.ClaimVersion, DrainReason: row.DrainReason.String,
 		CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time,
 	}
 	if row.CurrentEpoch.Valid {
@@ -283,4 +309,24 @@ func publicHostStatus(state string) (WorkerHostStatus, error) {
 	default:
 		return "", fmt.Errorf("worker host state %q has no public projection", state)
 	}
+}
+
+func retainedProfiles(ctx context.Context, q db.Querier, groupID, poolID pgtype.UUID) (RetainedProfiles, error) {
+	const limit = 100
+	rows, err := q.ListWorkerGroupRetainedProfiles(ctx, db.ListWorkerGroupRetainedProfilesParams{WorkerGroupID: groupID, WorkerPoolID: poolID, RowLimit: limit + 1})
+	if err != nil {
+		return RetainedProfiles{}, fmt.Errorf("read retained worker profiles: %w", err)
+	}
+	result := RetainedProfiles{Profiles: make([]RetainedProfile, 0, min(len(rows), limit)), Complete: len(rows) <= limit}
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	for _, row := range rows {
+		result.Profiles = append(result.Profiles, RetainedProfile{
+			VMPlatformID: row.VMPlatformID, VCPUCount: row.VMVCPUCount, CPUConfigDigest: row.CPUConfigDigest,
+			Resources:     ResourceVector{CPUMillis: row.ReservedCPUMillis, MemoryBytes: row.ReservedMemoryBytes, GuestEphemeralDiskBytes: row.ReservedGuestEphemeralDiskBytes},
+			LiveInstances: row.LiveInstances, CapturingCheckpoints: row.CapturingCheckpoints, ParkedCheckpoints: row.ParkedCheckpoints, EligiblePools: row.EligiblePools,
+		})
+	}
+	return result, nil
 }

@@ -224,12 +224,16 @@ func (s *Server) adminSwitchWorkerPoolPrimary(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	var request api.SwitchAdminWorkerPoolPrimaryRequest
+	var request workergroup.PrimarySelectionRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
 		writeError(w, fmt.Errorf("invalid worker pool primary request JSON: %w", err))
 		return
 	}
-	selection, err := workergroup.SelectPrimaryPool(r.Context(), s.tx, groupID, poolID, request.ExpectedGroupClaimVersion)
+	if request.PoolID != poolID.String() {
+		writeError(w, badRequest(errors.New("pool_id must match the requested pool")))
+		return
+	}
+	selection, err := workergroup.SelectPrimaryPool(r.Context(), s.tx, groupID, poolID, request.ExpectedGroupClaimVersion, request.MinimumReadyHosts)
 	if err != nil {
 		s.writeWorkerGroupError(w, err)
 		return

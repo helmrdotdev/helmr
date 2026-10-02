@@ -27,6 +27,8 @@ func workerGroupError(err error) error {
 		errors.Is(err, workergroup.ErrPoolNotFound),
 		errors.Is(err, workergroup.ErrHostNotFound):
 		return notFound(err)
+	case errors.Is(err, workergroup.ErrInsufficientReadyHosts):
+		return conflict(codedError{code: "insufficient_ready_hosts", message: err.Error()})
 	case errors.Is(err, workergroup.ErrQueuedDemand):
 		return conflict(codedError{code: "queued_demand_present", message: workergroup.ErrQueuedDemand.Error()})
 	case errors.As(err, &conflicting):

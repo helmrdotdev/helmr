@@ -44,7 +44,7 @@ The Control Plane base URL is shown as `$CONTROL_PLANE_URL` below.
 | --- | --- |
 | `GET /capacity/v1/worker-groups/resolve?region_id=...&name=...` | Resolve a Worker group by canonical Region ID and name. |
 | `GET /capacity/v1/worker-groups/{group_id}/pools/resolve?name=...` | Resolve a pool in a Worker group. |
-| `PUT /capacity/v1/worker-groups/{group_id}/primary-pools` | Select the primary pool with a group claim-version fence. |
+| `PUT /capacity/v1/worker-groups/{group_id}/primary-pool` | Select the primary pool with a group claim-version fence and a positive minimum of ready hosts. |
 | `POST /capacity/v1/worker-groups/{group_id}/plan` | Compute provider-neutral additional Worker recommendations. |
 | `GET /capacity/v1/worker-hosts` | List Worker instances for inventory and lifecycle reconciliation. |
 | `GET /capacity/v1/worker-hosts/{instance_id}` | Read one Worker instance. |
@@ -121,7 +121,7 @@ start a drain unless all of these are true:
   already draining, and no provider mutation is in flight; and
 - provider inventory is complete and stable under its scale-in protection.
 
-The drain fence and `require_zero_queued_demand` are final safety checks. They
+The drain fence and the advisory queued-demand check for `idle_scale_in` are final safety checks. They
 do not make a partial plan or incomplete inventory safe for scale-in.
 
 ### Select a primary pool
@@ -131,12 +131,28 @@ Use the `claim_version` returned by Worker-group resolution:
 ```json
 {
   "expected_group_claim_version": 4,
+  "minimum_ready_hosts": 1,
   "pool_id": "019..."
 }
 ```
 
-`PUT .../primary-pools` returns `worker_group` and `applied`. Re-read the group
-and retry from current state when the claim fence is stale.
+`PUT .../primary-pool` returns `worker_group` and `applied`. Re-read the group
+and retry from current state when the claim fence is stale. Selection checks
+fresh, active, unpaused hosts at the current epoch under the same Group, Pool
+and Host fences used by drain. Selecting the current primary is an exact replay;
+it does not establish current fleet health.
+
+Group and Pool resolution includes `retained_profiles`: up to 100 distinct
+profiles with live Instance, creating checkpoint, parked checkpoint and eligible
+Pool counts. `complete: false` means more profiles exist; a truncated result is
+not proof that retirement is safe. Valid parked checkpoints retain their profile
+when waits resolve or Commands queue. A Pool also reports its claim version and
+seal time. Retirement checks the complete database state atomically.
+
+`GET /capacity/v1/deployment` reports this Control Plane replica's release,
+source commit, worker protocol revision, applied database schema version and
+migration dirty flag. It reads database state directly and does not report
+provider fleet convergence.
 
 ### Reconcile Worker inventory
 
@@ -152,7 +168,9 @@ and retry from current state when the claim fence is stale.
 
 The response contains `worker_hosts`. Each item includes `id`,
 `resource_id`, `worker_group_id`, `worker_pool_id`, `status`, `claim_version`,
-`created_at`, and `updated_at`. `current_epoch`, `draining_at`,
+`created_at`, and `updated_at`. `drain_blockers` counts unreclaimed Instances and unreconciled Run and Command
+processes. Zero counts still require the worker's local cleanup acknowledgment.
+`current_epoch`, `draining_at`, `drain_reason`,
 `termination_ready_at`, and `lost_at` appear when applicable.
 
 Group statuses are `active`, `paused`, `draining`, or `disabled`. Pool statuses
@@ -170,15 +188,18 @@ printf 'Authorization: Bearer %s\n' "$CAPACITY_TOKEN" |
   --header @- \
   --header 'Accept: application/json' \
   --header 'Content-Type: application/json' \
-  --data "{\"expected_epoch\":$CURRENT_EPOCH,\"expected_claim_version\":$CLAIM_VERSION,\"require_zero_queued_demand\":true}" \
+  --data "{\"expected_epoch\":$CURRENT_EPOCH,\"expected_claim_version\":$CLAIM_VERSION,\"reason\":\"idle_scale_in\"}" \
   "$CONTROL_PLANE_URL/capacity/v1/worker-hosts/$INSTANCE_ID/drain"
 ```
 
 The epoch and claim version fence the exact Worker ownership observed by the
 scaler. On conflict, discard the attempted mutation, read the instance again,
-and reconcile from current state. When `require_zero_queued_demand` is true,
+and reconcile from current state. For reason `idle_scale_in`,
 Helmr returns `409` with code `queued_demand_present` instead of beginning
-scale-in while that group has queued work.
+scale-in while that group has queued work. This demand snapshot is advisory;
+new work may enqueue afterward. Use `replacement` or `capacity_reduction` for
+planned maintenance that must preserve queued work while draining. The first
+committed drain reason and epoch remain unchanged on replay.
 
 After the provider confirms that a host is absent, call `POST .../{id}/lost`.
 This is a confirmation of observed provider state, not a request for Helmr to

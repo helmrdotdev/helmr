@@ -240,7 +240,7 @@ WITH enrollment_token AS (
                ELSE sqlc.arg(current_service_id)::uuid
            END,
            epoch_started_at = CASE WHEN worker_hosts.current_epoch IS NULL THEN NULL ELSE now() END,
-           activated_at = NULL, draining_at = NULL,
+           activated_at = NULL, draining_at = NULL, drain_reason = NULL,
 	       observed_at = NULL,
 	       run_paused_reason = NULL,
 	       vm_paused_reason = NULL,

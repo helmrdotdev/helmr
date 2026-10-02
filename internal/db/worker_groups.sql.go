@@ -39,6 +39,13 @@ UPDATE worker_hosts
            THEN COALESCE(worker_hosts.draining_at, now())
            ELSE worker_hosts.draining_at
        END,
+       drain_reason = CASE
+           WHEN worker_hosts.status = 'draining'
+               OR worker_groups.status = 'draining'
+               OR worker_pools.status = 'draining'
+           THEN COALESCE(worker_hosts.drain_reason, 'admin')
+           ELSE worker_hosts.drain_reason
+       END,
        updated_at = now()
   FROM worker_groups, worker_pools
  WHERE worker_hosts.id = $12
@@ -87,7 +94,7 @@ UPDATE worker_hosts
            AND worker_hosts.cpu_environment_digest = $11
        )
    )
-RETURNING worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.run_paused_reason, worker_hosts.vm_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
+RETURNING worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.run_paused_reason, worker_hosts.vm_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
 `
 
 type ActivateWorkerHostParams struct {
@@ -151,6 +158,7 @@ func (q *Queries) ActivateWorkerHost(ctx context.Context, arg ActivateWorkerHost
 		&i.EpochStartedAt,
 		&i.ActivatedAt,
 		&i.DrainingAt,
+		&i.DrainReason,
 		&i.TerminationReadyAt,
 		&i.LostAt,
 		&i.CreatedAt,
@@ -228,7 +236,7 @@ UPDATE worker_hosts
    AND (SELECT count(*) FROM reclaimed_instances) >= 0
    AND (SELECT count(*) FROM reconciled_processes) >= 0
    AND (SELECT count(*) FROM invalidated_captures) >= 0
-RETURNING worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.run_paused_reason, worker_hosts.vm_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
+RETURNING worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.run_paused_reason, worker_hosts.vm_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
 `
 
 type CompleteWorkerStartupRecoveryParams struct {
@@ -272,6 +280,7 @@ func (q *Queries) CompleteWorkerStartupRecovery(ctx context.Context, arg Complet
 		&i.EpochStartedAt,
 		&i.ActivatedAt,
 		&i.DrainingAt,
+		&i.DrainReason,
 		&i.TerminationReadyAt,
 		&i.LostAt,
 		&i.CreatedAt,
@@ -302,7 +311,7 @@ WITH target AS MATERIALIZED (
     RETURNING worker_hosts.id, worker_hosts.resource_id,
               worker_hosts.worker_group_id, worker_hosts.worker_pool_id,
               worker_hosts.status, worker_hosts.claim_version,
-              worker_hosts.current_epoch, worker_hosts.draining_at,
+              worker_hosts.current_epoch, worker_hosts.draining_at, worker_hosts.drain_reason,
               worker_hosts.termination_ready_at, worker_hosts.lost_at,
               worker_hosts.created_at, worker_hosts.updated_at
 ), revoked_host_secrets AS (
@@ -317,7 +326,7 @@ WITH target AS MATERIALIZED (
 SELECT transitioned.id, transitioned.resource_id,
        transitioned.worker_group_id, transitioned.worker_pool_id,
        transitioned.status, transitioned.claim_version,
-       transitioned.current_epoch, transitioned.draining_at,
+       transitioned.current_epoch, transitioned.draining_at, transitioned.drain_reason,
        transitioned.termination_ready_at, transitioned.lost_at,
        transitioned.created_at, transitioned.updated_at
   FROM transitioned
@@ -333,6 +342,7 @@ type ConfirmWorkerHostProviderAbsentRow struct {
 	ClaimVersion       int64              `json:"claim_version"`
 	CurrentEpoch       pgtype.Int8        `json:"current_epoch"`
 	DrainingAt         pgtype.Timestamptz `json:"draining_at"`
+	DrainReason        pgtype.Text        `json:"drain_reason"`
 	TerminationReadyAt pgtype.Timestamptz `json:"termination_ready_at"`
 	LostAt             pgtype.Timestamptz `json:"lost_at"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
@@ -351,12 +361,42 @@ func (q *Queries) ConfirmWorkerHostProviderAbsent(ctx context.Context, workerHos
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
 		&i.DrainingAt,
+		&i.DrainReason,
 		&i.TerminationReadyAt,
 		&i.LostAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const countReadyWorkerPoolHosts = `-- name: CountReadyWorkerPoolHosts :one
+SELECT count(*)::bigint
+  FROM worker_hosts h
+  JOIN worker_pools p ON p.id = h.worker_pool_id AND p.worker_group_id = h.worker_group_id
+ WHERE h.id = ANY($1::uuid[])
+   AND h.status = 'active'
+   AND h.current_epoch IS NOT NULL
+   AND h.activated_at IS NOT NULL
+   AND h.observed_at >= clock_timestamp() - $2::bigint * interval '1 second'
+   AND h.run_paused_reason IS NULL AND h.vm_paused_reason IS NULL
+   AND h.vm_platform_id = p.vm_platform_id
+   AND h.per_vm_cpu_millis >= p.per_vm_cpu_millis
+   AND h.per_vm_memory_bytes >= p.per_vm_memory_bytes
+   AND h.per_vm_guest_ephemeral_disk_bytes >= p.per_vm_guest_ephemeral_disk_bytes
+   AND h.max_vm_slots > 0 AND h.max_vm_starts > 0
+`
+
+type CountReadyWorkerPoolHostsParams struct {
+	WorkerHostIds               []pgtype.UUID `json:"worker_host_ids"`
+	ObservationFreshnessSeconds int64         `json:"observation_freshness_seconds"`
+}
+
+func (q *Queries) CountReadyWorkerPoolHosts(ctx context.Context, arg CountReadyWorkerPoolHostsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countReadyWorkerPoolHosts, arg.WorkerHostIds, arg.ObservationFreshnessSeconds)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const createPendingWorkerPool = `-- name: CreatePendingWorkerPool :one
@@ -455,25 +495,32 @@ func (q *Queries) CreateWorkerGroup(ctx context.Context, arg CreateWorkerGroupPa
 
 const getCapacityWorkerHost = `-- name: GetCapacityWorkerHost :one
 SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch,
-       draining_at, termination_ready_at, lost_at,
-       created_at, updated_at
+       draining_at, drain_reason, termination_ready_at, lost_at,
+       created_at, updated_at,
+       (SELECT count(*) FROM computer_instances i WHERE i.worker_host_id=worker_hosts.id AND i.reclaimed_at IS NULL)::bigint AS unreclaimed_instances,
+       (SELECT count(*) FROM run_leases l WHERE l.worker_host_id=worker_hosts.id AND l.process_reconciled_at IS NULL)::bigint AS unreconciled_run_processes,
+       (SELECT count(*) FROM computer_commands c JOIN computer_instances i ON i.id=c.computer_instance_id WHERE i.worker_host_id=worker_hosts.id AND c.process_reconciled_at IS NULL)::bigint AS unreconciled_command_processes
   FROM worker_hosts
- WHERE id = $1
+ WHERE worker_hosts.id = $1
 `
 
 type GetCapacityWorkerHostRow struct {
-	ID                 pgtype.UUID        `json:"id"`
-	ResourceID         string             `json:"resource_id"`
-	WorkerGroupID      pgtype.UUID        `json:"worker_group_id"`
-	WorkerPoolID       pgtype.UUID        `json:"worker_pool_id"`
-	Status             string             `json:"status"`
-	ClaimVersion       int64              `json:"claim_version"`
-	CurrentEpoch       pgtype.Int8        `json:"current_epoch"`
-	DrainingAt         pgtype.Timestamptz `json:"draining_at"`
-	TerminationReadyAt pgtype.Timestamptz `json:"termination_ready_at"`
-	LostAt             pgtype.Timestamptz `json:"lost_at"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	ID                           pgtype.UUID        `json:"id"`
+	ResourceID                   string             `json:"resource_id"`
+	WorkerGroupID                pgtype.UUID        `json:"worker_group_id"`
+	WorkerPoolID                 pgtype.UUID        `json:"worker_pool_id"`
+	Status                       string             `json:"status"`
+	ClaimVersion                 int64              `json:"claim_version"`
+	CurrentEpoch                 pgtype.Int8        `json:"current_epoch"`
+	DrainingAt                   pgtype.Timestamptz `json:"draining_at"`
+	DrainReason                  pgtype.Text        `json:"drain_reason"`
+	TerminationReadyAt           pgtype.Timestamptz `json:"termination_ready_at"`
+	LostAt                       pgtype.Timestamptz `json:"lost_at"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	UnreclaimedInstances         int64              `json:"unreclaimed_instances"`
+	UnreconciledRunProcesses     int64              `json:"unreconciled_run_processes"`
+	UnreconciledCommandProcesses int64              `json:"unreconciled_command_processes"`
 }
 
 func (q *Queries) GetCapacityWorkerHost(ctx context.Context, workerHostID pgtype.UUID) (GetCapacityWorkerHostRow, error) {
@@ -488,10 +535,14 @@ func (q *Queries) GetCapacityWorkerHost(ctx context.Context, workerHostID pgtype
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
 		&i.DrainingAt,
+		&i.DrainReason,
 		&i.TerminationReadyAt,
 		&i.LostAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.UnreclaimedInstances,
+		&i.UnreconciledRunProcesses,
+		&i.UnreconciledCommandProcesses,
 	)
 	return i, err
 }
@@ -689,8 +740,11 @@ const listCapacityWorkerHosts = `-- name: ListCapacityWorkerHosts :many
 WITH current_instances AS (
     SELECT DISTINCT ON (worker_group_id, resource_id)
            id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch,
-           draining_at, termination_ready_at, lost_at,
-           created_at, updated_at
+           draining_at, drain_reason, termination_ready_at, lost_at,
+           created_at, updated_at,
+       (SELECT count(*) FROM computer_instances i WHERE i.worker_host_id=worker_hosts.id AND i.reclaimed_at IS NULL)::bigint AS unreclaimed_instances,
+       (SELECT count(*) FROM run_leases l WHERE l.worker_host_id=worker_hosts.id AND l.process_reconciled_at IS NULL)::bigint AS unreconciled_run_processes,
+       (SELECT count(*) FROM computer_commands c JOIN computer_instances i ON i.id=c.computer_instance_id WHERE i.worker_host_id=worker_hosts.id AND c.process_reconciled_at IS NULL)::bigint AS unreconciled_command_processes
      FROM worker_hosts
      WHERE ($3::uuid IS NULL OR worker_group_id = $3)
        AND (
@@ -710,7 +764,7 @@ WITH current_instances AS (
               (status IN ('registering', 'active', 'draining')) DESC,
               created_at DESC, id DESC
 )
-SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, draining_at, termination_ready_at, lost_at, created_at, updated_at
+SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, draining_at, drain_reason, termination_ready_at, lost_at, created_at, updated_at, unreclaimed_instances, unreconciled_run_processes, unreconciled_command_processes
   FROM current_instances
  WHERE (
        cardinality($1::text[]) = 0
@@ -729,18 +783,22 @@ type ListCapacityWorkerHostsParams struct {
 }
 
 type ListCapacityWorkerHostsRow struct {
-	ID                 pgtype.UUID        `json:"id"`
-	ResourceID         string             `json:"resource_id"`
-	WorkerGroupID      pgtype.UUID        `json:"worker_group_id"`
-	WorkerPoolID       pgtype.UUID        `json:"worker_pool_id"`
-	Status             string             `json:"status"`
-	ClaimVersion       int64              `json:"claim_version"`
-	CurrentEpoch       pgtype.Int8        `json:"current_epoch"`
-	DrainingAt         pgtype.Timestamptz `json:"draining_at"`
-	TerminationReadyAt pgtype.Timestamptz `json:"termination_ready_at"`
-	LostAt             pgtype.Timestamptz `json:"lost_at"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	ID                           pgtype.UUID        `json:"id"`
+	ResourceID                   string             `json:"resource_id"`
+	WorkerGroupID                pgtype.UUID        `json:"worker_group_id"`
+	WorkerPoolID                 pgtype.UUID        `json:"worker_pool_id"`
+	Status                       string             `json:"status"`
+	ClaimVersion                 int64              `json:"claim_version"`
+	CurrentEpoch                 pgtype.Int8        `json:"current_epoch"`
+	DrainingAt                   pgtype.Timestamptz `json:"draining_at"`
+	DrainReason                  pgtype.Text        `json:"drain_reason"`
+	TerminationReadyAt           pgtype.Timestamptz `json:"termination_ready_at"`
+	LostAt                       pgtype.Timestamptz `json:"lost_at"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	UnreclaimedInstances         int64              `json:"unreclaimed_instances"`
+	UnreconciledRunProcesses     int64              `json:"unreconciled_run_processes"`
+	UnreconciledCommandProcesses int64              `json:"unreconciled_command_processes"`
 }
 
 func (q *Queries) ListCapacityWorkerHosts(ctx context.Context, arg ListCapacityWorkerHostsParams) ([]ListCapacityWorkerHostsRow, error) {
@@ -767,10 +825,14 @@ func (q *Queries) ListCapacityWorkerHosts(ctx context.Context, arg ListCapacityW
 			&i.ClaimVersion,
 			&i.CurrentEpoch,
 			&i.DrainingAt,
+			&i.DrainReason,
 			&i.TerminationReadyAt,
 			&i.LostAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.UnreclaimedInstances,
+			&i.UnreconciledRunProcesses,
+			&i.UnreconciledCommandProcesses,
 		); err != nil {
 			return nil, err
 		}
@@ -1172,6 +1234,95 @@ func (q *Queries) ListWorkerCapacityBins(ctx context.Context, arg ListWorkerCapa
 	return items, nil
 }
 
+const listWorkerGroupRetainedProfiles = `-- name: ListWorkerGroupRetainedProfiles :many
+WITH retained AS (
+ SELECT i.id, i.org_id, i.worker_group_id, i.project_id, i.environment_id, i.region_id, i.worker_host_id, i.vm_platform_id, i.worker_epoch, i.vm_vcpu_count, i.cpu_config_digest, i.reserved_cpu_millis, i.reserved_memory_bytes, i.reserved_guest_ephemeral_disk_bytes, i.reserved_execution_slots, i.computer_id, i.program_deployment_id, i.source_checkpoint_id, i.source_disk_version_id, i.save_sequence, i.save_disk_version_id, i.save_base_disk_version_id, i.computer_payload_required, i.retained_source_disk_version_id, i.write_key_id, i.retained_write_key_id, i.computer_key_available, i.preparation_expires_at, i.desired_state, i.desired_version, i.desired_at, i.desired_reason, i.observed_state, i.observed_version, i.observed_desired_version, i.observed_at, i.allocated_at, i.ready_at, i.terminal_at, i.reclaimed_at, i.reclaim_evidence, i.terminal_reason_code, i.terminal_error, i.updated_at, i.computer_spec_id, i.writer_generation, i.writer_token_hash, i.writer_expires_at, i.admission_state, i.membership_revision, i.mount_state, i.mounted_at, i.unmounted_at, i.guest_channel_credential_hash, i.guest_channel_credential_expires_at, i.finalization_action, i.finalization_reason_code, i.finalization_error, i.capture_checkpoint_id, i.spec_retention_required,
+   (SELECT count(*) FROM computer_checkpoints c WHERE c.source_computer_instance_id=i.id
+     AND c.status='creating' AND c.resume_committed_at IS NULL
+     AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp()))::bigint AS captures,
+   (SELECT count(*) FROM computer_checkpoints c WHERE c.source_computer_instance_id=i.id
+     AND c.status='ready' AND c.resume_committed_at IS NULL
+     AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp()))::bigint AS parked
+ FROM computer_instances i WHERE i.worker_group_id=$1
+), profiles AS (
+ SELECT vm_platform_id, vm_vcpu_count, cpu_config_digest,
+   reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes,
+   count(*) FILTER (WHERE reclaimed_at IS NULL)::bigint AS live_instances,
+   sum(captures)::bigint AS capturing_checkpoints, sum(parked)::bigint AS parked_checkpoints
+ FROM retained WHERE reclaimed_at IS NULL OR captures>0 OR parked>0
+ GROUP BY vm_platform_id,vm_vcpu_count,cpu_config_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_guest_ephemeral_disk_bytes
+)
+SELECT p.vm_platform_id, p.vm_vcpu_count, p.cpu_config_digest, p.reserved_cpu_millis, p.reserved_memory_bytes, p.reserved_guest_ephemeral_disk_bytes, p.live_instances, p.capturing_checkpoints, p.parked_checkpoints,
+ (SELECT count(*) FROM worker_pools supplier
+  WHERE supplier.worker_group_id=$1 AND supplier.status='active' AND supplier.sealed_at IS NOT NULL
+    AND supplier.vm_platform_id=p.vm_platform_id AND supplier.per_vm_cpu_millis>=p.reserved_cpu_millis
+    AND supplier.per_vm_memory_bytes>=p.reserved_memory_bytes
+    AND supplier.per_vm_guest_ephemeral_disk_bytes>=p.reserved_guest_ephemeral_disk_bytes
+    AND EXISTS (SELECT 1 FROM worker_pool_cpu_shapes s WHERE s.worker_pool_id=supplier.id
+      AND s.vcpu_count=p.vm_vcpu_count AND s.cpu_config_digest=p.cpu_config_digest))::bigint AS eligible_pools
+FROM profiles p
+WHERE $2::uuid IS NULL OR EXISTS (
+ SELECT 1 FROM worker_pools target WHERE target.id=$2 AND target.worker_group_id=$1
+   AND target.vm_platform_id=p.vm_platform_id AND target.per_vm_cpu_millis>=p.reserved_cpu_millis
+   AND target.per_vm_memory_bytes>=p.reserved_memory_bytes
+   AND target.per_vm_guest_ephemeral_disk_bytes>=p.reserved_guest_ephemeral_disk_bytes
+   AND EXISTS (SELECT 1 FROM worker_pool_cpu_shapes s WHERE s.worker_pool_id=target.id
+     AND s.vcpu_count=p.vm_vcpu_count AND s.cpu_config_digest=p.cpu_config_digest)
+)
+ORDER BY vm_platform_id,vm_vcpu_count,cpu_config_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_guest_ephemeral_disk_bytes
+LIMIT $3
+`
+
+type ListWorkerGroupRetainedProfilesParams struct {
+	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
+	WorkerPoolID  pgtype.UUID `json:"worker_pool_id"`
+	RowLimit      int32       `json:"row_limit"`
+}
+
+type ListWorkerGroupRetainedProfilesRow struct {
+	VMPlatformID                    string `json:"vm_platform_id"`
+	VMVCPUCount                     int32  `json:"vm_vcpu_count"`
+	CPUConfigDigest                 string `json:"cpu_config_digest"`
+	ReservedCPUMillis               int64  `json:"reserved_cpu_millis"`
+	ReservedMemoryBytes             int64  `json:"reserved_memory_bytes"`
+	ReservedGuestEphemeralDiskBytes int64  `json:"reserved_guest_ephemeral_disk_bytes"`
+	LiveInstances                   int64  `json:"live_instances"`
+	CapturingCheckpoints            int64  `json:"capturing_checkpoints"`
+	ParkedCheckpoints               int64  `json:"parked_checkpoints"`
+	EligiblePools                   int64  `json:"eligible_pools"`
+}
+
+func (q *Queries) ListWorkerGroupRetainedProfiles(ctx context.Context, arg ListWorkerGroupRetainedProfilesParams) ([]ListWorkerGroupRetainedProfilesRow, error) {
+	rows, err := q.db.Query(ctx, listWorkerGroupRetainedProfiles, arg.WorkerGroupID, arg.WorkerPoolID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListWorkerGroupRetainedProfilesRow
+	for rows.Next() {
+		var i ListWorkerGroupRetainedProfilesRow
+		if err := rows.Scan(
+			&i.VMPlatformID,
+			&i.VMVCPUCount,
+			&i.CPUConfigDigest,
+			&i.ReservedCPUMillis,
+			&i.ReservedMemoryBytes,
+			&i.ReservedGuestEphemeralDiskBytes,
+			&i.LiveInstances,
+			&i.CapturingCheckpoints,
+			&i.ParkedCheckpoints,
+			&i.EligiblePools,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWorkerGroups = `-- name: ListWorkerGroups :many
 SELECT id, token_id, region_id, name, description, status, claim_version, primary_pool_id, created_at, updated_at
   FROM worker_groups
@@ -1331,7 +1482,7 @@ func (q *Queries) LockWorkerGroupMutation(ctx context.Context, lockKey int64) er
 }
 
 const lockWorkerHostForActivation = `-- name: LockWorkerHostForActivation :one
-SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, vm_platform_id, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_vm_starts, cpu_environment, cpu_environment_digest, observed_at, run_paused_reason, vm_paused_reason, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
+SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, vm_platform_id, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_vm_starts, cpu_environment, cpu_environment_digest, observed_at, run_paused_reason, vm_paused_reason, epoch_started_at, activated_at, draining_at, drain_reason, termination_ready_at, lost_at, created_at, updated_at
   FROM worker_hosts
  WHERE id = $1
    AND worker_group_id = $2
@@ -1381,6 +1532,7 @@ func (q *Queries) LockWorkerHostForActivation(ctx context.Context, arg LockWorke
 		&i.EpochStartedAt,
 		&i.ActivatedAt,
 		&i.DrainingAt,
+		&i.DrainReason,
 		&i.TerminationReadyAt,
 		&i.LostAt,
 		&i.CreatedAt,
@@ -1424,6 +1576,39 @@ func (q *Queries) LockWorkerPool(ctx context.Context, arg LockWorkerPoolParams) 
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const lockWorkerPoolActiveHosts = `-- name: LockWorkerPoolActiveHosts :many
+SELECT id FROM worker_hosts
+ WHERE worker_group_id=$1
+   AND worker_pool_id=$2 AND status='active'
+ ORDER BY id
+ FOR UPDATE
+`
+
+type LockWorkerPoolActiveHostsParams struct {
+	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
+	WorkerPoolID  pgtype.UUID `json:"worker_pool_id"`
+}
+
+func (q *Queries) LockWorkerPoolActiveHosts(ctx context.Context, arg LockWorkerPoolActiveHostsParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, lockWorkerPoolActiveHosts, arg.WorkerGroupID, arg.WorkerPoolID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const markWorkerHostLost = `-- name: MarkWorkerHostLost :one
@@ -1566,7 +1751,7 @@ UPDATE worker_hosts
    AND worker_hosts.worker_group_id = $4
    AND worker_hosts.current_epoch = $5
    AND worker_hosts.status IN ('active', 'draining')
-RETURNING worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.run_paused_reason, worker_hosts.vm_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
+RETURNING worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.run_paused_reason, worker_hosts.vm_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
 `
 
 type RecordWorkerObservationParams struct {
@@ -1612,6 +1797,7 @@ func (q *Queries) RecordWorkerObservation(ctx context.Context, arg RecordWorkerO
 		&i.EpochStartedAt,
 		&i.ActivatedAt,
 		&i.DrainingAt,
+		&i.DrainReason,
 		&i.TerminationReadyAt,
 		&i.LostAt,
 		&i.CreatedAt,
@@ -2101,166 +2287,70 @@ WITH restore_profiles AS MATERIALIZED (
    i.reserved_cpu_millis AS requested_cpu_millis,i.reserved_memory_bytes AS requested_memory_bytes,
    i.reserved_guest_ephemeral_disk_bytes AS requested_guest_ephemeral_disk_bytes
  FROM computer_instances i
- WHERE i.reclaimed_at IS NULL OR EXISTS(SELECT 1 FROM computer_checkpoints c
-   WHERE c.source_computer_instance_id=i.id AND c.status='ready' AND c.resume_committed_at IS NULL
-     AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp()))
+ WHERE i.worker_group_id=$3
+   AND (i.reclaimed_at IS NULL OR EXISTS(SELECT 1 FROM computer_checkpoints c
+   WHERE c.source_computer_instance_id=i.id AND c.status IN ('creating','ready') AND c.resume_committed_at IS NULL
+     AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp())))
 )
 UPDATE worker_pools AS target
-       SET status = $1::text,
-           claim_version = target.claim_version + 1,
-           updated_at = now()
-      FROM worker_groups
-     WHERE target.id = $2
-       AND target.worker_group_id = $3
-       AND target.claim_version = $4
-       AND worker_groups.id = target.worker_group_id
-       AND worker_groups.status IN ('active', 'paused', 'draining')
-       AND worker_groups.primary_pool_id IS DISTINCT FROM target.id
-       AND (
-           (
-               $1::text = 'draining'
-               AND target.status = 'active'
-               AND NOT EXISTS (
-                   SELECT 1
-                     FROM restore_profiles
-                    WHERE restore_profiles.worker_group_id = target.worker_group_id
-                      AND target.vm_platform_id = restore_profiles.vm_platform_id
-                      AND EXISTS (
-                          SELECT 1 FROM worker_pool_cpu_shapes AS target_shape
-                           WHERE target_shape.worker_pool_id = target.id
-                             AND target_shape.vcpu_count = restore_profiles.vm_vcpu_count
-                             AND target_shape.cpu_config_digest = restore_profiles.cpu_config_digest
-                      )
-                      AND target.per_vm_cpu_millis >= restore_profiles.requested_cpu_millis
-                      AND target.per_vm_memory_bytes >= restore_profiles.requested_memory_bytes
-                      AND target.per_vm_guest_ephemeral_disk_bytes >= restore_profiles.requested_guest_ephemeral_disk_bytes
-                      AND NOT EXISTS (
-                          SELECT 1
-                            FROM worker_pools AS supplier
-                           WHERE supplier.worker_group_id = target.worker_group_id
-                             AND supplier.id <> target.id
-                             AND supplier.status = 'active'
-                             AND supplier.vm_platform_id = restore_profiles.vm_platform_id
-                             AND supplier.per_vm_cpu_millis >= restore_profiles.requested_cpu_millis
-                             AND supplier.per_vm_memory_bytes >= restore_profiles.requested_memory_bytes
-                             AND supplier.per_vm_guest_ephemeral_disk_bytes >= restore_profiles.requested_guest_ephemeral_disk_bytes
-                             AND EXISTS (
-                                 SELECT 1 FROM worker_pool_cpu_shapes AS supplier_shape
-                                  WHERE supplier_shape.worker_pool_id = supplier.id
-                                    AND supplier_shape.vcpu_count = restore_profiles.vm_vcpu_count
-                                    AND supplier_shape.cpu_config_digest = restore_profiles.cpu_config_digest
-                             )
-                      )
-               )
-           )
-           OR (
-               $1::text = 'disabled'
-               AND (
-                   (
-                       target.status = 'pending'
-                       AND NOT EXISTS (
-                           SELECT 1 FROM worker_hosts
-                            WHERE worker_hosts.worker_group_id = target.worker_group_id
-                              AND worker_hosts.worker_pool_id = target.id
-                              AND worker_hosts.status IN ('registering', 'active', 'draining')
-                       )
-                       AND NOT EXISTS (
-                           SELECT 1
-                             FROM worker_hosts
-                            WHERE worker_hosts.worker_group_id = target.worker_group_id
-                              AND worker_hosts.worker_pool_id = target.id
-                              AND (
-                                  EXISTS (
-                                      SELECT 1 FROM computer_instances
-                                       WHERE computer_instances.worker_group_id = worker_hosts.worker_group_id
-                                         AND computer_instances.worker_host_id = worker_hosts.id
-                                         AND computer_instances.reclaimed_at IS NULL
-                                  )
-                                  OR EXISTS (
-                                      SELECT 1 FROM run_leases
-                                       WHERE run_leases.worker_group_id = worker_hosts.worker_group_id
-                                         AND run_leases.worker_host_id = worker_hosts.id
-                                         AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
-                                  )
-                                  OR EXISTS (
-                                      SELECT 1 FROM computer_commands JOIN computer_instances command_instance ON command_instance.id=computer_commands.computer_instance_id
-                                       WHERE command_instance.worker_group_id = worker_hosts.worker_group_id
-                                         AND command_instance.worker_host_id = worker_hosts.id
-                                         AND computer_commands.process_reconciled_at IS NULL
-                                  )
-                              )
-                       )
-                   )
-                   OR (
-                       target.status = 'draining'
-                       AND NOT EXISTS (
-                           SELECT 1 FROM worker_hosts
-                            WHERE worker_hosts.worker_group_id = target.worker_group_id
-                              AND worker_hosts.worker_pool_id = target.id
-                              AND worker_hosts.status IN ('registering', 'active', 'draining')
-                       )
-                       AND NOT EXISTS (
-                           SELECT 1
-                             FROM worker_hosts
-                            WHERE worker_hosts.worker_group_id = target.worker_group_id
-                              AND worker_hosts.worker_pool_id = target.id
-                              AND (
-                                  EXISTS (
-                                      SELECT 1 FROM computer_instances
-                                       WHERE computer_instances.worker_group_id = worker_hosts.worker_group_id
-                                         AND computer_instances.worker_host_id = worker_hosts.id
-                                         AND computer_instances.reclaimed_at IS NULL
-                                  )
-                                  OR EXISTS (
-                                      SELECT 1 FROM run_leases
-                                       WHERE run_leases.worker_group_id = worker_hosts.worker_group_id
-                                         AND run_leases.worker_host_id = worker_hosts.id
-                                         AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
-                                  )
-                                  OR EXISTS (
-                                      SELECT 1 FROM computer_commands JOIN computer_instances command_instance ON command_instance.id=computer_commands.computer_instance_id
-                                       WHERE command_instance.worker_group_id = worker_hosts.worker_group_id
-                                         AND command_instance.worker_host_id = worker_hosts.id
-                                         AND computer_commands.process_reconciled_at IS NULL
-                                  )
-                              )
-                       )
-                       AND NOT EXISTS (
-                           SELECT 1
-                             FROM restore_profiles
-	                            WHERE restore_profiles.worker_group_id = target.worker_group_id
-	                              AND target.vm_platform_id = restore_profiles.vm_platform_id
-                              AND EXISTS (
-                                  SELECT 1 FROM worker_pool_cpu_shapes AS target_shape
-                                   WHERE target_shape.worker_pool_id = target.id
-                                     AND target_shape.vcpu_count = restore_profiles.vm_vcpu_count
-                                     AND target_shape.cpu_config_digest = restore_profiles.cpu_config_digest
-                              )
-                              AND target.per_vm_cpu_millis >= restore_profiles.requested_cpu_millis
-                              AND target.per_vm_memory_bytes >= restore_profiles.requested_memory_bytes
-                              AND target.per_vm_guest_ephemeral_disk_bytes >= restore_profiles.requested_guest_ephemeral_disk_bytes
-                              AND NOT EXISTS (
-                                  SELECT 1
-                                    FROM worker_pools AS supplier
-                                   WHERE supplier.worker_group_id = target.worker_group_id
-                                     AND supplier.id <> target.id
-                                     AND supplier.status = 'active'
-                                     AND supplier.vm_platform_id = restore_profiles.vm_platform_id
-                                     AND supplier.per_vm_cpu_millis >= restore_profiles.requested_cpu_millis
-                                     AND supplier.per_vm_memory_bytes >= restore_profiles.requested_memory_bytes
-                                     AND supplier.per_vm_guest_ephemeral_disk_bytes >= restore_profiles.requested_guest_ephemeral_disk_bytes
-                                     AND EXISTS (
-                                         SELECT 1 FROM worker_pool_cpu_shapes AS supplier_shape
-                                          WHERE supplier_shape.worker_pool_id = supplier.id
-                                            AND supplier_shape.vcpu_count = restore_profiles.vm_vcpu_count
-                                            AND supplier_shape.cpu_config_digest = restore_profiles.cpu_config_digest
-                                     )
-                              )
-                       )
-                   )
-               )
-           )
-       )
+ SET status = $1::text,
+     claim_version = target.claim_version + 1,
+     updated_at = now()
+ FROM worker_groups
+ WHERE target.id = $2
+   AND target.worker_group_id = $3
+   AND target.claim_version = $4
+   AND worker_groups.id = target.worker_group_id
+   AND worker_groups.status IN ('active', 'paused', 'draining')
+   AND worker_groups.primary_pool_id IS DISTINCT FROM target.id
+   AND (
+     ($1::text = 'draining' AND target.status = 'active')
+     OR ($1::text = 'disabled' AND target.status IN ('pending','draining')
+       AND NOT EXISTS (
+         SELECT 1 FROM worker_hosts h
+         WHERE h.worker_group_id=target.worker_group_id AND h.worker_pool_id=target.id
+           AND (h.status IN ('registering','active','draining')
+             OR EXISTS (SELECT 1 FROM computer_instances i
+               WHERE i.worker_group_id=h.worker_group_id AND i.worker_host_id=h.id AND i.reclaimed_at IS NULL)
+             OR EXISTS (SELECT 1 FROM run_leases l
+               WHERE l.worker_group_id=h.worker_group_id AND l.worker_host_id=h.id
+                 AND (l.status IN ('assigned','starting','running','checkpointing','finalizing') OR l.process_reconciled_at IS NULL))
+             OR EXISTS (SELECT 1 FROM computer_commands c JOIN computer_instances i ON i.id=c.computer_instance_id
+               WHERE i.worker_group_id=h.worker_group_id AND i.worker_host_id=h.id AND c.process_reconciled_at IS NULL))
+       ))
+   )
+   AND NOT EXISTS (
+       SELECT 1
+         FROM restore_profiles
+        WHERE restore_profiles.worker_group_id = target.worker_group_id
+          AND target.vm_platform_id = restore_profiles.vm_platform_id
+          AND EXISTS (
+              SELECT 1 FROM worker_pool_cpu_shapes AS target_shape
+               WHERE target_shape.worker_pool_id = target.id
+                 AND target_shape.vcpu_count = restore_profiles.vm_vcpu_count
+                 AND target_shape.cpu_config_digest = restore_profiles.cpu_config_digest
+          )
+          AND target.per_vm_cpu_millis >= restore_profiles.requested_cpu_millis
+          AND target.per_vm_memory_bytes >= restore_profiles.requested_memory_bytes
+          AND target.per_vm_guest_ephemeral_disk_bytes >= restore_profiles.requested_guest_ephemeral_disk_bytes
+          AND NOT EXISTS (
+              SELECT 1
+                FROM worker_pools AS supplier
+               WHERE supplier.worker_group_id = target.worker_group_id
+                 AND supplier.id <> target.id
+                 AND supplier.status = 'active'
+                 AND supplier.vm_platform_id = restore_profiles.vm_platform_id
+                 AND supplier.per_vm_cpu_millis >= restore_profiles.requested_cpu_millis
+                 AND supplier.per_vm_memory_bytes >= restore_profiles.requested_memory_bytes
+                 AND supplier.per_vm_guest_ephemeral_disk_bytes >= restore_profiles.requested_guest_ephemeral_disk_bytes
+                 AND EXISTS (
+                     SELECT 1 FROM worker_pool_cpu_shapes AS supplier_shape
+                      WHERE supplier_shape.worker_pool_id = supplier.id
+                        AND supplier_shape.vcpu_count = restore_profiles.vm_vcpu_count
+                        AND supplier_shape.cpu_config_digest = restore_profiles.cpu_config_digest
+                 )
+          )
+   )
 RETURNING target.id, target.worker_group_id, target.name, target.status, target.claim_version, target.vm_platform_id, target.capacity_cpu_millis, target.capacity_memory_bytes, target.capacity_guest_ephemeral_disk_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.sealed_at, target.created_at, target.updated_at
 `
 

@@ -61,10 +61,10 @@ func TestClaimLeaseKeepsEpochAndStateFences(t *testing.T) {
 		refresh   bool
 	}{
 		{"active claims", `UPDATE worker_hosts SET claim_version=claim_version+1`, true},
-		{"draining claims", `UPDATE worker_hosts SET status='draining',draining_at=now(),claim_version=claim_version+1`, true},
+		{"draining claims", `UPDATE worker_hosts SET status='draining',draining_at = now(), drain_reason = 'shutdown',claim_version=claim_version+1`, true},
 		{"new epoch", `UPDATE worker_hosts SET current_epoch=2,claim_version=claim_version+1`, false},
 		{"lost", `UPDATE worker_hosts SET status='lost',lost_at=now(),claim_version=claim_version+1`, false},
-		{"termination ready", `UPDATE worker_hosts SET status='termination_ready',draining_at=now(),termination_ready_at=now(),claim_version=claim_version+1`, false},
+		{"termination ready", `UPDATE worker_hosts SET status='termination_ready',draining_at = now(), drain_reason = 'shutdown',termination_ready_at=now(),claim_version=claim_version+1`, false},
 		{"active Group claims", `UPDATE worker_groups SET claim_version=claim_version+1`, true},
 		{"paused Group", `UPDATE worker_groups SET status='paused',claim_version=claim_version+1`, false},
 		{"disabled Group", `UPDATE worker_groups SET status='disabled',claim_version=claim_version+1`, false},
@@ -253,7 +253,7 @@ func TestRenewLeaseDoesNotWriteWhenHorizonDoesNotAdvance(t *testing.T) {
 
 func TestRenewLeaseAllowsDrainingOwner(t *testing.T) {
 	f, _, fence, expiry := renewalFixture(t)
-	drained, err := db.New(f.Pool).DrainWorkerHost(t.Context(), db.DrainWorkerHostParams{ID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), ExpectedEpoch: pgtype.Int8{Int64: 1, Valid: true}, ExpectedClaimVersion: 1})
+	drained, err := db.New(f.Pool).DrainWorkerHost(t.Context(), db.DrainWorkerHostParams{DrainReason: "shutdown", ID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), ExpectedEpoch: pgtype.Int8{Int64: 1, Valid: true}, ExpectedClaimVersion: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

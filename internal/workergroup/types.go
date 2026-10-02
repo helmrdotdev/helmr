@@ -122,29 +122,34 @@ type PoolRequest struct {
 }
 
 type Group struct {
-	ID            string            `json:"id"`
-	Name          string            `json:"name"`
-	RegionID      string            `json:"region_id"`
-	Status        WorkerGroupStatus `json:"status"`
-	ClaimVersion  int64             `json:"claim_version"`
-	PrimaryPoolID string            `json:"primary_pool_id,omitempty"`
+	RetainedProfiles *RetainedProfiles `json:"retained_profiles,omitempty"`
+	ID               string            `json:"id"`
+	Name             string            `json:"name"`
+	RegionID         string            `json:"region_id"`
+	Status           WorkerGroupStatus `json:"status"`
+	ClaimVersion     int64             `json:"claim_version"`
+	PrimaryPoolID    string            `json:"primary_pool_id,omitempty"`
 }
 
-type ReconcilePrimaryPoolsRequest struct {
+type PrimarySelectionRequest struct {
+	MinimumReadyHosts         int32  `json:"minimum_ready_hosts"`
 	ExpectedGroupClaimVersion int64  `json:"expected_group_claim_version"`
 	PoolID                    string `json:"pool_id"`
 }
 
-type ReconcilePrimaryPoolsResponse struct {
+type PrimarySelectionResponse struct {
 	WorkerGroup Group `json:"worker_group"`
 	Applied     bool  `json:"applied"`
 }
 
 type WorkerPool struct {
-	ID            string           `json:"id"`
-	WorkerGroupID string           `json:"worker_group_id"`
-	Name          string           `json:"name"`
-	Status        WorkerPoolStatus `json:"status"`
+	ClaimVersion     int64            `json:"claim_version"`
+	SealedAt         *time.Time       `json:"sealed_at,omitempty"`
+	RetainedProfiles RetainedProfiles `json:"retained_profiles"`
+	ID               string           `json:"id"`
+	WorkerGroupID    string           `json:"worker_group_id"`
+	Name             string           `json:"name"`
+	Status           WorkerPoolStatus `json:"status"`
 }
 
 type Incompatibility struct {
@@ -175,27 +180,72 @@ type PoolPlan struct {
 	ScaleInBlocked               bool   `json:"scale_in_blocked"`
 }
 
+// HostDrainBlockers counts outstanding runtime ownership; zero counts do not
+// replace the worker's local cleanup acknowledgment.
+type HostDrainBlockers struct {
+	UnreclaimedInstances         int64 `json:"unreclaimed_instances"`
+	UnreconciledRunProcesses     int64 `json:"unreconciled_run_processes"`
+	UnreconciledCommandProcesses int64 `json:"unreconciled_command_processes"`
+}
+
 type WorkerHost struct {
-	ID                 string           `json:"id"`
-	ResourceID         string           `json:"resource_id"`
-	WorkerGroupID      string           `json:"worker_group_id"`
-	WorkerPoolID       string           `json:"worker_pool_id"`
-	Status             WorkerHostStatus `json:"status"`
-	ClaimVersion       int64            `json:"claim_version"`
-	CurrentEpoch       *int64           `json:"current_epoch,omitempty"`
-	DrainingAt         *time.Time       `json:"draining_at,omitempty"`
-	TerminationReadyAt *time.Time       `json:"termination_ready_at,omitempty"`
-	LostAt             *time.Time       `json:"lost_at,omitempty"`
-	CreatedAt          time.Time        `json:"created_at"`
-	UpdatedAt          time.Time        `json:"updated_at"`
+	DrainBlockers      HostDrainBlockers `json:"drain_blockers"`
+	ID                 string            `json:"id"`
+	ResourceID         string            `json:"resource_id"`
+	WorkerGroupID      string            `json:"worker_group_id"`
+	WorkerPoolID       string            `json:"worker_pool_id"`
+	Status             WorkerHostStatus  `json:"status"`
+	ClaimVersion       int64             `json:"claim_version"`
+	CurrentEpoch       *int64            `json:"current_epoch,omitempty"`
+	DrainingAt         *time.Time        `json:"draining_at,omitempty"`
+	DrainReason        string            `json:"drain_reason,omitempty"`
+	TerminationReadyAt *time.Time        `json:"termination_ready_at,omitempty"`
+	LostAt             *time.Time        `json:"lost_at,omitempty"`
+	CreatedAt          time.Time         `json:"created_at"`
+	UpdatedAt          time.Time         `json:"updated_at"`
 }
 
 type ListWorkerHostsResponse struct {
 	WorkerHosts []WorkerHost `json:"worker_hosts"`
 }
 
+type DrainReason string
+
+const (
+	DrainReasonReplacement       DrainReason = "replacement"
+	DrainReasonCapacityReduction DrainReason = "capacity_reduction"
+	DrainReasonIdleScaleIn       DrainReason = "idle_scale_in"
+)
+
 type DrainWorkerHostRequest struct {
-	ExpectedEpoch           int64 `json:"expected_epoch"`
-	ExpectedClaimVersion    int64 `json:"expected_claim_version"`
-	RequireZeroQueuedDemand bool  `json:"require_zero_queued_demand,omitempty"`
+	ExpectedEpoch        int64       `json:"expected_epoch"`
+	ExpectedClaimVersion int64       `json:"expected_claim_version"`
+	Reason               DrainReason `json:"reason"`
+}
+
+// Deployment is one Control Plane replica's release and applied database state.
+type Deployment struct {
+	Release              string `json:"release"`
+	SourceCommit         string `json:"source_commit"`
+	AppliedSchemaVersion int64  `json:"applied_schema_version"`
+	SchemaDirty          bool   `json:"schema_dirty"`
+	WorkerRevision       string `json:"worker_revision"`
+}
+
+// RetainedProfiles is bounded inventory. An incomplete result must not be used
+// as evidence that all dependencies have a remaining restore path.
+type RetainedProfiles struct {
+	Profiles []RetainedProfile `json:"profiles"`
+	Complete bool              `json:"complete"`
+}
+
+type RetainedProfile struct {
+	VMPlatformID         string         `json:"vm_platform_id"`
+	VCPUCount            int32          `json:"vcpu_count"`
+	CPUConfigDigest      string         `json:"cpu_config_digest"`
+	Resources            ResourceVector `json:"resources"`
+	LiveInstances        int64          `json:"live_instances"`
+	CapturingCheckpoints int64          `json:"capturing_checkpoints"`
+	ParkedCheckpoints    int64          `json:"parked_checkpoints"`
+	EligiblePools        int64          `json:"eligible_pools"`
 }

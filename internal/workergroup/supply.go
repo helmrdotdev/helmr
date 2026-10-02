@@ -332,6 +332,6 @@ func DrainLockedHost(ctx context.Context, q db.Querier, locked LockedHost) error
 	if locked.Host.Status != db.WorkerHostStatusActive {
 		return nil
 	}
-	_, err := q.DrainWorkerHost(ctx, db.DrainWorkerHostParams{ID: locked.Host.ID, WorkerGroupID: locked.Group.ID, ExpectedEpoch: locked.Host.CurrentEpoch, ExpectedClaimVersion: locked.Host.ClaimVersion})
+	_, err := q.DrainWorkerHost(ctx, db.DrainWorkerHostParams{DrainReason: "incompatible_worker", ID: locked.Host.ID, WorkerGroupID: locked.Group.ID, ExpectedEpoch: locked.Host.CurrentEpoch, ExpectedClaimVersion: locked.Host.ClaimVersion})
 	return err
 }

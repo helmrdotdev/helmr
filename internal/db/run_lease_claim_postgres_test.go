@@ -237,7 +237,7 @@ UPDATE computer_instances SET mount_state='mounted' WHERE id=(SELECT computer_in
 	unclaimed := fixture.addWork(t, ctx, "assigned", time.Now())
 
 	if _, err := fixture.pool.Exec(ctx,
-		`UPDATE worker_hosts SET status = 'draining', draining_at = now() WHERE id = $1`,
+		`UPDATE worker_hosts SET status = 'draining', draining_at = now(), drain_reason = 'shutdown' WHERE id = $1`,
 		fixture.workerID,
 	); err != nil {
 		t.Fatal(err)

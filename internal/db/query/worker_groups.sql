@@ -79,6 +79,30 @@ SELECT sqlc.arg(worker_pool_id), worker_groups.id, sqlc.arg(name),
    AND worker_groups.status IN ('active', 'paused')
 RETURNING worker_pools.*;
 
+-- name: LockWorkerPoolActiveHosts :many
+SELECT id FROM worker_hosts
+ WHERE worker_group_id=sqlc.arg(worker_group_id)
+   AND worker_pool_id=sqlc.arg(worker_pool_id) AND status='active'
+ ORDER BY id
+ FOR UPDATE;
+
+-- name: CountReadyWorkerPoolHosts :one
+SELECT count(*)::bigint
+  FROM worker_hosts h
+  JOIN worker_pools p ON p.id = h.worker_pool_id AND p.worker_group_id = h.worker_group_id
+ WHERE h.id = ANY(sqlc.arg(worker_host_ids)::uuid[])
+   AND h.status = 'active'
+   AND h.current_epoch IS NOT NULL
+   AND h.activated_at IS NOT NULL
+   AND h.observed_at >= clock_timestamp() - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
+   AND h.run_paused_reason IS NULL AND h.vm_paused_reason IS NULL
+   AND h.vm_platform_id = p.vm_platform_id
+   AND h.per_vm_cpu_millis >= p.per_vm_cpu_millis
+   AND h.per_vm_memory_bytes >= p.per_vm_memory_bytes
+   AND h.per_vm_guest_ephemeral_disk_bytes >= p.per_vm_guest_ephemeral_disk_bytes
+   AND h.max_vm_slots > 0 AND h.max_vm_starts > 0
+;
+
 -- name: SetWorkerGroupPrimaryPool :one
 UPDATE worker_groups
    SET primary_pool_id = sqlc.arg(pool_id),
@@ -95,166 +119,70 @@ WITH restore_profiles AS MATERIALIZED (
    i.reserved_cpu_millis AS requested_cpu_millis,i.reserved_memory_bytes AS requested_memory_bytes,
    i.reserved_guest_ephemeral_disk_bytes AS requested_guest_ephemeral_disk_bytes
  FROM computer_instances i
- WHERE i.reclaimed_at IS NULL OR EXISTS(SELECT 1 FROM computer_checkpoints c
-   WHERE c.source_computer_instance_id=i.id AND c.status='ready' AND c.resume_committed_at IS NULL
-     AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp()))
+ WHERE i.worker_group_id=sqlc.arg(worker_group_id)
+   AND (i.reclaimed_at IS NULL OR EXISTS(SELECT 1 FROM computer_checkpoints c
+   WHERE c.source_computer_instance_id=i.id AND c.status IN ('creating','ready') AND c.resume_committed_at IS NULL
+     AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp())))
 )
 UPDATE worker_pools AS target
-       SET status = sqlc.arg(target_status)::text,
-           claim_version = target.claim_version + 1,
-           updated_at = now()
-      FROM worker_groups
-     WHERE target.id = sqlc.arg(worker_pool_id)
-       AND target.worker_group_id = sqlc.arg(worker_group_id)
-       AND target.claim_version = sqlc.arg(expected_pool_claim_version)
-       AND worker_groups.id = target.worker_group_id
-       AND worker_groups.status IN ('active', 'paused', 'draining')
-       AND worker_groups.primary_pool_id IS DISTINCT FROM target.id
-       AND (
-           (
-               sqlc.arg(target_status)::text = 'draining'
-               AND target.status = 'active'
-               AND NOT EXISTS (
-                   SELECT 1
-                     FROM restore_profiles
-                    WHERE restore_profiles.worker_group_id = target.worker_group_id
-                      AND target.vm_platform_id = restore_profiles.vm_platform_id
-                      AND EXISTS (
-                          SELECT 1 FROM worker_pool_cpu_shapes AS target_shape
-                           WHERE target_shape.worker_pool_id = target.id
-                             AND target_shape.vcpu_count = restore_profiles.vm_vcpu_count
-                             AND target_shape.cpu_config_digest = restore_profiles.cpu_config_digest
-                      )
-                      AND target.per_vm_cpu_millis >= restore_profiles.requested_cpu_millis
-                      AND target.per_vm_memory_bytes >= restore_profiles.requested_memory_bytes
-                      AND target.per_vm_guest_ephemeral_disk_bytes >= restore_profiles.requested_guest_ephemeral_disk_bytes
-                      AND NOT EXISTS (
-                          SELECT 1
-                            FROM worker_pools AS supplier
-                           WHERE supplier.worker_group_id = target.worker_group_id
-                             AND supplier.id <> target.id
-                             AND supplier.status = 'active'
-                             AND supplier.vm_platform_id = restore_profiles.vm_platform_id
-                             AND supplier.per_vm_cpu_millis >= restore_profiles.requested_cpu_millis
-                             AND supplier.per_vm_memory_bytes >= restore_profiles.requested_memory_bytes
-                             AND supplier.per_vm_guest_ephemeral_disk_bytes >= restore_profiles.requested_guest_ephemeral_disk_bytes
-                             AND EXISTS (
-                                 SELECT 1 FROM worker_pool_cpu_shapes AS supplier_shape
-                                  WHERE supplier_shape.worker_pool_id = supplier.id
-                                    AND supplier_shape.vcpu_count = restore_profiles.vm_vcpu_count
-                                    AND supplier_shape.cpu_config_digest = restore_profiles.cpu_config_digest
-                             )
-                      )
-               )
-           )
-           OR (
-               sqlc.arg(target_status)::text = 'disabled'
-               AND (
-                   (
-                       target.status = 'pending'
-                       AND NOT EXISTS (
-                           SELECT 1 FROM worker_hosts
-                            WHERE worker_hosts.worker_group_id = target.worker_group_id
-                              AND worker_hosts.worker_pool_id = target.id
-                              AND worker_hosts.status IN ('registering', 'active', 'draining')
-                       )
-                       AND NOT EXISTS (
-                           SELECT 1
-                             FROM worker_hosts
-                            WHERE worker_hosts.worker_group_id = target.worker_group_id
-                              AND worker_hosts.worker_pool_id = target.id
-                              AND (
-                                  EXISTS (
-                                      SELECT 1 FROM computer_instances
-                                       WHERE computer_instances.worker_group_id = worker_hosts.worker_group_id
-                                         AND computer_instances.worker_host_id = worker_hosts.id
-                                         AND computer_instances.reclaimed_at IS NULL
-                                  )
-                                  OR EXISTS (
-                                      SELECT 1 FROM run_leases
-                                       WHERE run_leases.worker_group_id = worker_hosts.worker_group_id
-                                         AND run_leases.worker_host_id = worker_hosts.id
-                                         AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
-                                  )
-                                  OR EXISTS (
-                                      SELECT 1 FROM computer_commands JOIN computer_instances command_instance ON command_instance.id=computer_commands.computer_instance_id
-                                       WHERE command_instance.worker_group_id = worker_hosts.worker_group_id
-                                         AND command_instance.worker_host_id = worker_hosts.id
-                                         AND computer_commands.process_reconciled_at IS NULL
-                                  )
-                              )
-                       )
-                   )
-                   OR (
-                       target.status = 'draining'
-                       AND NOT EXISTS (
-                           SELECT 1 FROM worker_hosts
-                            WHERE worker_hosts.worker_group_id = target.worker_group_id
-                              AND worker_hosts.worker_pool_id = target.id
-                              AND worker_hosts.status IN ('registering', 'active', 'draining')
-                       )
-                       AND NOT EXISTS (
-                           SELECT 1
-                             FROM worker_hosts
-                            WHERE worker_hosts.worker_group_id = target.worker_group_id
-                              AND worker_hosts.worker_pool_id = target.id
-                              AND (
-                                  EXISTS (
-                                      SELECT 1 FROM computer_instances
-                                       WHERE computer_instances.worker_group_id = worker_hosts.worker_group_id
-                                         AND computer_instances.worker_host_id = worker_hosts.id
-                                         AND computer_instances.reclaimed_at IS NULL
-                                  )
-                                  OR EXISTS (
-                                      SELECT 1 FROM run_leases
-                                       WHERE run_leases.worker_group_id = worker_hosts.worker_group_id
-                                         AND run_leases.worker_host_id = worker_hosts.id
-                                         AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
-                                  )
-                                  OR EXISTS (
-                                      SELECT 1 FROM computer_commands JOIN computer_instances command_instance ON command_instance.id=computer_commands.computer_instance_id
-                                       WHERE command_instance.worker_group_id = worker_hosts.worker_group_id
-                                         AND command_instance.worker_host_id = worker_hosts.id
-                                         AND computer_commands.process_reconciled_at IS NULL
-                                  )
-                              )
-                       )
-                       AND NOT EXISTS (
-                           SELECT 1
-                             FROM restore_profiles
-	                            WHERE restore_profiles.worker_group_id = target.worker_group_id
-	                              AND target.vm_platform_id = restore_profiles.vm_platform_id
-                              AND EXISTS (
-                                  SELECT 1 FROM worker_pool_cpu_shapes AS target_shape
-                                   WHERE target_shape.worker_pool_id = target.id
-                                     AND target_shape.vcpu_count = restore_profiles.vm_vcpu_count
-                                     AND target_shape.cpu_config_digest = restore_profiles.cpu_config_digest
-                              )
-                              AND target.per_vm_cpu_millis >= restore_profiles.requested_cpu_millis
-                              AND target.per_vm_memory_bytes >= restore_profiles.requested_memory_bytes
-                              AND target.per_vm_guest_ephemeral_disk_bytes >= restore_profiles.requested_guest_ephemeral_disk_bytes
-                              AND NOT EXISTS (
-                                  SELECT 1
-                                    FROM worker_pools AS supplier
-                                   WHERE supplier.worker_group_id = target.worker_group_id
-                                     AND supplier.id <> target.id
-                                     AND supplier.status = 'active'
-                                     AND supplier.vm_platform_id = restore_profiles.vm_platform_id
-                                     AND supplier.per_vm_cpu_millis >= restore_profiles.requested_cpu_millis
-                                     AND supplier.per_vm_memory_bytes >= restore_profiles.requested_memory_bytes
-                                     AND supplier.per_vm_guest_ephemeral_disk_bytes >= restore_profiles.requested_guest_ephemeral_disk_bytes
-                                     AND EXISTS (
-                                         SELECT 1 FROM worker_pool_cpu_shapes AS supplier_shape
-                                          WHERE supplier_shape.worker_pool_id = supplier.id
-                                            AND supplier_shape.vcpu_count = restore_profiles.vm_vcpu_count
-                                            AND supplier_shape.cpu_config_digest = restore_profiles.cpu_config_digest
-                                     )
-                              )
-                       )
-                   )
-               )
-           )
-       )
+ SET status = sqlc.arg(target_status)::text,
+     claim_version = target.claim_version + 1,
+     updated_at = now()
+ FROM worker_groups
+ WHERE target.id = sqlc.arg(worker_pool_id)
+   AND target.worker_group_id = sqlc.arg(worker_group_id)
+   AND target.claim_version = sqlc.arg(expected_pool_claim_version)
+   AND worker_groups.id = target.worker_group_id
+   AND worker_groups.status IN ('active', 'paused', 'draining')
+   AND worker_groups.primary_pool_id IS DISTINCT FROM target.id
+   AND (
+     (sqlc.arg(target_status)::text = 'draining' AND target.status = 'active')
+     OR (sqlc.arg(target_status)::text = 'disabled' AND target.status IN ('pending','draining')
+       AND NOT EXISTS (
+         SELECT 1 FROM worker_hosts h
+         WHERE h.worker_group_id=target.worker_group_id AND h.worker_pool_id=target.id
+           AND (h.status IN ('registering','active','draining')
+             OR EXISTS (SELECT 1 FROM computer_instances i
+               WHERE i.worker_group_id=h.worker_group_id AND i.worker_host_id=h.id AND i.reclaimed_at IS NULL)
+             OR EXISTS (SELECT 1 FROM run_leases l
+               WHERE l.worker_group_id=h.worker_group_id AND l.worker_host_id=h.id
+                 AND (l.status IN ('assigned','starting','running','checkpointing','finalizing') OR l.process_reconciled_at IS NULL))
+             OR EXISTS (SELECT 1 FROM computer_commands c JOIN computer_instances i ON i.id=c.computer_instance_id
+               WHERE i.worker_group_id=h.worker_group_id AND i.worker_host_id=h.id AND c.process_reconciled_at IS NULL))
+       ))
+   )
+   AND NOT EXISTS (
+       SELECT 1
+         FROM restore_profiles
+        WHERE restore_profiles.worker_group_id = target.worker_group_id
+          AND target.vm_platform_id = restore_profiles.vm_platform_id
+          AND EXISTS (
+              SELECT 1 FROM worker_pool_cpu_shapes AS target_shape
+               WHERE target_shape.worker_pool_id = target.id
+                 AND target_shape.vcpu_count = restore_profiles.vm_vcpu_count
+                 AND target_shape.cpu_config_digest = restore_profiles.cpu_config_digest
+          )
+          AND target.per_vm_cpu_millis >= restore_profiles.requested_cpu_millis
+          AND target.per_vm_memory_bytes >= restore_profiles.requested_memory_bytes
+          AND target.per_vm_guest_ephemeral_disk_bytes >= restore_profiles.requested_guest_ephemeral_disk_bytes
+          AND NOT EXISTS (
+              SELECT 1
+                FROM worker_pools AS supplier
+               WHERE supplier.worker_group_id = target.worker_group_id
+                 AND supplier.id <> target.id
+                 AND supplier.status = 'active'
+                 AND supplier.vm_platform_id = restore_profiles.vm_platform_id
+                 AND supplier.per_vm_cpu_millis >= restore_profiles.requested_cpu_millis
+                 AND supplier.per_vm_memory_bytes >= restore_profiles.requested_memory_bytes
+                 AND supplier.per_vm_guest_ephemeral_disk_bytes >= restore_profiles.requested_guest_ephemeral_disk_bytes
+                 AND EXISTS (
+                     SELECT 1 FROM worker_pool_cpu_shapes AS supplier_shape
+                      WHERE supplier_shape.worker_pool_id = supplier.id
+                        AND supplier_shape.vcpu_count = restore_profiles.vm_vcpu_count
+                        AND supplier_shape.cpu_config_digest = restore_profiles.cpu_config_digest
+                 )
+          )
+   )
 RETURNING target.*;
 
 -- name: ListCapacityWorkerPools :many
@@ -505,17 +433,23 @@ SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, 
 
 -- name: GetCapacityWorkerHost :one
 SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch,
-       draining_at, termination_ready_at, lost_at,
-       created_at, updated_at
+       draining_at, drain_reason, termination_ready_at, lost_at,
+       created_at, updated_at,
+       (SELECT count(*) FROM computer_instances i WHERE i.worker_host_id=worker_hosts.id AND i.reclaimed_at IS NULL)::bigint AS unreclaimed_instances,
+       (SELECT count(*) FROM run_leases l WHERE l.worker_host_id=worker_hosts.id AND l.process_reconciled_at IS NULL)::bigint AS unreconciled_run_processes,
+       (SELECT count(*) FROM computer_commands c JOIN computer_instances i ON i.id=c.computer_instance_id WHERE i.worker_host_id=worker_hosts.id AND c.process_reconciled_at IS NULL)::bigint AS unreconciled_command_processes
   FROM worker_hosts
- WHERE id = sqlc.arg(worker_host_id);
+ WHERE worker_hosts.id = sqlc.arg(worker_host_id);
 
 -- name: ListCapacityWorkerHosts :many
 WITH current_instances AS (
     SELECT DISTINCT ON (worker_group_id, resource_id)
            id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch,
-           draining_at, termination_ready_at, lost_at,
-           created_at, updated_at
+           draining_at, drain_reason, termination_ready_at, lost_at,
+           created_at, updated_at,
+       (SELECT count(*) FROM computer_instances i WHERE i.worker_host_id=worker_hosts.id AND i.reclaimed_at IS NULL)::bigint AS unreclaimed_instances,
+       (SELECT count(*) FROM run_leases l WHERE l.worker_host_id=worker_hosts.id AND l.process_reconciled_at IS NULL)::bigint AS unreconciled_run_processes,
+       (SELECT count(*) FROM computer_commands c JOIN computer_instances i ON i.id=c.computer_instance_id WHERE i.worker_host_id=worker_hosts.id AND c.process_reconciled_at IS NULL)::bigint AS unreconciled_command_processes
      FROM worker_hosts
      WHERE (sqlc.narg(worker_group_id)::uuid IS NULL OR worker_group_id = sqlc.narg(worker_group_id))
        AND (
@@ -885,7 +819,7 @@ WITH target AS MATERIALIZED (
     RETURNING worker_hosts.id, worker_hosts.resource_id,
               worker_hosts.worker_group_id, worker_hosts.worker_pool_id,
               worker_hosts.status, worker_hosts.claim_version,
-              worker_hosts.current_epoch, worker_hosts.draining_at,
+              worker_hosts.current_epoch, worker_hosts.draining_at, worker_hosts.drain_reason,
               worker_hosts.termination_ready_at, worker_hosts.lost_at,
               worker_hosts.created_at, worker_hosts.updated_at
 ), revoked_host_secrets AS (
@@ -900,7 +834,7 @@ WITH target AS MATERIALIZED (
 SELECT transitioned.id, transitioned.resource_id,
        transitioned.worker_group_id, transitioned.worker_pool_id,
        transitioned.status, transitioned.claim_version,
-       transitioned.current_epoch, transitioned.draining_at,
+       transitioned.current_epoch, transitioned.draining_at, transitioned.drain_reason,
        transitioned.termination_ready_at, transitioned.lost_at,
        transitioned.created_at, transitioned.updated_at
   FROM transitioned
@@ -964,6 +898,13 @@ UPDATE worker_hosts
                OR worker_pools.status = 'draining'
            THEN COALESCE(worker_hosts.draining_at, now())
            ELSE worker_hosts.draining_at
+       END,
+       drain_reason = CASE
+           WHEN worker_hosts.status = 'draining'
+               OR worker_groups.status = 'draining'
+               OR worker_pools.status = 'draining'
+           THEN COALESCE(worker_hosts.drain_reason, 'admin')
+           ELSE worker_hosts.drain_reason
        END,
        updated_at = now()
   FROM worker_groups, worker_pools
@@ -1097,3 +1038,41 @@ UPDATE worker_hosts
    AND (SELECT count(*) FROM reconciled_processes) >= 0
    AND (SELECT count(*) FROM invalidated_captures) >= 0
 RETURNING worker_hosts.*;
+
+-- name: ListWorkerGroupRetainedProfiles :many
+WITH retained AS (
+ SELECT i.*,
+   (SELECT count(*) FROM computer_checkpoints c WHERE c.source_computer_instance_id=i.id
+     AND c.status='creating' AND c.resume_committed_at IS NULL
+     AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp()))::bigint AS captures,
+   (SELECT count(*) FROM computer_checkpoints c WHERE c.source_computer_instance_id=i.id
+     AND c.status='ready' AND c.resume_committed_at IS NULL
+     AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp()))::bigint AS parked
+ FROM computer_instances i WHERE i.worker_group_id=sqlc.arg(worker_group_id)
+), profiles AS (
+ SELECT vm_platform_id, vm_vcpu_count, cpu_config_digest,
+   reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes,
+   count(*) FILTER (WHERE reclaimed_at IS NULL)::bigint AS live_instances,
+   sum(captures)::bigint AS capturing_checkpoints, sum(parked)::bigint AS parked_checkpoints
+ FROM retained WHERE reclaimed_at IS NULL OR captures>0 OR parked>0
+ GROUP BY vm_platform_id,vm_vcpu_count,cpu_config_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_guest_ephemeral_disk_bytes
+)
+SELECT p.*,
+ (SELECT count(*) FROM worker_pools supplier
+  WHERE supplier.worker_group_id=sqlc.arg(worker_group_id) AND supplier.status='active' AND supplier.sealed_at IS NOT NULL
+    AND supplier.vm_platform_id=p.vm_platform_id AND supplier.per_vm_cpu_millis>=p.reserved_cpu_millis
+    AND supplier.per_vm_memory_bytes>=p.reserved_memory_bytes
+    AND supplier.per_vm_guest_ephemeral_disk_bytes>=p.reserved_guest_ephemeral_disk_bytes
+    AND EXISTS (SELECT 1 FROM worker_pool_cpu_shapes s WHERE s.worker_pool_id=supplier.id
+      AND s.vcpu_count=p.vm_vcpu_count AND s.cpu_config_digest=p.cpu_config_digest))::bigint AS eligible_pools
+FROM profiles p
+WHERE sqlc.narg(worker_pool_id)::uuid IS NULL OR EXISTS (
+ SELECT 1 FROM worker_pools target WHERE target.id=sqlc.narg(worker_pool_id) AND target.worker_group_id=sqlc.arg(worker_group_id)
+   AND target.vm_platform_id=p.vm_platform_id AND target.per_vm_cpu_millis>=p.reserved_cpu_millis
+   AND target.per_vm_memory_bytes>=p.reserved_memory_bytes
+   AND target.per_vm_guest_ephemeral_disk_bytes>=p.reserved_guest_ephemeral_disk_bytes
+   AND EXISTS (SELECT 1 FROM worker_pool_cpu_shapes s WHERE s.worker_pool_id=target.id
+     AND s.vcpu_count=p.vm_vcpu_count AND s.cpu_config_digest=p.cpu_config_digest)
+)
+ORDER BY vm_platform_id,vm_vcpu_count,cpu_config_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_guest_ephemeral_disk_bytes
+LIMIT sqlc.arg(row_limit);

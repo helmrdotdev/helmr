@@ -141,7 +141,9 @@ func main() {
 		p.Out.URL.Scheme = "https"
 		p.Out.URL.Host = fmt.Sprintf("s3.%s.amazonaws.com", *region)
 		p.Out.Host = p.Out.URL.Host
-	}, Transport: signedTransport{cfg.Credentials, *region}, ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) { http.Error(w, "S3 forwarding failed", http.StatusBadGateway) }}
+	}, Transport: signedTransport{cfg.Credentials, *region}, ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+		http.Error(w, "S3 forwarding failed", http.StatusBadGateway)
+	}}
 	f := &fault{delay: *hold, forward: proxy}
 	handler := bucketHandler(*bucket, f)
 	if *replies {

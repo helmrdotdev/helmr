@@ -451,14 +451,14 @@ func TestDrainCaptureRechecksSourceAndAllMembers(t *testing.T) {
 		want         bool
 	}{
 		{"all safe without idle deadline", `UPDATE run_waits SET idle_timeout_ms=NULL`, true},
-		{"host active", `UPDATE worker_hosts SET status='active',draining_at=NULL WHERE id=(SELECT worker_host_id FROM run_leases WHERE run_id=$1)`, false},
+		{"host active", `UPDATE worker_hosts SET status='active',draining_at = NULL, drain_reason = NULL WHERE id=(SELECT worker_host_id FROM run_leases WHERE run_id=$1)`, false},
 		{"instance open", `UPDATE computer_instances SET admission_state='open' WHERE id=(SELECT computer_instance_id FROM run_leases WHERE run_id=$1)`, false},
 		{"peer working", `UPDATE runs SET status='running' WHERE id=$1`, false},
 		{"wait resolved before seal", `UPDATE run_waits SET due_at=clock_timestamp()-interval '1 second' WHERE run_id=$1`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, _, peer, request := computertest.Capture(t)
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET status='draining',draining_at=now() WHERE id=$1`, f.WorkerID)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET status='draining',draining_at = now(), drain_reason = 'shutdown' WHERE id=$1`, f.WorkerID)
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET admission_state='draining' WHERE id=$1`, request.InstanceID)
 			if strings.Contains(tc.change, "$1") {
 				dbtest.MustExec(t, t.Context(), f.Pool, tc.change, peer.RunID)

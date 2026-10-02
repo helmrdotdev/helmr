@@ -82,6 +82,18 @@ func (f httpPostgresFixture) sealWorkerPool(t *testing.T, groupID string, poolID
 	}
 }
 
+func (f httpPostgresFixture) readyWorkerHost(t *testing.T, groupID, poolID string) {
+	t.Helper()
+	hostID := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO worker_hosts (
+        id,resource_id,worker_group_id,worker_pool_id,status,current_epoch,current_service_id,vm_platform_id,
+        epoch_cpu_millis,epoch_memory_bytes,epoch_guest_ephemeral_disk_bytes,
+        per_vm_cpu_millis,per_vm_memory_bytes,per_vm_guest_ephemeral_disk_bytes,max_vm_slots,max_vm_starts,
+        cpu_environment,cpu_environment_digest,observed_at,epoch_started_at,activated_at
+    ) VALUES($1,$2,$3,$4,'active',1,$5,$6,4000,8589934592,34359738368,1000,1073741824,4294967296,4,4,
+      '{"vendor":"test"}',$7,now(),now(),now())`, hostID, hostID.String(), groupID, poolID, uuid.NewV7(), dbtest.Digest("supply-http-runtime"), dbtest.Digest("supply-http-cpu-environment"))
+}
+
 // supplyGroup creates a region and a worker group through the admin API and
 // returns the group.
 func (f httpPostgresFixture) supplyGroup(t *testing.T, admin string, regionID string) api.AdminWorkerGroup {
@@ -238,14 +250,16 @@ func TestAdminHTTPWorkerPools(t *testing.T) {
 		t.Fatalf("pending pool = %+v", pending)
 	}
 	assertAdminError(t, f.request(t, http.MethodPost, path, admin, `{"name":"run-next","expected_group_claim_version":`+claim+`}`), http.StatusConflict, "conflict")
-	assertAdminError(t, f.request(t, http.MethodPost, path+"/"+pending.ID+"/primary", admin, `{"expected_group_claim_version":`+claim+`}`), http.StatusConflict, "conflict")
+	assertAdminError(t, f.request(t, http.MethodPost, path+"/"+pending.ID+"/primary", admin, `{"expected_group_claim_version":`+claim+`,"pool_id":"`+pending.ID+`","minimum_ready_hosts":1}`), http.StatusConflict, "conflict")
 
 	f.sealWorkerPool(t, group.ID, pending.ID)
-	switched := decodeAdmin[api.SwitchAdminWorkerPoolPrimaryResponse](t, f.request(t, http.MethodPost, path+"/"+pending.ID+"/primary", admin, `{"expected_group_claim_version":`+claim+`}`), http.StatusOK)
+	f.readyWorkerHost(t, group.ID, pending.ID)
+	switched := decodeAdmin[api.SwitchAdminWorkerPoolPrimaryResponse](t, f.request(t, http.MethodPost, path+"/"+pending.ID+"/primary", admin, `{"expected_group_claim_version":`+claim+`,"pool_id":"`+pending.ID+`","minimum_ready_hosts":1}`), http.StatusOK)
 	if !switched.WorkerPool.Primary || switched.WorkerGroup.PrimaryPoolID != pending.ID || switched.WorkerGroup.ClaimVersion != group.ClaimVersion+1 {
 		t.Fatalf("switched = %+v", switched)
 	}
-	assertAdminError(t, f.request(t, http.MethodPost, path+"/"+uuid.NewV7().String()+"/primary", admin, `{"expected_group_claim_version":`+claim+`}`), http.StatusNotFound, "not_found")
+	missingPoolID := uuid.NewV7().String()
+	assertAdminError(t, f.request(t, http.MethodPost, path+"/"+missingPoolID+"/primary", admin, `{"expected_group_claim_version":`+claim+`,"pool_id":"`+missingPoolID+`","minimum_ready_hosts":1}`), http.StatusNotFound, "not_found")
 
 	listed := decodeAdmin[api.AdminWorkerPoolsResponse](t, f.request(t, http.MethodGet, path, admin, ""), http.StatusOK)
 	if len(listed.WorkerPools) != 1 || listed.WorkerPools[0].ID != pending.ID || !listed.WorkerPools[0].Primary || listed.WorkerPools[0].Status != "active" {

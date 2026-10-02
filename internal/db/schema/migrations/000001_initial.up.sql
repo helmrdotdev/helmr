@@ -376,6 +376,10 @@ CREATE TABLE worker_hosts (
     epoch_started_at TIMESTAMPTZ,
     activated_at TIMESTAMPTZ,
     draining_at TIMESTAMPTZ,
+    drain_reason TEXT CONSTRAINT worker_hosts_drain_reason_value_check CHECK (drain_reason IN (
+        'replacement', 'capacity_reduction', 'idle_scale_in',
+        'shutdown', 'admin', 'incompatible_worker'
+    )),
     termination_ready_at TIMESTAMPTZ,
     lost_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -410,6 +414,7 @@ CREATE TABLE worker_hosts (
     ),
     CONSTRAINT worker_hosts_cpu_environment_pair_check CHECK ((cpu_environment IS NULL) = (cpu_environment_digest IS NULL)),
     CONSTRAINT worker_hosts_draining_time_check CHECK (status NOT IN ('draining', 'termination_ready') OR draining_at IS NOT NULL),
+    CONSTRAINT worker_hosts_drain_reason_check CHECK ((draining_at IS NULL) = (drain_reason IS NULL)),
     CONSTRAINT worker_hosts_termination_ready_time_check CHECK ((status = 'termination_ready') = (termination_ready_at IS NOT NULL)),
     CONSTRAINT worker_hosts_lost_time_check CHECK ((status = 'lost') = (lost_at IS NOT NULL))
 );

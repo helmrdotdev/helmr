@@ -38,7 +38,7 @@ func TestTaskCompletionRefreshesAuthenticationWithoutChangingReceipt(t *testing.
 					_, err := f.Pool.Exec(ctx, `UPDATE worker_groups SET claim_version=claim_version+1 WHERE id=$1`, runtest.WorkerGroupID)
 					return err
 				}
-				_, err := db.New(f.Pool).DrainWorkerHost(ctx, db.DrainWorkerHostParams{
+				_, err := db.New(f.Pool).DrainWorkerHost(ctx, db.DrainWorkerHostParams{DrainReason: "shutdown",
 					ID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID),
 					ExpectedEpoch: pgtype.Int8{Int64: 1, Valid: true}, ExpectedClaimVersion: 1,
 				})

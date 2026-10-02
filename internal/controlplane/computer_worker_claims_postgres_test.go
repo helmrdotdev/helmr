@@ -110,7 +110,7 @@ func drainWorkerHost(f runtest.Fixture) func(context.Context) error {
 		if err := f.Pool.QueryRow(ctx, `SELECT claim_version FROM worker_hosts WHERE id=$1`, f.WorkerID).Scan(&claim); err != nil {
 			return err
 		}
-		_, err := db.New(f.Pool).DrainWorkerHost(ctx, db.DrainWorkerHostParams{
+		_, err := db.New(f.Pool).DrainWorkerHost(ctx, db.DrainWorkerHostParams{DrainReason: "shutdown",
 			ID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID),
 			ExpectedEpoch: pgtype.Int8{Int64: 1, Valid: true}, ExpectedClaimVersion: claim,
 		})

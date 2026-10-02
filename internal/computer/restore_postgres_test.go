@@ -21,7 +21,7 @@ var hostTransitions = []struct {
 	rejected bool
 }{
 	{"drain", func(ctx context.Context, f runtest.Fixture) error {
-		_, err := db.New(f.Pool).DrainWorkerHost(ctx, db.DrainWorkerHostParams{ID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), ExpectedEpoch: pgtype.Int8{Int64: 1, Valid: true}, ExpectedClaimVersion: 1})
+		_, err := db.New(f.Pool).DrainWorkerHost(ctx, db.DrainWorkerHostParams{DrainReason: "shutdown", ID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), ExpectedEpoch: pgtype.Int8{Int64: 1, Valid: true}, ExpectedClaimVersion: 1})
 		return err
 	}, false},
 	{"host claim", execTransition(`UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`), false},
