@@ -10,7 +10,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
-	"github.com/jackc/pgx/v5"
 )
 
 func sessionControlExecutionFixture(t *testing.T) (runtest.Fixture, [2]ExecutionFence, [2]uuid.UUID) {
@@ -159,7 +158,7 @@ func TestSessionInterruptionRejectsTargetGenerationChangeDuringLock(t *testing.T
 	if err = blocker.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err = <-done; !errors.Is(err, pgx.ErrNoRows) {
+	if err = <-done; !errors.Is(err, ErrExecutionTargetChanged) {
 		t.Fatalf("changed target accepted: %v", err)
 	}
 }

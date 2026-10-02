@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 	"uuid"
@@ -427,5 +429,143 @@ func TestWorkerSessionControlChildToParentFinalizationOrderPostgres(t *testing.T
 	}
 	if err = <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Mutate after the target's first read, before the authority prologue reads it
+// again. The caller's request never names this server-observed generation.
+type changedControlTarget struct {
+	pgx.Tx
+	after     func()
+	reads     int
+	afterRead int
+}
+
+func (tx *changedControlTarget) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	row := tx.Tx.QueryRow(ctx, sql, args...)
+	if strings.HasPrefix(sql, "-- name: GetSession :one") && tx.after != nil {
+		return changedControlTargetRow{Row: row, tx: tx}
+	}
+	return row
+}
+
+type changedControlTargetRow struct {
+	pgx.Row
+	tx *changedControlTarget
+}
+
+func (r changedControlTargetRow) Scan(dest ...any) error {
+	if err := r.Row.Scan(dest...); err != nil {
+		return err
+	}
+	r.tx.reads++
+	if r.tx.afterRead == 0 || r.tx.reads == r.tx.afterRead {
+		after := r.tx.after
+		r.tx.after = nil
+		after()
+	}
+	return nil
+}
+
+func TestWorkerSessionControlTargetSnapshotChangePostgres(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		interrupt bool
+		afterRead int
+		idle      bool
+	}{
+		{"ordinary first read", false, 1, false},
+		{"interruption first read", true, 1, false},
+		{"interruption graph read", true, 2, false},
+		{"interruption idle read", true, 2, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := newExecution(t, nil, true)
+			target := executionOn(t, source.Fixture, nil, true)
+			if tc.idle {
+				dbtest.MustExec(t, t.Context(), source.Pool, `UPDATE sessions SET current_run_id=NULL WHERE id=$1`, target.SessionID)
+			}
+			tx, err := source.Pool.Begin(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(t.Context())
+			wrapped := &changedControlTarget{Tx: tx, afterRead: tc.afterRead, after: func() {
+				dbtest.MustExec(t, t.Context(), source.Pool, `UPDATE sessions SET run_generation=run_generation+1 WHERE id=$1`, target.SessionID)
+			}}
+			_, _, _, err = lockControlFromRun(t.Context(), wrapped, source.Fence(), target.SessionID, tc.interrupt)
+			if !errors.Is(err, run.ErrExecutionTargetChanged) {
+				t.Fatalf("snapshot change: %v", err)
+			}
+			if err = tx.Rollback(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			tx, err = source.Pool.Begin(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(t.Context())
+			if _, _, _, err = lockControlFromRun(t.Context(), tx, source.Fence(), target.SessionID, tc.interrupt); err != nil {
+				t.Fatalf("fresh snapshot: %v", err)
+			}
+			var claims int
+			if err = source.Pool.QueryRow(t.Context(), `SELECT count(*) FROM idempotency_claims WHERE operation IN ('session.cancel','session.resume','session.interrupt')`).Scan(&claims); err != nil || claims != 0 {
+				t.Fatalf("pre-admission claims=%d err=%v", claims, err)
+			}
+		})
+	}
+}
+
+func TestWorkerSessionControlRejectsObsoleteSourceOwnerPostgres(t *testing.T) {
+	parent := newExecution(t, json.RawMessage(`1`), true)
+	target := secondControlSession(t, parent)
+	child := controlChild(t, parent, false)
+	dbtest.MustExec(t, t.Context(), parent.Pool, `UPDATE sessions SET current_run_id=NULL,active_turn_id=NULL WHERE id=$1`, parent.SessionID)
+	err := db.RunTx(t.Context(), parent.Pool, func(tx pgx.Tx) error {
+		_, _, _, err := lockControlFromRun(t.Context(), tx, child.Fence(), target.SessionID, false)
+		return err
+	})
+	if !errors.Is(err, run.ErrStaleSource) {
+		t.Fatalf("obsolete source owner: %v", err)
+	}
+}
+
+func TestWorkerSessionControlDeliveryRejectionRollsBackPostgres(t *testing.T) {
+	for _, corrupt := range []bool{false, true} {
+		t.Run(fmt.Sprint(corrupt), func(t *testing.T) {
+			source := newExecution(t, nil, true)
+			target := executionOn(t, source.Fixture, nil, true)
+			addControlSecret(t, source)
+			if corrupt {
+				dbtest.MustExec(t, t.Context(), source.Pool, `DELETE FROM secret_resolutions WHERE run_id=$1`, source.RunID)
+			} else {
+				dbtest.MustExec(t, t.Context(), source.Pool, `UPDATE secrets SET status='revoked',current_version_id=NULL,revoked_at=clock_timestamp(),revocation_generation=revocation_generation+1 WHERE id IN (SELECT secret_id FROM computer_secrets WHERE computer_id=$1)`, source.ComputerID)
+			}
+			_, err := CancelFromRun(t.Context(), source.Pool, source.Fence(), ControlRequest{Target: Target{SessionID: target.SessionID}, IdempotencyKey: "denied-cancel"})
+			if !errors.Is(err, secret.ErrDeliveryUnavailable) || errors.Is(err, secret.ErrDeliveryRevoked) == corrupt {
+				t.Fatalf("delivery rejection classification: %v corrupt=%v", err, corrupt)
+			}
+			var mutated bool
+			var claims int
+			if err = source.Pool.QueryRow(t.Context(), `SELECT cancel_requested_at IS NOT NULL OR dispatch_hold_id IS NOT NULL,(SELECT count(*) FROM idempotency_claims WHERE operation='session.cancel') FROM sessions WHERE id=$1`, target.SessionID).Scan(&mutated, &claims); err != nil || mutated || claims != 0 {
+				t.Fatalf("denied control committed: mutated=%v claims=%d err=%v", mutated, claims, err)
+			}
+		})
+	}
+}
+
+func TestWorkerSessionControlTargetRevocationKeepsSourceAuthorityPostgres(t *testing.T) {
+	source := newExecution(t, nil, true)
+	target := executionOn(t, source.Fixture, nil, true)
+	addControlSecret(t, target)
+	dbtest.MustExec(t, t.Context(), source.Pool, `UPDATE secrets SET status='revoked',current_version_id=NULL,revoked_at=clock_timestamp(),revocation_generation=revocation_generation+1 WHERE id IN (SELECT secret_id FROM computer_secrets WHERE computer_id=$1)`, target.ComputerID)
+	_, err := CancelFromRun(t.Context(), source.Pool, source.Fence(), ControlRequest{Target: Target{SessionID: target.SessionID}, IdempotencyKey: "target-revoked"})
+	if !errors.Is(err, run.ErrExecutionTargetChanged) || errors.Is(err, secret.ErrDeliveryRevoked) || errors.Is(err, run.ErrStaleSource) {
+		t.Fatalf("target-only revocation: %v", err)
+	}
+	var sourceLive, targetMutated bool
+	var claims int
+	if err = source.Pool.QueryRow(t.Context(), `SELECT l.status='running' AND r.current_run_lease_id=l.id,s.cancel_requested_at IS NOT NULL OR s.dispatch_hold_id IS NOT NULL,(SELECT count(*) FROM idempotency_claims WHERE operation='session.cancel') FROM run_leases l JOIN runs r ON r.id=l.run_id CROSS JOIN sessions s WHERE l.id=$1 AND s.id=$2`, source.LeaseID, target.SessionID).Scan(&sourceLive, &targetMutated, &claims); err != nil || !sourceLive || targetMutated || claims != 0 {
+		t.Fatalf("rejected target control: sourceLive=%v targetMutated=%v claims=%d err=%v", sourceLive, targetMutated, claims, err)
 	}
 }

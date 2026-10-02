@@ -14,6 +14,10 @@ import (
 
 var ErrExecutionTargetNotFound = errors.New("execution target not found")
 
+// ErrExecutionTargetChanged reports target execution state that moved while its
+// authority was acquired. The caller must roll back and retry its snapshot.
+var ErrExecutionTargetChanged = errors.New("execution target changed while acquiring authority")
+
 // LockLiveExecutionForSession locks the addressed Session together with the
 // source lineage. Reciprocal sends acquire Computers and Sessions in UUID order.
 // Secret locks, when needed, must precede this operation; the caller owns the tx.

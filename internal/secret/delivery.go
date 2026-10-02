@@ -15,6 +15,10 @@ const maxComputerSecretPlacements = 64
 
 var ErrDeliveryUnavailable = errors.New("secret delivery authority is unavailable")
 
+// ErrDeliveryRevoked denies an otherwise valid recorded delivery whose Secret
+// status or revocation generation no longer permits use.
+var ErrDeliveryRevoked = fmt.Errorf("secret delivery is no longer authorized: %w", ErrDeliveryUnavailable)
+
 type DeliveryEnvelope struct {
 	Mode            string
 	PlacementKind   string
@@ -173,15 +177,17 @@ func validateDeliveryRow(
 		row.ComputerSecret.SecretID != row.Secret.ID ||
 		(row.ComputerSecret.PlacementKind != "env" && row.ComputerSecret.PlacementKind != "file") ||
 		row.ComputerSecret.PlacementTarget == "" ||
-		row.Secret.Status != "active" ||
 		!row.ResolutionID.Valid ||
 		row.ResolutionRunID != runID ||
 		!row.ResolutionAttemptNumber.Valid ||
 		row.ResolutionAttemptNumber.Int32 != attemptNumber ||
 		!row.ResolutionSecretVersionID.Valid ||
 		!row.ResolutionRevocationGeneration.Valid ||
-		row.ResolutionRevocationGeneration.Int64 != row.Secret.RevocationGeneration {
+		row.ResolutionRevocationGeneration.Int64 > row.Secret.RevocationGeneration {
 		return ErrDeliveryUnavailable
+	}
+	if row.Secret.Status != "active" || row.ResolutionRevocationGeneration.Int64 < row.Secret.RevocationGeneration {
+		return ErrDeliveryRevoked
 	}
 	return nil
 }

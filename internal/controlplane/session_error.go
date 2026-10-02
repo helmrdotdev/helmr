@@ -9,6 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/run"
+	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -54,7 +55,9 @@ const (
 // credential claims first. A worker Session command reports a stale
 // execution as a conflict carrying the error and passes every other error
 // through as internal, including inconsistent Session authority and
-// unavailable Secret deliveries. Turn output, Turn commit, Actor completion
+// unavailable Secret deliveries. Target snapshot changes are retryable
+// unavailability, while revoked deliveries are conflicts. Turn output, Turn
+// commit, Actor completion
 // and Actor input wait report their stale receipt as a conflict with a
 // fixed message; an Actor completion still cleaning up owned executions is
 // unavailable, and one with unavailable Secret deliveries or a rejected
@@ -88,8 +91,14 @@ func sessionError(err error, operation sessionOperation) error {
 }
 
 func sessionWorkerError(err error, operation sessionOperation) error {
+	if operation != sessionWorkerCompleteOperation && errors.Is(err, secret.ErrDeliveryRevoked) {
+		return conflict(errors.New("secret delivery is no longer authorized"))
+	}
 	switch operation {
 	case sessionWorkerOperation:
+		if errors.Is(err, run.ErrExecutionTargetChanged) {
+			return unavailable(codedError{code: "session_control_target_changed", message: "Session control target changed; retry the operation", retryable: true})
+		}
 		if errors.Is(err, session.ErrStaleOutput) || errors.Is(err, session.ErrStaleExecution) {
 			return conflict(err)
 		}

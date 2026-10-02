@@ -19,7 +19,8 @@ import (
 // fence: with the target's owned graph for an interruption, with the target
 // Session otherwise. It then checks the source's owning ancestor Sessions,
 // reads the target again and requires its Computer, current Run and
-// generation unchanged (ErrAuthority), locks the target's Computer for a
+// generation unchanged (run.ErrExecutionTargetChanged); an immutable Computer
+// mismatch remains ErrAuthority. It locks the target's Computer for a
 // resume or cancel of a Session with no current Run, and re-reads the
 // Secret union with ControlSecrets.Recheck: a new binding invalidates this
 // attempt rather than acquiring a Secret out of order. It returns the source,
@@ -55,8 +56,11 @@ func lockControlFromRun(ctx context.Context, tx pgx.Tx, fence run.ExecutionFence
 	if err != nil {
 		return fail(err)
 	}
-	if target.ComputerID != lockedTarget.ComputerID || target.CurrentRunID != lockedTarget.CurrentRunID || target.RunGeneration != lockedTarget.RunGeneration {
+	if target.ComputerID != lockedTarget.ComputerID {
 		return fail(ErrAuthority)
+	}
+	if target.CurrentRunID != lockedTarget.CurrentRunID || target.RunGeneration != lockedTarget.RunGeneration {
+		return fail(run.ErrExecutionTargetChanged)
 	}
 
 	if !interrupt && !target.CurrentRunID.Valid {
@@ -83,7 +87,7 @@ func controlTargetError(err error) error {
 // lineage. Owned Tasks retain their ancestor Actor's lifecycle fence even in
 // a different Computer. Locking only the source Computer's Session would let
 // reciprocal child controls each hold the other's graph root while waiting
-// on its child. An owning Session whose current Run changed is ErrAuthority;
+// on its child. An owning Session whose current Run changed is run.ErrStaleSource;
 // a held one is session_held, and one whose active Turn began settlement is
 // turn_unsettled.
 func lockSourceControlSessions(ctx context.Context, q db.Querier, source run.LiveSource, targetID pgtype.UUID) error {
@@ -97,7 +101,7 @@ func lockSourceControlSessions(ctx context.Context, q db.Querier, source run.Liv
 		}
 		session := row.Session
 		if session.CurrentRunID != row.SourceOwnerRunID {
-			return ErrAuthority
+			return run.ErrStaleSource
 		}
 		if session.DispatchHoldID.Valid {
 			return &OperationError{Code: "session_held"}

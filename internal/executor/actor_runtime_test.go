@@ -18,16 +18,18 @@ import (
 
 type actorRuntimeContractControlPlane struct {
 	*testRunLeaseControlPlane
-	startRequest  workerapi.StartActorRequest
-	startRequests []workerapi.StartActorRequest
-	startResponse workerapi.StartActorResponse
-	startErr      error
-	startErrors   []error
-	firstAttempt  chan struct{}
-	statusRequest workerapi.SessionReferenceRequest
-	closeRequest  workerapi.CloseSessionRequest
-	cancelRequest workerapi.CancelSessionRequest
-	outputRequest workerapi.ReadSessionEventsRequest
+	startRequest   workerapi.StartActorRequest
+	startRequests  []workerapi.StartActorRequest
+	startResponse  workerapi.StartActorResponse
+	startErr       error
+	startErrors    []error
+	firstAttempt   chan struct{}
+	statusRequest  workerapi.SessionReferenceRequest
+	closeRequest   workerapi.CloseSessionRequest
+	cancelRequest  workerapi.CancelSessionRequest
+	cancelRequests []workerapi.CancelSessionRequest
+	cancelErrors   []error
+	outputRequest  workerapi.ReadSessionEventsRequest
 }
 
 func (controlPlane *actorRuntimeContractControlPlane) StartRunActor(
@@ -75,6 +77,12 @@ func (controlPlane *actorRuntimeContractControlPlane) CancelRunSession(
 	request workerapi.CancelSessionRequest,
 ) (workerapi.CancelSessionResponse, error) {
 	controlPlane.cancelRequest = request
+	controlPlane.cancelRequests = append(controlPlane.cancelRequests, request)
+	if len(controlPlane.cancelErrors) != 0 {
+		err := controlPlane.cancelErrors[0]
+		controlPlane.cancelErrors = controlPlane.cancelErrors[1:]
+		return workerapi.CancelSessionResponse{}, err
+	}
 	return workerapi.CancelSessionResponse{
 		CorrelationID: request.CorrelationID,
 		Completed:     &api.SessionCancelReceipt{},
@@ -220,6 +228,35 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 				controlPlane.statusRequest, controlPlane.closeRequest, controlPlane.outputRequest)
 		}
 	})
+}
+
+func TestSessionCancelRetriesTargetChangeWithSameRequest(t *testing.T) {
+	const correlationID = "019c0225-f0c9-7f66-8a23-7782ca0a8461"
+	controlPlane := &actorRuntimeContractControlPlane{
+		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
+		cancelErrors: []error{&httpclient.Error{
+			StatusCode: 503, Status: "503 Service Unavailable",
+			Message: "Session control target changed; retry the operation",
+		}},
+	}
+	decision, err := runActorRuntimeContract(t, &programv0.RunEvent{
+		Event: &programv0.RunEvent_SessionCancelRequested{
+			SessionCancelRequested: &programv0.SessionCancelRequested{
+				CorrelationId:  correlationID,
+				SessionId:      "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+				IdempotencyKey: new("cancel-1"),
+			},
+		},
+	}, controlPlane)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.GetKind() != "completed" || decision.GetCorrelationId() != correlationID ||
+		len(controlPlane.cancelRequests) != 2 ||
+		controlPlane.cancelRequests[0] != controlPlane.cancelRequests[1] ||
+		controlPlane.cancelRequest.IdempotencyKey != "cancel-1" {
+		t.Fatalf("decision=%+v requests=%+v", decision, controlPlane.cancelRequests)
+	}
 }
 
 func TestActorRuntimeRetryUsesRenewedAssignment(t *testing.T) {

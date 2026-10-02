@@ -73,6 +73,11 @@ func TestLockAttemptDeliveryRejectsIncompleteOrRevokedAuthority(t *testing.T) {
 		{name: "missing resolution", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.ResolutionID = pgtype.UUID{} }},
 		{name: "wrong Run", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.ResolutionRunID = pgvalue.UUID(uuid.New()) }},
 		{name: "wrong Attempt", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.ResolutionAttemptNumber.Int32++ }},
+		{name: "future resolution generation", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.ResolutionRevocationGeneration.Int64++ }},
+		{name: "revoked with missing resolution", edit: func(row *db.LockAttemptSecretDeliveryRow) {
+			row.Secret.Status = "revoked"
+			row.ResolutionID = pgtype.UUID{}
+		}},
 		{name: "revocation generation changed", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.Secret.RevocationGeneration++ }},
 		{name: "revoked", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.Secret.Status = "revoked" }},
 		{name: "wrong Computer", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.ComputerSecret.ComputerID = pgvalue.UUID(uuid.New()) }},
@@ -87,6 +92,10 @@ func TestLockAttemptDeliveryRejectsIncompleteOrRevokedAuthority(t *testing.T) {
 			_, err := LockAttemptDelivery(t.Context(), store, runID, 2, computerID)
 			if !errors.Is(err, ErrDeliveryUnavailable) {
 				t.Fatalf("error = %v", err)
+			}
+			revoked := test.name == "revoked" || test.name == "revocation generation changed"
+			if errors.Is(err, ErrDeliveryRevoked) != revoked {
+				t.Fatalf("revocation classification=%v want=%v", err, revoked)
 			}
 			if store.versionReads != 0 {
 				t.Fatalf("version reads = %d, want 0", store.versionReads)
