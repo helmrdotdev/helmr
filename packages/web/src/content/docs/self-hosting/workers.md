@@ -38,14 +38,34 @@ All Dispatcher replicas must run this behavior before relying on the protection.
 The evaluation profile has workers and NAT disabled by default. For a bounded end-to-end smoke test:
 
 ```hcl
-enable_nat_gateway                  = true
-create_worker                       = true
-worker_host_type                = "c8i.xlarge"
-worker_enable_nested_virtualization = true
-worker_count                        = 1
-worker_root_volume_size_gb          = 256
-worker_disk_mib                     = null
+enable_nat_gateway                    = true
+create_worker                         = true
+worker_host_type                      = "c8i.xlarge"
+worker_enable_nested_virtualization   = true
+worker_count                          = 1
+worker_capacity_vcpus                 = 3
+worker_capacity_memory_mib            = 6144
+worker_execution_slots                = 2
+worker_root_volume_size_gb            = 512
+worker_root_volume_iops               = 3000
+worker_root_volume_throughput         = 125
+worker_disk_mib                       = 491520
+worker_disk_reserve_mib               = 8192
+worker_artifact_cache_max_mib         = 16384
+worker_vm_vcpus                       = 1
+worker_vm_memory_mib                  = 2048
+worker_vm_scratch_disk_mib            = 32768
+worker_computer_save_interval_seconds = 60
+worker_computer_devices               = ["/dev/nbd0", "/dev/nbd1", "/dev/nbd2", "/dev/nbd3"]
 ```
+
+This bounds a sequential smoke test; it does not qualify concurrent capture and
+restore on both slots. The explicit 480-GiB disk ceiling leaves 456 GiB after the
+8-GiB reserve and 16-GiB cache. A single cold Computer with 32-GiB guest scratch
+can reserve another 32 GiB for its local projection and 64 GiB for default staging:
+128 GiB in total before other instances and restore/capture overhead. A 120-GiB
+root cannot satisfy that reservation. Allow additional shared capacity for all
+concurrent work and keep the disk ceiling below the actual filesystem capacity.
 
 Use only an EC2 family that supports nested virtualization. Keep NAT enabled while a private worker is running or draining.
 
@@ -54,9 +74,11 @@ Use only an EC2 family that supports nested virtualization. Keep NAT enabled whi
 The standard profile defaults to a metal worker instance type and nested virtualization off. Set an explicit `worker_count` when enabling Workers, along with the instance type, root-volume performance, VM sizing, cache limits, and execution slots for your workload. The reference roots set desired and maximum capacity to that count and minimum capacity to zero.
 
 Workers are filesystem-first. Their root EBS volume holds runtime data, staged
-artifacts, and cache. Leave `worker_disk_mib = null` to advertise detected
-filesystem capacity, or set it to cap the advertised value. The worker always
-withholds `worker_disk_reserve_mib` before certifying usable capacity.
+artifacts, and cache. The AWS reference roots require explicit CPU, memory,
+execution-slot, cache and disk capacity when Workers are enabled, including a
+non-null `worker_disk_mib`. The Worker trusts this explicit ceiling and subtracts
+its reserve and cache before certifying shared capacity. Keep the ceiling below
+the actual filesystem size; the Worker does not correct an oversized ceiling.
 
 ## Computer storage
 
@@ -69,6 +91,13 @@ another service. The Worker fails startup without an explicit allowlist.
 Runtime (default: 65536 MiB). This host reservation is additional to guest disk
 capacity; admission waits when the local ledger cannot reserve it. It does not
 change the Computer's logical disk size or make local writes externally durable.
+
+The current AWS roots neither expose this staging setting nor validate its full
+reservation with the Computer projection. The planner's guest-disk admission can
+therefore accept work that the local ledger cannot fit. Such work can keep retrying
+with a local-capacity refusal instead of reaching a terminal failure. The explicit
+smoke sizing above avoids the observed undersized-host case; it is not a fix to
+that admission mismatch. Inspect Worker capacity logs when a Run remains queued.
 
 `WORKER_COMPUTER_SAVE_EVERY` is required and must be a positive Go duration.
 It controls background disk preservation while an execution is running. Choose

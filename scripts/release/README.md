@@ -134,10 +134,22 @@ the shell bootstrap verifies the completion index before any binary download. It
 bootstrap trust is HTTPS plus index/checksum binding; it does not perform Sigstore
 verification or install a new mandatory runtime.
 
-Self-host Runtime publication uses `publish-platform-release.sh STORE TAG INDEX
-INDEX_SIGNATURE ARCHIVE PROVENANCE`. It verifies the signed v0 index with the exact
-tag/main workflow identity, matches the checkout/tag/source and indexed archive and
-provenance, safely extracts, and delegates to the existing immutable publisher.
+For a tagged release, self-host Runtime publication uses
+`publish-platform-release.sh STORE TAG INDEX INDEX_SIGNATURE ARCHIVE PROVENANCE`.
+It verifies the signed v0 index with the exact workflow identity, matches the
+checkout/tag/source and indexed archive and provenance, safely extracts, and
+delegates to the existing immutable publisher. This wrapper requires the Git tag
+locally; it does not support an untagged main-preview cohort. Do not create a tag
+for a preview to satisfy that check.
+
+For a main preview, `scripts/release/platform_materialize.py` accepts the signed
+index, index signature, archive, provenance, exact preview version, source commit
+and output directory. It verifies the main-workflow identity and indexed inputs
+before materializing the release. The matching published Linux Control Plane
+image can then run `release publish --store STORE_URI --input DIRECTORY` against
+that verified directory. Pin that image to the digest in the same signed index
+and use normal operator authentication. Keep the materialized input read-only;
+never skip the verification step or substitute a locally rebuilt artifact.
 No standalone Platform archive signature is produced or accepted.
 
 ## Worker artifact identity

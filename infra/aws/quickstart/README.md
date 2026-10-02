@@ -128,14 +128,34 @@ Workers are intentionally disabled by default. To create one nested-virtualizati
 set:
 
 ```hcl
-enable_nat_gateway                  = true
-create_worker                       = true
-worker_host_type                = "c8i.xlarge"
-worker_enable_nested_virtualization = true
-worker_count                        = 1
-worker_root_volume_size_gb          = 120
-worker_disk_mib                     = null
+enable_nat_gateway                    = true
+create_worker                         = true
+worker_host_type                      = "c8i.xlarge"
+worker_enable_nested_virtualization   = true
+worker_count                          = 1
+worker_capacity_vcpus                 = 3
+worker_capacity_memory_mib            = 6144
+worker_execution_slots                = 2
+worker_root_volume_size_gb            = 512
+worker_root_volume_iops               = 3000
+worker_root_volume_throughput         = 125
+worker_disk_mib                       = 491520
+worker_disk_reserve_mib               = 8192
+worker_artifact_cache_max_mib         = 16384
+worker_vm_vcpus                       = 1
+worker_vm_memory_mib                  = 2048
+worker_vm_scratch_disk_mib            = 32768
+worker_computer_save_interval_seconds = 60
+worker_computer_devices               = ["/dev/nbd0", "/dev/nbd1", "/dev/nbd2", "/dev/nbd3"]
 ```
+
+This bounds a sequential smoke test; it does not qualify concurrent capture and
+restore on both slots. The explicit 480-GiB disk ceiling leaves 456 GiB after the
+8-GiB reserve and 16-GiB cache. A single cold Computer with 32-GiB guest scratch
+can reserve another 32 GiB for its local projection and 64 GiB for default staging:
+128 GiB in total before other instances and restore/capture overhead. A 120-GiB
+root cannot satisfy that reservation. Allow additional shared capacity for all
+concurrent work and keep the disk ceiling below the actual filesystem capacity.
 
 When workers are enabled, `certificate_arn` and a Worker Control Plane DNS name are required. The stack
 derives the worker Control Plane URL from `public_url` for direct ALB mode or from
