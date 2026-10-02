@@ -281,20 +281,38 @@ func observationParams(principal HostPrincipal, observation HostObservation) db.
 
 // BeginHostDrain starts the worker-requested drain of the authenticated
 // epoch, fenced by its host claim version. Draining again is a replay.
-func BeginHostDrain(ctx context.Context, q db.Querier, principal HostPrincipal) error {
-	_, err := q.DrainWorkerHost(ctx, db.DrainWorkerHostParams{
-		ID:                   pgvalue.UUID(principal.HostID),
-		WorkerGroupID:        pgvalue.UUID(principal.GroupID),
-		ExpectedEpoch:        pgtype.Int8{Int64: principal.Epoch, Valid: true},
-		ExpectedClaimVersion: principal.HostClaimVersion,
+func BeginHostDrain(ctx context.Context, txb db.TxBeginner, principal HostPrincipal) error {
+	return db.RunTx(ctx, txb, func(tx pgx.Tx) error {
+		q := db.New(tx)
+		poolID, err := q.GetWorkerHostPoolID(ctx, db.GetWorkerHostPoolIDParams{
+			WorkerHostID: pgvalue.UUID(principal.HostID), WorkerGroupID: pgvalue.UUID(principal.GroupID),
+			WorkerEpoch: pgtype.Int8{Int64: principal.Epoch, Valid: true},
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrHostNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("resolve draining worker pool: %w", err)
+		}
+		if _, err := LockHostWithPool(ctx, q, principal.GroupID, pgvalue.MustUUIDValue(poolID), principal.HostID, principal.Epoch); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrHostNotFound
+			}
+			return fmt.Errorf("lock worker drain: %w", err)
+		}
+		_, err = q.DrainWorkerHost(ctx, db.DrainWorkerHostParams{
+			ID: pgvalue.UUID(principal.HostID), WorkerGroupID: pgvalue.UUID(principal.GroupID),
+			ExpectedEpoch:        pgtype.Int8{Int64: principal.Epoch, Valid: true},
+			ExpectedClaimVersion: principal.HostClaimVersion, DrainReason: "shutdown",
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrHostNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("drain worker host %s: %w", principal.HostID, err)
+		}
+		return nil
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrHostNotFound
-	}
-	if err != nil {
-		return fmt.Errorf("drain worker host %s: %w", principal.HostID, err)
-	}
-	return nil
 }
 
 // CompleteHostDrain marks a drained epoch termination ready once its instance
@@ -421,7 +439,7 @@ func DrainInvalidEpoch(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID
 			return errors.New("invalid worker epoch is inactive")
 		}
 		if host.Status == db.WorkerHostStatusActive {
-			if _, err := q.DrainWorkerHost(ctx, db.DrainWorkerHostParams{
+			if _, err := q.DrainWorkerHost(ctx, db.DrainWorkerHostParams{DrainReason: "incompatible_worker",
 				ID:                   pgvalue.UUID(hostID),
 				WorkerGroupID:        pgvalue.UUID(groupID),
 				ExpectedEpoch:        pgtype.Int8{Int64: epoch, Valid: true},

@@ -30,7 +30,7 @@ func TestWorkerDrainPublishesExactTerminalReceiptAndReplays(t *testing.T) {
 		) VALUES ($1, $2, $3, $4, 1, $5)
 	`, hostSecretID, dbtest.DefaultWorkerGroupID, workerID, uuid.New().String(), []byte("drain-secret"))
 
-	draining, err := q.DrainWorkerHost(ctx, db.DrainWorkerHostParams{
+	draining, err := q.DrainWorkerHost(ctx, db.DrainWorkerHostParams{DrainReason: "shutdown",
 		ID:                   pgvalue.UUID(workerID),
 		WorkerGroupID:        dbtest.DefaultWorkerGroupID,
 		ExpectedEpoch:        pgtype.Int8{Int64: 1, Valid: true},
@@ -87,7 +87,7 @@ func TestWorkerDrainCurrentClaimPreservesFences(t *testing.T) {
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
 	workerID := insertActiveWorkerWithObservation(t, ctx, pool, time.Now().UTC())
-	params := db.DrainWorkerHostParams{
+	params := db.DrainWorkerHostParams{DrainReason: "shutdown",
 		ID: pgvalue.UUID(workerID), WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ExpectedEpoch: pgtype.Int8{Int64: 1, Valid: true}, ExpectedClaimVersion: 1,
 	}
@@ -150,7 +150,7 @@ func TestWorkerDrainPreservesPhysicalStateAndClosesAdmission(t *testing.T) {
 		return value
 	}
 	before := snapshot()
-	params := db.DrainWorkerHostParams{ID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), ExpectedEpoch: pgtype.Int8{Int64: 1, Valid: true}, ExpectedClaimVersion: 1}
+	params := db.DrainWorkerHostParams{DrainReason: "shutdown", ID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), ExpectedEpoch: pgtype.Int8{Int64: 1, Valid: true}, ExpectedClaimVersion: 1}
 	for range 2 {
 		if _, err := db.New(f.Pool).DrainWorkerHost(t.Context(), params); err != nil {
 			t.Fatal(err)
@@ -411,7 +411,7 @@ func TestWorkerDrainRequiresEveryPriorEpochPhysicalScopeReconciled(t *testing.T)
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET status='cancelled',terminal_at=now(),terminal_reason_code='cancelled',computer_instance_id=$2,writer_generation=2 WHERE computer_id=$1`, computerID, instanceID)
 			}
 			q := db.New(f.Pool)
-			row, err := q.DrainWorkerHost(t.Context(), db.DrainWorkerHostParams{ID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), ExpectedEpoch: pgtype.Int8{Int64: 2, Valid: true}, ExpectedClaimVersion: 1})
+			row, err := q.DrainWorkerHost(t.Context(), db.DrainWorkerHostParams{DrainReason: "shutdown", ID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), ExpectedEpoch: pgtype.Int8{Int64: 2, Valid: true}, ExpectedClaimVersion: 1})
 			if err != nil {
 				t.Fatal(err)
 			}

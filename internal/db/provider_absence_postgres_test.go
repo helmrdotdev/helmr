@@ -171,7 +171,7 @@ func TestConfirmWorkerHostProviderAbsentRejectsTerminalReadyAndUnknownWorker(t *
 	fixture := runtest.New(t)
 	if _, err := fixture.Pool.Exec(ctx, `
 		UPDATE worker_hosts
-		   SET status = 'termination_ready', draining_at = now(), termination_ready_at = now()
+		   SET status = 'termination_ready', draining_at = now(), drain_reason = 'shutdown', termination_ready_at = now()
 		 WHERE id = $1
 	`, fixture.WorkerID); err != nil {
 		t.Fatal(err)

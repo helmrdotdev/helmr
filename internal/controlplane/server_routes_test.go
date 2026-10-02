@@ -81,6 +81,7 @@ GET /api/projects/{projectID}/environments/{environmentID}/tokens
 GET /api/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}
 GET /api/projects/{projectRef}
 GET /api/regions
+GET /capacity/v1/deployment
 GET /capacity/v1/worker-groups/resolve
 GET /capacity/v1/worker-groups/{workerGroupID}/pools/resolve
 GET /capacity/v1/worker-hosts
@@ -281,7 +282,7 @@ POST /worker/v1/run/turns/settlement/begin
 POST /worker/v1/run/waits/create
 POST /worker/v1/run/waits/poll
 POST /worker/v1/run/waits/resume-ack
-PUT /capacity/v1/worker-groups/{workerGroupID}/primary-pools
+PUT /capacity/v1/worker-groups/{workerGroupID}/primary-pool
 `), "\n")
 	if !slices.IsSorted(want) {
 		t.Fatal("Control Plane route snapshot must stay sorted")

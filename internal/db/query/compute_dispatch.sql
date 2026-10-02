@@ -3,7 +3,8 @@ WITH transitioned AS (
     UPDATE worker_hosts
        SET status = 'draining',
            claim_version = worker_hosts.claim_version + 1,
-           draining_at = COALESCE(draining_at, now()), updated_at = now()
+           draining_at = COALESCE(draining_at, now()),
+           drain_reason = sqlc.arg(drain_reason)::text, updated_at = now()
      WHERE worker_hosts.id = sqlc.arg(id)
        AND worker_hosts.worker_group_id = sqlc.arg(worker_group_id)
        AND worker_hosts.current_epoch = sqlc.arg(expected_epoch)

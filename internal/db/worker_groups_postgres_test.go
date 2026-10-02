@@ -322,7 +322,7 @@ func TestDrainingWorkerActivationSurvivesRestartAndLostResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	draining, err := q.DrainWorkerHost(ctx, db.DrainWorkerHostParams{
+	draining, err := q.DrainWorkerHost(ctx, db.DrainWorkerHostParams{DrainReason: "shutdown",
 		ID:                   pgvalue.UUID(workerID),
 		WorkerGroupID:        dbtest.DefaultWorkerGroupID,
 		ExpectedEpoch:        firstEpoch.CurrentEpoch,

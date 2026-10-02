@@ -102,7 +102,7 @@ func TestCommandClaimSharesInstanceAndReplays(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status='running' AND l.status='running' AND i.desired_state='ready' AND i.mount_state='mounted' AND i.admission_state='open' AND i.capture_checkpoint_id IS NULL AND i.reclaimed_at IS NULL FROM run_leases l JOIN runs r ON r.id=l.run_id JOIN computer_instances i ON i.id=l.computer_instance_id WHERE l.id=$1`, member.LeaseID).Scan(&unchanged); err != nil || !unchanged {
 		t.Fatalf("peer/physical changed=%v %v", !unchanged, err)
 	}
-	drained, err := db.New(f.Pool).DrainWorkerHost(t.Context(), db.DrainWorkerHostParams{
+	drained, err := db.New(f.Pool).DrainWorkerHost(t.Context(), db.DrainWorkerHostParams{DrainReason: "shutdown",
 		ID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), ExpectedEpoch: pgtype.Int8{Int64: 1, Valid: true}, ExpectedClaimVersion: 1,
 	})
 	if err != nil {

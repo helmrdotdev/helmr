@@ -1250,6 +1250,7 @@ type WorkerHost struct {
 	EpochStartedAt               pgtype.Timestamptz `json:"epoch_started_at"`
 	ActivatedAt                  pgtype.Timestamptz `json:"activated_at"`
 	DrainingAt                   pgtype.Timestamptz `json:"draining_at"`
+	DrainReason                  pgtype.Text        `json:"drain_reason"`
 	TerminationReadyAt           pgtype.Timestamptz `json:"termination_ready_at"`
 	LostAt                       pgtype.Timestamptz `json:"lost_at"`
 	CreatedAt                    pgtype.Timestamptz `json:"created_at"`

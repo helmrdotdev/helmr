@@ -485,7 +485,7 @@ func TestTokenWaitRegistrationAllowsInFlightWorkerOnNonAdmittingGroup(t *testing
 			request := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, uuid.NewV7())
 			dbtest.MustExec(t, ctx, fixture.pool, `UPDATE worker_groups SET status = $2 WHERE id = $1`, request.WorkerGroupID, status)
 			dbtest.MustExec(t, ctx, fixture.pool, `
-				UPDATE worker_hosts SET status = 'draining', draining_at = transaction_timestamp() WHERE id = $1
+				UPDATE worker_hosts SET status = 'draining', draining_at = transaction_timestamp(), drain_reason = 'shutdown' WHERE id = $1
 			`, request.WorkerHostID)
 			registrar, err := NewRegistrar(fixture.pool)
 			if err != nil {

@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"context"
 	"crypto/hmac"
 	"encoding/base64"
 	"errors"
@@ -14,6 +15,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/version"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
@@ -47,10 +50,11 @@ func (s *Server) mountCapacityRoutes(r chi.Router) {
 	r.Route("/capacity/v1", func(r chi.Router) {
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireCapacity)
+			r.Get("/deployment", s.capacityDeployment)
 			r.Get("/worker-groups/resolve", s.capacityResolveWorkerGroup)
 			r.Get("/worker-groups/{workerGroupID}/pools/resolve", s.capacityResolveWorkerPool)
 			r.With(limitRequestBody(capacityRequestBodyLimit)).
-				Put("/worker-groups/{workerGroupID}/primary-pools", s.capacityReconcileWorkerGroupPrimaryPools)
+				Put("/worker-groups/{workerGroupID}/primary-pool", s.capacitySelectWorkerGroupPrimaryPool)
 			r.With(limitRequestBody(capacityRequestBodyLimit)).
 				Post("/worker-groups/{workerGroupID}/plan", s.capacityPlan)
 			r.Get("/worker-hosts", s.capacityListWorkerHosts)
@@ -117,12 +121,12 @@ func (s *Server) capacityResolveWorkerPool(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, pool)
 }
 
-func (s *Server) capacityReconcileWorkerGroupPrimaryPools(w http.ResponseWriter, r *http.Request) {
+func (s *Server) capacitySelectWorkerGroupPrimaryPool(w http.ResponseWriter, r *http.Request) {
 	workerGroupID, ok := capacityWorkerGroupID(w, r)
 	if !ok {
 		return
 	}
-	var request workergroup.ReconcilePrimaryPoolsRequest
+	var request workergroup.PrimarySelectionRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
 		writeError(w, fmt.Errorf("invalid primary Pool selection JSON: %w", err))
 		return
@@ -136,7 +140,7 @@ func (s *Server) capacityReconcileWorkerGroupPrimaryPools(w http.ResponseWriter,
 		writeError(w, badRequest(fmt.Errorf("pool_id: %w", err)))
 		return
 	}
-	response, err := workergroup.ReconcilePrimaryPools(r.Context(), s.tx, workerGroupID, poolID, request.ExpectedGroupClaimVersion)
+	response, err := workergroup.SelectPrimary(r.Context(), s.tx, workerGroupID, poolID, request.ExpectedGroupClaimVersion, request.MinimumReadyHosts)
 	if err != nil {
 		s.writeWorkerGroupError(w, err)
 		return
@@ -214,7 +218,7 @@ func (s *Server) capacityDrainWorkerHost(w http.ResponseWriter, r *http.Request)
 		writeError(w, fmt.Errorf("invalid worker drain JSON: %w", err))
 		return
 	}
-	host, err := workergroup.DrainHost(r.Context(), s.db, id, request)
+	host, err := workergroup.DrainHost(r.Context(), s.tx, id, request)
 	if err != nil {
 		s.writeWorkerGroupError(w, err)
 		return
@@ -314,4 +318,26 @@ func capacityWorkerHostFilter(r *http.Request) (workergroup.HostFilter, error) {
 		filter.Limit = int32(limit)
 	}
 	return filter, nil
+}
+
+// capacityDeployment describes this replica and the schema actually applied to
+// its database. It does not assert provider fleet convergence.
+func (s *Server) capacityDeployment(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if s.readinessDB == nil {
+		s.writeReadinessUnavailable(w, errors.New("database schema reader is unavailable"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), readinessTimeout)
+	defer cancel()
+	var applied int64
+	var dirty bool
+	if err := s.readinessDB.QueryRow(ctx, `SELECT version, dirty FROM schema_migrations`).Scan(&applied, &dirty); err != nil {
+		s.writeReadinessUnavailable(w, fmt.Errorf("read applied database schema: %w", err))
+		return
+	}
+	writeJSON(w, http.StatusOK, workergroup.Deployment{
+		Release: version.Version, SourceCommit: version.SourceCommit,
+		AppliedSchemaVersion: applied, SchemaDirty: dirty, WorkerRevision: workerapi.APIVersion,
+	})
 }

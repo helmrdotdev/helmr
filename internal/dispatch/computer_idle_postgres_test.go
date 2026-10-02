@@ -74,7 +74,7 @@ func TestDrainCaptureSkipsIdleDelayAndPreservesQueuedCommands(t *testing.T) {
 	for _, warm := range []bool{false, true} {
 		t.Run(map[bool]string{false: "managed waits", true: "warm empty Computer"}[warm], func(t *testing.T) {
 			f, work, _, request := computertest.Capture(t)
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp() WHERE id=$1`, f.WorkerID)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET status='draining',draining_at = clock_timestamp(), drain_reason = 'shutdown' WHERE id=$1`, f.WorkerID)
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET admission_state='draining' WHERE id=$1`, request.InstanceID)
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_waits SET idle_timeout_ms=NULL`)
 			if warm {

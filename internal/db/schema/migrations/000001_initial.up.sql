@@ -376,6 +376,10 @@ CREATE TABLE worker_hosts (
     epoch_started_at TIMESTAMPTZ,
     activated_at TIMESTAMPTZ,
     draining_at TIMESTAMPTZ,
+    drain_reason TEXT CONSTRAINT worker_hosts_drain_reason_value_check CHECK (drain_reason IN (
+        'replacement', 'capacity_reduction', 'idle_scale_in',
+        'shutdown', 'admin', 'incompatible_worker'
+    )),
     termination_ready_at TIMESTAMPTZ,
     lost_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -410,6 +414,7 @@ CREATE TABLE worker_hosts (
     ),
     CONSTRAINT worker_hosts_cpu_environment_pair_check CHECK ((cpu_environment IS NULL) = (cpu_environment_digest IS NULL)),
     CONSTRAINT worker_hosts_draining_time_check CHECK (status NOT IN ('draining', 'termination_ready') OR draining_at IS NOT NULL),
+    CONSTRAINT worker_hosts_drain_reason_check CHECK ((draining_at IS NULL) = (drain_reason IS NULL)),
     CONSTRAINT worker_hosts_termination_ready_time_check CHECK ((status = 'termination_ready') = (termination_ready_at IS NOT NULL)),
     CONSTRAINT worker_hosts_lost_time_check CHECK ((status = 'lost') = (lost_at IS NOT NULL))
 );
@@ -3013,3 +3018,7 @@ CREATE UNIQUE INDEX computer_checkpoints_capture_uidx ON computer_checkpoints(so
 CREATE INDEX computer_checkpoint_runs_wait_idx ON computer_checkpoint_runs(run_wait_id,checkpoint_id);
 CREATE INDEX idempotency_claims_receipt_gc_idx ON idempotency_claims(receipt_expires_at,id) WHERE receipt_pruned_at IS NULL AND status<>'pending';
 CREATE UNIQUE INDEX telemetry_outbox_command_log_observed_idx ON telemetry_outbox(environment_id,command_id,stream_name,observed_seq) WHERE stream_kind='command_log';
+
+CREATE INDEX computer_checkpoints_retained_source_idx
+    ON computer_checkpoints(source_computer_instance_id)
+    WHERE status IN ('creating','ready') AND resume_committed_at IS NULL;

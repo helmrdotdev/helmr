@@ -166,7 +166,7 @@ func TestHostLifecycleThroughCredentials(t *testing.T) {
 		t.Fatalf("observed host state = %+v, err = %v", state, err)
 	}
 
-	if err := BeginHostDrain(t.Context(), f.q, principal); err != nil {
+	if err := BeginHostDrain(t.Context(), f.pool, principal); err != nil {
 		t.Fatal(err)
 	}
 	// Draining advanced the host claim version, so the credential minted before it
@@ -329,7 +329,7 @@ func TestHostOperationsRejectAnotherEpoch(t *testing.T) {
 	if err := RecordObservation(t.Context(), f.q, other, HostObservation{}); !errors.Is(err, ErrObservationConflict) {
 		t.Fatalf("observation error = %v, want ErrObservationConflict", err)
 	}
-	if err := BeginHostDrain(t.Context(), f.q, other); !errors.Is(err, ErrHostNotFound) {
+	if err := BeginHostDrain(t.Context(), f.pool, other); !errors.Is(err, ErrHostNotFound) {
 		t.Fatalf("drain error = %v, want ErrHostNotFound", err)
 	}
 	if err := FenceHost(t.Context(), f.q, other, "worker_retired"); !errors.Is(err, ErrHostNotFound) {

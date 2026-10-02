@@ -204,7 +204,7 @@ func TestComputerRestoreAcknowledgesEntireSet(t *testing.T) {
 				}
 			}
 
-			if _, err = db.New(f.Pool).DrainWorkerHost(t.Context(), db.DrainWorkerHostParams{ID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), ExpectedEpoch: pgtype.Int8{Int64: 1, Valid: true}, ExpectedClaimVersion: 1}); err != nil {
+			if _, err = db.New(f.Pool).DrainWorkerHost(t.Context(), db.DrainWorkerHostParams{DrainReason: "shutdown", ID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), ExpectedEpoch: pgtype.Int8{Int64: 1, Valid: true}, ExpectedClaimVersion: 1}); err != nil {
 				t.Fatal(err)
 			}
 			replayed, err := computer.AcknowledgeRestore(t.Context(), f.Pool, fence, cp.ID, cp.WriterGeneration+1, grants)
@@ -290,7 +290,7 @@ func TestComputerRestoreAcknowledgementRejectsPartialAuthority(t *testing.T) {
 				dbtest.MustExec(t, t.Context(), f.Pool, `CREATE FUNCTION reject_restore_delivery() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'delivery rejected'; END $$`)
 				dbtest.MustExec(t, t.Context(), f.Pool, `CREATE TRIGGER reject_restore_delivery BEFORE UPDATE ON control_outbox FOR EACH ROW EXECUTE FUNCTION reject_restore_delivery()`)
 			case "draining Worker":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp() WHERE id=$1`, f.WorkerID)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET status='draining',draining_at = clock_timestamp(), drain_reason = 'shutdown' WHERE id=$1`, f.WorkerID)
 			case "draining Group":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET status='draining',primary_pool_id=NULL,claim_version=claim_version+1 WHERE id=$1`, runtest.WorkerGroupID)
 			case "preparation expired":

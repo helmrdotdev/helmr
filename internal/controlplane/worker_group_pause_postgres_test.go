@@ -25,7 +25,7 @@ func TestPausedWorkerGroupKeepsStartedWorkerAuthority(t *testing.T) {
 		}{
 			{"active", ``, true},
 			{"paused Group", `UPDATE worker_groups SET status='paused' WHERE id=$1`, false},
-			{"draining Host", `UPDATE worker_hosts SET status='draining',draining_at=now() WHERE worker_group_id=$1`, false},
+			{"draining Host", `UPDATE worker_hosts SET status='draining',draining_at = now(), drain_reason = 'shutdown' WHERE worker_group_id=$1`, false},
 			{"draining Pool", `WITH g AS (UPDATE worker_groups SET primary_pool_id=NULL WHERE id=$1 RETURNING id) UPDATE worker_pools SET status='draining' WHERE worker_group_id=(SELECT id FROM g)`, false},
 			{"Run paused Host", `UPDATE worker_hosts SET run_paused_reason='startup_recovery_leak' WHERE worker_group_id=$1`, false},
 			{"VM paused Host", `UPDATE worker_hosts SET vm_paused_reason='runtime_health' WHERE worker_group_id=$1`, false},

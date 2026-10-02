@@ -33,7 +33,7 @@ type Capture struct {
 }
 
 // BeginCapture seals the complete resident set of the Instance, including an
-// empty set, into a new creating checkpoint. It locks the worker Group and
+// empty set, into a new creating checkpoint. It locks the worker Group, Pool and
 // Host at the Instance's epoch without comparing claim versions, the
 // Computer, the Instance, then the Sessions, Runs, Attempts, Run leases,
 // Waits and Session turns of the Instance's unreconciled leases in stable
@@ -64,21 +64,20 @@ func captureRequest(capture Capture) db.BeginComputerCheckpointParams {
 	return db.BeginComputerCheckpointParams{CheckpointID: pgvalue.UUID(capture.CheckpointID), ExpiresAt: pgtype.Timestamptz{}, ComputerInstanceID: pgvalue.UUID(capture.InstanceID), EnvironmentID: pgvalue.UUID(capture.EnvironmentID), WriterGeneration: capture.WriterGeneration, MembershipRevision: capture.MembershipRevision, DesiredVersion: capture.DesiredVersion}
 }
 
-// lockCapture locks the worker Group and Host at the Instance's epoch without
+// lockCapture locks the worker Group, Pool and Host at the Instance's epoch without
 // comparing claim versions, then the Computer and the Instance.
 func lockCapture(ctx context.Context, tx pgx.Tx, capture Capture) (captureFence, error) {
 	request := captureRequest(capture)
-	var groupID, workerID uuid.UUID
+	var groupID, workerID, poolID uuid.UUID
 	var computerID pgtype.UUID
-	var region string
 	var epoch int64
-	err := tx.QueryRow(ctx, `SELECT worker_group_id,worker_host_id,computer_id,region_id,worker_epoch
- FROM computer_instances WHERE id=$1 AND environment_id=$2`, request.ComputerInstanceID, request.EnvironmentID).Scan(&groupID, &workerID, &computerID, &region, &epoch)
+	err := tx.QueryRow(ctx, `SELECT i.worker_group_id,i.worker_host_id,i.computer_id,h.worker_pool_id,i.worker_epoch
+ FROM computer_instances i JOIN worker_hosts h ON h.id=i.worker_host_id AND h.worker_group_id=i.worker_group_id WHERE i.id=$1 AND i.environment_id=$2`, request.ComputerInstanceID, request.EnvironmentID).Scan(&groupID, &workerID, &computerID, &poolID, &epoch)
 	if err != nil {
 		return captureFence{}, err
 	}
 	q := db.New(tx)
-	host, err := workergroup.LockHostIgnoringClaims(ctx, q, groupID, region, workerID, epoch)
+	host, err := workergroup.LockHostWithPool(ctx, q, groupID, poolID, workerID, epoch)
 	if err != nil {
 		return captureFence{}, err
 	}
@@ -190,6 +189,13 @@ func (f captureFence) seal(ctx context.Context) (db.ComputerCheckpoint, error) {
 	}
 	checkpoint, err := q.BeginComputerCheckpoint(ctx, request)
 	if err != nil {
+		return db.ComputerCheckpoint{}, err
+	}
+	if _, err = q.RequireCheckpointRestoreSupplier(ctx, db.RequireCheckpointRestoreSupplierParams{
+		SourceWorkerPoolID: worker.WorkerPoolID, ComputerInstanceID: i.ID,
+		WorkerGroupID: worker.WorkerGroupID, WorkerHostID: worker.ID, WorkerEpoch: worker.CurrentEpoch.Int64,
+		WriterGeneration: i.WriterGeneration, CheckpointID: checkpoint.ID,
+	}); err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
 	for _, m := range members {

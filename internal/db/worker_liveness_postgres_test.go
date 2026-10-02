@@ -315,7 +315,7 @@ func TestWorkerObservationFollowsTheLiveEpochThroughDrain(t *testing.T) {
 	workerID := insertActiveWorkerWithObservation(t, ctx, pool, time.Now())
 	if _, err := pool.Exec(ctx, `
 		UPDATE worker_hosts
-		   SET status = 'draining', draining_at = now()
+		   SET status = 'draining', draining_at = now(), drain_reason = 'shutdown'
 		 WHERE id = $1
 	`, workerID); err != nil {
 		t.Fatal(err)
@@ -437,7 +437,7 @@ func TestComputerInstanceWriterLiveChecksWriterAndFreshness(t *testing.T) {
 	}{
 		{"active", ``, true},
 		{"Run pause is not applied", `UPDATE worker_hosts SET run_paused_reason='startup_recovery_leak' WHERE id=$1`, true},
-		{"status is not applied", `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp() WHERE id=$1`, true},
+		{"status is not applied", `UPDATE worker_hosts SET status='draining',draining_at = clock_timestamp(), drain_reason = 'shutdown' WHERE id=$1`, true},
 		{"stale observation", `UPDATE worker_hosts SET observed_at=clock_timestamp()-interval '1 hour' WHERE id=$1`, false},
 		{"expired writer", `UPDATE computer_instances SET writer_expires_at=clock_timestamp()-interval '1 second' WHERE worker_host_id=$1`, false},
 	} {

@@ -328,7 +328,7 @@ func TestReadyObservationOnNonAdmittingSupply(t *testing.T) {
 		{"draining Group", `UPDATE worker_groups SET status='draining',primary_pool_id=NULL,claim_version=claim_version+1 WHERE id=$1`},
 		{"paused Host", `UPDATE worker_hosts SET run_paused_reason='startup_recovery_leak',vm_paused_reason='runtime_health' WHERE worker_group_id=$1`},
 		{"draining Pool", `WITH g AS (UPDATE worker_groups SET primary_pool_id=NULL WHERE id=$1 RETURNING id) UPDATE worker_pools SET status='draining' WHERE worker_group_id=(SELECT id FROM g)`},
-		{"draining Host", `WITH h AS (UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp() WHERE worker_group_id=$1 RETURNING id) UPDATE computer_instances SET admission_state='draining' WHERE worker_host_id IN (SELECT id FROM h) AND admission_state='open'`},
+		{"draining Host", `WITH h AS (UPDATE worker_hosts SET status='draining',draining_at = clock_timestamp(), drain_reason = 'shutdown' WHERE worker_group_id=$1 RETURNING id) UPDATE computer_instances SET admission_state='draining' WHERE worker_host_id IN (SELECT id FROM h) AND admission_state='open'`},
 	} {
 		for _, allocated := range []bool{false, true} {
 			t.Run(supply.name+map[bool]string{false: "/ready", true: "/allocated"}[allocated], func(t *testing.T) {
