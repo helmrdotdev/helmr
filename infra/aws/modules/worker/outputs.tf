@@ -50,12 +50,6 @@ output "sealed_provider_definition" {
     termination_policies                            = local.worker_termination_policies
     protect_from_scale_in                           = local.worker_protect_from_scale_in
     health_check_type                               = local.worker_health_check_type
-    instance_refresh_strategy                       = local.worker_host_refresh_strategy
-    instance_refresh_min_healthy_percentage         = local.worker_host_refresh_min_healthy_percentage
-    instance_refresh_max_healthy_percentage         = local.worker_host_refresh_max_healthy_percentage
-    instance_refresh_scale_in_protected_instances   = local.worker_host_refresh_scale_in_protected_instances
-    instance_refresh_standby_instances              = local.worker_host_refresh_standby_instances
-    instance_refresh_skip_matching                  = local.worker_host_refresh_skip_matching
     launch_lifecycle_transition                     = local.worker_launch_lifecycle_transition
     launch_lifecycle_default_result                 = local.worker_launch_lifecycle_default_result
     termination_lifecycle_transition                = local.worker_termination_lifecycle_transition

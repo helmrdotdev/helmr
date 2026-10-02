@@ -475,10 +475,21 @@ variable "create_worker" {
   default     = false
 }
 
+variable "worker_generation_key" {
+  description = "Operator-selected immutable generation key. Change only to create a fresh same-build Pool/provider binding for an explicitly qualified recovery; retain the old definition first."
+  type        = string
+  default     = "initial"
+  validation {
+    condition     = can(regex("^[a-z0-9][a-z0-9-]{0,63}$", var.worker_generation_key))
+    error_message = "worker_generation_key must be 1-64 lowercase letters, digits or hyphens, starting with a letter or digit."
+  }
+}
+
 variable "retained_worker_generations" {
-  description = "Immutable prior execution Worker Pool generations retained as scale-zero ASG/LT/AMI supply for exact checkpoint restore. Keys must equal execution-sha256(jsonencode(generation_inputs))."
+  description = "Immutable prior execution Worker Pool generations retained with explicit capacity and their exact ASG/LT/AMI definition for exact checkpoint restore. Keys must equal execution-sha256(jsonencode(generation_inputs))."
   type = map(object({
     generation_inputs = object({
+      generation_key        = string
       ami_id                = string
       instance_type         = string
       nested_virtualization = bool
@@ -519,12 +530,6 @@ variable "retained_worker_generations" {
           termination_policies                            = list(string)
           protect_from_scale_in                           = bool
           health_check_type                               = string
-          instance_refresh_strategy                       = string
-          instance_refresh_min_healthy_percentage         = number
-          instance_refresh_max_healthy_percentage         = number
-          instance_refresh_scale_in_protected_instances   = string
-          instance_refresh_standby_instances              = string
-          instance_refresh_skip_matching                  = bool
           launch_lifecycle_transition                     = string
           launch_lifecycle_default_result                 = string
           termination_lifecycle_transition                = string
@@ -543,8 +548,7 @@ variable "retained_worker_generations" {
         guest_ephemeral_disk_mib = number
       })
     })
-    min_size = number
-    max_size = number
+    count = number
     sealed_provider_definition = object({
       user_data_base64                                = string
       permission_policy_json                          = string
@@ -560,12 +564,6 @@ variable "retained_worker_generations" {
       termination_policies                            = list(string)
       protect_from_scale_in                           = bool
       health_check_type                               = string
-      instance_refresh_strategy                       = string
-      instance_refresh_min_healthy_percentage         = number
-      instance_refresh_max_healthy_percentage         = number
-      instance_refresh_scale_in_protected_instances   = string
-      instance_refresh_standby_instances              = string
-      instance_refresh_skip_matching                  = bool
       launch_lifecycle_transition                     = string
       launch_lifecycle_default_result                 = string
       termination_lifecycle_transition                = string
@@ -578,8 +576,7 @@ variable "retained_worker_generations" {
     condition = alltrue([
       for pool_name, generation in var.retained_worker_generations :
       pool_name == "execution-${sha256(jsonencode(generation.generation_inputs))}" &&
-      generation.min_size == 0 &&
-      generation.max_size > 0 &&
+      generation.count >= 0 && floor(generation.count) == generation.count &&
       generation.generation_inputs.supply.disk.total_mib > generation.generation_inputs.supply.disk.reserve_mib &&
       generation.generation_inputs.capacity.cpu_millis > 0 &&
       generation.generation_inputs.capacity.cpu_millis % 1000 == 0 &&
@@ -603,12 +600,6 @@ variable "retained_worker_generations" {
       generation.sealed_provider_definition.termination_policies == generation.generation_inputs.supply.lifecycle.termination_policies &&
       generation.sealed_provider_definition.protect_from_scale_in == generation.generation_inputs.supply.lifecycle.protect_from_scale_in &&
       generation.sealed_provider_definition.health_check_type == generation.generation_inputs.supply.lifecycle.health_check_type &&
-      generation.sealed_provider_definition.instance_refresh_strategy == generation.generation_inputs.supply.lifecycle.instance_refresh_strategy &&
-      generation.sealed_provider_definition.instance_refresh_min_healthy_percentage == generation.generation_inputs.supply.lifecycle.instance_refresh_min_healthy_percentage &&
-      generation.sealed_provider_definition.instance_refresh_max_healthy_percentage == generation.generation_inputs.supply.lifecycle.instance_refresh_max_healthy_percentage &&
-      generation.sealed_provider_definition.instance_refresh_scale_in_protected_instances == generation.generation_inputs.supply.lifecycle.instance_refresh_scale_in_protected_instances &&
-      generation.sealed_provider_definition.instance_refresh_standby_instances == generation.generation_inputs.supply.lifecycle.instance_refresh_standby_instances &&
-      generation.sealed_provider_definition.instance_refresh_skip_matching == generation.generation_inputs.supply.lifecycle.instance_refresh_skip_matching &&
       generation.sealed_provider_definition.launch_lifecycle_transition == generation.generation_inputs.supply.lifecycle.launch_lifecycle_transition &&
       generation.sealed_provider_definition.launch_lifecycle_default_result == generation.generation_inputs.supply.lifecycle.launch_lifecycle_default_result &&
       generation.sealed_provider_definition.termination_lifecycle_transition == generation.generation_inputs.supply.lifecycle.termination_lifecycle_transition &&
@@ -619,7 +610,7 @@ variable "retained_worker_generations" {
       generation.sealed_provider_definition.termination_wait_timeout_seconds > 0 &&
       length(generation.sealed_provider_definition.termination_policies) > 0
     ])
-    error_message = "retained_worker_generations must bind each canonical execution Pool key to one complete scale-zero generation input and sealed provider definition."
+    error_message = "retained_worker_generations must bind each canonical execution Pool key to one complete generation input with a non-negative whole count and sealed provider definition."
   }
 }
 
@@ -683,16 +674,14 @@ variable "worker_network_resolver_ipv4" {
   nullable    = true
 }
 
-variable "worker_min_size" {
-  description = "Minimum worker instance count."
+variable "worker_count" {
+  description = "Explicit fixed count for the current Worker generation; required when create_worker is true. Use zero to prepare an inert target or deliberately stop capacity after draining."
   type        = number
-  default     = 0
-}
-
-variable "worker_max_size" {
-  description = "Maximum worker instance count."
-  type        = number
-  default     = 3
+  default     = null
+  validation {
+    condition     = var.worker_count == null ? !var.create_worker : var.worker_count >= 0 && floor(var.worker_count) == var.worker_count
+    error_message = "Set worker_count to a non-negative whole number when creating Worker resources."
+  }
 }
 
 variable "worker_capacity_vcpus" {
@@ -784,4 +773,28 @@ variable "computer_wrapping_key_id" {
   type        = string
   default     = "computer-root-v1"
   nullable    = false
+}
+
+variable "capacity_token_secret_arn" {
+  description = "Optional externally owned Secrets Manager ARN containing the provider-neutral capacity credential."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.capacity_token_secret_arn == null || can(regex("^arn:[^:]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$", var.capacity_token_secret_arn))
+    error_message = "capacity_token_secret_arn must be a Secrets Manager secret ARN."
+  }
+}
+
+variable "capacity_token_kms_key_arn" {
+  description = "Optional KMS key ARN required to decrypt capacity_token_secret_arn."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.capacity_token_kms_key_arn == null || can(regex("^arn:[^:]+:kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]+$", var.capacity_token_kms_key_arn))
+    error_message = "capacity_token_kms_key_arn must be a KMS key ARN."
+  }
 }

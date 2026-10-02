@@ -174,3 +174,30 @@ run "reject_duplicate_computer_device" {
   variables { computer_devices = ["/dev/nbd0", "/dev/nbd0"] }
   expect_failures = [var.computer_devices]
 }
+
+run "fixed_capacity_is_explicit_and_has_no_automatic_refresh" {
+  command = plan
+  variables {
+    min_size         = 2
+    max_size         = 2
+    desired_capacity = 2
+  }
+  assert {
+    condition     = aws_autoscaling_group.worker.desired_capacity == 2 && length(aws_autoscaling_group.worker.instance_refresh) == 0
+    error_message = "Fixed supply must set desired capacity and never start an automatic refresh."
+  }
+}
+
+run "external_capacity_owner" {
+  command = plan
+  assert {
+    condition     = var.desired_capacity == null && length(aws_autoscaling_group.worker.instance_refresh) == 0
+    error_message = "An external capacity owner must retain desired ownership without automatic refresh."
+  }
+}
+
+run "desired_capacity_rejects_outside_bounds" {
+  command = plan
+  variables { desired_capacity = 2 }
+  expect_failures = [aws_autoscaling_group.worker]
+}

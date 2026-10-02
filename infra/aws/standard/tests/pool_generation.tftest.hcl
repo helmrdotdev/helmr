@@ -78,6 +78,7 @@ variables {
   controlplane_image                       = "111122223333.dkr.ecr.us-east-1.amazonaws.com/helmr@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   worker_ami_id                            = "ami-00000000000000000"
 
+  worker_count                        = 0
   create_worker                       = false
   worker_host_type                    = "c8i.xlarge"
   worker_enable_nested_virtualization = true
@@ -97,7 +98,7 @@ run "baseline_execution_generation" {
   variables {
     enable_nat_gateway = true
     create_worker      = true
-    worker_min_size    = 0
+    worker_count       = 0
   }
 
   assert {
@@ -125,19 +126,17 @@ run "immutable_capacity_change_rotates_generation" {
   }
 }
 
-run "scale_policy_does_not_rotate_generation" {
+run "count_change_does_not_rotate_generation" {
   command = plan
   variables {
     retained_worker_generations = run.baseline_execution_generation.worker_generation_definitions
-    worker_min_size             = 5
-    worker_max_size             = 9
+    worker_count                = 5
   }
 
   assert {
     condition = (
       local.worker_pool_name == one(keys(var.retained_worker_generations)) &&
-      one(values(output.worker_generation_definitions)).min_size == 5 &&
-      one(values(output.worker_generation_definitions)).max_size == 9
+      one(values(output.worker_generation_definitions)).count == 5
     )
     error_message = "mutable ASG size must not rotate the execution Pool generation"
   }
@@ -146,8 +145,8 @@ run "scale_policy_does_not_rotate_generation" {
 run "export_current_sealed_generation" {
   command = apply
   variables {
-    create_worker   = true
-    worker_min_size = 0
+    create_worker = true
+    worker_count  = 0
   }
 }
 run "retain_current_sealed_generation" {
@@ -261,4 +260,90 @@ run "release_tag_rejects_trailing_text" {
   command = plan
   variables { helmr_version = "v1.2.3junk" }
   expect_failures = [var.helmr_version]
+}
+
+run "fixed_capacity_plan" {
+  command = plan
+  variables {
+    create_worker             = true
+    worker_count              = 2
+    capacity_token_secret_arn = "arn:aws:secretsmanager:us-east-1:111122223333:secret:capacity-token"
+  }
+}
+
+run "export_serving_source" {
+  command = apply
+  variables {
+    create_worker = true
+    worker_count  = 2
+  }
+}
+
+run "prepare_inert_target" {
+  command = plan
+  variables {
+    create_worker               = true
+    worker_count                = 0
+    worker_ami_id               = "ami-11111111111111111"
+    retained_worker_generations = run.export_serving_source.worker_generation_definitions
+  }
+  assert {
+    condition = (
+      local.worker_pool_name != one(keys(var.retained_worker_generations)) &&
+      output.worker_generation_definitions[local.worker_pool_name].count == 0 &&
+      output.worker_generation_definitions[one(keys(var.retained_worker_generations))].count == 2
+    )
+    error_message = "Target preparation must retain the serving source count and prepare a distinct zero-capacity generation."
+  }
+}
+
+run "activate_after_full_stop" {
+  command = plan
+  variables {
+    create_worker = true
+    worker_count  = 1
+    worker_ami_id = "ami-11111111111111111"
+    retained_worker_generations = {
+      for name, generation in run.export_serving_source.worker_generation_definitions : name => {
+        generation_inputs          = generation.generation_inputs
+        count                      = 0
+        sealed_provider_definition = generation.sealed_provider_definition
+      }
+    }
+  }
+}
+
+run "worker_count_must_be_explicit" {
+  command = plan
+  variables {
+    create_worker = true
+    worker_count  = null
+  }
+  expect_failures = [var.worker_count]
+}
+
+run "worker_count_rejects_fraction" {
+  command = plan
+  variables { worker_count = 1.5 }
+  expect_failures = [var.worker_count]
+}
+
+
+run "same_build_recovery_has_fresh_binding" {
+  command = plan
+  variables {
+    create_worker               = true
+    worker_count                = 0
+    worker_generation_key       = "recovery-1"
+    retained_worker_generations = run.export_serving_source.worker_generation_definitions
+  }
+  assert {
+    condition = (
+      local.worker_pool_name != one(keys(var.retained_worker_generations)) &&
+      output.worker_generation_definitions[local.worker_pool_name].generation_inputs.ami_id ==
+      var.retained_worker_generations[one(keys(var.retained_worker_generations))].generation_inputs.ami_id &&
+      output.worker_generation_definitions[one(keys(var.retained_worker_generations))].count == 2
+    )
+    error_message = "Same-build recovery must prepare a distinct inert Pool without changing the source count or release."
+  }
 }

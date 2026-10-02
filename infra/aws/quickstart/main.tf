@@ -12,6 +12,7 @@ locals {
   worker_shared_disk_mib          = coalesce(var.worker_disk_mib, 0) - var.worker_disk_reserve_mib - local.worker_artifact_cache_mib
   worker_guest_ephemeral_disk_mib = local.worker_shared_disk_mib
   worker_generation_inputs = {
+    generation_key        = var.worker_generation_key
     ami_id                = local.worker_ami_id
     instance_type         = var.worker_host_type
     nested_virtualization = var.worker_enable_nested_virtualization
@@ -52,12 +53,6 @@ locals {
         termination_policies                            = ["OldestLaunchTemplate", "OldestInstance"]
         protect_from_scale_in                           = true
         health_check_type                               = "EC2"
-        instance_refresh_strategy                       = "Rolling"
-        instance_refresh_min_healthy_percentage         = 100
-        instance_refresh_max_healthy_percentage         = 100
-        instance_refresh_scale_in_protected_instances   = "Refresh"
-        instance_refresh_standby_instances              = "Terminate"
-        instance_refresh_skip_matching                  = true
         launch_lifecycle_transition                     = "autoscaling:EC2_INSTANCE_LAUNCHING"
         launch_lifecycle_default_result                 = "ABANDON"
         termination_lifecycle_transition                = "autoscaling:EC2_INSTANCE_TERMINATING"
@@ -80,8 +75,7 @@ locals {
   current_worker_generation_specs = {
     (local.worker_pool_name) = {
       generation_inputs          = local.worker_generation_inputs
-      min_size                   = var.worker_min_size
-      max_size                   = var.worker_max_size
+      count                      = var.worker_count
       sealed_provider_definition = null
     }
   }
@@ -94,8 +88,7 @@ locals {
       ami_id                       = spec.generation_inputs.ami_id
       instance_type                = spec.generation_inputs.instance_type
       enable_nested_virtualization = spec.generation_inputs.nested_virtualization
-      min_size                     = spec.min_size
-      max_size                     = spec.max_size
+      count                        = spec.count
       root_volume_size_gb          = spec.generation_inputs.supply.root_volume.size_gb
       root_volume_iops             = spec.generation_inputs.supply.root_volume.iops
       root_volume_throughput       = spec.generation_inputs.supply.root_volume.throughput
@@ -155,6 +148,8 @@ module "release_artifacts" {
 }
 
 module "controlplane" {
+  capacity_token_secret_arn  = var.capacity_token_secret_arn
+  capacity_token_kms_key_arn = var.capacity_token_kms_key_arn
   enable_deployment_rollback = var.enable_deployment_rollback
   source                     = "../modules/controlplane"
 
@@ -245,8 +240,9 @@ module "worker_group" {
   termination_lifecycle_heartbeat_timeout_seconds = local.worker_generations[each.key].lifecycle.termination_lifecycle_heartbeat_timeout_seconds
   termination_wait_timeout_seconds                = local.worker_generations[each.key].lifecycle.termination_wait_timeout_seconds
   lifecycle_heartbeat_interval_seconds            = local.worker_generations[each.key].lifecycle.lifecycle_heartbeat_interval_seconds
-  min_size                                        = local.worker_generations[each.key].min_size
-  max_size                                        = local.worker_generations[each.key].max_size
+  min_size                                        = 0
+  max_size                                        = local.worker_generations[each.key].count
+  desired_capacity                                = local.worker_generations[each.key].count
   root_volume_size_gb                             = local.worker_generations[each.key].root_volume_size_gb
   root_volume_iops                                = local.worker_generations[each.key].root_volume_iops
   root_volume_throughput                          = local.worker_generations[each.key].root_volume_throughput
@@ -284,8 +280,7 @@ resource "terraform_data" "quickstart_preconditions" {
     enable_nat_gateway            = var.enable_nat_gateway
     public_url                    = var.public_url
     worker_ami_id                 = module.release_artifacts.worker_ami_id
-    worker_max_size               = var.worker_max_size
-    worker_min_size               = var.worker_min_size
+    worker_count                  = var.worker_count
   }
 
   lifecycle {
