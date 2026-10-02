@@ -13,17 +13,13 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// ErrControlTargetChanged reports a target execution that changed while the
-// control acquired locks. The transaction must roll back before retrying.
-var ErrControlTargetChanged = errors.New("session control target changed while acquiring authority")
-
 // lockControlFromRun authorizes a worker Session control (cancel, interrupt,
 // resume) from the source Run. It locks the complete Secret union of the
 // source Computer and the target Session's Computer before the execution
 // fence: with the target's owned graph for an interruption, with the target
 // Session otherwise. It then checks the source's owning ancestor Sessions,
 // reads the target again and requires its Computer, current Run and
-// generation unchanged (ErrControlTargetChanged); an immutable Computer
+// generation unchanged (run.ErrExecutionTargetChanged); an immutable Computer
 // mismatch remains ErrAuthority. It locks the target's Computer for a
 // resume or cancel of a Session with no current Run, and re-reads the
 // Secret union with ControlSecrets.Recheck: a new binding invalidates this
@@ -64,7 +60,7 @@ func lockControlFromRun(ctx context.Context, tx pgx.Tx, fence run.ExecutionFence
 		return fail(ErrAuthority)
 	}
 	if target.CurrentRunID != lockedTarget.CurrentRunID || target.RunGeneration != lockedTarget.RunGeneration {
-		return fail(ErrControlTargetChanged)
+		return fail(run.ErrExecutionTargetChanged)
 	}
 
 	if !interrupt && !target.CurrentRunID.Valid {

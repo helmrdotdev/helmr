@@ -42,8 +42,11 @@ func LockLiveExecutionForSessionInterruption(ctx context.Context, tx pgx.Tx, fen
 		if err != nil {
 			return fail(err)
 		}
-		if current.ComputerID != target.ComputerID || current.CurrentRunID.Valid || current.RunGeneration != target.RunGeneration {
-			return fail(pgx.ErrNoRows)
+		if current.ComputerID != target.ComputerID {
+			return fail(cancellationAuthority("session control target Computer changed", nil))
+		}
+		if current.CurrentRunID.Valid || current.RunGeneration != target.RunGeneration {
+			return fail(ErrExecutionTargetChanged)
 		}
 		return authority, OwnedFinalization{}, nil
 	}
@@ -80,8 +83,11 @@ func LockLiveExecutionForSessionInterruption(ctx context.Context, tx pgx.Tx, fen
 	if err != nil {
 		return fail(err)
 	}
-	if current.ComputerID != target.ComputerID || current.CurrentRunID != target.CurrentRunID || current.RunGeneration != target.RunGeneration {
-		return fail(pgx.ErrNoRows)
+	if current.ComputerID != target.ComputerID {
+		return fail(cancellationAuthority("session control target Computer changed", nil))
+	}
+	if current.CurrentRunID != target.CurrentRunID || current.RunGeneration != target.RunGeneration {
+		return fail(ErrExecutionTargetChanged)
 	}
 	for _, id := range order {
 		if _, err = lockCancellationRun(ctx, tx, scope, id); err != nil {

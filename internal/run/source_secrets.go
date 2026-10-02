@@ -165,6 +165,11 @@ func (c ControlSecrets) Recheck(ctx context.Context, interrupt bool) error {
 			return err
 		}
 		if _, err = secret.LockAttemptDelivery(ctx, q, current.ID, current.CurrentAttemptNumber, c.target.ComputerID); err != nil {
+			// A target's revocation does not revoke the live source. Retain
+			// the target fence and retry after its lifecycle transition.
+			if errors.Is(err, secret.ErrDeliveryRevoked) {
+				return ErrExecutionTargetChanged
+			}
 			return err
 		}
 	}

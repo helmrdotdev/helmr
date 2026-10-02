@@ -91,11 +91,11 @@ func sessionError(err error, operation sessionOperation) error {
 
 func sessionWorkerError(err error, operation sessionOperation) error {
 	if operation != sessionWorkerCompleteOperation && errors.Is(err, secret.ErrDeliveryRevoked) {
-		return conflict(errors.New("Secret delivery is no longer authorized"))
+		return conflict(errors.New("secret delivery is no longer authorized"))
 	}
 	switch operation {
 	case sessionWorkerOperation:
-		if errors.Is(err, session.ErrControlTargetChanged) {
+		if errors.Is(err, run.ErrExecutionTargetChanged) {
 			return unavailable(codedError{code: "session_control_target_changed", message: "Session control target changed; retry the operation", retryable: true})
 		}
 		if errors.Is(err, session.ErrStaleOutput) || errors.Is(err, session.ErrStaleExecution) {
