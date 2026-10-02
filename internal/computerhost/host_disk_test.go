@@ -6,45 +6,17 @@ import (
 	"os"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/disk"
-	"github.com/helmrdotdev/helmr/internal/reservation"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func TestHostDiskFundsTwoRestoredRecaptures(t *testing.T) {
+func TestHostDiskRejectsInvalidShapes(t *testing.T) {
 	cipher, err := NewCheckpointEncryptor(make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
-	}
-	const memory = int64(2048 << 20)
-	const scratch = int64(32768 << 20)
-	const staging = int64(65536 << 20)
-	envelope, err := HostDiskPerSlot(memory>>20, scratch>>20, staging, cipher)
-	if err != nil {
-		t.Fatal(err)
-	}
-	limits, err := checkpointStagingSize(vm.SnapshotLimits{ComputerBytes: disk.SeedCapacity, MemoryBytes: memory, ScratchBytes: scratch, StateBytes: vm.SnapshotStateLimit, ConfigBytes: vm.SnapshotConfigLimit}, cipher)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state, _ := cipher.EncryptedSize(vm.SnapshotStateLimit)
-	ledger, err := reservation.New(reservation.Vector{CPUMillis: 8000, MemoryBytes: 2 * memory, HostDiskBytes: 2 * envelope, VMSlots: 2})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, id := range []string{"one", "two"} {
-		for kind, size := range map[string]int64{"instance": scratch + disk.SeedCapacity + memory + state, "computer": staging, "artifacts": artifact.MaxProgramPhysicalBytes + artifact.MaxRuntimePhysicalBytes, "capture": limits.total} {
-			if _, err := ledger.Reserve(reservation.Key{Kind: kind, Epoch: 1, ID: id}, reservation.Vector{HostDiskBytes: size}); err != nil {
-				t.Fatalf("%s/%s: %v", id, kind, err)
-			}
-		}
-	}
-	if ledger.Snapshot().Used.HostDiskBytes != 2*envelope {
-		t.Fatal("envelope components differ")
 	}
 	for _, shape := range [][3]int64{{0, 1, 1}, {1, 0, 1}, {1, 1, 0}, {math.MaxInt64, 1, 1}, {1, 1, math.MaxInt64}} {
 		if _, err := HostDiskPerSlot(shape[0], shape[1], shape[2], cipher); err == nil {

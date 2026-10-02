@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -398,9 +397,9 @@ func TestCheckpointCallerCancellationKeepsSnapshotOwnerUntilJoin(t *testing.T) {
 
 // A failed producer can leave packed files while returning an empty artifact.
 // The capture must retain its hold until all of its deterministic paths are gone.
-func TestFailedCheckpointCleansFilesBeforeReleasingHold(t *testing.T) {
+func TestCheckpointFailureCleanup(t *testing.T) {
 	for _, delivered := range []bool{false, true} {
-		t.Run(fmt.Sprintf("delivered=%t", delivered), func(t *testing.T) {
+		t.Run(map[bool]string{false: "lost", true: "returned"}[delivered], func(t *testing.T) {
 			s, _, states := liveCaptureMachine(t, false)
 			capture, err := s.BeginCheckpoint(t.Context(), vm.SnapshotRequest{ID: "failed-capture"})
 			if err != nil {
