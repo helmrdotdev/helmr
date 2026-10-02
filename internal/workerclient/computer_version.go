@@ -10,7 +10,7 @@ import (
 
 func (c *Client) PublishInitialComputerVersion(ctx context.Context, request workerapi.InitialComputerVersionRequest) (workerapi.InitialComputerVersionResponse, error) {
 	var response workerapi.InitialComputerVersionResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/computer-instances/initialization/version", request, &response); err != nil {
+	if err := c.postPreparationJSON(ctx, "/worker/v1/run/computer-instances/initialization/version", request, &response); err != nil {
 		return workerapi.InitialComputerVersionResponse{}, err
 	}
 	if ids.Validate(response.ComputerID) != nil || ids.Validate(response.VersionID) != nil {

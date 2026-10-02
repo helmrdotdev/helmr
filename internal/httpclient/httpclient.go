@@ -12,12 +12,16 @@ import (
 	"strings"
 )
 
+// ErrSensitiveTransport reports a transport failure without retaining request details.
+var ErrSensitiveTransport = errors.New("sensitive HTTP request failed")
+
 type Error struct {
 	StatusCode int
 	Status     string
 	Message    string
 	Code       string
 	Details    json.RawMessage
+	cause      error
 }
 
 func (e *Error) HTTPStatusCode() int {
@@ -27,7 +31,12 @@ func (e *Error) HTTPStatusCode() int {
 	return e.StatusCode
 }
 
+func (e *Error) Unwrap() error { return e.cause }
+
 func (e *Error) Error() string {
+	if e.cause != nil {
+		return e.Status + ": " + e.cause.Error()
+	}
 	if e.Message == "" {
 		return e.Status
 	}
@@ -103,13 +112,24 @@ func (t *Transport) Request(ctx context.Context, method string, path string, bod
 // Do sends req and returns only successful HTTP responses. The caller owns the
 // returned response body. Error responses are decoded and closed here.
 func (t *Transport) Do(req *http.Request) (*http.Response, error) {
+	return t.do(req, false)
+}
+
+// DoWithStatus also retains a received rejection status when its diagnostic body
+// cannot be read. Callers can then classify the response independently of that
+// communication failure. Successful response bodies remain caller-owned.
+func (t *Transport) DoWithStatus(req *http.Request) (*http.Response, error) {
+	return t.do(req, true)
+}
+
+func (t *Transport) do(req *http.Request, retainStatus bool) (*http.Response, error) {
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		defer resp.Body.Close()
-		return nil, decodeError(resp)
+		return nil, decodeError(resp, retainStatus)
 	}
 	return resp, nil
 }
@@ -119,7 +139,7 @@ func (t *Transport) Do(req *http.Request) (*http.Response, error) {
 func (t *Transport) DoSensitive(req *http.Request) (*http.Response, error) {
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
-		return nil, errors.New("sensitive HTTP request failed")
+		return nil, ErrSensitiveTransport
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		resp.Body.Close()
@@ -178,10 +198,14 @@ func isLoopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func decodeError(resp *http.Response) error {
+func decodeError(resp *http.Response, retainStatus bool) error {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("read error response: %w", err)
+		cause := fmt.Errorf("read error response: %w", err)
+		if retainStatus {
+			return &Error{StatusCode: resp.StatusCode, Status: resp.Status, cause: cause}
+		}
+		return cause
 	}
 	var payload struct {
 		Error struct {

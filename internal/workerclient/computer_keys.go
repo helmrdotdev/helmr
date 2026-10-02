@@ -6,11 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"net/http"
 	"time"
 	"unicode/utf8"
 
-	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -20,48 +18,23 @@ import (
 func (c *Client) InitialComputerKey(ctx context.Context, request workerapi.InitialComputerKeyRequest) (workerapi.ComputerKeyMaterial, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	payload, err := json.Marshal(request)
+	body, err := c.preparationRequest(ctx, "/worker/v1/run/computer-instances/initialization/key", request, true, 1024)
 	if err != nil {
-		return workerapi.ComputerKeyMaterial{}, errors.New("invalid computer key request")
+		return workerapi.ComputerKeyMaterial{}, err
 	}
-	for attempt := range 2 {
-		credential, err := c.hostCredential(ctx)
-		if err != nil {
-			return workerapi.ComputerKeyMaterial{}, errors.New("computer key authentication failed")
-		}
-		req, err := c.transport.Request(ctx, http.MethodPost, "/worker/v1/run/computer-instances/initialization/key", bytes.NewReader(payload), credential)
-		if err != nil {
-			return workerapi.ComputerKeyMaterial{}, errors.New("invalid computer key endpoint")
-		}
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := c.transport.DoSensitive(req)
-		if attempt == 0 && httpclient.IsStatus(err, http.StatusUnauthorized) {
-			c.invalidateHostCredential(credential)
-			continue
-		}
-		if err != nil {
-			return workerapi.ComputerKeyMaterial{}, err
-		}
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1025))
-		resp.Body.Close()
-		if readErr != nil || len(body) > 1024 {
-			clear(body)
-			return workerapi.ComputerKeyMaterial{}, errors.New("invalid computer key response")
-		}
-		var material workerapi.ComputerKeyMaterial
-		decoder := json.NewDecoder(bytes.NewReader(body))
-		decoder.DisallowUnknownFields()
-		decodeErr := decoder.Decode(&material)
-		trailingErr := decoder.Decode(new(any))
-		clear(body)
-		_, idErr := ids.Parse(material.ID)
-		if decodeErr != nil || trailingErr != io.EOF || idErr != nil || len(material.Key) != 32 || material.Scope == "" || len(material.Scope) > 256 || !utf8.ValidString(material.Scope) {
-			clear(material.Key)
-			return workerapi.ComputerKeyMaterial{}, errors.New("invalid computer key response")
-		}
-		return material, nil
+	defer clear(body)
+	var material workerapi.ComputerKeyMaterial
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	decodeErr := decoder.Decode(&material)
+	trailingErr := decoder.Decode(new(any))
+	_, idErr := ids.Parse(material.ID)
+	if decodeErr != nil || trailingErr != io.EOF || idErr != nil || len(material.Key) != 32 || material.Scope == "" || len(material.Scope) > 256 || !utf8.ValidString(material.Scope) {
+		clear(material.Key)
+		return workerapi.ComputerKeyMaterial{}, errors.New("invalid computer key response")
 	}
-	return workerapi.ComputerKeyMaterial{}, errors.New("computer key authentication retry exhausted")
+	return material, nil
+
 }
 
 // ComputerSource retrieves the retained source and host-only read/write keys.
@@ -69,48 +42,22 @@ func (c *Client) InitialComputerKey(ctx context.Context, request workerapi.Initi
 func (c *Client) ComputerSource(ctx context.Context, request workerapi.ComputerSourceRequest) (workerapi.ComputerSourceMaterial, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	payload, err := json.Marshal(request)
+	body, err := c.preparationRequest(ctx, "/worker/v1/run/computer-instances/computer-source", request, true, 4<<20)
 	if err != nil {
-		return workerapi.ComputerSourceMaterial{}, errors.New("invalid computer key request")
+		return workerapi.ComputerSourceMaterial{}, err
 	}
-	for attempt := range 2 {
-		credential, err := c.hostCredential(ctx)
-		if err != nil {
-			return workerapi.ComputerSourceMaterial{}, errors.New("computer key authentication failed")
-		}
-		req, err := c.transport.Request(ctx, http.MethodPost, "/worker/v1/run/computer-instances/computer-source", bytes.NewReader(payload), credential)
-		if err != nil {
-			return workerapi.ComputerSourceMaterial{}, errors.New("invalid computer key endpoint")
-		}
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := c.transport.DoSensitive(req)
-		if attempt == 0 && httpclient.IsStatus(err, http.StatusUnauthorized) {
-			c.invalidateHostCredential(credential)
-			continue
-		}
-		if err != nil {
-			return workerapi.ComputerSourceMaterial{}, err
-		}
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, (4<<20)+1))
-		resp.Body.Close()
-		if readErr != nil || len(body) > 4<<20 {
-			clear(body)
-			return workerapi.ComputerSourceMaterial{}, errors.New("invalid computer key response")
-		}
-		var material workerapi.ComputerSourceMaterial
-		decoder := json.NewDecoder(bytes.NewReader(body))
-		decoder.DisallowUnknownFields()
-		decodeErr := decoder.Decode(&material)
-		trailingErr := decoder.Decode(new(any))
-		clear(body)
-		if decodeErr != nil || trailingErr != io.EOF || !validComputerSource(material) {
-			material.Clear()
-			return workerapi.ComputerSourceMaterial{}, errors.New("invalid computer source response")
-		}
+	defer clear(body)
+	var material workerapi.ComputerSourceMaterial
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	decodeErr := decoder.Decode(&material)
+	trailingErr := decoder.Decode(new(any))
+	if decodeErr != nil || trailingErr != io.EOF || !validComputerSource(material) {
+		material.Clear()
+		return workerapi.ComputerSourceMaterial{}, errors.New("invalid computer source response")
+	}
+	return material, nil
 
-		return material, nil
-	}
-	return workerapi.ComputerSourceMaterial{}, errors.New("computer key authentication retry exhausted")
 }
 
 func validComputerSource(m workerapi.ComputerSourceMaterial) bool {
