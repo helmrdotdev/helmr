@@ -88,9 +88,9 @@ func privateHead(t *testing.T, pool *pgxpool.Pool, computerID uuid.UUID) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_disk_versions(id,environment_id,computer_id,parent_version_id,root_pack_digest,logical_bytes,status,writer_generation,source_computer_instance_id)
- SELECT $2,v.environment_id,v.computer_id,v.id,v.root_pack_digest,v.logical_bytes,'private',i.writer_generation,i.id FROM computers c JOIN computer_disk_versions v ON v.id=c.head_disk_version_id JOIN computer_instances i ON i.computer_id=c.id AND i.reclaimed_at IS NULL WHERE c.id=$1`, computerID, head)
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_disk_version_roots(environment_id,computer_id,version_id,locator) SELECT r.environment_id,r.computer_id,$2,r.locator FROM computers c JOIN computer_disk_version_roots r ON r.version_id=c.head_disk_version_id WHERE c.id=$1`, computerID, head)
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_disk_versions(id,environment_id,computer_id,parent_version_id,status,writer_generation,source_computer_instance_id)
+ SELECT $2,v.environment_id,v.computer_id,v.id,'private',i.writer_generation,i.id   FROM computers c JOIN computer_disk_versions v ON v.id=c.head_disk_version_id JOIN computer_instances i ON i.computer_id=c.id AND i.reclaimed_at IS NULL WHERE c.id=$1`, computerID, head)
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_disk_version_roots(environment_id,computer_id,version_id,root_id) SELECT r.environment_id,r.computer_id,$2,r.root_id FROM computers c JOIN computer_disk_version_roots r ON r.version_id=c.head_disk_version_id WHERE c.id=$1`, computerID, head)
 	dbtest.MustExec(t, t.Context(), tx, `UPDATE computers SET head_disk_version_id=$2 WHERE id=$1`, computerID, head)
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)

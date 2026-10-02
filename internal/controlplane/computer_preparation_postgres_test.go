@@ -3,6 +3,7 @@ package controlplane
 import (
 	"bytes"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -99,14 +100,39 @@ func inspectedPackDigest(inspection blockformat.ObjectInspection) string {
 // publishInitialVersion prepares the Instance as its worker host does:
 // it certifies an empty root under the initial key and publishes it as the
 // initial version with config.
-func (f initialPublicationFixture) publishInitialVersion(t *testing.T, client *workerclient.Client, config oci.RuntimeConfig) (workerapi.ComputerKeyMaterial, disk.VersionRoot, workerapi.InitialComputerVersionResponse) {
+func (f initialPublicationFixture) publishInitialVersion(t *testing.T, client *workerclient.Client) (workerapi.ComputerKeyMaterial, disk.VersionRoot, workerapi.InitialComputerVersionResponse) {
 	t.Helper()
 	key, root, _ := f.certifyInitialRoot(t, client)
-	published, err := client.PublishInitialComputerVersion(t.Context(), workerapi.InitialComputerVersionRequest{ComputerInstanceID: pgvalue.UUIDString(f.instance), DesiredVersion: 1, Root: root, Config: config})
+	published, err := client.PublishInitialComputerVersion(t.Context(), workerapi.InitialComputerVersionRequest{ComputerInstanceID: pgvalue.UUIDString(f.instance), DesiredVersion: 1, Root: root, Config: f.initialConfig(t)})
 	if err != nil {
 		t.Fatalf("version publication: %v", err)
 	}
 	return key, root, published
+}
+
+func (f initialPublicationFixture) initialConfig(t *testing.T) oci.RuntimeConfig {
+	t.Helper()
+	var raw []byte
+	if err := f.Pool.QueryRow(t.Context(), `SELECT s.config->'image' FROM computer_specs s JOIN computer_instances i ON i.computer_spec_id=s.id WHERE i.id=$1`, f.instance).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var config oci.RuntimeConfig
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatal(err)
+	}
+	return config
+}
+
+func (f initialPublicationFixture) prepareSeedKey(t *testing.T, client *workerclient.Client) workerapi.ComputerKeyMaterial {
+	t.Helper()
+	prepared, err := client.PrepareComputerSeed(t.Context(), workerapi.PrepareComputerSeedRequest{ComputerInstanceID: pgvalue.UUIDString(f.instance), DesiredVersion: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Status != "convert" || prepared.Key == nil {
+		t.Fatalf("seed preparation: %+v", prepared)
+	}
+	return *prepared.Key
 }
 
 // certifyInitialRoot fetches the initial key, registers an empty root,
@@ -114,10 +140,7 @@ func (f initialPublicationFixture) publishInitialVersion(t *testing.T, client *w
 func (f initialPublicationFixture) certifyInitialRoot(t *testing.T, client *workerclient.Client) (workerapi.ComputerKeyMaterial, disk.VersionRoot, workerapi.InitialComputerObjectRequest) {
 	t.Helper()
 	instanceID := pgvalue.UUIDString(f.instance)
-	key, err := client.InitialComputerKey(t.Context(), workerapi.InitialComputerKeyRequest{ComputerInstanceID: instanceID, DesiredVersion: 1})
-	if err != nil {
-		t.Fatalf("initial key: %v", err)
-	}
+	key := f.prepareSeedKey(t, client)
 	t.Cleanup(func() { clear(key.Key) })
 	local, err := cas.NewFile(t.TempDir())
 	if err != nil {
@@ -161,7 +184,7 @@ func (f initialPublicationFixture) certifyInitialRoot(t *testing.T, client *work
 func TestInitialComputerPreparationOverHTTP(t *testing.T) {
 	f := newInitialPublicationFixture(t)
 	client := f.client(t, f.serve(t))
-	key, root, published := f.publishInitialVersion(t, client, oci.RuntimeConfig{User: "root"})
+	key, root, published := f.publishInitialVersion(t, client)
 	var head string
 	if err := f.Pool.QueryRow(t.Context(), `SELECT c.head_disk_version_id::text FROM computers c JOIN computer_instances i ON i.computer_id=c.id WHERE i.id=$1`, f.instance).Scan(&head); err != nil || head != published.VersionID {
 		t.Fatalf("published head=%s response=%s err=%v", head, published.VersionID, err)
@@ -171,8 +194,17 @@ func TestInitialComputerPreparationOverHTTP(t *testing.T) {
 		t.Fatalf("source delivery: %v", err)
 	}
 	defer source.Clear()
-	if source.VersionID != published.VersionID || source.Root != root || source.WriteKeyID != key.ID || len(source.Keys) != 1 || !bytes.Equal(source.Keys[0].Key, key.Key) {
+	if source.VersionID != published.VersionID || source.Root != root || source.WriteKeyID == key.ID || len(source.Keys) != 2 {
 		t.Fatalf("source=%s root=%v write key=%s keys=%d", source.VersionID, source.Root == root, source.WriteKeyID, len(source.Keys))
+	}
+	var seedKeyFound bool
+	for _, material := range source.Keys {
+		if material.ID == key.ID && bytes.Equal(material.Key, key.Key) {
+			seedKeyFound = true
+		}
+	}
+	if !seedKeyFound {
+		t.Fatal("source missing shared seed key")
 	}
 	if _, err := client.ComputerSource(t.Context(), workerapi.ComputerSourceRequest{ComputerInstanceID: pgvalue.UUIDString(f.instance), DesiredVersion: 2}); err == nil {
 		t.Fatal("stale source fence accepted")
@@ -191,7 +223,8 @@ func TestComputerPreparationSourceTracksPublishedRoot(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO artifacts(id,org_id,project_id,environment_id,kind,digest,size_bytes,media_type)
  VALUES($1,$2,$3,$4,'computer_image',$5,$6,$7)`, seedID, f.OrgID, f.ProjectID, f.EnvironmentID, seed.ComputerImageDigest, seed.ComputerImageSizeBytes, seed.ComputerImageMediaType)
 	spec, err := db.New(f.Pool).RegisterComputerSpec(t.Context(), db.RegisterComputerSpecParams{
-		ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(f.EnvironmentID),
+		LogicalBytes: disk.SeedCapacity,
+		ID:           pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(f.EnvironmentID),
 		Config: seed.ComputerConfig, Digest: seed.ComputerSpecDigest, SeedArtifactID: pgvalue.UUID(seedID),
 		SeedDigest: seed.ComputerImageDigest, SeedSizeBytes: seed.ComputerImageSizeBytes, SeedMediaType: seed.ComputerImageMediaType,
 	})
@@ -222,14 +255,14 @@ func TestComputerPreparationSourceTracksPublishedRoot(t *testing.T) {
 	if initial.Seed == nil || initial.Root != nil || initial.Config.User != "1000" {
 		t.Fatalf("initial: %+v", initial)
 	}
-	_, _, published := f.publishInitialVersion(t, f.client(t, f.serve(t)), oci.RuntimeConfig{User: "root", WorkingDir: "/workspace"})
+	_, _, published := f.publishInitialVersion(t, f.client(t, f.serve(t)))
 	continued := read()
-	if continued.Seed != nil || continued.Root == nil || continued.Config.User != "root" || continued.VersionID != initial.VersionID || continued.VersionID != published.VersionID {
+	if continued.Seed != nil || continued.Root == nil || continued.Config.User != "1000" || continued.VersionID != initial.VersionID || continued.VersionID != published.VersionID {
 		t.Fatalf("published: %+v", continued)
 	}
 	// A later deployment cannot replace the Computer's initial configuration.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE deployment_definitions SET manifest=jsonb_set(manifest,'{image,config}', '{"User":"changed"}') WHERE id=$1`, f.ComputerDefinitionID)
-	if source := read(); source.Config.User != "root" || source.Config.WorkingDir != "/workspace" || source.Root == nil {
+	if source := read(); source.Config.User != "1000" || len(source.Config.Env) != 1 || source.Config.Env[0] != "HELLO=world" || source.Root == nil {
 		t.Fatalf("continuation depended on receipt or new deployment: %+v", source)
 	}
 }

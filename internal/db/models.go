@@ -345,6 +345,8 @@ type Computer struct {
 	ComputerSpecID               pgtype.UUID        `json:"computer_spec_id"`
 	CreationDeploymentID         pgtype.UUID        `json:"creation_deployment_id"`
 	SpecRetentionRequired        pgtype.Bool        `json:"spec_retention_required"`
+	SnapshotCaptureID            pgtype.UUID        `json:"snapshot_capture_id"`
+	SnapshotCaptureStatus        pgtype.Text        `json:"snapshot_capture_status"`
 }
 
 type ComputerCheckpoint struct {
@@ -434,14 +436,30 @@ type ComputerCommand struct {
 }
 
 type ComputerDataKey struct {
-	ID            pgtype.UUID        `json:"id"`
-	EnvironmentID pgtype.UUID        `json:"environment_id"`
-	ComputerID    pgtype.UUID        `json:"computer_id"`
-	WrappingKeyID string             `json:"wrapping_key_id"`
-	WrappedKey    []byte             `json:"wrapped_key"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	RetiredAt     pgtype.Timestamptz `json:"retired_at"`
-	Available     pgtype.Bool        `json:"available"`
+	ID               pgtype.UUID        `json:"id"`
+	EnvironmentID    pgtype.UUID        `json:"environment_id"`
+	WriterComputerID pgtype.UUID        `json:"writer_computer_id"`
+	WrappingKeyID    string             `json:"wrapping_key_id"`
+	WrappedKey       []byte             `json:"wrapped_key"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	RetiredAt        pgtype.Timestamptz `json:"retired_at"`
+	Available        pgtype.Bool        `json:"available"`
+	IsSeedKey        pgtype.Bool        `json:"is_seed_key"`
+}
+
+type ComputerDiskRoot struct {
+	EnvironmentID         pgtype.UUID `json:"environment_id"`
+	ID                    pgtype.UUID `json:"id"`
+	Locator               []byte      `json:"locator"`
+	LogicalBytes          int64       `json:"logical_bytes"`
+	RootKind              pgtype.Text `json:"root_kind"`
+	RootPackDigest        string      `json:"root_pack_digest"`
+	RootPackSizeBytes     int64       `json:"root_pack_size_bytes"`
+	RootPackRank          int32       `json:"root_pack_rank"`
+	RootPageKeyID         pgtype.UUID `json:"root_page_key_id"`
+	DirectKeyRequired     pgtype.Bool `json:"direct_key_required"`
+	CertificationRequired pgtype.Bool `json:"certification_required"`
+	RootPageOffset        int64       `json:"root_page_offset"`
 }
 
 type ComputerDiskVersion struct {
@@ -449,8 +467,6 @@ type ComputerDiskVersion struct {
 	EnvironmentID                 pgtype.UUID        `json:"environment_id"`
 	ComputerID                    pgtype.UUID        `json:"computer_id"`
 	ParentVersionID               pgtype.UUID        `json:"parent_version_id"`
-	RootPackDigest                pgtype.Text        `json:"root_pack_digest"`
-	LogicalBytes                  int64              `json:"logical_bytes"`
 	Status                        string             `json:"status"`
 	PublisherComputerInstanceID   pgtype.UUID        `json:"publisher_computer_instance_id"`
 	PublisherSaveSequence         pgtype.Int8        `json:"publisher_save_sequence"`
@@ -463,90 +479,90 @@ type ComputerDiskVersion struct {
 	PayloadRetiredAt              pgtype.Timestamptz `json:"payload_retired_at"`
 	PayloadNotRetired             pgtype.Bool        `json:"payload_not_retired"`
 	SourceComputerInstanceID      pgtype.UUID        `json:"source_computer_instance_id"`
+	RetainedRootVersionID         pgtype.UUID        `json:"retained_root_version_id"`
 }
 
 type ComputerDiskVersionRoot struct {
-	EnvironmentID         pgtype.UUID `json:"environment_id"`
-	ComputerID            pgtype.UUID `json:"computer_id"`
-	VersionID             pgtype.UUID `json:"version_id"`
-	Locator               []byte      `json:"locator"`
-	LogicalBytes          int64       `json:"logical_bytes"`
-	RootKind              pgtype.Text `json:"root_kind"`
-	RootPackDigest        string      `json:"root_pack_digest"`
-	RootPackSizeBytes     int64       `json:"root_pack_size_bytes"`
-	RootPackRank          int32       `json:"root_pack_rank"`
-	RootPageKeyID         pgtype.UUID `json:"root_page_key_id"`
-	DirectKeyRequired     pgtype.Bool `json:"direct_key_required"`
-	CertificationRequired pgtype.Bool `json:"certification_required"`
-	PayloadRequired       pgtype.Bool `json:"payload_required"`
+	EnvironmentID   pgtype.UUID `json:"environment_id"`
+	ComputerID      pgtype.UUID `json:"computer_id"`
+	VersionID       pgtype.UUID `json:"version_id"`
+	RootID          pgtype.UUID `json:"root_id"`
+	PayloadRequired pgtype.Bool `json:"payload_required"`
 }
 
 type ComputerInstance struct {
-	ID                              pgtype.UUID        `json:"id"`
-	OrgID                           pgtype.UUID        `json:"org_id"`
-	WorkerGroupID                   pgtype.UUID        `json:"worker_group_id"`
-	ProjectID                       pgtype.UUID        `json:"project_id"`
-	EnvironmentID                   pgtype.UUID        `json:"environment_id"`
-	RegionID                        string             `json:"region_id"`
-	WorkerHostID                    pgtype.UUID        `json:"worker_host_id"`
-	VMPlatformID                    string             `json:"vm_platform_id"`
-	WorkerEpoch                     int64              `json:"worker_epoch"`
-	VMVCPUCount                     int32              `json:"vm_vcpu_count"`
-	CPUConfigDigest                 string             `json:"cpu_config_digest"`
-	ReservedCPUMillis               int64              `json:"reserved_cpu_millis"`
-	ReservedMemoryBytes             int64              `json:"reserved_memory_bytes"`
-	ReservedGuestEphemeralDiskBytes int64              `json:"reserved_guest_ephemeral_disk_bytes"`
-	ReservedExecutionSlots          int32              `json:"reserved_execution_slots"`
-	ComputerID                      pgtype.UUID        `json:"computer_id"`
-	ProgramDeploymentID             pgtype.UUID        `json:"program_deployment_id"`
-	SourceCheckpointID              pgtype.UUID        `json:"source_checkpoint_id"`
-	SourceDiskVersionID             pgtype.UUID        `json:"source_disk_version_id"`
-	SaveSequence                    int64              `json:"save_sequence"`
-	SaveDiskVersionID               pgtype.UUID        `json:"save_disk_version_id"`
-	SaveBaseDiskVersionID           pgtype.UUID        `json:"save_base_disk_version_id"`
-	ComputerPayloadRequired         pgtype.Bool        `json:"computer_payload_required"`
-	RetainedSourceDiskVersionID     pgtype.UUID        `json:"retained_source_disk_version_id"`
-	WriteKeyID                      pgtype.UUID        `json:"write_key_id"`
-	RetainedWriteKeyID              pgtype.UUID        `json:"retained_write_key_id"`
-	ComputerKeyAvailable            pgtype.Bool        `json:"computer_key_available"`
-	PreparationExpiresAt            pgtype.Timestamptz `json:"preparation_expires_at"`
-	DesiredState                    string             `json:"desired_state"`
-	DesiredVersion                  int64              `json:"desired_version"`
-	DesiredAt                       pgtype.Timestamptz `json:"desired_at"`
-	DesiredReason                   string             `json:"desired_reason"`
-	ObservedState                   string             `json:"observed_state"`
-	ObservedVersion                 int64              `json:"observed_version"`
-	ObservedDesiredVersion          int64              `json:"observed_desired_version"`
-	ObservedAt                      pgtype.Timestamptz `json:"observed_at"`
-	AllocatedAt                     pgtype.Timestamptz `json:"allocated_at"`
-	ReadyAt                         pgtype.Timestamptz `json:"ready_at"`
-	TerminalAt                      pgtype.Timestamptz `json:"terminal_at"`
-	ReclaimedAt                     pgtype.Timestamptz `json:"reclaimed_at"`
-	ReclaimEvidence                 []byte             `json:"reclaim_evidence"`
-	TerminalReasonCode              pgtype.Text        `json:"terminal_reason_code"`
-	TerminalError                   []byte             `json:"terminal_error"`
-	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
-	ComputerSpecID                  pgtype.UUID        `json:"computer_spec_id"`
-	WriterGeneration                int64              `json:"writer_generation"`
-	WriterTokenHash                 []byte             `json:"writer_token_hash"`
-	WriterExpiresAt                 pgtype.Timestamptz `json:"writer_expires_at"`
-	AdmissionState                  string             `json:"admission_state"`
-	MembershipRevision              int64              `json:"membership_revision"`
-	MountState                      string             `json:"mount_state"`
-	MountedAt                       pgtype.Timestamptz `json:"mounted_at"`
-	UnmountedAt                     pgtype.Timestamptz `json:"unmounted_at"`
-	GuestChannelCredentialHash      []byte             `json:"guest_channel_credential_hash"`
-	GuestChannelCredentialExpiresAt pgtype.Timestamptz `json:"guest_channel_credential_expires_at"`
-	FinalizationAction              pgtype.Text        `json:"finalization_action"`
-	FinalizationReasonCode          pgtype.Text        `json:"finalization_reason_code"`
-	FinalizationError               []byte             `json:"finalization_error"`
-	CaptureCheckpointID             pgtype.UUID        `json:"capture_checkpoint_id"`
-	SpecRetentionRequired           pgtype.Bool        `json:"spec_retention_required"`
+	SeedID                           pgtype.UUID        `json:"seed_id"`
+	SeedPreparationGeneration        pgtype.Int8        `json:"seed_preparation_generation"`
+	SeedKeyID                        pgtype.UUID        `json:"seed_key_id"`
+	RetainedSeedKeyID                pgtype.UUID        `json:"retained_seed_key_id"`
+	ID                               pgtype.UUID        `json:"id"`
+	OrgID                            pgtype.UUID        `json:"org_id"`
+	WorkerGroupID                    pgtype.UUID        `json:"worker_group_id"`
+	ProjectID                        pgtype.UUID        `json:"project_id"`
+	EnvironmentID                    pgtype.UUID        `json:"environment_id"`
+	RegionID                         string             `json:"region_id"`
+	WorkerHostID                     pgtype.UUID        `json:"worker_host_id"`
+	VMPlatformID                     string             `json:"vm_platform_id"`
+	WorkerEpoch                      int64              `json:"worker_epoch"`
+	VMVCPUCount                      int32              `json:"vm_vcpu_count"`
+	CPUConfigDigest                  string             `json:"cpu_config_digest"`
+	ReservedCPUMillis                int64              `json:"reserved_cpu_millis"`
+	ReservedMemoryBytes              int64              `json:"reserved_memory_bytes"`
+	ReservedGuestEphemeralDiskBytes  int64              `json:"reserved_guest_ephemeral_disk_bytes"`
+	ReservedExecutionSlots           int32              `json:"reserved_execution_slots"`
+	ComputerID                       pgtype.UUID        `json:"computer_id"`
+	ProgramDeploymentID              pgtype.UUID        `json:"program_deployment_id"`
+	SourceCheckpointID               pgtype.UUID        `json:"source_checkpoint_id"`
+	InitialDiskVersionID             pgtype.UUID        `json:"initial_disk_version_id"`
+	InitialPublicationDesiredVersion pgtype.Int8        `json:"initial_publication_desired_version"`
+	InitialPublicationFingerprint    []byte             `json:"initial_publication_fingerprint"`
+	SourceDiskVersionID              pgtype.UUID        `json:"source_disk_version_id"`
+	SaveSequence                     int64              `json:"save_sequence"`
+	SaveDiskVersionID                pgtype.UUID        `json:"save_disk_version_id"`
+	SaveBaseDiskVersionID            pgtype.UUID        `json:"save_base_disk_version_id"`
+	ComputerPayloadRequired          pgtype.Bool        `json:"computer_payload_required"`
+	RetainedSourceDiskVersionID      pgtype.UUID        `json:"retained_source_disk_version_id"`
+	WriteKeyID                       pgtype.UUID        `json:"write_key_id"`
+	RetainedWriteKeyID               pgtype.UUID        `json:"retained_write_key_id"`
+	ComputerKeyAvailable             pgtype.Bool        `json:"computer_key_available"`
+	PreparationExpiresAt             pgtype.Timestamptz `json:"preparation_expires_at"`
+	DesiredState                     string             `json:"desired_state"`
+	DesiredVersion                   int64              `json:"desired_version"`
+	DesiredAt                        pgtype.Timestamptz `json:"desired_at"`
+	DesiredReason                    string             `json:"desired_reason"`
+	ObservedState                    string             `json:"observed_state"`
+	ObservedVersion                  int64              `json:"observed_version"`
+	ObservedDesiredVersion           int64              `json:"observed_desired_version"`
+	ObservedAt                       pgtype.Timestamptz `json:"observed_at"`
+	AllocatedAt                      pgtype.Timestamptz `json:"allocated_at"`
+	ReadyAt                          pgtype.Timestamptz `json:"ready_at"`
+	TerminalAt                       pgtype.Timestamptz `json:"terminal_at"`
+	ReclaimedAt                      pgtype.Timestamptz `json:"reclaimed_at"`
+	ReclaimEvidence                  []byte             `json:"reclaim_evidence"`
+	TerminalReasonCode               pgtype.Text        `json:"terminal_reason_code"`
+	TerminalError                    []byte             `json:"terminal_error"`
+	UpdatedAt                        pgtype.Timestamptz `json:"updated_at"`
+	ComputerSpecID                   pgtype.UUID        `json:"computer_spec_id"`
+	WriterGeneration                 int64              `json:"writer_generation"`
+	WriterTokenHash                  []byte             `json:"writer_token_hash"`
+	WriterExpiresAt                  pgtype.Timestamptz `json:"writer_expires_at"`
+	AdmissionState                   string             `json:"admission_state"`
+	MembershipRevision               int64              `json:"membership_revision"`
+	MountState                       string             `json:"mount_state"`
+	MountedAt                        pgtype.Timestamptz `json:"mounted_at"`
+	UnmountedAt                      pgtype.Timestamptz `json:"unmounted_at"`
+	GuestChannelCredentialHash       []byte             `json:"guest_channel_credential_hash"`
+	GuestChannelCredentialExpiresAt  pgtype.Timestamptz `json:"guest_channel_credential_expires_at"`
+	FinalizationAction               pgtype.Text        `json:"finalization_action"`
+	FinalizationReasonCode           pgtype.Text        `json:"finalization_reason_code"`
+	FinalizationError                []byte             `json:"finalization_error"`
+	CaptureCheckpointID              pgtype.UUID        `json:"capture_checkpoint_id"`
+	SpecRetentionRequired            pgtype.Bool        `json:"spec_retention_required"`
+	SeedKeyRequired                  pgtype.Bool        `json:"seed_key_required"`
 }
 
 type ComputerObject struct {
 	EnvironmentID        pgtype.UUID        `json:"environment_id"`
-	ComputerID           pgtype.UUID        `json:"computer_id"`
 	Digest               string             `json:"digest"`
 	OrgID                pgtype.UUID        `json:"org_id"`
 	ProjectID            pgtype.UUID        `json:"project_id"`
@@ -563,7 +579,6 @@ type ComputerObject struct {
 
 type ComputerObjectEdge struct {
 	EnvironmentID         pgtype.UUID `json:"environment_id"`
-	ComputerID            pgtype.UUID `json:"computer_id"`
 	ParentDigest          string      `json:"parent_digest"`
 	ChildDigest           string      `json:"child_digest"`
 	ParentRank            int32       `json:"parent_rank"`
@@ -573,7 +588,6 @@ type ComputerObjectEdge struct {
 
 type ComputerObjectKey struct {
 	EnvironmentID        pgtype.UUID `json:"environment_id"`
-	ComputerID           pgtype.UUID `json:"computer_id"`
 	Digest               string      `json:"digest"`
 	KeyID                pgtype.UUID `json:"key_id"`
 	IsDirect             bool        `json:"is_direct"`
@@ -599,6 +613,50 @@ type ComputerSecret struct {
 	AllowedOrigins  []string           `json:"allowed_origins"`
 	Placeholder     string             `json:"placeholder"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+type ComputerSeed struct {
+	ID                    pgtype.UUID        `json:"id"`
+	EnvironmentID         pgtype.UUID        `json:"environment_id"`
+	SeedDigest            string             `json:"seed_digest"`
+	SeedSizeBytes         int64              `json:"seed_size_bytes"`
+	SeedMediaType         string             `json:"seed_media_type"`
+	FormatVersion         int32              `json:"format_version"`
+	LogicalBytes          int64              `json:"logical_bytes"`
+	SourceArtifactID      pgtype.UUID        `json:"source_artifact_id"`
+	SourceKind            NullArtifactKind   `json:"source_kind"`
+	RootID                pgtype.UUID        `json:"root_id"`
+	ReadyAt               pgtype.Timestamptz `json:"ready_at"`
+	PayloadRetiredAt      pgtype.Timestamptz `json:"payload_retired_at"`
+	PreparationGeneration int64              `json:"preparation_generation"`
+	PreparationInstanceID pgtype.UUID        `json:"preparation_instance_id"`
+	PreparationKeyID      pgtype.UUID        `json:"preparation_key_id"`
+	LeaseExpiresAt        pgtype.Timestamptz `json:"lease_expires_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+}
+
+type ComputerSnapshot struct {
+	ID                      pgtype.UUID        `json:"id"`
+	EnvironmentID           pgtype.UUID        `json:"environment_id"`
+	SourceComputerID        pgtype.UUID        `json:"source_computer_id"`
+	SourceVersionID         pgtype.UUID        `json:"source_version_id"`
+	CaptureInstanceID       pgtype.UUID        `json:"capture_instance_id"`
+	CaptureWriterGeneration pgtype.Int8        `json:"capture_writer_generation"`
+	CaptureDesiredVersion   pgtype.Int8        `json:"capture_desired_version"`
+	CaptureSaveID           pgtype.UUID        `json:"capture_save_id"`
+	ClaimID                 pgtype.UUID        `json:"claim_id"`
+	RequestFingerprint      []byte             `json:"request_fingerprint"`
+	Status                  string             `json:"status"`
+	RootID                  pgtype.UUID        `json:"root_id"`
+	RetentionSeconds        pgtype.Int8        `json:"retention_seconds"`
+	RequestedRetainUntil    pgtype.Timestamptz `json:"requested_retain_until"`
+	ExpiresAt               pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	CaptureDeadline         pgtype.Timestamptz `json:"capture_deadline"`
+	ReadyAt                 pgtype.Timestamptz `json:"ready_at"`
+	SettledAt               pgtype.Timestamptz `json:"settled_at"`
+	FailureCode             pgtype.Text        `json:"failure_code"`
+	CapturingID             pgtype.UUID        `json:"capturing_id"`
 }
 
 type ComputerSpec struct {

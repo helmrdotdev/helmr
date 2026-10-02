@@ -1,22 +1,31 @@
 -- These operations run only under the owning Computer/Instance fence. Locator
 -- framing, authenticated page membership and upload correspondence are prerequisites.
 
+-- name: RetainComputerDiskRoot :one
+INSERT INTO computer_disk_roots(id,environment_id,locator)
+VALUES(sqlc.arg(id),sqlc.arg(environment_id),sqlc.arg(locator))
+ON CONFLICT (environment_id,root_pack_digest,root_page_offset) DO UPDATE
+ SET locator=EXCLUDED.locator
+ WHERE computer_disk_roots.locator=EXCLUDED.locator
+RETURNING id;
+
 -- name: CreateComputerDiskVersionRoot :exec
-INSERT INTO computer_disk_version_roots(environment_id,computer_id,version_id,locator)
-VALUES(sqlc.arg(environment_id),sqlc.arg(computer_id),sqlc.arg(version_id),sqlc.arg(locator));
+INSERT INTO computer_disk_version_roots(environment_id,computer_id,version_id,root_id)
+VALUES(sqlc.arg(environment_id),sqlc.arg(computer_id),sqlc.arg(version_id),sqlc.arg(root_id));
 
 -- name: GetComputerDiskVersionRoot :one
-SELECT locator FROM computer_disk_version_roots
- WHERE environment_id=sqlc.arg(environment_id) AND computer_id=sqlc.arg(computer_id)
-   AND version_id=sqlc.arg(version_id);
+SELECT r.locator FROM computer_disk_version_roots v
+ JOIN computer_disk_roots r ON r.environment_id=v.environment_id AND r.id=v.root_id
+ WHERE v.environment_id=sqlc.arg(environment_id) AND v.computer_id=sqlc.arg(computer_id)
+   AND v.version_id=sqlc.arg(version_id);
 
 -- name: PinInstanceComputerSource :execrows
 UPDATE computer_instances r SET source_disk_version_id=sqlc.arg(version_id)
  WHERE r.id=sqlc.arg(computer_instance_id) AND r.environment_id=sqlc.arg(environment_id)
    AND r.computer_id=sqlc.arg(computer_id) AND r.reclaimed_at IS NULL
-   AND EXISTS(SELECT 1 FROM computer_disk_version_roots v WHERE v.environment_id=r.environment_id
+   AND EXISTS(SELECT 1 FROM computer_disk_version_roots v JOIN computer_disk_roots root ON root.environment_id=v.environment_id AND root.id=v.root_id WHERE v.environment_id=r.environment_id
       AND v.computer_id=r.computer_id AND v.version_id=sqlc.arg(version_id)
-      AND v.logical_bytes=r.reserved_guest_ephemeral_disk_bytes)
+      AND root.logical_bytes=r.reserved_guest_ephemeral_disk_bytes)
    AND (r.source_disk_version_id IS NULL OR r.source_disk_version_id=sqlc.arg(version_id));
 
 -- Derive keys from the Instance's pinned source, not from a caller-supplied root.
@@ -25,10 +34,11 @@ UPDATE computer_instances r SET source_disk_version_id=sqlc.arg(version_id)
 SELECT k.* FROM computer_instances r
  JOIN computer_disk_version_roots v ON v.environment_id=r.environment_id AND v.computer_id=r.computer_id
    AND v.version_id=r.retained_source_disk_version_id
- JOIN computer_object_keys dependency ON dependency.environment_id=v.environment_id
-   AND dependency.computer_id=v.computer_id AND dependency.digest=v.root_pack_digest
+ JOIN computer_disk_roots root ON root.environment_id=v.environment_id AND root.id=v.root_id
+ JOIN computer_object_keys dependency ON dependency.environment_id=root.environment_id
+   AND dependency.digest=root.root_pack_digest
  JOIN computer_data_keys k ON k.environment_id=dependency.environment_id
-   AND k.computer_id=dependency.computer_id AND k.id=dependency.key_id
+   AND k.id=dependency.key_id
  WHERE r.id=sqlc.arg(computer_instance_id)
  ORDER BY k.id;
 
@@ -36,10 +46,11 @@ SELECT k.* FROM computer_instances r
 -- This is retention evidence, not live authorization; callers hold/recheck their
 -- Instance and Worker fences before granting source or key access.
 -- name: GetInstanceComputerSourceRoot :one
-SELECT v.version_id, v.locator, v.logical_bytes
+SELECT v.version_id, root.locator, root.logical_bytes
 FROM computer_instances r
 JOIN computer_disk_version_roots v ON v.environment_id=r.environment_id
  AND v.computer_id=r.computer_id AND v.version_id=r.retained_source_disk_version_id
+JOIN computer_disk_roots root ON root.environment_id=v.environment_id AND root.id=v.root_id
 WHERE r.id=sqlc.arg(computer_instance_id);
 
 -- name: RequireComputerObjectPin :one
@@ -83,3 +94,14 @@ WHERE r.environment_id=sqlc.arg(environment_id) AND r.computer_id=sqlc.arg(compu
 UPDATE computer_disk_versions SET payload_retired_at=clock_timestamp()
 WHERE environment_id=sqlc.arg(environment_id) AND computer_id=sqlc.arg(computer_id)
  AND id=sqlc.arg(version_id) AND payload_not_retired;
+
+-- The shared descriptor may be removed only after all independent owners release it.
+-- name: DeleteUnreferencedComputerDiskRoots :execrows
+WITH candidates AS (
+ SELECT r.id FROM computer_disk_roots r
+ WHERE NOT EXISTS (SELECT 1 FROM computer_disk_version_roots v WHERE v.root_id=r.id)
+ AND NOT EXISTS (SELECT 1 FROM computer_seeds s WHERE s.root_id=r.id)
+ AND NOT EXISTS (SELECT 1 FROM computer_snapshots s WHERE s.root_id=r.id)
+ ORDER BY r.id LIMIT sqlc.arg(row_limit) FOR UPDATE SKIP LOCKED
+)
+DELETE FROM computer_disk_roots r USING candidates c WHERE r.id=c.id;

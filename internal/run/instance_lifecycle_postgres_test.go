@@ -136,8 +136,8 @@ func restoringTimer(t *testing.T, f runtest.Fixture, work runtest.RunLease) (uui
 	dbtest.MustExec(t, ctx, tx, `INSERT INTO computer_checkpoints(id,computer_id,environment_id,computer_spec_id,source_computer_instance_id,writer_generation,membership_revision,program_deployment_id,base_computer_disk_version_id)
  SELECT $2,i.computer_id,i.environment_id,i.computer_spec_id,i.id,i.writer_generation,i.membership_revision,i.program_deployment_id,c.head_disk_version_id
  FROM computer_instances i JOIN computers c ON c.id=i.computer_id WHERE i.id=$1`, sourceID, checkpoint)
-	dbtest.MustExec(t, ctx, tx, `INSERT INTO computer_disk_versions(id,environment_id,computer_id,parent_version_id,root_pack_digest,logical_bytes,status,source_computer_instance_id,writer_generation)
- SELECT $2,environment_id,computer_id,base_computer_disk_version_id,$3,4096,'private',source_computer_instance_id,writer_generation FROM computer_checkpoints WHERE id=$1`, checkpoint, private, dbtest.Digest("restored-private"))
+	dbtest.MustExec(t, ctx, tx, `INSERT INTO computer_disk_versions(id,environment_id,computer_id,parent_version_id,status,source_computer_instance_id,writer_generation)
+ SELECT $2,environment_id,computer_id,base_computer_disk_version_id,'private',source_computer_instance_id,writer_generation   FROM computer_checkpoints WHERE id=$1`, checkpoint, private)
 	computerdbtest.InsertComputerVersion(t, ctx, tx, f.EnvironmentID, computerID, private)
 	artifacts := computerdbtest.InsertCheckpointArtifacts(t, ctx, tx, work.RunID, "restore-timer")
 	dbtest.MustExec(t, ctx, tx, `UPDATE computer_checkpoints SET status='ready',ready_at=now(),private_computer_disk_version_id=$2,
@@ -266,7 +266,7 @@ func TestUnenteredSessionCancellationDoesNotWaitForInitialDisk(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET status='cancelled',terminal_at=now(),current_run_lease_id=NULL,failure='{"code":"run_cancelled","message":"Run was cancelled","details":{}}' WHERE id=$1`, work.RunID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_attempts SET terminal_outcome='cancelled',terminal_at=now(),terminal_reason_code='run_cancelled' WHERE run_id=$1`, work.RunID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET status='closing',close_sequence=1,next_input_sequence=2,cancel_requested_at=now(),dispatch_hold_id=$2,dispatch_hold_reason='interrupt_requested',dispatch_hold_run_id=current_run_id,dispatch_hold_attempt_number=1,dispatch_hold_run_generation=run_generation WHERE id=$1`, sessionID, uuid.NewV7())
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_disk_versions SET status='initializing',root_pack_digest=NULL,logical_bytes=0,published_at=NULL,publisher_computer_instance_id=NULL,publisher_desired_version=NULL,publication_request_fingerprint=NULL WHERE id=(SELECT base_computer_disk_version_id FROM runs WHERE id=$1)`, work.RunID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_disk_versions SET status='initializing',published_at=NULL,publisher_computer_instance_id=NULL,publisher_desired_version=NULL,publication_request_fingerprint=NULL WHERE id=(SELECT base_computer_disk_version_id FROM runs WHERE id=$1)`, work.RunID)
 	reconciler, err := session.NewReconciler(f.Pool)
 	if err != nil {
 		t.Fatal(err)

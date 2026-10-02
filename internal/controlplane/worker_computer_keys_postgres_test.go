@@ -14,7 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
+func TestComputerSeedPreparationAuthenticatedHTTP(t *testing.T) {
 	f := newInitialPublicationFixture(t)
 	handler := f.serve(t)
 	hostSecret := seedHostSecret(t, f.Pool, f.worker.HostID)
@@ -22,23 +22,29 @@ func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
 	defer httpServer.Close()
 	client := hostSecret.client(t, httpServer.URL)
 	hostCredential := hostSecret.issue(t, handler)
-	request := workerapi.InitialComputerKeyRequest{ComputerInstanceID: pgvalue.UUIDString(f.instance), DesiredVersion: 1}
-	first, err := client.InitialComputerKey(t.Context(), request)
+	request := workerapi.PrepareComputerSeedRequest{ComputerInstanceID: pgvalue.UUIDString(f.instance), DesiredVersion: 1}
+	first, err := client.PrepareComputerSeed(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer clear(first.Key)
-	second, err := client.InitialComputerKey(t.Context(), request)
+	if first.Status != "convert" || first.Key == nil {
+		t.Fatal("no conversion key")
+	}
+	defer clear(first.Key.Key)
+	second, err := client.PrepareComputerSeed(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer clear(second.Key)
-	if first.ID != second.ID || first.Scope != second.Scope || !bytes.Equal(first.Key, second.Key) {
+	if second.Status != "convert" || second.Key == nil {
+		t.Fatal("no replay key")
+	}
+	defer clear(second.Key.Key)
+	if first.Key.ID != second.Key.ID || first.Key.Scope != second.Key.Scope || !bytes.Equal(first.Key.Key, second.Key.Key) {
 		t.Fatal("lost-response retry changed material")
 	}
 	payload, _ := json.Marshal(request)
 	call := func(bearer string, body []byte) *httptest.ResponseRecorder {
-		r := httptest.NewRequest("POST", "/worker/v1/run/computer-instances/initialization/key", bytes.NewReader(body))
+		r := httptest.NewRequest("POST", "/worker/v1/run/computer-instances/initialization/seed", bytes.NewReader(body))
 		if bearer != "" {
 			r.Header.Set("Authorization", "Bearer "+bearer)
 		}
@@ -56,7 +62,7 @@ func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
 	for name, bearer := range map[string]string{"missing": "", "foreign worker": signRawWorkerJWT(t, foreign), "expired": signRawWorkerJWT(t, expired)} {
 		t.Run(name, func(t *testing.T) {
 			w := call(bearer, payload)
-			if w.Code != 401 || strings.Contains(w.Body.String(), first.ID) {
+			if w.Code != 401 || strings.Contains(w.Body.String(), first.Key.ID) {
 				t.Fatalf("unauthorized key response status=%d", w.Code)
 			}
 		})
@@ -90,11 +96,11 @@ func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
 	if drained.Code != 200 {
 		t.Fatalf("drain status=%d body=%s", drained.Code, drained.Body.String())
 	}
-	if w := call(hostCredential, payload); w.Code != 401 || strings.Contains(w.Body.String(), first.ID) {
+	if w := call(hostCredential, payload); w.Code != 401 || strings.Contains(w.Body.String(), first.Key.ID) {
 		t.Fatalf("pre-drain host credential key response status=%d", w.Code)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, f.instance)
-	if material, err := client.InitialComputerKey(t.Context(), request); err == nil || len(material.Key) != 0 {
+	if material, err := client.PrepareComputerSeed(t.Context(), request); err == nil || material.Key != nil {
 		t.Fatal("revoked instance delivered key")
 	}
 }

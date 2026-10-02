@@ -38,7 +38,7 @@ func residentInstance(t *testing.T) (runtest.Fixture, runtest.RunLease, workergr
 		t.Fatal(err)
 	}
 	key := pgvalue.NewUUIDv7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) SELECT $2,environment_id,computer_id,'fixture',decode('01','hex') FROM computer_instances WHERE id=$1`, instanceID, key)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) SELECT $2,environment_id,computer_id,'fixture',decode('01','hex') FROM computer_instances WHERE id=$1`, instanceID, key)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET write_key_id=$2 WHERE id=$1`, instanceID, key)
 	if instance, err = db.New(f.Pool).GetComputerInstance(t.Context(), db.GetComputerInstanceParams{ID: pgvalue.UUID(instanceID), EnvironmentID: pgvalue.UUID(f.EnvironmentID)}); err != nil {
 		t.Fatal(err)
@@ -155,8 +155,15 @@ func TestAbandonedSaveRetainsObjectsForLaterCheckpoint(t *testing.T) {
 	if _, err = publisher.BeginSave(t.Context(), worker, save); err != nil {
 		t.Fatal(err)
 	}
-	inspection := blockformat.ObjectInspection{Segment: &blockformat.Ref{Digest: sha256.Sum256([]byte("abandoned save candidate")), Key: pgvalue.UUIDString(instance.WriteKeyID), Kind: blockformat.SegmentKind, Count: 1, Size: 64}}
+	data := bytes.Repeat([]byte{9}, 64)
+	inspection := blockformat.ObjectInspection{Segment: &blockformat.Ref{Digest: sha256.Sum256(data), Key: pgvalue.UUIDString(instance.WriteKeyID), Kind: blockformat.SegmentKind, Count: 1, Size: int64(len(data))}}
 	if err = publisher.RegisterSaveObject(t.Context(), worker, save, inspection); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = objects.Put(t.Context(), "application/octet-stream", bytes.NewReader(data)); err != nil {
+		t.Fatal(err)
+	}
+	if err = publisher.CertifySaveObject(t.Context(), worker, save, inspection); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
@@ -174,6 +181,23 @@ func TestAbandonedSaveRetainsObjectsForLaterCheckpoint(t *testing.T) {
 	}
 	if store.calls != 0 {
 		t.Fatal("abandoned save ciphertext was retired while its VM can reuse it")
+	}
+	// The unchanged local cut can be selected again after publication failed.
+	// Its objects are already certified but the second save owns a new receipt.
+	second := save
+	second.Sequence++
+	second.SaveID = uuid.NewV7()
+	if _, err = publisher.BeginSave(t.Context(), worker, second); err != nil {
+		t.Fatal(err)
+	}
+	if err = publisher.RegisterSaveObject(t.Context(), worker, second, inspection); err != nil {
+		t.Fatalf("later save could not register its retained bytes: %v", err)
+	}
+	if err = publisher.CertifySaveObject(t.Context(), worker, second, inspection); err != nil {
+		t.Fatal(err)
+	}
+	if err = publisher.AbandonSave(t.Context(), worker, second); err != nil {
+		t.Fatal(err)
 	}
 	// Finish the resident process, then use the ordinary whole-instance capture
 	// admission and publication owners for the same ciphertext.

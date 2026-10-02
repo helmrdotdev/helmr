@@ -10,7 +10,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
+	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -19,7 +21,7 @@ import (
 
 func TestInitialComputerObjectInspectedRegistration(t *testing.T) {
 	f := newPreparationFixture(t)
-	key := f.initialKey(t)
+	key := f.seedKey(t)
 	defer clear(key.Key)
 	store, err := cas.NewFile(t.TempDir())
 	if err != nil {
@@ -167,6 +169,80 @@ func TestInitialComputerObjectInspectedRegistration(t *testing.T) {
 	if err = f.recordInitialObject(t.Context(), f.principal, f.ref, blockformat.ObjectInspection{Pack: &other}, false); err == nil {
 		t.Fatal("unpinned write key accepted")
 	}
+	// A different Computer can reuse every actual descendant of the populated
+	// seed, even though none of the converter's publication pins belong to it.
+	versionRoot, err := disk.NewVersionRoot(root, capacity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.publisher.PublishInitialVersion(t.Context(), f.principal, f.ref, InitialVersion{Root: versionRoot, Config: oci.RuntimeConfig{Env: []string{}, Entrypoint: []string{}, Cmd: []string{}}}); err != nil {
+		t.Fatal(err)
+	}
+	adopter := f.sibling(t)
+	if result, err := adopter.broker.PrepareSeed(t.Context(), adopter.principal, adopter.ref); err != nil || result.Status != "ready" {
+		t.Fatalf("adopt populated seed: %s %v", result.Status, err)
+	}
+	source, err := adopter.broker.SourceKeys(t.Context(), adopter.principal, adopter.ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Clear()
+	scope := objectScope{objectRetention: objectRetention{environmentID: pgvalue.UUID(f.EnvironmentID), instanceID: adopter.instance}, allowedKeys: map[string]bool{}}
+	for _, material := range source.Keys {
+		scope.allowedKeys[material.ID] = true
+	}
+	tx, err := f.Pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	for digest := range registered {
+		if err := scope.requireAdmittedObject(t.Context(), tx, digest); err != nil {
+			t.Fatalf("populated source descendant rejected: %v", err)
+		}
+	}
+
+	// Unrelated certified history can share a source segment. More immediate
+	// parents than the ancestor probe budget must not hide the real source root.
+	// Only the surrounding history below is synthetic; the retained source above
+	// was captured, inspected and published through the real object path.
+	var segment string
+	if err = tx.QueryRow(t.Context(), `SELECT digest FROM computer_objects WHERE environment_id=$1 AND rank=0 LIMIT 1`, scope.environmentID).Scan(&segment); err != nil {
+		t.Fatal(err)
+	}
+	var direct bool
+	if err = tx.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM computer_object_edges WHERE environment_id=$1 AND parent_digest=$2 AND child_digest=$3)`, scope.environmentID, objectDigest(root.Pack.Digest), segment).Scan(&direct); err != nil {
+		t.Fatal(err)
+	}
+	if direct {
+		t.Fatal("fallback fixture needs a source more than one edge above its segment")
+	}
+	outsider := dbtest.Digest("outside retained source")
+	if _, err = tx.Exec(t.Context(), `WITH blobs AS (
+ INSERT INTO cas_blobs(digest,size_bytes)
+ SELECT 'sha256:'||encode(sha256(('unrelated-parent-'||n)::bytea),'hex'),64 FROM generate_series(1,256) n
+ UNION ALL SELECT $1,64 RETURNING digest
+ ), members AS (
+ INSERT INTO cas_objects(org_id,digest,size_bytes,media_type)
+ SELECT $3,digest,64,'application/octet-stream' FROM blobs RETURNING digest
+ ) INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at)
+ SELECT $2,digest,$3,$4,64,'application/octet-stream',CASE WHEN digest=$1 THEN 'segment' ELSE 'root' END,
+ CASE WHEN digest=$1 THEN 0 ELSE 1 END,'{}',now() FROM members`, outsider, scope.environmentID, f.OrgID, f.ProjectID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(t.Context(), `INSERT INTO computer_object_edges(environment_id,parent_digest,child_digest,parent_rank,child_rank)
+ SELECT $1,'sha256:'||encode(sha256(('unrelated-parent-'||n)::bytea),'hex'),c,1,0
+ FROM generate_series(1,256) n CROSS JOIN unnest(ARRAY[$2::text,$3::text]) c`, scope.environmentID, segment, outsider); err != nil {
+		t.Fatal(err)
+	}
+	if err = scope.requireAdmittedObject(t.Context(), tx, segment); err != nil {
+		t.Fatalf("shared descendant hidden by unrelated ancestors: %v", err)
+	}
+	var outsideConflict ObjectConflictError
+	if err = scope.requireAdmittedObject(t.Context(), tx, outsider); !errors.As(err, &outsideConflict) {
+		t.Fatalf("unrelated history admitted: %v", err)
+	}
+
 }
 
 // recordInitialObject registers the object, or certifies it against the

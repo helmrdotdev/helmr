@@ -181,7 +181,7 @@ func (q *Queries) BeginComputerInstanceSave(ctx context.Context, arg BeginComput
 }
 
 const getWorkerComputerSave = `-- name: GetWorkerComputerSave :one
-SELECT v.id, v.environment_id, v.computer_id, v.parent_version_id, v.root_pack_digest, v.logical_bytes, v.status, v.publisher_computer_instance_id, v.publisher_save_sequence, v.publisher_desired_version, v.publication_request_fingerprint, v.writer_generation, v.created_at, v.published_at, v.discarded_at, v.payload_retired_at, v.payload_not_retired, v.source_computer_instance_id FROM computer_disk_versions v JOIN computer_instances i ON i.id=v.publisher_computer_instance_id
+SELECT v.id, v.environment_id, v.computer_id, v.parent_version_id, v.status, v.publisher_computer_instance_id, v.publisher_save_sequence, v.publisher_desired_version, v.publication_request_fingerprint, v.writer_generation, v.created_at, v.published_at, v.discarded_at, v.payload_retired_at, v.payload_not_retired, v.source_computer_instance_id, v.retained_root_version_id FROM computer_disk_versions v JOIN computer_instances i ON i.id=v.publisher_computer_instance_id
 WHERE v.id=$1 AND v.publisher_save_sequence=$2
  AND i.id=$3 AND i.environment_id=$4
  AND i.worker_host_id=$5 AND i.worker_group_id=$6
@@ -217,8 +217,6 @@ func (q *Queries) GetWorkerComputerSave(ctx context.Context, arg GetWorkerComput
 		&i.EnvironmentID,
 		&i.ComputerID,
 		&i.ParentVersionID,
-		&i.RootPackDigest,
-		&i.LogicalBytes,
 		&i.Status,
 		&i.PublisherComputerInstanceID,
 		&i.PublisherSaveSequence,
@@ -231,6 +229,7 @@ func (q *Queries) GetWorkerComputerSave(ctx context.Context, arg GetWorkerComput
 		&i.PayloadRetiredAt,
 		&i.PayloadNotRetired,
 		&i.SourceComputerInstanceID,
+		&i.RetainedRootVersionID,
 	)
 	return i, err
 }
@@ -314,38 +313,36 @@ func (q *Queries) IsComputerSaveAbandoned(ctx context.Context, arg IsComputerSav
 const publishComputerInstanceSave = `-- name: PublishComputerInstanceSave :one
 WITH created AS (
  INSERT INTO computer_disk_versions(id,environment_id,computer_id,parent_version_id,
- root_pack_digest,logical_bytes,status,source_computer_instance_id,writer_generation,
+ status,source_computer_instance_id,writer_generation,
  publisher_computer_instance_id,publisher_desired_version,publisher_save_sequence,
  publication_request_fingerprint,published_at)
  SELECT i.save_disk_version_id,i.environment_id,i.computer_id,i.save_base_disk_version_id,
- $1,$2,'committed',i.id,i.writer_generation,
- i.id,i.desired_version,i.save_sequence,$3,clock_timestamp()
+ 'committed',i.id,i.writer_generation,
+ i.id,i.desired_version,i.save_sequence,$1,clock_timestamp()
  FROM computer_instances i JOIN computers c ON c.id=i.computer_id AND c.environment_id=i.environment_id
- WHERE i.id=$4 AND i.environment_id=$5
- AND i.worker_host_id=$6 AND i.worker_epoch=$7
- AND i.writer_generation=$8 AND i.writer_token_hash=$9
+ WHERE i.id=$2 AND i.environment_id=$3
+ AND i.worker_host_id=$4 AND i.worker_epoch=$5
+ AND i.writer_generation=$6 AND i.writer_token_hash=$7
  AND i.writer_expires_at>clock_timestamp() AND i.reclaimed_at IS NULL
- AND i.desired_version=$10 AND i.desired_state='ready'
+ AND i.desired_version=$8 AND i.desired_state='ready'
  AND i.observed_state='ready' AND i.mount_state='mounted'
- AND i.save_disk_version_id=$11 AND i.save_sequence=$12
+ AND i.save_disk_version_id=$9 AND i.save_sequence=$10
  AND c.status='active' AND c.head_disk_version_id=i.save_base_disk_version_id
  AND c.writer_generation=i.writer_generation
- RETURNING id, environment_id, computer_id, parent_version_id, root_pack_digest, logical_bytes, status, publisher_computer_instance_id, publisher_save_sequence, publisher_desired_version, publication_request_fingerprint, writer_generation, created_at, published_at, discarded_at, payload_retired_at, payload_not_retired, source_computer_instance_id
+ RETURNING id, environment_id, computer_id, parent_version_id, status, publisher_computer_instance_id, publisher_save_sequence, publisher_desired_version, publication_request_fingerprint, writer_generation, created_at, published_at, discarded_at, payload_retired_at, payload_not_retired, source_computer_instance_id, retained_root_version_id
 ), retained AS (
- INSERT INTO computer_disk_version_roots(environment_id,computer_id,version_id,locator)
- SELECT environment_id,computer_id,id,$13 FROM created RETURNING version_id
+ INSERT INTO computer_disk_version_roots(environment_id,computer_id,version_id,root_id)
+ SELECT environment_id,computer_id,id,$11 FROM created RETURNING version_id
 ), advanced AS (
  UPDATE computers c SET head_disk_version_id=v.id,revision=revision+1,updated_at=v.published_at
  FROM created v,retained root WHERE c.id=v.computer_id AND root.version_id=v.id
  AND c.head_disk_version_id=v.parent_version_id AND c.writer_generation=v.writer_generation
  RETURNING c.id
 )
-SELECT v.id, v.environment_id, v.computer_id, v.parent_version_id, v.root_pack_digest, v.logical_bytes, v.status, v.publisher_computer_instance_id, v.publisher_save_sequence, v.publisher_desired_version, v.publication_request_fingerprint, v.writer_generation, v.created_at, v.published_at, v.discarded_at, v.payload_retired_at, v.payload_not_retired, v.source_computer_instance_id FROM created v JOIN advanced c ON c.id=v.computer_id
+SELECT v.id, v.environment_id, v.computer_id, v.parent_version_id, v.status, v.publisher_computer_instance_id, v.publisher_save_sequence, v.publisher_desired_version, v.publication_request_fingerprint, v.writer_generation, v.created_at, v.published_at, v.discarded_at, v.payload_retired_at, v.payload_not_retired, v.source_computer_instance_id, v.retained_root_version_id FROM created v JOIN advanced c ON c.id=v.computer_id
 `
 
 type PublishComputerInstanceSaveParams struct {
-	RootPackDigest     pgtype.Text `json:"root_pack_digest"`
-	LogicalBytes       int64       `json:"logical_bytes"`
 	Fingerprint        []byte      `json:"fingerprint"`
 	ComputerInstanceID pgtype.UUID `json:"computer_instance_id"`
 	EnvironmentID      pgtype.UUID `json:"environment_id"`
@@ -356,7 +353,7 @@ type PublishComputerInstanceSaveParams struct {
 	DesiredVersion     int64       `json:"desired_version"`
 	SaveID             pgtype.UUID `json:"save_id"`
 	Sequence           int64       `json:"sequence"`
-	Locator            []byte      `json:"locator"`
+	RootID             pgtype.UUID `json:"root_id"`
 }
 
 type PublishComputerInstanceSaveRow struct {
@@ -364,8 +361,6 @@ type PublishComputerInstanceSaveRow struct {
 	EnvironmentID                 pgtype.UUID        `json:"environment_id"`
 	ComputerID                    pgtype.UUID        `json:"computer_id"`
 	ParentVersionID               pgtype.UUID        `json:"parent_version_id"`
-	RootPackDigest                pgtype.Text        `json:"root_pack_digest"`
-	LogicalBytes                  int64              `json:"logical_bytes"`
 	Status                        string             `json:"status"`
 	PublisherComputerInstanceID   pgtype.UUID        `json:"publisher_computer_instance_id"`
 	PublisherSaveSequence         pgtype.Int8        `json:"publisher_save_sequence"`
@@ -378,14 +373,13 @@ type PublishComputerInstanceSaveRow struct {
 	PayloadRetiredAt              pgtype.Timestamptz `json:"payload_retired_at"`
 	PayloadNotRetired             pgtype.Bool        `json:"payload_not_retired"`
 	SourceComputerInstanceID      pgtype.UUID        `json:"source_computer_instance_id"`
+	RetainedRootVersionID         pgtype.UUID        `json:"retained_root_version_id"`
 }
 
 // Certified objects and their exact operation pins are checked under the same
 // Computer/instance locks. Head publication and root retention commit atomically.
 func (q *Queries) PublishComputerInstanceSave(ctx context.Context, arg PublishComputerInstanceSaveParams) (PublishComputerInstanceSaveRow, error) {
 	row := q.db.QueryRow(ctx, publishComputerInstanceSave,
-		arg.RootPackDigest,
-		arg.LogicalBytes,
 		arg.Fingerprint,
 		arg.ComputerInstanceID,
 		arg.EnvironmentID,
@@ -396,7 +390,7 @@ func (q *Queries) PublishComputerInstanceSave(ctx context.Context, arg PublishCo
 		arg.DesiredVersion,
 		arg.SaveID,
 		arg.Sequence,
-		arg.Locator,
+		arg.RootID,
 	)
 	var i PublishComputerInstanceSaveRow
 	err := row.Scan(
@@ -404,8 +398,6 @@ func (q *Queries) PublishComputerInstanceSave(ctx context.Context, arg PublishCo
 		&i.EnvironmentID,
 		&i.ComputerID,
 		&i.ParentVersionID,
-		&i.RootPackDigest,
-		&i.LogicalBytes,
 		&i.Status,
 		&i.PublisherComputerInstanceID,
 		&i.PublisherSaveSequence,
@@ -418,6 +410,7 @@ func (q *Queries) PublishComputerInstanceSave(ctx context.Context, arg PublishCo
 		&i.PayloadRetiredAt,
 		&i.PayloadNotRetired,
 		&i.SourceComputerInstanceID,
+		&i.RetainedRootVersionID,
 	)
 	return i, err
 }

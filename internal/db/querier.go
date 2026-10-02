@@ -142,8 +142,6 @@ type Querier interface {
 	// coordinator compares the complete resident set before committing capture intent.
 	CreateComputerCheckpointRun(ctx context.Context, arg CreateComputerCheckpointRunParams) (ComputerCheckpointRun, error)
 	CreateComputerCommand(ctx context.Context, arg CreateComputerCommandParams) (ComputerCommand, error)
-	// These operations run only under the owning Computer/Instance fence. Locator
-	// framing, authenticated page membership and upload correspondence are prerequisites.
 	CreateComputerDiskVersionRoot(ctx context.Context, arg CreateComputerDiskVersionRootParams) error
 	CreateComputerForScheduleFire(ctx context.Context, arg CreateComputerForScheduleFireParams) (CreateComputerForScheduleFireRow, error)
 	CreateComputerFromCurrentDeployment(ctx context.Context, arg CreateComputerFromCurrentDeploymentParams) (CreateComputerFromCurrentDeploymentRow, error)
@@ -185,6 +183,8 @@ type Querier interface {
 	// Run only after deleting the selected Computer object in the same transaction.
 	// Other Computers and artifact kinds may still own the shared physical bytes.
 	DeleteUnreferencedComputerCasMembership(ctx context.Context, arg DeleteUnreferencedComputerCasMembershipParams) (int64, error)
+	// The shared descriptor may be removed only after all independent owners release it.
+	DeleteUnreferencedComputerDiskRoots(ctx context.Context, rowLimit int32) (int64, error)
 	DeleteUnreferencedComputerDiskVersionRoot(ctx context.Context, arg DeleteUnreferencedComputerDiskVersionRootParams) (int64, error)
 	DeleteUnreferencedComputerObject(ctx context.Context, arg DeleteUnreferencedComputerObjectParams) (int64, error)
 	DeleteUnusedComputerSeedArtifact(ctx context.Context, arg DeleteUnusedComputerSeedArtifactParams) error
@@ -270,6 +270,7 @@ type Querier interface {
 	// their deployment independently of whether their process is currently resident.
 	GetComputerProgramAdmission(ctx context.Context, arg GetComputerProgramAdmissionParams) (GetComputerProgramAdmissionRow, error)
 	GetComputerSecretCAPublic(ctx context.Context, arg GetComputerSecretCAPublicParams) (GetComputerSecretCAPublicRow, error)
+	GetComputerSeedKey(ctx context.Context, computerInstanceID pgtype.UUID) (ComputerDataKey, error)
 	GetComputerSpec(ctx context.Context, arg GetComputerSpecParams) (ComputerSpec, error)
 	GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploymentParams) (Deployment, error)
 	GetCurrentDeploymentForRoute(ctx context.Context, arg GetCurrentDeploymentForRouteParams) (Deployment, error)
@@ -365,9 +366,9 @@ type Querier interface {
 	GetWorkerHostPoolID(ctx context.Context, arg GetWorkerHostPoolIDParams) (pgtype.UUID, error)
 	GetWorkerHostStatus(ctx context.Context, arg GetWorkerHostStatusParams) (GetWorkerHostStatusRow, error)
 	GetWorkerHostStatusByResource(ctx context.Context, arg GetWorkerHostStatusByResourceParams) (GetWorkerHostStatusByResourceRow, error)
-	// Authentication supplies the original Worker identity. Historical success is
-	// independent of current head/config, desired state and retained payload lifetime.
-	GetWorkerInitialComputerDiskVersion(ctx context.Context, arg GetWorkerInitialComputerDiskVersionParams) (ComputerDiskVersion, error)
+	// Authentication supplies the original Worker identity; no live authority or
+	// retained root is needed to replay a committed initial adoption.
+	GetWorkerInitialComputerDiskVersion(ctx context.Context, arg GetWorkerInitialComputerDiskVersionParams) (GetWorkerInitialComputerDiskVersionRow, error)
 	GetWorkerPoolByGroupName(ctx context.Context, arg GetWorkerPoolByGroupNameParams) (WorkerPool, error)
 	GrantUserAdmin(ctx context.Context, userID pgtype.UUID) error
 	HasRegisteredInitialComputerObject(ctx context.Context, arg HasRegisteredInitialComputerObjectParams) (bool, error)
@@ -407,8 +408,6 @@ type Querier interface {
 	ListComputerInstanceReconcileTargets(ctx context.Context, arg ListComputerInstanceReconcileTargetsParams) ([]ListComputerInstanceReconcileTargetsRow, error)
 	ListComputerListItems(ctx context.Context, arg ListComputerListItemsParams) ([]ListComputerListItemsRow, error)
 	ListComputerMembers(ctx context.Context, arg ListComputerMembersParams) ([]ListComputerMembersRow, error)
-	// The root comes from the exact retained owner, never an arbitrary HTTP key list.
-	ListComputerObjectReadKeys(ctx context.Context, arg ListComputerObjectReadKeysParams) ([]ComputerDataKey, error)
 	ListComputerSecrets(ctx context.Context, computerID pgtype.UUID) ([]ListComputerSecretsRow, error)
 	ListDefinitionSnapshots(ctx context.Context, arg ListDefinitionSnapshotsParams) ([]string, error)
 	ListDeploymentDefinitionsForDeployment(ctx context.Context, arg ListDeploymentDefinitionsForDeploymentParams) ([]DeploymentDefinition, error)
@@ -512,6 +511,9 @@ type Querier interface {
 	// descriptors and immediate dependencies are immutable after certification.
 	LockComputerObject(ctx context.Context, arg LockComputerObjectParams) (ComputerObject, error)
 	LockComputerSecretsForAdmission(ctx context.Context, computerID pgtype.UUID) ([]LockComputerSecretsForAdmissionRow, error)
+	// Called after Computer/Instance locks. The seed is addressed only by that
+	// Computer's admitted specification; content-addressing does not grant access.
+	LockComputerSeed(ctx context.Context, arg LockComputerSeedParams) (ComputerSeed, error)
 	LockDeploymentBundle(ctx context.Context, arg LockDeploymentBundleParams) error
 	LockDeploymentPromotionTarget(ctx context.Context, arg LockDeploymentPromotionTargetParams) (Deployment, error)
 	LockEnclosingRunWaits(ctx context.Context, runID pgtype.UUID) ([]pgtype.UUID, error)
@@ -565,6 +567,9 @@ type Querier interface {
 	LockTokenWaitRun(ctx context.Context, arg LockTokenWaitRunParams) (Run, error)
 	LockTokenWaitRunLease(ctx context.Context, arg LockTokenWaitRunLeaseParams) (string, error)
 	LockTokenWaitSession(ctx context.Context, sessionID pgtype.UUID) (Session, error)
+	// Shared conversion survives only while admitted specs or physical attempts need
+	// it. Historical spec/Instance identities alone do not retain the payload.
+	LockUnusedComputerSeeds(ctx context.Context, rowLimit int32) ([]pgtype.UUID, error)
 	LockWorkerComputerInstance(ctx context.Context, arg LockWorkerComputerInstanceParams) (ComputerInstance, error)
 	LockWorkerControlSecrets(ctx context.Context, computerIds []pgtype.UUID) ([]LockWorkerControlSecretsRow, error)
 	LockWorkerControlSessions(ctx context.Context, arg LockWorkerControlSessionsParams) ([]LockWorkerControlSessionsRow, error)
@@ -615,8 +620,9 @@ type Querier interface {
 	// Certified objects and their exact operation pins are checked under the same
 	// Computer/instance locks. Head publication and root retention commit atomically.
 	PublishComputerInstanceSave(ctx context.Context, arg PublishComputerInstanceSaveParams) (PublishComputerInstanceSaveRow, error)
-	// The owner validates the exact certified root page and holds the preparation
-	// locks. Publication records success once; pending uploads remain Instance pins.
+	// The owner validates the exact certified root and holds preparation locks.
+	// An adopted initial version has no source writer. Its Instance retains the
+	// request receipt independently of the version's payload lifetime.
 	PublishInitialComputerDiskVersion(ctx context.Context, arg PublishInitialComputerDiskVersionParams) (PublishInitialComputerDiskVersionRow, error)
 	ReadWorkerControlSecrets(ctx context.Context, computerIds []pgtype.UUID) ([]ReadWorkerControlSecretsRow, error)
 	ReadWorkerSessionControl(ctx context.Context, arg ReadWorkerSessionControlParams) (ReadWorkerSessionControlRow, error)
@@ -643,7 +649,7 @@ type Querier interface {
 	// entire four-object set must succeed or roll back; exact replays preserve candidate identity.
 	RegisterCheckpointObject(ctx context.Context, arg RegisterCheckpointObjectParams) (ComputerCheckpointObject, error)
 	RegisterChildCall(ctx context.Context, arg RegisterChildCallParams) (RunWait, error)
-	RegisterComputerSpec(ctx context.Context, arg RegisterComputerSpecParams) (ComputerSpec, error)
+	RegisterComputerSpec(ctx context.Context, arg RegisterComputerSpecParams) (RegisterComputerSpecRow, error)
 	RegisterResolvedChildCall(ctx context.Context, arg RegisterResolvedChildCallParams) (RunWait, error)
 	RegisterRetiredCasUpload(ctx context.Context, arg RegisterRetiredCasUploadParams) error
 	RegisterSessionInputRunWait(ctx context.Context, arg RegisterSessionInputRunWaitParams) (RunWait, error)
@@ -679,6 +685,9 @@ type Querier interface {
 	// Record condition changes without crossing its activation acknowledgement.
 	ResolveResumingRunWait(ctx context.Context, arg ResolveResumingRunWaitParams) (RunWait, error)
 	ResolveRunPinnedComputerDefinitionForCreate(ctx context.Context, arg ResolveRunPinnedComputerDefinitionForCreateParams) (DeploymentDefinition, error)
+	// These operations run only under the owning Computer/Instance fence. Locator
+	// framing, authenticated page membership and upload correspondence are prerequisites.
+	RetainComputerDiskRoot(ctx context.Context, arg RetainComputerDiskRootParams) (pgtype.UUID, error)
 	// Commit before making any remote calls. Never clear retired_at or remove this
 	// row: an in-flight upload can finish after a successful empty sweep.
 	RetireAbandonedCasBlob(ctx context.Context, digest string) (int64, error)
@@ -691,6 +700,8 @@ type Querier interface {
 	RetireComputerDiskVersionPayload(ctx context.Context, arg RetireComputerDiskVersionPayloadParams) (int64, error)
 	// Erase wrapped material, preserving the irreversible key identity/audit row.
 	RetireUnreferencedComputerKey(ctx context.Context, id pgtype.UUID) (int64, error)
+	// Recheck using a fresh statement snapshot while the candidate locks are held.
+	RetireUnusedComputerSeeds(ctx context.Context, seedIds []pgtype.UUID) (int64, error)
 	RetryControlOutbox(ctx context.Context, arg RetryControlOutboxParams) (ControlOutbox, error)
 	RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (int64, error)
 	RevokeAuthSessionByTokenHash(ctx context.Context, tokenHash []byte) (int64, error)

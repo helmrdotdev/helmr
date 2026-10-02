@@ -16,6 +16,7 @@ DELETE FROM artifacts
  WHERE artifacts.environment_id = $1
    AND artifacts.id = $2
    AND artifacts.kind = 'computer_image'
+   AND NOT EXISTS (SELECT 1 FROM computer_seeds WHERE source_artifact_id=artifacts.id)
    AND NOT EXISTS (
        SELECT 1 FROM computer_specs
         WHERE computer_specs.environment_id = artifacts.environment_id
@@ -63,6 +64,7 @@ func (q *Queries) GetComputerSpec(ctx context.Context, arg GetComputerSpecParams
 }
 
 const registerComputerSpec = `-- name: RegisterComputerSpec :one
+WITH registered AS (
 INSERT INTO computer_specs (
     id, environment_id, config, digest,
     seed_artifact_id, seed_digest, seed_size_bytes, seed_media_type
@@ -77,6 +79,17 @@ ON CONFLICT (environment_id, digest) DO UPDATE
       AND computer_specs.seed_size_bytes = EXCLUDED.seed_size_bytes
       AND computer_specs.seed_media_type = EXCLUDED.seed_media_type
 RETURNING id, environment_id, config, digest, created_at, seed_artifact_id, seed_kind, seed_digest, seed_size_bytes, seed_media_type, seed_available
+), seed AS (
+ INSERT INTO computer_seeds(id,environment_id,seed_digest,seed_size_bytes,seed_media_type,format_version,logical_bytes,source_artifact_id)
+ SELECT gen_random_uuid(),environment_id,seed_digest,seed_size_bytes,seed_media_type,1,$9::bigint,seed_artifact_id FROM registered
+ ON CONFLICT (environment_id,seed_digest,format_version,logical_bytes) DO UPDATE
+ SET source_artifact_id=COALESCE(computer_seeds.source_artifact_id,EXCLUDED.source_artifact_id),
+     ready_at=CASE WHEN computer_seeds.payload_retired_at IS NOT NULL THEN NULL ELSE computer_seeds.ready_at END,
+     payload_retired_at=NULL
+ WHERE computer_seeds.seed_size_bytes=EXCLUDED.seed_size_bytes AND computer_seeds.seed_media_type=EXCLUDED.seed_media_type
+ RETURNING environment_id,seed_digest
+)
+SELECT r.id, r.environment_id, r.config, r.digest, r.created_at, r.seed_artifact_id, r.seed_kind, r.seed_digest, r.seed_size_bytes, r.seed_media_type, r.seed_available FROM registered r JOIN seed s ON s.environment_id=r.environment_id AND s.seed_digest=r.seed_digest
 `
 
 type RegisterComputerSpecParams struct {
@@ -88,9 +101,24 @@ type RegisterComputerSpecParams struct {
 	SeedDigest     string      `json:"seed_digest"`
 	SeedSizeBytes  int64       `json:"seed_size_bytes"`
 	SeedMediaType  string      `json:"seed_media_type"`
+	LogicalBytes   int64       `json:"logical_bytes"`
 }
 
-func (q *Queries) RegisterComputerSpec(ctx context.Context, arg RegisterComputerSpecParams) (ComputerSpec, error) {
+type RegisterComputerSpecRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	EnvironmentID  pgtype.UUID        `json:"environment_id"`
+	Config         []byte             `json:"config"`
+	Digest         []byte             `json:"digest"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	SeedArtifactID pgtype.UUID        `json:"seed_artifact_id"`
+	SeedKind       NullArtifactKind   `json:"seed_kind"`
+	SeedDigest     string             `json:"seed_digest"`
+	SeedSizeBytes  int64              `json:"seed_size_bytes"`
+	SeedMediaType  string             `json:"seed_media_type"`
+	SeedAvailable  pgtype.Bool        `json:"seed_available"`
+}
+
+func (q *Queries) RegisterComputerSpec(ctx context.Context, arg RegisterComputerSpecParams) (RegisterComputerSpecRow, error) {
 	row := q.db.QueryRow(ctx, registerComputerSpec,
 		arg.ID,
 		arg.EnvironmentID,
@@ -100,8 +128,9 @@ func (q *Queries) RegisterComputerSpec(ctx context.Context, arg RegisterComputer
 		arg.SeedDigest,
 		arg.SeedSizeBytes,
 		arg.SeedMediaType,
+		arg.LogicalBytes,
 	)
-	var i ComputerSpec
+	var i RegisterComputerSpecRow
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,

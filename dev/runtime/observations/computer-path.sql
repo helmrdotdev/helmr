@@ -5,7 +5,10 @@ SELECT jsonb_build_object(
  'id',i.id,'worker_host_id',i.worker_host_id,'worker_epoch',i.worker_epoch,
  'observed_state',i.observed_state,'reclaimed_at',i.reclaimed_at,
  'source_checkpoint_id',i.source_checkpoint_id,'source_disk_version_id',i.source_disk_version_id,
- 'ready_at',i.ready_at,'mount_state',i.mount_state) ORDER BY i.allocated_at,i.id)
+ 'ready_at',i.ready_at,'mount_state',i.mount_state,
+ 'allocated_at',i.allocated_at,'initial_disk_version_id',i.initial_disk_version_id,
+ 'initial_publication_fingerprint',encode(i.initial_publication_fingerprint,'hex'),
+ 'seed_id',i.seed_id,'seed_preparation_generation',i.seed_preparation_generation) ORDER BY i.allocated_at,i.id)
  FROM computer_instances i JOIN target c ON c.id=i.computer_id),'[]'::jsonb),
  'checkpoints', COALESCE((SELECT jsonb_agg(jsonb_build_object(
  'id',p.id,'status',p.status,'source_computer_instance_id',p.source_computer_instance_id,

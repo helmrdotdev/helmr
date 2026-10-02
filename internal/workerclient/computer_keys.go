@@ -13,30 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-// InitialComputerKey retrieves the instance's pinned initial write key. It is
-// host-only; the caller owns clearing the returned Key after use.
-func (c *Client) InitialComputerKey(ctx context.Context, request workerapi.InitialComputerKeyRequest) (workerapi.ComputerKeyMaterial, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	body, err := c.preparationRequest(ctx, "/worker/v1/run/computer-instances/initialization/key", request, true, 1024)
-	if err != nil {
-		return workerapi.ComputerKeyMaterial{}, err
-	}
-	defer clear(body)
-	var material workerapi.ComputerKeyMaterial
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	decodeErr := decoder.Decode(&material)
-	trailingErr := decoder.Decode(new(any))
-	_, idErr := ids.Parse(material.ID)
-	if decodeErr != nil || trailingErr != io.EOF || idErr != nil || len(material.Key) != 32 || material.Scope == "" || len(material.Scope) > 256 || !utf8.ValidString(material.Scope) {
-		clear(material.Key)
-		return workerapi.ComputerKeyMaterial{}, errors.New("invalid computer key response")
-	}
-	return material, nil
-
-}
-
 // ComputerSource retrieves the retained source and host-only read/write keys.
 // The caller owns Clear and must compare the version/capacity with its reservation.
 func (c *Client) ComputerSource(ctx context.Context, request workerapi.ComputerSourceRequest) (workerapi.ComputerSourceMaterial, error) {
@@ -85,4 +61,34 @@ func validComputerSource(m workerapi.ComputerSourceMaterial) bool {
 		seen[k.ID] = true
 	}
 	return seen[m.Root.Page.KeyID] && seen[m.WriteKeyID]
+}
+
+// PrepareComputerSeed claims or adopts the admitted seed; plaintext stays on the host.
+func (c *Client) PrepareComputerSeed(ctx context.Context, request workerapi.PrepareComputerSeedRequest) (workerapi.ComputerSeedPreparation, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	body, err := c.preparationRequest(ctx, "/worker/v1/run/computer-instances/initialization/seed", request, true, 1024)
+	if err != nil {
+		return workerapi.ComputerSeedPreparation{}, err
+	}
+	defer clear(body)
+	var material workerapi.ComputerSeedPreparation
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	decodeErr := decoder.Decode(&material)
+	trailingErr := decoder.Decode(new(any))
+	valid := decodeErr == nil && trailingErr == io.EOF
+	if material.Status == "convert" && material.Key != nil {
+		key := material.Key
+		valid = valid && ids.Validate(key.ID) == nil && len(key.Key) == 32 && key.Scope != "" && len(key.Scope) <= 256 && utf8.ValidString(key.Scope)
+	} else {
+		valid = valid && (material.Status == "ready" || material.Status == "waiting") && material.Key == nil
+	}
+	if !valid {
+		if material.Key != nil {
+			clear(material.Key.Key)
+		}
+		return workerapi.ComputerSeedPreparation{}, errors.New("invalid computer seed preparation response")
+	}
+	return material, nil
 }

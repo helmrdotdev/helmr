@@ -113,84 +113,21 @@ func NewKeyBroker(txb db.TxBeginner, wrapper KeyWrapper) (*KeyBroker, error) {
 // authenticated context, not authorization; callers must obtain these
 // identities from the admitted Computer, never from guest input or
 // human-readable labels.
-func encryptionScope(orgID, environmentID, computerID string) (string, error) {
-	for _, id := range []string{orgID, environmentID, computerID} {
+func encryptionScope(orgID, environmentID string) (string, error) {
+	for _, id := range []string{orgID, environmentID} {
 		if id == "" || !utf8.ValidString(id) {
 			return "", errors.New("invalid computer encryption identity")
 		}
 	}
-	encoded, err := json.Marshal([3]string{orgID, environmentID, computerID})
+	encoded, err := json.Marshal([2]string{orgID, environmentID})
 	if err != nil {
 		return "", err
 	}
-	scope := "helmr.computer.v1:" + string(encoded)
+	scope := "helmr.storage.v1:" + string(encoded)
 	if len(scope) > 256 {
 		return "", errors.New("computer encryption scope exceeds codec limit")
 	}
 	return scope, nil
-}
-
-// InitialKey delivers the write key of an initial preparation, creating and
-// pinning it on first delivery. It never initializes a continuation: an
-// absent key on a restored or continued Instance is unavailability. A
-// discovery transaction authorizes the scope, the key is wrapped outside any
-// transaction, a second transaction creates or adopts the persisted key and
-// pins it to the Instance, the key is unwrapped outside it, and a third
-// transaction revalidates the preparation and pin before delivery. A racing
-// first delivery uses the winner's persisted key, and a lost reply keeps the
-// same pin for its retry. A preparation that no longer authorizes delivery
-// reports ErrAuthorityChanged, stale claims report workergroup.ErrStaleClaims,
-// an absent or changed key or a shape-invalid envelope reports ErrKeyUnavailable and
-// an unavailable provider reports ErrKeyProviderUnavailable; any other
-// failure, including a cancelled request, keeps its cause.
-// Plaintext is cleared on every failure.
-func (b *KeyBroker) InitialKey(ctx context.Context, principal workergroup.HostPrincipal, ref PreparationRef) (KeyMaterial, error) {
-	pin, err := b.pinInitialKey(ctx, principal, ref, nil, "")
-	if err != nil {
-		return KeyMaterial{}, err
-	}
-	if pin.absent {
-		// Scope discovery was authorized, but no secret leaves the control
-		// plane here. Provider work must not hold SQL locks; a second
-		// transaction revalidates before insert.
-		key := make([]byte, computerkey.Size)
-		if _, err = rand.Read(key); err != nil {
-			return KeyMaterial{}, fmt.Errorf("generate computer key: %w", err)
-		}
-		keyID := pgvalue.UUID(uuid.NewV7())
-		envelope, wrapErr := b.wrapper.Wrap(ctx, pin.scope, pgvalue.UUIDString(keyID), key)
-		clear(key)
-		if wrapErr != nil {
-			return KeyMaterial{}, providerFailure(ctx, "wrap computer key", wrapErr)
-		}
-		candidate := db.ComputerDataKey{ID: keyID, WrappingKeyID: envelope.WrappingKeyID, WrappedKey: envelope.Ciphertext}
-		if pin, err = b.pinInitialKey(ctx, principal, ref, &candidate, pin.scope); err != nil {
-			return KeyMaterial{}, err
-		}
-	}
-	keyID := pgvalue.UUIDString(pin.key.ID)
-	plain, err := b.wrapper.Unwrap(ctx, pin.scope, keyID, computerkey.Envelope{WrappingKeyID: pin.key.WrappingKeyID, Ciphertext: pin.key.WrappedKey})
-	if err != nil {
-		clear(plain)
-		return KeyMaterial{}, providerFailure(ctx, "unwrap computer key", err)
-	}
-	if err = providerKeyLength(plain); err != nil {
-		clear(plain)
-		return KeyMaterial{}, err
-	}
-	// A successful unwrap is not a delivery grant. Revocation, expiry,
-	// cancellation or a changed reservation during provider I/O must suppress
-	// the response.
-	current, err := b.pinInitialKey(ctx, principal, ref, nil, "")
-	if err != nil {
-		clear(plain)
-		return KeyMaterial{}, err
-	}
-	if current.absent || current.scope != pin.scope || current.key.ID != pin.key.ID || current.key.WrappingKeyID != pin.key.WrappingKeyID || !bytes.Equal(current.key.WrappedKey, pin.key.WrappedKey) {
-		clear(plain)
-		return KeyMaterial{}, keyUnavailable("pinned computer key changed during delivery")
-	}
-	return KeyMaterial{Scope: pin.scope, ID: keyID, Key: plain}, nil
 }
 
 // initialKeyPin is the write key one initial-key transaction pinned, or its
@@ -260,7 +197,7 @@ func (p initialPreparation) pinKey(ctx context.Context, candidate *db.ComputerDa
 		if err != nil {
 			return initialKeyPin{}, fmt.Errorf("create computer key: %w", err)
 		}
-		n, err := q.InitializeComputerWriteKey(ctx, db.InitializeComputerWriteKeyParams{KeyID: row.ID, EnvironmentID: row.EnvironmentID, ComputerID: row.ComputerID})
+		n, err := q.InitializeComputerWriteKey(ctx, db.InitializeComputerWriteKeyParams{KeyID: row.ID, EnvironmentID: row.EnvironmentID, ComputerID: row.WriterComputerID})
 		if err != nil {
 			return initialKeyPin{}, fmt.Errorf("initialize computer write key: %w", err)
 		}
@@ -270,7 +207,7 @@ func (p initialPreparation) pinKey(ctx context.Context, candidate *db.ComputerDa
 	} else if err != nil {
 		return initialKeyPin{}, fmt.Errorf("read computer write key: %w", err)
 	}
-	n, err := q.PinInstanceComputerKey(ctx, db.PinInstanceComputerKeyParams{KeyID: row.ID, ComputerInstanceID: instanceID, EnvironmentID: row.EnvironmentID, ComputerID: row.ComputerID})
+	n, err := q.PinInstanceComputerKey(ctx, db.PinInstanceComputerKeyParams{KeyID: row.ID, ComputerInstanceID: instanceID, EnvironmentID: row.EnvironmentID, ComputerID: row.WriterComputerID})
 	if err != nil {
 		return initialKeyPin{}, fmt.Errorf("pin computer write key: %w", err)
 	}
@@ -430,4 +367,33 @@ func loadRetainedVersion(ctx context.Context, q *db.Queries, instanceID pgtype.U
 		return source, disk.VersionRoot{}, nil, keyUnavailable("retained computer root key is missing")
 	}
 	return source, root, keys, nil
+}
+
+// ensureInitialKey pins the private write key without unwrapping it. Waiting
+// seed consumers must not perform KMS unwrap on every observation.
+func (b *KeyBroker) ensureInitialKey(ctx context.Context, principal workergroup.HostPrincipal, ref PreparationRef) (initialKeyPin, error) {
+	pin, err := b.pinInitialKey(ctx, principal, ref, nil, "")
+	if err != nil {
+		return initialKeyPin{}, err
+	}
+	if pin.absent {
+		// Scope discovery was authorized, but no secret leaves the control
+		// plane here. Provider work must not hold SQL locks; a second
+		// transaction revalidates before insert.
+		key := make([]byte, computerkey.Size)
+		if _, err = rand.Read(key); err != nil {
+			return initialKeyPin{}, fmt.Errorf("generate computer key: %w", err)
+		}
+		keyID := pgvalue.UUID(uuid.NewV7())
+		envelope, wrapErr := b.wrapper.Wrap(ctx, pin.scope, pgvalue.UUIDString(keyID), key)
+		clear(key)
+		if wrapErr != nil {
+			return initialKeyPin{}, providerFailure(ctx, "wrap computer key", wrapErr)
+		}
+		candidate := db.ComputerDataKey{ID: keyID, WrappingKeyID: envelope.WrappingKeyID, WrappedKey: envelope.Ciphertext}
+		if pin, err = b.pinInitialKey(ctx, principal, ref, &candidate, pin.scope); err != nil {
+			return initialKeyPin{}, err
+		}
+	}
+	return pin, nil
 }

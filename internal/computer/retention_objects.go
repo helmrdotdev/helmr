@@ -35,7 +35,7 @@ func (r *Retention) collectComputerObject(ctx context.Context, candidate db.List
 	}
 	defer tx.Rollback(context.WithoutCancel(ctx))
 	q := db.New(tx)
-	n, err := q.DeleteUnreferencedComputerObject(ctx, db.DeleteUnreferencedComputerObjectParams{EnvironmentID: candidate.EnvironmentID, ComputerID: candidate.ComputerID, Digest: candidate.Digest})
+	n, err := q.DeleteUnreferencedComputerObject(ctx, db.DeleteUnreferencedComputerObjectParams{EnvironmentID: candidate.EnvironmentID, Digest: candidate.Digest})
 	if err != nil || n == 0 {
 		return err
 	}

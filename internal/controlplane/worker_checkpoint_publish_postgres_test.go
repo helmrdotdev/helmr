@@ -24,7 +24,7 @@ import (
 func checkpointPublicationFixture(t *testing.T) (*computerCheckpointFixture, workerapi.RegisterCheckpointRequest, func(), func(int)) {
 	t.Helper()
 	f, req := checkpointRegistrationFixture(t)
-	root, inspection := retainedTestVersion(t, f.Pool, f.store, req.ComputerInstanceID)
+	root, inspection := uploadedTestVersion(t, f.Pool, f.store, req.ComputerInstanceID)
 	req.Manifest.RuntimeState.Computer.Root = root
 	artifacts := []*workerapi.CheckpointArtifact{&req.Manifest.RuntimeState.ConfigArtifact, &req.Manifest.RuntimeState.VMStateArtifact, &req.Manifest.RuntimeState.MemoryArtifacts[0], &req.Manifest.RuntimeState.ScratchDiskArtifact}
 	data := make([]string, len(artifacts))
@@ -36,6 +36,8 @@ func checkpointPublicationFixture(t *testing.T) (*computerCheckpointFixture, wor
 	register := func() {
 		t.Helper()
 		f.worker.post(t, checkpointRegisterPath, req, http.StatusOK, nil)
+		f.worker.post(t, "/worker/v1/computer/checkpoints/objects/register", workerapi.CheckpointComputerObjectRequest{ComputerInstanceID: req.ComputerInstanceID, WorkerEpoch: req.WorkerEpoch, DesiredVersion: req.DesiredVersion, CheckpointID: req.CheckpointID, Inspection: inspection}, http.StatusOK, nil)
+		f.worker.post(t, "/worker/v1/computer/checkpoints/objects/certify", workerapi.CheckpointComputerObjectRequest{ComputerInstanceID: req.ComputerInstanceID, WorkerEpoch: req.WorkerEpoch, DesiredVersion: req.DesiredVersion, CheckpointID: req.CheckpointID, Inspection: inspection}, http.StatusOK, nil)
 		f.worker.post(t, "/worker/v1/computer/checkpoints/objects/reuse", workerapi.CheckpointComputerObjectRequest{ComputerInstanceID: req.ComputerInstanceID, WorkerEpoch: req.WorkerEpoch, DesiredVersion: req.DesiredVersion, CheckpointID: req.CheckpointID, Inspection: inspection}, http.StatusOK, nil)
 	}
 	return f, req, register, func(i int) {
@@ -72,7 +74,7 @@ func TestCheckpointPublicationCommitsWholeMachineAndReplays(t *testing.T) {
 	}
 	var status, digest, media string
 	var logical int64
-	err := f.Pool.QueryRow(t.Context(), `SELECT v.status,v.root_pack_digest,v.logical_bytes,a.media_type FROM computer_disk_versions v JOIN computer_disk_version_roots r ON r.version_id=v.id JOIN computer_objects a ON a.digest=r.root_pack_digest AND a.computer_id=r.computer_id AND a.environment_id=r.environment_id WHERE v.id=$1`, receipt.ComputerDiskVersionID).Scan(&status, &digest, &logical, &media)
+	err := f.Pool.QueryRow(t.Context(), `SELECT v.status,shared.root_pack_digest,shared.logical_bytes,a.media_type FROM computer_disk_versions v JOIN computer_disk_version_roots r ON r.version_id=v.id JOIN computer_disk_roots shared ON shared.id=r.root_id JOIN computer_objects a ON a.digest=shared.root_pack_digest AND a.environment_id=shared.environment_id WHERE v.id=$1`, receipt.ComputerDiskVersionID).Scan(&status, &digest, &logical, &media)
 	if err != nil || status != "private" || digest != req.Manifest.RuntimeState.Computer.Root.Pack.Digest || logical != req.Manifest.RuntimeState.Computer.LogicalBytes || media != "application/octet-stream" {
 		t.Fatalf("version %s %s %d %s: %v", status, digest, logical, media, err)
 	}

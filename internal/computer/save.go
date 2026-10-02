@@ -232,7 +232,7 @@ func (s unpublishedSave) objects(ctx context.Context) (objectScope, error) {
 		return objectScope{}, objectConflict("save write key is not retained")
 	}
 	allowed[pgvalue.UUIDString(write.ID)] = true
-	return objectScope{objectRetention: s.retention(), orgID: i.OrgID, projectID: i.ProjectID, logicalBytes: i.ReservedGuestEphemeralDiskBytes, allowedKeys: allowed}, nil
+	return objectScope{objectRetention: s.retention(), orgID: i.OrgID, projectID: i.ProjectID, logicalBytes: i.ReservedGuestEphemeralDiskBytes, allowedKeys: allowed, writeKey: pgvalue.UUIDString(write.ID)}, nil
 }
 
 // SaveBegun is an admitted save: the version it saves on top of and the
@@ -402,7 +402,7 @@ func (s unpublishedSave) publish(ctx context.Context, root disk.VersionRoot, loc
 	if root.LogicalBytes != r.ReservedGuestEphemeralDiskBytes {
 		return Publication{}, objectConflict("save capacity differs from Computer")
 	}
-	object, err := q.LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: r.EnvironmentID, ComputerID: r.ComputerID, Digest: root.Pack.Digest})
+	object, err := q.LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: r.EnvironmentID, Digest: root.Pack.Digest})
 	if err != nil {
 		return Publication{}, err
 	}
@@ -427,7 +427,11 @@ func (s unpublishedSave) publish(ctx context.Context, root disk.VersionRoot, loc
 	if err != nil {
 		return Publication{}, err
 	}
-	v, err := q.PublishComputerInstanceSave(ctx, db.PublishComputerInstanceSaveParams{ComputerInstanceID: r.ID, EnvironmentID: r.EnvironmentID, WorkerHostID: r.WorkerHostID, WorkerEpoch: r.WorkerEpoch, WriterGeneration: r.WriterGeneration, WriterTokenHash: r.WriterTokenHash, DesiredVersion: r.DesiredVersion, SaveID: pgvalue.UUID(s.ref.SaveID), Sequence: s.ref.Sequence, RootPackDigest: pgvalue.Text(root.Pack.Digest), LogicalBytes: root.LogicalBytes, Fingerprint: fingerprint, Locator: encoded})
+	rootID, err := q.RetainComputerDiskRoot(ctx, db.RetainComputerDiskRootParams{ID: pgvalue.NewUUIDv7(), EnvironmentID: r.EnvironmentID, Locator: encoded})
+	if err != nil {
+		return Publication{}, err
+	}
+	v, err := q.PublishComputerInstanceSave(ctx, db.PublishComputerInstanceSaveParams{ComputerInstanceID: r.ID, EnvironmentID: r.EnvironmentID, WorkerHostID: r.WorkerHostID, WorkerEpoch: r.WorkerEpoch, WriterGeneration: r.WriterGeneration, WriterTokenHash: r.WriterTokenHash, DesiredVersion: r.DesiredVersion, SaveID: pgvalue.UUID(s.ref.SaveID), Sequence: s.ref.Sequence, RootID: rootID, Fingerprint: fingerprint})
 	if err != nil {
 		return Publication{}, err
 	}

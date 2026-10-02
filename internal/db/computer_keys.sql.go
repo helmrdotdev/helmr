@@ -12,9 +12,9 @@ import (
 )
 
 const createComputerKey = `-- name: CreateComputerKey :one
-INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key)
+INSERT INTO computer_data_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key)
 VALUES($1,$2,$3,$4,$5)
-RETURNING id, environment_id, computer_id, wrapping_key_id, wrapped_key, created_at, retired_at, available
+RETURNING id, environment_id, writer_computer_id, wrapping_key_id, wrapped_key, created_at, retired_at, available, is_seed_key
 `
 
 type CreateComputerKeyParams struct {
@@ -37,22 +37,23 @@ func (q *Queries) CreateComputerKey(ctx context.Context, arg CreateComputerKeyPa
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
-		&i.ComputerID,
+		&i.WriterComputerID,
 		&i.WrappingKeyID,
 		&i.WrappedKey,
 		&i.CreatedAt,
 		&i.RetiredAt,
 		&i.Available,
+		&i.IsSeedKey,
 	)
 	return i, err
 }
 
 const getInstanceComputerWriteKey = `-- name: GetInstanceComputerWriteKey :one
 
-SELECT k.id, k.environment_id, k.computer_id, k.wrapping_key_id, k.wrapped_key, k.created_at, k.retired_at, k.available
+SELECT k.id, k.environment_id, k.writer_computer_id, k.wrapping_key_id, k.wrapped_key, k.created_at, k.retired_at, k.available, k.is_seed_key
   FROM computer_instances r
   JOIN computers c ON c.environment_id=r.environment_id AND c.id=r.computer_id
-  JOIN computer_data_keys k ON k.environment_id=c.environment_id AND k.computer_id=c.id
+  JOIN computer_data_keys k ON k.environment_id=c.environment_id AND k.writer_computer_id=c.id
     AND k.id=COALESCE(r.write_key_id,c.write_key_id) AND k.available
  WHERE r.id=$1 AND r.environment_id=$2
    AND r.computer_id=$3 AND r.reclaimed_at IS NULL
@@ -72,12 +73,13 @@ func (q *Queries) GetInstanceComputerWriteKey(ctx context.Context, arg GetInstan
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
-		&i.ComputerID,
+		&i.WriterComputerID,
 		&i.WrappingKeyID,
 		&i.WrappedKey,
 		&i.CreatedAt,
 		&i.RetiredAt,
 		&i.Available,
+		&i.IsSeedKey,
 	)
 	return i, err
 }
@@ -106,6 +108,7 @@ SELECT k.id FROM computer_data_keys k
 WHERE k.available
  AND NOT EXISTS(SELECT 1 FROM computers c WHERE c.write_key_id=k.id)
  AND NOT EXISTS(SELECT 1 FROM computer_instances r WHERE r.retained_write_key_id=k.id)
+ AND NOT EXISTS(SELECT 1 FROM computer_instances r WHERE r.retained_seed_key_id=k.id)
  AND NOT EXISTS(SELECT 1 FROM computer_object_keys o WHERE o.key_id=k.id)
 ORDER BY k.id LIMIT $1
 `
@@ -164,6 +167,7 @@ UPDATE computer_data_keys k SET retired_at=clock_timestamp(), wrapped_key=NULL
 WHERE k.id=$1 AND k.available
  AND NOT EXISTS(SELECT 1 FROM computers c WHERE c.write_key_id=k.id)
  AND NOT EXISTS(SELECT 1 FROM computer_instances r WHERE r.retained_write_key_id=k.id)
+ AND NOT EXISTS(SELECT 1 FROM computer_instances r WHERE r.retained_seed_key_id=k.id)
  AND NOT EXISTS(SELECT 1 FROM computer_object_keys o WHERE o.key_id=k.id)
 `
 

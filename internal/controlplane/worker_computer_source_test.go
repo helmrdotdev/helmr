@@ -36,7 +36,7 @@ func initializingComputerSourceRow(t *testing.T) db.ListComputerInstanceReconcil
 	return db.ListComputerInstanceReconcileTargetsRow{
 		PreparationDiskVersionID:  pgvalue.UUID(uuid.NewV7()),
 		ComputerDiskVersionStatus: pgvalue.Text("initializing"),
-		ComputerLogicalSizeBytes:  pgtype.Int8{Valid: true},
+		ComputerLogicalSizeBytes:  pgtype.Int8{},
 		ComputerArchitecture:      "x86_64", ReservedGuestEphemeralDiskBytes: disk.SeedCapacity,
 		ComputerImageDigest: dbtest.Digest("seed"), ComputerImageSizeBytes: 1024, ComputerImageMediaType: definition.ComputerSeedMediaType,
 		ComputerConfig: spec.Config, ComputerSpecDigest: spec.Digest[:],
@@ -65,7 +65,7 @@ func committedComputerSourceRow(t *testing.T) db.ListComputerInstanceReconcileTa
 		t.Fatal(err)
 	}
 	r.ComputerContentDigest = pgvalue.Text(root.Pack.Digest)
-	r.ComputerLogicalSizeBytes.Int64 = disk.SeedCapacity
+	r.ComputerLogicalSizeBytes = pgtype.Int8{Int64: disk.SeedCapacity, Valid: true}
 	r.ComputerInitialConfig = []byte(`{"User":"original","Env":["ORIGINAL=yes"]}`)
 	return r
 }

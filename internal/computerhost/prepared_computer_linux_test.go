@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 	"uuid"
 
@@ -31,6 +32,7 @@ type computerPreparationTransport struct {
 	fail         string
 	key          []byte
 	publications int
+	seedStatuses []string
 }
 
 const preparationKey = "01950000-0000-7000-8000-000000000004"
@@ -50,8 +52,45 @@ func (s *computerPreparationTransport) RegisterInitialComputerObject(context.Con
 func (s *computerPreparationTransport) CertifyInitialComputerObject(context.Context, workerapi.InitialComputerObjectRequest) error {
 	return nil
 }
-func (s *computerPreparationTransport) InitialComputerKey(context.Context, workerapi.InitialComputerKeyRequest) (workerapi.ComputerKeyMaterial, error) {
-	return workerapi.ComputerKeyMaterial{Scope: "fixture", ID: preparationKey, Key: bytes.Clone(s.key)}, nil
+func (s *computerPreparationTransport) PrepareComputerSeed(context.Context, workerapi.PrepareComputerSeedRequest) (workerapi.ComputerSeedPreparation, error) {
+	if len(s.seedStatuses) > 0 {
+		status := s.seedStatuses[0]
+		s.seedStatuses = s.seedStatuses[1:]
+		return workerapi.ComputerSeedPreparation{Status: status}, nil
+	}
+	return workerapi.ComputerSeedPreparation{Status: "convert", Key: &workerapi.ComputerKeyMaterial{Scope: "fixture", ID: preparationKey, Key: bytes.Clone(s.key)}}, nil
+}
+
+func TestSharedSeedPreparationAvoidsRepeatedConversion(t *testing.T) {
+	for _, waiting := range []bool{false, true} {
+		t.Run(map[bool]string{false: "ready", true: "waiting"}[waiting], func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				transport := &computerPreparationTransport{seedStatuses: []string{"ready"}}
+				if waiting {
+					transport.seedStatuses = []string{"waiting", "ready"}
+				}
+				machines := &PreparedMachines{ComputerPreparation: transport, ComputerObjects: transport}
+				// No seed bytes or conversion directory exist. Adoption must finish
+				// without touching either, including after a pending owner completes.
+				if err := machines.publishComputerSeed(t.Context(), workerapi.InstanceReconcileTarget{}, "unused"); err != nil {
+					t.Fatal(err)
+				}
+				if transport.publications != 0 || len(transport.seedStatuses) != 0 {
+					t.Fatal("adoption repeated conversion or stopped before ready")
+				}
+			})
+		})
+	}
+	synctest.Test(t, func(t *testing.T) {
+		transport := &computerPreparationTransport{seedStatuses: []string{"waiting"}}
+		machines := &PreparedMachines{ComputerPreparation: transport, ComputerObjects: transport}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		time.AfterFunc(time.Millisecond, cancel)
+		if err := machines.publishComputerSeed(ctx, workerapi.InstanceReconcileTarget{}, "unused"); !errors.Is(err, context.Canceled) {
+			t.Fatalf("waiting ignored cancellation: %v", err)
+		}
+	})
 }
 func (s *computerPreparationTransport) PublishInitialComputerVersion(_ context.Context, r workerapi.InitialComputerVersionRequest) (workerapi.InitialComputerVersionResponse, error) {
 	s.mu.Lock()
@@ -104,7 +143,7 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 	}
 	target := workerapi.InstanceReconcileTarget{ID: uuid.NewV7().String(), WorkerEpoch: 1, DesiredVersion: 1, Source: workerapi.InstanceSource{ComputerID: uuid.NewV7().String(), ReservedDiskMiB: disk.SeedCapacity / mebibyte, Computer: &workerapi.InstanceComputerSource{VersionID: uuid.NewV7().String(), LogicalBytes: disk.SeedCapacity, Seed: &workerapi.ComputerSeed{Profile: definition.ComputerSeedProfile, Object: workerapi.CASObject{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}}}}}
 	const budget = 64 << 20
-	for _, failure := range []string{"capacity", "register", "upload", "commit", ""} {
+	for _, failure := range []string{"capacity", "register", "upload", "commit", "", "takeover"} {
 		t.Run("failure="+failure, func(t *testing.T) {
 			admitted := int64(budget)
 			if failure == "capacity" {
@@ -115,9 +154,12 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 				t.Fatal(err)
 			}
 			client := &computerPreparationTransport{Store: objects, targets: map[string]workerapi.InstanceReconcileTarget{target.ID: target}, fail: failure, key: bytes.Repeat([]byte{7}, 32)}
+			if failure == "takeover" {
+				client.seedStatuses = []string{"waiting"}
+			}
 			machines := &PreparedMachines{TempDir: t.TempDir(), CAS: objects, ComputerRanges: objects, ComputerObjects: client, ComputerPreparation: client, ComputerStagingBytes: budget, Reservations: ledger}
 			prepared, err := machines.prepareComputerVersion(t.Context(), target)
-			if failure != "" {
+			if failure != "" && failure != "takeover" {
 				if err == nil || prepared != nil {
 					t.Fatal("failed preparation exposed version")
 				}

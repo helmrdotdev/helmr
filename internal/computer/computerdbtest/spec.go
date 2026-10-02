@@ -11,6 +11,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/jackc/pgx/v5"
 )
@@ -44,10 +45,15 @@ func InsertComputerSpec(t *testing.T, ctx context.Context, executor interface {
 	digest := sha256.Sum256(append([]byte("helmr.computer-spec.v0\x00"), canonical...))
 	var id uuid.UUID
 	if err := executor.QueryRow(ctx, `
-		INSERT INTO computer_specs(id, environment_id, config, digest, seed_artifact_id, seed_digest, seed_size_bytes, seed_media_type)
+		WITH registered AS (INSERT INTO computer_specs(id, environment_id, config, digest, seed_artifact_id, seed_digest, seed_size_bytes, seed_media_type)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 		ON CONFLICT(environment_id,digest) DO UPDATE SET seed_artifact_id=COALESCE(computer_specs.seed_artifact_id,EXCLUDED.seed_artifact_id)
-		RETURNING id`, uuid.NewV7(), environmentID, config, digest[:], artifactID, seed.Digest, seed.SizeBytes, seed.MediaType).Scan(&id); err != nil {
+		RETURNING *), seed AS (
+ INSERT INTO computer_seeds(id,environment_id,seed_digest,seed_size_bytes,seed_media_type,format_version,logical_bytes,source_artifact_id)
+ SELECT gen_random_uuid(),environment_id,seed_digest,seed_size_bytes,seed_media_type,1,$9,seed_artifact_id FROM registered
+ ON CONFLICT(environment_id,seed_digest,format_version,logical_bytes) DO UPDATE SET source_artifact_id=COALESCE(computer_seeds.source_artifact_id,EXCLUDED.source_artifact_id)
+ RETURNING id)
+ SELECT registered.id FROM registered,seed`, uuid.NewV7(), environmentID, config, digest[:], artifactID, seed.Digest, seed.SizeBytes, seed.MediaType, disk.SeedCapacity).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
 	return id

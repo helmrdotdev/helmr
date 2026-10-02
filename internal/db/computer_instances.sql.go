@@ -14,7 +14,7 @@ import (
 const advanceComputerInstanceMembership = `-- name: AdvanceComputerInstanceMembership :one
 UPDATE computer_instances SET membership_revision=membership_revision+1,updated_at=clock_timestamp()
  WHERE id=$1 AND writer_generation=$2 AND reclaimed_at IS NULL
- RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required
+ RETURNING seed_id, seed_preparation_generation, seed_key_id, retained_seed_key_id, id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, initial_disk_version_id, initial_publication_desired_version, initial_publication_fingerprint, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required, seed_key_required
 `
 
 type AdvanceComputerInstanceMembershipParams struct {
@@ -26,6 +26,10 @@ func (q *Queries) AdvanceComputerInstanceMembership(ctx context.Context, arg Adv
 	row := q.db.QueryRow(ctx, advanceComputerInstanceMembership, arg.ID, arg.WriterGeneration)
 	var i ComputerInstance
 	err := row.Scan(
+		&i.SeedID,
+		&i.SeedPreparationGeneration,
+		&i.SeedKeyID,
+		&i.RetainedSeedKeyID,
 		&i.ID,
 		&i.OrgID,
 		&i.WorkerGroupID,
@@ -44,6 +48,9 @@ func (q *Queries) AdvanceComputerInstanceMembership(ctx context.Context, arg Adv
 		&i.ComputerID,
 		&i.ProgramDeploymentID,
 		&i.SourceCheckpointID,
+		&i.InitialDiskVersionID,
+		&i.InitialPublicationDesiredVersion,
+		&i.InitialPublicationFingerprint,
 		&i.SourceDiskVersionID,
 		&i.SaveSequence,
 		&i.SaveDiskVersionID,
@@ -86,6 +93,7 @@ func (q *Queries) AdvanceComputerInstanceMembership(ctx context.Context, arg Adv
 		&i.FinalizationError,
 		&i.CaptureCheckpointID,
 		&i.SpecRetentionRequired,
+		&i.SeedKeyRequired,
 	)
 	return i, err
 }
@@ -109,7 +117,7 @@ WITH advanced AS (
       AND checkpoint.resume_committed_at IS NULL
       AND (checkpoint.expires_at IS NULL OR checkpoint.expires_at>clock_timestamp())))
  AND NOT EXISTS(SELECT 1 FROM computer_instances i WHERE i.computer_id=c.id AND i.reclaimed_at IS NULL)
- RETURNING c.id, c.environment_id, c.region_id, c.sandbox_declared_id, c.key, c.revision, c.writer_generation, c.head_disk_version_id, c.recovery_id, c.recovery_disk_version_id, c.recovery_reason, c.recovery_started_at, c.preparation_attempt_count, c.next_preparation_at, c.preparation_instance_id, c.recovery_completed_at, c.recovery_failure, c.computer_payload_required, c.recovery_payload_required, c.preparation_failure, c.initial_config, c.write_key_id, c.write_key_available, c.status, c.desired_state, c.dirty_state, c.last_activity_at, c.created_at, c.updated_at, c.deleted_at, c.secret_ca_certificate, c.secret_ca_private_key_nonce, c.secret_ca_private_key_ciphertext, c.secret_ca_not_after, c.computer_spec_id, c.creation_deployment_id, c.spec_retention_required,CASE WHEN checkpoint.id IS NOT NULL THEN checkpoint.private_computer_disk_version_id
+ RETURNING c.id, c.environment_id, c.region_id, c.sandbox_declared_id, c.key, c.revision, c.writer_generation, c.head_disk_version_id, c.recovery_id, c.recovery_disk_version_id, c.recovery_reason, c.recovery_started_at, c.preparation_attempt_count, c.next_preparation_at, c.preparation_instance_id, c.recovery_completed_at, c.recovery_failure, c.computer_payload_required, c.recovery_payload_required, c.preparation_failure, c.initial_config, c.write_key_id, c.write_key_available, c.status, c.desired_state, c.dirty_state, c.last_activity_at, c.created_at, c.updated_at, c.deleted_at, c.secret_ca_certificate, c.secret_ca_private_key_nonce, c.secret_ca_private_key_ciphertext, c.secret_ca_not_after, c.computer_spec_id, c.creation_deployment_id, c.spec_retention_required, c.snapshot_capture_id, c.snapshot_capture_status,CASE WHEN checkpoint.id IS NOT NULL THEN checkpoint.private_computer_disk_version_id
                    WHEN head.status='committed' THEN head.id END AS allocation_source_disk_version_id
 )
 INSERT INTO computer_instances (
@@ -130,7 +138,7 @@ SELECT $1,e.org_id,e.project_id,c.environment_id,c.region_id,
  clock_timestamp()+$17::bigint*interval '1 second',
  CASE WHEN $13::uuid IS NULL THEN 'open' ELSE 'restoring' END
  FROM advanced c JOIN environments e ON e.id=c.environment_id
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required
+RETURNING seed_id, seed_preparation_generation, seed_key_id, retained_seed_key_id, id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, initial_disk_version_id, initial_publication_desired_version, initial_publication_fingerprint, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required, seed_key_required
 `
 
 type AllocateComputerInstanceParams struct {
@@ -185,6 +193,10 @@ func (q *Queries) AllocateComputerInstance(ctx context.Context, arg AllocateComp
 	)
 	var i ComputerInstance
 	err := row.Scan(
+		&i.SeedID,
+		&i.SeedPreparationGeneration,
+		&i.SeedKeyID,
+		&i.RetainedSeedKeyID,
 		&i.ID,
 		&i.OrgID,
 		&i.WorkerGroupID,
@@ -203,6 +215,9 @@ func (q *Queries) AllocateComputerInstance(ctx context.Context, arg AllocateComp
 		&i.ComputerID,
 		&i.ProgramDeploymentID,
 		&i.SourceCheckpointID,
+		&i.InitialDiskVersionID,
+		&i.InitialPublicationDesiredVersion,
+		&i.InitialPublicationFingerprint,
 		&i.SourceDiskVersionID,
 		&i.SaveSequence,
 		&i.SaveDiskVersionID,
@@ -245,6 +260,7 @@ func (q *Queries) AllocateComputerInstance(ctx context.Context, arg AllocateComp
 		&i.FinalizationError,
 		&i.CaptureCheckpointID,
 		&i.SpecRetentionRequired,
+		&i.SeedKeyRequired,
 	)
 	return i, err
 }
@@ -259,7 +275,7 @@ UPDATE computer_instances AS i SET guest_channel_credential_hash=$1,
  AND EXISTS(SELECT 1 FROM worker_hosts h WHERE h.id=i.worker_host_id
  AND h.observed_at>=clock_timestamp()-$6::bigint*interval '1 second' AND h.run_paused_reason IS NULL)
  AND admission_state IN ('open','restoring')
- RETURNING i.id, i.org_id, i.worker_group_id, i.project_id, i.environment_id, i.region_id, i.worker_host_id, i.vm_platform_id, i.worker_epoch, i.vm_vcpu_count, i.cpu_config_digest, i.reserved_cpu_millis, i.reserved_memory_bytes, i.reserved_guest_ephemeral_disk_bytes, i.reserved_execution_slots, i.computer_id, i.program_deployment_id, i.source_checkpoint_id, i.source_disk_version_id, i.save_sequence, i.save_disk_version_id, i.save_base_disk_version_id, i.computer_payload_required, i.retained_source_disk_version_id, i.write_key_id, i.retained_write_key_id, i.computer_key_available, i.preparation_expires_at, i.desired_state, i.desired_version, i.desired_at, i.desired_reason, i.observed_state, i.observed_version, i.observed_desired_version, i.observed_at, i.allocated_at, i.ready_at, i.terminal_at, i.reclaimed_at, i.reclaim_evidence, i.terminal_reason_code, i.terminal_error, i.updated_at, i.computer_spec_id, i.writer_generation, i.writer_token_hash, i.writer_expires_at, i.admission_state, i.membership_revision, i.mount_state, i.mounted_at, i.unmounted_at, i.guest_channel_credential_hash, i.guest_channel_credential_expires_at, i.finalization_action, i.finalization_reason_code, i.finalization_error, i.capture_checkpoint_id, i.spec_retention_required
+ RETURNING i.seed_id, i.seed_preparation_generation, i.seed_key_id, i.retained_seed_key_id, i.id, i.org_id, i.worker_group_id, i.project_id, i.environment_id, i.region_id, i.worker_host_id, i.vm_platform_id, i.worker_epoch, i.vm_vcpu_count, i.cpu_config_digest, i.reserved_cpu_millis, i.reserved_memory_bytes, i.reserved_guest_ephemeral_disk_bytes, i.reserved_execution_slots, i.computer_id, i.program_deployment_id, i.source_checkpoint_id, i.initial_disk_version_id, i.initial_publication_desired_version, i.initial_publication_fingerprint, i.source_disk_version_id, i.save_sequence, i.save_disk_version_id, i.save_base_disk_version_id, i.computer_payload_required, i.retained_source_disk_version_id, i.write_key_id, i.retained_write_key_id, i.computer_key_available, i.preparation_expires_at, i.desired_state, i.desired_version, i.desired_at, i.desired_reason, i.observed_state, i.observed_version, i.observed_desired_version, i.observed_at, i.allocated_at, i.ready_at, i.terminal_at, i.reclaimed_at, i.reclaim_evidence, i.terminal_reason_code, i.terminal_error, i.updated_at, i.computer_spec_id, i.writer_generation, i.writer_token_hash, i.writer_expires_at, i.admission_state, i.membership_revision, i.mount_state, i.mounted_at, i.unmounted_at, i.guest_channel_credential_hash, i.guest_channel_credential_expires_at, i.finalization_action, i.finalization_reason_code, i.finalization_error, i.capture_checkpoint_id, i.spec_retention_required, i.seed_key_required
 `
 
 type ClaimComputerInstanceChannelParams struct {
@@ -285,6 +301,10 @@ func (q *Queries) ClaimComputerInstanceChannel(ctx context.Context, arg ClaimCom
 	)
 	var i ComputerInstance
 	err := row.Scan(
+		&i.SeedID,
+		&i.SeedPreparationGeneration,
+		&i.SeedKeyID,
+		&i.RetainedSeedKeyID,
 		&i.ID,
 		&i.OrgID,
 		&i.WorkerGroupID,
@@ -303,6 +323,9 @@ func (q *Queries) ClaimComputerInstanceChannel(ctx context.Context, arg ClaimCom
 		&i.ComputerID,
 		&i.ProgramDeploymentID,
 		&i.SourceCheckpointID,
+		&i.InitialDiskVersionID,
+		&i.InitialPublicationDesiredVersion,
+		&i.InitialPublicationFingerprint,
 		&i.SourceDiskVersionID,
 		&i.SaveSequence,
 		&i.SaveDiskVersionID,
@@ -345,6 +368,7 @@ func (q *Queries) ClaimComputerInstanceChannel(ctx context.Context, arg ClaimCom
 		&i.FinalizationError,
 		&i.CaptureCheckpointID,
 		&i.SpecRetentionRequired,
+		&i.SeedKeyRequired,
 	)
 	return i, err
 }
@@ -364,7 +388,7 @@ UPDATE computer_instances SET desired_state='closed',desired_version=desired_ver
  AND desired_state='ready' AND reclaimed_at IS NULL
  AND (writer_expires_at<=clock_timestamp()
       OR ((observed_state='allocated' OR admission_state='restoring') AND preparation_expires_at<=clock_timestamp()))
- RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required
+ RETURNING seed_id, seed_preparation_generation, seed_key_id, retained_seed_key_id, id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, initial_disk_version_id, initial_publication_desired_version, initial_publication_fingerprint, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required, seed_key_required
 `
 
 type ExpireComputerInstanceParams struct {
@@ -385,6 +409,10 @@ func (q *Queries) ExpireComputerInstance(ctx context.Context, arg ExpireComputer
 	)
 	var i ComputerInstance
 	err := row.Scan(
+		&i.SeedID,
+		&i.SeedPreparationGeneration,
+		&i.SeedKeyID,
+		&i.RetainedSeedKeyID,
 		&i.ID,
 		&i.OrgID,
 		&i.WorkerGroupID,
@@ -403,6 +431,9 @@ func (q *Queries) ExpireComputerInstance(ctx context.Context, arg ExpireComputer
 		&i.ComputerID,
 		&i.ProgramDeploymentID,
 		&i.SourceCheckpointID,
+		&i.InitialDiskVersionID,
+		&i.InitialPublicationDesiredVersion,
+		&i.InitialPublicationFingerprint,
 		&i.SourceDiskVersionID,
 		&i.SaveSequence,
 		&i.SaveDiskVersionID,
@@ -445,12 +476,13 @@ func (q *Queries) ExpireComputerInstance(ctx context.Context, arg ExpireComputer
 		&i.FinalizationError,
 		&i.CaptureCheckpointID,
 		&i.SpecRetentionRequired,
+		&i.SeedKeyRequired,
 	)
 	return i, err
 }
 
 const getComputerInstance = `-- name: GetComputerInstance :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required FROM computer_instances WHERE id=$1 AND environment_id=$2
+SELECT seed_id, seed_preparation_generation, seed_key_id, retained_seed_key_id, id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, initial_disk_version_id, initial_publication_desired_version, initial_publication_fingerprint, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required, seed_key_required FROM computer_instances WHERE id=$1 AND environment_id=$2
 `
 
 type GetComputerInstanceParams struct {
@@ -462,6 +494,10 @@ func (q *Queries) GetComputerInstance(ctx context.Context, arg GetComputerInstan
 	row := q.db.QueryRow(ctx, getComputerInstance, arg.ID, arg.EnvironmentID)
 	var i ComputerInstance
 	err := row.Scan(
+		&i.SeedID,
+		&i.SeedPreparationGeneration,
+		&i.SeedKeyID,
+		&i.RetainedSeedKeyID,
 		&i.ID,
 		&i.OrgID,
 		&i.WorkerGroupID,
@@ -480,6 +516,9 @@ func (q *Queries) GetComputerInstance(ctx context.Context, arg GetComputerInstan
 		&i.ComputerID,
 		&i.ProgramDeploymentID,
 		&i.SourceCheckpointID,
+		&i.InitialDiskVersionID,
+		&i.InitialPublicationDesiredVersion,
+		&i.InitialPublicationFingerprint,
 		&i.SourceDiskVersionID,
 		&i.SaveSequence,
 		&i.SaveDiskVersionID,
@@ -522,6 +561,7 @@ func (q *Queries) GetComputerInstance(ctx context.Context, arg GetComputerInstan
 		&i.FinalizationError,
 		&i.CaptureCheckpointID,
 		&i.SpecRetentionRequired,
+		&i.SeedKeyRequired,
 	)
 	return i, err
 }
@@ -614,13 +654,13 @@ func (q *Queries) GetWorkerComputerInstanceTarget(ctx context.Context, arg GetWo
 }
 
 const listComputerInstanceReconcileTargets = `-- name: ListComputerInstanceReconcileTargets :many
-SELECT i.id, i.org_id, i.worker_group_id, i.project_id, i.environment_id, i.region_id, i.worker_host_id, i.vm_platform_id, i.worker_epoch, i.vm_vcpu_count, i.cpu_config_digest, i.reserved_cpu_millis, i.reserved_memory_bytes, i.reserved_guest_ephemeral_disk_bytes, i.reserved_execution_slots, i.computer_id, i.program_deployment_id, i.source_checkpoint_id, i.source_disk_version_id, i.save_sequence, i.save_disk_version_id, i.save_base_disk_version_id, i.computer_payload_required, i.retained_source_disk_version_id, i.write_key_id, i.retained_write_key_id, i.computer_key_available, i.preparation_expires_at, i.desired_state, i.desired_version, i.desired_at, i.desired_reason, i.observed_state, i.observed_version, i.observed_desired_version, i.observed_at, i.allocated_at, i.ready_at, i.terminal_at, i.reclaimed_at, i.reclaim_evidence, i.terminal_reason_code, i.terminal_error, i.updated_at, i.computer_spec_id, i.writer_generation, i.writer_token_hash, i.writer_expires_at, i.admission_state, i.membership_revision, i.mount_state, i.mounted_at, i.unmounted_at, i.guest_channel_credential_hash, i.guest_channel_credential_expires_at, i.finalization_action, i.finalization_reason_code, i.finalization_error, i.capture_checkpoint_id, i.spec_retention_required,spec.config AS computer_config,spec.digest AS computer_spec_digest,
+SELECT i.seed_id, i.seed_preparation_generation, i.seed_key_id, i.retained_seed_key_id, i.id, i.org_id, i.worker_group_id, i.project_id, i.environment_id, i.region_id, i.worker_host_id, i.vm_platform_id, i.worker_epoch, i.vm_vcpu_count, i.cpu_config_digest, i.reserved_cpu_millis, i.reserved_memory_bytes, i.reserved_guest_ephemeral_disk_bytes, i.reserved_execution_slots, i.computer_id, i.program_deployment_id, i.source_checkpoint_id, i.initial_disk_version_id, i.initial_publication_desired_version, i.initial_publication_fingerprint, i.source_disk_version_id, i.save_sequence, i.save_disk_version_id, i.save_base_disk_version_id, i.computer_payload_required, i.retained_source_disk_version_id, i.write_key_id, i.retained_write_key_id, i.computer_key_available, i.preparation_expires_at, i.desired_state, i.desired_version, i.desired_at, i.desired_reason, i.observed_state, i.observed_version, i.observed_desired_version, i.observed_at, i.allocated_at, i.ready_at, i.terminal_at, i.reclaimed_at, i.reclaim_evidence, i.terminal_reason_code, i.terminal_error, i.updated_at, i.computer_spec_id, i.writer_generation, i.writer_token_hash, i.writer_expires_at, i.admission_state, i.membership_revision, i.mount_state, i.mounted_at, i.unmounted_at, i.guest_channel_credential_hash, i.guest_channel_credential_expires_at, i.finalization_action, i.finalization_reason_code, i.finalization_error, i.capture_checkpoint_id, i.spec_retention_required, i.seed_key_required,spec.config AS computer_config,spec.digest AS computer_spec_digest,
  spec.seed_digest AS computer_image_digest,spec.seed_size_bytes AS computer_image_size_bytes,
  spec.seed_media_type AS computer_image_media_type,
  source.id AS preparation_disk_version_id,
  c.initial_config AS computer_initial_config,root.locator AS computer_version_locator,
- source.status AS computer_disk_version_status,source.root_pack_digest AS computer_content_digest,
- source.logical_bytes AS computer_logical_size_bytes,
+ source.status AS computer_disk_version_status,root.root_pack_digest AS computer_content_digest,
+ root.logical_bytes AS computer_logical_size_bytes,
  platform.arch AS computer_architecture,platform.rootfs_digest,platform.contract AS vm_contract,
  program.runtime_artifact_digest AS program_runtime_digest,program.program_index_digest,
  artifact.digest AS program_artifact_digest,artifact.size_bytes AS program_artifact_size_bytes,
@@ -629,7 +669,8 @@ SELECT i.id, i.org_id, i.worker_group_id, i.project_id, i.environment_id, i.regi
  JOIN computer_specs spec ON spec.id=i.computer_spec_id AND spec.environment_id=i.environment_id
  JOIN vm_platforms platform ON platform.id=i.vm_platform_id
  LEFT JOIN computer_disk_versions source ON source.id=COALESCE(i.source_disk_version_id,c.head_disk_version_id) AND source.computer_id=i.computer_id
- LEFT JOIN computer_disk_version_roots root ON root.version_id=source.id AND root.computer_id=i.computer_id
+ LEFT JOIN computer_disk_version_roots retained ON retained.version_id=source.id AND retained.computer_id=i.computer_id
+ LEFT JOIN computer_disk_roots root ON root.environment_id=retained.environment_id AND root.id=retained.root_id
  LEFT JOIN deployments program ON program.id=i.program_deployment_id AND program.environment_id=i.environment_id
  LEFT JOIN artifacts artifact ON artifact.id=program.program_artifact_id AND artifact.environment_id=i.environment_id
  WHERE i.worker_host_id=$1 AND i.worker_epoch=$2
@@ -647,85 +688,93 @@ type ListComputerInstanceReconcileTargetsParams struct {
 }
 
 type ListComputerInstanceReconcileTargetsRow struct {
-	ID                              pgtype.UUID        `json:"id"`
-	OrgID                           pgtype.UUID        `json:"org_id"`
-	WorkerGroupID                   pgtype.UUID        `json:"worker_group_id"`
-	ProjectID                       pgtype.UUID        `json:"project_id"`
-	EnvironmentID                   pgtype.UUID        `json:"environment_id"`
-	RegionID                        string             `json:"region_id"`
-	WorkerHostID                    pgtype.UUID        `json:"worker_host_id"`
-	VMPlatformID                    string             `json:"vm_platform_id"`
-	WorkerEpoch                     int64              `json:"worker_epoch"`
-	VMVCPUCount                     int32              `json:"vm_vcpu_count"`
-	CPUConfigDigest                 string             `json:"cpu_config_digest"`
-	ReservedCPUMillis               int64              `json:"reserved_cpu_millis"`
-	ReservedMemoryBytes             int64              `json:"reserved_memory_bytes"`
-	ReservedGuestEphemeralDiskBytes int64              `json:"reserved_guest_ephemeral_disk_bytes"`
-	ReservedExecutionSlots          int32              `json:"reserved_execution_slots"`
-	ComputerID                      pgtype.UUID        `json:"computer_id"`
-	ProgramDeploymentID             pgtype.UUID        `json:"program_deployment_id"`
-	SourceCheckpointID              pgtype.UUID        `json:"source_checkpoint_id"`
-	SourceDiskVersionID             pgtype.UUID        `json:"source_disk_version_id"`
-	SaveSequence                    int64              `json:"save_sequence"`
-	SaveDiskVersionID               pgtype.UUID        `json:"save_disk_version_id"`
-	SaveBaseDiskVersionID           pgtype.UUID        `json:"save_base_disk_version_id"`
-	ComputerPayloadRequired         pgtype.Bool        `json:"computer_payload_required"`
-	RetainedSourceDiskVersionID     pgtype.UUID        `json:"retained_source_disk_version_id"`
-	WriteKeyID                      pgtype.UUID        `json:"write_key_id"`
-	RetainedWriteKeyID              pgtype.UUID        `json:"retained_write_key_id"`
-	ComputerKeyAvailable            pgtype.Bool        `json:"computer_key_available"`
-	PreparationExpiresAt            pgtype.Timestamptz `json:"preparation_expires_at"`
-	DesiredState                    string             `json:"desired_state"`
-	DesiredVersion                  int64              `json:"desired_version"`
-	DesiredAt                       pgtype.Timestamptz `json:"desired_at"`
-	DesiredReason                   string             `json:"desired_reason"`
-	ObservedState                   string             `json:"observed_state"`
-	ObservedVersion                 int64              `json:"observed_version"`
-	ObservedDesiredVersion          int64              `json:"observed_desired_version"`
-	ObservedAt                      pgtype.Timestamptz `json:"observed_at"`
-	AllocatedAt                     pgtype.Timestamptz `json:"allocated_at"`
-	ReadyAt                         pgtype.Timestamptz `json:"ready_at"`
-	TerminalAt                      pgtype.Timestamptz `json:"terminal_at"`
-	ReclaimedAt                     pgtype.Timestamptz `json:"reclaimed_at"`
-	ReclaimEvidence                 []byte             `json:"reclaim_evidence"`
-	TerminalReasonCode              pgtype.Text        `json:"terminal_reason_code"`
-	TerminalError                   []byte             `json:"terminal_error"`
-	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
-	ComputerSpecID                  pgtype.UUID        `json:"computer_spec_id"`
-	WriterGeneration                int64              `json:"writer_generation"`
-	WriterTokenHash                 []byte             `json:"writer_token_hash"`
-	WriterExpiresAt                 pgtype.Timestamptz `json:"writer_expires_at"`
-	AdmissionState                  string             `json:"admission_state"`
-	MembershipRevision              int64              `json:"membership_revision"`
-	MountState                      string             `json:"mount_state"`
-	MountedAt                       pgtype.Timestamptz `json:"mounted_at"`
-	UnmountedAt                     pgtype.Timestamptz `json:"unmounted_at"`
-	GuestChannelCredentialHash      []byte             `json:"guest_channel_credential_hash"`
-	GuestChannelCredentialExpiresAt pgtype.Timestamptz `json:"guest_channel_credential_expires_at"`
-	FinalizationAction              pgtype.Text        `json:"finalization_action"`
-	FinalizationReasonCode          pgtype.Text        `json:"finalization_reason_code"`
-	FinalizationError               []byte             `json:"finalization_error"`
-	CaptureCheckpointID             pgtype.UUID        `json:"capture_checkpoint_id"`
-	SpecRetentionRequired           pgtype.Bool        `json:"spec_retention_required"`
-	ComputerConfig                  []byte             `json:"computer_config"`
-	ComputerSpecDigest              []byte             `json:"computer_spec_digest"`
-	ComputerImageDigest             string             `json:"computer_image_digest"`
-	ComputerImageSizeBytes          int64              `json:"computer_image_size_bytes"`
-	ComputerImageMediaType          string             `json:"computer_image_media_type"`
-	PreparationDiskVersionID        pgtype.UUID        `json:"preparation_disk_version_id"`
-	ComputerInitialConfig           []byte             `json:"computer_initial_config"`
-	ComputerVersionLocator          []byte             `json:"computer_version_locator"`
-	ComputerDiskVersionStatus       pgtype.Text        `json:"computer_disk_version_status"`
-	ComputerContentDigest           pgtype.Text        `json:"computer_content_digest"`
-	ComputerLogicalSizeBytes        pgtype.Int8        `json:"computer_logical_size_bytes"`
-	ComputerArchitecture            string             `json:"computer_architecture"`
-	RootfsDigest                    string             `json:"rootfs_digest"`
-	VmContract                      string             `json:"vm_contract"`
-	ProgramRuntimeDigest            pgtype.Text        `json:"program_runtime_digest"`
-	ProgramIndexDigest              []byte             `json:"program_index_digest"`
-	ProgramArtifactDigest           pgtype.Text        `json:"program_artifact_digest"`
-	ProgramArtifactSizeBytes        pgtype.Int8        `json:"program_artifact_size_bytes"`
-	ProgramArtifactMediaType        pgtype.Text        `json:"program_artifact_media_type"`
+	SeedID                           pgtype.UUID        `json:"seed_id"`
+	SeedPreparationGeneration        pgtype.Int8        `json:"seed_preparation_generation"`
+	SeedKeyID                        pgtype.UUID        `json:"seed_key_id"`
+	RetainedSeedKeyID                pgtype.UUID        `json:"retained_seed_key_id"`
+	ID                               pgtype.UUID        `json:"id"`
+	OrgID                            pgtype.UUID        `json:"org_id"`
+	WorkerGroupID                    pgtype.UUID        `json:"worker_group_id"`
+	ProjectID                        pgtype.UUID        `json:"project_id"`
+	EnvironmentID                    pgtype.UUID        `json:"environment_id"`
+	RegionID                         string             `json:"region_id"`
+	WorkerHostID                     pgtype.UUID        `json:"worker_host_id"`
+	VMPlatformID                     string             `json:"vm_platform_id"`
+	WorkerEpoch                      int64              `json:"worker_epoch"`
+	VMVCPUCount                      int32              `json:"vm_vcpu_count"`
+	CPUConfigDigest                  string             `json:"cpu_config_digest"`
+	ReservedCPUMillis                int64              `json:"reserved_cpu_millis"`
+	ReservedMemoryBytes              int64              `json:"reserved_memory_bytes"`
+	ReservedGuestEphemeralDiskBytes  int64              `json:"reserved_guest_ephemeral_disk_bytes"`
+	ReservedExecutionSlots           int32              `json:"reserved_execution_slots"`
+	ComputerID                       pgtype.UUID        `json:"computer_id"`
+	ProgramDeploymentID              pgtype.UUID        `json:"program_deployment_id"`
+	SourceCheckpointID               pgtype.UUID        `json:"source_checkpoint_id"`
+	InitialDiskVersionID             pgtype.UUID        `json:"initial_disk_version_id"`
+	InitialPublicationDesiredVersion pgtype.Int8        `json:"initial_publication_desired_version"`
+	InitialPublicationFingerprint    []byte             `json:"initial_publication_fingerprint"`
+	SourceDiskVersionID              pgtype.UUID        `json:"source_disk_version_id"`
+	SaveSequence                     int64              `json:"save_sequence"`
+	SaveDiskVersionID                pgtype.UUID        `json:"save_disk_version_id"`
+	SaveBaseDiskVersionID            pgtype.UUID        `json:"save_base_disk_version_id"`
+	ComputerPayloadRequired          pgtype.Bool        `json:"computer_payload_required"`
+	RetainedSourceDiskVersionID      pgtype.UUID        `json:"retained_source_disk_version_id"`
+	WriteKeyID                       pgtype.UUID        `json:"write_key_id"`
+	RetainedWriteKeyID               pgtype.UUID        `json:"retained_write_key_id"`
+	ComputerKeyAvailable             pgtype.Bool        `json:"computer_key_available"`
+	PreparationExpiresAt             pgtype.Timestamptz `json:"preparation_expires_at"`
+	DesiredState                     string             `json:"desired_state"`
+	DesiredVersion                   int64              `json:"desired_version"`
+	DesiredAt                        pgtype.Timestamptz `json:"desired_at"`
+	DesiredReason                    string             `json:"desired_reason"`
+	ObservedState                    string             `json:"observed_state"`
+	ObservedVersion                  int64              `json:"observed_version"`
+	ObservedDesiredVersion           int64              `json:"observed_desired_version"`
+	ObservedAt                       pgtype.Timestamptz `json:"observed_at"`
+	AllocatedAt                      pgtype.Timestamptz `json:"allocated_at"`
+	ReadyAt                          pgtype.Timestamptz `json:"ready_at"`
+	TerminalAt                       pgtype.Timestamptz `json:"terminal_at"`
+	ReclaimedAt                      pgtype.Timestamptz `json:"reclaimed_at"`
+	ReclaimEvidence                  []byte             `json:"reclaim_evidence"`
+	TerminalReasonCode               pgtype.Text        `json:"terminal_reason_code"`
+	TerminalError                    []byte             `json:"terminal_error"`
+	UpdatedAt                        pgtype.Timestamptz `json:"updated_at"`
+	ComputerSpecID                   pgtype.UUID        `json:"computer_spec_id"`
+	WriterGeneration                 int64              `json:"writer_generation"`
+	WriterTokenHash                  []byte             `json:"writer_token_hash"`
+	WriterExpiresAt                  pgtype.Timestamptz `json:"writer_expires_at"`
+	AdmissionState                   string             `json:"admission_state"`
+	MembershipRevision               int64              `json:"membership_revision"`
+	MountState                       string             `json:"mount_state"`
+	MountedAt                        pgtype.Timestamptz `json:"mounted_at"`
+	UnmountedAt                      pgtype.Timestamptz `json:"unmounted_at"`
+	GuestChannelCredentialHash       []byte             `json:"guest_channel_credential_hash"`
+	GuestChannelCredentialExpiresAt  pgtype.Timestamptz `json:"guest_channel_credential_expires_at"`
+	FinalizationAction               pgtype.Text        `json:"finalization_action"`
+	FinalizationReasonCode           pgtype.Text        `json:"finalization_reason_code"`
+	FinalizationError                []byte             `json:"finalization_error"`
+	CaptureCheckpointID              pgtype.UUID        `json:"capture_checkpoint_id"`
+	SpecRetentionRequired            pgtype.Bool        `json:"spec_retention_required"`
+	SeedKeyRequired                  pgtype.Bool        `json:"seed_key_required"`
+	ComputerConfig                   []byte             `json:"computer_config"`
+	ComputerSpecDigest               []byte             `json:"computer_spec_digest"`
+	ComputerImageDigest              string             `json:"computer_image_digest"`
+	ComputerImageSizeBytes           int64              `json:"computer_image_size_bytes"`
+	ComputerImageMediaType           string             `json:"computer_image_media_type"`
+	PreparationDiskVersionID         pgtype.UUID        `json:"preparation_disk_version_id"`
+	ComputerInitialConfig            []byte             `json:"computer_initial_config"`
+	ComputerVersionLocator           []byte             `json:"computer_version_locator"`
+	ComputerDiskVersionStatus        pgtype.Text        `json:"computer_disk_version_status"`
+	ComputerContentDigest            pgtype.Text        `json:"computer_content_digest"`
+	ComputerLogicalSizeBytes         pgtype.Int8        `json:"computer_logical_size_bytes"`
+	ComputerArchitecture             string             `json:"computer_architecture"`
+	RootfsDigest                     string             `json:"rootfs_digest"`
+	VmContract                       string             `json:"vm_contract"`
+	ProgramRuntimeDigest             pgtype.Text        `json:"program_runtime_digest"`
+	ProgramIndexDigest               []byte             `json:"program_index_digest"`
+	ProgramArtifactDigest            pgtype.Text        `json:"program_artifact_digest"`
+	ProgramArtifactSizeBytes         pgtype.Int8        `json:"program_artifact_size_bytes"`
+	ProgramArtifactMediaType         pgtype.Text        `json:"program_artifact_media_type"`
 }
 
 func (q *Queries) ListComputerInstanceReconcileTargets(ctx context.Context, arg ListComputerInstanceReconcileTargetsParams) ([]ListComputerInstanceReconcileTargetsRow, error) {
@@ -743,6 +792,10 @@ func (q *Queries) ListComputerInstanceReconcileTargets(ctx context.Context, arg 
 	for rows.Next() {
 		var i ListComputerInstanceReconcileTargetsRow
 		if err := rows.Scan(
+			&i.SeedID,
+			&i.SeedPreparationGeneration,
+			&i.SeedKeyID,
+			&i.RetainedSeedKeyID,
 			&i.ID,
 			&i.OrgID,
 			&i.WorkerGroupID,
@@ -761,6 +814,9 @@ func (q *Queries) ListComputerInstanceReconcileTargets(ctx context.Context, arg 
 			&i.ComputerID,
 			&i.ProgramDeploymentID,
 			&i.SourceCheckpointID,
+			&i.InitialDiskVersionID,
+			&i.InitialPublicationDesiredVersion,
+			&i.InitialPublicationFingerprint,
 			&i.SourceDiskVersionID,
 			&i.SaveSequence,
 			&i.SaveDiskVersionID,
@@ -803,6 +859,7 @@ func (q *Queries) ListComputerInstanceReconcileTargets(ctx context.Context, arg 
 			&i.FinalizationError,
 			&i.CaptureCheckpointID,
 			&i.SpecRetentionRequired,
+			&i.SeedKeyRequired,
 			&i.ComputerConfig,
 			&i.ComputerSpecDigest,
 			&i.ComputerImageDigest,
@@ -834,7 +891,7 @@ func (q *Queries) ListComputerInstanceReconcileTargets(ctx context.Context, arg 
 }
 
 const listExpiredComputerInstances = `-- name: ListExpiredComputerInstances :many
-SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required FROM computer_instances
+SELECT seed_id, seed_preparation_generation, seed_key_id, retained_seed_key_id, id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, initial_disk_version_id, initial_publication_desired_version, initial_publication_fingerprint, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required, seed_key_required FROM computer_instances
  WHERE reclaimed_at IS NULL AND desired_state='ready'
  AND (writer_expires_at<=clock_timestamp()
       OR ((observed_state='allocated' OR admission_state='restoring') AND preparation_expires_at<=clock_timestamp()))
@@ -854,6 +911,10 @@ func (q *Queries) ListExpiredComputerInstances(ctx context.Context, rowLimit int
 	for rows.Next() {
 		var i ComputerInstance
 		if err := rows.Scan(
+			&i.SeedID,
+			&i.SeedPreparationGeneration,
+			&i.SeedKeyID,
+			&i.RetainedSeedKeyID,
 			&i.ID,
 			&i.OrgID,
 			&i.WorkerGroupID,
@@ -872,6 +933,9 @@ func (q *Queries) ListExpiredComputerInstances(ctx context.Context, rowLimit int
 			&i.ComputerID,
 			&i.ProgramDeploymentID,
 			&i.SourceCheckpointID,
+			&i.InitialDiskVersionID,
+			&i.InitialPublicationDesiredVersion,
+			&i.InitialPublicationFingerprint,
 			&i.SourceDiskVersionID,
 			&i.SaveSequence,
 			&i.SaveDiskVersionID,
@@ -914,6 +978,7 @@ func (q *Queries) ListExpiredComputerInstances(ctx context.Context, rowLimit int
 			&i.FinalizationError,
 			&i.CaptureCheckpointID,
 			&i.SpecRetentionRequired,
+			&i.SeedKeyRequired,
 		); err != nil {
 			return nil, err
 		}
@@ -967,7 +1032,7 @@ func (q *Queries) ListUnclaimedWorkerComputerInstances(ctx context.Context, arg 
 }
 
 const lockComputerInstance = `-- name: LockComputerInstance :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required FROM computer_instances WHERE computer_id=$1
+SELECT seed_id, seed_preparation_generation, seed_key_id, retained_seed_key_id, id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, initial_disk_version_id, initial_publication_desired_version, initial_publication_fingerprint, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required, seed_key_required FROM computer_instances WHERE computer_id=$1
  AND environment_id=$2 AND reclaimed_at IS NULL FOR UPDATE
 `
 
@@ -980,6 +1045,10 @@ func (q *Queries) LockComputerInstance(ctx context.Context, arg LockComputerInst
 	row := q.db.QueryRow(ctx, lockComputerInstance, arg.ComputerID, arg.EnvironmentID)
 	var i ComputerInstance
 	err := row.Scan(
+		&i.SeedID,
+		&i.SeedPreparationGeneration,
+		&i.SeedKeyID,
+		&i.RetainedSeedKeyID,
 		&i.ID,
 		&i.OrgID,
 		&i.WorkerGroupID,
@@ -998,6 +1067,9 @@ func (q *Queries) LockComputerInstance(ctx context.Context, arg LockComputerInst
 		&i.ComputerID,
 		&i.ProgramDeploymentID,
 		&i.SourceCheckpointID,
+		&i.InitialDiskVersionID,
+		&i.InitialPublicationDesiredVersion,
+		&i.InitialPublicationFingerprint,
 		&i.SourceDiskVersionID,
 		&i.SaveSequence,
 		&i.SaveDiskVersionID,
@@ -1040,12 +1112,13 @@ func (q *Queries) LockComputerInstance(ctx context.Context, arg LockComputerInst
 		&i.FinalizationError,
 		&i.CaptureCheckpointID,
 		&i.SpecRetentionRequired,
+		&i.SeedKeyRequired,
 	)
 	return i, err
 }
 
 const lockWorkerComputerInstance = `-- name: LockWorkerComputerInstance :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required FROM computer_instances WHERE id=$1 AND org_id=$2
+SELECT seed_id, seed_preparation_generation, seed_key_id, retained_seed_key_id, id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, initial_disk_version_id, initial_publication_desired_version, initial_publication_fingerprint, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required, seed_key_required FROM computer_instances WHERE id=$1 AND org_id=$2
  AND worker_host_id=$3 AND worker_epoch=$4
  AND worker_group_id=$5 FOR UPDATE
 `
@@ -1068,6 +1141,10 @@ func (q *Queries) LockWorkerComputerInstance(ctx context.Context, arg LockWorker
 	)
 	var i ComputerInstance
 	err := row.Scan(
+		&i.SeedID,
+		&i.SeedPreparationGeneration,
+		&i.SeedKeyID,
+		&i.RetainedSeedKeyID,
 		&i.ID,
 		&i.OrgID,
 		&i.WorkerGroupID,
@@ -1086,6 +1163,9 @@ func (q *Queries) LockWorkerComputerInstance(ctx context.Context, arg LockWorker
 		&i.ComputerID,
 		&i.ProgramDeploymentID,
 		&i.SourceCheckpointID,
+		&i.InitialDiskVersionID,
+		&i.InitialPublicationDesiredVersion,
+		&i.InitialPublicationFingerprint,
 		&i.SourceDiskVersionID,
 		&i.SaveSequence,
 		&i.SaveDiskVersionID,
@@ -1128,6 +1208,7 @@ func (q *Queries) LockWorkerComputerInstance(ctx context.Context, arg LockWorker
 		&i.FinalizationError,
 		&i.CaptureCheckpointID,
 		&i.SpecRetentionRequired,
+		&i.SeedKeyRequired,
 	)
 	return i, err
 }
@@ -1144,7 +1225,7 @@ UPDATE computer_instances SET observed_state='failed',observed_version=observed_
 WHERE id=$4 AND worker_host_id=$5 AND worker_epoch=$6
  AND desired_version=$1 AND observed_version=$7
  AND observed_state IN ('allocated','ready') AND reclaimed_at IS NULL
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required
+RETURNING seed_id, seed_preparation_generation, seed_key_id, retained_seed_key_id, id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, initial_disk_version_id, initial_publication_desired_version, initial_publication_fingerprint, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required, seed_key_required
 `
 
 type MarkComputerInstanceFailedParams struct {
@@ -1170,6 +1251,10 @@ func (q *Queries) MarkComputerInstanceFailed(ctx context.Context, arg MarkComput
 	)
 	var i ComputerInstance
 	err := row.Scan(
+		&i.SeedID,
+		&i.SeedPreparationGeneration,
+		&i.SeedKeyID,
+		&i.RetainedSeedKeyID,
 		&i.ID,
 		&i.OrgID,
 		&i.WorkerGroupID,
@@ -1188,6 +1273,9 @@ func (q *Queries) MarkComputerInstanceFailed(ctx context.Context, arg MarkComput
 		&i.ComputerID,
 		&i.ProgramDeploymentID,
 		&i.SourceCheckpointID,
+		&i.InitialDiskVersionID,
+		&i.InitialPublicationDesiredVersion,
+		&i.InitialPublicationFingerprint,
 		&i.SourceDiskVersionID,
 		&i.SaveSequence,
 		&i.SaveDiskVersionID,
@@ -1230,6 +1318,7 @@ func (q *Queries) MarkComputerInstanceFailed(ctx context.Context, arg MarkComput
 		&i.FinalizationError,
 		&i.CaptureCheckpointID,
 		&i.SpecRetentionRequired,
+		&i.SeedKeyRequired,
 	)
 	return i, err
 }
@@ -1238,7 +1327,7 @@ const markComputerInstanceMounting = `-- name: MarkComputerInstanceMounting :one
 UPDATE computer_instances SET mount_state='mounting',updated_at=clock_timestamp()
  WHERE id=$1 AND writer_generation=$2
  AND desired_state='ready' AND mount_state IN ('pending','mounting') AND reclaimed_at IS NULL
- RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required
+ RETURNING seed_id, seed_preparation_generation, seed_key_id, retained_seed_key_id, id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, initial_disk_version_id, initial_publication_desired_version, initial_publication_fingerprint, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required, seed_key_required
 `
 
 type MarkComputerInstanceMountingParams struct {
@@ -1250,6 +1339,10 @@ func (q *Queries) MarkComputerInstanceMounting(ctx context.Context, arg MarkComp
 	row := q.db.QueryRow(ctx, markComputerInstanceMounting, arg.ID, arg.WriterGeneration)
 	var i ComputerInstance
 	err := row.Scan(
+		&i.SeedID,
+		&i.SeedPreparationGeneration,
+		&i.SeedKeyID,
+		&i.RetainedSeedKeyID,
 		&i.ID,
 		&i.OrgID,
 		&i.WorkerGroupID,
@@ -1268,6 +1361,9 @@ func (q *Queries) MarkComputerInstanceMounting(ctx context.Context, arg MarkComp
 		&i.ComputerID,
 		&i.ProgramDeploymentID,
 		&i.SourceCheckpointID,
+		&i.InitialDiskVersionID,
+		&i.InitialPublicationDesiredVersion,
+		&i.InitialPublicationFingerprint,
 		&i.SourceDiskVersionID,
 		&i.SaveSequence,
 		&i.SaveDiskVersionID,
@@ -1310,6 +1406,7 @@ func (q *Queries) MarkComputerInstanceMounting(ctx context.Context, arg MarkComp
 		&i.FinalizationError,
 		&i.CaptureCheckpointID,
 		&i.SpecRetentionRequired,
+		&i.SeedKeyRequired,
 	)
 	return i, err
 }
@@ -1327,7 +1424,7 @@ UPDATE computer_instances SET observed_state='ready',observed_version=observed_v
  AND vm_vcpu_count=$7 AND cpu_config_digest=$8
  AND (observed_state='ready' OR (observed_state='allocated' AND preparation_expires_at>clock_timestamp()))
  AND reclaimed_at IS NULL
- RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required
+ RETURNING seed_id, seed_preparation_generation, seed_key_id, retained_seed_key_id, id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, initial_disk_version_id, initial_publication_desired_version, initial_publication_fingerprint, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required, seed_key_required
 `
 
 type MarkComputerInstanceReadyParams struct {
@@ -1354,6 +1451,10 @@ func (q *Queries) MarkComputerInstanceReady(ctx context.Context, arg MarkCompute
 	)
 	var i ComputerInstance
 	err := row.Scan(
+		&i.SeedID,
+		&i.SeedPreparationGeneration,
+		&i.SeedKeyID,
+		&i.RetainedSeedKeyID,
 		&i.ID,
 		&i.OrgID,
 		&i.WorkerGroupID,
@@ -1372,6 +1473,9 @@ func (q *Queries) MarkComputerInstanceReady(ctx context.Context, arg MarkCompute
 		&i.ComputerID,
 		&i.ProgramDeploymentID,
 		&i.SourceCheckpointID,
+		&i.InitialDiskVersionID,
+		&i.InitialPublicationDesiredVersion,
+		&i.InitialPublicationFingerprint,
 		&i.SourceDiskVersionID,
 		&i.SaveSequence,
 		&i.SaveDiskVersionID,
@@ -1414,6 +1518,7 @@ func (q *Queries) MarkComputerInstanceReady(ctx context.Context, arg MarkCompute
 		&i.FinalizationError,
 		&i.CaptureCheckpointID,
 		&i.SpecRetentionRequired,
+		&i.SeedKeyRequired,
 	)
 	return i, err
 }
@@ -1428,7 +1533,7 @@ UPDATE computer_instances SET observed_state=$1,observed_version=observed_versio
  AND writer_generation=$10 AND desired_version=$2
  AND observed_version=$11
  AND desired_state='closed' AND reclaimed_at IS NULL
- AND (NOT $12::boolean OR observed_state IN ('failed','lost')) RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required
+ AND (NOT $12::boolean OR observed_state IN ('failed','lost')) RETURNING seed_id, seed_preparation_generation, seed_key_id, retained_seed_key_id, id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, initial_disk_version_id, initial_publication_desired_version, initial_publication_fingerprint, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required, seed_key_required
 `
 
 type ReclaimComputerInstanceParams struct {
@@ -1464,6 +1569,10 @@ func (q *Queries) ReclaimComputerInstance(ctx context.Context, arg ReclaimComput
 	)
 	var i ComputerInstance
 	err := row.Scan(
+		&i.SeedID,
+		&i.SeedPreparationGeneration,
+		&i.SeedKeyID,
+		&i.RetainedSeedKeyID,
 		&i.ID,
 		&i.OrgID,
 		&i.WorkerGroupID,
@@ -1482,6 +1591,9 @@ func (q *Queries) ReclaimComputerInstance(ctx context.Context, arg ReclaimComput
 		&i.ComputerID,
 		&i.ProgramDeploymentID,
 		&i.SourceCheckpointID,
+		&i.InitialDiskVersionID,
+		&i.InitialPublicationDesiredVersion,
+		&i.InitialPublicationFingerprint,
 		&i.SourceDiskVersionID,
 		&i.SaveSequence,
 		&i.SaveDiskVersionID,
@@ -1524,6 +1636,7 @@ func (q *Queries) ReclaimComputerInstance(ctx context.Context, arg ReclaimComput
 		&i.FinalizationError,
 		&i.CaptureCheckpointID,
 		&i.SpecRetentionRequired,
+		&i.SeedKeyRequired,
 	)
 	return i, err
 }
@@ -1538,7 +1651,7 @@ UPDATE computer_instances SET writer_expires_at=clock_timestamp()+$1::bigint*int
  AND worker_host_id=$5 AND worker_epoch=$6
  AND writer_expires_at>clock_timestamp() AND reclaimed_at IS NULL
  AND desired_state='ready' AND admission_state<>'closed'
- RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required
+ RETURNING seed_id, seed_preparation_generation, seed_key_id, retained_seed_key_id, id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, initial_disk_version_id, initial_publication_desired_version, initial_publication_fingerprint, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required, seed_key_required
 `
 
 type RenewComputerInstanceWriterParams struct {
@@ -1561,6 +1674,10 @@ func (q *Queries) RenewComputerInstanceWriter(ctx context.Context, arg RenewComp
 	)
 	var i ComputerInstance
 	err := row.Scan(
+		&i.SeedID,
+		&i.SeedPreparationGeneration,
+		&i.SeedKeyID,
+		&i.RetainedSeedKeyID,
 		&i.ID,
 		&i.OrgID,
 		&i.WorkerGroupID,
@@ -1579,6 +1696,9 @@ func (q *Queries) RenewComputerInstanceWriter(ctx context.Context, arg RenewComp
 		&i.ComputerID,
 		&i.ProgramDeploymentID,
 		&i.SourceCheckpointID,
+		&i.InitialDiskVersionID,
+		&i.InitialPublicationDesiredVersion,
+		&i.InitialPublicationFingerprint,
 		&i.SourceDiskVersionID,
 		&i.SaveSequence,
 		&i.SaveDiskVersionID,
@@ -1621,6 +1741,7 @@ func (q *Queries) RenewComputerInstanceWriter(ctx context.Context, arg RenewComp
 		&i.FinalizationError,
 		&i.CaptureCheckpointID,
 		&i.SpecRetentionRequired,
+		&i.SeedKeyRequired,
 	)
 	return i, err
 }
@@ -1632,7 +1753,7 @@ UPDATE computer_instances SET desired_state='closed',desired_version=desired_ver
  finalization_error=$3,mount_state=CASE WHEN mount_state='mounted' THEN 'unmounting' ELSE mount_state END,
  updated_at=clock_timestamp()
  WHERE id=$4 AND writer_generation=$5
- AND desired_state='ready' AND reclaimed_at IS NULL RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required
+ AND desired_state='ready' AND reclaimed_at IS NULL RETURNING seed_id, seed_preparation_generation, seed_key_id, retained_seed_key_id, id, org_id, worker_group_id, project_id, environment_id, region_id, worker_host_id, vm_platform_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, computer_id, program_deployment_id, source_checkpoint_id, initial_disk_version_id, initial_publication_desired_version, initial_publication_fingerprint, source_disk_version_id, save_sequence, save_disk_version_id, save_base_disk_version_id, computer_payload_required, retained_source_disk_version_id, write_key_id, retained_write_key_id, computer_key_available, preparation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_spec_id, writer_generation, writer_token_hash, writer_expires_at, admission_state, membership_revision, mount_state, mounted_at, unmounted_at, guest_channel_credential_hash, guest_channel_credential_expires_at, finalization_action, finalization_reason_code, finalization_error, capture_checkpoint_id, spec_retention_required, seed_key_required
 `
 
 type RequestComputerInstanceCloseParams struct {
@@ -1655,6 +1776,10 @@ func (q *Queries) RequestComputerInstanceClose(ctx context.Context, arg RequestC
 	)
 	var i ComputerInstance
 	err := row.Scan(
+		&i.SeedID,
+		&i.SeedPreparationGeneration,
+		&i.SeedKeyID,
+		&i.RetainedSeedKeyID,
 		&i.ID,
 		&i.OrgID,
 		&i.WorkerGroupID,
@@ -1673,6 +1798,9 @@ func (q *Queries) RequestComputerInstanceClose(ctx context.Context, arg RequestC
 		&i.ComputerID,
 		&i.ProgramDeploymentID,
 		&i.SourceCheckpointID,
+		&i.InitialDiskVersionID,
+		&i.InitialPublicationDesiredVersion,
+		&i.InitialPublicationFingerprint,
 		&i.SourceDiskVersionID,
 		&i.SaveSequence,
 		&i.SaveDiskVersionID,
@@ -1715,6 +1843,7 @@ func (q *Queries) RequestComputerInstanceClose(ctx context.Context, arg RequestC
 		&i.FinalizationError,
 		&i.CaptureCheckpointID,
 		&i.SpecRetentionRequired,
+		&i.SeedKeyRequired,
 	)
 	return i, err
 }

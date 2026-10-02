@@ -22,7 +22,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
-	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
@@ -30,7 +29,7 @@ import (
 )
 
 const (
-	initialKeyPath       = "/worker/v1/run/computer-instances/initialization/key"
+	seedPreparationPath  = "/worker/v1/run/computer-instances/initialization/seed"
 	computerSourcePath   = "/worker/v1/run/computer-instances/computer-source"
 	objectRegisterPath   = "/worker/v1/run/computer-instances/initialization/objects/register"
 	objectCertifyPath    = "/worker/v1/run/computer-instances/initialization/objects/certify"
@@ -297,7 +296,7 @@ func newPreparationErrorServer(t *testing.T, stage preparationStage) *preparatio
 		client := hostSecret.client(t, server.URL)
 		_, root, object := f.certifyInitialRoot(t, client)
 		s.object = object
-		s.version = workerapi.InitialComputerVersionRequest{ComputerInstanceID: s.instance, DesiredVersion: 1, Root: root, Config: oci.RuntimeConfig{User: "root"}}
+		s.version = workerapi.InitialComputerVersionRequest{ComputerInstanceID: s.instance, DesiredVersion: 1, Root: root, Config: f.initialConfig(t)}
 		if stage >= preparationPublished {
 			if _, err := client.PublishInitialComputerVersion(t.Context(), s.version); err != nil {
 				t.Fatal(err)
@@ -318,8 +317,8 @@ func (s *preparationErrorServer) post(t *testing.T, path string) *httptest.Respo
 	t.Helper()
 	var body any
 	switch path {
-	case initialKeyPath:
-		body = workerapi.InitialComputerKeyRequest{ComputerInstanceID: s.instance, DesiredVersion: 1}
+	case seedPreparationPath:
+		body = workerapi.PrepareComputerSeedRequest{ComputerInstanceID: s.instance, DesiredVersion: 1}
 	case computerSourcePath:
 		body = workerapi.ComputerSourceRequest{ComputerInstanceID: s.instance, DesiredVersion: 1}
 	case objectRegisterPath, objectCertifyPath:
@@ -428,27 +427,27 @@ func TestComputerPreparationFailuresReportTheirClass(t *testing.T) {
 		// wrapped requires the provider to have been given plaintext to wrap.
 		wrapped bool
 	}{
-		{name: "key first fence", path: initialKeyPath, inject: func(s *preparationErrorServer) { s.faults.arm(firstFenceStatement, 0, false) }, status: http.StatusInternalServerError},
-		{name: "key pin write", path: initialKeyPath, inject: func(s *preparationErrorServer) { s.faults.arm(pinWriteStatement, 0, false) }, status: http.StatusInternalServerError},
-		{name: "key commit", path: initialKeyPath, inject: func(s *preparationErrorServer) { s.faults.arm("", 0, true) }, status: http.StatusInternalServerError},
-		{name: "key final deadline query", path: initialKeyPath, inject: func(s *preparationErrorServer) { s.armAfterUnwrap(deadlineStatement, 1) }, status: http.StatusInternalServerError, unwrapped: true},
-		{name: "key final claim read", path: initialKeyPath, inject: func(s *preparationErrorServer) { s.armAfterUnwrap(claimReadStatement, 0) }, status: http.StatusInternalServerError, unwrapped: true},
-		{name: "key provider wrap unavailable", path: initialKeyPath, inject: func(s *preparationErrorServer) {
+		{name: "key first fence", path: seedPreparationPath, inject: func(s *preparationErrorServer) { s.faults.arm(firstFenceStatement, 0, false) }, status: http.StatusInternalServerError},
+		{name: "key pin write", path: seedPreparationPath, inject: func(s *preparationErrorServer) { s.faults.arm(pinWriteStatement, 0, false) }, status: http.StatusInternalServerError},
+		{name: "key commit", path: seedPreparationPath, inject: func(s *preparationErrorServer) { s.faults.arm("", 0, true) }, status: http.StatusInternalServerError},
+		{name: "key final deadline query", path: seedPreparationPath, inject: func(s *preparationErrorServer) { s.armAfterUnwrap(deadlineStatement, 1) }, status: http.StatusInternalServerError, unwrapped: true},
+		{name: "key final claim read", path: seedPreparationPath, inject: func(s *preparationErrorServer) { s.armAfterUnwrap(claimReadStatement, 0) }, status: http.StatusInternalServerError, unwrapped: true},
+		{name: "key provider wrap unavailable", path: seedPreparationPath, inject: func(s *preparationErrorServer) {
 			s.setKeys(func(k *faultingKeys) { k.wrapErr = errProviderUnavailable })
 		}, status: http.StatusServiceUnavailable, wrapped: true},
-		{name: "key provider wrap unexpected", path: initialKeyPath, inject: func(s *preparationErrorServer) {
+		{name: "key provider wrap unexpected", path: seedPreparationPath, inject: func(s *preparationErrorServer) {
 			s.setKeys(func(k *faultingKeys) { k.wrapErr = errInjectedPreparation })
 		}, status: http.StatusInternalServerError, wrapped: true},
-		{name: "key provider unwrap unavailable", path: initialKeyPath, inject: func(s *preparationErrorServer) {
+		{name: "key provider unwrap unavailable", path: seedPreparationPath, inject: func(s *preparationErrorServer) {
 			s.setKeys(func(k *faultingKeys) { k.unwrap = providerFailure(errProviderUnavailable) })
 		}, status: http.StatusServiceUnavailable, unwrapped: true},
-		{name: "key provider unwrap unexpected", path: initialKeyPath, inject: func(s *preparationErrorServer) {
+		{name: "key provider unwrap unexpected", path: seedPreparationPath, inject: func(s *preparationErrorServer) {
 			s.setKeys(func(k *faultingKeys) { k.unwrap = providerFailure(errInjectedPreparation) })
 		}, status: http.StatusInternalServerError, unwrapped: true},
-		{name: "key provider wrong key length", path: initialKeyPath, inject: func(s *preparationErrorServer) {
+		{name: "key provider wrong key length", path: seedPreparationPath, inject: func(s *preparationErrorServer) {
 			s.setKeys(func(k *faultingKeys) { k.unwrap = wrongLengthKey })
 		}, status: http.StatusInternalServerError, unwrapped: true},
-		{name: "key request cancelled during unwrap", path: initialKeyPath, inject: func(s *preparationErrorServer) {
+		{name: "key request cancelled during unwrap", path: seedPreparationPath, inject: func(s *preparationErrorServer) {
 			s.setKeys(func(k *faultingKeys) {
 				k.unwrap = func(key []byte) ([]byte, error) {
 					s.cancel()
@@ -515,12 +514,12 @@ func TestComputerPreparationRejectionsReportTheirClass(t *testing.T) {
 	// key, which keeps the envelope's shape but fails its authentication: a
 	// data-integrity failure that must be logged.
 	corruptEnvelope := func(s *preparationErrorServer) {
-		dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_data_keys SET wrapped_key=set_byte(wrapped_key,20,get_byte(wrapped_key,20)#255) WHERE computer_id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, s.f.instance)
+		dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_data_keys SET wrapped_key=set_byte(wrapped_key,20,get_byte(wrapped_key,20)#255) WHERE id=(SELECT seed_key_id FROM computer_instances WHERE id=$1)`, s.f.instance)
 	}
 	// truncateEnvelope drops the last ciphertext byte of the Computer's
 	// persisted key: an envelope shape the provider cannot accept.
 	truncateEnvelope := func(s *preparationErrorServer) {
-		dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_data_keys SET wrapped_key=substring(wrapped_key from 1 for length(wrapped_key)-1) WHERE computer_id=(SELECT computer_id FROM computer_instances WHERE id=$1)`, s.f.instance)
+		dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_data_keys SET wrapped_key=substring(wrapped_key from 1 for length(wrapped_key)-1) WHERE id=(SELECT seed_key_id FROM computer_instances WHERE id=$1)`, s.f.instance)
 	}
 	staleClaims := func(s *preparationErrorServer) {
 		dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, pgvalue.UUID(s.f.worker.HostID))
@@ -532,10 +531,10 @@ func TestComputerPreparationRejectionsReportTheirClass(t *testing.T) {
 		change func(*preparationErrorServer)
 		status int
 	}{
-		{name: "key expired", path: initialKeyPath, change: expire, status: http.StatusConflict},
-		{name: "key revoked", path: initialKeyPath, change: revoke, status: http.StatusConflict},
-		{name: "key stale claims", path: initialKeyPath, change: staleClaims, status: http.StatusUnauthorized},
-		{name: "key malformed instance", path: initialKeyPath, change: func(s *preparationErrorServer) { s.instance = "not-an-instance" }, status: http.StatusBadRequest},
+		{name: "key expired", path: seedPreparationPath, change: expire, status: http.StatusConflict},
+		{name: "key revoked", path: seedPreparationPath, change: revoke, status: http.StatusConflict},
+		{name: "key stale claims", path: seedPreparationPath, change: staleClaims, status: http.StatusUnauthorized},
+		{name: "key malformed instance", path: seedPreparationPath, change: func(s *preparationErrorServer) { s.instance = "not-an-instance" }, status: http.StatusBadRequest},
 		{name: "source expired", stage: preparationPublished, path: computerSourcePath, change: expire, status: http.StatusConflict},
 		{name: "source revoked", stage: preparationPublished, path: computerSourcePath, change: revoke, status: http.StatusConflict},
 		{name: "source stale claims", stage: preparationPublished, path: computerSourcePath, change: staleClaims, status: http.StatusUnauthorized},
@@ -547,15 +546,15 @@ func TestComputerPreparationRejectionsReportTheirClass(t *testing.T) {
 		{name: "version stale claims", stage: preparationRootCertified, path: initialVersionPath, change: staleClaims, status: http.StatusUnauthorized},
 		{name: "version malformed root", stage: preparationRootCertified, path: initialVersionPath, change: func(s *preparationErrorServer) { s.version.Root.Page.KeyID = "not-a-key" }, status: http.StatusBadRequest},
 		{name: "version root differs from inspection", stage: preparationRootCertified, path: initialVersionPath, change: func(s *preparationErrorServer) { s.version.Root.Page.Digest = dbtest.Digest("another root page") }, status: http.StatusConflict},
-		{name: "key corrupt ciphertext", stage: preparationRootCertified, path: initialKeyPath, change: corruptEnvelope, status: http.StatusInternalServerError},
-		{name: "key envelope shape invalid", stage: preparationRootCertified, path: initialKeyPath, change: truncateEnvelope, status: http.StatusConflict},
-		{name: "key changed during delivery", stage: preparationRootCertified, path: initialKeyPath, change: func(s *preparationErrorServer) {
+		{name: "key corrupt ciphertext", stage: preparationRootCertified, path: seedPreparationPath, change: corruptEnvelope, status: http.StatusInternalServerError},
+		{name: "key envelope shape invalid", stage: preparationRootCertified, path: seedPreparationPath, change: truncateEnvelope, status: http.StatusConflict},
+		{name: "key changed during delivery", stage: preparationRootCertified, path: seedPreparationPath, change: func(s *preparationErrorServer) {
 			s.setKeys(func(k *faultingKeys) { k.afterUnwrap = func() { corruptEnvelope(s) } })
 		}, status: http.StatusConflict},
 		{name: "source corrupt ciphertext", stage: preparationPublished, path: computerSourcePath, change: corruptEnvelope, status: http.StatusInternalServerError},
 		{name: "source envelope shape invalid", stage: preparationPublished, path: computerSourcePath, change: truncateEnvelope, status: http.StatusConflict},
 		{name: "source retained root invalid", stage: preparationPublished, path: computerSourcePath, change: func(s *preparationErrorServer) {
-			dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_disk_version_roots SET locator=jsonb_set(locator,'{page,salt}','"not-hex"') WHERE version_id=(SELECT retained_source_disk_version_id FROM computer_instances WHERE id=$1)`, s.f.instance)
+			dbtest.MustExec(t, t.Context(), s.f.Pool, `UPDATE computer_disk_roots SET locator=jsonb_set(locator,'{page,salt}','"not-hex"') WHERE id=(SELECT r.root_id FROM computer_disk_version_roots r JOIN computer_instances i ON i.retained_source_disk_version_id=r.version_id WHERE i.id=$1)`, s.f.instance)
 		}, status: http.StatusConflict},
 	} {
 		t.Run(test.name, func(t *testing.T) {

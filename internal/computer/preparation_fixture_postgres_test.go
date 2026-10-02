@@ -2,6 +2,7 @@ package computer
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"testing"
 
@@ -91,11 +92,15 @@ func (f preparationFixture) instanceWorker() any {
 // initialKey delivers the fixture's initial key; the caller clears it.
 func (f preparationFixture) initialKey(t *testing.T) KeyMaterial {
 	t.Helper()
-	key, err := f.broker.InitialKey(t.Context(), f.principal, f.ref)
+	pin, err := f.broker.ensureInitialKey(t.Context(), f.principal, f.ref)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return key
+	plain, err := f.broker.wrapper.Unwrap(t.Context(), pin.scope, pgvalue.UUIDString(pin.key.ID), computerkey.Envelope{WrappingKeyID: pin.key.WrappingKeyID, Ciphertext: pin.key.WrappedKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return KeyMaterial{ID: pgvalue.UUIDString(pin.key.ID), Scope: pin.scope, Key: plain}
 }
 
 // certifyInitialObject registers the object, uploads its bytes from local
@@ -133,7 +138,11 @@ func (f preparationFixture) upload(t *testing.T, local cas.Reader, inspection bl
 func newVersionFixture(t *testing.T) (preparationFixture, InitialVersion) {
 	t.Helper()
 	f := newPreparationFixture(t)
-	key := f.initialKey(t)
+	prepared, err := f.broker.PrepareSeed(t.Context(), f.principal, f.ref)
+	if err != nil || prepared.Status != "convert" {
+		t.Fatalf("prepare seed: %+v %v", prepared, err)
+	}
+	key := prepared.Key
 	defer clear(key.Key)
 	local, err := cas.NewFile(t.TempDir())
 	if err != nil {
@@ -153,7 +162,7 @@ func newVersionFixture(t *testing.T) (preparationFixture, InitialVersion) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return f, InitialVersion{Root: root, Config: oci.RuntimeConfig{User: "root", WorkingDir: "/workspace"}}
+	return f, InitialVersion{Root: root, Config: oci.RuntimeConfig{Env: []string{}, Entrypoint: []string{}, Cmd: []string{}}}
 }
 
 func requireKeyFK(t *testing.T, err error) {
@@ -162,4 +171,40 @@ func requireKeyFK(t *testing.T, err error) {
 	if !errors.As(err, &pg) || pg.Code != "23503" {
 		t.Fatalf("expected FK violation: %v", err)
 	}
+}
+
+func (f preparationFixture) seedKey(t *testing.T) KeyMaterial {
+	t.Helper()
+	prepared, err := f.broker.PrepareSeed(t.Context(), f.principal, f.ref)
+	if err != nil || prepared.Status != "convert" {
+		t.Fatalf("prepare seed: status=%s err=%v", prepared.Status, err)
+	}
+	return prepared.Key
+}
+
+// conversionKey selects the conversion result for provider failure tests.
+func conversionKey(b *KeyBroker, ctx context.Context, principal workergroup.HostPrincipal, ref PreparationRef) (KeyMaterial, error) {
+	result, err := b.PrepareSeed(ctx, principal, ref)
+	if err != nil {
+		return KeyMaterial{}, err
+	}
+	if result.Status != "convert" {
+		return KeyMaterial{}, errors.New("expected conversion owner")
+	}
+	return result.Key, nil
+}
+
+func sourceWriterKey(b *KeyBroker, ctx context.Context, principal workergroup.HostPrincipal, ref PreparationRef) (KeyMaterial, error) {
+	source, err := b.SourceKeys(ctx, principal, ref)
+	if err != nil {
+		return KeyMaterial{}, err
+	}
+	defer source.Clear()
+	for _, key := range source.Keys {
+		if key.ID == source.WriteKeyID {
+			key.Key = bytes.Clone(key.Key)
+			return key, nil
+		}
+	}
+	return KeyMaterial{}, errors.New("source has no writer key")
 }

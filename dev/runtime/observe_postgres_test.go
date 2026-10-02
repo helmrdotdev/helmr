@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os/exec"
 	"strings"
 	"testing"
@@ -193,8 +194,8 @@ func seedObservationRestore(t *testing.T, f runtest.Fixture, work runtest.RunLea
 	dbtest.MustExec(t, ctx, tx, `INSERT INTO computer_checkpoints(id,computer_id,environment_id,computer_spec_id,source_computer_instance_id,writer_generation,membership_revision,program_deployment_id,base_computer_disk_version_id)
  SELECT $2,i.computer_id,i.environment_id,i.computer_spec_id,i.id,i.writer_generation,i.membership_revision,i.program_deployment_id,c.head_disk_version_id
  FROM computer_instances i JOIN computers c ON c.id=i.computer_id WHERE i.id=$1`, sourceID, checkpoint)
-	dbtest.MustExec(t, ctx, tx, `INSERT INTO computer_disk_versions(id,environment_id,computer_id,parent_version_id,root_pack_digest,logical_bytes,status,source_computer_instance_id,writer_generation)
- SELECT $2,environment_id,computer_id,base_computer_disk_version_id,$3,4096,'private',source_computer_instance_id,writer_generation FROM computer_checkpoints WHERE id=$1`, checkpoint, private, dbtest.Digest("restored-private"))
+	dbtest.MustExec(t, ctx, tx, `INSERT INTO computer_disk_versions(id,environment_id,computer_id,parent_version_id,status,source_computer_instance_id,writer_generation)
+ SELECT $2,environment_id,computer_id,base_computer_disk_version_id,'private',source_computer_instance_id,writer_generation FROM computer_checkpoints WHERE id=$1`, checkpoint, private)
 	computerdbtest.InsertComputerVersion(t, ctx, tx, f.EnvironmentID, computerID, private)
 	artifacts := computerdbtest.InsertCheckpointArtifacts(t, ctx, tx, work.RunID, "restore-timer")
 	dbtest.MustExec(t, ctx, tx, `UPDATE computer_checkpoints SET status='ready',ready_at=now(),private_computer_disk_version_id=$2,
@@ -401,9 +402,13 @@ func TestVerificationObservationComputerPath(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO idempotency_claims(id,environment_id,operation,slot_hash,request_fingerprint,accepted_at) VALUES($1,$2,'computer.command.start',$3,$3,now())`, claim, f.EnvironmentID, dbtest.Hash(claim.String()))
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_commands(id,environment_id,computer_id,claim_id,argv,env,stdin,timeout_ms,created_by_subject_type,created_by_subject_id)
  SELECT $2,environment_id,computer_id,$3,ARRAY['true'],'{}',''::bytea,60000,'api_key',run_id::text FROM run_leases WHERE id=$1`, work.LeaseID, command, claim)
+	// The host observation reports the immutable publication receipt; periodic
+	// saves need not keep an initial version's payload to preserve this evidence.
+	fingerprint := dbtest.Hash("initial-publication-observation")
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances i SET initial_disk_version_id=v.id,initial_publication_desired_version=1,initial_publication_fingerprint=$2 FROM computer_disk_versions v WHERE i.id=(SELECT source_computer_instance_id FROM computer_checkpoints WHERE computer_id=$1) AND v.computer_id=$1 AND v.parent_version_id IS NULL`, computerID, fingerprint)
 	got := observe(t, f.Pool, "computer-path", map[string]any{"computer_id": computerID.String()}).(map[string]any)
 	instances, checkpoints, commands := got["instances"].([]any), got["checkpoints"].([]any), got["commands"].([]any)
-	if len(instances) != 3 || len(checkpoints) != 1 || len(commands) != 1 {
+	if len(instances) != 2 || len(checkpoints) != 1 || len(commands) != 1 {
 		t.Fatalf("path=%v", got)
 	}
 	checkpoint := checkpoints[0].(map[string]any)
@@ -419,6 +424,9 @@ func TestVerificationObservationComputerPath(t *testing.T) {
 	}
 	if source == nil || restored == nil {
 		t.Fatalf("missing lineage: %v", got)
+	}
+	if source["initial_disk_version_id"] == nil || source["initial_publication_fingerprint"] != fmt.Sprintf("%x", fingerprint) {
+		t.Fatalf("missing initial publication receipt: %v", source)
 	}
 	if source["reclaimed_at"] == nil || source["observed_state"] != "closed" || restored["source_checkpoint_id"] != checkpoint["id"] || restored["source_disk_version_id"] != checkpoint["private_computer_disk_version_id"] {
 		t.Fatalf("lineage=%v", got)

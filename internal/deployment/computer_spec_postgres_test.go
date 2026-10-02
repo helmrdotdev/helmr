@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 )
@@ -87,7 +88,8 @@ func TestRegisterComputerSpecsPostgresReusedAcrossProgramDeployments(t *testing.
 		t.Fatal("JSONB changed canonical spec identity")
 	}
 	params := db.RegisterComputerSpecParams{
-		ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: fixture.environmentID, Config: []byte(strings.Replace(string(spec.Config), `"milliCpu":1000`, `"milliCpu":2000`, 1)),
+		LogicalBytes: disk.SeedCapacity,
+		ID:           pgvalue.UUID(uuid.NewV7()), EnvironmentID: fixture.environmentID, Config: []byte(strings.Replace(string(spec.Config), `"milliCpu":1000`, `"milliCpu":2000`, 1)),
 		Digest: spec.Digest[:], SeedArtifactID: stored.SeedArtifactID, SeedDigest: stored.SeedDigest, SeedSizeBytes: stored.SeedSizeBytes, SeedMediaType: stored.SeedMediaType,
 	}
 	if _, err := queries.RegisterComputerSpec(t.Context(), params); !errors.Is(err, pgx.ErrNoRows) {
@@ -99,8 +101,64 @@ func TestRegisterComputerSpecsPostgresReusedAcrossProgramDeployments(t *testing.
 		t.Fatalf("same digest with different descriptor = %v", err)
 	}
 	params.SeedSizeBytes = stored.SeedSizeBytes
+	retireSeeds := func() (int64, error) {
+		tx, err := fixture.pool.Begin(t.Context())
+		if err != nil {
+			return 0, err
+		}
+		defer tx.Rollback(t.Context())
+		q := db.New(tx)
+		ids, err := q.LockUnusedComputerSeeds(t.Context(), 100)
+		if err != nil {
+			return 0, err
+		}
+		n, err := q.RetireUnusedComputerSeeds(t.Context(), ids)
+		if err != nil {
+			return 0, err
+		}
+		return n, tx.Commit(t.Context())
+	}
+	if retired, err := retireSeeds(); err != nil || retired != 0 {
+		t.Fatalf("admitted specification lost seed: %d %v", retired, err)
+	}
 	if _, err := fixture.pool.Exec(t.Context(), `UPDATE computer_specs SET seed_artifact_id=NULL WHERE id=$1`, stored.ID); err != nil {
 		t.Fatal(err)
+	}
+	// A discovered candidate is not authority to retire: recheck newly committed
+	// owners under the seed lock before releasing its source artifact.
+	tx, err := fixture.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	locked := db.New(tx)
+	candidates, err := locked.LockUnusedComputerSeeds(t.Context(), 100)
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("seed candidates: %v %v", candidates, err)
+	}
+	if _, err = fixture.pool.Exec(t.Context(), `UPDATE computer_specs SET seed_artifact_id=$2 WHERE id=$1`, stored.ID, stored.SeedArtifactID); err != nil {
+		t.Fatal(err)
+	}
+	if retired, err := locked.RetireUnusedComputerSeeds(t.Context(), candidates); err != nil || retired != 0 {
+		t.Fatalf("newly retained seed retired: %d %v", retired, err)
+	}
+	if err = tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = fixture.pool.Exec(t.Context(), `UPDATE computer_specs SET seed_artifact_id=NULL WHERE id=$1`, stored.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The seed independently protects its input while retirement has not yet
+	// released it; a historical specification alone does not keep it forever.
+	if err := queries.DeleteUnusedComputerSeedArtifact(t.Context(), db.DeleteUnusedComputerSeedArtifactParams{EnvironmentID: fixture.environmentID, ID: stored.SeedArtifactID}); err != nil {
+		t.Fatal(err)
+	}
+	var retained bool
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM artifacts WHERE id=$1)`, stored.SeedArtifactID).Scan(&retained); err != nil || !retained {
+		t.Fatalf("seed input lost before retirement: %v", err)
+	}
+	if retired, err := retireSeeds(); err != nil || retired != 1 {
+		t.Fatalf("unused seed retirement: %d %v", retired, err)
 	}
 	var group sync.WaitGroup
 	outcomes := make(chan error, 8)
@@ -121,6 +179,10 @@ func TestRegisterComputerSpecsPostgresReusedAcrossProgramDeployments(t *testing.
 		if err != nil {
 			t.Fatal(err)
 		}
+	}
+	var revived bool
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT source_artifact_id=$1 AND payload_retired_at IS NULL AND ready_at IS NULL FROM computer_seeds`, stored.SeedArtifactID).Scan(&revived); err != nil || !revived {
+		t.Fatalf("seed rematerialization: %v", err)
 	}
 
 }

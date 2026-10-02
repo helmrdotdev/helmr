@@ -94,6 +94,7 @@ func (r RunInstance) Instance() db.ComputerInstance {
 // cloneInstance copies every slice of an Instance row, so a caller cannot
 // change what an accessor returns next through a returned row.
 func cloneInstance(i db.ComputerInstance) db.ComputerInstance {
+	i.InitialPublicationFingerprint = bytes.Clone(i.InitialPublicationFingerprint)
 	i.ReclaimEvidence = bytes.Clone(i.ReclaimEvidence)
 	i.TerminalError = bytes.Clone(i.TerminalError)
 	i.WriterTokenHash = bytes.Clone(i.WriterTokenHash)

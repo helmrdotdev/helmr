@@ -24,7 +24,7 @@ func TestComputerDiskAuthorityProjectsPrivateVersionWithinExactComputer(t *testi
 		t.Fatal(err)
 	}
 	privateVersionID := uuid.NewV7()
-	dbtest.MustExec(t, ctx, fixture.pool, `INSERT INTO computer_disk_versions(id,environment_id,computer_id,parent_version_id,root_pack_digest,logical_bytes,status,source_computer_instance_id,writer_generation) VALUES($1,$2,$3,$4,$5,4096,'private',$6,$7)`, privateVersionID, fixture.environmentID, computerID, baseComputerDiskVersionID, dbtest.Digest("private-computer-target"), instanceID, writerGeneration)
+	dbtest.MustExec(t, ctx, fixture.pool, `INSERT INTO computer_disk_versions(id,environment_id,computer_id,parent_version_id,status,source_computer_instance_id,writer_generation) VALUES($1,$2,$3,$4,'private',$5,$6)`, privateVersionID, fixture.environmentID, computerID, baseComputerDiskVersionID, instanceID, writerGeneration)
 
 	row, err := fixture.queries.GetComputerDiskVersionAuthority(ctx, GetComputerDiskVersionAuthorityParams{
 		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),

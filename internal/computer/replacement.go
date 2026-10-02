@@ -183,7 +183,7 @@ func (r Replacement) Promote(ctx context.Context) error {
 	tag, err := r.tx.Exec(ctx, `UPDATE computer_disk_versions v SET status='committed',published_at=clock_timestamp()
  WHERE v.id=$1 AND v.environment_id=$2 AND v.computer_id=$3 AND v.status='private'
  AND v.parent_version_id=$4 AND v.source_computer_instance_id=$5 AND v.writer_generation=$6 AND v.payload_retired_at IS NULL
- AND EXISTS(SELECT 1 FROM computer_disk_version_roots root JOIN computer_objects object ON object.environment_id=root.environment_id AND object.computer_id=root.computer_id AND object.digest=v.root_pack_digest
+ AND EXISTS(SELECT 1 FROM computer_disk_version_roots root JOIN computer_disk_roots shared ON shared.environment_id=root.environment_id AND shared.id=root.root_id JOIN computer_objects object ON object.environment_id=shared.environment_id AND object.digest=shared.root_pack_digest
  WHERE root.version_id=v.id AND root.computer_id=v.computer_id AND object.certified)`, cp.PrivateComputerDiskVersionID, c.EnvironmentID, c.ID, c.HeadDiskVersionID, r.sourceID, c.WriterGeneration)
 	if err != nil {
 		return err

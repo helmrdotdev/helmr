@@ -19,15 +19,15 @@ func TestComputerKeyCollectionPreservesOwnersAndErasesUnownedMaterial(t *testing
 	collector := &Retention{pool: f.Pool, queries: q}
 	orphan, current, object := uuid.NewV7().String(), uuid.NewV7().String(), uuid.NewV7().String()
 	for _, id := range []string{orphan, current, object} {
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) SELECT $2,environment_id,computer_id,'fixture',decode('01','hex') FROM runs WHERE id=$1`, work.RunID, id)
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) SELECT $2,environment_id,computer_id,'fixture',decode('01','hex') FROM runs WHERE id=$1`, work.RunID, id)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET write_key_id=$2 WHERE id=(SELECT computer_id FROM runs WHERE id=$1)`, work.RunID, current)
 	digest := dbtest.Digest("key retention object")
 	if _, err := q.UpsertCasObject(t.Context(), db.UpsertCasObjectParams{OrgID: pgvalue.UUID(f.OrgID), Digest: digest, SizeBytes: 1, MediaType: "application/octet-stream"}); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) SELECT environment_id,computer_id,$2,org_id,project_id,1,'application/octet-stream','segment',0,'{}' FROM runs WHERE id=$1`, work.RunID, digest)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id,is_direct) SELECT environment_id,computer_id,$2,$3,true FROM runs WHERE id=$1`, work.RunID, digest, object)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) SELECT environment_id,$2,org_id,project_id,1,'application/octet-stream','segment',0,'{}'  FROM runs WHERE id=$1`, work.RunID, digest)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_keys(environment_id,digest,key_id,is_direct) SELECT environment_id,$2,$3,true  FROM runs WHERE id=$1`, work.RunID, digest, object)
 	if err := collector.collectComputerKeys(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestComputerKeyRetirementWaitsForConcurrentAdoption(t *testing.T) {
 	f := runtest.New(t)
 	work := f.AddRunLease(t, "assigned", time.Now())
 	key := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) SELECT $2,environment_id,computer_id,'fixture',decode('01','hex') FROM runs WHERE id=$1`, work.RunID, key.String())
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) SELECT $2,environment_id,computer_id,'fixture',decode('01','hex') FROM runs WHERE id=$1`, work.RunID, key.String())
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	tx, err := f.Pool.Begin(ctx)

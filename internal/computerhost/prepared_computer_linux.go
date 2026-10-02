@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
@@ -90,29 +91,57 @@ func (p *PreparedMachines) publishComputerSeed(ctx context.Context, target worke
 		return errors.New("computer object publication required")
 	}
 	source := target.Source.Computer
+	var key workerapi.ComputerKeyMaterial
+	preparationStarted := time.Now()
+	for {
+		preparation, err := p.ComputerPreparation.PrepareComputerSeed(ctx, workerapi.PrepareComputerSeedRequest{ComputerInstanceID: target.ID, DesiredVersion: target.DesiredVersion})
+		if err != nil {
+			return err
+		}
+		switch preparation.Status {
+		case "ready":
+			p.logInfo("computer seed phase", "computer_instance_id", target.ID, "phase", "adopt", "duration_ms", time.Since(preparationStarted).Milliseconds())
+			return nil
+		case "waiting":
+			if err := sleepWithContext(ctx, time.Second); err != nil {
+				return err
+			}
+			continue
+		case "convert":
+			if preparation.Key == nil {
+				return errors.New("seed conversion has no key")
+			}
+			key = *preparation.Key
+		default:
+			return errors.New("invalid seed preparation state")
+		}
+		break
+	}
+	defer clear(key.Key)
+	p.logInfo("computer seed phase", "computer_instance_id", target.ID, "phase", "claim", "duration_ms", time.Since(preparationStarted).Milliseconds())
 	path := filepath.Join(dir, "seed.raw")
+	phaseStarted := time.Now()
 	if err := (disk.SeedStore{CAS: p.CAS}).Decode(ctx, disk.SeedArtifact{Object: computerObject(source.Seed.Object), LogicalBytes: source.LogicalBytes}, path, source.LogicalBytes); err != nil {
 		return err
 	}
+	p.logInfo("computer seed phase", "computer_instance_id", target.ID, "phase", "decode", "duration_ms", time.Since(phaseStarted).Milliseconds())
 	file, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, file.Close(), os.Remove(path)) }()
-	key, err := p.ComputerPreparation.InitialComputerKey(ctx, workerapi.InitialComputerKeyRequest{ComputerInstanceID: target.ID, DesiredVersion: target.DesiredVersion})
-	if err != nil {
-		return err
-	}
-	defer clear(key.Key)
+	phaseStarted = time.Now()
 	candidate, err := disk.CaptureInitialVersion(ctx, disk.VersionCapture{Disk: file, Capacity: source.LogicalBytes, StagingParent: dir, Scope: key.Scope, KeyID: key.ID, Key: key.Key, Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: p.ComputerStagingBytes, MaxObjects: 1 << 20})
 	if err != nil {
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, candidate.Close()) }()
+	p.logInfo("computer seed phase", "computer_instance_id", target.ID, "phase", "capture", "duration_ms", time.Since(phaseStarted).Milliseconds())
 	publisher, err := NewInitialVersionPublisher(p.ComputerPreparation, p.ComputerObjects, target.ID, target.DesiredVersion)
 	if err != nil {
 		return err
 	}
+	phaseStarted = time.Now()
 	locator, err := candidate.Publish(ctx, publisher)
 	if err != nil {
 		return err
@@ -128,6 +157,7 @@ func (p *PreparedMachines) publishComputerSeed(ctx context.Context, target worke
 	if published.ComputerID != target.Source.ComputerID || published.VersionID != source.VersionID {
 		return errors.New("published computer version identity mismatch")
 	}
+	p.logInfo("computer seed phase", "computer_instance_id", target.ID, "phase", "publish", "duration_ms", time.Since(phaseStarted).Milliseconds())
 	return nil
 }
 

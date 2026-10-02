@@ -13,9 +13,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func TestInitialComputerKeyRejectsMalformedAndSensitiveErrors(t *testing.T) {
+func TestComputerSeedPreparationRejectsMalformedAndSensitiveErrors(t *testing.T) {
 	valid := workerapi.ComputerKeyMaterial{Scope: "computer-scope", ID: uuid.NewV7().String(), Key: bytes.Repeat([]byte{0x61}, 32)}
-	encoded, _ := json.Marshal(valid)
+	encoded, _ := json.Marshal(workerapi.ComputerSeedPreparation{Status: "convert", Key: &valid})
 	for _, tc := range []struct {
 		name   string
 		status int
@@ -25,7 +25,7 @@ func TestInitialComputerKeyRejectsMalformedAndSensitiveErrors(t *testing.T) {
 		{"partial", 200, string(encoded[:len(encoded)-1]) + `,"other":"SECRET-MARKER"`},
 		{"trailing", 200, string(encoded) + "SECRET-MARKER"},
 		{"oversized", 200, string(encoded) + strings.Repeat(" ", 1100)},
-		{"wrong-size", 200, `{"scope":"scope","id":"` + valid.ID + `","key":"YQ=="}`},
+		{"wrong-size", 200, `{"status":"convert","key":{"scope":"scope","id":"` + valid.ID + `","key":"YQ=="}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -41,15 +41,15 @@ func TestInitialComputerKeyRejectsMalformedAndSensitiveErrors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			material, err := c.InitialComputerKey(t.Context(), workerapi.InitialComputerKeyRequest{})
-			if err == nil || len(material.Key) != 0 || strings.Contains(err.Error(), "SECRET-MARKER") {
+			material, err := c.PrepareComputerSeed(t.Context(), workerapi.PrepareComputerSeedRequest{})
+			if err == nil || material.Key != nil || strings.Contains(err.Error(), "SECRET-MARKER") {
 				t.Fatal("sensitive malformed response not suppressed")
 			}
 		})
 	}
 }
 
-func TestInitialComputerKeyRefreshesAuthenticationOnce(t *testing.T) {
+func TestComputerSeedPreparationRefreshesAuthenticationOnce(t *testing.T) {
 	credentialCalls, keyCalls := 0, 0
 	valid := workerapi.ComputerKeyMaterial{Scope: "scope", ID: uuid.NewV7().String(), Key: make([]byte, 32)}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -63,16 +63,18 @@ func TestInitialComputerKeyRefreshesAuthenticationOnce(t *testing.T) {
 			w.WriteHeader(401)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(valid)
+		_ = json.NewEncoder(w).Encode(workerapi.ComputerSeedPreparation{Status: "convert", Key: &valid})
 	}))
 	defer server.Close()
 	c, err := New(server.URL, WithAuth(uuid.NewV7().String(), "fixture-secret"), WithService(uuid.NewV7().String()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	material, err := c.InitialComputerKey(t.Context(), workerapi.InitialComputerKeyRequest{})
-	defer clear(material.Key)
-	if err != nil || credentialCalls != 2 || keyCalls != 2 || len(material.Key) != 32 {
+	material, err := c.PrepareComputerSeed(t.Context(), workerapi.PrepareComputerSeedRequest{})
+	if material.Key != nil {
+		defer clear(material.Key.Key)
+	}
+	if err != nil || credentialCalls != 2 || keyCalls != 2 || material.Key == nil || len(material.Key.Key) != 32 {
 		t.Fatalf("refresh failed: credential=%d key=%d err=%v", credentialCalls, keyCalls, err)
 	}
 }

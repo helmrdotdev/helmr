@@ -48,7 +48,18 @@ func TestComputerDiskVersionRootInstanceRetention(t *testing.T) {
 		}
 		return v
 	}
-	params := db.CreateComputerDiskVersionRootParams{EnvironmentID: env, ComputerID: computerID, VersionID: versionID, Locator: encode(root)}
+	type rootParams struct {
+		EnvironmentID, ComputerID, VersionID pgtype.UUID
+		Locator                              []byte
+	}
+	createRoot := func(q *db.Queries, p rootParams) error {
+		id, err := q.RetainComputerDiskRoot(t.Context(), db.RetainComputerDiskRootParams{ID: pgvalue.NewUUIDv7(), EnvironmentID: p.EnvironmentID, Locator: p.Locator})
+		if err != nil {
+			return err
+		}
+		return q.CreateComputerDiskVersionRoot(t.Context(), db.CreateComputerDiskVersionRootParams{EnvironmentID: p.EnvironmentID, ComputerID: p.ComputerID, VersionID: p.VersionID, RootID: id})
+	}
+	params := rootParams{EnvironmentID: env, ComputerID: computerID, VersionID: versionID, Locator: encode(root)}
 	integrity := func(err error) {
 		t.Helper()
 		var pg *pgconn.PgError
@@ -58,17 +69,17 @@ func TestComputerDiskVersionRootInstanceRetention(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,512)`, digest)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,512,'application/octet-stream')`, f.OrgID, digest)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) VALUES($1,$2,$3,$4,$5,512,'application/octet-stream','root',2,'{}')`, env, computerID, digest, f.OrgID, f.ProjectID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id,is_direct) VALUES($1,$2,$3,$4,true)`, env, computerID, digest, key.ID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) VALUES($1,$2,$3,$4,512,'application/octet-stream','root',2,'{}')`, env, digest, f.OrgID, f.ProjectID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_keys(environment_id,digest,key_id,is_direct) VALUES($1,$2,$3,true)`, env, digest, key.ID)
 	secondID := uuid.NewV7().String()
 	secondEnvelope, err := b.wrapper.Wrap(t.Context(), key.Scope, secondID, bytes.Repeat([]byte{8}, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,$4,$5)`, secondID, env, computerID, secondEnvelope.WrappingKeyID, secondEnvelope.Ciphertext)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id,is_direct) VALUES($1,$2,$3,$4,false)`, env, computerID, digest, secondID)
-	integrity(q.CreateComputerDiskVersionRoot(t.Context(), params))
-	if n, err := q.CertifyComputerObject(t.Context(), db.CertifyComputerObjectParams{EnvironmentID: env, ComputerID: computerID, Digest: digest}); err != nil || n != 1 {
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,$4,$5)`, secondID, env, computerID, secondEnvelope.WrappingKeyID, secondEnvelope.Ciphertext)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_keys(environment_id,digest,key_id,is_direct) VALUES($1,$2,$3,false)`, env, digest, secondID)
+	integrity(createRoot(q, params))
+	if n, err := q.CertifyComputerObject(t.Context(), db.CertifyComputerObjectParams{EnvironmentID: env, Digest: digest}); err != nil || n != 1 {
 		t.Fatalf("certify root: %d %v", n, err)
 	}
 	for _, mutate := range []func(*disk.VersionRoot){func(r *disk.VersionRoot) { r.Pack.SizeBytes++ }, func(r *disk.VersionRoot) { r.Pack.Rank++ }, func(r *disk.VersionRoot) { r.Page.KeyID = uuid.NewV7().String() }} {
@@ -76,11 +87,11 @@ func TestComputerDiskVersionRootInstanceRetention(t *testing.T) {
 		mutate(&bad)
 		p := params
 		p.Locator = encode(bad)
-		integrity(q.CreateComputerDiskVersionRoot(t.Context(), p))
+		integrity(createRoot(q, p))
 	}
 	// Exact size/rank/certification are insufficient: an index pack is not a root.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_objects SET kind='index' WHERE digest=$1`, digest)
-	integrity(q.CreateComputerDiskVersionRoot(t.Context(), params))
+	integrity(createRoot(q, params))
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_objects SET kind='root' WHERE digest=$1`, digest)
 	for _, capacity := range []int64{0, -4096, 4097} {
 		bad := root
@@ -88,7 +99,7 @@ func TestComputerDiskVersionRootInstanceRetention(t *testing.T) {
 		p := params
 		p.Locator = encode(bad)
 		var pg *pgconn.PgError
-		if e := q.CreateComputerDiskVersionRoot(t.Context(), p); !errors.As(e, &pg) || pg.Code != "23514" {
+		if e := createRoot(q, p); !errors.As(e, &pg) || pg.Code != "23514" {
 			t.Fatalf("invalid persisted capacity %d accepted: %v", capacity, e)
 		}
 	}
@@ -100,17 +111,17 @@ func TestComputerDiskVersionRootInstanceRetention(t *testing.T) {
 	}
 	defer inheritedTx.Rollback(context.Background())
 	inheritedKey := pgvalue.NewUUIDv7()
-	dbtest.MustExec(t, t.Context(), inheritedTx, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'fixture',decode('01','hex'))`, inheritedKey, env, computerID)
-	dbtest.MustExec(t, t.Context(), inheritedTx, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id,is_direct) VALUES($1,$2,$3,$4,false)`, env, computerID, digest, inheritedKey)
+	dbtest.MustExec(t, t.Context(), inheritedTx, `INSERT INTO computer_data_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'fixture',decode('01','hex'))`, inheritedKey, env, computerID)
+	dbtest.MustExec(t, t.Context(), inheritedTx, `INSERT INTO computer_object_keys(environment_id,digest,key_id,is_direct) VALUES($1,$2,$3,false)`, env, digest, inheritedKey)
 	inheritedRoot := root
 	inheritedRoot.Page.KeyID = pgvalue.UUIDString(inheritedKey)
 	inheritedParams := params
 	inheritedParams.Locator = encode(inheritedRoot)
-	integrity(db.New(inheritedTx).CreateComputerDiskVersionRoot(t.Context(), inheritedParams))
+	integrity(createRoot(db.New(inheritedTx), inheritedParams))
 	if err = inheritedTx.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err = q.CreateComputerDiskVersionRoot(t.Context(), params); err != nil {
+	if err = createRoot(q, params); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := q.GetComputerDiskVersionRoot(t.Context(), db.GetComputerDiskVersionRootParams{EnvironmentID: env, ComputerID: computerID, VersionID: versionID})
@@ -165,18 +176,24 @@ func TestComputerDiskVersionRootInstanceRetention(t *testing.T) {
 		t.Fatal("failed admission retained source")
 	}
 	// Recreate only the fixture root, with wrong capacity, before any owner pins it.
+	if _, err = q.DeleteUnreferencedComputerDiskRoots(t.Context(), 100); err != nil {
+		t.Fatal(err)
+	}
 	badCapacity := root
 	badCapacity.LogicalBytes = 4096
 	badParams := params
 	badParams.Locator = encode(badCapacity)
-	if err = q.CreateComputerDiskVersionRoot(t.Context(), badParams); err != nil {
+	if err = createRoot(q, badParams); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := q.PinInstanceComputerSource(t.Context(), pin); err != nil || n != 0 {
 		t.Fatalf("wrong capacity admitted: %d %v", n, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM computer_disk_version_roots WHERE environment_id=$1 AND computer_id=$2 AND version_id=$3`, env, computerID, versionID)
-	if err = q.CreateComputerDiskVersionRoot(t.Context(), params); err != nil {
+	if _, err = q.DeleteUnreferencedComputerDiskRoots(t.Context(), 100); err != nil {
+		t.Fatal(err)
+	}
+	if err = createRoot(q, params); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
@@ -208,7 +225,7 @@ func TestComputerDiskVersionRootInstanceRetention(t *testing.T) {
 	if _, err := b.SourceKeys(t.Context(), f.principal, f.ref); !errors.Is(err, ErrAuthorityChanged) {
 		t.Fatal("initial source key grant", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_disk_versions SET status='committed',published_at=clock_timestamp(),root_pack_digest=$2,logical_bytes=$3,publisher_computer_instance_id=$4,publisher_desired_version=1,publication_request_fingerprint=decode(repeat('ab',32),'hex') WHERE id=$1`, versionID, digest, root.LogicalBytes, f.instance)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_disk_versions SET status='committed',published_at=clock_timestamp() WHERE id=$1`, versionID)
 	delivered, err := b.SourceKeys(t.Context(), f.principal, f.ref)
 	if err != nil || delivered.Root != root || delivered.VersionID != pgvalue.UUIDString(versionID) || delivered.WriteKeyID != key.ID || len(delivered.Keys) != 2 || !bytes.Equal(delivered.Keys[0].Key, key.Key) {
 		t.Fatalf("source delivery: %v", err)
@@ -229,7 +246,7 @@ func TestComputerDiskVersionRootInstanceRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,$4,$5)`, writeID, env, computerID, writeEnvelope.WrappingKeyID, writeEnvelope.Ciphertext)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,$4,$5)`, writeID, env, computerID, writeEnvelope.WrappingKeyID, writeEnvelope.Ciphertext)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET write_key_id=NULL WHERE id=$1`, f.instance)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET write_key_id=$2 WHERE id=$1`, computerID, writeID)
 	for i := range 2 {
@@ -350,6 +367,10 @@ func TestComputerDiskVersionRootInstanceRetention(t *testing.T) {
 	if err != nil || len(keys) != 0 {
 		t.Fatalf("released instance retained key delivery: %v", err)
 	}
+	// The committed version itself retains its root until payload retirement.
+	integrity(deleteRoot())
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET head_disk_version_id=NULL,status='deleted',desired_state='deleted',deleted_at=clock_timestamp(),sandbox_declared_id=NULL WHERE id=$1`, computerID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `WITH removed AS (DELETE FROM computer_disk_version_roots WHERE version_id=$1 RETURNING version_id) UPDATE computer_disk_versions SET payload_retired_at=clock_timestamp() WHERE id IN (SELECT version_id FROM removed)`, versionID)
 	if err = deleteRoot(); err != nil {
 		t.Fatal(err)
 	}

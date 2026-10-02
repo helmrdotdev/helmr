@@ -40,7 +40,6 @@ func TestInstanceSourceDiscoveryUsesExactDisk(t *testing.T) {
 		return db.ListComputerInstanceReconcileTargetsRow{}
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET initial_config='{"User":"original"}' WHERE id=$1`, computerID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_disk_versions v SET root_pack_digest=root.locator->'pack'->>'digest',logical_bytes=$2 FROM computer_disk_version_roots root WHERE v.id=$1 AND root.version_id=v.id`, version, disk.SeedCapacity)
 	platform, err := cas.NewFile(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +63,7 @@ func TestInstanceSourceDiscoveryUsesExactDisk(t *testing.T) {
 	}
 	// The allocated source remains authoritative even if the Computer head changes.
 	later := pgvalue.UUID(uuid.NewV7())
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_disk_versions (id,environment_id,computer_id,parent_version_id,root_pack_digest,logical_bytes,status,writer_generation,published_at,source_computer_instance_id) SELECT $2,environment_id,computer_id,id,root_pack_digest,logical_bytes,'committed',(SELECT writer_generation FROM computer_instances WHERE id=$3),clock_timestamp(),$3 FROM computer_disk_versions WHERE id=$1`, version, later, instance)
+	dbtest.MustExec(t, t.Context(), f.Pool, `WITH version AS (INSERT INTO computer_disk_versions (id,environment_id,computer_id,parent_version_id,status,writer_generation,published_at,source_computer_instance_id) SELECT $2,environment_id,computer_id,id,'committed',(SELECT writer_generation FROM computer_instances WHERE id=$3),clock_timestamp(),$3 FROM computer_disk_versions WHERE id=$1 RETURNING *) INSERT INTO computer_disk_version_roots(environment_id,computer_id,version_id,root_id) SELECT v.environment_id,v.computer_id,v.id,r.root_id FROM version v JOIN computer_disk_version_roots r ON r.version_id=v.parent_version_id`, version, later, instance)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET head_disk_version_id=$2 WHERE id=$1`, computerID, later)
 	if row := read(); row.PreparationDiskVersionID != version {
 		t.Fatal("discovery replaced the pinned source")
@@ -73,8 +72,8 @@ func TestInstanceSourceDiscoveryUsesExactDisk(t *testing.T) {
 	// Initial allocation has no retained source; its seed publication targets the
 	// Computer's initializing head, not a reservation owned by a member Run.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET source_disk_version_id=NULL WHERE id=$1`, instance)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_disk_versions SET status='initializing',publisher_computer_instance_id=NULL,publisher_desired_version=NULL,publication_request_fingerprint=NULL,published_at=NULL WHERE id=$1`, version)
 	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM computer_disk_version_roots WHERE version_id=$1`, version)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_disk_versions SET status='initializing',publisher_computer_instance_id=NULL,publisher_desired_version=NULL,publication_request_fingerprint=NULL,root_pack_digest=NULL,logical_bytes=0,published_at=NULL WHERE id=$1`, version)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET initial_config=NULL WHERE id=$1`, computerID)
 	initial := read()
 	if initial.SourceDiskVersionID.Valid || initial.PreparationDiskVersionID != version || initial.ComputerDiskVersionStatus.String != "initializing" || len(initial.ComputerVersionLocator) != 0 {

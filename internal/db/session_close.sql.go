@@ -471,7 +471,7 @@ func (q *Queries) LockSessionClose(ctx context.Context, arg LockSessionClosePara
 }
 
 const lockSessionCloseComputer = `-- name: LockSessionCloseComputer :one
-SELECT c.id, c.environment_id, c.region_id, c.sandbox_declared_id, c.key, c.revision, c.writer_generation, c.head_disk_version_id, c.recovery_id, c.recovery_disk_version_id, c.recovery_reason, c.recovery_started_at, c.preparation_attempt_count, c.next_preparation_at, c.preparation_instance_id, c.recovery_completed_at, c.recovery_failure, c.computer_payload_required, c.recovery_payload_required, c.preparation_failure, c.initial_config, c.write_key_id, c.write_key_available, c.status, c.desired_state, c.dirty_state, c.last_activity_at, c.created_at, c.updated_at, c.deleted_at, c.secret_ca_certificate, c.secret_ca_private_key_nonce, c.secret_ca_private_key_ciphertext, c.secret_ca_not_after, c.computer_spec_id, c.creation_deployment_id, c.spec_retention_required FROM computers c
+SELECT c.id, c.environment_id, c.region_id, c.sandbox_declared_id, c.key, c.revision, c.writer_generation, c.head_disk_version_id, c.recovery_id, c.recovery_disk_version_id, c.recovery_reason, c.recovery_started_at, c.preparation_attempt_count, c.next_preparation_at, c.preparation_instance_id, c.recovery_completed_at, c.recovery_failure, c.computer_payload_required, c.recovery_payload_required, c.preparation_failure, c.initial_config, c.write_key_id, c.write_key_available, c.status, c.desired_state, c.dirty_state, c.last_activity_at, c.created_at, c.updated_at, c.deleted_at, c.secret_ca_certificate, c.secret_ca_private_key_nonce, c.secret_ca_private_key_ciphertext, c.secret_ca_not_after, c.computer_spec_id, c.creation_deployment_id, c.spec_retention_required, c.snapshot_capture_id, c.snapshot_capture_status FROM computers c
 WHERE c.environment_id=$1 AND c.id=$2
  AND EXISTS(SELECT 1 FROM sessions s WHERE s.id=$3
  AND s.environment_id=c.environment_id AND s.computer_id=c.id)
@@ -525,6 +525,8 @@ func (q *Queries) LockSessionCloseComputer(ctx context.Context, arg LockSessionC
 		&i.ComputerSpecID,
 		&i.CreationDeploymentID,
 		&i.SpecRetentionRequired,
+		&i.SnapshotCaptureID,
+		&i.SnapshotCaptureStatus,
 	)
 	return i, err
 }

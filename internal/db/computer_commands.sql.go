@@ -548,7 +548,7 @@ SELECT c.id AS computer_id,s.config AS computer_config,
  COALESCE(source.reserved_guest_ephemeral_disk_bytes,0)::bigint AS required_guest_ephemeral_disk_bytes
 FROM computers c JOIN computer_specs s ON s.id=c.computer_spec_id
 LEFT JOIN LATERAL (
- SELECT i.id, i.org_id, i.worker_group_id, i.project_id, i.environment_id, i.region_id, i.worker_host_id, i.vm_platform_id, i.worker_epoch, i.vm_vcpu_count, i.cpu_config_digest, i.reserved_cpu_millis, i.reserved_memory_bytes, i.reserved_guest_ephemeral_disk_bytes, i.reserved_execution_slots, i.computer_id, i.program_deployment_id, i.source_checkpoint_id, i.source_disk_version_id, i.save_sequence, i.save_disk_version_id, i.save_base_disk_version_id, i.computer_payload_required, i.retained_source_disk_version_id, i.write_key_id, i.retained_write_key_id, i.computer_key_available, i.preparation_expires_at, i.desired_state, i.desired_version, i.desired_at, i.desired_reason, i.observed_state, i.observed_version, i.observed_desired_version, i.observed_at, i.allocated_at, i.ready_at, i.terminal_at, i.reclaimed_at, i.reclaim_evidence, i.terminal_reason_code, i.terminal_error, i.updated_at, i.computer_spec_id, i.writer_generation, i.writer_token_hash, i.writer_expires_at, i.admission_state, i.membership_revision, i.mount_state, i.mounted_at, i.unmounted_at, i.guest_channel_credential_hash, i.guest_channel_credential_expires_at, i.finalization_action, i.finalization_reason_code, i.finalization_error, i.capture_checkpoint_id, i.spec_retention_required FROM computer_checkpoints cp
+ SELECT i.seed_id, i.seed_preparation_generation, i.seed_key_id, i.retained_seed_key_id, i.id, i.org_id, i.worker_group_id, i.project_id, i.environment_id, i.region_id, i.worker_host_id, i.vm_platform_id, i.worker_epoch, i.vm_vcpu_count, i.cpu_config_digest, i.reserved_cpu_millis, i.reserved_memory_bytes, i.reserved_guest_ephemeral_disk_bytes, i.reserved_execution_slots, i.computer_id, i.program_deployment_id, i.source_checkpoint_id, i.initial_disk_version_id, i.initial_publication_desired_version, i.initial_publication_fingerprint, i.source_disk_version_id, i.save_sequence, i.save_disk_version_id, i.save_base_disk_version_id, i.computer_payload_required, i.retained_source_disk_version_id, i.write_key_id, i.retained_write_key_id, i.computer_key_available, i.preparation_expires_at, i.desired_state, i.desired_version, i.desired_at, i.desired_reason, i.observed_state, i.observed_version, i.observed_desired_version, i.observed_at, i.allocated_at, i.ready_at, i.terminal_at, i.reclaimed_at, i.reclaim_evidence, i.terminal_reason_code, i.terminal_error, i.updated_at, i.computer_spec_id, i.writer_generation, i.writer_token_hash, i.writer_expires_at, i.admission_state, i.membership_revision, i.mount_state, i.mounted_at, i.unmounted_at, i.guest_channel_credential_hash, i.guest_channel_credential_expires_at, i.finalization_action, i.finalization_reason_code, i.finalization_error, i.capture_checkpoint_id, i.spec_retention_required, i.seed_key_required FROM computer_checkpoints cp
  JOIN computer_instances i ON i.id=cp.source_computer_instance_id
  WHERE cp.computer_id=c.id AND cp.status='ready' AND cp.resume_committed_at IS NULL
  AND (cp.expires_at IS NULL OR cp.expires_at>clock_timestamp())
@@ -705,7 +705,7 @@ func (q *Queries) LockComputerCommand(ctx context.Context, arg LockComputerComma
 }
 
 const lockComputerCommandInstance = `-- name: LockComputerCommandInstance :one
-SELECT i.id, i.org_id, i.worker_group_id, i.project_id, i.environment_id, i.region_id, i.worker_host_id, i.vm_platform_id, i.worker_epoch, i.vm_vcpu_count, i.cpu_config_digest, i.reserved_cpu_millis, i.reserved_memory_bytes, i.reserved_guest_ephemeral_disk_bytes, i.reserved_execution_slots, i.computer_id, i.program_deployment_id, i.source_checkpoint_id, i.source_disk_version_id, i.save_sequence, i.save_disk_version_id, i.save_base_disk_version_id, i.computer_payload_required, i.retained_source_disk_version_id, i.write_key_id, i.retained_write_key_id, i.computer_key_available, i.preparation_expires_at, i.desired_state, i.desired_version, i.desired_at, i.desired_reason, i.observed_state, i.observed_version, i.observed_desired_version, i.observed_at, i.allocated_at, i.ready_at, i.terminal_at, i.reclaimed_at, i.reclaim_evidence, i.terminal_reason_code, i.terminal_error, i.updated_at, i.computer_spec_id, i.writer_generation, i.writer_token_hash, i.writer_expires_at, i.admission_state, i.membership_revision, i.mount_state, i.mounted_at, i.unmounted_at, i.guest_channel_credential_hash, i.guest_channel_credential_expires_at, i.finalization_action, i.finalization_reason_code, i.finalization_error, i.capture_checkpoint_id, i.spec_retention_required FROM computer_instances i JOIN computer_commands c ON c.computer_instance_id=i.id
+SELECT i.seed_id, i.seed_preparation_generation, i.seed_key_id, i.retained_seed_key_id, i.id, i.org_id, i.worker_group_id, i.project_id, i.environment_id, i.region_id, i.worker_host_id, i.vm_platform_id, i.worker_epoch, i.vm_vcpu_count, i.cpu_config_digest, i.reserved_cpu_millis, i.reserved_memory_bytes, i.reserved_guest_ephemeral_disk_bytes, i.reserved_execution_slots, i.computer_id, i.program_deployment_id, i.source_checkpoint_id, i.initial_disk_version_id, i.initial_publication_desired_version, i.initial_publication_fingerprint, i.source_disk_version_id, i.save_sequence, i.save_disk_version_id, i.save_base_disk_version_id, i.computer_payload_required, i.retained_source_disk_version_id, i.write_key_id, i.retained_write_key_id, i.computer_key_available, i.preparation_expires_at, i.desired_state, i.desired_version, i.desired_at, i.desired_reason, i.observed_state, i.observed_version, i.observed_desired_version, i.observed_at, i.allocated_at, i.ready_at, i.terminal_at, i.reclaimed_at, i.reclaim_evidence, i.terminal_reason_code, i.terminal_error, i.updated_at, i.computer_spec_id, i.writer_generation, i.writer_token_hash, i.writer_expires_at, i.admission_state, i.membership_revision, i.mount_state, i.mounted_at, i.unmounted_at, i.guest_channel_credential_hash, i.guest_channel_credential_expires_at, i.finalization_action, i.finalization_reason_code, i.finalization_error, i.capture_checkpoint_id, i.spec_retention_required, i.seed_key_required FROM computer_instances i JOIN computer_commands c ON c.computer_instance_id=i.id
  AND c.writer_generation=i.writer_generation AND c.environment_id=i.environment_id AND c.computer_id=i.computer_id
 WHERE c.environment_id=$1 AND c.computer_id=$2
  AND c.id=$3 FOR UPDATE OF i
@@ -723,6 +723,10 @@ func (q *Queries) LockComputerCommandInstance(ctx context.Context, arg LockCompu
 	row := q.db.QueryRow(ctx, lockComputerCommandInstance, arg.EnvironmentID, arg.ComputerID, arg.CommandID)
 	var i ComputerInstance
 	err := row.Scan(
+		&i.SeedID,
+		&i.SeedPreparationGeneration,
+		&i.SeedKeyID,
+		&i.RetainedSeedKeyID,
 		&i.ID,
 		&i.OrgID,
 		&i.WorkerGroupID,
@@ -741,6 +745,9 @@ func (q *Queries) LockComputerCommandInstance(ctx context.Context, arg LockCompu
 		&i.ComputerID,
 		&i.ProgramDeploymentID,
 		&i.SourceCheckpointID,
+		&i.InitialDiskVersionID,
+		&i.InitialPublicationDesiredVersion,
+		&i.InitialPublicationFingerprint,
 		&i.SourceDiskVersionID,
 		&i.SaveSequence,
 		&i.SaveDiskVersionID,
@@ -783,12 +790,13 @@ func (q *Queries) LockComputerCommandInstance(ctx context.Context, arg LockCompu
 		&i.FinalizationError,
 		&i.CaptureCheckpointID,
 		&i.SpecRetentionRequired,
+		&i.SeedKeyRequired,
 	)
 	return i, err
 }
 
 const lockComputerCommandWorkerAuthority = `-- name: LockComputerCommandWorkerAuthority :one
-SELECT command.id, command.environment_id, command.computer_id, command.claim_id, command.computer_instance_id, command.writer_generation, command.status, command.revision, command.argv, command.cwd, command.env, command.stdin, command.timeout_ms, command.created_by_subject_type, command.created_by_subject_id, command.started_at, command.cancel_requested_at, command.process_exited_at, command.process_reconciled_at, command.exit_code, command.error, command.terminal_at, command.terminal_reason_code, command.result_expires_at, command.created_at, command.updated_at, command.failure_reason, command.result_pruned_at, command.outcome_kind,i.id, i.org_id, i.worker_group_id, i.project_id, i.environment_id, i.region_id, i.worker_host_id, i.vm_platform_id, i.worker_epoch, i.vm_vcpu_count, i.cpu_config_digest, i.reserved_cpu_millis, i.reserved_memory_bytes, i.reserved_guest_ephemeral_disk_bytes, i.reserved_execution_slots, i.computer_id, i.program_deployment_id, i.source_checkpoint_id, i.source_disk_version_id, i.save_sequence, i.save_disk_version_id, i.save_base_disk_version_id, i.computer_payload_required, i.retained_source_disk_version_id, i.write_key_id, i.retained_write_key_id, i.computer_key_available, i.preparation_expires_at, i.desired_state, i.desired_version, i.desired_at, i.desired_reason, i.observed_state, i.observed_version, i.observed_desired_version, i.observed_at, i.allocated_at, i.ready_at, i.terminal_at, i.reclaimed_at, i.reclaim_evidence, i.terminal_reason_code, i.terminal_error, i.updated_at, i.computer_spec_id, i.writer_generation, i.writer_token_hash, i.writer_expires_at, i.admission_state, i.membership_revision, i.mount_state, i.mounted_at, i.unmounted_at, i.guest_channel_credential_hash, i.guest_channel_credential_expires_at, i.finalization_action, i.finalization_reason_code, i.finalization_error, i.capture_checkpoint_id, i.spec_retention_required
+SELECT command.id, command.environment_id, command.computer_id, command.claim_id, command.computer_instance_id, command.writer_generation, command.status, command.revision, command.argv, command.cwd, command.env, command.stdin, command.timeout_ms, command.created_by_subject_type, command.created_by_subject_id, command.started_at, command.cancel_requested_at, command.process_exited_at, command.process_reconciled_at, command.exit_code, command.error, command.terminal_at, command.terminal_reason_code, command.result_expires_at, command.created_at, command.updated_at, command.failure_reason, command.result_pruned_at, command.outcome_kind,i.seed_id, i.seed_preparation_generation, i.seed_key_id, i.retained_seed_key_id, i.id, i.org_id, i.worker_group_id, i.project_id, i.environment_id, i.region_id, i.worker_host_id, i.vm_platform_id, i.worker_epoch, i.vm_vcpu_count, i.cpu_config_digest, i.reserved_cpu_millis, i.reserved_memory_bytes, i.reserved_guest_ephemeral_disk_bytes, i.reserved_execution_slots, i.computer_id, i.program_deployment_id, i.source_checkpoint_id, i.initial_disk_version_id, i.initial_publication_desired_version, i.initial_publication_fingerprint, i.source_disk_version_id, i.save_sequence, i.save_disk_version_id, i.save_base_disk_version_id, i.computer_payload_required, i.retained_source_disk_version_id, i.write_key_id, i.retained_write_key_id, i.computer_key_available, i.preparation_expires_at, i.desired_state, i.desired_version, i.desired_at, i.desired_reason, i.observed_state, i.observed_version, i.observed_desired_version, i.observed_at, i.allocated_at, i.ready_at, i.terminal_at, i.reclaimed_at, i.reclaim_evidence, i.terminal_reason_code, i.terminal_error, i.updated_at, i.computer_spec_id, i.writer_generation, i.writer_token_hash, i.writer_expires_at, i.admission_state, i.membership_revision, i.mount_state, i.mounted_at, i.unmounted_at, i.guest_channel_credential_hash, i.guest_channel_credential_expires_at, i.finalization_action, i.finalization_reason_code, i.finalization_error, i.capture_checkpoint_id, i.spec_retention_required, i.seed_key_required
  FROM computer_commands command JOIN computer_instances i
  ON i.environment_id=command.environment_id AND i.computer_id=command.computer_id
  AND i.id=command.computer_instance_id AND i.writer_generation=command.writer_generation
@@ -851,6 +859,10 @@ func (q *Queries) LockComputerCommandWorkerAuthority(ctx context.Context, arg Lo
 		&i.ComputerCommand.FailureReason,
 		&i.ComputerCommand.ResultPrunedAt,
 		&i.ComputerCommand.OutcomeKind,
+		&i.ComputerInstance.SeedID,
+		&i.ComputerInstance.SeedPreparationGeneration,
+		&i.ComputerInstance.SeedKeyID,
+		&i.ComputerInstance.RetainedSeedKeyID,
 		&i.ComputerInstance.ID,
 		&i.ComputerInstance.OrgID,
 		&i.ComputerInstance.WorkerGroupID,
@@ -869,6 +881,9 @@ func (q *Queries) LockComputerCommandWorkerAuthority(ctx context.Context, arg Lo
 		&i.ComputerInstance.ComputerID,
 		&i.ComputerInstance.ProgramDeploymentID,
 		&i.ComputerInstance.SourceCheckpointID,
+		&i.ComputerInstance.InitialDiskVersionID,
+		&i.ComputerInstance.InitialPublicationDesiredVersion,
+		&i.ComputerInstance.InitialPublicationFingerprint,
 		&i.ComputerInstance.SourceDiskVersionID,
 		&i.ComputerInstance.SaveSequence,
 		&i.ComputerInstance.SaveDiskVersionID,
@@ -911,6 +926,7 @@ func (q *Queries) LockComputerCommandWorkerAuthority(ctx context.Context, arg Lo
 		&i.ComputerInstance.FinalizationError,
 		&i.ComputerInstance.CaptureCheckpointID,
 		&i.ComputerInstance.SpecRetentionRequired,
+		&i.ComputerInstance.SeedKeyRequired,
 	)
 	return i, err
 }

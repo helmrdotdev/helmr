@@ -5,13 +5,13 @@
 SELECT k.*
   FROM computer_instances r
   JOIN computers c ON c.environment_id=r.environment_id AND c.id=r.computer_id
-  JOIN computer_data_keys k ON k.environment_id=c.environment_id AND k.computer_id=c.id
+  JOIN computer_data_keys k ON k.environment_id=c.environment_id AND k.writer_computer_id=c.id
     AND k.id=COALESCE(r.write_key_id,c.write_key_id) AND k.available
  WHERE r.id=sqlc.arg(computer_instance_id) AND r.environment_id=sqlc.arg(environment_id)
    AND r.computer_id=sqlc.arg(computer_id) AND r.reclaimed_at IS NULL;
 
 -- name: CreateComputerKey :one
-INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key)
+INSERT INTO computer_data_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key)
 VALUES(sqlc.arg(id),sqlc.arg(environment_id),sqlc.arg(computer_id),sqlc.arg(wrapping_key_id),sqlc.arg(wrapped_key))
 RETURNING *;
 
@@ -32,6 +32,7 @@ SELECT k.id FROM computer_data_keys k
 WHERE k.available
  AND NOT EXISTS(SELECT 1 FROM computers c WHERE c.write_key_id=k.id)
  AND NOT EXISTS(SELECT 1 FROM computer_instances r WHERE r.retained_write_key_id=k.id)
+ AND NOT EXISTS(SELECT 1 FROM computer_instances r WHERE r.retained_seed_key_id=k.id)
  AND NOT EXISTS(SELECT 1 FROM computer_object_keys o WHERE o.key_id=k.id)
 ORDER BY k.id LIMIT sqlc.arg(row_limit);
 
@@ -41,4 +42,5 @@ UPDATE computer_data_keys k SET retired_at=clock_timestamp(), wrapped_key=NULL
 WHERE k.id=sqlc.arg(id) AND k.available
  AND NOT EXISTS(SELECT 1 FROM computers c WHERE c.write_key_id=k.id)
  AND NOT EXISTS(SELECT 1 FROM computer_instances r WHERE r.retained_write_key_id=k.id)
+ AND NOT EXISTS(SELECT 1 FROM computer_instances r WHERE r.retained_seed_key_id=k.id)
  AND NOT EXISTS(SELECT 1 FROM computer_object_keys o WHERE o.key_id=k.id);

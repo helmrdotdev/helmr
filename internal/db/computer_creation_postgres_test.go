@@ -44,13 +44,13 @@ VALUES ($1,$2,'test-task',$3,$4,'* * * * *','UTC','active',now(),now()+interval 
 			}
 			var valid bool
 			if err := f.Pool.QueryRow(t.Context(), `SELECT v.id=$2 AND v.status='initializing' AND v.parent_version_id IS NULL
-AND v.publisher_computer_instance_id IS NULL AND v.root_pack_digest IS NULL AND v.logical_bytes=0 AND v.published_at IS NULL
+AND v.publisher_computer_instance_id IS NULL AND NOT EXISTS(SELECT 1 FROM computer_disk_version_roots root WHERE root.version_id=v.id) AND v.published_at IS NULL
 FROM computers w JOIN computer_disk_versions v ON v.id=w.head_disk_version_id WHERE w.id=$1`, computerID, rootID).Scan(&valid); err != nil || !valid {
 				t.Fatalf("new root fabricated persistence: %v %v", valid, err)
 			}
 			_, err = f.Pool.Exec(t.Context(), `UPDATE computer_disk_versions SET status='committed',published_at=now() WHERE id=$1`, rootID)
 			var check *pgconn.PgError
-			if !errors.As(err, &check) || check.Code != "23514" {
+			if !errors.As(err, &check) || check.Code != "23503" {
 				t.Fatalf("root without disk committed: %v", err)
 			}
 		})

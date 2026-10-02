@@ -20,9 +20,9 @@ func TestComputerCollectorsSerializeSharedPhysicalLifetime(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		work := f.AddRunLease(t, "assigned", time.Now())
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at)
- SELECT environment_id,computer_id,$2,org_id,project_id,1,'application/octet-stream','segment',0,'{}',now() FROM runs WHERE id=$1`, work.RunID, digest)
+		environment := pgvalue.NewUUIDv7()
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex) VALUES($1,$2,$3,$4,$4,'#123456')`, environment, f.OrgID, f.ProjectID, pgvalue.UUIDString(environment))
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) VALUES($1,$2,$3,$4,1,'application/octet-stream','segment',0,'{}',now())`, environment, digest, f.OrgID, f.ProjectID)
 	}
 	candidates, err := q.ListUnreferencedComputerObjects(t.Context(), 100)
 	if err != nil {
@@ -100,11 +100,11 @@ func TestComputerCollectionDrainsOrphanGraph(t *testing.T) {
 		if _, err := q.UpsertCasObject(t.Context(), db.UpsertCasObjectParams{OrgID: pgvalue.UUID(f.OrgID), Digest: digest, SizeBytes: 1, MediaType: "application/octet-stream"}); err != nil {
 			t.Fatal(err)
 		}
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at)
- SELECT environment_id,computer_id,$2,org_id,project_id,1,'application/octet-stream',$3,$4,'{}',now() FROM runs WHERE id=$1`, work.RunID, digest, []string{"segment", "index", "root"}[rank], rank)
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at)
+ SELECT environment_id,$2,org_id,project_id,1,'application/octet-stream',$3,$4,'{}',now()  FROM runs WHERE id=$1`, work.RunID, digest, []string{"segment", "index", "root"}[rank], rank)
 		if rank > 0 {
-			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_edges(environment_id,computer_id,parent_digest,child_digest,parent_rank,child_rank)
- SELECT environment_id,computer_id,$2,$3,$4,$4-1 FROM runs WHERE id=$1`, work.RunID, digest, digests[rank-1], rank)
+			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_edges(environment_id,parent_digest,child_digest,parent_rank,child_rank)
+ SELECT environment_id,$2,$3,$4,$4-1  FROM runs WHERE id=$1`, work.RunID, digest, digests[rank-1], rank)
 		}
 	}
 	collector := &Retention{pool: f.Pool, queries: q}

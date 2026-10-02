@@ -41,6 +41,7 @@ injection into an ordinary behavior case. External agent examples live in
 | `actor` | `cases/actor` | Actor Turns and same-host checkpoint restore |
 | `network` | `cases/network` | Guest metadata denial plus exact host packet observation |
 | `runtime`, `computer-command`, `program-replacement.run.ts` | `cases/runtime` | Runtime tools/files/logs; Computer idempotency/exec |
+| `computer-command/seed-reuse.run.ts` | `cases/runtime` | Shared seed root, independent Computer writes, deletion isolation, and create-to-first-work timing; requires the dedicated host and two VM slots |
 | `token-wait`, `token-fanout` | `cases/token-wait` | Internal Token creation/resumption; shared Token fan-out and completion before wait |
 | `actor-continuity`, `child-tasks` (including `cancel-peer.run.ts`) | `cases/child-tasks` | Child modes, cancellation without stopping a shared-Computer peer, Actor continuation and ordered/paginated durable output |
 | `planned-drain` | `cases/planned-drain cases/control-plane-outage` | Warm Computer capture with a queued Command and fresh logical Host restore; dedicated host orchestration below |

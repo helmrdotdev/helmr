@@ -69,7 +69,13 @@ func (r *Retention) Reconcile(ctx context.Context) error {
 	if _, err := r.queries.ReleaseReclaimedComputerObjects(ctx, 1000); err != nil {
 		return err
 	}
+	if err := r.collectComputerSeeds(ctx); err != nil {
+		return err
+	}
 	if err := r.collectComputerDiskVersions(ctx); err != nil {
+		return err
+	}
+	if _, err := r.queries.DeleteUnreferencedComputerDiskRoots(ctx, 100); err != nil {
 		return err
 	}
 	if err := r.collectComputerObjects(ctx); err != nil {
@@ -79,4 +85,24 @@ func (r *Retention) Reconcile(ctx context.Context) error {
 		return err
 	}
 	return r.reclaimCasBlobs(ctx)
+}
+
+// collectComputerSeeds locks discovered candidates before checking owners again.
+// Registration takes the same seed lock, so either its committed owner is visible
+// to the second statement or it revives the seed after retirement commits.
+func (r *Retention) collectComputerSeeds(ctx context.Context) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(context.WithoutCancel(ctx))
+	q := db.New(tx)
+	ids, err := q.LockUnusedComputerSeeds(ctx, 100)
+	if err != nil {
+		return err
+	}
+	if _, err = q.RetireUnusedComputerSeeds(ctx, ids); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
