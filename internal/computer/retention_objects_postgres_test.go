@@ -121,3 +121,70 @@ func TestComputerCollectionDrainsOrphanGraph(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckpointCollectorsSerializeSharedPhysicalLifetime(t *testing.T) {
+	f := runtest.New(t)
+	digest := dbtest.Digest("shared checkpoint orphan")
+	q := db.New(f.Pool)
+	if _, err := q.UpsertCasObject(t.Context(), db.UpsertCasObjectParams{OrgID: pgvalue.UUID(f.OrgID), Digest: digest, SizeBytes: 1, MediaType: "application/octet-stream"}); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO artifacts(id,org_id,project_id,environment_id,digest,kind,size_bytes,media_type) VALUES($1,$2,$3,$4,$5,'computer_checkpoint_memory',1,'application/octet-stream')`, pgvalue.NewUUIDv7(), f.OrgID, f.ProjectID, f.EnvironmentID, digest)
+	}
+	candidates, err := q.ListUnreferencedCheckpointArtifacts(t.Context(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 2 {
+		t.Fatalf("artifact candidates=%d", len(candidates))
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	blocker, err := f.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocker.Rollback(context.Background())
+	if _, err = db.New(blocker).LockCollectedComputerBlob(ctx, digest); err != nil {
+		t.Fatal(err)
+	}
+	pid := blocker.Conn().PgConn().PID()
+	collector := &Retention{pool: f.Pool, queries: q}
+	done := make(chan error, 2)
+	for _, candidate := range candidates {
+		go func() { done <- collector.collectCheckpointArtifact(ctx, candidate) }()
+	}
+	for {
+		var blocked int
+		if err = f.Pool.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND pid<>$1 AND wait_event_type='Lock' AND query LIKE '%LockCollectedComputerBlob%'`, pid).Scan(&blocked); err != nil {
+			t.Fatal(err)
+		}
+		if blocked == 2 {
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("collector did not wait for shared cleanup: %v", err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if err = blocker.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err = <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	var retired bool
+	var artifacts, members int
+	if err = f.Pool.QueryRow(ctx, `SELECT retired_at IS NOT NULL,(SELECT count(*) FROM artifacts WHERE digest=$1),(SELECT count(*) FROM cas_objects WHERE digest=$1) FROM cas_blobs WHERE digest=$1`, digest).Scan(&retired, &artifacts, &members); err != nil {
+		t.Fatal(err)
+	}
+	if !retired || artifacts != 0 || members != 0 {
+		t.Fatalf("shared checkpoint bytes lost cleanup owner: retired=%v artifacts=%d members=%d", retired, artifacts, members)
+	}
+}

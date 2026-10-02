@@ -181,6 +181,7 @@ type Querier interface {
 	DeadLetterUnsupportedControlOutbox(ctx context.Context, arg DeadLetterUnsupportedControlOutboxParams) ([]ControlOutbox, error)
 	DelayTaskRunRetry(ctx context.Context, arg DelayTaskRunRetryParams) (Run, error)
 	DeleteScheduleSecretsForSchedules(ctx context.Context, arg DeleteScheduleSecretsForSchedulesParams) error
+	DeleteUnreferencedCheckpointArtifact(ctx context.Context, id pgtype.UUID) (int64, error)
 	// Run only after deleting the selected Computer object in the same transaction.
 	// Other Computers and artifact kinds may still own the shared physical bytes.
 	DeleteUnreferencedComputerCasMembership(ctx context.Context, arg DeleteUnreferencedComputerCasMembershipParams) (int64, error)
@@ -453,6 +454,9 @@ type Querier interface {
 	ListTokenWaitCandidates(ctx context.Context, arg ListTokenWaitCandidatesParams) ([]ListTokenWaitCandidatesRow, error)
 	ListTokens(ctx context.Context, arg ListTokensParams) ([]ListTokensRow, error)
 	ListUnclaimedWorkerComputerInstances(ctx context.Context, arg ListUnclaimedWorkerComputerInstancesParams) ([]ListUnclaimedWorkerComputerInstancesRow, error)
+	// Release commits independently of artifact cleanup. Discovery retries cleanup
+	// after interruption; the deletion statement and FKs arbitrate concurrent owners.
+	ListUnreferencedCheckpointArtifacts(ctx context.Context, rowLimit int32) ([]ListUnreferencedCheckpointArtifactsRow, error)
 	// Native owners arbitrate retirement with restrictive availability FKs. This
 	// discovery only avoids repeatedly selecting retained roots in the bounded sweep.
 	ListUnreferencedComputerDiskVersionRoots(ctx context.Context, rowLimit int32) ([]ListUnreferencedComputerDiskVersionRootsRow, error)
@@ -644,6 +648,10 @@ type Querier interface {
 	RegisterSessionInputRunWait(ctx context.Context, arg RegisterSessionInputRunWaitParams) (RunWait, error)
 	RegisterTimerRunWait(ctx context.Context, arg RegisterTimerRunWaitParams) (RunWait, error)
 	RegisterTokenWait(ctx context.Context, arg RegisterTokenWaitParams) (RunWait, error)
+	// Invalidation ends restore eligibility. Preserve the manifest, lineage and
+	// publication receipt while releasing the four storage-owning artifact refs.
+	// Ready checkpoints, including committed restores, keep their artifact refs.
+	ReleaseInvalidCheckpointArtifacts(ctx context.Context, rowLimit int32) (int64, error)
 	// Physical reclamation is monotonic and already requires exclusion evidence.
 	// Bound cleanup independently of remote storage; graph/object FKs remain intact.
 	ReleaseReclaimedComputerObjects(ctx context.Context, rowLimit int32) (int64, error)
