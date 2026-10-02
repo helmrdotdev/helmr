@@ -21,9 +21,7 @@ var (
 
 // WaitPollStore reads a polled wait and its Session and Turn authority.
 type WaitPollStore interface {
-	GetRunWait(context.Context, db.GetRunWaitParams) (db.RunWait, error)
-	RunWaitSessionStopped(context.Context, pgtype.UUID) (bool, error)
-	RunWaitTurnCurrent(context.Context, pgtype.UUID) (bool, error)
+	GetRunWaitPoll(context.Context, db.GetRunWaitPollParams) (db.GetRunWaitPollRow, error)
 }
 
 // WaitPollScope is the located live lease a wait is polled under.
@@ -34,11 +32,11 @@ type WaitPollScope struct {
 	LeaseID       pgtype.UUID
 }
 
-// PollWait reads, without a transaction, the wait a worker polls under its
-// located lease. A released wait whose Session was stopped returns stopped
+// PollWait reads the wait and its Session/Turn authority in one snapshot
+// under the located lease. A released wait whose Session was stopped returns stopped
 // without the Turn check; otherwise the wait's Turn must still hold it.
 func PollWait(ctx context.Context, store WaitPollStore, scope WaitPollScope, waitID pgtype.UUID) (wait db.RunWait, stopped bool, err error) {
-	wait, err = store.GetRunWait(ctx, db.GetRunWaitParams{
+	poll, err := store.GetRunWaitPoll(ctx, db.GetRunWaitPollParams{
 		RunID: scope.RunID, AttemptNumber: scope.AttemptNumber, ID: waitID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -47,23 +45,17 @@ func PollWait(ctx context.Context, store WaitPollStore, scope WaitPollScope, wai
 	if err != nil {
 		return db.RunWait{}, false, err
 	}
+	wait = poll.RunWait
 	if wait.AttemptNumber != scope.AttemptNumber ||
 		wait.ComputerID != scope.ComputerID ||
 		(wait.CurrentRunLeaseID != scope.LeaseID && wait.PriorRunLeaseID != scope.LeaseID) {
 		return db.RunWait{}, false, ErrWaitFenceStale
 	}
-	stopped, err = store.RunWaitSessionStopped(ctx, wait.ID)
-	if err != nil {
-		return db.RunWait{}, false, err
-	}
+	stopped = poll.Stopped
 	if stopped && wait.SuspensionStatus == db.RunWaitStatusReleased {
 		return wait, true, nil
 	}
-	current, err := store.RunWaitTurnCurrent(ctx, wait.ID)
-	if err != nil {
-		return db.RunWait{}, false, err
-	}
-	if !current {
+	if !poll.Current {
 		return db.RunWait{}, false, ErrWaitTurnRevoked
 	}
 	return wait, false, nil

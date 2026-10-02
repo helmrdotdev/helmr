@@ -5,6 +5,25 @@ SELECT *
    AND attempt_number = sqlc.arg(attempt_number)
    AND id = sqlc.arg(id);
 
+-- name: GetRunWaitPoll :one
+-- Wait resolution and its Session/Turn predicates must share one statement
+-- snapshot; interruption releases the wait and holds its Session atomically.
+SELECT sqlc.embed(w),
+ EXISTS (SELECT 1 FROM sessions s
+  WHERE s.id=r.session_id AND s.current_run_id=r.id
+    AND s.dispatch_hold_reason='interrupt_requested' AND s.dispatch_hold_run_id=r.id
+    AND s.dispatch_hold_attempt_number=w.attempt_number AND s.dispatch_hold_run_generation=s.run_generation
+    AND r.current_attempt_number=w.attempt_number
+    AND (w.turn_id IS NULL OR (s.active_turn_id=w.turn_id AND w.turn_session_id=s.id AND w.turn_run_generation=s.run_generation))
+ ) AS stopped,
+ ((r.session_id IS NULL OR EXISTS(SELECT 1 FROM sessions a WHERE a.id=r.session_id AND a.current_run_id=r.id AND a.dispatch_hold_id IS NULL)) AND
+  (w.turn_id IS NULL OR EXISTS(SELECT 1 FROM sessions s JOIN session_turns t ON t.id=s.active_turn_id
+   WHERE s.id=w.turn_session_id AND s.active_turn_id=w.turn_id AND s.current_run_id=w.run_id
+     AND s.run_generation=w.turn_run_generation AND s.dispatch_hold_id IS NULL
+     AND t.attempt_number=w.attempt_number AND t.status='running' AND t.interrupt_requested_at IS NULL)))::boolean AS current
+FROM run_waits w JOIN runs r ON r.id=w.run_id
+WHERE w.run_id=sqlc.arg(run_id) AND w.attempt_number=sqlc.arg(attempt_number) AND w.id=sqlc.arg(id);
+
 -- name: GetTokenWaitRegistrationReplay :one
 -- Presence and exact identity must use one statement snapshot, including the
 -- read-only replay before Run locks.

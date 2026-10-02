@@ -1465,6 +1465,88 @@ func (q *Queries) GetRunWait(ctx context.Context, arg GetRunWaitParams) (RunWait
 	return i, err
 }
 
+const getRunWaitPoll = `-- name: GetRunWaitPoll :one
+SELECT w.id, w.environment_id, w.run_id, w.computer_id, w.turn_session_id, w.turn_id, w.turn_run_generation, w.kind, w.condition_status, w.due_at, w.timeout_at, w.idle_timeout_ms, w.token_id, w.child_run_id, w.child_target_declared_id, w.child_claim_id, w.child_request, w.session_id, w.after_input_sequence, w.condition_result, w.condition_error, w.condition_terminal_at, w.condition_reason_code, w.completed_turn_id, w.suspension_status, w.token_registration_run_revision, w.registration_request_fingerprint, w.expected_run_revision, w.attempt_number, w.current_run_lease_id, w.prior_run_lease_id, w.suspend_checkpoint_id, w.metadata, w.tags, w.suspension_terminal_at, w.suspension_reason_code, w.suspension_error, w.created_at, w.updated_at, w.computer_payload_required,
+ EXISTS (SELECT 1 FROM sessions s
+  WHERE s.id=r.session_id AND s.current_run_id=r.id
+    AND s.dispatch_hold_reason='interrupt_requested' AND s.dispatch_hold_run_id=r.id
+    AND s.dispatch_hold_attempt_number=w.attempt_number AND s.dispatch_hold_run_generation=s.run_generation
+    AND r.current_attempt_number=w.attempt_number
+    AND (w.turn_id IS NULL OR (s.active_turn_id=w.turn_id AND w.turn_session_id=s.id AND w.turn_run_generation=s.run_generation))
+ ) AS stopped,
+ ((r.session_id IS NULL OR EXISTS(SELECT 1 FROM sessions a WHERE a.id=r.session_id AND a.current_run_id=r.id AND a.dispatch_hold_id IS NULL)) AND
+  (w.turn_id IS NULL OR EXISTS(SELECT 1 FROM sessions s JOIN session_turns t ON t.id=s.active_turn_id
+   WHERE s.id=w.turn_session_id AND s.active_turn_id=w.turn_id AND s.current_run_id=w.run_id
+     AND s.run_generation=w.turn_run_generation AND s.dispatch_hold_id IS NULL
+     AND t.attempt_number=w.attempt_number AND t.status='running' AND t.interrupt_requested_at IS NULL)))::boolean AS current
+FROM run_waits w JOIN runs r ON r.id=w.run_id
+WHERE w.run_id=$1 AND w.attempt_number=$2 AND w.id=$3
+`
+
+type GetRunWaitPollParams struct {
+	RunID         pgtype.UUID `json:"run_id"`
+	AttemptNumber int32       `json:"attempt_number"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+type GetRunWaitPollRow struct {
+	RunWait RunWait `json:"run_wait"`
+	Stopped bool    `json:"stopped"`
+	Current bool    `json:"current"`
+}
+
+// Wait resolution and its Session/Turn predicates must share one statement
+// snapshot; interruption releases the wait and holds its Session atomically.
+func (q *Queries) GetRunWaitPoll(ctx context.Context, arg GetRunWaitPollParams) (GetRunWaitPollRow, error) {
+	row := q.db.QueryRow(ctx, getRunWaitPoll, arg.RunID, arg.AttemptNumber, arg.ID)
+	var i GetRunWaitPollRow
+	err := row.Scan(
+		&i.RunWait.ID,
+		&i.RunWait.EnvironmentID,
+		&i.RunWait.RunID,
+		&i.RunWait.ComputerID,
+		&i.RunWait.TurnSessionID,
+		&i.RunWait.TurnID,
+		&i.RunWait.TurnRunGeneration,
+		&i.RunWait.Kind,
+		&i.RunWait.ConditionStatus,
+		&i.RunWait.DueAt,
+		&i.RunWait.TimeoutAt,
+		&i.RunWait.IdleTimeoutMs,
+		&i.RunWait.TokenID,
+		&i.RunWait.ChildRunID,
+		&i.RunWait.ChildTargetDeclaredID,
+		&i.RunWait.ChildClaimID,
+		&i.RunWait.ChildRequest,
+		&i.RunWait.SessionID,
+		&i.RunWait.AfterInputSequence,
+		&i.RunWait.ConditionResult,
+		&i.RunWait.ConditionError,
+		&i.RunWait.ConditionTerminalAt,
+		&i.RunWait.ConditionReasonCode,
+		&i.RunWait.CompletedTurnID,
+		&i.RunWait.SuspensionStatus,
+		&i.RunWait.TokenRegistrationRunRevision,
+		&i.RunWait.RegistrationRequestFingerprint,
+		&i.RunWait.ExpectedRunRevision,
+		&i.RunWait.AttemptNumber,
+		&i.RunWait.CurrentRunLeaseID,
+		&i.RunWait.PriorRunLeaseID,
+		&i.RunWait.SuspendCheckpointID,
+		&i.RunWait.Metadata,
+		&i.RunWait.Tags,
+		&i.RunWait.SuspensionTerminalAt,
+		&i.RunWait.SuspensionReasonCode,
+		&i.RunWait.SuspensionError,
+		&i.RunWait.CreatedAt,
+		&i.RunWait.UpdatedAt,
+		&i.RunWait.ComputerPayloadRequired,
+		&i.Stopped,
+		&i.Current,
+	)
+	return i, err
+}
+
 const getSessionInputRunWaitRegistrationReplay = `-- name: GetSessionInputRunWaitRegistrationReplay :one
 SELECT id, environment_id, run_id, computer_id, turn_session_id, turn_id, turn_run_generation, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_turn_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, current_run_lease_id, prior_run_lease_id, suspend_checkpoint_id, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at, computer_payload_required
   FROM run_waits
