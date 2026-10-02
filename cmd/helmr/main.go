@@ -28,7 +28,7 @@ func newRootCommand() *cobra.Command {
 		SilenceErrors: true,
 	}
 	root.SetVersionTemplate("{{.Version}}\n")
-	root.PersistentFlags().StringP("api-url", "a", "", "Helmr origin. API-key commands default to HELMR_API_URL or https://api.helmr.dev; session commands use the saved login origin.")
+	root.PersistentFlags().StringP("api-url", "a", "", "Helmr origin. API-key commands default to HELMR_API_URL or https://api.helmr.dev; commands using your saved login use its origin.")
 	root.AddCommand(
 		initCommand(),
 		loginCommand(),
@@ -39,6 +39,7 @@ func newRootCommand() *cobra.Command {
 		deploymentCommand(),
 		taskCommand(),
 		actorCommand(),
+		sessionCommand(),
 		runCommand(),
 		scheduleCommand(),
 		tokenCommand(),

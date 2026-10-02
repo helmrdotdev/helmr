@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func actorResumeCommand() *cobra.Command {
+func sessionResumeCommand() *cobra.Command {
 	var projectID, environmentID, key, holdID string
 	var jsonOutput bool
 	cmd := &cobra.Command{
@@ -55,13 +55,13 @@ func actorResumeCommand() *cobra.Command {
 	return cmd
 }
 
-func actorTurnCommand() *cobra.Command {
+func sessionTurnCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "turn", Short: "Inspect or control an exact Session Turn."}
-	cmd.AddCommand(actorTurnGetCommand(), actorTurnSendCommand(), actorTurnInterruptCommand())
+	cmd.AddCommand(sessionTurnGetCommand(), sessionTurnSendCommand(), sessionTurnInterruptCommand())
 	return cmd
 }
 
-func actorTurnGetCommand() *cobra.Command {
+func sessionTurnGetCommand() *cobra.Command {
 	var projectID, environmentID string
 	var jsonOutput bool
 	cmd := &cobra.Command{
@@ -96,7 +96,7 @@ func actorTurnGetCommand() *cobra.Command {
 	return cmd
 }
 
-func actorTurnSendCommand() *cobra.Command {
+func sessionTurnSendCommand() *cobra.Command {
 	var projectID, environmentID, dataFile, dataJSON, key string
 	var jsonOutput bool
 	cmd := &cobra.Command{
@@ -133,7 +133,7 @@ func actorTurnSendCommand() *cobra.Command {
 	return cmd
 }
 
-func actorTurnInterruptCommand() *cobra.Command {
+func sessionTurnInterruptCommand() *cobra.Command {
 	var projectID, environmentID, key string
 	var jsonOutput bool
 	cmd := &cobra.Command{

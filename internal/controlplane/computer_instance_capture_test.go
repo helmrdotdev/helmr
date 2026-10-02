@@ -25,7 +25,7 @@ func TestComputerCaptureProjection(t *testing.T) {
 	for _, count := range []int{0, 2} {
 		cp, members := captureProjectionFixture(count)
 		if count > 0 {
-			members[0].ActorSpeculativeInputSequence = pgtype.Int8{Int64: 4, Valid: true}
+			members[0].SessionSpeculativeInputSequence = pgtype.Int8{Int64: 4, Valid: true}
 		}
 		got, err := projectComputerInstanceCapture(cp, members)
 		if err != nil {
@@ -41,11 +41,11 @@ func TestComputerCaptureProjection(t *testing.T) {
 			}
 		}
 		if count > 0 {
-			if got.Runs[0].ActorSpeculativeInputSequence == nil || *got.Runs[0].ActorSpeculativeInputSequence != 4 || got.Runs[1].ActorSpeculativeInputSequence != nil {
+			if got.Runs[0].SessionSpeculativeInputSequence == nil || *got.Runs[0].SessionSpeculativeInputSequence != 4 || got.Runs[1].SessionSpeculativeInputSequence != nil {
 				t.Fatal("cursor ownership changed")
 			}
-			*got.Runs[0].ActorSpeculativeInputSequence = 5
-			if members[0].ActorSpeculativeInputSequence.Int64 != 4 {
+			*got.Runs[0].SessionSpeculativeInputSequence = 5
+			if members[0].SessionSpeculativeInputSequence.Int64 != 4 {
 				t.Fatal("projection aliases source")
 			}
 		}
@@ -72,7 +72,7 @@ func TestComputerCaptureProjectionRejectsInvalidSet(t *testing.T) {
 		{"wrong generation", func(c *db.ComputerCheckpoint, m []db.ComputerCheckpointRun) { m[0].WriterGeneration++ }},
 		{"missing lease", func(c *db.ComputerCheckpoint, m []db.ComputerCheckpointRun) { m[0].SourceRunLeaseID = pgtype.UUID{} }},
 		{"negative cursor", func(c *db.ComputerCheckpoint, m []db.ComputerCheckpointRun) {
-			m[0].ActorSpeculativeInputSequence = pgtype.Int8{Int64: -1, Valid: true}
+			m[0].SessionSpeculativeInputSequence = pgtype.Int8{Int64: -1, Valid: true}
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -140,7 +140,7 @@ func (s *Server) workerInvokeChildTask(w http.ResponseWriter, r *http.Request) {
 			RetryPolicy: normalized.RetryPolicy, Metadata: normalized.Metadata,
 			Tags: normalized.Tags,
 		},
-		Cursor: request.ActorSpeculativeInputSequence,
+		Cursor: request.SessionSpeculativeInputSequence,
 		TurnID: turnID, RunGeneration: runGeneration,
 		RunWaitID: runWaitID, ResumeAttachID: resumeAttachID,
 		ChildResult: childTaskResult,

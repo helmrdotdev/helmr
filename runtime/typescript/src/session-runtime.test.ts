@@ -177,7 +177,7 @@ function harness(
       if (await intercept?.(event, reply)) return
       if (
         event.case === "runWaitRequested" &&
-        event.value.kind === "actor_input"
+        event.value.kind === "session_input"
       ) {
         if (sequence === inputs.length)
           reply({ reason_code: "session_closed" }, "failed")
@@ -890,7 +890,7 @@ test("Actor child calls carry exact Turn identity while Task results stay generi
         assert.equal(event.value.turnId, ids.turn)
         assert.equal(event.value.execution?.sessionId, ids.session)
         assert.equal(event.value.execution?.runGeneration, 7n)
-        assert.equal(event.value.actorSpeculativeInputSequence, 1n)
+        assert.equal(event.value.sessionSpeculativeInputSequence, 1n)
         reply({ ok: true, output: null, run: { id: ids.event } })
         return true
       }
@@ -1156,7 +1156,7 @@ test("outside-Turn managed waits carry generation and the committed input positi
         return false
       assert.equal(event.value.execution?.runGeneration, 7n)
       assert.equal(event.value.turnId, undefined)
-      positions.push(event.value.actorSpeculativeInputSequence!)
+      positions.push(event.value.sessionSpeculativeInputSequence!)
       reply(true)
       return true
     },

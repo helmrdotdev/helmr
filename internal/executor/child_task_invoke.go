@@ -67,13 +67,13 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 		}
 		runtimeWait := WaitRequest{
 			Execution: requested.GetExecution(), TurnID: requested.TurnId,
-			Leases:                        task,
-			CorrelationID:                 request.CorrelationID,
-			RunWaitID:                     request.RunWaitID,
-			ResumeAttachID:                request.ResumeAttachID,
-			Kind:                          workerapi.RunWaitKindChild,
-			ActorSpeculativeInputSequence: request.ActorSpeculativeInputSequence,
-			Computer:                      task.waitComputer,
+			Leases:                          task,
+			CorrelationID:                   request.CorrelationID,
+			RunWaitID:                       request.RunWaitID,
+			ResumeAttachID:                  request.ResumeAttachID,
+			Kind:                            workerapi.RunWaitKindChild,
+			SessionSpeculativeInputSequence: request.SessionSpeculativeInputSequence,
+			Computer:                        task.waitComputer,
 			Resume: func(resumeCtx context.Context, decision WaitResumeDecision) error {
 				if err := task.beforeWaitResume(resumeCtx, decision); err != nil {
 					return err
@@ -163,7 +163,7 @@ func workerChildTaskInvokeRequest(
 	if requested.IdempotencyKey != nil {
 		request.IdempotencyKey = requested.GetIdempotencyKey()
 	}
-	request.ActorSpeculativeInputSequence = requested.ActorSpeculativeInputSequence
+	request.SessionSpeculativeInputSequence = requested.SessionSpeculativeInputSequence
 	return request, nil
 }
 

@@ -16,14 +16,14 @@ func projectComputerInstanceCapture(cp db.ComputerCheckpoint, members []db.Compu
 	seen := make(map[string]struct{}, len(members))
 	for _, member := range members {
 		id := pgvalue.UUIDString(member.RunID)
-		if _, duplicate := seen[id]; duplicate || !member.RunID.Valid || !member.RunWaitID.Valid || !member.SourceRunLeaseID.Valid || member.AttemptNumber <= 0 || member.CheckpointID != cp.ID || member.EnvironmentID != cp.EnvironmentID || member.ComputerID != cp.ComputerID || member.SourceComputerInstanceID != cp.SourceComputerInstanceID || member.WriterGeneration != cp.WriterGeneration || (member.ActorSpeculativeInputSequence.Valid && member.ActorSpeculativeInputSequence.Int64 < 0) {
+		if _, duplicate := seen[id]; duplicate || !member.RunID.Valid || !member.RunWaitID.Valid || !member.SourceRunLeaseID.Valid || member.AttemptNumber <= 0 || member.CheckpointID != cp.ID || member.EnvironmentID != cp.EnvironmentID || member.ComputerID != cp.ComputerID || member.SourceComputerInstanceID != cp.SourceComputerInstanceID || member.WriterGeneration != cp.WriterGeneration || (member.SessionSpeculativeInputSequence.Valid && member.SessionSpeculativeInputSequence.Int64 < 0) {
 			return nil, errors.New("computer capture membership has inconsistent authority")
 		}
 		seen[id] = struct{}{}
 		run := workerapi.InstanceCaptureRun{RunID: id, AttemptNumber: member.AttemptNumber, RunWaitID: pgvalue.UUIDString(member.RunWaitID), RunLeaseID: pgvalue.UUIDString(member.SourceRunLeaseID)}
-		if member.ActorSpeculativeInputSequence.Valid {
-			cursor := member.ActorSpeculativeInputSequence.Int64
-			run.ActorSpeculativeInputSequence = &cursor
+		if member.SessionSpeculativeInputSequence.Valid {
+			cursor := member.SessionSpeculativeInputSequence.Int64
+			run.SessionSpeculativeInputSequence = &cursor
 		}
 		result.Runs = append(result.Runs, run)
 	}

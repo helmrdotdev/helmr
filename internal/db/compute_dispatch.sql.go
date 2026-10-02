@@ -493,7 +493,7 @@ SELECT input_scopes.scope_ordinal,
              AND c.status='ready' AND c.resume_committed_at IS NULL
              AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp())
              AND (runs.session_id IS NULL OR EXISTS(SELECT 1 FROM sessions a WHERE a.id=runs.session_id
-               AND m.actor_speculative_input_sequence BETWEEN a.committed_input_sequence AND a.next_input_sequence-1)))
+               AND m.session_speculative_input_sequence BETWEEN a.committed_input_sequence AND a.next_input_sequence-1)))
        )
          AND (runs.next_instance_preparation_at IS NULL
               OR runs.next_instance_preparation_at <= transaction_timestamp())
@@ -605,7 +605,7 @@ WITH candidate_scopes AS (
              AND c.status='ready' AND c.resume_committed_at IS NULL
              AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp())
              AND (runs.session_id IS NULL OR EXISTS(SELECT 1 FROM sessions a WHERE a.id=runs.session_id
-               AND m.actor_speculative_input_sequence BETWEEN a.committed_input_sequence AND a.next_input_sequence-1)))
+               AND m.session_speculative_input_sequence BETWEEN a.committed_input_sequence AND a.next_input_sequence-1)))
        )
        AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
      GROUP BY runs.org_id, runs.project_id, runs.environment_id, computers.region_id,
@@ -808,7 +808,7 @@ SELECT runs.org_id,
              AND c.status='ready' AND c.resume_committed_at IS NULL
              AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp())
              AND (runs.session_id IS NULL OR EXISTS(SELECT 1 FROM sessions a WHERE a.id=runs.session_id
-               AND m.actor_speculative_input_sequence BETWEEN a.committed_input_sequence AND a.next_input_sequence-1)))
+               AND m.session_speculative_input_sequence BETWEEN a.committed_input_sequence AND a.next_input_sequence-1)))
        )
    AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
  ORDER BY runs.queue_score_at, runs.id

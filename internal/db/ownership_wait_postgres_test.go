@@ -176,7 +176,7 @@ func TestOwnershipActorInputStoredRoleGatesAllSuspensions(t *testing.T) {
 			work := f.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
 			sessionID := f.ConvertToActor(t, ctx, work, `{"enabled":false}`)
 			w := ownershipTimerWait(t, f, work)
-			dbtest.MustExec(t, ctx, f.Pool, "UPDATE run_waits SET kind='actor_input',due_at=NULL,session_id=$2,after_input_sequence=2 WHERE id=$1", w.ID, sessionID)
+			dbtest.MustExec(t, ctx, f.Pool, "UPDATE run_waits SET kind='session_input',due_at=NULL,session_id=$2,after_input_sequence=2 WHERE id=$1", w.ID, sessionID)
 			checkpointID := uuid.NewV7()
 			if state != "hot" {
 				ownershipCapture(t, f, work, pgvalue.UUID(checkpointID))

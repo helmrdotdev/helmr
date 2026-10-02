@@ -227,11 +227,11 @@ type InstanceCapture struct {
 }
 
 type InstanceCaptureRun struct {
-	RunID                         string `json:"run_id"`
-	AttemptNumber                 int32  `json:"attempt_number"`
-	RunWaitID                     string `json:"run_wait_id"`
-	RunLeaseID                    string `json:"run_lease_id"`
-	ActorSpeculativeInputSequence *int64 `json:"actor_speculative_input_sequence,omitempty"`
+	RunID                           string `json:"run_id"`
+	AttemptNumber                   int32  `json:"attempt_number"`
+	RunWaitID                       string `json:"run_wait_id"`
+	RunLeaseID                      string `json:"run_lease_id"`
+	SessionSpeculativeInputSequence *int64 `json:"session_speculative_input_sequence,omitempty"`
 }
 
 type InstanceReconcileTarget struct {
@@ -517,20 +517,20 @@ type DeleteComputerResponse struct {
 }
 
 type InvokeChildTaskRequest struct {
-	TurnID                        *string         `json:"turn_id"`
-	RunGeneration                 *int64          `json:"run_generation"`
-	Lease                         RunLeaseFence   `json:"lease"`
-	CorrelationID                 string          `json:"correlation_id"`
-	RunWaitID                     string          `json:"run_wait_id,omitempty"`
-	ResumeAttachID                string          `json:"resume_attach_id,omitempty"`
-	TaskDeclaredID                string          `json:"task_declared_id"`
-	Method                        string          `json:"method"`
-	PayloadPresent                bool            `json:"payload_present"`
-	Payload                       json.RawMessage `json:"payload,omitempty"`
-	Computer                      json.RawMessage `json:"computer"`
-	Options                       json.RawMessage `json:"options"`
-	IdempotencyKey                string          `json:"idempotency_key,omitempty"`
-	ActorSpeculativeInputSequence *int64          `json:"actor_speculative_input_sequence,omitempty"`
+	TurnID                          *string         `json:"turn_id"`
+	RunGeneration                   *int64          `json:"run_generation"`
+	Lease                           RunLeaseFence   `json:"lease"`
+	CorrelationID                   string          `json:"correlation_id"`
+	RunWaitID                       string          `json:"run_wait_id,omitempty"`
+	ResumeAttachID                  string          `json:"resume_attach_id,omitempty"`
+	TaskDeclaredID                  string          `json:"task_declared_id"`
+	Method                          string          `json:"method"`
+	PayloadPresent                  bool            `json:"payload_present"`
+	Payload                         json.RawMessage `json:"payload,omitempty"`
+	Computer                        json.RawMessage `json:"computer"`
+	Options                         json.RawMessage `json:"options"`
+	IdempotencyKey                  string          `json:"idempotency_key,omitempty"`
+	SessionSpeculativeInputSequence *int64          `json:"session_speculative_input_sequence,omitempty"`
 }
 
 type ChildTaskStartResult struct {
@@ -763,26 +763,26 @@ type CreateTokenRequest struct {
 type RunWaitKind string
 
 const (
-	RunWaitKindToken      RunWaitKind = "token"
-	RunWaitKindTimer      RunWaitKind = "timer"
-	RunWaitKindActorInput RunWaitKind = "actor_input"
-	RunWaitKindChild      RunWaitKind = "child"
+	RunWaitKindToken        RunWaitKind = "token"
+	RunWaitKindTimer        RunWaitKind = "timer"
+	RunWaitKindSessionInput RunWaitKind = "session_input"
+	RunWaitKindChild        RunWaitKind = "child"
 )
 
 type CreateRunWaitRequest struct {
-	TurnID                        *string         `json:"turn_id"`
-	RunGeneration                 *int64          `json:"run_generation"`
-	Lease                         RunLeaseFence   `json:"lease"`
-	CorrelationID                 string          `json:"correlation_id"`
-	RunWaitID                     string          `json:"run_wait_id"`
-	ResumeAttachID                string          `json:"resume_attach_id"`
-	Kind                          RunWaitKind     `json:"kind"`
-	Params                        json.RawMessage `json:"params,omitempty"`
-	Metadata                      json.RawMessage `json:"metadata,omitempty"`
-	Tags                          []string        `json:"tags,omitempty"`
-	TimeoutMS                     *int64          `json:"timeout_ms,omitempty"`
-	IdleTimeoutMS                 *int64          `json:"idle_timeout_ms,omitempty"`
-	ActorSpeculativeInputSequence *int64          `json:"actor_speculative_input_sequence,omitempty"`
+	TurnID                          *string         `json:"turn_id"`
+	RunGeneration                   *int64          `json:"run_generation"`
+	Lease                           RunLeaseFence   `json:"lease"`
+	CorrelationID                   string          `json:"correlation_id"`
+	RunWaitID                       string          `json:"run_wait_id"`
+	ResumeAttachID                  string          `json:"resume_attach_id"`
+	Kind                            RunWaitKind     `json:"kind"`
+	Params                          json.RawMessage `json:"params,omitempty"`
+	Metadata                        json.RawMessage `json:"metadata,omitempty"`
+	Tags                            []string        `json:"tags,omitempty"`
+	TimeoutMS                       *int64          `json:"timeout_ms,omitempty"`
+	IdleTimeoutMS                   *int64          `json:"idle_timeout_ms,omitempty"`
+	SessionSpeculativeInputSequence *int64          `json:"session_speculative_input_sequence,omitempty"`
 }
 
 type CreateRunWaitResponse struct {
@@ -856,12 +856,12 @@ type CheckpointRecoveryPoint struct {
 }
 
 type CheckpointRun struct {
-	RunID                         string `json:"run_id"`
-	AttemptNumber                 int32  `json:"attempt_number"`
-	RunWaitID                     string `json:"run_wait_id"`
-	RunLeaseID                    string `json:"run_lease_id"`
-	ActorSpeculativeInputSequence *int64 `json:"actor_speculative_input_sequence,omitempty"`
-	CorrelationID                 string `json:"correlation_id"`
+	RunID                           string `json:"run_id"`
+	AttemptNumber                   int32  `json:"attempt_number"`
+	RunWaitID                       string `json:"run_wait_id"`
+	RunLeaseID                      string `json:"run_lease_id"`
+	SessionSpeculativeInputSequence *int64 `json:"session_speculative_input_sequence,omitempty"`
+	CorrelationID                   string `json:"correlation_id"`
 }
 
 type CheckpointRuntime struct {

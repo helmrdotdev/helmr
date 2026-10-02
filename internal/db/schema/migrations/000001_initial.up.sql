@@ -29,7 +29,7 @@ CREATE TYPE wait_kind AS ENUM (
     'token',
     'timer',
     'child',
-    'actor_input'
+    'session_input'
 );
 
 CREATE TABLE organizations (
@@ -1744,9 +1744,9 @@ CREATE TABLE run_waits (
     CHECK (suspension_error IS NULL OR jsonb_typeof(suspension_error) = 'object'),
     CONSTRAINT run_waits_completed_turn_condition_check CHECK (
         (completed_turn_id IS NULL
-         AND (kind <> 'actor_input' OR condition_status <> 'completed'))
+         AND (kind <> 'session_input' OR condition_status <> 'completed'))
         OR
-        (kind = 'actor_input'
+        (kind = 'session_input'
          AND condition_status = 'completed'
          AND session_id IS NOT NULL
          AND completed_turn_id IS NOT NULL)
@@ -1787,7 +1787,7 @@ CREATE TABLE run_waits (
          AND session_id IS NULL
          AND after_input_sequence IS NULL)
         OR
-        (kind = 'actor_input'
+        (kind = 'session_input'
          AND due_at IS NULL
          AND token_id IS NULL
          AND token_registration_run_revision IS NULL
@@ -1984,7 +1984,7 @@ CREATE TABLE computer_checkpoint_runs (
     attempt_number INTEGER NOT NULL CHECK (attempt_number>0),
     run_wait_id UUID NOT NULL,
     source_run_lease_id UUID NOT NULL,
-    actor_speculative_input_sequence BIGINT CHECK (actor_speculative_input_sequence >= 0),
+    session_speculative_input_sequence BIGINT CHECK (session_speculative_input_sequence >= 0),
     PRIMARY KEY (checkpoint_id,run_id),
     UNIQUE (run_id,attempt_number,computer_id,run_wait_id,checkpoint_id),
     source_computer_instance_id UUID NOT NULL,

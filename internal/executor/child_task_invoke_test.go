@@ -341,14 +341,14 @@ func TestHandleChildTaskCallContinuesOpenedWait(t *testing.T) {
 	result := make(chan error, 1)
 	go func() {
 		result <- task.handleChildTaskInvoke(t.Context(), &programv0.TaskChildInvokeRequested{
-			CorrelationId:                 correlationID,
-			RunWaitId:                     runWaitID,
-			ResumeAttachId:                resumeAttachID,
-			DeclaredId:                    "resize-image",
-			Method:                        "call",
-			ComputerJson:                  `{"key":"image-computer"}`,
-			OptionsJson:                   `{}`,
-			ActorSpeculativeInputSequence: &actorSequence,
+			CorrelationId:                   correlationID,
+			RunWaitId:                       runWaitID,
+			ResumeAttachId:                  resumeAttachID,
+			DeclaredId:                      "resize-image",
+			Method:                          "call",
+			ComputerJson:                    `{"key":"image-computer"}`,
+			OptionsJson:                     `{}`,
+			SessionSpeculativeInputSequence: &actorSequence,
 		})
 	}()
 	reader := bufio.NewReader(host)
@@ -370,8 +370,8 @@ func TestHandleChildTaskCallContinuesOpenedWait(t *testing.T) {
 		decision.GetDataJson() != `{"ok":true,"output":{"resized":true},"run":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"}}` {
 		t.Fatalf("decision = %+v", decision)
 	}
-	if controlPlane.request.ActorSpeculativeInputSequence == nil ||
-		*controlPlane.request.ActorSpeculativeInputSequence != actorSequence ||
+	if controlPlane.request.SessionSpeculativeInputSequence == nil ||
+		*controlPlane.request.SessionSpeculativeInputSequence != actorSequence ||
 		controlPlane.request.RunWaitID != runWaitID ||
 		controlPlane.request.ResumeAttachID != resumeAttachID {
 		t.Fatalf("request = %+v", controlPlane.request)

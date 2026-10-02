@@ -159,7 +159,7 @@ func TestSchemaProvenanceAndExpiryRejectPartialTuples(t *testing.T) {
 		INSERT INTO run_waits (id,environment_id,run_id,computer_id,kind,session_id,after_input_sequence,
 		 condition_status,condition_terminal_at,completed_turn_id,
 		 expected_run_revision,attempt_number,current_run_lease_id)
-		SELECT $1,environment_id,id,computer_id,'actor_input',session_id,0,'completed',now(),$2,revision,1,$3
+		SELECT $1,environment_id,id,computer_id,'session_input',session_id,0,'completed',now(),$2,revision,1,$3
 		FROM runs WHERE id=$4
 	`, waitID, turnID, work.leaseID, work.runID)
 	rejectSchemaRow(t, tx, "23514", `UPDATE run_waits SET completed_turn_id=NULL WHERE id=$1`, waitID)

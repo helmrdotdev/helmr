@@ -99,7 +99,7 @@ func computerCheckpointManifest(m workerapi.CheckpointManifest) computer.Checkpo
 		for _, run := range point.Runs {
 			result.RecoveryPoint.Runs = append(result.RecoveryPoint.Runs, computer.CheckpointRun{
 				RunID: run.RunID, AttemptNumber: run.AttemptNumber, RunWaitID: run.RunWaitID, RunLeaseID: run.RunLeaseID,
-				ActorSpeculativeInputSequence: run.ActorSpeculativeInputSequence, CorrelationID: run.CorrelationID,
+				SessionSpeculativeInputSequence: run.SessionSpeculativeInputSequence, CorrelationID: run.CorrelationID,
 			})
 		}
 	}

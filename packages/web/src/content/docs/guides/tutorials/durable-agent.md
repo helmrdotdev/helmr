@@ -63,12 +63,12 @@ ID for all later interaction.
 ## Continue the Session
 
 ```sh
-helmr actor enqueue SESSION_ID \
+helmr session enqueue SESSION_ID \
   --project demo --env development \
   --data-json '{"type":"message","text":"summarize our work"}' \
   --idempotency-key tutorial:assistant:message:2
 
-helmr actor events SESSION_ID \
+helmr session events SESSION_ID \
   --project demo --env development \
   --after 0 --jsonl
 ```
@@ -79,11 +79,11 @@ A page ending does not complete a Turn. Pass the last durable sequence back thro
 stable upstream event ID so delivery retries do not duplicate application
 commands.
 
-Inspect the current managed Run with `helmr actor get SESSION_ID`. When the
+Inspect the current managed Run with `helmr session get SESSION_ID`. When the
 conversation is finished, close the Session explicitly:
 
 ```sh
-helmr actor close SESSION_ID \
+helmr session close SESSION_ID \
   --project demo --env development \
   --idempotency-key tutorial:assistant:close
 ```

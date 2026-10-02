@@ -12,6 +12,8 @@ helmr task get TASK [-p PROJECT] [-e ENV] [--json]
 helmr task start TASK --computer COMPUTER [flags]
 ```
 
+`start` returns a Run; use [`helmr run`](../run/) to inspect or control it.
+
 Start payload sources are mutually exclusive: `--payload-file FILE`,
 `--payload-json JSON`, or repeated `--payload KEY=VALUE`. Run options are
 `--queue`, `--concurrency-key`, `--priority`, `--ttl`, repeated `--tag`, and

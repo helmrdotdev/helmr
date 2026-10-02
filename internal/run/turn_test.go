@@ -16,12 +16,12 @@ func TestWorkerWaitCursorCompletedActorInputReplay(t *testing.T) {
 		session: db.Session{ID: sessionID, CurrentRunID: runID, Status: "open", CommittedInputSequence: 3, NextInputSequence: 5, ActiveTurnID: turnID, RunGeneration: 2},
 		attempt: db.RunAttempt{SessionInputStartSequence: pgtype.Int8{Int64: 1, Valid: true}},
 	}
-	receipt := db.RunWait{Kind: db.WaitKindActorInput, CompletedTurnID: turnID, TurnID: turnID, TurnSessionID: sessionID, TurnRunGeneration: pgtype.Int8{Int64: 2, Valid: true}}
+	receipt := db.RunWait{Kind: db.WaitKindSessionInput, CompletedTurnID: turnID, TurnID: turnID, TurnSessionID: sessionID, TurnRunGeneration: pgtype.Int8{Int64: 2, Valid: true}}
 	cursor := pgtype.Int8{Int64: 3, Valid: true}
 	if err := a.ValidateWaitCursor(receipt, cursor); err != nil {
 		t.Fatalf("completed receive replay rejected: %v", err)
 	}
-	if err := a.ValidateWaitCursor(db.RunWait{Kind: db.WaitKindActorInput}, cursor); err == nil {
+	if err := a.ValidateWaitCursor(db.RunWait{Kind: db.WaitKindSessionInput}, cursor); err == nil {
 		t.Fatal("new receive accepted during active Turn")
 	}
 	receipt.CompletedTurnID = pgvalue.UUID(uuid.NewV7())

@@ -605,14 +605,14 @@ func TestTokenWaitCreateRoute(t *testing.T) {
 	// so registration rejects its authority.
 	actorCursor := wait(token.ID)
 	zero := int64(0)
-	actorCursor.ActorSpeculativeInputSequence = &zero
+	actorCursor.SessionSpeculativeInputSequence = &zero
 	out = worker.post(t, "/worker/v1/run/waits/create", actorCursor, http.StatusConflict, nil)
 	if body := decodeHTTPError(t, out.Body.Bytes()); body.Code != "conflict" || body.Message != "worker run wait receipt is stale" {
 		t.Fatalf("stale registration = %s", out.Body.String())
 	}
 	negative := wait(token.ID)
 	cursor := int64(-1)
-	negative.ActorSpeculativeInputSequence = &cursor
+	negative.SessionSpeculativeInputSequence = &cursor
 	out = worker.post(t, "/worker/v1/run/waits/create", negative, http.StatusInternalServerError, nil)
 	if body := decodeHTTPError(t, out.Body.Bytes()); body.Code != "internal_error" || body.Message != "internal server error" {
 		t.Fatalf("invalid registration = %s", out.Body.String())

@@ -65,8 +65,8 @@ func (s *Server) workerCreateTimerRunWait(
 	waitID := identity.waitID
 	resumeAttachID := identity.resumeAttachID
 	actorCursor := pgtype.Int8{}
-	if request.ActorSpeculativeInputSequence != nil {
-		actorCursor = pgtype.Int8{Int64: *request.ActorSpeculativeInputSequence, Valid: true}
+	if request.SessionSpeculativeInputSequence != nil {
+		actorCursor = pgtype.Int8{Int64: *request.SessionSpeculativeInputSequence, Valid: true}
 	}
 
 	registered, err := run.RegisterTimerWait(r.Context(), s.tx, run.TimerWait{

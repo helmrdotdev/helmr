@@ -35,7 +35,7 @@ helmr actor start reviewer --project agents --env development \
   --computer COMPUTER_ID --key review:42 \
   --idempotency-key review:42:start --json
 
-helmr actor enqueue SESSION_ID --project agents --env development \
+helmr session enqueue SESSION_ID --project agents --env development \
   --data-json '{"type":"review","number":42}' \
   --idempotency-key review:42:first --json
 ```

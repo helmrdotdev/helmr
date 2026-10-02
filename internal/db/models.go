@@ -190,10 +190,10 @@ func (ns NullTelemetryStreamKind) Value() (driver.Value, error) {
 type WaitKind string
 
 const (
-	WaitKindToken      WaitKind = "token"
-	WaitKindTimer      WaitKind = "timer"
-	WaitKindChild      WaitKind = "child"
-	WaitKindActorInput WaitKind = "actor_input"
+	WaitKindToken        WaitKind = "token"
+	WaitKindTimer        WaitKind = "timer"
+	WaitKindChild        WaitKind = "child"
+	WaitKindSessionInput WaitKind = "session_input"
 )
 
 func (e *WaitKind) Scan(src interface{}) error {
@@ -389,16 +389,16 @@ type ComputerCheckpointObject struct {
 }
 
 type ComputerCheckpointRun struct {
-	CheckpointID                  pgtype.UUID `json:"checkpoint_id"`
-	EnvironmentID                 pgtype.UUID `json:"environment_id"`
-	ComputerID                    pgtype.UUID `json:"computer_id"`
-	RunID                         pgtype.UUID `json:"run_id"`
-	AttemptNumber                 int32       `json:"attempt_number"`
-	RunWaitID                     pgtype.UUID `json:"run_wait_id"`
-	SourceRunLeaseID              pgtype.UUID `json:"source_run_lease_id"`
-	ActorSpeculativeInputSequence pgtype.Int8 `json:"actor_speculative_input_sequence"`
-	SourceComputerInstanceID      pgtype.UUID `json:"source_computer_instance_id"`
-	WriterGeneration              int64       `json:"writer_generation"`
+	CheckpointID                    pgtype.UUID `json:"checkpoint_id"`
+	EnvironmentID                   pgtype.UUID `json:"environment_id"`
+	ComputerID                      pgtype.UUID `json:"computer_id"`
+	RunID                           pgtype.UUID `json:"run_id"`
+	AttemptNumber                   int32       `json:"attempt_number"`
+	RunWaitID                       pgtype.UUID `json:"run_wait_id"`
+	SourceRunLeaseID                pgtype.UUID `json:"source_run_lease_id"`
+	SessionSpeculativeInputSequence pgtype.Int8 `json:"session_speculative_input_sequence"`
+	SourceComputerInstanceID        pgtype.UUID `json:"source_computer_instance_id"`
+	WriterGeneration                int64       `json:"writer_generation"`
 }
 
 type ComputerCommand struct {

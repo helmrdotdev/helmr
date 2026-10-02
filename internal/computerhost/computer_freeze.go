@@ -50,7 +50,7 @@ func computerFreezeRequest(target workerapi.InstanceReconcileTarget) (*computerv
 	request := &computerv0.FreezeComputerRequest{ComputerId: target.Source.ComputerID, ComputerInstanceId: target.ID, WriterGeneration: target.Source.WriterGeneration, CheckpointId: capture.CheckpointID, DesiredVersion: target.DesiredVersion, MembershipRevision: capture.MembershipRevision, Runs: make([]*computerv0.ComputerCaptureRun, 0, len(capture.Runs))}
 	seen := make(map[string]bool, len(capture.Runs))
 	for _, run := range capture.Runs {
-		if strings.TrimSpace(run.RunID) == "" || run.AttemptNumber <= 0 || strings.TrimSpace(run.RunWaitID) == "" || strings.TrimSpace(run.RunLeaseID) == "" || seen[run.RunID] || (run.ActorSpeculativeInputSequence != nil && *run.ActorSpeculativeInputSequence < 0) {
+		if strings.TrimSpace(run.RunID) == "" || run.AttemptNumber <= 0 || strings.TrimSpace(run.RunWaitID) == "" || strings.TrimSpace(run.RunLeaseID) == "" || seen[run.RunID] || (run.SessionSpeculativeInputSequence != nil && *run.SessionSpeculativeInputSequence < 0) {
 			return nil, errors.New("computer capture member is incomplete or duplicated")
 		}
 		seen[run.RunID] = true
@@ -83,9 +83,9 @@ func computerFrozenRecoveryPoint(target workerapi.InstanceReconcileTarget, reque
 	point := workerapi.CheckpointRecoveryPoint{ID: request.CheckpointId, ComputerID: request.ComputerId, ComputerInstanceID: request.ComputerInstanceId, WriterGeneration: request.WriterGeneration, MembershipRevision: request.MembershipRevision, ComputerSpecID: target.Source.ComputerSpecID, ProgramDeploymentID: target.Capture.ProgramDeploymentID, Runs: make([]workerapi.CheckpointRun, 0, len(target.Capture.Runs))}
 	for _, run := range target.Capture.Runs {
 		captured := workerapi.CheckpointRun{RunID: run.RunID, AttemptNumber: run.AttemptNumber, RunWaitID: run.RunWaitID, RunLeaseID: run.RunLeaseID, CorrelationID: correlations[run.RunID]}
-		if run.ActorSpeculativeInputSequence != nil {
-			cursor := *run.ActorSpeculativeInputSequence
-			captured.ActorSpeculativeInputSequence = &cursor
+		if run.SessionSpeculativeInputSequence != nil {
+			cursor := *run.SessionSpeculativeInputSequence
+			captured.SessionSpeculativeInputSequence = &cursor
 		}
 		point.Runs = append(point.Runs, captured)
 	}

@@ -36,10 +36,10 @@ FROM barrier RETURNING *;
 -- coordinator compares the complete resident set before committing capture intent.
 -- name: CreateComputerCheckpointRun :one
 INSERT INTO computer_checkpoint_runs(checkpoint_id,environment_id,computer_id,run_id,
- attempt_number,run_wait_id,source_run_lease_id,actor_speculative_input_sequence,
+ attempt_number,run_wait_id,source_run_lease_id,session_speculative_input_sequence,
  source_computer_instance_id,writer_generation)
 SELECT checkpoint.id,checkpoint.environment_id,checkpoint.computer_id,lease.run_id,
- lease.attempt_number,wait.id,lease.id,sqlc.narg(actor_speculative_input_sequence),
+ lease.attempt_number,wait.id,lease.id,sqlc.narg(session_speculative_input_sequence),
  checkpoint.source_computer_instance_id,checkpoint.writer_generation
 FROM computer_checkpoints checkpoint JOIN computer_instances instance
  ON instance.id=checkpoint.source_computer_instance_id AND instance.capture_checkpoint_id=checkpoint.id

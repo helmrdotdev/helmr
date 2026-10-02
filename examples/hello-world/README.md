@@ -28,8 +28,8 @@ helmr deploy PATH/TO/hello-world --project PROJECT --env ENVIRONMENT
   ```
 
 Start an Actor without input, then enqueue with the returned Session ID. Read
-`helmr actor events SESSION_ID --json` and retain `next_after`; inspect a Turn
-with `helmr actor turn get SESSION_ID TURN_ID`. Output and lifecycle share one
+`helmr session events SESSION_ID --json` and retain `next_after`; inspect a Turn
+with `helmr session turn get SESSION_ID TURN_ID`. Output and lifecycle share one
 sequence. The external CI service is application-owned; the example does not
 contact a provider automatically.
 
@@ -37,7 +37,7 @@ To exercise a managed wait, enqueue A and wait for `ci_requested`, then enqueue 
 Interrupt A using its exact Turn ID. A Token completion that races interruption
 does not authorize further Turn output or replay A; inspect the Turn's terminal
 outcome. Queued B remains behind the hold. Once interruption converges, resume
-using the exact hold from the stop receipt (`actor resume SESSION_ID --hold ID`).
+using the exact hold from the stop receipt (`session resume SESSION_ID --hold ID`).
 Stopping this wait does not globally cancel its Token or another consumer's wait.
 The SDK supports shared Token consumers; this example creates one per Turn.
 

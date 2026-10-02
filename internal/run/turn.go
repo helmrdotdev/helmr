@@ -148,7 +148,7 @@ func (e Execution) ValidateWaitCursor(wait db.RunWait, cursor pgtype.Int8) error
 	if wait.TurnID.Valid && (s.ActiveTurnID != wait.TurnID || wait.TurnSessionID != s.ID || !wait.TurnRunGeneration.Valid || wait.TurnRunGeneration.Int64 != s.RunGeneration) {
 		return ErrTurnScope
 	}
-	if wait.Kind == db.WaitKindActorInput && wait.CompletedTurnID.Valid {
+	if wait.Kind == db.WaitKindSessionInput && wait.CompletedTurnID.Valid {
 		if wait.CompletedTurnID != s.ActiveTurnID || wait.TurnID != wait.CompletedTurnID {
 			return ErrTurnScope
 		}
@@ -156,7 +156,7 @@ func (e Execution) ValidateWaitCursor(wait db.RunWait, cursor pgtype.Int8) error
 		return ErrTurnScope
 	}
 	want := s.CommittedInputSequence
-	if wait.TurnID.Valid && wait.Kind != db.WaitKindActorInput {
+	if wait.TurnID.Valid && wait.Kind != db.WaitKindSessionInput {
 		want++
 	}
 	if !cursor.Valid || cursor.Int64 != want || !attempt.SessionInputStartSequence.Valid || attempt.SessionInputStartSequence.Int64 > s.CommittedInputSequence || cursor.Int64 >= s.NextInputSequence {

@@ -37,7 +37,7 @@ func freezeTarget(count int) workerapi.InstanceReconcileTarget {
 	}
 	if count > 0 {
 		cursor := int64(9)
-		target.Capture.Runs[0].ActorSpeculativeInputSequence = &cursor
+		target.Capture.Runs[0].SessionSpeculativeInputSequence = &cursor
 	}
 	return target
 }
@@ -119,11 +119,11 @@ func TestComputerFreezeVerifiesWholeGuestProof(t *testing.T) {
 					}
 				}
 				if test.count > 0 {
-					if point.Runs[0].ActorSpeculativeInputSequence == nil || *point.Runs[0].ActorSpeculativeInputSequence != 9 || point.Runs[1].ActorSpeculativeInputSequence != nil {
+					if point.Runs[0].SessionSpeculativeInputSequence == nil || *point.Runs[0].SessionSpeculativeInputSequence != 9 || point.Runs[1].SessionSpeculativeInputSequence != nil {
 						t.Fatal("cursor changed")
 					}
-					*point.Runs[0].ActorSpeculativeInputSequence = 10
-					if *target.Capture.Runs[0].ActorSpeculativeInputSequence != 9 {
+					*point.Runs[0].SessionSpeculativeInputSequence = 10
+					if *target.Capture.Runs[0].SessionSpeculativeInputSequence != 9 {
 						t.Fatal("source cursor aliased")
 					}
 				}

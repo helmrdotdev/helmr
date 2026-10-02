@@ -82,13 +82,13 @@ type Started struct {
 }
 
 type startReceipt struct {
-	SessionID string `json:"actorId"`
+	SessionID string `json:"sessionId"`
 	BootRunID string `json:"bootRunId"`
 }
 
 // Start admits an Actor's Session and boot Run in its own transaction. A
 // non-nil claim makes the start replayable: Start acquires it first and
-// replays a completed claim's receipt {"actorId","bootRunId"}. A new start
+// replays a completed claim's receipt {"sessionId","bootRunId"}. A new start
 // then locks the environment FOR NO KEY UPDATE with the current deployment's
 // Actor, takes the transaction advisory lock on the environment, Actor and
 // key and checks the key is free, locks the Computer's Secrets and then the

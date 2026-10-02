@@ -8,7 +8,7 @@ description: Continue an Actor Session and page through its durable output.
 Send one JSON value to an open Session:
 
 ```sh
-helmr actor send SESSION_ID \
+helmr session send SESSION_ID \
   --project agents --env development \
   --data-json '{"type":"instruction","text":"also update the tests"}' \
   --idempotency-key slack:T123:C456:1712345678.000100
@@ -21,12 +21,12 @@ queue a new Turn. Messages accepted before handler registration wait for deliver
 to that same Turn. Acceptance does not mean the application has handled the message;
 inspect message outcomes in the Session timeline. A held Session rejects `send`.
 For an answer or approval tied to existing work, use `session.turn(turnId).send`
-or `helmr actor turn send SESSION_ID TURN_ID`. These never retarget a late reply.
+or `helmr session turn send SESSION_ID TURN_ID`. These never retarget a late reply.
 
 Read one finite event page:
 
 ```sh
-helmr actor events SESSION_ID \
+helmr session events SESSION_ID \
   --project agents --env development \
   --after 0 --limit 50 --json
 ```

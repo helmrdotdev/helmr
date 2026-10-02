@@ -26,21 +26,21 @@ type WaitBatch struct {
 }
 
 type WaitRegistration struct {
-	TurnID                        pgtype.UUID
-	RunGeneration                 pgtype.Int8
-	TokenID                       uuid.UUID
-	WaitID                        uuid.UUID
-	RunLeaseID                    uuid.UUID
-	LeaseSequence                 int64
-	WorkerGroupID                 uuid.UUID
-	WorkerHostID                  uuid.UUID
-	WorkerEpoch                   int64
-	RequestFingerprint            string
-	ActorSpeculativeInputSequence pgtype.Int8
-	TimeoutAt                     pgtype.Timestamptz
-	IdleTimeoutMS                 pgtype.Int8
-	Metadata                      json.RawMessage
-	Tags                          []string
+	TurnID                          pgtype.UUID
+	RunGeneration                   pgtype.Int8
+	TokenID                         uuid.UUID
+	WaitID                          uuid.UUID
+	RunLeaseID                      uuid.UUID
+	LeaseSequence                   int64
+	WorkerGroupID                   uuid.UUID
+	WorkerHostID                    uuid.UUID
+	WorkerEpoch                     int64
+	RequestFingerprint              string
+	SessionSpeculativeInputSequence pgtype.Int8
+	TimeoutAt                       pgtype.Timestamptz
+	IdleTimeoutMS                   pgtype.Int8
+	Metadata                        json.RawMessage
+	Tags                            []string
 }
 
 type WaitRegistrationResult struct {
@@ -95,8 +95,8 @@ func (r *Registrar) RegisterWait(
 		len(request.RequestFingerprint) != 71 || request.RequestFingerprint[:7] != "sha256:" {
 		return WaitRegistrationResult{}, errors.New("token wait registration fences are invalid")
 	}
-	if request.ActorSpeculativeInputSequence.Valid && request.ActorSpeculativeInputSequence.Int64 < 0 {
-		return WaitRegistrationResult{}, errors.New("token wait actor speculative cursor is invalid")
+	if request.SessionSpeculativeInputSequence.Valid && request.SessionSpeculativeInputSequence.Int64 < 0 {
+		return WaitRegistrationResult{}, errors.New("token wait session speculative cursor is invalid")
 	}
 	metadata := request.Metadata
 	if len(metadata) == 0 {
@@ -161,7 +161,7 @@ func registerTokenWait(
 		return WaitRegistrationResult{}, tokenWaitStageError(err)
 	}
 	if err := validateTokenWaitSessionCursor(
-		request.ActorSpeculativeInputSequence, locator.SessionID, lockedSession.CurrentRunID,
+		request.SessionSpeculativeInputSequence, locator.SessionID, lockedSession.CurrentRunID,
 		lockedSession.CommittedInputSequence, lockedSession.NextInputSequence,
 		lockedRun, attempt.Attempt().EntrypointKind, attempt.Attempt().SessionInputStartSequence,
 	); err != nil {
@@ -172,7 +172,7 @@ func registerTokenWait(
 		if request.TurnID.Valid {
 			want++
 		}
-		if request.ActorSpeculativeInputSequence.Int64 != want {
+		if request.SessionSpeculativeInputSequence.Int64 != want {
 			return WaitRegistrationResult{}, tokenWaitAuthorityError("Token wait cursor does not identify its admitted Turn", nil)
 		}
 	}

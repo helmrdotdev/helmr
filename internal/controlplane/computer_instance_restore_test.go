@@ -77,7 +77,7 @@ func TestComputerRestoreProjectionRejectsChangedCapture(t *testing.T) {
 		{"correlation", func(m *workerapi.CheckpointManifest) { m.RecoveryPoint.Runs[0].CorrelationID = "" }},
 		{"actor cursor", func(m *workerapi.CheckpointManifest) {
 			v := int64(2)
-			m.RecoveryPoint.Runs[0].ActorSpeculativeInputSequence = &v
+			m.RecoveryPoint.Runs[0].SessionSpeculativeInputSequence = &v
 		}},
 		{"artifact", func(m *workerapi.CheckpointManifest) {
 			m.RuntimeState.MemoryArtifacts[0].Digest = dbtest.Digest("wrong-memory")
@@ -97,9 +97,9 @@ func TestComputerRestoreProjectionRejectsChangedCapture(t *testing.T) {
 
 func TestComputerRestoreProjectionPreservesActorCursor(t *testing.T) {
 	a, members, m := restoreProjectionFixture(t, 1)
-	members[0].ActorSpeculativeInputSequence = pgtype.Int8{Int64: 7, Valid: true}
+	members[0].SessionSpeculativeInputSequence = pgtype.Int8{Int64: 7, Valid: true}
 	v := int64(7)
-	m.RecoveryPoint.Runs[0].ActorSpeculativeInputSequence = &v
+	m.RecoveryPoint.Runs[0].SessionSpeculativeInputSequence = &v
 	encodeRestoreManifest(t, &a, m)
 	if _, err := projectComputerInstanceRestore(a, members); err != nil {
 		t.Fatal(err)
