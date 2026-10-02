@@ -267,3 +267,12 @@ func TestExecutionFinalizationLeavesIndependentCommandActive(t *testing.T) {
 		t.Fatalf("Command changed during Run finalization: active=%v err=%v", active, err)
 	}
 }
+
+func TestBeginFinalizationPreservesDatabaseFailure(t *testing.T) {
+	f, request := finalizationExecutionFixture(t, false)
+	dbtest.MustExec(t, t.Context(), f.Pool, `ALTER TABLE run_leases RENAME TO unavailable_run_leases`)
+	_, err := BeginFinalization(t.Context(), f.Pool, request)
+	if err == nil || errors.Is(err, ErrStale) {
+		t.Fatalf("database failure was classified as stale: %v", err)
+	}
+}

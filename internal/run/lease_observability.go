@@ -161,7 +161,7 @@ func UpdateMetadata(ctx context.Context, txb db.TxBeginner, update MetadataUpdat
 			return ErrStale
 		}
 		if r.Status == db.RunStatusWaiting {
-			return errors.New("run metadata cannot be updated while a managed wait is pending")
+			return MetadataRejectionError{Reason: "run metadata cannot be updated while a managed wait is pending"}
 		}
 		next, err := update.Mutation.apply(r.Metadata)
 		if err != nil {

@@ -50,12 +50,11 @@ func tokenError(err error) error {
 }
 
 // publicTokenError maps a callback or bearer completion error. Only the
-// terminal outcomes of a Token the credential addresses are told apart:
-// a conflicting result, an expired Token and a cancelled Token. Every other
-// failure, including rejected input and internal errors, reports the
-// credential as invalid.
+// terminal outcomes and input rejections retain their status. Credential
+// mismatches conceal resource existence; internal failures remain internal.
 func publicTokenError(err error) error {
 	var expired *token.ExpiredError
+	var input token.InputError
 	switch {
 	case errors.Is(err, token.ErrCompletionConflict):
 		return conflict(errTokenCompletionConflict)
@@ -63,7 +62,11 @@ func publicTokenError(err error) error {
 		return gone(errTokenExpired)
 	case errors.Is(err, token.ErrCancelled):
 		return conflict(errTokenCancelled)
-	default:
+	case errors.Is(err, token.ErrCredentialDenied), errors.Is(err, token.ErrNotFound), errors.Is(err, pgx.ErrNoRows):
 		return unauthorized(errTokenScopeDenied)
+	case errors.As(err, &input):
+		return badRequest(input)
+	default:
+		return err
 	}
 }

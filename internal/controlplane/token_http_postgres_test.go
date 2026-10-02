@@ -428,7 +428,7 @@ func TestTokenPublicCompletionRoutes(t *testing.T) {
 	t.Run("callback", func(t *testing.T) {
 		token := f.create(t, `{}`)
 		path := callbackPath(t, token)
-		scopeDenied(t, f.serve(t, http.MethodPost, path, "", `{"result":{"a":1,"a":2}}`))
+		assertTokenHTTPError(t, f.serve(t, http.MethodPost, path, "", `{"result":{"a":1,"a":2}}`), http.StatusBadRequest, "bad_request", "result must be unambiguous JSON")
 		scopeDenied(t, f.serve(t, http.MethodPost, path+"x", "", `{"result":true}`))
 		scopeDenied(t, f.serve(t, http.MethodPost, "/api/token-callbacks/not-a-token/secret", "", `{"result":true}`))
 		scopeDenied(t, f.serve(t, http.MethodPost, strings.Replace(path, token.ID, uuid.NewV7().String(), 1), "", `{"result":true}`))
@@ -468,7 +468,7 @@ func TestTokenPublicCompletionRoutes(t *testing.T) {
 		}
 		scopeDenied(t, f.bearerComplete(t, token.ID, other.PublicAccessToken, `{"result":true}`))
 		scopeDenied(t, f.bearerComplete(t, "not-a-token", token.PublicAccessToken, `{"result":true}`))
-		scopeDenied(t, f.bearerComplete(t, token.ID, token.PublicAccessToken, `{"result":{"a":1,"a":2}}`))
+		assertTokenHTTPError(t, f.bearerComplete(t, token.ID, token.PublicAccessToken, `{"result":{"a":1,"a":2}}`), http.StatusBadRequest, "bad_request", "result must be unambiguous JSON")
 		response := f.bearerComplete(t, token.ID, token.PublicAccessToken, `{"result":{"ok":true}}`)
 		completed := decodeTokenStatus(t, response, http.StatusOK)
 		if completed.Status != api.TokenStatusCompleted || response.Header().Get("Access-Control-Allow-Origin") != "*" || response.Header().Get("Vary") != "Origin" {
@@ -512,8 +512,8 @@ func TestTokenPublicCompletionRoutes(t *testing.T) {
 		callback := f.create(t, `{}`)
 		bearer := f.create(t, `{}`)
 		f.failControlOutbox(t)
-		scopeDenied(t, f.serve(t, http.MethodPost, callbackPath(t, callback), "", `{"result":true}`))
-		scopeDenied(t, f.bearerComplete(t, bearer.ID, bearer.PublicAccessToken, `{"result":true}`))
+		assertTokenHTTPError(t, f.serve(t, http.MethodPost, callbackPath(t, callback), "", `{"result":true}`), http.StatusInternalServerError, "internal_error", "internal server error")
+		assertTokenHTTPError(t, f.bearerComplete(t, bearer.ID, bearer.PublicAccessToken, `{"result":true}`), http.StatusInternalServerError, "internal_error", "internal server error")
 		if f.tokenStatus(t, callback.ID) != "pending" || f.tokenStatus(t, bearer.ID) != "pending" {
 			t.Fatal("failed public completion changed a token")
 		}
@@ -624,5 +624,41 @@ func TestTokenWaitCreateRoute(t *testing.T) {
 	if registered.RunID != work.RunID.String() || registered.RunWaitID != request.RunWaitID ||
 		registered.ResumeAttachID != request.ResumeAttachID || registered.ResolutionKind != "" {
 		t.Fatalf("registered = %+v", registered)
+	}
+}
+
+func TestPublicTokenCredentialLookupFailureIsInternal(t *testing.T) {
+	for _, mode := range []string{"callback", "bearer"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newTokenHTTPFixture(t)
+			created := f.create(t, `{}`)
+			table := "tokens"
+			if mode == "bearer" {
+				table = "public_access_tokens"
+			}
+			dbtest.MustExec(t, t.Context(), f.run.Pool, "ALTER TABLE "+table+" RENAME TO unavailable_"+table)
+			var response *httptest.ResponseRecorder
+			if mode == "callback" {
+				response = f.serve(t, http.MethodPost, callbackPath(t, created), "", `{"result":true}`)
+			} else {
+				response = f.bearerComplete(t, created.ID, created.PublicAccessToken, `{"result":true}`)
+			}
+			assertTokenHTTPError(t, response, http.StatusInternalServerError, "internal_error", "internal server error")
+		})
+	}
+}
+
+func TestPublicTokenUsageWriteFailureRollsBackCompletion(t *testing.T) {
+	f := newTokenHTTPFixture(t)
+	created := f.create(t, `{}`)
+	dbtest.MustExec(t, t.Context(), f.run.Pool, `CREATE FUNCTION reject_credential_usage() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'credential usage storage failed'; END $$`)
+	dbtest.MustExec(t, t.Context(), f.run.Pool, `CREATE TRIGGER reject_credential_usage BEFORE UPDATE ON public_access_tokens FOR EACH ROW EXECUTE FUNCTION reject_credential_usage()`)
+	assertTokenHTTPError(t, f.bearerComplete(t, created.ID, created.PublicAccessToken, `{"result":true}`), http.StatusInternalServerError, "internal_error", "internal server error")
+	if status := f.tokenStatus(t, created.ID); status != "pending" {
+		t.Fatalf("failed usage write committed Token status=%s", status)
+	}
+	var used int
+	if err := f.run.Pool.QueryRow(t.Context(), `SELECT used_count FROM public_access_tokens WHERE token_id=$1`, created.ID).Scan(&used); err != nil || used != 0 {
+		t.Fatalf("usage count=%d: %v", used, err)
 	}
 }

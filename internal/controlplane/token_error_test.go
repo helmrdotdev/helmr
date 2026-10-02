@@ -56,7 +56,7 @@ func TestTokenErrorMapsOwnerErrors(t *testing.T) {
 	})
 }
 
-func TestPublicTokenErrorCollapsesNonTerminalFailures(t *testing.T) {
+func TestPublicTokenErrorPreservesInputAndInfrastructureFailures(t *testing.T) {
 	denied := func(name string, err error) tokenErrorCase {
 		return tokenErrorCase{name, err, http.StatusUnauthorized, "token_scope_denied", "token credential is invalid"}
 	}
@@ -65,15 +65,15 @@ func TestPublicTokenErrorCollapsesNonTerminalFailures(t *testing.T) {
 		{"expired", &token.ExpiredError{}, http.StatusGone, "token_expired", "token has expired"},
 		{"cancelled", token.ErrCancelled, http.StatusConflict, "token_cancelled", "token was cancelled"},
 		denied("credential denied", token.ErrCredentialDenied),
-		denied("input", tokenInputError(t)),
-		denied("completed", token.ErrCompleted),
+		{"input", tokenInputError(t), http.StatusBadRequest, "bad_request", "result must be unambiguous JSON"},
+		{"completed", token.ErrCompleted, http.StatusInternalServerError, "internal_error", "internal server error"},
 		denied("not found", token.ErrNotFound),
 		denied("no rows", pgx.ErrNoRows),
-		denied("receipt expired", idempotency.ExpiredError{}),
-		denied("idempotency conflict", idempotency.ConflictError{}),
-		denied("receipt invalid", token.ErrReceiptInvalid),
-		denied("stale claims", workergroup.ErrStaleClaims),
-		denied("internal", errors.New("database is down")),
+		{"receipt expired", idempotency.ExpiredError{}, http.StatusInternalServerError, "operation_expired", "internal server error"},
+		{"idempotency conflict", idempotency.ConflictError{}, http.StatusInternalServerError, "internal_error", "internal server error"},
+		{"receipt invalid", token.ErrReceiptInvalid, http.StatusInternalServerError, "internal_error", "internal server error"},
+		{"stale claims", workergroup.ErrStaleClaims, http.StatusInternalServerError, "internal_error", "internal server error"},
+		{"internal", errors.New("database is down"), http.StatusInternalServerError, "internal_error", "internal server error"},
 	})
 }
 

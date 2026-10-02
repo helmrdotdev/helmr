@@ -108,6 +108,7 @@ func runError(err error, operation runOperation) error {
 	}
 	var expired idempotency.ExpiredError
 	var idempotencyConflict idempotency.ConflictError
+	var metadataRejected run.MetadataRejectionError
 	switch operation {
 	case runStartOperation:
 		if errors.Is(err, run.ErrStale) {
@@ -137,8 +138,8 @@ func runError(err error, operation runOperation) error {
 			return conflict(idempotencyConflict)
 		case errors.Is(err, run.ErrStale), errors.Is(err, pgx.ErrNoRows):
 			return conflict(errors.New(runStale[operation]))
-		default:
-			return apiError{kind: errUnprocessable, err: codedError{code: "run_metadata_rejected", message: err.Error()}}
+		case errors.As(err, &metadataRejected):
+			return apiError{kind: errUnprocessable, err: codedError{code: "run_metadata_rejected", message: metadataRejected.Error()}}
 		}
 	case runTimerWaitOperation:
 		if errors.Is(err, run.ErrStale) || errors.Is(err, run.ErrWaitCursor) || errors.Is(err, run.ErrTurnStopped) || errors.Is(err, run.ErrTurnScope) {
