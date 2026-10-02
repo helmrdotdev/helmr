@@ -58,7 +58,9 @@ database_deletion_protection   = true
 database_backup_retention_days = 14
 database_skip_final_snapshot   = false
 
-# Optional custom builds. Leave null to use the official release artifacts.
+# Supply the digest-pinned image from the verified common release index and
+# an AMI prepared from its exact host/runtime bundles before enabling workers.
+# Common releases do not publish the resolver's default AWS manifest.
 controlplane_image = null
 worker_ami_id = null
 worker_network_blocked_ipv4_cidrs = [

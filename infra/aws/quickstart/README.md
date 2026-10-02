@@ -40,7 +40,7 @@ tofu apply
 ```
 
 The first apply should usually keep `create_controlplane_service=false`. It creates infrastructure,
-resolves the official release artifacts, creates empty Secrets Manager containers, and creates the
+uses the explicitly supplied release image, creates empty Secrets Manager containers, and creates the
 migration task definition without trying to start a service that cannot yet read populated secrets.
 
 This example intentionally has no backend block. Add your own backend configuration in the

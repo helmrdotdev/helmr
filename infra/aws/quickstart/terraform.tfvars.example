@@ -55,7 +55,9 @@ dispatcher_desired_count = 1
 redis_node_type  = "cache.t4g.micro"
 redis_node_count = 1
 
-# Optional custom builds. Leave null to use the official release artifacts.
+# Supply the digest-pinned image from the verified common release index and
+# an AMI prepared from its exact host/runtime bundles before enabling workers.
+# Common releases do not publish the resolver's default AWS manifest.
 controlplane_image = null
 worker_ami_id = null
 worker_network_blocked_ipv4_cidrs = [
@@ -63,8 +65,8 @@ worker_network_blocked_ipv4_cidrs = [
   "169.254.0.0/16",
 ]
 
-# Optional smoke worker. The official worker AMI is resolved from helmr_version
-# and aws_region. NAT Gateway is required because workers run in private subnets.
+# Optional smoke worker using the explicitly prepared worker_ami_id.
+# NAT Gateway is required because workers run in private subnets.
 create_worker                       = false
 # Copy prior entries from `tofu output -json worker_generation_definitions`
 # here unchanged, including count, before an immutable generation change.

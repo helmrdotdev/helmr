@@ -48,8 +48,8 @@ by the migration task, then set `create_controlplane_service=true` and apply aga
 empty secret containers; it does not generate or store Helmr internal secret values in Terraform
 state. This starts separate
 `helmr-controlplane` and `helmr-dispatcher` ECS services using `controlplane_desired_count` and
-`dispatcher_desired_count`. The official Control Plane image is resolved from `helmr_version`; set
-`controlplane_image` only for digest-pinned custom builds.
+`dispatcher_desired_count`. Set `controlplane_image` to the digest-pinned image in the verified
+common release index; common releases do not publish the resolver's default AWS manifest.
 
 Required secret value formats:
 

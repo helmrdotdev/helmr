@@ -86,7 +86,7 @@ missing process-local state is not proof that the attachment was released.
 
 ## AMI and enrollment contract
 
-The official AMI is selected from the release manifest by `helmr_version` and `aws_region`. A custom AMI must contain the worker binary and unit, Firecracker, jailer, `ip`, `nft`, AWS CLI v2, curl, KVM support, and certified guest boot artifacts under the configured images directory.
+Prepare `worker_ami_id` from the verified public release's host/runtime bundles as described in [release artifact requirements](/docs/self-hosting/requirements#release-artifacts). Common releases do not publish AWS AMIs. The prepared AMI must contain the worker binary and unit, Firecracker, jailer, `ip`, `nft`, AWS CLI v2, curl, KVM support, and certified guest boot artifacts under the configured images directory.
 
 At boot, the module fetches the worker-group enrollment token into a root-only volatile file. The token selects the logical group. AWS identity, AMI provenance, instance profile, Auto Scaling membership, and fleet policy remain infrastructure responsibilities; the Control Plane does not authenticate or allowlist the AMI.
 

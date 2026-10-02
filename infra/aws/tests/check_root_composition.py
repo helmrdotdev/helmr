@@ -45,7 +45,10 @@ for filename in sys.argv[1:3]:
     plans = {event['@testrun']: event['test_plan']
              for line in Path(filename).read_text().splitlines()
              if (event := json.loads(line)).get('type') == 'test_plan'}
-    baseline = plans['baseline_execution_generation']['output_changes']['worker_generation_definitions']['after']
+    baseline = next(event['test_state']['values']['outputs']['worker_generation_definitions']['value']
+                    for line in Path(filename).read_text().splitlines()
+                    if (event := json.loads(line)).get('type') == 'test_state'
+                    and event['@testrun'] == 'baseline_execution_generation')
     resized = plans['count_change_does_not_rotate_generation']['output_changes']['worker_generation_definitions']['after']
     assert baseline.keys() == resized.keys(), (filename, 'count change must preserve Pool identity')
     for run, expected_counts in (
