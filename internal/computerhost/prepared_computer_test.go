@@ -9,11 +9,11 @@ import (
 
 func TestLostComputerOwnerRetainsAttachmentEvidenceAndCapacity(t *testing.T) {
 	const id = "01950000-0000-7000-8000-000000000001"
-	ledger, err := reservation.New(reservation.Vector{CPUMillis: 1, MemoryBytes: 1, GuestEphemeralDiskBytes: 1024})
+	ledger, err := reservation.New(reservation.Vector{CPUMillis: 1, MemoryBytes: 1, HostDiskBytes: 1024})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = ledger.Reserve(computerStagingKey(id, 1), reservation.Vector{GuestEphemeralDiskBytes: 1024}); err != nil {
+	if _, err = ledger.Reserve(computerStagingKey(id, 1), reservation.Vector{HostDiskBytes: 1024}); err != nil {
 		t.Fatal(err)
 	}
 	machines := &PreparedMachines{TempDir: t.TempDir(), Reservations: ledger}

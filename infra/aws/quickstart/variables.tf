@@ -549,9 +549,10 @@ variable "retained_worker_generations" {
           throughput = number
         })
         disk = object({
-          total_mib          = number
-          reserve_mib        = number
-          artifact_cache_mib = number
+          total_mib            = number
+          reserve_mib          = number
+          artifact_cache_mib   = number
+          computer_staging_mib = number
         })
         lifecycle = object({
           health_check_grace_period_seconds               = number
@@ -619,6 +620,8 @@ variable "retained_worker_generations" {
       generation.generation_inputs.per_vm.memory_mib > 0 &&
       generation.generation_inputs.per_vm.guest_ephemeral_disk_mib > 0 &&
       generation.generation_inputs.supply.disk.artifact_cache_mib > 0 &&
+      generation.generation_inputs.supply.disk.computer_staging_mib > 0 &&
+      generation.generation_inputs.capacity.guest_ephemeral_disk_mib == generation.generation_inputs.capacity.vm_slots * generation.generation_inputs.per_vm.guest_ephemeral_disk_mib &&
       can(base64decode(generation.sealed_provider_definition.user_data_base64)) &&
       can(jsondecode(generation.sealed_provider_definition.permission_policy_json)) &&
       can(jsondecode(generation.sealed_provider_definition.boundary_policy_json)) &&
@@ -835,5 +838,15 @@ variable "capacity_token_kms_key_arn" {
   validation {
     condition     = var.capacity_token_kms_key_arn == null || can(regex("^arn:[^:]+:kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]+$", var.capacity_token_kms_key_arn))
     error_message = "capacity_token_kms_key_arn must be a KMS key ARN."
+  }
+}
+
+variable "worker_computer_staging_mib" {
+  description = "Per-Instance Computer storage staging budget in MiB. Changing it creates a new Worker generation."
+  type        = number
+  default     = 65536
+  validation {
+    condition     = var.worker_computer_staging_mib > 0 && floor(var.worker_computer_staging_mib) == var.worker_computer_staging_mib && var.worker_computer_staging_mib <= 8796093022207
+    error_message = "worker_computer_staging_mib must be positive whole MiB representable in int64 bytes."
   }
 }

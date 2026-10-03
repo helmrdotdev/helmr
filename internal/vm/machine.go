@@ -13,6 +13,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
+// Snapshot format bounds shared by producers and host capacity admission.
+const (
+	SnapshotStateLimit  int64 = 10_000_000
+	SnapshotConfigLimit int64 = 65_536
+)
+
 type RestoringBackend interface {
 	Restore(context.Context, RestoreRequest) (CheckpointableMachine, error)
 }

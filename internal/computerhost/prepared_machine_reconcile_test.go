@@ -534,7 +534,7 @@ func TestPreparedMachineCapacityReservationLivesThroughCheckout(t *testing.T) {
 	}
 	wantKey := instanceReservationKey(target.ID, target.WorkerEpoch)
 	wantVector := reservation.Vector{
-		CPUMillis: 1000, MemoryBytes: 512 << 20, GuestEphemeralDiskBytes: 1024 << 20,
+		CPUMillis: 1000, MemoryBytes: 512 << 20, HostDiskBytes: 1024 << 20,
 		VMSlots: 1,
 	}
 	if got := machines.Reservations.Snapshot().Reservations[wantKey]; got != wantVector {
@@ -702,7 +702,7 @@ func TestPreparedMachineCloseFailureRetainsCapacityUntilReclaim(t *testing.T) {
 func newPreparedMachineReservations(t *testing.T, vmSlots int64) *reservation.Ledger {
 	t.Helper()
 	ledger, err := reservation.New(reservation.Vector{
-		CPUMillis: 1000 * vmSlots, MemoryBytes: vmSlots * 512 << 20, GuestEphemeralDiskBytes: vmSlots * 1024 << 20,
+		CPUMillis: 1000 * vmSlots, MemoryBytes: vmSlots * 512 << 20, HostDiskBytes: vmSlots * 1024 << 20,
 		VMSlots: vmSlots,
 	})
 	if err != nil {

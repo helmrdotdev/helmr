@@ -7,7 +7,7 @@ func TestComputerCapacityIncludesDiskProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := int64(1280 << 20); request.GuestEphemeralDiskBytes != want {
-		t.Fatalf("arena disk reservation = %d, want %d", request.GuestEphemeralDiskBytes, want)
+	if want := int64(1280 << 20); request.HostDiskBytes != want {
+		t.Fatalf("arena disk reservation = %d, want %d", request.HostDiskBytes, want)
 	}
 }

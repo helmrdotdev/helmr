@@ -145,17 +145,20 @@ worker_artifact_cache_max_mib         = 16384
 worker_vm_vcpus                       = 1
 worker_vm_memory_mib                  = 2048
 worker_vm_scratch_disk_mib            = 32768
+worker_computer_staging_mib           = 65536
 worker_computer_save_interval_seconds = 60
 worker_computer_devices               = ["/dev/nbd0", "/dev/nbd1", "/dev/nbd2", "/dev/nbd3"]
 ```
 
-This bounds a sequential smoke test; it does not qualify concurrent capture and
-restore on both slots. The explicit 480-GiB disk ceiling leaves 456 GiB after the
-8-GiB reserve and 16-GiB cache. A single cold Computer with 32-GiB guest scratch
-can reserve another 32 GiB for its local projection and 64 GiB for default staging:
-128 GiB in total before other instances and restore/capture overhead. A 120-GiB
-root cannot satisfy that reservation. Allow additional shared capacity for all
-concurrent work and keep the disk ceiling below the actual filesystem capacity.
+This profile was qualified with sequential smoke workloads; concurrent capture
+and restore on both slots remain a separate runtime qualification. The explicit
+480-GiB disk ceiling leaves 456 GiB after the 8-GiB reserve and 16-GiB cache.
+Each slot now needs just over 216 GiB for its full lifecycle: scratch, Computer
+projection and staging, runtime and program files, retained restored memory/state,
+and simultaneous checkpoint intermediates. Both slots fit the configured supply.
+The Worker also checks fresh available filesystem space before activation; existing
+files can make an otherwise sufficient configured disk fail startup. Keep the
+ceiling below actual filesystem capacity and fund every configured slot.
 
 When workers are enabled, `certificate_arn` and a Worker Control Plane DNS name are required. The stack
 derives the worker Control Plane URL from `public_url` for direct ALB mode or from

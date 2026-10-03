@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/operations"
@@ -98,12 +99,12 @@ func (c *checkpointCapture) CreateSnapshot(ctx context.Context) (vm.SnapshotArti
 	}
 }
 
-// discardUndeliveredSnapshot runs only after the snapshot job joined. The
+// discardUntransferredSnapshot runs only after the snapshot job joined. The
 // normal successful handoff gives these resources to the checkpoint uploader.
-func (c *checkpointCapture) discardUndeliveredSnapshot() error {
+func (c *checkpointCapture) discardUntransferredSnapshot() error {
 	c.machine.mu.Lock()
 	defer c.machine.mu.Unlock()
-	if c.delivered {
+	if c.delivered && c.snapshotErr == nil {
 		return nil
 	}
 	if c.artifact.Computer != nil && c.artifact.Computer.Capture != nil {
@@ -113,6 +114,17 @@ func (c *checkpointCapture) discardUndeliveredSnapshot() error {
 	paths := []string{c.artifact.VMState.Path, c.artifact.ScratchDisk.Path}
 	for _, file := range c.artifact.Memory {
 		paths = append(paths, file.Path)
+	}
+	// Failed producers can return no artifact after creating files. Their
+	// deterministic paths remain owned by this capture until removal succeeds.
+	if c.attempted && c.snapshotErr != nil {
+		id := safeSnapshotID(c.request.ID)
+		paths = append(paths,
+			filepath.Join(c.machine.jailRoot, id+snapshotMemorySuffix),
+			filepath.Join(c.machine.jailRoot, id+snapshotStateSuffix),
+			filepath.Join(filepath.Dir(c.machine.scratchDisk), id+snapshotScratchPackSuffix),
+			filepath.Join(filepath.Dir(c.machine.scratchDisk), id+snapshotMemoryPackSuffix),
+		)
 	}
 	var result error
 	for _, path := range paths {
@@ -141,7 +153,7 @@ func (c *checkpointCapture) ResumeGuestControl(ctx context.Context) error {
 	if c.resumed {
 		return nil
 	}
-	if err := c.discardUndeliveredSnapshot(); err != nil {
+	if err := c.discardUntransferredSnapshot(); err != nil {
 		return err
 	}
 	if !c.attempted {

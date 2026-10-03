@@ -15,6 +15,7 @@ import (
 
 	sdk "github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/filepack"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
@@ -391,5 +392,77 @@ func TestCheckpointCallerCancellationKeepsSnapshotOwnerUntilJoin(t *testing.T) {
 	}
 	if got := states(); len(got) != 2 || got[1] != "Resumed" {
 		t.Fatalf("states=%v", got)
+	}
+}
+
+// A failed producer can leave packed files while returning an empty artifact.
+// The capture must retain its hold until all of its deterministic paths are gone.
+func TestCheckpointFailureCleanup(t *testing.T) {
+	for _, delivered := range []bool{false, true} {
+		t.Run(map[bool]string{false: "lost", true: "returned"}[delivered], func(t *testing.T) {
+			s, _, states := liveCaptureMachine(t, false)
+			capture, err := s.BeginCheckpoint(t.Context(), vm.SnapshotRequest{ID: "failed-capture"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c := capture.(*checkpointCapture)
+			id := safeSnapshotID(c.request.ID)
+			memoryPath := filepath.Join(s.jailRoot, id+snapshotMemorySuffix)
+			statePath := filepath.Join(s.jailRoot, id+snapshotStateSuffix)
+			packedMemory := filepath.Join(filepath.Dir(s.scratchDisk), id+snapshotMemoryPackSuffix)
+			packedScratch := filepath.Join(filepath.Dir(s.scratchDisk), id+snapshotScratchPackSuffix)
+			if err := os.WriteFile(memoryPath, []byte("memory"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(statePath, []byte("state"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := filepack.Pack(t.Context(), memoryPath, packedMemory, filepack.MemoryRole); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := filepack.Pack(t.Context(), s.scratchDisk, packedScratch, filepack.ScratchRole); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(memoryPath); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(memoryPath, 0700); err != nil {
+				t.Fatal(err)
+			}
+			blocker := filepath.Join(memoryPath, "still-owned")
+			if err := os.WriteFile(blocker, []byte("busy"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			c.attempted, c.delivered, c.snapshotErr = true, delivered, errors.New("remove raw checkpoint memory")
+			if err := c.ResumeGuestControl(t.Context()); err == nil {
+				t.Fatal("failed removal released checkpoint control")
+			}
+			if len(states()) != 0 || !s.computerHeld || s.checkpointHold != c {
+				t.Fatal("cleanup failure lost hold or resumed guest")
+			}
+			if err := c.CompleteAbort(t.Context()); err == nil {
+				t.Fatal("abort completed before cleanup")
+			}
+			if err := os.Remove(blocker); err != nil {
+				t.Fatal(err)
+			}
+			if err := c.ResumeGuestControl(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			for _, path := range []string{memoryPath, statePath, packedMemory, packedScratch} {
+				if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("capture residue at %s: %v", path, err)
+				}
+			}
+			if _, err := os.Stat(s.scratchDisk); err != nil {
+				t.Fatalf("source scratch removed: %v", err)
+			}
+			if err := c.CompleteAbort(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.BeginCheckpoint(t.Context(), vm.SnapshotRequest{ID: "next-capture"}); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

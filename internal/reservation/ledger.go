@@ -19,10 +19,10 @@ var (
 )
 
 type Vector struct {
-	CPUMillis               int64
-	MemoryBytes             int64
-	GuestEphemeralDiskBytes int64
-	VMSlots                 int64
+	CPUMillis     int64
+	MemoryBytes   int64
+	HostDiskBytes int64
+	VMSlots       int64
 }
 
 type Key struct {
@@ -46,7 +46,7 @@ type Ledger struct {
 
 func New(capacity Vector) (*Ledger, error) {
 	if capacity.CPUMillis <= 0 || capacity.MemoryBytes <= 0 ||
-		capacity.GuestEphemeralDiskBytes < 0 ||
+		capacity.HostDiskBytes < 0 ||
 		capacity.VMSlots < 0 {
 		return nil, ErrInvalidCapacity
 	}
@@ -132,7 +132,7 @@ func validateRequest(request Vector) error {
 	values := [...]int64{
 		request.CPUMillis,
 		request.MemoryBytes,
-		request.GuestEphemeralDiskBytes,
+		request.HostDiskBytes,
 		request.VMSlots,
 	}
 	positive := false
@@ -156,7 +156,7 @@ func add(left, right Vector) (Vector, error) {
 	}{
 		{"cpu", left.CPUMillis, right.CPUMillis},
 		{"memory", left.MemoryBytes, right.MemoryBytes},
-		{"guest ephemeral disk", left.GuestEphemeralDiskBytes, right.GuestEphemeralDiskBytes},
+		{"host disk", left.HostDiskBytes, right.HostDiskBytes},
 		{"VM slots", left.VMSlots, right.VMSlots},
 	}
 	sums := [len(fields)]int64{}
@@ -167,25 +167,25 @@ func add(left, right Vector) (Vector, error) {
 		sums[index] = field.left + field.right
 	}
 	return Vector{
-		CPUMillis:               sums[0],
-		MemoryBytes:             sums[1],
-		GuestEphemeralDiskBytes: sums[2],
-		VMSlots:                 sums[3],
+		CPUMillis:     sums[0],
+		MemoryBytes:   sums[1],
+		HostDiskBytes: sums[2],
+		VMSlots:       sums[3],
 	}, nil
 }
 
 func subtract(left, right Vector) Vector {
 	return Vector{
-		CPUMillis:               left.CPUMillis - right.CPUMillis,
-		MemoryBytes:             left.MemoryBytes - right.MemoryBytes,
-		GuestEphemeralDiskBytes: left.GuestEphemeralDiskBytes - right.GuestEphemeralDiskBytes,
-		VMSlots:                 left.VMSlots - right.VMSlots,
+		CPUMillis:     left.CPUMillis - right.CPUMillis,
+		MemoryBytes:   left.MemoryBytes - right.MemoryBytes,
+		HostDiskBytes: left.HostDiskBytes - right.HostDiskBytes,
+		VMSlots:       left.VMSlots - right.VMSlots,
 	}
 }
 
 func fits(used, capacity Vector) bool {
 	return used.CPUMillis <= capacity.CPUMillis &&
 		used.MemoryBytes <= capacity.MemoryBytes &&
-		used.GuestEphemeralDiskBytes <= capacity.GuestEphemeralDiskBytes &&
+		used.HostDiskBytes <= capacity.HostDiskBytes &&
 		used.VMSlots <= capacity.VMSlots
 }

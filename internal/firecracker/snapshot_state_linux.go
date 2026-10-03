@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/vm"
 	"io"
 	"net"
 	"net/http"
@@ -20,7 +21,7 @@ import (
 
 // Maximum accepted serialized state, including its checksum. This is a restore
 // format limit, not a claim that the VMM's encoder cannot produce larger output.
-const snapshotStateLimit int64 = 10_000_000
+const snapshotStateLimit = vm.SnapshotStateLimit
 
 // captureSnapshotState bounds writes before bytes reach the staging filesystem.
 // The FIFO keeper prevents a premature EOF before the VMM opens its writer. It

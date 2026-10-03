@@ -51,7 +51,7 @@ func TestCheckpointRegistersAllMembersBeforeRetryingExactCiphertext(t *testing.T
 		if len(store.puts) != 0 {
 			t.Fatal("upload before registration")
 		}
-		if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes == 0 {
+		if c.reservations.Snapshot().Used.HostDiskBytes == 0 {
 			t.Fatal("no reservation during registration")
 		}
 		if m.RecoveryPoint.ComputerID != request.Target.Source.ComputerID || m.RecoveryPoint.ComputerInstanceID != request.Target.ID || m.RecoveryPoint.WriterGeneration != request.Target.Source.WriterGeneration || m.RecoveryPoint.MembershipRevision != request.Target.Capture.MembershipRevision || len(m.RecoveryPoint.Runs) != 2 {
@@ -72,7 +72,7 @@ func TestCheckpointRegistersAllMembersBeforeRetryingExactCiphertext(t *testing.T
 		if registered.RuntimeState.Computer == nil {
 			t.Fatal("upload without complete registered manifest")
 		}
-		if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes == 0 {
+		if c.reservations.Snapshot().Used.HostDiskBytes == 0 {
 			t.Fatal("capacity released before upload")
 		}
 		if machine.artifact.Computer.Capture.(*versionCaptureFixture).released {
@@ -93,7 +93,7 @@ func TestCheckpointRegistersAllMembersBeforeRetryingExactCiphertext(t *testing.T
 		return nil
 	}
 	machine.snapshotHook = func() {
-		if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes == 0 {
+		if c.reservations.Snapshot().Used.HostDiskBytes == 0 {
 			t.Fatal("capture before capacity admission")
 		}
 	}
@@ -104,7 +104,7 @@ func TestCheckpointRegistersAllMembersBeforeRetryingExactCiphertext(t *testing.T
 	if !reflect.DeepEqual(result.Manifest, registered) || len(attempts) != 5 || len(store.puts) != 4 {
 		t.Fatalf("registration/uploads mismatch: attempts=%d objects=%d", len(attempts), len(store.puts))
 	}
-	if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes != 0 {
+	if c.reservations.Snapshot().Used.HostDiskBytes != 0 {
 		t.Fatal("staging reservation leaked")
 	}
 	if !machine.artifact.Computer.Capture.(*versionCaptureFixture).released {
@@ -122,7 +122,7 @@ func TestCheckpointRegistersAllMembersBeforeRetryingExactCiphertext(t *testing.T
 
 func TestCheckpointCapacityFailurePrecedesPauseAndWrites(t *testing.T) {
 	c, request, machine, store := newCaptureTest(t)
-	c.reservations, _ = reservation.New(reservation.Vector{CPUMillis: 1, MemoryBytes: 1, GuestEphemeralDiskBytes: 1})
+	c.reservations, _ = reservation.New(reservation.Vector{CPUMillis: 1, MemoryBytes: 1, HostDiskBytes: 1})
 	_, err := c.CreateCheckpoint(t.Context(), request)
 	if !errors.Is(err, reservation.ErrCapacityExceeded) {
 		t.Fatalf("error=%v", err)
@@ -144,7 +144,7 @@ func TestCheckpointRegistrationFailureRetainsSourceBeforeUpload(t *testing.T) {
 	if !errors.Is(err, failure) || machine.closeCount != 0 || len(store.puts) != 0 {
 		t.Fatalf("err=%v closes=%d uploads=%d", err, machine.closeCount, len(store.puts))
 	}
-	if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes == 0 || c.pendingCleanup == nil {
+	if c.reservations.Snapshot().Used.HostDiskBytes == 0 || c.pendingCleanup == nil {
 		t.Fatal("failed candidate lost its retained staging owner")
 	}
 }
@@ -160,7 +160,7 @@ func TestCheckpointStopFailureRetainsChargeAndRawSnapshot(t *testing.T) {
 	if err = c.ReleaseCheckpointSource(t.Context()); !errors.Is(err, machine.closeErr) || machine.closeCount != 1 {
 		t.Fatalf("terminal close: %v count=%d", err, machine.closeCount)
 	}
-	if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes == 0 {
+	if c.reservations.Snapshot().Used.HostDiskBytes == 0 {
 		t.Fatal("unproven cleanup released charge")
 	}
 	entries, _ := os.ReadDir(c.tempDir)
@@ -199,7 +199,7 @@ func TestCheckpointCleanupFailureAfterUploadRetainsSourceAndCharge(t *testing.T)
 	if err == nil || machine.closeCount != 0 || len(store.puts) != 4 {
 		t.Fatalf("err=%v closes=%d uploads=%d", err, machine.closeCount, len(store.puts))
 	}
-	if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes == 0 {
+	if c.reservations.Snapshot().Used.HostDiskBytes == 0 {
 		t.Fatal("failed cleanup released charge")
 	}
 }
@@ -212,14 +212,14 @@ func TestCheckpointDuplicateCaptureDoesNotStopExistingOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := reservation.Key{Kind: "checkpoint-staging", ID: request.Target.Capture.CheckpointID, Epoch: request.Target.DesiredVersion}
-	if _, err := c.reservations.Reserve(key, reservation.Vector{GuestEphemeralDiskBytes: limits.total}); err != nil {
+	if _, err := c.reservations.Reserve(key, reservation.Vector{HostDiskBytes: limits.total}); err != nil {
 		t.Fatal(err)
 	}
 	_, err = c.CreateCheckpoint(t.Context(), request)
 	if err == nil || machine.closeCount != 0 || len(machine.snapshotRequests) != 0 {
 		t.Fatalf("err=%v closes=%d", err, machine.closeCount)
 	}
-	if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes != limits.total {
+	if c.reservations.Snapshot().Used.HostDiskBytes != limits.total {
 		t.Fatal("existing owner reservation changed")
 	}
 }
@@ -239,7 +239,7 @@ func TestCheckpointPermanentUploadFailureRetainsSourceUntilSettlement(t *testing
 			if !errors.Is(err, failure) || machine.closeCount != 0 || machine.resumeCount != 0 {
 				t.Fatalf("err=%v closes=%d resumes=%d", err, machine.closeCount, machine.resumeCount)
 			}
-			if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes == 0 {
+			if c.reservations.Snapshot().Used.HostDiskBytes == 0 {
 				t.Fatal("failed capture released its staging before settlement")
 			}
 			if err := c.capture.ResumeGuestControl(t.Context()); err != nil {
@@ -251,7 +251,7 @@ func TestCheckpointPermanentUploadFailureRetainsSourceUntilSettlement(t *testing
 			if err := c.cleanupCheckpointStaging(); err != nil {
 				t.Fatal(err)
 			}
-			if c.reservations.Snapshot().Used.GuestEphemeralDiskBytes != 0 {
+			if c.reservations.Snapshot().Used.HostDiskBytes != 0 {
 				t.Fatal("staging capacity leaked")
 			}
 			if !machine.artifact.Computer.Capture.(*versionCaptureFixture).released {

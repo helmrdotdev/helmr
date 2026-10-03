@@ -1698,7 +1698,7 @@ func (p *PreparedMachines) reserveInstanceCapacity(
 		return err
 	}
 	if staging > 0 {
-		created, err = p.Reservations.Reserve(restoreStagingKey(target.ID, target.WorkerEpoch), reservation.Vector{GuestEphemeralDiskBytes: staging})
+		created, err = p.Reservations.Reserve(restoreStagingKey(target.ID, target.WorkerEpoch), reservation.Vector{HostDiskBytes: staging})
 		if err != nil || !created {
 			releaseErr := p.Reservations.Release(instanceReservationKey(target.ID, target.WorkerEpoch))
 			if errors.Is(err, reservation.ErrCapacityExceeded) || err == nil {

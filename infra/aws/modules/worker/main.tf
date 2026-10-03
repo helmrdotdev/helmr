@@ -5,7 +5,26 @@ locals {
   termination_hook_name = "${local.name}-worker-terminate"
   network_resolver_ipv4 = coalesce(var.network_resolver_ipv4, cidrhost(data.aws_vpc.selected.cidr_block, 2))
 
+  # Bound filepack with its maximum header and a full 4-MiB final chunk.
+  # Each chunk has 21 bytes framing + 14 bytes zstd framing + 65*3 bytes
+  # block overhead (SpeedFastest uses 64-KiB blocks). AES-GCM adds 36 bytes
+  # per 4-MiB record including the end record, plus the 25-byte magic.
+  checkpoint_packed_bytes = {
+    memory  = ceil(var.vm_memory_mib / 4) * (4194304 + 230) + 1048609
+    scratch = ceil(var.vm_scratch_disk_mib / 4) * (4194304 + 230) + 1048609
+  }
+  checkpoint_plain_bytes = merge(local.checkpoint_packed_bytes, { state = 10000000, config = 65536 })
+  checkpoint_cipher_bytes = {
+    for role, size in local.checkpoint_plain_bytes : role => size + 25 + 36 * (ceil(size / 4194304) + 1)
+  }
+  worker_slot_disk_bytes = (
+    (var.vm_scratch_disk_mib + 32768 + var.computer_staging_mib + 16384 + 2 * var.vm_memory_mib) * 1048576 +
+    10000000 + local.checkpoint_cipher_bytes.state +
+    sum(values(local.checkpoint_packed_bytes)) + sum(values(local.checkpoint_cipher_bytes))
+  )
+
   worker_environment_values = {
+    WORKER_COMPUTER_STAGING_MIB       = tostring(var.computer_staging_mib)
     WORKER_COMPUTER_SAVE_EVERY        = "${var.computer_save_interval_seconds}s"
     WORKER_COMPUTER_DEVICES           = join(" ", var.computer_devices)
     CONTROL_PLANE_URL                 = var.worker_controlplane_url
@@ -393,6 +412,19 @@ resource "terraform_data" "network_preconditions" {
     precondition {
       condition     = var.platform_store_bucket_arn != var.cas_bucket_arn
       error_message = "platform_store_bucket_arn must identify the dedicated bootstrap store, not the mutable Artifact CAS bucket."
+    }
+
+    precondition {
+      condition = var.worker_disk_mib == null || (
+        (coalesce(var.worker_disk_mib, 0) - var.worker_disk_reserve_mib - coalesce(var.artifact_cache_max_mib, 16384)) * 1048576 >=
+        coalesce(var.worker_execution_slots, 1) * local.worker_slot_disk_bytes
+      )
+      error_message = "worker disk must fund every configured slot's Computer, staging, program, restore and checkpoint files after reserve and cache."
+    }
+
+    precondition {
+      condition     = var.worker_disk_mib == null || coalesce(var.worker_disk_mib, 0) <= var.root_volume_size_gb * 1024
+      error_message = "worker_disk_mib must not exceed the provisioned root volume capacity."
     }
 
     precondition {

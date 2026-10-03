@@ -166,7 +166,7 @@ func (s *guestMachine) Close(ctx context.Context) error {
 	defer unlock()
 	s.computerHeld = true
 	if s.checkpointHold != nil {
-		if err := s.checkpointHold.discardUndeliveredSnapshot(); err != nil {
+		if err := s.checkpointHold.discardUntransferredSnapshot(); err != nil {
 			return err
 		}
 	}
@@ -512,5 +512,5 @@ func (s *guestMachine) SnapshotLimits() (vm.SnapshotLimits, error) {
 	if s.cfg.MemoryMiB > math.MaxInt64/(1<<20) || s.cfg.ScratchDiskMiB > math.MaxInt64/(1<<20) {
 		return vm.SnapshotLimits{}, errors.New("checkpoint runtime size overflow")
 	}
-	return vm.SnapshotLimits{ComputerBytes: s.topology.Computer.SizeBytes, MemoryBytes: s.cfg.MemoryMiB * (1 << 20), ScratchBytes: s.cfg.ScratchDiskMiB * (1 << 20), StateBytes: snapshotStateLimit, ConfigBytes: 65536}, nil
+	return vm.SnapshotLimits{ComputerBytes: s.topology.Computer.SizeBytes, MemoryBytes: s.cfg.MemoryMiB * (1 << 20), ScratchBytes: s.cfg.ScratchDiskMiB * (1 << 20), StateBytes: snapshotStateLimit, ConfigBytes: vm.SnapshotConfigLimit}, nil
 }
