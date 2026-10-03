@@ -169,11 +169,11 @@ INSERT INTO computers (
 	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO computer_disk_versions (
-    id, environment_id, computer_id, root_pack_digest, status,
-    writer_generation, published_at, logical_bytes
+    id, environment_id, computer_id, status,
+    writer_generation, published_at
 ) VALUES
-    ($1::uuid, $3::uuid, $4::uuid, NULL, 'initializing', 0, NULL, 0),
-    ($2::uuid, $3::uuid, $5::uuid, NULL, 'initializing', 0, NULL, 0)
+    ($1::uuid, $3::uuid, $4::uuid, 'initializing', 0, NULL),
+    ($2::uuid, $3::uuid, $5::uuid, 'initializing', 0, NULL)
 `, demoSeedComputerActorVersionID, demoSeedComputerTaskVersionID, demoSeedEnvironmentID,
 		demoSeedComputerActorID, demoSeedComputerTaskID); err != nil {
 		return err
