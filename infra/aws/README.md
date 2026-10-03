@@ -82,3 +82,11 @@ The operator supplies an existing trusted IAM role/user ARN. Publication grants
 remain limited to the selected Platform objects/key and Control Plane repository;
 storage immutability is enforced by storage policy independently of that role.
 An operator with separately owned delivery IAM can consume storage alone.
+
+The network module's optional `retain_nat_eip` keeps its existing allocation when
+`enable_nat_gateway=false`. The gateway and private default route disappear; S3
+Gateway endpoints and VPC resources remain. Re-enabling NAT uses the retained
+allocation. The default is false; set both flags false for final allocation
+retirement. This switch does not stop services, drain work or make a private
+workload usable without outbound connectivity. Coordinate workload closure and
+restoration before changing NAT lifetime.
