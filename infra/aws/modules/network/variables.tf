@@ -32,6 +32,12 @@ variable "enable_s3_gateway_endpoint" {
   default     = true
 }
 
+variable "retain_nat_eip" {
+  description = "Retain the NAT Elastic IP while NAT is disabled, for reuse on recreation. Set false for final retirement."
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   description = "Tags applied to all resources."
   type        = map(string)
