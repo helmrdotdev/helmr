@@ -177,22 +177,22 @@
       },
       {
         "name": "libcrypto3",
-        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libcrypto3-3.5.8-r0.apk",
-        "version": "3.5.8-r0",
+        "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libcrypto3-3.5.9-r0.apk",
+        "version": "3.5.9-r0",
         "architecture": "x86_64",
         "signature": {
           "range": "bytes=0-722",
-          "checksum": "sha1-Tz1KEITq9wJNOMYz6fzc5joJvN8="
+          "checksum": "sha1-KP2BH+ZDVmUg7ukpTmN54FFSxag="
         },
         "control": {
-          "range": "bytes=723-1281",
-          "checksum": "sha1-kLI/t7BIk7nzs6GS0P12dqVEIok="
+          "range": "bytes=723-1278",
+          "checksum": "sha1-oh3VN2UxBgaVmtvnt5CjXfB97sk="
         },
         "data": {
-          "range": "bytes=1282-1984630",
-          "checksum": "sha256-4Nv0kDw4IFPzOsb0QjXtEfJMqs2KVsbzaDN2tIhPAkg="
+          "range": "bytes=1279-1986878",
+          "checksum": "sha256-eAQYoj6lwORSo54XZsUlWlyml7fSBKsWUUptPZgDeb4="
         },
-        "checksum": "Q1kLI/t7BIk7nzs6GS0P12dqVEIok="
+        "checksum": "Q1oh3VN2UxBgaVmtvnt5CjXfB97sk="
       },
       {
         "name": "coreutils-sha512sum",
