@@ -9,7 +9,7 @@
     .mono { font-family: "Geist Mono", ui-monospace, monospace; }
   </style>
 
-  <rect width="1200" height="630" fill="#ffffff"/>
+  <rect width="1200" height="630" fill="#f7f6f3"/>
 
   <g transform="translate(72 67) scale(0.05456)">
     <path fill="#1f1f24" d="M168.437.419c-16.5 2.2-33 13.3-40.2 27-3.1 5.8-19.1 49-55.1 148.3-72.7 200.5-67.8 186.3-71.2 205.4-2.4 13.2-2.6 28.8-.4 39.4 2 10.2 8.9 24.2 15.4 31.4 6 6.7 17.6 14.8 25.6 17.8 28.7 10.7 66.4 5.8 94.5-12.3 26-16.7 45.1-39.5 81.9-98.2 34.5-55 54.2-76.7 80.6-88.6 25-11.4 54.1-11 79 1.1 21 10.1 42.1 27.9 86.8 72.8l19.9 20-6.2 23c-3.4 12.7-6.4 25.9-6.8 29.4-2.3 25.3 14.4 48.8 40 56.3 7.3 2.1 21.3 2.1 29.2 0 14.4-3.8 28.3-15.8 35.2-30.4l3.8-8 20 .6c28.9.8 48.7-1.3 77.1-8.2 45-11 91.2-33.1 123-58.8 25.2-20.3 30.7-37.2 17-51.3-9.6-9.8-16.4-9.7-37.6.4-31.7 15.2-64.7 25-98.5 29.3-14.6 1.9-46.4 1.7-60.8-.5-51.1-7.4-91.8-29.5-165.7-89.6-49.8-40.6-77.6-56.1-115-64.2-9.2-2-13.3-2.2-33.5-2.2-20 0-24.3.3-32.9 2.2-32.2 7.2-60.7 23.2-85.3 48.1-14.1 14.2-24.8 27.7-40.5 51.1-7.1 10.7-13.2 19.7-13.5 20-.2.2 1.5-4.7 3.7-11 4.2-11.5 7.6-21 23.3-65.5 23.3-65.5 46.6-129.9 57.4-158.5l5.8-15.5v-12c0-11.8-.1-12.1-3.7-19.8-9.6-20-30.9-31.8-52.3-29"/>
@@ -18,19 +18,18 @@
   <text class="brand" x="128" y="61" font-size="35" font-weight="500" letter-spacing="-0.875" fill="#1f1f24">Helmr</text>
 
   <text class="display" x="72" y="178" font-size="67" font-weight="500" letter-spacing="-3.35" fill="#1f1f24">
-    <tspan x="72" dy="0">Build your own</tspan>
-    <tspan x="72" dy="70">software factory.</tspan>
+    <tspan x="72" dy="0">Build cloud agents</tspan>
+    <tspan x="72" dy="70">that work your way.</tspan>
   </text>
 
   <text class="body" x="76" y="357" font-size="25" font-weight="400" fill="#585862">
-    <tspan x="76" dy="0">Infrastructure and APIs for your own agent harness.</tspan>
-    <tspan x="76" dy="37">Define workloads in TypeScript, run them in microVMs.</tspan>
+    <tspan x="76" dy="0">Your models, tools, and code.</tspan>
+    <tspan x="76" dy="37">We handle the infrastructure.</tspan>
   </text>
 
-  <rect x="748.5" y="143.5" width="379" height="299" fill="#ffffff" stroke="#e5e5e3"/>
+  <rect x="748.5" y="143.5" width="379" height="299" fill="#fdfcfa" stroke="#e3e0da"/>
   <image href="helmr-art.png" x="759" y="154" width="358" height="278" preserveAspectRatio="xMidYMid slice"/>
-  <text class="mono" x="749" y="458" font-size="14" letter-spacing="0.28" fill="#8b8a91">fig. 01 — steady at the helm</text>
 
-  <line x1="72" y1="557.5" x2="1128" y2="557.5" stroke="#e5e5e3"/>
+  <line x1="72" y1="557.5" x2="1128" y2="557.5" stroke="#e3e0da"/>
   <text class="body" x="72" y="576" font-size="17" font-weight="500" fill="#1f1f24">helmr.dev</text>
 </svg>

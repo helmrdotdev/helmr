@@ -36,7 +36,7 @@ License: Apache 2.0
 - Every docs page is also served as Markdown by appending .md to the page path.
 
 ## Core Pages
-- [Home](${absoluteUrl("/", base)}): ${SITE.tagline} — infrastructure and APIs for your own agent harness.
+- [Home](${absoluteUrl("/", base)}): ${SITE.tagline} — your models, tools, and code; Helmr handles the infrastructure.
 - [Docs](${absoluteUrl("/docs", base)}): Documentation index for installing, operating, and extending Helmr.
 
 ${docLines}
