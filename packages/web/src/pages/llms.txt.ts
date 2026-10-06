@@ -1,6 +1,5 @@
 import type { APIRoute } from "astro";
 import { getDocs, getDocMarkdownUrl, groupDocs } from "../lib/docs";
-import { harnesses, interfaces, positioning, usecases } from "../lib/messaging";
 import { SITE, absoluteUrl } from "../lib/seo";
 
 export const GET: APIRoute = async ({ site }) => {
@@ -23,10 +22,6 @@ export const GET: APIRoute = async ({ site }) => {
     })
     .join("\n\n");
 
-  const primitives = [...new Set(usecases.map((usecase) => usecase.primitive))].join(", ");
-  const agents = harnesses.map((harness) => harness.name).join(", ");
-  const surfaces = interfaces.map((iface) => iface.name).join(", ");
-
   const body = `# Helmr
 
 > ${SITE.tagline}. ${SITE.defaultDescription}
@@ -37,8 +32,6 @@ Source code: ${SITE.githubUrl}
 License: Apache 2.0
 
 ## Product Context
-- ${positioning}
-- Any job (${primitives}), any agent (${agents}), any interface (${surfaces}).
 - Runs on Helmr Cloud (coming soon) or self-hosted in your own AWS account.
 - Every docs page is also served as Markdown by appending .md to the page path.
 

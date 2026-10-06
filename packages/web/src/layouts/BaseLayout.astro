@@ -24,6 +24,8 @@ type Props = {
   markdownPath?: string;
   enableClientRouter?: boolean;
   minimalHeader?: boolean;
+  /** "page" renders only the slot; the page supplies its own navigation and footer. */
+  chrome?: "site" | "page";
 };
 
 const {
@@ -39,6 +41,7 @@ const {
   markdownPath,
   enableClientRouter = false,
   minimalHeader = false,
+  chrome = "site",
 } = Astro.props;
 
 const canonicalUrl = absoluteUrl(path, Astro.site?.toString() ?? SITE.url);
@@ -108,9 +111,11 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
       href="https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600&display=swap"
       rel="stylesheet"
     />
+    <slot name="head" />
     {enableClientRouter && <ClientRouter fallback="swap" />}
   </head>
   <body>
+    {chrome === "page" ? <slot /> : <Fragment>
     <header class="site-header">
       <nav class="site-nav">
         <slot name="header-start" />
@@ -180,5 +185,6 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
         </div>
       </div>
     </footer>
+    </Fragment>}
   </body>
 </html>
