@@ -170,12 +170,6 @@ const nav = [
   chrome="page"
   jsonLd={[softwareJsonLd(), breadcrumbJsonLd([{ name: "Home", path: "/" }])]}
 >
-  <Fragment slot="head">
-    <link
-      href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap"
-      rel="stylesheet"
-    />
-  </Fragment>
 
   <div class="page">
     <div class="frame">
@@ -558,7 +552,7 @@ const nav = [
     --ink-2: #4c4b52;
     --ink-3: #8a8890;
     --link: #2b4fd8;
-    --serif: "Newsreader", Georgia, "Times New Roman", serif;
+    --serif: var(--font-serif);
     --edge: 2.5rem;
     --rail: 13rem;
     --band: 56rem;

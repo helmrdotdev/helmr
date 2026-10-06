@@ -1,26 +1,26 @@
 :root {
-  --bg: #ffffff;
-  --surface-raised: #ffffff;
-  --surface-soft: #f7f7f6;
-  --surface-dim: #f1f1ef;
-  --btn-surface: #ffffff;
+  --bg: #f7f6f3;
+  --surface-raised: #fdfcfa;
+  --surface-soft: #f3f1ec;
+  --surface-dim: #ece9e3;
+  --btn-surface: #fdfcfa;
 
-  --text: #1f1f24;
-  --text-muted: #585862;
-  --text-subtle: #8b8a91;
+  --text: #16161a;
+  --text-muted: #4c4b52;
+  --text-subtle: #8a8890;
 
-  --border: #e5e5e3;
-  --border-strong: #d1d1ce;
+  --border: #e3e0da;
+  --border-strong: #cfcac1;
 
-  --ink: #1f1f24;
-  --ink-hover: #34343c;
+  --ink: #16161a;
+  --ink-hover: #33333a;
 
-  --accent: #5079e4;
-  --accent-strong: #3a63d4;
+  --accent: #2b4fd8;
+  --accent-strong: #2346c4;
   --accent-fg: #ffffff;
   --accent-faint: #7396ec;
-  --accent-wash: rgba(80, 121, 228, 0.08);
-  --accent-border: rgba(80, 121, 228, 0.38);
+  --accent-wash: rgba(43, 79, 216, 0.07);
+  --accent-border: rgba(43, 79, 216, 0.35);
   --ok: #15803d;
 
   --wash-yellow: #fff0bd;
@@ -28,36 +28,36 @@
   --wash-pink: #f3dded;
   --wash-green: #e4efdc;
 
-  --frame-bg: #ffffff;
-  --frame-border: #dededb;
+  --frame-bg: #fdfcfa;
+  --frame-border: #e3e0da;
   --frame-text: #2c2c33;
   --frame-muted: #6e6d76;
   --frame-subtle: #9a989f;
-  --frame-line: #e9e9e7;
-  --frame-cap: #f7f7f6;
-  --frame-bright: #1f1f24;
-  --frame-blue: #4a6fd8;
+  --frame-line: #e3e0da;
+  --frame-cap: #f7f6f3;
+  --frame-bright: #16161a;
+  --frame-blue: #2b4fd8;
   --frame-green: #3c8a59;
   --frame-amber: #ad8226;
   --frame-cyan: #3793b8;
   --frame-pink: #c2538c;
 
   --astro-code-color-text: #2c2c33;
-  --astro-code-color-background: #ffffff;
-  --astro-code-token-constant: #4a6fd8;
-  --astro-code-token-string: #3c8a59;
-  --astro-code-token-comment: #a09d96;
-  --astro-code-token-keyword: #4a6fd8;
+  --astro-code-color-background: #fdfcfa;
+  --astro-code-token-constant: #2b4fd8;
+  --astro-code-token-string: #3c7a51;
+  --astro-code-token-comment: #a7a299;
+  --astro-code-token-keyword: #2b4fd8;
   --astro-code-token-parameter: #2c2c33;
-  --astro-code-token-function: #c2538c;
-  --astro-code-token-string-expression: #3c8a59;
-  --astro-code-token-punctuation: #8d8a93;
-  --astro-code-token-link: #3c8a59;
+  --astro-code-token-function: #b0457c;
+  --astro-code-token-string-expression: #3c7a51;
+  --astro-code-token-punctuation: #97939b;
+  --astro-code-token-link: #3c7a51;
 
   --font-sans: "General Sans", "Helvetica Neue", Arial, sans-serif;
   --font-brand: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
-  --font-old: "DotGothic16", "Geist Mono", ui-monospace, monospace;
   --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --font-serif: "Newsreader", Georgia, "Times New Roman", serif;
 
   --radius-btn: 0;
   --radius-card: 0;
@@ -69,11 +69,11 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html {
-  background: #ffffff;
+  background: #f7f6f3;
   color-scheme: light;
   scroll-behavior: smooth;
   scrollbar-gutter: stable;
-  scrollbar-color: #c9c9c7 #ffffff;
+  scrollbar-color: #cfcac1 #f7f6f3;
 }
 
 body {
@@ -117,13 +117,13 @@ html::-webkit-scrollbar {
 }
 
 html::-webkit-scrollbar-track {
-  background: #ffffff;
+  background: #f7f6f3;
 }
 
 html::-webkit-scrollbar-thumb {
-  border: 3px solid #ffffff;
+  border: 3px solid #f7f6f3;
   border-radius: 999px;
-  background: #c9c9c7;
+  background: #cfcac1;
 }
 
 html::-webkit-scrollbar-thumb:hover {
@@ -140,30 +140,12 @@ html::-webkit-scrollbar-thumb:hover {
 }
 
 .headline .faint {
-  font-family: var(--font-old);
-  font-style: normal;
   font-weight: 400;
-  font-size: 0.95em;
-  letter-spacing: 0;
-  color: var(--text);
+  letter-spacing: -0.025em;
+  color: var(--text-muted);
 }
 
-.hero-title .faint {
-  display: block;
-  width: fit-content;
-  margin-top: 0.08em;
-  background: var(--wash-blue);
-  box-decoration-break: clone;
-  -webkit-box-decoration-break: clone;
-  padding: 0 0.14em;
-}
 
-.pixel-seam {
-  height: 1px;
-  border: 0;
-  background-image: linear-gradient(90deg, var(--border-strong) 1px, transparent 1px);
-  background-size: 4px 1px;
-}
 
 .btn {
   display: inline-flex;
@@ -285,7 +267,7 @@ html::-webkit-scrollbar-thumb:hover {
   z-index: 100;
   height: var(--nav-h);
   border-bottom: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.94);
+  background: rgba(247, 246, 243, 0.94);
   backdrop-filter: blur(12px) saturate(1.05);
   -webkit-backdrop-filter: blur(12px) saturate(1.05);
 }

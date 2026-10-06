@@ -71,7 +71,7 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content={robots} />
     <meta name="description" content={description} />
-    <meta name="theme-color" content="#ffffff" />
+    <meta name="theme-color" content="#f7f6f3" />
     <title>{title}</title>
     <link rel="canonical" href={canonicalUrl} />
     <link rel="icon" href="/favicon.ico" sizes="any" />
@@ -104,14 +104,17 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
     <link rel="preconnect" href="https://api.fontshare.com" />
     <link rel="preconnect" href="https://cdn.fontshare.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Geist+Mono:wght@400;500&family=Instrument+Sans:wght@550&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&family=Instrument+Sans:wght@550&display=swap"
       rel="stylesheet"
     />
     <link
       href="https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600&display=swap"
       rel="stylesheet"
     />
-    <slot name="head" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap"
+      rel="stylesheet"
+    />
     {enableClientRouter && <ClientRouter fallback="swap" />}
   </head>
   <body>
@@ -168,7 +171,7 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
           <div class="footer-links-group">
             <div class="footer-col">
               <h3>Product</h3>
-              <a href="/#runtime">Runtime</a>
+              <a href="/#environment">How it works</a>
               <a href="/docs/quickstart" data-astro-prefetch="viewport">Quickstart</a>
               <a href="/docs" data-astro-prefetch="viewport">Documentation</a>
             </div>

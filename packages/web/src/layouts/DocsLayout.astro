@@ -243,31 +243,13 @@ const docsJsonLd: JsonLdNode[] = currentDoc
 
 <style>
   :global(body:has(.docs-page)) {
-    --bg: #ffffff;
-    --surface-raised: #ffffff;
-    --surface-soft: #f8f8f8;
-    --surface-dim: #f3f3f3;
-    --border: #dedede;
-    --border-strong: #cccccc;
-    --frame-bg: #ffffff;
-    --frame-border: #dedede;
-    --frame-line: #dedede;
-    --frame-cap: #ffffff;
-    --astro-code-token-constant: #4a6fd8;
-    --astro-code-token-string: #4a8265;
-    --astro-code-token-comment: #a09d96;
-    --astro-code-token-keyword: #4a6fd8;
-    --astro-code-token-function: #a8618a;
-    --astro-code-token-string-expression: #4a8265;
-    --astro-code-token-punctuation: #8d8a93;
-    --astro-code-token-link: #4a8265;
-    background: #ffffff;
+    background: var(--bg);
   }
 
   :global(.site-header) {
     height: 3.5rem;
-    border-bottom: 1px solid #dedede;
-    background: rgba(255, 255, 255, 0.96);
+    border-bottom: 1px solid var(--border);
+    background: rgba(247, 246, 243, 0.96);
   }
 
   :global(.site-nav) {
@@ -422,7 +404,7 @@ const docsJsonLd: JsonLdNode[] = currentDoc
 
   .docs-sidebar {
     border-right: 1px solid var(--border);
-    background: #ffffff;
+    background: var(--bg);
     padding: 1.25rem 1rem;
   }
 
@@ -436,11 +418,11 @@ const docsJsonLd: JsonLdNode[] = currentDoc
     border-bottom: 0;
     padding-bottom: 0;
     color: var(--text-subtle);
-    font-family: var(--font-sans);
-    font-size: 0.72rem;
-    font-weight: 600;
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    font-weight: 400;
     text-transform: none;
-    letter-spacing: 0.01em;
+    letter-spacing: 0;
   }
 
   .docs-nav-group + .docs-nav-group {
@@ -451,10 +433,10 @@ const docsJsonLd: JsonLdNode[] = currentDoc
     margin: 0.3rem 0 0.22rem;
     padding: 0 0.5rem;
     color: var(--text-subtle);
-    font-family: var(--font-sans);
-    font-size: 0.66rem;
-    font-weight: 500;
-    letter-spacing: 0.01em;
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    font-weight: 400;
+    letter-spacing: 0;
   }
 
   .docs-nav-group a,
@@ -468,21 +450,30 @@ const docsJsonLd: JsonLdNode[] = currentDoc
   }
 
   .docs-nav-group a {
-    margin: 0.08rem 0;
-    padding: 0.4rem 0.5rem;
+    position: relative;
+    margin: 0.04rem 0;
+    padding: 0.3rem 0.5rem;
+    color: var(--text);
   }
 
   .docs-nav-group a:hover,
   .docs-toc a:hover {
-    background: var(--surface-soft);
-    color: var(--text);
+    color: var(--accent);
   }
 
+  /* the current page, marked like the landing navigation */
   .docs-nav-group a.active {
-    background: var(--accent-wash);
-    box-shadow: inset 2px 0 0 var(--accent);
-    color: var(--accent-strong);
-    font-weight: 500;
+    color: var(--accent);
+  }
+
+  .docs-nav-group a.active::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: -0.6rem;
+    width: 0.6rem;
+    height: 1px;
+    background: var(--accent);
   }
 
   .docs-nav-group a[hidden] {
@@ -582,38 +573,44 @@ const docsJsonLd: JsonLdNode[] = currentDoc
   }
 
   :global(.docs-content h1) {
-    margin: 0 0 1rem;
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 0.85rem;
+    margin: 0 0 1.25rem;
     color: var(--text);
-    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-    font-size: 2rem;
-    font-weight: 500;
+    font-family: var(--font-sans);
+    font-size: clamp(2rem, 3vw, 2.5rem);
+    font-weight: 400;
     line-height: 1.1;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.035em;
   }
 
   :global(.docs-content h2) {
-    margin: 2rem 0 0.7rem;
+    margin: 2.5rem 0 0.75rem;
     color: var(--text);
-    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-    font-size: 1.25rem;
-    font-weight: 500;
-    line-height: 1.2;
-    letter-spacing: -0.014em;
+    font-family: var(--font-sans);
+    font-size: 1.375rem;
+    font-weight: 400;
+    line-height: 1.25;
+    letter-spacing: -0.015em;
   }
 
   :global(.docs-content h3) {
-    margin: 1.35rem 0 0.45rem;
+    margin: 1.6rem 0 0.45rem;
     color: var(--text);
-    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-family: var(--font-sans);
     font-size: 1rem;
     font-weight: 500;
     letter-spacing: -0.01em;
   }
 
+  /* running text uses the landing page's serif */
+  :global(.docs-content p),
+  :global(.docs-content li) {
+    font-family: var(--font-serif);
+    font-size: 1.0625rem;
+    line-height: 1.6;
+  }
+
   :global(.docs-content p) {
-    max-width: 68ch;
+    max-width: 66ch;
   }
 
   :global(.docs-content p),
@@ -695,25 +692,28 @@ const docsJsonLd: JsonLdNode[] = currentDoc
   :global(.docs-content table) {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.78rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.8125rem;
   }
 
   :global(.docs-content th),
   :global(.docs-content td) {
-    border: 1px solid var(--border);
-    padding: 0.48rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+    padding: 0.6rem 0.75rem 0.6rem 0;
     text-align: left;
     vertical-align: top;
   }
 
   :global(.docs-content th) {
-    background: var(--surface-raised);
+    color: var(--text-subtle);
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    font-weight: 400;
   }
 
   :global(.docs-content blockquote) {
-    border-left: 2px solid var(--ink);
-    background: var(--surface-raised);
-    padding: 0.6rem 0.8rem;
+    border-left: 1px solid var(--border-strong);
+    padding: 0.1rem 0 0.1rem 1rem;
     color: var(--text-muted);
   }
 
