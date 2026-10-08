@@ -63,9 +63,9 @@ const annotated = (source: string, notes: Note[]) => {
 
 const computerNotes: Note[] = [
   { from: "image:", to: "resources:", title: "Exactly this image.", text: "No hidden base, no drift." },
+  { from: "buildSecrets:", to: "  secrets:", title: "Secrets by purpose.", text: "Build and run kept apart." },
   { from: "async prepare", to: "  },", title: "One prepared version.", text: "Every new computer starts from it." },
   { from: "refresh:", to: "refresh:", title: "Kept fresh.", text: "Rebuilt on a schedule." },
-  { from: "buildSecrets:", to: "  secrets:", title: "Secrets by purpose.", text: "Build and runtime secrets stay separate." },
 ];
 
 const agentNotes: Note[] = [
@@ -486,9 +486,12 @@ const nav = [
           }
           const line = block.querySelector<HTMLElement>(`.is-noted[data-note="${note.dataset.note}"]`);
           if (!line) continue;
-          const top = Math.max(line.getBoundingClientRect().top - block.getBoundingClientRect().top, floor);
+          const title = note.querySelector<HTMLElement>(".note-title");
+          const lineBox = line.getBoundingClientRect();
+          const centered = lineBox.top + (lineBox.height - (title?.offsetHeight ?? lineBox.height)) / 2;
+          const top = Math.max(centered - block.getBoundingClientRect().top, floor);
           note.style.top = `${top}px`;
-          floor = top + note.offsetHeight + 16;
+          floor = top + note.offsetHeight + 12;
         }
       };
 
@@ -1107,6 +1110,7 @@ const nav = [
 
   .notes li {
     position: relative;
+    font-size: 0.8125rem;
     padding-left: 0.9rem;
     border-left: 1px solid var(--rule-strong);
     cursor: default;
@@ -1143,7 +1147,7 @@ const nav = [
     .notes li::before {
       content: "";
       position: absolute;
-      top: 0.62em;
+      top: 0.75em;
       left: calc(-1 * (var(--pad) + 1.25rem));
       width: calc(var(--pad) + 0.85rem);
       height: 1px;
