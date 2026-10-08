@@ -1,0 +1,44 @@
+import { agent, triggers } from "@helmr/sdk"
+import { createOpencode } from "@opencode-ai/sdk/v2"
+import { workspace } from "./computer"
+
+export const coder = agent({
+  id: "coder",
+  computer: workspace,
+
+  async setup(ctx) {
+    const { client } = await createOpencode({ signal: ctx.signal })
+    const { data: session } = await client.session.create({}, { throwOnError: true })
+    return { client, sessionID: session.id }
+  },
+
+  async turn(turn, { setupResult: { client, sessionID } }) {
+    const events = await client.event.subscribe()
+    await client.session.promptAsync({
+      sessionID,
+      parts: [{ type: "text", text: turn.input }],
+    })
+
+    for await (const event of events.stream) {
+      if (event.type === "session.idle") break
+      if (event.type !== "question.asked") continue
+
+      // OpenCode asks; a teammate answers.
+      const [question] = event.properties.questions
+      const answer = await turn.ask({
+        question: question.question,
+        options: question.options.map((o) => o.label),
+      })
+      const answers = [[String(answer)]]
+      await client.question.reply({ requestID: event.properties.id, answers })
+    }
+    return null
+  },
+
+  triggers: [
+    triggers.cron("weekday-deps", "0 9 * * 1-5", {
+      timezone: "Asia/Tokyo",
+      input: "Update dependencies and fix anything that breaks.",
+    }),
+  ],
+})

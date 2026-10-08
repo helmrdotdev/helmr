@@ -1,0 +1,17 @@
+import { computer, image } from "@helmr/sdk"
+
+export const workspace = computer({
+  id: "app",
+  image: image("app")
+    .from("node:24-bookworm")
+    .run(["npm", "install", "-g", "opencode-ai@1.1.53"]),
+  resources: { cpu: 2, memory: "4GiB" },
+  buildSecrets: { REGISTRY_TOKEN: { secretId: "5b0e2c7a-91d4-4f3e-8a6b-2c4d1e9f7a30" } },
+  secrets: { OPENAI_API_KEY: { secretId: "c3a8f1d2-7e4b-4c19-9d5a-6b2e8f0a1c47" } },
+
+  async prepare(build) {
+    await build.exec(["git", "clone", "https://github.com/acme/app", "/app"])
+    await build.exec(["npm", "ci"], { cwd: "/app" })
+  },
+  refresh: { every: "24h" },
+})

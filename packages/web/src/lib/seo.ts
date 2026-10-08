@@ -4,10 +4,10 @@ export const SITE = {
   name: "Helmr",
   url: "https://helmr.dev",
   githubUrl: "https://github.com/helmrdotdev/helmr",
-  tagline: "Build your own software factory",
-  defaultTitle: "Helmr — Build your own software factory",
+  tagline: "Build cloud agents that work your way",
+  defaultTitle: "Helmr — Build cloud agents that work your way",
   defaultDescription:
-    "Infrastructure and APIs for your own agent harness. Define agent workloads in TypeScript and run them in isolated Linux microVMs with durable computers.",
+    "Your models, tools, and code. Helmr runs the coding agents you already use on computers you define in TypeScript, and handles the infrastructure, from durable state to secrets.",
   defaultImage: "/og/helmr.png",
   logoImage: "/web-app-manifest-512x512.png",
   locale: "en_US",

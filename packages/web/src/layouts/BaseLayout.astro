@@ -24,6 +24,8 @@ type Props = {
   markdownPath?: string;
   enableClientRouter?: boolean;
   minimalHeader?: boolean;
+  /** "page" renders only the slot; the page supplies its own navigation and footer. */
+  chrome?: "site" | "page";
 };
 
 const {
@@ -39,6 +41,7 @@ const {
   markdownPath,
   enableClientRouter = false,
   minimalHeader = false,
+  chrome = "site",
 } = Astro.props;
 
 const canonicalUrl = absoluteUrl(path, Astro.site?.toString() ?? SITE.url);
@@ -68,7 +71,7 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content={robots} />
     <meta name="description" content={description} />
-    <meta name="theme-color" content="#ffffff" />
+    <meta name="theme-color" content="#f7f6f3" />
     <title>{title}</title>
     <link rel="canonical" href={canonicalUrl} />
     <link rel="icon" href="/favicon.ico" sizes="any" />
@@ -101,16 +104,21 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
     <link rel="preconnect" href="https://api.fontshare.com" />
     <link rel="preconnect" href="https://cdn.fontshare.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Geist+Mono:wght@400;500&family=Instrument+Sans:wght@550&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&family=Instrument+Sans:wght@550&display=swap"
       rel="stylesheet"
     />
     <link
       href="https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600&display=swap"
       rel="stylesheet"
     />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap"
+      rel="stylesheet"
+    />
     {enableClientRouter && <ClientRouter fallback="swap" />}
   </head>
   <body>
+    {chrome === "page" ? <slot /> : <Fragment>
     <header class="site-header">
       <nav class="site-nav">
         <slot name="header-start" />
@@ -142,8 +150,8 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
       <div class="footer-inner">
         <div class="footer-pitch">
           <h2 class="headline footer-headline">
-            Bring your loop.<br />
-            <span class="faint">We&rsquo;re the runtime.</span>
+            Build cloud agents<br />
+            <span class="faint">that work your way.</span>
           </h2>
           <div class="footer-cta">
             <a class="btn btn-dark" href="/docs/quickstart" data-astro-prefetch="viewport">Start building</a>
@@ -156,14 +164,14 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
               Helmr
             </a>
             <p class="footer-tagline">
-              Infrastructure and APIs for your own agent harness.<br />
-              Run it on our cloud or in your own AWS account.
+              Your models, tools, and code. We handle the infrastructure.<br />
+              Run it on Helmr Cloud or in your own AWS account.
             </p>
           </div>
           <div class="footer-links-group">
             <div class="footer-col">
               <h3>Product</h3>
-              <a href="/#runtime">Runtime</a>
+              <a href="/#environment">How it works</a>
               <a href="/docs/quickstart" data-astro-prefetch="viewport">Quickstart</a>
               <a href="/docs" data-astro-prefetch="viewport">Documentation</a>
             </div>
@@ -180,5 +188,6 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
         </div>
       </div>
     </footer>
+    </Fragment>}
   </body>
 </html>
