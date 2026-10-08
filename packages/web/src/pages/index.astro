@@ -153,6 +153,19 @@ const stages = [
   { kind: "vm", label: "another vm", note: "picks up where it left off" },
 ] as const;
 
+// The docs page each section points to.
+const sectionDocs = [
+  { id: "agents", docs: { href: "/docs/quickstart", label: "Coding agents" } },
+  { id: "environment", docs: { href: "/docs/concepts/computers", label: "Computers" } },
+  { id: "work", docs: { href: "/docs/reference/sdk/overview", label: "Agents" } },
+  { id: "team", docs: { href: "/docs/concepts/waits-and-input", label: "Collaboration" } },
+  { id: "durable", docs: { href: "/docs/concepts/how-helmr-works", label: "Durability" } },
+  { id: "security", docs: { href: "/docs/concepts/secrets", label: "Secrets" } },
+  { id: "open-source", docs: { href: "/docs/self-hosting/overview", label: "Self-hosting" } },
+] as const;
+
+const docsFor = (id: (typeof sectionDocs)[number]["id"]) => sectionDocs.find((o) => o.id === id)!.docs;
+
 const nav = [
   { label: "Home", href: "/", current: true },
   { label: "Docs", href: "/docs" },
@@ -217,12 +230,13 @@ const nav = [
           <canvas data-print></canvas>
         </figure>
 
-        <section class="block" aria-labelledby="agents-title">
+        <section id="agents" class="block" aria-labelledby="agents-title">
           <h2 id="agents-title">Bring the agent you already use.</h2>
           <p>
             Helmr runs your agent as ordinary code on a computer you define. No new inference API,
             no rewrite into a framework&rsquo;s abstractions.
           </p>
+          <a class="side-link" href={docsFor("agents").href}><span>Docs</span>{docsFor("agents").label} &rarr;</a>
           <ul class="logo-grid" aria-label="Agents you can run">
             {agents.map((agent) => (
               <li>
@@ -240,6 +254,7 @@ const nav = [
             Nothing is configured behind a console, so what&rsquo;s in the file is exactly what your agent
             gets &mdash; reviewable, versioned and the same for every session.
           </p>
+          <a class="side-link" href={docsFor("environment").href}><span>Docs</span>{docsFor("environment").label} &rarr;</a>
           <div class="annotated" data-annotated>
           <div class="card code-card">
             <div class="card-head"><span>{examples.computer.file}</span></div>
@@ -262,6 +277,7 @@ const nav = [
             needs a decision, a teammate answers. No workflow engine, and no rewriting your agent for
             someone else&rsquo;s API.
           </p>
+          <a class="side-link" href={docsFor("work").href}><span>Docs</span>{docsFor("work").label} &rarr;</a>
           <div class="annotated" data-annotated>
           <div class="card code-card">
             <div class="card-head"><span>{examples.agent.file}</span></div>
@@ -285,6 +301,7 @@ const nav = [
             it asks teammates for context, hands parts of the job to other agents, and reports back
             in the thread.
           </p>
+          <a class="side-link" href={docsFor("team").href}><span>Docs</span>{docsFor("team").label} &rarr;</a>
           <figure class="hub" data-hub aria-label="Teammates and agents built on OpenCode, Claude Code and Codex working in one Slack channel">
             <svg class="dial" viewBox="0 0 460 460" role="img" aria-hidden="true">
               <defs>
@@ -351,6 +368,7 @@ const nav = [
             and files are saved outside the VM as your agent works, so it picks up where it left off,
             even on another machine, without repeating work or running setup again.
           </p>
+          <a class="side-link" href={docsFor("durable").href}><span>Docs</span>{docsFor("durable").label} &rarr;</a>
           <figure class="carry" aria-label="A VM's memory, processes and files are saved outside it and appear unchanged in another VM">
             {stages.map((stage, i) => (
               <Fragment>
@@ -387,6 +405,7 @@ const nav = [
             swaps in the real value at the network boundary, only for origins you allow, and fails
             the request once the secret is revoked.
           </p>
+          <a class="side-link" href={docsFor("security").href}><span>Docs</span>{docsFor("security").label} &rarr;</a>
           <div class="wire">
             <div class="card wire-card">
               <div class="card-head"><span>inside the microVM</span><span class="muted">GH_TOKEN</span></div>
@@ -404,15 +423,15 @@ const nav = [
               </div>
             </div>
           </div>
-          <p class="note"><a href="/docs/concepts/secrets">How protected secrets work</a></p>
         </section>
 
-        <section class="block" aria-labelledby="oss-title">
+        <section id="open-source" class="block" aria-labelledby="oss-title">
           <h2 id="oss-title">Open source. Infrastructure you control.</h2>
           <p>
             Early, open, Apache&nbsp;2.0. Read the source before you trust it with your repositories,
             then choose where it runs.
           </p>
+          <a class="side-link" href={docsFor("open-source").href}><span>Docs</span>{docsFor("open-source").label} &rarr;</a>
           <div class="homes">
             <div class="card home">
               <p class="home-title">Helmr Cloud <span class="soon">coming soon</span></p>
@@ -1091,6 +1110,36 @@ const nav = [
     font-size: 0.6rem;
     color: var(--ink-2);
   }
+
+
+
+  /* docs links: inline under the lead on narrow screens, in the margin on wide ones */
+  .block { position: relative; }
+
+  .side-link {
+    display: inline-flex;
+    gap: 0.5rem;
+    margin-top: 0.85rem;
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    color: var(--link);
+  }
+
+  .side-link span { color: var(--ink-3); }
+  .side-link:hover { text-decoration: underline; }
+
+  @media (min-width: 84rem) {
+    .side-link {
+      position: absolute;
+      top: calc(4rem + 0.35rem);
+      left: calc(100% + var(--pad) + 1.25rem);
+      flex-direction: column;
+      gap: 0.15rem;
+      width: calc(var(--rail) - 2.25rem);
+      margin: 0;
+    }
+  }
+
 
   /* annotations */
   .annotated { position: relative; }
