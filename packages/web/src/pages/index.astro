@@ -553,10 +553,11 @@ const nav = [
     --ink-3: #8a8890;
     --link: #2b4fd8;
     --serif: var(--font-serif);
-    --edge: 2.5rem;
-    --rail: 13rem;
-    --band: 56rem;
-    --inset: 3rem;
+    --edge: 1.5rem;
+    --rail: 14rem;
+    --gutter: 3.25rem;
+    --col: 46rem;
+    --pad: 3.25rem;
     --top: 9rem;
 
     min-height: 100vh;
@@ -569,19 +570,22 @@ const nav = [
   }
 
   /*
-   * Rail | main | margin. The margin column mirrors the rail so the main band
-   * stays centered; it carries code annotations on wide screens. Hairlines
-   * mark every column edge so both side columns read as part of the frame.
+   * Rail | reading column with equal gutters | margin. The reading column, not
+   * the whole frame, is centered on the page; the unruled margin column on the
+   * right carries code annotations.
    */
   .frame {
+    --main: calc(var(--gutter) + var(--col) + var(--pad));
     position: relative;
     display: grid;
-    grid-template-columns: var(--rail) minmax(0, var(--band)) var(--rail);
-    width: calc(100% - 2 * var(--edge));
-    max-width: calc(2 * var(--rail) + var(--band));
-    margin: 0 auto;
-    border-inline: 1px solid var(--line);
+    grid-template-columns: var(--rail) minmax(0, var(--main)) var(--rail);
+    width: calc(2 * var(--rail) + var(--main));
+    max-width: calc(100% - 2 * var(--edge));
+    margin-left: max(var(--edge), calc(50% - var(--rail) - var(--gutter) - var(--col) / 2));
+    border-left: 1px solid var(--line);
   }
+
+
 
 
   /* ---- left rail ---- */
@@ -661,12 +665,12 @@ const nav = [
   .column {
     grid-column: 2;
     min-width: 0;
-    padding: var(--top) 0 3rem;
+    padding: var(--top) var(--pad) 3rem var(--gutter);
     border-inline: 1px solid var(--line);
   }
 
   .block {
-    padding: 4rem var(--inset);
+    padding: 4rem 0;
   }
 
   .hero { padding-top: 0; }
@@ -705,7 +709,6 @@ const nav = [
   }
 
   .block > p:not(.lede, .note) {
-    max-width: 40rem;
     font-family: var(--serif);
     font-size: 1.0625rem;
     line-height: 1.6;
@@ -782,7 +785,7 @@ const nav = [
 
   /* ---- plate ---- */
   .plate {
-    margin: 0 var(--inset);
+    margin: 0;
     border: 1px solid var(--rule);
   }
 
@@ -865,11 +868,11 @@ const nav = [
   }
 
   .code code { display: block; min-width: max-content; font: inherit; }
-  .line { display: block; padding-right: 1.25rem; white-space: pre; }
+  .line { display: block; padding-right: 0.75rem; white-space: pre; }
   .ln {
     display: inline-block;
-    width: 3rem;
-    padding-right: 1.1rem;
+    width: 2.6rem;
+    padding-right: 1rem;
     text-align: right;
     color: #bdb9b1;
     user-select: none;
@@ -1129,7 +1132,7 @@ const nav = [
     .notes {
       position: absolute;
       top: 0;
-      left: calc(100% + var(--inset) + 1rem);
+      left: calc(100% + var(--pad) + 1.25rem);
       display: block;
       width: calc(var(--rail) - 1.75rem);
       margin: 0;
@@ -1141,8 +1144,8 @@ const nav = [
       content: "";
       position: absolute;
       top: 0.62em;
-      left: calc(-1 * (var(--inset) + 1rem));
-      width: calc(var(--inset) + 0.5rem);
+      left: calc(-1 * (var(--pad) + 1.25rem));
+      width: calc(var(--pad) + 0.85rem);
       height: 1px;
       background: var(--rule-strong);
       transition: background 0.15s;
@@ -1255,7 +1258,7 @@ const nav = [
   .foot {
     grid-column: 1 / -1;
     display: grid;
-    grid-template-columns: var(--rail) minmax(0, var(--band)) var(--rail);
+    grid-template-columns: var(--rail) minmax(0, var(--main)) var(--rail);
     border-top: 1px solid var(--line);
     font-family: var(--font-mono);
     font-size: 0.6875rem;
@@ -1272,7 +1275,7 @@ const nav = [
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 1.5rem;
-    padding: 2.5rem var(--inset) 4rem;
+    padding: 2.5rem var(--pad) 4rem var(--gutter);
     border-inline: 1px solid var(--line);
   }
 
@@ -1283,12 +1286,11 @@ const nav = [
 
   /* ---- responsive ---- */
   @media (max-width: 83.99rem) {
-    .page { --edge: 1.5rem; --rail: 12rem; --inset: 2.5rem; }
-    .code { font-size: 0.74rem; }
+    .page { --rail: 11rem; --gutter: 2.5rem; --pad: 2.5rem; }
   }
 
   @media (max-width: 79.99rem) {
-    .page { --rail: 10rem; --inset: 2rem; }
+    .page { --rail: 10rem; --gutter: 2rem; --pad: 2rem; }
     .code { font-size: 0.72rem; }
     .line { padding-right: 0.5rem; }
     .ln { width: 2.5rem; padding-right: 0.9rem; }
@@ -1299,7 +1301,10 @@ const nav = [
 
     .frame {
       grid-template-columns: minmax(0, 1fr);
-      border-inline: 0;
+      width: auto;
+      max-width: none;
+      margin: 0;
+      border: 0;
     }
 
     .rail {
