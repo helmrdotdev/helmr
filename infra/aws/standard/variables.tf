@@ -68,12 +68,6 @@ variable "public_url" {
   nullable    = true
 }
 
-variable "api_origin" {
-  description = "External origin used for machine-facing Control Plane API URLs. Defaults to the effective public URL."
-  type        = string
-  default     = null
-  nullable    = true
-}
 
 variable "deployment_mode" {
   description = "Helmr deployment mode passed to control-plane tasks."
@@ -519,7 +513,6 @@ variable "retained_worker_generations" {
         disk = object({
           total_mib            = number
           reserve_mib          = number
-          artifact_cache_mib   = number
           computer_staging_mib = number
         })
         lifecycle = object({
@@ -587,7 +580,6 @@ variable "retained_worker_generations" {
       generation.generation_inputs.per_vm.cpu_millis % 1000 == 0 &&
       generation.generation_inputs.per_vm.memory_mib > 0 &&
       generation.generation_inputs.per_vm.guest_ephemeral_disk_mib > 0 &&
-      generation.generation_inputs.supply.disk.artifact_cache_mib > 0 &&
       generation.generation_inputs.supply.disk.computer_staging_mib > 0 &&
       generation.generation_inputs.capacity.guest_ephemeral_disk_mib == generation.generation_inputs.capacity.vm_slots * generation.generation_inputs.per_vm.guest_ephemeral_disk_mib &&
       can(base64decode(generation.sealed_provider_definition.user_data_base64)) &&
@@ -703,11 +695,7 @@ variable "worker_execution_slots" {
   nullable = true
 }
 
-variable "worker_artifact_cache_max_mib" {
-  type     = number
-  default  = null
-  nullable = true
-}
+
 variable "worker_root_volume_size_gb" {
   description = "Worker root EBS volume size in GiB."
   type        = number

@@ -8,14 +8,14 @@ locals {
   # Bound filepack with its maximum header and a full 4-MiB final chunk.
   # Each chunk has 21 bytes framing + 14 bytes zstd framing + 65*3 bytes
   # block overhead (SpeedFastest uses 64-KiB blocks). AES-GCM adds 36 bytes
-  # per 4-MiB record including the end record, plus the 25-byte magic.
+  # per 4-MiB record including the end record, plus the 73-byte magic, key fingerprint and salt.
   checkpoint_packed_bytes = {
     memory  = ceil(var.vm_memory_mib / 4) * (4194304 + 230) + 1048609
     scratch = ceil(var.vm_scratch_disk_mib / 4) * (4194304 + 230) + 1048609
   }
   checkpoint_plain_bytes = merge(local.checkpoint_packed_bytes, { state = 10000000, config = 65536 })
   checkpoint_cipher_bytes = {
-    for role, size in local.checkpoint_plain_bytes : role => size + 25 + 36 * (ceil(size / 4194304) + 1)
+    for role, size in local.checkpoint_plain_bytes : role => size + 73 + 36 * (ceil(size / 4194304) + 1)
   }
   worker_slot_disk_bytes = (
     (var.vm_scratch_disk_mib + 32768 + var.computer_staging_mib + 16384 + 2 * var.vm_memory_mib) * 1048576 +
@@ -52,13 +52,12 @@ locals {
     VM_SCRATCH_DISK_MIB               = tostring(var.vm_scratch_disk_mib)
     VM_INIT_TIMEOUT                   = "30s"
     # EC2 workers allow extra time for first-boot guest health convergence.
-    VM_HEALTH_TIMEOUT             = "300s"
-    WORKER_DISK_RESERVE_MIB       = tostring(var.worker_disk_reserve_mib)
-    WORKER_DISK_MIB               = var.worker_disk_mib == null ? null : tostring(var.worker_disk_mib)
-    WORKER_CAPACITY_VCPUS         = var.worker_capacity_vcpus == null ? null : tostring(var.worker_capacity_vcpus)
-    WORKER_CAPACITY_MEMORY_MIB    = var.worker_capacity_memory_mib == null ? null : tostring(var.worker_capacity_memory_mib)
-    WORKER_EXECUTION_SLOTS        = var.worker_execution_slots == null ? null : tostring(var.worker_execution_slots)
-    WORKER_ARTIFACT_CACHE_MAX_MIB = var.artifact_cache_max_mib == null ? null : tostring(var.artifact_cache_max_mib)
+    VM_HEALTH_TIMEOUT          = "300s"
+    WORKER_DISK_RESERVE_MIB    = tostring(var.worker_disk_reserve_mib)
+    WORKER_DISK_MIB            = var.worker_disk_mib == null ? null : tostring(var.worker_disk_mib)
+    WORKER_CAPACITY_VCPUS      = var.worker_capacity_vcpus == null ? null : tostring(var.worker_capacity_vcpus)
+    WORKER_CAPACITY_MEMORY_MIB = var.worker_capacity_memory_mib == null ? null : tostring(var.worker_capacity_memory_mib)
+    WORKER_EXECUTION_SLOTS     = var.worker_execution_slots == null ? null : tostring(var.worker_execution_slots)
   }
   worker_environment = {
     for key, value in local.worker_environment_values : key => value if value != null
@@ -416,10 +415,10 @@ resource "terraform_data" "network_preconditions" {
 
     precondition {
       condition = var.worker_disk_mib == null || (
-        (coalesce(var.worker_disk_mib, 0) - var.worker_disk_reserve_mib - coalesce(var.artifact_cache_max_mib, 16384)) * 1048576 >=
+        (coalesce(var.worker_disk_mib, 0) - var.worker_disk_reserve_mib) * 1048576 >=
         coalesce(var.worker_execution_slots, 1) * local.worker_slot_disk_bytes
       )
-      error_message = "worker disk must fund every configured slot's Computer, staging, program, restore and checkpoint files after reserve and cache."
+      error_message = "worker disk must fund every configured slot's Computer, staging, program, restore and checkpoint files after reserve."
     }
 
     precondition {

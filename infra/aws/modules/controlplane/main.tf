@@ -115,7 +115,6 @@ locals {
     DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH = "/usr/local/share/helmr/runtime.descriptor.json"
     PLATFORM_STORE_URI                 = var.platform_store_uri
     PUBLIC_URL                         = local.controlplane_url
-    API_ORIGIN                         = coalesce(var.api_origin, local.controlplane_url)
     REDIS_URL                          = local.redis_url
     GITHUB_OAUTH_CLIENT_ID             = var.github_oauth_client_id
     }, var.deployment_mode == "managed-cloud" ? {
@@ -130,7 +129,6 @@ locals {
     AUTH_KEY                           = aws_secretsmanager_secret.auth_key.arn
     ENCRYPTION_KEY                     = aws_secretsmanager_secret.encryption_key.arn
     COMPUTER_FENCING_KEY               = aws_secretsmanager_secret.computer_fencing_key.arn
-    TOKEN_CREDENTIAL_KEY               = aws_secretsmanager_secret.token_credential_key.arn
     GITHUB_OAUTH_CLIENT_SECRET         = aws_secretsmanager_secret.github_oauth_client_secret.arn
     },
     var.deployment_mode == "self-hosted" ? {
@@ -180,6 +178,7 @@ locals {
 
   dispatcher_environment_defaults = merge(local.clickhouse_ingester_environment, {
     CONTROL_PLANE_URL = local.controlplane_url
+    PUBLIC_URL        = local.controlplane_url
   })
   dispatcher_environment = merge(var.dispatcher_environment, local.dispatcher_environment_defaults)
 
@@ -1323,12 +1322,6 @@ resource "aws_secretsmanager_secret" "computer_fencing_key" {
   tags                    = var.tags
 }
 
-resource "aws_secretsmanager_secret" "token_credential_key" {
-  name                    = "${local.name}/controlplane/token-credential-key"
-  kms_key_id              = aws_kms_key.helmr.arn
-  recovery_window_in_days = var.secret_recovery_window_in_days
-  tags                    = var.tags
-}
 
 resource "aws_secretsmanager_secret" "github_oauth_client_secret" {
   name                    = "${local.name}/controlplane/github-oauth-client-secret"

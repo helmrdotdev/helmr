@@ -71,6 +71,17 @@ override_resource {
 }
 
 variables {
+  controlplane_environment = {
+    ENVIRONMENT_MAX_RESIDENT_COMPUTERS     = "10"
+    ENVIRONMENT_MAX_CPU_MILLIS             = "16000"
+    ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
+    ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES = "1099511627776"
+    ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS = "100"
+    ENVIRONMENT_MAX_CAUSAL_DEPTH           = "8"
+    ENVIRONMENT_ADMISSION_RATE_PER_SECOND  = "10"
+    ENVIRONMENT_ADMISSION_BURST            = "20"
+    ENVIRONMENT_PREPARATION_TIMEOUT_MS     = "600000"
+  }
   name                                     = "helmr-test"
   vpc_id                                   = "vpc-0123456789abcdef0"
   private_subnet_ids                       = ["subnet-0123456789abcdef0", "subnet-1123456789abcdef0"]
@@ -102,6 +113,11 @@ run "controlplane_uses_execution_only_runtime_authority" {
   assert {
     condition     = { for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name => item.value }.CONTROL_PLANE_URL == output.controlplane_url
     error_message = "Dispatcher fencing must observe the same public Control Plane endpoint as Workers."
+  }
+
+  assert {
+    condition     = { for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name => item.value }.PUBLIC_URL == output.controlplane_url
+    error_message = "Slack publications must link to this installation's Console origin."
   }
 
   assert {
@@ -163,11 +179,9 @@ run "managed_controlplane_omits_setup_token" {
   command = plan
   variables {
     deployment_mode = "managed-cloud"
-    api_origin      = "https://api.example.test"
   }
   assert {
     condition = (
-      { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[0].environment : item.name => item.value }.API_ORIGIN == "https://api.example.test" &&
       !contains([for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[0].secrets : item.name], "SETUP_TOKEN") &&
       !contains(keys(output.secret_arns), "setup_token")
     )
@@ -206,7 +220,18 @@ run "capacity_api_credential_is_explicit_composition" {
 run "capacity_api_credential_rejects_plaintext_environment" {
   command = plan
   variables {
-    controlplane_environment = { CAPACITY_TOKEN = "plaintext-must-not-enter-task-definition" }
+    controlplane_environment = {
+      ENVIRONMENT_MAX_RESIDENT_COMPUTERS     = "10"
+      ENVIRONMENT_MAX_CPU_MILLIS             = "16000"
+      ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
+      ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES = "1099511627776"
+      ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS = "100"
+      ENVIRONMENT_MAX_CAUSAL_DEPTH           = "8"
+      ENVIRONMENT_ADMISSION_RATE_PER_SECOND  = "10"
+      ENVIRONMENT_ADMISSION_BURST            = "20"
+      ENVIRONMENT_PREPARATION_TIMEOUT_MS     = "600000"
+      CAPACITY_TOKEN                         = "plaintext-must-not-enter-task-definition"
+    }
   }
   expect_failures = [terraform_data.bootstrap_preconditions]
 }
@@ -377,7 +402,18 @@ run "managed_computer_root_is_context_bound_kms" {
 
 run "reject_computer_root_override" {
   command = plan
-  variables { controlplane_environment = { COMPUTER_KMS_KEY_ARN = "other" } }
+  variables { controlplane_environment = {
+    ENVIRONMENT_MAX_RESIDENT_COMPUTERS     = "10"
+    ENVIRONMENT_MAX_CPU_MILLIS             = "16000"
+    ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
+    ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES = "1099511627776"
+    ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS = "100"
+    ENVIRONMENT_MAX_CAUSAL_DEPTH           = "8"
+    ENVIRONMENT_ADMISSION_RATE_PER_SECOND  = "10"
+    ENVIRONMENT_ADMISSION_BURST            = "20"
+    ENVIRONMENT_PREPARATION_TIMEOUT_MS     = "600000"
+    COMPUTER_KMS_KEY_ARN                   = "other"
+  } }
   expect_failures = [terraform_data.bootstrap_preconditions]
 }
 
@@ -398,5 +434,29 @@ run "dispatcher_observes_cloudfront_viewer_endpoint" {
   assert {
     condition     = { for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name => item.value }.CONTROL_PLANE_URL == "https://viewer.cloudfront.net"
     error_message = "Dispatcher must probe the Worker-facing viewer URL, not the restricted ALB origin."
+  }
+}
+
+run "environment_execution_policy_is_required" {
+  command = plan
+  variables { controlplane_environment = {} }
+  expect_failures = [var.controlplane_environment]
+}
+run "environment_execution_policy_reaches_container" {
+  command = plan
+  assert {
+    condition     = alltrue([for name, value in var.controlplane_environment : { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[0].environment : item.name => item.value }[name] == value])
+    error_message = "Configured execution policy must reach the control-plane process unchanged."
+  }
+}
+
+run "slack_credentials_are_database_owned" {
+  command = plan
+  assert {
+    condition = alltrue([for container in concat(
+      jsondecode(aws_ecs_task_definition.controlplane.container_definitions),
+      jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)
+    ) : alltrue([for item in concat(container.environment, container.secrets) : !startswith(item.name, "SLACK_")])])
+    error_message = "Dedicated Slack app credentials belong to protected registrations, not process configuration."
   }
 }

@@ -39,6 +39,25 @@ Before enabling or updating Control Plane services, run the database migration t
 for the exact image. Keep `/healthz` for process health and use `/readyz` for
 traffic readiness after the schema is current.
 
+## Optional Slack integration
+
+The Control Plane module and both self-hosted roots accept `slack = null` by
+default. To enable Slack, supply the app's `app_id` and `client_id`, plus
+`client_secret_arn` and `signing_secret_arn` referring to populated Secrets Manager
+secrets. Supply `client_secret_kms_key_arns` and `signing_secret_kms_key_arns` when
+those secrets use customer-managed encryption keys. The app/client IDs reach both
+processes; the client secret reaches Control Plane and Dispatcher, while the
+signing secret reaches only Control Plane. Secret values remain outside Terraform.
+Reserved Slack environment names cannot bypass this input.
+
+Use the deployment's reachable HTTPS origin for installation consent at
+`/auth/slack/callback`, identity linking at `/api/slack/user-links/callback`, Events
+API delivery at `/api/slack/events` and interactions at `/api/slack/interactions`.
+Configure the app, its scopes and the HTTPS callbacks before connecting it in
+Console. Deployment configuration alone neither installs the app nor approves a
+channel. Existing connections use encrypted installation credentials; app secrets
+are distinct from those per-workspace grants.
+
 ## IAM ceilings and deployment recovery
 
 The Control Plane, Worker and Worker-image modules accept one optional

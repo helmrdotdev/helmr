@@ -46,6 +46,13 @@ for filename in sys.argv[1:3]:
     plans = {event['@testrun']: event['test_plan']
              for line in Path(filename).read_text().splitlines()
              if (event := json.loads(line)).get('type') == 'test_plan'}
+    slack_tasks = {r['name']: json.loads(r['change']['after']['container_definitions'])[0]
+                   for r in plans['slack_no_global_credentials']['resource_changes']
+                   if r['type'] == 'aws_ecs_task_definition'}
+    for name in ('controlplane', 'dispatcher'):
+        assert all(not item['name'].startswith('SLACK_')
+                   for item in slack_tasks[name]['environment'] + slack_tasks[name]['secrets']), (filename, name)
+    print(f'ok - {filename}: dedicated Slack credentials are absent from process configuration')
     baseline = next(event['test_state']['values']['outputs']['worker_generation_definitions']['value']
                     for line in Path(filename).read_text().splitlines()
                     if (event := json.loads(line)).get('type') == 'test_state'

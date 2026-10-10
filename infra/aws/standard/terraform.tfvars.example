@@ -85,3 +85,15 @@ worker_vm_scratch_disk_mib    = 32768
 # Initial evaluation values; tune using workload measurements.
 worker_computer_save_interval_seconds = 60
 worker_computer_devices = ["/dev/nbd0", "/dev/nbd1", "/dev/nbd2", "/dev/nbd3"]
+
+# Required: set the following keys in controlplane_environment to operator-approved
+# positive integers. No production quota values are inferred by the module.
+# ENVIRONMENT_MAX_RESIDENT_COMPUTERS
+# ENVIRONMENT_MAX_CPU_MILLIS
+# ENVIRONMENT_MAX_MEMORY_BYTES
+# ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES
+# ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS
+# ENVIRONMENT_MAX_CAUSAL_DEPTH
+# ENVIRONMENT_ADMISSION_RATE_PER_SECOND
+# ENVIRONMENT_ADMISSION_BURST
+# ENVIRONMENT_PREPARATION_TIMEOUT_MS
