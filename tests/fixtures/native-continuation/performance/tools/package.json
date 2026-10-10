@@ -1,0 +1,5 @@
+{
+  "name": "native-performance-build-tools",
+  "private": true,
+  "dependencies": { "esbuild": "0.28.2" }
+}
