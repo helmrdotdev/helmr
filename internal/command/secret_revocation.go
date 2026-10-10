@@ -3,144 +3,71 @@ package command
 import (
 	"context"
 	"errors"
-	"fmt"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5"
 )
 
-// StopSecretRevokedCommands stops up to limit live Commands that resolved
-// the revoked Secret at an older generation, oldest first. Each Command is
-// fenced in its own transaction: it locks the Command's Computer's Secrets,
-// and when that Computer still places the Secret at the revoked generation,
-// the Computer, its Instance and the Command, and stops the Command unless
-// it is terminal or already stopping. A fenced Command is then recovered in
-// a separate transaction; a recovery that finds the Command changed is not a
-// failure. It returns the number of candidates examined, including those it
-// left unchanged; on the first failure it returns the candidates examined
-// before it with the error.
-func StopSecretRevokedCommands(
-	ctx context.Context,
-	txdb db.TxDB,
-	revocation secret.Revocation,
-	limit int32,
-) (int, error) {
+// StopSecretRevokedCommands records convergence intent. Revocation quarantines
+// the shared Computer separately; this does not claim a process physically stopped.
+func StopSecretRevokedCommands(ctx context.Context, database db.TxDB, revocation secret.Revocation, limit int32) (int, error) {
 	if err := revocation.Validate(); err != nil {
 		return 0, err
 	}
 	if limit <= 0 {
 		return 0, errors.New("secret revocation batch limit must be positive")
 	}
-	candidates, err := db.New(txdb).ListSecretRevocationProcesses(
-		ctx,
-		db.ListSecretRevocationProcessesParams{
-			SecretID:             pgvalue.UUID(revocation.SecretID),
-			RevocationGeneration: revocation.Generation,
-			EnvironmentID:        pgvalue.UUID(revocation.EnvironmentID),
-			RowLimit:             limit,
-		},
-	)
+	rows, err := database.Query(ctx, `SELECT c.environment_id,c.id,c.computer_id,c.revision FROM computer_commands c JOIN environments e ON e.id=c.environment_id
+ WHERE c.environment_id=$1 AND c.terminal_at IS NULL AND c.cancel_requested_at IS NULL
+ AND EXISTS(SELECT 1 FROM computer_secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id)
+ WHERE b.environment_id=c.environment_id AND b.computer_id=c.computer_id AND s.id=$2 AND s.status='revoked' AND s.revocation_generation=$3)
+ ORDER BY c.created_at,c.id LIMIT $4`, revocation.EnvironmentID, revocation.SecretID, revocation.Generation, limit)
 	if err != nil {
-		return 0, fmt.Errorf("list secret-revoked process candidates: %w", err)
+		return 0, err
 	}
-	examined := 0
-	for _, candidate := range candidates {
-		if err := stopSecretRevokedCommand(ctx, txdb, candidate, revocation); err != nil {
-			return examined, err
-		}
-		examined++
-	}
-	return examined, nil
-}
-
-func stopSecretRevokedCommand(
-	ctx context.Context,
-	txdb db.TxDB,
-	candidate db.ListSecretRevocationProcessesRow,
-	revocation secret.Revocation,
-) error {
-	var revision int64
-	fenced := false
-	err := db.RunTx(ctx, txdb, func(tx pgx.Tx) error {
-		var err error
-		revision, fenced, err = fenceSecretRevokedCommand(ctx, tx, candidate, revocation)
-		return err
-	})
-	if err != nil || !fenced {
-		return err
-	}
-	err = Recover(ctx, txdb, RecoveryCandidate{
-		OrgID:            pgvalue.MustUUIDValue(candidate.OrgID),
-		CommandID:        pgvalue.MustUUIDValue(candidate.ID),
-		ComputerID:       pgvalue.MustUUIDValue(candidate.ComputerID),
-		ExpectedRevision: revision,
-	})
-	if err != nil && !errors.Is(err, ErrChanged) {
-		return fmt.Errorf("recover secret-revoked Command: %w", err)
-	}
-	return nil
-}
-
-// fenceSecretRevokedCommand stops the candidate Command in tx and returns
-// its resulting revision. It reports false, leaving the Command unchanged,
-// when the Computer no longer places the Secret at the revoked generation or
-// the Command no longer exists.
-func fenceSecretRevokedCommand(
-	ctx context.Context,
-	tx pgx.Tx,
-	candidate db.ListSecretRevocationProcessesRow,
-	revocation secret.Revocation,
-) (int64, bool, error) {
-	revoked, err := secret.CheckRevocation(
-		ctx,
-		tx,
-		pgvalue.MustUUIDValue(candidate.ComputerID),
-		revocation,
-	)
-	if err != nil || !revoked {
-		return 0, false, err
-	}
-	q := db.New(tx)
-	target, err := q.GetComputerCommandTarget(ctx, db.GetComputerCommandTargetParams{
-		OrgID: candidate.OrgID, CommandID: candidate.ID,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, false, nil
-	}
-	if err != nil {
-		return 0, false, fmt.Errorf("locate secret-revoked Command: %w", err)
-	}
-	if target.ComputerID != candidate.ComputerID {
-		return 0, false, errors.New("secret-revoked Command placement changed")
-	}
-	admission, err := computer.LockForAdmission(
-		ctx,
-		tx,
-		pgvalue.MustUUIDValue(target.EnvironmentID),
-		pgvalue.MustUUIDValue(target.ComputerID),
-	)
-	if err != nil {
-		return 0, false, fmt.Errorf("lock secret-revoked Computer: %w", err)
-	}
-	if err := admission.LockLiveInstance(ctx); err != nil {
-		return 0, false, fmt.Errorf("lock secret-revoked Instance: %w", err)
-	}
-	command, err := q.LockComputerCommand(ctx, db.LockComputerCommandParams{
-		EnvironmentID: target.EnvironmentID, ComputerID: target.ComputerID, CommandID: candidate.ID,
+	candidates, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (RecoveryCandidate, error) {
+		var c RecoveryCandidate
+		err := row.Scan(&c.EnvironmentID, &c.CommandID, &c.ComputerID, &c.ExpectedRevision)
+		return c, err
 	})
 	if err != nil {
-		return 0, false, fmt.Errorf("lock secret-revoked Command: %w", err)
+		return 0, err
 	}
-	if !command.TerminalAt.Valid && !command.CancelRequestedAt.Valid {
-		command, err = q.StopSecretRevokedComputerCommand(ctx, db.StopSecretRevokedComputerCommandParams{
-			EnvironmentID: target.EnvironmentID, CommandID: command.ID, ExpectedRevision: command.Revision,
-		})
-		if err != nil {
-			return 0, false, fmt.Errorf("fail secret-revoked Command: %w", err)
+	for i, c := range candidates {
+		if err = Recover(ctx, database, c); err != nil && !errors.Is(err, ErrChanged) {
+			return i, err
 		}
 	}
-	return command.Revision, true, nil
+	return len(candidates), nil
+}
+
+// RecoverBatch is restart-safe discovery for lost writers and revoked bindings.
+// Every candidate is compared again under its immutable Computer/lease locks.
+func RecoverBatch(ctx context.Context, database db.TxDB, limit int) (int, error) {
+	if limit <= 0 {
+		return 0, errors.New("command recovery batch limit must be positive")
+	}
+	rows, err := database.Query(ctx, `SELECT c.environment_id,c.id,c.computer_id,c.revision FROM computer_commands c JOIN environments e ON e.id=c.environment_id
+ LEFT JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(c.environment_id,c.computer_id,c.computer_lease_epoch)
+ WHERE (c.computer_lease_epoch IS NOT NULL AND c.process_reconciled_at IS NULL AND (l.fenced_at IS NOT NULL OR (c.terminal_at IS NULL AND (l.status IN ('lost','released') OR l.expires_at<=clock_timestamp()))))
+ OR (c.terminal_at IS NULL AND c.cancel_requested_at IS NULL AND EXISTS(SELECT 1 FROM computer_secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id) WHERE b.environment_id=c.environment_id AND b.computer_id=c.computer_id AND s.status='revoked'))
+ ORDER BY c.updated_at,c.id LIMIT $1`, limit)
+	if err != nil {
+		return 0, err
+	}
+	candidates, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (RecoveryCandidate, error) {
+		var c RecoveryCandidate
+		err := row.Scan(&c.EnvironmentID, &c.CommandID, &c.ComputerID, &c.ExpectedRevision)
+		return c, err
+	})
+	if err != nil {
+		return 0, err
+	}
+	for i, c := range candidates {
+		if err = Recover(ctx, database, c); err != nil && !errors.Is(err, ErrChanged) {
+			return i, err
+		}
+	}
+	return len(candidates), nil
 }

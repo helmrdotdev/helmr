@@ -13,19 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestWorkerLifecycleClient(t *testing.T) {
-	claim := workerapi.RunLease{
-		ID: "00000000-0000-0000-0000-000000000001", RunID: "00000000-0000-0000-0000-000000000002",
-		WorkerGroupID: "01900000-0000-7000-8000-000000000901", WorkerHostID: "00000000-0000-0000-0000-000000000401",
-		WorkerEpoch: 1, LeaseSequence: 1, ComputerInstanceID: "00000000-0000-0000-0000-000000000501",
-		AttemptNumber: 1, ExpiresAt: time.Date(2026, 5, 8, 12, 5, 0, 0, time.UTC),
-	}
 	paths := []string{}
 	workerCredential := "worker-credential"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -42,23 +35,9 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			if request.WorkerHostID != "00000000-0000-0000-0000-000000000401" || request.WorkerHostSecret != "worker-secret" || request.ServiceID != "00000000-0000-0000-0000-000000000901" {
 				t.Fatalf("worker host credential request = %+v", request)
 			}
-			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{
+			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{WorkerEpoch: 7,
 				Credential:       workerCredential,
 				ExpiresInSeconds: int64(time.Hour / time.Second),
-			})
-		case "/worker/v1/run/leases/discover":
-			if got := r.Header.Get("authorization"); got != "Bearer "+workerCredential {
-				t.Fatalf("worker auth = %s", got)
-			}
-			var request workerapi.RunLeaseDiscoveryRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				t.Fatal(err)
-			}
-			_ = json.NewEncoder(w).Encode(workerapi.RunLeaseDiscoveryResponse{
-				Items: []workerapi.RunLeaseWork{{
-					LeaseID:       claim.ID,
-					LeaseSequence: claim.LeaseSequence,
-				}},
 			})
 		case "/worker/v1/instance/activate":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerCredential {
@@ -113,15 +92,6 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	discovered, err := client.DiscoverRunLeases(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(discovered.Items) != 1 ||
-		discovered.Items[0].LeaseID != claim.ID ||
-		discovered.Items[0].LeaseSequence != claim.LeaseSequence {
-		t.Fatalf("discovered = %+v", discovered)
-	}
 	if status, err := client.ActivateWorker(context.Background(), workerClientCapabilities()); err != nil || status.Status != workerapi.StatusActive {
 		t.Fatalf("activate status = %+v err=%v", status, err)
 	}
@@ -137,232 +107,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	if err := client.FenceWorker(context.Background(), "provider_termination"); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(paths, ","); got != "/worker/v1/instance/credential,/worker/v1/run/leases/discover,/worker/v1/instance/activate,/worker/v1/instance/drain,/worker/v1/instance,/worker/v1/instance/drain/complete,/worker/v1/instance/fence" {
-		t.Fatalf("paths = %s", got)
-	}
-}
-
-func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
-	receipt := workerapi.RunLeaseAssignment{
-		ID:                        "00000000-0000-0000-0000-000000000001",
-		RunID:                     "00000000-0000-0000-0000-000000000002",
-		AttemptNumber:             1,
-		LeaseSequence:             3,
-		BaseComputerDiskVersionID: "00000000-0000-0000-0000-000000000003",
-	}
-	operationID := "00000000-0000-0000-0000-000000000004"
-	var paths []string
-	server := httptest.NewServer(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			paths = append(paths, r.URL.Path)
-			switch r.URL.Path {
-			case "/worker/v1/instance/credential":
-				_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{
-					Credential:       "worker-credential",
-					ExpiresInSeconds: 3600,
-				})
-			case "/worker/v1/run/leases/claim":
-				var request workerapi.RunLeaseClaimRequest
-				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-					t.Fatal(err)
-				}
-				if request.LeaseID != receipt.ID ||
-					request.LeaseSequence != receipt.LeaseSequence {
-					t.Fatalf("claim request = %+v", request)
-				}
-				_ = json.NewEncoder(w).Encode(
-					workerapi.RunLeaseClaimResponse{
-						Lease: receipt,
-						Computer: workerapi.ComputerAttachment{Target: workerapi.ComputerMountTarget{
-							BaseComputerDiskVersionID: receipt.BaseComputerDiskVersionID,
-						}},
-						ProgramStart: []byte("frame"),
-					},
-				)
-			case "/worker/v1/run/leases/start":
-				var request workerapi.RunStartRequest
-				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-					t.Fatal(err)
-				}
-				if request.Lease != receipt.Fence() {
-					t.Fatalf("start request = %+v", request)
-				}
-				_ = json.NewEncoder(w).Encode(
-					workerapi.RunStartResponse{Lease: receipt.Fence()},
-				)
-			case "/worker/v1/run/leases/entrypoint":
-				var request workerapi.RunEntrypointRequest
-				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-					t.Fatal(err)
-				}
-				if request.Lease != receipt.Fence() ||
-					request.EntrypointKind != "task" ||
-					request.EntrypointDeclaredID != "deploy" {
-					t.Fatalf("entrypoint request = %+v", request)
-				}
-				w.WriteHeader(http.StatusNoContent)
-			case "/worker/v1/run/leases/renew":
-				var request workerapi.RunLeaseRenewRequest
-				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-					t.Fatal(err)
-				}
-				if request.Lease != receipt.Fence() ||
-					!request.ExpectedExpiresAt.Equal(receipt.ExpiresAt) {
-					t.Fatalf("renew request = %+v", request)
-				}
-				_ = json.NewEncoder(w).Encode(workerapi.RunLeaseRenewResponse{
-					Lease: receipt.Fence(), ExpiresAt: receipt.ExpiresAt,
-					BaseComputerDiskVersionID: receipt.BaseComputerDiskVersionID,
-				})
-			case "/worker/v1/run/logs/append":
-				var request workerapi.RunLogAppendRequest
-				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-					t.Fatal(err)
-				}
-				if request.Lease != receipt.Fence() ||
-					request.Stream != workerapi.LogStreamStdout ||
-					request.ObservedSeq != 7 ||
-					request.ContentBase64 != "bG9n" {
-					t.Fatalf("log request = %+v", request)
-				}
-				w.WriteHeader(http.StatusNoContent)
-			case "/worker/v1/run/finalization/begin":
-				var request workerapi.BeginRunFinalizationRequest
-				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-					t.Fatal(err)
-				}
-				if request.Lease != receipt.Fence() ||
-					request.OperationID != operationID ||
-					request.ProgramQuiesced.RunID != receipt.RunID ||
-					request.ProgramQuiesced.AttemptNumber != receipt.AttemptNumber ||
-					request.ProgramQuiesced.RunLeaseID != receipt.ID {
-					t.Fatalf("finalization request = %+v", request)
-				}
-				_ = json.NewEncoder(w).Encode(
-					workerapi.BeginRunFinalizationResponse{
-						Lease:     receipt.Fence(),
-						ExpiresAt: receipt.ExpiresAt, OperationID: operationID,
-					},
-				)
-			case "/worker/v1/run/tasks/complete":
-				var request workerapi.CompleteTaskRequest
-				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-					t.Fatal(err)
-				}
-				if request.Lease != receipt.Fence() ||
-					request.Outcome.Succeeded == nil ||
-					string(request.Outcome.Succeeded.Output) != `{"ok":true}` ||
-					request.OperationID != operationID {
-					t.Fatalf("Task completion request = %+v", request)
-				}
-				w.WriteHeader(http.StatusNoContent)
-			default:
-				t.Fatalf("unexpected path %s", r.URL.Path)
-			}
-		},
-	))
-	defer server.Close()
-	client, err := New(
-		server.URL,
-		WithHTTPClient(server.Client()),
-		WithAuth(
-			"00000000-0000-0000-0000-000000000401",
-			"worker-secret",
-		),
-		WithService(
-			"00000000-0000-0000-0000-000000000901",
-		),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	claim, err := client.ClaimRunLease(
-		context.Background(),
-		workerapi.RunLeaseWork{
-			LeaseID:       receipt.ID,
-			LeaseSequence: receipt.LeaseSequence,
-		},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if claim.Lease != receipt ||
-		len(claim.ProgramStart) == 0 ||
-		string(claim.ProgramStart) != "frame" {
-		t.Fatalf("claim response = %+v", claim)
-	}
-	started, err := client.AcknowledgeRunStart(
-		context.Background(),
-		workerapi.RunStartRequest{Lease: receipt.Fence()},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if started.Lease != receipt.Fence() {
-		t.Fatalf("start response = %+v", started)
-	}
-	if err := client.AcknowledgeRunEntrypoint(
-		context.Background(),
-		workerapi.RunEntrypointRequest{
-			Lease:                receipt.Fence(),
-			EntrypointKind:       "task",
-			EntrypointDeclaredID: "deploy",
-		},
-	); err != nil {
-		t.Fatal(err)
-	}
-	renewed, err := client.RenewRunLease(context.Background(), receipt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if renewed.Lease != receipt.Fence() {
-		t.Fatalf("renew response = %+v", renewed)
-	}
-	finalization, err := client.BeginRunFinalization(
-		context.Background(),
-		workerapi.BeginRunFinalizationRequest{
-			Lease: receipt.Fence(),
-			ProgramQuiesced: workerapi.RunQuiescenceProof{
-				RunID: receipt.RunID, AttemptNumber: receipt.AttemptNumber,
-				RunLeaseID: receipt.ID,
-			},
-			OperationID: operationID,
-		},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if finalization.Lease != receipt.Fence() ||
-		finalization.OperationID != operationID {
-		t.Fatalf("finalization response = %+v", finalization)
-	}
-	if err := client.CompleteTask(
-		context.Background(),
-		workerapi.CompleteTaskRequest{
-			Lease: receipt.Fence(),
-			Outcome: workerapi.TaskOutcome{Succeeded: &workerapi.TaskSucceeded{
-				Output: json.RawMessage(`{"ok":true}`),
-			}},
-			OperationID: operationID,
-		},
-	); err != nil {
-		t.Fatal(err)
-	}
-	err = client.AppendRunLog(
-		context.Background(),
-		receipt,
-		workerapi.LogStreamStdout,
-		7,
-		[]byte("log"),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Join(paths, ","); got !=
-		"/worker/v1/instance/credential,/worker/v1/run/leases/claim,"+
-			"/worker/v1/run/leases/start,/worker/v1/run/leases/entrypoint,/worker/v1/run/leases/renew,"+
-			"/worker/v1/run/finalization/begin,/worker/v1/run/tasks/complete,"+
-			"/worker/v1/run/logs/append" {
+	if got := strings.Join(paths, ","); got != "/worker/v1/instance/credential,/worker/v1/instance/activate,/worker/v1/instance/drain,/worker/v1/instance,/worker/v1/instance/drain/complete,/worker/v1/instance/fence" {
 		t.Fatalf("paths = %s", got)
 	}
 }
@@ -373,7 +118,7 @@ func TestCompleteWorkerDrainRetriesTheIdenticalProofAfterAmbiguousResponse(t *te
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/worker/v1/instance/credential":
-			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "worker-credential", ExpiresInSeconds: 3600})
+			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{WorkerEpoch: 7, Credential: "worker-credential", ExpiresInSeconds: 3600})
 		case "/worker/v1/instance/drain/complete":
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
@@ -410,7 +155,7 @@ func TestFenceWorkerRetriesTheIdenticalRequestAfterAmbiguousResponse(t *testing.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/worker/v1/instance/credential":
-			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "worker-credential", ExpiresInSeconds: 3600})
+			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{WorkerEpoch: 7, Credential: "worker-credential", ExpiresInSeconds: 3600})
 		case "/worker/v1/instance/fence":
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
@@ -448,7 +193,7 @@ func TestWorkerClientRefreshesHostCredentialAndReplaysBufferedRequestAfterUnauth
 		switch r.URL.Path {
 		case "/worker/v1/instance/credential":
 			credentialRequests++
-			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{
+			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{WorkerEpoch: 7,
 				Credential: fmt.Sprintf("worker-credential-%d", credentialRequests), ExpiresInSeconds: 3600,
 			})
 		case "/worker/v1/instance/activate":
@@ -498,152 +243,6 @@ func TestWorkerClientRefreshesHostCredentialAndReplaysBufferedRequestAfterUnauth
 	}
 }
 
-func TestWorkerRunWaitClient(t *testing.T) {
-	claim := workerapi.RunLeaseAssignment{
-		ID: "00000000-0000-0000-0000-000000000001", RunID: "00000000-0000-0000-0000-000000000002",
-		WorkerGroupID: "01900000-0000-7000-8000-000000000901", WorkerHostID: "00000000-0000-0000-0000-000000000401",
-		WorkerEpoch: 1, LeaseSequence: 1, ComputerInstanceID: "00000000-0000-0000-0000-000000000501",
-		AttemptNumber: 1, ComputerID: "00000000-0000-0000-0000-000000000701",
-		BaseComputerDiskVersionID: "00000000-0000-0000-0000-000000000704",
-		ExpiresAt:                 time.Date(2026, 5, 8, 12, 5, 0, 0, time.UTC),
-	}
-	kernelDigest := "sha256:kernel"
-	rootfsDigest := "sha256:rootfs"
-	configDigest := "sha256:runtime-config"
-	manifestDigest := "sha256:manifest"
-	vmStateDigest := "sha256:state"
-	memoryDigest := "sha256:memory"
-	scratchDigest := "sha256:scratch"
-	paths := []string{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		paths = append(paths, r.URL.Path)
-		if r.URL.Path == "/worker/v1/instance/credential" {
-			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "worker-credential", ExpiresInSeconds: int64(time.Hour / time.Second)})
-			return
-		}
-		if got := r.Header.Get("authorization"); got != "Bearer worker-credential" {
-			t.Fatalf("worker auth = %s", got)
-		}
-		switch r.URL.Path {
-		case "/worker/v1/run/waits/create":
-			var request workerapi.CreateRunWaitRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				t.Fatal(err)
-			}
-			if request.Lease.ID != claim.ID || request.CorrelationID != "corr-1" || request.Kind != workerapi.RunWaitKindToken || string(request.Params) != `{"prompt":"ship?"}` {
-				t.Fatalf("create run wait = %+v", request)
-			}
-			_ = json.NewEncoder(w).Encode(workerapi.CreateRunWaitResponse{RunID: claim.RunID, RunWaitID: "run-wait-id-1"})
-		case "/worker/v1/run/waits/poll":
-			var request workerapi.RunWaitPollRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				t.Fatal(err)
-			}
-			if request.Lease.ID != claim.ID || request.RunWaitID != "run-wait-id-1" {
-				t.Fatalf("poll run wait request = %+v", request)
-			}
-			_ = json.NewEncoder(w).Encode(workerapi.RunWaitPollResponse{
-				RunID: claim.RunID, RunWaitID: request.RunWaitID, Status: "resume_requested",
-				ResumeKind: "completed", ResumePayload: json.RawMessage(`{"approved":true}`),
-			})
-		case "/worker/v1/run/waits/resume-ack":
-			var request workerapi.RunWaitResumeAckRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				t.Fatal(err)
-			}
-			if request.Lease.ID != claim.ID || request.RunWaitID != "run-wait-id-1" || request.CheckpointID != "checkpoint-1" {
-				t.Fatalf("resume ack request = %+v", request)
-			}
-			_ = json.NewEncoder(w).Encode(workerapi.RunWaitResumeAckResponse{
-				RunID: claim.RunID, RunWaitID: request.RunWaitID, CheckpointID: request.CheckpointID,
-			})
-		case "/worker/v1/computer/checkpoints/ready":
-			var request workerapi.CheckpointReadyRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				t.Fatal(err)
-			}
-			if request.ComputerInstanceID != "instance-1" || request.WorkerEpoch != 2 || request.DesiredVersion != 42 || request.CheckpointID != "checkpoint-1" {
-				t.Fatalf("checkpoint ready request = %+v", request)
-			}
-			if request.Manifest.RecoveryPoint.Runtime.KernelDigest != kernelDigest || request.Manifest.RecoveryPoint.Runtime.RootfsDigest != rootfsDigest {
-				t.Fatalf("checkpoint manifest = %+v", request.Manifest)
-			}
-			_ = json.NewEncoder(w).Encode(workerapi.ComputerCheckpointResponse{ComputerInstanceID: "instance-1", WorkerEpoch: 2, DesiredVersion: 42, CheckpointID: "checkpoint-1"})
-		default:
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("00000000-0000-0000-0000-000000000401", "worker-secret"), WithService("00000000-0000-0000-0000-000000000901"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	created, err := client.CreateRunWait(context.Background(), workerapi.CreateRunWaitRequest{
-		Lease:         claim.Fence(),
-		CorrelationID: "corr-1",
-		Kind:          workerapi.RunWaitKindToken,
-		Params:        json.RawMessage(`{"prompt":"ship?"}`),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if created.RunWaitID != "run-wait-id-1" {
-		t.Fatalf("created = %+v", created)
-	}
-	polled, err := client.PollRunWait(context.Background(), workerapi.RunWaitPollRequest{Lease: claim.Fence(), RunWaitID: "run-wait-id-1"})
-	if err != nil || polled.ResumeKind != "completed" {
-		t.Fatalf("polled = %+v, err = %v", polled, err)
-	}
-	resumeAck, err := client.AcknowledgeRunWaitResume(context.Background(), workerapi.RunWaitResumeAckRequest{
-		Lease: claim.Fence(), RunWaitID: "run-wait-id-1", CheckpointID: "checkpoint-1",
-	})
-	if err != nil || resumeAck.CheckpointID != "checkpoint-1" {
-		t.Fatalf("resume ack = %+v, err = %v", resumeAck, err)
-	}
-	ready, err := client.MarkCheckpointReady(context.Background(), workerapi.CheckpointReadyRequest{
-		ComputerInstanceID: "instance-1",
-		WorkerEpoch:        2,
-		DesiredVersion:     42,
-		CheckpointID:       "checkpoint-1",
-		Manifest:           testClientCheckpointManifest(kernelDigest, rootfsDigest, configDigest, manifestDigest, vmStateDigest, scratchDigest, memoryDigest),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ready.CheckpointID != "checkpoint-1" {
-		t.Fatalf("ready = %+v", ready)
-	}
-	if got := strings.Join(paths, ","); got != "/worker/v1/instance/credential,/worker/v1/run/waits/create,/worker/v1/run/waits/poll,/worker/v1/run/waits/resume-ack,/worker/v1/computer/checkpoints/ready" {
-		t.Fatalf("paths = %s", got)
-	}
-}
-
-func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, configDigest string, manifestDigest string, vmStateDigest string, scratchDigest string, memoryDigest string) workerapi.CheckpointManifest {
-	return workerapi.CheckpointManifest{
-		RecoveryPoint: workerapi.CheckpointRecoveryPoint{Runtime: workerapi.CheckpointRuntime{
-			Backend:         "firecracker",
-			ID:              "sha256:runtime",
-			Arch:            "arm64",
-			Contract:        vmplatform.Contract,
-			KernelDigest:    kernelDigest,
-			InitramfsDigest: "sha256:initramfs",
-			RootfsDigest:    rootfsDigest,
-			ConfigDigest:    configDigest,
-		}},
-		RuntimeState: workerapi.CheckpointRuntimeState{
-			ConfigArtifact:      workerapi.CheckpointArtifact{Digest: manifestDigest, MediaType: cas.CheckpointVMConfigMediaType},
-			VMStateArtifact:     workerapi.CheckpointArtifact{Digest: vmStateDigest, MediaType: cas.CheckpointVMStateMediaType},
-			ScratchDiskArtifact: workerapi.CheckpointArtifact{Digest: scratchDigest, MediaType: cas.CheckpointScratchDiskMediaType},
-			MemoryArtifacts:     []workerapi.CheckpointArtifact{{Digest: memoryDigest, MediaType: cas.CheckpointMemoryMediaType}},
-			Config:              json.RawMessage(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`),
-		},
-		ComputerState: workerapi.CheckpointComputerState{
-			Base: workerapi.CheckpointComputerBase{MountPath: "/workspace"},
-		},
-	}
-}
-
 func workerClientCapabilities() workerapi.Capabilities {
 	return workerapi.Capabilities{
 		Runtime: vmplatform.Profile{
@@ -690,7 +289,7 @@ func TestWorkerConnectionAPIVersion(t *testing.T) {
 		case "/worker/v1/enrollment":
 			_ = json.NewEncoder(w).Encode(workerapi.EnrollmentResponse{})
 		case "/worker/v1/instance/credential":
-			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "worker-credential", ExpiresInSeconds: 3600})
+			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{WorkerEpoch: 7, Credential: "worker-credential", ExpiresInSeconds: 3600})
 		case "/worker/v1/instance/recover":
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -731,7 +330,7 @@ func TestWorkerAPIVersionMismatchPreservesHTTPError(t *testing.T) {
 			calls := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if phase == "activation" && r.URL.Path == "/worker/v1/instance/credential" {
-					_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "credential", ExpiresInSeconds: 3600})
+					_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{WorkerEpoch: 7, Credential: "credential", ExpiresInSeconds: 3600})
 					return
 				}
 				calls++
@@ -784,7 +383,7 @@ func TestRepeatedStaleClaimsRemainRecoverable(t *testing.T) {
 	var requests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/worker/v1/instance/credential" {
-			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "credential", ExpiresInSeconds: 3600})
+			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{WorkerEpoch: 7, Credential: "credential", ExpiresInSeconds: 3600})
 			return
 		}
 		requests++
@@ -806,5 +405,62 @@ func TestRepeatedStaleClaimsRemainRecoverable(t *testing.T) {
 	}
 	if _, err := client.GetWorkerStatus(t.Context()); err != nil {
 		t.Fatalf("next observation did not recover: %v", err)
+	}
+}
+
+func TestHostIdentityRetainsAuthenticatedIncarnation(t *testing.T) {
+	var epoch int64 = 19
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/worker/v1/instance/credential" {
+			t.Errorf("unexpected request %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "credential", ExpiresInSeconds: 3600, WorkerEpoch: epoch})
+	}))
+	defer server.Close()
+	client, err := New(server.URL, WithAuth("host", "secret"), WithService("service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := client.HostIdentity(); err == nil {
+		t.Fatal("unauthenticated identity was exposed")
+	}
+	for range 2 {
+		if err := client.AuthenticateWorker(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		host, gotEpoch, err := client.HostIdentity()
+		if err != nil || host != "host" || gotEpoch != 19 {
+			t.Fatalf("identity = %s/%d, %v", host, gotEpoch, err)
+		}
+		client.invalidateHostCredential("credential")
+	}
+	// The same process must not adopt a different incarnation after renewal.
+	epoch = 20
+	var rejected HostAuthorityRejectedError
+	if err := client.AuthenticateWorker(t.Context()); !errors.As(err, &rejected) {
+		t.Fatalf("changed incarnation error = %v", err)
+	}
+	_, gotEpoch, err := client.HostIdentity()
+	if err != nil || gotEpoch != 19 {
+		t.Fatalf("original incarnation lost: %d, %v", gotEpoch, err)
+	}
+}
+
+func TestHostCredentialRejectsMissingEpoch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "credential", ExpiresInSeconds: 3600})
+	}))
+	defer server.Close()
+	client, err := New(server.URL, WithAuth("host", "secret"), WithService("service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.AuthenticateWorker(t.Context()); err == nil {
+		t.Fatal("credential without an incarnation was accepted")
+	}
+	if _, _, err := client.HostIdentity(); err == nil {
+		t.Fatal("failed authentication established an incarnation")
 	}
 }

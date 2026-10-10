@@ -104,7 +104,7 @@ func Dockerfile() ([]byte, error) {
 	lines = append(lines, managedContextLines...)
 	lines = append(lines,
 		"COPY --from=helmr_prepared --chown=65532:65532 / /workspace/prepared/",
-		"COPY --from=helmr_images --chown=0:0 / /workspace/images/",
+		"COPY --from=helmr_images --chown=65532:65532 / /workspace/images/",
 		"USER 65532:65532", "RUN --network=none "+finalizer,
 		"FROM scratch AS bundle", "COPY --from=finalized /workspace/output/bundle/ /", "",
 	)
@@ -155,7 +155,7 @@ func PreparationDockerfile() ([]byte, error) {
 		"COPY --from=" + BuilderContextName + " /nix/helmr/ /nix/helmr/",
 		"COPY --from=" + BuilderContextName + " --chown=65532:65532 --chmod=0755 /opt/helmr/empty/ /workspace/output/",
 		"COPY --from=" + BuilderContextName + " --chown=65532:65532 --chmod=0755 /opt/helmr/empty/ /workspace/tmp/",
-		"COPY --from=" + ConfigContextName + " --chown=0:0 /config.json " + resolvedConfigPath,
+		"COPY --from=" + ConfigContextName + " --chown=0:0 --chmod=0444 /config.json " + resolvedConfigPath,
 		"ENV TMPDIR=/workspace/tmp HOME=/workspace/tmp",
 		"WORKDIR /workspace/project", "USER 65532:65532", "RUN --network=none --mount=type=bind,from=helmr_installed,source=/workspace/project,target=/workspace/project " + bundle,
 		"FROM " + EnvironmentContextName + " AS runtime-installed",
@@ -179,7 +179,7 @@ func PreparationDockerfile() ([]byte, error) {
 	lines = append(lines,
 		"COPY --from=assembled --chown=0:0 /workspace/output/payload/ /workspace/project/",
 		"COPY --from=bundled --chown=0:0 /workspace/output/bundle/bundle.json /workspace/bundle.json",
-		"COPY --from="+ConfigContextName+" --chown=0:0 /config.json "+resolvedConfigPath,
+		"COPY --from="+ConfigContextName+" --chown=0:0 --chmod=0444 /config.json "+resolvedConfigPath,
 		`RUN ["/bin/bash","-euo","pipefail","-c","chmod -R a-w /workspace/project"]`,
 		"USER 65532:65532", "RUN --network=none "+canonicalToolMounts+analyze,
 		"FROM scratch AS preparation",
@@ -189,7 +189,7 @@ func PreparationDockerfile() ([]byte, error) {
 	return []byte(strings.Join(lines, "\n")), nil
 }
 
-const resolvedConfigPath = "/workspace/config/config.json"
+const resolvedConfigPath = "/workspace/config.json"
 
 func installRunInstruction(plan InstallPlan) (string, error) {
 	secretIDs, err := NormalizeSecretIDs(plan.SecretIDs)

@@ -13,19 +13,19 @@ const base: Me = {
 };
 
 test("grants only permissions the session reports", () => {
-  const developer: Me = { ...base, permissions: ["runs.read", "runs.manage", "tasks.deploy"] };
-  expect(hasPermission(developer, "runs.manage")).toBe(true);
-  expect(hasPermission(developer, "tasks.deploy")).toBe(true);
-  expect(hasPermission(developer, "tokens.complete")).toBe(false);
+  const developer: Me = { ...base, permissions: ["sessions.read", "sessions.cancel", "deployments.write"] };
+  expect(hasPermission(developer, "sessions.cancel")).toBe(true);
+  expect(hasPermission(developer, "deployments.write")).toBe(true);
+  expect(hasPermission(developer, "asks.respond")).toBe(false);
 });
 
 test("denies everything for a viewer-like session and while unauthenticated", () => {
-  const viewer: Me = { ...base, permissions: ["runs.read", "sessions.read", "tokens.read", "computers.read"] };
-  for (const permission of ["runs.manage", "tokens.complete", "tokens.cancel", "tasks.deploy"]) {
+  const viewer: Me = { ...base, permissions: ["sessions.read", "computers.read"] };
+  for (const permission of ["sessions.cancel", "asks.respond", "sessions.interrupt", "deployments.write"]) {
     expect(hasPermission(viewer, permission)).toBe(false);
   }
-  expect(hasPermission(undefined, "runs.read")).toBe(false);
-  expect(hasPermission(base, "runs.read")).toBe(false);
+  expect(hasPermission(undefined, "sessions.read")).toBe(false);
+  expect(hasPermission(base, "sessions.read")).toBe(false);
 });
 
 test("account lookup leaves 401 routing to the authentication guard", async () => {

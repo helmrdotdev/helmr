@@ -29,37 +29,38 @@ import (
 const stopTimeout = 10 * time.Second
 
 type guestMachine struct {
-	mu              sync.Mutex
-	computerBarrier chan struct{}
-	computerCancel  context.CancelFunc
-	computerHeld    bool               // protected by computerBarrier
-	checkpointHold  *checkpointCapture // protected by computerBarrier
-	stream          vm.Stream
-	opened          bool
-	closed          bool
-	machine         *firecracker.Machine
-	machineCancel   context.CancelFunc
-	machineExit     *machineExit
-	computerExport  *computerExportWatch
-	cfg             Config
-	kernelArgs      string
-	vmPlatform      vmplatform.Profile
-	cpuConfigDigest string
-	vsockHostPath   string
-	instanceDir     string
-	jailRoot        string
-	scratchDisk     string
-	diskFiles       map[string]*os.File
-	topology        vm.Topology
-	readOnlyDrives  []vm.ReadOnlyDrive
-	owner           vm.Owner
-	cleaner         vm.Cleaner
-	networkBinding  *installedNetworkBinding
-	once            sync.Once
-	machineStopOnce sync.Once
-	machineStopErr  error
-	networkErr      error
-	err             error
+	mu                       sync.Mutex
+	computerBarrier          chan struct{}
+	computerCancel           context.CancelFunc
+	computerCaptureBlocked   bool               // protected by computerBarrier
+	checkpointHold           *checkpointCapture // protected by computerBarrier
+	agentContinuationPending bool               // protected by computerBarrier
+	stream                   vm.Stream
+	opened                   bool
+	closed                   bool
+	machine                  *firecracker.Machine
+	machineCancel            context.CancelFunc
+	machineExit              *machineExit
+	computerExport           *computerExportWatch
+	cfg                      Config
+	kernelArgs               string
+	vmPlatform               vmplatform.Profile
+	cpuConfigDigest          string
+	vsockHostPath            string
+	instanceDir              string
+	jailRoot                 string
+	scratchDisk              string
+	diskFiles                map[string]*os.File
+	topology                 vm.Topology
+	readOnlyDrives           []vm.ReadOnlyDrive
+	owner                    vm.Owner
+	cleaner                  vm.Cleaner
+	networkBinding           *installedNetworkBinding
+	once                     sync.Once
+	machineStopOnce          sync.Once
+	machineStopErr           error
+	networkErr               error
+	err                      error
 }
 
 func (s *guestMachine) Stream() vm.Stream {
@@ -164,7 +165,7 @@ func (s *guestMachine) Close(ctx context.Context) error {
 		return err
 	}
 	defer unlock()
-	s.computerHeld = true
+	s.computerCaptureBlocked = true
 	if s.checkpointHold != nil {
 		if err := s.checkpointHold.discardUntransferredSnapshot(); err != nil {
 			return err

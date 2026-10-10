@@ -14,4 +14,4 @@ fi
 for project in tests/e2e tests/e2e/fixtures/schedule; do
   (cd "$project" && bun install --frozen-lockfile --ignore-scripts && bun run typecheck)
 done
-bun test tests/e2e
+bun test ./tests/e2e

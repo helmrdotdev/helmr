@@ -31,7 +31,7 @@ func TestProgramTreeEntriesEncodeOneFrozenTree(t *testing.T) {
 	}
 	generated := map[string][]byte{
 		"helmr/program-manifest.json": []byte(`{"modules":[]}`),
-		"helmr/declarations.json":     []byte(`{"declarations":[]}`),
+		"helmr/program-metadata.json": []byte(`{"declarations":[]}`),
 		"helmr/entry.mjs":             []byte("entry\n"),
 	}
 
@@ -50,7 +50,7 @@ func TestProgramTreeEntriesEncodeOneFrozenTree(t *testing.T) {
 		"app.js":                             "export const app = true\n",
 		"helmr":                              "",
 		"helmr/program-manifest.json":        `{"modules":[]}`,
-		"helmr/declarations.json":            `{"declarations":[]}`,
+		"helmr/program-metadata.json":        `{"declarations":[]}`,
 		"helmr/entry.mjs":                    "entry\n",
 		"node_modules":                       "",
 		"node_modules/.bin":                  "",

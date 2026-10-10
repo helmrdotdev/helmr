@@ -8,7 +8,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -25,8 +24,8 @@ func computerScope(orgID uuid.UUID, projectID, environmentID pgtype.UUID) comput
 }
 
 func (s *Server) createComputerHTTP(w http.ResponseWriter, r *http.Request) {
-	declaredID := chi.URLParam(r, "sandboxID")
-	if err := definition.ValidateSandboxDeclaredID(declaredID); err != nil {
+	declaredID := chi.URLParam(r, "computerDefinitionID")
+	if err := api.ValidateDefinitionID(declaredID); err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_computer_create", message: err.Error()}))
 		return
 	}
@@ -56,7 +55,7 @@ func (s *Server) createComputerHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.computers.Create(r.Context(), s.tx, computer.Request{
 		Scope:          computerScope(principal.OrgID, projectID, environmentID),
-		DeclaredID:     declaredID,
+		DefinitionKey:  declaredID,
 		Key:            request.Key,
 		Secrets:        request.Secrets,
 		IdempotencyKey: idempotencyKey,
@@ -86,7 +85,7 @@ func (s *Server) getComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		}))
 		return
 	}
-	snapshot, err := computer.Read(r.Context(), s.db, computerScope(principal.OrgID, projectID, environmentID), computerID)
+	snapshot, err := computer.Read(r.Context(), s.tx, computerScope(principal.OrgID, projectID, environmentID), computerID)
 	if err != nil {
 		s.writeComputerError(w, err, computerReadOperation, "read Computer failed")
 		return
@@ -146,7 +145,7 @@ func apiComputerSnapshot(snapshot computer.Snapshot) api.ComputerSnapshot {
 		Error:          snapshot.Error,
 		ID:             snapshot.ID,
 		Key:            snapshot.Key,
-		SandboxID:      snapshot.SandboxID,
+		DefinitionKey:  snapshot.DefinitionKey,
 		DeploymentID:   snapshot.DeploymentID,
 		Status:         api.ComputerStatus(snapshot.Status),
 		Secrets:        snapshot.Secrets,
@@ -162,7 +161,7 @@ func apiComputerListItem(item computer.ListItem) api.ComputerListItem {
 		Error:          item.Error,
 		ID:             item.ID,
 		Key:            item.Key,
-		SandboxID:      item.SandboxID,
+		DefinitionKey:  item.DefinitionKey,
 		DeploymentID:   item.DeploymentID,
 		Status:         api.ComputerStatus(item.Status),
 		LastActivityAt: item.LastActivityAt,
@@ -175,7 +174,7 @@ func apiComputerMembers(page computer.MembersPage) api.ListComputerMembersRespon
 	response := api.ListComputerMembersResponse{Members: make([]api.ComputerMember, 0, len(page.Members)), NextCursor: page.NextCursor}
 	for _, member := range page.Members {
 		response.Members = append(response.Members, api.ComputerMember{
-			Kind: member.Kind, ID: member.ID, RunID: member.RunID, State: member.State, CreatedAt: member.CreatedAt,
+			Kind: member.Kind, ID: member.ID, State: member.State, CreatedAt: member.CreatedAt,
 		})
 	}
 	return response

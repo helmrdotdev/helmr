@@ -293,7 +293,7 @@ func TestPoolRetirementPostgresFencesWaitingEnrollment(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := EnrollHost(ctx, f.q, cfg, Enrollment{TokenHash: token, PoolName: pool.Name, ResourceID: "late"})
+		_, err := EnrollHost(ctx, f.pool, cfg, Enrollment{TokenHash: token, PoolName: pool.Name, ResourceID: "late"})
 		done <- err
 	}()
 	for {

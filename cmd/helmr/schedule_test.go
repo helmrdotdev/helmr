@@ -22,13 +22,13 @@ func TestScheduleListAndGet(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(api.ListSchedulesResponse{
 				Schedules: []api.ScheduleResponse{{
-					ID: scheduleID, TaskID: "nightly", Status: "active",
+					ID: scheduleID, AgentID: "nightly", TriggerKey: "daily",
 				}},
 				NextCursor: "cursor-next",
 			})
 		case "/v1/schedules/" + scheduleID:
 			_ = json.NewEncoder(w).Encode(api.ScheduleResponse{
-				ID: scheduleID, TaskID: "nightly", Status: "active",
+				ID: scheduleID, AgentID: "nightly", TriggerKey: "daily",
 			})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.RequestURI())
@@ -46,7 +46,7 @@ func TestScheduleListAndGet(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if out.String() != scheduleID+"\tnightly\tactive\nnext_cursor: cursor-next\n" {
+	if out.String() != scheduleID+"\tnightly\tdaily\nnext_cursor: cursor-next\n" {
 		t.Fatalf("list output = %q", out.String())
 	}
 
@@ -60,8 +60,8 @@ func TestScheduleListAndGet(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"schedule_id: " + scheduleID,
-		"task: nightly",
-		"status: active",
+		"agent: nightly",
+		"trigger: daily",
 	} {
 		if !strings.Contains(out.String(), expected) {
 			t.Fatalf("get output = %q, missing %q", out.String(), expected)

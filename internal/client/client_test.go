@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,8 +15,6 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/httpclient"
-	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
 func TestUploadDeploymentBundleObjectRejectsNonSuccess(t *testing.T) {
@@ -227,10 +224,10 @@ func TestClientErrorUsesServerMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.StartTask(
+	_, err = client.StartAgent(
 		context.Background(),
 		"deploy",
-		api.StartTaskRequest{},
+		api.StartAgentRequest{},
 		EnvironmentScopeOptions{},
 	)
 	if err == nil {
@@ -340,7 +337,7 @@ func TestNewAllowsPlainHTTPLoopback(t *testing.T) {
 
 func TestClientRejectsPlainHTTPNonLoopbackRedirect(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "http://helmr.example/v1/tasks/deploy/start", http.StatusTemporaryRedirect)
+		http.Redirect(w, r, "http://helmr.example/v1/agents/deploy/start", http.StatusTemporaryRedirect)
 	}))
 	defer server.Close()
 
@@ -348,151 +345,9 @@ func TestClientRejectsPlainHTTPNonLoopbackRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.StartTask(context.Background(), "deploy", api.StartTaskRequest{}, EnvironmentScopeOptions{})
+	_, err = client.StartAgent(context.Background(), "deploy", api.StartAgentRequest{}, EnvironmentScopeOptions{})
 	if err == nil || !strings.Contains(err.Error(), "plaintext non-loopback") {
 		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestStartTask(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/tasks/deploy/start" {
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var raw map[string]json.RawMessage
-		if err := json.Unmarshal(body, &raw); err != nil {
-			t.Fatal(err)
-		}
-		var request api.StartTaskRequest
-		if err := json.Unmarshal(body, &request); err != nil {
-			t.Fatal(err)
-		}
-		if request.Computer.ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32" {
-			t.Fatalf("request = %+v", request)
-		}
-		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
-	}))
-	defer server.Close()
-
-	client, err := New(server.URL, WithHTTPClient(server.Client()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	computerID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
-	started, err := client.StartTask(context.Background(), "deploy", api.StartTaskRequest{
-		Payload:  json.RawMessage(`{"env":"prod"}`),
-		Computer: api.ComputerIDTarget{ID: computerID},
-	}, EnvironmentScopeOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if started.RunID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" {
-		t.Fatalf("started = %+v", started)
-	}
-}
-
-func TestStartTaskReturnsHTTPError(t *testing.T) {
-	calls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/tasks/deploy/start" {
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-		w.WriteHeader(http.StatusConflict)
-		_ = json.NewEncoder(w).Encode(api.HTTPErrorResponse{Error: api.HTTPError{
-			Code:    "conflict",
-			Message: "already started differently",
-		}})
-	}))
-	defer server.Close()
-
-	client, err := New(server.URL, WithHTTPClient(server.Client()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = client.StartTask(context.Background(), "deploy", api.StartTaskRequest{}, EnvironmentScopeOptions{})
-	var httpErr *httpclient.Error
-	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusConflict || !strings.Contains(httpErr.Message, "already started differently") {
-		t.Fatalf("err = %#v, want 409 httpclient.Error", err)
-	}
-	if calls != 1 {
-		t.Fatalf("calls = %d, want 1", calls)
-	}
-}
-
-func TestStartTaskUsesEnvironmentScopedRoute(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/projects/project-1/environments/env-1/tasks/deploy/start" {
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-		var request api.StartTaskRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatal(err)
-		}
-		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
-	}))
-	defer server.Close()
-
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithSessionScopedRoutes())
-	if err != nil {
-		t.Fatal(err)
-	}
-	started, err := client.StartTask(context.Background(), "deploy", api.StartTaskRequest{
-		Payload: json.RawMessage(`{"env":"prod"}`),
-	}, EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if started.RunID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" {
-		t.Fatalf("started = %+v", started)
-	}
-}
-
-func TestRunOperations(t *testing.T) {
-	for _, scoped := range []bool{false, true} {
-		for _, actor := range []bool{false, true} {
-			name := "task"
-			if actor {
-				name = "actor"
-			}
-			t.Run(name+scopeName(scoped), func(t *testing.T) {
-				scope, prefix := sessionRouteScope(scoped)
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if r.Method != http.MethodPost || r.URL.Path != prefix+"/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/cancel" {
-						t.Errorf("request = %s %s", r.Method, r.URL.Path)
-					}
-					var request api.CancelRunRequest
-					if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-						t.Error(err)
-					}
-					if ids.Validate(request.IdempotencyKey) != nil {
-						t.Errorf("idempotency key = %q", request.IdempotencyKey)
-					}
-					if actor {
-						_ = json.NewEncoder(w).Encode(api.ActorRunCancellationReceipt{ID: "cancel-1", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", SessionID: testSessionID, HoldID: testHoldID, Status: "accepted"})
-					} else {
-						_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", Status: "cancelled"})
-					}
-				}))
-				defer server.Close()
-				c := sessionTestClient(t, server, scoped)
-				result, err := c.CancelRun(context.Background(), "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", api.CancelRunRequest{}, RunScopeOptions(scope))
-				if err != nil {
-					t.Fatal(err)
-				}
-				if actor {
-					if result.Task != nil || result.Actor == nil || result.Actor.ID != "cancel-1" || result.Actor.RunID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" || result.Actor.SessionID != testSessionID || result.Actor.HoldID != testHoldID || result.Actor.Status != "accepted" {
-						t.Fatalf("result = %+v", result)
-					}
-				} else if result.Actor != nil || result.Task == nil || result.Task.ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" || result.Task.Status != "cancelled" {
-					t.Fatalf("result = %+v", result)
-				}
-			})
-		}
 	}
 }
 
@@ -554,78 +409,6 @@ func TestDeviceCodeFlowClient(t *testing.T) {
 	}
 }
 
-func TestListRunsOptionsAndListRunLogs(t *testing.T) {
-	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
-	observedSequence := int64(1)
-	byteCount := int64(len("hello\n"))
-	paths := []string{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		paths = append(paths, r.URL.RequestURI())
-		switch r.URL.Path {
-		case "/v1/runs":
-			if got := r.URL.Query()["status"]; !slices.Equal(got, []string{"running", "waiting"}) ||
-				!slices.Equal(r.URL.Query()["kind"], []string{"actor"}) ||
-				r.URL.Query().Get("session_id") != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" ||
-				r.URL.Query().Get("cursor") != "cursor-1" ||
-				r.URL.Query().Get("limit") != "25" {
-				t.Fatalf("query = %s", r.URL.RawQuery)
-			}
-			_ = json.NewEncoder(w).Encode(api.ListRunsResponse{
-				Runs: []api.RunListItem{{
-					ID:         "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
-					Status:     "succeeded",
-					Entrypoint: api.RunEntrypointResponse{Kind: "task", ID: "deploy"},
-					CreatedAt:  now,
-				}},
-				NextCursor: "cursor-2",
-			})
-		case "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs":
-			_ = json.NewEncoder(w).Encode(api.RunLogPage{
-				Logs: []api.RunLogRecord{{
-					ID: "log-cursor", Kind: "stdout", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
-					AttemptNumber: 1, ObservedSequence: &observedSequence, Bytes: &byteCount, At: now,
-					ContentBase64: base64.StdEncoding.EncodeToString([]byte("hello\n")),
-				}},
-				NextCursor: "cursor-next",
-			})
-		default:
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-
-	client, err := New(server.URL, WithHTTPClient(server.Client()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	runs, err := client.ListRuns(context.Background(), ListRunsOptions{
-		Statuses:  []string{"running", "waiting"},
-		Kinds:     []string{"actor"},
-		SessionID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-		Cursor:    "cursor-1",
-		Limit:     25,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(runs.Runs) != 1 || runs.Runs[0].ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" ||
-		runs.Runs[0].Entrypoint.ID != "deploy" || runs.NextCursor != "cursor-2" {
-		t.Fatalf("runs = %+v", runs)
-	}
-	logs, err := client.ListRunLogs(context.Background(), "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(logs.Logs) != 1 ||
-		logs.Logs[0].ContentBase64 != base64.StdEncoding.EncodeToString([]byte("hello\n")) ||
-		logs.NextCursor != "cursor-next" {
-		t.Fatalf("logs = %+v", logs)
-	}
-	if got := strings.Join(paths, ","); got != "/v1/runs?cursor=cursor-1&kind=actor&limit=25&session_id=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33&status=running&status=waiting,/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" {
-		t.Fatalf("paths = %s", got)
-	}
-}
-
 func TestListProjectsOptions(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.RequestURI() != "/api/projects?cursor=cursor-1&limit=50" {
@@ -683,56 +466,13 @@ func TestSessionScopedClientRequiresEnvironmentScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.ListRuns(context.Background()); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
-		t.Fatalf("ListRuns err = %v", err)
+	if _, err := client.ListSessions(context.Background(), SessionListOptions{}); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
+		t.Fatalf("ListSessions err = %v", err)
 	}
-	if _, err := client.GetRun(context.Background(), "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
-		t.Fatalf("GetRun err = %v", err)
+	if _, err := client.RetrieveSession(context.Background(), testSessionID, EnvironmentScopeOptions{}); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
+		t.Fatalf("RetrieveSession err = %v", err)
 	}
 	if _, err := client.ListSecrets(context.Background()); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
 		t.Fatalf("ListSecrets err = %v", err)
-	}
-}
-
-func TestListRunLogsSendsCursorAndFilters(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" ||
-			r.URL.Query().Get("cursor") != "cursor-previous" ||
-			r.URL.Query().Get("limit") != "25" ||
-			strings.Join(r.URL.Query()["level"], ",") != "warn,error" {
-			t.Fatalf("%s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
-		}
-		observed := int64(2)
-		bytes := int64(6)
-		_ = json.NewEncoder(w).Encode(api.RunLogPage{Logs: []api.RunLogRecord{{
-			ID:               "log-cursor",
-			RunID:            "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
-			AttemptNumber:    1,
-			Kind:             "stdout",
-			ContentBase64:    base64.StdEncoding.EncodeToString([]byte("hello\n")),
-			Bytes:            &bytes,
-			ObservedSequence: &observed,
-			At:               time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC),
-		}}, NextCursor: "cursor-next"})
-	}))
-	defer server.Close()
-
-	client, err := New(server.URL, WithHTTPClient(server.Client()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	page, err := client.ListRunLogs(
-		context.Background(),
-		"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
-		ListRunLogsOptions{
-			Cursor: "cursor-previous", Limit: 25, Levels: []string{"warn", "error"},
-		},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(page.Logs) != 1 || page.Logs[0].ID != "log-cursor" ||
-		page.NextCursor != "cursor-next" {
-		t.Fatalf("page = %+v", page)
 	}
 }

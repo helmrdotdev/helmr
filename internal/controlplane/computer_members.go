@@ -59,7 +59,7 @@ func (s *Server) listComputerMembersHTTP(w http.ResponseWriter, r *http.Request)
 		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
 		return
 	}
-	page, err := computer.ListMembers(r.Context(), s.db, computerScope(principal.OrgID, projectID, environmentID), computerID, query)
+	page, err := computer.ListMembers(r.Context(), s.tx, computerScope(principal.OrgID, projectID, environmentID), computerID, query)
 	if err != nil {
 		s.writeComputerError(w, err, computerReadOperation, "list Computer members failed")
 		return

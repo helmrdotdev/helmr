@@ -1,5 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import {
+  cp,
+  realpath,
   mkdir,
   mkdtemp,
   rm,
@@ -43,18 +45,17 @@ describe("declaration discovery", () => {
       "tasks/barrel.js",
       "tasks/shared.js",
     ])
-    expect(result.buildPlan.definitions.map((item) => item.declaredId)).toEqual([
+    expect(result.buildPlan.definitions.filter((item) => item.kind === "agent").map((item) => item.declaredId)).toEqual([
       "hidden",
       "shared",
       "test",
       "underscore",
     ])
-    expect(result.declarationLocator.declarations.find(
-      (item) => item.declaredId === "shared",
+    expect(result.definitionIndex.agents.find(
+      (item) => item.id === "shared",
     )).toMatchObject({
       modulePath: "helmr/app/entry-3.mjs",
       exportName: "shared",
-      slot: "handler",
     })
   })
 
@@ -71,7 +72,7 @@ describe("declaration discovery", () => {
       config,
     })
     expect(result.modules).toEqual(["tasks/nested/task.js"])
-    expect(result.buildPlan.definitions).toHaveLength(1)
+    expect(result.buildPlan.definitions).toHaveLength(2)
   })
 
   test("fails reserved output, dependency dirs, and invalid config", async () => {
@@ -103,10 +104,10 @@ describe("declaration discovery", () => {
       config: normalizedConfig({ dirs: ["./tasks"] }),
     })
     expect(result.modules).toEqual(["tasks/task.ts"])
-    expect(result.programDeclarations).toEqual([{
+    expect(result.buildPlan.definitions.filter((item) => item.kind === "agent")).toEqual([{
       declaredId: "plain",
-      kind: "task",
-      slots: ["handler"],
+      kind: "agent",
+      manifest: { computerDefinitionId: "plain-computer", setup: false, triggers: {} },
     }])
   })
 })
@@ -118,32 +119,9 @@ async function project(): Promise<string> {
     resolve(root, "package.json"),
     JSON.stringify({ name: "analysis-fixture", private: true, type: "module" }),
   )
-  await mkdir(resolve(root, "node_modules/@helmr"), { recursive: true })
-  await mkdir(resolve(root, "node_modules/@helmr/sdk"))
-  await writeFile(
-    resolve(root, "node_modules/@helmr/sdk/package.json"),
-    JSON.stringify({
-      name: "@helmr/sdk",
-      type: "module",
-      exports: "./index.mjs",
-    }),
-  )
-  await writeFile(
-    resolve(root, "node_modules/@helmr/sdk/index.mjs"),
-    [
-      'const brand = Symbol.for("helmr.sdk.v0.definition")',
-      "export function task(config) {",
-      "  return Object.freeze({",
-      "    [brand]: Object.freeze({",
-      '      kind: "task",',
-      "      id: config.id,",
-      "      hasPayload: false,",
-      "      handler: config.run,",
-      "    }),",
-      "  })",
-      "}",
-    ].join("\n"),
-  )
+  const repository = new URL("../../../", import.meta.url).pathname
+  for (const name of ["sdk", "proto"]) await cp(resolve(repository, `dist/npm/${name}/package`), resolve(root, `node_modules/@helmr/${name}`), { recursive: true })
+  await cp(await realpath(resolve(repository, "sdk/typescript/node_modules/@bufbuild/protobuf")), resolve(root, "node_modules/@bufbuild/protobuf"), { recursive: true, dereference: true })
   testCleanup.push(root)
   return root
 }
@@ -179,10 +157,11 @@ async function writeModule(
 
 function task(id: string): string {
   return [
-    'import { task } from "@helmr/sdk"',
-    `export const ${id.replace("-", "_")} = task({`,
+    'import { agent, computer, image } from "@helmr/sdk"',
+    `export const ${id.replace("-", "_")} = agent({`,
     `  id: ${JSON.stringify(id)},`,
-    "  run: () => null,",
+    `  computer: computer({ id: ${JSON.stringify(id+"-computer")}, image: image("root").from("ubuntu:24.04"), resources: { cpu: 1, memory: "1GiB" } }),`,
+    "  turn: () => null,",
     "})",
   ].join("\n")
 }

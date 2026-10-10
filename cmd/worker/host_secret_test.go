@@ -84,13 +84,17 @@ func TestWorkerHostSecretSurvivesAPIVersionMismatch(t *testing.T) {
 	}))
 	defer server.Close()
 	workDir := t.TempDir()
-	stored := workerHostSecretFile{WorkerHostID: "host", WorkerHostSecret: "hlmr_wi_secret", CreatedAt: time.Now().UTC()}
+	workDir, jailerDir, err := resolveWorkerRecoveryRoots(workDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := workerHostSecretFile{WorkDir: workDir, JailerDir: jailerDir, WorkerHostID: "host", WorkerHostSecret: "hlmr_wi_secret", CreatedAt: time.Now().UTC()}
 	path := workerHostSecretPath(workDir, "")
 	if err := writeWorkerHostSecret(path, stored); err != nil {
 		t.Fatal(err)
 	}
 	cfg := config.Worker{ControlPlaneURL: server.URL}
-	_, err := resolveAuthenticatedWorkerHostSecret(t.Context(), cfg, workDir, func(hostSecret workerHostSecretFile) error {
+	_, err = resolveAuthenticatedWorkerHostSecret(t.Context(), cfg, workDir, func(hostSecret workerHostSecretFile) error {
 		client, err := workerclient.New(server.URL, workerclient.WithHTTPClient(server.Client()),
 			workerclient.WithAuth(hostSecret.WorkerHostID, hostSecret.WorkerHostSecret), workerclient.WithService("service"))
 		if err != nil {
@@ -107,5 +111,63 @@ func TestWorkerHostSecretSurvivesAPIVersionMismatch(t *testing.T) {
 	}
 	if len(requests) != 1 || requests["/worker/v1/instance/credential"] != 1 {
 		t.Fatalf("requests = %v, want one host credential request", requests)
+	}
+}
+
+func TestWorkerHostSecretBindsRecoveryRootsBeforeAuthentication(t *testing.T) {
+	for _, change := range []string{"work", "jailer", "missing", "alias", "retarget"} {
+		t.Run(change, func(t *testing.T) {
+			base := t.TempDir()
+			work, jailer, err := resolveWorkerRecoveryRoots(filepath.Join(base, "work"), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if jailer != filepath.Join(work, "vms", "jailer") {
+				t.Fatal("incorrect default jailer root")
+			}
+			secret := workerHostSecretFile{WorkerHostID: "host", WorkerHostSecret: "secret", WorkDir: work, JailerDir: jailer}
+			cfg := config.Worker{WorkerHostSecretPath: filepath.Join(base, "credential"), JailerChrootDir: jailer}
+			switch change {
+			case "work":
+				work = filepath.Join(base, "other-work")
+			case "jailer":
+				cfg.JailerChrootDir = filepath.Join(base, "other-jailer")
+			case "missing":
+				secret.WorkDir, secret.JailerDir = "", ""
+			case "alias", "retarget":
+				alias := filepath.Join(base, "alias")
+				if err := os.Symlink(work, alias); err != nil {
+					t.Fatal(err)
+				}
+				work = alias
+				if change == "retarget" {
+					if err := os.Remove(alias); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Symlink(filepath.Join(base, "other-work"), alias); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.MkdirAll(filepath.Join(base, "other-work"), 0700); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if err := writeWorkerHostSecret(cfg.WorkerHostSecretPath, secret); err != nil {
+				t.Fatal(err)
+			}
+			called := false
+			_, err = resolveAuthenticatedWorkerHostSecret(t.Context(), cfg, work, func(workerHostSecretFile) error { called = true; return nil })
+			if change == "alias" {
+				if err != nil || !called {
+					t.Fatalf("equivalent alias rejected: %v", err)
+				}
+			} else if err == nil || called {
+				t.Fatalf("root change authenticated: called=%v err=%v", called, err)
+			}
+			kept, err := readWorkerHostSecret(cfg.WorkerHostSecretPath)
+			if err != nil || kept != secret {
+				t.Fatal("binding rejection modified stored credential")
+			}
+		})
 	}
 }

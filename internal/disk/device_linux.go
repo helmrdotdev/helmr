@@ -116,8 +116,9 @@ func (d *Device) LinkInto(ctx context.Context, directory string, uid, gid int) (
 	return target, nil
 }
 
-// Capture requires the VMM dispatch hold. It drains the kernel device, then
-// atomically flushes and retains the exact cut through subsequent collection.
+// Capture follows the guest's acknowledged filesystem flush. It drains the
+// kernel device, then cuts between complete NBD requests without a VMM hold.
+// Encoding and persistence run after the request boundary has been released.
 func (d *Device) Capture(ctx context.Context) (CapturedVersion, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()

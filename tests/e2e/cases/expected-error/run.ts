@@ -1,17 +1,16 @@
-import { verify, assertEqual, deadline, waitRun } from "../../support/context"
-await verify("expected-error", async ({ client, marker, objects, computer }) => {
+import { verify, assert, assertEqual, waitTurn } from "../../support/context"
+await verify("expected-error", async ({ marker, computer, startAgent }) => {
   const target = await computer("helmr-edge-smoke")
-  const run = await client.tasks.start(
+  const { turn } = await startAgent(
     "edge-smoke",
     {
       computer: target,
-      payload: { mode: "expected-error" },
+      input: { mode: "expected-error" },
       idempotencyKey: `expected-error:${marker}`,
     },
-    { signal: deadline(30_000) },
   )
-  objects.run_ids.push(run.id)
-  const terminal = await waitRun(client, run.id, ["failed"])
-  assertEqual(terminal.failure?.code, "task_failed", "Wrong failure code")
-  return { failureCode: "task_failed" }
+  const terminal = await waitTurn(turn, ["failed"])
+  assertEqual(terminal.error?.code, "handler_failed", "Wrong failure code")
+  assert(terminal.error?.message?.includes("intentional edge-case failure"), "Original application error was lost")
+  return { failureCode: "handler_failed" }
 })

@@ -21,6 +21,15 @@ def config():
         'worker_host_receipt': '/opt/worker-host-bundle.json',
         'worker_runtime_receipt': '/opt/worker-runtime-bundle.json',
         'control_plane': {
+            'ENVIRONMENT_MAX_RESIDENT_COMPUTERS': '10',
+            'ENVIRONMENT_MAX_CPU_MILLIS': '16000',
+            'ENVIRONMENT_MAX_MEMORY_BYTES': '68719476736',
+            'ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES': '1099511627776',
+            'ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS': '100',
+            'ENVIRONMENT_MAX_CAUSAL_DEPTH': '8',
+            'ENVIRONMENT_ADMISSION_RATE_PER_SECOND': '10',
+            'ENVIRONMENT_ADMISSION_BURST': '20',
+            'ENVIRONMENT_PREPARATION_TIMEOUT_MS': '600000',
             'CAS_URI': 's3://scope-cas', 'PLATFORM_STORE_URI': 's3://scope-platform',
             'DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH': '/opt/runtime.json',
             'GITHUB_OAUTH_CLIENT_ID': 'test-id', 'GITHUB_OAUTH_CLIENT_SECRET': 'test-secret',
@@ -35,23 +44,81 @@ def config():
 
 
 class ProfileTests(unittest.TestCase):
+
+    def test_https_origin_changes_public_links_without_exposing_private_services(self):
+        cfg = host.compile_config(config() | {'public_url': 'https://Verification.example.test:8443/'})
+        self.assertEqual(cfg['control_plane']['PUBLIC_URL'], 'https://verification.example.test:8443')
+        self.assertEqual(cfg['dispatcher']['PUBLIC_URL'], cfg['control_plane']['PUBLIC_URL'])
+        self.assertEqual(cfg['control_plane']['CONTROL_PLANE_ADDR'], '127.0.0.1:58080')
+        self.assertEqual(cfg['worker']['CONTROL_PLANE_URL'], 'http://127.0.0.1:58080')
+        self.assertEqual(cfg['dispatcher']['CONTROL_PLANE_URL'], 'http://127.0.0.1:58080')
+        self.assertEqual(host.compile_config(config())['control_plane']['PUBLIC_URL'], 'http://127.0.0.1:58080')
+        for value in [None, '', 'http://example.test', 'https://', 'https://user:password@example.test',
+                      'https://example.test/path', 'https://example.test?q=x', 'https://example.test#x',
+                      ' https://example.test', 'https://example.test\n', 'https://example.test:0',
+                      'https://example.test:65536', 'https://example.test:invalid']:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                host.compile_config(config() | {'public_url': value})
+
+    def test_sample_diagnostic_policy_reaches_both_services(self):
+        raw = json.loads((ROOT / 'dev/runtime/config.example.json').read_text())
+        cfg = host.compile_config(raw)
+        rendered = host.files(cfg)
+        diagnostic = {key: value for key, value in raw['control_plane'].items() if key.startswith('DIAGNOSTIC_')}
+        self.assertEqual(len(diagnostic), 10)
+        for key, value in diagnostic.items():
+            for name in ['control-plane.env', 'dispatcher.env']:
+                self.assertIn(f'{key}="{value}"\n', rendered[name])
+            self.assertNotIn(key, rendered['worker.env'])
+        for key in ['WORKER_LOG_CHUNK_BYTES', 'WORKER_LOG_BUFFER_BYTES', 'WORKER_LOG_BUFFER_RECORDS']:
+            self.assertIn(f'{key}="{raw["worker"][key]}"\n', rendered['worker.env'])
+
+    def test_invalid_native_config_stops_before_dependencies_or_migrations(self):
+        cfg = host.compile_config(config())
+        for failed_at in [0, 1]:
+            with self.subTest(failed_at=failed_at), patch.object(host, 'state', return_value='inactive'), patch.object(host, 'run') as run, patch.object(host, 'service_run', side_effect=[None] * failed_at + [subprocess.CalledProcessError(1, 'check-config')]) as check:
+                with self.assertRaises(subprocess.CalledProcessError):
+                    host.start(cfg)
+                self.assertEqual(check.call_count, failed_at + 1)
+                run.assert_not_called()
+                for call in check.call_args_list:
+                    self.assertEqual(call.args[1], 'check-config')
+
+    def test_preflight_cannot_borrow_missing_diagnostics_from_caller(self):
+        cfg = host.compile_config(config())
+        with patch.dict(host.os.environ, {'DIAGNOSTIC_CHUNK_BYTES': '65536'}), patch.object(host, 'state', return_value='inactive'), patch.object(host, 'run') as run, patch.object(host, 'service_run', side_effect=subprocess.CalledProcessError(1, 'check-config')) as check:
+            with self.assertRaises(subprocess.CalledProcessError):
+                host.start(cfg)
+            self.assertNotIn('DIAGNOSTIC_CHUNK_BYTES', check.call_args.kwargs['env'])
+            self.assertEqual(check.call_args.kwargs['env'], {'PATH': host.os.environ['PATH']} | cfg['control_plane'])
+            run.assert_not_called()
+
+    def test_execution_policy_is_required_before_host_setup(self):
+        for value in [None, '', '0', '-1', '1.5', '9223372036854775808']:
+            with self.subTest(value=value):
+                raw = config()
+                if value is None:
+                    del raw['control_plane']['ENVIRONMENT_MAX_RESIDENT_COMPUTERS']
+                else:
+                    raw['control_plane']['ENVIRONMENT_MAX_RESIDENT_COMPUTERS'] = value
+                with self.assertRaisesRegex(ValueError, 'ENVIRONMENT_MAX_RESIDENT_COMPUTERS'):
+                    host.compile_config(raw)
     def test_reply_fault_profile_routes_only_worker_through_fixed_loopback_proxy(self):
         cfg = host.compile_config(config() | {'capture_reply_faults': True})
         self.assertEqual(cfg['worker']['CONTROL_PLANE_URL'], 'http://127.0.0.1:58088')
         self.assertEqual(cfg['dispatcher']['CONTROL_PLANE_URL'], 'http://127.0.0.1:58080')
+        self.assertEqual(cfg['dispatcher']['PUBLIC_URL'], cfg['control_plane']['PUBLIC_URL'])
         for invalid in ['true', 1, None, 'http://elsewhere']:
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 host.compile_config(config() | {'capture_reply_faults': invalid})
 
     def test_abort_observation_rejects_replacement_and_unacknowledged_source(self):
-        evidence = dict(attempt_number=1, acknowledged=True, source_reclaimed=False,
-                        source_state='ready', other_instances=0, lease_on_source=True,
-                        writer_generation=1, captured_writer_generation=1)
+        evidence = dict(checkpoint_id='cp', checkpoint_status='consumed', acknowledged=True, source_abort=True,
+                        source_fenced=False, source_state='active', later_leases=0, lease_on_source=True)
         self.assertTrue(host.persistence_matches(evidence, 'wait-aborted'))
-        for key, value in [('acknowledged', False), ('source_reclaimed', True),
-                           ('source_state', 'closed'), ('other_instances', 1),
-                           ('lease_on_source', False), ('attempt_number', 2),
-                           ('writer_generation', 2)]:
+        for key, value in [('acknowledged', False), ('source_fenced', True),
+                           ('source_state', 'released'), ('later_leases', 1),
+                           ('source_abort', False), ('lease_on_source', False), ('checkpoint_status', 'aborting'), ('checkpoint_id', None)]:
             with self.subTest(key=key):
                 self.assertFalse(host.persistence_matches(evidence | {key: value}, 'wait-aborted'))
 

@@ -35,12 +35,14 @@ func versionDeviceError(err error) error {
 // Buffer pressure commits locally and retries the unapplied block once; staged
 // storage exhaustion remains an error. No remote publication is triggered.
 func (d versionDevice) WriteAt(ctx context.Context, b []byte, off int64) (int, error) {
+	d.request.Lock()
+	defer d.request.Unlock()
 	total := 0
 	for len(b) > 0 {
 		n := min(len(b), 4096-int(off%4096))
 		_, err := d.LocalVersion.WriteAt(ctx, b[:n], off)
 		if errors.Is(err, ErrVersionBufferFull) {
-			if err = d.Flush(ctx); err == nil {
+			if _, err = d.LocalVersion.Flush(ctx); err == nil {
 				_, err = d.LocalVersion.WriteAt(ctx, b[:n], off)
 			}
 		}
@@ -54,11 +56,13 @@ func (d versionDevice) WriteAt(ctx context.Context, b []byte, off int64) (int, e
 	return total, nil
 }
 func (d versionDevice) Trim(ctx context.Context, off int64, n int) error {
+	d.request.Lock()
+	defer d.request.Unlock()
 	for n > 0 {
 		length := min(n, 4096-int(off%4096))
 		err := d.LocalVersion.Trim(ctx, off, length)
 		if errors.Is(err, ErrVersionBufferFull) {
-			if err = d.Flush(ctx); err == nil {
+			if _, err = d.LocalVersion.Flush(ctx); err == nil {
 				err = d.LocalVersion.Trim(ctx, off, length)
 			}
 		}
@@ -71,6 +75,8 @@ func (d versionDevice) Trim(ctx context.Context, off int64, n int) error {
 	return nil
 }
 func (d versionDevice) Flush(ctx context.Context) error {
+	d.request.Lock()
+	defer d.request.Unlock()
 	_, err := d.LocalVersion.Flush(ctx)
 	return versionDeviceError(err)
 }

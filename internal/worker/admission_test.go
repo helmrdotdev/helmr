@@ -27,7 +27,7 @@ func TestHardAdmissionFailClosedChecks(t *testing.T) {
 	now := time.Date(2026, 7, 12, 0, 0, 0, 0, time.UTC)
 	probe := &staticHealthProbe{health: healthyHost(now)}
 	evaluator, err := NewHardAdmission(HardAdmissionConfig{
-		Probe: probe, DiskFloorBytes: 8 << 30, FDHeadroom: 256, InstanceSlotCount: 2, Now: func() time.Time { return now },
+		Probe: probe, DiskFloorBytes: 8 << 30, FDHeadroom: 256, Now: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -47,12 +47,12 @@ func TestHardAdmissionFailClosedChecks(t *testing.T) {
 		{name: "slots", mutate: func(_ *HostHealth, c *AdmissionCheck) {
 			c.Consumer = "computer"
 			c.Recovery.Quarantined = []string{"one", "two"}
-		}, want: AdmissionInstanceSlotsQuarantined},
+		}, want: AdmissionAllowed},
 		{name: "partial quarantine plus active slot", mutate: func(_ *HostHealth, c *AdmissionCheck) {
 			c.Consumer = "computer"
 			c.Recovery.Quarantined = []string{"one"}
 			c.Snapshot = Snapshot{Active: map[string]int{"computer": 1}}
-		}, want: AdmissionInstanceSlotsQuarantined},
+		}, want: AdmissionAllowed},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -75,7 +75,7 @@ func TestHardAdmissionFailsClosedWhenDatapathChanges(t *testing.T) {
 	datapathHealthy := true
 	evaluator, err := NewHardAdmission(HardAdmissionConfig{
 		Probe:          &staticHealthProbe{health: healthyHost(now)},
-		DiskFloorBytes: 1, FDHeadroom: 1, InstanceSlotCount: 1,
+		DiskFloorBytes: 1, FDHeadroom: 1,
 		Now: func() time.Time { return now },
 		DatapathHealth: func() error {
 			if datapathHealthy {
@@ -102,10 +102,10 @@ func TestHardAdmissionFailsClosedWhenDatapathChanges(t *testing.T) {
 	}
 }
 
-func TestHardAdmissionKeepsInstanceSlotPressureInInstanceDomain(t *testing.T) {
+func TestHardAdmissionLeavesPhysicalSlotsToReservationLedger(t *testing.T) {
 	now := time.Now()
 	probe := &staticHealthProbe{health: healthyHost(now)}
-	evaluator, err := NewHardAdmission(HardAdmissionConfig{Probe: probe, DiskFloorBytes: 1, FDHeadroom: 1, InstanceSlotCount: 1, Now: func() time.Time { return now }})
+	evaluator, err := NewHardAdmission(HardAdmissionConfig{Probe: probe, DiskFloorBytes: 1, FDHeadroom: 1, Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestHardAdmissionKeepsInstanceSlotPressureInInstanceDomain(t *testing.T) {
 	check.Consumer = "instance"
 	evaluator.Evaluate(context.Background(), check)
 	observation := evaluator.Observation()
-	if observation.RunPausedReason != "" || observation.VMPausedReason == "" {
+	if observation.RunPausedReason != "" || observation.VMPausedReason != "" {
 		t.Fatalf("domain pauses = run:%q instance:%q", observation.RunPausedReason, observation.VMPausedReason)
 	}
 }
@@ -124,7 +124,7 @@ func TestHardAdmissionAllowsRunInsideActiveComputerSlot(t *testing.T) {
 	now := time.Now()
 	probe := &staticHealthProbe{health: healthyHost(now)}
 	evaluator, err := NewHardAdmission(HardAdmissionConfig{
-		Probe: probe, DiskFloorBytes: 1, FDHeadroom: 1, InstanceSlotCount: 1,
+		Probe: probe, DiskFloorBytes: 1, FDHeadroom: 1,
 		Now: func() time.Time { return now },
 	})
 	if err != nil {
@@ -143,7 +143,7 @@ func TestHardAdmissionAllowsOnlyExplicitDrainContinuation(t *testing.T) {
 	now := time.Now()
 	evaluator, err := NewHardAdmission(HardAdmissionConfig{
 		Probe: &staticHealthProbe{health: healthyHost(now)}, DiskFloorBytes: 1,
-		FDHeadroom: 1, InstanceSlotCount: 1, Now: func() time.Time { return now },
+		FDHeadroom: 1, Now: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -157,5 +157,59 @@ func TestHardAdmissionAllowsOnlyExplicitDrainContinuation(t *testing.T) {
 		Consumer: "run", Status: StatusDraining, DrainContinuation: true,
 	}); !decision.Allowed {
 		t.Fatalf("bound drain continuation rejected: %+v", decision)
+	}
+}
+
+func TestAllocatedStartPreservesDrainContinuationAndHardHealthFences(t *testing.T) {
+	probe := &staticHealthProbe{health: healthyHost(time.Now())}
+	gate, err := NewHardAdmission(HardAdmissionConfig{Probe: probe, DiskFloorBytes: 1, FDHeadroom: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(Config{ControlPlane: &testControlPlane{}, Recover: emptyPhysicalRecovery, AdmissionEvaluator: gate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.state.Store(StatusDraining)
+	admission := consumerAdmission{supervisor: s}
+	if err := s.AdmitInstanceStart(t.Context()); err == nil {
+		t.Fatal("undelivered startup admitted during drain")
+	}
+	if err := admission.AdmitAllocatedStart(t.Context()); err != nil {
+		t.Fatalf("delivered startup blocked by drain: %v", err)
+	}
+	probe.health.KVMHealthy = false
+	if err := admission.AdmitAllocatedStart(t.Context()); err == nil {
+		t.Fatal("delivered startup bypassed hard health fence")
+	}
+}
+
+func TestCheckpointKeyMismatchSurvivesHealthReevaluation(t *testing.T) {
+	cfg := HardAdmissionConfig{Probe: &staticHealthProbe{health: healthyHost(time.Now())}, DiskFloorBytes: 1, FDHeadroom: 1}
+	admission, err := NewHardAdmission(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := AdmissionCheck{Consumer: "instance", Status: StatusActive, DrainContinuation: true}
+	if !admission.Evaluate(t.Context(), check).Allowed {
+		t.Fatal("healthy worker did not admit")
+	}
+	admission.PauseForCheckpointKeyMismatch()
+	for range 3 {
+		observation := admission.Observation()
+		if observation.RunPausedReason != string(AdmissionCheckpointKeyUnavailable) || observation.VMPausedReason != string(AdmissionCheckpointKeyUnavailable) {
+			t.Fatalf("key fault not visible: %+v", observation)
+		}
+		decision := admission.Evaluate(t.Context(), check)
+		if decision.Allowed || decision.Reason != AdmissionCheckpointKeyUnavailable {
+			t.Fatalf("health cleared key fault: %+v", decision)
+		}
+	}
+	restarted, err := NewHardAdmission(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !restarted.Evaluate(t.Context(), check).Allowed {
+		t.Fatal("reinitialized worker retained previous key fault")
 	}
 }

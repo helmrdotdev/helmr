@@ -8,45 +8,48 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/computer/computertest"
+	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
-func cloneRestorePool(t *testing.T, f runtest.Fixture) uuid.UUID {
+type retirementFixture struct {
+	agenttest.Fixture
+	poolID uuid.UUID
+	host   workergroup.HostPrincipal
+}
+
+func newRetirementFixture(t *testing.T) retirementFixture {
+	t.Helper()
+	f := retirementFixture{Fixture: agenttest.New(t)}
+	if err := f.Pool.QueryRow(t.Context(), `SELECT worker_pool_id FROM worker_hosts WHERE id=$1`, f.Worker).Scan(&f.poolID); err != nil {
+		t.Fatal(err)
+	}
+	f.host = workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
+	return f
+}
+func (f retirementFixture) capture() agent.ComputerCaptureRequest {
+	return agent.ComputerCaptureRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, CheckpointID: uuid.NewV7(), LeaseEpoch: 1, ChannelCredential: agenttest.ChannelCredential}
+}
+func cloneRestorePool(t *testing.T, f retirementFixture) uuid.UUID {
 	t.Helper()
 	id := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_pools
- (id,worker_group_id,name,status,vm_platform_id,capacity_cpu_millis,capacity_memory_bytes,capacity_guest_ephemeral_disk_bytes,per_vm_cpu_millis,per_vm_memory_bytes,per_vm_guest_ephemeral_disk_bytes,max_vm_slots,sealed_at)
- SELECT $1,worker_group_id,$2,'active',vm_platform_id,capacity_cpu_millis,capacity_memory_bytes,capacity_guest_ephemeral_disk_bytes,per_vm_cpu_millis,per_vm_memory_bytes,per_vm_guest_ephemeral_disk_bytes,max_vm_slots,sealed_at
- FROM worker_pools WHERE id=$3`, id, id.String(), f.WorkerPoolID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_pool_cpu_shapes(worker_pool_id,vcpu_count,cpu_config_digest) SELECT $1,vcpu_count,cpu_config_digest FROM worker_pool_cpu_shapes WHERE worker_pool_id=$2`, id, f.WorkerPoolID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_pools SELECT (jsonb_populate_record(NULL::worker_pools,to_jsonb(p)||jsonb_build_object('id',$2::text,'name',$2::text))).* FROM worker_pools p WHERE p.id=$1;
+ INSERT INTO worker_pool_cpu_shapes(worker_pool_id,vcpu_count,cpu_config_digest) SELECT $2,vcpu_count,cpu_config_digest FROM worker_pool_cpu_shapes WHERE worker_pool_id=$1`, pgx.QueryExecModeSimpleProtocol, f.poolID, id)
 	return id
 }
 
-func retireFixtureGroup(t *testing.T, f runtest.Fixture) uuid.UUID {
-	t.Helper()
-	var group uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `UPDATE worker_groups SET primary_pool_id=NULL WHERE id=(SELECT worker_group_id FROM worker_pools WHERE id=$1) RETURNING id`, f.WorkerPoolID).Scan(&group); err != nil {
-		t.Fatal(err)
-	}
-	return group
-}
-
 func TestPoolRetirementPostgresConcurrentLastRestorePath(t *testing.T) {
-	f, _, _, _ := computertest.Capture(t)
-	group := retireFixtureGroup(t, f)
+	f := newRetirementFixture(t)
 	alternative := cloneRestorePool(t, f)
 	start := make(chan struct{})
 	results := make([]error, 2)
 	var wait sync.WaitGroup
-	for index, id := range []uuid.UUID{f.WorkerPoolID, alternative} {
-		wait.Go(func() { <-start; _, _, results[index] = workergroup.DrainPool(t.Context(), f.Pool, group, id, 1) })
+	for index, id := range []uuid.UUID{f.poolID, alternative} {
+		wait.Go(func() { <-start; _, _, results[index] = workergroup.DrainPool(t.Context(), f.Pool, f.Group, id, 1) })
 	}
 	close(start)
 	wait.Wait()
@@ -65,21 +68,20 @@ func TestPoolRetirementPostgresConcurrentLastRestorePath(t *testing.T) {
 		t.Fatalf("retirements=%v, want exactly one", results)
 	}
 	var active int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM worker_pools WHERE worker_group_id=$1 AND status='active'`, group).Scan(&active); err != nil || active != 1 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM worker_pools WHERE worker_group_id=$1 AND status='active'`, f.Group).Scan(&active); err != nil || active != 1 {
 		t.Fatalf("remaining pools=%d: %v", active, err)
 	}
 }
 
 func TestPoolRetirementPostgresWaitsForCaptureFence(t *testing.T) {
-	f, _, _, capture := computertest.Capture(t)
-	group := retireFixtureGroup(t, f)
+	f := newRetirementFixture(t)
 	cloneRestorePool(t, f)
 	hold, err := f.Pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer hold.Rollback(t.Context())
-	if _, err = computer.BeginCapture(t.Context(), hold, capture); err != nil {
+	if _, err = agent.BeginComputerCapture(t.Context(), hold, f.host, f.capture()); err != nil {
 		t.Fatal(err)
 	}
 	var blocker int32
@@ -89,7 +91,7 @@ func TestPoolRetirementPostgresWaitsForCaptureFence(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { _, _, err := workergroup.DrainPool(ctx, f.Pool, group, f.WorkerPoolID, 1); done <- err }()
+	go func() { _, _, err := workergroup.DrainPool(ctx, f.Pool, f.Group, f.poolID, 1); done <- err }()
 	for {
 		var blocked bool
 		if err = f.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, blocker).Scan(&blocked); err != nil {
@@ -112,11 +114,7 @@ func TestPoolRetirementPostgresWaitsForCaptureFence(t *testing.T) {
 	if err = <-done; err != nil {
 		t.Fatal(err)
 	}
-	var name string
-	if err = f.Pool.QueryRow(ctx, `SELECT name FROM worker_pools WHERE id=$1`, f.WorkerPoolID).Scan(&name); err != nil {
-		t.Fatal(err)
-	}
-	profiles, err := workergroup.ResolvePool(ctx, db.New(f.Pool), group, name)
+	profiles, err := workergroup.ResolvePool(ctx, db.New(f.Pool), f.Group, "pool")
 	if err != nil || !profiles.RetainedProfiles.Complete || len(profiles.RetainedProfiles.Profiles) != 1 {
 		t.Fatalf("profiles=%+v: %v", profiles, err)
 	}
@@ -127,67 +125,103 @@ func TestPoolRetirementPostgresWaitsForCaptureFence(t *testing.T) {
 }
 
 func TestPoolRetirementPostgresParkedQueuedWorkRetainsProfile(t *testing.T) {
-	f, ref, manifest, objects := computertest.ReadyCapture(t, false)
-	cp := computertest.Complete(t, f, ref, manifest, objects)
-	group := retireFixtureGroup(t, f)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='closed',observed_desired_version=desired_version,mount_state='unmounted',unmounted_at=now(),terminal_at=now(),reclaimed_at=now(),reclaim_evidence='{"method":"machine_closed"}',terminal_reason_code='checkpointed' WHERE id=$1`, ref.InstanceID)
-	// Resolved waits remain parked until resume commits; they cannot release the profile.
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_waits SET condition_status='completed',condition_terminal_at=now() WHERE suspend_checkpoint_id=$1`, cp.ID)
-	claimID, commandID := uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO idempotency_claims(id,environment_id,operation,slot_hash,request_fingerprint,accepted_at,receipt_expires_at) VALUES($1,$2,'computer.command.create',$3,$4,now(),now()+interval '30 days')`, claimID, f.EnvironmentID, dbtest.Hash(commandID.String()), dbtest.Hash("retained-command"))
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_commands(id,environment_id,computer_id,claim_id,argv,cwd,env,stdin,timeout_ms,created_by_subject_type,created_by_subject_id) VALUES($1,$2,$3,$4,ARRAY['true'],'/workspace','{}','',300000,'api_key','fixture')`, commandID, f.EnvironmentID, cp.ComputerID, claimID)
+	f := newRetirementFixture(t)
+	request := f.capture()
+	if _, err := agent.BeginComputerCapture(t.Context(), f.Pool, f.host, request); err != nil {
+		t.Fatal(err)
+	}
+	// This fixture supplies an already-certified checkpoint; this test exercises
+	// supplier retirement, not VM capture or manifest certification.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_checkpoints SET status='ready',manifest=decode('01','hex'),vm_platform_id=(SELECT vm_platform_id FROM worker_hosts WHERE id=$3),ready_at=clock_timestamp() WHERE environment_id=$1 AND id=$2;
+ UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='fixture VM stopped' WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, request.CheckpointID, f.Worker)
+	if _, err := agent.Enqueue(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "parked-input", Input: []byte(`[]`)}); err != nil {
+		t.Fatal(err)
+	}
+	if demand, err := workergroup.HasQueuedDemand(t.Context(), f.Pool, f.Group); err != nil || !demand {
+		t.Fatalf("parked Session restore demand=%v: %v", demand, err)
+	}
+	if _, err := workergroup.DrainHost(t.Context(), f.Pool, f.Worker, workergroup.DrainWorkerHostRequest{ExpectedEpoch: 1, ExpectedClaimVersion: 1, Reason: workergroup.DrainReasonIdleScaleIn}); !errors.Is(err, workergroup.ErrQueuedDemand) {
+		t.Fatalf("idle drain with parked input=%v, want queued demand", err)
+	}
 	var conflict workergroup.ConflictError
-	if _, _, err := workergroup.DrainPool(t.Context(), f.Pool, group, f.WorkerPoolID, 1); !errors.As(err, &conflict) {
+	if _, _, err := workergroup.DrainPool(t.Context(), f.Pool, f.Group, f.poolID, 1); !errors.As(err, &conflict) {
 		t.Fatalf("last parked profile retired: %v", err)
 	}
 	alternative := cloneRestorePool(t, f)
-	if _, _, err := workergroup.DrainPool(t.Context(), f.Pool, group, f.WorkerPoolID, 1); err != nil {
+	if _, _, err := workergroup.DrainPool(t.Context(), f.Pool, f.Group, f.poolID, 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := workergroup.DrainPool(t.Context(), f.Pool, group, alternative, 1); !errors.As(err, &conflict) {
+	if _, _, err := workergroup.DrainPool(t.Context(), f.Pool, f.Group, alternative, 1); !errors.As(err, &conflict) {
 		t.Fatalf("last alternative retired: %v", err)
+	}
+	profiles, err := workergroup.ResolvePool(t.Context(), db.New(f.Pool), f.Group, "pool")
+	if err != nil || len(profiles.RetainedProfiles.Profiles) != 1 || profiles.RetainedProfiles.Profiles[0].LiveInstances != 0 || profiles.RetainedProfiles.Profiles[0].ParkedCheckpoints != 1 {
+		t.Fatalf("parked profile=%+v: %v", profiles, err)
 	}
 }
 
 func TestPoolRetirementPostgresCaptureRequiresRemainingSupplier(t *testing.T) {
-	f, _, _, capture := computertest.Capture(t)
-	// Model a withdrawn source whose supplier has become unavailable. Capture
-	// must leave the live source unchanged instead of parking without a path.
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_pools SET status='draining',claim_version=claim_version+1 WHERE id=$1`, f.WorkerPoolID)
-	err := db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error { _, err := computer.BeginCapture(t.Context(), tx, capture); return err })
-	if !errors.Is(err, pgx.ErrNoRows) {
+	f := newRetirementFixture(t)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_pools SET status='draining',claim_version=claim_version+1 WHERE id=$1`, f.poolID)
+	if _, err := agent.BeginComputerCapture(t.Context(), f.Pool, f.host, f.capture()); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("capture without supplier=%v", err)
 	}
 	var count int
-	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_checkpoints WHERE source_computer_instance_id=$1`, pgvalue.UUID(capture.InstanceID)).Scan(&count); err != nil || count != 0 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_checkpoints WHERE environment_id=$1`, f.Environment).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("rejected capture committed %d rows: %v", count, err)
 	}
 }
 
-func TestPoolRetirementPostgresDisableWaitsForTerminalProcesses(t *testing.T) {
-	f, _, _, capture := computertest.Capture(t)
-	group := retireFixtureGroup(t, f)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1,observed_state='closed',observed_desired_version=desired_version+1,admission_state='closed',mount_state='unmounted',unmounted_at=now(),terminal_at=now(),reclaimed_at=now(),reclaim_evidence='{"method":"machine_closed"}',terminal_reason_code='cancelled' WHERE id=$1`, capture.InstanceID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET status='cancelled',terminal_at=now(),terminal_reason_code='cancelled' WHERE computer_instance_id=$1`, capture.InstanceID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET status='lost',lost_at=now() WHERE id=$1`, f.WorkerID)
-	_, drained, err := workergroup.DrainPool(t.Context(), f.Pool, group, f.WorkerPoolID, 1)
+func TestPoolRetirementPostgresDisableWaitsForPhysicalStop(t *testing.T) {
+	f := newRetirementFixture(t)
+	cloneRestorePool(t, f)
+	lost, err := workergroup.MarkHostLost(t.Context(), f.Pool, f.Group, "host", 1)
+	if err != nil || lost.Status != "lost" {
+		t.Fatalf("mark lost=%+v %v", lost, err)
+	}
+	_, drained, err := workergroup.DrainPool(t.Context(), f.Pool, f.Group, f.poolID, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var conflict workergroup.ConflictError
-	if _, _, err = workergroup.DisablePool(t.Context(), f.Pool, group, f.WorkerPoolID, drained.ClaimVersion); !errors.As(err, &conflict) {
-		t.Fatalf("disabled with unreconciled terminal process: %v", err)
+	if _, _, err = workergroup.DisablePool(t.Context(), f.Pool, f.Group, f.poolID, drained.ClaimVersion); !errors.As(err, &conflict) {
+		t.Fatalf("disabled while VM custody remains: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET process_reconciled_at=now() WHERE computer_instance_id=$1`, capture.InstanceID)
-	_, receipt, err := workergroup.DisablePool(t.Context(), f.Pool, group, f.WorkerPoolID, drained.ClaimVersion)
+	err = db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error {
+		absence, err := workergroup.ConfirmHostProviderAbsent(t.Context(), tx, f.Worker)
+		if err != nil {
+			return err
+		}
+		return agent.ObserveProviderAbsentHostComputers(t.Context(), absence)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, receipt, err := workergroup.DisablePool(t.Context(), f.Pool, f.Group, f.poolID, drained.ClaimVersion)
 	if err != nil || receipt.Status != "disabled" {
 		t.Fatalf("disable receipt=%+v: %v", receipt, err)
 	}
-	_, replay, err := workergroup.DisablePool(t.Context(), f.Pool, group, f.WorkerPoolID, drained.ClaimVersion)
+	_, replay, err := workergroup.DisablePool(t.Context(), f.Pool, f.Group, f.poolID, drained.ClaimVersion)
 	if err != nil || replay.ClaimVersion != receipt.ClaimVersion {
 		t.Fatalf("disable replay=%+v: %v", replay, err)
 	}
-	if _, _, err = workergroup.DrainPool(t.Context(), f.Pool, group, f.WorkerPoolID, receipt.ClaimVersion); !errors.As(err, &conflict) {
+	if _, _, err = workergroup.DrainPool(t.Context(), f.Pool, f.Group, f.poolID, receipt.ClaimVersion); !errors.As(err, &conflict) {
 		t.Fatalf("disabled pool revived: %v", err)
+	}
+}
+
+func TestCaptureRequiresRestoreAdmittingGroup(t *testing.T) {
+	for _, status := range []string{"paused", "draining"} {
+		t.Run(status, func(t *testing.T) {
+			f := newRetirementFixture(t)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET status=$2 WHERE id=$1`, f.Group, status)
+			if _, err := agent.BeginComputerCapture(t.Context(), f.Pool, f.host, f.capture()); !errors.Is(err, agent.ErrNotReady) {
+				t.Fatalf("capture in %s Group: %v; want not ready", status, err)
+			}
+			var count int
+			if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_checkpoints WHERE environment_id=$1`, f.Environment).Scan(&count); err != nil || count != 0 {
+				t.Fatalf("checkpoints=%d: %v", count, err)
+			}
+		})
 	}
 }

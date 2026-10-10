@@ -15,16 +15,16 @@ func Program(
 	unitCgroupRoot string,
 	leaseIdentity string,
 	programSnapshot *snapshot.Program,
-) (artifact.ProgramIndex, error) {
+) (artifact.ProgramMetadata, error) {
 	if ctx == nil {
-		return artifact.ProgramIndex{}, errors.New("program verification context is nil")
+		return artifact.ProgramMetadata{}, errors.New("program verification context is nil")
 	}
 	if programSnapshot == nil {
-		return artifact.ProgramIndex{}, errors.New("program artifact snapshot is closed")
+		return artifact.ProgramMetadata{}, errors.New("program artifact snapshot is closed")
 	}
 	file, err := programSnapshot.VerifierFile()
 	if err != nil {
-		return artifact.ProgramIndex{}, err
+		return artifact.ProgramMetadata{}, err
 	}
 	result, err := runVerifierProcess(ctx, verifierProcessConfig{
 		job:            programVerifierJob,
@@ -33,21 +33,21 @@ func Program(
 		artifacts:      []*os.File{file},
 	})
 	if err != nil {
-		return artifact.ProgramIndex{}, err
+		return artifact.ProgramMetadata{}, err
 	}
 	switch result.kind {
 	case verifierVerified:
 		verified, err := parseProgramVerification(result.payload)
 		if err != nil {
-			return artifact.ProgramIndex{}, fmt.Errorf("parse verified program index: %w", err)
+			return artifact.ProgramMetadata{}, fmt.Errorf("parse verified program metadata: %w", err)
 		}
-		return verified.Index, nil
+		return verified.Metadata, nil
 	case verifierInvalid:
-		return artifact.ProgramIndex{}, &verifierInvalidError{diagnostic: result.diagnostic}
+		return artifact.ProgramMetadata{}, &verifierInvalidError{diagnostic: result.diagnostic}
 	case verifierFailed:
-		return artifact.ProgramIndex{}, errors.New("program verifier failed")
+		return artifact.ProgramMetadata{}, errors.New("program verifier failed")
 	default:
-		return artifact.ProgramIndex{}, fmt.Errorf(
+		return artifact.ProgramMetadata{}, fmt.Errorf(
 			"program verifier returned unknown outcome %d",
 			result.kind,
 		)

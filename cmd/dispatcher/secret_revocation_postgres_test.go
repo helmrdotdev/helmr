@@ -1,164 +1,62 @@
 package main
 
 import (
+	"bytes"
 	"testing"
-	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/command/commandtest"
-	"github.com/helmrdotdev/helmr/internal/run/runtest"
+	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
+	"github.com/helmrdotdev/helmr/internal/command"
+	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
-// A revocation batch fails revoked Runs before it stops revoked Commands,
-// and the Commands share the limit the Runs left.
-func TestSecretRevocationBatchFailsRunsBeforeStoppingCommands(t *testing.T) {
-	f := runtest.New(t)
-	secretID := f.AddSecret(t, "revoked-secret")
-	first := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
-	second := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
-	host := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
-	for _, work := range []runtest.RunLease{first, second, host} {
-		f.PlaceSecret(t, work.LeaseID, secretID, 1)
+func TestSecretRevocationBatchStopsCommandsWithinLimit(t *testing.T) {
+	f := agenttest.New(t)
+	var org, project uuid.UUID
+	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&org, &project); err != nil {
+		t.Fatal(err)
 	}
-	f.ResolveRunSecret(t, first, secretID)
-	f.ResolveRunSecret(t, second, secretID)
-	early := commandtest.Bound(t, f, host.LeaseID, "running")
-	late := commandtest.Bound(t, f, host.LeaseID, "running")
-	commandtest.ResolveSecret(t, f, early.ID, secretID)
-	commandtest.ResolveSecret(t, f, late.ID, secretID)
-	f.RevokeSecret(t, secretID, 1)
+	store, err := secret.New(db.New(f.Pool), f.Pool, bytes.Repeat([]byte{17}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := store.Create(t.Context(), f.Environment, "COMMAND_TOKEN", []byte("test"), "create-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretID := uuid.UUID(s.ID.Bytes)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_secret_bindings(environment_id,computer_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw')`, f.Environment, f.Computer, secretID)
+	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
+	ids := []uuid.UUID{}
+	for _, key := range []string{"first", "second", "third"} {
+		c, err := command.Create(t.Context(), f.Pool, command.CreateRequest{OrgID: org, ProjectID: project, EnvironmentID: f.Environment, ComputerID: f.Computer, Creator: command.Creator{SubjectType: "session", SubjectID: f.User.String()}, Argv: []string{"true"}, IdempotencyKey: key})
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := command.Claim(t.Context(), f.Pool, host, command.ClaimRequest{EnvironmentID: f.Environment, InstanceID: f.Computer, WriterGeneration: 1, ActiveCommandIDs: ids})
+		if err != nil || result.Start == nil || result.Start.Command.ID != c.ID {
+			t.Fatalf("claim=%+v: %v", result, err)
+		}
+		ids = append(ids, uuid.UUID(c.ID.Bytes))
+	}
+	if _, err = store.Revoke(t.Context(), f.Environment, secretID, "revoke"); err != nil {
+		t.Fatal(err)
+	}
 	reconcile := reconcileSecretRevocation(f.Pool)
-
-	examined, err := reconcile(t.Context(), f.EnvironmentID, secretID, 1, 3)
-	if err != nil || examined != 3 {
-		t.Fatalf("first batch = %d, %v", examined, err)
-	}
-	for _, work := range []runtest.RunLease{first, second} {
-		if status := runStatus(t, f, work.RunID); status != "failed" {
-			t.Fatalf("revoked Run status = %s", status)
+	for _, tc := range []struct {
+		limit          int32
+		want, stopping int
+	}{{1, 1, 1}, {2, 2, 3}, {2, 0, 3}} {
+		n, err := reconcile(t.Context(), f.Environment, secretID, 1, tc.limit)
+		if err != nil || n != tc.want {
+			t.Fatalf("batch=%d want %d: %v", n, tc.want, err)
+		}
+		var count int
+		if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_commands WHERE status='stopping' AND terminal_at IS NULL AND process_reconciled_at IS NULL`).Scan(&count); err != nil || count != tc.stopping {
+			t.Fatalf("stopping=%d want %d: %v", count, tc.stopping, err)
 		}
 	}
-	if status := commandStatus(t, f, early.ID); status != "stopping" {
-		t.Fatalf("first revoked Command status = %s", status)
-	}
-	if status := commandStatus(t, f, late.ID); status != "running" {
-		t.Fatalf("Command beyond the limit status = %s", status)
-	}
-	examined, err = reconcile(t.Context(), f.EnvironmentID, secretID, 1, 3)
-	if err != nil || examined != 1 {
-		t.Fatalf("second batch = %d, %v", examined, err)
-	}
-	if status := commandStatus(t, f, late.ID); status != "stopping" {
-		t.Fatalf("second revoked Command status = %s", status)
-	}
-	examined, err = reconcile(t.Context(), f.EnvironmentID, secretID, 1, 3)
-	if err != nil || examined != 0 {
-		t.Fatalf("drained batch = %d, %v", examined, err)
-	}
-}
-
-// A Command fence failure after a Run was examined returns the Run in the
-// partial count.
-func TestSecretRevocationBatchReturnsPartialCountOnCommandFailure(t *testing.T) {
-	f := runtest.New(t)
-	secretID := f.AddSecret(t, "revoked-secret")
-	work := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
-	host := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
-	f.PlaceSecret(t, work.LeaseID, secretID, 1)
-	f.PlaceSecret(t, host.LeaseID, secretID, 65)
-	f.ResolveRunSecret(t, work, secretID)
-	bound := commandtest.Bound(t, f, host.LeaseID, "running")
-	commandtest.ResolveSecret(t, f, bound.ID, secretID)
-	f.RevokeSecret(t, secretID, 1)
-
-	examined, err := reconcileSecretRevocation(f.Pool)(t.Context(), f.EnvironmentID, secretID, 1, 10)
-	if err == nil || examined != 1 {
-		t.Fatalf("batch = %d, %v", examined, err)
-	}
-	if status := runStatus(t, f, work.RunID); status != "failed" {
-		t.Fatalf("revoked Run status = %s", status)
-	}
-	if status := commandStatus(t, f, bound.ID); status != "running" {
-		t.Fatalf("unfenced Command status = %s", status)
-	}
-}
-
-// A batch the Runs fill does not reach the Commands.
-func TestSecretRevocationBatchFilledByRunsLeavesCommands(t *testing.T) {
-	f := runtest.New(t)
-	secretID := f.AddSecret(t, "revoked-secret")
-	first := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
-	second := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
-	host := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
-	for _, work := range []runtest.RunLease{first, second, host} {
-		f.PlaceSecret(t, work.LeaseID, secretID, 1)
-	}
-	f.ResolveRunSecret(t, first, secretID)
-	f.ResolveRunSecret(t, second, secretID)
-	bound := commandtest.Bound(t, f, host.LeaseID, "running")
-	commandtest.ResolveSecret(t, f, bound.ID, secretID)
-	f.RevokeSecret(t, secretID, 1)
-
-	examined, err := reconcileSecretRevocation(f.Pool)(t.Context(), f.EnvironmentID, secretID, 1, 2)
-	if err != nil || examined != 2 {
-		t.Fatalf("batch = %d, %v", examined, err)
-	}
-	for _, work := range []runtest.RunLease{first, second} {
-		if status := runStatus(t, f, work.RunID); status != "failed" {
-			t.Fatalf("revoked Run status = %s", status)
-		}
-	}
-	if status := commandStatus(t, f, bound.ID); status != "running" {
-		t.Fatalf("Command beyond a full batch status = %s", status)
-	}
-}
-
-// A Run failure returns the Runs examined before it and leaves the Commands
-// unchanged.
-func TestSecretRevocationBatchReturnsPartialCountOnRunFailure(t *testing.T) {
-	f := runtest.New(t)
-	secretID := f.AddSecret(t, "revoked-secret")
-	first := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
-	overplaced := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
-	host := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
-	f.PlaceSecret(t, first.LeaseID, secretID, 1)
-	f.PlaceSecret(t, overplaced.LeaseID, secretID, 65)
-	f.PlaceSecret(t, host.LeaseID, secretID, 1)
-	f.ResolveRunSecret(t, first, secretID)
-	f.ResolveRunSecret(t, overplaced, secretID)
-	bound := commandtest.Bound(t, f, host.LeaseID, "running")
-	commandtest.ResolveSecret(t, f, bound.ID, secretID)
-	f.RevokeSecret(t, secretID, 1)
-
-	examined, err := reconcileSecretRevocation(f.Pool)(t.Context(), f.EnvironmentID, secretID, 1, 10)
-	if err == nil || examined != 1 {
-		t.Fatalf("batch = %d, %v", examined, err)
-	}
-	if status := runStatus(t, f, first.RunID); status != "failed" {
-		t.Fatalf("first revoked Run status = %s", status)
-	}
-	if status := runStatus(t, f, overplaced.RunID); status == "failed" {
-		t.Fatalf("failing Run status = %s", status)
-	}
-	if status := commandStatus(t, f, bound.ID); status != "running" {
-		t.Fatalf("Command after a Run failure status = %s", status)
-	}
-}
-
-func runStatus(t *testing.T, f runtest.Fixture, runID uuid.UUID) string {
-	t.Helper()
-	var status string
-	if err := f.Pool.QueryRow(t.Context(), `SELECT status FROM runs WHERE id=$1`, runID).Scan(&status); err != nil {
-		t.Fatal(err)
-	}
-	return status
-}
-
-func commandStatus(t *testing.T, f runtest.Fixture, commandID uuid.UUID) string {
-	t.Helper()
-	var status string
-	if err := f.Pool.QueryRow(t.Context(), `SELECT status FROM computer_commands WHERE id=$1`, commandID).Scan(&status); err != nil {
-		t.Fatal(err)
-	}
-	return status
 }

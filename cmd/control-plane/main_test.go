@@ -17,6 +17,7 @@ import (
 	"uuid"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bundle"
@@ -29,8 +30,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/identity"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/helmrdotdev/helmr/internal/telemetry/diagnostic"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -47,18 +50,25 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	allocator, err := agent.NewAllocator(panicDatabase{}, make([]byte, 32), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	handler, err := controlplane.NewServer(controlplane.ServerConfig{
+		Allocator:                      allocator,
+		EnvironmentExecutionLimits:     org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000},
 		ComputerKeys:                   computerKeys,
 		Log:                            log,
 		DB:                             store,
 		TX:                             panicDatabase{},
+		DiagnosticDB:                   panicDatabase{},
+		DiagnosticBounds:               diagnostic.Bounds{ChunkBytes: 1024, SourceBytes: 4096, SourceRecords: 16, EnvironmentBytes: 16384, EnvironmentRecords: 64, QueueBytes: 65536, QueueRecords: 256},
 		Auth:                           identity.NewAPIKeyAuthenticator(store),
 		CAS:                            unusedUploadStore{},
 		BundleAdmission:                bundle.Admission{Runtime: smokeRuntimeDescriptor()},
 		PlatformStore:                  unusedUploadStore{},
 		SecretDelivery:                 controlplanetestSecretDeliveryOpener{},
 		ComputerFencingKey:             controlplanetestComputerFencingKey(),
-		TokenCredentialKey:             controlplanetestTokenCredentialKey(),
 		AuthKey:                        make([]byte, auth.RootKeySize),
 		WorkerHostCredentialSigningKey: make([]byte, workergroup.HostCredentialSigningKeySize),
 		PublicURL:                      publicURL,
@@ -254,18 +264,6 @@ func controlplanetestComputerFencingKey() disk.FencingKey {
 	return key
 }
 
-func controlplanetestTokenCredentialKey() auth.CredentialKey {
-	key := make([]byte, auth.CredentialKeySize)
-	for index := range key {
-		key[index] = 3
-	}
-	credentialKey, err := auth.NewCredentialKey(key)
-	if err != nil {
-		panic(err)
-	}
-	return credentialKey
-}
-
 func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	ctx := context.Background()
 	databaseURL := newSmokeDatabase(t, ctx)
@@ -280,6 +278,22 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	for key, value := range map[string]string{
+		"DIAGNOSTIC_CHUNK_BYTES": "1024", "DIAGNOSTIC_SOURCE_BYTES": "4096", "DIAGNOSTIC_SOURCE_RECORDS": "16",
+		"DIAGNOSTIC_ENVIRONMENT_BYTES": "16384", "DIAGNOSTIC_ENVIRONMENT_RECORDS": "64",
+		"DIAGNOSTIC_QUEUE_BYTES": "65536", "DIAGNOSTIC_QUEUE_RECORDS": "256", "DIAGNOSTIC_DB_MAX_CONNECTIONS": "2",
+	} {
+		t.Setenv(key, value)
+	}
+	t.Setenv("ENVIRONMENT_MAX_RESIDENT_COMPUTERS", "10")
+	t.Setenv("ENVIRONMENT_MAX_CPU_MILLIS", "16000")
+	t.Setenv("ENVIRONMENT_MAX_MEMORY_BYTES", "68719476736")
+	t.Setenv("ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES", "1099511627776")
+	t.Setenv("ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS", "100")
+	t.Setenv("ENVIRONMENT_MAX_CAUSAL_DEPTH", "8")
+	t.Setenv("ENVIRONMENT_ADMISSION_RATE_PER_SECOND", "10")
+	t.Setenv("ENVIRONMENT_ADMISSION_BURST", "20")
+	t.Setenv("ENVIRONMENT_PREPARATION_TIMEOUT_MS", "600000")
 	t.Setenv("CONTROL_PLANE_ADDR", addr)
 	t.Setenv("DATABASE_URL", databaseURL)
 	t.Setenv("REDIS_URL", "redis://"+redisServer.Addr()+"/0")
@@ -288,7 +302,6 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	t.Setenv("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH", runtimeDescriptorPath)
 	t.Setenv("PLATFORM_STORE_URI", "s3://helmr-smoke-runtime")
 	t.Setenv("WORKER_HOST_CREDENTIAL_SIGNING_KEY", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
-	t.Setenv("TOKEN_CREDENTIAL_KEY", "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=")
 	t.Setenv("SETUP_TOKEN", "setup-token")
 	t.Setenv("AUTH_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
 	t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
@@ -351,10 +364,6 @@ type controlplanetestTelemetryReader struct {
 
 func (r controlplanetestTelemetryReader) ListEvents(context.Context, telemetry.EventQuery) (telemetry.EventPage, error) {
 	return telemetry.EventPage{}, nil
-}
-
-func (r controlplanetestTelemetryReader) ListRunLogChunks(context.Context, telemetry.RunLogChunkQuery) (telemetry.RunLogChunkPage, error) {
-	return telemetry.RunLogChunkPage{}, nil
 }
 
 func (r controlplanetestTelemetryReader) ListCommandLogChunks(context.Context, telemetry.CommandLogChunkQuery) (telemetry.CommandLogChunkPage, error) {

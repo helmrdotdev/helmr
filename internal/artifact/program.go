@@ -1,5 +1,5 @@
 // Package artifact defines Program and Node runtime artifacts: descriptors,
-// media types, the Program index and manifest, the compiler contract,
+// media types, the Program metadata and manifest, the compiler contract,
 // declaration locators, build config, payload digests, runtime metadata, and
 // the SquashFS profile and inspected entry tree every such artifact conforms
 // to. It holds only pure contract code. Checkpoint, Computer image and disk
@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"slices"
 
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
@@ -23,36 +22,15 @@ const (
 	maxJSONSafeInteger              int64 = 9007199254740991
 	MaxProgramFileSizeBytes         int64 = 16777216
 	MaxProgramVerificationSizeBytes       = 17891328
-	DeclarationKindTask                   = DeclarationKind("task")
-	DeclarationKindActor                  = DeclarationKind("actor")
-	DeclarationSlotHandler                = DeclarationSlot("handler")
-	DeclarationSlotPayloadSchema          = DeclarationSlot("payloadSchema")
 )
 
 var sha256DigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
-type DeclarationKind string
-type DeclarationSlot string
-
-type ProgramDeclaration struct {
-	Kind       DeclarationKind   `json:"kind"`
-	DeclaredID string            `json:"declaredId"`
-	Slots      []DeclarationSlot `json:"slots"`
-}
-
-type ProgramLocator struct {
-	ExportName string          `json:"exportName"`
-	ModulePath string          `json:"modulePath"`
-	Slot       DeclarationSlot `json:"slot"`
-}
-
-type ProgramIndexDeclaration struct {
+type ProgramDefinition struct {
 	Kind       definition.Kind `json:"-"`
 	DeclaredID string          `json:"-"`
-	Task       *definition.TaskManifest
-	Actor      *definition.ActorManifest
-	Sandbox    *definition.SandboxManifest
-	Locator    *ProgramLocator
+	Agent      *definition.AgentManifest
+	Computer   *definition.ComputerManifest
 }
 
 type ProgramDescriptor struct {
@@ -72,19 +50,18 @@ type ProgramConfig struct {
 	ResultDigest      string `json:"resultDigest"`
 }
 
-type ProgramIndex struct {
+type ProgramMetadata struct {
 	Architecture       definition.RuntimeArchitecture `json:"architecture"`
 	ConfigResultDigest string                         `json:"configResultDigest"`
-	Declarations       []ProgramIndexDeclaration      `json:"declarations"`
-	Queues             []definition.QueueInput        `json:"queues"`
+	Definitions        []ProgramDefinition            `json:"definitions"`
 	RuntimeContract    string                         `json:"runtimeContract"`
 	RuntimeDigest      string                         `json:"runtimeDigest"`
 }
 
-// ProgramOutput is the canonical Program artifact and its execution index.
+// ProgramOutput is the canonical Program artifact and its definition metadata.
 type ProgramOutput struct {
 	Artifact ProgramDescriptor `json:"artifact"`
-	Index    ProgramIndex      `json:"index"`
+	Metadata ProgramMetadata   `json:"metadata"`
 }
 
 func ParseProgramOutput(raw []byte) (ProgramOutput, error) {
@@ -120,7 +97,7 @@ func ParseProgramOutput(raw []byte) (ProgramOutput, error) {
 	if !bytes.Equal(raw, complete) {
 		return ProgramOutput{}, errors.New("program output does not match the complete canonical v0 shape")
 	}
-	output.Index = cloneProgramIndex(output.Index)
+	output.Metadata = cloneProgramMetadata(output.Metadata)
 	return output, nil
 }
 
@@ -184,201 +161,122 @@ func ValidateProgramOutput(output ProgramOutput) error {
 	); err != nil {
 		return err
 	}
-	if err := ValidateProgramIndex(output.Index); err != nil {
+	if err := ValidateProgramMetadata(output.Metadata); err != nil {
 		return fmt.Errorf("program output index: %w", err)
 	}
 	return nil
 }
 
-func (index ProgramIndex) Clone() ProgramIndex {
-	return cloneProgramIndex(index)
+func (index ProgramMetadata) Clone() ProgramMetadata {
+	return cloneProgramMetadata(index)
 }
 
-func cloneProgramIndex(index ProgramIndex) ProgramIndex {
-	declarations := make([]ProgramIndexDeclaration, len(index.Declarations))
-	copy(declarations, index.Declarations)
-	index.Declarations = declarations
-	for position := range index.Declarations {
-		index.Declarations[position] = cloneProgramIndexDeclaration(
-			index.Declarations[position],
+func cloneProgramMetadata(index ProgramMetadata) ProgramMetadata {
+	declarations := make([]ProgramDefinition, len(index.Definitions))
+	copy(declarations, index.Definitions)
+	index.Definitions = declarations
+	for position := range index.Definitions {
+		index.Definitions[position] = cloneProgramDefinition(
+			index.Definitions[position],
 		)
-	}
-	queues := make([]definition.QueueInput, len(index.Queues))
-	copy(queues, index.Queues)
-	index.Queues = queues
-	for position := range index.Queues {
-		if index.Queues[position].ConcurrencyLimit != nil {
-			value := *index.Queues[position].ConcurrencyLimit
-			index.Queues[position].ConcurrencyLimit = &value
-		}
 	}
 	return index
 }
 
-func ParseProgramIndex(raw []byte) (ProgramIndex, error) {
+func ParseProgramMetadata(raw []byte) (ProgramMetadata, error) {
 	if len(raw) == 0 || len(raw) > int(MaxProgramFileSizeBytes) {
-		return ProgramIndex{}, fmt.Errorf("program index size is outside [1,%d]", MaxProgramFileSizeBytes)
+		return ProgramMetadata{}, fmt.Errorf("program metadata size is outside [1,%d]", MaxProgramFileSizeBytes)
 	}
 	canonical, err := jsoncanon.Transform(raw)
 	if err != nil {
-		return ProgramIndex{}, fmt.Errorf("canonicalize program index: %w", err)
+		return ProgramMetadata{}, fmt.Errorf("canonicalize program metadata: %w", err)
 	}
 	if !bytes.Equal(raw, canonical) {
-		return ProgramIndex{}, fmt.Errorf("program index is not RFC 8785 canonical JSON")
+		return ProgramMetadata{}, fmt.Errorf("program metadata is not RFC 8785 canonical JSON")
 	}
 
-	var index ProgramIndex
+	var index ProgramMetadata
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&index); err != nil {
-		return ProgramIndex{}, fmt.Errorf("decode program index: %w", err)
+		return ProgramMetadata{}, fmt.Errorf("decode program metadata: %w", err)
 	}
-	if err := jsoncanon.RequireEOF(decoder, "program index"); err != nil {
-		return ProgramIndex{}, err
+	if err := jsoncanon.RequireEOF(decoder, "program metadata"); err != nil {
+		return ProgramMetadata{}, err
 	}
-	if err := ValidateProgramIndex(index); err != nil {
-		return ProgramIndex{}, err
+	if err := ValidateProgramMetadata(index); err != nil {
+		return ProgramMetadata{}, err
 	}
-	complete, err := CanonicalProgramIndex(index)
+	complete, err := CanonicalProgramMetadata(index)
 	if err != nil {
-		return ProgramIndex{}, err
+		return ProgramMetadata{}, err
 	}
 	if !bytes.Equal(raw, complete) {
-		return ProgramIndex{}, fmt.Errorf("program index does not match the complete canonical v0 shape")
+		return ProgramMetadata{}, fmt.Errorf("program metadata does not match the complete canonical v0 shape")
 	}
-	return cloneProgramIndex(index), nil
+	return cloneProgramMetadata(index), nil
 }
 
-func CanonicalProgramIndex(index ProgramIndex) ([]byte, error) {
-	if err := ValidateProgramIndex(index); err != nil {
+func CanonicalProgramMetadata(index ProgramMetadata) ([]byte, error) {
+	if err := ValidateProgramMetadata(index); err != nil {
 		return nil, err
 	}
 	raw, err := json.Marshal(index)
 	if err != nil {
-		return nil, fmt.Errorf("encode program index: %w", err)
+		return nil, fmt.Errorf("encode program metadata: %w", err)
 	}
 	canonical, err := jsoncanon.Transform(raw)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize program index: %w", err)
+		return nil, fmt.Errorf("canonicalize program metadata: %w", err)
 	}
 	if len(canonical) > int(MaxProgramFileSizeBytes) {
-		return nil, fmt.Errorf("program index size is outside [1,%d]", MaxProgramFileSizeBytes)
+		return nil, fmt.Errorf("program metadata size is outside [1,%d]", MaxProgramFileSizeBytes)
 	}
 	return canonical, nil
 }
 
-func ValidateProgramIndex(index ProgramIndex) error {
+func ValidateProgramMetadata(index ProgramMetadata) error {
 	if index.RuntimeContract != definition.RuntimeContract {
-		return fmt.Errorf("program index runtimeContract = %q, want %q", index.RuntimeContract, definition.RuntimeContract)
+		return fmt.Errorf("program metadata runtimeContract = %q, want %q", index.RuntimeContract, definition.RuntimeContract)
 	}
 	if !sha256DigestPattern.MatchString(index.RuntimeDigest) {
-		return errors.New("program index runtimeDigest is not a lowercase SHA-256 digest")
+		return errors.New("program metadata runtimeDigest is not a lowercase SHA-256 digest")
 	}
 	if !validArchitecture(index.Architecture) {
-		return fmt.Errorf("program index architecture %q is unsupported", index.Architecture)
+		return fmt.Errorf("program metadata architecture %q is unsupported", index.Architecture)
 	}
 	if !sha256DigestPattern.MatchString(index.ConfigResultDigest) {
-		return errors.New("program index configResultDigest is not a lowercase SHA-256 digest")
+		return errors.New("program metadata configResultDigest is not a lowercase SHA-256 digest")
 	}
-	if index.Queues == nil {
-		return errors.New("program index queues must be an array")
+	if len(index.Definitions) == 0 || len(index.Definitions) > definition.MaxBuildDefinitions {
+		return fmt.Errorf("program metadata declarations must contain 1 to %d definitions", definition.MaxBuildDefinitions)
 	}
-	queues := make(map[string]struct{}, len(index.Queues))
-	for position, queue := range index.Queues {
-		if err := definition.ValidateQueueInput(queue); err != nil {
-			return fmt.Errorf("program index queue %d: %w", position, err)
-		}
-		if position > 0 && bytes.Compare(
-			[]byte(index.Queues[position-1].Name),
-			[]byte(queue.Name),
-		) >= 0 {
-			return fmt.Errorf(
-				"program index queues are not in canonical order at position %d",
-				position,
-			)
-		}
-		queues[queue.Name] = struct{}{}
-	}
-	if len(index.Declarations) == 0 {
-		return fmt.Errorf("program index declarations must not be empty")
-	}
-	for position, declaration := range index.Declarations {
-		if err := ValidateProgramIndexDeclaration(declaration, queues); err != nil {
-			return fmt.Errorf("program index declaration %d: %w", position, err)
+	for position, declaration := range index.Definitions {
+		if err := ValidateProgramDefinition(declaration); err != nil {
+			return fmt.Errorf("program metadata declaration %d: %w", position, err)
 		}
 		if position > 0 &&
-			CompareProgramIndexDeclarations(index.Declarations[position-1], declaration) >= 0 {
-			return fmt.Errorf("program index declarations are not in canonical order at position %d", position)
+			CompareProgramDefinitions(index.Definitions[position-1], declaration) >= 0 {
+			return fmt.Errorf("program metadata declarations are not in canonical order at position %d", position)
 		}
 	}
-	return nil
-}
-
-func BuildPlanProgramDeclarations(plan definition.BuildPlan) []ProgramDeclaration {
-	declarations := make([]ProgramDeclaration, 0)
-	for _, input := range plan.Definitions {
-		switch input.Kind {
-		case definition.KindTask:
-			slots := []DeclarationSlot{DeclarationSlotHandler}
-			if input.Task.Payload.Kind == definition.SchemaKindStandard {
-				slots = append(slots, DeclarationSlotPayloadSchema)
+	computers := make(map[string]struct{})
+	for _, declaration := range index.Definitions {
+		if declaration.Computer != nil {
+			computers[declaration.DeclaredID] = struct{}{}
+		}
+	}
+	for _, declaration := range index.Definitions {
+		if declaration.Agent != nil {
+			if _, found := computers[declaration.Agent.ComputerDefinitionID]; !found {
+				return errors.New("agent references an absent Computer")
 			}
-			declarations = append(declarations, ProgramDeclaration{
-				Kind: DeclarationKindTask, DeclaredID: input.DeclaredID, Slots: slots,
-			})
-		case definition.KindActor:
-			declarations = append(declarations, ProgramDeclaration{
-				Kind: DeclarationKindActor, DeclaredID: input.DeclaredID,
-				Slots: []DeclarationSlot{DeclarationSlotHandler},
-			})
 		}
 	}
-	return declarations
+
+	return nil
 }
 
 func validArchitecture(architecture definition.RuntimeArchitecture) bool {
 	return architecture == definition.ArchitectureX8664
-}
-
-func ValidateDeclaration(declaration ProgramDeclaration) error {
-	if !definition.ValidDeclaredID(declaration.DeclaredID) {
-		return fmt.Errorf("declaredId %q is outside the exact ASCII ID domain", declaration.DeclaredID)
-	}
-	switch declaration.Kind {
-	case DeclarationKindTask:
-		if !slices.Equal(declaration.Slots, []DeclarationSlot{DeclarationSlotHandler}) &&
-			!slices.Equal(declaration.Slots, []DeclarationSlot{DeclarationSlotHandler, DeclarationSlotPayloadSchema}) {
-			return fmt.Errorf("task slots must be [handler] or [handler,payloadSchema]")
-		}
-	case DeclarationKindActor:
-		if !slices.Equal(declaration.Slots, []DeclarationSlot{DeclarationSlotHandler}) {
-			return fmt.Errorf("actor slots must be [handler]")
-		}
-	default:
-		return fmt.Errorf("unknown kind %q", declaration.Kind)
-	}
-	return nil
-}
-
-func CompareDeclarations(left, right ProgramDeclaration) int {
-	leftKind := declarationKindOrder(left.Kind)
-	rightKind := declarationKindOrder(right.Kind)
-	if leftKind < rightKind {
-		return -1
-	}
-	if leftKind > rightKind {
-		return 1
-	}
-	return bytes.Compare([]byte(left.DeclaredID), []byte(right.DeclaredID))
-}
-
-func declarationKindOrder(kind DeclarationKind) int {
-	switch kind {
-	case DeclarationKindTask:
-		return 0
-	case DeclarationKindActor:
-		return 1
-	default:
-		return 2
-	}
 }

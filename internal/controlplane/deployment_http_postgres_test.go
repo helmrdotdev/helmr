@@ -11,7 +11,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
@@ -68,7 +67,6 @@ func TestDeploymentHTTPPostgresSessionRoutes(t *testing.T) {
 		}
 	}
 	expectError(t, http.MethodGet, base+"/deployments/current", owner, http.StatusNotFound, "no_current_deployment")
-	expectError(t, http.MethodGet, base+"/tasks", owner, http.StatusNotFound, "no_current_deployment")
 	expectError(t, http.MethodPost, base+"/deployments/"+deploymentID.String()+"/promote", viewer, http.StatusForbidden, "forbidden")
 	expectError(t, http.MethodPost, base+"/deployments/"+uuid.NewV7().String()+"/promote", owner, http.StatusNotFound, "not_found")
 	expectDeployment(t, http.MethodPost, base+"/deployments/"+deploymentID.String()+"/promote")
@@ -86,21 +84,6 @@ func TestDeploymentHTTPPostgresSessionRoutes(t *testing.T) {
 		t.Fatalf("list = %d %s", list.Code, list.Body.String())
 	}
 
-	tasks := fixture.request(t, http.MethodGet, base+"/tasks", viewer, "")
-	var taskList api.ListTasksResponse
-	if err := json.Unmarshal(tasks.Body.Bytes(), &taskList); err != nil {
-		t.Fatal(err)
-	}
-	if tasks.Code != http.StatusOK || taskList.DeploymentID != deploymentID.String() ||
-		len(taskList.Tasks) != 1 || taskList.Tasks[0].ID != "daily-report" {
-		t.Fatalf("tasks = %d %s", tasks.Code, tasks.Body.String())
-	}
-	task := fixture.request(t, http.MethodGet, base+"/tasks/daily-report?deployment_id="+deploymentID.String(), viewer, "")
-	if task.Code != http.StatusOK {
-		t.Fatalf("task = %d %s", task.Code, task.Body.String())
-	}
-	expectError(t, http.MethodGet, base+"/tasks/missing", viewer, http.StatusNotFound, "not_found")
-	expectError(t, http.MethodGet, base+"/tasks?deployment_id="+uuid.NewV7().String(), viewer, http.StatusNotFound, "deployment_not_found")
 }
 
 func TestDeploymentHTTPPostgresAPIKeyRoutes(t *testing.T) {
@@ -122,7 +105,7 @@ func TestDeploymentHTTPPostgresAPIKeyRoutes(t *testing.T) {
 		}
 		return issued.Raw
 	}
-	reader, deployer := issue(auth.PermissionRunsRead), issue(auth.PermissionTasksDeploy)
+	reader, deployer, unrelated := issue(auth.PermissionSessionsRead), issue(auth.PermissionDeploymentsWrite), issue(auth.PermissionSessionsSend)
 
 	promote := "/v1/deployments/" + deploymentID.String() + "/promote"
 	if response := fixture.request(t, http.MethodPost, promote, reader, ""); response.Code != http.StatusForbidden {
@@ -139,8 +122,11 @@ func TestDeploymentHTTPPostgresAPIKeyRoutes(t *testing.T) {
 	if current.Code != http.StatusOK || body.ID != deploymentID.String() {
 		t.Fatalf("current = %d %s", current.Code, current.Body.String())
 	}
-	if response := fixture.request(t, http.MethodGet, "/v1/deployments/current", deployer, ""); response.Code != http.StatusForbidden {
+	if response := fixture.request(t, http.MethodGet, "/v1/deployments/current", deployer, ""); response.Code != http.StatusOK {
 		t.Fatalf("deploy key current deployment = %d %s", response.Code, response.Body.String())
+	}
+	if response := fixture.request(t, http.MethodGet, "/v1/deployments/current", unrelated, ""); response.Code != http.StatusForbidden {
+		t.Fatalf("unrelated grant read deployment = %d %s", response.Code, response.Body.String())
 	}
 }
 
@@ -157,7 +143,8 @@ func deploymentHTTPEnvironment(t *testing.T, fixture httpPostgresFixture, orgID 
 		t.Fatal(err)
 	}
 	if _, err := fixture.queries.CreateEnvironment(t.Context(), db.CreateEnvironmentParams{
-		ID: pgvalue.UUID(environmentID), OrgID: pgvalue.UUID(orgID), ProjectID: pgvalue.UUID(projectID),
+		HistoryRetentionMode: "until_environment_deletion",
+		ID:                   pgvalue.UUID(environmentID), OrgID: pgvalue.UUID(orgID), ProjectID: pgvalue.UUID(projectID),
 		Slug: "staging", Name: "Staging", ColorHex: "#315FCE", IsDefault: true,
 	}); err != nil {
 		t.Fatal(err)
@@ -165,42 +152,15 @@ func deploymentHTTPEnvironment(t *testing.T, fixture httpPostgresFixture, orgID 
 	return projectID, environmentID
 }
 
-// deploymentHTTPDeployment records a finalized Deployment declaring one Task.
+// deploymentHTTPDeployment records a finalized Deployment with an Agent and Computer.
 func deploymentHTTPDeployment(t *testing.T, fixture httpPostgresFixture, orgID, projectID, environmentID uuid.UUID) uuid.UUID {
 	t.Helper()
-	deploymentID, programID := uuid.NewV7(), uuid.NewV7()
-	bundleDigest := "sha256:" + fmt.Sprintf("%064x", 1)
-	programDigest := "sha256:" + fmt.Sprintf("%064x", 2)
-	runtimeDigest := "sha256:" + fmt.Sprintf("%064x", 3)
-	dbtest.MustExec(t, t.Context(), fixture.pool, `
-		WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1), ($3, 1) ON CONFLICT DO NOTHING)
-		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
-		VALUES ($1, $2, 1, 'application/vnd.helmr.deployment-bundle.v0+json'),
-		       ($1, $3, 1, 'application/vnd.helmr.deployment-program.v0+squashfs')
-	`, orgID, bundleDigest, programDigest)
-	dbtest.MustExec(t, t.Context(), fixture.pool, `
-		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
-		VALUES ($1, $2, $3, $4, $5, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs')
-	`, programID, orgID, projectID, environmentID, programDigest)
-	dbtest.MustExec(t, t.Context(), fixture.pool, `
-		INSERT INTO deployments (
-		    id, org_id, project_id, environment_id, version, bundle_digest,
-		    runtime_artifact_digest, program_artifact_id, program_index_digest, queue_config
-		) VALUES (
-		    $1, $2, $3, $4, 'test', $5, $6, $7, decode(repeat('03', 32), 'hex'),
-		    '{"formatVersion":0,"queues":[{"name":"default"}]}'::jsonb
-		)
-	`, deploymentID, orgID, projectID, environmentID, bundleDigest, runtimeDigest, programID)
-	manifest, digest, err := definition.CanonicalManifestAndDigest([]byte(
-		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`,
-	))
-	if err != nil {
-		t.Fatal(err)
-	}
-	dbtest.MustExec(t, t.Context(), fixture.pool, `
-		INSERT INTO deployment_definitions (
-		    id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest
-		) VALUES ($1, $2, $3, 'task', 'daily-report', 0, $4::jsonb, $5)
-	`, uuid.NewV7(), environmentID, deploymentID, manifest, digest[:])
+	deploymentID, agentID, specID := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
+	digest := "sha256:" + fmt.Sprintf("%064x", 1)
+	dbtest.MustExec(t, t.Context(), fixture.pool, `INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$2,$3)`, environmentID, deploymentID, digest)
+	dbtest.MustExec(t, t.Context(), fixture.pool, `INSERT INTO computer_preparation_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$2,$3,'{}','{}')`, environmentID, specID, digest)
+	dbtest.MustExec(t, t.Context(), fixture.pool, `INSERT INTO computer_definitions(environment_id,deployment_id,definition_key,preparation_spec_id,resources) VALUES($1,$2,'report-computer',$3,'{}')`, environmentID, deploymentID, specID)
+	dbtest.MustExec(t, t.Context(), fixture.pool, `INSERT INTO agents(environment_id,id,name) VALUES($1,$2,'daily-report')`, environmentID, agentID)
+	dbtest.MustExec(t, t.Context(), fixture.pool, `INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,definition_key,computer_definition_key,setup,triggers) VALUES($1,$2,$3,'daily-report','report-computer',false,'{}')`, environmentID, agentID, deploymentID)
 	return deploymentID
 }

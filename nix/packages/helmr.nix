@@ -33,7 +33,10 @@ let
   );
   moduleSource = lib.fileset.toSource {
     root = ../..;
-    fileset = moduleFiles;
+    fileset = lib.fileset.unions [
+      moduleFiles
+      ../../cmd/control-plane
+    ];
   };
 in
 buildGoModule {
@@ -45,11 +48,10 @@ buildGoModule {
     fileset = runtimeFiles;
   };
 
-  vendorHash = "sha256-a80MJ/MA0uh8tI4a7+DyNv8Oq8gUEreJ2NfZud3eztU=";
+  vendorHash = "sha256-WE0xPhpjxQ7nPoIz88MdT5NP+BknG3AChwjNhIOw8Bw=";
   overrideModAttrs = _: {
-    # Contract checks reuse goModules while compiling package tests. Resolve
-    # dependencies from the complete module source even though the shipped CLI
-    # source intentionally excludes test files.
+    # Contract checks reuse goModules for CLI and Control Plane package tests.
+    # Include their test dependencies while excluding tests from the shipped CLI.
     src = moduleSource;
   };
   subPackages = [ "cmd/helmr" ];

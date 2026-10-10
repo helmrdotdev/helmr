@@ -55,6 +55,23 @@ func LoadWorker() (Worker, error) {
 		return cfg, errors.New("WORKER_ENROLLMENT_TOKEN_FILE is required")
 	}
 	var err error
+	for _, limit := range []struct {
+		name   string
+		target *int64
+	}{
+		{"WORKER_LOG_CHUNK_BYTES", &cfg.LogChunkBytes}, {"WORKER_LOG_BUFFER_BYTES", &cfg.LogBufferBytes}, {"WORKER_LOG_BUFFER_RECORDS", &cfg.LogBufferRecords},
+	} {
+		*limit.target, err = envInt64(limit.name, 0)
+		if err != nil {
+			return cfg, err
+		}
+		if *limit.target <= 0 {
+			return cfg, fmt.Errorf("%s must be explicitly positive", limit.name)
+		}
+	}
+	if cfg.LogChunkBytes > 16*1024*1024 || cfg.LogBufferBytes < cfg.LogChunkBytes || cfg.LogBufferRecords > math.MaxInt32 {
+		return cfg, errors.New("WORKER_LOG bounds exceed the transport or have inconsistent buffer limits")
+	}
 	if cfg.ComputerStagingMiB, err = envInt64("WORKER_COMPUTER_STAGING_MIB", cfg.ComputerStagingMiB); err != nil {
 		return cfg, err
 	}
@@ -115,12 +132,6 @@ func LoadWorker() (Worker, error) {
 	if cfg.WorkerDiskReserveMiB <= 0 {
 		return cfg, errors.New("WORKER_DISK_RESERVE_MIB must be positive")
 	}
-	if cfg.ArtifactCacheMaxMiB, err = envInt64("WORKER_ARTIFACT_CACHE_MAX_MIB", cfg.ArtifactCacheMaxMiB); err != nil {
-		return cfg, err
-	}
-	if cfg.ArtifactCacheMaxMiB < 0 {
-		return cfg, errors.New("WORKER_ARTIFACT_CACHE_MAX_MIB must be non-negative")
-	}
 	var workerExecutionSlots int
 	if workerExecutionSlots, err = envInt("WORKER_EXECUTION_SLOTS", int(cfg.WorkerExecutionSlots)); err != nil {
 		return cfg, err
@@ -161,9 +172,6 @@ func LoadWorker() (Worker, error) {
 	}
 	if cfg.PlatformStoreURI == "" {
 		return cfg, errors.New("PLATFORM_STORE_URI is required")
-	}
-	if cfg.ArtifactCacheMaxMiB > math.MaxInt64/(1024*1024) {
-		return cfg, errors.New("worker cache capacity exceeds the supported byte range")
 	}
 	cfg.CheckpointKey, err = rootKey("CHECKPOINT_ENCRYPTION_KEY")
 	if err != nil {

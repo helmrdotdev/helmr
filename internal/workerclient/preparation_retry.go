@@ -14,7 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 )
 
-// preparationRequest replays only immutable Instance preparation requests. It
+// preparationRequest replays only immutable allocation preparation requests. It
 // encodes once, refreshes rejected credentials once, and makes at most three
 // transient attempts within the caller's preparation deadline. Each response
 // is fully read and closed before retry; sensitive failures retain no details.
@@ -23,6 +23,7 @@ func (c *Client) preparationRequest(ctx context.Context, path string, input any,
 	if err != nil {
 		return nil, fmt.Errorf("encode preparation request: %w", err)
 	}
+	defer clear(payload)
 	refreshed := false
 	failures := 0
 	for {
@@ -96,18 +97,4 @@ func (c *Client) preparationRequest(ctx context.Context, path string, input any,
 		case <-timer.C:
 		}
 	}
-}
-
-func (c *Client) postPreparationJSON(ctx context.Context, path string, input any, out any) error {
-	body, err := c.preparationRequest(ctx, path, input, false, 0)
-	if err != nil {
-		return err
-	}
-	if out == nil {
-		return nil
-	}
-	if err := json.NewDecoder(bytes.NewReader(body)).Decode(out); err != nil {
-		return fmt.Errorf("decode response: %w", err)
-	}
-	return nil
 }

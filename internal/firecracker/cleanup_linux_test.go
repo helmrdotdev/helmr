@@ -66,3 +66,75 @@ func TestCleanupRemovesExactInstanceOwnerAndMarkerLast(t *testing.T) {
 		}
 	}
 }
+
+func TestCleanupInventoryAndStopFailureRetainCustody(t *testing.T) {
+	for _, failure := range []string{"inventory", "stop", "rescan", "remaining", "success"} {
+		t.Run(failure, func(t *testing.T) {
+			c, owner, jail, device := cleanupProcessFixture(t)
+			retained := c.lockComputerOwner(owner)
+			defer retained.mu.Unlock()
+			calls, stops := 0, 0
+			failed := errors.New("process proof unavailable")
+			inventory := func() ([]int, error) {
+				calls++
+				if _, err := os.Stat(jail); err != nil {
+					t.Fatal("jail removed before process absence", err)
+				}
+				if device.closes != 0 {
+					t.Fatal("device released before process absence")
+				}
+				if calls == 1 {
+					if failure == "inventory" {
+						return nil, failed
+					}
+					return []int{42}, nil
+				}
+				if stops != 1 {
+					t.Fatalf("rescan preceded stop: %d", stops)
+				}
+				if failure == "rescan" {
+					return nil, failed
+				}
+				if failure == "remaining" {
+					return []int{42}, nil
+				}
+				return nil, nil
+			}
+			stop := func(context.Context, int) error {
+				stops++
+				if failure == "stop" {
+					return failed
+				}
+				return nil
+			}
+			err := c.cleanupOwnedProcesses(t.Context(), owner, retained, inventory, stop)
+			if failure == "success" {
+				if err != nil || calls != 2 || stops != 1 || device.closes != 1 {
+					t.Fatalf("cleanup: %v calls=%d stops=%d closes=%d", err, calls, stops, device.closes)
+				}
+				return
+			}
+			var unproven *vm.CleanupUnprovenError
+			if !errors.As(err, &unproven) {
+				t.Fatalf("unproved cleanup accepted: %v", err)
+			}
+			if failure != "remaining" && !errors.Is(err, failed) {
+				t.Fatalf("lost error identity: %v", err)
+			}
+			if _, err := os.Stat(jail); err != nil {
+				t.Fatal("lost jail", err)
+			}
+			if err := validateOwnerMarker(filepath.Join(c.cfg.StateDir, owner.ID), owner); err != nil {
+				t.Fatal(err)
+			}
+			if device.closes != 0 {
+				t.Fatal("released without process proof")
+			}
+			select {
+			case <-device.excluded:
+				t.Fatal("false consumer exclusion")
+			default:
+			}
+		})
+	}
+}

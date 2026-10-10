@@ -1,4 +1,4 @@
-import type { ComputerRef } from "@helmr/sdk"
+import type { ClientComputerRef } from "@helmr/sdk"
 import { verify, assert, assertEqual, deadline, deleteComputer } from "../../support/context"
 import { hostObservation } from "../../support/host-observation"
 
@@ -6,7 +6,7 @@ import { hostObservation } from "../../support/host-observation"
 // seed is needed to measure conversion; an existing seed is recorded as adoption.
 await verify("computer-seed-reuse", async ({ client, marker, computer }) => {
   const samples: unknown[] = []
-  async function command(target: ComputerRef, suffix: string, script: string, value: string) {
+  async function command(target: ClientComputerRef, suffix: string, script: string, value: string) {
     const requestAt = performance.now()
     const ref = await client.computers.ref(target.id).exec({ command: ["sh", "-ceu", script], env: { VALUE: value },
       idempotencyKey: `${marker}:${suffix}`, timeout: "2m" }, { signal: deadline(900_000) })
@@ -36,19 +36,14 @@ await verify("computer-seed-reuse", async ({ client, marker, computer }) => {
   const secondPath = await hostObservation("computer-path", { computer_id: second.id })
   samples.push({ computerId: second.id, createAcceptanceMs: secondAcceptedMs,
     createToFirstWorkMs: secondWorkMs, ...secondCommand, path: secondPath })
-  // Immutable receipts survive periodic saves and initial-payload retirement.
-  // Equal canonical fingerprints bind the exact same root and launch config.
-  const firstInitial = firstPath.instances.filter((instance: any) => instance.initial_disk_version_id !== null)
-  const secondInitial = secondPath.instances.filter((instance: any) => instance.initial_disk_version_id !== null)
-  assert.equal(firstInitial.length, 1, "first initial receipt missing")
-  assert.equal(secondInitial.length, 1, "second initial receipt missing")
-  assert(/^[0-9a-f]{64}$/.test(firstInitial[0].initial_publication_fingerprint), "invalid initial fingerprint")
-  assertEqual(firstInitial[0].initial_publication_fingerprint, secondInitial[0].initial_publication_fingerprint,
-    "same seed was converted into separate roots")
-  assert(firstInitial[0].initial_disk_version_id !== secondInitial[0].initial_disk_version_id,
-    "Computers shared mutable version history")
-  assert(secondPath.instances.every((instance: any) => instance.seed_id === null),
-    "second Computer started another conversion")
+  // The immutable preparation receipt binds both Computers to the same root.
+  // Files written above and checked below prove their mutable disks are private.
+  assert(first.id !== second.id, "Computer identity was reused")
+  assert(typeof firstPath.computer.preparation_id === "string", "Preparation receipt missing")
+  assertEqual(firstPath.computer.preparation_id, secondPath.computer.preparation_id, "Same definition did not reuse preparation")
+  assert(/^[0-9a-f]{64}$/.test(firstPath.computer.initial_root_digest), "Invalid initial root digest")
+  assertEqual(firstPath.computer.initial_root_digest, secondPath.computer.initial_root_digest, "Computers used different prepared roots")
+  assertEqual(firstPath.computer.initial_root_id, secondPath.computer.initial_root_id, "Prepared root was duplicated")
   await command(first, "first-read", 'test "$(cat /workspace/seed-owner)" = "$VALUE"', `${marker}:first`)
   await deleteComputer(first, `delete:seed-first:${marker}`)
   await command(second, "surviving-read", 'test "$(cat /workspace/seed-owner)" = "$VALUE"', `${marker}:second`)

@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"sync"
-	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
@@ -29,23 +28,6 @@ func (unsupportedMachineStarts) Materialize(context.Context, vm.MaterializeReque
 // errTestLiveCapture is what test instances return when the machines admits them as
 // live-capture machines but a test never expects a Computer save to succeed.
 var errTestLiveCapture = errors.New("test instance does not capture a live Computer")
-
-type scriptedGuestStream struct {
-	read    *bytes.Reader
-	written bytes.Buffer
-}
-
-func (s *scriptedGuestStream) Read(p []byte) (int, error) {
-	return s.read.Read(p)
-}
-
-func (s *scriptedGuestStream) Write(p []byte) (int, error) {
-	return s.written.Write(p)
-}
-
-func (s *scriptedGuestStream) Close() error {
-	return nil
-}
 
 type fakeCAS struct {
 	mu        sync.Mutex
@@ -156,18 +138,13 @@ func (f *fakeCAS) Delete(context.Context, string) error {
 	return nil
 }
 
-func testCheckpointEncryptor(t *testing.T) *CheckpointEncryptor {
-	t.Helper()
-	encryptor, err := NewCheckpointEncryptor(bytes.Repeat([]byte{7}, 32))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return encryptor
-}
-
 // unusedCheckpoint implements the required machine capability for tests that
 // never capture. Calling it is a test fixture error, not a production fallback.
 type unusedCheckpoint struct{}
+
+func (unusedCheckpoint) WithRunningGuestControl(context.Context, vm.GuestControlStage, func(context.Context) error) error {
+	return errors.New("unexpected guest control")
+}
 
 func (unusedCheckpoint) SnapshotLimits() (vm.SnapshotLimits, error) {
 	return vm.SnapshotLimits{}, errors.New("unexpected checkpoint limits")

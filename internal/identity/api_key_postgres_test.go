@@ -32,7 +32,7 @@ func newAPIKeyFixture(t *testing.T) apiKeyFixture {
 	projectID, environmentID := uuid.NewV7(), uuid.NewV7()
 	fixture.exec(t, `INSERT INTO regions (id, display_name) VALUES ('api-keys', 'API keys')`)
 	fixture.exec(t, `INSERT INTO projects (id, org_id, default_region_id, slug, name, is_default) VALUES ($1, $2, 'api-keys', 'api-keys', 'API keys', true)`, projectID, orgID)
-	fixture.exec(t, `INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default) VALUES ($1, $2, $3, 'production', 'Production', '#315FCE', true)`, environmentID, orgID, projectID)
+	fixture.exec(t, `INSERT INTO environments (history_retention_mode,id, org_id, project_id, slug, name, color_hex, is_default) VALUES ('until_environment_deletion',$1, $2, $3, 'production', 'Production', '#315FCE', true)`, environmentID, orgID, projectID)
 	return apiKeyFixture{
 		identityFixture: fixture,
 		owner:           auth.Principal{OrgID: orgID, UserID: userID, Kind: auth.PrincipalKindSession, Role: auth.RoleOwner},
@@ -54,8 +54,8 @@ func TestAPIKeyPostgresAuthenticatesActiveKeys(t *testing.T) {
 	ctx := t.Context()
 	store := &apiKeyCountingQuerier{Querier: fixture.queries}
 	authenticator := NewAPIKeyAuthenticator(store)
-	issued := fixture.issue(t, "  deploy  ", auth.PermissionRunsRead, auth.PermissionTasksDeploy)
-	if issued.Record.Name != "deploy" || issued.Raw == "" || !slices.Equal(issued.Record.Permissions, []string{"runs.read", "tasks.deploy"}) {
+	issued := fixture.issue(t, "  deploy  ", auth.PermissionSessionsRead, auth.PermissionDeploymentsWrite)
+	if issued.Record.Name != "deploy" || issued.Raw == "" || !slices.Equal(issued.Record.Permissions, []string{"sessions.read", "deployments.write"}) {
 		t.Fatalf("issued = %+v", issued.Record)
 	}
 
@@ -67,7 +67,7 @@ func TestAPIKeyPostgresAuthenticatesActiveKeys(t *testing.T) {
 		OrgID: fixture.owner.OrgID, APIKeyID: pgvalue.MustUUIDValue(issued.Record.ID),
 		ProjectID: fixture.scope.ProjectID, EnvironmentID: fixture.scope.EnvironmentID,
 		Kind: auth.PrincipalKindAPIKey, Role: auth.RoleOwner,
-		Permissions: []auth.Permission{auth.PermissionRunsRead, auth.PermissionTasksDeploy},
+		Permissions: []auth.Permission{auth.PermissionSessionsRead, auth.PermissionDeploymentsWrite},
 	}
 	if !reflect.DeepEqual(principal, want) {
 		t.Fatalf("principal = %+v, want %+v", principal, want)
@@ -85,7 +85,7 @@ func TestAPIKeyPostgresAuthenticatesActiveKeys(t *testing.T) {
 	if err := fixture.pool.QueryRow(ctx, `SELECT last_used_at FROM api_keys WHERE id = $1`, issued.Record.ID).Scan(&revokedTouchedAt); err != nil || revokedTouchedAt == nil || !revokedTouchedAt.Equal(*touchedAt) {
 		t.Fatalf("revoked key last_used_at = %v, want %v, err = %v", revokedTouchedAt, touchedAt, err)
 	}
-	expired := fixture.issue(t, "expired", auth.PermissionRunsRead)
+	expired := fixture.issue(t, "expired", auth.PermissionSessionsRead)
 	fixture.expire(t, "api_keys", expired.Record.ID)
 	if _, err := authenticator.Authenticate(ctx, expired.Raw); !errors.Is(err, auth.ErrUnauthenticated) || store.reset() != 1 {
 		t.Fatalf("expired key error = %v, want one statement", err)
@@ -104,8 +104,8 @@ func TestAPIKeyPostgresAuthenticatesActiveKeys(t *testing.T) {
 func TestAPIKeyPostgresReplacementIsAtomic(t *testing.T) {
 	fixture := newAPIKeyFixture(t)
 	ctx := t.Context()
-	original := fixture.issue(t, "replacement", auth.PermissionRunsRead)
-	replacement := fixture.issue(t, "replacement", auth.PermissionRunsRead, auth.PermissionRunsCreate)
+	original := fixture.issue(t, "replacement", auth.PermissionSessionsRead)
+	replacement := fixture.issue(t, "replacement", auth.PermissionSessionsRead, auth.PermissionAgentsStart)
 	var originalRevoked bool
 	if err := fixture.pool.QueryRow(ctx, `SELECT revoked_at IS NOT NULL FROM api_keys WHERE id = $1`, original.Record.ID).Scan(&originalRevoked); err != nil || !originalRevoked {
 		t.Fatalf("original revoked = %t, err = %v", originalRevoked, err)
@@ -122,7 +122,7 @@ func TestAPIKeyPostgresReplacementIsAtomic(t *testing.T) {
 		$$`)
 	fixture.exec(t, `CREATE TRIGGER reject_replacement_api_key BEFORE INSERT ON api_keys FOR EACH ROW EXECUTE FUNCTION reject_replacement_api_key()`)
 	store := &apiKeyCountingQuerier{Querier: fixture.queries}
-	if _, err := IssueAPIKey(ctx, store, fixture.owner, fixture.scope, APIKeyInput{Name: "replacement", Permissions: []auth.Permission{auth.PermissionRunsRead}}); err == nil || store.reset() != 1 {
+	if _, err := IssueAPIKey(ctx, store, fixture.owner, fixture.scope, APIKeyInput{Name: "replacement", Permissions: []auth.Permission{auth.PermissionSessionsRead}}); err == nil || store.reset() != 1 {
 		t.Fatalf("failed replacement error = %v, want an error from one statement", err)
 	}
 	var activeID uuid.UUID
@@ -138,7 +138,7 @@ func TestAPIKeyPostgresListsAndRevokesWithinEnvironment(t *testing.T) {
 	ctx := t.Context()
 	rows := make([][]any, 0, 5)
 	for index := range 5 {
-		rows = append(rows, []any{uuid.NewV7(), fixture.owner.OrgID, uuid.MustParse(fixture.scope.ProjectID), uuid.MustParse(fixture.scope.EnvironmentID), fixture.owner.UserID, "owner", []string{"runs.read"}, fmt.Sprintf("key-%d", index), fmt.Sprintf("hlmr_%d", index), []byte(fmt.Sprintf("hash-%d", index))})
+		rows = append(rows, []any{uuid.NewV7(), fixture.owner.OrgID, uuid.MustParse(fixture.scope.ProjectID), uuid.MustParse(fixture.scope.EnvironmentID), fixture.owner.UserID, "owner", []string{"sessions.read"}, fmt.Sprintf("key-%d", index), fmt.Sprintf("hlmr_%d", index), []byte(fmt.Sprintf("hash-%d", index))})
 	}
 	if _, err := fixture.pool.CopyFrom(ctx, pgx.Identifier{"api_keys"},
 		[]string{"id", "org_id", "project_id", "environment_id", "created_by_user_id", "role", "permissions", "name", "key_prefix", "token_hash"}, pgx.CopyFromRows(rows)); err != nil {
@@ -149,9 +149,9 @@ func TestAPIKeyPostgresListsAndRevokesWithinEnvironment(t *testing.T) {
 	fixture.member(t, otherOrg, other.UserID, db.OrgMemberRoleOwner)
 	otherProjectID, otherEnvironmentID := uuid.NewV7(), uuid.NewV7()
 	fixture.exec(t, `INSERT INTO projects (id, org_id, default_region_id, slug, name, is_default) VALUES ($1, $2, 'api-keys', 'other', 'Other', true)`, otherProjectID, otherOrg)
-	fixture.exec(t, `INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default) VALUES ($1, $2, $3, 'production', 'Production', '#315FCE', true)`, otherEnvironmentID, otherOrg, otherProjectID)
+	fixture.exec(t, `INSERT INTO environments (history_retention_mode,id, org_id, project_id, slug, name, color_hex, is_default) VALUES ('until_environment_deletion',$1, $2, $3, 'production', 'Production', '#315FCE', true)`, otherEnvironmentID, otherOrg, otherProjectID)
 	otherScope := auth.Scope{OrgID: otherOrg, ProjectID: otherProjectID.String(), EnvironmentID: otherEnvironmentID.String()}
-	if _, err := IssueAPIKey(ctx, fixture.queries, other, otherScope, APIKeyInput{Name: "other-org", Permissions: []auth.Permission{auth.PermissionRunsRead}}); err != nil {
+	if _, err := IssueAPIKey(ctx, fixture.queries, other, otherScope, APIKeyInput{Name: "other-org", Permissions: []auth.Permission{auth.PermissionSessionsRead}}); err != nil {
 		t.Fatal(err)
 	}
 	if listed, _, err := ListAPIKeys(ctx, fixture.queries, other, fixture.scope, APIKeyFilterAll, 10, nil); err != nil || len(listed) != 0 {
@@ -190,8 +190,8 @@ func TestAPIKeyPostgresListsAndRevokesWithinEnvironment(t *testing.T) {
 
 	// Listing reports each key's stored permissions, including a key holding
 	// fewer than another.
-	full := fixture.issue(t, "full", auth.PermissionRunsRead, auth.PermissionTasksDeploy)
-	expired := fixture.issue(t, "expired", auth.PermissionRunsRead)
+	full := fixture.issue(t, "full", auth.PermissionSessionsRead, auth.PermissionDeploymentsWrite)
+	expired := fixture.issue(t, "expired", auth.PermissionSessionsRead)
 	fixture.expire(t, "api_keys", expired.Record.ID)
 	permissions := map[string][]string{}
 	all, _, err := ListAPIKeys(ctx, fixture.queries, fixture.owner, fixture.scope, APIKeyFilterAll, 20, nil)
@@ -202,7 +202,7 @@ func TestAPIKeyPostgresListsAndRevokesWithinEnvironment(t *testing.T) {
 		permissions[row.Name] = row.Permissions
 	}
 	if len(all) != 7 || permissions["other-org"] != nil || permissions[second[0].Name] == nil || permissions["expired"] == nil ||
-		!slices.Equal(permissions["full"], full.Record.Permissions) || !slices.Equal(permissions["key-0"], []string{"runs.read"}) {
+		!slices.Equal(permissions["full"], full.Record.Permissions) || !slices.Equal(permissions["key-0"], []string{"sessions.read"}) {
 		t.Fatalf("all list = %v", permissions)
 	}
 	expiredList, _, err := ListAPIKeys(ctx, fixture.queries, fixture.owner, fixture.scope, APIKeyFilterExpired, 10, nil)
@@ -217,7 +217,7 @@ func TestAPIKeyPostgresRequiresManagementAndValidInput(t *testing.T) {
 	for _, role := range []auth.Role{auth.RoleDeveloper, auth.RoleViewer} {
 		principal := fixture.owner
 		principal.Role = role
-		if _, err := IssueAPIKey(ctx, fixture.queries, principal, fixture.scope, APIKeyInput{Name: "blocked", Permissions: []auth.Permission{auth.PermissionRunsRead}}); !errors.Is(err, ErrAPIKeyManagementRequired) {
+		if _, err := IssueAPIKey(ctx, fixture.queries, principal, fixture.scope, APIKeyInput{Name: "blocked", Permissions: []auth.Permission{auth.PermissionSessionsRead}}); !errors.Is(err, ErrAPIKeyManagementRequired) {
 			t.Fatalf("%s issue error = %v", role, err)
 		}
 		if _, _, err := ListAPIKeys(ctx, fixture.queries, principal, fixture.scope, APIKeyFilterAll, 10, nil); !errors.Is(err, ErrAPIKeyManagementRequired) {
@@ -229,19 +229,19 @@ func TestAPIKeyPostgresRequiresManagementAndValidInput(t *testing.T) {
 	}
 	days, invalidDays := 90, 31
 	for _, input := range []APIKeyInput{
-		{Name: "", Permissions: []auth.Permission{auth.PermissionRunsRead}},
-		{Name: "bad\nname", Permissions: []auth.Permission{auth.PermissionRunsRead}},
-		{Name: string(make([]byte, 65)), Permissions: []auth.Permission{auth.PermissionRunsRead}},
+		{Name: "", Permissions: []auth.Permission{auth.PermissionSessionsRead}},
+		{Name: "bad\nname", Permissions: []auth.Permission{auth.PermissionSessionsRead}},
+		{Name: string(make([]byte, 65)), Permissions: []auth.Permission{auth.PermissionSessionsRead}},
 		{Name: "no permissions"},
 		{Name: "member management", Permissions: []auth.Permission{auth.PermissionMembersManage}},
-		{Name: "expiry", Permissions: []auth.Permission{auth.PermissionRunsRead}, ExpiresInDays: &invalidDays},
+		{Name: "expiry", Permissions: []auth.Permission{auth.PermissionSessionsRead}, ExpiresInDays: &invalidDays},
 	} {
 		var inputError InputError
 		if _, err := IssueAPIKey(ctx, fixture.queries, fixture.owner, fixture.scope, input); !errors.As(err, &inputError) {
 			t.Fatalf("input %+v error = %v", input, err)
 		}
 	}
-	expiring, err := IssueAPIKey(ctx, fixture.queries, fixture.owner, fixture.scope, APIKeyInput{Name: "expiring", Permissions: []auth.Permission{auth.PermissionRunsRead}, ExpiresInDays: &days})
+	expiring, err := IssueAPIKey(ctx, fixture.queries, fixture.owner, fixture.scope, APIKeyInput{Name: "expiring", Permissions: []auth.Permission{auth.PermissionSessionsRead}, ExpiresInDays: &days})
 	if err != nil || !expiring.Record.ExpiresAt.Valid || time.Until(expiring.Record.ExpiresAt.Time) < 89*24*time.Hour {
 		t.Fatalf("expiring key = %+v, err = %v", expiring.Record.ExpiresAt, err)
 	}

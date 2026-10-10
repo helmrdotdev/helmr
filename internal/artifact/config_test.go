@@ -17,12 +17,12 @@ func TestBuildConfigClosedCanonicalAuthority(t *testing.T) {
 	}
 	cloned := cloneBuildConfig(config)
 	before, _ := BuildConfigDigest(config)
-	config.Dirs[0] = "actors"
+	config.Dirs[0] = "agents"
 	after, _ := BuildConfigDigest(config)
 	if before == after || cloned.Dirs[0] != "tasks" {
 		t.Fatal("config binding or clone failed")
 	}
-	for _, value := range []string{`{}`, `{"dirs":null,"ignorePatterns":[]}`, `{"dirs":["tasks"],"ignorePatterns":null}`, `{"compilePackages":[],"dirs":["tasks"],"ignorePatterns":[]}`, `{"dirs":["../tasks"],"ignorePatterns":[]}`} {
+	for _, value := range []string{`{}`, `{"dirs":null,"ignorePatterns":[]}`, `{"dirs":["tasks"],"ignorePatterns":null}`, `{"assets":[],"dirs":["tasks"],"external":[],"ignorePatterns":[],"unexpectedOption":[]}`, `{"dirs":["../tasks"],"ignorePatterns":[]}`} {
 		if _, err := ParseBuildConfig([]byte(value)); err == nil {
 			t.Fatalf("accepted %s", value)
 		}

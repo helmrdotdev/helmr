@@ -3,7 +3,7 @@ package computerhost
 import (
 	"context"
 	"errors"
-	"fmt"
+
 	"os"
 	"path/filepath"
 	"strconv"
@@ -11,48 +11,12 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/disk"
-	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/reservation"
+
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func validateComputerPreparationSource(target workerapi.InstanceReconcileTarget) error {
-	if err := ids.Validate(target.ID); err != nil {
-		return fmt.Errorf("instance preparation identity: %w", err)
-	}
-	if target.WorkerEpoch <= 0 || target.DesiredVersion <= 0 {
-		return errors.New("instance preparation fence is required")
-	}
-	if err := ids.Validate(target.Source.ComputerID); err != nil {
-		return fmt.Errorf("computer identity: %w", err)
-	}
-	source := target.Source.Computer
-	if source == nil {
-		return errors.New("instance computer source is required")
-	}
-	if err := ids.Validate(source.VersionID); err != nil {
-		return fmt.Errorf("computer version: %w", err)
-	}
-	if source.LogicalBytes != disk.SeedCapacity || target.Source.ReservedDiskMiB != source.LogicalBytes/mebibyte {
-		return errors.New("computer capacity does not match instance reservation")
-	}
-	if source.Seed != nil {
-		if source.Seed.Profile != definition.ComputerSeedProfile || target.Source.Restore != nil {
-			return errors.New("invalid initializing computer source")
-		}
-		return (disk.SeedArtifact{Object: computerObject(source.Seed.Object), LogicalBytes: source.LogicalBytes}).Validate(source.LogicalBytes)
-	}
-	return nil // Continuation is resolved by the fenced source/key broker, never a disk artifact.
-}
-
 func computerObject(object workerapi.CASObject) cas.Descriptor {
 	return cas.Descriptor{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}
-}
-
-func computerStagingKey(id string, epoch int64) reservation.Key {
-	return reservation.Key{Kind: "computer-staging", ID: strings.TrimSpace(id), Epoch: epoch}
 }
 
 func (p *PreparedMachines) computerPreparationDirectory(id string, epoch int64) string {

@@ -4,195 +4,214 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io"
-	"os"
-	"path/filepath"
+	"net"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"google.golang.org/protobuf/proto"
 )
 
-func commandSpoolBytes(t *testing.T, spool *commandOutputSpool, stream string) []byte {
+func testCommandOutput(t *testing.T, limits diagnosticLimits) *commandOutputSpool {
+	t.Helper()
+	s, err := newCommandOutputSpool(limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.close)
+	return s
+}
+func commandSpoolBytes(t *testing.T, s *commandOutputSpool, stream string) []byte {
 	t.Helper()
 	var result []byte
-	var offset int64
 	for {
-		chunk, next, _, err := spool.read(offset)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if chunk == nil {
+		r, ok := s.pipes[stream].peek()
+		if !ok {
 			return result
 		}
-		if chunk.GetStream() == stream {
-			result = append(result, chunk.GetContent()...)
+		result = append(result, r.Data...)
+		if err := s.pipes[stream].acknowledge(r.Through); err != nil {
+			t.Fatal(err)
 		}
-		offset = next
+	}
+}
+func attachCommand(t *testing.T, e *computerBasicExec) (net.Conn, <-chan error) {
+	t.Helper()
+	host, guest := net.Pipe()
+	_ = host.SetDeadline(time.Now().Add(5 * time.Second))
+	t.Cleanup(func() { host.Close() })
+	done := make(chan error, 1)
+	go func() { done <- e.streamOutput(t.Context(), guest) }()
+	return host, done
+}
+func readCommandEvent(t *testing.T, c net.Conn) *computerv0.ComputerBasicExecEvent {
+	t.Helper()
+	event := new(computerv0.ComputerBasicExecEvent)
+	if err := frameio.ReadProtoFrame(c, event); err != nil {
+		t.Fatal(err)
+	}
+	return event
+}
+func ackCommand(t *testing.T, c net.Conn, chunk *computerv0.CommandOutputChunk) {
+	t.Helper()
+	if err := frameio.WriteProtoFrame(c, &computerv0.CommandOutputAck{Stream: chunk.Stream, ThroughSequence: chunk.ThroughSequence, Disposition: "accepted"}); err != nil {
+		t.Fatal(err)
 	}
 }
 
-func TestCommandOutputStreamsBeforeExitAndReplaysAfterDisconnect(t *testing.T) {
-	t.Setenv("HELMR_GUESTD_TMPDIR", t.TempDir())
-	spool, err := newCommandOutputSpool()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer spool.close()
-	execution := &computerBasicExec{output: spool, done: make(chan struct{})}
-	reader, writer := io.Pipe()
-	firstDone := make(chan error, 1)
-	go func() { firstDone <- execution.streamOutput(t.Context(), writer); writer.Close() }()
+func TestCommandOutputReplaysOnlyUnacknowledgedHead(t *testing.T) {
+	s := testCommandOutput(t, diagnosticLimits{4, 8, 2})
+	e := &computerBasicExec{output: s, done: make(chan struct{})}
 	payload := []byte{0, 255, 10, 128}
-	if err := spool.append("stdout", payload); err != nil {
+	if err := s.append("stdout", payload); err != nil {
 		t.Fatal(err)
 	}
-	var first computerv0.ComputerBasicExecEvent
-	if err := frameio.ReadProtoFrame(reader, &first); err != nil {
+	c, done := attachCommand(t, e)
+	first := readCommandEvent(t, c)
+	c.Close()
+	if err := <-done; err == nil {
+		t.Fatal("disconnect succeeded")
+	}
+	c, done = attachCommand(t, e)
+	replay := readCommandEvent(t, c)
+	if !proto.Equal(first, replay) {
+		t.Fatalf("head changed %v / %v", first, replay)
+	}
+	ackCommand(t, c, replay.GetOutput())
+	// Once acknowledged, the successor is retained across the next disconnect.
+	if err := s.append("stdout", []byte("next")); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(first.GetOutput().GetContent(), payload) {
-		t.Fatal(&first)
+	next := readCommandEvent(t, c)
+	if next.GetOutput().Sequence != 2 {
+		t.Fatal(next)
 	}
-	// Disconnect after receiving a chunk, before process exit or acknowledgement.
-	reader.Close()
-	if err := spool.append("stderr", []byte("last")); err != nil {
+	c.Close()
+	<-done
+	c, done = attachCommand(t, e)
+	again := readCommandEvent(t, c)
+	if !proto.Equal(next, again) {
+		t.Fatal("successor replay changed")
+	}
+	ackCommand(t, c, again.GetOutput())
+	c.Close()
+	<-done
+}
+
+func TestCommandOutputTerminalIndependentOfPendingPipes(t *testing.T) {
+	s := testCommandOutput(t, diagnosticLimits{4, 4, 1})
+	e := &computerBasicExec{output: s, done: make(chan struct{})}
+	for _, stream := range []string{"stdout", "stderr"} {
+		if err := s.append(stream, []byte("data")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c, done := attachCommand(t, e)
+	first := readCommandEvent(t, c)
+	second := readCommandEvent(t, c)
+	if first.GetOutput().Stream == second.GetOutput().Stream {
+		t.Fatal("peer pipe starved")
+	}
+	s.finish(true)
+	e.result = &computerv0.ComputerBasicExecResult{Outcome: "exited", Stdout: s.boundaries["stdout"], Stderr: s.boundaries["stderr"]}
+	close(e.done)
+	terminal := readCommandEvent(t, c)
+	if terminal.GetResult().Outcome != "exited" {
+		t.Fatal("pending output hid terminal")
+	}
+	if s.settled() {
+		t.Fatal("unacknowledged pipes settled")
+	}
+	ackCommand(t, c, first.GetOutput())
+	ackCommand(t, c, second.GetOutput())
+	for range 2 {
+		end := readCommandEvent(t, c).GetOutput()
+		if end.Kind != "end" || !end.Complete {
+			t.Fatal(end)
+		}
+		ackCommand(t, c, end)
+	}
+	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	execution.result = &computerv0.ComputerBasicExecResult{Outcome: "exited", ExitCode: 7}
-	close(execution.done)
-	if err := <-firstDone; err == nil {
-		t.Fatal("disconnected stream succeeded")
-	}
-	var replay bytes.Buffer
-	if err := execution.streamOutput(t.Context(), &replay); err != nil {
-		t.Fatal(err)
-	}
-	var got computerv0.ComputerBasicExecEvent
-	if err := frameio.ReadProtoFrame(&replay, &got); err != nil {
-		t.Fatal(err)
-	}
-	if !proto.Equal(&first, &got) {
-		t.Fatalf("replay changed: %v / %v", &first, &got)
-	}
-	if err := frameio.ReadProtoFrame(&replay, &got); err != nil {
-		t.Fatal(err)
-	}
-	if got.GetOutput().GetStream() != "stderr" || got.GetOutput().GetSequence() != 0 {
-		t.Fatal(&got)
-	}
-	if err := frameio.ReadProtoFrame(&replay, &got); err != nil {
-		t.Fatal(err)
-	}
-	if got.GetResult().GetExitCode() != 7 || replay.Len() != 0 {
-		t.Fatal(&got)
+	if !s.settled() {
+		t.Fatal("end ACKs not retained")
 	}
 }
 
-func TestCommandOutputConcurrentBinaryWriters(t *testing.T) {
-	t.Setenv("HELMR_GUESTD_TMPDIR", t.TempDir())
-	spool, err := newCommandOutputSpool()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer spool.close()
-	payload := bytes.Repeat([]byte{0, 255, 128, 10}, (5<<20)/4)
+func TestCommandOutputSaturationPreservesBinaryPrefixAndGap(t *testing.T) {
+	s := testCommandOutput(t, diagnosticLimits{4, 4, 1})
+	payload := []byte{0, 255, 128, 10}
 	var writers sync.WaitGroup
 	for _, stream := range []string{"stdout", "stderr"} {
 		writers.Go(func() {
-			writer := &commandOutputWriter{spool: spool, stream: stream, onError: func(err error) { t.Error(err) }}
-			if n, err := writer.Write(payload); err != nil || n != len(payload) {
-				t.Errorf("write %d: %v", n, err)
+			w := commandOutputWriter{spool: s, stream: stream}
+			if n, err := w.Write(append(append([]byte{}, payload...), bytes.Repeat([]byte("x"), 12)...)); err != nil || n != 16 {
+				t.Errorf("write %d %v", n, err)
 			}
 		})
 	}
 	writers.Wait()
+	s.finish(true)
 	for _, stream := range []string{"stdout", "stderr"} {
-		if !bytes.Equal(commandSpoolBytes(t, spool, stream), payload) {
-			t.Fatalf("lost %s bytes", stream)
+		p := s.pipes[stream]
+		r, _ := p.peek()
+		if !bytes.Equal(r.Data, payload) {
+			t.Fatal(r)
 		}
-	}
-	next := map[string]uint64{"stdout": 0, "stderr": 0}
-	var offset int64
-	for {
-		chunk, end, _, err := spool.read(offset)
-		if err != nil {
-			t.Fatal(err)
+		_ = p.acknowledge(r.Through)
+		gap, _ := p.peek()
+		if gap.Kind != diagnosticGap || gap.Sequence != 2 || gap.Through != 4 || gap.DroppedBytes != 12 {
+			t.Fatal(gap)
 		}
-		if chunk == nil {
-			break
+		_ = p.acknowledge(gap.Through)
+		end, _ := p.peek()
+		if end.Kind != diagnosticEnd || end.Sequence != 5 || !end.Complete || !s.boundaries[stream].Gapped {
+			t.Fatal(end)
 		}
-		if chunk.Sequence != next[chunk.Stream] || len(chunk.Content) > commandOutputChunkBytes {
-			t.Fatal(chunk)
-		}
-		next[chunk.Stream]++
-		offset = end
 	}
 }
 
-func TestCommandOutputCaptureFailurePreservesPrefix(t *testing.T) {
-	t.Setenv("HELMR_GUESTD_TMPDIR", t.TempDir())
-	spool, err := newCommandOutputSpool()
-	if err != nil {
-		t.Fatal(err)
+func TestCommandOutputReplacementFencesOldAttachment(t *testing.T) {
+	s := testCommandOutput(t, diagnosticLimits{4, 4, 1})
+	e := &computerBasicExec{output: s, done: make(chan struct{})}
+	_ = s.append("stdout", []byte("head"))
+	old, oldDone := attachCommand(t, e)
+	first := readCommandEvent(t, old)
+	current, currentDone := attachCommand(t, e)
+	replay := readCommandEvent(t, current)
+	if !proto.Equal(first, replay) {
+		t.Fatal("replacement changed head")
 	}
-	defer spool.close()
-	if err := spool.append("stdout", []byte("prefix")); err != nil {
-		t.Fatal(err)
+	if err := <-oldDone; err == nil {
+		t.Fatal("old attachment succeeded")
 	}
-	// Force the actual file write to fail without changing the published frontier.
-	if err := spool.file.Close(); err != nil {
-		t.Fatal(err)
+	if err := frameio.WriteProtoFrame(old, &computerv0.CommandOutputAck{Stream: "stdout", ThroughSequence: 1, Disposition: "accepted"}); err == nil {
+		t.Fatal("old transport accepted ACK")
 	}
-	failed := false
-	writer := &commandOutputWriter{spool: spool, stream: "stdout", onError: func(error) { failed = true }}
-	if n, err := writer.Write([]byte("tail")); n != 0 || err == nil || !failed {
-		t.Fatalf("n=%d err=%v failure=%v", n, err, failed)
+	r, _ := s.pipes["stdout"].peek()
+	if r.Sequence != 1 {
+		t.Fatal("old ACK released head")
 	}
-	if spool.sequences["stdout"] != 1 {
-		t.Fatal("failed append advanced sequence")
-	}
+	ackCommand(t, current, replay.GetOutput())
+	current.Close()
+	<-currentDone
 }
 
 func TestCommandOutputObservationCancellation(t *testing.T) {
-	t.Setenv("HELMR_GUESTD_TMPDIR", t.TempDir())
-	spool, err := newCommandOutputSpool()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer spool.close()
-	execution := &computerBasicExec{output: spool, done: make(chan struct{})}
+	s := testCommandOutput(t, diagnosticLimits{16, 16, 1})
+	e := &computerBasicExec{output: s, done: make(chan struct{})}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := execution.streamOutput(ctx, io.Discard); !errors.Is(err, context.Canceled) {
+	host, guest := net.Pipe()
+	defer host.Close()
+	defer guest.Close()
+	if err := e.streamOutput(ctx, guest); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	if err := spool.append("stdout", []byte("still running")); err != nil {
+	if err := s.append("stdout", []byte("still running")); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestCommandOutputUsesPrivateScratchFile(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("HELMR_GUESTD_TMPDIR", root)
-	spool, err := newCommandOutputSpool()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer spool.close()
-	if filepath.Dir(spool.file.Name()) != root {
-		t.Fatalf("spool outside scratch: %s", spool.file.Name())
-	}
-	info, err := spool.file.Stat()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0600 {
-		t.Fatalf("permissions %v", info.Mode())
-	}
-	if _, err := os.Stat(spool.file.Name()); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("spool must be unlinked: %v", err)
 	}
 }

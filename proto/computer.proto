@@ -2,9 +2,18 @@ syntax = "proto3";
 
 package helmr.computer.v0;
 
-import "program.proto";
-
 option go_package = "github.com/helmrdotdev/helmr/internal/proto/computer/v0;computerv0";
+
+// The owned VM transport selects the single Computer filesystem. Acknowledgement
+// covers its retained descriptor; it does not attest remote publication.
+message FlushComputerRequest {
+  string operation_id = 1;
+}
+
+message FlushComputerResponse {
+  string operation_id = 1;
+  string error = 2;
+}
 
 message ComputerOperationEnvelope {
   string operation_id = 1;
@@ -19,152 +28,12 @@ message ComputerOperationEnvelope {
   string request_fingerprint = 10;
 }
 
-message ComputerArtifact {
-  string digest = 1;
-  string media_type = 2;
-  string encoding = 3;
-  uint64 size_bytes = 4;
-  uint32 entry_count = 5;
-}
-
-message ComputerAuthorityFence {
-  string worker_host_id = 1;
-  int64 worker_epoch = 2;
-  string computer_instance_id = 3;
-  string vm_platform_id = 4;
-  string computer_id = 5;
-  string run_id = 7;
-  uint32 attempt_number = 8;
-  string run_lease_id = 9;
-  int64 lease_sequence = 10;
-  int64 writer_generation = 13;
-  int64 expires_at_unix_nano = 15;
-  string base_computer_disk_version_id = 16;
-}
-
-message ComputerRunAuthority {
-  ComputerAuthorityFence fence = 1;
-  string channel_credential = 2;
-  string write_capability = 3;
-}
-
-message RenewComputerAuthorityRequest {
-  ComputerRunAuthority previous = 1;
-  int64 new_expires_at_unix_nano = 2;
-}
-
-message RenewComputerAuthorityResponse {
-  ComputerAuthorityFence fence = 1;
-  string error = 2;
-}
-
-message GrantProgramResumeRequest {
-  ComputerRunAuthority authority = 1;
-  string run_wait_id = 2;
-  string checkpoint_id = 3;
-}
-
-message GrantProgramResumeResponse {
-  ComputerAuthorityFence fence = 1;
-  helmr.program.v0.ResumeAttach attach = 2;
-}
-
-message CapturedRun {
-  string run_id = 1;
-  uint32 attempt_number = 2;
-  string run_wait_id = 3;
-  string run_lease_id = 4;
-  string correlation_id = 5;
-}
-
-message ComputerRestoreIdentity {
-  string computer_id = 1;
-  string source_computer_instance_id = 2;
-  int64 writer_generation = 3;
-  string checkpoint_id = 4;
-  repeated CapturedRun runs = 5;
-}
-
-// One request seals and freezes the entire admitted set before VM capture.
-message ComputerCaptureRun {
-  string run_id = 1;
-  uint32 attempt_number = 2;
-  string run_wait_id = 3;
-  string run_lease_id = 4;
-}
-
-message FreezeComputerRequest {
-  string computer_id = 1;
-  string computer_instance_id = 2;
-  int64 writer_generation = 3;
-  string checkpoint_id = 4;
-  int64 desired_version = 5;
-  int64 membership_revision = 6;
-  repeated ComputerCaptureRun runs = 7;
-}
-
-message FreezeComputerResponse {
-  ComputerRestoreIdentity identity = 1;
-  int64 desired_version = 2;
-  int64 membership_revision = 3;
-}
-
-// Installation replaces expired guest grants only for the same source capture.
-// Activation follows restoration of host-to-guest grant renewal and waits for
-// every captured member to thaw or finish its ordinary cancellation path.
-message ComputerCaptureAbortMember {
-  ComputerCaptureRun member = 1;
-  ComputerRunAuthority authority = 2;
-  bool cancelled = 3;
-  uint64 attach_sequence = 4;
-}
-
-message ComputerCaptureAbortRequest {
-  FreezeComputerRequest capture = 1;
-  int64 abort_desired_version = 2;
-  repeated ComputerCaptureAbortMember members = 3;
-  bool activate = 4;
-}
-
-message ComputerCaptureAbortResponse {
-  string checkpoint_id = 1;
-  int64 abort_desired_version = 2;
-  bool activated = 3;
-  // Definitive completed cancellation cleanup failure; the source cannot thaw.
-  bool cleanup_failed = 4;
-}
-
-// A fresh transport for an unchanged source member, authorized by abort installation.
-message ComputerCaptureAbortAttachRequest {
-  string checkpoint_id = 1;
-  int64 abort_desired_version = 2;
-  ComputerCaptureRun member = 3;
-  ComputerRunAuthority authority = 4;
-  uint64 attach_sequence = 5;
-}
-
-message ComputerCaptureAbortAttachResponse {
-  string checkpoint_id = 1;
-  int64 abort_desired_version = 2;
-  ComputerCaptureRun member = 3;
-  uint64 attach_sequence = 4;
-}
-
-message VerifyComputerRestoreRequest {
-  ComputerRestoreIdentity identity = 1;
-}
-
-message VerifyComputerRestoreResponse {
-  ComputerRestoreIdentity identity = 1;
-}
 
 message MaterializeComputerRequest {
+  reserved 4, 5, 7;
   ComputerOperationEnvelope envelope = 1;
   string mount_path = 2;
   ComputerMountTarget target = 3;
-  ComputerArtifact computer_image = 4;
-  bool use_prepared_runtime = 5;
-  string restored_checkpoint_id = 7;
 }
 
 message ComputerMountPhase {
@@ -192,12 +61,12 @@ message RuntimeImageConfig {
 }
 
 message PrepareComputerRuntimeRequest {
+  reserved 3;
   string computer_id = 5;
   int64 writer_generation = 6;
   string computer_instance_id = 1;
   string mount_path = 2;
-  ComputerArtifact computer_image = 3;
-  // When present, the substrate is already mounted and no image frame follows.
+  // The substrate is already mounted; the request supplies its admitted settings.
   RuntimeImageConfig mounted_image_config = 4;
 }
 
@@ -207,22 +76,10 @@ message PrepareComputerRuntimeResponse {
   repeated ComputerMountPhase phases = 3;
 }
 
-message HeartbeatComputerRequest {
-  ComputerOperationEnvelope envelope = 1;
-  string status = 2;
-  uint64 dirty_generation = 3;
-}
-
-message HeartbeatComputerResponse {
-  string status = 1;
-  bool stop_requested = 2;
-}
-
 // The host has already materialized the retained Computer disk version.
 message ComputerMountTarget {
   string base_computer_disk_version_id = 1;
 }
-
 
 message ComputerCommandAuthority {
   string operation_id = 1;
@@ -241,6 +98,8 @@ message ComputerBasicExecRequest {
   bytes stdin = 4;
   map<string,string> protected_env = 5;
   bytes proxy_ca = 6;
+  CommandLogLimits log_limits = 7;
+  bool tail_only = 8;
 }
 
 message ComputerBasicExecResult {
@@ -248,6 +107,8 @@ message ComputerBasicExecResult {
   int32 exit_code = 2;
   string outcome = 5;
   string request_fingerprint = 6;
+  CommandOutputBoundary stdout = 7;
+  CommandOutputBoundary stderr = 8;
 }
 
 message CommandOutputChunk {
@@ -255,6 +116,29 @@ message CommandOutputChunk {
   uint64 sequence = 2;
   int64 observed_at_unix_nano = 3;
   bytes content = 4;
+  string kind = 5;
+  uint64 through_sequence = 6;
+  int64 dropped_bytes = 7;
+  bool complete = 8;
+}
+
+message CommandLogLimits {
+  int32 chunk_bytes = 1;
+  int64 buffer_bytes = 2;
+  int32 buffer_records = 3;
+}
+
+message CommandOutputBoundary {
+  uint64 through_sequence = 1;
+  bool complete = 2;
+  bool gapped = 3;
+}
+
+// Only a committed durable receipt or explicit expiry can release a head.
+message CommandOutputAck {
+  string stream = 1;
+  uint64 through_sequence = 2;
+  string disposition = 3;
 }
 
 message ComputerBasicExecEvent {
@@ -272,6 +156,7 @@ message ComputerSecretDelivery {
 
 message ComputerCommandReleaseRequest {
  ComputerCommandAuthority authority = 1;
+ bool output_fenced = 2;
 }
 message ComputerCommandReleaseResponse {
  bool released = 1;
@@ -286,28 +171,45 @@ message ComputerCommandCancelResponse {
  string error = 2;
 }
 
-// Installs the entire restored membership while admission remains sealed.
-message ComputerRestoreInstallation {
-  ComputerOperationEnvelope envelope = 1;
-  string checkpoint_id = 2;
-  int64 desired_version = 3;
-  repeated ComputerRunAuthority grants = 4;
+// One private preparation owns the mounted image until capture and physical stop.
+// Empty start probes or renews an existing executor; it never starts authored code.
+message PreparationIdentity {
+  string preparation_id = 1;
+  string instance_id = 2;
+  int64 epoch = 3;
+  bytes channel_credential = 4;
 }
-
-message ComputerRestoreInstallationResponse {
-  ComputerRestoreInstallation installation = 1;
+message PreparationStart {
+  string computer_definition_id = 1;
+  repeated ComputerSecretDelivery secrets = 2;
+  PreparationLogLimits log_limits = 3;
+  map<string, string> protected_env = 4;
+  bytes proxy_ca = 5;
 }
-
-message ComputerRunCleanupRequest {
-  string computer_id = 1;
-  string computer_instance_id = 2;
-  int64 writer_generation = 3;
-  string channel_credential = 4;
-  string run_id = 5;
-  uint32 attempt_number = 6;
-  string run_lease_id = 7;
+message PreparationLogLimits {
+  int32 chunk_bytes = 1;
+  int64 buffer_bytes = 2;
+  int32 buffer_records = 3;
 }
-message ComputerRunCleanupResponse {
-  bool reconciled = 1;
-  string error = 2;
+message PreparationLog {
+  string kind = 1;
+  int64 sequence = 2;
+  int64 through_sequence = 3;
+  int64 observed_at_unix_nano = 4;
+  bytes data = 5;
+  int64 dropped_bytes = 6;
+  bool complete = 7;
+}
+message PreparationControlRequest {
+  PreparationIdentity identity = 1;
+  int64 expires_at_unix_nano = 2;
+  PreparationStart start = 3;
+  bool renew_only = 4;
+  string log_stream = 5;
+  int64 acknowledged_through = 6;
+}
+message PreparationControlResponse {
+  string state = 1;
+  string error_code = 2;
+  PreparationLog log = 3;
 }

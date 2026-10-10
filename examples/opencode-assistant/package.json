@@ -1,0 +1,23 @@
+{
+  "name": "helmr-opencode-assistant",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.13",
+  "version": "0.1.0",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test tests/questions.test.ts",
+    "test:native": "bun build tests/native.test.ts --target=node --outdir dist/tests && node --test dist/tests/native.test.js"
+  },
+  "dependencies": {
+    "@helmr/sdk": "file:../../dist/npm/sdk/package",
+    "@opencode-ai/sdk": "1.18.30"
+  },
+  "devDependencies": {
+    "@types/node": "^24.7.2",
+    "typescript": "7.0.2"
+  },
+  "overrides": {
+    "@helmr/proto": "file:../../dist/npm/proto/package"
+  }
+}

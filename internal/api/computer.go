@@ -8,9 +8,9 @@ import (
 )
 
 type CreateComputerRequest struct {
-	Key            *string                 `json:"key,omitempty"`
-	Secrets        []secretbinding.Binding `json:"secrets,omitempty"`
-	IdempotencyKey string                  `json:"idempotency_key,omitempty"`
+	Key            *string                   `json:"key,omitempty"`
+	Secrets        []secretbinding.Reference `json:"secrets,omitempty"`
+	IdempotencyKey string                    `json:"idempotency_key,omitempty"`
 }
 
 type ComputerStatus string
@@ -24,17 +24,17 @@ const (
 type ComputerResidency string
 
 type ComputerSnapshot struct {
-	Residency      ComputerResidency       `json:"residency"`
-	Error          json.RawMessage         `json:"error,omitempty"`
-	ID             string                  `json:"id"`
-	Key            *string                 `json:"key,omitempty"`
-	SandboxID      string                  `json:"sandbox_id"`
-	DeploymentID   string                  `json:"deployment_id"`
-	Status         ComputerStatus          `json:"status"`
-	Secrets        []secretbinding.Binding `json:"secrets"`
-	LastActivityAt time.Time               `json:"last_activity_at"`
-	CreatedAt      time.Time               `json:"created_at"`
-	UpdatedAt      time.Time               `json:"updated_at"`
+	Residency      ComputerResidency         `json:"residency"`
+	Error          json.RawMessage           `json:"error,omitempty"`
+	ID             string                    `json:"id"`
+	Key            *string                   `json:"key,omitempty"`
+	DefinitionKey  string                    `json:"definition_key"`
+	DeploymentID   string                    `json:"deployment_id"`
+	Status         ComputerStatus            `json:"status"`
+	Secrets        []secretbinding.Reference `json:"secrets"`
+	LastActivityAt time.Time                 `json:"last_activity_at"`
+	CreatedAt      time.Time                 `json:"created_at"`
+	UpdatedAt      time.Time                 `json:"updated_at"`
 }
 
 type ComputerListItem struct {
@@ -42,7 +42,7 @@ type ComputerListItem struct {
 	Error          json.RawMessage   `json:"error,omitempty"`
 	ID             string            `json:"id"`
 	Key            *string           `json:"key,omitempty"`
-	SandboxID      string            `json:"sandbox_id"`
+	DefinitionKey  string            `json:"definition_key"`
 	DeploymentID   string            `json:"deployment_id"`
 	Status         ComputerStatus    `json:"status"`
 	LastActivityAt time.Time         `json:"last_activity_at"`
@@ -58,7 +58,6 @@ type ListComputersResponse struct {
 type ComputerMember struct {
 	Kind      string    `json:"kind"`
 	ID        string    `json:"id"`
-	RunID     string    `json:"run_id,omitempty"`
 	State     string    `json:"state"`
 	CreatedAt time.Time `json:"created_at"`
 }

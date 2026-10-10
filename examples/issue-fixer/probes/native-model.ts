@@ -1,7 +1,7 @@
 // Loopback model fixtures shared by native and Control Plane integration probes.
 import { createServer } from "node:http"
 
-export function claudeModel(requests: any[], interrupted = false) {
+export function claudeModel(requests: any[], interrupted = false, tools?: { id: string; name: string; input: Record<string, unknown> }[] | ((body: any, index: number) => { id: string; name: string; input: Record<string, unknown> } | undefined)) {
   return createServer(async (req, res) => {
     const chunks: Buffer[] = []
     for await (const chunk of req) chunks.push(Buffer.from(chunk))
@@ -9,7 +9,7 @@ export function claudeModel(requests: any[], interrupted = false) {
     if (!req.url?.startsWith("/v1/messages")) { res.writeHead(404); res.end(); return }
     if (req.url.includes("count_tokens")) { res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ input_tokens: 1 })); return }
     requests.push(body)
-    const tool = requests.length === 1
+    const tool = typeof tools === "function" ? tools(body, requests.length) : tools ? tools[requests.length - 1] : requests.length === 1
       ? { id: "toolu_question", name: "AskUserQuestion", input: { questions: [{ question: "Which option?", header: "Choice", multiSelect: false, options: [{ label: "A", description: "First" }, { label: "B", description: "Second" }] }] } }
       : requests.length === 2 && !interrupted
       ? { id: "toolu_command", name: "Bash", input: { command: "printf fixture > denied-command-marker", description: "Write a disposable test marker" } }
@@ -27,16 +27,17 @@ export function claudeModel(requests: any[], interrupted = false) {
   })
 }
 
-export function codexModel(requests: any[], approval = false, questionThenApproval = false) {
+export function codexModel(requests: any[], approval = false, questionThenApproval = false, tools?: (body: any, index: number) => Record<string, unknown> | undefined) {
   return createServer(async (req, res) => {
     const chunks: Buffer[] = []
     for await (const chunk of req) chunks.push(Buffer.from(chunk))
     requests.push(JSON.parse(Buffer.concat(chunks).toString()))
-    const item = (requests.length === 1 && approval) || (requests.length === 2 && questionThenApproval)
+    const completion = { id: `msg_${requests.length}`, type: "message", role: "assistant", phase: "final_answer", status: "completed", content: [{ type: "output_text", text: "fixture response", annotations: [] }] }
+    const item = tools ? tools(requests.at(-1), requests.length) ?? completion : (requests.length === 1 && approval) || (requests.length === 2 && questionThenApproval)
       ? { type: "function_call", id: "fc_command", call_id: "call_command", name: "exec_command", arguments: JSON.stringify({ cmd: questionThenApproval ? "printf fixture > denied-command-marker" : "printf native-approval-fixture", sandbox_permissions: "require_escalated", justification: "Local approval fixture" }) }
       : requests.length === 1
       ? { type: "function_call", id: "fc_question", call_id: "call_question", name: "request_user_input", arguments: JSON.stringify({ questions: [{ id: "choice", header: "Choice", question: "Which option?", options: [{ label: "A", description: "First" }, { label: "B", description: "Second" }] }] }) }
-      : { id: `msg_${requests.length}`, type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: "fixture response", annotations: [] }] }
+      : completion
     res.writeHead(200, { "content-type": "text/event-stream" })
     for (const event of [
       { type: "response.created", response: { id: `resp_${requests.length}` } },

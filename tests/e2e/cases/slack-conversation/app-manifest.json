@@ -1,0 +1,52 @@
+{
+  "display_information": {
+    "name": "Helmr Dev",
+    "description": "Synthetic conversation verification",
+    "background_color": "#24304A"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Helmr Dev",
+      "always_online": false
+    },
+    "agent_view": {
+      "agent_description": "Synthetic conversation verification for Helmr."
+    }
+  },
+  "oauth_config": {
+    "redirect_urls": [
+      "https://helmr-verification.invalid/auth/slack/callback",
+      "https://helmr-verification.invalid/api/slack/user-links/callback"
+    ],
+    "scopes": {
+      "bot": [
+        "app_mentions:read",
+        "channels:read",
+        "channels:history",
+        "groups:read",
+        "groups:history",
+        "chat:write",
+        "assistant:write"
+      ]
+    }
+  },
+  "settings": {
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": true,
+    "event_subscriptions": {
+      "request_url": "https://helmr-verification.invalid/integrations/slack/apps/REGISTRATION_ID/events",
+      "bot_events": [
+        "app_mention",
+        "message.channels",
+        "message.groups",
+        "app_uninstalled",
+        "tokens_revoked"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "https://helmr-verification.invalid/integrations/slack/apps/REGISTRATION_ID/interactions"
+    }
+  }
+}

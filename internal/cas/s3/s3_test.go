@@ -1268,3 +1268,28 @@ func (f *fakeS3Client) ListMultipartUploads(context.Context, *awss3.ListMultipar
 func (f *fakeS3Client) ListParts(context.Context, *awss3.ListPartsInput, ...func(*awss3.Options)) (*awss3.ListPartsOutput, error) {
 	return &awss3.ListPartsOutput{}, nil
 }
+
+func TestStorageReadFailureRequiresDefinitiveObjectAbsence(t *testing.T) {
+	for _, test := range []struct {
+		code                 string
+		fault                smithy.ErrorFault
+		missing, unavailable bool
+	}{
+		{"NoSuchKey", smithy.FaultClient, true, false}, {"NotFound", smithy.FaultClient, true, false},
+		{"AccessDenied", smithy.FaultClient, false, false}, {"ServiceUnavailable", smithy.FaultServer, false, true},
+	} {
+		t.Run(test.code, func(t *testing.T) {
+			source := &smithy.GenericAPIError{Code: test.code, Fault: test.fault}
+			err := storageReadFailure(t.Context(), source)
+			if !errors.Is(err, source) || errors.Is(err, os.ErrNotExist) != test.missing || errors.Is(err, cas.ErrUnavailable) != test.unavailable {
+				t.Fatalf("classification: %v", err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			err = storageReadFailure(ctx, source)
+			if errors.Is(err, os.ErrNotExist) || errors.Is(err, cas.ErrUnavailable) {
+				t.Fatalf("cancelled read classified as object state: %v", err)
+			}
+		})
+	}
+}

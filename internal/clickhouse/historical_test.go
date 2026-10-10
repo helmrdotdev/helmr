@@ -12,14 +12,11 @@ import (
 
 func TestHistoricalRowsDeclareClickHouseTagsForSelectedColumns(t *testing.T) {
 	assertClickHouseTags(t, eventRow{}, []string{
-		"seq", "run_id", "deployment_id", "run_lease_id", "attempt_number",
+		"seq", "deployment_id",
 		"trace_id", "span_id", "traceparent", "category", "severity", "source",
 		"event_kind", "message", "body", "redaction_class", "observed_at",
 	})
-	assertClickHouseTags(t, runLogRow{}, []string{
-		"run_id", "run_lease_id", "attempt_number", "stream_name",
-		"seq", "observed_seq", "content", "size_bytes", "observed_at",
-	})
+	assertClickHouseTags(t, commandLogRow{}, []string{"sequence", "through_sequence", "kind", "data", "observed_at_unix_nano", "dropped_bytes", "complete", "accepted_at", "expires_at"})
 }
 
 type partialHistoricalClient struct{}
@@ -28,8 +25,8 @@ func (partialHistoricalClient) Select(_ context.Context, dest any, _ string, _ .
 	switch rows := dest.(type) {
 	case *[]eventRow:
 		*rows = []eventRow{{Seq: 1}}
-	case *[]runLogRow:
-		*rows = []runLogRow{{Seq: 1}}
+	case *[]commandLogRow:
+		*rows = []commandLogRow{{Sequence: 1}}
 	}
 	return errors.New("query limit exceeded after a partial block")
 }
@@ -40,22 +37,17 @@ func TestHistoricalReadDiscardsPartialRowsOnFailure(t *testing.T) {
 	if !errors.Is(err, telemetry.ErrHistoricalUnavailable) || len(events.Events) != 0 || events.LastSeq != 0 {
 		t.Fatalf("partial event page escaped: %+v %v", events, err)
 	}
-	logs, err := reader.ListRunLogChunks(t.Context(), telemetry.RunLogChunkQuery{AfterSeq: 10, Limit: 200})
-	if !errors.Is(err, telemetry.ErrHistoricalUnavailable) || len(logs.Chunks) != 0 || logs.LastSeq != 0 {
+	logs, err := reader.ListCommandLogChunks(t.Context(), telemetry.CommandLogChunkQuery{OrgID: uuid.New(), EnvironmentID: uuid.New(), CommandID: uuid.New(), Stream: "stdout", Limit: 2})
+	if !errors.Is(err, telemetry.ErrHistoricalUnavailable) || len(logs.Chunks) != 0 {
 		t.Fatalf("partial log page escaped: %+v %v", logs, err)
 	}
 }
 
 func TestHistoricalRowsMapUUIDStrings(t *testing.T) {
-	runID := uuid.NewV7().String()
 	deploymentID := uuid.NewV7().String()
-	runLeaseID := uuid.NewV7().String()
-	event := (eventRow{RunID: &runID, DeploymentID: &deploymentID, RunLeaseID: &runLeaseID}).event()
-	if event.RunID == nil || *event.RunID != runID || event.DeploymentID == nil || *event.DeploymentID != deploymentID {
-		t.Fatalf("event UUIDs = run %v, deployment %v", event.RunID, event.DeploymentID)
-	}
-	if got := (runLogRow{RunID: runID, RunLeaseID: runLeaseID}).chunk().RunID; got != runID {
-		t.Fatalf("run log UUID = %q, want %q", got, runID)
+	event := (eventRow{DeploymentID: &deploymentID}).event()
+	if event.DeploymentID == nil || *event.DeploymentID != deploymentID {
+		t.Fatalf("event Deployment ID = %v", event.DeploymentID)
 	}
 }
 

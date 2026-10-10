@@ -27,12 +27,24 @@ type workerHostSecretFile struct {
 	WorkerHostID     string    `json:"worker_host_id"`
 	WorkerHostSecret string    `json:"worker_host_secret"`
 	CreatedAt        time.Time `json:"created_at"`
+	WorkDir          string    `json:"work_dir"`
+	JailerDir        string    `json:"jailer_dir"`
 }
 
 func resolveWorkerHostSecret(ctx context.Context, cfg config.Worker, workDir string) (workerHostSecretFile, error) {
+	workDir, jailerDir, err := resolveWorkerRecoveryRoots(workDir, cfg.JailerChrootDir)
+	if err != nil {
+		return workerHostSecretFile{}, err
+	}
+	validate := func(secret workerHostSecretFile) error {
+		if secret.WorkDir != workDir || secret.JailerDir != jailerDir {
+			return errors.New("worker host secret recovery roots are missing or do not match configured roots")
+		}
+		return nil
+	}
 	path := workerHostSecretPath(workDir, cfg.WorkerHostSecretPath)
 	if hostSecret, err := readWorkerHostSecret(path); err == nil {
-		return hostSecret, nil
+		return hostSecret, validate(hostSecret)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return workerHostSecretFile{}, err
 	}
@@ -40,7 +52,7 @@ func resolveWorkerHostSecret(ctx context.Context, cfg config.Worker, workDir str
 	if err := withWorkerHostSecretLock(path, func() error {
 		if stored, err := readWorkerHostSecret(path); err == nil {
 			hostSecret = stored
-			return nil
+			return validate(stored)
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
@@ -74,6 +86,8 @@ func resolveWorkerHostSecret(ctx context.Context, cfg config.Worker, workDir str
 			WorkerHostID:     registered.WorkerHostID,
 			WorkerHostSecret: registered.WorkerHostSecret,
 			CreatedAt:        time.Now().UTC(),
+			WorkDir:          workDir,
+			JailerDir:        jailerDir,
 		}
 		if err := writeWorkerHostSecret(path, hostSecret); err != nil {
 			return err
@@ -297,4 +311,32 @@ func syncDirectory(path string) error {
 	}
 	defer dir.Close()
 	return dir.Sync()
+}
+
+// Resolve the effective launch and recovery roots before acquiring host authority.
+// Persist canonical paths so changing a symlink or a custom secret's configuration
+// cannot make a successor inventory a different directory from its predecessor.
+func resolveWorkerRecoveryRoots(workDir, jailerDir string) (string, string, error) {
+	canonical := func(path string) (string, error) {
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return "", err
+		}
+		if err := os.MkdirAll(absolute, 0700); err != nil {
+			return "", err
+		}
+		return filepath.EvalSymlinks(absolute)
+	}
+	workDir, err := canonical(workDir)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve worker recovery directory: %w", err)
+	}
+	if strings.TrimSpace(jailerDir) == "" {
+		jailerDir = filepath.Join(workDir, "vms", "jailer")
+	}
+	jailerDir, err = canonical(jailerDir)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve worker jailer directory: %w", err)
+	}
+	return workDir, jailerDir, nil
 }

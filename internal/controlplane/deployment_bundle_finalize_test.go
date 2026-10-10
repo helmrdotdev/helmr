@@ -14,7 +14,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/idempotency"
 )
 
 type deploymentFinalizeStreamRecorder struct {
@@ -237,7 +236,12 @@ func TestPublicDeploymentFinalizeErrorUsesClosedMessages(t *testing.T) {
 			message: "deployment object failed verification",
 		},
 		"idempotency conflict": {
-			err:     idempotency.ConflictError{},
+			err:     deployment.ErrFinalizationConflict,
+			code:    "idempotency_conflict",
+			message: "idempotency key conflicts with another deployment bundle",
+		},
+		"wrapped idempotency conflict": {
+			err:     fmt.Errorf("context: %w", deployment.ErrFinalizationConflict),
 			code:    "idempotency_conflict",
 			message: "idempotency key conflicts with another deployment bundle",
 		},

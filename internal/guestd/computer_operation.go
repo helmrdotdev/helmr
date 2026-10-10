@@ -2,58 +2,41 @@ package guestd
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"log/slog"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/oci"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
-	"github.com/helmrdotdev/helmr/internal/wire"
 	"google.golang.org/protobuf/proto"
 )
 
-const (
-	computerImageMediaType = "application/vnd.helmr.computer-image.v0.oci-tar"
-	computerImageEncoding  = "oci-tar"
-)
-
 type computerOperationRegistry struct {
-	mu                      sync.RWMutex
-	captureAbortMu          sync.Mutex
-	entries                 map[string]*computerMountEntry
-	preparedRuntime         *preparedComputerRuntime
-	programClaims           []*managedProgramClaim
-	captureRequest          *computerv0.FreezeComputerRequest
-	captureAbort            *captureAbortInstallation
-	restoredMaterialization *computerv0.MaterializeComputerRequest
-	restoreInstallation     *computerv0.ComputerRestoreInstallation
-	restoreActivated        bool
-	materializations        int
-}
-
-type managedProgramClaim struct {
-	entry          *computerMountEntry
-	authority      *computerv0.ComputerRunAuthority
-	previousExpiry int64
-	stop           context.CancelFunc
-	stopRequested  bool
-	done           chan struct{}
-	cleanupErr     error
+	setWallClock     func(time.Time) error
+	agentPrograms    agentProgramStore
+	agentSessions    map[string]*agentRelay
+	agentStarting    map[string]bool
+	agentCaptureMu   sync.Mutex
+	agentCapture     *agentComputerCapture
+	writeback        *computerWriteback
+	mu               sync.RWMutex
+	entries          map[string]*computerMountEntry
+	preparedRuntime  *preparedComputerRuntime
+	materializations int
 }
 
 type computerMountEntry struct {
+	authorityClock            atomic.Pointer[computerAuthorityClock]
 	writerGeneration          int64
 	channelCredential         string
 	computerID                string
@@ -68,7 +51,7 @@ type computerMountEntry struct {
 	cleanup                   func()
 	processesMu               sync.Mutex
 	commands                  map[string]*computerBasicExec
-	programCleanup            map[string]*managedProgramClaim
+	preparation               *computerPreparation
 	basicExecRun              func(context.Context, *computerv0.ComputerBasicExecRequest) *computerv0.ComputerBasicExecResult
 	active                    int
 	retired                   bool
@@ -81,20 +64,19 @@ type computerMountEntry struct {
 }
 
 type preparedComputerRuntime struct {
-	computerID          string
-	writerGeneration    int64
-	computerInstanceID  string
-	computerImageDigest string
-	imageRoot           string
-	imageConfig         ociRuntimeConfig
-	runtimeUser         *resolvedRuntimeUser
-	computerMount       string
-	computerRoot        string
-	cleanup             func()
+	computerID         string
+	writerGeneration   int64
+	computerInstanceID string
+	imageRoot          string
+	imageConfig        ociRuntimeConfig
+	runtimeUser        *resolvedRuntimeUser
+	computerMount      string
+	computerRoot       string
+	cleanup            func()
 }
 
 func newComputerOperationRegistry() *computerOperationRegistry {
-	return &computerOperationRegistry{entries: map[string]*computerMountEntry{}}
+	return &computerOperationRegistry{entries: map[string]*computerMountEntry{}, agentSessions: map[string]*agentRelay{}, agentStarting: map[string]bool{}}
 }
 
 func (r *computerOperationRegistry) setPreparedRuntime(runtime *preparedComputerRuntime) error {
@@ -102,7 +84,7 @@ func (r *computerOperationRegistry) setPreparedRuntime(runtime *preparedComputer
 		return nil
 	}
 	r.mu.Lock()
-	if r.captureRequest != nil {
+	if r.captureSealedLocked() {
 		r.mu.Unlock()
 		return errors.New("computer capture has sealed preparation")
 	}
@@ -115,15 +97,14 @@ func (r *computerOperationRegistry) setPreparedRuntime(runtime *preparedComputer
 	return nil
 }
 
-func (r *computerOperationRegistry) takePreparedRuntime(computerInstanceID string, computerID string, computerImageDigest string, computerMount string, writerGeneration uint64) (*preparedComputerRuntime, bool) {
+func (r *computerOperationRegistry) takePreparedRuntime(computerInstanceID string, computerID string, computerMount string, writerGeneration uint64) (*preparedComputerRuntime, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	prepared := r.preparedRuntime
-	if prepared == nil || r.captureRequest != nil {
+	if prepared == nil || r.captureSealedLocked() {
 		return nil, false
 	}
 	if writerGeneration == 0 || uint64(prepared.writerGeneration) != writerGeneration || prepared.computerID != computerID || prepared.computerInstanceID != computerInstanceID ||
-		strings.TrimSpace(prepared.computerImageDigest) != strings.TrimSpace(computerImageDigest) ||
 		strings.TrimSpace(prepared.computerMount) != strings.TrimSpace(computerMount) {
 		return nil, false
 	}
@@ -134,7 +115,7 @@ func (r *computerOperationRegistry) takePreparedRuntime(computerInstanceID strin
 func (r *computerOperationRegistry) register(computerInstanceID string, entry *computerMountEntry) error {
 	for {
 		r.mu.Lock()
-		if r.captureRequest != nil {
+		if r.captureSealedLocked() {
 			r.mu.Unlock()
 			return errors.New("computer capture has sealed materialization")
 		}
@@ -155,7 +136,7 @@ func (r *computerOperationRegistry) register(computerInstanceID string, entry *c
 		previous.lifecycleMu.Lock()
 		previous.finalizationMu.Lock()
 		r.mu.Lock()
-		if r.captureRequest != nil || r.entries[computerInstanceID] != previous {
+		if r.captureSealedLocked() || r.entries[computerInstanceID] != previous {
 			r.mu.Unlock()
 			previous.finalizationMu.Unlock()
 			previous.lifecycleMu.Unlock()
@@ -177,27 +158,6 @@ func (r *computerOperationRegistry) register(computerInstanceID string, entry *c
 		}
 		return nil
 	}
-}
-
-func (r *computerOperationRegistry) acquireAuthorityMount(computerInstanceID string, computerID string, token string) (*computerMountEntry, func(), bool) {
-	r.mu.Lock()
-	entry := r.entries[computerInstanceID]
-	computerID = strings.TrimSpace(computerID)
-	token = strings.TrimSpace(token)
-	if computerID == "" || token == "" || !computerEntryMatches(entry, computerInstanceID, computerID, token) {
-		r.mu.Unlock()
-		return nil, func() {}, false
-	}
-	entry.processesMu.Lock()
-	recoveryRequired := entry.recoveryRequired
-	entry.processesMu.Unlock()
-	if recoveryRequired {
-		r.mu.Unlock()
-		return nil, func() {}, false
-	}
-	entry.active++
-	r.mu.Unlock()
-	return entry, func() { r.release(entry) }, true
 }
 
 func (r *computerOperationRegistry) acquireExact(computerInstanceID string, computerID string, token string, writerGeneration uint64) (*computerMountEntry, func(), bool) {
@@ -293,96 +253,7 @@ func (r *computerOperationRegistry) retireLocked(computerInstanceID string, entr
 	}
 }
 
-func (r *computerOperationRegistry) admitProgram(entry *computerMountEntry, authority *computerv0.ComputerRunAuthority, clock func() time.Time) (func(), error) {
-	entry.lifecycleMu.Lock()
-	defer entry.lifecycleMu.Unlock()
-	entry.finalizationMu.Lock()
-	defer entry.finalizationMu.Unlock()
-	entry.processesMu.Lock()
-	recoveryRequired := entry.recoveryRequired
-	entry.processesMu.Unlock()
-	if recoveryRequired {
-		return func() {}, errors.New("computer mount requires recovery")
-	}
-	if entry.stopping {
-		return func() {}, errors.New("computer is stopping")
-	}
-	r.mu.Lock()
-	if r.captureRequest != nil {
-		r.mu.Unlock()
-		return func() {}, errors.New("computer capture has sealed program admission")
-	}
-	if authority == nil || authority.GetFence() == nil || r.entries[authority.GetFence().GetComputerInstanceId()] != entry {
-		r.mu.Unlock()
-		return func() {}, errors.New("program authority is not current for the computer instance")
-	}
-	if clock == nil {
-		clock = time.Now
-	}
-	if err := validateComputerRunAuthority(entry, authority, clock()); err != nil {
-		r.mu.Unlock()
-		return func() {}, err
-	}
-	if entry.programCleanup[authority.GetFence().GetRunLeaseId()] != nil {
-		r.mu.Unlock()
-		return func() {}, errors.New("program lease has been retired")
-	}
-	for _, current := range r.programClaims {
-		if current.authority.GetFence().GetRunId() == authority.GetFence().GetRunId() {
-			r.mu.Unlock()
-			return func() {}, errors.New("program Run already has an active claim")
-		}
-	}
-	claim := &managedProgramClaim{
-		entry:     entry,
-		authority: proto.Clone(authority).(*computerv0.ComputerRunAuthority),
-		done:      make(chan struct{}),
-	}
-	r.programClaims = append(r.programClaims, claim)
-	r.mu.Unlock()
-	return sync.OnceFunc(func() {
-		r.mu.Lock()
-		if entry.programCleanup == nil {
-			entry.programCleanup = make(map[string]*managedProgramClaim)
-		}
-		fence := claim.authority.GetFence()
-		// Keep only the scoped identity and cleanup result for lost-reply replay.
-		claim.authority = &computerv0.ComputerRunAuthority{Fence: &computerv0.ComputerAuthorityFence{RunId: fence.RunId, RunLeaseId: fence.RunLeaseId, AttemptNumber: fence.AttemptNumber}}
-		entry.programCleanup[claim.authority.GetFence().GetRunLeaseId()] = claim
-		claim.stop = nil
-		close(claim.done)
-		for index, current := range r.programClaims {
-			if current != claim {
-				continue
-			}
-			r.programClaims = append(r.programClaims[:index], r.programClaims[index+1:]...)
-			break
-		}
-		r.mu.Unlock()
-	}), nil
-}
-
-func (r *computerOperationRegistry) programClaimLocked(
-	entry *computerMountEntry,
-	authority *computerv0.ComputerRunAuthority,
-) *managedProgramClaim {
-	if authority == nil || authority.GetFence() == nil {
-		return nil
-	}
-	fence := authority.GetFence()
-	for index := len(r.programClaims) - 1; index >= 0; index-- {
-		claim := r.programClaims[index]
-		current := claim.authority.GetFence()
-		if claim.entry == entry &&
-			current.GetRunId() == fence.GetRunId() &&
-			current.GetAttemptNumber() == fence.GetAttemptNumber() {
-			return claim
-		}
-	}
-	return nil
-}
-
-func handleComputerMaterializeConnection(_ context.Context, conn io.ReadWriter, logger *slog.Logger, registry *computerOperationRegistry, waits *waitingRunRegistry) error {
+func handleComputerMaterializeConnection(_ context.Context, conn io.ReadWriter, logger *slog.Logger, registry *computerOperationRegistry) error {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -391,13 +262,11 @@ func handleComputerMaterializeConnection(_ context.Context, conn io.ReadWriter, 
 	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
 		return fmt.Errorf("read computer materialize request: %w", err)
 	}
-	if request.GetRestoredCheckpointId() == "" {
-		releaseMutation, err := registry.reserveMaterialization()
-		if err != nil {
-			return err
-		}
-		defer releaseMutation()
+	releaseMutation, err := registry.reserveMaterialization()
+	if err != nil {
+		return err
 	}
+	defer releaseMutation()
 	envelope := request.GetEnvelope()
 	if envelope == nil {
 		return errors.New("computer materialize envelope is required")
@@ -416,24 +285,6 @@ func handleComputerMaterializeConnection(_ context.Context, conn io.ReadWriter, 
 	}
 	computerInstanceID := strings.TrimSpace(envelope.ComputerInstanceId)
 	computerID := strings.TrimSpace(envelope.ComputerId)
-	if strings.TrimSpace(request.GetRestoredCheckpointId()) != "" {
-		phases, err := registry.materializeRestoredComputerMount(&request, waits)
-		if err != nil {
-			phases = appendComputerMountFailurePhase(phases, "guest_restore_rebind", totalStarted, err)
-			writeErr := frameio.WriteProtoFrame(conn, &computerv0.MaterializeComputerResponse{Status: "failed", Phases: phases})
-			if writeErr != nil {
-				return errors.Join(err, writeErr)
-			}
-			return err
-		}
-		logger.Info("restored computer mount rebound", "computer_id", computerID,
-			"computer_instance_id", computerInstanceID, "checkpoint_id", request.GetRestoredCheckpointId(),
-			"duration_ms", time.Since(totalStarted).Milliseconds())
-		return frameio.WriteProtoFrame(conn, &computerv0.MaterializeComputerResponse{
-			Status: "running", GuestChannelCredentialHash: sha256sum.HexBytes([]byte(strings.TrimSpace(envelope.ChannelCredential))),
-			Phases: phases, Target: proto.Clone(request.GetTarget()).(*computerv0.ComputerMountTarget),
-		})
-	}
 	entry, err := restoreComputerMount(&request, registry)
 	var phases []*computerv0.ComputerMountPhase
 	if err != nil {
@@ -467,122 +318,6 @@ func handleComputerMaterializeConnection(_ context.Context, conn io.ReadWriter, 
 	})
 }
 
-func (r *computerOperationRegistry) materializeRestoredComputerMount(
-	request *computerv0.MaterializeComputerRequest,
-	waits *waitingRunRegistry,
-) ([]*computerv0.ComputerMountPhase, error) {
-	started := time.Now()
-	if request == nil || request.GetEnvelope() == nil || !request.GetUsePreparedRuntime() {
-		return nil, errors.New("restored computer materialization requires a prepared runtime")
-	}
-	checkpointID := strings.TrimSpace(request.GetRestoredCheckpointId())
-	target, err := computerMountTargetFromProto(request.GetTarget())
-	if err != nil {
-		return nil, fmt.Errorf("restored computer target: %w", err)
-	}
-	if waits == nil {
-		return nil, errors.New("restored computer requires frozen waits")
-	}
-	envelope := request.GetEnvelope()
-	computerID := strings.TrimSpace(envelope.GetComputerId())
-	channelCredential := strings.TrimSpace(envelope.GetChannelCredential())
-	computerInstanceID := strings.TrimSpace(envelope.GetComputerInstanceId())
-	mountPath := filepath.Clean(strings.TrimSpace(request.GetMountPath()))
-	if computerInstanceID == "" || computerID == "" || channelCredential == "" ||
-		checkpointID == "" || envelope.GetWriterGeneration() == 0 || envelope.GetWriterGeneration() > math.MaxInt64 || mountPath == "." ||
-		mountPath == string(filepath.Separator) || !filepath.IsAbs(mountPath) {
-		return nil, errors.New("restored computer materialization authority is incomplete")
-	}
-	r.mu.Lock()
-	var entry *computerMountEntry
-	for _, candidate := range r.entries {
-		if candidate == nil || (entry != nil && candidate != entry) {
-			r.mu.Unlock()
-			return nil, errors.New("restored computer has ambiguous mounted identity")
-		}
-		entry = candidate
-	}
-	var prepared *preparedComputerRuntime
-	if entry == nil {
-		prepared = r.preparedRuntime
-		if prepared == nil {
-			r.mu.Unlock()
-			return nil, errors.New("restored computer has no retained filesystem")
-		}
-		entry = &computerMountEntry{
-			computerID: prepared.computerID, computerInstanceID: prepared.computerInstanceID,
-			writerGeneration: prepared.writerGeneration, imageRoot: prepared.imageRoot,
-			imageConfig: prepared.imageConfig, runtimeUser: prepared.runtimeUser,
-			computerMount: prepared.computerMount, computerRoot: prepared.computerRoot,
-		}
-	}
-	r.mu.Unlock()
-	entry.lifecycleMu.Lock()
-	defer entry.lifecycleMu.Unlock()
-	entry.finalizationMu.Lock()
-	defer entry.finalizationMu.Unlock()
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	waits.mu.Lock()
-	defer waits.mu.Unlock()
-	if entry.retired || entry.computerID != computerID || filepath.Clean(entry.computerMount) != mountPath || r.captureRequest == nil || r.captureRequest.CheckpointId != checkpointID {
-		return nil, errors.New("restored computer does not match the sealed capture")
-	}
-	if r.restoredMaterialization != nil {
-		if !proto.Equal(r.restoredMaterialization, request) || r.entries[computerInstanceID] != entry || entry.computerInstanceID != computerInstanceID || entry.currentWriterGeneration() != envelope.GetWriterGeneration() || entry.channelCredential != channelCredential || entry.baseComputerDiskVersionID != target.GetBaseComputerDiskVersionId() {
-			return nil, errors.New("restored computer materialization conflicts with its receipt")
-		}
-		return []*computerv0.ComputerMountPhase{computerMountPhase("guest_restore_materialize_replay", started, 0, nil)}, nil
-	}
-	capture := r.captureRequest
-	identity := &computerv0.ComputerRestoreIdentity{ComputerId: capture.ComputerId, SourceComputerInstanceId: capture.ComputerInstanceId, WriterGeneration: capture.WriterGeneration, CheckpointId: capture.CheckpointId}
-	for _, member := range capture.Runs {
-		if member == nil {
-			return nil, errors.New("captured member is missing")
-		}
-		slot := waits.slots[member.RunWaitId]
-		if slot == nil {
-			return nil, errors.New("captured member has no frozen wait")
-		}
-		identity.Runs = append(identity.Runs, &computerv0.CapturedRun{RunId: member.RunId, AttemptNumber: member.AttemptNumber, RunWaitId: member.RunWaitId, RunLeaseId: member.RunLeaseId, CorrelationId: slot.correlationID})
-	}
-	sourceEntry := entry
-	if prepared != nil {
-		sourceEntry = nil
-	}
-	if err := verifyFrozenComputerLocked(r, waits, sourceEntry, identity); err != nil {
-		return nil, err
-	}
-	if r.materializations != 0 || (prepared == nil && r.entries[entry.computerInstanceID] != entry) || (prepared != nil && (r.preparedRuntime != prepared || len(r.entries) != 0)) {
-		return nil, errors.New("restored computer source changed")
-	}
-	currentGeneration := entry.currentWriterGeneration()
-	if computerInstanceID == entry.computerInstanceID || envelope.GetWriterGeneration() <= currentGeneration {
-		return nil, errors.New("restored Computer requires a new Instance and writer generation")
-	}
-	if current := r.entries[computerInstanceID]; current != nil && current != entry {
-		return nil, errors.New("restored computer materialization target mount is already registered")
-	}
-	for id, current := range r.entries {
-		if current == entry {
-			delete(r.entries, id)
-		}
-	}
-	if prepared != nil {
-		entry.cleanup = prepared.cleanup
-		r.preparedRuntime = nil
-	}
-	entry.channelCredential = channelCredential
-	entry.computerInstanceID = computerInstanceID
-	entry.baseComputerDiskVersionID = target.GetBaseComputerDiskVersionId()
-	entry.setWriterGeneration(envelope.GetWriterGeneration())
-	r.entries[computerInstanceID] = entry
-	r.restoredMaterialization = proto.Clone(request).(*computerv0.MaterializeComputerRequest)
-	return []*computerv0.ComputerMountPhase{
-		computerMountPhase("guest_restore_materialize", started, 0, nil),
-	}, nil
-}
-
 func handleComputerRuntimePrepareConnection(_ context.Context, conn io.ReadWriter, logger *slog.Logger, registry *computerOperationRegistry) error {
 	releaseMutation, mutationErr := registry.reserveMaterialization()
 	if mutationErr != nil {
@@ -598,7 +333,7 @@ func handleComputerRuntimePrepareConnection(_ context.Context, conn io.ReadWrite
 	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
 		return fmt.Errorf("read computer runtime prepare request: %w", err)
 	}
-	runtime, phases, err := restorePreparedComputerRuntime(conn, &request, logger)
+	runtime, phases, err := restorePreparedComputerRuntime(&request, logger)
 	if err != nil {
 		phases = appendComputerMountFailurePhase(phases, "guest_runtime_prepare", totalStarted, err)
 		writeErr := frameio.WriteProtoFrame(conn, &computerv0.PrepareComputerRuntimeResponse{
@@ -633,7 +368,7 @@ func computerInstanceLogID(computerInstanceID string) string {
 	return hash[:16]
 }
 
-func restorePreparedComputerRuntime(conn io.Reader, request *computerv0.PrepareComputerRuntimeRequest, logger *slog.Logger) (*preparedComputerRuntime, []*computerv0.ComputerMountPhase, error) {
+func restorePreparedComputerRuntime(request *computerv0.PrepareComputerRuntimeRequest, logger *slog.Logger) (*preparedComputerRuntime, []*computerv0.ComputerMountPhase, error) {
 	var phases []*computerv0.ComputerMountPhase
 	computerInstanceID := request.GetComputerInstanceId()
 	if strings.TrimSpace(computerInstanceID) == "" || strings.TrimSpace(request.GetComputerId()) == "" || request.GetWriterGeneration() <= 0 {
@@ -643,28 +378,10 @@ func restorePreparedComputerRuntime(conn io.Reader, request *computerv0.PrepareC
 	if mountPath == "" || mountPath == "." || mountPath == string(filepath.Separator) || !filepath.IsAbs(mountPath) {
 		return nil, phases, fmt.Errorf("computer runtime prepare mount_path %q is invalid", request.GetMountPath())
 	}
-	computerImage := request.GetComputerImage()
-	if strings.TrimSpace(os.Getenv("HELMR_GUESTD_COMPUTER_ROOT")) == "" {
-		if computerImage == nil {
-			return nil, phases, errors.New("computer runtime prepare computer_image is required")
-		}
-		if strings.TrimSpace(computerImage.GetDigest()) == "" {
-			return nil, phases, errors.New("computer runtime prepare computer_image digest is required")
-		}
-		if computerImage.GetMediaType() != computerImageMediaType {
-			return nil, phases, fmt.Errorf("computer runtime prepare computer_image media_type %q is not supported", computerImage.GetMediaType())
-		}
-		if computerImage.GetEncoding() != computerImageEncoding {
-			return nil, phases, fmt.Errorf("computer runtime prepare computer_image encoding %q is not supported", computerImage.GetEncoding())
-		}
-		if computerImage.GetSizeBytes() == 0 {
-			return nil, phases, errors.New("computer runtime prepare computer_image size_bytes is required")
-		}
-	}
 	phaseStarted := time.Now()
-	image, cleanupImage, err := restorePreparedComputerImage(conn, request)
-	phases = append(phases, computerMountPhase("guest_computer_image_restore", phaseStarted, computerImage.GetSizeBytes(), err))
-	logger.Info("computer runtime prepare computer image restored", "computer_instance_id_hash", computerInstanceLogID(computerInstanceID), "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", computerImage.GetSizeBytes(), "error", errorText(err))
+	image, cleanupImage, err := restorePreparedComputerImage(request)
+	phases = append(phases, computerMountPhase("guest_computer_image_restore", phaseStarted, 0, err))
+	logger.Info("computer runtime prepare computer image restored", "computer_instance_id_hash", computerInstanceLogID(computerInstanceID), "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", 0, "error", errorText(err))
 	if err != nil {
 		return nil, phases, err
 	}
@@ -685,14 +402,13 @@ func restorePreparedComputerRuntime(conn io.Reader, request *computerv0.PrepareC
 	}
 	return &preparedComputerRuntime{
 		computerID: request.GetComputerId(), writerGeneration: request.GetWriterGeneration(),
-		computerInstanceID:  computerInstanceID,
-		computerImageDigest: strings.TrimSpace(computerImage.GetDigest()),
-		imageRoot:           image.RootfsDir,
-		imageConfig:         image.Config,
-		runtimeUser:         runtimeUser,
-		computerMount:       mountPath,
-		computerRoot:        computerRoot,
-		cleanup:             cleanup,
+		computerInstanceID: computerInstanceID,
+		imageRoot:          image.RootfsDir,
+		imageConfig:        image.Config,
+		runtimeUser:        runtimeUser,
+		computerMount:      mountPath,
+		computerRoot:       computerRoot,
+		cleanup:            cleanup,
 	}, phases, nil
 }
 
@@ -713,22 +429,9 @@ func restoreComputerMount(request *computerv0.MaterializeComputerRequest, regist
 		return nil, fmt.Errorf("computer materialize target: %w", err)
 	}
 	entry.baseComputerDiskVersionID = target.GetBaseComputerDiskVersionId()
-	computerImage := request.GetComputerImage()
-	if computerImage == nil {
-		return nil, errors.New("computer materialize computer_image is required")
-	}
-	if strings.TrimSpace(computerImage.GetDigest()) == "" {
-		return nil, errors.New("computer materialize computer_image digest is required")
-	}
-	if computerImage.GetSizeBytes() == 0 {
-		return nil, errors.New("computer materialize computer_image size_bytes is required")
-	}
-	if !request.GetUsePreparedRuntime() {
-		return nil, errors.New("computer mount requires a prepared runtime")
-	}
 	// Materialization binds the already prepared filesystem; it does not decode
 	// an image stream. Format admission belongs to the preparation path.
-	prepared, ok := registry.takePreparedRuntime(computerInstanceID, envelope.GetComputerId(), computerImage.GetDigest(), mountPath, envelope.GetWriterGeneration())
+	prepared, ok := registry.takePreparedRuntime(computerInstanceID, envelope.GetComputerId(), mountPath, envelope.GetWriterGeneration())
 	if !ok {
 		return nil, errors.New("prepared computer runtime is not available")
 	}
@@ -767,65 +470,17 @@ func appendComputerMountFailurePhase(phases []*computerv0.ComputerMountPhase, na
 	return append(phases, computerMountPhase(name, started, 0, err))
 }
 
-func restorePreparedComputerImage(conn io.Reader, request *computerv0.PrepareComputerRuntimeRequest) (ociImage, func(), error) {
+func restorePreparedComputerImage(request *computerv0.PrepareComputerRuntimeRequest) (ociImage, func(), error) {
 	cleanup := func() {}
-	if root := strings.TrimSpace(os.Getenv("HELMR_GUESTD_COMPUTER_ROOT")); root != "" {
-		config := request.GetMountedImageConfig()
-		if config == nil {
-			return ociImage{}, cleanup, errors.New("computer preparation requires admitted image config")
-		}
-		return ociImage{RootfsDir: root, Config: oci.RuntimeConfig{Env: config.GetEnv(), WorkingDir: config.GetWorkingDir(), User: config.GetUser(), Entrypoint: config.GetEntrypoint(), Cmd: config.GetCmd()}}, cleanup, nil
-	}
-	if request.GetMountedImageConfig() != nil {
+	root := strings.TrimSpace(os.Getenv("HELMR_GUESTD_COMPUTER_ROOT"))
+	if root == "" {
 		return ociImage{}, cleanup, errors.New("prepared image config requires a mounted Computer")
 	}
-	header, bodyLen, err := wire.ReadStreamFrameHeader(conn)
-	if err != nil {
-		return ociImage{}, cleanup, fmt.Errorf("read prepared computer image stream header: %w", err)
+	config := request.GetMountedImageConfig()
+	if config == nil {
+		return ociImage{}, cleanup, errors.New("computer preparation requires admitted image config")
 	}
-	if header.Type != wire.StreamTypeRunImage {
-		drainStreamBody(conn, bodyLen)
-		return ociImage{}, cleanup, fmt.Errorf("unsupported computer runtime prepare input type %q", header.Type)
-	}
-	computerImage := request.GetComputerImage()
-	if computerImage.GetSizeBytes() != bodyLen {
-		drainStreamBody(conn, bodyLen)
-		return ociImage{}, cleanup, fmt.Errorf("prepared computer image size_bytes %d does not match frame size %d", computerImage.GetSizeBytes(), bodyLen)
-	}
-	frameDigest := ""
-	if header.BodyDigest != nil {
-		frameDigest = strings.TrimSpace(*header.BodyDigest)
-	}
-	if frameDigest != "" && frameDigest != strings.TrimSpace(computerImage.GetDigest()) {
-		drainStreamBody(conn, bodyLen)
-		return ociImage{}, cleanup, fmt.Errorf("prepared computer image digest %q does not match frame digest %q", computerImage.GetDigest(), frameDigest)
-	}
-	body := &io.LimitedReader{R: conn, N: int64(bodyLen)}
-	hashedBody := newDigestingReader(body)
-	imageRoot, err := mkdirGuestdTemp("helmr-prepared-computer-image-*")
-	if err != nil {
-		drainStreamBody(conn, bodyLen)
-		return ociImage{}, cleanup, fmt.Errorf("create prepared computer image root: %w", err)
-	}
-	cleanup = func() { _ = os.RemoveAll(imageRoot) }
-	image, err := unpackOCIImage(hashedBody, imageRoot)
-	if err != nil {
-		if _, drainErr := io.Copy(io.Discard, hashedBody); drainErr != nil {
-			cleanup()
-			return ociImage{}, func() {}, errors.Join(fmt.Errorf("extract prepared computer image: %w", err), fmt.Errorf("drain prepared computer image: %w", drainErr))
-		}
-		cleanup()
-		return ociImage{}, func() {}, fmt.Errorf("extract prepared computer image: %w", err)
-	}
-	if _, err := io.Copy(io.Discard, hashedBody); err != nil {
-		cleanup()
-		return ociImage{}, func() {}, fmt.Errorf("drain prepared computer image: %w", err)
-	}
-	if digest := hashedBody.Digest(); digest != strings.TrimSpace(computerImage.GetDigest()) {
-		cleanup()
-		return ociImage{}, func() {}, fmt.Errorf("prepared computer image body digest %q does not match declared digest %q", digest, computerImage.GetDigest())
-	}
-	return image, cleanup, nil
+	return ociImage{RootfsDir: root, Config: oci.RuntimeConfig{Env: config.GetEnv(), WorkingDir: config.GetWorkingDir(), User: config.GetUser(), Entrypoint: config.GetEntrypoint(), Cmd: config.GetCmd()}}, cleanup, nil
 }
 
 func handleComputerBasicExecConnection(
@@ -880,7 +535,7 @@ func handleComputerBasicExecConnection(
 			errors.New("computer BasicExec expiry is required"),
 		)
 	}
-	if time.Now().UnixNano() >= envelope.OperationExpiresAtUnixNano {
+	if entry.authorityNow().UnixNano() >= envelope.OperationExpiresAtUnixNano {
 		return fail(
 			"computer_command_expired",
 			errors.New("computer BasicExec claim expired"),
@@ -928,27 +583,6 @@ func errorText(err error) string {
 		return ""
 	}
 	return err.Error()
-}
-
-type digestingReader struct {
-	reader io.Reader
-	hash   hash.Hash
-}
-
-func newDigestingReader(reader io.Reader) *digestingReader {
-	return &digestingReader{reader: reader, hash: sha256.New()}
-}
-
-func (reader *digestingReader) Read(body []byte) (int, error) {
-	count, err := reader.reader.Read(body)
-	if count > 0 {
-		_, _ = reader.hash.Write(body[:count])
-	}
-	return count, err
-}
-
-func (reader *digestingReader) Digest() string {
-	return sha256sum.DigestHash(reader.hash)
 }
 
 // Instance identity is separate from the mount registry's internal key.

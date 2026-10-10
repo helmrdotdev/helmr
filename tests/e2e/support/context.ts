@@ -1,10 +1,11 @@
+import { fixtureInput } from "./runtime-mcp"
 import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
 import { mkdir } from "node:fs/promises"
 import { writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { HelmrClient, type Run, type ComputerRef } from "@helmr/sdk"
+import { HelmrClient, type AgentStartRequest, type ClientComputerRef, type ClientSessionRef, type TurnState, type AskState, type Json } from "@helmr/sdk"
 import { deadline } from "./deadline"
 
 export { deadline }
@@ -19,38 +20,78 @@ export function errorCode(error: unknown): string | undefined {
     ? error.code
     : undefined
 }
-export async function waitRun(
-  client: HelmrClient,
-  id: string,
-  accepted: readonly Run["status"][],
+export type ClientTurn = ReturnType<ClientSessionRef["turn"]>
+export const terminalTurnStatuses = ["completed", "failed", "interrupted", "cancelled"] as const
+export async function waitTurn(
+  turn: ClientTurn,
+  accepted: readonly TurnState["status"][],
   timeoutMs = 20 * 60_000,
-): Promise<Run> {
+): Promise<TurnState> {
   const signal = deadline(timeoutMs)
   for (;;) {
-    signal.throwIfAborted()
-    const run = await client.runs.retrieve(id, { signal })
-    if (accepted.includes(run.status)) return run
+    const state = await turn.retrieve({ signal })
+    if (accepted.includes(state.status)) return state
     assert(
-      !["succeeded", "failed", "cancelled", "expired", "system_failed"].includes(run.status),
-      `Unexpected terminal Run ${id}: ${run.status}`,
+      !(terminalTurnStatuses as readonly string[]).includes(state.status),
+      `Unexpected terminal Turn ${turn.id}: ${state.status} (${JSON.stringify(state.error)})`,
     )
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    await delay(500, undefined, { signal })
   }
 }
-export async function readTelemetry<T>(read: () => Promise<T>): Promise<T> {
-  const signal = deadline(5 * 60_000)
+export async function waitAsk(
+  turn: ClientTurn,
+  match: (ask: AskState) => boolean = () => true,
+  timeoutMs = 5 * 60_000,
+): Promise<AskState> {
+  const signal = deadline(timeoutMs)
   for (;;) {
-    signal.throwIfAborted()
-    try {
-      return await read()
-    } catch (error) {
-      if (!["telemetry_lagging", "telemetry_unavailable"].includes(errorCode(error) ?? ""))
-        throw error
-      await new Promise((resolve) => setTimeout(resolve, 500))
-    }
+    let cursor: string | undefined
+    do {
+      const page = await turn.asks.list({ cursor, limit: 100 }, { signal })
+      const ask = page.asks.find(item => item.status === "pending" && match(item))
+      if (ask) return ask
+      cursor = page.nextCursor
+    } while (cursor !== undefined)
+    const state = await turn.retrieve({ signal })
+    assert(!(terminalTurnStatuses as readonly string[]).includes(state.status),
+      `Turn ${turn.id} ended before the requested question: ${state.status}`)
+    await delay(500, undefined, { signal })
   }
 }
-export async function deleteComputer(ref: ComputerRef, idempotencyKey: string) {
+export async function completedResult(turn: ClientTurn, timeoutMs = 20 * 60_000) {
+  const outcome = await turn.wait({ signal: deadline(timeoutMs) })
+  assert.equal(outcome.status, "completed", `Turn ${turn.id}: ${JSON.stringify(outcome)}`)
+  assert.notEqual(outcome.result, undefined, `Turn ${turn.id}: result expired or absent`)
+  return outcome.result!
+}
+export async function waitOutput(
+  session: ClientSessionRef,
+  turn: ClientTurn,
+  match: (value: Json) => boolean,
+  timeoutMs = 5 * 60_000,
+): Promise<Json> {
+  const signal = deadline(timeoutMs)
+  let after = 0
+  for (;;) {
+    const page = await session.events.list({ after, limit: 100 }, { signal })
+    assert(page.retainedAfter <= after, "Required Session output expired during verification")
+    for (const event of page.records) {
+      if (event.turnId !== turn.id) continue
+      assert(!["turn.completed", "turn.failed", "turn.interrupted", "turn.cancelled"].includes(event.kind),
+        `Turn ${turn.id} ended before the requested output: ${event.kind}`)
+      if (event.kind !== "turn.output") continue
+      const data = event.data
+      if (!Array.isArray(data)) continue
+      for (const part of data) {
+        if (part && typeof part === "object" && part.type === "json" && match(part.value)) return part.value
+      }
+    }
+    after = page.nextAfter
+    if (page.hasMore) continue
+    await delay(500, undefined, { signal })
+  }
+}
+export async function deleteComputer(ref: ClientComputerRef, idempotencyKey: string) {
   const signal = deadline(120_000)
   // Terminal outcomes can precede physical process reconciliation.
   // Retry only that conflict, preserving the delete request's identity.
@@ -79,11 +120,12 @@ export async function verify(
     client: HelmrClient
     marker: string
     objects: Record<
-      "run_ids" | "computer_ids" | "session_ids" | "token_ids" | "secret_ids" | "deployment_ids" | "schedule_ids",
+      "turn_ids" | "computer_ids" | "session_ids" | "ask_ids" | "secret_ids" | "deployment_ids" | "schedule_ids",
       string[]
     >
     cleanup: (action: () => Promise<unknown>) => void
-    computer: (sandbox: string, suffix?: string) => Promise<ComputerRef>
+    computer: (definition: string, suffix?: string) => Promise<ClientComputerRef>
+    startAgent: (definition: string, request: Omit<AgentStartRequest, "input"> & { input: Json }) => ReturnType<HelmrClient["agents"]["start"]>
   }) => Promise<unknown>,
 ) {
   const url = process.env.HELMR_API_URL,
@@ -102,10 +144,10 @@ export async function verify(
     }),
     marker = randomUUID()
   const objects = {
-    run_ids: [] as string[],
+    turn_ids: [] as string[],
     computer_ids: [] as string[],
     session_ids: [] as string[],
-    token_ids: [] as string[],
+    ask_ids: [] as string[],
     secret_ids: [] as string[],
     deployment_ids: [] as string[],
     schedule_ids: [] as string[],
@@ -150,9 +192,15 @@ export async function verify(
       marker,
       objects,
       cleanup: (action) => cleanup.push(action),
-      computer: async (sandbox, suffix = sandbox) => {
-        const ref = await client.sandboxes.createComputer(
-          sandbox,
+      startAgent: async (definition, request) => {
+        const admission = await client.agents.start(definition, { ...request, input: fixtureInput(request.input) }, { signal: deadline(30_000) })
+        objects.session_ids.push(admission.session.id)
+        objects.turn_ids.push(admission.turn.id)
+        return admission
+      },
+      computer: async (definition, suffix = definition) => {
+        const ref = await client.computerDefinitions.createComputer(
+          definition,
           { key: `${suffix}-${marker}`, idempotencyKey: `create:${suffix}:${marker}` },
           { signal: deadline(30_000) },
         )
@@ -172,24 +220,17 @@ export async function verify(
     evidence.failure = error instanceof Error ? error.message : String(error)
   }
   const failures: string[] = []
-  if (failure !== undefined) {
-    for (const id of objects.run_ids) {
-      try {
-        const run = await client.runs.retrieve(id, { signal: deadline(30_000) })
-        if (
-          !["succeeded", "failed", "system_failed", "cancelled", "expired"].includes(run.status)
-        ) {
-          await client.runs.cancel(id, {}, { signal: deadline(30_000) })
-          await waitRun(
-            client,
-            id,
-            ["succeeded", "failed", "system_failed", "cancelled", "expired"],
-            120_000,
-          )
-        }
-      } catch (error) {
-        failures.push(`Run ${id}: ${error instanceof Error ? error.message : String(error)}`)
-      }
+  // A completed Turn leaves an open Session. Stop every owned Session on both
+  // success and failure before attempting Computer deletion; its physical owner
+  // may still need to reconcile, which deleteComputer observes separately.
+  for (const id of new Set(objects.session_ids)) {
+    try {
+      await client.sessions.get(id).cancel(
+        { idempotencyKey: `cleanup:${marker}:${id}` }, { signal: deadline(30_000) },
+      )
+    } catch (error) {
+      failures.push(`Session ${id}: ${error instanceof Error ? error.message : String(error)}`)
+      failure ??= error
     }
   }
   for (const action of cleanup.reverse()) {

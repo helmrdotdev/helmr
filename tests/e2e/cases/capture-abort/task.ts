@@ -1,68 +1,65 @@
-import { task, tokens, logger, sandbox, image } from "@helmr/sdk"
+import { fixtureValue } from "../../support/runtime-mcp"
+import { agent, computer, image } from "@helmr/sdk"
 import { randomUUID } from "node:crypto"
 import { writeFileSync } from "node:fs"
 import { readFile, writeFile, access } from "node:fs/promises"
 import { z } from "zod"
 
-export const captureAbortSandbox = sandbox({ id: "capture-abort-verification" })
-  .image(image("capture-abort-verification").from("node:24-bookworm-slim").workdir("/sandbox"))
-  .resources({ cpu: 1, memory: "1GiB" })
+export const captureAbortComputer = computer({
+  id: "capture-abort-verification",
+  image: image("capture-abort-verification").from("node:24-bookworm-slim").workdir("/workspace"),
+  resources: { cpu: 1, memory: "1GiB" },
+})
 
-export const captureAbortTask = task({
-  id: "verification-capture-abort",
-  maxDuration: "20m",
-  retry: { enabled: false },
-  payload: z.object({ marker: z.string(), first: z.string(), second: z.string(), cancelledMarker: z.string(), cancelMember: z.boolean() }).strict(),
-  run: async ({ marker, first, second, cancelledMarker, cancelMember }, ctx) => {
-    const nonce = randomUUID()
-    const file = `/root/capture-abort-${nonce}`
-    await writeFile(file, marker, { flag: "wx" })
-    const state = () => ({ marker, nonce, runId: ctx.run.id, computerId: ctx.computer.id })
-    await logger.info("capture abort before", { ...state(), phase: "before" })
+export const captureAbortAgent = agent({
+  id: "verification-capture-abort", computer: captureAbortComputer, maxTurnDuration: "20m",
+  setup: () => ({ nonce: randomUUID(), count: 0, marker: "" }),
+  turn: async (turn, ctx) => {
+    const { marker, cancelledMarker, cancelMember, cancelledCounter } = z.object({
+      marker: z.string(), cancelledMarker: z.string(), cancelMember: z.boolean(),
+      cancelledCounter: z.number().int().positive().optional(),
+    }).strict().parse(fixtureValue(turn.input))
+    const memory = ctx.setupResult
+    const count = ++memory.count
+    const file = `/workspace/capture-abort-${memory.nonce}`
     const counterFile = `${cancelledMarker}.counter`
+    const state = () => ({ marker, nonce: memory.nonce, count, turnId: turn.id, sessionId: ctx.session.id, computerId: ctx.computer.id })
     if (cancelMember) {
-      let counter = 0
-      writeFileSync(counterFile, String(counter), { flag: "wx" })
-      setInterval(() => {
-        counter++
-        // Write before emitting the baseline evidence. A buffered final log can
-        // only make qualification fail conservatively, never hide execution.
-        writeFileSync(counterFile, String(counter))
-        void logger.info("capture cancellation probe", { marker, counter })
-      }, 25)
-    }
-    let firstResult: unknown
-    try {
-      firstResult = await tokens.ref(first).wait({ timeout: "12m", idleTimeout: "2s" }).unwrap()
-    } finally {
-      // Ordinary cancellation kills the process while frozen; it cannot run
-      // JavaScript cleanup. This also detects a rejected wait reaching user code.
-      if (cancelMember) writeFileSync(cancelledMarker, "cancelled wait continued")
-    }
-    if (cancelMember) {
-      throw new Error("cancelled member resumed")
-    }
-    const assertCancelledMemberStopped = async () => {
-      try { await access(cancelledMarker) }
-      catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") return
-        throw error
+      // A queued Turn admitted while frozen must never enter after cancellation.
+      writeFileSync(counterFile, String(count))
+      // Input identifies queued work even if an incorrect cold start resets memory.
+      if (cancelledCounter !== undefined || count > 1) {
+        writeFileSync(cancelledMarker, "cancelled queued Turn entered")
+        throw new Error("cancelled member executed after capture")
       }
-      throw new Error("cancelled member executed after capture")
     }
-    const baseline = z.object({ cancelledCounter: z.number().int().positive() }).strict().parse(firstResult)
-    const assertCancelledCounterUnchanged = async () => {
-      const observed = z.number().int().nonnegative().parse(JSON.parse(await readFile(counterFile, "utf8")))
-      if (observed !== baseline.cancelledCounter) throw new Error(`cancelled execution counter changed: ${baseline.cancelledCounter} -> ${observed}`)
+    if (count === 1) {
+      memory.marker = marker
+      await writeFile(file, marker, { flag: "wx" })
+      let start!: () => void
+      const armed = new Promise<void>(resolve => { start = resolve })
+      await turn.onMessage(message => { if (fixtureValue(message) === "start") start() })
+      await turn.output.write([{ type: "json", value: { ...state(), phase: "ready" } }])
+      await armed
+      // Only a completed Turn with no authored timers/I/O can become capturable.
+      return state()
     }
-    await assertCancelledCounterUnchanged()
-    await assertCancelledMemberStopped()
-    if (await readFile(file, "utf8") !== marker) throw new Error("file changed after abort")
-    await logger.info("capture abort resumed", { ...state(), phase: "resumed" })
-    await tokens.ref(second).wait({ timeout: "6m", idleTimeout: "30s" }).unwrap()
-    await assertCancelledCounterUnchanged()
-    await assertCancelledMemberStopped()
-    if (await readFile(file, "utf8") !== marker) throw new Error("file changed after restore")
+    if (memory.marker !== marker || count > 3 || cancelledCounter === undefined) throw new Error("Session state changed")
+    try {
+      await access(cancelledMarker)
+      throw new Error("cancelled queued Turn left its execution marker")
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+    }
+    const observed = z.number().int().positive().parse(JSON.parse(await readFile(counterFile, "utf8")))
+    if (observed !== cancelledCounter) throw new Error(`cancelled Turn counter changed: ${cancelledCounter} -> ${observed}`)
+    if (await readFile(file, "utf8") !== marker) throw new Error("capture lost the file")
+    let finish!: () => void
+    const inspected = new Promise<void>(resolve => { finish = resolve })
+    await turn.onMessage(message => { if (fixtureValue(message) === "finish") finish() })
+    await turn.output.write([{ type: "json", value: { ...state(), phase: count === 2 ? "resumed" : "restored" } }])
+    // Keep this allocation active until the driver observes its exact checkpoint.
+    await inspected
     return state()
   },
 })

@@ -16,8 +16,8 @@ import (
 // Go identifiers that encoding/json would otherwise place in client messages.
 var goDecodeDiagnostics = []string{
 	"Go struct", "Go value", "json:", "UnmarshalJSON", "CreateComputerRequest",
-	"secretbinding", "Binding", "RunLeaseRenewRequest", "RunLeaseClaimRequest",
-	"CompleteTaskRequest", "workerapi", "api.", "int64", "2006-01-02", "Manifest",
+	"secretbinding", "Binding", "AgentComputerUnsealedRequest", "AgentComputerLeaseRequest",
+	"workerapi", "api.", "int64", "2006-01-02", "Manifest",
 }
 
 func assertNoGoDecodeDiagnostics(t *testing.T, message string) {
@@ -43,9 +43,9 @@ func TestDecodeRequestJSONPublicMessages(t *testing.T) {
 	}{
 		{
 			name: "mistyped nested field",
-			body: `{"secrets":[{"secret":7}]}`,
+			body: `{"secrets":[{"secretId":7}]}`,
 			out:  func() any { return new(api.CreateComputerRequest) },
-			want: `field "secrets.0.secret" must be a JSON string, got number`,
+			want: `field "secrets.0.secretId" must be a JSON string, got number`,
 		},
 		{
 			name: "mistyped array field",
@@ -55,21 +55,21 @@ func TestDecodeRequestJSONPublicMessages(t *testing.T) {
 		},
 		{
 			name: "mistyped integer field",
-			body: `{"lease_id":"x","lease_sequence":"1"}`,
-			out:  func() any { return new(workerapi.RunLeaseClaimRequest) },
-			want: `field "lease_sequence" must be a JSON integer, got string`,
+			body: `{"computer_id":"x","lease_epoch":"1"}`,
+			out:  func() any { return new(workerapi.AgentComputerLeaseRequest) },
+			want: `field "lease_epoch" must be a JSON integer, got string`,
 		},
 		{
 			name: "fractional integer field",
-			body: `{"lease_sequence":1.5}`,
-			out:  func() any { return new(workerapi.RunLeaseClaimRequest) },
-			want: `field "lease_sequence" must be an integer`,
+			body: `{"lease_epoch":1.5}`,
+			out:  func() any { return new(workerapi.AgentComputerLeaseRequest) },
+			want: `field "lease_epoch" must be an integer`,
 		},
 		{
 			name: "overflowing integer field",
-			body: `{"lease_sequence":99999999999999999999}`,
-			out:  func() any { return new(workerapi.RunLeaseClaimRequest) },
-			want: `field "lease_sequence" must be an integer within the supported range`,
+			body: `{"lease_epoch":99999999999999999999}`,
+			out:  func() any { return new(workerapi.AgentComputerLeaseRequest) },
+			want: `field "lease_epoch" must be an integer within the supported range`,
 		},
 		{
 			name: "invalid base64 field",
@@ -129,14 +129,14 @@ func TestDecodeRequestJSONPublicMessages(t *testing.T) {
 		},
 		{
 			name: "timestamp type",
-			body: `{"expected_expires_at":1}`,
-			out:  func() any { return new(workerapi.RunLeaseRenewRequest) },
-			want: `field "expected_expires_at" must be a JSON string, got number`,
+			body: `{"absent_observed_at":1}`,
+			out:  func() any { return new(workerapi.AgentComputerUnsealedRequest) },
+			want: `field "absent_observed_at" must be a JSON string, got number`,
 		},
 		{
 			name: "timestamp format",
-			body: `{"expected_expires_at":"tomorrow"}`,
-			out:  func() any { return new(workerapi.RunLeaseRenewRequest) },
+			body: `{"absent_observed_at":"tomorrow"}`,
+			out:  func() any { return new(workerapi.AgentComputerUnsealedRequest) },
 			want: `timestamp must be an RFC 3339 string`,
 		},
 	}
@@ -178,35 +178,29 @@ func TestDecodeRequestJSONTimestampMessages(t *testing.T) {
 	}
 }
 
-// Worker lease renewal decodes inline, so it exercises the handler-owned path.
-func TestWorkerRenewRunLeaseTimestampMessages(t *testing.T) {
+// Timestamp decoding keeps transport diagnostics independent of Go types.
+func TestRequestTimestampMessages(t *testing.T) {
 	tests := []struct {
 		value string
 		want  string
 	}{
-		{`1`, `field "expected_expires_at" must be a JSON string, got number`},
-		{`true`, `field "expected_expires_at" must be a JSON string, got boolean`},
-		{`[]`, `field "expected_expires_at" must be a JSON string, got array`},
-		{`{}`, `field "expected_expires_at" must be a JSON string, got object`},
+		{`1`, `field "absent_observed_at" must be a JSON string, got number`},
+		{`true`, `field "absent_observed_at" must be a JSON string, got boolean`},
+		{`[]`, `field "absent_observed_at" must be a JSON string, got array`},
+		{`{}`, `field "absent_observed_at" must be a JSON string, got object`},
 		{`"tomorrow"`, `timestamp must be an RFC 3339 string`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.value, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"expected_expires_at":`+tt.value+`}`))
-			recorder := httptest.NewRecorder()
-			(&Server{}).workerRenewRunLease(recorder, request)
-			if recorder.Code != http.StatusBadRequest {
-				t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+			request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"absent_observed_at":`+tt.value+`}`))
+			var value struct {
+				ExpectedExpiresAt time.Time `json:"absent_observed_at"`
 			}
-			var response api.HTTPErrorResponse
-			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-				t.Fatal(err)
+			err := decodeRequestJSON(request, &value)
+			if err == nil || err.Error() != tt.want {
+				t.Fatalf("timestamp error: %v, want %s", err, tt.want)
 			}
-			want := "invalid worker run lease renewal JSON: " + tt.want
-			if response.Error.Code != "bad_request" || response.Error.Message != want {
-				t.Fatalf("error = %+v, want bad_request %q", response.Error, want)
-			}
-			assertNoGoDecodeDiagnostics(t, response.Error.Message)
+			assertNoGoDecodeDiagnostics(t, err.Error())
 		})
 	}
 }
@@ -218,19 +212,8 @@ func TestCanonicalDecodersReportTruncatedBodies(t *testing.T) {
 		`{"idempotency_key":"k","data":[1,`,
 		`{"computer":{"id":"x"},"payload":"abc`,
 	}
-	decoders := map[string]func(*http.Request) error{
-		"task start": func(r *http.Request) error {
-			_, _, err := decodeStartTaskRequest(r)
-			return err
-		},
-		"actor start": func(r *http.Request) error {
-			_, err := decodeStartActorRequest(r)
-			return err
-		},
-		"session command": func(r *http.Request) error {
-			return decodeSessionCommand(r, new(map[string]json.RawMessage))
-		},
-	}
+	decoders := map[string]func(*http.Request) error{"request": func(r *http.Request) error { return decodeRequestJSON(r, new(map[string]json.RawMessage)) }}
+
 	for name, decode := range decoders {
 		for _, body := range bodies {
 			t.Run(name+" "+body, func(t *testing.T) {
@@ -265,19 +248,19 @@ func TestWorkerDecodeReturnsTooLarge(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"lease":{"id":"`+strings.Repeat("x", 64)+`"}}`))
 	recorder := httptest.NewRecorder()
 	request.Body = http.MaxBytesReader(recorder, request.Body, 16)
-	(&Server{}).workerRenewRunLease(recorder, request)
+	(&Server{}).workerListAllocations(recorder, request)
 	body := decodeHTTPError(t, recorder.Body.Bytes())
 	if recorder.Code != http.StatusRequestEntityTooLarge || body.Code != "request_too_large" ||
-		body.Message != "invalid worker run lease renewal JSON: request body is too large" {
+		body.Message != "request body is too large" {
 		t.Fatalf("status = %d error = %+v", recorder.Code, body)
 	}
 }
 
 func TestNestedWorkerDecodeKeepsContext(t *testing.T) {
-	var request workerapi.CompleteTaskRequest
-	err := decodeClosedJSON(json.RawMessage(`{"surprise":true}`), &request)
-	if err == nil || err.Error() != `decode task completion request: unknown field "surprise"` {
-		t.Fatalf("decodeClosedJSON() error = %v", err)
+	var request workerapi.AllocationIdentity
+	err := decodeJSONBody(`{"surprise":true}`, &request)
+	if err == nil || err.Error() != `unknown field "surprise"` {
+		t.Fatalf("decodeJSONBody() error = %v", err)
 	}
 	assertNoGoDecodeDiagnostics(t, err.Error())
 }

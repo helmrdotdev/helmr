@@ -34,15 +34,7 @@ func TestProgramCompilerResultRoundTrip(t *testing.T) {
 
 func testProgramCompilerResult(t *testing.T) ProgramCompilerResult {
 	t.Helper()
-	return ProgramCompilerResult{APIVersion: "helmr.compiler.v0", Bundler: testBundlerIdentity(), NodeVersion: "24.21.0", Config: ProgramPathDigest{Path: "helmr/config.json", Digest: testDigest("config")}, PayloadDigest: testDigest("input"), Modules: []string{"helmr/app/entry-0.mjs"}, Selections: []ProgramCompilerSelection{{DeclaredID: "build", ExportName: "build", Kind: DeclarationKindTask, ModulePath: "helmr/app/entry-0.mjs", Slot: DeclarationSlotHandler}}}
-}
-
-func TestProgramCompilerSelectionsUseDeclarationOrder(t *testing.T) {
-	task := ProgramCompilerSelection{Kind: DeclarationKindTask, DeclaredID: "z-task"}
-	actor := ProgramCompilerSelection{Kind: DeclarationKindActor, DeclaredID: "a-actor"}
-	if compareProgramCompilerSelection(task, actor) >= 0 {
-		t.Fatal("task selection did not sort before actor selection")
-	}
+	return ProgramCompilerResult{APIVersion: "helmr.compiler.v0", Bundler: testBundlerIdentity(), NodeVersion: "24.21.0", Config: ProgramPathDigest{Path: "helmr/config.json", Digest: testDigest("config")}, PayloadDigest: testDigest("input"), Modules: []string{"helmr/app/entry-0.mjs"}}
 }
 
 func TestCompilerAuthorityMismatchTuples(t *testing.T) {
@@ -95,7 +87,7 @@ func TestNativeCompilerContractsRejectOpenMissingAndUnsupportedShapes(t *testing
 				t.Fatalf("accepted missing %s in %s", key, item.raw)
 			}
 		}
-		for key, value := range map[string]json.RawMessage{"outputs": json.RawMessage(`[]`), "compilePackages": json.RawMessage(`[]`), "apiVersion": json.RawMessage(`"helmr.compiler.unsupported"`)} {
+		for key, value := range map[string]json.RawMessage{"unexpectedField": json.RawMessage(`[]`), "apiVersion": json.RawMessage(`"helmr.compiler.unsupported"`)} {
 			candidate := maps.Clone(document)
 			candidate[key] = value
 			encoded, _ := json.Marshal(candidate)
@@ -110,9 +102,6 @@ func TestNativeCompilerContractsRejectOpenMissingAndUnsupportedShapes(t *testing
 	}
 	for _, mutate := range []func(*ProgramCompilerResult){
 		func(r *ProgramCompilerResult) { r.Modules = nil },
-		func(r *ProgramCompilerResult) { r.Selections = nil },
-		func(r *ProgramCompilerResult) { r.Selections[0].Slot = "other" },
-		func(r *ProgramCompilerResult) { r.Selections[0].ModulePath = "tasks/missing.ts" },
 		func(r *ProgramCompilerResult) { r.Modules = []string{"helmr/app/entry-0.mjs", "helmr/app/entry-0.mjs"} },
 	} {
 		candidate := testProgramCompilerResult(t)
@@ -120,5 +109,24 @@ func TestNativeCompilerContractsRejectOpenMissingAndUnsupportedShapes(t *testing
 		if err := validateProgramCompilerResult(candidate); err == nil {
 			t.Fatal("accepted malformed compiler evidence")
 		}
+	}
+}
+
+func TestCompilerDefinitionLocationsMustBeDiscoveryCandidates(t *testing.T) {
+	result := testProgramCompilerResult(t)
+	result.Modules = []string{testModulePath("a"), testModulePath("b")}
+	index := testDefinitionIndex()
+	if err := ValidateProgramCompilerLocators(result, index); err != nil {
+		t.Fatal(err)
+	}
+	index.Computers[0].ThroughAgent = false
+	index.Computers[0].ModulePath = "helmr/app/entry-9.mjs"
+	if err := ValidateProgramCompilerLocators(result, index); err == nil {
+		t.Fatal("accepted Computer outside compiler discovery")
+	}
+	index = testDefinitionIndex()
+	index.Agents[1].ModulePath = "helmr/app/entry-9.mjs"
+	if err := ValidateProgramCompilerLocators(result, index); err == nil {
+		t.Fatal("accepted Agent outside compiler discovery")
 	}
 }

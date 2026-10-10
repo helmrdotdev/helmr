@@ -58,7 +58,8 @@ func init() {
 
 type imageCommandOptions struct {
 	SecretRoot      string
-	ManagedProgram  bool
+	NativeRoot      string
+	Program         programMounts
 	CgroupNamespace bool
 	CgroupLeaf      string
 	StartProof      bool
@@ -69,8 +70,11 @@ func imageCommand(ctx context.Context, runtimePath string, args []string, launch
 	if user == nil {
 		return nil, errors.New("image runtime user is required")
 	}
+	if err := opts.Program.validate(); err != nil {
+		return nil, err
+	}
 	if opts.CgroupNamespace {
-		if err := validateProcessCgroupLeaf(opts.CgroupLeaf); err != nil {
+		if err := validateAssignedProcessCgroup(opts.CgroupLeaf); err != nil {
 			return nil, err
 		}
 	} else if opts.CgroupLeaf != "" {
@@ -82,11 +86,13 @@ func imageCommand(ctx context.Context, runtimePath string, args []string, launch
 		launchCwd,
 		strconv.FormatUint(uint64(user.UID), 10),
 		strconv.FormatUint(uint64(user.GID), 10),
-		strconv.FormatBool(opts.ManagedProgram),
+		opts.Program.Runtime,
+		opts.Program.Artifact,
 		strconv.FormatBool(opts.CgroupNamespace),
 		opts.CgroupLeaf,
 		strconv.FormatBool(opts.StartProof),
 		opts.SecretRoot,
+		opts.NativeRoot,
 		runtimePath,
 	}
 	initArgs = append(initArgs, args...)
@@ -101,7 +107,7 @@ func imageCommand(ctx context.Context, runtimePath string, args []string, launch
 }
 
 func runImageRuntimeInit(args []string, env []string) error {
-	if len(args) < 10 {
+	if len(args) < 12 {
 		return errors.New("missing image runtime init arguments")
 	}
 	imageRoot := args[0]
@@ -114,57 +120,59 @@ func runImageRuntimeInit(args []string, env []string) error {
 	if err != nil {
 		return err
 	}
-	var managedProgram bool
-	switch args[4] {
-	case "true":
-		managedProgram = true
-	case "false":
-	default:
-		return fmt.Errorf("invalid managed program flag %q", args[4])
+	program := programMounts{Runtime: args[4], Artifact: args[5]}
+	if err := program.validate(); err != nil {
+		return err
 	}
 	var startProof bool
 	var cgroupNamespace bool
-	switch args[5] {
+	switch args[6] {
 	case "true":
 		cgroupNamespace = true
 	case "false":
 	default:
-		return fmt.Errorf("invalid cgroup namespace flag %q", args[5])
+		return fmt.Errorf("invalid cgroup namespace flag %q", args[6])
 	}
-	cgroupLeaf := args[6]
+	cgroupLeaf := args[7]
 	if cgroupNamespace {
-		if err := validateProcessCgroupLeaf(cgroupLeaf); err != nil {
+		if err := validateAssignedProcessCgroup(cgroupLeaf); err != nil {
 			return err
 		}
 	} else if cgroupLeaf != "" {
 		return errors.New("program cgroup leaf requires a cgroup namespace")
 	}
-	switch args[7] {
+	switch args[8] {
 	case "true":
 		startProof = true
 	case "false":
 	default:
-		return fmt.Errorf("invalid start proof flag %q", args[7])
+		return fmt.Errorf("invalid start proof flag %q", args[8])
 	}
-	secretRoot := args[8]
-	runtimePath := args[9]
-	runtimeArgs := args[10:]
+	secretRoot := args[9]
+	nativeRoot := args[10]
+	runtimePath := args[11]
+	runtimeArgs := args[12:]
 	if cgroupNamespace {
 		if err := enterProcessCgroupNamespace(cgroupLeaf); err != nil {
 			return err
 		}
 	}
-	if err := setupImageRuntimeNamespace(imageRoot, managedProgram, secretRoot); err != nil {
+	if err := setupImageRuntimeNamespace(imageRoot, program, secretRoot); err != nil {
 		return err
+	}
+	if nativeRoot != "" {
+		if err := mountNativeLauncher(imageRoot, nativeRoot); err != nil {
+			return err
+		}
 	}
 	if err := pivotIntoImageRoot(imageRoot); err != nil {
 		return err
 	}
-	if err := syscall.Chdir(launchCwd); err != nil {
-		return fmt.Errorf("chdir launch cwd: %w", err)
-	}
 	if err := applyVMPlatform(uid, gid); err != nil {
 		return err
+	}
+	if err := syscall.Chdir(launchCwd); err != nil {
+		return fmt.Errorf("chdir launch cwd: %w", err)
 	}
 	argv := append([]string{runtimePath}, runtimeArgs...)
 	if startProof {
@@ -214,7 +222,7 @@ func parseInitUint32(name string, raw string) (uint32, error) {
 	return uint32(value), nil
 }
 
-func setupImageRuntimeNamespace(imageRoot string, managedProgram bool, secretRoot string) error {
+func setupImageRuntimeNamespace(imageRoot string, program programMounts, secretRoot string) error {
 	if err := syscall.Mount("", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
 		return fmt.Errorf("make mount namespace private: %w", err)
 	}
@@ -252,8 +260,8 @@ func setupImageRuntimeNamespace(imageRoot string, managedProgram bool, secretRoo
 	if err := setupImageRuntimeNetworkFiles(imageRoot); err != nil {
 		return err
 	}
-	if managedProgram {
-		if err := mountManagedProgram(imageRoot); err != nil {
+	if program != (programMounts{}) {
+		if err := mountManagedProgram(imageRoot, program); err != nil {
 			return err
 		}
 	}
@@ -284,9 +292,6 @@ func setupImageRuntimeNamespace(imageRoot string, managedProgram bool, secretRoo
 
 func mountManagedSecretFiles(imageRoot, secretRoot string) error {
 	info, err := os.Stat(secretRoot)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
 	if err != nil {
 		return fmt.Errorf("inspect managed secret root: %w", err)
 	}
@@ -348,13 +353,13 @@ func mountManagedSecretFiles(imageRoot, secretRoot string) error {
 	})
 }
 
-func mountManagedProgram(imageRoot string) error {
+func mountManagedProgram(imageRoot string, program programMounts) error {
 	mounts := []struct {
 		source string
 		target string
 	}{
-		{source: "/var/lib/helmr/program/runtime", target: "opt/helmr/runtime"},
-		{source: "/var/lib/helmr/program/artifact", target: "opt/helmr/program"},
+		{source: program.Runtime, target: "opt/helmr/runtime"},
+		{source: program.Artifact, target: "opt/helmr/program"},
 	}
 	for _, mount := range mounts {
 		info, err := os.Stat(mount.source)
@@ -432,6 +437,11 @@ func createRuntimeDevice(imageRoot string, device runtimeDevice) error {
 	mode := uint32(syscall.S_IFCHR) | device.mode
 	if err := syscall.Mknod(target, mode, int(unix.Mkdev(device.major, device.minor))); err != nil && !errors.Is(err, os.ErrExist) {
 		return fmt.Errorf("create /dev/%s: %w", device.name, err)
+	}
+	// Device permissions are a runtime contract, not an inherited daemon umask.
+	// In particular, non-root children need to open /dev/null for output too.
+	if err := os.Chmod(target, os.FileMode(device.mode)); err != nil {
+		return fmt.Errorf("set /dev/%s permissions: %w", device.name, err)
 	}
 	return nil
 }

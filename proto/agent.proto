@@ -1,0 +1,341 @@
+syntax = "proto3";
+
+package helmr.agent.v1;
+
+import "computer.proto";
+
+option go_package = "github.com/helmrdotdev/helmr/internal/proto/agent/v1;agentv1";
+
+// Local pipes survive coherent Computer continuation. The guest supervisor owns
+// physical lease/host authentication; customer processes never hold upstream keys.
+message SessionIdentity {
+  string session_id = 1;
+  int64 process_epoch = 2;
+}
+
+message SessionStart {
+  string agent_id = 1;
+  string computer_id = 2;
+  string deployment_id = 3;
+  optional string conversation_key = 4;
+  optional string parent_session_id = 5;
+  enum RecoveryKind {
+    RECOVERY_KIND_UNSPECIFIED = 0;
+    RECOVERY_KIND_INITIAL = 1;
+    RECOVERY_KIND_RECONSTRUCTED = 2;
+  }
+  RecoveryKind recovery_kind = 6;
+  string recovery_reason = 7;
+  int64 terminal_sequence = 8;
+  SessionProgram program = 9;
+  SessionLogLimits log_limits = 10;
+}
+
+// Exact executable bytes for one pinned Session. Deployment remains its authority.
+message SessionProgramArtifact {
+  string digest = 1;
+  int64 size_bytes = 2;
+}
+message SessionProgram {
+  SessionProgramArtifact runtime = 1;
+  SessionProgramArtifact artifact = 2;
+}
+// Sent only during first startup, before SessionAttached. An artifact request is
+// followed by exactly its declared bytes. Release requires a fresh launch grant
+// after materialization; the guest has executed no customer code at that point.
+message SessionProgramRequest {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_RUNTIME = 1;
+    KIND_ARTIFACT = 2;
+    KIND_RELEASE = 3;
+  }
+  Kind kind = 1;
+}
+
+message TurnDispatch {
+  string turn_id = 1;
+  int64 sequence = 2;
+  string created_at = 3;
+  bytes input_json = 4;
+  bytes source_json = 5;
+}
+message MessageDelivery {
+  string turn_id = 1;
+  string message_id = 2;
+  bytes input_json = 3;
+}
+message TurnInterrupt { string turn_id = 1; string reason = 2; }
+message TurnReconcile { string turn_id = 1; }
+message TurnAcknowledged { string turn_id = 1; int64 sequence = 2; }
+// Issued only after the control plane releases the exact hold and the guest has
+// installed current authority. Other effective holds prohibit this command.
+message SessionResume {}
+message SessionSuspend { string reason = 1; }
+message SessionShutdown { string reason = 1; }
+// Private supervisor handshake; it does not change the Session hold state.
+message SessionCheckpoint { string checkpoint_id = 1; }
+message SessionCheckpointReady {
+  string checkpoint_id = 1;
+  oneof outcome {
+    bytes scopes_json = 2;
+    OperationError error = 3;
+  }
+}
+
+message OperationResult {
+  string request_id = 1;
+  oneof outcome {
+    bytes value_json = 2;
+    OperationError error = 3;
+  }
+}
+message OperationError { string code = 1; string message = 2; }
+
+message GuestCommand {
+  SessionIdentity identity = 1;
+  string delivery_id = 2;
+  // Guest-owned monotonic sequence for interrupt/suspend/resume, retained across
+  // attachment renewal. A delayed resume must not release a newer local hold.
+  int64 control_sequence = 13;
+  oneof command {
+    SessionStart start = 3;
+    TurnDispatch dispatch = 4;
+    MessageDelivery message = 5;
+    TurnInterrupt interrupt = 6;
+    TurnReconcile reconcile = 7;
+    TurnAcknowledged acknowledged = 8;
+    OperationResult operation_result = 9;
+    SessionResume resume = 10;
+    SessionShutdown shutdown = 11;
+    SessionSuspend suspend = 12;
+    SessionCheckpoint checkpoint = 14;
+  }
+}
+
+// Every uncertain operation retains request_id and the original payload through
+// host reattachment. The authenticated Session identity is outside payload_json.
+message Operation {
+  enum Method {
+    METHOD_UNSPECIFIED = 0;
+    METHOD_REGISTER_MESSAGES = 1;
+    METHOD_CLOSE_PROCESSING = 2;
+    METHOD_ASK = 3;
+    METHOD_WITHDRAW_ASK = 4;
+    METHOD_OUTPUT = 5;
+    METHOD_SPAWN = 6;
+    METHOD_START = 7;
+    METHOD_ENQUEUE = 8;
+    METHOD_WAIT_TURN = 9;
+    METHOD_SEND_MESSAGE = 10;
+    METHOD_CONVERGE_NATIVE = 11;
+    METHOD_FINALIZE = 12;
+    METHOD_FAIL = 13;
+    METHOD_HOLD = 14;
+    METHOD_WAIT_ASK = 15;
+    METHOD_GET_MCP_CONNECTION = 16;
+    METHOD_RUNTIME_MCP = 17;
+    METHOD_RESPOND = 18;
+    METHOD_CONTROL_SESSION = 19;
+    METHOD_INSPECT_SESSION = 20;
+    METHOD_LIST_SESSIONS = 21;
+  }
+  string request_id = 1;
+  optional string turn_id = 2;
+  Method method = 3;
+  bytes payload_json = 4;
+}
+// Cancels only a local observation/wait, never the referenced Turn or mutation.
+message OperationCancel { string request_id = 1; }
+message SessionReady {}
+message DeliveryResult {
+  string delivery_id = 1;
+  oneof outcome {
+    bytes value_json = 2;
+    OperationError error = 3;
+  }
+}
+message SessionFailed { string code = 1; string message = 2; }
+message ProgramEvent {
+  SessionIdentity identity = 1;
+  oneof event {
+    SessionReady ready = 2;
+    Operation operation = 3;
+    DeliveryResult delivery_result = 4;
+    SessionFailed failed = 5;
+    OperationCancel cancel_operation = 6;
+    SessionCheckpointReady checkpoint_ready = 7;
+  }
+}
+
+// This envelope exists only on the owned host-to-guest transport. It is never
+// forwarded to the authored process or included in a native launch request.
+message SessionGrant {
+  SessionIdentity identity = 1;
+  string computer_id = 2;
+  string computer_instance_id = 3;
+  int64 writer_generation = 4;
+  string worker_host_id = 5;
+  int64 computer_lease_epoch = 6;
+  int64 authority_generation = 7;
+  int64 expires_at_unix_nano = 8;
+  string channel_credential = 9;
+}
+
+message SessionSecret {
+  oneof placement {
+    string env = 1;
+    string file = 2;
+  }
+  bytes value = 3;
+}
+
+// A repeated open attaches to the retained process; start must match exactly.
+// The guest does not reconstruct a missing process during an attach-only call.
+message SessionAttach {
+  SessionGrant grant = 1;
+  uint64 attachment_sequence = 2;
+  SessionStart start = 3;
+  repeated SessionSecret secrets = 4;
+  map<string, string> protected_env = 5;
+  bytes proxy_ca = 6;
+}
+
+message HostSessionMessage {
+  uint64 attachment_sequence = 1;
+  oneof message {
+    GuestCommand command = 2;
+    SessionGrant renew = 3;
+    SessionEventsAcknowledged acknowledged = 4;
+    SessionLogAcknowledged log_acknowledged = 5;
+  }
+}
+
+message SessionEventsAcknowledged { uint64 through_sequence = 1; }
+message SessionAttached {
+  bool ready = 1;
+  bool terminal = 2;
+  // Oldest Turn whose runtime receipt has not yet been retired by the host.
+  string pending_turn_id = 3;
+}
+message SessionStopped {}
+// A control-only attachment proved that this process epoch is absent.
+message SessionAbsent {}
+// Bounds apply separately to each stdout/stderr stream. They are supplied by
+// qualified deployment configuration; no guest default is implied.
+message SessionLogLimits {
+  int32 chunk_bytes = 1;
+  int64 buffer_bytes = 2;
+  int32 buffer_records = 3;
+}
+message SessionLogAcknowledged {
+  SessionLog.Stream stream = 1;
+  int64 through_sequence = 2;
+  // An expired disposition releases only this fully expired retained head.
+  // It rejects re-acceptance and does not acknowledge new durable bytes.
+  bool expired = 3;
+}
+message SessionLog {
+  enum Stream { STREAM_UNSPECIFIED = 0; STREAM_STDOUT = 1; STREAM_STDERR = 2; }
+  Stream stream = 1;
+  bytes data = 2;
+  enum Kind { KIND_UNSPECIFIED = 0; KIND_DATA = 1; KIND_GAP = 2; KIND_END = 3; }
+  Kind kind = 3;
+  int64 sequence = 4;
+  int64 through_sequence = 5;
+  int64 observed_at_unix_nano = 6;
+  int64 dropped_bytes = 7;
+  // Exact source EOF, not a claim that preceding gaps contain bytes.
+  bool complete = 8;
+}
+message GuestSessionMessage {
+  SessionIdentity identity = 1;
+  uint64 attachment_sequence = 2;
+  oneof message {
+    SessionAttached attached = 3;
+    ProgramEvent event = 4;
+    SessionLog log = 5;
+    SessionStopped stopped = 10;
+    SessionProgramRequest program_request = 11;
+    SessionAbsent absent = 12;
+  }
+  // Generated by the guest after physical verification. Authored ProgramEvent
+  // has no field that can populate or override this attestation.
+  string drain_evidence = 6;
+  uint64 event_sequence = 7;
+  // Pending mutations retain their original admission generation when replayed.
+  int64 operation_authority_generation = 8;
+  int64 operation_lease_epoch = 9;
+}
+
+// Host-owned coherent capture. Membership is the complete resident process set,
+// not a subset selected by an individual Agent.
+message ComputerSessionCapture {
+  helmr.computer.v0.ComputerOperationEnvelope envelope = 1;
+  string checkpoint_id = 2;
+  int64 desired_version = 3;
+  int64 membership_revision = 4;
+  repeated SessionIdentity sessions = 5;
+}
+message ComputerSessionInstallation {
+  ComputerSessionCapture capture = 1;
+  helmr.computer.v0.ComputerOperationEnvelope envelope = 2;
+  int64 desired_version = 3;
+  string base_computer_disk_version_id = 4;
+  repeated SessionGrant grants = 5;
+  // Abort retains the source filesystem and owner; restore advances ownership.
+  bool source_abort = 6;
+  // Exact captured members cancelled before this installation was prepared.
+  // Activation must confirm their physical stop before thawing live peers.
+  repeated SessionIdentity stopped_sessions = 7;
+}
+// Current durable controls are applied after installation and before any user
+// process is thawed. They do not replace the immutable installation request.
+message SessionContinuationControl {
+  SessionIdentity identity = 1;
+  int64 authority_generation = 2;
+  bool held = 3;
+  bool stopped = 4;
+}
+message ComputerSessionControls {
+  helmr.computer.v0.ComputerOperationEnvelope envelope = 1;
+  string checkpoint_id = 2;
+  int64 desired_version = 3;
+  repeated SessionContinuationControl sessions = 4;
+}
+message ComputerSessionControl {
+  oneof operation {
+    ComputerSessionCapture capture = 1;
+    ComputerSessionInstallation install = 3;
+    ComputerSessionInstallation activate = 4;
+    ComputerSessionCapture inspect = 5;
+    ComputerSessionControls controls = 6;
+  }
+}
+enum ComputerSessionErrorCode {
+  COMPUTER_SESSION_ERROR_CODE_UNSPECIFIED = 0;
+  COMPUTER_SESSION_ERROR_CODE_AUTHORITY_EXPIRED = 1;
+  COMPUTER_SESSION_ERROR_CODE_CAPTURE_ABSENT_AFTER_EXPIRY = 2;
+  COMPUTER_SESSION_ERROR_CODE_CAPTURE_ADMISSION_PENDING = 3;
+  COMPUTER_SESSION_ERROR_CODE_CAPTURE_UNUSABLE = 4;
+}
+message ComputerSessionReceipt {
+  string checkpoint_id = 1;
+  int64 desired_version = 2;
+  bool frozen = 3;
+  bool installed = 4;
+  bool activated = 5;
+  // Once set, an uncertain response is not permission to restore the old image.
+  bool activation_started = 6;
+  string error = 7;
+  // Digest of the exact current-control request applied before activation.
+  bytes controls_digest = 8;
+  ComputerSessionErrorCode error_code = 9;
+}
+
+// Installation time is sampled by the owned host after receiving this nonce.
+message ComputerAuthorityChallenge { bytes nonce = 1; }
+message ComputerAuthorityObservation {
+  bytes nonce = 1;
+  int64 authority_time_unix_nano = 2;
+}

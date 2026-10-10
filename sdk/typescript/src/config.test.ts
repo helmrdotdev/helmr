@@ -242,7 +242,7 @@ describe("ignore pattern matching", () => {
   })
 })
 
-test("empty config is valid; removed package selectors are unknown", () => {
+test("empty config uses defaults and unknown options are rejected", () => {
  expect(defineConfig({})).toMatchObject({dirs:["tasks"],ignorePatterns:[]})
- expect(() => inspectConfig({compilePackages:[]})).toThrow()
+ expect(() => inspectConfig({unexpectedOption:true})).toThrow()
 })

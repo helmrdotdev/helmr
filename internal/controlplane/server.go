@@ -10,13 +10,13 @@ import (
 	"net/http"
 	"net/url"
 	"runtime/debug"
-	"strconv"
 	"strings"
 	"time"
 	"uuid"
 
 	"github.com/felixge/httpsnoop"
 	"github.com/go-chi/chi/v5"
+	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bundle"
@@ -29,20 +29,19 @@ import (
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
-	"github.com/helmrdotdev/helmr/internal/token"
+	"github.com/helmrdotdev/helmr/internal/telemetry/diagnostic"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 const (
-	readinessTimeout             = 2 * time.Second
-	apiRequestBodyLimit          = int64(128 << 20)
-	deploymentRequestBodyLimit   = int64(642 << 20)
-	workerLogRequestBodyLimit    = int64(256 << 10)
-	workerRunLogRequestBodyLimit = int64(len(`{"lease":{"id":"00000000-0000-7000-8000-000000000000","lease_sequence":9223372036854775807},"stream":"stdout","observed_seq":9223372036854775807,"content_base64":""}`) +
-		((telemetry.MaxRunLogContentBytes + 2) / 3 * 4))
+	readinessTimeout           = 2 * time.Second
+	apiRequestBodyLimit        = int64(128 << 20)
+	deploymentRequestBodyLimit = int64(642 << 20)
+	workerLogRequestBodyLimit  = int64(256 << 10)
 	taskCompletionBodyLimit    = int64(17 << 20)
 	computerCommandResultLimit = int64(10 << 20)
 	secretRequestBodyLimit     = int64(1 << 20)
@@ -57,42 +56,47 @@ type SecretManager interface {
 }
 
 type SubjectEventReader interface {
-	ReadSubject(context.Context, uuid.UUID, string, uuid.UUID, int64, func(api.RunEvent) error, func() error) error
+	ReadSubject(context.Context, uuid.UUID, string, uuid.UUID, int64, func(api.DiagnosticEvent) error, func() error) error
 }
 
 type Server struct {
-	computerKeys          *computer.KeyBroker
-	publisher             computer.Publisher
-	log                   *slog.Logger
-	deploymentMode        string
-	db                    db.Querier
-	tx                    db.TxDB
-	tokenWaits            *token.Registrar
-	tokens                *token.Tokens
-	readinessDB           db.DBTX
-	auth                  auth.Authenticator
-	cas                   cas.UploadStore
-	bundleAdmission       bundle.Admission
-	platformStore         cas.Reader
-	secrets               SecretManager
-	secretDelivery        SecretDeliveryOpener
-	secretProxy           *secret.Store
-	computers             computer.Creator
-	computerFencingKey    disk.FencingKey
-	eventStream           SubjectEventReader
-	telemetryReader       telemetry.Reader
-	hostAuth              workergroup.HostAuthConfig
-	workerEnrollmentGuard *workerEnrollmentGuard
-	capacityTokenHash     []byte
-	setupToken            string
-	authKeys              auth.Keys
-	publicURL             *url.URL
-	authProvider          AuthProvider
-	mailer                email.Sender
-	magicLinkDelivery     *MagicLinkDelivery
-	magicLinkDebugURLs    bool
-	identity              identity.Config
-	deploymentFinalizer   *deployment.Finalizer
+	slackConfig                *SlackConfig
+	diagnosticDB               db.TxDB
+	diagnosticBounds           diagnostic.Bounds
+	allocator                  *agent.Allocator
+	environmentExecutionLimits org.ExecutionLimits
+	allocationKeys             *agent.ComputerKeyBroker
+	preparationKeys            *agent.PreparationKeyBroker
+	preparationPublisher       *agent.PreparationPublisher
+	savePublisher              *agent.SavePublisher
+	log                        *slog.Logger
+	deploymentMode             string
+	db                         db.Querier
+	tx                         db.TxDB
+	readinessDB                db.DBTX
+	auth                       auth.Authenticator
+	cas                        cas.UploadStore
+	bundleAdmission            bundle.Admission
+	platformStore              cas.Reader
+	secrets                    SecretManager
+	secretDelivery             SecretDeliveryOpener
+	secretProxy                *secret.Store
+	computers                  computer.Creator
+	computerFencingKey         disk.FencingKey
+	eventStream                SubjectEventReader
+	telemetryReader            telemetry.Reader
+	hostAuth                   workergroup.HostAuthConfig
+	workerEnrollmentGuard      *workerEnrollmentGuard
+	capacityTokenHash          []byte
+	setupToken                 string
+	authKeys                   auth.Keys
+	publicURL                  *url.URL
+	authProvider               AuthProvider
+	mailer                     email.Sender
+	magicLinkDelivery          *MagicLinkDelivery
+	magicLinkDebugURLs         bool
+	identity                   identity.Config
+	deploymentFinalizer        *deployment.Finalizer
 }
 
 const (
@@ -101,9 +105,14 @@ const (
 )
 
 type ServerConfig struct {
-	ComputerKeys   computer.KeyWrapper
-	Log            *slog.Logger
-	DeploymentMode string
+	Slack                      *SlackConfig
+	DiagnosticDB               db.TxDB
+	DiagnosticBounds           diagnostic.Bounds
+	Allocator                  *agent.Allocator
+	EnvironmentExecutionLimits org.ExecutionLimits
+	ComputerKeys               agent.DataKeyWrapper
+	Log                        *slog.Logger
+	DeploymentMode             string
 
 	DB          db.Querier
 	TX          db.TxDB
@@ -117,7 +126,6 @@ type ServerConfig struct {
 	SecretDelivery     SecretDeliveryOpener
 	SecretProxy        *secret.Store
 	ComputerFencingKey disk.FencingKey
-	TokenCredentialKey auth.CredentialKey
 	EventStream        SubjectEventReader
 	TelemetryReader    telemetry.Reader
 	Mailer             email.Sender
@@ -130,7 +138,6 @@ type ServerConfig struct {
 	SetupToken                     string
 	AuthKey                        []byte
 	PublicURL                      *url.URL
-	APIOrigin                      *url.URL
 
 	MagicLinkDebugURLs bool
 	AdminEmails        []string
@@ -141,6 +148,12 @@ type ServerConfig struct {
 }
 
 func NewServer(cfg ServerConfig) (http.Handler, error) {
+	if cfg.Slack != nil && (len(cfg.Slack.ControlKey) != 32 || cfg.Slack.Credentials == nil || cfg.Slack.Client == nil || cfg.PublicURL == nil || len(cfg.AuthKey) != 32) {
+		return nil, errors.New("complete Slack adapter configuration is required")
+	}
+	if err := cfg.EnvironmentExecutionLimits.Validate(); err != nil {
+		return nil, fmt.Errorf("environment execution limits: %w", err)
+	}
 	log := cfg.Log
 	if log == nil {
 		log = slog.Default()
@@ -180,9 +193,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if !cfg.ComputerFencingKey.Valid() {
 		return nil, errors.New("computer fencing key is required")
 	}
-	if !cfg.TokenCredentialKey.Valid() {
-		return nil, errors.New("token credential key is required")
-	}
 	authKeys, err := auth.NewKeys(cfg.AuthKey)
 	if err != nil {
 		return nil, err
@@ -190,6 +200,12 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	hostAuth, err := workergroup.NewHostAuthConfig(authKeys.WorkerHost, cfg.WorkerHostCredentialSigningKey, cfg.WorkerHostCredentialTTL)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.DiagnosticDB == nil {
+		return nil, errors.New("diagnostic database pool is required")
+	}
+	if err := cfg.DiagnosticBounds.Validate(); err != nil || cfg.DiagnosticBounds.ChunkBytes > 16*1024*1024 {
+		return nil, errors.New("control plane requires valid diagnostic bounds within the Session transport limit")
 	}
 	telemetryReader := cfg.TelemetryReader
 	if telemetryReader == nil {
@@ -206,57 +222,61 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if _, unconfigured := mailer.(email.Unconfigured); !unconfigured && cfg.MagicLinkDelivery == nil {
 		return nil, errors.New("magic link delivery worker is required")
 	}
-	apiOrigin := cfg.APIOrigin
-	if apiOrigin == nil {
-		apiOrigin = cfg.PublicURL
-	}
-	computerKeys, err := computer.NewKeyBroker(cfg.TX, cfg.ComputerKeys)
+	allocationKeys, err := agent.NewComputerKeyBroker(cfg.TX, cfg.ComputerKeys)
 	if err != nil {
 		return nil, err
 	}
-	publisher, err := computer.NewPublisher(cfg.TX, cfg.CAS)
+	preparationKeys, err := agent.NewPreparationKeyBroker(cfg.TX, cfg.ComputerKeys)
 	if err != nil {
 		return nil, err
 	}
-	tokenWaits, err := token.NewRegistrar(cfg.TX)
+	preparationPublisher, err := agent.NewPreparationPublisher(cfg.TX, cfg.CAS)
 	if err != nil {
 		return nil, err
 	}
-	tokens, err := token.New(cfg.TX, cfg.TokenCredentialKey, apiOrigin)
+	savePublisher, err := agent.NewSavePublisher(cfg.TX, cfg.CAS)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.Allocator == nil {
+		return nil, errors.New("allocation owner is required")
 	}
 	server := &Server{
-		computerKeys:          computerKeys,
-		publisher:             publisher,
-		log:                   log,
-		deploymentMode:        deploymentMode,
-		db:                    cfg.DB,
-		tx:                    cfg.TX,
-		tokenWaits:            tokenWaits,
-		tokens:                tokens,
-		readinessDB:           cfg.ReadinessDB,
-		auth:                  cfg.Auth,
-		cas:                   cfg.CAS,
-		bundleAdmission:       cfg.BundleAdmission,
-		platformStore:         cfg.PlatformStore,
-		secrets:               cfg.Secrets,
-		secretDelivery:        cfg.SecretDelivery,
-		secretProxy:           cfg.SecretProxy,
-		computers:             computer.NewCreator(cfg.SecretProxy),
-		computerFencingKey:    cfg.ComputerFencingKey,
-		eventStream:           cfg.EventStream,
-		telemetryReader:       telemetryReader,
-		hostAuth:              hostAuth,
-		workerEnrollmentGuard: newWorkerEnrollmentGuard(),
-		capacityTokenHash:     capacityTokenHash,
-		setupToken:            cfg.SetupToken,
-		authKeys:              authKeys,
-		publicURL:             cfg.PublicURL,
-		authProvider:          cfg.AuthProvider,
-		mailer:                mailer,
-		magicLinkDelivery:     cfg.MagicLinkDelivery,
-		magicLinkDebugURLs:    cfg.MagicLinkDebugURLs,
+		slackConfig:                cfg.Slack,
+		allocator:                  cfg.Allocator,
+		environmentExecutionLimits: cfg.EnvironmentExecutionLimits,
+		allocationKeys:             allocationKeys,
+		preparationKeys:            preparationKeys,
+		preparationPublisher:       preparationPublisher,
+		savePublisher:              savePublisher,
+		log:                        log,
+		deploymentMode:             deploymentMode,
+		db:                         cfg.DB,
+		tx:                         cfg.TX,
+		readinessDB:                cfg.ReadinessDB,
+		auth:                       cfg.Auth,
+		cas:                        cfg.CAS,
+		bundleAdmission:            cfg.BundleAdmission,
+		platformStore:              cfg.PlatformStore,
+		secrets:                    cfg.Secrets,
+		secretDelivery:             cfg.SecretDelivery,
+		secretProxy:                cfg.SecretProxy,
+		computers:                  computer.NewCreator(cfg.SecretProxy),
+		computerFencingKey:         cfg.ComputerFencingKey,
+		eventStream:                cfg.EventStream,
+		telemetryReader:            telemetryReader,
+		diagnosticBounds:           cfg.DiagnosticBounds,
+		diagnosticDB:               cfg.DiagnosticDB,
+		hostAuth:                   hostAuth,
+		workerEnrollmentGuard:      newWorkerEnrollmentGuard(),
+		capacityTokenHash:          capacityTokenHash,
+		setupToken:                 cfg.SetupToken,
+		authKeys:                   authKeys,
+		publicURL:                  cfg.PublicURL,
+		authProvider:               cfg.AuthProvider,
+		mailer:                     mailer,
+		magicLinkDelivery:          cfg.MagicLinkDelivery,
+		magicLinkDebugURLs:         cfg.MagicLinkDebugURLs,
 		identity: identity.NewConfig(authKeys, identity.Lifetimes{
 			Session:            cfg.SessionTTL,
 			MagicLink:          cfg.MagicLinkTTL,
@@ -302,6 +322,8 @@ func (s *Server) mountRoutes(router chi.Router) {
 	router.Get("/healthz", s.healthz)
 	router.Get("/readyz", s.readyz)
 	router.Route("/api", s.mountManagementRoutes)
+	router.Post("/integrations/slack/apps/{registrationID}/events", s.slackAppEvents)
+	router.Post("/integrations/slack/apps/{registrationID}/interactions", s.slackAppInteractions)
 	router.Group(func(r chi.Router) {
 		r.Use(limitAPIRequestBody)
 		s.mountCapacityRoutes(r)
@@ -384,12 +406,8 @@ func (s *Server) recoverPanics(next http.Handler) http.Handler {
 
 func (s *Server) mountManagementRoutes(r chi.Router) {
 	r.Use(limitAPIRequestBody)
-	r.With(limitRequestBody(tokenRequestBodyLimit)).
-		Post("/token-callbacks/{tokenID}/{callbackSecret}", s.completeTokenWithCallback)
-	r.With(limitRequestBody(tokenRequestBodyLimit)).
-		Post("/public/tokens/{tokenID}/complete", s.completeTokenWithBearer)
-	r.Options("/public/tokens/{tokenID}/complete", s.completeTokenBearerPreflight)
 	s.mountAuthRoutes(r)
+	s.mountSlackRoutes(r)
 	s.mountSessionRoutes(r)
 }
 
@@ -457,16 +475,33 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.Get("/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}", s.getDeployment)
 		r.Get("/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}/events", s.getDeploymentEvents)
 		r.Post("/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}/promote", s.promoteDeployment)
+		r.Get("/projects/{projectID}/environments/{environmentID}/agents", s.listAgents)
+		r.Get("/projects/{projectID}/environments/{environmentID}/agents/{agentName}", s.getAgent)
+		r.Get("/projects/{projectID}/environments/{environmentID}/agents/{agentName}/slack", s.agentSlackPublication)
+		r.Post("/projects/{projectID}/environments/{environmentID}/agents/{agentName}/slack", s.agentSlackPublication)
+		r.Put("/projects/{projectID}/environments/{environmentID}/agents/{agentName}/slack/{publicationID}/credentials", s.agentSlackPublication)
+		r.Post("/projects/{projectID}/environments/{environmentID}/agents/{agentName}/slack/{publicationID}/authorize", s.agentSlackPublication)
+		r.Delete("/projects/{projectID}/environments/{environmentID}/agents/{agentName}/slack/{publicationID}", s.agentSlackPublication)
+		r.Post("/projects/{projectID}/environments/{environmentID}/agents/{agentName}/start", s.startAgentHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/sessions", s.listAgentSessionsHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}", s.getAgentSessionHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/slack-delivery", s.sessionSlackDelivery)
+		r.Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/slack-delivery/{postID}/{recovery:check|abandon}", s.sessionSlackDelivery)
+		r.Get("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/events", s.listAgentEventsHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns", s.listAgentTurnsHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}", s.getAgentTurnHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}/asks", s.listAgentAsksHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}/asks/{askID}", s.getAgentAskHTTP)
+		r.Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}/asks/{askID}/respond", s.respondAgentAskHTTP)
+		r.Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/enqueue", s.enqueueSessionHTTP)
+		r.Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/send", s.sendSessionHTTP)
+		r.Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}/messages", s.sendSessionHTTP)
+		r.Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/interrupt", s.interruptSessionHTTP)
+		r.Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/close", s.closeSessionHTTP)
+		r.Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/cancel", s.cancelSessionHTTP)
+		r.Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/resume", s.resumeSessionHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/schedules", s.listSchedules)
 		r.Get("/projects/{projectID}/environments/{environmentID}/schedules/{scheduleID}", s.getSchedule)
-		r.Get("/projects/{projectID}/environments/{environmentID}/tokens", s.listTokens)
-		r.With(limitRequestBody(tokenRequestBodyLimit)).
-			Post("/projects/{projectID}/environments/{environmentID}/tokens", s.createToken)
-		r.Get("/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}", s.getToken)
-		r.With(limitRequestBody(tokenRequestBodyLimit)).
-			Post("/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/complete", s.completeToken)
-		r.With(limitRequestBody(tokenRequestBodyLimit)).
-			Post("/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/cancel", s.cancelToken)
 		r.Get("/projects/{projectID}/environments/{environmentID}/secrets", s.listSecrets)
 		r.With(limitRequestBody(secretRequestBodyLimit)).
 			Post("/projects/{projectID}/environments/{environmentID}/secrets", s.createSecret)
@@ -476,7 +511,7 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.With(limitRequestBody(secretRequestBodyLimit)).
 			Post("/projects/{projectID}/environments/{environmentID}/secrets/{secretID}/revoke", s.revokeSecretByID)
 		r.With(limitRequestBody(computerCreateBodyLimit)).
-			Post("/projects/{projectID}/environments/{environmentID}/sandboxes/{sandboxID}/computers", s.createComputerHTTP)
+			Post("/projects/{projectID}/environments/{environmentID}/computer-definitions/{computerDefinitionID}/computers", s.createComputerHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/computers", s.listComputersHTTP)
 		r.With(limitRequestBody(computerCommandBodyMaxBytes)).
 			Post("/projects/{projectID}/environments/{environmentID}/computers/{computerID}/exec", s.executeComputerHTTP)
@@ -486,42 +521,8 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.Get("/projects/{projectID}/environments/{environmentID}/computers/{computerID}", s.getComputerHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/computers/{computerID}/members", s.listComputerMembersHTTP)
 		r.Delete("/projects/{projectID}/environments/{environmentID}/computers/{computerID}", s.deleteComputerHTTP)
-		r.With(limitRequestBody(taskStartBodyLimit)).
-			Post("/projects/{projectID}/environments/{environmentID}/tasks/{taskDeclaredID}/start", s.startTaskHTTP)
-		r.Get("/projects/{projectID}/environments/{environmentID}/tasks", s.listTasks)
-		r.Get("/projects/{projectID}/environments/{environmentID}/tasks/{taskID}", s.getTask)
-		r.Get("/projects/{projectID}/environments/{environmentID}/actors", s.listActors)
-		r.Get("/projects/{projectID}/environments/{environmentID}/actors/{actorID}", s.getActor)
-		r.Get("/projects/{projectID}/environments/{environmentID}/sandboxes", s.listSandboxes)
-		r.Get("/projects/{projectID}/environments/{environmentID}/sandboxes/{sandboxID}", s.getSandbox)
-		r.Get("/projects/{projectID}/environments/{environmentID}/runs", s.listRunSnapshotsHTTP)
-		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{runID}", s.getRunSnapshotHTTP)
-		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{runID}/logs", s.listRunLogsHTTP)
-		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{runID}/events", s.listRunEventsHTTP)
-		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/projects/{projectID}/environments/{environmentID}/runs/{runID}/cancel", s.cancelRunHTTP)
-	})
-	r.Group(func(r chi.Router) {
-		r.Use(func(next http.Handler) http.Handler {
-			return s.requireSessionWithErrorWriter(next, writeActorStartAuthError)
-		})
-		r.With(limitRequestBody(actorStartBodyLimit)).
-			Post("/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/start", s.startActorHTTP)
-	})
-	r.Group(func(r chi.Router) {
-		r.Use(func(next http.Handler) http.Handler {
-			return s.requireSessionWithErrorWriter(next, writeSessionLifecycleAuthError)
-		})
-		r.Get("/projects/{projectID}/environments/{environmentID}/sessions", s.listSessionsHTTP)
-		r.Get("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}", s.getSessionHTTP)
-		r.With(limitRequestBody(sessionDataBodyLimit)).Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/send", s.sendSessionHTTP)
-		r.With(limitRequestBody(sessionDataBodyLimit)).Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/enqueue", s.enqueueSessionHTTP)
-		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/close", s.closeSessionHTTP)
-		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/cancel", s.cancelSessionHTTP)
-		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/resume", s.resumeSessionHTTP)
-		r.With(limitRequestBody(sessionDataBodyLimit)).Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}/messages", s.sendSessionMessageHTTP)
-		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}/interrupt", s.interruptSessionTurnHTTP)
-		r.Get("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/events", s.readSessionEventsHTTP)
-		r.Get("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}", s.getSessionTurnHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/computer-definitions", s.listComputerDefinitions)
+		r.Get("/projects/{projectID}/environments/{environmentID}/computer-definitions/{computerDefinitionID}", s.getComputerDefinition)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
@@ -545,32 +546,35 @@ func (s *Server) mountDeveloperRoutes(r chi.Router) {
 		r.With(limitRequestBody(bundle.MaxBytes)).Post("/deployment-bundles/upload-plan", s.planDeploymentBundleUpload)
 		r.Post("/deployment-bundles/finalize", s.finalizeDeploymentBundle)
 		r.Post("/deployments/{deploymentID}/promote", s.promoteDeployment)
+		r.Get("/agents", s.listAgents)
+		r.Get("/agents/{agentName}", s.getAgent)
+		r.Post("/agents/{agentName}/start", s.startAgentHTTP)
+		r.Get("/sessions", s.listAgentSessionsHTTP)
+		r.Get("/sessions/{sessionID}", s.getAgentSessionHTTP)
+		r.Get("/sessions/{sessionID}/events", s.listAgentEventsHTTP)
+		r.Get("/sessions/{sessionID}/turns", s.listAgentTurnsHTTP)
+		r.Get("/sessions/{sessionID}/turns/{turnID}", s.getAgentTurnHTTP)
+		r.Get("/sessions/{sessionID}/turns/{turnID}/asks", s.listAgentAsksHTTP)
+		r.Get("/sessions/{sessionID}/turns/{turnID}/asks/{askID}", s.getAgentAskHTTP)
+		r.Post("/sessions/{sessionID}/turns/{turnID}/asks/{askID}/respond", s.respondAgentAskHTTP)
+		r.Post("/sessions/{sessionID}/enqueue", s.enqueueSessionHTTP)
+		r.Post("/sessions/{sessionID}/send", s.sendSessionHTTP)
+		r.Post("/sessions/{sessionID}/turns/{turnID}/messages", s.sendSessionHTTP)
+		r.Post("/sessions/{sessionID}/interrupt", s.interruptSessionHTTP)
+		r.Post("/sessions/{sessionID}/close", s.closeSessionHTTP)
+		r.Post("/sessions/{sessionID}/cancel", s.cancelSessionHTTP)
+		r.Post("/sessions/{sessionID}/resume", s.resumeSessionHTTP)
 		r.Get("/schedules", s.listSchedules)
 		r.Get("/schedules/{scheduleID}", s.getSchedule)
-		r.Get("/tokens", s.listTokens)
-		r.With(limitRequestBody(tokenRequestBodyLimit)).Post("/tokens", s.createToken)
-		r.Get("/tokens/{tokenID}", s.getToken)
-		r.With(limitRequestBody(tokenRequestBodyLimit)).Post("/tokens/{tokenID}/complete", s.completeToken)
-		r.With(limitRequestBody(tokenRequestBodyLimit)).Post("/tokens/{tokenID}/cancel", s.cancelToken)
-		r.With(limitRequestBody(taskStartBodyLimit)).Post("/tasks/{taskDeclaredID}/start", s.startTaskHTTP)
-		r.Get("/tasks", s.listTasks)
-		r.Get("/tasks/{taskID}", s.getTask)
-		r.Get("/actors", s.listActors)
-		r.Get("/actors/{actorID}", s.getActor)
-		r.Get("/sandboxes", s.listSandboxes)
-		r.Get("/sandboxes/{sandboxID}", s.getSandbox)
-		r.Get("/runs", s.listRunSnapshotsHTTP)
-		r.Get("/runs/{runID}", s.getRunSnapshotHTTP)
-		r.Get("/runs/{runID}/logs", s.listRunLogsHTTP)
-		r.Get("/runs/{runID}/events", s.listRunEventsHTTP)
-		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/runs/{runID}/cancel", s.cancelRunHTTP)
+		r.Get("/computer-definitions", s.listComputerDefinitions)
+		r.Get("/computer-definitions/{computerDefinitionID}", s.getComputerDefinition)
 
 		r.Get("/secrets", s.listSecrets)
 		r.With(limitRequestBody(secretRequestBodyLimit)).Post("/secrets", s.createSecret)
 		r.Get("/secrets/{secretID}", s.getSecretByID)
 		r.With(limitRequestBody(secretRequestBodyLimit)).Post("/secrets/{secretID}/rotate", s.rotateSecretByID)
 		r.With(limitRequestBody(secretRequestBodyLimit)).Post("/secrets/{secretID}/revoke", s.revokeSecretByID)
-		r.With(limitRequestBody(computerCreateBodyLimit)).Post("/sandboxes/{sandboxID}/computers", s.createComputerHTTP)
+		r.With(limitRequestBody(computerCreateBodyLimit)).Post("/computer-definitions/{computerDefinitionID}/computers", s.createComputerHTTP)
 		r.Get("/computers", s.listComputersHTTP)
 		r.With(limitRequestBody(computerCommandBodyMaxBytes)).Post("/computers/{computerID}/exec", s.executeComputerHTTP)
 		r.Get("/commands/{commandID}", s.getComputerCommandHTTP)
@@ -579,28 +583,6 @@ func (s *Server) mountDeveloperRoutes(r chi.Router) {
 		r.Get("/computers/{computerID}", s.getComputerHTTP)
 		r.Get("/computers/{computerID}/members", s.listComputerMembersHTTP)
 		r.Delete("/computers/{computerID}", s.deleteComputerHTTP)
-	})
-	r.Group(func(r chi.Router) {
-		r.Use(func(next http.Handler) http.Handler {
-			return s.requireAPIKeyWithErrorWriter(next, writeActorStartAuthError)
-		})
-		r.With(limitRequestBody(actorStartBodyLimit)).Post("/actors/{actorDeclaredID}/start", s.startActorHTTP)
-	})
-	r.Group(func(r chi.Router) {
-		r.Use(func(next http.Handler) http.Handler {
-			return s.requireAPIKeyWithErrorWriter(next, writeSessionLifecycleAuthError)
-		})
-		r.Get("/sessions", s.listSessionsHTTP)
-		r.Get("/sessions/{sessionID}", s.getSessionHTTP)
-		r.With(limitRequestBody(sessionDataBodyLimit)).Post("/sessions/{sessionID}/send", s.sendSessionHTTP)
-		r.With(limitRequestBody(sessionDataBodyLimit)).Post("/sessions/{sessionID}/enqueue", s.enqueueSessionHTTP)
-		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/sessions/{sessionID}/close", s.closeSessionHTTP)
-		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/sessions/{sessionID}/cancel", s.cancelSessionHTTP)
-		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/sessions/{sessionID}/resume", s.resumeSessionHTTP)
-		r.With(limitRequestBody(sessionDataBodyLimit)).Post("/sessions/{sessionID}/turns/{turnID}/messages", s.sendSessionMessageHTTP)
-		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/sessions/{sessionID}/turns/{turnID}/interrupt", s.interruptSessionTurnHTTP)
-		r.Get("/sessions/{sessionID}/events", s.readSessionEventsHTTP)
-		r.Get("/sessions/{sessionID}/turns/{turnID}", s.getSessionTurnHTTP)
 	})
 }
 
@@ -614,86 +596,77 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 		r.With(s.requireWorkerDrainCompletion).Post("/instance/drain/complete", s.workerCompleteDrain)
 		r.With(s.requireWorkerFence).Post("/instance/fence", s.workerFence)
 		r.Group(func(r chi.Router) {
+			r.Use(s.requireDiagnosticWorker)
+			r.With(limitRequestBody(((s.diagnosticBounds.ChunkBytes+2)/3)*4+8192)).Post("/sessions/logs", s.workerSessionLog)
+			r.With(limitRequestBody(((s.diagnosticBounds.ChunkBytes+2)/3)*4+8192)).Post("/allocations/preparation/logs", s.workerPreparationLog)
+			r.With(limitRequestBody(((s.diagnosticBounds.ChunkBytes+2)/3)*4+8192)).Post("/computer-commands/logs/append", s.workerAppendCommandLogs)
+		})
+		r.Group(func(r chi.Router) {
 			r.Use(s.requireWorker)
+			r.With(limitRequestBody(4096)).Post("/allocations/list", s.workerListAllocations)
+			r.With(limitRequestBody(4096)).Post("/allocations/preparation/deliver", s.workerDeliverPreparationAllocation)
+			r.With(limitRequestBody(4096)).Post("/allocations/preparation/stopped", s.workerPreparationStopped)
+			r.With(limitRequestBody(4096)).Post("/allocations/preparation/renew", s.workerRenewPreparation)
+			r.With(limitRequestBody(4096)).Post("/allocations/preparation/key", s.workerPreparationWriteKey)
+			r.With(limitRequestBody(4096)).Post("/allocations/preparation/secrets", s.workerPreparationSecrets)
+			r.With(limitRequestBody(4096)).Post("/allocations/preparation/start", s.workerPreparationStart)
+			r.With(limitRequestBody(4096)).Post("/allocations/preparation/fail", s.workerFailPreparation)
+			r.With(limitRequestBody(4096)).Post("/allocations/preparation/capture/begin", s.workerBeginPreparationCapture)
+			r.With(limitRequestBody(1048576)).Post("/allocations/preparation/objects/register", s.workerRegisterPreparationObject)
+			r.With(limitRequestBody(1048576)).Post("/allocations/preparation/objects/certify", s.workerCertifyPreparationObject)
+			r.With(limitRequestBody(8192)).Post("/allocations/preparation/capture", s.workerRecordPreparationCapture)
+			r.With(limitRequestBody(8192)).Post("/allocations/preparation/publish", s.workerPublishPreparation)
+			r.With(limitRequestBody(4096)).Post("/computer-saves/next", s.workerNextAgentSave)
+			r.With(limitRequestBody(1048576)).Post("/computer-saves/objects/register", s.workerRegisterAgentSaveObject)
+			r.With(limitRequestBody(1048576)).Post("/computer-saves/objects/certify", s.workerCertifyAgentSaveObject)
+			r.With(limitRequestBody(8192)).Post("/computer-saves/capture", s.workerCaptureAgentSave)
+			r.With(limitRequestBody(8192)).Post("/computer-saves/publish", s.workerPublishAgentSave)
+			r.With(limitRequestBody(4096)).Post("/allocations/computer/deliver", s.workerDeliverComputerAllocation)
+			r.With(limitRequestBody(4096)).Post("/allocations/computer/ready", s.workerFreshComputerReady)
+			r.With(limitRequestBody(4096)).Post("/allocations/computer/processes", s.workerListComputerProcesses)
+			r.With(limitRequestBody(4096)).Post("/allocations/computer/source", s.workerComputerAllocationSource)
+			r.With(limitRequestBody(2<<20)).Post("/agent-computers/checkpoint/register", s.workerRegisterAgentCheckpoint)
+			r.With(limitRequestBody(2<<20)).Post("/agent-computers/checkpoint/complete", s.workerCompleteAgentCheckpoint)
+			r.With(limitRequestBody(4096)).Post("/agent-computers/checkpoint/read", s.workerReadAgentCheckpoint)
+			r.With(limitRequestBody(32768)).Post("/agent-computers/capture/begin", s.workerBeginAgentComputerCapture)
+			r.With(limitRequestBody(128<<10)).Post("/agent-computers/capture/seal", s.workerSealAgentComputerCapture)
+			r.With(limitRequestBody(4096)).Post("/agent-computers/capture/cancel", s.workerCancelAgentComputerCapture)
+			r.With(limitRequestBody(32768)).Post("/agent-computers/capture/save-absence", s.workerAgentComputerSaveAbsence)
+			r.With(limitRequestBody(32768)).Post("/agent-computers/restore/prepare", s.workerPrepareAgentComputerRestore)
+			r.With(limitRequestBody(23<<20)).Post("/agent-computers/controls", s.workerAgentComputerControls)
+			r.With(limitRequestBody(128<<10)).Post("/agent-computers/source-abort/prepare", s.workerPrepareAgentComputerSourceAbort)
+			r.With(limitRequestBody(23<<20)).Post("/agent-computers/source-abort/validate", s.workerValidateAgentComputerSourceAbort)
+			r.With(limitRequestBody(23<<20)).Post("/agent-computers/source-abort/commit", s.workerCommitAgentComputerSourceAbort)
+			r.With(limitRequestBody(23<<20)).Post("/agent-computers/source-abort/complete", s.workerCompleteAgentComputerSourceAbort)
+			r.With(limitRequestBody(23<<20)).Post("/agent-computers/restore/validate", s.workerValidateAgentComputerRestore)
+			r.With(limitRequestBody(23<<20)).Post("/agent-computers/restore/commit", s.workerCommitAgentComputerRestore)
+			r.With(limitRequestBody(23<<20)).Post("/agent-computers/restore/complete", s.workerCompleteAgentComputerRestore)
+			r.With(limitRequestBody(4096)).Post("/agent-computers/lease/renew", s.workerRenewAgentComputerLease)
+			r.With(limitRequestBody(4096)).Post("/agent-computers/stopped", s.workerAgentComputerStopped)
+			r.With(limitRequestBody(4096)).Post("/sessions/authority", s.workerAgentAuthority)
+			r.With(limitRequestBody(4096)).Post("/sessions/attachment", s.workerAgentAttachment)
+			r.With(limitRequestBody(4096)).Post("/sessions/control", s.workerAgentControl)
+			r.With(limitRequestBody(8192)).Post("/sessions/control/receipt", s.workerAgentControlReceipt)
+			r.With(limitRequestBody(4096)).Post("/sessions/ready", s.workerAgentReady)
+			r.With(limitRequestBody(4096)).Post("/sessions/turn", s.workerAgentTurn)
+			r.With(limitRequestBody(4096)).Post("/sessions/message", s.workerAgentMessage)
+			r.With(limitRequestBody(4096)).Post("/sessions/message/receipt", s.workerAgentMessageReceipt)
+			r.With(limitRequestBody(1<<20)).Post("/sessions/turn/receipt", s.workerAgentTurnReceipt)
+			r.With(limitRequestBody(4096)).Post("/sessions/start", s.workerAgentStart)
+			r.With(limitRequestBody(4096)).Post("/sessions/start/release", s.workerAgentStartRelease)
+			r.With(limitRequestBody(4096)).Post("/sessions/stopped", s.workerAgentStopped)
+			r.With(limitRequestBody(4096)).Post("/sessions/failed", s.workerAgentFailure)
+			r.With(limitRequestBody(17<<20)).Post("/sessions/operations", s.workerAgentOperation)
 			r.Post("/instance/observations", s.workerObserve)
 			r.Post("/instance/drain", s.workerDrain)
 			r.Group(func(r chi.Router) {
 				r.With(limitRequestBody(16384)).Post("/run/secret-proxy/prepare", s.workerPrepareSecretProxy)
 				r.With(limitRequestBody(16384)).Post("/run/secret-proxy/resolve", s.workerResolveSecretProxy)
-				r.Post("/run/computer-instances/reconcile", s.workerNextInstanceReconcileTarget)
-				r.Post("/run/computer-instances/ready", s.workerMarkComputerInstanceReady)
-				r.With(limitRequestBody(1<<20)).Post("/run/computer-instances/initialization/version", s.workerPublishInitialComputerVersion)
-				r.With(limitRequestBody(1024)).Post("/run/computer-instances/initialization/seed", s.workerPrepareComputerSeed)
-				r.With(limitRequestBody(1024)).Post("/run/computer-instances/computer-source", s.workerComputerSource)
-				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/computer-instances/initialization/objects/register", s.workerRegisterInitialComputerObject)
-				r.With(limitRequestBody(1<<20)).Post("/run/computer-saves/begin", s.workerBeginComputerSave)
-				r.With(limitRequestBody(1<<20)).Post("/run/computer-saves/abandon", s.workerAbandonComputerSave)
-				r.With(limitRequestBody(1<<20)).Post("/run/computer-saves/publish", s.workerPublishComputerSave)
-				r.With(limitRequestBody(1<<20)).Post("/run/computer-saves/adopt", s.workerAdoptComputerSave)
-				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/computer-saves/objects/register", s.workerRegisterComputerSaveObject)
-				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/computer-saves/objects/certify", s.workerCertifyComputerSaveObject)
-				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/computer-saves/objects/reuse", s.workerReuseComputerSaveObject)
-				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/computer-instances/initialization/objects/certify", s.workerCertifyInitialComputerObject)
-				r.Post("/run/computer-instances/closed", s.workerMarkComputerInstanceClosed)
-				r.Post("/run/computer-instances/failed", s.workerMarkComputerInstanceFailed)
-				r.Post("/run/computer-instances/claim", s.workerClaimComputerInstance)
-				r.Post("/run/computer-instances/renew", s.workerRenewComputerInstance)
 
-				r.Post("/run/computer-commands/claim", s.workerClaimComputerCommand)
-				r.With(limitRequestBody(computerCommandResultLimit)).Post("/run/computer-commands/reconcile", s.workerReconcileComputerCommand)
-				r.Post("/run/computer-instances/runs/cleanup", s.workerGetComputerRunCleanup)
-				r.Post("/run/computer-instances/runs/reconcile", s.workerReconcileComputerRun)
-				r.With(limitRequestBody(workerCommandLogRequestBodyLimit)).Post("/run/computer-commands/logs/append", s.workerAppendCommandLogs)
+				r.Post("/computer-commands/claim", s.workerClaimComputerCommand)
+				r.With(limitRequestBody(computerCommandResultLimit)).Post("/computer-commands/reconcile", s.workerReconcileComputerCommand)
 				r.With(limitRequestBody(computerCommandResultLimit)).
-					Post("/run/computer-commands/complete", s.workerCompleteComputerCommand)
-				r.Post("/run/leases/discover", s.workerDiscoverRunLeases)
-				r.Post("/run/leases/claim", s.workerClaimRunLease)
-				r.Post("/run/leases/start", s.workerStart)
-				r.Post("/run/leases/entrypoint", s.workerEnterRunEntrypoint)
-				r.Post("/run/leases/renew", s.workerRenewRunLease)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/waits/create", s.workerCreateRunWait)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/waits/poll", s.workerPollRunWait)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/waits/resume-ack", s.workerAcknowledgeRunWaitResume)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/restores/ack", s.workerAcknowledgeComputerRestore)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/restores/plan", s.workerComputerRestorePlan)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/checkpoints/register", s.workerRegisterCheckpoint)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/checkpoints/ready", s.workerMarkCheckpointReady)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/checkpoints/abort", s.workerAbortCapture)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/checkpoints/abort/complete", s.workerCompleteCaptureAbort)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/checkpoints/objects/register", s.workerRegisterCheckpointComputerObject)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/checkpoints/objects/certify", s.workerCertifyCheckpointComputerObject)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/checkpoints/objects/reuse", s.workerReuseCheckpointComputerObject)
-				r.Post("/run/finalization/begin", s.workerBeginRunFinalization)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/turns/commit", s.workerCommitActorTurn)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/actors/start", s.workerStartActor)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/retrieve", s.workerGetSessionStatus)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/close", s.workerCloseSession)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/cancel", s.workerCancelSession)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/computers/create", s.workerCreateComputer)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/computers/retrieve", s.workerRetrieveComputer)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/computers/members", s.workerListComputerMembers)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/computers/delete", s.workerDeleteComputer)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/tasks/invoke", s.workerInvokeChildTask)
-				r.With(limitRequestBody(tokenRequestBodyLimit)).Post("/run/tokens/create", s.workerCreateToken)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/tasks/complete", s.workerCompleteTask)
-				r.With(limitRequestBody(sessionDataBodyLimit)).Post("/run/sessions/send", s.workerSendSession)
-				r.With(limitRequestBody(sessionDataBodyLimit)).Post("/run/sessions/enqueue", s.workerEnqueueSession)
-				r.With(limitRequestBody(sessionDataBodyLimit)).Post("/run/turns/messages/send", s.workerSendTurnMessage)
-				r.With(limitRequestBody(sessionControlBodyLimit)).Post("/run/sessions/events/read-page", s.workerReadSessionEvents)
-				r.With(limitRequestBody(sessionControlBodyLimit)).Post("/run/turns/retrieve", s.workerGetSessionTurn)
-				r.With(limitRequestBody(sessionControlBodyLimit)).Post("/run/turns/interrupt", s.workerInterruptSessionTurn)
-				r.With(limitRequestBody(sessionControlBodyLimit)).Post("/run/sessions/resume", s.workerResumeSession)
-				r.With(limitRequestBody(sessionDataBodyLimit)).Post("/run/turns/output/write", s.workerWriteTurnOutput)
-				r.With(limitRequestBody(sessionDataBodyLimit)).Post("/run/sessions/output/write", s.workerWriteSessionOutput)
-				r.With(limitRequestBody(sessionControlBodyLimit)).Post("/run/turns/messages/ready", s.workerTurnMessagesReady)
-				r.With(limitRequestBody(sessionControlBodyLimit)).Post("/run/turns/messages/claim", s.workerClaimTurnMessage)
-				r.With(limitRequestBody(sessionDataBodyLimit)).Post("/run/turns/messages/complete", s.workerCompleteTurnMessage)
-				r.With(limitRequestBody(sessionControlBodyLimit)).Post("/run/turns/settlement/begin", s.workerBeginTurnSettlement)
-				r.With(limitRequestBody(sessionControlBodyLimit)).Post("/run/sessions/control", s.workerSessionControl)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/complete", s.workerCompleteActor)
-				r.With(limitRequestBody(workerRunLogRequestBodyLimit)).Post("/run/logs/append", s.workerAppendRunLogs)
-				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/run/structured-logs/append", s.workerAppendStructuredLog)
-				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/run/metadata/update", s.workerUpdateRunMetadata)
+					Post("/computer-commands/complete", s.workerCompleteComputerCommand)
 			})
 		})
 	})
@@ -752,18 +725,6 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("content-type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
-}
-
-func optionalLimitQuery(r *http.Request, defaultLimit int32) (int32, error) {
-	limit := defaultLimit
-	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
-		parsed, err := strconv.ParseInt(raw, 10, 32)
-		if err != nil || parsed <= 0 || parsed > int64(maxPageSize) {
-			return 0, fmt.Errorf("limit must be an integer between 1 and %d", maxPageSize)
-		}
-		limit = int32(parsed)
-	}
-	return limit, nil
 }
 
 func (s *Server) userAuthConfigured() error {

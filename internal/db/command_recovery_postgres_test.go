@@ -1,102 +1,70 @@
 package db_test
 
 import (
-	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"testing"
-	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
+	"github.com/helmrdotdev/helmr/internal/command"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/secret"
 )
 
-func TestCommandRecoveryDiscoverySkipsPendingProcessCleanup(t *testing.T) {
-	f := runtest.New(t)
-	live := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
-	lost := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
-	for range 32 {
-		insertRecoveryCommand(t, f, live, true)
-	}
-	actionable := insertRecoveryCommand(t, f, lost, false)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET writer_expires_at=now()-interval '1 second' WHERE id=(SELECT computer_instance_id FROM run_leases WHERE id=$1)`, lost.LeaseID)
-	rows, err := db.New(f.Pool).ListRecoverableComputerCommandCandidates(t.Context(), 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 1 || rows[0].ID != pgvalue.UUID(actionable) {
-		t.Fatalf("lost Command starved behind unchanged scopes: %+v", rows)
-	}
-}
-
-func TestSecretRevocationRetainsCommandProcessUntilReconciled(t *testing.T) {
-	f := runtest.New(t)
-	work := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
-	id := insertRecoveryCommand(t, f, work, false)
-	command, err := db.New(f.Pool).StopSecretRevokedComputerCommand(t.Context(), db.StopSecretRevokedComputerCommandParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), CommandID: pgvalue.UUID(id), ExpectedRevision: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if command.Status != "stopping" || command.TerminalAt.Valid || !command.CancelRequestedAt.Valid || !command.ComputerInstanceID.Valid || command.ProcessReconciledAt.Valid {
-		t.Fatalf("revoked Command: %+v", command)
-	}
-	var writerLive bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT desired_state='ready' AND admission_state='open' AND reclaimed_at IS NULL AND writer_expires_at>now() FROM computer_instances WHERE id=$1`, command.ComputerInstanceID).Scan(&writerLive); err != nil {
-		t.Fatal(err)
-	}
-	if !writerLive {
-		t.Fatal("revocation changed Instance writer")
-	}
-}
-
-func insertRecoveryCommand(t *testing.T, f runtest.Fixture, work runtest.RunLease, terminal bool) uuid.UUID {
+func insertRecoveryCommand(t *testing.T, f agenttest.Fixture, computer uuid.UUID, terminal bool) uuid.UUID {
 	t.Helper()
-	id, claim := uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO idempotency_claims(id,environment_id,operation,slot_hash,request_fingerprint,accepted_at) VALUES($1,$2,'computer.command.start',$3,$3,now())`, claim, f.EnvironmentID, dbtest.Hash(claim.String()))
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_commands(id,environment_id,computer_id,claim_id,computer_instance_id,writer_generation,argv,env,stdin,timeout_ms,created_by_subject_type,created_by_subject_id,status,terminal_at,terminal_reason_code)
- SELECT $2,environment_id,computer_id,$3,computer_instance_id,writer_generation,ARRAY['true'],'{}',''::bytea,60000,'api_key',run_id::text,
- CASE WHEN $4::boolean THEN 'cancelled' ELSE 'running' END,CASE WHEN $4::boolean THEN now() END,CASE WHEN $4::boolean THEN 'cancelled' END FROM run_leases WHERE id=$1`, work.LeaseID, id, claim, terminal)
+	id := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_commands(environment_id,id,computer_id,computer_lease_epoch,argv,env,stdin,timeout_ms,created_by_subject_type,created_by_subject_id,status,terminal_at,terminal_reason_code) VALUES($1,$2,$3,1,ARRAY['true'],'{}','',60000,'user','fixture',CASE WHEN $4::boolean THEN 'cancelled' ELSE 'running' END,CASE WHEN $4::boolean THEN now() END,CASE WHEN $4::boolean THEN 'cancelled' END)`, f.Environment, id, computer, terminal)
 	return id
 }
 
+func TestCommandRecoveryDiscoverySkipsPendingProcessCleanup(t *testing.T) {
+	f := agenttest.New(t)
+	for range 32 {
+		insertRecoveryCommand(t, f, f.Computer, true)
+	}
+	other := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest) SELECT environment_id,$2,initial_root_id,initial_root_digest FROM computers WHERE environment_id=$1 AND id=$3`, f.Environment, other, f.Computer)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,computer_instance_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) SELECT environment_id,$3,epoch,worker_host_id,worker_epoch,clock_timestamp()-interval '1 second','lost',$3,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE environment_id=$1 AND computer_id=$2`, f.Environment, f.Computer, other)
+	actionable := insertRecoveryCommand(t, f, other, false)
+	n, err := command.RecoverBatch(t.Context(), f.Pool, 1)
+	if err != nil || n != 1 {
+		t.Fatalf("recovery=%d %v", n, err)
+	}
+	var lost, unreconciled bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status='lost',process_reconciled_at IS NULL FROM computer_commands WHERE environment_id=$1 AND id=$2`, f.Environment, actionable).Scan(&lost, &unreconciled); err != nil || !lost || !unreconciled {
+		t.Fatalf("lost Command starved or falsely reconciled: %v %v %v", lost, unreconciled, err)
+	}
+}
+
 func TestSecretRevocationDiscoveryAdvancesPastStoppedCommands(t *testing.T) {
-	f := runtest.New(t)
-	work := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
-	secretID, versionID := uuid.NewV7(), uuid.NewV7()
-	tx, err := f.Pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(t.Context())
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO secrets(id,environment_id,name,current_version_id,revocation_generation) VALUES($1,$2,'revocation-batch',$3,2)`, secretID, f.EnvironmentID, versionID)
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO secret_versions(id,secret_id,version,nonce,ciphertext) VALUES($1,$2,1,decode(repeat('01',12),'hex'),decode(repeat('02',16),'hex'))`, versionID, secretID)
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_secrets(mode,computer_id,environment_id,placement_kind,placement_target,secret_id) SELECT 'raw',computer_id,environment_id,'env','TOKEN',$2 FROM run_leases WHERE id=$1`, work.LeaseID, secretID)
-	if err = tx.Commit(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	q := db.New(f.Pool)
+	f := agenttest.New(t)
+	secretID := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secrets(id,environment_id,name,status,revoked_at,revocation_generation) VALUES($1,$2,'TOKEN','revoked',clock_timestamp(),2)`, secretID, f.Environment)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_secret_bindings(environment_id,computer_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw')`, f.Environment, f.Computer, secretID)
 	for n := 0; n < 3; n++ {
-		id := insertRecoveryCommand(t, f, work, false)
+		id := insertRecoveryCommand(t, f, f.Computer, false)
 		if n == 0 {
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET computer_instance_id=NULL,writer_generation=NULL,status='pending' WHERE id=$1`, id)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET status='pending',computer_lease_epoch=NULL WHERE environment_id=$1 AND id=$2`, f.Environment, id)
 		}
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secret_resolutions(id,computer_id,command_id,placement_kind,placement_target,secret_id,secret_version_id,revocation_generation) SELECT $2,computer_id,id,'env','TOKEN',$3,$4,1 FROM computer_commands WHERE id=$1`, id, uuid.NewV7(), secretID, versionID)
-		if n < 2 {
-			stopped, err := q.StopSecretRevokedComputerCommand(t.Context(), db.StopSecretRevokedComputerCommandParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), CommandID: pgvalue.UUID(id), ExpectedRevision: 1})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if n == 0 && (stopped.Status != "failed" || stopped.TerminalReasonCode.String != "secret_revoked" || !stopped.TerminalAt.Valid) {
-				t.Fatalf("pending revocation=%+v", stopped)
-			}
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET created_at=now()-interval '1 hour' WHERE id=$1`, id)
-		} else {
-			rows, err := q.ListSecretRevocationProcesses(t.Context(), db.ListSecretRevocationProcessesParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), SecretID: pgvalue.UUID(secretID), RevocationGeneration: 2, RowLimit: 1})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(rows) != 1 || rows[0].ID != pgvalue.UUID(id) {
-				t.Fatalf("live command starved behind stopped work: %+v", rows)
-			}
+		count, err := command.StopSecretRevokedCommands(t.Context(), f.Pool, secret.Revocation{EnvironmentID: f.Environment, SecretID: secretID, Generation: 2}, 1)
+		if err != nil || count != 1 {
+			t.Fatalf("revocation discovery %d=%d %v", n, count, err)
 		}
+		var status string
+		var terminal, reconciled bool
+		if err := f.Pool.QueryRow(t.Context(), `SELECT status,terminal_at IS NOT NULL,process_reconciled_at IS NOT NULL FROM computer_commands WHERE environment_id=$1 AND id=$2`, f.Environment, id).Scan(&status, &terminal, &reconciled); err != nil {
+			t.Fatal(err)
+		}
+		if n == 0 {
+			if status != "failed" || !terminal {
+				t.Fatalf("pending revocation=%s %v", status, terminal)
+			}
+		} else if status != "stopping" || terminal || reconciled {
+			t.Fatalf("physical process falsely stopped=%s terminal=%v reconciled=%v", status, terminal, reconciled)
+		}
+	}
+	var live bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status='active' AND fenced_at IS NULL FROM computer_leases WHERE environment_id=$1 AND computer_id=$2`, f.Environment, f.Computer).Scan(&live); err != nil || !live {
+		t.Fatalf("revocation changed physical lease: %v %v", live, err)
 	}
 }

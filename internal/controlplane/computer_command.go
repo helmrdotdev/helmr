@@ -68,6 +68,6 @@ func publicCommandInfo(process db.ComputerCommand) (api.CommandInfo, error) {
 		}
 	}
 	resource.Outcome = outcome
-	resource.ProcessReconciled = !process.ComputerInstanceID.Valid || process.ProcessReconciledAt.Valid
+	resource.ProcessReconciled = !process.ComputerLeaseEpoch.Valid || process.ProcessReconciledAt.Valid
 	return resource, nil
 }

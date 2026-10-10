@@ -80,7 +80,7 @@ func cancel(ctx context.Context, tx pgx.Tx, ref Ref) (CancelReceipt, error) {
 	if err != nil {
 		return CancelReceipt{}, err
 	}
-	if _, err := claims.Complete(ctx, acquired.Claim, body); err != nil {
+	if _, err := claims.Complete(ctx, acquired.Claim, idempotency.Target{CommandID: ref.CommandID}, body); err != nil {
 		return CancelReceipt{}, err
 	}
 	return want, nil

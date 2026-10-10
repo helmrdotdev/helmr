@@ -10,7 +10,7 @@ SELECT COALESCE(jsonb_agg(jsonb_build_object(
  'current_epoch', h.current_epoch, 'vm_platform_id', h.vm_platform_id,
  'observed_epoch', extract(epoch FROM h.observed_at),
  'termination_ready_at', h.termination_ready_at, 'lost_at', h.lost_at,
- 'active_leases', (SELECT count(*) FROM run_leases l WHERE l.worker_host_id=h.id AND l.status IN ('assigned','starting','running','checkpointing','finalizing')),
- 'unreclaimed_instances', (SELECT count(*) FROM computer_instances i WHERE i.worker_host_id=h.id AND i.reclaimed_at IS NULL)
+ 'active_leases', (SELECT count(*) FROM computer_leases l WHERE l.worker_host_id=h.id AND l.fenced_at IS NULL),
+ 'unfenced_preparations', (SELECT count(*) FROM computer_preparations p WHERE p.worker_host_id=h.id AND p.fenced_at IS NULL)
 ) ORDER BY h.id), '[]'::jsonb)
 FROM current_hosts h;

@@ -1,36 +1,11 @@
 package computerhost
 
 import (
-	"context"
-	"io"
-
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"io"
 )
 
-type fakeGuestMachine struct {
-	stream io.ReadWriteCloser
-}
-
-func (s fakeGuestMachine) Stream() vm.Stream {
-	return testVMStream(s.stream)
-}
-
-func (s fakeGuestMachine) OpenStream(context.Context) (vm.Stream, error) {
-	return testVMStream(s.stream), nil
-}
-
-func (s fakeGuestMachine) Close(context.Context) error {
-	return s.stream.Close()
-}
-
-func (s fakeGuestMachine) Wait(ctx context.Context) error {
-	<-ctx.Done()
-	return ctx.Err()
-}
-
-type testStream struct {
-	io.ReadWriteCloser
-}
+type testStream struct{ io.ReadWriteCloser }
 
 func testVMStream(stream io.ReadWriteCloser) vm.Stream {
 	if stream == nil {

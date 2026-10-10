@@ -1,37 +1,24 @@
 import type {
   CursorPage,
-  JsonValue,
 } from "./contract"
 import type { RequestOptions } from "./request"
 import { resourceID } from "./internal/id"
 import { timestampString } from "./internal/timestamp"
-import { validateTaskId } from "./schema/task"
-
-export interface ScheduleFailure {
-  readonly code: string
-  readonly message: string
-  readonly details: Readonly<Record<string, JsonValue>>
-}
-
-export type ScheduleStatus = "active" | "errored" | "archived"
+import { normalizeInput, type InputContent } from "./content"
 
 export interface Schedule {
   readonly id: string
-  readonly taskId: string
-  readonly generation: number
-  readonly effectiveFrom: string
+  readonly agentId: string
+  readonly deploymentId: string
+  readonly triggerKey: string
+  readonly input: InputContent
+  readonly activeFrom: string
+  readonly activeUntil?: string
   readonly cron: Readonly<{ pattern: string; timezone: string }>
-  readonly status: ScheduleStatus
-  readonly lastFailure?: ScheduleFailure
   readonly nextFireAt?: string
-  readonly lastFireAt?: string
-  readonly createdAt: string
-  readonly updatedAt: string
 }
 
-export type ScheduleListQuery =
-  | Readonly<{ taskId?: never; cursor?: string; limit?: number }>
-  | Readonly<{ taskId: string; cursor?: never; limit?: never }>
+export type ScheduleListQuery = Readonly<{ agentId?: string; cursor?: string; limit?: number }>
 
 export interface ClientSchedulesApi {
   retrieve(
@@ -73,12 +60,8 @@ export function createClientSchedules(
       options: RequestOptions = {},
     ): Promise<CursorPage<Schedule>> {
       const values = new URLSearchParams()
-      if (query.taskId !== undefined) {
-        if (query.cursor !== undefined || query.limit !== undefined) {
-          throw new Error("Schedule exact task lookup does not accept cursor or limit")
-        }
-        validateTaskId(query.taskId)
-        values.set("task_id", query.taskId)
+      if (query.agentId !== undefined) {
+        values.set("agent_id", resourceID(query.agentId, "Agent ID"))
       }
       if (query.cursor !== undefined) {
         if (query.cursor.length === 0) throw new Error("Schedule cursor is required")
@@ -117,49 +100,22 @@ export function createClientSchedules(
 function parseSchedule(value: unknown): Schedule {
   const input = scheduleObject(value, "Schedule response")
   const cron = scheduleObject(input["cron"], "Schedule cron")
-  const status = input["status"]
-  if (
-    status !== "active" &&
-    status !== "errored" &&
-    status !== "archived"
-  ) {
-    throw new Error("Schedule response.status is invalid")
-  }
-  const lastFailure = input["last_failure"] === undefined
-    ? undefined
-    : parseScheduleFailure(input["last_failure"])
-  if (status === "errored" && lastFailure === undefined) {
-    throw new Error("Errored Schedule response must contain last_failure")
-  }
   return Object.freeze({
     id: resourceID(input["id"], "Schedule response.id"),
-    taskId: requiredString(input, "task_id", "Schedule response"),
-    generation: positiveInteger(input["generation"], "generation"),
-    effectiveFrom: timestamp(input["effective_from"], "effective_from"),
+    agentId: resourceID(input["agent_id"], "Agent ID"),
+    deploymentId: resourceID(input["deployment_id"], "Deployment ID"),
+    triggerKey: requiredString(input, "trigger_key", "Schedule response"),
+    input: normalizeInput(input["input"]),
+    activeFrom: timestamp(input["active_from"], "active_from"),
+    ...(input["active_until"] === undefined ? {} : {activeUntil: timestamp(input["active_until"], "active_until")}),
     cron: Object.freeze({
       pattern: requiredString(cron, "pattern", "Schedule cron"),
       timezone: requiredString(cron, "timezone", "Schedule cron"),
     }),
-    status,
-    ...(lastFailure === undefined ? {} : { lastFailure }),
     ...(input["next_fire_at"] === undefined
       ? {}
       : { nextFireAt: timestamp(input["next_fire_at"], "next_fire_at") }),
-    ...(input["last_fire_at"] === undefined
-      ? {}
-      : { lastFireAt: timestamp(input["last_fire_at"], "last_fire_at") }),
-    createdAt: timestamp(input["created_at"], "created_at"),
-    updatedAt: timestamp(input["updated_at"], "updated_at"),
-  })
-}
 
-function parseScheduleFailure(value: unknown): ScheduleFailure {
-  const input = scheduleObject(value, "Schedule failure")
-  const code = requiredString(input, "code", "Schedule failure")
-  return Object.freeze({
-    code,
-    message: requiredString(input, "message", "Schedule failure"),
-    details: Object.freeze({ ...scheduleObject(input["details"], "Schedule failure.details") }) as Readonly<Record<string, JsonValue>>,
   })
 }
 
@@ -187,11 +143,4 @@ function requiredString(
 
 function timestamp(value: unknown, field: string): string {
   return timestampString(value, `Schedule response.${field}`)
-}
-
-function positiveInteger(value: unknown, field: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 1) {
-    throw new Error(`Schedule response.${field} must be a positive integer`)
-  }
-  return value as number
 }

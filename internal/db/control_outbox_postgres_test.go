@@ -23,12 +23,12 @@ func TestControlOutboxClaimReclaimAndStaleFence(t *testing.T) {
 	pool := newPostgresDB(t, ctx)
 	queries := db.New(pool)
 	id := uuid.NewV7()
-	insertControlOutbox(t, ctx, pool, id, "token.reconcile", "pending", time.Time{})
+	insertControlOutbox(t, ctx, pool, id, "secret.revoked", "pending", time.Time{})
 
 	first, err := queries.ClaimControlOutbox(ctx, db.ClaimControlOutboxParams{
 		ClaimedBy:      pgvalue.Text("worker-a"),
 		ClaimExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
-		Topics:         []string{"token.reconcile"},
+		Topics:         []string{"secret.revoked"},
 		RowLimit:       8,
 	})
 	if err != nil || len(first) != 1 || pgvalue.MustUUIDValue(first[0].ID) != id ||
@@ -56,7 +56,7 @@ func TestControlOutboxClaimReclaimAndStaleFence(t *testing.T) {
 	second, err := queries.ClaimControlOutbox(ctx, db.ClaimControlOutboxParams{
 		ClaimedBy:      pgvalue.Text("worker-b"),
 		ClaimExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),
-		Topics:         []string{"token.reconcile"},
+		Topics:         []string{"secret.revoked"},
 		RowLimit:       8,
 	})
 	if err != nil || len(second) != 1 || second[0].Attempts != 2 ||
@@ -90,12 +90,12 @@ func TestControlOutboxPruneIsBoundedAndProtectsLiveStates(t *testing.T) {
 	oldA := uuid.NewV7()
 	oldB := uuid.NewV7()
 	oldC := uuid.NewV7()
-	insertControlOutbox(t, ctx, pool, pendingID, "token.reconcile", "pending", time.Time{})
-	insertControlOutbox(t, ctx, pool, claimedID, "token.reconcile", "claimed", time.Time{})
-	insertControlOutbox(t, ctx, pool, deadLetterID, "token.reconcile", "dead_lettered", time.Time{})
-	insertControlOutbox(t, ctx, pool, deadLetterID2, "token.reconcile", "dead_lettered", time.Time{})
-	insertControlOutbox(t, ctx, pool, freshID, "token.reconcile", "delivered", time.Now().Add(-23*time.Hour))
-	insertControlOutbox(t, ctx, pool, oldA, "token.reconcile", "delivered", time.Now().Add(-26*time.Hour))
+	insertControlOutbox(t, ctx, pool, pendingID, "secret.revoked", "pending", time.Time{})
+	insertControlOutbox(t, ctx, pool, claimedID, "secret.revoked", "claimed", time.Time{})
+	insertControlOutbox(t, ctx, pool, deadLetterID, "secret.revoked", "dead_lettered", time.Time{})
+	insertControlOutbox(t, ctx, pool, deadLetterID2, "secret.revoked", "dead_lettered", time.Time{})
+	insertControlOutbox(t, ctx, pool, freshID, "secret.revoked", "delivered", time.Now().Add(-23*time.Hour))
+	insertControlOutbox(t, ctx, pool, oldA, "secret.revoked", "delivered", time.Now().Add(-26*time.Hour))
 	insertControlOutbox(t, ctx, pool, oldB, "secret.revoked", "delivered", time.Now().Add(-25*time.Hour))
 	insertControlOutbox(t, ctx, pool, oldC, "session.input.reconcile", "delivered", time.Now().Add(-30*time.Hour))
 	canceledCtx, cancel := context.WithCancel(ctx)
@@ -148,14 +148,11 @@ func TestControlOutboxDeadLettersOnlyUnsupportedTopics(t *testing.T) {
 
 	knownID := uuid.NewV7()
 	unknownID := uuid.NewV7()
-	insertControlOutbox(t, ctx, pool, knownID, "token.reconcile", "pending", time.Time{})
+	insertControlOutbox(t, ctx, pool, knownID, "secret.revoked", "pending", time.Time{})
 	insertControlOutbox(t, ctx, pool, unknownID, "unknown.topic", "pending", time.Time{})
 
 	rows, err := queries.DeadLetterUnsupportedControlOutbox(ctx, db.DeadLetterUnsupportedControlOutboxParams{
 		SupportedTopics: []string{
-			"session.input.reconcile",
-			"session.lifecycle.reconcile",
-			"token.reconcile",
 			"secret.revoked",
 		},
 		RowLimit: 100,
@@ -180,9 +177,6 @@ func TestControlOutboxDeadLettersUnsupportedAfterSupportedPrefixSaturation(t *te
 
 	const rowLimit int32 = 2
 	supportedTopics := []string{
-		"session.input.reconcile",
-		"session.lifecycle.reconcile",
-		"token.reconcile",
 		"secret.revoked",
 	}
 
@@ -198,8 +192,8 @@ func TestControlOutboxDeadLettersUnsupportedAfterSupportedPrefixSaturation(t *te
 	oldestUnsupportedID := uuid.NewV7()
 	nextUnsupportedID := uuid.NewV7()
 	newestUnsupportedID := uuid.NewV7()
-	insertPendingAt(supportedIDs[0], "token.reconcile", unsupportedStart.Add(-2*time.Hour))
-	insertPendingAt(supportedIDs[1], "token.reconcile", unsupportedStart.Add(-time.Hour))
+	insertPendingAt(supportedIDs[0], "secret.revoked", unsupportedStart.Add(-2*time.Hour))
+	insertPendingAt(supportedIDs[1], "secret.revoked", unsupportedStart.Add(-time.Hour))
 	insertPendingAt(oldestUnsupportedID, "unknown.oldest", unsupportedStart)
 	insertPendingAt(nextUnsupportedID, "unknown.next", unsupportedStart.Add(time.Hour))
 	insertPendingAt(newestUnsupportedID, "unknown.newest", unsupportedStart.Add(2*time.Hour))
@@ -266,7 +260,7 @@ func TestControlOutboxLifecycleScaleBudget(t *testing.T) {
 		        substr(md5(generated::text), 17, 4) || '-' ||
 		        substr(md5(generated::text), 21, 12))::uuid,
 		       CASE WHEN generated > 800000 AND generated <= 900000
-		            THEN 'unknown.topic' ELSE 'token.reconcile' END,
+		            THEN 'unknown.topic' ELSE 'secret.revoked' END,
 		       '{}'::jsonb,
 		       CASE WHEN generated <= 700000 THEN 'delivered'
 		            WHEN generated <= 900000 THEN 'pending'
@@ -319,7 +313,7 @@ func TestControlOutboxLifecycleScaleBudget(t *testing.T) {
 		  FROM candidates
 		 WHERE control_outbox.id = candidates.id
 		   AND control_outbox.status = 'pending'
-	`, []string{"token.reconcile", "secret.revoked", "session.input.reconcile", "session.lifecycle.reconcile"})
+	`, []string{"secret.revoked", "secret.revoked"})
 	if err := unsupportedTx.Rollback(ctx); err != nil {
 		t.Fatal(err)
 	}

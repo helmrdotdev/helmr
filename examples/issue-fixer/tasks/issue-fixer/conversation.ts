@@ -2,27 +2,33 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { z } from "zod"
 
-// Application-owned state, captured with the Computer. Keep this directory out
-// of commits and preserve it when preparing the next Run's repository checkout.
+// Application-owned native history identity, captured with the Computer.
 export async function conversation(cwd: string, sessionId: string, provider: "codex" | "claude") {
   const directory = join(cwd, ".helmr", "issue-fixer", encodeURIComponent(sessionId), provider)
   await mkdir(directory, { recursive: true, mode: 0o700 })
   const file = join(directory, "conversation.json")
-  let id: string | undefined
+  let id: string | undefined, established = false
   try {
-    id = z.object({ id: z.string().min(1) }).parse(JSON.parse(await readFile(file, "utf8"))).id
+    const record = z.object({ id: z.string().min(1), established: z.boolean() }).parse(JSON.parse(await readFile(file, "utf8")))
+    id = record.id
+    established = record.established
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
   }
+  async function persist(value: string, ready: boolean) {
+    if (id !== undefined && id !== value) throw new Error("Native conversation changed unexpectedly")
+    if (id === value && established === ready) return
+    await writeFile(`${file}.tmp`, JSON.stringify({ id: value, established: ready }), { mode: 0o600 })
+    await rename(`${file}.tmp`, file)
+    id = value
+    established = ready
+  }
   return {
-    id,
+    id: established ? id : undefined,
+    candidateId: id,
     directory,
-    async remember(value: string) {
-      if (id === value) return
-      if (id !== undefined) throw new Error("Native conversation changed unexpectedly")
-      await writeFile(`${file}.tmp`, JSON.stringify({ id: value }), { mode: 0o600 })
-      await rename(`${file}.tmp`, file)
-      id = value
-    },
+    // A reserved UUID is not evidence that a native transcript exists yet.
+    reserve: (value: string) => persist(value, established),
+    remember: (value: string) => persist(value, true),
   }
 }

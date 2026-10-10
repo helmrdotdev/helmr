@@ -1,143 +1,111 @@
-import { execFile } from "node:child_process"
-import { promisify } from "node:util"
+import { fixtureInput } from "../../support/runtime-mcp"
 import { setTimeout as delay } from "node:timers/promises"
-import { verify, assert, assertEqual, deadline, readTelemetry, waitRun } from "../../support/context"
-import type { captureAbortTask } from "./task"
+import { verify, assert, assertEqual, deadline, waitTurn, waitOutput, completedResult } from "../../support/context"
 import { hostObservation } from "../../support/host-observation"
+import { observePersistence, assertRestored } from "../../support/persistence"
 import { replyFault, assertReplyLosses } from "../../support/reply-fault"
 
-await verify("capture-abort", async ({ client, marker, objects, computer, cleanup }) => {
+await verify("capture-abort", async ({ marker, objects, computer, cleanup, startAgent }) => {
   assertEqual(process.env.HELMR_API_URL?.replace(/\/$/, ""), "http://127.0.0.1:58080", "Run on the dedicated host")
-  const hostTool = process.env.HELMR_RUNTIME_HOST_TOOL
-  assert(hostTool, "HELMR_RUNTIME_HOST_TOOL is required")
-  const faultURL = "http://127.0.0.1:58089/__fault"
-  const fault = async (method = "GET") => {
-    const response = await fetch(faultURL, { method, signal: deadline(10_000) })
-    assert(response.ok, `Fault observer returned ${response.status}`)
-    return response.json() as Promise<{ delay_ms: number; started: string; failed: string }>
-  }
-  const observe = async (action: string, runId: string) => {
-    const { stdout } = await promisify(execFile)("sudo", ["-n", "python3", hostTool, action, "--run-id", runId], { timeout: 200_000, maxBuffer: 65536 })
-    return JSON.parse(stdout)
-  }
   const ref = await computer("capture-abort-verification", "capture-abort")
-  const tokenIds: string[] = []
-  for (const phase of ["first", "second"]) {
-    const token = await client.tokens.create({ timeout: "20m", idempotencyKey: `${marker}:${phase}` })
-    tokenIds.push(token.id)
-    objects.token_ids.push(token.id)
-    cleanup(async () => {
-      if ((await client.tokens.retrieve(token.id)).status === "pending") await client.tokens.cancel(token.id, { idempotencyKey: `${marker}:${phase}:cancel` })
-    })
+  const members = await Promise.all([false, true].map(cancelMember => startAgent("verification-capture-abort", {
+    computer: ref, input: { marker: cancelMember ? `${marker}:cancelled` : marker,
+      cancelledMarker: `/workspace/cancelled-capture-${marker}`, cancelMember },
+    idempotencyKey: `${marker}:${cancelMember}:start`,
+  })))
+  const healthy = members[0]!, cancelled = members[1]!
+  const ready = await Promise.all(members.map(member => waitOutput(member.session, member.turn,
+    value => value !== null && typeof value === "object" && "phase" in value && value.phase === "ready")))
+  const before = ready[0]!
+  assert(before !== null && typeof before === "object" && "nonce" in before && typeof before.nonce === "string")
+  const placements = await hostObservation("session-placements", { session_ids: members.map(m => m.session.id) })
+  assert.equal(placements.length, 2)
+  const source = placements[0]
+  for (const placement of placements) {
+    assert.equal(placement.computer_id, ref.id)
+    assert.equal(placement.computer_instance_id, source.computer_instance_id)
+    assert.equal(placement.computer_lease_epoch, source.computer_lease_epoch)
   }
-  const armed = await fault("POST")
-  assert(armed.delay_ms >= 360_000, "Fault must leave time to cancel after the five-minute guest grant")
-  // Admit both members while the shared Computer starts. The DB assertion below
-  // rejects a run where the cancelled member missed the captured member set.
-  const runs = await Promise.all([marker, `${marker}:cancelled`].map(async memberMarker => {
-    const member = await client.tasks.start<typeof captureAbortTask>("verification-capture-abort", {
-      computer: ref, payload: { marker: memberMarker, first: tokenIds[0]!, second: tokenIds[1]!, cancelledMarker: `/root/cancelled-capture-${marker}`, cancelMember: memberMarker !== marker }, idempotencyKey: `${memberMarker}:run`,
-    })
-    objects.run_ids.push(member.id)
-    return member
-  }))
-  const run = runs[0]!
-  const cancelled = runs[1]!
-  const waitFault = async (field: "started" | "failed", timeout: number) => {
-    const signal = deadline(timeout)
-    for (;;) {
-      signal.throwIfAborted()
-      const state = await fault()
-      if (Date.parse(state[field]) > 0) return state
-      await delay(500, undefined, { signal })
-    }
-  }
-  const started = await waitFault("started", 180_000)
-  const loseReplies = process.env.HELMR_CAPTURE_REPLY_LOSS === "1"
-  if (loseReplies) {
-    const path = await hostObservation("run-path", { run_id: run.id })
-    assert.equal(path.checkpoints.length, 1, "expected the first held capture")
-    const capture = path.checkpoints[0]
-    assertEqual(capture.members.map((m: any) => m.run_id).sort(), [run.id, cancelled.id].sort(), "wrong sealed member set")
-    await replyFault("POST", { mode: "drop", computer_id: ref.id,
-      instance_id: capture.source_computer_instance_id, checkpoint_id: capture.id,
-      run_ids: [run.id, cancelled.id] })
-    cleanup(async () => { await replyFault("DELETE") })
-  }
-  // Keep both CP leases renewing while their old guest grants expire. Cancelling
-  // earlier would eventually end the cancelled member's lease and interrupt the
-  // upload before the intended delayed S3 response.
-  await delay(Math.max(0, Date.parse(started.started) + 310_000 - Date.now()), undefined, { signal: deadline(330_000) })
-  let cancelledCounter = 0
-  let probeCursor: string | undefined
-  const probeDeadline = deadline(30_000)
-  do {
-    const probeLogs = await readTelemetry(() => client.runs.logs(cancelled.id, { limit: 100, cursor: probeCursor }, { signal: probeDeadline }))
-    for (const log of probeLogs.items) {
-      if (log.kind === "structured" && log.attributes.marker === `${marker}:cancelled` && Number.isSafeInteger(log.attributes.counter)) {
-        cancelledCounter = Math.max(cancelledCounter, Number(log.attributes.counter))
-      }
-    }
-    probeCursor = probeLogs.nextCursor
-  } while (probeCursor)
-  assert(cancelledCounter > 0, "No active cancelled-member counter observed before thaw")
-  const stillHeld = await fault()
-  assert(Date.parse(stillHeld.started) === Date.parse(started.started) && !(Date.parse(stillHeld.failed) > 0), "Probe baseline was not read while the upload was held")
-  await client.runs.cancel(cancelled.id, {})
-  const cancellationConfirmedAt = Date.now()
-  // Resolve while sealed so acknowledged abort can continue into the second wait.
-  await client.tokens.complete(tokenIds[0]!, { result: { cancelledCounter }, idempotencyKey: `${marker}:first:complete` })
-  const firstCompletionConfirmedAt = Date.now()
-  const failed = await waitFault("failed", 660_000)
-  assert(Date.parse(failed.failed) > cancellationConfirmedAt, "Cancellation did not commit before the upload failure")
-  assert(Date.parse(failed.failed) > firstCompletionConfirmedAt, "Token did not resolve before the upload failure")
-  assert(Date.parse(failed.failed) - Date.parse(started.started) > 300_000, "Capture did not exceed the old guest grant")
-  const aborted = await observe("wait-aborted", run.id)
-  let replies
-  if (loseReplies) {
-    const settled = deadline(120_000)
-    for (;;) {
-      settled.throwIfAborted()
-      replies = await replyFault()
-      assert.equal(replies.failure, "")
-      if (replies.relay?.restored && replies.events?.some(e =>
-        e.kind === "cp-abort" && e.disposition === "acknowledged" && !e.dropped)) break
-      // DB acknowledgment precedes the deliberately lost completion response.
-      // Wait for the Worker's subsequent reconciliation, not just that DB write.
-      await delay(200, undefined, { signal: settled })
-    }
-  }
-  if (replies) {
-    assertReplyLosses(replies, run.id, cancelled.id)
-    assert.equal(replies.target?.checkpoint_id, aborted.checkpoint_id)
-    assert.equal(replies.target?.instance_id, aborted.source_instance_id)
-    assert.equal(replies.target?.computer_id, ref.id)
-  }
-  assertEqual([...aborted.captured_run_ids].sort(), [run.id, cancelled.id].sort(), "Both members must belong to the failed capture")
-  const cancelledRun = await waitRun(client, cancelled.id, ["cancelled"], 120_000)
-  const signal = deadline(120_000)
-  let nonce: string | undefined
+  await replyFault("POST", { mode: "drop", computer_id: ref.id, instance_id: source.computer_instance_id,
+    writer_generation: source.computer_lease_epoch,
+    members: placements.map((p: any) => ({ session_id: p.session_id, process_epoch: p.process_epoch })) })
+  cleanup(async () => { await replyFault("DELETE") })
+  await Promise.all(members.map(member => member.turn.send(fixtureInput("start"), { idempotencyKey: `${marker}:${member.session.id}:start` })))
+  const initial = await Promise.all(members.map(member => completedResult(member.turn, 180_000)))
+  const cancelledInitial = initial[1]
+  assert(cancelledInitial !== null && typeof cancelledInitial === "object" && "count" in cancelledInitial)
+  assert.equal(cancelledInitial.count, 1)
+  const cancelledCounter = cancelledInitial.count
+  assert(typeof cancelledCounter === "number")
+  const heldDeadline = deadline(180_000)
+  let held
   for (;;) {
-    signal.throwIfAborted()
-    const logs = await readTelemetry(() => client.runs.logs(run.id, { limit: 100 }, { signal }))
-    const states = logs.items.filter(log => log.kind === "structured" && log.attributes.marker === marker)
-    const before = states.filter(log => log.kind === "structured" && log.attributes.phase === "before")
-    const resumed = states.filter(log => log.kind === "structured" && log.attributes.phase === "resumed")
-    assert(before.length <= 1 && resumed.length <= 1, "Task entry or continuation replayed")
-    if (before[0]?.kind === "structured" && resumed[0]?.kind === "structured") {
-      nonce = String(before[0].attributes.nonce)
-      assertEqual(resumed[0].attributes.nonce, nonce, "Abort lost in-memory state")
-      break
-    }
-    await delay(500, undefined, { signal })
+    heldDeadline.throwIfAborted()
+    held = await replyFault()
+    assert.equal(held.failure, "")
+    if (held.events?.some(e => e.kind === "guest-capture" && e.dropped)) break
+    await delay(200, undefined, { signal: heldDeadline })
   }
-  const parked = await observe("wait-parked", run.id)
-  assertEqual(parked.prior_runtime_id, aborted.source_instance_id, "Second capture did not use the original source")
-  assert(parked.checkpoint_id !== aborted.checkpoint_id, "Aborted checkpoint became restorable")
-  await client.tokens.complete(tokenIds[1]!, { result: { resume: true }, idempotencyKey: `${marker}:second:complete` })
-  const output = await client.runs.wait(run, { signal: deadline(180_000) }).unwrap()
-  assertEqual(output, { marker, nonce, runId: run.id, computerId: ref.id }, "Restore lost memory, files or Run identity")
-  const restored = await observe("verify-restored", run.id)
-  assertEqual(restored.checkpoint_id, parked.checkpoint_id, "Wrong checkpoint restored")
-  return { started, failed, replies, cancelledCounter, cancellationConfirmedAt, firstCompletionConfirmedAt, aborted, cancelledRun, parked, restored, output }
+  assert.equal(held.released, false)
+  const captureEvent = held.events!.find(e => e.kind === "guest-capture" && e.dropped)!
+  const captureExpiry = Date.parse(captureEvent.expires_at ?? "")
+  assert(Number.isFinite(captureExpiry) && captureExpiry > Date.parse(captureEvent.at), "Capture authority deadline missing or already expired")
+  const expiryWait = Math.max(0, captureExpiry + 1_000 - Date.now())
+  assert(expiryWait <= 60_000, "Capture deadline exceeds bounded expiry check")
+  await delay(expiryWait, undefined, { signal: deadline(65_000) })
+  const renewed = await hostObservation("session-placements", { session_ids: members.map(m => m.session.id) })
+  assert.equal(renewed.length, 2, "Current CP authority stopped renewing while old capture authority expired")
+  for (const placement of renewed) {
+    assert.equal(placement.computer_instance_id, source.computer_instance_id)
+    assert.equal(placement.computer_lease_epoch, source.computer_lease_epoch)
+  }
+  const input = (cancelMember: boolean) => ({ marker: cancelMember ? `${marker}:cancelled` : marker,
+    cancelledMarker: `/workspace/cancelled-capture-${marker}`, cancelMember, cancelledCounter })
+  const cancelledQueued = await cancelled.session.enqueue(fixtureInput(input(true)), { idempotencyKey: `${marker}:cancelled-queued` })
+  objects.turn_ids.push(cancelledQueued.id)
+  await cancelled.session.cancel({ idempotencyKey: `${marker}:cancel` })
+  const cancellationConfirmedAt = Date.now()
+  const continued = await healthy.session.enqueue(fixtureInput(input(false)), { idempotencyKey: `${marker}:continue` })
+  objects.turn_ids.push(continued.id)
+  const continuationAdmittedAt = Date.now()
+  const stillHeld = await replyFault()
+  assert.equal(stillHeld.released, false)
+  assert.equal(stillHeld.failure, "")
+  await replyFault("PATCH")
+  const inspectionReleasedAt = Date.now()
+  const settled = deadline(180_000)
+  let replies
+  for (;;) {
+    settled.throwIfAborted()
+    replies = await replyFault()
+    assert.equal(replies.failure, "")
+    if (replies.relay?.restored) break
+    await delay(200, undefined, { signal: settled })
+  }
+  assertReplyLosses(replies, healthy.session.id, cancelled.session.id)
+  const aborted = await observePersistence("wait-aborted", healthy.session.id)
+  assert.equal(aborted.checkpoint_id, replies.target?.checkpoint_id)
+  assert.equal(aborted.source_instance_id, source.computer_instance_id)
+  assert.deepEqual([...(aborted.captured_session_ids as string[])].sort(), members.map(m => m.session.id).sort())
+  const cancelledTurn = await waitTurn(cancelledQueued, ["cancelled"], 120_000)
+  const resumed = await waitOutput(healthy.session, continued,
+    value => value !== null && typeof value === "object" && "phase" in value && value.phase === "resumed")
+  assert(resumed !== null && typeof resumed === "object" && "nonce" in resumed)
+  assert.equal(resumed.nonce, before.nonce, "Abort lost in-memory state")
+  assert.equal((resumed as Record<string, unknown>).count, 2)
+  await continued.send(fixtureInput("finish"), { idempotencyKey: `${marker}:finish-abort` })
+  const continuedResult = await completedResult(continued, 180_000)
+  assert.deepEqual(continuedResult, { marker, nonce: before.nonce, count: 2, turnId: continued.id, sessionId: healthy.session.id, computerId: ref.id })
+  const parked = await observePersistence("wait-parked", healthy.session.id)
+  assert.equal(parked.prior_runtime_id, aborted.source_instance_id)
+  assert.notEqual(parked.checkpoint_id, aborted.checkpoint_id, "Aborted checkpoint became restorable")
+  const final = await healthy.session.enqueue(fixtureInput(input(false)), { idempotencyKey: `${marker}:restore` })
+  objects.turn_ids.push(final.id)
+  await waitOutput(healthy.session, final, value => value !== null && typeof value === "object" && "phase" in value && value.phase === "restored")
+  const restored = await observePersistence("verify-restored", healthy.session.id)
+  assertRestored(parked, restored, healthy.session.id)
+  await final.send(fixtureInput("finish"), { idempotencyKey: `${marker}:finish-restore` })
+  const output = await completedResult(final, 180_000)
+  assert.deepEqual(output, { marker, nonce: before.nonce, count: 3, turnId: final.id, sessionId: healthy.session.id, computerId: ref.id })
+  return { initial, continuedResult, placements, renewed, captureExpiry, held, replies, cancelledCounter, cancellationConfirmedAt, continuationAdmittedAt, inspectionReleasedAt, aborted, cancelledTurn, parked, restored, output }
 })

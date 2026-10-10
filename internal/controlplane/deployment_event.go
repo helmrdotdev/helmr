@@ -11,7 +11,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 )
 
@@ -37,7 +36,7 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	record, err := deployment.Get(r.Context(), s.db, principal, scope, deploymentID)
+	record, err := deployment.Get(r.Context(), s.tx, principal, scope, deploymentID)
 	if err != nil {
 		s.writeDeploymentError(w, err)
 		return
@@ -49,7 +48,7 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 	page, err := s.telemetryReader.ListEvents(r.Context(), telemetry.EventQuery{
 		OrgID:       principal.OrgID,
 		SubjectType: eventSubjectTypeDeployment,
-		SubjectID:   pgvalue.MustUUIDValue(record.ID),
+		SubjectID:   record.ID,
 		AfterSeq:    cursor,
 		Limit:       limit + 1,
 	})
@@ -67,7 +66,7 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 		value := rows[len(rows)-1].ID
 		nextCursor = &value
 	}
-	writeJSON(w, http.StatusOK, api.RunEventPage{Events: rows, NextCursor: nextCursor})
+	writeJSON(w, http.StatusOK, api.DiagnosticEventPage{Events: rows, NextCursor: nextCursor})
 }
 
 func (s *Server) followDeploymentEvents(w http.ResponseWriter, r *http.Request, orgID uuid.UUID, deploymentID uuid.UUID, cursor int64) {
@@ -82,7 +81,7 @@ func (s *Server) followDeploymentEvents(w http.ResponseWriter, r *http.Request, 
 	encoder := json.NewEncoder(w)
 	ctx, cancel := context.WithTimeout(r.Context(), runEventsFollowMaxDuration)
 	defer cancel()
-	err := s.eventStream.ReadSubject(ctx, orgID, eventSubjectTypeDeployment, deploymentID, cursor, func(event api.RunEvent) error {
+	err := s.eventStream.ReadSubject(ctx, orgID, eventSubjectTypeDeployment, deploymentID, cursor, func(event api.DiagnosticEvent) error {
 		_, _ = fmt.Fprintf(w, "id: %s\n", event.ID)
 		_, _ = fmt.Fprint(w, "event: deployment_event\n")
 		_, _ = fmt.Fprint(w, "data: ")

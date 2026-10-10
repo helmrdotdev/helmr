@@ -17,6 +17,28 @@ const (
 	processCgroupCleanupTimeout = 10 * time.Second
 )
 
+// cgroup.kill and cgroup.events cover descendants, but removing the parent does
+// not remove empty subgroup directories. The owner must seal launch admission
+// and prove the tree empty before calling this function. Never unlink interface
+// files or follow a workload-controlled symlink while cleaning up.
+func removeEmptyCgroupTree(path string) error {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("unexpected symlink in cgroup tree: %s", entry.Name())
+		}
+		if entry.IsDir() {
+			if err := removeEmptyCgroupTree(filepath.Join(path, entry.Name())); err != nil {
+				return err
+			}
+		}
+	}
+	return os.Remove(path)
+}
+
 func killCgroup(path string) error {
 	if err := os.WriteFile(filepath.Join(path, "cgroup.kill"), []byte("1"), 0o644); err != nil {
 		return fmt.Errorf("kill cgroup: %w", err)

@@ -64,17 +64,35 @@ func (c *LocalCapture) Release() {
 	c.released = true
 }
 
-// Capture flushes and pins atomically with respect to local collection. A bare
-// Flush is for the block protocol's durability acknowledgment, not retained cuts.
+// Capture cuts between complete NBD requests and pins atomically with respect to
+// local collection. Encoding and local persistence do not hold the request gate.
+// The guest must acknowledge its filesystem flush before this call when the cut
+// certifies guest writes. A host-local cut alone does not establish that boundary.
 func (p *LocalVersion) Capture(ctx context.Context) (*LocalCapture, error) {
 	p.life.RLock()
 	defer p.life.RUnlock()
 	if p.closed {
 		return nil, os.ErrClosed
 	}
-	p.commit.Lock()
+	// Requests can flush under buffer pressure. Never wait for commit while
+	// holding request: an earlier encoder must not stall otherwise runnable I/O.
+	// Acquire both only when commit is immediately available; otherwise join the
+	// previous commit outside the request gate and retry the boundary.
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		p.request.Lock()
+		if p.commit.TryLock() {
+			break
+		}
+		p.request.Unlock()
+		p.commit.Lock()
+		//lint:ignore SA2001 Wait for the preceding commit outside the request gate.
+		p.commit.Unlock()
+	}
 	defer p.commit.Unlock()
-	root, err := p.flushLocked(ctx)
+	root, err := p.flushBoundaryLocked(ctx, p.request.Unlock)
 	if err != nil {
 		return nil, err
 	}

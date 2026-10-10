@@ -140,13 +140,13 @@ func TestSnapshotFailureRequiresExplicitAbortToResume(t *testing.T) {
 			if err := capture.ResumeGuestControl(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if api.paused || api.resumes != 1 || !machine.computerHeld {
+			if api.paused || api.resumes != 1 || !machine.computerCaptureBlocked {
 				t.Fatal("guest-control resume released dispatch or repeated VMM resume")
 			}
 			if err := capture.CompleteAbort(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if machine.computerHeld || machine.checkpointHold != nil {
+			if machine.computerCaptureBlocked || machine.checkpointHold != nil {
 				t.Fatal("acknowledged abort did not release capture hold")
 			}
 			next, err := machine.BeginCheckpoint(t.Context(), vm.SnapshotRequest{ID: "next-checkpoint"})
@@ -162,7 +162,7 @@ func TestSnapshotFailureRequiresExplicitAbortToResume(t *testing.T) {
 			if err := capture.CompleteAbort(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if machine.checkpointHold != next || !machine.computerHeld {
+			if machine.checkpointHold != next || !machine.computerCaptureBlocked {
 				t.Fatal("old acknowledgment released newer hold")
 			}
 		})

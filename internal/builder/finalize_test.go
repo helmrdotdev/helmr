@@ -4,7 +4,9 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
@@ -24,8 +27,8 @@ import (
 func TestFinalizeBundleWritesExactAtomicDirectory(t *testing.T) {
 	root := t.TempDir()
 	programPath, programBytes, index := writeVerifiedProgramFixture(t, root)
-	input := testBundleInput(programPath, programBytes)
-	input.Program.Index = index
+	input := testBundleInput(t, programPath, programBytes)
+	input.Program.Metadata = index
 	output := filepath.Join(root, "output", "deployment-bundle")
 
 	finalized, err := FinalizeBundle(context.Background(), output, input)
@@ -79,13 +82,13 @@ func TestFinalizeBundleRejectsStructurallyInvalidProgram(t *testing.T) {
 	if _, err := FinalizeBundle(
 		context.Background(),
 		filepath.Join(root, "bundle"),
-		testBundleInput(programPath, programBytes),
+		testBundleInput(t, programPath, programBytes),
 	); err == nil || !strings.Contains(err.Error(), "verify finalized Program object") {
 		t.Fatalf("FinalizeBundle error = %v", err)
 	}
 }
 
-func TestVerifyFinalObjectRejectsStructurallyInvalidComputerImage(t *testing.T) {
+func TestVerifyFinalObjectRejectsStructurallyInvalidComputerSeed(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "image.oci.tar")
 	if err := os.WriteFile(path, []byte("not an OCI archive"), 0o600); err != nil {
 		t.Fatal(err)
@@ -95,32 +98,32 @@ func TestVerifyFinalObjectRejectsStructurallyInvalidComputerImage(t *testing.T) 
 		path,
 		bundle.Object{
 			Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 18,
-			MediaType: bundle.ComputerImageMediaType,
+			MediaType: definition.ComputerSeedMediaType,
 		},
 		artifact.ProgramOutput{},
 	)
-	if err == nil || !strings.Contains(err.Error(), "verify finalized computer image object") {
+	if err == nil || !strings.Contains(err.Error(), "verify finalized Computer seed object") {
 		t.Fatalf("verifyFinalObject error = %v", err)
 	}
 }
 
-func TestReferencedBundleObjectsDeduplicatesSharedComputerImage(t *testing.T) {
+func TestReferencedBundleObjectsDeduplicatesSharedComputerSeed(t *testing.T) {
 	program := artifact.ProgramDescriptor{
 		Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 10,
 		MediaType: artifact.ProgramArtifactMediaType,
 	}
-	image := bundle.ComputerImage{
+	image := bundle.ComputerSeed{
 		DeclaredID: "first",
-		Artifact: bundle.ComputerImageArtifact{
+		Artifact: bundle.ComputerSeedArtifact{
 			Profile:      definition.ComputerSeedProfile,
 			Architecture: definition.ArchitectureX8664,
 			Digest:       "sha256:" + strings.Repeat("b", 64), SizeBytes: 20,
-			MediaType: bundle.ComputerImageMediaType,
+			MediaType: definition.ComputerSeedMediaType,
 		},
 	}
 	shared := image
 	shared.DeclaredID = "second"
-	objects, err := referencedBundleObjects(program, []bundle.ComputerImage{image, shared})
+	objects, err := referencedBundleObjects(program, []bundle.ComputerSeed{image, shared})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +134,7 @@ func TestReferencedBundleObjectsDeduplicatesSharedComputerImage(t *testing.T) {
 	shared.Artifact.SizeBytes++
 	if _, err := referencedBundleObjects(
 		program,
-		[]bundle.ComputerImage{image, shared},
+		[]bundle.ComputerSeed{image, shared},
 	); err == nil || !strings.Contains(err.Error(), "conflicting reference metadata") {
 		t.Fatalf("referencedBundleObjects error = %v", err)
 	}
@@ -140,8 +143,8 @@ func TestReferencedBundleObjectsDeduplicatesSharedComputerImage(t *testing.T) {
 func TestFinalizeBundlePublishesExactlyOneConcurrentWriter(t *testing.T) {
 	root := t.TempDir()
 	programPath, programBytes, index := writeVerifiedProgramFixture(t, root)
-	input := testBundleInput(programPath, programBytes)
-	input.Program.Index = index
+	input := testBundleInput(t, programPath, programBytes)
+	input.Program.Metadata = index
 	output := filepath.Join(root, "bundle")
 	start := make(chan struct{})
 	errorsByWriter := make([]error, 2)
@@ -183,7 +186,7 @@ func TestFinalizeBundleFailsClosed(t *testing.T) {
 			name: "digest mismatch",
 			change: func(_ *testing.T, input *BundleInput, _ string) {
 				input.Program.Artifact.Digest = "sha256:" + strings.Repeat("a", 64)
-				input.Program.Index.RuntimeDigest = input.Runtime.Digest
+				input.Program.Metadata.RuntimeDigest = input.Runtime.Digest
 				input.Objects[0].Digest = input.Program.Artifact.Digest
 			},
 			want: "digest does not match descriptor",
@@ -224,7 +227,7 @@ func TestFinalizeBundleFailsClosed(t *testing.T) {
 			if err := os.WriteFile(programPath, programBytes, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			input := testBundleInput(programPath, programBytes)
+			input := testBundleInput(t, programPath, programBytes)
 			test.change(t, &input, programPath)
 			output := filepath.Join(root, "bundle")
 			if _, err := FinalizeBundle(context.Background(), output, input); err == nil ||
@@ -263,7 +266,7 @@ func TestFinalizeBundleRejectsExistingOutput(t *testing.T) {
 	if _, err := FinalizeBundle(
 		context.Background(),
 		output,
-		testBundleInput(programPath, programBytes),
+		testBundleInput(t, programPath, programBytes),
 	); err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("FinalizeBundle error = %v", err)
 	}
@@ -272,32 +275,12 @@ func TestFinalizeBundleRejectsExistingOutput(t *testing.T) {
 	}
 }
 
-func testBundleInput(programPath string, programBytes []byte) BundleInput {
+func testBundleInput(t *testing.T, programPath string, programBytes []byte) BundleInput {
 	runtimeDigest := "sha256:" + strings.Repeat("f", 64)
 	programDigest := sha256sum.DigestBytes(programBytes)
-	index := artifact.ProgramIndex{
-		Architecture:       definition.ArchitectureX8664,
-		ConfigResultDigest: "sha256:" + strings.Repeat("c", 64),
-		Declarations: []artifact.ProgramIndexDeclaration{{
-			Kind:       definition.KindTask,
-			DeclaredID: "hello",
-			Task: &definition.TaskManifest{
-				Payload: definition.SchemaManifest{Kind: definition.SchemaKindNone},
-				Run: definition.RunManifest{
-					Queue: "tasks", MaxDurationMs: 5000,
-					Retry: definition.RetryManifest{Enabled: false},
-				},
-			},
-			Locator: &artifact.ProgramLocator{
-				ExportName: "hello",
-				ModulePath: "helmr/app/entry-0.mjs",
-				Slot:       artifact.DeclarationSlotHandler,
-			},
-		}},
-		Queues:          []definition.QueueInput{{Name: "tasks"}},
-		RuntimeContract: definition.RuntimeContract,
-		RuntimeDigest:   runtimeDigest,
-	}
+	image, source := writeSeedFixture(t, filepath.Dir(programPath))
+	index := fixtureProgramMetadata([]bundle.ComputerSeed{image}, "sha256:"+strings.Repeat("c", 64), runtimeDigest)
+
 	return BundleInput{
 		Runtime: artifact.RuntimeDescriptor{
 			Architecture: definition.ArchitectureX8664,
@@ -310,18 +293,22 @@ func testBundleInput(programPath string, programBytes []byte) BundleInput {
 				Digest: programDigest, SizeBytes: int64(len(programBytes)),
 				MediaType: artifact.ProgramArtifactMediaType,
 			},
-			Index: index,
+			Metadata: index,
 		},
-		ComputerImages: []bundle.ComputerImage{},
-		Objects:        []ObjectSource{{Digest: programDigest, Path: programPath}},
+		ComputerSeeds: []bundle.ComputerSeed{image},
+		Objects:       []ObjectSource{{Digest: programDigest, Path: programPath}, source},
 	}
 }
 
 func writeVerifiedProgramFixture(
 	t *testing.T,
 	root string,
-	images ...bundle.ComputerImage,
-) (string, []byte, artifact.ProgramIndex) {
+	images ...bundle.ComputerSeed,
+) (string, []byte, artifact.ProgramMetadata) {
+	return writeVerifiedProgramFixtureWithMetadata(t, root, nil, images...)
+}
+
+func writeVerifiedProgramFixtureWithMetadata(t *testing.T, root string, edit func(*artifact.ProgramMetadata), images ...bundle.ComputerSeed) (string, []byte, artifact.ProgramMetadata) {
 	t.Helper()
 	encoder := os.Getenv("HELMR_SQUASHFS_ENCODER")
 	if encoder == "" {
@@ -329,33 +316,26 @@ func writeVerifiedProgramFixture(
 	}
 	configRaw := []byte(`{"assets":[],"dirs":["tasks"],"external":[],"ignorePatterns":[]}`)
 	sourcePath := "helmr/app/entry-0.mjs"
-	sourceRaw := []byte("export const build = task({ id: \"build\" })\n")
+	sourceRaw := []byte("export const build = {}\n")
 	runtimeDigest := "sha256:" + strings.Repeat("f", 64)
-	index := artifact.ProgramIndex{
-		Architecture:       definition.ArchitectureX8664,
-		ConfigResultDigest: sha256sum.DigestBytes(configRaw),
-		Declarations: []artifact.ProgramIndexDeclaration{{
-			Kind: definition.KindTask, DeclaredID: "hello",
-			Task: &definition.TaskManifest{
-				Payload: definition.SchemaManifest{Kind: definition.SchemaKindNone},
-				Run: definition.RunManifest{
-					Queue: "tasks", MaxDurationMs: 5000,
-					Retry: definition.RetryManifest{Enabled: false},
-				},
-			},
-			Locator: &artifact.ProgramLocator{
-				ExportName: "build", ModulePath: sourcePath,
-				Slot: artifact.DeclarationSlotHandler,
-			},
-		}},
-		Queues:          []definition.QueueInput{{Name: "tasks"}},
-		RuntimeContract: definition.RuntimeContract, RuntimeDigest: runtimeDigest,
+	if len(images) == 0 {
+		image, _ := writeSeedFixture(t, root)
+		images = []bundle.ComputerSeed{image}
 	}
+	index := fixtureProgramMetadata(images, sha256sum.DigestBytes(configRaw), runtimeDigest)
+	if edit != nil {
+		edit(&index)
+	}
+	runtimeIndex := artifact.DefinitionIndex{APIVersion: "helmr.definition-index.v1", Agents: []artifact.AgentBundleEntry{{ID: "hello", ComputerDefinitionID: images[0].DeclaredID, ModulePath: sourcePath, ExportName: "build"}}, Computers: []artifact.ComputerBundleEntry{}}
 	for _, image := range images {
-		index.Declarations = append(index.Declarations, artifact.ProgramIndexDeclaration{Kind: definition.KindSandbox, DeclaredID: image.DeclaredID, Sandbox: &definition.SandboxManifest{Image: definition.SandboxImageManifest{ArtifactDigest: image.Artifact.Digest, MediaType: image.Artifact.MediaType, Profile: image.Artifact.Profile, Config: image.Artifact.Config}, Resources: definition.ResourcesManifest{MilliCPU: 1000, MemoryMiB: 1024}}})
+		runtimeIndex.Computers = append(runtimeIndex.Computers, artifact.ComputerBundleEntry{ID: image.DeclaredID, ModulePath: sourcePath, ExportName: image.DeclaredID})
 	}
-	sort.Slice(index.Declarations, func(i, j int) bool { return index.Declarations[i].Kind < index.Declarations[j].Kind })
-	indexRaw, err := artifact.CanonicalProgramIndex(index)
+	definitionIndexRaw, err := artifact.CanonicalDefinitionIndex(runtimeIndex)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	indexRaw, err := artifact.CanonicalProgramMetadata(index)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,15 +344,16 @@ func writeVerifiedProgramFixture(
 		Config: artifact.ProgramPathDigest{
 			Digest: sha256sum.DigestBytes(configRaw), Path: "helmr/config.json",
 		},
-		ProgramIndexDigest: sha256sum.DigestBytes(indexRaw),
+		ProgramMetadataDigest: sha256sum.DigestBytes(indexRaw),
 	}
 	files := map[string][]byte{
-		"bun.lock":                []byte("lockfileVersion = 1\n"),
-		"helmr.config.ts":         []byte("export default { dirs: [\"tasks\"] };\n"),
-		"helmr/config.json":       configRaw,
-		"helmr/declarations.json": indexRaw,
-		"package.json":            []byte(`{"packageManager":"yarn@4.9.2"}`),
-		sourcePath:                sourceRaw,
+		"bun.lock":                    []byte("lockfileVersion = 1\n"),
+		"helmr.config.ts":             []byte("export default { dirs: [\"tasks\"] };\n"),
+		"helmr/config.json":           configRaw,
+		"helmr/program-metadata.json": indexRaw,
+		"helmr/definition-index.json": definitionIndexRaw,
+		"package.json":                []byte(`{"packageManager":"yarn@4.9.2"}`),
+		sourcePath:                    sourceRaw,
 	}
 	directories := []string{"helmr", "helmr/app", "node_modules", "tasks"}
 	inputRoot := t.TempDir()
@@ -455,4 +436,39 @@ func canonicalJSON(t *testing.T, value any) []byte {
 		t.Fatal(err)
 	}
 	return canonical
+}
+
+func fixtureProgramMetadata(images []bundle.ComputerSeed, configDigest, runtimeDigest string) artifact.ProgramMetadata {
+	index := artifact.ProgramMetadata{Architecture: definition.ArchitectureX8664, ConfigResultDigest: configDigest, RuntimeContract: definition.RuntimeContract, RuntimeDigest: runtimeDigest,
+		Definitions: []artifact.ProgramDefinition{{Kind: definition.KindAgent, DeclaredID: "hello", Agent: &definition.AgentManifest{ComputerDefinitionID: images[0].DeclaredID, Triggers: map[string]definition.CronTrigger{}}}}}
+	for _, image := range images {
+		index.Definitions = append(index.Definitions, artifact.ProgramDefinition{Kind: definition.KindComputer, DeclaredID: image.DeclaredID, Computer: &definition.ComputerManifest{
+			Seed: definition.ComputerSeedManifest{ArtifactDigest: image.Artifact.Digest, MediaType: image.Artifact.MediaType, Profile: image.Artifact.Profile, Config: image.Artifact.Config}, Resources: definition.ResourcesManifest{MilliCPU: 1000, MemoryMiB: 1024}, Secrets: []definition.SecretBinding{}, BuildSecrets: []definition.SecretBinding{},
+		}})
+	}
+	sort.Slice(index.Definitions, func(i, j int) bool {
+		return artifact.CompareProgramDefinitions(index.Definitions[i], index.Definitions[j]) < 0
+	})
+	return index
+}
+
+// The finalizer checks the seed container, not bootability. A sparse zero disk
+// exercises that contract without a filesystem builder on the test host.
+func writeSeedFixture(t *testing.T, root string) (bundle.ComputerSeed, ObjectSource) {
+	t.Helper()
+	var encoded bytes.Buffer
+	encoded.WriteString("helmr-firecracker-filepack-v0\n")
+	header := []byte(fmt.Sprintf(`{"version":0,"role":"computer-seed","logical_size":%d,"chunk_size":4194304,"codec":"zstd"}`, disk.SeedCapacity))
+	if err := binary.Write(&encoded, binary.BigEndian, uint32(len(header))); err != nil {
+		t.Fatal(err)
+	}
+	encoded.Write(header)
+	encoded.WriteByte(255)
+	raw := encoded.Bytes()
+	digest := sha256sum.DigestBytes(raw)
+	path := filepath.Join(root, "seed.filepack")
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return bundle.ComputerSeed{DeclaredID: "computer", Artifact: bundle.ComputerSeedArtifact{Profile: definition.ComputerSeedProfile, Architecture: definition.ArchitectureX8664, Digest: digest, SizeBytes: int64(len(raw)), MediaType: definition.ComputerSeedMediaType}}, ObjectSource{Digest: digest, Path: path}
 }

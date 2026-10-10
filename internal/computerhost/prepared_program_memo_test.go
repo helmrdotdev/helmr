@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -20,24 +21,31 @@ import (
 func TestPreparedProgramMemoDescriptorAndOwnership(t *testing.T) {
 	machines := &PreparedMachines{}
 	descriptor := artifact.ProgramDescriptor{Digest: "sha256:one", SizeBytes: 42, MediaType: artifact.ProgramArtifactMediaType}
-	limit := int64(3)
-	index := artifact.ProgramIndex{Queues: []definition.QueueInput{{Name: "queue", ConcurrencyLimit: &limit}}, Declarations: []artifact.ProgramIndexDeclaration{{Locator: &artifact.ProgramLocator{ExportName: "original"}}}}
+	index := artifacttest.ProgramMetadata(t)
+	index.Definitions[0].Agent.Triggers["nightly"] = definition.CronTrigger{Input: []byte(`[{"type":"text","text":"{\"original\":true}"}]`)}
+	index.Definitions[2].Computer.Secrets = []definition.SecretBinding{{SecretID: "original", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
+	index.Definitions[2].Computer.Seed.Config.Env = []string{"KEY=original"}
+	original := index.Clone()
+	mutate := func(value artifact.ProgramMetadata) {
+		value.Definitions[0].Agent.Triggers["nightly"].Input[2] = 'X'
+		value.Definitions[2].Computer.Secrets = []definition.SecretBinding{{SecretID: "changed", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
+		value.Definitions[2].Computer.Seed.Config.Env[0] = "KEY=changed"
+	}
 	calls := 0
-	verify := func() (artifact.ProgramIndex, error) { calls++; return index, nil }
+	verify := func() (artifact.ProgramMetadata, error) { calls++; return index, nil }
 	first, err := machines.verifyProgram(t.Context(), descriptor, verify)
 	if err != nil {
 		t.Fatal(err)
 	}
-	first.Declarations[0].Locator.ExportName = "changed"
-	*index.Queues[0].ConcurrencyLimit = 9
+	mutate(first)
+	mutate(index)
 	hit, err := machines.verifyProgram(t.Context(), descriptor, verify)
-	if err != nil || calls != 1 || hit.Declarations[0].Locator.ExportName != "original" || *hit.Queues[0].ConcurrencyLimit != 3 {
+	if err != nil || calls != 1 || !reflect.DeepEqual(hit, original) {
 		t.Fatalf("hit = %+v, calls %d, error %v", hit, calls, err)
 	}
-	hit.Declarations[0].Locator.ExportName = "changed hit"
-	*hit.Queues[0].ConcurrencyLimit = 10
+	mutate(hit)
 	again, err := machines.verifyProgram(t.Context(), descriptor, verify)
-	if err != nil || !reflect.DeepEqual(again.Declarations[0].Locator, &artifact.ProgramLocator{ExportName: "original"}) || *again.Queues[0].ConcurrencyLimit != 3 {
+	if err != nil || !reflect.DeepEqual(again, original) {
 		t.Fatal("returned hit aliases memo", err)
 	}
 	// Reflect over every actual descriptor field so future key fields need coverage.
@@ -65,34 +73,34 @@ func TestPreparedProgramMemoDescriptorAndOwnership(t *testing.T) {
 func TestPreparedProgramMemoPublishesOnlySuccess(t *testing.T) {
 	machines := &PreparedMachines{}
 	descriptor := artifact.ProgramDescriptor{Digest: "original"}
-	good := artifact.ProgramIndex{RuntimeContract: "original"}
-	if _, err := machines.verifyProgram(t.Context(), descriptor, func() (artifact.ProgramIndex, error) { return good, nil }); err != nil {
+	good := artifact.ProgramMetadata{RuntimeContract: "original"}
+	if _, err := machines.verifyProgram(t.Context(), descriptor, func() (artifact.ProgramMetadata, error) { return good, nil }); err != nil {
 		t.Fatal(err)
 	}
 	for _, failure := range []error{errors.New("verification failed"), context.Canceled, context.DeadlineExceeded} {
 		for range 2 {
-			_, err := machines.verifyProgram(t.Context(), artifact.ProgramDescriptor{Digest: "failed"}, func() (artifact.ProgramIndex, error) { return good, failure })
+			_, err := machines.verifyProgram(t.Context(), artifact.ProgramDescriptor{Digest: "failed"}, func() (artifact.ProgramMetadata, error) { return good, failure })
 			if !errors.Is(err, failure) {
 				t.Fatalf("failure cached or lost: %v", err)
 			}
 		}
 	}
 	ctx, cancel := context.WithCancel(t.Context())
-	_, err := machines.verifyProgram(ctx, artifact.ProgramDescriptor{Digest: "cancel-after-success"}, func() (artifact.ProgramIndex, error) { cancel(); return good, nil })
+	_, err := machines.verifyProgram(ctx, artifact.ProgramDescriptor{Digest: "cancel-after-success"}, func() (artifact.ProgramMetadata, error) { cancel(); return good, nil })
 	if !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	_, err = machines.verifyProgram(ctx, descriptor, func() (artifact.ProgramIndex, error) { t.Fatal("canceled hit verified"); return good, nil })
+	_, err = machines.verifyProgram(ctx, descriptor, func() (artifact.ProgramMetadata, error) { t.Fatal("canceled hit verified"); return good, nil })
 	if !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	got, err := machines.verifyProgram(t.Context(), descriptor, func() (artifact.ProgramIndex, error) { t.Fatal("failed miss replaced success"); return good, nil })
+	got, err := machines.verifyProgram(t.Context(), descriptor, func() (artifact.ProgramMetadata, error) { t.Fatal("failed miss replaced success"); return good, nil })
 	if err != nil || got.RuntimeContract != "original" {
 		t.Fatal(got, err)
 	}
 	calls := 0
 	for range 2 {
-		_, err = machines.verifyProgram(t.Context(), artifact.ProgramDescriptor{Digest: "cancel-after-success"}, func() (artifact.ProgramIndex, error) { calls++; return good, nil })
+		_, err = machines.verifyProgram(t.Context(), artifact.ProgramDescriptor{Digest: "cancel-after-success"}, func() (artifact.ProgramMetadata, error) { calls++; return good, nil })
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -111,16 +119,16 @@ func TestPreparedProgramMemoConcurrentMisses(t *testing.T) {
 	descriptor := artifact.ProgramDescriptor{Digest: "same"}
 	for range n {
 		wg.Go(func() {
-			got, err := machines.verifyProgram(t.Context(), descriptor, func() (artifact.ProgramIndex, error) {
+			got, err := machines.verifyProgram(t.Context(), descriptor, func() (artifact.ProgramMetadata, error) {
 				entered <- struct{}{}
 				<-release
-				return artifact.ProgramIndex{Queues: []definition.QueueInput{{Name: "original"}}}, nil
+				return artifact.ProgramMetadata{Definitions: []artifact.ProgramDefinition{{DeclaredID: "original"}}}, nil
 			})
 			if err != nil {
 				t.Error(err)
 				return
 			}
-			got.Queues[0].Name = "caller mutation"
+			got.Definitions[0].DeclaredID = "caller mutation"
 		})
 	}
 	timer := time.NewTimer(5 * time.Second)
@@ -138,15 +146,15 @@ func TestPreparedProgramMemoConcurrentMisses(t *testing.T) {
 	wg.Wait()
 	for range n {
 		wg.Go(func() {
-			got, err := machines.verifyProgram(t.Context(), descriptor, func() (artifact.ProgramIndex, error) {
+			got, err := machines.verifyProgram(t.Context(), descriptor, func() (artifact.ProgramMetadata, error) {
 				t.Error("missing published result")
-				return artifact.ProgramIndex{}, nil
+				return artifact.ProgramMetadata{}, nil
 			})
-			if err != nil || len(got.Queues) != 1 || got.Queues[0].Name != "original" {
+			if err != nil || len(got.Definitions) != 1 || got.Definitions[0].DeclaredID != "original" {
 				t.Error("corrupted memo", err)
 				return
 			}
-			got.Queues[0].Name = "mutated hit"
+			got.Definitions[0].DeclaredID = "mutated hit"
 		})
 	}
 	wg.Wait()
@@ -156,39 +164,13 @@ func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T)
 	if runtime.GOOS != "linux" {
 		t.Skip("artifact snapshots require Linux")
 	}
-	digest := "sha256:" + strings.Repeat("a", 64)
-	index := artifact.ProgramIndex{
-		Architecture:       definition.ArchitectureX8664,
-		ConfigResultDigest: digest,
-		Declarations: []artifact.ProgramIndexDeclaration{{
-			Kind:       definition.KindTask,
-			DeclaredID: "task",
-			Task: &definition.TaskManifest{
-				Payload: definition.SchemaManifest{Kind: definition.SchemaKindNone},
-				Run: definition.RunManifest{
-					Queue:         "task/task",
-					MaxDurationMs: 900000,
-					Retry:         definition.RetryManifest{Enabled: false},
-				},
-			},
-			Locator: &artifact.ProgramLocator{
-				ExportName: "task",
-				ModulePath: "helmr/app/entry-0.mjs",
-				Slot:       artifact.DeclarationSlotHandler,
-			},
-		}},
-		Queues: []definition.QueueInput{{
-			Name: "task/task",
-		}},
-		RuntimeContract: definition.RuntimeContract,
-		RuntimeDigest:   "sha256:" + strings.Repeat("f", 64),
-	}
+	index := artifacttest.ProgramMetadata(t)
 
 	store := &fakeCAS{objects: map[string][]byte{}}
 	runtimeObject := store.put(artifact.RuntimeArtifactMediaType, []byte("runtime"))
 	programObject := store.put(artifact.ProgramArtifactMediaType, []byte("program"))
 	index.RuntimeDigest = runtimeObject.Digest
-	canonical, err := artifact.CanonicalProgramIndex(index)
+	canonical, err := artifact.CanonicalProgramMetadata(index)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,20 +178,22 @@ func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T)
 	descriptor := artifact.ProgramDescriptor{Digest: programObject.Digest, SizeBytes: programObject.SizeBytes, MediaType: programObject.MediaType}
 	machines := &PreparedMachines{CAS: store, PlatformStore: store, RuntimeArchitecture: definition.ArchitectureX8664, verifiedRuntimes: map[artifact.RuntimeDescriptor]artifact.RuntimeIndex{runtimeDescriptor: {Architecture: definition.ArchitectureX8664, RuntimeContract: definition.RuntimeContract}}}
 	// Inject only the isolated verifier result; exercise real snapshots and the
-	// production prepareProgram authority path on every hit.
-	if _, err := machines.verifyProgram(t.Context(), descriptor, func() (artifact.ProgramIndex, error) { return index, nil }); err != nil {
+	// production artifact preparation authority path on every hit.
+	if _, err := machines.verifyProgram(t.Context(), descriptor, func() (artifact.ProgramMetadata, error) { return index, nil }); err != nil {
 		t.Fatal(err)
 	}
-	target := workerapi.InstanceReconcileTarget{ID: "memo-test", Source: workerapi.InstanceSource{ComputerArchitecture: string(definition.ArchitectureX8664), Program: &workerapi.RuntimeProgram{DeploymentID: "deployment", Runtime: workerapi.CASObject{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType}, Artifact: workerapi.CASObject{Digest: programObject.Digest, SizeBytes: programObject.SizeBytes, MediaType: programObject.MediaType}, IndexDigest: sha256sum.DigestBytes(canonical)}}}
+	program := &workerapi.RuntimeProgram{DeploymentID: "deployment", Runtime: workerapi.CASObject{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType}, Artifact: workerapi.CASObject{Digest: programObject.Digest, SizeBytes: programObject.SizeBytes, MediaType: programObject.MediaType}, IndexDigest: sha256sum.DigestBytes(canonical)}
 	run := func(want string) {
 		t.Helper()
 		dir := t.TempDir()
-		drives, cleanup, err := machines.prepareProgram(t.Context(), dir, target)
-		if closeErr := cleanup(); closeErr != nil {
-			t.Fatal(closeErr)
+		images, err := machines.prepareProgramArtifacts(t.Context(), dir, "memo-test", program)
+		if images != nil {
+			if closeErr := images.close(); closeErr != nil {
+				t.Fatal(closeErr)
+			}
 		}
 		if want == "" {
-			if err != nil || len(drives) != 2 {
+			if err != nil || images == nil || images.runtime == nil || images.artifact == nil {
 				t.Fatalf("prepare: %v", err)
 			}
 		} else if err == nil || !strings.Contains(err.Error(), want) {
@@ -232,26 +216,23 @@ func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T)
 	otherDescriptor.Digest = otherRuntime.Digest
 	otherDescriptor.SizeBytes = otherRuntime.SizeBytes
 	machines.verifiedRuntimes[otherDescriptor] = machines.verifiedRuntimes[runtimeDescriptor]
-	target.Source.Program.Runtime = workerapi.CASObject{Digest: otherRuntime.Digest, SizeBytes: otherRuntime.SizeBytes, MediaType: otherRuntime.MediaType}
+	program.Runtime = workerapi.CASObject{Digest: otherRuntime.Digest, SizeBytes: otherRuntime.SizeBytes, MediaType: otherRuntime.MediaType}
 	run("runtime reservation authority")
-	target.Source.Program.Runtime = workerapi.CASObject{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType}
-	target.Source.Program.IndexDigest = "sha256:" + strings.Repeat("0", 64)
+	program.Runtime = workerapi.CASObject{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType}
+	program.IndexDigest = "sha256:" + strings.Repeat("0", 64)
 	run("deployment authority")
-	target.Source.Program.IndexDigest = sha256sum.DigestBytes(canonical)
-	target.Source.Program.DeploymentID = ""
+	program.IndexDigest = sha256sum.DigestBytes(canonical)
+	program.DeploymentID = ""
 	run("deployment id")
-	target.Source.Program.DeploymentID = "deployment"
-	target.Source.ComputerArchitecture = "aarch64"
-	run("computer architecture")
-	target.Source.ComputerArchitecture = string(definition.ArchitectureX8664)
-	for _, bad := range []artifact.ProgramIndex{{Architecture: definition.ArchitectureX8664, RuntimeContract: "wrong"}, {Architecture: definition.RuntimeArchitecture("aarch64"), RuntimeContract: definition.RuntimeContract}} {
+	program.DeploymentID = "deployment"
+	for _, bad := range []artifact.ProgramMetadata{{Architecture: definition.ArchitectureX8664, RuntimeContract: "wrong"}, {Architecture: definition.RuntimeArchitecture("aarch64"), RuntimeContract: definition.RuntimeContract}} {
 		machines.mu.Lock()
-		machines.programIndex = &bad
+		machines.programMetadata = &bad
 		machines.mu.Unlock()
 		run("runtime reservation authority")
 	}
 	owned := index.Clone()
-	machines.programIndex = &owned
+	machines.programMetadata = &owned
 	store.objects[programObject.Digest] = []byte("tamper!")
 	run("digest")
 }

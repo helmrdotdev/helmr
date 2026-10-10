@@ -11,8 +11,7 @@ import (
 )
 
 // HostDiskPerSlot bounds all files that may coexist for one physical Instance,
-// including a restored machine taking another checkpoint. Shared caches and the
-// host reserve are withheld separately. Immutable publication uploads these
+// including a restored machine taking another checkpoint. The host reserve is withheld separately. Immutable publication uploads these
 // files directly; it does not spool another copy.
 func HostDiskPerSlot(memoryMiB, scratchMiB, computerStagingBytes int64, cipher *CheckpointEncryptor) (int64, error) {
 	if memoryMiB <= 0 || scratchMiB <= 0 || memoryMiB > math.MaxInt64/mebibyte || scratchMiB > math.MaxInt64/mebibyte || computerStagingBytes <= 0 {

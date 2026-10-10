@@ -2,7 +2,7 @@ package controlplane
 
 import (
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/run/runtest"
+	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"log/slog"
@@ -191,7 +191,7 @@ INSERT INTO worker_hosts (
 }
 
 func TestCapacityHTTPDeploymentAppliedSchema(t *testing.T) {
-	f := runtest.New(t)
+	f := agenttest.New(t)
 	server := &Server{readinessDB: f.Pool, log: slog.Default()}
 	// Deliberately differs from the embedded migration maximum.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE schema_migrations SET version=12345, dirty=true`)

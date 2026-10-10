@@ -76,7 +76,7 @@ func TestManagedNodeNativeLibraries(t *testing.T) {
 			defer cleanup()
 			cmd, err := imageCommand(t.Context(), managedProgramNode,
 				[]string{"/opt/helmr/program/probe/check.cjs"}, "/", env, imageRoot, user,
-				imageCommandOptions{ManagedProgram: true})
+				imageCommandOptions{Program: bootProgramMounts()})
 			if err != nil {
 				t.Fatal(err)
 			}

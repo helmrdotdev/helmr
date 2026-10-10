@@ -11,24 +11,9 @@ func testDigest(value string) string {
 	return sha256sum.FormatDigest(digest[:])
 }
 
-func testAnalysisDeclarationLocator() DeclarationLocator {
-	return DeclarationLocator{
-		FormatVersion: DeclarationLocatorFormatVersion,
-		Declarations: []LocatedDeclaration{
-			{
-				Kind:       DeclarationKindTask,
-				DeclaredID: "build",
-				ModulePath: testModulePath("a"),
-				ExportName: "build",
-				Slot:       DeclarationSlotHandler,
-			},
-			{
-				Kind:       DeclarationKindActor,
-				DeclaredID: "chat",
-				ModulePath: testModulePath("b"),
-				ExportName: "chat",
-				Slot:       DeclarationSlotHandler,
-			},
-		},
-	}
+func testDefinitionIndex() DefinitionIndex {
+	return DefinitionIndex{APIVersion: "helmr.definition-index.v1", Agents: []AgentBundleEntry{
+		{ID: "build", ComputerDefinitionID: "repo", ModulePath: testModulePath("a"), ExportName: "build"},
+		{ID: "chat", ComputerDefinitionID: "repo", ModulePath: testModulePath("b"), ExportName: "chat"},
+	}, Computers: []ComputerBundleEntry{{ID: "repo", ModulePath: testModulePath("a"), ExportName: "build", ThroughAgent: true}}}
 }

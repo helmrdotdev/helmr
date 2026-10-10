@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"uuid"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -20,6 +21,15 @@ func seedDevData(ctx context.Context, pool *pgxpool.Pool, cfg devConfig) error {
 	}
 	if _, err := tx.Exec(ctx, devSeedSQL); err != nil {
 		return err
+	}
+	for _, id := range []string{"00000000-0000-7000-8000-000000000401", "00000000-0000-7000-8000-000000000402", "00000000-0000-7000-8000-000000000403"} {
+		env, err := uuid.Parse(id)
+		if err != nil {
+			return err
+		}
+		if err := cfg.environmentExecutionLimits.InitializeEnvironment(ctx, tx, env); err != nil {
+			return err
+		}
 	}
 	if err := seedDemoEnvironmentData(ctx, tx); err != nil {
 		return err
@@ -40,9 +50,9 @@ VALUES ('00000000-0000-7000-8000-000000000201', '00000000-0000-7000-8000-0000000
 INSERT INTO projects (id, org_id, default_region_id, slug, name, is_default)
 VALUES ('00000000-0000-7000-8000-000000000301', '00000000-0000-7000-8000-000000000201', current_setting('helmr.seed_region_id'), 'console-demo', 'Console Demo', true);
 
-INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default)
+INSERT INTO environments (history_retention_mode,id, org_id, project_id, slug, name, color_hex, is_default)
 VALUES
-    ('00000000-0000-7000-8000-000000000401', '00000000-0000-7000-8000-000000000201', '00000000-0000-7000-8000-000000000301', 'production', 'Production', '#315FCE', true),
-    ('00000000-0000-7000-8000-000000000402', '00000000-0000-7000-8000-000000000201', '00000000-0000-7000-8000-000000000301', 'staging', 'Staging', '#F59E0B', false),
-    ('00000000-0000-7000-8000-000000000403', '00000000-0000-7000-8000-000000000201', '00000000-0000-7000-8000-000000000301', 'demo', 'Demo', '#9333EA', false);
+    ('until_environment_deletion','00000000-0000-7000-8000-000000000401', '00000000-0000-7000-8000-000000000201', '00000000-0000-7000-8000-000000000301', 'production', 'Production', '#315FCE', true),
+    ('until_environment_deletion','00000000-0000-7000-8000-000000000402', '00000000-0000-7000-8000-000000000201', '00000000-0000-7000-8000-000000000301', 'staging', 'Staging', '#F59E0B', false),
+    ('until_environment_deletion','00000000-0000-7000-8000-000000000403', '00000000-0000-7000-8000-000000000201', '00000000-0000-7000-8000-000000000301', 'demo', 'Demo', '#9333EA', false);
 `

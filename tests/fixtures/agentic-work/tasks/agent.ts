@@ -1,4 +1,4 @@
-import { image, sandbox, task } from "@helmr/sdk"
+import { image, computer, agent } from "@helmr/sdk"
 import { browserWork } from "../work/browser.ts"
 import { gitWork } from "../work/git.ts"
 import { imageWork } from "../work/image.ts"
@@ -20,12 +20,10 @@ const agenticImage = image("agentic-work")
   .from("mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27")
   .run(["sh", "-ceu", tools])
 
-export const agenticComputer = sandbox({ id: "agentic-work" })
-  .image(agenticImage)
-  .resources({ cpu: 2, memory: "2GiB" })
+export const agenticComputer = computer({ id: "agentic-work", image: agenticImage, resources: { cpu: 2, memory: "2GiB" } })
 
-export const gitEdit = task({ id: "git-edit", maxDuration: "5m", run: () => gitWork() })
-export const browserPage = task({ id: "browser-page", maxDuration: "5m", run: () => browserWork() })
-export const pythonData = task({ id: "python-data", maxDuration: "5m", run: () => pythonWork() })
-export const imageTransform = task({ id: "image-transform", maxDuration: "5m", run: () => imageWork() })
-export const toolProcess = task({ id: "tool-process", maxDuration: "5m", run: () => processWork() })
+export const gitEdit = agent({ id: "git-edit", computer: agenticComputer, maxTurnDuration: "5m", turn: () => gitWork() })
+export const browserPage = agent({ id: "browser-page", computer: agenticComputer, maxTurnDuration: "5m", turn: () => browserWork() })
+export const pythonData = agent({ id: "python-data", computer: agenticComputer, maxTurnDuration: "5m", turn: () => pythonWork() })
+export const imageTransform = agent({ id: "image-transform", computer: agenticComputer, maxTurnDuration: "5m", turn: () => imageWork() })
+export const toolProcess = agent({ id: "tool-process", computer: agenticComputer, maxTurnDuration: "5m", turn: () => processWork() })

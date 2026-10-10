@@ -23,15 +23,18 @@ type ProjectDetails struct {
 // the first configured region.
 type ProjectInput struct {
 	ProjectDetails
-	DefaultRegionID string
+	DefaultRegionID  string
+	ExecutionLimits  ExecutionLimits
+	HistoryRetention HistoryRetentionPolicy
 }
 
 // EnvironmentDetails are the editable fields of an environment. ColorHex is
 // already normalized to the public #RRGGBB form.
 type EnvironmentDetails struct {
-	Slug     string
-	Name     string
-	ColorHex string
+	HistoryRetention HistoryRetentionPolicy
+	Slug             string
+	Name             string
+	ColorHex         string
 }
 
 // ProjectPosition is the sort key of the last project on a previous page.
@@ -97,6 +100,9 @@ func ListEnvironments(ctx context.Context, q db.Querier, project db.Project) ([]
 // organization row lock serializes the choice of the organization's default
 // project before the insert.
 func CreateProject(ctx context.Context, txb db.TxBeginner, orgID uuid.UUID, input ProjectInput) (db.Project, []db.Environment, error) {
+	if err := input.HistoryRetention.Validate(); err != nil {
+		return db.Project{}, nil, err
+	}
 	slug, name, err := normalizeProjectSlugName(input.Slug, input.Name)
 	if err != nil {
 		return db.Project{}, nil, err
@@ -118,14 +124,16 @@ func CreateProject(ctx context.Context, txb db.TxBeginner, orgID uuid.UUID, inpu
 			return err
 		}
 		created, err := q.CreateProjectWithDefaultEnvironment(ctx, db.CreateProjectWithDefaultEnvironmentParams{
-			ID:                   pgvalue.UUID(uuid.NewV7()),
-			OrgID:                pgvalue.UUID(orgID),
-			DefaultRegionID:      regionID,
-			Slug:                 slug,
-			Name:                 name,
-			IsDefault:            false,
-			EnvironmentID:        pgvalue.UUID(uuid.NewV7()),
-			StagingEnvironmentID: pgvalue.UUID(uuid.NewV7()),
+			ID:                      pgvalue.UUID(uuid.NewV7()),
+			OrgID:                   pgvalue.UUID(orgID),
+			DefaultRegionID:         regionID,
+			Slug:                    slug,
+			Name:                    name,
+			IsDefault:               false,
+			EnvironmentID:           pgvalue.UUID(uuid.NewV7()),
+			StagingEnvironmentID:    pgvalue.UUID(uuid.NewV7()),
+			HistoryRetentionMode:    input.HistoryRetention.Mode,
+			HistoryRetentionSeconds: input.HistoryRetention.seconds(),
 		})
 		if db.IsUniqueViolation(err) {
 			return ErrProjectSlugInUse
@@ -135,7 +143,15 @@ func CreateProject(ctx context.Context, txb db.TxBeginner, orgID uuid.UUID, inpu
 		}
 		project = db.Project(created)
 		environments, err = ListEnvironments(ctx, q, project)
-		return err
+		if err != nil {
+			return err
+		}
+		for _, env := range environments {
+			if err = input.ExecutionLimits.InitializeEnvironment(ctx, tx, pgvalue.MustUUIDValue(env.ID)); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return db.Project{}, nil, err
@@ -189,7 +205,10 @@ func UpdateProject(ctx context.Context, q db.Querier, orgID uuid.UUID, projectID
 }
 
 // CreateEnvironment adds an environment to an active project.
-func CreateEnvironment(ctx context.Context, txb db.TxBeginner, orgID uuid.UUID, projectID uuid.UUID, details EnvironmentDetails) (db.Environment, error) {
+func CreateEnvironment(ctx context.Context, txb db.TxBeginner, orgID uuid.UUID, projectID uuid.UUID, details EnvironmentDetails, limits ExecutionLimits) (db.Environment, error) {
+	if err := details.HistoryRetention.Validate(); err != nil {
+		return db.Environment{}, err
+	}
 	slug, name, err := normalizeSlugName(details.Slug, details.Name)
 	if err != nil {
 		return db.Environment{}, err
@@ -205,13 +224,15 @@ func CreateEnvironment(ctx context.Context, txb db.TxBeginner, orgID uuid.UUID, 
 			return fmt.Errorf("load project: %w", err)
 		}
 		environment, err = q.CreateEnvironment(ctx, db.CreateEnvironmentParams{
-			ID:        pgvalue.UUID(uuid.NewV7()),
-			OrgID:     pgvalue.UUID(orgID),
-			ProjectID: pgvalue.UUID(projectID),
-			Slug:      slug,
-			Name:      name,
-			ColorHex:  details.ColorHex,
-			IsDefault: false,
+			ID:                      pgvalue.UUID(uuid.NewV7()),
+			OrgID:                   pgvalue.UUID(orgID),
+			ProjectID:               pgvalue.UUID(projectID),
+			Slug:                    slug,
+			Name:                    name,
+			ColorHex:                details.ColorHex,
+			IsDefault:               false,
+			HistoryRetentionMode:    details.HistoryRetention.Mode,
+			HistoryRetentionSeconds: details.HistoryRetention.seconds(),
 		})
 		if db.IsUniqueViolation(err) {
 			return ErrEnvironmentSlugInUse
@@ -219,7 +240,7 @@ func CreateEnvironment(ctx context.Context, txb db.TxBeginner, orgID uuid.UUID, 
 		if err != nil {
 			return fmt.Errorf("create environment: %w", err)
 		}
-		return nil
+		return limits.InitializeEnvironment(ctx, tx, pgvalue.MustUUIDValue(environment.ID))
 	})
 	if err != nil {
 		return db.Environment{}, err
@@ -247,6 +268,11 @@ func GetEnvironment(ctx context.Context, q db.Querier, orgID uuid.UUID, projectI
 // production and staging slugs are fixed: they can neither be renamed nor
 // taken by a rename.
 func UpdateEnvironment(ctx context.Context, q db.Querier, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, details EnvironmentDetails) (db.Environment, error) {
+	if details.HistoryRetention.Mode != "" || details.HistoryRetention.Seconds != nil {
+		if err := details.HistoryRetention.Validate(); err != nil {
+			return db.Environment{}, err
+		}
+	}
 	slug, name, err := normalizeSlugName(details.Slug, details.Name)
 	if err != nil {
 		return db.Environment{}, err
@@ -259,12 +285,14 @@ func UpdateEnvironment(ctx context.Context, q db.Querier, orgID uuid.UUID, proje
 		return db.Environment{}, invalidInput("production and staging environment slugs cannot be renamed")
 	}
 	environment, err := q.UpdateEnvironmentDetails(ctx, db.UpdateEnvironmentDetailsParams{
-		OrgID:     pgvalue.UUID(orgID),
-		ProjectID: pgvalue.UUID(projectID),
-		ID:        pgvalue.UUID(environmentID),
-		Slug:      slug,
-		Name:      name,
-		ColorHex:  details.ColorHex,
+		OrgID:                   pgvalue.UUID(orgID),
+		ProjectID:               pgvalue.UUID(projectID),
+		ID:                      pgvalue.UUID(environmentID),
+		Slug:                    slug,
+		Name:                    name,
+		ColorHex:                details.ColorHex,
+		HistoryRetentionMode:    details.HistoryRetention.Mode,
+		HistoryRetentionSeconds: details.HistoryRetention.seconds(),
 	})
 	if isNoRows(err) {
 		return db.Environment{}, ErrEnvironmentNotFound

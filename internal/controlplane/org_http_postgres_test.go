@@ -35,14 +35,14 @@ func TestProjectHTTPPostgresListAndDetailContract(t *testing.T) {
 	for index := range 3 {
 		projectID := uuid.NewV7()
 		projectRows = append(projectRows, []any{projectID, orgID, "project-http", fmt.Sprintf("project-%d", index), fmt.Sprintf("Project %d", index), index == 0})
-		environmentRows = append(environmentRows, []any{uuid.NewV7(), orgID, projectID, "production", "Production", "#315FCE", true})
+		environmentRows = append(environmentRows, []any{uuid.NewV7(), orgID, projectID, "production", "Production", "#315FCE", true, "until_environment_deletion"})
 	}
 	if _, err := fixture.pool.CopyFrom(t.Context(), pgx.Identifier{"projects"},
 		[]string{"id", "org_id", "default_region_id", "slug", "name", "is_default"}, pgx.CopyFromRows(projectRows)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fixture.pool.CopyFrom(t.Context(), pgx.Identifier{"environments"},
-		[]string{"id", "org_id", "project_id", "slug", "name", "color_hex", "is_default"}, pgx.CopyFromRows(environmentRows)); err != nil {
+		[]string{"id", "org_id", "project_id", "slug", "name", "color_hex", "is_default", "history_retention_mode"}, pgx.CopyFromRows(environmentRows)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -90,7 +90,7 @@ func TestProjectHTTPPostgresListAndDetailContract(t *testing.T) {
 func TestCreateProjectHTTPPostgresReportsMissingRegion(t *testing.T) {
 	fixture := newHTTPPostgresFixture(t)
 	_, ownerToken := fixture.organizationOwner(t, "missing-region")
-	recorder := fixture.request(t, http.MethodPost, "/api/projects", ownerToken, `{"slug":"project","name":"Project"}`)
+	recorder := fixture.request(t, http.MethodPost, "/api/projects", ownerToken, `{"slug":"project","name":"Project","history_retention_mode":"until_environment_deletion"}`)
 	var body api.HTTPErrorResponse
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("response = %d %s: %v", recorder.Code, recorder.Body.String(), err)
@@ -113,4 +113,44 @@ func (s *projectHTTPCountingStore) ListProjects(ctx context.Context, arg db.List
 func (s *projectHTTPCountingStore) GetProjectBySlug(ctx context.Context, arg db.GetProjectBySlugParams) (db.Project, error) {
 	s.statements.Add(1)
 	return s.Querier.GetProjectBySlug(ctx, arg)
+}
+
+func TestHistoryRetentionHTTPPolicy(t *testing.T) {
+	f := newHTTPPostgresFixture(t)
+	_, token := f.organizationOwner(t, "history-http")
+	if _, err := f.queries.CreateRegion(t.Context(), db.CreateRegionParams{ID: "history-http", DisplayName: "History"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []string{`{"slug":"history","name":"History"}`, `{"slug":"history","name":"History","history_retention_mode":"duration"}`, `{"slug":"history","name":"History","history_retention_mode":"duration","history_retention_seconds":0}`, `{"slug":"history","name":"History","history_retention_mode":"until_environment_deletion","history_retention_seconds":1}`} {
+		r := f.request(t, http.MethodPost, "/api/projects", token, body)
+		if r.Code != http.StatusBadRequest {
+			t.Fatalf("invalid policy accepted: %d %s", r.Code, r.Body.String())
+		}
+	}
+	r := f.request(t, http.MethodPost, "/api/projects", token, `{"slug":"history","name":"History","history_retention_mode":"duration","history_retention_seconds":3600}`)
+	var project api.ProjectSummary
+	if r.Code != http.StatusCreated || json.Unmarshal(r.Body.Bytes(), &project) != nil || len(project.Environments) != 2 {
+		t.Fatalf("create: %d %s", r.Code, r.Body.String())
+	}
+	for _, env := range project.Environments {
+		if env.HistoryRetentionMode != "duration" || env.HistoryRetentionSeconds == nil || *env.HistoryRetentionSeconds != 3600 {
+			t.Fatalf("policy absent: %+v", env)
+		}
+	}
+	env := project.Environments[0]
+	path := "/api/projects/" + project.ID + "/environments/" + env.ID
+	r = f.request(t, http.MethodPatch, path, token, fmt.Sprintf(`{"slug":%q,"name":"Renamed","color_hex":%q}`, env.Slug, env.ColorHex))
+	var updated api.EnvironmentSummary
+	if r.Code != http.StatusOK || json.Unmarshal(r.Body.Bytes(), &updated) != nil || updated.HistoryRetentionSeconds == nil || *updated.HistoryRetentionSeconds != 3600 {
+		t.Fatalf("rename changed policy: %d %s", r.Code, r.Body.String())
+	}
+	r = f.request(t, http.MethodPatch, path, token, fmt.Sprintf(`{"slug":%q,"name":"Renamed","color_hex":%q,"history_retention_mode":"until_environment_deletion"}`, env.Slug, env.ColorHex))
+	updated = api.EnvironmentSummary{}
+	if r.Code != http.StatusOK || json.Unmarshal(r.Body.Bytes(), &updated) != nil || updated.HistoryRetentionMode != "until_environment_deletion" || updated.HistoryRetentionSeconds != nil {
+		t.Fatalf("policy update: %d %s", r.Code, r.Body.String())
+	}
+	r = f.request(t, http.MethodPost, "/api/projects/"+project.ID+"/environments", token, `{"slug":"preview","name":"Preview","color_hex":"#123456"}`)
+	if r.Code != http.StatusBadRequest {
+		t.Fatalf("new environment omitted policy: %d %s", r.Code, r.Body.String())
+	}
 }

@@ -3,6 +3,9 @@ package computerhost
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
+	"errors"
+	"io"
 	"math"
 	"strings"
 	"testing"
@@ -122,5 +125,101 @@ func TestEncryptedSizeMatchesActualFraming(t *testing.T) {
 	}
 	if _, err := (*CheckpointEncryptor)(nil).EncryptedSize(1); err == nil {
 		t.Fatal("missing encryptor accepted")
+	}
+}
+
+func TestCheckpointEncryptorRejectsInvalidNonceWithoutPanic(t *testing.T) {
+	cipher, err := NewCheckpointEncryptor(bytes.Repeat([]byte{3}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var invalid bytes.Buffer
+	header := make([]byte, headerSize)
+	copy(header, magic)
+	copy(header[len(magic):], cipher.keyID[:])
+	invalid.Write(header)
+	if err := writeRecord(&invalid, []byte{1}, bytes.Repeat([]byte{0}, 16)); err != nil {
+		t.Fatal(err)
+	}
+	if err := cipher.Decrypt(t.Context(), &invalid, &bytes.Buffer{}, "memory"); err == nil {
+		t.Fatal("malformed nonce accepted")
+	}
+}
+
+func TestCheckpointEncryptorSeparatesAttemptsAndAuthenticatesFraming(t *testing.T) {
+	c, err := NewCheckpointEncryptor(bytes.Repeat([]byte{7}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := bytes.Repeat([]byte{42}, chunkSize+1)
+	var first, second bytes.Buffer
+	if err = c.Encrypt(t.Context(), bytes.NewReader(data), &first, "checkpoint/memory"); err != nil {
+		t.Fatal(err)
+	}
+	if err = c.Encrypt(t.Context(), bytes.NewReader(data), &second, "checkpoint/memory"); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(first.Bytes(), second.Bytes()) || bytes.Equal(first.Bytes()[len(magic)+keyIDSize:headerSize], second.Bytes()[len(magic)+keyIDSize:headerSize]) {
+		t.Fatal("encryption attempts share a key domain")
+	}
+	reader := bytes.NewReader(first.Bytes()[headerSize:])
+	var records [][]byte
+	for reader.Len() > 0 {
+		before := reader.Len()
+		if _, _, err := readRecord(reader); err != nil {
+			t.Fatal(err)
+		}
+		start := first.Len() - before
+		records = append(records, append([]byte(nil), first.Bytes()[start:start+before-reader.Len()]...))
+	}
+	for _, fault := range []string{"key-id", "salt", "format", "reorder", "repeat", "missing-end", "end-before-data", "wrong-key", "wrong-purpose"} {
+		t.Run(fault, func(t *testing.T) {
+			raw := append([]byte(nil), first.Bytes()...)
+			decryptor := c
+			purpose := "checkpoint/memory"
+			switch fault {
+			case "key-id":
+				raw[len(magic)] ^= 1
+			case "salt":
+				raw[headerSize-1] ^= 1
+			case "format":
+				raw[0] ^= 1
+			case "reorder":
+				raw = append(append(append(append([]byte(nil), raw[:headerSize]...), records[1]...), records[0]...), records[2]...)
+			case "repeat":
+				raw = append(append(append(append([]byte(nil), raw[:headerSize]...), records[0]...), records[0]...), records[2]...)
+			case "missing-end":
+				raw = raw[:len(raw)-len(records[2])]
+			case "end-before-data":
+				raw = append(append([]byte(nil), raw[:headerSize]...), records[2]...)
+			case "wrong-key":
+				decryptor, _ = NewCheckpointEncryptor(bytes.Repeat([]byte{8}, 32))
+			case "wrong-purpose":
+				purpose = "checkpoint/scratch_disk"
+			}
+			if err := decryptor.Decrypt(t.Context(), bytes.NewReader(raw), io.Discard, purpose); err == nil {
+				t.Fatal("unauthenticated framing accepted")
+			}
+		})
+	}
+	if _, err := c.EncryptedSize(int64(maxRecords-1) * chunkSize); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.EncryptedSize(int64(maxRecords-1)*chunkSize + 1); err == nil {
+		t.Fatal("end record nonce budget not reserved")
+	}
+}
+
+func TestCheckpointKeyMismatchReportsOnlyFingerprints(t *testing.T) {
+	key := bytes.Repeat([]byte{8}, 32)
+	source, _ := NewCheckpointEncryptor(key)
+	target, _ := NewCheckpointEncryptor(bytes.Repeat([]byte{9}, 32))
+	var ciphertext bytes.Buffer
+	if err := source.Encrypt(t.Context(), strings.NewReader("retained"), &ciphertext, "memory"); err != nil {
+		t.Fatal(err)
+	}
+	err := target.Decrypt(t.Context(), &ciphertext, io.Discard, "memory")
+	if !errors.Is(err, ErrCheckpointKeyUnavailable) || !strings.Contains(err.Error(), source.KeyID()) || !strings.Contains(err.Error(), target.KeyID()) || strings.Contains(err.Error(), hex.EncodeToString(key)) {
+		t.Fatalf("key mismatch diagnostic: %v", err)
 	}
 }

@@ -18,26 +18,27 @@ func TestPausedWorkerGroupKeepsStartedWorkerAuthority(t *testing.T) {
 			}
 		}
 	})
-	t.Run("allocated Secret preparation", func(t *testing.T) {
+	t.Run("acquiring Computer Secret transport", func(t *testing.T) {
 		for _, test := range []struct {
 			name, sql string
 			allowed   bool
 		}{
 			{"active", ``, true},
 			{"paused Group", `UPDATE worker_groups SET status='paused' WHERE id=$1`, false},
-			{"draining Host", `UPDATE worker_hosts SET status='draining',draining_at = now(), drain_reason = 'shutdown' WHERE worker_group_id=$1`, false},
+			// Planned Host drain preserves first delivery for committed allocations.
+			{"draining Host", `UPDATE worker_hosts SET status='draining',draining_at = now(), drain_reason = 'shutdown' WHERE worker_group_id=$1`, true},
 			{"draining Pool", `WITH g AS (UPDATE worker_groups SET primary_pool_id=NULL WHERE id=$1 RETURNING id) UPDATE worker_pools SET status='draining' WHERE worker_group_id=(SELECT id FROM g)`, false},
 			{"Run paused Host", `UPDATE worker_hosts SET run_paused_reason='startup_recovery_leak' WHERE worker_group_id=$1`, false},
 			{"VM paused Host", `UPDATE worker_hosts SET vm_paused_reason='runtime_health' WHERE worker_group_id=$1`, false},
 		} {
 			t.Run(test.name, func(t *testing.T) {
 				f := newSnapshotFixture(t, 1, true)
-				dbtest.MustExec(t, t.Context(), f.fixture.Pool, `UPDATE computer_instances SET observed_state='allocated',observed_desired_version=0,ready_at=NULL,preparation_expires_at=now()+interval '5 minutes' WHERE id=$1`, f.instance)
+				dbtest.MustExec(t, t.Context(), f.fixture.Pool, `UPDATE computer_leases SET status='acquiring',initialized_at=NULL WHERE computer_instance_id=$1`, f.instance)
 				if test.sql != "" {
 					dbtest.MustExec(t, t.Context(), f.fixture.Pool, test.sql, f.worker.GroupID)
 				}
 				if response := f.invoke(t.Context(), false); (response.Code == 200) != test.allowed {
-					t.Fatalf("allocated preparation: %d %s", response.Code, response.Body.String())
+					t.Fatalf("acquiring transport status: got %d, allowed=%v", response.Code, test.allowed)
 				}
 			})
 		}

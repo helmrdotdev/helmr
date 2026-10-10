@@ -58,26 +58,12 @@ WITH target AS (
      WHERE host_secrets.worker_host_id = target.id
        AND host_secrets.revoked_at IS NULL
     RETURNING host_secrets.id
-), lost_instances AS (
-    UPDATE computer_instances AS instances
-       SET observed_state = 'lost', observed_version = instances.observed_version + 1,
-           observed_at = now(), terminal_at = now(),
-           terminal_reason_code = sqlc.arg(reason_code),
-           mount_state='lost', admission_state='closed', updated_at=now()
-      FROM target
-     WHERE instances.worker_host_id = target.id
-       AND instances.worker_epoch = target.current_epoch
-       AND instances.reclaimed_at IS NULL
-       AND instances.observed_state IN ('allocated', 'ready')
-    RETURNING instances.id
 )
--- Immediate fencing revokes host secrets and marks Instance observations lost.
--- Physical reclamation still requires independent exclusion evidence. Run/build/computer authority is recovered by its canonical
--- expiry and recovery loops; this transition does not imply zero authority.
+-- Host loss revokes credentials without confirming physical absence.
+-- Allocation owners reconcile logical state; only confirmed stop releases custody.
 SELECT target.id, target.worker_group_id, target.current_epoch, target.status
   FROM target
- WHERE (SELECT count(*) FROM revoked_host_secrets) >= 0
-   AND (SELECT count(*) FROM lost_instances) >= 0;
+ WHERE (SELECT count(*) FROM revoked_host_secrets) >= 0;
 
 -- Worker Host fence for dispatch and Computer preparation. The caller
 -- (workergroup.LockDispatchSupply) must already hold the Worker Group and Pool share

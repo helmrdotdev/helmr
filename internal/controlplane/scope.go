@@ -25,11 +25,6 @@ func invalidEnvironmentScopeReference(message string) error {
 	return environmentScopeReferenceError{message: message}
 }
 
-func isInvalidEnvironmentScopeReference(err error) bool {
-	var referenceError environmentScopeReferenceError
-	return errors.As(err, &referenceError)
-}
-
 func (s *Server) requestEnvironmentScope(ctx context.Context, principal auth.Principal, projectID string, environmentID string) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
 	if principal.Kind == auth.PrincipalKindAPIKey {
 		if projectID != "" || environmentID != "" {

@@ -53,7 +53,7 @@ func TestScopedCommandCleansDescendantPipesAfterMainExit(t *testing.T) {
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	scope := &commandTestScope{}
-	runErr, cleanupErr := runScopedCommand(cmd, scope)
+	runErr, cleanupErr := runScopedCommand(cmd, scope, nil)
 	var exitErr *exec.ExitError
 	if !errors.As(runErr, &exitErr) || exitErr.ExitCode() != 7 || cleanupErr != nil {
 		t.Fatalf("run=%v cleanup=%v", runErr, cleanupErr)
@@ -70,7 +70,7 @@ func TestScopedCommandPreservesCleanupFailure(t *testing.T) {
 	cmd := exec.CommandContext(t.Context(), "sh", "-c", "exit 0")
 	failure := errors.New("scope exclusion failed")
 	scope := &commandTestScope{cleanupErr: failure}
-	_, cleanupErr := runScopedCommand(cmd, scope)
+	_, cleanupErr := runScopedCommand(cmd, scope, nil)
 	if !errors.Is(cleanupErr, failure) || !scope.closed {
 		t.Fatalf("cleanup=%v closed=%v", cleanupErr, scope.closed)
 	}
@@ -79,7 +79,7 @@ func TestScopedCommandPreservesCleanupFailure(t *testing.T) {
 func TestScopedCommandClosesScopeAfterLaunchFailure(t *testing.T) {
 	cmd := exec.CommandContext(t.Context(), "/does-not-exist/exec")
 	scope := &commandTestScope{}
-	runErr, cleanupErr := runScopedCommand(cmd, scope)
+	runErr, cleanupErr := runScopedCommand(cmd, scope, nil)
 	if runErr == nil || cleanupErr != nil || !scope.closed {
 		t.Fatalf("run=%v cleanup=%v closed=%v", runErr, cleanupErr, scope.closed)
 	}
@@ -92,7 +92,7 @@ func TestScopedCommandCancellationSurvivesCgroupKillFailure(t *testing.T) {
 	failure := errors.New("cgroup kill unavailable")
 	scope := &commandTestScope{killFailure: failure}
 	done := make(chan error, 1)
-	go func() { _, cleanupErr := runScopedCommand(cmd, scope); done <- cleanupErr }()
+	go func() { _, cleanupErr := runScopedCommand(cmd, scope, nil); done <- cleanupErr }()
 	select {
 	case cleanupErr := <-done:
 		if !errors.Is(cleanupErr, failure) || !scope.closed {

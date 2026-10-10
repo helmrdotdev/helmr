@@ -2,7 +2,9 @@ version: v2
 plugins:
   - local: protoc-gen-es
     out: proto/typescript/src/gen
-    opt: target=ts
+    opt:
+      - target=ts
+      - erasable_syntax=true
   - local: protoc-gen-go
     out: .
     opt:
