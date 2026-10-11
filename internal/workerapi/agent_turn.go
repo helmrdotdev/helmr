@@ -11,10 +11,19 @@ type AgentTurnRequest struct {
 	AuthorityGeneration int64          `json:"authority_generation"`
 }
 
+type SlackInputSource struct {
+	TeamID    string `json:"teamId"`
+	ChannelID string `json:"channelId"`
+	ThreadTS  string `json:"threadTs"`
+	MessageTS string `json:"messageTs"`
+	UserID    string `json:"userId"`
+}
+
 type AgentTurnSource struct {
-	Kind               string `json:"kind"`
-	RequesterSessionID string `json:"requesterSessionId,omitempty"`
-	OriginTurnID       string `json:"originTurnId,omitempty"`
+	Slack              *SlackInputSource `json:"slack,omitempty"`
+	Kind               string            `json:"kind"`
+	RequesterSessionID string            `json:"requesterSessionId,omitempty"`
+	OriginTurnID       string            `json:"originTurnId,omitempty"`
 }
 
 type AgentTurnDispatch struct {

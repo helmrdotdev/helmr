@@ -28,6 +28,7 @@ export interface ComputerDefinition {
   readonly image: ImageBuilder
   readonly resources: { readonly cpu: number; readonly memory: string; readonly disk?: string }
   readonly prepare?: (build: BuildContext) => MaybePromise<void>
+  readonly deleteAfterUnused?: Duration
   readonly refresh?: { readonly every: Duration; readonly maxAge?: Duration }
   readonly secrets?: readonly SecretBinding[]
   readonly buildSecrets?: readonly SecretBinding[]
@@ -38,19 +39,35 @@ export function computer(config: Omit<ComputerDefinition, "kind">): ComputerDefi
   return Object.freeze({ ...config, kind: "computer" as const })
 }
 export interface OutputReceipt { readonly sequence: number }
+export interface InputSource {
+  readonly kind: string
+  readonly requesterSessionId?: string
+  readonly originTurnId?: string
+  readonly slack?: Readonly<{
+    teamId: string
+    channelId: string
+    threadTs: string
+    messageTs: string
+    userId: string
+  }>
+}
+export interface InputMessage {
+  readonly id: string
+  readonly source: InputSource
+}
 export interface Turn<I extends InputContent = InputContent> {
   readonly id: string
   readonly sequence: number
   readonly createdAt: string
   readonly input: I
-  readonly source: Readonly<{ kind: string; requesterSessionId?: string; originTurnId?: string }>
+  readonly source: InputSource
   readonly signal: AbortSignal
   readonly output: {
     write(value: HumanContent): Promise<OutputReceipt>
     pipe(values: AsyncIterable<HumanContent>, options?: { signal?: AbortSignal }): Promise<void>
   }
   respond(value: HumanContent): Promise<void>
-  onMessage(handler: (message: InputContent) => MaybePromise<void>): Promise<void>
+  onMessage(handler: (input: InputContent, message: InputMessage) => MaybePromise<void>): Promise<void>
   ask<C extends AnswerControl>(question: Question<C>, options?: { signal?: AbortSignal }): Promise<AskResponse<AnswerFor<C>>>
 }
 export interface InitContext {

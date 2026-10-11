@@ -29,7 +29,7 @@ func (server *Server) workerAgentMessage(w http.ResponseWriter, r *http.Request)
 	}
 	var response *workerapi.AgentMessageDispatch
 	if next != nil {
-		response = &workerapi.AgentMessageDispatch{TurnID: next.TurnID.String(), MessageID: next.ID.String(), Input: next.Input}
+		response = &workerapi.AgentMessageDispatch{TurnID: next.TurnID.String(), MessageID: next.ID.String(), Input: next.Input, Source: agentInputSource(next.Source)}
 	}
 	writeJSON(w, http.StatusOK, response)
 }

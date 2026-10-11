@@ -83,13 +83,13 @@ func (s *Server) startAgentHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := agent.Start(r.Context(), s.tx, s.secretProxy, caller, agent.StartRequest{
 		SlackPreflight: preflight, EnvironmentID: environment, Agent: chi.URLParam(r, "agentName"), ComputerID: computerID,
-		SessionKey: request.SessionKey, SlackChannelID: slackChannelID, RetryKey: request.IdempotencyKey, Input: request.Input,
+		CloseAfterIdle: request.CloseAfterIdle, SessionKey: request.SessionKey, SlackChannelID: slackChannelID, RetryKey: request.IdempotencyKey, Input: request.Input,
 	})
 	if err != nil {
 		s.writeAgentHTTPError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, api.StartAgentResponse{TurnAdmission: agentAdmission(result), Created: result.Created})
+	writeJSON(w, http.StatusOK, api.StartAgentResponse{TurnAdmission: agentAdmission(result), Created: result.Created, CloseAfterIdleMs: result.CloseAfterIdleMs})
 }
 
 func (s *Server) enqueueSessionHTTP(w http.ResponseWriter, r *http.Request) {

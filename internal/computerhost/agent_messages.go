@@ -37,8 +37,12 @@ func (owner *agentSessionTurns) dispatchMessageLocked(ctx context.Context) error
 	if next.TurnID != owner.pending || ids.Validate(next.MessageID) != nil || !json.Valid(next.Input) {
 		return errors.New("invalid message assignment")
 	}
+	source, err := json.Marshal(next.Source)
+	if err != nil {
+		return err
+	}
 	owner.pendingMessage = "message:" + next.TurnID + ":" + next.MessageID
-	return owner.connection.SendCommand(ctx, &agentv1.GuestCommand{Identity: owner.connection.identity, DeliveryId: owner.pendingMessage, Command: &agentv1.GuestCommand_Message{Message: &agentv1.MessageDelivery{TurnId: next.TurnID, MessageId: next.MessageID, InputJson: next.Input}}})
+	return owner.connection.SendCommand(ctx, &agentv1.GuestCommand{Identity: owner.connection.identity, DeliveryId: owner.pendingMessage, Command: &agentv1.GuestCommand_Message{Message: &agentv1.MessageDelivery{TurnId: next.TurnID, MessageId: next.MessageID, InputJson: next.Input, SourceJson: source}}})
 }
 
 func (owner *agentSessionTurns) observeMessage(ctx context.Context, result *agentv1.DeliveryResult) error {

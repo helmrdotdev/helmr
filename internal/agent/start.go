@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/lifetime"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"math"
 	"strings"
@@ -26,6 +27,7 @@ import (
 // StartRequest contains submitted identity, never resolved defaults. Runtime
 // Agent references are definition keys in the caller's pinned Deployment.
 type StartRequest struct {
+	CloseAfterIdle lifetime.Policy
 	SlackPreflight SlackStartPreflight
 	PreparedSlack  *SlackStartRoute
 	EnvironmentID  uuid.UUID
@@ -51,7 +53,7 @@ func Spawn(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIssuer, c
 // Admission owns the first Turn, Session, fresh Computer, preparation demand and
 // capacity together. No executor can observe any of them before commit.
 func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIssuer, caller Caller, req StartRequest, method string) (Admission, error) {
-	if req.EnvironmentID == uuid.Nil() || !definition.ValidDeclaredID(req.Agent) || len(req.RetryKey) > 512 || !utf8.ValidString(req.RetryKey) || (req.SessionKey != nil && (len(*req.SessionKey) == 0 || len(*req.SessionKey) > 512 || !utf8.ValidString(*req.SessionKey))) {
+	if !req.CloseAfterIdle.Valid() || req.EnvironmentID == uuid.Nil() || !definition.ValidDeclaredID(req.Agent) || len(req.RetryKey) > 512 || !utf8.ValidString(req.RetryKey) || (req.SessionKey != nil && (len(*req.SessionKey) == 0 || len(*req.SessionKey) > 512 || !utf8.ValidString(*req.SessionKey))) {
 		return Admission{}, ErrInvalidInput
 	}
 	if req.SlackChannelID != nil && (!ValidSlackChannelID(*req.SlackChannelID) || caller.Kind == "session") {
@@ -72,12 +74,13 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 		return Admission{}, inputErr
 	}
 	raw, err := json.Marshal(struct {
+		CloseAfterIdle lifetime.Policy `json:",omitzero"`
 		Agent          string
 		Computer       any
 		SessionKey     *string
 		Input          json.RawMessage
 		SlackChannelID *string
-	}{req.Agent, nullableID(req.ComputerID), req.SessionKey, req.Input, req.SlackChannelID})
+	}{req.CloseAfterIdle, req.Agent, nullableID(req.ComputerID), req.SessionKey, req.Input, req.SlackChannelID})
 	if err != nil {
 		return Admission{}, ErrInvalidInput
 	}
@@ -174,7 +177,7 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 				if !bytes.Equal(prior, digest[:]) {
 					return ErrConflict
 				}
-				return nil
+				return tx.QueryRow(ctx, `SELECT close_after_idle_ms FROM sessions WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, result.SessionID).Scan(&result.CloseAfterIdleMs)
 			}
 			if !errors.Is(err, pgx.ErrNoRows) {
 				return err
@@ -282,6 +285,15 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 				}
 			}
 		}
+		if existing && req.CloseAfterIdle.Set {
+			var policy *int64
+			if err = tx.QueryRow(ctx, `SELECT close_after_idle_ms FROM sessions WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, result.SessionID).Scan(&policy); err != nil {
+				return err
+			}
+			if !lifetime.Same(policy, req.CloseAfterIdle.Milliseconds) {
+				return ErrConflict
+			}
+		}
 		if existing {
 			if locked[result.SessionID].lifecycle != "open" || (req.ComputerID != uuid.Nil() && req.ComputerID != computer) {
 				return ErrConflict
@@ -305,6 +317,12 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 			return err
 		}
 		if !existing {
+			var duration *int64
+			var never bool
+			if err = tx.QueryRow(ctx, `SELECT close_after_idle_ms,close_after_idle_never FROM agent_definitions WHERE environment_id=$1 AND agent_id=$2 AND deployment_id=$3`, req.EnvironmentID, agentID, deployment).Scan(&duration, &never); err != nil {
+				return err
+			}
+			idlePolicy := lifetime.Resolve(req.CloseAfterIdle, duration, never)
 			result.SessionID = uuid.NewV7()
 			root := result.SessionID
 			var parent, requester, origin any
@@ -324,10 +342,15 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 					return ErrInvalidInput
 				}
 			}
-			if _, err = tx.Exec(ctx, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,origin_turn_id,causal_depth,session_key,slack_channel_id,history_retention_mode,history_retention_seconds) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,history_retention_mode,history_retention_seconds FROM environments WHERE id=$1`, req.EnvironmentID, result.SessionID, agentID, deployment, computer, root, parent, requester, origin, causal, req.SessionKey, route); err != nil {
+			if _, err = tx.Exec(ctx, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,origin_turn_id,causal_depth,session_key,slack_channel_id,close_after_idle_ms,history_retention_mode,history_retention_seconds) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,history_retention_mode,history_retention_seconds FROM environments WHERE id=$1`, req.EnvironmentID, result.SessionID, agentID, deployment, computer, root, parent, requester, origin, causal, req.SessionKey, route, idlePolicy); err != nil {
 				return err
 			}
 			result.Created = true
+			if parent != nil {
+				if _, err = tx.Exec(ctx, `UPDATE sessions SET idle_since=NULL WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, parent); err != nil {
+					return err
+				}
+			}
 			if slackBinding.thread != uuid.Nil() {
 				if err = insertSlackSource(ctx, tx, req.EnvironmentID, result.SessionID, slackBinding.thread); err != nil {
 					return err
@@ -335,7 +358,7 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 			}
 		}
 		result.TurnID = uuid.NewV7()
-		if err = tx.QueryRow(ctx, `UPDATE sessions SET next_turn_seq=next_turn_seq+1 WHERE environment_id=$1 AND id=$2 RETURNING next_turn_seq-1`, req.EnvironmentID, result.SessionID).Scan(&result.Sequence); err != nil {
+		if err = tx.QueryRow(ctx, `UPDATE sessions SET idle_since=NULL,next_turn_seq=next_turn_seq+1 WHERE environment_id=$1 AND id=$2 RETURNING next_turn_seq-1`, req.EnvironmentID, result.SessionID).Scan(&result.Sequence); err != nil {
 			return err
 		}
 		if _, err = tx.Exec(ctx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,retry_key,request_digest,input,origin_turn_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,''),$11,$12,$13)`, req.EnvironmentID, result.TurnID, result.SessionID, computer, result.Sequence, caller.Kind, caller.ID, method, agentID, req.RetryKey, digest[:], req.Input, nullableID(caller.TurnID)); err != nil {
@@ -348,6 +371,9 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 			if err = createSlackRoot(ctx, tx, req.EnvironmentID, result.SessionID, result.TurnID, *route, *prepared); err != nil {
 				return err
 			}
+		}
+		if err = tx.QueryRow(ctx, `SELECT close_after_idle_ms FROM sessions WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, result.SessionID).Scan(&result.CloseAfterIdleMs); err != nil {
+			return err
 		}
 		return event(ctx, tx, req.EnvironmentID, result.SessionID, result.TurnID, "turn.queued")
 	})
@@ -389,7 +415,8 @@ func computerAcceptsAdmission(ctx context.Context, tx pgx.Tx, env, computer uuid
 	if !available {
 		return ErrNotReady
 	}
-	return nil
+	_, err := tx.Exec(ctx, `UPDATE computers SET unused_since=NULL WHERE environment_id=$1 AND id=$2`, env, computer)
+	return err
 }
 
 func createAdmissionComputer(ctx context.Context, tx pgx.Tx, trust ComputerTrustIssuer, env, deployment uuid.UUID, key string, policy admissionEnvironment) (uuid.UUID, error) {
@@ -414,8 +441,9 @@ func CreateStandaloneComputer(ctx context.Context, tx pgx.Tx, trust ComputerTrus
 func createComputer(ctx context.Context, tx pgx.Tx, trust ComputerTrustIssuer, env, deployment uuid.UUID, key string, policy admissionEnvironment, explicit *[]secretbinding.Reference) (uuid.UUID, error) {
 	var spec uuid.UUID
 	var resources, seed []byte
-	var maxAge *int64
-	if err := tx.QueryRow(ctx, `SELECT d.preparation_spec_id,d.resources,d.max_image_age_ms,s.seed FROM computer_definitions d JOIN computer_preparation_specs s ON (s.environment_id,s.id)=(d.environment_id,d.preparation_spec_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND d.definition_key=$3`, env, deployment, key).Scan(&spec, &resources, &maxAge, &seed); err != nil {
+	var maxAge, deleteUnused *int64
+	var deleteNever bool
+	if err := tx.QueryRow(ctx, `SELECT d.preparation_spec_id,d.resources,d.max_image_age_ms,s.seed,d.delete_after_unused_ms,d.delete_after_unused_never FROM computer_definitions d JOIN computer_preparation_specs s ON (s.environment_id,s.id)=(d.environment_id,d.preparation_spec_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND d.definition_key=$3`, env, deployment, key).Scan(&spec, &resources, &maxAge, &seed, &deleteUnused, &deleteNever); err != nil {
 		return uuid.Nil(), err
 	}
 	var actual definition.ResourcesManifest
@@ -435,7 +463,7 @@ func createComputer(ctx context.Context, tx pgx.Tx, trust ComputerTrustIssuer, e
 		return uuid.Nil(), ErrNotReady
 	}
 	id := uuid.NewV7()
-	if _, err := tx.Exec(ctx, `INSERT INTO computers(environment_id,id,preparation_spec_id,origin_deployment_id,origin_definition_key,resources,storage_reservation_bytes,preparation_deadline_at,preparation_max_age_ms) VALUES($1,$2,$3,$4,$5,$6,$7,clock_timestamp()+$8*interval '1 millisecond',$9)`, env, id, spec, deployment, key, resources, disk.SeedCapacity, policy.preparationTimeout, maxAge); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO computers(environment_id,id,preparation_spec_id,origin_deployment_id,origin_definition_key,resources,storage_reservation_bytes,preparation_deadline_at,preparation_max_age_ms,delete_after_unused_ms) VALUES($1,$2,$3,$4,$5,$6,$7,clock_timestamp()+$8*interval '1 millisecond',$9,$10)`, env, id, spec, deployment, key, resources, disk.SeedCapacity, policy.preparationTimeout, maxAge, lifetime.Resolve(lifetime.Policy{}, deleteUnused, deleteNever)); err != nil {
 		return uuid.Nil(), err
 	}
 	if explicit == nil {

@@ -327,6 +327,9 @@ func create(ctx context.Context, tx pgx.Tx, request CreateRequest, normalized no
 		return db.ComputerCommand{}, computer.ErrSecretUnavailable
 	}
 
+	if _, err = tx.Exec(ctx, `UPDATE computers SET unused_since=NULL WHERE environment_id=$1 AND id=$2`, request.EnvironmentID, request.ComputerID); err != nil {
+		return db.ComputerCommand{}, err
+	}
 	created, err := q.CreateComputerCommand(ctx, db.CreateComputerCommandParams{
 		ID:                   pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID:        pgvalue.UUID(request.EnvironmentID),

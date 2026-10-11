@@ -14,6 +14,7 @@ export type ApiKeyScope =
   | "computers:create"
   | "computers:read"
   | "computers:delete"
+  | "computers:update"
   | "computer-exec:create"
   | "secrets:write"
   | "deployments:write";

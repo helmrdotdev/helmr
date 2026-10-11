@@ -29,6 +29,7 @@ import (
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/controlplane"
@@ -245,6 +246,7 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		{name: "commands", run: func(ctx context.Context) error { return command.ReconcileCommands(ctx, pool, log) }},
 		{name: "Session history retention", run: func(ctx context.Context) error { return agent.RunSessionHistoryRetention(ctx, pool, log) }},
 		{name: "Session lifecycle", run: func(ctx context.Context) error { return agent.RunSessionLifecycle(ctx, pool, log) }},
+		{name: "Computer retention", run: func(ctx context.Context) error { return computer.RunRetention(ctx, pool, log) }},
 		{name: "Computer lifecycle", run: func(ctx context.Context) error { return agent.RunComputerLifecycle(ctx, pool, log) }},
 		{name: "preparation lifecycle", run: func(ctx context.Context) error { return agent.RunPreparationLifecycle(ctx, pool, log) }},
 		{name: "event stream publisher", run: eventStream.RunPublisher},

@@ -34,31 +34,35 @@ type Residency string
 // Snapshot is the public projection of one Computer. Its JSON encoding is the
 // retained creation receipt for the platform operation.
 type Snapshot struct {
-	Residency      Residency                 `json:"residency"`
-	Error          json.RawMessage           `json:"error,omitempty"`
-	ID             string                    `json:"id"`
-	Key            *string                   `json:"key,omitempty"`
-	DefinitionKey  string                    `json:"definition_id"`
-	DeploymentID   string                    `json:"deployment_id"`
-	Status         Status                    `json:"status"`
-	Secrets        []secretbinding.Reference `json:"secrets"`
-	LastActivityAt time.Time                 `json:"last_activity_at"`
-	CreatedAt      time.Time                 `json:"created_at"`
-	UpdatedAt      time.Time                 `json:"updated_at"`
+	DeleteAfterUnusedMs *int64                    `json:"delete_after_unused_ms"`
+	UnusedSince         *time.Time                `json:"unused_since"`
+	Residency           Residency                 `json:"residency"`
+	Error               json.RawMessage           `json:"error,omitempty"`
+	ID                  string                    `json:"id"`
+	Key                 *string                   `json:"key,omitempty"`
+	DefinitionKey       string                    `json:"definition_id"`
+	DeploymentID        string                    `json:"deployment_id"`
+	Status              Status                    `json:"status"`
+	Secrets             []secretbinding.Reference `json:"secrets"`
+	LastActivityAt      time.Time                 `json:"last_activity_at"`
+	CreatedAt           time.Time                 `json:"created_at"`
+	UpdatedAt           time.Time                 `json:"updated_at"`
 }
 
 // ListItem is the projection of one Computer in a list.
 type ListItem struct {
-	Residency      Residency
-	Error          json.RawMessage
-	ID             string
-	Key            *string
-	DefinitionKey  string
-	DeploymentID   string
-	Status         Status
-	LastActivityAt time.Time
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	DeleteAfterUnusedMs *int64
+	UnusedSince         *time.Time
+	Residency           Residency
+	Error               json.RawMessage
+	ID                  string
+	Key                 *string
+	DefinitionKey       string
+	DeploymentID        string
+	Status              Status
+	LastActivityAt      time.Time
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 // ListPosition is the last item of a previous list page.
@@ -87,7 +91,7 @@ const computerProjection = `SELECT c.id::text,c.key,COALESCE(c.origin_definition
  CASE WHEN c.integrity_fault_at IS NOT NULL THEN jsonb_build_object('code','computer_recovery_required','message',c.integrity_fault_reason)
  WHEN c.preparation_failed_at IS NOT NULL THEN jsonb_build_object('code','computer_preparation_failed','message','Computer preparation failed')
  WHEN l.status='lost' THEN jsonb_build_object('code','computer_recovery_required','message','Computer execution state is unavailable') END,
- c.last_activity_at,c.created_at,c.updated_at
+ c.last_activity_at,c.created_at,c.updated_at,c.delete_after_unused_ms,c.unused_since
  FROM computers c JOIN environments e ON e.id=c.environment_id
  LEFT JOIN computer_leases l ON l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL
  LEFT JOIN computer_checkpoints cp ON cp.environment_id=c.environment_id AND cp.computer_id=c.id AND cp.status IN ('capturing','sealed','ready','restoring','aborting')
@@ -95,7 +99,7 @@ const computerProjection = `SELECT c.id::text,c.key,COALESCE(c.origin_definition
 
 func scanComputer(row pgx.Row) (ListItem, error) {
 	var item ListItem
-	err := row.Scan(&item.ID, &item.Key, &item.DefinitionKey, &item.DeploymentID, &item.Status, &item.Residency, &item.Error, &item.LastActivityAt, &item.CreatedAt, &item.UpdatedAt)
+	err := row.Scan(&item.ID, &item.Key, &item.DefinitionKey, &item.DeploymentID, &item.Status, &item.Residency, &item.Error, &item.LastActivityAt, &item.CreatedAt, &item.UpdatedAt, &item.DeleteAfterUnusedMs, &item.UnusedSince)
 	item.LastActivityAt, item.CreatedAt, item.UpdatedAt = item.LastActivityAt.UTC(), item.CreatedAt.UTC(), item.UpdatedAt.UTC()
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
@@ -129,7 +133,7 @@ func Read(ctx context.Context, database db.DBTX, scope Scope, id uuid.UUID) (Sna
 	if refs == nil {
 		refs = []secretbinding.Reference{}
 	}
-	return Snapshot{ID: item.ID, Key: item.Key, DefinitionKey: item.DefinitionKey, DeploymentID: item.DeploymentID, Status: item.Status, Residency: item.Residency, Error: item.Error, Secrets: refs, LastActivityAt: item.LastActivityAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}, nil
+	return Snapshot{DeleteAfterUnusedMs: item.DeleteAfterUnusedMs, UnusedSince: item.UnusedSince, ID: item.ID, Key: item.Key, DefinitionKey: item.DefinitionKey, DeploymentID: item.DeploymentID, Status: item.Status, Residency: item.Residency, Error: item.Error, Secrets: refs, LastActivityAt: item.LastActivityAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}, nil
 }
 func FindByKey(ctx context.Context, database db.DBTX, scope Scope, key string) (ListItem, error) {
 	return scanComputer(database.QueryRow(ctx, computerProjection+` AND c.key=$4`, scope.OrgID, scope.ProjectID, scope.EnvironmentID, key))

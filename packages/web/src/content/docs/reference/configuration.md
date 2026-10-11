@@ -238,8 +238,8 @@ tools.
 
 | Surface | Fields |
 | --- | --- |
-| `agent` | `id`, required `computer` and `turn`, optional `init`, `maxTurnDuration`, `closeAfterIdle`, `triggers` |
-| `computer` | `id`, `image`, `resources`, optional `prepare`, `refresh`, `secrets`, `buildSecrets` |
+| `agent` | `id`, required `computer` and `turn`, optional `init`, `maxTurnDuration`, `closeAfterIdle` (default `"7d"`, or `"never"`), `triggers` |
+| `computer` | `id`, `image`, `resources`, optional `prepare`, `refresh`, `deleteAfterUnused` (default `"7d"`, or `"never"`), `secrets`, `buildSecrets` |
 | `triggers.cron` | Trigger ID, expression, `{ timezone, input, slack? }` |
 | `image` | `from`, `run`, `copy`, `copyFrom`, `workdir`, `env`, `user` |
 | `source` | `file(path)`, `directory(path)` |

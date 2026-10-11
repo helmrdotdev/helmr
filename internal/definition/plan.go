@@ -197,6 +197,9 @@ func validateDefinitionInput(input Input) error {
 		if err := ValidateImageBuild(input.Computer.ImageBuild, string(ArchitectureX8664)); err != nil {
 			return err
 		}
+		if err := ValidateUnusedPolicy(input.Computer.DeleteAfterUnusedMs, input.Computer.DeleteAfterUnusedNever); err != nil {
+			return err
+		}
 		return validateComputerSettings(input.Computer.Resources, input.Computer.Refresh, input.Computer.Secrets, input.Computer.BuildSecrets)
 	default:
 		return fmt.Errorf("definition kind %q is unsupported", input.Kind)

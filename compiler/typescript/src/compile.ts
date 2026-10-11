@@ -6,6 +6,8 @@ import { compareUTF8, hasOnlyUnicodeScalarValues } from "./utf8"
 export const BUILD_PLAN_FORMAT_VERSION = 0 as const
 
 export interface ComputerManifest {
+  readonly deleteAfterUnusedMs?: number
+  readonly deleteAfterUnusedNever?: boolean
   readonly imageBuild: ImageBuild
   readonly resources: { readonly milliCpu: number; readonly memoryMiB: number; readonly diskMiB?: number }
   readonly prepare: boolean
@@ -17,6 +19,7 @@ export interface AgentManifest {
   readonly computerDefinitionId: string
   readonly setup: boolean
   readonly closeAfterIdleMs?: number
+  readonly closeAfterIdleNever?: boolean
   readonly maxTurnDurationMs?: number
   readonly triggers: Readonly<Record<string, { readonly cron: string; readonly timezone: string; readonly input: Json; readonly slack?: Readonly<{ channelId: string }> }>>
 }
@@ -107,7 +110,7 @@ export function analyze(options: AnalyzeOptions): AnalysisResult {
       }
       return { kind: "agent", declaredId: definition.id, manifest: {
         computerDefinitionId: definition.computer.id, setup: definition.init !== undefined, triggers,
-        ...(definition.closeAfterIdle === undefined ? {} : { closeAfterIdleMs: duration(definition.closeAfterIdle, "closeAfterIdle") }),
+        ...(definition.closeAfterIdle === undefined ? {} : definition.closeAfterIdle === "never" ? { closeAfterIdleNever: true } : { closeAfterIdleMs: duration(definition.closeAfterIdle, "closeAfterIdle") }),
         ...(definition.maxTurnDuration === undefined ? {} : { maxTurnDurationMs: duration(definition.maxTurnDuration, "maxTurnDuration") }),
       } }
     }
@@ -118,6 +121,7 @@ export function analyze(options: AnalyzeOptions): AnalysisResult {
     return { kind: "computer", declaredId: definition.id, manifest: {
       imageBuild: compileImageBuild(image, options), resources: normalizeComputerResources(definition.resources),
       prepare: definition.prepare !== undefined,
+      ...(definition.deleteAfterUnused === undefined ? {} : definition.deleteAfterUnused === "never" ? { deleteAfterUnusedNever: true } : { deleteAfterUnusedMs: duration(definition.deleteAfterUnused, "deleteAfterUnused") }),
       ...(refresh === undefined ? {} : { refresh: { everyMs: duration(refresh.every, "refresh.every"), ...(refresh.maxAge === undefined ? {} : { maxAgeMs: duration(refresh.maxAge, "refresh.maxAge") }) } }),
       secrets: secretBindings(definition.secrets), buildSecrets: secretBindings(definition.buildSecrets),
     } }
@@ -151,7 +155,7 @@ function locateDefinitions(options: AnalyzeOptions): LocatedDefinition[] {
   }
   for (const { definition } of found.values()) {
     if (definition.kind === "computer") {
-      assertMembers(definition, ["kind", "id", "image", "resources", "prepare", "refresh", "secrets", "buildSecrets"], "Computer")
+      assertMembers(definition, ["kind", "id", "image", "resources", "prepare", "refresh", "secrets", "buildSecrets", "deleteAfterUnused"], "Computer")
       if (definition.prepare !== undefined && typeof definition.prepare !== "function") throw new Error("Computer prepare must be a function")
     }
   }

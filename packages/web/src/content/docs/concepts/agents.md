@@ -45,8 +45,12 @@ questions and native work before returning. Throwing fails the Turn; it does not
 request an automatic retry.
 
 `maxTurnDuration` optionally limits elapsed time through processing, human waits
-and finalization. `closeAfterIdle` optionally closes the Session identity; it is
-separate from compute release. Neither has a universal duration default.
+and finalization. It has no universal duration default. `closeAfterIdle` closes
+an idle Session after seven days by default; use a positive duration or `"never"`
+to configure it. Idle time excludes queued or active Turns, pending questions,
+message callbacks, holds, active owned children and unfinished saves or process
+stops. Closure uses the normal drain and process-stop lifecycle. Compute parking
+and stored-history retention are separate policies.
 
 Use `turn.signal` to cancel Turn work and `ctx.signal` for initialization/process shutdown.
 The managed MCP connection carries Session runtime authority. Root Sessions can

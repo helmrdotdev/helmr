@@ -97,7 +97,7 @@ func TestSlackEventHandlerIgnoresBotsEditsAndUnboundChatter(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_requests`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("unrelated content retained: %d %v", count, err)
 	}
-	event := map[string]any{"type": "message", "user": "human", "channel": "C1", "ts": slackNow(), "thread_ts": "123.456", "text": "follow-up"}
+	event := map[string]any{"type": "message", "user": "human", "channel": "C1", "ts": slackNow(), "thread_ts": "123.456", "text": "<@bot> follow-up"}
 	if response := serveSignedEvent(handler, eventBody(t, "follow-up", event)); response.Code != http.StatusOK {
 		t.Fatalf("bound human follow-up response %d", response.Code)
 	}
@@ -134,7 +134,7 @@ func TestSlackEventHandlerChallengeAndStaleSource(t *testing.T) {
 func TestSlackEventHandlerIgnoresBroadcastOfReceivedReply(t *testing.T) {
 	f := newStatusFixture(t)
 	handler := EventHandler{Database: f.Pool, AppID: "app", SigningSecret: []byte("fixture-secret")}
-	event := map[string]any{"type": "message", "user": "human", "channel": "C1", "ts": slackNow(), "thread_ts": "123.456", "text": "original reply"}
+	event := map[string]any{"type": "message", "user": "human", "channel": "C1", "ts": slackNow(), "thread_ts": "123.456", "text": "<@bot> original reply"}
 	if response := serveSignedEvent(handler, eventBody(t, "original", event)); response.Code != http.StatusOK {
 		t.Fatalf("reply response: %d", response.Code)
 	}
@@ -188,7 +188,7 @@ func TestSlackEventHandlerDeduplicatesMessageNotifications(t *testing.T) {
 			if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_requests`).Scan(&count); err != nil || count != 2 {
 				t.Fatalf("new source message lost: %d %v", count, err)
 			}
-			event["text"] = "changed content"
+			event["text"] = "<@bot> changed content"
 			if response := serveSignedEvent(handler, eventBody(t, "new-message", event)); response.Code != http.StatusConflict {
 				t.Fatalf("existing event key bypassed conflict: %d", response.Code)
 			}
@@ -196,7 +196,7 @@ func TestSlackEventHandlerDeduplicatesMessageNotifications(t *testing.T) {
 	}
 }
 
-func TestSlackEventHandlerRetainsLiteralMentionInCode(t *testing.T) {
+func TestSlackEventHandlerIgnoresLiteralMentionInCode(t *testing.T) {
 	f := newStatusFixture(t)
 	handler := EventHandler{Database: f.Pool, AppID: "app", SigningSecret: []byte("fixture-secret")}
 	event := map[string]any{"type": "message", "user": "human", "channel": "C1", "ts": slackNow(), "thread_ts": "123.456", "text": "explain `<@bot>` syntax"}
@@ -204,8 +204,8 @@ func TestSlackEventHandlerRetainsLiteralMentionInCode(t *testing.T) {
 		t.Fatalf("literal response: %d", response.Code)
 	}
 	var count int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_requests WHERE request_key='literal-mention'`).Scan(&count); err != nil || count != 1 {
-		t.Fatalf("literal mention discarded reply: %d %v", count, err)
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_requests WHERE request_key='literal-mention'`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("literal mention admitted work: %d %v", count, err)
 	}
 }
 
@@ -377,5 +377,20 @@ func TestSlackEventReceiptDoesNotWaitForCoreAdmission(t *testing.T) {
 	var received bool
 	if err = f.Pool.QueryRow(t.Context(), `SELECT status='received' FROM slack_requests WHERE request_key='independent-receipt'`).Scan(&received); err != nil || !received {
 		t.Fatal("receipt not durable before acknowledgment", received, err)
+	}
+}
+
+func TestSlackBoundThreadRequiresExplicitUnquotedMention(t *testing.T) {
+	f := newStatusFixture(t)
+	handler := EventHandler{Database: f.Pool, AppID: "app", SigningSecret: []byte("fixture-secret")}
+	for i, text := range []string{"human discussion", "<@other-human> please check", "<@other-bot> work", "`<@bot>`", "```<@bot>```", "> <@bot> quoted"} {
+		e := map[string]any{"type": "message", "user": "human", "channel": "C1", "ts": slackNow(), "thread_ts": "123.456", "text": text}
+		if r := serveSignedEvent(handler, eventBody(t, fmt.Sprintf("chatter-%d", i), e)); r.Code != http.StatusOK {
+			t.Fatal(r.Code)
+		}
+	}
+	var count int
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_requests`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("chatter retained: %d %v", count, err)
 	}
 }

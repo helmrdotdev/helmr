@@ -6,7 +6,7 @@ import { ContentError, normalizeContent, normalizeInput, type Content, type Huma
 import type { SessionActivity } from "./agent-activity"
 import { randomUUID, randomUUIDv7 } from "node:crypto"
 import { AsyncLocalStorage } from "node:async_hooks"
-import type { AgentDefinition, AgentContext, Json, OutputReceipt, InitContext, Turn, TurnOutcome } from "../../../sdk/typescript/src/agent"
+import type { AgentDefinition, AgentContext, Json, OutputReceipt, InitContext, InputMessage, InputSource, Turn, TurnOutcome } from "../../../sdk/typescript/src/agent"
 import { NativeContinuationLost, type SessionNativeRegistry } from "./agent-native"
 import { MessageRejected } from "../../../sdk/typescript/src/message-error"
 import { requireJson } from "../../../sdk/typescript/src/agent"
@@ -66,7 +66,7 @@ interface Execution {
   pipes: Set<Promise<unknown>>
   registrations: Set<Promise<unknown>>
   asks: Set<AskOperation>
-  messageHandler?: (message: InputContent) => unknown
+  messageHandler?: (input: InputContent, message: InputMessage) => unknown
   callback?: Promise<void> | undefined
   messages: Map<string, { fingerprint: string; promise: Promise<void> }>
   result?: Json
@@ -167,11 +167,11 @@ export class SessionRuntime {
 
   // Receipts retain exact identity. A callback rejection is not an enqueue or a
   // reason to run the callback again after transport reconnection.
-  deliverMessage(turnId: string, messageId: string, message: InputContent): Promise<void> {
+  deliverMessage(turnId: string, messageId: string, message: InputContent, source: InputSource): Promise<void> {
     const execution = this.turns.get(turnId)
     if (!execution) return Promise.reject(new Error("Turn is unknown"))
     try { normalizeInput(message) } catch (error) { return Promise.reject(error) }
-    const identity = fingerprint(message)
+    const identity = fingerprint({ message, source })
     const old = execution.messages.get(messageId)
     if (old) return old.fingerprint === identity ? old.promise : Promise.reject(new Error("Message delivery identity changed"))
     if (execution.signal.aborted) return Promise.reject(execution.signal.reason)
@@ -179,7 +179,8 @@ export class SessionRuntime {
     if (execution.callback) return Promise.reject(new MessageBusy())
     const scope: OutputScope = { execution, live: true }
     const admitted = structuredClone(message)
-    const callback = Promise.resolve().then(() => { execution.signal.throwIfAborted(); return this.invoke(() => this.outputScope.run(scope, () => execution.messageHandler!(admitted))) }).then(() => {}).finally(() => { scope.live = false })
+    const admittedSource = structuredClone(source)
+    const callback = Promise.resolve().then(() => { execution.signal.throwIfAborted(); return this.invoke(() => this.outputScope.run(scope, () => execution.messageHandler!(admitted, { id: messageId, source: admittedSource }))) }).then(() => {}).finally(() => { scope.live = false })
     execution.messages.set(messageId, { fingerprint: identity, promise: callback })
     execution.callback = callback
     void callback.finally(() => { if (execution.callback === callback) execution.callback = undefined }).catch(() => {})

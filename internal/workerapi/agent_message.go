@@ -9,6 +9,7 @@ type AgentMessageRequest struct {
 	TurnID              string         `json:"turn_id"`
 }
 type AgentMessageDispatch struct {
+	Source    AgentTurnSource `json:"source"`
 	TurnID    string          `json:"turn_id"`
 	MessageID string          `json:"message_id"`
 	Input     json.RawMessage `json:"input"`

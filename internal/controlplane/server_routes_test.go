@@ -121,6 +121,8 @@ PATCH /admin/api/v1/worker-groups/{groupID}
 PATCH /api/members/{userID}
 PATCH /api/projects/{projectID}
 PATCH /api/projects/{projectID}/environments/{environmentID}
+PATCH /api/projects/{projectID}/environments/{environmentID}/computers/{computerID}
+PATCH /v1/computers/{computerID}
 POST /admin/api/v1/regions
 POST /admin/api/v1/worker-groups
 POST /admin/api/v1/worker-groups/{groupID}/activate

@@ -9,6 +9,7 @@ describe("HelmrClient Computers", () => {
       id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
       key: "repository",
       definition_id: "repository-agent",
+      delete_after_unused_ms: null, unused_since: null,
       deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
       status: "available",
       residency: "cold",
@@ -25,6 +26,7 @@ describe("HelmrClient Computers", () => {
 				id: computer.id,
 				key: computer.key,
 				definition_id: computer.definition_id,
+      delete_after_unused_ms: null, unused_since: null,
 				deployment_id: computer.deployment_id,
 				status: "available",
  residency: "unavailable",
@@ -108,9 +110,15 @@ describe("HelmrClient Computers", () => {
       idempotency_key: "exec-1",
     })
 
+    responses.unshift(computer)
+    const preserved = await created.update({ deleteAfterUnused: "never" })
+    expect(preserved.deleteAfterUnused).toBe("never")
+    expect(requests[4]!.init?.method).toBe("PATCH")
+    expect(JSON.parse(String(requests[4]!.init?.body))).toEqual({ delete_after_unused_ms: null })
+
     await created.delete({ idempotencyKey: "delete-1" }, { signal })
-    expect(requests[4]!.init?.method).toBe("DELETE")
-    expect(JSON.parse(String(requests[4]!.init?.body))).toEqual({
+    expect(requests[5]!.init?.method).toBe("DELETE")
+    expect(JSON.parse(String(requests[5]!.init?.body))).toEqual({
       idempotency_key: "delete-1",
     })
   })

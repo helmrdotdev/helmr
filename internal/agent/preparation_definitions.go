@@ -72,16 +72,18 @@ func registerComputerDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 		}
 	}
 	type input struct {
-		ID          uuid.UUID       `json:"id"`
-		Digest      string          `json:"digest"`
-		Definition  string          `json:"definition"`
-		Spec        json.RawMessage `json:"spec"`
-		Seed        json.RawMessage `json:"seed"`
-		BuildRefs   json.RawMessage `json:"build_refs"`
-		Resources   json.RawMessage `json:"resources"`
-		RuntimeRefs json.RawMessage `json:"runtime_refs"`
-		Every       *int64          `json:"every_ms"`
-		MaxAge      *int64          `json:"max_age_ms"`
+		ID           uuid.UUID       `json:"id"`
+		Digest       string          `json:"digest"`
+		Definition   string          `json:"definition"`
+		Spec         json.RawMessage `json:"spec"`
+		Seed         json.RawMessage `json:"seed"`
+		BuildRefs    json.RawMessage `json:"build_refs"`
+		Resources    json.RawMessage `json:"resources"`
+		RuntimeRefs  json.RawMessage `json:"runtime_refs"`
+		Every        *int64          `json:"every_ms"`
+		MaxAge       *int64          `json:"max_age_ms"`
+		DeleteUnused *int64          `json:"delete_unused_ms"`
+		DeleteNever  bool            `json:"delete_never"`
 	}
 	inputs := make([]input, 0, len(specs))
 	digests := make([]string, 0, len(specs))
@@ -124,7 +126,7 @@ func registerComputerDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 			every = &m.Refresh.EveryMs
 			maxAge = m.Refresh.MaxAgeMs
 		}
-		inputs = append(inputs, input{ID: uuid.NewV7(), Digest: digest, Definition: spec.ComputerDefinitionID, Spec: raw, Seed: seed, BuildRefs: buildRefs, Resources: resources, RuntimeRefs: runtimeRefs, Every: every, MaxAge: maxAge})
+		inputs = append(inputs, input{ID: uuid.NewV7(), Digest: digest, Definition: spec.ComputerDefinitionID, Spec: raw, Seed: seed, BuildRefs: buildRefs, Resources: resources, RuntimeRefs: runtimeRefs, Every: every, MaxAge: maxAge, DeleteUnused: m.DeleteAfterUnusedMs, DeleteNever: m.DeleteAfterUnusedNever})
 		digests = append(digests, digest)
 	}
 	if len(inputs) == 0 {
@@ -224,9 +226,9 @@ func registerComputerDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 	if count != len(buildBindings) {
 		return ErrConflict
 	}
-	inserted, err := tx.Exec(ctx, `INSERT INTO computer_definitions(environment_id,deployment_id,definition_key,preparation_spec_id,resources,refresh_every_ms,max_image_age_ms)
- SELECT $1,$2,v.definition,s.id,v.resources,v.every_ms,v.max_age_ms
- FROM jsonb_to_recordset($3::jsonb) AS v(definition text,digest text,resources jsonb,runtime_refs jsonb,every_ms bigint,max_age_ms bigint)
+	inserted, err := tx.Exec(ctx, `INSERT INTO computer_definitions(environment_id,deployment_id,definition_key,preparation_spec_id,resources,refresh_every_ms,max_image_age_ms,delete_after_unused_ms,delete_after_unused_never)
+ SELECT $1,$2,v.definition,s.id,v.resources,v.every_ms,v.max_age_ms,v.delete_unused_ms,v.delete_never
+ FROM jsonb_to_recordset($3::jsonb) AS v(definition text,digest text,resources jsonb,runtime_refs jsonb,every_ms bigint,max_age_ms bigint,delete_unused_ms bigint,delete_never boolean)
  JOIN computer_preparation_specs s ON s.environment_id=$1 AND s.spec_digest=v.digest`, env, deployment, raw)
 	if err != nil {
 		return err
@@ -248,13 +250,14 @@ func RegisterProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment 
 	}
 
 	type agentInput struct {
-		Name      string    `json:"name"`
-		Computer  string    `json:"computer"`
-		Setup     bool      `json:"setup"`
-		Triggers  []byte    `json:"triggers"`
-		MaxTurn   *int64    `json:"max_turn_ms"`
-		CloseIdle *int64    `json:"close_idle_ms"`
-		ID        uuid.UUID `json:"id"`
+		Name       string    `json:"name"`
+		Computer   string    `json:"computer"`
+		Setup      bool      `json:"setup"`
+		Triggers   []byte    `json:"triggers"`
+		MaxTurn    *int64    `json:"max_turn_ms"`
+		CloseIdle  *int64    `json:"close_idle_ms"`
+		CloseNever bool      `json:"close_never"`
+		ID         uuid.UUID `json:"id"`
 	}
 	inputs := make([]agentInput, 0, len(output.Metadata.Definitions))
 	for _, d := range output.Metadata.Definitions {
@@ -263,7 +266,7 @@ func RegisterProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment 
 			if err != nil {
 				return err
 			}
-			inputs = append(inputs, agentInput{Name: d.DeclaredID, Computer: d.Agent.ComputerDefinitionID, Setup: d.Agent.Setup, Triggers: triggers, MaxTurn: d.Agent.MaxTurnDurationMs, CloseIdle: d.Agent.CloseAfterIdleMs, ID: uuid.NewV7()})
+			inputs = append(inputs, agentInput{Name: d.DeclaredID, Computer: d.Agent.ComputerDefinitionID, Setup: d.Agent.Setup, Triggers: triggers, MaxTurn: d.Agent.MaxTurnDurationMs, CloseIdle: d.Agent.CloseAfterIdleMs, CloseNever: d.Agent.CloseAfterIdleNever, ID: uuid.NewV7()})
 		}
 	}
 	if len(inputs) == 0 {
@@ -278,9 +281,9 @@ func RegisterProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment 
  ON CONFLICT(environment_id,name) DO NOTHING`, env, raw); err != nil {
 		return err
 	}
-	inserted, err := tx.Exec(ctx, `INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,definition_key,computer_definition_key,setup,triggers,max_turn_duration_ms,close_after_idle_ms)
- SELECT $1,a.id,$2,v.name,v.computer,v.setup,decode(v.triggers,'base64'),v.max_turn_ms,v.close_idle_ms
- FROM jsonb_to_recordset($3::jsonb) AS v(name text,computer text,setup boolean,triggers text,max_turn_ms bigint,close_idle_ms bigint)
+	inserted, err := tx.Exec(ctx, `INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,definition_key,computer_definition_key,setup,triggers,max_turn_duration_ms,close_after_idle_ms,close_after_idle_never)
+ SELECT $1,a.id,$2,v.name,v.computer,v.setup,decode(v.triggers,'base64'),v.max_turn_ms,v.close_idle_ms,v.close_never
+ FROM jsonb_to_recordset($3::jsonb) AS v(name text,computer text,setup boolean,triggers text,max_turn_ms bigint,close_idle_ms bigint,close_never boolean)
  JOIN agents a ON a.environment_id=$1 AND a.name=v.name`, env, deployment, raw)
 	if err != nil {
 		return err

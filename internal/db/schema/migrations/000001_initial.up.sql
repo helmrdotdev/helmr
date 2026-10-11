@@ -602,6 +602,9 @@ CREATE TABLE computer_definitions (
     resources jsonb NOT NULL CHECK (jsonb_typeof(resources) = 'object'),
     refresh_every_ms bigint CHECK (refresh_every_ms > 0),
     max_image_age_ms bigint CHECK (max_image_age_ms > 0),
+    delete_after_unused_ms bigint CHECK (delete_after_unused_ms > 0),
+    delete_after_unused_never boolean NOT NULL DEFAULT false,
+    CHECK (NOT delete_after_unused_never OR delete_after_unused_ms IS NULL),
     PRIMARY KEY (environment_id,deployment_id,definition_key),
     FOREIGN KEY (environment_id,deployment_id) REFERENCES deployments(environment_id,id),
     FOREIGN KEY (environment_id,preparation_spec_id) REFERENCES computer_preparation_specs(environment_id,id)
@@ -625,6 +628,8 @@ CREATE TABLE agent_definitions (
     triggers bytea NOT NULL,
     max_turn_duration_ms bigint CHECK (max_turn_duration_ms > 0),
     close_after_idle_ms bigint CHECK (close_after_idle_ms > 0),
+    close_after_idle_never boolean NOT NULL DEFAULT false,
+    CHECK (NOT close_after_idle_never OR close_after_idle_ms IS NULL),
     PRIMARY KEY (environment_id,agent_id,deployment_id),
     UNIQUE (environment_id,deployment_id,definition_key),
     FOREIGN KEY (environment_id,deployment_id,computer_definition_key) REFERENCES computer_definitions(environment_id,deployment_id,definition_key),
@@ -740,6 +745,8 @@ CREATE INDEX computer_preparations_host ON computer_preparations(worker_host_id,
 CREATE INDEX computer_preparations_environment_allocations ON computer_preparations(environment_id) WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL;
 
 CREATE TABLE computers (
+    delete_after_unused_ms bigint CHECK (delete_after_unused_ms > 0),
+    unused_since timestamptz,
     environment_id uuid NOT NULL REFERENCES environments(id),
     id uuid NOT NULL,
     key text CHECK (key IS NULL OR octet_length(key) BETWEEN 1 AND 512),
@@ -784,6 +791,7 @@ CREATE TABLE computers (
     CHECK ((initial_root_digest IS NOT NULL) = (initial_root_id IS NOT NULL OR initial_payload_retired_at IS NOT NULL)),
     CHECK (initial_payload_retired_at IS NULL OR (initial_root_id IS NULL AND deleted_at IS NOT NULL))
 );
+CREATE INDEX computers_unused_policy ON computers(environment_id,id) WHERE deleted_at IS NULL AND delete_after_unused_ms IS NOT NULL;
 CREATE UNIQUE INDEX computers_key ON computers(environment_id,key) WHERE key IS NOT NULL;
 CREATE INDEX computers_storage_reservations ON computers(environment_id) INCLUDE (storage_reservation_bytes) WHERE storage_reservation_bytes IS NOT NULL;
 CREATE INDEX computers_preparation ON computers(environment_id,preparation_spec_id,preparation_id) WHERE preparation_id IS NOT NULL;
@@ -814,6 +822,8 @@ CREATE TABLE computer_secret_bindings (
 CREATE INDEX computer_secret_bindings_secret ON computer_secret_bindings(environment_id,secret_id);
 
 CREATE TABLE sessions (
+    close_after_idle_ms bigint CHECK (close_after_idle_ms > 0),
+    idle_since timestamptz,
     history_retention_mode text NOT NULL CHECK (history_retention_mode IN ('duration','until_environment_deletion')),
     history_retention_seconds bigint,
     CHECK ((history_retention_mode='duration' AND history_retention_seconds IS NOT NULL AND history_retention_seconds>0)
@@ -857,6 +867,7 @@ CREATE TABLE sessions (
     CHECK (origin_turn_id IS NULL OR requester_session_id IS NOT NULL),
     CHECK ((requester_session_id IS NULL AND causal_depth=0) OR (requester_session_id IS NOT NULL AND causal_depth>0))
 );
+CREATE INDEX sessions_idle_policy ON sessions(environment_id,id) WHERE status='open' AND close_after_idle_ms IS NOT NULL;
 CREATE INDEX sessions_closing ON sessions(environment_id,id) WHERE status='closing';
 CREATE INDEX sessions_children ON sessions(environment_id,parent_session_id) WHERE parent_session_id IS NOT NULL;
 CREATE TABLE computer_leases (
@@ -2035,6 +2046,7 @@ CREATE TABLE slack_requests (
         OR (operation='stop' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NOT NULL)))
         OR (status<>'accepted' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL))
 );
+CREATE INDEX slack_requests_input_source ON slack_requests(environment_id,turn_id,message_id) WHERE status='accepted' AND operation IN ('start','enqueue','send');
 CREATE INDEX slack_requests_due ON slack_requests(next_attempt_at,id) WHERE status='received';
 CREATE INDEX slack_requests_feedback_due ON slack_requests(finished_at,id) WHERE status='rejected' AND payload_expired_at IS NULL;
 CREATE INDEX slack_requests_gesture ON slack_requests(installation_id,request_digest);

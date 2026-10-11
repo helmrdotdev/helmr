@@ -10,6 +10,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/lifetime"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -320,6 +321,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 	case agentv1.Operation_METHOD_START, agentv1.Operation_METHOD_SPAWN:
 		var input struct {
 			AgentID        string          `json:"agentId"`
+			CloseAfterIdle lifetime.Policy `json:"closeAfterIdleMs,omitzero"`
 			Input          json.RawMessage `json:"input"`
 			ComputerID     json.RawMessage `json:"computerId,omitempty"`
 			IdempotencyKey string          `json:"idempotencyKey,omitempty"`
@@ -347,7 +349,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 		if server.slackConfig != nil {
 			preflight = server.slackConfig.Client
 		}
-		admission := agent.StartRequest{SlackPreflight: preflight, EnvironmentID: execution.EnvironmentID, Agent: input.AgentID, ComputerID: computer, RetryKey: input.IdempotencyKey, Input: input.Input}
+		admission := agent.StartRequest{CloseAfterIdle: input.CloseAfterIdle, SlackPreflight: preflight, EnvironmentID: execution.EnvironmentID, Agent: input.AgentID, ComputerID: computer, RetryKey: input.IdempotencyKey, Input: input.Input}
 		var receipt agent.Admission
 		if method == agentv1.Operation_METHOD_SPAWN {
 			receipt, err = agent.Spawn(r.Context(), server.tx, server.secretProxy, caller, admission)
@@ -358,7 +360,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 			server.writeAgentAdmissionError(w, request.RequestID, err)
 			return
 		}
-		body, _ := json.Marshal(map[string]any{"sessionId": receipt.SessionID.String(), "turnId": receipt.TurnID.String(), "sequence": receipt.Sequence, "created": receipt.Created})
+		body, _ := json.Marshal(map[string]any{"sessionId": receipt.SessionID.String(), "turnId": receipt.TurnID.String(), "sequence": receipt.Sequence, "created": receipt.Created, "closeAfterIdleMs": receipt.CloseAfterIdleMs})
 		writeJSON(w, http.StatusOK, workerapi.AgentOperationResponse{RequestID: request.RequestID, Value: body})
 
 	case agentv1.Operation_METHOD_SEND_MESSAGE:

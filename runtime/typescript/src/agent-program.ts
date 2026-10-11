@@ -32,7 +32,17 @@ function source(bytes: Uint8Array): Turn['source'] {
   if (typeof value['kind'] !== "string") throw new Error("Invalid Turn source")
   if (value['requesterSessionId'] !== undefined && typeof value['requesterSessionId'] !== "string") throw new Error("Invalid requester Session")
   if (value['originTurnId'] !== undefined && typeof value['originTurnId'] !== "string") throw new Error("Invalid origin Turn")
-  return { kind: value['kind'], ...(value['requesterSessionId'] === undefined ? {} : { requesterSessionId: value['requesterSessionId'] }), ...(value['originTurnId'] === undefined ? {} : { originTurnId: value['originTurnId'] }) }
+  let slack: Turn['source']['slack']
+  if (value['slack'] !== undefined) {
+    const rawReference = value['slack']
+    if (rawReference === null || Array.isArray(rawReference) || typeof rawReference !== "object") throw new Error("Invalid Slack source")
+    const reference = rawReference as Record<string, Json>
+    for (const key of ["teamId", "channelId", "threadTs", "messageTs", "userId"]) {
+      if (typeof reference[key] !== "string" || !reference[key]) throw new Error("Invalid Slack source")
+    }
+    slack = { teamId: reference['teamId'] as string, channelId: reference['channelId'] as string, threadTs: reference['threadTs'] as string, messageTs: reference['messageTs'] as string, userId: reference['userId'] as string }
+  }
+  return { ...(slack === undefined ? {} : { slack }), kind: value['kind'], ...(value['requesterSessionId'] === undefined ? {} : { requesterSessionId: value['requesterSessionId'] }), ...(value['originTurnId'] === undefined ? {} : { originTurnId: value['originTurnId'] }) }
 }
 function failure(error: unknown): agentProto.OperationError {
   const code = error instanceof MessageBusy ? "message_busy" : error instanceof MessageRejected ? "message_rejected" : error instanceof OperationError ? error.code : "runtime_error"
@@ -140,7 +150,7 @@ export async function runAgentProgram(definitionSource: AgentDefinition<InputCon
           }
           case "message": {
             const message = command.command.value
-            await current.deliverMessage(message.turnId, message.messageId, normalizeInput(json(message.inputJson))); return null
+            await current.deliverMessage(message.turnId, message.messageId, normalizeInput(json(message.inputJson)), source(message.sourceJson)); return null
           }
           case "interrupt": current.interrupt(command.command.value.turnId, new Error(command.command.value.reason)); controlSequence = command.controlSequence; return null
           case "suspend": current.suspend(new Error(command.command.value.reason)); controlSequence = command.controlSequence; return null

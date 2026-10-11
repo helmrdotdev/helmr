@@ -90,6 +90,8 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 			}
 		case "gesture_expired", "stale_gesture":
 			text = "This action is out of date. Send a new message or use the latest question controls to try again."
+		case "session_unavailable":
+			text = "This Session is closed or unavailable. Mention the Agent in a new thread to start a new Session."
 		case "agent_unavailable":
 			text = "That Agent is unavailable. Check its connection in Console, then try again."
 		case "thread_generation_unavailable":

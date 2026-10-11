@@ -32,7 +32,8 @@ func BuildProgramMetadata(plan definition.BuildPlan, runtimeIndex DefinitionInde
 				return ProgramMetadata{}, err
 			}
 			d.Computer = &definition.ComputerManifest{
-				Seed:      definition.ComputerSeedManifest{Profile: image.Profile, Config: image.Config, ArtifactDigest: image.Digest, MediaType: image.MediaType},
+				Seed:                definition.ComputerSeedManifest{Profile: image.Profile, Config: image.Config, ArtifactDigest: image.Digest, MediaType: image.MediaType},
+				DeleteAfterUnusedMs: input.Computer.DeleteAfterUnusedMs, DeleteAfterUnusedNever: input.Computer.DeleteAfterUnusedNever,
 				Resources: input.Computer.Resources, Prepare: input.Computer.Prepare,
 				Refresh: input.Computer.Refresh, Secrets: input.Computer.Secrets, BuildSecrets: input.Computer.BuildSecrets,
 			}

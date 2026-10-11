@@ -1,6 +1,6 @@
 export { MessageRejected } from "./message-error"
 export { agent, computer, triggers } from "./agent"
-export type { CronTrigger, Json, Duration, MaybePromise, ComputerIdentity, BuildContext, SecretBinding, ComputerDefinition, TurnOutcome, OutputReceipt, Turn, InitContext, AgentContext, AgentDefinition } from "./agent"
+export type { CronTrigger, Json, Duration, MaybePromise, ComputerIdentity, BuildContext, SecretBinding, ComputerDefinition, TurnOutcome, OutputReceipt, InputSource, InputMessage, Turn, InitContext, AgentContext, AgentDefinition } from "./agent"
 export { HelmrClient } from "./client"
 export { image, source } from "./image"
 export { builder } from "./builder"

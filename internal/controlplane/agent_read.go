@@ -173,7 +173,7 @@ func agentOptionalID(id *uuid.UUID) *string {
 	return &value
 }
 func agentSessionResponse(v agent.SessionView) api.AgentSession {
-	result := api.AgentSession{ID: v.ID.String(), AgentID: v.AgentID.String(), DeploymentID: v.DeploymentID.String(), ComputerID: v.ComputerID.String(), RootSessionID: v.RootSessionID.String(), ParentSessionID: agentOptionalID(v.ParentSessionID), SlackChannelID: v.SlackChannelID, Key: v.Key, Status: v.Status, CreatedAt: v.CreatedAt.UTC(), Holds: []api.AgentSessionHold{}}
+	result := api.AgentSession{CloseAfterIdleMs: v.CloseAfterIdleMs, IdleSince: v.IdleSince, ID: v.ID.String(), AgentID: v.AgentID.String(), DeploymentID: v.DeploymentID.String(), ComputerID: v.ComputerID.String(), RootSessionID: v.RootSessionID.String(), ParentSessionID: agentOptionalID(v.ParentSessionID), SlackChannelID: v.SlackChannelID, Key: v.Key, Status: v.Status, CreatedAt: v.CreatedAt.UTC(), Holds: []api.AgentSessionHold{}}
 	result.RequesterSessionID = agentOptionalID(v.RequesterSessionID)
 	if v.InitialTurnID != nil && v.InitialTurnStatus != nil {
 		result.InitialTurn = &api.AgentSessionInitialTurn{ID: v.InitialTurnID.String(), Status: *v.InitialTurnStatus}

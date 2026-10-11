@@ -218,7 +218,7 @@ test("already-started callback drains its question and output after return", asy
   } }, { ask: async () => { asked.resolve(); return { answer: answer.promise, withdraw: async () => answer.reject(new Error("withdrawn")) } } })
   const outcome = runtime.dispatch(request())
   await handlerReady.promise
-  const callback = runtime.deliverMessage("turn-1", "message-1", textInput("follow-up"))
+  const callback = runtime.deliverMessage("turn-1", "message-1", textInput("follow-up"), { kind: "user" })
   await asked.promise
   returnHandler.resolve()
   await new Promise<void>(resolve => setImmediate(resolve))
@@ -273,7 +273,7 @@ test("completed callback scope cannot admit detached output during native conver
   } }, { convergeNative: async () => { converging.resolve(); await nativeDone.promise } })
   const result = runtime.dispatch(request())
   await ready.promise
-  await runtime.deliverMessage("turn-1", "message-1", textInput("start callback"))
+  await runtime.deliverMessage("turn-1", "message-1", textInput("start callback"), { kind: "user" })
   returnHandler.resolve()
   await converging.promise
   releaseDetached.resolve()
@@ -291,7 +291,7 @@ test("callback failure remains part of drainage after its delivery response", as
   } })
   const result = runtime.dispatch(request())
   await ready.promise
-  await assert.rejects(runtime.deliverMessage("turn-1", "message-1", textInput("input")), /callback failed/)
+  await assert.rejects(runtime.deliverMessage("turn-1", "message-1", textInput("input"), { kind: "user" }), /callback failed/)
   returnHandler.resolve()
   assert.equal((await result).status, "failed")
   assert.ok(!calls.includes("finalize"))
@@ -318,10 +318,10 @@ test("duplicate message identity cannot replace the admitted payload", async () 
   } })
   const result = runtime.dispatch(request())
   await ready.promise
-  const delivered = runtime.deliverMessage("turn-1", "message-1", [{ type: "text", text: "original" }])
+  const delivered = runtime.deliverMessage("turn-1", "message-1", [{ type: "text", text: "original" }], { kind: "user" })
   await delivered
-  assert.equal(runtime.deliverMessage("turn-1", "message-1", [{ text: "original", type: "text" }]), delivered)
-  await assert.rejects(runtime.deliverMessage("turn-1", "message-1", textInput("changed")), /identity changed/)
+  assert.equal(runtime.deliverMessage("turn-1", "message-1", [{ text: "original", type: "text" }], { kind: "user" }), delivered)
+  await assert.rejects(runtime.deliverMessage("turn-1", "message-1", textInput("changed"), { kind: "user" }), /identity changed/)
   assert.equal(calls, 1)
   returnHandler.resolve()
   await result
@@ -374,7 +374,7 @@ test("failure convergence holds when a callback ignores interruption", async () 
   const result = runtime.dispatch(request())
   void result.catch(() => {})
   await ready.promise
-  const message = runtime.deliverMessage("turn-1", "message-1", textInput("1"))
+  const message = runtime.deliverMessage("turn-1", "message-1", textInput("1"), { kind: "user" })
   await callbackStarted.promise
   returnHandler.resolve()
   await new Promise<void>(resolve => setImmediate(resolve))
@@ -421,10 +421,10 @@ test("message backpressure is distinguishable and the exact payload can be retri
   } })
   const result = runtime.dispatch(request())
   await ready.promise
-  const first = runtime.deliverMessage("turn-1", "one", textInput("1"))
-  await assert.rejects(runtime.deliverMessage("turn-1", "two", textInput("2")), MessageBusy)
+  const first = runtime.deliverMessage("turn-1", "one", textInput("1"), { kind: "user" })
+  await assert.rejects(runtime.deliverMessage("turn-1", "two", textInput("2"), { kind: "user" }), MessageBusy)
   release.resolve(); await first
-  await runtime.deliverMessage("turn-1", "two", textInput("2"))
+  await runtime.deliverMessage("turn-1", "two", textInput("2"), { kind: "user" })
   assert.deepEqual(received, [textInput("1"), textInput("2")])
   returnHandler.resolve(); await result
 })
@@ -480,7 +480,7 @@ test("interrupt immediately closes message admission before asynchronous cleanup
   const result = runtime.dispatch(request())
   await ready.promise
   runtime.interrupt("turn-1", new Error("stop now"))
-  await assert.rejects(runtime.deliverMessage("turn-1", "late", textInput("1")), /stop now/)
+  await assert.rejects(runtime.deliverMessage("turn-1", "late", textInput("1"), { kind: "user" }), /stop now/)
   assert.equal((await result).status, "interrupted")
   assert.equal(callbacks, 0)
 })
@@ -563,7 +563,7 @@ test("known steering rejection remains visible without failing the Turn", async 
   } })
   const pending = runtime.dispatch(request())
   await ready.promise
-  await assert.rejects(runtime.deliverMessage("turn-1", "message", []), /unsupported steering/)
+  await assert.rejects(runtime.deliverMessage("turn-1", "message", [], { kind: "user" }), /unsupported steering/)
   finish.resolve()
   assert.equal((await pending).status, "completed")
 })
@@ -614,7 +614,7 @@ test("lost native continuation still joins authored callbacks before interrupted
   } }, { convergeNative: async () => { throw new NativeContinuationLost() } })
   const pending = runtime.dispatch(request())
   await new Promise(resolve => setImmediate(resolve))
-  const callback = runtime.deliverMessage("turn-1", "message", [])
+  const callback = runtime.deliverMessage("turn-1", "message", [], { kind: "user" })
   await started.promise
   handlerDone.resolve()
   await new Promise(resolve => setImmediate(resolve))
@@ -627,4 +627,23 @@ test("lost native continuation still joins authored callbacks before interrupted
   assert.ok(calls.includes("hold:native_continuation_lost"))
   assert.equal(runtime.idle, false)
   assert.throws(() => runtime.resume(), /reconstruction/)
+})
+
+test("message callbacks retain their own immutable Slack source", async () => {
+  const ready = deferred<void>(), done = deferred<void>()
+  let received: unknown
+  const initialSource = { kind: "user", slack: { teamId: "T", channelId: "C", threadTs: "1.0", messageTs: "1.0", userId: "first" } }
+  const { runtime } = fixture({ turn: async turn => {
+    await turn.onMessage((_input, message) => { received = message; assert.equal(turn.source.slack?.userId, "first") })
+    ready.resolve(); await done.promise; return 1
+  } })
+  const result = runtime.dispatch({ ...request(), source: initialSource })
+  await ready.promise
+  const source = { kind: "user", slack: { ...initialSource.slack, messageTs: "2.0", userId: "second" } }
+  const callback = runtime.deliverMessage("turn-1", "message", textInput("hello"), source)
+  source.slack.userId = "mutated"
+  await callback
+  assert.deepEqual(received, { id: "message", source: { kind: "user", slack: { ...initialSource.slack, messageTs: "2.0", userId: "second" } } })
+  await assert.rejects(runtime.deliverMessage("turn-1", "message", textInput("hello"), source), /identity changed/)
+  done.resolve(); await result
 })

@@ -256,6 +256,8 @@ func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
 		return auth.PermissionComputersCreate, true
 	case api.APIKeyScopeComputersRead:
 		return auth.PermissionComputersRead, true
+	case api.APIKeyScopeComputersUpdate:
+		return auth.PermissionComputersUpdate, true
 	case api.APIKeyScopeComputersDelete:
 		return auth.PermissionComputersDelete, true
 	case api.APIKeyScopeComputerCommandCreate:
@@ -291,6 +293,8 @@ func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeComputersCreate, true
 	case string(auth.PermissionComputersRead):
 		return api.APIKeyScopeComputersRead, true
+	case string(auth.PermissionComputersUpdate):
+		return api.APIKeyScopeComputersUpdate, true
 	case string(auth.PermissionComputersDelete):
 		return api.APIKeyScopeComputersDelete, true
 	case string(auth.PermissionComputerCommandCreate):

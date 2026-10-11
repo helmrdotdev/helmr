@@ -29,13 +29,7 @@ func (server *Server) workerAgentTurn(w http.ResponseWriter, r *http.Request) {
 	}
 	var response *workerapi.AgentTurnDispatch
 	if dispatch != nil {
-		response = &workerapi.AgentTurnDispatch{TurnID: dispatch.TurnID.String(), Sequence: dispatch.Sequence, CreatedAt: dispatch.CreatedAt, Input: dispatch.Input, Source: workerapi.AgentTurnSource{Kind: dispatch.Source.Kind}}
-		if dispatch.Source.RequesterSessionID != nil {
-			response.Source.RequesterSessionID = dispatch.Source.RequesterSessionID.String()
-		}
-		if dispatch.Source.OriginTurnID != nil {
-			response.Source.OriginTurnID = dispatch.Source.OriginTurnID.String()
-		}
+		response = &workerapi.AgentTurnDispatch{TurnID: dispatch.TurnID.String(), Sequence: dispatch.Sequence, CreatedAt: dispatch.CreatedAt, Input: dispatch.Input, Source: agentInputSource(dispatch.Source)}
 	}
 	writeJSON(w, http.StatusOK, response)
 }
@@ -59,4 +53,18 @@ func (server *Server) workerAgentTurnReceipt(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.AgentTurnAcknowledgment{Sequence: sequence})
+}
+
+func agentInputSource(source agent.TurnSource) workerapi.AgentTurnSource {
+	result := workerapi.AgentTurnSource{Kind: source.Kind}
+	if source.RequesterSessionID != nil {
+		result.RequesterSessionID = source.RequesterSessionID.String()
+	}
+	if source.OriginTurnID != nil {
+		result.OriginTurnID = source.OriginTurnID.String()
+	}
+	if source.Slack != nil {
+		result.Slack = &workerapi.SlackInputSource{TeamID: source.Slack.TeamID, ChannelID: source.Slack.ChannelID, ThreadTS: source.Slack.ThreadTS, MessageTS: source.Slack.MessageTS, UserID: source.Slack.UserID}
+	}
+	return result
 }

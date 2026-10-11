@@ -82,6 +82,7 @@ func TestGranularComputerPermissionsDoNotEscalate(t *testing.T) {
 	for _, permission := range []Permission{
 		PermissionComputersCreate,
 		PermissionComputersDelete,
+		PermissionComputersUpdate,
 		PermissionComputerCommandCreate,
 	} {
 		if principal.HasPermission(permission, scope) {

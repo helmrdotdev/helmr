@@ -15,3 +15,13 @@ export function durationMilliseconds(value: Duration, label = "Duration"): numbe
   if (milliseconds > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error(`${label} must be positive safe integer milliseconds`)
   return Number(milliseconds)
 }
+
+/** Resource-retention opt-out; execution timeouts still require a duration. */
+export function retentionMilliseconds(value: Duration, label: string): number | null {
+  return value === "never" ? null : durationMilliseconds(value, label)
+}
+export function retentionFromMilliseconds(value: unknown, label: string): Duration {
+  if (value === null) return "never"
+  if (typeof value !== "number") throw new Error(`${label} must be null or milliseconds`)
+  return durationMilliseconds(value, label)
+}

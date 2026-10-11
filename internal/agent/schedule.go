@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/conversation"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/lifetime"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -197,7 +198,9 @@ func admitScheduledSession(ctx context.Context, tx pgx.Tx, trust ComputerTrustIs
 		return Admission{}, err
 	}
 	var key string
-	if err := tx.QueryRow(ctx, `SELECT computer_definition_key FROM agent_definitions WHERE environment_id=$1 AND agent_id=$2 AND deployment_id=$3`, s.environment, s.agent, s.deployment).Scan(&key); err != nil {
+	var idle *int64
+	var never bool
+	if err := tx.QueryRow(ctx, `SELECT computer_definition_key,close_after_idle_ms,close_after_idle_never FROM agent_definitions WHERE environment_id=$1 AND agent_id=$2 AND deployment_id=$3`, s.environment, s.agent, s.deployment).Scan(&key, &idle, &never); err != nil {
 		return Admission{}, err
 	}
 	computer, err := createAdmissionComputer(ctx, tx, trust, s.environment, s.deployment, key, policy)
@@ -207,8 +210,9 @@ func admitScheduledSession(ctx context.Context, tx pgx.Tx, trust ComputerTrustIs
 	if err = computerAcceptsAdmission(ctx, tx, s.environment, computer, true); err != nil {
 		return Admission{}, err
 	}
-	receipt := Admission{SessionID: uuid.NewV7(), TurnID: uuid.NewV7(), Sequence: 1, Created: true}
-	if _, err = tx.Exec(ctx, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,next_turn_seq,slack_channel_id,history_retention_mode,history_retention_seconds) SELECT $1,$2,$3,$4,$5,$2,0,2,$6,history_retention_mode,history_retention_seconds FROM environments WHERE id=$1`, s.environment, receipt.SessionID, s.agent, s.deployment, computer, s.slackChannelID); err != nil {
+	idle = lifetime.Resolve(lifetime.Policy{}, idle, never)
+	receipt := Admission{CloseAfterIdleMs: idle, SessionID: uuid.NewV7(), TurnID: uuid.NewV7(), Sequence: 1, Created: true}
+	if _, err = tx.Exec(ctx, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,next_turn_seq,slack_channel_id,close_after_idle_ms,history_retention_mode,history_retention_seconds) SELECT $1,$2,$3,$4,$5,$2,0,2,$6,$7,history_retention_mode,history_retention_seconds FROM environments WHERE id=$1`, s.environment, receipt.SessionID, s.agent, s.deployment, computer, s.slackChannelID, idle); err != nil {
 		return Admission{}, err
 	}
 	digest, err := digestJSON(s.input)
