@@ -30,9 +30,15 @@ export async function interruptNativeTurn(client: HelmrClient, provider: string,
   const marker = `/workspace/native-stop-settled-${interrupted.id}.json`
   const ownedCommand = `/workspace/${session.id}/owned-command-${interrupted.id}`
   async function command(script: string, phase: string) {
-    const command = await computer.exec({ command: ["/usr/local/bin/node", "--input-type=module", "-e", script], timeout: "15s", idempotencyKey: `native-stop:${interrupted.id}:${phase}` }, { signal })
+    const requestedAt = Date.now()
+    const report = (stage: string) => `process.stderr.write(JSON.stringify({nativeStopCommand:${JSON.stringify(phase)},stage:${JSON.stringify(stage)},at:Date.now()})+'\\n');`
+    const command = await computer.exec({ command: ["/bin/sh", "-c", "printf '%s\\n' \"$1\" >&2; shift; exec \"$@\"", "native-stop-command",
+      JSON.stringify({ nativeStopCommand: phase, stage: "launcher-entered" }), "/usr/local/bin/node", "--input-type=module", "-e", report("node-entered") + script + report("script-completed")],
+      timeout: phase === "inspect-running" ? "60s" : "15s", idempotencyKey: `native-stop:${interrupted.id}:${phase}` }, { signal })
+    process.stderr.write(JSON.stringify({ nativeStopCommand: phase, commandId: command.id, requestedAt }) + "\n")
     const outcome = await command.wait({ signal })
-    assert.equal(outcome.kind, "exited"); assert.equal(outcome.exitCode, 0, `native stop ${phase} failed`)
+    process.stderr.write(JSON.stringify({ nativeStopCommand: phase, commandId: command.id, durationMs: Date.now() - requestedAt, outcome }) + "\n")
+    assert.equal(outcome.kind, "exited", `native stop ${phase}: ${JSON.stringify(outcome)}`); assert.equal(outcome.exitCode, 0, `native stop ${phase} failed`)
     return command.id
   }
   const runningCommandID = provider === "codex" ? await command(`
@@ -42,7 +48,10 @@ export async function interruptNativeTurn(client: HelmrClient, provider: string,
     for (;;) { try { if(await readFile(${JSON.stringify(ownedCommand + ".started")},'utf8')===${JSON.stringify(interrupted.id)}) break }
       catch(error) { if(error.code!=='ENOENT') throw error }
       assert(Date.now()<deadline,'owned native command did not enter'); await delay(50) }
-    assert.equal(spawnSync('/usr/bin/flock',['--nonblock','--exclusive',${JSON.stringify(ownedCommand + ".lock")},'/bin/true'],{timeout:1000}).status,1,'owned command was not running before interruption');
+    process.stderr.write(JSON.stringify({nativeStopCommand:'inspect-running',stage:'marker-ready',at:Date.now()})+'\\n');
+    const lock=spawnSync('/usr/bin/flock',['--nonblock','--exclusive',${JSON.stringify(ownedCommand + ".lock")},'/bin/true'],{timeout:1000});
+    process.stderr.write(JSON.stringify({nativeStopCommand:'inspect-running',stage:'lock-checked',at:Date.now(),status:lock.status,error:lock.error?.message})+'\\n');
+    assert.equal(lock.status,1,'owned command was not running before interruption');
   `, "inspect-running") : undefined
   const receipt = await interrupted.interrupt(request, { signal })
   assert.equal(receipt.turnId, interrupted.id)

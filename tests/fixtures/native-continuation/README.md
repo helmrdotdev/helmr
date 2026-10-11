@@ -623,6 +623,9 @@ The Codex command holds an exclusive advisory lock for its lifetime. The driver
 requires lock contention before interrupting it; the authored handler and external
 Command both require successful non-blocking acquisition after it stops. This
 checks the same shared inode across the isolated PID namespaces.
+The pre-interrupt Command has a 60-second startup allowance and records launcher,
+Node, marker and lock-check stages. This allowance is outside the cleanup gate;
+the post-interrupt gate and production stop deadlines remain unchanged.
 The driver requires Ask cancellation and exact stop clearance before accepting
 warm successor completion. `native-stop-settlement.json` binds those observations
 to durable Turn/process/Ask state. The ordinary eight completed own-Save Turns and
