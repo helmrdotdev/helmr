@@ -3,7 +3,7 @@ import type { AskResponse } from "../../../sdk/typescript/src/question"
 import type { HumanContent } from "../../../sdk/typescript/src/content"
 import assert from "node:assert/strict"
 import test from "node:test"
-import type { AgentDefinition, Json, OutputReceipt, SetupContext, Turn, TurnOutcome } from "../../../sdk/typescript/src/agent"
+import type { AgentDefinition, Json, OutputReceipt, InitContext, Turn, TurnOutcome } from "../../../sdk/typescript/src/agent"
 import { NativeContinuationLost, SessionNativeRegistry } from "./agent-native"
 import { MessageRejected } from "../../../sdk/typescript/src/message-error"
 import { OperationError } from "./agent-channel"
@@ -13,10 +13,10 @@ import { parseAsk } from "../../../sdk/typescript/src/internal/asks"
 function deferred<T>() { let resolve!: (value: T) => void, reject!: (error: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no }); return { promise, resolve, reject } }
 const question = (text: string) => ({ prompt: [{ type: "text" as const, text }], answer: { type: "text" as const } })
 const reply = (answer: Json): AskResponse => ({ answer, respondedBy: { kind: "user", id: "answerer" } })
-const context: SetupContext = { session: { id: "session" }, computer: { id: "computer" }, deployment: { id: "deployment" }, recovery: { kind: "initial" }, signal: new AbortController().signal }
+const context: InitContext = { session: { id: "session" }, computer: { id: "computer" }, deployment: { id: "deployment" }, recovery: { kind: "initial" }, signal: new AbortController().signal }
 const textInput = (text: string): InputContent => [{ type: "text", text }]
 const request = (sequence = 1) => ({ id: `turn-${sequence}`, sequence, createdAt: "2026-10-04T00:00:00Z", input: textInput(String(sequence)), source: { kind: "api" } })
-function fixture(definition: Pick<AgentDefinition<InputContent, Json, unknown>, "turn" | "setup">, overrides: Partial<SessionDriver> = {}, limits: NonNullable<ConstructorParameters<typeof SessionRuntime>[3]> = { failureConvergenceMs: 100 }) {
+function fixture(definition: Pick<AgentDefinition<InputContent, Json, unknown>, "turn" | "init">, overrides: Partial<SessionDriver> = {}, limits: NonNullable<ConstructorParameters<typeof SessionRuntime>[3]> = { failureConvergenceMs: 100 }) {
   const calls: string[] = []
   const driver: SessionDriver = {
     registerMessages: async () => { calls.push("register") },
@@ -63,10 +63,10 @@ test("caught progress budget rejection permits a separate final response", async
 
 test("setup result retains identity and memory across turns", async () => {
   let setups = 0, seen: unknown
-  const { runtime } = fixture({ setup: () => { setups++; return { counter: 0 } }, turn: (_turn, ctx) => {
-    if (seen) assert.equal(ctx.setupResult, seen)
-    seen = ctx.setupResult
-    return ++(ctx.setupResult as { counter: number }).counter
+  const { runtime } = fixture({ init: () => { setups++; return { counter: 0 } }, turn: (_turn, ctx) => {
+    if (seen) assert.equal(ctx.initResult, seen)
+    seen = ctx.initResult
+    return ++(ctx.initResult as { counter: number }).counter
   } })
   assert.deepEqual(await runtime.dispatch(request()), { status: "completed", result: 1 })
   assert.deepEqual(await runtime.dispatch(request(2)), { status: "completed", result: 2 })
@@ -126,7 +126,7 @@ test("a failed handler has no fabricated return timing", async () => {
 
 test("failed setup holds queued work and is not implicitly retried", async () => {
   let setups = 0
-  const { runtime, calls } = fixture({ setup: () => { setups++; throw new Error("broken bundle setup") }, turn: () => assert.fail("handler ran") })
+  const { runtime, calls } = fixture({ init: () => { setups++; throw new Error("broken bundle setup") }, turn: () => assert.fail("handler ran") })
   await assert.rejects(runtime.dispatch(request()), /broken bundle setup/)
   await assert.rejects(runtime.initialize(), /broken bundle setup/)
   await assert.rejects(runtime.dispatch(request()), /cannot dispatch/)
@@ -160,7 +160,7 @@ test("reconciling an already running unheld Session does not interrupt work", as
 test("authorized resume admits new input only after interruption settles", async () => {
   const started = deferred<void>()
   let setups = 0
-  const { runtime } = fixture({ setup: () => ++setups, turn: async turn => {
+  const { runtime } = fixture({ init: () => ++setups, turn: async turn => {
     if (turn.sequence === 1) {
       started.resolve()
       await new Promise<void>(resolve => turn.signal.addEventListener("abort", () => resolve(), { once: true }))
@@ -569,7 +569,7 @@ test("known steering rejection remains visible without failing the Turn", async 
 })
 
 test("hold receipt failure retains the original setup and convergence diagnosis", async () => {
-  const setup = fixture({ setup: () => { throw new Error("setup broke") }, turn: () => null }, { hold: async () => { throw new Error("upstream renewing") } })
+  const setup = fixture({ init: () => { throw new Error("setup broke") }, turn: () => null }, { hold: async () => { throw new Error("upstream renewing") } })
   await assert.rejects(setup.runtime.initialize(), error => error instanceof AggregateError && error.errors[0].message === "setup broke" && error.errors[1].message === "upstream renewing" && error.message.includes("setup broke"))
   const native = fixture({ turn: () => { throw new Error("handler broke") } }, { convergeNative: async () => { throw new Error("native still running") }, hold: async () => { throw new Error("hold reply lost") } })
   await assert.rejects(native.runtime.dispatch(request()), error => error instanceof AggregateError && error.errors[0].message === "native still running" && error.errors[1].message === "hold reply lost")
@@ -584,7 +584,7 @@ test("registered native output remains bound to its Turn while its producer drai
   const done = deferred<void>(), admitted = deferred<void>(), write = deferred<void>()
   let nativeDone = false
   const { runtime, calls } = fixture({
-    setup: () => { resource = native.resource({ initialized, state: () => ({ phase: "idle", reusable: true }), stop: async () => {} }) },
+    init: () => { resource = native.resource({ initialized, state: () => ({ phase: "idle", reusable: true }), stop: async () => {} }) },
     turn: turn => {
       const scope = native.register(turn, resource, { done: done.promise, state: () => ({ idle: nativeDone, reusable: true }), stop: async () => {} })
       void write.promise.then(() => scope.run(async () => {

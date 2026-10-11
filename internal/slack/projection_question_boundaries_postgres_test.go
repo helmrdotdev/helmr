@@ -105,7 +105,7 @@ func TestSlackQuestionPromptBoundariesRemainVisibleAndAdvance(t *testing.T) {
 						t.Fatalf("CLI guidance must appear only on the last question post: post %d of %d", count+1, total)
 					}
 					if lastPost {
-						target := fmt.Sprintf("%s %s %s --project %s --env %s", f.Session, turn, ask, project, f.Environment)
+						target := fmt.Sprintf("%s --session %s --turn %s --project %s --env %s", ask, f.Session, turn, project, f.Environment)
 						for _, expected := range []string{"session turn ask get " + target + " --json", "session turn ask respond " + target + " --answer-file answer.json --response-id RESPONSE_ID", "helmr login", "--api-url", "unset HELMR_API_KEY", "same answer for retries"} {
 							if !strings.Contains(guide, expected) {
 								t.Fatalf("missing CLI guidance %q: %s", expected, guide)

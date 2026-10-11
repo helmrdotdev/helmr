@@ -83,8 +83,8 @@ test("pending questions expose complete content and exact CLI commands as read-o
   const origin = new URL(page.url()).origin;
   const guide = page.getByRole("region", { name: "Answer through CLI" });
   await expect(guide).toContainText(`helmr login '${origin}'`);
-  await expect(guide).toContainText(`helmr --api-url '${origin}' session turn ask get '${sessionID}' '${turnID}' '${askID}' --project '${projectID}' --env '${environmentID}' --json`);
-  await expect(guide).toContainText(`respond '${sessionID}' '${turnID}' '${askID}'`);
+  await expect(guide).toContainText(`helmr --api-url '${origin}' session turn ask get '${askID}' --session '${sessionID}' --turn '${turnID}' --project '${projectID}' --env '${environmentID}' --json`);
+  await expect(guide).toContainText(`respond '${askID}' --session '${sessionID}' --turn '${turnID}'`);
   await expect(guide).toContainText("--answer-file answer.json --response-id RESPONSE_ID");
   await expect(guide).toContainText("Reuse the same ID and unchanged answer");
   await expect(page.locator("form")).toHaveCount(0);

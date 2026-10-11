@@ -18,8 +18,8 @@ await verify("sessions", async ({ marker, objects, computer, startAgent }) => {
   assertRestored(parked, restored, first.session.id)
   await second.send(fixtureInput("finish"), { idempotencyKey: `finish:${marker}` })
   const secondResult = await completedResult(second, 180_000)
-  assertEqual((await first.turn.retrieve()).sequence, 1, "Initial Turn sequence changed")
-  assertEqual((await second.retrieve()).sequence, 2, "Follow-up Turn sequence changed")
+  assertEqual((await first.turn.get()).sequence, 1, "Initial Turn sequence changed")
+  assertEqual((await second.get()).sequence, 2, "Follow-up Turn sequence changed")
   assertSessionTurns({ marker, nonce: firstResult.nonce, sessionId: first.session.id, computerId: target.id }, firstResult, secondResult)
   return { parked, restored, turns: [firstResult, secondResult] }
 })

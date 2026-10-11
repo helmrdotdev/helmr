@@ -8,7 +8,7 @@ import { getMe, hasPermission } from "../lib/auth";
 import { getCurrentDeployment, getDeployment, getDeploymentEvents } from "../lib/deployments";
 import { listSchedules } from "../lib/schedules";
 import { useScope } from "../lib/scope";
-import { listAgents, listComputerDefinitions, type DefinitionListItem } from "../lib/definitions";
+import { listAgentDefinitions, listComputerDefinitions, type DefinitionListItem } from "../lib/definitions";
 import { DataTable } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
 import { PageHeader } from "../ui/PageHeader";
@@ -17,11 +17,11 @@ import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
 import { cx, ui } from "../ui/styles";
 
-const TABS = ["agents", "computer_definitions", "schedules", "events"] as const;
+const TABS = ["agent_definitions", "computer_definitions", "schedules", "events"] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_LABELS: Record<Tab, string> = {
-  agents: "Agents",
+  agent_definitions: "Agent definitions",
   computer_definitions: "Computer definitions",
   schedules: "Schedules",
   events: "Events",
@@ -83,14 +83,14 @@ export function DeploymentDetail() {
   const environmentID = () => scope.selectedEnvironmentID();
   const enabled = () => !!deploymentID() && !!projectID() && !!environmentID();
   const resourceScope = () => ({ projectID: projectID(), environmentID: environmentID() });
-  const [tab, setTab] = createSignal<Tab>("agents");
+  const [tab, setTab] = createSignal<Tab>("agent_definitions");
   const [slackAgent, setSlackAgent] = createSignal<string>();
   const [promoting, setPromoting] = createSignal(false);
   const selection = createMemo(() => JSON.stringify([projectID(), environmentID(), deploymentID()]));
   createEffect(on(selection, () => {
     setSlackAgent(undefined);
     setPromoting(false);
-    setTab("agents");
+    setTab("agent_definitions");
   }, { defer: true }));
   const me = createQuery(() => ({ queryKey: ["me"], queryFn: getMe, retry: false, staleTime: 60_000 }));
 
@@ -114,11 +114,11 @@ export function DeploymentDetail() {
   }));
   const definitionOptions = () => ({ ...resourceScope(), deploymentID: deploymentID(), limit: 100 });
   const agents = createInfiniteQuery(() => ({
-    queryKey: ["agents", deploymentID(), projectID(), environmentID()],
-    queryFn: ({ pageParam }) => listAgents({ ...definitionOptions(), cursor: pageParam || undefined }),
+    queryKey: ["agent_definitions", deploymentID(), projectID(), environmentID()],
+    queryFn: ({ pageParam }) => listAgentDefinitions({ ...definitionOptions(), cursor: pageParam || undefined }),
     initialPageParam: "",
     getNextPageParam: page => page.next_cursor,
-    enabled: enabled() && tab() === "agents",
+    enabled: enabled() && tab() === "agent_definitions",
     retry: false,
   }));
   const computerDefinitions = createInfiniteQuery(() => ({
@@ -197,14 +197,15 @@ export function DeploymentDetail() {
           </For>
         </div>
 
-        <Show when={tab() === "agents"}>
+        <Show when={tab() === "agent_definitions"}>
           <p class={`${ui.muted} mb-3`}>Start Agents through the CLI or their connected Slack app.</p>
-          <DefinitionTable label="Agents" items={agents.data?.pages.flatMap(page => page.agents)} pending={agents.isPending} error={agents.error} onSlack={me.data?.role === "owner" || me.data?.role === "admin" ? setSlackAgent : undefined} />
+          <DefinitionTable label="Agent definitions" items={agents.data?.pages.flatMap(page => page.agent_definitions)} pending={agents.isPending} error={agents.error} onSlack={me.data?.role === "owner" || me.data?.role === "admin" ? setSlackAgent : undefined} />
           <Show when={agents.hasNextPage}>
-            <button type="button" class={ui.secondaryButton} disabled={agents.isFetchingNextPage} onClick={() => void agents.fetchNextPage()}>Load more Agents</button>
+            <button type="button" class={ui.secondaryButton} disabled={agents.isFetchingNextPage} onClick={() => void agents.fetchNextPage()}>Load more Agent definitions</button>
           </Show>
         </Show>
         <Show when={tab() === "computer_definitions"}>
+          <p class={`${ui.muted} mb-3`}>Computer configurations declared in this Deployment. Create a Computer to run work.</p>
           <DefinitionTable label="Computer definitions" items={computerDefinitions.data?.pages.flatMap(page => page.computer_definitions)} pending={computerDefinitions.isPending} error={computerDefinitions.error} />
           <Show when={computerDefinitions.hasNextPage}>
             <button type="button" class={ui.secondaryButton} disabled={computerDefinitions.isFetchingNextPage} onClick={() => void computerDefinitions.fetchNextPage()}>Load more Computer definitions</button>

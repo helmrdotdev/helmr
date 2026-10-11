@@ -13,13 +13,13 @@ export const captureAbortComputer = computer({
 
 export const captureAbortAgent = agent({
   id: "verification-capture-abort", computer: captureAbortComputer, maxTurnDuration: "20m",
-  setup: () => ({ nonce: randomUUID(), count: 0, marker: "" }),
+  init: () => ({ nonce: randomUUID(), count: 0, marker: "" }),
   turn: async (turn, ctx) => {
     const { marker, cancelledMarker, cancelMember, cancelledCounter } = z.object({
       marker: z.string(), cancelledMarker: z.string(), cancelMember: z.boolean(),
       cancelledCounter: z.number().int().positive().optional(),
     }).strict().parse(fixtureValue(turn.input))
-    const memory = ctx.setupResult
+    const memory = ctx.initResult
     const count = ++memory.count
     const file = `/workspace/capture-abort-${memory.nonce}`
     const counterFile = `${cancelledMarker}.counter`

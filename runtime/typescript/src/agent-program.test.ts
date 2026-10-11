@@ -19,7 +19,7 @@ function queue<T>() {
 }
 const identity = create(agentProto.SessionIdentitySchema, { sessionId: "session", processEpoch: 3n })
 const json = (value: unknown) => Buffer.from(JSON.stringify(value))
-function fixture(definition: Pick<AgentDefinition<InputContent, Json, unknown>, "turn" | "setup">, handle?: (operation: agentProto.Operation) => Promise<Json>, terminalSequence = 0n, beforeWrite?: (event: agentProto.ProgramEvent["event"]) => void) {
+function fixture(definition: Pick<AgentDefinition<InputContent, Json, unknown>, "turn" | "init">, handle?: (operation: agentProto.Operation) => Promise<Json>, terminalSequence = 0n, beforeWrite?: (event: agentProto.ProgramEvent["event"]) => void) {
   const input = queue<Uint8Array>()
   const ready = deferred<void>(), failed = deferred<agentProto.SessionFailed>()
   const receipts = new Map<string, ReturnType<typeof deferred<agentProto.DeliveryResult>>>()
@@ -80,7 +80,7 @@ function value(receipt: agentProto.DeliveryResult): TurnOutcome {
 
 test("framed Session program retains setup and completes operation responses while dispatch waits", async () => {
   let setups = 0
-  const f = fixture({ setup: () => { setups++; return { count: 0 } }, turn: (_turn, ctx) => ++(ctx.setupResult as { count: number }).count })
+  const f = fixture({ init: () => { setups++; return { count: 0 } }, turn: (_turn, ctx) => ++(ctx.initResult as { count: number }).count })
   await f.ready
   assert.deepEqual(value(await f.dispatch(1)), { status: "completed", result: 1 })
   assert.deepEqual(value(await f.dispatch(2)), { status: "completed", result: 2 })
@@ -103,7 +103,7 @@ test("idle suspension prevents dispatch until authorized resume and watermark bl
 
 test("setup failure reports hold and never becomes ready on a resume command", async () => {
   let setups = 0
-  const f = fixture({ setup: () => { setups++; throw new Error("setup broke") }, turn: () => assert.fail("unexpected Turn") })
+  const f = fixture({ init: () => { setups++; throw new Error("setup broke") }, turn: () => assert.fail("unexpected Turn") })
   assert.match((await f.failed).message, /setup broke/)
   assert.equal(f.operations[0]?.method, agentProto.Operation_Method.HOLD)
   assert.equal((await f.command({ case: "resume", value: create(agentProto.SessionResumeSchema) })).outcome.case, "error")
@@ -132,7 +132,7 @@ test("unexpected EOF is process loss, not a clean shutdown", async () => {
 
 
 test("parent context contains only identity and Turn exposes no control facade", async () => {
-  const f = fixture({ setup: async ctx => {
+  const f = fixture({ init: async ctx => {
     assert.deepEqual(Object.keys(ctx.session.parent!), ["id"])
     assert.equal(ctx.session.parent!.id, "parent")
     return null
@@ -194,7 +194,7 @@ test("bundle loader failure emits a Session failure before closing the local pip
 
 test("checkpoint observes idle continuation without releasing a hold or repeating setup", async () => {
   let setups = 0
-  const f = fixture({ setup: () => { setups++; return { count: 0 } }, turn: (_turn, ctx) => ++(ctx.setupResult as { count: number }).count })
+  const f = fixture({ init: () => { setups++; return { count: 0 } }, turn: (_turn, ctx) => ++(ctx.initResult as { count: number }).count })
   await f.ready
   assert.equal((await f.checkpoint("initial")).outcome.case, "scopesJson")
   assert.equal(value(await f.dispatch(1)).result, 1)
@@ -222,7 +222,7 @@ test("checkpoint rejects an active Turn without interrupting its work", async ()
 
 test("an authored background timer pins compute even without an active Turn", async () => {
   let timer: ReturnType<typeof setInterval> | undefined
-  const f = fixture({ setup: () => { timer = setInterval(() => {}, 1000); return null }, turn: () => null })
+  const f = fixture({ init: () => { timer = setInterval(() => {}, 1000); return null }, turn: () => null })
   try {
     await f.ready
     const blocked = await f.checkpoint("background")
@@ -263,7 +263,7 @@ test("managed MCP factory works during setup and is removed at process shutdown"
   await assert.rejects(createRuntimeMcpConnection(), /managed Session/)
   const connection = { url: "http://127.0.0.1:31415/mcp", headers: { Authorization: "Bearer local-only" } }
   let setups = 0
-  const f = fixture({ setup: async () => { setups++; return createRuntimeMcpConnection() }, turn: (_turn, ctx) => (ctx.setupResult as typeof connection).url }, async operation => {
+  const f = fixture({ init: async () => { setups++; return createRuntimeMcpConnection() }, turn: (_turn, ctx) => (ctx.initResult as typeof connection).url }, async operation => {
     const payload = JSON.parse(Buffer.from(operation.payloadJson).toString())
     if (operation.method === agentProto.Operation_Method.GET_MCP_CONNECTION) {
       assert.equal(operation.turnId, undefined)

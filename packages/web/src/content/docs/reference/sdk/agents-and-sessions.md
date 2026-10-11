@@ -6,7 +6,7 @@ description: Define an Agent and operate retained Sessions and attributable Turn
 # Agents, Sessions and Turns
 
 An Agent definition selects a Computer and handles one Turn at a time. A Session
-retains setup state across those Turns and healthy checkpoint restoration. Each
+retains initialization state across those Turns and healthy checkpoint restoration. Each
 accepted input has a distinct Turn ID and admission sequence.
 
 ```ts
@@ -33,16 +33,44 @@ required drainage and the Turn's own Save publication. `turn.respond(content)`
 stages a human-facing response published with successful settlement. Output is
 available while work is running or saving; it does not establish completion.
 
+## Definition IDs and Agent identity
+
+An Agent has a stable UUID within its Environment. Each Deployment records a
+separate definition for that Agent. Read definitions through
+`client.agentDefinitions.list({ deploymentId?, cursor?, limit? })` or
+`client.agentDefinitions.get(id, { deploymentId? })`. Omission uses the current
+Deployment; list cursors retain their original Deployment.
+
+```ts
+const definition = await client.agentDefinitions.get("reviewer")
+// { id: "reviewer", agentId: "<Agent UUID>", deploymentId: "<Deployment UUID>" }
+```
+
+`id` is the identifier declared in `agent({ id: ... })`, not the Agent UUID.
+`agentId` links the definition to Session and Schedule records. Definition list
+items include both IDs; the page includes their shared `deploymentId` and optional
+`nextCursor`. An authored ID may itself look like a UUID; its spelling never
+changes which identifier a method accepts.
+
+`client.agents.start(id, request)` starts work by the authored ID. New independent
+Sessions use the current Deployment; reuse through `sessionKey` keeps the existing
+Session's Deployment. Child Sessions use their parent's pinned Deployment.
+Historical definition reads do not select a Deployment for a new start.
+
+## Initialization
+
+`init(ctx)` runs once per live Agent process before its first Turn. Its returned value is available as `ctx.initResult`; `InitContext` is the exported initialization context type. Healthy checkpoint continuation preserves this state. Reconstruction creates a new process and runs `init` again with `ctx.recovery.kind === "reconstructed"`. A failed initialization remains failed in that process; redelivery does not retry it. Use idempotent external operations when reconstruction could repeat them.
+
 ## Authored context and helper Sessions
 
 | Member | Contract |
 | --- | --- |
 | `ctx.session.id`, `.key`, `.parent` | Session identity, optional conversation key and optional parent identity `{ id }`. |
-| `ctx.computer` | Actual current Computer reference for explicit placement. |
+| `ctx.computer` | Current `ComputerIdentity` (`{ id }`) for explicit placement. |
 | `ctx.deployment.id` | Pinned Deployment identity. |
 | `ctx.recovery` | `kind: "initial"` or `"reconstructed"`, with optional reason. |
-| `ctx.setupResult` | The value returned by setup, including live application/native handles. |
-| `ctx.signal` | Process shutdown and setup cancellation. |
+| `ctx.initResult` | The value returned by `init`, including live application/native handles. |
+| `ctx.signal` | Process shutdown and initialization cancellation. |
 | `turn.id`, `.sequence`, `.createdAt` | This input's identity, admission sequence and creation time. |
 | `turn.input`, `.source` | Text-part array input and origin facts: kind, optional requester Session and origin Turn IDs. |
 | `turn.signal` | Cancellation for this Turn's processing. |
@@ -138,14 +166,14 @@ The explicit client uses its authentication even when constructed inside Agent
 code. Injected Turn operations carry the current Session's runtime authority.
 A client does not inherit that authority from code location.
 
-Recover handles with `client.sessions.get(sessionId)` and
-`session.turn(turnId)`. `retrieve()` reads retained state. `turn.wait()` returns
+Recover handles with `client.sessions.ref(sessionId)` and
+`session.turns.ref(turnId)`. These construct local handles without network I/O. `get()` reads retained state, and `session.turns.list()` reads a page. `turn.wait()` returns
 a terminal outcome; `wait({ timeout })` returns either a settled outcome or
 `{ status: "timeout" }`. Timeout never cancels work, and a failed outcome does
 not close the Session. Payload expiry remains explicit in retained reads.
 
 `session.send(data)` messages active work or enqueues a Turn when idle;
-`session.enqueue(input)` always creates FIFO work. `session.turn(id).send(data)`
+`session.enqueue(input)` always creates FIFO work. `session.turns.ref(id).send(data)`
 targets that exact Turn. Message acceptance is separate from delivery and
 application. Held Sessions reject automatic send but retain queued input.
 

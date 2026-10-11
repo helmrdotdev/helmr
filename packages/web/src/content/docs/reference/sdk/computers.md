@@ -19,19 +19,34 @@ export const repo = computer({
 `client.computerDefinitions.list({ deploymentId?, cursor?, limit? })` lists
 identities in the selected Deployment, or the current Deployment when omitted.
 The page includes `deploymentId`, `items` and an optional `nextCursor`; continuation
-keeps the selected Deployment. Use `.retrieve(id, { deploymentId? })` for one
+keeps the selected Deployment. Use `.get(id, { deploymentId? })` for one
 identity and its owning Deployment. Limits range from 1 to 100.
 
 Create an actual Computer with
-`client.computerDefinitions.createComputer(id, { key?, idempotencyKey?, secrets? })`.
+`client.computers.create({ definition: id, key?, idempotencyKey?, secrets? })`.
 Creation uses the current Deployment and returns a `ClientComputerRef`.
-Its snapshot exposes the source `definitionKey` and `deploymentId`.
+`definition` is the authored ID from `computer({ id: ... })`. `key` is an optional
+immutable lookup value; it does not make creation get-or-create. Reuse an
+`idempotencyKey` for safe retries. Definition inspection is read-only and can
+select a historical Deployment; creating a Computer always uses the current one.
+Its snapshot exposes the source `definitionId` and `deploymentId`.
+
+Use `client.computers.list()` and `client.computers.get(id)` to inspect actual
+Computers; delete one with `client.computers.ref(id).delete()`.
+
+```ts
+const computer = await client.computers.create({
+  definition: "workspace",
+  key: "shared-repository",
+  idempotencyKey: "create:shared-repository",
+})
+```
 
 `client.computers.ref(id)` exposes:
 
 | API | Result |
 | --- | --- |
-| `retrieve()` | Current Computer lifecycle, residency and secret bindings. |
+| `get()` | Current Computer lifecycle, residency and secret bindings. |
 | `members({ cursor?, limit? })` | A page of Sessions and Commands attached to the Computer. |
 | `exec({ command, idempotencyKey, cwd?, env?, stdin?, timeout? })` | A durable `CommandRef` after admission. |
 | `delete({ idempotencyKey? })` | Deletion receipt. |
@@ -53,11 +68,11 @@ starting. Reconnect using `client.commands.ref(id)` from your application backen
 
 | Command API | Result |
 | --- | --- |
-| `retrieve()` | Command status and an outcome when available. |
+| `get()` | Command status and an outcome when available. |
 | `cancel({ signal? })` | An accepted cancellation receipt with `id`, `targetId` and `status`. |
-| `wait({ waitTimeout?, signal? })` | Terminal outcome; a nonzero exit is an ordinary `exited` outcome. |
-| `logs({ cursor?, limit? }, { signal? })` | One finite page of retained output and gap records. |
-| `streamLogs({ after? }, { signal? })` | Retained output followed by new output until the output closes. |
+| `wait({ timeout?, signal? })` | Outcome without a timeout; with a timeout, `{ status: "settled", outcome }` or `{ status: "timeout" }`. |
+| `logs.list({ cursor?, limit? }, { signal? })` | One finite page of retained output and gap records. |
+| `logs.stream({ after? }, { signal? })` | Retained output followed by new output until the output closes. |
 
 Command operations use the explicitly authenticated `HelmrClient`, including
 when that client is constructed inside Agent code. Its credentials determine
@@ -75,14 +90,14 @@ const command = await computer.exec({
   idempotencyKey: "test:revision-42",
 })
 
-for await (const record of command.streamLogs({}, { signal })) {
+for await (const record of command.logs.stream({}, { signal })) {
   if (record.kind === "output") {
     const destination = record.stream === "stdout" ? process.stdout : process.stderr
     destination.write(record.content)
   } else {
     console.warn(`Missing ${record.stream} chunks: ${record.fromSequence}–${record.throughSequence}`)
   }
-  // Persist after processing to reconnect with streamLogs({ after: record.cursor }).
+  // Persist after processing to reconnect with logs.stream({ after: record.cursor }).
 }
 const outcome = await command.wait()
 ```
@@ -92,7 +107,7 @@ lines or UTF-8 characters. Each record has an opaque cursor and identifies stdou
 or stderr. Ordering is preserved within each stream; timestamps do not establish a
 causal order between stdout and stderr.
 
-Finite pages contain `items` and a `nextCursor` when records were returned. Follow
+Finite pages contain `items`, `outputState` (`open`, `closed`, or `unavailable`), and a `nextCursor` when records were returned. Follow
 that cursor to request another page; an empty page does not mean a running command
 has finished. Streaming handles temporary log-delivery lag without advancing past
 undelivered output. The command outcome can be available before logs finish
@@ -100,7 +115,7 @@ reaching their read store.
 
 Call `command.cancel()` to request termination. Repeated calls return the same
 retained operation receipt; the receipt confirms intent, not process exit. Use
-`retrieve()` or `wait()` for the outcome. Pending work that has not been assigned is
+`get()` or `wait()` for the outcome. Pending work that has not been assigned is
 cancelled without starting. Assigned work retains its execution identity until the
 worker confirms cleanup; `processReconciled` reports that separate fact. Commands
 are independent of Session lifecycles; cancelling a Session does not cancel
@@ -112,3 +127,5 @@ failed producer's final output cannot be established, observation reports an err
 instead of a successful empty history. Complete-history reads are unavailable once
 the Command's creation time crosses the 90-day retention boundary, even if some
 newer chunks have not yet expired from storage.
+
+Execution and observation timeouts accept positive integer milliseconds or a positive integer followed by `ms`, `s`, `m`, `h`, or `d`. Compound and fractional strings are rejected. An observation timeout stops waiting without cancelling execution. Aborts and transport failures reject; a nonzero process exit remains an ordinary `exited` outcome.

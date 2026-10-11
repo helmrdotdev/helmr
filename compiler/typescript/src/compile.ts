@@ -1,5 +1,5 @@
 import type { InputContent } from "@helmr/sdk"
-import { normalizeInput, encodeComputerSecrets, inspectImage, canonicalizeJsonValue, type InternalImage, type InternalImageStep, type JsonValue, type DefinitionIndex, type RuntimeArchitecture } from "@helmr/sdk/internal"
+import { durationMilliseconds, normalizeInput, encodeComputerSecrets, inspectImage, canonicalizeJsonValue, type InternalImage, type InternalImageStep, type JsonValue, type DefinitionIndex, type RuntimeArchitecture } from "@helmr/sdk/internal"
 import type { AgentDefinition, ComputerDefinition, SecretBinding, Json } from "@helmr/sdk"
 import { compareUTF8, hasOnlyUnicodeScalarValues } from "./utf8"
 
@@ -106,7 +106,7 @@ export function analyze(options: AnalyzeOptions): AnalysisResult {
         triggers[key] = { cron: trigger.cron, timezone: trigger.timezone, input: trigger.input, ...(trigger.slack === undefined ? {} : { slack: { channelId: trigger.slack.channelId } }) }
       }
       return { kind: "agent", declaredId: definition.id, manifest: {
-        computerDefinitionId: definition.computer.id, setup: definition.setup !== undefined, triggers,
+        computerDefinitionId: definition.computer.id, setup: definition.init !== undefined, triggers,
         ...(definition.closeAfterIdle === undefined ? {} : { closeAfterIdleMs: duration(definition.closeAfterIdle, "closeAfterIdle") }),
         ...(definition.maxTurnDuration === undefined ? {} : { maxTurnDurationMs: duration(definition.maxTurnDuration, "maxTurnDuration") }),
       } }
@@ -143,8 +143,8 @@ function locateDefinitions(options: AnalyzeOptions): LocatedDefinition[] {
     const value = item.value as Partial<Definition> | undefined
     if (!value || (value.kind !== "agent" && value.kind !== "computer")) continue
     if (value.kind === "agent") {
-      assertMembers(value, ["kind", "id", "computer", "setup", "turn", "closeAfterIdle", "maxTurnDuration", "triggers"], "Agent")
-      if (typeof value.turn !== "function" || (value.setup !== undefined && typeof value.setup !== "function") || value.computer?.kind !== "computer") throw new Error("Invalid Agent definition")
+      assertMembers(value, ["kind", "id", "computer", "init", "turn", "closeAfterIdle", "maxTurnDuration", "triggers"], "Agent")
+      if (typeof value.turn !== "function" || (value.init !== undefined && typeof value.init !== "function") || value.computer?.kind !== "computer") throw new Error("Invalid Agent definition")
       add(value as Definition, item, false)
       add(value.computer, item, true)
     } else add(value as Definition, item, false)
@@ -172,16 +172,7 @@ export function normalizeComputerResources(resources: Readonly<{ cpu: number; me
   assertMembers(resources, ["cpu", "memory", "disk"], "Computer resources")
   return { milliCpu: normalizeCpu(resources.cpu), memoryMiB: normalizeIecMiB(resources.memory, "memory"), ...(resources.disk === undefined ? {} : { diskMiB: normalizeIecMiB(resources.disk, "disk") }) }
 }
-function duration(value: string | number, label: string): number {
-  if (typeof value === "number") {
-    if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${label} must be positive safe integer milliseconds`)
-    return value
-  }
-  const match = /^([1-9][0-9]*)(ms|s|m|h|d)$/.exec(value)
-  if (!match) throw new Error(`${label} must be a positive duration`)
-  const scale: Record<string, bigint> = { ms: 1n, s: 1000n, m: 60000n, h: 3600000n, d: 86400000n }
-  return safePositiveNumber(BigInt(match[1]!) * scale[match[2]!]!, label)
-}
+const duration = durationMilliseconds
 
 function compileImageBuild(
   root: InternalImage,

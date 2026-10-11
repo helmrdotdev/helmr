@@ -11,13 +11,13 @@ helmr session list [--agent AGENT_UUID] [--key KEY] [--status STATUS] [--limit N
 helmr session get SESSION_ID [--json]
 helmr session send SESSION_ID (--data-json JSON | --data-file FILE) [--json]
 helmr session enqueue SESSION_ID (--input-json JSON | --input-file FILE) [--json]
-helmr session turn list SESSION_ID [--limit N] [--cursor CURSOR] [--json]
-helmr session turn get SESSION_ID TURN_ID [--json]
-helmr session turn wait SESSION_ID TURN_ID --timeout DURATION [--json]
-helmr session turn ask list SESSION_ID TURN_ID [--limit N] [--cursor CURSOR] [--json]
-helmr session turn ask get SESSION_ID TURN_ID ASK_ID [--json]
-helmr session turn ask respond SESSION_ID TURN_ID ASK_ID (--answer-json JSON | --answer-file FILE) [--response-id ID] [--json]
-helmr session turn send SESSION_ID TURN_ID (--data-json JSON | --data-file FILE) [--json]
+helmr session turn list --session SESSION_ID [--limit N] [--cursor CURSOR] [--json]
+helmr session turn get TURN_ID --session SESSION_ID [--json]
+helmr session turn wait TURN_ID --session SESSION_ID --timeout DURATION [--json]
+helmr session turn ask list --session SESSION_ID --turn TURN_ID [--limit N] [--cursor CURSOR] [--json]
+helmr session turn ask get ASK_ID --session SESSION_ID --turn TURN_ID [--json]
+helmr session turn ask respond ASK_ID --session SESSION_ID --turn TURN_ID (--answer-json JSON | --answer-file FILE) [--response-id ID] [--json]
+helmr session turn send TURN_ID --session SESSION_ID (--data-json JSON | --data-file FILE) [--json]
 helmr session interrupt SESSION_ID [--json]
 helmr session resume SESSION_ID --hold HOLD_ID [--json]
 helmr session events SESSION_ID [--after N] [--limit N] [--json | --jsonl]
@@ -86,7 +86,7 @@ the active Turn or clear a hold. Use `get` to observe the final Session state.
 ## Observe recovery
 
 Helmr reconciles routine saving without replaying authored processing. Healthy
-continuation restores setup and native state. If valid continuation is lost,
+continuation restores initialization and native state. If valid continuation is lost,
 inspect the runtime hold and explicitly resume the authorized recovery. Completed
 results remain; unpublished file changes can be lost and uncertain callbacks are
 not replayed. Use `get` and Session events to observe progress.

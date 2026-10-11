@@ -142,7 +142,7 @@ export function ComputerDetail() {
                     <DetailItem label="Key">
                       <Show when={current().key} fallback={<span class="text-console-faint">—</span>}>{(key) => <code>{key()}</code>}</Show>
                     </DetailItem>
-                    <DetailItem label="Computer definition"><code>{current().definition_key}</code></DetailItem>
+                    <DetailItem label="Created from"><code>{current().definition_id}</code></DetailItem>
                     <DetailItem label="Deployment">
                       <IDText value={current().deployment_id} mode="link" href={deploymentHref(current().deployment_id)} />
                     </DetailItem>

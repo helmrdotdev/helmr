@@ -54,7 +54,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	}
 	h := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys}
 	owner := h.session(t, f.User, org)
-	base := fmt.Sprintf("/api/projects/%s/environments/%s/agents", project, f.Environment)
+	base := fmt.Sprintf("/api/projects/%s/environments/%s/agent-definitions", project, f.Environment)
 	get := func(path, token string, status int) []byte {
 		t.Helper()
 		r := h.request(t, http.MethodGet, path, token, "")
@@ -64,7 +64,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 		return r.Body.Bytes()
 	}
 
-	computerBase := strings.TrimSuffix(base, "/agents") + "/computer-definitions"
+	computerBase := strings.TrimSuffix(base, "/agent-definitions") + "/computer-definitions"
 	var definitions api.ListComputerDefinitionsResponse
 	if err := json.Unmarshal(get(computerBase, owner, http.StatusOK), &definitions); err != nil {
 		t.Fatal(err)
@@ -79,25 +79,27 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	if computerDefinition.ID != "fixture-computer" || computerDefinition.DeploymentID != f.Deployment.String() {
 		t.Fatalf("computer definition: %+v", computerDefinition)
 	}
-	get(strings.TrimSuffix(base, "/agents")+"/sandboxes", owner, http.StatusNotFound)
+	get(strings.TrimSuffix(base, "/agent-definitions")+"/sandboxes", owner, http.StatusNotFound)
+	get(strings.TrimSuffix(base, "/agent-definitions")+"/agents", owner, http.StatusNotFound)
+	get(strings.TrimSuffix(base, "/agent-definitions")+"/agents/agent", owner, http.StatusNotFound)
 	get(base, "", http.StatusUnauthorized)
 	viewer := h.user(t, "Viewer")
 	h.member(t, org, viewer, db.OrgMemberRoleViewer)
 	get(base, h.session(t, viewer, org), http.StatusOK)
-	var first api.ListAgentsResponse
+	var first api.ListAgentDefinitionsResponse
 	if err := json.Unmarshal(get(base+"?limit=1", owner, http.StatusOK), &first); err != nil {
 		t.Fatal(err)
 	}
-	if first.DeploymentID != f.Deployment.String() || len(first.Agents) != 1 || first.Agents[0].ID != "agent" || first.NextCursor == "" {
+	if first.DeploymentID != f.Deployment.String() || len(first.AgentDefinitions) != 1 || first.AgentDefinitions[0].ID != "agent" || first.AgentDefinitions[0].AgentID != f.Agent.String() || first.NextCursor == "" {
 		t.Fatalf("first page: %+v", first)
 	}
 	// Removing the mutable current selection must not move the cursor's snapshot.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=NULL WHERE id=$1`, f.Environment)
-	var second api.ListAgentsResponse
+	var second api.ListAgentDefinitionsResponse
 	if err := json.Unmarshal(get(base+"?cursor="+url.QueryEscape(first.NextCursor), owner, http.StatusOK), &second); err != nil {
 		t.Fatal(err)
 	}
-	if second.DeploymentID != first.DeploymentID || len(second.Agents) != 1 || second.Agents[0].ID != "zebra" || second.NextCursor != "" {
+	if second.DeploymentID != first.DeploymentID || len(second.AgentDefinitions) != 1 || second.AgentDefinitions[0].ID != "zebra" || second.NextCursor != "" {
 		t.Fatalf("second page: %+v", second)
 	}
 	get(computerBase+"?cursor="+url.QueryEscape(first.NextCursor), owner, http.StatusBadRequest)
@@ -106,7 +108,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	if err := json.Unmarshal(get(base+"/agent"+selected, owner, http.StatusOK), &item); err != nil {
 		t.Fatal(err)
 	}
-	if item.ID != "agent" || item.DeploymentID != first.DeploymentID {
+	if item.ID != "agent" || item.AgentID != f.Agent.String() || item.DeploymentID != first.DeploymentID {
 		t.Fatalf("item: %+v", item)
 	}
 	get(base, owner, http.StatusNotFound)
@@ -128,9 +130,9 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 		return key.Raw
 	}
 	reader := issue(auth.PermissionSessionsRead)
-	get("/v1/agents"+selected, reader, http.StatusOK)
-	get("/v1/agents/agent"+selected, reader, http.StatusOK)
-	get("/v1/agents"+selected, issue(auth.PermissionAgentsStart), http.StatusForbidden)
+	get("/v1/agent-definitions"+selected, reader, http.StatusOK)
+	get("/v1/agent-definitions/agent"+selected, reader, http.StatusOK)
+	get("/v1/agent-definitions"+selected, issue(auth.PermissionAgentsStart), http.StatusForbidden)
 	dbtest.MustExec(t, t.Context(), f.Pool, `
  UPDATE environments SET current_deployment_id=$2 WHERE id=$1;
  UPDATE computer_preparation_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1;
@@ -155,7 +157,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := json.Marshal(map[string]string{"url": sdkServer.URL, "apiKey": sdkKey.Raw, "deploymentId": f.Deployment.String()})
+	input, err := json.Marshal(map[string]string{"url": sdkServer.URL, "apiKey": sdkKey.Raw, "deploymentId": f.Deployment.String(), "agentId": f.Agent.String()})
 	if err != nil {
 		t.Fatal(err)
 	}

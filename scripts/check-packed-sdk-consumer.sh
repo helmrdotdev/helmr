@@ -52,9 +52,9 @@ const machine: ComputerDefinition = computer({
 })
 const fixture: AgentDefinition<InputContent, string, { ready: boolean }> = agent<InputContent, string, { ready: boolean }>({
   id: "packed-consumer", computer: machine,
-  setup: () => ({ ready: true }),
+  init: () => ({ ready: true }),
   turn: async (turn, ctx) => {
-    if (!ctx.setupResult.ready) throw new Error("setup result unavailable")
+    if (!ctx.initResult.ready) throw new Error("setup result unavailable")
     await turn.output.write("working")
     await turn.respond("done")
     return turn.input.map(part => part.text).join("")
@@ -97,7 +97,7 @@ const started = await client.agents.start(fixture.id, {
   input: [{ type: "text", text: "typed" }], computer: client.computers.ref(computerID), idempotencyKey: "start-1",
 })
 if (!started.created || started.session.id !== sessionID || started.turn.id !== turnID) throw new Error("invalid Agent admission")
-const session = client.sessions.get(sessionID)
+const session = client.sessions.ref(sessionID)
 const queued = await session.enqueue([{ type: "text", text: JSON.stringify({ issue: "APP-42" }) }], { idempotencyKey: "queue-1" })
 if (queued.id !== turnID) throw new Error("enqueue did not return the exact Turn reference")
 const message = await queued.send([{ type: "text", text: "answer" }])

@@ -23,7 +23,7 @@ await verify("program-replacement", async ({ client, marker, objects, computer, 
   assert(firstOutput !== null && typeof firstOutput === "object" && !Array.isArray(firstOutput))
   assert("ok" in firstOutput)
   assertEqual(firstOutput.ok, true, "Initial filesystem checks failed")
-  assertEqual((await first.session.retrieve()).deploymentId, previous.id, "Initial Session used a different deployment")
+  assertEqual((await first.session.get()).deploymentId, previous.id, "Initial Session used a different deployment")
   assert(!("programRevision" in firstOutput), "Initial Turn already used replacement code")
   const transition = { computerId: shared.id, firstSessionId: first.session.id, firstTurnId: first.turn.id, firstOutput, nextDigest }
   await writeFile(join(process.env.HELMR_EVIDENCE_DIR!, "ready-for-deploy.json"), JSON.stringify(transition, null, 2) + "\n", { mode: 0o600 })
@@ -44,7 +44,7 @@ await verify("program-replacement", async ({ client, marker, objects, computer, 
   assert("ok" in followupOutput)
   assertEqual(followupOutput.ok, true, "Pinned Session lost Computer writes")
   assert(!("programRevision" in followupOutput), "Existing Session changed its pinned code")
-  assertEqual((await first.session.retrieve()).deploymentId, previous.id, "Existing Session changed its deployment")
+  assertEqual((await first.session.get()).deploymentId, previous.id, "Existing Session changed its deployment")
   const second = await startAgent("runtime-smoke", {
     computer: shared, input: input("second", `${marker}:followup`), idempotencyKey: `${marker}:second`,
   })
@@ -52,7 +52,7 @@ await verify("program-replacement", async ({ client, marker, objects, computer, 
   assert(secondOutput !== null && typeof secondOutput === "object" && !Array.isArray(secondOutput))
   assert("ok" in secondOutput)
   assertEqual(secondOutput.ok, true, "New Session lost Computer writes")
-  assertEqual((await second.session.retrieve()).deploymentId, next.id, "New Session did not use the promoted deployment")
+  assertEqual((await second.session.get()).deploymentId, next.id, "New Session did not use the promoted deployment")
   assert("programRevision" in secondOutput)
   assertEqual(secondOutput.programRevision, "next", "New Session executed old code")
   objects.deployment_ids.push(previous.id, next.id)

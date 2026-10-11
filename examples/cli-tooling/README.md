@@ -11,5 +11,5 @@ helmr agent start cli-tooling --text '{"pattern":"export const"}' --project PROJ
 ```
 
 The Agent parses its options from JSON in the text. Use the returned Session and Turn IDs with
-`helmr session turn wait SESSION_ID TURN_ID --timeout 5m --json` and the same scope
+`helmr session turn wait TURN_ID --session SESSION_ID --timeout 5m --json` and the same scope
 flags. The report is the machine result after successful settlement.

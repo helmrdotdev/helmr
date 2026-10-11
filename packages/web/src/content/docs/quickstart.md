@@ -74,8 +74,8 @@ Use the IDs from the receipt:
 
 ```sh
 helmr session events SESSION_ID --project PROJECT --env ENVIRONMENT
-helmr session turn wait SESSION_ID TURN_ID --timeout 10m --project PROJECT --env ENVIRONMENT --json
-helmr session turn get SESSION_ID TURN_ID --project PROJECT --env ENVIRONMENT --json
+helmr session turn wait TURN_ID --session SESSION_ID --timeout 10m --project PROJECT --env ENVIRONMENT --json
+helmr session turn get TURN_ID --session SESSION_ID --project PROJECT --env ENVIRONMENT --json
 ```
 
 Read events while work proceeds. The bounded wait returns either a settled

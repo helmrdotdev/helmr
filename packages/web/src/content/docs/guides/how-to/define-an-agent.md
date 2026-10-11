@@ -1,6 +1,6 @@
 ---
 title: Define an Agent
-description: Select a Computer and handle serial inputs with optional setup.
+description: Select a Computer and handle serial inputs with optional initialization.
 ---
 
 # Define an Agent
@@ -19,13 +19,13 @@ export const workspace = computer({
 export const reviewer = agent({
   id: "reviewer",
   computer: workspace,
-  async setup(ctx) {
+  async init(ctx) {
     return { sessionId: ctx.session.id }
   },
   async turn(turn, ctx) {
     await turn.output.write("Review started")
     await turn.respond("Review complete")
-    return { input: turn.input, sessionId: ctx.setupResult.sessionId }
+    return { input: turn.input, sessionId: ctx.initResult.sessionId }
   },
 })
 ```
@@ -37,8 +37,8 @@ repository checks before return. Stage a human response separately from the JSON
 machine result.
 
 Setup is optional and its result is reused across healthy continuation. Use
-`turn.signal` for Turn work and `ctx.signal` for process/setup cancellation. For
-native harnesses, open one managed harness in setup and preserve its conversation
+`turn.signal` for Turn work and `ctx.signal` for process/initialization cancellation. For
+native harnesses, open one managed harness in initialization and preserve its conversation
 identity across Turns. Follow the native SDK's permission and cancellation model.
 
 Deploy, then [start the Agent](/docs/guides/how-to/start-an-agent). No manual

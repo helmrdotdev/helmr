@@ -4,9 +4,11 @@ export type DefinitionListItem = {
   id: string;
 };
 
-export type ListAgentsResponse = {
+export type AgentDefinitionListItem = DefinitionListItem & { agent_id: string };
+
+export type ListAgentDefinitionsResponse = {
   deployment_id: string;
-  agents: DefinitionListItem[];
+  agent_definitions: AgentDefinitionListItem[];
   next_cursor?: string;
 };
 
@@ -29,15 +31,15 @@ export type DefinitionListOptions = {
   limit?: number | undefined;
 };
 
-export async function listAgents(options: DefinitionListOptions): Promise<ListAgentsResponse> {
-  return request<ListAgentsResponse>(definitionPath("agents", options));
+export async function listAgentDefinitions(options: DefinitionListOptions): Promise<ListAgentDefinitionsResponse> {
+  return request<ListAgentDefinitionsResponse>(definitionPath("agent-definitions", options));
 }
 
 export async function listComputerDefinitions(options: DefinitionListOptions): Promise<ListComputerDefinitionsResponse> {
   return request<ListComputerDefinitionsResponse>(definitionPath("computer-definitions", options));
 }
 
-function definitionPath(kind: "agents" | "computer-definitions", options: DefinitionScope & Partial<DefinitionListOptions>): string {
+function definitionPath(kind: "agent-definitions" | "computer-definitions", options: DefinitionScope & Partial<DefinitionListOptions>): string {
   if (!options.projectID || !options.environmentID) {
     throw new Error("project and environment are required");
   }

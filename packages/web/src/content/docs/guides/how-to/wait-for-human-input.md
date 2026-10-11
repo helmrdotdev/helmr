@@ -26,9 +26,9 @@ its machine result or staging a response.
 Find and answer the question from an authenticated CLI:
 
 ```sh
-helmr session turn ask list SESSION_ID TURN_ID --project agents --env development --json
-helmr session turn ask get SESSION_ID TURN_ID ASK_ID --project agents --env development --json
-helmr session turn ask respond SESSION_ID TURN_ID ASK_ID \
+helmr session turn ask list --session SESSION_ID --turn TURN_ID --project agents --env development --json
+helmr session turn ask get ASK_ID --session SESSION_ID --turn TURN_ID --project agents --env development --json
+helmr session turn ask respond ASK_ID --session SESSION_ID --turn TURN_ID \
   --project agents --env development \
   --answer-json '"revision-42"' --response-id answer:revision-42 --json
 ```

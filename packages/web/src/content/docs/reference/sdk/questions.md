@@ -44,7 +44,7 @@ import { HelmrClient } from "@helmr/sdk"
 const url = process.env["HELMR_API_URL"]
 if (!url) throw new Error("Set HELMR_API_URL to your control plane URL")
 const client = new HelmrClient({ url, apiKey: process.env["HELMR_API_KEY"]! })
-const turn = client.sessions.get("SESSION_ID").turn("TURN_ID")
+const turn = client.sessions.ref("SESSION_ID").turns.ref("TURN_ID")
 const page = await turn.asks.list({ limit: 50 })
 const question = await turn.asks.get("ASK_ID")
 const receipt = await turn.asks.respond("ASK_ID", {

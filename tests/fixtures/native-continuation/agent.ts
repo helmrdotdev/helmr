@@ -19,7 +19,7 @@ interface SetupState {
 function specimen(provider: "codex" | "claude") {
   return {
     kind: "agent" as const, id: provider, computer: { kind: "computer" as const, id: "native-continuation" },
-    async setup(context: { session: { id: string } }): Promise<SetupState> {
+    async init(context: { session: { id: string } }): Promise<SetupState> {
       const directory = join("/workspace", context.session.id)
       await mkdir(directory, { recursive: true })
       const endpoints = JSON.parse(await readFile("/workspace/native-models.json", "utf8")) as { codex: number; claude: number; host?: string }
@@ -38,8 +38,8 @@ function specimen(provider: "codex" | "claude") {
         : await ClaudeHarness.open(directory, context.session.id, environment, { helmr: { type: "http", url: mcp.url, headers: mcp.headers } })
       return { harness, mcp, count: 0, nonce: crypto.randomUUID() }
     },
-    async turn(turn: Turn, context: { setupResult: SetupState }) {
-      const state = context.setupResult
+    async turn(turn: Turn, context: { initResult: SetupState }) {
+      const state = context.initResult
       const result = await state.harness.run(turn, String(fixtureValue(turn.input)))
       return { count: ++state.count, pid: process.pid, nativePid: state.harness.processId!, nonce: state.nonce,
         result }

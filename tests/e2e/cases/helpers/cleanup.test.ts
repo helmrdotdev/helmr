@@ -17,7 +17,7 @@ for (const cancelFails of [false, true]) {
           ], nextCursor: "next",
         } : { items: [{ id: relation === "parentSessionId" ? "owned" : "independent", computerId: "ours", [relation]: "parent" }] }
       },
-      get: (id: string) => ({ cancel: async () => {
+      ref: (id: string) => ({ cancel: async () => {
         expect(queries).toHaveLength(4)
         cancelled.push(id)
         if (cancelFails && id === "owned") throw new Error("cancel failed")

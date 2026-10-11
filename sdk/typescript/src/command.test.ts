@@ -23,8 +23,8 @@ describe("Command observation", () => {
   test("timeout interrupts a stalled status request without cancelling the execution", async () => {
     const wait = waitForCommand(id, (signal) => new Promise((_resolve, reject) => {
       signal!.addEventListener("abort", () => reject(signal!.reason), { once: true })
-    }), { waitTimeout: "10ms" })
-    await expect(wait).rejects.toMatchObject({ name: "TimeoutError" })
+    }), { timeout: "10ms" })
+    await expect(wait).resolves.toEqual({ status: "timeout" })
   })
 
   test("nonzero exit and pending cleanup are an available outcome", async () => {
@@ -85,10 +85,10 @@ test("explicit client command authority is independent of the installed runtime"
   try {
     const ref = await client.computers.ref(computerId).exec({ command: ["true"], idempotencyKey: "command" }, { signal })
     expect(ref.id).toBe(id)
-    expect((await ref.retrieve({ signal })).status).toBe("exited")
+    expect((await ref.get({ signal })).status).toBe("exited")
     expect(await ref.wait({ signal })).toMatchObject({ kind: "exited", exitCode: 0 })
-    expect(await ref.logs({}, { signal })).toEqual({ items: [] })
-    expect(await ref.streamLogs({}, { signal }).next()).toEqual({ done: true, value: undefined })
+    expect(await ref.logs.list({}, { signal })).toEqual({ items: [], outputState: "closed" })
+    expect(await ref.logs.stream({}, { signal }).next()).toEqual({ done: true, value: undefined })
     expect(await client.commands.ref(id).cancel({ signal })).toEqual({ id: computerId, targetId: id, status: "accepted" })
     expect(calls.map(call => call.path)).toEqual([
       `/v1/computers/${computerId}/exec`, `/v1/commands/${id}`, `/v1/commands/${id}`,
@@ -100,8 +100,19 @@ test("explicit client command authority is independent of the installed runtime"
     }
     expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({ command: ["true"], idempotency_key: "command" })
     denied = true
-    await expect(ref.retrieve()).rejects.toMatchObject({ code: "permission_required" })
+    await expect(ref.get()).rejects.toMatchObject({ code: "permission_required" })
   } finally {
     uninstall()
   }
+})
+
+test("bounded wait returns settlement while a stalled transport cannot defeat its deadline", async () => {
+  const info = parseCommandInfo({ id, computer_id: computerId, status: "exited", process_reconciled: false,
+    outcome: { command_id: id, kind: "exited", exit_code: 7, terminal_at: "2026-10-08T00:00:00Z" } })
+  expect(await waitForCommand(id, async () => info, { timeout: 1000 })).toEqual({ status: "settled", outcome: info.outcome! })
+  expect(await waitForCommand(id, () => new Promise(() => {}), { timeout: 10 })).toEqual({ status: "timeout" })
+  const failure = new Error("network unavailable")
+  await expect(waitForCommand(id, async () => { throw failure }, { timeout: 1000 })).rejects.toBe(failure)
+  const signal = AbortSignal.abort(failure)
+  await expect(waitForCommand(id, () => new Promise(() => {}), { timeout: 1000, signal })).rejects.toBe(failure)
 })

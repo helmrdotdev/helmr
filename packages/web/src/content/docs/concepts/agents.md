@@ -1,6 +1,6 @@
 ---
 title: Agents
-description: Define Computer placement, setup and one handler for each admitted input.
+description: Define Computer placement, initialization and one handler for each admitted input.
 ---
 
 # Agents
@@ -21,20 +21,20 @@ const workspace = computer({
 export const reviewer = agent({
   id: "reviewer",
   computer: workspace,
-  async setup(ctx) {
+  async init(ctx) {
     return { sessionId: ctx.session.id, turns: 0 }
   },
   async turn(turn, ctx) {
-    ctx.setupResult.turns += 1
+    ctx.initResult.turns += 1
     await turn.output.write("Review started")
     await turn.respond("Review complete")
-    return { input: turn.input, turns: ctx.setupResult.turns }
+    return { input: turn.input, turns: ctx.initResult.turns }
   },
 })
 ```
 
-`setup` is optional. Its result may contain mutable objects or native handles.
-Healthy hibernation preserves it; exceptional reconstruction can rerun setup
+`init` is optional. Its result may contain mutable objects or native handles.
+Healthy hibernation preserves it; exceptional reconstruction can rerun initialization
 against retained disk. It is not a separate durable key/value store. Use
 `ctx.recovery` to distinguish initialization from reconstruction and reconcile
 external effects in application code.
@@ -48,7 +48,7 @@ request an automatic retry.
 and finalization. `closeAfterIdle` optionally closes the Session identity; it is
 separate from compute release. Neither has a universal duration default.
 
-Use `turn.signal` to cancel Turn work and `ctx.signal` for setup/process shutdown.
+Use `turn.signal` to cancel Turn work and `ctx.signal` for initialization/process shutdown.
 The managed MCP connection carries Session runtime authority. Root Sessions can
 create owned children with `spawn` or independent roots with `start`. An explicit
 `HelmrClient` uses only its supplied authentication, including inside Agent code.

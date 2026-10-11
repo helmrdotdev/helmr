@@ -1,5 +1,5 @@
 import { callMcp, waitManagedTurn, type ManagedAdmission } from "../../support/runtime-mcp"
-import { agent, computer, image, type ComputerRef, type Json, type Turn } from "@helmr/sdk"
+import { agent, computer, image, type ComputerIdentity, type Json, type Turn } from "@helmr/sdk"
 import { setTimeout as delay } from "node:timers/promises"
 
 const modes = ["progress", "long", "text", "choice", "withdraw", "empty", "silent", "stop", "multi"] as const
@@ -32,7 +32,7 @@ async function progress(turn: Turn, speaker: string, marker: string, count: numb
   }
 }
 
-async function conversation(turn: Turn, speaker: string, currentComputer: ComputerRef): Promise<Json> {
+async function conversation(turn: Turn, speaker: string, currentComputer: ComputerIdentity): Promise<Json> {
   const { mode, marker } = command(turn.input)
   const result: { marker: string; speaker: string; mode: Mode; privateMarker: string; answer?: Json } = {
     marker, speaker, mode, privateMarker: `PRIVATE_RETURN_${marker}`,

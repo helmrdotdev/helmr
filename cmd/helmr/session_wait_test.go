@@ -44,7 +44,7 @@ func TestSessionTurnWaitObservesWithoutMutations(t *testing.T) {
 			cmd := newRootCommand()
 			cmd.SetOut(&out)
 			cmd.SetErr(&bytes.Buffer{})
-			cmd.SetArgs([]string{"session", "turn", "wait", testSessionID, turn, "--timeout", tc.timeout, "--json"})
+			cmd.SetArgs([]string{"session", "turn", "wait", turn, "--session", testSessionID, "--timeout", tc.timeout, "--json"})
 			err := cmd.Execute()
 			if tc.name == "forbidden" || tc.name == "unknown" {
 				if err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -83,7 +83,7 @@ func TestSessionTurnWaitCancellationAndIdentity(t *testing.T) {
 			cmd := newRootCommand()
 			cmd.SetOut(&bytes.Buffer{})
 			cmd.SetErr(&bytes.Buffer{})
-			cmd.SetArgs([]string{"session", "turn", "wait", testSessionID, turn, "--timeout", "2s", "--json"})
+			cmd.SetArgs([]string{"session", "turn", "wait", turn, "--session", testSessionID, "--timeout", "2s", "--json"})
 			if err := cmd.ExecuteContext(ctx); err == nil {
 				t.Fatal("invalid observation succeeded")
 			}
@@ -114,7 +114,7 @@ func TestSessionTurnWaitIncludesFinalizingBeforeSettlement(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"session", "turn", "wait", testSessionID, turn, "--timeout", "3s", "--json"})
+	cmd.SetArgs([]string{"session", "turn", "wait", turn, "--session", testSessionID, "--timeout", "3s", "--json"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}

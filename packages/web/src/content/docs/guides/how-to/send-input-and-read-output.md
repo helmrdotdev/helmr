@@ -16,7 +16,7 @@ helmr session enqueue SESSION_ID \
 
 Reuse the same key and input for retries of that request. To steer current work,
 use `helmr session send ... --data-json JSON`; it targets active work or enqueues
-when idle. Exact `helmr session turn send SESSION_ID TURN_ID --data-json JSON`
+when idle. Exact `helmr session turn send TURN_ID --session SESSION_ID --data-json JSON`
 never retargets another Turn. Message acceptance is separate from delivery and
 application. Held Sessions reject automatic send. Questions use the
 [exact ask response API](/docs/guides/how-to/wait-for-human-input).
@@ -38,7 +38,7 @@ import { HelmrClient } from "@helmr/sdk"
 const url = process.env["HELMR_API_URL"]
 if (!url) throw new Error("Set HELMR_API_URL to your control plane URL")
 const client = new HelmrClient({ url, apiKey: process.env["HELMR_API_KEY"]! })
-const session = client.sessions.get("SESSION_ID")
+const session = client.sessions.ref("SESSION_ID")
 const turn = await session.enqueue([{ type: "text", text: "also update the tests" }], {
   idempotencyKey: "request:revision-42:tests",
 })

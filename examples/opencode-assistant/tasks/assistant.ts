@@ -18,7 +18,7 @@ export const assistant = agent({
   id: "opencode-assistant",
   computer: workspace,
   maxTurnDuration: "15m",
-  async setup(context) {
+  async init(context) {
     if (!process.env.OPENCODE_GO_API_KEY) throw new Error("Configure the OpenCode Go Environment Secret before starting")
     return OpenCodeHarness.open("/workspace", context.session.id, {
       model: "opencode-go/glm-5.3",
@@ -27,11 +27,11 @@ export const assistant = agent({
       provider: { "opencode-go": { options: { apiKey: "{env:OPENCODE_GO_API_KEY}" } } },
     })
   },
-  async turn(turn, { setupResult }) {
+  async turn(turn, { initResult }) {
     await turn.onMessage(async () => {
       throw new MessageRejected("Answer the current question, or enqueue a new instruction after this task")
     })
-    return setupResult.run(turn, inputText(turn.input))
+    return initResult.run(turn, inputText(turn.input))
   },
 })
 

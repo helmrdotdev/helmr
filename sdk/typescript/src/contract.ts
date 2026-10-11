@@ -15,7 +15,7 @@ export interface CursorPage<T> {
   readonly nextCursor?: string
 }
 
-export type Duration = string
+export type { Duration } from "./duration"
 
 export interface HelmrError extends Error {
   readonly code: string
@@ -179,7 +179,7 @@ export interface AskState {
 }
 export type AskResponseReceipt = Omit<AskState, "prompt" | "answerControl">
 export interface AskQuery { readonly cursor?: string; readonly limit?: number }
-export interface AskPage { readonly asks: readonly AskState[]; readonly nextCursor?: string }
+export type AskPage = CursorPage<AskState>
 export interface TurnAsks {
   list(query?: AskQuery, options?: RequestOptions): Promise<AskPage>
   get(askId: string, options?: RequestOptions): Promise<AskState>
@@ -213,7 +213,7 @@ export interface TurnRef {
     request?: SessionOperationOptions,
     options?: RequestOptions,
   ): Promise<MessageReceipt>
-  retrieve(options?: RequestOptions): Promise<TurnState>
+  get(options?: RequestOptions): Promise<TurnState>
 }
 export type SessionSendResult =
   | Readonly<{ kind: "enqueued"; turn: TurnRef }>
@@ -234,7 +234,7 @@ export interface SessionRef {
     request?: SessionOperationOptions,
     options?: RequestOptions,
   ): Promise<TurnRef>
-  turn(id: string): TurnRef
+  readonly turns: Readonly<{ ref(id: string): TurnRef }>
   readonly events: Readonly<{
     list(
       query?: SessionEventQuery,
@@ -245,7 +245,7 @@ export interface SessionRef {
       options?: RequestOptions,
     ): AsyncIterableIterator<SessionEvent>
   }>
-  retrieve(options?: RequestOptions): Promise<Session>
+  get(options?: RequestOptions): Promise<Session>
   close(
     request?: SessionOperationOptions,
     options?: RequestOptions,

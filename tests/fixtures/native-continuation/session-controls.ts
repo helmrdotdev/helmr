@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 import { setTimeout as delay } from "node:timers/promises"
-import type { AgentDefinition, ComputerRef, Turn } from "../../../sdk/typescript/src/agent"
+import type { AgentDefinition, ComputerIdentity, Turn } from "../../../sdk/typescript/src/agent"
 import { callMcp, fixtureInput, waitManagedTurn, type ManagedAdmission } from "../../e2e/support/runtime-mcp"
 
 async function entered(turn: Turn, session: string, active: string) {
@@ -15,7 +15,7 @@ async function entered(turn: Turn, session: string, active: string) {
     await delay(100, undefined, { signal: turn.signal })
   }
 }
-export async function checkSessionControls(turn: Turn, computer: ComputerRef,
+export async function checkSessionControls(turn: Turn, computer: ComputerIdentity,
   definition: AgentDefinition, owned: { id: string },
   inspect: (sessionId: string, turnId: string) => Promise<{ status: string }>) {
   const enqueue = (text: string) => callMcp<ManagedAdmission>(turn.signal, "enqueue", { sessionId: owned.id, input: fixtureInput(text), idempotencyKey: `${turn.id}:${text}` })

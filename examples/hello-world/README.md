@@ -9,7 +9,7 @@ helmr agent start hello-world --text Helmr --project PROJECT --env ENVIRONMENT -
 ```
 
 The admission includes a Session ID and a Turn ID. Inspect the outcome with
-`helmr session turn wait SESSION_ID TURN_ID --timeout 5m --json`, using the same
+`helmr session turn wait TURN_ID --session SESSION_ID --timeout 5m --json`, using the same
 project and environment flags. A timeout stops observation and leaves work running.
 
 ## Output, response and questions

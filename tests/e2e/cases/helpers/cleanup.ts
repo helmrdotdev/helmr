@@ -23,7 +23,7 @@ export async function cleanupChildren(
   const failures: unknown[] = []
   for (const id of ids) {
     try {
-      await client.sessions.get(id).cancel({ idempotencyKey: `helper-cleanup:${parentId}:${id}` }, { signal: deadline(30_000) })
+      await client.sessions.ref(id).cancel({ idempotencyKey: `helper-cleanup:${parentId}:${id}` }, { signal: deadline(30_000) })
     } catch (error) { failures.push(error) }
   }
   if (failures.length) throw new AggregateError(failures, "Helper Session cleanup failed")

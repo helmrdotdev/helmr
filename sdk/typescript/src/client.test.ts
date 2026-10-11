@@ -8,7 +8,7 @@ describe("HelmrClient Computers", () => {
     const computer = {
       id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
       key: "repository",
-      definition_key: "repository-agent",
+      definition_id: "repository-agent",
       deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
       status: "available",
       residency: "cold",
@@ -24,7 +24,7 @@ describe("HelmrClient Computers", () => {
 			computers: [{
 				id: computer.id,
 				key: computer.key,
-				definition_key: computer.definition_key,
+				definition_id: computer.definition_id,
 				deployment_id: computer.deployment_id,
 				status: "available",
  residency: "unavailable",
@@ -47,12 +47,10 @@ describe("HelmrClient Computers", () => {
     })
     const signal = new AbortController().signal
 
-    await expect(client.computerDefinitions.createComputer("repository-agent", {
-      secrets: [{
+    await expect(client.computers.create({ definition: "repository-agent", secrets: [{
         secretId: { name: "GITHUB_TOKEN" } as never,
         env: { name: "GITHUB_TOKEN", mode: "raw" },
-      }],
-    })).rejects.toThrow("Secret ID")
+      }], })).rejects.toThrow("Secret ID")
     expect(requests).toHaveLength(0)
 
     const inertRef = client.computers.ref(
@@ -61,18 +59,12 @@ describe("HelmrClient Computers", () => {
     expect(inertRef.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")
     expect(requests).toHaveLength(0)
 
-    const created = await client.computerDefinitions.createComputer(
-      "repository-agent",
-      {
-        key: "repository",
+    const created = await client.computers.create({ definition: "repository-agent", key: "repository",
         secrets: [
           { secretId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38", env: { name: "GITHUB_TOKEN", mode: "raw" } },
           { secretId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc39", file: { path: "/run/secrets/model.json" } },
         ],
-        idempotencyKey: "create-repository",
-      },
-      { signal },
-    )
+        idempotencyKey: "create-repository", }, { signal })
     expect(created.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")
     expect(requests[0]!.url).toBe(
       "https://api.example.test/v1/computer-definitions/repository-agent/computers",
@@ -87,18 +79,18 @@ describe("HelmrClient Computers", () => {
     })
     expect(requests[0]!.init?.signal).toBe(signal)
 
-    const retrieved = await created.retrieve({ signal })
+    const retrieved = await created.get({ signal })
     expect(retrieved).toMatchObject({
       id: computer.id,
       key: "repository",
-      definitionKey: "repository-agent",
+      definitionId: "repository-agent",
     })
     expect(requests[1]!.url).toBe(
       "https://api.example.test/v1/computers/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
     )
 
     const matches = await client.computers.list({ key: "repository" })
-    expect(matches.items[0]?.definitionKey).toBe("repository-agent")
+    expect(matches.items[0]?.definitionId).toBe("repository-agent")
     expect(matches.items[0]?.residency).toBe("unavailable")
     expect(requests[2]!.url).toBe(
       "https://api.example.test/v1/computers?key=repository",
@@ -147,7 +139,7 @@ describe("HelmrClient Computers", () => {
     expect(requests).toHaveLength(1)
     expect(await reconstructed.wait()).toMatchObject({ commandId, kind: "exited", exitCode: 17 })
     expect(requests[1]).toBe(`https://api.example.test/v1/commands/${commandId}`)
-    await expect(ref.retrieve()).rejects.toThrow("changed ID")
+    await expect(ref.get()).rejects.toThrow("changed ID")
   })
 })
 
@@ -171,8 +163,8 @@ describe("HelmrClient transport errors", () => {
       })
 
       try {
-        await client.sessions.retrieve("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37")
-        throw new Error("expected Session retrieve to fail")
+        await client.sessions.get("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37")
+        throw new Error("expected Session get to fail")
       } catch (error) {
         expect(error).toMatchObject({
           name: "HelmrError",
@@ -196,8 +188,8 @@ describe("HelmrClient transport errors", () => {
     })
 
     try {
-      await client.sessions.retrieve("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37")
-      throw new Error("expected Session retrieve to fail")
+      await client.sessions.get("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37")
+      throw new Error("expected Session get to fail")
     } catch (error) {
       expect(error).toMatchObject({
         name: "HelmrError",
@@ -258,7 +250,7 @@ describe("HelmrClient Secrets", () => {
     })
     expect(requests[0]!.init?.signal).toBe(signal)
 
-    await client.secrets.retrieve(secretID, { signal })
+    await client.secrets.get(secretID, { signal })
     expect(requests[1]!.url).toBe(
       `https://api.example.test/v1/secrets/${secretID}`,
     )
@@ -337,7 +329,7 @@ describe("HelmrClient Deployments", () => {
 
     await expect(client.deployments.current()).resolves.toBeNull()
     await expect(
-      client.deployments.retrieve("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35"),
+      client.deployments.get("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35"),
     ).resolves.toEqual({
       id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
       version: "2026.07.25.1",
@@ -387,7 +379,7 @@ describe("HelmrClient Schedules", () => {
     const client = new HelmrClient({url:"https://api.example.test",apiKey:"api-key",fetch:(async (input: URL | RequestInfo) => {
       requests.push(String(input)); return String(input).includes("?") ? Response.json({schedules:[schedule],next_cursor:"next"}) : Response.json(schedule)
     }) as typeof fetch})
-    expect(await client.schedules.retrieve(id)).toMatchObject({id,agentId:id,deploymentId:id,triggerKey:"daily",input:[{type:"text",text:"Create the report"}],activeFrom:schedule.active_from})
+    expect(await client.schedules.get(id)).toMatchObject({id,agentId:id,deploymentId:id,triggerKey:"daily",input:[{type:"text",text:"Create the report"}],activeFrom:schedule.active_from})
     const page = await client.schedules.list({agentId:id,limit:2,cursor:"previous"})
     expect(page.items).toHaveLength(1)
     expect(page.nextCursor).toBe("next")
@@ -396,7 +388,7 @@ describe("HelmrClient Schedules", () => {
   test("requires the pinned Agent and Deployment identities",async()=>{
     for (const field of ["id","agent_id","deployment_id"] as const) {
       const client = new HelmrClient({url:"https://api.example.test",apiKey:"api-key",fetch:(async()=>Response.json({...schedule,[field]:"invalid"})) as typeof fetch})
-      await expect(client.schedules.retrieve(id)).rejects.toThrow("ID")
+      await expect(client.schedules.get(id)).rejects.toThrow("ID")
     }
   })
 })
@@ -421,7 +413,7 @@ describe("HelmrClient Sessions", () => {
       fetch: (async () => Response.json(session)) as typeof fetch,
     })
 
-    await expect(client.sessions.retrieve(
+    await expect(client.sessions.get(
       "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
     )).rejects.toThrow("Session.computer_id")
   })
@@ -473,7 +465,7 @@ describe("HelmrClient Sessions", () => {
       })) as typeof fetch,
     })
 
-    await expect(client.sessions.retrieve(sessionId)).rejects.toThrow(
+    await expect(client.sessions.get(sessionId)).rejects.toThrow(
       "Session.status is invalid",
     )
   })

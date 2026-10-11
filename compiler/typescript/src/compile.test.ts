@@ -9,7 +9,7 @@ const compile = (...exports: ReturnType<typeof entry>[]) => analyze({ architectu
 describe("Agent declaration analysis", () => {
   test("bundles inline Computer and all execution functions without running them", () => {
     const prepare = () => { throw new Error("prepare executed during compilation") }
-    const worker = agent({ id: "worker", computer: computer({ ...machine(), prepare, refresh: { every: "1h", maxAge: "1d" }, secrets: [{ secretId: "01900000-0000-7000-8000-000000000001", env: { name: "TOKEN", mode: "raw" } }] }), setup: () => { throw new Error("setup executed") }, turn: () => { throw new Error("turn executed") }, maxTurnDuration: "5m", closeAfterIdle: 1000, triggers: [triggers.cron("hourly", "0 * * * *", { timezone: "Asia/Tokyo", input: [{ type: "text", text: "work" }] })] })
+    const worker = agent({ id: "worker", computer: computer({ ...machine(), prepare, refresh: { every: "1h", maxAge: "1d" }, secrets: [{ secretId: "01900000-0000-7000-8000-000000000001", env: { name: "TOKEN", mode: "raw" } }] }), init: () => { throw new Error("setup executed") }, turn: () => { throw new Error("turn executed") }, maxTurnDuration: "5m", closeAfterIdle: 1000, triggers: [triggers.cron("hourly", "0 * * * *", { timezone: "Asia/Tokyo", input: [{ type: "text", text: "work" }] })] })
     const result = compile(entry(worker))
     expect(result.buildPlan.definitions[1]?.manifest).toMatchObject({ prepare: true })
     expect(result.buildPlan.definitions[0]).toEqual({ kind: "agent", declaredId: "worker", manifest: { computerDefinitionId: "machine", setup: true, maxTurnDurationMs: 300000, closeAfterIdleMs: 1000, triggers: { hourly: { cron: "0 * * * *", timezone: "Asia/Tokyo", input: [{ type: "text", text: "work" }] } } } })

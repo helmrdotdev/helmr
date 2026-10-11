@@ -117,7 +117,7 @@ func computerGetCommand() *cobra.Command {
 			if jsonOutput {
 				return writeJSON(command.OutOrStdout(), snapshot)
 			}
-			_, err = fmt.Fprintf(command.OutOrStdout(), "%s\t%s\t%s\n", snapshot.ID, snapshot.DefinitionKey, snapshot.Status)
+			_, err = fmt.Fprintf(command.OutOrStdout(), "%s\t%s\t%s\n", snapshot.ID, snapshot.DefinitionID, snapshot.Status)
 			return err
 		},
 	}

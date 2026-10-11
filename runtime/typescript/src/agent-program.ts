@@ -1,7 +1,7 @@
 import { normalizeInput, type InputContent } from "../../../sdk/typescript/src/content"
 import { create, fromBinary } from "@bufbuild/protobuf"
 import { agentProto } from "@helmr/proto"
-import type { AgentDefinition, Json, SetupContext, Turn } from "../../../sdk/typescript/src/agent"
+import type { AgentDefinition, Json, InitContext, Turn } from "../../../sdk/typescript/src/agent"
 import { requireJson } from "../../../sdk/typescript/src/agent"
 import { AgentChannel, OperationError, MAX_AGENT_FRAME_BYTES } from "./agent-channel"
 import { SessionActivity } from "./agent-activity"
@@ -84,7 +84,7 @@ export async function runAgentProgram(definitionSource: AgentDefinition<InputCon
         const driver = new GuestSessionDriver(channel, native)
         const kind = start.recoveryKind === agentProto.SessionStart_RecoveryKind.INITIAL ? "initial" : start.recoveryKind === agentProto.SessionStart_RecoveryKind.RECONSTRUCTED ? "reconstructed" : undefined
         if (!kind) throw new Error("Invalid Session recovery kind")
-        const context: SetupContext = {
+        const context: InitContext = {
           session: { id: command.identity.sessionId, ...(start.conversationKey === undefined ? {} : { key: start.conversationKey }), ...(start.parentSessionId === undefined ? {} : { parent: Object.freeze({ id: start.parentSessionId }) }) },
           computer: { id: start.computerId }, deployment: { id: start.deploymentId }, recovery: { kind, ...(start.recoveryReason ? { reason: start.recoveryReason } : {}) }, signal: stopped.signal,
         }

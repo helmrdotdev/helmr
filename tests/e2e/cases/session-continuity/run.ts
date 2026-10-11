@@ -16,11 +16,11 @@ await verify("session-continuity", async ({ client, marker, objects, cleanup, co
   const nextInput = { marker: `${marker}:second`, childComputerId: target.id }
   const second = await first.session.enqueue(fixtureInput(nextInput), { idempotencyKey: `continuity:second:${marker}` })
   objects.turn_ids.push(second.id)
-  const state = await first.session.retrieve()
+  const state = await first.session.get()
   const matches = await client.sessions.list({ agentId: state.agentId, key })
   assertEqual(matches.items.length, 1, "Session key lookup was not exact")
   assertEqual(matches.items[0]!.id, first.session.id, "Session key changed identity")
-  const byKey = client.sessions.get(matches.items[0]!.id)
+  const byKey = client.sessions.ref(matches.items[0]!.id)
   const replay = await byKey.enqueue(fixtureInput(nextInput), { idempotencyKey: `continuity:second:${marker}` })
   assertEqual(replay.id, second.id, "Enqueue replay changed Turn identity")
   const outputs = []
@@ -35,7 +35,7 @@ await verify("session-continuity", async ({ client, marker, objects, cleanup, co
     objects.turn_ids.push(result.childTurnId)
     outputs.push(selected)
   }
-  const firstState = await first.turn.retrieve(), secondState = await second.retrieve()
+  const firstState = await first.turn.get(), secondState = await second.get()
   assert(firstState.sequence < secondState.sequence, "Turn sequence did not preserve FIFO admission")
   const readOutputs = async () => {
     const records = []
@@ -56,7 +56,7 @@ await verify("session-continuity", async ({ client, marker, objects, cleanup, co
   assertEqual(events.map(event => event.turnId), [first.turn.id, second.id], "Paginated output did not retain both Turns in order")
   await byKey.close({ idempotencyKey: `continuity:close:${marker}` })
   const signal = deadline(120_000)
-  while ((await byKey.retrieve({ signal })).status !== "closed") await delay(500, undefined, { signal })
+  while ((await byKey.get({ signal })).status !== "closed") await delay(500, undefined, { signal })
   assertEqual(await readOutputs(), events, "Closing the Session discarded its output")
   return { sessionId: first.session.id, turns: [first.turn.id, second.id], outputs, outputSequences: events.map(event => event.sequence) }
 })

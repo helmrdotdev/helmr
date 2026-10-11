@@ -9,7 +9,7 @@ export type ComputerStatus = "available" | "deleted" | "deleting";
 export type Computer = {
   id: string;
   key?: string;
-  definition_key: string;
+  definition_id: string;
   deployment_id: string;
   status: ComputerStatus;
   residency: "cold" | "starting" | "running" | "parking" | "parked" | "restoring" | "unavailable";

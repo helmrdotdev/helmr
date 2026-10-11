@@ -18,8 +18,8 @@ helmr computer exec (--id UUID | --key KEY) --idempotency-key KEY -- COMMAND [AR
 All commands also accept project/environment scope.
 
 `exec` accepts `--cwd`, repeated `--set-env NAME=VALUE`, `--stdin FILE`, and
-`--timeout` (default 5m, maximum 15m). It returns bounded stdout/stderr and exits
-with the remote process exit code. The `--` separator is required before the
+`--timeout` (default 5m, maximum 15m). It returns a Command ID after admission. Use
+[`helmr command`](/docs/reference/cli/command) to read output, wait, or cancel. The `--` separator is required before the
 remote command.
 
 ## Delete a Computer
@@ -63,4 +63,4 @@ Computer detail page shows modes and origins without values.
 `definition list` and `definition get` inspect the current Deployment, or the
 explicit `--deployment` snapshot. A list returns the pinned Deployment ID and a
 continuation cursor when needed; its default limit is 50, maximum 100. These are
-authored Computer definitions. `get COMPUTER_ID` inspects an actual Computer.
+authored Computer definitions. `get --id COMPUTER_ID` inspects an actual Computer.

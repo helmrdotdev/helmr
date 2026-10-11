@@ -1,9 +1,13 @@
+import { durationMilliseconds } from "./duration"
 import { encodeCommandLogQuery, parseCommandLogPage, streamCommandLogs, type CommandLogQuery, type CommandLogStreamQuery } from "./command-logs"
-import { parseCancelReceipt, parseCommandInfo, parseCommandReceipt, waitForCommand, type CommandRef, type CommandWaitOptions } from "./command"
+import { parseCancelReceipt, parseCommandInfo, parseCommandReceipt, waitForCommand, type CommandRef, type CommandWaitOptions, type CommandOutcome, type TimedCommandWaitResult } from "./command"
 import type { CursorPage } from "./contract"
+import { validateDefinitionId } from "./schema/definition"
 import { resourceID } from "./internal/id"
 import type { RequestOptions } from "./request"
 import {
+  encodeComputerSecrets,
+  type ComputerCreateRequest,
   parseComputerDeleteReceipt,
   parseComputer,
   parseComputerMembers,
@@ -24,7 +28,8 @@ export type ComputerListQuery =
   | Readonly<{ key: string; cursor?: never; limit?: never }>
 
 export interface ClientComputersApi {
-  retrieve(id: string, options?: RequestOptions): Promise<Computer>
+  create(request: ComputerCreateRequest, options?: RequestOptions): Promise<ClientComputerRef>
+  get(id: string, options?: RequestOptions): Promise<Computer>
   list(
     query?: ComputerListQuery,
     options?: RequestOptions,
@@ -44,7 +49,27 @@ export function createClientComputers(
   transport: ComputerTransport,
 ): ClientComputersApi {
   return Object.freeze({
-    async retrieve(id: string, options: RequestOptions = {}): Promise<Computer> {
+    async create(
+      request: ComputerCreateRequest,
+      options: RequestOptions = {},
+    ): Promise<ClientComputerRef> {
+      validateDefinitionId(request.definition)
+      const secrets = encodeComputerSecrets(request.secrets)
+      const computer = parseComputer(await transport.request(
+        "POST",
+        `/v1/computer-definitions/${encodeURIComponent(request.definition)}/computers`,
+        {
+          body: {
+            ...(request.key === undefined ? {} : { key: request.key }),
+            ...(request.secrets === undefined ? {} : { secrets }),
+            ...(request.idempotencyKey === undefined ? {} : { idempotency_key: request.idempotencyKey }),
+          },
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+        },
+      ))
+      return createClientComputerRef(computer.id, transport)
+    },
+    async get(id: string, options: RequestOptions = {}): Promise<Computer> {
       const computerID = resourceID(id, "Computer ID")
       return parseComputer(await transport.request(
         "GET",
@@ -105,7 +130,7 @@ export function createClientComputerRef(
       return parseComputerMembers(await transport.request("GET", `${path}/members${params.size ? `?${params}` : ""}`,
         options.signal === undefined ? {} : { signal: options.signal }))
     },
-    async retrieve(options: RequestOptions = {}): Promise<Computer> {
+    async get(options: RequestOptions = {}): Promise<Computer> {
       return parseComputer(await transport.request(
         "GET",
         path,
@@ -122,7 +147,7 @@ export function createClientComputerRef(
           ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
           ...(request.env === undefined ? {} : { env: request.env }),
           ...(request.stdin === undefined ? {} : { stdin_base64: encodeBase64(request.stdin) }),
-          ...(request.timeout === undefined ? {} : { timeout: request.timeout }),
+          ...(request.timeout === undefined ? {} : { timeout: `${durationMilliseconds(request.timeout, "Command execution timeout")}ms` }),
           idempotency_key: request.idempotencyKey,
         },
         ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -144,7 +169,7 @@ export function createClientComputerRef(
 
 export function createClientCommandRef(id: string, transport: ComputerTransport): CommandRef {
   const commandId = resourceID(id, "Command ID")
-  const retrieve = async (signal?: AbortSignal) => {
+  const get = async (signal?: AbortSignal) => {
     return parseCommandInfo(await transport.request("GET", `/v1/commands/${encodeURIComponent(commandId)}`, signal === undefined ? {} : { signal }), commandId)
   }
   const logs = async (query: CommandLogQuery = {}, signal?: AbortSignal) => {
@@ -154,21 +179,22 @@ export function createClientCommandRef(id: string, transport: ComputerTransport)
     if (value.limit !== undefined) params.set("limit", String(value.limit))
     return parseCommandLogPage(await transport.request("GET", `/v1/commands/${encodeURIComponent(commandId)}/logs${params.size ? `?${params}` : ""}`, signal === undefined ? {} : { signal }))
   }
+  function wait(options: CommandWaitOptions & { readonly timeout: import("./duration").Duration }): Promise<TimedCommandWaitResult>
+  function wait(options?: CommandWaitOptions & { readonly timeout?: undefined }): Promise<CommandOutcome>
+  function wait(options: CommandWaitOptions): Promise<CommandOutcome | TimedCommandWaitResult>
+  function wait(options: CommandWaitOptions = {}): Promise<CommandOutcome | TimedCommandWaitResult> {
+    return waitForCommand(commandId, get, options)
+  }
   return Object.freeze({ id: commandId,
-    logs: async (query: CommandLogQuery = {}, options: RequestOptions = {}) => {
-      const page = await logs(query, options.signal)
-      return Object.freeze({ items: page.items, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) })
-    },
-    streamLogs: (query: CommandLogStreamQuery = {}, options: RequestOptions = {}) => {
-      return streamCommandLogs(logs, query, options)
-    },
+    logs: Object.freeze({
+      list: (query: CommandLogQuery = {}, options: RequestOptions = {}) => logs(query, options.signal),
+      stream: (query: CommandLogStreamQuery = {}, options: RequestOptions = {}) => streamCommandLogs(logs, query, options),
+    }),
     cancel: async (options: RequestOptions = {}) => {
       return parseCancelReceipt(await transport.request("POST", `/v1/commands/${encodeURIComponent(commandId)}/cancel`, options.signal === undefined ? {} : { signal: options.signal }), commandId)
     },
-    retrieve: (options: RequestOptions = {}) => retrieve(options.signal),
-    wait: (options: CommandWaitOptions = {}) => {
-      return waitForCommand(commandId, retrieve, options)
-    },
+    get: (options: RequestOptions = {}) => get(options.signal),
+    wait,
   })
 }
 

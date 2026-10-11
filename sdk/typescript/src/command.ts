@@ -1,14 +1,17 @@
-import type { CommandLogQuery, CommandLogRecord, CommandLogStreamQuery } from "./command-logs"
-import type { CursorPage } from "./contract"
+import type { CommandLogQuery, CommandLogRecord, CommandLogStreamQuery, CommandLogReadPage } from "./command-logs"
 import type { Duration } from "./contract"
 import type { RequestOptions } from "./request"
 import { resourceID } from "./internal/id"
 import { timestampString } from "./internal/timestamp"
-import { abortableDelay } from "./internal/abort"
+export { waitForCommand } from "./internal/command-wait"
 
 export interface CommandWaitOptions extends RequestOptions {
-  readonly waitTimeout?: Duration
+  readonly timeout?: Duration
 }
+
+export type TimedCommandWaitResult =
+  | Readonly<{ status: "timeout" }>
+  | Readonly<{ status: "settled"; outcome: CommandOutcome }>
 
 export type CommandOutcome = Readonly<{
   commandId: string
@@ -36,11 +39,15 @@ export interface CancelReceipt {
 
 export interface CommandRef {
   readonly id: string
-  logs(query?: CommandLogQuery, options?: RequestOptions): Promise<CursorPage<CommandLogRecord>>
-  streamLogs(query?: CommandLogStreamQuery, options?: RequestOptions): AsyncIterable<CommandLogRecord>
+  readonly logs: Readonly<{
+    list(query?: CommandLogQuery, options?: RequestOptions): Promise<CommandLogReadPage>
+    stream(query?: CommandLogStreamQuery, options?: RequestOptions): AsyncIterable<CommandLogRecord>
+  }>
   cancel(options?: RequestOptions): Promise<CancelReceipt>
-  retrieve(options?: RequestOptions): Promise<CommandInfo>
-  wait(options?: CommandWaitOptions): Promise<CommandOutcome>
+  get(options?: RequestOptions): Promise<CommandInfo>
+  wait(options: CommandWaitOptions & { readonly timeout: Duration }): Promise<TimedCommandWaitResult>
+  wait(options?: CommandWaitOptions & { readonly timeout?: undefined }): Promise<CommandOutcome>
+  wait(options: CommandWaitOptions): Promise<CommandOutcome | TimedCommandWaitResult>
 }
 
 export function parseCancelReceipt(value: unknown, expectedId: string): CancelReceipt {
@@ -91,50 +98,6 @@ export function parseCommandInfo(value: unknown, expectedId?: string): CommandIn
   return Object.freeze({ id, computerId, status: status as CommandInfo["status"], processReconciled: raw["process_reconciled"], ...(outcome === undefined ? {} : { outcome }) })
 }
 
-export async function waitForCommand(
-  id: string,
-  retrieve: (signal?: AbortSignal) => Promise<CommandInfo>,
-  options: CommandWaitOptions = {},
-): Promise<CommandOutcome> {
-  const timeout = options.waitTimeout === undefined ? undefined : waitMilliseconds(options.waitTimeout)
-  const deadline = timeout === undefined ? undefined : Date.now() + timeout
-  const timeoutController = new AbortController()
-  const signal = options.signal === undefined ? timeoutController.signal : AbortSignal.any([options.signal, timeoutController.signal])
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const expire = () => {
-    if (deadline === undefined) return
-    const remaining = deadline - Date.now()
-    if (remaining <= 0) timeoutController.abort(new DOMException("Command observation timed out", "TimeoutError"))
-    else timer = setTimeout(expire, Math.min(remaining, 2147483647))
-  }
-  expire()
-  try {
-    for (;;) {
-      expireIfDue()
-      signal.throwIfAborted()
-      const info = await retrieve(signal)
-      expireIfDue()
-      signal.throwIfAborted()
-      if (info.id !== id) throw new Error("Command response changed ID")
-      if (info.outcome !== undefined) return info.outcome
-      await abortableDelay(Math.max(1, Math.min(1000, deadline === undefined ? 1000 : deadline - Date.now())), signal)
-    }
-  } finally {
-    if (timer !== undefined) clearTimeout(timer)
-  }
-  function expireIfDue() {
-    if (deadline !== undefined && Date.now() >= deadline) timeoutController.abort(new DOMException("Command observation timed out", "TimeoutError"))
-  }
-}
-
-function waitMilliseconds(value: Duration): number {
-  const match = /^([1-9][0-9]*)(ms|s|m|h|d)$/.exec(value)
-  if (match === null) throw new Error("Command waitTimeout must be a positive duration")
-  const unit = { ms: 1, s: 1000, m: 60000, h: 3600000, d: 86400000 }[match[2]!]!
-  const result = Number(match[1]) * unit
-  if (!Number.isSafeInteger(result) || !Number.isSafeInteger(Date.now() + result)) throw new Error("Command waitTimeout is too large")
-  return result
-}
 
 function object(value: unknown, label: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`)

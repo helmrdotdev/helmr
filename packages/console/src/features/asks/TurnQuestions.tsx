@@ -15,7 +15,7 @@ export function TurnQuestions(props: { address: SessionAddress; turnID: string; 
   }));
   return <div>
     <Show when={asks.isError}><p role="alert">Questions could not be loaded.</p></Show>
-    <For each={asks.data?.pages.flatMap(page => page.asks)}>{ask => <p><a class="underline" href={askConsolePath({ ...props.address, turnID: props.turnID, askID: ask.id })}>Question — {ask.status}</a></p>}</For>
+    <For each={asks.data?.pages.flatMap(page => page.items)}>{ask => <p><a class="underline" href={askConsolePath({ ...props.address, turnID: props.turnID, askID: ask.id })}>Question — {ask.status}</a></p>}</For>
     <Show when={asks.hasNextPage}><button class={ui.secondaryButton} disabled={asks.isFetchingNextPage} onClick={() => void asks.fetchNextPage()}>Load more questions</button></Show>
   </div>;
 }

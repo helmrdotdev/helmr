@@ -42,7 +42,7 @@ export async function loadAgentBundle(indexURL: URL, agentId: string): Promise<A
   if (!selected) throw new Error("Agent is absent from the verified bundle")
   const namespace = await loadExport(indexPath, selected.modulePath)
   const definition = namespace[selected.exportName] as Partial<AgentDefinition> | undefined
-  if (definition?.kind !== "agent" || definition.id !== selected.id || definition.computer?.kind !== "computer" || definition.computer.id !== selected.computerDefinitionId || typeof definition.turn !== "function" || (definition.setup !== undefined && typeof definition.setup !== "function")) throw new Error("Agent export differs from the verified bundle")
+  if (definition?.kind !== "agent" || definition.id !== selected.id || definition.computer?.kind !== "computer" || definition.computer.id !== selected.computerDefinitionId || typeof definition.turn !== "function" || (definition.init !== undefined && typeof definition.init !== "function")) throw new Error("Agent export differs from the verified bundle")
   return definition as AgentDefinition<InputContent, Json, unknown>
 }
 

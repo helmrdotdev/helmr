@@ -19,7 +19,7 @@ await verify("reply-relay", async ({ client, computer, marker, cleanup }) => {
   const command = await ref.exec({ command: ["sh", "-ceu", 'sleep 15; printf %s "$MARKER"'],
     env: { MARKER: marker }, idempotencyKey: `${marker}:relayed` })
   cleanup(async () => {
-    if (["pending", "starting", "running"].includes((await command.retrieve()).status)) await command.cancel()
+    if (["pending", "starting", "running"].includes((await command.get()).status)) await command.cancel()
   })
   const signal = deadline(60_000)
   let during
@@ -28,7 +28,7 @@ await verify("reply-relay", async ({ client, computer, marker, cleanup }) => {
     during = await replyFault()
     assert.equal(during.failure, "")
     if (during.relay && during.relay.active_streams > 0 && during.relay.forwarded_streams > 0 &&
-      (await command.retrieve()).status === "running") break
+      (await command.get()).status === "running") break
     await delay(200, undefined, { signal })
   }
   const restoredListener = await replyFault("DELETE")
@@ -37,7 +37,7 @@ await verify("reply-relay", async ({ client, computer, marker, cleanup }) => {
   const result = await command.wait({ signal: deadline(60_000) })
   assert.equal(result.exitCode, 0)
   let output = ""
-  for await (const event of command.streamLogs({}, { signal: deadline(30_000) })) {
+  for await (const event of command.logs.stream({}, { signal: deadline(30_000) })) {
     assert(event.kind !== "gap")
     if (event.stream === "stdout") output += new TextDecoder().decode(event.content)
   }

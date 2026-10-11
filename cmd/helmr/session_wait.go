@@ -26,10 +26,11 @@ type turnWaitResult struct {
 }
 
 func sessionTurnWaitCommand() *cobra.Command {
+	var sessionID string
 	var project, environment, timeout string
 	var jsonOutput bool
-	cmd := &cobra.Command{Use: "wait SESSION_ID TURN_ID --timeout DURATION", Short: "Observe a Turn until settlement or timeout without cancelling work.", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
-		duration, err := time.ParseDuration(timeout)
+	cmd := &cobra.Command{Use: "wait TURN_ID --session SESSION_ID --timeout DURATION", Short: "Observe a Turn until settlement or timeout without cancelling work.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		duration, err := parseDuration(timeout)
 		if err != nil || duration <= 0 {
 			return errors.New("--timeout must be a positive duration, such as 30s or 10m")
 		}
@@ -39,7 +40,7 @@ func sessionTurnWaitCommand() *cobra.Command {
 		}
 		ctx, cancel := context.WithTimeout(cmd.Context(), duration)
 		defer cancel()
-		turn, err := waitForSessionTurn(ctx, cp, args[0], args[1], scope)
+		turn, err := waitForSessionTurn(ctx, cp, sessionID, args[0], scope)
 		result := turnWaitResult{Status: "timeout"}
 		if err != nil {
 			if cmd.Context().Err() != nil {
@@ -73,6 +74,8 @@ func sessionTurnWaitCommand() *cobra.Command {
 		}
 		return nil
 	}}
+	cmd.Flags().StringVar(&sessionID, "session", "", "Parent Session ID.")
+	_ = cmd.MarkFlagRequired("session")
 	addScopeFlags(cmd, &project, &environment)
 	cmd.Flags().StringVar(&timeout, "timeout", "", "Maximum observation time (for example 30s or 10m).")
 	_ = cmd.MarkFlagRequired("timeout")

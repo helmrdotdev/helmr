@@ -75,7 +75,7 @@ func presentationBlocks(o projectionOwner, e projectionEvent, role string, ask *
 	// Keep the command separate from the question's untrusted prompt and values.
 	origin := (&url.URL{Scheme: o.config.PublicURL.Scheme, Host: o.config.PublicURL.Host}).String()
 	quotedOrigin := "'" + strings.ReplaceAll(origin, "'", "'\"'\"'") + "'"
-	target := fmt.Sprintf("%s %s %s --project %s --env %s", o.session, *e.turn, *ask, o.project, o.environment)
+	target := fmt.Sprintf("%s --session %s --turn %s --project %s --env %s", *ask, o.session, *e.turn, o.project, o.environment)
 	guide := "Answer with the Helmr CLI if this question or your answer does not fit Slack. These commands use your Helmr login; unset HELMR_API_KEY first.\n" +
 		"helmr login " + quotedOrigin + "\n" +
 		"helmr --api-url " + quotedOrigin + " session turn ask get " + target + " --json\n" +

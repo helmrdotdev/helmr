@@ -11,7 +11,7 @@ Choose the operation by the lifetime of the input:
 | --- | --- |
 | New work, even while busy or held | `session.enqueue(input)` |
 | Steer active work, or start work when idle | `session.send(data)` |
-| Message exactly one Turn | `session.turn(turnId).send(data)` |
+| Message exactly one Turn | `session.turns.ref(turnId).send(data)` |
 | Ask for a typed human answer | `await turn.ask({ prompt, answer })` |
 | Observe an outcome | `turn.wait({ timeout })` |
 
@@ -32,7 +32,7 @@ Without a chosen Turn duration limit, that drainage may wait for a human.
 Use ordinary cancellable JavaScript or harness facilities for short delays.
 Compute release depends on all work resident on the Computer becoming eligible;
 a pending question or arbitrary promise does not independently request release.
-Healthy release preserves setup and native process state.
+Healthy release preserves initialization and native process state.
 
 Client observation timeouts do not stop execution. To stop active work, interrupt
 the Session; inspect the resulting hold and explicitly resume it when appropriate.

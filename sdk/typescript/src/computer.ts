@@ -14,6 +14,7 @@ export type ComputerStatus =
   | "deleting"
 
 export interface ComputerCreateRequest {
+  readonly definition: string
   readonly key?: string
   readonly secrets?: readonly SecretBinding[]
   readonly idempotencyKey?: string
@@ -23,7 +24,7 @@ export interface Computer {
   readonly error?: Readonly<{ code: string; message: string }>
   readonly id: string
   readonly key?: string
-  readonly definitionKey: string
+  readonly definitionId: string
   readonly deploymentId: string
   readonly status: ComputerStatus
   readonly residency: ComputerResidency
@@ -52,7 +53,7 @@ export interface ComputerDeleteReceipt {
 
 export interface ComputerRef {
   readonly id: string
-  retrieve(options?: RequestOptions): Promise<Computer>
+  get(options?: RequestOptions): Promise<Computer>
   members(query?: ComputerMembersQuery, options?: RequestOptions): Promise<CursorPage<ComputerMember>>
   delete(
     request?: ComputerDeleteRequest,
@@ -162,11 +163,11 @@ export function parseComputer(value: unknown): Computer {
   if (key !== undefined && typeof key !== "string") {
     throw new Error("Computer response.key must be a string")
   }
-  const definitionKey = input["definition_key"]
-  if (typeof definitionKey !== "string") {
-    throw new Error("Computer response.definition_key must be a string")
+  const definitionId = input["definition_id"]
+  if (typeof definitionId !== "string") {
+    throw new Error("Computer response.definition_id must be a string")
   }
-  validateDefinitionId(definitionKey)
+  validateDefinitionId(definitionId)
   const status = input["status"]
   if (
     status !== "available" &&
@@ -184,7 +185,7 @@ export function parseComputer(value: unknown): Computer {
   return Object.freeze({
     id: resourceID(input["id"], "Computer response.id"),
     ...(key === undefined ? {} : { key }),
-    definitionKey,
+    definitionId,
     deploymentId: resourceID(input["deployment_id"], "Computer response.deployment_id"),
     status,
     residency: residency as ComputerResidency,

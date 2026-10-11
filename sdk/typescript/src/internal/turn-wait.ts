@@ -1,19 +1,20 @@
+import { durationMilliseconds } from "../duration"
 import type { TurnOutcome, TurnState, TimedTurnWaitResult, TurnWaitOptions } from "../contract"
 import { abortableDelay } from "./abort"
 
 export type TurnObservation = Pick<TurnState, "id" | "sessionId" | "status" | "result" | "response" | "error" | "payloadExpiredAt"> & { readonly waitBlocked?: "capacity_wait_blocked" }
 
 // Observation uses the ordinary authenticated read and never sends a control.
-export function waitForTurn(sessionId: string, turnId: string, retrieve: (signal: AbortSignal) => Promise<TurnObservation>, options: TurnWaitOptions & { readonly timeout: string | number }): Promise<TimedTurnWaitResult>
-export function waitForTurn(sessionId: string, turnId: string, retrieve: (signal: AbortSignal) => Promise<TurnObservation>, options?: TurnWaitOptions & { readonly timeout?: undefined }): Promise<TurnOutcome>
-export function waitForTurn(sessionId: string, turnId: string, retrieve: (signal: AbortSignal) => Promise<TurnObservation>, options: TurnWaitOptions): Promise<TurnOutcome | TimedTurnWaitResult>
+export function waitForTurn(sessionId: string, turnId: string, get: (signal: AbortSignal) => Promise<TurnObservation>, options: TurnWaitOptions & { readonly timeout: string | number }): Promise<TimedTurnWaitResult>
+export function waitForTurn(sessionId: string, turnId: string, get: (signal: AbortSignal) => Promise<TurnObservation>, options?: TurnWaitOptions & { readonly timeout?: undefined }): Promise<TurnOutcome>
+export function waitForTurn(sessionId: string, turnId: string, get: (signal: AbortSignal) => Promise<TurnObservation>, options: TurnWaitOptions): Promise<TurnOutcome | TimedTurnWaitResult>
 export async function waitForTurn(
   sessionId: string,
   turnId: string,
-  retrieve: (signal: AbortSignal) => Promise<TurnObservation>,
+  get: (signal: AbortSignal) => Promise<TurnObservation>,
   options: TurnWaitOptions = {},
 ): Promise<TurnOutcome | TimedTurnWaitResult> {
-  const timeout = options.timeout === undefined ? undefined : timeoutMilliseconds(options.timeout)
+  const timeout = options.timeout === undefined ? undefined : durationMilliseconds(options.timeout, "Turn timeout")
   const deadline = timeout === undefined ? undefined : performance.now() + timeout
   const timerController = new AbortController()
   const timeoutReason = new Error("Turn observation timed out")
@@ -30,7 +31,7 @@ export async function waitForTurn(
     for (;;) {
       if (deadline !== undefined && performance.now() >= deadline) timerController.abort(timeoutReason)
       signal.throwIfAborted()
-      const state = await readWithAbort(retrieve, signal)
+      const state = await readWithAbort(get, signal)
       if (deadline !== undefined && performance.now() >= deadline) timerController.abort(timeoutReason)
       signal.throwIfAborted()
       if (state.id !== turnId || state.sessionId !== sessionId) throw new Error("Turn response changed identity")
@@ -55,7 +56,7 @@ export async function waitForTurn(
   }
 }
 
-async function readWithAbort(retrieve: (signal: AbortSignal) => Promise<TurnObservation>, signal: AbortSignal): Promise<TurnObservation> {
+async function readWithAbort(get: (signal: AbortSignal) => Promise<TurnObservation>, signal: AbortSignal): Promise<TurnObservation> {
   signal.throwIfAborted()
   let onAbort!: () => void
   const aborted = new Promise<never>((_, reject) => {
@@ -66,23 +67,11 @@ async function readWithAbort(retrieve: (signal: AbortSignal) => Promise<TurnObse
     return await Promise.race([
       Promise.resolve().then(() => {
         signal.throwIfAborted()
-        return retrieve(signal)
+        return get(signal)
       }),
       aborted,
     ])
   } finally {
     signal.removeEventListener("abort", onAbort)
   }
-}
-
-function timeoutMilliseconds(value: string | number): number {
-  let milliseconds: number
-  if (typeof value === "number") milliseconds = value
-  else {
-    const match = /^([1-9][0-9]*)(ms|s|m|h|d)$/.exec(value)
-    if (!match) throw new Error("Turn timeout must be a positive duration")
-    milliseconds = Number(match[1]) * ({ ms: 1, s: 1000, m: 60000, h: 3600000, d: 86400000 }[match[2]!]!)
-  }
-  if (!Number.isSafeInteger(milliseconds) || milliseconds <= 0) throw new Error("Turn timeout must be positive safe integer milliseconds")
-  return milliseconds
 }

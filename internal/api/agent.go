@@ -6,14 +6,20 @@ import (
 )
 
 type AgentDefinition struct {
+	AgentID      string `json:"agent_id"`
 	ID           string `json:"id"`
 	DeploymentID string `json:"deployment_id"`
 }
 
-type ListAgentsResponse struct {
-	DeploymentID string               `json:"deployment_id"`
-	Agents       []DefinitionListItem `json:"agents"`
-	NextCursor   string               `json:"next_cursor,omitempty"`
+type AgentDefinitionListItem struct {
+	ID      string `json:"id"`
+	AgentID string `json:"agent_id"`
+}
+
+type ListAgentDefinitionsResponse struct {
+	DeploymentID     string                    `json:"deployment_id"`
+	AgentDefinitions []AgentDefinitionListItem `json:"agent_definitions"`
+	NextCursor       string                    `json:"next_cursor,omitempty"`
 }
 
 type StartAgentRequest struct {

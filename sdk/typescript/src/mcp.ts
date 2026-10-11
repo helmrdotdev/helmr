@@ -6,7 +6,7 @@ export interface RuntimeMcpConnection {
 const runtimeMcp = Symbol.for("helmr.agent.v1.mcp_connection")
 type McpGlobal = typeof globalThis & { [runtimeMcp]?: () => Promise<RuntimeMcpConnection> }
 
-/** Obtain this Session process's managed MCP connection during setup. */
+/** Obtain this Session process's managed MCP connection during initialization. */
 export function createRuntimeMcpConnection(): Promise<RuntimeMcpConnection> {
   const factory = (globalThis as McpGlobal)[runtimeMcp]
   if (!factory) return Promise.reject(new Error("Runtime MCP requires the managed Session runtime"))

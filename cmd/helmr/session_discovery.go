@@ -55,10 +55,11 @@ func sessionListCommand() *cobra.Command {
 }
 
 func sessionTurnListCommand() *cobra.Command {
+	var sessionID string
 	var project, environment, cursor string
 	var limit int32
 	var jsonOutput bool
-	cmd := &cobra.Command{Use: "list SESSION_ID", Short: "Read one page of Turns in admission order.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "list --session SESSION_ID", Short: "Read one page of Turns in admission order.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("limit") && limit < 1 {
 			return errors.New("--limit must be in [1,100]")
 		}
@@ -66,7 +67,7 @@ func sessionTurnListCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		page, err := cp.ListSessionTurns(cmd.Context(), args[0], client.SessionTurnListOptions{Cursor: cursor, Limit: limit, EnvironmentScopeOptions: scope})
+		page, err := cp.ListSessionTurns(cmd.Context(), sessionID, client.SessionTurnListOptions{Cursor: cursor, Limit: limit, EnvironmentScopeOptions: scope})
 		if err != nil {
 			return err
 		}
@@ -81,6 +82,8 @@ func sessionTurnListCommand() *cobra.Command {
 		}
 		return nil
 	}}
+	cmd.Flags().StringVar(&sessionID, "session", "", "Parent Session ID.")
+	_ = cmd.MarkFlagRequired("session")
 	addScopeFlags(cmd, &project, &environment)
 	cmd.Flags().StringVar(&cursor, "cursor", "", "Continuation cursor from the previous page.")
 	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum Turns (default 50, maximum 100).")

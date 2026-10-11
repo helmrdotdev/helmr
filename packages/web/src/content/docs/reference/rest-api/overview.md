@@ -11,7 +11,8 @@ have separate authority.
 
 | Resource | Methods and paths |
 | --- | --- |
-| Agents | `GET /v1/agents`, `GET /v1/agents/{name}`, `POST /v1/agents/{name}/start` |
+| Agent definitions | `GET /v1/agent-definitions`, `GET /v1/agent-definitions/{id}` |
+| Agents | `POST /v1/agents/{name}/start` |
 | Sessions | `GET /v1/sessions`, `GET /v1/sessions/{id}`, `POST .../enqueue`, `POST .../send`, `GET .../events` |
 | Session controls | `POST /v1/sessions/{id}/interrupt`, `POST .../resume`, `POST .../close`, `POST .../cancel` |
 | Turns | `GET /v1/sessions/{id}/turns`, `GET .../turns/{turnID}`, `POST .../turns/{turnID}/messages` |

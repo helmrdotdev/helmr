@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { setTimeout as delay } from "node:timers/promises"
-import type { AgentDefinition, ComputerRef, Turn } from "../../../sdk/typescript/src/agent"
+import type { AgentDefinition, ComputerIdentity, Turn } from "../../../sdk/typescript/src/agent"
 import { createRuntimeMcpConnection, type RuntimeMcpConnection } from "../../../sdk/typescript/src/mcp"
 import { callMcp, fixtureInput, waitManagedTurn, type ManagedAdmission } from "../../e2e/support/runtime-mcp"
 import { checkSessionControls } from "./session-controls"
@@ -19,7 +19,7 @@ interface SessionPage { sessions: SessionView[]; next_cursor?: string }
 
 // Only identity and the local MCP descriptor survive in setup state. Every call
 // crosses the current Session authority boundary again after restoration.
-export async function checkSessionDiscovery(turn: Turn, caller: string, computer: ComputerRef,
+export async function checkSessionDiscovery(turn: Turn, caller: string, computer: ComputerIdentity,
   definition: AgentDefinition, prior?: DiscoveryState) {
   let state = prior
   if (!state) {

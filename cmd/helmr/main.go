@@ -41,6 +41,7 @@ func newRootCommand() *cobra.Command {
 		sessionCommand(),
 		scheduleCommand(),
 		computerCommand(),
+		commandCommand(),
 		projectCommand(),
 		envCommand(),
 		secretCommand(),

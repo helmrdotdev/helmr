@@ -21,24 +21,25 @@ const client = new HelmrClient({
 })
 
 const definitions = await client.computerDefinitions.list()
-const computer = await client.computerDefinitions.createComputer("issue-computer", {
+const computer = await client.computers.create({
+  definition: "issue-computer",
   key: "issue:123",
   idempotencyKey: "issue:123:computer",
 })
 const { session, turn } = await client.agents.start("issue-agent", {
-  input: { issue: 123 },
+  input: [{ type: "text", text: "Review issue 123" }],
   computer,
   idempotencyKey: "issue:123:start",
 })
 const outcome = await turn.wait()
-await session.enqueue({ followUp: "Check the tests" }, {
+await session.enqueue([{ type: "text", text: "Check the tests" }], {
   idempotencyKey: "issue:123:follow-up",
 })
 ```
 
 Creation returns a Session and its initial Turn receipt. Retain their IDs for
 reconnection; observe the exact Turn for its result. Computer snapshots expose
-`definitionKey` and `deploymentId`. Bind Secrets by stable `secretId` with explicit
+`definitionId` and `deploymentId`. Bind Secrets by stable `secretId` with explicit
 env or file placement; never place Secret values in business input.
 
 The client uses its supplied credentials even inside Agent code. Injected Turn

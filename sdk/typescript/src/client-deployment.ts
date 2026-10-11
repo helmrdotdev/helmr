@@ -28,7 +28,7 @@ export interface ClientDeploymentsApi {
     options?: RequestOptions,
   ): Promise<CursorPage<DeploymentListItem>>
   current(options?: RequestOptions): Promise<Deployment | null>
-  retrieve(
+  get(
     deploymentId: string,
     options?: RequestOptions,
   ): Promise<Deployment>
@@ -93,7 +93,7 @@ export function createClientDeployments(
         throw error
       }
     },
-    async retrieve(
+    async get(
       deploymentId: string,
       options: RequestOptions = {},
     ): Promise<Deployment> {

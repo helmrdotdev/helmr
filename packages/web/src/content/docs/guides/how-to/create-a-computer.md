@@ -1,11 +1,11 @@
 ---
 title: Create a computer
-description: Create and address a durable Computer from a deployed Computer definition.
+description: Create and address a durable Computer using a deployed configuration.
 ---
 
 # Create a computer
 
-Deploy a Computer definition declaration, then create a Computer from its declared ID:
+Declare image and resources with `computer({ id: ... })`, deploy, then create a Computer from that ID:
 
 ```sh
 COMPUTER_ID="$(helmr computer create repository-agent \
@@ -29,19 +29,17 @@ const client = new HelmrClient({
   apiKey: process.env.HELMR_API_KEY!,
 })
 
-const computer = await client.computerDefinitions.createComputer(
-  "repository-agent",
-  {
-    key: "repo:helmrdotdev/helmr",
-    idempotencyKey: "computer:helmrdotdev/helmr",
-    secrets: [
-      {
-        secretId: process.env.HELMR_GITHUB_SECRET_ID!,
-        env: { name: "GITHUB_TOKEN", mode: "raw" },
-      },
-    ],
-  },
-)
+const computer = await client.computers.create({
+  definition: "repository-agent",
+  key: "repo:helmrdotdev/helmr",
+  idempotencyKey: "computer:helmrdotdev/helmr",
+  secrets: [
+    {
+      secretId: process.env.HELMR_GITHUB_SECRET_ID!,
+      env: { name: "GITHUB_TOKEN", mode: "raw" },
+    },
+  ],
+})
 ```
 
 Retrieve by UUID or exact key:

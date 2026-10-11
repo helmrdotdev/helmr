@@ -12,7 +12,7 @@ admission, execution, retained outcomes and the Computer lifecycle.
 | Resource | Purpose |
 | --- | --- |
 | Deployment | Immutable code and definitions selected in a Project Environment. |
-| Agent | A Computer recipe, optional setup and a Turn handler. |
+| Agent | A Computer recipe, optional initialization and a Turn handler. |
 | Computer | A working environment with retained disk and execution state. |
 | Session | A continuing work context pinned to a Deployment and Computer. |
 | Turn | One admitted input and one terminal outcome, processed serially within a Session. |
@@ -23,7 +23,7 @@ created from it unless the caller selects an existing one. Sessions sharing a
 Computer share files but keep separate identities and native histories.
 
 Setup runs before the first Turn. Its live result is available as
-`ctx.setupResult`. Healthy hibernation preserves that result and native processes.
+`ctx.initResult`. Healthy hibernation preserves that result and native processes.
 Loss of a valid continuation holds the affected Session for explicit recovery;
 Helmr does not silently replay interrupted inputs.
 
