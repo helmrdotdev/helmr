@@ -51,7 +51,6 @@ worker_root_volume_iops               = 3000
 worker_root_volume_throughput         = 125
 worker_disk_mib                       = 491520
 worker_disk_reserve_mib               = 8192
-worker_artifact_cache_max_mib         = 16384
 worker_vm_vcpus                       = 1
 worker_vm_memory_mib                  = 2048
 worker_vm_scratch_disk_mib            = 32768
@@ -120,14 +119,44 @@ It controls background disk preservation while an execution is running. Choose
 it using the workload's write rate, staging capacity, and acceptable loss window;
 there is no built-in default. An in-flight save coalesces ticks. This is not a
 maximum recovery-point age: upload latency and failures can extend that age.
-Turn completion does not wait for this interval or a disk upload. Managed waiting
-and `idleTimeout` govern execution suspension separately; they do not change the
-preservation cadence. Successful adoption allows bounded local staging cleanup.
+Successful Turn completion requires its own fresh disk cut and durable publication;
+it does not wait for the periodic interval. Required saves take priority over new
+background saves, while an already admitted save finishes first. Any successful
+publication restarts the interval. Managed waiting and `idleTimeout` govern
+execution suspension separately. Successful adoption allows bounded local staging
+cleanup. Published roots remain retained while the writer lease is live, so both
+write volume and lease duration affect retained storage. Save records and object
+pins also accumulate each interval while the lease is live, even when the resulting
+disk content is unchanged. A failed live capture
+stops the allocation and interrupts its running work; an uncertain publication
+retains its original cut for reconciliation.
 
 The Worker binary runs its own NBD helper. Keep the Computer preparation arena
 and VMM state on the same filesystem. If the Worker dies while a helper owns a
 device, retain the arena and reconcile the exact owner before reusing the device;
 missing process-local state is not proof that the attachment was released.
+Startup and drain completion refuse the whole host while a direct
+`WORKER_WORK_DIR/tmp/computer-*` arena retains `config.json`, `claim.json` or
+`nbd.sock`, including a released claim journal, or while any configured NBD
+device cannot be verified idle and exclusively opened. Unreadable or symlinked
+temporary roots and Computer arenas also block recovery. Before removing an
+exact retained arena, prove that its consumer and descendants have stopped,
+resolve its Saves' publication or loss outcomes, release its known helper and
+device, and verify device inactivity. Preserve ordinary temporary data; a
+subsequent Worker startup checks custody again before reporting recovery.
+
+If network cleanup cannot prove that retained VM resources are gone, the affected
+Worker cannot accept new work. Startup logs identify quarantined owners and their
+cleanup errors, including when runtime qualification fails before the Worker can
+report to the Control Plane. Each ordinary startup retries cleanup of resources
+whose exact identity still matches the retained manifest. Keep owner markers,
+network manifests and retained resource reservations until recovery completes.
+
+For persistent failures, stop the Worker and establish the actual ownership and
+authority to reconcile each affected resource. A manifest naming a link does not
+authorize deleting a replacement or foreign link. After authorized reconciliation,
+restart the Worker so ordinary recovery, runtime qualification and Control Plane
+activation recheck the result. Do not bypass overlap checks or activation fences.
 
 ## AMI and enrollment contract
 
@@ -156,7 +185,7 @@ Drain the whole source population with the deployment Capacity API, wait for all
 exact Host epochs to become `termination_ready`, and only then remove that
 population. Keep Control Plane, dispatcher and networking available during drain.
 Group drain, Pool retirement and on-host `worker drain` have different purposes
-and do not implement this procedure. A long-running Task can postpone maintenance
+and do not implement this procedure. A long-running Turn can postpone maintenance
 indefinitely; an observation timeout does not authorize cancellation or deletion.
 
 Check connectivity and activation with:

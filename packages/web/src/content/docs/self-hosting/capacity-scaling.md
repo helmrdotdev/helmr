@@ -171,7 +171,7 @@ provider fleet convergence.
 
 The response contains `worker_hosts`. Each item includes `id`,
 `resource_id`, `worker_group_id`, `worker_pool_id`, `status`, `claim_version`,
-`created_at`, and `updated_at`. `drain_blockers` counts unreclaimed Instances and unreconciled Run and Command
+`created_at`, and `updated_at`. `drain_blockers` counts unreclaimed Instances and unreconciled Session
 processes. Zero counts still require the worker's local cleanup acknowledgment.
 `current_epoch`, `draining_at`, `drain_reason`,
 `termination_ready_at`, and `lost_at` appear when applicable.

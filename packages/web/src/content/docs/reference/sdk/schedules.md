@@ -1,40 +1,54 @@
 ---
 title: Schedules
-description: Declare scheduled Tasks and inspect reconciled Schedules.
+description: Declare cron triggers and inspect their active Deployment intervals.
 ---
 
 # Schedules
 
-`schedules.task(config)` declares a Task whose schedule is reconciled when its
-Deployment is promoted.
+Declare a trigger on an Agent:
 
 ```ts
-export const cleanup = schedules.task({
-  id: "cleanup",
-  cron: {
-    pattern: "0 2 * * *",
-    timezone: "UTC",
+import { agent, computer, image, triggers } from "@helmr/sdk"
+
+const workspace = computer({
+  id: "reporting",
+  image: image("reporting").from("node:24-bookworm-slim"),
+  resources: { cpu: 1, memory: "1GiB" },
+})
+
+export const dailyReport = agent({
+  id: "daily-report",
+  computer: workspace,
+  closeAfterIdle: "5m",
+  triggers: [
+    triggers.cron("morning", "0 9 * * *", {
+      timezone: "America/New_York",
+      input: [{ type: "text", text: "Prepare the daily report" }],
+    }),
+  ],
+  async turn(turn) {
+    return { requested: turn.input }
   },
-  computer: { sandbox: repo },
-  run: async ({ scheduledAt }) => ({
-    at: scheduledAt.toISOString(),
-  }),
 })
 ```
 
-The handler payload contains `scheduledAt`, optional `lastScheduledAt`, and
-`timezone`. The declaration also accepts Task defaults and optional Computer
-secret placements.
+`triggers.cron` requires a trigger ID, five-field expression, IANA timezone and
+a JSON text-part input array. Optional `slack: { channelId: "C0123456789" }` selects
+an actual Slack channel ID. Promotion verifies the Agent’s dedicated App connection
+and channel access, then pins that connection. Each fire starts an independent
+Session on a fresh Computer with an explicit Slack opening when routed;
+the handler receives the declared input without a synthetic schedule payload.
 
-External Schedule APIs are read-only: `client.schedules.retrieve(id)` and
-`list({ cursor?, limit? })`, or exact lookup with `{ taskId }`. Exact task
-lookup cannot be combined with pagination. Status is `active`, `errored`, or
-`archived`; an errored record includes `lastFailure`. Timing or lifecycle
-changes require another source Deployment promotion.
+`client.schedules.retrieve(id)` reads one Schedule.
+`client.schedules.list({ agentId?, cursor?, limit? })` pages records; `agentId`
+is an Agent UUID and limits range from 1 to 100. Results include `id`, `agentId`,
+`deploymentId`, `triggerKey`, `input`, `cron`, `activeFrom`, optional `activeUntil`
+and optional `nextFireAt`.
 
-`lastFailure.code` is an opaque string. Known admission diagnostics include
-`task_not_found`, `program_unavailable`, `invalid_definition`,
-`secret_selection_mismatch`, and `sandbox_not_found`; cron and schedule validation
-use `invalid_cron`, `unsupported_cron_version`, or `invalid_schedule`. Keep a generic
-handling path for unfamiliar codes. The SDK preserves the code, message and details;
-the Schedule status still determines its lifecycle.
+These APIs are read-only. Edit the Agent declaration and promote a Deployment
+to change future triggers. Already-admitted Sessions retain their pinned code.
+
+For a new Agent with Slack delivery, first promote it without the Slack-routed
+trigger, connect its Slack app from the Agent page, then add the trigger and
+promote again. Promotion verifies the connected app and channel before enabling
+the schedule.

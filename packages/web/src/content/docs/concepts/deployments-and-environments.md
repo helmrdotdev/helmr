@@ -8,7 +8,7 @@ sidebarLabel: Deployments and environments
 
 A Project groups a product or service inside an organization. Environments are
 independent scopes within a Project: each has its own current Deployment,
-Secrets, Computers, Runs, Sessions, Tokens, and Schedules.
+Secrets, Computers, Sessions, Turns and Schedules.
 
 Use separate Environments when the same source needs different promoted
 versions, credentials, execution history, or access boundaries. Environment
@@ -17,13 +17,13 @@ Project and Environment on each CLI operation.
 
 A Deployment is one immutable, content-addressed bundle produced by the Helmr
 CLI on a developer or CI machine. The official builder installs the project's
-dependencies, evaluates config, compiles declarations, builds Sandbox images,
-and indexes Tasks, Actors, Sandboxes, and Schedules. The Control Plane verifies
+dependencies, evaluates config, compiles declarations, builds Computer images,
+and indexes Agents, Computer definitions and cron triggers. The Control Plane verifies
 and registers the completed closure without rebuilding it.
 
 Promotion makes one completed Deployment current in an Environment. New
 definition lookups and starts use that current Deployment unless the read API
-explicitly selects another Deployment. Existing Runs remain pinned to the
+explicitly selects another Deployment. Existing Sessions remain pinned to the
 Deployment recorded when they were created.
 
 Promotion also reconciles source-declared Schedules. It does not mutate the

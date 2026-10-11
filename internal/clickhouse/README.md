@@ -1,107 +1,78 @@
 # Historical telemetry
 
-PostgreSQL owns accepted events and log chunks in a durable outbox. The
-Dispatcher projects that outbox into ClickHouse; the Control Plane reads
-history with tenant-scoped, sequence-ordered `FINAL` queries. Redis remains the
-live event projection. A failed or ambiguous ClickHouse acknowledgment leaves
-the PostgreSQL claim retryable; outbox retry counts fence acknowledgments.
+The clean schema contains four histories: platform `events`, `session_logs`,
+`computer_preparation_logs`, and `computer_command_logs`. PostgreSQL owns accepted
+records and durable export claims. ClickHouse stores their historical projection;
+its acknowledgment permits outbox retirement. A failed or ambiguous acknowledgment
+leaves the claim retryable. Redis remains the live event projection.
 
 ## Retention and representation
 
-`accepted_at` is the original PostgreSQL outbox `created_at`, in UTC millisecond
-precision. Both tables partition by its date and become eligible for TTL
-cleanup 90 days after acceptance. Retries preserve this value and therefore
-cannot move the logical record to a new partition or extend retention.
-`observed_at` describes the event occurrence; `ingested_at` records delivery and
-versions `ReplacingMergeTree` replacements. These clocks have different roles.
+All histories partition by the original PostgreSQL acceptance date and become
+eligible for deletion 90 days after acceptance. Retries preserve that date and
+cannot extend retention. `ingested_at` versions `ReplacingMergeTree` replacements;
+readers use `FINAL` because physical replacement happens asynchronously.
 
-TTL uses whole-part background cleanup. Ninety days is eligibility for deletion,
-not an exact API visibility cutoff; parts can remain until every row in the part
-expires and ClickHouse performs cleanup. Readers retain `FINAL` because physical
-replacement is asynchronous. Keep the tenant/subject/sequence sorting keys.
+Events retain UTC millisecond `accepted_at` and `observed_at` values, opaque JSON
+bodies and nullable event references. Diagnostic histories retain microsecond
+`accepted_at` and `expires_at`, the producer's nanosecond observation timestamp,
+producer epoch, stream sequence and byte offsets. `data` stores arbitrary bytes,
+including NUL and invalid UTF-8. Explicit data, gap and end records preserve stream
+loss and completion information. JSON-looking stdout remains raw stdout.
 
-Run-log `String` stores arbitrary raw bytes, including NUL and invalid UTF-8.
-Base64 belongs only to the API response boundary. Structured records use a
-materialized `level LowCardinality(String)` for level filters; stdout/stderr
-JSON-looking content does not become a structured record. Event body remains an
-opaque JSON string. Run-log lease IDs are required, event references remain
-nullable, and 64-bit cursors are unchanged.
+Diagnostic sort keys contain Environment, owner, producer epoch, stream and
+sequence. The command reader constrains that prefix and excludes expired records
+at query time. TTL uses whole-part background cleanup: eligibility does not mean
+immediate physical deletion. Event history retains its existing TTL visibility
+semantics; diagnostic API expiry is enforced separately from background deletion.
 
 ## Ingestion envelope
 
-The ingester claims at most 10,000 rows or 16 MiB of admitted payload, whichever
-bound is reached first. PostgreSQL's stored generated `ingest_size_bytes`
-computes the exact normalized event-message/JSON byte count on writes, or uses
-the admitted log size. Claim candidate scans need not repeatedly detoast large
-JSON payloads just to size rows they will leave for a later batch.
+The platform event ingester claims at most 10,000 rows or 16 MiB of admitted
+message/JSON payload. Claims, writes and acknowledgments share a 25-second deadline
+inside a 30-second claim. Cycles start at least one second apart; errors retain the
+two-second retry backoff. Diagnostic admission and export use their separately
+configured source, Environment, global queue, record and byte bounds. The event
+budget is not a diagnostic policy or a process-memory ceiling.
 
-The byte ceiling excludes metadata, PostgreSQL result objects, Native block
-buffers and compression scratch space. It is not a process-memory limit or a
-ClickHouse recommendation. ClickHouse's [insert guidance](https://clickhouse.com/docs/best-practices/selecting-an-insert-strategy)
-recommends row batching, commonly 10,000–100,000 rows; large individual records
-must still obey the client byte budget. Local writer/claim measurements support
-16 MiB as the initial operating point. Larger envelopes consumed substantially
-more memory without consistent writer throughput gains. Deployment hardware,
-network latency and concurrent Dispatcher duties still require load validation.
-
-Each ingestion cycle starts no sooner than one second after the preceding
-cycle's start; a slower cycle can continue immediately. Rows accumulate unleased
-in PostgreSQL. Event/log sends remain serial, with explicit `async_insert=0`,
-Native over HTTP, and LZ4. This targets roughly one insert per table per second
-per ingester; each accepted-date partition can create its own part, and multiple
-ingesters multiply the rate. A single serial writer waiting for durable async
-flush cannot coalesce its own next request. Async server-buffer thresholds are
-not client request-size ceilings, and version-dependent defaults are not relied on.
-
-Each claim, write and acknowledgment shares a 25-second deadline within the
-30-second lease. Errors retain the existing two-second retry backoff. Sparse
-historical projection can wait roughly one cycle plus database/network work;
-this is not a public latency SLO. Monitor retry age, backlog and part/merge pressure
-before raising limits or adding ingestion concurrency.
+Writers send typed Native batches over HTTP with LZ4 and explicit `async_insert=0`.
+Row-local encoding failures rebuild the batch without the rejected row; healthy
+neighbors remain deliverable. ClickHouse's [insert guidance](https://clickhouse.com/docs/best-practices/selecting-an-insert-strategy)
+recommends row batching, commonly 10,000–100,000 rows, subject to payload budgets.
+A serial writer waiting for durable async flush cannot coalesce its own next
+request. Deployment load, backlog and part/merge pressure require actual measurement.
 
 ## Access and read limits
 
-Bootstrap administration, schema creation, ingestion and historical reads use
-separate credentials and ECS execution permissions. Bootstrap is a one-off task;
-runtime services receive only their own credentials. Existing-user privilege,
-role, profile or password drift fails bootstrap before additive changes. Rotation
-and privilege revocation are explicit operator actions.
+Bootstrap administration, schema creation, ingestion and reads use separate
+credentials. Runtime services receive only their own credentials. Existing-user
+privilege, role, profile or password drift fails bootstrap before additive changes.
+Rotation and privilege revocation remain explicit operator actions.
 
-Initial reader limits are 10,000,000 scanned rows, 1 GiB scanned bytes, 512 MiB
-query memory, and a 30-second client deadline (server execution setting permits
-1–35 seconds to accommodate the Go driver's deadline cushion). Positive server
-constraints prevent disabling ceilings. Overflow throws, and the API discards
-any partial rows. Limits are checked during execution and may exceed a threshold
-by a processing block. They protect the service; they do not promise arbitrary
-filtered-history workloads or Cloud concurrency. A rare-match query can scan far
-more rows than its page limit.
+Initial reader limits are 10,000,000 scanned rows, 1 GiB scanned bytes, 512 MiB query
+memory and a 30-second client deadline. The server execution setting permits 1–35
+seconds for the Go driver's deadline cushion. Positive constraints prevent
+disabling ceilings. Overflow throws and readers discard partial results; a page
+limit alone does not bound scanned data.
 
 ## Validation and prerelease rollout
 
-`nix run .#ci-clickhouse` starts isolated local servers from the pinned ClickHouse
-package and executes uncached race tests for the shipped schema, binary and
-filtered pagination, repeat delivery, deadlines, access separation and bootstrap
-recovery. PostgreSQL generated sizing, bounded prefixes and acknowledgment fences
-are exercised by `nix run .#ci-postgres`.
+`nix run .#ci-clickhouse` starts isolated servers from the pinned package and runs
+uncached race tests for the exact four-table schema, binary records, command stream
+pagination, repeated delivery, retention, deadlines, access and bootstrap recovery.
+Tests joining PostgreSQL acceptance to ClickHouse require the PostgreSQL test
+configuration as well. `nix run .#ci-postgres` covers PostgreSQL ownership and claim
+fences. Optional `BenchmarkWriterEnvelope` and `TestWriterInsertStrategyMeasurement`
+use an explicitly configured isolated ClickHouse server; the latter requires
+`HELMR_TEST_CLICKHOUSE_INSERT_PROBE=1`. They report synthetic measurements, not SLOs.
+`TestTelemetryClaimEnvelopeMeasurement` uses an isolated PostgreSQL URL and
+`HELMR_TEST_TELEMETRY_ENVELOPE=1`; `HELMR_TEST_TELEMETRY_ENTROPY=random` selects
+the large TOAST probe. Those measurements support the event 16 MiB starting budget;
+they do not set diagnostic limits. The canary writes and reads a scoped platform event.
 
-Optional writer measurements use `BenchmarkWriterEnvelope` and
-`HELMR_TEST_CLICKHOUSE_URL` against an isolated server with the current schema.
-Set `HELMR_TEST_CLICKHOUSE_INSERT_MODE=async` only for the comparison benchmark.
-`TestTelemetryClaimEnvelopeMeasurement` additionally requires an isolated
-PostgreSQL URL and `HELMR_TEST_TELEMETRY_ENVELOPE=1`; set
-`HELMR_TEST_TELEMETRY_ENTROPY=random` for the large TOAST candidate-scan probe.
-These are synthetic diagnostics, not release SLOs or production savings claims.
-
-The initial PostgreSQL and ClickHouse schemas are greenfield definitions. An
-existing deployment with the old initial schema must be reset/reprovisioned by
-an explicitly authorized operator before this candidate is deployed. Running
-`CREATE TABLE IF NOT EXISTS` against old ClickHouse tables does not upgrade them.
-Likewise, this change does not provide a PostgreSQL data migration from the old
-initial schema. Preserve any required data before an approved reset.
-
-Prepare the combined Product/Cloud revision, inspect the target schema and
-credentials, then authorize the environment reset and rollout. Bootstrap access
-before schema migration; migration failure must prevent service rollout. Verify
-both deployment/run identities, binary logs, filtered page cursors, late/replayed
-records and reader denials in the actual Cloud service. Local tests do not prove
-its inherited settings, grants, backup policy, workload, or long-duration cleanup.
+The initial schemas are greenfield definitions. `CREATE TABLE IF NOT EXISTS` does
+not upgrade an old deployment. Reset/reprovisioning, credential changes and rollout
+need their own authorization; this source change performs no live table removal.
+Verify the combined Product/Cloud revision, selected histories, actual export and
+reader grants in the target service before release. Local tests do not prove Cloud
+settings, workload, backup policy or long-duration physical TTL cleanup.

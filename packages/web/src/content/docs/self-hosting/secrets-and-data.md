@@ -47,7 +47,6 @@ Set `TOFU=terraform` if required. The helper creates locally generated values fo
 - `auth_key`
 - `encryption_key`
 - `computer_fencing_key`
-- `token_credential_key`
 - `checkpoint_encryption_key`
 - `setup_token`
 - the worker-group enrollment token

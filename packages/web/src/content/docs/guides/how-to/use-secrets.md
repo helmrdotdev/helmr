@@ -5,7 +5,7 @@ description: Create a Secret, bind it to a Computer, and rotate its value.
 
 # Use secrets
 
-This guide uses a GitHub token with `gh api`. The `reviewer` Sandbox must be
+This guide uses a GitHub token with `gh api`. The `reviewer` Computer definition must be
 included in the current Deployment and its image must contain `gh`. See
 [Build a custom image](/docs/guides/how-to/build-a-custom-image) to install tools.
 Use the same Project Environment for the Secret and Computer.
@@ -28,22 +28,25 @@ ID for rotation or revocation.
 ## Bind it as a protected environment variable
 
 Set `HELMR_API_KEY` to an [environment API key](/docs/reference/rest-api/authentication)
-for the same `agents` project and `development` environment. Bind the Secret by
-name when creating the Computer:
+for the same `agents` project and `development` environment. Bind the Secret by its returned
+ID when creating the Computer (set `HELMR_GITHUB_SECRET_ID` to that ID):
 
 ```ts
 import { HelmrClient } from "@helmr/sdk"
 
+const url = process.env["HELMR_API_URL"]
+if (!url) throw new Error("Set HELMR_API_URL to your control plane URL")
 const client = new HelmrClient({
+  url,
   apiKey: process.env.HELMR_API_KEY!,
 })
 
-const computer = await client.sandboxes.createComputer("reviewer", {
+const computer = await client.computerDefinitions.createComputer("reviewer", {
   key: "github-review",
   idempotencyKey: "computer:github-review",
   secrets: [
     {
-      secret: "GITHUB_TOKEN",
+      secretId: process.env.HELMR_GITHUB_SECRET_ID!,
       env: {
         name: "GH_TOKEN",
         mode: "protected",
@@ -70,13 +73,12 @@ placeholder unchanged in the header. Do not encode it for Basic authentication
 or use it to sign requests. See [client requirements](/docs/concepts/secrets#client-requirements)
 for supported protocols and limitations.
 
-Bindings are fixed at Computer creation. Later Task and Actor starts use the
+Bindings are fixed at Computer creation. Later Agent starts use the
 Computer reference rather than a new binding map. To change a binding or its
 allowed origins, create a new Computer.
 
-You can also attach Secrets in Console under **Computers → Create Computer**, or
-use the CLI's [`--secrets-file`](/docs/reference/cli/computer#secret-bindings-at-creation)
-option. JSON uses `allowed_origins` where the SDK uses `allowedOrigins`.
+Use the CLI's [`--secrets-file`](/docs/reference/cli/computer#secret-bindings-at-creation)
+option. JSON and the SDK both use `secretId` and `allowedOrigins`.
 
 ## Use raw values when required
 
@@ -85,12 +87,12 @@ access, choose raw env or file delivery when creating its Computer:
 
 ```ts
 secrets: [
-  { secret: "database-password", env: { name: "PGPASSWORD", mode: "raw" } },
-  { secret: "client-key", file: { path: "/run/secrets/client.key" } },
+  { secretId: databaseSecret.id, env: { name: "PGPASSWORD", mode: "raw" } },
+  { secretId: clientKeySecret.id, file: { path: "/run/secrets/client.key" } },
 ]
 ```
 
-Create those named Secrets in the same Project Environment first. Raw values can
+Create those Secrets in the same Project Environment first and use their returned IDs. Raw values can
 be read by Computer processes and may be retained in snapshots. Do not expose a
 Secret through raw delivery if you need its value hidden from the Computer.
 
@@ -113,6 +115,6 @@ blocks subsequent credential resolution; it does not cancel requests already
 authorized or erase raw copies previously delivered. See
 [rotation and revocation](/docs/concepts/secrets#rotation-and-revocation).
 
-Keep credentials out of payloads, metadata, tags, source archives, logs, and Actor
-output. Helmr does not automatically refresh OAuth tokens or write CLI credential
+Keep credentials out of inputs, results, source archives, logs and authored
+content. Helmr does not automatically refresh OAuth tokens or write CLI credential
 changes back to a Secret.
