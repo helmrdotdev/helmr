@@ -39,7 +39,7 @@ for the separate Pool retirement operations below. It does not promote existing
 users or change existing grants; an organization owner is not automatically a
 deployment administrator. Keep this login session separate from the Capacity token.
 
-Use the deployment [Capacity API](/docs/self-hosting/capacity-scaling) credential
+Use the deployment [Capacity API](/docs/self-hosting/capacity) credential
 through an authorized operator session. In Standard or Quickstart, configure
 `capacity_token_secret_arn` with a Secrets Manager secret containing the token;
 set `capacity_token_kms_key_arn` as well when that secret uses a customer KMS key.

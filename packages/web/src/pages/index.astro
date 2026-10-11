@@ -65,7 +65,6 @@ const computerNotes: Note[] = [
   { from: "image:", to: "resources:", title: "Exactly this image.", text: "No hidden base, no drift." },
   { from: "buildSecrets:", to: "allowedOrigins", title: "Secrets by purpose.", text: "Protected keys stay outside the VM." },
   { from: "async prepare", to: "  },", title: "One prepared version.", text: "Every new computer starts from it." },
-  { from: "refresh:", to: "refresh:", title: "Kept fresh.", text: "Rebuilt on a schedule." },
 ];
 
 const agentNotes: Note[] = [
@@ -155,11 +154,11 @@ const stages = [
 
 // The docs page each section points to.
 const sectionDocs = [
-  { id: "agents", docs: { href: "/docs/quickstart", label: "Coding agents" } },
+  { id: "agents", docs: { href: "/docs/concepts/agents#running-a-harness-inside-an-agent", label: "Running a harness" } },
   { id: "environment", docs: { href: "/docs/concepts/computers", label: "Computers" } },
-  { id: "work", docs: { href: "/docs/reference/sdk/overview", label: "Agents" } },
-  { id: "team", docs: { href: "/docs/concepts/waits-and-input", label: "Collaboration" } },
-  { id: "durable", docs: { href: "/docs/concepts/how-helmr-works", label: "Durability" } },
+  { id: "work", docs: { href: "/docs/concepts/agents", label: "Agents" } },
+  { id: "team", docs: { href: "/docs/concepts/slack", label: "Slack" } },
+  { id: "durable", docs: { href: "/docs/concepts/durability", label: "Durability" } },
   { id: "security", docs: { href: "/docs/concepts/secrets", label: "Secrets" } },
   { id: "open-source", docs: { href: "/docs/self-hosting/overview", label: "Self-hosting" } },
 ] as const;

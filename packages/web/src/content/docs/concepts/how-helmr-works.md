@@ -1,39 +1,50 @@
 ---
 title: How Helmr works
-description: Deployed Agents, retained Sessions, serial Turns and durable Computers.
+description: The resources Helmr uses to run deployed Agents in durable Linux Computers.
 ---
 
 # How Helmr works
 
-Helmr runs deployed JavaScript and TypeScript Agents in Linux Computers. You
-choose the native harness, model, tools and work procedure. Helmr manages
-admission, execution, retained outcomes and the Computer lifecycle.
+Helmr runs JavaScript and TypeScript Agents in Linux Computers. You choose the
+harness, model, tools and work procedure inside the Agent. Helmr admits work,
+runs it one Turn at a time, keeps the Computer's state across Turns and retains
+each outcome.
 
-| Resource | Purpose |
+| Resource | What it is |
 | --- | --- |
-| Deployment | Immutable code and definitions selected in a Project Environment. |
-| Agent | A Computer recipe, optional initialization and a Turn handler. |
-| Computer | A working environment with retained disk and execution state. |
-| Session | A continuing work context pinned to a Deployment and Computer. |
-| Turn | One admitted input and one terminal outcome, processed serially within a Session. |
+| [Agent](/docs/concepts/agents) | A deployed definition: a Computer recipe, optional `init` and a `turn` handler. |
+| [Computer](/docs/concepts/computers) | A Linux working environment with a retained disk and running processes. |
+| [Session](/docs/concepts/sessions) | One continuing conversation with an Agent, pinned to a Deployment and a Computer. |
+| [Turn](/docs/concepts/turns) | One admitted input and its terminal outcome. Turns in a Session run one at a time. |
+| [Project and Deployment](/docs/concepts/projects) | A Project holds Environments; a Deployment is an immutable build promoted to be current in one Environment. |
 
-Starting an Agent admits a Session and its first Turn. Later inputs enter the same
-Session with `enqueue`. A Computer definition is a recipe; an actual Computer is
-created from it unless the caller selects an existing one. Sessions sharing a
-Computer share files but keep separate identities and native histories.
+## From code to a running Session
 
-Setup runs before the first Turn. Its live result is available as
-`ctx.initResult`. Healthy hibernation preserves that result and native processes.
-Loss of a valid continuation holds the affected Session for explicit recovery;
-Helmr does not silently replay interrupted inputs.
+You define Agents and Computers in TypeScript, build them into a Deployment
+with the CLI and promote that Deployment in an Environment. Starting an Agent
+creates a Session and its first Turn. The Session gets a Computer, runs the
+Agent's `init` once and then calls `turn` for each admitted input in order.
+Later inputs join the same Session. See [Agents](/docs/concepts/agents) and
+[Sessions](/docs/concepts/sessions).
 
-A handler return begins finalization. Completed requires drainage and publication
-of the Turn's adequate Computer disk Save. Output can be read before completion.
-The machine result and optional human response are separate values.
+A Turn can write output, ask a person a [question](/docs/concepts/questions)
+and return a JSON result. A Turn is `completed` only after the Computer's disk
+is saved durably. Between Turns, an idle Session can hibernate and resume
+without rerunning `init`. See [Turns](/docs/concepts/turns) and
+[Durability](/docs/concepts/durability).
 
-Use resource IDs for operations. Session keys identify conversations; idempotency
-keys reconcile retries of the same request. Promotion selects code for new work;
-it does not upgrade existing Sessions.
+Work can also start from a [cron trigger](/docs/concepts/triggers), from
+[Slack](/docs/concepts/slack) or from another Agent through
+[delegation](/docs/concepts/delegation).
 
-Keep credentials in Secrets. Inputs, results, human content and event history are
-retained application data and must not contain credentials.
+## Identity and retries
+
+Operations address resources by ID. A Session key names a continuing
+conversation so a later start reaches the same Session. An idempotency key
+identifies one request so an uncertain retry does not admit the work twice.
+
+## Data and credentials
+
+Keep credentials in [Secrets](/docs/concepts/secrets). Inputs, results,
+output, questions, answers and event history are retained application data and
+must not contain credentials. See [Security](/docs/concepts/security).

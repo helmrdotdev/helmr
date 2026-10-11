@@ -141,7 +141,7 @@ packages rather than the entire installed project. The runtime does not transfor
 TypeScript/JSX or preserve arbitrary source-relative asset paths. Runtime externals
 currently require public-registry semver roots; local archives can be bundled but
 cannot be selected as external roots. See the
-[configuration reference](../packages/web/src/content/docs/reference/configuration.md#program-bundling-and-runtime-dependencies)
+[configuration reference](../packages/web/src/content/docs/reference/config.md#runtime-dependencies)
 for dependency eligibility and locating shipped assets with package imports.
 
 Keep `vendor/` in the captured project so the build can install these files.

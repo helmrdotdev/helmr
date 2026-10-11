@@ -1,37 +1,65 @@
 ---
 title: CLI
-description: Authentication, global flags, and command groups for helmr.
+description: Global flags, credentials and the full helmr command list.
 sidebarLabel: Overview
 ---
 
 # CLI
 
-`helmr` talks to the Control Plane over HTTP(S). `-a, --api-url` overrides the
-origin. API-key commands otherwise use `HELMR_API_URL` or
-`https://api.helmr.dev`; commands using your saved login use its origin.
+`helmr` builds and deploys Agent projects and calls the control plane over
+HTTP(S). With the CLI configured (see [Quickstart](/docs/quickstart)), run
+`helmr COMMAND --help` for the exact flags of the installed version.
 
-Authenticate with `HELMR_API_KEY` or `helmr login [URL] [--no-browser]`.
-`helmr logout [URL]` revokes a saved login and `helmr whoami [--json]` reports
-the active source. `HELMR_CONFIG_DIR` overrides the saved CLI state directory.
+## Global flags
 
-Browser login returns you to the CLI approval request after any required sign-in
-or organization setup. Review the account, organization, server, and terminal
-code before approving. CLI login does not require a project; commands that need
-an environment still require project and environment scope. The browser confirms
-approval, and the terminal confirms login after saving the credentials.
+| Flag | Description |
+| --- | --- |
+| `-a, --api-url URL` | Control plane origin for this invocation. Overrides `HELMR_API_URL`. |
+| `--help` | Show help for any command. |
+| `--version` | Print the CLI version. |
 
-An expired or denied request requires a new `helmr login`. Starting another GitHub
-sign-in supersedes the earlier browser attempt; completing the earlier callback
-does not cancel the newer one. Organization switching is not supported by this flow.
+## Credentials and scope
 
-If browser sign-in fails during CLI login, run `helmr login` again to start a new
-request. The callback error page also offers a separate link to sign in to the
-console.
+The CLI uses `HELMR_API_KEY` when it is set, and otherwise the saved login for
+the selected origin. An API key is bound to one Environment, so `-p, --project`
+and `-e, --env` are rejected with it. With a saved login, commands that act in
+an Environment require both flags; each accepts a slug or ID. Details are in
+[Credential selection](/docs/reference/cli/login#credential-selection).
 
-Top-level commands also include `init [--dir DIR] [--force]`, `completion`,
-`--help`, and `--version`. Use `helmr COMMAND --help` as executable authority
-for the installed CLI version.
+## Commands
 
-Environment-scoped commands accept `-p, --project` and `-e, --env`. Saved-login
-requests require both. An environment-bound API key supplies that scope, so
-project and environment flags are rejected with API-key auth.
+| Command | Subcommands | Description | Reference |
+| --- | --- | --- | --- |
+| `helmr init` | | Create a starter Agent project. | [init](/docs/reference/cli/init) |
+| `helmr login` | | Authenticate the CLI with a control plane. | [login](/docs/reference/cli/login) |
+| `helmr logout` | | Revoke and delete a saved login. | [login](/docs/reference/cli/login#helmr-logout) |
+| `helmr whoami` | | Show the active credentials. | [login](/docs/reference/cli/login#helmr-whoami) |
+| `helmr build` | | Build a verified deployment bundle locally. | [build](/docs/reference/cli/build) |
+| `helmr deploy` | | Build, upload, finalize and promote a deployment bundle. | [deploy](/docs/reference/cli/deploy) |
+| `helmr deployment` | `list`, `get`, `promote` | Inspect Deployments and promote one to current. | [deployment](/docs/reference/cli/deployment) |
+| `helmr agent` | `definition list`, `definition get`, `start` | Inspect Agent definitions and start Sessions. | [agent](/docs/reference/cli/agent) |
+| `helmr session` | `list`, `get`, `send`, `enqueue`, `events`, `interrupt`, `resume`, `close`, `cancel`, `turn list`, `turn get`, `turn wait`, `turn send`, `turn ask list`, `turn ask get`, `turn ask respond` | Work with Sessions, Turns and questions. | [session](/docs/reference/cli/session) |
+| `helmr schedule` | `list`, `get` | Inspect Schedules created by triggers. | [schedule](/docs/reference/cli/schedule) |
+| `helmr computer` | `definition list`, `definition get`, `create`, `get`, `delete`, `exec` | Work with Computer definitions and Computers. | [computer](/docs/reference/cli/computer) |
+| `helmr command` | `get`, `wait`, `logs`, `cancel` | Observe and cancel Commands. | [command](/docs/reference/cli/command) |
+| `helmr project` | `list`, `get`, `create`, `update` | Manage Projects. Requires a saved login. | [project](/docs/reference/cli/project) |
+| `helmr env` | `list`, `get`, `create`, `update` | Manage a Project's Environments. Requires a saved login. | [project](/docs/reference/cli/project) |
+| `helmr secret` | `list`, `get`, `create`, `rotate`, `revoke` | Manage Environment Secrets. | [secret](/docs/reference/cli/secret) |
+| `helmr completion` | `bash`, `zsh`, `fish`, `powershell` | Generate a shell completion script. | [login](/docs/reference/cli/login#helmr-completion) |
+
+## Output
+
+Most commands print `key: value` lines or one line per item. Commands with
+`--json` print the server resource or receipt as one JSON object; some list
+commands also offer `--jsonl`. Receipts confirm that the control plane accepted
+a request, not that the work has finished.
+
+## Environment variables
+
+| Variable | Description |
+| --- | --- |
+| `HELMR_API_KEY` | API key. Takes precedence over a saved login. |
+| `HELMR_API_URL` | Control plane origin when `--api-url` is not given. |
+| `HELMR_CONFIG_DIR` | Directory for saved CLI configuration. |
+
+See [Environment variables](/docs/reference/env) for the complete list.

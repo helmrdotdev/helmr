@@ -13,7 +13,7 @@ Helmr names environment variables according to the environment that owns them:
   `HELMR_` inside a process-specific environment adds no ownership information.
 - `HELMR_` is reserved for public client configuration and values that cross
   into an environment Helmr does not exclusively own, such as a user's shell
-  or a task guest. The CLI variables below are examples.
+  or a Computer guest. The CLI variables below are examples.
 - Established ecosystem variables such as `AWS_*`, `HTTP_PROXY`, and
   `NO_PROXY` keep their standard names.
 
@@ -140,7 +140,7 @@ the same value as a Bearer token over HTTPS outside localhost. Possession grants
 the complete capacity API for the deployment, so store it as a secret and
 provide it only to the Control Plane and trusted scaler. When it is unset,
 capacity API requests are rejected. See [custom capacity
-scaling](/docs/self-hosting/capacity-scaling) for setup and rotation.
+scaling](/docs/self-hosting/capacity) for setup and rotation.
 
 ClickHouse telemetry: `CLICKHOUSE_URL` is required. Set `CLICKHOUSE_USER` when the service user is not `default`, and set `CLICKHOUSE_PASSWORD` when the service requires a password.
 

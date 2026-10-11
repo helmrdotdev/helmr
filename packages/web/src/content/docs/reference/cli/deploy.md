@@ -24,7 +24,7 @@ from `helmr build` and follows the same upload and verification path.
 | `--json` | Emit progress as JSON lines. |
 
 The install command, build secrets and build environment are
-[build settings](/docs/reference/configuration#build-settings) in `helmr.config.ts`, which the command evaluates
+[build settings](/docs/reference/config#build-environment) in `helmr.config.ts`, which the command evaluates
 once on this machine (Node.js 22 or newer required).
 
 Human progress is written to stderr and the final version to stdout. The
