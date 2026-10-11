@@ -124,7 +124,10 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
     return output
    }
    const status = (await holding.get({ signal })).status
-   assert(status === "running" || status === "queued", "peer did not survive continuation")
+   if (status !== "running" && status !== "queued") {
+    const outcome = await holding.wait({ timeout: "30s", signal })
+    assert.fail(`peer did not survive continuation: ${JSON.stringify({ status, outcome })}`)
+   }
    await delay(100, undefined, { signal })
   }
  }

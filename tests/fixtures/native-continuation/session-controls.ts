@@ -7,8 +7,7 @@ import { callMcp, fixtureInput, waitManagedTurn, type ManagedAdmission } from ".
 async function entered(turn: Turn, session: string, active: string) {
   for (;;) {
     try {
-      assert.equal(JSON.parse(await readFile(`/workspace/control-${session}.json`, "utf8")).turnId, active)
-      return
+      if (JSON.parse(await readFile(`/workspace/control-${session}.json`, "utf8")).turnId === active) return
     } catch (error) {
       if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error
     }
@@ -18,13 +17,13 @@ async function entered(turn: Turn, session: string, active: string) {
 export async function checkSessionControls(turn: Turn, computer: ComputerIdentity,
   definition: AgentDefinition, owned: { id: string },
   inspect: (sessionId: string, turnId: string) => Promise<{ status: string }>) {
-  const enqueue = (text: string) => callMcp<ManagedAdmission>(turn.signal, "enqueue", { sessionId: owned.id, input: fixtureInput(text), idempotencyKey: `${turn.id}:${text}` })
+  const enqueue = (text: string, admission: string) => callMcp<ManagedAdmission>(turn.signal, "enqueue", { sessionId: owned.id, input: fixtureInput(text), idempotencyKey: `${turn.id}:${admission}` })
   const retrieve = () => callMcp<{ holds: { id: string; session_id: string }[] }>(turn.signal, "inspect_session", { sessionId: owned.id })
-  const exact = await enqueue("native-control-hold")
+  const exact = await enqueue("native-control-hold", "exact-active")
   await entered(turn, owned.id, exact.turnId)
   const processBefore = JSON.parse(await readFile(`/workspace/control-${owned.id}.json`, "utf8")).processId
   assert(Number.isSafeInteger(processBefore) && processBefore > 0)
-  const following = await enqueue("after-exact-interrupt")
+  const following = await enqueue("after-exact-interrupt", "exact-following")
   const exactRequest = { sessionId: owned.id, turnId: exact.turnId, idempotencyKey: `${turn.id}:exact-interrupt` }
   const exactReceipt = await callMcp<{ id: string; turnId: string; status: string }>(turn.signal, "interrupt_turn", exactRequest)
   assert.equal(exactReceipt.turnId, exact.turnId)
@@ -36,9 +35,9 @@ export async function checkSessionControls(turn: Turn, computer: ComputerIdentit
   assert.deepEqual((await retrieve()).holds, [])
   assert.equal(JSON.parse(await readFile(`/workspace/control-${owned.id}.json`, "utf8")).processId, processBefore)
   assert.deepEqual(await callMcp(turn.signal, "interrupt_turn", exactRequest), exactReceipt)
-  const active = await enqueue("native-control-hold")
+  const active = await enqueue("native-control-hold", "session-active")
   await entered(turn, owned.id, active.turnId)
-  const pending = await enqueue("after-interrupt")
+  const pending = await enqueue("after-interrupt", "session-following")
   const interruption = { sessionId: owned.id, idempotencyKey: "native-control-interrupt" }
   const interrupted = await callMcp<{ holdId: string }>(turn.signal,"interrupt_session",interruption)
   assert.deepEqual(await callMcp(turn.signal,"interrupt_session",interruption), interrupted)

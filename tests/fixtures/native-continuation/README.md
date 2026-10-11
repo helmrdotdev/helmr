@@ -618,7 +618,7 @@ explicit authored cleanup gate retains that interval after the native adapter
 joins its interrupted work. Ordinary Computer Commands verify unchanged setup,
 managed/native process and scope identities, and absence of the owned command,
 then release the gate after three fresh read-only PostgreSQL observations. The
-gate has a 25-second failure bound and does not change production stop deadlines.
+gate has a 4-second failure bound and does not change production stop deadlines.
 The driver requires Ask cancellation and exact stop clearance before accepting
 warm successor completion. `native-stop-settlement.json` binds those observations
 to durable Turn/process/Ask state. The ordinary eight completed own-Save Turns and
