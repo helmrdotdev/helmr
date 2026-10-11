@@ -26,18 +26,29 @@ export async function interruptNativeTurn(client: HelmrClient, provider: string,
   }
   const successor = await session.enqueue(fixtureInput(nextInput), undefined, { signal })
   const request = { idempotencyKey: `native-stop:${interrupted.id}` }
-  const receipt = await interrupted.interrupt(request, { signal })
-  assert.equal(receipt.turnId, interrupted.id)
   const computer = client.computers.ref(computerID)
   const marker = `/workspace/native-stop-settled-${interrupted.id}.json`
+  const ownedCommand = `/workspace/${session.id}/owned-command-${interrupted.id}`
   async function command(script: string, phase: string) {
     const command = await computer.exec({ command: ["/usr/local/bin/node", "--input-type=module", "-e", script], timeout: "15s", idempotencyKey: `native-stop:${interrupted.id}:${phase}` }, { signal })
     const outcome = await command.wait({ signal })
     assert.equal(outcome.kind, "exited"); assert.equal(outcome.exitCode, 0, `native stop ${phase} failed`)
     return command.id
   }
+  const runningCommandID = provider === "codex" ? await command(`
+    import assert from 'node:assert/strict'; import {readFile} from 'node:fs/promises'; import {spawnSync} from 'node:child_process';
+    import {setTimeout as delay} from 'node:timers/promises';
+    const deadline=Date.now()+8000;
+    for (;;) { try { if(await readFile(${JSON.stringify(ownedCommand + ".started")},'utf8')===${JSON.stringify(interrupted.id)}) break }
+      catch(error) { if(error.code!=='ENOENT') throw error }
+      assert(Date.now()<deadline,'owned native command did not enter'); await delay(50) }
+    assert.equal(spawnSync('/usr/bin/flock',['--nonblock','--exclusive',${JSON.stringify(ownedCommand + ".lock")},'/bin/true'],{timeout:1000}).status,1,'owned command was not running before interruption');
+  `, "inspect-running") : undefined
+  const receipt = await interrupted.interrupt(request, { signal })
+  assert.equal(receipt.turnId, interrupted.id)
   const inspectedCommandID = await command(`
     import assert from 'node:assert/strict'; import {readFile} from 'node:fs/promises';
+    import {spawnSync} from 'node:child_process';
     import {setTimeout as delay} from 'node:timers/promises';
     let actual; const deadline=Date.now()+8000;
     for (;;) { try { actual=JSON.parse(await readFile(${JSON.stringify(marker)},'utf8')); break }
@@ -45,7 +56,10 @@ export async function interruptNativeTurn(client: HelmrClient, provider: string,
     assert.equal(actual.turnId,${JSON.stringify(interrupted.id)});
     const previous=${JSON.stringify(previous)};
     for (const key of ['pid','nativePid','nonce','setupCount','nativeScopeId']) assert.equal(actual[key],previous[key],key);
-    if (${JSON.stringify(provider)}==='codex') { assert(Number.isSafeInteger(actual.commandPid)); assert.throws(()=>process.kill(actual.commandPid,0),{code:'ESRCH'}) }
+    if (${JSON.stringify(provider)}==='codex') {
+      assert.equal(actual.commandLock,${JSON.stringify(ownedCommand + ".lock")});
+      assert.equal(spawnSync('/usr/bin/flock',['--nonblock','--exclusive',actual.commandLock,'/bin/true'],{timeout:1000}).status,0,'owned native command retained its lifetime lock');
+    }
   `, "inspect-cleanup")
   const samples: StopObservation[] = []
   for (;;) {
@@ -75,7 +89,7 @@ export async function interruptNativeTurn(client: HelmrClient, provider: string,
     }
     await delay(100, undefined, { signal })
   }
-  const evidence = { provider, sessionId: session.id, interruptedTurnId: interrupted.id, successorTurnId: successor.id, askId: askID, inspectedCommandID, releasedCommandID, samples, cleared }
+  const evidence = { provider, sessionId: session.id, interruptedTurnId: interrupted.id, successorTurnId: successor.id, askId: askID, runningCommandID, inspectedCommandID, releasedCommandID, samples, cleared }
   records.push(evidence)
   process.stderr.write(JSON.stringify({ nativeStop: evidence }) + "\n")
   return successor

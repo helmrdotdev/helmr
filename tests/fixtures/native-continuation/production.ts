@@ -5,6 +5,7 @@ import { agent, template, image, source, type Json, type InputContent } from "..
 import assert from "node:assert/strict"
 import { readFile, writeFile, rename, unlink } from "node:fs/promises"
 import { setTimeout as delay } from "node:timers/promises"
+import { spawnSync } from "node:child_process"
 import type { NativeProcess, NativeRuntimeHooks } from "../../../sdk/typescript/src/internal/native-runtime"
 import { codex as nativeCodex, claude as nativeClaude } from "./agent"
 import { startNativeModels } from "./model-server"
@@ -91,17 +92,20 @@ function native(definition: typeof nativeCodex) {
         if (!stopping) throw error
         assert(turn.signal.aborted, "native control Turn failed without interruption")
         const identity = await context.initResult.nativeProcess.ready
-        let commandPid: number | undefined
+        let commandLock: string | undefined
         if (definition.id === "codex") {
-          commandPid = Number(await readFile(`/workspace/${context.session.id}/owned-command-${turn.id}.pid`, "utf8"))
-          assert(Number.isSafeInteger(commandPid) && commandPid > 0)
-          assert.throws(() => process.kill(commandPid!, 0), { code: "ESRCH" })
+          const command = `/workspace/${context.session.id}/owned-command-${turn.id}`
+          assert.equal(await readFile(`${command}.started`, "utf8"), turn.id)
+          commandLock = `${command}.lock`
+          // The shared inode identifies the command across isolated PID namespaces.
+          const lock = spawnSync("/usr/bin/flock", ["--nonblock", "--exclusive", commandLock, "/bin/true"], { timeout: 1_000 })
+          assert.equal(lock.status, 0, "owned native command retained its lifetime lock")
         }
         await unlink(stopPath)
         const gateStartedAt = Date.now()
         const marker = `/workspace/native-stop-settled-${turn.id}.json`
         await writeFile(`${marker}.tmp`, JSON.stringify({ turnId: turn.id, gateStartedAt, pid: process.pid, nativePid: context.initResult.harness.processId,
-          nonce: context.initResult.nonce, setupCount: context.initResult.setupCount, nativeScopeId: identity.scopeId, commandPid }))
+          nonce: context.initResult.nonce, setupCount: context.initResult.setupCount, nativeScopeId: identity.scopeId, commandLock }))
         await rename(`${marker}.tmp`, marker)
         // Authored cleanup deliberately waits for the external fixture to observe
         // pending-stop admission. A bounded failure cannot retain the gate forever.

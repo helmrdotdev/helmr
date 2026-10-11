@@ -21,7 +21,7 @@ export function nativeStopResponse(provider: "codex" | "claude", state: NativeSt
   if (provider === "codex") {
     const name = index === 1 ? "exec_command" : "request_user_input"
     const args = index === 1
-      ? { cmd: `sh -c 'echo $$ > ${control.directory}/owned-command-${control.turnId}.pid; exec sleep 120'`, yield_time_ms: 100 }
+      ? { cmd: `/usr/bin/flock --exclusive --no-fork ${control.directory}/owned-command-${control.turnId}.lock sh -c 'printf %s ${control.turnId} > ${control.directory}/owned-command-${control.turnId}.started; exec sleep 120'`, yield_time_ms: 100 }
       : { questions: [{ id: "choice", header: "Choice", question: "Continue the control fixture?", options: [{ label: "A", description: "First" }, { label: "B", description: "Second" }] }] }
     return { codex: index <= 2 ? { type: "function_call", id: `fc_stop_${control.turnId}_${index}`, call_id: `call_stop_${control.turnId}_${index}`, name, arguments: JSON.stringify(args) } : undefined }
   }

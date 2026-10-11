@@ -619,6 +619,10 @@ joins its interrupted work. Ordinary Computer Commands verify unchanged setup,
 managed/native process and scope identities, and absence of the owned command,
 then release the gate after three fresh read-only PostgreSQL observations. The
 gate has a 4-second failure bound and does not change production stop deadlines.
+The Codex command holds an exclusive advisory lock for its lifetime. The driver
+requires lock contention before interrupting it; the authored handler and external
+Command both require successful non-blocking acquisition after it stops. This
+checks the same shared inode across the isolated PID namespaces.
 The driver requires Ask cancellation and exact stop clearance before accepting
 warm successor completion. `native-stop-settlement.json` binds those observations
 to durable Turn/process/Ask state. The ordinary eight completed own-Save Turns and
