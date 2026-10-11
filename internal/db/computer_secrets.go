@@ -1,6 +1,7 @@
 package db
 
 // RevokedComputerSecretsSQL derives revocation from all durable exposure paths.
+// Revocation follows the pinned image across disk saves and RAM checkpoints.
 // Historical processes and commands remain relevant after they stop. Keep the
 // static copy in query/allocation_planning.sql identical for sqlc.
 const RevokedComputerSecretsSQL = `SELECT c.environment_id,c.id AS computer_id,x.secret_id

@@ -249,6 +249,13 @@ func assertDatabaseConstraintBoundaries(
 	pool *pgxpool.Pool,
 ) {
 	t.Helper()
+	var deferredRetryReferences int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_constraint WHERE conrelid='platform_retry_keys'::regclass AND contype='f' AND condeferrable`).Scan(&deferredRetryReferences); err != nil {
+		t.Fatal(err)
+	}
+	if deferredRetryReferences != 0 {
+		t.Fatalf("deferred retry references = %d, want 0", deferredRetryReferences)
+	}
 	var triggerCount int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)

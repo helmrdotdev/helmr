@@ -1,4 +1,3 @@
-DROP VIEW IF EXISTS computer_secret_revocations;
 -- Drop the owned table set together to resolve internal foreign-key cycles.
 DROP TABLE IF EXISTS
     slack_posts,
@@ -71,5 +70,3 @@ DROP TABLE IF EXISTS
     regions,
     organizations;
 DROP TYPE IF EXISTS org_member_role, magic_link_purpose;
-
-DROP FUNCTION IF EXISTS require_platform_retry_completion();
