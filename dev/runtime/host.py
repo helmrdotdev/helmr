@@ -356,7 +356,7 @@ def start(cfg):
     run('systemctl', 'start', 'helmr-worker.service')
     wait_for(lambda: run('/usr/local/bin/worker', 'status', env=dict(os.environ) | cfg['worker'], capture_output=True).returncode == 0, 'Worker readiness', seconds=300, unit_name='helmr-worker.service')
     require_active_services()
-    print('CP and Worker report ready; all service processes are active. No Task/Actor assertion has run.')
+    print('CP and Worker report ready; all service processes are active. No Agent execution assertion has run.')
 
 
 def stop(cfg):

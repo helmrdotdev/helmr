@@ -23,7 +23,7 @@ test("config defaults are strict, computed ESM/CJS expressions execute once", as
   const f=await fixture({"package.json":{type},"helmr.config.ts":`import{writeFileSync}from'node:fs';writeFileSync(new URL('./evaluated',import.meta.url),'once',{flag:'wx'});const value={};export default value`})
   // CJS uses its native filename, not import.meta (which is ESM-only).
   if(type==="commonjs")await writeFile(resolve(f.root,"helmr.config.ts"),`import{writeFileSync}from'node:fs';writeFileSync(__dirname+'/evaluated','once',{flag:'wx'});const value={};export default value`)
-  try {expect(runHostConfig(f.root)).toEqual({discovery:{assets:[],dirs:["tasks"],external:[],ignorePatterns:[]},build:{builder:{steps:[]},secrets:[]}});expect(await readFile(resolve(f.root,"evaluated"),"utf8")).toBe("once")}finally{await f.close()}
+  try {expect(runHostConfig(f.root)).toEqual({discovery:{assets:[],dirs:["agents"],external:[],ignorePatterns:[]},build:{builder:{steps:[]},secrets:[]}});expect(await readFile(resolve(f.root,"evaluated"),"utf8")).toBe("once")}finally{await f.close()}
  }
  for(const body of ["export const other={}","export default undefined","export default 1","export default []"]){
   const f=await fixture({"helmr.config.ts":body})
@@ -40,8 +40,8 @@ test("packed SDK identity survives one split bundle and assets resolve independe
   "helmr.config.ts":`import{defineConfig}from'@helmr/sdk';export default defineConfig({build:{assets:["prompts/**"]}})`,
   "prompts/system.md":"installed",
   "shared.ts":`import{agent,computer,image}from'@helmr/sdk';import{readFileSync}from'node:fs';export const value=readFileSync(new URL(import.meta.resolve('#project/prompts/system.md')),'utf8');export const shared=agent({id:'build',computer:computer({id:'machine',image:image('root').from('ubuntu:24.04'),resources:{cpu:1,memory:'1GiB'}}),turn:()=>value})`,
-  "tasks/a.ts":`export{shared as build}from'../shared'`,
-  "tasks/b.ts":`import{agent}from'@helmr/sdk';import{value,shared}from'../shared';if(value!=='installed')throw Error('wrong asset');export const worker=agent({id:'worker',computer:shared.computer,turn:async()=>null})`,
+  "agents/a.ts":`export{shared as build}from'../shared'`,
+  "agents/b.ts":`import{agent}from'@helmr/sdk';import{value,shared}from'../shared';if(value!=='installed')throw Error('wrong asset');export const worker=agent({id:'worker',computer:shared.computer,turn:async()=>null})`,
  },true)
  try{
   const result=await analyzeProject({root:f.root,architecture:"x86_64",config:runHostConfig(f.root).discovery})
@@ -53,8 +53,8 @@ test("packed SDK identity survives one split bundle and assets resolve independe
 
 test("program cannot replay root config through helper, and preserves missing imports",async()=>{
  for(const source of ['import "../helmr.config.ts?again"','import "missing-dependency"']){
-  const f=await fixture({"helmr.config.ts":"throw Error('replayed')","tasks/main.ts":source})
-  try{await expect(analyzeProject({root:f.root,architecture:"x86_64",config:{dirs:["tasks"],ignorePatterns:[]}})).rejects.toThrow(source.includes("again")?"build-only":"missing-dependency")}finally{await f.close()}
+  const f=await fixture({"helmr.config.ts":"throw Error('replayed')","agents/main.ts":source})
+  try{await expect(analyzeProject({root:f.root,architecture:"x86_64",config:{dirs:["agents"],ignorePatterns:[]}})).rejects.toThrow(source.includes("again")?"build-only":"missing-dependency")}finally{await f.close()}
  }
 })
 

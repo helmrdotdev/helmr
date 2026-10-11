@@ -12,14 +12,14 @@ import (
 	"sync"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
-	"github.com/helmrdotdev/helmr/internal/artifact/snapshot"
+	"github.com/helmrdotdev/helmr/internal/artifact/localcopy"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"golang.org/x/sys/unix"
 )
 
 type mountedProgramImage struct {
 	root, directory string
-	snapshot        *snapshot.Artifact
+	content         *localcopy.Artifact
 	loop            *os.File
 	mounted         bool
 	cleanupErr      error
@@ -49,7 +49,7 @@ func materializeAgentProgram(ctx context.Context, root string, kind agentv1.Sess
 	if kind == agentv1.SessionProgramRequest_KIND_RUNTIME {
 		role = artifact.RoleRuntime
 	}
-	image.snapshot, err = snapshot.Produce(ctx, directory, role, snapshot.Owner{UID: os.Geteuid(), GID: os.Getegid()}, false, func(file *os.File) error {
+	image.content, err = localcopy.Produce(ctx, directory, role, localcopy.Owner{UID: os.Geteuid(), GID: os.Getegid()}, false, func(file *os.File) error {
 		// Reserve the actual bytes before receiving them. This shares the Computer's
 		// already-reserved scratch capacity and never evicts a peer's executable.
 		if err := unix.Fallocate(int(file.Fd()), 0, 0, descriptor.SizeBytes); err != nil {
@@ -60,11 +60,11 @@ func materializeAgentProgram(ctx context.Context, root string, kind agentv1.Sess
 	if err != nil {
 		return nil, err
 	}
-	actual := image.snapshot.Descriptor()
+	actual := image.content.Descriptor()
 	if actual.Digest != descriptor.Digest || actual.SizeBytes != descriptor.SizeBytes {
 		return nil, errors.New("session Program bytes do not match pinned descriptor")
 	}
-	file, err := image.snapshot.VerifierFile()
+	file, err := image.content.VerifierFile()
 	if err != nil {
 		return nil, err
 	}
@@ -98,9 +98,9 @@ func (image *mountedProgramImage) close() error {
 		image.cleanupErr = errors.Join(image.cleanupErr, image.loop.Close())
 		image.loop = nil
 	}
-	if image.snapshot != nil {
-		image.cleanupErr = errors.Join(image.cleanupErr, image.snapshot.Close())
-		image.snapshot = nil
+	if image.content != nil {
+		image.cleanupErr = errors.Join(image.cleanupErr, image.content.Close())
+		image.content = nil
 	}
 	image.cleanupErr = errors.Join(image.cleanupErr, os.RemoveAll(image.directory))
 	return image.cleanupErr

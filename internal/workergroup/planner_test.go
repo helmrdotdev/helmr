@@ -192,7 +192,7 @@ func TestPlanComputerCannotUseSecondaryOnlyRequest(t *testing.T) {
 	}
 }
 
-func TestPlanComputerSharesFreshRunBinConstraints(t *testing.T) {
+func TestPlanComputerRequiresAdmissionCapacity(t *testing.T) {
 	primaryID := plannerTestUUID(56)
 	primary := plannerTestPool(primaryID, "primary")
 	base := plannerBin(primary, primaryID)
@@ -200,11 +200,8 @@ func TestPlanComputerSharesFreshRunBinConstraints(t *testing.T) {
 		name   string
 		mutate func(*db.ListWorkerCapacityBinsRow)
 	}{
-		{name: "run paused", mutate: func(row *db.ListWorkerCapacityBinsRow) {
-			row.RunPausedReason = pgtype.Text{String: "operator", Valid: true}
-		}},
-		{name: "instance paused", mutate: func(row *db.ListWorkerCapacityBinsRow) {
-			row.VMPausedReason = pgtype.Text{String: "operator", Valid: true}
+		{name: "admission paused", mutate: func(row *db.ListWorkerCapacityBinsRow) {
+			row.AdmissionPausedReason = pgtype.Text{String: "operator", Valid: true}
 		}},
 		{name: "instance start", mutate: func(row *db.ListWorkerCapacityBinsRow) {
 			row.AvailableInstanceStarts = 0

@@ -14,7 +14,7 @@ project and environment flags. A timeout stops observation and leaves work runni
 
 ## Output, response and questions
 
-`tasks/session.ts` defines `checked-reply` with the same default Computer definition:
+`agents/session.ts` defines `checked-reply` with the same default Computer definition:
 
 - `checked-reply` writes output, validates it, stages a response, and returns a
   machine result. Send `{"text":"hello","expected":"hello"}` as the text of one

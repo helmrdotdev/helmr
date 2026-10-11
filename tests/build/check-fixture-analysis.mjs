@@ -22,7 +22,7 @@ try {
     ["execution", ["cases"]],
     ["sessions", ["cases/sessions"]],
     ["persistence", ["cases/persistence"]],
-    ["schedule", ["fixtures/schedule/tasks"]],
+    ["schedule", ["fixtures/schedule/agents"]],
   ]) {
     const config = resolve(output, `${name}-config.json`)
     writeFileSync(config, JSON.stringify({ dirs, ignorePatterns: ["**/run.ts", "**/*.run.ts", "**/*.test.*"], external: [], assets: [] }))

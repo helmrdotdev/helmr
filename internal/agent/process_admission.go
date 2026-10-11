@@ -55,7 +55,7 @@ func (a *Allocator) AllocateSessionProcess(ctx context.Context, env, session uui
  WHERE s.environment_id=$1 AND s.id=$2 AND l.fenced_at IS NULL`, env, session).Scan(&group, &host, &hostEpoch, &region); err != nil {
 			return err
 		}
-		admitting, err := workergroup.LockDispatchSupply(ctx, tx, workergroup.DispatchSupply{GroupID: pgvalue.UUID(group), HostID: pgvalue.UUID(host), Epoch: hostEpoch, RegionID: region, RunArchitecture: string(definition.ArchitectureX8664), Continuation: true})
+		admitting, err := workergroup.LockDispatchSupply(ctx, tx, workergroup.DispatchSupply{GroupID: pgvalue.UUID(group), HostID: pgvalue.UUID(host), Epoch: hostEpoch, RegionID: region, RuntimeArchitecture: string(definition.ArchitectureX8664), Continuation: true})
 		if err != nil {
 			return err
 		}
@@ -111,7 +111,7 @@ func assignSessionProcess(ctx context.Context, tx pgx.Tx, env, session uuid.UUID
  AND (SELECT COALESCE(max(p.epoch),0) FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id)=$3::bigint-1
  AND EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued')
  AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status IN ('running','finalizing'))
- AND NOT EXISTS(SELECT 1 FROM computer_secret_revocations revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id)
+ AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id)
  AND NOT EXISTS(SELECT 1 FROM computer_checkpoints cp WHERE cp.environment_id=c.environment_id AND cp.computer_id=c.id AND (cp.status IN ('capturing','sealed','ready','restoring','aborting') OR (cp.status='consumed' AND cp.controls_reconciled_at IS NULL)))
  AND NOT EXISTS(SELECT 1 FROM computer_saves save WHERE save.environment_id=c.environment_id AND save.computer_id=c.id AND save.computer_lease_epoch<>l.epoch AND save.status IN ('requested','captured'))`, env, session, epoch, host, hostEpoch, freshLease)
 	if err != nil {

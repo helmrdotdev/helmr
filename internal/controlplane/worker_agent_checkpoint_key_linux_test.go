@@ -125,7 +125,7 @@ func qualifyNativeCheckpointKeyMismatch(ctx context.Context, pool *pgxpool.Pool,
 			}
 			var ready bool
 			err := pool.QueryRow(ctx, `SELECT COALESCE(current_epoch,0),COALESCE(status='active' AND current_epoch>$2
- AND run_paused_reason IS NULL AND vm_paused_reason IS NULL AND observed_at>=clock_timestamp()-interval '5 seconds',false)
+ AND admission_paused_reason IS NULL AND observed_at>=clock_timestamp()-interval '5 seconds',false)
  FROM worker_hosts WHERE id=$1`, host, after).Scan(&epoch, &ready)
 			return ready, err
 		})
@@ -146,7 +146,7 @@ func qualifyNativeCheckpointKeyMismatch(ctx context.Context, pool *pgxpool.Pool,
  'failedLeaseCount',count(bad.epoch),'lastFailureEpoch',COALESCE(max(bad.epoch),0),
  'ready',p.status='ready' AND p.target_lease_epoch IS NULL AND count(bad.epoch)>0
  AND bool_and(bad.fenced_at IS NOT NULL AND bad.initialized_at IS NULL AND bad.fence_evidence='owning worker joined physical VM closure')
- AND h.observed_at>=clock_timestamp()-$4::bigint*interval '1 second' AND h.status='active' AND h.current_epoch=$3 AND h.run_paused_reason='checkpoint_key_unavailable' AND h.vm_paused_reason='checkpoint_key_unavailable'
+ AND h.observed_at>=clock_timestamp()-$4::bigint*interval '1 second' AND h.status='active' AND h.current_epoch=$3 AND h.admission_paused_reason='checkpoint_key_unavailable'
  AND NOT EXISTS(SELECT 1 FROM computer_leases live WHERE live.environment_id=p.environment_id AND live.computer_id=p.computer_id AND live.fenced_at IS NULL)
  AND (SELECT count(*)=4 FROM computer_checkpoint_objects o WHERE o.environment_id=p.environment_id AND o.checkpoint_id=p.id))
  FROM computer_checkpoints p JOIN computer_leases source ON(source.environment_id,source.computer_id,source.epoch)=(p.environment_id,p.computer_id,p.source_lease_epoch)

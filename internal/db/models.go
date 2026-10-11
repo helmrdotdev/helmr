@@ -574,12 +574,6 @@ type ComputerSecretBinding struct {
 	AllowedOrigins    []string    `json:"allowed_origins"`
 }
 
-type ComputerSecretRevocation struct {
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	ComputerID    pgtype.UUID `json:"computer_id"`
-	SecretID      pgtype.UUID `json:"secret_id"`
-}
-
 type ControlOutbox struct {
 	ID             pgtype.UUID        `json:"id"`
 	Topic          string             `json:"topic"`
@@ -1265,8 +1259,7 @@ type WorkerHost struct {
 	CPUEnvironment               []byte             `json:"cpu_environment"`
 	CPUEnvironmentDigest         pgtype.Text        `json:"cpu_environment_digest"`
 	ObservedAt                   pgtype.Timestamptz `json:"observed_at"`
-	RunPausedReason              pgtype.Text        `json:"run_paused_reason"`
-	VMPausedReason               pgtype.Text        `json:"vm_paused_reason"`
+	AdmissionPausedReason        pgtype.Text        `json:"admission_paused_reason"`
 	EpochStartedAt               pgtype.Timestamptz `json:"epoch_started_at"`
 	ActivatedAt                  pgtype.Timestamptz `json:"activated_at"`
 	DrainingAt                   pgtype.Timestamptz `json:"draining_at"`

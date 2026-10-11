@@ -1,12 +1,13 @@
 //go:build linux
 
-package snapshot
+package localcopy
 
 import (
 	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/cas"
 	"io"
 	"os"
 	"path/filepath"
@@ -18,7 +19,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func TestArtifactSnapshotOwnsPrivateNamedBytes(t *testing.T) {
+func TestArtifactCopyOwnsPrivateNamedBytes(t *testing.T) {
 	directory := t.TempDir()
 	sourcePath := filepath.Join(directory, "encoder-output")
 	if err := os.WriteFile(sourcePath, []byte("original"), 0o600); err != nil {
@@ -30,19 +31,19 @@ func TestArtifactSnapshotOwnsPrivateNamedBytes(t *testing.T) {
 	}
 	defer source.Close()
 
-	snapshot, err := snapshotArtifact(
+	local, err := copyArtifact(
 		context.Background(),
 		directory,
 		artifact.RoleProgram,
-		artifactSnapshotDescriptor(testProgramDescriptor(artifact.RoleProgram, []byte("original"))),
+		cas.Descriptor(testProgramDescriptor(artifact.RoleProgram, []byte("original"))),
 		source,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer snapshot.Close()
-	leaseDirectory := snapshot.platform.directory.Name()
-	snapshotPath := filepath.Join(leaseDirectory, snapshot.platform.name)
+	defer local.Close()
+	leaseDirectory := local.platform.directory.Name()
+	snapshotPath := filepath.Join(leaseDirectory, local.platform.name)
 
 	replacement := filepath.Join(directory, "replacement")
 	if err := os.WriteFile(replacement, []byte("replaced"), 0o600); err != nil {
@@ -56,7 +57,7 @@ func TestArtifactSnapshotOwnsPrivateNamedBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(entries) != 2 {
-		t.Fatalf("snapshot directory entries = %#v", entries)
+		t.Fatalf("local directory entries = %#v", entries)
 	}
 	names := map[string]bool{}
 	for _, entry := range entries {
@@ -64,10 +65,10 @@ func TestArtifactSnapshotOwnsPrivateNamedBytes(t *testing.T) {
 	}
 	if !names["encoder-output"] ||
 		!names[filepath.Base(leaseDirectory)] {
-		t.Fatalf("snapshot directory entries = %#v", entries)
+		t.Fatalf("local directory entries = %#v", entries)
 	}
 
-	reader, err := snapshot.UploadReader(context.Background())
+	reader, err := local.UploadReader(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,28 +77,28 @@ func TestArtifactSnapshotOwnsPrivateNamedBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(got) != "original" {
-		t.Fatalf("snapshot bytes = %q, want original", got)
+		t.Fatalf("local bytes = %q, want original", got)
 	}
-	if err := snapshot.Close(); err != nil {
+	if err := local.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(snapshotPath); !os.IsNotExist(err) {
-		t.Fatalf("closed snapshot stat error = %v", err)
+		t.Fatalf("closed local stat error = %v", err)
 	}
 	if _, err := os.Stat(leaseDirectory); !os.IsNotExist(err) {
-		t.Fatalf("closed snapshot lease stat error = %v", err)
+		t.Fatalf("closed local lease stat error = %v", err)
 	}
 }
 
-func TestArtifactSnapshotDescriptorsAreReadOnlyAndIndependent(t *testing.T) {
-	snapshot := newTestArtifactSnapshot(t, []byte("abcdef"))
-	verifier, err := snapshot.VerifierFile()
+func TestArtifactCopyDescriptorsAreReadOnlyAndIndependent(t *testing.T) {
+	local := newTestArtifactCopy(t, []byte("abcdef"))
+	verifier, err := local.VerifierFile()
 	if err != nil {
 		t.Fatal(err)
 	}
 	for name, file := range map[string]*os.File{
 		"verifier": verifier,
-		"upload":   snapshot.upload,
+		"upload":   local.upload,
 	} {
 		flags, err := unix.FcntlInt(file.Fd(), unix.F_GETFL, 0)
 		if err != nil {
@@ -111,15 +112,15 @@ func TestArtifactSnapshotDescriptorsAreReadOnlyAndIndependent(t *testing.T) {
 	if err := unix.Fstat(int(verifier.Fd()), &verifierStat); err != nil {
 		t.Fatal(err)
 	}
-	if err := unix.Fstat(int(snapshot.upload.Fd()), &uploadStat); err != nil {
+	if err := unix.Fstat(int(local.upload.Fd()), &uploadStat); err != nil {
 		t.Fatal(err)
 	}
 	if verifierStat.Dev != uploadStat.Dev || verifierStat.Ino != uploadStat.Ino {
-		t.Fatal("snapshot descriptors do not identify the same inode")
+		t.Fatal("local descriptors do not identify the same inode")
 	}
 	if verifierStat.Mode&0o7777 != 0o400 || uploadStat.Mode&0o7777 != 0o400 {
 		t.Fatalf(
-			"snapshot modes = %#o/%#o, want 0400/0400",
+			"local modes = %#o/%#o, want 0400/0400",
 			verifierStat.Mode&0o7777,
 			uploadStat.Mode&0o7777,
 		)
@@ -147,11 +148,11 @@ func TestArtifactSnapshotDescriptorsAreReadOnlyAndIndependent(t *testing.T) {
 			t.Fatal(err)
 		}
 		if flags&unix.O_ACCMODE != unix.O_RDONLY {
-			t.Fatalf("snapshot retained writable descriptor %d", fd)
+			t.Fatalf("local retained writable descriptor %d", fd)
 		}
 	}
 	if matches != 2 {
-		t.Fatalf("snapshot inode descriptor count = %d, want 2", matches)
+		t.Fatalf("local inode descriptor count = %d, want 2", matches)
 	}
 
 	first := make([]byte, 2)
@@ -159,7 +160,7 @@ func TestArtifactSnapshotDescriptorsAreReadOnlyAndIndependent(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := make([]byte, 2)
-	if _, err := snapshot.upload.Read(second); err != nil {
+	if _, err := local.upload.Read(second); err != nil {
 		t.Fatal(err)
 	}
 	if string(first) != "ab" || string(second) != "ab" {
@@ -167,16 +168,16 @@ func TestArtifactSnapshotDescriptorsAreReadOnlyAndIndependent(t *testing.T) {
 	}
 
 	if os.Geteuid() != 0 {
-		path := fmt.Sprintf("/proc/self/fd/%d", snapshot.upload.Fd())
+		path := fmt.Sprintf("/proc/self/fd/%d", local.upload.Fd())
 		writer, err := os.OpenFile(path, os.O_WRONLY, 0)
 		if err == nil {
 			writer.Close()
-			t.Fatal("snapshot inode reopened for writing")
+			t.Fatal("local inode reopened for writing")
 		}
 	}
 }
 
-func TestArtifactSnapshotUploadRejectsTrustedOwnerMutation(t *testing.T) {
+func TestArtifactCopyUploadRejectsTrustedOwnerMutation(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		mutate    func(*testing.T, *os.File)
@@ -204,11 +205,11 @@ func TestArtifactSnapshotUploadRejectsTrustedOwnerMutation(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			snapshot := newTestArtifactSnapshot(t, []byte("verified"))
-			if err := snapshot.upload.Chmod(0o600); err != nil {
+			local := newTestArtifactCopy(t, []byte("verified"))
+			if err := local.upload.Chmod(0o600); err != nil {
 				t.Fatal(err)
 			}
-			path := fmt.Sprintf("/proc/self/fd/%d", snapshot.upload.Fd())
+			path := fmt.Sprintf("/proc/self/fd/%d", local.upload.Fd())
 			writer, err := os.OpenFile(path, os.O_WRONLY, 0)
 			if err != nil {
 				t.Fatal(err)
@@ -217,11 +218,11 @@ func TestArtifactSnapshotUploadRejectsTrustedOwnerMutation(t *testing.T) {
 			if err := writer.Close(); err != nil {
 				t.Fatal(err)
 			}
-			if err := snapshot.upload.Chmod(0o400); err != nil {
+			if err := local.upload.Chmod(0o400); err != nil {
 				t.Fatal(err)
 			}
 
-			reader, err := snapshot.UploadReader(context.Background())
+			reader, err := local.UploadReader(context.Background())
 			if err == nil {
 				_, err = io.ReadAll(reader)
 			}
@@ -232,17 +233,17 @@ func TestArtifactSnapshotUploadRejectsTrustedOwnerMutation(t *testing.T) {
 	}
 }
 
-func TestArtifactSnapshotUploadRejectsMetadataMutation(t *testing.T) {
-	snapshot := newTestArtifactSnapshot(t, []byte("verified"))
-	if err := snapshot.upload.Chmod(0o600); err != nil {
+func TestArtifactCopyUploadRejectsMetadataMutation(t *testing.T) {
+	local := newTestArtifactCopy(t, []byte("verified"))
+	if err := local.upload.Chmod(0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := snapshot.UploadReader(context.Background()); err == nil {
+	if _, err := local.UploadReader(context.Background()); err == nil {
 		t.Fatal("expected metadata mutation rejection")
 	}
 }
 
-func TestArtifactSnapshotRejectsMismatchAndOversizeWithoutVisibleFiles(t *testing.T) {
+func TestArtifactCopyRejectsMismatchAndOversizeWithoutVisibleFiles(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		descriptor artifact.ProgramDescriptor
@@ -274,37 +275,37 @@ func TestArtifactSnapshotRejectsMismatchAndOversizeWithoutVisibleFiles(t *testin
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			directory := t.TempDir()
-			snapshot, err := snapshotArtifact(
+			local, err := copyArtifact(
 				context.Background(),
 				directory,
 				artifact.RoleProgram,
-				artifactSnapshotDescriptor(test.descriptor),
+				cas.Descriptor(test.descriptor),
 				bytes.NewReader(test.source),
 			)
-			if snapshot != nil {
-				snapshot.Close()
-				t.Fatal("snapshot was returned")
+			if local != nil {
+				local.Close()
+				t.Fatal("local was returned")
 			}
 			if err == nil {
-				t.Fatal("snapshot error is nil")
+				t.Fatal("local error is nil")
 			}
 			entries, readErr := os.ReadDir(directory)
 			if readErr != nil {
 				t.Fatal(readErr)
 			}
 			if len(entries) != 0 {
-				t.Fatalf("failed snapshot left visible files: %#v", entries)
+				t.Fatalf("failed local left visible files: %#v", entries)
 			}
 		})
 	}
 }
 
-func TestArtifactSnapshotRejectsSharedDirectory(t *testing.T) {
+func TestArtifactCopyRejectsSharedDirectory(t *testing.T) {
 	directory := t.TempDir()
 	if err := os.Chmod(directory, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := Produce(
+	local, err := Produce(
 		context.Background(),
 		directory,
 		artifact.RoleProgram,
@@ -315,38 +316,38 @@ func TestArtifactSnapshotRejectsSharedDirectory(t *testing.T) {
 			return err
 		},
 	)
-	if snapshot != nil || err == nil {
-		t.Fatalf("snapshot/error = %v/%v", snapshot, err)
+	if local != nil || err == nil {
+		t.Fatalf("local/error = %v/%v", local, err)
 	}
 }
 
-func TestArtifactSnapshotCloseFailsAccess(t *testing.T) {
-	snapshot := newTestArtifactSnapshot(t, []byte("closed"))
+func TestArtifactCopyCloseFailsAccess(t *testing.T) {
+	local := newTestArtifactCopy(t, []byte("closed"))
 	path := filepath.Join(
-		snapshot.platform.directory.Name(),
-		snapshot.platform.name,
+		local.platform.directory.Name(),
+		local.platform.name,
 	)
-	if err := snapshot.Close(); err != nil {
+	if err := local.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("closed snapshot stat error = %v", err)
+		t.Fatalf("closed local stat error = %v", err)
 	}
-	if _, err := snapshot.VerifierFile(); err == nil {
+	if _, err := local.VerifierFile(); err == nil {
 		t.Fatal("closed verifier descriptor remained accessible")
 	}
-	if _, err := snapshot.UploadReader(context.Background()); err == nil {
+	if _, err := local.UploadReader(context.Background()); err == nil {
 		t.Fatal("closed upload descriptor remained accessible")
 	}
-	if err := snapshot.Close(); err != nil {
+	if err := local.Close(); err != nil {
 		t.Fatalf("second close = %v", err)
 	}
 }
 
-func TestProduceArtifactSnapshotSealsDirectOutput(t *testing.T) {
+func TestProduceArtifactCopySealsDirectOutput(t *testing.T) {
 	content := []byte("direct encoder output")
 	directory := privateArtifactTestDirectory(t)
-	snapshot, err := Produce(
+	local, err := Produce(
 		context.Background(),
 		directory,
 		artifact.RoleProgram,
@@ -360,22 +361,22 @@ func TestProduceArtifactSnapshotSealsDirectOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer snapshot.Close()
+	defer local.Close()
 
-	want := artifactSnapshotDescriptor(testProgramDescriptor(artifact.RoleProgram, content))
-	if snapshot.descriptor != want {
-		t.Fatalf("descriptor = %+v, want %+v", snapshot.descriptor, want)
+	want := cas.Descriptor(testProgramDescriptor(artifact.RoleProgram, content))
+	if local.descriptor != want {
+		t.Fatalf("descriptor = %+v, want %+v", local.descriptor, want)
 	}
 	var stat unix.Stat_t
-	if err := unix.Fstat(int(snapshot.upload.Fd()), &stat); err != nil {
+	if err := unix.Fstat(int(local.upload.Fd()), &stat); err != nil {
 		t.Fatal(err)
 	}
 	if stat.Mode&0o7777 != 0o400 {
-		t.Fatalf("snapshot mode = %#o, want 0400", stat.Mode&0o7777)
+		t.Fatalf("local mode = %#o, want 0400", stat.Mode&0o7777)
 	}
 	if int(stat.Uid) != os.Geteuid() || int(stat.Gid) != os.Getegid() {
 		t.Fatalf(
-			"snapshot owner = %d:%d, want %d:%d",
+			"local owner = %d:%d, want %d:%d",
 			stat.Uid,
 			stat.Gid,
 			os.Geteuid(),
@@ -384,9 +385,9 @@ func TestProduceArtifactSnapshotSealsDirectOutput(t *testing.T) {
 	}
 }
 
-func TestProduceArtifactSnapshotCleansFailedOutput(t *testing.T) {
+func TestProduceArtifactCopyCleansFailedOutput(t *testing.T) {
 	directory := privateArtifactTestDirectory(t)
-	snapshot, err := Produce(
+	local, err := Produce(
 		context.Background(),
 		directory,
 		artifact.RoleProgram,
@@ -399,8 +400,8 @@ func TestProduceArtifactSnapshotCleansFailedOutput(t *testing.T) {
 			return fmt.Errorf("encoder failed")
 		},
 	)
-	if snapshot != nil || err == nil {
-		t.Fatalf("snapshot/error = %v/%v", snapshot, err)
+	if local != nil || err == nil {
+		t.Fatalf("local/error = %v/%v", local, err)
 	}
 	entries, readErr := os.ReadDir(directory)
 	if readErr != nil {
@@ -411,10 +412,10 @@ func TestProduceArtifactSnapshotCleansFailedOutput(t *testing.T) {
 	}
 }
 
-func TestArtifactSnapshotLinksExactSealedInode(t *testing.T) {
-	snapshot := newTestArtifactSnapshot(t, []byte("linked"))
+func TestArtifactCopyLinksExactSealedInode(t *testing.T) {
+	local := newTestArtifactCopy(t, []byte("linked"))
 	directory := t.TempDir()
-	if err := snapshot.LinkInto(
+	if err := local.LinkInto(
 		directory,
 		"program.squashfs",
 		os.Geteuid(),
@@ -424,7 +425,7 @@ func TestArtifactSnapshotLinksExactSealedInode(t *testing.T) {
 	}
 
 	var source, linked unix.Stat_t
-	if err := unix.Fstat(int(snapshot.upload.Fd()), &source); err != nil {
+	if err := unix.Fstat(int(local.upload.Fd()), &source); err != nil {
 		t.Fatal(err)
 	}
 	if err := unix.Stat(filepath.Join(directory, "program.squashfs"), &linked); err != nil {
@@ -440,14 +441,14 @@ func TestArtifactSnapshotLinksExactSealedInode(t *testing.T) {
 	}
 }
 
-func TestArtifactSnapshotTransfersOwnershipForJailer(t *testing.T) {
+func TestArtifactCopyTransfersOwnershipForJailer(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("requires root to transfer artifact ownership")
 	}
-	snapshot := newTestArtifactSnapshot(t, []byte("linked"))
+	local := newTestArtifactCopy(t, []byte("linked"))
 	directory := t.TempDir()
 	const jailerID = 65534
-	if err := snapshot.LinkInto(
+	if err := local.LinkInto(
 		directory,
 		"program.squashfs",
 		jailerID,
@@ -457,7 +458,7 @@ func TestArtifactSnapshotTransfersOwnershipForJailer(t *testing.T) {
 	}
 
 	var source, linked unix.Stat_t
-	if err := unix.Fstat(int(snapshot.upload.Fd()), &source); err != nil {
+	if err := unix.Fstat(int(local.upload.Fd()), &source); err != nil {
 		t.Fatal(err)
 	}
 	if err := unix.Stat(filepath.Join(directory, "program.squashfs"), &linked); err != nil {
@@ -474,14 +475,14 @@ func TestArtifactSnapshotTransfersOwnershipForJailer(t *testing.T) {
 	}
 }
 
-func TestArtifactSnapshotLinkDoesNotReplaceDestination(t *testing.T) {
-	snapshot := newTestArtifactSnapshot(t, []byte("linked"))
+func TestArtifactCopyLinkDoesNotReplaceDestination(t *testing.T) {
+	local := newTestArtifactCopy(t, []byte("linked"))
 	directory := t.TempDir()
 	path := filepath.Join(directory, "program.squashfs")
 	if err := os.WriteFile(path, []byte("existing"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := snapshot.LinkInto(
+	if err := local.LinkInto(
 		directory,
 		"program.squashfs",
 		os.Geteuid(),
@@ -498,28 +499,28 @@ func TestArtifactSnapshotLinkDoesNotReplaceDestination(t *testing.T) {
 	}
 }
 
-func TestArtifactSnapshotLinkRejectsCrossFilesystem(t *testing.T) {
+func TestArtifactCopyLinkRejectsCrossFilesystem(t *testing.T) {
 	if _, err := os.Stat("/dev/shm"); err != nil {
 		t.Skip("/dev/shm is unavailable")
 	}
-	snapshot := newTestArtifactSnapshot(t, []byte("linked"))
-	directory, err := os.MkdirTemp("/dev/shm", "helmr-snapshot-")
+	local := newTestArtifactCopy(t, []byte("linked"))
+	directory, err := os.MkdirTemp("/dev/shm", "helmr-local-")
 	if err != nil {
 		t.Skipf("create cross-filesystem directory: %v", err)
 	}
 	defer os.RemoveAll(directory)
 
 	var sourceStat, directoryStat unix.Stat_t
-	if err := unix.Fstat(int(snapshot.upload.Fd()), &sourceStat); err != nil {
+	if err := unix.Fstat(int(local.upload.Fd()), &sourceStat); err != nil {
 		t.Fatal(err)
 	}
 	if err := unix.Stat(directory, &directoryStat); err != nil {
 		t.Fatal(err)
 	}
 	if sourceStat.Dev == directoryStat.Dev {
-		t.Skip("snapshot and /dev/shm use the same filesystem")
+		t.Skip("local and /dev/shm use the same filesystem")
 	}
-	if err := snapshot.LinkInto(
+	if err := local.LinkInto(
 		directory,
 		"program.squashfs",
 		os.Geteuid(),
@@ -541,24 +542,24 @@ func privateArtifactTestDirectory(t *testing.T) string {
 	return directory
 }
 
-func newTestArtifactSnapshot(t *testing.T, content []byte) *Artifact {
+func newTestArtifactCopy(t *testing.T, content []byte) *Artifact {
 	t.Helper()
-	snapshot, err := snapshotArtifact(
+	local, err := copyArtifact(
 		context.Background(),
 		t.TempDir(),
 		artifact.RoleProgram,
-		artifactSnapshotDescriptor(testProgramDescriptor(artifact.RoleProgram, content)),
+		cas.Descriptor(testProgramDescriptor(artifact.RoleProgram, content)),
 		bytes.NewReader(content),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if err := snapshot.Close(); err != nil {
+		if err := local.Close(); err != nil {
 			t.Error(err)
 		}
 	})
-	return snapshot
+	return local
 }
 
 func testProgramDescriptor(role artifact.Role, content []byte) artifact.ProgramDescriptor {

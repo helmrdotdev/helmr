@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"testing"
 	"uuid"
 )
@@ -55,7 +56,7 @@ func TestRevokedImagePayloadRetirementPreservesLineageAndComputerRoot(t *testing
 			}
 			if attached {
 				var lineage bool
-				if err := p.f.pool.QueryRow(t.Context(), `SELECT c.image_id=$3 AND c.initial_root_id IS NOT NULL AND EXISTS(SELECT 1 FROM computer_secret_revocations r WHERE r.environment_id=c.environment_id AND r.computer_id=c.id) FROM computers c WHERE environment_id=$1 AND id=$2`, p.f.env, computer, image).Scan(&lineage); err != nil || !lineage {
+				if err := p.f.pool.QueryRow(t.Context(), `SELECT c.image_id=$3 AND c.initial_root_id IS NOT NULL AND EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) r WHERE r.environment_id=c.environment_id AND r.computer_id=c.id) FROM computers c WHERE environment_id=$1 AND id=$2`, p.f.env, computer, image).Scan(&lineage); err != nil || !lineage {
 					t.Fatalf("historical revocation or Computer root lost: %v %v", lineage, err)
 				}
 			}

@@ -1,4 +1,4 @@
-package snapshot
+package localcopy
 
 import (
 	"bytes"
@@ -13,7 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
-func TestSnapshotRuntimeObjectBindsStoreMetadataAndBytes(t *testing.T) {
+func TestCopyRuntimeObjectBindsStoreMetadataAndBytes(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("runtime snapshots require Linux")
 	}
@@ -29,7 +29,7 @@ func TestSnapshotRuntimeObjectBindsStoreMetadataAndBytes(t *testing.T) {
 		},
 		body: body,
 	}
-	snapshot, err := ReadRuntime(
+	local, err := ReadRuntime(
 		context.Background(),
 		store,
 		t.TempDir(),
@@ -38,7 +38,7 @@ func TestSnapshotRuntimeObjectBindsStoreMetadataAndBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := snapshot.Close(); err != nil {
+	if err := local.Close(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -53,7 +53,7 @@ func TestSnapshotRuntimeObjectBindsStoreMetadataAndBytes(t *testing.T) {
 	}
 }
 
-func TestSnapshotRuntimeObjectRejectsDivergentMetadata(t *testing.T) {
+func TestCopyRuntimeObjectRejectsDivergentMetadata(t *testing.T) {
 	body := []byte("managed runtime")
 	descriptor := artifacttest.RuntimeDescriptor()
 	descriptor.Digest = sha256sum.DigestBytes(body)
@@ -83,7 +83,7 @@ func TestSnapshotRuntimeObjectRejectsDivergentMetadata(t *testing.T) {
 	}
 }
 
-func TestSnapshotRuntimeObjectRequiresStore(t *testing.T) {
+func TestCopyRuntimeObjectRequiresStore(t *testing.T) {
 	if _, err := ReadRuntime(
 		context.Background(),
 		nil,

@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
-	"github.com/helmrdotdev/helmr/internal/artifact/snapshot"
+	"github.com/helmrdotdev/helmr/internal/artifact/localcopy"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
@@ -199,7 +199,7 @@ func testFrozenBuildTree(t *testing.T, memory *artifacttest.Memory) *buildTree {
 		t.Fatal(err)
 	}
 	tree, err := newBuildTree(
-		&snapshot.Artifact{},
+		&localcopy.Artifact{},
 		inspected,
 		buildTreeDescriptor{Digest: artifacttest.Digest("build-tree-stream"), SizeBytes: 4096},
 	)

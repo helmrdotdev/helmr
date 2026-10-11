@@ -11,7 +11,7 @@ Computer declaration. Relative file paths use the Computer working directory.
 
 - `hello-world` — greeting, validated response and an answerable CI-report question.
 - `cli-tooling` — invoke an installed CLI and return a report.
-- `task-secrets` — bind a Secret ID and read the resulting environment variable.
+- `agent-secrets` — bind a Secret ID and read the resulting environment variable.
 - `github-pr-review` — read a GitHub pull request and return a summary.
 
 Each README gives setup and admission commands. The standalone `issue-fixer`

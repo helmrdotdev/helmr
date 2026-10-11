@@ -88,7 +88,7 @@ func (c *testControlPlane) ObserveWorker(_ context.Context, observation workerap
 	if code := c.observeErrorCode.Load(); code != 0 {
 		return workerapi.StatusResponse{}, testHTTPStatusError{status: int(code)}
 	}
-	if observation.RunPausedReason == string(StatusDraining) {
+	if observation.AdmissionPausedReason == string(StatusDraining) {
 		return c.returnedStatus(), nil
 	}
 	if status, ok := c.observeStatus.Load().(workerapi.StatusResponse); ok {
@@ -808,7 +808,7 @@ func TestDrainingObservationPreservesHardHealthInsteadOfLifecyclePause(t *testin
 	})
 	s := &Supervisor{cfg: Config{AdmissionEvaluator: evaluator}}
 	observation := s.observation(t.Context(), StatusDraining, RecoveryEvidence{})
-	if observation.RunPausedReason != "" || observation.VMPausedReason != "" {
+	if observation.AdmissionPausedReason != "" {
 		t.Fatalf("draining observation reported lifecycle pause: %+v", observation)
 	}
 }

@@ -1,7 +1,7 @@
 import { fixtureValue } from "../../support/runtime-mcp"
 import { agent } from "@helmr/sdk"
 import { z } from "zod"
-import { verificationComputer } from "../agent/task"
+import { verificationComputer } from "../agent/agent"
 
 export const networkAgent = agent({
   id: "verification-network", computer: verificationComputer, maxTurnDuration: "10m",

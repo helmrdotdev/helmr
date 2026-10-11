@@ -12,18 +12,18 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// Placement shares Group and Pool locks and locks the selected Host.
+// DispatchSupply shares Group and Pool locks and locks the selected Host.
 // Continuation preserves already admitted work through paused/draining supply.
 type DispatchSupply struct {
-	GroupID         pgtype.UUID
-	RegionID        string
-	HostID          pgtype.UUID
-	Epoch           int64
-	RunArchitecture string
-	RequirePrimary  bool
+	GroupID             pgtype.UUID
+	RegionID            string
+	HostID              pgtype.UUID
+	Epoch               int64
+	RuntimeArchitecture string
+	RequirePrimary      bool
 	// Continuation continues already admitted work: it accepts a paused or
-	// draining Group, a draining Pool or Host and Run pauses. Admission
-	// requires active supply without a Run pause.
+	// draining Group, a draining Pool or Host and admission pauses. Admission
+	// requires active supply without an admission pause.
 	Continuation bool
 }
 
@@ -61,10 +61,10 @@ SELECT worker_pools.status = 'active'
 		return false, fmt.Errorf("lock eligible worker pool: %w", err)
 	}
 
-	hostAdmitting, err := db.New(tx).LockRunEligibleWorkerHost(ctx, db.LockRunEligibleWorkerHostParams{
+	hostAdmitting, err := db.New(tx).LockAdmissionEligibleWorkerHost(ctx, db.LockAdmissionEligibleWorkerHostParams{
 		ID: supply.HostID, WorkerGroupID: supply.GroupID, WorkerEpoch: supply.Epoch,
 		Continuation: supply.Continuation, WorkerFreshnessSeconds: ObservationFreshnessSeconds,
-		RunArchitecture: supply.RunArchitecture, Contract: vmplatform.Contract,
+		RuntimeArchitecture: supply.RuntimeArchitecture, Contract: vmplatform.Contract,
 	})
 	if err != nil {
 		return false, fmt.Errorf("lock eligible worker epoch: %w", err)

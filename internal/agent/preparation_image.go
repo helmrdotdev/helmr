@@ -163,9 +163,9 @@ func readComputerImage(ctx context.Context, tx pgx.Tx, env, spec, image uuid.UUI
 // Execution checks may overlap a revoke and linearize before it. A check after
 // the revoke commits always denies, without waiting for lifecycle reconciliation.
 // This is not physical-stop evidence and is not used to block cleanup controls.
-func requireComputerImageAllowed(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) error {
+func requireComputerSecretsNotRevoked(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) error {
 	var revoked bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_secret_revocations WHERE environment_id=$1 AND computer_id=$2)`, env, computer).Scan(&revoked); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2)`, env, computer).Scan(&revoked); err != nil {
 		return err
 	}
 	if revoked {

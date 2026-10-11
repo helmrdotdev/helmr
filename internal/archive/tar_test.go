@@ -164,8 +164,8 @@ func TestExtractTarRestoresPermissionBitsDespiteUmask(t *testing.T) {
 
 func TestCreateTarWithOptionsExcludesGlobPatterns(t *testing.T) {
 	root := t.TempDir()
-	writeTestFile(t, filepath.Join(root, "tasks", "task.ts"), "task")
-	writeTestFile(t, filepath.Join(root, "tasks", "task.test.ts"), "test")
+	writeTestFile(t, filepath.Join(root, "agents", "task.ts"), "task")
+	writeTestFile(t, filepath.Join(root, "agents", "task.test.ts"), "test")
 	writeTestFile(t, filepath.Join(root, "secrets", "token.txt"), "secret")
 	writeTestFile(t, filepath.Join(root, ".next", "cache"), "cache")
 
@@ -178,10 +178,10 @@ func TestCreateTarWithOptionsExcludesGlobPatterns(t *testing.T) {
 	defer cleanup()
 
 	names := readTarNames(t, archive.Path)
-	if !names["tasks/task.ts"] {
+	if !names["agents/task.ts"] {
 		t.Fatalf("source entry missing: %+v", names)
 	}
-	for _, name := range []string{"tasks/task.test.ts", "secrets/token.txt", ".next/cache"} {
+	for _, name := range []string{"agents/task.test.ts", "secrets/token.txt", ".next/cache"} {
 		if names[name] {
 			t.Fatalf("excluded entry %q was archived: %+v", name, names)
 		}

@@ -52,36 +52,36 @@ func cancel(ctx context.Context, tx pgx.Tx, ref Ref) (CancelReceipt, error) {
 	if err != nil {
 		return CancelReceipt{}, err
 	}
-	claims, err := idempotency.TransactionFor(tx)
-	if err != nil {
-		return CancelReceipt{}, err
-	}
-	acquired, err := claims.Acquire(ctx, request)
-	if err != nil {
-		return CancelReceipt{}, err
-	}
-	want := CancelReceipt{ID: pgvalue.UUIDString(acquired.Claim.ID), TargetID: ref.CommandID.String(), Status: "accepted"}
-	if !acquired.New {
-		var replayed CancelReceipt
-		if err := json.Unmarshal(acquired.Claim.Receipt, &replayed); err != nil {
-			return CancelReceipt{}, fmt.Errorf("%w: %v", ErrReceiptInvalid, err)
+	var result CancelReceipt
+	err = idempotency.Run(ctx, tx, request, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
+		q := db.New(tx)
+		want := CancelReceipt{ID: pgvalue.UUIDString(acquired.Claim.ID), TargetID: ref.CommandID.String(), Status: "accepted"}
+		if !acquired.New {
+			var replayed CancelReceipt
+			if err := json.Unmarshal(acquired.Claim.Receipt, &replayed); err != nil {
+				return idempotency.Completion{}, fmt.Errorf("%w: %v", ErrReceiptInvalid, err)
+			}
+			if replayed != want {
+				return idempotency.Completion{}, fmt.Errorf("%w: command cancellation receipt differs from its claim", ErrReceiptInvalid)
+			}
+			result = replayed
+			return idempotency.Completion{}, nil
 		}
-		if replayed != want {
-			return CancelReceipt{}, fmt.Errorf("%w: command cancellation receipt differs from its claim", ErrReceiptInvalid)
+		if _, err := q.RequestComputerCommandCancellation(ctx, db.RequestComputerCommandCancellationParams{
+			EnvironmentID: pgvalue.UUID(ref.EnvironmentID), CommandID: pgvalue.UUID(ref.CommandID),
+		}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return idempotency.Completion{}, err
 		}
-		return replayed, nil
-	}
-	if _, err := q.RequestComputerCommandCancellation(ctx, db.RequestComputerCommandCancellationParams{
-		EnvironmentID: pgvalue.UUID(ref.EnvironmentID), CommandID: pgvalue.UUID(ref.CommandID),
-	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return CancelReceipt{}, err
-	}
-	body, err := json.Marshal(want)
+		body, err := json.Marshal(want)
+		if err != nil {
+			return idempotency.Completion{}, err
+		}
+
+		result = want
+		return idempotency.Completion{Target: idempotency.Target{CommandID: ref.CommandID}, Receipt: body}, nil
+	})
 	if err != nil {
 		return CancelReceipt{}, err
 	}
-	if _, err := claims.Complete(ctx, acquired.Claim, idempotency.Target{CommandID: ref.CommandID}, body); err != nil {
-		return CancelReceipt{}, err
-	}
-	return want, nil
+	return result, nil
 }

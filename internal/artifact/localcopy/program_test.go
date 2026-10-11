@@ -1,4 +1,4 @@
-package snapshot
+package localcopy
 
 import (
 	"bytes"
@@ -14,7 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
-func TestSnapshotProgramBindsDescriptorAndDriveSource(t *testing.T) {
+func TestCopyProgramBindsDescriptorAndDriveSource(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("Program snapshots require Linux")
 	}
@@ -27,7 +27,7 @@ func TestSnapshotProgramBindsDescriptorAndDriveSource(t *testing.T) {
 	store := programObjectStore{objects: map[string]programObject{
 		program.Digest: {descriptor: program, body: body},
 	}}
-	snapshot, err := ReadProgram(
+	local, err := ReadProgram(
 		context.Background(),
 		store,
 		t.TempDir(),
@@ -36,10 +36,10 @@ func TestSnapshotProgramBindsDescriptorAndDriveSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer snapshot.Close()
+	defer local.Close()
 
 	jail := t.TempDir()
-	if err := snapshot.LinkInto(jail, "program.squashfs", os.Getuid(), os.Getgid()); err != nil {
+	if err := local.LinkInto(jail, "program.squashfs", os.Getuid(), os.Getgid()); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(filepath.Join(jail, "program.squashfs"))

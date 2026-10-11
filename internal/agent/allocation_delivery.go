@@ -64,7 +64,7 @@ func lockMaterializationHost(ctx context.Context, tx pgx.Tx, host workergroup.Ho
 	if err := tx.QueryRow(ctx, `SELECT region_id FROM worker_groups WHERE id=$1`, host.GroupID).Scan(&region); err != nil {
 		return materializationSupply{}, err
 	}
-	admitting, err := workergroup.LockDispatchSupply(ctx, tx, workergroup.DispatchSupply{GroupID: pgvalue.UUID(host.GroupID), HostID: pgvalue.UUID(host.HostID), Epoch: host.Epoch, RegionID: region, RunArchitecture: string(definition.ArchitectureX8664), Continuation: true})
+	admitting, err := workergroup.LockDispatchSupply(ctx, tx, workergroup.DispatchSupply{GroupID: pgvalue.UUID(host.GroupID), HostID: pgvalue.UUID(host.HostID), Epoch: host.Epoch, RegionID: region, RuntimeArchitecture: string(definition.ArchitectureX8664), Continuation: true})
 	if err != nil {
 		return materializationSupply{}, err
 	}
@@ -72,7 +72,7 @@ func lockMaterializationHost(ctx context.Context, tx pgx.Tx, host workergroup.Ho
 		return materializationSupply{}, err
 	}
 	var draining, hostDrainContinuation, healthy bool
-	if err := tx.QueryRow(ctx, `SELECT g.status='draining' OR p.status='draining' OR h.status='draining', h.status='draining' AND g.status='active' AND p.status='active', h.run_paused_reason IS NULL AND h.vm_paused_reason IS NULL FROM worker_hosts h JOIN worker_groups g ON g.id=h.worker_group_id JOIN worker_pools p ON p.id=h.worker_pool_id WHERE h.id=$1`, host.HostID).Scan(&draining, &hostDrainContinuation, &healthy); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT g.status='draining' OR p.status='draining' OR h.status='draining', h.status='draining' AND g.status='active' AND p.status='active', h.admission_paused_reason IS NULL FROM worker_hosts h JOIN worker_groups g ON g.id=h.worker_group_id JOIN worker_pools p ON p.id=h.worker_pool_id WHERE h.id=$1`, host.HostID).Scan(&draining, &hostDrainContinuation, &healthy); err != nil {
 		return materializationSupply{}, err
 	}
 	return materializationSupply{admitting: admitting, draining: draining, healthy: healthy, hostDrainContinuation: hostDrainContinuation}, nil
@@ -172,7 +172,7 @@ func (a *Allocator) DeliverComputer(ctx context.Context, host workergroup.HostPr
 		if !allocationBelongsToHost(r.Allocation, host) || r.InstanceID != identity.InstanceID || subtle.ConstantTimeCompare(digest, expected[:]) != 1 {
 			return ErrDenied
 		}
-		if err := requireComputerImageAllowed(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
+		if err := requireComputerSecretsNotRevoked(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
 			if errors.Is(err, ErrDenied) {
 				return ErrAllocationClosed
 			}
@@ -225,7 +225,7 @@ func ObserveFreshComputerReady(ctx context.Context, database db.TxBeginner, host
 		if !allocationBelongsToHost(r.Allocation, host) || r.InstanceID != identity.InstanceID || r.Shape != shape || r.BaseVersion != base || r.RestoredFrom != nil {
 			return ErrDenied
 		}
-		if err := requireComputerImageAllowed(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
+		if err := requireComputerSecretsNotRevoked(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
 			if errors.Is(err, ErrDenied) {
 				return ErrAllocationClosed
 			}

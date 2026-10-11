@@ -46,7 +46,7 @@ its execution Runtime contract.
 import { builder, defineConfig } from "@helmr/sdk"
 
 export default defineConfig({
-  dirs: ["tasks"],
+  dirs: ["agents"],
   build: {
     builder: builder()
       .copy("build/setup.sh", "/opt/setup.sh")
@@ -103,12 +103,12 @@ Helmr's builder image and offers only `copy(source, destination)` and
 import { defineConfig } from "@helmr/sdk"
 
 export default defineConfig({
-  dirs: ["tasks"],
+  dirs: ["agents"],
   ignorePatterns: ["**/*.test.ts"],
 })
 ```
 
-`dirs` defaults to `["tasks"]` and must be non-empty when provided. It selects declaration discovery
+`dirs` defaults to `["agents"]` and must be non-empty when provided. It selects declaration discovery
 from the submitted project source. `ignorePatterns` affects discovery only.
 `.helmrignore` is the only source-selection file; `.gitignore` is not read.
 The root `.git` entry is always excluded. Retained root `node_modules` and

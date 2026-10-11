@@ -12,7 +12,7 @@ import (
 	"sort"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
-	"github.com/helmrdotdev/helmr/internal/artifact/snapshot"
+	"github.com/helmrdotdev/helmr/internal/artifact/localcopy"
 	"github.com/helmrdotdev/helmr/internal/artifact/verify"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -22,7 +22,7 @@ import (
 
 type encodedProgram struct {
 	Output   artifact.ProgramOutput
-	artifact *snapshot.Artifact
+	artifact *localcopy.Artifact
 }
 
 func encodeProgram(
@@ -167,7 +167,7 @@ func encodeProgram(
 
 func verifyEncodedProgram(
 	ctx context.Context,
-	content *snapshot.Artifact,
+	content *localcopy.Artifact,
 	output artifact.ProgramOutput,
 ) error {
 	file, err := content.VerifierFile()
@@ -373,7 +373,7 @@ func (program *encodedProgram) Materialize(
 func publishProgramArtifact(
 	ctx context.Context,
 	store cas.Store,
-	content *snapshot.Artifact,
+	content *localcopy.Artifact,
 	expected artifact.ProgramDescriptor,
 ) error {
 	reader, err := content.UploadReader(ctx)

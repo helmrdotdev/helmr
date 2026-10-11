@@ -39,7 +39,7 @@ bun install
 ```
 
 `helmr init` creates the Helmr config, TypeScript config, package manifest,
-ignore file, and a starter declaration in `tasks/hello.ts`. The declaration
+ignore file, and a starter declaration in `agents/hello.ts`. The declaration
 exports a Computer recipe and an Agent that stages a greeting and returns a
 machine result.
 

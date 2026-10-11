@@ -15,7 +15,7 @@ func TestCaptureUsesOnlyHelmrIgnoreAndRootGitRule(t *testing.T) {
 	writeTestFile(t, filepath.Join(root, "node_modules", "pkg", "index.js"), "dependency")
 	writeTestFile(t, filepath.Join(root, "ignored", "drop.ts"), "drop")
 	writeTestFile(t, filepath.Join(root, "ignored", "keep.ts"), "keep")
-	writeTestFile(t, filepath.Join(root, "tasks", "task.test.ts"), "test")
+	writeTestFile(t, filepath.Join(root, "agents", "task.test.ts"), "test")
 	writeTestFile(t, filepath.Join(root, ".env"), "secret")
 
 	result, err := Capture(t.Context(), root, t.TempDir())
@@ -29,7 +29,7 @@ func TestCaptureUsesOnlyHelmrIgnoreAndRootGitRule(t *testing.T) {
 			t.Fatalf("build source contains excluded %q: %+v", name, names)
 		}
 	}
-	for _, name := range []string{".helmrignore", "ignored/keep.ts", "tasks/task.test.ts"} {
+	for _, name := range []string{".helmrignore", "ignored/keep.ts", "agents/task.test.ts"} {
 		if !names[name] {
 			t.Fatalf("build source omits %q: %+v", name, names)
 		}

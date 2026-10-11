@@ -5,7 +5,7 @@ description: Configure GitHub OAuth and first-organization setup for a self-host
 
 # Authentication
 
-Self-hosted Helmr uses a GitHub OAuth app for browser login. Repository credentials used by tasks are separate: pass a scoped credential as a task secret when a task needs repository access.
+Self-hosted Helmr uses a GitHub OAuth app for browser login. Repository credentials used by Agents are separate: bind a scoped Secret to the Agent’s Computer when it needs repository access.
 
 ## Configure GitHub OAuth
 

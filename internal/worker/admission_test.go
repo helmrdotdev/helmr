@@ -96,8 +96,7 @@ func TestHardAdmissionFailsClosedWhenDatapathChanges(t *testing.T) {
 		t.Fatalf("changed datapath decision = %+v", decision)
 	}
 	observation := evaluator.Observation()
-	if observation.RunPausedReason != string(AdmissionDatapathUnverified) ||
-		observation.VMPausedReason != string(AdmissionDatapathUnverified) {
+	if observation.AdmissionPausedReason != string(AdmissionDatapathUnverified) {
 		t.Fatalf("datapath observation = %+v", observation)
 	}
 }
@@ -115,8 +114,8 @@ func TestHardAdmissionLeavesPhysicalSlotsToReservationLedger(t *testing.T) {
 	check.Consumer = "instance"
 	evaluator.Evaluate(context.Background(), check)
 	observation := evaluator.Observation()
-	if observation.RunPausedReason != "" || observation.VMPausedReason != "" {
-		t.Fatalf("domain pauses = run:%q instance:%q", observation.RunPausedReason, observation.VMPausedReason)
+	if observation.AdmissionPausedReason != "" {
+		t.Fatalf("admission pause = %q", observation.AdmissionPausedReason)
 	}
 }
 
@@ -197,7 +196,7 @@ func TestCheckpointKeyMismatchSurvivesHealthReevaluation(t *testing.T) {
 	admission.PauseForCheckpointKeyMismatch()
 	for range 3 {
 		observation := admission.Observation()
-		if observation.RunPausedReason != string(AdmissionCheckpointKeyUnavailable) || observation.VMPausedReason != string(AdmissionCheckpointKeyUnavailable) {
+		if observation.AdmissionPausedReason != string(AdmissionCheckpointKeyUnavailable) {
 			t.Fatalf("key fault not visible: %+v", observation)
 		}
 		decision := admission.Evaluate(t.Context(), check)

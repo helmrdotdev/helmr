@@ -141,7 +141,7 @@ func (p *SavePublisher) CompleteCheckpoint(ctx context.Context, ref CheckpointPu
 		if _, err = currentComputerLease(ctx, tx, ref.Host, ref.EnvironmentID, manifest.ComputerID, manifest.LeaseEpoch); err != nil {
 			return err
 		}
-		if err = requireComputerImageAllowed(ctx, tx, ref.EnvironmentID, manifest.ComputerID); err != nil {
+		if err = requireComputerSecretsNotRevoked(ctx, tx, ref.EnvironmentID, manifest.ComputerID); err != nil {
 			return err
 		}
 		_, err = tx.Exec(ctx, `UPDATE computer_checkpoints SET status='ready',ready_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, manifest.CheckpointID)
@@ -193,7 +193,7 @@ func lockCheckpointPublication(ctx context.Context, tx pgx.Tx, ref CheckpointPub
 		}
 		return r, raw, true, nil
 	}
-	if err = requireComputerImageAllowed(ctx, tx, ref.EnvironmentID, r.Computer); err != nil {
+	if err = requireComputerSecretsNotRevoked(ctx, tx, ref.EnvironmentID, r.Computer); err != nil {
 		return r, nil, false, err
 	}
 	if r.State != "sealed" {

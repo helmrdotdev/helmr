@@ -109,10 +109,8 @@ WITH locked_group AS MATERIALIZED (
                                THEN worker_hosts.activated_at ELSE NULL END,
            observed_at = CASE WHEN worker_hosts.current_service_id = sqlc.arg(service_id)
                               THEN worker_hosts.observed_at ELSE NULL END,
-	       run_paused_reason = CASE WHEN worker_hosts.current_service_id = sqlc.arg(service_id)
-	                                THEN worker_hosts.run_paused_reason ELSE NULL END,
-           vm_paused_reason = CASE WHEN worker_hosts.current_service_id = sqlc.arg(service_id)
-                                        THEN worker_hosts.vm_paused_reason ELSE NULL END,
+	       admission_paused_reason = CASE WHEN worker_hosts.current_service_id = sqlc.arg(service_id)
+	                                THEN worker_hosts.admission_paused_reason ELSE NULL END,
            updated_at = now()
       FROM host_secret
      WHERE worker_hosts.id = host_secret.worker_host_id
@@ -273,8 +271,7 @@ WITH enrollment_token AS (
            epoch_started_at = CASE WHEN worker_hosts.current_epoch IS NULL THEN NULL ELSE now() END,
            activated_at = NULL, draining_at = NULL, drain_reason = NULL,
 	       observed_at = NULL,
-	       run_paused_reason = NULL,
-	       vm_paused_reason = NULL,
+	       admission_paused_reason = NULL,
            updated_at = now()
      WHERE worker_hosts.status = 'registering'
        AND worker_hosts.worker_pool_id = (SELECT id FROM pool)

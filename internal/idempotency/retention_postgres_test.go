@@ -18,7 +18,7 @@ func TestPlatformCommandCreationAndCancellationRetainReceiptsUntilPhysicalStop(t
 	a := accept(t, f, create, retry.Target{CommandID: command})
 	b := accept(t, f, cancel, retry.Target{CommandID: command})
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE platform_retry_keys SET accepted_at=accepted_at-interval '31 days',receipt_expires_at=receipt_expires_at-interval '31 days' WHERE environment_id=$1`, f.Environment)
-	for _, request := range []retry.Request{create, cancel} {
+	for _, request := range []*retry.Request{create, cancel} {
 		if err := acquireError(t, f, request); err != nil {
 			t.Fatalf("live Command lost receipt: %v", err)
 		}

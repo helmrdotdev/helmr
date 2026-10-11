@@ -66,7 +66,7 @@ func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request)
 	if err != nil {
 		return Created{}, err
 	}
-	var retry idempotency.Request
+	var retry *idempotency.Request
 	if request.IdempotencyKey != "" {
 		retry, err = idempotency.NewExternalComputerCreateRequest(request.Scope.EnvironmentID, request.DefinitionKey, request.IdempotencyKey, idempotency.ComputerCreateFingerprint{Key: request.Key, Secrets: raw, DeleteAfterUnused: request.DeleteAfterUnused})
 		if err != nil {
@@ -79,93 +79,78 @@ func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request)
 		if err := tx.QueryRow(ctx, `SELECT current_deployment_id FROM environments WHERE id=$1 AND org_id=$2 AND project_id=$3 AND retired_at IS NULL FOR NO KEY UPDATE`, request.Scope.EnvironmentID, request.Scope.OrgID, request.Scope.ProjectID).Scan(&deployment); err != nil {
 			return err
 		}
-		claims, err := idempotency.TransactionFor(tx)
-		if err != nil {
-			return err
-		}
-		var accepted *db.PlatformRetryKey
-		if retry != nil {
-			acquired, err := claims.Acquire(ctx, retry)
-			if err != nil {
-				return err
-			}
+		return idempotency.Run(ctx, tx, retry, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
 			if !acquired.New {
 				result, err = createdFromReceipt(acquired.Claim.Receipt)
 				if err != nil {
-					return err
+					return idempotency.Completion{}, err
 				}
 				if !acquired.Claim.ComputerID.Valid || uuid.UUID(acquired.Claim.ComputerID.Bytes) != result.ComputerID {
-					return ErrReceiptInvalid
+					return idempotency.Completion{}, ErrReceiptInvalid
 				}
 				result.Replayed = true
-				return nil
+				return idempotency.Completion{}, nil
 			}
-			accepted = &acquired.Claim
-		}
-		if deployment == nil {
-			return ErrNotDeployed
-		}
-		var live bool
-		if err = tx.QueryRow(ctx, `SELECT execution_revoked_at IS NULL FROM deployments WHERE environment_id=$1 AND id=$2 FOR SHARE`, request.Scope.EnvironmentID, *deployment).Scan(&live); err != nil {
-			return err
-		}
-		if !live {
-			return ErrNotDeployed
-		}
-		ids := []uuid.UUID{}
-		for _, ref := range refs {
-			ids = append(ids, uuid.MustParse(ref.SecretID))
-		}
-		rows, err := tx.Query(ctx, `SELECT id FROM secrets WHERE environment_id=$1 AND id=ANY($2::uuid[]) AND status='active' ORDER BY id FOR SHARE`, request.Scope.EnvironmentID, ids)
-		if err != nil {
-			return err
-		}
-		locked, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (uuid.UUID, error) {
-			var id uuid.UUID
-			err := row.Scan(&id)
-			return id, err
-		})
-		if err != nil {
-			return err
-		}
-		available := map[uuid.UUID]bool{}
-		for _, id := range locked {
-			available[id] = true
-		}
-		for _, id := range ids {
-			if !available[id] {
-				return ErrSecretUnavailable
+			if deployment == nil {
+				return idempotency.Completion{}, ErrNotDeployed
 			}
-		}
-		id, err := agent.CreateStandaloneComputer(ctx, tx, c.ca, request.Scope.EnvironmentID, *deployment, request.DefinitionKey, refs)
-		if err != nil {
-			return err
-		}
-		if request.DeleteAfterUnused.Set {
-			if _, err = tx.Exec(ctx, `UPDATE computers SET delete_after_unused_ms=$3 WHERE environment_id=$1 AND id=$2`, request.Scope.EnvironmentID, id, request.DeleteAfterUnused.Milliseconds); err != nil {
-				return err
+			var live bool
+			if err = tx.QueryRow(ctx, `SELECT execution_revoked_at IS NULL FROM deployments WHERE environment_id=$1 AND id=$2 FOR SHARE`, request.Scope.EnvironmentID, *deployment).Scan(&live); err != nil {
+				return idempotency.Completion{}, err
 			}
-		}
-		if request.Key != nil {
-			if _, err = tx.Exec(ctx, `UPDATE computers SET key=$3 WHERE environment_id=$1 AND id=$2`, request.Scope.EnvironmentID, id, *request.Key); err != nil {
-				return err
+			if !live {
+				return idempotency.Completion{}, ErrNotDeployed
 			}
-		}
-		snapshot, err := Read(ctx, tx, request.Scope, id)
-		if err != nil {
-			return err
-		}
-		result = Created{ComputerID: id, Snapshot: snapshot}
-		if accepted != nil {
+			ids := []uuid.UUID{}
+			for _, ref := range refs {
+				ids = append(ids, uuid.MustParse(ref.SecretID))
+			}
+			rows, err := tx.Query(ctx, `SELECT id FROM secrets WHERE environment_id=$1 AND id=ANY($2::uuid[]) AND status='active' ORDER BY id FOR SHARE`, request.Scope.EnvironmentID, ids)
+			if err != nil {
+				return idempotency.Completion{}, err
+			}
+			locked, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (uuid.UUID, error) {
+				var id uuid.UUID
+				err := row.Scan(&id)
+				return id, err
+			})
+			if err != nil {
+				return idempotency.Completion{}, err
+			}
+			available := map[uuid.UUID]bool{}
+			for _, id := range locked {
+				available[id] = true
+			}
+			for _, id := range ids {
+				if !available[id] {
+					return idempotency.Completion{}, ErrSecretUnavailable
+				}
+			}
+			id, err := agent.CreateStandaloneComputer(ctx, tx, c.ca, request.Scope.EnvironmentID, *deployment, request.DefinitionKey, refs)
+			if err != nil {
+				return idempotency.Completion{}, err
+			}
+			if request.DeleteAfterUnused.Set {
+				if _, err = tx.Exec(ctx, `UPDATE computers SET delete_after_unused_ms=$3 WHERE environment_id=$1 AND id=$2`, request.Scope.EnvironmentID, id, request.DeleteAfterUnused.Milliseconds); err != nil {
+					return idempotency.Completion{}, err
+				}
+			}
+			if request.Key != nil {
+				if _, err = tx.Exec(ctx, `UPDATE computers SET key=$3 WHERE environment_id=$1 AND id=$2`, request.Scope.EnvironmentID, id, *request.Key); err != nil {
+					return idempotency.Completion{}, err
+				}
+			}
+			snapshot, err := Read(ctx, tx, request.Scope, id)
+			if err != nil {
+				return idempotency.Completion{}, err
+			}
+			result = Created{ComputerID: id, Snapshot: snapshot}
 			body, err := json.Marshal(createReceipt{Computer: snapshot})
 			if err != nil {
-				return err
+				return idempotency.Completion{}, err
 			}
-			if _, err = claims.Complete(ctx, *accepted, idempotency.Target{ComputerID: id}, body); err != nil {
-				return err
-			}
-		}
-		return nil
+			return idempotency.Completion{Target: idempotency.Target{ComputerID: id}, Receipt: body}, nil
+		})
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Created{}, ErrNotDeployed

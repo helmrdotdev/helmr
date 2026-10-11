@@ -9,7 +9,7 @@ import (
 	"os"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
-	"github.com/helmrdotdev/helmr/internal/artifact/snapshot"
+	"github.com/helmrdotdev/helmr/internal/artifact/localcopy"
 	"github.com/helmrdotdev/helmr/internal/cas"
 )
 
@@ -30,7 +30,7 @@ func PublishPlatformRuntime(
 		returnErr = errors.Join(returnErr, source.Close())
 	}()
 
-	runtimeSnapshot, err := snapshot.CopyRuntime(ctx, "", descriptor, source)
+	runtimeSnapshot, err := localcopy.CopyRuntime(ctx, "", descriptor, source)
 	if err != nil {
 		return err
 	}

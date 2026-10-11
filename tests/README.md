@@ -32,7 +32,7 @@ package just to put every test here. Human-facing examples live in `examples/`.
   `Makefile`, `package.json` and generated files.
 
 Name the behavior or subject, not `misc`, `utils`, `new` or `v2`. Avoid repeating
-parent-directory information: a case can use `run.ts`, `task.ts` and `cleanup.ts`.
+parent-directory information: a case can use `run.ts`, `agent.ts` and `cleanup.ts`.
 Keep explicit contract versions and fixture filenames whose spelling is itself
 an input being tested. File organization does not rename public identifiers or
 persisted workload names. Do not retain forwarding wrappers for moved internal

@@ -1,4 +1,4 @@
-package snapshot
+package localcopy
 
 import (
 	"context"
@@ -18,7 +18,7 @@ func ReadProgram(
 	if store == nil {
 		return nil, errors.New("program store is required")
 	}
-	snapshot, err := snapshotProgramObject(
+	local, err := copyProgramObject(
 		ctx,
 		store,
 		directory,
@@ -26,25 +26,25 @@ func ReadProgram(
 		artifact.RoleProgram,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("snapshot program: %w", err)
+		return nil, fmt.Errorf("copy program: %w", err)
 	}
-	return snapshot, nil
+	return local, nil
 }
 
-func snapshotProgramObject(
+func copyProgramObject(
 	ctx context.Context,
 	store cas.Reader,
 	directory string,
 	descriptor artifact.ProgramDescriptor,
 	role artifact.Role,
 ) (*Program, error) {
-	spec, err := artifactSnapshotSpecForRole(role)
+	spec, err := artifactSpecForRole(role)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateArtifactSnapshotDescriptor(
+	if err := validateArtifactCopyDescriptor(
 		spec,
-		artifactSnapshotDescriptor(descriptor),
+		cas.Descriptor(descriptor),
 	); err != nil {
 		return nil, err
 	}
@@ -61,16 +61,16 @@ func snapshotProgramObject(
 	if err != nil {
 		return nil, fmt.Errorf("open program object: %w", err)
 	}
-	content, snapshotErr := snapshotArtifact(
+	content, copyErr := copyArtifact(
 		ctx,
 		directory,
 		role,
-		artifactSnapshotDescriptor(descriptor),
+		cas.Descriptor(descriptor),
 		body,
 	)
 	closeErr := body.Close()
-	if snapshotErr != nil {
-		return nil, snapshotErr
+	if copyErr != nil {
+		return nil, copyErr
 	}
 	if closeErr != nil {
 		_ = content.Close()

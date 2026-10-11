@@ -158,10 +158,10 @@ func TestHostLifecycleThroughCredentials(t *testing.T) {
 	if state.Status != db.WorkerHostStatusActive || state.ActiveInstances != 0 {
 		t.Fatalf("activated host state = %+v", state)
 	}
-	if err := RecordObservation(t.Context(), f.q, principal, HostObservation{VMPausedReason: "maintenance"}); err != nil {
+	if err := RecordObservation(t.Context(), f.q, principal, HostObservation{AdmissionPausedReason: "maintenance"}); err != nil {
 		t.Fatal(err)
 	}
-	if state, err = ReadHost(t.Context(), f.q, principal); err != nil || !state.VMPausedReason.Valid || state.VMPausedReason.String != "maintenance" {
+	if state, err = ReadHost(t.Context(), f.q, principal); err != nil || !state.AdmissionPausedReason.Valid || state.AdmissionPausedReason.String != "maintenance" {
 		t.Fatalf("observed host state = %+v, err = %v", state, err)
 	}
 

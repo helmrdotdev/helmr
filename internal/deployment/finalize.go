@@ -158,39 +158,36 @@ func register(ctx context.Context, txb db.TxBeginner, f Finalization) (Record, e
 		if err != nil {
 			return err
 		}
-		claims, _ := idempotency.TransactionFor(tx)
-		acquired, err := claims.Acquire(ctx, request)
-		if err != nil {
-			var conflict idempotency.ConflictError
-			if errors.As(err, &conflict) {
-				return errors.Join(ErrFinalizationConflict, err)
+		err = idempotency.Run(ctx, tx, request, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
+			if !acquired.New {
+				if err = json.Unmarshal(acquired.Claim.Receipt, &record); err != nil {
+					return idempotency.Completion{}, err
+				}
+				if record.ID != pgvalue.MustUUIDValue(acquired.Claim.DeploymentID) || record.EnvironmentID != env || record.ProjectID != project || record.OrgID != f.orgID || record.BundleDigest != f.bundle.root.Digest {
+					return idempotency.Completion{}, errors.New("deployment retry receipt does not match its request")
+				}
+				return idempotency.Completion{}, nil
 			}
-			return err
-		}
-		if !acquired.New {
-			if err = json.Unmarshal(acquired.Claim.Receipt, &record); err != nil {
-				return err
+			var existing uuid.UUID
+			err = tx.QueryRow(ctx, `SELECT id FROM deployments WHERE environment_id=$1 AND bundle_digest=$2`, env, f.bundle.root.Digest).Scan(&existing)
+			if errors.Is(err, pgx.ErrNoRows) {
+				record, err = createDeployment(ctx, tx, f)
+			} else if err == nil {
+				record, err = readRecord(ctx, tx, env, existing)
 			}
-			if record.ID != pgvalue.MustUUIDValue(acquired.Claim.DeploymentID) || record.EnvironmentID != env || record.ProjectID != project || record.OrgID != f.orgID || record.BundleDigest != f.bundle.root.Digest {
-				return idempotency.ErrIncomplete
+			if err != nil {
+				return idempotency.Completion{}, err
 			}
-			return nil
+			receipt, err := json.Marshal(record)
+			if err != nil {
+				return idempotency.Completion{}, err
+			}
+			return idempotency.Completion{Target: idempotency.Target{DeploymentID: record.ID}, Receipt: receipt}, nil
+		})
+		var conflict idempotency.ConflictError
+		if errors.As(err, &conflict) {
+			return errors.Join(ErrFinalizationConflict, err)
 		}
-		var existing uuid.UUID
-		err = tx.QueryRow(ctx, `SELECT id FROM deployments WHERE environment_id=$1 AND bundle_digest=$2`, env, f.bundle.root.Digest).Scan(&existing)
-		if errors.Is(err, pgx.ErrNoRows) {
-			record, err = createDeployment(ctx, tx, f)
-		} else if err == nil {
-			record, err = readRecord(ctx, tx, env, existing)
-		}
-		if err != nil {
-			return err
-		}
-		receipt, err := json.Marshal(record)
-		if err != nil {
-			return err
-		}
-		_, err = claims.Complete(ctx, acquired.Claim, idempotency.Target{DeploymentID: record.ID}, receipt)
 		return err
 	})
 	if err != nil {

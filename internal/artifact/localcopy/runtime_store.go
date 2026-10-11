@@ -1,4 +1,4 @@
-package snapshot
+package localcopy
 
 import (
 	"context"
@@ -34,14 +34,14 @@ func ReadRuntime(
 	if err != nil {
 		return nil, fmt.Errorf("open runtime object: %w", err)
 	}
-	snapshot, snapshotErr := CopyRuntime(ctx, directory, descriptor, body)
+	local, copyErr := CopyRuntime(ctx, directory, descriptor, body)
 	closeErr := body.Close()
-	if snapshotErr != nil {
-		return nil, snapshotErr
+	if copyErr != nil {
+		return nil, copyErr
 	}
 	if closeErr != nil {
-		_ = snapshot.Close()
+		_ = local.Close()
 		return nil, fmt.Errorf("close runtime object: %w", closeErr)
 	}
-	return snapshot, nil
+	return local, nil
 }

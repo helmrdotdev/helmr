@@ -238,7 +238,7 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, caller Caller, r
 			return ErrNotReady
 		}
 		var computerAvailable bool
-		if err = tx.QueryRow(ctx, `SELECT preparation_failed_at IS NULL AND deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM computer_secret_revocations WHERE environment_id=$1 AND computer_id=$2) FROM computers WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, o.computer).Scan(&computerAvailable); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT preparation_failed_at IS NULL AND deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2) FROM computers WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, o.computer).Scan(&computerAvailable); err != nil {
 			return err
 		}
 		if !computerAvailable {
@@ -325,7 +325,7 @@ func authorizeSessionInput(ctx context.Context, tx pgx.Tx, caller Caller, env uu
         ) SELECT NOT EXISTS(SELECT 1 FROM session_holds h JOIN ancestors a ON a.id=h.session_id WHERE h.environment_id=$1 AND h.released_at IS NULL AND (h.session_id=$2 OR h.scope='subtree'))
         AND EXISTS(SELECT 1 FROM sessions s JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id)
           JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id)
-          WHERE s.environment_id=$1 AND s.id=$2 AND d.execution_revoked_at IS NULL AND NOT EXISTS(SELECT 1 FROM computer_secret_revocations revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id) AND c.integrity_fault_at IS NULL AND c.deleted_at IS NULL)
+          WHERE s.environment_id=$1 AND s.id=$2 AND d.execution_revoked_at IS NULL AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id) AND c.integrity_fault_at IS NULL AND c.deleted_at IS NULL)
         AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND session_id=$2 AND id=$3 AND process_epoch=$4 AND status='running' AND processing_closed_at IS NULL AND (deadline_at IS NULL OR deadline_at>clock_timestamp())))`, env, caller.ID, nullableID(caller.TurnID), caller.Execution.ProcessEpoch).Scan(&allowed)
 		if err != nil {
 			return err
@@ -388,7 +388,7 @@ func executionPhysical(ctx context.Context, tx pgx.Tx, e Execution, allowStartin
       WHERE p.environment_id=$1 AND p.session_id=$2 AND p.epoch=$3 AND l.epoch=$4 AND l.worker_host_id=$5
         AND (p.status='ready' OR ($7 AND p.status='starting')) AND p.fenced_at IS NULL AND l.status='active' AND l.fenced_at IS NULL
         AND l.worker_epoch=$6 AND l.expires_at>clock_timestamp()
-        AND c.initial_root_id IS NOT NULL AND c.preparation_failed_at IS NULL AND c.integrity_fault_at IS NULL AND c.deleted_at IS NULL AND (NOT $8 OR (d.execution_revoked_at IS NULL AND NOT EXISTS(SELECT 1 FROM computer_secret_revocations revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id))))`, e.EnvironmentID, e.SessionID, e.ProcessEpoch, e.LeaseEpoch, e.WorkerHostID, e.WorkerEpoch, allowStarting, requireLiveDeployment).Scan(&allowed)
+        AND c.initial_root_id IS NOT NULL AND c.preparation_failed_at IS NULL AND c.integrity_fault_at IS NULL AND c.deleted_at IS NULL AND (NOT $8 OR (d.execution_revoked_at IS NULL AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id))))`, e.EnvironmentID, e.SessionID, e.ProcessEpoch, e.LeaseEpoch, e.WorkerHostID, e.WorkerEpoch, allowStarting, requireLiveDeployment).Scan(&allowed)
 	if err != nil {
 		return err
 	}

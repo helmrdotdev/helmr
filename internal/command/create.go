@@ -239,8 +239,7 @@ func Create(ctx context.Context, txb db.TxBeginner, request CreateRequest) (db.C
 	return created, nil
 }
 
-func create(ctx context.Context, tx pgx.Tx, request CreateRequest, normalized normalizedRequest, claimRequest idempotency.Request) (db.ComputerCommand, error) {
-	q := db.New(tx)
+func create(ctx context.Context, tx pgx.Tx, request CreateRequest, normalized normalizedRequest, claimRequest *idempotency.Request) (db.ComputerCommand, error) {
 	var scoped bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS (
  SELECT 1 FROM computers c JOIN environments e ON e.id=c.environment_id
@@ -251,106 +250,106 @@ func create(ctx context.Context, tx pgx.Tx, request CreateRequest, normalized no
 	if !scoped {
 		return db.ComputerCommand{}, computer.ErrNotFound
 	}
-	claims, err := idempotency.TransactionFor(tx)
-	if err != nil {
-		return db.ComputerCommand{}, err
-	}
-	acquired, err := claims.Acquire(ctx, claimRequest)
-	if err != nil {
-		return db.ComputerCommand{}, err
-	}
-	if !acquired.New {
-		replayed, err := q.GetComputerCommandByRetryKey(ctx, db.GetComputerCommandByRetryKeyParams{
-			EnvironmentID: pgvalue.UUID(request.EnvironmentID),
-			RetryKeyID:    acquired.Claim.ID,
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return db.ComputerCommand{}, ErrReceiptInvalid
-		}
-		if err == nil {
-			var receipt createReceipt
-			if json.Unmarshal(acquired.Claim.Receipt, &receipt) != nil || receipt.CommandID != pgvalue.UUIDString(replayed.ID) {
-				return db.ComputerCommand{}, ErrReceiptInvalid
+	var result db.ComputerCommand
+	err := idempotency.Run(ctx, tx, claimRequest, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
+		q := db.New(tx)
+		if !acquired.New {
+			replayed, err := q.GetComputerCommandByRetryKey(ctx, db.GetComputerCommandByRetryKeyParams{
+				EnvironmentID: pgvalue.UUID(request.EnvironmentID),
+				RetryKeyID:    acquired.Claim.ID,
+			})
+			if errors.Is(err, pgx.ErrNoRows) {
+				return idempotency.Completion{}, ErrReceiptInvalid
 			}
+			if err == nil {
+				var receipt createReceipt
+				if json.Unmarshal(acquired.Claim.Receipt, &receipt) != nil || receipt.CommandID != pgvalue.UUIDString(replayed.ID) {
+					return idempotency.Completion{}, ErrReceiptInvalid
+				}
+			}
+			result = replayed
+			return idempotency.Completion{}, err
 		}
-		return replayed, err
-	}
 
-	// Secret locks precede the Computer lock, matching revocation. Admission
-	// checks availability and placements without selecting a runtime version.
-	rows, err := tx.Query(ctx, `SELECT b.placement_kind,b.placement_target,s.status
+		// Secret locks precede the Computer lock, matching revocation. Admission
+		// checks availability and placements without selecting a runtime version.
+		rows, err := tx.Query(ctx, `SELECT b.placement_kind,b.placement_target,s.status
  FROM computer_secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id)
  WHERE b.environment_id=$1 AND b.computer_id=$2 ORDER BY s.id,b.placement_kind,b.placement_target FOR SHARE OF s`, request.EnvironmentID, request.ComputerID)
-	if err != nil {
-		return db.ComputerCommand{}, err
-	}
-	type binding struct{ kind, target, status string }
-	bindings, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (binding, error) {
-		var b binding
-		err := row.Scan(&b.kind, &b.target, &b.status)
-		return b, err
-	})
-	if err != nil {
-		return db.ComputerCommand{}, err
-	}
-	for _, b := range bindings {
-		if b.status != "active" {
-			return db.ComputerCommand{}, computer.ErrSecretUnavailable
+		if err != nil {
+			return idempotency.Completion{}, err
 		}
-		if b.kind == "env" {
-			if _, ok := normalized.env[b.target]; ok {
-				return db.ComputerCommand{}, invalid("env cannot override computer secret %q", b.target)
+		type binding struct{ kind, target, status string }
+		bindings, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (binding, error) {
+			var b binding
+			err := row.Scan(&b.kind, &b.target, &b.status)
+			return b, err
+		})
+		if err != nil {
+			return idempotency.Completion{}, err
+		}
+		for _, b := range bindings {
+			if b.status != "active" {
+				return idempotency.Completion{}, computer.ErrSecretUnavailable
+			}
+			if b.kind == "env" {
+				if _, ok := normalized.env[b.target]; ok {
+					return idempotency.Completion{}, invalid("env cannot override computer secret %q", b.target)
+				}
 			}
 		}
-	}
-	var deleted, broken, ready, failed bool
-	if err = tx.QueryRow(ctx, `SELECT deleted_at IS NOT NULL,integrity_fault_at IS NOT NULL,initial_root_id IS NOT NULL,preparation_failed_at IS NOT NULL FROM computers WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, request.EnvironmentID, request.ComputerID).Scan(&deleted, &broken, &ready, &failed); err != nil {
-		return db.ComputerCommand{}, err
-	}
-	if broken {
-		return db.ComputerCommand{}, computer.ErrRecoveryRequired
-	}
-	if deleted {
-		return db.ComputerCommand{}, computer.ErrDeleting
-	}
-	if failed {
-		return db.ComputerCommand{}, computer.ErrPreparationExhausted
-	}
-	if !ready {
-		return db.ComputerCommand{}, computer.ErrBusy
-	}
-	var revoked bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_secret_revocations WHERE environment_id=$1 AND computer_id=$2)`, request.EnvironmentID, request.ComputerID).Scan(&revoked); err != nil {
-		return db.ComputerCommand{}, err
-	}
-	if revoked {
-		return db.ComputerCommand{}, computer.ErrSecretUnavailable
-	}
+		var deleted, broken, ready, failed bool
+		if err = tx.QueryRow(ctx, `SELECT deleted_at IS NOT NULL,integrity_fault_at IS NOT NULL,initial_root_id IS NOT NULL,preparation_failed_at IS NOT NULL FROM computers WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, request.EnvironmentID, request.ComputerID).Scan(&deleted, &broken, &ready, &failed); err != nil {
+			return idempotency.Completion{}, err
+		}
+		if broken {
+			return idempotency.Completion{}, computer.ErrRecoveryRequired
+		}
+		if deleted {
+			return idempotency.Completion{}, computer.ErrDeleting
+		}
+		if failed {
+			return idempotency.Completion{}, computer.ErrPreparationExhausted
+		}
+		if !ready {
+			return idempotency.Completion{}, computer.ErrBusy
+		}
+		var revoked bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2)`, request.EnvironmentID, request.ComputerID).Scan(&revoked); err != nil {
+			return idempotency.Completion{}, err
+		}
+		if revoked {
+			return idempotency.Completion{}, computer.ErrSecretUnavailable
+		}
 
-	if _, err = tx.Exec(ctx, `UPDATE computers SET unused_since=NULL WHERE environment_id=$1 AND id=$2`, request.EnvironmentID, request.ComputerID); err != nil {
-		return db.ComputerCommand{}, err
-	}
-	created, err := q.CreateComputerCommand(ctx, db.CreateComputerCommandParams{
-		ID:                   pgvalue.UUID(uuid.NewV7()),
-		EnvironmentID:        pgvalue.UUID(request.EnvironmentID),
-		ComputerID:           pgvalue.UUID(request.ComputerID),
-		Argv:                 normalized.argv,
-		Cwd:                  pgvalue.Text(normalized.cwd),
-		Env:                  normalized.envJSON,
-		TimeoutMs:            normalized.timeoutMS,
-		Stdin:                normalized.stdin,
-		CreatedBySubjectType: request.Creator.SubjectType,
-		CreatedBySubjectID:   request.Creator.SubjectID,
+		if _, err = tx.Exec(ctx, `UPDATE computers SET unused_since=NULL WHERE environment_id=$1 AND id=$2`, request.EnvironmentID, request.ComputerID); err != nil {
+			return idempotency.Completion{}, err
+		}
+		created, err := q.CreateComputerCommand(ctx, db.CreateComputerCommandParams{
+			ID:                   pgvalue.UUID(uuid.NewV7()),
+			EnvironmentID:        pgvalue.UUID(request.EnvironmentID),
+			ComputerID:           pgvalue.UUID(request.ComputerID),
+			Argv:                 normalized.argv,
+			Cwd:                  pgvalue.Text(normalized.cwd),
+			Env:                  normalized.envJSON,
+			TimeoutMs:            normalized.timeoutMS,
+			Stdin:                normalized.stdin,
+			CreatedBySubjectType: request.Creator.SubjectType,
+			CreatedBySubjectID:   request.Creator.SubjectID,
+		})
+		if err != nil {
+			return idempotency.Completion{}, fmt.Errorf("create computer exec: %w", err)
+		}
+		receipt, err := json.Marshal(createReceipt{CommandID: pgvalue.UUIDString(created.ID)})
+		if err != nil {
+			return idempotency.Completion{}, err
+		}
+
+		result = created
+		return idempotency.Completion{Target: idempotency.Target{CommandID: uuid.UUID(created.ID.Bytes)}, Receipt: receipt}, nil
 	})
 	if err != nil {
-		return db.ComputerCommand{}, fmt.Errorf("create computer exec: %w", err)
-	}
-	receipt, err := json.Marshal(createReceipt{CommandID: pgvalue.UUIDString(created.ID)})
-	if err != nil {
 		return db.ComputerCommand{}, err
 	}
-	if _, err := claims.Complete(ctx, acquired.Claim, idempotency.Target{CommandID: uuid.UUID(created.ID.Bytes)}, receipt); err != nil {
-		return db.ComputerCommand{}, err
-	}
-	return created, nil
+	return result, nil
 }

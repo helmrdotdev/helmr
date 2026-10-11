@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["tasks/**/*.ts", "helmr.config.ts"]
+  "include": ["agents/**/*.ts", "helmr.config.ts"]
 }

@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test"
 import type { Turn } from "../../../sdk/typescript/src/agent"
 import { normalizeAnswer, type Question } from "../../../sdk/typescript/src/question"
-import { askNativeQuestions, nativeQuestions } from "../tasks/issue-fixer/native-questions"
-import { nativeText, steeringText } from "../tasks/issue-fixer/native-content"
+import { askNativeQuestions, nativeQuestions } from "../agents/issue-fixer/native-questions"
+import { nativeText, steeringText } from "../agents/issue-fixer/native-content"
 
 const question = (id: string) => ({ id, header: "Choice", question: "Choose", isOther: true, options: [{ label: "A", description: "First" }, { label: "B", description: "Second" }] })
 test("native batch admits in source order and translates independent answers", async () => {

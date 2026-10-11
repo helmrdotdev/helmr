@@ -1,6 +1,7 @@
 package idempotency_test
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -14,7 +15,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func deploymentRequest(t *testing.T, f agenttest.Fixture, key string) retry.Request {
+func runRetry(ctx context.Context, txb db.TxBeginner, request *retry.Request, fn func(pgx.Tx, retry.Result) (retry.Completion, error)) error {
+	return db.RunTx(ctx, txb, func(tx pgx.Tx) error { return retry.Run(ctx, tx, request, fn) })
+}
+
+func deploymentRequest(t *testing.T, f agenttest.Fixture, key string) *retry.Request {
 	t.Helper()
 	var project uuid.UUID
 	var digest string
@@ -27,32 +32,26 @@ func deploymentRequest(t *testing.T, f agenttest.Fixture, key string) retry.Requ
 	}
 	return request
 }
-func accept(t *testing.T, f agenttest.Fixture, request retry.Request, target retry.Target) db.PlatformRetryKey {
+func accept(t *testing.T, f agenttest.Fixture, request *retry.Request, target retry.Target) db.PlatformRetryKey {
 	t.Helper()
 	var claim db.PlatformRetryKey
-	if err := db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error {
-		claims, _ := retry.TransactionFor(tx)
-		r, err := claims.Acquire(t.Context(), request)
-		if err != nil {
-			return err
-		}
+	if err := runRetry(t.Context(), f.Pool, request, func(tx pgx.Tx, r retry.Result) (retry.Completion, error) {
 		claim = r.Claim
-		if !r.New {
-			return nil
-		}
-		claim, err = claims.Complete(t.Context(), r.Claim, target, []byte(`{"accepted":true}`))
-		return err
+		return retry.Completion{Target: target, Receipt: []byte(`{"accepted":true}`)}, nil
 	}); err != nil {
 		t.Fatal(err)
 	}
+	stored, err := db.New(f.Pool).GetPlatformRetryKey(t.Context(), db.GetPlatformRetryKeyParams{EnvironmentID: claim.EnvironmentID, ID: claim.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim = stored
 	return claim
 }
-func acquireError(t *testing.T, f agenttest.Fixture, request retry.Request) error {
+func acquireError(t *testing.T, f agenttest.Fixture, request *retry.Request) error {
 	t.Helper()
-	return db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error {
-		claims, _ := retry.TransactionFor(tx)
-		_, err := claims.Acquire(t.Context(), request)
-		return err
+	return runRetry(t.Context(), f.Pool, request, func(tx pgx.Tx, r retry.Result) (retry.Completion, error) {
+		return retry.Completion{}, nil
 	})
 }
 func TestPlatformConcurrentRetryCommitsOneReceipt(t *testing.T) {
@@ -64,17 +63,9 @@ func TestPlatformConcurrentRetryCommitsOneReceipt(t *testing.T) {
 	for range 8 {
 		wg.Go(func() {
 			var r retry.Result
-			err := db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error {
-				claims, _ := retry.TransactionFor(tx)
-				var err error
-				r, err = claims.Acquire(t.Context(), request)
-				if err != nil {
-					return err
-				}
-				if r.New {
-					r.Claim, err = claims.Complete(t.Context(), r.Claim, retry.Target{DeploymentID: f.Deployment}, []byte(`{"accepted":true}`))
-				}
-				return err
+			err := runRetry(t.Context(), f.Pool, request, func(tx pgx.Tx, acquired retry.Result) (retry.Completion, error) {
+				r = acquired
+				return retry.Completion{Target: retry.Target{DeploymentID: f.Deployment}, Receipt: []byte(`{"accepted":true}`)}, nil
 			})
 			results <- r
 			failures <- err
@@ -114,21 +105,18 @@ func TestPlatformIncompleteTransactionAndWrongTargetRollBack(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f := agenttest.New(t)
 			request := deploymentRequest(t, f, mode)
-			err := db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error {
-				claims, _ := retry.TransactionFor(tx)
-				r, err := claims.Acquire(t.Context(), request)
-				if err != nil {
-					return err
+			err := runRetry(t.Context(), f.Pool, request, func(tx pgx.Tx, r retry.Result) (retry.Completion, error) {
+				if _, err := tx.Exec(t.Context(), `UPDATE computers SET key='partial' WHERE environment_id=$1 AND id=$2`, f.Environment, f.Computer); err != nil {
+					return retry.Completion{}, err
 				}
 				if mode == "unfinished" {
-					return nil
+					return retry.Completion{}, nil
 				}
 				target := retry.Target{ComputerID: f.Computer}
 				if mode == "foreign-target" {
 					target = retry.Target{DeploymentID: uuid.NewV7()}
 				}
-				_, err = claims.Complete(t.Context(), r.Claim, target, []byte(`{}`))
-				return err
+				return retry.Completion{Target: target, Receipt: []byte(`{}`)}, nil
 			})
 			if err == nil {
 				t.Fatal("incomplete or mistyped result committed")
@@ -136,6 +124,10 @@ func TestPlatformIncompleteTransactionAndWrongTargetRollBack(t *testing.T) {
 			var count int
 			if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM platform_retry_keys WHERE environment_id=$1`, f.Environment).Scan(&count); err != nil || count != 0 {
 				t.Fatalf("partial claim retained %d: %v", count, err)
+			}
+			var partial bool
+			if err := f.Pool.QueryRow(t.Context(), `SELECT COALESCE(key='partial',false) FROM computers WHERE environment_id=$1 AND id=$2`, f.Environment, f.Computer).Scan(&partial); err != nil || partial {
+				t.Fatalf("mutation survived: %v, %v", partial, err)
 			}
 			accept(t, f, request, retry.Target{DeploymentID: f.Deployment})
 		})
@@ -165,4 +157,120 @@ func TestPlatformExpiredIdentityCannotExecuteBeforeOrAfterCollection(t *testing.
 	if err := acquireError(t, f, different); !errors.As(err, &conflict) {
 		t.Fatalf("expired conflict evidence: %v", err)
 	}
+}
+
+func TestPlatformOwnedSavepointRollsBackIgnoredFailure(t *testing.T) {
+	for _, mode := range []string{"error", "panic", "cancel", "missing-receipt"} {
+		t.Run(mode, func(t *testing.T) {
+			f := agenttest.New(t)
+			request := deploymentRequest(t, f, mode)
+			err := db.RunTx(t.Context(), f.Pool, func(outer pgx.Tx) error {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				func() {
+					defer func() {
+						if value := recover(); value != nil && mode != "panic" {
+							panic(value)
+						}
+					}()
+					err := retry.Run(ctx, outer, request, func(tx pgx.Tx, r retry.Result) (retry.Completion, error) {
+						if _, err := tx.Exec(ctx, `UPDATE computers SET key='partial' WHERE environment_id=$1 AND id=$2`, f.Environment, f.Computer); err != nil {
+							return retry.Completion{}, err
+						}
+						switch mode {
+						case "error":
+							return retry.Completion{}, errors.New("domain failed")
+						case "panic":
+							panic("domain failed")
+						case "cancel":
+							cancel()
+							return retry.Completion{Target: retry.Target{DeploymentID: f.Deployment}, Receipt: []byte(`{}`)}, nil
+						default:
+							return retry.Completion{}, nil
+						}
+					})
+					if err == nil {
+						t.Error("failed mutation succeeded")
+					}
+				}()
+				// The key remains locked by the caller after the failed savepoint.
+				var locks int
+				if err := outer.QueryRow(t.Context(), `SELECT count(*) FROM pg_locks WHERE pid=pg_backend_pid() AND locktype='advisory' AND granted`).Scan(&locks); err != nil || locks != 1 {
+					t.Fatalf("caller advisory locks: %d, %v", locks, err)
+				}
+				// Deliberately ignore the inner error and commit unrelated work.
+				_, err := outer.Exec(t.Context(), `UPDATE computers SET unused_since=NULL WHERE environment_id=$1 AND id=$2`, f.Environment, f.Computer)
+				return err
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertNoPartialMutation(t, f)
+			accept(t, f, request, retry.Target{DeploymentID: f.Deployment})
+		})
+	}
+}
+
+func assertNoPartialMutation(t *testing.T, f agenttest.Fixture) {
+	t.Helper()
+	var partial bool
+	var count int
+	if err := f.Pool.QueryRow(t.Context(), `SELECT COALESCE(key='partial',false) FROM computers WHERE environment_id=$1 AND id=$2`, f.Environment, f.Computer).Scan(&partial); err != nil || partial {
+		t.Fatalf("domain mutation survived: %v, %v", partial, err)
+	}
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM platform_retry_keys WHERE environment_id=$1`, f.Environment).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("retry records survived: %d, %v", count, err)
+	}
+}
+
+func TestPlatformNestedSameKeyCannotCommitTwoMutations(t *testing.T) {
+	f := agenttest.New(t)
+	request := deploymentRequest(t, f, "nested")
+	completion := retry.Completion{Target: retry.Target{DeploymentID: f.Deployment}, Receipt: []byte(`{}`)}
+	var mutationErr error
+	err := db.RunTx(t.Context(), f.Pool, func(outer pgx.Tx) error {
+		mutationErr = retry.Run(t.Context(), outer, request, func(tx pgx.Tx, r retry.Result) (retry.Completion, error) {
+			if _, err := tx.Exec(t.Context(), `UPDATE computers SET key='partial' WHERE environment_id=$1 AND id=$2`, f.Environment, f.Computer); err != nil {
+				return retry.Completion{}, err
+			}
+			if err := retry.Run(t.Context(), tx, request, func(inner pgx.Tx, r retry.Result) (retry.Completion, error) { return completion, nil }); err != nil {
+				return retry.Completion{}, err
+			}
+			return completion, nil
+		})
+		return nil // Deliberately commit the caller after the failed unit.
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mutationErr == nil {
+		t.Fatal("two new receipts for the same identity committed")
+	}
+	assertNoPartialMutation(t, f)
+	accept(t, f, request, completion.Target)
+}
+
+func TestPlatformSuccessfulInnerMutationFollowsOuterRollback(t *testing.T) {
+	f := agenttest.New(t)
+	request := deploymentRequest(t, f, "outer-rollback")
+	rollback := errors.New("outer rejected")
+	err := db.RunTx(t.Context(), f.Pool, func(outer pgx.Tx) error {
+		if err := retry.Run(t.Context(), outer, request, func(tx pgx.Tx, r retry.Result) (retry.Completion, error) {
+			if _, err := tx.Exec(t.Context(), `UPDATE computers SET key='partial' WHERE environment_id=$1 AND id=$2`, f.Environment, f.Computer); err != nil {
+				return retry.Completion{}, err
+			}
+			return retry.Completion{Target: retry.Target{DeploymentID: f.Deployment}, Receipt: []byte(`{}`)}, nil
+		}); err != nil {
+			return err
+		}
+		var count int
+		if err := outer.QueryRow(t.Context(), `SELECT count(*) FROM platform_retry_keys WHERE environment_id=$1`, f.Environment).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("inner receipt not visible: %d, %v", count, err)
+		}
+		return rollback
+	})
+	if !errors.Is(err, rollback) {
+		t.Fatal(err)
+	}
+	assertNoPartialMutation(t, f)
 }

@@ -9,7 +9,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func validWorkerCapabilities(t *testing.T) workerapi.Capabilities {
@@ -172,10 +171,10 @@ func TestNormalizeWorkerCapabilitiesRejectsCPUShapeOrTemplateMismatch(t *testing
 	})
 }
 
-func TestWorkerRoleReadinessReportsMissingObservation(t *testing.T) {
-	readiness := workerRoleReadiness(db.GetWorkerHostStatusRow{
+func TestWorkerAdmissionReadinessReportsMissingObservation(t *testing.T) {
+	readiness := workerAdmissionReadiness(db.GetWorkerHostStatusRow{
 		Status: db.WorkerHostStatusActive,
-	}, false, pgtype.Text{})
+	})
 	if readiness.Ready || readiness.PausedReason != "observation_missing" {
 		t.Fatalf("readiness = %+v, want observation_missing", readiness)
 	}

@@ -114,7 +114,7 @@ func PrepareComputerRestore(ctx context.Context, pool db.TxBeginner, host worker
 		for _, m := range r.Members {
 			var generation int64
 			var terminal, fenced bool
-			if err = tx.QueryRow(ctx, `SELECT s.authority_generation,s.status IN ('closed','cancelled') OR d.execution_revoked_at IS NOT NULL OR EXISTS(SELECT 1 FROM computer_secret_revocations revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) OR p.status IN ('stopping','lost','stopped'),p.fenced_at IS NOT NULL FROM sessions s JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id) JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id) WHERE s.environment_id=$1 AND s.id=$2 AND p.epoch=$3`, env, m.Session, m.Epoch).Scan(&generation, &terminal, &fenced); err != nil {
+			if err = tx.QueryRow(ctx, `SELECT s.authority_generation,s.status IN ('closed','cancelled') OR d.execution_revoked_at IS NOT NULL OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) OR p.status IN ('stopping','lost','stopped'),p.fenced_at IS NOT NULL FROM sessions s JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id) JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id) WHERE s.environment_id=$1 AND s.id=$2 AND p.epoch=$3`, env, m.Session, m.Epoch).Scan(&generation, &terminal, &fenced); err != nil {
 				return err
 			}
 			if fenced && !terminal {
@@ -172,7 +172,7 @@ func ValidateComputerRestore(ctx context.Context, pool db.TxBeginner, host worke
 		if err != nil {
 			return err
 		}
-		if err = requireComputerImageAllowed(ctx, tx, env, r.Computer); err != nil {
+		if err = requireComputerSecretsNotRevoked(ctx, tx, env, r.Computer); err != nil {
 			return err
 		}
 		var stored []byte
@@ -215,7 +215,7 @@ func CommitComputerRestore(ctx context.Context, pool db.TxBeginner, host workerg
 		if r.State == "consumed" {
 			return nil
 		}
-		if err = requireComputerImageAllowed(ctx, tx, env, r.Computer); err != nil {
+		if err = requireComputerSecretsNotRevoked(ctx, tx, env, r.Computer); err != nil {
 			return err
 		}
 		// A pre-freeze acknowledgement cannot release this continuation. Reset
@@ -257,7 +257,7 @@ func CompleteComputerRestore(ctx context.Context, pool db.TxBeginner, host worke
 		if r.ControlsReconciled {
 			return nil
 		}
-		if err = requireComputerImageAllowed(ctx, tx, env, r.Computer); err != nil {
+		if err = requireComputerSecretsNotRevoked(ctx, tx, env, r.Computer); err != nil {
 			return err
 		}
 		if err = requireComputerControlReceipts(ctx, tx, env, r); err != nil {
@@ -366,7 +366,7 @@ func validateRestoreInstallation(ctx context.Context, tx pgx.Tx, host workergrou
 		}
 		var generation, processLease int64
 		var terminal, fenced bool
-		if err = tx.QueryRow(ctx, `SELECT s.authority_generation,p.computer_lease_epoch,s.status IN ('closed','cancelled') OR d.execution_revoked_at IS NOT NULL OR EXISTS(SELECT 1 FROM computer_secret_revocations revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) OR p.status IN ('stopping','lost','stopped'),p.fenced_at IS NOT NULL FROM sessions s JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id) JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id) WHERE s.environment_id=$1 AND s.id=$2 AND p.epoch=$3`, env, m.Session, m.Epoch).Scan(&generation, &processLease, &terminal, &fenced); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT s.authority_generation,p.computer_lease_epoch,s.status IN ('closed','cancelled') OR d.execution_revoked_at IS NOT NULL OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) OR p.status IN ('stopping','lost','stopped'),p.fenced_at IS NOT NULL FROM sessions s JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id) JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id) WHERE s.environment_id=$1 AND s.id=$2 AND p.epoch=$3`, env, m.Session, m.Epoch).Scan(&generation, &processLease, &terminal, &fenced); err != nil {
 			return r, err
 		}
 		if processLease != epoch || (fenced && !terminal) {
@@ -391,7 +391,7 @@ func validateRestoreInstallation(ctx context.Context, tx pgx.Tx, host workergrou
 // A newer or unresolved disk cut makes a retained RAM image ineligible.
 func checkpointDiskEligible(ctx context.Context, tx pgx.Tx, env, computer, save uuid.UUID) (bool, error) {
 	var eligible bool
-	err := tx.QueryRow(ctx, `SELECT COALESCE(c.integrity_fault_at IS NULL AND c.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM computer_secret_revocations revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id) AND c.recovery_save_id=$3
+	err := tx.QueryRow(ctx, `SELECT COALESCE(c.integrity_fault_at IS NULL AND c.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id) AND c.recovery_save_id=$3
    AND NOT EXISTS(SELECT 1 FROM computer_saves s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.status IN ('requested','captured')),false)
    FROM computers c WHERE c.environment_id=$1 AND c.id=$2`, env, computer, save).Scan(&eligible)
 	return eligible, err

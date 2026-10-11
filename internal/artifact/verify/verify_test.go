@@ -230,10 +230,10 @@ func newTestProgram(t *testing.T) *testProgram {
 	t.Helper()
 	lockfile := []byte("lockfileVersion = 1\n")
 	configSourceRaw := []byte(
-		`import { defineConfig } from "@helmr/sdk"; export default defineConfig({ dirs: ["tasks"] });`,
+		`import { defineConfig } from "@helmr/sdk"; export default defineConfig({ dirs: ["agents"] });`,
 	)
 	configRaw := []byte(
-		`{"assets":[],"dirs":["tasks"],"external":[],"ignorePatterns":[]}`,
+		`{"assets":[],"dirs":["agents"],"external":[],"ignorePatterns":[]}`,
 	)
 	sourcePath := "helmr/app/entry-0.mjs"
 	sourceRaw := []byte("export const build = {}\n")

@@ -22,7 +22,7 @@ does not execute real workloads.
 ## Layout and selection
 
 - `cases/<behavior>/run.ts` and `*.run.ts`: executable stimulus, assertions and fixture cleanup.
-- `cases/<behavior>/task.ts`: guest Agent/Computer definitions needed by that
+- `cases/<behavior>/agent.ts`: guest Agent/Computer definitions needed by that
   behavior. Related cases may use an existing fixture with a relative import.
 - `support/`: bounded waits and evidence/cleanup mechanics shared by actual callers.
 - `fixtures/schedule/`: intentionally separate scheduled deployment. Promote it

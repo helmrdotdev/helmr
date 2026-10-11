@@ -9,8 +9,8 @@ import { mkdtemp, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { SessionRuntime, type SessionDriver } from "../../../runtime/typescript/src/agent-session"
-import { conversation } from "../tasks/issue-fixer/conversation"
-import { ClaudeHarness } from "../tasks/issue-fixer/claude-harness"
+import { conversation } from "../agents/issue-fixer/conversation"
+import { ClaudeHarness } from "../agents/issue-fixer/claude-harness"
 import { claudeModel } from "./native-model"
 
 for (const scenario of ["answer", "background", "malformed", "handler-failure", "stopped-process"]) test(`Claude warm Session: ${scenario}`, { timeout: 30_000 }, async () => {

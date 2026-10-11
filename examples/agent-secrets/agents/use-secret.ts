@@ -1,16 +1,16 @@
 import { agent, computer, image, source } from "@helmr/sdk"
 
-const base = image("task-secrets")
+const base = image("agent-secrets")
   .from("node:24-bookworm-slim")
   .workdir("/sandbox")
   .run(["npm", "install", "-g", "bun@1.3.13"])
-  .copy(source.file("package.json"), "/opt/helmr-task/package.json")
-  .workdir("/opt/helmr-task")
+  .copy(source.file("package.json"), "/opt/helmr-agent/package.json")
+  .workdir("/opt/helmr-agent")
   .run(["bun", "install"])
   .workdir("/sandbox")
 
 export const taskSecretsComputer = computer({
-  id: "task-secrets",
+  id: "agent-secrets",
   image: base,
   resources: { cpu: 1, memory: "1GiB" },
   // Replace this example UUID with the Environment Secret ID before deployment.

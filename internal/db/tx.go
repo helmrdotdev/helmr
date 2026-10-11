@@ -115,9 +115,13 @@ func withRollbackFailure(primary, rollback error) error {
 }
 
 // RunTx runs fn in one PostgreSQL transaction. It commits when fn returns nil
-// and rolls back when fn returns an error, panics or the commit fails; a panic
-// is re-raised after rollback. Lifecycle errors keep their cause for errors.Is
-// but report only the transaction stage in their text.
+// and rolls back when fn returns an error, panics, or the context is cancelled
+// before commit; a panic is re-raised after rollback. A native pgx.Tx beginner
+// composes through a savepoint. Its lifecycle is uncancelled so a failed RELEASE
+// cannot close pgx's savepoint handle before rollback. The callback still uses
+// the original request context. Cancellation after the final check can lose to
+// successful release; top-level commits remain cancellable. Lifecycle errors
+// retain their cause for errors.Is but report only the stage in their text.
 func RunTx(ctx context.Context, txb TxBeginner, fn func(pgx.Tx) error) error {
 	if fn == nil {
 		return errors.New("transaction function is required")
@@ -125,14 +129,21 @@ func RunTx(ctx context.Context, txb TxBeginner, fn func(pgx.Tx) error) error {
 	if txb == nil {
 		return errors.New("transactional database is required")
 	}
-	tx, err := txb.Begin(ctx)
+	if err := ctx.Err(); err != nil {
+		return txError("begin transaction", err)
+	}
+	lifecycleCtx := ctx
+	if _, nested := txb.(pgx.Tx); nested {
+		lifecycleCtx = context.WithoutCancel(ctx)
+	}
+	tx, err := txb.Begin(lifecycleCtx)
 	if err != nil {
 		return txError("begin transaction", err)
 	}
-	return runTransaction(ctx, tx, fn)
+	return runTransaction(ctx, lifecycleCtx, tx, fn)
 }
 
-func runTransaction(ctx context.Context, tx pgx.Tx, fn func(pgx.Tx) error) (err error) {
+func runTransaction(ctx, lifecycleCtx context.Context, tx pgx.Tx, fn func(pgx.Tx) error) (err error) {
 	if tx == nil {
 		return errors.New("transaction is required")
 	}
@@ -148,10 +159,16 @@ func runTransaction(ctx context.Context, tx pgx.Tx, fn func(pgx.Tx) error) (err 
 			err = withRollbackFailure(err, tx.Rollback(context.WithoutCancel(ctx)))
 		}
 	}()
+	if err := ctx.Err(); err != nil {
+		return txError("transaction body", err)
+	}
 	if err := fn(tx); err != nil {
 		return err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
+		return txError("commit transaction", err)
+	}
+	if err := tx.Commit(lifecycleCtx); err != nil {
 		return txError("commit transaction", err)
 	}
 	committed = true

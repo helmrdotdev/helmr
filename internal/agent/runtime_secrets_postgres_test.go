@@ -138,7 +138,7 @@ func TestRuntimeSecretPinsSurviveRetryAndCoexistWithNewPeers(t *testing.T) {
 		t.Fatalf("revoked final release: %v", err)
 	}
 	var quarantine bool
-	if err = f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM computer_secret_revocations WHERE environment_id=$1 AND computer_id=$2)`, f.env, f.computer).Scan(&quarantine); err != nil || !quarantine {
+	if err = f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2)`, f.env, f.computer).Scan(&quarantine); err != nil || !quarantine {
 		t.Fatalf("ended/live lineage missing: %v %v", quarantine, err)
 	}
 }
@@ -310,7 +310,7 @@ func TestRuntimeSecretConcurrentLostAcknowledgementKeepsOnePin(t *testing.T) {
 }
 
 func TestRuntimeProxyTrustPreservesCommittedHostDrainAndHealthPolicies(t *testing.T) {
-	for _, mode := range []string{"group-paused", "group-draining", "pool-draining", "host-draining", "run-paused", "vm-paused"} {
+	for _, mode := range []string{"group-paused", "group-draining", "pool-draining", "host-draining", "admission-paused"} {
 		t.Run(mode, func(t *testing.T) {
 			f, _, _, _, _, instance := runtimeSecretsFixture(t)
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='acquiring' WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer)
@@ -326,10 +326,8 @@ func TestRuntimeProxyTrustPreservesCommittedHostDrainAndHealthPolicies(t *testin
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_pools SET status='draining' WHERE id=(SELECT worker_pool_id FROM worker_hosts WHERE id=$1)`, f.worker)
 			case "host-draining":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp(),drain_reason='admin' WHERE id=$1`, f.worker)
-			case "run-paused":
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET run_paused_reason='operator' WHERE id=$1`, f.worker)
-			case "vm-paused":
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET vm_paused_reason='operator' WHERE id=$1`, f.worker)
+			case "admission-paused":
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET admission_paused_reason='operator' WHERE id=$1`, f.worker)
 			}
 			_, err := CaptureComputerProxyTrust(t.Context(), f.pool, *f.host(), instance)
 			if mode == "host-draining" {

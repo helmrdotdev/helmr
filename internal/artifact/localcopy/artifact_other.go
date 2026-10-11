@@ -1,35 +1,36 @@
 //go:build !linux
 
-package snapshot
+package localcopy
 
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/cas"
 	"io"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
 )
 
-type artifactSnapshotPlatform struct{}
+type artifactPlatform struct{}
 
-func snapshotArtifact(
+func copyArtifact(
 	context.Context,
 	string,
 	artifact.Role,
-	artifactSnapshotDescriptor,
+	cas.Descriptor,
 	io.Reader,
 ) (*Artifact, error) {
 	return nil, errors.New("artifact snapshots require Linux")
 }
 
-func closeArtifactSnapshotPlatform(snapshot *Artifact) error {
-	if snapshot != nil {
-		snapshot.platform = artifactSnapshotPlatform{}
+func closeArtifactCopyPlatform(local *Artifact) error {
+	if local != nil {
+		local.platform = artifactPlatform{}
 	}
 	return nil
 }
 
-func validateArtifactSnapshotPlatform(*Artifact) error {
+func validateArtifactCopyPlatform(*Artifact) error {
 	return nil
 }
 

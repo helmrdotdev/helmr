@@ -195,7 +195,7 @@ func TestDrainPoolPostgresRejectsPrimaryPool(t *testing.T) {
 func TestSelectPrimaryPoolPostgresRequiresReadyHosts(t *testing.T) {
 	for name, mutation := range map[string]string{
 		"unobserved": "observed_at=NULL", "stale": "observed_at=now()-interval '3 minutes'",
-		"paused": "run_paused_reason='test'", "VM paused": "vm_paused_reason='test'",
+		"paused": "admission_paused_reason='test'",
 
 		"draining": "status='draining',draining_at=now(),drain_reason='replacement'",
 	} {

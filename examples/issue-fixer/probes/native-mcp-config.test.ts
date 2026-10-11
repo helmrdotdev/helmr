@@ -5,8 +5,8 @@ import { createServer } from "node:http"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { CodexHarness } from "../tasks/issue-fixer/codex-harness"
-import { conversation } from "../tasks/issue-fixer/conversation"
+import { CodexHarness } from "../agents/issue-fixer/codex-harness"
+import { conversation } from "../agents/issue-fixer/conversation"
 import { localNativeRuntime } from "./native-runtime"
 
 test("Codex setup passes the managed MCP endpoint and header to the native client", { timeout: 25_000 }, async () => {

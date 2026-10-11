@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"testing"
 	"uuid"
 
@@ -60,7 +61,7 @@ func (f Fixture) PinRevokedImage(t *testing.T, computer uuid.UUID) {
  INSERT INTO secret_exposures(environment_id,preparation_id,secret_id,version_id,revocation_generation) VALUES($2,$3,$12,$13,0);
  `, pgx.QueryExecModeSimpleProtocol, key, f.Environment, preparation, fmt.Sprintf("sha256:%x", locator.Pack.Digest), locator.Pack.Size, locator.Pack.Rank, rootID, string(encoded), identity, spec, computer, secretID, versionID)
 	var revoked bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM computer_secret_revocations WHERE environment_id=$1 AND computer_id=$2)`, f.Environment, computer).Scan(&revoked); err != nil || !revoked {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2)`, f.Environment, computer).Scan(&revoked); err != nil || !revoked {
 		t.Fatalf("image lineage not revoked: %v %v", revoked, err)
 	}
 }

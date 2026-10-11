@@ -82,7 +82,7 @@ buildGoModule {
   '';
 
   meta = {
-    description = "CLI for deploying and running Helmr task projects";
+    description = "CLI for deploying and running Helmr Agent projects";
     homepage = "https://helmr.dev";
     license = lib.licenses.asl20;
     mainProgram = "helmr";

@@ -219,7 +219,11 @@ func TestBootstrapDatabasePostgres(t *testing.T) {
 	if err := applicationPool.QueryRow(ctx, "SELECT version, dirty FROM schema_migrations").Scan(&version, &dirty); err != nil {
 		t.Fatal(err)
 	}
-	if version != 1 || dirty {
+	currentVersion, err := dbschema.CurrentVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != int(currentVersion) || dirty {
 		t.Fatalf("migration after reset: version=%d dirty=%t", version, dirty)
 	}
 	if _, err := applicationPool.Exec(ctx, "CREATE DATABASE forbidden"); err == nil {

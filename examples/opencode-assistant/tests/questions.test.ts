@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import type { Turn } from "@helmr/sdk"
-import { answerQuestions } from "../tasks/questions"
+import { answerQuestions } from "../agents/questions"
 
 test("maps choices, multiple selections, custom text and text-only questions", async () => {
   const seen: any[] = []

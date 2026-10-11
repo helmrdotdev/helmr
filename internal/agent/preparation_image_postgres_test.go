@@ -320,7 +320,7 @@ func TestPreparationLifecycleReplacesThenPinsOriginalDemand(t *testing.T) {
 		t.Fatal(err)
 	}
 	var revoked bool
-	if err = p.f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM computer_secret_revocations WHERE environment_id=$1 AND computer_id=$2)`, p.f.env, computer).Scan(&revoked); err != nil || !revoked {
+	if err = p.f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2)`, p.f.env, computer).Scan(&revoked); err != nil || !revoked {
 		t.Fatalf("successor lineage lost: %v", err)
 	}
 }

@@ -249,6 +249,13 @@ func assertDatabaseConstraintBoundaries(
 	pool *pgxpool.Pool,
 ) {
 	t.Helper()
+	var deferredRetryReferences int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_constraint WHERE conrelid='platform_retry_keys'::regclass AND contype='f' AND condeferrable`).Scan(&deferredRetryReferences); err != nil {
+		t.Fatal(err)
+	}
+	if deferredRetryReferences != 0 {
+		t.Fatalf("deferred retry references = %d, want 0", deferredRetryReferences)
+	}
 	var triggerCount int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
@@ -257,7 +264,6 @@ func assertDatabaseConstraintBoundaries(
 		  JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace
 		 WHERE pg_namespace.nspname = 'public'
 		   AND NOT pg_trigger.tgisinternal
- AND NOT (pg_trigger.tgname='platform_retry_completion' AND pg_class.relname='platform_retry_keys' AND pg_trigger.tgconstraint<>0 AND pg_trigger.tgdeferrable AND pg_trigger.tginitdeferred)
 	`).Scan(&triggerCount); err != nil {
 		t.Fatal(err)
 	}
@@ -265,15 +271,6 @@ func assertDatabaseConstraintBoundaries(
 		t.Fatalf("application-owned PostgreSQL triggers = %d, want 0", triggerCount)
 	}
 
-	// The deferred retry constraint rejects incomplete transaction-local key
-	// acquisitions; it does not advance lifecycle state or schedule work.
-	var completionConstraint bool
-	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='platform_retry_keys'::regclass AND tgname='platform_retry_completion' AND tgconstraint<>0 AND tgdeferrable AND tginitdeferred AND tgfoid='require_platform_retry_completion()'::regprocedure)`).Scan(&completionConstraint); err != nil {
-		t.Fatal(err)
-	}
-	if !completionConstraint {
-		t.Fatal("missing deferred retry completion constraint")
-	}
 	var functionCount int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
@@ -281,7 +278,6 @@ func assertDatabaseConstraintBoundaries(
 		  JOIN pg_namespace ON pg_namespace.oid = pg_proc.pronamespace
 		 WHERE pg_namespace.nspname = 'public'
 		   AND pg_proc.prokind IN ('f', 'p')
- AND pg_proc.proname<>'require_platform_retry_completion'
 		   AND NOT EXISTS (
 		       SELECT 1
 		         FROM pg_depend
@@ -296,19 +292,12 @@ func assertDatabaseConstraintBoundaries(
 		t.Fatalf("application-owned PostgreSQL functions = %d, want 0", functionCount)
 	}
 
-	var views []string
-	if err := pool.QueryRow(ctx, `SELECT COALESCE(array_agg(table_name ORDER BY table_name),ARRAY[]::text[]) FROM information_schema.views WHERE table_schema='public' AND is_updatable='NO'`).Scan(&views); err != nil {
+	var viewCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('v','m')`).Scan(&viewCount); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(views, ",") != "computer_secret_revocations" {
-		t.Fatalf("read-only derived views=%v", views)
-	}
-	var otherViews int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('v','m') AND c.relname<>'computer_secret_revocations'`).Scan(&otherViews); err != nil {
-		t.Fatal(err)
-	}
-	if otherViews != 0 {
-		t.Fatalf("unexpected views=%d", otherViews)
+	if viewCount != 0 {
+		t.Fatalf("application-owned PostgreSQL views = %d, want 0", viewCount)
 	}
 	var ruleCount int
 	if err := pool.QueryRow(ctx, `

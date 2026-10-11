@@ -10,13 +10,13 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// recordImageRevocationFailure is shared by reconciliation and physical observers.
+// recordComputerSecretRevocationFailure is shared by reconciliation and physical observers.
 // The caller holds the Session/Computer and process locks. A prior failure marker
 // survives user hold release, so a late observation cannot add another hold.
-func recordImageRevocationFailure(ctx context.Context, tx pgx.Tx, e Execution) (bool, error) {
+func recordComputerSecretRevocationFailure(ctx context.Context, tx pgx.Tx, e Execution) (bool, error) {
 	var record bool
 	if err := tx.QueryRow(ctx, `SELECT p.failure_recorded_at IS NULL AND s.status IN ('open','closing') AND EXISTS(
- SELECT 1 FROM computer_secret_revocations r WHERE r.environment_id=p.environment_id AND r.computer_id=p.computer_id)
+ SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) r WHERE r.environment_id=p.environment_id AND r.computer_id=p.computer_id)
  FROM session_processes p JOIN sessions s ON (s.environment_id,s.id)=(p.environment_id,p.session_id)
  WHERE p.environment_id=$1 AND p.session_id=$2 AND p.epoch=$3`, e.EnvironmentID, e.SessionID, e.ProcessEpoch).Scan(&record); err != nil {
 		return false, err
@@ -31,10 +31,10 @@ func recordImageRevocationFailure(ctx context.Context, tx pgx.Tx, e Execution) (
 	return err == nil, err
 }
 
-// reconcileComputerImageRevocation interrupts exposed peers and preserves queued
+// reconcileComputerSecretRevocation interrupts exposed peers and preserves queued
 // input for explicit disposition. It does not cancel descendants on other Computers or erase
 // recorded results. Only existing exact lease stop evidence may fence a process.
-func reconcileComputerImageRevocation(ctx context.Context, pool db.TxBeginner, env, computer uuid.UUID) error {
+func reconcileComputerSecretRevocation(ctx context.Context, pool db.TxBeginner, env, computer uuid.UUID) error {
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout='1s'`); err != nil {
 			return err
@@ -62,7 +62,7 @@ func reconcileComputerImageRevocation(ctx context.Context, pool db.TxBeginner, e
 		if !slices.Equal(before, after) {
 			return ErrNotReady
 		}
-		if err = requireComputerImageAllowed(ctx, tx, env, computer); err == nil {
+		if err = requireComputerSecretsNotRevoked(ctx, tx, env, computer); err == nil {
 			return nil
 		} else if !errors.Is(err, ErrDenied) {
 			return err
@@ -80,7 +80,7 @@ func reconcileComputerImageRevocation(ctx context.Context, pool db.TxBeginner, e
 			return err
 		}
 		for _, e := range members {
-			if _, err = recordImageRevocationFailure(ctx, tx, e); err != nil {
+			if _, err = recordComputerSecretRevocationFailure(ctx, tx, e); err != nil {
 				return err
 			}
 			if err = interruptRunningSessionTurn(ctx, tx, e); err != nil {

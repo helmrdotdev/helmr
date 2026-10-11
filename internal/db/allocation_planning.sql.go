@@ -65,7 +65,19 @@ WITH RECURSIVE held AS (
  LEFT JOIN worker_hosts h ON h.id=source.worker_host_id
  WHERE NOT EXISTS(SELECT 1 FROM computer_leases live WHERE live.environment_id=c.environment_id AND live.computer_id=c.id AND live.fenced_at IS NULL) AND (
  c.deleted_at IS NULL AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL
- AND NOT EXISTS(SELECT 1 FROM computer_secret_revocations revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id)
+ AND NOT EXISTS(SELECT 1 FROM (SELECT c.environment_id,c.id AS computer_id,x.secret_id
+    FROM computers c JOIN computer_images i ON (i.environment_id,i.id)=(c.environment_id,c.image_id)
+    JOIN secret_exposures x ON (x.environment_id,x.preparation_id)=(i.environment_id,i.preparation_id)
+    JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
+    WHERE s.status='revoked'
+    UNION
+    SELECT p.environment_id,p.computer_id,x.secret_id FROM secret_exposures x
+    JOIN session_processes p ON (p.environment_id,p.session_id,p.epoch)=(x.environment_id,x.session_id,x.process_epoch)
+    JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id) WHERE s.status='revoked'
+    UNION
+    SELECT c.environment_id,c.computer_id,x.secret_id FROM secret_exposures x
+    JOIN computer_commands c ON (c.environment_id,c.id)=(x.environment_id,x.command_id)
+    JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id) WHERE s.status='revoked') revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id)
  AND ((cp.id IS NOT NULL) OR (c.initial_root_id IS NOT NULL AND c.image_id IS NOT NULL AND c.recovery_save_id IS NULL
   AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.initialized_at IS NOT NULL)))
  AND (EXISTS(SELECT 1 FROM computer_commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending')

@@ -1,4 +1,4 @@
-package snapshot
+package localcopy
 
 import (
 	"bytes"
@@ -22,6 +22,6 @@ func TestRuntimeDescriptorDomainIsIndependentFromArtifactAdmission(t *testing.T)
 		descriptor,
 		bytes.NewReader(nil),
 	); err == nil || !strings.Contains(err.Error(), "exceeds") {
-		t.Fatalf("runtime Artifact snapshot error = %v", err)
+		t.Fatalf("runtime Artifact local error = %v", err)
 	}
 }

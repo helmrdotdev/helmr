@@ -13,11 +13,11 @@ const open = async (cwd: string, sessionId: string, _env: unknown, mcp: unknown)
   trace.push("setup")
   return { run: async (_turn: unknown, prompt: HumanContent) => { prompts.push(prompt); trace.push("native"); return { native: "completed" } } }
 }
-mock.module("../tasks/issue-fixer/codex-harness", () => ({ CodexHarness: { open } }))
-mock.module("../tasks/issue-fixer/claude-harness", () => ({ ClaudeHarness: { open } }))
+mock.module("../agents/issue-fixer/codex-harness", () => ({ CodexHarness: { open } }))
+mock.module("../agents/issue-fixer/claude-harness", () => ({ ClaudeHarness: { open } }))
 mock.module("@helmr/sdk/mcp", () => ({ createRuntimeMcpConnection: async () => connection }))
-const { issuePrompt } = await import("../tasks/issue-fixer/checks")
-mock.module("../tasks/issue-fixer/checks", () => ({
+const { issuePrompt } = await import("../agents/issue-fixer/checks")
+mock.module("../agents/issue-fixer/checks", () => ({
   issuePrompt,
   repository: () => "/fixture/repository",
   checkRepository: async (_cwd: string, signal: AbortSignal) => {
@@ -25,8 +25,8 @@ mock.module("../tasks/issue-fixer/checks", () => ({
     if (checksFail) throw new Error("Repository checks failed")
   },
 }))
-const { codexIssueFixer } = await import("../tasks/issue-fixer/codex")
-const { claudeIssueFixer } = await import("../tasks/issue-fixer/claude")
+const { codexIssueFixer } = await import("../agents/issue-fixer/codex")
+const { claudeIssueFixer } = await import("../agents/issue-fixer/claude")
 
 for (const definition of [codexIssueFixer, claudeIssueFixer]) {
   test(`${definition.id} reuses setup, accepts Content and settles only after checks`, async () => {

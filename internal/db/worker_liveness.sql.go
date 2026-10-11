@@ -90,9 +90,8 @@ func (q *Queries) ListStaleWorkerFenceCandidates(ctx context.Context, arg ListSt
 	return items, nil
 }
 
-const lockRunEligibleWorkerHost = `-- name: LockRunEligibleWorkerHost :one
-SELECT (worker_hosts.status = 'active' AND worker_hosts.run_paused_reason IS NULL
-        AND worker_hosts.vm_paused_reason IS NULL)::boolean AS admitting
+const lockAdmissionEligibleWorkerHost = `-- name: LockAdmissionEligibleWorkerHost :one
+SELECT (worker_hosts.status = 'active' AND worker_hosts.admission_paused_reason IS NULL)::boolean AS admitting
   FROM worker_hosts
   LEFT JOIN vm_platforms
     ON vm_platforms.id = worker_hosts.vm_platform_id
@@ -101,19 +100,19 @@ SELECT (worker_hosts.status = 'active' AND worker_hosts.run_paused_reason IS NUL
    AND worker_hosts.current_epoch = $3::bigint
    AND (worker_hosts.status = 'active' OR ($4::boolean AND worker_hosts.status = 'draining'))
    AND worker_hosts.observed_at >= clock_timestamp() - $5::bigint * interval '1 second'
-   AND ($4::boolean OR worker_hosts.run_paused_reason IS NULL)
+   AND ($4::boolean OR worker_hosts.admission_paused_reason IS NULL)
    AND vm_platforms.arch = $6
    AND vm_platforms.contract = $7
  FOR UPDATE OF worker_hosts
 `
 
-type LockRunEligibleWorkerHostParams struct {
+type LockAdmissionEligibleWorkerHostParams struct {
 	ID                     pgtype.UUID `json:"id"`
 	WorkerGroupID          pgtype.UUID `json:"worker_group_id"`
 	WorkerEpoch            int64       `json:"worker_epoch"`
 	Continuation           bool        `json:"continuation"`
 	WorkerFreshnessSeconds int64       `json:"worker_freshness_seconds"`
-	RunArchitecture        string      `json:"run_architecture"`
+	RuntimeArchitecture    string      `json:"runtime_architecture"`
 	Contract               string      `json:"contract"`
 }
 
@@ -121,17 +120,17 @@ type LockRunEligibleWorkerHostParams struct {
 // (workergroup.LockDispatchSupply) must already hold the Worker Group and Pool share
 // locks and have validated their status. This query locks the Worker Host and
 // checks epoch, observation freshness and platform. Admission also requires an
-// active host without a Run pause; continuation of admitted work accepts a
+// active host without an admission pause; continuation of admitted work accepts a
 // draining host and ignores pauses. admitting reports whether the locked host
-// could admit new work, including the VM pause.
-func (q *Queries) LockRunEligibleWorkerHost(ctx context.Context, arg LockRunEligibleWorkerHostParams) (bool, error) {
-	row := q.db.QueryRow(ctx, lockRunEligibleWorkerHost,
+// could admit new work, including the admission pause.
+func (q *Queries) LockAdmissionEligibleWorkerHost(ctx context.Context, arg LockAdmissionEligibleWorkerHostParams) (bool, error) {
+	row := q.db.QueryRow(ctx, lockAdmissionEligibleWorkerHost,
 		arg.ID,
 		arg.WorkerGroupID,
 		arg.WorkerEpoch,
 		arg.Continuation,
 		arg.WorkerFreshnessSeconds,
-		arg.RunArchitecture,
+		arg.RuntimeArchitecture,
 		arg.Contract,
 	)
 	var admitting bool
@@ -161,7 +160,7 @@ WITH target AS (
                 < transaction_timestamp()
                     - $5::bigint * interval '1 second')
        )
-    RETURNING workers.id, workers.resource_id, workers.worker_group_id, workers.worker_pool_id, workers.status, workers.claim_version, workers.current_epoch, workers.current_service_id, workers.vm_platform_id, workers.epoch_cpu_millis, workers.epoch_memory_bytes, workers.epoch_guest_ephemeral_disk_bytes, workers.per_vm_cpu_millis, workers.per_vm_memory_bytes, workers.per_vm_guest_ephemeral_disk_bytes, workers.max_vm_slots, workers.max_vm_starts, workers.cpu_environment, workers.cpu_environment_digest, workers.observed_at, workers.run_paused_reason, workers.vm_paused_reason, workers.epoch_started_at, workers.activated_at, workers.draining_at, workers.drain_reason, workers.termination_ready_at, workers.lost_at, workers.created_at, workers.updated_at
+    RETURNING workers.id, workers.resource_id, workers.worker_group_id, workers.worker_pool_id, workers.status, workers.claim_version, workers.current_epoch, workers.current_service_id, workers.vm_platform_id, workers.epoch_cpu_millis, workers.epoch_memory_bytes, workers.epoch_guest_ephemeral_disk_bytes, workers.per_vm_cpu_millis, workers.per_vm_memory_bytes, workers.per_vm_guest_ephemeral_disk_bytes, workers.max_vm_slots, workers.max_vm_starts, workers.cpu_environment, workers.cpu_environment_digest, workers.observed_at, workers.admission_paused_reason, workers.epoch_started_at, workers.activated_at, workers.draining_at, workers.drain_reason, workers.termination_ready_at, workers.lost_at, workers.created_at, workers.updated_at
 ), revoked_host_secrets AS (
     UPDATE worker_host_secrets AS host_secrets
        SET revoked_at = COALESCE(host_secrets.revoked_at, now())

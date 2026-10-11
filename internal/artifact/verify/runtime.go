@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
-	"github.com/helmrdotdev/helmr/internal/artifact/snapshot"
+	"github.com/helmrdotdev/helmr/internal/artifact/localcopy"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/safepath"
 )
@@ -29,7 +29,7 @@ func Runtime(
 	ctx context.Context,
 	unitCgroupRoot string,
 	leaseIdentity string,
-	runtimeSnapshot *snapshot.Runtime,
+	runtimeSnapshot *localcopy.Runtime,
 ) (artifact.RuntimeIndex, error) {
 	if ctx == nil {
 		return artifact.RuntimeIndex{}, fmt.Errorf("runtime verification context is nil")

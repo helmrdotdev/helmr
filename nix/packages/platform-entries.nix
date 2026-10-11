@@ -65,7 +65,7 @@ let
     installPhase = installDependencies;
     outputHashMode = "recursive";
     outputHashAlgo = "sha256";
-    outputHash = "sha256-iJ/QONXc5byd5C0l2rzH8/2RR27f1TwJqasSMGLvYzE=";
+    outputHash = "sha256-E4Tux5Qsh2kZEcMDEKFW9dXx8WQL7w7z9tu9zXaaObE=";
   };
   platforms = {
     aarch64-darwin = {

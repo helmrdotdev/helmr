@@ -43,7 +43,7 @@ func RenewComputerLease(ctx context.Context, pool db.TxBeginner, host workergrou
 		return tx.QueryRow(ctx, `UPDATE computer_leases SET expires_at=GREATEST(expires_at,clock_timestamp()+interval '1 minute')
  WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND computer_instance_id=$4 AND worker_host_id=$5 AND worker_epoch=$6
  AND status IN ('active','acquiring','releasing') AND fenced_at IS NULL AND expires_at>clock_timestamp()
- AND NOT EXISTS(SELECT 1 FROM computer_secret_revocations WHERE environment_id=$1 AND computer_id=$2) RETURNING expires_at`, identity.EnvironmentID, identity.ComputerID, identity.Epoch, identity.InstanceID, host.HostID, host.Epoch).Scan(&expires)
+ AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2) RETURNING expires_at`, identity.EnvironmentID, identity.ComputerID, identity.Epoch, identity.InstanceID, host.HostID, host.Epoch).Scan(&expires)
 	})
 	if err != nil {
 		return time.Time{}, hideMissing(err)
@@ -141,7 +141,7 @@ func loseComputerProcesses(ctx context.Context, tx pgx.Tx, env, computer uuid.UU
 // physical fence or checkpoint-loss reconciliation safe after explicit hold release.
 func loseSessionProcess(ctx context.Context, tx pgx.Tx, e Execution, physicalStopped bool) error {
 	var recorded, terminal, fenced, neverStarted bool
-	if err := tx.QueryRow(ctx, `SELECT p.failure_recorded_at IS NOT NULL,s.status IN ('closed','cancelled') OR d.execution_revoked_at IS NOT NULL OR EXISTS(SELECT 1 FROM computer_secret_revocations revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id),p.fenced_at IS NOT NULL, p.status IN ('starting','stopping') AND p.attachment_sequence=0 AND p.failure_recorded_at IS NULL AND l.initialized_at IS NULL AND l.restored_from_save_id IS NULL
+	if err := tx.QueryRow(ctx, `SELECT p.failure_recorded_at IS NOT NULL,s.status IN ('closed','cancelled') OR d.execution_revoked_at IS NOT NULL OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id),p.fenced_at IS NOT NULL, p.status IN ('starting','stopping') AND p.attachment_sequence=0 AND p.failure_recorded_at IS NULL AND l.initialized_at IS NULL AND l.restored_from_save_id IS NULL
  FROM session_processes p JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch) JOIN sessions s ON (s.environment_id,s.id)=(p.environment_id,p.session_id)
  JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id)
  WHERE p.environment_id=$1 AND p.session_id=$2 AND p.epoch=$3 AND p.computer_lease_epoch=$4 FOR NO KEY UPDATE OF p`, e.EnvironmentID, e.SessionID, e.ProcessEpoch, e.LeaseEpoch).Scan(&recorded, &terminal, &fenced, &neverStarted); err != nil {
@@ -152,7 +152,7 @@ func loseSessionProcess(ctx context.Context, tx pgx.Tx, e Execution, physicalSto
 	if fenced {
 		return nil
 	}
-	revocationRecorded, err := recordImageRevocationFailure(ctx, tx, e)
+	revocationRecorded, err := recordComputerSecretRevocationFailure(ctx, tx, e)
 	if err != nil {
 		return err
 	}

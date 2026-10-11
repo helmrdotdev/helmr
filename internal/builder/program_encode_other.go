@@ -8,7 +8,7 @@ import (
 	"iter"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
-	"github.com/helmrdotdev/helmr/internal/artifact/snapshot"
+	"github.com/helmrdotdev/helmr/internal/artifact/localcopy"
 )
 
 func encodeProgramTree(
@@ -18,6 +18,6 @@ func encodeProgramTree(
 	artifact.Role,
 	iter.Seq2[treeEntry, error],
 	bool,
-) (*snapshot.Artifact, error) {
+) (*localcopy.Artifact, error) {
 	return nil, errors.New("program encoding requires Linux")
 }

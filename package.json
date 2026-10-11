@@ -11,7 +11,7 @@
     "examples/cli-tooling",
     "examples/github-pr-review",
     "examples/hello-world",
-    "examples/task-secrets",
+    "examples/agent-secrets",
     "packages/*"
   ],
   "overrides": {

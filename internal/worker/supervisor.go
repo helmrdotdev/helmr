@@ -668,17 +668,14 @@ func (s *Supervisor) observation(ctx context.Context, state Status, evidence Rec
 		s.cfg.AdmissionEvaluator.Evaluate(healthCtx, AdmissionCheck{Consumer: "instance", Status: state, DrainContinuation: true})
 		cancel()
 		admissionObservation := s.cfg.AdmissionEvaluator.Observation()
-		observation.RunPausedReason = admissionObservation.RunPausedReason
-		observation.VMPausedReason = admissionObservation.VMPausedReason
+		observation.AdmissionPausedReason = admissionObservation.AdmissionPausedReason
 	}
 	if len(evidence.Quarantined) > 0 {
-		observation.RunPausedReason = "startup_recovery_leak"
-		observation.VMPausedReason = "startup_recovery_leak"
+		observation.AdmissionPausedReason = "startup_recovery_leak"
 		return observation
 	}
 	if state != StatusActive && state != StatusDraining {
-		observation.RunPausedReason = string(state)
-		observation.VMPausedReason = string(state)
+		observation.AdmissionPausedReason = string(state)
 	}
 	return observation
 }

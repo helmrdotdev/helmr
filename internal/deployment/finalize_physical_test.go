@@ -28,7 +28,7 @@ func TestFinalizeAdmitsPhysicalProgramBeforeRegisteringDefinitions(t *testing.T)
 	seed := finalizeDiskFixture(t)
 	metadata := artifacttest.ProgramMetadata(t)
 	metadata.Definitions[2].Computer.Seed.ArtifactDigest = sha256sum.DigestBytes(seed)
-	metadata.ConfigResultDigest = sha256sum.DigestBytes([]byte(`{"assets":[],"dirs":["tasks"],"external":[],"ignorePatterns":[]}`))
+	metadata.ConfigResultDigest = sha256sum.DigestBytes([]byte(`{"assets":[],"dirs":["agents"],"external":[],"ignorePatterns":[]}`))
 	program := physicalProgram(t, metadata)
 	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: sha256sum.DigestBytes(program), SizeBytes: int64(len(program)), MediaType: artifact.ProgramArtifactMediaType}, Metadata: metadata}
 	runtime := artifact.RuntimeDescriptor{Architecture: metadata.Architecture, Digest: metadata.RuntimeDigest, FormatVersion: artifact.RuntimeDescriptorFormatVersion, MediaType: artifact.RuntimeArtifactMediaType, RuntimeContract: metadata.RuntimeContract, SizeBytes: 4096}
@@ -146,13 +146,13 @@ func physicalProgram(t *testing.T, metadata artifact.ProgramMetadata) []byte {
 		t.Fatal(err)
 	}
 	files := map[string][]byte{
-		"bun.lock": []byte("lockfileVersion = 1\n"), "helmr.config.ts": []byte("export default { dirs: ['tasks'] };\n"),
-		"helmr/config.json":           []byte(`{"assets":[],"dirs":["tasks"],"external":[],"ignorePatterns":[]}`),
+		"bun.lock": []byte("lockfileVersion = 1\n"), "helmr.config.ts": []byte("export default { dirs: ['agents'] };\n"),
+		"helmr/config.json":           []byte(`{"assets":[],"dirs":["agents"],"external":[],"ignorePatterns":[]}`),
 		"helmr/program-metadata.json": rawMetadata, "helmr/definition-index.json": index,
 		"helmr/app/entry-0.mjs": []byte("export const build = {};\n"), "helmr/app/entry-1.mjs": []byte("export const chat = {};\n"),
 		"package.json": []byte(`{"packageManager":"yarn@4.9.2"}`),
 	}
-	directories := []string{"helmr", "helmr/app", "node_modules", "tasks"}
+	directories := []string{"helmr", "helmr/app", "node_modules", "agents"}
 	entries := []artifact.Entry{{Path: ".", Kind: artifact.EntryDirectory, Mode: 0755}}
 	for _, dir := range directories {
 		entries = append(entries, artifact.Entry{Path: dir, Kind: artifact.EntryDirectory, Mode: 0755})

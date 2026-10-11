@@ -156,11 +156,11 @@ func TestWorkerHostLifecycleHTTP(t *testing.T) {
 	if activated.Status != workerapi.StatusActive || activated.WorkerHostID != enrolled.WorkerHostID || activated.WorkerGroupID != f.group.ID {
 		t.Fatalf("activated = %+v", activated)
 	}
-	observed, err := host.client.ObserveWorker(t.Context(), workerapi.Observation{VMPausedReason: "maintenance"})
+	observed, err := host.client.ObserveWorker(t.Context(), workerapi.Observation{AdmissionPausedReason: "maintenance"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if observed.Readiness.Instance == nil || observed.Readiness.Instance.Ready || observed.Readiness.Instance.PausedReason != "maintenance" {
+	if observed.Readiness.Ready || observed.Readiness.PausedReason != "maintenance" {
 		t.Fatalf("observed readiness = %+v", observed.Readiness)
 	}
 	if err := host.client.FenceWorker(t.Context(), "future_diagnostic"); !httpclient.IsStatus(err, http.StatusBadRequest) {

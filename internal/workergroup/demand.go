@@ -26,7 +26,7 @@ func HasQueuedDemand(ctx context.Context, database db.DBTX, workerGroupID uuid.U
  JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id) AND d.execution_revoked_at IS NULL
  JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id)
  WHERE s.status IN ('open','closing') AND c.deleted_at IS NULL AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL
- AND NOT EXISTS(SELECT 1 FROM computer_secret_revocations revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id)
+ AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id)
  AND NOT EXISTS(WITH RECURSIVE ancestors AS (
    SELECT s.id,s.parent_session_id
    UNION ALL SELECT parent.id,parent.parent_session_id FROM sessions parent JOIN ancestors a ON parent.id=a.parent_session_id WHERE parent.environment_id=s.environment_id)
@@ -46,7 +46,7 @@ func HasQueuedDemand(ctx context.Context, database db.DBTX, workerGroupID uuid.U
  JOIN environments e ON e.id=c.environment_id AND e.retired_at IS NULL
  JOIN projects p ON p.id=e.project_id JOIN worker_groups g ON g.region_id=p.default_region_id AND g.id=$1
  WHERE cmd.status='pending' AND c.deleted_at IS NULL AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL
- AND NOT EXISTS(SELECT 1 FROM computer_secret_revocations r WHERE r.environment_id=c.environment_id AND r.computer_id=c.id)
+ AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) r WHERE r.environment_id=c.environment_id AND r.computer_id=c.id)
  )`, workerGroupID).Scan(&present)
 	if err != nil {
 		return false, fmt.Errorf("read queued execution demand: %w", err)

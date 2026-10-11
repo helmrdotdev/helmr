@@ -3,7 +3,7 @@ import { agent } from "@helmr/sdk"
 import { randomUUID } from "node:crypto"
 import { readFile, writeFile } from "node:fs/promises"
 import { z } from "zod"
-import { verificationComputer } from "../agent/task"
+import { verificationComputer } from "../agent/agent"
 
 export const verificationSession = agent({
   id: "verification-session", computer: verificationComputer, maxTurnDuration: "10m",

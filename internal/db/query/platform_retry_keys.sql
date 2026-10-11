@@ -11,17 +11,12 @@ FOR UPDATE OF k;
 -- name: CreatePlatformRetryKey :one
 INSERT INTO platform_retry_keys(environment_id,id,operation,slot_hash,request_fingerprint,
     scope_secret_name,scope_secret_id,scope_computer_id,scope_command_id,scope_caller_kind,scope_computer_key,
+    deployment_id,secret_id,secret_version_id,computer_id,command_id,receipt,
     accepted_at,receipt_expires_at)
 VALUES(sqlc.arg(environment_id),sqlc.arg(id),sqlc.arg(operation),sqlc.arg(slot_hash),sqlc.arg(request_fingerprint),
     sqlc.narg(scope_secret_name),sqlc.narg(scope_secret_id),sqlc.narg(scope_computer_id),sqlc.narg(scope_command_id),sqlc.narg(scope_caller_kind),sqlc.narg(scope_computer_key),
+    sqlc.narg(deployment_id),sqlc.narg(secret_id),sqlc.narg(secret_version_id),sqlc.narg(computer_id),sqlc.narg(command_id),sqlc.arg(receipt),
     statement_timestamp(),statement_timestamp()+interval '720 hours')
-ON CONFLICT(environment_id,operation,slot_hash) DO NOTHING RETURNING *;
-
--- name: CompletePlatformRetryKey :one
-UPDATE platform_retry_keys SET deployment_id=sqlc.narg(deployment_id),secret_id=sqlc.narg(secret_id),secret_version_id=sqlc.narg(secret_version_id),
-    computer_id=sqlc.narg(computer_id),command_id=sqlc.narg(command_id),receipt=sqlc.arg(receipt)
-WHERE environment_id=sqlc.arg(environment_id) AND id=sqlc.arg(id) AND request_fingerprint=sqlc.arg(request_fingerprint)
-    AND receipt IS NULL AND receipt_pruned_at IS NULL
 RETURNING *;
 
 -- name: GetPlatformRetryKey :one

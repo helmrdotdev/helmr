@@ -1,25 +1,26 @@
 //go:build !linux
 
-package snapshot
+package localcopy
 
 import (
 	"bytes"
 	"context"
+	"github.com/helmrdotdev/helmr/internal/cas"
 	"strings"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
 )
 
-func TestArtifactSnapshotFailsClosedOutsideLinux(t *testing.T) {
-	_, err := snapshotArtifact(
+func TestArtifactCopyFailsClosedOutsideLinux(t *testing.T) {
+	_, err := copyArtifact(
 		context.Background(),
 		t.TempDir(),
 		artifact.RoleProgram,
-		artifactSnapshotDescriptor{},
+		cas.Descriptor{},
 		bytes.NewReader(nil),
 	)
 	if err == nil || !strings.Contains(err.Error(), "require Linux") {
-		t.Fatalf("snapshot error = %v", err)
+		t.Fatalf("local error = %v", err)
 	}
 }

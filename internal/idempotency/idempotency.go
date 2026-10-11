@@ -17,6 +17,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/pglock"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -40,17 +41,13 @@ const (
 	operationCommandCancel      operation = "command.cancel"
 )
 
-type Request interface{ idempotencyRequest() request }
-type request struct {
+type Request struct {
 	environmentID uuid.UUID
 	operation     operation
 	scope         []byte
 	key           string
-	fingerprint   func() ([sha256.Size]byte, error)
+	fingerprint   [sha256.Size]byte
 }
-type sealedRequest struct{ value request }
-
-func (r sealedRequest) idempotencyRequest() request { return r.value }
 
 type DeploymentFinalizeFingerprint struct {
 	BundleDigest string `json:"bundleDigest"`
@@ -77,92 +74,127 @@ type ConflictError struct{ ClaimID uuid.UUID }
 
 func (e ConflictError) Error() string { return "idempotency key conflicts with its original request" }
 
-var ErrIncomplete = errors.New("platform mutation receipt is incomplete")
-
 type Result struct {
 	Claim db.PlatformRetryKey
 	New   bool
 }
 type Target struct{ DeploymentID, SecretID, SecretVersionID, ComputerID, CommandID uuid.UUID }
-type Transaction struct{ queries *db.Queries }
 
-func TransactionFor(tx pgx.Tx) (*Transaction, error) {
-	if tx == nil {
-		return nil, errors.New("idempotency transaction is required")
-	}
-	return &Transaction{queries: db.New(tx)}, nil
+// Completion is the target and response saved with a successful mutation.
+type Completion struct {
+	Target  Target
+	Receipt []byte
 }
 
-// Acquire serializes one scoped request. The enclosing transaction must bind its
-// typed result and receipt before commit; the deferred constraint enforces that.
-func (t *Transaction) Acquire(ctx context.Context, input Request) (Result, error) {
-	if input == nil {
-		return Result{}, errors.New("idempotency request is required")
+// Run owns a pgx savepoint inside the caller's transaction. The scoped advisory
+// lock belongs to the caller transaction and survives rollback of this unit.
+// The callback uses only its supplied transaction for domain writes. Returning an
+// error, panicking, or omitting a new receipt rolls back those writes even when
+// an outer caller ignores the error. A nil request performs an unkeyed mutation.
+func Run(ctx context.Context, caller pgx.Tx, input *Request, fn func(pgx.Tx, Result) (Completion, error)) error {
+	if fn == nil {
+		return errors.New("idempotency mutation is required")
 	}
-	r := input.idempotencyRequest()
-	if r.environmentID == uuid.Nil() || !supportedOperation(r.operation) || r.key == "" || len(r.key) > 512 || !utf8.ValidString(r.key) || strings.ContainsFunc(r.key, unicode.IsControl) || r.fingerprint == nil {
-		return Result{}, errors.New("invalid platform retry identity")
+	if caller == nil {
+		return errors.New("idempotency transaction is required")
 	}
-	slot := idempotencySlotHash(r)
-	fingerprint, err := r.fingerprint()
-	if err != nil {
-		return Result{}, err
+	var slot [sha256.Size]byte
+	if input != nil {
+		if input.environmentID == uuid.Nil() || !supportedOperation(input.operation) || input.key == "" || len(input.key) > 512 || !utf8.ValidString(input.key) || strings.ContainsFunc(input.key, unicode.IsControl) {
+			return errors.New("invalid platform retry identity")
+		}
+		slot = idempotencySlotHash(input)
+		// Separate lock/read statements under READ COMMITTED let a waiter see
+		// the previous winner. A hash collision only serializes unrelated keys.
+		key := pglock.Key("platform-retry:" + hex.EncodeToString(slot[:]))
+		if _, err := caller.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, key); err != nil {
+			return fmt.Errorf("lock platform retry identity: %w", err)
+		}
 	}
-	for {
-		locked, err := t.queries.LockPlatformRetryKey(ctx, db.LockPlatformRetryKeyParams{EnvironmentID: pgvalue.UUID(r.environmentID), Operation: string(r.operation), SlotHash: slot[:]})
-		if err == nil {
-			claim := locked.PlatformRetryKey
-			if !bytes.Equal(claim.RequestFingerprint, fingerprint[:]) {
-				return Result{}, ConflictError{ClaimID: pgvalue.MustUUIDValue(claim.ID)}
+	return db.RunTx(ctx, caller, func(tx pgx.Tx) error {
+		acquired := Result{New: true}
+		if input != nil {
+			var err error
+			acquired, err = acquire(ctx, tx, input, slot)
+			if err != nil {
+				return err
 			}
-			if claim.ReceiptPrunedAt.Valid || (locked.Expired.Valid && locked.Expired.Bool) {
-				return Result{}, ExpiredError{}
-			}
-			if len(claim.Receipt) == 0 {
-				return Result{}, ErrIncomplete
-			}
-			return Result{Claim: claim}, nil
 		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return Result{}, fmt.Errorf("lock platform retry key: %w", err)
-		}
-		params := db.CreatePlatformRetryKeyParams{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(r.environmentID), Operation: string(r.operation), SlotHash: slot[:], RequestFingerprint: fingerprint[:]}
-		switch r.operation {
-		case operationSecretCreate:
-			if len(r.scope) < 8 || binary.BigEndian.Uint64(r.scope[:8]) != uint64(len(r.scope)-8) {
-				return Result{}, errors.New("invalid Secret name scope")
-			}
-			params.ScopeSecretName = pgvalue.Text(string(r.scope[8:]))
-		case operationSecretRotate, operationSecretRevoke, operationComputerDelete, operationComputerCommand, operationCommandCancel:
-			if len(r.scope) != 16 {
-				return Result{}, errors.New("invalid platform object scope")
-			}
-			id := pgvalue.UUID(uuid.UUID(r.scope))
-			switch r.operation {
-			case operationSecretRotate, operationSecretRevoke:
-				params.ScopeSecretID = id
-			case operationComputerDelete, operationComputerCommand:
-				params.ScopeComputerID = id
-			case operationCommandCancel:
-				params.ScopeCommandID = id
-			}
-		case operationComputerCreate:
-			name, ok := strings.CutPrefix(string(r.scope), "external\x00")
-			if !ok || name == "" {
-				return Result{}, errors.New("invalid external Computer scope")
-			}
-			params.ScopeCallerKind = pgvalue.Text("external")
-			params.ScopeComputerKey = pgvalue.Text(name)
-		}
-		claim, err := t.queries.CreatePlatformRetryKey(ctx, params)
-		if errors.Is(err, pgx.ErrNoRows) {
-			continue
-		}
+		completion, err := fn(tx, acquired)
 		if err != nil {
-			return Result{}, fmt.Errorf("bind platform retry key: %w", err)
+			return err
 		}
-		return Result{Claim: claim, New: true}, nil
+		if input == nil || !acquired.New {
+			return nil
+		}
+		if err := validateReceipt(completion.Receipt); err != nil {
+			return err
+		}
+		claim := acquired.Claim
+		target := completion.Target
+		_, err = db.New(tx).CreatePlatformRetryKey(ctx, db.CreatePlatformRetryKeyParams{
+			ID: claim.ID, EnvironmentID: claim.EnvironmentID, Operation: claim.Operation,
+			SlotHash: claim.SlotHash, RequestFingerprint: claim.RequestFingerprint,
+			ScopeSecretName: claim.ScopeSecretName, ScopeSecretID: claim.ScopeSecretID,
+			ScopeComputerID: claim.ScopeComputerID, ScopeCommandID: claim.ScopeCommandID,
+			ScopeCallerKind: claim.ScopeCallerKind, ScopeComputerKey: claim.ScopeComputerKey,
+			DeploymentID: optionalUUID(target.DeploymentID), SecretID: optionalUUID(target.SecretID),
+			SecretVersionID: optionalUUID(target.SecretVersionID), ComputerID: optionalUUID(target.ComputerID),
+			CommandID: optionalUUID(target.CommandID), Receipt: bytes.Clone(completion.Receipt),
+		})
+		return err
+	})
+}
+
+func acquire(ctx context.Context, tx pgx.Tx, r *Request, slot [sha256.Size]byte) (Result, error) {
+	locked, err := db.New(tx).LockPlatformRetryKey(ctx, db.LockPlatformRetryKeyParams{EnvironmentID: pgvalue.UUID(r.environmentID), Operation: string(r.operation), SlotHash: slot[:]})
+	if err == nil {
+		claim := locked.PlatformRetryKey
+		if !bytes.Equal(claim.RequestFingerprint, r.fingerprint[:]) {
+			return Result{}, ConflictError{ClaimID: pgvalue.MustUUIDValue(claim.ID)}
+		}
+		if claim.ReceiptPrunedAt.Valid || (locked.Expired.Valid && locked.Expired.Bool) {
+			return Result{}, ExpiredError{}
+		}
+		return Result{Claim: claim}, nil
 	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return Result{}, fmt.Errorf("read platform retry key: %w", err)
+	}
+	claim, err := newClaim(r, slot)
+	return Result{Claim: claim, New: true}, err
+}
+
+func newClaim(r *Request, slot [sha256.Size]byte) (db.PlatformRetryKey, error) {
+	params := db.PlatformRetryKey{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(r.environmentID), Operation: string(r.operation), SlotHash: slot[:], RequestFingerprint: bytes.Clone(r.fingerprint[:])}
+	switch r.operation {
+	case operationSecretCreate:
+		if len(r.scope) < 8 || binary.BigEndian.Uint64(r.scope[:8]) != uint64(len(r.scope)-8) {
+			return db.PlatformRetryKey{}, errors.New("invalid Secret name scope")
+		}
+		params.ScopeSecretName = pgvalue.Text(string(r.scope[8:]))
+	case operationSecretRotate, operationSecretRevoke, operationComputerDelete, operationComputerCommand, operationCommandCancel:
+		if len(r.scope) != 16 {
+			return db.PlatformRetryKey{}, errors.New("invalid platform object scope")
+		}
+		id := pgvalue.UUID(uuid.UUID(r.scope))
+		switch r.operation {
+		case operationSecretRotate, operationSecretRevoke:
+			params.ScopeSecretID = id
+		case operationComputerDelete, operationComputerCommand:
+			params.ScopeComputerID = id
+		case operationCommandCancel:
+			params.ScopeCommandID = id
+		}
+	case operationComputerCreate:
+		name, ok := strings.CutPrefix(string(r.scope), "external\x00")
+		if !ok || name == "" {
+			return db.PlatformRetryKey{}, errors.New("invalid external Computer scope")
+		}
+		params.ScopeCallerKind = pgvalue.Text("external")
+		params.ScopeComputerKey = pgvalue.Text(name)
+	}
+	return params, nil
 }
 func supportedOperation(value operation) bool {
 	switch value {
@@ -170,12 +202,6 @@ func supportedOperation(value operation) bool {
 		return true
 	}
 	return false
-}
-func (t *Transaction) Complete(ctx context.Context, claim db.PlatformRetryKey, target Target, receipt []byte) (db.PlatformRetryKey, error) {
-	if err := validateReceipt(receipt); err != nil {
-		return db.PlatformRetryKey{}, err
-	}
-	return t.queries.CompletePlatformRetryKey(ctx, db.CompletePlatformRetryKeyParams{EnvironmentID: claim.EnvironmentID, ID: claim.ID, RequestFingerprint: bytes.Clone(claim.RequestFingerprint), DeploymentID: optionalUUID(target.DeploymentID), SecretID: optionalUUID(target.SecretID), SecretVersionID: optionalUUID(target.SecretVersionID), ComputerID: optionalUUID(target.ComputerID), CommandID: optionalUUID(target.CommandID), Receipt: bytes.Clone(receipt)})
 }
 func deploymentDigestBytes(value string) ([]byte, error) {
 	hexValue, ok := strings.CutPrefix(value, "sha256:")
@@ -194,7 +220,7 @@ func NewDeploymentFinalizeRequest(
 	projectID uuid.UUID,
 	key string,
 	fingerprint DeploymentFinalizeFingerprint,
-) (Request, error) {
+) (*Request, error) {
 	if environmentID == uuid.Nil() {
 		return nil, errors.New("idempotency environment is required")
 	}
@@ -212,47 +238,43 @@ func NewDeploymentFinalizeRequest(
 	if err != nil {
 		return nil, fmt.Errorf("canonicalize deployment finalization fingerprint: %w", err)
 	}
-	return sealedRequest{value: request{
+	return &Request{
 		environmentID: environmentID,
 		operation:     operationDeploymentFinalize,
 		scope:         bytes.Clone(projectID[:]),
 		key:           key,
-		fingerprint: func() ([sha256.Size]byte, error) {
-			return operationFingerprint(operationDeploymentFinalize, canonical), nil
-		},
-	}}, nil
+		fingerprint:   operationFingerprint(operationDeploymentFinalize, canonical),
+	}, nil
 }
 
-func NewSecretCreateRequest(environmentID uuid.UUID, name string, key string) (Request, error) {
+func NewSecretCreateRequest(environmentID uuid.UUID, name string, key string) (*Request, error) {
 	if name == "" {
 		return nil, errors.New("secret name is required")
 	}
 	return newSecretValueRequest(environmentID, operationSecretCreate, secretNameScope(name), key, []byte(name))
 }
 
-func NewSecretRotateRequest(environmentID uuid.UUID, secretID uuid.UUID, key string) (Request, error) {
+func NewSecretRotateRequest(environmentID uuid.UUID, secretID uuid.UUID, key string) (*Request, error) {
 	if secretID == uuid.Nil() {
 		return nil, errors.New("secret ID is required")
 	}
 	return newSecretValueRequest(environmentID, operationSecretRotate, secretID[:], key, nil)
 }
 
-func NewSecretRevokeRequest(environmentID uuid.UUID, secretID uuid.UUID, key string) (Request, error) {
+func NewSecretRevokeRequest(environmentID uuid.UUID, secretID uuid.UUID, key string) (*Request, error) {
 	if environmentID == uuid.Nil() {
 		return nil, errors.New("idempotency environment is required")
 	}
 	if secretID == uuid.Nil() {
 		return nil, errors.New("secret ID is required")
 	}
-	return sealedRequest{value: request{
+	return &Request{
 		environmentID: environmentID,
 		operation:     operationSecretRevoke,
 		scope:         bytes.Clone(secretID[:]),
 		key:           key,
-		fingerprint: func() ([sha256.Size]byte, error) {
-			return operationFingerprint(operationSecretRevoke, nil), nil
-		},
-	}}, nil
+		fingerprint:   operationFingerprint(operationSecretRevoke, nil),
+	}, nil
 }
 
 func NewExternalComputerCreateRequest(
@@ -260,7 +282,7 @@ func NewExternalComputerCreateRequest(
 	computerDeclaredID string,
 	key string,
 	input ComputerCreateFingerprint,
-) (Request, error) {
+) (*Request, error) {
 	return newComputerCreateRequest(
 		environmentID,
 		[]byte("external\x00"+computerDeclaredID),
@@ -276,7 +298,7 @@ func newComputerCreateRequest(
 	computerDeclaredID string,
 	key string,
 	input ComputerCreateFingerprint,
-) (Request, error) {
+) (*Request, error) {
 	if environmentID == uuid.Nil() {
 		return nil, errors.New("idempotency environment is required")
 	}
@@ -303,33 +325,29 @@ func newComputerCreateRequest(
 	if err != nil {
 		return nil, fmt.Errorf("canonicalize computer create fingerprint: %w", err)
 	}
-	return sealedRequest{value: request{
+	return &Request{
 		environmentID: environmentID,
 		operation:     operationComputerCreate,
 		scope:         scope,
 		key:           key,
-		fingerprint: func() ([sha256.Size]byte, error) {
-			return operationFingerprint(operationComputerCreate, canonicalFields), nil
-		},
-	}}, nil
+		fingerprint:   operationFingerprint(operationComputerCreate, canonicalFields),
+	}, nil
 }
 
-func NewComputerDeleteRequest(environmentID uuid.UUID, computerID uuid.UUID, key string) (Request, error) {
+func NewComputerDeleteRequest(environmentID uuid.UUID, computerID uuid.UUID, key string) (*Request, error) {
 	if environmentID == uuid.Nil() {
 		return nil, errors.New("idempotency environment is required")
 	}
 	if computerID == uuid.Nil() {
 		return nil, errors.New("computer ID is required")
 	}
-	return sealedRequest{value: request{
+	return &Request{
 		environmentID: environmentID,
 		operation:     operationComputerDelete,
 		scope:         bytes.Clone(computerID[:]),
 		key:           key,
-		fingerprint: func() ([sha256.Size]byte, error) {
-			return operationFingerprint(operationComputerDelete, nil), nil
-		},
-	}}, nil
+		fingerprint:   operationFingerprint(operationComputerDelete, nil),
+	}, nil
 }
 
 func NewComputerCommandRequest(
@@ -337,7 +355,7 @@ func NewComputerCommandRequest(
 	computerID uuid.UUID,
 	key string,
 	input ComputerCommandFingerprint,
-) (Request, error) {
+) (*Request, error) {
 	if environmentID == uuid.Nil() {
 		return nil, errors.New("idempotency environment is required")
 	}
@@ -368,15 +386,13 @@ func NewComputerCommandRequest(
 	if err != nil {
 		return nil, fmt.Errorf("canonicalize computer exec fingerprint: %w", err)
 	}
-	return sealedRequest{value: request{
+	return &Request{
 		environmentID: environmentID,
 		operation:     operationComputerCommand,
 		scope:         bytes.Clone(computerID[:]),
 		key:           key,
-		fingerprint: func() ([sha256.Size]byte, error) {
-			return operationFingerprint(operationComputerCommand, canonical), nil
-		},
-	}}, nil
+		fingerprint:   operationFingerprint(operationComputerCommand, canonical),
+	}, nil
 }
 
 func canonicalJSONOr(value json.RawMessage, fallback string) ([]byte, error) {
@@ -386,22 +402,20 @@ func canonicalJSONOr(value json.RawMessage, fallback string) ([]byte, error) {
 	return jsoncanon.Transform(value)
 }
 
-func newSecretValueRequest(environmentID uuid.UUID, operation operation, scope []byte, key string, fields []byte) (Request, error) {
+func newSecretValueRequest(environmentID uuid.UUID, operation operation, scope []byte, key string, fields []byte) (*Request, error) {
 	if environmentID == uuid.Nil() {
 		return nil, errors.New("idempotency environment is required")
 	}
-	return sealedRequest{value: request{
+	return &Request{
 		environmentID: environmentID,
 		operation:     operation,
 		scope:         bytes.Clone(scope),
 		key:           key,
-		fingerprint: func() ([sha256.Size]byte, error) {
-			return operationFingerprint(operation, fields), nil
-		},
-	}}, nil
+		fingerprint:   operationFingerprint(operation, fields),
+	}, nil
 }
 
-func idempotencySlotHash(request request) [sha256.Size]byte {
+func idempotencySlotHash(request *Request) [sha256.Size]byte {
 	frame := make([]byte, 0, len(slotDomain)+1+16+8+len(request.operation)+8+len(request.scope)+8+len(request.key))
 	frame = append(frame, slotDomain...)
 	frame = append(frame, 0)
@@ -443,11 +457,11 @@ func validateReceipt(receipt []byte) error {
 	return nil
 }
 
-func NewCommandCancelRequest(environmentID, commandID uuid.UUID) (Request, error) {
+func NewCommandCancelRequest(environmentID, commandID uuid.UUID) (*Request, error) {
 	if environmentID == uuid.Nil() || commandID == uuid.Nil() {
 		return nil, errors.New("command cancellation requires environment and Command IDs")
 	}
-	return sealedRequest{value: request{environmentID: environmentID, operation: operationCommandCancel, scope: bytes.Clone(commandID[:]), key: "cancel", fingerprint: func() ([sha256.Size]byte, error) { return operationFingerprint(operationCommandCancel, nil), nil }}}, nil
+	return &Request{environmentID: environmentID, operation: operationCommandCancel, scope: bytes.Clone(commandID[:]), key: "cancel", fingerprint: operationFingerprint(operationCommandCancel, nil)}, nil
 }
 
 func optionalUUID(value uuid.UUID) pgtype.UUID {

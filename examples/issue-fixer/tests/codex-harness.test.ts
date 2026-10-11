@@ -7,7 +7,7 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import type { Turn } from "../../../sdk/typescript/src/agent"
 import { MessageRejected } from "../../../sdk/typescript/src/message-error"
-import { Queue } from "../tasks/issue-fixer/queue"
+import { Queue } from "../agents/issue-fixer/queue"
 
 let messages: Queue<any>
 let sent: any[] = []
@@ -15,7 +15,7 @@ let startRequestGate: Promise<void> | undefined
 let onInterrupt: (() => void) | undefined
 let finishExit!: () => void
 class Rejected extends Error { constructor(readonly code: number, message: string) { super(message) } }
-mock.module("../tasks/issue-fixer/codex-stdio", () => ({
+mock.module("../agents/issue-fixer/codex-stdio", () => ({
   spawnManagedCodex: () => ({ child: {}, ready: Promise.resolve({ scopeId: "fixture", processId: 123 }) }), CodexRequestRejected: Rejected,
   CodexStdio: class {
     readonly messages = messages = new Queue()
@@ -32,7 +32,7 @@ mock.module("../tasks/issue-fixer/codex-stdio", () => ({
     close() { return this.exit }
   },
 }))
-const { CodexHarness } = await import("../tasks/issue-fixer/codex-harness")
+const { CodexHarness } = await import("../agents/issue-fixer/codex-harness")
 
 test("every close caller waits for physical exit after reader failure", async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-close-"))

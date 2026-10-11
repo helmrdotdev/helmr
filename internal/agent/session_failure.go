@@ -94,10 +94,10 @@ func ObserveSessionFailure(ctx context.Context, pool db.TxBeginner, host workerg
 
 func observeSessionFailure(ctx context.Context, tx pgx.Tx, e Execution, reason string) error {
 	var terminal bool
-	if err := tx.QueryRow(ctx, `SELECT s.status IN ('closed','cancelled') OR d.execution_revoked_at IS NOT NULL OR EXISTS(SELECT 1 FROM computer_secret_revocations revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) FROM sessions s JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id) WHERE s.environment_id=$1 AND s.id=$2`, e.EnvironmentID, e.SessionID).Scan(&terminal); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT s.status IN ('closed','cancelled') OR d.execution_revoked_at IS NOT NULL OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) FROM sessions s JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id) WHERE s.environment_id=$1 AND s.id=$2`, e.EnvironmentID, e.SessionID).Scan(&terminal); err != nil {
 		return err
 	}
-	revocationRecorded, err := recordImageRevocationFailure(ctx, tx, e)
+	revocationRecorded, err := recordComputerSecretRevocationFailure(ctx, tx, e)
 	if err != nil {
 		return err
 	}

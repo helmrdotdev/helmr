@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "task-secrets",
+      "name": "agent-secrets",
       "dependencies": {
         "@helmr/sdk": "latest",
       },

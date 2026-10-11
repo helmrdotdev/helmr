@@ -409,7 +409,7 @@ func authorizeStart(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UUID
 
 func computerAcceptsAdmission(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, newPlacement bool) error {
 	var available bool
-	if err := tx.QueryRow(ctx, `SELECT preparation_failed_at IS NULL AND deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM computer_secret_revocations WHERE environment_id=$1 AND computer_id=$2) AND (NOT $3 OR (integrity_fault_at IS NULL AND (initial_root_id IS NOT NULL OR preparation_deadline_at>clock_timestamp()))) FROM computers WHERE environment_id=$1 AND id=$2`, env, computer, newPlacement).Scan(&available); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT preparation_failed_at IS NULL AND deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2) AND (NOT $3 OR (integrity_fault_at IS NULL AND (initial_root_id IS NOT NULL OR preparation_deadline_at>clock_timestamp()))) FROM computers WHERE environment_id=$1 AND id=$2`, env, computer, newPlacement).Scan(&available); err != nil {
 		return err
 	}
 	if !available {

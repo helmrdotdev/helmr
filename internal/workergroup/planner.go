@@ -32,7 +32,6 @@ const (
 var ErrInvalidPlanRequest = errors.New("invalid capacity plan request")
 
 const (
-	reasonRunRole              = "worker_does_not_support_run"
 	reasonPerInstanceResources = "per_instance_resources"
 	reasonRuntimeCompatibility = "runtime_compatibility"
 	reasonInvalidWorkload      = "invalid_workload_requirements"
@@ -57,7 +56,6 @@ type item struct {
 	environment  [16]byte
 	budget       environmentBudget
 	computer     bool
-	role         string
 	resources    ResourceVector
 	targetPoolID pgtype.UUID
 	restore      *RestoreRequirements
@@ -71,12 +69,10 @@ type bin struct {
 	workerPoolID    pgtype.UUID
 	resources       ResourceVector
 	instanceStarts  int64
-	supportsRun     bool
 	runtimeArch     string
 	runtimeContract string
 	vmPlatformID    string
-	runPaused       bool
-	instancePaused  bool
+	admissionPaused bool
 	perVM           ResourceVector
 	cpuShapes       []vmplatform.CPUShape
 }
@@ -231,9 +227,6 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 		}
 		if left.resources.GuestEphemeralDiskBytes != right.resources.GuestEphemeralDiskBytes {
 			return left.resources.GuestEphemeralDiskBytes > right.resources.GuestEphemeralDiskBytes
-		}
-		if left.role != right.role {
-			return left.role < right.role
 		}
 		return left.key < right.key
 	})
@@ -397,7 +390,6 @@ func capacityPoolPlan(row db.ListCapacityWorkerPoolsRow, max int32) (poolPlan, e
 	template := bin{
 		workerGroupID: workerGroupID, workerPoolID: row.ID,
 		resources: resources, instanceStarts: resources.VMSlots,
-		supportsRun: true,
 		runtimeArch: "x86_64", runtimeContract: vmplatform.Contract,
 		vmPlatformID: row.VMPlatformID.String,
 		perVM:        perVM, cpuShapes: shapes,
@@ -452,7 +444,7 @@ func discoverItems(ctx context.Context, store PlanStore, group db.WorkerGroup) (
 }
 
 func allocationItem(row db.ListAllocationPlanningDemandRow) item {
-	result := item{environment: row.EnvironmentID.Bytes, computer: row.Kind == "computer", budget: environmentBudget{cpu: row.RemainingCpuMillis, memory: row.RemainingMemoryBytes, residents: row.RemainingResidents}, role: "run", key: fmt.Sprintf("%s:%x:%x", row.Kind, row.EnvironmentID.Bytes, row.OwnerID.Bytes)}
+	result := item{environment: row.EnvironmentID.Bytes, computer: row.Kind == "computer", budget: environmentBudget{cpu: row.RemainingCpuMillis, memory: row.RemainingMemoryBytes, residents: row.RemainingResidents}, key: fmt.Sprintf("%s:%x:%x", row.Kind, row.EnvironmentID.Bytes, row.OwnerID.Bytes)}
 	var declared definition.ResourcesManifest
 	if json.Unmarshal(row.Resources, &declared) != nil || definition.ValidateResourcesManifest(declared) != nil || declared.MemoryMiB > math.MaxInt64/mebibyte {
 		result.reason = reasonInvalidWorkload
@@ -504,11 +496,10 @@ func binFromRow(row db.ListWorkerCapacityBinsRow) bin {
 			GuestEphemeralDiskBytes: row.AvailableGuestEphemeralDiskBytes,
 			VMSlots:                 row.AvailableVMSlots,
 		},
-		instanceStarts: row.AvailableInstanceStarts, supportsRun: true,
+		instanceStarts:  row.AvailableInstanceStarts,
 		runtimeArch:     row.Arch,
 		runtimeContract: row.Contract, vmPlatformID: row.VMPlatformID.String,
-		runPaused:      row.RunPausedReason.Valid,
-		instancePaused: row.VMPausedReason.Valid,
+		admissionPaused: row.AdmissionPausedReason.Valid,
 		perVM: ResourceVector{
 			CPUMillis: row.PerVMCPUMillis, MemoryBytes: row.PerVMMemoryBytes,
 			GuestEphemeralDiskBytes: row.PerVMGuestEphemeralDiskBytes,
@@ -538,19 +529,16 @@ func incompatibility(candidate item, target bin) string {
 			return reasonRuntimeCompatibility
 		}
 	}
-	if candidate.role == "run" && !target.supportsRun {
-		return reasonRunRole
-	}
 	if target.runtimeArch != "x86_64" || target.runtimeContract != vmplatform.Contract {
 		return reasonRuntimeCompatibility
 	}
-	if candidate.role == "run" && candidate.vmPlatformID != "" && candidate.vmPlatformID != target.vmPlatformID {
+	if candidate.vmPlatformID != "" && candidate.vmPlatformID != target.vmPlatformID {
 		return reasonRuntimeCompatibility
 	}
 	if !fitsResources(target.resources, candidate.resources) {
 		return reasonPerInstanceResources
 	}
-	if candidate.role == "run" && !fitsPhysical(target.perVM, candidate.resources) {
+	if !fitsPhysical(target.perVM, candidate.resources) {
 		return reasonPerInstanceResources
 	}
 	return ""
@@ -563,16 +551,14 @@ func place(target *bin, candidate item) bool {
 	if incompatibility(candidate, *target) != "" {
 		return false
 	}
-	if candidate.role == "run" && (target.runPaused || target.instancePaused || target.instanceStarts <= 0) {
+	if target.admissionPaused || target.instanceStarts <= 0 {
 		return false
 	}
 	target.resources.CPUMillis -= candidate.resources.CPUMillis
 	target.resources.MemoryBytes -= candidate.resources.MemoryBytes
 	target.resources.GuestEphemeralDiskBytes -= candidate.resources.GuestEphemeralDiskBytes
-	if candidate.role == "run" {
-		target.resources.VMSlots--
-		target.instanceStarts--
-	}
+	target.resources.VMSlots--
+	target.instanceStarts--
 	return true
 }
 

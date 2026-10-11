@@ -35,7 +35,6 @@ type Querier interface {
 	// Retained upload IDs get independent, fair retry scheduling. Historical IDs
 	// must not monopolize the digest's deadline or starve completed-version cleanup.
 	ClaimRetiredCasUploads(ctx context.Context, arg ClaimRetiredCasUploadsParams) ([]string, error)
-	CompletePlatformRetryKey(ctx context.Context, arg CompletePlatformRetryKeyParams) (PlatformRetryKey, error)
 	CompleteWorkerDrain(ctx context.Context, arg CompleteWorkerDrainParams) (CompleteWorkerDrainRow, error)
 	// Physical Computer closure is recorded before this supply acknowledgement.
 	// Quarantined allocations remain unfenced and continue blocking activation.
@@ -138,20 +137,20 @@ type Querier interface {
 	ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsParams) ([]WorkerGroup, error)
 	ListWorkerPoolCPUShapes(ctx context.Context, workerPoolID pgtype.UUID) ([]WorkerPoolCpuShape, error)
 	ListWorkerPools(ctx context.Context, workerGroupID pgtype.UUID) ([]WorkerPool, error)
+	// Worker Host fence for dispatch and Computer preparation. The caller
+	// (workergroup.LockDispatchSupply) must already hold the Worker Group and Pool share
+	// locks and have validated their status. This query locks the Worker Host and
+	// checks epoch, observation freshness and platform. Admission also requires an
+	// active host without an admission pause; continuation of admitted work accepts a
+	// draining host and ignores pauses. admitting reports whether the locked host
+	// could admit new work, including the admission pause.
+	LockAdmissionEligibleWorkerHost(ctx context.Context, arg LockAdmissionEligibleWorkerHostParams) (bool, error)
 	LockComputerCommand(ctx context.Context, arg LockComputerCommandParams) (ComputerCommand, error)
 	LockComputerObject(ctx context.Context, arg LockComputerObjectParams) (ComputerObject, error)
 	LockMagicLinkRecipient(ctx context.Context, lockKey int64) error
 	LockOrganizationForProjectDefaults(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error)
 	LockOrganizationsForSelfHostedSetup(ctx context.Context) error
 	LockPlatformRetryKey(ctx context.Context, arg LockPlatformRetryKeyParams) (LockPlatformRetryKeyRow, error)
-	// Worker Host fence for dispatch and Computer preparation. The caller
-	// (workergroup.LockDispatchSupply) must already hold the Worker Group and Pool share
-	// locks and have validated their status. This query locks the Worker Host and
-	// checks epoch, observation freshness and platform. Admission also requires an
-	// active host without a Run pause; continuation of admitted work accepts a
-	// draining host and ignores pauses. admitting reports whether the locked host
-	// could admit new work, including the VM pause.
-	LockRunEligibleWorkerHost(ctx context.Context, arg LockRunEligibleWorkerHostParams) (bool, error)
 	LockWorkerDrainCompletion(ctx context.Context, arg LockWorkerDrainCompletionParams) (LockWorkerDrainCompletionRow, error)
 	LockWorkerGroupCreationRegion(ctx context.Context, lockKey int64) error
 	LockWorkerGroupForPoolMutation(ctx context.Context, workerGroupID pgtype.UUID) (WorkerGroup, error)
