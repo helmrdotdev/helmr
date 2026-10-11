@@ -38,7 +38,7 @@ func TestDeploymentPlanSupportsStandaloneComputer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Definitions) != 1 || plan.Definitions[0].Kind != definition.KindComputer {
+	if len(plan.Definitions) != 1 || plan.Definitions[0].Kind != definition.KindTemplate {
 		t.Fatal(plan)
 	}
 }

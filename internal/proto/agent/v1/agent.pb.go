@@ -281,7 +281,7 @@ func (x Operation_Method) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use Operation_Method.Descriptor instead.
 func (Operation_Method) EnumDescriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{18, 0}
+	return file_agent_proto_rawDescGZIP(), []int{15, 0}
 }
 
 type SessionLog_Stream int32
@@ -330,7 +330,7 @@ func (x SessionLog_Stream) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use SessionLog_Stream.Descriptor instead.
 func (SessionLog_Stream) EnumDescriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{34, 0}
+	return file_agent_proto_rawDescGZIP(), []int{31, 0}
 }
 
 type SessionLog_Kind int32
@@ -382,7 +382,7 @@ func (x SessionLog_Kind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use SessionLog_Kind.Descriptor instead.
 func (SessionLog_Kind) EnumDescriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{34, 1}
+	return file_agent_proto_rawDescGZIP(), []int{31, 1}
 }
 
 // Local pipes survive coherent Computer continuation. The guest supervisor owns
@@ -851,28 +851,30 @@ func (x *MessageDelivery) GetSourceJson() []byte {
 	return nil
 }
 
-type TurnInterrupt struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TurnId        string                 `protobuf:"bytes,1,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
-	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+type SessionControl struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	Desired              string                 `protobuf:"bytes,1,opt,name=desired,proto3" json:"desired,omitempty"` // run, hold, shutdown
+	StopSequence         int64                  `protobuf:"varint,2,opt,name=stop_sequence,json=stopSequence,proto3" json:"stop_sequence,omitempty"`
+	StopTurnId           *string                `protobuf:"bytes,3,opt,name=stop_turn_id,json=stopTurnId,proto3,oneof" json:"stop_turn_id,omitempty"` // absent with a stop means interrupted setup
+	StopDeadlineUnixNano int64                  `protobuf:"varint,4,opt,name=stop_deadline_unix_nano,json=stopDeadlineUnixNano,proto3" json:"stop_deadline_unix_nano,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
-func (x *TurnInterrupt) Reset() {
-	*x = TurnInterrupt{}
+func (x *SessionControl) Reset() {
+	*x = SessionControl{}
 	mi := &file_agent_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TurnInterrupt) String() string {
+func (x *SessionControl) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TurnInterrupt) ProtoMessage() {}
+func (*SessionControl) ProtoMessage() {}
 
-func (x *TurnInterrupt) ProtoReflect() protoreflect.Message {
+func (x *SessionControl) ProtoReflect() protoreflect.Message {
 	mi := &file_agent_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -884,23 +886,37 @@ func (x *TurnInterrupt) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TurnInterrupt.ProtoReflect.Descriptor instead.
-func (*TurnInterrupt) Descriptor() ([]byte, []int) {
+// Deprecated: Use SessionControl.ProtoReflect.Descriptor instead.
+func (*SessionControl) Descriptor() ([]byte, []int) {
 	return file_agent_proto_rawDescGZIP(), []int{7}
 }
 
-func (x *TurnInterrupt) GetTurnId() string {
+func (x *SessionControl) GetDesired() string {
 	if x != nil {
-		return x.TurnId
+		return x.Desired
 	}
 	return ""
 }
 
-func (x *TurnInterrupt) GetReason() string {
+func (x *SessionControl) GetStopSequence() int64 {
 	if x != nil {
-		return x.Reason
+		return x.StopSequence
+	}
+	return 0
+}
+
+func (x *SessionControl) GetStopTurnId() string {
+	if x != nil && x.StopTurnId != nil {
+		return *x.StopTurnId
 	}
 	return ""
+}
+
+func (x *SessionControl) GetStopDeadlineUnixNano() int64 {
+	if x != nil {
+		return x.StopDeadlineUnixNano
+	}
+	return 0
 }
 
 type TurnReconcile struct {
@@ -999,132 +1015,6 @@ func (x *TurnAcknowledged) GetSequence() int64 {
 	return 0
 }
 
-// Issued only after the control plane releases the exact hold and the guest has
-// installed current authority. Other effective holds prohibit this command.
-type SessionResume struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *SessionResume) Reset() {
-	*x = SessionResume{}
-	mi := &file_agent_proto_msgTypes[10]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *SessionResume) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*SessionResume) ProtoMessage() {}
-
-func (x *SessionResume) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[10]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use SessionResume.ProtoReflect.Descriptor instead.
-func (*SessionResume) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{10}
-}
-
-type SessionSuspend struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Reason        string                 `protobuf:"bytes,1,opt,name=reason,proto3" json:"reason,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *SessionSuspend) Reset() {
-	*x = SessionSuspend{}
-	mi := &file_agent_proto_msgTypes[11]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *SessionSuspend) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*SessionSuspend) ProtoMessage() {}
-
-func (x *SessionSuspend) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[11]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use SessionSuspend.ProtoReflect.Descriptor instead.
-func (*SessionSuspend) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{11}
-}
-
-func (x *SessionSuspend) GetReason() string {
-	if x != nil {
-		return x.Reason
-	}
-	return ""
-}
-
-type SessionShutdown struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Reason        string                 `protobuf:"bytes,1,opt,name=reason,proto3" json:"reason,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *SessionShutdown) Reset() {
-	*x = SessionShutdown{}
-	mi := &file_agent_proto_msgTypes[12]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *SessionShutdown) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*SessionShutdown) ProtoMessage() {}
-
-func (x *SessionShutdown) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[12]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use SessionShutdown.ProtoReflect.Descriptor instead.
-func (*SessionShutdown) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{12}
-}
-
-func (x *SessionShutdown) GetReason() string {
-	if x != nil {
-		return x.Reason
-	}
-	return ""
-}
-
 // Private supervisor handshake; it does not change the Session hold state.
 type SessionCheckpoint struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1135,7 +1025,7 @@ type SessionCheckpoint struct {
 
 func (x *SessionCheckpoint) Reset() {
 	*x = SessionCheckpoint{}
-	mi := &file_agent_proto_msgTypes[13]
+	mi := &file_agent_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1147,7 +1037,7 @@ func (x *SessionCheckpoint) String() string {
 func (*SessionCheckpoint) ProtoMessage() {}
 
 func (x *SessionCheckpoint) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[13]
+	mi := &file_agent_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1160,7 +1050,7 @@ func (x *SessionCheckpoint) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionCheckpoint.ProtoReflect.Descriptor instead.
 func (*SessionCheckpoint) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{13}
+	return file_agent_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *SessionCheckpoint) GetCheckpointId() string {
@@ -1184,7 +1074,7 @@ type SessionCheckpointReady struct {
 
 func (x *SessionCheckpointReady) Reset() {
 	*x = SessionCheckpointReady{}
-	mi := &file_agent_proto_msgTypes[14]
+	mi := &file_agent_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1196,7 +1086,7 @@ func (x *SessionCheckpointReady) String() string {
 func (*SessionCheckpointReady) ProtoMessage() {}
 
 func (x *SessionCheckpointReady) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[14]
+	mi := &file_agent_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1209,7 +1099,7 @@ func (x *SessionCheckpointReady) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionCheckpointReady.ProtoReflect.Descriptor instead.
 func (*SessionCheckpointReady) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{14}
+	return file_agent_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *SessionCheckpointReady) GetCheckpointId() string {
@@ -1274,7 +1164,7 @@ type OperationResult struct {
 
 func (x *OperationResult) Reset() {
 	*x = OperationResult{}
-	mi := &file_agent_proto_msgTypes[15]
+	mi := &file_agent_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1286,7 +1176,7 @@ func (x *OperationResult) String() string {
 func (*OperationResult) ProtoMessage() {}
 
 func (x *OperationResult) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[15]
+	mi := &file_agent_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1299,7 +1189,7 @@ func (x *OperationResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OperationResult.ProtoReflect.Descriptor instead.
 func (*OperationResult) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{15}
+	return file_agent_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *OperationResult) GetRequestId() string {
@@ -1360,7 +1250,7 @@ type OperationError struct {
 
 func (x *OperationError) Reset() {
 	*x = OperationError{}
-	mi := &file_agent_proto_msgTypes[16]
+	mi := &file_agent_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1372,7 +1262,7 @@ func (x *OperationError) String() string {
 func (*OperationError) ProtoMessage() {}
 
 func (x *OperationError) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[16]
+	mi := &file_agent_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1385,7 +1275,7 @@ func (x *OperationError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OperationError.ProtoReflect.Descriptor instead.
 func (*OperationError) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{16}
+	return file_agent_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *OperationError) GetCode() string {
@@ -1414,13 +1304,10 @@ type GuestCommand struct {
 	//	*GuestCommand_Start
 	//	*GuestCommand_Dispatch
 	//	*GuestCommand_Message
-	//	*GuestCommand_Interrupt
+	//	*GuestCommand_Control
 	//	*GuestCommand_Reconcile
 	//	*GuestCommand_Acknowledged
 	//	*GuestCommand_OperationResult
-	//	*GuestCommand_Resume
-	//	*GuestCommand_Shutdown
-	//	*GuestCommand_Suspend
 	//	*GuestCommand_Checkpoint
 	Command       isGuestCommand_Command `protobuf_oneof:"command"`
 	unknownFields protoimpl.UnknownFields
@@ -1429,7 +1316,7 @@ type GuestCommand struct {
 
 func (x *GuestCommand) Reset() {
 	*x = GuestCommand{}
-	mi := &file_agent_proto_msgTypes[17]
+	mi := &file_agent_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1441,7 +1328,7 @@ func (x *GuestCommand) String() string {
 func (*GuestCommand) ProtoMessage() {}
 
 func (x *GuestCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[17]
+	mi := &file_agent_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1454,7 +1341,7 @@ func (x *GuestCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GuestCommand.ProtoReflect.Descriptor instead.
 func (*GuestCommand) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{17}
+	return file_agent_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *GuestCommand) GetIdentity() *SessionIdentity {
@@ -1512,10 +1399,10 @@ func (x *GuestCommand) GetMessage() *MessageDelivery {
 	return nil
 }
 
-func (x *GuestCommand) GetInterrupt() *TurnInterrupt {
+func (x *GuestCommand) GetControl() *SessionControl {
 	if x != nil {
-		if x, ok := x.Command.(*GuestCommand_Interrupt); ok {
-			return x.Interrupt
+		if x, ok := x.Command.(*GuestCommand_Control); ok {
+			return x.Control
 		}
 	}
 	return nil
@@ -1548,33 +1435,6 @@ func (x *GuestCommand) GetOperationResult() *OperationResult {
 	return nil
 }
 
-func (x *GuestCommand) GetResume() *SessionResume {
-	if x != nil {
-		if x, ok := x.Command.(*GuestCommand_Resume); ok {
-			return x.Resume
-		}
-	}
-	return nil
-}
-
-func (x *GuestCommand) GetShutdown() *SessionShutdown {
-	if x != nil {
-		if x, ok := x.Command.(*GuestCommand_Shutdown); ok {
-			return x.Shutdown
-		}
-	}
-	return nil
-}
-
-func (x *GuestCommand) GetSuspend() *SessionSuspend {
-	if x != nil {
-		if x, ok := x.Command.(*GuestCommand_Suspend); ok {
-			return x.Suspend
-		}
-	}
-	return nil
-}
-
 func (x *GuestCommand) GetCheckpoint() *SessionCheckpoint {
 	if x != nil {
 		if x, ok := x.Command.(*GuestCommand_Checkpoint); ok {
@@ -1600,8 +1460,8 @@ type GuestCommand_Message struct {
 	Message *MessageDelivery `protobuf:"bytes,5,opt,name=message,proto3,oneof"`
 }
 
-type GuestCommand_Interrupt struct {
-	Interrupt *TurnInterrupt `protobuf:"bytes,6,opt,name=interrupt,proto3,oneof"`
+type GuestCommand_Control struct {
+	Control *SessionControl `protobuf:"bytes,6,opt,name=control,proto3,oneof"`
 }
 
 type GuestCommand_Reconcile struct {
@@ -1616,18 +1476,6 @@ type GuestCommand_OperationResult struct {
 	OperationResult *OperationResult `protobuf:"bytes,9,opt,name=operation_result,json=operationResult,proto3,oneof"`
 }
 
-type GuestCommand_Resume struct {
-	Resume *SessionResume `protobuf:"bytes,10,opt,name=resume,proto3,oneof"`
-}
-
-type GuestCommand_Shutdown struct {
-	Shutdown *SessionShutdown `protobuf:"bytes,11,opt,name=shutdown,proto3,oneof"`
-}
-
-type GuestCommand_Suspend struct {
-	Suspend *SessionSuspend `protobuf:"bytes,12,opt,name=suspend,proto3,oneof"`
-}
-
 type GuestCommand_Checkpoint struct {
 	Checkpoint *SessionCheckpoint `protobuf:"bytes,14,opt,name=checkpoint,proto3,oneof"`
 }
@@ -1638,19 +1486,13 @@ func (*GuestCommand_Dispatch) isGuestCommand_Command() {}
 
 func (*GuestCommand_Message) isGuestCommand_Command() {}
 
-func (*GuestCommand_Interrupt) isGuestCommand_Command() {}
+func (*GuestCommand_Control) isGuestCommand_Command() {}
 
 func (*GuestCommand_Reconcile) isGuestCommand_Command() {}
 
 func (*GuestCommand_Acknowledged) isGuestCommand_Command() {}
 
 func (*GuestCommand_OperationResult) isGuestCommand_Command() {}
-
-func (*GuestCommand_Resume) isGuestCommand_Command() {}
-
-func (*GuestCommand_Shutdown) isGuestCommand_Command() {}
-
-func (*GuestCommand_Suspend) isGuestCommand_Command() {}
 
 func (*GuestCommand_Checkpoint) isGuestCommand_Command() {}
 
@@ -1668,7 +1510,7 @@ type Operation struct {
 
 func (x *Operation) Reset() {
 	*x = Operation{}
-	mi := &file_agent_proto_msgTypes[18]
+	mi := &file_agent_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1680,7 +1522,7 @@ func (x *Operation) String() string {
 func (*Operation) ProtoMessage() {}
 
 func (x *Operation) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[18]
+	mi := &file_agent_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1693,7 +1535,7 @@ func (x *Operation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Operation.ProtoReflect.Descriptor instead.
 func (*Operation) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{18}
+	return file_agent_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *Operation) GetRequestId() string {
@@ -1734,7 +1576,7 @@ type OperationCancel struct {
 
 func (x *OperationCancel) Reset() {
 	*x = OperationCancel{}
-	mi := &file_agent_proto_msgTypes[19]
+	mi := &file_agent_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1746,7 +1588,7 @@ func (x *OperationCancel) String() string {
 func (*OperationCancel) ProtoMessage() {}
 
 func (x *OperationCancel) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[19]
+	mi := &file_agent_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1759,7 +1601,7 @@ func (x *OperationCancel) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OperationCancel.ProtoReflect.Descriptor instead.
 func (*OperationCancel) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{19}
+	return file_agent_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *OperationCancel) GetRequestId() string {
@@ -1777,7 +1619,7 @@ type SessionReady struct {
 
 func (x *SessionReady) Reset() {
 	*x = SessionReady{}
-	mi := &file_agent_proto_msgTypes[20]
+	mi := &file_agent_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1789,7 +1631,7 @@ func (x *SessionReady) String() string {
 func (*SessionReady) ProtoMessage() {}
 
 func (x *SessionReady) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[20]
+	mi := &file_agent_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1802,7 +1644,7 @@ func (x *SessionReady) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionReady.ProtoReflect.Descriptor instead.
 func (*SessionReady) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{20}
+	return file_agent_proto_rawDescGZIP(), []int{17}
 }
 
 type DeliveryResult struct {
@@ -1819,7 +1661,7 @@ type DeliveryResult struct {
 
 func (x *DeliveryResult) Reset() {
 	*x = DeliveryResult{}
-	mi := &file_agent_proto_msgTypes[21]
+	mi := &file_agent_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1831,7 +1673,7 @@ func (x *DeliveryResult) String() string {
 func (*DeliveryResult) ProtoMessage() {}
 
 func (x *DeliveryResult) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[21]
+	mi := &file_agent_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1844,7 +1686,7 @@ func (x *DeliveryResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeliveryResult.ProtoReflect.Descriptor instead.
 func (*DeliveryResult) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{21}
+	return file_agent_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *DeliveryResult) GetDeliveryId() string {
@@ -1905,7 +1747,7 @@ type SessionFailed struct {
 
 func (x *SessionFailed) Reset() {
 	*x = SessionFailed{}
-	mi := &file_agent_proto_msgTypes[22]
+	mi := &file_agent_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1917,7 +1759,7 @@ func (x *SessionFailed) String() string {
 func (*SessionFailed) ProtoMessage() {}
 
 func (x *SessionFailed) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[22]
+	mi := &file_agent_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1930,7 +1772,7 @@ func (x *SessionFailed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionFailed.ProtoReflect.Descriptor instead.
 func (*SessionFailed) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{22}
+	return file_agent_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *SessionFailed) GetCode() string {
@@ -1965,7 +1807,7 @@ type ProgramEvent struct {
 
 func (x *ProgramEvent) Reset() {
 	*x = ProgramEvent{}
-	mi := &file_agent_proto_msgTypes[23]
+	mi := &file_agent_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1977,7 +1819,7 @@ func (x *ProgramEvent) String() string {
 func (*ProgramEvent) ProtoMessage() {}
 
 func (x *ProgramEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[23]
+	mi := &file_agent_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1990,7 +1832,7 @@ func (x *ProgramEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProgramEvent.ProtoReflect.Descriptor instead.
 func (*ProgramEvent) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{23}
+	return file_agent_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ProgramEvent) GetIdentity() *SessionIdentity {
@@ -2120,7 +1962,7 @@ type SessionGrant struct {
 
 func (x *SessionGrant) Reset() {
 	*x = SessionGrant{}
-	mi := &file_agent_proto_msgTypes[24]
+	mi := &file_agent_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2132,7 +1974,7 @@ func (x *SessionGrant) String() string {
 func (*SessionGrant) ProtoMessage() {}
 
 func (x *SessionGrant) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[24]
+	mi := &file_agent_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2145,7 +1987,7 @@ func (x *SessionGrant) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionGrant.ProtoReflect.Descriptor instead.
 func (*SessionGrant) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{24}
+	return file_agent_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *SessionGrant) GetIdentity() *SessionIdentity {
@@ -2225,7 +2067,7 @@ type SessionSecret struct {
 
 func (x *SessionSecret) Reset() {
 	*x = SessionSecret{}
-	mi := &file_agent_proto_msgTypes[25]
+	mi := &file_agent_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2237,7 +2079,7 @@ func (x *SessionSecret) String() string {
 func (*SessionSecret) ProtoMessage() {}
 
 func (x *SessionSecret) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[25]
+	mi := &file_agent_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2250,7 +2092,7 @@ func (x *SessionSecret) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionSecret.ProtoReflect.Descriptor instead.
 func (*SessionSecret) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{25}
+	return file_agent_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *SessionSecret) GetPlacement() isSessionSecret_Placement {
@@ -2317,7 +2159,7 @@ type SessionAttach struct {
 
 func (x *SessionAttach) Reset() {
 	*x = SessionAttach{}
-	mi := &file_agent_proto_msgTypes[26]
+	mi := &file_agent_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2329,7 +2171,7 @@ func (x *SessionAttach) String() string {
 func (*SessionAttach) ProtoMessage() {}
 
 func (x *SessionAttach) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[26]
+	mi := &file_agent_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2342,7 +2184,7 @@ func (x *SessionAttach) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionAttach.ProtoReflect.Descriptor instead.
 func (*SessionAttach) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{26}
+	return file_agent_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *SessionAttach) GetGrant() *SessionGrant {
@@ -2403,7 +2245,7 @@ type HostSessionMessage struct {
 
 func (x *HostSessionMessage) Reset() {
 	*x = HostSessionMessage{}
-	mi := &file_agent_proto_msgTypes[27]
+	mi := &file_agent_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2415,7 +2257,7 @@ func (x *HostSessionMessage) String() string {
 func (*HostSessionMessage) ProtoMessage() {}
 
 func (x *HostSessionMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[27]
+	mi := &file_agent_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2428,7 +2270,7 @@ func (x *HostSessionMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HostSessionMessage.ProtoReflect.Descriptor instead.
 func (*HostSessionMessage) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{27}
+	return file_agent_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *HostSessionMessage) GetAttachmentSequence() uint64 {
@@ -2518,7 +2360,7 @@ type SessionEventsAcknowledged struct {
 
 func (x *SessionEventsAcknowledged) Reset() {
 	*x = SessionEventsAcknowledged{}
-	mi := &file_agent_proto_msgTypes[28]
+	mi := &file_agent_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2530,7 +2372,7 @@ func (x *SessionEventsAcknowledged) String() string {
 func (*SessionEventsAcknowledged) ProtoMessage() {}
 
 func (x *SessionEventsAcknowledged) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[28]
+	mi := &file_agent_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2543,7 +2385,7 @@ func (x *SessionEventsAcknowledged) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionEventsAcknowledged.ProtoReflect.Descriptor instead.
 func (*SessionEventsAcknowledged) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{28}
+	return file_agent_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *SessionEventsAcknowledged) GetThroughSequence() uint64 {
@@ -2565,7 +2407,7 @@ type SessionAttached struct {
 
 func (x *SessionAttached) Reset() {
 	*x = SessionAttached{}
-	mi := &file_agent_proto_msgTypes[29]
+	mi := &file_agent_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2577,7 +2419,7 @@ func (x *SessionAttached) String() string {
 func (*SessionAttached) ProtoMessage() {}
 
 func (x *SessionAttached) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[29]
+	mi := &file_agent_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2590,7 +2432,7 @@ func (x *SessionAttached) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionAttached.ProtoReflect.Descriptor instead.
 func (*SessionAttached) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{29}
+	return file_agent_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *SessionAttached) GetReady() bool {
@@ -2622,7 +2464,7 @@ type SessionStopped struct {
 
 func (x *SessionStopped) Reset() {
 	*x = SessionStopped{}
-	mi := &file_agent_proto_msgTypes[30]
+	mi := &file_agent_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2634,7 +2476,7 @@ func (x *SessionStopped) String() string {
 func (*SessionStopped) ProtoMessage() {}
 
 func (x *SessionStopped) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[30]
+	mi := &file_agent_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2647,7 +2489,7 @@ func (x *SessionStopped) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionStopped.ProtoReflect.Descriptor instead.
 func (*SessionStopped) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{30}
+	return file_agent_proto_rawDescGZIP(), []int{27}
 }
 
 // A control-only attachment proved that this process epoch is absent.
@@ -2659,7 +2501,7 @@ type SessionAbsent struct {
 
 func (x *SessionAbsent) Reset() {
 	*x = SessionAbsent{}
-	mi := &file_agent_proto_msgTypes[31]
+	mi := &file_agent_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2671,7 +2513,7 @@ func (x *SessionAbsent) String() string {
 func (*SessionAbsent) ProtoMessage() {}
 
 func (x *SessionAbsent) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[31]
+	mi := &file_agent_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2684,7 +2526,7 @@ func (x *SessionAbsent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionAbsent.ProtoReflect.Descriptor instead.
 func (*SessionAbsent) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{31}
+	return file_agent_proto_rawDescGZIP(), []int{28}
 }
 
 // Bounds apply separately to each stdout/stderr stream. They are supplied by
@@ -2700,7 +2542,7 @@ type SessionLogLimits struct {
 
 func (x *SessionLogLimits) Reset() {
 	*x = SessionLogLimits{}
-	mi := &file_agent_proto_msgTypes[32]
+	mi := &file_agent_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2712,7 +2554,7 @@ func (x *SessionLogLimits) String() string {
 func (*SessionLogLimits) ProtoMessage() {}
 
 func (x *SessionLogLimits) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[32]
+	mi := &file_agent_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2725,7 +2567,7 @@ func (x *SessionLogLimits) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionLogLimits.ProtoReflect.Descriptor instead.
 func (*SessionLogLimits) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{32}
+	return file_agent_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *SessionLogLimits) GetChunkBytes() int32 {
@@ -2762,7 +2604,7 @@ type SessionLogAcknowledged struct {
 
 func (x *SessionLogAcknowledged) Reset() {
 	*x = SessionLogAcknowledged{}
-	mi := &file_agent_proto_msgTypes[33]
+	mi := &file_agent_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2774,7 +2616,7 @@ func (x *SessionLogAcknowledged) String() string {
 func (*SessionLogAcknowledged) ProtoMessage() {}
 
 func (x *SessionLogAcknowledged) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[33]
+	mi := &file_agent_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2787,7 +2629,7 @@ func (x *SessionLogAcknowledged) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionLogAcknowledged.ProtoReflect.Descriptor instead.
 func (*SessionLogAcknowledged) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{33}
+	return file_agent_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *SessionLogAcknowledged) GetStream() SessionLog_Stream {
@@ -2828,7 +2670,7 @@ type SessionLog struct {
 
 func (x *SessionLog) Reset() {
 	*x = SessionLog{}
-	mi := &file_agent_proto_msgTypes[34]
+	mi := &file_agent_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2840,7 +2682,7 @@ func (x *SessionLog) String() string {
 func (*SessionLog) ProtoMessage() {}
 
 func (x *SessionLog) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[34]
+	mi := &file_agent_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2853,7 +2695,7 @@ func (x *SessionLog) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionLog.ProtoReflect.Descriptor instead.
 func (*SessionLog) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{34}
+	return file_agent_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *SessionLog) GetStream() SessionLog_Stream {
@@ -2938,7 +2780,7 @@ type GuestSessionMessage struct {
 
 func (x *GuestSessionMessage) Reset() {
 	*x = GuestSessionMessage{}
-	mi := &file_agent_proto_msgTypes[35]
+	mi := &file_agent_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2950,7 +2792,7 @@ func (x *GuestSessionMessage) String() string {
 func (*GuestSessionMessage) ProtoMessage() {}
 
 func (x *GuestSessionMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[35]
+	mi := &file_agent_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2963,7 +2805,7 @@ func (x *GuestSessionMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GuestSessionMessage.ProtoReflect.Descriptor instead.
 func (*GuestSessionMessage) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{35}
+	return file_agent_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *GuestSessionMessage) GetIdentity() *SessionIdentity {
@@ -3124,7 +2966,7 @@ type ComputerSessionCapture struct {
 
 func (x *ComputerSessionCapture) Reset() {
 	*x = ComputerSessionCapture{}
-	mi := &file_agent_proto_msgTypes[36]
+	mi := &file_agent_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3136,7 +2978,7 @@ func (x *ComputerSessionCapture) String() string {
 func (*ComputerSessionCapture) ProtoMessage() {}
 
 func (x *ComputerSessionCapture) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[36]
+	mi := &file_agent_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3149,7 +2991,7 @@ func (x *ComputerSessionCapture) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerSessionCapture.ProtoReflect.Descriptor instead.
 func (*ComputerSessionCapture) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{36}
+	return file_agent_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *ComputerSessionCapture) GetEnvelope() *v0.ComputerOperationEnvelope {
@@ -3205,7 +3047,7 @@ type ComputerSessionInstallation struct {
 
 func (x *ComputerSessionInstallation) Reset() {
 	*x = ComputerSessionInstallation{}
-	mi := &file_agent_proto_msgTypes[37]
+	mi := &file_agent_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3217,7 +3059,7 @@ func (x *ComputerSessionInstallation) String() string {
 func (*ComputerSessionInstallation) ProtoMessage() {}
 
 func (x *ComputerSessionInstallation) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[37]
+	mi := &file_agent_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3230,7 +3072,7 @@ func (x *ComputerSessionInstallation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerSessionInstallation.ProtoReflect.Descriptor instead.
 func (*ComputerSessionInstallation) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{37}
+	return file_agent_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ComputerSessionInstallation) GetCapture() *ComputerSessionCapture {
@@ -3296,7 +3138,7 @@ type SessionContinuationControl struct {
 
 func (x *SessionContinuationControl) Reset() {
 	*x = SessionContinuationControl{}
-	mi := &file_agent_proto_msgTypes[38]
+	mi := &file_agent_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3308,7 +3150,7 @@ func (x *SessionContinuationControl) String() string {
 func (*SessionContinuationControl) ProtoMessage() {}
 
 func (x *SessionContinuationControl) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[38]
+	mi := &file_agent_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3321,7 +3163,7 @@ func (x *SessionContinuationControl) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionContinuationControl.ProtoReflect.Descriptor instead.
 func (*SessionContinuationControl) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{38}
+	return file_agent_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *SessionContinuationControl) GetIdentity() *SessionIdentity {
@@ -3364,7 +3206,7 @@ type ComputerSessionControls struct {
 
 func (x *ComputerSessionControls) Reset() {
 	*x = ComputerSessionControls{}
-	mi := &file_agent_proto_msgTypes[39]
+	mi := &file_agent_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3376,7 +3218,7 @@ func (x *ComputerSessionControls) String() string {
 func (*ComputerSessionControls) ProtoMessage() {}
 
 func (x *ComputerSessionControls) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[39]
+	mi := &file_agent_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3389,7 +3231,7 @@ func (x *ComputerSessionControls) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerSessionControls.ProtoReflect.Descriptor instead.
 func (*ComputerSessionControls) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{39}
+	return file_agent_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *ComputerSessionControls) GetEnvelope() *v0.ComputerOperationEnvelope {
@@ -3436,7 +3278,7 @@ type ComputerSessionControl struct {
 
 func (x *ComputerSessionControl) Reset() {
 	*x = ComputerSessionControl{}
-	mi := &file_agent_proto_msgTypes[40]
+	mi := &file_agent_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3448,7 +3290,7 @@ func (x *ComputerSessionControl) String() string {
 func (*ComputerSessionControl) ProtoMessage() {}
 
 func (x *ComputerSessionControl) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[40]
+	mi := &file_agent_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3461,7 +3303,7 @@ func (x *ComputerSessionControl) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerSessionControl.ProtoReflect.Descriptor instead.
 func (*ComputerSessionControl) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{40}
+	return file_agent_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *ComputerSessionControl) GetOperation() isComputerSessionControl_Operation {
@@ -3569,7 +3411,7 @@ type ComputerSessionReceipt struct {
 
 func (x *ComputerSessionReceipt) Reset() {
 	*x = ComputerSessionReceipt{}
-	mi := &file_agent_proto_msgTypes[41]
+	mi := &file_agent_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3581,7 +3423,7 @@ func (x *ComputerSessionReceipt) String() string {
 func (*ComputerSessionReceipt) ProtoMessage() {}
 
 func (x *ComputerSessionReceipt) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[41]
+	mi := &file_agent_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3594,7 +3436,7 @@ func (x *ComputerSessionReceipt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerSessionReceipt.ProtoReflect.Descriptor instead.
 func (*ComputerSessionReceipt) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{41}
+	return file_agent_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *ComputerSessionReceipt) GetCheckpointId() string {
@@ -3670,7 +3512,7 @@ type ComputerAuthorityChallenge struct {
 
 func (x *ComputerAuthorityChallenge) Reset() {
 	*x = ComputerAuthorityChallenge{}
-	mi := &file_agent_proto_msgTypes[42]
+	mi := &file_agent_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3682,7 +3524,7 @@ func (x *ComputerAuthorityChallenge) String() string {
 func (*ComputerAuthorityChallenge) ProtoMessage() {}
 
 func (x *ComputerAuthorityChallenge) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[42]
+	mi := &file_agent_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3695,7 +3537,7 @@ func (x *ComputerAuthorityChallenge) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerAuthorityChallenge.ProtoReflect.Descriptor instead.
 func (*ComputerAuthorityChallenge) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{42}
+	return file_agent_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *ComputerAuthorityChallenge) GetNonce() []byte {
@@ -3715,7 +3557,7 @@ type ComputerAuthorityObservation struct {
 
 func (x *ComputerAuthorityObservation) Reset() {
 	*x = ComputerAuthorityObservation{}
-	mi := &file_agent_proto_msgTypes[43]
+	mi := &file_agent_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3727,7 +3569,7 @@ func (x *ComputerAuthorityObservation) String() string {
 func (*ComputerAuthorityObservation) ProtoMessage() {}
 
 func (x *ComputerAuthorityObservation) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[43]
+	mi := &file_agent_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3740,7 +3582,7 @@ func (x *ComputerAuthorityObservation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerAuthorityObservation.ProtoReflect.Descriptor instead.
 func (*ComputerAuthorityObservation) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{43}
+	return file_agent_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *ComputerAuthorityObservation) GetNonce() []byte {
@@ -3816,20 +3658,19 @@ const file_agent_proto_rawDesc = "" +
 	"\n" +
 	"input_json\x18\x03 \x01(\fR\tinputJson\x12\x1f\n" +
 	"\vsource_json\x18\x04 \x01(\fR\n" +
-	"sourceJson\"@\n" +
-	"\rTurnInterrupt\x12\x17\n" +
-	"\aturn_id\x18\x01 \x01(\tR\x06turnId\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason\"(\n" +
+	"sourceJson\"\xbe\x01\n" +
+	"\x0eSessionControl\x12\x18\n" +
+	"\adesired\x18\x01 \x01(\tR\adesired\x12#\n" +
+	"\rstop_sequence\x18\x02 \x01(\x03R\fstopSequence\x12%\n" +
+	"\fstop_turn_id\x18\x03 \x01(\tH\x00R\n" +
+	"stopTurnId\x88\x01\x01\x125\n" +
+	"\x17stop_deadline_unix_nano\x18\x04 \x01(\x03R\x14stopDeadlineUnixNanoB\x0f\n" +
+	"\r_stop_turn_id\"(\n" +
 	"\rTurnReconcile\x12\x17\n" +
 	"\aturn_id\x18\x01 \x01(\tR\x06turnId\"G\n" +
 	"\x10TurnAcknowledged\x12\x17\n" +
 	"\aturn_id\x18\x01 \x01(\tR\x06turnId\x12\x1a\n" +
-	"\bsequence\x18\x02 \x01(\x03R\bsequence\"\x0f\n" +
-	"\rSessionResume\"(\n" +
-	"\x0eSessionSuspend\x12\x16\n" +
-	"\x06reason\x18\x01 \x01(\tR\x06reason\")\n" +
-	"\x0fSessionShutdown\x12\x16\n" +
-	"\x06reason\x18\x01 \x01(\tR\x06reason\"8\n" +
+	"\bsequence\x18\x02 \x01(\x03R\bsequence\"8\n" +
 	"\x11SessionCheckpoint\x12#\n" +
 	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\"\xa3\x01\n" +
 	"\x16SessionCheckpointReady\x12#\n" +
@@ -3847,7 +3688,7 @@ const file_agent_proto_rawDesc = "" +
 	"\aoutcome\">\n" +
 	"\x0eOperationError\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\xde\x06\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xa7\x05\n" +
 	"\fGuestCommand\x12;\n" +
 	"\bidentity\x18\x01 \x01(\v2\x1f.helmr.agent.v1.SessionIdentityR\bidentity\x12\x1f\n" +
 	"\vdelivery_id\x18\x02 \x01(\tR\n" +
@@ -3855,15 +3696,11 @@ const file_agent_proto_rawDesc = "" +
 	"\x10control_sequence\x18\r \x01(\x03R\x0fcontrolSequence\x124\n" +
 	"\x05start\x18\x03 \x01(\v2\x1c.helmr.agent.v1.SessionStartH\x00R\x05start\x12:\n" +
 	"\bdispatch\x18\x04 \x01(\v2\x1c.helmr.agent.v1.TurnDispatchH\x00R\bdispatch\x12;\n" +
-	"\amessage\x18\x05 \x01(\v2\x1f.helmr.agent.v1.MessageDeliveryH\x00R\amessage\x12=\n" +
-	"\tinterrupt\x18\x06 \x01(\v2\x1d.helmr.agent.v1.TurnInterruptH\x00R\tinterrupt\x12=\n" +
+	"\amessage\x18\x05 \x01(\v2\x1f.helmr.agent.v1.MessageDeliveryH\x00R\amessage\x12:\n" +
+	"\acontrol\x18\x06 \x01(\v2\x1e.helmr.agent.v1.SessionControlH\x00R\acontrol\x12=\n" +
 	"\treconcile\x18\a \x01(\v2\x1d.helmr.agent.v1.TurnReconcileH\x00R\treconcile\x12F\n" +
 	"\facknowledged\x18\b \x01(\v2 .helmr.agent.v1.TurnAcknowledgedH\x00R\facknowledged\x12L\n" +
-	"\x10operation_result\x18\t \x01(\v2\x1f.helmr.agent.v1.OperationResultH\x00R\x0foperationResult\x127\n" +
-	"\x06resume\x18\n" +
-	" \x01(\v2\x1d.helmr.agent.v1.SessionResumeH\x00R\x06resume\x12=\n" +
-	"\bshutdown\x18\v \x01(\v2\x1f.helmr.agent.v1.SessionShutdownH\x00R\bshutdown\x12:\n" +
-	"\asuspend\x18\f \x01(\v2\x1e.helmr.agent.v1.SessionSuspendH\x00R\asuspend\x12C\n" +
+	"\x10operation_result\x18\t \x01(\v2\x1f.helmr.agent.v1.OperationResultH\x00R\x0foperationResult\x12C\n" +
 	"\n" +
 	"checkpoint\x18\x0e \x01(\v2!.helmr.agent.v1.SessionCheckpointH\x00R\n" +
 	"checkpointB\t\n" +
@@ -4075,7 +3912,7 @@ func file_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
-var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
+var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 42)
 var file_agent_proto_goTypes = []any{
 	(ComputerSessionErrorCode)(0),        // 0: helmr.agent.v1.ComputerSessionErrorCode
 	(SessionStart_RecoveryKind)(0),       // 1: helmr.agent.v1.SessionStart.RecoveryKind
@@ -4090,115 +3927,109 @@ var file_agent_proto_goTypes = []any{
 	(*SessionProgramRequest)(nil),        // 10: helmr.agent.v1.SessionProgramRequest
 	(*TurnDispatch)(nil),                 // 11: helmr.agent.v1.TurnDispatch
 	(*MessageDelivery)(nil),              // 12: helmr.agent.v1.MessageDelivery
-	(*TurnInterrupt)(nil),                // 13: helmr.agent.v1.TurnInterrupt
+	(*SessionControl)(nil),               // 13: helmr.agent.v1.SessionControl
 	(*TurnReconcile)(nil),                // 14: helmr.agent.v1.TurnReconcile
 	(*TurnAcknowledged)(nil),             // 15: helmr.agent.v1.TurnAcknowledged
-	(*SessionResume)(nil),                // 16: helmr.agent.v1.SessionResume
-	(*SessionSuspend)(nil),               // 17: helmr.agent.v1.SessionSuspend
-	(*SessionShutdown)(nil),              // 18: helmr.agent.v1.SessionShutdown
-	(*SessionCheckpoint)(nil),            // 19: helmr.agent.v1.SessionCheckpoint
-	(*SessionCheckpointReady)(nil),       // 20: helmr.agent.v1.SessionCheckpointReady
-	(*OperationResult)(nil),              // 21: helmr.agent.v1.OperationResult
-	(*OperationError)(nil),               // 22: helmr.agent.v1.OperationError
-	(*GuestCommand)(nil),                 // 23: helmr.agent.v1.GuestCommand
-	(*Operation)(nil),                    // 24: helmr.agent.v1.Operation
-	(*OperationCancel)(nil),              // 25: helmr.agent.v1.OperationCancel
-	(*SessionReady)(nil),                 // 26: helmr.agent.v1.SessionReady
-	(*DeliveryResult)(nil),               // 27: helmr.agent.v1.DeliveryResult
-	(*SessionFailed)(nil),                // 28: helmr.agent.v1.SessionFailed
-	(*ProgramEvent)(nil),                 // 29: helmr.agent.v1.ProgramEvent
-	(*SessionGrant)(nil),                 // 30: helmr.agent.v1.SessionGrant
-	(*SessionSecret)(nil),                // 31: helmr.agent.v1.SessionSecret
-	(*SessionAttach)(nil),                // 32: helmr.agent.v1.SessionAttach
-	(*HostSessionMessage)(nil),           // 33: helmr.agent.v1.HostSessionMessage
-	(*SessionEventsAcknowledged)(nil),    // 34: helmr.agent.v1.SessionEventsAcknowledged
-	(*SessionAttached)(nil),              // 35: helmr.agent.v1.SessionAttached
-	(*SessionStopped)(nil),               // 36: helmr.agent.v1.SessionStopped
-	(*SessionAbsent)(nil),                // 37: helmr.agent.v1.SessionAbsent
-	(*SessionLogLimits)(nil),             // 38: helmr.agent.v1.SessionLogLimits
-	(*SessionLogAcknowledged)(nil),       // 39: helmr.agent.v1.SessionLogAcknowledged
-	(*SessionLog)(nil),                   // 40: helmr.agent.v1.SessionLog
-	(*GuestSessionMessage)(nil),          // 41: helmr.agent.v1.GuestSessionMessage
-	(*ComputerSessionCapture)(nil),       // 42: helmr.agent.v1.ComputerSessionCapture
-	(*ComputerSessionInstallation)(nil),  // 43: helmr.agent.v1.ComputerSessionInstallation
-	(*SessionContinuationControl)(nil),   // 44: helmr.agent.v1.SessionContinuationControl
-	(*ComputerSessionControls)(nil),      // 45: helmr.agent.v1.ComputerSessionControls
-	(*ComputerSessionControl)(nil),       // 46: helmr.agent.v1.ComputerSessionControl
-	(*ComputerSessionReceipt)(nil),       // 47: helmr.agent.v1.ComputerSessionReceipt
-	(*ComputerAuthorityChallenge)(nil),   // 48: helmr.agent.v1.ComputerAuthorityChallenge
-	(*ComputerAuthorityObservation)(nil), // 49: helmr.agent.v1.ComputerAuthorityObservation
-	nil,                                  // 50: helmr.agent.v1.SessionAttach.ProtectedEnvEntry
-	(*v0.ComputerOperationEnvelope)(nil), // 51: helmr.computer.v0.ComputerOperationEnvelope
+	(*SessionCheckpoint)(nil),            // 16: helmr.agent.v1.SessionCheckpoint
+	(*SessionCheckpointReady)(nil),       // 17: helmr.agent.v1.SessionCheckpointReady
+	(*OperationResult)(nil),              // 18: helmr.agent.v1.OperationResult
+	(*OperationError)(nil),               // 19: helmr.agent.v1.OperationError
+	(*GuestCommand)(nil),                 // 20: helmr.agent.v1.GuestCommand
+	(*Operation)(nil),                    // 21: helmr.agent.v1.Operation
+	(*OperationCancel)(nil),              // 22: helmr.agent.v1.OperationCancel
+	(*SessionReady)(nil),                 // 23: helmr.agent.v1.SessionReady
+	(*DeliveryResult)(nil),               // 24: helmr.agent.v1.DeliveryResult
+	(*SessionFailed)(nil),                // 25: helmr.agent.v1.SessionFailed
+	(*ProgramEvent)(nil),                 // 26: helmr.agent.v1.ProgramEvent
+	(*SessionGrant)(nil),                 // 27: helmr.agent.v1.SessionGrant
+	(*SessionSecret)(nil),                // 28: helmr.agent.v1.SessionSecret
+	(*SessionAttach)(nil),                // 29: helmr.agent.v1.SessionAttach
+	(*HostSessionMessage)(nil),           // 30: helmr.agent.v1.HostSessionMessage
+	(*SessionEventsAcknowledged)(nil),    // 31: helmr.agent.v1.SessionEventsAcknowledged
+	(*SessionAttached)(nil),              // 32: helmr.agent.v1.SessionAttached
+	(*SessionStopped)(nil),               // 33: helmr.agent.v1.SessionStopped
+	(*SessionAbsent)(nil),                // 34: helmr.agent.v1.SessionAbsent
+	(*SessionLogLimits)(nil),             // 35: helmr.agent.v1.SessionLogLimits
+	(*SessionLogAcknowledged)(nil),       // 36: helmr.agent.v1.SessionLogAcknowledged
+	(*SessionLog)(nil),                   // 37: helmr.agent.v1.SessionLog
+	(*GuestSessionMessage)(nil),          // 38: helmr.agent.v1.GuestSessionMessage
+	(*ComputerSessionCapture)(nil),       // 39: helmr.agent.v1.ComputerSessionCapture
+	(*ComputerSessionInstallation)(nil),  // 40: helmr.agent.v1.ComputerSessionInstallation
+	(*SessionContinuationControl)(nil),   // 41: helmr.agent.v1.SessionContinuationControl
+	(*ComputerSessionControls)(nil),      // 42: helmr.agent.v1.ComputerSessionControls
+	(*ComputerSessionControl)(nil),       // 43: helmr.agent.v1.ComputerSessionControl
+	(*ComputerSessionReceipt)(nil),       // 44: helmr.agent.v1.ComputerSessionReceipt
+	(*ComputerAuthorityChallenge)(nil),   // 45: helmr.agent.v1.ComputerAuthorityChallenge
+	(*ComputerAuthorityObservation)(nil), // 46: helmr.agent.v1.ComputerAuthorityObservation
+	nil,                                  // 47: helmr.agent.v1.SessionAttach.ProtectedEnvEntry
+	(*v0.ComputerOperationEnvelope)(nil), // 48: helmr.computer.v0.ComputerOperationEnvelope
 }
 var file_agent_proto_depIdxs = []int32{
 	1,  // 0: helmr.agent.v1.SessionStart.recovery_kind:type_name -> helmr.agent.v1.SessionStart.RecoveryKind
 	9,  // 1: helmr.agent.v1.SessionStart.program:type_name -> helmr.agent.v1.SessionProgram
-	38, // 2: helmr.agent.v1.SessionStart.log_limits:type_name -> helmr.agent.v1.SessionLogLimits
+	35, // 2: helmr.agent.v1.SessionStart.log_limits:type_name -> helmr.agent.v1.SessionLogLimits
 	8,  // 3: helmr.agent.v1.SessionProgram.runtime:type_name -> helmr.agent.v1.SessionProgramArtifact
 	8,  // 4: helmr.agent.v1.SessionProgram.artifact:type_name -> helmr.agent.v1.SessionProgramArtifact
 	2,  // 5: helmr.agent.v1.SessionProgramRequest.kind:type_name -> helmr.agent.v1.SessionProgramRequest.Kind
-	22, // 6: helmr.agent.v1.SessionCheckpointReady.error:type_name -> helmr.agent.v1.OperationError
-	22, // 7: helmr.agent.v1.OperationResult.error:type_name -> helmr.agent.v1.OperationError
+	19, // 6: helmr.agent.v1.SessionCheckpointReady.error:type_name -> helmr.agent.v1.OperationError
+	19, // 7: helmr.agent.v1.OperationResult.error:type_name -> helmr.agent.v1.OperationError
 	6,  // 8: helmr.agent.v1.GuestCommand.identity:type_name -> helmr.agent.v1.SessionIdentity
 	7,  // 9: helmr.agent.v1.GuestCommand.start:type_name -> helmr.agent.v1.SessionStart
 	11, // 10: helmr.agent.v1.GuestCommand.dispatch:type_name -> helmr.agent.v1.TurnDispatch
 	12, // 11: helmr.agent.v1.GuestCommand.message:type_name -> helmr.agent.v1.MessageDelivery
-	13, // 12: helmr.agent.v1.GuestCommand.interrupt:type_name -> helmr.agent.v1.TurnInterrupt
+	13, // 12: helmr.agent.v1.GuestCommand.control:type_name -> helmr.agent.v1.SessionControl
 	14, // 13: helmr.agent.v1.GuestCommand.reconcile:type_name -> helmr.agent.v1.TurnReconcile
 	15, // 14: helmr.agent.v1.GuestCommand.acknowledged:type_name -> helmr.agent.v1.TurnAcknowledged
-	21, // 15: helmr.agent.v1.GuestCommand.operation_result:type_name -> helmr.agent.v1.OperationResult
-	16, // 16: helmr.agent.v1.GuestCommand.resume:type_name -> helmr.agent.v1.SessionResume
-	18, // 17: helmr.agent.v1.GuestCommand.shutdown:type_name -> helmr.agent.v1.SessionShutdown
-	17, // 18: helmr.agent.v1.GuestCommand.suspend:type_name -> helmr.agent.v1.SessionSuspend
-	19, // 19: helmr.agent.v1.GuestCommand.checkpoint:type_name -> helmr.agent.v1.SessionCheckpoint
-	3,  // 20: helmr.agent.v1.Operation.method:type_name -> helmr.agent.v1.Operation.Method
-	22, // 21: helmr.agent.v1.DeliveryResult.error:type_name -> helmr.agent.v1.OperationError
-	6,  // 22: helmr.agent.v1.ProgramEvent.identity:type_name -> helmr.agent.v1.SessionIdentity
-	26, // 23: helmr.agent.v1.ProgramEvent.ready:type_name -> helmr.agent.v1.SessionReady
-	24, // 24: helmr.agent.v1.ProgramEvent.operation:type_name -> helmr.agent.v1.Operation
-	27, // 25: helmr.agent.v1.ProgramEvent.delivery_result:type_name -> helmr.agent.v1.DeliveryResult
-	28, // 26: helmr.agent.v1.ProgramEvent.failed:type_name -> helmr.agent.v1.SessionFailed
-	25, // 27: helmr.agent.v1.ProgramEvent.cancel_operation:type_name -> helmr.agent.v1.OperationCancel
-	20, // 28: helmr.agent.v1.ProgramEvent.checkpoint_ready:type_name -> helmr.agent.v1.SessionCheckpointReady
-	6,  // 29: helmr.agent.v1.SessionGrant.identity:type_name -> helmr.agent.v1.SessionIdentity
-	30, // 30: helmr.agent.v1.SessionAttach.grant:type_name -> helmr.agent.v1.SessionGrant
-	7,  // 31: helmr.agent.v1.SessionAttach.start:type_name -> helmr.agent.v1.SessionStart
-	31, // 32: helmr.agent.v1.SessionAttach.secrets:type_name -> helmr.agent.v1.SessionSecret
-	50, // 33: helmr.agent.v1.SessionAttach.protected_env:type_name -> helmr.agent.v1.SessionAttach.ProtectedEnvEntry
-	23, // 34: helmr.agent.v1.HostSessionMessage.command:type_name -> helmr.agent.v1.GuestCommand
-	30, // 35: helmr.agent.v1.HostSessionMessage.renew:type_name -> helmr.agent.v1.SessionGrant
-	34, // 36: helmr.agent.v1.HostSessionMessage.acknowledged:type_name -> helmr.agent.v1.SessionEventsAcknowledged
-	39, // 37: helmr.agent.v1.HostSessionMessage.log_acknowledged:type_name -> helmr.agent.v1.SessionLogAcknowledged
-	4,  // 38: helmr.agent.v1.SessionLogAcknowledged.stream:type_name -> helmr.agent.v1.SessionLog.Stream
-	4,  // 39: helmr.agent.v1.SessionLog.stream:type_name -> helmr.agent.v1.SessionLog.Stream
-	5,  // 40: helmr.agent.v1.SessionLog.kind:type_name -> helmr.agent.v1.SessionLog.Kind
-	6,  // 41: helmr.agent.v1.GuestSessionMessage.identity:type_name -> helmr.agent.v1.SessionIdentity
-	35, // 42: helmr.agent.v1.GuestSessionMessage.attached:type_name -> helmr.agent.v1.SessionAttached
-	29, // 43: helmr.agent.v1.GuestSessionMessage.event:type_name -> helmr.agent.v1.ProgramEvent
-	40, // 44: helmr.agent.v1.GuestSessionMessage.log:type_name -> helmr.agent.v1.SessionLog
-	36, // 45: helmr.agent.v1.GuestSessionMessage.stopped:type_name -> helmr.agent.v1.SessionStopped
-	10, // 46: helmr.agent.v1.GuestSessionMessage.program_request:type_name -> helmr.agent.v1.SessionProgramRequest
-	37, // 47: helmr.agent.v1.GuestSessionMessage.absent:type_name -> helmr.agent.v1.SessionAbsent
-	51, // 48: helmr.agent.v1.ComputerSessionCapture.envelope:type_name -> helmr.computer.v0.ComputerOperationEnvelope
-	6,  // 49: helmr.agent.v1.ComputerSessionCapture.sessions:type_name -> helmr.agent.v1.SessionIdentity
-	42, // 50: helmr.agent.v1.ComputerSessionInstallation.capture:type_name -> helmr.agent.v1.ComputerSessionCapture
-	51, // 51: helmr.agent.v1.ComputerSessionInstallation.envelope:type_name -> helmr.computer.v0.ComputerOperationEnvelope
-	30, // 52: helmr.agent.v1.ComputerSessionInstallation.grants:type_name -> helmr.agent.v1.SessionGrant
-	6,  // 53: helmr.agent.v1.ComputerSessionInstallation.stopped_sessions:type_name -> helmr.agent.v1.SessionIdentity
-	6,  // 54: helmr.agent.v1.SessionContinuationControl.identity:type_name -> helmr.agent.v1.SessionIdentity
-	51, // 55: helmr.agent.v1.ComputerSessionControls.envelope:type_name -> helmr.computer.v0.ComputerOperationEnvelope
-	44, // 56: helmr.agent.v1.ComputerSessionControls.sessions:type_name -> helmr.agent.v1.SessionContinuationControl
-	42, // 57: helmr.agent.v1.ComputerSessionControl.capture:type_name -> helmr.agent.v1.ComputerSessionCapture
-	43, // 58: helmr.agent.v1.ComputerSessionControl.install:type_name -> helmr.agent.v1.ComputerSessionInstallation
-	43, // 59: helmr.agent.v1.ComputerSessionControl.activate:type_name -> helmr.agent.v1.ComputerSessionInstallation
-	42, // 60: helmr.agent.v1.ComputerSessionControl.inspect:type_name -> helmr.agent.v1.ComputerSessionCapture
-	45, // 61: helmr.agent.v1.ComputerSessionControl.controls:type_name -> helmr.agent.v1.ComputerSessionControls
-	0,  // 62: helmr.agent.v1.ComputerSessionReceipt.error_code:type_name -> helmr.agent.v1.ComputerSessionErrorCode
-	63, // [63:63] is the sub-list for method output_type
-	63, // [63:63] is the sub-list for method input_type
-	63, // [63:63] is the sub-list for extension type_name
-	63, // [63:63] is the sub-list for extension extendee
-	0,  // [0:63] is the sub-list for field type_name
+	18, // 15: helmr.agent.v1.GuestCommand.operation_result:type_name -> helmr.agent.v1.OperationResult
+	16, // 16: helmr.agent.v1.GuestCommand.checkpoint:type_name -> helmr.agent.v1.SessionCheckpoint
+	3,  // 17: helmr.agent.v1.Operation.method:type_name -> helmr.agent.v1.Operation.Method
+	19, // 18: helmr.agent.v1.DeliveryResult.error:type_name -> helmr.agent.v1.OperationError
+	6,  // 19: helmr.agent.v1.ProgramEvent.identity:type_name -> helmr.agent.v1.SessionIdentity
+	23, // 20: helmr.agent.v1.ProgramEvent.ready:type_name -> helmr.agent.v1.SessionReady
+	21, // 21: helmr.agent.v1.ProgramEvent.operation:type_name -> helmr.agent.v1.Operation
+	24, // 22: helmr.agent.v1.ProgramEvent.delivery_result:type_name -> helmr.agent.v1.DeliveryResult
+	25, // 23: helmr.agent.v1.ProgramEvent.failed:type_name -> helmr.agent.v1.SessionFailed
+	22, // 24: helmr.agent.v1.ProgramEvent.cancel_operation:type_name -> helmr.agent.v1.OperationCancel
+	17, // 25: helmr.agent.v1.ProgramEvent.checkpoint_ready:type_name -> helmr.agent.v1.SessionCheckpointReady
+	6,  // 26: helmr.agent.v1.SessionGrant.identity:type_name -> helmr.agent.v1.SessionIdentity
+	27, // 27: helmr.agent.v1.SessionAttach.grant:type_name -> helmr.agent.v1.SessionGrant
+	7,  // 28: helmr.agent.v1.SessionAttach.start:type_name -> helmr.agent.v1.SessionStart
+	28, // 29: helmr.agent.v1.SessionAttach.secrets:type_name -> helmr.agent.v1.SessionSecret
+	47, // 30: helmr.agent.v1.SessionAttach.protected_env:type_name -> helmr.agent.v1.SessionAttach.ProtectedEnvEntry
+	20, // 31: helmr.agent.v1.HostSessionMessage.command:type_name -> helmr.agent.v1.GuestCommand
+	27, // 32: helmr.agent.v1.HostSessionMessage.renew:type_name -> helmr.agent.v1.SessionGrant
+	31, // 33: helmr.agent.v1.HostSessionMessage.acknowledged:type_name -> helmr.agent.v1.SessionEventsAcknowledged
+	36, // 34: helmr.agent.v1.HostSessionMessage.log_acknowledged:type_name -> helmr.agent.v1.SessionLogAcknowledged
+	4,  // 35: helmr.agent.v1.SessionLogAcknowledged.stream:type_name -> helmr.agent.v1.SessionLog.Stream
+	4,  // 36: helmr.agent.v1.SessionLog.stream:type_name -> helmr.agent.v1.SessionLog.Stream
+	5,  // 37: helmr.agent.v1.SessionLog.kind:type_name -> helmr.agent.v1.SessionLog.Kind
+	6,  // 38: helmr.agent.v1.GuestSessionMessage.identity:type_name -> helmr.agent.v1.SessionIdentity
+	32, // 39: helmr.agent.v1.GuestSessionMessage.attached:type_name -> helmr.agent.v1.SessionAttached
+	26, // 40: helmr.agent.v1.GuestSessionMessage.event:type_name -> helmr.agent.v1.ProgramEvent
+	37, // 41: helmr.agent.v1.GuestSessionMessage.log:type_name -> helmr.agent.v1.SessionLog
+	33, // 42: helmr.agent.v1.GuestSessionMessage.stopped:type_name -> helmr.agent.v1.SessionStopped
+	10, // 43: helmr.agent.v1.GuestSessionMessage.program_request:type_name -> helmr.agent.v1.SessionProgramRequest
+	34, // 44: helmr.agent.v1.GuestSessionMessage.absent:type_name -> helmr.agent.v1.SessionAbsent
+	48, // 45: helmr.agent.v1.ComputerSessionCapture.envelope:type_name -> helmr.computer.v0.ComputerOperationEnvelope
+	6,  // 46: helmr.agent.v1.ComputerSessionCapture.sessions:type_name -> helmr.agent.v1.SessionIdentity
+	39, // 47: helmr.agent.v1.ComputerSessionInstallation.capture:type_name -> helmr.agent.v1.ComputerSessionCapture
+	48, // 48: helmr.agent.v1.ComputerSessionInstallation.envelope:type_name -> helmr.computer.v0.ComputerOperationEnvelope
+	27, // 49: helmr.agent.v1.ComputerSessionInstallation.grants:type_name -> helmr.agent.v1.SessionGrant
+	6,  // 50: helmr.agent.v1.ComputerSessionInstallation.stopped_sessions:type_name -> helmr.agent.v1.SessionIdentity
+	6,  // 51: helmr.agent.v1.SessionContinuationControl.identity:type_name -> helmr.agent.v1.SessionIdentity
+	48, // 52: helmr.agent.v1.ComputerSessionControls.envelope:type_name -> helmr.computer.v0.ComputerOperationEnvelope
+	41, // 53: helmr.agent.v1.ComputerSessionControls.sessions:type_name -> helmr.agent.v1.SessionContinuationControl
+	39, // 54: helmr.agent.v1.ComputerSessionControl.capture:type_name -> helmr.agent.v1.ComputerSessionCapture
+	40, // 55: helmr.agent.v1.ComputerSessionControl.install:type_name -> helmr.agent.v1.ComputerSessionInstallation
+	40, // 56: helmr.agent.v1.ComputerSessionControl.activate:type_name -> helmr.agent.v1.ComputerSessionInstallation
+	39, // 57: helmr.agent.v1.ComputerSessionControl.inspect:type_name -> helmr.agent.v1.ComputerSessionCapture
+	42, // 58: helmr.agent.v1.ComputerSessionControl.controls:type_name -> helmr.agent.v1.ComputerSessionControls
+	0,  // 59: helmr.agent.v1.ComputerSessionReceipt.error_code:type_name -> helmr.agent.v1.ComputerSessionErrorCode
+	60, // [60:60] is the sub-list for method output_type
+	60, // [60:60] is the sub-list for method input_type
+	60, // [60:60] is the sub-list for extension type_name
+	60, // [60:60] is the sub-list for extension extendee
+	0,  // [0:60] is the sub-list for field type_name
 }
 
 func init() { file_agent_proto_init() }
@@ -4207,33 +4038,31 @@ func file_agent_proto_init() {
 		return
 	}
 	file_agent_proto_msgTypes[1].OneofWrappers = []any{}
-	file_agent_proto_msgTypes[14].OneofWrappers = []any{
+	file_agent_proto_msgTypes[7].OneofWrappers = []any{}
+	file_agent_proto_msgTypes[11].OneofWrappers = []any{
 		(*SessionCheckpointReady_ScopesJson)(nil),
 		(*SessionCheckpointReady_Error)(nil),
 	}
-	file_agent_proto_msgTypes[15].OneofWrappers = []any{
+	file_agent_proto_msgTypes[12].OneofWrappers = []any{
 		(*OperationResult_ValueJson)(nil),
 		(*OperationResult_Error)(nil),
 	}
-	file_agent_proto_msgTypes[17].OneofWrappers = []any{
+	file_agent_proto_msgTypes[14].OneofWrappers = []any{
 		(*GuestCommand_Start)(nil),
 		(*GuestCommand_Dispatch)(nil),
 		(*GuestCommand_Message)(nil),
-		(*GuestCommand_Interrupt)(nil),
+		(*GuestCommand_Control)(nil),
 		(*GuestCommand_Reconcile)(nil),
 		(*GuestCommand_Acknowledged)(nil),
 		(*GuestCommand_OperationResult)(nil),
-		(*GuestCommand_Resume)(nil),
-		(*GuestCommand_Shutdown)(nil),
-		(*GuestCommand_Suspend)(nil),
 		(*GuestCommand_Checkpoint)(nil),
 	}
-	file_agent_proto_msgTypes[18].OneofWrappers = []any{}
-	file_agent_proto_msgTypes[21].OneofWrappers = []any{
+	file_agent_proto_msgTypes[15].OneofWrappers = []any{}
+	file_agent_proto_msgTypes[18].OneofWrappers = []any{
 		(*DeliveryResult_ValueJson)(nil),
 		(*DeliveryResult_Error)(nil),
 	}
-	file_agent_proto_msgTypes[23].OneofWrappers = []any{
+	file_agent_proto_msgTypes[20].OneofWrappers = []any{
 		(*ProgramEvent_Ready)(nil),
 		(*ProgramEvent_Operation)(nil),
 		(*ProgramEvent_DeliveryResult)(nil),
@@ -4241,17 +4070,17 @@ func file_agent_proto_init() {
 		(*ProgramEvent_CancelOperation)(nil),
 		(*ProgramEvent_CheckpointReady)(nil),
 	}
-	file_agent_proto_msgTypes[25].OneofWrappers = []any{
+	file_agent_proto_msgTypes[22].OneofWrappers = []any{
 		(*SessionSecret_Env)(nil),
 		(*SessionSecret_File)(nil),
 	}
-	file_agent_proto_msgTypes[27].OneofWrappers = []any{
+	file_agent_proto_msgTypes[24].OneofWrappers = []any{
 		(*HostSessionMessage_Command)(nil),
 		(*HostSessionMessage_Renew)(nil),
 		(*HostSessionMessage_Acknowledged)(nil),
 		(*HostSessionMessage_LogAcknowledged)(nil),
 	}
-	file_agent_proto_msgTypes[35].OneofWrappers = []any{
+	file_agent_proto_msgTypes[32].OneofWrappers = []any{
 		(*GuestSessionMessage_Attached)(nil),
 		(*GuestSessionMessage_Event)(nil),
 		(*GuestSessionMessage_Log)(nil),
@@ -4259,7 +4088,7 @@ func file_agent_proto_init() {
 		(*GuestSessionMessage_ProgramRequest)(nil),
 		(*GuestSessionMessage_Absent)(nil),
 	}
-	file_agent_proto_msgTypes[40].OneofWrappers = []any{
+	file_agent_proto_msgTypes[37].OneofWrappers = []any{
 		(*ComputerSessionControl_Capture)(nil),
 		(*ComputerSessionControl_Install)(nil),
 		(*ComputerSessionControl_Activate)(nil),
@@ -4272,7 +4101,7 @@ func file_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_proto_rawDesc), len(file_agent_proto_rawDesc)),
 			NumEnums:      6,
-			NumMessages:   45,
+			NumMessages:   42,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -13,7 +13,7 @@ export async function cleanupChildren(
     do {
       const page = await client.sessions.list({ [relation]: parentId, limit: 100, cursor }, { signal })
       for (const item of page.items) {
-        if (item.id === parentId || item[relation] !== parentId || !computerIds.includes(item.computerId)) continue
+        if (item.id === parentId || item[relation] !== parentId || item.computerId === null || !computerIds.includes(item.computerId)) continue
         ids.add(item.id)
         if (!recorded.includes(item.id)) recorded.push(item.id)
       }

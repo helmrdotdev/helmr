@@ -23,7 +23,7 @@ const ComputerPreparationSpecVersion = "helmr.computer-preparation.v1"
 // require preparation again, even if the authored prepare function is unchanged.
 type ComputerPreparationSpec struct {
 	APIVersion           string            `json:"apiVersion"`
-	ComputerDefinitionID string            `json:"computerDefinitionId"`
+	TemplateDefinitionID string            `json:"templateDefinitionId"`
 	Program              ProgramDescriptor `json:"program"`
 }
 
@@ -36,11 +36,11 @@ func BuildComputerPreparationSpecs(output ProgramOutput) ([]ComputerPreparationS
 	}
 	specs := make([]ComputerPreparationSpec, 0)
 	for _, d := range output.Metadata.Definitions {
-		if d.Kind != definition.KindComputer {
+		if d.Kind != definition.KindTemplate {
 			continue
 		}
 		specs = append(specs, ComputerPreparationSpec{
-			APIVersion: ComputerPreparationSpecVersion, ComputerDefinitionID: d.DeclaredID,
+			APIVersion: ComputerPreparationSpecVersion, TemplateDefinitionID: d.DeclaredID,
 			Program: output.Artifact,
 		})
 	}
@@ -48,7 +48,7 @@ func BuildComputerPreparationSpecs(output ProgramOutput) ([]ComputerPreparationS
 }
 
 func CanonicalComputerPreparationSpec(spec ComputerPreparationSpec) ([]byte, error) {
-	if spec.APIVersion != ComputerPreparationSpecVersion || !definition.ValidDeclaredID(spec.ComputerDefinitionID) {
+	if spec.APIVersion != ComputerPreparationSpecVersion || !definition.ValidDeclaredID(spec.TemplateDefinitionID) {
 		return nil, errors.New("invalid Computer preparation identity")
 	}
 	if err := validateProgramDescriptor(spec.Program, "preparation Program", ProgramArtifactMediaType, MaxProgramPhysicalBytes); err != nil {

@@ -9,6 +9,8 @@ const path = `${base}/sessions/${id}`;
 const url = `/sessions/${id}?project_id=${projectID}&environment_id=${environmentID}`;
 const now = "2026-10-06T00:00:00Z";
 const initialSession = {
+  activity: { process: null },
+  initial_turn: { id: turnID, status: "queued" },
   id,
   agent_id: turnID,
   deployment_id: turnID,

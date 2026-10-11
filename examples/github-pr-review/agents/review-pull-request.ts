@@ -1,4 +1,4 @@
-import { agent, computer, image, source } from "@helmr/sdk"
+import { agent, template, image, source } from "@helmr/sdk"
 import { z } from "zod"
 
 const base = image("github-pr-review")
@@ -10,7 +10,7 @@ const base = image("github-pr-review")
   .run(["bun", "install"])
   .workdir("/sandbox")
 
-export const githubPRReviewComputer = computer({
+export const githubPRReviewComputer = template({
   id: "github-pr-review",
   image: base,
   resources: { cpu: 1, memory: "1GiB" },
@@ -35,7 +35,7 @@ interface PullRequestFile {
 }
 
 export const reviewPullRequest = agent({
-  computer: githubPRReviewComputer,
+  template: githubPRReviewComputer,
   id: "github-pr-review",
   maxTurnDuration: "10m",
   async turn(turn) {

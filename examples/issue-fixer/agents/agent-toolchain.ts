@@ -1,6 +1,6 @@
 import { query, type Options as ClaudeOptions } from "@anthropic-ai/claude-agent-sdk"
 import { Agent } from "@cursor/sdk"
-import { agent, computer, image, source, type JsonValue } from "@helmr/sdk"
+import { agent, template, image, source, type JsonValue } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
 import { runCodex as runCodexTurn, type CodexThreadOptions } from "./lib/agents/codex-app-server"
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_CURSOR_MODEL } from "./lib/agents/models"
@@ -39,7 +39,7 @@ const base = image("helmr-agent-toolchain-smoke")
   .run(["npm", "install", "-g", "bun@1.3.13"])
   .workdir("/sandbox")
 
-export const agentToolchainSmokeComputer = computer({
+export const agentToolchainSmokeComputer = template({
   id: "helmr-agent-toolchain-smoke",
   image: base,
   resources: { cpu: 2, memory: "4GiB" },
@@ -61,7 +61,7 @@ type CheckResult = {
 }
 
 export const agentToolchainSmoke = agent({
-  computer: agentToolchainSmokeComputer,
+  template: agentToolchainSmokeComputer,
   id: "agent-toolchain-smoke",
   maxTurnDuration: "30m",
   async turn(turn): Promise<JsonValue> {

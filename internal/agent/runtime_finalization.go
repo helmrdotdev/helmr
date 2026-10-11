@@ -70,6 +70,9 @@ func RuntimeFinalize(ctx context.Context, pool db.TxBeginner, host workergroup.H
 		if err := lockRuntimeOperationOwner(ctx, tx, host, e); err != nil {
 			return err
 		}
+		if err := expireSessionDeadlineTx(ctx, tx, e.EnvironmentID, e.SessionID); err != nil {
+			return err
+		}
 		var status string
 		var prior []byte
 		var stored, response json.RawMessage

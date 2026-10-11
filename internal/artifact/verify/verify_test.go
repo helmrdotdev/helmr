@@ -337,8 +337,8 @@ func TestProgramArtifactRequiresExactDefinitionIndex(t *testing.T) {
 		},
 		"Computer module missing": func(p *testProgram) {
 			index := artifacttest.DefinitionIndex()
-			index.Computers[0].ThroughAgent = false
-			index.Computers[0].ModulePath = "helmr/app/entry-9.mjs"
+			index.Templates[0].ThroughAgent = false
+			index.Templates[0].ModulePath = "helmr/app/entry-9.mjs"
 			raw, err := artifact.CanonicalDefinitionIndex(index)
 			if err != nil {
 				t.Fatal(err)

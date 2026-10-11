@@ -168,7 +168,7 @@ func reconcileSchedules(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUI
 
 func reconcilePreparationRefresh(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, cutover time.Time) error {
 	// Lock in stable order. Refresh workers use the same Environment -> spec order.
-	rows, err := tx.Query(ctx, `WITH affected AS (SELECT id FROM computer_preparation_specs WHERE environment_id=$1 AND refresh_every_ms IS NOT NULL UNION SELECT preparation_spec_id FROM computer_definitions WHERE environment_id=$1 AND deployment_id=$2 AND refresh_every_ms IS NOT NULL) SELECT s.id FROM computer_preparation_specs s JOIN affected a ON a.id=s.id WHERE s.environment_id=$1 ORDER BY s.id FOR NO KEY UPDATE OF s`, env, deployment)
+	rows, err := tx.Query(ctx, `WITH affected AS (SELECT id FROM computer_preparation_specs WHERE environment_id=$1 AND refresh_every_ms IS NOT NULL UNION SELECT preparation_spec_id FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2 AND refresh_every_ms IS NOT NULL) SELECT s.id FROM computer_preparation_specs s JOIN affected a ON a.id=s.id WHERE s.environment_id=$1 ORDER BY s.id FOR NO KEY UPDATE OF s`, env, deployment)
 	if err != nil {
 		return err
 	}
@@ -185,7 +185,7 @@ func reconcilePreparationRefresh(ctx context.Context, tx pgx.Tx, env, deployment
 		return err
 	}
 	_, err = tx.Exec(ctx, `WITH requested AS (
- SELECT preparation_spec_id,min(refresh_every_ms) AS every_ms FROM computer_definitions
+ SELECT preparation_spec_id,min(refresh_every_ms) AS every_ms FROM template_definitions
  WHERE environment_id=$1 AND deployment_id=$2 AND refresh_every_ms IS NOT NULL GROUP BY preparation_spec_id
  ) , affected AS (
  SELECT id FROM computer_preparation_specs WHERE environment_id=$1 AND refresh_every_ms IS NOT NULL

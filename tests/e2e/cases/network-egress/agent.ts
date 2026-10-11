@@ -1,17 +1,17 @@
-import { agent, computer, image } from "@helmr/sdk"
+import { agent, template, image } from "@helmr/sdk"
 import { readFile } from "node:fs/promises"
 
 const base = image("helmr-network-smoke")
   .from("node:24-bookworm-slim")
   .workdir("/sandbox")
 
-export const networkSmokeComputer = computer({
+export const networkSmokeComputer = template({
   id: "helmr-network-smoke", image: base, resources: { cpu: 1, memory: "1GiB" },
 })
 
 export const networkSmoke = agent({
   id: "network-smoke",
-  computer: networkSmokeComputer,
+  template: networkSmokeComputer,
   maxTurnDuration: "2m",
   turn: async (turn) => {
     const publicResponse = await fetch("https://checkip.amazonaws.com", {

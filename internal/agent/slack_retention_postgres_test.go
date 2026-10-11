@@ -118,7 +118,7 @@ func TestSlackFrontHistoryWaitsForOwnedActivityToSettle(t *testing.T) {
 	}
 	c := f
 	c.session = child.SessionID
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status) VALUES($1,$2,1,$3,1,'ready')`, f.env, c.session, f.computer)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,control_kind,control_generation,control_acknowledged_at) VALUES($1,$2,1,$3,1,'ready','resume',1,clock_timestamp())`, f.env, c.session, f.computer)
 	if _, err = Dispatch(t.Context(), f.pool, c.execution()); err != nil {
 		t.Fatal(err)
 	}

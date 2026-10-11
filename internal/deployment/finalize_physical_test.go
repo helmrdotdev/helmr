@@ -27,7 +27,7 @@ func TestFinalizeAdmitsPhysicalProgramBeforeRegisteringDefinitions(t *testing.T)
 	f := newDeploymentFinalizePostgresFixture(t)
 	seed := finalizeDiskFixture(t)
 	metadata := artifacttest.ProgramMetadata(t)
-	metadata.Definitions[2].Computer.Seed.ArtifactDigest = sha256sum.DigestBytes(seed)
+	metadata.Definitions[2].Template.Seed.ArtifactDigest = sha256sum.DigestBytes(seed)
 	metadata.ConfigResultDigest = sha256sum.DigestBytes([]byte(`{"assets":[],"dirs":["agents"],"external":[],"ignorePatterns":[]}`))
 	program := physicalProgram(t, metadata)
 	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: sha256sum.DigestBytes(program), SizeBytes: int64(len(program)), MediaType: artifact.ProgramArtifactMediaType}, Metadata: metadata}
@@ -37,7 +37,7 @@ func TestFinalizeAdmitsPhysicalProgramBeforeRegisteringDefinitions(t *testing.T)
 	seedDigest := sha256sum.DigestBytes(seed)
 	store.add(seedDigest, definition.ComputerSeedMediaType, seed)
 	store.objects[runtime.Digest] = cas.Object{Digest: runtime.Digest, SizeBytes: runtime.SizeBytes, MediaType: runtime.MediaType}
-	manifest := bundle.Manifest{Contract: bundle.Contract, Platform: bundle.Platform{Architecture: metadata.Architecture, OS: bundle.TargetOS}, Runtime: bundle.Runtime{Contract: runtime.RuntimeContract, Artifact: bundle.Object{Digest: runtime.Digest, SizeBytes: runtime.SizeBytes, MediaType: runtime.MediaType}}, Program: output, ComputerSeeds: []bundle.ComputerSeed{{DeclaredID: "repo", Artifact: bundle.ComputerSeedArtifact{Profile: definition.ComputerSeedProfile, Config: metadata.Definitions[2].Computer.Seed.Config, Architecture: metadata.Architecture, Digest: seedDigest, SizeBytes: int64(len(seed)), MediaType: definition.ComputerSeedMediaType}}}, Objects: []bundle.Object{bundle.Object(output.Artifact), {Digest: seedDigest, SizeBytes: int64(len(seed)), MediaType: definition.ComputerSeedMediaType}}}
+	manifest := bundle.Manifest{Contract: bundle.Contract, Platform: bundle.Platform{Architecture: metadata.Architecture, OS: bundle.TargetOS}, Runtime: bundle.Runtime{Contract: runtime.RuntimeContract, Artifact: bundle.Object{Digest: runtime.Digest, SizeBytes: runtime.SizeBytes, MediaType: runtime.MediaType}}, Program: output, ComputerSeeds: []bundle.ComputerSeed{{DeclaredID: "repo", Artifact: bundle.ComputerSeedArtifact{Profile: definition.ComputerSeedProfile, Config: metadata.Definitions[2].Template.Seed.Config, Architecture: metadata.Architecture, Digest: seedDigest, SizeBytes: int64(len(seed)), MediaType: definition.ComputerSeedMediaType}}}, Objects: []bundle.Object{bundle.Object(output.Artifact), {Digest: seedDigest, SizeBytes: int64(len(seed)), MediaType: definition.ComputerSeedMediaType}}}
 	bundle.SortObjects(manifest.Objects)
 	finalize := NewFinalizer(store, store, bundle.Admission{Runtime: runtime}, discardLogger())
 	root := func(m bundle.Manifest) string {
@@ -82,11 +82,11 @@ func TestFinalizeAdmitsPhysicalProgramBeforeRegisteringDefinitions(t *testing.T)
 		t.Fatalf("finalize: %v verified=%d", err, verified)
 	}
 	var stored []byte
-	if err = f.pool.QueryRow(t.Context(), `SELECT s.spec FROM computer_preparation_specs s JOIN computer_definitions d ON (d.environment_id,d.preparation_spec_id)=(s.environment_id,s.id) WHERE d.deployment_id=$1`, result.ID).Scan(&stored); err != nil {
+	if err = f.pool.QueryRow(t.Context(), `SELECT s.spec FROM computer_preparation_specs s JOIN template_definitions d ON (d.environment_id,d.preparation_spec_id)=(s.environment_id,s.id) WHERE d.deployment_id=$1`, result.ID).Scan(&stored); err != nil {
 		t.Fatal(err)
 	}
 	spec, err := artifact.ParseComputerPreparationSpec(stored)
-	if err != nil || spec.Program != output.Artifact || spec.ComputerDefinitionID != "repo" {
+	if err != nil || spec.Program != output.Artifact || spec.TemplateDefinitionID != "repo" {
 		t.Fatalf("registered identity: %+v %v", spec, err)
 	}
 }

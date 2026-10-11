@@ -265,3 +265,60 @@ func TestAgentMessageWaitsForDurableCallbackReceipt(t *testing.T) {
 		t.Fatalf("committed receipt not released: %v", err)
 	}
 }
+
+func TestAgentTurnCommittedDispatchPrecedesConcurrentStop(t *testing.T) {
+	grant := sessionTransportGrant()
+	turn := uuid.NewV7().String()
+	committed, release, prepared := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	frames := make(chan *agentv1.HostSessionMessage, 3)
+	machine := sessionTransportMachine(t, func(stream net.Conn, _ *agentv1.SessionAttach) {
+		for range 3 {
+			var frame agentv1.HostSessionMessage
+			if err := frameio.ReadProtoFrameBounded(stream, agentTransportFrameLimit, &frame); err != nil {
+				return
+			}
+			frames <- &frame
+		}
+	})
+	connection, _, err := OpenAgentSession(t.Context(), machine, &agentv1.SessionAttach{Grant: grant, AttachmentSequence: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	controls := &terminalControlClient{prepare: func(context.Context, workerapi.AgentControlRequest) (workerapi.AgentControlResponse, error) {
+		close(prepared)
+		deadline := time.Now().Add(time.Minute)
+		return workerapi.AgentControlResponse{Sequence: 2, AuthorityGeneration: 3, Kind: "resume", ExpiresAt: time.Now().Add(time.Hour), StopSequence: 1, StopTurnID: &turn, StopDeadline: &deadline}, nil
+	}}
+	client := &turnExecutionTestClient{AgentControlClient: controls, next: func(ctx context.Context, _ workerapi.AgentTurnRequest) (*workerapi.AgentTurnDispatch, error) {
+		close(committed)
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return &workerapi.AgentTurnDispatch{TurnID: turn, Sequence: 1, CreatedAt: time.Now(), Input: json.RawMessage(`[]`), Source: workerapi.AgentTurnSource{Kind: "user"}}, nil
+	}}
+	turnOwner := &agentSessionTurns{connection: connection, client: client, environment: "environment"}
+	controlOwner := &agentSessionControls{connection: connection, client: controls, environment: "environment", ready: true}
+	dispatched, stopped := make(chan error, 1), make(chan error, 1)
+	go func() { dispatched <- turnOwner.dispatch(t.Context()) }()
+	<-committed
+	go func() { stopped <- controlOwner.apply(t.Context()) }()
+	select {
+	case <-prepared:
+		t.Error("stop queried while committed dispatch reply was pending")
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(release)
+	if err := <-dispatched; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-stopped; err != nil {
+		t.Fatal(err)
+	}
+	first, renewal, last := <-frames, <-frames, <-frames
+	if first.GetCommand().GetDispatch().GetTurnId() != turn || renewal.GetRenew() == nil || last.GetCommand().GetControl().GetStopTurnId() != turn {
+		t.Fatal("stop overtook committed dispatch")
+	}
+}

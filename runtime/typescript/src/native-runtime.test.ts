@@ -69,7 +69,7 @@ for (const agentId of ["deploy", "worker"]) {
           assert.deepEqual(outcome.result, agentId === "deploy"
             ? { asset: "installed", native: 42, same: true, worker: 42, fork: 42 }
             : { asset: "installed", same: true })
-          f.send({ case: "shutdown", value: create(p.SessionShutdownSchema, { reason: "fixture completed" }) }, "shutdown")
+          f.send({ case: "control", value: create(p.SessionControlSchema, { desired: "shutdown" }) }, "shutdown")
         } else { assert.equal(event.value.deliveryId, "shutdown"); shutdown = true }
       }
     }

@@ -31,7 +31,7 @@ func TestDiskGraphRootAdoptionArbitratesDeletion(t *testing.T) {
 			}
 			defer tx.Rollback(context.Background())
 			adopt := func(tx pgx.Tx) error {
-				_, err := tx.Exec(t.Context(), `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest) VALUES($1,$2,$3,$4)`, f.env, uuid.NewV7(), root, digest)
+				_, err := tx.Exec(t.Context(), `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes) SELECT $1,$2,$3,$4,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes FROM computers WHERE environment_id=$1 LIMIT 1`, f.env, uuid.NewV7(), root, digest)
 				return err
 			}
 			if adoptFirst {

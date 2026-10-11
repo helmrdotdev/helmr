@@ -18,9 +18,9 @@ func ModulePath(digit string) string {
 
 func DefinitionIndex() artifact.DefinitionIndex {
 	return artifact.DefinitionIndex{APIVersion: "helmr.definition-index.v1", Agents: []artifact.AgentBundleEntry{
-		{ID: "build", ComputerDefinitionID: "repo", ModulePath: ModulePath("a"), ExportName: "build"},
-		{ID: "chat", ComputerDefinitionID: "repo", ModulePath: ModulePath("b"), ExportName: "chat"},
-	}, Computers: []artifact.ComputerBundleEntry{{ID: "repo", ModulePath: ModulePath("a"), ExportName: "build", ThroughAgent: true}}}
+		{ID: "build", TemplateDefinitionID: "repo", ModulePath: ModulePath("a"), ExportName: "build"},
+		{ID: "chat", TemplateDefinitionID: "repo", ModulePath: ModulePath("b"), ExportName: "chat"},
+	}, Templates: []artifact.TemplateBundleEntry{{ID: "repo", ModulePath: ModulePath("a"), ExportName: "build", ThroughAgent: true}}}
 }
 
 func ProgramMetadata(t *testing.T) artifact.ProgramMetadata {

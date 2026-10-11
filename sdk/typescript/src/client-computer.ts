@@ -53,13 +53,14 @@ export function createClientComputers(
       request: ComputerCreateRequest,
       options: RequestOptions = {},
     ): Promise<ClientComputerRef> {
-      validateDefinitionId(request.definition)
+      validateDefinitionId(request.template)
       const secrets = encodeComputerSecrets(request.secrets)
       const computer = parseComputer(await transport.request(
         "POST",
-        `/v1/computer-definitions/${encodeURIComponent(request.definition)}/computers`,
+        "/v1/computers",
         {
           body: {
+            template: request.template,
             ...(request.key === undefined ? {} : { key: request.key }),
             ...(request.deleteAfterUnused === undefined ? {} : { delete_after_unused_ms: retentionMilliseconds(request.deleteAfterUnused, "deleteAfterUnused") }),
             ...(request.secrets === undefined ? {} : { secrets }),

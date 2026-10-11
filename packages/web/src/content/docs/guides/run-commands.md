@@ -10,7 +10,7 @@ a repository before starting work, inspect an Agent's files, or run a job. This
 guide creates or finds a Computer, runs a command and reads its output. For what
 a Computer is, see [Computers](/docs/concepts/computers).
 
-The examples use a Computer definition with the ID `repo` deployed to the `demo`
+The examples use a Template definition with the ID `repo` deployed to the `demo`
 Project's `staging` Environment, with the CLI configured (see
 [Quickstart](/docs/quickstart)).
 
@@ -23,7 +23,7 @@ helmr computer create repo --project demo --env staging \
 ```
 
 The command prints the new Computer's ID. `repo` is the ID from
-`computer({ id: "repo" })` in the current Deployment. `--key` is an optional,
+`template({ id: "repo" })` in the current Deployment. `--key` is an optional,
 immutable name you can look the Computer up by later. `--idempotency-key` makes
 retries safe: repeating the command with the same key returns the same Computer.
 To bind Secrets at creation, pass `--secrets-file`; see
@@ -104,7 +104,7 @@ const client = new HelmrClient({
 })
 
 const computer = await client.computers.create({
-  definition: "repo",
+  template: "repo",
   key: "repo:acme/app",
   idempotencyKey: "computer:acme/app",
 })

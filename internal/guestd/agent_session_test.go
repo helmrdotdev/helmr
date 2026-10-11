@@ -235,8 +235,8 @@ func TestAgentSessionRenewalRetainsOriginalPendingGeneration(t *testing.T) {
 func TestAgentSessionStaleResumeCannotReleaseNewerHold(t *testing.T) {
 	session, _ := agentSessionFixture(t)
 	for _, command := range []*agentv1.GuestCommand{
-		{Identity: session.grant.Identity, DeliveryId: "hold", ControlSequence: 3, Command: &agentv1.GuestCommand_Suspend{Suspend: &agentv1.SessionSuspend{Reason: "hold"}}},
-		{Identity: session.grant.Identity, DeliveryId: "stale-resume", ControlSequence: 2, Command: &agentv1.GuestCommand_Resume{Resume: &agentv1.SessionResume{}}},
+		{Identity: session.grant.Identity, DeliveryId: "hold", ControlSequence: 3, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "hold"}}},
+		{Identity: session.grant.Identity, DeliveryId: "stale-resume", ControlSequence: 2, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "run"}}},
 	} {
 		if err := session.send(command); err != nil {
 			t.Fatal(err)
@@ -245,7 +245,7 @@ func TestAgentSessionStaleResumeCannotReleaseNewerHold(t *testing.T) {
 	if !session.held {
 		t.Fatal("stale resume released hold")
 	}
-	if err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "resume", ControlSequence: 4, Command: &agentv1.GuestCommand_Resume{Resume: &agentv1.SessionResume{}}}); err != nil {
+	if err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "resume", ControlSequence: 4, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "run"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if !session.held {
@@ -269,8 +269,8 @@ func guestControlReceipt(t *testing.T, session *agentSession, id string, failed 
 func TestAgentSessionSupersededResumeReceiptKeepsHold(t *testing.T) {
 	session, _ := agentSessionFixture(t)
 	for _, command := range []*agentv1.GuestCommand{
-		{Identity: session.grant.Identity, DeliveryId: "hold", ControlSequence: 3, Command: &agentv1.GuestCommand_Suspend{Suspend: &agentv1.SessionSuspend{}}},
-		{Identity: session.grant.Identity, DeliveryId: "same-sequence-resume", ControlSequence: 3, Command: &agentv1.GuestCommand_Resume{Resume: &agentv1.SessionResume{}}},
+		{Identity: session.grant.Identity, DeliveryId: "hold", ControlSequence: 3, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "hold"}}},
+		{Identity: session.grant.Identity, DeliveryId: "same-sequence-resume", ControlSequence: 3, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "run"}}},
 	} {
 		if err := session.send(command); err != nil {
 			t.Fatal(err)
@@ -288,19 +288,19 @@ func TestAgentSessionResumeReceiptCannotClearLaterHold(t *testing.T) {
 	for _, later := range []string{"suspend", "failed", "runtime_hold", "shutdown", "resume_error"} {
 		t.Run(later, func(t *testing.T) {
 			session, _ := agentSessionFixture(t)
-			if err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "hold", ControlSequence: 1, Command: &agentv1.GuestCommand_Suspend{Suspend: &agentv1.SessionSuspend{}}}); err != nil {
+			if err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "hold", ControlSequence: 1, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "hold"}}}); err != nil {
 				t.Fatal(err)
 			}
-			if err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "resume", ControlSequence: 2, Command: &agentv1.GuestCommand_Resume{Resume: &agentv1.SessionResume{}}}); err != nil {
+			if err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "resume", ControlSequence: 2, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "run"}}}); err != nil {
 				t.Fatal(err)
 			}
 			switch later {
 			case "suspend":
-				if err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "new-hold", ControlSequence: 3, Command: &agentv1.GuestCommand_Suspend{Suspend: &agentv1.SessionSuspend{}}}); err != nil {
+				if err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "new-hold", ControlSequence: 3, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "hold"}}}); err != nil {
 					t.Fatal(err)
 				}
 			case "shutdown":
-				if err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "shutdown", Command: &agentv1.GuestCommand_Shutdown{Shutdown: &agentv1.SessionShutdown{}}}); err != nil {
+				if err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "shutdown", ControlSequence: 5, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "shutdown"}}}); err != nil {
 					t.Fatal(err)
 				}
 			case "failed":
@@ -317,7 +317,7 @@ func TestAgentSessionResumeReceiptCannotClearLaterHold(t *testing.T) {
 				t.Fatal("old or failed resume released hold")
 			}
 			if later == "failed" || later == "runtime_hold" {
-				if err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "new-resume", ControlSequence: 4, Command: &agentv1.GuestCommand_Resume{Resume: &agentv1.SessionResume{}}}); err == nil {
+				if err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "new-resume", ControlSequence: 4, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "run"}}}); err == nil {
 					t.Fatal("resume repaired a process requiring reconstruction")
 				}
 			}
@@ -410,7 +410,7 @@ func TestAgentSessionReconstructionWaitsForPhysicalClose(t *testing.T) {
 
 func TestAgentSessionPendingControlReplayDoesNotDuplicateLocalReceipt(t *testing.T) {
 	session, process := agentSessionFixture(t)
-	command := &agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "hold", ControlSequence: 1, Command: &agentv1.GuestCommand_Suspend{Suspend: &agentv1.SessionSuspend{Reason: "hold"}}}
+	command := &agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "hold", ControlSequence: 1, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "hold"}}}
 	before := len(process.commands)
 	for range 2 {
 		if err := session.send(command); err != nil {
@@ -514,5 +514,35 @@ func TestAgentSessionRequiresToolEnvelopeForSessionOperations(t *testing.T) {
 	for _, method := range []agentv1.Operation_Method{agentv1.Operation_METHOD_START, agentv1.Operation_METHOD_SPAWN, agentv1.Operation_METHOD_ENQUEUE, agentv1.Operation_METHOD_SEND_MESSAGE, agentv1.Operation_METHOD_CONTROL_SESSION, agentv1.Operation_METHOD_WAIT_TURN, agentv1.Operation_METHOD_INSPECT_SESSION, agentv1.Operation_METHOD_LIST_SESSIONS} {
 		envelope, reply := guestOperation(t, session, method.String(), method, `{}`)
 		requireGuestRejected(t, envelope, reply)
+	}
+}
+
+func TestAgentSessionStopUndeliveredTurnKeepsWarmProcess(t *testing.T) {
+	session, process := agentSessionFixture(t)
+	control := &agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "stop-undelivered", ControlSequence: 1, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "run", StopSequence: 1, StopTurnId: proto.String("undelivered"), StopDeadlineUnixNano: time.Now().Add(time.Minute).UnixNano()}}}
+	if err := session.send(control); err != nil {
+		t.Fatal(err)
+	}
+	if session.reconstructRequired || session.activeTurn != "" || len(session.turns) != 0 {
+		t.Fatal("undelivered stop invented execution or required reconstruction")
+	}
+	if len(process.commands) != 2 {
+		t.Fatal("stop was not forwarded to runtime")
+	}
+	if _, _, err := session.receive(&agentv1.ProgramEvent{Identity: session.grant.Identity, Event: &agentv1.ProgramEvent_DeliveryResult{DeliveryResult: &agentv1.DeliveryResult{DeliveryId: control.DeliveryId, Outcome: &agentv1.DeliveryResult_ValueJson{ValueJson: []byte("null")}}}}); err != nil {
+		t.Fatal(err)
+	}
+	guestDispatch(t, session, "successor", 2)
+	if session.activeTurn != "successor" || session.held {
+		t.Fatal("acknowledged absent stop prevented successor")
+	}
+}
+
+func TestAgentSessionStopUnknownTurnCannotIgnoreActiveExecution(t *testing.T) {
+	session, _ := agentSessionFixture(t)
+	guestDispatch(t, session, "active", 1)
+	err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "wrong-stop", ControlSequence: 1, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "run", StopSequence: 1, StopTurnId: proto.String("unknown"), StopDeadlineUnixNano: time.Now().Add(time.Minute).UnixNano()}}})
+	if err == nil || session.turns["active"].closed || session.activeTurn != "active" {
+		t.Fatal("unknown stop was accepted or changed active execution")
 	}
 }

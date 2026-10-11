@@ -12,7 +12,7 @@ import (
 func TestPreparationSpecBindsMountedProgramAndSelectedComputer(t *testing.T) {
 	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
 	specs, err := artifact.BuildComputerPreparationSpecs(output)
-	if err != nil || len(specs) != 1 || specs[0].ComputerDefinitionID != "repo" {
+	if err != nil || len(specs) != 1 || specs[0].TemplateDefinitionID != "repo" {
 		t.Fatalf("specs %v: %v", specs, err)
 	}
 	spec := specs[0]
@@ -25,7 +25,7 @@ func TestPreparationSpecBindsMountedProgramAndSelectedComputer(t *testing.T) {
 			s.Program.Digest = artifacttest.Digest("changed metadata or payload")
 		},
 		"Program length":     func(s *artifact.ComputerPreparationSpec) { s.Program.SizeBytes++ },
-		"Computer selection": func(s *artifact.ComputerPreparationSpec) { s.ComputerDefinitionID = "other" },
+		"Computer selection": func(s *artifact.ComputerPreparationSpec) { s.TemplateDefinitionID = "other" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := spec
@@ -53,9 +53,9 @@ func TestPreparationSpecBindsMountedProgramAndSelectedComputer(t *testing.T) {
 		t.Fatalf("round trip identity %q: %v", got, err)
 	}
 	for _, invalid := range [][]byte{
-		bytes.Replace(raw, []byte(`"computerDefinitionId":"repo"`), []byte(`"computerDefinitionId":"repo","computerDefinitionId":"other"`), 1),
+		bytes.Replace(raw, []byte(`"templateDefinitionId":"repo"`), []byte(`"templateDefinitionId":"repo","templateDefinitionId":"other"`), 1),
 		append([]byte(`{"extra":true,`), raw[1:]...),
-		bytes.Replace(raw, []byte(`"computerDefinitionId":"repo",`), nil, 1),
+		bytes.Replace(raw, []byte(`,"templateDefinitionId":"repo"`), nil, 1),
 	} {
 		if _, err := artifact.ParseComputerPreparationSpec(invalid); err == nil {
 			t.Fatalf("accepted %s", invalid)

@@ -77,7 +77,7 @@ export const repo={kind:'computer',id:'repo',async prepare(build){
 			if mode == "large secret" {
 				secretValue = strings.Repeat("A", 80<<10)
 			}
-			request.Start = &computerv0.PreparationStart{LogLimits: &computerv0.PreparationLogLimits{ChunkBytes: 1024, BufferBytes: 2048, BufferRecords: 4}, ComputerDefinitionId: "repo", Secrets: []*computerv0.ComputerSecretDelivery{{PlacementKind: "env", PlacementTarget: "BUILD_TOKEN", Value: []byte(secretValue)}, {PlacementKind: "env", PlacementTarget: "MODE", Value: []byte(mode)}, {PlacementKind: "file", PlacementTarget: "/etc/helmr-preparation-token", Value: []byte(secretValue)}}}
+			request.Start = &computerv0.PreparationStart{LogLimits: &computerv0.PreparationLogLimits{ChunkBytes: 1024, BufferBytes: 2048, BufferRecords: 4}, TemplateDefinitionId: "repo", Secrets: []*computerv0.ComputerSecretDelivery{{PlacementKind: "env", PlacementTarget: "BUILD_TOKEN", Value: []byte(secretValue)}, {PlacementKind: "env", PlacementTarget: "MODE", Value: []byte(mode)}, {PlacementKind: "file", PlacementTarget: "/etc/helmr-preparation-token", Value: []byte(secretValue)}}}
 			if _, err := registry.controlPreparation(t.Context(), request, (*computerMountEntry).executePreparation); err != nil {
 				t.Fatal(err)
 			}

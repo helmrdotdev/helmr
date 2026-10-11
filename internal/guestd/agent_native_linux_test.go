@@ -127,7 +127,7 @@ func TestAgentNativeComputerContinuation(t *testing.T) {
 	// both native continuations resident, with one explicitly held, while making
 	// the bundle unavailable to any fresh Session process.
 	held := peers[0].relay.session
-	if err := held.send(&agentv1.GuestCommand{Identity: peers[0].identity, DeliveryId: "command-hold", ControlSequence: 10, Command: &agentv1.GuestCommand_Suspend{Suspend: &agentv1.SessionSuspend{Reason: "hold"}}}); err != nil {
+	if err := held.send(&agentv1.GuestCommand{Identity: peers[0].identity, DeliveryId: "command-hold", ControlSequence: 10, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "hold"}}}); err != nil {
 		t.Fatal(err)
 	}
 	func() {
@@ -191,7 +191,7 @@ func TestAgentNativeComputerContinuation(t *testing.T) {
 	}()
 	// Only this explicit control releases the hold. Both native clients must
 	// continue the same setup result and process after the independent command.
-	if err := held.send(&agentv1.GuestCommand{Identity: peers[0].identity, DeliveryId: "command-resume", ControlSequence: 11, Command: &agentv1.GuestCommand_Resume{Resume: &agentv1.SessionResume{}}}); err != nil {
+	if err := held.send(&agentv1.GuestCommand{Identity: peers[0].identity, DeliveryId: "command-resume", ControlSequence: 11, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "run"}}}); err != nil {
 		t.Fatal(err)
 	}
 	waitAgentRelay(t, peers[0].relay, func() bool { held.mu.Lock(); defer held.mu.Unlock(); return !held.held && held.pendingResume == "" })

@@ -568,7 +568,7 @@ func writeDeployTestBundle(t *testing.T) (string, []byte, string, string) {
 	seed := []byte("computer seed")
 	seedDigest := sha256sum.DigestBytes(seed)
 	for i := range metadata.Definitions {
-		if computer := metadata.Definitions[i].Computer; computer != nil {
+		if computer := metadata.Definitions[i].Template; computer != nil {
 			computer.Seed.ArtifactDigest = seedDigest
 		}
 	}

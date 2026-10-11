@@ -11,7 +11,7 @@ func TestProgramMetadataCloneOwnsNestedValues(t *testing.T) {
 	a := index.Definitions[0].Agent
 	a.MaxTurnDurationMs = new(int64(100))
 	a.CloseAfterIdleMs = new(int64(200))
-	c := index.Definitions[2].Computer
+	c := index.Definitions[2].Template
 	c.Resources.DiskMiB = new(int64(500))
 	c.Refresh = &definition.ComputerRefresh{EveryMs: 1000, MaxAgeMs: new(int64(2000))}
 	c.Seed.Config.Env = []string{"KEY=value"}
@@ -25,7 +25,7 @@ func TestProgramMetadataCloneOwnsNestedValues(t *testing.T) {
 	*clone.Definitions[0].Agent.CloseAfterIdleMs = 201
 	clone.Definitions[0].Agent.Triggers["daily"].Input[0] = 'x'
 	clone.Definitions[0].Agent.Triggers["new"] = definition.CronTrigger{}
-	cc := clone.Definitions[2].Computer
+	cc := clone.Definitions[2].Template
 	*cc.Resources.DiskMiB = 501
 	cc.Refresh.EveryMs = 1001
 	*cc.Refresh.MaxAgeMs = 2001

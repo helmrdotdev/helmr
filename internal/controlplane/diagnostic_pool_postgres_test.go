@@ -148,7 +148,7 @@ func TestDiagnosticAuthenticationLockPreservesAdmission(t *testing.T) {
 			t.Fatal("diagnostic authentication did not reach held credential")
 		}
 	}
-	admission, err := agent.Enqueue(ctx, lifecycle, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "auth-contention", Input: json.RawMessage(`[{"type":"text","text":"{\"work\":1}"}]`)})
+	admission, err := agent.Enqueue(ctx, lifecycle, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "auth-contention", Input: json.RawMessage(`[{"type":"text","text":"{\"work\":1}"}]`)})
 	if err != nil || admission.TurnID == uuid.Nil() {
 		t.Fatalf("ordinary admission blocked by diagnostic authentication: %+v %v", admission, err)
 	}

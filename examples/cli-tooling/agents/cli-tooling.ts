@@ -1,4 +1,4 @@
-import { agent, computer, image, source } from "@helmr/sdk"
+import { agent, template, image, source } from "@helmr/sdk"
 import { spawn } from "node:child_process"
 import { writeFile } from "node:fs/promises"
 import { z } from "zod"
@@ -19,7 +19,7 @@ const base = image("cli-tooling")
   .run(["bun", "install"])
   .workdir("/sandbox")
 
-export const cliToolingComputer = computer({
+export const cliToolingComputer = template({
   id: "cli-tooling",
   image: base,
   resources: { cpu: 1, memory: "1GiB" },
@@ -30,7 +30,7 @@ const payload = z.object({
 })
 
 export const cliTooling = agent({
-  computer: cliToolingComputer,
+  template: cliToolingComputer,
   id: "cli-tooling",
   maxTurnDuration: "5m",
   async turn(turn) {

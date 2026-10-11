@@ -2,6 +2,7 @@ package deployment
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -96,8 +97,10 @@ func GetCurrent(ctx context.Context, q db.DBTX, principal auth.Principal, scope 
 }
 
 type DefinitionRecord struct {
-	ID      string
-	AgentID *uuid.UUID
+	ID         string
+	AgentID    *uuid.UUID
+	TemplateID *string
+	Resources  json.RawMessage
 }
 
 type DefinitionPage struct {
@@ -109,9 +112,9 @@ type DefinitionPage struct {
 func definitionQuery(kind definition.Kind) (string, error) {
 	switch kind {
 	case definition.KindAgent:
-		return "SELECT definition_key, agent_id FROM agent_definitions", nil
-	case definition.KindComputer:
-		return "SELECT definition_key, NULL::uuid FROM computer_definitions", nil
+		return "SELECT key, agent_id, template_key, NULL::jsonb FROM (SELECT d.environment_id,d.deployment_id,d.agent_id,a.key,t.key AS template_key FROM agent_definitions d JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id)) definitions", nil
+	case definition.KindTemplate:
+		return "SELECT key, NULL::uuid, NULL::text, resources FROM (SELECT d.environment_id,d.deployment_id,t.key,d.resources FROM template_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id)) definitions", nil
 	default:
 		return "", invalidInput(fmt.Errorf("unsupported definition kind %q", kind))
 	}
@@ -142,7 +145,7 @@ func ListDefinitions(ctx context.Context, q db.DBTX, principal auth.Principal, s
 	if err != nil {
 		return DefinitionPage{}, err
 	}
-	rows, err := q.Query(ctx, query+` WHERE environment_id=$1 AND deployment_id=$2 AND ($3::text IS NULL OR definition_key>$3) ORDER BY definition_key LIMIT $4`, r.EnvironmentID, r.ID, after, limit+1)
+	rows, err := q.Query(ctx, query+` WHERE environment_id=$1 AND deployment_id=$2 AND ($3::text IS NULL OR key>$3) ORDER BY key LIMIT $4`, r.EnvironmentID, r.ID, after, limit+1)
 	if err != nil {
 		return DefinitionPage{}, err
 	}
@@ -150,7 +153,7 @@ func ListDefinitions(ctx context.Context, q db.DBTX, principal auth.Principal, s
 	page := DefinitionPage{DeploymentID: r.ID, Items: []DefinitionRecord{}}
 	for rows.Next() {
 		var item DefinitionRecord
-		if err := rows.Scan(&item.ID, &item.AgentID); err != nil {
+		if err := rows.Scan(&item.ID, &item.AgentID, &item.TemplateID, &item.Resources); err != nil {
 			return DefinitionPage{}, err
 		}
 		page.Items = append(page.Items, item)
@@ -174,7 +177,7 @@ func GetDefinition(ctx context.Context, q db.DBTX, principal auth.Principal, sco
 		return uuid.Nil(), DefinitionRecord{}, err
 	}
 	var found DefinitionRecord
-	err = q.QueryRow(ctx, query+` WHERE environment_id=$1 AND deployment_id=$2 AND definition_key=$3`, r.EnvironmentID, r.ID, id).Scan(&found.ID, &found.AgentID)
+	err = q.QueryRow(ctx, query+` WHERE environment_id=$1 AND deployment_id=$2 AND key=$3`, r.EnvironmentID, r.ID, id).Scan(&found.ID, &found.AgentID, &found.TemplateID, &found.Resources)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrDefinitionNotFound
 	}

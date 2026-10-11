@@ -26,13 +26,13 @@ func assertDefinitionCLIHTTP(t *testing.T, serverURL, key, deployment string) {
 	if err != nil || item.ID != "agent" || item.DeploymentID != deployment {
 		t.Fatalf("Go definition=%+v err=%v", item, err)
 	}
-	computers, err := cp.ListComputerDefinitions(t.Context(), client.DefinitionListOptions{DeploymentID: deployment})
-	if err != nil || len(computers.ComputerDefinitions) != 1 {
-		t.Fatalf("Go Computer definitions=%+v err=%v", computers, err)
+	computers, err := cp.ListTemplateDefinitions(t.Context(), client.DefinitionListOptions{DeploymentID: deployment})
+	if err != nil || len(computers.TemplateDefinitions) != 1 {
+		t.Fatalf("Go Template definitions=%+v err=%v", computers, err)
 	}
-	computer, err := cp.GetComputerDefinition(t.Context(), "fixture-computer", client.DefinitionGetOptions{DeploymentID: deployment})
+	computer, err := cp.GetTemplateDefinition(t.Context(), "fixture-computer", client.DefinitionGetOptions{DeploymentID: deployment})
 	if err != nil || computer.ID != "fixture-computer" {
-		t.Fatalf("Go Computer definition=%+v err=%v", computer, err)
+		t.Fatalf("Go Template definition=%+v err=%v", computer, err)
 	}
 	run := newAgentTestCLI(t, serverURL, key)
 	if err := json.Unmarshal(run("agent", "definition", "list", "--limit", "1", "--deployment", deployment, "--json"), &page); err != nil || page.NextCursor == "" {
@@ -41,11 +41,11 @@ func assertDefinitionCLIHTTP(t *testing.T, serverURL, key, deployment string) {
 	if err := json.Unmarshal(run("agent", "definition", "get", "agent", "--deployment", deployment, "--json"), &item); err != nil || item.DeploymentID != deployment {
 		t.Fatalf("CLI definition=%+v err=%v", item, err)
 	}
-	if err := json.Unmarshal(run("computer", "definition", "list", "--deployment", deployment, "--json"), &computers); err != nil || len(computers.ComputerDefinitions) != 1 {
+	if err := json.Unmarshal(run("template", "definition", "list", "--deployment", deployment, "--json"), &computers); err != nil || len(computers.TemplateDefinitions) != 1 {
 		t.Fatalf("CLI Computer catalog=%+v err=%v", computers, err)
 	}
-	if err := json.Unmarshal(run("computer", "definition", "get", "fixture-computer", "--deployment", deployment, "--json"), &computer); err != nil || computer.ID != "fixture-computer" {
-		t.Fatalf("CLI Computer definition=%+v err=%v", computer, err)
+	if err := json.Unmarshal(run("template", "definition", "get", "fixture-computer", "--deployment", deployment, "--json"), &computer); err != nil || computer.ID != "fixture-computer" {
+		t.Fatalf("CLI Template definition=%+v err=%v", computer, err)
 	}
 }
 

@@ -51,7 +51,7 @@ func TestWorkerAgentSavePublicationThroughHTTP(t *testing.T) {
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	execution := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
-	a, err := agent.Enqueue(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "save-http", Input: json.RawMessage(`[]`)})
+	a, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "save-http", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}

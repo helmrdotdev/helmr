@@ -25,7 +25,7 @@ func lockAdmissionEnvironment(ctx context.Context, tx pgx.Tx, env uuid.UUID) (ad
 	return p, err
 }
 
-// One token belongs to each newly admitted Turn, including a keyed continuation.
+// Creation (with or without input) and later Turn admission share one token bucket.
 // Historical receipts consume none. The enclosing transaction owns rollback of
 // tokens, reservations and work; server time never moves the refill point back.
 func consumeAdmission(ctx context.Context, tx pgx.Tx, env uuid.UUID, p admissionEnvironment) error {
@@ -37,6 +37,13 @@ func consumeAdmission(ctx context.Context, tx pgx.Tx, env uuid.UUID, p admission
 		return err
 	}
 	if outstanding >= p.maxOutstanding {
+		return ErrNotReady
+	}
+	return consumeAdmissionToken(ctx, tx, env, p)
+}
+
+func consumeAdmissionToken(ctx context.Context, tx pgx.Tx, env uuid.UUID, p admissionEnvironment) error {
+	if !p.configured {
 		return ErrNotReady
 	}
 	var id uuid.UUID

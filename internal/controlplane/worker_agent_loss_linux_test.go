@@ -458,13 +458,13 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 	if _, err := apiClient.PromoteDeployment(ctx, deployment.ID, client.EnvironmentScopeOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	started, err := apiClient.StartAgent(ctx, "peer", api.StartAgentRequest{Input: json.RawMessage(`[{"type":"text","text":"hold"}]`), IdempotencyKey: "loss-original"}, client.EnvironmentScopeOptions{})
+	started, err := apiClient.CreateSession(ctx, api.CreateSessionRequest{Agent: "peer", Input: json.RawMessage(`[{"type":"text","text":"hold"}]`), IdempotencyKey: "loss-original"}, client.EnvironmentScopeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof["sessionId"], proof["turnId"] = started.SessionID, started.TurnID
+	proof["sessionId"], proof["turnId"] = started.SessionID, started.Turn.TurnID
 	gate.mu.Lock()
-	gate.turn = started.TurnID
+	gate.turn = started.Turn.TurnID
 	gate.mu.Unlock()
 	var output api.AgentSessionEvent
 	err = awaitLossCondition(ctx, func() (bool, error) {
@@ -478,7 +478,7 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 			return false, err
 		}
 		for _, event := range page.Records {
-			if event.TurnID != nil && *event.TurnID == started.TurnID && event.Kind == "turn.output" {
+			if event.TurnID != nil && *event.TurnID == started.Turn.TurnID && event.Kind == "turn.output" {
 				output = event
 				return true, nil
 			}
@@ -489,7 +489,7 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 		t.Fatal("authored output before loss", err)
 	}
 	proof["publicOutputBeforeLoss"] = output
-	if _, err := apiClient.SendSessionMessage(ctx, started.SessionID, started.TurnID, api.SessionDataRequest{Data: json.RawMessage(`"release"`), IdempotencyKey: "loss-release"}, client.EnvironmentScopeOptions{}); err != nil {
+	if _, err := apiClient.SendSessionMessage(ctx, started.SessionID, started.Turn.TurnID, api.SessionDataRequest{Data: json.RawMessage(`"release"`), IdempotencyKey: "loss-release"}, client.EnvironmentScopeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	var publication lossPublication
@@ -710,7 +710,7 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 	if err != nil || !unchanged {
 		t.Fatalf("lost process was replayed or its outcome changed: %t %v", unchanged, err)
 	}
-	publicTurn, err := apiClient.RetrieveSessionTurn(ctx, started.SessionID, started.TurnID, client.EnvironmentScopeOptions{})
+	publicTurn, err := apiClient.RetrieveSessionTurn(ctx, started.SessionID, started.Turn.TurnID, client.EnvironmentScopeOptions{})
 	if err != nil || publicTurn.Status != wantTurn {
 		t.Fatalf("public loss outcome differs: %s %v", publicTurn.Status, err)
 	}
@@ -729,7 +729,7 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 	if err := retireNativeExecution(ctx, database.Pool, apiClient, env); err != nil {
 		t.Fatal("retire lost Computer", err)
 	}
-	reuse, err := apiClient.StartAgent(ctx, "peer", api.StartAgentRequest{Input: json.RawMessage(`[{"type":"text","text":"reuse"}]`), IdempotencyKey: "loss-reuse"}, client.EnvironmentScopeOptions{})
+	reuse, err := apiClient.CreateSession(ctx, api.CreateSessionRequest{Agent: "peer", Input: json.RawMessage(`[{"type":"text","text":"reuse"}]`), IdempotencyKey: "loss-reuse"}, client.EnvironmentScopeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -742,7 +742,7 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 		var complete bool
 		err := database.Pool.QueryRow(ctx, `SELECT t.status='completed' AND s.status='published' AND s.root_id IS NOT NULL
  FROM turns t LEFT JOIN computer_saves s ON (s.environment_id,s.id)=(t.environment_id,t.completion_save_id)
- WHERE t.environment_id=$1 AND t.id=$2`, env, reuse.TurnID).Scan(&complete)
+ WHERE t.environment_id=$1 AND t.id=$2`, env, reuse.Turn.TurnID).Scan(&complete)
 		return complete, err
 	})
 	if err != nil {
@@ -750,7 +750,7 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 	}
 	var reuseSave workerapi.AgentSave
 	reuseSave.EnvironmentID = env.String()
-	err = database.Pool.QueryRow(ctx, `SELECT s.id::text,s.computer_lease_epoch FROM turns t JOIN computer_saves s ON (s.environment_id,s.id)=(t.environment_id,t.completion_save_id) WHERE t.environment_id=$1 AND t.id=$2`, env, reuse.TurnID).Scan(&reuseSave.SaveID, &reuseSave.LeaseEpoch)
+	err = database.Pool.QueryRow(ctx, `SELECT s.id::text,s.computer_lease_epoch FROM turns t JOIN computer_saves s ON (s.environment_id,s.id)=(t.environment_id,t.completion_save_id) WHERE t.environment_id=$1 AND t.id=$2`, env, reuse.Turn.TurnID).Scan(&reuseSave.SaveID, &reuseSave.LeaseEpoch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -776,7 +776,7 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 		proof["reusedNetworkIndex"] = *network.AllocationIndex
 	}
 	proof["reusedDevice"] = reused.Device
-	proof["reuseTurnId"] = reuse.TurnID
+	proof["reuseTurnId"] = reuse.Turn.TurnID
 	if published {
 		if err := retireNativeExecution(ctx, database.Pool, apiClient, env); err != nil {
 			t.Fatal(err)
@@ -1097,7 +1097,7 @@ func lossArenaFiles(root, device string) (map[string]string, error) {
 	return files, err
 }
 
-func lossDatabaseState(ctx context.Context, pool *pgxpool.Pool, env uuid.UUID, turn api.StartAgentResponse, save string) (json.RawMessage, error) {
+func lossDatabaseState(ctx context.Context, pool *pgxpool.Pool, env uuid.UUID, turn api.CreateSessionResponse, save string) (json.RawMessage, error) {
 	var state json.RawMessage
 	err := pool.QueryRow(ctx, `SELECT jsonb_build_object('saveId',s.id,'saveStatus',s.status,'rootId',s.root_id,
  'capturedRoot',encode(s.captured_root_digest,'hex'),'captureEvidence',s.capture_evidence,'publicationEvidence',s.publication_evidence,

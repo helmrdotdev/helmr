@@ -1,4 +1,4 @@
-import { agent, computer, image, source } from "@helmr/sdk"
+import { agent, template, image, source } from "@helmr/sdk"
 
 const base = image("agent-secrets")
   .from("node:24-bookworm-slim")
@@ -9,7 +9,7 @@ const base = image("agent-secrets")
   .run(["bun", "install"])
   .workdir("/sandbox")
 
-export const taskSecretsComputer = computer({
+export const taskSecretsComputer = template({
   id: "agent-secrets",
   image: base,
   resources: { cpu: 1, memory: "1GiB" },
@@ -18,7 +18,7 @@ export const taskSecretsComputer = computer({
 })
 
 export const useSecret = agent({
-  computer: taskSecretsComputer,
+  template: taskSecretsComputer,
   id: "use-secret",
   maxTurnDuration: "5m",
   async turn() {

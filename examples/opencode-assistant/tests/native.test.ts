@@ -72,7 +72,7 @@ for (const scenario of ["question", "permission", "deny", "large-edit", "project
       hold: async () => { holds++ },
     }
     const runtime = new SessionRuntime({
-      kind: "agent", id: "fixture", computer: undefined!,
+      kind: "agent", id: "fixture", template: undefined!,
       init: async () => {
         harness = await OpenCodeHarness.open(cwd, "same-session", {
           model: "fixture/fixture", small_model: "fixture/fixture", enabled_providers: ["fixture"],

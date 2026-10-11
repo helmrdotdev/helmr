@@ -5,7 +5,7 @@ import { NativeContinuationLost } from "../../../runtime/typescript/src/agent-na
 import { localNativeRuntime } from "./native-runtime"
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { SessionRuntime, type SessionDriver } from "../../../runtime/typescript/src/agent-session"
@@ -13,11 +13,13 @@ import { CodexHarness } from "../agents/issue-fixer/codex-harness"
 import { conversation } from "../agents/issue-fixer/conversation"
 import { codexModel } from "./native-model"
 
-for (const scenario of ["answer", "malformed", "handler-failure", "stopped-process"]) test(`Codex warm Session: ${scenario}`, { timeout: 30_000 }, async () => {
+for (const scenario of ["answer", "malformed", "handler-failure", "stopped-process", "background-exec", "interrupt"]) test(`Codex warm Session: ${scenario}`, { timeout: 30_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "helmr-native-session-"))
   const requests: any[] = []
   const responses: { turnId: string; value: unknown }[] = []
-  const http = codexModel(requests, false)
+  const http = codexModel(requests, false, false, scenario === "background-exec" ? (_body,index) => index === 1
+    ? { type:"function_call",id:"fc_exec",call_id:"call_exec",name:"exec_command",arguments:JSON.stringify({cmd:"sh -c 'echo $$ > owned-command.pid; exec sleep 60'",yield_time_ms:100}) }
+    : index === 2 ? { type:"function_call",id:"fc_question",call_id:"call_question",name:"request_user_input",arguments:JSON.stringify({questions:[{id:"choice",header:"Choice",question:"Continue?",options:[{label:"A",description:"First"},{label:"B",description:"Second"}]}]}) } : undefined : undefined)
   const cancel = new AbortController()
   let native: ReturnType<typeof localNativeRuntime> | undefined
   let questionReached!: () => void
@@ -39,12 +41,12 @@ for (const scenario of ["answer", "malformed", "handler-failure", "stopped-proce
           questionReached()
           return { answer: new Promise<AskResponse>(() => {}), withdraw: async () => {} }
         }
-        if (scenario === "stopped-process") {
-          process.kill(harness!.processId!, "SIGSTOP")
-          runtime.interrupt("first", new Error("Fixture interruption"))
+        if ((scenario === "stopped-process" || scenario === "background-exec" || scenario === "interrupt") && turnId === "first") {
+          if (scenario === "stopped-process") process.kill(harness!.processId!, "SIGSTOP")
+          void runtime.interrupt("first", new Error("Fixture interruption")).catch(() => {})
           return { answer: new Promise<AskResponse>(() => {}), withdraw: async () => {} }
         }
-        await assert.rejects(runtime.deliverMessage(turnId, "bad-steer", { text: "" } as never), /Content must be an array/)
+        await assert.rejects(runtime.deliverMessage(turnId, "bad-steer", { text: "" } as never, { kind: "user" }), /Content must be an array/)
         return { answer: Promise.resolve<AskResponse>({ answer: scenario === "malformed" ? { wrong: ["A"] } : { selected: [{ id: "option-1", value: "A" }] }, respondedBy: { kind: "user", id: "fixture" } }), withdraw: async () => {} }
       },
       output: async () => ({ sequence: ++outputs }),
@@ -59,7 +61,7 @@ for (const scenario of ["answer", "malformed", "handler-failure", "stopped-proce
       hold: async () => { holds++ },
     }
     const runtime = new SessionRuntime({
-      kind: "agent", id: "native-probe", computer: undefined!,
+      kind: "agent", id: "native-probe", template: undefined!,
       init: async () => { setups++; harness = await CodexHarness.open(directory, "same-session", { PATH: process.env.PATH, HOME: directory }); return harness },
       turn: async (turn, context) => {
         const running = (context.initResult as CodexHarness).run(turn, turn.input.map(part => part.text).join(""))
@@ -80,8 +82,13 @@ for (const scenario of ["answer", "malformed", "handler-failure", "stopped-proce
       return
     }
     const first = await firstPending
+    if (scenario === "background-exec") {
+      const commandPid = Number((await readFile(join(directory,"owned-command.pid"),"utf8")).trim())
+      assert.ok(Number.isSafeInteger(commandPid) && commandPid>0)
+      assert.throws(() => process.kill(commandPid,0))
+    }
     const processId = harness!.processId
-    assert.equal(first.status, ["handler-failure", "malformed"].includes(scenario) ? "failed" : "completed")
+    assert.equal(first.status, (scenario === "interrupt" || scenario === "background-exec") ? "interrupted" : ["handler-failure", "malformed"].includes(scenario) ? "failed" : "completed")
     assert.equal(runtime.idle, true)
     assert.ok(processId !== undefined && processId > 0)
     const second = await runtime.dispatch({ id: "second", sequence: 2, createdAt: "2026-10-04T00:00:01Z", input: [{type:"text",text:"second unique input"}], source: { kind: "api" } })
@@ -102,6 +109,7 @@ for (const scenario of ["answer", "malformed", "handler-failure", "stopped-proce
     native?.uninstall()
     http.closeAllConnections()
     await new Promise<void>(resolve => http.close(() => resolve()))
-    await rm(directory, { recursive: true, force: true })
+    // Native plugin-cache helpers can finish filesystem cleanup after app-server exit.
+    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
   }
 })

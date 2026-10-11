@@ -4,12 +4,18 @@ import type { JsonValue } from "../../../../sdk/typescript/src/contract";
 import { postJson, request } from "./api";
 
 export type SessionStatus = "open" | "closing" | "closed" | "cancelled";
+export type ProcessStop = { process_epoch: number; turn_id: string | null; state: "requested" | "stopping" | "stopped"; deadline: string };
 export type Session = {
+  agent_definition_id: string;
+  template_definition_id: string;
+  activity: {
+    process: { epoch: number; status: string; applied: boolean; reconstruction_required: boolean; stop: ProcessStop | null } | null;
+  };
   slack_channel_id?: string | null;
   id: string;
   agent_id: string;
   deployment_id: string;
-  computer_id: string;
+  computer_id: string | null;
   root_session_id: string;
   parent_session_id: string | null;
   requester_session_id: string | null;
@@ -26,6 +32,7 @@ export type Session = {
   }[];
 };
 export type SessionTurn = {
+  stop?: ProcessStop;
   id: string;
   session_id: string;
   sequence: number;
@@ -88,6 +95,7 @@ export type ListSessionsResponse = {
 export async function listSessions(options: {
   projectID: string;
   environmentID: string;
+  agentID?: string | undefined;
   statuses?: SessionStatus[] | undefined;
   cursor?: string | undefined;
   limit?: number | undefined;
@@ -96,6 +104,7 @@ export async function listSessions(options: {
     throw new Error("Session project and environment are required");
   }
   const params = new URLSearchParams();
+  if (options.agentID) params.set("agent_id", options.agentID);
   for (const status of options.statuses ?? []) params.append("status", status);
   if (options.cursor) params.set("cursor", options.cursor);
   if (options.limit !== undefined) params.set("limit", String(options.limit));
@@ -214,4 +223,8 @@ export function messageDeliveryNotice(event: SessionEvent): string | undefined {
  return "delivery" in event.data && event.data["delivery"] === "uncertain"
   ? "Message delivery uncertain. Check the conversation before sending it again."
   : "Message not delivered. Send a new message when the Agent is available.";
+}
+
+export function interruptTurn(address: SessionAddress, turnID: string, input: { idempotency_key: string }): Promise<SessionReceipt> {
+  return postJson(`${sessionAPIPath(address)}/turns/${encodeURIComponent(turnID)}/interrupt`, input);
 }

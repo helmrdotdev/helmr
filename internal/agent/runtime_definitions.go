@@ -61,7 +61,7 @@ func RuntimeListAgents(ctx context.Context, pool db.TxBeginner, caller Caller, o
 		if expected != uuid.Nil() && expected != *selected {
 			return ErrInvalidInput
 		}
-		rows, err := tx.Query(ctx, `SELECT definition_key FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2 AND definition_key>$3 ORDER BY definition_key LIMIT 51`, caller.Execution.EnvironmentID, *selected, after)
+		rows, err := tx.Query(ctx, `SELECT a.key FROM agent_definitions d JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND a.key>$3 ORDER BY a.key LIMIT 51`, caller.Execution.EnvironmentID, *selected, after)
 		if err != nil {
 			return err
 		}

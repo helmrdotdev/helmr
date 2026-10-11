@@ -126,7 +126,7 @@ func (o *PreparationAllocationOwner) Run(ctx context.Context) (resultErr error) 
 	if err != nil {
 		return err
 	}
-	if start.SeedObject.Digest != start.Seed.ArtifactDigest || start.Seed.Profile != definition.ComputerSeedProfile || start.SeedObject.MediaType != definition.ComputerSeedMediaType || !definition.ValidDeclaredID(start.ComputerDefinitionID) {
+	if start.SeedObject.Digest != start.Seed.ArtifactDigest || start.Seed.Profile != definition.ComputerSeedProfile || start.SeedObject.MediaType != definition.ComputerSeedMediaType || !definition.ValidDeclaredID(start.TemplateDefinitionID) {
 		return errors.New("preparation seed or definition is invalid")
 	}
 	if err := (disk.SeedArtifact{Object: computerObject(start.SeedObject), LogicalBytes: disk.SeedCapacity}).Validate(disk.SeedCapacity); err != nil {

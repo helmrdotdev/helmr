@@ -5,18 +5,19 @@ description: Define the Computer an Agent runs in, its one-time initialization a
 
 # Agents
 
-An Agent is a deployed definition. It names the [Computer](/docs/concepts/computers)
-recipe its Sessions run in, an optional `init` function that runs once per
+An Agent is a stable resource identified by its ID within an Environment. Its
+Deployment-specific definition names the [Template](/docs/concepts/computers)
+used to create the Computer its Sessions run in, an optional `init` function that runs once per
 Session process and a `turn` handler that Helmr calls once for each admitted
 input. The same definition serves a one-off request or a long conversation.
 
-Export Agents and Computers from files in your project's `agents` directory.
+Export Agent and Template definitions from files in your project's `agents` directory.
 `helmr build` and `helmr deploy` index every exported definition.
 
 ```ts
-import { agent, computer, image } from "@helmr/sdk"
+import { agent, template, image } from "@helmr/sdk"
 
-export const reviewerComputer = computer({
+export const reviewerComputer = template({
   id: "reviewer",
   image: image("reviewer").from("node:24-bookworm-slim").workdir("/app"),
   resources: { cpu: 1, memory: "1GiB" },
@@ -24,7 +25,7 @@ export const reviewerComputer = computer({
 
 export const reviewer = agent({
   id: "reviewer",
-  computer: reviewerComputer,
+  template: reviewerComputer,
   maxTurnDuration: "30m",
   closeAfterIdle: "1d",
   async init(ctx) {
@@ -39,8 +40,8 @@ export const reviewer = agent({
 })
 ```
 
-`id`, `computer` and `turn` are required. The Agent `id` is the name you pass
-to `helmr agent start` and `client.agents.start`.
+`id`, `template` and `turn` are required. The Agent `id` is the name you pass
+to `helmr session create` and `client.sessions.create`.
 
 ## `init` and `initResult`
 
@@ -83,11 +84,11 @@ Validate application-specific input in the handler.
 | Option | Effect |
 | --- | --- |
 | `closeAfterIdle` | Closes a Session after it has been idle this long. Default 7 days. A positive duration (`"30m"`, `"1d"`, or milliseconds) or `"never"`. |
-| `maxTurnDuration` | Limits each Turn's elapsed time, including human waits and finalization. No default. |
+| `maxTurnDuration` | Limits running work, including human waits, until the result is durably recorded. Save finalization has its own recovery lifecycle. No default. |
 
 A Session is idle only when it has no queued or running Turns, pending
 questions, in-flight messages, holds, open child Sessions or unfinished disk
-saves. A start request can set its own `closeAfterIdle` for a new Session.
+saves. A Session creation request can set its own `closeAfterIdle` for a new Session.
 Closing on idle uses the normal [close](/docs/concepts/sessions#controls)
 lifecycle.
 
@@ -102,10 +103,10 @@ it in `init` and drive it from `turn`. This example runs OpenCode and keeps one
 OpenCode conversation for the whole Session:
 
 ```ts
-import { agent, computer, image } from "@helmr/sdk"
+import { agent, template, image } from "@helmr/sdk"
 import { createOpencode } from "@opencode-ai/sdk/v2"
 
-export const coderComputer = computer({
+export const coderComputer = template({
   id: "coder",
   image: image("coder")
     .from("node:24-bookworm-slim")
@@ -117,7 +118,7 @@ export const coderComputer = computer({
 
 export const coder = agent({
   id: "coder",
-  computer: coderComputer,
+  template: coderComputer,
   maxTurnDuration: "15m",
   async init(ctx) {
     const { client } = await createOpencode({ signal: ctx.signal })
@@ -160,3 +161,21 @@ tools. Obtain the connection with `createRuntimeMcpConnection` from
 - [Sessions](/docs/concepts/sessions) and [Turns](/docs/concepts/turns)
 - [Questions](/docs/concepts/questions)
 - [Agent reference](/docs/reference/sdk/agent)
+
+## Deployment definitions and existing work
+
+Each Deployment contains immutable Agent and Template definitions. The current
+Deployment determines which definitions are available for new Sessions and
+Computers. Inspect a specific Deployment to read its definitions, including ones
+that are absent from the current Deployment.
+
+Promoting a Deployment changes this selection for new work. Existing Sessions
+keep their pinned Agent definition and continue on their current Computer;
+existing Computers keep their original Template definition. Promotion does not
+restart or upgrade either resource. An Agent can remain visible in the resource
+catalog while having no definition in the current Deployment; it cannot create a
+new Session until a Deployment containing that definition is promoted.
+
+Read access to definitions and history does not grant permission to create or
+control work. The Console exposes creation and management actions only when the
+selected definition is available and the caller has the required permission.

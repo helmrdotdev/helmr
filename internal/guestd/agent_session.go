@@ -180,7 +180,7 @@ func (session *agentSession) admitCommandLocked(command *agentv1.GuestCommand) (
 		// Do not create another local receipt for the same admitted delivery.
 		return false, nil
 	}
-	control := command.GetSuspend() != nil || command.GetInterrupt() != nil || command.GetResume() != nil
+	control := command.GetControl() != nil
 	if control && command.GetControlSequence() <= 0 {
 		return false, errors.New("control sequence is required")
 	}
@@ -214,22 +214,48 @@ func (session *agentSession) admitCommandLocked(command *agentv1.GuestCommand) (
 		if turn == nil || !turn.settled || turn.sequence != payload.Acknowledged.GetSequence() || payload.Acknowledged.GetTurnId() == session.activeTurn {
 			return false, errors.New("active Turn cannot be retired")
 		}
-	case *agentv1.GuestCommand_Suspend, *agentv1.GuestCommand_Interrupt:
-		if !staleControl {
-			session.holdLocked()
+	case *agentv1.GuestCommand_Control:
+		envelope := payload.Control
+		if envelope.GetDesired() != "run" && envelope.GetDesired() != "hold" && envelope.GetDesired() != "shutdown" {
+			return false, errors.New("invalid desired Session state")
 		}
-	case *agentv1.GuestCommand_Resume:
-		if session.reconstructRequired {
-			return false, errSessionReconstructionRequired
+		if staleControl {
+			break
 		}
-		if !staleControl {
+		if envelope.GetStopDeadlineUnixNano() != 0 {
+			if envelope.GetStopSequence() <= 0 {
+				return false, errors.New("invalid stop identity")
+			}
+			target := envelope.GetStopTurnId()
+			if target != "" {
+				turn := session.turns[target]
+				if turn == nil {
+					// A committed dispatch may have lost its host reply before any
+					// guest delivery. Host query/write ordering and attachment fencing
+					// prevent a late dispatch after this no-op stop acknowledgment.
+					if session.activeTurn != "" {
+						return false, errors.New("stop does not target owned execution")
+					}
+				} else {
+					if session.activeTurn != target && !turn.settled {
+						return false, errors.New("stop does not target owned execution")
+					}
+					turn.closed = true
+				}
+			} else {
+				session.reconstructRequired = true
+			}
+		}
+		session.holdLocked()
+		if envelope.GetDesired() == "run" {
+			if session.reconstructRequired && envelope.GetStopDeadlineUnixNano() == 0 {
+				return false, errSessionReconstructionRequired
+			}
 			session.pendingResume = command.GetDeliveryId()
 		}
-		// Admission remains held until the local runtime confirms this exact
-		// resume. A later suspend or runtime failure supersedes its receipt.
-	case *agentv1.GuestCommand_Shutdown:
-		session.holdLocked()
-		session.reconstructRequired = true
+		if envelope.GetDesired() == "shutdown" {
+			session.reconstructRequired = true
+		}
 	case *agentv1.GuestCommand_Reconcile:
 		if session.turns[payload.Reconcile.GetTurnId()] == nil {
 			return false, errors.New("unknown Turn finalization")
@@ -327,7 +353,7 @@ func (session *agentSession) receive(event *agentv1.ProgramEvent) (*agentv1.Gues
 		}
 		// The runtime returns null only when it applied Resume. Superseded
 		// controls return a successful object without changing runtime state.
-		if delivery.GetResume() != nil && bytes.Equal(bytes.TrimSpace(value.DeliveryResult.GetValueJson()), []byte("null")) && session.pendingResume == value.DeliveryResult.GetDeliveryId() {
+		if delivery.GetControl().GetDesired() == "run" && bytes.Equal(bytes.TrimSpace(value.DeliveryResult.GetValueJson()), []byte("null")) && session.pendingResume == value.DeliveryResult.GetDeliveryId() {
 			session.held = false
 		}
 		if session.pendingResume == value.DeliveryResult.GetDeliveryId() {
@@ -361,7 +387,7 @@ func (session *agentSession) receive(event *agentv1.ProgramEvent) (*agentv1.Gues
 				}
 			}
 		}
-		if delivery.GetSuspend() != nil || delivery.GetResume() != nil || delivery.GetInterrupt() != nil || delivery.GetShutdown() != nil {
+		if delivery.GetControl() != nil {
 			delete(session.deliveries, value.DeliveryResult.GetDeliveryId())
 		}
 	case *agentv1.ProgramEvent_CancelOperation:

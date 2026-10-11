@@ -37,15 +37,14 @@ A Session can start in Slack in three ways:
 | From | What happens |
 | --- | --- |
 | A message that mentions the Agent | A new Session starts. The message becomes the root of its thread. |
-| `client.agents.start(id, { input, slack: { channelId } })` or `helmr agent start AGENT --slack-channel C0123456789` | Helmr posts "Started *Agent*." in the channel and binds the Session to that message's thread. The input is not posted. |
+| `client.sessions.create({ agent: id, input, slack: { channelId } })` or `helmr session create AGENT --slack-channel C0123456789` | Helmr posts "Started *Agent*." in the channel and binds the Session to that message's thread. The input is not posted. |
 | A cron trigger with `slack: { channelId }` | Each fire posts an opening message the same way. See [Triggers](/docs/concepts/triggers#slack-delivery). |
 
 `channelId` and `--slack-channel` take a raw Slack channel ID such as
 `C0123456789`, not a channel name. The start fails if the Agent has no Slack
 connection (`target_not_published`) or the channel cannot be used
-(`channel_unavailable`). A Session with a `sessionKey` stays bound to its first
-channel; starting it with a different channel fails with
-`slack_destination_conflict`.
+(`channel_unavailable`). A Session stays bound to its original channel. Creating another Session with
+an occupied `key` conflicts; enqueue follow-up work using the existing Session ID.
 
 When a Slack-bound Session creates independent work for another Agent through
 [delegation](/docs/concepts/delegation), the new Session also starts in a
@@ -59,7 +58,7 @@ Every message to the Agent, including replies in its thread, must mention the
 Agent. Messages without a mention are ignored. Helmr removes the mention and
 passes the remaining text as a text part.
 
-A reply in a Session's thread is sent to that Session like `session.send`: it
+A reply in a Session's thread uses Slack routing: it
 steers the active Turn, or becomes a new queued Turn when none is active. See
 [Sessions](/docs/concepts/sessions). If a message sent to the active Turn is not
 delivered, Helmr posts a notice in the thread.
@@ -133,4 +132,4 @@ backfilled, and cron triggers that post to Slack must be promoted again.
 - [Questions](/docs/concepts/questions)
 - [Triggers](/docs/concepts/triggers)
 - [Agent reference](/docs/reference/sdk/agent) and
-  [`helmr agent start`](/docs/reference/cli/agent)
+  [`helmr session create`](/docs/reference/cli/agent)

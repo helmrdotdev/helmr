@@ -28,14 +28,14 @@ file already exists.
 | `.helmrignore` | Excludes `node_modules/`, `helmr/`, `dist/`, `.env` and `.env.*`, while keeping `.env*.example`, `.env*.sample` and `.env*.template`. |
 | `package.json` | A private ES module package with `@helmr/sdk` as a dependency, a `packageManager` selector, and a `devEngines` entry for the matching Node.js version. |
 | `tsconfig.json` | Strict `NodeNext` settings with `noEmit`, including `agents/**/*.ts`. |
-| `agents/hello.ts` | One Computer definition and one Agent, both with ID `hello`. |
+| `agents/hello.ts` | One Template definition and one Agent, both with ID `hello`. |
 
 `agents/hello.ts`:
 
 ```ts
-import { agent, computer, image } from "@helmr/sdk"
+import { agent, template, image } from "@helmr/sdk"
 
-export const helloComputer = computer({
+export const helloComputer = template({
   id: "hello",
   image: image("hello").from("node:24-bookworm-slim").workdir("/app"),
   resources: { cpu: 1, memory: "1GiB" },
@@ -43,7 +43,7 @@ export const helloComputer = computer({
 
 export const hello = agent({
   id: "hello",
-  computer: helloComputer,
+  template: helloComputer,
   async turn(turn) {
     await turn.respond("Hello from Helmr")
     return { ok: true }

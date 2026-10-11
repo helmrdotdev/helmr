@@ -15,7 +15,7 @@ import (
 
 func (f statusFixture) outputWriter(t *testing.T) func(string) int64 {
 	t.Helper()
-	receipt, err := agent.Enqueue(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "projection", Input: json.RawMessage(`[]`)})
+	receipt, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "projection", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,10 +106,10 @@ func TestSlackProjectionAuthorizationCutoffDoesNotReintroduceCumulativeBytes(t *
 func TestSlackProjectionUsesInstallationIdentityAcrossContinuations(t *testing.T) {
 	f := newStatusFixture(t)
 	write := f.outputWriter(t)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agents SET name='first' WHERE environment_id=$1 AND id=$2`, f.Environment, f.Agent)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agents SET key='first' WHERE environment_id=$1 AND id=$2`, f.Environment, f.Agent)
 	write("first")
 	f.projectAll(t)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agents SET name='second' WHERE environment_id=$1 AND id=$2`, f.Environment, f.Agent)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agents SET key='second' WHERE environment_id=$1 AND id=$2`, f.Environment, f.Agent)
 	write(strings.Repeat("😀", 4000))
 	f.projectAll(t)
 	rows, err := f.Pool.Query(t.Context(), `SELECT payload,continuation_ordinal FROM slack_posts WHERE thread_source_id=$1 ORDER BY seq`, f.participant)

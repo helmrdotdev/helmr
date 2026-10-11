@@ -63,7 +63,7 @@ func TestWorkerAgentDurableControlsReachRetainedProcess(t *testing.T) {
 					}
 					command = message.GetCommand()
 				}
-				if command.ControlSequence != int64(index+1) || (kind == "resume" && command.GetResume() == nil) || (kind == "suspend" && command.GetSuspend() == nil) || (kind == "shutdown" && command.GetShutdown() == nil) {
+				if command.ControlSequence != int64(index+1) || (kind == "resume" && command.GetControl().GetDesired() != "run") || (kind == "suspend" && command.GetControl().GetDesired() != "hold") || (kind == "shutdown" && command.GetControl().GetDesired() != "shutdown") {
 					return errors.New("wrong durable control")
 				}
 				result := &agentv1.DeliveryResult{DeliveryId: command.DeliveryId, Outcome: &agentv1.DeliveryResult_ValueJson{ValueJson: []byte(`null`)}}

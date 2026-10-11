@@ -100,10 +100,10 @@ by default.
 Replace `agents/hello.ts` with an Agent that uses its input:
 
 ```ts
-import { agent, computer, image } from "@helmr/sdk"
+import { agent, template, image } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
 
-export const helloComputer = computer({
+export const helloComputer = template({
   id: "hello",
   image: image("hello").from("node:24-bookworm-slim").workdir("/app"),
   resources: { cpu: 1, memory: "1GiB" },
@@ -111,7 +111,7 @@ export const helloComputer = computer({
 
 export const hello = agent({
   id: "hello",
-  computer: helloComputer,
+  template: helloComputer,
   maxTurnDuration: "5m",
   async turn(turn) {
     const name = turn.input.map(part => part.text).join("").trim()
@@ -125,7 +125,7 @@ export const hello = agent({
 })
 ```
 
-The `computer()` definition is the Linux environment the Agent runs in. The
+The `template()` definition is the Linux environment the Agent runs in. The
 `turn` handler runs once per input: it writes progress output, writes a file on
 the Computer's disk, stages a response for people, and returns a JSON result for
 programs. See [Agents](/docs/concepts/agents) and
@@ -143,7 +143,7 @@ new Deployment current in `staging`. See [Deploy](/docs/guides/deploy).
 ## Start the Agent
 
 ```sh
-helmr agent start hello --project hello --env staging \
+helmr session create hello --project hello --env staging \
   --text "Ada" --idempotency-key quickstart:hello:1
 ```
 

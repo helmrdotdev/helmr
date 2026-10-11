@@ -50,7 +50,7 @@ import { agent, triggers } from "@helmr/sdk"
 
 export const dailyReport = agent({
   id: "daily-report",
-  computer: reporting, // an existing computer() definition
+  template: reporting, // an existing template() definition
   triggers: [
     triggers.cron("morning", "0 9 * * *", {
       timezone: "America/New_York",

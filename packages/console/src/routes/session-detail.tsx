@@ -16,6 +16,7 @@ import {
   on,
   Show,
 } from "solid-js";
+import { definitionHref, scopedConsoleHref } from "../lib/definitions";
 import { deploymentHref } from "../features/deployments/navigation";
 import { ApiError } from "../lib/api";
 import { getMe, hasPermission } from "../lib/auth";
@@ -23,6 +24,7 @@ import { useScope } from "../lib/scope";
 import {
   cancelSession,
   interruptSession,
+  interruptTurn,
   sessionConsolePath,
   getSession,
   listSessionTurns,
@@ -125,16 +127,18 @@ function SessionDetailContent() {
     ),
   );
   const [receipt, setReceipt] = createSignal<SessionReceipt>();
-  type Control = { kind: "interrupt" | "cancel" };
+  type Control = { kind: "interrupt" | "cancel" } | { kind: "turn_interrupt"; turnID: string };
   const [control, setControl] = createSignal<Control>();
   const controlKeys = new Map<string, string>();
-  const controlLabels = { interrupt: "Interrupt Session", cancel: "Cancel Session" };
+  const controlLabels = { interrupt: "Interrupt Session", cancel: "Cancel Session", turn_interrupt: "Interrupt Turn" };
   const performControl = async (operation: Control) => {
-    const operationKey = operation.kind;
+    const operationKey = operation.kind === "turn_interrupt" ? `${operation.kind}:${operation.turnID}` : operation.kind;
     const key = controlKeys.get(operationKey) ?? crypto.randomUUID();
     controlKeys.set(operationKey, key);
     const input = { idempotency_key: key };
-    const result = operation.kind === "interrupt"
+    const result = operation.kind === "turn_interrupt"
+      ? await interruptTurn(address(), operation.turnID, input)
+      : operation.kind === "interrupt"
       ? await interruptSession(address(), input)
       : await cancelSession(address(), input);
     setReceipt(result);
@@ -228,7 +232,9 @@ function SessionDetailContent() {
                                   <strong>Turn #{turn.sequence}</strong>
                                   <StatusBadge resource="turn" status={turn.status} />
                                   <IDText value={turn.id} />
+                                  <Show when={turn.status === "running" && can("sessions.interrupt")}><button class={ui.secondaryButton} onClick={() => setControl({ kind: "turn_interrupt", turnID: turn.id })}>Interrupt Turn</button></Show>
                                 </div>
+                                <Show when={turn.stop}>{stop => <p class={ui.muted}>Processing stop: {stop().state}. <Show when={stop().state !== "stopped"}>New processing waits for stop confirmation.</Show></p>}</Show>
                                 <Show when={!turn.payload_expired_at} fallback={<p class={ui.muted}>Turn content expired.</p>}>
                                 <p class={ui.muted}>Input</p>
                                 <pre class="whitespace-pre-wrap break-words">
@@ -282,10 +288,11 @@ function SessionDetailContent() {
                   <p class={ui.muted}>Send work through the CLI or the connected Slack conversation. Use the CLI to close this Session or release a hold.</p>
                 </div>
                 <DetailList title="Session details">
+                  <Show when={current().activity.process}>{process => <DetailItem label="Process">{process().reconstruction_required ? "Recovery required" : process().status}<Show when={process().stop}>{stop => <span class="block">Stop {stop().state}<Show when={stop().turn_id}>{id => <> for <IDText value={id()} /></>}</Show></span>}</Show></DetailItem>}</Show>
                   <DetailItem label="Agent">
-                    <IDText value={current().agent_id} />
+                    <a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("agents", current().agent_definition_id, { projectID: projectID(), environmentID: environmentID(), deploymentID: current().deployment_id })}>{current().agent_definition_id}</a>
                   </DetailItem>
-                  <Show when={current().initial_turn}>
+                  <Show when={current().initial_turn} fallback={<DetailItem label="Work">No input yet</DetailItem>}>
                     {turn => <DetailItem label="Initial Turn"><span class="inline-flex flex-wrap items-center gap-2"><IDText value={turn().id} mode="link" href={`#turn-${turn().id}`} /><StatusBadge resource="turn" status={turn().status} /></span></DetailItem>}
                   </Show>
                   <Show when={current().parent_session_id}>
@@ -304,19 +311,18 @@ function SessionDetailContent() {
                   <DetailItem label="Status">
                     <StatusBadge resource="session" status={current().status} />
                   </DetailItem>
+                  <DetailItem label="Template"><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", current().template_definition_id, { projectID: projectID(), environmentID: environmentID(), deploymentID: current().deployment_id })}>{current().template_definition_id}</a></DetailItem>
                   <DetailItem label="Deployment">
                     <IDText
                       value={current().deployment_id}
                       mode="link"
-                      href={deploymentHref(current().deployment_id)}
+                      href={scopedConsoleHref(deploymentHref(current().deployment_id), { projectID: projectID(), environmentID: environmentID() })}
                     />
                   </DetailItem>
                   <DetailItem label="Computer">
-                    <IDText
-                      value={current().computer_id}
-                      mode="link"
-                      href={`/computers/${current().computer_id}`}
-                    />
+                    <Show when={current().computer_id} fallback={<span>No Computer assigned</span>}>
+                      {(id) => <IDText value={id()} mode="link" href={scopedConsoleHref(`/computers/${id()}`, { projectID: projectID(), environmentID: environmentID() })} />}
+                    </Show>
                   </DetailItem>
                   <DetailItem label="Created">
                     <RelativeTime value={current().created_at} />
@@ -361,7 +367,10 @@ function SessionDetailContent() {
             onConfirm={() => performControl(operation)}
           >
             <Show when={operation.kind === "interrupt"}>
-              Request active work in this Session and its owned children to stop, and hold queued work. Interrupted Turns do not restart when the hold is released.
+              Request running work and initialization in this Session and its owned children to stop, and hold queued work. Results already being saved can finish. Interrupted Turns do not restart when the hold is released.
+            </Show>
+            <Show when={operation.kind === "turn_interrupt"}>
+              Request this running Turn to stop. Queued work can proceed after stopping is confirmed. Existing Session holds remain in force.
             </Show>
             <Show when={operation.kind === "cancel"}>
               Cancel queued Turns and request that active work in this Session and its owned children stop. Retained inputs remain available for inspection. Other Sessions sharing the Computer are not cancelled.

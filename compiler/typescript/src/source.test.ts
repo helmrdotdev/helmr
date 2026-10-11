@@ -39,13 +39,13 @@ test("packed SDK identity survives one split bundle and assets resolve independe
   "package.json":{type:"module",imports:{"#project/*":"./*"}},
   "helmr.config.ts":`import{defineConfig}from'@helmr/sdk';export default defineConfig({build:{assets:["prompts/**"]}})`,
   "prompts/system.md":"installed",
-  "shared.ts":`import{agent,computer,image}from'@helmr/sdk';import{readFileSync}from'node:fs';export const value=readFileSync(new URL(import.meta.resolve('#project/prompts/system.md')),'utf8');export const shared=agent({id:'build',computer:computer({id:'machine',image:image('root').from('ubuntu:24.04'),resources:{cpu:1,memory:'1GiB'}}),turn:()=>value})`,
+  "shared.ts":`import{agent,template,image}from'@helmr/sdk';import{readFileSync}from'node:fs';export const value=readFileSync(new URL(import.meta.resolve('#project/prompts/system.md')),'utf8');export const shared=agent({id:'build',template:template({id:'machine',image:image('root').from('ubuntu:24.04'),resources:{cpu:1,memory:'1GiB'}}),turn:()=>value})`,
   "agents/a.ts":`export{shared as build}from'../shared'`,
-  "agents/b.ts":`import{agent}from'@helmr/sdk';import{value,shared}from'../shared';if(value!=='installed')throw Error('wrong asset');export const worker=agent({id:'worker',computer:shared.computer,turn:async()=>null})`,
+  "agents/b.ts":`import{agent}from'@helmr/sdk';import{value,shared}from'../shared';if(value!=='installed')throw Error('wrong asset');export const worker=agent({id:'worker',template:shared.template,turn:async()=>null})`,
  },true)
  try{
   const result=await analyzeProject({root:f.root,architecture:"x86_64",config:runHostConfig(f.root).discovery})
-  expect(result.buildPlan.definitions.map((d:{kind:string})=>d.kind)).toEqual(["agent","agent","computer"])
+  expect(result.buildPlan.definitions.map((d:{kind:string})=>d.kind)).toEqual(["agent","agent","template"])
   expect(result.definitionIndex.agents.map((d:{modulePath:string})=>d.modulePath)).toEqual(["helmr/app/entry-0.mjs","helmr/app/entry-1.mjs"])
   expect(Object.keys(result.result).sort()).toEqual(["apiVersion","bundler","config","modules","nodeVersion","payloadDigest"])
  }finally{await f.close()}
@@ -61,9 +61,9 @@ test("program cannot replay root config through helper, and preserves missing im
 
 test("packed SDK exposes coherent Agent handler and preparation types", async () => {
  const f = await fixture({ "authoring.ts": `
-   import { agent, computer, image, triggers, type CronTrigger, type Turn, type AgentContext, type AgentDefinition, type BuildContext, type ComputerDefinition, type InputContent } from '@helmr/sdk';
+   import { agent, template, image, triggers, type CronTrigger, type Turn, type AgentContext, type AgentDefinition, type BuildContext, type TemplateDefinition, type InputContent } from '@helmr/sdk';
    const prepare = async (build: BuildContext): Promise<void> => { await build.exec(['true']); };
-   const machine: ComputerDefinition = computer({ id: 'computer', image: image('root').from('ubuntu:24.04'), resources: { cpu: 1, memory: '1GiB' }, prepare });
+   const machine: TemplateDefinition = template({ id: 'computer', image: image('root').from('ubuntu:24.04'), resources: { cpu: 1, memory: '1GiB' }, prepare });
    const handler = async (turn: Turn<InputContent>, ctx: AgentContext<{ value: number }>): Promise<number> => {
      const { answer } = await turn.ask({ prompt: [{ type: 'text', text: 'continue' }], answer: { type: 'text' } });
      await turn.output.write([{ type: 'json', value: answer }]);
@@ -71,7 +71,7 @@ test("packed SDK exposes coherent Agent handler and preparation types", async ()
      return ctx.initResult.value;
    };
    const nightly: CronTrigger<InputContent> = triggers.cron('nightly', '0 0 * * *', { timezone: 'Asia/Tokyo', input: [] });
-   const worker: AgentDefinition<InputContent, number, { value: number }> = agent({ id: 'agent', computer: machine, init: () => ({ value: 42 }), turn: handler, triggers: [nightly] });
+   const worker: AgentDefinition<InputContent, number, { value: number }> = agent({ id: 'agent', template: machine, init: () => ({ value: 42 }), turn: handler, triggers: [nightly] });
    void worker;
  ` }, true)
  try {

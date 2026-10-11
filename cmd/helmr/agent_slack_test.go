@@ -16,16 +16,16 @@ func TestAgentSlackStart(t *testing.T) {
 	var starts int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == "POST" && r.URL.Path == "/v1/agents/engineer/start":
+		case r.Method == "POST" && r.URL.Path == "/v1/sessions":
 			starts++
-			var req api.StartAgentRequest
+			var req api.CreateSessionRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatal(err)
 			}
 			if string(req.Input) != `[{"text":"inspect","type":"text"}]` || string(req.Slack) != `{"channel_id":"`+channel+`"}` {
 				t.Fatalf("start bytes: %+v", req)
 			}
-			_ = json.NewEncoder(w).Encode(api.StartAgentResponse{TurnAdmission: api.TurnAdmission{SessionID: testSessionID, TurnID: testComputerID, Sequence: 1}, Created: true})
+			_ = json.NewEncoder(w).Encode(api.CreateSessionResponse{SessionID: testSessionID, Turn: &api.TurnAdmission{SessionID: testSessionID, TurnID: testComputerID, Sequence: 1}})
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL)
 			w.WriteHeader(500)
@@ -43,11 +43,11 @@ func TestAgentSlackStart(t *testing.T) {
 		err := cmd.Execute()
 		return out.String(), err
 	}
-	if out, err := run("agent", "start", "engineer", "--input-json", `[{"text":"inspect","type":"text"}]`, "--slack-channel", channel, "--json"); err != nil || !strings.Contains(out, testSessionID) {
+	if out, err := run("session", "create", "engineer", "--input-json", `[{"text":"inspect","type":"text"}]`, "--slack-channel", channel, "--json"); err != nil || !strings.Contains(out, testSessionID) {
 		t.Fatalf("start: %s %v", out, err)
 	}
 	for _, flags := range [][]string{{"--slack-channel", ""}, {"--slack-channel", "bad"}, {"--slack-channel", channel, "--slack-channel", channel}} {
-		args := append([]string{"agent", "start", "engineer", "--input-json", "[]"}, flags...)
+		args := append([]string{"session", "create", "engineer", "--input-json", "[]"}, flags...)
 		if _, err := run(args...); err == nil {
 			t.Fatalf("accepted malformed route %v", flags)
 		}

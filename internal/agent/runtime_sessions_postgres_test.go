@@ -96,7 +96,7 @@ func TestRuntimeSessionDiscoveryRetainsRelationsAndReceipts(t *testing.T) {
 	unrelated.enqueue(t, "unrelated")
 	// Sending a new Turn to an unrelated target permits exact receipt observation,
 	// not discovery of its Session metadata or other work.
-	if _, err := Enqueue(t.Context(), f.pool, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: unrelated.session, RetryKey: "sent", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := Enqueue(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: unrelated.session, RetryKey: "sent", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := RuntimeGetSession(t.Context(), f.pool, caller, unrelated.session); !errors.Is(err, ErrDenied) {

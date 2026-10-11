@@ -1,4 +1,4 @@
-import { agent, computer, image, source } from "@helmr/sdk"
+import { agent, template, image, source } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
 
 const base = image("hello-world")
@@ -10,7 +10,7 @@ const base = image("hello-world")
   .run(["bun", "install"])
   .workdir("/sandbox")
 
-export const helloWorldComputer = computer({
+export const helloWorldComputer = template({
   id: "hello-world",
   image: base,
   resources: { cpu: 1, memory: "1GiB" },
@@ -18,7 +18,7 @@ export const helloWorldComputer = computer({
 
 
 export const helloWorld = agent({
-  computer: helloWorldComputer,
+  template: helloWorldComputer,
   id: "hello-world",
   maxTurnDuration: "5m",
   async turn(turn) {

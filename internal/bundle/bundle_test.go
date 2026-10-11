@@ -64,7 +64,7 @@ func TestParseDeploymentBundleRequiresClosedCanonicalShape(t *testing.T) {
 			raw: func() []byte {
 				return mutateDeploymentBundleJSON(t, raw, func(root map[string]any) {
 					definitions := root["plan"].(map[string]any)["definitions"].([]any)
-					deploymentBundleJSONDefinition(t, definitions, "computer")["manifest"].(map[string]any)["imageBuild"] = map[string]any{}
+					deploymentBundleJSONDefinition(t, definitions, "template")["manifest"].(map[string]any)["imageBuild"] = map[string]any{}
 				})
 			},
 			errMsg: "unknown field",
@@ -105,7 +105,7 @@ func TestParseDeploymentBundleRequiresClosedCanonicalShape(t *testing.T) {
 			raw: func() []byte {
 				return mutateDeploymentBundleJSON(t, raw, func(root map[string]any) {
 					definitions := root["plan"].(map[string]any)["definitions"].([]any)
-					deploymentBundleJSONDefinition(t, definitions, "computer")["manifest"].(map[string]any)["seed"].(map[string]any)["artifactDigest"] =
+					deploymentBundleJSONDefinition(t, definitions, "template")["manifest"].(map[string]any)["seed"].(map[string]any)["artifactDigest"] =
 						"sha256:" + strings.Repeat("e", 64)
 				})
 			},
@@ -116,7 +116,7 @@ func TestParseDeploymentBundleRequiresClosedCanonicalShape(t *testing.T) {
 			raw: func() []byte {
 				return mutateDeploymentBundleJSON(t, raw, func(root map[string]any) {
 					definitions := root["plan"].(map[string]any)["definitions"].([]any)
-					deploymentBundleJSONDefinition(t, definitions, "computer")["manifest"].(map[string]any)["seed"].(map[string]any)["mediaType"] =
+					deploymentBundleJSONDefinition(t, definitions, "template")["manifest"].(map[string]any)["seed"].(map[string]any)["mediaType"] =
 						"application/octet-stream"
 				})
 			},

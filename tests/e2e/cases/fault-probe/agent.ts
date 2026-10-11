@@ -1,6 +1,6 @@
 import { fixtureValue } from "../../support/runtime-mcp"
 import { setTimeout as sleep } from "node:timers/promises"
-import { image, agent, computer, type Json } from "@helmr/sdk"
+import { image, agent, template, type Json } from "@helmr/sdk"
 import { appendFile, readFile } from "node:fs/promises"
 import { z } from "zod"
 
@@ -8,7 +8,7 @@ const base = image("helmr-fault-probe")
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
 
-export const faultProbeComputer = computer({ id: "helmr-fault-probe", image: base, resources: { cpu: 1, memory: "1GiB" } })
+export const faultProbeComputer = template({ id: "helmr-fault-probe", image: base, resources: { cpu: 1, memory: "1GiB" } })
 
 const payload = z.object({
   marker: z.string().min(1),
@@ -20,7 +20,7 @@ const payload = z.object({
 
 export const faultProbe = agent({
   id: "fault-probe",
-  computer: faultProbeComputer, maxTurnDuration: "35m",
+  template: faultProbeComputer, maxTurnDuration: "35m",
   turn: async (turn, ctx): Promise<Json> => {
     const input = payload.parse(fixtureValue(turn.input))
     await appendFile(

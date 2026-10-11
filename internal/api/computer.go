@@ -9,6 +9,7 @@ import (
 )
 
 type CreateComputerRequest struct {
+	Template          string                    `json:"template"`
 	DeleteAfterUnused lifetime.Policy           `json:"delete_after_unused_ms,omitzero"`
 	Key               *string                   `json:"key,omitempty"`
 	Secrets           []secretbinding.Reference `json:"secrets,omitempty"`

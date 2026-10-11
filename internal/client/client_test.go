@@ -224,10 +224,8 @@ func TestClientErrorUsesServerMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.StartAgent(
-		context.Background(),
-		"deploy",
-		api.StartAgentRequest{},
+	_, err = client.CreateSession(
+		context.Background(), api.CreateSessionRequest{Agent: "deploy"},
 		EnvironmentScopeOptions{},
 	)
 	if err == nil {
@@ -345,7 +343,7 @@ func TestClientRejectsPlainHTTPNonLoopbackRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.StartAgent(context.Background(), "deploy", api.StartAgentRequest{}, EnvironmentScopeOptions{})
+	_, err = client.CreateSession(context.Background(), api.CreateSessionRequest{Agent: "deploy"}, EnvironmentScopeOptions{})
 	if err == nil || !strings.Contains(err.Error(), "plaintext non-loopback") {
 		t.Fatalf("err = %v", err)
 	}

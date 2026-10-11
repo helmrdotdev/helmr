@@ -33,7 +33,7 @@ func TestMessagesKeepExactDispositionAndDrain(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Go(func() {
-			r, err := Send(t.Context(), f.pool, f.caller(), req)
+			r, err := RouteSlackInput(t.Context(), f.pool, nil, f.caller(), req)
 			if err != nil {
 				t.Error(err)
 			}
@@ -85,16 +85,16 @@ func TestMessagesKeepExactDispositionAndDrain(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.RetryKey = "steer"
-	retried, err := Send(t.Context(), f.pool, f.caller(), req)
+	retried, err := RouteSlackInput(t.Context(), f.pool, nil, f.caller(), req)
 	if err != nil || retried.MessageID != admitted.MessageID {
 		t.Fatalf("rejected steering fell back: %+v %v", retried, err)
 	}
 	req.Input = json.RawMessage(`[{"type":"text","text":"false"}]`)
-	if _, err := Send(t.Context(), f.pool, f.caller(), req); !errors.Is(err, ErrConflict) {
+	if _, err := RouteSlackInput(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, ErrConflict) {
 		t.Fatalf("changed retry: %v", err)
 	}
 	req.RetryKey = "new"
-	queued, err := Send(t.Context(), f.pool, f.caller(), req)
+	queued, err := RouteSlackInput(t.Context(), f.pool, nil, f.caller(), req)
 	if err != nil || queued.MessageID != uuid.Nil() || queued.TurnID == first.TurnID {
 		t.Fatalf("new send didn't queue: %+v %v", queued, err)
 	}
@@ -150,11 +150,11 @@ func TestMessagesSteerClosingSessionWithoutEnqueueAuthority(t *testing.T) {
 		if err != nil || exact.MessageID == uuid.Nil() {
 			t.Fatalf("closing exact %s: %+v %v", caller.Kind, exact, err)
 		}
-		routed, err := Send(t.Context(), f.pool, caller, req)
+		routed, err := RouteSlackInput(t.Context(), f.pool, nil, caller, req)
 		if err != nil || routed.MessageID == uuid.Nil() {
 			t.Fatalf("closing send %s: %+v %v", caller.Kind, routed, err)
 		}
-		if _, err := Enqueue(t.Context(), f.pool, caller, req); err == nil {
+		if _, err := Enqueue(t.Context(), f.pool, nil, caller, req); err == nil {
 			t.Fatalf("closing enqueue allowed: %s", caller.Kind)
 		}
 	}
@@ -162,7 +162,7 @@ func TestMessagesSteerClosingSessionWithoutEnqueueAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, caller := range []Caller{f.caller(), runtime} {
-		if _, err := Send(t.Context(), f.pool, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, Input: json.RawMessage(`[]`)}); err == nil {
+		if _, err := RouteSlackInput(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, Input: json.RawMessage(`[]`)}); err == nil {
 			t.Fatalf("closing send fell back: %s", caller.Kind)
 		}
 	}

@@ -83,11 +83,11 @@ func TestCommandSurface(t *testing.T) {
 		{"build"},
 		{"computer"},
 		{"agent"},
-		{"agent", "start"},
+		{"session", "create"},
 		{"agent", "definition", "list"},
 		{"agent", "definition", "get"},
-		{"computer", "definition", "list"},
-		{"computer", "definition", "get"},
+		{"template", "definition", "list"},
+		{"template", "definition", "get"},
 		{"session", "turn", "wait"},
 		{"session", "turn", "ask", "list"},
 		{"session", "turn", "ask", "get"},
@@ -96,7 +96,7 @@ func TestCommandSurface(t *testing.T) {
 		{"schedule"},
 		{"deployment"},
 		{"session", "get"},
-		{"session", "send"},
+		{"session", "turn", "send"},
 		{"session", "events"},
 		{"session", "close"},
 		{"session", "cancel"},
@@ -129,9 +129,9 @@ func commandByPath(root *cobra.Command, path ...string) *cobra.Command {
 	return current
 }
 
-func TestInterruptIsSessionScoped(t *testing.T) {
+func TestInterruptHasDistinctSessionAndTurnScopes(t *testing.T) {
 	root := newRootCommand()
-	if commandByPath(root, "session", "turn", "interrupt") != nil {
-		t.Fatal("Turn interrupt remains registered")
+	if commandByPath(root, "session", "turn", "interrupt") == nil || commandByPath(root, "session", "interrupt") == nil {
+		t.Fatal("exact and subtree interruption commands must both be registered")
 	}
 }

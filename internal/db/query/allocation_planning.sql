@@ -11,7 +11,7 @@ WITH RECURSIVE held AS (
  ''::text required_cpu_config_digest,0::bigint required_cpu_millis,0::bigint required_memory_bytes,
  0::bigint required_scratch_bytes
  FROM computer_preparations p
- JOIN LATERAL (SELECT resources FROM computer_definitions d WHERE d.environment_id=p.environment_id AND d.preparation_spec_id=p.preparation_spec_id ORDER BY deployment_id,definition_key LIMIT 1) d ON true
+ JOIN LATERAL (SELECT resources FROM template_definitions d WHERE d.environment_id=p.environment_id AND d.preparation_spec_id=p.preparation_spec_id ORDER BY deployment_id,template_id LIMIT 1) d ON true
  WHERE p.status='queued' AND p.worker_host_id IS NULL AND p.deadline_at>statement_timestamp()
  AND NOT EXISTS(SELECT 1 FROM computer_secret_bindings binding JOIN secrets secret ON secret.environment_id=binding.environment_id AND secret.id=binding.secret_id
  WHERE binding.environment_id=p.environment_id AND binding.preparation_spec_id=p.preparation_spec_id AND secret.status='revoked')

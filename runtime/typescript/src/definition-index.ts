@@ -2,7 +2,7 @@ import type { InputContent } from "../../../sdk/typescript/src/content"
 import { readFile, realpath } from "node:fs/promises"
 import { dirname, isAbsolute, relative, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import type { AgentDefinition, ComputerDefinition, Json } from "@helmr/sdk"
+import type { AgentDefinition, TemplateDefinition, Json } from "@helmr/sdk"
 import type { DefinitionIndex } from "@helmr/sdk/internal"
 
 export type { DefinitionIndex } from "@helmr/sdk/internal"
@@ -17,18 +17,18 @@ function locator(value: Record<string, unknown>): boolean {
   return typeof value["modulePath"] === "string" && /^helmr\/app\/entry-[0-9]+\.mjs$/.test(value["modulePath"]) && typeof value["exportName"] === "string" && new TextEncoder().encode(value["exportName"]).length >= 1 && new TextEncoder().encode(value["exportName"]).length <= 256 && !/[\p{Cc}\p{Cs}]/u.test(value["exportName"])
 }
 export function parseDefinitionIndex(value: unknown): DefinitionIndex {
-  if (!record(value, ["apiVersion", "agents", "computers"]) || value["apiVersion"] !== "helmr.definition-index.v1" || !Array.isArray(value["agents"]) || !Array.isArray(value["computers"]) || value["agents"].length + value["computers"].length === 0 || value["agents"].length + value["computers"].length > 10_000) throw new Error("Invalid Definition index")
-  const agents = new Set<string>(), computers = new Set<string>()
+  if (!record(value, ["apiVersion", "agents", "templates"]) || value["apiVersion"] !== "helmr.definition-index.v1" || !Array.isArray(value["agents"]) || !Array.isArray(value["templates"]) || value["agents"].length + value["templates"].length === 0 || value["agents"].length + value["templates"].length > 10_000) throw new Error("Invalid Definition index")
+  const agents = new Set<string>(), templates = new Set<string>()
   for (const agent of value["agents"]) {
-    if (!record(agent, ["id", "computerDefinitionId", "modulePath", "exportName"]) || !id(agent["id"]) || !id(agent["computerDefinitionId"]) || !locator(agent) || agents.has(agent["id"])) throw new Error("Invalid or duplicate Agent bundle locator")
+    if (!record(agent, ["id", "templateDefinitionId", "modulePath", "exportName"]) || !id(agent["id"]) || !id(agent["templateDefinitionId"]) || !locator(agent) || agents.has(agent["id"])) throw new Error("Invalid or duplicate Agent bundle locator")
     agents.add(agent["id"])
   }
-  for (const computer of value["computers"]) {
-    if (!record(computer, ["id", "modulePath", "exportName", "throughAgent"]) || !id(computer["id"]) || !locator(computer) || typeof computer["throughAgent"] !== "boolean" || computers.has(computer["id"])) throw new Error("Invalid or duplicate Computer bundle locator")
-    if (computer["throughAgent"] && !value["agents"].some(agent => agent["modulePath"] === computer["modulePath"] && agent["exportName"] === computer["exportName"] && agent["computerDefinitionId"] === computer["id"])) throw new Error("Computer bundle locator has no matching Agent")
-    computers.add(computer["id"])
+  for (const computer of value["templates"]) {
+    if (!record(computer, ["id", "modulePath", "exportName", "throughAgent"]) || !id(computer["id"]) || !locator(computer) || typeof computer["throughAgent"] !== "boolean" || templates.has(computer["id"])) throw new Error("Invalid or duplicate Computer bundle locator")
+    if (computer["throughAgent"] && !value["agents"].some(agent => agent["modulePath"] === computer["modulePath"] && agent["exportName"] === computer["exportName"] && agent["templateDefinitionId"] === computer["id"])) throw new Error("Computer bundle locator has no matching Agent")
+    templates.add(computer["id"])
   }
-  if (value["agents"].some(agent => !computers.has(agent["computerDefinitionId"]))) throw new Error("Agent bundle locator has no matching Computer")
+  if (value["agents"].some(agent => !templates.has(agent["templateDefinitionId"]))) throw new Error("Agent bundle locator has no matching Computer")
   return value as unknown as DefinitionIndex
 }
 
@@ -42,7 +42,7 @@ export async function loadAgentBundle(indexURL: URL, agentId: string): Promise<A
   if (!selected) throw new Error("Agent is absent from the verified bundle")
   const namespace = await loadExport(indexPath, selected.modulePath)
   const definition = namespace[selected.exportName] as Partial<AgentDefinition> | undefined
-  if (definition?.kind !== "agent" || definition.id !== selected.id || definition.computer?.kind !== "computer" || definition.computer.id !== selected.computerDefinitionId || typeof definition.turn !== "function" || (definition.init !== undefined && typeof definition.init !== "function")) throw new Error("Agent export differs from the verified bundle")
+  if (definition?.kind !== "agent" || definition.id !== selected.id || definition.template?.kind !== "template" || definition.template.id !== selected.templateDefinitionId || typeof definition.turn !== "function" || (definition.init !== undefined && typeof definition.init !== "function")) throw new Error("Agent export differs from the verified bundle")
   return definition as AgentDefinition<InputContent, Json, unknown>
 }
 
@@ -56,14 +56,14 @@ async function loadExport(indexPath: string, selectedModulePath: string): Promis
 
 // Preparation imports the same bundled code as execution, including supporting
 // modules and closures. Compilation records where to find it, not its source text.
-export async function loadComputerBundle(indexURL: URL, computerDefinitionId: string): Promise<ComputerDefinition> {
+export async function loadComputerBundle(indexURL: URL, templateDefinitionId: string): Promise<TemplateDefinition> {
   const indexPath = fileURLToPath(indexURL)
   const index = parseDefinitionIndex(JSON.parse(await readFile(indexPath, "utf8")))
-  const selected = index.computers.find(computer => computer.id === computerDefinitionId)
+  const selected = index.templates.find(computer => computer.id === templateDefinitionId)
   if (!selected) throw new Error("Computer is absent from the verified bundle")
   const namespace = await loadExport(indexPath, selected.modulePath)
-  const exported = namespace[selected.exportName] as Partial<AgentDefinition> | Partial<ComputerDefinition> | undefined
-  const definition = selected.throughAgent ? (exported as Partial<AgentDefinition> | undefined)?.computer : exported as Partial<ComputerDefinition> | undefined
-  if ((selected.throughAgent && (exported as Partial<AgentDefinition> | undefined)?.kind !== "agent") || definition?.kind !== "computer" || definition.id !== computerDefinitionId || (definition.prepare !== undefined && typeof definition.prepare !== "function")) throw new Error("Computer export differs from the verified bundle")
-  return definition as ComputerDefinition
+  const exported = namespace[selected.exportName] as Partial<AgentDefinition> | Partial<TemplateDefinition> | undefined
+  const definition = selected.throughAgent ? (exported as Partial<AgentDefinition> | undefined)?.template : exported as Partial<TemplateDefinition> | undefined
+  if ((selected.throughAgent && (exported as Partial<AgentDefinition> | undefined)?.kind !== "agent") || definition?.kind !== "template" || definition.id !== templateDefinitionId || (definition.prepare !== undefined && typeof definition.prepare !== "function")) throw new Error("Computer export differs from the verified bundle")
+  return definition as TemplateDefinition
 }

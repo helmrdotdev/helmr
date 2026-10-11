@@ -7,11 +7,11 @@ import { createAgentCatalog } from "./fixtures/agent-catalog";
 async function conversation(page: Page, kind: "text" | "choice" = "text") {
   await page.goto("/dev/login");
   const catalog = await createAgentCatalog(page);
-  const response = await page.request.post(`${catalog.base}/agents/browser-agent/start`, {
-    data: { input: [{ type: "text", text: "retained" }], idempotency_key: crypto.randomUUID() },
+  const response = await page.request.post(`${catalog.base}/sessions`, {
+    data: { agent: "browser-agent", input: [{ type: "text", text: "retained" }], idempotency_key: crypto.randomUUID() },
   });
   expect(response.ok(), await response.text()).toBeTruthy();
-  const { session_id: sessionID, turn_id: turnID } = await response.json() as { session_id: string; turn_id: string };
+  const { session_id: sessionID, turn: { turn_id: turnID } } = await response.json() as { session_id: string; turn: { turn_id: string } };
   const askID = `00000000-0000-7000-8000-${crypto.randomUUID().slice(-12)}`;
   const seed = (mode: "text" | "choice" | "finalizing" | "output" | "disable-member" | "restore-member" | "expose-secret", referenceID = askID) => {
     execFileSync("bash", ["tests/browser/fixtures/session-conversation.sh", catalog.environmentID, sessionID, turnID, referenceID, mode], { cwd: process.cwd() });

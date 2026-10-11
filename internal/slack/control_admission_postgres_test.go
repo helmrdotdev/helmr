@@ -46,7 +46,7 @@ func (f statusFixture) controlReceipt(t *testing.T, c controlEnvelope, answer js
 }
 func (f statusFixture) pendingQuestion(t *testing.T) (uuid.UUID, uuid.UUID) {
 	t.Helper()
-	admission, err := agent.Enqueue(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "ask-turn", Input: json.RawMessage(`[]`)})
+	admission, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "ask-turn", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}

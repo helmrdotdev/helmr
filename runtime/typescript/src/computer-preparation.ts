@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process"
-import type { BuildContext, ComputerDefinition } from "@helmr/sdk"
+import type { BuildContext, TemplateDefinition } from "@helmr/sdk"
 
 // The guest owns the enclosing cgroup and joins all descendants before capture.
 // This driver supplies ordinary process execution to the authored prepare hook.
-export async function runComputerPreparation(computer: ComputerDefinition, signal: AbortSignal): Promise<void> {
+export async function runComputerPreparation(computer: TemplateDefinition, signal: AbortSignal): Promise<void> {
   signal.throwIfAborted()
   const cancellation = new AbortController()
   const executionSignal = AbortSignal.any([signal, cancellation.signal])

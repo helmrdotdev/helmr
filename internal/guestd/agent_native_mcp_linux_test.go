@@ -265,13 +265,15 @@ func (peer *nativeManagedMCPPeer) AgentOperation(ctx context.Context, request wo
 	// These fixture-owned receipts do not represent CP lifecycle acceptance.
 	value := json.RawMessage("null")
 	switch agentv1.Operation_Method(request.Method) {
-	case agentv1.Operation_METHOD_REGISTER_MESSAGES, agentv1.Operation_METHOD_CLOSE_PROCESSING, agentv1.Operation_METHOD_HOLD:
+	case agentv1.Operation_METHOD_REGISTER_MESSAGES, agentv1.Operation_METHOD_CLOSE_PROCESSING, agentv1.Operation_METHOD_HOLD, agentv1.Operation_METHOD_RESPOND:
 	case agentv1.Operation_METHOD_ASK:
 		value = json.RawMessage(`{"id":"fixture-approval"}`)
 	case agentv1.Operation_METHOD_WAIT_ASK:
-		value = json.RawMessage(`{"allow":true}`)
+		value = json.RawMessage(`{"answer":{"selected":[{"id":"allow","value":true}]},"respondedBy":{"kind":"api_key","id":"fixture-operator"}}`)
 	case agentv1.Operation_METHOD_OUTPUT:
 		value = json.RawMessage(`{"sequence":1}`)
+	case agentv1.Operation_METHOD_FAIL:
+		return workerapi.AgentOperationResponse{}, fmt.Errorf("native fixture Turn failed: %s", request.Payload)
 	case agentv1.Operation_METHOD_FINALIZE:
 		var payload struct{ Result json.RawMessage }
 		if err := json.Unmarshal(request.Payload, &payload); err != nil {

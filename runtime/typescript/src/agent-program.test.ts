@@ -39,7 +39,7 @@ function fixture(definition: Pick<AgentDefinition<InputContent, Json, unknown>, 
     if (operation.method === agentProto.Operation_Method.FAIL) return { status: value.error.code === "interrupted" ? "interrupted" : "failed", error: value.error }
     return null
   }
-  const running = runAgentProgram({ kind: "agent", id: "agent", computer: undefined!, ...definition }, {
+  const running = runAgentProgram({ kind: "agent", id: "agent", template: undefined!, ...definition }, {
     input,
     write: async frame => {
       const event = fromBinary(agentProto.ProgramEventSchema, frame.subarray(4)).event
@@ -57,14 +57,17 @@ function fixture(definition: Pick<AgentDefinition<InputContent, Json, unknown>, 
   })
   send({ case: "start", value: create(agentProto.SessionStartSchema, { agentId: "agent", computerId: "computer", deploymentId: "deployment", recoveryKind: agentProto.SessionStart_RecoveryKind.INITIAL, parentSessionId: "parent", terminalSequence }) })
   let sequence = 0
+  let latestControl = 0n
   function command(value: agentProto.GuestCommand['command'], controlSequence?: bigint) {
     const id = `delivery-${++sequence}`, receipt = deferred<agentProto.DeliveryResult>()
     receipts.set(id, receipt)
-    send(value, id, controlSequence ?? BigInt(sequence))
+    const currentControl = controlSequence ?? latestControl + 1n
+    if (currentControl > latestControl) latestControl = currentControl
+    send(value, id, currentControl)
     return receipt.promise
   }
   const dispatch = (turn: number) => command({ case: "dispatch", value: create(agentProto.TurnDispatchSchema, { turnId: `turn-${turn}`, sequence: BigInt(turn), createdAt: "2026-10-04T00:00:00Z", inputJson: json([{ type: "text", text: String(turn) }]), sourceJson: json({ kind: "api" }) }) })
-  const shutdown = async () => { await command({ case: "shutdown", value: create(agentProto.SessionShutdownSchema, { reason: "test finished" }) }); input.end(); await running }
+  const shutdown = async () => { await command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "shutdown" }) }); input.end(); await running }
   const checkpoint = (checkpointId: string) => {
     const result = deferred<agentProto.SessionCheckpointReady>()
     checkpoints.set(checkpointId, result)
@@ -94,9 +97,9 @@ test("idle suspension prevents dispatch until authorized resume and watermark bl
   await f.ready
   const stale = await f.dispatch(4)
   assert.equal(stale.outcome.case, "error")
-  await f.command({ case: "suspend", value: create(agentProto.SessionSuspendSchema, { reason: "human hold" }) })
+  await f.command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "hold" }) })
   assert.equal((await f.dispatch(5)).outcome.case, "error")
-  await f.command({ case: "resume", value: create(agentProto.SessionResumeSchema) })
+  await f.command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "run" }) })
   assert.deepEqual(value(await f.dispatch(5)).result, [{ type: "text", text: "5" }])
   await f.shutdown()
 })
@@ -106,7 +109,7 @@ test("setup failure reports hold and never becomes ready on a resume command", a
   const f = fixture({ init: () => { setups++; throw new Error("setup broke") }, turn: () => assert.fail("unexpected Turn") })
   assert.match((await f.failed).message, /setup broke/)
   assert.equal(f.operations[0]?.method, agentProto.Operation_Method.HOLD)
-  assert.equal((await f.command({ case: "resume", value: create(agentProto.SessionResumeSchema) })).outcome.case, "error")
+  assert.equal((await f.command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "run" }) })).outcome.case, "error")
   assert.equal((await f.dispatch(1)).outcome.case, "error")
   assert.equal(setups, 1)
   await f.shutdown()
@@ -118,7 +121,7 @@ test("output pipe failure wakes a silent input reader and rejects the program", 
   const header = Buffer.alloc(4); header.writeUInt32BE(body.length)
   const input = queue<Uint8Array>()
   input.push(Buffer.concat([header, body]))
-  const running = runAgentProgram({ kind: "agent", id: "agent", computer: undefined!, turn: () => null }, { input, write: async () => { throw new Error("output pipe lost") } })
+  const running = runAgentProgram({ kind: "agent", id: "agent", template: undefined!, turn: () => null }, { input, write: async () => { throw new Error("output pipe lost") } })
   await assert.rejects(running, /output pipe lost/)
   input.end()
 })
@@ -165,13 +168,13 @@ test("a delayed resume cannot release a newer suspension", async () => {
   let invocations = 0
   const f = fixture({ turn: () => ++invocations })
   await f.ready
-  await f.command({ case: "suspend", value: create(agentProto.SessionSuspendSchema, { reason: "hold A" }) }, 1n)
-  await f.command({ case: "resume", value: create(agentProto.SessionResumeSchema) }, 2n)
-  await f.command({ case: "suspend", value: create(agentProto.SessionSuspendSchema, { reason: "hold B" }) }, 3n)
-  assert.deepEqual(value(await f.command({ case: "resume", value: create(agentProto.SessionResumeSchema) }, 2n)), { superseded: true })
+  await f.command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "hold" }) }, 1n)
+  await f.command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "run" }) }, 2n)
+  await f.command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "hold" }) }, 3n)
+  assert.deepEqual(value(await f.command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "run" }) }, 2n)), { superseded: true })
   assert.equal((await f.dispatch(1)).outcome.case, "error")
   assert.equal(invocations, 0)
-  await f.command({ case: "resume", value: create(agentProto.SessionResumeSchema) }, 4n)
+  await f.command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "run" }) }, 4n)
   assert.equal(value(await f.dispatch(1)).result, 1)
   await f.shutdown()
 })
@@ -198,10 +201,10 @@ test("checkpoint observes idle continuation without releasing a hold or repeatin
   await f.ready
   assert.equal((await f.checkpoint("initial")).outcome.case, "scopesJson")
   assert.equal(value(await f.dispatch(1)).result, 1)
-  await f.command({ case: "suspend", value: create(agentProto.SessionSuspendSchema, { reason: "held" }) })
+  await f.command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "hold" }) })
   assert.equal((await f.checkpoint("held")).outcome.case, "scopesJson")
   assert.equal((await f.dispatch(2)).outcome.case, "error")
-  await f.command({ case: "resume", value: create(agentProto.SessionResumeSchema) })
+  await f.command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "run" }) })
   assert.equal(value(await f.dispatch(2)).result, 2)
   assert.equal(setups, 1)
   await f.shutdown()
@@ -248,7 +251,7 @@ test("interrupted Turn cleanup callbacks pin a held Session until their work end
     await f.ready
     const pending = f.dispatch(1)
     await entered.promise
-    await f.command({ case: "interrupt", value: create(agentProto.TurnInterruptSchema, { turnId: "turn-1", reason: "test" }) })
+    await f.command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "run", stopTurnId: "turn-1", stopSequence: 1n, stopDeadlineUnixNano: 1n }) })
     assert.equal(value(await pending).status, "interrupted")
     const checkpoint = await f.checkpoint("held")
     assert.equal(checkpoint.outcome.case, "error")
@@ -291,15 +294,16 @@ test("resume waits for interrupted work and a later hold supersedes the wait", a
     await f.ready
     const first = f.dispatch(1)
     await started.promise
-    await f.command({ case: "suspend", value: create(agentProto.SessionSuspendSchema, { reason: "interrupt" }) }, 10n)
-    const resume = f.command({ case: "resume", value: create(agentProto.SessionResumeSchema) }, 11n)
-    if (supersede) await f.command({ case: "suspend", value: create(agentProto.SessionSuspendSchema, { reason: "later hold" }) }, 12n)
+    const stop = f.command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "hold", stopTurnId: "turn-1", stopSequence: 1n, stopDeadlineUnixNano: 1n }) }, 10n)
+    const resume = f.command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "run" }) }, 11n)
+    if (supersede) await f.command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "hold" }) }, 12n)
     drain.resolve()
     assert.equal(value(await first).status, "interrupted")
+    await stop
     assert.deepEqual(value(await resume), supersede ? { superseded: true } : null)
     if (supersede) {
       assert.equal((await f.dispatch(2)).outcome.case, "error")
-      await f.command({ case: "resume", value: create(agentProto.SessionResumeSchema) }, 13n)
+      await f.command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "run" }) }, 13n)
     }
     assert.equal(value(await f.dispatch(2)).result, 2)
     await f.shutdown()

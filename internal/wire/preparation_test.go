@@ -7,7 +7,7 @@ import (
 )
 
 func TestPreparationRejectsOversizedSecretAggregateBeforeSending(t *testing.T) {
-	request := &computerv0.PreparationControlRequest{Start: &computerv0.PreparationStart{LogLimits: &computerv0.PreparationLogLimits{ChunkBytes: 1024, BufferBytes: 2048, BufferRecords: 4}, ComputerDefinitionId: "repo"}}
+	request := &computerv0.PreparationControlRequest{Start: &computerv0.PreparationStart{LogLimits: &computerv0.PreparationLogLimits{ChunkBytes: 1024, BufferBytes: 2048, BufferRecords: 4}, TemplateDefinitionId: "repo"}}
 	// Reusing the value keeps the test small; each placement counts in the frame.
 	value := bytes.Repeat([]byte{1}, 80<<10)
 	for range 16 {

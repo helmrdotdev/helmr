@@ -49,7 +49,7 @@ type APIKeyScope string
 const (
 	APIKeyScopeAsksRespond           APIKeyScope = "asks:respond"
 	APIKeyScopeSessionsRead          APIKeyScope = "sessions:read"
-	APIKeyScopeAgentsStart           APIKeyScope = "agents:start"
+	APIKeyScopeSessionsCreate        APIKeyScope = "sessions:create"
 	APIKeyScopeSessionsSend          APIKeyScope = "sessions:send"
 	APIKeyScopeSessionsInterrupt     APIKeyScope = "sessions:interrupt"
 	APIKeyScopeSessionsResume        APIKeyScope = "sessions:resume"

@@ -35,6 +35,8 @@ interface Operation {
   finalText?: string
   readonly publishedItems: Set<string>
   terminal: boolean
+  readonly commands: Set<string>
+  commandsDrained: ReturnType<typeof deferred<void>>
   readonly boundary: ReturnType<typeof deferred<void>>
 }
 
@@ -95,7 +97,7 @@ export class CodexHarness {
   private async runTurn(turn: Turn, prompt: HumanContent): Promise<Json> {
     if (!this.reusable || this.active) throw new Error("Native conversation is not ready")
     turn.signal.throwIfAborted()
-    const operation: Operation = { turn, done: deferred<string>(), publishedItems: new Set(), abort: new AbortController(), jobs: new Set(), requests: new Map(), resolved: new Set(), starting: deferred<{ id: string; status: string }>(), accepting: true, terminal: false, boundary: deferred<void>() }
+    const operation: Operation = { turn, done: deferred<string>(), publishedItems: new Set(), abort: new AbortController(), jobs: new Set(), requests: new Map(), resolved: new Set(), starting: deferred<{ id: string; status: string }>(), accepting: true, terminal: false, commands: new Set(), commandsDrained: deferred<void>(), boundary: deferred<void>() }
     let stopTimer: ReturnType<typeof setTimeout> | undefined
     let interruptSent = false
     let startIssued = false
@@ -152,6 +154,7 @@ export class CodexHarness {
       turn.signal.throwIfAborted()
       if (operation.failure !== undefined) throw operation.failure
       if (status !== "completed") throw new Error(`Native Turn ended: ${status}`)
+      if (operation.commands.size) throw new Error("Native command cessation is not established")
       if (operation.finalText !== undefined) await turn.respond(operation.finalText)
       return { nativeThreadId: this.threadId, nativeTurnId: native.id }
     } catch (error) {
@@ -168,7 +171,18 @@ export class CodexHarness {
         stop()
         await operation.boundary.promise.catch(() => {})
       }
-      if (!operation.terminal || this.broken) await this.close()
+      if (operation.terminal && !this.broken && operation.commands.size) {
+        // This setup-owned thread has exactly one active invocation. Prior work
+        // cannot return while commands remain. Clean only this thread, then join
+        // the exact command item receipts observed for this invocation.
+        const timer = setTimeout(() => { void this.close().finally(() => operation.commandsDrained.reject(new Error("Native command stop did not converge"))) }, this.resource.cooperativeStopMs)
+        try {
+          await this.server.request("thread/backgroundTerminals/clean", { threadId: this.threadId })
+          if (operation.commands.size) await operation.commandsDrained.promise
+        } catch { await this.close() }
+        finally { clearTimeout(timer) }
+      }
+      if (!operation.terminal || this.broken || operation.commands.size) await this.close()
       await Promise.allSettled([...operation.jobs])
       throw error
     } finally {
@@ -212,6 +226,16 @@ export class CodexHarness {
       return
     }
     if (message.id !== undefined) { this.track(operation, operation.invocation!.run(() => this.respond(operation, message))); return }
+    if (message.method === "item/started" || message.method === "item/completed") {
+      const params = target.parse(message.params)
+      if (params.threadId === this.threadId && params.turnId === operation.nativeId) {
+        const command = z.object({type:z.literal("commandExecution"),id:z.string(),status:z.string(),exitCode:z.number().nullable().optional()}).safeParse(params.item)
+        if (command.success) {
+          if (message.method === "item/completed" && (command.data.exitCode != null || ["completed", "failed", "declined"].includes(command.data.status))) { operation.commands.delete(command.data.id); if (!operation.commands.size) operation.commandsDrained.resolve() }
+          else { if (!operation.commands.size) operation.commandsDrained = deferred<void>(); operation.commands.add(command.data.id) }
+        }
+      }
+    }
     if (message.method === "turn/completed") {
       const params = turnResponse.extend({ threadId: z.string() }).parse(message.params)
       if (params.threadId !== this.threadId || params.turn.id !== operation.nativeId) return

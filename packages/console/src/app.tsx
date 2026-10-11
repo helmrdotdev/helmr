@@ -19,6 +19,7 @@ import { AuthSlackCallback } from "./routes/auth-slack-callback";
 import { SlackSettings } from "./routes/slack-settings";
 import { AuthGitHubCallback } from "./routes/auth-github-callback";
 import { AuthMagicLinkCallback } from "./routes/auth-magic-link-callback";
+import { Agents, Templates, AgentDetail, TemplateDetail } from "./routes/definitions";
 import { Sessions } from "./routes/sessions";
 import { Computers } from "./routes/computers";
 import { Deployments } from "./routes/deployments";
@@ -204,7 +205,9 @@ function AppShell(props: { children?: JSX.Element }) {
         <span class={"h-5 w-px shrink-0 bg-console-border"} aria-hidden="true" />
         <nav class={"flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-1 scrollbar-none [&::-webkit-scrollbar]:hidden"} aria-label="Sections">
           <TabLink href="/">Overview</TabLink>
+          <TabLink href="/agents">Agents</TabLink>
           <TabLink href="/sessions">Sessions</TabLink>
+          <TabLink href="/templates">Templates</TabLink>
           <TabLink href="/computers">Computers</TabLink>
           <TabLink href="/deployments">Deployments</TabLink>
         </nav>
@@ -281,6 +284,10 @@ export function App() {
       <Route path="/access-required" component={() => <RequireAuth requirement="session"><AccessRequired /></RequireAuth>} />
       <Route path="/organizations/new" component={() => <RequireAuth requirement="session"><OrganizationNew /></RequireAuth>} />
 
+      <Route path="/agents" component={wrap(Agents)} />
+      <Route path="/agents/:definition_id" component={wrap(AgentDetail)} />
+      <Route path="/templates" component={wrap(Templates)} />
+      <Route path="/templates/:definition_id" component={wrap(TemplateDetail)} />
       <Route path="/sessions" component={wrap(Sessions)} />
       <Route path="/sessions/:session_id" component={wrap(SessionDetail)} />
       <Route path="/sessions/:session_id/turns/:turn_id/asks/:ask_id" component={wrap(QuestionDetail)} />

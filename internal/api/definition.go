@@ -1,17 +1,19 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/definition"
 )
 
-type ComputerDefinition struct {
-	ID           string `json:"id"`
-	DeploymentID string `json:"deployment_id"`
+type TemplateDefinition struct {
+	Resources    json.RawMessage `json:"resources"`
+	ID           string          `json:"id"`
+	DeploymentID string          `json:"deployment_id"`
 }
-type ListComputerDefinitionsResponse struct {
+type ListTemplateDefinitionsResponse struct {
 	DeploymentID        string               `json:"deployment_id"`
-	ComputerDefinitions []DefinitionListItem `json:"computer_definitions"`
+	TemplateDefinitions []DefinitionListItem `json:"template_definitions"`
 	NextCursor          string               `json:"next_cursor,omitempty"`
 }
 
@@ -23,5 +25,6 @@ func ValidateDefinitionID(id string) error {
 }
 
 type DefinitionListItem struct {
-	ID string `json:"id"`
+	Resources json.RawMessage `json:"resources"`
+	ID        string          `json:"id"`
 }

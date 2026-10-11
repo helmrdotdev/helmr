@@ -1,9 +1,9 @@
 import { fixtureValue } from "../../support/runtime-mcp"
-import { agent, computer, image, type Json } from "@helmr/sdk"
+import { agent, template, image, type Json } from "@helmr/sdk"
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { z } from "zod"
 
-export const edgeSmokeComputer = computer({
+export const edgeSmokeComputer = template({
   id: "helmr-edge-smoke",
   image: image("helmr-edge-smoke").from("node:24-bookworm-slim").workdir("/workspace"),
   resources: { cpu: 1, memory: "1GiB" },
@@ -16,7 +16,7 @@ const inputSchema = z.object({
 
 export const edgeSmoke = agent({
   id: "edge-smoke",
-  computer: edgeSmokeComputer,
+  template: edgeSmokeComputer,
   maxTurnDuration: "5m",
   async turn(turn): Promise<Json> {
     const input = inputSchema.parse(fixtureValue(turn.input))

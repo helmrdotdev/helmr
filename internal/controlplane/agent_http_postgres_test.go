@@ -14,6 +14,7 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -28,7 +29,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	f := agenttest.New(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `
  UPDATE computer_preparation_specs SET seed=jsonb_build_object('profile',$2::text) WHERE environment_id=$1;
- UPDATE computer_definitions SET resources='{"milliCpu":1000,"memoryMiB":512}' WHERE environment_id=$1;
+ UPDATE template_definitions SET resources='{"milliCpu":1000,"memoryMiB":512}' WHERE environment_id=$1;
  UPDATE org_members SET role='owner' WHERE user_id=$3;
  `, pgx.QueryExecModeSimpleProtocol, f.Environment, definition.ComputerSeedProfile, f.User)
 	var orgID, projectID uuid.UUID
@@ -50,10 +51,18 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	httpFixture := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys}
 	owner := httpFixture.session(t, f.User, orgID)
 	base := fmt.Sprintf("/api/projects/%s/environments/%s", projectID, f.Environment)
-	start := base + "/agents/agent/start"
-	input := `{"input":[{"type":"text","text":"{\"work\":1}"}],"session_key":"conversation","idempotency_key":"first"}`
+	start := base + "/sessions"
+	input := `{"input":[{"type":"text","text":"{\"work\":1}"}],"key":"conversation","idempotency_key":"first"}`
 	call := func(path, token, body string, status int) []byte {
 		t.Helper()
+		if path == start || path == "/v1/sessions" {
+			var value map[string]json.RawMessage
+			if json.Unmarshal([]byte(body), &value) == nil && value != nil && len(value) > 0 {
+				value["agent"] = json.RawMessage(`"agent"`)
+				raw, _ := json.Marshal(value)
+				body = string(raw)
+			}
+		}
 		response := httpFixture.request(t, http.MethodPost, path, token, body)
 		if response.Code != status {
 			t.Fatalf("%s = %d %s, want %d", path, response.Code, response.Body.String(), status)
@@ -67,9 +76,9 @@ func TestAgentHTTPAdmission(t *testing.T) {
 			t.Fatalf("error code: %s, want %s (%v)", raw, code, err)
 		}
 	}
-	decode := func(raw []byte) api.StartAgentResponse {
+	decode := func(raw []byte) api.CreateSessionResponse {
 		t.Helper()
-		var receipt api.StartAgentResponse
+		var receipt api.CreateSessionResponse
 		if err := json.Unmarshal(raw, &receipt); err != nil {
 			t.Fatal(err)
 		}
@@ -84,7 +93,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 		call(start, owner, body, http.StatusBadRequest)
 	}
 	first := decode(call(start, owner, input, http.StatusOK))
-	if !first.Created || first.Sequence != 1 || first.SessionID == "" || first.TurnID == "" {
+	if first.Turn == nil || first.Turn.Sequence != 1 || first.SessionID == "" || first.Turn.TurnID == "" {
 		t.Fatalf("incomplete receipt: %+v", first)
 	}
 	var pendingPreparation bool
@@ -94,31 +103,28 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	if retry := decode(call(start, owner, input, http.StatusOK)); !reflect.DeepEqual(retry, first) {
 		t.Fatalf("retry changed: %+v / %+v", first, retry)
 	}
-	expectCode(call(start, owner, `{"input":[{"type":"text","text":"2"}],"session_key":"conversation","idempotency_key":"first"}`, http.StatusConflict), "idempotency_conflict")
+	expectCode(call(start, owner, `{"input":[{"type":"text","text":"2"}],"key":"conversation","idempotency_key":"first"}`, http.StatusConflict), "idempotency_conflict")
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET admission_tokens=0,admission_refilled_at=clock_timestamp()+interval '1 day' WHERE id=$1`, f.Environment)
 	expectCode(call(start, owner, `{"input":[{"type":"text","text":"2"}],"idempotency_key":"backpressure"}`, http.StatusConflict), "admission_unavailable")
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET admission_tokens=1000000,admission_refilled_at=clock_timestamp() WHERE id=$1`, f.Environment)
 	call(start, owner, `{"input":[{"type":"text","text":"2"}],"idempotency_key":"backpressure"}`, http.StatusOK)
-	// Conversation reuse stays pinned even when the current Deployment changes.
+	// An occupied key conflicts; enqueue preserves the original pin.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=NULL WHERE id=$1`, f.Environment)
-	second := decode(call(start, owner, `{"input":[{"type":"text","text":"2"}],"session_key":"conversation","idempotency_key":"second"}`, http.StatusOK))
-	if second.Created || second.SessionID != first.SessionID || second.Sequence != 2 || second.TurnID == first.TurnID {
-		t.Fatalf("conversation reuse: %+v", second)
-	}
+	expectCode(call(start, owner, `{"input":[{"type":"text","text":"2"}],"key":"conversation","idempotency_key":"second"}`, http.StatusConflict), "idempotency_conflict")
 	enqueue := base + "/sessions/" + first.SessionID + "/enqueue"
-	third := decode(call(enqueue, owner, `{"input":[{"type":"text","text":"3"}],"idempotency_key":"third"}`, http.StatusOK))
-	if third.SessionID != first.SessionID || third.Sequence != 3 {
-		t.Fatalf("enqueue: %+v", third)
+	var third, replayEnqueue api.TurnAdmission
+	if err := json.Unmarshal(call(enqueue, owner, `{"input":[{"type":"text","text":"3"}],"idempotency_key":"third"}`, http.StatusOK), &third); err != nil || third.SessionID != first.SessionID || third.Sequence != 2 {
+		t.Fatalf("enqueue: %+v %v", third, err)
 	}
-	if replay := decode(call(enqueue, owner, `{"input":[{"type":"text","text":"3"}],"idempotency_key":"third"}`, http.StatusOK)); !reflect.DeepEqual(replay, third) {
-		t.Fatalf("enqueue retry changed: %+v", replay)
+	if err := json.Unmarshal(call(enqueue, owner, `{"input":[{"type":"text","text":"3"}],"idempotency_key":"third"}`, http.StatusOK), &replayEnqueue); err != nil || replayEnqueue != third {
+		t.Fatalf("enqueue retry: %+v %v", replayEnqueue, err)
 	}
 	call(enqueue, viewer, `{"input":[{"type":"text","text":"4"}]}`, http.StatusForbidden)
 	call(base+"/sessions/"+uuid.NewV7().String()+"/enqueue", owner, `{"input":[{"type":"text","text":"4"}]}`, http.StatusForbidden)
 	_, otherOwner := httpFixture.organizationOwner(t, "other-org")
 	call(start, otherOwner, input, http.StatusBadRequest)
 	var actualCaller string
-	if err := f.Pool.QueryRow(t.Context(), `SELECT caller_id::text FROM turns WHERE id=$1`, first.TurnID).Scan(&actualCaller); err != nil || actualCaller != f.User.String() {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT caller_id::text FROM turns WHERE id=$1`, first.Turn.TurnID).Scan(&actualCaller); err != nil || actualCaller != f.User.String() {
 		t.Fatalf("wrong caller: %s %v", actualCaller, err)
 	}
 
@@ -142,25 +148,25 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	}
 	call("/v1/sessions/"+first.SessionID+"/enqueue", otherKey.Raw, `{"input":[{"type":"text","text":"4"}]}`, http.StatusForbidden)
 	call(fmt.Sprintf("/api/projects/%s/environments/%s/sessions/%s/enqueue", projectID, otherEnvironment, first.SessionID), owner, `{"input":[{"type":"text","text":"4"}]}`, http.StatusForbidden)
-	starter, sender := issue(auth.PermissionAgentsStart), issue(auth.PermissionSessionsSend)
-	call("/v1/agents/agent/start", sender, input, http.StatusForbidden)
+	starter, sender := issue(auth.PermissionSessionsCreate), issue(auth.PermissionSessionsSend)
+	call("/v1/sessions", sender, input, http.StatusForbidden)
 	call("/v1/sessions/"+first.SessionID+"/enqueue", starter, `{"input":[{"type":"text","text":"4"}]}`, http.StatusForbidden)
 	call("/v1/sessions/"+first.SessionID+"/enqueue", sender, `{"input":[{"type":"text","text":"4"}]}`, http.StatusOK)
-	call("/v1/agents/agent/start", starter, `{"input":[{"type":"text","text":"{}"}],"environment_id":"override"}`, http.StatusBadRequest)
+	call("/v1/sessions", starter, `{"input":[{"type":"text","text":"{}"}],"environment_id":"override"}`, http.StatusBadRequest)
 	call(start, starter, input, http.StatusUnauthorized)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.Environment, f.Deployment)
-	keyAdmission := decode(call("/v1/agents/agent/start", starter, `{"input":[{"type":"text","text":"5"}],"idempotency_key":"key-start"}`, http.StatusOK))
+	keyAdmission := decode(call("/v1/sessions", starter, `{"input":[{"type":"text","text":"5"}],"idempotency_key":"key-start"}`, http.StatusOK))
 	var valid bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT t.caller_kind='api_key' AND t.caller_id=k.id AND t.environment_id=k.environment_id FROM turns t JOIN api_keys k ON k.token_hash=$2 WHERE t.id=$1`, keyAdmission.TurnID, auth.HashAPIKey(starter)).Scan(&valid); err != nil || !valid {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT t.caller_kind='api_key' AND t.caller_id=k.id AND t.environment_id=k.environment_id FROM turns t JOIN api_keys k ON k.token_hash=$2 WHERE t.id=$1`, keyAdmission.Turn.TurnID, auth.HashAPIKey(starter)).Scan(&valid); err != nil || !valid {
 		t.Fatalf("API key identity: %v %v", valid, err)
 	}
 
 	// Lifetime policy survives both HTTP transports; preservation is separately scoped.
-	never := decode(call("/v1/agents/agent/start", starter, `{"input":[],"close_after_idle_ms":null}`, http.StatusOK))
+	never := decode(call("/v1/sessions", starter, `{"agent":"agent","close_after_idle_ms":null}`, http.StatusOK))
 	if never.CloseAfterIdleMs != nil {
 		t.Fatalf("never policy: %+v", never)
 	}
-	finite := decode(call(start, owner, `{"input":[],"close_after_idle_ms":12000}`, http.StatusOK))
+	finite := decode(call(start, owner, `{"agent":"agent","close_after_idle_ms":12000}`, http.StatusOK))
 	if finite.CloseAfterIdleMs == nil || *finite.CloseAfterIdleMs != 12000 {
 		t.Fatalf("finite policy: %+v", finite)
 	}
@@ -285,7 +291,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	 AND (SELECT count(*)=2 FROM session_controls c WHERE c.environment_id=s.environment_id AND c.session_id=s.id AND c.kind='interrupt')
 	 AND (SELECT count(*)=2 FROM session_holds h WHERE h.environment_id=s.environment_id AND h.session_id=s.id)
 	 AND (SELECT count(*)=1 FROM session_holds h WHERE h.environment_id=s.environment_id AND h.session_id=s.id AND h.released_at IS NULL)
-	 FROM sessions s JOIN turns t ON(t.environment_id,t.session_id)=(s.environment_id,s.id) WHERE s.id=$1 AND t.id=$2`, toInterrupt.SessionID, toInterrupt.TurnID).Scan(&retainedHeld); err != nil || !retainedHeld {
+	 FROM sessions s JOIN turns t ON(t.environment_id,t.session_id)=(s.environment_id,s.id) WHERE s.id=$1 AND t.id=$2`, toInterrupt.SessionID, toInterrupt.Turn.TurnID).Scan(&retainedHeld); err != nil || !retainedHeld {
 		t.Fatalf("interrupt discarded work or duplicated holds: %v %v", retainedHeld, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET revoked_at=clock_timestamp() WHERE token_hash=$1`, auth.HashAPIKey(interrupter))
@@ -320,14 +326,14 @@ func TestAgentHTTPAdmission(t *testing.T) {
 		}
 	}
 	var retainedClosing bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT s.status='closing' AND t.status='queued' AND (SELECT count(*)=2 FROM session_controls c WHERE c.environment_id=s.environment_id AND c.session_id=s.id AND c.kind='close') FROM sessions s JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id) WHERE s.id=$1 AND t.id=$2`, toClose.SessionID, toClose.TurnID).Scan(&retainedClosing); err != nil || !retainedClosing {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT s.status='closing' AND t.status='queued' AND (SELECT count(*)=2 FROM session_controls c WHERE c.environment_id=s.environment_id AND c.session_id=s.id AND c.kind='close') FROM sessions s JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id) WHERE s.id=$1 AND t.id=$2`, toClose.SessionID, toClose.Turn.TurnID).Scan(&retainedClosing); err != nil || !retainedClosing {
 		t.Fatalf("close discarded work or duplicated controls: %v %v", retainedClosing, err)
 	}
 	expectCode(call(base+"/sessions/"+toClose.SessionID+"/enqueue", owner, `{"input":[{"type":"text","text":"2"}]}`, http.StatusConflict), "admission_unavailable")
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET revoked_at=clock_timestamp() WHERE token_hash=$1`, auth.HashAPIKey(closer))
 	call(keyClosePath, closer, closeBody, http.StatusUnauthorized)
 
-	sdkKey, err := identity.IssueAPIKey(t.Context(), queries, issuer, scope, identity.APIKeyInput{Name: "SDK composition", Permissions: []auth.Permission{auth.PermissionAgentsStart, auth.PermissionSessionsRead, auth.PermissionSessionsSend, auth.PermissionSessionsClose, auth.PermissionSessionsCancel, auth.PermissionSessionsInterrupt, auth.PermissionSessionsResume}})
+	sdkKey, err := identity.IssueAPIKey(t.Context(), queries, issuer, scope, identity.APIKeyInput{Name: "SDK composition", Permissions: []auth.Permission{auth.PermissionSessionsCreate, auth.PermissionSessionsRead, auth.PermissionSessionsSend, auth.PermissionSessionsClose, auth.PermissionSessionsCancel, auth.PermissionSessionsInterrupt, auth.PermissionSessionsResume}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,19 +353,65 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	if output, err := sdkCommand.CombinedOutput(); err != nil {
 		t.Fatalf("SDK HTTP composition: %v\n%s", err, output)
 	}
+	t.Run("exact Turn interrupt across public clients", func(t *testing.T) {
+		a, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "exact", Input: json.RawMessage(`[{"type":"text","text":"run"}]`)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := "/v1/sessions/" + f.Session.String() + "/turns/" + a.TurnID.String() + "/interrupt"
+		body := `{"idempotency_key":"exact-stop"}`
+		call(path, sender, body, http.StatusForbidden)
+		cookiePath := base + "/sessions/" + f.Session.String() + "/turns/" + a.TurnID.String() + "/interrupt"
+		call(cookiePath, viewer, body, http.StatusForbidden)
+		for _, transport := range []struct{ path, token string }{{path, sdkKey.Raw}, {cookiePath, owner}} {
+			raw := call(transport.path, transport.token, body, http.StatusConflict)
+			expectCode(raw, "turn_not_interruptible")
+			var rejected api.HTTPErrorResponse
+			if err := json.Unmarshal(raw, &rejected); err != nil || string(rejected.Error.Details["status"]) != `"queued"` || string(rejected.Error.Details["reason"]) != `"not_started"` {
+				t.Fatalf("queued rejection details: %s %v", raw, err)
+			}
+		}
+		e := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+		if _, err := agent.Dispatch(t.Context(), f.Pool, e); err != nil {
+			t.Fatal(err)
+		}
+		var receipt api.TurnInterruptReceipt
+		if err := json.Unmarshal(call(path, sdkKey.Raw, body, http.StatusOK), &receipt); err != nil || receipt.TurnID != a.TurnID.String() || receipt.ID == "" {
+			t.Fatalf("exact receipt: %+v %v", receipt, err)
+		}
+		run := newAgentTestCLI(t, sdkServer.URL, sdkKey.Raw)
+		var replay api.TurnInterruptReceipt
+		if err := json.Unmarshal(run("session", "turn", "interrupt", a.TurnID.String(), "--session", f.Session.String(), "--idempotency-key", "exact-stop", "--json"), &replay); err != nil || replay != receipt {
+			t.Fatalf("CLI exact replay: %+v %v", replay, err)
+		}
+		script, err := filepath.Abs("../../sdk/typescript/testdata/turn-interrupt-http.ts")
+		if err != nil {
+			t.Fatal(err)
+		}
+		config, _ := json.Marshal(map[string]string{"url": sdkServer.URL, "apiKey": sdkKey.Raw, "sessionId": f.Session.String(), "turnId": a.TurnID.String(), "receiptId": receipt.ID})
+		command := exec.CommandContext(t.Context(), "bun", script)
+		command.Stdin = bytes.NewReader(config)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("SDK exact interrupt: %v\n%s", err, output)
+		}
+		var unchanged bool
+		if err := f.Pool.QueryRow(t.Context(), `SELECT NOT EXISTS(SELECT 1 FROM session_holds WHERE session_id=$1) AND (SELECT status='ready' FROM session_processes WHERE session_id=$1)`, f.Session).Scan(&unchanged); err != nil || !unchanged {
+			t.Fatalf("exact interrupt changed hold/process: %v %v", unchanged, err)
+		}
+	})
 	expectCode(call(start, owner, `{"input":[{"type":"json","value":null}]}`, http.StatusUnprocessableEntity), "content_kind_unsupported")
 	expectCode(call(start, owner, `{"input":{"type":"message","content":"shorthand"}}`, http.StatusBadRequest), "bad_request")
-	var conversational api.StartAgentResponse
+	var conversational api.CreateSessionResponse
 	if err := json.Unmarshal(call(start, owner, `{"input":[{"type":"text","text":"a\u0000雪"}],"idempotency_key":"message-nul"}`, http.StatusOK), &conversational); err != nil {
 		t.Fatal(err)
 	}
-	messageRead := httpFixture.request(t, http.MethodGet, base+"/sessions/"+conversational.SessionID+"/turns/"+conversational.TurnID, owner, "")
+	messageRead := httpFixture.request(t, http.MethodGet, base+"/sessions/"+conversational.SessionID+"/turns/"+conversational.Turn.TurnID, owner, "")
 	var messageTurn api.AgentTurn
 	if messageRead.Code != http.StatusOK || json.Unmarshal(messageRead.Body.Bytes(), &messageTurn) != nil || string(messageTurn.Input) != `[{"text":"a\u0000雪","type":"text"}]` {
 		t.Fatalf("HTTP message bytes changed: %s", messageRead.Body.String())
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET revoked_at=clock_timestamp() WHERE token_hash=$1`, auth.HashAPIKey(starter))
-	call("/v1/agents/agent/start", starter, `{"input":[{"type":"text","text":"5"}],"idempotency_key":"key-start"}`, http.StatusUnauthorized)
+	call("/v1/sessions", starter, `{"input":[{"type":"text","text":"5"}],"idempotency_key":"key-start"}`, http.StatusUnauthorized)
 	// A revoked Computer cannot run retained input, but current control authority
 	// can still cancel it over either external transport.
 	var retainedComputer uuid.UUID
@@ -376,12 +428,12 @@ func TestAgentHTTPAdmission(t *testing.T) {
 		}
 		response = httpFixture.request(t, http.MethodGet, transport.path+"/turns?limit=1", transport.token, "")
 		var page api.AgentTurnsPage
-		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &page) != nil || len(page.Turns) != 1 || page.Turns[0].ID != first.TurnID || page.Turns[0].Status != "queued" || page.NextCursor != "1" {
+		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &page) != nil || len(page.Turns) != 1 || page.Turns[0].ID != first.Turn.TurnID || page.Turns[0].Status != "queued" || page.NextCursor != "1" {
 			t.Fatalf("retained queue: %d %s", response.Code, response.Body.String())
 		}
-		response = httpFixture.request(t, http.MethodGet, transport.path+"/turns/"+first.TurnID, transport.token, "")
+		response = httpFixture.request(t, http.MethodGet, transport.path+"/turns/"+first.Turn.TurnID, transport.token, "")
 		var turn api.AgentTurn
-		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &turn) != nil || turn.ID != first.TurnID || string(turn.Input) != `[{"text":"{\"work\":1}","type":"text"}]` {
+		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &turn) != nil || turn.ID != first.Turn.TurnID || string(turn.Input) != `[{"text":"{\"work\":1}","type":"text"}]` {
 			t.Fatalf("retained input: %d %s", response.Code, response.Body.String())
 		}
 	}

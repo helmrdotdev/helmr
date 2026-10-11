@@ -1,5 +1,5 @@
-import { agent, computer, triggers, builder as configBuilder, defineConfig, image, source,
-  type HelmrClient, type ImageBuilder, type ComputerDefinitionInfo, type SessionEventPage,
+import { agent, template, triggers, builder as configBuilder, defineConfig, image, source,
+  type HelmrClient, type ImageBuilder, type TemplateDefinitionInfo, type SessionEventPage,
   type SecretCreateRequest, type SecretRotateRequest, type SecretRevokeRequest,
   type SecretBinding, type SourceFile, type SourceDirectory, type ComputerRef } from "."
 import * as sdk from "."
@@ -51,7 +51,7 @@ export function assertGreenfieldTypes(): void {
   // @ts-expect-error A Computer image is not a build environment.
   defineConfig({ build: { builder: image("computer").from("debian") } })
   // @ts-expect-error The build environment is not a Computer image.
-  computer({ id: "wrong-role", image: prepared, resources: { cpu: 1, memory: "1GiB" } })
+  template({ id: "wrong-role", image: prepared, resources: { cpu: 1, memory: "1GiB" } })
   // @ts-expect-error Builder sources are captured project paths, not installed-tree selectors.
   configBuilder().copy(sourceFile, "/opt/setup.sh")
   // @ts-expect-error The builder always starts from the Helmr builder image.
@@ -72,7 +72,7 @@ export function assertGreenfieldTypes(): void {
     info.agentId satisfies string
     info.deploymentId satisfies string
   })
-  client.computerDefinitions.get("machine").then((info: ComputerDefinitionInfo) => {
+  client.templateDefinitions.get("machine").then((info: TemplateDefinitionInfo) => {
     info.id satisfies string
     info.deploymentId satisfies string
   })
@@ -83,28 +83,26 @@ export function assertGreenfieldTypes(): void {
   // @ts-expect-error Creation requires the deployed definition selector.
   client.computers.create({ key: "shared-repository" })
   // @ts-expect-error Definition inspection does not create Computer instances.
-  client.computerDefinitions.createComputer("machine")
+  client.templateDefinitions.createComputer("machine")
   const clientComputer = client.computers.ref(
     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
   )
   clientComputer satisfies ComputerRef
-  client.computers.create({ definition: "machine" }).then((computer) => {
+  client.computers.create({ template: "machine" }).then((computer) => {
     computer satisfies ComputerRef
   })
   client.sessions.ref(
     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
   ).events.list({ after: 0, limit: 10 }) satisfies Promise<SessionEventPage>
-  client.agents.start("operator", { input: [{ type: "text", text: "ok" }], computer: clientComputer }).then(({ session, turn, created }) => {
-    created satisfies boolean
+  client.sessions.create({ agent: "operator", input: [{ type: "text", text: "ok" }], computer: clientComputer }).then(({ session, turn }) => {
     session.id satisfies string
     turn.sessionId satisfies string
     turn.wait().then((outcome) => { outcome.status satisfies string })
   })
-  // @ts-expect-error Agent admission requires explicit text-part input.
-  client.agents.start("operator", { computer: clientComputer })
+  client.sessions.create({ agent: "operator", computer: clientComputer }).then(({turn}) => { turn satisfies null })
 
-  const workspace = computer({ id: "workspace", image: image("workspace").from("debian"), resources: { cpu: 1, memory: "1GiB" } })
-  agent({ id: "operator", computer: workspace, init: () => ({ count: 0 }),
+  const workspace = template({ id: "workspace", image: image("workspace").from("debian"), resources: { cpu: 1, memory: "1GiB" } })
+  agent({ id: "operator", template: workspace, init: () => ({ count: 0 }),
     async turn(turn, ctx) {
       ctx.initResult.count satisfies number
       // @ts-expect-error Runtime delegation is available through managed MCP.
@@ -141,9 +139,8 @@ export function assertProcessDiagnosticsAreInternal(client: HelmrClient): void {
   void client.computers.preparationLogStreams
 }
 
-function assertSessionOwnsInterruption(client: HelmrClient): void {
+function assertExactTurnInterruption(client: HelmrClient): void {
  const turn = client.sessions.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33").turns.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34")
- // @ts-expect-error Interruption belongs to the Session subtree.
  void turn.interrupt()
 }
-void assertSessionOwnsInterruption
+void assertExactTurnInterruption

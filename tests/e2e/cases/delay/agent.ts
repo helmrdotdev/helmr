@@ -1,10 +1,10 @@
 import { fixtureValue } from "../../support/runtime-mcp"
-import { agent, computer, image } from "@helmr/sdk"
+import { agent, template, image } from "@helmr/sdk"
 import { readFile, writeFile } from "node:fs/promises"
 import { setTimeout as delay } from "node:timers/promises"
 import { z } from "zod"
 
-export const delayComputer = computer({
+export const delayComputer = template({
   id: "helmr-delay-smoke",
   image: image("helmr-delay-smoke").from("node:24-bookworm-slim").workdir("/workspace"),
   resources: { cpu: 1, memory: "1GiB" },
@@ -12,7 +12,7 @@ export const delayComputer = computer({
 
 export const delayAgent = agent({
   id: "delay-smoke",
-  computer: delayComputer,
+  template: delayComputer,
   maxTurnDuration: "5m",
   async turn(turn) {
     const input = z.object({ marker: z.string(), delayMs: z.number().int().min(1).max(240_000) }).strict().parse(fixtureValue(turn.input))

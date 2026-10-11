@@ -94,10 +94,10 @@ func TestComputerCommandCommandReturnsAdmissionReceipt(t *testing.T) {
 	}
 }
 
-func TestComputerCreateSecretsFileUsesNestedAPI(t *testing.T) {
+func TestComputerCreateSecretsFileUsesComputerAPI(t *testing.T) {
 	var received api.CreateComputerRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" || r.URL.Path != "/v1/computer-definitions/reviewer/computers" {
+		if r.Method != "POST" || r.URL.Path != "/v1/computers" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {

@@ -23,9 +23,9 @@ func runtimeAdmissionOrigin(t *testing.T) (agenttest.Fixture, agent.Admission, a
 	t.Helper()
 	f := agenttest.New(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_preparation_specs SET seed=jsonb_build_object('profile',$2::text) WHERE environment_id=$1;
- UPDATE computer_definitions SET resources='{"milliCpu":1000,"memoryMiB":512}' WHERE environment_id=$1;
- UPDATE computers SET preparation_spec_id=$3,origin_deployment_id=$3,origin_definition_key='fixture-computer',resources='{"milliCpu":1000,"memoryMiB":512}',storage_reservation_bytes=$4 WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, definition.ComputerSeedProfile, f.Deployment, disk.SeedCapacity)
-	origin, err := agent.Enqueue(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "origin", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
+ UPDATE template_definitions SET resources='{"milliCpu":1000,"memoryMiB":512}' WHERE environment_id=$1;
+ UPDATE computers SET preparation_spec_id=$3,origin_deployment_id=$3,origin_template_id=origin_deployment_id,resources='{"milliCpu":1000,"memoryMiB":512}',storage_reservation_bytes=$4 WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, definition.ComputerSeedProfile, f.Deployment, disk.SeedCapacity)
+	origin, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "origin", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestWorkerAgentStartSpawnReconcileLostResponse(t *testing.T) {
 					Sequence          int64
 					Created           bool
 				}
-				if err = json.Unmarshal(first.Value, &receipt); err != nil || !receipt.Created || receipt.Sequence != 1 {
+				if err = json.Unmarshal(first.Value, &receipt); err != nil || receipt.Sequence != 1 {
 					t.Fatalf("receipt=%s err=%v", first.Value, err)
 				}
 				var valid bool

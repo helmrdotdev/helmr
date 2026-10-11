@@ -30,14 +30,18 @@ type AgentControlRequest struct {
 	AttachmentSequence int64          `json:"attachment_sequence"`
 }
 type AgentControlResponse struct {
-	Sequence            int64     `json:"sequence"`
-	AuthorityGeneration int64     `json:"authority_generation"`
-	Kind                string    `json:"kind"`
-	Acknowledged        bool      `json:"acknowledged"`
-	Error               string    `json:"error,omitempty"`
-	ExpiresAt           time.Time `json:"expires_at"`
+	StopSequence        int64      `json:"stop_sequence"`
+	StopTurnID          *string    `json:"stop_turn_id,omitempty"`
+	StopDeadline        *time.Time `json:"stop_deadline,omitempty"`
+	Sequence            int64      `json:"sequence"`
+	AuthorityGeneration int64      `json:"authority_generation"`
+	Kind                string     `json:"kind"`
+	Acknowledged        bool       `json:"acknowledged"`
+	Error               string     `json:"error,omitempty"`
+	ExpiresAt           time.Time  `json:"expires_at"`
 }
 type AgentControlReceipt struct {
+	StopSequence        int64          `json:"stop_sequence"`
 	Session             RuntimeSession `json:"session"`
 	AttachmentSequence  int64          `json:"attachment_sequence"`
 	Sequence            int64          `json:"sequence"`

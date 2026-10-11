@@ -20,14 +20,14 @@ function agent<I extends InputContent = InputContent, O extends Json = Json, S =
 ```
 
 Returns a frozen definition with `kind: "agent"`. Throws `TypeError` when `id`
-is blank, `computer` is not a Computer definition, or `turn` is not a function.
+is blank, `computer` is not a Template definition, or `turn` is not a function.
 Export the definition from a file in a discovered source directory (`agents` by
 default; see [Configuration](/docs/reference/config)).
 
 ```ts
-import { agent, computer, image } from "@helmr/sdk"
+import { agent, template, image } from "@helmr/sdk"
 
-const repoComputer = computer({
+const repoComputer = template({
   id: "repo",
   image: image("repo").from("node:24-bookworm-slim"),
   resources: { cpu: 1, memory: "1GiB" },
@@ -35,7 +35,7 @@ const repoComputer = computer({
 
 export const reviewer = agent({
   id: "reviewer",
-  computer: repoComputer,
+  template: repoComputer,
   async init(ctx) {
     return { startedAt: Date.now() }
   },
@@ -53,7 +53,7 @@ export const reviewer = agent({
 interface AgentDefinition<I extends InputContent = InputContent, O extends Json = Json, S = unknown> {
   readonly kind: "agent"
   readonly id: string
-  readonly computer: ComputerDefinition
+  readonly computer: TemplateDefinition
   readonly init?: (ctx: InitContext) => MaybePromise<S>
   readonly turn: (turn: Turn<I>, ctx: AgentContext<S>) => MaybePromise<O>
   readonly closeAfterIdle?: Duration
@@ -64,17 +64,17 @@ interface AgentDefinition<I extends InputContent = InputContent, O extends Json 
 
 | Field | Required | Description |
 | --- | --- | --- |
-| `id` | yes | Definition ID, matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Used by `client.agents.start(id)` and `helmr agent start`. |
-| `computer` | yes | A `computer()` definition. New Sessions run on a Computer created from it unless the start request names an existing Computer. See [Computer](/docs/reference/sdk/computer). |
+| `id` | yes | Definition ID, matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Used by `client.sessions.create(id)` and `helmr session create`. |
+| `template` | yes | A `template()` definition. New Sessions run on a Computer created from it unless the start request names an existing Computer. See [Computer](/docs/reference/sdk/computer). |
 | `init` | no | Runs once per Session process before its first Turn. The returned value is `ctx.initResult`. |
 | `turn` | yes | Handles one Turn. Its JSON return value is the Turn's machine `result`. |
 | `closeAfterIdle` | no | Idle retention for new Sessions: a `Duration` or `"never"`. Default `"7d"`. |
 | `maxTurnDuration` | no | A `Duration` after which a running Turn reaches its deadline. No limit when omitted. |
 | `triggers` | no | Cron triggers. See [Triggers](/docs/reference/sdk/triggers). |
 
-A `closeAfterIdle` option on `client.agents.start()` (or `closeAfterIdleMs` on
+A `closeAfterIdle` option on `client.sessions.create()` (or `closeAfterIdleMs` on
 the runtime MCP `spawn`/`start` tools) overrides the definition for that new
-Session. Reusing a Session through `sessionKey` keeps its existing policy.
+Session. Enqueuing later work keeps the Session's existing policy.
 
 ## `Turn`
 
@@ -214,39 +214,40 @@ Agent code creates and controls other Sessions through the runtime MCP tools,
 not through an SDK method. See [Runtime MCP](/docs/reference/sdk/mcp) and
 [Delegation](/docs/concepts/delegation).
 
-## Client: start an Agent
+## Client: create a Session
 
 ```ts
-client.agents.start(name: string, request: AgentStartRequest, options?: RequestOptions): Promise<AgentStartReceipt>
+client.sessions.create(request: SessionCreateRequest, options?: RequestOptions): Promise<SessionCreateReceipt>
 
-interface AgentStartRequest {
-  readonly input: InputContent
+interface SessionCreateRequest {
+  readonly agent: string
+  readonly input?: InputContent
   readonly closeAfterIdle?: Duration          // or "never"
   readonly slack?: Readonly<{ channelId: string }>
   readonly computer?: Readonly<{ id: string }>
-  readonly sessionKey?: string
+  readonly key?: string
   readonly idempotencyKey?: string
 }
 
-interface AgentStartReceipt {
+interface SessionCreateReceipt {
   readonly session: ClientSessionRef
-  readonly turn: TurnRef
-  readonly created: boolean
+  readonly turn: TurnRef | null
   readonly closeAfterIdle: Duration          // resolved policy; "never" when disabled
 }
 ```
 
 | Option | Description |
 | --- | --- |
-| `input` | Initial Turn input. Required; `[]` for empty input. |
+| `agent` | Authored Agent ID in the current Deployment. |
+| `input` | Optional initial Turn input. Omit for zero Turns; explicit empty input is rejected. |
 | `closeAfterIdle` | Overrides the definition's idle retention for a new Session. |
 | `slack.channelId` | Opens the Session in a Slack channel, by raw channel ID (for example `C0123456789`). See [Slack](/docs/concepts/slack). |
-| `computer.id` | Runs on an existing Computer. Omit to create one from the Agent's Computer definition. |
-| `sessionKey` | Reuses the Session with this key for the Agent, or creates it. `created` reports which. |
+| `computer.id` | Runs on an existing Computer. Omit to assign one from the pinned Template definition on first input. |
+| `key` | Unique Session identity within its Agent. An occupied key conflicts. |
 | `idempotencyKey` | Retry identity. When omitted, the SDK generates a new key for each call, so pass one explicitly to retry safely. |
 
-`name` is the definition ID. New Sessions use the current Deployment; a reused
-Session keeps its pinned Deployment. The receipt confirms admission, not
+New Sessions pin the current Deployment. Enqueue later work using the Session ID.
+Exact creation retries retain the original receipt, including a null initial Turn. The receipt confirms admission, not
 completion.
 
 ## Client: Sessions
@@ -271,7 +272,6 @@ client.sessions.ref(id: string): ClientSessionRef
 | Method | Returns | Description |
 | --- | --- | --- |
 | `get(options?)` | `Session` | Current Session state. |
-| `send(data, { idempotencyKey? }?, options?)` | `SessionSendResult` | Messages the active Turn, or enqueues a Turn when idle. Result is `{ kind: "enqueued", turn }` or `{ kind: "messaged", turn, message }`. |
 | `enqueue(input, { idempotencyKey? }?, options?)` | `TurnRef` | Always admits a new Turn. |
 | `turns.ref(id)` | `TurnRef` | Local handle for a Turn. |
 | `turns.list({ cursor?, limit? }?, options?)` | `CursorPage<TurnState>` | Turns in admission order; `limit` 1–100. |
@@ -291,8 +291,8 @@ payloads are listed in [Session events](/docs/reference/events).
 
 | Field | Type |
 | --- | --- |
-| `id`, `agentId`, `deploymentId`, `computerId`, `rootSessionId` | `string` |
-| `parentSessionId`, `requesterSessionId` | `string \| null` |
+| `id`, `agentId`, `deploymentId`, `rootSessionId` | `string` |
+| `computerId`, `parentSessionId`, `requesterSessionId` | `string \| null` |
 | `key` | `string`, optional |
 | `slackChannelId` | `string`, optional |
 | `status` | `"open" \| "closing" \| "closed" \| "cancelled"` |
@@ -311,6 +311,7 @@ payloads are listed in [Session events](/docs/reference/events).
 | `wait({ signal? }?)` | `TurnOutcome` | Resolves when the Turn settles. |
 | `wait({ timeout, signal? })` | `TimedTurnWaitResult` | `{ status: "timeout" }` or `{ status: "settled", outcome }`. A timeout never cancels the Turn. |
 | `send(data, { idempotencyKey? }?, options?)` | `MessageReceipt` | Sends a message to exactly this Turn. Returns `{ id, status: "accepted" }`. |
+| `interrupt({ idempotencyKey? }?, options?)` | `TurnInterruptReceipt` | Interrupts this running Turn without a hold. Returns `{ id, sessionId, turnId, status: "accepted" }`. |
 | `asks` | `TurnAsks` | Question methods. See [Questions](/docs/reference/sdk/questions#client-methods). |
 
 `TurnState` has `id`, `sessionId`, `sequence`, `status`, and optional `input`,

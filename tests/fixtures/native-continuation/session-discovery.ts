@@ -55,6 +55,8 @@ export async function checkSessionDiscovery(turn: Turn, caller: string, computer
   } while(cursor)
   assert.deepEqual(requested.sort(),[state.owned.id,state.requested.id].sort())
   for (const [sessionId,turnId,status] of [
+    [state.owned.id,state.controls.exactInterruptedTurn,"interrupted"],
+    [state.owned.id,state.controls.exactFollowingTurn,"completed"],
     [state.owned.id,state.controls.interruptedTurn,"interrupted"],
     [state.owned.id,state.controls.resumedTurn,"completed"],
     [state.controls.cancelledSession,state.controls.cancelledTurn,"cancelled"],

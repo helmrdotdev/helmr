@@ -116,7 +116,7 @@ func (verifier *programVerifier) verifyDeclarations() error {
 			return err
 		}
 	}
-	for _, entry := range verifier.definitionIndex.Computers {
+	for _, entry := range verifier.definitionIndex.Templates {
 		if err := artifact.VerifyDeclarationModule(verifier.artifact, entry.ModulePath); err != nil {
 			return err
 		}

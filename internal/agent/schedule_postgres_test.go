@@ -55,7 +55,7 @@ func TestScheduleRejectionRollsBackAdmissionAndRetainsDisposition(t *testing.T) 
 	schedule := seedSchedule(t, f, time.Now().UTC().Truncate(time.Minute))
 	// Force a late admission failure after the token reservation, proving its
 	// savepoint preserves a rejected occurrence without leaking that reservation.
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_definitions SET resources='{"milliCpu":1000,"memoryMiB":0}' WHERE environment_id=$1`, f.env)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET resources='{"milliCpu":1000,"memoryMiB":0}' WHERE environment_id=$1`, f.env)
 	var tokens string
 	if err := f.pool.QueryRow(t.Context(), `SELECT admission_tokens::text FROM environments WHERE id=$1`, f.env).Scan(&tokens); err != nil {
 		t.Fatal(err)
@@ -103,7 +103,7 @@ func TestScheduleLoopRecoversLatestOnly(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT session_id FROM agent_schedule_occurrences WHERE environment_id=$1 AND schedule_id=$2 AND disposition='admitted'`, f.env, schedule).Scan(&session); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Enqueue(context.Background(), f.pool, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: session, Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := Enqueue(context.Background(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: session, Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 }

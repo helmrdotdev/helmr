@@ -1,6 +1,6 @@
-import { agent, computer, image, triggers } from "@helmr/sdk"
+import { agent, template, image, triggers } from "@helmr/sdk"
 
-export const scheduleSmokeComputer = computer({
+export const scheduleSmokeComputer = template({
   id: "helmr-schedule-smoke",
   image: image("helmr-schedule-smoke").from("node:24-bookworm-slim").workdir("/sandbox"),
   resources: { cpu: 1, memory: "1GiB" },
@@ -8,7 +8,7 @@ export const scheduleSmokeComputer = computer({
 
 export const scheduleSmoke = agent({
   id: "schedule-smoke",
-  computer: scheduleSmokeComputer,
+  template: scheduleSmokeComputer,
   triggers: [triggers.cron("each-minute", "* * * * *", { timezone: "UTC", input: [{ type: "text", text: JSON.stringify({ scheduled: true }) }] })],
   maxTurnDuration: "5m",
   turn: async (turn, ctx) => ({

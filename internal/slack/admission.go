@@ -184,7 +184,7 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust agent.ComputerT
 			if p.thread == uuid.Nil() {
 				receipt.Admission, err = agent.Start(ctx, core, trust, agent.Caller{Kind: "user", ID: p.user}, agent.StartRequest{EnvironmentID: p.route.Target.EnvironmentID, Agent: p.route.Target.AgentName, SlackChannelID: &p.message.Channel, PreparedSlack: &p.route, RetryKey: "slack:" + id.String(), Input: input})
 			} else {
-				receipt, err = agent.Send(ctx, core, agent.Caller{Kind: "user", ID: p.user}, agent.EnqueueRequest{EnvironmentID: p.route.Target.EnvironmentID, SessionID: p.session, RetryKey: "slack:" + id.String(), Input: input})
+				receipt, err = agent.RouteSlackInput(ctx, core, trust, agent.Caller{Kind: "user", ID: p.user}, agent.EnqueueRequest{EnvironmentID: p.route.Target.EnvironmentID, SessionID: p.session, RetryKey: "slack:" + id.String(), Input: input})
 			}
 			if err != nil {
 				return err

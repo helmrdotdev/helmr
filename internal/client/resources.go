@@ -75,11 +75,10 @@ func (c *Client) computerResourcePath(computerID string, suffix string, opts Com
 
 func (c *Client) CreateComputer(
 	ctx context.Context,
-	declaredID string,
 	input api.CreateComputerRequest,
 	opts ComputerScopeOptions,
 ) (api.ComputerSnapshot, error) {
-	path, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/computer-definitions/"+url.PathEscape(declaredID)+"/computers")
+	path, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/computers")
 	if err != nil {
 		return api.ComputerSnapshot{}, err
 	}

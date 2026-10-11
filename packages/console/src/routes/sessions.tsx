@@ -1,7 +1,9 @@
+import { useSearchParams } from "@solidjs/router";
+import { definitionHref, scopedConsoleHref } from "../lib/definitions";
 import { createInfiniteQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { ApiError } from "../lib/api";
-import { useScope } from "../lib/scope";
+import { useRouteScope } from "../lib/scope";
 import {
   listSessions,
   sessionConsolePath,
@@ -46,7 +48,7 @@ function SessionRow(props: {
         <IDText value={props.session.id} mode="link"
           href={sessionConsolePath(props.session.id, props.projectID, props.environmentID)} />
       </td>
-      <td><IDText value={props.session.agent_id} /></td>
+      <td><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("agents", props.session.agent_definition_id, { projectID: props.projectID, environmentID: props.environmentID, deploymentID: props.session.deployment_id })}>{props.session.agent_definition_id}</a></td>
       <td>
         <Show
           when={props.session.key}
@@ -60,11 +62,9 @@ function SessionRow(props: {
       </td>
       <td>{props.session.holds.length ? `${props.session.holds.length} active` : "None"}</td>
       <td>
-        <IDText
-          value={props.session.computer_id}
-          mode="link"
-          href={`/computers/${props.session.computer_id}`}
-        />
+        <Show when={props.session.computer_id} fallback={<span class="text-console-faint">No Computer assigned</span>}>
+          {(id) => <IDText value={id()} mode="link" href={scopedConsoleHref(`/computers/${id()}`, { projectID: props.projectID, environmentID: props.environmentID })} />}
+        </Show>
       </td>
       <td>
         <RelativeTime value={props.session.created_at} />
@@ -74,17 +74,21 @@ function SessionRow(props: {
 }
 
 export function Sessions() {
-  const scope = useScope();
-  const projectID = () => scope.selectedProjectID();
-  const environmentID = () => scope.selectedEnvironmentID();
+  const scope = useRouteScope();
+  const [search] = useSearchParams();
+  const text = (v: string | string[] | undefined) => typeof v === "string" ? v : "";
+  const projectID = () => scope().projectID;
+  const environmentID = () => scope().environmentID;
+  const agentID = () => text(search["agent_id"]);
   const [filter, setFilter] = createSignal<SessionFilter>("all");
   const sessions = createInfiniteQuery(() => ({
-    queryKey: ["sessions", "list", filter(), projectID(), environmentID()],
+    queryKey: ["sessions", "list", filter(), projectID(), environmentID(), agentID()],
     queryFn: ({ pageParam }) => {
       const status = filter();
       return listSessions({
         projectID: projectID(),
         environmentID: environmentID(),
+        agentID: agentID() || undefined,
         statuses: status === "all" ? undefined : [status],
         cursor: pageParam || undefined,
         limit: 100,
@@ -117,6 +121,7 @@ export function Sessions() {
         }
       />
 
+      <Show when={agentID()}><p class={ui.muted}>Showing this Agent’s Sessions across all Deployments. <a class="text-console-accent hover:text-console-accent-hover" href={scopedConsoleHref("/sessions", { projectID: projectID(), environmentID: environmentID() })}>Show all Sessions</a></p></Show>
       <Show when={sessions.isError}>
         <StatePanel error={sessionsErrorMessage(sessions.error)} />
       </Show>

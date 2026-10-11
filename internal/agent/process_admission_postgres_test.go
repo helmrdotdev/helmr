@@ -60,6 +60,7 @@ func TestProcessAdmissionSetupReceiptPrecedesTurnDispatch(t *testing.T) {
 	if err := ObserveSessionReady(t.Context(), f.pool, *f.host(), e, attachment.Sequence); err != nil {
 		t.Fatal(err)
 	}
+	acknowledgeAdmissionControl(t, f, e, attachment.Sequence)
 	if _, err := Dispatch(t.Context(), f.pool, e); err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +169,7 @@ func TestProcessReadinessReplayDoesNotBlockRestoreCompletion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err = AcknowledgeSessionDelivery(ctx, r.f.pool, r.host, e, attachment.Sequence, control.Sequence, control.Generation, control.Kind, ""); err != nil {
+		if err = AcknowledgeSessionDelivery(ctx, r.f.pool, r.host, e, attachment.Sequence, control.Sequence, control.Generation, control.Kind, "", 0); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -178,5 +179,16 @@ func TestProcessReadinessReplayDoesNotBlockRestoreCompletion(t *testing.T) {
 	var active bool
 	if err := r.f.pool.QueryRow(ctx, `SELECT status='active' FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, r.f.env, r.f.computer, r.epoch).Scan(&active); err != nil || !active {
 		t.Fatalf("restore did not activate lease: %v %v", active, err)
+	}
+}
+
+func acknowledgeAdmissionControl(t *testing.T, f fixture, e Execution, attachment int64) {
+	t.Helper()
+	c, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), e, attachment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), e, attachment, c.Sequence, c.Generation, c.Kind, "", c.StopSequence); err != nil {
+		t.Fatal(err)
 	}
 }

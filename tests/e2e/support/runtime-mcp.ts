@@ -15,7 +15,7 @@ export async function callMcp<T>(signal: AbortSignal, name: string, args: object
   if (rpc.error || !rpc.result || rpc.result.isError || rpc.result.content.length !== 1 || rpc.result.content[0]?.type !== "text") throw new Error(`MCP ${name}: ${JSON.stringify(rpc)}`)
   return JSON.parse(rpc.result.content[0].text!) as T
 }
-export interface ManagedAdmission { sessionId: string; turnId: string; sequence: number; created: boolean }
+export interface ManagedAdmission { sessionId: string; turnId: string; sequence: number }
 export async function waitManagedTurn(signal: AbortSignal, sessionId: string, turnId: string): Promise<TurnOutcome> {
   for (;;) {
     const state = await callMcp<{ status: "settled"; outcome: TurnOutcome } | { status: "timeout" }>(signal, "wait_turn", { sessionId, turnId, timeoutMs: 30000 })

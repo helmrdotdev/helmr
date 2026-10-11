@@ -194,7 +194,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		duration, driverTimeout = 35*time.Minute, 30*60*1000
 	}
 	longIdle := mode == nativeExecutionLongIdle
-	// Discovery includes sequential interruption, replacement and cancellation before both restores.
+	// Discovery includes sequential interruption, retained-process continuation and cancellation before both restores.
 	if keyMismatch || sessionDiscovery {
 		duration, driverTimeout = 20*time.Minute, 15*60*1000
 	}
@@ -225,6 +225,9 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		t.Fatal(err)
 	}
 	var extraPermissions []auth.Permission
+	if sessionDiscovery {
+		extraPermissions = append(extraPermissions, auth.PermissionSessionsInterrupt)
+	}
 	if secretBindings {
 		extraPermissions = []auth.Permission{auth.PermissionComputersCreate, auth.PermissionSecretsWrite}
 	}
@@ -425,7 +428,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		observeCtx, stopObserving := context.WithCancel(ctx)
 		observed := make(chan error, 1)
 		go func() {
-			observed <- writeNativeCheckpointObservations(observeCtx, database.Pool, env, checkpointObservations)
+			observed <- writeNativeCheckpointObservations(observeCtx, database.Pool, env, checkpointObservations, sessionDiscovery)
 		}()
 		defer func() {
 			stopObserving()
@@ -573,6 +576,9 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		}
 	}
 	if sessionDiscovery {
+		if err := verifyNativeStops(ctx, database.Pool, env, result.Bytes(), input.Evidence); err != nil {
+			t.Fatal(err)
+		}
 		if err := verifyNativeSessionControls(ctx, database.Pool, env, result.Bytes(), input.Evidence); err != nil {
 			t.Fatal(err)
 		}
@@ -834,7 +840,7 @@ func seedNativeExecution(t *testing.T, pool *pgxpool.Pool, extraPermissions ...a
  INSERT INTO projects(id,org_id,default_region_id,slug,name) VALUES($3,$1,'native-proof','native-proof','Native proof');
  INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex) VALUES('until_environment_deletion',$4,$1,$3,'native-proof','Native proof','#112233');
  UPDATE environments SET max_outstanding_admissions=128,max_causal_depth=8,max_resident_computers=2,max_cpu_millis=4000,max_memory_bytes=17179869184,max_reserved_storage_bytes=137438953472,preparation_timeout_ms=600000,admission_rate_per_second=100,admission_burst=100,admission_tokens=100,admission_refilled_at=clock_timestamp() WHERE id=$4;`, pgx.QueryExecModeSimpleProtocol, org, user, project, env)
-	issued, err := identity.IssueAPIKey(t.Context(), db.New(pool), auth.Principal{OrgID: org, UserID: user, Kind: auth.PrincipalKindSession, Role: auth.RoleOwner}, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: env.String()}, identity.APIKeyInput{Name: "native proof", Permissions: append([]auth.Permission{auth.PermissionDeploymentsWrite, auth.PermissionAgentsStart, auth.PermissionSessionsRead, auth.PermissionSessionsSend, auth.PermissionSessionsClose, auth.PermissionSessionsCancel, auth.PermissionSessionsResume, auth.PermissionComputersRead, auth.PermissionComputersDelete, auth.PermissionComputerCommandCreate, auth.PermissionAsksRespond}, extraPermissions...)})
+	issued, err := identity.IssueAPIKey(t.Context(), db.New(pool), auth.Principal{OrgID: org, UserID: user, Kind: auth.PrincipalKindSession, Role: auth.RoleOwner}, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: env.String()}, identity.APIKeyInput{Name: "native proof", Permissions: append([]auth.Permission{auth.PermissionDeploymentsWrite, auth.PermissionSessionsCreate, auth.PermissionSessionsRead, auth.PermissionSessionsSend, auth.PermissionSessionsClose, auth.PermissionSessionsCancel, auth.PermissionSessionsResume, auth.PermissionComputersRead, auth.PermissionComputersDelete, auth.PermissionComputerCommandCreate, auth.PermissionAsksRespond}, extraPermissions...)})
 	if err != nil {
 		t.Fatal(err)
 	}

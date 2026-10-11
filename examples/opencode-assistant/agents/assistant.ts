@@ -1,8 +1,8 @@
 import { normalizeInput } from "@helmr/sdk/internal"
-import { agent, computer, image, MessageRejected } from "@helmr/sdk"
+import { agent, template, image, MessageRejected } from "@helmr/sdk"
 import { OpenCodeHarness } from "./opencode"
 
-export const workspace = computer({
+export const workspace = template({
   id: "opencode-workspace",
   image: image("opencode-workspace")
     .from("node:24-bookworm-slim")
@@ -16,7 +16,7 @@ export const workspace = computer({
 
 export const assistant = agent({
   id: "opencode-assistant",
-  computer: workspace,
+  template: workspace,
   maxTurnDuration: "15m",
   async init(context) {
     if (!process.env.OPENCODE_GO_API_KEY) throw new Error("Configure the OpenCode Go Environment Secret before starting")

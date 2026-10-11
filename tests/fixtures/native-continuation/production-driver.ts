@@ -18,7 +18,7 @@ if (options.healthyRAM || options.checkpointFault) { await runHealthyContinuatio
 const signal = AbortSignal.timeout(options.timeoutMs)
 const client = new HelmrClient({ url: options.url, apiKey: options.apiKey })
 const sessions: ClientSessionRef[] = []
-const peer = await client.agents.start("peer", { input: fixtureInput("hold" )}, { signal })
+const peer = await client.sessions.create({ agent: "peer", input: fixtureInput("hold" ) }, { signal })
 sessions.push(peer.session)
 let model: CommandRef | undefined
 let activeOutcome: { controller: AbortController; promise: Promise<TurnOutcome> } | undefined
@@ -71,7 +71,9 @@ async function nativeOutcome(turn: TurnRef, provider: string, count: number, out
 
 try {
   let peerSequence = await progress(0, true)
-  const computer = { id: (await peer.session.get({ signal })).computerId }
+  const computerID = (await peer.session.get({ signal })).computerId
+  assert(computerID, "running peer must be placed on a Computer")
+  const computer = { id: computerID }
   const commands = client.computers.ref(computer.id)
   if (options.backgroundSaves) {
     const waiting = performance.now()
@@ -198,7 +200,7 @@ try {
     const firstInput = options.nativeProcessLoss ? `${provider} unique pre-loss input one` : "first"
     const secondInput = options.nativeProcessLoss ? `${provider} unique pre-loss input two` : "second"
     const startAt = performance.now()
-    const started = await client.agents.start(provider, { input: fixtureInput(firstInput), computer }, { signal })
+    const started = await client.sessions.create({ agent: provider, input: fixtureInput(firstInput), computer }, { signal })
     const startAckMs = performance.now() - startAt
     sessions.push(started.session)
     nativeSessions[provider] = started.session.id
@@ -459,7 +461,7 @@ try {
     }
   }
   if (options.deadlineSave) {
-    const expiring = await client.agents.start("deadline", { input: fixtureInput("expire during required save"), computer }, { signal })
+    const expiring = await client.sessions.create({ agent: "deadline", input: fixtureInput("expire during required save"), computer }, { signal })
     sessions.push(expiring.session)
     const readProof = async (path: string): Promise<Record<string, string>> => {
       for (;;) {

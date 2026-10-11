@@ -103,14 +103,14 @@ func TestSessionSendPermissionRequiresWritableRole(t *testing.T) {
 }
 
 func TestAgentStartPermissionIsWritableButNotReadableRoleAuthority(t *testing.T) {
-	if !RoleAllows(RoleDeveloper, PermissionAgentsStart) {
+	if !RoleAllows(RoleDeveloper, PermissionSessionsCreate) {
 		t.Fatal("developer should be allowed to start an Agent")
 	}
-	if RoleAllows(RoleViewer, PermissionAgentsStart) {
+	if RoleAllows(RoleViewer, PermissionSessionsCreate) {
 		t.Fatal("viewer should not be allowed to start an Agent")
 	}
-	normalized, ok := ParseAPIKeyGrant(string(PermissionAgentsStart))
-	if !ok || normalized != PermissionAgentsStart {
+	normalized, ok := ParseAPIKeyGrant(string(PermissionSessionsCreate))
+	if !ok || normalized != PermissionSessionsCreate {
 		t.Fatalf("normalized Agent start permission = %v", normalized)
 	}
 }

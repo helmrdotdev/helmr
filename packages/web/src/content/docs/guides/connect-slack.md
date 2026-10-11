@@ -79,15 +79,13 @@ channel of the connected workspace. Pass the channel's ID (for example
 must be able to access the channel.
 
 ```sh
-helmr agent start reviewer --project demo --env staging \
+helmr session create reviewer --project demo --env staging \
   --slack-channel C0123456789 --text "Review issue 42"
 ```
 
 ```ts
-await client.agents.start("reviewer", {
-  input: [{ type: "text", text: "Review issue 42" }],
-  slack: { channelId: "C0123456789" },
-})
+await client.sessions.create({ agent: "reviewer", input: [{ type: "text", text: "Review issue 42" }],
+  slack: { channelId: "C0123456789" }, })
 ```
 
 For scheduled work, set `slack: { channelId }` on the cron trigger; see

@@ -108,8 +108,8 @@ func writeTestDeploymentBundleDirectory(t *testing.T) (string, Manifest) {
 	bundle.ComputerSeeds[0].Artifact.Digest = sha256sum.DigestBytes(computer)
 	bundle.ComputerSeeds[0].Artifact.SizeBytes = int64(len(computer))
 	for index := range bundle.Program.Metadata.Definitions {
-		if bundle.Program.Metadata.Definitions[index].Computer != nil {
-			bundle.Program.Metadata.Definitions[index].Computer.Seed.ArtifactDigest = bundle.ComputerSeeds[0].Artifact.Digest
+		if bundle.Program.Metadata.Definitions[index].Template != nil {
+			bundle.Program.Metadata.Definitions[index].Template.Seed.ArtifactDigest = bundle.ComputerSeeds[0].Artifact.Digest
 		}
 	}
 	bundle.Objects = []Object{

@@ -68,7 +68,7 @@ func (o *PreparationAllocationOwner) runGuestPreparation(ctx context.Context, st
 			if err != nil {
 				return err
 			}
-			request.Start = &computerv0.PreparationStart{ComputerDefinitionId: start.ComputerDefinitionID, LogLimits: o.machines.PreparationLogLimits, ProtectedEnv: secrets.Protected.Values(), ProxyCa: secrets.Protected.PublicCA()}
+			request.Start = &computerv0.PreparationStart{TemplateDefinitionId: start.TemplateDefinitionID, LogLimits: o.machines.PreparationLogLimits, ProtectedEnv: secrets.Protected.Values(), ProxyCa: secrets.Protected.PublicCA()}
 			for _, secret := range secrets.Secrets {
 				delivery := &computerv0.ComputerSecretDelivery{Value: secret.Value}
 				switch {

@@ -12,7 +12,7 @@ source and Turn input.
 ```bash
 helmr secret create GITHUB_TOKEN --project PROJECT --env ENVIRONMENT --json
 helmr deploy PATH/TO/github-pr-review --project PROJECT --env ENVIRONMENT
-helmr agent start github-pr-review --text '{"owner":"OWNER","repo":"REPOSITORY","prNumber":123}' --project PROJECT --env ENVIRONMENT --json
+helmr session create github-pr-review --text '{"owner":"OWNER","repo":"REPOSITORY","prNumber":123}' --project PROJECT --env ENVIRONMENT --json
 ```
 
 The Agent parses the pull-request coordinates from JSON in the text.

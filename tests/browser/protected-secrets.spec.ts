@@ -9,8 +9,8 @@ test("Console inspects a Computer and all secret placement modes without submitt
   });
   expect(response.ok(), await response.text()).toBeTruthy();
   const secret = await response.json();
-  const created = await page.request.post(`${base}/computer-definitions/browser-computer/computers`, {
-    data: { secrets: [
+  const created = await page.request.post(`${base}/computers`, {
+    data: { template: "browser-computer", secrets: [
       { secretId: secret.id, env: { name: "GH_TOKEN", mode: "protected", allowedOrigins: ["https://api.github.com"] } },
       { secretId: secret.id, env: { name: "PGPASSWORD", mode: "raw" } },
       { secretId: secret.id, file: { path: "/run/secrets/client.key" } },

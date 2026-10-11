@@ -34,8 +34,8 @@ func TestComputerTrustCreationIsAtomicAndRetriesPreserveSigner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_secret_bindings(environment_id,deployment_id,definition_key,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder)
- VALUES($1,$2,'fixture-computer',$3,'env','RUNTIME_TOKEN','protected',ARRAY['https://api.example.com'],$4)`, f.env, f.deployment, f.secretID, marker)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_secret_bindings(environment_id,deployment_id,template_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder)
+ VALUES($1,$2,$2,$3,'env','RUNTIME_TOKEN','protected',ARRAY['https://api.example.com'],$4)`, f.env, f.deployment, f.secretID, marker)
 	req := f.startRequest("computer-trust")
 	if _, err = Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("missing issuer: %v", err)

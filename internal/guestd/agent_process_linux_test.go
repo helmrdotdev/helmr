@@ -209,7 +209,7 @@ func testAgentProcessRetainedRuntime(t *testing.T, checkpoint, computerCapture, 
 	}
 	write(managedRuntimeMetadata, metadata)
 	write(filepath.Join(programRoot, "package.json"), []byte(`{"type":"module"}`))
-	write(filepath.Join(programRoot, "helmr/definition-index.json"), []byte(`{"apiVersion":"helmr.definition-index.v1","agents":[{"id":"agent","computerDefinitionId":"computer","modulePath":"helmr/app/entry-0.mjs","exportName":"agent"}],"computers":[{"id":"computer","modulePath":"helmr/app/entry-0.mjs","exportName":"agent","throughAgent":true}]}`))
+	write(filepath.Join(programRoot, "helmr/definition-index.json"), []byte(`{"apiVersion":"helmr.definition-index.v1","agents":[{"id":"agent","templateDefinitionId":"computer","modulePath":"helmr/app/entry-0.mjs","exportName":"agent"}],"computers":[{"id":"computer","modulePath":"helmr/app/entry-0.mjs","exportName":"agent","throughAgent":true}]}`))
 	if checkpoint {
 		write(filepath.Join(programRoot, "helmr/app/entry-0.mjs"), []byte(`export const agent={kind:"agent",id:"agent",computer:{kind:"computer",id:"computer"},init(){return {count:0}},turn(turn,ctx){return {count:++ctx.initResult.count,pid:process.pid}}}`))
 	} else {
@@ -399,7 +399,7 @@ func testAgentProcessRetainedRuntime(t *testing.T, checkpoint, computerCapture, 
 	}
 	var ended [2]bool
 	stopped := false
-	shutdown := &agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "shutdown", Command: &agentv1.GuestCommand_Shutdown{Shutdown: &agentv1.SessionShutdown{Reason: "test"}}}
+	shutdown := &agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "shutdown", ControlSequence: 5, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "shutdown"}}}
 	if err := writeAgentTransportFrame(host, &agentv1.HostSessionMessage{AttachmentSequence: 1, Message: &agentv1.HostSessionMessage_Command{Command: shutdown}}); err != nil {
 		t.Fatal(err)
 	}
@@ -559,7 +559,7 @@ func actualAgentComputerContinuation(t *testing.T, session *agentSession, proces
 	} else if _, _, err := peer.receive(event); err != nil {
 		t.Fatal(err)
 	}
-	if err := peer.send(&agentv1.GuestCommand{Identity: peerGrant.Identity, DeliveryId: "hold", ControlSequence: 1, Command: &agentv1.GuestCommand_Suspend{Suspend: &agentv1.SessionSuspend{Reason: "retained hold"}}}); err != nil {
+	if err := peer.send(&agentv1.GuestCommand{Identity: peerGrant.Identity, DeliveryId: "hold", ControlSequence: 1, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "hold"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := peer.receive(peerRead()); err != nil {

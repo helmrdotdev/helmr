@@ -18,12 +18,12 @@ a URL and an `Authorization` header that identify the current Session. Pass
 them to any MCP client or harness that supports MCP over HTTP.
 
 ```ts
-import { agent, computer, image } from "@helmr/sdk"
+import { agent, template, image } from "@helmr/sdk"
 import { createRuntimeMcpConnection } from "@helmr/sdk/mcp"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 
-const repoComputer = computer({
+const repoComputer = template({
   id: "coordinator",
   image: image("coordinator").from("node:24-bookworm-slim"),
   resources: { cpu: 1, memory: "1GiB" },
@@ -31,7 +31,7 @@ const repoComputer = computer({
 
 export const coordinator = agent({
   id: "coordinator",
-  computer: repoComputer,
+  template: repoComputer,
   async init() {
     const { url, headers } = await createRuntimeMcpConnection()
     const mcp = new Client({ name: "coordinator", version: "1.0.0" })
@@ -79,13 +79,13 @@ There are two ways to create work:
 
 Both take `agentId`, `input` (text parts) and a required `idempotencyKey`, plus
 optional `computerId` and `closeAfterIdleMs`. They return
-`{ sessionId, turnId, sequence, created, closeAfterIdleMs }`. Reuse the same
+`{ sessionId, turnId, sequence, closeAfterIdleMs }`. Reuse the same
 idempotency key with the same arguments when you are unsure whether a call
 succeeded. Use `list_agents` with `operation: "spawn"` or `"start"` to see the
 Agents you can target.
 
 Without `computerId`, the new Session gets a fresh Computer from the target
-Agent's Computer definition. With `computerId`, it runs on that existing
+Agent's Template definition. With `computerId`, it runs on that existing
 Computer and sees its files. `list_computers` lists the Computers in the
 Environment.
 

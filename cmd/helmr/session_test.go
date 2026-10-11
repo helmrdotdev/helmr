@@ -26,7 +26,7 @@ func TestSessionCommandsUseSessionID(t *testing.T) {
 				ID: testSessionID, AgentID: testSessionID, DeploymentID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30", Status: "closing",
 				Holds: []api.AgentSessionHold{{ID: holdID, Scope: "session", Reason: "interrupted"}},
 			})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/sessions/"+testSessionID+"/send":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/sessions/"+testSessionID+"/turns/"+testSessionID+"/messages":
 			var request api.SessionDataRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
@@ -35,7 +35,7 @@ func TestSessionCommandsUseSessionID(t *testing.T) {
 				request.IdempotencyKey != "input:1" {
 				t.Fatalf("input request = %+v", request)
 			}
-			_ = json.NewEncoder(w).Encode(api.SessionAdmissionReceipt{ID: "operation-1", Kind: "messaged", TurnID: testSessionID, MessageID: sessionStringPointer("message-1")})
+			_ = json.NewEncoder(w).Encode(api.SessionMessageReceipt{ID: "operation-1", TurnID: testSessionID, MessageID: "message-1", Status: "accepted"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/sessions/"+testSessionID+"/close":
 			var request api.CloseSessionRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -76,14 +76,14 @@ func TestSessionCommandsUseSessionID(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{
-		"session", "send", testSessionID,
+		"session", "turn", "send", testSessionID, "--session", testSessionID,
 		"--data-json", "[]",
 		"--idempotency-key", "input:1",
 	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if out.String() != "id: operation-1\nkind: messaged\nturn_id: "+testSessionID+"\nmessage_id: message-1\n" {
+	if out.String() != "id: operation-1\nturn_id: "+testSessionID+"\nmessage_id: message-1\nstatus: accepted\n" {
 		t.Fatalf("input output = %q", out.String())
 	}
 
@@ -155,7 +155,7 @@ func TestSessionCommandsRejectInvalidArgumentsAndMissingData(t *testing.T) {
 	}{
 		{[]string{"session", "get"}, "accepts 1 arg"},
 		{[]string{"session", "get", "invalid"}, "invalid UUIDv7"},
-		{[]string{"session", "send", testSessionID}, "--text, --data-file or --data-json is required"},
+		{[]string{"session", "turn", "send", testSessionID, "--session", testSessionID}, "--text, --data-file or --data-json is required"},
 		{[]string{"session", "events", testSessionID, "--limit", "0"}, "--limit must be in [1,1000]"},
 		{[]string{"session", "events", testSessionID, "--limit", "1001"}, "limit must be in [1,1000]"},
 	} {
@@ -169,5 +169,3 @@ func TestSessionCommandsRejectInvalidArgumentsAndMissingData(t *testing.T) {
 		}
 	}
 }
-
-func sessionStringPointer(value string) *string { return &value }

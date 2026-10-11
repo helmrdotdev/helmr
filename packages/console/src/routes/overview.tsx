@@ -28,7 +28,7 @@ function CliOnboarding() {
 cd ./my-agent
 bun install
 helmr deploy . --project PROJECT --env ENVIRONMENT`}</pre>
-      <p class={ui.muted}>Then open the current Deployment to start an Agent. Each Session retains its Turns, output, questions and controls.</p>
+      <p class={ui.muted}>Then create a Session through the CLI or a connected Slack app. Browse the current Deployment to inspect its Agent definitions. Each Session retains its Turns, output, questions and controls.</p>
     </Panel>
   );
 }
@@ -78,7 +78,7 @@ export function Overview() {
             <Show when={sessions.isError}><StatePanel error={errorMessage(sessions.error)} /></Show>
             <Show when={sessions.isPending}><StatePanel loading="Loading Sessions..." /></Show>
             <Show when={sessions.isSuccess}>
-              <Show when={sessions.data?.sessions.length} fallback={<StatePanel empty="No Sessions yet." hint="Start an Agent from the current Deployment." />}>
+              <Show when={sessions.data?.sessions.length} fallback={<StatePanel empty="No Sessions yet." hint="Create a Session through the CLI or a connected Slack app." />}>
                 <DataTable columns={["Session", "Agent", "Status", "Holds", "Created"]}>
                   <For each={sessions.data?.sessions}>{session => (
                     <tr>

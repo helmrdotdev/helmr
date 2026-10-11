@@ -1,8 +1,9 @@
+import { scopedConsoleHref, definitionHref, type DefinitionScope } from "../lib/definitions";
 import { createInfiniteQuery } from "@tanstack/solid-query";
 import { createMemo, For, Show } from "solid-js";
 import { computerHref } from "../features/computers/navigation";
 import { ApiError } from "../lib/api";
-import { useScope } from "../lib/scope";
+import { useRouteScope } from "../lib/scope";
 import { listComputers, type ComputerListItem } from "../lib/computers";
 import { DataTable } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
@@ -20,16 +21,16 @@ function computersErrorMessage(error: unknown): string {
   return "Could not load Computers.";
 }
 
-function ComputerRow(props: { computer: ComputerListItem }) {
+function ComputerRow(props: { computer: ComputerListItem; scope: DefinitionScope }) {
   return (
     <tr>
-      <td><IDText value={props.computer.id} mode="link" href={computerHref(props.computer.id)} /></td>
+      <td><IDText value={props.computer.id} mode="link" href={scopedConsoleHref(computerHref(props.computer.id), props.scope)} /></td>
       <td>
         <Show when={props.computer.key} fallback={<span class="text-console-faint">—</span>}>
           {(key) => <code>{key()}</code>}
         </Show>
       </td>
-      <td><span class={ui.muted}>{props.computer.definition_id}</span></td>
+      <td><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", props.computer.definition_id, { ...props.scope, deploymentID: props.computer.deployment_id })}>{props.computer.definition_id}</a></td>
       <td><StatusBadge resource="computer" status={props.computer.status} /><span class="ml-2">{props.computer.residency}</span></td>
       <td><RelativeTime value={props.computer.last_activity_at} /></td>
       <td><RelativeTime value={props.computer.created_at} /></td>
@@ -38,9 +39,9 @@ function ComputerRow(props: { computer: ComputerListItem }) {
 }
 
 export function Computers() {
-  const scope = useScope();
-  const projectID = () => scope.selectedProjectID();
-  const environmentID = () => scope.selectedEnvironmentID();
+  const scope = useRouteScope();
+  const projectID = () => scope().projectID;
+  const environmentID = () => scope().environmentID;
   const computers = createInfiniteQuery(() => ({
     queryKey: ["computers", "list", projectID(), environmentID()],
     queryFn: ({ pageParam }) => listComputers(
@@ -71,7 +72,7 @@ export function Computers() {
         >
           <DataTable columns={["Computer", "Key", "Definition", "Status", "Last activity", "Created"]} minWidth="min-w-200">
             <For each={items()}>
-              {(computer) => <ComputerRow computer={computer} />}
+              {(computer) => <ComputerRow computer={computer} scope={{ projectID: projectID(), environmentID: environmentID() }} />}
             </For>
           </DataTable>
           <Show when={computers.hasNextPage}>

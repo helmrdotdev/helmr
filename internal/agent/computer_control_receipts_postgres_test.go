@@ -44,7 +44,7 @@ func acknowledgeComputerMembers(t *testing.T, f fixture, host workergroup.HostPr
 				t.Fatalf("failure did not request stop: %+v %v", d, err)
 			}
 		}
-		if err := AcknowledgeSessionDelivery(t.Context(), f.pool, host, e, a.Sequence, d.Sequence, d.Generation, d.Kind, ""); err != nil {
+		if err := AcknowledgeSessionDelivery(t.Context(), f.pool, host, e, a.Sequence, d.Sequence, d.Generation, d.Kind, "", 0); err != nil {
 			t.Fatal(err)
 		}
 		if d.Kind == "shutdown" {
@@ -150,14 +150,14 @@ func TestSourceContinuationRejectsDelayedPreFreezeReceipt(t *testing.T) {
 	if err := CommitComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
 		t.Fatal(err)
 	}
-	if err := AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, old.Sequence, old.Generation, old.Kind, ""); !errors.Is(err, ErrConflict) {
+	if err := AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, old.Sequence, old.Generation, old.Kind, "", 0); !errors.Is(err, ErrConflict) {
 		t.Fatalf("delayed pre-freeze receipt: %v", err)
 	}
 	current, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
 	if err != nil || current.Sequence <= old.Sequence || current.Acknowledged {
 		t.Fatalf("current delivery: %+v %v", current, err)
 	}
-	if err := AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, current.Sequence, current.Generation, current.Kind, ""); err != nil {
+	if err := AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, current.Sequence, current.Generation, current.Kind, "", 0); err != nil {
 		t.Fatal(err)
 	}
 	// An uncertain activation-commit reply retries without invalidating the new receipt.

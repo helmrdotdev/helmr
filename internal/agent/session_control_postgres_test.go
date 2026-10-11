@@ -21,7 +21,7 @@ func ownedFixture(t *testing.T, f fixture) fixture {
 	return p
 }
 
-func TestSessionInterruptSettlesOwnedTreePreservesQueueAndPeer(t *testing.T) {
+func TestSessionInterruptPreservesFinalizingTurnQueueAndPeer(t *testing.T) {
 	f := newFixture(t)
 	child := ownedFixture(t, f)
 	peer := f.peer(t)
@@ -35,21 +35,21 @@ func TestSessionInterruptSettlesOwnedTreePreservesQueueAndPeer(t *testing.T) {
 	if err != nil || r.HoldID == uuid.Nil() {
 		t.Fatalf("interrupt: %+v %v", r, err)
 	}
-	for id, want := range map[uuid.UUID]string{active.TurnID: "interrupted", queued.TurnID: "queued", peerActive.TurnID: "running"} {
+	for id, want := range map[uuid.UUID]string{active.TurnID: "finalizing", queued.TurnID: "queued", peerActive.TurnID: "running"} {
 		var status string
 		if err := f.pool.QueryRow(t.Context(), `SELECT status FROM turns WHERE id=$1`, id).Scan(&status); err != nil || status != want {
 			t.Fatalf("turn %s: %s, want %s: %v", id, status, want, err)
 		}
 	}
-	for id, want := range map[uuid.UUID]string{f.session: "ready", child.session: "stopping", peer.session: "ready"} {
+	for id, want := range map[uuid.UUID]string{f.session: "ready", child.session: "ready", peer.session: "ready"} {
 		var status string
 		if err := f.pool.QueryRow(t.Context(), `SELECT status FROM session_processes WHERE session_id=$1`, id).Scan(&status); err != nil || status != want {
 			t.Fatalf("process %s: %s, want %s: %v", id, status, want, err)
 		}
 	}
-	// A pending save is not allowed to resurrect a terminal interrupted result.
-	if err := Complete(t.Context(), f.pool, f.env, child.session, active.TurnID); !errors.Is(err, ErrTerminal) {
-		t.Fatalf("late completion: %v", err)
+	// Finalizing work remains pending until its own save is published.
+	if err := Complete(t.Context(), f.pool, f.env, child.session, active.TurnID); !errors.Is(err, ErrNotReady) {
+		t.Fatalf("premature completion: %v", err)
 	}
 }
 
@@ -186,7 +186,7 @@ func TestSessionCancelSettlesQueueAndStopsOnlyOwnedProcesses(t *testing.T) {
 	}
 }
 
-func TestSessionInterruptedSaveReconcilesWithoutBlockingPeerOrChangingOutcome(t *testing.T) {
+func TestSessionHeldFinalizingSaveCompletesWithoutBlockingPeer(t *testing.T) {
 	f := newFixture(t)
 	peer := f.peer(t)
 	active, save := f.finalize(t, "active")
@@ -212,8 +212,8 @@ func TestSessionInterruptedSaveReconcilesWithoutBlockingPeerOrChangingOutcome(t 
 	if err := storage.publish(t, save.ID, cut); err != nil {
 		t.Fatal(err)
 	}
-	if err := Complete(t.Context(), f.pool, f.env, f.session, active.TurnID); !errors.Is(err, ErrTerminal) {
-		t.Fatalf("interrupted Turn resurrected: %v", err)
+	if err := Complete(t.Context(), f.pool, f.env, f.session, active.TurnID); err != nil {
+		t.Fatalf("held finalizing Turn did not complete: %v", err)
 	}
 	peerTurn, peerSave := peer.finalize(t, "peer")
 	peerCut, peerRoot := storage.cut(t, 3)

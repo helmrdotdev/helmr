@@ -1,6 +1,6 @@
 export { MessageRejected } from "./message-error"
-export { agent, computer, triggers } from "./agent"
-export type { CronTrigger, Json, Duration, MaybePromise, ComputerIdentity, BuildContext, SecretBinding, ComputerDefinition, TurnOutcome, OutputReceipt, InputSource, InputMessage, Turn, InitContext, AgentContext, AgentDefinition } from "./agent"
+export { agent, template, triggers } from "./agent"
+export type { CronTrigger, Json, Duration, MaybePromise, ComputerIdentity, BuildContext, SecretBinding, TemplateDefinition, TurnOutcome, OutputReceipt, InputSource, InputMessage, Turn, InitContext, AgentContext, AgentDefinition } from "./agent"
 export { HelmrClient } from "./client"
 export { image, source } from "./image"
 export { builder } from "./builder"
@@ -9,13 +9,13 @@ export { defineConfig } from "./config"
 export type { SessionListQuery, ClientSessionRef, ClientSessionsApi } from "./client-session"
 
 export type {
-  ClientComputerDefinitionsApi,
-  ComputerDefinitionInfo,
-  ComputerDefinitionListItem,
-  ComputerDefinitionListQuery,
-  ComputerDefinitionPage,
-  ComputerDefinitionGetQuery,
-} from "./client-computer-definition"
+  ClientTemplateDefinitionsApi,
+  TemplateDefinitionInfo,
+  TemplateDefinitionListItem,
+  TemplateDefinitionListQuery,
+  TemplateDefinitionPage,
+  TemplateDefinitionGetQuery,
+} from "./client-template-definition"
 
 export type {
   ClientComputersApi,
@@ -78,16 +78,17 @@ export type {
   Session,
   SessionStatus,
   SessionOperationOptions,
-  SessionAdmissionReceipt,
   SessionMessageReceipt,
-  SessionSendResult,
   SessionEventKind,
   SessionEvent,
   SessionEventPage,
   SessionEventQuery,
   SessionCloseReceipt,
   SessionCancelReceipt,
+  SessionActivity,
+  ProcessStop,
   SessionInterruptReceipt,
+  TurnInterruptReceipt,
   SessionResumeRequest,
   SessionResumeReceipt,
   CursorPage,
@@ -118,7 +119,7 @@ export { type CancelReceipt, type CommandRef, type CommandInfo, type CommandOutc
 
 export type { CommandLogQuery, CommandLogStreamQuery, CommandLogRecord, CommandLogReadPage } from "./command-logs"
 
-export type { ClientAgentsApi, AgentStartRequest, AgentStartReceipt } from "./client-agent"
+export type { SessionCreateRequest, SessionCreateReceipt } from "./client-session"
 export type { ClientAgentDefinitionsApi, AgentDefinitionGetQuery, AgentDefinitionListQuery, AgentDefinitionListItem, AgentDefinitionInfo, AgentDefinitionPage } from "./client-agent-definition"
 
 export type { ContentPart, Content, HumanContent, InputPart, InputContent } from "./content"

@@ -42,7 +42,7 @@ type PreparationSecrets struct {
 
 type PreparationStart struct {
 	Program              RuntimeProgram                  `json:"program"`
-	ComputerDefinitionID string                          `json:"computer_definition_id"`
+	TemplateDefinitionID string                          `json:"template_definition_id"`
 	SeedObject           CASObject                       `json:"seed_object"`
 	Seed                 definition.ComputerSeedManifest `json:"seed"`
 	RootfsDigest         string                          `json:"rootfs_digest"`

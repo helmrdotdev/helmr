@@ -6,7 +6,7 @@ import { z } from "zod"
 import { verificationComputer } from "../agent/agent"
 
 export const persistenceAgent = agent({
-  id: "verification-persistence", computer: verificationComputer, maxTurnDuration: "10m",
+  id: "verification-persistence", template: verificationComputer, maxTurnDuration: "10m",
   init: () => ({ nonce: randomUUID(), marker: "", count: 0 }),
   turn: async (turn, ctx) => {
     const { marker, awaitStart, holdForObservation } = z.object({ marker: z.string().min(1), awaitStart: z.boolean().default(false), holdForObservation: z.boolean().default(false) }).strict().parse(fixtureValue(turn.input))

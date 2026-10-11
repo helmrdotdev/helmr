@@ -30,7 +30,7 @@ type ProgramDefinition struct {
 	Kind       definition.Kind `json:"-"`
 	DeclaredID string          `json:"-"`
 	Agent      *definition.AgentManifest
-	Computer   *definition.ComputerManifest
+	Template   *definition.TemplateManifest
 }
 
 type ProgramDescriptor struct {
@@ -262,13 +262,13 @@ func ValidateProgramMetadata(index ProgramMetadata) error {
 	}
 	computers := make(map[string]struct{})
 	for _, declaration := range index.Definitions {
-		if declaration.Computer != nil {
+		if declaration.Template != nil {
 			computers[declaration.DeclaredID] = struct{}{}
 		}
 	}
 	for _, declaration := range index.Definitions {
 		if declaration.Agent != nil {
-			if _, found := computers[declaration.Agent.ComputerDefinitionID]; !found {
+			if _, found := computers[declaration.Agent.TemplateDefinitionID]; !found {
 				return errors.New("agent references an absent Computer")
 			}
 		}

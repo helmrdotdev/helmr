@@ -1,3 +1,4 @@
+import { interruptNativeTurn } from "./native-stop-driver"
 import { fixtureInput } from "../../e2e/support/runtime-mcp"
 import assert from "node:assert/strict"
 import { createHash, randomBytes } from "node:crypto"
@@ -19,6 +20,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
  const nativeSessions: Record<string, string> = {}
  const native: Record<string, { session: ClientSessionRef; previous: Record<string, unknown> }> = {}
  const continuations: Record<string, unknown>[] = []
+ const nativeStops: Record<string, unknown>[] = []
  const clientTimings = new Map<string, { provider: string; phase: string; sessionId: string; turnId: string; requestStartedAt: string; requestStartedMS: number; ackMS: number; runningObservedMS?: number; firstOutputObservedMS?: number; firstOutputSequence?: number; settlementObservedMS?: number }>()
  const nativeEvents: (SessionEvent & { clientObservedMS: number })[] = []
  const eventCursors = new Map<string, number>()
@@ -48,7 +50,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
  let secretChecks = 0
  let secretRevocation: Record<string, unknown> | undefined
  async function startPeer() {
-  if (!options.secretBindings) return client.agents.start("peer", { input: fixtureInput(options.performanceKind ? "hold-performance" : options.sessionDiscovery ? "hold-discovery" : "hold" )}, { signal })
+  if (!options.secretBindings) return client.sessions.create({ agent: "peer", input: fixtureInput(options.performanceKind ? "hold-performance" : options.sessionDiscovery ? "hold-discovery" : "hold" ) }, { signal })
   try {
    const digests: string[] = []
    for (const kind of ["raw", "file", "protected"]) {
@@ -56,12 +58,12 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
     const secret = await client.secrets.create({ name: `native-${kind}`, value, idempotencyKey: `native-${kind}` }, { signal })
     secretIds.push(secret.id); digests.push(createHash("sha256").update(value).digest("hex"))
    }
-   const computer = await client.computers.create({ definition: "native-continuation", idempotencyKey: "native-secret-computer", secrets: [
+   const computer = await client.computers.create({ template: "native-continuation", idempotencyKey: "native-secret-computer", secrets: [
      { secretId: secretIds[0]!, env: { name: "NATIVE_RAW_SECRET", mode: "raw" } },
      { secretId: secretIds[1]!, file: { path: "/run/native-proof/secret" } },
      { secretId: secretIds[2]!, env: { name: "NATIVE_PROTECTED_SECRET", mode: "protected", allowedOrigins: ["https://native-proof.invalid"] } },
     ], }, { signal })
-   return await client.agents.start("peer", { computer, input: fixtureInput({ kind: "hold-secrets", rawDigest: digests[0]!, fileDigest: digests[1]!, protectedDigest: digests[2]! } )}, { signal })
+   return await client.sessions.create({ agent: "peer", computer, input: fixtureInput({ kind: "hold-secrets", rawDigest: digests[0]!, fileDigest: digests[1]!, protectedDigest: digests[2]! } ) }, { signal })
   } catch (error) {
    const cleanup = AbortSignal.timeout(10_000)
    const results = await Promise.allSettled(secretIds.map(id => client.secrets.ref(id).revoke({ idempotencyKey: `cleanup-${id}` }, { signal: cleanup })))
@@ -102,7 +104,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
      }
      const controls = observed["controls"] as Record<string, unknown>
      assert(controls && typeof controls === "object")
-     for (const key of ["interruptedTurn", "resumedTurn", "holdId", "cancelledSession", "cancelledTurn", "cancelledQueuedTurn"]) {
+     for (const key of ["exactInterruptedTurn", "exactFollowingTurn", "interruptedTurn", "resumedTurn", "holdId", "cancelledSession", "cancelledTurn", "cancelledQueuedTurn"]) {
       assert.equal(typeof controls[key], "string")
       if (discovery.length) assert.equal(controls[key], (discovery[0]!["controls"] as Record<string, unknown>)[key])
      }
@@ -188,10 +190,12 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
  try {
   const initialPeerOutput = await progress()
   const initialPeerTiming = { requestStartedAt: initialPeerStartedAt, ackMS: initialPeerAckMS, firstOutputObservedMS: performance.now() - initialPeerStartedMS, turnId: peer.turn.id, outputSequence: initialPeerOutput.sequence }
-  const computer = { id: (await peer.session.get({ signal })).computerId }
+  const computerID = (await peer.session.get({ signal })).computerId
+  assert(computerID, "running peer must be placed on a Computer")
+  const computer = { id: computerID }
   const modelInput = options.performanceKind ? { peerSession: peer.session.id, performance: true } : peer.session.id
   const nativeInput = (text: string) => options.performanceKind ? `performance:${options.performanceKind}` : text
-  const model = await client.agents.start("models", { input: fixtureInput(modelInput), computer }, { signal })
+  const model = await client.sessions.create({ agent: "models", input: fixtureInput(modelInput), computer }, { signal })
   sessions.push(model.session)
   const firstModel = await model.turn.wait({ signal }); assert.equal(firstModel.status, "completed")
   const modelState = (await model.turn.get({ signal })).result as Record<string, unknown>
@@ -200,9 +204,16 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
   if (options.performanceKind) await delay(12000, undefined, { signal })
   for (const provider of ["codex", "claude"]) {
    const startMS = performance.now(), startAt = new Date().toISOString()
-   const started = await client.agents.start(provider, { input: fixtureInput(nativeInput(`${provider} before idle one`)), computer }, { signal })
+   const started = await client.sessions.create({ agent: provider, input: fixtureInput(nativeInput(`${provider} before idle one`)), computer }, { signal })
    admitted(provider, "initial", started.turn, startMS, startAt)
    sessions.push(started.session); nativeSessions[provider] = started.session.id
+   if (options.sessionDiscovery) {
+    const first = await finish(started.turn, provider, 1)
+    native[provider] = { session: started.session, previous: first }
+    const queued = await interruptNativeTurn(client, provider, started.session, computer.id, first,
+      nativeInput(`${provider} before idle two`), options.checkpointObservations + ".stops", signal, nativeStops)
+    await finish(queued, provider, 2)
+   } else {
    const enqueueMS = performance.now(), enqueueAt = new Date().toISOString()
    const queued = await started.session.enqueue(fixtureInput(nativeInput(`${provider} before idle two`)), undefined, { signal })
    admitted(provider, "queued-successor", queued, enqueueMS, enqueueAt)
@@ -213,6 +224,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    const first = await finish(started.turn, provider, 1)
    native[provider] = { session: started.session, previous: first }
    await finish(queued, provider, 2)
+   }
   }
   let priorCheckpoint = ""
   let priorPeer: Record<string, unknown> | undefined
@@ -390,7 +402,10 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    const before = Object.fromEntries(Object.entries(native).map(([provider, value]) => [provider, value.previous]))
    for (const provider of ["codex", "claude"]) {
     const started = performance.now(), at = new Date().toISOString()
-    const turn = await native[provider]!.session.enqueue(fixtureInput(nativeInput(`${provider} after idle ${cycle}`)), undefined, { signal })
+    const turn = options.sessionDiscovery && cycle === 1
+      ? await interruptNativeTurn(client, provider, native[provider]!.session, computer.id, native[provider]!.previous,
+          nativeInput(`${provider} after idle ${cycle}`), options.checkpointObservations + ".stops", signal, nativeStops)
+      : await native[provider]!.session.enqueue(fixtureInput(nativeInput(`${provider} after idle ${cycle}`)), undefined, { signal })
     admitted(provider, `after-resume-${cycle}`, turn, started, at)
     await finish(turn, provider, cycle + 2)
    }
@@ -430,7 +445,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    const retained = retainedTurns.get(state.id)!
    assert.deepEqual(await retained.get({ signal }), state)
   }
-  process.stdout.write(JSON.stringify({ computerId: computer.id, peerSessionId: peer.session.id, peerTurnId: holding.id, peerSequence, peerOutcome, nativeSessions, nativeLosses: [], turns, continuations, discovery, ...(options.performanceKind ? { firstOutputSemantics: "first authored workload result before handler return; includes native operation and client observation delay", initialPeerTiming, clientTimings: [...clientTimings.values()], nativeEvents } : {}), ...(options.secretBindings ? { secretBindings: { ids: secretIds, checks: secretChecks, rotatedWhileReleased: true, revocation: secretRevocation } } : {}) }) + "\n")
+  process.stdout.write(JSON.stringify({ computerId: computer.id, peerSessionId: peer.session.id, peerTurnId: holding.id, peerSequence, peerOutcome, nativeSessions, nativeLosses: [], turns, continuations, discovery, nativeStops, ...(options.performanceKind ? { firstOutputSemantics: "first authored workload result before handler return; includes native operation and client observation delay", initialPeerTiming, clientTimings: [...clientTimings.values()], nativeEvents } : {}), ...(options.secretBindings ? { secretBindings: { ids: secretIds, checks: secretChecks, rotatedWhileReleased: true, revocation: secretRevocation } } : {}) }) + "\n")
  } finally {
   const cleanupSignal = AbortSignal.timeout(10_000)
   const results: PromiseSettledResult<unknown>[] = await Promise.allSettled(sessions.map(session => session.cancel(undefined, { signal: cleanupSignal })))

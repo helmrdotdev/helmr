@@ -22,7 +22,7 @@ type nativeCheckpointObject struct {
 	SizeBytes int64  `json:"sizeBytes"`
 }
 
-func writeNativeCheckpointObservations(ctx context.Context, pool *pgxpool.Pool, env uuid.UUID, path string) error {
+func writeNativeCheckpointObservations(ctx context.Context, pool *pgxpool.Pool, env uuid.UUID, path string, nativeControls bool) error {
 	tick := time.NewTicker(250 * time.Millisecond)
 	defer tick.Stop()
 	for {
@@ -41,6 +41,11 @@ func writeNativeCheckpointObservations(ctx context.Context, pool *pgxpool.Pool, 
 		}
 		if err = os.Rename(path+".new", path); err != nil {
 			return err
+		}
+		if nativeControls {
+			if err := writeNativeStopObservations(ctx, pool, env, path+".stops"); err != nil {
+				return err
+			}
 		}
 		select {
 		case <-ctx.Done():

@@ -5,7 +5,6 @@ import type {
   SessionStatus,
   CursorPage,
   TurnState,
-  SessionAdmissionReceipt,
   SessionMessageReceipt,
   SessionCloseReceipt,
   SessionCancelReceipt,
@@ -27,10 +26,11 @@ export function parseSession(value: unknown): Session {
   if (!Array.isArray(v["holds"]))
     throw new Error("Session.holds must be an array")
   return Object.freeze({
+    activity: parseSessionActivity(v["activity"]),
     id: resourceID(v["id"], "Session.id"),
     agentId: resourceID(v["agent_id"], "Session.agent_id"),
     deploymentId: resourceID(v["deployment_id"], "Session.deployment_id"),
-    computerId: resourceID(v["computer_id"], "Session.computer_id"),
+    computerId: v["computer_id"] === null ? null : resourceID(v["computer_id"], "Session.computer_id"),
     rootSessionId: resourceID(v["root_session_id"], "Session.root_session_id"),
     ...(v["slack_channel_id"] === undefined ? {} : { slackChannelId: slackStartOption({ channelId: v["slack_channel_id"] }).channel_id }),
     parentSessionId: nullableID(
@@ -102,6 +102,7 @@ export function parseTurnState(value: unknown): TurnState {
     throw new Error("Turn.error is invalid")
   return Object.freeze({
     ...(failure === undefined ? {} : { error: Object.freeze({ code: failure["code"] as string, ...(expired ? {} : { message: failure["message"] as string }) }) }),
+    ...(v["stop"] === undefined ? {} : { stop: parseProcessStop(v["stop"]) }),
     id: resourceID(v["id"], "Turn.id"),
     sessionId: resourceID(v["session_id"], "Turn.session_id"),
     sequence: safeSequence(v["sequence"], "Turn.sequence"),
@@ -134,23 +135,6 @@ export function parseTurnAdmission(
     turnId: resourceID(v["turn_id"], "Turn admission.turn_id"),
     sequence: safeSequence(v["sequence"], "Turn admission.sequence"),
   })
-}
-export function parseSessionAdmissionReceipt(
-  value: unknown,
-): SessionAdmissionReceipt {
-  const v = objectValue(value, "Session admission")
-  const id = resourceID(v["id"], "Session admission.id"),
-    turnId = resourceID(v["turn_id"], "Session admission.turn_id")
-  if (v["kind"] === "enqueued")
-    return Object.freeze({ id, kind: v["kind"], turnId })
-  if (v["kind"] === "messaged")
-    return Object.freeze({
-      id,
-      kind: v["kind"],
-      turnId,
-      messageId: resourceID(v["message_id"], "Session admission.message_id"),
-    })
-  throw new Error("Session admission.kind is invalid")
 }
 export function parseSessionMessageReceipt(
   value: unknown,
@@ -223,6 +207,7 @@ const eventKinds: readonly SessionEventKind[] = [
   "turn.finalizing",
   "turn.completed",
   "turn.failed",
+  "turn.interrupt",
   "turn.interrupted",
   "turn.cancelled",
   "session.cancelled",
@@ -300,4 +285,26 @@ function safeSequence(value: unknown, label: string): number {
   if (!Number.isSafeInteger(value) || (value as number) < 0)
     throw new Error(`${label} must be a non-negative safe integer`)
   return value as number
+}
+
+export function parseTurnInterruptReceipt(value: unknown): import("../contract").TurnInterruptReceipt {
+  const v = objectValue(value, "Turn interrupt receipt")
+  if (v["status"] !== "accepted") throw new Error("Turn interrupt receipt.status is invalid")
+  return Object.freeze({ id: resourceID(v["id"], "Turn interrupt receipt.id"), sessionId: resourceID(v["session_id"], "Turn interrupt receipt.session_id"), turnId: resourceID(v["turn_id"], "Turn interrupt receipt.turn_id"), status: v["status"] })
+}
+
+function parseProcessStop(value: unknown): import("../contract").ProcessStop {
+  const v = objectValue(value, "Process stop")
+  if (v["state"] !== "requested" && v["state"] !== "stopping" && v["state"] !== "stopped") throw new Error("Invalid stop state")
+  return Object.freeze({ processEpoch: safeSequence(v["process_epoch"], "Process epoch"), turnId: nullableID(v["turn_id"], "Stop Turn ID"), state: v["state"], deadline: timestampString(v["deadline"], "Stop deadline") })
+}
+function parseSessionActivity(value: unknown): import("../contract").SessionActivity {
+  const v = objectValue(value, "Session activity")
+  let process: import("../contract").SessionActivity["process"] = null
+  if (v["process"] !== null) {
+    const p = objectValue(v["process"], "Session process")
+    if (!["starting", "ready", "stopping", "lost", "stopped"].includes(p["status"] as string) || typeof p["applied"] !== "boolean" || typeof p["reconstruction_required"] !== "boolean") throw new Error("Invalid Session process")
+    process = Object.freeze({ epoch: safeSequence(p["epoch"], "Process epoch"), status: p["status"] as NonNullable<import("../contract").SessionActivity["process"]>["status"], applied: p["applied"], reconstructionRequired: p["reconstruction_required"], stop: p["stop"] === null ? null : parseProcessStop(p["stop"]) })
+  }
+  return Object.freeze({ process })
 }

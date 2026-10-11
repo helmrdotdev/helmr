@@ -27,7 +27,7 @@ const (
 
 type RuntimeArchitecture string
 
-// ComputerSeed is the verified seed image used by a Computer definition.
+// ComputerSeed is the verified seed image used by a Template definition.
 type ComputerSeed struct {
 	Profile      string
 	Config       oci.RuntimeConfig

@@ -108,22 +108,6 @@ func (c *Client) ListSessions(ctx context.Context, opts SessionListOptions) (api
 	return response, nil
 }
 
-func (c *Client) SendSession(ctx context.Context, sessionID string, input api.SessionDataRequest, opts EnvironmentScopeOptions) (api.SessionAdmissionReceipt, error) {
-	if err := api.ValidateSessionDataRequest(input); err != nil {
-		return api.SessionAdmissionReceipt{}, err
-	}
-	path, err := c.sessionPath(sessionID, "/send", opts)
-	if err != nil {
-		return api.SessionAdmissionReceipt{}, err
-	}
-	input.IdempotencyKey = invocationKey(input.IdempotencyKey)
-	var response api.SessionAdmissionReceipt
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.SessionAdmissionReceipt{}, err
-	}
-	return response, nil
-}
-
 func (c *Client) EnqueueSession(ctx context.Context, sessionID string, input api.EnqueueSessionRequest, opts EnvironmentScopeOptions) (api.TurnAdmission, error) {
 	path, err := c.sessionPath(sessionID, "/enqueue", opts)
 	if err != nil {
@@ -312,4 +296,20 @@ func (c *Client) InterruptSession(ctx context.Context, sessionID string, input a
 	input.IdempotencyKey = invocationKey(input.IdempotencyKey)
 	err = c.postJSON(ctx, path, input, &result)
 	return result, err
+}
+
+func (c *Client) InterruptSessionTurn(ctx context.Context, sessionID, turnID string, input api.InterruptTurnRequest, opts EnvironmentScopeOptions) (api.TurnInterruptReceipt, error) {
+	if err := ids.Validate(turnID); err != nil {
+		return api.TurnInterruptReceipt{}, err
+	}
+	path, err := c.sessionPath(sessionID, "/turns/"+url.PathEscape(turnID)+"/interrupt", opts)
+	if err != nil {
+		return api.TurnInterruptReceipt{}, err
+	}
+	input.IdempotencyKey = invocationKey(input.IdempotencyKey)
+	var response api.TurnInterruptReceipt
+	if err := c.postJSON(ctx, path, input, &response); err != nil {
+		return api.TurnInterruptReceipt{}, err
+	}
+	return response, nil
 }

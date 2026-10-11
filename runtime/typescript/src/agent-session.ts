@@ -194,21 +194,26 @@ export class SessionRuntime {
     return execution.promise
   }
 
-  interrupt(turnId: string, reason: unknown): void {
+  async interrupt(turnId: string, reason: unknown): Promise<void> {
     const execution = this.turns.get(turnId)
     if (!execution || execution.phase === "terminal") return
-    this.held = true
+    if (execution.phase === "finalizing") {
+      // Local finalization starts before result admission commits. A durable
+      // stop can win that race; join its authoritative settlement before ACK.
+      const outcome = await this.reconcileFinalization(turnId)
+      if (outcome.status !== "interrupted" && outcome.status !== "cancelled") throw new Error("Turn result is already recorded")
+      return
+    }
     if (execution.phase === "processing") execution.phase = "draining"
     this.abort(execution.abort, reason)
+    await execution.promise
+    if (this.reconstructRequired) throw new Error("Session requires reconstruction")
   }
 
   get idle(): boolean { return !this.active && !this.held }
   get canCheckpoint(): boolean { return !this.active && !this.reconstructRequired }
 
-  suspend(reason: unknown): void {
-    this.held = true
-    if (this.active) this.interrupt(this.active.request.id, reason)
-  }
+  suspend(_reason: unknown): void { this.held = true }
 
   // The command reader stays live while an interrupted Turn drains. Its caller
   // must recheck control ordering before releasing admission after this wait.
@@ -275,7 +280,6 @@ export class SessionRuntime {
       })(), execution.signal)
     } catch (error) {
       let interrupted = execution.signal.aborted || error instanceof NativeContinuationLost
-      if (interrupted) this.held = true
       execution.phase = "draining"
       this.abort(execution.abort, error)
       let convergenceExpired = false
@@ -287,10 +291,10 @@ export class SessionRuntime {
       try {
         const native = converge()
         await bounded(Promise.all([native, (async () => {
-          await this.driver.closeProcessing(execution.request.id)
+          if (!interrupted) await this.driver.closeProcessing(execution.request.id)
           await Promise.allSettled(execution.handler ? [execution.handler] : [])
           await Promise.allSettled([...execution.registrations])
-          await Promise.all([...execution.asks].map(ask => this.withdraw(ask)))
+          await Promise.allSettled([...execution.asks].map(ask => this.withdraw(ask)))
           await Promise.allSettled([...execution.messages.values()].map(message => message.promise))
           await Promise.allSettled([...execution.pipes])
           await Promise.allSettled([...execution.output])

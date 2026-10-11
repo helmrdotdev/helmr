@@ -49,7 +49,7 @@ type createReceipt struct {
 // Environment's later current Deployment or current Secret versions.
 func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request) (Created, error) {
 	if !request.DeleteAfterUnused.Valid() || !definition.ValidDeclaredID(request.DefinitionKey) {
-		return Created{}, invalidInput("invalid Computer definition key")
+		return Created{}, invalidInput("invalid Template definition key")
 	}
 	if err := ValidateKey(request.Key); err != nil {
 		return Created{}, err

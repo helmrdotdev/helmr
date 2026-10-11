@@ -44,16 +44,16 @@ type ComputerTrustIssuer interface {
 }
 
 func Start(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIssuer, caller Caller, req StartRequest) (Admission, error) {
-	return admitSession(ctx, pool, trust, caller, req, "start")
+	return admitSession(ctx, pool, trust, caller, req, "create")
 }
 func Spawn(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIssuer, caller Caller, req StartRequest) (Admission, error) {
 	return admitSession(ctx, pool, trust, caller, req, "spawn")
 }
 
-// Admission owns the first Turn, Session, fresh Computer, preparation demand and
-// capacity together. No executor can observe any of them before commit.
+// Creation commits a durable Session receipt, optionally with its first Turn and
+// Computer admission. Empty Sessions pin code without allocating execution.
 func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIssuer, caller Caller, req StartRequest, method string) (Admission, error) {
-	if !req.CloseAfterIdle.Valid() || req.EnvironmentID == uuid.Nil() || !definition.ValidDeclaredID(req.Agent) || len(req.RetryKey) > 512 || !utf8.ValidString(req.RetryKey) || (req.SessionKey != nil && (len(*req.SessionKey) == 0 || len(*req.SessionKey) > 512 || !utf8.ValidString(*req.SessionKey))) {
+	if !req.CloseAfterIdle.Valid() || req.EnvironmentID == uuid.Nil() || !definition.ValidDeclaredID(req.Agent) || len(req.RetryKey) > 512 || !utf8.ValidString(req.RetryKey) || strings.ContainsRune(req.RetryKey, 0) || (req.SessionKey != nil && (len(*req.SessionKey) == 0 || len(*req.SessionKey) > 512 || !utf8.ValidString(*req.SessionKey) || strings.ContainsRune(*req.SessionKey, 0))) {
 		return Admission{}, ErrInvalidInput
 	}
 	if req.SlackChannelID != nil && (!ValidSlackChannelID(*req.SlackChannelID) || caller.Kind == "session") {
@@ -68,10 +68,16 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 	if caller.Kind == "session" && req.RetryKey == "" {
 		return Admission{}, ErrInvalidInput
 	}
-	var inputErr error
-	req.Input, inputErr = conversation.Input(req.Input)
-	if inputErr != nil {
-		return Admission{}, inputErr
+	hasInput := req.Input != nil
+	if hasInput || caller.Kind == "session" || method == "spawn" {
+		var err error
+		req.Input, err = conversation.Input(req.Input)
+		if err != nil {
+			return Admission{}, err
+		}
+		if bytes.Equal(req.Input, []byte("[]")) {
+			return Admission{}, ErrInvalidInput
+		}
 	}
 	raw, err := json.Marshal(struct {
 		CloseAfterIdle lifetime.Policy `json:",omitzero"`
@@ -107,20 +113,20 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 		} else if err := authorizeStart(ctx, tx, caller, req.EnvironmentID); err != nil {
 			return err
 		}
-		var route *uuid.UUID
 		routeActive := true
-		var slackBinding slackAdmissionBinding
 		if prepared != nil {
 			pubs := []uuid.UUID{prepared.Target.PublicationID}
 			if prepared.Source != nil {
 				pubs = append(pubs, prepared.Source.Connection.PublicationID)
 			}
-			var routeErr error
-			routeActive, routeErr = LockSlackPublications(ctx, tx, req.EnvironmentID, pubs)
-			if routeErr != nil {
-				return routeErr
+			active, err := LockSlackPublications(ctx, tx, req.EnvironmentID, pubs)
+			if err != nil {
+				return err
 			}
+			// Exact retries are checked below before fresh connection eligibility.
+			routeActive = active
 		}
+		var binding slackAdmissionBinding
 		if caller.Kind == "session" && method == "spawn" {
 			var sourceRoute *uuid.UUID
 			if err := tx.QueryRow(ctx, `SELECT slack_channel_id FROM sessions WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, caller.ID).Scan(&sourceRoute); err != nil {
@@ -131,104 +137,47 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 					return err
 				}
 			}
-			var bindErr error
-			slackBinding, bindErr = resolveSlackChildBinding(ctx, tx, req.EnvironmentID, caller.ID)
-			if bindErr != nil {
-				return bindErr
+			var err error
+			binding, err = resolveSlackChildBinding(ctx, tx, req.EnvironmentID, caller.ID)
+			if err != nil {
+				return err
 			}
 		}
 		policy, err := lockAdmissionEnvironment(ctx, tx, req.EnvironmentID)
 		if err != nil {
 			return err
 		}
-		var agentID, deployment uuid.UUID
+		var agentID uuid.UUID
+		if err = tx.QueryRow(ctx, `SELECT id FROM agents WHERE environment_id=$1 AND key=$2`, req.EnvironmentID, req.Agent).Scan(&agentID); err != nil {
+			return err
+		}
+		prior, err := sessionCreationReceipt(ctx, tx, caller, req.EnvironmentID, agentID, method, req.RetryKey, digest)
+		if err != nil {
+			return err
+		}
+		if prior != nil {
+			result = *prior
+			return nil
+		}
+		if req.SessionKey != nil {
+			var occupied bool
+			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM sessions WHERE environment_id=$1 AND agent_id=$2 AND session_key=$3)`, req.EnvironmentID, agentID, *req.SessionKey).Scan(&occupied); err != nil {
+				return err
+			}
+			if occupied {
+				return ErrConflict
+			}
+		}
+		var deployment uuid.UUID
 		if caller.Kind == "session" && method == "spawn" {
-			if err = tx.QueryRow(ctx, `SELECT d.agent_id,s.deployment_id FROM sessions s JOIN agent_definitions d ON (d.environment_id,d.deployment_id)=(s.environment_id,s.deployment_id) WHERE s.environment_id=$1 AND s.id=$2 AND d.definition_key=$3`, req.EnvironmentID, caller.ID, req.Agent).Scan(&agentID, &deployment); err != nil {
+			if err = tx.QueryRow(ctx, `SELECT deployment_id FROM sessions WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, caller.ID).Scan(&deployment); err != nil {
 				return err
 			}
 		} else {
-			if err = tx.QueryRow(ctx, `SELECT id FROM agents WHERE environment_id=$1 AND name=$2`, req.EnvironmentID, req.Agent).Scan(&agentID); err != nil {
-				return err
-			}
-		}
-		// Retry lookup precedes live defaults, placement and budget consumption.
-		if req.RetryKey != "" {
-			var prior []byte
-			err = tx.QueryRow(ctx, `SELECT session_id,id,seq,seq=1,request_digest FROM turns WHERE environment_id=$1 AND caller_kind=$2 AND caller_id=$3 AND admission_method=$4 AND target_id=$5 AND retry_key=$6`, req.EnvironmentID, caller.Kind, caller.ID, method, agentID, req.RetryKey).Scan(&result.SessionID, &result.TurnID, &result.Sequence, &result.Created, &prior)
-			if err == nil {
-				if caller.Kind == "session" {
-					owner, lockErr := lockSession(ctx, tx, req.EnvironmentID, caller.ID)
-					if lockErr != nil {
-						return lockErr
-					}
-					if err = executionReceipt(ctx, tx, caller.Execution, owner); err != nil {
-						return err
-					}
-				} else {
-					if err = authorizeStart(ctx, tx, caller, req.EnvironmentID); err != nil {
-						return err
-					}
-					if !result.Created {
-						if err = authorizeEnqueue(ctx, tx, caller, req.EnvironmentID, owners{}); err != nil {
-							return err
-						}
-					}
-				}
-				if !bytes.Equal(prior, digest[:]) {
-					return ErrConflict
-				}
-				return tx.QueryRow(ctx, `SELECT close_after_idle_ms FROM sessions WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, result.SessionID).Scan(&result.CloseAfterIdleMs)
-			}
-			if !errors.Is(err, pgx.ErrNoRows) {
-				return err
-			}
-		}
-		var computer uuid.UUID
-		existing := false
-		if req.SessionKey != nil {
-			err = tx.QueryRow(ctx, `SELECT id,deployment_id,computer_id FROM sessions WHERE environment_id=$1 AND agent_id=$2 AND session_key=$3`, req.EnvironmentID, agentID, *req.SessionKey).Scan(&result.SessionID, &deployment, &computer)
-			if err == nil {
-				existing = true
-			} else if !errors.Is(err, pgx.ErrNoRows) {
-				return err
-			}
-		}
-		if existing {
-			var pinned *uuid.UUID
-			if err = tx.QueryRow(ctx, `SELECT slack_channel_id FROM sessions WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, result.SessionID).Scan(&pinned); err != nil {
-				return err
-			}
-			if req.SlackChannelID != nil {
-				if pinned == nil {
-					return ErrSlackDestinationConflict
-				}
-				var channel string
-				if err = tx.QueryRow(ctx, `SELECT slack_channel_id FROM slack_channels WHERE id=$1`, *pinned).Scan(&channel); err != nil {
-					return err
-				}
-				if channel != *req.SlackChannelID {
-					return ErrSlackDestinationConflict
-				}
-			}
-			route = pinned
-		} else if (prepared != nil && !routeActive) || (prepared == nil && req.SlackChannelID != nil) {
-			return ErrConversationChanged
-		}
-		if !existing && (caller.Kind != "session" || method == "start") {
 			if policy.deployment == nil {
 				return ErrNotReady
 			}
 			deployment = *policy.deployment
-		}
-		if !existing && prepared != nil {
-			if err = validateSlackStart(ctx, tx, req.EnvironmentID, agentID, deployment, caller, prepared); err != nil {
-				return err
-			}
-			routeID, routeErr := ResolveSlackRoute(ctx, tx, prepared.Target)
-			if routeErr != nil {
-				return routeErr
-			}
-			route = &routeID
 		}
 		var revoked bool
 		if err = tx.QueryRow(ctx, `SELECT execution_revoked_at IS NOT NULL FROM deployments WHERE environment_id=$1 AND id=$2 FOR SHARE`, req.EnvironmentID, deployment).Scan(&revoked); err != nil {
@@ -237,37 +186,46 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 		if revoked {
 			return ErrDenied
 		}
-		req.Input, err = conversation.Input(req.Input)
-		if err != nil {
-			return err
-		}
-		if !existing {
-			if !policy.configured {
+		var templateKey string
+		var duration *int64
+		var never bool
+		if err = tx.QueryRow(ctx, `SELECT t.key,d.close_after_idle_ms,d.close_after_idle_never FROM agent_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=$1 AND d.agent_id=$2 AND d.deployment_id=$3`, req.EnvironmentID, agentID, deployment).Scan(&templateKey, &duration, &never); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrNotReady
 			}
-			var definitionKey string
-			if err = tx.QueryRow(ctx, `SELECT computer_definition_key FROM agent_definitions WHERE environment_id=$1 AND agent_id=$2 AND deployment_id=$3`, req.EnvironmentID, agentID, deployment).Scan(&definitionKey); err != nil {
-				if errors.Is(err, pgx.ErrNoRows) {
-					return ErrNotReady
-				}
+			return err
+		}
+		var route *uuid.UUID
+		if prepared != nil {
+			if !routeActive {
+				return ErrConversationChanged
+			}
+			if err = validateSlackStart(ctx, tx, req.EnvironmentID, agentID, deployment, caller, prepared); err != nil {
 				return err
 			}
-			computer = req.ComputerID
-			if computer == uuid.Nil() {
-				computer, err = createAdmissionComputer(ctx, tx, trust, req.EnvironmentID, deployment, definitionKey, policy)
-				if err != nil {
-					return err
-				}
+			routeID, err := ResolveSlackRoute(ctx, tx, prepared.Target)
+			if err != nil {
+				return err
+			}
+			route = &routeID
+		} else if req.SlackChannelID != nil {
+			return ErrConversationChanged
+		}
+		computer := req.ComputerID
+		if computer == uuid.Nil() && hasInput {
+			computer, err = createAdmissionComputer(ctx, tx, trust, req.EnvironmentID, deployment, templateKey, policy)
+			if err != nil {
+				return err
 			}
 		}
-		ids := []uuid.UUID{}
-		if existing {
-			ids = append(ids, result.SessionID)
-		}
+		var callerIDs, computerIDs []uuid.UUID
 		if caller.Kind == "session" {
-			ids = append(ids, caller.ID)
+			callerIDs = append(callerIDs, caller.ID)
 		}
-		locked, err := lockSessionsAndComputers(ctx, tx, req.EnvironmentID, ids, []uuid.UUID{computer})
+		if computer != uuid.Nil() {
+			computerIDs = append(computerIDs, computer)
+		}
+		locked, err := lockSessionsAndComputers(ctx, tx, req.EnvironmentID, callerIDs, computerIDs)
 		if err != nil {
 			return err
 		}
@@ -275,107 +233,80 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 			if err = authorizeEnqueue(ctx, tx, caller, req.EnvironmentID, locked[caller.ID]); err != nil {
 				return err
 			}
-		} else {
-			if err = authorizeStart(ctx, tx, caller, req.EnvironmentID); err != nil {
-				return err
-			}
-			if existing {
-				if err = authorizeEnqueue(ctx, tx, caller, req.EnvironmentID, owners{}); err != nil {
-					return err
-				}
-			}
-		}
-		if existing && req.CloseAfterIdle.Set {
-			var policy *int64
-			if err = tx.QueryRow(ctx, `SELECT close_after_idle_ms FROM sessions WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, result.SessionID).Scan(&policy); err != nil {
-				return err
-			}
-			if !lifetime.Same(policy, req.CloseAfterIdle.Milliseconds) {
-				return ErrConflict
-			}
-		}
-		if existing {
-			if locked[result.SessionID].lifecycle != "open" || (req.ComputerID != uuid.Nil() && req.ComputerID != computer) {
-				return ErrConflict
-			}
-		}
-		if err = computerAcceptsAdmission(ctx, tx, req.EnvironmentID, computer, !existing); err != nil {
+		} else if err = authorizeStart(ctx, tx, caller, req.EnvironmentID); err != nil {
 			return err
 		}
-		if !existing && req.ComputerID != uuid.Nil() {
-			// Current Programs and registered Computers use one supported seed/runtime
-			// profile. Explicit placement preserves the actual Computer configuration.
-			var profile string
-			if err = tx.QueryRow(ctx, `SELECT spec.seed->>'profile' FROM computers c JOIN computer_preparation_specs spec ON (spec.environment_id,spec.id)=(c.environment_id,c.preparation_spec_id) WHERE c.environment_id=$1 AND c.id=$2 AND c.resources IS NOT NULL`, req.EnvironmentID, computer).Scan(&profile); err != nil {
+		if computer != uuid.Nil() {
+			if err = computerAcceptsAdmission(ctx, tx, req.EnvironmentID, computer, true); err != nil {
 				return err
 			}
-			if profile != definition.ComputerSeedProfile {
-				return ErrInvalidInput
-			}
-		}
-		if err = consumeAdmission(ctx, tx, req.EnvironmentID, policy); err != nil {
-			return err
-		}
-		if !existing {
-			var duration *int64
-			var never bool
-			if err = tx.QueryRow(ctx, `SELECT close_after_idle_ms,close_after_idle_never FROM agent_definitions WHERE environment_id=$1 AND agent_id=$2 AND deployment_id=$3`, req.EnvironmentID, agentID, deployment).Scan(&duration, &never); err != nil {
-				return err
-			}
-			idlePolicy := lifetime.Resolve(req.CloseAfterIdle, duration, never)
-			result.SessionID = uuid.NewV7()
-			root := result.SessionID
-			var parent, requester, origin any
-			causal := 0
-			if caller.Kind == "session" {
-				if err = tx.QueryRow(ctx, `SELECT causal_depth FROM sessions WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, caller.ID).Scan(&causal); err != nil {
+			if req.ComputerID != uuid.Nil() {
+				var profile string
+				if err = tx.QueryRow(ctx, `SELECT spec.seed->>'profile' FROM computers c JOIN computer_preparation_specs spec ON (spec.environment_id,spec.id)=(c.environment_id,c.preparation_spec_id) WHERE c.environment_id=$1 AND c.id=$2`, req.EnvironmentID, computer).Scan(&profile); err != nil {
 					return err
 				}
-				causal++
-				requester = caller.ID
-				origin = nullableID(caller.TurnID)
-				if method == "spawn" {
-					parent = caller.ID
-					root = locked[caller.ID].root
-				}
-				if causal > policy.maxCausal {
+				if profile != definition.ComputerSeedProfile {
 					return ErrInvalidInput
 				}
 			}
-			if _, err = tx.Exec(ctx, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,origin_turn_id,causal_depth,session_key,slack_channel_id,close_after_idle_ms,history_retention_mode,history_retention_seconds) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,history_retention_mode,history_retention_seconds FROM environments WHERE id=$1`, req.EnvironmentID, result.SessionID, agentID, deployment, computer, root, parent, requester, origin, causal, req.SessionKey, route, idlePolicy); err != nil {
+		}
+		if hasInput {
+			err = consumeAdmission(ctx, tx, req.EnvironmentID, policy)
+		} else {
+			err = consumeAdmissionToken(ctx, tx, req.EnvironmentID, policy)
+		}
+		if err != nil {
+			return err
+		}
+		result.SessionID, result.Created = uuid.NewV7(), true
+		result.CloseAfterIdleMs = lifetime.Resolve(req.CloseAfterIdle, duration, never)
+		if hasInput {
+			result.TurnID, result.Sequence = uuid.NewV7(), 1
+		}
+		root := result.SessionID
+		var parent, requester, origin any
+		causal := 0
+		if caller.Kind == "session" {
+			if err = tx.QueryRow(ctx, `SELECT causal_depth FROM sessions WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, caller.ID).Scan(&causal); err != nil {
 				return err
 			}
-			result.Created = true
-			if parent != nil {
-				if _, err = tx.Exec(ctx, `UPDATE sessions SET idle_since=NULL WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, parent); err != nil {
-					return err
-				}
+			causal++
+			requester, origin = caller.ID, nullableID(caller.TurnID)
+			if method == "spawn" {
+				parent, root = caller.ID, locked[caller.ID].root
 			}
-			if slackBinding.thread != uuid.Nil() {
-				if err = insertSlackSource(ctx, tx, req.EnvironmentID, result.SessionID, slackBinding.thread); err != nil {
-					return err
-				}
+			if causal > policy.maxCausal {
+				return ErrInvalidInput
 			}
 		}
-		result.TurnID = uuid.NewV7()
-		if err = tx.QueryRow(ctx, `UPDATE sessions SET idle_since=NULL,next_turn_seq=next_turn_seq+1 WHERE environment_id=$1 AND id=$2 RETURNING next_turn_seq-1`, req.EnvironmentID, result.SessionID).Scan(&result.Sequence); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,origin_turn_id,causal_depth,session_key,slack_channel_id,close_after_idle_ms,history_retention_mode,history_retention_seconds,creation_caller_kind,creation_caller_id,creation_method,creation_retry_key,creation_digest,creation_turn_id,idle_since,next_turn_seq)
+ SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,history_retention_mode,history_retention_seconds,$14,$15,$16,NULLIF($17,''),$18,$19,CASE WHEN $19::uuid IS NULL THEN clock_timestamp() END,CASE WHEN $19::uuid IS NULL THEN 1 ELSE 2 END FROM environments WHERE id=$1`, req.EnvironmentID, result.SessionID, agentID, deployment, nullableID(computer), root, parent, requester, origin, causal, req.SessionKey, route, result.CloseAfterIdleMs, caller.Kind, caller.ID, method, req.RetryKey, digest[:], nullableID(result.TurnID)); err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,retry_key,request_digest,input,origin_turn_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,''),$11,$12,$13)`, req.EnvironmentID, result.TurnID, result.SessionID, computer, result.Sequence, caller.Kind, caller.ID, method, agentID, req.RetryKey, digest[:], req.Input, nullableID(caller.TurnID)); err != nil {
-			return err
-		}
-		if !existing && prepared != nil {
-			if route == nil {
-				return ErrConversationChanged
+		if parent != nil {
+			if _, err = tx.Exec(ctx, `UPDATE sessions SET idle_since=NULL WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, parent); err != nil {
+				return err
 			}
+		}
+		if binding.thread != uuid.Nil() {
+			if err = insertSlackSource(ctx, tx, req.EnvironmentID, result.SessionID, binding.thread); err != nil {
+				return err
+			}
+		}
+		if hasInput {
+			if _, err = tx.Exec(ctx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,retry_key,request_digest,input,origin_turn_id) VALUES($1,$2,$3,$4,1,$5,$6,$7,$8,NULLIF($9,''),$10,$11,$12)`, req.EnvironmentID, result.TurnID, result.SessionID, computer, caller.Kind, caller.ID, method, agentID, req.RetryKey, digest[:], req.Input, nullableID(caller.TurnID)); err != nil {
+				return err
+			}
+		}
+		if prepared != nil {
 			if err = createSlackRoot(ctx, tx, req.EnvironmentID, result.SessionID, result.TurnID, *route, *prepared); err != nil {
 				return err
 			}
 		}
-		if err = tx.QueryRow(ctx, `SELECT close_after_idle_ms FROM sessions WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, result.SessionID).Scan(&result.CloseAfterIdleMs); err != nil {
-			return err
+		if hasInput {
+			return event(ctx, tx, req.EnvironmentID, result.SessionID, result.TurnID, "turn.queued")
 		}
-		return event(ctx, tx, req.EnvironmentID, result.SessionID, result.TurnID, "turn.queued")
+		return nil
 	})
 	if err != nil {
 		var invalid *pgconn.PgError
@@ -387,6 +318,43 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 	return result, nil
 }
 
+// A creation receipt never depends on a Turn existing or the Agent remaining in
+// current. Caller authority is still checked on each observation.
+func sessionCreationReceipt(ctx context.Context, tx pgx.Tx, caller Caller, env, agentID uuid.UUID, method, retry string, digest [32]byte) (*Admission, error) {
+	if retry == "" {
+		return nil, nil
+	}
+	var result Admission
+	var turn *uuid.UUID
+	var prior []byte
+	err := tx.QueryRow(ctx, `SELECT id,creation_turn_id,creation_digest,close_after_idle_ms FROM sessions WHERE environment_id=$1 AND creation_caller_kind=$2 AND creation_caller_id=$3 AND creation_method=$4 AND agent_id=$5 AND creation_retry_key=$6`, env, caller.Kind, caller.ID, method, agentID, retry).Scan(&result.SessionID, &turn, &prior, &result.CloseAfterIdleMs)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if caller.Kind == "session" {
+		owner, err := lockSession(ctx, tx, env, caller.ID)
+		if err != nil {
+			return nil, err
+		}
+		if err = executionReceipt(ctx, tx, caller.Execution, owner); err != nil {
+			return nil, err
+		}
+	} else if err = authorizeStart(ctx, tx, caller, env); err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(prior, digest[:]) {
+		return nil, ErrConflict
+	}
+	result.Created = true
+	if turn != nil {
+		result.TurnID, result.Sequence = *turn, 1
+	}
+	return &result, nil
+}
+
 func authorizeStart(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UUID) error {
 	var allowed bool
 	var err error
@@ -394,7 +362,7 @@ func authorizeStart(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UUID
 	case "user":
 		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM environments e JOIN org_members m ON m.org_id=e.org_id JOIN users u ON u.id=m.user_id WHERE e.id=$1 AND m.user_id=$2 AND m.disabled_at IS NULL AND u.disabled_at IS NULL AND m.role IN ('owner','admin','developer'))`, env, caller.ID).Scan(&allowed)
 	case "api_key":
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM api_keys k JOIN environments e ON (e.id,e.project_id,e.org_id)=(k.environment_id,k.project_id,k.org_id) WHERE e.id=$1 AND k.id=$2 AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()) AND k.role IN ('owner','admin','developer') AND 'agents.start'=ANY(k.permissions))`, env, caller.ID).Scan(&allowed)
+		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM api_keys k JOIN environments e ON (e.id,e.project_id,e.org_id)=(k.environment_id,k.project_id,k.org_id) WHERE e.id=$1 AND k.id=$2 AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()) AND k.role IN ('owner','admin','developer') AND 'sessions.create'=ANY(k.permissions))`, env, caller.ID).Scan(&allowed)
 	default:
 		return ErrDenied
 	}
@@ -439,11 +407,11 @@ func CreateStandaloneComputer(ctx context.Context, tx pgx.Tx, trust ComputerTrus
 }
 
 func createComputer(ctx context.Context, tx pgx.Tx, trust ComputerTrustIssuer, env, deployment uuid.UUID, key string, policy admissionEnvironment, explicit *[]secretbinding.Reference) (uuid.UUID, error) {
-	var spec uuid.UUID
+	var spec, template uuid.UUID
 	var resources, seed []byte
 	var maxAge, deleteUnused *int64
 	var deleteNever bool
-	if err := tx.QueryRow(ctx, `SELECT d.preparation_spec_id,d.resources,d.max_image_age_ms,s.seed,d.delete_after_unused_ms,d.delete_after_unused_never FROM computer_definitions d JOIN computer_preparation_specs s ON (s.environment_id,s.id)=(d.environment_id,d.preparation_spec_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND d.definition_key=$3`, env, deployment, key).Scan(&spec, &resources, &maxAge, &seed, &deleteUnused, &deleteNever); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT d.template_id,d.preparation_spec_id,d.resources,d.max_image_age_ms,s.seed,d.delete_after_unused_ms,d.delete_after_unused_never FROM template_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) JOIN computer_preparation_specs s ON (s.environment_id,s.id)=(d.environment_id,d.preparation_spec_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND t.key=$3`, env, deployment, key).Scan(&template, &spec, &resources, &maxAge, &seed, &deleteUnused, &deleteNever); err != nil {
 		return uuid.Nil(), err
 	}
 	var actual definition.ResourcesManifest
@@ -463,11 +431,11 @@ func createComputer(ctx context.Context, tx pgx.Tx, trust ComputerTrustIssuer, e
 		return uuid.Nil(), ErrNotReady
 	}
 	id := uuid.NewV7()
-	if _, err := tx.Exec(ctx, `INSERT INTO computers(environment_id,id,preparation_spec_id,origin_deployment_id,origin_definition_key,resources,storage_reservation_bytes,preparation_deadline_at,preparation_max_age_ms,delete_after_unused_ms) VALUES($1,$2,$3,$4,$5,$6,$7,clock_timestamp()+$8*interval '1 millisecond',$9,$10)`, env, id, spec, deployment, key, resources, disk.SeedCapacity, policy.preparationTimeout, maxAge, lifetime.Resolve(lifetime.Policy{}, deleteUnused, deleteNever)); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO computers(environment_id,id,preparation_spec_id,origin_deployment_id,origin_template_id,resources,storage_reservation_bytes,preparation_deadline_at,preparation_max_age_ms,delete_after_unused_ms) VALUES($1,$2,$3,$4,$5,$6,$7,clock_timestamp()+$8*interval '1 millisecond',$9,$10)`, env, id, spec, deployment, template, resources, disk.SeedCapacity, policy.preparationTimeout, maxAge, lifetime.Resolve(lifetime.Policy{}, deleteUnused, deleteNever)); err != nil {
 		return uuid.Nil(), err
 	}
 	if explicit == nil {
-		if err := copyDefinitionSecretBindings(ctx, tx, env, deployment, key, id); err != nil {
+		if err := copyDefinitionSecretBindings(ctx, tx, env, deployment, template, id); err != nil {
 			return uuid.Nil(), err
 		}
 	} else {

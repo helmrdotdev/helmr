@@ -13,15 +13,26 @@ import { conversation } from "../agents/issue-fixer/conversation"
 import { ClaudeHarness } from "../agents/issue-fixer/claude-harness"
 import { claudeModel } from "./native-model"
 
-for (const scenario of ["answer", "background", "malformed", "handler-failure", "stopped-process"]) test(`Claude warm Session: ${scenario}`, { timeout: 30_000 }, async () => {
+for (const scenario of ["answer", "background", "malformed", "handler-failure", "stopped-process", "interrupt"]) test(`Claude warm Session: ${scenario}`, { timeout: 30_000 }, async () => {
   const blocked = scenario === "background"
   const directory = await mkdtemp(join(tmpdir(), "helmr-claude-session-"))
   const requests: any[] = []
   const responses: { turnId: string; value: unknown }[] = []
+  let recoveryApprovalSent = false
+  const recovers = ["malformed", "handler-failure", "interrupt"].includes(scenario)
   const http = claudeModel(requests, false, blocked ? [
     { id: "toolu_background", name: "Bash", input: { command: "printf forbidden > background-marker", run_in_background: true, description: "Must be denied" } },
     { id: "toolu_agent", name: "Agent", input: { description: "Must be denied", prompt: "Write background-marker", subagent_type: "general-purpose", run_in_background: true } },
-  ] : undefined)
+  ] : recovers ? (body, index) => {
+    if (index === 1) return { id: "toolu_question", name: "AskUserQuestion", input: { questions: [{ question: "Which option?", header: "Choice", multiSelect: false, options: [{ label: "A", description: "First" }, { label: "B", description: "Second" }] }] } }
+    // Cancellation can consume a model response without admitting its tool.
+    // Exercise approval on the successor Turn, whose input proves recovery.
+    if (!recoveryApprovalSent && JSON.stringify(body.messages).includes("second unique input")) {
+      recoveryApprovalSent = true
+      return { id: "toolu_command", name: "Bash", input: { command: "printf fixture > denied-command-marker", description: "Write a disposable test marker" } }
+    }
+    return undefined
+  } : undefined)
   const cancel = new AbortController()
   let native: ReturnType<typeof localNativeRuntime> | undefined
   let questionReached!: () => void
@@ -58,12 +69,12 @@ for (const scenario of ["answer", "background", "malformed", "handler-failure", 
           questionReached()
           return { answer: new Promise<AskResponse>(() => {}), withdraw: async () => {} }
         }
-        if (scenario === "stopped-process") {
-          process.kill(harness!.processId!, "SIGSTOP")
-          runtime.interrupt("first", new Error("Fixture interruption"))
+        if ((scenario === "stopped-process" || scenario === "interrupt") && _turn === "first") {
+          if (scenario === "stopped-process") process.kill(harness!.processId!, "SIGSTOP")
+          void runtime.interrupt("first", new Error("Fixture interruption")).catch(() => {})
           return { answer: new Promise<AskResponse>(() => {}), withdraw: async () => {} }
         }
-        await assert.rejects(runtime.deliverMessage(_turn, `bad-steer-${questions}-${approvals}`, { text: "" } as never), /Content must be an array/)
+        await assert.rejects(runtime.deliverMessage(_turn, `bad-steer-${questions}-${approvals}`, { text: "" } as never, { kind: "user" }), /Content must be an array/)
         return { answer: Promise.resolve<AskResponse>({ answer: kind === "answer" ? (scenario === "malformed" ? { wrong: ["A"] } : { selected: [{ id: "option-1", value: "A" }] }) : { selected: [{ id: "deny", value: false }] }, respondedBy: { kind: "user", id: "fixture" } }), withdraw: async () => {} }
       },
       output: async () => ({ sequence: ++outputs }),
@@ -77,7 +88,7 @@ for (const scenario of ["answer", "background", "malformed", "handler-failure", 
       fail: async (_id, error) => ({ status: error.code === "interrupted" ? "interrupted" : "failed", error }), hold: async () => { holds++ },
     }
     const runtime = new SessionRuntime({
-      kind: "agent", id: "native-probe", computer: undefined!,
+      kind: "agent", id: "native-probe", template: undefined!,
       init: async () => {
         setups++
         harness = await ClaudeHarness.open(directory, "same-session", environment)
@@ -103,7 +114,7 @@ for (const scenario of ["answer", "background", "malformed", "handler-failure", 
     }
     const first = await firstPending
     const processId = harness!.processId
-    assert.equal(first.status, ["handler-failure", "malformed"].includes(scenario) ? "failed" : "completed")
+    assert.equal(first.status, scenario === "interrupt" ? "interrupted" : ["handler-failure", "malformed"].includes(scenario) ? "failed" : "completed")
     assert.equal(runtime.idle, true)
     assert.ok(processId !== undefined && processId > 0)
     const second = await runtime.dispatch({ id: "second", sequence: 2, createdAt: "2026-10-04T00:00:01Z", input: [{type:"text",text:"second unique input"}], source: { kind: "api" } })
@@ -114,9 +125,10 @@ for (const scenario of ["answer", "background", "malformed", "handler-failure", 
     assert.equal(setups, 1)
     assert.equal(holds, 0)
     assert.equal(questions, blocked ? 0 : 1)
-    // A malformed answer ends the first Turn before the later command approval.
-    assert.equal(approvals, blocked || scenario === "malformed" ? 0 : 1)
+    // The second model request may occur in the next Turn after interruption.
+    assert.equal(approvals, blocked ? 0 : 1)
     await assert.rejects(stat(join(directory, "background-marker")), { code: "ENOENT" })
+    await assert.rejects(stat(join(directory, "denied-command-marker")), { code: "ENOENT" })
     assert.equal(runtime.idle, true)
     const history = JSON.stringify(requests.at(-1).messages)
     assert.ok(history.includes("first unique input"))

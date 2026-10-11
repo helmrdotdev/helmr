@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/conversation"
 	"reflect"
 	"sync"
 	"testing"
@@ -22,8 +21,8 @@ func newAdmissionFixture(t *testing.T) fixture {
 	t.Helper()
 	f := newFixture(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_preparation_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1 AND id=$2;
- UPDATE computer_definitions SET resources='{"milliCpu":1000,"memoryMiB":512}',max_image_age_ms=12345 WHERE environment_id=$1 AND deployment_id=$2;
- UPDATE computers SET preparation_spec_id=$2,origin_deployment_id=$2,origin_definition_key='fixture-computer',resources='{"milliCpu":1000,"memoryMiB":512}',storage_reservation_bytes=$4 WHERE environment_id=$1;`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, definition.ComputerSeedProfile, disk.SeedCapacity)
+ UPDATE template_definitions SET resources='{"milliCpu":1000,"memoryMiB":512}',max_image_age_ms=12345 WHERE environment_id=$1 AND deployment_id=$2;
+ UPDATE computers SET preparation_spec_id=$2,origin_deployment_id=$2,origin_template_id=origin_deployment_id,resources='{"milliCpu":1000,"memoryMiB":512}',storage_reservation_bytes=$4 WHERE environment_id=$1;`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, definition.ComputerSeedProfile, disk.SeedCapacity)
 	return f
 }
 func (f fixture) startRequest(key string) StartRequest {
@@ -32,7 +31,7 @@ func (f fixture) startRequest(key string) StartRequest {
 
 func TestStartFractionalCPUUsesPhysicalAdmissionBound(t *testing.T) {
 	f := newAdmissionFixture(t)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_definitions SET resources=jsonb_set(resources,'{milliCpu}','500') WHERE environment_id=$1;
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET resources=jsonb_set(resources,'{milliCpu}','500') WHERE environment_id=$1;
  UPDATE environments SET max_cpu_millis=999 WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.env)
 	if _, err := Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("physical-cpu")); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("admitted a whole vCPU below physical bound: %v", err)
@@ -94,7 +93,7 @@ func TestStartAtomicFreshAdmissionAndConcurrentRetry(t *testing.T) {
 	}
 }
 
-func TestStartConversationPreservesPinAndPlacement(t *testing.T) {
+func TestCreateSessionKeyNeverContinuesExistingSession(t *testing.T) {
 	f := newAdmissionFixture(t)
 	key := "conversation"
 	req := f.startRequest("first")
@@ -105,26 +104,17 @@ func TestStartConversationPreservesPinAndPlacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET current_deployment_id=NULL WHERE id=$1`, f.env)
-	req.RetryKey = "second"
-	req.ComputerID = uuid.Nil()
-	second, err := Start(t.Context(), f.pool, nil, f.caller(), req)
-	if err != nil || second.Created || second.SessionID != first.SessionID || second.Sequence != 2 {
-		t.Fatalf("continuation: %+v %v", second, err)
-	}
-	req.RetryKey = "different-placement"
-	req.ComputerID = uuid.NewV7()
-	if _, err = Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, ErrConflict) {
-		t.Fatalf("changed placement: %v", err)
-	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed' WHERE environment_id=$1 AND id=$2`, f.env, first.SessionID)
-	req.RetryKey = "closed"
-	req.ComputerID = uuid.Nil()
-	if _, err = Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, ErrConflict) {
-		t.Fatalf("closed key reopened: %v", err)
-	}
-	req.RetryKey = "second"
-	if a, err := Start(t.Context(), f.pool, nil, f.caller(), req); err != nil || !reflect.DeepEqual(a, second) {
-		t.Fatalf("closed historical receipt: %+v %v", a, err)
+	for _, state := range []string{"open", "closed"} {
+		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status=$2 WHERE id=$1`, first.SessionID, state)
+		changed := req
+		changed.RetryKey = state
+		if _, err := Start(t.Context(), f.pool, nil, f.caller(), changed); !errors.Is(err, ErrConflict) {
+			t.Fatalf("occupied %s key: %v", state, err)
+		}
+		replay, err := Start(t.Context(), f.pool, nil, f.caller(), req)
+		if err != nil || !reflect.DeepEqual(first, replay) {
+			t.Fatalf("receipt after %s: %+v %v", state, replay, err)
+		}
 	}
 }
 
@@ -137,10 +127,10 @@ func TestRuntimeCreationSelectsCurrentStartAndPinnedSpawn(t *testing.T) {
 	caller := Caller{Kind: "session", ID: f.session, TurnID: admitted.TurnID, Execution: f.execution(), Host: f.host()}
 	promoted := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$3,'sha256:'||repeat('e',64));
- INSERT INTO computer_definitions(environment_id,deployment_id,definition_key,preparation_spec_id,resources) SELECT environment_id,$3,definition_key,preparation_spec_id,resources FROM computer_definitions WHERE environment_id=$1 AND deployment_id=$2;
- INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,definition_key,computer_definition_key,setup,triggers) SELECT environment_id,agent_id,$3,definition_key,computer_definition_key,setup,triggers FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2;
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,resources) SELECT environment_id,$3,template_id,preparation_spec_id,resources FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2;
+ INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,setup,triggers) SELECT environment_id,agent_id,$3,template_id,setup,triggers FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2;
  UPDATE environments SET current_deployment_id=$3 WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, promoted)
-	for _, method := range []string{"start", "spawn"} {
+	for _, method := range []string{"create", "spawn"} {
 		req := f.startRequest(method)
 		req.ComputerID = f.computer
 		a, err := admitSession(t.Context(), f.pool, nil, caller, req, method)
@@ -148,7 +138,7 @@ func TestRuntimeCreationSelectsCurrentStartAndPinnedSpawn(t *testing.T) {
 			t.Fatal(err)
 		}
 		expected := f.deployment
-		if method == "start" {
+		if method == "create" {
 			expected = promoted
 		}
 		var valid bool
@@ -185,7 +175,7 @@ func TestStartBudgetFailureRollsBackPreparationAndComputer(t *testing.T) {
 	}
 }
 
-func TestStartConversationConcurrentDistinctRequestsShareOnlyExplicitKey(t *testing.T) {
+func TestCreateConcurrentDistinctRequestsConflictOnExplicitKey(t *testing.T) {
 	f := newAdmissionFixture(t)
 	key := "same-conversation"
 	const clients = 6
@@ -204,28 +194,25 @@ func TestStartConversationConcurrentDistinctRequestsShareOnlyExplicitKey(t *test
 	wg.Wait()
 	close(results)
 	close(errs)
+	conflicts := 0
 	for err := range errs {
-		if err != nil {
+		if errors.Is(err, ErrConflict) {
+			conflicts++
+		} else if err != nil {
 			t.Fatal(err)
 		}
 	}
-	var session uuid.UUID
 	created := 0
-	seqs := map[int64]bool{}
 	for a := range results {
-		if session == uuid.Nil() {
-			session = a.SessionID
-		}
-		if a.SessionID != session || seqs[a.Sequence] {
-			t.Fatalf("key split or duplicate sequence: %+v", a)
-		}
-		seqs[a.Sequence] = true
 		if a.Created {
 			created++
+			if a.Sequence != 1 || a.SessionID == uuid.Nil() {
+				t.Fatalf("invalid creation: %+v", a)
+			}
 		}
 	}
-	if created != 1 || len(seqs) != clients {
-		t.Fatalf("created=%d sequences=%v", created, seqs)
+	if created != 1 || conflicts != clients-1 {
+		t.Fatalf("created=%d conflicts=%d", created, conflicts)
 	}
 	var count int
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computers WHERE environment_id=$1`, f.env).Scan(&count); err != nil || count != 2 {
@@ -243,14 +230,14 @@ func TestStartAndEnqueueShareOneTokenBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	enqueue := EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, RetryKey: "second", Input: json.RawMessage(`[]`)}
-	second, err := Enqueue(t.Context(), f.pool, f.caller(), enqueue)
+	second, err := Enqueue(t.Context(), f.pool, nil, f.caller(), enqueue)
 	if err != nil {
 		t.Fatalf("initial Session consumed more than one token: %v", err)
 	}
 	if retry, err := Start(t.Context(), f.pool, nil, f.caller(), req); err != nil || !reflect.DeepEqual(retry, first) {
 		t.Fatalf("start retry charged: %+v %v", retry, err)
 	}
-	if retry, err := Enqueue(t.Context(), f.pool, f.caller(), enqueue); err != nil || retry != second {
+	if retry, err := Enqueue(t.Context(), f.pool, nil, f.caller(), enqueue); err != nil || retry != second {
 		t.Fatalf("enqueue retry charged: %+v %v", retry, err)
 	}
 	req.RetryKey = "third"
@@ -258,7 +245,7 @@ func TestStartAndEnqueueShareOneTokenBudget(t *testing.T) {
 		t.Fatalf("start bypassed shared budget: %v", err)
 	}
 	enqueue.RetryKey = "fourth"
-	if _, err := Enqueue(t.Context(), f.pool, f.caller(), enqueue); !errors.Is(err, ErrNotReady) {
+	if _, err := Enqueue(t.Context(), f.pool, nil, f.caller(), enqueue); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("enqueue bypassed shared budget: %v", err)
 	}
 	var preserved bool
@@ -330,18 +317,21 @@ func TestStartAPIKeyCreationAndContinuationPermissions(t *testing.T) {
 	if _, err := Start(t.Context(), f.pool, nil, caller, req); !errors.Is(err, ErrDenied) {
 		t.Fatalf("send grant created work: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE api_keys SET permissions=ARRAY['agents.start'] WHERE id=$1`, key)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE api_keys SET permissions=ARRAY['sessions.create'] WHERE id=$1`, key)
 	first, err := Start(t.Context(), f.pool, nil, caller, req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	req.RetryKey = "continue"
-	if _, err := Start(t.Context(), f.pool, nil, caller, req); !errors.Is(err, ErrDenied) {
-		t.Fatalf("creation grant continued without input permission: %v", err)
+	if _, err := Start(t.Context(), f.pool, nil, caller, req); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate creation reused a Session: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE api_keys SET permissions=ARRAY['agents.start','sessions.send'] WHERE id=$1`, key)
-	if a, err := Start(t.Context(), f.pool, nil, caller, req); err != nil || a.SessionID != first.SessionID || a.Created {
-		t.Fatalf("authorized continuation: %+v %v", a, err)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE api_keys SET permissions=ARRAY['sessions.create','sessions.send'] WHERE id=$1`, key)
+	if _, err := Start(t.Context(), f.pool, nil, caller, req); !errors.Is(err, ErrConflict) {
+		t.Fatalf("send permission bypassed key conflict: %v", err)
+	}
+	if _, err := Enqueue(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, RetryKey: "send", Input: req.Input}); err != nil {
+		t.Fatalf("explicit send failed: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE api_keys SET revoked_at=clock_timestamp() WHERE id=$1`, key)
 	req.RetryKey = "first"
@@ -367,12 +357,12 @@ func TestStartPinsPublishedImageAndPreservesMaximumAge(t *testing.T) {
 	}
 }
 
-func TestStartRejectsMissingInputAndFaultedPlacement(t *testing.T) {
+func TestCreateAllowsOmittedInputAndRejectsFaultedPlacement(t *testing.T) {
 	f := newAdmissionFixture(t)
 	req := f.startRequest("invalid")
 	req.Input = nil
-	if _, err := Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, conversation.ErrInvalid) {
-		t.Fatalf("missing input admitted: %v", err)
+	if a, err := Start(t.Context(), f.pool, nil, f.caller(), req); err != nil || a.TurnID != uuid.Nil() {
+		t.Fatalf("empty creation: %+v %v", a, err)
 	}
 	req = f.startRequest("faulted")
 	req.ComputerID = f.computer
@@ -407,7 +397,7 @@ func TestRuntimeStartPreservesCausalLimitAcrossIndependentRoots(t *testing.T) {
 
 func TestStartRejectsUnsupportedDiskSizeWithoutReservations(t *testing.T) {
 	f := newAdmissionFixture(t)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_definitions SET resources=resources||'{"diskMiB":102400}' WHERE environment_id=$1`, f.env)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET resources=resources||'{"diskMiB":102400}' WHERE environment_id=$1`, f.env)
 	if _, err := Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("large-disk")); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("unsupported disk admitted: %v", err)
 	}
@@ -415,7 +405,7 @@ func TestStartRejectsUnsupportedDiskSizeWithoutReservations(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computers WHERE environment_id=$1`, f.env).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("disk rejection leaked reservation: %d %v", count, err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_definitions SET resources=resources||'{"diskMiB":32768}' WHERE environment_id=$1`, f.env)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET resources=resources||'{"diskMiB":32768}' WHERE environment_id=$1`, f.env)
 	if _, err := Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("supported-disk")); err != nil {
 		t.Fatal(err)
 	}
@@ -428,7 +418,7 @@ func TestRuntimeCreationWithFreshComputer(t *testing.T) {
 		t.Fatal(err)
 	}
 	caller := Caller{Kind: "session", ID: f.session, TurnID: first.TurnID, Execution: f.execution(), Host: f.host()}
-	for _, method := range []string{"start", "spawn"} {
+	for _, method := range []string{"create", "spawn"} {
 		a, err := admitSession(t.Context(), f.pool, nil, caller, f.startRequest(method), method)
 		if err != nil {
 			t.Fatal(err)
@@ -506,7 +496,7 @@ func TestMCPStartAndSpawnRetainSessionOriginWithoutInventingTurn(t *testing.T) {
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='starting' WHERE session_id=$1`, f.session)
 			}
 			caller := Caller{Kind: "session", ID: f.session, Execution: f.execution(), Host: f.host()}
-			for _, method := range []string{"start", "spawn"} {
+			for _, method := range []string{"create", "spawn"} {
 				req := f.startRequest(method)
 				req.ComputerID = f.computer
 				receipt, err := admitSession(t.Context(), f.pool, nil, caller, req, method)

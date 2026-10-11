@@ -119,8 +119,8 @@ func TestCompilerDefinitionLocationsMustBeDiscoveryCandidates(t *testing.T) {
 	if err := ValidateProgramCompilerLocators(result, index); err != nil {
 		t.Fatal(err)
 	}
-	index.Computers[0].ThroughAgent = false
-	index.Computers[0].ModulePath = "helmr/app/entry-9.mjs"
+	index.Templates[0].ThroughAgent = false
+	index.Templates[0].ModulePath = "helmr/app/entry-9.mjs"
 	if err := ValidateProgramCompilerLocators(result, index); err == nil {
 		t.Fatal("accepted Computer outside compiler discovery")
 	}

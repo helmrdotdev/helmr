@@ -1,11 +1,11 @@
 import { callMcp, waitManagedTurn, type ManagedAdmission } from "../../support/runtime-mcp"
-import { agent, computer, image, type ComputerIdentity, type Json, type Turn } from "@helmr/sdk"
+import { agent, template, image, type ComputerIdentity, type Json, type Turn } from "@helmr/sdk"
 import { setTimeout as delay } from "node:timers/promises"
 
 const modes = ["progress", "long", "text", "choice", "withdraw", "empty", "silent", "stop", "multi"] as const
 type Mode = typeof modes[number]
 
-export const conversationComputer = computer({
+export const conversationComputer = template({
   id: "verification-conversation",
   image: image("verification-conversation").from("node:24-bookworm-slim").workdir("/sandbox"),
   resources: { cpu: 1, memory: "1GiB" },
@@ -96,17 +96,17 @@ async function conversation(turn: Turn, speaker: string, currentComputer: Comput
 }
 
 export const alpha = agent({
-  id: "verification-alpha", computer: conversationComputer,
+  id: "verification-alpha", template: conversationComputer,
   maxTurnDuration: "10m", turn: (turn, ctx) => conversation(turn, "Alpha", ctx.computer),
 })
 export const beta = agent({
-  id: "verification-beta", computer: conversationComputer,
+  id: "verification-beta", template: conversationComputer,
   maxTurnDuration: "10m", turn: (turn, ctx) => conversation(turn, "Beta", ctx.computer),
 })
 
 // This front Agent delegates progress without emitting authored output itself.
 export const coordinator = agent({
-  id: "verification-coordinator", computer: conversationComputer, maxTurnDuration: "10m",
+  id: "verification-coordinator", template: conversationComputer, maxTurnDuration: "10m",
   turn: async (turn, ctx): Promise<Json> => {
     const { mode, marker } = command(turn.input)
     if (mode !== "progress" || marker.length > 58) throw new Error("Start the coordinator with progress and a marker of at most 58 characters")

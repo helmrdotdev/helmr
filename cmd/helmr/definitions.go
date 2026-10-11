@@ -13,9 +13,15 @@ func agentDefinitionCommand() *cobra.Command {
 	return cmd
 }
 
-func computerDefinitionCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "definition", Short: "Inspect deployed Computer definitions."}
-	cmd.AddCommand(computerDefinitionListCommand(), computerDefinitionGetCommand())
+func templateCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "template", Short: "Inspect Computer Templates."}
+	cmd.AddCommand(templateDefinitionCommand())
+	return cmd
+}
+
+func templateDefinitionCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "definition", Short: "Inspect deployed Template definitions."}
+	cmd.AddCommand(templateDefinitionListCommand(), templateDefinitionGetCommand())
 	return cmd
 }
 
@@ -79,11 +85,11 @@ func agentDefinitionGetCommand() *cobra.Command {
 	return cmd
 }
 
-func computerDefinitionListCommand() *cobra.Command {
+func templateDefinitionListCommand() *cobra.Command {
 	var project, environment, deployment, cursor string
 	var limit int32
 	var jsonOutput bool
-	cmd := &cobra.Command{Use: "list", Short: "Read one page of deployed Computer definitions.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "list", Short: "Read one page of deployed Template definitions.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("limit") && limit < 1 {
 			return errors.New("--limit must be in [1,100]")
 		}
@@ -91,7 +97,7 @@ func computerDefinitionListCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		page, err := cp.ListComputerDefinitions(cmd.Context(), client.DefinitionListOptions{DeploymentID: deployment, Cursor: cursor, Limit: limit, EnvironmentScopeOptions: scope})
+		page, err := cp.ListTemplateDefinitions(cmd.Context(), client.DefinitionListOptions{DeploymentID: deployment, Cursor: cursor, Limit: limit, EnvironmentScopeOptions: scope})
 		if err != nil {
 			return err
 		}
@@ -99,7 +105,7 @@ func computerDefinitionListCommand() *cobra.Command {
 			return writeJSON(cmd.OutOrStdout(), page)
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "deployment_id: %s\n", page.DeploymentID)
-		for _, item := range page.ComputerDefinitions {
+		for _, item := range page.TemplateDefinitions {
 			fmt.Fprintln(cmd.OutOrStdout(), item.ID)
 		}
 		if page.NextCursor != "" {
@@ -115,15 +121,15 @@ func computerDefinitionListCommand() *cobra.Command {
 	return cmd
 }
 
-func computerDefinitionGetCommand() *cobra.Command {
+func templateDefinitionGetCommand() *cobra.Command {
 	var project, environment, deployment string
 	var jsonOutput bool
-	cmd := &cobra.Command{Use: "get DEFINITION_ID", Short: "Inspect one deployed Computer definition.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "get DEFINITION_ID", Short: "Inspect one deployed Template definition.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		cp, scope, err := scopedSessionClient(cmd, project, environment)
 		if err != nil {
 			return err
 		}
-		item, err := cp.GetComputerDefinition(cmd.Context(), args[0], client.DefinitionGetOptions{DeploymentID: deployment, EnvironmentScopeOptions: scope})
+		item, err := cp.GetTemplateDefinition(cmd.Context(), args[0], client.DefinitionGetOptions{DeploymentID: deployment, EnvironmentScopeOptions: scope})
 		if err != nil {
 			return err
 		}

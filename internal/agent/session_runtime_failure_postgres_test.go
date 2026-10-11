@@ -134,7 +134,7 @@ func TestSessionRuntimeFailureSurvivesControlReattachment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, original.Sequence, original.Generation, original.Kind, "failed native resume"); err != nil {
+	if err = AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, original.Sequence, original.Generation, original.Kind, "failed native resume", 0); err != nil {
 		t.Fatal(err)
 	}
 	next, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
@@ -246,7 +246,7 @@ func TestSessionRuntimeFailureSurvivesContinuationCommit(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = AcknowledgeSessionDelivery(t.Context(), f.pool, host, e, a.Sequence, d.Sequence, d.Generation, d.Kind, "retained rejection"); err != nil {
+			if err = AcknowledgeSessionDelivery(t.Context(), f.pool, host, e, a.Sequence, d.Sequence, d.Generation, d.Kind, "retained rejection", 0); err != nil {
 				t.Fatal(err)
 			}
 			if err = commit(); err != nil {

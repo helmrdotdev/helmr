@@ -6,7 +6,7 @@ import { z } from "zod"
 import { verificationComputer } from "../agent/agent"
 
 export const verificationSession = agent({
-  id: "verification-session", computer: verificationComputer, maxTurnDuration: "10m",
+  id: "verification-session", template: verificationComputer, maxTurnDuration: "10m",
   init: () => ({ nonce: randomUUID(), count: 0, marker: "" }),
   turn: async (turn, ctx) => {
     const input = z.object({ marker: z.string().uuid() }).strict().parse(fixtureValue(turn.input))

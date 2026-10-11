@@ -12,7 +12,7 @@ import type { Message, UnknownEnum } from "@bufbuild/protobuf";
  * Describes the file agent.proto.
  */
 export const file_agent: GenFile = /*@__PURE__*/
-  fileDesc("CgthZ2VudC5wcm90bxIOaGVsbXIuYWdlbnQudjEiPAoPU2Vzc2lvbklkZW50aXR5EhIKCnNlc3Npb25faWQYASABKAkSFQoNcHJvY2Vzc19lcG9jaBgCIAEoAyL+AwoMU2Vzc2lvblN0YXJ0EhAKCGFnZW50X2lkGAEgASgJEhMKC2NvbXB1dGVyX2lkGAIgASgJEhUKDWRlcGxveW1lbnRfaWQYAyABKAkSHQoQY29udmVyc2F0aW9uX2tleRgEIAEoCUgAiAEBEh4KEXBhcmVudF9zZXNzaW9uX2lkGAUgASgJSAGIAQESQAoNcmVjb3Zlcnlfa2luZBgGIAEoDjIpLmhlbG1yLmFnZW50LnYxLlNlc3Npb25TdGFydC5SZWNvdmVyeUtpbmQSFwoPcmVjb3ZlcnlfcmVhc29uGAcgASgJEhkKEXRlcm1pbmFsX3NlcXVlbmNlGAggASgDEi8KB3Byb2dyYW0YCSABKAsyHi5oZWxtci5hZ2VudC52MS5TZXNzaW9uUHJvZ3JhbRI0Cgpsb2dfbGltaXRzGAogASgLMiAuaGVsbXIuYWdlbnQudjEuU2Vzc2lvbkxvZ0xpbWl0cyJpCgxSZWNvdmVyeUtpbmQSHQoZUkVDT1ZFUllfS0lORF9VTlNQRUNJRklFRBAAEhkKFVJFQ09WRVJZX0tJTkRfSU5JVElBTBABEh8KG1JFQ09WRVJZX0tJTkRfUkVDT05TVFJVQ1RFRBACQhMKEV9jb252ZXJzYXRpb25fa2V5QhQKEl9wYXJlbnRfc2Vzc2lvbl9pZCI8ChZTZXNzaW9uUHJvZ3JhbUFydGlmYWN0Eg4KBmRpZ2VzdBgBIAEoCRISCgpzaXplX2J5dGVzGAIgASgDIoMBCg5TZXNzaW9uUHJvZ3JhbRI3CgdydW50aW1lGAEgASgLMiYuaGVsbXIuYWdlbnQudjEuU2Vzc2lvblByb2dyYW1BcnRpZmFjdBI4CghhcnRpZmFjdBgCIAEoCzImLmhlbG1yLmFnZW50LnYxLlNlc3Npb25Qcm9ncmFtQXJ0aWZhY3QipgEKFVNlc3Npb25Qcm9ncmFtUmVxdWVzdBI4CgRraW5kGAEgASgOMiouaGVsbXIuYWdlbnQudjEuU2Vzc2lvblByb2dyYW1SZXF1ZXN0LktpbmQiUwoES2luZBIUChBLSU5EX1VOU1BFQ0lGSUVEEAASEAoMS0lORF9SVU5USU1FEAESEQoNS0lORF9BUlRJRkFDVBACEhAKDEtJTkRfUkVMRUFTRRADIm4KDFR1cm5EaXNwYXRjaBIPCgd0dXJuX2lkGAEgASgJEhAKCHNlcXVlbmNlGAIgASgDEhIKCmNyZWF0ZWRfYXQYAyABKAkSEgoKaW5wdXRfanNvbhgEIAEoDBITCgtzb3VyY2VfanNvbhgFIAEoDCJfCg9NZXNzYWdlRGVsaXZlcnkSDwoHdHVybl9pZBgBIAEoCRISCgptZXNzYWdlX2lkGAIgASgJEhIKCmlucHV0X2pzb24YAyABKAwSEwoLc291cmNlX2pzb24YBCABKAwiMAoNVHVybkludGVycnVwdBIPCgd0dXJuX2lkGAEgASgJEg4KBnJlYXNvbhgCIAEoCSIgCg1UdXJuUmVjb25jaWxlEg8KB3R1cm5faWQYASABKAkiNQoQVHVybkFja25vd2xlZGdlZBIPCgd0dXJuX2lkGAEgASgJEhAKCHNlcXVlbmNlGAIgASgDIg8KDVNlc3Npb25SZXN1bWUiIAoOU2Vzc2lvblN1c3BlbmQSDgoGcmVhc29uGAEgASgJIiEKD1Nlc3Npb25TaHV0ZG93bhIOCgZyZWFzb24YASABKAkiKgoRU2Vzc2lvbkNoZWNrcG9pbnQSFQoNY2hlY2twb2ludF9pZBgBIAEoCSKCAQoWU2Vzc2lvbkNoZWNrcG9pbnRSZWFkeRIVCg1jaGVja3BvaW50X2lkGAEgASgJEhUKC3Njb3Blc19qc29uGAIgASgMSAASLwoFZXJyb3IYAyABKAsyHi5oZWxtci5hZ2VudC52MS5PcGVyYXRpb25FcnJvckgAQgkKB291dGNvbWUidwoPT3BlcmF0aW9uUmVzdWx0EhIKCnJlcXVlc3RfaWQYASABKAkSFAoKdmFsdWVfanNvbhgCIAEoDEgAEi8KBWVycm9yGAMgASgLMh4uaGVsbXIuYWdlbnQudjEuT3BlcmF0aW9uRXJyb3JIAEIJCgdvdXRjb21lIi8KDk9wZXJhdGlvbkVycm9yEgwKBGNvZGUYASABKAkSDwoHbWVzc2FnZRgCIAEoCSLBBQoMR3Vlc3RDb21tYW5kEjEKCGlkZW50aXR5GAEgASgLMh8uaGVsbXIuYWdlbnQudjEuU2Vzc2lvbklkZW50aXR5EhMKC2RlbGl2ZXJ5X2lkGAIgASgJEhgKEGNvbnRyb2xfc2VxdWVuY2UYDSABKAMSLQoFc3RhcnQYAyABKAsyHC5oZWxtci5hZ2VudC52MS5TZXNzaW9uU3RhcnRIABIwCghkaXNwYXRjaBgEIAEoCzIcLmhlbG1yLmFnZW50LnYxLlR1cm5EaXNwYXRjaEgAEjIKB21lc3NhZ2UYBSABKAsyHy5oZWxtci5hZ2VudC52MS5NZXNzYWdlRGVsaXZlcnlIABIyCglpbnRlcnJ1cHQYBiABKAsyHS5oZWxtci5hZ2VudC52MS5UdXJuSW50ZXJydXB0SAASMgoJcmVjb25jaWxlGAcgASgLMh0uaGVsbXIuYWdlbnQudjEuVHVyblJlY29uY2lsZUgAEjgKDGFja25vd2xlZGdlZBgIIAEoCzIgLmhlbG1yLmFnZW50LnYxLlR1cm5BY2tub3dsZWRnZWRIABI7ChBvcGVyYXRpb25fcmVzdWx0GAkgASgLMh8uaGVsbXIuYWdlbnQudjEuT3BlcmF0aW9uUmVzdWx0SAASLwoGcmVzdW1lGAogASgLMh0uaGVsbXIuYWdlbnQudjEuU2Vzc2lvblJlc3VtZUgAEjMKCHNodXRkb3duGAsgASgLMh8uaGVsbXIuYWdlbnQudjEuU2Vzc2lvblNodXRkb3duSAASMQoHc3VzcGVuZBgMIAEoCzIeLmhlbG1yLmFnZW50LnYxLlNlc3Npb25TdXNwZW5kSAASNwoKY2hlY2twb2ludBgOIAEoCzIhLmhlbG1yLmFnZW50LnYxLlNlc3Npb25DaGVja3BvaW50SABCCQoHY29tbWFuZCKPBQoJT3BlcmF0aW9uEhIKCnJlcXVlc3RfaWQYASABKAkSFAoHdHVybl9pZBgCIAEoCUgAiAEBEjAKBm1ldGhvZBgDIAEoDjIgLmhlbG1yLmFnZW50LnYxLk9wZXJhdGlvbi5NZXRob2QSFAoMcGF5bG9hZF9qc29uGAQgASgMIoMECgZNZXRob2QSFgoSTUVUSE9EX1VOU1BFQ0lGSUVEEAASHAoYTUVUSE9EX1JFR0lTVEVSX01FU1NBR0VTEAESGwoXTUVUSE9EX0NMT1NFX1BST0NFU1NJTkcQAhIOCgpNRVRIT0RfQVNLEAMSFwoTTUVUSE9EX1dJVEhEUkFXX0FTSxAEEhEKDU1FVEhPRF9PVVRQVVQQBRIQCgxNRVRIT0RfU1BBV04QBhIQCgxNRVRIT0RfU1RBUlQQBxISCg5NRVRIT0RfRU5RVUVVRRAIEhQKEE1FVEhPRF9XQUlUX1RVUk4QCRIXChNNRVRIT0RfU0VORF9NRVNTQUdFEAoSGgoWTUVUSE9EX0NPTlZFUkdFX05BVElWRRALEhMKD01FVEhPRF9GSU5BTElaRRAMEg8KC01FVEhPRF9GQUlMEA0SDwoLTUVUSE9EX0hPTEQQDhITCg9NRVRIT0RfV0FJVF9BU0sQDxIdChlNRVRIT0RfR0VUX01DUF9DT05ORUNUSU9OEBASFgoSTUVUSE9EX1JVTlRJTUVfTUNQEBESEgoOTUVUSE9EX1JFU1BPTkQQEhIaChZNRVRIT0RfQ09OVFJPTF9TRVNTSU9OEBMSGgoWTUVUSE9EX0lOU1BFQ1RfU0VTU0lPThAUEhgKFE1FVEhPRF9MSVNUX1NFU1NJT05TEBVCCgoIX3R1cm5faWQiJQoPT3BlcmF0aW9uQ2FuY2VsEhIKCnJlcXVlc3RfaWQYASABKAkiDgoMU2Vzc2lvblJlYWR5IncKDkRlbGl2ZXJ5UmVzdWx0EhMKC2RlbGl2ZXJ5X2lkGAEgASgJEhQKCnZhbHVlX2pzb24YAiABKAxIABIvCgVlcnJvchgDIAEoCzIeLmhlbG1yLmFnZW50LnYxLk9wZXJhdGlvbkVycm9ySABCCQoHb3V0Y29tZSIuCg1TZXNzaW9uRmFpbGVkEgwKBGNvZGUYASABKAkSDwoHbWVzc2FnZRgCIAEoCSKWAwoMUHJvZ3JhbUV2ZW50EjEKCGlkZW50aXR5GAEgASgLMh8uaGVsbXIuYWdlbnQudjEuU2Vzc2lvbklkZW50aXR5Ei0KBXJlYWR5GAIgASgLMhwuaGVsbXIuYWdlbnQudjEuU2Vzc2lvblJlYWR5SAASLgoJb3BlcmF0aW9uGAMgASgLMhkuaGVsbXIuYWdlbnQudjEuT3BlcmF0aW9uSAASOQoPZGVsaXZlcnlfcmVzdWx0GAQgASgLMh4uaGVsbXIuYWdlbnQudjEuRGVsaXZlcnlSZXN1bHRIABIvCgZmYWlsZWQYBSABKAsyHS5oZWxtci5hZ2VudC52MS5TZXNzaW9uRmFpbGVkSAASOwoQY2FuY2VsX29wZXJhdGlvbhgGIAEoCzIfLmhlbG1yLmFnZW50LnYxLk9wZXJhdGlvbkNhbmNlbEgAEkIKEGNoZWNrcG9pbnRfcmVhZHkYByABKAsyJi5oZWxtci5hZ2VudC52MS5TZXNzaW9uQ2hlY2twb2ludFJlYWR5SABCBwoFZXZlbnQinQIKDFNlc3Npb25HcmFudBIxCghpZGVudGl0eRgBIAEoCzIfLmhlbG1yLmFnZW50LnYxLlNlc3Npb25JZGVudGl0eRITCgtjb21wdXRlcl9pZBgCIAEoCRIcChRjb21wdXRlcl9pbnN0YW5jZV9pZBgDIAEoCRIZChF3cml0ZXJfZ2VuZXJhdGlvbhgEIAEoAxIWCg53b3JrZXJfaG9zdF9pZBgFIAEoCRIcChRjb21wdXRlcl9sZWFzZV9lcG9jaBgGIAEoAxIcChRhdXRob3JpdHlfZ2VuZXJhdGlvbhgHIAEoAxIcChRleHBpcmVzX2F0X3VuaXhfbmFubxgIIAEoAxIaChJjaGFubmVsX2NyZWRlbnRpYWwYCSABKAkiSgoNU2Vzc2lvblNlY3JldBINCgNlbnYYASABKAlIABIOCgRmaWxlGAIgASgJSAASDQoFdmFsdWUYAyABKAxCCwoJcGxhY2VtZW50IsUCCg1TZXNzaW9uQXR0YWNoEisKBWdyYW50GAEgASgLMhwuaGVsbXIuYWdlbnQudjEuU2Vzc2lvbkdyYW50EhsKE2F0dGFjaG1lbnRfc2VxdWVuY2UYAiABKAQSKwoFc3RhcnQYAyABKAsyHC5oZWxtci5hZ2VudC52MS5TZXNzaW9uU3RhcnQSLgoHc2VjcmV0cxgEIAMoCzIdLmhlbG1yLmFnZW50LnYxLlNlc3Npb25TZWNyZXQSRgoNcHJvdGVjdGVkX2VudhgFIAMoCzIvLmhlbG1yLmFnZW50LnYxLlNlc3Npb25BdHRhY2guUHJvdGVjdGVkRW52RW50cnkSEAoIcHJveHlfY2EYBiABKAwaMwoRUHJvdGVjdGVkRW52RW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASKjAgoSSG9zdFNlc3Npb25NZXNzYWdlEhsKE2F0dGFjaG1lbnRfc2VxdWVuY2UYASABKAQSLwoHY29tbWFuZBgCIAEoCzIcLmhlbG1yLmFnZW50LnYxLkd1ZXN0Q29tbWFuZEgAEi0KBXJlbmV3GAMgASgLMhwuaGVsbXIuYWdlbnQudjEuU2Vzc2lvbkdyYW50SAASQQoMYWNrbm93bGVkZ2VkGAQgASgLMikuaGVsbXIuYWdlbnQudjEuU2Vzc2lvbkV2ZW50c0Fja25vd2xlZGdlZEgAEkIKEGxvZ19hY2tub3dsZWRnZWQYBSABKAsyJi5oZWxtci5hZ2VudC52MS5TZXNzaW9uTG9nQWNrbm93bGVkZ2VkSABCCQoHbWVzc2FnZSI1ChlTZXNzaW9uRXZlbnRzQWNrbm93bGVkZ2VkEhgKEHRocm91Z2hfc2VxdWVuY2UYASABKAQiSwoPU2Vzc2lvbkF0dGFjaGVkEg0KBXJlYWR5GAEgASgIEhAKCHRlcm1pbmFsGAIgASgIEhcKD3BlbmRpbmdfdHVybl9pZBgDIAEoCSIQCg5TZXNzaW9uU3RvcHBlZCIPCg1TZXNzaW9uQWJzZW50IlUKEFNlc3Npb25Mb2dMaW1pdHMSEwoLY2h1bmtfYnl0ZXMYASABKAUSFAoMYnVmZmVyX2J5dGVzGAIgASgDEhYKDmJ1ZmZlcl9yZWNvcmRzGAMgASgFInYKFlNlc3Npb25Mb2dBY2tub3dsZWRnZWQSMQoGc3RyZWFtGAEgASgOMiEuaGVsbXIuYWdlbnQudjEuU2Vzc2lvbkxvZy5TdHJlYW0SGAoQdGhyb3VnaF9zZXF1ZW5jZRgCIAEoAxIPCgdleHBpcmVkGAMgASgIIoEDCgpTZXNzaW9uTG9nEjEKBnN0cmVhbRgBIAEoDjIhLmhlbG1yLmFnZW50LnYxLlNlc3Npb25Mb2cuU3RyZWFtEgwKBGRhdGEYAiABKAwSLQoEa2luZBgDIAEoDjIfLmhlbG1yLmFnZW50LnYxLlNlc3Npb25Mb2cuS2luZBIQCghzZXF1ZW5jZRgEIAEoAxIYChB0aHJvdWdoX3NlcXVlbmNlGAUgASgDEh0KFW9ic2VydmVkX2F0X3VuaXhfbmFubxgGIAEoAxIVCg1kcm9wcGVkX2J5dGVzGAcgASgDEhAKCGNvbXBsZXRlGAggASgIIkYKBlN0cmVhbRIWChJTVFJFQU1fVU5TUEVDSUZJRUQQABIRCg1TVFJFQU1fU1RET1VUEAESEQoNU1RSRUFNX1NUREVSUhACIkcKBEtpbmQSFAoQS0lORF9VTlNQRUNJRklFRBAAEg0KCUtJTkRfREFUQRABEgwKCEtJTkRfR0FQEAISDAoIS0lORF9FTkQQAyKcBAoTR3Vlc3RTZXNzaW9uTWVzc2FnZRIxCghpZGVudGl0eRgBIAEoCzIfLmhlbG1yLmFnZW50LnYxLlNlc3Npb25JZGVudGl0eRIbChNhdHRhY2htZW50X3NlcXVlbmNlGAIgASgEEjMKCGF0dGFjaGVkGAMgASgLMh8uaGVsbXIuYWdlbnQudjEuU2Vzc2lvbkF0dGFjaGVkSAASLQoFZXZlbnQYBCABKAsyHC5oZWxtci5hZ2VudC52MS5Qcm9ncmFtRXZlbnRIABIpCgNsb2cYBSABKAsyGi5oZWxtci5hZ2VudC52MS5TZXNzaW9uTG9nSAASMQoHc3RvcHBlZBgKIAEoCzIeLmhlbG1yLmFnZW50LnYxLlNlc3Npb25TdG9wcGVkSAASQAoPcHJvZ3JhbV9yZXF1ZXN0GAsgASgLMiUuaGVsbXIuYWdlbnQudjEuU2Vzc2lvblByb2dyYW1SZXF1ZXN0SAASLwoGYWJzZW50GAwgASgLMh0uaGVsbXIuYWdlbnQudjEuU2Vzc2lvbkFic2VudEgAEhYKDmRyYWluX2V2aWRlbmNlGAYgASgJEhYKDmV2ZW50X3NlcXVlbmNlGAcgASgEEiYKHm9wZXJhdGlvbl9hdXRob3JpdHlfZ2VuZXJhdGlvbhgIIAEoAxIdChVvcGVyYXRpb25fbGVhc2VfZXBvY2gYCSABKANCCQoHbWVzc2FnZSLYAQoWQ29tcHV0ZXJTZXNzaW9uQ2FwdHVyZRI+CghlbnZlbG9wZRgBIAEoCzIsLmhlbG1yLmNvbXB1dGVyLnYwLkNvbXB1dGVyT3BlcmF0aW9uRW52ZWxvcGUSFQoNY2hlY2twb2ludF9pZBgCIAEoCRIXCg9kZXNpcmVkX3ZlcnNpb24YAyABKAMSGwoTbWVtYmVyc2hpcF9yZXZpc2lvbhgEIAEoAxIxCghzZXNzaW9ucxgFIAMoCzIfLmhlbG1yLmFnZW50LnYxLlNlc3Npb25JZGVudGl0eSLVAgobQ29tcHV0ZXJTZXNzaW9uSW5zdGFsbGF0aW9uEjcKB2NhcHR1cmUYASABKAsyJi5oZWxtci5hZ2VudC52MS5Db21wdXRlclNlc3Npb25DYXB0dXJlEj4KCGVudmVsb3BlGAIgASgLMiwuaGVsbXIuY29tcHV0ZXIudjAuQ29tcHV0ZXJPcGVyYXRpb25FbnZlbG9wZRIXCg9kZXNpcmVkX3ZlcnNpb24YAyABKAMSJQodYmFzZV9jb21wdXRlcl9kaXNrX3ZlcnNpb25faWQYBCABKAkSLAoGZ3JhbnRzGAUgAygLMhwuaGVsbXIuYWdlbnQudjEuU2Vzc2lvbkdyYW50EhQKDHNvdXJjZV9hYm9ydBgGIAEoCBI5ChBzdG9wcGVkX3Nlc3Npb25zGAcgAygLMh8uaGVsbXIuYWdlbnQudjEuU2Vzc2lvbklkZW50aXR5IowBChpTZXNzaW9uQ29udGludWF0aW9uQ29udHJvbBIxCghpZGVudGl0eRgBIAEoCzIfLmhlbG1yLmFnZW50LnYxLlNlc3Npb25JZGVudGl0eRIcChRhdXRob3JpdHlfZ2VuZXJhdGlvbhgCIAEoAxIMCgRoZWxkGAMgASgIEg8KB3N0b3BwZWQYBCABKAgixwEKF0NvbXB1dGVyU2Vzc2lvbkNvbnRyb2xzEj4KCGVudmVsb3BlGAEgASgLMiwuaGVsbXIuY29tcHV0ZXIudjAuQ29tcHV0ZXJPcGVyYXRpb25FbnZlbG9wZRIVCg1jaGVja3BvaW50X2lkGAIgASgJEhcKD2Rlc2lyZWRfdmVyc2lvbhgDIAEoAxI8CghzZXNzaW9ucxgEIAMoCzIqLmhlbG1yLmFnZW50LnYxLlNlc3Npb25Db250aW51YXRpb25Db250cm9sItkCChZDb21wdXRlclNlc3Npb25Db250cm9sEjkKB2NhcHR1cmUYASABKAsyJi5oZWxtci5hZ2VudC52MS5Db21wdXRlclNlc3Npb25DYXB0dXJlSAASPgoHaW5zdGFsbBgDIAEoCzIrLmhlbG1yLmFnZW50LnYxLkNvbXB1dGVyU2Vzc2lvbkluc3RhbGxhdGlvbkgAEj8KCGFjdGl2YXRlGAQgASgLMisuaGVsbXIuYWdlbnQudjEuQ29tcHV0ZXJTZXNzaW9uSW5zdGFsbGF0aW9uSAASOQoHaW5zcGVjdBgFIAEoCzImLmhlbG1yLmFnZW50LnYxLkNvbXB1dGVyU2Vzc2lvbkNhcHR1cmVIABI7Cghjb250cm9scxgGIAEoCzInLmhlbG1yLmFnZW50LnYxLkNvbXB1dGVyU2Vzc2lvbkNvbnRyb2xzSABCCwoJb3BlcmF0aW9uIoACChZDb21wdXRlclNlc3Npb25SZWNlaXB0EhUKDWNoZWNrcG9pbnRfaWQYASABKAkSFwoPZGVzaXJlZF92ZXJzaW9uGAIgASgDEg4KBmZyb3plbhgDIAEoCBIRCglpbnN0YWxsZWQYBCABKAgSEQoJYWN0aXZhdGVkGAUgASgIEhoKEmFjdGl2YXRpb25fc3RhcnRlZBgGIAEoCBINCgVlcnJvchgHIAEoCRIXCg9jb250cm9sc19kaWdlc3QYCCABKAwSPAoKZXJyb3JfY29kZRgJIAEoDjIoLmhlbG1yLmFnZW50LnYxLkNvbXB1dGVyU2Vzc2lvbkVycm9yQ29kZSIrChpDb21wdXRlckF1dGhvcml0eUNoYWxsZW5nZRINCgVub25jZRgBIAEoDCJPChxDb21wdXRlckF1dGhvcml0eU9ic2VydmF0aW9uEg0KBW5vbmNlGAEgASgMEiAKGGF1dGhvcml0eV90aW1lX3VuaXhfbmFubxgCIAEoAyqkAgoYQ29tcHV0ZXJTZXNzaW9uRXJyb3JDb2RlEisKJ0NPTVBVVEVSX1NFU1NJT05fRVJST1JfQ09ERV9VTlNQRUNJRklFRBAAEjEKLUNPTVBVVEVSX1NFU1NJT05fRVJST1JfQ09ERV9BVVRIT1JJVFlfRVhQSVJFRBABEjsKN0NPTVBVVEVSX1NFU1NJT05fRVJST1JfQ09ERV9DQVBUVVJFX0FCU0VOVF9BRlRFUl9FWFBJUlkQAhI5CjVDT01QVVRFUl9TRVNTSU9OX0VSUk9SX0NPREVfQ0FQVFVSRV9BRE1JU1NJT05fUEVORElORxADEjAKLENPTVBVVEVSX1NFU1NJT05fRVJST1JfQ09ERV9DQVBUVVJFX1VOVVNBQkxFEARCPlo8Z2l0aHViLmNvbS9oZWxtcmRvdGRldi9oZWxtci9pbnRlcm5hbC9wcm90by9hZ2VudC92MTthZ2VudHYxYgZwcm90bzM", [file_computer]);
+  fileDesc("CgthZ2VudC5wcm90bxIOaGVsbXIuYWdlbnQudjEiPAoPU2Vzc2lvbklkZW50aXR5EhIKCnNlc3Npb25faWQYASABKAkSFQoNcHJvY2Vzc19lcG9jaBgCIAEoAyL+AwoMU2Vzc2lvblN0YXJ0EhAKCGFnZW50X2lkGAEgASgJEhMKC2NvbXB1dGVyX2lkGAIgASgJEhUKDWRlcGxveW1lbnRfaWQYAyABKAkSHQoQY29udmVyc2F0aW9uX2tleRgEIAEoCUgAiAEBEh4KEXBhcmVudF9zZXNzaW9uX2lkGAUgASgJSAGIAQESQAoNcmVjb3Zlcnlfa2luZBgGIAEoDjIpLmhlbG1yLmFnZW50LnYxLlNlc3Npb25TdGFydC5SZWNvdmVyeUtpbmQSFwoPcmVjb3ZlcnlfcmVhc29uGAcgASgJEhkKEXRlcm1pbmFsX3NlcXVlbmNlGAggASgDEi8KB3Byb2dyYW0YCSABKAsyHi5oZWxtci5hZ2VudC52MS5TZXNzaW9uUHJvZ3JhbRI0Cgpsb2dfbGltaXRzGAogASgLMiAuaGVsbXIuYWdlbnQudjEuU2Vzc2lvbkxvZ0xpbWl0cyJpCgxSZWNvdmVyeUtpbmQSHQoZUkVDT1ZFUllfS0lORF9VTlNQRUNJRklFRBAAEhkKFVJFQ09WRVJZX0tJTkRfSU5JVElBTBABEh8KG1JFQ09WRVJZX0tJTkRfUkVDT05TVFJVQ1RFRBACQhMKEV9jb252ZXJzYXRpb25fa2V5QhQKEl9wYXJlbnRfc2Vzc2lvbl9pZCI8ChZTZXNzaW9uUHJvZ3JhbUFydGlmYWN0Eg4KBmRpZ2VzdBgBIAEoCRISCgpzaXplX2J5dGVzGAIgASgDIoMBCg5TZXNzaW9uUHJvZ3JhbRI3CgdydW50aW1lGAEgASgLMiYuaGVsbXIuYWdlbnQudjEuU2Vzc2lvblByb2dyYW1BcnRpZmFjdBI4CghhcnRpZmFjdBgCIAEoCzImLmhlbG1yLmFnZW50LnYxLlNlc3Npb25Qcm9ncmFtQXJ0aWZhY3QipgEKFVNlc3Npb25Qcm9ncmFtUmVxdWVzdBI4CgRraW5kGAEgASgOMiouaGVsbXIuYWdlbnQudjEuU2Vzc2lvblByb2dyYW1SZXF1ZXN0LktpbmQiUwoES2luZBIUChBLSU5EX1VOU1BFQ0lGSUVEEAASEAoMS0lORF9SVU5USU1FEAESEQoNS0lORF9BUlRJRkFDVBACEhAKDEtJTkRfUkVMRUFTRRADIm4KDFR1cm5EaXNwYXRjaBIPCgd0dXJuX2lkGAEgASgJEhAKCHNlcXVlbmNlGAIgASgDEhIKCmNyZWF0ZWRfYXQYAyABKAkSEgoKaW5wdXRfanNvbhgEIAEoDBITCgtzb3VyY2VfanNvbhgFIAEoDCJfCg9NZXNzYWdlRGVsaXZlcnkSDwoHdHVybl9pZBgBIAEoCRISCgptZXNzYWdlX2lkGAIgASgJEhIKCmlucHV0X2pzb24YAyABKAwSEwoLc291cmNlX2pzb24YBCABKAwihQEKDlNlc3Npb25Db250cm9sEg8KB2Rlc2lyZWQYASABKAkSFQoNc3RvcF9zZXF1ZW5jZRgCIAEoAxIZCgxzdG9wX3R1cm5faWQYAyABKAlIAIgBARIfChdzdG9wX2RlYWRsaW5lX3VuaXhfbmFubxgEIAEoA0IPCg1fc3RvcF90dXJuX2lkIiAKDVR1cm5SZWNvbmNpbGUSDwoHdHVybl9pZBgBIAEoCSI1ChBUdXJuQWNrbm93bGVkZ2VkEg8KB3R1cm5faWQYASABKAkSEAoIc2VxdWVuY2UYAiABKAMiKgoRU2Vzc2lvbkNoZWNrcG9pbnQSFQoNY2hlY2twb2ludF9pZBgBIAEoCSKCAQoWU2Vzc2lvbkNoZWNrcG9pbnRSZWFkeRIVCg1jaGVja3BvaW50X2lkGAEgASgJEhUKC3Njb3Blc19qc29uGAIgASgMSAASLwoFZXJyb3IYAyABKAsyHi5oZWxtci5hZ2VudC52MS5PcGVyYXRpb25FcnJvckgAQgkKB291dGNvbWUidwoPT3BlcmF0aW9uUmVzdWx0EhIKCnJlcXVlc3RfaWQYASABKAkSFAoKdmFsdWVfanNvbhgCIAEoDEgAEi8KBWVycm9yGAMgASgLMh4uaGVsbXIuYWdlbnQudjEuT3BlcmF0aW9uRXJyb3JIAEIJCgdvdXRjb21lIi8KDk9wZXJhdGlvbkVycm9yEgwKBGNvZGUYASABKAkSDwoHbWVzc2FnZRgCIAEoCSKnBAoMR3Vlc3RDb21tYW5kEjEKCGlkZW50aXR5GAEgASgLMh8uaGVsbXIuYWdlbnQudjEuU2Vzc2lvbklkZW50aXR5EhMKC2RlbGl2ZXJ5X2lkGAIgASgJEhgKEGNvbnRyb2xfc2VxdWVuY2UYDSABKAMSLQoFc3RhcnQYAyABKAsyHC5oZWxtci5hZ2VudC52MS5TZXNzaW9uU3RhcnRIABIwCghkaXNwYXRjaBgEIAEoCzIcLmhlbG1yLmFnZW50LnYxLlR1cm5EaXNwYXRjaEgAEjIKB21lc3NhZ2UYBSABKAsyHy5oZWxtci5hZ2VudC52MS5NZXNzYWdlRGVsaXZlcnlIABIxCgdjb250cm9sGAYgASgLMh4uaGVsbXIuYWdlbnQudjEuU2Vzc2lvbkNvbnRyb2xIABIyCglyZWNvbmNpbGUYByABKAsyHS5oZWxtci5hZ2VudC52MS5UdXJuUmVjb25jaWxlSAASOAoMYWNrbm93bGVkZ2VkGAggASgLMiAuaGVsbXIuYWdlbnQudjEuVHVybkFja25vd2xlZGdlZEgAEjsKEG9wZXJhdGlvbl9yZXN1bHQYCSABKAsyHy5oZWxtci5hZ2VudC52MS5PcGVyYXRpb25SZXN1bHRIABI3CgpjaGVja3BvaW50GA4gASgLMiEuaGVsbXIuYWdlbnQudjEuU2Vzc2lvbkNoZWNrcG9pbnRIAEIJCgdjb21tYW5kIo8FCglPcGVyYXRpb24SEgoKcmVxdWVzdF9pZBgBIAEoCRIUCgd0dXJuX2lkGAIgASgJSACIAQESMAoGbWV0aG9kGAMgASgOMiAuaGVsbXIuYWdlbnQudjEuT3BlcmF0aW9uLk1ldGhvZBIUCgxwYXlsb2FkX2pzb24YBCABKAwigwQKBk1ldGhvZBIWChJNRVRIT0RfVU5TUEVDSUZJRUQQABIcChhNRVRIT0RfUkVHSVNURVJfTUVTU0FHRVMQARIbChdNRVRIT0RfQ0xPU0VfUFJPQ0VTU0lORxACEg4KCk1FVEhPRF9BU0sQAxIXChNNRVRIT0RfV0lUSERSQVdfQVNLEAQSEQoNTUVUSE9EX09VVFBVVBAFEhAKDE1FVEhPRF9TUEFXThAGEhAKDE1FVEhPRF9TVEFSVBAHEhIKDk1FVEhPRF9FTlFVRVVFEAgSFAoQTUVUSE9EX1dBSVRfVFVSThAJEhcKE01FVEhPRF9TRU5EX01FU1NBR0UQChIaChZNRVRIT0RfQ09OVkVSR0VfTkFUSVZFEAsSEwoPTUVUSE9EX0ZJTkFMSVpFEAwSDwoLTUVUSE9EX0ZBSUwQDRIPCgtNRVRIT0RfSE9MRBAOEhMKD01FVEhPRF9XQUlUX0FTSxAPEh0KGU1FVEhPRF9HRVRfTUNQX0NPTk5FQ1RJT04QEBIWChJNRVRIT0RfUlVOVElNRV9NQ1AQERISCg5NRVRIT0RfUkVTUE9ORBASEhoKFk1FVEhPRF9DT05UUk9MX1NFU1NJT04QExIaChZNRVRIT0RfSU5TUEVDVF9TRVNTSU9OEBQSGAoUTUVUSE9EX0xJU1RfU0VTU0lPTlMQFUIKCghfdHVybl9pZCIlCg9PcGVyYXRpb25DYW5jZWwSEgoKcmVxdWVzdF9pZBgBIAEoCSIOCgxTZXNzaW9uUmVhZHkidwoORGVsaXZlcnlSZXN1bHQSEwoLZGVsaXZlcnlfaWQYASABKAkSFAoKdmFsdWVfanNvbhgCIAEoDEgAEi8KBWVycm9yGAMgASgLMh4uaGVsbXIuYWdlbnQudjEuT3BlcmF0aW9uRXJyb3JIAEIJCgdvdXRjb21lIi4KDVNlc3Npb25GYWlsZWQSDAoEY29kZRgBIAEoCRIPCgdtZXNzYWdlGAIgASgJIpYDCgxQcm9ncmFtRXZlbnQSMQoIaWRlbnRpdHkYASABKAsyHy5oZWxtci5hZ2VudC52MS5TZXNzaW9uSWRlbnRpdHkSLQoFcmVhZHkYAiABKAsyHC5oZWxtci5hZ2VudC52MS5TZXNzaW9uUmVhZHlIABIuCglvcGVyYXRpb24YAyABKAsyGS5oZWxtci5hZ2VudC52MS5PcGVyYXRpb25IABI5Cg9kZWxpdmVyeV9yZXN1bHQYBCABKAsyHi5oZWxtci5hZ2VudC52MS5EZWxpdmVyeVJlc3VsdEgAEi8KBmZhaWxlZBgFIAEoCzIdLmhlbG1yLmFnZW50LnYxLlNlc3Npb25GYWlsZWRIABI7ChBjYW5jZWxfb3BlcmF0aW9uGAYgASgLMh8uaGVsbXIuYWdlbnQudjEuT3BlcmF0aW9uQ2FuY2VsSAASQgoQY2hlY2twb2ludF9yZWFkeRgHIAEoCzImLmhlbG1yLmFnZW50LnYxLlNlc3Npb25DaGVja3BvaW50UmVhZHlIAEIHCgVldmVudCKdAgoMU2Vzc2lvbkdyYW50EjEKCGlkZW50aXR5GAEgASgLMh8uaGVsbXIuYWdlbnQudjEuU2Vzc2lvbklkZW50aXR5EhMKC2NvbXB1dGVyX2lkGAIgASgJEhwKFGNvbXB1dGVyX2luc3RhbmNlX2lkGAMgASgJEhkKEXdyaXRlcl9nZW5lcmF0aW9uGAQgASgDEhYKDndvcmtlcl9ob3N0X2lkGAUgASgJEhwKFGNvbXB1dGVyX2xlYXNlX2Vwb2NoGAYgASgDEhwKFGF1dGhvcml0eV9nZW5lcmF0aW9uGAcgASgDEhwKFGV4cGlyZXNfYXRfdW5peF9uYW5vGAggASgDEhoKEmNoYW5uZWxfY3JlZGVudGlhbBgJIAEoCSJKCg1TZXNzaW9uU2VjcmV0Eg0KA2VudhgBIAEoCUgAEg4KBGZpbGUYAiABKAlIABINCgV2YWx1ZRgDIAEoDEILCglwbGFjZW1lbnQixQIKDVNlc3Npb25BdHRhY2gSKwoFZ3JhbnQYASABKAsyHC5oZWxtci5hZ2VudC52MS5TZXNzaW9uR3JhbnQSGwoTYXR0YWNobWVudF9zZXF1ZW5jZRgCIAEoBBIrCgVzdGFydBgDIAEoCzIcLmhlbG1yLmFnZW50LnYxLlNlc3Npb25TdGFydBIuCgdzZWNyZXRzGAQgAygLMh0uaGVsbXIuYWdlbnQudjEuU2Vzc2lvblNlY3JldBJGCg1wcm90ZWN0ZWRfZW52GAUgAygLMi8uaGVsbXIuYWdlbnQudjEuU2Vzc2lvbkF0dGFjaC5Qcm90ZWN0ZWRFbnZFbnRyeRIQCghwcm94eV9jYRgGIAEoDBozChFQcm90ZWN0ZWRFbnZFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIqMCChJIb3N0U2Vzc2lvbk1lc3NhZ2USGwoTYXR0YWNobWVudF9zZXF1ZW5jZRgBIAEoBBIvCgdjb21tYW5kGAIgASgLMhwuaGVsbXIuYWdlbnQudjEuR3Vlc3RDb21tYW5kSAASLQoFcmVuZXcYAyABKAsyHC5oZWxtci5hZ2VudC52MS5TZXNzaW9uR3JhbnRIABJBCgxhY2tub3dsZWRnZWQYBCABKAsyKS5oZWxtci5hZ2VudC52MS5TZXNzaW9uRXZlbnRzQWNrbm93bGVkZ2VkSAASQgoQbG9nX2Fja25vd2xlZGdlZBgFIAEoCzImLmhlbG1yLmFnZW50LnYxLlNlc3Npb25Mb2dBY2tub3dsZWRnZWRIAEIJCgdtZXNzYWdlIjUKGVNlc3Npb25FdmVudHNBY2tub3dsZWRnZWQSGAoQdGhyb3VnaF9zZXF1ZW5jZRgBIAEoBCJLCg9TZXNzaW9uQXR0YWNoZWQSDQoFcmVhZHkYASABKAgSEAoIdGVybWluYWwYAiABKAgSFwoPcGVuZGluZ190dXJuX2lkGAMgASgJIhAKDlNlc3Npb25TdG9wcGVkIg8KDVNlc3Npb25BYnNlbnQiVQoQU2Vzc2lvbkxvZ0xpbWl0cxITCgtjaHVua19ieXRlcxgBIAEoBRIUCgxidWZmZXJfYnl0ZXMYAiABKAMSFgoOYnVmZmVyX3JlY29yZHMYAyABKAUidgoWU2Vzc2lvbkxvZ0Fja25vd2xlZGdlZBIxCgZzdHJlYW0YASABKA4yIS5oZWxtci5hZ2VudC52MS5TZXNzaW9uTG9nLlN0cmVhbRIYChB0aHJvdWdoX3NlcXVlbmNlGAIgASgDEg8KB2V4cGlyZWQYAyABKAgigQMKClNlc3Npb25Mb2cSMQoGc3RyZWFtGAEgASgOMiEuaGVsbXIuYWdlbnQudjEuU2Vzc2lvbkxvZy5TdHJlYW0SDAoEZGF0YRgCIAEoDBItCgRraW5kGAMgASgOMh8uaGVsbXIuYWdlbnQudjEuU2Vzc2lvbkxvZy5LaW5kEhAKCHNlcXVlbmNlGAQgASgDEhgKEHRocm91Z2hfc2VxdWVuY2UYBSABKAMSHQoVb2JzZXJ2ZWRfYXRfdW5peF9uYW5vGAYgASgDEhUKDWRyb3BwZWRfYnl0ZXMYByABKAMSEAoIY29tcGxldGUYCCABKAgiRgoGU3RyZWFtEhYKElNUUkVBTV9VTlNQRUNJRklFRBAAEhEKDVNUUkVBTV9TVERPVVQQARIRCg1TVFJFQU1fU1RERVJSEAIiRwoES2luZBIUChBLSU5EX1VOU1BFQ0lGSUVEEAASDQoJS0lORF9EQVRBEAESDAoIS0lORF9HQVAQAhIMCghLSU5EX0VORBADIpwEChNHdWVzdFNlc3Npb25NZXNzYWdlEjEKCGlkZW50aXR5GAEgASgLMh8uaGVsbXIuYWdlbnQudjEuU2Vzc2lvbklkZW50aXR5EhsKE2F0dGFjaG1lbnRfc2VxdWVuY2UYAiABKAQSMwoIYXR0YWNoZWQYAyABKAsyHy5oZWxtci5hZ2VudC52MS5TZXNzaW9uQXR0YWNoZWRIABItCgVldmVudBgEIAEoCzIcLmhlbG1yLmFnZW50LnYxLlByb2dyYW1FdmVudEgAEikKA2xvZxgFIAEoCzIaLmhlbG1yLmFnZW50LnYxLlNlc3Npb25Mb2dIABIxCgdzdG9wcGVkGAogASgLMh4uaGVsbXIuYWdlbnQudjEuU2Vzc2lvblN0b3BwZWRIABJACg9wcm9ncmFtX3JlcXVlc3QYCyABKAsyJS5oZWxtci5hZ2VudC52MS5TZXNzaW9uUHJvZ3JhbVJlcXVlc3RIABIvCgZhYnNlbnQYDCABKAsyHS5oZWxtci5hZ2VudC52MS5TZXNzaW9uQWJzZW50SAASFgoOZHJhaW5fZXZpZGVuY2UYBiABKAkSFgoOZXZlbnRfc2VxdWVuY2UYByABKAQSJgoeb3BlcmF0aW9uX2F1dGhvcml0eV9nZW5lcmF0aW9uGAggASgDEh0KFW9wZXJhdGlvbl9sZWFzZV9lcG9jaBgJIAEoA0IJCgdtZXNzYWdlItgBChZDb21wdXRlclNlc3Npb25DYXB0dXJlEj4KCGVudmVsb3BlGAEgASgLMiwuaGVsbXIuY29tcHV0ZXIudjAuQ29tcHV0ZXJPcGVyYXRpb25FbnZlbG9wZRIVCg1jaGVja3BvaW50X2lkGAIgASgJEhcKD2Rlc2lyZWRfdmVyc2lvbhgDIAEoAxIbChNtZW1iZXJzaGlwX3JldmlzaW9uGAQgASgDEjEKCHNlc3Npb25zGAUgAygLMh8uaGVsbXIuYWdlbnQudjEuU2Vzc2lvbklkZW50aXR5ItUCChtDb21wdXRlclNlc3Npb25JbnN0YWxsYXRpb24SNwoHY2FwdHVyZRgBIAEoCzImLmhlbG1yLmFnZW50LnYxLkNvbXB1dGVyU2Vzc2lvbkNhcHR1cmUSPgoIZW52ZWxvcGUYAiABKAsyLC5oZWxtci5jb21wdXRlci52MC5Db21wdXRlck9wZXJhdGlvbkVudmVsb3BlEhcKD2Rlc2lyZWRfdmVyc2lvbhgDIAEoAxIlCh1iYXNlX2NvbXB1dGVyX2Rpc2tfdmVyc2lvbl9pZBgEIAEoCRIsCgZncmFudHMYBSADKAsyHC5oZWxtci5hZ2VudC52MS5TZXNzaW9uR3JhbnQSFAoMc291cmNlX2Fib3J0GAYgASgIEjkKEHN0b3BwZWRfc2Vzc2lvbnMYByADKAsyHy5oZWxtci5hZ2VudC52MS5TZXNzaW9uSWRlbnRpdHkijAEKGlNlc3Npb25Db250aW51YXRpb25Db250cm9sEjEKCGlkZW50aXR5GAEgASgLMh8uaGVsbXIuYWdlbnQudjEuU2Vzc2lvbklkZW50aXR5EhwKFGF1dGhvcml0eV9nZW5lcmF0aW9uGAIgASgDEgwKBGhlbGQYAyABKAgSDwoHc3RvcHBlZBgEIAEoCCLHAQoXQ29tcHV0ZXJTZXNzaW9uQ29udHJvbHMSPgoIZW52ZWxvcGUYASABKAsyLC5oZWxtci5jb21wdXRlci52MC5Db21wdXRlck9wZXJhdGlvbkVudmVsb3BlEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkSFwoPZGVzaXJlZF92ZXJzaW9uGAMgASgDEjwKCHNlc3Npb25zGAQgAygLMiouaGVsbXIuYWdlbnQudjEuU2Vzc2lvbkNvbnRpbnVhdGlvbkNvbnRyb2wi2QIKFkNvbXB1dGVyU2Vzc2lvbkNvbnRyb2wSOQoHY2FwdHVyZRgBIAEoCzImLmhlbG1yLmFnZW50LnYxLkNvbXB1dGVyU2Vzc2lvbkNhcHR1cmVIABI+CgdpbnN0YWxsGAMgASgLMisuaGVsbXIuYWdlbnQudjEuQ29tcHV0ZXJTZXNzaW9uSW5zdGFsbGF0aW9uSAASPwoIYWN0aXZhdGUYBCABKAsyKy5oZWxtci5hZ2VudC52MS5Db21wdXRlclNlc3Npb25JbnN0YWxsYXRpb25IABI5CgdpbnNwZWN0GAUgASgLMiYuaGVsbXIuYWdlbnQudjEuQ29tcHV0ZXJTZXNzaW9uQ2FwdHVyZUgAEjsKCGNvbnRyb2xzGAYgASgLMicuaGVsbXIuYWdlbnQudjEuQ29tcHV0ZXJTZXNzaW9uQ29udHJvbHNIAEILCglvcGVyYXRpb24igAIKFkNvbXB1dGVyU2Vzc2lvblJlY2VpcHQSFQoNY2hlY2twb2ludF9pZBgBIAEoCRIXCg9kZXNpcmVkX3ZlcnNpb24YAiABKAMSDgoGZnJvemVuGAMgASgIEhEKCWluc3RhbGxlZBgEIAEoCBIRCglhY3RpdmF0ZWQYBSABKAgSGgoSYWN0aXZhdGlvbl9zdGFydGVkGAYgASgIEg0KBWVycm9yGAcgASgJEhcKD2NvbnRyb2xzX2RpZ2VzdBgIIAEoDBI8CgplcnJvcl9jb2RlGAkgASgOMiguaGVsbXIuYWdlbnQudjEuQ29tcHV0ZXJTZXNzaW9uRXJyb3JDb2RlIisKGkNvbXB1dGVyQXV0aG9yaXR5Q2hhbGxlbmdlEg0KBW5vbmNlGAEgASgMIk8KHENvbXB1dGVyQXV0aG9yaXR5T2JzZXJ2YXRpb24SDQoFbm9uY2UYASABKAwSIAoYYXV0aG9yaXR5X3RpbWVfdW5peF9uYW5vGAIgASgDKqQCChhDb21wdXRlclNlc3Npb25FcnJvckNvZGUSKwonQ09NUFVURVJfU0VTU0lPTl9FUlJPUl9DT0RFX1VOU1BFQ0lGSUVEEAASMQotQ09NUFVURVJfU0VTU0lPTl9FUlJPUl9DT0RFX0FVVEhPUklUWV9FWFBJUkVEEAESOwo3Q09NUFVURVJfU0VTU0lPTl9FUlJPUl9DT0RFX0NBUFRVUkVfQUJTRU5UX0FGVEVSX0VYUElSWRACEjkKNUNPTVBVVEVSX1NFU1NJT05fRVJST1JfQ09ERV9DQVBUVVJFX0FETUlTU0lPTl9QRU5ESU5HEAMSMAosQ09NUFVURVJfU0VTU0lPTl9FUlJPUl9DT0RFX0NBUFRVUkVfVU5VU0FCTEUQBEI+WjxnaXRodWIuY29tL2hlbG1yZG90ZGV2L2hlbG1yL2ludGVybmFsL3Byb3RvL2FnZW50L3YxO2FnZW50djFiBnByb3RvMw", [file_computer]);
 
 /**
  * Local pipes survive coherent Computer continuation. The guest supervisor owns
@@ -305,25 +305,39 @@ export const MessageDeliverySchema: GenMessage<MessageDelivery> = /*@__PURE__*/
   messageDesc(file_agent, 6);
 
 /**
- * @generated from message helmr.agent.v1.TurnInterrupt
+ * @generated from message helmr.agent.v1.SessionControl
  */
-export type TurnInterrupt = Message<"helmr.agent.v1.TurnInterrupt"> & {
+export type SessionControl = Message<"helmr.agent.v1.SessionControl"> & {
   /**
-   * @generated from field: string turn_id = 1;
+   * run, hold, shutdown
+   *
+   * @generated from field: string desired = 1;
    */
-  turnId: string;
+  desired: string;
 
   /**
-   * @generated from field: string reason = 2;
+   * @generated from field: int64 stop_sequence = 2;
    */
-  reason: string;
+  stopSequence: bigint;
+
+  /**
+   * absent with a stop means interrupted setup
+   *
+   * @generated from field: optional string stop_turn_id = 3;
+   */
+  stopTurnId?: string | undefined;
+
+  /**
+   * @generated from field: int64 stop_deadline_unix_nano = 4;
+   */
+  stopDeadlineUnixNano: bigint;
 };
 
 /**
- * Describes the message helmr.agent.v1.TurnInterrupt.
- * Use `create(TurnInterruptSchema)` to create a new message.
+ * Describes the message helmr.agent.v1.SessionControl.
+ * Use `create(SessionControlSchema)` to create a new message.
  */
-export const TurnInterruptSchema: GenMessage<TurnInterrupt> = /*@__PURE__*/
+export const SessionControlSchema: GenMessage<SessionControl> = /*@__PURE__*/
   messageDesc(file_agent, 7);
 
 /**
@@ -366,56 +380,6 @@ export const TurnAcknowledgedSchema: GenMessage<TurnAcknowledged> = /*@__PURE__*
   messageDesc(file_agent, 9);
 
 /**
- * Issued only after the control plane releases the exact hold and the guest has
- * installed current authority. Other effective holds prohibit this command.
- *
- * @generated from message helmr.agent.v1.SessionResume
- */
-export type SessionResume = Message<"helmr.agent.v1.SessionResume"> & {
-};
-
-/**
- * Describes the message helmr.agent.v1.SessionResume.
- * Use `create(SessionResumeSchema)` to create a new message.
- */
-export const SessionResumeSchema: GenMessage<SessionResume> = /*@__PURE__*/
-  messageDesc(file_agent, 10);
-
-/**
- * @generated from message helmr.agent.v1.SessionSuspend
- */
-export type SessionSuspend = Message<"helmr.agent.v1.SessionSuspend"> & {
-  /**
-   * @generated from field: string reason = 1;
-   */
-  reason: string;
-};
-
-/**
- * Describes the message helmr.agent.v1.SessionSuspend.
- * Use `create(SessionSuspendSchema)` to create a new message.
- */
-export const SessionSuspendSchema: GenMessage<SessionSuspend> = /*@__PURE__*/
-  messageDesc(file_agent, 11);
-
-/**
- * @generated from message helmr.agent.v1.SessionShutdown
- */
-export type SessionShutdown = Message<"helmr.agent.v1.SessionShutdown"> & {
-  /**
-   * @generated from field: string reason = 1;
-   */
-  reason: string;
-};
-
-/**
- * Describes the message helmr.agent.v1.SessionShutdown.
- * Use `create(SessionShutdownSchema)` to create a new message.
- */
-export const SessionShutdownSchema: GenMessage<SessionShutdown> = /*@__PURE__*/
-  messageDesc(file_agent, 12);
-
-/**
  * Private supervisor handshake; it does not change the Session hold state.
  *
  * @generated from message helmr.agent.v1.SessionCheckpoint
@@ -432,7 +396,7 @@ export type SessionCheckpoint = Message<"helmr.agent.v1.SessionCheckpoint"> & {
  * Use `create(SessionCheckpointSchema)` to create a new message.
  */
 export const SessionCheckpointSchema: GenMessage<SessionCheckpoint> = /*@__PURE__*/
-  messageDesc(file_agent, 13);
+  messageDesc(file_agent, 10);
 
 /**
  * @generated from message helmr.agent.v1.SessionCheckpointReady
@@ -466,7 +430,7 @@ export type SessionCheckpointReady = Message<"helmr.agent.v1.SessionCheckpointRe
  * Use `create(SessionCheckpointReadySchema)` to create a new message.
  */
 export const SessionCheckpointReadySchema: GenMessage<SessionCheckpointReady> = /*@__PURE__*/
-  messageDesc(file_agent, 14);
+  messageDesc(file_agent, 11);
 
 /**
  * @generated from message helmr.agent.v1.OperationResult
@@ -500,7 +464,7 @@ export type OperationResult = Message<"helmr.agent.v1.OperationResult"> & {
  * Use `create(OperationResultSchema)` to create a new message.
  */
 export const OperationResultSchema: GenMessage<OperationResult> = /*@__PURE__*/
-  messageDesc(file_agent, 15);
+  messageDesc(file_agent, 12);
 
 /**
  * @generated from message helmr.agent.v1.OperationError
@@ -522,7 +486,7 @@ export type OperationError = Message<"helmr.agent.v1.OperationError"> & {
  * Use `create(OperationErrorSchema)` to create a new message.
  */
 export const OperationErrorSchema: GenMessage<OperationError> = /*@__PURE__*/
-  messageDesc(file_agent, 16);
+  messageDesc(file_agent, 13);
 
 /**
  * @generated from message helmr.agent.v1.GuestCommand
@@ -569,10 +533,10 @@ export type GuestCommand = Message<"helmr.agent.v1.GuestCommand"> & {
     case: "message";
   } | {
     /**
-     * @generated from field: helmr.agent.v1.TurnInterrupt interrupt = 6;
+     * @generated from field: helmr.agent.v1.SessionControl control = 6;
      */
-    value: TurnInterrupt;
-    case: "interrupt";
+    value: SessionControl;
+    case: "control";
   } | {
     /**
      * @generated from field: helmr.agent.v1.TurnReconcile reconcile = 7;
@@ -593,24 +557,6 @@ export type GuestCommand = Message<"helmr.agent.v1.GuestCommand"> & {
     case: "operationResult";
   } | {
     /**
-     * @generated from field: helmr.agent.v1.SessionResume resume = 10;
-     */
-    value: SessionResume;
-    case: "resume";
-  } | {
-    /**
-     * @generated from field: helmr.agent.v1.SessionShutdown shutdown = 11;
-     */
-    value: SessionShutdown;
-    case: "shutdown";
-  } | {
-    /**
-     * @generated from field: helmr.agent.v1.SessionSuspend suspend = 12;
-     */
-    value: SessionSuspend;
-    case: "suspend";
-  } | {
-    /**
      * @generated from field: helmr.agent.v1.SessionCheckpoint checkpoint = 14;
      */
     value: SessionCheckpoint;
@@ -623,7 +569,7 @@ export type GuestCommand = Message<"helmr.agent.v1.GuestCommand"> & {
  * Use `create(GuestCommandSchema)` to create a new message.
  */
 export const GuestCommandSchema: GenMessage<GuestCommand> = /*@__PURE__*/
-  messageDesc(file_agent, 17);
+  messageDesc(file_agent, 14);
 
 /**
  * Every uncertain operation retains request_id and the original payload through
@@ -658,7 +604,7 @@ export type Operation = Message<"helmr.agent.v1.Operation"> & {
  * Use `create(OperationSchema)` to create a new message.
  */
 export const OperationSchema: GenMessage<Operation> = /*@__PURE__*/
-  messageDesc(file_agent, 18);
+  messageDesc(file_agent, 15);
 
 /**
  * @generated from enum helmr.agent.v1.Operation.Method
@@ -784,7 +730,7 @@ export type Operation_Method = (typeof Operation_Method)[keyof typeof Operation_
  * Describes the enum helmr.agent.v1.Operation.Method.
  */
 export const Operation_MethodSchema: GenEnum<Operation_Method> = /*@__PURE__*/
-  enumDesc(file_agent, 18, 0);
+  enumDesc(file_agent, 15, 0);
 
 /**
  * Cancels only a local observation/wait, never the referenced Turn or mutation.
@@ -803,7 +749,7 @@ export type OperationCancel = Message<"helmr.agent.v1.OperationCancel"> & {
  * Use `create(OperationCancelSchema)` to create a new message.
  */
 export const OperationCancelSchema: GenMessage<OperationCancel> = /*@__PURE__*/
-  messageDesc(file_agent, 19);
+  messageDesc(file_agent, 16);
 
 /**
  * @generated from message helmr.agent.v1.SessionReady
@@ -816,7 +762,7 @@ export type SessionReady = Message<"helmr.agent.v1.SessionReady"> & {
  * Use `create(SessionReadySchema)` to create a new message.
  */
 export const SessionReadySchema: GenMessage<SessionReady> = /*@__PURE__*/
-  messageDesc(file_agent, 20);
+  messageDesc(file_agent, 17);
 
 /**
  * @generated from message helmr.agent.v1.DeliveryResult
@@ -850,7 +796,7 @@ export type DeliveryResult = Message<"helmr.agent.v1.DeliveryResult"> & {
  * Use `create(DeliveryResultSchema)` to create a new message.
  */
 export const DeliveryResultSchema: GenMessage<DeliveryResult> = /*@__PURE__*/
-  messageDesc(file_agent, 21);
+  messageDesc(file_agent, 18);
 
 /**
  * @generated from message helmr.agent.v1.SessionFailed
@@ -872,7 +818,7 @@ export type SessionFailed = Message<"helmr.agent.v1.SessionFailed"> & {
  * Use `create(SessionFailedSchema)` to create a new message.
  */
 export const SessionFailedSchema: GenMessage<SessionFailed> = /*@__PURE__*/
-  messageDesc(file_agent, 22);
+  messageDesc(file_agent, 19);
 
 /**
  * @generated from message helmr.agent.v1.ProgramEvent
@@ -930,7 +876,7 @@ export type ProgramEvent = Message<"helmr.agent.v1.ProgramEvent"> & {
  * Use `create(ProgramEventSchema)` to create a new message.
  */
 export const ProgramEventSchema: GenMessage<ProgramEvent> = /*@__PURE__*/
-  messageDesc(file_agent, 23);
+  messageDesc(file_agent, 20);
 
 /**
  * This envelope exists only on the owned host-to-guest transport. It is never
@@ -990,7 +936,7 @@ export type SessionGrant = Message<"helmr.agent.v1.SessionGrant"> & {
  * Use `create(SessionGrantSchema)` to create a new message.
  */
 export const SessionGrantSchema: GenMessage<SessionGrant> = /*@__PURE__*/
-  messageDesc(file_agent, 24);
+  messageDesc(file_agent, 21);
 
 /**
  * @generated from message helmr.agent.v1.SessionSecret
@@ -1024,7 +970,7 @@ export type SessionSecret = Message<"helmr.agent.v1.SessionSecret"> & {
  * Use `create(SessionSecretSchema)` to create a new message.
  */
 export const SessionSecretSchema: GenMessage<SessionSecret> = /*@__PURE__*/
-  messageDesc(file_agent, 25);
+  messageDesc(file_agent, 22);
 
 /**
  * A repeated open attaches to the retained process; start must match exactly.
@@ -1069,7 +1015,7 @@ export type SessionAttach = Message<"helmr.agent.v1.SessionAttach"> & {
  * Use `create(SessionAttachSchema)` to create a new message.
  */
 export const SessionAttachSchema: GenMessage<SessionAttach> = /*@__PURE__*/
-  messageDesc(file_agent, 26);
+  messageDesc(file_agent, 23);
 
 /**
  * @generated from message helmr.agent.v1.HostSessionMessage
@@ -1115,7 +1061,7 @@ export type HostSessionMessage = Message<"helmr.agent.v1.HostSessionMessage"> & 
  * Use `create(HostSessionMessageSchema)` to create a new message.
  */
 export const HostSessionMessageSchema: GenMessage<HostSessionMessage> = /*@__PURE__*/
-  messageDesc(file_agent, 27);
+  messageDesc(file_agent, 24);
 
 /**
  * @generated from message helmr.agent.v1.SessionEventsAcknowledged
@@ -1132,7 +1078,7 @@ export type SessionEventsAcknowledged = Message<"helmr.agent.v1.SessionEventsAck
  * Use `create(SessionEventsAcknowledgedSchema)` to create a new message.
  */
 export const SessionEventsAcknowledgedSchema: GenMessage<SessionEventsAcknowledged> = /*@__PURE__*/
-  messageDesc(file_agent, 28);
+  messageDesc(file_agent, 25);
 
 /**
  * @generated from message helmr.agent.v1.SessionAttached
@@ -1161,7 +1107,7 @@ export type SessionAttached = Message<"helmr.agent.v1.SessionAttached"> & {
  * Use `create(SessionAttachedSchema)` to create a new message.
  */
 export const SessionAttachedSchema: GenMessage<SessionAttached> = /*@__PURE__*/
-  messageDesc(file_agent, 29);
+  messageDesc(file_agent, 26);
 
 /**
  * @generated from message helmr.agent.v1.SessionStopped
@@ -1174,7 +1120,7 @@ export type SessionStopped = Message<"helmr.agent.v1.SessionStopped"> & {
  * Use `create(SessionStoppedSchema)` to create a new message.
  */
 export const SessionStoppedSchema: GenMessage<SessionStopped> = /*@__PURE__*/
-  messageDesc(file_agent, 30);
+  messageDesc(file_agent, 27);
 
 /**
  * A control-only attachment proved that this process epoch is absent.
@@ -1189,7 +1135,7 @@ export type SessionAbsent = Message<"helmr.agent.v1.SessionAbsent"> & {
  * Use `create(SessionAbsentSchema)` to create a new message.
  */
 export const SessionAbsentSchema: GenMessage<SessionAbsent> = /*@__PURE__*/
-  messageDesc(file_agent, 31);
+  messageDesc(file_agent, 28);
 
 /**
  * Bounds apply separately to each stdout/stderr stream. They are supplied by
@@ -1219,7 +1165,7 @@ export type SessionLogLimits = Message<"helmr.agent.v1.SessionLogLimits"> & {
  * Use `create(SessionLogLimitsSchema)` to create a new message.
  */
 export const SessionLogLimitsSchema: GenMessage<SessionLogLimits> = /*@__PURE__*/
-  messageDesc(file_agent, 32);
+  messageDesc(file_agent, 29);
 
 /**
  * @generated from message helmr.agent.v1.SessionLogAcknowledged
@@ -1249,7 +1195,7 @@ export type SessionLogAcknowledged = Message<"helmr.agent.v1.SessionLogAcknowled
  * Use `create(SessionLogAcknowledgedSchema)` to create a new message.
  */
 export const SessionLogAcknowledgedSchema: GenMessage<SessionLogAcknowledged> = /*@__PURE__*/
-  messageDesc(file_agent, 33);
+  messageDesc(file_agent, 30);
 
 /**
  * @generated from message helmr.agent.v1.SessionLog
@@ -1303,7 +1249,7 @@ export type SessionLog = Message<"helmr.agent.v1.SessionLog"> & {
  * Use `create(SessionLogSchema)` to create a new message.
  */
 export const SessionLogSchema: GenMessage<SessionLog> = /*@__PURE__*/
-  messageDesc(file_agent, 34);
+  messageDesc(file_agent, 31);
 
 /**
  * @generated from enum helmr.agent.v1.SessionLog.Stream
@@ -1334,7 +1280,7 @@ export type SessionLog_Stream = (typeof SessionLog_Stream)[keyof typeof SessionL
  * Describes the enum helmr.agent.v1.SessionLog.Stream.
  */
 export const SessionLog_StreamSchema: GenEnum<SessionLog_Stream> = /*@__PURE__*/
-  enumDesc(file_agent, 34, 0);
+  enumDesc(file_agent, 31, 0);
 
 /**
  * @generated from enum helmr.agent.v1.SessionLog.Kind
@@ -1370,7 +1316,7 @@ export type SessionLog_Kind = (typeof SessionLog_Kind)[keyof typeof SessionLog_K
  * Describes the enum helmr.agent.v1.SessionLog.Kind.
  */
 export const SessionLog_KindSchema: GenEnum<SessionLog_Kind> = /*@__PURE__*/
-  enumDesc(file_agent, 34, 1);
+  enumDesc(file_agent, 31, 1);
 
 /**
  * @generated from message helmr.agent.v1.GuestSessionMessage
@@ -1458,7 +1404,7 @@ export type GuestSessionMessage = Message<"helmr.agent.v1.GuestSessionMessage"> 
  * Use `create(GuestSessionMessageSchema)` to create a new message.
  */
 export const GuestSessionMessageSchema: GenMessage<GuestSessionMessage> = /*@__PURE__*/
-  messageDesc(file_agent, 35);
+  messageDesc(file_agent, 32);
 
 /**
  * Host-owned coherent capture. Membership is the complete resident process set,
@@ -1498,7 +1444,7 @@ export type ComputerSessionCapture = Message<"helmr.agent.v1.ComputerSessionCapt
  * Use `create(ComputerSessionCaptureSchema)` to create a new message.
  */
 export const ComputerSessionCaptureSchema: GenMessage<ComputerSessionCapture> = /*@__PURE__*/
-  messageDesc(file_agent, 36);
+  messageDesc(file_agent, 33);
 
 /**
  * @generated from message helmr.agent.v1.ComputerSessionInstallation
@@ -1550,7 +1496,7 @@ export type ComputerSessionInstallation = Message<"helmr.agent.v1.ComputerSessio
  * Use `create(ComputerSessionInstallationSchema)` to create a new message.
  */
 export const ComputerSessionInstallationSchema: GenMessage<ComputerSessionInstallation> = /*@__PURE__*/
-  messageDesc(file_agent, 37);
+  messageDesc(file_agent, 34);
 
 /**
  * Current durable controls are applied after installation and before any user
@@ -1585,7 +1531,7 @@ export type SessionContinuationControl = Message<"helmr.agent.v1.SessionContinua
  * Use `create(SessionContinuationControlSchema)` to create a new message.
  */
 export const SessionContinuationControlSchema: GenMessage<SessionContinuationControl> = /*@__PURE__*/
-  messageDesc(file_agent, 38);
+  messageDesc(file_agent, 35);
 
 /**
  * @generated from message helmr.agent.v1.ComputerSessionControls
@@ -1617,7 +1563,7 @@ export type ComputerSessionControls = Message<"helmr.agent.v1.ComputerSessionCon
  * Use `create(ComputerSessionControlsSchema)` to create a new message.
  */
 export const ComputerSessionControlsSchema: GenMessage<ComputerSessionControls> = /*@__PURE__*/
-  messageDesc(file_agent, 39);
+  messageDesc(file_agent, 36);
 
 /**
  * @generated from message helmr.agent.v1.ComputerSessionControl
@@ -1664,7 +1610,7 @@ export type ComputerSessionControl = Message<"helmr.agent.v1.ComputerSessionCont
  * Use `create(ComputerSessionControlSchema)` to create a new message.
  */
 export const ComputerSessionControlSchema: GenMessage<ComputerSessionControl> = /*@__PURE__*/
-  messageDesc(file_agent, 40);
+  messageDesc(file_agent, 37);
 
 /**
  * @generated from message helmr.agent.v1.ComputerSessionReceipt
@@ -1725,7 +1671,7 @@ export type ComputerSessionReceipt = Message<"helmr.agent.v1.ComputerSessionRece
  * Use `create(ComputerSessionReceiptSchema)` to create a new message.
  */
 export const ComputerSessionReceiptSchema: GenMessage<ComputerSessionReceipt> = /*@__PURE__*/
-  messageDesc(file_agent, 41);
+  messageDesc(file_agent, 38);
 
 /**
  * Installation time is sampled by the owned host after receiving this nonce.
@@ -1744,7 +1690,7 @@ export type ComputerAuthorityChallenge = Message<"helmr.agent.v1.ComputerAuthori
  * Use `create(ComputerAuthorityChallengeSchema)` to create a new message.
  */
 export const ComputerAuthorityChallengeSchema: GenMessage<ComputerAuthorityChallenge> = /*@__PURE__*/
-  messageDesc(file_agent, 42);
+  messageDesc(file_agent, 39);
 
 /**
  * @generated from message helmr.agent.v1.ComputerAuthorityObservation
@@ -1766,7 +1712,7 @@ export type ComputerAuthorityObservation = Message<"helmr.agent.v1.ComputerAutho
  * Use `create(ComputerAuthorityObservationSchema)` to create a new message.
  */
 export const ComputerAuthorityObservationSchema: GenMessage<ComputerAuthorityObservation> = /*@__PURE__*/
-  messageDesc(file_agent, 43);
+  messageDesc(file_agent, 40);
 
 /**
  * @generated from enum helmr.agent.v1.ComputerSessionErrorCode

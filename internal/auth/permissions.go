@@ -15,7 +15,7 @@ const (
 	PermissionProjectsManage        Permission = "projects.manage"
 	PermissionAsksRespond           Permission = "asks.respond"
 	PermissionSessionsRead          Permission = "sessions.read"
-	PermissionAgentsStart           Permission = "agents.start"
+	PermissionSessionsCreate        Permission = "sessions.create"
 	PermissionSessionsSend          Permission = "sessions.send"
 	PermissionSessionsClose         Permission = "sessions.close"
 	PermissionSessionsCancel        Permission = "sessions.cancel"
@@ -40,7 +40,7 @@ func AllPermissions() []Permission {
 		PermissionMembersManage,
 		PermissionProjectsManage,
 		PermissionSessionsRead,
-		PermissionAgentsStart,
+		PermissionSessionsCreate,
 		PermissionSessionsSend,
 		PermissionSessionsClose,
 		PermissionSessionsCancel,
@@ -87,7 +87,7 @@ func RoleAllows(role Role, permission Permission) bool {
 	case RoleDeveloper:
 		switch permission {
 		case PermissionSessionsRead,
-			PermissionAgentsStart,
+			PermissionSessionsCreate,
 			PermissionSessionsSend,
 			PermissionSessionsClose,
 			PermissionSessionsCancel,
@@ -121,7 +121,7 @@ func ParseAPIKeyGrant(value string) (Permission, bool) {
 	switch permission {
 	case PermissionAsksRespond,
 		PermissionSessionsRead,
-		PermissionAgentsStart,
+		PermissionSessionsCreate,
 		PermissionSessionsSend,
 		PermissionSessionsClose,
 		PermissionSessionsCancel,

@@ -5,7 +5,7 @@ description: Build a Computer's image, prepare its starting disk with prepare(),
 
 # Prepare a Computer
 
-A Computer definition controls what every new Computer starts with: the Linux
+A Template definition controls what every new Computer starts with: the Linux
 image, and optionally a `prepare` step that sets up the disk once so that
 Sessions do not repeat the work. This guide builds both and rolls out a change.
 For how prepared baselines, refresh and Secret bindings behave, see
@@ -19,7 +19,7 @@ configured (see [Quickstart](/docs/quickstart)).
 Compose the image in TypeScript with `image()` and attach it to a definition:
 
 ```ts
-import { computer, image, source } from "@helmr/sdk"
+import { template, image, source } from "@helmr/sdk"
 
 const repoImage = image("repo")
   .from("node:24-bookworm-slim")
@@ -29,7 +29,7 @@ const repoImage = image("repo")
   .env("GIT_TERMINAL_PROMPT", "0")
   .workdir("/workspace")
 
-export const repo = computer({
+export const repo = template({
   id: "repo",
   image: repoImage,
   resources: { cpu: 2, memory: "4GiB" },
@@ -60,7 +60,7 @@ Add `prepare` for work that should happen once and be copied into every new
 Computer, such as cloning a repository or installing its dependencies:
 
 ```ts
-export const repo = computer({
+export const repo = template({
   id: "repo",
   image: repoImage,
   resources: { cpu: 2, memory: "4GiB" },
@@ -94,7 +94,7 @@ Environment you deploy to and use its ID; see
 // ID from `helmr secret create REGISTRY_TOKEN --json` in this Environment.
 const REGISTRY_TOKEN_ID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
 
-export const repo = computer({
+export const repo = template({
   id: "repo",
   image: repoImage,
   resources: { cpu: 2, memory: "4GiB" },
@@ -134,7 +134,7 @@ on the `every` interval; see [Computers](/docs/concepts/computers).
 3. Confirm the definition in the new current Deployment:
 
    ```sh
-   helmr computer definition get repo --project demo --env staging --json
+   helmr template definition get repo --project demo --env staging --json
    ```
 
 Computers created after the Deployment is promoted use the new definition; the

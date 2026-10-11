@@ -326,9 +326,9 @@ func writeVerifiedProgramFixtureWithMetadata(t *testing.T, root string, edit fun
 	if edit != nil {
 		edit(&index)
 	}
-	runtimeIndex := artifact.DefinitionIndex{APIVersion: "helmr.definition-index.v1", Agents: []artifact.AgentBundleEntry{{ID: "hello", ComputerDefinitionID: images[0].DeclaredID, ModulePath: sourcePath, ExportName: "build"}}, Computers: []artifact.ComputerBundleEntry{}}
+	runtimeIndex := artifact.DefinitionIndex{APIVersion: "helmr.definition-index.v1", Agents: []artifact.AgentBundleEntry{{ID: "hello", TemplateDefinitionID: images[0].DeclaredID, ModulePath: sourcePath, ExportName: "build"}}, Templates: []artifact.TemplateBundleEntry{}}
 	for _, image := range images {
-		runtimeIndex.Computers = append(runtimeIndex.Computers, artifact.ComputerBundleEntry{ID: image.DeclaredID, ModulePath: sourcePath, ExportName: image.DeclaredID})
+		runtimeIndex.Templates = append(runtimeIndex.Templates, artifact.TemplateBundleEntry{ID: image.DeclaredID, ModulePath: sourcePath, ExportName: image.DeclaredID})
 	}
 	definitionIndexRaw, err := artifact.CanonicalDefinitionIndex(runtimeIndex)
 	if err != nil {
@@ -440,9 +440,9 @@ func canonicalJSON(t *testing.T, value any) []byte {
 
 func fixtureProgramMetadata(images []bundle.ComputerSeed, configDigest, runtimeDigest string) artifact.ProgramMetadata {
 	index := artifact.ProgramMetadata{Architecture: definition.ArchitectureX8664, ConfigResultDigest: configDigest, RuntimeContract: definition.RuntimeContract, RuntimeDigest: runtimeDigest,
-		Definitions: []artifact.ProgramDefinition{{Kind: definition.KindAgent, DeclaredID: "hello", Agent: &definition.AgentManifest{ComputerDefinitionID: images[0].DeclaredID, Triggers: map[string]definition.CronTrigger{}}}}}
+		Definitions: []artifact.ProgramDefinition{{Kind: definition.KindAgent, DeclaredID: "hello", Agent: &definition.AgentManifest{TemplateDefinitionID: images[0].DeclaredID, Triggers: map[string]definition.CronTrigger{}}}}}
 	for _, image := range images {
-		index.Definitions = append(index.Definitions, artifact.ProgramDefinition{Kind: definition.KindComputer, DeclaredID: image.DeclaredID, Computer: &definition.ComputerManifest{
+		index.Definitions = append(index.Definitions, artifact.ProgramDefinition{Kind: definition.KindTemplate, DeclaredID: image.DeclaredID, Template: &definition.TemplateManifest{
 			Seed: definition.ComputerSeedManifest{ArtifactDigest: image.Artifact.Digest, MediaType: image.Artifact.MediaType, Profile: image.Artifact.Profile, Config: image.Artifact.Config}, Resources: definition.ResourcesManifest{MilliCPU: 1000, MemoryMiB: 1024}, Secrets: []definition.SecretBinding{}, BuildSecrets: []definition.SecretBinding{},
 		}})
 	}

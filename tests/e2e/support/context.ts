@@ -5,7 +5,7 @@ import { mkdir } from "node:fs/promises"
 import { writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { HelmrClient, type AgentStartRequest, type ClientComputerRef, type ClientSessionRef, type TurnState, type AskState, type Json } from "@helmr/sdk"
+import { HelmrClient, type SessionCreateRequest, type ClientComputerRef, type ClientSessionRef, type TurnState, type AskState, type Json } from "@helmr/sdk"
 import { deadline } from "./deadline"
 
 export { deadline }
@@ -125,7 +125,7 @@ export async function verify(
     >
     cleanup: (action: () => Promise<unknown>) => void
     computer: (definition: string, suffix?: string) => Promise<ClientComputerRef>
-    startAgent: (definition: string, request: Omit<AgentStartRequest, "input"> & { input: Json }) => ReturnType<HelmrClient["agents"]["start"]>
+    startAgent: (definition: string, request: Omit<SessionCreateRequest, "agent" | "input"> & { input: Json }) => Promise<import("@helmr/sdk").SessionCreateReceipt<import("@helmr/sdk").TurnRef>>
   }) => Promise<unknown>,
 ) {
   const url = process.env.HELMR_API_URL,
@@ -193,13 +193,13 @@ export async function verify(
       objects,
       cleanup: (action) => cleanup.push(action),
       startAgent: async (definition, request) => {
-        const admission = await client.agents.start(definition, { ...request, input: fixtureInput(request.input) }, { signal: deadline(30_000) })
+        const admission = await client.sessions.create({ agent: definition, ...request, input: fixtureInput(request.input) }, { signal: deadline(30_000) })
         objects.session_ids.push(admission.session.id)
         objects.turn_ids.push(admission.turn.id)
         return admission
       },
       computer: async (definition, suffix = definition) => {
-        const ref = await client.computers.create({ definition: definition, key: `${suffix}-${marker}`, idempotencyKey: `create:${suffix}:${marker}` }, { signal: deadline(30_000) })
+        const ref = await client.computers.create({ template: definition, key: `${suffix}-${marker}`, idempotencyKey: `create:${suffix}:${marker}` }, { signal: deadline(30_000) })
         objects.computer_ids.push(ref.id)
         cleanup.push(async () => {
           try {

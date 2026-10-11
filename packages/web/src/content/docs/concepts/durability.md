@@ -100,7 +100,7 @@ work:
 // openHarness and reconcilePendingWork stand for your own harness code.
 export const coder = agent({
   id: "coder",
-  computer: repoComputer,
+  template: repoComputer,
   async init(ctx) {
     const harness = await openHarness("/workspace/repo")
     if (ctx.recovery.kind === "reconstructed") {

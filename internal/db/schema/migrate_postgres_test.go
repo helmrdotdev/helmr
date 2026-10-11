@@ -538,8 +538,8 @@ func assertForeignKey(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tab
 func assertExecutionOwnershipSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	for _, fk := range [][3]string{
-		{"agent_definitions", "environment_id, deployment_id, computer_definition_key", "computer_definitions(environment_id, deployment_id, definition_key)"},
-		{"computer_definitions", "environment_id, preparation_spec_id", "computer_preparation_specs(environment_id, id)"},
+		{"agent_definitions", "environment_id, template_id, deployment_id", "template_definitions(environment_id, template_id, deployment_id)"},
+		{"template_definitions", "environment_id, preparation_spec_id", "computer_preparation_specs(environment_id, id)"},
 		{"computer_saves", "environment_id, computer_id, computer_lease_epoch", "computer_leases(environment_id, computer_id, epoch)"},
 		{"computer_saves", "environment_id, turn_id, computer_id, requires_recorded_result", "turns(environment_id, id, computer_id, has_recorded_result)"},
 		{"turns", "environment_id, computer_id, id, completion_save_id, completion_published", "computer_saves(environment_id, computer_id, turn_id, id, published)"},

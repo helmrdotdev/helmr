@@ -17,10 +17,10 @@ import (
 func (d ProgramDefinition) MarshalJSON() ([]byte, error) {
 	var manifest any
 	switch {
-	case d.Kind == definition.KindAgent && d.Agent != nil && d.Computer == nil:
+	case d.Kind == definition.KindAgent && d.Agent != nil && d.Template == nil:
 		manifest = d.Agent
-	case d.Kind == definition.KindComputer && d.Computer != nil && d.Agent == nil:
-		manifest = d.Computer
+	case d.Kind == definition.KindTemplate && d.Template != nil && d.Agent == nil:
+		manifest = d.Template
 	default:
 		return nil, errors.New("program definition requires exactly its kind's manifest")
 	}
@@ -43,8 +43,8 @@ func (d *ProgramDefinition) UnmarshalJSON(raw []byte) error {
 	switch wire.Kind {
 	case definition.KindAgent:
 		return decodeClosedDefinition(wire.Manifest, &d.Agent)
-	case definition.KindComputer:
-		return decodeClosedDefinition(wire.Manifest, &d.Computer)
+	case definition.KindTemplate:
+		return decodeClosedDefinition(wire.Manifest, &d.Template)
 	default:
 		return fmt.Errorf("unsupported program definition kind %q", wire.Kind)
 	}
@@ -54,10 +54,10 @@ func ValidateProgramDefinition(d ProgramDefinition) error {
 		return errors.New("invalid program definition id")
 	}
 	switch {
-	case d.Kind == definition.KindAgent && d.Agent != nil && d.Computer == nil:
+	case d.Kind == definition.KindAgent && d.Agent != nil && d.Template == nil:
 		return definition.ValidateAgentManifest(*d.Agent)
-	case d.Kind == definition.KindComputer && d.Computer != nil && d.Agent == nil:
-		return definition.ValidateComputerManifest(*d.Computer)
+	case d.Kind == definition.KindTemplate && d.Template != nil && d.Agent == nil:
+		return definition.ValidateTemplateManifest(*d.Template)
 	default:
 		return errors.New("program definition requires exactly its kind's manifest")
 	}
@@ -83,8 +83,8 @@ func cloneProgramDefinition(d ProgramDefinition) ProgramDefinition {
 		}
 		d.Agent = &value
 	}
-	if d.Computer != nil {
-		value := *d.Computer
+	if d.Template != nil {
+		value := *d.Template
 		value.Seed.Config.Env = slices.Clone(value.Seed.Config.Env)
 		value.Seed.Config.Entrypoint = slices.Clone(value.Seed.Config.Entrypoint)
 		value.Seed.Config.Cmd = slices.Clone(value.Seed.Config.Cmd)
@@ -96,7 +96,7 @@ func cloneProgramDefinition(d ProgramDefinition) ProgramDefinition {
 		}
 		value.Secrets = secretbinding.CloneReferences(value.Secrets)
 		value.BuildSecrets = secretbinding.CloneReferences(value.BuildSecrets)
-		d.Computer = &value
+		d.Template = &value
 	}
 	return d
 }

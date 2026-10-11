@@ -271,10 +271,10 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 		server.writeAllocationError(w, agent.ErrConflict)
 		return
 	}
-	var computer *definition.ComputerManifest
+	var computer *definition.TemplateManifest
 	for _, d := range manifest.Program.Metadata.Definitions {
-		if d.Kind == definition.KindComputer && d.DeclaredID == start.Spec.ComputerDefinitionID {
-			computer = d.Computer
+		if d.Kind == definition.KindTemplate && d.DeclaredID == start.Spec.TemplateDefinitionID {
+			computer = d.Template
 			break
 		}
 	}
@@ -284,7 +284,7 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 	}
 	var seedObject workerapi.CASObject
 	for _, seed := range manifest.ComputerSeeds {
-		if seed.DeclaredID == start.Spec.ComputerDefinitionID {
+		if seed.DeclaredID == start.Spec.TemplateDefinitionID {
 			seedObject = workerapi.CASObject{Digest: seed.Artifact.Digest, SizeBytes: seed.Artifact.SizeBytes, MediaType: seed.Artifact.MediaType}
 			break
 		}
@@ -303,5 +303,5 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 		server.writeAllocationError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, workerapi.PreparationStart{Program: program, ComputerDefinitionID: start.Spec.ComputerDefinitionID, Seed: computer.Seed, SeedObject: seedObject, RootfsDigest: start.RootfsDigest})
+	writeJSON(w, http.StatusOK, workerapi.PreparationStart{Program: program, TemplateDefinitionID: start.Spec.TemplateDefinitionID, Seed: computer.Seed, SeedObject: seedObject, RootfsDigest: start.RootfsDigest})
 }

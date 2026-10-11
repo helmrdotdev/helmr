@@ -1,18 +1,18 @@
 import { fixtureValue } from "../../support/runtime-mcp"
-import { agent, computer, image } from "@helmr/sdk"
+import { agent, template, image } from "@helmr/sdk"
 import { randomUUID } from "node:crypto"
 import { writeFileSync } from "node:fs"
 import { readFile, writeFile, access } from "node:fs/promises"
 import { z } from "zod"
 
-export const captureAbortComputer = computer({
+export const captureAbortComputer = template({
   id: "capture-abort-verification",
   image: image("capture-abort-verification").from("node:24-bookworm-slim").workdir("/workspace"),
   resources: { cpu: 1, memory: "1GiB" },
 })
 
 export const captureAbortAgent = agent({
-  id: "verification-capture-abort", computer: captureAbortComputer, maxTurnDuration: "20m",
+  id: "verification-capture-abort", template: captureAbortComputer, maxTurnDuration: "20m",
   init: () => ({ nonce: randomUUID(), count: 0, marker: "" }),
   turn: async (turn, ctx) => {
     const { marker, cancelledMarker, cancelMember, cancelledCounter } = z.object({

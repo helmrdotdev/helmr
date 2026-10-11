@@ -14,17 +14,17 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func TestComputerDefinitionRegistrationReusesExactInputsAndSeparatesPolicy(t *testing.T) {
+func TestTemplateDefinitionRegistrationReusesExactInputsAndSeparatesPolicy(t *testing.T) {
 	f := newFixture(t)
 	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
 	every, age := int64(1001), int64(3507)
-	output.Metadata.Definitions[2].Computer.Refresh = &definition.ComputerRefresh{EveryMs: every, MaxAgeMs: &age}
+	output.Metadata.Definitions[2].Template.Refresh = &definition.ComputerRefresh{EveryMs: every, MaxAgeMs: &age}
 	register := func(deployment uuid.UUID, output artifact.ProgramOutput) error {
 		return db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
 			if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 				return err
 			}
-			return registerComputerDefinitions(t.Context(), tx, f.env, deployment, output)
+			return registerTemplateDefinitions(t.Context(), tx, f.env, deployment, output)
 		})
 	}
 	if err := register(f.deployment, output); err != nil {
@@ -43,7 +43,7 @@ func TestComputerDefinitionRegistrationReusesExactInputsAndSeparatesPolicy(t *te
 	}
 	var gotEvery, gotAge int64
 	var scheduled bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT d.refresh_every_ms,d.max_image_age_ms,s.next_refresh_at IS NOT NULL FROM computer_definitions d JOIN computer_preparation_specs s ON s.environment_id=d.environment_id AND s.id=d.preparation_spec_id WHERE d.environment_id=$1 AND d.deployment_id=$2`, f.env, second).Scan(&gotEvery, &gotAge, &scheduled); err != nil || gotEvery != every || gotAge != age || scheduled {
+	if err := f.pool.QueryRow(t.Context(), `SELECT d.refresh_every_ms,d.max_image_age_ms,s.next_refresh_at IS NOT NULL FROM template_definitions d JOIN computer_preparation_specs s ON s.environment_id=d.environment_id AND s.id=d.preparation_spec_id WHERE d.environment_id=$1 AND d.deployment_id=$2`, f.env, second).Scan(&gotEvery, &gotAge, &scheduled); err != nil || gotEvery != every || gotAge != age || scheduled {
 		t.Fatalf("policy %d %d scheduled=%v: %v", gotEvery, gotAge, scheduled, err)
 	}
 	// A failed registration never leaves a new input row behind.
@@ -57,7 +57,7 @@ func TestComputerDefinitionRegistrationReusesExactInputsAndSeparatesPolicy(t *te
 		if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 			return err
 		}
-		if err := registerComputerDefinitions(t.Context(), tx, f.env, third, output); err != nil {
+		if err := registerTemplateDefinitions(t.Context(), tx, f.env, third, output); err != nil {
 			return err
 		}
 		return sentinel
@@ -70,20 +70,20 @@ func TestComputerDefinitionRegistrationReusesExactInputsAndSeparatesPolicy(t *te
 	}
 }
 
-func TestComputerDefinitionRegistrationRejectsForeignSecretAndConflictingStoredInput(t *testing.T) {
+func TestTemplateDefinitionRegistrationRejectsForeignSecretAndConflictingStoredInput(t *testing.T) {
 	f := newFixture(t)
 	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
-	output.Metadata.Definitions[2].Computer.BuildSecrets = []definition.SecretBinding{{SecretID: uuid.NewV7().String(), Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
+	output.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{{SecretID: uuid.NewV7().String(), Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
 	err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
 		if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 			return err
 		}
-		return registerComputerDefinitions(t.Context(), tx, f.env, f.deployment, output)
+		return registerTemplateDefinitions(t.Context(), tx, f.env, f.deployment, output)
 	})
 	if !errors.Is(err, ErrDenied) {
 		t.Fatalf("foreign Secret %v", err)
 	}
-	output.Metadata.Definitions[2].Computer.BuildSecrets = []definition.SecretBinding{}
+	output.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{}
 	specs, err := artifact.BuildComputerPreparationSpecs(output)
 	if err != nil {
 		t.Fatal(err)
@@ -103,13 +103,13 @@ func TestComputerDefinitionRegistrationRejectsForeignSecretAndConflictingStoredI
 		if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 			return err
 		}
-		return registerComputerDefinitions(t.Context(), tx, f.env, f.deployment, output)
+		return registerTemplateDefinitions(t.Context(), tx, f.env, f.deployment, output)
 	})
 	if err == nil {
 		t.Fatal("registered conflicting seed projection")
 	}
 	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_definitions WHERE environment_id=$1`, f.env).Scan(&count); err != nil || count != 1 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM template_definitions WHERE environment_id=$1`, f.env).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("partial registration %d: %v", count, err)
 	}
 }
@@ -139,16 +139,16 @@ func TestProgramDefinitionRegistrationPinsComputerAndPreservesAgentIdentity(t *t
 		t.Fatal(err)
 	}
 	var identities, defs int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(DISTINCT agent_id),count(*) FROM agent_definitions WHERE environment_id=$1 AND definition_key='build'`, f.env).Scan(&identities, &defs); err != nil || identities != 1 || defs != 2 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(DISTINCT d.agent_id),count(*) FROM agent_definitions d JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) WHERE d.environment_id=$1 AND a.key='build'`, f.env).Scan(&identities, &defs); err != nil || identities != 1 || defs != 2 {
 		t.Fatalf("stable identity %d/%d: %v", identities, defs, err)
 	}
 	var gotDuration, gotIdle int64
 	var computer string
-	if err := f.pool.QueryRow(t.Context(), `SELECT max_turn_duration_ms,close_after_idle_ms,computer_definition_key FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2 AND definition_key='build'`, f.env, second).Scan(&gotDuration, &gotIdle, &computer); err != nil || gotDuration != duration || gotIdle != idle || computer != "repo" {
+	if err := f.pool.QueryRow(t.Context(), `SELECT d.max_turn_duration_ms,d.close_after_idle_ms,t.key FROM agent_definitions d JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND a.key='build'`, f.env, second).Scan(&gotDuration, &gotIdle, &computer); err != nil || gotDuration != duration || gotIdle != idle || computer != "repo" {
 		t.Fatalf("pinned definition %d/%d/%s: %v", gotDuration, gotIdle, computer, err)
 	}
 	// Even a direct write cannot bind an Agent to another deployment's Computer.
-	if _, err := f.pool.Exec(t.Context(), `UPDATE agent_definitions SET computer_definition_key='missing' WHERE environment_id=$1 AND deployment_id=$2 AND definition_key='build'`, f.env, second); err == nil {
+	if _, err := f.pool.Exec(t.Context(), `UPDATE agent_definitions SET template_id='01900000-0000-7000-8000-000000000099' WHERE environment_id=$1 AND deployment_id=$2`, f.env, second); err == nil {
 		t.Fatal("missing Computer reference accepted")
 	}
 }
@@ -174,7 +174,7 @@ func lockDefinitionTestEnvironment(t *testing.T, tx pgx.Tx, env uuid.UUID) error
 	return tx.QueryRow(t.Context(), `SELECT id FROM environments WHERE id=$1 FOR NO KEY UPDATE`, env).Scan(&id)
 }
 
-func TestComputerDefinitionRegistrationUsesStableScopedSecretReferences(t *testing.T) {
+func TestTemplateDefinitionRegistrationUsesStableScopedSecretReferences(t *testing.T) {
 	f := newFixture(t)
 	otherEnv, foreign, revoked := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	if _, err := f.pool.Exec(t.Context(), `INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex) SELECT 'until_environment_deletion',$2,org_id,project_id,'other','Other','#112233' FROM environments WHERE id=$1;
@@ -190,15 +190,15 @@ func TestComputerDefinitionRegistrationUsesStableScopedSecretReferences(t *testi
 			return RegisterProgramDefinitions(t.Context(), tx, f.env, f.deployment, output)
 		})
 	}
-	output.Metadata.Definitions[2].Computer.BuildSecrets = []definition.SecretBinding{{SecretID: foreign.String(), Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
+	output.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{{SecretID: foreign.String(), Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
 	if err := register(); !errors.Is(err, ErrDenied) {
 		t.Fatalf("foreign stable reference: %v", err)
 	}
-	output.Metadata.Definitions[2].Computer.BuildSecrets = []definition.SecretBinding{
+	output.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{
 		{SecretID: revoked.String(), Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://API.EXAMPLE.COM:443", "https://api.example.com"}}},
 		{SecretID: revoked.String(), File: &secretbinding.File{Path: "/etc/build/token"}},
 	}
-	output.Metadata.Definitions[2].Computer.Secrets = []definition.SecretBinding{{SecretID: revoked.String(), Env: &definition.SecretBindingEnv{Name: "RUNTIME_TOKEN", Mode: "raw"}}}
+	output.Metadata.Definitions[2].Template.Secrets = []definition.SecretBinding{{SecretID: revoked.String(), Env: &definition.SecretBindingEnv{Name: "RUNTIME_TOKEN", Mode: "raw"}}}
 	if err := register(); err != nil {
 		t.Fatalf("registration must not become a whole-deployment Secret readiness gate: %v", err)
 	}

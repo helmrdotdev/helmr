@@ -332,12 +332,17 @@ func (r cliDeployReporter) DeploymentCreated(value api.DeploymentResponse) error
 }
 
 func (r cliDeployReporter) DeploymentResult(value api.DeploymentResponse, phase string) error {
+	if phase == "promoted" && !r.jsonOutput {
+		fmt.Fprintln(r.cmd.ErrOrStderr(), promotionEffects)
+	}
 	if r.jsonOutput {
 		return writeJSONLines(r.cmd.OutOrStdout(), []cliDeployLine{{Type: "deployment_result", Phase: phase, Deployment: &value}})
 	}
 	_, err := fmt.Fprintln(r.cmd.OutOrStdout(), deploymentOutputRef(value))
 	return err
 }
+
+const promotionEffects = "New Sessions and future schedules now use this Deployment. Agents absent from it no longer accept new independent Sessions or Slack conversations; retained identities, connections and pinned Sessions are unchanged. Inactive schedule intervals are not replayed."
 
 func promoteCommand() *cobra.Command {
 	var projectID string
@@ -363,6 +368,7 @@ func promoteCommand() *cobra.Command {
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), deploymentOutputRef(value))
+			fmt.Fprintln(cmd.ErrOrStderr(), promotionEffects)
 			return nil
 		},
 	}

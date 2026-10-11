@@ -39,7 +39,7 @@ func TestProgramMetadataCanonicalRoundTrip(t *testing.T) {
 	}
 	if parsed.Definitions[0].Kind != definition.KindAgent ||
 		parsed.Definitions[1].Kind != definition.KindAgent ||
-		parsed.Definitions[2].Kind != definition.KindComputer {
+		parsed.Definitions[2].Kind != definition.KindTemplate {
 		t.Fatalf("Program index declarations are not in unsigned UTF-8 kind order")
 	}
 }
@@ -100,8 +100,8 @@ func TestProgramMetadataRejectsInvalidAuthority(t *testing.T) {
 				index.ConfigResultDigest = "sha256:invalid"
 			},
 		},
-		{name: "absent Computer", change: func(index *ProgramMetadata) { index.Definitions[0].Agent.ComputerDefinitionID = "absent" }},
-		{name: "wrong manifest kind", change: func(index *ProgramMetadata) { index.Definitions[0].Computer = index.Definitions[2].Computer }},
+		{name: "absent Computer", change: func(index *ProgramMetadata) { index.Definitions[0].Agent.TemplateDefinitionID = "absent" }},
+		{name: "wrong manifest kind", change: func(index *ProgramMetadata) { index.Definitions[0].Template = index.Definitions[2].Template }},
 		{name: "duplicate declaration", change: func(index *ProgramMetadata) { index.Definitions[1] = index.Definitions[0] }},
 	}
 	for _, test := range tests {

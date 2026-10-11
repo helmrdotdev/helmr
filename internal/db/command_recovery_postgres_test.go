@@ -23,7 +23,7 @@ func TestCommandRecoveryDiscoverySkipsPendingProcessCleanup(t *testing.T) {
 		insertRecoveryCommand(t, f, f.Computer, true)
 	}
 	other := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest) SELECT environment_id,$2,initial_root_id,initial_root_digest FROM computers WHERE environment_id=$1 AND id=$3`, f.Environment, other, f.Computer)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes) SELECT environment_id,$2,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes FROM computers WHERE environment_id=$1 AND id=$3`, f.Environment, other, f.Computer)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,computer_instance_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) SELECT environment_id,$3,epoch,worker_host_id,worker_epoch,clock_timestamp()-interval '1 second','lost',$3,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE environment_id=$1 AND computer_id=$2`, f.Environment, f.Computer, other)
 	actionable := insertRecoveryCommand(t, f, other, false)
 	n, err := command.RecoverBatch(t.Context(), f.Pool, 1)

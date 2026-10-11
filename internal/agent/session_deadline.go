@@ -30,7 +30,7 @@ func expireSessionDeadlineTx(ctx context.Context, tx pgx.Tx, env, session uuid.U
 	var turn uuid.UUID
 	var epoch int64
 	err := tx.QueryRow(ctx, `UPDATE turns SET status='interrupted',terminal_at=clock_timestamp(),processing_closed_at=COALESCE(processing_closed_at,clock_timestamp())
- WHERE environment_id=$1 AND session_id=$2 AND status IN ('running','finalizing') AND deadline_at<=clock_timestamp()
+ WHERE environment_id=$1 AND session_id=$2 AND status='running' AND deadline_at<=clock_timestamp()
  RETURNING id,process_epoch`, env, session).Scan(&turn, &epoch)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil

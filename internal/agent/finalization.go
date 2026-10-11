@@ -68,8 +68,9 @@ func recordResult(ctx context.Context, tx pgx.Tx, e Execution, turn uuid.UUID, r
 	var prior []byte
 	var epoch *int64
 	var closed *time.Time
-	err = tx.QueryRow(ctx, `SELECT status,result_digest,process_epoch,processing_closed_at FROM turns
-          WHERE environment_id=$1 AND session_id=$2 AND id=$3 FOR NO KEY UPDATE`, e.EnvironmentID, e.SessionID, turn).Scan(&state, &prior, &epoch, &closed)
+	var expired bool
+	err = tx.QueryRow(ctx, `SELECT status,result_digest,process_epoch,processing_closed_at,COALESCE(deadline_at<=clock_timestamp(),false) FROM turns
+          WHERE environment_id=$1 AND session_id=$2 AND id=$3 FOR NO KEY UPDATE`, e.EnvironmentID, e.SessionID, turn).Scan(&state, &prior, &epoch, &closed, &expired)
 	if err != nil {
 		return err
 	}
@@ -88,7 +89,7 @@ func recordResult(ctx context.Context, tx pgx.Tx, e Execution, turn uuid.UUID, r
 		}
 		return tx.QueryRow(ctx, `SELECT id,computer_id,computer_lease_epoch,seq,requested_at FROM computer_saves WHERE environment_id=$1 AND turn_id=$2`, e.EnvironmentID, turn).Scan(&save.ID, &save.ComputerID, &save.LeaseEpoch, &save.Sequence, &save.RequestedAt)
 	}
-	if state != "running" || closed == nil {
+	if state != "running" || closed == nil || expired {
 		return ErrNotReady
 	}
 	var pending bool
@@ -104,7 +105,7 @@ func recordResult(ctx context.Context, tx pgx.Tx, e Execution, turn uuid.UUID, r
 	if err = tx.QueryRow(ctx, `UPDATE computers SET next_save_seq=next_save_seq+1 WHERE environment_id=$1 AND id=$2 RETURNING next_save_seq-1`, e.EnvironmentID, o.computer).Scan(&save.Sequence); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE turns SET status='finalizing',result=$3,result_digest=$4,drain_evidence=$5,result_recorded_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, turn, result, digest[:], drainEvidence)
+	_, err = tx.Exec(ctx, `UPDATE turns SET status='finalizing',result=$3,result_digest=$4,drain_evidence=$5,result_recorded_at=clock_timestamp(),deadline_at=NULL WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, turn, result, digest[:], drainEvidence)
 	if err != nil {
 		return err
 	}
@@ -201,7 +202,7 @@ func ReconcileSavePublication(ctx context.Context, pool db.TxBeginner, env, save
 }
 
 // Complete reconciles the Turn's own published save, even after source loss.
-// A newer recovery head cannot stand in for that save. Cancellation, deadline and
+// A newer recovery head cannot stand in for that save. Cancellation and
 // integrity failure still win until this transaction commits.
 func Complete(ctx context.Context, pool db.TxBeginner, env, session, turn uuid.UUID) error {
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
@@ -214,8 +215,7 @@ func Complete(ctx context.Context, pool db.TxBeginner, env, session, turn uuid.U
 			return err
 		}
 		var state string
-		var deadline *time.Time
-		if err = tx.QueryRow(ctx, `SELECT status,deadline_at FROM turns WHERE environment_id=$1 AND session_id=$2 AND id=$3 FOR NO KEY UPDATE`, env, session, turn).Scan(&state, &deadline); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT status FROM turns WHERE environment_id=$1 AND session_id=$2 AND id=$3 FOR NO KEY UPDATE`, env, session, turn).Scan(&state); err != nil {
 			return err
 		}
 		if state == "completed" {
@@ -234,9 +234,6 @@ func Complete(ctx context.Context, pool db.TxBeginner, env, session, turn uuid.U
 		}
 		if fault != nil {
 			return ErrNotReady
-		}
-		if deadline != nil && !now.Before(*deadline) {
-			return ErrTerminal
 		}
 		var save uuid.UUID
 		err = tx.QueryRow(ctx, `SELECT id FROM computer_saves WHERE environment_id=$1 AND computer_id=$2 AND turn_id=$3 AND status='published'`, env, o.computer, turn).Scan(&save)

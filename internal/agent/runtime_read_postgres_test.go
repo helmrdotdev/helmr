@@ -23,7 +23,7 @@ func TestRuntimeTurnObservationScope(t *testing.T) {
 	caller := runtimeReadCaller(t, f)
 	peer := f.peer(t)
 	unrelated := peer.enqueue(t, "unrelated")
-	own, err := Enqueue(t.Context(), f.pool, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, RetryKey: "own", Input: json.RawMessage(`[{"type":"text","text":"{\"private\":\"input\"}"}]`)})
+	own, err := Enqueue(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, RetryKey: "own", Input: json.RawMessage(`[{"type":"text","text":"{\"private\":\"input\"}"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestRuntimeTurnObservationRechecksCaller(t *testing.T) {
 			f := newFixture(t)
 			caller := runtimeReadCaller(t, f)
 			peer := f.peer(t)
-			a, err := Enqueue(t.Context(), f.pool, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, RetryKey: "own", Input: json.RawMessage(`[]`)})
+			a, err := Enqueue(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, RetryKey: "own", Input: json.RawMessage(`[]`)})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -139,7 +139,7 @@ func TestRuntimeTurnWaitReportsOnlyKnownRetainedCapacityDependency(t *testing.T)
 			f := newAdmissionFixture(t)
 			caller := runtimeReadCaller(t, f)
 			// Fractional declared CPU still reserves a whole physical vCPU.
-			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_definitions SET resources='{"milliCpu":500,"memoryMiB":512}' WHERE environment_id=$1`, f.env)
+			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET resources='{"milliCpu":500,"memoryMiB":512}' WHERE environment_id=$1`, f.env)
 			receipt, err := Start(t.Context(), f.pool, nil, caller, f.startRequest("target"))
 			if err != nil {
 				t.Fatal(err)

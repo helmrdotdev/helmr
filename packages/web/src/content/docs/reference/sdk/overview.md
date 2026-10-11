@@ -11,7 +11,7 @@ build, and provides an explicitly authenticated `HelmrClient`. The
 `@helmr/sdk/mcp` entry point connects Agent code to the runtime MCP tools.
 
 ```ts
-import { agent, computer, image, triggers, defineConfig, HelmrClient } from "@helmr/sdk"
+import { agent, template, image, triggers, defineConfig, HelmrClient } from "@helmr/sdk"
 import { createRuntimeMcpConnection } from "@helmr/sdk/mcp"
 ```
 
@@ -20,7 +20,7 @@ import { createRuntimeMcpConnection } from "@helmr/sdk/mcp"
 | Page | Covers |
 | --- | --- |
 | [Agent](/docs/reference/sdk/agent) | `agent()`, `AgentDefinition`, `Turn`, `InitContext`/`AgentContext`, `MessageRejected`, and the client's Session and Turn methods. |
-| [Computer](/docs/reference/sdk/computer) | `computer()`, `image()`, `source`, Secret bindings, and the client's Computer, Computer definition and Command methods. |
+| [Computer](/docs/reference/sdk/computer) | `template()`, `image()`, `source`, Secret bindings, and the client's Computer, Template definition and Command methods. |
 | [Client](/docs/reference/sdk/client) | `HelmrClient` options and properties, Agent and definition reads, Deployments and Secrets. |
 | [Triggers](/docs/reference/sdk/triggers) | `triggers.cron()` and the client's read-only Schedule methods. |
 | [Questions](/docs/reference/sdk/questions) | `turn.ask()`, answer controls, answer shapes and limits, and the client's ask methods. |
@@ -48,14 +48,14 @@ Types exported from `@helmr/sdk`, grouped by area:
 
 | Area | Types |
 | --- | --- |
-| Definitions | `AgentDefinition`, `ComputerDefinition`, `CronTrigger`, `ComputerIdentity`, `BuildContext`, `SecretBinding`, `Duration`, `Json`, `JsonValue`, `MaybePromise` |
+| Definitions | `AgentDefinition`, `TemplateDefinition`, `CronTrigger`, `ComputerIdentity`, `BuildContext`, `SecretBinding`, `Duration`, `Json`, `JsonValue`, `MaybePromise` |
 | Turn handler | `Turn`, `InitContext`, `AgentContext`, `InputSource`, `InputMessage`, `OutputReceipt`, `TurnOutcome` |
 | Content | `ContentPart`, `Content`, `HumanContent`, `InputPart`, `InputContent` |
 | Questions | `ChoiceOption`, `AnswerControl`, `Question`, `ChoiceAnswer`, `AnswerFor`, `AskResponse`, `AskState`, `AskResponseReceipt`, `AskQuery`, `AskPage`, `TurnAsks` |
 | Client | `HelmrClientOptions`, `RequestOptions`, `CursorPage`, `HelmrError`, `APIError` |
-| Agents | `ClientAgentsApi`, `AgentStartRequest`, `AgentStartReceipt`, `ClientAgentDefinitionsApi`, `AgentDefinitionGetQuery`, `AgentDefinitionListQuery`, `AgentDefinitionListItem`, `AgentDefinitionInfo`, `AgentDefinitionPage` |
-| Sessions and Turns | `ClientSessionsApi`, `ClientSessionRef`, `SessionListQuery`, `SessionRef`, `Session`, `SessionStatus`, `SessionHold`, `SessionOperationOptions`, `SessionAdmissionReceipt`, `SessionMessageReceipt`, `SessionSendResult`, `SessionCloseReceipt`, `SessionCancelReceipt`, `SessionInterruptReceipt`, `SessionResumeRequest`, `SessionResumeReceipt`, `SessionEvent`, `SessionEventKind`, `SessionEventPage`, `SessionEventQuery`, `MessageReceipt`, `TurnRef`, `TurnState`, `TurnStatus`, `TurnListQuery`, `TurnWaitOptions`, `TimedTurnWaitResult` |
-| Computers | `ClientComputersApi`, `ClientComputerRef`, `ComputerRef`, `Computer`, `ComputerStatus`, `ComputerResidency`, `ComputerListItem`, `ComputerListQuery`, `ComputerCreateRequest`, `ComputerDeleteRequest`, `ComputerDeleteReceipt`, `ComputerCommandRequest`, `ComputerMembersQuery`, `ComputerMember`, `ClientComputerDefinitionsApi`, `ComputerDefinitionInfo`, `ComputerDefinitionListItem`, `ComputerDefinitionListQuery`, `ComputerDefinitionPage`, `ComputerDefinitionGetQuery`, `ImageBuilder`, `SourceDirectory`, `SourceFile` |
+| Agents | `ClientAgentsApi`, `SessionCreateRequest`, `SessionCreateReceipt`, `ClientAgentDefinitionsApi`, `AgentDefinitionGetQuery`, `AgentDefinitionListQuery`, `AgentDefinitionListItem`, `AgentDefinitionInfo`, `AgentDefinitionPage` |
+| Sessions and Turns | `ClientSessionsApi`, `ClientSessionRef`, `SessionListQuery`, `SessionRef`, `Session`, `SessionStatus`, `SessionHold`, `SessionOperationOptions`, `SessionCreateReceipt`, `SessionMessageReceipt`, `SessionCloseReceipt`, `SessionCancelReceipt`, `SessionInterruptReceipt`, `SessionResumeRequest`, `SessionResumeReceipt`, `SessionEvent`, `SessionEventKind`, `SessionEventPage`, `SessionEventQuery`, `MessageReceipt`, `TurnRef`, `TurnState`, `TurnStatus`, `TurnListQuery`, `TurnWaitOptions`, `TimedTurnWaitResult` |
+| Computers | `ClientComputersApi`, `ClientComputerRef`, `ComputerRef`, `Computer`, `ComputerStatus`, `ComputerResidency`, `ComputerListItem`, `ComputerListQuery`, `ComputerCreateRequest`, `ComputerDeleteRequest`, `ComputerDeleteReceipt`, `ComputerCommandRequest`, `ComputerMembersQuery`, `ComputerMember`, `ClientTemplateDefinitionsApi`, `TemplateDefinitionInfo`, `TemplateDefinitionListItem`, `TemplateDefinitionListQuery`, `TemplateDefinitionPage`, `TemplateDefinitionGetQuery`, `ImageBuilder`, `SourceDirectory`, `SourceFile` |
 | Commands | `CommandRef`, `CommandInfo`, `CommandOutcome`, `CommandWaitOptions`, `TimedCommandWaitResult`, `CancelReceipt`, `CommandLogQuery`, `CommandLogStreamQuery`, `CommandLogRecord`, `CommandLogReadPage` |
 | Deployments | `ClientDeploymentsApi`, `Deployment`, `DeploymentListItem`, `DeploymentListQuery` |
 | Schedules | `ClientSchedulesApi`, `Schedule`, `ScheduleListQuery` |
@@ -72,7 +72,7 @@ Types exported from `@helmr/sdk`, grouped by area:
   a positive integer followed by `ms`, `s`, `m`, `h` or `d` (for example
   `"30s"`, `"7d"`). Compound and fractional strings are rejected. Retention
   options (`closeAfterIdle`, `deleteAfterUnused`) also accept `"never"`.
-- Input is always an array of text parts (`InputContent`); `[]` is empty input.
+- Input is always an array of text parts (`InputContent`); omit initial input to create a Session with zero Turns; explicit empty initial input is rejected.
   Output, responses and question prompts use `Content`, which also allows JSON
   parts. Machine results and answers are JSON.
 - Client methods accept an optional final `RequestOptions` argument,

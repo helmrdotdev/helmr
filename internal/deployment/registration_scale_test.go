@@ -50,14 +50,14 @@ func measureDeploymentRegistration(t *testing.T, computerCount, secretCount int)
 	metadata.Definitions = make([]artifact.ProgramDefinition, definition.MaxBuildDefinitions)
 	for i := range agentCount {
 		agent := prototype
-		agent.ComputerDefinitionID = fmt.Sprintf("computer-%03d", i%computerCount)
+		agent.TemplateDefinitionID = fmt.Sprintf("computer-%03d", i%computerCount)
 		metadata.Definitions[i] = artifact.ProgramDefinition{Kind: definition.KindAgent, DeclaredID: fmt.Sprintf("agent-%05d", i), Agent: &agent}
 	}
 	for i := range computerCount {
 		declaration := computer
-		manifest := *computer.Computer
+		manifest := *computer.Template
 		declaration.DeclaredID = fmt.Sprintf("computer-%03d", i)
-		declaration.Computer = &manifest
+		declaration.Template = &manifest
 		every := int64(1101)
 		manifest.Refresh = &definition.ComputerRefresh{EveryMs: every}
 		manifest.BuildSecrets = refs

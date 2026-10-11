@@ -12,11 +12,11 @@ async function confirm(page: Page, label: string) {
 test("Console inspects externally admitted work and applies interrupt and cancel", async ({ page }, testInfo) => {
   await page.goto("/dev/login");
   const { scope, base } = await createAgentCatalog(page);
-  const response = await page.request.post(`${base}/agents/browser-agent/start`, {
-    data: { input: [{ type: "text", text: "retained" }], idempotency_key: crypto.randomUUID() },
+  const response = await page.request.post(`${base}/sessions`, {
+    data: { agent: "browser-agent", input: [{ type: "text", text: "retained" }], idempotency_key: crypto.randomUUID() },
   });
   expect(response.ok(), await response.text()).toBeTruthy();
-  const receipt = await response.json() as { session_id: string; turn_id: string };
+  const receipt = await response.json() as { session_id: string; turn: { turn_id: string } };
   const enqueued = await page.request.post(`${base}/sessions/${receipt.session_id}/enqueue`, {
     data: { input: [{ type: "text", text: "queued" }], idempotency_key: crypto.randomUUID() },
   });

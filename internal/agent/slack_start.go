@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -51,7 +50,7 @@ func ReadSlackConnection(ctx context.Context, tx pgx.Tx, env, agent uuid.UUID, c
 	c.EnvironmentID = env
 	c.ChannelID = channel
 	c.AgentID = agent
-	err := tx.QueryRow(ctx, `SELECT p.id,r.id,i.id,e.org_id,i.team_id,i.app_id,i.bot_user_id,a.name,i.credential_revision,i.authorized_at
+	err := tx.QueryRow(ctx, `SELECT p.id,r.id,i.id,e.org_id,i.team_id,i.app_id,i.bot_user_id,a.key,i.credential_revision,i.authorized_at
  FROM agent_publications p JOIN environments e ON e.id=p.environment_id JOIN agents a ON (a.environment_id,a.id)=(p.environment_id,p.agent_id)
  JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id JOIN slack_installations i ON i.id=p.slack_installation_id
  WHERE p.environment_id=$1 AND p.agent_id=$2 AND p.revoked_at IS NULL AND r.retired_at IS NULL AND r.credential_ciphertext IS NOT NULL
@@ -76,7 +75,7 @@ func readSlackStartSource(ctx context.Context, tx pgx.Tx, env, caller uuid.UUID)
 	c.EnvironmentID = env
 	var root *string
 	var active, abandoned bool
-	err := tx.QueryRow(ctx, `SELECT t.id,t.thread_ts,c.publication_id,r.id,i.id,c.organization_id,c.team_id,c.slack_channel_id,i.app_id,i.bot_user_id,s.agent_id,a.name,i.credential_revision,i.authorized_at,
+	err := tx.QueryRow(ctx, `SELECT t.id,t.thread_ts,c.publication_id,r.id,i.id,c.organization_id,c.team_id,c.slack_channel_id,i.app_id,i.bot_user_id,s.agent_id,a.key,i.credential_revision,i.authorized_at,
  p.revoked_at IS NULL AND r.retired_at IS NULL AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND t.deleted_at IS NULL,
  EXISTS(SELECT 1 FROM slack_posts post WHERE post.thread_id=t.id AND post.role='opening' AND (post.delivery_disposed_at IS NOT NULL OR (t.thread_ts IS NULL AND post.status IN ('failed','suppressed'))))
  FROM slack_threads t JOIN slack_channels c ON c.id=t.channel_id JOIN agent_publications p ON p.id=c.publication_id
@@ -121,44 +120,18 @@ func prepareStart(ctx context.Context, pool db.TxBeginner, caller Caller, req St
 		var agent, deployment uuid.UUID
 		var err error
 		if caller.Kind == "session" && method == "spawn" {
-			err = tx.QueryRow(ctx, `SELECT d.agent_id,s.deployment_id FROM sessions s JOIN agent_definitions d ON (d.environment_id,d.deployment_id)=(s.environment_id,s.deployment_id) WHERE s.environment_id=$1 AND s.id=$2 AND d.definition_key=$3`, req.EnvironmentID, caller.ID, req.Agent).Scan(&agent, &deployment)
+			err = tx.QueryRow(ctx, `SELECT d.agent_id,s.deployment_id FROM sessions s JOIN agent_definitions d ON (d.environment_id,d.deployment_id)=(s.environment_id,s.deployment_id) JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) WHERE s.environment_id=$1 AND s.id=$2 AND a.key=$3`, req.EnvironmentID, caller.ID, req.Agent).Scan(&agent, &deployment)
 		} else {
-			err = tx.QueryRow(ctx, `SELECT id FROM agents WHERE environment_id=$1 AND name=$2`, req.EnvironmentID, req.Agent).Scan(&agent)
+			err = tx.QueryRow(ctx, `SELECT id FROM agents WHERE environment_id=$1 AND key=$2`, req.EnvironmentID, req.Agent).Scan(&agent)
 		}
 		if err != nil {
 			return err
 		}
-		if req.RetryKey != "" {
-			var prior []byte
-			var value Admission
-			err = tx.QueryRow(ctx, `SELECT session_id,id,seq,seq=1,request_digest FROM turns WHERE environment_id=$1 AND caller_kind=$2 AND caller_id=$3 AND admission_method=$4 AND target_id=$5 AND retry_key=$6`, req.EnvironmentID, caller.Kind, caller.ID, method, agent, req.RetryKey).Scan(&value.SessionID, &value.TurnID, &value.Sequence, &value.Created, &prior)
-			if err == nil {
-				if caller.Kind == "session" {
-					owner, e := lockSession(ctx, tx, req.EnvironmentID, caller.ID)
-					if e != nil {
-						return e
-					}
-					if e = executionReceipt(ctx, tx, caller.Execution, owner); e != nil {
-						return e
-					}
-				} else if !value.Created {
-					if e := authorizeEnqueue(ctx, tx, caller, req.EnvironmentID, owners{}); e != nil {
-						return e
-					}
-				}
-				if !bytes.Equal(prior, digest[:]) {
-					return ErrConflict
-				}
-				if err = tx.QueryRow(ctx, `SELECT close_after_idle_ms FROM sessions WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, value.SessionID).Scan(&value.CloseAfterIdleMs); err != nil {
-					return err
-				}
-				receipt = &value
-				return nil
-			}
-			if !errors.Is(err, pgx.ErrNoRows) {
-				return err
-			}
+		receipt, err = sessionCreationReceipt(ctx, tx, caller, req.EnvironmentID, agent, method, req.RetryKey, digest)
+		if err != nil || receipt != nil {
+			return err
 		}
+
 		if caller.Kind == "session" {
 			owner, e := lockSession(ctx, tx, req.EnvironmentID, caller.ID)
 			if e != nil {
@@ -171,29 +144,16 @@ func prepareStart(ctx context.Context, pool db.TxBeginner, caller Caller, req St
 		if method == "spawn" {
 			return nil
 		}
-		// Resolve keyed continuation before considering current target defaults.
 		if req.SessionKey != nil {
-			var pinned *uuid.UUID
-			err = tx.QueryRow(ctx, `SELECT slack_channel_id FROM sessions WHERE environment_id=$1 AND agent_id=$2 AND session_key=$3`, req.EnvironmentID, agent, *req.SessionKey).Scan(&pinned)
-			if err == nil {
-				if req.SlackChannelID != nil {
-					if pinned == nil {
-						return ErrSlackDestinationConflict
-					}
-					var channel string
-					if err = tx.QueryRow(ctx, `SELECT slack_channel_id FROM slack_channels WHERE id=$1`, *pinned).Scan(&channel); err != nil {
-						return err
-					}
-					if channel != *req.SlackChannelID {
-						return ErrSlackDestinationConflict
-					}
-				}
-				return nil
-			}
-			if !errors.Is(err, pgx.ErrNoRows) {
+			var occupied bool
+			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM sessions WHERE environment_id=$1 AND agent_id=$2 AND session_key=$3)`, req.EnvironmentID, agent, *req.SessionKey).Scan(&occupied); err != nil {
 				return err
 			}
+			if occupied {
+				return ErrConflict
+			}
 		}
+
 		var source *SlackStartSource
 		channel := ""
 		if caller.Kind == "session" {
@@ -298,7 +258,7 @@ func createSlackRoot(ctx context.Context, tx pgx.Tx, env, session, turn, channel
 			recipientUser = p.HumanActor
 		}
 	} else {
-		opening = "opening:" + turn.String()
+		opening = "opening:" + session.String()
 	}
 	_, err := tx.Exec(ctx, `INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,organization_id,team_id,slack_channel_id,thread_ts,opening_publication_key,recipient_team_id,recipient_user_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, thread, env, session, channel, p.Target.OrganizationID, p.Target.TeamID, p.Target.ChannelID, root, opening, recipientTeam, recipientUser)
 	if err != nil {
@@ -315,6 +275,6 @@ func createSlackRoot(ctx context.Context, tx pgx.Tx, env, session, turn, channel
 		sourceThread = p.Source.ThreadID
 	}
 	digest := sha256.Sum256(p.Opening)
-	_, err = tx.Exec(ctx, `INSERT INTO slack_posts(id,environment_id,session_id,thread_source_id,thread_id,source_thread_id,seq,publication_key,role,turn_id,payload,payload_digest,presentation_path,closed_at) VALUES($1,$2,$3,$4,$5,$6,1,$7,'opening',$8,$9,$10,'post',clock_timestamp())`, uuid.NewV7(), env, session, source, thread, sourceThread, opening, turn, []byte(p.Opening), digest[:])
+	_, err = tx.Exec(ctx, `INSERT INTO slack_posts(id,environment_id,session_id,thread_source_id,thread_id,source_thread_id,seq,publication_key,role,turn_id,payload,payload_digest,presentation_path,closed_at) VALUES($1,$2,$3,$4,$5,$6,1,$7,'opening',$8,$9,$10,'post',clock_timestamp())`, uuid.NewV7(), env, session, source, thread, sourceThread, opening, nullableID(turn), []byte(p.Opening), digest[:])
 	return err
 }

@@ -58,7 +58,7 @@ const API_KEY_SCOPE_OPTIONS: {
     description: "Allow automation to read Session state in the selected project and environment.",
   },
   {
-    value: "agents:start",
+    value: "sessions:create",
     label: "Start agents",
     description: "Allow automation to start declared Agents.",
   },
@@ -116,7 +116,7 @@ const API_KEY_SCOPE_OPTIONS: {
   },
 ];
 
-const DEFAULT_SCOPES: ApiKeyScope[] = ["agents:start", "sessions:read"];
+const DEFAULT_SCOPES: ApiKeyScope[] = ["sessions:create", "sessions:read"];
 
 function apiKeyErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {

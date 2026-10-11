@@ -12,7 +12,7 @@ import (
 )
 
 type AgentManifest struct {
-	ComputerDefinitionID string                 `json:"computerDefinitionId"`
+	TemplateDefinitionID string                 `json:"templateDefinitionId"`
 	Setup                bool                   `json:"setup"`
 	CloseAfterIdleNever  bool                   `json:"closeAfterIdleNever,omitempty"`
 	CloseAfterIdleMs     *int64                 `json:"closeAfterIdleMs,omitempty"`
@@ -32,7 +32,7 @@ type ComputerRefresh struct {
 	MaxAgeMs *int64 `json:"maxAgeMs,omitempty"`
 }
 
-type ComputerInputManifest struct {
+type TemplateInputManifest struct {
 	DeleteAfterUnusedMs    *int64            `json:"deleteAfterUnusedMs,omitempty"`
 	DeleteAfterUnusedNever bool              `json:"deleteAfterUnusedNever,omitempty"`
 	ImageBuild             ImageBuild        `json:"imageBuild"`
@@ -47,8 +47,8 @@ func ValidateAgentManifest(m AgentManifest) error {
 	if m.CloseAfterIdleNever && m.CloseAfterIdleMs != nil {
 		return errors.New("conflicting idle close policy")
 	}
-	if !ValidDeclaredID(m.ComputerDefinitionID) {
-		return errors.New("agent computerDefinitionId is invalid")
+	if !ValidDeclaredID(m.TemplateDefinitionID) {
+		return errors.New("agent templateDefinitionId is invalid")
 	}
 	for _, duration := range []*int64{m.CloseAfterIdleMs, m.MaxTurnDurationMs} {
 		if duration != nil && !positiveSafeInteger(*duration) {
@@ -100,9 +100,9 @@ func ValidateSecretBindings(refs []SecretBinding) error {
 	return err
 }
 
-// ComputerManifest records the resolved base seed and authored preparation inputs.
+// TemplateManifest records the resolved base seed and authored preparation inputs.
 // A seed is not an eligible prepared revision; preparation must publish that output.
-type ComputerManifest struct {
+type TemplateManifest struct {
 	DeleteAfterUnusedMs    *int64               `json:"deleteAfterUnusedMs,omitempty"`
 	DeleteAfterUnusedNever bool                 `json:"deleteAfterUnusedNever,omitempty"`
 	Seed                   ComputerSeedManifest `json:"seed"`
@@ -119,7 +119,7 @@ type ComputerSeedManifest struct {
 	MediaType      string            `json:"mediaType"`
 }
 
-func ValidateComputerManifest(m ComputerManifest) error {
+func ValidateTemplateManifest(m TemplateManifest) error {
 	if err := ValidateUnusedPolicy(m.DeleteAfterUnusedMs, m.DeleteAfterUnusedNever); err != nil {
 		return err
 	}

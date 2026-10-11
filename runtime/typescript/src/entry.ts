@@ -7,7 +7,7 @@ import { turnTimingSink } from "./turn-timing"
 const index = new URL("file:///opt/helmr/program/helmr/definition-index.json")
 if (process.argv[2] === "prepare") {
   const computerId = process.argv[3]
-  if (!computerId || process.argv.length !== 4) throw new Error("Preparation requires one Computer definition")
+  if (!computerId || process.argv.length !== 4) throw new Error("Preparation requires one Template definition")
   const cancellation = new AbortController()
   const stop = () => cancellation.abort()
   process.once("SIGTERM", stop)

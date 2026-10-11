@@ -5,7 +5,7 @@ import { helloWorldComputer } from "./hello-world"
 // Output is observable before validation and successful settlement.
 export const checkedReply = agent({
   id: "checked-reply",
-  computer: helloWorldComputer,
+  template: helloWorldComputer,
   async turn(turn) {
     const input = z.object({ text: z.string(), expected: z.string() }).parse(JSON.parse(turn.input.map(part => part.text).join("")))
     await turn.output.write(input.text)

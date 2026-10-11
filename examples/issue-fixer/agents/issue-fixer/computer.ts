@@ -1,6 +1,6 @@
-import { computer, image } from "@helmr/sdk"
+import { template, image } from "@helmr/sdk"
 
-export const issueFixerComputer = computer({
+export const issueFixerComputer = template({
   id: "issue-fixer",
   image: image("issue-fixer")
     .from("node:24-bookworm-slim")

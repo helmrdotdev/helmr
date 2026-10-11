@@ -13,23 +13,49 @@ import (
 // SessionView reports retained work independently of current execution eligibility.
 // A revoked Computer does not revoke a human's authority to inspect its Sessions.
 type SessionView struct {
-	CloseAfterIdleMs   *int64
-	IdleSince          *time.Time
-	ID                 uuid.UUID
-	AgentID            uuid.UUID
-	DeploymentID       uuid.UUID
-	ComputerID         uuid.UUID
-	RootSessionID      uuid.UUID
-	ParentSessionID    *uuid.UUID
-	RequesterSessionID *uuid.UUID
-	InitialTurnID      *uuid.UUID
-	InitialTurnStatus  *string
-	SlackChannelID     *string
-	Key                *string
-	Status             string
-	CreatedAt          time.Time
-	Holds              []HoldView
+	AgentDefinitionID    string
+	TemplateDefinitionID string
+	Activity             SessionActivityView
+	CloseAfterIdleMs     *int64
+	IdleSince            *time.Time
+	ID                   uuid.UUID
+	AgentID              uuid.UUID
+	DeploymentID         uuid.UUID
+	ComputerID           *uuid.UUID
+	RootSessionID        uuid.UUID
+	ParentSessionID      *uuid.UUID
+	RequesterSessionID   *uuid.UUID
+	InitialTurnID        *uuid.UUID
+	InitialTurnStatus    *string
+	SlackChannelID       *string
+	Key                  *string
+	Status               string
+	CreatedAt            time.Time
+	Holds                []HoldView
 }
+
+type SessionActivityView struct {
+	Process *ProcessActivityView `json:"process"`
+}
+type ProcessActivityView struct {
+	Epoch                  int64            `json:"epoch"`
+	Status                 string           `json:"status"`
+	Applied                bool             `json:"applied"`
+	ReconstructionRequired bool             `json:"reconstruction_required"`
+	Stop                   *ProcessStopView `json:"stop"`
+}
+type ProcessStopView struct {
+	ProcessEpoch int64     `json:"process_epoch"`
+	TurnID       *string   `json:"turn_id"`
+	State        string    `json:"state"`
+	Deadline     time.Time `json:"deadline"`
+}
+
+const processStopFields = `jsonb_build_object('process_epoch',p.epoch,'turn_id',p.stop_turn_id,'state',CASE WHEN p.fenced_at IS NOT NULL THEN 'stopped' WHEN p.status IN ('stopping','lost') THEN 'stopping' ELSE 'requested' END,'deadline',p.stop_deadline_at)`
+const sessionActivityColumn = `jsonb_build_object(
+ 'process',(SELECT jsonb_build_object('epoch',p.epoch,'status',p.status,'applied',p.control_kind='resume' AND p.control_generation=sessions.authority_generation AND p.control_attachment=p.attachment_sequence AND p.control_acknowledged_at IS NOT NULL AND p.control_error IS NULL,
+ 'reconstruction_required',p.failure_recorded_at IS NOT NULL,'stop',CASE WHEN p.stop_deadline_at IS NOT NULL THEN ` + processStopFields + ` END)
+ FROM session_processes p WHERE p.environment_id=sessions.environment_id AND p.session_id=sessions.id ORDER BY p.epoch DESC LIMIT 1))`
 
 type HoldView struct {
 	ID        uuid.UUID
@@ -40,6 +66,7 @@ type HoldView struct {
 }
 
 type TurnView struct {
+	Stop             *ProcessStopView
 	PayloadExpiredAt *time.Time
 	ID               uuid.UUID
 	SessionID        uuid.UUID
@@ -122,7 +149,9 @@ func readTransaction(ctx context.Context, pool db.TxBeginner, caller Caller, env
 	}))
 }
 
-const sessionViewColumns = `id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,session_key,status,created_at,(SELECT c.slack_channel_id FROM slack_channels c WHERE c.id=sessions.slack_channel_id),requester_session_id,
+const sessionViewColumns = `(SELECT a.key FROM agents a WHERE a.environment_id=sessions.environment_id AND a.id=sessions.agent_id),
+ (SELECT t.key FROM agent_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=sessions.environment_id AND d.deployment_id=sessions.deployment_id AND d.agent_id=sessions.agent_id),
+ id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,session_key,status,created_at,(SELECT c.slack_channel_id FROM slack_channels c WHERE c.id=sessions.slack_channel_id),requester_session_id,
  (SELECT t.id FROM turns t WHERE t.environment_id=sessions.environment_id AND t.session_id=sessions.id AND t.seq=1) AS initial_turn_id,
  (SELECT t.status FROM turns t WHERE t.environment_id=sessions.environment_id AND t.session_id=sessions.id AND t.seq=1) AS initial_turn_status,
  (WITH RECURSIVE ancestors AS (
@@ -130,14 +159,17 @@ const sessionViewColumns = `id,agent_id,deployment_id,computer_id,root_session_i
    UNION ALL SELECT s.id,s.parent_session_id FROM sessions s JOIN ancestors a ON s.id=a.parent_session_id WHERE s.environment_id=sessions.environment_id
   ) SELECT COALESCE(jsonb_agg(jsonb_build_object('ID',h.id,'SessionID',h.session_id,'Scope',h.scope,'Reason',h.reason,'CreatedAt',h.created_at) ORDER BY h.created_at,h.id),'[]'::jsonb)
   FROM session_holds h JOIN ancestors a ON a.id=h.session_id
-  WHERE h.environment_id=sessions.environment_id AND h.released_at IS NULL AND (h.session_id=sessions.id OR h.scope='subtree')) AS effective_holds,close_after_idle_ms,idle_since`
+  WHERE h.environment_id=sessions.environment_id AND h.released_at IS NULL AND (h.session_id=sessions.id OR h.scope='subtree')) AS effective_holds,close_after_idle_ms,idle_since,` + sessionActivityColumn
 
 func scanSession(row pgx.Row) (SessionView, error) {
 	var v SessionView
-	var holds []byte
-	err := row.Scan(&v.ID, &v.AgentID, &v.DeploymentID, &v.ComputerID, &v.RootSessionID, &v.ParentSessionID, &v.Key, &v.Status, &v.CreatedAt, &v.SlackChannelID, &v.RequesterSessionID, &v.InitialTurnID, &v.InitialTurnStatus, &holds, &v.CloseAfterIdleMs, &v.IdleSince)
+	var holds, activity []byte
+	err := row.Scan(&v.AgentDefinitionID, &v.TemplateDefinitionID, &v.ID, &v.AgentID, &v.DeploymentID, &v.ComputerID, &v.RootSessionID, &v.ParentSessionID, &v.Key, &v.Status, &v.CreatedAt, &v.SlackChannelID, &v.RequesterSessionID, &v.InitialTurnID, &v.InitialTurnStatus, &holds, &v.CloseAfterIdleMs, &v.IdleSince, &activity)
 	if err == nil {
 		err = json.Unmarshal(holds, &v.Holds)
+	}
+	if err == nil {
+		err = json.Unmarshal(activity, &v.Activity)
 	}
 	return v, err
 }
@@ -209,13 +241,16 @@ func listSessions(ctx context.Context, tx pgx.Tx, req SessionListRequest) (Sessi
 
 // A prepared result is not a successful outcome. Expose it only after the own-save
 // transaction has committed completion; finalizing remains explicitly unfinished.
-const turnViewColumns = `id,session_id,seq,status,input,CASE WHEN status='completed' THEN result END,CASE WHEN status='completed' THEN response END,error_code,error_message,started_at,terminal_at,completion_save_id,payload_expired_at`
+const turnViewColumns = `id,session_id,seq,status,input,CASE WHEN status='completed' THEN result END,CASE WHEN status='completed' THEN response END,error_code,error_message,started_at,terminal_at,completion_save_id,payload_expired_at,(SELECT ` + processStopFields + ` FROM session_processes p WHERE p.environment_id=turns.environment_id AND p.session_id=turns.session_id AND p.stop_deadline_at IS NOT NULL AND (p.stop_turn_id=turns.id OR turns.status='queued') AND NOT EXISTS(SELECT 1 FROM session_processes newer WHERE newer.environment_id=p.environment_id AND newer.session_id=p.session_id AND newer.epoch>p.epoch))`
 
 func scanTurn(row pgx.Row) (TurnView, error) {
 	var v TurnView
 	var code *string
-	var message []byte
-	err := row.Scan(&v.ID, &v.SessionID, &v.Sequence, &v.Status, &v.Input, &v.Result, &v.Response, &code, &message, &v.StartedAt, &v.TerminalAt, &v.CompletionSaveID, &v.PayloadExpiredAt)
+	var message, stop []byte
+	err := row.Scan(&v.ID, &v.SessionID, &v.Sequence, &v.Status, &v.Input, &v.Result, &v.Response, &code, &message, &v.StartedAt, &v.TerminalAt, &v.CompletionSaveID, &v.PayloadExpiredAt, &stop)
+	if err == nil && stop != nil {
+		err = json.Unmarshal(stop, &v.Stop)
+	}
 	if code != nil {
 		v.Error = &TurnError{Code: *code, Message: string(message)}
 	}

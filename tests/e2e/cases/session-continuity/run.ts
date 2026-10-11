@@ -8,7 +8,7 @@ await verify("session-continuity", async ({ client, marker, objects, cleanup, co
   const caller = await computer("helmr-helper-caller-smoke", "continuity-caller")
   const key = `continuity:${marker}`
   const first = await startAgent("helper-continuity", {
-    sessionKey: key, computer: caller, input: { marker: `${marker}:first`, childComputerId: target.id },
+    key: key, computer: caller, input: { marker: `${marker}:first`, childComputerId: target.id },
     idempotencyKey: `continuity:start:${marker}`,
   })
   cleanup(() => cleanupChildren(client, first.session.id, [caller.id, target.id], objects.session_ids))

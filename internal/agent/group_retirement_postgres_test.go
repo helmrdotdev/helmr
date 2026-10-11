@@ -151,7 +151,7 @@ func TestAllocationRestoreRejectsSuccessorGroup(t *testing.T) {
 	if _, err = a.AllocateRestoredComputer(t.Context(), f.env, cp.manifest.CheckpointID, 2, host); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("cross-group restore: %v", err)
 	}
-	if _, err = Enqueue(t.Context(), f.pool, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, RetryKey: "restore", Input: []byte(`[{"type":"text","text":"{}"}]`)}); err != nil {
+	if _, err = Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, RetryKey: "restore", Input: []byte(`[{"type":"text","text":"{}"}]`)}); err != nil {
 		t.Fatal(err)
 	}
 	candidates, err := a.discoverAllocations(t.Context(), allocationPosition{})

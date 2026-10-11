@@ -56,7 +56,9 @@ func reconcileSessionLifecycle(ctx context.Context, database db.TxDB, after sess
    AND (idle_since IS NULL OR extract(epoch FROM (clock_timestamp()-idle_since))*1000>=close_after_idle_ms
     OR EXISTS(SELECT 1 FROM computer_saves save WHERE save.environment_id=s.environment_id AND save.computer_id=s.computer_id AND save.requested_at>=s.idle_since AND (save.turn_id IS NULL OR EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=save.environment_id AND t.id=save.turn_id AND t.session_id=s.id))))
   UNION
-  SELECT environment_id,session_id FROM turns WHERE status IN ('running','finalizing') AND deadline_at<=clock_timestamp()
+  SELECT environment_id,session_id FROM turns WHERE status='running' AND deadline_at<=clock_timestamp()
+  UNION
+  SELECT environment_id,session_id FROM session_processes WHERE stop_deadline_at<=clock_timestamp() AND fenced_at IS NULL AND failure_recorded_at IS NULL
   UNION
   SELECT t.environment_id,t.session_id FROM turns t
    JOIN computer_saves save ON save.environment_id=t.environment_id AND save.turn_id=t.id AND save.status IN ('published','failed')
@@ -95,7 +97,10 @@ func reconcileSessionLifecycle(ctx context.Context, database db.TxDB, after sess
 			break
 		}
 		after = candidate
-		err := expireSessionDeadline(ctx, database, candidate.environment, candidate.session)
+		err := reconcileProcessStopDeadline(ctx, database, candidate.environment, candidate.session)
+		if err == nil {
+			err = expireSessionDeadline(ctx, database, candidate.environment, candidate.session)
+		}
 		if err == nil {
 			err = reconcileSessionCompletion(ctx, database, candidate.environment, candidate.session)
 		}
@@ -171,4 +176,25 @@ func reconcileSessionCompletion(ctx context.Context, database db.TxDB, environme
 		return nil
 	}
 	return err
+}
+
+// A wedged program cannot extend the durable stop budget through reconnection.
+func reconcileProcessStopDeadline(ctx context.Context, pool db.TxBeginner, env, session uuid.UUID) error {
+	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout='1s'`); err != nil {
+			return err
+		}
+		if _, err := lockSession(ctx, tx, env, session); err != nil {
+			return err
+		}
+		var epoch int64
+		err := tx.QueryRow(ctx, `SELECT epoch FROM session_processes WHERE environment_id=$1 AND session_id=$2 AND stop_deadline_at<=clock_timestamp() AND fenced_at IS NULL AND failure_recorded_at IS NULL FOR NO KEY UPDATE`, env, session).Scan(&epoch)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		return observeSessionFailure(ctx, tx, Execution{EnvironmentID: env, SessionID: session, ProcessEpoch: epoch}, "Session cooperative stop deadline elapsed; reconstruction required")
+	})
 }

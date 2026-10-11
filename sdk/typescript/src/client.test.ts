@@ -3,10 +3,11 @@ import { describe, expect, test } from "bun:test"
 import { HelmrClient } from "./index"
 
 describe("HelmrClient Computers", () => {
-  test("creates from a Computer definition and uses Computer UUID refs", async () => {
+  test("creates from a Template definition and uses Computer UUID refs", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = []
     const computer = {
       id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
+      template: "repository-agent",
       key: "repository",
       definition_id: "repository-agent",
       delete_after_unused_ms: null, unused_since: null,
@@ -49,7 +50,7 @@ describe("HelmrClient Computers", () => {
     })
     const signal = new AbortController().signal
 
-    await expect(client.computers.create({ definition: "repository-agent", secrets: [{
+    await expect(client.computers.create({ template: "repository-agent", secrets: [{
         secretId: { name: "GITHUB_TOKEN" } as never,
         env: { name: "GITHUB_TOKEN", mode: "raw" },
       }], })).rejects.toThrow("Secret ID")
@@ -61,7 +62,7 @@ describe("HelmrClient Computers", () => {
     expect(inertRef.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")
     expect(requests).toHaveLength(0)
 
-    const created = await client.computers.create({ definition: "repository-agent", key: "repository",
+    const created = await client.computers.create({ template: "repository-agent", key: "repository",
         secrets: [
           { secretId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38", env: { name: "GITHUB_TOKEN", mode: "raw" } },
           { secretId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc39", file: { path: "/run/secrets/model.json" } },
@@ -69,9 +70,10 @@ describe("HelmrClient Computers", () => {
         idempotencyKey: "create-repository", }, { signal })
     expect(created.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")
     expect(requests[0]!.url).toBe(
-      "https://api.example.test/v1/computer-definitions/repository-agent/computers",
+      "https://api.example.test/v1/computers",
     )
     expect(JSON.parse(String(requests[0]!.init?.body))).toEqual({
+      template: "repository-agent",
       key: "repository",
       secrets: [
         { secretId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38", env: { name: "GITHUB_TOKEN", mode: "raw" } },
@@ -407,14 +409,14 @@ describe("HelmrClient Sessions", () => {
     agent_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
     deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
     root_session_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-    initial_turn: null,
+    initial_turn: null, activity: { process: null },
     parent_session_id: null,
     requester_session_id: null,
     holds: [],
     status: "open",
     created_at: "2026-07-24T11:50:00Z",
   }
-  test("requires the owning Computer on every Session", async () => {
+  test("rejects a missing Computer field; empty Sessions require explicit null", async () => {
     const client = new HelmrClient({
       url: "https://api.example.test",
       apiKey: "api-key",

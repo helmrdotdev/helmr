@@ -44,7 +44,11 @@ func diagnosticTestSource(t *testing.T, pool *pgxpool.Pool, kind string, env uui
 		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO computer_preparations(environment_id,id,preparation_spec_id,retry_key,status,deadline_at,executor_epoch,worker_host_id,worker_epoch,instance_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest)
    SELECT $1::uuid,$2::uuid,$2::uuid,$2::text,'running',clock_timestamp()+interval '1 hour',1,worker_host_id,worker_epoch,$2,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest FROM computer_leases LIMIT 1`, env, s.ID)
 	case "computer_command":
-		dbtest.MustExec(t, t.Context(), pool, `WITH spec AS (INSERT INTO computer_preparation_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$2::uuid,'sha256:'||repeat(replace($2::text,'-',''),2),'{}','{}')) INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at) VALUES($1,$2,$2,clock_timestamp()+interval '1 hour')`, env, s.ID)
+		dbtest.MustExec(t, t.Context(), pool, `WITH spec AS (INSERT INTO computer_preparation_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$2::uuid,'sha256:'||repeat(replace($2::text,'-',''),2),'{}','{}')),
+ deployment AS (INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$2,'sha256:'||repeat(replace($2::text,'-',''),2))),
+ template AS (INSERT INTO templates(environment_id,id,key) VALUES($1,$2,$2::text)),
+ definition AS (INSERT INTO template_definitions(environment_id,template_id,deployment_id,preparation_spec_id,resources) VALUES($1,$2,$2,$2,'{}'))
+ INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes) VALUES($1,$2,$2,clock_timestamp()+interval '1 hour',$2,$2,'{}',34359738368)`, env, s.ID)
 		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO computer_commands(environment_id,id,computer_id,argv,env,stdin,timeout_ms,created_by_subject_type,created_by_subject_id) VALUES($1,$2,$2,ARRAY['true'],'{}','',1000,'user','test')`, env, s.ID)
 	default:
 		t.Fatal("unsupported diagnostic test owner")

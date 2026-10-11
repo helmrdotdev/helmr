@@ -41,7 +41,7 @@ func applyAgentComputerTestControls(t *testing.T, r *computerOperationRegistry) 
 func TestAgentComputerSnapshotHoldSupersedesPendingResume(t *testing.T) {
 	r, capture, _ := agentComputerFixture(t)
 	session := r.agentSessions["session"].session
-	if err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "old-resume", ControlSequence: 1, Command: &agentv1.GuestCommand_Resume{Resume: &agentv1.SessionResume{}}}); err != nil {
+	if err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "old-resume", ControlSequence: 1, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "run"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.captureAgentComputer(t.Context(), capture); err != nil {

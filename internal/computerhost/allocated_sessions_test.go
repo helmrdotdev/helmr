@@ -297,7 +297,7 @@ func TestAllocatedSessionsRetainedFailureAcknowledgedOnlyAfterDurableReport(t *t
 				if err := frameio.ReadProtoFrameBounded(stream, agentTransportFrameLimit, &command); err != nil {
 					return
 				}
-				if command.GetCommand().GetShutdown() == nil {
+				if command.GetCommand().GetControl().GetDesired() != "shutdown" {
 					continue
 				}
 				shutdown.Store(true)

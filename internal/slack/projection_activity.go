@@ -63,7 +63,7 @@ func (t activityTask) presentation() (string, string) {
 // machine results, native prompts or tool transcripts. Authored child Content
 // keeps its own lossless continuation chain below this shared surface.
 func projectActivity(ctx context.Context, tx pgx.Tx, o projectionOwner, authorized time.Time) error {
-	rows, err := tx.Query(ctx, `SELECT t.id,a.name,t.seq,t.status,
+	rows, err := tx.Query(ctx, `SELECT t.id,a.key,t.seq,t.status,
  EXISTS(SELECT 1 FROM session_holds h WHERE h.environment_id=s.environment_id AND h.released_at IS NULL AND (h.session_id=s.id OR (h.session_id=s.root_session_id AND h.scope='subtree'))),
  p.status,p.epoch IS NOT NULL,
  COALESCE(p.control_kind='suspend' AND p.control_acknowledged_at IS NOT NULL AND p.control_generation=s.authority_generation,false)

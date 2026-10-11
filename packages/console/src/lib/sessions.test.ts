@@ -113,3 +113,10 @@ test("question CLI instructions bind origin, scope and exact question without in
   expect(commands.get).toBe(`helmr --api-url 'https://helmr.example' session turn ask get 'a' --session 's'"'"'$(command)' --turn 't' --project 'p' --env 'e' --json`);
   expect(commands.respond).toBe(`helmr --api-url 'https://helmr.example' session turn ask respond 'a' --session 's'"'"'$(command)' --turn 't' --project 'p' --env 'e' --answer-file answer.json --response-id RESPONSE_ID`);
 });
+
+test("Agent navigation filters Sessions by stable Agent identity without a Deployment filter", async () => {
+  let url = "";
+  globalThis.fetch = (async (input: RequestInfo | URL) => { url = String(input); return Response.json({ sessions: [] }); }) as typeof fetch;
+  await listSessions({ projectID: "p", environmentID: "e", agentID: "stable-agent", limit: 100 });
+  expect(url).toBe("/api/projects/p/environments/e/sessions?agent_id=stable-agent&limit=100");
+});
