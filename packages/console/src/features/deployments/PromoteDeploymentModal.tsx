@@ -37,7 +37,7 @@ export function PromoteDeploymentModal(props: {
       errorMessage={promoteErrorMessage}
     >
       <strong>{props.deployment.version}</strong> becomes the current Deployment for{" "}
-      <strong>{props.environmentName ?? "this environment"}</strong>. New Runs use its definitions and its schedules take effect.
+      <strong>{props.environmentName ?? "this environment"}</strong>. New Sessions use its Agent definitions and its schedules take effect. Existing Sessions retain their Deployment.
     </ConfirmModal>
   );
 }

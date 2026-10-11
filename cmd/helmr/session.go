@@ -11,8 +11,8 @@ import (
 )
 
 func sessionCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "session", Short: "Work with Actor Sessions."}
-	cmd.AddCommand(sessionGetCommand(), sessionSendCommand(false), sessionSendCommand(true), sessionResumeCommand(), sessionTurnCommand(), sessionEventsCommand(), sessionCloseCommand(), sessionCancelCommand())
+	cmd := &cobra.Command{Use: "session", Short: "Work with Agent Sessions."}
+	cmd.AddCommand(sessionListCommand(), sessionInterruptCommand(), sessionGetCommand(), sessionSendCommand(), sessionEnqueueCommand(), sessionResumeCommand(), sessionTurnCommand(), sessionEventsCommand(), sessionCloseCommand(), sessionCancelCommand())
 	return cmd
 }
 
@@ -25,7 +25,7 @@ func sessionGetCommand() *cobra.Command {
 		Short: "Show Session status.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			controlPlane, scope, err := scopedActorClient(cmd, projectID, environmentID)
+			controlPlane, scope, err := scopedSessionClient(cmd, projectID, environmentID)
 			if err != nil {
 				return err
 			}
@@ -38,18 +38,12 @@ func sessionGetCommand() *cobra.Command {
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "session_id: %s\n", session.ID)
 			fmt.Fprintf(cmd.OutOrStdout(), "session_status: %s\n", session.Status)
-			fmt.Fprintf(cmd.OutOrStdout(), "dispatch: %s\n", session.Dispatch.State)
-			if session.Dispatch.HoldID != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "hold_id: %s\n", *session.Dispatch.HoldID)
-			}
-			if session.Dispatch.Reason != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "hold_reason: %s\n", *session.Dispatch.Reason)
-			}
-			if session.ActiveTurnID != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "turn_id: %s\n", *session.ActiveTurnID)
-			}
-			if session.CurrentRunID != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "run_id: %s\n", *session.CurrentRunID)
+			fmt.Fprintf(cmd.OutOrStdout(), "agent_id: %s\ncomputer_id: %s\n", session.AgentID, session.ComputerID)
+			for _, hold := range session.Holds {
+				fmt.Fprintf(cmd.OutOrStdout(), "hold_id: %s\nhold_session_id: %s\nhold_scope: %s\n", hold.ID, hold.SessionID, hold.Scope)
+				if hold.Reason != "" {
+					fmt.Fprintf(cmd.OutOrStdout(), "hold_reason: %s\n", hold.Reason)
+				}
 			}
 			return nil
 		},
@@ -59,11 +53,7 @@ func sessionGetCommand() *cobra.Command {
 	return cmd
 }
 
-func sessionSendCommand(enqueue bool) *cobra.Command {
-	operation, description := "send", "Send data to active work or enqueue a new Turn."
-	if enqueue {
-		operation, description = "enqueue", "Enqueue a new Turn, including while another Turn is active."
-	}
+func sessionSendCommand() *cobra.Command {
 	var projectID string
 	var environmentID string
 	var dataFile string
@@ -71,28 +61,19 @@ func sessionSendCommand(enqueue bool) *cobra.Command {
 	var idempotencyKey string
 	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use:   operation + " SESSION_ID",
-		Short: description,
+		Use:   "send SESSION_ID",
+		Short: "Send data to active work or enqueue a new Turn.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			input, err := parseOptionalJSON(dataFile, dataJSON, "--data")
+			input, err := parseContentInput(cmd, dataFile, dataJSON, "--data")
 			if err != nil {
 				return err
 			}
-			if len(input) == 0 {
-				return errors.New("--data-file or --data-json is required")
-			}
-			controlPlane, scope, err := scopedActorClient(cmd, projectID, environmentID)
+			controlPlane, scope, err := scopedSessionClient(cmd, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			send := controlPlane.SendSession
-			if enqueue {
-				send = controlPlane.EnqueueSession
-			}
-			response, err := send(cmd.Context(), args[0], api.SessionDataRequest{
-				Data: input, IdempotencyKey: strings.TrimSpace(idempotencyKey),
-			}, scope)
+			response, err := controlPlane.SendSession(cmd.Context(), args[0], api.SessionDataRequest{Data: input, IdempotencyKey: strings.TrimSpace(idempotencyKey)}, scope)
 			if err != nil {
 				return err
 			}
@@ -109,11 +90,12 @@ func sessionSendCommand(enqueue bool) *cobra.Command {
 		},
 	}
 	addScopeFlags(cmd, &projectID, &environmentID)
-	cmd.Flags().StringVar(&dataFile, "data-file", "", "Read application data JSON from a file.")
-	cmd.Flags().StringVar(&dataJSON, "data-json", "", "Inline application data JSON literal.")
+	cmd.Flags().StringVar(&dataFile, "data-file", "", "Read text-part array JSON from a file.")
+	cmd.Flags().StringVar(&dataJSON, "data-json", "", "Inline text-part array JSON literal.")
 	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for this send.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
-	cmd.MarkFlagsMutuallyExclusive("data-file", "data-json")
+	cmd.Flags().String("text", "", "Message text, preserving whitespace.")
+	cmd.MarkFlagsMutuallyExclusive("text", "data-file", "data-json")
 	return cmd
 }
 
@@ -132,7 +114,7 @@ func sessionEventsCommand() *cobra.Command {
 			if cmd.Flags().Changed("limit") && limit < 1 {
 				return errors.New("--limit must be in [1,1000]")
 			}
-			controlPlane, scope, err := scopedActorClient(cmd, projectID, environmentID)
+			controlPlane, scope, err := scopedSessionClient(cmd, projectID, environmentID)
 			if err != nil {
 				return err
 			}
@@ -176,7 +158,7 @@ func sessionCloseCommand() *cobra.Command {
 		Short: "Close a Session.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			controlPlane, scope, err := scopedActorClient(cmd, projectID, environmentID)
+			controlPlane, scope, err := scopedSessionClient(cmd, projectID, environmentID)
 			if err != nil {
 				return err
 			}
@@ -211,7 +193,7 @@ func sessionCancelCommand() *cobra.Command {
 		Short: "Cancel a Session.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			controlPlane, scope, err := scopedActorClient(cmd, projectID, environmentID)
+			controlPlane, scope, err := scopedSessionClient(cmd, projectID, environmentID)
 			if err != nil {
 				return err
 			}
@@ -236,7 +218,7 @@ func sessionCancelCommand() *cobra.Command {
 	return cmd
 }
 
-func scopedActorClient(
+func scopedSessionClient(
 	cmd *cobra.Command,
 	projectID string,
 	environmentID string,
@@ -247,4 +229,36 @@ func scopedActorClient(
 	}
 	scope, err := environmentScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
 	return controlPlane, scope, err
+}
+
+func sessionEnqueueCommand() *cobra.Command {
+	var project, environment, inputFile, inputJSON, key string
+	var jsonOutput bool
+	cmd := &cobra.Command{Use: "enqueue SESSION_ID", Short: "Enqueue a new Turn, including while another Turn is active.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		input, err := parseContentInput(cmd, inputFile, inputJSON, "--input")
+		if err != nil {
+			return err
+		}
+		cp, scope, err := scopedSessionClient(cmd, project, environment)
+		if err != nil {
+			return err
+		}
+		receipt, err := cp.EnqueueSession(cmd.Context(), args[0], api.EnqueueSessionRequest{Input: input, IdempotencyKey: strings.TrimSpace(key)}, scope)
+		if err != nil {
+			return err
+		}
+		if jsonOutput {
+			return writeJSON(cmd.OutOrStdout(), receipt)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "session_id: %s\nturn_id: %s\nsequence: %d\n", receipt.SessionID, receipt.TurnID, receipt.Sequence)
+		return nil
+	}}
+	addScopeFlags(cmd, &project, &environment)
+	cmd.Flags().StringVar(&inputFile, "input-file", "", "Read Turn input JSON from a file.")
+	cmd.Flags().StringVar(&inputJSON, "input-json", "", "Inline Turn input JSON literal.")
+	cmd.Flags().StringVar(&key, "idempotency-key", "", "Idempotency key for this admission.")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON admission receipt.")
+	cmd.Flags().String("text", "", "Message text, preserving whitespace.")
+	cmd.MarkFlagsMutuallyExclusive("text", "input-file", "input-json")
+	return cmd
 }

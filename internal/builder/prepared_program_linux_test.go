@@ -52,7 +52,7 @@ func TestPreparedProgramFinalization(t *testing.T) {
 		result, err := BuildPreparedProgram(t.Context(), PreparedProgramInput{
 			PreparedDirectory: prepared, WorkDirectory: work, ProgramObjectPath: filepath.Join(work, "program.squashfs"),
 			SquashFSEncoder: "/opt/helmr/bin/mksquashfs", Compiler: compiler, Runtime: runtime, RuntimeMetadata: metadata,
-			ComputerImages: []bundle.ComputerImage{},
+			ComputerSeeds: []bundle.ComputerSeed{},
 		})
 		if err != nil {
 			t.Fatal(err)

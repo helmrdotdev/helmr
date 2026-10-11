@@ -1,4 +1,4 @@
-import { task } from "@helmr/sdk"
+import { agent, computer, image } from "@helmr/sdk"
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 
@@ -12,4 +12,4 @@ if (installed !== analyzed) {
   throw new Error(`install saw environment ${installed.trim()} but analysis sees ${analyzed.trim()}`)
 }
 
-export const native = task({ id: "native", run: () => JSON.parse(addon.run()) })
+export const native = agent({ id: "native", computer: computer({ id: "native-environment", image: image("native-environment").from("debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132"), resources: { cpu: 1, memory: "1GiB" } }), turn: () => JSON.parse(addon.run()) })

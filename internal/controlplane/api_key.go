@@ -201,16 +201,12 @@ func normalizeAPIKeyPermissionGrants(grants []api.APIKeyPermissionGrant) ([]api.
 
 func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
 	switch strings.TrimSpace(string(scope)) {
-	case string(api.APIKeyScopeRunsCreate):
-		return api.APIKeyScopeRunsCreate, true
-	case string(api.APIKeyScopeRunsRead):
-		return api.APIKeyScopeRunsRead, true
-	case string(api.APIKeyScopeRunsManage):
-		return api.APIKeyScopeRunsManage, true
+	case string(api.APIKeyScopeAsksRespond):
+		return api.APIKeyScopeAsksRespond, true
 	case string(api.APIKeyScopeSessionsRead):
 		return api.APIKeyScopeSessionsRead, true
-	case string(api.APIKeyScopeActorsStart):
-		return api.APIKeyScopeActorsStart, true
+	case string(api.APIKeyScopeAgentsStart):
+		return api.APIKeyScopeAgentsStart, true
 	case string(api.APIKeyScopeSessionsSend):
 		return api.APIKeyScopeSessionsSend, true
 	case string(api.APIKeyScopeSessionsInterrupt):
@@ -221,14 +217,6 @@ func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeSessionsClose, true
 	case string(api.APIKeyScopeSessionsCancel):
 		return api.APIKeyScopeSessionsCancel, true
-	case string(api.APIKeyScopeTokensCreate):
-		return api.APIKeyScopeTokensCreate, true
-	case string(api.APIKeyScopeTokensRead):
-		return api.APIKeyScopeTokensRead, true
-	case string(api.APIKeyScopeTokensComplete):
-		return api.APIKeyScopeTokensComplete, true
-	case string(api.APIKeyScopeTokensCancel):
-		return api.APIKeyScopeTokensCancel, true
 	case string(api.APIKeyScopeComputersCreate):
 		return api.APIKeyScopeComputersCreate, true
 	case string(api.APIKeyScopeComputersRead):
@@ -239,8 +227,8 @@ func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeComputerCommandCreate, true
 	case string(api.APIKeyScopeSecretsWrite):
 		return api.APIKeyScopeSecretsWrite, true
-	case string(api.APIKeyScopeTasksDeploy):
-		return api.APIKeyScopeTasksDeploy, true
+	case string(api.APIKeyScopeDeploymentsWrite):
+		return api.APIKeyScopeDeploymentsWrite, true
 	default:
 		return "", false
 	}
@@ -248,16 +236,12 @@ func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
 
 func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
 	switch scope {
-	case api.APIKeyScopeRunsCreate:
-		return auth.PermissionRunsCreate, true
-	case api.APIKeyScopeRunsRead:
-		return auth.PermissionRunsRead, true
-	case api.APIKeyScopeRunsManage:
-		return auth.PermissionRunsManage, true
+	case api.APIKeyScopeAsksRespond:
+		return auth.PermissionAsksRespond, true
 	case api.APIKeyScopeSessionsRead:
 		return auth.PermissionSessionsRead, true
-	case api.APIKeyScopeActorsStart:
-		return auth.PermissionActorsStart, true
+	case api.APIKeyScopeAgentsStart:
+		return auth.PermissionAgentsStart, true
 	case api.APIKeyScopeSessionsSend:
 		return auth.PermissionSessionsSend, true
 	case api.APIKeyScopeSessionsInterrupt:
@@ -268,14 +252,6 @@ func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
 		return auth.PermissionSessionsClose, true
 	case api.APIKeyScopeSessionsCancel:
 		return auth.PermissionSessionsCancel, true
-	case api.APIKeyScopeTokensCreate:
-		return auth.PermissionTokensCreate, true
-	case api.APIKeyScopeTokensRead:
-		return auth.PermissionTokensRead, true
-	case api.APIKeyScopeTokensComplete:
-		return auth.PermissionTokensComplete, true
-	case api.APIKeyScopeTokensCancel:
-		return auth.PermissionTokensCancel, true
 	case api.APIKeyScopeComputersCreate:
 		return auth.PermissionComputersCreate, true
 	case api.APIKeyScopeComputersRead:
@@ -286,8 +262,8 @@ func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
 		return auth.PermissionComputerCommandCreate, true
 	case api.APIKeyScopeSecretsWrite:
 		return auth.PermissionSecretsWrite, true
-	case api.APIKeyScopeTasksDeploy:
-		return auth.PermissionTasksDeploy, true
+	case api.APIKeyScopeDeploymentsWrite:
+		return auth.PermissionDeploymentsWrite, true
 	default:
 		return "", false
 	}
@@ -295,16 +271,12 @@ func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
 
 func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 	switch strings.TrimSpace(permission) {
-	case string(auth.PermissionRunsCreate):
-		return api.APIKeyScopeRunsCreate, true
-	case string(auth.PermissionRunsRead):
-		return api.APIKeyScopeRunsRead, true
-	case string(auth.PermissionRunsManage):
-		return api.APIKeyScopeRunsManage, true
+	case string(auth.PermissionAsksRespond):
+		return api.APIKeyScopeAsksRespond, true
 	case string(auth.PermissionSessionsRead):
 		return api.APIKeyScopeSessionsRead, true
-	case string(auth.PermissionActorsStart):
-		return api.APIKeyScopeActorsStart, true
+	case string(auth.PermissionAgentsStart):
+		return api.APIKeyScopeAgentsStart, true
 	case string(auth.PermissionSessionsSend):
 		return api.APIKeyScopeSessionsSend, true
 	case string(auth.PermissionSessionsInterrupt):
@@ -315,14 +287,6 @@ func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeSessionsClose, true
 	case string(auth.PermissionSessionsCancel):
 		return api.APIKeyScopeSessionsCancel, true
-	case string(auth.PermissionTokensCreate):
-		return api.APIKeyScopeTokensCreate, true
-	case string(auth.PermissionTokensRead):
-		return api.APIKeyScopeTokensRead, true
-	case string(auth.PermissionTokensComplete):
-		return api.APIKeyScopeTokensComplete, true
-	case string(auth.PermissionTokensCancel):
-		return api.APIKeyScopeTokensCancel, true
 	case string(auth.PermissionComputersCreate):
 		return api.APIKeyScopeComputersCreate, true
 	case string(auth.PermissionComputersRead):
@@ -333,8 +297,8 @@ func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeComputerCommandCreate, true
 	case string(auth.PermissionSecretsWrite):
 		return api.APIKeyScopeSecretsWrite, true
-	case string(auth.PermissionTasksDeploy):
-		return api.APIKeyScopeTasksDeploy, true
+	case string(auth.PermissionDeploymentsWrite):
+		return api.APIKeyScopeDeploymentsWrite, true
 	default:
 		return "", false
 	}

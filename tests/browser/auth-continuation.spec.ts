@@ -97,12 +97,13 @@ test("existing org needs no project or additional login for CLI approval", async
 
 test("ordinary protected destinations return after required project creation", async ({ page, context }) => {
   const state = await fixture(context);
-  await page.goto("/runs?kind=task#logs");
+  await page.goto("/sessions?status=open#history");
   await signIn(page, "github");
   await expect(page.getByRole("heading", { name: "Create your first project" })).toBeVisible();
   await page.getByLabel("Name", { exact: true }).fill("Example project");
+  await page.getByLabel("History retention policy").selectOption("until_environment_deletion");
   await page.getByRole("button", { name: "Create", exact: true }).click();
-  await expect(page).toHaveURL("/runs?kind=task#logs");
+  await expect(page).toHaveURL("/sessions?status=open#history");
   expect(state.projectCreates).toBe(1);
 });
 
@@ -182,6 +183,7 @@ test("direct project creation survives login and finishes at home", async ({ pag
   await signIn(page, "github");
   await expect(page).toHaveURL("/projects/new");
   await page.getByLabel("Name", { exact: true }).fill("Another project");
+  await page.getByLabel("History retention policy").selectOption("until_environment_deletion");
   await page.getByRole("button", { name: "Create", exact: true }).click();
   await expect(page).toHaveURL("/");
   expect(state.projectCreates).toBe(1);

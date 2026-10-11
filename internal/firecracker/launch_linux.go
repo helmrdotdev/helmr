@@ -59,7 +59,7 @@ func (c *Connector) validateMaterializeRequest(request vm.MaterializeRequest) er
 	if strings.TrimSpace(request.ComputerMountPath) != "/workspace" {
 		return fmt.Errorf("the Firecracker materialize computer mount path %q is not supported", request.ComputerMountPath)
 	}
-	requestedVCPUs, err := VCPUCountForMilliCPU(request.Resources.MilliCPU)
+	requestedVCPUs, err := vm.VCPUCountForMilliCPU(request.Resources.MilliCPU)
 	if err != nil {
 		return fmt.Errorf("derive materialize VM vCPU count: %w", err)
 	}
@@ -132,7 +132,7 @@ func (c *Connector) configForResources(resources vm.Resources, operation string)
 		cfg.MemoryMiB = resources.MemoryMiB
 	}
 	if resources.MilliCPU > 0 {
-		requestedVCPUs, err := VCPUCountForMilliCPU(resources.MilliCPU)
+		requestedVCPUs, err := vm.VCPUCountForMilliCPU(resources.MilliCPU)
 		if err != nil {
 			return Config{}, fmt.Errorf("%s requested cpu: %w", operation, err)
 		}

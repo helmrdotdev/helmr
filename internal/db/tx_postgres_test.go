@@ -1,8 +1,11 @@
 package db_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -87,5 +90,40 @@ func TestRunTxDurability(t *testing.T) {
 				t.Fatalf("transaction still open: %v", e)
 			}
 		})
+	}
+}
+
+func TestRunTxCancelledCommitDiagnostics(t *testing.T) {
+	pool := dbtest.Open(t).Pool
+	dbtest.MustExec(t, t.Context(), pool, `CREATE TABLE cancelled_commit_probe (id integer PRIMARY KEY)`)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `INSERT INTO cancelled_commit_probe VALUES (1)`); err != nil {
+			return err
+		}
+		cancel()
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, pgx.ErrTxClosed) {
+		t.Fatalf("commit/rollback identities: %v", err)
+	}
+	var output bytes.Buffer
+	slog.New(slog.NewJSONHandler(&output, nil)).Error("transaction failed", "error", err)
+	var record struct {
+		Error struct {
+			Operation, Rollback struct{ Stage, Cause string }
+		}
+	}
+	if err := json.Unmarshal(output.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.Error.Operation.Stage != "commit transaction" || record.Error.Operation.Cause != "context_cancelled" ||
+		record.Error.Rollback.Stage != "rollback transaction" || record.Error.Rollback.Cause != "transaction_closed" {
+		t.Fatalf("joined diagnostics: %s", output.String())
+	}
+	var rows int
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM cancelled_commit_probe`).Scan(&rows); err != nil || rows != 0 {
+		t.Fatalf("cancelled commit persisted data: rows=%d err=%v", rows, err)
 	}
 }

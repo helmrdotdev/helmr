@@ -11,7 +11,7 @@ import (
 // A child retaining stdout or stdin must not keep the scope alive after its
 // command exits. Cgroup exclusion, rather than a process-group signal, accounts
 // for descendants that create their own sessions.
-func runScopedCommand(cmd *exec.Cmd, scope processCgroup) (runErr, cleanupErr error) {
+func runScopedCommand(cmd *exec.Cmd, scope processCgroup, pipeClosed func(string, error)) (runErr, cleanupErr error) {
 	defer func() { cleanupErr = errors.Join(cleanupErr, scope.close()) }()
 	if err := scope.attach(cmd); err != nil {
 		return err, nil
@@ -62,15 +62,19 @@ func runScopedCommand(cmd *exec.Cmd, scope processCgroup) (runErr, cleanupErr er
 	}()
 	outputDone := make(chan error, 2)
 	for _, stream := range []struct {
-		dst io.Writer
-		src *os.File
-	}{{stdout, stdoutR}, {stderr, stderrR}} {
+		dst  io.Writer
+		src  *os.File
+		name string
+	}{{stdout, stdoutR, "stdout"}, {stderr, stderrR, "stderr"}} {
 		go func() {
 			dst := stream.dst
 			if dst == nil {
 				dst = io.Discard
 			}
 			_, err := io.Copy(dst, stream.src)
+			if pipeClosed != nil {
+				pipeClosed(stream.name, err)
+			}
 			outputDone <- err
 		}()
 	}

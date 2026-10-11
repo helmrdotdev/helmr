@@ -37,18 +37,12 @@ WITH target AS MATERIALIZED (
               AND worker_host_secrets.revoked_at IS NULL
        )
        AND NOT EXISTS (
-           SELECT 1 FROM run_leases
-            WHERE run_leases.worker_host_id = drain_target.id
-              AND run_leases.process_reconciled_at IS NULL
+           SELECT 1 FROM computer_leases
+            WHERE computer_leases.worker_host_id=drain_target.id AND computer_leases.fenced_at IS NULL
        )
        AND NOT EXISTS (
-           SELECT 1 FROM computer_instances
-            WHERE computer_instances.worker_host_id = drain_target.id
-              AND computer_instances.reclaimed_at IS NULL
-       )
-       AND NOT EXISTS (
-           SELECT 1 FROM computer_commands c JOIN computer_instances i ON i.id=c.computer_instance_id
-            WHERE i.worker_host_id=drain_target.id AND c.process_reconciled_at IS NULL
+           SELECT 1 FROM computer_preparations
+            WHERE computer_preparations.worker_host_id=drain_target.id AND computer_preparations.fenced_at IS NULL
        )
 ), completed AS (
     UPDATE worker_hosts

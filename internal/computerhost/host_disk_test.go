@@ -5,12 +5,6 @@ import (
 	"math"
 	"os"
 	"testing"
-
-	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/disk"
-	"github.com/helmrdotdev/helmr/internal/sha256sum"
-	"github.com/helmrdotdev/helmr/internal/vm"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestHostDiskRejectsInvalidShapes(t *testing.T) {
@@ -22,37 +16,6 @@ func TestHostDiskRejectsInvalidShapes(t *testing.T) {
 		if _, err := HostDiskPerSlot(shape[0], shape[1], shape[2], cipher); err == nil {
 			t.Fatalf("invalid shape accepted: %v", shape)
 		}
-	}
-}
-
-func TestRestoreRejectsOversizedArtifactsBeforeReservation(t *testing.T) {
-	cipher, _ := NewCheckpointEncryptor(make([]byte, 32))
-	p := &PreparedMachines{CheckpointEncryptor: cipher}
-	limits, err := checkpointStagingSize(vm.SnapshotLimits{ComputerBytes: disk.SeedCapacity, MemoryBytes: 2 << 30, ScratchBytes: 32 << 30, StateBytes: vm.SnapshotStateLimit, ConfigBytes: vm.SnapshotConfigLimit}, cipher)
-	if err != nil {
-		t.Fatal(err)
-	}
-	media := []string{cas.CheckpointVMConfigMediaType, cas.CheckpointVMStateMediaType, cas.CheckpointScratchDiskMediaType, cas.CheckpointMemoryMediaType}
-	artifacts := make([]workerapi.CheckpointArtifact, 4)
-	for i, n := range []int64{limits.config, limits.state, limits.scratch, limits.memory} {
-		bound, _ := cipher.EncryptedSize(n)
-		artifacts[i] = workerapi.CheckpointArtifact{Digest: sha256sum.DigestBytes([]byte(media[i])), MediaType: media[i], SizeBytes: bound}
-	}
-	check := func() error {
-		checkpoint := workerapi.CheckpointManifest{RuntimeState: workerapi.CheckpointRuntimeState{ConfigArtifact: artifacts[0], VMStateArtifact: artifacts[1], ScratchDiskArtifact: artifacts[2], MemoryArtifacts: artifacts[3:]}}
-		raw, _ := json.Marshal(checkpoint)
-		_, _, err := p.checkpointRestoreCapacity(workerapi.InstanceReconcileTarget{Source: workerapi.InstanceSource{ReservedMemoryMiB: 2048, ReservedDiskMiB: 32768, Restore: &workerapi.InstanceRestore{Manifest: raw}}})
-		return err
-	}
-	if err := check(); err != nil {
-		t.Fatal(err)
-	}
-	for i := range artifacts {
-		artifacts[i].SizeBytes++
-		if check() == nil {
-			t.Fatalf("oversized role %d accepted", i)
-		}
-		artifacts[i].SizeBytes--
 	}
 }
 

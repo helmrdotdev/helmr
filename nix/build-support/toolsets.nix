@@ -53,6 +53,8 @@ rec {
   ];
 
   base = repoChecks ++ [
+    pkgs.gh
+    pkgsUnstable.gh-stack
     pkgs.postgresql_18
     direnv
     pkgs.nix-direnv

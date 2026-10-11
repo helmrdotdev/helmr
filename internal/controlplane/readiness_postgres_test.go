@@ -13,12 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/run/runtest"
+	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestReadinessRejectsReadOnlyServingPool(t *testing.T) {
-	fixture := runtest.New(t)
+	fixture := agenttest.New(t)
 	cfg := fixture.Pool.Config()
 	cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
 	readOnly, err := pgxpool.NewWithConfig(t.Context(), cfg)
@@ -66,9 +66,8 @@ func TestServingOutagePreservesHostsUntilRecovery(t *testing.T) {
 				name = outage + "/live draining host"
 			}
 			t.Run(name, func(t *testing.T) {
-				fixture := runtest.New(t)
-				fixture.AddRunLease(t, "running", time.Now().Add(-time.Minute))
-				secret := seedHostSecret(t, fixture.Pool, fixture.WorkerID)
+				fixture := agenttest.New(t)
+				secret := seedHostSecret(t, fixture.Pool, fixture.Worker)
 				cfg := fixture.Pool.Config()
 				cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
 				readOnly, err := pgxpool.NewWithConfig(t.Context(), cfg)
@@ -118,7 +117,7 @@ func TestServingOutagePreservesHostsUntilRecovery(t *testing.T) {
 				}
 				cycle(false, 0)
 				unavailable.Store(true)
-				dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE worker_hosts SET observed_at=now()-interval '10 minutes' WHERE id=$1`, fixture.WorkerID)
+				dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE worker_hosts SET observed_at=now()-interval '10 minutes' WHERE id=$1`, fixture.Worker)
 				if _, err := client.ObserveWorker(t.Context(), workerapi.Observation{}); err == nil {
 					t.Fatal("observation unexpectedly succeeded during outage")
 				}
@@ -142,18 +141,19 @@ func TestServingOutagePreservesHostsUntilRecovery(t *testing.T) {
 				} else {
 					cycle(false, 1)
 					var lost, revoked bool
-					if err := fixture.Pool.QueryRow(t.Context(), `SELECT status='lost', NOT EXISTS(SELECT 1 FROM worker_host_secrets WHERE worker_host_id=$1 AND revoked_at IS NULL) FROM worker_hosts WHERE id=$1`, fixture.WorkerID).Scan(&lost, &revoked); err != nil {
+					if err := fixture.Pool.QueryRow(t.Context(), `SELECT status='lost', NOT EXISTS(SELECT 1 FROM worker_host_secrets WHERE worker_host_id=$1 AND revoked_at IS NULL) FROM worker_hosts WHERE id=$1`, fixture.Worker).Scan(&lost, &revoked); err != nil {
 						t.Fatal(err)
 					}
 					if !lost || !revoked {
 						t.Fatalf("dead host not fenced after recovery: lost=%v revoked=%v", lost, revoked)
 					}
-					var lostInstances int
-					if err := fixture.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_instances WHERE worker_host_id=$1 AND observed_state='lost'`, fixture.WorkerID).Scan(&lostInstances); err != nil {
+					// A missed heartbeat does not prove the VM stopped; retain physical charges.
+					var retainedLeases int
+					if err := fixture.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_leases WHERE worker_host_id=$1 AND fenced_at IS NULL`, fixture.Worker).Scan(&retainedLeases); err != nil {
 						t.Fatal(err)
 					}
-					if lostInstances != 1 {
-						t.Fatalf("lost instances=%d", lostInstances)
+					if retainedLeases != 1 {
+						t.Fatalf("retained physical leases=%d", retainedLeases)
 					}
 				}
 			})
@@ -161,7 +161,7 @@ func TestServingOutagePreservesHostsUntilRecovery(t *testing.T) {
 	}
 }
 
-func assertServingHostPreserved(t *testing.T, fixture runtest.Fixture, draining bool) {
+func assertServingHostPreserved(t *testing.T, fixture agenttest.Fixture, draining bool) {
 	t.Helper()
 	want := "active"
 	if draining {
@@ -169,7 +169,7 @@ func assertServingHostPreserved(t *testing.T, fixture runtest.Fixture, draining 
 	}
 	var status string
 	var secrets, instances int
-	if err := fixture.Pool.QueryRow(t.Context(), `SELECT status, (SELECT count(*) FROM worker_host_secrets WHERE worker_host_id=$1 AND revoked_at IS NULL), (SELECT count(*) FROM computer_instances WHERE worker_host_id=$1 AND observed_state='ready') FROM worker_hosts WHERE id=$1`, fixture.WorkerID).Scan(&status, &secrets, &instances); err != nil {
+	if err := fixture.Pool.QueryRow(t.Context(), `SELECT status, (SELECT count(*) FROM worker_host_secrets WHERE worker_host_id=$1 AND revoked_at IS NULL), (SELECT count(*) FROM computer_leases WHERE worker_host_id=$1 AND fenced_at IS NULL) FROM worker_hosts WHERE id=$1`, fixture.Worker).Scan(&status, &secrets, &instances); err != nil {
 		t.Fatal(err)
 	}
 	if status != want || secrets != 1 || instances != 1 {

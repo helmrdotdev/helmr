@@ -3,6 +3,7 @@ package builder
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -101,7 +102,7 @@ func TestParseVerificationResultRejectsOpenOrNoncanonicalShape(t *testing.T) {
 				files := root["files"].([]any)
 				files[1].(map[string]any)["path"] = verificationBuildPlanPath
 			},
-			wantErr: "files[1].path",
+			wantErr: "requires exactly",
 		},
 		{
 			name: "out of order file",
@@ -109,14 +110,14 @@ func TestParseVerificationResultRejectsOpenOrNoncanonicalShape(t *testing.T) {
 				files := root["files"].([]any)
 				files[0], files[1] = files[1], files[0]
 			},
-			wantErr: "files[0].path",
+			wantErr: "requires exactly",
 		},
 		{
 			name: "partial program result",
 			mutate: func(root map[string]any) {
 				root["files"] = root["files"].([]any)[:1]
 			},
-			wantErr: "program-backed",
+			wantErr: "requires exactly",
 		},
 	}
 	for _, test := range tests {
@@ -155,27 +156,27 @@ func TestVerificationResultVerifiesGeneratedFilesAgainstPlan(t *testing.T) {
 				result.Succeeded.Files[1].Content = " " +
 					result.Succeeded.Files[1].Content
 			},
-			wantErr: "declaration locator",
+			wantErr: "Definition index",
 		},
 		{
 			name: "declaration identity mismatch",
 			change: func(result *VerificationResult) {
-				locator := artifacttest.AnalysisDeclarationLocator()
-				locator.Declarations[0].DeclaredID = "different"
-				raw, err := artifact.CanonicalDeclarationLocator(locator)
+				locator := artifacttest.DefinitionIndex()
+				locator.Agents[0].ID = "different"
+				raw, err := artifact.CanonicalDefinitionIndex(locator)
 				if err != nil {
 					panic(err)
 				}
 				result.Succeeded.Files[1].Content = string(raw)
 			},
-			wantErr: "does not match build plan at position 0",
+			wantErr: "does not match program definition",
 		},
 		{
 			name: "program entry mismatch",
 			change: func(result *VerificationResult) {
 				result.Succeeded.Files = append(result.Succeeded.Files, VerificationFile{Path: "helmr/entry.mjs", Content: "obsolete"})
 			},
-			wantErr: "one or two",
+			wantErr: "requires exactly",
 		},
 	}
 	for _, test := range tests {
@@ -235,22 +236,21 @@ func testComputerVerificationResult(t *testing.T) VerificationResult {
 	t.Helper()
 	plan := artifacttest.BuildPlan()
 	plan.Definitions = []definition.Input{plan.Definitions[2]}
-	plan.Queues = []definition.QueueInput{}
-	raw, err := definition.CanonicalBuildPlan(plan)
+	planRaw, err := definition.CanonicalBuildPlan(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return VerificationResult{
-		FormatVersion: verificationResultFormatVersion,
-		Outcome:       VerificationOutcomeSucceeded,
-		Succeeded: &VerificationSucceeded{
-			Declarations: []artifact.ProgramDeclaration{},
-			Files: []VerificationFile{{
-				Path:    verificationBuildPlanPath,
-				Content: string(raw),
-			}},
-		},
+	index := artifacttest.DefinitionIndex()
+	index.Agents = []artifact.AgentBundleEntry{}
+	index.Computers[0].ThroughAgent = false
+	index.Computers[0].ExportName = "repo"
+	indexRaw, err := artifact.CanonicalDefinitionIndex(index)
+	if err != nil {
+		t.Fatal(err)
 	}
+	return VerificationResult{FormatVersion: verificationResultFormatVersion, Outcome: VerificationOutcomeSucceeded, Succeeded: &VerificationSucceeded{
+		Files: []VerificationFile{{Path: verificationBuildPlanPath, Content: string(planRaw)}, {Path: verificationDefinitionIndexPath, Content: string(indexRaw)}},
+	}}
 }
 
 func testProgramVerificationResult(t *testing.T) VerificationResult {
@@ -260,8 +260,8 @@ func testProgramVerificationResult(t *testing.T) VerificationResult {
 	if err != nil {
 		t.Fatal(err)
 	}
-	locatorRaw, err := artifact.CanonicalDeclarationLocator(
-		artifacttest.AnalysisDeclarationLocator(),
+	locatorRaw, err := artifact.CanonicalDefinitionIndex(
+		artifacttest.DefinitionIndex(),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -270,10 +270,9 @@ func testProgramVerificationResult(t *testing.T) VerificationResult {
 		FormatVersion: verificationResultFormatVersion,
 		Outcome:       VerificationOutcomeSucceeded,
 		Succeeded: &VerificationSucceeded{
-			Declarations: artifact.BuildPlanProgramDeclarations(plan),
 			Files: []VerificationFile{
 				{Path: verificationBuildPlanPath, Content: string(planRaw)},
-				{Path: verificationDeclarationsPath, Content: string(locatorRaw)},
+				{Path: verificationDefinitionIndexPath, Content: string(locatorRaw)},
 			},
 		},
 	}
@@ -310,4 +309,37 @@ func mutateVerificationResultJSON(
 		t.Fatal(err)
 	}
 	return canonical
+}
+
+func TestCompilerVerificationFrameCrossContract(t *testing.T) {
+	raw, err := os.ReadFile("testdata/verification.frame")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := readVerificationResultFrame(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := definition.ParseBuildPlan(result.BuildPlan())
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, err := artifact.ParseDefinitionIndex(result.DefinitionIndex())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Definitions) != 2 || len(index.Agents) != 1 || index.Agents[0].ID != "coder" || len(index.Computers) != 1 || !index.Computers[0].ThroughAgent {
+		t.Fatal("compiler contract differs")
+	}
+	var regenerated bytes.Buffer
+	canonical, err := canonicalVerificationResult(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := frameio.WriteMessageFrame(&regenerated, canonical); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(raw, regenerated.Bytes()) {
+		t.Fatal("compiler frame changed during Go round trip")
+	}
 }

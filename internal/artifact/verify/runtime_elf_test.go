@@ -474,21 +474,21 @@ func buildTestELF64(t *testing.T, spec testELF64Spec) []byte {
 	binary.LittleEndian.PutUint16(raw[58:], sectionHeaderSize)
 	binary.LittleEndian.PutUint16(raw[60:], uint16(sectionCount))
 
-	programIndex := 0
+	programMetadata := 0
 	for index, interpreter := range interpreterRaw {
 		writeTestELFProgramHeader(
-			raw[elfHeaderSize+programIndex*programHeaderSize:],
+			raw[elfHeaderSize+programMetadata*programHeaderSize:],
 			elf.PT_INTERP,
 			interpreterOffsets[index],
 			len(interpreter),
 			1,
 		)
 		copy(raw[interpreterOffsets[index]:], interpreter)
-		programIndex++
+		programMetadata++
 	}
 	if hasDynamic {
 		writeTestELFProgramHeader(
-			raw[elfHeaderSize+programIndex*programHeaderSize:],
+			raw[elfHeaderSize+programMetadata*programHeaderSize:],
 			elf.PT_DYNAMIC,
 			dynamicOffset,
 			len(dynamicRaw),

@@ -1,16 +1,8 @@
-import { describe, expect, test } from "bun:test"
+import { expect, test } from "bun:test"
 import { runtimeSmokePayload } from "./task.ts"
 
-describe("runtime smoke payload", () => {
-  test("accepts only canonical UUIDv7 external Token IDs", () => {
-    expect(runtimeSmokePayload.safeParse({
-      externalTokenId: "01a029e7-3c4a-7395-b578-6bfa2d822a26",
-    }).success).toBe(true)
-    expect(runtimeSmokePayload.safeParse({
-      externalTokenId: "tok_abcdefghijklmnopqrstuvwxyz",
-    }).success).toBe(false)
-    expect(runtimeSmokePayload.safeParse({
-      externalTokenId: "550e8400-e29b-41d4-a716-446655440000",
-    }).success).toBe(false)
-  })
+test("runtime input validates application options and rejects unknown fields", () => {
+  expect(runtimeSmokePayload.parse({ exerciseQuestion: true }).exerciseQuestion).toBe(true)
+  expect(runtimeSmokePayload.safeParse({ unknownOption: true }).success).toBe(false)
+  expect(runtimeSmokePayload.safeParse({ largeFileKiB: 4097 }).success).toBe(false)
 })

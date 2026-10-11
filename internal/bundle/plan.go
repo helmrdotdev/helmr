@@ -12,23 +12,21 @@ import (
 // Plan is the final scheduler and execution projection committed by
 // a deployment bundle. It contains no producer build instructions.
 type Plan struct {
-	FormatVersion int                                `json:"formatVersion"`
-	Definitions   []artifact.ProgramIndexDeclaration `json:"definitions"`
-	Queues        []definition.QueueInput            `json:"queues"`
+	FormatVersion int                          `json:"formatVersion"`
+	Definitions   []artifact.ProgramDefinition `json:"definitions"`
 }
 
-// PlanFromProgramIndex derives the final scheduler projection from
-// the verified Program index. Producer build instructions and provenance are
+// PlanFromProgramMetadata derives the final scheduler projection from
+// the verified Program metadata. Producer build instructions and provenance are
 // intentionally absent from both sides of this boundary.
-func PlanFromProgramIndex(index artifact.ProgramIndex) (Plan, error) {
-	if err := artifact.ValidateProgramIndex(index); err != nil {
-		return Plan{}, fmt.Errorf("deployment plan program index: %w", err)
+func PlanFromProgramMetadata(index artifact.ProgramMetadata) (Plan, error) {
+	if err := artifact.ValidateProgramMetadata(index); err != nil {
+		return Plan{}, fmt.Errorf("deployment plan program metadata: %w", err)
 	}
 	cloned := index.Clone()
 	plan := Plan{
 		FormatVersion: definition.DeploymentPlanFormatVersion,
-		Definitions:   cloned.Declarations,
-		Queues:        cloned.Queues,
+		Definitions:   cloned.Definitions,
 	}
 	if err := validatePlan(plan); err != nil {
 		return Plan{}, err
@@ -50,35 +48,11 @@ func validatePlan(plan Plan) error {
 	if len(plan.Definitions) > definition.MaxBuildDefinitions {
 		return fmt.Errorf("deployment plan contains more than %d definitions", definition.MaxBuildDefinitions)
 	}
-	if plan.Queues == nil {
-		return errors.New("deployment plan queues must be an array")
-	}
-	if len(plan.Queues) > definition.MaxBuildQueues {
-		return fmt.Errorf("deployment plan contains more than %d queues", definition.MaxBuildQueues)
-	}
-
-	queues := make(map[string]struct{}, len(plan.Queues))
-	for position, queue := range plan.Queues {
-		if err := definition.ValidateQueueInput(queue); err != nil {
-			return fmt.Errorf("deployment plan queue %d: %w", position, err)
-		}
-		if position > 0 && bytes.Compare(
-			[]byte(plan.Queues[position-1].Name),
-			[]byte(queue.Name),
-		) >= 0 {
-			return fmt.Errorf(
-				"deployment plan queues are not in canonical order at position %d",
-				position,
-			)
-		}
-		queues[queue.Name] = struct{}{}
-	}
-
 	for position, definition := range plan.Definitions {
-		if err := artifact.ValidateProgramIndexDeclaration(definition, queues); err != nil {
+		if err := artifact.ValidateProgramDefinition(definition); err != nil {
 			return fmt.Errorf("deployment plan definition %d: %w", position, err)
 		}
-		if position > 0 && artifact.CompareProgramIndexDeclarations(
+		if position > 0 && artifact.CompareProgramDefinitions(
 			plan.Definitions[position-1],
 			definition,
 		) >= 0 {
@@ -88,37 +62,32 @@ func validatePlan(plan Plan) error {
 			)
 		}
 	}
+	computers := make(map[string]struct{})
+	for _, d := range plan.Definitions {
+		if d.Computer != nil {
+			computers[d.DeclaredID] = struct{}{}
+		}
+	}
+	for _, d := range plan.Definitions {
+		if d.Agent != nil {
+			if _, exists := computers[d.Agent.ComputerDefinitionID]; !exists {
+				return errors.New("deployment Agent references an absent Computer")
+			}
+		}
+	}
+
 	return nil
 }
 
-func validateProgramIndexDeployment(index artifact.ProgramIndex, plan Plan) error {
+func validateProgramMetadataDeployment(index artifact.ProgramMetadata, plan Plan) error {
 	if err := validatePlan(plan); err != nil {
 		return err
 	}
-	if len(index.Queues) != len(plan.Queues) || len(index.Declarations) != len(plan.Definitions) {
-		return errors.New("program index does not match deployment plan")
+	if len(index.Definitions) != len(plan.Definitions) {
+		return errors.New("program metadata does not match deployment plan")
 	}
-	for position := range index.Queues {
-		left, err := definition.CanonicalQueueConfig(definition.QueueConfig{
-			FormatVersion: definition.DeploymentPlanFormatVersion,
-			Queues:        []definition.QueueInput{index.Queues[position]},
-		})
-		if err != nil {
-			return err
-		}
-		right, err := definition.CanonicalQueueConfig(definition.QueueConfig{
-			FormatVersion: definition.DeploymentPlanFormatVersion,
-			Queues:        []definition.QueueInput{plan.Queues[position]},
-		})
-		if err != nil {
-			return err
-		}
-		if !bytes.Equal(left, right) {
-			return errors.New("program index does not match deployment plan")
-		}
-	}
-	for position := range index.Declarations {
-		left, err := index.Declarations[position].MarshalJSON()
+	for position := range index.Definitions {
+		left, err := index.Definitions[position].MarshalJSON()
 		if err != nil {
 			return err
 		}
@@ -127,18 +96,18 @@ func validateProgramIndexDeployment(index artifact.ProgramIndex, plan Plan) erro
 			return err
 		}
 		if !bytes.Equal(left, right) {
-			return errors.New("program index does not match deployment plan")
+			return errors.New("program metadata does not match deployment plan")
 		}
 	}
 	return nil
 }
 
-func deploymentPlanSandboxes(plan Plan) []artifact.ProgramIndexDeclaration {
-	sandboxes := make([]artifact.ProgramIndexDeclaration, 0)
+func deploymentPlanComputers(plan Plan) []artifact.ProgramDefinition {
+	computers := make([]artifact.ProgramDefinition, 0)
 	for _, declaration := range plan.Definitions {
-		if declaration.Kind == definition.KindSandbox {
-			sandboxes = append(sandboxes, declaration.Clone())
+		if declaration.Kind == definition.KindComputer {
+			computers = append(computers, declaration.Clone())
 		}
 	}
-	return sandboxes
+	return computers
 }

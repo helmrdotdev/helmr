@@ -15,14 +15,6 @@ func LoadControlPlane() (ControlPlane, error) {
 	if err != nil {
 		return ControlPlane{}, err
 	}
-	apiOriginRaw := envText("API_ORIGIN")
-	if apiOriginRaw == "" {
-		apiOriginRaw = publicURL
-	}
-	apiOrigin, err := normalizeOrigin("API_ORIGIN", apiOriginRaw)
-	if err != nil {
-		return ControlPlane{}, err
-	}
 	magicLinkDebugURLs, err := envBool("MAGIC_LINK_DEBUG_URLS", false)
 	if err != nil {
 		return ControlPlane{}, err
@@ -42,7 +34,6 @@ func LoadControlPlane() (ControlPlane, error) {
 		CapacityToken:                   envSecret("CAPACITY_TOKEN"),
 		SetupToken:                      envSecret("SETUP_TOKEN"),
 		PublicURL:                       publicURL,
-		APIOrigin:                       apiOrigin,
 		MagicLinkDebugURLs:              magicLinkDebugURLs,
 		AdminEmails:                     splitNormalizedList(envText("ADMIN_EMAILS")),
 		EmailProvider:                   envLower("EMAIL_PROVIDER"),
@@ -77,7 +68,6 @@ func LoadControlPlane() (ControlPlane, error) {
 		target *[]byte
 	}{
 		{"AUTH_KEY", &cfg.AuthKey},
-		{"TOKEN_CREDENTIAL_KEY", &cfg.TokenCredentialKey},
 		{"COMPUTER_FENCING_KEY", &cfg.ComputerFencingKey},
 		{"ENCRYPTION_KEY", &cfg.EncryptionKey},
 		{"WORKER_HOST_CREDENTIAL_SIGNING_KEY", &cfg.WorkerHostCredentialSigningKey},
@@ -124,6 +114,15 @@ func LoadControlPlane() (ControlPlane, error) {
 		if err != nil {
 			return cfg, err
 		}
+	}
+	cfg.EnvironmentExecutionLimits, err = LoadEnvironmentExecutionLimits()
+	if err != nil {
+		return cfg, err
+	}
+
+	cfg.DiagnosticAdmission, err = LoadDiagnosticAdmission()
+	if err != nil {
+		return cfg, err
 	}
 	return cfg, nil
 }

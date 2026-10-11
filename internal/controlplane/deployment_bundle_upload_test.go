@@ -9,6 +9,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -34,7 +35,7 @@ func TestPlanDeploymentBundleUploadsRequiresOwnerProofBeforeSkipping(t *testing.
 	if err != nil {
 		t.Fatalf("planDeploymentBundleUploads: %v", err)
 	}
-	if response.BundleDigest == "" || len(response.Uploads) != 1 {
+	if response.BundleDigest == "" || len(response.Uploads) != len(manifest.Objects) {
 		t.Fatalf("response = %+v", response)
 	}
 	if len(store.quarantined) != 1 || store.quarantined[0].MediaType != bundle.MediaType {
@@ -44,11 +45,9 @@ func TestPlanDeploymentBundleUploadsRequiresOwnerProofBeforeSkipping(t *testing.
 		t.Fatalf("presigned = %+v", store.presigned)
 	}
 
-	store.quarantine = map[string]cas.Descriptor{
-		manifest.Objects[0].Digest: {
-			Digest: manifest.Objects[0].Digest, SizeBytes: manifest.Objects[0].SizeBytes,
-			MediaType: manifest.Objects[0].MediaType,
-		},
+	store.quarantine = make(map[string]cas.Descriptor)
+	for _, object := range manifest.Objects {
+		store.quarantine[object.Digest] = cas.Descriptor{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}
 	}
 	store.presigned = nil
 	response, err = planDeploymentBundleUploads(
@@ -61,9 +60,10 @@ func TestPlanDeploymentBundleUploadsRequiresOwnerProofBeforeSkipping(t *testing.
 		t.Fatalf("quarantine response = %+v, presigned = %+v", response, store.presigned)
 	}
 
-	ownership.rows[manifest.Objects[0].Digest] = db.CasObject{
-		OrgID: orgID, Digest: manifest.Objects[0].Digest,
-		SizeBytes: manifest.Objects[0].SizeBytes, MediaType: manifest.Objects[0].MediaType,
+	store.quarantine = nil
+	for _, object := range manifest.Objects {
+		ownership.rows[object.Digest] = db.CasObject{OrgID: orgID, Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}
+		store.objects[object.Digest] = cas.Object{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}
 	}
 	store.presigned = nil
 	response, err = planDeploymentBundleUploads(
@@ -205,26 +205,8 @@ func bundleCASObject(object bundle.Object) cas.Object {
 
 func controlPlaneDeploymentBundle(t *testing.T) ([]byte, bundle.Manifest) {
 	t.Helper()
-	run := definition.RunManifest{
-		Queue: "default", MaxDurationMs: 5000,
-		Retry: definition.RetryManifest{Enabled: false},
-	}
-	task := definition.TaskManifest{
-		Payload: definition.SchemaManifest{Kind: definition.SchemaKindNone}, Run: run,
-	}
-	declaration := artifact.ProgramIndexDeclaration{
-		Kind: definition.KindTask, DeclaredID: "hello", Task: &task,
-		Locator: &artifact.ProgramLocator{
-			ExportName: "hello",
-			ModulePath: "helmr/app/entry-0.mjs",
-			Slot:       artifact.DeclarationSlotHandler,
-		},
-	}
-	plan := bundle.Plan{
-		FormatVersion: definition.DeploymentPlanFormatVersion,
-		Definitions:   []artifact.ProgramIndexDeclaration{declaration},
-		Queues:        []definition.QueueInput{{Name: "default"}},
-	}
+	metadata := artifacttest.ProgramMetadata(t)
+	plan := bundle.Plan{FormatVersion: definition.DeploymentPlanFormatVersion, Definitions: metadata.Definitions}
 	programDigest := "sha256:" + strings.Repeat("a", 64)
 	manifest := bundle.Manifest{
 		Contract: bundle.Contract,
@@ -243,19 +225,12 @@ func controlPlaneDeploymentBundle(t *testing.T) ([]byte, bundle.Manifest) {
 			Artifact: artifact.ProgramDescriptor{
 				Digest: programDigest, SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType,
 			},
-			Index: artifact.ProgramIndex{
-				Architecture:       definition.ArchitectureX8664,
-				ConfigResultDigest: "sha256:" + strings.Repeat("c", 64),
-				Declarations:       []artifact.ProgramIndexDeclaration{declaration},
-				Queues:             plan.Queues,
-				RuntimeContract:    definition.RuntimeContract,
-				RuntimeDigest:      "sha256:" + strings.Repeat("f", 64),
-			},
+			Metadata: metadata,
 		},
-		ComputerImages: []bundle.ComputerImage{},
+		ComputerSeeds: []bundle.ComputerSeed{{DeclaredID: "repo", Artifact: bundle.ComputerSeedArtifact{Profile: definition.ComputerSeedProfile, Architecture: definition.ArchitectureX8664, Digest: "sha256:" + strings.Repeat("d", 64), MediaType: definition.ComputerSeedMediaType, SizeBytes: 4096}}},
 		Objects: []bundle.Object{{
 			Digest: programDigest, SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType,
-		}},
+		}, {Digest: "sha256:" + strings.Repeat("d", 64), MediaType: definition.ComputerSeedMediaType, SizeBytes: 4096}},
 	}
 	raw, err := bundle.Canonical(manifest)
 	if err != nil {

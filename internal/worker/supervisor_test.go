@@ -125,7 +125,10 @@ type successfulRejectionConsumer struct {
 	once    sync.Once
 }
 
-func (c *successfulRejectionConsumer) Claim(context.Context) (Work, bool, error) {
+func (c *successfulRejectionConsumer) Claim(ctx context.Context, admission ConsumerAdmission) (Work, bool, error) {
+	if err := admission.AdmitClaim(ctx); err != nil {
+		return nil, false, err
+	}
 	c.once.Do(func() { close(c.claimed) })
 	return nil, true, nil
 }
@@ -163,14 +166,20 @@ func TestSupervisorRetriesStartupRecoveryConflictWithExactProof(t *testing.T) {
 	}
 }
 
-func (c *enabledConsumer) Claim(ctx context.Context) (Work, bool, error) {
+func (c *enabledConsumer) Claim(ctx context.Context, admission ConsumerAdmission) (Work, bool, error) {
+	if err := admission.AdmitClaim(ctx); err != nil {
+		return nil, false, err
+	}
 	if !c.enabled.Load() {
 		return nil, false, nil
 	}
-	return c.inner.Claim(ctx)
+	return c.inner.Claim(ctx, admission)
 }
 
-func (c *shutdownClaimConsumer) Claim(ctx context.Context) (Work, bool, error) {
+func (c *shutdownClaimConsumer) Claim(ctx context.Context, admission ConsumerAdmission) (Work, bool, error) {
+	if err := admission.AdmitClaim(ctx); err != nil {
+		return nil, false, err
+	}
 	close(c.entered)
 	<-ctx.Done()
 	<-c.allowReturn
@@ -181,14 +190,20 @@ func (c *shutdownClaimConsumer) Claim(ctx context.Context) (Work, bool, error) {
 	}, true, nil
 }
 
-func (c *blockingClaimConsumer) Claim(ctx context.Context) (Work, bool, error) {
+func (c *blockingClaimConsumer) Claim(ctx context.Context, admission ConsumerAdmission) (Work, bool, error) {
+	if err := admission.AdmitClaim(ctx); err != nil {
+		return nil, false, err
+	}
 	close(c.entered)
 	<-ctx.Done()
 	close(c.canceled)
 	return nil, false, ctx.Err()
 }
 
-func (c *queuedConsumer) Claim(context.Context) (Work, bool, error) {
+func (c *queuedConsumer) Claim(ctx context.Context, admission ConsumerAdmission) (Work, bool, error) {
+	if err := admission.AdmitClaim(ctx); err != nil {
+		return nil, false, err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if len(c.work) == 0 {
@@ -525,7 +540,7 @@ func TestSupervisorHardAdmissionPausesClaimsButNotShutdown(t *testing.T) {
 	probe := &staticHealthProbe{health: healthyHost(now)}
 	probe.health.AvailableDiskBytes = 1
 	evaluator, err := NewHardAdmission(HardAdmissionConfig{
-		Probe: probe, DiskFloorBytes: 2, FDHeadroom: 1, InstanceSlotCount: 1, Now: time.Now,
+		Probe: probe, DiskFloorBytes: 2, FDHeadroom: 1, Now: time.Now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -563,18 +578,29 @@ func TestSupervisorHardAdmissionPausesClaimsButNotShutdown(t *testing.T) {
 func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T) {
 	controlPlane := &testControlPlane{}
 	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusActive})
+	var physicalOwners atomic.Int32
+	var discoveryStopped atomic.Bool
+	discoveryStarted := make(chan struct{})
 	runStarted := make(chan struct{})
 	runRelease := make(chan struct{})
 	unexpectedRun := make(chan struct{}, 1)
 	runs := &queuedConsumer{work: []Work{
-		func(context.Context) error { close(runStarted); <-runRelease; return nil },
+		func(context.Context) error {
+			physicalOwners.Add(1)
+			close(runStarted)
+			<-runRelease
+			physicalOwners.Add(-1)
+			return nil
+		},
 		func(context.Context) error { unexpectedRun <- struct{}{}; return nil },
 	}}
 	cleanupStarted := make(chan struct{})
 	cleanupRelease := make(chan struct{})
 	cleanup := &enabledConsumer{inner: &queuedConsumer{work: []Work{func(context.Context) error {
+		physicalOwners.Add(1)
 		close(cleanupStarted)
 		<-cleanupRelease
+		physicalOwners.Add(-1)
 		return nil
 	}}}}
 	finalized := make(chan struct{})
@@ -584,7 +610,16 @@ func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T)
 			{Name: "run", Concurrency: 1, Consumer: runs},
 			{Name: "computer-cleanup", Concurrency: 1, ContinueDuringDrain: true, BypassAdmissionDuringDrain: true, Consumer: cleanup},
 		},
+		Background: []BackgroundSpec{{Name: "allocation-discovery", DrainEligible: true, Run: func(ctx context.Context) error {
+			close(discoveryStarted)
+			<-ctx.Done()
+			discoveryStopped.Store(true)
+			return ctx.Err()
+		}}},
 		FinalizeDrain: func(context.Context) (RecoveryEvidence, error) {
+			if !discoveryStopped.Load() || physicalOwners.Load() != 0 {
+				return RecoveryEvidence{}, errors.New("final inventory raced discovery or physical owners")
+			}
 			close(finalized)
 			return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
 		},
@@ -599,6 +634,11 @@ func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T)
 	case <-runStarted:
 	case <-time.After(time.Second):
 		t.Fatal("run did not start")
+	}
+	select {
+	case <-discoveryStarted:
+	case <-time.After(time.Second):
+		t.Fatal("discovery did not start")
 	}
 	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveInstances: 1})
 	deadline := time.Now().Add(time.Second)
@@ -646,7 +686,7 @@ func TestServerDirectedDrainContinuesBoundRunWithHardAdmission(t *testing.T) {
 	now := time.Now()
 	evaluator, err := NewHardAdmission(HardAdmissionConfig{
 		Probe: &staticHealthProbe{health: healthyHost(now)}, DiskFloorBytes: 1,
-		FDHeadroom: 1, InstanceSlotCount: 1, Now: func() time.Time { return now },
+		FDHeadroom: 1, Now: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -706,7 +746,7 @@ func TestServerDirectedDrainDoesNotBypassBoundRunAdmission(t *testing.T) {
 	probe := &staticHealthProbe{health: healthyHost(now)}
 	probe.health.KVMHealthy = false
 	evaluator, err := NewHardAdmission(HardAdmissionConfig{
-		Probe: probe, DiskFloorBytes: 1, FDHeadroom: 1, InstanceSlotCount: 1, Now: func() time.Time { return now },
+		Probe: probe, DiskFloorBytes: 1, FDHeadroom: 1, Now: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -758,7 +798,7 @@ func TestDrainingObservationPreservesHardHealthInsteadOfLifecyclePause(t *testin
 	now := time.Now()
 	evaluator, err := NewHardAdmission(HardAdmissionConfig{
 		Probe: &staticHealthProbe{health: healthyHost(now)}, DiskFloorBytes: 1,
-		FDHeadroom: 1, InstanceSlotCount: 1, Now: func() time.Time { return now },
+		FDHeadroom: 1, Now: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -767,7 +807,7 @@ func TestDrainingObservationPreservesHardHealthInsteadOfLifecyclePause(t *testin
 		Consumer: "run", Status: StatusDraining, DrainContinuation: true,
 	})
 	s := &Supervisor{cfg: Config{AdmissionEvaluator: evaluator}}
-	observation := s.observation(StatusDraining, RecoveryEvidence{})
+	observation := s.observation(t.Context(), StatusDraining, RecoveryEvidence{})
 	if observation.RunPausedReason != "" || observation.VMPausedReason != "" {
 		t.Fatalf("draining observation reported lifecycle pause: %+v", observation)
 	}
@@ -1151,3 +1191,17 @@ func TestSupervisorRecoveryFailurePreventsReportingAndActivation(t *testing.T) {
 		t.Fatal("failed enumeration was reported as completed recovery")
 	}
 }
+
+// Direct consumer tests use an explicit admitting policy; supervisor tests pass
+// the real gates through the same required protocol.
+type allowConsumerAdmission struct{}
+
+func (allowConsumerAdmission) AdmitClaim(context.Context) error          { return nil }
+func (allowConsumerAdmission) AdmitAllocatedStart(context.Context) error { return nil }
+
+// fatalWorkerError models a physical owner that requires process shutdown.
+type fatalWorkerError struct{ err error }
+
+func (e *fatalWorkerError) Error() string     { return e.err.Error() }
+func (e *fatalWorkerError) Unwrap() error     { return e.err }
+func (e *fatalWorkerError) FatalWorker() bool { return true }

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -20,7 +21,7 @@ import (
 )
 
 func TestComputerBasicExecExecutesRetainedBytes(t *testing.T) {
-	entry, registry, _ := testLinuxComputerCommandImage(t)
+	entry, registry := testLinuxComputerCommandImage(t)
 	before, err := os.ReadFile(filepath.Join(entry.computerRoot, "file"))
 	if err != nil {
 		t.Fatal(err)
@@ -43,13 +44,20 @@ func TestComputerBasicExecExecutesRetainedBytes(t *testing.T) {
 	}
 }
 
-func testLinuxComputerCommandImage(t *testing.T) (*computerMountEntry, *computerOperationRegistry, *computerv0.ComputerRunAuthority) {
+func testLinuxComputerCommandImage(t *testing.T) (*computerMountEntry, *computerOperationRegistry) {
 	t.Helper()
 	if os.Getenv("HELMR_PRIVILEGED_PROGRAM_TEST") != "1" {
 		t.Skip("requires disposable privileged Linux namespaces; set HELMR_PRIVILEGED_PROGRAM_TEST=1")
 	}
-	entry, registry, authority := testProgramMount(t)
-	image := filepath.Dir(entry.computerRoot)
+	image := t.TempDir()
+	entry := &computerMountEntry{computerRoot: filepath.Join(image, "computer")}
+	if err := os.Mkdir(entry.computerRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(entry.computerRoot, "file"), []byte("content"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	registry := testComputerBasicExecRegistry(t, entry)
 	if err := os.MkdirAll(filepath.Join(image, "bin"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +78,7 @@ func testLinuxComputerCommandImage(t *testing.T) (*computerMountEntry, *computer
 	entry.computerMount = "/workspace"
 	entry.runtimeUser = &resolvedRuntimeUser{UID: 0, GID: 0, Home: "/tmp"}
 
-	return entry, registry, authority
+	return entry, registry
 }
 
 func TestComputerBasicExecRetainedBytesHelper(t *testing.T) {
@@ -145,7 +153,7 @@ func TestComputerBasicExecRetainedBytesHelper(t *testing.T) {
 func TestComputerBasicExecProcessContainment(t *testing.T) {
 	for _, mode := range []string{"descendant", "timeout", "output", "cancel"} {
 		t.Run(mode, func(t *testing.T) {
-			entry, registry, _ := testLinuxComputerCommandImage(t)
+			entry, registry := testLinuxComputerCommandImage(t)
 			req := testComputerBasicExecRequest("process-1", "fingerprint")
 			body, err := json.Marshal(computerBasicExecSpec{Command: []string{"/bin/check", "-test.run=^TestComputerBasicExecRetainedBytesHelper$"}, Cwd: "/workspace", Env: map[string]string{"COMPUTER_EXEC_BYTES_HELPER": "1", "COMPUTER_EXEC_MODE": mode}, TimeoutMS: 2000})
 			if err != nil {
@@ -168,20 +176,16 @@ func TestComputerBasicExecProcessContainment(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer execution.cancel()
-				var offset int64
+				var observed []byte
 				readyCtx, stop := context.WithTimeout(t.Context(), 10*time.Second)
 				defer stop()
 				for {
-					chunk, next, changed, err := execution.output.read(offset)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if chunk != nil {
-						offset = next
-						if chunk.Stream == "stdout" && string(chunk.Content) == "ready" {
-							break
-						}
-						continue
+					execution.output.mu.Lock()
+					changed := execution.output.changed
+					execution.output.mu.Unlock()
+					observed = append(observed, commandSpoolBytes(t, execution.output, "stdout")...)
+					if strings.Contains(string(observed), "ready") {
+						break
 					}
 					select {
 					case <-changed:

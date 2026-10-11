@@ -6,7 +6,12 @@ import (
 
 func LoadDispatcher() (Dispatcher, error) {
 	var err error
+	publicURL, err := normalizeOrigin("PUBLIC_URL", env("PUBLIC_URL", DefaultPublicURL))
+	if err != nil {
+		return Dispatcher{}, err
+	}
 	cfg := Dispatcher{
+		PublicURL:          publicURL,
 		ControlPlaneURL:    envText("CONTROL_PLANE_URL"),
 		DatabaseURL:        envText("DATABASE_URL"),
 		ClickHouseURL:      envText("CLICKHOUSE_URL"),
@@ -27,6 +32,10 @@ func LoadDispatcher() (Dispatcher, error) {
 		return cfg, err
 	}
 	cfg.EncryptionKey, err = rootKey("ENCRYPTION_KEY")
+	if err != nil {
+		return cfg, err
+	}
+	cfg.DiagnosticExporter, err = LoadDiagnosticExporter()
 	if err != nil {
 		return cfg, err
 	}

@@ -127,6 +127,12 @@ prepare_host_sdk() {
 project="$tmp/project"
 mkdir -p "$project/tasks"
 prepare_host_sdk "$project"
+# Installation lifecycle checks use the actual packed SDK. Keep it inside the
+# captured project so every package manager can install without a fake SDK API.
+mkdir -p "$project/vendor"
+cp -R "$repo_root/dist/npm/sdk/package" "$project/vendor/sdk"
+cp -R "$repo_root/dist/npm/proto/package" "$project/vendor/proto"
+cp -RL "$repo_root/sdk/typescript/node_modules/@bufbuild/protobuf" "$project/vendor/protobuf"
 cp "$repo_root/internal/version/runtime-dependencies.json" "$project/runtime-dependencies.json"
 cat >"$project/prepare.sh" <<'SH'
 #!/bin/sh
@@ -136,24 +142,10 @@ node -e '
   require("node:assert/strict").equal(process.versions.node, expected)
   console.log(JSON.stringify({surface:"install lifecycle", version:process.versions.node, execPath:process.execPath}))
 '
-mkdir -p node_modules/@helmr/sdk
-cat >node_modules/@helmr/sdk/package.json <<'JSON'
-{"name":"@helmr/sdk","type":"module"}
-JSON
-cat >node_modules/@helmr/sdk/index.js <<'JS'
-const brand = Symbol.for("helmr.sdk.v0.definition")
-export function defineConfig(config) { return config }
-export function task(config) {
-  return Object.freeze({
-    [brand]: Object.freeze({
-      kind: "task",
-      id: config.id,
-      hasPayload: false,
-      handler: config.run,
-    }),
-  })
-}
-JS
+mkdir -p node_modules/@helmr node_modules/@bufbuild
+cp -R vendor/sdk/. node_modules/@helmr/sdk/
+cp -R vendor/proto/. node_modules/@helmr/proto/
+cp -R vendor/protobuf/. node_modules/@bufbuild/protobuf/
 SH
 chmod 0755 "$project/prepare.sh"
 cat >"$project/.yarnrc.yml" <<'YAML'
@@ -169,9 +161,10 @@ export default defineConfig({ dirs: ["tasks"], ignorePatterns: [], build: $build
 TS
 }
 write_config "$project"
-cat >"$project/tasks/hello.ts" <<'TS'
-import { task } from "@helmr/sdk"
-export const hello = task({ id: "hello", run: () => "hello" })
+cat >"$project/tasks/hello.ts" <<TS
+import { agent, computer, image } from "@helmr/sdk"
+const machine = computer({ id: "machine", image: image("machine").from("$builder_image"), resources: { cpu: 1, memory: "1GiB" } })
+export const hello = agent({ id: "hello", computer: machine, turn: () => "hello" })
 TS
 
 write_package_json() {
@@ -194,11 +187,12 @@ build_fixture() {
   write_package_json "$selector"
   "$tmp/helmr" build "$project" --output "$tmp/$label" 2>"$tmp/$label.log" ||
     { tail -n 80 "$tmp/$label.log" >&2; return 1; }
-  jq -e '.contract == "helmr.deployment-bundle.v0" and .computerImages == []' \
+  jq -e '.contract == "helmr.deployment-bundle.v0" and [.computerSeeds[].declaredId] == ["machine"]' \
     "$tmp/$label/bundle.json" >/dev/null
 }
 
-build_fixture npm npm@11.5.1
+# Generated compiler inputs remain readable under a restrictive caller umask.
+(umask 077; build_fixture npm npm@11.5.1)
 build_fixture pnpm pnpm@10.14.0
 build_fixture bun bun@1.3.13
 build_fixture yarn yarn@4.9.2
@@ -260,10 +254,15 @@ cp -a "$project" "$mutation_project"
 # Tenant isolation is a property of the target phases. The config now runs on
 # the host, so the hostile module is a declaration module the target imports.
 write_config "$mutation_project" '{ installCommand: "./prepare.sh" }'
+cat >"$mutation_project/tasks/fixture-image.ts" <<TS
+import { image } from "@helmr/sdk"
+export const fixtureImage = image("machine").from("$builder_image")
+TS
 cat >"$mutation_project/tasks/hello.ts" <<'TS'
 import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, writeFileSync } from "node:fs"
-import { task } from "@helmr/sdk"
+import { agent, computer } from "@helmr/sdk"
+import { fixtureImage } from "./fixture-image"
 if (existsSync("/workspace/program")) {
   throw new Error("tenant code can observe the private Program assembly tree")
 }
@@ -292,7 +291,7 @@ const child = spawn(process.execPath, ["-e", `
   }, 5)
 `], { detached: true, stdio: "ignore" })
 child.unref()
-export const hello = task({ id: "hello", run: () => "hello" })
+export const hello = agent({ id: "hello", computer: computer({ id: "machine", image: fixtureImage, resources: { cpu: 1, memory: "1GiB" } }), turn: () => "hello" })
 TS
 "$tmp/helmr" build "$mutation_project" \
   --output "$tmp/mutation-bundle" \
@@ -312,65 +311,25 @@ cp "$project/helmr.config.ts" "$computer_project/helmr.config.ts"
 cat >"$computer_project/package.json" <<'JSON'
 {"name":"bundle-computer-e2e","private":true}
 JSON
-cat >"$computer_project/prepare.sh" <<'SH'
-#!/bin/sh
-set -eu
-mkdir -p node_modules/@helmr/sdk
-cat >node_modules/@helmr/sdk/package.json <<'JSON'
-{"name":"@helmr/sdk","type":"module"}
-JSON
-cat >node_modules/@helmr/sdk/index.js <<JS
-const brand = Symbol.for("helmr.sdk.v0.definition")
-const sandboxBrand = Symbol.for("helmr.sdk.v0.sandbox")
-export function defineConfig(config) { return config }
-export function sandbox(config) {
-  return Object.freeze({
-    id: config.id,
-    internal: Object.freeze({
-      kind: "sandbox",
-      id: config.id,
-      image: Object.freeze({ key: "sandbox/" + config.id, steps: Object.freeze([{ kind: "from", ref: "$BASE_IMAGE" }]) }),
-      resources: Object.freeze({ cpu: 1, memory: "1GiB" }),
-    }),
-    [sandboxBrand]: true,
-  })
-}
-export const schedules = Object.freeze({
-  task(config) {
-    return Object.freeze({
-      [brand]: Object.freeze({
-        kind: "task",
-        id: config.id,
-        hasPayload: true,
-        handler: config.run,
-        schedule: Object.freeze({
-          cron: config.cron.pattern,
-          timezone: config.cron.timezone,
-          computer: Object.freeze({ sandbox: config.computer.sandbox, secrets: Object.freeze([]) }),
-        }),
-      }),
-    })
-  },
-})
-JS
-SH
-chmod 0755 "$computer_project/prepare.sh"
-cat >"$computer_project/tasks/hello.ts" <<'TS'
-import { sandbox, schedules } from "@helmr/sdk"
-export const machine = sandbox({ id: "machine" })
-export const hello = schedules.task({
+cp -R "$project/vendor" "$computer_project/vendor"
+cp "$project/runtime-dependencies.json" "$computer_project/runtime-dependencies.json"
+cp "$project/prepare.sh" "$computer_project/prepare.sh"
+cat >"$computer_project/tasks/hello.ts" <<TS
+import { agent, computer, image, triggers } from "@helmr/sdk"
+export const machine = computer({ id: "machine", image: image("machine").from("$builder_image"), resources: { cpu: 1, memory: "1GiB" } })
+export const hello = agent({
   id: "hello",
-  cron: { pattern: "0 9 * * *", timezone: "UTC" },
-  computer: { sandbox: machine },
-  run: () => "hello",
+  triggers: [triggers.cron("daily", "0 9 * * *", { timezone: "UTC", input: null })],
+  computer: machine,
+  turn: () => "hello",
 })
 TS
 prepare_host_sdk "$computer_project"
-write_config "$computer_project" "{ installCommand: \"BASE_IMAGE=$builder_image ./prepare.sh\" }"
+write_config "$computer_project" '{ installCommand: "./prepare.sh" }'
 "$tmp/helmr" build "$computer_project" \
   --output "$tmp/computer"
 jq -e \
-  '.contract == "helmr.deployment-bundle.v0" and (.computerImages | length) == 1 and .computerImages[0].declaredId == "machine"' \
+  '.contract == "helmr.deployment-bundle.v0" and (.computerSeeds | length) == 1 and .computerSeeds[0].declaredId == "machine"' \
   "$tmp/computer/bundle.json" >/dev/null
 
 # Native environment: build.builder copies and runs a setup script that installs
@@ -381,6 +340,7 @@ jq -e \
 native_project="$tmp/native-project"
 cp -a "$repo_root/tests/fixtures/native-environment" "$native_project"
 prepare_host_sdk "$native_project"
+cp -R "$project/vendor" "$native_project/vendor"
 native_build() {
   local label="$1"
   "$tmp/helmr" build "$native_project" --output "$tmp/$label" 2>"$tmp/$label.log" ||
@@ -494,14 +454,14 @@ grep -F 'spawnSync jq ENOENT' "$tmp/bare.log" >/dev/null
 
 HELMR_NATIVE_BUNDLE="$tmp/native-recipe-input" bash "$repo_root/tests/build/guestd-native-library.test.sh"
 
-# Agent tool work: the real SDK declares the tasks and a Computer image with a
+# Agent tool work: the real SDK declares the Agents and a Computer image with a
 # browser, Git and Python; the Program carries Playwright and Sharp.
 agentic_project="$tmp/agentic-project"
 cp -a "$repo_root/tests/fixtures/agentic-work" "$agentic_project"
 prepare_host_sdk "$agentic_project"
 "$tmp/helmr" build "$agentic_project" --output "$tmp/agentic" 2>"$tmp/agentic.log" ||
   { tail -n 120 "$tmp/agentic.log" >&2; exit 1; }
-jq -e '[.computerImages[].declaredId] == ["agentic-work"]' "$tmp/agentic/bundle.json" >/dev/null
+jq -e '[.computerSeeds[].declaredId] == ["agentic-work"]' "$tmp/agentic/bundle.json" >/dev/null
 HELMR_AGENTIC_BUNDLE="$tmp/agentic" bash "$repo_root/tests/build/agentic-work.test.sh"
 
 # The packed SDK fixture exercises the selective Program through the actual CLI

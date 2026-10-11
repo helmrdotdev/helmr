@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Runs the agentic-work fixture's declared tasks in the Computer seed its own
+# Runs the agentic-work fixture's declared Agents in the Computer seed its own
 # SDK declaration built, through guestd's managed Program launch path. The
 # handlers drive real tools: Git, Chromium through Playwright, Python with
 # NumPy, Sharp, and child processes. A privileged container supplies Linux
-# namespaces; the guest task protocol, Firecracker and checkpoint/resume are
+# namespaces; the Session protocol, Firecracker and checkpoint/resume are
 # not part of this check, and no model is involved.
 set -euo pipefail
 
@@ -27,14 +27,14 @@ fi
   { echo "bundle was not built against this Runtime artifact" >&2; exit 1; }
 object() { printf '%s/objects/sha256/%s' "$bundle" "${1#sha256:}"; }
 program=$(object "$(jq -er '.program.artifact.digest' "$bundle/bundle.json")")
-computer=$(object "$(jq -er '.computerImages[] | select(.declaredId == "agentic-work") | .artifact.digest' "$bundle/bundle.json")")
+computer=$(object "$(jq -er '.computerSeeds[] | select(.declaredId == "agentic-work") | .artifact.digest' "$bundle/bundle.json")")
 
 mkdir "$tmp/context"
 cp "$runtime_release/runtime.squashfs" "$tmp/context/runtime.squashfs"
 cp "$program" "$tmp/context/program.squashfs"
 mkdir -p "$tmp/context/objects/sha256"
 cp "$computer" "$tmp/context/objects/sha256/$(basename "$computer")"
-jq -e '.computerImages[] | select(.declaredId == "agentic-work") | .artifact' "$bundle/bundle.json" >"$tmp/context/seed.json"
+jq -e '.computerSeeds[] | select(.declaredId == "agentic-work") | .artifact' "$bundle/bundle.json" >"$tmp/context/seed.json"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$repo_root" test -c -o "$tmp/context/guestd.test" ./internal/guestd
 
 cat >"$tmp/context/Dockerfile" <<'DOCKERFILE'

@@ -11,8 +11,8 @@ func TestStreamFrameRoundTrip(t *testing.T) {
 	hash := "sha256:abc"
 	body := []byte("tar")
 	if err := WriteStreamFrameHeader(&buf, StreamHeader{
-		Type:       StreamTypeRunImage,
-		RunID:      "run-1",
+		Type:       StreamTypeAgentSession,
+		ComputerID: "computer-1",
 		BodyDigest: &hash,
 	}, uint64(len(body))); err != nil {
 		t.Fatal(err)
@@ -28,7 +28,7 @@ func TestStreamFrameRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if header.Type != StreamTypeRunImage || header.RunID != "run-1" || header.BodyDigest == nil || *header.BodyDigest != hash || string(gotBody) != "tar" {
+	if header.Type != StreamTypeAgentSession || header.ComputerID != "computer-1" || header.BodyDigest == nil || *header.BodyDigest != hash || string(gotBody) != "tar" {
 		t.Fatalf("header = %+v body = %q", header, gotBody)
 	}
 }
@@ -36,7 +36,7 @@ func TestStreamFrameRoundTrip(t *testing.T) {
 func TestStreamFrameHeaderSupportsLargeBodies(t *testing.T) {
 	var buf bytes.Buffer
 	const bodyLen = uint64(1 << 32)
-	if err := WriteStreamFrameHeader(&buf, StreamHeader{Type: StreamTypeRunImage, RunID: "run-1"}, bodyLen); err != nil {
+	if err := WriteStreamFrameHeader(&buf, StreamHeader{Type: StreamTypeAgentSession, ComputerID: "computer-1"}, bodyLen); err != nil {
 		t.Fatal(err)
 	}
 	_, gotBodyLen, err := ReadStreamFrameHeader(&buf)

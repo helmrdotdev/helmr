@@ -77,6 +77,7 @@ let
           bun install --frozen-lockfile --ignore-scripts
           bun run typecheck
           bun run test:ts
+          (cd examples/opencode-assistant && bun install --frozen-lockfile --ignore-scripts && bun run typecheck && bun run test)
           bun run check:web
         '';
 
@@ -101,7 +102,6 @@ let
           bash tests/release/aws-release-artifacts.test.sh
           bash tests/release/platform-release-materialize.test.sh
           bash tests/release/publish-materialized-platform-release.test.sh
-          bash tests/build/runtime-naming-contract.test.sh
           bash tests/release/worker-host-bundle.test.sh
           bash tests/release/worker-runtime-bundle.test.sh
           bash tests/release/linux-worker-host-bundle-materialize.test.sh
@@ -132,6 +132,7 @@ let
           scripts/pack-npm-packages.sh "$sdk_packages"
           scripts/check-e2e.sh --skip-sdk-build
           (cd examples/issue-fixer && bun install --frozen-lockfile --ignore-scripts && bun run typecheck && bun test tests)
+          (cd examples/opencode-assistant && bun install --frozen-lockfile --ignore-scripts && bun run typecheck && bun run test)
           scripts/check-packed-sdk-consumer.sh --sdk-packages "$sdk_packages"
           scripts/build-compiler-entry.sh
           scripts/build-hostconfig-entry.sh
@@ -226,7 +227,7 @@ let
         pkgsClickHouse = import nixpkgs-clickhouse { inherit system; };
       in
       app "ci-clickhouse" "run real ClickHouse projection and access tests"
-        (toolsets.ciGo ++ [ pkgsClickHouse.clickhouse ])
+        (toolsets.ciPostgres ++ [ pkgsClickHouse.clickhouse ])
         ''
           unset HELMR_TEST_CLICKHOUSE_URL HELMR_TEST_CLICKHOUSE_IDLE_ONLY HELMR_TEST_CLICKHOUSE_BATCH_KIND
           export HELMR_TEST_CLICKHOUSE_BOOTSTRAP=1

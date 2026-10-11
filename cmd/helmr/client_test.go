@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,15 +13,13 @@ import (
 
 func TestAPIURLFlagOverridesEnvironmentURL(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/sessions/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if got := r.Header.Get("authorization"); got != "Bearer env-key" {
 			t.Fatalf("auth = %s", got)
 		}
-		_ = json.NewEncoder(w).Encode(api.RunLogPage{Logs: []api.RunLogRecord{{
-			Kind: "stdout", ContentBase64: base64.StdEncoding.EncodeToString([]byte("from flag\n")),
-		}}})
+		_ = json.NewEncoder(w).Encode(api.AgentSession{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", Status: "open"})
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, "https://ignored.example.test")
@@ -32,11 +29,11 @@ func TestAPIURLFlagOverridesEnvironmentURL(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"--api-url", server.URL, "run", "logs", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
+	cmd.SetArgs([]string{"--api-url", server.URL, "session", "get", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if out.String() != "from flag\n" {
+	if !strings.Contains(out.String(), "session_status: open") {
 		t.Fatalf("output = %q", out.String())
 	}
 }

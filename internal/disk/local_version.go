@@ -61,6 +61,7 @@ func (s localVersionSource) GetRange(ctx context.Context, digest string, size, o
 // Do not unlink/replace the directory or owner.lock while any owner can use it.
 type LocalVersion struct {
 	life          sync.RWMutex
+	request       sync.Mutex // Complete NBD requests versus the immutable cut only.
 	commit        sync.Mutex
 	publication   sync.RWMutex // Joins local-file publishers before reachable eviction.
 	store         *cas.File
@@ -345,7 +346,11 @@ func (p *LocalVersion) Flush(ctx context.Context) (VersionRoot, error) {
 }
 
 func (p *LocalVersion) flushLocked(ctx context.Context) (VersionRoot, error) {
-	root, err := p.disk.Capture(ctx)
+	return p.flushBoundaryLocked(ctx, nil)
+}
+
+func (p *LocalVersion) flushBoundaryLocked(ctx context.Context, cut func()) (VersionRoot, error) {
+	root, err := p.disk.captureBoundary(ctx, cut)
 	if err != nil {
 		return VersionRoot{}, err
 	}

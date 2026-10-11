@@ -35,8 +35,10 @@ func TestControlPlaneRoutesMatchCurrentProtocol(t *testing.T) {
 	want := strings.Split(strings.TrimSpace(`
 DELETE /api/invitations/{id}
 DELETE /api/members/{userID}
+DELETE /api/projects/{projectID}/environments/{environmentID}/agents/{agentName}/slack/{publicationID}
 DELETE /api/projects/{projectID}/environments/{environmentID}/api-keys/{id}
 DELETE /api/projects/{projectID}/environments/{environmentID}/computers/{computerID}
+DELETE /api/slack/user-links/{teamID}/{slackUserID}
 DELETE /v1/computers/{computerID}
 GET /admin/api/v1/regions
 GET /admin/api/v1/regions/{regionID}
@@ -49,11 +51,14 @@ GET /api/me
 GET /api/members
 GET /api/projects
 GET /api/projects/{projectID}/environments/{environmentID}
-GET /api/projects/{projectID}/environments/{environmentID}/actors
-GET /api/projects/{projectID}/environments/{environmentID}/actors/{actorID}
+GET /api/projects/{projectID}/environments/{environmentID}/agents
+GET /api/projects/{projectID}/environments/{environmentID}/agents/{agentName}
+GET /api/projects/{projectID}/environments/{environmentID}/agents/{agentName}/slack
 GET /api/projects/{projectID}/environments/{environmentID}/api-keys
 GET /api/projects/{projectID}/environments/{environmentID}/commands/{commandID}
 GET /api/projects/{projectID}/environments/{environmentID}/commands/{commandID}/logs
+GET /api/projects/{projectID}/environments/{environmentID}/computer-definitions
+GET /api/projects/{projectID}/environments/{environmentID}/computer-definitions/{computerDefinitionID}
 GET /api/projects/{projectID}/environments/{environmentID}/computers
 GET /api/projects/{projectID}/environments/{environmentID}/computers/{computerID}
 GET /api/projects/{projectID}/environments/{environmentID}/computers/{computerID}/members
@@ -61,12 +66,6 @@ GET /api/projects/{projectID}/environments/{environmentID}/deployments
 GET /api/projects/{projectID}/environments/{environmentID}/deployments/current
 GET /api/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}
 GET /api/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}/events
-GET /api/projects/{projectID}/environments/{environmentID}/runs
-GET /api/projects/{projectID}/environments/{environmentID}/runs/{runID}
-GET /api/projects/{projectID}/environments/{environmentID}/runs/{runID}/events
-GET /api/projects/{projectID}/environments/{environmentID}/runs/{runID}/logs
-GET /api/projects/{projectID}/environments/{environmentID}/sandboxes
-GET /api/projects/{projectID}/environments/{environmentID}/sandboxes/{sandboxID}
 GET /api/projects/{projectID}/environments/{environmentID}/schedules
 GET /api/projects/{projectID}/environments/{environmentID}/schedules/{scheduleID}
 GET /api/projects/{projectID}/environments/{environmentID}/secrets
@@ -74,13 +73,17 @@ GET /api/projects/{projectID}/environments/{environmentID}/secrets/{secretID}
 GET /api/projects/{projectID}/environments/{environmentID}/sessions
 GET /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}
 GET /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/events
+GET /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/slack-delivery
+GET /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns
 GET /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}
-GET /api/projects/{projectID}/environments/{environmentID}/tasks
-GET /api/projects/{projectID}/environments/{environmentID}/tasks/{taskID}
-GET /api/projects/{projectID}/environments/{environmentID}/tokens
-GET /api/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}
+GET /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}/asks
+GET /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}/asks/{askID}
 GET /api/projects/{projectRef}
 GET /api/regions
+GET /api/slack/link-workspaces
+GET /api/slack/user-links
+GET /api/slack/user-links/callback
+GET /api/slack/user-links/first-use
 GET /capacity/v1/deployment
 GET /capacity/v1/worker-groups/resolve
 GET /capacity/v1/worker-groups/{workerGroupID}/pools/resolve
@@ -88,10 +91,12 @@ GET /capacity/v1/worker-hosts
 GET /capacity/v1/worker-hosts/{workerHostID}
 GET /healthz
 GET /readyz
-GET /v1/actors
-GET /v1/actors/{actorID}
+GET /v1/agents
+GET /v1/agents/{agentName}
 GET /v1/commands/{commandID}
 GET /v1/commands/{commandID}/logs
+GET /v1/computer-definitions
+GET /v1/computer-definitions/{computerDefinitionID}
 GET /v1/computers
 GET /v1/computers/{computerID}
 GET /v1/computers/{computerID}/members
@@ -99,12 +104,6 @@ GET /v1/deployments
 GET /v1/deployments/current
 GET /v1/deployments/{deploymentID}
 GET /v1/deployments/{deploymentID}/events
-GET /v1/runs
-GET /v1/runs/{runID}
-GET /v1/runs/{runID}/events
-GET /v1/runs/{runID}/logs
-GET /v1/sandboxes
-GET /v1/sandboxes/{sandboxID}
 GET /v1/schedules
 GET /v1/schedules/{scheduleID}
 GET /v1/secrets
@@ -112,13 +111,11 @@ GET /v1/secrets/{secretID}
 GET /v1/sessions
 GET /v1/sessions/{sessionID}
 GET /v1/sessions/{sessionID}/events
+GET /v1/sessions/{sessionID}/turns
 GET /v1/sessions/{sessionID}/turns/{turnID}
-GET /v1/tasks
-GET /v1/tasks/{taskID}
-GET /v1/tokens
-GET /v1/tokens/{tokenID}
+GET /v1/sessions/{sessionID}/turns/{turnID}/asks
+GET /v1/sessions/{sessionID}/turns/{turnID}/asks/{askID}
 GET /worker/v1/instance
-OPTIONS /api/public/tokens/{tokenID}/complete
 PATCH /admin/api/v1/regions/{regionID}
 PATCH /admin/api/v1/worker-groups/{groupID}
 PATCH /api/members/{userID}
@@ -150,65 +147,101 @@ POST /api/invitations
 POST /api/organizations
 POST /api/projects
 POST /api/projects/{projectID}/environments
-POST /api/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/start
+POST /api/projects/{projectID}/environments/{environmentID}/agents/{agentName}/slack
+POST /api/projects/{projectID}/environments/{environmentID}/agents/{agentName}/slack/{publicationID}/authorize
+POST /api/projects/{projectID}/environments/{environmentID}/agents/{agentName}/start
 POST /api/projects/{projectID}/environments/{environmentID}/api-keys
 POST /api/projects/{projectID}/environments/{environmentID}/commands/{commandID}/cancel
+POST /api/projects/{projectID}/environments/{environmentID}/computer-definitions/{computerDefinitionID}/computers
 POST /api/projects/{projectID}/environments/{environmentID}/computers/{computerID}/exec
 POST /api/projects/{projectID}/environments/{environmentID}/deployment-bundles/finalize
 POST /api/projects/{projectID}/environments/{environmentID}/deployment-bundles/upload-plan
 POST /api/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}/promote
-POST /api/projects/{projectID}/environments/{environmentID}/runs/{runID}/cancel
-POST /api/projects/{projectID}/environments/{environmentID}/sandboxes/{sandboxID}/computers
 POST /api/projects/{projectID}/environments/{environmentID}/secrets
 POST /api/projects/{projectID}/environments/{environmentID}/secrets/{secretID}/revoke
 POST /api/projects/{projectID}/environments/{environmentID}/secrets/{secretID}/rotate
 POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/cancel
 POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/close
 POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/enqueue
+POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/interrupt
 POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/resume
 POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/send
-POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}/interrupt
+POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/slack-delivery/{postID}/{recovery:check|abandon}
+POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}/asks/{askID}/respond
 POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}/messages
-POST /api/projects/{projectID}/environments/{environmentID}/tasks/{taskDeclaredID}/start
-POST /api/projects/{projectID}/environments/{environmentID}/tokens
-POST /api/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/cancel
-POST /api/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/complete
-POST /api/public/tokens/{tokenID}/complete
-POST /api/token-callbacks/{tokenID}/{callbackSecret}
+POST /api/slack/installations/finish
+POST /api/slack/user-links/authorize
+POST /api/slack/user-links/callback
+POST /api/slack/user-links/confirm
+POST /api/slack/user-links/verify
 POST /capacity/v1/worker-groups/{workerGroupID}/plan
 POST /capacity/v1/worker-hosts/{workerHostID}/drain
 POST /capacity/v1/worker-hosts/{workerHostID}/lost
-POST /v1/actors/{actorDeclaredID}/start
+POST /integrations/slack/apps/{registrationID}/events
+POST /integrations/slack/apps/{registrationID}/interactions
+POST /v1/agents/{agentName}/start
 POST /v1/commands/{commandID}/cancel
+POST /v1/computer-definitions/{computerDefinitionID}/computers
 POST /v1/computers/{computerID}/exec
 POST /v1/deployment-bundles/finalize
 POST /v1/deployment-bundles/upload-plan
 POST /v1/deployments/{deploymentID}/promote
-POST /v1/runs/{runID}/cancel
-POST /v1/sandboxes/{sandboxID}/computers
 POST /v1/secrets
 POST /v1/secrets/{secretID}/revoke
 POST /v1/secrets/{secretID}/rotate
 POST /v1/sessions/{sessionID}/cancel
 POST /v1/sessions/{sessionID}/close
 POST /v1/sessions/{sessionID}/enqueue
+POST /v1/sessions/{sessionID}/interrupt
 POST /v1/sessions/{sessionID}/resume
 POST /v1/sessions/{sessionID}/send
-POST /v1/sessions/{sessionID}/turns/{turnID}/interrupt
+POST /v1/sessions/{sessionID}/turns/{turnID}/asks/{askID}/respond
 POST /v1/sessions/{sessionID}/turns/{turnID}/messages
-POST /v1/tasks/{taskDeclaredID}/start
-POST /v1/tokens
-POST /v1/tokens/{tokenID}/cancel
-POST /v1/tokens/{tokenID}/complete
-POST /worker/v1/computer/checkpoints/abort
-POST /worker/v1/computer/checkpoints/abort/complete
-POST /worker/v1/computer/checkpoints/objects/certify
-POST /worker/v1/computer/checkpoints/objects/register
-POST /worker/v1/computer/checkpoints/objects/reuse
-POST /worker/v1/computer/checkpoints/ready
-POST /worker/v1/computer/checkpoints/register
-POST /worker/v1/computer/restores/ack
-POST /worker/v1/computer/restores/plan
+POST /worker/v1/agent-computers/capture/begin
+POST /worker/v1/agent-computers/capture/cancel
+POST /worker/v1/agent-computers/capture/save-absence
+POST /worker/v1/agent-computers/capture/seal
+POST /worker/v1/agent-computers/checkpoint/complete
+POST /worker/v1/agent-computers/checkpoint/read
+POST /worker/v1/agent-computers/checkpoint/register
+POST /worker/v1/agent-computers/controls
+POST /worker/v1/agent-computers/lease/renew
+POST /worker/v1/agent-computers/restore/commit
+POST /worker/v1/agent-computers/restore/complete
+POST /worker/v1/agent-computers/restore/prepare
+POST /worker/v1/agent-computers/restore/validate
+POST /worker/v1/agent-computers/source-abort/commit
+POST /worker/v1/agent-computers/source-abort/complete
+POST /worker/v1/agent-computers/source-abort/prepare
+POST /worker/v1/agent-computers/source-abort/validate
+POST /worker/v1/agent-computers/stopped
+POST /worker/v1/allocations/computer/deliver
+POST /worker/v1/allocations/computer/processes
+POST /worker/v1/allocations/computer/ready
+POST /worker/v1/allocations/computer/source
+POST /worker/v1/allocations/list
+POST /worker/v1/allocations/preparation/capture
+POST /worker/v1/allocations/preparation/capture/begin
+POST /worker/v1/allocations/preparation/deliver
+POST /worker/v1/allocations/preparation/fail
+POST /worker/v1/allocations/preparation/key
+POST /worker/v1/allocations/preparation/logs
+POST /worker/v1/allocations/preparation/objects/certify
+POST /worker/v1/allocations/preparation/objects/register
+POST /worker/v1/allocations/preparation/publish
+POST /worker/v1/allocations/preparation/renew
+POST /worker/v1/allocations/preparation/secrets
+POST /worker/v1/allocations/preparation/start
+POST /worker/v1/allocations/preparation/stopped
+POST /worker/v1/computer-commands/claim
+POST /worker/v1/computer-commands/complete
+POST /worker/v1/computer-commands/logs/append
+POST /worker/v1/computer-commands/reconcile
+POST /worker/v1/computer-saves/capture
+POST /worker/v1/computer-saves/next
+POST /worker/v1/computer-saves/objects/certify
+POST /worker/v1/computer-saves/objects/register
+POST /worker/v1/computer-saves/publish
 POST /worker/v1/enrollment
 POST /worker/v1/instance/activate
 POST /worker/v1/instance/credential
@@ -217,71 +250,24 @@ POST /worker/v1/instance/drain/complete
 POST /worker/v1/instance/fence
 POST /worker/v1/instance/observations
 POST /worker/v1/instance/recover
-POST /worker/v1/run/actors/start
-POST /worker/v1/run/computer-commands/claim
-POST /worker/v1/run/computer-commands/complete
-POST /worker/v1/run/computer-commands/logs/append
-POST /worker/v1/run/computer-commands/reconcile
-POST /worker/v1/run/computer-instances/claim
-POST /worker/v1/run/computer-instances/closed
-POST /worker/v1/run/computer-instances/computer-source
-POST /worker/v1/run/computer-instances/failed
-POST /worker/v1/run/computer-instances/initialization/objects/certify
-POST /worker/v1/run/computer-instances/initialization/objects/register
-POST /worker/v1/run/computer-instances/initialization/seed
-POST /worker/v1/run/computer-instances/initialization/version
-POST /worker/v1/run/computer-instances/ready
-POST /worker/v1/run/computer-instances/reconcile
-POST /worker/v1/run/computer-instances/renew
-POST /worker/v1/run/computer-instances/runs/cleanup
-POST /worker/v1/run/computer-instances/runs/reconcile
-POST /worker/v1/run/computer-saves/abandon
-POST /worker/v1/run/computer-saves/adopt
-POST /worker/v1/run/computer-saves/begin
-POST /worker/v1/run/computer-saves/objects/certify
-POST /worker/v1/run/computer-saves/objects/register
-POST /worker/v1/run/computer-saves/objects/reuse
-POST /worker/v1/run/computer-saves/publish
-POST /worker/v1/run/computers/create
-POST /worker/v1/run/computers/delete
-POST /worker/v1/run/computers/members
-POST /worker/v1/run/computers/retrieve
-POST /worker/v1/run/finalization/begin
-POST /worker/v1/run/leases/claim
-POST /worker/v1/run/leases/discover
-POST /worker/v1/run/leases/entrypoint
-POST /worker/v1/run/leases/renew
-POST /worker/v1/run/leases/start
-POST /worker/v1/run/logs/append
-POST /worker/v1/run/metadata/update
 POST /worker/v1/run/secret-proxy/prepare
 POST /worker/v1/run/secret-proxy/resolve
-POST /worker/v1/run/sessions/cancel
-POST /worker/v1/run/sessions/close
-POST /worker/v1/run/sessions/complete
-POST /worker/v1/run/sessions/control
-POST /worker/v1/run/sessions/enqueue
-POST /worker/v1/run/sessions/events/read-page
-POST /worker/v1/run/sessions/output/write
-POST /worker/v1/run/sessions/resume
-POST /worker/v1/run/sessions/retrieve
-POST /worker/v1/run/sessions/send
-POST /worker/v1/run/sessions/turns/commit
-POST /worker/v1/run/structured-logs/append
-POST /worker/v1/run/tasks/complete
-POST /worker/v1/run/tasks/invoke
-POST /worker/v1/run/tokens/create
-POST /worker/v1/run/turns/interrupt
-POST /worker/v1/run/turns/messages/claim
-POST /worker/v1/run/turns/messages/complete
-POST /worker/v1/run/turns/messages/ready
-POST /worker/v1/run/turns/messages/send
-POST /worker/v1/run/turns/output/write
-POST /worker/v1/run/turns/retrieve
-POST /worker/v1/run/turns/settlement/begin
-POST /worker/v1/run/waits/create
-POST /worker/v1/run/waits/poll
-POST /worker/v1/run/waits/resume-ack
+POST /worker/v1/sessions/attachment
+POST /worker/v1/sessions/authority
+POST /worker/v1/sessions/control
+POST /worker/v1/sessions/control/receipt
+POST /worker/v1/sessions/failed
+POST /worker/v1/sessions/logs
+POST /worker/v1/sessions/message
+POST /worker/v1/sessions/message/receipt
+POST /worker/v1/sessions/operations
+POST /worker/v1/sessions/ready
+POST /worker/v1/sessions/start
+POST /worker/v1/sessions/start/release
+POST /worker/v1/sessions/stopped
+POST /worker/v1/sessions/turn
+POST /worker/v1/sessions/turn/receipt
+PUT /api/projects/{projectID}/environments/{environmentID}/agents/{agentName}/slack/{publicationID}/credentials
 PUT /capacity/v1/worker-groups/{workerGroupID}/primary-pool
 `), "\n")
 	if !slices.IsSorted(want) {
@@ -354,8 +340,8 @@ func TestMachineRoutesPreserveAuthenticationBoundaries(t *testing.T) {
 	}{
 		{name: "Capacity missing", path: "/capacity/v1/worker-hosts", status: http.StatusUnauthorized},
 		{name: "Capacity foreign", path: "/capacity/v1/worker-hosts", authorization: "Bearer hlmr_test_product", status: http.StatusUnauthorized},
-		{name: "Save missing", path: "/worker/v1/run/computer-saves/begin", status: http.StatusUnauthorized},
-		{name: "Save foreign", path: "/worker/v1/run/computer-saves/publish", authorization: "Bearer " + capacityTestToken(), status: http.StatusUnauthorized},
+		{name: "Save missing", path: "/worker/v1/computer-saves/next", status: http.StatusUnauthorized},
+		{name: "Save foreign", path: "/worker/v1/computer-saves/publish", authorization: "Bearer " + capacityTestToken(), status: http.StatusUnauthorized},
 		{name: "Worker missing", path: "/worker/v1/instance", status: http.StatusUnauthorized},
 		{name: "Worker foreign", path: "/worker/v1/instance", authorization: "Bearer " + capacityTestToken(), status: http.StatusUnauthorized},
 		{name: "Worker enrollment bootstrap", path: "/worker/v1/enrollment", status: http.StatusBadRequest},
@@ -409,5 +395,42 @@ func TestWorkerRoutesPreserveRequestBodyLimits(t *testing.T) {
 	}
 	if got := decodeHTTPError(t, response.Body.Bytes()).Code; got != "request_too_large" {
 		t.Fatalf("code = %q, want request_too_large", got)
+	}
+}
+
+func TestProcessDiagnosticsRemainInternal(t *testing.T) {
+	server := &Server{log: discardTestLogger()}
+	router := chi.NewRouter()
+	server.mountRoutes(router)
+	router.NotFound(server.notFound)
+	registered := map[string]bool{}
+	if err := chi.Walk(router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		registered[method+" "+route] = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, prefix := range []string{"/v1", "/api/projects/{projectID}/environments/{environmentID}"} {
+		for _, owner := range []string{"/sessions/{sessionID}", "/computer-preparations/{preparationID}"} {
+			for _, suffix := range []string{"/logs", "/log-streams"} {
+				path := prefix + owner + suffix
+				if registered["GET "+path] {
+					t.Fatalf("process diagnostics exposed: %s", path)
+				}
+				recorder := httptest.NewRecorder()
+				router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+				if recorder.Code != http.StatusNotFound {
+					t.Fatalf("%s returned %d, want 404", path, recorder.Code)
+				}
+			}
+		}
+	}
+	for _, route := range []string{
+		"POST /worker/v1/sessions/logs", "POST /worker/v1/allocations/preparation/logs",
+		"GET /v1/commands/{commandID}/logs",
+	} {
+		if !registered[route] {
+			t.Fatalf("required diagnostic ingestion or command output removed: %s", route)
+		}
 	}
 }

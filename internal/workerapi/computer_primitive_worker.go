@@ -9,7 +9,6 @@ import (
 type ComputerCommandClaimRequest struct {
 	ActiveCancellationIDs []string `json:"active_cancellation_ids,omitempty"`
 	ActiveCommandIDs      []string `json:"active_command_ids,omitempty"`
-	OrgID                 string   `json:"org_id"`
 	EnvironmentID         string   `json:"environment_id"`
 	ComputerInstanceID    string   `json:"computer_instance_id"`
 	WriterGeneration      int64    `json:"writer_generation"`
@@ -28,6 +27,7 @@ type ComputerCommandRelease struct {
 }
 
 type ComputerCommand struct {
+	TailOnly           bool             `json:"tail_only"`
 	ProtectedEnv       *ProtectedEnv    `json:"protected_env,omitempty"`
 	CommandID          string           `json:"command_id"`
 	ComputerID         string           `json:"computer_id"`
@@ -40,44 +40,22 @@ type ComputerCommand struct {
 	ExpiresAt          time.Time        `json:"expires_at"`
 }
 
+type CommandOutputBoundary struct {
+	ThroughSequence int64 `json:"through_sequence"`
+	Complete        bool  `json:"complete"`
+	Gapped          bool  `json:"gapped"`
+}
 type ComputerCommandCompleteRequest struct {
-	OrgID              string          `json:"org_id"`
-	CommandID          string          `json:"command_id"`
-	ComputerInstanceID string          `json:"computer_instance_id"`
-	WriterGeneration   int64           `json:"writer_generation"`
-	Outcome            string          `json:"outcome"`
-	ExitCode           *int32          `json:"exit_code,omitempty"`
-	Error              json.RawMessage `json:"error,omitempty"`
-}
-
-type ComputerRunCleanup struct {
-	RunID         string `json:"run_id"`
-	RunLeaseID    string `json:"run_lease_id"`
-	AttemptNumber uint32 `json:"attempt_number"`
-}
-type ComputerRunCleanupRequest struct {
-	EnvironmentID      string `json:"environment_id"`
-	ComputerInstanceID string `json:"computer_instance_id"`
-	WriterGeneration   int64  `json:"writer_generation"`
-}
-type ComputerRunCleanupResponse struct {
-	Run *ComputerRunCleanup `json:"run,omitempty"`
-}
-type ComputerRunReconcileRequest struct {
-	ComputerRunCleanupRequest
-	ComputerRunCleanup
-}
-
-type ComputerServerControlPlaneClient interface {
-	GetComputerRunCleanup(context.Context, ComputerRunCleanupRequest) (ComputerRunCleanupResponse, error)
-	ReconcileComputerRun(context.Context, ComputerRunReconcileRequest) error
-	RenewComputerInstance(context.Context, ComputerInstanceRenewRequest) (ComputerInstanceRenewResponse, error)
-	MarkComputerInstanceClosed(context.Context, ComputerInstanceStateRequest) (ComputerInstance, error)
-	MarkComputerInstanceFailed(context.Context, ComputerInstanceStateRequest) (ComputerInstance, error)
-	ClaimComputerCommand(context.Context, ComputerCommandClaimRequest) (ComputerCommandClaimResponse, error)
-	CompleteComputerCommand(context.Context, ComputerCommandCompleteRequest) error
-	ReconcileComputerCommand(context.Context, ComputerCommandCompleteRequest) error
-	AppendCommandLog(context.Context, CommandLogAppendRequest) error
+	Stdout             CommandOutputBoundary `json:"stdout"`
+	Stderr             CommandOutputBoundary `json:"stderr"`
+	OutputFenced       bool                  `json:"output_fenced"`
+	EnvironmentID      string                `json:"environment_id"`
+	CommandID          string                `json:"command_id"`
+	ComputerInstanceID string                `json:"computer_instance_id"`
+	WriterGeneration   int64                 `json:"writer_generation"`
+	Outcome            string                `json:"outcome"`
+	ExitCode           *int32                `json:"exit_code,omitempty"`
+	Error              json.RawMessage       `json:"error,omitempty"`
 }
 
 type ComputerCommandCancellation struct {
@@ -87,4 +65,12 @@ type ComputerCommandCancellation struct {
 	WriterGeneration   int64     `json:"writer_generation"`
 	RequestFingerprint string    `json:"request_fingerprint"`
 	ExpiresAt          time.Time `json:"expires_at"`
+}
+
+// ComputerCommandClient is independent of Session execution and lease renewal.
+type ComputerCommandClient interface {
+	ClaimComputerCommand(context.Context, ComputerCommandClaimRequest) (ComputerCommandClaimResponse, error)
+	CompleteComputerCommand(context.Context, ComputerCommandCompleteRequest) error
+	ReconcileComputerCommand(context.Context, ComputerCommandCompleteRequest) error
+	AppendCommandLog(context.Context, CommandLogAppendRequest) (DiagnosticLogReceipt, error)
 }

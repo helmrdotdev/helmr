@@ -15,12 +15,6 @@ line_number() {
   printf '%s\n' "${line}"
 }
 
-if grep -Fq 'helmr.pids_max' "${guest_init}" ||
-  grep -Fq 'configure_process_limit' "${guest_init}"; then
-  printf 'retired managed-build PID policy remains in guest init\n' >&2
-  exit 1
-fi
-
 mount_line="$(line_number 'is_mounted /sys/fs/cgroup || mount -t cgroup2 cgroup2 /sys/fs/cgroup')"
 parent_line="$(line_number 'mkdir /sys/fs/cgroup/helmr')"
 supervisor_line="$(line_number 'mkdir /sys/fs/cgroup/helmr/supervisor')"

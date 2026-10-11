@@ -3,7 +3,7 @@ import { createClientComputers } from "./client-computer"
 
 const computer = {
   id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
-  sandbox_id: "repository-agent",
+  definition_key: "repository-agent",
   deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
   status: "available",
       residency: "unavailable",

@@ -218,7 +218,7 @@ func verifyPublishedJSON(id string, payload []byte, records []redis.XMessage, er
 	return nil
 }
 
-func (s *Stream) ReadSubject(ctx context.Context, orgID uuid.UUID, subjectType string, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error, onIdle func() error) error {
+func (s *Stream) ReadSubject(ctx context.Context, orgID uuid.UUID, subjectType string, subjectID uuid.UUID, cursor int64, onEvent func(api.DiagnosticEvent) error, onIdle func() error) error {
 	streamKey := eventStreamKey(orgID, subjectType, subjectID)
 	for {
 		if err := ctx.Err(); err != nil {
@@ -271,7 +271,7 @@ func (s *Stream) ReadSubject(ctx context.Context, orgID uuid.UUID, subjectType s
 				if !ok {
 					return fmt.Errorf("event stream record %s missing event field", message.ID)
 				}
-				var event api.RunEvent
+				var event api.DiagnosticEvent
 				if err := json.Unmarshal([]byte(raw), &event); err != nil {
 					return fmt.Errorf("decode event stream record %s: %w", message.ID, err)
 				}
@@ -302,7 +302,7 @@ func (s *Stream) redisEventStreamCoversCursor(ctx context.Context, streamKey str
 	return first <= cursor, nil
 }
 
-func (s *Stream) readDurableSubjectEvents(ctx context.Context, orgID uuid.UUID, subjectType string, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error) (int64, bool, error) {
+func (s *Stream) readDurableSubjectEvents(ctx context.Context, orgID uuid.UUID, subjectType string, subjectID uuid.UUID, cursor int64, onEvent func(api.DiagnosticEvent) error) (int64, bool, error) {
 	page, err := s.telemetryReader.ListEvents(ctx, telemetry.EventQuery{
 		OrgID:       orgID,
 		SubjectType: subjectType,
@@ -382,37 +382,15 @@ func sleepWithContext(ctx context.Context, duration time.Duration) error {
 	}
 }
 
-func eventResponseFromClaim(event db.ClaimLiveTelemetryOutboxRow) api.RunEvent {
-	return apiEventResponse(event.Seq, event.RunID, event.DeploymentID, event.RunLeaseID, event.AttemptNumber, event.TraceID, event.SpanID, event.Traceparent, event.Category, event.Severity, event.Source, event.Kind, event.Message, event.Payload, event.RedactionClass, event.CreatedAt, event.OccurredAt)
+func eventResponseFromClaim(event db.ClaimLiveTelemetryOutboxRow) api.DiagnosticEvent {
+	return apiEventResponse(event.Seq, event.DeploymentID, event.Category, event.Severity, event.Source, event.Kind, event.Message, event.Payload, event.RedactionClass, event.CreatedAt, event.OccurredAt)
 }
 
-func apiEventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, _ pgtype.UUID, attemptNumberValue pgtype.Int4, traceIDValue pgtype.Text, spanIDValue pgtype.Text, traceparentValue pgtype.Text, category string, severity string, source string, rawKind string, message string, payload []byte, redactionClass string, createdAt pgtype.Timestamptz, occurredAt pgtype.Timestamptz) api.RunEvent {
-	var runIDValue *string
-	if runID.Valid {
-		value := pgvalue.MustUUIDValue(runID).String()
-		runIDValue = &value
-	}
+func apiEventResponse(seq int64, deploymentID pgtype.UUID, category string, severity string, source string, rawKind string, message string, payload []byte, redactionClass string, createdAt pgtype.Timestamptz, occurredAt pgtype.Timestamptz) api.DiagnosticEvent {
 	var deploymentIDValue *string
 	if deploymentID.Valid {
 		value := pgvalue.MustUUIDValue(deploymentID).String()
 		deploymentIDValue = &value
-	}
-	var attemptNumber *int32
-	if attemptNumberValue.Valid {
-		attemptNumber = &attemptNumberValue.Int32
-	}
-	kind := rawKind
-	traceID := ""
-	if traceIDValue.Valid {
-		traceID = traceIDValue.String
-	}
-	spanID := ""
-	if spanIDValue.Valid {
-		spanID = spanIDValue.String
-	}
-	traceparent := ""
-	if traceparentValue.Valid {
-		traceparent = traceparentValue.String
 	}
 	attributes := json.RawMessage(payload)
 	if len(attributes) == 0 || !json.Valid(attributes) {
@@ -421,16 +399,13 @@ func apiEventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, _ 
 	if redactionClass == "sensitive" {
 		attributes = json.RawMessage(`{"redacted":true}`)
 	}
-	return api.RunEvent{
+	return api.DiagnosticEvent{
 		ID:             telemetry.Cursor(seq),
-		RunID:          runIDValue,
 		DeploymentID:   deploymentIDValue,
-		AttemptNumber:  attemptNumber,
-		Trace:          api.TraceContext{TraceID: traceID, SpanID: spanID, Traceparent: traceparent},
 		Category:       category,
 		Severity:       severity,
 		Source:         source,
-		Kind:           kind,
+		Kind:           rawKind,
 		Message:        firstNonEmpty(message, rawKind),
 		At:             pgvalue.Time(createdAt),
 		OccurredAt:     pgvalue.Time(occurredAt),

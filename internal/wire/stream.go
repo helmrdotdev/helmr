@@ -11,34 +11,19 @@ import (
 type StreamType string
 
 const (
-	StreamTypeSessionStop                StreamType = "session-stop"
-	StreamTypeRunImage                   StreamType = "run-image"
-	StreamTypeComputerArtifact           StreamType = "computer-artifact"
-	StreamTypeCheckpointPauseRequest     StreamType = "checkpoint-pause-request"
-	StreamTypeCheckpointPauseReady       StreamType = "checkpoint-pause-ready"
-	StreamTypeResumeDecision             StreamType = "resume-decision"
-	StreamTypeComputerMaterialize        StreamType = "computer-materialize"
-	StreamTypeComputerRuntimePrepare     StreamType = "computer-runtime-prepare"
-	StreamTypeProgramRun                 StreamType = "program-run"
-	StreamTypeComputerBasicExec          StreamType = "computer-basic-exec"
-	StreamTypeComputerCommandCancel      StreamType = "computer-command-cancel"
-	StreamTypeComputerCommandRelease     StreamType = "computer-command-release"
-	StreamTypeComputerRunCleanup         StreamType = "computer-run-cleanup"
-	StreamTypeComputerAuthorityRenew     StreamType = "computer-authority-renew"
-	StreamTypeProgramResumeGrant         StreamType = "program-resume-grant"
-	StreamTypeComputerRestoreVerify      StreamType = "computer-restore-verify"
-	StreamTypeComputerFreeze             StreamType = "computer-freeze"
-	StreamTypeComputerCaptureAbort       StreamType = "computer-capture-abort"
-	StreamTypeComputerCaptureAbortAttach StreamType = "computer-capture-abort-attach"
-	StreamTypeComputerRestoreInstall     StreamType = "computer-restore-install"
-	StreamTypeComputerRestoreActivate    StreamType = "computer-restore-activate"
+	StreamTypePreparationControl     StreamType = "preparation-control"
+	StreamTypeAgentComputer          StreamType = "agent-computer"
+	StreamTypeAgentSession           StreamType = "agent-session"
+	StreamTypeComputerMaterialize    StreamType = "computer-materialize"
+	StreamTypeComputerRuntimePrepare StreamType = "computer-runtime-prepare"
+	StreamTypeComputerBasicExec      StreamType = "computer-basic-exec"
+	StreamTypeComputerCommandCancel  StreamType = "computer-command-cancel"
+	StreamTypeComputerCommandRelease StreamType = "computer-command-release"
+	StreamTypeComputerFlush          StreamType = "computer-flush"
 )
 
 type StreamHeader struct {
 	Type               StreamType `json:"type"`
-	RunID              string     `json:"run_id,omitempty"`
-	TaskID             string     `json:"task_id,omitempty"`
-	RunWaitID          string     `json:"run_wait_id,omitempty"`
 	CheckpointID       string     `json:"checkpoint_id,omitempty"`
 	ComputerID         string     `json:"computer_id,omitempty"`
 	ComputerInstanceID string     `json:"computer_instance_id,omitempty"`

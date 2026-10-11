@@ -11,10 +11,10 @@ await verify("reply-relay", async ({ client, computer, marker, cleanup }) => {
   const warm = await ref.exec({ command: ["true"], idempotencyKey: `${marker}:warm` })
   assert.equal((await warm.wait({ signal: deadline(300_000) })).exitCode, 0)
   const before = await hostObservation("computer-path", { computer_id: shared.id })
-  const sources = before.instances.filter((i: any) => i.reclaimed_at === null)
+  const sources = before.leases.filter((lease: any) => lease.status === "active" && lease.fenced_at === null)
   assert.equal(sources.length, 1)
   const source = sources[0]
-  await replyFault("POST", { mode: "passthrough", computer_id: shared.id, instance_id: source.id })
+  await replyFault("POST", { mode: "passthrough", computer_id: shared.id, instance_id: source.computer_instance_id })
   cleanup(async () => { await replyFault("DELETE") })
   const command = await ref.exec({ command: ["sh", "-ceu", 'sleep 15; printf %s "$MARKER"'],
     env: { MARKER: marker }, idempotencyKey: `${marker}:relayed` })
@@ -43,7 +43,7 @@ await verify("reply-relay", async ({ client, computer, marker, cleanup }) => {
   }
   assert.equal(output, marker)
   const after = await hostObservation("computer-path", { computer_id: shared.id })
-  assert.equal(after.commands.find((c: any) => c.id === command.id)?.computer_instance_id, source.id)
+  assert.equal(after.commands.find((c: any) => c.id === command.id)?.computer_lease_epoch, source.epoch)
   const final = await replyFault()
   assert.equal(final.failure, "")
   return { before, during, restoredListener, result, output, after, final }

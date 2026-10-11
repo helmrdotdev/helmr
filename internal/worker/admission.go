@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,9 +23,9 @@ const (
 	AdmissionCgroupUnavailable        AdmissionReason = "cgroup_unavailable"
 	AdmissionKVMUnavailable           AdmissionReason = "kvm_unavailable"
 	AdmissionFirecrackerUnavailable   AdmissionReason = "firecracker_unavailable"
-	AdmissionInstanceSlotsQuarantined AdmissionReason = "instance_slots_quarantined"
 	AdmissionProbeFailed              AdmissionReason = "host_probe_failed"
 	AdmissionDatapathUnverified       AdmissionReason = "datapath_unverified"
+	AdmissionCheckpointKeyUnavailable AdmissionReason = "checkpoint_key_unavailable"
 )
 
 type HostHealth struct {
@@ -63,18 +62,36 @@ type AdmissionEvaluator interface {
 }
 
 type HardAdmissionConfig struct {
-	Probe             HostHealthProbe
-	DiskFloorBytes    int64
-	FDHeadroom        uint64
-	InstanceSlotCount int32
-	DatapathHealth    func() error
-	Now               func() time.Time
+	Probe          HostHealthProbe
+	DiskFloorBytes int64
+	FDHeadroom     uint64
+	DatapathHealth func() error
+	Now            func() time.Time
 }
 
 type HardAdmission struct {
-	cfg  HardAdmissionConfig
-	mu   sync.RWMutex
-	last map[string]AdmissionDecision
+	cfg                      HardAdmissionConfig
+	mu                       sync.RWMutex
+	last                     AdmissionDecision
+	checkpointKeyUnavailable bool
+}
+
+// The configured key is immutable for this worker's lifetime. A health probe
+// cannot repair a mismatch. Reinitialization clears this local latch but does
+// not prove compatibility with retained checkpoints.
+// Only new physical starts consult this gate. Cleanup and running work continue.
+func (a *HardAdmission) PauseForCheckpointKeyMismatch() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.checkpointKeyUnavailable = true
+	a.last.Allowed = false
+	a.last.Reason = AdmissionCheckpointKeyUnavailable
+}
+
+func (a *HardAdmission) CheckpointKeyUnavailable() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.checkpointKeyUnavailable
 }
 
 func NewHardAdmission(cfg HardAdmissionConfig) (*HardAdmission, error) {
@@ -87,13 +104,10 @@ func NewHardAdmission(cfg HardAdmissionConfig) (*HardAdmission, error) {
 	if cfg.FDHeadroom == 0 {
 		return nil, errors.New("admission file descriptor headroom must be positive")
 	}
-	if cfg.InstanceSlotCount <= 0 {
-		return nil, errors.New("admission instance slot count must be positive")
-	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &HardAdmission{cfg: cfg, last: map[string]AdmissionDecision{}}, nil
+	return &HardAdmission{cfg: cfg}, nil
 }
 
 func (a *HardAdmission) Evaluate(ctx context.Context, check AdmissionCheck) AdmissionDecision {
@@ -121,26 +135,22 @@ func (a *HardAdmission) Evaluate(ctx context.Context, check AdmissionCheck) Admi
 		decision.Reason = AdmissionKVMUnavailable
 	case !health.FirecrackerHealthy:
 		decision.Reason = AdmissionFirecrackerUnavailable
-	case instanceSlotConsumer(check.Consumer) &&
-		int32(len(check.Recovery.Quarantined)+check.Snapshot.Active["computer"]) >= a.cfg.InstanceSlotCount:
-		decision.Reason = AdmissionInstanceSlotsQuarantined
 	default:
 		decision.Allowed = true
 	}
 	a.mu.Lock()
-	a.last[check.Consumer] = decision
+	if a.checkpointKeyUnavailable {
+		decision.Allowed = false
+		decision.Reason = AdmissionCheckpointKeyUnavailable
+	}
+	a.last = decision
 	a.mu.Unlock()
 	return decision
 }
 
-func instanceSlotConsumer(consumer string) bool {
-	return consumer == "computer" || consumer == "instance"
-}
-
 func (a *HardAdmission) Observation() workerapi.Observation {
 	a.mu.RLock()
-	decisions := make(map[string]AdmissionDecision, len(a.last))
-	maps.Copy(decisions, a.last)
+	decision := a.last
 	a.mu.RUnlock()
 	observation := workerapi.Observation{}
 	var datapathErr error
@@ -153,21 +163,8 @@ func (a *HardAdmission) Observation() workerapi.Observation {
 		observation.VMPausedReason = reason
 		return observation
 	}
-	for domain, current := range decisions {
-		if current.Allowed || current.Reason == "" {
-			continue
-		}
-		reason := string(current.Reason)
-		if current.Reason != AdmissionInstanceSlotsQuarantined {
-			observation.RunPausedReason, observation.VMPausedReason = reason, reason
-			break
-		}
-		if domain == "run" {
-			observation.RunPausedReason = reason
-		}
-		if domain == "instance" {
-			observation.VMPausedReason = reason
-		}
+	if !decision.Allowed && decision.Reason != "" {
+		observation.RunPausedReason, observation.VMPausedReason = string(decision.Reason), string(decision.Reason)
 	}
 	return observation
 }
@@ -218,4 +215,41 @@ func (p SystemHostHealthProbe) Probe(context.Context) (HostHealth, error) {
 		}
 	}
 	return health, nil
+}
+
+// ConsumerAdmission keeps claim admission separate from the physical effects of
+// an already delivered allocation. Discovery and retained cleanup need neither.
+type ConsumerAdmission interface {
+	AdmitClaim(context.Context) error
+	AdmitAllocatedStart(context.Context) error
+}
+
+var errClaimAdmissionPaused = errors.New("worker claim admission paused")
+
+type consumerAdmission struct {
+	supervisor *Supervisor
+	spec       ConsumerSpec
+	recovery   RecoveryEvidence
+}
+
+func (a consumerAdmission) AdmitClaim(ctx context.Context) error {
+	s := a.supervisor
+	state := s.state.Load().(Status)
+	if s.cfg.AdmissionEvaluator == nil || (a.spec.BypassAdmissionDuringDrain && state == StatusDraining) {
+		return nil
+	}
+	decision := s.cfg.AdmissionEvaluator.Evaluate(ctx, AdmissionCheck{
+		Consumer: a.spec.Name, Status: state, Snapshot: s.registry.snapshot(),
+		Recovery: a.recovery, DrainContinuation: a.spec.ContinueDuringDrain && state == StatusDraining,
+	})
+	if !decision.Allowed {
+		return errClaimAdmissionPaused
+	}
+	return nil
+}
+
+// The physical owner invokes this only after validating the exact live delivery.
+// Host drain preserves that admitted start; every hard health fence still applies.
+func (a consumerAdmission) AdmitAllocatedStart(ctx context.Context) error {
+	return a.supervisor.admitInstanceStart(ctx, true)
 }

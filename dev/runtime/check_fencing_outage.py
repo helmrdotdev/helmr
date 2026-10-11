@@ -40,7 +40,7 @@ def main():
             return values[0]
 
         before = observed()
-        if before['status'] != 'active' or before['active_leases'] or before['unreclaimed_instances']:
+        if before['status'] != 'active' or before['active_leases'] or before['unfenced_preparations']:
             raise RuntimeError('requires an active idle Host with all fixtures reclaimed')
         report['before'] = before
         receipt = args.evidence / 'result.json'

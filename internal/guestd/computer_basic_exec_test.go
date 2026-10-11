@@ -124,7 +124,7 @@ func TestComputerBasicExecSharesInstance(t *testing.T) {
 
 func TestComputerBasicExecDoesNotRequestManagedProgramMounts(t *testing.T) {
 	options := computerBasicExecImageCommandOptions("exec-test")
-	if options.ManagedProgram ||
+	if options.Program != (programMounts{}) ||
 		!options.CgroupNamespace ||
 		options.CgroupLeaf != "exec-test" ||
 		options.StartProof ||
@@ -138,6 +138,7 @@ func testComputerBasicExecRequest(
 	fingerprint string,
 ) *computerv0.ComputerBasicExecRequest {
 	return &computerv0.ComputerBasicExecRequest{
+		LogLimits: &computerv0.CommandLogLimits{ChunkBytes: 65536, BufferBytes: 1048576, BufferRecords: 64},
 		Envelope: &computerv0.ComputerCommandAuthority{
 			OperationId: commandID, RequestFingerprint: fingerprint,
 			ComputerInstanceId: "instance-1", ComputerId: "computer-1", ChannelCredential: "channel-credential",
@@ -159,4 +160,45 @@ func testComputerBasicExecRegistry(t *testing.T, entry *computerMountEntry) *com
 	registry.register(entry.computerInstanceID, entry)
 	t.Cleanup(func() { registry.retire(entry.computerInstanceID, entry) })
 	return registry
+}
+
+func TestComputerBasicExecTailOnlyNeverLaunchesMissingCommand(t *testing.T) {
+	var runs atomic.Int32
+	entry := &computerMountEntry{basicExecRun: func(context.Context, *computerv0.ComputerBasicExecRequest) *computerv0.ComputerBasicExecResult {
+		runs.Add(1)
+		return &computerv0.ComputerBasicExecResult{Outcome: "exited"}
+	}}
+	registry := testComputerBasicExecRegistry(t, entry)
+	request := testComputerBasicExecRequest("missing", strings.Repeat("a", 64))
+	request.TailOnly = true
+	result := registry.runComputerBasicExec(t.Context(), entry, request)
+	if result.GetOutcome() != "computer_command_unavailable" || runs.Load() != 0 || len(entry.commands) != 0 {
+		t.Fatalf("missing tail launched: result=%v runs=%d", result, runs.Load())
+	}
+	request.TailOnly = false
+	first := registry.runComputerBasicExec(t.Context(), entry, request)
+	request.TailOnly = true
+	request.RequestJson = ""
+	request.LogLimits = nil
+	replay := registry.runComputerBasicExec(t.Context(), entry, request)
+	if replay != first || runs.Load() != 1 {
+		t.Fatalf("tail replay changed execution: %v runs=%d", replay, runs.Load())
+	}
+}
+
+func TestComputerBasicExecInvalidLimitsPreserveAdmission(t *testing.T) {
+	entry := &computerMountEntry{basicExecRun: func(context.Context, *computerv0.ComputerBasicExecRequest) *computerv0.ComputerBasicExecResult {
+		return &computerv0.ComputerBasicExecResult{Outcome: "exited"}
+	}}
+	registry := testComputerBasicExecRegistry(t, entry)
+	request := testComputerBasicExecRequest("invalid", strings.Repeat("a", 64))
+	request.LogLimits = nil
+	result := registry.runComputerBasicExec(t.Context(), entry, request)
+	if result.GetOutcome() != "computer_command_invalid" || entry.recoveryRequired || len(entry.commands) != 0 {
+		t.Fatal(result)
+	}
+	result = registry.runComputerBasicExec(t.Context(), entry, testComputerBasicExecRequest("valid", strings.Repeat("b", 64)))
+	if result.GetOutcome() != "exited" {
+		t.Fatal(result)
+	}
 }

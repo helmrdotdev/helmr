@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build an API-only Linux service candidate from a clean, archived Product revision."""
+"""Build a Linux service candidate from a clean, archived Product revision."""
 import argparse
 import hashlib
 import json
@@ -36,7 +36,7 @@ def json_stream(text):
         text = text[end:]
 
 
-def inputs(source, env):
+def inputs(source, env, console=False):
     def go(*args):
         return subprocess.check_output(['go', *args], cwd=source, env=env, text=True)
     result = {}
@@ -44,7 +44,8 @@ def inputs(source, env):
     # path classifier. External dependency bytes are pinned by go.mod/go.sum.
     for name in COMPONENTS:
         paths = ['go.mod', 'go.sum']
-        for package in json_stream(go('list', '-deps', '-json', './cmd/' + name)):
+        tags = ['-tags', 'embed_console'] if console else []
+        for package in json_stream(go('list', *tags, '-deps', '-json', './cmd/' + name)):
             directory = Path(package['Dir'])
             if package.get('Standard'):
                 continue
@@ -58,15 +59,20 @@ def inputs(source, env):
     # Non-Go runtime/build inputs must also remain unchanged for host reuse.
     prefixes = ['internal/runtime/', 'internal/compiler/', 'internal/version/', 'nix/', 'images/', 'runtime/', 'sdk/', 'proto/', 'compiler/', 'scripts/materialize-']
     support = []
-    for path in source.rglob('*'):
-        relative = path.relative_to(source)
-        if not path.is_file():
-            continue
-        name = str(relative)
-        if (name.startswith(tuple(prefixes)) or name.endswith('/package.json') or name in [
-                'flake.nix', 'flake.lock', 'bun.lock', 'bunfig.toml', 'package.json', 'tsconfig.json',
-                'scripts/build-platform-entries.ts', 'scripts/node-version.mjs']):
-            support.append(name)
+    for directory, folders, files in os.walk(source):
+        # Console preparation installs dependencies in the archive. Their bytes
+        # enter the CP digest through the built assets, not the Worker contract.
+        folders[:] = [name for name in folders if name != 'node_modules']
+        for name in files:
+            path = Path(directory) / name
+            relative = path.relative_to(source)
+            if not path.is_file():
+                continue
+            name = str(relative)
+            if (name.startswith(tuple(prefixes)) or name.endswith('/package.json') or name in [
+                    'flake.nix', 'flake.lock', 'bun.lock', 'bunfig.toml', 'package.json', 'tsconfig.json',
+                    'scripts/build-platform-entries.ts', 'scripts/node-version.mjs']):
+                support.append(name)
     result['runtime-support'] = tree_digest(source, support)
     schema = [str(p.relative_to(source)) for directory in SCHEMA_DIRS for p in (source / directory).rglob('*')
               if p.is_file() and not p.name.endswith('_test.go')]
@@ -77,7 +83,7 @@ def inputs(source, env):
     return result
 
 
-def build(source, output):
+def build(source, output, console=False):
     source = source.resolve()
     if subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=all'], cwd=source):
         raise ValueError('candidate requires a clean source revision; preserve edits in a commit first')
@@ -92,9 +98,13 @@ def build(source, output):
         root = Path(directory).resolve()
         with tarfile.open(archive) as tar:
             tar.extractall(root, filter='data')
-        evidence = inputs(root, env)
+        if console:
+            subprocess.run(['bun', 'install', '--frozen-lockfile', '--ignore-scripts'], cwd=root, check=True)
+            subprocess.run(['make', 'console-build'], cwd=root, check=True)
+        evidence = inputs(root, env, console)
         for name in COMPONENTS[:2]:
-            subprocess.run(['go', 'build', '-trimpath', '-buildvcs=false', '-ldflags',
+            tags = ['-tags', 'embed_console'] if console else []
+            subprocess.run(['go', 'build', *tags, '-trimpath', '-buildvcs=false', '-ldflags',
                             '-X github.com/helmrdotdev/helmr/internal/version.SourceCommit=' + revision,
                             '-o', str((output / name).resolve()), './cmd/' + name], cwd=root, env=env, check=True)
     receipt = {'source_commit': revision, 'source_sha256': digest(archive), 'inputs': evidence,
@@ -106,5 +116,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source', type=Path)
     parser.add_argument('output', type=Path, help='new directory, outside source checkout')
+    parser.add_argument('--console', action='store_true', help='build and embed the production Console')
     args = parser.parse_args()
-    build(args.source, args.output.resolve())
+    build(args.source, args.output.resolve(), args.console)

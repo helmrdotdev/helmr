@@ -22,9 +22,9 @@ await verify("planned-drain", async ({ client, marker, computer, cleanup }) => {
   assert.equal(written.kind, "exited")
   assert.equal(written.exitCode, 0)
   const before = await hostObservation("computer-path", { computer_id: shared.id })
-  const source = before.instances.filter((i: any) => i.reclaimed_at === null)
-  assert.equal(source.length, 1, "expected one warm source Instance")
-  assert.equal(source[0].observed_state, "ready")
+  const source = before.leases.filter((lease: any) => lease.status === "active" && lease.fenced_at === null)
+  assert.equal(source.length, 1, "expected one active source lease")
+  assert.equal(source[0].status, "active")
   await record("ready-for-pause.json", { computerId: shared.id, before })
   const pauseDeadline = deadline(120_000)
   for (;;) {
@@ -42,10 +42,10 @@ await verify("planned-drain", async ({ client, marker, computer, cleanup }) => {
     "helmr-verification-dispatcher.service", "-p", "ActiveState", "--value"], { timeout: 10_000 })
   assert.equal(dispatcher.stdout.trim(), "inactive", "Dispatcher must be paused before queueing")
   const assertUncaptured = (path: any) => {
-    const current = path.instances.find((i: any) => i.id === source[0].id)
-    assert.equal(current?.observed_state, "ready")
-    assert.equal(current?.reclaimed_at, null)
-    assert(!path.checkpoints.some((p: any) => p.source_computer_instance_id === source[0].id),
+    const current = path.leases.find((lease: any) => lease.epoch === source[0].epoch)
+    assert.equal(current?.status, "active")
+    assert.equal(current?.fenced_at, null)
+    assert(!path.checkpoints.some((p: any) => p.source_lease_epoch === source[0].epoch),
       "source was already captured before the drain trigger")
   }
   assertUncaptured(await hostObservation("computer-path", { computer_id: shared.id }))
@@ -59,7 +59,7 @@ await verify("planned-drain", async ({ client, marker, computer, cleanup }) => {
   assertUncaptured(queued)
   const command = queued.commands.find((c: any) => c.id === pending.id)
   assert.equal(command?.status, "pending")
-  assert.equal(command?.computer_instance_id, null)
+  assert.equal(command?.computer_lease_epoch, null)
   await record("command-queued.json", { computerId: shared.id, commandId: pending.id, queued })
   const captureDeadline = deadline(600_000)
   let captured: any
@@ -67,14 +67,14 @@ await verify("planned-drain", async ({ client, marker, computer, cleanup }) => {
   for (;;) {
     captureDeadline.throwIfAborted()
     captured = await hostObservation("computer-path", { computer_id: shared.id })
-    checkpoint = captured.checkpoints.find((p: any) => p.source_computer_instance_id === source[0].id && p.status === "ready")
-    const old = captured.instances.find((i: any) => i.id === source[0].id)
-    if (checkpoint && old?.observed_state === "closed" && old.reclaimed_at !== null) break
+    checkpoint = captured.checkpoints.find((p: any) => p.source_lease_epoch === source[0].epoch && p.status === "ready")
+    const old = captured.leases.find((lease: any) => lease.epoch === source[0].epoch)
+    if (checkpoint && old?.status === "released" && old.fenced_at !== null) break
     await delay(1000, undefined, { signal: captureDeadline })
   }
   const stillPending = captured.commands.find((c: any) => c.id === pending.id)
   assert.equal(stillPending?.status, "pending")
-  assert.equal(stillPending?.computer_instance_id, null)
+  assert.equal(stillPending?.computer_lease_epoch, null)
   await record("capture-observed.json", { computerId: shared.id, captured })
   const outcome = await pending.wait({ signal: deadline(600_000) })
   assert.equal(outcome.kind, "exited")
@@ -87,10 +87,13 @@ await verify("planned-drain", async ({ client, marker, computer, cleanup }) => {
   assert.equal(stdout, marker, "restored Command lost the original file")
   const restored = await hostObservation("computer-path", { computer_id: shared.id })
   const finished = restored.commands.find((c: any) => c.id === pending.id)
-  const destination = restored.instances.find((i: any) => i.id === finished?.computer_instance_id)
-  assert(destination && destination.id !== source[0].id)
-  assert.equal(destination.source_checkpoint_id, checkpoint.id)
-  assert.equal(destination.source_disk_version_id, checkpoint.private_computer_disk_version_id)
+  const destination = restored.leases.find((lease: any) => lease.epoch === finished?.computer_lease_epoch)
+  assert(destination && destination.epoch > source[0].epoch)
+  assert.notEqual(destination.computer_instance_id, source[0].computer_instance_id)
+  const consumed = restored.checkpoints.find((item: any) => item.id === checkpoint.id)
+  assert.equal(consumed?.status, "consumed")
+  assert.equal(consumed?.target_lease_epoch, destination.epoch)
+  assert.equal(destination.restored_from_save_id, checkpoint.disk_save_id)
   assert.notEqual(destination.worker_host_id, source[0].worker_host_id)
   return { before, queued, captured, restored, stdout }
 })

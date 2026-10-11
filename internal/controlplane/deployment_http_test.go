@@ -28,7 +28,6 @@ func TestDeploymentErrorMapsHTTPContract(t *testing.T) {
 		{deployment.ErrNoCurrentDeployment, http.StatusNotFound, "no_current_deployment", "no current deployment"},
 		{deployment.ErrNoCurrentDefinitions, http.StatusNotFound, "no_current_deployment", "Environment has no current Deployment"},
 		{deployment.ErrSelectedDeploymentNotFound, http.StatusNotFound, "deployment_not_found", "Deployment was not found"},
-		{deployment.ErrDefinitionsNotMaterialized, http.StatusConflict, "deployment_not_materialized", "Deployment definitions are not materialized"},
 		{fmt.Errorf("promote deployment: %w", errors.New("connection reset")), http.StatusInternalServerError, "internal_error", "internal server error"},
 	} {
 		t.Run(test.err.Error(), func(t *testing.T) {

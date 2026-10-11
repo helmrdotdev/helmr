@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
+	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -39,57 +42,52 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("bootstrap local worker group: %v", err)
 	}
-	cfg := devConfig{bootstrap: config.Bootstrap{RegionID: "dev-local"}}
+	cfg := devConfig{environmentExecutionLimits: devTestExecutionLimits(), bootstrap: config.Bootstrap{RegionID: "dev-local"}}
 	if err := seedDevData(ctx, pool, cfg); err != nil {
 		t.Fatalf("seed dev data: %v", err)
 	}
 
-	var (
-		definitions   int
-		schedules     int
-		computers     int
-		sessions      int
-		runs          int
-		queuedRuns    int
-		tokens        int
-		scheduleState string
-	)
-	if err := pool.QueryRow(ctx, `
-		SELECT
-		    (SELECT count(*) FROM deployment_definitions WHERE environment_id = $1),
-		    (SELECT count(*) FROM schedules WHERE environment_id = $1),
-		    (SELECT count(*) FROM computers WHERE environment_id = $1 AND deleted_at IS NULL),
-		    (SELECT count(*) FROM sessions WHERE environment_id = $1),
-		    (SELECT count(*) FROM runs WHERE environment_id = $1),
-		    (SELECT count(*) FROM runs WHERE environment_id = $1 AND status = 'queued'),
-		    (SELECT count(*) FROM tokens WHERE environment_id = $1),
-		    (SELECT status FROM schedules WHERE id = $2)
-	`, demoSeedEnvironmentID, demoSeedScheduleID).Scan(
-		&definitions, &schedules, &computers, &sessions, &runs, &queuedRuns, &tokens, &scheduleState,
-	); err != nil {
+	var definitions, schedules, computers, sessions, turns, runnable, events int
+	if err := pool.QueryRow(ctx, `SELECT
+ (SELECT count(*) FROM agent_definitions WHERE environment_id=$1),
+ (SELECT count(*) FROM agent_schedules WHERE environment_id=$1 AND active_until IS NOT NULL),
+ (SELECT count(*) FROM computers WHERE environment_id=$1 AND preparation_failed_at IS NOT NULL),
+ (SELECT count(*) FROM sessions WHERE environment_id=$1 AND status='closed'),
+ (SELECT count(*) FROM turns WHERE environment_id=$1 AND status='failed'),
+ (SELECT count(*) FROM turns WHERE environment_id=$1 AND status IN ('queued','running','finalizing'))+
+ (SELECT count(*) FROM agent_schedules WHERE environment_id=$1 AND active_until IS NULL)+
+ (SELECT count(*) FROM computer_preparations WHERE environment_id=$1)+
+ (SELECT count(*) FROM computer_leases WHERE environment_id=$1)+
+ (SELECT count(*) FROM session_processes WHERE environment_id=$1),
+ (SELECT count(*) FROM session_events WHERE environment_id=$1)
+ `, demoSeedEnvironmentID).Scan(&definitions, &schedules, &computers, &sessions, &turns, &runnable, &events); err != nil {
 		t.Fatal(err)
 	}
-	if definitions != 3 || schedules != 1 || computers != 2 || sessions != 2 || runs != 4 || tokens != 2 {
-		t.Fatalf(
-			"definitions/schedules/computers/sessions/runs/tokens = %d/%d/%d/%d/%d/%d, want 3/1/2/2/4/2",
-			definitions, schedules, computers, sessions, runs, tokens,
-		)
+	if definitions != 1 || schedules != 1 || computers != 1 || sessions != 1 || turns != 1 || events != 3 || runnable != 0 {
+		t.Fatalf("demo definitions/schedules/computers/sessions/turns/events/runnable=%d/%d/%d/%d/%d/%d/%d", definitions, schedules, computers, sessions, turns, events, runnable)
 	}
-	if queuedRuns != 0 {
-		t.Fatalf("queued demo runs = %d, want 0 so connected workers cannot pick up synthetic work", queuedRuns)
+	var chronological bool
+	if err := pool.QueryRow(ctx, `SELECT s.created_at <= min(e.created_at)
+ AND t.processing_closed_at=t.terminal_at
+ AND max(e.created_at)=t.terminal_at
+ AND d.created_at<=schedule.active_from AND d.created_at<=s.created_at
+ AND d.execution_revoked_at>=d.created_at AND spec.created_at<=s.created_at
+ FROM sessions s JOIN session_events e ON (e.environment_id,e.session_id)=(s.environment_id,s.id)
+ JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id)
+ JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id)
+ JOIN agent_schedules schedule ON (schedule.environment_id,schedule.deployment_id)=(d.environment_id,d.id)
+ JOIN computer_preparation_specs spec ON spec.environment_id=s.environment_id
+ WHERE s.environment_id=$1 AND s.id=$2
+ GROUP BY s.created_at,t.processing_closed_at,t.terminal_at,d.created_at,d.execution_revoked_at,schedule.active_from,spec.created_at`, demoSeedEnvironmentID, demoSeedSessionID).Scan(&chronological); err != nil || !chronological {
+		t.Fatalf("demo history chronological=%v: %v", chronological, err)
 	}
-	if scheduleState != "archived" {
-		t.Fatalf("schedule state = %q, want archived", scheduleState)
+	caller := agent.Caller{Kind: "user", ID: uuid.MustParse("00000000-0000-7000-8000-000000000101")}
+	env := uuid.MustParse(demoSeedEnvironmentID)
+	if _, err := agent.Start(ctx, pool, nil, caller, agent.StartRequest{EnvironmentID: env, Agent: "demo-agent", RetryKey: "should-not-start", Input: []byte(`[]`)}); !errors.Is(err, agent.ErrDenied) {
+		t.Fatalf("synthetic Deployment start=%v, want denied", err)
 	}
-
-	var sessionRecords int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*) FROM session_events WHERE session_id = $1
-	`, demoSeedSessionOpenID).Scan(&sessionRecords); err != nil {
-		t.Fatal(err)
-	}
-	if sessionRecords != 5 {
-		t.Fatalf("open session records = %d, want 5", sessionRecords)
+	if _, err := agent.Enqueue(ctx, pool, caller, agent.EnqueueRequest{EnvironmentID: env, SessionID: uuid.MustParse(demoSeedSessionID), RetryKey: "should-not-enqueue", Input: []byte(`[]`)}); !errors.Is(err, agent.ErrNotReady) {
+		t.Fatalf("terminal demo enqueue=%v, want not ready", err)
 	}
 }
 
@@ -121,7 +119,7 @@ func TestDevSeedRestartPreservesEditsWithoutReseeding(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	cfg := devConfig{bootstrap: config.Bootstrap{RegionID: "dev-local"}}
+	cfg := devConfig{environmentExecutionLimits: devTestExecutionLimits(), bootstrap: config.Bootstrap{RegionID: "dev-local"}}
 	if err := seedDevData(ctx, pool, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -132,16 +130,10 @@ func TestDevSeedRestartPreservesEditsWithoutReseeding(t *testing.T) {
 	`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `
-		UPDATE tokens
-		   SET status = 'completed',
-		       result = '{"approved":true}'::jsonb,
-		       completed_at = now(), completion_fingerprint = decode(repeat('cc', 32), 'hex')
-		 WHERE id = $1
-	`, demoSeedTokenPendingID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE agents SET name='renamed-demo' WHERE environment_id=$1 AND id=$2`, demoSeedEnvironmentID, demoSeedAgentID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `DELETE FROM schedules WHERE id = $1`, demoSeedScheduleID); err != nil {
+	if _, err := pool.Exec(ctx, `DELETE FROM agent_schedules WHERE id = $1`, demoSeedScheduleID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -158,7 +150,7 @@ func TestDevSeedRestartPreservesEditsWithoutReseeding(t *testing.T) {
 		t.Fatal("expected existing database on restart migrate")
 	}
 
-	var name, color, tokenState string
+	var name, color, agentName string
 	var scheduleCount int
 	var currentDeploymentID *string
 	if err := pool.QueryRow(ctx, `
@@ -166,10 +158,10 @@ func TestDevSeedRestartPreservesEditsWithoutReseeding(t *testing.T) {
 	`).Scan(&name, &color); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT status FROM tokens WHERE id = $1`, demoSeedTokenPendingID).Scan(&tokenState); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT name FROM agents WHERE environment_id=$1 AND id=$2`, demoSeedEnvironmentID, demoSeedAgentID).Scan(&agentName); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schedules WHERE id = $1`, demoSeedScheduleID).Scan(&scheduleCount); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM agent_schedules WHERE id = $1`, demoSeedScheduleID).Scan(&scheduleCount); err != nil {
 		t.Fatal(err)
 	}
 	if err := pool.QueryRow(ctx, `
@@ -180,8 +172,8 @@ func TestDevSeedRestartPreservesEditsWithoutReseeding(t *testing.T) {
 	if name != "Renamed Production" || color != "#22C55E" {
 		t.Fatalf("environment after restart = %q/%q, want Renamed Production/#22C55E", name, color)
 	}
-	if tokenState != "completed" {
-		t.Fatalf("token state after restart = %q, want completed", tokenState)
+	if agentName != "renamed-demo" {
+		t.Fatalf("agent name after restart=%q, want renamed-demo", agentName)
 	}
 	if scheduleCount != 0 {
 		t.Fatalf("deleted schedule count after restart = %d, want 0", scheduleCount)

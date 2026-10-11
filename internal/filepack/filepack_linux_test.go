@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -277,8 +278,8 @@ func TestUnpackRejectsUnboundedRecords(t *testing.T) {
 			}
 			stream.WriteByte(filepackRecordEnd)
 			target := filepath.Join(t.TempDir(), "disk")
-			if _, err := UnpackFrom(t.Context(), &stream, target, ScratchRole, logical); err == nil {
-				t.Fatal("malformed record accepted")
+			if _, err := UnpackFrom(t.Context(), &stream, target, ScratchRole, logical); !errors.Is(err, ErrInvalidContent) {
+				t.Fatalf("malformed record classification: %v", err)
 			}
 			if _, err := os.Lstat(target); !os.IsNotExist(err) {
 				t.Fatalf("failed output retained: %v", err)

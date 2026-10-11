@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -31,24 +30,6 @@ func TestEventSinkOutageUsesOneWriteAndOneFailureUpdate(t *testing.T) {
 	}
 	if writer.eventCalls != 1 || store.failureCalls != 1 || len(store.failedIDs) != int(defaultIngestBatchSize) {
 		t.Fatalf("writes = %d failure updates = %d failed IDs = %d", writer.eventCalls, store.failureCalls, len(store.failedIDs))
-	}
-}
-
-func TestRunLogSinkOutageUsesOneWriteAndOneFailureUpdate(t *testing.T) {
-	store := &fakeIngestStore{}
-	writer := &fakeIngestWriter{runLogErr: errors.New("sink unavailable")}
-	ingester := testIngestor(store, writer)
-	candidates := make([]runLogIngestCandidate, defaultIngestBatchSize)
-	for idx := range candidates {
-		candidates[idx].outboxID = int64(idx + 1)
-	}
-
-	successes, err := ingester.writeRunLogCandidates(context.Background(), candidates)
-	if err == nil || len(successes) != 0 {
-		t.Fatalf("successes = %d err = %v, want failed batch", len(successes), err)
-	}
-	if writer.runLogCalls != 1 || store.failureCalls != 1 || len(store.failedIDs) != int(defaultIngestBatchSize) {
-		t.Fatalf("writes = %d failure updates = %d failed IDs = %d", writer.runLogCalls, store.failureCalls, len(store.failedIDs))
 	}
 }
 
@@ -181,21 +162,11 @@ func TestTelemetryClaimsUseFrozenRowAndByteBudgets(t *testing.T) {
 	if _, err := ingester.ingestEvents(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ingester.ingestRunLogs(context.Background()); err != nil {
-		t.Fatal(err)
-	}
 	if len(store.eventClaims) != 1 {
 		t.Fatalf("event claims = %d, want 1", len(store.eventClaims))
 	}
-	if len(store.runLogClaims) != 1 {
-		t.Fatalf("run-log claims = %d, want 1", len(store.runLogClaims))
-	}
 	if params := store.eventClaims[0]; params.RowLimit != defaultIngestBatchSize || params.MaxBatchBytes != MaxTelemetryBatchBytes {
 		t.Fatalf("event claim budget = rows %d bytes %d, want rows %d bytes %d",
-			params.RowLimit, params.MaxBatchBytes, defaultIngestBatchSize, MaxTelemetryBatchBytes)
-	}
-	if params := store.runLogClaims[0]; params.RowLimit != defaultIngestBatchSize || params.MaxBatchBytes != MaxTelemetryBatchBytes {
-		t.Fatalf("run-log claim budget = rows %d bytes %d, want rows %d bytes %d",
 			params.RowLimit, params.MaxBatchBytes, defaultIngestBatchSize, MaxTelemetryBatchBytes)
 	}
 }
@@ -208,16 +179,10 @@ func testIngestor(store ingestStore, writer IngestWriter) *Ingestor {
 }
 
 type fakeIngestWriter struct {
-	commandLogRows   []CommandLogRecord
-	commandLogResult []RejectedRow
-	commandLogErr    error
-	commandLogCalls  int
-	eventCalls       int
-	eventResult      []RejectedRow
-	eventErr         error
-	eventHook        func(context.Context)
-	runLogCalls      int
-	runLogErr        error
+	eventCalls  int
+	eventResult []RejectedRow
+	eventErr    error
+	eventHook   func(context.Context)
 }
 
 func (w *fakeIngestWriter) WriteEvents(ctx context.Context, _ []EventRecord) ([]RejectedRow, error) {
@@ -228,30 +193,21 @@ func (w *fakeIngestWriter) WriteEvents(ctx context.Context, _ []EventRecord) ([]
 	return w.eventResult, w.eventErr
 }
 
-func (w *fakeIngestWriter) WriteRunLogs(context.Context, []RunLogRecord) ([]RejectedRow, error) {
-	w.runLogCalls++
-	return nil, w.runLogErr
-}
-
 type fakeIngestStore struct {
-	commandLogClaims []db.ClaimCommandLogIngestBatchParams
-	commandLogRows   []db.ClaimCommandLogIngestBatchRow
-	failureCalls     int
-	failedIDs        []int64
-	failureErr       error
-	writtenCalls     int
-	writtenIDs       []int64
-	writtenCounts    []int32
-	writtenResult    *int64
-	writtenErr       error
-	written          chan struct{}
-	pruned           chan db.PruneTelemetryOutboxWrittenParams
-	eventClaims      []db.ClaimEventIngestBatchParams
-	eventClaimCalls  atomic.Int32
-	eventRows        []db.ClaimEventIngestBatchRow
-	claimHook        func(context.Context)
-	runLogClaims     []db.ClaimRunLogIngestBatchParams
-	runLogRows       []db.ClaimRunLogIngestBatchRow
+	failureCalls    int
+	failedIDs       []int64
+	failureErr      error
+	writtenCalls    int
+	writtenIDs      []int64
+	writtenCounts   []int32
+	writtenResult   *int64
+	writtenErr      error
+	written         chan struct{}
+	pruned          chan db.PruneTelemetryOutboxWrittenParams
+	eventClaims     []db.ClaimEventIngestBatchParams
+	eventClaimCalls atomic.Int32
+	eventRows       []db.ClaimEventIngestBatchRow
+	claimHook       func(context.Context)
 }
 
 func (s *fakeIngestStore) ClaimEventIngestBatch(ctx context.Context, params db.ClaimEventIngestBatchParams) ([]db.ClaimEventIngestBatchRow, error) {
@@ -263,14 +219,6 @@ func (s *fakeIngestStore) ClaimEventIngestBatch(ctx context.Context, params db.C
 		return s.eventRows, nil
 	}
 	return nil, nil
-}
-
-func (s *fakeIngestStore) ClaimRunLogIngestBatch(ctx context.Context, params db.ClaimRunLogIngestBatchParams) ([]db.ClaimRunLogIngestBatchRow, error) {
-	if s.claimHook != nil {
-		s.claimHook(ctx)
-	}
-	s.runLogClaims = append(s.runLogClaims, params)
-	return s.runLogRows, nil
 }
 
 func (s *fakeIngestStore) MarkTelemetryOutboxWritten(_ context.Context, params db.MarkTelemetryOutboxWrittenParams) (int64, error) {
@@ -312,85 +260,46 @@ func (*fakeIngestStore) GetTelemetryOutboxLifecycle(context.Context, pgtype.Inte
 	return db.GetTelemetryOutboxLifecycleRow{}, nil
 }
 
-func validRunLogRow() db.ClaimRunLogIngestBatchRow {
-	return db.ClaimRunLogIngestBatchRow{
-		OutboxID: 1, RetryCount: 2,
-		OrgID: pgvalue.UUID(uuid.NewV7()), ProjectID: pgvalue.UUID(uuid.NewV7()),
-		EnvironmentID: pgvalue.UUID(uuid.NewV7()), RunID: pgvalue.UUID(uuid.NewV7()),
-		RunLeaseID: pgvalue.UUID(uuid.NewV7()), AttemptNumber: pgtype.Int4{Int32: 3, Valid: true},
-		Content: []byte("hello"), SizeBytes: pgtype.Int8{Int64: 5, Valid: true},
-		CreatedAt: pgtype.Timestamptz{Time: time.Now().UTC().Truncate(time.Millisecond), Valid: true},
-	}
-}
-
-func TestRunLogRecordConvertsClaimedRow(t *testing.T) {
-	row := validRunLogRow()
-	record := runLogRecord(row)
-	if record.RunLeaseID != pgvalue.MustUUIDValue(row.RunLeaseID) || record.AttemptNumber != 3 || record.SizeBytes != 5 || !record.AcceptedAt.Equal(row.CreatedAt.Time) || string(record.Content) != "hello" {
-		t.Fatalf("record = %+v", record)
-	}
-}
-
-func TestIngestRunLogsWritesClaimedBatch(t *testing.T) {
-	first, second := validRunLogRow(), validRunLogRow()
-	second.OutboxID = 2
-	store := &fakeIngestStore{runLogRows: []db.ClaimRunLogIngestBatchRow{first, second}}
-	writer := &fakeIngestWriter{}
-	count, err := testIngestor(store, writer).ingestRunLogs(t.Context())
-	if count != 2 || err != nil {
-		t.Fatalf("count = %d, error = %v", count, err)
-	}
-	if len(store.failedIDs) != 0 || !slices.Equal(store.writtenIDs, []int64{1, 2}) || writer.runLogCalls != 1 {
-		t.Fatalf("failed = %v, written = %v, writes = %d", store.failedIDs, store.writtenIDs, writer.runLogCalls)
-	}
+func validEventRow() db.ClaimEventIngestBatchRow {
+	accepted := time.Now().UTC().Truncate(time.Millisecond)
+	id := pgvalue.NewUUIDv7()
+	return db.ClaimEventIngestBatchRow{OutboxID: 1, RetryCount: 2, OrgID: pgvalue.NewUUIDv7(), ProjectID: pgvalue.NewUUIDv7(), EnvironmentID: pgvalue.NewUUIDv7(), SubjectType: "deployment", SubjectID: id, DeploymentID: id, CreatedAt: pgvalue.Timestamptz(accepted), OccurredAt: pgvalue.Timestamptz(accepted.Add(-time.Hour)), Payload: []byte(`{}`)}
 }
 
 func TestEventRecordKeepsSubjectIdentityAndAcceptanceTime(t *testing.T) {
-	accepted := time.Now().UTC().Truncate(time.Millisecond)
-	for _, kind := range []string{"run", "deployment"} {
-		id := pgvalue.NewUUIDv7()
-		row := db.ClaimEventIngestBatchRow{OrgID: pgvalue.NewUUIDv7(), ProjectID: pgvalue.NewUUIDv7(), EnvironmentID: pgvalue.NewUUIDv7(), SubjectType: kind, SubjectID: id, CreatedAt: pgvalue.Timestamptz(accepted), OccurredAt: pgvalue.Timestamptz(accepted.Add(-time.Hour)), Payload: []byte(`{}`)}
-		if kind == "run" {
-			row.RunID = id
-		} else {
-			row.DeploymentID = id
-		}
-		record := eventRecord(row)
-		if !record.AcceptedAt.Equal(accepted) || !record.ObservedAt.Equal(accepted.Add(-time.Hour)) {
-			t.Fatalf("timestamps: %+v", record)
-		}
-		if kind == "run" {
-			if record.RunID == nil || *record.RunID != pgvalue.MustUUIDValue(id) || record.DeploymentID != nil {
-				t.Fatalf("run identity: %+v", record)
-			}
-		} else if record.DeploymentID == nil || *record.DeploymentID != pgvalue.MustUUIDValue(id) || record.RunID != nil || record.RunLeaseID != nil || record.AttemptNumber != nil {
-			t.Fatalf("deployment identity: %+v", record)
-		}
-		row.RetryCount++
-		if retry := eventRecord(row); !retry.AcceptedAt.Equal(record.AcceptedAt) {
-			t.Fatal("retry changed acceptance time")
-		}
+	row := validEventRow()
+	record := eventRecord(row)
+	if !record.AcceptedAt.Equal(row.CreatedAt.Time) || !record.ObservedAt.Equal(row.OccurredAt.Time) {
+		t.Fatalf("timestamps: %+v", record)
+	}
+	if record.DeploymentID == nil || *record.DeploymentID != pgvalue.MustUUIDValue(row.DeploymentID) {
+		t.Fatalf("deployment identity: %+v", record)
+	}
+	row.RetryCount++
+	if retry := eventRecord(row); !retry.AcceptedAt.Equal(record.AcceptedAt) {
+		t.Fatal("retry changed acceptance time")
 	}
 }
 
 func TestIngestAcknowledgmentFailurePreservesClaimFence(t *testing.T) {
 	errAck := errors.New("postgres acknowledgment failed")
-	row := validRunLogRow()
-	store := &fakeIngestStore{runLogRows: []db.ClaimRunLogIngestBatchRow{row}, writtenErr: errAck}
+	row := validEventRow()
+	store := &fakeIngestStore{eventRows: []db.ClaimEventIngestBatchRow{row}, writtenErr: errAck}
 	writer := &fakeIngestWriter{}
 	ingester := testIngestor(store, writer)
-	if _, err := ingester.ingestRunLogs(t.Context()); !errors.Is(err, errAck) {
+	if _, err := ingester.ingestEvents(t.Context()); !errors.Is(err, errAck) {
 		t.Fatalf("error: %v", err)
 	}
-	if writer.runLogCalls != 1 || store.failureCalls != 0 || !slices.Equal(store.writtenCounts, []int32{row.RetryCount}) {
+	if writer.eventCalls != 1 || store.failureCalls != 0 || !slices.Equal(store.writtenCounts, []int32{row.RetryCount}) {
 		t.Fatal("ack failure must leave the original claim retryable")
 	}
 	store.writtenErr = nil
-	store.runLogRows[0].RetryCount++
-	if _, err := ingester.ingestRunLogs(t.Context()); err != nil {
+	store.eventRows[0].RetryCount++
+	store.eventClaimCalls.Store(0)
+	if _, err := ingester.ingestEvents(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if writer.runLogCalls != 2 || !slices.Equal(store.writtenCounts, []int32{row.RetryCount + 1}) {
+	if writer.eventCalls != 2 || !slices.Equal(store.writtenCounts, []int32{row.RetryCount + 1}) {
 		t.Fatal("retry did not acknowledge the new claim fence")
 	}
 }
@@ -412,10 +321,7 @@ func TestIngestOperationBudgetPreservesLeaseHeadroomAndCallerDeadline(t *testing
 		if _, err := i.ingestEvents(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := i.ingestRunLogs(ctx); err != nil {
-			t.Fatal(err)
-		}
-		if calls != 3 {
+		if calls != 2 {
 			t.Fatalf("budget checked %d times", calls)
 		}
 	}
@@ -430,8 +336,6 @@ func TestIngestCadenceWaitsAfterNonemptyCycleWithoutHoldingClaims(t *testing.T) 
 	done := make(chan error, 1)
 	go func() { done <- i.runIngest(ctx) }()
 	first := <-started
-	<-started // Run and exec logs follow events within the same cycle.
-	<-started
 	second := <-started
 	cancel()
 	if err := <-done; !errors.Is(err, context.Canceled) {
@@ -443,17 +347,4 @@ func TestIngestCadenceWaitsAfterNonemptyCycleWithoutHoldingClaims(t *testing.T) 
 	if store.writtenCalls != 1 {
 		t.Fatal("successful event was not acknowledged in its cycle")
 	}
-}
-
-func (w *fakeIngestWriter) WriteCommandLogs(_ context.Context, rows []CommandLogRecord) ([]RejectedRow, error) {
-	w.commandLogCalls++
-	w.commandLogRows = append([]CommandLogRecord(nil), rows...)
-	return w.commandLogResult, w.commandLogErr
-}
-func (s *fakeIngestStore) ClaimCommandLogIngestBatch(ctx context.Context, params db.ClaimCommandLogIngestBatchParams) ([]db.ClaimCommandLogIngestBatchRow, error) {
-	if s.claimHook != nil {
-		s.claimHook(ctx)
-	}
-	s.commandLogClaims = append(s.commandLogClaims, params)
-	return s.commandLogRows, nil
 }

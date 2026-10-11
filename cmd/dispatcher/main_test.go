@@ -21,6 +21,12 @@ func TestRunStartsAndStopsWithConfiguredDependencies(t *testing.T) {
 	ctx := context.Background()
 	databaseURL := newSmokeDatabase(t, ctx)
 	t.Setenv("DATABASE_URL", databaseURL)
+	for key, value := range map[string]string{
+		"DIAGNOSTIC_CHUNK_BYTES": "1024", "DIAGNOSTIC_SOURCE_BYTES": "4096", "DIAGNOSTIC_SOURCE_RECORDS": "16",
+		"DIAGNOSTIC_ENVIRONMENT_BYTES": "16384", "DIAGNOSTIC_ENVIRONMENT_RECORDS": "64", "DIAGNOSTIC_QUEUE_BYTES": "65536", "DIAGNOSTIC_QUEUE_RECORDS": "256", "DIAGNOSTIC_DB_MAX_CONNECTIONS": "2", "DIAGNOSTIC_EXPORT_BATCH_BYTES": "4096", "DIAGNOSTIC_EXPORT_BATCH_RECORDS": "16",
+	} {
+		t.Setenv(key, value)
+	}
 	ready := make(chan struct{}, 1)
 	cp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/readyz" {

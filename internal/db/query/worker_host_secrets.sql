@@ -1,7 +1,8 @@
 -- name: AuthenticateWorkerHostSecret :one
-WITH host_secret AS (
-    SELECT worker_host_secrets.*,
-           worker_groups.claim_version AS group_claim_version
+-- Each dependent stage locks one supply row before the next, matching runtime
+-- admission and lifecycle operations. A joined FOR UPDATE does not guarantee order.
+WITH locked_group AS MATERIALIZED (
+    SELECT worker_groups.id, worker_groups.claim_version
       FROM worker_host_secrets
       JOIN worker_hosts ON worker_hosts.id = worker_host_secrets.worker_host_id
                            AND worker_hosts.worker_group_id = worker_host_secrets.worker_group_id
@@ -16,7 +17,36 @@ WITH host_secret AS (
        AND worker_hosts.status IN ('registering','active','draining')
        AND worker_groups.status IN ('active','paused','draining')
        AND worker_pools.status IN ('pending','active','draining')
-     FOR UPDATE OF worker_host_secrets, worker_hosts, worker_groups, worker_pools
+     FOR UPDATE OF worker_groups
+), locked_pool AS MATERIALIZED (
+    SELECT worker_pools.id, worker_pools.worker_group_id
+      FROM worker_pools
+      JOIN locked_group ON locked_group.id = worker_pools.worker_group_id
+      JOIN worker_hosts ON worker_hosts.worker_pool_id = worker_pools.id
+                           AND worker_hosts.worker_group_id = locked_group.id
+     WHERE worker_hosts.id = sqlc.arg(worker_host_id)
+       AND worker_pools.status IN ('pending','active','draining')
+     FOR UPDATE OF worker_pools
+), locked_host AS MATERIALIZED (
+    SELECT worker_hosts.*
+      FROM worker_hosts
+      JOIN locked_pool ON locked_pool.id = worker_hosts.worker_pool_id
+                          AND locked_pool.worker_group_id = worker_hosts.worker_group_id
+     WHERE worker_hosts.id = sqlc.arg(worker_host_id)
+       AND worker_hosts.status IN ('registering','active','draining')
+     FOR UPDATE OF worker_hosts
+), host_secret AS (
+    SELECT worker_host_secrets.*,
+           locked_group.claim_version AS group_claim_version
+      FROM worker_host_secrets
+      JOIN locked_host ON locked_host.id = worker_host_secrets.worker_host_id
+                          AND locked_host.worker_group_id = worker_host_secrets.worker_group_id
+      JOIN locked_group ON locked_group.id = worker_host_secrets.worker_group_id
+     WHERE worker_host_secrets.secret_hash = sqlc.arg(secret_hash)
+       AND worker_host_secrets.revoked_at IS NULL
+       AND (worker_host_secrets.expires_at IS NULL OR worker_host_secrets.expires_at > now())
+       AND worker_host_secrets.claim_version = locked_host.claim_version
+     FOR UPDATE OF worker_host_secrets
 ), advanced AS (
     UPDATE worker_hosts
        SET current_epoch = CASE WHEN worker_hosts.current_service_id = sqlc.arg(service_id)
@@ -198,6 +228,7 @@ SELECT worker_host_secrets.*, worker_hosts.resource_id,
    AND worker_hosts.status = 'lost'
    AND worker_hosts.claim_version = worker_host_secrets.claim_version + 1;
 
+-- EnrollHost owns the deciding authority locks and physical-custody exclusion.
 -- name: EnrollWorkerHost :one
 WITH enrollment_token AS (
     SELECT worker_group_tokens.id AS token_id,

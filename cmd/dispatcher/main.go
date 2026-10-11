@@ -5,44 +5,30 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	"github.com/helmrdotdev/helmr/internal/command"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbpool"
-	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/disk"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/outbox"
-	"github.com/helmrdotdev/helmr/internal/run"
-	"github.com/helmrdotdev/helmr/internal/scheduler"
 	"github.com/helmrdotdev/helmr/internal/secret"
-	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/slack"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
-	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// The dispatcher's connection budget is 44 = 12 + 32. On the run dispatch
-// pool, session-lock holders (the run dispatch lane workers plus the Run
-// lease and Computer instance reconcilers) are at most 10 connections, below
-// its cap of 32; each holder's work takes further connections. The Computer
-// deletion reconciler holds no session lock and takes one connection per
-// cycle. Default demand is about 31 of 32, so exhaustion only queues
-// acquisitions within each cycle's timeout.
-const (
-	baseMaxConns        = int32(12)
-	runDispatchMaxConns = int32(32)
-)
+// Lifecycle and event export share this pool; diagnostics have a separate budget.
+const baseMaxConns = int32(12)
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "--version" {
@@ -50,6 +36,18 @@ func main() {
 		return
 	}
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	if len(os.Args) > 1 {
+		if os.Args[1] != "check-config" || len(os.Args) != 2 {
+			log.Error("usage: dispatcher [check-config|--version]")
+			os.Exit(1)
+		}
+		if _, err := config.LoadDispatcher(); err != nil {
+			log.Error("invalid environment configuration", "error", err)
+			os.Exit(1)
+		}
+		fmt.Println("Environment configuration is valid; dependencies and runtime files were not checked.")
+		return
+	}
 	if err := runDispatcher(context.Background(), log); err != nil {
 		log.Error("dispatcher stopped", "error", err)
 		os.Exit(1)
@@ -71,35 +69,13 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	if err := pool.Ping(ctx); err != nil {
 		return fmt.Errorf("ping database: %w", err)
 	}
-	runDispatchPool, err := newDispatchPool(ctx, cfg.DatabaseURL, runDispatchMaxConns)
+	diagnosticPool, err := newDispatchPool(ctx, cfg.DatabaseURL, cfg.DiagnosticExporter.MaxConnections)
 	if err != nil {
-		return fmt.Errorf("configure run dispatch database pool: %w", err)
+		return fmt.Errorf("connect diagnostic database: %w", err)
 	}
-	defer runDispatchPool.Close()
-	connectionBudget := baseMaxConns + runDispatchMaxConns
-	log.Info("dispatcher database connection budget", "max_connections", connectionBudget,
-		"base", baseMaxConns, "run_dispatch", runDispatchMaxConns)
+	defer diagnosticPool.Close()
+	log.Info("dispatcher database connection budget", "lifecycle", baseMaxConns, "diagnostic", cfg.DiagnosticExporter.MaxConnections)
 	queries := db.New(pool)
-	runDispatchQueries := db.New(runDispatchPool)
-	runStore, err := dispatch.NewRunStore(runDispatchPool)
-	if err != nil {
-		return fmt.Errorf("configure run dispatch store: %w", err)
-	}
-	runLaneLock, err := dispatch.NewRunLaneLock(runDispatchPool)
-	if err != nil {
-		return fmt.Errorf("configure run dispatch lane lock: %w", err)
-	}
-	computerFencingKey, err := disk.NewFencingKey(cfg.ComputerFencingKey)
-	if err != nil {
-		return fmt.Errorf("configure computer fencing key: %w", err)
-	}
-	runDispatchAuthority, err := dispatch.NewRunAuthority(
-		runDispatchPool,
-		computerFencingKey,
-	)
-	if err != nil {
-		return fmt.Errorf("configure run dispatch authority: %w", err)
-	}
 	clickHouseClient, err := clickhouse.New(clickhouse.Config{
 		URL:      cfg.ClickHouseURL,
 		User:     cfg.ClickHouseUser,
@@ -109,18 +85,6 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("configure clickhouse: %w", err)
 	}
 	defer clickHouseClient.Close()
-	dispatchReconciler, err := dispatch.NewReconciler(
-		runStore, runLaneLock, runDispatchAuthority,
-		runDispatchQueries, runDispatchAuthority,
-		log,
-	)
-	if err != nil {
-		return fmt.Errorf("configure dispatch reconciler: %w", err)
-	}
-	computerDeletionReconciler, err := computer.NewDeletionReconciler(runDispatchPool, log)
-	if err != nil {
-		return fmt.Errorf("configure Computer deletion reconciler: %w", err)
-	}
 	telemetryIngestor, err := telemetry.NewIngestor(log, queries, clickhouse.NewWriter(clickHouseClient))
 	if err != nil {
 		return fmt.Errorf("configure telemetry ingester: %w", err)
@@ -129,73 +93,22 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure stale worker fencer: %w", err)
 	}
-	runLeaseReconciler, err := run.NewLeaseReconciler(runDispatchPool, log)
-	if err != nil {
-		return fmt.Errorf("configure Run lease reconciler: %w", err)
-	}
-	instanceReconciler, err := dispatch.NewInstanceReconciler(runDispatchAuthority, log)
-	if err != nil {
-		return fmt.Errorf("configure Computer instance reconciler: %w", err)
-	}
-	scheduleAuthority := definition.NewScheduleAuthority()
 	secretStore, err := secret.New(queries, pool, cfg.EncryptionKey)
 	if err != nil {
-		return fmt.Errorf("configure scheduled Computer CA encryption: %w", err)
+		return fmt.Errorf("configure scheduled Computer trust: %w", err)
 	}
-	scheduleAdmitter, err := scheduler.NewDBAdmitter(pool, scheduleAuthority, secretStore)
+	diagnosticIngester, err := telemetry.NewDiagnosticIngester(diagnosticPool, clickhouse.NewWriter(clickHouseClient), cfg.DiagnosticExporter.Ingest, log)
 	if err != nil {
-		return fmt.Errorf("configure schedule admission: %w", err)
-	}
-	scheduleWorker, err := scheduler.NewWorker(log, queries, scheduleAdmitter)
-	if err != nil {
-		return fmt.Errorf("configure schedule worker: %w", err)
-	}
-	tokenWaitReconciler, err := token.NewWaitReconciler(pool)
-	if err != nil {
-		return fmt.Errorf("configure token wait reconciler: %w", err)
-	}
-	tokenReconcileDelivery, err := token.NewDeliveryWorker(
-		log,
-		queries,
-		tokenWaitReconciler.ReconcileBatch,
-	)
-	if err != nil {
-		return fmt.Errorf("configure token reconciliation delivery: %w", err)
+		return fmt.Errorf("configure diagnostic exporter: %w", err)
 	}
 	secretRevocationDelivery, err :=
 		secret.NewRevocationDeliveryWorker(
 			log,
 			queries,
-			reconcileSecretRevocation(runDispatchPool),
+			reconcileSecretRevocation(pool),
 		)
 	if err != nil {
 		return fmt.Errorf("configure secret revocation delivery: %w", err)
-	}
-	timerWaitReconciler, err := run.NewTimerWaitReconciler(pool)
-	if err != nil {
-		return fmt.Errorf("configure timer wait reconciler: %w", err)
-	}
-	sessionReconciler, err := session.NewReconciler(pool)
-	if err != nil {
-		return fmt.Errorf("configure actor input reconciler: %w", err)
-	}
-	sessionInputDelivery, err := session.NewDeliveryWorker(
-		log,
-		queries,
-		sessionReconciler.ReconcileInput,
-		sessionReconciler.ReconcileLifecycle,
-	)
-	if err != nil {
-		return fmt.Errorf("configure actor input reconciliation delivery: %w", err)
-	}
-	runWaitDeadlineDelivery, err := run.NewDeadlineWorker(
-		log,
-		timerWaitReconciler.ReconcileDue,
-		tokenWaitReconciler.ReconcileTimeouts,
-		sessionReconciler.ReconcileTimeouts,
-	)
-	if err != nil {
-		return fmt.Errorf("configure run wait deadline reconciliation delivery: %w", err)
 	}
 	controlOutboxLifecycle, err := outbox.NewLifecycle(log, queries)
 	if err != nil {
@@ -204,17 +117,35 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 
 	runners := []dispatcherRunner{
 		{name: "stale host fencer", run: staleHostFencer.Run},
-		{name: "Run lease reconciler", run: runLeaseReconciler.Run},
-		{name: "Computer instance reconciler", run: instanceReconciler.Run},
-		{name: "dispatch reconciler", run: dispatchReconciler.Run},
-		{name: "Computer deletion reconciler", run: computerDeletionReconciler.Run},
-		{name: "schedule worker", run: scheduleWorker.Run},
-		{name: "token reconciliation delivery", run: tokenReconcileDelivery.Run},
+		{name: "Agent schedules", run: func(ctx context.Context) error { return agent.RunSchedules(ctx, pool, secretStore, log) }},
 		{name: "secret revocation delivery", run: secretRevocationDelivery.Run},
-		{name: "run wait deadline delivery", run: runWaitDeadlineDelivery.Run},
-		{name: "actor input delivery", run: sessionInputDelivery.Run},
-		{name: "telemetry ingestor", run: telemetryIngestor.Run},
+		{name: "event telemetry ingestor", run: telemetryIngestor.Run},
+		{name: "diagnostic exporter", run: diagnosticIngester.Run},
 		{name: "control outbox lifecycle", run: controlOutboxLifecycle.Run},
+	}
+	{
+		credentials, err := slack.NewCredentialStore(pool, cfg.EncryptionKey)
+		if err != nil {
+			return fmt.Errorf("configure Slack credentials: %w", err)
+		}
+		client := slack.NewWebClient(credentials, nil)
+		publicURL, err := url.Parse(cfg.PublicURL)
+		if err != nil {
+			return fmt.Errorf("configure Slack Console URL: %w", err)
+		}
+		controlKey, err := slack.ControlKey(cfg.EncryptionKey)
+		if err != nil {
+			return fmt.Errorf("configure Slack controls: %w", err)
+		}
+		projection := slack.ProjectionConfig{PublicURL: publicURL, ControlKey: controlKey}
+		runners = append(runners,
+			dispatcherRunner{name: "Slack requests", run: func(ctx context.Context) error {
+				return slack.RunRequests(ctx, pool, secretStore, projection, client, log)
+			}},
+			dispatcherRunner{name: "Slack projection", run: func(ctx context.Context) error { return slack.RunProjection(ctx, pool, projection, log) }},
+			dispatcherRunner{name: "Slack credentials", run: func(ctx context.Context) error { return credentials.RunCredentials(ctx, nil, log) }},
+			dispatcherRunner{name: "Slack delivery", run: func(ctx context.Context) error { return slack.RunDelivery(ctx, pool, client, log) }},
+		)
 	}
 	log.Info("Helmr dispatcher running")
 	return superviseRunners(ctx, runners)
@@ -283,32 +214,10 @@ func newDispatchPool(ctx context.Context, databaseURL string, maxConns int32) (*
 	return pool, nil
 }
 
-// reconcileSecretRevocation fails the Runs a Secret revocation affects and,
-// with the batch limit they leave, stops the affected Commands. It returns
-// the candidates examined.
+// Agent preparation and image revocation converge in the control-plane owner
+// loops. This outbox callback converges affected ordinary Commands.
 func reconcileSecretRevocation(database db.TxDB) secret.RevocationReconcileBatch {
-	return func(
-		ctx context.Context,
-		environmentID uuid.UUID,
-		secretID uuid.UUID,
-		revocationGeneration int64,
-		limit int32,
-	) (int, error) {
-		revocation := secret.Revocation{
-			EnvironmentID: environmentID,
-			SecretID:      secretID,
-			Generation:    revocationGeneration,
-		}
-		runs, err := run.FailSecretRevokedRuns(ctx, database, revocation, limit)
-		if err != nil || runs >= int(limit) {
-			return runs, err
-		}
-		commands, err := command.StopSecretRevokedCommands(
-			ctx,
-			database,
-			revocation,
-			limit-int32(runs),
-		)
-		return runs + commands, err
+	return func(ctx context.Context, environmentID, secretID uuid.UUID, generation int64, limit int32) (int, error) {
+		return command.StopSecretRevokedCommands(ctx, database, secret.Revocation{EnvironmentID: environmentID, SecretID: secretID, Generation: generation}, limit)
 	}
 }

@@ -12,7 +12,7 @@ import (
 
 func TestCommandCompletionRejectsAmbiguousResult(t *testing.T) {
 	code := int32(0)
-	valid := CompletionReport{OrgID: uuid.NewV7(), CommandID: uuid.NewV7(), InstanceID: uuid.NewV7(), WriterGeneration: 1, Outcome: "exited", ExitCode: &code}
+	valid := CompletionReport{EnvironmentID: uuid.NewV7(), CommandID: uuid.NewV7(), InstanceID: uuid.NewV7(), WriterGeneration: 1, Outcome: "exited", ExitCode: &code, Stdout: OutputBoundary{ThroughSequence: 1, Complete: true}, Stderr: OutputBoundary{ThroughSequence: 1, Complete: true}}
 	for name, mutate := range map[string]func(*CompletionReport){
 		"exit without code": func(r *CompletionReport) { r.ExitCode = nil },
 		"exit with error":   func(r *CompletionReport) { r.Error = []byte(`{}`) },
@@ -28,10 +28,12 @@ func TestCommandCompletionRejectsAmbiguousResult(t *testing.T) {
 			r.Outcome = "computer_command_failed"
 			r.Error = []byte(`[]`)
 		},
-		"zero generation":     func(r *CompletionReport) { r.WriterGeneration = 0 },
-		"nil instance":        func(r *CompletionReport) { r.InstanceID = uuid.Nil() },
-		"UUIDv4 command":      func(r *CompletionReport) { r.CommandID = uuid.MustParse("8fa3431e-c649-4ea0-bf12-b8e9fcdf1d8d") },
-		"UUIDv4 organization": func(r *CompletionReport) { r.OrgID = uuid.MustParse("8fa3431e-c649-4ea0-bf12-b8e9fcdf1d8d") },
+		"missing stdout boundary": func(r *CompletionReport) { r.Stdout = OutputBoundary{} },
+		"missing stderr boundary": func(r *CompletionReport) { r.Stderr = OutputBoundary{} },
+		"zero generation":         func(r *CompletionReport) { r.WriterGeneration = 0 },
+		"nil instance":            func(r *CompletionReport) { r.InstanceID = uuid.Nil() },
+		"UUIDv4 command":          func(r *CompletionReport) { r.CommandID = uuid.MustParse("8fa3431e-c649-4ea0-bf12-b8e9fcdf1d8d") },
+		"UUIDv4 organization":     func(r *CompletionReport) { r.EnvironmentID = uuid.MustParse("8fa3431e-c649-4ea0-bf12-b8e9fcdf1d8d") },
 	} {
 		t.Run(name, func(t *testing.T) {
 			report := valid
@@ -50,7 +52,7 @@ func TestCommandCompletionRejectsAmbiguousResult(t *testing.T) {
 // The recorded error document is normalized to a JSON object, and a failure
 // without one records its outcome as the code.
 func TestCommandCompletionNormalizesErrorDocument(t *testing.T) {
-	report := CompletionReport{OrgID: uuid.NewV7(), CommandID: uuid.NewV7(), InstanceID: uuid.NewV7(), WriterGeneration: 1, Outcome: "computer_command_failed"}
+	report := CompletionReport{EnvironmentID: uuid.NewV7(), CommandID: uuid.NewV7(), InstanceID: uuid.NewV7(), WriterGeneration: 1, Outcome: "computer_command_failed", Stdout: OutputBoundary{ThroughSequence: 1, Complete: true}, Stderr: OutputBoundary{ThroughSequence: 1, Complete: true}}
 	result, err := report.parse()
 	if err != nil || string(result.detail) != `{"code":"computer_command_failed"}` {
 		t.Fatalf("default detail=%s err=%v", result.detail, err)
@@ -64,7 +66,7 @@ func TestCommandCompletionNormalizesErrorDocument(t *testing.T) {
 
 func TestCommandReleaseLeavesRecoveryScopesUnreconciled(t *testing.T) {
 	for _, reason := range []string{"secret_revoked", "instance_lost", "worker_lost"} {
-		report, err := release(db.ComputerCommand{Status: "failed", TerminalAt: pgvalue.Timestamptz(time.Now()), TerminalReasonCode: pgvalue.Text(reason)}, uuid.NewV7())
+		report, err := release(db.ComputerCommand{Status: "failed", TerminalAt: pgvalue.Timestamptz(time.Now()), TerminalReasonCode: pgvalue.Text(reason)}, uuid.NewV7(), Lease{})
 		if err != nil || report != nil {
 			t.Fatalf("recovery reason %s blocked peer claims: %v", reason, err)
 		}

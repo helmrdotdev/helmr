@@ -1,9 +1,13 @@
 package controlplane
 
 import (
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5/pgtype"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+	"uuid"
 )
 
 func TestSecretListCursorRoundTripAndScope(t *testing.T) {
@@ -70,5 +74,19 @@ func TestSecretListQueryAcceptsExactName(t *testing.T) {
 	}
 	if limit != 0 || cursor != nil || name != "API_TOKEN" {
 		t.Fatalf("limit=%d cursor=%+v name=%q", limit, cursor, name)
+	}
+}
+
+func TestSecretResponseUsesUTCTimestamps(t *testing.T) {
+	instant := time.Date(2026, 10, 9, 8, 0, 0, 0, time.FixedZone("fixture", 9*60*60))
+	timestamp := pgtype.Timestamptz{Time: instant, Valid: true}
+	response, err := secretResponse(pgvalue.UUID(uuid.NewV7()), "fixture", "revoked", timestamp, timestamp, timestamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []time.Time{response.CreatedAt, *response.RotatedAt, *response.RevokedAt} {
+		if value.Location() != time.UTC || !value.Equal(instant) {
+			t.Fatalf("timestamp changed instant or retained local offset: %s", value)
+		}
 	}
 }

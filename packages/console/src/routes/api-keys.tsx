@@ -51,37 +51,23 @@ const API_KEY_SCOPE_OPTIONS: {
   label: string;
   description: string;
 }[] = [
-  {
-    value: "runs:create",
-    label: "Start tasks",
-    description: "Allow automation to start deployed tasks in the selected project and environment.",
-  },
-  {
-    value: "runs:read",
-    label: "Read runs",
-    description: "Allow automation to read run status, metadata, and logs.",
-  },
-  {
-    value: "runs:manage",
-    label: "Manage runs",
-    description: "Allow automation to cancel Runs.",
-  },
+  { value: "asks:respond", label: "Answer questions", description: "Allow this API key to answer pending questions in the selected project and environment." },
   {
     value: "sessions:read",
     label: "Read sessions",
     description: "Allow automation to read Session state in the selected project and environment.",
   },
   {
-    value: "actors:start",
-    label: "Start actors",
-    description: "Allow automation to start declared Actors.",
+    value: "agents:start",
+    label: "Start agents",
+    description: "Allow automation to start declared Agents.",
   },
   {
     value: "sessions:send",
     label: "Send session work and messages",
     description: "Allow automation to enqueue Turns and send Session or exact Turn messages.",
   },
-  { value: "sessions:interrupt", label: "Interrupt turns", description: "Request interruption of an exact Turn while retaining queued work." },
+  { value: "sessions:interrupt", label: "Interrupt sessions", description: "Interrupt the Session subtree and hold queued work until resumed." },
   { value: "sessions:resume", label: "Resume sessions", description: "Resume queued work after an exact hold converges." },
   {
     value: "sessions:close",
@@ -97,26 +83,6 @@ const API_KEY_SCOPE_OPTIONS: {
     value: "secrets:write",
     label: "Manage secrets",
     description: "Allow automation to list, create, rotate, and revoke secrets in the selected project and environment.",
-  },
-  {
-    value: "tokens:create",
-    label: "Create tokens",
-    description: "Allow automation to create externally completable tokens.",
-  },
-  {
-    value: "tokens:read",
-    label: "Read tokens",
-    description: "Allow automation to inspect token status and metadata.",
-  },
-  {
-    value: "tokens:complete",
-    label: "Complete tokens",
-    description: "Allow automation to complete tokens through the token API.",
-  },
-  {
-    value: "tokens:cancel",
-    label: "Cancel tokens",
-    description: "Allow automation to cancel pending tokens.",
   },
   {
     value: "computers:create",
@@ -139,13 +105,13 @@ const API_KEY_SCOPE_OPTIONS: {
     description: "Allow automation to start Commands on Computers.",
   },
   {
-    value: "tasks:deploy",
-    label: "Deploy tasks",
+    value: "deployments:write",
+    label: "Deploy bundles",
     description: "Allow automation to upload, finalize, and promote Deployment Bundles in the selected project and environment.",
   },
 ];
 
-const DEFAULT_SCOPES: ApiKeyScope[] = ["runs:create", "runs:read"];
+const DEFAULT_SCOPES: ApiKeyScope[] = ["agents:start", "sessions:read"];
 
 function apiKeyErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {

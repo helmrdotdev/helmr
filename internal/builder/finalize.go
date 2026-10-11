@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"io"
 	"os"
 	"path/filepath"
@@ -28,10 +29,10 @@ type ObjectSource struct {
 // installation, package-manager selection, source layout, and builder
 // provenance are producer-local concerns and are deliberately absent.
 type BundleInput struct {
-	Runtime        artifact.RuntimeDescriptor
-	Program        artifact.ProgramOutput
-	ComputerImages []bundle.ComputerImage
-	Objects        []ObjectSource
+	Runtime       artifact.RuntimeDescriptor
+	Program       artifact.ProgramOutput
+	ComputerSeeds []bundle.ComputerSeed
+	Objects       []ObjectSource
 }
 
 // FinalizeBundle writes one exact, self-contained deployment bundle directory.
@@ -58,16 +59,16 @@ func FinalizeBundle(
 		return bundle.Directory{}, fmt.Errorf("bundle Program: %w", err)
 	}
 
-	plan, err := bundle.PlanFromProgramIndex(input.Program.Index)
+	plan, err := bundle.PlanFromProgramMetadata(input.Program.Metadata)
 	if err != nil {
 		return bundle.Directory{}, err
 	}
-	computerImages := make([]bundle.ComputerImage, len(input.ComputerImages))
-	copy(computerImages, input.ComputerImages)
-	sort.Slice(computerImages, func(left, right int) bool {
-		return computerImages[left].DeclaredID < computerImages[right].DeclaredID
+	computerSeeds := make([]bundle.ComputerSeed, len(input.ComputerSeeds))
+	copy(computerSeeds, input.ComputerSeeds)
+	sort.Slice(computerSeeds, func(left, right int) bool {
+		return computerSeeds[left].DeclaredID < computerSeeds[right].DeclaredID
 	})
-	objects, err := referencedBundleObjects(input.Program.Artifact, computerImages)
+	objects, err := referencedBundleObjects(input.Program.Artifact, computerSeeds)
 	if err != nil {
 		return bundle.Directory{}, err
 	}
@@ -85,9 +86,9 @@ func FinalizeBundle(
 				MediaType: input.Runtime.MediaType,
 			},
 		},
-		Program:        input.Program,
-		ComputerImages: computerImages,
-		Objects:        objects,
+		Program:       input.Program,
+		ComputerSeeds: computerSeeds,
+		Objects:       objects,
 	}
 	bundleJSON, err := bundle.Canonical(manifest)
 	if err != nil {
@@ -168,12 +169,12 @@ func FinalizeBundle(
 
 func referencedBundleObjects(
 	program artifact.ProgramDescriptor,
-	computerImages []bundle.ComputerImage,
+	computerSeeds []bundle.ComputerSeed,
 ) ([]bundle.Object, error) {
-	objectsByDigest := make(map[string]bundle.Object, 1+len(computerImages))
+	objectsByDigest := make(map[string]bundle.Object, 1+len(computerSeeds))
 	programObject := bundle.Object(program)
 	objectsByDigest[programObject.Digest] = programObject
-	for _, image := range computerImages {
+	for _, image := range computerSeeds {
 		object := bundle.Object{
 			Digest: image.Artifact.Digest, SizeBytes: image.Artifact.SizeBytes,
 			MediaType: image.Artifact.MediaType,
@@ -236,10 +237,10 @@ func verifyFinalObject(
 		if err := verify.ProgramOutputFile(ctx, file, program); err != nil {
 			return fmt.Errorf("verify finalized Program object: %w", err)
 		}
-	case bundle.ComputerImageMediaType:
+	case definition.ComputerSeedMediaType:
 		artifact := disk.SeedArtifact{Object: cas.Descriptor{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}, LogicalBytes: disk.SeedCapacity}
 		if err := disk.VerifySeed(ctx, file, artifact, disk.SeedCapacity); err != nil {
-			return fmt.Errorf("verify finalized computer image object: %w", err)
+			return fmt.Errorf("verify finalized Computer seed object: %w", err)
 		}
 
 	default:

@@ -1,30 +1,20 @@
-import { image, schedules, sandbox } from "@helmr/sdk"
+import { agent, computer, image, triggers } from "@helmr/sdk"
 
-const base = image("helmr-schedule-smoke")
-  .from("node:24-bookworm-slim")
-  .workdir("/sandbox")
+export const scheduleSmokeComputer = computer({
+  id: "helmr-schedule-smoke",
+  image: image("helmr-schedule-smoke").from("node:24-bookworm-slim").workdir("/sandbox"),
+  resources: { cpu: 1, memory: "1GiB" },
+})
 
-export const scheduleSmokeComputer = sandbox({ id: "helmr-schedule-smoke" })
-  .image(base)
-  .resources({ cpu: 1, memory: "1GiB" })
-
-export const scheduleSmoke = schedules.task({
+export const scheduleSmoke = agent({
   id: "schedule-smoke",
-  cron: {
-    pattern: "* * * * *",
-    timezone: "UTC",
-  },
-  computer: { sandbox: scheduleSmokeComputer },
-  maxDuration: "5m",
-  ttl: "5m",
-  retry: { enabled: false },
-  run: async (input, ctx) => ({
-    scheduleId: input.scheduleId,
-    scheduledAt: input.scheduledAt.toISOString(),
-    lastScheduledAt: input.lastScheduledAt?.toISOString() ?? null,
-    timezone: input.timezone,
-    upcoming: input.upcoming.map((value) => value.toISOString()),
-    runId: ctx.run.id,
-    causeType: ctx.run.cause.type,
+  computer: scheduleSmokeComputer,
+  triggers: [triggers.cron("each-minute", "* * * * *", { timezone: "UTC", input: [{ type: "text", text: JSON.stringify({ scheduled: true }) }] })],
+  maxTurnDuration: "5m",
+  turn: async (turn, ctx) => ({
+    input: turn.input,
+    source: turn.source.kind,
+    sessionId: ctx.session.id,
+    turnId: turn.id,
   }),
 })

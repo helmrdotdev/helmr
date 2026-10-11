@@ -13,26 +13,20 @@ const (
 	PermissionAPIKeysManage         Permission = "api_keys.manage"
 	PermissionMembersManage         Permission = "members.manage"
 	PermissionProjectsManage        Permission = "projects.manage"
-	PermissionRunsCreate            Permission = "runs.create"
-	PermissionRunsRead              Permission = "runs.read"
-	PermissionRunsManage            Permission = "runs.manage"
+	PermissionAsksRespond           Permission = "asks.respond"
 	PermissionSessionsRead          Permission = "sessions.read"
-	PermissionActorsStart           Permission = "actors.start"
+	PermissionAgentsStart           Permission = "agents.start"
 	PermissionSessionsSend          Permission = "sessions.send"
 	PermissionSessionsClose         Permission = "sessions.close"
 	PermissionSessionsCancel        Permission = "sessions.cancel"
 	PermissionSessionsInterrupt     Permission = "sessions.interrupt"
 	PermissionSessionsResume        Permission = "sessions.resume"
-	PermissionTokensCreate          Permission = "tokens.create"
-	PermissionTokensRead            Permission = "tokens.read"
-	PermissionTokensComplete        Permission = "tokens.complete"
-	PermissionTokensCancel          Permission = "tokens.cancel"
 	PermissionComputersCreate       Permission = "computers.create"
 	PermissionComputersRead         Permission = "computers.read"
 	PermissionComputersDelete       Permission = "computers.delete"
 	PermissionComputerCommandCreate Permission = "computer.exec.create"
 	PermissionSecretsWrite          Permission = "secrets.write"
-	PermissionTasksDeploy           Permission = "tasks.deploy"
+	PermissionDeploymentsWrite      Permission = "deployments.write"
 )
 
 // AllPermissions lists every Permission in declaration order. Callers that
@@ -40,29 +34,23 @@ const (
 // the constants.
 func AllPermissions() []Permission {
 	return []Permission{
+		PermissionAsksRespond,
 		PermissionAPIKeysManage,
 		PermissionMembersManage,
 		PermissionProjectsManage,
-		PermissionRunsCreate,
-		PermissionRunsRead,
-		PermissionRunsManage,
 		PermissionSessionsRead,
-		PermissionActorsStart,
+		PermissionAgentsStart,
 		PermissionSessionsSend,
 		PermissionSessionsClose,
 		PermissionSessionsCancel,
 		PermissionSessionsInterrupt,
 		PermissionSessionsResume,
-		PermissionTokensCreate,
-		PermissionTokensRead,
-		PermissionTokensComplete,
-		PermissionTokensCancel,
 		PermissionComputersCreate,
 		PermissionComputersRead,
 		PermissionComputersDelete,
 		PermissionComputerCommandCreate,
 		PermissionSecretsWrite,
-		PermissionTasksDeploy,
+		PermissionDeploymentsWrite,
 	}
 }
 
@@ -96,34 +84,25 @@ func RoleAllows(role Role, permission Permission) bool {
 		return true
 	case RoleDeveloper:
 		switch permission {
-		case PermissionRunsCreate,
-			PermissionRunsRead,
-			PermissionRunsManage,
-			PermissionSessionsRead,
-			PermissionActorsStart,
+		case PermissionSessionsRead,
+			PermissionAgentsStart,
 			PermissionSessionsSend,
 			PermissionSessionsClose,
 			PermissionSessionsCancel,
 			PermissionSessionsInterrupt,
 			PermissionSessionsResume,
-			PermissionTokensCreate,
-			PermissionTokensRead,
-			PermissionTokensComplete,
-			PermissionTokensCancel,
 			PermissionComputersCreate,
 			PermissionComputersRead,
 			PermissionComputersDelete,
 			PermissionComputerCommandCreate,
-			PermissionTasksDeploy:
+			PermissionDeploymentsWrite:
 			return true
 		default:
 			return false
 		}
 	case RoleViewer:
 		switch permission {
-		case PermissionRunsRead,
-			PermissionSessionsRead,
-			PermissionTokensRead,
+		case PermissionSessionsRead,
 			PermissionComputersRead:
 			return true
 		default:
@@ -137,26 +116,20 @@ func RoleAllows(role Role, permission Permission) bool {
 func ParseAPIKeyGrant(value string) (Permission, bool) {
 	permission := Permission(strings.TrimSpace(value))
 	switch permission {
-	case PermissionRunsCreate,
-		PermissionRunsRead,
-		PermissionRunsManage,
+	case PermissionAsksRespond,
 		PermissionSessionsRead,
-		PermissionActorsStart,
+		PermissionAgentsStart,
 		PermissionSessionsSend,
 		PermissionSessionsClose,
 		PermissionSessionsCancel,
 		PermissionSessionsInterrupt,
 		PermissionSessionsResume,
-		PermissionTokensCreate,
-		PermissionTokensRead,
-		PermissionTokensComplete,
-		PermissionTokensCancel,
 		PermissionComputersCreate,
 		PermissionComputersRead,
 		PermissionComputersDelete,
 		PermissionComputerCommandCreate,
 		PermissionSecretsWrite,
-		PermissionTasksDeploy:
+		PermissionDeploymentsWrite:
 		return permission, true
 	default:
 		return "", false

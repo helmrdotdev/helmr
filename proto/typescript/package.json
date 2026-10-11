@@ -8,7 +8,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "gen": "cd ../.. && buf generate proto --path proto/program.proto --path proto/computer.proto --template proto/buf.gen.yaml",
+    "gen": "make -C ../.. proto",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

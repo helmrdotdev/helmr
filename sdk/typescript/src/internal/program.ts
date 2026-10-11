@@ -1,13 +1,16 @@
 export type RuntimeArchitecture = "x86_64"
-
-export type ProgramDeclaration =
-  | Readonly<{
-      kind: "task"
-      declaredId: string
-      slots: readonly ["handler"] | readonly ["handler", "payloadSchema"]
-    }>
-  | Readonly<{
-      kind: "actor"
-      declaredId: string
-      slots: readonly ["handler"]
-    }>
+export interface DefinitionIndex {
+  readonly apiVersion: "helmr.definition-index.v1"
+  readonly agents: readonly {
+    readonly id: string
+    readonly computerDefinitionId: string
+    readonly modulePath: string
+    readonly exportName: string
+  }[]
+  readonly computers: readonly {
+    readonly id: string
+    readonly modulePath: string
+    readonly exportName: string
+    readonly throughAgent: boolean
+  }[]
+}

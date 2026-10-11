@@ -1,21 +1,21 @@
-import { verify, assert, errorCode, deadline } from "../../support/context"
+import { verify, assert, errorCode, deadline, deleteComputer } from "../../support/context"
 await verify("missing-secret", async ({ client, marker, cleanup, objects }) => {
   await assert.rejects(
     async () => {
-      const ref = await client.sandboxes.createComputer(
+      const ref = await client.computerDefinitions.createComputer(
         "helmr-secret-smoke",
         {
           key: marker,
           idempotencyKey: `missing:${marker}`,
           secrets: [
-            { secret: `absent-${marker}`, env: { name: "HELMR_VERIFICATION_SECRET", mode: "raw" } },
+            { secretId: "01900000-0000-7000-8000-000000000099", env: { name: "VERIFICATION_SECRET", mode: "raw" } },
           ],
         },
         { signal: deadline(30_000) },
       )
       objects.computer_ids.push(ref.id)
       cleanup(() =>
-        ref.delete({ idempotencyKey: `delete:${marker}` }, { signal: deadline(30_000) }),
+        deleteComputer(ref, `delete:${marker}`),
       )
     },
     (error) => errorCode(error) === "secret_unavailable",

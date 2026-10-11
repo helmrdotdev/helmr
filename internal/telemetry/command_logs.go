@@ -20,10 +20,15 @@ type CommandLogChunkQuery struct {
 }
 
 type CommandLogChunk struct {
-	ObservedSeq uint64
-	Content     []byte
-	ObservedAt  time.Time
-	AcceptedAt  time.Time
+	Kind            string
+	ThroughSequence uint64
+	DroppedBytes    int64
+	Complete        bool
+	ExpiresAt       time.Time
+	ObservedSeq     uint64
+	Content         []byte
+	ObservedAt      time.Time
+	AcceptedAt      time.Time
 }
 
 type CommandLogChunkPage struct {

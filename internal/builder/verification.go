@@ -23,8 +23,8 @@ const (
 
 	verificationFailureReason = "verification_failed"
 
-	verificationBuildPlanPath    = "helmr/build-plan.json"
-	verificationDeclarationsPath = "helmr/analysis-locators.json"
+	verificationBuildPlanPath       = "helmr/build-plan.json"
+	verificationDefinitionIndexPath = "helmr/definition-index.json"
 
 	maxVerificationResultBytes         = 70 << 20
 	maxVerificationFailureMessageBytes = 16 << 10
@@ -45,16 +45,13 @@ func (result VerificationResult) BuildPlan() []byte {
 	return []byte(result.Succeeded.Files[0].Content)
 }
 
-// Declarations returns the declaration locator document of a program-backed
-// succeeded verification result, which is always its second file
-// (verificationDeclarationsPath).
-func (result VerificationResult) Declarations() []byte {
+// DefinitionIndex returns the sole runtime export index from successful verification.
+func (result VerificationResult) DefinitionIndex() []byte {
 	return []byte(result.Succeeded.Files[1].Content)
 }
 
 type VerificationSucceeded struct {
-	Declarations []artifact.ProgramDeclaration `json:"declarations"`
-	Files        []VerificationFile            `json:"files"`
+	Files []VerificationFile `json:"files"`
 }
 
 type VerificationFile struct {
@@ -190,14 +187,12 @@ func (result VerificationResult) MarshalJSON() ([]byte, error) {
 			return nil, errors.New("succeeded verification result requires success data")
 		}
 		return json.Marshal(struct {
-			FormatVersion int                           `json:"formatVersion"`
-			Outcome       VerificationOutcome           `json:"outcome"`
-			Declarations  []artifact.ProgramDeclaration `json:"declarations"`
-			Files         []VerificationFile            `json:"files"`
+			FormatVersion int                 `json:"formatVersion"`
+			Outcome       VerificationOutcome `json:"outcome"`
+			Files         []VerificationFile  `json:"files"`
 		}{
 			FormatVersion: result.FormatVersion,
 			Outcome:       result.Outcome,
-			Declarations:  result.Succeeded.Declarations,
 			Files:         result.Succeeded.Files,
 		})
 	case VerificationOutcomeFailed:
@@ -233,17 +228,15 @@ func (result *VerificationResult) UnmarshalJSON(raw []byte) error {
 	switch header.Outcome {
 	case VerificationOutcomeSucceeded:
 		var wire struct {
-			FormatVersion int                           `json:"formatVersion"`
-			Outcome       VerificationOutcome           `json:"outcome"`
-			Declarations  []artifact.ProgramDeclaration `json:"declarations"`
-			Files         []VerificationFile            `json:"files"`
+			FormatVersion int                 `json:"formatVersion"`
+			Outcome       VerificationOutcome `json:"outcome"`
+			Files         []VerificationFile  `json:"files"`
 		}
 		if err := decodeClosedVerificationResult(raw, &wire); err != nil {
 			return err
 		}
 		result.Succeeded = &VerificationSucceeded{
-			Declarations: wire.Declarations,
-			Files:        wire.Files,
+			Files: wire.Files,
 		}
 	case VerificationOutcomeFailed:
 		var wire struct {
@@ -271,67 +264,18 @@ func decodeClosedVerificationResult(raw []byte, value any) error {
 }
 
 func validateVerificationSucceeded(succeeded VerificationSucceeded) error {
-	if succeeded.Files == nil {
-		return errors.New("verification result files must be an array")
-	}
-	if len(succeeded.Files) != 1 && len(succeeded.Files) != 2 {
-		return errors.New("verification result files must contain exactly one or two entries")
-	}
-	if succeeded.Files[0].Path != verificationBuildPlanPath {
-		return fmt.Errorf(
-			"verification result files[0].path = %q, want %q",
-			succeeded.Files[0].Path,
-			verificationBuildPlanPath,
-		)
+	if len(succeeded.Files) != 2 || succeeded.Files[0].Path != verificationBuildPlanPath || succeeded.Files[1].Path != verificationDefinitionIndexPath {
+		return errors.New("verification requires exactly build-plan.json and definition-index.json in that order")
 	}
 	plan, err := definition.ParseBuildPlan([]byte(succeeded.Files[0].Content))
 	if err != nil {
-		return fmt.Errorf("verification result build plan: %w", err)
+		return fmt.Errorf("verification build plan: %w", err)
 	}
-	declarations := artifact.BuildPlanProgramDeclarations(plan)
-	if len(declarations) == 0 {
-		if len(succeeded.Files) != 1 {
-			return errors.New(
-				"computer-only verification result must contain only the build plan",
-			)
-		}
-		if succeeded.Declarations == nil || len(succeeded.Declarations) != 0 {
-			return errors.New("computer-only verification result requires empty declarations")
-		}
-		return nil
-	}
-	if len(succeeded.Files) != 2 {
-		return errors.New(
-			"program-backed verification result must contain all generated program files",
-		)
-	}
-	if succeeded.Files[1].Path != verificationDeclarationsPath {
-		return fmt.Errorf(
-			"verification result files[1].path = %q, want %q",
-			succeeded.Files[1].Path,
-			verificationDeclarationsPath,
-		)
-	}
-	locator, err := artifact.ParseDeclarationLocator([]byte(succeeded.Files[1].Content))
+	index, err := artifact.ParseDefinitionIndex([]byte(succeeded.Files[1].Content))
 	if err != nil {
-		return fmt.Errorf("verification result declaration locator: %w", err)
+		return fmt.Errorf("verification Definition index: %w", err)
 	}
-	if len(locator.Declarations) != len(declarations) {
-		return errors.New(
-			"verification result declaration locator does not match build plan",
-		)
-	}
-	for index, declaration := range declarations {
-		located := locator.Declarations[index]
-		if located.Kind != declaration.Kind ||
-			located.DeclaredID != declaration.DeclaredID {
-			return fmt.Errorf(
-				"verification result declaration locator does not match build plan at position %d",
-				index,
-			)
-		}
-	}
-	return validateVerifiedDeclarations(succeeded.Declarations, declarations)
+	return artifact.ValidateBuildPlanDefinitionIndex(plan, index)
 }
 
 func validateVerificationFailed(failed VerificationFailed) error {
@@ -355,10 +299,8 @@ func validateVerificationFailed(failed VerificationFailed) error {
 func cloneVerificationResult(result VerificationResult) VerificationResult {
 	if result.Succeeded != nil {
 		files := append([]VerificationFile(nil), result.Succeeded.Files...)
-		declarations := cloneProgramDeclarations(result.Succeeded.Declarations)
 		result.Succeeded = &VerificationSucceeded{
-			Declarations: declarations,
-			Files:        files,
+			Files: files,
 		}
 	}
 	if result.Failed != nil {
@@ -368,79 +310,19 @@ func cloneVerificationResult(result VerificationResult) VerificationResult {
 	return result
 }
 
-func validateVerifiedDeclarations(
-	verified []artifact.ProgramDeclaration,
-	planned []artifact.ProgramDeclaration,
-) error {
-	if verified == nil {
-		return errors.New("verification result declarations must be an array")
-	}
-	if len(verified) != len(planned) {
-		return errors.New("verified declarations do not match the build plan")
-	}
-	for index, declaration := range verified {
-		if err := artifact.ValidateDeclaration(declaration); err != nil {
-			return fmt.Errorf("verified declaration %d: %w", index, err)
-		}
-		if index > 0 && artifact.CompareDeclarations(verified[index-1], declaration) >= 0 {
-			return fmt.Errorf(
-				"verified declarations are not in canonical order at position %d",
-				index,
-			)
-		}
-		if !sameProgramDeclaration(declaration, planned[index]) {
-			return fmt.Errorf(
-				"verified declaration %d does not match the build plan",
-				index,
-			)
-		}
-	}
-	return nil
-}
-
-func validateVerifiedProgram(
-	result VerificationResult,
-	index artifact.ProgramIndex,
-) error {
+func validateVerifiedProgram(result VerificationResult, index artifact.ProgramMetadata) error {
 	if err := validateVerificationResult(result); err != nil {
 		return err
 	}
 	if result.Outcome != VerificationOutcomeSucceeded {
 		return errors.New("program verification did not succeed")
 	}
-	if err := artifact.ValidateProgramIndex(index); err != nil {
+	if err := artifact.ValidateProgramMetadata(index); err != nil {
 		return err
 	}
-	return validateVerifiedDeclarations(
-		result.Succeeded.Declarations,
-		artifact.ProgramIndexExecutionDeclarations(index),
-	)
-}
-
-func sameProgramDeclaration(left, right artifact.ProgramDeclaration) bool {
-	if left.Kind != right.Kind ||
-		left.DeclaredID != right.DeclaredID ||
-		len(left.Slots) != len(right.Slots) {
-		return false
+	runtimeIndex, err := artifact.ParseDefinitionIndex(result.DefinitionIndex())
+	if err != nil {
+		return err
 	}
-	for index := range left.Slots {
-		if left.Slots[index] != right.Slots[index] {
-			return false
-		}
-	}
-	return true
-}
-
-func cloneProgramDeclarations(
-	source []artifact.ProgramDeclaration,
-) []artifact.ProgramDeclaration {
-	cloned := make([]artifact.ProgramDeclaration, len(source))
-	for index := range source {
-		cloned[index] = source[index]
-		cloned[index].Slots = append(
-			[]artifact.DeclarationSlot(nil),
-			source[index].Slots...,
-		)
-	}
-	return cloned
+	return artifact.ValidateProgramDefinitionIndex(index, runtimeIndex)
 }

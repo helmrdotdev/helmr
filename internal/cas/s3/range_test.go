@@ -12,6 +12,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go"
+	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -111,6 +113,16 @@ func TestGetRangeMissingClassification(t *testing.T) {
 		_, missing := cause.(*types.NoSuchKey)
 		if errors.Is(err, fs.ErrNotExist) != missing || !errors.Is(err, cause) {
 			t.Fatalf("wrong classification: %v", err)
+		}
+	}
+}
+
+func TestGetRangeTemporaryProviderFailure(t *testing.T) {
+	for _, cause := range []error{&smithy.GenericAPIError{Code: "SlowDown"}, &smithy.GenericAPIError{Code: "InternalError", Fault: smithy.FaultServer}} {
+		store := &Store{client: &rangeClient{err: cause}, bucket: "bucket", prefix: "cas"}
+		_, err := store.GetRange(t.Context(), sha256sum.DigestBytes([]byte("root")), 10, 0, 1)
+		if !errors.Is(err, cas.ErrUnavailable) || !errors.Is(err, cause) || errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("temporary read classification: %v", err)
 		}
 	}
 }

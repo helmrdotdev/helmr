@@ -1,7 +1,6 @@
 import { encodeCommandLogQuery, parseCommandLogPage, streamCommandLogs, type CommandLogQuery, type CommandLogStreamQuery } from "./command-logs"
 import { parseCancelReceipt, parseCommandInfo, parseCommandReceipt, waitForCommand, type CommandRef, type CommandWaitOptions } from "./command"
 import type { CursorPage } from "./contract"
-import { runtimeOperationsInstalled } from "./internal/runtime"
 import { resourceID } from "./internal/id"
 import type { RequestOptions } from "./request"
 import {
@@ -11,7 +10,6 @@ import {
   encodeComputerMembersQuery,
   type ComputerMembersQuery,
   type ComputerMember,
-  brandComputerAddress,
   type ComputerDeleteRequest,
   type ComputerDeleteReceipt,
   type ComputerCommandRequest,
@@ -118,7 +116,6 @@ export function createClientComputerRef(
       request: ComputerCommandRequest,
       options: RequestOptions = {},
     ): Promise<CommandRef> {
-      requireExternalCommandContext()
       const commandId = parseCommandReceipt(await transport.request("POST", `${path}/exec`, {
         body: {
           command: [...request.command],
@@ -142,17 +139,15 @@ export function createClientComputerRef(
       }))
     },
   }
-  return brandComputerAddress(ref)
+  return Object.freeze(ref)
 }
 
 export function createClientCommandRef(id: string, transport: ComputerTransport): CommandRef {
   const commandId = resourceID(id, "Command ID")
   const retrieve = async (signal?: AbortSignal) => {
-    requireExternalCommandContext()
     return parseCommandInfo(await transport.request("GET", `/v1/commands/${encodeURIComponent(commandId)}`, signal === undefined ? {} : { signal }), commandId)
   }
   const logs = async (query: CommandLogQuery = {}, signal?: AbortSignal) => {
-    requireExternalCommandContext()
     const value = encodeCommandLogQuery(query)
     const params = new URLSearchParams()
     if (value.cursor !== undefined) params.set("cursor", value.cursor)
@@ -165,23 +160,16 @@ export function createClientCommandRef(id: string, transport: ComputerTransport)
       return Object.freeze({ items: page.items, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) })
     },
     streamLogs: (query: CommandLogStreamQuery = {}, options: RequestOptions = {}) => {
-      requireExternalCommandContext()
       return streamCommandLogs(logs, query, options)
     },
     cancel: async (options: RequestOptions = {}) => {
-      requireExternalCommandContext()
       return parseCancelReceipt(await transport.request("POST", `/v1/commands/${encodeURIComponent(commandId)}/cancel`, options.signal === undefined ? {} : { signal: options.signal }), commandId)
     },
     retrieve: (options: RequestOptions = {}) => retrieve(options.signal),
     wait: (options: CommandWaitOptions = {}) => {
-      requireExternalCommandContext()
       return waitForCommand(commandId, retrieve, options)
     },
   })
-}
-
-function requireExternalCommandContext(): void {
-  if (runtimeOperationsInstalled()) throw new Error("Command operations are unavailable inside a Helmr Run; use a local subprocess or a child Task")
 }
 
 function computerListQuery(queryInput: ComputerListQuery): string {

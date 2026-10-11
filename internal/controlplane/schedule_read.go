@@ -25,10 +25,11 @@ const (
 )
 
 type scheduleListCursor struct {
-	ProjectID      string `json:"project_id"`
-	EnvironmentID  string `json:"environment_id"`
-	TaskDeclaredID string `json:"task_declared_id"`
-	ScheduleID     string `json:"schedule_id"`
+	FilterAgentID string `json:"filter_agent_id,omitempty"`
+	ProjectID     string `json:"project_id"`
+	EnvironmentID string `json:"environment_id"`
+	AgentID       string `json:"agent_id"`
+	ScheduleID    string `json:"schedule_id"`
 }
 
 func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
@@ -38,11 +39,11 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionRunsRead, scope) {
+	if !principal.HasPermission(auth.PermissionSessionsRead, scope) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	limit, cursor, exactTaskID, err := parseScheduleListQuery(
+	limit, cursor, exactAgentID, err := parseScheduleListQuery(
 		r,
 		scope.ProjectID,
 		scope.EnvironmentID,
@@ -51,10 +52,11 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	var afterTask pgtype.Text
+	var afterAgent pgtype.UUID
 	var afterID pgtype.UUID
 	if cursor != nil {
-		afterTask = pgvalue.Text(cursor.TaskDeclaredID)
+		agent, _ := ids.Parse(cursor.AgentID)
+		afterAgent = pgvalue.UUID(agent)
 		id, err := ids.Parse(cursor.ScheduleID)
 		if err != nil {
 			writeError(w, badRequest(errors.New("schedule cursor is invalid")))
@@ -62,25 +64,26 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 		}
 		afterID = pgvalue.UUID(id)
 	}
-	taskDeclaredID := pgtype.Text{}
-	if exactTaskID != nil {
-		taskDeclaredID = pgvalue.Text(*exactTaskID)
+	agentID := pgtype.UUID{}
+	if exactAgentID != nil {
+		id, _ := ids.Parse(*exactAgentID)
+		agentID = pgvalue.UUID(id)
 	}
 	rows, err := s.db.ListSchedules(r.Context(), db.ListSchedulesParams{
-		OrgID:               pgvalue.UUID(principal.OrgID),
-		ProjectID:           projectID,
-		EnvironmentID:       environmentID,
-		TaskDeclaredID:      taskDeclaredID,
-		AfterTaskDeclaredID: afterTask,
-		AfterID:             afterID,
-		LimitCount:          limit + 1,
+		OrgID:         pgvalue.UUID(principal.OrgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		AgentID:       agentID,
+		AfterAgentID:  afterAgent,
+		AfterID:       afterID,
+		LimitCount:    limit + 1,
 	})
 	if err != nil {
 		s.log.Error("list schedules failed", "error", err)
 		writeError(w, errors.New("list schedules"))
 		return
 	}
-	hasMore := exactTaskID == nil && len(rows) > int(limit)
+	hasMore := len(rows) > int(limit)
 	if hasMore {
 		rows = rows[:limit]
 	}
@@ -99,8 +102,8 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 	if hasMore {
 		last := rows[len(rows)-1]
 		response.NextCursor, err = encodeScheduleListCursor(scheduleListCursor{
-			ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
-			TaskDeclaredID: last.TaskDeclaredID, ScheduleID: pgvalue.UUIDString(last.ID),
+			ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, FilterAgentID: r.URL.Query().Get("agent_id"),
+			AgentID: pgvalue.UUIDString(last.AgentID), ScheduleID: pgvalue.UUIDString(last.ID),
 		})
 		if err != nil {
 			s.log.Error("encode schedule cursor failed", "error", err)
@@ -118,21 +121,19 @@ func parseScheduleListQuery(
 ) (int32, *scheduleListCursor, *string, error) {
 	values := r.URL.Query()
 	for name, entries := range values {
-		if name != "task_id" && name != "cursor" && name != "limit" {
+		if name != "agent_id" && name != "cursor" && name != "limit" {
 			return 0, nil, nil, fmt.Errorf("query parameter %q is not supported", name)
 		}
 		if len(entries) != 1 || strings.TrimSpace(entries[0]) == "" {
 			return 0, nil, nil, fmt.Errorf("query parameter %q must appear once", name)
 		}
 	}
-	if raw := values.Get("task_id"); raw != "" {
-		if values.Get("cursor") != "" || values.Get("limit") != "" {
-			return 0, nil, nil, errors.New("schedule exact task lookup does not accept cursor or limit")
+	var filter *string
+	if raw := values.Get("agent_id"); raw != "" {
+		if ids.Validate(raw) != nil {
+			return 0, nil, nil, errors.New("invalid agent ID")
 		}
-		if err := api.ValidateDefinitionID(raw); err != nil {
-			return 0, nil, nil, err
-		}
-		return 1, nil, &raw, nil
+		filter = &raw
 	}
 	limit := scheduleListDefaultLimit
 	if raw := values.Get("limit"); raw != "" {
@@ -147,7 +148,7 @@ func parseScheduleListQuery(
 	}
 	rawCursor := values.Get("cursor")
 	if rawCursor == "" {
-		return limit, nil, nil, nil
+		return limit, nil, filter, nil
 	}
 	cursor, err := decodeScheduleListCursor(rawCursor)
 	if err != nil {
@@ -156,13 +157,16 @@ func parseScheduleListQuery(
 	if cursor.ProjectID != projectID || cursor.EnvironmentID != environmentID {
 		return 0, nil, nil, errors.New("schedule cursor belongs to another scope")
 	}
-	if err := api.ValidateDefinitionID(cursor.TaskDeclaredID); err != nil {
+	if err := ids.Validate(cursor.AgentID); err != nil {
 		return 0, nil, nil, errors.New("schedule cursor is invalid")
 	}
 	if ids.Validate(cursor.ScheduleID) != nil {
 		return 0, nil, nil, errors.New("schedule cursor is invalid")
 	}
-	return limit, &cursor, nil, nil
+	if cursor.FilterAgentID != values.Get("agent_id") {
+		return 0, nil, nil, errors.New("schedule cursor belongs to another filter")
+	}
+	return limit, &cursor, filter, nil
 }
 
 func encodeScheduleListCursor(cursor scheduleListCursor) (string, error) {
@@ -182,7 +186,7 @@ func decodeScheduleListCursor(raw string) (scheduleListCursor, error) {
 	if json.Unmarshal(decoded, &cursor) != nil ||
 		cursor.ProjectID == "" ||
 		cursor.EnvironmentID == "" ||
-		cursor.TaskDeclaredID == "" ||
+		cursor.AgentID == "" ||
 		cursor.ScheduleID == "" {
 		return scheduleListCursor{}, errors.New("schedule cursor is invalid")
 	}
@@ -196,7 +200,7 @@ func (s *Server) getSchedule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionRunsRead, scope) {
+	if !principal.HasPermission(auth.PermissionSessionsRead, scope) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
@@ -229,57 +233,18 @@ func (s *Server) getSchedule(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func scheduleResponse(row db.Schedule) (api.ScheduleResponse, error) {
-	scheduleID := pgvalue.UUIDString(row.ID)
-	if ids.Validate(scheduleID) != nil {
-		return api.ScheduleResponse{}, errors.New("schedule identity is invalid")
+func scheduleResponse(row db.AgentSchedule) (api.ScheduleResponse, error) {
+	if !row.ID.Valid || !row.AgentID.Valid || !row.DeploymentID.Valid || !row.ActiveFrom.Valid || !row.NextFireAt.Valid {
+		return api.ScheduleResponse{}, errors.New("schedule identity or interval is invalid")
 	}
-	status, err := schedulePublicStatus(row.Status)
-	if err != nil {
-		return api.ScheduleResponse{}, err
+	result := api.ScheduleResponse{
+		ID: pgvalue.UUIDString(row.ID), AgentID: pgvalue.UUIDString(row.AgentID),
+		DeploymentID: pgvalue.UUIDString(row.DeploymentID), TriggerKey: row.TriggerKey,
+		Cron: api.ScheduleCron{Pattern: row.Cron, Timezone: row.Timezone}, Input: row.Input,
+		ActiveFrom: row.ActiveFrom.Time.UTC(), ActiveUntil: pgvalue.TimePtr(row.ActiveUntil),
 	}
-	response := api.ScheduleResponse{
-		ID:         scheduleID,
-		TaskID:     row.TaskDeclaredID,
-		Cron:       api.ScheduleCron{Pattern: row.CronPattern, Timezone: row.Timezone},
-		Status:     status,
-		Generation: row.Generation,
-		NextFireAt: pgvalue.TimePtr(row.NextFireAt),
-		LastFireAt: pgvalue.TimePtr(row.LastFireAt),
+	if !row.ActiveUntil.Valid || row.NextFireAt.Time.Before(row.ActiveUntil.Time) {
+		result.NextFireAt = pgvalue.TimePtr(row.NextFireAt)
 	}
-	if !row.EffectiveFrom.Valid || !row.CreatedAt.Valid || !row.UpdatedAt.Valid {
-		return api.ScheduleResponse{}, errors.New("schedule timestamps are invalid")
-	}
-	response.EffectiveFrom = row.EffectiveFrom.Time.UTC()
-	response.CreatedAt = row.CreatedAt.Time.UTC()
-	response.UpdatedAt = row.UpdatedAt.Time.UTC()
-	if status == api.ScheduleStatusErrored && len(row.LastFailure) == 0 {
-		return api.ScheduleResponse{}, errors.New("errored schedule failure is unavailable")
-	}
-	if len(row.LastFailure) > 0 {
-		var failure api.ScheduleFailure
-		if err := json.Unmarshal(row.LastFailure, &failure); err != nil ||
-			failure.Code == "" || failure.Message == "" || len(failure.Details) == 0 {
-			return api.ScheduleResponse{}, errors.New("schedule failure is invalid")
-		}
-		var details map[string]json.RawMessage
-		if err := json.Unmarshal(failure.Details, &details); err != nil || details == nil {
-			return api.ScheduleResponse{}, errors.New("schedule failure details are invalid")
-		}
-		response.LastFailure = &failure
-	}
-	return response, nil
-}
-
-func schedulePublicStatus(state string) (api.ScheduleStatus, error) {
-	switch state {
-	case "active":
-		return api.ScheduleStatusActive, nil
-	case "errored":
-		return api.ScheduleStatusErrored, nil
-	case "archived":
-		return api.ScheduleStatusArchived, nil
-	default:
-		return "", fmt.Errorf("schedule state %q has no public projection", state)
-	}
+	return result, nil
 }

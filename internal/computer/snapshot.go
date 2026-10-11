@@ -4,15 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // Scope addresses the Computers of one environment.
@@ -35,20 +32,19 @@ const (
 type Residency string
 
 // Snapshot is the public projection of one Computer. Its JSON encoding is the
-// stored creation receipt: field names and tags must stay byte-compatible
-// with receipts already written.
+// retained creation receipt for the platform operation.
 type Snapshot struct {
-	Residency      Residency               `json:"residency"`
-	Error          json.RawMessage         `json:"error,omitempty"`
-	ID             string                  `json:"id"`
-	Key            *string                 `json:"key,omitempty"`
-	SandboxID      string                  `json:"sandbox_id"`
-	DeploymentID   string                  `json:"deployment_id"`
-	Status         Status                  `json:"status"`
-	Secrets        []secretbinding.Binding `json:"secrets"`
-	LastActivityAt time.Time               `json:"last_activity_at"`
-	CreatedAt      time.Time               `json:"created_at"`
-	UpdatedAt      time.Time               `json:"updated_at"`
+	Residency      Residency                 `json:"residency"`
+	Error          json.RawMessage           `json:"error,omitempty"`
+	ID             string                    `json:"id"`
+	Key            *string                   `json:"key,omitempty"`
+	DefinitionKey  string                    `json:"definition_key"`
+	DeploymentID   string                    `json:"deployment_id"`
+	Status         Status                    `json:"status"`
+	Secrets        []secretbinding.Reference `json:"secrets"`
+	LastActivityAt time.Time                 `json:"last_activity_at"`
+	CreatedAt      time.Time                 `json:"created_at"`
+	UpdatedAt      time.Time                 `json:"updated_at"`
 }
 
 // ListItem is the projection of one Computer in a list.
@@ -57,7 +53,7 @@ type ListItem struct {
 	Error          json.RawMessage
 	ID             string
 	Key            *string
-	SandboxID      string
+	DefinitionKey  string
 	DeploymentID   string
 	Status         Status
 	LastActivityAt time.Time
@@ -83,176 +79,84 @@ type Listing struct {
 	More  bool
 }
 
-// Read returns the Computer's snapshot. q may be a pool or the caller's
-// transaction; Read takes no locks.
-func Read(ctx context.Context, q db.Querier, scope Scope, id uuid.UUID) (Snapshot, error) {
-	record, err := getComputer(ctx, q, scope, id)
+const computerProjection = `SELECT c.id::text,c.key,COALESCE(c.origin_definition_key,''),COALESCE(c.origin_deployment_id::text,''),
+ CASE WHEN c.deleted_at IS NULL THEN 'available' WHEN l.epoch IS NOT NULL OR c.storage_reservation_bytes IS NOT NULL THEN 'deleting' ELSE 'deleted' END,
+ CASE WHEN c.integrity_fault_at IS NOT NULL OR c.preparation_failed_at IS NOT NULL OR l.status='lost' THEN 'unavailable'
+ WHEN cp.status='restoring' THEN 'restoring' WHEN l.status='releasing' THEN 'parking'
+ WHEN l.status='active' THEN 'running' WHEN l.status='acquiring' OR c.initial_root_id IS NULL THEN 'starting' ELSE 'cold' END,
+ CASE WHEN c.integrity_fault_at IS NOT NULL THEN jsonb_build_object('code','computer_recovery_required','message',c.integrity_fault_reason)
+ WHEN c.preparation_failed_at IS NOT NULL THEN jsonb_build_object('code','computer_preparation_failed','message','Computer preparation failed')
+ WHEN l.status='lost' THEN jsonb_build_object('code','computer_recovery_required','message','Computer execution state is unavailable') END,
+ c.last_activity_at,c.created_at,c.updated_at
+ FROM computers c JOIN environments e ON e.id=c.environment_id
+ LEFT JOIN computer_leases l ON l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL
+ LEFT JOIN computer_checkpoints cp ON cp.environment_id=c.environment_id AND cp.computer_id=c.id AND cp.status IN ('capturing','sealed','ready','restoring','aborting')
+ WHERE e.org_id=$1 AND e.project_id=$2 AND c.environment_id=$3`
+
+func scanComputer(row pgx.Row) (ListItem, error) {
+	var item ListItem
+	err := row.Scan(&item.ID, &item.Key, &item.DefinitionKey, &item.DeploymentID, &item.Status, &item.Residency, &item.Error, &item.LastActivityAt, &item.CreatedAt, &item.UpdatedAt)
+	item.LastActivityAt, item.CreatedAt, item.UpdatedAt = item.LastActivityAt.UTC(), item.CreatedAt.UTC(), item.UpdatedAt.UTC()
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = ErrNotFound
+	}
+	return item, err
+}
+func Read(ctx context.Context, database db.DBTX, scope Scope, id uuid.UUID) (Snapshot, error) {
+	item, err := scanComputer(database.QueryRow(ctx, computerProjection+` AND c.id=$4`, scope.OrgID, scope.ProjectID, scope.EnvironmentID, id))
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return snapshot(ctx, q, record)
-}
-
-func getComputer(ctx context.Context, q db.Querier, scope Scope, id uuid.UUID) (db.GetComputerRow, error) {
-	record, err := q.GetComputer(ctx, db.GetComputerParams{
-		OrgID:         pgvalue.UUID(scope.OrgID),
-		ProjectID:     pgvalue.UUID(scope.ProjectID),
-		EnvironmentID: pgvalue.UUID(scope.EnvironmentID),
-		ID:            pgvalue.UUID(id),
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return db.GetComputerRow{}, ErrNotFound
-	}
+	rows, err := database.Query(ctx, `SELECT secret_id::text,placement_kind,placement_target,mode,allowed_origins FROM computer_secret_bindings WHERE environment_id=$1 AND computer_id=$2 ORDER BY placement_kind,placement_target`, scope.EnvironmentID, id)
 	if err != nil {
-		return db.GetComputerRow{}, fmt.Errorf("read computer: %w", err)
+		return Snapshot{}, err
 	}
-	return record, nil
-}
-
-func snapshot(ctx context.Context, q db.Querier, record db.GetComputerRow) (Snapshot, error) {
-	bindings, err := q.ListComputerSecrets(ctx, record.ID)
-	if err != nil {
-		return Snapshot{}, fmt.Errorf("read computer secrets: %w", err)
-	}
-	secrets := make([]secretbinding.Binding, 0, len(bindings))
-	for _, binding := range bindings {
-		item, err := snapshotBinding(binding.SecretName, binding.PlacementKind, binding.PlacementTarget, binding.Mode, binding.AllowedOrigins)
-		if err != nil {
-			return Snapshot{}, err
+	refs, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (secretbinding.Reference, error) {
+		var r secretbinding.Reference
+		var kind, target, mode string
+		var origins []string
+		err := row.Scan(&r.SecretID, &kind, &target, &mode, &origins)
+		if kind == "env" {
+			r.Env = &secretbinding.ReferenceEnv{Name: target, Mode: mode, AllowedOrigins: origins}
+		} else {
+			r.File = &secretbinding.File{Path: target}
 		}
-		secrets = append(secrets, item)
-	}
-	status, err := publicStatus(record.Status)
+		return r, err
+	})
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return Snapshot{
-		ID:             pgvalue.UUIDString(record.ID),
-		Key:            textPointer(record.Key),
-		SandboxID:      record.SandboxDeclaredID.String,
-		DeploymentID:   pgvalue.UUIDString(record.CreationDeploymentID),
-		Status:         status,
-		Error:          record.ResidencyError,
-		Residency:      Residency(record.Residency),
-		Secrets:        secrets,
-		LastActivityAt: pgvalue.Time(record.LastActivityAt),
-		CreatedAt:      pgvalue.Time(record.CreatedAt),
-		UpdatedAt:      pgvalue.Time(record.UpdatedAt),
-	}, nil
+	if refs == nil {
+		refs = []secretbinding.Reference{}
+	}
+	return Snapshot{ID: item.ID, Key: item.Key, DefinitionKey: item.DefinitionKey, DeploymentID: item.DeploymentID, Status: item.Status, Residency: item.Residency, Error: item.Error, Secrets: refs, LastActivityAt: item.LastActivityAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}, nil
 }
-
-func snapshotBinding(name, kind, target, mode string, origins []string) (secretbinding.Binding, error) {
-	item := secretbinding.Binding{Name: name}
-	switch kind {
-	case "env":
-		item.Env = &secretbinding.Env{Name: target, Mode: mode, AllowedOrigins: origins}
-	case "file":
-		item.File = &secretbinding.File{Path: target}
-	default:
-		return secretbinding.Binding{}, fmt.Errorf("unsupported computer secret placement %q", kind)
-	}
-	return item, nil
+func FindByKey(ctx context.Context, database db.DBTX, scope Scope, key string) (ListItem, error) {
+	return scanComputer(database.QueryRow(ctx, computerProjection+` AND c.key=$4`, scope.OrgID, scope.ProjectID, scope.EnvironmentID, key))
 }
-
-// FindByKey returns the list item of the Computer holding key.
-func FindByKey(ctx context.Context, q db.Querier, scope Scope, key string) (ListItem, error) {
-	record, err := q.GetComputerListItemByKey(ctx, db.GetComputerListItemByKeyParams{
-		OrgID:         pgvalue.UUID(scope.OrgID),
-		ProjectID:     pgvalue.UUID(scope.ProjectID),
-		EnvironmentID: pgvalue.UUID(scope.EnvironmentID),
-		Key:           pgvalue.Text(key),
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ListItem{}, ErrNotFound
+func List(ctx context.Context, database db.DBTX, scope Scope, page ListPage) (Listing, error) {
+	if page.Limit < 1 || page.Limit > 100 {
+		return Listing{}, invalidInput("Computer page limit must be between 1 and 100")
 	}
-	if err != nil {
-		return ListItem{}, fmt.Errorf("read computer by key: %w", err)
-	}
-	item, err := listItem(
-		record.ID, record.Key, record.SandboxID, record.DeploymentID, record.Status,
-		record.LastActivityAt, record.CreatedAt, record.UpdatedAt,
-	)
-	if err != nil {
-		return ListItem{}, err
-	}
-	item.Error = record.ResidencyError
-	item.Residency = Residency(record.Residency)
-	return item, nil
-}
-
-// List returns one page of the scope's Computers, newest first.
-func List(ctx context.Context, q db.Querier, scope Scope, page ListPage) (Listing, error) {
-	params := db.ListComputerListItemsParams{
-		OrgID:         pgvalue.UUID(scope.OrgID),
-		ProjectID:     pgvalue.UUID(scope.ProjectID),
-		EnvironmentID: pgvalue.UUID(scope.EnvironmentID),
-		RowLimit:      page.Limit + 1,
-	}
+	var afterTime time.Time
+	var afterID uuid.UUID
 	if page.After != nil {
-		params.HasAfter = true
-		params.AfterCreatedAt = pgtype.Timestamptz{Time: page.After.CreatedAt, Valid: true}
-		params.AfterID = pgvalue.UUID(page.After.ID)
+		afterTime, afterID = page.After.CreatedAt, page.After.ID
 	}
-	rows, err := q.ListComputerListItems(ctx, params)
+	rows, err := database.Query(ctx, computerProjection+` AND (NOT $4 OR (c.created_at,c.id)<($5,$6)) ORDER BY c.created_at DESC,c.id DESC LIMIT $7`, scope.OrgID, scope.ProjectID, scope.EnvironmentID, page.After != nil, afterTime, afterID, page.Limit+1)
 	if err != nil {
-		return Listing{}, fmt.Errorf("list computers: %w", err)
+		return Listing{}, err
 	}
-	listing := Listing{Items: make([]ListItem, 0, len(rows)), More: len(rows) > int(page.Limit)}
-	if listing.More {
-		rows = rows[:page.Limit]
-	}
-	for _, row := range rows {
-		item, err := listItem(
-			row.ID, row.Key, row.SandboxID, row.DeploymentID, row.Status,
-			row.LastActivityAt, row.CreatedAt, row.UpdatedAt,
-		)
-		if err != nil {
-			return Listing{}, err
-		}
-		item.Error = row.ResidencyError
-		item.Residency = Residency(row.Residency)
-		listing.Items = append(listing.Items, item)
-	}
-	return listing, nil
-}
-
-func listItem(
-	id pgtype.UUID,
-	key pgtype.Text,
-	sandboxID string,
-	deploymentID pgtype.UUID,
-	state string,
-	lastActivityAt, createdAt, updatedAt pgtype.Timestamptz,
-) (ListItem, error) {
-	status, err := publicStatus(state)
+	items, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (ListItem, error) { return scanComputer(row) })
 	if err != nil {
-		return ListItem{}, err
+		return Listing{}, err
 	}
-	return ListItem{
-		ID: pgvalue.UUIDString(id), Key: textPointer(key), SandboxID: sandboxID,
-		DeploymentID: pgvalue.UUIDString(deploymentID), Status: status,
-		LastActivityAt: pgvalue.Time(lastActivityAt), CreatedAt: pgvalue.Time(createdAt),
-		UpdatedAt: pgvalue.Time(updatedAt),
-	}, nil
-}
-
-func publicStatus(state string) (Status, error) {
-	switch state {
-	case db.ComputerStatusActive, db.ComputerStatusRecoveryRequired:
-		return StatusAvailable, nil
-	case db.ComputerStatusDeleted:
-		return StatusDeleted, nil
-	case db.ComputerStatusDeleting:
-		return StatusDeleting, nil
-	default:
-		return "", fmt.Errorf("computer state %q has no public projection", state)
+	if items == nil {
+		items = []ListItem{}
 	}
-}
-
-func textPointer(value pgtype.Text) *string {
-	if !value.Valid {
-		return nil
+	result := Listing{Items: items, More: len(items) > int(page.Limit)}
+	if result.More {
+		result.Items = result.Items[:page.Limit]
 	}
-	text := value.String
-	return &text
+	return result, nil
 }

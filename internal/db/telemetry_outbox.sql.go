@@ -11,114 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const claimCommandLogIngestBatch = `-- name: ClaimCommandLogIngestBatch :many
-WITH candidates AS (
-    SELECT telemetry_outbox.id,
-           telemetry_outbox.ingest_size_bytes AS size_bytes
-      FROM telemetry_outbox
-     WHERE telemetry_outbox.stream_kind = 'command_log'
-       AND telemetry_outbox.written_at IS NULL
-       AND telemetry_outbox.status IN ('pending', 'claimed', 'failed')
-       AND (telemetry_outbox.next_retry_at IS NULL OR telemetry_outbox.next_retry_at <= now())
-     ORDER BY telemetry_outbox.id ASC
-     LIMIT $1
-     FOR UPDATE SKIP LOCKED
-),
-claimed AS (
-    SELECT sized.id
-      FROM (
-          SELECT candidates.id,
-                 SUM(candidates.size_bytes) OVER (ORDER BY candidates.id ASC) AS cumulative_size_bytes
-            FROM candidates
-      ) AS sized
-     WHERE sized.cumulative_size_bytes <= $2::bigint
-),
-updated AS (
-    UPDATE telemetry_outbox
-       SET status = 'claimed',
-           retry_count = telemetry_outbox.retry_count + 1,
-           next_retry_at = now() + $3::interval,
-           updated_at = now()
-      FROM claimed
-     WHERE telemetry_outbox.id = claimed.id
-    RETURNING telemetry_outbox.id, telemetry_outbox.org_id, telemetry_outbox.stream_kind, telemetry_outbox.source_kind, telemetry_outbox.source_id, telemetry_outbox.stream_name, telemetry_outbox.idempotency_key, telemetry_outbox.project_id, telemetry_outbox.environment_id, telemetry_outbox.run_id, telemetry_outbox.deployment_id, telemetry_outbox.run_lease_id, telemetry_outbox.attempt_number, telemetry_outbox.trace_id, telemetry_outbox.span_id, telemetry_outbox.parent_span_id, telemetry_outbox.traceparent, telemetry_outbox.category, telemetry_outbox.severity, telemetry_outbox.source, telemetry_outbox.kind, telemetry_outbox.message, telemetry_outbox.payload, telemetry_outbox.content, telemetry_outbox.size_bytes, telemetry_outbox.ingest_size_bytes, telemetry_outbox.observed_seq, telemetry_outbox.redaction_class, telemetry_outbox.retention_class, telemetry_outbox.snapshot_version, telemetry_outbox.status, telemetry_outbox.retry_count, telemetry_outbox.next_retry_at, telemetry_outbox.written_at, telemetry_outbox.published_at, telemetry_outbox.publish_attempts, telemetry_outbox.publish_locked_until, telemetry_outbox.ingest_error, telemetry_outbox.publish_error, telemetry_outbox.observed_at, telemetry_outbox.created_at, telemetry_outbox.updated_at, telemetry_outbox.command_id
-)
-SELECT updated.id AS outbox_id,
-       updated.retry_count,
-       COALESCE(updated.idempotency_key, '')::text AS idempotency_key,
-       updated.org_id,
-       updated.project_id,
-       updated.environment_id,
-       updated.command_id,
-       updated.stream_name AS stream,
-       updated.id AS seq,
-       updated.observed_seq,
-       updated.content,
-       updated.size_bytes,
-       updated.observed_at,
-       updated.created_at
-  FROM updated
- ORDER BY updated.id ASC
-`
-
-type ClaimCommandLogIngestBatchParams struct {
-	RowLimit      int32           `json:"row_limit"`
-	MaxBatchBytes int64           `json:"max_batch_bytes"`
-	LeaseDuration pgtype.Interval `json:"lease_duration"`
-}
-
-type ClaimCommandLogIngestBatchRow struct {
-	OutboxID       int64              `json:"outbox_id"`
-	RetryCount     int32              `json:"retry_count"`
-	IdempotencyKey string             `json:"idempotency_key"`
-	OrgID          pgtype.UUID        `json:"org_id"`
-	ProjectID      pgtype.UUID        `json:"project_id"`
-	EnvironmentID  pgtype.UUID        `json:"environment_id"`
-	CommandID      pgtype.UUID        `json:"command_id"`
-	Stream         string             `json:"stream"`
-	Seq            int64              `json:"seq"`
-	ObservedSeq    pgtype.Int8        `json:"observed_seq"`
-	Content        []byte             `json:"content"`
-	SizeBytes      pgtype.Int8        `json:"size_bytes"`
-	ObservedAt     pgtype.Timestamptz `json:"observed_at"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-}
-
-func (q *Queries) ClaimCommandLogIngestBatch(ctx context.Context, arg ClaimCommandLogIngestBatchParams) ([]ClaimCommandLogIngestBatchRow, error) {
-	rows, err := q.db.Query(ctx, claimCommandLogIngestBatch, arg.RowLimit, arg.MaxBatchBytes, arg.LeaseDuration)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ClaimCommandLogIngestBatchRow
-	for rows.Next() {
-		var i ClaimCommandLogIngestBatchRow
-		if err := rows.Scan(
-			&i.OutboxID,
-			&i.RetryCount,
-			&i.IdempotencyKey,
-			&i.OrgID,
-			&i.ProjectID,
-			&i.EnvironmentID,
-			&i.CommandID,
-			&i.Stream,
-			&i.Seq,
-			&i.ObservedSeq,
-			&i.Content,
-			&i.SizeBytes,
-			&i.ObservedAt,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const claimEventIngestBatch = `-- name: ClaimEventIngestBatch :many
 WITH candidates AS (
     SELECT telemetry_outbox.id,
@@ -126,7 +18,6 @@ WITH candidates AS (
       FROM telemetry_outbox
      WHERE telemetry_outbox.stream_kind = 'event'
        AND telemetry_outbox.written_at IS NULL
-       AND telemetry_outbox.status IN ('pending', 'claimed', 'failed')
        AND (telemetry_outbox.next_retry_at IS NULL OR telemetry_outbox.next_retry_at <= now())
      ORDER BY telemetry_outbox.id ASC
      LIMIT $1
@@ -143,31 +34,22 @@ claimed AS (
 ),
 updated AS (
     UPDATE telemetry_outbox
-       SET status = 'claimed',
-           retry_count = telemetry_outbox.retry_count + 1,
+       SET retry_count = telemetry_outbox.retry_count + 1,
            next_retry_at = now() + $3::interval,
            updated_at = now()
       FROM claimed
      WHERE telemetry_outbox.id = claimed.id
-    RETURNING telemetry_outbox.id, telemetry_outbox.org_id, telemetry_outbox.stream_kind, telemetry_outbox.source_kind, telemetry_outbox.source_id, telemetry_outbox.stream_name, telemetry_outbox.idempotency_key, telemetry_outbox.project_id, telemetry_outbox.environment_id, telemetry_outbox.run_id, telemetry_outbox.deployment_id, telemetry_outbox.run_lease_id, telemetry_outbox.attempt_number, telemetry_outbox.trace_id, telemetry_outbox.span_id, telemetry_outbox.parent_span_id, telemetry_outbox.traceparent, telemetry_outbox.category, telemetry_outbox.severity, telemetry_outbox.source, telemetry_outbox.kind, telemetry_outbox.message, telemetry_outbox.payload, telemetry_outbox.content, telemetry_outbox.size_bytes, telemetry_outbox.ingest_size_bytes, telemetry_outbox.observed_seq, telemetry_outbox.redaction_class, telemetry_outbox.retention_class, telemetry_outbox.snapshot_version, telemetry_outbox.status, telemetry_outbox.retry_count, telemetry_outbox.next_retry_at, telemetry_outbox.written_at, telemetry_outbox.published_at, telemetry_outbox.publish_attempts, telemetry_outbox.publish_locked_until, telemetry_outbox.ingest_error, telemetry_outbox.publish_error, telemetry_outbox.observed_at, telemetry_outbox.created_at, telemetry_outbox.updated_at, telemetry_outbox.command_id
+    RETURNING telemetry_outbox.id, telemetry_outbox.environment_id, telemetry_outbox.session_id, telemetry_outbox.process_epoch, telemetry_outbox.preparation_id, telemetry_outbox.preparation_epoch, telemetry_outbox.command_id, telemetry_outbox.deployment_id, telemetry_outbox.source_kind, telemetry_outbox.source_id, telemetry_outbox.producer_epoch, telemetry_outbox.stream_kind, telemetry_outbox.stream, telemetry_outbox.sequence, telemetry_outbox.through_sequence, telemetry_outbox.byte_offset, telemetry_outbox.through_byte_offset, telemetry_outbox.kind, telemetry_outbox.observed_at_unix_nano, telemetry_outbox.data, telemetry_outbox.dropped_bytes, telemetry_outbox.complete, telemetry_outbox.accepted_at, telemetry_outbox.expires_at, telemetry_outbox.export_claim, telemetry_outbox.export_after, telemetry_outbox.category, telemetry_outbox.severity, telemetry_outbox.source, telemetry_outbox.message, telemetry_outbox.payload, telemetry_outbox.redaction_class, telemetry_outbox.observed_at, telemetry_outbox.ingest_size_bytes, telemetry_outbox.retry_count, telemetry_outbox.next_retry_at, telemetry_outbox.written_at, telemetry_outbox.published_at, telemetry_outbox.publish_attempts, telemetry_outbox.publish_locked_until, telemetry_outbox.ingest_error, telemetry_outbox.publish_error, telemetry_outbox.created_at, telemetry_outbox.updated_at
 )
 SELECT updated.id AS outbox_id,
        updated.retry_count,
-       COALESCE(updated.idempotency_key, '')::text AS idempotency_key,
        updated.source_kind AS subject_type,
        updated.source_id AS subject_id,
        updated.id AS seq,
-       updated.org_id,
-       updated.project_id,
+       environments.org_id,
+       environments.project_id,
        updated.environment_id,
-       updated.run_id,
        updated.deployment_id,
-       updated.run_lease_id,
-       updated.attempt_number,
-       updated.trace_id,
-       updated.span_id,
-       updated.parent_span_id,
-       updated.traceparent,
        updated.category,
        updated.severity,
        updated.source,
@@ -175,10 +57,9 @@ SELECT updated.id AS outbox_id,
        updated.message,
        updated.payload,
        updated.redaction_class,
-       updated.snapshot_version,
        updated.observed_at AS occurred_at,
        updated.created_at
-  FROM updated
+  FROM updated JOIN environments ON environments.id=updated.environment_id
  ORDER BY updated.id ASC
 `
 
@@ -189,33 +70,24 @@ type ClaimEventIngestBatchParams struct {
 }
 
 type ClaimEventIngestBatchRow struct {
-	OutboxID        int64              `json:"outbox_id"`
-	RetryCount      int32              `json:"retry_count"`
-	IdempotencyKey  string             `json:"idempotency_key"`
-	SubjectType     string             `json:"subject_type"`
-	SubjectID       pgtype.UUID        `json:"subject_id"`
-	Seq             int64              `json:"seq"`
-	OrgID           pgtype.UUID        `json:"org_id"`
-	ProjectID       pgtype.UUID        `json:"project_id"`
-	EnvironmentID   pgtype.UUID        `json:"environment_id"`
-	RunID           pgtype.UUID        `json:"run_id"`
-	DeploymentID    pgtype.UUID        `json:"deployment_id"`
-	RunLeaseID      pgtype.UUID        `json:"run_lease_id"`
-	AttemptNumber   pgtype.Int4        `json:"attempt_number"`
-	TraceID         pgtype.Text        `json:"trace_id"`
-	SpanID          pgtype.Text        `json:"span_id"`
-	ParentSpanID    pgtype.Text        `json:"parent_span_id"`
-	Traceparent     pgtype.Text        `json:"traceparent"`
-	Category        string             `json:"category"`
-	Severity        string             `json:"severity"`
-	Source          string             `json:"source"`
-	Kind            string             `json:"kind"`
-	Message         string             `json:"message"`
-	Payload         []byte             `json:"payload"`
-	RedactionClass  string             `json:"redaction_class"`
-	SnapshotVersion pgtype.Int8        `json:"snapshot_version"`
-	OccurredAt      pgtype.Timestamptz `json:"occurred_at"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	OutboxID       int64              `json:"outbox_id"`
+	RetryCount     int32              `json:"retry_count"`
+	SubjectType    string             `json:"subject_type"`
+	SubjectID      pgtype.UUID        `json:"subject_id"`
+	Seq            int64              `json:"seq"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	EnvironmentID  pgtype.UUID        `json:"environment_id"`
+	DeploymentID   pgtype.UUID        `json:"deployment_id"`
+	Category       string             `json:"category"`
+	Severity       string             `json:"severity"`
+	Source         string             `json:"source"`
+	Kind           string             `json:"kind"`
+	Message        string             `json:"message"`
+	Payload        []byte             `json:"payload"`
+	RedactionClass string             `json:"redaction_class"`
+	OccurredAt     pgtype.Timestamptz `json:"occurred_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
 func (q *Queries) ClaimEventIngestBatch(ctx context.Context, arg ClaimEventIngestBatchParams) ([]ClaimEventIngestBatchRow, error) {
@@ -230,21 +102,13 @@ func (q *Queries) ClaimEventIngestBatch(ctx context.Context, arg ClaimEventInges
 		if err := rows.Scan(
 			&i.OutboxID,
 			&i.RetryCount,
-			&i.IdempotencyKey,
 			&i.SubjectType,
 			&i.SubjectID,
 			&i.Seq,
 			&i.OrgID,
 			&i.ProjectID,
 			&i.EnvironmentID,
-			&i.RunID,
 			&i.DeploymentID,
-			&i.RunLeaseID,
-			&i.AttemptNumber,
-			&i.TraceID,
-			&i.SpanID,
-			&i.ParentSpanID,
-			&i.Traceparent,
 			&i.Category,
 			&i.Severity,
 			&i.Source,
@@ -252,7 +116,6 @@ func (q *Queries) ClaimEventIngestBatch(ctx context.Context, arg ClaimEventInges
 			&i.Message,
 			&i.Payload,
 			&i.RedactionClass,
-			&i.SnapshotVersion,
 			&i.OccurredAt,
 			&i.CreatedAt,
 		); err != nil {
@@ -278,7 +141,7 @@ WITH claimed AS (
               FROM telemetry_outbox AS earlier_outbox
              WHERE earlier_outbox.stream_kind = 'event'
                AND earlier_outbox.published_at IS NULL
-               AND earlier_outbox.org_id = telemetry_outbox.org_id
+               AND earlier_outbox.environment_id = telemetry_outbox.environment_id
                AND earlier_outbox.source_kind = telemetry_outbox.source_kind
                AND earlier_outbox.source_id = telemetry_outbox.source_id
                AND earlier_outbox.id < telemetry_outbox.id
@@ -294,27 +157,19 @@ updated AS (
            updated_at = now()
       FROM claimed
      WHERE telemetry_outbox.id = claimed.id
-    RETURNING telemetry_outbox.id, telemetry_outbox.org_id, telemetry_outbox.stream_kind, telemetry_outbox.source_kind, telemetry_outbox.source_id, telemetry_outbox.stream_name, telemetry_outbox.idempotency_key, telemetry_outbox.project_id, telemetry_outbox.environment_id, telemetry_outbox.run_id, telemetry_outbox.deployment_id, telemetry_outbox.run_lease_id, telemetry_outbox.attempt_number, telemetry_outbox.trace_id, telemetry_outbox.span_id, telemetry_outbox.parent_span_id, telemetry_outbox.traceparent, telemetry_outbox.category, telemetry_outbox.severity, telemetry_outbox.source, telemetry_outbox.kind, telemetry_outbox.message, telemetry_outbox.payload, telemetry_outbox.content, telemetry_outbox.size_bytes, telemetry_outbox.ingest_size_bytes, telemetry_outbox.observed_seq, telemetry_outbox.redaction_class, telemetry_outbox.retention_class, telemetry_outbox.snapshot_version, telemetry_outbox.status, telemetry_outbox.retry_count, telemetry_outbox.next_retry_at, telemetry_outbox.written_at, telemetry_outbox.published_at, telemetry_outbox.publish_attempts, telemetry_outbox.publish_locked_until, telemetry_outbox.ingest_error, telemetry_outbox.publish_error, telemetry_outbox.observed_at, telemetry_outbox.created_at, telemetry_outbox.updated_at, telemetry_outbox.command_id
+    RETURNING telemetry_outbox.id, telemetry_outbox.environment_id, telemetry_outbox.session_id, telemetry_outbox.process_epoch, telemetry_outbox.preparation_id, telemetry_outbox.preparation_epoch, telemetry_outbox.command_id, telemetry_outbox.deployment_id, telemetry_outbox.source_kind, telemetry_outbox.source_id, telemetry_outbox.producer_epoch, telemetry_outbox.stream_kind, telemetry_outbox.stream, telemetry_outbox.sequence, telemetry_outbox.through_sequence, telemetry_outbox.byte_offset, telemetry_outbox.through_byte_offset, telemetry_outbox.kind, telemetry_outbox.observed_at_unix_nano, telemetry_outbox.data, telemetry_outbox.dropped_bytes, telemetry_outbox.complete, telemetry_outbox.accepted_at, telemetry_outbox.expires_at, telemetry_outbox.export_claim, telemetry_outbox.export_after, telemetry_outbox.category, telemetry_outbox.severity, telemetry_outbox.source, telemetry_outbox.message, telemetry_outbox.payload, telemetry_outbox.redaction_class, telemetry_outbox.observed_at, telemetry_outbox.ingest_size_bytes, telemetry_outbox.retry_count, telemetry_outbox.next_retry_at, telemetry_outbox.written_at, telemetry_outbox.published_at, telemetry_outbox.publish_attempts, telemetry_outbox.publish_locked_until, telemetry_outbox.ingest_error, telemetry_outbox.publish_error, telemetry_outbox.created_at, telemetry_outbox.updated_at
 )
 SELECT updated.id AS outbox_id,
        updated.stream_kind,
-       ('helmr:events:' || updated.org_id::text || ':' || updated.source_kind || ':' || updated.source_id::text)::text AS stream_key,
+       ('helmr:events:' || environments.org_id::text || ':' || updated.source_kind || ':' || updated.source_id::text)::text AS stream_key,
        updated.publish_attempts AS attempts,
        updated.id AS seq,
-       updated.org_id,
-       updated.project_id,
+       environments.org_id,
+       environments.project_id,
        updated.environment_id,
        updated.source_kind,
        updated.source_id,
-       updated.stream_name,
-       updated.run_id,
        updated.deployment_id,
-       updated.run_lease_id,
-       updated.attempt_number,
-       updated.trace_id,
-       updated.span_id,
-       updated.parent_span_id,
-       updated.traceparent,
        updated.category,
        updated.severity,
        updated.source,
@@ -322,10 +177,9 @@ SELECT updated.id AS outbox_id,
        updated.message,
        updated.payload,
        updated.redaction_class,
-       updated.snapshot_version,
        updated.observed_at AS occurred_at,
        updated.created_at
-  FROM updated
+  FROM updated JOIN environments ON environments.id=updated.environment_id
  ORDER BY updated.id ASC
 `
 
@@ -335,35 +189,26 @@ type ClaimLiveTelemetryOutboxParams struct {
 }
 
 type ClaimLiveTelemetryOutboxRow struct {
-	OutboxID        int64               `json:"outbox_id"`
-	StreamKind      TelemetryStreamKind `json:"stream_kind"`
-	StreamKey       string              `json:"stream_key"`
-	Attempts        int32               `json:"attempts"`
-	Seq             int64               `json:"seq"`
-	OrgID           pgtype.UUID         `json:"org_id"`
-	ProjectID       pgtype.UUID         `json:"project_id"`
-	EnvironmentID   pgtype.UUID         `json:"environment_id"`
-	SourceKind      string              `json:"source_kind"`
-	SourceID        pgtype.UUID         `json:"source_id"`
-	StreamName      string              `json:"stream_name"`
-	RunID           pgtype.UUID         `json:"run_id"`
-	DeploymentID    pgtype.UUID         `json:"deployment_id"`
-	RunLeaseID      pgtype.UUID         `json:"run_lease_id"`
-	AttemptNumber   pgtype.Int4         `json:"attempt_number"`
-	TraceID         pgtype.Text         `json:"trace_id"`
-	SpanID          pgtype.Text         `json:"span_id"`
-	ParentSpanID    pgtype.Text         `json:"parent_span_id"`
-	Traceparent     pgtype.Text         `json:"traceparent"`
-	Category        string              `json:"category"`
-	Severity        string              `json:"severity"`
-	Source          string              `json:"source"`
-	Kind            string              `json:"kind"`
-	Message         string              `json:"message"`
-	Payload         []byte              `json:"payload"`
-	RedactionClass  string              `json:"redaction_class"`
-	SnapshotVersion pgtype.Int8         `json:"snapshot_version"`
-	OccurredAt      pgtype.Timestamptz  `json:"occurred_at"`
-	CreatedAt       pgtype.Timestamptz  `json:"created_at"`
+	OutboxID       int64              `json:"outbox_id"`
+	StreamKind     string             `json:"stream_kind"`
+	StreamKey      string             `json:"stream_key"`
+	Attempts       int32              `json:"attempts"`
+	Seq            int64              `json:"seq"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	EnvironmentID  pgtype.UUID        `json:"environment_id"`
+	SourceKind     string             `json:"source_kind"`
+	SourceID       pgtype.UUID        `json:"source_id"`
+	DeploymentID   pgtype.UUID        `json:"deployment_id"`
+	Category       string             `json:"category"`
+	Severity       string             `json:"severity"`
+	Source         string             `json:"source"`
+	Kind           string             `json:"kind"`
+	Message        string             `json:"message"`
+	Payload        []byte             `json:"payload"`
+	RedactionClass string             `json:"redaction_class"`
+	OccurredAt     pgtype.Timestamptz `json:"occurred_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
 func (q *Queries) ClaimLiveTelemetryOutbox(ctx context.Context, arg ClaimLiveTelemetryOutboxParams) ([]ClaimLiveTelemetryOutboxRow, error) {
@@ -386,15 +231,7 @@ func (q *Queries) ClaimLiveTelemetryOutbox(ctx context.Context, arg ClaimLiveTel
 			&i.EnvironmentID,
 			&i.SourceKind,
 			&i.SourceID,
-			&i.StreamName,
-			&i.RunID,
 			&i.DeploymentID,
-			&i.RunLeaseID,
-			&i.AttemptNumber,
-			&i.TraceID,
-			&i.SpanID,
-			&i.ParentSpanID,
-			&i.Traceparent,
 			&i.Category,
 			&i.Severity,
 			&i.Source,
@@ -402,7 +239,6 @@ func (q *Queries) ClaimLiveTelemetryOutbox(ctx context.Context, arg ClaimLiveTel
 			&i.Message,
 			&i.Payload,
 			&i.RedactionClass,
-			&i.SnapshotVersion,
 			&i.OccurredAt,
 			&i.CreatedAt,
 		); err != nil {
@@ -416,145 +252,11 @@ func (q *Queries) ClaimLiveTelemetryOutbox(ctx context.Context, arg ClaimLiveTel
 	return items, nil
 }
 
-const claimRunLogIngestBatch = `-- name: ClaimRunLogIngestBatch :many
-WITH candidates AS (
-    SELECT telemetry_outbox.id,
-           telemetry_outbox.ingest_size_bytes AS size_bytes
-      FROM telemetry_outbox
-     WHERE telemetry_outbox.stream_kind = 'run_log'
-       AND telemetry_outbox.written_at IS NULL
-       AND telemetry_outbox.status IN ('pending', 'claimed', 'failed')
-       AND (telemetry_outbox.next_retry_at IS NULL OR telemetry_outbox.next_retry_at <= now())
-     ORDER BY telemetry_outbox.id ASC
-     LIMIT $1
-     FOR UPDATE SKIP LOCKED
-),
-claimed AS (
-    SELECT sized.id
-      FROM (
-          SELECT candidates.id,
-                 SUM(candidates.size_bytes) OVER (ORDER BY candidates.id ASC) AS cumulative_size_bytes
-            FROM candidates
-      ) AS sized
-     WHERE sized.cumulative_size_bytes <= $2::bigint
-),
-updated AS (
-    UPDATE telemetry_outbox
-       SET status = 'claimed',
-           retry_count = telemetry_outbox.retry_count + 1,
-           next_retry_at = now() + $3::interval,
-           updated_at = now()
-      FROM claimed
-     WHERE telemetry_outbox.id = claimed.id
-    RETURNING telemetry_outbox.id, telemetry_outbox.org_id, telemetry_outbox.stream_kind, telemetry_outbox.source_kind, telemetry_outbox.source_id, telemetry_outbox.stream_name, telemetry_outbox.idempotency_key, telemetry_outbox.project_id, telemetry_outbox.environment_id, telemetry_outbox.run_id, telemetry_outbox.deployment_id, telemetry_outbox.run_lease_id, telemetry_outbox.attempt_number, telemetry_outbox.trace_id, telemetry_outbox.span_id, telemetry_outbox.parent_span_id, telemetry_outbox.traceparent, telemetry_outbox.category, telemetry_outbox.severity, telemetry_outbox.source, telemetry_outbox.kind, telemetry_outbox.message, telemetry_outbox.payload, telemetry_outbox.content, telemetry_outbox.size_bytes, telemetry_outbox.ingest_size_bytes, telemetry_outbox.observed_seq, telemetry_outbox.redaction_class, telemetry_outbox.retention_class, telemetry_outbox.snapshot_version, telemetry_outbox.status, telemetry_outbox.retry_count, telemetry_outbox.next_retry_at, telemetry_outbox.written_at, telemetry_outbox.published_at, telemetry_outbox.publish_attempts, telemetry_outbox.publish_locked_until, telemetry_outbox.ingest_error, telemetry_outbox.publish_error, telemetry_outbox.observed_at, telemetry_outbox.created_at, telemetry_outbox.updated_at, telemetry_outbox.command_id
-)
-SELECT updated.id AS outbox_id,
-       updated.retry_count,
-       COALESCE(updated.idempotency_key, '')::text AS idempotency_key,
-       updated.org_id,
-       updated.project_id,
-       updated.environment_id,
-       updated.run_id,
-       updated.run_lease_id,
-       updated.attempt_number,
-       updated.stream_name AS stream,
-       updated.id AS seq,
-       updated.observed_seq,
-       updated.content,
-       updated.size_bytes,
-       updated.created_at
-  FROM updated
- ORDER BY updated.id ASC
-`
-
-type ClaimRunLogIngestBatchParams struct {
-	RowLimit      int32           `json:"row_limit"`
-	MaxBatchBytes int64           `json:"max_batch_bytes"`
-	LeaseDuration pgtype.Interval `json:"lease_duration"`
-}
-
-type ClaimRunLogIngestBatchRow struct {
-	OutboxID       int64              `json:"outbox_id"`
-	RetryCount     int32              `json:"retry_count"`
-	IdempotencyKey string             `json:"idempotency_key"`
-	OrgID          pgtype.UUID        `json:"org_id"`
-	ProjectID      pgtype.UUID        `json:"project_id"`
-	EnvironmentID  pgtype.UUID        `json:"environment_id"`
-	RunID          pgtype.UUID        `json:"run_id"`
-	RunLeaseID     pgtype.UUID        `json:"run_lease_id"`
-	AttemptNumber  pgtype.Int4        `json:"attempt_number"`
-	Stream         string             `json:"stream"`
-	Seq            int64              `json:"seq"`
-	ObservedSeq    pgtype.Int8        `json:"observed_seq"`
-	Content        []byte             `json:"content"`
-	SizeBytes      pgtype.Int8        `json:"size_bytes"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-}
-
-func (q *Queries) ClaimRunLogIngestBatch(ctx context.Context, arg ClaimRunLogIngestBatchParams) ([]ClaimRunLogIngestBatchRow, error) {
-	rows, err := q.db.Query(ctx, claimRunLogIngestBatch, arg.RowLimit, arg.MaxBatchBytes, arg.LeaseDuration)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ClaimRunLogIngestBatchRow
-	for rows.Next() {
-		var i ClaimRunLogIngestBatchRow
-		if err := rows.Scan(
-			&i.OutboxID,
-			&i.RetryCount,
-			&i.IdempotencyKey,
-			&i.OrgID,
-			&i.ProjectID,
-			&i.EnvironmentID,
-			&i.RunID,
-			&i.RunLeaseID,
-			&i.AttemptNumber,
-			&i.Stream,
-			&i.Seq,
-			&i.ObservedSeq,
-			&i.Content,
-			&i.SizeBytes,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getTelemetryOutboxLifecycle = `-- name: GetTelemetryOutboxLifecycle :one
-SELECT LEAST(
-           (SELECT created_at
-              FROM telemetry_outbox
-             WHERE stream_kind = 'event'
-               AND written_at IS NULL
-               AND status IN ('pending', 'claimed', 'failed')
-               AND (next_retry_at IS NULL OR next_retry_at <= now())
-             ORDER BY id ASC LIMIT 1),
-           (SELECT created_at
-              FROM telemetry_outbox
-             WHERE stream_kind IN ('run_log','command_log')
-               AND written_at IS NULL
-               AND status IN ('pending', 'claimed', 'failed')
-               AND (next_retry_at IS NULL OR next_retry_at <= now())
-             ORDER BY id ASC LIMIT 1)
-       )::timestamptz AS oldest_retry_created_at,
-       (SELECT written_at
-          FROM telemetry_outbox
-         WHERE written_at < now() - $1::interval
-           AND ((stream_kind = 'event' AND published_at IS NOT NULL) OR stream_kind = 'run_log' OR (stream_kind = 'command_log' AND EXISTS (
-                SELECT 1 FROM computer_commands AS exec
-                 WHERE exec.environment_id = telemetry_outbox.environment_id
-                   AND exec.id = telemetry_outbox.command_id
-                   AND exec.terminal_at IS NOT NULL
-                   AND (exec.computer_instance_id IS NULL OR exec.process_reconciled_at IS NOT NULL)
-            )))
-         ORDER BY written_at ASC, id ASC LIMIT 1) AS oldest_gc_written_at
+SELECT (SELECT created_at FROM telemetry_outbox WHERE stream_kind='event' AND written_at IS NULL
+ AND (next_retry_at IS NULL OR next_retry_at<=now()) ORDER BY id LIMIT 1)::timestamptz AS oldest_retry_created_at,
+ (SELECT written_at FROM telemetry_outbox WHERE stream_kind='event' AND published_at IS NOT NULL
+ AND written_at<now()-$1::interval ORDER BY written_at,id LIMIT 1)::timestamptz AS oldest_gc_written_at
 `
 
 type GetTelemetryOutboxLifecycleRow struct {
@@ -594,7 +296,7 @@ UPDATE telemetry_outbox
   FROM failures
  WHERE telemetry_outbox.id = failures.id
    AND telemetry_outbox.publish_attempts = failures.publish_attempts
-   AND telemetry_outbox.published_at IS NULL
+   AND telemetry_outbox.published_at IS NULL AND telemetry_outbox.stream_kind='event'
 `
 
 type MarkLiveTelemetryOutboxBatchFailedParams struct {
@@ -635,7 +337,7 @@ UPDATE telemetry_outbox
   FROM completions
  WHERE telemetry_outbox.id = completions.id
    AND telemetry_outbox.publish_attempts = completions.publish_attempts
-   AND telemetry_outbox.published_at IS NULL
+   AND telemetry_outbox.published_at IS NULL AND telemetry_outbox.stream_kind='event'
 `
 
 type MarkLiveTelemetryOutboxBatchPublishedParams struct {
@@ -662,14 +364,13 @@ WITH failures AS (
         ON input_retries.position = input_ids.position
 )
 UPDATE telemetry_outbox
-   SET status = 'failed',
-       next_retry_at = now() + $1::interval,
+   SET next_retry_at = now() + $1::interval,
        updated_at = now(),
        ingest_error = $2
   FROM failures
  WHERE telemetry_outbox.id = failures.id
    AND telemetry_outbox.retry_count = failures.retry_count
-   AND telemetry_outbox.written_at IS NULL
+   AND telemetry_outbox.written_at IS NULL AND telemetry_outbox.stream_kind='event'
 `
 
 type MarkTelemetryOutboxBatchFailedParams struct {
@@ -703,8 +404,7 @@ WITH completions AS (
         ON input_retries.position = input_ids.position
 )
 UPDATE telemetry_outbox
-   SET status = 'written',
-       written_at = now(),
+   SET written_at = now(),
        retry_count = 0,
        next_retry_at = NULL,
        updated_at = now(),
@@ -712,7 +412,7 @@ UPDATE telemetry_outbox
   FROM completions
  WHERE telemetry_outbox.id = completions.id
    AND telemetry_outbox.retry_count = completions.retry_count
-   AND telemetry_outbox.written_at IS NULL
+   AND telemetry_outbox.written_at IS NULL AND telemetry_outbox.stream_kind='event'
 `
 
 type MarkTelemetryOutboxWrittenParams struct {
@@ -730,26 +430,10 @@ func (q *Queries) MarkTelemetryOutboxWritten(ctx context.Context, arg MarkTeleme
 
 const pruneTelemetryOutboxWritten = `-- name: PruneTelemetryOutboxWritten :execrows
 WITH eligible AS (
-    SELECT id
-      FROM telemetry_outbox
-     WHERE written_at < now() - $1::interval
-       AND (
-            (stream_kind = 'event' AND published_at IS NOT NULL)
-            OR stream_kind = 'run_log' OR (stream_kind = 'command_log' AND EXISTS (
-                SELECT 1 FROM computer_commands AS exec
-                 WHERE exec.environment_id = telemetry_outbox.environment_id
-                   AND exec.id = telemetry_outbox.command_id
-                   AND exec.terminal_at IS NOT NULL
-                   AND (exec.computer_instance_id IS NULL OR exec.process_reconciled_at IS NOT NULL)
-            ))
-       )
-     ORDER BY written_at ASC, id ASC
-     LIMIT $2
-     FOR UPDATE SKIP LOCKED
-)
-DELETE FROM telemetry_outbox
- USING eligible
- WHERE telemetry_outbox.id = eligible.id
+ SELECT id FROM telemetry_outbox WHERE stream_kind='event' AND published_at IS NOT NULL
+ AND written_at<now()-$1::interval
+ ORDER BY written_at,id LIMIT $2 FOR UPDATE SKIP LOCKED
+) DELETE FROM telemetry_outbox USING eligible WHERE telemetry_outbox.id=eligible.id
 `
 
 type PruneTelemetryOutboxWrittenParams struct {

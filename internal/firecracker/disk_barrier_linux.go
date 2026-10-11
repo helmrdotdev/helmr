@@ -8,20 +8,25 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/operations"
 
+	"github.com/helmrdotdev/helmr/internal/frameio"
+	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/wire"
 )
 
-// computerCaptureTimeout bounds the disk cut for live saves and checkpoints;
-// checkpoint memory serialization happens after this cut under its caller budget.
+// computerCaptureTimeout bounds guest writeback, host drain, disk encoding and
+// root persistence. Checkpoint memory serialization uses its caller budget.
 const computerCaptureTimeout = 30 * time.Second
 
 // lockComputer serializes live disk cuts with checkpoint and terminal close
@@ -47,7 +52,7 @@ func (s *guestMachine) lockComputer(ctx context.Context) (func(), error) {
 
 // captureContext lets Close cancel and join a disk operation before releasing
 // its device or backing descriptors. The caller owns computerBarrier. The finite
-// capture budget also covers synchronous disk I/O delaying VMM API dispatch.
+// capture budget includes synchronous disk I/O and guest acknowledgement.
 func (s *guestMachine) captureContext(ctx context.Context) (context.Context, func(), error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -73,7 +78,7 @@ func (s *guestMachine) PauseComputerForTermination(ctx context.Context) (*vm.Com
 	}
 	defer unlock()
 	s.checkpointHold = nil
-	s.computerHeld = true
+	s.computerCaptureBlocked = true
 	ctx, done, err := s.captureContext(ctx)
 	if err != nil {
 		return nil, err
@@ -88,39 +93,72 @@ var _ interface {
 	CaptureComputer(context.Context) (*vm.ComputerSnapshot, error)
 } = (*guestMachine)(nil)
 
-// CaptureComputer briefly holds dispatch and resumes before returning the owned
-// disk cut. It captures no memory. Any error forbids further live captures and
-// requires the owner to stop the source, including an ambiguous resume reply.
+// CaptureComputer flushes the retained guest filesystem and takes an ordered
+// online disk cut. It does not pause the VM, processes or filesystem. Any error
+// fences further captures until the owner stops the unsafe source.
 func (s *guestMachine) CaptureComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
 	unlock, err := s.lockComputer(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	if s.computerHeld {
-		return nil, errors.New("computer dispatch is held")
+	if s.computerCaptureBlocked {
+		return nil, errors.New("computer capture is fenced")
 	}
-	s.computerHeld = true
+	s.computerCaptureBlocked = true
 	ctx, done, err := s.captureContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer done()
-	cut, err := s.capturePausedComputer(ctx)
+	if s.topology.Computer == nil || s.topology.Computer.Device == nil {
+		return nil, errors.New("owned Computer device required")
+	}
+	started := time.Now()
+	if err := s.flushGuestComputer(ctx); err != nil {
+		return nil, err
+	}
+	slog.Info("Computer guest flush completed", "computer_id", s.topology.Computer.ComputerID, "duration_ms", float64(time.Since(started))/float64(time.Millisecond))
+	started = time.Now()
+	capture, err := s.topology.Computer.Device.Capture(ctx)
 	if err != nil {
 		return nil, err
 	}
-	// Close cancels this operation and joins the barrier before stopping the
-	// machine. Even an in-flight resume cannot run after that physical stop.
-	// Use the capture budget rather than the SDK default request cutoff: the
-	// synchronous block engine must finish in-flight I/O before API dispatch.
-	err = s.machine.ResumeVM(ctx, func(params *operations.PatchVMParams) { params.SetContext(ctx) })
+	// Includes device drainage, the request boundary, encoding and local
+	// persistence; it is not a measurement of cut synchronization alone.
+	slog.Info("Computer online capture completed", "computer_id", s.topology.Computer.ComputerID, "duration_ms", float64(time.Since(started))/float64(time.Millisecond))
+	s.computerCaptureBlocked = false
+	return &vm.ComputerSnapshot{ComputerID: s.topology.Computer.ComputerID, Capture: capture}, nil
+}
+
+func (s *guestMachine) flushGuestComputer(ctx context.Context) error {
+	stream, err := s.OpenStream(ctx)
 	if err != nil {
-		cut.Capture.Release()
-		return nil, fmt.Errorf("resume captured Computer: %w", err)
+		return err
 	}
-	s.computerHeld = false
-	return cut, nil
+	defer stream.Close()
+	closed := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() { defer close(closed); _ = stream.Close() })
+	defer func() {
+		if !stop() {
+			<-closed
+		}
+	}()
+	operation := uuid.NewV7().String()
+	if err = wire.WriteStreamFrameHeader(stream, wire.StreamHeader{Type: wire.StreamTypeComputerFlush, ComputerID: s.topology.Computer.ComputerID, OperationID: operation}, 0); err != nil {
+		return errors.Join(ctx.Err(), err)
+	}
+	if err = frameio.WriteProtoFrame(stream, &computerv0.FlushComputerRequest{OperationId: operation}); err != nil {
+		return errors.Join(ctx.Err(), err)
+	}
+	var response computerv0.FlushComputerResponse
+	if err = frameio.ReadProtoFrameBounded(stream, 4096, &response); err != nil {
+		return errors.Join(ctx.Err(), err)
+	}
+	if response.OperationId != operation || response.Error != "" {
+		return errors.New("guest Computer writeback was not acknowledged")
+	}
+	return ctx.Err()
 }
 
 func (s *guestMachine) capturePausedComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
@@ -283,4 +321,30 @@ func closeRuntimeDiskFiles(files map[string]*os.File) error {
 		}
 	}
 	return result
+}
+
+// WithRunningGuestControl holds the same barrier as snapshot/termination. The
+// caller's exchange may not recursively invoke a VM lifecycle operation.
+func (s *guestMachine) WithRunningGuestControl(ctx context.Context, stage vm.GuestControlStage, exchange func(context.Context) error) error {
+	unlock, err := s.lockComputer(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if (s.checkpointHold != nil && !s.checkpointHold.resumed) || (s.computerCaptureBlocked && s.checkpointHold == nil) {
+		return errors.New("computer guest control is paused or fenced")
+	}
+	ctx, done, err := s.captureContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer done()
+	if stage == vm.GuestControlInstallation {
+		s.agentContinuationPending = true
+	}
+	err = exchange(ctx)
+	if err == nil && stage == vm.GuestControlActivation {
+		s.agentContinuationPending = false
+	}
+	return err
 }

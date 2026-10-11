@@ -21,6 +21,7 @@ func computerCommand() *cobra.Command {
 		Short: "Work with durable Computers.",
 	}
 	command.AddCommand(
+		computerDefinitionCommand(),
 		computerCreateCommand(),
 		computerGetCommand(),
 		computerDeleteCommand(),
@@ -49,7 +50,7 @@ func computerCreateCommand() *cobra.Command {
 			if command.Flags().Changed("key") {
 				keyPointer = &key
 			}
-			var bindings []secretbinding.Binding
+			bindings := []secretbinding.Reference{}
 			if secretsFile != "" {
 				file, e := os.Open(secretsFile)
 				if e != nil {
@@ -59,7 +60,7 @@ func computerCreateCommand() *cobra.Command {
 				decoder := json.NewDecoder(io.LimitReader(file, 65537))
 				decoder.DisallowUnknownFields()
 				if e := decoder.Decode(&bindings); e != nil {
-					return fmt.Errorf("secrets-file must contain a JSON Computer binding array (API fields use allowed_origins): %w", e)
+					return fmt.Errorf("secrets-file must contain a JSON Secret reference array (secretId and allowedOrigins): %w", e)
 				}
 				var trailing any
 				if e := decoder.Decode(&trailing); e != io.EOF {
@@ -68,10 +69,8 @@ func computerCreateCommand() *cobra.Command {
 				if bindings == nil {
 					return errors.New("secrets-file must contain an array")
 				}
-				for _, binding := range bindings {
-					if e := secretbinding.ValidateBinding(binding); e != nil {
-						return e
-					}
+				if _, e := secretbinding.NormalizeReferences(bindings); e != nil {
+					return e
 				}
 			}
 			response, err := controlPlane.CreateComputer(command.Context(), args[0], api.CreateComputerRequest{
@@ -90,7 +89,7 @@ func computerCreateCommand() *cobra.Command {
 		},
 	}
 	addScopeFlags(command, &projectID, &environmentID)
-	command.Flags().StringVar(&secretsFile, "secrets-file", "", "API JSON array of Computer Secret bindings (allowed_origins; names and placements, never values).")
+	command.Flags().StringVar(&secretsFile, "secrets-file", "", "JSON array of Secret references (secretId, env or file placement, and allowedOrigins; never values).")
 	command.Flags().StringVar(&key, "key", "", "Immutable Computer key.")
 	command.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for safe retries.")
 	command.Flags().BoolVar(&jsonOutput, "json", false, "Emit JSON.")
@@ -118,7 +117,7 @@ func computerGetCommand() *cobra.Command {
 			if jsonOutput {
 				return writeJSON(command.OutOrStdout(), snapshot)
 			}
-			_, err = fmt.Fprintf(command.OutOrStdout(), "%s\t%s\t%s\n", snapshot.ID, snapshot.SandboxID, snapshot.Status)
+			_, err = fmt.Fprintf(command.OutOrStdout(), "%s\t%s\t%s\n", snapshot.ID, snapshot.DefinitionKey, snapshot.Status)
 			return err
 		},
 	}

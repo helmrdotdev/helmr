@@ -1,88 +1,10 @@
-import {
-  actor,
-  builder as configBuilder,
-  defineConfig,
-  image,
-  queue,
-  source,
-  task,
-  sandbox,
-  schedules,
-  sessions,
-  tokens,
-  computers,
-  type JsonValue,
-  type HelmrClient,
-  type Actor,
-  type ActorStartResult,
-  type ImageBuilder,
-  type PayloadSchema,
-  type ActorInfo,
-  type ActorContext,
-  type SandboxInfo,
-  type TaskContext,
-  type TaskConfig,
-  type TaskConfigWithPayload,
-  type TaskConfigWithoutPayload,
-  type TaskInfo,
-  type TaskInput,
-  type TaskOutput,
-  type SessionEventPage,
-  type SessionRef,
-  type TokenCreateResult,
-  type TokenCancelRequest,
-  type TokenCompleteRequest,
-  type TokenRef,
-  type Queue,
-  type QueueConfig,
-  type SandboxBuilder,
-  type SandboxConfig,
-  type SandboxResourceBuilder,
-  type Sandbox,
-  type SecretCreateRequest,
-  type SecretRevokeRequest,
-  type SecretRotateRequest,
-  type RecordWriter,
-  type SourceDirectory,
-  type SourceFile,
-  type ComputerRef,
-  type ComputerSecretBinding,
-} from "."
-
-const schema: PayloadSchema<{ readonly value: string }> = {
-  "~standard": {
-    version: 1,
-    vendor: "type-test",
-    validate(value) {
-      return { value: value as { readonly value: string } }
-    },
-  },
-}
+import { agent, computer, triggers, builder as configBuilder, defineConfig, image, source,
+  type HelmrClient, type ImageBuilder, type ComputerDefinitionInfo, type SessionEventPage,
+  type SecretCreateRequest, type SecretRotateRequest, type SecretRevokeRequest,
+  type SecretBinding, type SourceFile, type SourceDirectory, type ComputerRef } from "."
+import * as sdk from "."
 
 export function assertGreenfieldTypes(): void {
-  const queueConfig: QueueConfig = {
-    name: "default",
-    concurrencyLimit: 10,
-  }
-  const defaultQueue: Queue = queue(queueConfig)
-  // @ts-expect-error Queue values must be created by queue().
-  const unbrandedQueue: Queue = { name: "default", concurrencyLimit: 10 }
-  void unbrandedQueue
-
-  const runDefaults = {
-    queue: defaultQueue,
-    maxDuration: "30m",
-    ttl: "1h",
-    retry: { maxAttempts: 3 },
-  } as const
-
-  const sandboxConfig: SandboxConfig = { id: "machine" }
-  const stagedSandbox: SandboxBuilder = sandbox(sandboxConfig)
-  const stagedResources: SandboxResourceBuilder = stagedSandbox.image(
-    image("staged-root").from("debian"),
-  )
-  stagedResources.resources({ cpu: 1, memory: "1GiB" })
-
   // @ts-expect-error ImageBuilder values must be created by image().
   const unbrandedImage: ImageBuilder = {
     key: "unbranded",
@@ -96,15 +18,7 @@ export function assertGreenfieldTypes(): void {
   }
   void unbrandedImage
 
-  const writeValues = async (
-    writer: RecordWriter,
-    values: readonly JsonValue[],
-  ): Promise<void> => {
-    for (const value of values) await writer.write(value)
-  }
-  void writeValues
-
-  const placement: ComputerSecretBinding = { secret: "token", env: {name: "TOKEN", mode: "raw"} }
+  const placement: SecretBinding = { secretId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38", env: {name: "TOKEN", mode: "raw"} }
   const secretCreate: SecretCreateRequest = {
     name: "TOKEN",
     value: "secret",
@@ -116,20 +30,11 @@ export function assertGreenfieldTypes(): void {
   const secretRevoke: SecretRevokeRequest = {
     idempotencyKey: "revoke-token",
   }
-  const tokenComplete: TokenCompleteRequest = { result: null }
-  const tokenCancel: TokenCancelRequest = {}
   void placement
   void secretCreate
   void secretRotate
   void secretRevoke
-  void tokenComplete
-  void tokenCancel
 
-  const builder = sandbox({ id: "machine" })
-  // @ts-expect-error image is required before resources.
-  builder.resources({ cpu: 1, memory: "1GiB" })
-
-  const resourceBuilder = builder.image(image("root").from("debian"))
   // @ts-expect-error registry authentication belongs to the local BuildKit session.
   image("private").from("ghcr.io/acme/base:1", { auth: {} })
   const sourceFile: SourceFile = source.file("./package.json")
@@ -146,7 +51,7 @@ export function assertGreenfieldTypes(): void {
   // @ts-expect-error A Computer image is not a build environment.
   defineConfig({ build: { builder: image("computer").from("debian") } })
   // @ts-expect-error The build environment is not a Computer image.
-  sandbox({ id: "wrong-role" }).image(prepared)
+  computer({ id: "wrong-role", image: prepared, resources: { cpu: 1, memory: "1GiB" } })
   // @ts-expect-error Builder sources are captured project paths, not installed-tree selectors.
   configBuilder().copy(sourceFile, "/opt/setup.sh")
   // @ts-expect-error The builder always starts from the Helmr builder image.
@@ -159,78 +64,14 @@ export function assertGreenfieldTypes(): void {
   const unbrandedSourceDirectory: SourceDirectory = { path: "./src" }
   void unbrandedSourceFile
   void unbrandedSourceDirectory
-  // @ts-expect-error v0 directory copy has no implementation-defined ignore language.
+  // @ts-expect-error Directory copy has no implementation-defined ignore language.
   source.directory("./src", { ignore: ["**/*.test.ts"] })
-  // @ts-expect-error memory is required.
-  resourceBuilder.resources({ cpu: 1 })
-  // @ts-expect-error memory uses canonical MiB or GiB suffixes.
-  resourceBuilder.resources({ cpu: 1, memory: "1Gi" })
-  // @ts-expect-error v0 ephemeral disk capacity is not public input.
-  resourceBuilder.resources({ cpu: 1, memory: "1GiB", disk: "64GiB" })
-
-  const machine: Sandbox = resourceBuilder.resources({
-    cpu: 1,
-    memory: "1GiB",
-  })
-  // @ts-expect-error Sandbox values must be created by sandbox().
-  const unbrandedSandbox: Sandbox = {
-    id: "unbranded",
-    createComputer: async () => null as never,
-  }
-  void unbrandedSandbox
-
-  const payloadTask = task({
-    id: "payload",
-    ...runDefaults,
-    payload: schema,
-    run(payload, ctx): JsonValue {
-      ctx satisfies TaskContext
-      return payload
-    },
-  })
-  payloadTask.id satisfies "payload"
-  const payloadInput: TaskInput<typeof payloadTask> = { value: "ok" }
-  payloadInput.value satisfies string
-  const runtimeComputer = computers.ref(
-    "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
-  )
-  runtimeComputer satisfies ComputerRef
-  payloadTask.start(
-    { value: "ok" },
-    { computer: runtimeComputer },
-  )
-  const childWait = payloadTask.call(
-    { value: "ok" },
-    {
-      computer: runtimeComputer,
-      idempotencyKey: "payload:ok",
-    },
-  )
-  childWait.unwrap().then((output) => {
-    output satisfies JsonValue
-  })
-  payloadTask.call(
-    { value: "ok" },
-    // @ts-expect-error task.call requires an explicit idempotency key.
-    { computer: runtimeComputer },
-  )
-  // @ts-expect-error a payload-bearing task call requires its payload position.
-  payloadTask.call({
-    computer: runtimeComputer,
-    idempotencyKey: "payload:missing",
-  })
-  // @ts-expect-error a payload-bearing task always requires payload.
-  payloadTask.start({ computer: runtimeComputer })
   const client = null as unknown as HelmrClient
-  client.tasks.retrieve("payload").then((info: TaskInfo) => {
+  client.agents.retrieve("operator").then((info) => {
     info.id satisfies string
     info.deploymentId satisfies string
   })
-  client.actors.retrieve("operator").then((info: ActorInfo) => {
-    info.id satisfies string
-    info.deploymentId satisfies string
-  })
-  client.sandboxes.retrieve("machine").then((info: SandboxInfo) => {
+  client.computerDefinitions.retrieve("machine").then((info: ComputerDefinitionInfo) => {
     info.id satisfies string
     info.deploymentId satisfies string
   })
@@ -238,210 +79,62 @@ export function assertGreenfieldTypes(): void {
     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
   )
   clientComputer satisfies ComputerRef
-  client.sandboxes.createComputer("machine").then((computer) => {
+  client.computerDefinitions.createComputer("machine").then((computer) => {
     computer satisfies ComputerRef
   })
-  sessions.ref(
-    "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-  ) satisfies SessionRef
-  client.sessions.ref(
-    "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-  ) satisfies SessionRef
-  client.sessions.ref(
+  client.sessions.get(
     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
   ).events.list({ after: 0, limit: 10 }) satisfies Promise<SessionEventPage>
-  sessions.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33").events.list()
-  tokens.create().then((token) => {
-    token satisfies TokenCreateResult & TokenRef
+  client.agents.start("operator", { input: [{ type: "text", text: "ok" }], computer: clientComputer }).then(({ session, turn, created }) => {
+    created satisfies boolean
+    session.id satisfies string
+    turn.sessionId satisfies string
+    turn.wait().then((outcome) => { outcome.status satisfies string })
   })
-  client.tokens.create().then((token) => {
-    token satisfies TokenCreateResult
-    // @ts-expect-error external Token creation returns credentials, not a runtime Wait handle.
-    token.wait()
-  })
-  client.tasks.start<typeof payloadTask>("payload", {
-    payload: { value: "ok" },
-    computer: clientComputer,
-  })
-  client.tasks.start<typeof payloadTask>(
-    // @ts-expect-error a typed Task start requires that Task's declared ID.
-    "other-task",
-    {
-      payload: { value: "ok" },
-      computer: clientComputer,
-    },
-  )
-  // @ts-expect-error the external typed Task envelope requires payload.
-  client.tasks.start<typeof payloadTask>("payload", {
-    computer: clientComputer,
-  })
-  const typedOutputTask = task({
-    id: "typed-output",
-    payload: schema,
-    run(payload) {
-      return { value: payload.value, count: payload.value.length }
-    },
-  })
-  const typedRun = client.tasks.start<typeof typedOutputTask>("typed-output", {
-    payload: { value: "ok" },
-    computer: clientComputer,
-  })
-  type TypedOutput = TaskOutput<typeof typedOutputTask>
-  const typedOutput: TypedOutput = { value: "ok", count: 2 }
-  typedOutput.count satisfies number
-  typedRun.then((handle) => {
-    client.runs.retrieve(handle).then((run) => {
-      if (run.output !== undefined) {
-        run.output.value satisfies string
-        run.output.count satisfies number
+  // @ts-expect-error Agent admission requires explicit text-part input.
+  client.agents.start("operator", { computer: clientComputer })
+
+  const workspace = computer({ id: "workspace", image: image("workspace").from("debian"), resources: { cpu: 1, memory: "1GiB" } })
+  agent({ id: "operator", computer: workspace, setup: () => ({ count: 0 }),
+    async turn(turn, ctx) {
+      ctx.setupResult.count satisfies number
+      // @ts-expect-error Runtime delegation is available through managed MCP.
+      void turn.agents
+      if (ctx.session.parent) {
+        ctx.session.parent.id satisfies string
+        // @ts-expect-error Parent metadata grants no control handle.
+        void ctx.session.parent.enqueue
       }
-    })
-    const payloadTaskWait = client.runs.wait(handle)
-    payloadTaskWait.unwrap().then((output) => {
-      output.value satisfies string
-      output.count satisfies number
-      // @ts-expect-error the Task output has no unknown member.
-      output.missing
-    })
-    payloadTaskWait.then((result) => {
-      if (result.ok) {
-        result.output.value satisfies string
-      } else {
-        result.failure.code satisfies string
-      }
-    })
-  })
-
-  const noPayloadTask = task({
-    id: "no-payload",
-    run(): JsonValue {
-      return null
+      await turn.output.write("Working")
+      await turn.respond("Done")
+      // @ts-expect-error The runtime owns settlement after the handler returns.
+      void turn.complete
+      // @ts-expect-error Session inbox loops are not Agent authoring.
+      void ctx.session.receive
+      return { count: ++ctx.setupResult.count }
     },
   })
-  const payloadConfig = {
-    id: "payload-config",
-    payload: schema,
-    run(payload: { readonly value: string }) {
-      return payload
-    },
-  } satisfies TaskConfigWithPayload<
-    "payload-config",
-    { readonly value: string },
-    { readonly value: string },
-    { readonly value: string }
-  >
-  task(payloadConfig)
-  const noPayloadConfig = {
-    id: "no-payload-config",
-    run: () => null,
-  } satisfies TaskConfigWithoutPayload<"no-payload-config", null>
-  task(noPayloadConfig)
-  noPayloadTask.id satisfies "no-payload"
-  const configuredTask = {
-    id: "configured",
-    run: () => null,
-  } satisfies TaskConfig<"configured", never, never, null>
-  task(configuredTask).id satisfies "configured"
-  noPayloadTask.start({ computer: runtimeComputer })
-  noPayloadTask.call({
-    computer: runtimeComputer,
-    idempotencyKey: "no-payload",
-  })
-  // @ts-expect-error task.call requires an explicit idempotency key.
-  noPayloadTask.call({ computer: runtimeComputer })
-  client.tasks.start<typeof noPayloadTask>("no-payload", {
-    computer: clientComputer,
-  })
-  client.tasks.start<typeof noPayloadTask>("no-payload", {
-    // @ts-expect-error the external no-payload Task envelope forbids payload.
-    payload: null,
-    computer: clientComputer,
-  })
-  // @ts-expect-error a no-payload task has no payload position.
-  noPayloadTask.start(null, { computer: runtimeComputer })
-  // @ts-expect-error a no-payload task call has no payload position.
-  noPayloadTask.call(null, {
-    computer: runtimeComputer,
-    idempotencyKey: "no-payload:unexpected",
-  })
-
-  const scheduled = schedules.task({
-    id: "scheduled",
-    cron: { pattern: "0 * * * *", timezone: "UTC" },
-    computer: { sandbox: machine },
-    run(payload) {
-      payload.scheduledAt satisfies Date
-      return { scheduleId: payload.scheduleId }
-    },
-  })
-  scheduled.id satisfies "scheduled"
-  const scheduledInput: TaskInput<typeof scheduled> = {
-    scheduledAt: "2026-08-06T00:00:00Z",
-    timezone: "UTC",
-    scheduleId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
-    upcoming: [],
-  }
-  scheduledInput.scheduledAt satisfies string
-  const scheduledOutput: TaskOutput<typeof scheduled> = {
-    scheduleId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
-  }
-  scheduledOutput.scheduleId satisfies string
-
-  task({
-    id: "duration",
-    maxDuration: "15m",
-    ttl: "7d",
-    retry: {
-      maxAttempts: 2,
-      backoff: { minDelay: "1s", maxDelay: "30s", factor: 2 },
-    },
-    run: () => null,
-  })
-  task({
-    id: "invalid-duration",
-    // @ts-expect-error public durations never accept bare numbers.
-    maxDuration: 900,
-    run: () => null,
-  })
-
-  const operator: Actor = actor({
-    id: "operator",
-    async run(session, ctx) {
-      ctx satisfies ActorContext
-      const sessionID: string = session.id
-      const actorID: string = ctx.actor.id
-      void sessionID
-      void actorID
-      const turn = await session.receive()
-      if (turn !== null) {
-        await turn.onMessage(({ data }) => { data satisfies JsonValue })
-        await turn.output.write(turn.input)
-        await turn.complete()
-        await turn.complete(null)
-      }
-      session.output satisfies RecordWriter
-      // @ts-expect-error Session addressing is not copied into Actor definition identity.
-      ctx.actor.key
-      // @ts-expect-error Actor definition identity is not copied onto the Session.
-      session.actorId
-    },
-  })
-  // @ts-expect-error Actor values must be created by actor().
-  const unbrandedActor: Actor = {
-    id: "unbranded",
-    start: async () => null as never,
-  }
-  void unbrandedActor
-  operator.start({ computer: runtimeComputer }).then((started) => {
-    started satisfies ActorStartResult
-    const { run } = started
-    client.runs.wait(run).unwrap().then((output) => {
-      output satisfies null
-    })
-  })
-  client.actors.start("operator", { computer: clientComputer }).then(({ run }) => {
-    client.runs.wait(run).unwrap().then((output) => {
-      output satisfies null
-    })
-  })
+  void triggers
+  // @ts-expect-error Runtime Session handles belong to injected Turn authority.
+  void sdk.sessions
+  // @ts-expect-error Computer handles belong to the authenticated client.
+  void sdk.computers
 }
+
+export function assertProcessDiagnosticsAreInternal(client: HelmrClient): void {
+  // @ts-expect-error Process-wide diagnostics are not a public Session API.
+  void client.sessions.logs
+  // @ts-expect-error Internal producer identities are not publicly discoverable.
+  void client.sessions.logStreams
+  // @ts-expect-error Preparation process diagnostics remain internal.
+  void client.computers.preparationLogs
+  // @ts-expect-error Preparation producer identities remain internal.
+  void client.computers.preparationLogStreams
+}
+
+function assertSessionOwnsInterruption(client: HelmrClient): void {
+ const turn = client.sessions.get("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33").turn("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34")
+ // @ts-expect-error Interruption belongs to the Session subtree.
+ void turn.interrupt()
+}
+void assertSessionOwnsInterruption

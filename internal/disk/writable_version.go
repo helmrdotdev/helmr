@@ -217,6 +217,17 @@ func (d *WritableVersion) Trim(ctx context.Context, offset int64, length int) er
 }
 
 func (d *WritableVersion) Capture(ctx context.Context) (VersionRoot, error) {
+	return d.captureBoundary(ctx, nil)
+}
+
+// cut releases the request boundary after the generation swap, before encoding.
+// It also runs on an early rejection so the caller never strands device I/O.
+func (d *WritableVersion) captureBoundary(ctx context.Context, cut func()) (VersionRoot, error) {
+	defer func() {
+		if cut != nil {
+			cut()
+		}
+	}()
 	d.capture.Lock()
 	defer d.capture.Unlock()
 	d.mu.Lock()
@@ -237,6 +248,10 @@ func (d *WritableVersion) Capture(ctx context.Context) (VersionRoot, error) {
 	d.dirty = make(map[uint64][]byte)
 	frozen, base := d.frozen, d.root
 	d.mu.Unlock()
+	if cut != nil {
+		cut()
+		cut = nil
+	}
 	locator, err := base.Locator(base.LogicalBytes)
 	if err == nil {
 		locator, err = d.writer.Capture(ctx, locator, base.LogicalBytes, frozen)

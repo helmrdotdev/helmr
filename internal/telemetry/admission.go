@@ -7,9 +7,8 @@ import (
 )
 
 const (
-	MaxEventMessageBytes  = 4 << 10
-	MaxEventPayloadBytes  = 64 << 10
-	MaxRunLogContentBytes = 192 << 10
+	MaxEventMessageBytes = 4 << 10
+	MaxEventPayloadBytes = 64 << 10
 	// MaxTelemetryBatchBytes bounds admitted payload, not Native wire or process size.
 	MaxTelemetryBatchBytes = 16 << 20
 )
@@ -23,13 +22,6 @@ func ValidateEvent(message string, payload []byte) error {
 	}
 	if len(payload) == 0 || !json.Valid(payload) {
 		return fmt.Errorf("telemetry event payload must be valid JSON")
-	}
-	return nil
-}
-
-func ValidateRunLog(content []byte) error {
-	if len(content) > MaxRunLogContentBytes {
-		return fmt.Errorf("telemetry run log content exceeds %d bytes", MaxRunLogContentBytes)
 	}
 	return nil
 }

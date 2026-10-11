@@ -3,9 +3,8 @@ import { promisify } from "node:util"
 import { writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { verify, assert, deadline, readTelemetry } from "../../support/context"
+import { verify, assert, deadline, waitOutput, completedResult } from "../../support/context"
 import { hostObservation } from "../../support/host-observation"
-import type { outageTask } from "./task"
 
 async function service(name: string, property: string) {
   return (await promisify(execFile)("systemctl", ["show", `helmr-verification-${name}.service`,
@@ -14,36 +13,24 @@ async function service(name: string, property: string) {
 
 // The operator stops only CP after ready-for-outage.json, holds it for at least
 // 150 seconds, and starts it again. Dispatcher and Worker must remain running.
-await verify("control-plane-outage", async ({ client, marker, computer, objects }) => {
+await verify("control-plane-outage", async ({ marker, computer, startAgent }) => {
   const shared = await computer("verification-outage")
-  const run = await client.tasks.start<typeof outageTask>("verification-outage", {
-    computer: shared, payload: { marker }, idempotencyKey: `${marker}:run`,
+  const started = await startAgent("verification-outage", {
+    computer: shared, input: { marker }, idempotencyKey: `${marker}:start`,
   })
-  objects.run_ids.push(run.id)
-  const startedDeadline = deadline(180_000)
-  let nonce: string | undefined
-  while (!nonce) {
-    startedDeadline.throwIfAborted()
-    const logs = await readTelemetry(() => client.runs.logs(run.id, { limit: 100 }))
-    const entries = logs.items.filter(item => item.kind === "structured" && item.attributes.marker === marker)
-    assert(entries.length <= 1, "probe entered more than once")
-    const entry = entries[0]
-    if (entry?.kind === "structured") {
-      assert.equal(typeof entry.attributes.nonce, "string")
-      nonce = entry.attributes.nonce as string
-    }
-    if (!nonce) await delay(500)
-  }
-  const before = await hostObservation("run-path", { run_id: run.id })
+  const outputBefore = await waitOutput(started.session, started.turn, value => value !== null && typeof value === "object" && "phase" in value && value.phase === "started")
+  assert(outputBefore !== null && typeof outputBefore === "object" && "nonce" in outputBefore && typeof outputBefore.nonce === "string")
+  const nonce = outputBefore.nonce
+  const before = await hostObservation("computer-path", { computer_id: shared.id })
   assert.equal(before.leases.length, 1)
   const source = before.leases[0]
   const fleet = await hostObservation("worker-fleet", { region: "default" })
   const host = fleet.find((h: any) => h.id === source.worker_host_id)
-  assert(host, "Run Host missing from fleet")
+  assert(host, "Computer Host missing from fleet")
   const dispatcher = await service("dispatcher", "InvocationID")
   assert(dispatcher)
   await writeFile(join(process.env.HELMR_EVIDENCE_DIR!, "ready-for-outage.json"),
-    JSON.stringify({ runId: run.id, computerId: shared.id, nonce, before, host, dispatcher }), { mode: 0o600, flag: "wx" })
+    JSON.stringify({ turnId: started.turn.id, sessionId: started.session.id, computerId: shared.id, nonce, before, host, dispatcher }), { mode: 0o600, flag: "wx" })
   const outageDeadline = deadline(300_000)
   let stoppedAt: number | undefined
   let recovered = false
@@ -82,11 +69,11 @@ await verify("control-plane-outage", async ({ client, marker, computer, objects 
   const readyWallSeconds = Date.now() / 1000
   assert.equal(await service("dispatcher", "InvocationID"), dispatcher)
   assert.equal(await service("dispatcher", "ActiveState"), "active")
-  const output = await client.runs.wait(run, { signal: deadline(300_000) }).unwrap()
-  assert.deepEqual(output, { marker, nonce, runId: run.id, attemptNumber: 1 })
-  const after = await hostObservation("run-path", { run_id: run.id })
+  const output = await completedResult(started.turn, 300_000)
+  assert.deepEqual(output, { marker, nonce, turnId: started.turn.id, sessionId: started.session.id })
+  const after = await hostObservation("computer-path", { computer_id: shared.id })
   assert.equal(after.leases.length, 1)
-  assert.equal(after.leases[0].id, source.id)
+  assert.equal(after.leases[0].epoch, source.epoch)
   assert.equal(after.leases[0].computer_instance_id, source.computer_instance_id)
   assert.equal(after.leases[0].worker_host_id, source.worker_host_id)
   assert.equal(await service("dispatcher", "InvocationID"), dispatcher)

@@ -11,14 +11,13 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestComputerInstanceCapacitySelectionFindsViableWorkerPastPlannerLimit(t *testing.T) {
+func TestWorkerCapacityBinsReturnBoundedHostPrefix(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
 	seedCapacityQueryWorkers(t, ctx, pool, 1002, 1001)
@@ -37,109 +36,6 @@ func TestComputerInstanceCapacitySelectionFindsViableWorkerPastPlannerLimit(t *t
 		t.Fatalf("planner Worker prefix ends at %s", pgvalue.UUIDString(bins[len(bins)-1].WorkerHostID))
 	}
 
-	selected, err := q.SelectComputerInstanceCapacity(ctx, runCapacitySelectionParams())
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := capacityQueryWorkerID(1002)
-	if selected.WorkerHostID != want {
-		t.Fatalf("selected Worker = %s, want %s", pgvalue.UUIDString(selected.WorkerHostID), pgvalue.UUIDString(want))
-	}
-}
-
-func TestComputerInstanceCapacityPressureCandidatesPageByWorkerID(t *testing.T) {
-	ctx := context.Background()
-	pool := newPostgresDB(t, ctx)
-	seedCapacityQueryWorkers(t, ctx, pool, 129, 0)
-	q := db.New(pool)
-	params := runCapacityPressureParams()
-	params.RowLimit = 128
-
-	first, err := q.ListComputerInstanceCapacityPressureCandidates(ctx, params)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(first) != 128 {
-		t.Fatalf("first pressure page has %d rows, want 128", len(first))
-	}
-	if first[0].WorkerHostID != capacityQueryWorkerID(1) || first[127].WorkerHostID != capacityQueryWorkerID(128) {
-		t.Fatalf("first pressure page bounds = %s..%s", pgvalue.UUIDString(first[0].WorkerHostID),
-			pgvalue.UUIDString(first[len(first)-1].WorkerHostID))
-	}
-	params.AfterWorkerHostID = first[len(first)-1].WorkerHostID
-	second, err := q.ListComputerInstanceCapacityPressureCandidates(ctx, params)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(second) != 1 || second[0].WorkerHostID != capacityQueryWorkerID(129) {
-		t.Fatalf("second pressure page = %+v, want Worker 129", second)
-	}
-}
-
-func TestComputerInstanceCapacityRestoreCompatibilityMatchesPlanner(t *testing.T) {
-	for _, test := range []struct {
-		name      string
-		cpuDigest string
-	}{
-		{name: "compatible", cpuDigest: dbtest.DefaultCPUConfigID},
-		{name: "cpu shape mismatch", cpuDigest: dbtest.Digest("wrong-cpu")},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			ctx := context.Background()
-			pool := newPostgresDB(t, ctx)
-			seedCapacityQueryWorkers(t, ctx, pool, 1, 0)
-			plannerCompatible := workergroup.CanRestore(workergroup.RestoreRequirements{
-				WorkerGroupID: dbtest.DefaultWorkerGroupUUID, VMPlatformID: dbtest.DefaultRuntimeID,
-				VCPUCount: 1, CPUConfigDigest: test.cpuDigest,
-				Resources: workergroup.ResourceVector{CPUMillis: 1000, MemoryBytes: 1 << 30, GuestEphemeralDiskBytes: 32 << 30, VMSlots: 1},
-			}, workergroup.Pool{
-				WorkerGroupID: dbtest.DefaultWorkerGroupUUID, VMPlatformID: dbtest.DefaultRuntimeID,
-				PerVM:     workergroup.ResourceVector{CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 32 << 30, VMSlots: 1},
-				CPUShapes: []vmplatform.CPUShape{{VCPUCount: 1, CPUConfigDigest: dbtest.DefaultCPUConfigID}},
-			})
-			immediateParams := runCapacitySelectionParams()
-			immediateParams.RequiredVMPlatformID = dbtest.DefaultRuntimeID
-			immediateParams.RequiredWorkerGroupID = dbtest.DefaultWorkerGroupID
-			immediateParams.RequiredVMVCPUCount = 1
-			immediateParams.RequiredCPUConfigDigest = test.cpuDigest
-			_, immediateErr := db.New(pool).SelectComputerInstanceCapacity(ctx, immediateParams)
-
-			pressureParams := runCapacityPressureParams()
-			pressureParams.RequiredVMPlatformID = immediateParams.RequiredVMPlatformID
-			pressureParams.RequiredWorkerGroupID = immediateParams.RequiredWorkerGroupID
-			pressureParams.RequiredVMVCPUCount = immediateParams.RequiredVMVCPUCount
-			pressureParams.RequiredCPUConfigDigest = immediateParams.RequiredCPUConfigDigest
-			pressure, err := db.New(pool).ListComputerInstanceCapacityPressureCandidates(ctx, pressureParams)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if (immediateErr == nil) != plannerCompatible || (len(pressure) == 1) != plannerCompatible {
-				t.Fatalf("planner = %v, immediate error = %v, pressure rows = %d", plannerCompatible, immediateErr, len(pressure))
-			}
-			if immediateErr != nil && !errors.Is(immediateErr, pgx.ErrNoRows) {
-				t.Fatal(immediateErr)
-			}
-		})
-	}
-}
-
-func runCapacitySelectionParams() db.SelectComputerInstanceCapacityParams {
-	return db.SelectComputerInstanceCapacityParams{
-		RegionID: dbtest.DefaultRegionID, ObservationFreshnessSeconds: workergroup.ObservationFreshnessSeconds,
-		RunArchitecture: "x86_64", Contract: vmplatform.Contract,
-		RequiredCPUMillis: 1000, RequiredMemoryBytes: 1 << 30,
-		RequiredGuestEphemeralDiskBytes: 32 << 30,
-	}
-}
-
-func runCapacityPressureParams() db.ListComputerInstanceCapacityPressureCandidatesParams {
-	base := runCapacitySelectionParams()
-	return db.ListComputerInstanceCapacityPressureCandidatesParams{
-		RegionID: base.RegionID, ObservationFreshnessSeconds: base.ObservationFreshnessSeconds,
-		RunArchitecture: base.RunArchitecture, Contract: base.Contract,
-		RequiredCPUMillis: base.RequiredCPUMillis, RequiredMemoryBytes: base.RequiredMemoryBytes,
-		RequiredGuestEphemeralDiskBytes: base.RequiredGuestEphemeralDiskBytes, RowLimit: 128,
-	}
 }
 
 func seedCapacityQueryWorkers(t *testing.T, ctx context.Context, pool *pgxpool.Pool, count, paused int) {
@@ -171,6 +67,94 @@ SELECT ('00000000-0000-7000-8000-' || lpad(value::text, 12, '0'))::uuid,
 
 func capacityQueryWorkerID(value int) pgtype.UUID {
 	return pgvalue.UUID(uuid.MustParse(fmt.Sprintf("00000000-0000-7000-8000-%012d", value)))
+}
+
+func TestWorkerCredentialExchangePreservesRuntimeLockOrder(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	pool := newPostgresDB(t, ctx)
+	q := db.New(pool)
+	workerID, serviceID := uuid.NewV7(), uuid.NewV7()
+	secretHash := []byte("credential-lock-order-secret")
+	enrollTestWorker(t, ctx, q, workerID, "credential-lock-order-worker", secretHash)
+	params := db.AuthenticateWorkerHostSecretParams{
+		WorkerHostID: pgvalue.UUID(workerID), SecretHash: secretHash, ServiceID: pgvalue.UUID(serviceID),
+	}
+	first, err := q.AuthenticateWorkerHostSecret(ctx, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.ActivateWorkerHost(ctx, testWorkerActivationParams(workerID, first.CurrentEpoch)); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Rollback(context.Background())
+	var groupClaim int64
+	var groupStatus string
+	if err := runtime.QueryRow(ctx, `SELECT claim_version,status FROM worker_groups WHERE id=$1 FOR SHARE`, dbtest.DefaultWorkerGroupID).Scan(&groupClaim, &groupStatus); err != nil {
+		t.Fatal(err)
+	}
+	exchange, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type outcome struct {
+		row db.AuthenticateWorkerHostSecretRow
+		err error
+	}
+	exchangePID, runtimePID := exchange.Conn().PgConn().PID(), runtime.Conn().PgConn().PID()
+	result := make(chan outcome, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		row, err := db.New(exchange).AuthenticateWorkerHostSecret(ctx, params)
+		result <- outcome{row, err}
+	}()
+	defer func() {
+		cancel()
+		<-done
+		exchange.Release()
+	}()
+	// Wait for the exchange to reach our group lock, rather than guessing when
+	// its statement starts. It must not hold the host while waiting for the group.
+	for {
+		var blocked bool
+		if err := pool.QueryRow(ctx, `SELECT $2::integer = ANY(pg_blocking_pids($1))`, exchangePID, runtimePID).Scan(&blocked); err != nil {
+			t.Fatal(err)
+		}
+		if blocked {
+			break
+		}
+		select {
+		case value := <-result:
+			t.Fatalf("credential exchange did not wait for runtime admission: %v", value.err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(time.Millisecond):
+		}
+	}
+	var hostClaim int64
+	var epoch pgtype.Int8
+	var hostStatus string
+	if err := runtime.QueryRow(ctx, `SELECT claim_version,current_epoch,status FROM worker_hosts WHERE id=$1 AND worker_group_id=$2 FOR SHARE NOWAIT`, workerID, dbtest.DefaultWorkerGroupID).Scan(&hostClaim, &epoch, &hostStatus); err != nil {
+		t.Fatalf("runtime admission blocked behind credential exchange: %v", err)
+	}
+	if epoch != first.CurrentEpoch || hostStatus != "active" || hostClaim != first.ClaimVersion || groupClaim != first.GroupClaimVersion || groupStatus != "active" {
+		t.Fatal("runtime authority changed before credential exchange")
+	}
+	if err := runtime.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	value := <-result
+	if value.err != nil {
+		t.Fatal(value.err)
+	}
+	if value.row.CurrentEpoch != first.CurrentEpoch || value.row.CurrentServiceID != first.CurrentServiceID || value.row.Status != db.WorkerHostStatusActive {
+		t.Fatalf("same-service exchange changed active epoch: %+v", value.row)
+	}
 }
 
 func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {

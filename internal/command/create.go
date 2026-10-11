@@ -19,7 +19,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -197,7 +196,8 @@ type createReceipt struct {
 // authorizes a replay after deletion; new admission requires the Computer's
 // live authority. In one transaction Create acquires the idempotency claim,
 // then locks the Computer's Secrets and the Computer, records the admission,
-// the Command and its Secret resolutions, and completes the receipt.
+// the Command, and completes the receipt. Secret versions are selected only
+// at the first possible delivery to this Command.
 func Create(ctx context.Context, txb db.TxBeginner, request CreateRequest) (db.ComputerCommand, error) {
 	switch request.Creator.SubjectType {
 	case string(auth.PrincipalKindAPIKey), string(auth.PrincipalKindSession):
@@ -260,110 +260,94 @@ func create(ctx context.Context, tx pgx.Tx, request CreateRequest, normalized no
 		return db.ComputerCommand{}, err
 	}
 	if !acquired.New {
-		replayed, err := q.GetComputerCommandByClaim(ctx, db.GetComputerCommandByClaimParams{
+		replayed, err := q.GetComputerCommandByRetryKey(ctx, db.GetComputerCommandByRetryKeyParams{
 			EnvironmentID: pgvalue.UUID(request.EnvironmentID),
-			OrgID:         pgvalue.UUID(request.OrgID),
-			ClaimID:       acquired.Claim.ID,
+			RetryKeyID:    acquired.Claim.ID,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return db.ComputerCommand{}, ErrReceiptInvalid
 		}
+		if err == nil {
+			var receipt createReceipt
+			if json.Unmarshal(acquired.Claim.Receipt, &receipt) != nil || receipt.CommandID != pgvalue.UUIDString(replayed.ID) {
+				return db.ComputerCommand{}, ErrReceiptInvalid
+			}
+		}
 		return replayed, err
 	}
 
-	bindings, err := q.LockComputerSecretsForAdmission(ctx, pgvalue.UUID(request.ComputerID))
+	// Secret locks precede the Computer lock, matching revocation. Admission
+	// checks availability and placements without selecting a runtime version.
+	rows, err := tx.Query(ctx, `SELECT b.placement_kind,b.placement_target,s.status
+ FROM computer_secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id)
+ WHERE b.environment_id=$1 AND b.computer_id=$2 ORDER BY s.id,b.placement_kind,b.placement_target FOR SHARE OF s`, request.EnvironmentID, request.ComputerID)
 	if err != nil {
-		return db.ComputerCommand{}, fmt.Errorf("lock computer exec secrets: %w", err)
+		return db.ComputerCommand{}, err
 	}
-	for _, binding := range bindings {
-		if binding.SecretStatus != "active" || !binding.CurrentVersionID.Valid {
+	type binding struct{ kind, target, status string }
+	bindings, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (binding, error) {
+		var b binding
+		err := row.Scan(&b.kind, &b.target, &b.status)
+		return b, err
+	})
+	if err != nil {
+		return db.ComputerCommand{}, err
+	}
+	for _, b := range bindings {
+		if b.status != "active" {
 			return db.ComputerCommand{}, computer.ErrSecretUnavailable
 		}
-		if binding.PlacementKind == "env" {
-			if _, exists := normalized.env[binding.PlacementTarget]; exists {
-				return db.ComputerCommand{}, invalid("env cannot override computer secret %q", binding.PlacementTarget)
+		if b.kind == "env" {
+			if _, ok := normalized.env[b.target]; ok {
+				return db.ComputerCommand{}, invalid("env cannot override computer secret %q", b.target)
 			}
 		}
 	}
-	admission, err := computer.LockForAdmission(ctx, tx, request.EnvironmentID, request.ComputerID)
-	if err != nil {
+	var deleted, broken, ready, failed bool
+	if err = tx.QueryRow(ctx, `SELECT deleted_at IS NOT NULL,integrity_fault_at IS NOT NULL,initial_root_id IS NOT NULL,preparation_failed_at IS NOT NULL FROM computers WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, request.EnvironmentID, request.ComputerID).Scan(&deleted, &broken, &ready, &failed); err != nil {
 		return db.ComputerCommand{}, err
 	}
-	if err := admits(admission.Row(), request); err != nil {
+	if broken {
+		return db.ComputerCommand{}, computer.ErrRecoveryRequired
+	}
+	if deleted {
+		return db.ComputerCommand{}, computer.ErrDeleting
+	}
+	if failed {
+		return db.ComputerCommand{}, computer.ErrPreparationExhausted
+	}
+	if !ready {
+		return db.ComputerCommand{}, computer.ErrBusy
+	}
+	var revoked bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_secret_revocations WHERE environment_id=$1 AND computer_id=$2)`, request.EnvironmentID, request.ComputerID).Scan(&revoked); err != nil {
 		return db.ComputerCommand{}, err
 	}
-	if err := admission.Touch(ctx); err != nil {
-		return db.ComputerCommand{}, fmt.Errorf("record command computer admission: %w", err)
+	if revoked {
+		return db.ComputerCommand{}, computer.ErrSecretUnavailable
 	}
 
-	authority := admission.Row()
 	created, err := q.CreateComputerCommand(ctx, db.CreateComputerCommandParams{
 		ID:                   pgvalue.UUID(uuid.NewV7()),
-		EnvironmentID:        authority.EnvironmentID,
-		ComputerID:           authority.ID,
+		EnvironmentID:        pgvalue.UUID(request.EnvironmentID),
+		ComputerID:           pgvalue.UUID(request.ComputerID),
 		Argv:                 normalized.argv,
 		Cwd:                  pgvalue.Text(normalized.cwd),
 		Env:                  normalized.envJSON,
 		TimeoutMs:            normalized.timeoutMS,
 		Stdin:                normalized.stdin,
-		ClaimID:              acquired.Claim.ID,
 		CreatedBySubjectType: request.Creator.SubjectType,
 		CreatedBySubjectID:   request.Creator.SubjectID,
 	})
 	if err != nil {
 		return db.ComputerCommand{}, fmt.Errorf("create computer exec: %w", err)
 	}
-	if err := secret.CreateProcessResolutions(ctx, q, authority.ID, created.ID, resolutions(bindings)); err != nil {
-		return db.ComputerCommand{}, fmt.Errorf("record computer exec secret resolutions: %w", err)
-	}
 	receipt, err := json.Marshal(createReceipt{CommandID: pgvalue.UUIDString(created.ID)})
 	if err != nil {
 		return db.ComputerCommand{}, err
 	}
-	if _, err := claims.Complete(ctx, acquired.Claim, receipt); err != nil {
+	if _, err := claims.Complete(ctx, acquired.Claim, idempotency.Target{CommandID: uuid.UUID(created.ID.Bytes)}, receipt); err != nil {
 		return db.ComputerCommand{}, err
 	}
 	return created, nil
-}
-
-// admits reports why the locked Computer does not admit a new Command in the
-// request's scope. Recovery takes precedence over deletion, and any other
-// state that may clear is ErrBusy.
-func admits(authority db.LockComputerAdmissionAuthorityRow, request CreateRequest) error {
-	if authority.OrgID != pgvalue.UUID(request.OrgID) ||
-		authority.ProjectID != pgvalue.UUID(request.ProjectID) ||
-		authority.Status != db.ComputerStatusActive ||
-		(authority.DesiredState != db.ComputerDesiredStateActive &&
-			authority.DesiredState != db.ComputerDesiredStateStopped) ||
-		authority.DirtyState == db.ComputerDirtyStateDirtyStateLost ||
-		len(authority.RecoveryFailure) > 0 ||
-		!authority.HeadDiskVersionID.Valid {
-		if len(authority.RecoveryFailure) > 0 {
-			return computer.ErrRecoveryRequired
-		}
-		switch authority.Status {
-		case db.ComputerStatusDeleting:
-			return computer.ErrDeleting
-		case db.ComputerStatusRecoveryRequired:
-			return computer.ErrRecoveryRequired
-		default:
-			return computer.ErrBusy
-		}
-	}
-	if len(authority.PreparationFailure) > 0 {
-		return computer.ErrPreparationExhausted
-	}
-	return nil
-}
-
-func resolutions(bindings []db.LockComputerSecretsForAdmissionRow) []secret.Resolution {
-	values := make([]secret.Resolution, len(bindings))
-	for index, binding := range bindings {
-		values[index] = secret.Resolution{
-			PlacementKind: binding.PlacementKind, PlacementTarget: binding.PlacementTarget,
-			SecretID: binding.SecretID, SecretVersionID: binding.CurrentVersionID,
-			RevocationGeneration: binding.RevocationGeneration,
-		}
-	}
-	return values
 }

@@ -11,11 +11,11 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 const (
@@ -46,7 +46,7 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 	if cursor != nil {
 		after = &deployment.Position{CreatedAt: cursor.CreatedAt, ID: uuid.MustParse(cursor.ID)}
 	}
-	rows, hasMore, err := deployment.List(r.Context(), s.db, principal, scope, limit, after)
+	rows, hasMore, err := deployment.List(r.Context(), s.tx, principal, scope, limit, after)
 	if err != nil {
 		s.writeDeploymentError(w, err)
 		return
@@ -54,8 +54,8 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 	items := make([]api.DeploymentListItem, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, api.DeploymentListItem{
-			ID: pgvalue.UUIDString(row.ID), Version: row.Version,
-			BundleDigest: row.BundleDigest, CreatedAt: pgvalue.Time(row.CreatedAt),
+			ID: row.ID.String(), Version: row.Version(),
+			BundleDigest: row.BundleDigest, CreatedAt: row.CreatedAt,
 		})
 	}
 	response := api.ListDeploymentsResponse{Deployments: items}
@@ -63,7 +63,7 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 		last := rows[len(rows)-1]
 		response.NextCursor, err = encodeDeploymentListCursor(deploymentListCursor{
 			ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
-			CreatedAt: pgvalue.Time(last.CreatedAt), ID: pgvalue.UUIDString(last.ID),
+			CreatedAt: last.CreatedAt, ID: last.ID.String(),
 		})
 		if err != nil {
 			writeError(w, errors.New("list deployments"))
@@ -137,7 +137,7 @@ func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	record, err := deployment.Get(r.Context(), s.db, principal, scope, deploymentID)
+	record, err := deployment.Get(r.Context(), s.tx, principal, scope, deploymentID)
 	if err != nil {
 		s.writeDeploymentError(w, err)
 		return
@@ -152,7 +152,7 @@ func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	record, err := deployment.GetCurrent(r.Context(), s.db, principal, scope)
+	record, err := deployment.GetCurrent(r.Context(), s.tx, principal, scope)
 	if err != nil {
 		s.writeDeploymentError(w, err)
 		return
@@ -172,27 +172,43 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	record, err := deployment.Promote(r.Context(), s.tx, principal, scope, deploymentID)
+	var preflight agent.SlackStartPreflight
+	if s.slackConfig != nil {
+		preflight = s.slackConfig.Client
+	}
+	record, err := deployment.Promote(r.Context(), s.tx, principal, scope, deploymentID, preflight)
 	if err != nil {
-		s.writeDeploymentError(w, err)
+		if errors.Is(err, agent.ErrTargetNotPublished) || errors.Is(err, agent.ErrSlackChannelUnavailable) || errors.Is(err, agent.ErrConversationChanged) {
+			s.writeAgentHTTPError(w, err)
+		} else {
+			s.writeDeploymentError(w, err)
+		}
 		return
 	}
 	writeJSON(w, http.StatusOK, deploymentResponse(record))
 }
 
-func deploymentResponse(record db.Deployment) api.DeploymentResponse {
+func deploymentResponse(record deployment.Record) api.DeploymentResponse {
 	return api.DeploymentResponse{
-		ID: pgvalue.UUIDString(record.ID), Version: record.Version,
-		BundleDigest: record.BundleDigest, CreatedAt: pgvalue.Time(record.CreatedAt),
+		ID: record.ID.String(), Version: record.Version(),
+		BundleDigest: record.BundleDigest, CreatedAt: record.CreatedAt,
 	}
 }
 
 // deploymentError maps errors of the deployment owner to HTTP errors.
 func deploymentError(err error) error {
 	var input deployment.InputError
+	var expired idempotency.ExpiredError
+	var retryConflict idempotency.ConflictError
 	switch {
+	case errors.As(err, &expired):
+		return gone(expired)
+	case errors.As(err, &retryConflict):
+		return conflict(retryConflict)
 	case errors.As(err, &input):
 		return badRequest(err)
+	case errors.Is(err, deployment.ErrFinalizationConflict):
+		return conflict(err)
 	case errors.Is(err, deployment.ErrPermissionRequired):
 		return forbidden(err)
 	case errors.Is(err, deployment.ErrNotFound),
@@ -205,8 +221,6 @@ func deploymentError(err error) error {
 		return notFound(codedError{code: "no_current_deployment", message: "Environment has no current Deployment"})
 	case errors.Is(err, deployment.ErrSelectedDeploymentNotFound):
 		return notFound(codedError{code: "deployment_not_found", message: "Deployment was not found"})
-	case errors.Is(err, deployment.ErrDefinitionsNotMaterialized):
-		return conflict(codedError{code: "deployment_not_materialized", message: "Deployment definitions are not materialized"})
 	default:
 		return err
 	}

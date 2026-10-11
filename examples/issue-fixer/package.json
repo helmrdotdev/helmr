@@ -12,7 +12,10 @@
   },
   "version": "0.1.0",
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.probes.json --noEmit",
+    "test:session-harness": "bun run test && bun run test:native-probes",
+    "test": "bun test tests/issue-fixer.test.ts && bun test tests/native-questions.test.ts && bun test tests/codex-harness.test.ts && bun test tests/claude-harness.test.ts",
+    "test:native-probes": "bun build probes/codex-session.test.ts probes/claude-session.test.ts probes/native-mcp-config.test.ts --target=node --external=@anthropic-ai/claude-agent-sdk --external=@openai/codex --external=@cursor/sdk --outdir dist/probes && node --test --test-concurrency=1 dist/probes/codex-session.test.js dist/probes/claude-session.test.js dist/probes/native-mcp-config.test.js"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.149",

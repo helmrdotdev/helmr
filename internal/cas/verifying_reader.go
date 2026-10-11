@@ -32,11 +32,14 @@ func (r *verifyingReadCloser) Read(p []byte) (int, error) {
 	if n > 0 {
 		_, _ = r.hash.Write(p[:n])
 	}
-	if errors.Is(readErr, io.EOF) {
+	if readErr == io.EOF {
 		r.eof = true
 		if err := r.verify(); err != nil {
 			return n, err
 		}
+	}
+	if readErr != nil && readErr != io.EOF {
+		r.err = readErr
 	}
 	return n, readErr
 }
@@ -47,7 +50,7 @@ func (r *verifyingReadCloser) Close() error {
 	}
 	r.closed = true
 	var drainErr error
-	if !r.eof {
+	if !r.eof && r.err == nil {
 		_, drainErr = io.Copy(r.hash, r.body)
 		if drainErr == nil {
 			r.eof = true
@@ -60,7 +63,7 @@ func (r *verifyingReadCloser) Close() error {
 }
 
 func (r *verifyingReadCloser) verify() error {
-	if r.err != nil {
+	if r.err != nil || !r.eof {
 		return r.err
 	}
 	actual := sha256sum.FormatDigest(r.hash.Sum(nil))

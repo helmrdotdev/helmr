@@ -215,7 +215,7 @@ func TestEnrollHostValidatesInputBeforeTheEnrollmentToken(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			// A call past validation has no database executor.
-			_, err := EnrollHost(t.Context(), db.New(nil), cfg, test.enrollment)
+			_, err := EnrollHost(t.Context(), nil, cfg, test.enrollment)
 			var input InputError
 			if test.input && !errors.As(err, &input) {
 				t.Fatalf("error = %v, want InputError", err)

@@ -48,7 +48,7 @@ type PreparedProgramInput struct {
 	Compiler          artifact.CompilerInputs
 	Runtime           artifact.RuntimeDescriptor
 	RuntimeMetadata   artifact.RuntimeMetadata
-	ComputerImages    []bundle.ComputerImage
+	ComputerSeeds     []bundle.ComputerSeed
 }
 
 type ProgramResult struct {
@@ -215,7 +215,7 @@ func BuildPreparedProgram(
 		verification,
 		configDigest,
 		input.Runtime.Digest,
-		input.ComputerImages,
+		input.ComputerSeeds,
 		input.Compiler,
 		input.RuntimeMetadata.NodeVersion,
 	)
@@ -223,7 +223,7 @@ func BuildPreparedProgram(
 		return ProgramResult{}, err
 	}
 	defer func() { returnErr = errors.Join(returnErr, program.Close()) }()
-	if err := validateVerifiedProgram(verification, program.Output.Index); err != nil {
+	if err := validateVerifiedProgram(verification, program.Output.Metadata); err != nil {
 		return ProgramResult{}, err
 	}
 	if err := program.Materialize(ctx, input.ProgramObjectPath); err != nil {

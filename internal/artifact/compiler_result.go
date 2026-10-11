@@ -16,20 +16,12 @@ import (
 )
 
 type ProgramCompilerResult struct {
-	APIVersion    string                     `json:"apiVersion"`
-	Bundler       BundlerIdentity            `json:"bundler"`
-	NodeVersion   string                     `json:"nodeVersion"`
-	Config        ProgramPathDigest          `json:"config"`
-	PayloadDigest string                     `json:"payloadDigest"`
-	Modules       []string                   `json:"modules"`
-	Selections    []ProgramCompilerSelection `json:"selections"`
-}
-type ProgramCompilerSelection struct {
-	DeclaredID string          `json:"declaredId"`
-	ExportName string          `json:"exportName"`
-	Kind       DeclarationKind `json:"kind"`
-	Slot       DeclarationSlot `json:"slot"`
-	ModulePath string          `json:"modulePath"`
+	APIVersion    string            `json:"apiVersion"`
+	Bundler       BundlerIdentity   `json:"bundler"`
+	NodeVersion   string            `json:"nodeVersion"`
+	Config        ProgramPathDigest `json:"config"`
+	PayloadDigest string            `json:"payloadDigest"`
+	Modules       []string          `json:"modules"`
 }
 
 func ParseProgramCompilerResult(raw []byte) (ProgramCompilerResult, error) {
@@ -98,7 +90,7 @@ func validateProgramCompilerResult(result ProgramCompilerResult) error {
 	if result.Config.Path != "helmr/config.json" || !sha256DigestPattern.MatchString(result.Config.Digest) || !sha256DigestPattern.MatchString(result.PayloadDigest) {
 		return errors.New("program compiler input authority is invalid")
 	}
-	if result.Modules == nil || result.Selections == nil {
+	if result.Modules == nil {
 		return errors.New("program compiler collections must be arrays")
 	}
 	for i, value := range result.Modules {
@@ -107,17 +99,6 @@ func validateProgramCompilerResult(result ProgramCompilerResult) error {
 		}
 		if i > 0 && result.Modules[i-1] >= value {
 			return errors.New("discovery candidates are not in canonical order")
-		}
-	}
-	for i, value := range result.Selections {
-		if err := validateLocatedDeclaration(LocatedDeclaration{DeclaredID: value.DeclaredID, ExportName: value.ExportName, Kind: value.Kind, Slot: value.Slot, ModulePath: value.ModulePath}); err != nil {
-			return err
-		}
-		if _, found := slices.BinarySearch(result.Modules, value.ModulePath); !found {
-			return errors.New("selection is not a discovery candidate")
-		}
-		if i > 0 && compareProgramCompilerSelection(result.Selections[i-1], value) >= 0 {
-			return errors.New("selections are not in canonical order")
 		}
 	}
 	return nil
@@ -142,33 +123,21 @@ func VerifyProgramCompilerFiles(ctx context.Context, artifact *Tree, result Prog
 	}
 	return nil
 }
-func ValidateProgramCompilerLocators(result ProgramCompilerResult, locator DeclarationLocator) error {
-	if len(result.Selections) != len(locator.Declarations) {
-		return errors.New("compiler selections do not match declaration locators")
+func ValidateProgramCompilerLocators(result ProgramCompilerResult, index DefinitionIndex) error {
+	if err := ValidateDefinitionIndex(index); err != nil {
+		return err
 	}
-	for i, value := range result.Selections {
-		d := locator.Declarations[i]
-		if value.DeclaredID != d.DeclaredID || value.ExportName != d.ExportName || value.Kind != d.Kind || value.Slot != d.Slot || value.ModulePath != d.ModulePath {
-			return errors.New("compiler selections do not match declaration locators")
+	for _, a := range index.Agents {
+		if _, found := slices.BinarySearch(result.Modules, a.ModulePath); !found {
+			return errors.New("agent module is not a discovery candidate")
+		}
+	}
+	for _, c := range index.Computers {
+		if _, found := slices.BinarySearch(result.Modules, c.ModulePath); !found {
+			return errors.New("computer module is not a discovery candidate")
 		}
 	}
 	return nil
-}
-func compareProgramCompilerSelection(left, right ProgramCompilerSelection) int {
-	leftKind := declarationKindOrder(left.Kind)
-	rightKind := declarationKindOrder(right.Kind)
-	if leftKind < rightKind {
-		return -1
-	}
-	if leftKind > rightKind {
-		return 1
-	}
-	return strings.Compare(
-		left.DeclaredID+"\x00"+left.ModulePath+"\x00"+
-			left.ExportName+"\x00"+string(left.Slot),
-		right.DeclaredID+"\x00"+right.ModulePath+"\x00"+
-			right.ExportName+"\x00"+string(right.Slot),
-	)
 }
 
 func VerifyProgramPathDigest(

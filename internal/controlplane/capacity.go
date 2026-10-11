@@ -13,11 +13,15 @@ import (
 	"uuid"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -223,7 +227,7 @@ func (s *Server) capacityDrainWorkerHost(w http.ResponseWriter, r *http.Request)
 		s.writeWorkerGroupError(w, err)
 		return
 	}
-	s.captureDrainingComputers(r.Context(), id, uuid.Nil())
+
 	writeJSON(w, http.StatusOK, host)
 }
 
@@ -237,9 +241,25 @@ func (s *Server) capacityConfirmWorkerHostProviderAbsent(w http.ResponseWriter, 
 		writeError(w, badRequest(errors.New("provider absence request must not contain a body")))
 		return
 	}
-	host, err := workergroup.ConfirmHostProviderAbsent(r.Context(), s.db, s.tx, id)
+	var host workergroup.WorkerHost
+	err = db.RunTx(r.Context(), s.tx, func(tx pgx.Tx) error {
+		absence, err := workergroup.ConfirmHostProviderAbsent(r.Context(), tx, id)
+		if err != nil {
+			return err
+		}
+		if err := agent.ObserveProviderAbsentHostComputers(r.Context(), absence); err != nil {
+			return err
+		}
+		host, err = workergroup.GetHost(r.Context(), db.New(tx), id)
+		return err
+	})
 	if err != nil {
-		s.writeWorkerGroupError(w, err)
+		var lock *pgconn.PgError
+		if errors.Is(err, agent.ErrNotReady) || (errors.As(err, &lock) && lock.Code == "55P03") {
+			s.writeAgentComputerError(w, agent.ErrNotReady)
+		} else {
+			s.writeWorkerGroupError(w, err)
+		}
 		return
 	}
 	writeJSON(w, http.StatusOK, host)

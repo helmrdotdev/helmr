@@ -17,14 +17,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws/arn"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
+	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/artifact"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
 	"github.com/helmrdotdev/helmr/internal/command"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/controlplane"
@@ -37,8 +36,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/eventstream"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/identity"
-	"github.com/helmrdotdev/helmr/internal/run"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/slack"
 	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -58,6 +58,17 @@ func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "check-config":
+			if len(os.Args) != 2 {
+				log.Error("usage: control-plane check-config")
+				os.Exit(1)
+			}
+			if _, err := config.LoadControlPlane(); err != nil {
+				log.Error("invalid environment configuration", "error", err)
+				os.Exit(1)
+			}
+			fmt.Println("Environment configuration is valid; dependencies and runtime files were not checked.")
+			return
 		case "migrate":
 			if err := runMigrate(log, os.Args[2:]); err != nil {
 				log.Error("migrate database", "error", err)
@@ -129,10 +140,6 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("parse public URL: %w", err)
 	}
-	apiOrigin, err := url.Parse(cfg.APIOrigin)
-	if err != nil {
-		return fmt.Errorf("parse API origin: %w", err)
-	}
 	runtimeRaw, err := os.ReadFile(cfg.DeploymentRuntimeDescriptorPath)
 	if err != nil {
 		return fmt.Errorf("read deployment Runtime descriptor: %w", err)
@@ -153,6 +160,15 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("connect database: %w", err)
 	}
 	defer pool.Close()
+	diagnosticConfig := poolConfig.Copy()
+	diagnosticConfig.MaxConns = cfg.DiagnosticAdmission.MaxConnections
+	diagnosticConfig.MinConns = 0
+	diagnosticPool, err := dbpool.New(ctx, diagnosticConfig)
+	if err != nil {
+		return fmt.Errorf("connect diagnostic database: %w", err)
+	}
+	defer diagnosticPool.Close()
+	log.Info("control plane database connection budget", "lifecycle", poolConfig.MaxConns, "diagnostic", diagnosticConfig.MaxConns)
 	queries := db.New(pool)
 	if cfg.Bootstrap.Enabled {
 		if err := workergroup.Bootstrap(ctx, pool, workergroup.BootstrapConfig{
@@ -188,17 +204,9 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure computer fencing key: %w", err)
 	}
-	tokenCredentialKey, err := auth.NewCredentialKey(cfg.TokenCredentialKey)
-	if err != nil {
-		return fmt.Errorf("configure token credential key: %w", err)
-	}
 	casStore, err := cass3.New(ctx, cfg.CASURI)
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
-	}
-	computerRetention, err := computer.NewRetention(pool, casStore, log)
-	if err != nil {
-		return fmt.Errorf("configure artifact reclamation: %w", err)
 	}
 	platformStore, err := cass3.NewImmutable(ctx, cfg.PlatformStoreURI)
 	if err != nil {
@@ -208,19 +216,32 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if cfg.GitHubOAuthClientID != "" && cfg.GitHubOAuthClientSecret != "" {
 		authProvider = controlplane.NewGitHubOAuthProvider(log, cfg.GitHubOAuthClientID, cfg.GitHubOAuthClientSecret, publicURL)
 	}
-	runRetryReady, err := run.NewRetryReadyWorker(log, run.NewRetryReconciler(pool))
-	if err != nil {
-		return fmt.Errorf("configure run retry readiness: %w", err)
-	}
-	queuedChildExpiry, err := run.NewQueuedChildExpiryWorker(log, pool)
-	if err != nil {
-		return fmt.Errorf("configure queued child run expiry: %w", err)
-	}
 	computerKeys, err := configuredComputerKeys(ctx, cfg)
 	if err != nil {
 		return err
 	}
+	allocator, err := agent.NewAllocator(pool, cfg.ComputerFencingKey, secretStore)
+	if err != nil {
+		return fmt.Errorf("configure allocation owner: %w", err)
+	}
+	var slackConfig *controlplane.SlackConfig
+	{
+		credentials, err := slack.NewCredentialStore(pool, cfg.EncryptionKey)
+		if err != nil {
+			return fmt.Errorf("configure Slack credentials: %w", err)
+		}
+		controlKey, err := slack.ControlKey(cfg.EncryptionKey)
+		if err != nil {
+			return fmt.Errorf("configure Slack controls: %w", err)
+		}
+		slackConfig = &controlplane.SlackConfig{ControlKey: controlKey, Credentials: credentials, Client: slack.NewWebClient(credentials, nil)}
+	}
 	handler, err := controlplane.NewServer(controlplane.ServerConfig{
+		Slack:                          slackConfig,
+		Allocator:                      allocator,
+		DiagnosticDB:                   diagnosticPool,
+		DiagnosticBounds:               cfg.DiagnosticAdmission.Bounds,
+		EnvironmentExecutionLimits:     org.ExecutionLimits(cfg.EnvironmentExecutionLimits),
 		ComputerKeys:                   computerKeys,
 		Log:                            log,
 		DeploymentMode:                 cfg.DeploymentMode,
@@ -235,7 +256,6 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		SecretDelivery:                 secretStore,
 		SecretProxy:                    secretStore,
 		ComputerFencingKey:             computerFencingKey,
-		TokenCredentialKey:             tokenCredentialKey,
 		EventStream:                    eventStream,
 		TelemetryReader:                telemetryReader,
 		Mailer:                         mailer,
@@ -246,7 +266,6 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		SetupToken:                     cfg.SetupToken,
 		AuthKey:                        cfg.AuthKey,
 		PublicURL:                      publicURL,
-		APIOrigin:                      apiOrigin,
 		MagicLinkDebugURLs:             cfg.MagicLinkDebugURLs,
 		AdminEmails:                    cfg.AdminEmails,
 	})
@@ -260,17 +279,27 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+	casReclaimer, err := agent.NewCASReclaimer(pool, casStore, log)
+	if err != nil {
+		return fmt.Errorf("configure CAS reclamation: %w", err)
+	}
+
 	workflows := []backgroundWorkflow{
+		{name: "CAS reclamation", run: casReclaimer.Run},
+		{name: "Computer disk retention", run: func(ctx context.Context) error { return agent.RunComputerDiskRetention(ctx, pool, log) }},
+		{name: "allocation", run: func(ctx context.Context) error { return allocator.Run(ctx, log) }},
+		{name: "commands", run: func(ctx context.Context) error { return command.ReconcileCommands(ctx, pool, log) }},
+		{name: "Session history retention", run: func(ctx context.Context) error { return agent.RunSessionHistoryRetention(ctx, pool, log) }},
+		{name: "Session lifecycle", run: func(ctx context.Context) error { return agent.RunSessionLifecycle(ctx, pool, log) }},
+		{name: "Computer lifecycle", run: func(ctx context.Context) error { return agent.RunComputerLifecycle(ctx, pool, log) }},
+		{name: "preparation lifecycle", run: func(ctx context.Context) error { return agent.RunPreparationLifecycle(ctx, pool, log) }},
 		{name: "live telemetry publisher", run: eventStream.RunPublisher},
-		{name: "Run retry readiness", run: runRetryReady.Run},
-		{name: "artifact reclamation", run: computerRetention.Run},
 		{name: "operation receipt retention", run: func(ctx context.Context) error {
 			return idempotency.CollectReceipts(ctx, queries, log)
 		}},
 		{name: "exec result retention", run: func(ctx context.Context) error {
 			return command.CollectResults(ctx, queries, log)
 		}},
-		{name: "queued child Run expiry", run: queuedChildExpiry.Run},
 		{name: "magic link delivery", run: magicLinkDelivery.Run},
 	}
 	return serveControlPlane(ctx, log, server, workflows, shutdownTimeout)
@@ -395,7 +424,7 @@ func runMigrate(log *slog.Logger, args []string) error {
 
 // Provider selection is explicit; a managed provider failure never selects local
 // wrapping material. The key ARN fixes the regional KMS endpoint.
-func configuredComputerKeys(ctx context.Context, cfg config.ControlPlane) (computer.KeyWrapper, error) {
+func configuredComputerKeys(ctx context.Context, cfg config.ControlPlane) (agent.DataKeyWrapper, error) {
 	switch cfg.DeploymentMode {
 	case config.DeploymentModeSelfHosted:
 		return computerkey.NewLocal(cfg.ComputerWrappingKeyID, cfg.ComputerWrappingKey)

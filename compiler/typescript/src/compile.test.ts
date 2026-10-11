@@ -1,249 +1,110 @@
 import { describe, expect, test } from "bun:test"
+import { agent, computer, image, source, triggers } from "@helmr/sdk"
+import { analyze, normalizeComputerResources } from "./compile"
+import { successfulVerificationResult } from "./analysis"
+const machine = () => computer({ id: "machine", image: image("root").from("ubuntu:24.04"), resources: { cpu: 2, memory: "4GiB", disk: "16GiB" } })
+const entry = (value: unknown, exportName = "worker", modulePath = "helmr/app/entry-0.mjs") => ({ value, exportName, modulePath })
+const compile = (...exports: ReturnType<typeof entry>[]) => analyze({ architecture: "x86_64", exports })
 
-import {
-  actor,
-  image,
-  queue,
-  schedules,
-  source,
-  task,
-  sandbox,
-  computers,
-  type JsonValue,
-  type PayloadSchema,
-} from "@helmr/sdk"
-import {
-  analyze,
-  normalizeComputerResources,
-} from "./compile"
-import {
-  encodeVerificationResultFrame,
-  failedVerificationResult,
-  successfulVerificationResult,
-} from "./analysis"
-
-const identitySchema: PayloadSchema<JsonValue> = {
-  "~standard": {
-    version: 1,
-    vendor: "test",
-    validate(value) {
-      return { value: value as JsonValue }
-    },
-  },
-}
-
-describe("declaration analysis", () => {
-  test("emits one deterministic BuildPlan and declaration locator", () => {
-    const jobs = queue({ name: "jobs", concurrencyLimit: 3 })
-    const payloadTask = task({
-      id: "constructor",
-      payload: identitySchema,
-      queue: jobs,
-      maxDuration: "60s",
-      ttl: "1500ms",
-      retry: { enabled: true, maxAttempts: 2 },
-      run: (payload) => payload,
-    })
-    const noPayloadTask = task({
-      id: "toString",
-      run: () => ({ ok: true }),
-    })
-    const service = actor({
-      id: "service",
-      idleTimeout: "1500ms",
-      run: async () => {},
-    })
-    const machine = sandbox({ id: "machine" })
-      .image(image("root").from("debian:bookworm"))
-      .resources({ cpu: 0.125, memory: "1024MiB" })
-    const exports = [
-      { modulePath: "helmr/app/entry-9.mjs", exportName: "machine", value: machine },
-      { modulePath: "helmr/app/entry-16.mjs", exportName: "toString", value: noPayloadTask },
-      { modulePath: "helmr/app/entry-4.mjs", exportName: "service", value: service },
-      { modulePath: "helmr/app/entry-16.mjs", exportName: "constructor", value: payloadTask },
-      { modulePath: "helmr/app/entry-11.mjs", exportName: "jobs", value: jobs },
-    ] as const
-
-    const result = analyze({ architecture: "x86_64", exports })
-    const reversed = analyze({
-      architecture: "x86_64",
-      exports: [...exports].reverse(),
-    })
-
-    expect(result.buildPlanBytes).toEqual(reversed.buildPlanBytes)
-    expect(result.declarationLocatorBytes).toEqual(
-      reversed.declarationLocatorBytes,
-    )
-    expect(result.buildPlan.definitions.map((item) => item.kind)).toEqual([
-      "task",
-      "task",
-      "actor",
-		"sandbox",
-    ])
-    expect(result.buildPlan.queues).toEqual([
-      { name: "actor/service" },
-      { name: "jobs", concurrencyLimit: 3 },
-      { name: "task/toString" },
-    ])
-    expect(result.declarationLocator.declarations).toEqual([
-      {
-        declaredId: "constructor",
-        exportName: "constructor",
-        kind: "task",
-        modulePath: "helmr/app/entry-16.mjs",
-        slot: "handler",
-      },
-      {
-        declaredId: "toString",
-        exportName: "toString",
-        kind: "task",
-        modulePath: "helmr/app/entry-16.mjs",
-        slot: "handler",
-      },
-      {
-        declaredId: "service",
-        exportName: "service",
-        kind: "actor",
-        modulePath: "helmr/app/entry-4.mjs",
-        slot: "handler",
-      },
-    ])
-    const computerDefinition = result.buildPlan.definitions[3]
-    expect(computerDefinition?.kind).toBe("sandbox")
-    if (computerDefinition?.kind !== "sandbox") throw new Error("Sandbox missing")
-    expect(computerDefinition.manifest.imageBuild).not.toHaveProperty(
-      "formatVersion",
-    )
-    expect(computerDefinition.manifest.resources).toEqual({
-      milliCpu: 125,
-      memoryMiB: 1024,
-    })
-
-    expect(JSON.stringify(result.buildPlan)).not.toContain("registry")
+describe("Agent declaration analysis", () => {
+  test("bundles inline Computer and all execution functions without running them", () => {
+    const prepare = () => { throw new Error("prepare executed during compilation") }
+    const worker = agent({ id: "worker", computer: computer({ ...machine(), prepare, refresh: { every: "1h", maxAge: "1d" }, secrets: [{ secretId: "01900000-0000-7000-8000-000000000001", env: { name: "TOKEN", mode: "raw" } }] }), setup: () => { throw new Error("setup executed") }, turn: () => { throw new Error("turn executed") }, maxTurnDuration: "5m", closeAfterIdle: 1000, triggers: [triggers.cron("hourly", "0 * * * *", { timezone: "Asia/Tokyo", input: [{ type: "text", text: "work" }] })] })
+    const result = compile(entry(worker))
+    expect(result.buildPlan.definitions[1]?.manifest).toMatchObject({ prepare: true })
+    expect(result.buildPlan.definitions[0]).toEqual({ kind: "agent", declaredId: "worker", manifest: { computerDefinitionId: "machine", setup: true, maxTurnDurationMs: 300000, closeAfterIdleMs: 1000, triggers: { hourly: { cron: "0 * * * *", timezone: "Asia/Tokyo", input: [{ type: "text", text: "work" }] } } } })
+    const declaration = result.buildPlan.definitions[1]!
+    if (declaration.kind !== "computer") throw new Error("Computer missing")
+    expect(declaration.manifest.resources).toEqual({ milliCpu: 2000, memoryMiB: 4096, diskMiB: 16384 })
+    expect(declaration.manifest.refresh).toEqual({ everyMs: 3600000, maxAgeMs: 86400000 })
+    expect(declaration.manifest.buildSecrets).toEqual([])
+    expect(JSON.parse(new TextDecoder().decode(result.definitionIndexBytes)).computers).toEqual([{ id: "machine", modulePath: "helmr/app/entry-0.mjs", exportName: "worker", throughAgent: true }])
+    const frame = successfulVerificationResult(result)
+    expect(Object.keys(frame).sort()).toEqual(["files", "formatVersion", "outcome"])
+    expect(frame.files.map(file => file.path)).toEqual(["helmr/build-plan.json", "helmr/definition-index.json"])
   })
-
-  test("accepts the same declared ID in distinct kind namespaces", () => {
-    const sharedTask = task({ id: "shared", run: () => null })
-    const sharedActor = actor({ id: "shared", run: async () => {} })
-    expect(
-      analyze({
-        architecture: "x86_64",
-        exports: [
-          { modulePath: "helmr/app/entry-15.mjs", exportName: "sharedTask", value: sharedTask },
-          { modulePath: "helmr/app/entry-4.mjs", exportName: "sharedActor", value: sharedActor },
-        ],
-      }).buildPlan.definitions,
-    ).toHaveLength(2)
+  test("chooses deterministic re-exports and direct Computer exports", () => {
+    const computer = machine(), worker = agent({ id: "worker", computer, turn: () => null })
+    const entries = [entry(worker, "z", "helmr/app/entry-2.mjs"), entry(worker, "a"), entry(computer, "machine", "helmr/app/entry-9.mjs")]
+    const result = compile(...entries)
+    expect(compile(...entries.toReversed()).definitionIndexBytes).toEqual(result.definitionIndexBytes)
+    expect(result.definitionIndex.agents).toEqual([{ id: "worker", computerDefinitionId: "machine", modulePath: "helmr/app/entry-0.mjs", exportName: "a" }])
+    expect(result.definitionIndex.computers).toEqual([{ id: "machine", modulePath: "helmr/app/entry-9.mjs", exportName: "machine", throughAgent: false }])
   })
-
-  test("rejects duplicate same-kind declarations", () => {
-    const first = task({ id: "duplicate", run: () => null })
-    const second = task({ id: "duplicate", run: () => null })
-    expect(() =>
-      analyze({
-        architecture: "x86_64",
-        exports: [
-          { modulePath: "helmr/app/entry-3.mjs", exportName: "first", value: first },
-          { modulePath: "helmr/app/entry-5.mjs", exportName: "second", value: second },
-        ],
-      }),
-    ).toThrow("duplicate task declaration")
+  test("does not substitute distinct Computers with the same declaration id", () => {
+    const worker = agent({ id: "worker", computer: machine(), turn: () => null })
+    expect(() => compile(entry(worker), entry(machine(), "machine"))).toThrow("duplicate computer")
+    expect(() => compile(entry(worker), entry(agent({ ...worker }), "other"))).toThrow("duplicate agent")
   })
-
-  test("deduplicates one Queue object and rejects distinct objects with the same name", () => {
-    const shared = queue({ name: "shared", concurrencyLimit: 2 })
-    expect(() =>
-      analyze({
-        architecture: "x86_64",
-        exports: [
-          { modulePath: "helmr/app/entry-10.mjs", exportName: "shared", value: shared },
-          {
-            modulePath: "helmr/app/entry-15.mjs",
-            exportName: "usesShared",
-            value: task({
-              id: "uses-shared",
-              queue: shared,
-              run: () => null,
-            }),
-          },
-        ],
-      }),
-    ).not.toThrow()
-
-    const first = queue({ name: "duplicate", concurrencyLimit: 2 })
-    const second = queue({ name: "duplicate", concurrencyLimit: 2 })
-    expect(() =>
-      analyze({
-        architecture: "x86_64",
-        exports: [
-          { modulePath: "helmr/app/entry-3.mjs", exportName: "first", value: first },
-          { modulePath: "helmr/app/entry-5.mjs", exportName: "second", value: second },
-          {
-            modulePath: "helmr/app/entry-15.mjs",
-            exportName: "task",
-            value: task({ id: "task", queue: first, run: () => null }),
-          },
-        ],
-      }),
-    ).toThrow("duplicate queue declaration")
+  test("rejects malformed locators, durations, credentials and application JSON", () => {
+    const worker = agent({ id: "worker", computer: machine(), turn: () => null })
+    expect(() => compile(entry(worker, "x", "../escape.mjs"))).toThrow()
+    for (const maxTurnDuration of [0, -1, NaN, Infinity, 0.5, "0s", "1.5s", "01s"]) expect(() => compile(entry({ ...worker, maxTurnDuration }))).toThrow()
+    expect(() => compile(entry({ ...machine(), secrets: [{ secretId: "name", env: { name: "TOKEN", mode: "raw" } }] }))).toThrow("Secret ID")
+    expect(() => compile(entry({ ...machine(), buildSecrets: [{ secretId: "01900000-0000-7000-8000-000000000001", env: { name: "TOKEN", mode: "raw" }, value: "secret" }] }))).toThrow("unknown member")
+    expect(() => compile(entry({ ...worker, triggers: [{ id: "tick", cron: "* * * * *", timezone: "UTC", input: undefined }] }))).toThrow()
+    expect(() => compile(entry({ kind: "task", id: "old" }))).toThrow("definitions")
   })
-
-  test("deduplicates re-exports and selects the smallest locator", () => {
-    const definition = task({
-      id: "shared",
-      payload: identitySchema,
-      run: (payload) => payload,
-    })
-    const result = analyze({
-      architecture: "x86_64",
-      exports: [
-        {
-          modulePath: "helmr/app/entry-3.mjs",
-          exportName: "shared",
-          value: definition,
-        },
-        {
-          modulePath: "helmr/app/entry-2.mjs",
-          exportName: "renamed",
-          value: definition,
-        },
-      ],
-    })
-
-    expect(result.buildPlan.definitions).toHaveLength(1)
-    expect(result.declarationLocator.declarations).toEqual([
-      {
-        declaredId: "shared",
-        exportName: "renamed",
-        kind: "task",
-        modulePath: "helmr/app/entry-2.mjs",
-        slot: "handler",
-      },
-    ])
-    expect(result.programDeclarations[0]?.slots).toEqual([
-      "handler",
-      "payloadSchema",
-    ])
+  test("rejects misspelled policy fields and preserves explicit cron identity", () => {
+    const worker = agent({ id: "worker", computer: machine(), turn: () => null })
+    for (const value of [{ ...worker, maxTurnDurations: "1h" }, { ...machine(), secret: {} }, { ...machine(), refresh: { every: "1h", maxage: "2h" } }, { ...machine(), resources: { cpu: 1, memory: "1GiB", disks: "1GiB" } }, { ...worker, triggers: [{ id: "tick", cron: "* * * * *", timezone: "UTC", input: [], overlap: true }] }]) expect(() => compile(entry(value))).toThrow("unknown members")
+    expect(() => triggers.cron("tick", "* * * * *", { input: [] } as never)).toThrow("timezone")
+    const tick = triggers.cron("tick", "* * * * *", { timezone: "Asia/Tokyo", input: [] })
+    expect(() => compile(entry({ ...worker, triggers: [tick, tick] }))).toThrow("Duplicate")
+    const second = agent({ id: "second", computer: machine(), turn: () => null })
+    expect(() => compile(entry(worker), entry(second, "second", "helmr/app/entry-1.mjs"))).toThrow("duplicate computer")
+    const sharedId = agent({ id: "machine", computer: machine(), turn: () => null })
+    expect(compile(entry(sharedId)).buildPlan.definitions.map(item => item.kind)).toEqual(["agent", "computer"])
   })
-
-  test("rejects invalid locator text before canonicalization", () => {
-    const definition = task({ id: "located", run: () => null })
-    for (const item of [
-      { modulePath: "src/\ud800.ts", exportName: "located" },
-      { modulePath: "helmr/app/entry-8.mjs", exportName: "\udc00" },
-      { modulePath: "node_modules/pkg/task.ts", exportName: "located" },
-      { modulePath: "tasks/../task.ts", exportName: "located" },
-      { modulePath: "helmr.config.ts", exportName: "located" },
-    ]) {
-      expect(() =>
-        analyze({
-          architecture: "x86_64",
-          exports: [{ ...item, value: definition }],
-        }),
-      ).toThrow()
+  test("rejects nil Secret identities for both runtime and preparation", () => {
+    for (const field of ["secrets", "buildSecrets"] as const) {
+      expect(() => compile(entry(computer({ ...machine(), [field]: [{ secretId: "00000000-0000-0000-0000-000000000000", env: { name: "TOKEN", mode: "raw" } }] })))).toThrow("Secret")
     }
   })
-
+  test("canonicalizes all Secret placements and rejects ambiguous delivery", () => {
+    const secretId = "01900000-0000-7000-8000-000000000003"
+    const bindings = [
+      { secretId, file: { path: "/etc/service/token" } },
+      { secretId, env: { name: "TOKEN", mode: "protected", allowedOrigins: ["https://API.EXAMPLE.COM:443", "https://api.example.com"] } },
+      { secretId, env: { name: "RAW_TOKEN", mode: "raw" } },
+    ]
+    const result = compile(entry({ ...machine(), secrets: bindings, buildSecrets: bindings.toReversed() }))
+    const declaration = result.buildPlan.definitions[0]!
+    if (declaration.kind !== "computer") throw new Error("Computer missing")
+    expect(declaration.manifest.secrets).toEqual([
+      { secretId, env: { name: "RAW_TOKEN", mode: "raw" } },
+      { secretId, env: { name: "TOKEN", mode: "protected", allowedOrigins: ["https://api.example.com"] } },
+      { secretId, file: { path: "/etc/service/token" } },
+    ])
+    expect(declaration.manifest.buildSecrets).toEqual(declaration.manifest.secrets)
+    for (const invalid of [
+      {},
+      [{ secretId }],
+      [{ secretId: "11111111-1111-4111-8111-111111111111", env: { name: "TOKEN", mode: "raw" } }],
+      [{ secretId: "01900000-0000-7AAA-8AAA-AAAAAAAAAAAA", env: { name: "TOKEN", mode: "raw" } }],
+      [{ secretId, env: { name: "TOKEN", mode: "raw" }, file: { path: "/etc/token" } }],
+      [{ secretId, env: { name: "NODE_OPTIONS", mode: "raw" } }],
+      [{ secretId, env: { name: "TOKEN", mode: "protected", allowedOrigins: ["http://api.example.com"] } }],
+      [{ secretId, env: { name: "TOKEN", mode: "raw", allowedOrigins: ["https://api.example.com"] } }],
+      [{ secretId, file: { path: "/workspace/token" } }],
+      [{ secretId, file: { path: "/etc/token" } }, { secretId, file: { path: "/etc/token/child" } }],
+      [bindings[1], bindings[1]],
+    ]) {
+      for (const field of ["secrets", "buildSecrets"]) expect(() => compile(entry({ ...machine(), [field]: invalid }))).toThrow()
+    }
+  })
+  test("preserves image source copies and rejects unknown step members", () => {
+    const base = image("dependency").from("ubuntu:24.04")
+    const disk = image("root").from("ubuntu:24.04").copy(source.file("package.json"), "/app/package.json").copy(source.directory("src"), "/app/src").copyFrom("/usr/local/bin/tool", base, "/opt/tool")
+    const result = compile(entry(computer({ ...machine(), image: disk })))
+    const declaration = result.buildPlan.definitions[0]!
+    if (declaration.kind !== "computer") throw new Error("Computer missing")
+    expect(declaration.manifest.imageBuild.images.flatMap(value => value.steps)).toContainEqual({ copyFromImage: { dst: "/usr/local/bin/tool", imageKey: "dependency", srcPath: "/opt/tool" } })
+    expect(declaration.manifest.imageBuild.images.flatMap(value => value.steps)).toContainEqual({ copySourceFile: { dst: "/app/package.json", path: "package.json" } })
+    const forged = image("forged").from("ubuntu:24.04").run(["true"])
+    Object.defineProperty((forged as unknown as { steps: object[] }).steps[1]!, "unknown", { value: true, enumerable: true })
+    expect(() => compile(entry(computer({ ...machine(), image: forged })))).toThrow("unknown members")
+  })
   test("normalizes resources exactly and rejects rounding or aliases", () => {
     expect(
       normalizeComputerResources({
@@ -273,361 +134,36 @@ describe("declaration analysis", () => {
     }
   })
 
-  test("preserves cross-image copy source paths independently of generated module locations", () => {
-    const dependency = image("dependency").from("debian:bookworm")
-    const machine = sandbox({ id: "cross-image-copy" })
-      .image(image("root").from("debian:bookworm").copyFrom("/usr/local/bin/tool", dependency, "/opt/tool"))
-      .resources({ cpu: 1, memory: "1GiB" })
-    const result = analyze({
-      architecture: "x86_64",
-      exports: [{ modulePath: "helmr/app/entry-0.mjs", exportName: "machine", value: machine }],
-    })
-    const definition = result.buildPlan.definitions[0]
-    if (definition?.kind !== "sandbox") throw new Error("Sandbox missing")
-    expect(definition.manifest.imageBuild.images.flatMap(value => value.steps)).toContainEqual({
-      copyFromImage: { dst: "/usr/local/bin/tool", imageKey: "dependency", srcPath: "/opt/tool" },
-    })
-  })
 
-  test("emits source copies without caller-provided integrity fields", () => {
-    const machine = sandbox({ id: "source-copy" })
-      .image(
-        image("root")
-          .from("debian:bookworm")
-          .copy(source.file("package.json"), "/app/package.json")
-          .copy(source.directory("src"), "/app/src"),
-      )
-      .resources({ cpu: 1, memory: "1GiB" })
-    const result = analyze({
-      architecture: "x86_64",
-      exports: [{
-        modulePath: "helmr/app/entry-6.mjs",
-        exportName: "machine",
-        value: machine,
-      }],
-    })
-    const definition = result.buildPlan.definitions[0]
-    expect(definition?.kind).toBe("sandbox")
-    if (definition?.kind !== "sandbox") throw new Error("Sandbox missing")
-    expect(definition.manifest.imageBuild.images[0]?.steps.slice(1)).toEqual([
-      {
-        copySourceFile: {
-          dst: "/app/package.json",
-          path: "package.json",
-        },
-      },
-      {
-        copySourceDir: {
-          dst: "/app/src",
-          path: "src",
-        },
-      },
-    ])
-  })
-
-  test("rejects image steps with unknown members", () => {
-    const root = image("root").from("debian:bookworm")
-    const run = root.run as (...args: readonly unknown[]) => unknown
-    expect(() =>
-      run.call(root, ["true"], { ignored: true }),
-    ).toThrow("image.run() accepts only argv")
-
-    const forged = root.run(["true"]) as unknown as {
-      readonly steps: readonly Record<string, unknown>[]
-    }
-    Object.defineProperty(
-      forged.steps[1] as Record<string, unknown>,
-      "unknown",
-      { value: true, enumerable: true },
-    )
-    expect(() =>
-      analyze({
-        architecture: "x86_64",
-        exports: [{
-          modulePath: "helmr/app/entry-6.mjs",
-          exportName: "machine",
-          value: sandbox({ id: "machine" })
-            .image(forged as never)
-            .resources({ cpu: 1, memory: "1GiB" }),
-        }],
-      }),
-    ).toThrow("image run step has unknown members")
-  })
-
-  test("normalizes scheduler-owned payload and declarative computer", () => {
-    const maintenance = sandbox({ id: "maintenance" })
-      .image(image("maintenance").from("debian:bookworm-slim"))
-      .resources({ cpu: 1, memory: "1GiB" })
-    const scheduled = schedules.task({
-      id: "nightly",
-      cron: { pattern: "0 3 * * *", timezone: "UTC" },
-      computer: {
-        sandbox: maintenance,
-        secrets: [{ secret: "TOKEN", env: {name: "TOKEN", mode: "raw"} }],
-      },
-      run: () => null,
-    })
-    const result = analyze({
-      architecture: "x86_64",
-      exports: [
-        {
-          modulePath: "helmr/app/entry-13.mjs",
-          exportName: "nightly",
-          value: scheduled,
-        },
-        {
-          modulePath: "helmr/app/entry-13.mjs",
-          exportName: "maintenance",
-          value: maintenance,
-        },
-      ],
-    })
-    const definition = result.buildPlan.definitions[0]
-    expect(definition?.kind).toBe("task")
-    if (definition?.kind !== "task") throw new Error("task missing")
-    expect(definition.manifest.schedule).toEqual({
-      cron: "0 3 * * *",
-      timezone: "UTC",
-      computer: {
-        sandboxId: "maintenance",
-        secrets: [{ secret: "TOKEN", env: {name: "TOKEN", mode: "raw"} }],
-      },
-    })
-    expect(definition.manifest.payload).toEqual({
-      kind: "standard_schema",
-    })
-  })
-
-  test("rejects a Schedule whose Sandbox definition is not exported", () => {
-    const maintenance = sandbox({ id: "maintenance" })
-      .image(image("maintenance").from("debian:bookworm-slim"))
-      .resources({ cpu: 1, memory: "1GiB" })
-    const scheduled = schedules.task({
-      id: "nightly",
-      cron: { pattern: "0 3 * * *", timezone: "UTC" },
-      computer: { sandbox: maintenance },
-      run: () => null,
-    })
-    expect(() => analyze({
-      architecture: "x86_64",
-      exports: [{
-        modulePath: "helmr/app/entry-13.mjs",
-        exportName: "nightly",
-        value: scheduled,
-      }],
-    })).toThrow('task "nightly" schedule references unexported Sandbox "maintenance"')
-  })
-
-  test("does not substitute an exported Sandbox with the same declared ID", () => {
-    const referenced = sandbox({ id: "maintenance" })
-      .image(image("referenced").from("debian:bookworm-slim"))
-      .resources({ cpu: 1, memory: "1GiB" })
-    const exported = sandbox({ id: "maintenance" })
-      .image(image("exported").from("debian:bookworm-slim"))
-      .resources({ cpu: 1, memory: "1GiB" })
-    const scheduled = schedules.task({
-      id: "nightly",
-      cron: { pattern: "0 3 * * *", timezone: "UTC" },
-      computer: { sandbox: referenced },
-      run: () => null,
-    })
-    expect(() => analyze({
-      architecture: "x86_64",
-      exports: [
-        {
-          modulePath: "helmr/app/entry-13.mjs",
-          exportName: "nightly",
-          value: scheduled,
-        },
-        {
-          modulePath: "helmr/app/entry-12.mjs",
-          exportName: "maintenance",
-          value: exported,
-        },
-      ],
-    })).toThrow(
-      'task "nightly" schedule references a different Sandbox object than the exported definition "maintenance"',
-    )
-  })
-
-  test("accepts re-exports of the exact Schedule Sandbox object", () => {
-    const maintenance = sandbox({ id: "maintenance" })
-      .image(image("maintenance").from("debian:bookworm-slim"))
-      .resources({ cpu: 1, memory: "1GiB" })
-    const scheduled = schedules.task({
-      id: "nightly",
-      cron: { pattern: "0 3 * * *", timezone: "UTC" },
-      computer: { sandbox: maintenance },
-      run: () => null,
-    })
-    const result = analyze({
-      architecture: "x86_64",
-      exports: [
-        {
-          modulePath: "helmr/app/entry-13.mjs",
-          exportName: "nightly",
-          value: scheduled,
-        },
-        {
-          modulePath: "helmr/app/entry-12.mjs",
-          exportName: "maintenance",
-          value: maintenance,
-        },
-        {
-          modulePath: "helmr/app/entry-7.mjs",
-          exportName: "computer",
-          value: maintenance,
-        },
-      ],
-    })
-    expect(result.buildPlan.definitions.filter(
-      (definition) => definition.kind === "sandbox",
-    )).toHaveLength(1)
-    expect(result.buildPlan.definitions[0]).toMatchObject({
-      kind: "task",
-      manifest: { schedule: { computer: { sandboxId: "maintenance" } } },
-    })
-  })
-
-  test("enforces the closed Duration grammar and bounds", () => {
-    for (const maxDuration of ["0s", "01s", "1.5s", "1h30m", " 5s", "25h"]) {
-      const definition = task({
-        id: "duration",
-        maxDuration,
-        run: () => null,
-      })
-      expect(() =>
-        analyze({
-          architecture: "x86_64",
-          exports: [{
-            modulePath: "helmr/app/entry-15.mjs",
-            exportName: "task",
-            value: definition,
-          }],
-        }),
-      ).toThrow()
-    }
-    const definition = task({
-      id: "retry",
-      retry: {
-        maxAttempts: 2,
-        backoff: { minDelay: "2s", maxDelay: "1s", factor: 1.5 },
-      },
-      run: () => null,
-    })
-    expect(() =>
-      analyze({
-        architecture: "x86_64",
-        exports: [{
-          modulePath: "helmr/app/entry-15.mjs",
-          exportName: "task",
-          value: definition,
-        }],
-      }),
-    ).toThrow()
-  })
-
-  test("leaves cron grammar authority to Control", () => {
-    const maintenance = sandbox({ id: "maintenance" })
-      .image(image("maintenance").from("debian:bookworm-slim"))
-      .resources({ cpu: 1, memory: "1GiB" })
-    for (const [index, pattern] of [
-      "*/15 0-23/2 1,15 * 0-7",
-      "0  3 * * *",
-      "00 3 * JAN MON",
-      "@daily",
-    ].entries()) {
-      expect(() =>
-        schedules.task({
-          id: `valid-${index}`,
-          cron: { pattern, timezone: "UTC" },
-          computer: { sandbox: maintenance },
-          run: () => null,
-        }),
-      ).not.toThrow()
-    }
-    expect(() =>
-      schedules.task({
-        id: "timezone",
-        cron: { pattern: "0 3 * * *", timezone: "utc" },
-        computer: { sandbox: maintenance },
-        run: () => null,
-      }),
-    ).not.toThrow()
-    expect(() =>
-      schedules.task({
-        id: "empty",
-        cron: { pattern: "", timezone: "UTC" },
-        computer: { sandbox: maintenance },
-        run: () => null,
-      }),
-    ).toThrow()
-  })
-
-  test("encodes the closed analysis result frame", () => {
-    const program = analyze({
-      architecture: "x86_64",
-      exports: [{
-        modulePath: "helmr/app/entry-15.mjs",
-        exportName: "build",
-        value: task({ id: "build", run: () => null }),
-      }],
-    })
-    const succeeded = decodeAnalysisFrame(
-      encodeVerificationResultFrame(successfulVerificationResult(program)),
-    )
-    expect(succeeded).toEqual({
-      formatVersion: 0,
-      outcome: "succeeded",
-      declarations: program.programDeclarations,
-      files: [
-        {
-          path: "helmr/build-plan.json",
-          content: new TextDecoder().decode(program.buildPlanBytes),
-        },
-        {
-          path: "helmr/analysis-locators.json",
-          content: new TextDecoder().decode(program.declarationLocatorBytes),
-        },
-      ],
-    })
-
-    const machine = sandbox({ id: "machine" })
-      .image(image("root").from("debian:bookworm"))
-      .resources({ cpu: 1, memory: "1GiB" })
-    const computerOnly = analyze({
-      architecture: "x86_64",
-      exports: [{
-        modulePath: "helmr/app/entry-6.mjs",
-        exportName: "machine",
-        value: machine,
-      }],
-    })
-    const computerResult = decodeAnalysisFrame(
-      encodeVerificationResultFrame(successfulVerificationResult(computerOnly)),
-    ) as { declarations: unknown[]; files: unknown[] }
-    expect(computerResult.declarations).toEqual([])
-    expect(computerResult.files).toHaveLength(1)
-
-    expect(decodeAnalysisFrame(
-      encodeVerificationResultFrame(failedVerificationResult("module import failed")),
-    )).toEqual({
-      formatVersion: 0,
-      outcome: "failed",
-      error: {
-        reason: "verification_failed",
-        message: "module import failed",
-      },
-    })
-  })
 })
 
-function decodeAnalysisFrame(frame: Uint8Array): unknown {
-  const size = new DataView(
-    frame.buffer,
-    frame.byteOffset,
-    frame.byteLength,
-  ).getUint32(0, false)
-  expect(size).toBe(frame.byteLength - 4)
-  return JSON.parse(new TextDecoder().decode(frame.subarray(4)))
-}
+test("Go admission fixtures are generated by the authored compiler contract", async () => {
+  const { agentContractFixture } = await import("./agent-contract.fixture")
+  const result = agentContractFixture()
+  const { readFile } = await import("node:fs/promises")
+  expect(new Uint8Array(await readFile(new URL("../../../internal/definition/testdata/agent-build-plan.json", import.meta.url)))).toEqual(result.buildPlanBytes)
+  expect(new Uint8Array(await readFile(new URL("../../../internal/artifact/testdata/definition-index.json", import.meta.url)))).toEqual(result.definitionIndexBytes)
+  const { encodeVerificationResultFrame } = await import("./analysis")
+  expect(new Uint8Array(await readFile(new URL("../../../internal/builder/testdata/verification.frame", import.meta.url)))).toEqual(encodeVerificationResultFrame(successfulVerificationResult(result)))
+})
+
+test("validates one text-input contract for every scheduled Agent", () => {
+  const worker = agent({ id: "worker", computer: machine(), turn: () => null })
+  expect(() => compile(entry({ ...worker, messages: { content: ["text"] } }))).toThrow()
+  const trigger = (input: unknown) => [{ id: "tick", cron: "* * * * *", timezone: "UTC", input }]
+  for (const input of [null, "hello", { task: "job" }, { type: "message", content: [] }, [{ type: "json", value: null }]]) {
+    expect(() => compile(entry({ ...worker, triggers: trigger(input) }))).toThrow()
+  }
+  expect(() => compile(entry({ ...worker, triggers: trigger([{ type: "text", text: "a\0雪" }]) }))).not.toThrow()
+})
+
+test("pins a literal cron Slack configuration and rejects malformed destinations", () => {
+  const channelId = "C123"
+  const trigger = triggers.cron("tick", "* * * * *", { timezone: "UTC", input: [], slack: { channelId } })
+  const worker = agent({ id: "worker", computer: machine(), turn: () => null, triggers: [trigger] })
+  expect(compile(entry(worker)).buildPlan.definitions[0]?.manifest).toMatchObject({ triggers: { tick: { slack: { channelId } } } })
+  for (const slack of [null, {}, { channelId: "" }, { channelId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35" }, { channelId, name: "mutable" }]) {
+    expect(() => triggers.cron("tick", "* * * * *", { timezone: "UTC", input: [], slack } as never)).toThrow()
+    expect(() => compile(entry({ ...worker, triggers: [{ ...trigger, slack }] }))).toThrow()
+  }
+})

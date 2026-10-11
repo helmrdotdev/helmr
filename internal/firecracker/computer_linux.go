@@ -11,6 +11,7 @@ import (
 	"unsafe"
 
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"golang.org/x/sys/unix"
 )
@@ -19,8 +20,10 @@ func validateComputerDisk(disk *vm.ComputerDisk) error {
 	if disk == nil || (disk.File == nil) == (disk.Device == nil) || disk.Path != "" || disk.SizeBytes <= 0 || disk.SizeBytes%4096 != 0 {
 		return errors.New("computer working disk is incomplete")
 	}
-	if err := ids.Validate(disk.VersionID); err != nil {
-		return err
+	// Fresh Computers mount an immutable image-root digest; restored Computers
+	// mount the identity of their published Save.
+	if !sha256sum.ValidDigest(disk.VersionID) && ids.Validate(disk.VersionID) != nil {
+		return errors.New("computer disk requires an initial root digest or Save identity")
 	}
 	if disk.Device != nil {
 		return nil

@@ -1,21 +1,21 @@
-import { image, task, sandbox } from "@helmr/sdk"
+import { agent, computer, image } from "@helmr/sdk"
 import { readFile } from "node:fs/promises"
 
 const base = image("helmr-network-smoke")
   .from("node:24-bookworm-slim")
   .workdir("/sandbox")
 
-export const networkSmokeComputer = sandbox({ id: "helmr-network-smoke" })
-  .image(base)
-  .resources({ cpu: 1, memory: "1GiB" })
+export const networkSmokeComputer = computer({
+  id: "helmr-network-smoke", image: base, resources: { cpu: 1, memory: "1GiB" },
+})
 
-export const networkSmoke = task({
+export const networkSmoke = agent({
   id: "network-smoke",
-  maxDuration: "2m",
-  retry: { enabled: false },
-  run: async () => {
+  computer: networkSmokeComputer,
+  maxTurnDuration: "2m",
+  turn: async (turn) => {
     const publicResponse = await fetch("https://checkip.amazonaws.com", {
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.any([turn.signal, AbortSignal.timeout(10_000)]),
     })
     if (!publicResponse.ok) {
       throw new Error(`public IPv4 probe returned ${publicResponse.status}`)

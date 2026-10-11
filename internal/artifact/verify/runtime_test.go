@@ -185,7 +185,7 @@ func TestVerifiedRuntimeResultMatchesDescriptor(t *testing.T) {
 			}
 		})
 	}
-	if _, err := verifiedRuntimeResult(canonicalVerifierProgramIndex(t), descriptor); err == nil {
+	if _, err := verifiedRuntimeResult(canonicalVerifierProgramMetadata(t), descriptor); err == nil {
 		t.Fatal("Program payload was accepted as a Runtime result")
 	}
 }

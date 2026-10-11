@@ -35,174 +35,76 @@ ln -s "${repo_root}/sdk/typescript/node_modules/@bufbuild/protobuf" \
 
 cat >"${consumer}/consumer.ts" <<'EOF'
 import {
-  HelmrClient,
-  actor,
-  image,
-  queue,
-  sandbox,
-  source,
-  task,
-  type Queue,
-  type QueueConfig,
-  type Actor,
-  type ActorStartResult,
-  type ImageBuilder,
-  type Sandbox,
-  type SandboxBuilder,
-  type SandboxResourceBuilder,
-  type SecretCreateRequest,
-  type RecordWriter,
-  type SourceDirectory,
-  type SourceFile,
-  type StandardSchemaV1,
-  type TaskConfigWithPayload,
-  type TokenCompleteRequest,
-  computers,
+  HelmrClient, agent, computer, image, source,
+  type AgentDefinition, type ComputerDefinition, type ImageBuilder, type InputContent,
+  type SecretCreateRequest, type SourceDirectory, type SourceFile,
 } from "@helmr/sdk"
 
-const payloadSchema: StandardSchemaV1<string, string> = {
-  "~standard": {
-    version: 1,
-    vendor: "packed-consumer",
-    validate(value: unknown) {
-      return typeof value === "string"
-        ? { value }
-        : { issues: [{ message: "expected string" }] }
-    },
-  },
-}
-
-const queueConfig: QueueConfig = { name: "packed-consumer", concurrencyLimit: 1 }
-const fixtureQueue: Queue = queue(queueConfig)
-const fixtureImage: ImageBuilder = image("packed-consumer-image")
-  .from("node:24-bookworm-slim")
 const sourceFile: SourceFile = source.file("./package.json")
 const sourceDirectory: SourceDirectory = source.directory("./src")
-const copiedImage = image("copied-source")
+const fixtureImage: ImageBuilder = image("packed-consumer-image")
+  .from("node:24-bookworm-slim")
   .copy(sourceFile, "/app/package.json")
   .copy(sourceDirectory, "/app/src")
-const stagedSandbox: SandboxBuilder = sandbox({ id: "packed-consumer" })
-const resourceSandbox: SandboxResourceBuilder = stagedSandbox.image(
-  image("packed-consumer").from("node:24-bookworm-slim"),
-)
-
-function outputHelper(writer: RecordWriter): Promise<void> {
-  return writer.pipe([{ type: "progress" }])
-}
-
+const machine: ComputerDefinition = computer({
+  id: "packed-machine", image: fixtureImage, resources: { cpu: 1, memory: "1GiB" },
+  prepare: async (build) => { await build.exec(["true"]) },
+})
+const fixture: AgentDefinition<InputContent, string, { ready: boolean }> = agent<InputContent, string, { ready: boolean }>({
+  id: "packed-consumer", computer: machine,
+  setup: () => ({ ready: true }),
+  turn: async (turn, ctx) => {
+    if (!ctx.setupResult.ready) throw new Error("setup result unavailable")
+    await turn.output.write("working")
+    await turn.respond("done")
+    return turn.input.map(part => part.text).join("")
+  },
+})
 const secretRequest: SecretCreateRequest = { name: "TOKEN", value: "secret" }
-const tokenRequest: TokenCompleteRequest = { result: null }
-void outputHelper
 void secretRequest
-void tokenRequest
-void copiedImage
-
-const taskConfig = {
-  id: "packed-consumer",
-  payload: payloadSchema,
-  queue: fixtureQueue,
-  run: (value) => value,
-} satisfies TaskConfigWithPayload<"packed-consumer", string, string, string>
-const fixture = task(taskConfig)
-
-const fixtureSandbox = resourceSandbox.resources({ cpu: 1, memory: "1GiB" })
-fixtureSandbox satisfies Sandbox
-const fixtureActor = actor({
-  id: "packed-consumer-actor",
-  async run(session) {
-    const turn = await session.receive()
-    if (turn === null) return
-    await turn.onMessage(async ({ data }) => { await turn.output.write(data) })
-    await turn.output.pipe([turn.input])
-    await turn.complete(turn.input)
-  },
-})
-const untypedActor: Actor = actor({ id: "untyped", async run(session) {
-  const turn = await session.receive()
-  if (turn) await turn.complete()
-} })
-void untypedActor
-function actorStartResultHelper(value: ActorStartResult): string {
-  return value.session.id + value.run.id
-}
-void fixtureImage
-void fixtureActor
-void actorStartResultHelper
-
-const requests: Array<{ url: string; init?: RequestInit }> = []
-const client = new HelmrClient({
-  url: "https://example.invalid",
-  apiKey: "packed-consumer",
-  fetch: async (input: URL | RequestInfo, init?: RequestInit) => {
-    requests.push({ url: String(input), init })
-    return Response.json({
-      run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
-    })
-  },
-})
-const run = await client.tasks.start<typeof fixture>("packed-consumer", {
-  payload: "typed",
-  computer: computers.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
-  idempotencyKey: "packed-consumer-start",
-})
-if (run.id !== "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31") {
-  throw new Error("packed client did not parse the canonical Run handle")
-}
-if (requests.length !== 1) {
-  throw new Error(`packed client made ${requests.length} requests`)
-}
-const request = requests[0]
-if (request?.url !== "https://example.invalid/v1/tasks/packed-consumer/start") {
-  throw new Error(`packed client used an unexpected URL: ${request?.url}`)
-}
-if (request.init?.method !== "POST") {
-  throw new Error("packed client did not serialize a POST request")
-}
-const body = JSON.parse(String(request.init?.body))
-if (
-  body.payload !== "typed" ||
-  body.computer?.id !== "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32" ||
-  body.idempotency_key !== "packed-consumer-start"
-) {
-  throw new Error(`packed client serialized an unexpected body: ${JSON.stringify(body)}`)
-}
-if (
-  fixture.id !== "packed-consumer" ||
-  fixtureSandbox.id !== "packed-consumer"
-) {
-  throw new Error("packed definition builders returned an invalid contract")
-}
+if (fixture.kind !== "agent" || machine.kind !== "computer") throw new Error("invalid authored definitions")
 
 const sessionID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
 const turnID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34"
-const sessionClient = new HelmrClient({
+const computerID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
+const requests: string[] = []
+const client = new HelmrClient({
   url: "https://example.invalid", apiKey: "packed-consumer",
   fetch: async (input: URL | RequestInfo, init?: RequestInit) => {
     const path = new URL(String(input)).pathname
+    requests.push(path)
+    if (new Headers(init?.headers).get("Authorization") !== "Bearer packed-consumer") throw new Error("missing client authentication")
+    const body = init?.body === undefined ? undefined : JSON.parse(String(init.body))
+    if (path === "/v1/agents/packed-consumer/start") {
+      if (init?.method !== "POST" || body.input[0]?.type !== "text" || body.input[0]?.text !== "typed" || body.computer_id !== computerID || body.idempotency_key !== "start-1") throw new Error("invalid start envelope")
+      return Response.json({ session_id: sessionID, turn_id: turnID, sequence: 1, created: true })
+    }
     if (path === `/v1/sessions/${sessionID}/enqueue`) {
-      const body = JSON.parse(String(init?.body))
-      if (body.data.issue !== "APP-42" || body.idempotency_key !== "queue-1") throw new Error("invalid enqueue envelope")
-      return Response.json({ id: sessionID, kind: "enqueued", turn_id: turnID })
+      if (body.input[0]?.text !== '{"issue":"APP-42"}' || body.idempotency_key !== "queue-1") throw new Error("invalid enqueue envelope")
+      return Response.json({ session_id: sessionID, turn_id: turnID, sequence: 2 })
     }
     if (path === `/v1/sessions/${sessionID}/turns/${turnID}/messages`) {
-      const body = JSON.parse(String(init?.body))
-      if (body.data.type !== "answer") throw new Error("invalid exact message envelope")
+      if (body.data[0]?.type !== "text" || body.data[0]?.text !== "answer") throw new Error("invalid exact message envelope")
       return Response.json({ id: sessionID, turn_id: turnID, message_id: turnID, status: "accepted" })
     }
     if (path === `/v1/sessions/${sessionID}/events`) {
       return Response.json({ records: [], next_after: 0, has_more: false, retained_after: 0 })
     }
-    throw new Error(`unexpected packed Session request: ${path}`)
+    throw new Error(`unexpected packed client request: ${path}`)
   },
 })
-const session = sessionClient.sessions.ref(sessionID)
-const queued = await session.enqueue({ issue: "APP-42" }, { idempotencyKey: "queue-1" })
+const started = await client.agents.start(fixture.id, {
+  input: [{ type: "text", text: "typed" }], computer: client.computers.ref(computerID), idempotencyKey: "start-1",
+})
+if (!started.created || started.session.id !== sessionID || started.turn.id !== turnID) throw new Error("invalid Agent admission")
+const session = client.sessions.get(sessionID)
+const queued = await session.enqueue([{ type: "text", text: JSON.stringify({ issue: "APP-42" }) }], { idempotencyKey: "queue-1" })
 if (queued.id !== turnID) throw new Error("enqueue did not return the exact Turn reference")
-const message = await queued.send({ type: "answer", value: true })
+const message = await queued.send([{ type: "text", text: "answer" }])
 if (message.status !== "accepted") throw new Error("message receipt was not parsed")
 const page = await session.events.list({ after: 0, limit: 10 })
 if (page.nextAfter !== 0 || page.hasMore) throw new Error("event cursor was not parsed")
-
+if (requests.length !== 4) throw new Error("unexpected request count")
 EOF
 
 cat >"${consumer}/package.json" <<'EOF'

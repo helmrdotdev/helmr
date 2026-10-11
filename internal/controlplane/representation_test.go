@@ -1,14 +1,9 @@
 package controlplane
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 	"uuid"
-
-	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/db"
 )
 
 func TestPublicLifecycleProjectionsRejectUnknownInternalValues(t *testing.T) {
@@ -16,12 +11,8 @@ func TestPublicLifecycleProjectionsRejectUnknownInternalValues(t *testing.T) {
 		name    string
 		project func() error
 	}{
-		{name: "run", project: func() error { _, err := runPublicStatus("future"); return err }},
-		{name: "schedule", project: func() error { _, err := schedulePublicStatus("future"); return err }},
-		{name: "session", project: func() error { _, err := sessionStatus("future"); return err }},
 		{name: "worker", project: func() error { _, err := workerPublicStatus("future"); return err }},
 		{name: "secret", project: func() error { _, err := secretPublicStatus("future"); return err }},
-		{name: "token", project: func() error { _, err := tokenPublicStatus("future"); return err }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -58,22 +49,5 @@ func TestResourceCollectionCursorsRoundTripOwnerScope(t *testing.T) {
 	decodedInvitationCursor, err := decodeInvitationListCursor(raw)
 	if err != nil || decodedInvitationCursor != invitationCursor {
 		t.Fatalf("invitation cursor = %+v, err = %v", decodedInvitationCursor, err)
-	}
-}
-
-func TestPublicLifecycleTokensUseCanonicalSnakeCase(t *testing.T) {
-	if status, err := runPublicStatus(db.RunStatusSystemFailed); err != nil || status != api.RunStatusSystemFailed {
-		t.Fatalf("run status = %q, err = %v", status, err)
-	}
-	if status, err := schedulePublicStatus("active"); err != nil || status != api.ScheduleStatusActive {
-		t.Fatalf("schedule status = %q, err = %v", status, err)
-	}
-}
-
-func TestRunStatusFilterUsesCanonicalToken(t *testing.T) {
-	request := httptest.NewRequest(http.MethodGet, "/v1/runs?status=system_failed", nil)
-	statuses, err := parseRunStatusFilter(request)
-	if err != nil || len(statuses) != 1 || statuses[0] != db.RunStatusSystemFailed {
-		t.Fatalf("statuses = %v, err = %v", statuses, err)
 	}
 }

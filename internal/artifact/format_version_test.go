@@ -20,7 +20,6 @@ func TestZeroFormatVersionRequiresExplicitCanonicalField(t *testing.T) {
 		{"runtime descriptor", testRuntimeDescriptor(), func(raw []byte) error { _, err := ParseRuntimeDescriptor(raw); return err }},
 		{"runtime metadata", metadata, func(raw []byte) error { _, err := ParseRuntimeMetadata(raw); return err }},
 		{"program manifest", testProgramManifest(t), func(raw []byte) error { _, err := ParseProgramManifest(raw); return err }},
-		{"declaration locator", testDeclarationLocator(), func(raw []byte) error { _, err := ParseDeclarationLocator(raw); return err }},
 	}
 	for _, item := range cases {
 		t.Run(item.name, func(t *testing.T) {

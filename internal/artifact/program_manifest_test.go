@@ -72,7 +72,7 @@ func TestProgramManifestRejectsInvalidFinalAuthority(t *testing.T) {
 			value.Config.Digest = "invalid"
 		},
 		"index": func(value *ProgramManifest) {
-			value.ProgramIndexDigest = "invalid"
+			value.ProgramMetadataDigest = "invalid"
 		},
 		"module": func(value *ProgramManifest) {
 			value.PayloadDigest = "invalid"
@@ -91,7 +91,7 @@ func TestProgramManifestRejectsInvalidFinalAuthority(t *testing.T) {
 
 func testProgramManifest(t *testing.T) ProgramManifest {
 	t.Helper()
-	raw, err := CanonicalProgramIndex(testProgramIndex(t))
+	raw, err := CanonicalProgramMetadata(testProgramMetadata(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,11 +10,11 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -26,37 +26,34 @@ func requireFK(t *testing.T, err error) {
 	}
 }
 
-// Use a current checkpoint upload owner to exercise physical CAS retirement.
-// Computer disk versions use their own immutable object graph and retention pins.
-type checkpointUploadCandidate struct {
+// An uncertified graph object pins the physical upload before publication.
+type uploadCandidate struct {
 	ID        uuid.UUID
 	Digest    string
 	SizeBytes int64
 	MediaType string
 }
 
-func checkpointUpload(t *testing.T, f runtest.Fixture) checkpointUploadCandidate {
+func registeredUpload(t *testing.T, f agenttest.Fixture) uploadCandidate {
 	t.Helper()
-	work := f.AddRunLease(t, "assigned", time.Now().Add(-time.Minute))
-	p := checkpointUploadCandidate{ID: uuid.NewV7(), Digest: dbtest.Digest(uuid.NewV7().String()), SizeBytes: 1024, MediaType: "application/octet-stream"}
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_checkpoints(id,environment_id,computer_id,computer_spec_id,source_computer_instance_id,writer_generation,membership_revision,base_computer_disk_version_id) SELECT $1,i.environment_id,i.computer_id,i.computer_spec_id,i.id,i.writer_generation,i.membership_revision,r.base_computer_disk_version_id FROM run_leases l JOIN runs r ON r.id=l.run_id JOIN computer_instances i ON i.id=l.computer_instance_id WHERE l.id=$2`, p.ID, work.LeaseID)
+	p := uploadCandidate{ID: uuid.NewV7(), Digest: dbtest.Digest(uuid.NewV7().String()), SizeBytes: 1024, MediaType: "application/octet-stream"}
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,$2)`, p.Digest, p.SizeBytes)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_checkpoint_objects(checkpoint_id,role,digest,size_bytes,media_type,checkpoint_status) VALUES($1,'memory',$2,$3,$4,'creating')`, p.ID, p.Digest, p.SizeBytes, p.MediaType)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) SELECT id,$2,org_id,project_id,$3,$4,'segment',0,'{}' FROM environments WHERE id=$1`, f.Environment, p.Digest, p.SizeBytes, p.MediaType)
 	return p
 }
-func abandonCheckpointUpload(t *testing.T, f runtest.Fixture, p checkpointUploadCandidate) {
+func abandonUpload(t *testing.T, f agenttest.Fixture, p uploadCandidate) {
 	t.Helper()
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_checkpoints SET status='invalid',invalidated_at=now(),invalidation_reason_code='capture_source_reclaimed' WHERE id=$1`, p.ID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM computer_objects WHERE environment_id=$1 AND digest=$2`, f.Environment, p.Digest)
 }
 
 func TestCasRetirementPinsAndCrossOrganizationAdoption(t *testing.T) {
-	f := runtest.New(t)
+	f := agenttest.New(t)
 	q := db.New(f.Pool)
-	p := checkpointUpload(t, f)
+	p := registeredUpload(t, f)
 	// A direct physical-key mutation cannot bypass a registered upload pin.
 	_, err := f.Pool.Exec(t.Context(), `UPDATE cas_blobs SET retired_at=now(),next_reclaim_at=now() WHERE digest=$1`, p.Digest)
 	requireFK(t, err)
-	abandonCheckpointUpload(t, f, p)
+	abandonUpload(t, f, p)
 	// Even another organization's observed membership protects the global key.
 	otherOrg := pgvalue.UUID(uuid.NewV7())
 	// One physical digest cannot acquire a conflicting size in another organization.
@@ -72,13 +69,13 @@ func TestCasRetirementPinsAndCrossOrganizationAdoption(t *testing.T) {
 	if n, err := q.RetireAbandonedCasBlob(t.Context(), p.Digest); err != nil || n != 1 {
 		t.Fatalf("retire: %d %v", n, err)
 	}
-	_, err = q.UpsertCasObject(t.Context(), db.UpsertCasObjectParams{OrgID: pgvalue.UUID(f.OrgID), Digest: p.Digest, SizeBytes: p.SizeBytes, MediaType: p.MediaType})
+	_, err = q.UpsertCasObject(t.Context(), db.UpsertCasObjectParams{OrgID: otherOrg, Digest: p.Digest, SizeBytes: p.SizeBytes, MediaType: p.MediaType})
 	requireFK(t, err)
 	// A future direct SQL adopter is subject to the same guard.
 	_, err = f.Pool.Exec(t.Context(), `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,$3,$4)`, otherOrg, p.Digest, p.SizeBytes, p.MediaType)
 	requireFK(t, err)
-	// Same-owner replay cannot reopen the upload pin after abandonment.
-	_, err = f.Pool.Exec(t.Context(), `UPDATE computer_checkpoints SET status='creating',invalidated_at=NULL,invalidation_reason_code=NULL WHERE id=$1`, p.ID)
+	// Re-registering the same upload cannot reopen retired availability.
+	_, err = f.Pool.Exec(t.Context(), `INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) SELECT id,$2,org_id,project_id,$3,$4,'segment',0,'{}' FROM environments WHERE id=$1`, f.Environment, p.Digest, p.SizeBytes, p.MediaType)
 	requireFK(t, err)
 }
 
@@ -89,9 +86,9 @@ func TestCasRetirementAdoptionRaces(t *testing.T) {
 			name = "retirement-first"
 		}
 		t.Run(name, func(t *testing.T) {
-			f := runtest.New(t)
-			p := checkpointUpload(t, f)
-			abandonCheckpointUpload(t, f, p)
+			f := agenttest.New(t)
+			p := registeredUpload(t, f)
+			abandonUpload(t, f, p)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			first, err := f.Pool.Begin(ctx)
@@ -189,7 +186,7 @@ func (s *reclaimProbe) ReclaimVersions(ctx context.Context, digest string) error
 	}
 	// A storage callback is after retirement commit, including on another DB
 	// connection. Attempting adoption must fail before any destructive action.
-	_, err := s.q.UpsertCasObject(ctx, db.UpsertCasObjectParams{OrgID: pgvalue.UUID(uuid.NewV7()), Digest: digest, SizeBytes: 1, MediaType: "test"})
+	_, err := s.q.UpsertCasObject(ctx, db.UpsertCasObjectParams{OrgID: pgvalue.UUID(uuid.NewV7()), Digest: digest, SizeBytes: 1024, MediaType: "application/octet-stream"})
 	requireFK(s.t, err)
 	if s.failDelete {
 		return errors.New("remote delete failed")
@@ -198,12 +195,12 @@ func (s *reclaimProbe) ReclaimVersions(ctx context.Context, digest string) error
 	return nil
 }
 func TestCasReclamationRetainsLateUploadsAndFailures(t *testing.T) {
-	f := runtest.New(t)
+	f := agenttest.New(t)
 	q := db.New(f.Pool)
-	p := checkpointUpload(t, f)
-	abandonCheckpointUpload(t, f, p)
+	p := registeredUpload(t, f)
+	abandonUpload(t, f, p)
 	store := &reclaimProbe{t: t, q: q, uploads: []string{"upload-1"}, versions: 1, failDelete: true}
-	r, err := computer.NewRetention(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	r, err := agent.NewCASReclaimer(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +230,7 @@ func TestCasReclamationRetainsLateUploadsAndFailures(t *testing.T) {
 		t.Fatalf("forgot multipart ID: %d aborts", store.aborts)
 	}
 	// Recreating the process after a claim/connection loss needs no local state.
-	r, err = computer.NewRetention(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	r, err = agent.NewCASReclaimer(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,15 +245,15 @@ func TestCasReclamationRetainsLateUploadsAndFailures(t *testing.T) {
 }
 
 func TestCasReclamationFairMultipartProgress(t *testing.T) {
-	f := runtest.New(t)
+	f := agenttest.New(t)
 	q := db.New(f.Pool)
-	p := checkpointUpload(t, f)
-	abandonCheckpointUpload(t, f, p)
+	p := registeredUpload(t, f)
+	abandonUpload(t, f, p)
 	store := &reclaimProbe{t: t, q: q, slowID: "00", attempted: make(map[string]bool), versions: 1}
 	for i := range 25 {
 		store.uploads = append(store.uploads, fmt.Sprintf("%02d", i))
 	}
-	r, err := computer.NewRetention(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	r, err := agent.NewCASReclaimer(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}

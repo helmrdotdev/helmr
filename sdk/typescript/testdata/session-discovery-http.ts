@@ -1,0 +1,21 @@
+import assert from "node:assert/strict"
+import { HelmrClient } from "../src/client"
+
+const input = JSON.parse(await Bun.stdin.text())
+const client = new HelmrClient({ url: input.url, apiKey: input.apiKey })
+const owned = await client.sessions.list({ parentSessionId: input.caller })
+assert.deepEqual(owned.items.map(item => item.id), [input.owned])
+const first = await client.sessions.list({ requesterSessionId: input.caller, limit: 1 })
+assert.equal(first.items.length, 1)
+assert.ok(first.nextCursor)
+const second = await client.sessions.list({ requesterSessionId: input.caller, limit: 1, cursor: first.nextCursor })
+assert.equal(second.nextCursor, undefined)
+assert.deepEqual(new Set([...first.items, ...second.items].map(item => item.id)), new Set([input.owned, input.independent]))
+const session = client.sessions.get(input.independent)
+assert.equal(session.id, input.independent)
+const state = await session.retrieve()
+assert.equal(state.parentSessionId, null)
+assert.equal(state.requesterSessionId, input.caller)
+assert.deepEqual(state.initialTurn, { id: input.initial, status: "queued" })
+const outcome = await session.turn(state.initialTurn!.id).wait({ timeout: 1 })
+assert.equal(outcome.status, "timeout")

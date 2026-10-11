@@ -69,7 +69,7 @@ func TestAPIKeyHTTPPostgresContract(t *testing.T) {
 		{name: "empty"},
 		{name: "empty grant", grants: []api.APIKeyPermissionGrant{{}}},
 		{name: "unsupported", grants: []api.APIKeyPermissionGrant{{Scopes: []api.APIKeyScope{"unsupported"}}}},
-		{name: "", grants: []api.APIKeyPermissionGrant{{Scopes: []api.APIKeyScope{api.APIKeyScopeRunsRead}}}},
+		{name: "", grants: []api.APIKeyPermissionGrant{{Scopes: []api.APIKeyScope{api.APIKeyScopeSessionsRead}}}},
 	} {
 		fixture.store.reset()
 		response := fixture.issueRecorder(t, test.name, test.grants)
@@ -78,9 +78,9 @@ func TestAPIKeyHTTPPostgresContract(t *testing.T) {
 		}
 	}
 
-	inputScopes := append([]api.APIKeyScope{api.APIKeyScopeRunsRead}, allAPIKeyPermissionScopes()...)
+	inputScopes := append([]api.APIKeyScope{api.APIKeyScopeSessionsRead}, allAPIKeyPermissionScopes()...)
 	fixture.store.reset()
-	issuedRecorder := fixture.issueRecorder(t, "issued", []api.APIKeyPermissionGrant{{Scopes: inputScopes}, {Scopes: []api.APIKeyScope{api.APIKeyScopeRunsRead}}})
+	issuedRecorder := fixture.issueRecorder(t, "issued", []api.APIKeyPermissionGrant{{Scopes: inputScopes}, {Scopes: []api.APIKeyScope{api.APIKeyScopeSessionsRead}}})
 	if issuedRecorder.Code != http.StatusCreated || fixture.store.statements.Load() != 1 {
 		t.Fatalf("issue status/statements = %d/%d: %s", issuedRecorder.Code, fixture.store.statements.Load(), issuedRecorder.Body.String())
 	}
@@ -162,7 +162,7 @@ func newAPIKeyHTTPPostgresFixture(t *testing.T, keyCount int) apiKeyHTTPPostgres
 	}{
 		{query: `INSERT INTO regions (id, display_name) VALUES ('api-keys', 'API keys')`},
 		{query: `INSERT INTO projects (id, org_id, default_region_id, slug, name, is_default) VALUES ($1, $2, 'api-keys', 'api-keys', 'API keys', true), ($3, $4, 'api-keys', 'other', 'Other', true)`, args: []any{projectID, orgID, otherProjectID, otherOrgID}},
-		{query: `INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default) VALUES ($1, $2, $3, 'production', 'Production', '#315FCE', true), ($4, $5, $6, 'production', 'Production', '#315FCE', true)`, args: []any{environmentID, orgID, projectID, otherEnvironmentID, otherOrgID, otherProjectID}},
+		{query: `INSERT INTO environments (history_retention_mode,id, org_id, project_id, slug, name, color_hex, is_default) VALUES ('until_environment_deletion',$1, $2, $3, 'production', 'Production', '#315FCE', true), ('until_environment_deletion',$4, $5, $6, 'production', 'Production', '#315FCE', true)`, args: []any{environmentID, orgID, projectID, otherEnvironmentID, otherOrgID, otherProjectID}},
 	} {
 		if _, err := fixture.pool.Exec(t.Context(), statement.query, statement.args...); err != nil {
 			t.Fatal(err)
@@ -214,12 +214,20 @@ func (f apiKeyHTTPPostgresFixture) issueRecorder(t *testing.T, name string, gran
 
 func allAPIKeyPermissionScopes() []api.APIKeyScope {
 	return []api.APIKeyScope{
-		api.APIKeyScopeRunsCreate, api.APIKeyScopeRunsRead, api.APIKeyScopeRunsManage,
-		api.APIKeyScopeSessionsRead, api.APIKeyScopeActorsStart, api.APIKeyScopeSessionsSend,
-		api.APIKeyScopeSessionsClose, api.APIKeyScopeSessionsInterrupt, api.APIKeyScopeSessionsResume, api.APIKeyScopeTokensCreate, api.APIKeyScopeTokensRead,
-		api.APIKeyScopeTokensComplete, api.APIKeyScopeTokensCancel, api.APIKeyScopeComputersCreate,
-		api.APIKeyScopeComputersRead, api.APIKeyScopeComputersDelete,
-		api.APIKeyScopeComputerCommandCreate, api.APIKeyScopeSecretsWrite, api.APIKeyScopeTasksDeploy,
+		api.APIKeyScopeAsksRespond,
+		api.APIKeyScopeSessionsRead,
+		api.APIKeyScopeAgentsStart,
+		api.APIKeyScopeSessionsSend,
+		api.APIKeyScopeSessionsInterrupt,
+		api.APIKeyScopeSessionsResume,
+		api.APIKeyScopeSessionsClose,
+		api.APIKeyScopeSessionsCancel,
+		api.APIKeyScopeComputersCreate,
+		api.APIKeyScopeComputersRead,
+		api.APIKeyScopeComputersDelete,
+		api.APIKeyScopeComputerCommandCreate,
+		api.APIKeyScopeSecretsWrite,
+		api.APIKeyScopeDeploymentsWrite,
 	}
 }
 

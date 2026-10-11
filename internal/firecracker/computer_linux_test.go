@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/nbd"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -179,5 +180,26 @@ func TestComputerBlockAttachmentAndPausedFlush(t *testing.T) {
 	}
 	if err := os.RemoveAll(arena); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestComputerMaterializationAcceptsInitialRootAndSavedSourceIdentity(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "working")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if err := file.Truncate(4096); err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range []string{"sha256:" + strings.Repeat("a", 64), "01950000-0000-7000-8000-000000000001"} {
+		if err := validateComputerDisk(&vm.ComputerDisk{File: file, SizeBytes: 4096, VersionID: source}); err != nil {
+			t.Fatalf("admitted source %s rejected before launch: %v", source, err)
+		}
+	}
+	for _, source := range []string{"", "sha256:" + strings.Repeat("A", 64), "sha256:bad", "arbitrary-source"} {
+		if err := validateComputerDisk(&vm.ComputerDisk{File: file, SizeBytes: 4096, VersionID: source}); err == nil {
+			t.Fatalf("invalid source %q accepted", source)
+		}
 	}
 }

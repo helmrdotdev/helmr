@@ -198,7 +198,28 @@ in
     worker
     ;
   inherit nodejs;
-  protocGenEs = pkgsUnstable.protoc-gen-es;
+  protocGenEs = pkgsUnstable.protoc-gen-es.overrideAttrs (final: old: {
+    version = "2.15.0";
+    src = pkgsUnstable.fetchFromGitHub {
+      owner = "bufbuild";
+      repo = "protobuf-es";
+      tag = "v2.15.0";
+      hash = "sha256-3D3TkBiY6v48hJd+y406jF/wxwPOVlVqIZPI2LzKaI8=";
+      postFetch = ''
+        ${lib.getExe pkgsUnstable.npm-lockfile-fix} $out/package-lock.json
+      '';
+    };
+    npmDepsHash = "sha256-ftn9pVv38N3pBTodaMnVaUz2V2VR5eVgBQvgC3qCi9s=";
+    npmDeps = pkgsUnstable.fetchNpmDeps {
+      inherit (final) src;
+      name = "protoc-gen-es-${final.version}-npm-deps";
+      hash = final.npmDepsHash;
+    };
+    postInstall = old.postInstall + ''
+      rm -rf $out/lib/node_modules/protobuf-es/node_modules/ts6.*
+      cp -rL node_modules/ts6.* $out/lib/node_modules/protobuf-es/node_modules/
+    '';
+  });
   inherit staticcheck;
   inherit unparam;
   inherit squashfsTools;

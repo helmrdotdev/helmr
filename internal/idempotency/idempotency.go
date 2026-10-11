@@ -10,12 +10,15 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
@@ -30,28 +33,13 @@ const (
 	operationSecretCreate       operation = "secret.create"
 	operationSecretRotate       operation = "secret.rotate"
 	operationSecretRevoke       operation = "secret.revoke"
-	operationRunMetadata        operation = "run.metadata"
-	operationActorStart         operation = "actor.start"
-	operationTaskStart          operation = "task.start"
-	operationTaskChildInvoke    operation = "task.child.invoke"
-	operationTokenCreate        operation = "token.create"
-	operationTokenComplete      operation = "token.complete"
-	operationTokenCancel        operation = "token.cancel"
 	operationComputerCreate     operation = "computer.create"
 	operationComputerCommand    operation = "computer.exec"
 	operationComputerDelete     operation = "computer.delete"
 	operationCommandCancel      operation = "command.cancel"
 )
 
-type Transaction struct {
-	store   claimStore
-	queries *db.Queries
-}
-
-type Request interface {
-	idempotencyRequest() request
-}
-
+type Request interface{ idempotencyRequest() request }
 type request struct {
 	environmentID uuid.UUID
 	operation     operation
@@ -59,89 +47,17 @@ type request struct {
 	key           string
 	fingerprint   func() ([sha256.Size]byte, error)
 }
+type sealedRequest struct{ value request }
 
-type sealedRequest struct {
-	value request
-}
-
-func (r sealedRequest) idempotencyRequest() request {
-	return r.value
-}
-
-type Result struct {
-	Claim db.IdempotencyClaim
-	New   bool
-}
-
-type ActorStartFingerprint struct {
-	Key                   *string
-	ComputerAddress       json.RawMessage
-	ManagedQueueName      string
-	ManagedConcurrencyKey *string
-	ManagedPriority       int32
-	ManagedQueuedTTLMS    *int64
-	ManagedRetryPolicy    json.RawMessage
-	ManagedRunMetadata    json.RawMessage
-	ManagedRunTags        []string
-}
+func (r sealedRequest) idempotencyRequest() request { return r.value }
 
 type DeploymentFinalizeFingerprint struct {
 	BundleDigest string `json:"bundleDigest"`
 }
-
-type TokenCreateFingerprint struct {
-	TimeoutMS *int64
-	Metadata  json.RawMessage
-	Tags      []string
-}
-
-type TaskStartFingerprint struct {
-	PayloadPresent bool
-	Payload        json.RawMessage
-	Computer       json.RawMessage
-	QueueName      string
-	ConcurrencyKey *string
-	Priority       int32
-	QueuedTTLMS    *int64
-	RetryPolicy    json.RawMessage
-	Metadata       json.RawMessage
-	Tags           []string
-}
-
-type TaskChildInvokeFingerprint struct {
-	Method         string          `json:"method"`
-	PayloadPresent bool            `json:"payloadPresent"`
-	Payload        json.RawMessage `json:"payload,omitempty"`
-	Computer       json.RawMessage `json:"computer"`
-	QueueName      string          `json:"queueName"`
-	ConcurrencyKey *string         `json:"concurrencyKey,omitempty"`
-	Priority       int32           `json:"priority"`
-	QueuedTTLMS    *int64          `json:"queuedTtlMs,omitempty"`
-	RetryPolicy    json.RawMessage `json:"retryPolicy,omitempty"`
-	Metadata       json.RawMessage `json:"metadata"`
-	Tags           []string        `json:"tags"`
-}
-
-// EncodeTaskChildInvokeFingerprint encodes normalized child invocation
-// authority for durable replay. Optional fields remain absent rather than
-// being widened to JSON null.
-func EncodeTaskChildInvokeFingerprint(input TaskChildInvokeFingerprint) (json.RawMessage, error) {
-	encoded, err := json.Marshal(input)
-	if err != nil {
-		return nil, fmt.Errorf("encode child task invocation fingerprint: %w", err)
-	}
-	canonical, err := jsoncanon.Transform(encoded)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize child task invocation fingerprint: %w", err)
-	}
-	return canonical, nil
-}
-
 type ComputerCreateFingerprint struct {
 	Key     *string
 	Secrets json.RawMessage
 }
-
 type ComputerCommandFingerprint struct {
 	Command   []string
 	Cwd       string
@@ -149,19 +65,116 @@ type ComputerCommandFingerprint struct {
 	StdinHash [sha256.Size]byte
 	TimeoutMS int64
 }
-
-// ExpiredError means the operation identity is retained but its receipt has
-// been pruned. The same key cannot authorize another execution.
 type ExpiredError struct{}
 
 func (ExpiredError) Error() string        { return "operation receipt has expired" }
 func (ExpiredError) ErrorCode() string    { return "operation_expired" }
 func (ExpiredError) ErrorRetryable() bool { return false }
 
-type ConflictError struct {
-	ClaimID uuid.UUID
+type ConflictError struct{ ClaimID uuid.UUID }
+
+func (e ConflictError) Error() string { return "idempotency key conflicts with its original request" }
+
+var ErrIncomplete = errors.New("platform mutation receipt is incomplete")
+
+type Result struct {
+	Claim db.PlatformRetryKey
+	New   bool
+}
+type Target struct{ DeploymentID, SecretID, SecretVersionID, ComputerID, CommandID uuid.UUID }
+type Transaction struct{ queries *db.Queries }
+
+func TransactionFor(tx pgx.Tx) (*Transaction, error) {
+	if tx == nil {
+		return nil, errors.New("idempotency transaction is required")
+	}
+	return &Transaction{queries: db.New(tx)}, nil
 }
 
+// Acquire serializes one scoped request. The enclosing transaction must bind its
+// typed result and receipt before commit; the deferred constraint enforces that.
+func (t *Transaction) Acquire(ctx context.Context, input Request) (Result, error) {
+	if input == nil {
+		return Result{}, errors.New("idempotency request is required")
+	}
+	r := input.idempotencyRequest()
+	if r.environmentID == uuid.Nil() || !supportedOperation(r.operation) || r.key == "" || len(r.key) > 512 || !utf8.ValidString(r.key) || strings.ContainsFunc(r.key, unicode.IsControl) || r.fingerprint == nil {
+		return Result{}, errors.New("invalid platform retry identity")
+	}
+	slot := idempotencySlotHash(r)
+	fingerprint, err := r.fingerprint()
+	if err != nil {
+		return Result{}, err
+	}
+	for {
+		locked, err := t.queries.LockPlatformRetryKey(ctx, db.LockPlatformRetryKeyParams{EnvironmentID: pgvalue.UUID(r.environmentID), Operation: string(r.operation), SlotHash: slot[:]})
+		if err == nil {
+			claim := locked.PlatformRetryKey
+			if !bytes.Equal(claim.RequestFingerprint, fingerprint[:]) {
+				return Result{}, ConflictError{ClaimID: pgvalue.MustUUIDValue(claim.ID)}
+			}
+			if claim.ReceiptPrunedAt.Valid || (locked.Expired.Valid && locked.Expired.Bool) {
+				return Result{}, ExpiredError{}
+			}
+			if len(claim.Receipt) == 0 {
+				return Result{}, ErrIncomplete
+			}
+			return Result{Claim: claim}, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return Result{}, fmt.Errorf("lock platform retry key: %w", err)
+		}
+		params := db.CreatePlatformRetryKeyParams{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(r.environmentID), Operation: string(r.operation), SlotHash: slot[:], RequestFingerprint: fingerprint[:]}
+		switch r.operation {
+		case operationSecretCreate:
+			if len(r.scope) < 8 || binary.BigEndian.Uint64(r.scope[:8]) != uint64(len(r.scope)-8) {
+				return Result{}, errors.New("invalid Secret name scope")
+			}
+			params.ScopeSecretName = pgvalue.Text(string(r.scope[8:]))
+		case operationSecretRotate, operationSecretRevoke, operationComputerDelete, operationComputerCommand, operationCommandCancel:
+			if len(r.scope) != 16 {
+				return Result{}, errors.New("invalid platform object scope")
+			}
+			id := pgvalue.UUID(uuid.UUID(r.scope))
+			switch r.operation {
+			case operationSecretRotate, operationSecretRevoke:
+				params.ScopeSecretID = id
+			case operationComputerDelete, operationComputerCommand:
+				params.ScopeComputerID = id
+			case operationCommandCancel:
+				params.ScopeCommandID = id
+			}
+		case operationComputerCreate:
+			name, ok := strings.CutPrefix(string(r.scope), "external\x00")
+			if !ok || name == "" {
+				return Result{}, errors.New("invalid external Computer scope")
+			}
+			params.ScopeCallerKind = pgvalue.Text("external")
+			params.ScopeComputerKey = pgvalue.Text(name)
+		}
+		claim, err := t.queries.CreatePlatformRetryKey(ctx, params)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return Result{}, fmt.Errorf("bind platform retry key: %w", err)
+		}
+		return Result{Claim: claim, New: true}, nil
+	}
+}
+func supportedOperation(value operation) bool {
+	switch value {
+	case operationDeploymentFinalize, operationSecretCreate, operationSecretRotate, operationSecretRevoke, operationComputerCreate, operationComputerDelete, operationComputerCommand, operationCommandCancel:
+		return true
+	}
+	return false
+}
+func (t *Transaction) Complete(ctx context.Context, claim db.PlatformRetryKey, target Target, receipt []byte) (db.PlatformRetryKey, error) {
+	if err := validateReceipt(receipt); err != nil {
+		return db.PlatformRetryKey{}, err
+	}
+	return t.queries.CompletePlatformRetryKey(ctx, db.CompletePlatformRetryKeyParams{EnvironmentID: claim.EnvironmentID, ID: claim.ID, RequestFingerprint: bytes.Clone(claim.RequestFingerprint), DeploymentID: optionalUUID(target.DeploymentID), SecretID: optionalUUID(target.SecretID), SecretVersionID: optionalUUID(target.SecretVersionID), ComputerID: optionalUUID(target.ComputerID), CommandID: optionalUUID(target.CommandID), Receipt: bytes.Clone(receipt)})
+}
 func deploymentDigestBytes(value string) ([]byte, error) {
 	hexValue, ok := strings.CutPrefix(value, "sha256:")
 	if !ok || len(hexValue) != sha256.Size*2 || strings.ToLower(hexValue) != hexValue {
@@ -172,10 +185,6 @@ func deploymentDigestBytes(value string) ([]byte, error) {
 		return nil, errors.New("deployment bundle digest must be a lowercase SHA-256 digest")
 	}
 	return decoded, nil
-}
-
-func (e ConflictError) Error() string {
-	return fmt.Sprintf("idempotency key conflicts with claim %s", e.ClaimID)
 }
 
 func NewDeploymentFinalizeRequest(
@@ -244,230 +253,6 @@ func NewSecretRevokeRequest(environmentID uuid.UUID, secretID uuid.UUID, key str
 	}}, nil
 }
 
-func NewRunMetadataRequest(
-	environmentID uuid.UUID,
-	runID uuid.UUID,
-	attemptNumber int32,
-	operationID string,
-	mutationJSON []byte,
-	leaseFenceFingerprint string,
-) (Request, error) {
-	if environmentID == uuid.Nil() {
-		return nil, errors.New("idempotency environment is required")
-	}
-	if runID == uuid.Nil() {
-		return nil, errors.New("run ID is required")
-	}
-	if attemptNumber <= 0 {
-		return nil, errors.New("run attempt number must be positive")
-	}
-	if leaseFenceFingerprint == "" {
-		return nil, errors.New("run lease fence fingerprint is required")
-	}
-	mutation, err := jsoncanon.Transform(mutationJSON)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize run metadata mutation: %w", err)
-	}
-	fingerprintInput, err := json.Marshal(struct {
-		Mutation              json.RawMessage `json:"mutation"`
-		LeaseFenceFingerprint string          `json:"leaseFenceFingerprint"`
-	}{
-		Mutation: mutation, LeaseFenceFingerprint: leaseFenceFingerprint,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("encode run metadata mutation fingerprint: %w", err)
-	}
-	canonical, err := jsoncanon.Transform(fingerprintInput)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize run metadata mutation fingerprint: %w", err)
-	}
-	scope := make([]byte, 0, len("attempt\x00")+len(runID)+4)
-	scope = append(scope, "attempt\x00"...)
-	scope = append(scope, runID[:]...)
-	var attempt [4]byte
-	binary.BigEndian.PutUint32(attempt[:], uint32(attemptNumber))
-	scope = append(scope, attempt[:]...)
-	return sealedRequest{value: request{
-		environmentID: environmentID,
-		operation:     operationRunMetadata,
-		scope:         scope,
-		key:           operationID,
-		fingerprint: func() ([sha256.Size]byte, error) {
-			return operationFingerprint(operationRunMetadata, canonical), nil
-		},
-	}}, nil
-}
-
-func NewRuntimeTokenCreateRequest(
-	environmentID uuid.UUID,
-	runID uuid.UUID,
-	key string,
-	input TokenCreateFingerprint,
-) (Request, error) {
-	if runID == uuid.Nil() {
-		return nil, errors.New("token creating run ID is required")
-	}
-	scope := append([]byte("runtime\x00"), runID[:]...)
-	return newTokenCreateRequest(environmentID, scope, key, input)
-}
-
-func NewExternalTokenCreateRequest(
-	environmentID uuid.UUID,
-	key string,
-	input TokenCreateFingerprint,
-) (Request, error) {
-	return newTokenCreateRequest(environmentID, []byte("external"), key, input)
-}
-
-func newTokenCreateRequest(
-	environmentID uuid.UUID,
-	scope []byte,
-	key string,
-	input TokenCreateFingerprint,
-) (Request, error) {
-	if environmentID == uuid.Nil() {
-		return nil, errors.New("idempotency environment is required")
-	}
-	metadata, err := canonicalJSONOr(input.Metadata, `{}`)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize token metadata: %w", err)
-	}
-	fields, err := json.Marshal(struct {
-		TimeoutMS *int64          `json:"timeoutMs"`
-		Metadata  json.RawMessage `json:"metadata"`
-		Tags      []string        `json:"tags"`
-	}{
-		TimeoutMS: input.TimeoutMS,
-		Metadata:  metadata,
-		Tags:      append([]string{}, input.Tags...),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("encode token create fingerprint: %w", err)
-	}
-	canonical, err := jsoncanon.Transform(fields)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize token create fingerprint: %w", err)
-	}
-	return sealedRequest{value: request{
-		environmentID: environmentID,
-		operation:     operationTokenCreate,
-		scope:         bytes.Clone(scope),
-		key:           key,
-		fingerprint: func() ([sha256.Size]byte, error) {
-			return operationFingerprint(operationTokenCreate, canonical), nil
-		},
-	}}, nil
-}
-
-func NewTokenCompleteRequest(
-	environmentID uuid.UUID,
-	tokenID uuid.UUID,
-	key string,
-	resultJSON []byte,
-) (Request, error) {
-	if environmentID == uuid.Nil() {
-		return nil, errors.New("idempotency environment is required")
-	}
-	if tokenID == uuid.Nil() {
-		return nil, errors.New("token ID is required")
-	}
-	canonical, err := jsoncanon.Transform(resultJSON)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize token result: %w", err)
-	}
-	return sealedRequest{value: request{
-		environmentID: environmentID,
-		operation:     operationTokenComplete,
-		scope:         bytes.Clone(tokenID[:]),
-		key:           key,
-		fingerprint: func() ([sha256.Size]byte, error) {
-			return operationFingerprint(operationTokenComplete, canonical), nil
-		},
-	}}, nil
-}
-
-func NewTokenCancelRequest(environmentID uuid.UUID, tokenID uuid.UUID, key string) (Request, error) {
-	if environmentID == uuid.Nil() {
-		return nil, errors.New("idempotency environment is required")
-	}
-	if tokenID == uuid.Nil() {
-		return nil, errors.New("token ID is required")
-	}
-	return sealedRequest{value: request{
-		environmentID: environmentID,
-		operation:     operationTokenCancel,
-		scope:         bytes.Clone(tokenID[:]),
-		key:           key,
-		fingerprint: func() ([sha256.Size]byte, error) {
-			return operationFingerprint(operationTokenCancel, nil), nil
-		},
-	}}, nil
-}
-
-func NewActorStartRequest(
-	environmentID uuid.UUID,
-	actorDeclaredID string,
-	key string,
-	input ActorStartFingerprint,
-) (Request, error) {
-	if environmentID == uuid.Nil() {
-		return nil, errors.New("idempotency environment is required")
-	}
-	if actorDeclaredID == "" {
-		return nil, errors.New("actor declared ID is required")
-	}
-	computer, err := jsoncanon.Transform(input.ComputerAddress)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize actor start computer address: %w", err)
-	}
-	runMetadata, err := canonicalJSONOr(input.ManagedRunMetadata, `{}`)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize managed run metadata: %w", err)
-	}
-	var retryPolicy json.RawMessage
-	if len(input.ManagedRetryPolicy) > 0 {
-		retryPolicy, err = jsoncanon.Transform(input.ManagedRetryPolicy)
-		if err != nil {
-			return nil, fmt.Errorf("canonicalize managed run retry policy: %w", err)
-		}
-	}
-	fields, err := json.Marshal(struct {
-		ActorDeclaredID       string          `json:"actorDeclaredId"`
-		Key                   *string         `json:"key"`
-		ComputerAddress       json.RawMessage `json:"computerAddress"`
-		ManagedQueueName      string          `json:"managedQueueName"`
-		ManagedConcurrencyKey *string         `json:"managedConcurrencyKey"`
-		ManagedPriority       int32           `json:"managedPriority"`
-		ManagedQueuedTTLMS    *int64          `json:"managedQueuedTtlMs"`
-		ManagedRetryPolicy    json.RawMessage `json:"managedRetryPolicy"`
-		ManagedRunMetadata    json.RawMessage `json:"managedRunMetadata"`
-		ManagedRunTags        []string        `json:"managedRunTags"`
-	}{
-		ActorDeclaredID: actorDeclaredID, Key: input.Key,
-		ComputerAddress:  computer,
-		ManagedQueueName: input.ManagedQueueName, ManagedConcurrencyKey: input.ManagedConcurrencyKey,
-		ManagedPriority: input.ManagedPriority, ManagedQueuedTTLMS: input.ManagedQueuedTTLMS,
-		ManagedRetryPolicy: retryPolicy, ManagedRunMetadata: runMetadata,
-		ManagedRunTags: append([]string{}, input.ManagedRunTags...),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("encode actor start fingerprint: %w", err)
-	}
-	canonicalFields, err := jsoncanon.Transform(fields)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize actor start fingerprint: %w", err)
-	}
-	return sealedRequest{value: request{
-		environmentID: environmentID,
-		operation:     operationActorStart,
-		scope:         []byte(actorDeclaredID),
-		key:           key,
-		fingerprint: func() ([sha256.Size]byte, error) {
-			return operationFingerprint(operationActorStart, canonicalFields), nil
-		},
-	}}, nil
-}
-
 func NewExternalComputerCreateRequest(
 	environmentID uuid.UUID,
 	computerDeclaredID string,
@@ -476,26 +261,7 @@ func NewExternalComputerCreateRequest(
 ) (Request, error) {
 	return newComputerCreateRequest(
 		environmentID,
-		computerCreateScope("external", uuid.Nil(), computerDeclaredID),
-		computerDeclaredID,
-		key,
-		input,
-	)
-}
-
-func NewRuntimeComputerCreateRequest(
-	environmentID uuid.UUID,
-	runID uuid.UUID,
-	computerDeclaredID string,
-	key string,
-	input ComputerCreateFingerprint,
-) (Request, error) {
-	if runID == uuid.Nil() {
-		return nil, errors.New("computer creating run ID is required")
-	}
-	return newComputerCreateRequest(
-		environmentID,
-		computerCreateScope("runtime", runID, computerDeclaredID),
+		[]byte("external\x00"+computerDeclaredID),
 		computerDeclaredID,
 		key,
 		input,
@@ -544,17 +310,6 @@ func newComputerCreateRequest(
 			return operationFingerprint(operationComputerCreate, canonicalFields), nil
 		},
 	}}, nil
-}
-
-func computerCreateScope(kind string, runID uuid.UUID, declaredID string) []byte {
-	scope := make([]byte, 0, len(kind)+1+len(runID)+1+len(declaredID))
-	scope = append(scope, kind...)
-	scope = append(scope, 0)
-	if runID != uuid.Nil() {
-		scope = append(scope, runID[:]...)
-		scope = append(scope, 0)
-	}
-	return append(scope, declaredID...)
 }
 
 func NewComputerDeleteRequest(environmentID uuid.UUID, computerID uuid.UUID, key string) (Request, error) {
@@ -622,146 +377,6 @@ func NewComputerCommandRequest(
 	}}, nil
 }
 
-func NewTaskStartRequest(
-	environmentID uuid.UUID,
-	taskDeclaredID string,
-	key string,
-	input TaskStartFingerprint,
-) (Request, error) {
-	if environmentID == uuid.Nil() {
-		return nil, errors.New("idempotency environment is required")
-	}
-	if taskDeclaredID == "" {
-		return nil, errors.New("task declared ID is required")
-	}
-	computer, err := jsoncanon.Transform(input.Computer)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize task start computer: %w", err)
-	}
-	metadata, err := canonicalJSONOr(input.Metadata, `{}`)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize task metadata: %w", err)
-	}
-	var payload json.RawMessage
-	if input.PayloadPresent {
-		payload, err = jsoncanon.Transform(input.Payload)
-		if err != nil {
-			return nil, fmt.Errorf("canonicalize task payload: %w", err)
-		}
-	}
-	var retry json.RawMessage
-	if len(input.RetryPolicy) > 0 {
-		retry, err = jsoncanon.Transform(input.RetryPolicy)
-		if err != nil {
-			return nil, fmt.Errorf("canonicalize task retry policy: %w", err)
-		}
-	}
-	fields, err := json.Marshal(struct {
-		TaskDeclaredID string          `json:"taskDeclaredId"`
-		PayloadPresent bool            `json:"payloadPresent"`
-		Payload        json.RawMessage `json:"payload"`
-		Computer       json.RawMessage `json:"computer"`
-		QueueName      string          `json:"queueName"`
-		ConcurrencyKey *string         `json:"concurrencyKey"`
-		Priority       int32           `json:"priority"`
-		QueuedTTLMS    *int64          `json:"queuedTtlMs"`
-		RetryPolicy    json.RawMessage `json:"retryPolicy"`
-		Metadata       json.RawMessage `json:"metadata"`
-		Tags           []string        `json:"tags"`
-	}{
-		TaskDeclaredID: taskDeclaredID,
-		PayloadPresent: input.PayloadPresent,
-		Payload:        payload, Computer: computer,
-		QueueName: input.QueueName, ConcurrencyKey: input.ConcurrencyKey,
-		Priority: input.Priority, QueuedTTLMS: input.QueuedTTLMS,
-		RetryPolicy: retry, Metadata: metadata,
-		Tags: append([]string{}, input.Tags...),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("encode task start fingerprint: %w", err)
-	}
-	canonical, err := jsoncanon.Transform(fields)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize task start fingerprint: %w", err)
-	}
-	return sealedRequest{value: request{
-		environmentID: environmentID,
-		operation:     operationTaskStart,
-		scope:         []byte(taskDeclaredID),
-		key:           key,
-		fingerprint: func() ([sha256.Size]byte, error) {
-			return operationFingerprint(operationTaskStart, canonical), nil
-		},
-	}}, nil
-}
-
-func NewTaskChildInvokeRequest(
-	environmentID uuid.UUID,
-	parentRunID uuid.UUID,
-	taskDeclaredID string,
-	key string,
-	input TaskChildInvokeFingerprint,
-) (Request, error) {
-	if parentRunID == uuid.Nil() {
-		return nil, errors.New("parent run ID is required")
-	}
-	if taskDeclaredID == "" {
-		return nil, errors.New("task declared ID is required")
-	}
-	if input.Method != "start" && input.Method != "call" {
-		return nil, errors.New("child task invocation method is invalid")
-	}
-	taskFingerprint := TaskStartFingerprint{
-		PayloadPresent: input.PayloadPresent,
-		Payload:        input.Payload,
-		Computer:       input.Computer,
-		QueueName:      input.QueueName,
-		ConcurrencyKey: input.ConcurrencyKey,
-		Priority:       input.Priority,
-		QueuedTTLMS:    input.QueuedTTLMS,
-		RetryPolicy:    input.RetryPolicy,
-		Metadata:       input.Metadata,
-		Tags:           input.Tags,
-	}
-	taskRequest, err := NewTaskStartRequest(
-		environmentID,
-		taskDeclaredID,
-		key,
-		taskFingerprint,
-	)
-	if err != nil {
-		return nil, err
-	}
-	base := taskRequest.idempotencyRequest()
-	fingerprint, err := base.fingerprint()
-	if err != nil {
-		return nil, err
-	}
-	fields, err := json.Marshal(struct {
-		Method          string `json:"method"`
-		TaskFingerprint string `json:"taskFingerprint"`
-	}{
-		Method:          input.Method,
-		TaskFingerprint: fmt.Sprintf("%x", fingerprint),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("encode child task invocation fingerprint: %w", err)
-	}
-	scope := make([]byte, 0, len(parentRunID)+1+len(taskDeclaredID))
-	scope = append(scope, parentRunID[:]...)
-	scope = append(scope, 0)
-	scope = append(scope, taskDeclaredID...)
-	return sealedRequest{value: request{
-		environmentID: environmentID,
-		operation:     operationTaskChildInvoke,
-		scope:         scope,
-		key:           key,
-		fingerprint: func() ([sha256.Size]byte, error) {
-			return operationFingerprint(operationTaskChildInvoke, fields), nil
-		},
-	}}, nil
-}
-
 func canonicalJSONOr(value json.RawMessage, fallback string) ([]byte, error) {
 	if len(value) == 0 {
 		value = json.RawMessage(fallback)
@@ -782,143 +397,6 @@ func newSecretValueRequest(environmentID uuid.UUID, operation operation, scope [
 			return operationFingerprint(operation, fields), nil
 		},
 	}}, nil
-}
-
-func TransactionFor(tx pgx.Tx) (*Transaction, error) {
-	if tx == nil {
-		return nil, errors.New("idempotency transaction is required")
-	}
-	queries := db.New(tx)
-	return &Transaction{store: queries, queries: queries}, nil
-}
-
-func TransactionForQueries(queries db.Querier) (*Transaction, error) {
-	if queries == nil {
-		return nil, errors.New("idempotency query transaction is required")
-	}
-	return &Transaction{store: queries}, nil
-}
-
-func (t *Transaction) Queries() *db.Queries {
-	return t.queries
-}
-
-func (t *Transaction) Acquire(ctx context.Context, input Request) (Result, error) {
-	if input == nil {
-		return Result{}, errors.New("idempotency request is required")
-	}
-	request := input.idempotencyRequest()
-	if request.environmentID == uuid.Nil() {
-		return Result{}, errors.New("idempotency environment is required")
-	}
-	if !supportedOperation(request.operation) {
-		return Result{}, fmt.Errorf("unsupported idempotency operation %q", request.operation)
-	}
-	if request.key == "" {
-		return Result{}, errors.New("idempotency key is required")
-	}
-	if request.fingerprint == nil {
-		return Result{}, errors.New("idempotency fingerprint function is required")
-	}
-
-	slotHash := idempotencySlotHash(request)
-	fingerprint, err := request.fingerprint()
-	if err != nil {
-		return Result{}, fmt.Errorf("fingerprint idempotency request: %w", err)
-	}
-
-	for {
-		locked, err := t.store.LockIdempotencyClaim(ctx, db.LockIdempotencyClaimParams{
-			EnvironmentID: pgvalue.UUID(request.environmentID),
-			Operation:     string(request.operation),
-			SlotHash:      slotHash[:],
-		})
-		switch {
-		case err == nil:
-			claim := locked
-			if !bytes.Equal(claim.RequestFingerprint, fingerprint[:]) {
-				claimID, _ := pgvalue.UUIDValue(claim.ID)
-				return Result{}, ConflictError{ClaimID: claimID}
-			}
-			if claim.ReceiptPrunedAt.Valid {
-				return Result{}, ExpiredError{}
-			}
-			return Result{Claim: claim}, nil
-		case !errors.Is(err, pgx.ErrNoRows):
-			return Result{}, fmt.Errorf("lock live idempotency claim: %w", err)
-		}
-
-		created, err := t.create(ctx, request, slotHash, fingerprint)
-		if err == nil {
-			return created, nil
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return Result{}, err
-		}
-	}
-}
-
-func supportedOperation(value operation) bool {
-	switch value {
-	case operationTurnInterrupt, operationTurnOutput, operationDeploymentFinalize, operationSecretCreate, operationSecretRotate, operationSecretRevoke, operationRunMetadata,
-		operationActorStart, "session.send", "session.enqueue", "turn.message", "session.close", "session.cancel", "session.resume", "session.output.write", "session.run.cancel",
-		operationTaskStart, operationTaskChildInvoke, operationTokenCreate, operationTokenComplete, operationTokenCancel,
-		operationComputerCreate, operationComputerCommand, operationComputerDelete, operationCommandCancel:
-		return true
-	default:
-		return false
-	}
-}
-
-func (t *Transaction) Complete(ctx context.Context, claim db.IdempotencyClaim, receipt []byte) (db.IdempotencyClaim, error) {
-	if err := validateReceipt(receipt); err != nil {
-		return db.IdempotencyClaim{}, err
-	}
-	completed, err := t.store.CompleteIdempotencyClaim(ctx, db.CompleteIdempotencyClaimParams{
-		Receipt:            bytes.Clone(receipt),
-		EnvironmentID:      claim.EnvironmentID,
-		ID:                 claim.ID,
-		RequestFingerprint: bytes.Clone(claim.RequestFingerprint),
-	})
-	if err != nil {
-		return db.IdempotencyClaim{}, fmt.Errorf("complete idempotency claim: %w", err)
-	}
-	return completed, nil
-}
-
-func (t *Transaction) Fail(ctx context.Context, claim db.IdempotencyClaim, receipt []byte) (db.IdempotencyClaim, error) {
-	if err := validateReceipt(receipt); err != nil {
-		return db.IdempotencyClaim{}, err
-	}
-	failed, err := t.store.FailIdempotencyClaim(ctx, db.FailIdempotencyClaimParams{
-		Receipt:            bytes.Clone(receipt),
-		EnvironmentID:      claim.EnvironmentID,
-		ID:                 claim.ID,
-		RequestFingerprint: bytes.Clone(claim.RequestFingerprint),
-	})
-	if err != nil {
-		return db.IdempotencyClaim{}, fmt.Errorf("fail idempotency claim: %w", err)
-	}
-	return failed, nil
-}
-
-func (t *Transaction) create(
-	ctx context.Context,
-	request request,
-	slotHash [sha256.Size]byte,
-	fingerprint [sha256.Size]byte,
-) (Result, error) {
-	claim, err := t.store.CreateIdempotencyClaim(ctx, db.CreateIdempotencyClaimParams{
-		ID:                 pgvalue.UUID(uuid.NewV7()),
-		EnvironmentID:      pgvalue.UUID(request.environmentID),
-		Operation:          string(request.operation),
-		SlotHash:           slotHash[:],
-		RequestFingerprint: fingerprint[:],
-	})
-	if err != nil {
-		return Result{}, fmt.Errorf("create idempotency claim: %w", err)
-	}
-	return Result{Claim: claim, New: true}, nil
 }
 
 func idempotencySlotHash(request request) [sha256.Size]byte {
@@ -963,17 +441,16 @@ func validateReceipt(receipt []byte) error {
 	return nil
 }
 
-type claimStore interface {
-	LockIdempotencyClaim(context.Context, db.LockIdempotencyClaimParams) (db.IdempotencyClaim, error)
-	CreateIdempotencyClaim(context.Context, db.CreateIdempotencyClaimParams) (db.IdempotencyClaim, error)
-
-	CompleteIdempotencyClaim(context.Context, db.CompleteIdempotencyClaimParams) (db.IdempotencyClaim, error)
-	FailIdempotencyClaim(context.Context, db.FailIdempotencyClaimParams) (db.IdempotencyClaim, error)
-}
-
 func NewCommandCancelRequest(environmentID, commandID uuid.UUID) (Request, error) {
 	if environmentID == uuid.Nil() || commandID == uuid.Nil() {
 		return nil, errors.New("command cancellation requires environment and Command IDs")
 	}
 	return sealedRequest{value: request{environmentID: environmentID, operation: operationCommandCancel, scope: bytes.Clone(commandID[:]), key: "cancel", fingerprint: func() ([sha256.Size]byte, error) { return operationFingerprint(operationCommandCancel, nil), nil }}}, nil
+}
+
+func optionalUUID(value uuid.UUID) pgtype.UUID {
+	if value == uuid.Nil() {
+		return pgtype.UUID{}
+	}
+	return pgvalue.UUID(value)
 }

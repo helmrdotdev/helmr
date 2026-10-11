@@ -1,7 +1,7 @@
 // Ordinary project lifecycle work, run by the package manager as the
 // unprivileged install user after node-gyp compiled the root addon.
 import { execFileSync } from "node:child_process"
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { copyFileSync, cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import assert from "node:assert/strict"
 
@@ -40,13 +40,7 @@ run("gcc", ["-shared", "-fPIC", "native/future-libc.c", "-Wl,-soname,libc.so.6",
 run("gcc", ["-shared", "-fPIC", `-I${include}`, "native/future.c", `-L${release}/future-libc`, "-l:libc.so.6",
   "-o", `${release}/future_addon.node`])
 
-// The e2e project has no registry SDK; provide the declaration surface it uses.
-mkdirSync("node_modules/@helmr/sdk", { recursive: true })
-writeFileSync("node_modules/@helmr/sdk/package.json", JSON.stringify({ name: "@helmr/sdk", type: "module" }))
-writeFileSync("node_modules/@helmr/sdk/index.js", `
-const brand = Symbol.for("helmr.sdk.v0.definition")
-export function defineConfig(config) { return config }
-export function task(config) {
-  return Object.freeze({ [brand]: Object.freeze({ kind: "task", id: config.id, hasPayload: false, handler: config.run }) })
+// Use the same packed SDK as host configuration and the final Runtime fixture.
+for (const [source, target] of [["sdk", "@helmr/sdk"], ["proto", "@helmr/proto"], ["protobuf", "@bufbuild/protobuf"]]) {
+  cpSync(`vendor/${source}`, `node_modules/${target}`, { recursive: true })
 }
-`)

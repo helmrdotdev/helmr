@@ -14,9 +14,9 @@ import (
 // releaseComputerCommand owns its guest stream beyond the guest response: the
 // control plane reconciles the release while that stream is still open, and
 // cancellation closes the stream at any point and is awaited before returning.
-func (m Server) releaseComputerCommand(ctx context.Context, machine vm.Machine, mount workerapi.ComputerInstanceAssignment, release workerapi.ComputerCommandRelease, client workerapi.ComputerServerControlPlaneClient) error {
+func (m commandService) releaseComputerCommand(ctx context.Context, machine vm.Machine, mount commandAuthority, release workerapi.ComputerCommandRelease, client workerapi.ComputerCommandClient) error {
 	r := release.Completion
-	if release.ComputerID != mount.ComputerID || r.ComputerInstanceID != mount.ComputerInstanceID || r.WriterGeneration != mount.WriterGeneration || r.OrgID != mount.OrgID || release.RequestFingerprint == "" {
+	if release.ComputerID != mount.ComputerID || r.ComputerInstanceID != mount.ComputerInstanceID || r.WriterGeneration != mount.WriterGeneration || r.EnvironmentID != mount.EnvironmentID || release.RequestFingerprint == "" {
 		return computerBasicExecProtocol(errors.New("command release does not match the Instance"))
 	}
 	conn, err := machine.OpenStream(ctx)
@@ -31,7 +31,7 @@ func (m Server) releaseComputerCommand(ctx context.Context, machine vm.Machine, 
 			<-closed
 		}
 	}()
-	if _, err := writeGuestControlRequest(conn, wire.StreamHeader{Type: wire.StreamTypeComputerCommandRelease, OperationID: r.CommandID}, &computerv0.ComputerCommandReleaseRequest{Authority: &computerv0.ComputerCommandAuthority{OperationId: r.CommandID, ComputerId: release.ComputerID, ComputerInstanceId: r.ComputerInstanceID, WriterGeneration: r.WriterGeneration, ChannelCredential: m.channelCredential(mount), RequestFingerprint: release.RequestFingerprint}}); err != nil {
+	if _, err := writeGuestControlRequest(conn, wire.StreamHeader{Type: wire.StreamTypeComputerCommandRelease, OperationID: r.CommandID}, &computerv0.ComputerCommandReleaseRequest{OutputFenced: r.OutputFenced, Authority: &computerv0.ComputerCommandAuthority{OperationId: r.CommandID, ComputerId: release.ComputerID, ComputerInstanceId: r.ComputerInstanceID, WriterGeneration: r.WriterGeneration, ChannelCredential: mount.GuestChannelCredential, RequestFingerprint: release.RequestFingerprint}}); err != nil {
 		return err
 	}
 	var response computerv0.ComputerCommandReleaseResponse

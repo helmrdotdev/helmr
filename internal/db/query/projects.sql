@@ -28,8 +28,8 @@ WITH project AS (
     RETURNING *
 ),
 environment AS (
-    INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default)
-    SELECT initial_environment.id, project.org_id, project.id, initial_environment.slug, initial_environment.name, initial_environment.color_hex, initial_environment.is_default
+    INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default, history_retention_mode, history_retention_seconds)
+    SELECT initial_environment.id, project.org_id, project.id, initial_environment.slug, initial_environment.name, initial_environment.color_hex, initial_environment.is_default, sqlc.arg(history_retention_mode), sqlc.narg(history_retention_seconds)
       FROM project
       CROSS JOIN (
           VALUES
@@ -76,7 +76,7 @@ SELECT *
  LIMIT sqlc.arg(row_limit);
 
 -- name: CreateEnvironment :one
-INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default)
+INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default, history_retention_mode, history_retention_seconds)
 VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
@@ -84,7 +84,9 @@ VALUES (
     sqlc.arg(slug),
     sqlc.arg(name),
     sqlc.arg(color_hex),
-    sqlc.arg(is_default)
+    sqlc.arg(is_default),
+    sqlc.arg(history_retention_mode),
+    sqlc.narg(history_retention_seconds)
 )
 RETURNING *;
 
@@ -93,6 +95,8 @@ UPDATE environments
    SET slug = sqlc.arg(slug),
        name = sqlc.arg(name),
        color_hex = sqlc.arg(color_hex),
+       history_retention_mode = CASE WHEN sqlc.arg(history_retention_mode)::text='' THEN history_retention_mode ELSE sqlc.arg(history_retention_mode) END,
+       history_retention_seconds = CASE WHEN sqlc.arg(history_retention_mode)::text='' THEN history_retention_seconds ELSE sqlc.narg(history_retention_seconds)::bigint END,
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)

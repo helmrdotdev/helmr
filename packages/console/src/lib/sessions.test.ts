@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
 
 import {
-  closeSession, getSession, getSessionEvents, listSessions, runSessionConsolePath,
-  sendSession, sendTurnMessage, interruptTurn, resumeSession, sessionConsolePath,
+  messageDeliveryNotice, questionCLICommands, getSession, getSessionEvents, listSessions, cancelSession,
+  interruptSession, sessionConsolePath,
 } from "./sessions";
 
 const originalFetch = globalThis.fetch;
@@ -17,7 +17,7 @@ test("loads a Session from the scoped read API", async () => {
     requestedURL = String(input);
     return Response.json({
       id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-      actor_id: "operator",
+      agent_id: "operator",
       deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
       status: "open",
       created_at: "2026-07-25T00:00:00Z",
@@ -60,19 +60,6 @@ test("escapes a Session console route and preserves its scope", () => {
   );
 });
 
-test("links only Runs that belong to a Session", () => {
-  expect(runSessionConsolePath({
-    session_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-  }, "prj_aaaaaaaaaaaaaaaaaaaaaaaaaa", "env_aaaaaaaaaaaaaaaaaaaaaaaaaa")).toBe(
-    "/sessions/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33?project_id=prj_aaaaaaaaaaaaaaaaaaaaaaaaaa&environment_id=env_aaaaaaaaaaaaaaaaaaaaaaaaaa",
-  );
-  expect(runSessionConsolePath(
-    {},
-    "prj_aaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "env_aaaaaaaaaaaaaaaaaaaaaaaaaa",
-  )).toBeUndefined();
-});
-
 test("lists Sessions with a bounded cursor", async () => {
   let requestedURL: string | undefined;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -92,50 +79,37 @@ test("lists Sessions by public status as repeated params", async () => {
     return Response.json({ sessions: [] });
   }) as typeof fetch;
 
-  await listSessions({ projectID: "project-1", environmentID: "env-1", statuses: ["open", "failed"], limit: 100 });
+  await listSessions({ projectID: "project-1", environmentID: "env-1", statuses: ["open", "cancelled"], limit: 100 });
 
-  expect(requestedURL).toBe("/api/projects/project-1/environments/env-1/sessions?status=open&status=failed&limit=100");
+  expect(requestedURL).toBe("/api/projects/project-1/environments/env-1/sessions?status=open&status=cancelled&limit=100");
 });
 
-test("closes a Session with its idempotency key", async () => {
-  let requestedURL: string | undefined;
-  let requestInit: RequestInit | undefined;
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    requestedURL = String(input);
-    requestInit = init;
-    return Response.json({ session_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33", id: "operation-1", status: "closing" });
-  }) as typeof fetch;
-
-  await closeSession(
-    { sessionID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33", projectID: "project/1", environmentID: "env-1" },
-    { idempotency_key: "key-2" },
-  );
-
-  expect(requestedURL).toBe(
-    "/api/projects/project%2F1/environments/env-1/sessions/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33/close",
-  );
-  expect(requestInit?.method).toBe("POST");
-  expect(JSON.parse(String(requestInit?.body))).toEqual({ idempotency_key: "key-2" });
-});
-
-
-test("mutations bind application data and exact Turn or hold to the scoped endpoint", async () => {
+test("safety controls preserve scope and retry identity", async () => {
   const address = { sessionID: "s/1", projectID: "p/1", environmentID: "e/1" };
   const calls: { path: string; body: unknown }[] = [];
   globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
     calls.push({ path: String(url), body: JSON.parse(String(init?.body)) });
     return Response.json({ id: "receipt", status: "stopping" });
   }) as typeof fetch;
-  const data = { data: { type: "answer", value: null }, idempotency_key: "message-key" };
-  await sendSession(address, data, "enqueue");
-  await sendTurnMessage(address, "t/1", data);
-  expect((await interruptTurn(address, "t/1", { idempotency_key: "stop-key" })).status).toBe("stopping");
-  await resumeSession(address, { hold_id: "h1", idempotency_key: "resume-key" });
+  expect((await interruptSession(address, { idempotency_key: "stop-key" })).status).toBe("stopping");
+  await cancelSession(address, { idempotency_key: "cancel-key" });
   const base = "/api/projects/p%2F1/environments/e%2F1/sessions/s%2F1";
   expect(calls).toEqual([
-    { path: base + "/enqueue", body: data },
-    { path: base + "/turns/t%2F1/messages", body: data },
-    { path: base + "/turns/t%2F1/interrupt", body: { idempotency_key: "stop-key" } },
-    { path: base + "/resume", body: { hold_id: "h1", idempotency_key: "resume-key" } },
+    { path: base + "/interrupt", body: { idempotency_key: "stop-key" } },
+    { path: base + "/cancel", body: { idempotency_key: "cancel-key" } },
   ]);
+});
+
+test("distinguishes a rejected message from an uncertain native callback", () => {
+ const event = { session_id: "session", turn_id: "turn", sequence: 5, kind: "message.rejected", created_at: "2026-10-10T00:00:00Z", data: { delivery: "uncertain" } };
+ expect(messageDeliveryNotice(event)).toContain("delivery uncertain");
+ expect(messageDeliveryNotice({ ...event, data: { delivery: "not_delivered" } })).toContain("not delivered");
+ expect(messageDeliveryNotice({ ...event, kind: "message.delivered" })).toBeUndefined();
+});
+
+test("question CLI instructions bind origin, scope and exact question without interpolating shell syntax", () => {
+  const commands = questionCLICommands({ sessionID: "s'$(command)", turnID: "t", askID: "a", projectID: "p", environmentID: "e" }, "https://helmr.example");
+  expect(commands.login).toBe("helmr login 'https://helmr.example'");
+  expect(commands.get).toBe(`helmr --api-url 'https://helmr.example' session turn ask get 's'"'"'$(command)' 't' 'a' --project 'p' --env 'e' --json`);
+  expect(commands.respond).toBe(`helmr --api-url 'https://helmr.example' session turn ask respond 's'"'"'$(command)' 't' 'a' --project 'p' --env 'e' --answer-file answer.json --response-id RESPONSE_ID`);
 });

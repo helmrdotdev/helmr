@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -49,63 +48,6 @@ func (c *Client) ListDeployments(ctx context.Context, opts EnvironmentScopeOptio
 	return response, nil
 }
 
-func (c *Client) ListTasks(ctx context.Context, opts EnvironmentScopeOptions) (api.ListTasksResponse, error) {
-	path, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/tasks")
-	if err != nil {
-		return api.ListTasksResponse{}, err
-	}
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return api.ListTasksResponse{}, err
-	}
-	var response api.ListTasksResponse
-	if err := c.doJSON(req, &response); err != nil {
-		return api.ListTasksResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) GetTask(ctx context.Context, taskID string, opts EnvironmentScopeOptions) (api.Task, error) {
-	path, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/tasks/"+url.PathEscape(taskID))
-	if err != nil {
-		return api.Task{}, err
-	}
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return api.Task{}, err
-	}
-	var response api.Task
-	if err := c.doJSON(req, &response); err != nil {
-		return api.Task{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) StartTask(
-	ctx context.Context,
-	taskID string,
-	request api.StartTaskRequest,
-	opts EnvironmentScopeOptions,
-) (api.StartTaskResponse, error) {
-	taskID = strings.TrimSpace(taskID)
-	if err := api.ValidateDefinitionID(taskID); err != nil {
-		return api.StartTaskResponse{}, err
-	}
-	path, err := c.environmentScopedPath(
-		opts.ProjectID,
-		opts.EnvironmentID,
-		"/tasks/"+url.PathEscape(taskID)+"/start",
-	)
-	if err != nil {
-		return api.StartTaskResponse{}, err
-	}
-	var response api.StartTaskResponse
-	if err := c.postJSON(ctx, path, request, &response); err != nil {
-		return api.StartTaskResponse{}, err
-	}
-	return response, nil
-}
-
 type ComputerScopeOptions struct {
 	ProjectID     string
 	EnvironmentID string
@@ -137,7 +79,7 @@ func (c *Client) CreateComputer(
 	input api.CreateComputerRequest,
 	opts ComputerScopeOptions,
 ) (api.ComputerSnapshot, error) {
-	path, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/sandboxes/"+url.PathEscape(declaredID)+"/computers")
+	path, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/computer-definitions/"+url.PathEscape(declaredID)+"/computers")
 	if err != nil {
 		return api.ComputerSnapshot{}, err
 	}
@@ -260,77 +202,4 @@ func (c *Client) CancelCommand(ctx context.Context, id string, opts ComputerScop
 		return api.CommandCancelReceipt{}, errors.New("invalid Command cancellation receipt")
 	}
 	return receipt, nil
-}
-
-type TokenScopeOptions struct {
-	ProjectID     string
-	EnvironmentID string
-}
-
-func (c *Client) tokenCollectionPath(opts TokenScopeOptions) (string, error) {
-	path, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/tokens")
-	return path, err
-}
-
-func (c *Client) tokenItemPath(tokenID string, suffix string, opts TokenScopeOptions) (string, error) {
-	if err := ids.Validate(tokenID); err != nil {
-		return "", err
-	}
-	path, err := c.tokenCollectionPath(opts)
-	if err != nil {
-		return "", err
-	}
-	return environmentScopedResourcePath(path, tokenID, suffix), nil
-}
-
-func (c *Client) CreateToken(ctx context.Context, input api.CreateTokenRequest, opts TokenScopeOptions) (api.TokenResponse, error) {
-	path, err := c.tokenCollectionPath(opts)
-	if err != nil {
-		return api.TokenResponse{}, err
-	}
-	var response api.TokenResponse
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.TokenResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) GetToken(ctx context.Context, tokenID string, opts TokenScopeOptions) (api.TokenResponse, error) {
-	path, err := c.tokenItemPath(tokenID, "", opts)
-	if err != nil {
-		return api.TokenResponse{}, err
-	}
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return api.TokenResponse{}, err
-	}
-	var response api.TokenResponse
-	if err := c.doJSON(req, &response); err != nil {
-		return api.TokenResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) CompleteToken(ctx context.Context, tokenID string, input api.CompleteTokenRequest, opts TokenScopeOptions) (api.TokenResponse, error) {
-	path, err := c.tokenItemPath(tokenID, "/complete", opts)
-	if err != nil {
-		return api.TokenResponse{}, err
-	}
-	var response api.TokenResponse
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.TokenResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) CancelToken(ctx context.Context, tokenID string, input api.CancelTokenRequest, opts TokenScopeOptions) (api.TokenResponse, error) {
-	path, err := c.tokenItemPath(tokenID, "/cancel", opts)
-	if err != nil {
-		return api.TokenResponse{}, err
-	}
-	var response api.TokenResponse
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.TokenResponse{}, err
-	}
-	return response, nil
 }

@@ -68,7 +68,10 @@ func TestCommandCancellationPreservesPeerAndReplay(t *testing.T) {
 	if other.result.GetOutcome() != "exited" {
 		t.Fatal("late cancellation rewrote completed result")
 	}
-	if err := registry.releaseCommand(target.Envelope); err != nil {
+	for _, stream := range []string{"stdout", "stderr"} {
+		commandSpoolBytes(t, entry.commands[target.Envelope.OperationId].output, stream)
+	}
+	if err := registry.releaseCommand(target.Envelope, false); err != nil {
 		t.Fatal(err)
 	}
 }

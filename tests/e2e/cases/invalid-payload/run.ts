@@ -1,17 +1,16 @@
-import { verify, assertEqual, deadline, waitRun } from "../../support/context"
-await verify("invalid-payload", async ({ client, marker, objects, computer }) => {
+import { verify, assert, assertEqual, waitTurn } from "../../support/context"
+await verify("invalid-payload", async ({ marker, computer, startAgent }) => {
   const target = await computer("helmr-edge-smoke")
-  const run = await client.tasks.start(
+  const { turn } = await startAgent(
     "edge-smoke",
     {
       computer: target,
-      payload: { mode: "sandbox-overwrite", unknown: true },
-      idempotencyKey: `invalid-payload:${marker}`,
+      input: { mode: "computer-overwrite", unknown: true },
+      idempotencyKey: `invalid-input:${marker}`,
     },
-    { signal: deadline(30_000) },
   )
-  objects.run_ids.push(run.id)
-  const terminal = await waitRun(client, run.id, ["failed"])
-  assertEqual(terminal.failure?.code, "task_payload_invalid", "Wrong failure code")
-  return { failureCode: "task_payload_invalid" }
+  const terminal = await waitTurn(turn, ["failed"])
+  assertEqual(terminal.error?.code, "handler_failed", "Wrong failure code")
+  assert(terminal.error?.message?.includes("unknown"), "Application schema did not identify the unknown field")
+  return { failureCode: "handler_failed" }
 })

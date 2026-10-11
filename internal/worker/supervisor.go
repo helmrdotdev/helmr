@@ -31,7 +31,7 @@ type FatalWorkError interface {
 }
 
 type Consumer interface {
-	Claim(context.Context) (Work, bool, error)
+	Claim(context.Context, ConsumerAdmission) (Work, bool, error)
 }
 
 type ConsumerSpec struct {
@@ -324,7 +324,7 @@ func (s *Supervisor) reportStartupRecovery(
 		if attempt == maxAttempts {
 			return fmt.Errorf("startup recovery conflict did not clear after %d attempts: %w", maxAttempts, err)
 		}
-		s.cfg.Log.Info("worker startup recovery is waiting for prior-epoch Leases to be fenced")
+		s.cfg.Log.Info("worker startup recovery is waiting for ownership reconciliation")
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
@@ -484,7 +484,7 @@ func (s *Supervisor) waitForDrainReady(ctx context.Context, evidence RecoveryEvi
 	defer ticker.Stop()
 	for {
 		if s.registry.empty() {
-			status, err := s.observeOnce(ctx, s.observation(StatusDraining, evidence))
+			status, err := s.observeOnce(ctx, s.observation(ctx, StatusDraining, evidence))
 			if err == nil && status.Status == workerapi.StatusDraining && status.ActiveInstances == 0 {
 				return nil
 			}
@@ -545,24 +545,15 @@ func (s *Supervisor) consume(
 			timer.Reset(s.cfg.PollEvery)
 			continue
 		}
-		// Cleanup may bypass host admission after dispatch is durably closed.
-		// Bound execution continuation still evaluates every hard host fence.
-		if s.cfg.AdmissionEvaluator != nil && !(spec.BypassAdmissionDuringDrain && state == StatusDraining) {
-			decision := s.cfg.AdmissionEvaluator.Evaluate(claimCtx, AdmissionCheck{
-				Consumer: spec.Name, Status: state, Snapshot: s.registry.snapshot(),
-				Recovery: evidence, DrainContinuation: spec.ContinueDuringDrain && state == StatusDraining,
-			})
-			if !decision.Allowed {
-				releaseAdmission()
-				timer.Reset(s.cfg.PollEvery)
-				continue
-			}
-		}
-		work, ok, err := spec.Consumer.Claim(claimCtx)
+		work, ok, err := spec.Consumer.Claim(claimCtx, consumerAdmission{supervisor: s, spec: spec, recovery: evidence})
 		if err != nil {
 			releaseAdmission()
 			if claimCtx.Err() != nil {
 				return
+			}
+			if errors.Is(err, errClaimAdmissionPaused) {
+				timer.Reset(s.cfg.PollEvery)
+				continue
 			}
 			s.cfg.Log.Error("worker claim failed", "consumer", spec.Name, "error", err)
 			timer.Reset(s.cfg.PollEvery)
@@ -632,7 +623,7 @@ func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, sta
 		case <-ticker.C:
 		}
 		state := s.state.Load().(Status)
-		status, err := s.observeOnce(ctx, s.observation(state, evidence))
+		status, err := s.observeOnce(ctx, s.observation(ctx, state, evidence))
 		if err != nil && ctx.Err() == nil {
 			if workerAuthorityRejected(err) {
 				select {
@@ -649,11 +640,15 @@ func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, sta
 }
 
 func (s *Supervisor) AdmitInstanceStart(ctx context.Context) error {
+	return s.admitInstanceStart(ctx, false)
+}
+
+func (s *Supervisor) admitInstanceStart(ctx context.Context, allocated bool) error {
 	if s.cfg.AdmissionEvaluator == nil {
 		return nil
 	}
 	decision := s.cfg.AdmissionEvaluator.Evaluate(ctx, AdmissionCheck{
-		Consumer: "instance", Status: s.state.Load().(Status), Snapshot: s.registry.snapshot(), Recovery: s.recovery,
+		Consumer: "instance", Status: s.state.Load().(Status), Snapshot: s.registry.snapshot(), Recovery: s.recovery, DrainContinuation: allocated,
 	})
 	if !decision.Allowed {
 		return fmt.Errorf("instance start admission paused: %s", decision.Reason)
@@ -661,12 +656,17 @@ func (s *Supervisor) AdmitInstanceStart(ctx context.Context) error {
 	return nil
 }
 
-func (s *Supervisor) observation(state Status, evidence RecoveryEvidence) workerapi.Observation {
+func (s *Supervisor) observation(ctx context.Context, state Status, evidence RecoveryEvidence) workerapi.Observation {
 	if s.cfg.Observation != nil {
 		return s.cfg.Observation(state, s.registry.snapshot(), evidence)
 	}
 	observation := workerapi.Observation{}
 	if s.cfg.AdmissionEvaluator != nil {
+		// Health recovery must be observable even with no delivered owners: CP
+		// placement and first delivery may themselves be paused by this report.
+		healthCtx, cancel := context.WithTimeout(ctx, s.cfg.ObservationEvery)
+		s.cfg.AdmissionEvaluator.Evaluate(healthCtx, AdmissionCheck{Consumer: "instance", Status: state, DrainContinuation: true})
+		cancel()
 		admissionObservation := s.cfg.AdmissionEvaluator.Observation()
 		observation.RunPausedReason = admissionObservation.RunPausedReason
 		observation.VMPausedReason = admissionObservation.VMPausedReason

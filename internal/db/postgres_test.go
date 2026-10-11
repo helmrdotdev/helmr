@@ -5,8 +5,6 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/artifact"
-	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
@@ -16,11 +14,10 @@ import (
 )
 
 type postgresIDs struct {
-	orgID                   uuid.UUID
-	projectID               uuid.UUID
-	environmentID           uuid.UUID
-	deploymentID            uuid.UUID
-	computerImageArtifactID uuid.UUID
+	orgID         uuid.UUID
+	projectID     uuid.UUID
+	environmentID uuid.UUID
+	deploymentID  uuid.UUID
 }
 
 func seedPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) postgresIDs {
@@ -43,65 +40,11 @@ func seedPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) postgre
 		VALUES ($1, $2, $3, $4, 'Project')
 	`, ids.projectID, ids.orgID, dbtest.DefaultRegionID, projectSlug)
 	dbtest.MustExec(t, ctx, pool, `
-		INSERT INTO environments (id, org_id, project_id, slug, name, color_hex)
-		VALUES ($1, $2, $3, $4, 'Environment', '#3366ff')
+		INSERT INTO environments (history_retention_mode,id, org_id, project_id, slug, name, color_hex)
+		VALUES ('until_environment_deletion',$1, $2, $3, $4, 'Environment', '#3366ff')
 	`, ids.environmentID, ids.orgID, ids.projectID, environmentSlug)
-	programArtifactID := seedPostgresArtifact(
-		t,
-		ctx,
-		pool,
-		ids,
-		"deployment_program",
-		artifact.ProgramArtifactMediaType,
-		"program",
-	)
-	ids.computerImageArtifactID = seedPostgresArtifact(
-		t,
-		ctx,
-		pool,
-		ids,
-		"computer_image",
-		bundle.ComputerImageMediaType,
-		"computer-image",
-	)
-	dbtest.MustExec(t, ctx, pool, `
-		INSERT INTO deployments (
-			id, org_id, project_id, environment_id, version, bundle_digest,
-			runtime_artifact_digest, program_artifact_id, program_index_digest, queue_config
-		)
-		VALUES (
-			$1, $2, $3, $4, 'v1', $5,
-			$6, $7, decode(repeat('03', 32), 'hex'),
-			'{"formatVersion":0,"queues":[]}'::jsonb
-		)
-	`, ids.deploymentID, ids.orgID, ids.projectID, ids.environmentID,
-		dbtest.Digest("deployment-"+ids.deploymentID.String()),
-		dbtest.Digest("runtime-"+ids.deploymentID.String()), programArtifactID)
+	dbtest.MustExec(t, ctx, pool, `INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$2,$3)`, ids.environmentID, ids.deploymentID, dbtest.Digest("deployment-"+ids.deploymentID.String()))
 	return ids
-}
-
-func seedPostgresArtifact(
-	t *testing.T,
-	ctx context.Context,
-	pool *pgxpool.Pool,
-	ids postgresIDs,
-	kind string,
-	mediaType string,
-	label string,
-) uuid.UUID {
-	t.Helper()
-	id := uuid.NewV7()
-	digest := dbtest.Digest(label + "-" + ids.deploymentID.String())
-	dbtest.MustExec(t, ctx, pool, `
-		WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
-		VALUES ($1, $2, 1, $3)
-	`, ids.orgID, digest, mediaType)
-	dbtest.MustExec(t, ctx, pool, `
-		INSERT INTO artifacts (
-			id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type
-		) VALUES ($1, $2, $3, $4, $5, $6::artifact_kind, 1, $7)
-	`, id, ids.orgID, ids.projectID, ids.environmentID, digest, kind, mediaType)
-	return id
 }
 
 func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {

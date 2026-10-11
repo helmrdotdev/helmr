@@ -1,6 +1,6 @@
 SELECT COALESCE((SELECT jsonb_build_object(
- 'id', c.id, 'status', c.status, 'desired_state', c.desired_state,
- 'latest_run_id', (SELECT id FROM runs WHERE computer_id=c.id ORDER BY created_at DESC,id DESC LIMIT 1),
- 'unreclaimed_instances', (SELECT count(*) FROM computer_instances i WHERE i.computer_id=c.id AND i.reclaimed_at IS NULL),
- 'active_leases', (SELECT count(*) FROM run_leases l WHERE l.computer_id=c.id AND l.status IN ('assigned','starting','running','checkpointing','finalizing'))
+ 'id', c.id, 'deleted_at', c.deleted_at, 'preparation_failed_at', c.preparation_failed_at,
+ 'integrity_fault_at', c.integrity_fault_at,
+ 'active_leases', (SELECT count(*) FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL),
+ 'open_sessions', (SELECT count(*) FROM sessions s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.status IN ('open','closing'))
 ) FROM computers c,input WHERE c.id=(args->>'computer_id')::uuid), 'null'::jsonb);

@@ -1,3 +1,4 @@
+import { HistoryRetentionFields, historyRetentionPolicy, type HistoryRetentionDraft } from "../ui/HistoryRetentionFields";
 import { returnPath } from "../lib/continuation";
 import { A, useNavigate, useLocation } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
@@ -31,6 +32,7 @@ export function ProjectNew() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const [retention, setRetention] = createSignal<HistoryRetentionDraft>({ mode: "", seconds: "" });
   const [name, setName] = createSignal("");
   const [slug, setSlug] = createSignal("");
   const [slugTouched, setSlugTouched] = createSignal(false);
@@ -72,6 +74,7 @@ export function ProjectNew() {
     try {
       const wasFirstProject = firstProject();
       const project = await createProject({
+        ...historyRetentionPolicy(retention()),
         name: nextName,
         slug: nextSlug,
         default_region_id: nextRegionID,
@@ -104,6 +107,7 @@ export function ProjectNew() {
           autofocus
         />
       </label>
+      <HistoryRetentionFields value={retention()} onChange={setRetention} />
       <Show when={!regions.isPending && regionOptions().length === 0}>
         <div class={ui.warning} role="status">
           A platform Region is required before a project can be created.

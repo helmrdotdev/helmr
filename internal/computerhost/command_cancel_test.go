@@ -45,7 +45,7 @@ func (c *cancellationClient) ClaimComputerCommand(ctx context.Context, r workera
 func (c *cancellationClient) CompleteComputerCommand(_ context.Context, r workerapi.ComputerCommandCompleteRequest) error {
 	c.commandMu.Lock()
 	defer c.commandMu.Unlock()
-	if r.Outcome != "computer_command_cancelled" || len(c.commandLogs) != 1 {
+	if r.Outcome != "computer_command_cancelled" || len(c.commandLogs) != 3 {
 		return errors.New("completion preceded output or had wrong outcome")
 	}
 	c.execCompletions = append(c.execCompletions, r)
@@ -102,8 +102,21 @@ func (s *cancellationMachine) OpenStream(ctx context.Context) (vm.Stream, error)
 			case <-ctx.Done():
 				return
 			}
-			_ = frameio.WriteProtoFrame(guest, &computerv0.ComputerBasicExecEvent{Event: &computerv0.ComputerBasicExecEvent_Output{Output: &computerv0.CommandOutputChunk{Stream: "stdout", Content: []byte("retained output"), ObservedAtUnixNano: time.Now().UnixNano()}}})
-			_ = frameio.WriteProtoFrame(guest, &computerv0.ComputerBasicExecEvent{Event: &computerv0.ComputerBasicExecEvent_Result{Result: &computerv0.ComputerBasicExecResult{Outcome: "computer_command_cancelled", RequestFingerprint: r.Envelope.RequestFingerprint, ErrorJson: `{"code":"computer_command_cancelled"}`}}})
+			for _, chunk := range []*computerv0.CommandOutputChunk{outputChunk("stdout", 1, "data"), outputChunk("stdout", 2, "end"), outputChunk("stderr", 1, "end")} {
+				if frameio.WriteProtoFrame(guest, outputEvent(chunk)) != nil {
+					return
+				}
+				var ack computerv0.CommandOutputAck
+				if frameio.ReadProtoFrame(guest, &ack) != nil {
+					return
+				}
+			}
+			terminal := outputResult()
+			terminal.GetResult().Outcome = "computer_command_cancelled"
+			terminal.GetResult().RequestFingerprint = r.Envelope.RequestFingerprint
+			terminal.GetResult().ErrorJson = `{"code":"computer_command_cancelled"}`
+			_ = frameio.WriteProtoFrame(guest, terminal)
+
 		}
 	}()
 	return testVMStream(host), nil
@@ -115,12 +128,11 @@ func TestCommandCancellationDrainsOutputBeforeCompletion(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 			defer cancel()
 			machine := &cancellationMachine{canceled: make(chan struct{}), launchRead: make(chan struct{}), dropFirstAck: mode == "lost_ack"}
-			mount := workerapi.ComputerInstanceAssignment{OrgID: "org", ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 2, GuestChannelCredential: "token"}
+			mount := commandAuthority{EnvironmentID: "org", ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 2, GuestChannelCredential: "token"}
 			command := workerapi.ComputerCommand{CommandID: "target", ComputerID: mount.ComputerID, ComputerInstanceID: mount.ComputerInstanceID, WriterGeneration: 2, RequestFingerprint: "fingerprint", ExpiresAt: time.Now().Add(time.Minute), Request: json.RawMessage(`{"command":["sleep","30"]}`)}
 			client := &cancellationClient{command: command, grant: workerapi.ComputerCommandCancellation{CommandID: command.CommandID, ComputerID: command.ComputerID, ComputerInstanceID: command.ComputerInstanceID, WriterGeneration: command.WriterGeneration, RequestFingerprint: command.RequestFingerprint, ExpiresAt: command.ExpiresAt}, attached: mode == "attached", launchRead: machine.launchRead, finish: cancel}
-			m := Server{PollEvery: time.Millisecond, ClaimErrorBackoff: time.Millisecond}
-			renewal := m.startRenewalLoop(ctx, workerapi.ComputerInstanceRenewRequest{}, client, time.Hour, time.Now().Add(time.Hour))
-			err := m.serveComputerMount(ctx, renewal, newInstanceMount(machine), nil, mount, client, nil)
+			m := commandService{PollEvery: time.Millisecond, ClaimErrorBackoff: time.Millisecond}
+			err := m.Serve(ctx, machine, mount, client)
 			machine.handlers.Wait()
 			if !errors.Is(err, context.Canceled) {
 				t.Fatal(err)
