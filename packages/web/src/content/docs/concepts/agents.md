@@ -1,26 +1,32 @@
 ---
 title: Agents
-description: Define Computer placement, initialization and one handler for each admitted input.
+description: Define the Computer an Agent runs in, its one-time initialization and its handler for each Turn.
 ---
 
 # Agents
 
-An Agent is a deployed definition. It selects a Computer recipe and handles one
-Turn at a time in each Session. The same model supports a single request or a
-continuing conversation.
+An Agent is a deployed definition. It names the [Computer](/docs/concepts/computers)
+recipe its Sessions run in, an optional `init` function that runs once per
+Session process and a `turn` handler that Helmr calls once for each admitted
+input. The same definition serves a one-off request or a long conversation.
+
+Export Agents and Computers from files in your project's `agents` directory.
+`helmr build` and `helmr deploy` index every exported definition.
 
 ```ts
 import { agent, computer, image } from "@helmr/sdk"
 
-const workspace = computer({
-  id: "workspace",
-  image: image("workspace").from("node:24-bookworm-slim"),
+export const reviewerComputer = computer({
+  id: "reviewer",
+  image: image("reviewer").from("node:24-bookworm-slim").workdir("/app"),
   resources: { cpu: 1, memory: "1GiB" },
 })
 
 export const reviewer = agent({
   id: "reviewer",
-  computer: workspace,
+  computer: reviewerComputer,
+  maxTurnDuration: "30m",
+  closeAfterIdle: "1d",
   async init(ctx) {
     return { sessionId: ctx.session.id, turns: 0 }
   },
@@ -28,34 +34,129 @@ export const reviewer = agent({
     ctx.initResult.turns += 1
     await turn.output.write("Review started")
     await turn.respond("Review complete")
-    return { input: turn.input, turns: ctx.initResult.turns }
+    return { turns: ctx.initResult.turns }
   },
 })
 ```
 
-`init` is optional. Its result may contain mutable objects or native handles.
-Healthy hibernation preserves it; exceptional reconstruction can rerun initialization
-against retained disk. It is not a separate durable key/value store. Use
-`ctx.recovery` to distinguish initialization from reconstruction and reconcile
-external effects in application code.
+`id`, `computer` and `turn` are required. The Agent `id` is the name you pass
+to `helmr agent start` and `client.agents.start`.
 
-`turn` is required. Inputs are JSON arrays of text parts; machine results are arbitrary JSON.
-Validate application-specific commands in the handler. Await output,
-questions and native work before returning. Throwing fails the Turn; it does not
-request an automatic retry.
+## `init` and `initResult`
 
-`maxTurnDuration` optionally limits elapsed time through processing, human waits
-and finalization. It has no universal duration default. `closeAfterIdle` closes
-an idle Session after seven days by default; use a positive duration or `"never"`
-to configure it. Idle time excludes queued or active Turns, pending questions,
-message callbacks, holds, active owned children and unfinished saves or process
-stops. Closure uses the normal drain and process-stop lifecycle. Compute parking
-and stored-history retention are separate policies.
+`init(ctx)` runs inside the Computer before the Session's first Turn. Use it to
+start a harness, open connections or load state that later Turns reuse. Its
+return value is available to every Turn as `ctx.initResult`. It can hold
+ordinary mutable objects and live handles such as a client or a child process;
+it does not need to be JSON.
 
-Use `turn.signal` to cancel Turn work and `ctx.signal` for initialization/process shutdown.
-The managed MCP connection carries Session runtime authority. Root Sessions can
-create owned children with `spawn` or independent roots with `start`. An explicit
-`HelmrClient` uses only its supplied authentication, including inside Agent code.
+`init` does not run again for each Turn. When an idle Session hibernates, its
+memory and processes are preserved and it resumes without rerunning `init`.
+After a lost process is explicitly reconstructed, `init` runs again with
+`ctx.recovery.kind` set to `"reconstructed"`, so `initResult` is not a durable
+store. See [Durability](/docs/concepts/durability#reconstruction).
 
-See [Agents, Sessions and Turns](/docs/reference/sdk/agents-and-sessions) for
-client operations and [Schedules](/docs/concepts/schedules) for cron triggers.
+`ctx` also carries the Session (`id`, optional `key`, optional `parent`), the
+Computer and Deployment IDs, and `ctx.signal`, which aborts when the Session
+process is shutting down. If `init` throws, the Session is held and its first
+input stays queued for explicit recovery.
+
+## `turn`
+
+`turn(turn, ctx)` handles one [Turn](/docs/concepts/turns). The input is a JSON
+array of text parts, `turn.input`. Inside the handler you can:
+
+- write human-facing output with `turn.output.write` or `turn.output.pipe`;
+- stage a human response with `turn.respond`;
+- ask a person a typed [question](/docs/concepts/questions) with `turn.ask`;
+- receive live messages with `turn.onMessage` (see
+  [Sessions](/docs/concepts/sessions#live-messages));
+- stop work when `turn.signal` aborts.
+
+The return value is the Turn's machine result and must be JSON. Returning
+starts finalization; throwing fails the Turn. Helmr does not retry a failed
+handler. Await all output, questions and harness work before returning.
+Validate application-specific input in the handler.
+
+## Session lifetime and Turn limits
+
+| Option | Effect |
+| --- | --- |
+| `closeAfterIdle` | Closes a Session after it has been idle this long. Default 7 days. A positive duration (`"30m"`, `"1d"`, or milliseconds) or `"never"`. |
+| `maxTurnDuration` | Limits each Turn's elapsed time, including human waits and finalization. No default. |
+
+A Session is idle only when it has no queued or running Turns, pending
+questions, in-flight messages, holds, open child Sessions or unfinished disk
+saves. A start request can set its own `closeAfterIdle` for a new Session.
+Closing on idle uses the normal [close](/docs/concepts/sessions#controls)
+lifecycle.
+
+When a Turn exceeds `maxTurnDuration`, it ends as `interrupted` and the Session
+is held until someone resumes it.
+
+## Running a harness inside an Agent
+
+An Agent is ordinary Node.js code running in a Linux Computer, so any agent
+harness or SDK can run inside it. Install the tool in the Computer image, start
+it in `init` and drive it from `turn`. This example runs OpenCode and keeps one
+OpenCode conversation for the whole Session:
+
+```ts
+import { agent, computer, image } from "@helmr/sdk"
+import { createOpencode } from "@opencode-ai/sdk/v2"
+
+export const coderComputer = computer({
+  id: "coder",
+  image: image("coder")
+    .from("node:24-bookworm-slim")
+    .run(["npm", "install", "-g", "opencode-ai"])
+    .workdir("/workspace"),
+  resources: { cpu: 1, memory: "1GiB" },
+  // Bind the model provider's API key from an Environment Secret here.
+})
+
+export const coder = agent({
+  id: "coder",
+  computer: coderComputer,
+  maxTurnDuration: "15m",
+  async init(ctx) {
+    const { client } = await createOpencode({ signal: ctx.signal })
+    const { data: session } = await client.session.create({}, { throwOnError: true })
+    return { client, sessionID: session.id }
+  },
+  async turn(turn, { initResult: { client, sessionID } }) {
+    const events = await client.event.subscribe()
+    await client.session.promptAsync({
+      sessionID,
+      parts: turn.input.map((part) => ({ type: "text", text: part.text })),
+    })
+    for await (const event of events.stream) {
+      if (event.type === "session.idle") break
+    }
+    return null
+  },
+})
+```
+
+Follow the harness's own permission and cancellation model, and connect
+`turn.signal` to it so an interruption stops the harness's work. Bind model
+credentials with [Secrets](/docs/concepts/secrets).
+
+## Triggers
+
+An Agent can declare cron `triggers`. Each fire starts a new Session with the
+declared input. See [Triggers](/docs/concepts/triggers).
+
+## Calling other Agents
+
+Agent code can start or spawn other Agents' Sessions through the runtime MCP
+tools. Obtain the connection with `createRuntimeMcpConnection` from
+`@helmr/sdk/mcp` and pass it to your harness. See
+[Delegation](/docs/concepts/delegation).
+
+## Related
+
+- [Computers](/docs/concepts/computers)
+- [Sessions](/docs/concepts/sessions) and [Turns](/docs/concepts/turns)
+- [Questions](/docs/concepts/questions)
+- [Agent reference](/docs/reference/sdk/agent)

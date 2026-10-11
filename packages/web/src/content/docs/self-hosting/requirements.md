@@ -52,7 +52,7 @@ also an explicit preparation input; it is not a Product publication fallback.
 
 Workers additionally need:
 
-- Private-subnet outbound access to the Control Plane, S3, ECR, AWS APIs, registries, and any external services tasks call.
+- Private-subnet outbound access to the Control Plane, S3, ECR, AWS APIs, registries, and any external services your agents call.
 - KVM-capable EC2 capacity. The evaluation profile supports explicitly enabled nested virtualization on supported families; the production profile defaults to a metal instance.
 - A worker AMI containing `worker`, Firecracker, jailer, `ip`, `nft`, AWS CLI v2, curl, the systemd unit, and certified guest boot artifacts.
 - Explicit host, VM, cache, disk, and execution-slot capacity sized for the workload.

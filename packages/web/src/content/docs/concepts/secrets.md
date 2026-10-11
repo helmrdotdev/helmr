@@ -173,6 +173,6 @@ Computer to continue using protected env. Certificate private keys are not
 delivered to the Computer. This technical limit does not change the recommended
 lifecycle: retain a Computer for the work that needs it, then delete it.
 
-See [Use secrets](/docs/guides/how-to/use-secrets) for creation, binding, rotation,
+See [Use secrets](/docs/guides/manage-secrets) for creation, binding, rotation,
 and revocation commands. Keep credentials out of inputs, results, logs,
 source archives, image literals and human content.

@@ -59,50 +59,50 @@ const entryIcons = {
 const entryPoints = [
   {
     section: "Quickstart",
-    title: "Run your first Agent",
-    description: "Install Helmr, deploy a TypeScript project, and complete a Turn in a durable Computer.",
+    title: "Run your first agent",
+    description: "Install Helmr, deploy a TypeScript project, and complete a Turn on a durable Computer.",
     href: "/docs/quickstart",
     icon: pixelsFromRows(entryIcons.bolt),
     tone: "yellow",
     links: [
       { label: "Quickstart", href: "/docs/quickstart" },
-      { label: "First Agent tutorial", href: "/docs/guides/tutorials/first-agent" },
-    ],
-  },
-  {
-    section: "Guides",
-    title: "Build with Helmr",
-    description: "Follow complete tutorials or solve one deployment, Agent, Computer or question workflow.",
-    href: "/docs/guides/tutorials/first-agent",
-    icon: pixelsFromRows(entryIcons.layers),
-    tone: "blue",
-    links: [
-      { label: "Durable agent", href: "/docs/guides/tutorials/durable-agent" },
-      { label: "All how-to guides", href: "/docs/guides/how-to/deploy-a-project" },
+      { label: "Build a durable agent", href: "/docs/guides/build-a-durable-agent" },
     ],
   },
   {
     section: "Concepts",
     title: "Understand the runtime",
-    description: "See how Deployments, Agents, Computers, Sessions and Turns fit together.",
+    description: "See how Agents, Computers, Sessions and Turns fit together, and what Helmr keeps durable.",
     href: "/docs/concepts/how-helmr-works",
     icon: pixelsFromRows(entryIcons.layers),
     tone: "green",
     links: [
-      { label: "Computers", href: "/docs/concepts/computers" },
-      { label: "Sessions", href: "/docs/concepts/sessions" },
+      { label: "Agents", href: "/docs/concepts/agents" },
+      { label: "Durability", href: "/docs/concepts/durability" },
+    ],
+  },
+  {
+    section: "Guides",
+    title: "Do one thing",
+    description: "Deploy, prepare a Computer, observe a Session, answer questions or connect Slack.",
+    href: "/docs/guides/start-and-observe-a-session",
+    icon: pixelsFromRows(entryIcons.layers),
+    tone: "blue",
+    links: [
+      { label: "Prepare a computer", href: "/docs/guides/prepare-a-computer" },
+      { label: "Connect Slack", href: "/docs/guides/connect-slack" },
     ],
   },
   {
     section: "Reference",
     title: "Look up an interface",
-    description: "Check the SDK, CLI, REST API, configuration, environment variables, and Session events.",
+    description: "Check the SDK, CLI, REST API, configuration, environment variables and Session events.",
     href: "/docs/reference/sdk/overview",
     icon: pixelsFromRows(entryIcons.terminal),
     tone: "pink",
     links: [
       { label: "CLI", href: "/docs/reference/cli/overview" },
-      { label: "REST API", href: "/docs/reference/rest-api/overview" },
+      { label: "REST API", href: "/docs/reference/api/overview" },
     ],
   },
   {
@@ -113,8 +113,8 @@ const entryPoints = [
     icon: pixelsFromRows(entryIcons.cloud),
     tone: "blue",
     links: [
-      { label: "AWS evaluation", href: "/docs/self-hosting/aws-evaluation" },
-      { label: "AWS production", href: "/docs/self-hosting/aws-production" },
+      { label: "Evaluation", href: "/docs/self-hosting/evaluation" },
+      { label: "Production", href: "/docs/self-hosting/production" },
     ],
   },
 ];

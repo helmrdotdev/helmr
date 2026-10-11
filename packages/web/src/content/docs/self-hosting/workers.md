@@ -63,7 +63,7 @@ This profile was qualified with sequential smoke workloads; concurrent capture
 and restore on both slots remain a separate runtime qualification. The explicit
 480-GiB disk ceiling leaves 456 GiB after the 8-GiB reserve and 16-GiB cache.
 Each slot now needs just over 216 GiB for its full lifecycle: scratch, Computer
-projection and staging, runtime and program files, retained restored memory/state,
+projection and staging, runtime and deployment bundle files, retained restored memory/state,
 and simultaneous checkpoint intermediates. Both slots fit the configured supply.
 The Worker also checks fresh available filesystem space before activation; existing
 files can make an otherwise sufficient configured disk fail startup. Keep the
@@ -109,7 +109,7 @@ immutable generation, including retained generations.
 
 Host disk supply and advertised guest disk are distinct. Guest supply is the
 configured slot count multiplied by per-VM scratch; physical disk also funds
-Program/runtime files, restore inputs and later capture. Incoming checkpoint
+Deployment bundle and runtime files, restore inputs and later capture. Incoming checkpoint
 artifacts must fit the admitted VM shape before materialization. AWS planning
 rejects explicit disk configurations that cannot fund these files. Genuine
 preparation failures retain their existing bounded retry and exhaustion behavior.
@@ -168,8 +168,8 @@ Workers send their worker API version in the JSON `api_version` field when enrol
 
 Ordinary worker API calls do not require a version header. Compatible releases keep the same API version. Connection checks do not guarantee compatibility after a Control Plane replacement: drain workers before deploying an incompatible release, as described in [Upgrades](/docs/self-hosting/upgrades#worker-api-version-changes).
 
-Workers need outbound access to the Control Plane, S3, AWS APIs, and task
-destinations. They do not install dependencies or build Deployment artifacts.
+Workers need outbound access to the Control Plane, S3, AWS APIs, and the
+destinations your agents call. They do not install dependencies or build Deployment artifacts.
 The deployment-owned blocked-CIDR set must include the exact execution VPC
 prefix. SSM Session Manager is enabled by default, and no inbound SSH rule is required.
 

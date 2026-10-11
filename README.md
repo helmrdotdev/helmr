@@ -1,21 +1,22 @@
 # Helmr
 
-**Build your own software factory.**
+**Build cloud agents that work your way.**
 
-Infrastructure and APIs for your own agent harness.<br>
-Your agents. Your workflows. Your rules.
+Your models, tools, and code. Helmr handles the infrastructure.
 
-Write your agent logic in TypeScript, bring your tools and integrations, and
-run it in isolated Linux microVMs. Keep your computer across turns, pause for
-human input, and inspect what happened.
+Define an agent's work in plain TypeScript and run it with the coding agent you
+already use: Claude Code, Codex, OpenCode, Pi, Cursor or the AI SDK. Helmr gives it
+a computer you define in code, keeps its work through hibernation and resume, and
+lets it work alongside your team in Slack.
 
 ## What you get
 
-- **Persistent computers** — files and dependencies kept across turns.
-- **Agents and sessions** — define agent behavior and continue its work across turns.
-- **Human input** — pause for approval or external input, then continue.
-- **Secrets and visibility** — runtime secret injection, logs, and session history.
-- **Infrastructure you control** — self-host in your own AWS account.
+- **Computers defined in code**: image, tools, resources, prepare steps and secrets in one definition.
+- **Agents in plain TypeScript**: start your coding agent once in `init`, then hand it each turn.
+- **Durable by default**: each turn's work is saved, and idle agents resume without rerunning `init`.
+- **People in the loop**: agents ask questions with `turn.ask`, and teammates answer from Slack or the CLI.
+- **Protected secrets**: real credentials are swapped in outside the VM, only for the origins you allow.
+- **Infrastructure you control**: self-host in your own AWS account. Managed Helmr Cloud is planned.
 
 ## Get started
 
@@ -25,9 +26,9 @@ Install the CLI:
 curl -fsSL https://helmr.dev/install | bash
 ```
 
-Follow the [quickstart](https://helmr.dev/docs/quickstart/) to deploy and run your
-first agent. You'll need a running control plane and worker; the
-[self-hosting guide](https://helmr.dev/docs/self-hosting/overview/) covers setup.
+Follow the [quickstart](https://helmr.dev/docs/quickstart) to deploy and run your
+first agent. You need a running control plane and worker; the
+[self-hosting guide](https://helmr.dev/docs/self-hosting/overview) covers setup.
 
 ## Build from source
 
@@ -59,11 +60,11 @@ entries with local generation byte-for-byte.
 
 ## Explore
 
-- [Documentation](https://helmr.dev/docs/)
-- [TypeScript SDK](https://helmr.dev/docs/reference/sdk/overview/)
-- [REST API](https://helmr.dev/docs/reference/rest-api/overview/)
+- [Documentation](https://helmr.dev/docs)
+- [How Helmr works](https://helmr.dev/docs/concepts/how-helmr-works)
+- [TypeScript SDK](https://helmr.dev/docs/reference/sdk/overview)
+- [REST API](https://helmr.dev/docs/reference/api/overview)
 - [Examples](examples/)
-- [Development verification](tests/e2e/README.md)
 
 Early, active development. APIs and deployment details may change before a
 stable release.

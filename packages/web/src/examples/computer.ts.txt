@@ -23,5 +23,4 @@ export const workspace = computer({
     await build.exec(["git", "clone", "https://github.com/acme/app", "/app"])
     await build.exec(["npm", "ci"], { cwd: "/app" })
   },
-  refresh: { every: "24h" },
 })

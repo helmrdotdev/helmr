@@ -1,32 +1,85 @@
 ---
 title: TypeScript SDK
-description: Agent authoring and explicitly authenticated resource clients.
+description: Exports of the @helmr/sdk package and an index of the SDK reference pages.
+sidebarLabel: Overview
 ---
 
 # TypeScript SDK
 
-Use `@helmr/sdk` to declare Agents, Computers and images, configure the build,
-and create an authenticated `HelmrClient`.
+`@helmr/sdk` declares Agents, Computers, images and triggers, configures the
+build, and provides an explicitly authenticated `HelmrClient`. The
+`@helmr/sdk/mcp` entry point connects Agent code to the runtime MCP tools.
 
 ```ts
 import { agent, computer, image, triggers, defineConfig, HelmrClient } from "@helmr/sdk"
+import { createRuntimeMcpConnection } from "@helmr/sdk/mcp"
 ```
 
-Agent handlers receive injected Turn operations for output, responses, questions,
-steering and Session creation. These carry current runtime authority. An explicit
-client always acts under its supplied credentials, even inside Agent code.
+## Reference pages
 
-Definition IDs match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Business input, machine
-results and ask answers are JSON. Human-facing input, output, responses and
-question prompts use Content. Output and responses also accept string shorthand. Await asynchronous
-operations and join work before returning from a Turn.
+| Page | Covers |
+| --- | --- |
+| [Agent](/docs/reference/sdk/agent) | `agent()`, `AgentDefinition`, `Turn`, `InitContext`/`AgentContext`, `MessageRejected`, and the client's Session and Turn methods. |
+| [Computer](/docs/reference/sdk/computer) | `computer()`, `image()`, `source`, Secret bindings, and the client's Computer, Computer definition and Command methods. |
+| [Client](/docs/reference/sdk/client) | `HelmrClient` options and properties, Agent and definition reads, Deployments and Secrets. |
+| [Triggers](/docs/reference/sdk/triggers) | `triggers.cron()` and the client's read-only Schedule methods. |
+| [Questions](/docs/reference/sdk/questions) | `turn.ask()`, answer controls, answer shapes and limits, and the client's ask methods. |
+| [Runtime MCP](/docs/reference/sdk/mcp) | `createRuntimeMcpConnection()` and every runtime MCP tool, with inputs and results. |
 
-- [Agents, Sessions and Turns](/docs/reference/sdk/agents-and-sessions)
-- [Computers](/docs/reference/sdk/computers)
-- [Questions](/docs/reference/sdk/questions)
-- [Schedules](/docs/reference/sdk/schedules)
-- [Authenticated client](/docs/reference/sdk/helmr-client)
+Build configuration (`defineConfig`, `builder`) is documented in
+[Configuration](/docs/reference/config).
 
-Use ordinary language facilities for short delays and process diagnostics. Public
-Session events contain authored content and lifecycle facts; process stdout and
-stderr are not a public Session log API.
+## Exports
+
+Values exported from `@helmr/sdk`:
+
+| Export | Kind | Reference |
+| --- | --- | --- |
+| `agent` | function | [Agent](/docs/reference/sdk/agent) |
+| `computer` | function | [Computer](/docs/reference/sdk/computer) |
+| `triggers` | object with `cron()` | [Triggers](/docs/reference/sdk/triggers) |
+| `image`, `source` | function, object | [Computer](/docs/reference/sdk/computer#images) |
+| `builder` | function | [Configuration](/docs/reference/config#build-environment) |
+| `defineConfig` | function | [Configuration](/docs/reference/config) |
+| `HelmrClient` | class | [Client](/docs/reference/sdk/client) |
+| `MessageRejected` | error class | [Agent](/docs/reference/sdk/agent#messagerejected) |
+
+Types exported from `@helmr/sdk`, grouped by area:
+
+| Area | Types |
+| --- | --- |
+| Definitions | `AgentDefinition`, `ComputerDefinition`, `CronTrigger`, `ComputerIdentity`, `BuildContext`, `SecretBinding`, `Duration`, `Json`, `JsonValue`, `MaybePromise` |
+| Turn handler | `Turn`, `InitContext`, `AgentContext`, `InputSource`, `InputMessage`, `OutputReceipt`, `TurnOutcome` |
+| Content | `ContentPart`, `Content`, `HumanContent`, `InputPart`, `InputContent` |
+| Questions | `ChoiceOption`, `AnswerControl`, `Question`, `ChoiceAnswer`, `AnswerFor`, `AskResponse`, `AskState`, `AskResponseReceipt`, `AskQuery`, `AskPage`, `TurnAsks` |
+| Client | `HelmrClientOptions`, `RequestOptions`, `CursorPage`, `HelmrError`, `APIError` |
+| Agents | `ClientAgentsApi`, `AgentStartRequest`, `AgentStartReceipt`, `ClientAgentDefinitionsApi`, `AgentDefinitionGetQuery`, `AgentDefinitionListQuery`, `AgentDefinitionListItem`, `AgentDefinitionInfo`, `AgentDefinitionPage` |
+| Sessions and Turns | `ClientSessionsApi`, `ClientSessionRef`, `SessionListQuery`, `SessionRef`, `Session`, `SessionStatus`, `SessionHold`, `SessionOperationOptions`, `SessionAdmissionReceipt`, `SessionMessageReceipt`, `SessionSendResult`, `SessionCloseReceipt`, `SessionCancelReceipt`, `SessionInterruptReceipt`, `SessionResumeRequest`, `SessionResumeReceipt`, `SessionEvent`, `SessionEventKind`, `SessionEventPage`, `SessionEventQuery`, `MessageReceipt`, `TurnRef`, `TurnState`, `TurnStatus`, `TurnListQuery`, `TurnWaitOptions`, `TimedTurnWaitResult` |
+| Computers | `ClientComputersApi`, `ClientComputerRef`, `ComputerRef`, `Computer`, `ComputerStatus`, `ComputerResidency`, `ComputerListItem`, `ComputerListQuery`, `ComputerCreateRequest`, `ComputerDeleteRequest`, `ComputerDeleteReceipt`, `ComputerCommandRequest`, `ComputerMembersQuery`, `ComputerMember`, `ClientComputerDefinitionsApi`, `ComputerDefinitionInfo`, `ComputerDefinitionListItem`, `ComputerDefinitionListQuery`, `ComputerDefinitionPage`, `ComputerDefinitionGetQuery`, `ImageBuilder`, `SourceDirectory`, `SourceFile` |
+| Commands | `CommandRef`, `CommandInfo`, `CommandOutcome`, `CommandWaitOptions`, `TimedCommandWaitResult`, `CancelReceipt`, `CommandLogQuery`, `CommandLogStreamQuery`, `CommandLogRecord`, `CommandLogReadPage` |
+| Deployments | `ClientDeploymentsApi`, `Deployment`, `DeploymentListItem`, `DeploymentListQuery` |
+| Schedules | `ClientSchedulesApi`, `Schedule`, `ScheduleListQuery` |
+| Secrets | `ClientSecretsApi`, `SecretRef`, `Secret`, `SecretStatus`, `SecretCreateRequest`, `SecretListQuery`, `SecretRotateRequest`, `SecretRevokeRequest` |
+| Configuration | `HelmrConfig`, `HelmrConfigInput`, `HelmrBuildConfig`, `HelmrBuildInput`, `Builder`, `BuilderStep` |
+
+`@helmr/sdk/mcp` exports `createRuntimeMcpConnection` and the
+`RuntimeMcpConnection` type. See [Runtime MCP](/docs/reference/sdk/mcp).
+
+## Shared conventions
+
+- Definition IDs match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`.
+- `Duration` is a positive safe integer number of milliseconds, or a string of
+  a positive integer followed by `ms`, `s`, `m`, `h` or `d` (for example
+  `"30s"`, `"7d"`). Compound and fractional strings are rejected. Retention
+  options (`closeAfterIdle`, `deleteAfterUnused`) also accept `"never"`.
+- Input is always an array of text parts (`InputContent`); `[]` is empty input.
+  Output, responses and question prompts use `Content`, which also allows JSON
+  parts. Machine results and answers are JSON.
+- Client methods accept an optional final `RequestOptions` argument,
+  `{ signal?: AbortSignal }`.
+- Client list methods return `CursorPage<T>`: `{ items, nextCursor? }`. Treat
+  cursors as opaque. See [Pagination](/docs/reference/api/pagination).
+- Operations inside a Turn handler (`turn.output`, `turn.respond`, `turn.ask`,
+  `turn.onMessage`) and runtime MCP tools act with the current Session's runtime
+  authority. A `HelmrClient` always acts with its own API key, including when it
+  is constructed inside Agent code.

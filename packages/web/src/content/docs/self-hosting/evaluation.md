@@ -50,7 +50,7 @@ The example intentionally has no backend block. Add and operate a remote-state b
 After the first apply:
 
 1. Record `controlplane_url`, `controlplane_load_balancer_dns_name`, `controlplane_cluster_name`, and `secret_arns`.
-2. Complete [authentication](/docs/self-hosting/authentication) and [secrets and data](/docs/self-hosting/secrets-and-data).
+2. Complete [authentication](/docs/self-hosting/authentication) and [secrets and data](/docs/self-hosting/platform-secrets).
 3. Bootstrap the database, run migrations, and enable the [Control Plane](/docs/self-hosting/control-plane).
 4. To test code execution, enable NAT and add one supported nested-virtualization worker as described in [workers](/docs/self-hosting/workers).
 
