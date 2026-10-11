@@ -1,68 +1,39 @@
 ---
 title: Waits and input
-description: Durable suspension with Actor input, Tokens, and timers.
-sidebarLabel: Waits and input
+description: Queue new work, steer an active Turn or answer an attributable question.
 ---
 
 # Waits and input
 
-Helmr exposes three durable waiting patterns:
+Choose the operation by the lifetime of the input:
 
-| Need | Primitive |
+| Need | Operation |
 | --- | --- |
-| Continuing commands, corrections, and progressive output | Actor Session |
-| One external result such as an approval or callback | Token |
-| Resume after a duration or timestamp | Timer |
+| New work, even while busy or held | `session.enqueue(input)` |
+| Steer active work, or start work when idle | `session.send(data)` |
+| Message exactly one Turn | `session.turn(turnId).send(data)` |
+| Ask for a typed human answer | `await turn.ask({ prompt, answer })` |
+| Observe an outcome | `turn.wait({ timeout })` |
 
-Actor work is FIFO within a Session. The Actor calls `session.receive()` for a
-Turn; external callers use `enqueue` for new work or exact `turn.send` for live
-interaction. `turn.onMessage` handles application-defined questions, approvals
-and corrections. Output and lifecycle events share one ordered timeline.
+Register live steering with `await turn.onMessage(handler)`. Callbacks execute
+serially for that Turn. An accepted message can still await delivery; settling
+work rejects new input rather than redirecting it to another Turn. Held Sessions
+reject automatic send while retaining eligible explicit enqueues.
 
-A Token represents one pending value. `tokens.create()` returns the Token plus
-a callback URL and public access credential. The owning Run waits with
-`token.wait()`, optionally validating the completion through a Standard Schema.
-Completed, cancelled, and expired are terminal Token states. The narrow public
-completion capability is preferable when an outside user should not gain
-access to an Actor channel.
+A question belongs to one Session and Turn and has its own ask ID. Clients read
+its prompt and answer control and respond to that exact ask. The result contains
+the answer and authenticated responder. A message is not a substitute for the
+ask response API. See [Questions](/docs/reference/sdk/questions).
 
-Timers park only on time:
+Await questions and callbacks that your work starts. Handler return closes new
+input admission; already-admitted questions may still resolve during drainage.
+Without a chosen Turn duration limit, that drainage may wait for a human.
 
-```ts
-import { timers } from "@helmr/sdk"
+Use ordinary cancellable JavaScript or harness facilities for short delays.
+Compute release depends on all work resident on the Computer becoming eligible;
+a pending question or arbitrary promise does not independently request release.
+Healthy release preserves setup and native process state.
 
-await timers.waitFor("15m")
-await timers.waitUntil(new Date("2026-08-10T09:00:00Z"))
-```
-
-A managed wait first retains the running environment for its hot-wait duration.
-Once suspension becomes eligible, Helmr can checkpoint and release compute while
-retaining durable intent to resume. Set application-level timeouts for input and Tokens, and handle
-`wait_timeout`, a null receive when closing drains, cancelled Tokens, and expired Tokens as normal
-branches. Avoid sending secret data through input, output, Token results, or
-wait metadata.
-
-## Hot waiting and response deadlines
-
-`idleTimeout` determines when a managed wait becomes eligible for suspension.
-The default comes from the owning Actor's `idleTimeout`, or 30 seconds for a Task.
-An explicit wait option overrides that default. Supported durations are 1 ms to
-1 hour.
-
-`timeout` limits how long the operation waits for its answer. It continues to
-elapse while execution is suspended. Token expiry belongs to the Token itself;
-a particular Token waiter can have an earlier timeout. Reaching an idle deadline
-does not complete or fail the Token or Turn. A Token wait within a Turn keeps that
-Turn active; `session.receive()` waits for the next Turn after settlement.
-
-A Session receive resolves in this order: the next accepted FIFO Turn, `null`
-after closing has drained, then `wait_timeout` if its deadline has elapsed.
-Input accepted after the nominal deadline can still be delivered if timeout has
-not committed. Once a receive result commits, later input cannot change it; that
-input remains queued for a subsequent receive if the Actor continues.
-
-A receive timeout does not itself delete queued Turns or close the Session. An
-uncaught timeout still follows the Actor's normal failure and retry policy.
-
-Hot-wait duration is not a hard billing cap: checkpoint work takes time, and
-resource lifecycle constraints affect when compute can actually be released.
+Client observation timeouts do not stop execution. To stop active work, interrupt
+the Session; inspect the resulting hold and explicitly resume it when appropriate.
+Keep credentials out of inputs, answers and recorded content.

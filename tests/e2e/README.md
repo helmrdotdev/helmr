@@ -22,7 +22,7 @@ does not execute real workloads.
 ## Layout and selection
 
 - `cases/<behavior>/run.ts` and `*.run.ts`: executable stimulus, assertions and fixture cleanup.
-- `cases/<behavior>/task.ts`: guest Task/Actor/Sandbox definitions needed by that
+- `cases/<behavior>/task.ts`: guest Agent/Computer definitions needed by that
   behavior. Related cases may use an existing fixture with a relative import.
 - `support/`: bounded waits and evidence/cleanup mechanics shared by actual callers.
 - `fixtures/schedule/`: intentionally separate scheduled deployment. Promote it
@@ -36,35 +36,46 @@ injection into an ordinary behavior case. External agent examples live in
 
 | Cases | Fixture directories passed to preparation | Claim |
 | --- | --- | --- |
-| `task` | `cases/task` | Minimal marker round-trip and guest filesystem |
+| `agent` | `cases/agent` | Initial Turn marker and guest filesystem |
 | `persistence` (including `shared.run.ts`) | `cases/persistence` | Single-member and shared-Computer checkpoint and same-host restore |
-| `actor` | `cases/actor` | Actor Turns and same-host checkpoint restore |
+| `sessions` | `cases/sessions` | Two Turns retain Session setup memory across same-host restore |
 | `network` | `cases/network` | Guest metadata denial plus exact host packet observation |
-| `runtime`, `computer-command`, `program-replacement.run.ts` | `cases/runtime` | Runtime tools/files/logs; Computer idempotency/exec |
-| `computer-command/seed-reuse.run.ts` | `cases/runtime` | Shared seed root, independent Computer writes, deletion isolation, and create-to-first-work timing; requires the dedicated host and two VM slots |
-| `token-wait`, `token-fanout` | `cases/token-wait` | Internal Token creation/resumption; shared Token fan-out and completion before wait |
-| `actor-continuity`, `child-tasks` (including `cancel-peer.run.ts`) | `cases/child-tasks` | Child modes, cancellation without stopping a shared-Computer peer, Actor continuation and ordered/paginated durable output |
-| `planned-drain` | `cases/planned-drain cases/control-plane-outage` | Warm Computer capture with a queued Command and fresh logical Host restore; dedicated host orchestration below |
-| `control-plane-outage` | `cases/control-plane-outage` | A live Run survives CP outage beyond the stale-Host window with Dispatcher continuously active |
-| `drain-renewal` | `cases/drain-renewal` | A resident Task remains on the same lease through more than 30 minutes of planned drain |
-| `timer`, `run-cancel` | `cases/timer` | Timer completion or explicit cancellation |
+| `runtime`, `computer-command` | `cases/runtime` | Runtime tools/files/output and Computer idempotency/exec |
+| `runtime/program-replacement.run.ts` | `cases/runtime` | Existing Session pins its Deployment; new Session uses promoted code on the same Computer |
+| `computer-command/seed-reuse.run.ts` | `cases/runtime` | Shared seed root, independent writes, deletion isolation and create-to-first-work timing; dedicated host and two VM slots |
+| `questions`, `question-isolation`, `question-cancel` | `cases/questions` | Pending questions, repeat response receipts, isolation between Sessions and cancellation |
+| `slack-conversation` (human-operated) | `cases/slack-conversation` | Synthetic progress, questions, multiple speakers and settlement for [native Slack observation](cases/slack-conversation/README.md) |
+| `session-continuity`, `helpers` (including `cancel-peer.run.ts`) | `cases/helpers` | Spawned and independent helpers, shared-Computer peers, Session memory and paginated durable output |
+| `planned-drain` | `cases/planned-drain cases/control-plane-outage` | Warm Computer capture with queued Command and fresh logical Host restore |
+| `control-plane-outage` | `cases/control-plane-outage` | Live Turn survives CP outage beyond the stale-Host window with Dispatcher continuously active |
+| `drain-renewal` | `cases/drain-renewal` | Resident Turn retains its lease through more than 30 minutes of planned drain |
+| `delay`, `session-cancel` | `cases/delay` | Ordinary JS delay completion and cancellation of active/queued Turns |
 | `network-egress` | `cases/network-egress` | Public IPv4 succeeds, no IPv6 default route |
-| `computer-overwrite`, `concurrent-wait`, `invalid-payload`, `expected-error` | `cases/computer-overwrite` | Filesystem overwrite and exact negative contracts |
+| `computer-overwrite`, `concurrent-questions`, `invalid-payload`, `expected-error` | `cases/computer-overwrite` | Filesystem overwrite, independent concurrent questions and handler failure contracts |
 | `secret-injection`, `missing-secret` | `cases/secret-injection` | Disposable secret value binding or missing-secret admission failure |
-| `secrets`, `token-cancel`, `deployment` | None (already initialized scope) | Focused management API contracts |
+| `capture-abort`, `reply-relay` | `cases/capture-abort cases/control-plane-outage` | Exact frozen idle-source continuation under reply loss, cancelled queued work and later healthy restore; dedicated host fault relay |
+| `secrets`, `deployment` | None (already initialized scope) | Focused management API contracts |
 
-`computer-durability`, `fault-probe`, and `datapath-network` contain guest fixtures
-for provider-owned assertions, not standalone Product case drivers. The Schedule
-fixture is likewise consumed by provider validation.
+`computer-durability`, `computer-restore`, `fault-probe`, and `datapath-network`
+contain guest fixtures for provider-owned assertions. The Schedule fixture is
+likewise consumed by provider validation. Fixture imports are part of the selected
+source closure; for example `sessions` and `persistence` import the shared
+Computer from `agent`.
+
+These sources target the current Agent/Session API. Typechecks and local helper
+tests do not qualify a deployed CP/Worker/guest combination. Separate Session
+questions prove answer isolation. Ordinary timers prove elapsed active execution
+and cancellation, without claiming a managed wait or checkpoint. Handler
+validation failures use the `handler_failed` contract.
 
 ## Prepare and run
 
 ```sh
 nix develop -c python3 tests/e2e/prepare_project.py /private/case-project \
-  --fixtures cases/task
+  --fixtures cases/agent
 helmr deploy /private/case-project
-HELMR_EVIDENCE_DIR=/private/attempt/task \
-  bun run /private/case-project/cases/task/run.ts
+HELMR_EVIDENCE_DIR=/private/attempt/agent \
+  bun run /private/case-project/cases/agent/run.ts
 ```
 
 Use normal `HELMR_API_URL` and `HELMR_API_KEY` for the explicitly selected scope.
@@ -74,11 +85,11 @@ only fixture directories needed by the case. It creates a new outside-checkout
 project, excludes case drivers from the deployment, and installs dependencies.
 Rerun preparation into a new directory after source/SDK changes.
 
-Host-observing `actor`, `persistence` and `network` cases run on the dedicated host
+Host-observing `sessions`, `persistence` and `network` cases run on the dedicated host
 and require `HELMR_RUNTIME_HOST_TOOL` to name its installed `dev/runtime/host.py`.
 Other cases use only the native API and can target an explicitly authorized endpoint.
-Different-Computer child calls require at least two available VM slots: a hot
-parent can retain its slot while its child runs. Before selecting `child-tasks`,
+Different-Computer helper calls require at least two available VM slots: a hot
+parent can retain its slot while its helper runs. Before selecting `helpers`,
 check the dedicated Worker's advertised capacity. On a sufficiently sized host,
 `WORKER_CAPACITY_VCPUS=4`, `WORKER_CAPACITY_MEMORY_MIB=4096` and
 `WORKER_EXECUTION_SLOTS=2` allow two default
@@ -87,15 +98,16 @@ Configure this before enrollment, following the host profile's replacement rules
 Cases requiring Secret management or Computer exec need those exact API-key
 permissions; do not broaden an existing key merely to run every case.
 
-The evidence directory must be new and its parent must exist. Most focused cases
-write `result.json`; Task, persistence, Actor and network retain their detailed
-`task.json`, `persistence.json`, `actor.json` and `network.json` receipts. Evidence
-contains exact object IDs, assertions and cleanup outcomes. Deployment IDs may
-identify the current deployment read by a case; they do not imply ownership.
-The shared `verify` driver writes a failed receipt synchronously on SIGINT or
-SIGTERM, including known Secret IDs, then exits without racing cleanup against
-the interrupted body. Its caller must retain that receipt and finish cleanup of
-owned resources before discarding the evidence. Accepted delete
+The evidence directory must be new and its parent must exist. The shared `verify`
+driver records `result.json`, including exact Session, Turn, question and Computer
+IDs, assertions and cleanup outcomes. Physical persistence observations are also
+saved separately. Cleanup cancels every owned Session, including those whose
+Turn already completed, before deleting owned Computers. An open Session can
+outlive a completed Turn. Observed Deployment IDs do not imply ownership.
+
+On SIGINT or SIGTERM, `verify` writes a failed receipt synchronously with known
+resource IDs and exits without racing cleanup against the interrupted body. The
+caller must retain that receipt and finish owned-resource cleanup. Accepted delete
 requests do not establish storage reclamation or environment retirement. Preserve
 failure evidence and diagnose the actual boundary before retrying.
 
@@ -105,21 +117,19 @@ the repair objective, clean up its test fixtures, then stop compute. Provider
 provisioning, retained storage costs and final retirement belong to deployment
 operations. A previous passing case does not qualify a changed case or artifact.
 
-## Compatible Program replacement
+## Deployment pins and Program replacement
 
 `cases/runtime/program-replacement.run.ts` retains one Computer across two normal
-Deployment promotions. Build the ordinary selected project, then a second isolated
-copy changing only `runtimeSmoke`'s returned report to include
-`programRevision: "next"`. Verify both bundles have identical Computer images and
-Sandbox specifications and different Program identities. Set
-`HELMR_NEXT_BUNDLE_DIGEST` to the second bundle digest. Deploy the original bundle
-and start the driver. After `ready-for-deploy.json` appears in its evidence
-folder, promote the second bundle through the normal CLI; the driver then verifies
-new code, the selected deployment and preservation of the first Run's files.
-Restore the ordinary deployment after the case. Deployment orchestration stays
-outside the driver. Use host evidence to confirm the old instance was physically
-excluded before the replacement became ready; SDK results alone do not prove that
-boundary.
+Deployment promotions. Prepare the ordinary project and a second isolated copy
+changing only `runtimeSmoke`'s returned report to include `programRevision: "next"`.
+Keep identical Computer images/specifications and different Program identities.
+Set `HELMR_NEXT_BUNDLE_DIGEST` to the second bundle digest, deploy the original,
+and start the driver. After `ready-for-deploy.json`, promote the second bundle
+through the normal CLI. A second Turn in the original Session must retain its
+original Deployment and code. A new Session must use the promoted Deployment and
+new code while reading the prior Computer writes. This does not require replacing
+the VM. Restore the ordinary deployment afterward; deployment orchestration stays
+outside the driver.
 
 ## Real PostgreSQL and Redis
 
@@ -144,7 +154,7 @@ not the long-lived real-VM environment used across a repair scope.
 For tests that need no services:
 
 ```sh
-nix develop -c scripts/test-go-selection.sh '^TestProgramResumeGrantPreservesFrozenScope$' ./internal/guestd
+nix develop -c scripts/test-go-selection.sh '^TestAgentComputerSourceAbortPreservesLateProbeAndHeldState$' ./internal/guestd
 ```
 
 Adding a test requires no runner change. Deleting one requires updating callers and
@@ -161,16 +171,20 @@ nor a compatibility runner. Run source checks for changed assertions, then the
 selected live case when the claim needs a real guest. An all-suite run is not a
 substitute for selecting the correct boundary.
 
-`cases/computer-restore` supplies a parent and child sharing one Computer for
-provider-controlled replacement verification. Both preserve independent memory
-nonces and files; the child enters a native token Wait while the parent awaits
-its call. A verifier must observe both members in the same ready checkpoint,
-source reclamation, the replacement Host and one destination Instance with exact
-checkpoint/disk lineage. Completing the child's token allows both to resume;
-the parent verifies the child's post-restore file write. Its one-hour Task and
-45-minute Wait budgets include bounded host replacement. Deployment owners own
-provider retirement, baseline restoration and cleanup; ordinary elapsed time or
-Task success does not establish a checkpoint restore.
+`cases/computer-restore` supplies parent and helper Sessions sharing one Computer
+for provider-controlled replacement verification. The first parent Turn spawns a
+helper, waits for its first Turn to complete, and returns both memory nonces and
+the helper Session ID. Only then can both idle Sessions be captured. The verifier
+must observe both members in one ready checkpoint, source reclamation, a replacement
+Host and exact checkpoint/disk lineage. Enqueue a second parent Turn; it enqueues
+the helper's second Turn and verifies the helper's post-restore file write. The
+parent emits `phase: "restored"` and waits for a `"finish"` Turn message so the
+provider can inspect the restored allocation before another idle capture.
+`computer-durability` uses the same completed-first-Turn boundary and second-Turn
+observation gate (`phase: "durability-restored"`). These gates have the fixture's
+Turn deadlines. One-hour restore Turn budgets include bounded host replacement.
+Deployment owners own provider retirement, baseline restoration and cleanup.
+Elapsed time or completed Turns alone do not prove checkpoint restore.
 
 ## Dedicated-host drain and observation outages
 
@@ -199,24 +213,24 @@ For `cases/control-plane-outage/run.ts`, wait for `ready-for-outage.json`, stop
 only `helmr-verification-control-plane.service`, hold it inactive for 150 seconds,
 then start it and require `/readyz`. Keep Dispatcher and Worker active throughout.
 The driver records Host observations during the real outage, requires uninterrupted
-Dispatcher identity, and checks the same Run attempt, lease, Instance, memory nonce
+Dispatcher identity, and checks the same Session process, lease, Instance, memory nonce
 and file afterward. It also requires the same active Host and fresh observations
 at least 130 seconds after readiness returns. Always restart CP after an orchestration failure before fixture
-cleanup; interrupted receipts contain the owned Run and Computer IDs.
+cleanup; interrupted receipts contain the owned Session, Turn and Computer IDs.
 
 For `cases/drain-renewal/run.ts`, allow approximately 40 minutes on the already
 authorized host. After `ready-for-drain.json`, invoke native
 `worker drain --wait=false` using the profile's Worker environment. This returns
 after CP accepts the drain request. Keep Worker and all profile dependencies
-alive. The Task uses ordinary JavaScript timers for 36 minutes, preserving its
+alive. The Agent uses ordinary JavaScript timers for 36 minutes, preserving its
 memory/file marker; it never requests a managed wait. The driver requires the same
 running lease and Instance, fresh Host observations and uninterrupted Worker, CP and Dispatcher processes
-through at least 31 minutes after observing drain, then the same Task attempt's
+through at least 31 minutes after observing drain, then the same Turn's
 successful output. Require the result and ordinary Computer deletion to settle,
 then require the same Host's non-null `termination_ready_at` from the native
 `worker-state` observation and its matching local `drain-complete` marker before
 stopping/restarting Worker. On failure,
-cancel the owned Run and delete its Computer through normal APIs; a timeout never
+cancel the owned Session and delete its Computer through normal APIs; a timeout never
 authorizes killing admitted work.
 
 After all fixtures are physically reclaimed, run

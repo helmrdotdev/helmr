@@ -1,25 +1,19 @@
 # Examples
 
-Runnable Helmr task projects live here. Each example is a small project that
-shows one customer-facing workflow.
+The four basic projects below define Agents with a default Computer. Helmr builds
+each project with the Manager and Managed Node selected by `package.json`. The
+Computer image supplies tools launched by application code.
 
-Helmr installs and builds each project with the exact Manager and Managed Node
-selected by `package.json`. Task code runs with that Managed Node. Node inside a
-Computer image is separate tool authority used only by commands launched
-through the Computer environment.
+Deploy the project, then start an Agent with input. Each admission returns a
+Session and Turn. Later Turns in that Session retain its Computer state. Validate
+input in the handler and bind credentials by stable Environment Secret ID in the
+Computer declaration. Relative file paths use the Computer working directory.
 
-Deploy the task source first, then start runs. Each run receives an empty writable
-computer. If a task needs external files or repository contents, pass identifiers
-in payload and credentials through declared secrets.
+- `hello-world` — greeting, validated response and an answerable CI-report question.
+- `cli-tooling` — invoke an installed CLI and return a report.
+- `task-secrets` — bind a Secret ID and read the resulting environment variable.
+- `github-pr-review` — read a GitHub pull request and return a summary.
 
-Tasks start in the computer directory. Use relative paths for computer files;
-absolute paths keep normal Linux container semantics.
-
-## Included Examples
-
-- `hello-world` — the smallest Task and Computer shape with payload and file output.
-- `cli-tooling` — install a CLI in the Computer image and run it against the Computer.
-- `task-secrets` — read a Secret attached when the Computer is created.
-- `github-pr-review` — inspect a GitHub pull request and return a review summary.
-
-Runtime contract task project fixtures live under `fixtures/`, not here.
+Each README gives setup and admission commands. The standalone `issue-fixer`
+project has separate provider dependencies and qualification instructions.
+Runtime contract fixtures live under `tests/fixtures/`.

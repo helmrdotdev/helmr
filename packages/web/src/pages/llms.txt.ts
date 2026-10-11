@@ -38,8 +38,8 @@ License: Apache 2.0
 
 ## Product Context
 - ${positioning}
-- Any job (${primitives}), any agent (${agents}), any interface (${surfaces}).
-- Runs on Helmr Cloud (coming soon) or self-hosted in your own AWS account.
+- Application sketches: ${primitives}; harness examples: ${agents}; client entry points: ${surfaces}. Local adapters require application configuration.
+- Self-hosted in your own AWS account. Managed Helmr Cloud is planned and is not currently available.
 - Every docs page is also served as Markdown by appending .md to the page path.
 
 ## Core Pages

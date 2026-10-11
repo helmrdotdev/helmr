@@ -1,29 +1,32 @@
 ---
 title: TypeScript SDK
-description: Public exports and the two execution contexts of @helmr/sdk.
-sidebarLabel: Overview
+description: Agent authoring and explicitly authenticated resource clients.
 ---
 
 # TypeScript SDK
 
-Import public APIs from `@helmr/sdk`. The package has two related surfaces:
-
-- declaration and guest-runtime APIs used by deployed code: `task`, `actor`,
-  `sandbox`, `schedules`, `tokens`, `timers`, `logger`, and `metadata`;
-- `HelmrClient`, an authenticated HTTP client for code running outside Helmr.
-
-`index.ts` is the public export authority. Modules not re-exported there are
-internal even if their source is visible.
+Use `@helmr/sdk` to declare Agents, Computers and images, configure the build,
+and create an authenticated `HelmrClient`.
 
 ```ts
-import {
-  defineConfig,
-  HelmrClient,
-  sandbox,
-  task,
-} from "@helmr/sdk"
+import { agent, computer, image, triggers, defineConfig, HelmrClient } from "@helmr/sdk"
 ```
 
-Definition IDs match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Public values passed
-as payloads, outputs, metadata, token results, or log attributes must be JSON
-values. Durable operations are asynchronous and should be awaited.
+Agent handlers receive injected Turn operations for output, responses, questions,
+steering and Session creation. These carry current runtime authority. An explicit
+client always acts under its supplied credentials, even inside Agent code.
+
+Definition IDs match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Business input, machine
+results and ask answers are JSON. Human-facing input, output, responses and
+question prompts use Content. Output and responses also accept string shorthand. Await asynchronous
+operations and join work before returning from a Turn.
+
+- [Agents, Sessions and Turns](/docs/reference/sdk/agents-and-sessions)
+- [Computers](/docs/reference/sdk/computers)
+- [Questions](/docs/reference/sdk/questions)
+- [Schedules](/docs/reference/sdk/schedules)
+- [Authenticated client](/docs/reference/sdk/helmr-client)
+
+Use ordinary language facilities for short delays and process diagnostics. Public
+Session events contain authored content and lifecycle facts; process stdout and
+stderr are not a public Session log API.

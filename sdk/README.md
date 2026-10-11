@@ -1,65 +1,45 @@
 # SDK
 
-User-facing SDK packages live here. `typescript/` contains `@helmr/sdk` for
-declaration authoring, managed runtime operations, and the external
-`HelmrClient`.
+`typescript/` contains `@helmr/sdk` for Agent and Computer definitions, injected
+Turn operations, and the explicitly authenticated `HelmrClient`.
 
 Runtime adapter internals, VM details, and host-specific code stay outside the
 SDK surface.
 
 ## External client
 
-Declaration-backed resources use a runtime declared ID and a type-only
-definition generic:
+Inspect deployed definitions and create an actual Computer when explicit
+placement is needed. Starting an Agent without a Computer uses its default
+Computer definition.
 
 ```ts
 import { HelmrClient } from "@helmr/sdk"
-import type { issueTask } from "./definitions"
 
 const client = new HelmrClient({
   url: process.env.HELMR_API_URL!,
   apiKey: process.env.HELMR_API_KEY!,
 })
 
-const computer = await client.sandboxes.createComputer(
-  "issue-computer",
-  {
-    key: "issue:123",
-    idempotencyKey: "issue:123:computer",
-  },
-)
-
-const run = await client.tasks.start<typeof issueTask>(
-  "issue-task",
-  {
-    payload: { issue: 123 },
-    computer,
-    idempotencyKey: "issue:123:run",
-  },
-)
-
-const result = await client.runs.wait(run)
-const logs = await client.runs.logs(run.id)
-const events = await client.runs.events(run.id)
-```
-
-Task start requires an existing Computer. The Task Run payload is plaintext
-audit data. Place Secret values when creating the Computer; never put them in
-payload.
-
-## Tokens
-
-Tokens are independent durable external-completion resources. Task code can
-create and wait on one; a trusted backend can also create or complete one
-through `client.tokens`. Multiple Runs in the same Environment may wait on the
-same Token.
-
-```ts
-const token = await tokens.create({ timeout: "1h" })
-const decision = await token.wait({ schema: approvalSchema })
-
-await client.tokens.complete(tokenId, {
-  result: { approved: true },
-  idempotencyKey: "approval:123",
+const definitions = await client.computerDefinitions.list()
+const computer = await client.computerDefinitions.createComputer("issue-computer", {
+  key: "issue:123",
+  idempotencyKey: "issue:123:computer",
+})
+const { session, turn } = await client.agents.start("issue-agent", {
+  input: { issue: 123 },
+  computer,
+  idempotencyKey: "issue:123:start",
+})
+const outcome = await turn.wait()
+await session.enqueue({ followUp: "Check the tests" }, {
+  idempotencyKey: "issue:123:follow-up",
 })
 ```
+
+Creation returns a Session and its initial Turn receipt. Retain their IDs for
+reconnection; observe the exact Turn for its result. Computer snapshots expose
+`definitionKey` and `deploymentId`. Bind Secrets by stable `secretId` with explicit
+env or file placement; never place Secret values in business input.
+
+The client uses its supplied credentials even inside Agent code. Injected Turn
+operations have their own Session and Deployment binding.

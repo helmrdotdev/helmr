@@ -1,30 +1,38 @@
 ---
-title: Sandboxes and Computers
-description: Declare Sandbox capacity and operate durable Computers.
+title: Computers
+description: Inspect Computer definitions and operate durable Computers.
 ---
 
-# Sandboxes and Computers
+# Computers
 
-A Sandbox is a deployed source declaration; a Computer is a durable resource
-created from it.
+A Computer definition describes a deployed environment. A Computer is a durable
+instance created from that definition.
 
 ```ts
-export const repo = sandbox({ id: "repo" })
-  .image(image("repo").from("node:24-bookworm-slim"))
-  .resources({ cpu: 2, memory: "4GiB" })
+export const repo = computer({
+  id: "repo",
+  image: image("repo").from("node:24-bookworm-slim"),
+  resources: { cpu: 2, memory: "4GiB" },
+})
 ```
 
-The builder requires `.image(imageBuilder).resources({ cpu, memory })`. Memory is expressed
-as `${bigint}MiB` or `${bigint}GiB`. Create externally with
-`client.sandboxes.createComputer(declaredId, { key?, idempotencyKey?,
-secrets? })`; the result is a `ComputerRef`.
+`client.computerDefinitions.list({ deploymentId?, cursor?, limit? })` lists
+identities in the selected Deployment, or the current Deployment when omitted.
+The page includes `deploymentId`, `items` and an optional `nextCursor`; continuation
+keeps the selected Deployment. Use `.retrieve(id, { deploymentId? })` for one
+identity and its owning Deployment. Limits range from 1 to 100.
+
+Create an actual Computer with
+`client.computerDefinitions.createComputer(id, { key?, idempotencyKey?, secrets? })`.
+Creation uses the current Deployment and returns a `ClientComputerRef`.
+Its snapshot exposes the source `definitionKey` and `deploymentId`.
 
 `client.computers.ref(id)` exposes:
 
 | API | Result |
 | --- | --- |
 | `retrieve()` | Current Computer lifecycle, residency and secret bindings. |
-| `members({ cursor?, limit? })` | A page of Sessions, Tasks and Commands attached to the Computer. |
+| `members({ cursor?, limit? })` | A page of Sessions and Commands attached to the Computer. |
 | `exec({ command, idempotencyKey, cwd?, env?, stdin?, timeout? })` | A durable `CommandRef` after admission. |
 | `delete({ idempotencyKey? })` | Deletion receipt. |
 
@@ -32,9 +40,11 @@ Computer `status` describes resource lifecycle: `available`, `deleting`, or `del
 Its separate `residency` describes execution: `cold`, `starting`, `running`,
 `parking`, `parked`, `restoring`, or `unavailable`. An unavailable Computer includes
 an `error` with a code and message. A parked Computer can resume; parking is not a
-resource failure. Starting a Task, Actor or Command requests startup or restoration
+resource failure. Starting an Agent or Command requests startup or restoration
 automatically.
-Secrets are bound at creation using plain string names; plaintext secret values are not part of a Computer request.
+Secrets are bound at creation using stable `secretId` values and explicit env or
+file placements. Protected env bindings use `allowedOrigins`. Plaintext values
+are not part of a Computer request.
 
 ## Command output and completion
 
@@ -49,14 +59,15 @@ starting. Reconnect using `client.commands.ref(id)` from your application backen
 | `logs({ cursor?, limit? }, { signal? })` | One finite page of retained output and gap records. |
 | `streamLogs({ after? }, { signal? })` | Retained output followed by new output until the output closes. |
 
-Command operations are available through the external client. Actor and Task code
-uses ordinary child processes for commands on its own Computer, or child Tasks
-for work on another Computer. The in-Run `ComputerRef` does not expose `exec()`;
-the external client's `ClientComputerRef` does. A local child-process promise is
-not a Helmr managed wait.
+Command operations use the explicitly authenticated `HelmrClient`, including
+when that client is constructed inside Agent code. Its credentials determine
+its authority; the current Session does not grant or restrict those client calls.
+The server still checks permissions, Computer availability and execution limits.
+Injected runtime Computer references do not expose `exec()`; use ordinary child
+processes for local work or an explicit client for authorized Computer commands.
 
 Each external observer has its own timeout or abort signal. Observing a Command
-does not create an Actor or Task.
+does not create an Agent Session.
 
 ```ts
 const command = await computer.exec({
@@ -92,7 +103,7 @@ retained operation receipt; the receipt confirms intent, not process exit. Use
 `retrieve()` or `wait()` for the outcome. Pending work that has not been assigned is
 cancelled without starting. Assigned work retains its execution identity until the
 worker confirms cleanup; `processReconciled` reports that separate fact. Commands
-are independent of Actor and Task lifecycles; cancelling a Run does not cancel
+are independent of Session lifecycles; cancelling a Session does not cancel
 a Command on the same Computer.
 
 Breaking iteration or aborting observation does not stop the command.

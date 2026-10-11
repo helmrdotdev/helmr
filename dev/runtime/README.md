@@ -4,11 +4,8 @@ This is a dedicated development verification profile, not a general deployment t
 It composes the normal Control Plane, Dispatcher, PostgreSQL 18, Redis,
 ClickHouse and installed Worker on one dedicated Linux x86_64 KVM/systemd host.
 A passing `start` means CP and native Worker readiness, Redis PING and active
-service processes only. On 2026-09-27 the Task, same-host persistence and Actor
-continuation cases passed on a disposable host using normal authentication and
-private native artifacts. Separate checks also passed a changed CP executable,
-an edited-initial-migration reset and guest IPv4 metadata denial. These do not
-qualify arbitrary service changes, general network isolation or cross-host recovery.
+service processes only. Run the selected Agent cases against the exact candidate
+to verify execution, persistence, service changes, network isolation or recovery.
 
 ## Inputs and ownership
 
@@ -16,8 +13,9 @@ One dedicated host serves one repair objective at a time. It may be stopped and
 retained between objectives. Reserve sufficient disk and memory
 for the real services, verifier and guest. The sample caps Computer staging at
 4 GiB for these small cases; the native default is 64 GiB. Reserve space for
-the live disks and checkpoint intermediates together. A 200 GiB pilot with the
-64 GiB staging default ran Tasks but rejected checkpoint capture for capacity. A scope spans multiple correction attempts. Do not install this
+the live disks and checkpoint intermediates together; capacity sufficient for
+execution may still be insufficient for checkpoint capture. A scope spans
+multiple correction attempts. Do not install this
 profile on shared staging or a host belonging to another owner.
 
 Provisioning must supply:
@@ -37,8 +35,9 @@ Provisioning must supply:
   is part of this path. This script does not grant AWS access or publish artifacts.
 - A `build_services.py` candidate directory containing Linux CP/Dispatcher binaries,
   input digests and the clean archived source, plus the native Worker host/runtime
-  bundle receipts from that initial source revision. These API-only service binaries
-  do not embed the console; normal setup/API authentication is still required.
+  bundle receipts from that initial source revision. Service binaries are API-only
+  by default; use the builder's `--console` option when the verification requires
+  the production Console. Normal setup/API authentication is still required.
   Supply absolute paths to the
   backing services from the pinned toolchain. Provisioning must retain their Nix
   closure/profile if using Nix; a development shell alone is not a GC root.
@@ -55,6 +54,32 @@ local endpoints, default region/group/pool, store agreement, key generation and
 service identities, and rejects overrides of those fields. Per-scope keys and
 passwords are generated once on install and retained across starts. Secrets never
 belong in source control or the evidence bundle.
+
+The sample includes explicit development execution and diagnostic budgets. Adjust
+them for the selected host. Diagnostic admission and export settings reach both
+Control Plane and Dispatcher; Worker log buffers remain Worker inputs. Native
+service configuration checks run before dependencies or migrations start.
+
+Configure each Agent's dedicated Slack App through Console after normal setup
+and promotion of the Agent's deployment. Use that registration's generated
+manifest and store its App credentials through the setup form. App credentials and installation tokens are
+held by the Control Plane; no global `SLACK_*` settings belong in this profile.
+
+For an explicitly authorized external HTTPS route, set the optional top-level
+`public_url` to its origin, such as `https://verification.example.test`. It must
+have no credentials, path, query or fragment. Control Plane and Dispatcher use
+this origin for normal authentication callbacks and public links. Their internal
+transport and all backing-service listeners remain on loopback. Omitting the field
+preserves the loopback public URL. This setting does not create a tunnel, DNS record
+or certificate, open a port, configure an OAuth app or authorize public exposure.
+Complete normal setup under the chosen operator-only access restriction before
+enabling public callbacks; do not expose a development login or Vite server.
+The public origin is fixed at profile installation. Changing it requires a new
+profile and normal setup; neither `apply-services` nor a data-only reset changes
+it. Do not hand-edit the saved profile or environment files. An external TLS
+terminator must set `X-Forwarded-Proto: https` and replace untrusted client
+`X-Forwarded-For` values; qualify Secure cookies through the actual route.
+
 
 Readiness waits stop immediately when their systemd service reports `failed`,
 retaining its journal and state for diagnosis. A live process may still need the
@@ -166,22 +191,22 @@ to make a partially updated host appear healthy. There is no rollback or resume
 command. Keep a healthy environment across ordinary failed behavior cases; a
 failed test alone does not require recreation.
 
-## First ordinary Task case
+## First ordinary Agent case
 
-The `tests/e2e/cases/task` fixture contains just a sandbox and a Task that
-round-trips a unique marker through the guest filesystem and returns run/computer
-identities. It has no package-install layer, Actor dependency, combined smoke suite
-or case registry. Add or remove ordinary `tests/e2e/cases/<behavior>/` files with
+The `tests/e2e/cases/agent` fixture contains a Computer definition and an Agent
+whose initial Turn round-trips a unique marker through the guest filesystem and
+returns Turn, Session and Computer identities. The driver waits for the Turn
+outcome, cancels the Session, and requests Computer deletion. Add or remove ordinary `tests/e2e/cases/<behavior>/` files with
 the behavior that needs them.
 
 Prepare a separate, self-contained case project with local SDK tarballs:
 
 ```sh
 nix develop -c bun install --frozen-lockfile
-nix develop -c python3 tests/e2e/prepare_project.py /private/case-project --fixtures cases/task
+nix develop -c python3 tests/e2e/prepare_project.py /private/case-project --fixtures cases/agent
 ```
 
-The new directory contains the current editable cases/tasks, local packed SDK and
+The new directory contains the current editable cases/agents, local packed SDK and
 Proto dependencies, and its own lockfile. No npm publication is performed. BuildKit
 receives all dependency files inside the project; repository-relative `file:`
 dependencies and TypeScript configuration outside it cannot survive source capture.
@@ -202,7 +227,7 @@ builds are live operations and require the scope's authorization:
 ```sh
 helmr deploy /private/case-project
 HELMR_EVIDENCE_DIR=/private/attempt-001/task \
-  bun run /private/case-project/cases/task/run.ts
+  bun run /private/case-project/cases/agent/run.ts
 ```
 
 When using the local Vite console with separate tunnels, point CLI/SDK
@@ -236,8 +261,12 @@ sudo python3 dev/runtime/host.py apply-services --candidate /private/candidate-0
 ```
 
 The builder hashes actual Go dependency/embedded-file inputs, schema source and
-non-Go runtime/build inputs. It produces Linux AMD64 API-only CP and Dispatcher
-binaries without rebuilding the Worker, guest or console. Candidates are trusted
+non-Go runtime/build inputs. It produces Linux AMD64 CP and Dispatcher binaries
+without rebuilding the Worker or guest. By default, it omits Console assets. With
+`--console`, it installs frozen JavaScript dependencies without lifecycle scripts
+inside the private source archive, runs the ordinary `console-build`, and applies
+`embed_console` to both Go dependency enumeration and compilation. The receipt
+therefore hashes the actual embedded assets. Candidates are trusted
 operator build outputs, not signed third-party release artifacts. At initial
 installation `services_candidate`, `worker_host_receipt` and
 `worker_runtime_receipt` bind service source to the installed Worker manifests.
@@ -251,7 +280,17 @@ Dispatcher bytes keep their original source identity. This does not prove that
 an active guest survived a long CP outage; rerun the selected behavior cases, and
 select an in-flight recovery case when that is the claim.
 
-If CP startup, identity verification or receipt writing fails, the update remains
+To replace CP and Dispatcher together without discarding data, add
+`--include-dispatcher`. Schema, Worker, guest, runtime-support and toolchain inputs
+must still match. The updater stops Dispatcher before CP, replaces both binaries,
+checks both candidate environments before stopping services, waits for CP readiness,
+then starts Dispatcher and waits for its existing startup-complete log in the exact
+systemd invocation. It verifies both running executable
+hashes and preserves the data-generation receipt and all backing/Worker processes.
+This option cannot be combined with `--reset-data`; it performs no migrations.
+Start a stopped profile with its installed services before applying the candidate.
+
+If service startup, identity verification or receipt writing fails, the update remains
 failed and its pending marker blocks further work. Collect the result and recreate
 the environment. The updater does not retain rollback binaries or restore an old
 candidate. Successful updates still reuse the current host and retained services.
@@ -275,7 +314,7 @@ PostgreSQL, Redis and ClickHouse state, Worker credentials/work state and jailer
 state, then recreates the database cluster and runs the new native bootstrap and
 migrations. Worker/guest binaries, runtime descriptor, installed guest images and
 scope root keys remain. A new data-generation ID distinguishes observations before
-and after reset. Normal self-hosted setup, project/environment/API keys and Task
+and after reset. Normal self-hosted setup, project/environment/API keys and Agent
 deployment must be recreated; old fixture IDs and API keys are no longer valid.
 
 Worker/guest/runtime input changes still require matching artifacts and a new
@@ -288,6 +327,51 @@ S3 CAS/platform objects are **not deleted by data reset**. Old fixture objects c
 remain orphaned until the scope's final storage cleanup; each reset is not a
 zero-storage claim. This path never resets shared staging or production and does
 not change the migration policy for already released persistent installations.
+
+## Replace an incompatible disposable profile
+
+When Worker/runtime inputs or the installed public origin must change, a
+service-only update is insufficient. With explicit authority to replace this
+profile, use `retire-profile` to preserve its private configuration and data on
+the same disk before the normal shared Worker installer and a fresh installation:
+
+```sh
+sudo python3 dev/runtime/host.py retire-profile \
+  --expected-source EXACT_INSTALLED_COMMIT \
+  --expected-generation EXACT_DATA_GENERATION_UUID
+```
+
+First resolve the exact host/scope, original candidate and data generation, prior
+fixture cleanup, and any external installation tied to the old database. Preserve
+the installed Worker/runtime bundles and digest receipts before overwriting their
+shared paths. Record disk capacity, retained private data and any leftover Worker
+network resources; do not treat service inactivity as completed fixture cleanup.
+Unresolved external work blocks replacement. This command does not clean S3.
+
+The command requires all profile services and Worker inactive and disabled, no
+remaining service/guest processes, disconnected owned NBD devices, unmounted data,
+and exact saved service definitions with no foreign Worker overrides. It refuses
+an unfinished update or retirement. It moves owned paths by same-filesystem renames
+into a new root-only `/var/lib/helmr-retired/<data-generation>/` directory. The
+archive contains credentials and private data and stays under the existing
+encrypted-disk custody. Shared runtime images, installed binaries, tool closures
+and artifact caches remain unchanged. Budget space for archived and new data.
+
+An absent Worker work directory is recorded and skipped because the Worker creates
+it lazily and initial startup may fail before it runs. Other owned paths remain
+required; symlink, mount, process and ownership guards still apply. Capture failure
+evidence and clear failed unit state explicitly before retirement.
+
+The first profile mutation renames `config.json` to `retired-config.json`, making
+the active configuration unavailable even to an older installed script. An
+interrupted retirement keeps that directory, blocking installation and further
+profile changes; a pending record identifies the archive if its write completed.
+Inspect the archive and active
+paths; do not remove the marker to bypass the failure. There is no automatic retry,
+resume or rollback. Success moves configuration last and reports the archive path.
+Install the exact current verified Worker/runtime bundles next, then run ordinary
+`install`, setup and enrollment with fresh keys/database. This is not a continuity
+test or permission to purge the archive; archive removal needs its own disposition.
 
 ## Failed reset
 
@@ -305,31 +389,15 @@ available while the unit runs.
 
 The focused Linux check `dev/runtime/check_reset_process_boundary.py`
 qualifies child-process containment on an authorized host. It is not a resume
-acceptance suite. The dedicated-host check passed on 2026-09-27: a stopped reset
-unit terminated its child process, and duplicate operation admission was rejected.
+acceptance suite. It checks that stopping a reset unit terminates its child
+process and that duplicate operation admission is rejected.
 
 After a successful reset, repeat normal authenticated setup, project/environment,
 API keys and case deployment before testing. Services ready is not case success.
 
-The same-candidate reset was exercised on 2026-09-27: services restarted with a
-new data generation, normal authenticated setup/deployment was repeated, and the
-Task case passed afterward. A separate check changed the existing initial
-migration, verified normal update rejection before any service/data-generation
-change, and applied it with explicit reset. The new schema marker and generation
-were observed, the same protected endpoint changed from HTTP 200 to 401 for the
-old API key, and normal GitHub setup, key issuance, deployment and Task execution
-passed afterward. Reset took 60.810 seconds and the subsequent Task 89.510 seconds
-in that single run, excluding manual setup and deployment time.
-
-A CP-only executable change also passed: the changed HTTP response and executable
-were observed while Dispatcher, Worker, backing-service identities and data
-generation remained unchanged. Host-side update and assertions took 2.170 seconds;
-the subsequent Task passed in 91.507 seconds with the retained API key. These
-measurements exclude candidate build/transfer and are not latency guarantees.
-
 ## Persistence and resume case
 
-Deploy the prepared Task project and run its case on the dedicated host with normal
+Deploy the prepared Agent project and run its case on the dedicated host with normal
 API credentials and authorized noninteractive sudo for the read-only observer:
 
 ```sh
@@ -337,188 +405,150 @@ HELMR_EVIDENCE_DIR=/private/attempt-003/persistence \
   bun run /private/case-project/cases/persistence/run.ts
 ```
 
-The Task writes a unique marker/symlink and emits a random in-memory nonce before
-a managed Token wait. The driver waits for a ready checkpoint and evidence that
-the original VM was closed and reclaimed, then completes the Token. It checks
-file/symlink state, the unchanged nonce, attempt number 1, and a different ready
-runtime restored from that exact checkpoint. Merely reporting `waiting`, a hot
-resume, or rerunning the function from its entry is insufficient.
+The first Turn writes a marker/symlink and returns a nonce retained in Session
+setup memory. After that Turn completes, the driver requires an idle ready
+checkpoint and physical source reclamation. It enqueues a second Turn, verifies
+the same nonce/files and Session identity, and observes the exact restored
+allocation while the second Turn waits on a `"finish"` message. Only after those
+observations does the driver allow that Turn to complete. Questions and authored
+timers keep Turns active; they are not checkpoint eligibility signals.
 
-The Product-owned observer uses a read-only PostgreSQL query with bounded waits.
-No provider runner imports database internals, no DB mutation triggers the resume,
-and the normal API owns all Task/Token actions. This is same-host restore; it does
-not prove host-loss isolation or cross-host compatibility. `persistence.json`
-retains assertions and fixture-cleanup outcomes. Terminal Tokens are not cancelled
-again. API deletion acknowledgement is not final host/S3 cleanup proof.
+The Product-owned observer uses bounded read-only PostgreSQL queries. Native APIs
+own Session admission, answers and cleanup. This is same-host restore; it does not
+prove cross-host compatibility. `result.json` and separate persistence observations
+retain assertions and cleanup outcomes. API deletion acknowledgement does not prove
+final host/S3 reclamation.
 
-## Recoverable capture failure case
+## Recoverable capture failure and lost replies
 
-`cases/capture-abort` is a dedicated Linux/KVM qualification case. It requires
-matching CP, Worker and guest artifacts and a fresh profile when those inputs
-change. It has not yet passed live qualification. Installing it, privately
-publishing its matching artifacts, and running the host require the applicable
-environment authorization.
+`cases/capture-abort` is a dedicated Linux/KVM qualification case. Matching CP,
+Worker, guest and fixture artifacts are required. The migrated case still needs
+live qualification. Publishing artifacts, starting a host and executing faults
+require the applicable environment authorization.
 
-Build `./dev/runtime/capturefault` with the pinned Go toolchain for the host.
-Run it only on the exclusive verification host, with its ordinary native S3
-credentials and the exact scope CAS bucket:
+Create an exclusive profile with `"capture_reply_faults": true`. Build
+`./dev/runtime/capturefault` with the pinned Go toolchain and start it as root before
+the profile, using the ordinary host authentication and exact scope CAS bucket:
 
 ```sh
-capturefault --bucket SCOPE_CAS_BUCKET --region us-east-1 --hold 360s
+capturefault --bucket SCOPE_CAS_BUCKET --region us-east-1 --replies
 ```
 
-At profile creation, set its CAS URI to
-`s3://SCOPE_CAS_BUCKET?endpoint=http%3A%2F%2F127.0.0.1%3A58089` (retain any existing
-CAS prefix). This loopback proxy forwards requests only to that bucket. It uses
-the ordinary S3 protocol and native host authentication; it is not a file CAS or
-a production fault hook. Keep its process available until profile shutdown.
-Do not use it on a shared host. Restarting the proxy clears its one-shot state;
-restart only between fresh cases after the previous Run and cleanup settle.
+Only Worker uses the additional CP relay at loopback port 58088; Dispatcher and
+user clients use CP directly at 58080. Keep the normal CAS URI. This case does not
+arm the tool's separate S3 upload-failure injector: publication retry is a different
+boundary from a source abort before disk capture. Runtime binaries contain no fault
+switches. The proxy is one-case state; restart it only after fixture reclamation.
 
-Prepare `cases/capture-abort` with `tests/e2e/prepare_project.py`, deploy through
-the normal authenticated CLI, and run its `run.ts` with the same API/key/evidence
-variables and `HELMR_RUNTIME_HOST_TOOL` as persistence. The case arms exactly one
-memory-upload failure, waits until that request has been held for 310 seconds,
-cancels one of two captured members, and completes the first Token while the source is sealed.
-The proxy delays a non-retryable S3 response
-for 360 seconds, longer than the five-minute guest grant. Both CP leases renew
-until the cancellation so an early cancellation does not end the upload before
-the intended injected response. The Task must continue
-with its original random in-memory nonce, file and Run. A read-only database
-observation requires both captured members, abort acknowledgment, the unchanged
-source writer and no replacement Instance. The cancelled Run must reach its
-cancelled outcome while the healthy member continues. Its active interval writes
-an increasing shared-file counter before emitting each structured log. While the
-proxy still holds the frozen upload, the driver reads the maximum delivered
-counter and passes that baseline through the first Token. The healthy member
-requires the file counter to remain exactly equal and a wait-finally marker to be
-absent after abort and restore. Missing/buffered final telemetry can conservatively
-fail the case. This sampled execution probe is not an exhaustive scheduler trace.
-A second Token wait then produces a successful checkpoint;
-the case requires source reclamation before completing that Token and verifies
-restoration from the new checkpoint with the same memory/files/Run identity.
+Prepare `cases/control-plane-outage` and `cases/capture-abort` in the fixture project.
+First run `cases/reply-relay/run.ts` with normal API/key/evidence variables on the
+host. It interposes the exact source vsock socket, starts a Computer Command through
+it, restores the socket pathname with a stream active, and requires the same Command
+and Instance to finish with its marker. After successful preflight and ordinary
+fixture reclamation, restart the proxy to clear its state.
 
-`HELMR_EVIDENCE_DIR/result.json` records the assertion results and normal fixture cleanup.
-An interrupted proxy, expired request or unobserved failure is a failed case.
-This case covers delayed upload failure, cancellation and resolution during
-capture; it does not alone qualify lost guest/Control Plane replies.
+Run `cases/capture-abort/run.ts` with `HELMR_RUNTIME_HOST_TOOL` and a fresh evidence
+directory. Both Sessions remain active until the driver arms the relay for their
+exact Computer, source Instance, writer generation and process epochs. After both first
+Turns complete, the relay reads the complete frozen Capture receipt and closes the
+reply without forwarding it. It gates every matching Inspect retry until the
+driver releases the gate; other streams, including authority renewals, continue.
+The gate has a three-minute failure bound.
 
-### Lost capture-abort replies
+The driver waits beyond the actual capture envelope deadline and verifies that
+current CP authority remains live. While the source is frozen, it enqueues a Turn
+on the Session selected for cancellation, cancels that Session, and enqueues the
+healthy Session's second Turn. All admissions and cancellation must finish before
+the driver releases Inspect. The relay then loses one successful CP preparation
+reply, guest Install reply, guest Activate reply and CP completion reply. Install's
+bidirectional authority-clock exchange is forwarded unchanged. Incomplete or failed
+responses never count as applied-but-lost evidence.
 
-For this separate exclusive-host case, create a fresh profile with
-`"capture_reply_faults": true` and the same S3 fault endpoint above. Start
-`capturefault --bucket SCOPE_CAS_BUCKET --region us-east-1 --hold 360s --replies` as root
-before starting the profile. Only Worker uses the additional loopback relay at
-58088; Dispatcher and user clients continue to use CP directly at 58080.
-The runtime binaries are ordinary source-bound builds, with no fault switches.
+Before installation, refreshed authority can replace an expired preparation. Once
+installed, every retry must retain the full exact installation. The relay records
+safe identities/digests and current stopped-session controls, never credentials or
+serialized authority. The case requires all drops, successful retries and listener
+restoration before the final CP completion response reaches Worker.
 
-Deploy `cases/control-plane-outage` and `cases/capture-abort` in the selected
-fixture project. First run `cases/reply-relay/run.ts` with ordinary API credentials
-and a fresh evidence directory. It interposes the original source vsock socket,
-starts a real Computer Command through that relay, restores the original socket
-name while a stream remains active, and requires the same Command/Instance to
-finish with its marker. A failed passthrough preflight is not permission to arm
-reply loss. Finish normal fixture reclamation, then restart only the proxy to
-clear its one-case state.
+The healthy member must retain setup memory, files and Session identity. Each
+Turn has its own identity. The cancelled queued Turn must stay cancelled without
+entering its handler: it would increment a file counter and write an execution
+marker immediately on entry. Both must remain unchanged/absent after source abort
+and later restore. Current guest controls and activation receipts also require the
+captured cancelled process to stop before live peers activate.
 
-Run the ordinary `cases/capture-abort/run.ts` with
-`HELMR_CAPTURE_REPLY_LOSS=1`. During the existing upload hold it arms the relay
-for that exact Computer, Instance, checkpoint and both sealed Run identities.
-The relay consumes a complete successful upstream response before losing one CP
-abort/grant reply, one guest prepare reply, one guest activation reply and one CP
-completion reply, in that order. It forwards all other traffic. Evidence records
-identity, timestamps, grants' expiry/disposition and whether a reply was dropped;
-it never records authentication headers or write capabilities.
-
-The case requires all four drops, real successful retries, current unexpired
-grants, stable cancelled disposition, and a final acknowledged abort receipt.
-All memory/file/Run identity, cancellation-counter and later restore assertions
-still apply. An unreached drop, upstream failure or incomplete response is not
-qualification. Unit checks for the tool and assertions are:
+The old active-question/interval/finally probe is retired: a running question or
+unqualified authored timer cannot enter coherent capture. The new counter checks
+queued handler entry; it does not claim to trace arbitrary idle process execution.
+The driver keeps the healthy second Turn active while observing the exact aborted
+checkpoint, then permits completion. A new idle checkpoint must become durable and
+reclaim its source before the third Turn runs on the restored allocation. The
+aborted checkpoint cannot serve as that restored checkpoint.
 
 ```sh
 nix develop -c go test -race ./dev/runtime/capturefault
-nix develop -c bun test tests/e2e/support/reply-fault.test.ts
+nix develop -c bun test ./tests/e2e/support/reply-fault.test.ts
 ```
 
-The Unix socket listener is restored before forwarding the final acknowledged
-abort reply. Existing relayed Program streams remain open until their normal
-close, so keep the proxy running through fixture/source reclamation. The source
-socket is renamed only under its exact dedicated jail path, with inode and
-ownership checks; a changed or missing endpoint is a failed restoration, never
-overwritten. After an interrupted case, inspect its receipts and request
-`DELETE http://127.0.0.1:58089/__replies` before stopping the proxy. Complete ordinary
-Run/Computer cleanup and confirm source reclamation before proxy/profile shutdown.
-Do not rename sockets on a shared host or reuse an interrupted case.
-There is no process-crash recovery: if the proxy dies while interposed, the source
-socket name still points at the dead listener. Preserve the sibling original socket
-and case evidence; use the normal operator cleanup path before recreating the
-profile. Do not stop the proxy as a shortcut while a source still uses its streams.
+Socket restoration preserves accepted streams until they close naturally. The
+relay checks original/proxy socket inodes and ownership; a changed pathname is never
+overwritten. On interruption request `DELETE http://127.0.0.1:58089/__replies` to
+release the gate and restore the listener, then finish native Session/Computer
+cleanup and source reclamation before stopping the proxy. A dead proxy has no
+process-crash recovery: preserve its sibling original socket and evidence and use
+normal operator cleanup before recreating the profile. Do not use this on shared
+hosts or stop a proxy while the source still uses its streams.
 
-## Actor Turn continuity
+## Session Turn continuity
 
-After deploying the same small project with normal credentials, run on the host:
+After deploying the selected project, run on the dedicated host:
 
 ```sh
-HELMR_EVIDENCE_DIR=/private/attempt-004/actor \
-  bun run /private/case-project/cases/actor/run.ts
+HELMR_EVIDENCE_DIR=/private/attempt-004/sessions \
+  bun run /private/case-project/cases/sessions/run.ts
 ```
 
-The Actor creates a random nonce in memory once, writes its marker to a private
-file, and waits on a Token during the first Turn. The driver observes the nonce
-before completion and waits for a ready checkpoint plus the original VM's closure
-and reclamation. It then completes the Token, checks the first Turn's result and
-submits a second Turn. The nonce, file, Run/Session/Workspace identity and in-memory
-counter must persist; the counter must advance from one to two. Run retries are
-disabled. Closing the Session must end its original Run successfully. The Product
-observer checks Actor identity, attempt one, the exact previously observed
-checkpoint and a different ready restored VM.
+The Agent's setup creates one random nonce and an in-memory counter. The first
+Turn writes a marker and completes. The driver requires a ready idle checkpoint
+and source reclamation before enqueuing the second Turn. Nonce, file and
+Session/Computer identities persist; the counter advances from one to two. The
+second Turn emits its state and waits for a `"finish"` message while the observer
+checks the exact checkpoint and a different current runtime. Cleanup cancels the
+Session and deletes the owned Computer.
 
-This is Actor-specific same-host continuation, not host-loss/cross-host acceptance
-or proof of every Session/Turn behavior. It reuses the read-only Product query used
-by the Task persistence case; Cloud receives no DB access. `actor.json` retains
-assertion results, identities and separate cancellation, closure and deletion
-outcomes. Cancellation and closure polling share a 180-second deadline; Workspace
-deletion requires confirmed Session closure. A failed Session or unconfirmed
-closure retains the Workspace for diagnosis instead of claiming cleanup. Creation
-ambiguity, observation failures, terminal Turn failures and cleanup failures exit
-nonzero. No accepted API deletion is promoted to final resource cleanup.
+This same-host claim does not prove host-loss or cross-host continuation. Local
+assertion checks reject changed memory, counters, identities, checkpoint lineage,
+unfenced sources and stale targets:
 
-Offline assertion-sensitivity checks use
-`nix develop -c bun test tests/e2e/cases/actor/assertions.test.ts`; they reject lost
-memory, reset counters, changed identity, retried Runs, wrong checkpoints and hot
-VM reuse. Type checking and the real PostgreSQL query check validate source/query
-boundaries only. The complete Actor case still needs the integrated checkpoint.
+```sh
+nix develop -c bun test ./tests/e2e/cases/sessions/assertions.test.ts
+```
 
 ## Guest IPv4 metadata case
 
 Run `cases/network/run.ts` on the dedicated host with the same API/key/evidence
 environment as persistence. It first requires successful public HTTPS from the
-guest, then takes a native policy/counter baseline on that Run's exact retained
+guest, then takes a native policy/counter baseline on that Session's exact retained
 VM. A request to the IPv4 metadata index must return no HTTP response; the
 metadata address must be in the installed deny set and the same namespace's
-`run_denied` counter must increase. Token waits keep that VM alive for observation.
+`run_denied` counter must increase. Ordinary message gates keep the Turn active for host observation.
 No credential path or IMDS token is requested. The counter is shared by several
 deny rules, so this is not destination-specific tracing, IPv6 coverage or general
-network-isolation qualification. This case passed on 2026-09-27: public HTTPS
-returned 200, the metadata probe received no HTTP response, and the retained VM's
-denied-packet count increased from 0 to 6. The case and fixture cleanup requests
-completed in 115.746 seconds in that run.
-
-Log replay can briefly return `telemetry_lagging`. The driver records and waits
-through only that condition within the existing phase deadline; other errors or
-a terminal Run still fail. The first live attempt exposed this condition and was
-cancelled with fixture cleanup before the corrected case passed.
+network-isolation qualification. Qualify the case against the exact candidate. Session
+output pagination and retention are checked explicitly; terminal Turns or missing
+phase evidence fail the case.
 
 ## Named database observations
 
 `observe.py OBSERVATION INPUTS_JSON` renders one fixed, read-only observation as
-psql input. The available observations cover Run placement/path and reclamation,
+psql input. The available observations cover Session placement/path and Computer lease fencing,
 Computer state, current Worker Hosts, regional Worker capacity/platforms,
 Deployment identity and environment API-key scope. Inputs contain exactly the
 fields declared in `observe.py`; SQL text, file names and query fragments are not
-accepted. Results are one JSON value. `run-path` includes exact checkpoint member
-identities, source reclamation, restored lease lineage and artifact byte sizes.
+accepted. Results are one JSON value. `session-path` reports only actual checkpoint
+membership. `computer-path` reports lease fencing, checkpoint source/target epochs,
+exact members, artifact byte sizes, disk saves and commands. These are recorded
+facts; checkpoint membership alone does not prove a completed restore.
 
 Execute with the same Product source revision that created the database. When
 an initial schema changes, reset the disposable database through the host or
@@ -526,6 +556,9 @@ deployment owner's normal greenfield reset before using these observations.
 A matching migration version alone does not establish that identity. The
 execution owner supplies authorized connectivity and enforces result bounds;
 the renderer enforces a read-only transaction and short statement/lock limits.
+`slack-delivery` takes an exact Session ID and reports its thread status lane,
+installation authorization/refresh state and newest 100 post delivery records.
+It excludes credentials, message bodies and frozen request payloads.
 No observation changes Product state or replaces native mutation APIs.
 
 The populated PostgreSQL regressions run with
