@@ -56,13 +56,11 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
     const secret = await client.secrets.create({ name: `native-${kind}`, value, idempotencyKey: `native-${kind}` }, { signal })
     secretIds.push(secret.id); digests.push(createHash("sha256").update(value).digest("hex"))
    }
-   const computer = await client.computerDefinitions.createComputer("native-continuation", {
-    idempotencyKey: "native-secret-computer", secrets: [
+   const computer = await client.computers.create({ definition: "native-continuation", idempotencyKey: "native-secret-computer", secrets: [
      { secretId: secretIds[0]!, env: { name: "NATIVE_RAW_SECRET", mode: "raw" } },
      { secretId: secretIds[1]!, file: { path: "/run/native-proof/secret" } },
      { secretId: secretIds[2]!, env: { name: "NATIVE_PROTECTED_SECRET", mode: "protected", allowedOrigins: ["https://native-proof.invalid"] } },
-    ],
-   }, { signal })
+    ], }, { signal })
    return await client.agents.start("peer", { computer, input: fixtureInput({ kind: "hold-secrets", rawDigest: digests[0]!, fileDigest: digests[1]!, protectedDigest: digests[2]! } )}, { signal })
   } catch (error) {
    const cleanup = AbortSignal.timeout(10_000)
@@ -91,8 +89,8 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
      const value = JSON.parse(text.text)
      if (value.discoveryCreated) {
       assert.equal(discovery.length, 0)
-      const target = client.sessions.get(value.discoveryCreated)
-      assert.equal((await target.retrieve({ signal })).requesterSessionId, peer.session.id)
+      const target = client.sessions.ref(value.discoveryCreated)
+      assert.equal((await target.get({ signal })).requesterSessionId, peer.session.id)
       await target.close(undefined, { signal })
       continue
      }
@@ -108,8 +106,8 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
       assert.equal(typeof controls[key], "string")
       if (discovery.length) assert.equal(controls[key], (discovery[0]!["controls"] as Record<string, unknown>)[key])
      }
-     const cancelled = client.sessions.get(controls["cancelledSession"] as string)
-     const neverStarted = await cancelled.turn(controls["cancelledQueuedTurn"] as string).retrieve({ signal })
+     const cancelled = client.sessions.ref(controls["cancelledSession"] as string)
+     const neverStarted = await cancelled.turns.ref(controls["cancelledQueuedTurn"] as string).get({ signal })
      assert.equal(neverStarted.status, "cancelled")
      assert.equal(neverStarted.startedAt, undefined)
      discovery.push(observed)
@@ -123,7 +121,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
     }
     return output
    }
-   const status = (await holding.retrieve({ signal })).status
+   const status = (await holding.get({ signal })).status
    assert(status === "running" || status === "queued", "peer did not survive continuation")
    await delay(100, undefined, { signal })
   }
@@ -131,11 +129,11 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
  async function finish(turn: TurnRef, provider: string, count: number) {
   const answered = new Set<string>()
   for (;;) {
-   await observeEvents(client.sessions.get(turn.sessionId))
+   await observeEvents(client.sessions.ref(turn.sessionId))
    let cursor: string | undefined
    do {
     const page = await turn.asks.list({ ...(cursor ? { cursor } : {}), limit: 100 }, { signal })
-    for (const summary of page.asks) {
+    for (const summary of page.items) {
      if (summary.status !== "pending" || answered.has(summary.id)) continue
      const ask = await turn.asks.get(summary.id, { signal })
      const part = ask.prompt?.find(item => item.type === "json")
@@ -165,8 +163,8 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    if (timing) timing.settlementObservedMS = performance.now() - timing.requestStartedMS
    assert.equal(waiting.outcome.status, "completed", JSON.stringify(waiting.outcome))
    assert.equal(answered.size, provider === "claude" ? 1 : 0)
-   const state = await turn.retrieve({ signal }); assert(state.completionSaveId)
-   await observeEvents(client.sessions.get(turn.sessionId))
+   const state = await turn.get({ signal }); assert(state.completionSaveId)
+   await observeEvents(client.sessions.ref(turn.sessionId))
    if (options.performanceKind) {
     assert(timing && timing.runningObservedMS !== undefined && timing.firstOutputObservedMS !== undefined, "native client timing is incomplete")
    }
@@ -190,13 +188,13 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
  try {
   const initialPeerOutput = await progress()
   const initialPeerTiming = { requestStartedAt: initialPeerStartedAt, ackMS: initialPeerAckMS, firstOutputObservedMS: performance.now() - initialPeerStartedMS, turnId: peer.turn.id, outputSequence: initialPeerOutput.sequence }
-  const computer = { id: (await peer.session.retrieve({ signal })).computerId }
+  const computer = { id: (await peer.session.get({ signal })).computerId }
   const modelInput = options.performanceKind ? { peerSession: peer.session.id, performance: true } : peer.session.id
   const nativeInput = (text: string) => options.performanceKind ? `performance:${options.performanceKind}` : text
   const model = await client.agents.start("models", { input: fixtureInput(modelInput), computer }, { signal })
   sessions.push(model.session)
   const firstModel = await model.turn.wait({ signal }); assert.equal(firstModel.status, "completed")
-  const modelState = (await model.turn.retrieve({ signal })).result as Record<string, unknown>
+  const modelState = (await model.turn.get({ signal })).result as Record<string, unknown>
   // Identical warm-up under both policies lets ordinary background saving occur
   // while the peer is doing real I/O, outside native handler timing intervals.
   if (options.performanceKind) await delay(12000, undefined, { signal })
@@ -209,7 +207,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    const queued = await started.session.enqueue(fixtureInput(nativeInput(`${provider} before idle two`)), undefined, { signal })
    admitted(provider, "queued-successor", queued, enqueueMS, enqueueAt)
    if (options.performanceKind) {
-    const state = await queued.retrieve({ signal })
+    const state = await queued.get({ signal })
     assert.equal(state.status, "queued"); assert.equal(state.startedAt, undefined)
    }
    const first = await finish(started.turn, provider, 1)
@@ -222,10 +220,10 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    const releaseStartedMS = performance.now()
    const park = await model.session.enqueue(fixtureInput("park"), undefined, { signal })
    assert.equal((await park.wait({ signal })).status, "completed")
-   assert.deepEqual((await park.retrieve({ signal })).result, { parked: true, nonce: modelState["nonce"], pid: modelState["pid"], count: cycle })
+   assert.deepEqual((await park.get({ signal })).result, { parked: true, nonce: modelState["nonce"], pid: modelState["pid"], count: cycle })
    await holding.send(fixtureInput("release"), undefined, { signal })
    peerOutcome = await holding.wait({ signal }); assert.equal(peerOutcome.status, "completed")
-   const peerState = (await holding.retrieve({ signal })).result as Record<string, unknown>
+   const peerState = (await holding.get({ signal })).result as Record<string, unknown>
    if (priorPeer) { for (const key of ["pid", "nonce"]) assert.equal(peerState[key], priorPeer[key]); assert(Number(peerState["count"]) > Number(priorPeer["count"])) }
    priorPeer = peerState
    let checkpoint: { computerId: string; checkpointId: string; sourceEpoch: number; sourceFenced: boolean; observedAt: string; unfencedLeases: number; status: string; runtimeObjects: { role: string; digest: string; sizeBytes: number }[] }
@@ -284,7 +282,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
     const holds: Record<string, string> = {}
     for (const session of sessions) {
      for (;;) {
-      const state = await session.retrieve({ signal })
+      const state = await session.get({ signal })
       if (state.holds.length) {
        assert.equal(state.holds.length, 1)
        const hold = state.holds[0]!
@@ -300,13 +298,13 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
     // this case proves no automatic reconstruction or accepted-input replay.
     const heldAt = performance.now()
     for (let sample = 0; sample < 20; sample++) {
-     for (const turn of queued) assert.equal((await turn.retrieve({ signal })).status, "queued")
-     for (const session of sessions) assert.deepEqual((await session.retrieve({ signal })).holds.map(hold => hold.id), [holds[session.id]])
-     for (const state of turns) assert.deepEqual(await retainedTurns.get(state.id)!.retrieve({ signal }), state)
+     for (const turn of queued) assert.equal((await turn.get({ signal })).status, "queued")
+     for (const session of sessions) assert.deepEqual((await session.get({ signal })).holds.map(hold => hold.id), [holds[session.id]])
+     for (const state of turns) assert.deepEqual(await retainedTurns.get(state.id)!.get({ signal }), state)
      await delay(1000, undefined, { signal })
     }
     process.stdout.write(JSON.stringify({ computerId: computer.id, peerSessionId: peer.session.id, peerTurnId: holding.id, peerSequence, peerOutcome, nativeSessions, nativeLosses: [], turns,
-     checkpointLoss: { checkpoint, fault, holds, queuedTurns: await Promise.all(queued.map(turn => turn.retrieve({ signal }))), heldMs: performance.now() - heldAt } }) + "\n")
+     checkpointLoss: { checkpoint, fault, holds, queuedTurns: await Promise.all(queued.map(turn => turn.get({ signal }))), heldMs: performance.now() - heldAt } }) + "\n")
     return
    }
    // The long-idle case observes two hours with no unfenced lease before resuming.
@@ -323,7 +321,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
      assert(current && current.status === "ready" && current.sourceFenced && current.unfencedLeases === 0, "idle checkpoint lost its released boundary")
      const age = Date.now() - Date.parse(current.observedAt)
      assert(Number.isFinite(age) && age >= -1000 && age < 5000, "idle checkpoint observation is stale")
-     for (const state of turns) assert.deepEqual(await retainedTurns.get(state.id)!.retrieve({ signal }), state)
+     for (const state of turns) assert.deepEqual(await retainedTurns.get(state.id)!.get({ signal }), state)
      idleSamples++
     }
    } while (performance.now() - idleStarted < requestedIdleMs)
@@ -354,9 +352,9 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
     keyFault = await keyReceipt("fault")
     const pausedAt = performance.now()
     for (let sample = 0; sample < 20; sample++) {
-     assert.equal((await holding.retrieve({ signal })).status, "queued")
-     for (const session of sessions) assert.deepEqual((await session.retrieve({ signal })).holds, [])
-     for (const state of turns) assert.deepEqual(await retainedTurns.get(state.id)!.retrieve({ signal }), state)
+     assert.equal((await holding.get({ signal })).status, "queued")
+     for (const session of sessions) assert.deepEqual((await session.get({ signal })).holds, [])
+     for (const state of turns) assert.deepEqual(await retainedTurns.get(state.id)!.get({ signal }), state)
      // The pause receipt and checkpoint sampler are independent readers. Require
      // a sample taken after this check starts, then assert its state unchanged.
      const sampleStarted = Date.now()
@@ -386,7 +384,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    }
    const modelTurn = await model.session.enqueue(fixtureInput(modelInput), undefined, { signal })
    const modelOutcome = await modelTurn.wait({ signal }); assert.equal(modelOutcome.status, "completed")
-   const restoredModel = (await modelTurn.retrieve({ signal })).result as Record<string, unknown>
+   const restoredModel = (await modelTurn.get({ signal })).result as Record<string, unknown>
    for (const key of ["pid", "nonce"]) assert.equal(restoredModel[key], modelState[key], `model ${key} changed`)
    assert.equal(restoredModel["count"], cycle + 1)
    const before = Object.fromEntries(Object.entries(native).map(([provider, value]) => [provider, value.previous]))
@@ -405,20 +403,20 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
   if (options.secretBindings) {
    assert.equal(secretChecks, 3)
    const pending = await peer.session.enqueue(fixtureInput("retained-after-revocation"), undefined, { signal })
-   assert.equal((await pending.retrieve({ signal })).status, "queued")
-   assert.equal((await holding.retrieve({ signal })).status, "running")
-   assert.deepEqual((await peer.session.retrieve({ signal })).holds, [])
+   assert.equal((await pending.get({ signal })).status, "queued")
+   assert.equal((await holding.get({ signal })).status, "running")
+   assert.deepEqual((await peer.session.get({ signal })).holds, [])
    assert.equal((await client.secrets.ref(secretIds[0]!).revoke({ idempotencyKey: "revoke-exposed-raw" }, { signal })).status, "revoked")
    peerOutcome = await holding.wait({ signal }); assert.equal(peerOutcome.status, "interrupted")
-   const held = await peer.session.retrieve({ signal })
+   const held = await peer.session.get({ signal })
    assert.equal(held.holds.length, 1)
    assert.equal(held.holds[0]!.sessionId, peer.session.id)
    assert.equal(held.holds[0]!.scope, "local")
    assert.equal(held.holds[0]!.reason, "Computer exposed to a revoked Secret")
    for (let sample = 0; sample < 10; sample++) {
-    const queued = await pending.retrieve({ signal })
+    const queued = await pending.get({ signal })
     assert.equal(queued.status, "queued"); assert.equal(queued.startedAt, undefined)
-    assert.deepEqual((await peer.session.retrieve({ signal })).holds, held.holds)
+    assert.deepEqual((await peer.session.get({ signal })).holds, held.holds)
     await delay(100, undefined, { signal })
    }
    await peer.session.cancel({ idempotencyKey: "cancel-revoked-queue" }, { signal })
@@ -430,7 +428,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
   assert.equal(new Set(turns.map(turn => turn.completionSaveId)).size, turns.length)
   for (const state of turns) {
    const retained = retainedTurns.get(state.id)!
-   assert.deepEqual(await retained.retrieve({ signal }), state)
+   assert.deepEqual(await retained.get({ signal }), state)
   }
   process.stdout.write(JSON.stringify({ computerId: computer.id, peerSessionId: peer.session.id, peerTurnId: holding.id, peerSequence, peerOutcome, nativeSessions, nativeLosses: [], turns, continuations, discovery, ...(options.performanceKind ? { firstOutputSemantics: "first authored workload result before handler return; includes native operation and client observation delay", initialPeerTiming, clientTimings: [...clientTimings.values()], nativeEvents } : {}), ...(options.secretBindings ? { secretBindings: { ids: secretIds, checks: secretChecks, rotatedWhileReleased: true, revocation: secretRevocation } } : {}) }) + "\n")
  } finally {

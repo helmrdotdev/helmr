@@ -146,8 +146,8 @@ test("progress wait reads canonical Content through the SDK before terminal sett
   } })
   try {
     const client = new HelmrClient({ url: server.url.toString(), apiKey: "fixture" })
-    const session = client.sessions.get(sessionID)
-    expect(await waitOutput(session, session.turn(turnID), value => value === null, 1000)).toBeNull()
+    const session = client.sessions.ref(sessionID)
+    expect(await waitOutput(session, session.turns.ref(turnID), value => value === null, 1000)).toBeNull()
     expect(cursors).toEqual(["0", "1"])
   } finally { server.stop(true) }
 })

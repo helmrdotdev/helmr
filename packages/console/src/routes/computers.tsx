@@ -29,7 +29,7 @@ function ComputerRow(props: { computer: ComputerListItem }) {
           {(key) => <code>{key()}</code>}
         </Show>
       </td>
-      <td><span class={ui.muted}>{props.computer.definition_key}</span></td>
+      <td><span class={ui.muted}>{props.computer.definition_id}</span></td>
       <td><StatusBadge resource="computer" status={props.computer.status} /><span class="ml-2">{props.computer.residency}</span></td>
       <td><RelativeTime value={props.computer.last_activity_at} /></td>
       <td><RelativeTime value={props.computer.created_at} /></td>
@@ -58,7 +58,7 @@ export function Computers() {
     <section class={ui.page}>
       <PageHeader
         title="Computers"
-        subtitle="Durable Computers created from Computer definitions in the selected environment."
+        subtitle="Durable execution environments for Sessions, commands, and files."
       />
 
       <Show when={computers.isError}>

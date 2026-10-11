@@ -11,10 +11,10 @@ export const durabilityComputer = computer({
 
 export const durabilityAgent = agent({
   id: "computer-durability", computer: durabilityComputer, maxTurnDuration: "10m",
-  setup: () => ({ runtimeNonce: randomUUID(), count: 0, path: `/root/helmr-durability/${randomUUID()}`, marker: "" }),
+  init: () => ({ runtimeNonce: randomUUID(), count: 0, path: `/root/helmr-durability/${randomUUID()}`, marker: "" }),
   turn: async (turn, ctx) => {
     const { marker } = z.object({ marker: z.string().min(1) }).strict().parse(fixtureValue(turn.input))
-    const memory = ctx.setupResult
+    const memory = ctx.initResult
     const { runtimeNonce, path } = memory
     const count = ++memory.count
     if (count === 1) {

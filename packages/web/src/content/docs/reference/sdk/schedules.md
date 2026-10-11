@@ -39,7 +39,7 @@ and channel access, then pins that connection. Each fire starts an independent
 Session on a fresh Computer with an explicit Slack opening when routed;
 the handler receives the declared input without a synthetic schedule payload.
 
-`client.schedules.retrieve(id)` reads one Schedule.
+`client.schedules.get(id)` reads one Schedule.
 `client.schedules.list({ agentId?, cursor?, limit? })` pages records; `agentId`
 is an Agent UUID and limits range from 1 to 100. Results include `id`, `agentId`,
 `deploymentId`, `triggerKey`, `input`, `cron`, `activeFrom`, optional `activeUntil`

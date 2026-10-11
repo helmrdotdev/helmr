@@ -40,5 +40,5 @@ export function parseAskReceipt(value: unknown): AskResponseReceipt { return par
 export function parseAskPage(value: unknown): AskPage {
   const v = object(value)
   if (!Array.isArray(v["asks"]) || (v["next_cursor"] !== undefined && (typeof v["next_cursor"] !== "string" || !v["next_cursor"]))) throw new Error("Invalid ask page")
-  return Object.freeze({ asks: Object.freeze(v["asks"].map(parseAsk)), ...(v["next_cursor"] === undefined ? {} : { nextCursor: v["next_cursor"] as string }) })
+  return Object.freeze({ items: Object.freeze(v["asks"].map(parseAsk)), ...(v["next_cursor"] === undefined ? {} : { nextCursor: v["next_cursor"] as string }) })
 }

@@ -65,7 +65,7 @@ export const helperCaller = agent({
 const continuityInput = z.object({ marker: z.string().min(1), childComputerId: z.string().min(1) }).strict()
 export const helperContinuity = agent({
   id: "helper-continuity", computer: helperCallerComputer, maxTurnDuration: "10m",
-  setup: () => ({ count: 0 }),
+  init: () => ({ count: 0 }),
   turn: async (turn, ctx) => {
     const input = continuityInput.parse(fixtureValue(turn.input))
     const child = await callMcp<ManagedAdmission>(turn.signal, "spawn", {
@@ -73,7 +73,7 @@ export const helperContinuity = agent({
     })
     const outcome = await waitManagedTurn(turn.signal, child.sessionId, child.turnId)
     if (outcome.status !== "completed" || !outcome.result) throw new Error(`Helper did not complete: ${JSON.stringify(outcome)}`)
-    const result = { marker: (outcome.result as {marker:string}).marker, childTurnId: child.turnId, childSessionId: child.sessionId, turnId: turn.id, count: ++ctx.setupResult.count }
+    const result = { marker: (outcome.result as {marker:string}).marker, childTurnId: child.turnId, childSessionId: child.sessionId, turnId: turn.id, count: ++ctx.initResult.count }
     await turn.output.write([{ type: "json", value: result }])
     return result
   },

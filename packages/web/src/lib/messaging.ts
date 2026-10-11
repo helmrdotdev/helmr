@@ -35,25 +35,25 @@ export const harnesses = [
     key: "claude", name: "Claude Agent SDK", meta: "application adapter · Claude Agent SDK", icon: logos.claude,
     imports: `import { ClaudeHarness } from "./claude-harness"
 import { createRuntimeMcpConnection } from "@helmr/sdk/mcp"`,
-    turn: "  async turn(turn, { setupResult }) {",
-    setup: `  async setup(context) {
+    turn: "  async turn(turn, { initResult }) {",
+    setup: `  async init(context) {
     const mcp = await createRuntimeMcpConnection()
     return ClaudeHarness.open("/workspace/repository", context.session.id,
       process.env, { helmr: { type: "http", url: mcp.url, headers: mcp.headers } })
   },`,
-    agent: "    return setupResult.run(turn, brief)",
+    agent: "    return initResult.run(turn, brief)",
   },
   {
     key: "codex", name: "Codex", meta: "application adapter · Codex", icon: logos.openai,
     imports: `import { CodexHarness } from "./codex-harness"
 import { createRuntimeMcpConnection } from "@helmr/sdk/mcp"`,
-    turn: "  async turn(turn, { setupResult }) {",
-    setup: `  async setup(context) {
+    turn: "  async turn(turn, { initResult }) {",
+    setup: `  async init(context) {
     const mcp = await createRuntimeMcpConnection()
     return CodexHarness.open("/workspace/repository", context.session.id,
       process.env, mcp)
   },`,
-    agent: "    return setupResult.run(turn, brief)",
+    agent: "    return initResult.run(turn, brief)",
   },
   {
     key: "own", name: "Your own harness", meta: "application code · implement runMyAgent", icon: null,
@@ -83,7 +83,7 @@ export async function start(client: HelmrClient, input: InputContent, channelId:
     code: `// After deployment, from an authenticated shell:
 // helmr agent start AGENT_ID --project agents --env development \\
 //   --input-json '[{"type":"text","text":"Review the latest changes."}]'
-// Inspect questions with: helmr session turn ask list SESSION_ID TURN_ID
+// Inspect questions with: helmr session turn ask list --session SESSION_ID --turn TURN_ID
 // Include --project agents --env development for each command.`,
   },
   {

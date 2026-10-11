@@ -21,7 +21,7 @@ export interface Schedule {
 export type ScheduleListQuery = Readonly<{ agentId?: string; cursor?: string; limit?: number }>
 
 export interface ClientSchedulesApi {
-  retrieve(
+  get(
     scheduleId: string,
     options?: RequestOptions,
   ): Promise<Schedule>
@@ -43,7 +43,7 @@ export function createClientSchedules(
   transport: ScheduleTransport,
 ): ClientSchedulesApi {
   return Object.freeze({
-    async retrieve(
+    async get(
       scheduleId: string,
       options: RequestOptions = {},
     ): Promise<Schedule> {

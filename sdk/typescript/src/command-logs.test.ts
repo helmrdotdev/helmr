@@ -11,7 +11,7 @@ test("logs reads one finite page without retrieving or waiting for command state
     requests.push(`${method} ${path}`)
     return { output_state: "open", logs: [{ kind: "output", stream: "stdout", cursor: "next", content_base64: "AP8=", observed_at: record.observedAt }], next_cursor: "next" }
   } })
-  expect(await command.logs({ cursor: "old", limit: 1 })).toEqual({ items: [record], nextCursor: "next" })
+  expect(await command.logs.list({ cursor: "old", limit: 1 })).toEqual({ outputState: "open", items: [record], nextCursor: "next" })
   expect(requests).toEqual([`GET /v1/commands/${id}/logs?cursor=old&limit=1`])
 })
 

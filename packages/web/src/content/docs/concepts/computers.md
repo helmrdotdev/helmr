@@ -24,13 +24,11 @@ files; different Computers have separate execution and filesystem state. Workloa
 within one Environment remain mutually trusted.
 
 ```ts
-const computer = await client.computerDefinitions.createComputer(
-  "repository-agent",
-  {
-    key: "repo:helmrdotdev/helmr",
-    idempotencyKey: "computer:helmrdotdev/helmr",
-  },
-)
+const computer = await client.computers.create({
+  definition: "repository-agent",
+  key: "repo:helmrdotdev/helmr",
+  idempotencyKey: "computer:helmrdotdev/helmr",
+})
 
 const command = await computer.exec({
   command: ["git", "status", "--short"],
@@ -42,7 +40,7 @@ const outcome = await command.wait()
 ```
 
 The external client returns a Command handle after admission. Use `wait()` for
-its terminal outcome and `logs()` or `streamLogs()` for output. Reconnect with
+its terminal outcome and `logs.list()` or `logs.stream()` for output. Reconnect with
 `client.commands.ref(command.id)`. Commands have their own identity and logs;
 they have a lifecycle independent of Agent Turns. Exec accepts explicit argv, optional cwd, environment,
 stdin, timeout, and a required idempotency key.

@@ -90,17 +90,17 @@ func assertAgentCLIHTTP(t *testing.T, serverURL, key, owner, project, environmen
 		t.Fatalf("CLI enqueue=%+v err=%v", next, err)
 	}
 	var turn api.AgentTurn
-	if err := json.Unmarshal(run("session", "turn", "get", first.SessionID, next.TurnID, "--json"), &turn); err != nil || string(turn.Input) != "[]" || turn.Status != "queued" {
+	if err := json.Unmarshal(run("session", "turn", "get", next.TurnID, "--session", first.SessionID, "--json"), &turn); err != nil || string(turn.Input) != "[]" || turn.Status != "queued" {
 		t.Fatalf("CLI turn=%+v err=%v", turn, err)
 	}
 	var turns api.AgentTurnsPage
-	if err := json.Unmarshal(run("session", "turn", "list", first.SessionID, "--limit", "1", "--json"), &turns); err != nil || turns.NextCursor != "1" || len(turns.Turns) != 1 {
+	if err := json.Unmarshal(run("session", "turn", "list", "--session", first.SessionID, "--limit", "1", "--json"), &turns); err != nil || turns.NextCursor != "1" || len(turns.Turns) != 1 {
 		t.Fatalf("CLI turns=%+v err=%v", turns, err)
 	}
 	var observation struct {
 		Status string `json:"status"`
 	}
-	if err := json.Unmarshal(run("session", "turn", "wait", first.SessionID, next.TurnID, "--timeout", "100ms", "--json"), &observation); err != nil || observation.Status != "timeout" {
+	if err := json.Unmarshal(run("session", "turn", "wait", next.TurnID, "--session", first.SessionID, "--timeout", "100ms", "--json"), &observation); err != nil || observation.Status != "timeout" {
 		t.Fatalf("CLI bounded wait=%+v err=%v", observation, err)
 	}
 	var receipt api.SessionInterruptReceipt

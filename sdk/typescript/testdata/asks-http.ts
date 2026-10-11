@@ -2,13 +2,13 @@ import assert from "node:assert/strict"
 import { HelmrClient } from "../src/index"
 const config = await Bun.stdin.json() as { url: string; apiKey: string; sessionId: string; turnId: string; askId: string }
 const client = new HelmrClient({ url: config.url, apiKey: config.apiKey })
-const asks = client.sessions.get(config.sessionId).turn(config.turnId).asks
+const asks = client.sessions.ref(config.sessionId).turns.ref(config.turnId).asks
 const first = await asks.list({ limit: 1 })
-assert.equal(first.asks.length, 1)
+assert.equal(first.items.length, 1)
 assert.ok(first.nextCursor)
 const second = await asks.list({ limit: 1, cursor: first.nextCursor })
-assert.equal(second.asks.length, 1)
-assert.notEqual(second.asks[0]!.id, first.asks[0]!.id)
+assert.equal(second.items.length, 1)
+assert.notEqual(second.items[0]!.id, first.items[0]!.id)
 const pending = await asks.get(config.askId)
 assert.equal(pending.status, "pending")
 assert.deepEqual(pending.prompt, [{ type: "text", text: "keep\0雪" }])

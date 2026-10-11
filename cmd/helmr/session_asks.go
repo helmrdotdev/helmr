@@ -16,10 +16,11 @@ func sessionTurnAskCommand() *cobra.Command {
 }
 
 func sessionTurnAskListCommand() *cobra.Command {
+	var sessionID, turnID string
 	var project, environment, cursor string
 	var limit int32
 	var jsonOutput bool
-	cmd := &cobra.Command{Use: "list SESSION_ID TURN_ID", Short: "Read one page of questions for a Turn.", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "list --session SESSION_ID --turn TURN_ID", Short: "Read one page of questions for a Turn.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("limit") && limit < 1 {
 			return errors.New("--limit must be in [1,100]")
 		}
@@ -27,7 +28,7 @@ func sessionTurnAskListCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		page, err := cp.ListTurnAsks(cmd.Context(), args[0], args[1], client.AskListOptions{Cursor: cursor, Limit: limit, EnvironmentScopeOptions: scope})
+		page, err := cp.ListTurnAsks(cmd.Context(), sessionID, turnID, client.AskListOptions{Cursor: cursor, Limit: limit, EnvironmentScopeOptions: scope})
 		if err != nil {
 			return err
 		}
@@ -42,6 +43,10 @@ func sessionTurnAskListCommand() *cobra.Command {
 		}
 		return nil
 	}}
+	cmd.Flags().StringVar(&sessionID, "session", "", "Parent Session ID.")
+	_ = cmd.MarkFlagRequired("session")
+	cmd.Flags().StringVar(&turnID, "turn", "", "Parent Turn ID.")
+	_ = cmd.MarkFlagRequired("turn")
 	addScopeFlags(cmd, &project, &environment)
 	cmd.Flags().StringVar(&cursor, "cursor", "", "Continuation cursor from the previous page.")
 	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum questions (default 50, maximum 100).")
@@ -50,14 +55,15 @@ func sessionTurnAskListCommand() *cobra.Command {
 }
 
 func sessionTurnAskGetCommand() *cobra.Command {
+	var sessionID, turnID string
 	var project, environment string
 	var jsonOutput bool
-	cmd := &cobra.Command{Use: "get SESSION_ID TURN_ID ASK_ID", Short: "Inspect a question and its answer control.", Args: cobra.ExactArgs(3), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "get ASK_ID --session SESSION_ID --turn TURN_ID", Short: "Inspect a question and its answer control.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		cp, scope, err := scopedSessionClient(cmd, project, environment)
 		if err != nil {
 			return err
 		}
-		ask, err := cp.GetTurnAsk(cmd.Context(), args[0], args[1], args[2], scope)
+		ask, err := cp.GetTurnAsk(cmd.Context(), sessionID, turnID, args[0], scope)
 		if err != nil {
 			return err
 		}
@@ -79,15 +85,20 @@ func sessionTurnAskGetCommand() *cobra.Command {
 		}
 		return nil
 	}}
+	cmd.Flags().StringVar(&sessionID, "session", "", "Parent Session ID.")
+	_ = cmd.MarkFlagRequired("session")
+	cmd.Flags().StringVar(&turnID, "turn", "", "Parent Turn ID.")
+	_ = cmd.MarkFlagRequired("turn")
 	addScopeFlags(cmd, &project, &environment)
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON question.")
 	return cmd
 }
 
 func sessionTurnAskRespondCommand() *cobra.Command {
+	var sessionID, turnID string
 	var project, environment, answerFile, answerJSON, responseID string
 	var jsonOutput bool
-	cmd := &cobra.Command{Use: "respond SESSION_ID TURN_ID ASK_ID", Short: "Answer exactly this question using current response authority.", Args: cobra.ExactArgs(3), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "respond ASK_ID --session SESSION_ID --turn TURN_ID", Short: "Answer exactly this question using current response authority.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		answer, err := parseOptionalJSON(answerFile, answerJSON, "--answer")
 		if err != nil {
 			return err
@@ -99,7 +110,7 @@ func sessionTurnAskRespondCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		receipt, err := cp.RespondTurnAsk(cmd.Context(), args[0], args[1], args[2], api.RespondAgentAskRequest{Answer: answer, ResponseID: responseID}, scope)
+		receipt, err := cp.RespondTurnAsk(cmd.Context(), sessionID, turnID, args[0], api.RespondAgentAskRequest{Answer: answer, ResponseID: responseID}, scope)
 		if err != nil {
 			return err
 		}
@@ -109,6 +120,10 @@ func sessionTurnAskRespondCommand() *cobra.Command {
 		fmt.Fprintf(cmd.OutOrStdout(), "ask_id: %s\nstatus: %s\n", receipt.ID, receipt.Status)
 		return nil
 	}}
+	cmd.Flags().StringVar(&sessionID, "session", "", "Parent Session ID.")
+	_ = cmd.MarkFlagRequired("session")
+	cmd.Flags().StringVar(&turnID, "turn", "", "Parent Turn ID.")
+	_ = cmd.MarkFlagRequired("turn")
 	addScopeFlags(cmd, &project, &environment)
 	cmd.Flags().StringVar(&answerFile, "answer-file", "", "Read answer JSON from a file.")
 	cmd.Flags().StringVar(&answerJSON, "answer-json", "", "Inline answer JSON literal.")

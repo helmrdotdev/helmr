@@ -7,10 +7,10 @@ import { verificationComputer } from "../agent/task"
 
 export const verificationSession = agent({
   id: "verification-session", computer: verificationComputer, maxTurnDuration: "10m",
-  setup: () => ({ nonce: randomUUID(), count: 0, marker: "" }),
+  init: () => ({ nonce: randomUUID(), count: 0, marker: "" }),
   turn: async (turn, ctx) => {
     const input = z.object({ marker: z.string().uuid() }).strict().parse(fixtureValue(turn.input))
-    const memory = ctx.setupResult
+    const memory = ctx.initResult
     const file = `/root/verification-session-${memory.nonce}.json`
     memory.count += 1
     if (memory.count === 1) {

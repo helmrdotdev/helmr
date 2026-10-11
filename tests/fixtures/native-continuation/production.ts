@@ -30,7 +30,7 @@ function native(definition: typeof nativeCodex) {
   return agent({
     id: definition.id,
     computer: workspace,
-    async setup(context) {
+    async init(context) {
       // Observe the ordinary launcher without replacing its authority or process
       // admission. This fixture kills only the exact proxy handle it receives;
       // guest PID metadata is never used as a signal target.
@@ -44,8 +44,8 @@ function native(definition: typeof nativeCodex) {
         return nativeProcess = original.spawn(...args)
       } }
       target[key] = observed
-      let state: Awaited<ReturnType<typeof definition.setup>>
-      try { state = await definition.setup(context) }
+      let state: Awaited<ReturnType<typeof definition.init>>
+      try { state = await definition.init(context) }
       finally { assert.equal(target[key], observed); target[key] = original }
       assert(nativeProcess)
       const path = `/workspace/${context.session.id}/setup-count.json`
@@ -67,7 +67,7 @@ function native(definition: typeof nativeCodex) {
         await turn.onMessage(message => { assert.equal(fixtureValue(message), "lose-native-proxy"); release() })
         await turn.output.write("native proxy loss ready")
         await requested
-        const child = context.setupResult.nativeProcess.child
+        const child = context.initResult.nativeProcess.child
         assert.equal(child.exitCode, null)
         assert.equal(child.signalCode, null)
         const exited = new Promise<void>(resolve => child.once("close", () => resolve()))
@@ -85,10 +85,10 @@ function native(definition: typeof nativeCodex) {
       const nativeResult = await definition.turn(turn, context)
       const saved = await conversation(`/workspace/${context.session.id}`, context.session.id, definition.id)
       assert(saved.id, "successful native Turn has no established conversation")
-      const identity = await context.setupResult.nativeProcess.ready
+      const identity = await context.initResult.nativeProcess.ready
       const workload = performanceKind ? JSON.parse(await readFile(`/workspace/${context.session.id}/performance-result-${turn.sequence}.json`, "utf8")) : undefined
       if (workload) { assert.equal(workload.kind, performanceKind); assert.equal(workload.sequence, turn.sequence) }
-      const result = { ...nativeResult, setupCount: context.setupResult.setupCount, nativeConversationId: saved.id, nativeScopeId: identity.scopeId, ...(workload ? { workload } : {}) }
+      const result = { ...nativeResult, setupCount: context.initResult.setupCount, nativeConversationId: saved.id, nativeScopeId: identity.scopeId, ...(workload ? { workload } : {}) }
       await turn.output.write([{ type: "json", value: result }])
       await writeFile(`/workspace/${context.session.id}/result-${turn.sequence}.json`, JSON.stringify(result))
       return result
@@ -119,8 +119,8 @@ export const receipt = agent<InputContent, Json, unknown>({
 export const peer = agent({
   id: "peer",
   computer: workspace,
-  setup: () => ({ nonce: crypto.randomUUID(), count: 0, discovery: undefined as DiscoveryState | undefined, secrets: undefined as SecretBindingState | undefined }),
-  async turn(turn, { setupResult: state, session, computer }): Promise<Json> {
+  init: () => ({ nonce: crypto.randomUUID(), count: 0, discovery: undefined as DiscoveryState | undefined, secrets: undefined as SecretBindingState | undefined }),
+  async turn(turn, { initResult: state, session, computer }): Promise<Json> {
     const input = fixtureValue(turn.input)
     const secretInput = input !== null && typeof input === "object" && !Array.isArray(input) && "kind" in input && input["kind"] === "hold-secrets"
     const performanceProbe = input === "hold-performance"
@@ -159,13 +159,13 @@ export const peer = agent({
 // request history and setup state in RAM; reopen the same ports after restoration.
 export const models = agent({
   id: "models", computer: workspace,
-  async setup() {
+  async init() {
     const target = { session: "", performance: false }
     const model = await startNativeModels(() => { assert(target.session); return target.session }, undefined, undefined, () => target.performance)
     await writeFile("/workspace/native-models.json", JSON.stringify(model.endpoints))
     return { ...model, target, nonce: crypto.randomUUID(), count: 0 }
   },
-  async turn(turn, { setupResult: state }): Promise<Json> {
+  async turn(turn, { initResult: state }): Promise<Json> {
     const input = fixtureValue(turn.input)
     assert(typeof input === "string" || (input && typeof input === "object" && !Array.isArray(input)))
     if (input === "park") {

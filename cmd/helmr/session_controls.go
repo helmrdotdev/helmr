@@ -49,16 +49,17 @@ func sessionTurnCommand() *cobra.Command {
 }
 
 func sessionTurnGetCommand() *cobra.Command {
+	var sessionID string
 	var projectID, environmentID string
 	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use: "get SESSION_ID TURN_ID", Short: "Show Turn outcome and message readiness.", Args: cobra.ExactArgs(2),
+		Use: "get TURN_ID --session SESSION_ID", Short: "Show Turn outcome and message readiness.", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			controlPlane, scope, err := scopedSessionClient(cmd, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			turn, err := controlPlane.RetrieveSessionTurn(cmd.Context(), args[0], args[1], scope)
+			turn, err := controlPlane.RetrieveSessionTurn(cmd.Context(), sessionID, args[0], scope)
 			if err != nil {
 				return err
 			}
@@ -87,16 +88,19 @@ func sessionTurnGetCommand() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&sessionID, "session", "", "Parent Session ID.")
+	_ = cmd.MarkFlagRequired("session")
 	addScopeFlags(cmd, &projectID, &environmentID)
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	return cmd
 }
 
 func sessionTurnSendCommand() *cobra.Command {
+	var sessionID string
 	var projectID, environmentID, dataFile, dataJSON, key string
 	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use: "send SESSION_ID TURN_ID", Short: "Send a message to exactly this Turn; never retarget it.", Args: cobra.ExactArgs(2),
+		Use: "send TURN_ID --session SESSION_ID", Short: "Send a message to exactly this Turn; never retarget it.", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			data, err := parseContentInput(cmd, dataFile, dataJSON, "--data")
 			if err != nil {
@@ -106,7 +110,7 @@ func sessionTurnSendCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			receipt, err := controlPlane.SendSessionMessage(cmd.Context(), args[0], args[1], api.SessionDataRequest{Data: data, IdempotencyKey: strings.TrimSpace(key)}, scope)
+			receipt, err := controlPlane.SendSessionMessage(cmd.Context(), sessionID, args[0], api.SessionDataRequest{Data: data, IdempotencyKey: strings.TrimSpace(key)}, scope)
 			if err != nil {
 				return err
 			}
@@ -117,6 +121,8 @@ func sessionTurnSendCommand() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&sessionID, "session", "", "Parent Session ID.")
+	_ = cmd.MarkFlagRequired("session")
 	addScopeFlags(cmd, &projectID, &environmentID)
 	cmd.Flags().StringVar(&dataFile, "data-file", "", "Read text-part array JSON from a file.")
 	cmd.Flags().StringVar(&dataJSON, "data-json", "", "Inline text-part array JSON literal.")

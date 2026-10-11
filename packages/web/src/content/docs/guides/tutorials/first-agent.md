@@ -68,8 +68,8 @@ and exact input.
 
 ```sh
 helmr session events SESSION_ID --project demo --env development --after 0 --json
-helmr session turn wait SESSION_ID TURN_ID --project demo --env development --timeout 10m --json
-helmr session turn get SESSION_ID TURN_ID --project demo --env development --json
+helmr session turn wait TURN_ID --session SESSION_ID --project demo --env development --timeout 10m --json
+helmr session turn get TURN_ID --session SESSION_ID --project demo --env development --json
 ```
 
 Events are readable during processing and finalization. A wait timeout leaves the

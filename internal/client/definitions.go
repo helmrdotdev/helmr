@@ -66,9 +66,9 @@ func (c *Client) definitionPath(collection, id string, opts DefinitionGetOptions
 	return path, nil
 }
 
-func (c *Client) ListAgents(ctx context.Context, opts DefinitionListOptions) (api.ListAgentsResponse, error) {
-	result := api.ListAgentsResponse{Agents: []api.DefinitionListItem{}}
-	path, err := c.definitionListPath("/agents", opts)
+func (c *Client) ListAgentDefinitions(ctx context.Context, opts DefinitionListOptions) (api.ListAgentDefinitionsResponse, error) {
+	result := api.ListAgentDefinitionsResponse{AgentDefinitions: []api.AgentDefinitionListItem{}}
+	path, err := c.definitionListPath("/agent-definitions", opts)
 	if err != nil {
 		return result, err
 	}
@@ -80,12 +80,12 @@ func (c *Client) ListAgents(ctx context.Context, opts DefinitionListOptions) (ap
 	return result, err
 }
 
-func (c *Client) GetAgent(ctx context.Context, id string, opts DefinitionGetOptions) (api.AgentDefinition, error) {
+func (c *Client) GetAgentDefinition(ctx context.Context, id string, opts DefinitionGetOptions) (api.AgentDefinition, error) {
 	var result api.AgentDefinition
 	if err := api.ValidateDefinitionID(id); err != nil {
 		return result, err
 	}
-	path, err := c.definitionPath("/agents", id, opts)
+	path, err := c.definitionPath("/agent-definitions", id, opts)
 	if err != nil {
 		return result, err
 	}

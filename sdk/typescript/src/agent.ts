@@ -8,10 +8,11 @@ import type { HumanContent, InputContent } from "./content"
 import type { ImageBuilder } from "./image"
 
 export type Json = JsonValue
-export type Duration = string | number
+export type { Duration } from "./duration"
+import type { Duration } from "./duration"
 export type MaybePromise<T> = T | Promise<T>
 
-export interface ComputerRef { readonly id: string }
+export interface ComputerIdentity { readonly id: string }
 export interface BuildContext {
   readonly signal: AbortSignal
   exec(command: string | readonly string[], options?: { cwd?: string; env?: Record<string, string> }): Promise<void>
@@ -52,14 +53,14 @@ export interface Turn<I extends InputContent = InputContent> {
   onMessage(handler: (message: InputContent) => MaybePromise<void>): Promise<void>
   ask<C extends AnswerControl>(question: Question<C>, options?: { signal?: AbortSignal }): Promise<AskResponse<AnswerFor<C>>>
 }
-export interface SetupContext {
+export interface InitContext {
   readonly session: Readonly<{ id: string; key?: string; parent?: Readonly<{ id: string }> }>
-  readonly computer: ComputerRef
+  readonly computer: ComputerIdentity
   readonly deployment: Readonly<{ id: string }>
   readonly recovery: Readonly<{ kind: "initial" | "reconstructed"; reason?: string }>
   readonly signal: AbortSignal
 }
-export interface AgentContext<S> extends SetupContext { readonly setupResult: S }
+export interface AgentContext<S> extends InitContext { readonly initResult: S }
 export interface CronTrigger<I extends InputContent = InputContent> {
   readonly slack?: Readonly<{ channelId: string }>
   readonly id: string
@@ -78,7 +79,7 @@ export interface AgentDefinition<I extends InputContent = InputContent, O extend
   readonly kind: "agent"
   readonly id: string
   readonly computer: ComputerDefinition
-  readonly setup?: (ctx: SetupContext) => MaybePromise<S>
+  readonly init?: (ctx: InitContext) => MaybePromise<S>
   readonly turn: (turn: Turn<I>, ctx: AgentContext<S>) => MaybePromise<O>
   readonly closeAfterIdle?: Duration
   readonly maxTurnDuration?: Duration

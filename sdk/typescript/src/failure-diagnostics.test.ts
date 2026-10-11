@@ -18,7 +18,7 @@ describe("Turn error read boundary", () => {
       url: "https://api.example.test", apiKey: "key",
       fetch: (async () => Response.json(response)) as typeof fetch,
     })
-    return (await client.sessions.get(sessionId).turn(turnId).retrieve()).error
+    return (await client.sessions.ref(sessionId).turns.ref(turnId).get()).error
   }
 
   for (const code of ["future_diagnostic", " ", "future/診断", "x".repeat(129)]) {

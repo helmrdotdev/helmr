@@ -27,7 +27,7 @@ async function progress(after: number, allowQueued = false): Promise<number> {
   for (;;) {
     const page = await peer.session.events.list({ after, limit: 100 }, { signal })
     const output = page.records.find(event => event.turnId === peer.turn.id && event.kind === "turn.output")
-    const status = (await peer.turn.retrieve({ signal })).status
+    const status = (await peer.turn.get({ signal })).status
     assert(status === "running" || (allowQueued && status === "queued"), "peer stopped before native completion")
     if (output) return output.sequence
     after = page.nextAfter
@@ -41,7 +41,7 @@ async function nativeOutcome(turn: TurnRef, provider: string, count: number, out
     let cursor: string | undefined
     do {
       const page = await turn.asks.list({ cursor, limit: 100 }, { signal: outcomeSignal })
-      for (const summary of page.asks) {
+      for (const summary of page.items) {
         if (summary.status !== "pending" || answered.has(summary.id)) continue
         const ask = await turn.asks.get(summary.id, { signal: outcomeSignal })
         assert.equal(provider, "claude", "unexpected native approval")
@@ -71,7 +71,7 @@ async function nativeOutcome(turn: TurnRef, provider: string, count: number, out
 
 try {
   let peerSequence = await progress(0, true)
-  const computer = { id: (await peer.session.retrieve({ signal })).computerId }
+  const computer = { id: (await peer.session.get({ signal })).computerId }
   const commands = client.computers.ref(computer.id)
   if (options.backgroundSaves) {
     const waiting = performance.now()
@@ -96,7 +96,7 @@ try {
             assert(save.peerCounter > previous.peerCounter, "peer stopped progressing between periodic publications")
           }
         }
-        assert.equal((await peer.turn.retrieve({ signal })).status, "running")
+        assert.equal((await peer.turn.get({ signal })).status, "running")
         await writeFile(`${options.evidence}/background-before-native.json`, JSON.stringify({ saves, waitedMs: performance.now() - waiting, peerStatus: "running" }) + "\n", { mode: 0o600 })
         peerSequence = await progress(peerSequence)
         break
@@ -142,8 +142,8 @@ try {
   if (readiness.kind !== "exited" || readiness.exitCode !== 0) {
     const diagnosticSignal = AbortSignal.timeout(5_000)
     const diagnostics = await Promise.allSettled([
-      model.retrieve({ signal: diagnosticSignal }),
-      ready.retrieve({ signal: diagnosticSignal }),
+      model.get({ signal: diagnosticSignal }),
+      ready.get({ signal: diagnosticSignal }),
     ])
     process.stderr.write(JSON.stringify({ modelReadiness: diagnostics.map(result =>
       result.status === "rejected" ? { status: result.status, reason: String(result.reason) } : result,
@@ -237,8 +237,8 @@ try {
     }
     assert.equal(held.sessionId, started.session.id)
     assert.equal(held.turnId, started.turn.id)
-    const reconnected = new HelmrClient({ url: options.url, apiKey: options.apiKey }).sessions.get(started.session.id)
-    const restoredState = await reconnected.turn(started.turn.id).retrieve({ signal: observingSignal })
+    const reconnected = new HelmrClient({ url: options.url, apiKey: options.apiKey }).sessions.ref(started.session.id)
+    const restoredState = await reconnected.turns.ref(started.turn.id).get({ signal: observingSignal })
     assert.equal(restoredState.status, "finalizing")
     assert.equal(restoredState.completionSaveId, undefined)
     const retained = await reconnected.events.list({ after: observedOutput.sequence - 1, limit: 1 }, { signal: observingSignal })
@@ -246,9 +246,9 @@ try {
     const enqueueAt = performance.now()
     const following = await reconnected.enqueue(fixtureInput(secondInput), undefined, { signal: observingSignal })
     const enqueueAckMs = performance.now() - enqueueAt
-    const predecessorAfterFollowupAck = (await reconnected.turn(started.turn.id).retrieve({ signal: observingSignal })).status
+    const predecessorAfterFollowupAck = (await reconnected.turns.ref(started.turn.id).get({ signal: observingSignal })).status
     assert.equal(predecessorAfterFollowupAck, "finalizing", "follow-up ACK was not observed during saving")
-    assert.equal((await following.retrieve({ signal: observingSignal })).status, "queued", "follow-up must wait for its predecessor")
+    assert.equal((await following.get({ signal: observingSignal })).status, "queued", "follow-up must wait for its predecessor")
     const resumedSequences: number[] = []
     for await (const event of reconnected.events.stream({ after: lastConsumedSequence }, { signal: observingSignal })) {
       assert(event.sequence > (resumedSequences.at(-1) ?? lastConsumedSequence), "reconnect replayed a consumed event")
@@ -265,7 +265,7 @@ try {
       const turn = count === 1 ? started.turn : following
       const outcome = await (count === 1 ? firstOutcome : nativeOutcome(turn, provider, count))
       assert.equal(outcome.status, "completed", JSON.stringify(outcome))
-      const state = await turn.retrieve({ signal })
+      const state = await turn.get({ signal })
       assert(state.completionSaveId, "Completed must identify its own mandatory save")
       const result = state.result as Record<string, unknown>
       assert.equal(result["count"], count)
@@ -327,19 +327,19 @@ try {
         assert.equal(held["turnId"], cancelled.id)
         assert.equal(held["sessionId"], started.session.id)
         assert(held["saveId"])
-        assert.equal((await cancelled.retrieve({ signal })).status, "finalizing")
+        assert.equal((await cancelled.get({ signal })).status, "finalizing")
         const queued = await started.session.enqueue(fixtureInput("must not dispatch after cancellation"), undefined, { signal })
-        assert.equal((await queued.retrieve({ signal })).status, "queued")
+        assert.equal((await queued.get({ signal })).status, "queued")
         await started.session.cancel(undefined, { signal })
-        const state = await cancelled.retrieve({ signal })
+        const state = await cancelled.get({ signal })
         assert.equal(state.status, "cancelled")
         assert.equal(state.result, undefined)
         assert.equal(state.completionSaveId, undefined)
-        const next = await queued.retrieve({ signal })
+        const next = await queued.get({ signal })
         assert.equal(next.status, "cancelled")
         assert.equal(next.startedAt, undefined)
         for (const completed of turns.filter(turn => turn.sessionId === started.session.id)) {
-          const current = await started.session.turn(completed.id).retrieve({ signal })
+          const current = await started.session.turns.ref(completed.id).get({ signal })
           assert.equal(current.status, "completed")
           assert.equal(current.completionSaveId, completed.completionSaveId)
           assert.deepEqual(current.result, completed.result)
@@ -357,7 +357,7 @@ try {
         await writeFile(release + ".new", JSON.stringify(proof), { mode: 0o600 })
         await rename(release + ".new", release)
         assert.deepEqual(await readProof(`${options.evidence}/cancel-published-${cancelled.id}.json`), proof)
-        const after = await cancelled.retrieve({ signal })
+        const after = await cancelled.get({ signal })
         assert.equal(after.status, "cancelled")
         assert.equal(after.completionSaveId, undefined)
         assert.equal(after.result, undefined)
@@ -381,14 +381,14 @@ try {
         after = page.nextAfter
         if (!page.hasMore) await delay(100, undefined, { signal })
       }
-      assert.equal((await recovered.retrieve({ signal })).status, "queued")
+      assert.equal((await recovered.get({ signal })).status, "queued")
       process.stderr.write(JSON.stringify({ nativeProcessLossRequested: { provider, sessionId: started.session.id, lostTurnId: lost.id, recoveredTurnId: recovered.id, before: previous } }) + "\n")
       await lost.send(fixtureInput("lose-native-proxy"), undefined, { signal })
       assert.equal((await lost.wait({ signal })).status, "interrupted")
       let holdId: string | undefined
       let holdReason: string | undefined
       for (;;) {
-        const session = await started.session.retrieve({ signal })
+        const session = await started.session.get({ signal })
         if (session.holds.length) {
           assert.equal(session.holds.length, 1, "native loss added multiple holds")
           const hold = session.holds[0]!
@@ -408,7 +408,7 @@ try {
       const heldPeerStart = peerSequence
       for (let sample = 0; sample < 5; sample++) peerSequence = await progress(peerSequence)
       assert(peerSequence > heldPeerStart)
-      assert.equal((await recovered.retrieve({ signal })).status, "queued")
+      assert.equal((await recovered.get({ signal })).status, "queued")
       const inspectSetup = await commands.exec({
         command: ["/usr/local/bin/node", "--input-type=module", "-e", `
           import assert from 'node:assert/strict';
@@ -422,7 +422,7 @@ try {
       await started.session.resume({ holdId, idempotencyKey: `fixture-native-resume-${provider}` }, { signal })
       const resumed = await nativeOutcome(recovered, provider, 3)
       assert.equal(resumed.status, "completed", JSON.stringify(resumed))
-      const state = await recovered.retrieve({ signal })
+      const state = await recovered.get({ signal })
       assert(state.completionSaveId)
       const result = state.result as Record<string, unknown>
       assert.equal(result["count"], 1, "exceptional resume did not reconstruct setup state")
@@ -431,9 +431,9 @@ try {
       assert.notEqual(result["nativePid"], previous["nativePid"])
       assert.notEqual(result["nativeScopeId"], previous["nativeScopeId"])
       assert.equal(result["nativeConversationId"], previous["nativeConversationId"])
-      assert.equal((await lost.retrieve({ signal })).status, "interrupted", "resume replayed the lost Turn")
+      assert.equal((await lost.get({ signal })).status, "interrupted", "resume replayed the lost Turn")
       for (const old of completed) {
-        const current = await started.session.turn(old.id).retrieve({ signal })
+        const current = await started.session.turns.ref(old.id).get({ signal })
         assert.equal(current.status, "completed")
         assert.equal(current.completionSaveId, old.completionSaveId)
         assert.deepEqual(current.result, old.result)
@@ -472,14 +472,14 @@ try {
     assert.equal(held["turnId"], expiring.turn.id)
     assert.equal(held["sessionId"], expiring.session.id)
     assert(held["saveId"] && held["deadlineAt"])
-    assert.equal((await expiring.turn.retrieve({ signal })).status, "finalizing")
+    assert.equal((await expiring.turn.get({ signal })).status, "finalizing")
     for (;;) {
       const page = await peer.session.events.list({ after: peerSequence, limit: 100 }, { signal })
       peerSequence = page.nextAfter
       if (!page.hasMore) break
     }
     const queued = await expiring.session.enqueue(fixtureInput("must stay queued after deadline"), undefined, { signal })
-    assert.equal((await queued.retrieve({ signal })).status, "queued")
+    assert.equal((await queued.get({ signal })).status, "queued")
     let peerAdvances = 0
     for (;;) {
       const waiting = await expiring.turn.wait({ timeout: "500ms", signal })
@@ -488,22 +488,22 @@ try {
         break
       }
       peerSequence = await progress(peerSequence)
-      if ((await expiring.turn.retrieve({ signal })).status === "finalizing") peerAdvances++
+      if ((await expiring.turn.get({ signal })).status === "finalizing") peerAdvances++
     }
     assert(peerAdvances >= 2, "deadline did not leave an observed interval of active peer work")
-    const stopped = await expiring.turn.retrieve({ signal })
+    const stopped = await expiring.turn.get({ signal })
     assert.equal(stopped.result, undefined)
     assert.equal(stopped.completionSaveId, undefined)
-    const session = await expiring.session.retrieve({ signal })
+    const session = await expiring.session.get({ signal })
     assert.equal(session.holds.length, 1)
     const hold = session.holds[0]!
     assert.equal(hold.scope, "local")
     assert.equal(hold.reason, "Turn deadline elapsed")
-    const next = await queued.retrieve({ signal })
+    const next = await queued.get({ signal })
     assert.equal(next.status, "queued")
     assert.equal(next.startedAt, undefined)
     for (const completed of turns) {
-      const current = await client.sessions.get(completed.sessionId).turn(completed.id).retrieve({ signal })
+      const current = await client.sessions.ref(completed.sessionId).turns.ref(completed.id).get({ signal })
       assert.equal(current.status, "completed")
       assert.equal(current.completionSaveId, completed.completionSaveId)
       assert.deepEqual(current.result, completed.result)
@@ -515,29 +515,29 @@ try {
     }
     for (let sample = 0; sample < 5; sample++) {
       peerSequence = await progress(peerSequence)
-      const pending = await queued.retrieve({ signal })
+      const pending = await queued.get({ signal })
       assert.equal(pending.status, "queued")
       assert.equal(pending.startedAt, undefined)
-      assert.deepEqual((await expiring.session.retrieve({ signal })).holds, session.holds)
+      assert.deepEqual((await expiring.session.get({ signal })).holds, session.holds)
     }
     deadline = { ...held, queuedTurnId: queued.id, holdId: hold.id }
     const release = `${options.evidence}/deadline-release.json`
     await writeFile(release + ".new", JSON.stringify(deadline), { mode: 0o600 })
     await rename(release + ".new", release)
     assert.deepEqual(await readProof(`${options.evidence}/deadline-published.json`), deadline)
-    const after = await expiring.turn.retrieve({ signal })
+    const after = await expiring.turn.get({ signal })
     assert.equal(after.status, "interrupted")
     assert.equal(after.completionSaveId, undefined)
     assert.equal(after.result, undefined)
-    assert.equal((await queued.retrieve({ signal })).status, "queued")
-    assert.deepEqual((await expiring.session.retrieve({ signal })).holds, session.holds)
+    assert.equal((await queued.get({ signal })).status, "queued")
+    assert.deepEqual((await expiring.session.get({ signal })).holds, session.holds)
     process.stderr.write(JSON.stringify({ configuredFinalizationDeadline: deadline, peerAdvances }) + "\n")
   }
   assert.equal(new Set(turns.map(turn => turn.completionSaveId)).size, turns.length, "Turns reused a mandatory save")
   await peer.turn.send(fixtureInput("release"), undefined, { signal })
   const peerOutcome = await peer.turn.wait({ signal })
   assert.equal(peerOutcome.status, "completed")
-  assert.equal((await model.retrieve({ signal })).status, "running")
+  assert.equal((await model.get({ signal })).status, "running")
   const files = await commands.exec({
     command: ["/usr/local/bin/node", "--input-type=module", "-e", `
       import assert from 'node:assert/strict';

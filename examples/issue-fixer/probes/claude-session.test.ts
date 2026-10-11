@@ -78,13 +78,13 @@ for (const scenario of ["answer", "background", "malformed", "handler-failure", 
     }
     const runtime = new SessionRuntime({
       kind: "agent", id: "native-probe", computer: undefined!,
-      setup: async () => {
+      init: async () => {
         setups++
         harness = await ClaudeHarness.open(directory, "same-session", environment)
         return harness
       },
       turn: async (turn, context) => {
-        const running = (context.setupResult as ClaudeHarness).run(turn, turn.input.map(part => part.text).join(""))
+        const running = (context.initResult as ClaudeHarness).run(turn, turn.input.map(part => part.text).join(""))
         if (scenario === "handler-failure" && turn.id === "first") {
           void running.catch(() => {})
           await questionReady

@@ -73,14 +73,14 @@ for (const scenario of ["question", "permission", "deny", "large-edit", "project
     }
     const runtime = new SessionRuntime({
       kind: "agent", id: "fixture", computer: undefined!,
-      setup: async () => {
+      init: async () => {
         harness = await OpenCodeHarness.open(cwd, "same-session", {
           model: "fixture/fixture", small_model: "fixture/fixture", enabled_providers: ["fixture"],
           provider: { fixture: { npm: "@ai-sdk/openai-compatible", name: "Local fixture", options: { baseURL, apiKey: "not-a-real-key" }, models: { fixture: { name: "Fixture", limit: { context: 32000, output: 2048 } } } } },
         }, { PATH: process.env.PATH, HOME: cwd })
         return harness
       },
-      turn: (turn, context) => (context.setupResult as OpenCodeHarness).run(turn, turn.input.map(part => part.text).join("")),
+      turn: (turn, context) => (context.initResult as OpenCodeHarness).run(turn, turn.input.map(part => part.text).join("")),
     }, { session: { id: "same-session" }, computer: { id: "computer" }, deployment: { id: "deployment" }, recovery: { kind: "initial" }, signal: cancel.signal }, driver, { failureConvergenceMs: 10_000, native: native.registry })
     const first = await runtime.dispatch({ id: "first", sequence: 1, createdAt: "2026-10-10T00:00:00Z", input: [{ type: "text", text: "first unique input" }], source: { kind: "api" } })
     const pid = harness!.processId, id = harness!.conversationId

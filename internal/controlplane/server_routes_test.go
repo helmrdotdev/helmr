@@ -51,8 +51,8 @@ GET /api/me
 GET /api/members
 GET /api/projects
 GET /api/projects/{projectID}/environments/{environmentID}
-GET /api/projects/{projectID}/environments/{environmentID}/agents
-GET /api/projects/{projectID}/environments/{environmentID}/agents/{agentName}
+GET /api/projects/{projectID}/environments/{environmentID}/agent-definitions
+GET /api/projects/{projectID}/environments/{environmentID}/agent-definitions/{agentDefinitionID}
 GET /api/projects/{projectID}/environments/{environmentID}/agents/{agentName}/slack
 GET /api/projects/{projectID}/environments/{environmentID}/api-keys
 GET /api/projects/{projectID}/environments/{environmentID}/commands/{commandID}
@@ -91,8 +91,8 @@ GET /capacity/v1/worker-hosts
 GET /capacity/v1/worker-hosts/{workerHostID}
 GET /healthz
 GET /readyz
-GET /v1/agents
-GET /v1/agents/{agentName}
+GET /v1/agent-definitions
+GET /v1/agent-definitions/{agentDefinitionID}
 GET /v1/commands/{commandID}
 GET /v1/commands/{commandID}/logs
 GET /v1/computer-definitions

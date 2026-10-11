@@ -1,12 +1,12 @@
 ---
 title: Build a durable Agent
-description: Retain setup state while processing continuing inputs in one Session.
+description: Retain initialization state while processing continuing inputs in one Session.
 ---
 
 # Build a durable Agent
 
-An Agent Session processes serial Turns and retains setup state through healthy
-continuation. This example counts Turns in a live setup object. It demonstrates
+An Agent Session processes serial Turns and retains initialization state through healthy
+continuation. This example counts Turns in a live initialization object. It demonstrates
 Session state without requiring a model provider.
 
 ## Define the Agent
@@ -23,24 +23,24 @@ export const workspace = computer({
 export const assistant = agent({
   id: "assistant",
   computer: workspace,
-  async setup(ctx) {
+  async init(ctx) {
     return { turns: 0, recovery: ctx.recovery.kind }
   },
   async turn(turn, ctx) {
-    ctx.setupResult.turns += 1
+    ctx.initResult.turns += 1
     await turn.output.write("Processing input")
-    await turn.respond(`Processed Turn ${ctx.setupResult.turns}`)
-    return { input: turn.input, turns: ctx.setupResult.turns }
+    await turn.respond(`Processed Turn ${ctx.initResult.turns}`)
+    return { input: turn.input, turns: ctx.initResult.turns }
   },
 })
 ```
 
 Healthy hibernation preserves the live object and native processes. The counter
-is not a separate durable database: exceptional reconstruction reruns setup and
+is not a separate durable database: exceptional reconstruction reruns initialization and
 resets it. Applications that reconstruct important state should use retained disk
 or their own authoritative store and reconcile external effects.
 
-For a model-backed Agent, initialize its managed native harness in setup and use
+For a model-backed Agent, initialize its managed native harness in initialization and use
 that same harness in each Turn. Read the text parts from `turn.input` explicitly,
 propagate `turn.signal`, validate native completion and finish post-processing
 before return. Select human response content separately from raw native events.

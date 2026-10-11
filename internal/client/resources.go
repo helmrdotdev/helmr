@@ -203,3 +203,35 @@ func (c *Client) CancelCommand(ctx context.Context, id string, opts ComputerScop
 	}
 	return receipt, nil
 }
+
+func (c *Client) ListCommandLogs(ctx context.Context, id, cursor string, limit int, opts ComputerScopeOptions) (api.CommandLogPage, error) {
+	if err := ids.Validate(id); err != nil {
+		return api.CommandLogPage{}, err
+	}
+	if limit < 0 || limit > 100 {
+		return api.CommandLogPage{}, errors.New("log limit must be in [1,100]")
+	}
+	path, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/commands/"+url.PathEscape(id)+"/logs")
+	if err != nil {
+		return api.CommandLogPage{}, err
+	}
+	query := url.Values{}
+	if cursor != "" {
+		query.Set("cursor", cursor)
+	}
+	if limit > 0 {
+		query.Set("limit", fmt.Sprint(limit))
+	}
+	if len(query) > 0 {
+		path += "?" + query.Encode()
+	}
+	request, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return api.CommandLogPage{}, err
+	}
+	var result api.CommandLogPage
+	if err := c.doJSON(request, &result); err != nil {
+		return api.CommandLogPage{}, err
+	}
+	return result, nil
+}

@@ -68,10 +68,10 @@ test("packed SDK exposes coherent Agent handler and preparation types", async ()
      const { answer } = await turn.ask({ prompt: [{ type: 'text', text: 'continue' }], answer: { type: 'text' } });
      await turn.output.write([{ type: 'json', value: answer }]);
      if (ctx.session.parent) ctx.session.parent.id satisfies string;
-     return ctx.setupResult.value;
+     return ctx.initResult.value;
    };
    const nightly: CronTrigger<InputContent> = triggers.cron('nightly', '0 0 * * *', { timezone: 'Asia/Tokyo', input: [] });
-   const worker: AgentDefinition<InputContent, number, { value: number }> = agent({ id: 'agent', computer: machine, setup: () => ({ value: 42 }), turn: handler, triggers: [nightly] });
+   const worker: AgentDefinition<InputContent, number, { value: number }> = agent({ id: 'agent', computer: machine, init: () => ({ value: 42 }), turn: handler, triggers: [nightly] });
    void worker;
  ` }, true)
  try {

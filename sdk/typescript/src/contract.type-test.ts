@@ -67,22 +67,31 @@ export function assertGreenfieldTypes(): void {
   // @ts-expect-error Directory copy has no implementation-defined ignore language.
   source.directory("./src", { ignore: ["**/*.test.ts"] })
   const client = null as unknown as HelmrClient
-  client.agents.retrieve("operator").then((info) => {
+  client.agentDefinitions.get("operator").then((info) => {
+    info.id satisfies string
+    info.agentId satisfies string
+    info.deploymentId satisfies string
+  })
+  client.computerDefinitions.get("machine").then((info: ComputerDefinitionInfo) => {
     info.id satisfies string
     info.deploymentId satisfies string
   })
-  client.computerDefinitions.retrieve("machine").then((info: ComputerDefinitionInfo) => {
-    info.id satisfies string
-    info.deploymentId satisfies string
-  })
+  // @ts-expect-error Agent reads belong to the deployed definition catalog.
+  client.agents.get("operator")
+  // @ts-expect-error Agent lists belong to the deployed definition catalog.
+  client.agents.list()
+  // @ts-expect-error Creation requires the deployed definition selector.
+  client.computers.create({ key: "shared-repository" })
+  // @ts-expect-error Definition inspection does not create Computer instances.
+  client.computerDefinitions.createComputer("machine")
   const clientComputer = client.computers.ref(
     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
   )
   clientComputer satisfies ComputerRef
-  client.computerDefinitions.createComputer("machine").then((computer) => {
+  client.computers.create({ definition: "machine" }).then((computer) => {
     computer satisfies ComputerRef
   })
-  client.sessions.get(
+  client.sessions.ref(
     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
   ).events.list({ after: 0, limit: 10 }) satisfies Promise<SessionEventPage>
   client.agents.start("operator", { input: [{ type: "text", text: "ok" }], computer: clientComputer }).then(({ session, turn, created }) => {
@@ -95,9 +104,9 @@ export function assertGreenfieldTypes(): void {
   client.agents.start("operator", { computer: clientComputer })
 
   const workspace = computer({ id: "workspace", image: image("workspace").from("debian"), resources: { cpu: 1, memory: "1GiB" } })
-  agent({ id: "operator", computer: workspace, setup: () => ({ count: 0 }),
+  agent({ id: "operator", computer: workspace, init: () => ({ count: 0 }),
     async turn(turn, ctx) {
-      ctx.setupResult.count satisfies number
+      ctx.initResult.count satisfies number
       // @ts-expect-error Runtime delegation is available through managed MCP.
       void turn.agents
       if (ctx.session.parent) {
@@ -111,7 +120,7 @@ export function assertGreenfieldTypes(): void {
       void turn.complete
       // @ts-expect-error Session inbox loops are not Agent authoring.
       void ctx.session.receive
-      return { count: ++ctx.setupResult.count }
+      return { count: ++ctx.initResult.count }
     },
   })
   void triggers
@@ -133,7 +142,7 @@ export function assertProcessDiagnosticsAreInternal(client: HelmrClient): void {
 }
 
 function assertSessionOwnsInterruption(client: HelmrClient): void {
- const turn = client.sessions.get("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33").turn("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34")
+ const turn = client.sessions.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33").turns.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34")
  // @ts-expect-error Interruption belongs to the Session subtree.
  void turn.interrupt()
 }

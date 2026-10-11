@@ -6,23 +6,15 @@ await verify("computer-command", async ({ client, marker, objects, cleanup, star
     key: computerKey,
     idempotencyKey: `computer:create:${marker}`,
   } as const
-  const created = await client.computerDefinitions.createComputer(
-    "helmr-runtime-smoke",
-    computerCreateOptions,
-  )
+  const created = await client.computers.create({ definition: "helmr-runtime-smoke", ...computerCreateOptions })
   objects.computer_ids.push(created.id)
   cleanup(() => deleteComputer(created, `computer:delete:${marker}`))
-  const replayedCreate = await client.computerDefinitions.createComputer(
-    "helmr-runtime-smoke",
-    computerCreateOptions,
-  )
+  const replayedCreate = await client.computers.create({ definition: "helmr-runtime-smoke", ...computerCreateOptions })
   assertEqual(replayedCreate.id, created.id, "computer create replay changed the ID")
   let unexpectedConflictComputer: ClientComputerRef | undefined
   try {
-    unexpectedConflictComputer = await client.computerDefinitions.createComputer("helmr-runtime-smoke", {
-      ...computerCreateOptions,
-      key: `${computerKey}-conflict`,
-    })
+    unexpectedConflictComputer = await client.computers.create({ definition: "helmr-runtime-smoke", ...computerCreateOptions,
+      key: `${computerKey}-conflict`, })
   } catch (error) {
     assertEqual(
       errorCode(error),
@@ -42,7 +34,7 @@ await verify("computer-command", async ({ client, marker, objects, cleanup, star
   const computer = matches.items[0]!
   const byKey = client.computers.ref(computer.id)
   assertEqual(computer.id, created.id, "computer key resolved to a different Computer")
-  assertEqual(computer.definitionKey, "helmr-runtime-smoke", "computer definition key mismatch")
+  assertEqual(computer.definitionId, "helmr-runtime-smoke", "computer definition key mismatch")
 
   const markerDirectory = "sandbox-smoke/nested"
   const markerPath = `${markerDirectory}/marker.txt`
@@ -156,7 +148,7 @@ async function collectCommand(command: CommandRef): Promise<CollectedCommand> {
  const outcome = await command.wait({signal})
  if (outcome.kind !== "exited") throw new Error(`Command ${command.id} ended with ${outcome.kind}`)
  const output: Record<"stdout" | "stderr", Uint8Array[]> = {stdout: [],stderr: []}
- for await (const record of command.streamLogs({}, {signal})) {
+ for await (const record of command.logs.stream({}, {signal})) {
   if (record.kind === "gap") throw new Error(`Command ${command.id} has an output gap`)
   output[record.stream].push(record.content)
  }

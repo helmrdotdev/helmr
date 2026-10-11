@@ -183,7 +183,7 @@ export type AskAddress = SessionAddress & { turnID: string; askID: string };
 export function questionCLICommands(address: AskAddress, origin: string) {
   const quote = (value: string) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
   const prefix = `helmr --api-url ${quote(origin)} session turn ask`;
-  const target = [address.sessionID, address.turnID, address.askID].map(quote).join(" ");
+  const target = `${quote(address.askID)} --session ${quote(address.sessionID)} --turn ${quote(address.turnID)}`;
   const scope = `--project ${quote(address.projectID)} --env ${quote(address.environmentID)}`;
   return {
     login: `helmr login ${quote(origin)}`,

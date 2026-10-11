@@ -211,9 +211,9 @@ func testAgentProcessRetainedRuntime(t *testing.T, checkpoint, computerCapture, 
 	write(filepath.Join(programRoot, "package.json"), []byte(`{"type":"module"}`))
 	write(filepath.Join(programRoot, "helmr/definition-index.json"), []byte(`{"apiVersion":"helmr.definition-index.v1","agents":[{"id":"agent","computerDefinitionId":"computer","modulePath":"helmr/app/entry-0.mjs","exportName":"agent"}],"computers":[{"id":"computer","modulePath":"helmr/app/entry-0.mjs","exportName":"agent","throughAgent":true}]}`))
 	if checkpoint {
-		write(filepath.Join(programRoot, "helmr/app/entry-0.mjs"), []byte(`export const agent={kind:"agent",id:"agent",computer:{kind:"computer",id:"computer"},setup(){return {count:0}},turn(turn,ctx){return {count:++ctx.setupResult.count,pid:process.pid}}}`))
+		write(filepath.Join(programRoot, "helmr/app/entry-0.mjs"), []byte(`export const agent={kind:"agent",id:"agent",computer:{kind:"computer",id:"computer"},init(){return {count:0}},turn(turn,ctx){return {count:++ctx.initResult.count,pid:process.pid}}}`))
 	} else {
-		write(filepath.Join(programRoot, "helmr/app/entry-0.mjs"), []byte(`export const agent={kind:"agent",id:"agent",computer:{kind:"computer",id:"computer"},setup(){setInterval(()=>{},1000);console.log("setup-log:"+"x".repeat(70*1024));return {count:0}},turn(turn,ctx){return {count:++ctx.setupResult.count,pid:process.pid}}}`))
+		write(filepath.Join(programRoot, "helmr/app/entry-0.mjs"), []byte(`export const agent={kind:"agent",id:"agent",computer:{kind:"computer",id:"computer"},init(){setInterval(()=>{},1000);console.log("setup-log:"+"x".repeat(70*1024));return {count:0}},turn(turn,ctx){return {count:++ctx.initResult.count,pid:process.pid}}}`))
 	}
 
 	fixture, _ := agentSessionFixture(t)

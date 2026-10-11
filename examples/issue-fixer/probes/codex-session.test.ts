@@ -60,9 +60,9 @@ for (const scenario of ["answer", "malformed", "handler-failure", "stopped-proce
     }
     const runtime = new SessionRuntime({
       kind: "agent", id: "native-probe", computer: undefined!,
-      setup: async () => { setups++; harness = await CodexHarness.open(directory, "same-session", { PATH: process.env.PATH, HOME: directory }); return harness },
+      init: async () => { setups++; harness = await CodexHarness.open(directory, "same-session", { PATH: process.env.PATH, HOME: directory }); return harness },
       turn: async (turn, context) => {
-        const running = (context.setupResult as CodexHarness).run(turn, turn.input.map(part => part.text).join(""))
+        const running = (context.initResult as CodexHarness).run(turn, turn.input.map(part => part.text).join(""))
         if (scenario === "handler-failure" && turn.id === "first") {
           void running.catch(() => {})
           await questionReady

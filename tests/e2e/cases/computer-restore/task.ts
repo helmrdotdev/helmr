@@ -11,10 +11,10 @@ export const restoreComputer = computer({
 const payload = z.object({ marker: z.string().min(1) }).strict()
 export const restoreChild = agent({
   id: "computer-restore-child", computer: restoreComputer, maxTurnDuration: "1h",
-  setup: () => ({ nonce: randomUUID(), count: 0, marker: "" }),
+  init: () => ({ nonce: randomUUID(), count: 0, marker: "" }),
   turn: async (turn, ctx) => {
     const { marker } = payload.parse(fixtureValue(turn.input))
-    const memory = ctx.setupResult, count = ++memory.count
+    const memory = ctx.initResult, count = ++memory.count
     const path = `/root/child-${ctx.session.id}.json`
     if (count === 1) {
       memory.marker = marker
@@ -28,10 +28,10 @@ export const restoreChild = agent({
 })
 export const restoreParent = agent({
   id: "computer-restore-parent", computer: restoreComputer, maxTurnDuration: "1h",
-  setup: () => ({ nonce: randomUUID(), count: 0, marker: "", childSessionId: "", childNonce: "" }),
+  init: () => ({ nonce: randomUUID(), count: 0, marker: "", childSessionId: "", childNonce: "" }),
   turn: async (turn, ctx) => {
     const { marker } = payload.parse(fixtureValue(turn.input))
-    const memory = ctx.setupResult, count = ++memory.count
+    const memory = ctx.initResult, count = ++memory.count
     const path = `/root/parent-${ctx.session.id}.json`
     let childTurn: string
     if (count === 1) {

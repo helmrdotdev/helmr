@@ -43,3 +43,5 @@ export {
   registerNativeResource, registerNativeOperation, spawnNative,
   type NativeResource, type NativeInvocation, type NativeProcess,
 } from "./internal/native-runtime"
+
+export { durationMilliseconds } from "./duration"

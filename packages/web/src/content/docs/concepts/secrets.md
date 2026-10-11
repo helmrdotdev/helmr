@@ -26,7 +26,8 @@ keeps the value outside the Computer unless you also expose the same Secret
 through a raw binding. Helmr never automatically falls back from protected to raw.
 
 ```ts
-const computer = await client.computerDefinitions.createComputer("reviewer", {
+const computer = await client.computers.create({
+  definition: "reviewer",
   secrets: [
     {
       secretId: process.env.HELMR_GITHUB_SECRET_ID!,

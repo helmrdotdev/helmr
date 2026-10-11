@@ -41,7 +41,8 @@ const client = new HelmrClient({
   apiKey: process.env.HELMR_API_KEY!,
 })
 
-const computer = await client.computerDefinitions.createComputer("reviewer", {
+const computer = await client.computers.create({
+  definition: "reviewer",
   key: "github-review",
   idempotencyKey: "computer:github-review",
   secrets: [

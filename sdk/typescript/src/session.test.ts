@@ -86,7 +86,7 @@ describe("Session lifecycle client", () => {
         status: "accepted",
       },
     ])
-    const ref = client.sessions.get(sessionId),
+    const ref = client.sessions.ref(sessionId),
       signal = new AbortController().signal
     const first = await ref.send(
       [{ type: "text", text: "work" }],
@@ -140,7 +140,7 @@ describe("Session lifecycle client", () => {
         { status: 410 },
       ),
     ])
-    const ref = client.sessions.get(sessionId)
+    const ref = client.sessions.ref(sessionId)
     expect(await ref.events.list({ after: 7, limit: 1000 })).toEqual({
       records: [
         {
@@ -179,7 +179,7 @@ describe("Session lifecycle client", () => {
       data: kind.startsWith("message.") ? { message_id: messageId, status: kind.slice(8) } : { reason: "delivery_unavailable" },
     }))
     const { client } = transport([{ records, next_after: 13, has_more: false, retained_after: 0 }])
-    const page = await client.sessions.get(sessionId).events.list({ after: 7 })
+    const page = await client.sessions.ref(sessionId).events.list({ after: 7 })
     expect(page.records.map(event => event.kind)).toEqual(kinds)
     expect(page.records.map(event => event.data)).toEqual(records.map(event => event.data))
     expect(page.records.map(event => event.turnId)).toEqual(records.map(event => event.turn_id))
@@ -187,9 +187,9 @@ describe("Session lifecycle client", () => {
   })
   test("Turn retrieval retains absent and explicit null results", async () => {
     const { client } = transport([turnState, { ...turnState, result: null }])
-    const ref = client.sessions.get(sessionId).turn(turnId)
-    expect(Object.hasOwn(await ref.retrieve(), "result")).toBe(false)
-    expect(await ref.retrieve()).toMatchObject({
+    const ref = client.sessions.ref(sessionId).turns.ref(turnId)
+    expect(Object.hasOwn(await ref.get(), "result")).toBe(false)
+    expect(await ref.get()).toMatchObject({
       result: null,
       terminalAt: createdAt,
       completionSaveId: holdId,
@@ -199,7 +199,7 @@ describe("Session lifecycle client", () => {
   test("Turn retrieval exposes immutable application failure", async () => {
     const failed = { ...turnState, status: "failed", completion_save_id: undefined, error: { code: "application_error", message: "fixture" } }
     const { client } = transport([failed])
-    expect(await client.sessions.get(sessionId).turn(turnId).retrieve()).toMatchObject({ status: "failed", error: failed.error })
+    expect(await client.sessions.ref(sessionId).turns.ref(turnId).get()).toMatchObject({ status: "failed", error: failed.error })
     expect(() => parseTurnState({ ...failed, error: { code: "", message: "fixture" } })).toThrow()
     expect(() => parseTurnState({ ...turnState, error: failed.error })).toThrow()
   })
@@ -221,7 +221,7 @@ describe("Session lifecycle client", () => {
         holds: [{id:holdId,session_id:sessionId,scope:"local",reason:"recovery_required",created_at:createdAt}],
       },
     ])
-    expect(await client.sessions.retrieve(sessionId)).toMatchObject({
+    expect(await client.sessions.get(sessionId)).toMatchObject({
       status: "closing",
       holds: [{ id:holdId,scope:"local",reason:"recovery_required" }],
     })
@@ -238,7 +238,7 @@ describe("Session lifecycle client", () => {
       receipt,
       receipt,
     ])
-    const ref = client.sessions.get(sessionId)
+    const ref = client.sessions.ref(sessionId)
     expect(
       await ref.interrupt({ idempotencyKey: "stop-1" }),
     ).toMatchObject({ sessionId, holdId, status: "accepted" })

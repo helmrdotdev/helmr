@@ -7,15 +7,15 @@ sidebarLabel: agent
 # `helmr agent`
 
 ```text
-helmr agent list [--deployment DEPLOYMENT_ID] [--limit N] [--cursor CURSOR] [--json]
-helmr agent get DEFINITION_ID [--deployment DEPLOYMENT_ID] [--json]
+helmr agent definition list [--deployment DEPLOYMENT_ID] [--limit N] [--cursor CURSOR] [--json]
+helmr agent definition get DEFINITION_ID [--deployment DEPLOYMENT_ID] [--json]
 helmr agent start DEFINITION_ID (--input-json JSON | --input-file FILE) [flags]
 ```
 
-`list` and `get` inspect the current Deployment unless `--deployment` pins an
+`definition list` and `definition get` inspect the current Deployment unless `--deployment` pins an
 explicit Deployment. A list cursor retains the original Deployment snapshot.
 Lists default to 50 definitions and accept up to 100. Definition IDs are authored
-names; Session discovery's `--agent` filter uses the Agent UUID instead.
+identifiers. Agent definitions also expose `agent_id`, the stable UUID across Deployments; Session discovery's `--agent` filter uses the Agent UUID instead.
 
 `start` admits a Session and its first Turn. Its receipt includes `session_id`,
 `turn_id`, admission `sequence` and whether the Session was `created`. Use

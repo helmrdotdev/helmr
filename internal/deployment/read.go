@@ -95,18 +95,23 @@ func GetCurrent(ctx context.Context, q db.DBTX, principal auth.Principal, scope 
 	return readRecord(ctx, q, pgvalue.MustUUIDValue(env), id)
 }
 
+type DefinitionRecord struct {
+	ID      string
+	AgentID *uuid.UUID
+}
+
 type DefinitionPage struct {
 	DeploymentID uuid.UUID
-	DeclaredIDs  []string
+	Items        []DefinitionRecord
 	HasMore      bool
 }
 
-func definitionTable(kind definition.Kind) (string, error) {
+func definitionQuery(kind definition.Kind) (string, error) {
 	switch kind {
 	case definition.KindAgent:
-		return "agent_definitions", nil
+		return "SELECT definition_key, agent_id FROM agent_definitions", nil
 	case definition.KindComputer:
-		return "computer_definitions", nil
+		return "SELECT definition_key, NULL::uuid FROM computer_definitions", nil
 	default:
 		return "", invalidInput(fmt.Errorf("unsupported definition kind %q", kind))
 	}
@@ -129,7 +134,7 @@ func ListDefinitions(ctx context.Context, q db.DBTX, principal auth.Principal, s
 	if limit < 1 || limit > 100 {
 		return DefinitionPage{}, invalidInput(errors.New("definition page limit must be between 1 and 100"))
 	}
-	table, err := definitionTable(kind)
+	query, err := definitionQuery(kind)
 	if err != nil {
 		return DefinitionPage{}, err
 	}
@@ -137,44 +142,44 @@ func ListDefinitions(ctx context.Context, q db.DBTX, principal auth.Principal, s
 	if err != nil {
 		return DefinitionPage{}, err
 	}
-	rows, err := q.Query(ctx, `SELECT definition_key FROM `+table+` WHERE environment_id=$1 AND deployment_id=$2 AND ($3::text IS NULL OR definition_key>$3) ORDER BY definition_key LIMIT $4`, r.EnvironmentID, r.ID, after, limit+1)
+	rows, err := q.Query(ctx, query+` WHERE environment_id=$1 AND deployment_id=$2 AND ($3::text IS NULL OR definition_key>$3) ORDER BY definition_key LIMIT $4`, r.EnvironmentID, r.ID, after, limit+1)
 	if err != nil {
 		return DefinitionPage{}, err
 	}
 	defer rows.Close()
-	page := DefinitionPage{DeploymentID: r.ID, DeclaredIDs: []string{}}
+	page := DefinitionPage{DeploymentID: r.ID, Items: []DefinitionRecord{}}
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var item DefinitionRecord
+		if err := rows.Scan(&item.ID, &item.AgentID); err != nil {
 			return DefinitionPage{}, err
 		}
-		page.DeclaredIDs = append(page.DeclaredIDs, id)
+		page.Items = append(page.Items, item)
 	}
 	if err := rows.Err(); err != nil {
 		return DefinitionPage{}, err
 	}
-	if len(page.DeclaredIDs) > int(limit) {
-		page.DeclaredIDs = page.DeclaredIDs[:limit]
+	if len(page.Items) > int(limit) {
+		page.Items = page.Items[:limit]
 		page.HasMore = true
 	}
 	return page, nil
 }
-func GetDefinition(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope, kind definition.Kind, selected *uuid.UUID, id string) (uuid.UUID, string, error) {
-	table, err := definitionTable(kind)
+func GetDefinition(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope, kind definition.Kind, selected *uuid.UUID, id string) (uuid.UUID, DefinitionRecord, error) {
+	query, err := definitionQuery(kind)
 	if err != nil {
-		return uuid.Nil(), "", err
+		return uuid.Nil(), DefinitionRecord{}, err
 	}
 	r, err := definitionDeployment(ctx, q, principal, scope, selected)
 	if err != nil {
-		return uuid.Nil(), "", err
+		return uuid.Nil(), DefinitionRecord{}, err
 	}
-	var found string
-	err = q.QueryRow(ctx, `SELECT definition_key FROM `+table+` WHERE environment_id=$1 AND deployment_id=$2 AND definition_key=$3`, r.EnvironmentID, r.ID, id).Scan(&found)
+	var found DefinitionRecord
+	err = q.QueryRow(ctx, query+` WHERE environment_id=$1 AND deployment_id=$2 AND definition_key=$3`, r.EnvironmentID, r.ID, id).Scan(&found.ID, &found.AgentID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrDefinitionNotFound
 	}
 	if err != nil {
-		return uuid.Nil(), "", err
+		return uuid.Nil(), DefinitionRecord{}, err
 	}
 	return r.ID, found, nil
 }

@@ -6,7 +6,7 @@ description: Continuing work with pinned code, serial Turns and explicit control
 # Sessions
 
 A Session is one continuing work context for an Agent. It has a stable identity,
-a pinned Deployment and an actual Computer. It runs optional setup before serving
+a pinned Deployment and an actual Computer. It runs optional initialization before serving
 its accepted Turns in FIFO order. Different Sessions can share a Computer while
 retaining separate conversation identities.
 
@@ -16,13 +16,13 @@ request, including an uncertain retry. Reusing a Session does not change its
 pinned code when a new Deployment is promoted.
 
 `session.enqueue(input)` always admits new FIFO work. `session.send(data)` steers
-active work or enqueues when idle. Exact `session.turn(id).send(data)` targets
+active work or enqueues when idle. Exact `session.turns.ref(id).send(data)` targets
 that Turn only. Acceptance does not establish callback delivery or application.
 
 A safely converged application failure leaves the Session open for later input.
 Unexpected execution loss or unsuccessful convergence holds dispatch. Healthy
-hibernation preserves setup and native state. If no valid continuation remains,
-explicit recovery can reconstruct setup from committed disk; it never replays an
+hibernation preserves initialization and native state. If no valid continuation remains,
+explicit recovery can reconstruct initialization from committed disk; it never replays an
 interrupted input automatically.
 
 | Control | Effect |

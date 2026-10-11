@@ -80,6 +80,7 @@ export const docsNav = [
           "reference/cli/agent",
           "reference/cli/session",
           "reference/cli/computer",
+        "reference/cli/command",
           "reference/cli/secret",
           "reference/cli/schedule",
         ],

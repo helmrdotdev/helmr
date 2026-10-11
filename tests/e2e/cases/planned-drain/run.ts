@@ -52,7 +52,7 @@ await verify("planned-drain", async ({ client, marker, computer, cleanup }) => {
   const pending = await target.exec({ command: ["cat", "/workspace/drain-marker"],
     timeout: "10m", idempotencyKey: `${marker}:read` })
   cleanup(async () => {
-    const state = await pending.retrieve()
+    const state = await pending.get()
     if (["pending", "starting", "running"].includes(state.status)) await pending.cancel()
   })
   const queued = await hostObservation("computer-path", { computer_id: shared.id })
@@ -80,7 +80,7 @@ await verify("planned-drain", async ({ client, marker, computer, cleanup }) => {
   assert.equal(outcome.kind, "exited")
   assert.equal(outcome.exitCode, 0)
   let stdout = ""
-  for await (const event of pending.streamLogs({}, { signal: deadline(30_000) })) {
+  for await (const event of pending.logs.stream({}, { signal: deadline(30_000) })) {
     assert(event.kind !== "gap", "Command output gap")
     if (event.stream === "stdout") stdout += new TextDecoder().decode(event.content)
   }

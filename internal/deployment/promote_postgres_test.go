@@ -161,12 +161,12 @@ func TestDeploymentReadsUseNewDefinitionsAndScope(t *testing.T) {
 		t.Fatalf("current: %v %v", current, err)
 	}
 	page, err := ListDefinitions(t.Context(), f.pool, f.principal(), f.scope(), definition.KindAgent, nil, 1, nil)
-	if err != nil || len(page.DeclaredIDs) != 1 || !page.HasMore || page.DeclaredIDs[0] != "build" {
+	if err != nil || len(page.Items) != 1 || !page.HasMore || page.Items[0].ID != "build" {
 		t.Fatalf("page: %+v %v", page, err)
 	}
 	id, name, err := GetDefinition(t.Context(), f.pool, f.principal(), f.scope(), definition.KindComputer, &r.ID, "repo")
-	if err != nil || id != r.ID || name != "repo" {
-		t.Fatalf("computer: %s %s %v", id, name, err)
+	if err != nil || id != r.ID || name.ID != "repo" {
+		t.Fatalf("computer: %s %+v %v", id, name, err)
 	}
 	wrong := f.scope()
 	wrong.ProjectID = uuid.NewV7().String()

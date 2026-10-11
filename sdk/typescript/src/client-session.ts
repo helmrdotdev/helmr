@@ -58,6 +58,7 @@ export type SessionListQuery =
 export interface ClientSessionRef extends SessionRef {
   interrupt(request?: SessionOperationOptions, options?: RequestOptions): Promise<SessionInterruptReceipt>
   readonly turns: Readonly<{
+    ref(id: string): TurnRef
     list(
       query?: TurnListQuery,
       options?: RequestOptions,
@@ -65,12 +66,12 @@ export interface ClientSessionRef extends SessionRef {
   }>
 }
 export interface ClientSessionsApi {
-  retrieve(id: string, options?: RequestOptions): Promise<Session>
+  get(id: string, options?: RequestOptions): Promise<Session>
   list(
     query?: SessionListQuery,
     options?: RequestOptions,
   ): Promise<CursorPage<Session>>
-  get(id: string): ClientSessionRef
+  ref(id: string): ClientSessionRef
 }
 interface SessionTransport {
   request(
@@ -83,8 +84,8 @@ export function createClientSessions(
   transport: SessionTransport,
 ): ClientSessionsApi {
   return Object.freeze({
-    retrieve(id, options) {
-      return createSessionRef(id, transport).retrieve(options)
+    get(id, options) {
+      return createSessionRef(id, transport).get(options)
     },
     async list(queryInput = {}, options = {}) {
       return parseSessionPage(await transport.request(
@@ -92,7 +93,7 @@ export function createClientSessions(
         options.signal === undefined ? {} : { signal: options.signal },
       ))
     },
-    get(id) {
+    ref(id) {
       return createSessionRef(id, transport)
     },
   } satisfies ClientSessionsApi)
@@ -158,14 +159,13 @@ export function createSessionRef(
         )
         return Object.freeze({ id: receipt.messageId, status: receipt.status })
       },
-      async retrieve(options) {
+      async get(options) {
         return parseTurnState(await get(path, options))
       },
     } satisfies TurnRef)
   }
   return Object.freeze({
     id: sessionId,
-    turn,
     async send(data, request, options) {
       normalizeInput(data)
       const receipt = parseSessionAdmissionReceipt(
@@ -206,6 +206,7 @@ export function createSessionRef(
       return turn(receipt.turnId)
     },
     turns: Object.freeze({
+      ref: turn,
       async list(query = {}, options) {
         const params = new URLSearchParams()
         if (query.cursor !== undefined) {
@@ -253,7 +254,7 @@ export function createSessionRef(
           await get(`/events?after=${after}&limit=${limit}`, options),
         )
     }),
-    async retrieve(options) {
+    async get(options) {
       return parseSession(await get("", options))
     },
     async interrupt(request, options) {

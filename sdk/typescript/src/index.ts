@@ -1,39 +1,44 @@
 export { MessageRejected } from "./message-error"
 export { agent, computer, triggers } from "./agent"
-export type { CronTrigger, Json, Duration, MaybePromise, ComputerRef, BuildContext, SecretBinding, ComputerDefinition, TurnOutcome, OutputReceipt, Turn, SetupContext, AgentContext, AgentDefinition } from "./agent"
+export type { CronTrigger, Json, Duration, MaybePromise, ComputerIdentity, BuildContext, SecretBinding, ComputerDefinition, TurnOutcome, OutputReceipt, Turn, InitContext, AgentContext, AgentDefinition } from "./agent"
 export { HelmrClient } from "./client"
 export { image, source } from "./image"
 export { builder } from "./builder"
 export { defineConfig } from "./config"
 
-export type { SessionListQuery, ClientSessionRef } from "./client-session"
+export type { SessionListQuery, ClientSessionRef, ClientSessionsApi } from "./client-session"
 
 export type {
+  ClientComputerDefinitionsApi,
   ComputerDefinitionInfo,
   ComputerDefinitionListItem,
   ComputerDefinitionListQuery,
   ComputerDefinitionPage,
-  ComputerDefinitionRetrieveQuery,
+  ComputerDefinitionGetQuery,
 } from "./client-computer-definition"
 
 export type {
+  ClientComputersApi,
   ClientComputerRef,
   ComputerListItem,
   ComputerListQuery,
 } from "./client-computer"
 
 export type {
+  ClientDeploymentsApi,
   DeploymentListItem,
   DeploymentListQuery,
   Deployment,
 } from "./client-deployment"
 
 export type {
+  ClientSchedulesApi,
   ScheduleListQuery,
   Schedule,
 } from "./client-schedule"
 
 export type {
+  ClientSecretsApi,
   SecretRef,
   SecretCreateRequest,
   SecretListQuery,
@@ -62,6 +67,8 @@ export type {
   TurnRef,
   SessionRef,
   TurnState,
+  TurnListQuery,
+  SessionHold,
   AskState,
   AskResponseReceipt,
   AskQuery,
@@ -95,6 +102,7 @@ export type {
 } from "./image"
 
 export type {
+  ComputerRef,
   ComputerCreateRequest,
   ComputerDeleteRequest,
   ComputerDeleteReceipt,
@@ -106,11 +114,12 @@ export type {
   ComputerResidency,
 } from "./computer"
 
-export { type CancelReceipt, type CommandRef, type CommandInfo, type CommandOutcome, type CommandWaitOptions } from "./command"
+export { type CancelReceipt, type CommandRef, type CommandInfo, type CommandOutcome, type CommandWaitOptions, type TimedCommandWaitResult } from "./command"
 
-export type { CommandLogQuery, CommandLogStreamQuery, CommandLogRecord } from "./command-logs"
+export type { CommandLogQuery, CommandLogStreamQuery, CommandLogRecord, CommandLogReadPage } from "./command-logs"
 
-export type { ClientAgentsApi, AgentStartRequest, AgentStartReceipt, AgentRetrieveQuery, AgentListQuery, AgentListItem, AgentInfo, AgentPage } from "./client-agent"
+export type { ClientAgentsApi, AgentStartRequest, AgentStartReceipt } from "./client-agent"
+export type { ClientAgentDefinitionsApi, AgentDefinitionGetQuery, AgentDefinitionListQuery, AgentDefinitionListItem, AgentDefinitionInfo, AgentDefinitionPage } from "./client-agent-definition"
 
 export type { ContentPart, Content, HumanContent, InputPart, InputContent } from "./content"
 

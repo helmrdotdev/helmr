@@ -20,7 +20,7 @@ export function errorCode(error: unknown): string | undefined {
     ? error.code
     : undefined
 }
-export type ClientTurn = ReturnType<ClientSessionRef["turn"]>
+export type ClientTurn = ReturnType<ClientSessionRef["turns"]["ref"]>
 export const terminalTurnStatuses = ["completed", "failed", "interrupted", "cancelled"] as const
 export async function waitTurn(
   turn: ClientTurn,
@@ -29,7 +29,7 @@ export async function waitTurn(
 ): Promise<TurnState> {
   const signal = deadline(timeoutMs)
   for (;;) {
-    const state = await turn.retrieve({ signal })
+    const state = await turn.get({ signal })
     if (accepted.includes(state.status)) return state
     assert(
       !(terminalTurnStatuses as readonly string[]).includes(state.status),
@@ -48,11 +48,11 @@ export async function waitAsk(
     let cursor: string | undefined
     do {
       const page = await turn.asks.list({ cursor, limit: 100 }, { signal })
-      const ask = page.asks.find(item => item.status === "pending" && match(item))
+      const ask = page.items.find(item => item.status === "pending" && match(item))
       if (ask) return ask
       cursor = page.nextCursor
     } while (cursor !== undefined)
-    const state = await turn.retrieve({ signal })
+    const state = await turn.get({ signal })
     assert(!(terminalTurnStatuses as readonly string[]).includes(state.status),
       `Turn ${turn.id} ended before the requested question: ${state.status}`)
     await delay(500, undefined, { signal })
@@ -199,11 +199,7 @@ export async function verify(
         return admission
       },
       computer: async (definition, suffix = definition) => {
-        const ref = await client.computerDefinitions.createComputer(
-          definition,
-          { key: `${suffix}-${marker}`, idempotencyKey: `create:${suffix}:${marker}` },
-          { signal: deadline(30_000) },
-        )
+        const ref = await client.computers.create({ definition: definition, key: `${suffix}-${marker}`, idempotencyKey: `create:${suffix}:${marker}` }, { signal: deadline(30_000) })
         objects.computer_ids.push(ref.id)
         cleanup.push(async () => {
           try {
@@ -225,7 +221,7 @@ export async function verify(
   // may still need to reconcile, which deleteComputer observes separately.
   for (const id of new Set(objects.session_ids)) {
     try {
-      await client.sessions.get(id).cancel(
+      await client.sessions.ref(id).cancel(
         { idempotencyKey: `cleanup:${marker}:${id}` }, { signal: deadline(30_000) },
       )
     } catch (error) {

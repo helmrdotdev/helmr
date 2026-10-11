@@ -1,8 +1,8 @@
 import { HelmrClient } from "../src/index"
 const config = await Bun.stdin.json() as {url:string; apiKey:string; sessionId:string; turnId:string; phase:string}
 const client = new HelmrClient({url:config.url, apiKey:config.apiKey})
-const session = client.sessions.get(config.sessionId)
-const turn = session.turn(config.turnId)
+const session = client.sessions.ref(config.sessionId)
+const turn = session.turns.ref(config.turnId)
 const value = [{type:"text" as const,text:"steer\u0000雪"}]
 const routed = await session.send(value, {idempotencyKey:"sdk-message"})
 if (routed.kind !== "messaged" || routed.turn.id !== turn.id) throw new Error("Session send changed disposition")

@@ -18,10 +18,10 @@ test("wait reads exact Turn until durable completion and preserves null result a
     const base = { id: turnId, session_id: sessionId, sequence: 1, input: [] }
     return Response.json(++count === 1 ? { ...base, status: "finalizing" } : { ...base, status: "completed", terminal_at: at, completion_save_id: saveId, result: null, response: [{ type: "text", text: "Saved." }] })
   }) as typeof fetch })
-  const outcome = await client.sessions.get(sessionId).turn(turnId).wait()
+  const outcome = await client.sessions.ref(sessionId).turns.ref(turnId).wait()
   expect(outcome).toEqual({ status: "completed", result: null, response: [{ type: "text", text: "Saved." }] })
   expect(methods).toEqual(["GET", "GET"])
-  const again = await client.sessions.get(sessionId).turn(turnId).wait({ timeout: "1s" })
+  const again = await client.sessions.ref(sessionId).turns.ref(turnId).wait({ timeout: "1s" })
   expect(again).toEqual({ status: "settled", outcome })
 })
 
@@ -83,7 +83,7 @@ test("HTTP authorization failures are not retried or returned as timeout", async
     requests++
     return Response.json({ error: { code: "forbidden", message: "read denied" } }, { status: 403 })
   }) as typeof fetch })
-  await expect(client.sessions.get(sessionId).turn(turnId).wait({ timeout: "1s" })).rejects.toMatchObject({ code: "forbidden" })
+  await expect(client.sessions.ref(sessionId).turns.ref(turnId).wait({ timeout: "1s" })).rejects.toMatchObject({ code: "forbidden" })
   expect(requests).toBe(1)
 })
 

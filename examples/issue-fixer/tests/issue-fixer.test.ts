@@ -32,9 +32,9 @@ for (const definition of [codexIssueFixer, claudeIssueFixer]) {
   test(`${definition.id} reuses setup, accepts Content and settles only after checks`, async () => {
     trace.length = 0; prompts.length = 0; connections.length = 0; checksFail = false
     const setup = { session: { id: "fixture-session" }, computer: { id: "fixture-computer" }, deployment: { id: "fixture-deployment" }, recovery: { kind: "initial" as const }, signal: new AbortController().signal }
-    const setupResult = await definition.setup!(setup)
+    const initResult = await definition.init!(setup)
     expect(connections).toEqual([definition === codexIssueFixer ? connection : { helmr: { type: "http", url: connection.url, headers: connection.headers } }])
-    const context = { ...setup, setupResult }
+    const context = { ...setup, initResult }
     const turn = { id: "turn", input: [{type:"text",text:"repair"}], signal: new AbortController().signal } as Turn
     expect(await definition.turn(turn, context)).toEqual({ native: "completed" })
     expect(await definition.turn({ ...turn, input: [{ type: "text", text: "followup" }] }, context)).toEqual({ native: "completed" })

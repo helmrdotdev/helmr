@@ -110,6 +110,6 @@ test("distinguishes a rejected message from an uncertain native callback", () =>
 test("question CLI instructions bind origin, scope and exact question without interpolating shell syntax", () => {
   const commands = questionCLICommands({ sessionID: "s'$(command)", turnID: "t", askID: "a", projectID: "p", environmentID: "e" }, "https://helmr.example");
   expect(commands.login).toBe("helmr login 'https://helmr.example'");
-  expect(commands.get).toBe(`helmr --api-url 'https://helmr.example' session turn ask get 's'"'"'$(command)' 't' 'a' --project 'p' --env 'e' --json`);
-  expect(commands.respond).toBe(`helmr --api-url 'https://helmr.example' session turn ask respond 's'"'"'$(command)' 't' 'a' --project 'p' --env 'e' --answer-file answer.json --response-id RESPONSE_ID`);
+  expect(commands.get).toBe(`helmr --api-url 'https://helmr.example' session turn ask get 'a' --session 's'"'"'$(command)' --turn 't' --project 'p' --env 'e' --json`);
+  expect(commands.respond).toBe(`helmr --api-url 'https://helmr.example' session turn ask respond 'a' --session 's'"'"'$(command)' --turn 't' --project 'p' --env 'e' --answer-file answer.json --response-id RESPONSE_ID`);
 });

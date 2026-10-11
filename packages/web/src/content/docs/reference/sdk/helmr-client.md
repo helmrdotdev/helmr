@@ -26,14 +26,15 @@ supplied credentials even when constructed inside Agent code.
 
 | Property | Operations |
 | --- | --- |
-| `agents` | `retrieve`, `list`, `start` |
-| `sessions` | `retrieve`, `list`, `get` |
-| `computerDefinitions` | `retrieve`, `list`, `createComputer` |
-| `computers` | `retrieve`, `list`, `ref` |
+| `agents` | `start` |
+| `agentDefinitions` | `get`, `list` |
+| `sessions` | `get`, `list`, `ref` |
+| `computerDefinitions` | `get`, `list` |
+| `computers` | `create`, `get`, `list`, `ref` |
 | `commands` | `ref` |
-| `deployments` | `list`, `current`, `retrieve` |
-| `schedules` | `retrieve`, `list` |
-| `secrets` | `create`, `retrieve`, `list`, `ref` |
+| `deployments` | `list`, `current`, `get` |
+| `schedules` | `get`, `list` |
+| `secrets` | `create`, `get`, `list`, `ref` |
 | `slack` | `channels.list`, `channels.get` |
 
 Resource list methods return `{ items, nextCursor? }`; Slack channel listing uses

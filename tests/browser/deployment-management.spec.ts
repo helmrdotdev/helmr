@@ -20,7 +20,7 @@ async function catalog(page: Page, permissions = ["agents.read", "deployments.re
     else if (path === `${base}/deployments`) json = { deployments: [deployment] };
     else if (path === `${base}/deployments/${deploymentID}`) json = deployment;
     else if (path === `${base}/deployments/current`) json = { ...deployment, id: current };
-    else if (path === `${base}/agents`) json = { deployment_id: deploymentID, agents: [{ id: "assistant" }] };
+    else if (path === `${base}/agent-definitions`) json = { deployment_id: deploymentID, agent_definitions: [{ id: "assistant", agent_id: "00000000-0000-7000-8000-000000000601" }] };
     else if (path.endsWith("/turns")) json = { turns: [] };
     else if (path.endsWith("/events")) json = { records: [], next_after: 0, has_more: false, retained_after: 0 };
     else { await route.fulfill({ status: 404, json: { error: { code: "not_found", message: path } } }); return; }

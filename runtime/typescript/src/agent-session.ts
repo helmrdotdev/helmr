@@ -6,7 +6,7 @@ import { ContentError, normalizeContent, normalizeInput, type Content, type Huma
 import type { SessionActivity } from "./agent-activity"
 import { randomUUID, randomUUIDv7 } from "node:crypto"
 import { AsyncLocalStorage } from "node:async_hooks"
-import type { AgentDefinition, AgentContext, Json, OutputReceipt, SetupContext, Turn, TurnOutcome } from "../../../sdk/typescript/src/agent"
+import type { AgentDefinition, AgentContext, Json, OutputReceipt, InitContext, Turn, TurnOutcome } from "../../../sdk/typescript/src/agent"
 import { NativeContinuationLost, type SessionNativeRegistry } from "./agent-native"
 import { MessageRejected } from "../../../sdk/typescript/src/message-error"
 import { requireJson } from "../../../sdk/typescript/src/agent"
@@ -112,13 +112,13 @@ export class SessionRuntime {
   private reconstructRequired = false
   private readonly outputScope = new AsyncLocalStorage<OutputScope>()
   private readonly definition: AgentDefinition<InputContent, Json, unknown>
-  private readonly context: SetupContext
+  private readonly context: InitContext
   private readonly driver: SessionDriver
   private readonly failureConvergenceMs: number
   private readonly native: SessionNativeRegistry | undefined
   private readonly activity: SessionActivity | undefined
   private readonly onTiming: ((timing: TurnTiming) => void) | undefined
-  constructor(definition: AgentDefinition<InputContent, Json, unknown>, context: SetupContext, driver: SessionDriver, limits: { failureConvergenceMs: number; terminalSequence?: number; native?: SessionNativeRegistry; activity?: SessionActivity; onTiming?: (timing: TurnTiming) => void } = { failureConvergenceMs: 10_000 }) {
+  constructor(definition: AgentDefinition<InputContent, Json, unknown>, context: InitContext, driver: SessionDriver, limits: { failureConvergenceMs: number; terminalSequence?: number; native?: SessionNativeRegistry; activity?: SessionActivity; onTiming?: (timing: TurnTiming) => void } = { failureConvergenceMs: 10_000 }) {
     this.definition = definition
     this.context = context
     this.driver = driver
@@ -138,9 +138,9 @@ export class SessionRuntime {
   initialize(): Promise<AgentContext<unknown>> {
     return this.setup ??= (async () => {
       try {
-        const action = () => this.definition.setup?.(this.context)
+        const action = () => this.definition.init?.(this.context)
         const setup = () => this.activity ? this.activity.authored(action) : action()
-        return { ...this.context, setupResult: await (this.native ? this.native.setup(setup) : setup()) }
+        return { ...this.context, initResult: await (this.native ? this.native.setup(setup) : setup()) }
       }
       catch (error) { this.held = true; this.reconstructRequired = true; return this.recordFailureHold("setup_failed", error) }
     })()

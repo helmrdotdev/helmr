@@ -354,11 +354,11 @@ export const workspace = computer({
 })`,
   },
   {
-    label: "client.computerDefinitions.createComputer()",
+    label: "client.computers.create()",
     icon: "resume",
     tone: "green",
     title: "Create the Computer",
-    caption: "Create it once, run bounded commands, and explicitly place later Sessions on it to share files. Each Agent still owns its setup state.",
+    caption: "Create it once, run bounded commands, and explicitly place later Sessions on it to share files. Each Agent still owns its initialization state.",
     code: `import { HelmrClient } from "@helmr/sdk"
 
 const url = process.env["HELMR_API_URL"]
@@ -367,16 +367,14 @@ const client = new HelmrClient({
   url,
   apiKey: process.env["HELMR_API_KEY"]!
 })
-const computer = await client.computerDefinitions.createComputer(
-  "repo-agent", { idempotencyKey: "computer:482" }
-)
+const computer = await client.computers.create({ definition: "repo-agent", idempotencyKey: "computer:482" })
 const result = await computer.exec({
   command: ["node", "--version"],
   cwd: "/workspace",
   idempotencyKey: "verify:482"
 })
 const { session } = await client.agents.start("reviewer", {
-  input: { prNumber: 482 }, computer,
+  input: [{ type: "text", text: "Review PR 482" }], computer,
   idempotencyKey: "review:482:shared-workspace"
 })`,
   },
@@ -391,7 +389,7 @@ const renderedComputerFeatures = computerFeatures.map((feature) => ({
 const sessionFeature = {
   title: "Steerable agent sessions.",
   caption:
-    "Retain setup state across Turns and healthy RAM restoration. Register a message handler to apply live corrections. The Session timeline records work; only a settled outcome establishes completion.",
+    "Retain initialization state across Turns and healthy RAM restoration. Register a message handler to apply live corrections. The Session timeline records work; only a settled outcome establishes completion.",
   define: `import { agent } from "@helmr/sdk"
 import { workspace } from "./computer"
 import { createReviewer } from "./review"
@@ -399,15 +397,14 @@ import { createReviewer } from "./review"
 export const reviewer = agent({
   id: "reviewer",
   computer: workspace,
-  messages: { content: ["text", "json"] },
-  async setup() {
+  async init() {
     return createReviewer()
   },
-  async turn(turn, { setupResult }) {
+  async turn(turn, { initResult }) {
     await turn.onMessage(async message => {
-      await setupResult.correct(message)
+      await initResult.correct(message)
     })
-    const result = await setupResult.review(turn.input, turn.signal)
+    const result = await initResult.review(turn.input, turn.signal)
     await turn.respond(result.summary)
     return result
   }
@@ -420,12 +417,12 @@ const client = new HelmrClient({
   url,
   apiKey: process.env["HELMR_API_KEY"]!
 })
-const session = client.sessions.get("SESSION_ID")
-const turn = await session.enqueue({ issue: "APP-42" }, {
+const session = client.sessions.ref("SESSION_ID")
+const turn = await session.enqueue([{ type: "text", text: "Review APP-42" }], {
   idempotencyKey: "issue:event-42"
 })
 // When this exact Turn is processing with its handler ready:
-await turn.send({ instruction: "Please also update the tests." }, {
+await turn.send([{ type: "text", text: "Please also update the tests." }], {
   idempotencyKey: "issue:correction-43"
 })
 const page = await session.events.list({ after: 0 })
@@ -803,7 +800,7 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
           </div>
           <div class="feature-panel panel panel-screen">
             <div class="code-cap">
-              <span>client.sessions.get()</span>
+              <span>client.sessions.ref()</span>
               <span class="cap-meta">typescript</span>
             </div>
             <pre><code set:html={renderedSession.sendHtml}></code></pre>
