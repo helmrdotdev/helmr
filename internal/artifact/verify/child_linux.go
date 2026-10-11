@@ -162,7 +162,7 @@ func verifyProgramDescriptor(ctx context.Context, fd int) ([]byte, error) {
 	}
 	canonical, err := canonicalProgramVerification(programVerification{
 		FormatVersion: programVerificationVersion,
-		Index:         verified.Index(),
+		Metadata:      verified.Metadata(),
 	})
 	if err != nil {
 		return nil, &artifactInfrastructureError{

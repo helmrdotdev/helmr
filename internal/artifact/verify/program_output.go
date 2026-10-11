@@ -67,11 +67,11 @@ func ProgramOutputFile(
 	if err != nil {
 		return fmt.Errorf("verify Program object: %w", err)
 	}
-	verifiedIndex, err := artifact.CanonicalProgramIndex(verified.Index())
+	verifiedIndex, err := artifact.CanonicalProgramMetadata(verified.Metadata())
 	if err != nil {
 		return err
 	}
-	expectedIndex, err := artifact.CanonicalProgramIndex(output.Index)
+	expectedIndex, err := artifact.CanonicalProgramMetadata(output.Metadata)
 	if err != nil {
 		return err
 	}

@@ -1,4 +1,4 @@
-import { image, source, task, sandbox } from "@helmr/sdk"
+import { agent, computer, image, source } from "@helmr/sdk"
 
 const base = image("task-secrets")
   .from("node:24-bookworm-slim")
@@ -9,15 +9,20 @@ const base = image("task-secrets")
   .run(["bun", "install"])
   .workdir("/sandbox")
 
-export const taskSecretsComputer = sandbox({ id: "task-secrets" })
-  .image(base)
-  .resources({ cpu: 1, memory: "1GiB" })
+export const taskSecretsComputer = computer({
+  id: "task-secrets",
+  image: base,
+  resources: { cpu: 1, memory: "1GiB" },
+  // Replace this example UUID with the Environment Secret ID before deployment.
+  secrets: [{ secretId: "01900000-0000-7000-8000-000000000001", env: { name: "API_TOKEN", mode: "raw" } }],
+})
 
-export const useSecret = task({
+export const useSecret = agent({
+  computer: taskSecretsComputer,
   id: "use-secret",
-  maxDuration: "5m",
-  run: async (ctx) => {
-    if (!process.env.API_TOKEN) {
+  maxTurnDuration: "5m",
+  async turn() {
+    if (!process.env["API_TOKEN"]) {
       throw new Error("API_TOKEN was not injected")
     }
     console.info({ secret: "API_TOKEN", available: true })

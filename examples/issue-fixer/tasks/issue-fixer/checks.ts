@@ -1,7 +1,11 @@
 import { spawn } from "node:child_process"
-import { z } from "zod"
 
-export const issueSchema = z.object({ issue: z.string().min(1) })
+import type { HumanContent, InputContent } from "@helmr/sdk"
+import { normalizeInput } from "@helmr/sdk/internal"
+
+export function issuePrompt(input: InputContent): HumanContent {
+  return [{ type: "text", text: "Fix this issue and explain the change: " }, ...normalizeInput(input)]
+}
 
 // Configure these on the application host, never from webhook JSON or model output.
 export function repository(): string {

@@ -154,7 +154,7 @@ func DrainHost(ctx context.Context, txb db.TxBeginner, hostID uuid.UUID, request
 			return fmt.Errorf("lock worker host drain: %w", err)
 		}
 		if request.Reason == DrainReasonIdleScaleIn && locked.Host.Status == db.WorkerHostStatusActive {
-			present, err := HasQueuedDemand(ctx, q, pgvalue.MustUUIDValue(host.WorkerGroupID))
+			present, err := HasQueuedDemand(ctx, tx, pgvalue.MustUUIDValue(host.WorkerGroupID))
 			if err != nil {
 				return fmt.Errorf("check queued demand for worker host drain: %w", err)
 			}
@@ -179,39 +179,39 @@ func DrainHost(ctx context.Context, txb db.TxBeginner, hostID uuid.UUID, request
 	return result, err
 }
 
-// ConfirmHostProviderAbsent records the provider's confirmation that a worker
-// host no longer exists and reconciles its Computer instances in one
-// transaction. The host's identity is read before the transaction and
-// compared with the confirmed row after commit; a mismatch is reported as an
-// error after the confirmation has committed.
-func ConfirmHostProviderAbsent(ctx context.Context, q db.Querier, txb db.TxBeginner, hostID uuid.UUID) (WorkerHost, error) {
-	host, err := getCapacityHost(ctx, q, hostID)
-	if err != nil {
-		return WorkerHost{}, err
-	}
-	var confirmed db.ConfirmWorkerHostProviderAbsentRow
-	err = db.RunTx(ctx, txb, func(tx pgx.Tx) error {
-		q := db.New(tx)
-		var err error
-		confirmed, err = q.ConfirmWorkerHostProviderAbsent(ctx, pgvalue.UUID(hostID))
+// ConfirmedProviderAbsence binds verified physical absence to the transaction
+// recording it. Physical reconciliation must use this transaction before commit.
+// Its zero value conveys no confirmation.
+type ConfirmedProviderAbsence struct {
+	tx     pgx.Tx
+	hostID uuid.UUID
+}
+
+func (a ConfirmedProviderAbsence) Transaction() pgx.Tx { return a.tx }
+func (a ConfirmedProviderAbsence) HostID() uuid.UUID   { return a.hostID }
+
+// ConfirmHostProviderAbsent records verified provider absence under supply locks.
+// The caller owns the transaction and must reconcile physical Computer ownership
+// before committing. Ordinary host expiry or credential revocation is not this proof.
+func ConfirmHostProviderAbsent(ctx context.Context, tx pgx.Tx, hostID uuid.UUID) (ConfirmedProviderAbsence, error) {
+	var group uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT worker_group_id FROM worker_hosts WHERE id=$1`, hostID).Scan(&group); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return conflict("worker host cannot be marked lost from its current state")
+			return ConfirmedProviderAbsence{}, ErrHostNotFound
 		}
-		if err != nil {
-			return fmt.Errorf("confirm worker host %s provider absence: %w", hostID.String(), err)
-		}
-		if _, err := q.ReconcileProviderAbsentWorkerInstances(ctx, pgvalue.UUID(hostID)); err != nil {
-			return fmt.Errorf("reconcile provider-absent worker host %s instances: %w", hostID.String(), err)
-		}
-		return nil
-	})
+		return ConfirmedProviderAbsence{}, err
+	}
+	if _, err := tx.Exec(ctx, `SELECT id FROM worker_groups WHERE id=$1 FOR UPDATE`, group); err != nil {
+		return ConfirmedProviderAbsence{}, err
+	}
+	_, err := db.New(tx).ConfirmWorkerHostProviderAbsent(ctx, pgvalue.UUID(hostID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ConfirmedProviderAbsence{}, conflict("worker host cannot be marked lost from its current state")
+	}
 	if err != nil {
-		return WorkerHost{}, err
+		return ConfirmedProviderAbsence{}, fmt.Errorf("confirm worker host %s provider absence: %w", hostID, err)
 	}
-	if confirmed.WorkerGroupID != host.WorkerGroupID || confirmed.WorkerPoolID != host.WorkerPoolID || confirmed.ResourceID != host.ResourceID {
-		return WorkerHost{}, fmt.Errorf("provider absence changed worker host %s identity", hostID.String())
-	}
-	return GetHost(ctx, q, hostID)
+	return ConfirmedProviderAbsence{tx: tx, hostID: hostID}, nil
 }
 
 func getCapacityHost(ctx context.Context, q db.Querier, hostID uuid.UUID) (db.GetCapacityWorkerHostRow, error) {
@@ -243,7 +243,7 @@ func projectHost(row db.GetCapacityWorkerHostRow) (WorkerHost, error) {
 		return WorkerHost{}, err
 	}
 	host := WorkerHost{
-		DrainBlockers: HostDrainBlockers{UnreclaimedInstances: row.UnreclaimedInstances, UnreconciledRunProcesses: row.UnreconciledRunProcesses, UnreconciledCommandProcesses: row.UnreconciledCommandProcesses},
+		DrainBlockers: HostDrainBlockers{UnreclaimedInstances: row.UnreclaimedInstances, UnreconciledSessionProcesses: row.UnreconciledSessionProcesses},
 		ID:            pgvalue.UUIDString(row.ID), ResourceID: row.ResourceID,
 		WorkerGroupID: pgvalue.UUIDString(row.WorkerGroupID), WorkerPoolID: pgvalue.UUIDString(row.WorkerPoolID),
 		Status: status, ClaimVersion: row.ClaimVersion, DrainReason: row.DrainReason.String,

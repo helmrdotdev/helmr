@@ -15,6 +15,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
@@ -563,21 +564,16 @@ func writeDeployTestBundle(t *testing.T) (string, []byte, string, string) {
 	program := []byte("program")
 	programDigest := sha256sum.DigestBytes(program)
 	runtimeDigest := "sha256:" + strings.Repeat("f", 64)
-	declaration := artifact.ProgramIndexDeclaration{
-		Kind: definition.KindTask, DeclaredID: "hello",
-		Task: &definition.TaskManifest{
-			Payload: definition.SchemaManifest{Kind: definition.SchemaKindNone},
-			Run: definition.RunManifest{Queue: "default", MaxDurationMs: 5000,
-				Retry: definition.RetryManifest{Enabled: false}},
-		},
-		Locator: &artifact.ProgramLocator{
-			ExportName: "hello", ModulePath: "helmr/app/entry-0.mjs",
-			Slot: artifact.DeclarationSlotHandler,
-		},
+	metadata := artifacttest.ProgramMetadata(t)
+	seed := []byte("computer seed")
+	seedDigest := sha256sum.DigestBytes(seed)
+	for i := range metadata.Definitions {
+		if computer := metadata.Definitions[i].Computer; computer != nil {
+			computer.Seed.ArtifactDigest = seedDigest
+		}
 	}
-	queues := []definition.QueueInput{{Name: "default"}}
 	plan := bundle.Plan{FormatVersion: definition.DeploymentPlanFormatVersion,
-		Definitions: []artifact.ProgramIndexDeclaration{declaration}, Queues: queues}
+		Definitions: metadata.Definitions}
 	manifest := bundle.Manifest{
 		Contract: bundle.Contract,
 		Platform: bundle.Platform{Architecture: definition.ArchitectureX8664,
@@ -589,15 +585,16 @@ func writeDeployTestBundle(t *testing.T) (string, []byte, string, string) {
 		Program: artifact.ProgramOutput{
 			Artifact: artifact.ProgramDescriptor{Digest: programDigest, SizeBytes: int64(len(program)),
 				MediaType: artifact.ProgramArtifactMediaType},
-			Index: artifact.ProgramIndex{Architecture: definition.ArchitectureX8664,
-				ConfigResultDigest: "sha256:" + strings.Repeat("c", 64),
-				Declarations:       []artifact.ProgramIndexDeclaration{declaration}, Queues: queues,
-				RuntimeContract: definition.RuntimeContract, RuntimeDigest: runtimeDigest},
+			Metadata: metadata,
 		},
-		ComputerImages: []bundle.ComputerImage{},
+		ComputerSeeds: []bundle.ComputerSeed{{DeclaredID: "repo", Artifact: bundle.ComputerSeedArtifact{
+			Profile: definition.ComputerSeedProfile, Architecture: definition.ArchitectureX8664,
+			Digest: seedDigest, SizeBytes: int64(len(seed)), MediaType: definition.ComputerSeedMediaType,
+		}}},
 		Objects: []bundle.Object{{Digest: programDigest, SizeBytes: int64(len(program)),
-			MediaType: artifact.ProgramArtifactMediaType}},
+			MediaType: artifact.ProgramArtifactMediaType}, {Digest: seedDigest, SizeBytes: int64(len(seed)), MediaType: definition.ComputerSeedMediaType}},
 	}
+	bundle.SortObjects(manifest.Objects)
 	raw, err := bundle.Canonical(manifest)
 	if err != nil {
 		t.Fatal(err)
@@ -615,6 +612,9 @@ func writeDeployTestBundle(t *testing.T) (string, []byte, string, string) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(objects, strings.TrimPrefix(programDigest, "sha256:")), program, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(objects, strings.TrimPrefix(seedDigest, "sha256:")), seed, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return root, raw, digest, programDigest

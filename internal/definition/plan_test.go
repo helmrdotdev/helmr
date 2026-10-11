@@ -1,602 +1,119 @@
 package definition
 
 import (
+	"bytes"
 	"encoding/json"
-	"strings"
+	"os"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	"github.com/helmrdotdev/helmr/internal/secretbinding"
 )
 
-func TestBuildPlanCanonicalRoundTrip(t *testing.T) {
-	plan := testBuildPlan()
-	raw, err := CanonicalBuildPlan(plan)
+func fixtureBuildPlan(t *testing.T) (BuildPlan, []byte) {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/agent-build-plan.json")
 	if err != nil {
-		t.Fatalf("CanonicalBuildPlan: %v", err)
+		t.Fatal(err)
 	}
-	parsed, err := ParseBuildPlan(raw)
+	plan, err := ParseBuildPlan(raw)
 	if err != nil {
-		t.Fatalf("ParseBuildPlan: %v", err)
+		t.Fatal(err)
 	}
-	reencoded, err := CanonicalBuildPlan(parsed)
+	return plan, raw
+}
+func TestAgentBuildPlanCompilerContract(t *testing.T) {
+	plan, raw := fixtureBuildPlan(t)
+	if len(plan.Definitions) != 2 || plan.Definitions[0].Agent.ComputerDefinitionID != "workspace" || *plan.Definitions[0].Agent.MaxTurnDurationMs != 300000 || plan.Definitions[1].Computer.BuildSecrets[0].SecretID != "01900000-0000-7000-8000-000000000002" {
+		t.Fatalf("unexpected compiler projection: %+v", plan)
+	}
+	got, err := CanonicalBuildPlan(plan)
 	if err != nil {
-		t.Fatalf("CanonicalBuildPlan(parsed): %v", err)
+		t.Fatal(err)
 	}
-	if string(reencoded) != string(raw) {
-		t.Fatalf("reencoded plan differs:\n%s\n%s", reencoded, raw)
-	}
-	if parsed.Definitions[0].Task == nil ||
-		parsed.Definitions[1].Actor == nil ||
-		parsed.Definitions[2].Sandbox == nil {
-		t.Fatalf("typed definition union was not preserved: %+v", parsed.Definitions)
+	if !bytes.Equal(got, raw) {
+		t.Fatalf("roundtrip changed compiler bytes: %s", got)
 	}
 }
-
-func TestParseSandboxManifestRejectsWrongVersionAndUnknownFields(t *testing.T) {
-	raw := []byte(`{"image":{"artifactDigest":"sha256:test","mediaType":"application/test"},"resources":{"milliCpu":1000,"memoryMiB":1024}}`)
-	if _, err := ParseSandboxManifest(DeploymentPlanFormatVersion+1, raw); err == nil {
-		t.Fatal("wrong sandbox manifest version was accepted")
+func TestAgentBuildPlanRejectsMalformedAuthority(t *testing.T) {
+	tests := map[string]func(*BuildPlan){
+		"missing Computer":     func(p *BuildPlan) { p.Definitions[0].Agent.ComputerDefinitionID = "absent" },
+		"duplicate definition": func(p *BuildPlan) { p.Definitions = append(p.Definitions, p.Definitions[1]) },
+		"definition order":     func(p *BuildPlan) { p.Definitions[0], p.Definitions[1] = p.Definitions[1], p.Definitions[0] },
+		"mixed manifest":       func(p *BuildPlan) { p.Definitions[0].Computer = p.Definitions[1].Computer },
+		"negative duration":    func(p *BuildPlan) { p.Definitions[0].Agent.MaxTurnDurationMs = new(int64(-1)) },
+		"unsafe duration":      func(p *BuildPlan) { p.Definitions[0].Agent.MaxTurnDurationMs = new(int64(9007199254740992)) },
+		"malformed scheduled conversation": func(p *BuildPlan) {
+			p.Definitions[0].Agent.Triggers["nightly"] = CronTrigger{Cron: "* * * * *", Timezone: "UTC", Input: []byte(`{"type":"message","content":"shorthand"}`)}
+		},
+		"missing triggers": func(p *BuildPlan) { p.Definitions[0].Agent.Triggers = nil },
+		"invalid cron": func(p *BuildPlan) {
+			p.Definitions[0].Agent.Triggers["nightly"] = CronTrigger{Cron: "bad", Timezone: "UTC", Input: json.RawMessage(`[]`)}
+		},
+		"invalid timezone": func(p *BuildPlan) {
+			v := p.Definitions[0].Agent.Triggers["nightly"]
+			v.Timezone = "Local"
+			p.Definitions[0].Agent.Triggers["nightly"] = v
+		},
+		"missing timezone": func(p *BuildPlan) {
+			v := p.Definitions[0].Agent.Triggers["nightly"]
+			v.Timezone = ""
+			p.Definitions[0].Agent.Triggers["nightly"] = v
+		},
+		"missing trigger input": func(p *BuildPlan) {
+			v := p.Definitions[0].Agent.Triggers["nightly"]
+			v.Input = nil
+			p.Definitions[0].Agent.Triggers["nightly"] = v
+		},
+		"invalid disk":             func(p *BuildPlan) { p.Definitions[1].Computer.Resources.DiskMiB = new(int64(0)) },
+		"invalid freshness":        func(p *BuildPlan) { p.Definitions[1].Computer.Refresh.MaxAgeMs = new(int64(0)) },
+		"missing runtime bindings": func(p *BuildPlan) { p.Definitions[1].Computer.Secrets = nil },
+		"missing build bindings":   func(p *BuildPlan) { p.Definitions[1].Computer.BuildSecrets = nil },
+		"invalid build Secret": func(p *BuildPlan) {
+			p.Definitions[1].Computer.BuildSecrets[0].SecretID = "name"
+		},
+		"invalid runtime Secret": func(p *BuildPlan) {
+			p.Definitions[1].Computer.Secrets[0].SecretID = "00000000-0000-0000-0000-000000000000"
+		},
+		"invalid image": func(p *BuildPlan) { p.Definitions[1].Computer.ImageBuild.Images[0].Steps = nil },
 	}
-	unknown := []byte(`{"image":{"artifactDigest":"sha256:test","mediaType":"application/test"},"resources":{"milliCpu":1000,"memoryMiB":1024},"extra":true}`)
-	if _, err := ParseSandboxManifest(DeploymentPlanFormatVersion, unknown); err == nil {
-		t.Fatal("unknown sandbox manifest field was accepted")
-	}
-}
-
-func TestCanonicalQueueConfigRejectsWrongDeploymentPlanVersion(t *testing.T) {
-	if _, err := CanonicalQueueConfig(QueueConfig{FormatVersion: DeploymentPlanFormatVersion + 1}); err == nil {
-		t.Fatal("wrong queue config version was accepted")
-	}
-}
-
-func TestParseBuildPlanRequiresClosedCanonicalShape(t *testing.T) {
-	raw := canonicalTestBuildPlan(t)
-	tests := []struct {
-		name   string
-		raw    func() []byte
-		errMsg string
-	}{
-		{
-			name: "noncanonical",
-			raw: func() []byte {
-				return append([]byte(" "), raw...)
-			},
-			errMsg: "canonical",
-		},
-		{
-			name: "missing format version",
-			raw: func() []byte {
-				return mutateBuildPlanJSON(t, raw, func(root map[string]any) {
-					delete(root, "formatVersion")
-				})
-			},
-			errMsg: "complete canonical v0 shape",
-		},
-		{
-			name: "null queue array",
-			raw: func() []byte {
-				return mutateBuildPlanJSON(t, raw, func(root map[string]any) {
-					root["queues"] = nil
-				})
-			},
-			errMsg: "queues must be an array",
-		},
-		{
-			name: "unknown root member",
-			raw: func() []byte {
-				return mutateBuildPlanJSON(t, raw, func(root map[string]any) {
-					root["unknown"] = true
-				})
-			},
-			errMsg: "unknown field",
-		},
-		{
-			name: "unknown definition member",
-			raw: func() []byte {
-				return mutateBuildPlanJSON(t, raw, func(root map[string]any) {
-					definitions := root["definitions"].([]any)
-					definitions[0].(map[string]any)["unknown"] = true
-				})
-			},
-			errMsg: "unknown field",
-		},
-		{
-			name: "unknown manifest member",
-			raw: func() []byte {
-				return mutateBuildPlanJSON(t, raw, func(root map[string]any) {
-					definitions := root["definitions"].([]any)
-					definitions[0].(map[string]any)["manifest"].(map[string]any)["unknown"] = true
-				})
-			},
-			errMsg: "unknown field",
-		},
-		{
-			name: "nested image build format version",
-			raw: func() []byte {
-				return mutateBuildPlanJSON(t, raw, func(root map[string]any) {
-					definitions := root["definitions"].([]any)
-					manifest := definitions[2].(map[string]any)["manifest"].(map[string]any)
-					manifest["imageBuild"].(map[string]any)["formatVersion"] = 0
-				})
-			},
-			errMsg: "unknown field",
-		},
-		{
-			name: "null optional member",
-			raw: func() []byte {
-				return mutateBuildPlanJSON(t, raw, func(root map[string]any) {
-					definitions := root["definitions"].([]any)
-					run := definitions[0].(map[string]any)["manifest"].(map[string]any)["run"].(map[string]any)
-					run["ttlMs"] = nil
-				})
-			},
-			errMsg: "complete canonical v0 shape",
-		},
-		{
-			name: "manifest does not match kind",
-			raw: func() []byte {
-				return mutateBuildPlanJSON(t, raw, func(root map[string]any) {
-					definitions := root["definitions"].([]any)
-					definitions[0].(map[string]any)["kind"] = "actor"
-				})
-			},
-			errMsg: "unknown field",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := ParseBuildPlan(test.raw())
-			if err == nil || !strings.Contains(err.Error(), test.errMsg) {
-				t.Fatalf("error = %v, want containing %q", err, test.errMsg)
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			p, _ := fixtureBuildPlan(t)
+			mutate(&p)
+			if err := ValidateBuildPlan(p); err == nil {
+				t.Fatal("invalid plan accepted")
 			}
 		})
 	}
 }
-
-func TestValidateBuildPlanDefinitions(t *testing.T) {
-	tests := []struct {
-		name   string
-		change func(*BuildPlan)
-		errMsg string
-	}{
-		{
-			name: "empty definitions",
-			change: func(plan *BuildPlan) {
-				plan.Definitions = []Input{}
-			},
-			errMsg: "non-empty array",
+func TestAgentBuildPlanRequiresClosedCanonicalShape(t *testing.T) {
+	_, raw := fixtureBuildPlan(t)
+	for name, change := range map[string]func([]byte) []byte{
+		"whitespace": func(b []byte) []byte { return append([]byte(" "), b...) },
+		"old kind":   func(b []byte) []byte { return bytes.Replace(b, []byte(`"kind":"agent"`), []byte(`"kind":"task"`), 1) },
+		"unknown policy": func(b []byte) []byte {
+			return bytes.Replace(b, []byte(`"setup":true`), []byte(`"setup":true,"unrecognized":1`), 1)
 		},
-		{
-			name: "definition order",
-			change: func(plan *BuildPlan) {
-				plan.Definitions[0], plan.Definitions[1] = plan.Definitions[1], plan.Definitions[0]
-			},
-			errMsg: "canonical order",
+		"unknown secret member": func(b []byte) []byte {
+			return bytes.Replace(b, []byte(`"secretId":"01900000`), []byte(`"unrecognized":1,"secretId":"01900000`), 1)
 		},
-		{
-			name: "declared id",
-			change: func(plan *BuildPlan) {
-				plan.Definitions[0].DeclaredID = "task/id"
-			},
-			errMsg: "ASCII ID domain",
-		},
-		{
-			name: "manifest oneof",
-			change: func(plan *BuildPlan) {
-				plan.Definitions[0].Actor = plan.Definitions[1].Actor
-			},
-			errMsg: "exactly one manifest",
-		},
-		{
-			name: "kind manifest mismatch",
-			change: func(plan *BuildPlan) {
-				plan.Definitions[0].Kind = KindActor
-			},
-			errMsg: "actor manifest",
-		},
-		{
-			name: "payload kind",
-			change: func(plan *BuildPlan) {
-				plan.Definitions[0].Task.Payload.Kind = "json_schema"
-			},
-			errMsg: "payload kind",
-		},
-		{
-			name: "scheduled task payload",
-			change: func(plan *BuildPlan) {
-				plan.Definitions[0].Task.Payload.Kind = SchemaKindNone
-			},
-			errMsg: "scheduled task payload",
-		},
-		{
-			name: "actor idle timeout",
-			change: func(plan *BuildPlan) {
-				plan.Definitions[1].Actor.IdleTimeoutMs = 0
-			},
-			errMsg: "idleTimeoutMs",
-		},
-		{
-			name: "actor idle timeout maximum",
-			change: func(plan *BuildPlan) {
-				plan.Definitions[1].Actor.IdleTimeoutMs = MaxActorIdleMs + 1
-			},
-			errMsg: "idleTimeoutMs",
-		},
-		{
-			name: "image architecture",
-			change: func(plan *BuildPlan) {
-				plan.Definitions[2].Sandbox.ImageBuild.Images[0].Platform.Architecture = "aarch64"
-			},
-			errMsg: "imageBuild",
-		},
-		{
-			name: "computer resources",
-			change: func(plan *BuildPlan) {
-				plan.Definitions[2].Sandbox.Resources.MemoryMiB = 0
-			},
-			errMsg: "memoryMiB",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			plan := testBuildPlan()
-			test.change(&plan)
-			assertBuildPlanError(t, plan, test.errMsg)
+		"missing boolean": func(b []byte) []byte { return bytes.Replace(b, []byte(`"setup":true,`), nil, 1) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := change(raw)
+			if bytes.Equal(candidate, raw) {
+				t.Fatal("invalid-shape fixture did not change")
+			}
+			if name != "whitespace" {
+				var err error
+				candidate, err = jsoncanon.Transform(candidate)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := ParseBuildPlan(candidate); err == nil {
+				t.Fatal("invalid shape accepted")
+			}
 		})
-	}
-}
-
-func TestValidateBuildPlanRunPolicy(t *testing.T) {
-	tests := []struct {
-		name   string
-		change func(*RunManifest)
-		errMsg string
-	}{
-		{
-			name: "queue domain",
-			change: func(run *RunManifest) {
-				run.Queue = "../queue"
-			},
-			errMsg: "queue name",
-		},
-		{
-			name: "undeclared queue",
-			change: func(run *RunManifest) {
-				run.Queue = "missing"
-			},
-			errMsg: "not declared",
-		},
-		{
-			name: "minimum duration",
-			change: func(run *RunManifest) {
-				run.MaxDurationMs = minRunDurationMs - 1
-			},
-			errMsg: "maxDurationMs",
-		},
-		{
-			name: "ttl",
-			change: func(run *RunManifest) {
-				run.TTLMs = new(int64(0))
-			},
-			errMsg: "ttlMs",
-		},
-		{
-			name: "ttl maximum",
-			change: func(run *RunManifest) {
-				run.TTLMs = new(maxQueuedRunTTLMs + 1)
-			},
-			errMsg: "ttlMs",
-		},
-		{
-			name: "disabled retry fields",
-			change: func(run *RunManifest) {
-				run.Retry.MaxAttempts = new(int64(1))
-			},
-			errMsg: "disabled retry",
-		},
-		{
-			name: "enabled retry attempts",
-			change: func(run *RunManifest) {
-				run.Retry = validRetryManifest()
-				run.Retry.MaxAttempts = new(int64(11))
-			},
-			errMsg: "maxAttempts",
-		},
-		{
-			name: "enabled retry backoff",
-			change: func(run *RunManifest) {
-				run.Retry = validRetryManifest()
-				run.Retry.Backoff = nil
-			},
-			errMsg: "requires backoff",
-		},
-		{
-			name: "retry factor",
-			change: func(run *RunManifest) {
-				run.Retry = validRetryManifest()
-				run.Retry.Backoff.Factor = 0
-			},
-			errMsg: "factor",
-		},
-		{
-			name: "retry delay order",
-			change: func(run *RunManifest) {
-				run.Retry = validRetryManifest()
-				run.Retry.Backoff.MinMs = run.Retry.Backoff.MaxMs + 1
-			},
-			errMsg: "must not exceed",
-		},
-		{
-			name: "retry delay maximum",
-			change: func(run *RunManifest) {
-				run.Retry = validRetryManifest()
-				run.Retry.Backoff.MaxMs = maxRetryDelayMs + 1
-			},
-			errMsg: "maxMs",
-		},
-		{
-			name: "retry jitter",
-			change: func(run *RunManifest) {
-				run.Retry = validRetryManifest()
-				run.Retry.Backoff.Jitter = "random"
-			},
-			errMsg: "jitter",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			plan := testBuildPlan()
-			test.change(&plan.Definitions[0].Task.Run)
-			assertBuildPlanError(t, plan, test.errMsg)
-		})
-	}
-
-	plan := testBuildPlan()
-	plan.Definitions[0].Task.Run.Retry = validRetryManifest()
-	if err := ValidateBuildPlan(plan); err != nil {
-		t.Fatalf("enabled retry: %v", err)
-	}
-}
-
-func TestValidateBuildPlanSchedule(t *testing.T) {
-	tests := []struct {
-		name   string
-		change func(*ScheduleManifest)
-		errMsg string
-	}{
-		{
-			name: "cron empty",
-			change: func(manifest *ScheduleManifest) {
-				manifest.Cron = ""
-			},
-			errMsg: "1-1024 bytes",
-		},
-		{
-			name: "cron syntax",
-			change: func(manifest *ScheduleManifest) {
-				manifest.Cron = "every day"
-			},
-			errMsg: "exactly 5 fields",
-		},
-		{
-			name: "timezone normalization",
-			change: func(manifest *ScheduleManifest) {
-				manifest.Timezone = "utc"
-			},
-			errMsg: "IANA timezone",
-		},
-		{
-			name: "timezone",
-			change: func(manifest *ScheduleManifest) {
-				manifest.Timezone = "Mars/Olympus"
-			},
-			errMsg: "IANA timezone",
-		},
-		{
-			name: "computer sandbox missing",
-			change: func(manifest *ScheduleManifest) {
-				manifest.Computer.SandboxDeclaredID = ""
-			},
-			errMsg: "sandbox declared ID",
-		},
-		{
-			name: "computer sandbox invalid",
-			change: func(manifest *ScheduleManifest) {
-				manifest.Computer.SandboxDeclaredID = "invalid sandbox"
-			},
-			errMsg: "sandbox declared ID",
-		},
-		{
-			name: "computer secrets nil",
-			change: func(manifest *ScheduleManifest) {
-				manifest.Computer.Secrets = nil
-			},
-			errMsg: "secrets must be an array",
-		},
-		{
-			name: "computer secret target",
-			change: func(manifest *ScheduleManifest) {
-				manifest.Computer.Secrets = []secretbinding.Binding{{
-					Name: "TOKEN", Env: &secretbinding.Env{Name: "HELMR_TOKEN", Mode: "raw"},
-				}}
-			},
-			errMsg: "reserved computer secret environment target",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			plan := testBuildPlan()
-			test.change(plan.Definitions[0].Task.Schedule)
-			assertBuildPlanError(t, plan, test.errMsg)
-		})
-	}
-
-}
-
-func TestValidateBuildPlanQueues(t *testing.T) {
-	tests := []struct {
-		name   string
-		change func(*BuildPlan)
-		errMsg string
-	}{
-		{
-			name: "nil",
-			change: func(plan *BuildPlan) {
-				plan.Queues = nil
-			},
-			errMsg: "queues must be an array",
-		},
-		{
-			name: "order",
-			change: func(plan *BuildPlan) {
-				plan.Queues[0], plan.Queues[1] = plan.Queues[1], plan.Queues[0]
-			},
-			errMsg: "canonical name order",
-		},
-		{
-			name: "duplicate",
-			change: func(plan *BuildPlan) {
-				plan.Queues[1].Name = plan.Queues[0].Name
-			},
-			errMsg: "canonical name order",
-		},
-		{
-			name: "limit",
-			change: func(plan *BuildPlan) {
-				plan.Queues[0].ConcurrencyLimit = new(int64(0))
-			},
-			errMsg: "concurrencyLimit",
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			plan := testBuildPlan()
-			test.change(&plan)
-			assertBuildPlanError(t, plan, test.errMsg)
-		})
-	}
-}
-
-func testBuildPlan() BuildPlan {
-	return BuildPlan{
-		FormatVersion: BuildPlanFormatVersion,
-		Definitions: []Input{
-			{
-				Kind:       KindTask,
-				DeclaredID: "build",
-				Task: &TaskManifest{
-					Payload: SchemaManifest{Kind: SchemaKindStandard},
-					Run: RunManifest{
-						Queue:         "task/build",
-						MaxDurationMs: 900000,
-						Retry:         RetryManifest{Enabled: false},
-					},
-					Schedule: &ScheduleManifest{
-						Cron:     "0 9 * * *",
-						Timezone: "UTC",
-						Computer: ScheduleComputerManifest{
-							SandboxDeclaredID: "repo",
-							Secrets:           []secretbinding.Binding{},
-						},
-					},
-				},
-			},
-			{
-				Kind:       KindActor,
-				DeclaredID: "chat",
-				Actor: &ActorManifest{
-					Run: RunManifest{
-						Queue:         "actor/chat",
-						MaxDurationMs: 900000,
-						Retry:         RetryManifest{Enabled: false},
-					},
-					IdleTimeoutMs: 30000,
-				},
-			},
-			{
-				Kind:       KindSandbox,
-				DeclaredID: "repo",
-				Sandbox: &SandboxInputManifest{
-					ImageBuild: ImageBuild{
-						Root: "repo",
-						Images: []ImageSpec{{
-							Key: "repo",
-							Platform: ImagePlatform{
-								OS:           "linux",
-								Architecture: "x86_64",
-							},
-							Steps: []ImageStep{
-								{From: &ImageFrom{Ref: "debian:bookworm-slim"}},
-								{CopySourceFile: &ImageCopySourceFile{
-									Dst:  "/app/package.json",
-									Path: "package.json",
-								}},
-							},
-						}},
-					},
-					Resources: ResourcesManifest{
-						MilliCPU:  2000,
-						MemoryMiB: 4096,
-					},
-				},
-			},
-		},
-		Queues: []QueueInput{
-			{Name: "actor/chat", ConcurrencyLimit: new(int64(1))},
-			{Name: "task/build"},
-		},
-	}
-}
-
-func validRetryManifest() RetryManifest {
-	return RetryManifest{
-		Enabled:     true,
-		MaxAttempts: new(int64(3)),
-		Backoff: &RetryBackoff{
-			MinMs:  1000,
-			MaxMs:  30000,
-			Factor: 2,
-			Jitter: RetryJitterFull,
-		},
-	}
-}
-
-func canonicalTestBuildPlan(t *testing.T) []byte {
-	t.Helper()
-	raw, err := CanonicalBuildPlan(testBuildPlan())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return raw
-}
-
-func mutateBuildPlanJSON(t *testing.T, raw []byte, mutate func(map[string]any)) []byte {
-	t.Helper()
-	var root map[string]any
-	if err := json.Unmarshal(raw, &root); err != nil {
-		t.Fatal(err)
-	}
-	mutate(root)
-	encoded, err := json.Marshal(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	canonical, err := jsoncanon.Transform(encoded)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return canonical
-}
-
-func assertBuildPlanError(t *testing.T, plan BuildPlan, want string) {
-	t.Helper()
-	err := ValidateBuildPlan(plan)
-	if err == nil || !strings.Contains(err.Error(), want) {
-		t.Fatalf("error = %v, want containing %q", err, want)
 	}
 }

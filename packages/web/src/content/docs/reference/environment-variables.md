@@ -40,8 +40,66 @@ key from your application's configuration to its constructor.
 Required: `DATABASE_URL`, `CAS_URI`, `CLICKHOUSE_URL`,
 `DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH`, `PLATFORM_STORE_URI`,
 `WORKER_HOST_CREDENTIAL_SIGNING_KEY`, `AUTH_KEY`, `ENCRYPTION_KEY`,
-`COMPUTER_FENCING_KEY`, `TOKEN_CREDENTIAL_KEY`,
+`COMPUTER_FENCING_KEY`,
 `GITHUB_OAUTH_CLIENT_ID`, and `GITHUB_OAUTH_CLIENT_SECRET`.
+
+Execution policy for newly created Environments must also be configured explicitly.
+These values are copied into each Environment when it is created; changing process
+configuration does not reset existing Environment limits or rate tokens. They have
+no implicit defaults. Set positive integer values appropriate for your deployment.
+
+| Variable | Purpose |
+| --- | --- |
+| `ENVIRONMENT_MAX_RESIDENT_COMPUTERS` | Reserved policy for the Computer allocator; not yet enforced. |
+| `ENVIRONMENT_MAX_CPU_MILLIS` | Bound on physical whole-vCPU reservations, in millicores. A fractional request rounds up: `cpu: 0.5` reserves 1000 millicores. A non-multiple of 1000 leaves its remainder unusable. Rejects fresh Computers that cannot fit; aggregate allocation enforcement is pending. |
+| `ENVIRONMENT_MAX_MEMORY_BYTES` | Rejects a Computer larger than this memory bound; aggregate allocation enforcement is pending. |
+| `ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES` | Bound on reserved logical Computer storage. Each Computer reserves 32 GiB; a lower bound rejects fresh Computer creation. |
+| `ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS` | Maximum queued, running and finalizing Turns. |
+| `ENVIRONMENT_MAX_CAUSAL_DEPTH` | Maximum immutable requester ancestry for created Sessions. |
+| `ENVIRONMENT_ADMISSION_RATE_PER_SECOND` | Refill rate for new Turn admission tokens. |
+| `ENVIRONMENT_ADMISSION_BURST` | Maximum admission tokens; one new Turn consumes one token. |
+| `ENVIRONMENT_PREPARATION_TIMEOUT_MS` | Initial Computer preparation deadline in milliseconds. |
+
+Retrying an accepted request does not consume another token. Disk reservations
+are distinct from physical CPU/memory allocation and from measured stored bytes.
+Deleted or failed-preparation Computers currently retain their logical storage reservation;
+reclamation must be implemented before repeated creation can reuse that capacity.
+These resource and admission bounds do not promise a monetary spend ceiling.
+
+Diagnostic ingestion requires explicit positive integer limits. The dispatcher also uses
+these limits for diagnostic export and requires the export batch settings below:
+
+| Variable | Purpose |
+| --- | --- |
+| `DIAGNOSTIC_CHUNK_BYTES` | Maximum bytes in one log data record, at most 16 MiB. |
+| `DIAGNOSTIC_SOURCE_BYTES`, `DIAGNOSTIC_SOURCE_RECORDS` | Pending byte and record ceilings for one producer. |
+| `DIAGNOSTIC_ENVIRONMENT_BYTES`, `DIAGNOSTIC_ENVIRONMENT_RECORDS` | Pending ceilings across an Environment. |
+| `DIAGNOSTIC_QUEUE_BYTES`, `DIAGNOSTIC_QUEUE_RECORDS` | Pending ceilings across the diagnostic queue. |
+| `DIAGNOSTIC_DB_MAX_CONNECTIONS` | Maximum connections in each process’s dedicated diagnostic pool, additional to its ordinary database pool. |
+| `DIAGNOSTIC_EXPORT_BATCH_RECORDS` | Dispatcher: maximum records per diagnostic export batch. |
+| `DIAGNOSTIC_EXPORT_BATCH_BYTES` | Dispatcher: maximum data bytes per diagnostic export batch, at least `DIAGNOSTIC_CHUNK_BYTES`. |
+
+Byte ceilings must satisfy chunk ≤ source ≤ Environment ≤ queue. Record ceilings
+must satisfy source ≤ Environment ≤ queue. Gap and end records count toward the
+record limits. These ceilings do not reserve capacity for a producer or Environment.
+A busy or full queue asks producers to retry; diagnostic pool exhaustion leaves
+the ordinary pool available for lifecycle requests.
+
+Missing, invalid or inconsistent diagnostic settings prevent the control plane or
+dispatcher from starting. Before a rollout, load each service's intended environment
+and run its binary with `check-config`:
+
+```sh
+control-plane check-config
+dispatcher check-config
+```
+
+These commands use the same environment loaders as service startup and exit nonzero
+on invalid settings. They do not start services, connect to dependencies, read the
+Runtime descriptor, or check credentials against external services. A successful
+check does not prove full startup or availability. Runtime sink failures and queue
+exhaustion continue to use bounded retry and backpressure; separate pools do not
+isolate a shared PostgreSQL outage. Accepted records retain their configured expiry.
 
 Deployment mode: `DEPLOYMENT_MODE` defaults to `self-hosted`. In `self-hosted` mode, `SETUP_TOKEN` is required to create the first and only organization. In `managed-cloud` mode, authenticated users can create organizations without a setup token.
 
@@ -70,10 +128,9 @@ addresses that receive the platform-wide Admin flag when their user record is
 created. Admin differs from organization membership roles and controls the
 `/admin` Console and `/admin/api/v1` API surfaces.
 
-Optional: `CONTROL_PLANE_ADDR`, `PUBLIC_URL`, `API_ORIGIN`, `REDIS_URL`, and
+Optional: `CONTROL_PLANE_ADDR`, `PUBLIC_URL`, `REDIS_URL`, and
 `MAGIC_LINK_DEBUG_URLS`. `PUBLIC_URL` is used for browser-facing links.
-`API_ORIGIN` is used for machine-facing token callback URLs and defaults to
-`PUBLIC_URL`. `REDIS_URL` defaults to
+`REDIS_URL` defaults to
 `redis://127.0.0.1:6379/0`.
 
 `CAPACITY_TOKEN` enables and authenticates the capacity API used by trusted
@@ -87,7 +144,7 @@ scaling](/docs/self-hosting/capacity-scaling) for setup and rotation.
 
 ClickHouse telemetry: `CLICKHOUSE_URL` is required. Set `CLICKHOUSE_USER` when the service user is not `default`, and set `CLICKHOUSE_PASSWORD` when the service requires a password.
 
-`AUTH_KEY`, `TOKEN_CREDENTIAL_KEY`, `COMPUTER_FENCING_KEY`,
+`AUTH_KEY`, `COMPUTER_FENCING_KEY`,
 `ENCRYPTION_KEY`, and `WORKER_HOST_CREDENTIAL_SIGNING_KEY` are distinct single roots.
 Each must be base64 and decode to exactly 32 bytes. Every Control Plane replica uses
 the same values. Online rotation and multi-key verification are not supported.
@@ -146,7 +203,7 @@ of uninterrupted healthy samples before fencing stale Worker observations.
 Failures, missed samples and Dispatcher restarts reset this recovery window.
 
 The dispatcher uses the same `ENCRYPTION_KEY` as the Control Plane to encrypt
-CA signers when it creates protected Computers for scheduled tasks.
+CA signers when it creates protected Computers for scheduled Agent admissions.
 
 The dispatcher uses the same single base64-encoded 32-byte
 `COMPUTER_FENCING_KEY` as the Control Plane service.
@@ -155,6 +212,13 @@ The AWS Control Plane module provisions cluster-mode disabled ElastiCache Valkey
 Control Plane event stream and injects `REDIS_URL` into the Control Plane service.
 
 ## Worker
+
+Worker log buffering requires `WORKER_LOG_CHUNK_BYTES`, `WORKER_LOG_BUFFER_BYTES`
+and `WORKER_LOG_BUFFER_RECORDS` as positive integers. The chunk size must fit the
+16 MiB transport limit and the control plane's `DIAGNOSTIC_CHUNK_BYTES`; the buffer
+byte limit must be at least one chunk. Record count must fit a positive int32.
+These are per-producer memory limits, not durable queue reservations.
+
 
 Required for every Worker: `CONTROL_PLANE_URL`, `CAS_URI`,
 `PLATFORM_STORE_URI`, `WORKER_RESOURCE_ID`,
@@ -176,6 +240,12 @@ secret for short-lived host credentials that authenticate its requests.
 `WORKER_RESOURCE_ID` remains an opaque deployment-owned locator for the
 physical Worker. Provider identity and infrastructure inventory are deployment
 responsibilities rather than Control Plane authentication inputs.
+
+Enrollment returns a `worker_resource_custody` conflict while any prior Host for
+the same Group and resource locator retains an unfenced VM allocation, including
+private preparation VMs. A `lost` status alone does not prove physical cleanup.
+The prior Host remains visible to the capacity provider until its physical absence
+is confirmed; registration cannot hide it behind a new Host identity.
 
 `WORKER_WORK_DIR` and `WORKER_IMAGES_DIR` select Worker state and image
 directories. The following advanced settings connect the Worker to binaries
@@ -204,7 +274,6 @@ VM sizing, Worker capacity, disk budgeting, and concurrency use these settings:
 | `WORKER_CAPACITY_MEMORY_MIB` | `VM_MEMORY_MIB` | Total memory capacity advertised by the Worker. It cannot be smaller than `VM_MEMORY_MIB`. |
 | `WORKER_DISK_MIB` | Total capacity of the Worker filesystem. | Overrides the physical capacity used for disk budgeting. |
 | `WORKER_DISK_RESERVE_MIB` | `1024` | Host disk space subtracted to form the physical disk budget. |
-| `WORKER_ARTIFACT_CACHE_MAX_MIB` | Derived when `0`. | Maximum artifact-cache size. |
 | `WORKER_EXECUTION_SLOTS` | `1` | Maximum concurrent executions admitted by the Worker. |
 | `VM_INIT_TIMEOUT` | `30s` | Timeout for Firecracker SDK initialization. |
 | `VM_HEALTH_TIMEOUT` | `30s` | Timeout for guest health convergence. |

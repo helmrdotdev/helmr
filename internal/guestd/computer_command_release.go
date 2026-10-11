@@ -20,7 +20,7 @@ func (entry *computerMountEntry) hasUnreleasedCommands() bool {
 
 // Release follows durable Control Plane outcome acknowledgement. A tombstone
 // retains duplicate-launch protection for the remainder of this Instance.
-func (r *computerOperationRegistry) releaseCommand(a *computerv0.ComputerCommandAuthority) error {
+func (r *computerOperationRegistry) releaseCommand(a *computerv0.ComputerCommandAuthority, outputFenced bool) error {
 	entry, release, ok := r.acquireCommandInstance(a.GetComputerInstanceId(), a.GetComputerId(), a.GetChannelCredential())
 	if !ok {
 		return errors.New("command Instance is unavailable")
@@ -48,6 +48,9 @@ func (r *computerOperationRegistry) releaseCommand(a *computerv0.ComputerCommand
 	if command.result == nil || command.result.GetOutcome() == "computer_command_scope_termination_failed" || command.result.GetOutcome() == "computer_command_result_uncertain" {
 		return errors.New("command process cleanup is unresolved")
 	}
+	if !outputFenced && !command.output.settled() {
+		return errors.New("command output is awaiting receipt or durable fencing")
+	}
 	command.output.close()
 	command.acknowledged = true
 	return nil
@@ -59,7 +62,7 @@ func handleComputerCommandReleaseConnection(conn io.ReadWriter, r *computerOpera
 		return err
 	}
 	response := &computerv0.ComputerCommandReleaseResponse{}
-	if err := r.releaseCommand(request.GetAuthority()); err != nil {
+	if err := r.releaseCommand(request.GetAuthority(), request.GetOutputFenced()); err != nil {
 		response.Error = err.Error()
 	} else {
 		response.Released = true

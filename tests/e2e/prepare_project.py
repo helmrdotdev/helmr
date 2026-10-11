@@ -14,7 +14,7 @@ ROOT = SOURCE.parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=Path, help='new directory outside the checkout')
-    parser.add_argument('--fixtures', nargs='+', required=True, help='fixture directories relative to tests/e2e, e.g. cases/task')
+    parser.add_argument('--fixtures', nargs='+', required=True, help='fixture directories relative to tests/e2e, e.g. cases/agent')
     parser.add_argument('--sdk-packages', type=Path, help='already built SDK/proto tarballs; otherwise build them locally')
     args = parser.parse_args()
     output = args.output.resolve()

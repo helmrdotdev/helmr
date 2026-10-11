@@ -6,23 +6,27 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/cas"
 )
 
-func computerSpecFixture() (SandboxManifest, ComputerImage) {
-	image := ComputerImage{
-		Profile: ComputerSeedProfile, Architecture: ArchitectureX8664,
-		Digest: "sha256:" + strings.Repeat("a", 64), MediaType: ComputerSeedMediaType, SizeBytes: 4096,
+func computerSpecFixture() (ComputerConfig, cas.Descriptor) {
+	config := ComputerConfig{Architecture: ArchitectureX8664, RuntimeContract: RuntimeContract, Profile: ComputerSeedProfile, Resources: ResourcesManifest{MilliCPU: 1000, MemoryMiB: 512}}
+	seed := cas.Descriptor{Digest: "sha256:" + strings.Repeat("a", 64), MediaType: ComputerSeedMediaType, SizeBytes: 4096}
+	return config, seed
+}
+
+func parseComputerSpecFixture(config ComputerConfig, seed cas.Descriptor) (ComputerSpec, error) {
+	raw, err := json.Marshal(config)
+	if err != nil {
+		return ComputerSpec{}, err
 	}
-	manifest := SandboxManifest{
-		Image:     SandboxImageManifest{Profile: image.Profile, Config: image.Config, ArtifactDigest: image.Digest, MediaType: image.MediaType},
-		Resources: ResourcesManifest{MilliCPU: 1000, MemoryMiB: 512},
-	}
-	return manifest, image
+	return ParseComputerSpec(raw, seed)
 }
 
 func TestComputerSpecCanonicalIdentity(t *testing.T) {
 	manifest, image := computerSpecFixture()
-	spec, err := CompileComputerSpec(manifest, image)
+	spec, err := parseComputerSpecFixture(manifest, image)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,38 +58,34 @@ func TestComputerSpecCanonicalIdentity(t *testing.T) {
 
 func TestComputerSpecLaunchChangesChangeIdentity(t *testing.T) {
 	manifest, image := computerSpecFixture()
-	original, err := CompileComputerSpec(manifest, image)
+	original, err := parseComputerSpecFixture(manifest, image)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, test := range []struct {
 		name string
-		edit func(*SandboxManifest, *ComputerImage)
+		edit func(*ComputerConfig, *cas.Descriptor)
 	}{
-		{"seed bytes", func(m *SandboxManifest, i *ComputerImage) {
+		{"seed bytes", func(m *ComputerConfig, i *cas.Descriptor) {
 			i.Digest = "sha256:" + strings.Repeat("b", 64)
-			m.Image.ArtifactDigest = i.Digest
 		}},
-		{"seed size", func(m *SandboxManifest, i *ComputerImage) { i.SizeBytes++ }},
-		{"cpu", func(m *SandboxManifest, i *ComputerImage) { m.Resources.MilliCPU++ }},
-		{"memory", func(m *SandboxManifest, i *ComputerImage) { m.Resources.MemoryMiB++ }},
-		{"image env", func(m *SandboxManifest, i *ComputerImage) {
-			i.Config.Env = []string{"A=one", "A=two"}
-			m.Image.Config = i.Config
+		{"seed size", func(m *ComputerConfig, i *cas.Descriptor) { i.SizeBytes++ }},
+		{"cpu", func(m *ComputerConfig, i *cas.Descriptor) { m.Resources.MilliCPU++ }},
+		{"memory", func(m *ComputerConfig, i *cas.Descriptor) { m.Resources.MemoryMiB++ }},
+		{"image env", func(m *ComputerConfig, i *cas.Descriptor) {
+			m.Image.Env = []string{"A=one", "A=two"}
 		}},
-		{"image user", func(m *SandboxManifest, i *ComputerImage) {
-			i.Config.User = "1000"
-			m.Image.Config = i.Config
+		{"image user", func(m *ComputerConfig, i *cas.Descriptor) {
+			m.Image.User = "1000"
 		}},
-		{"working directory", func(m *SandboxManifest, i *ComputerImage) {
-			i.Config.WorkingDir = "/app"
-			m.Image.Config = i.Config
+		{"working directory", func(m *ComputerConfig, i *cas.Descriptor) {
+			m.Image.WorkingDir = "/app"
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			m, i := computerSpecFixture()
 			test.edit(&m, &i)
-			changed, err := CompileComputerSpec(m, i)
+			changed, err := parseComputerSpecFixture(m, i)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -98,7 +98,7 @@ func TestComputerSpecLaunchChangesChangeIdentity(t *testing.T) {
 
 func TestComputerSpecRejectsAmbiguousAndUnknownConfig(t *testing.T) {
 	manifest, image := computerSpecFixture()
-	spec, err := CompileComputerSpec(manifest, image)
+	spec, err := parseComputerSpecFixture(manifest, image)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,8 +114,8 @@ func TestComputerSpecRejectsAmbiguousAndUnknownConfig(t *testing.T) {
 			t.Fatalf("accepted %s", raw)
 		}
 	}
-	image.Digest = "sha256:" + strings.Repeat("b", 64)
-	if _, err := CompileComputerSpec(manifest, image); err == nil {
-		t.Fatal("accepted mismatched seed")
+	image.MediaType = "application/octet-stream"
+	if _, err := parseComputerSpecFixture(manifest, image); err == nil {
+		t.Fatal("accepted unsupported seed descriptor")
 	}
 }

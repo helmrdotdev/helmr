@@ -19,17 +19,17 @@ func (r *Reader) ListCommandLogChunks(ctx context.Context, q telemetry.CommandLo
 		after = *q.AfterObservedSeq
 	}
 	var rows []commandLogRow
-	err := r.client.Select(ctx, &rows, `SELECT observed_seq, content, observed_at, accepted_at
-FROM helmr_telemetry.command_logs FINAL
-WHERE org_id = @org_id
-  AND environment_id = @environment_id
+	err := r.client.Select(ctx, &rows, `SELECT sequence, through_sequence, kind, data, observed_at_unix_nano, dropped_bytes, complete, accepted_at, expires_at
+FROM helmr_telemetry.computer_command_logs FINAL
+WHERE environment_id = @environment_id
   AND command_id = @command_id
-  AND stream_name = @stream
-  AND (@has_after = 0 OR observed_seq > @after)
-  AND accepted_at >= now64(3) - INTERVAL 90 DAY
-ORDER BY observed_seq ASC
+  AND producer_epoch = 1
+  AND stream = @stream
+  AND (@has_after = 0 OR sequence > @after)
+  AND expires_at > now64(6)
+ORDER BY sequence ASC
 LIMIT @row_limit`,
-		Named("org_id", q.OrgID), Named("environment_id", q.EnvironmentID), Named("command_id", q.CommandID),
+		Named("environment_id", q.EnvironmentID), Named("command_id", q.CommandID),
 		Named("stream", q.Stream), Named("has_after", q.AfterObservedSeq != nil), Named("after", after), Named("row_limit", uint32(q.Limit)))
 	if err != nil {
 		return telemetry.CommandLogChunkPage{}, fmt.Errorf("%w: %v", telemetry.ErrHistoricalUnavailable, err)
@@ -37,15 +37,20 @@ LIMIT @row_limit`,
 	page := telemetry.CommandLogChunkPage{Chunks: make([]telemetry.CommandLogChunk, 0, len(rows))}
 	for _, row := range rows {
 		page.Chunks = append(page.Chunks, telemetry.CommandLogChunk{
-			ObservedSeq: row.ObservedSeq, Content: []byte(row.Content), ObservedAt: row.ObservedAt, AcceptedAt: row.AcceptedAt,
+			Kind: row.Kind, ThroughSequence: uint64(row.ThroughSequence), DroppedBytes: row.DroppedBytes, Complete: row.Complete, ExpiresAt: row.ExpiresAt, ObservedSeq: uint64(row.Sequence), Content: []byte(row.Data), ObservedAt: time.Unix(0, row.ObservedAtUnixNano).UTC(), AcceptedAt: row.AcceptedAt,
 		})
 	}
 	return page, nil
 }
 
 type commandLogRow struct {
-	ObservedSeq uint64    `ch:"observed_seq"`
-	Content     string    `ch:"content"`
-	ObservedAt  time.Time `ch:"observed_at"`
-	AcceptedAt  time.Time `ch:"accepted_at"`
+	Sequence           int64     `ch:"sequence"`
+	ThroughSequence    int64     `ch:"through_sequence"`
+	Kind               string    `ch:"kind"`
+	Data               string    `ch:"data"`
+	ObservedAtUnixNano int64     `ch:"observed_at_unix_nano"`
+	DroppedBytes       int64     `ch:"dropped_bytes"`
+	Complete           bool      `ch:"complete"`
+	AcceptedAt         time.Time `ch:"accepted_at"`
+	ExpiresAt          time.Time `ch:"expires_at"`
 }

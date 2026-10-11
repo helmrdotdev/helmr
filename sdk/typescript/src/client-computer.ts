@@ -1,17 +1,19 @@
+import { durationMilliseconds, retentionMilliseconds, type Duration } from "./duration"
 import { encodeCommandLogQuery, parseCommandLogPage, streamCommandLogs, type CommandLogQuery, type CommandLogStreamQuery } from "./command-logs"
-import { parseCancelReceipt, parseCommandInfo, parseCommandReceipt, waitForCommand, type CommandRef, type CommandWaitOptions } from "./command"
+import { parseCancelReceipt, parseCommandInfo, parseCommandReceipt, waitForCommand, type CommandRef, type CommandWaitOptions, type CommandOutcome, type TimedCommandWaitResult } from "./command"
 import type { CursorPage } from "./contract"
-import { runtimeOperationsInstalled } from "./internal/runtime"
+import { validateDefinitionId } from "./schema/definition"
 import { resourceID } from "./internal/id"
 import type { RequestOptions } from "./request"
 import {
+  encodeComputerSecrets,
+  type ComputerCreateRequest,
   parseComputerDeleteReceipt,
   parseComputer,
   parseComputerMembers,
   encodeComputerMembersQuery,
   type ComputerMembersQuery,
   type ComputerMember,
-  brandComputerAddress,
   type ComputerDeleteRequest,
   type ComputerDeleteReceipt,
   type ComputerCommandRequest,
@@ -26,7 +28,8 @@ export type ComputerListQuery =
   | Readonly<{ key: string; cursor?: never; limit?: never }>
 
 export interface ClientComputersApi {
-  retrieve(id: string, options?: RequestOptions): Promise<Computer>
+  create(request: ComputerCreateRequest, options?: RequestOptions): Promise<ClientComputerRef>
+  get(id: string, options?: RequestOptions): Promise<Computer>
   list(
     query?: ComputerListQuery,
     options?: RequestOptions,
@@ -36,7 +39,7 @@ export interface ClientComputersApi {
 
 export interface ComputerTransport {
   request(
-    method: "GET" | "POST" | "DELETE",
+    method: "GET" | "POST" | "DELETE" | "PATCH",
     path: string,
     options?: Readonly<{ body?: unknown; signal?: AbortSignal }>,
   ): Promise<unknown>
@@ -46,7 +49,28 @@ export function createClientComputers(
   transport: ComputerTransport,
 ): ClientComputersApi {
   return Object.freeze({
-    async retrieve(id: string, options: RequestOptions = {}): Promise<Computer> {
+    async create(
+      request: ComputerCreateRequest,
+      options: RequestOptions = {},
+    ): Promise<ClientComputerRef> {
+      validateDefinitionId(request.definition)
+      const secrets = encodeComputerSecrets(request.secrets)
+      const computer = parseComputer(await transport.request(
+        "POST",
+        `/v1/computer-definitions/${encodeURIComponent(request.definition)}/computers`,
+        {
+          body: {
+            ...(request.key === undefined ? {} : { key: request.key }),
+            ...(request.deleteAfterUnused === undefined ? {} : { delete_after_unused_ms: retentionMilliseconds(request.deleteAfterUnused, "deleteAfterUnused") }),
+            ...(request.secrets === undefined ? {} : { secrets }),
+            ...(request.idempotencyKey === undefined ? {} : { idempotency_key: request.idempotencyKey }),
+          },
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+        },
+      ))
+      return createClientComputerRef(computer.id, transport)
+    },
+    async get(id: string, options: RequestOptions = {}): Promise<Computer> {
       const computerID = resourceID(id, "Computer ID")
       return parseComputer(await transport.request(
         "GET",
@@ -88,6 +112,7 @@ function parseComputerListItem(value: unknown): ComputerListItem {
 }
 
 export interface ClientComputerRef extends ComputerRef {
+  update(request: Readonly<{ deleteAfterUnused: Duration }>, options?: RequestOptions): Promise<Computer>
   exec(request: ComputerCommandRequest, options?: RequestOptions): Promise<CommandRef>
 }
 
@@ -99,6 +124,9 @@ export function createClientComputerRef(
   const path = `/v1/computers/${encodeURIComponent(computerID)}`
   const ref = {
     id: computerID,
+    async update(request: Readonly<{ deleteAfterUnused: Duration }>, options: RequestOptions = {}): Promise<Computer> {
+      return parseComputer(await transport.request("PATCH", path, { body: { delete_after_unused_ms: retentionMilliseconds(request.deleteAfterUnused, "deleteAfterUnused") }, ...(options.signal === undefined ? {} : { signal: options.signal }) }))
+    },
     async members(query: ComputerMembersQuery = {}, options: RequestOptions = {}): Promise<CursorPage<ComputerMember>> {
       const encoded = encodeComputerMembersQuery(query)
       const params = new URLSearchParams()
@@ -107,7 +135,7 @@ export function createClientComputerRef(
       return parseComputerMembers(await transport.request("GET", `${path}/members${params.size ? `?${params}` : ""}`,
         options.signal === undefined ? {} : { signal: options.signal }))
     },
-    async retrieve(options: RequestOptions = {}): Promise<Computer> {
+    async get(options: RequestOptions = {}): Promise<Computer> {
       return parseComputer(await transport.request(
         "GET",
         path,
@@ -118,14 +146,13 @@ export function createClientComputerRef(
       request: ComputerCommandRequest,
       options: RequestOptions = {},
     ): Promise<CommandRef> {
-      requireExternalCommandContext()
       const commandId = parseCommandReceipt(await transport.request("POST", `${path}/exec`, {
         body: {
           command: [...request.command],
           ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
           ...(request.env === undefined ? {} : { env: request.env }),
           ...(request.stdin === undefined ? {} : { stdin_base64: encodeBase64(request.stdin) }),
-          ...(request.timeout === undefined ? {} : { timeout: request.timeout }),
+          ...(request.timeout === undefined ? {} : { timeout: `${durationMilliseconds(request.timeout, "Command execution timeout")}ms` }),
           idempotency_key: request.idempotencyKey,
         },
         ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -142,46 +169,38 @@ export function createClientComputerRef(
       }))
     },
   }
-  return brandComputerAddress(ref)
+  return Object.freeze(ref)
 }
 
 export function createClientCommandRef(id: string, transport: ComputerTransport): CommandRef {
   const commandId = resourceID(id, "Command ID")
-  const retrieve = async (signal?: AbortSignal) => {
-    requireExternalCommandContext()
+  const get = async (signal?: AbortSignal) => {
     return parseCommandInfo(await transport.request("GET", `/v1/commands/${encodeURIComponent(commandId)}`, signal === undefined ? {} : { signal }), commandId)
   }
   const logs = async (query: CommandLogQuery = {}, signal?: AbortSignal) => {
-    requireExternalCommandContext()
     const value = encodeCommandLogQuery(query)
     const params = new URLSearchParams()
     if (value.cursor !== undefined) params.set("cursor", value.cursor)
     if (value.limit !== undefined) params.set("limit", String(value.limit))
     return parseCommandLogPage(await transport.request("GET", `/v1/commands/${encodeURIComponent(commandId)}/logs${params.size ? `?${params}` : ""}`, signal === undefined ? {} : { signal }))
   }
+  function wait(options: CommandWaitOptions & { readonly timeout: import("./duration").Duration }): Promise<TimedCommandWaitResult>
+  function wait(options?: CommandWaitOptions & { readonly timeout?: undefined }): Promise<CommandOutcome>
+  function wait(options: CommandWaitOptions): Promise<CommandOutcome | TimedCommandWaitResult>
+  function wait(options: CommandWaitOptions = {}): Promise<CommandOutcome | TimedCommandWaitResult> {
+    return waitForCommand(commandId, get, options)
+  }
   return Object.freeze({ id: commandId,
-    logs: async (query: CommandLogQuery = {}, options: RequestOptions = {}) => {
-      const page = await logs(query, options.signal)
-      return Object.freeze({ items: page.items, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) })
-    },
-    streamLogs: (query: CommandLogStreamQuery = {}, options: RequestOptions = {}) => {
-      requireExternalCommandContext()
-      return streamCommandLogs(logs, query, options)
-    },
+    logs: Object.freeze({
+      list: (query: CommandLogQuery = {}, options: RequestOptions = {}) => logs(query, options.signal),
+      stream: (query: CommandLogStreamQuery = {}, options: RequestOptions = {}) => streamCommandLogs(logs, query, options),
+    }),
     cancel: async (options: RequestOptions = {}) => {
-      requireExternalCommandContext()
       return parseCancelReceipt(await transport.request("POST", `/v1/commands/${encodeURIComponent(commandId)}/cancel`, options.signal === undefined ? {} : { signal: options.signal }), commandId)
     },
-    retrieve: (options: RequestOptions = {}) => retrieve(options.signal),
-    wait: (options: CommandWaitOptions = {}) => {
-      requireExternalCommandContext()
-      return waitForCommand(commandId, retrieve, options)
-    },
+    get: (options: RequestOptions = {}) => get(options.signal),
+    wait,
   })
-}
-
-function requireExternalCommandContext(): void {
-  if (runtimeOperationsInstalled()) throw new Error("Command operations are unavailable inside a Helmr Run; use a local subprocess or a child Task")
 }
 
 function computerListQuery(queryInput: ComputerListQuery): string {

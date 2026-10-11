@@ -27,11 +27,22 @@ const (
 )
 
 type browserAuthFlow struct {
-	Kind          browserAuthKind `json:"kind"`
-	State         string          `json:"state"`
-	Verifier      string          `json:"verifier"`
-	TokenHash     string          `json:"token_hash,omitempty"`
-	RedirectAfter string          `json:"redirect_after,omitempty"`
+	PublicationID     string          `json:"publication_id,omitempty"`
+	AppRegistrationID string          `json:"app_registration_id,omitempty"`
+	EnvironmentID     string          `json:"environment_id,omitempty"`
+	SlackLinkToken    string          `json:"slack_link_token,omitempty"`
+	SlackReturnURL    string          `json:"slack_return_url,omitempty"`
+	Nonce             string          `json:"nonce,omitempty"`
+	SlackTeamID       string          `json:"slack_team_id,omitempty"`
+	SlackUserID       string          `json:"slack_user_id,omitempty"`
+	OrganizationID    string          `json:"organization_id,omitempty"`
+	UserID            string          `json:"user_id,omitempty"`
+	InstallationID    string          `json:"installation_id,omitempty"`
+	Kind              browserAuthKind `json:"kind"`
+	State             string          `json:"state"`
+	Verifier          string          `json:"verifier"`
+	TokenHash         string          `json:"token_hash,omitempty"`
+	RedirectAfter     string          `json:"redirect_after,omitempty"`
 }
 
 type browserAuthEnvelope struct {
@@ -119,7 +130,7 @@ func (s *Server) githubFinish(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if request.State == "" || request.State != flow.State {
+	if (flow.Kind != browserAuthGitHubLogin && flow.Kind != browserAuthGitHubInvite) || request.State == "" || request.State != flow.State {
 		writeError(w, badRequest(errors.New("auth state mismatch")))
 		return
 	}

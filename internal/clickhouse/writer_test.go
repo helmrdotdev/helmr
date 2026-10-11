@@ -11,13 +11,11 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/column"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/helmrdotdev/helmr/internal/telemetry/diagnostic"
 )
 
 func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 	deploymentID := uuid.NewV7()
-	runID := uuid.NewV7()
-	runLeaseID := uuid.NewV7()
-	attemptNumber := int32(2)
 	observedAt := time.Date(2026, 7, 3, 1, 2, 3, 456000000, time.UTC)
 	client := &fakeBatchClient{}
 	writer := NewWriter(client)
@@ -26,14 +24,11 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 		OrgID:          uuid.NewV7(),
 		ProjectID:      uuid.NewV7(),
 		EnvironmentID:  uuid.NewV7(),
-		SubjectKind:    "run",
-		SubjectID:      runID,
-		EventKind:      "run.started",
+		SubjectKind:    "deployment",
+		SubjectID:      deploymentID,
+		EventKind:      "deployment.started",
 		Seq:            7,
-		RunID:          &runID,
 		DeploymentID:   &deploymentID,
-		RunLeaseID:     &runLeaseID,
-		AttemptNumber:  &attemptNumber,
 		TraceID:        "trace",
 		SpanID:         "span",
 		ParentSpanID:   "parent",
@@ -53,43 +48,27 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 	}
 	eventBatch := client.takeLast(t)
 	assertQueryContains(t, eventBatch.query, "INSERT INTO helmr_telemetry.events", "observed_at")
-	assertRowShape(t, eventBatch.rows, 1, 25)
-	if got := eventBatch.rows[0][24]; got != observedAt.Add(-time.Hour) {
+	assertRowShape(t, eventBatch.rows, 1, 22)
+	if got := eventBatch.rows[0][21]; got != observedAt.Add(-time.Hour) {
 		t.Fatalf("accepted_at = %v", got)
 	}
 	if got := eventBatch.rows[0][6]; got != uint64(7) {
 		t.Fatalf("event seq = %v, want 7", got)
 	}
-	if got := eventBatch.rows[0][23]; got != observedAt {
+	if got := eventBatch.rows[0][20]; got != observedAt {
 		t.Fatalf("event observed_at = %v, want %v", got, observedAt)
 	}
 
-	if _, err := writer.WriteRunLogs(context.Background(), []telemetry.RunLogRecord{{
-		OrgID:          uuid.NewV7(),
-		ProjectID:      uuid.NewV7(),
-		EnvironmentID:  uuid.NewV7(),
-		RunID:          runID,
-		RunLeaseID:     runLeaseID,
-		AttemptNumber:  attemptNumber,
-		StreamName:     "stdout",
-		Seq:            8,
-		ObservedSeq:    9,
-		Content:        []byte("hello"),
-		SizeBytes:      5,
-		IdempotencyKey: "log-key",
-		RetentionClass: "standard",
-		RedactionClass: "standard",
-		Source:         "worker",
-		ObservedAt:     observedAt,
-		AcceptedAt:     observedAt.Add(-time.Hour),
-	}}); err != nil {
-		t.Fatal(err)
+	source := telemetry.DiagnosticSource{EnvironmentID: uuid.New(), Kind: "session", ID: uuid.New(), ProducerEpoch: 2}
+	rows := diagnosticRows(source, 1, 5, observedAt)
+	if rejected, err := writer.WriteDiagnostics(context.Background(), "session", rows); err != nil || len(rejected) != 0 {
+		t.Fatalf("diagnostics: %v %v", rejected, err)
 	}
-	runLogBatch := client.takeLast(t)
-	assertQueryContains(t, runLogBatch.query, "INSERT INTO helmr_telemetry.run_logs", "run_lease_id", "observed_at")
-	assertRowShape(t, runLogBatch.rows, 1, 17)
-	if got := runLogBatch.rows[0][4]; got != runLeaseID {
-		t.Fatalf("run log run_lease_id = %v, want %s", got, runLeaseID)
+	batch := client.takeLast(t)
+	assertQueryContains(t, batch.query, "INSERT INTO helmr_telemetry.session_logs", "producer_epoch", "observed_at_unix_nano")
+	assertRowShape(t, batch.rows, 1, 15)
+	if batch.rows[0][0] != source.EnvironmentID || batch.rows[0][1] != source.ID || batch.rows[0][2] != source.ProducerEpoch || batch.rows[0][13] != observedAt || batch.rows[0][14] != observedAt.Add(90*24*time.Hour) {
+		t.Fatalf("diagnostic envelope: %+v", batch.rows[0])
 	}
 }
 
@@ -149,12 +128,12 @@ func TestClickHouseWriterKeepsValidRowsAfterRepeatedAppendFailures(t *testing.T)
 	}
 }
 
-func TestClickHouseWriterRebuildsRunLogBatchAfterAppendFailure(t *testing.T) {
+func TestClickHouseWriterRebuildsDiagnosticBatchAfterAppendFailure(t *testing.T) {
 	client := &fakeBatchClient{appendFailures: []int{0, -1}}
 	writer := NewWriter(client)
-	rows := []telemetry.RunLogRecord{{Content: []byte("hello"), SizeBytes: 5}, {Content: []byte("world"), SizeBytes: 5}}
+	rows := diagnosticRows(telemetry.DiagnosticSource{EnvironmentID: uuid.New(), Kind: "session", ID: uuid.New(), ProducerEpoch: 1}, 2, 5, time.Now().UTC().Truncate(time.Microsecond))
 
-	result, err := writer.WriteRunLogs(context.Background(), rows)
+	result, err := writer.WriteDiagnostics(context.Background(), "session", rows)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,4 +269,13 @@ func assertRowShape(t *testing.T, rows [][]any, rowCount int, columnCount int) {
 			t.Fatalf("row %d columns = %d, want %d", idx, len(row), columnCount)
 		}
 	}
+}
+
+// Synthetic rows share a producer and retain contiguous stream offsets.
+func diagnosticRows(source telemetry.DiagnosticSource, count, size int, accepted time.Time) []telemetry.StoredDiagnostic {
+	rows := make([]telemetry.StoredDiagnostic, count)
+	for i := range rows {
+		rows[i] = telemetry.StoredDiagnostic{Source: source, Record: diagnostic.Record{Stream: "stdout", Kind: "data", Sequence: int64(i + 1), ThroughSequence: int64(i + 1), ObservedAtUnixNano: accepted.UnixNano(), Data: make([]byte, size)}, ByteOffset: int64(i * size), ThroughByteOffset: int64((i + 1) * size), AcceptedAt: accepted, ExpiresAt: accepted.Add(90 * 24 * time.Hour)}
+	}
+	return rows
 }

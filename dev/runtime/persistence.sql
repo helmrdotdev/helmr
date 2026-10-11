@@ -1,28 +1,25 @@
 SELECT json_build_object(
-  'entrypoint_kind', r.entrypoint_kind, 'session_id', r.session_id,
-  'run_id', r.id, 'run_status', r.status, 'run_failure', r.failure, 'attempt_number', r.current_attempt_number,
-  'wait_id', w.id, 'condition', w.condition_status, 'suspension', w.suspension_status,
-  'checkpoint_id', c.id, 'checkpoint_status', c.status,
-  'prior_runtime_id', old.id, 'prior_runtime_state', old.observed_state,
-  'prior_runtime_reclaimed', old.reclaimed_at IS NOT NULL,
-  'restored_runtime_ids', COALESCE((SELECT json_agg(ri.id ORDER BY ri.id)
-    FROM computer_instances ri WHERE ri.source_checkpoint_id = c.id
-      AND ri.computer_id = r.computer_id AND ri.id <> old.id
-      AND ri.ready_at IS NOT NULL), '[]'::json)
+ 'session_id',s.id,'session_status',s.status,
+ 'checkpoint_id',c.id,'checkpoint_status',c.status,
+ 'source_lease_epoch',c.source_lease_epoch,'target_lease_epoch',c.target_lease_epoch,
+ 'prior_runtime_id',old.computer_instance_id,'source_fenced',old.fenced_at IS NOT NULL,
+ 'source_state',old.status,'controls_reconciled',c.controls_reconciled_at IS NOT NULL,
+ 'target_runtime_id',restored.computer_instance_id,
+ 'target_current',COALESCE(restored.status='active' AND restored.fenced_at IS NULL
+    AND restored.expires_at>now() AND host.current_epoch=restored.worker_epoch
+    AND host.status IN ('active','draining') AND process.status='ready'
+    AND process.fenced_at IS NULL AND process.computer_lease_epoch=c.target_lease_epoch,false)
 )::text
-FROM runs r
-LEFT JOIN run_waits w ON w.run_id = r.id AND w.kind = 'token' AND w.attempt_number = r.current_attempt_number
+FROM sessions s
 LEFT JOIN LATERAL (
-  SELECT member.checkpoint_id, member.source_computer_instance_id
-  FROM computer_checkpoint_runs member
-  JOIN computer_checkpoints checkpoint ON checkpoint.id = member.checkpoint_id
-  WHERE member.run_id = r.id AND member.attempt_number = r.current_attempt_number
-    AND member.run_wait_id = w.id AND member.computer_id = r.computer_id
-    AND member.environment_id = r.environment_id
-    AND (w.suspend_checkpoint_id IS NULL OR member.checkpoint_id = w.suspend_checkpoint_id)
-  ORDER BY checkpoint.created_at DESC, checkpoint.id DESC LIMIT 1
-) captured ON true
-LEFT JOIN computer_checkpoints c ON c.id = captured.checkpoint_id
-LEFT JOIN computer_instances old ON old.id = captured.source_computer_instance_id
-WHERE r.id = :'run_id'::uuid
-ORDER BY w.created_at DESC LIMIT 1;
+ SELECT checkpoint.*,member.process_epoch
+ FROM computer_checkpoint_members member
+ JOIN computer_checkpoints checkpoint ON (checkpoint.environment_id,checkpoint.id)=(member.environment_id,member.checkpoint_id)
+ WHERE member.environment_id=s.environment_id AND member.session_id=s.id AND checkpoint.computer_id=s.computer_id
+ ORDER BY checkpoint.created_at DESC,checkpoint.id DESC LIMIT 1
+) c ON true
+LEFT JOIN computer_leases old ON (old.environment_id,old.computer_id,old.epoch)=(s.environment_id,s.computer_id,c.source_lease_epoch)
+LEFT JOIN computer_leases restored ON (restored.environment_id,restored.computer_id,restored.epoch)=(s.environment_id,s.computer_id,c.target_lease_epoch)
+LEFT JOIN worker_hosts host ON host.id=restored.worker_host_id
+LEFT JOIN session_processes process ON (process.environment_id,process.session_id,process.epoch)=(s.environment_id,s.id,c.process_epoch)
+WHERE s.id=:'session_id'::uuid;

@@ -30,6 +30,9 @@ func createOwnerStateRoot(stateDir string, owner vm.Owner) (string, error) {
 	if err := ensureSecureDirectory("the Firecracker state directory", stateDir); err != nil {
 		return "", err
 	}
+	if err := claimInstanceIdentity(stateDir, owner); err != nil {
+		return "", err
+	}
 	statePath := filepath.Join(stateDir, owner.ID)
 	if err := os.Mkdir(statePath, 0o700); err != nil {
 		return "", fmt.Errorf("create Firecracker owner state root: %w", err)
@@ -59,6 +62,32 @@ func createOwnerStateRoot(stateDir string, owner vm.Owner) (string, error) {
 		return "", err
 	}
 	return statePath, nil
+}
+
+// An instance names one physical launch, including a failed launch. Cleanup
+// removes its runtime files but must never permit the same immutable checkpoint
+// to be loaded again under that identity. Keep the claim outside the runtime
+// inventory so recovery/cleanup cannot erase it. A replacement requires a new
+// instance and control-plane lease; reconnecting to a live VM makes no claim.
+// Claims survive worker restarts and have the lifetime of the host state volume.
+func claimInstanceIdentity(stateDir string, owner vm.Owner) error {
+	claimsDir := filepath.Clean(stateDir) + ".instances"
+	if err := ensureSecureDirectory("the Firecracker instance claims directory", claimsDir); err != nil {
+		return err
+	}
+	if err := syncDirectory(stateCoordinationDir(stateDir)); err != nil {
+		return err
+	}
+	claim, err := os.OpenFile(filepath.Join(claimsDir, owner.ID), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("claim single-use Firecracker instance: %w", err)
+	}
+	// Never remove an uncertain claim, even if persistence or later preparation
+	// fails. No process can start until both the file and directory are durable.
+	if err := errors.Join(claim.Sync(), claim.Close()); err != nil {
+		return fmt.Errorf("persist Firecracker instance claim: %w", err)
+	}
+	return syncDirectory(claimsDir)
 }
 
 func ensureSecureDirectory(label string, path string) error {

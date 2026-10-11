@@ -5,49 +5,30 @@ import (
 	"errors"
 	"log/slog"
 	"time"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/helmrdotdev/helmr/internal/lifetime"
+	"github.com/jackc/pgx/v5"
 )
 
-// RetentionStore is the remote CAS storage Retention reclaims after retirement commits.
-// Storage adapters never decide whether a referenced key may be deleted.
-type RetentionStore interface {
-	RetiredUploads(context.Context, string) ([]string, error)
-	ReclaimUpload(context.Context, string, string) error
-	ReclaimVersions(context.Context, string) error
-}
+type retentionPosition struct{ environment, computer uuid.UUID }
 
-// Retention retires unreferenced Computer disk versions, objects and data keys,
-// and repeatedly reclaims the physical storage of retired CAS blobs and failed
-// uploads.
-//
-// cas_blobs is a shared physical-lifetime table, not a Computer table. Every
-// retired blob is Computer-owned today only because RetireAbandonedCasBlob and
-// RetireCollectedComputerObject are the sole writers of retired_at, and the
-// availability FK from cas_objects rejects retiring a blob that still has an
-// organization membership. Adding a non-Computer retirement trigger later needs
-// a separate CAS blob owner rather than another caller of this sweep.
-type Retention struct {
-	pool    *pgxpool.Pool
-	queries *db.Queries
-	store   RetentionStore
-	log     *slog.Logger
-}
-
-func NewRetention(pool *pgxpool.Pool, store RetentionStore, log *slog.Logger) (*Retention, error) {
-	if pool == nil || store == nil || log == nil {
-		return nil, errors.New("artifact reclamation requires database, storage and logger")
-	}
-	return &Retention{pool: pool, queries: db.New(pool), store: store, log: log}, nil
-}
-
-func (r *Retention) Run(ctx context.Context) error {
-	ticker := time.NewTicker(time.Minute)
+func RunRetention(ctx context.Context, database db.TxDB, log *slog.Logger) error {
+	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	var after retentionPosition
 	for {
-		if err := r.Reconcile(ctx); err != nil && ctx.Err() == nil {
-			r.log.ErrorContext(ctx, "artifact reclamation failed", "error", err)
+		next, more, err := reconcileRetention(ctx, database, log, after)
+		after = next
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err != nil {
+			log.ErrorContext(ctx, "Computer retention reconciliation failed", "error", err)
+		}
+		if more {
+			continue
 		}
 		select {
 		case <-ctx.Done():
@@ -57,52 +38,103 @@ func (r *Retention) Run(ctx context.Context) error {
 	}
 }
 
-// Reconcile commits retirement before remote I/O. Database connection loss or
-// storage uncertainty leaves the permanent tombstone discoverable for retry.
-func (r *Retention) Reconcile(ctx context.Context) error {
-	if err := r.collectCheckpointArtifacts(ctx); err != nil {
-		return err
+func reconcileRetention(ctx context.Context, database db.TxDB, log *slog.Logger, after retentionPosition) (retentionPosition, bool, error) {
+	rows, err := database.Query(ctx, `SELECT environment_id,id FROM computers c WHERE deleted_at IS NULL AND delete_after_unused_ms IS NOT NULL AND (unused_since IS NULL OR extract(epoch FROM (clock_timestamp()-unused_since))*1000>=delete_after_unused_ms OR EXISTS(SELECT 1 FROM computer_saves save WHERE save.environment_id=c.environment_id AND save.computer_id=c.id AND save.requested_at>=c.unused_since)) AND (environment_id,id)>($1,$2) ORDER BY environment_id,id LIMIT 100`, after.environment, after.computer)
+	if err != nil {
+		return after, false, err
 	}
-	if _, err := r.queries.AbandonReclaimedComputerSaves(ctx, 100); err != nil {
-		return err
+	candidates, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (retentionPosition, error) {
+		var p retentionPosition
+		err := row.Scan(&p.environment, &p.computer)
+		return p, err
+	})
+	if err != nil {
+		return after, false, err
 	}
-	if _, err := r.queries.ReleaseReclaimedComputerObjects(ctx, 1000); err != nil {
-		return err
+	var failures []error
+	for _, p := range candidates {
+		after = p
+		attempt, cancel := context.WithTimeout(ctx, 10*time.Second)
+		deleted, err := reconcileUnused(attempt, database, p.environment, p.computer)
+		cancel()
+		if err != nil {
+			failures = append(failures, err)
+		} else if deleted {
+			log.InfoContext(ctx, "Computer deleted after unused retention", "environment_id", p.environment, "computer_id", p.computer)
+		}
 	}
-	if err := r.collectComputerSeeds(ctx); err != nil {
-		return err
+	more := len(candidates) == 100
+	if !more {
+		after = retentionPosition{}
 	}
-	if err := r.collectComputerDiskVersions(ctx); err != nil {
-		return err
-	}
-	if _, err := r.queries.DeleteUnreferencedComputerDiskRoots(ctx, 100); err != nil {
-		return err
-	}
-	if err := r.collectComputerObjects(ctx); err != nil {
-		return err
-	}
-	if err := r.collectComputerKeys(ctx); err != nil {
-		return err
-	}
-	return r.reclaimCasBlobs(ctx)
+	return after, more, errors.Join(failures...)
 }
 
-// collectComputerSeeds locks discovered candidates before checking owners again.
-// Registration takes the same seed lock, so either its committed owner is visible
-// to the second statement or it revives the seed after retirement commits.
-func (r *Retention) collectComputerSeeds(ctx context.Context) error {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return err
+func reconcileUnused(ctx context.Context, database db.TxBeginner, env, id uuid.UUID) (bool, error) {
+	deletedByRetention := false
+	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout='1s'`); err != nil {
+			return err
+		}
+		var deleted bool
+		var policy *int64
+		if err := tx.QueryRow(ctx, `SELECT deleted_at IS NOT NULL,delete_after_unused_ms FROM computers WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, id).Scan(&deleted, &policy); err != nil {
+			return err
+		}
+		if deleted || policy == nil {
+			return nil
+		}
+		var busy bool
+		if err := tx.QueryRow(ctx, computerBusySQL, env, id).Scan(&busy); err != nil {
+			return err
+		}
+		if busy {
+			_, err := tx.Exec(ctx, `UPDATE computers SET unused_since=NULL WHERE environment_id=$1 AND id=$2`, env, id)
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE computers SET unused_since=CASE WHEN unused_since IS NULL OR EXISTS(SELECT 1 FROM computer_saves save WHERE save.environment_id=computers.environment_id AND save.computer_id=computers.id AND save.requested_at>=computers.unused_since) THEN clock_timestamp() ELSE unused_since END WHERE environment_id=$1 AND id=$2`, env, id); err != nil {
+			return err
+		}
+		var due bool
+		if err := tx.QueryRow(ctx, `SELECT extract(epoch FROM (clock_timestamp()-unused_since))*1000>=delete_after_unused_ms FROM computers WHERE environment_id=$1 AND id=$2`, env, id).Scan(&due); err != nil {
+			return err
+		}
+		if !due {
+			return nil
+		}
+		if err := deleteLocked(ctx, tx, env, id, false); err != nil {
+			return err
+		}
+		deletedByRetention = true
+		return nil
+	})
+	return deletedByRetention && err == nil, err
+}
+
+// UpdateRetention serializes preservation with deletion. The current continuous
+// unused interval remains valid when a policy changes; deleted data cannot be revived.
+func UpdateRetention(ctx context.Context, database db.TxBeginner, scope Scope, id uuid.UUID, policy lifetime.Policy) (Snapshot, error) {
+	if !policy.Set || !policy.Valid() {
+		return Snapshot{}, invalidInput("delete_after_unused_ms must be null or positive safe integer milliseconds")
 	}
-	defer tx.Rollback(context.WithoutCancel(ctx))
-	q := db.New(tx)
-	ids, err := q.LockUnusedComputerSeeds(ctx, 100)
-	if err != nil {
+	var result Snapshot
+	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		var deleted bool
+		if err := tx.QueryRow(ctx, `SELECT c.deleted_at IS NOT NULL FROM computers c JOIN environments e ON e.id=c.environment_id WHERE c.environment_id=$1 AND c.id=$2 AND e.org_id=$3 AND e.project_id=$4 FOR NO KEY UPDATE OF c`, scope.EnvironmentID, id, scope.OrgID, scope.ProjectID).Scan(&deleted); err != nil {
+			return err
+		}
+		if deleted {
+			return ErrNotFound
+		}
+		if _, err := tx.Exec(ctx, `UPDATE computers SET delete_after_unused_ms=$3,updated_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, scope.EnvironmentID, id, policy.Milliseconds); err != nil {
+			return err
+		}
+		var err error
+		result, err = Read(ctx, tx, scope, id)
 		return err
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = ErrNotFound
 	}
-	if _, err = q.RetireUnusedComputerSeeds(ctx, ids); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	return result, err
 }

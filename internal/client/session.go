@@ -12,41 +12,13 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
-func (c *Client) StartActor(
-	ctx context.Context,
-	actorDeclaredID string,
-	input api.StartActorRequest,
-	opts EnvironmentScopeOptions,
-) (api.StartActorResponse, error) {
-	if err := api.ValidateActorDeclaredID(actorDeclaredID); err != nil {
-		return api.StartActorResponse{}, err
-	}
-	if err := api.ValidateStartActorRequest(input); err != nil {
-		return api.StartActorResponse{}, err
-	}
-	path, err := c.environmentScopedPath(
-		opts.ProjectID,
-		opts.EnvironmentID,
-		"/actors/"+url.PathEscape(actorDeclaredID)+"/start",
-	)
-	if err != nil {
-		return api.StartActorResponse{}, err
-	}
-	input.IdempotencyKey = invocationKey(input.IdempotencyKey)
-	var response api.StartActorResponse
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.StartActorResponse{}, err
-	}
-	return response, nil
-}
-
 func (c *Client) RetrieveSession(
 	ctx context.Context,
 	sessionID string,
 	opts EnvironmentScopeOptions,
-) (api.Session, error) {
+) (api.AgentSession, error) {
 	if err := ids.Validate(sessionID); err != nil {
-		return api.Session{}, err
+		return api.AgentSession{}, err
 	}
 	path, err := c.environmentScopedPath(
 		opts.ProjectID,
@@ -54,55 +26,52 @@ func (c *Client) RetrieveSession(
 		"/sessions/"+url.PathEscape(sessionID),
 	)
 	if err != nil {
-		return api.Session{}, err
+		return api.AgentSession{}, err
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.Session{}, err
+		return api.AgentSession{}, err
 	}
-	var response api.Session
+	var response api.AgentSession
 	if err := c.doJSON(req, &response); err != nil {
-		return api.Session{}, err
+		return api.AgentSession{}, err
 	}
 	return response, nil
 }
 
 type SessionListOptions struct {
-	Statuses []string
-	Cursor   string
-	Limit    int32
-	ActorID  string
-	Key      string
+	Statuses           []string
+	Cursor             string
+	Limit              int32
+	AgentID            string
+	Key                *string
+	ParentSessionID    string
+	RequesterSessionID string
 	EnvironmentScopeOptions
 }
 
-func (c *Client) ListSessions(ctx context.Context, opts SessionListOptions) (api.ListSessionsResponse, error) {
-	hasActorID := opts.ActorID != ""
-	hasKey := opts.Key != ""
-	if hasActorID != hasKey {
-		return api.ListSessionsResponse{}, errors.New("actor ID and key must be provided together")
+func (c *Client) ListSessions(ctx context.Context, opts SessionListOptions) (api.AgentSessionsPage, error) {
+	if opts.Key != nil && (opts.AgentID == "" || *opts.Key == "") {
+		return api.AgentSessionsPage{}, errors.New("a nonempty key requires an Agent ID")
 	}
 	for _, status := range opts.Statuses {
-		if err := api.ValidateSessionStatus(status); err != nil {
-			return api.ListSessionsResponse{}, err
+		if status != "open" && status != "closing" && status != "closed" && status != "cancelled" {
+			return api.AgentSessionsPage{}, errors.New("invalid Session status")
 		}
 	}
-	if hasActorID {
-		if opts.Cursor != "" || opts.Limit != 0 || len(opts.Statuses) != 0 {
-			return api.ListSessionsResponse{}, errors.New("cursor, limit and status are not accepted with actor ID and key")
+	for _, id := range []string{opts.AgentID, opts.ParentSessionID, opts.RequesterSessionID, opts.Cursor} {
+		if id != "" {
+			if err := ids.Validate(id); err != nil {
+				return api.AgentSessionsPage{}, err
+			}
 		}
-		if err := api.ValidateActorDeclaredID(opts.ActorID); err != nil {
-			return api.ListSessionsResponse{}, err
-		}
-		if err := api.ValidateActorKey(opts.Key); err != nil {
-			return api.ListSessionsResponse{}, err
-		}
-	} else if opts.Limit < 0 || opts.Limit > 100 {
-		return api.ListSessionsResponse{}, errors.New("session list limit must be in [1,100] when present")
+	}
+	if opts.Limit < 0 || opts.Limit > 100 {
+		return api.AgentSessionsPage{}, errors.New("session list limit must be in [1,100] when present")
 	}
 	path, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/sessions")
 	if err != nil {
-		return api.ListSessionsResponse{}, err
+		return api.AgentSessionsPage{}, err
 	}
 	values := url.Values{}
 	for _, status := range opts.Statuses {
@@ -114,23 +83,27 @@ func (c *Client) ListSessions(ctx context.Context, opts SessionListOptions) (api
 	if opts.Limit > 0 {
 		values.Set("limit", strconv.FormatInt(int64(opts.Limit), 10))
 	}
-	if hasActorID {
-		values.Set("actor_id", opts.ActorID)
-		values.Set("key", opts.Key)
+	for name, value := range map[string]string{"agent_id": opts.AgentID, "parent_session_id": opts.ParentSessionID, "requester_session_id": opts.RequesterSessionID} {
+		if value != "" {
+			values.Set(name, value)
+		}
+	}
+	if opts.Key != nil {
+		values.Set("key", *opts.Key)
 	}
 	if encoded := values.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.ListSessionsResponse{}, err
+		return api.AgentSessionsPage{}, err
 	}
-	var response api.ListSessionsResponse
+	var response api.AgentSessionsPage
 	if err := c.doJSON(req, &response); err != nil {
-		return api.ListSessionsResponse{}, err
+		return api.AgentSessionsPage{}, err
 	}
 	if response.Sessions == nil {
-		response.Sessions = []api.Session{}
+		response.Sessions = []api.AgentSession{}
 	}
 	return response, nil
 }
@@ -151,18 +124,15 @@ func (c *Client) SendSession(ctx context.Context, sessionID string, input api.Se
 	return response, nil
 }
 
-func (c *Client) EnqueueSession(ctx context.Context, sessionID string, input api.SessionDataRequest, opts EnvironmentScopeOptions) (api.SessionAdmissionReceipt, error) {
-	if err := api.ValidateSessionDataRequest(input); err != nil {
-		return api.SessionAdmissionReceipt{}, err
-	}
+func (c *Client) EnqueueSession(ctx context.Context, sessionID string, input api.EnqueueSessionRequest, opts EnvironmentScopeOptions) (api.TurnAdmission, error) {
 	path, err := c.sessionPath(sessionID, "/enqueue", opts)
 	if err != nil {
-		return api.SessionAdmissionReceipt{}, err
+		return api.TurnAdmission{}, err
 	}
 	input.IdempotencyKey = invocationKey(input.IdempotencyKey)
-	var response api.SessionAdmissionReceipt
+	var response api.TurnAdmission
 	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.SessionAdmissionReceipt{}, err
+		return api.TurnAdmission{}, err
 	}
 	return response, nil
 }
@@ -212,22 +182,6 @@ func (c *Client) CancelSession(ctx context.Context, sessionID string, input api.
 	return response, nil
 }
 
-func (c *Client) InterruptSessionTurn(ctx context.Context, sessionID string, turnID string, input api.InterruptTurnRequest, opts EnvironmentScopeOptions) (api.TurnInterruptReceipt, error) {
-	if err := ids.Validate(turnID); err != nil {
-		return api.TurnInterruptReceipt{}, err
-	}
-	path, err := c.sessionPath(sessionID, "/turns/"+url.PathEscape(turnID)+"/interrupt", opts)
-	if err != nil {
-		return api.TurnInterruptReceipt{}, err
-	}
-	input.IdempotencyKey = invocationKey(input.IdempotencyKey)
-	var response api.TurnInterruptReceipt
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.TurnInterruptReceipt{}, err
-	}
-	return response, nil
-}
-
 func (c *Client) ResumeSession(ctx context.Context, sessionID string, input api.ResumeSessionRequest, opts EnvironmentScopeOptions) (api.SessionResumeReceipt, error) {
 	if err := ids.Validate(input.HoldID); err != nil {
 		return api.SessionResumeReceipt{}, err
@@ -244,21 +198,21 @@ func (c *Client) ResumeSession(ctx context.Context, sessionID string, input api.
 	return response, nil
 }
 
-func (c *Client) RetrieveSessionTurn(ctx context.Context, sessionID, turnID string, opts EnvironmentScopeOptions) (api.SessionTurn, error) {
+func (c *Client) RetrieveSessionTurn(ctx context.Context, sessionID, turnID string, opts EnvironmentScopeOptions) (api.AgentTurn, error) {
 	if err := ids.Validate(turnID); err != nil {
-		return api.SessionTurn{}, err
+		return api.AgentTurn{}, err
 	}
 	path, err := c.sessionPath(sessionID, "/turns/"+url.PathEscape(turnID), opts)
 	if err != nil {
-		return api.SessionTurn{}, err
+		return api.AgentTurn{}, err
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.SessionTurn{}, err
+		return api.AgentTurn{}, err
 	}
-	var response api.SessionTurn
+	var response api.AgentTurn
 	if err := c.doJSON(req, &response); err != nil {
-		return api.SessionTurn{}, err
+		return api.AgentTurn{}, err
 	}
 	return response, nil
 }
@@ -271,33 +225,33 @@ type SessionEventReadOptions struct {
 	EnvironmentScopeOptions
 }
 
-func (c *Client) ReadSessionEvents(ctx context.Context, sessionID string, opts SessionEventReadOptions) (api.SessionEventPage, error) {
+func (c *Client) ReadSessionEvents(ctx context.Context, sessionID string, opts SessionEventReadOptions) (api.AgentSessionEventPage, error) {
 	if opts.After < 0 || opts.After > 1<<53-1 {
-		return api.SessionEventPage{}, fmt.Errorf("session events after must be in [0,%d]", int64(1<<53-1))
+		return api.AgentSessionEventPage{}, fmt.Errorf("session events after must be in [0,%d]", int64(1<<53-1))
 	}
 	if opts.Limit < 0 || opts.Limit > 1000 {
-		return api.SessionEventPage{}, errors.New("session events limit must be in [1,1000] when present")
+		return api.AgentSessionEventPage{}, errors.New("session events limit must be in [1,1000] when present")
 	}
 	if opts.Limit == 0 {
 		opts.Limit = 100
 	}
 	path, err := c.sessionPath(sessionID, "/events", opts.EnvironmentScopeOptions)
 	if err != nil {
-		return api.SessionEventPage{}, err
+		return api.AgentSessionEventPage{}, err
 	}
 	values := url.Values{}
 	values.Set("after", strconv.FormatInt(opts.After, 10))
 	values.Set("limit", strconv.FormatInt(int64(opts.Limit), 10))
 	req, err := c.newRequest(ctx, http.MethodGet, path+"?"+values.Encode(), nil)
 	if err != nil {
-		return api.SessionEventPage{}, err
+		return api.AgentSessionEventPage{}, err
 	}
-	var response api.SessionEventPage
+	var response api.AgentSessionEventPage
 	if err := c.doJSON(req, &response); err != nil {
-		return api.SessionEventPage{}, err
+		return api.AgentSessionEventPage{}, err
 	}
 	if response.Records == nil {
-		response.Records = []api.SessionEvent{}
+		response.Records = []api.AgentSessionEvent{}
 	}
 	return response, nil
 }
@@ -307,4 +261,55 @@ func (c *Client) sessionPath(sessionID, suffix string, opts EnvironmentScopeOpti
 		return "", err
 	}
 	return c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/sessions/"+url.PathEscape(sessionID)+suffix)
+}
+
+// SessionTurnListOptions reads one finite page in Turn admission order.
+type SessionTurnListOptions struct {
+	Cursor string
+	Limit  int32
+	EnvironmentScopeOptions
+}
+
+func (c *Client) ListSessionTurns(ctx context.Context, sessionID string, opts SessionTurnListOptions) (api.AgentTurnsPage, error) {
+	result := api.AgentTurnsPage{Turns: []api.AgentTurn{}}
+	if opts.Limit < 0 || opts.Limit > 100 {
+		return result, errors.New("turn list limit must be in [1,100] when present")
+	}
+	if opts.Cursor != "" {
+		n, err := strconv.ParseInt(opts.Cursor, 10, 64)
+		if err != nil || n < 0 {
+			return result, errors.New("turn cursor must be a nonnegative sequence")
+		}
+	}
+	path, err := c.sessionPath(sessionID, "/turns", opts.EnvironmentScopeOptions)
+	if err != nil {
+		return result, err
+	}
+	query := url.Values{}
+	if opts.Cursor != "" {
+		query.Set("cursor", opts.Cursor)
+	}
+	if opts.Limit > 0 {
+		query.Set("limit", strconv.Itoa(int(opts.Limit)))
+	}
+	if len(query) > 0 {
+		path += "?" + query.Encode()
+	}
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return result, err
+	}
+	err = c.doJSON(req, &result)
+	return result, err
+}
+
+func (c *Client) InterruptSession(ctx context.Context, sessionID string, input api.InterruptSessionRequest, opts EnvironmentScopeOptions) (api.SessionInterruptReceipt, error) {
+	var result api.SessionInterruptReceipt
+	path, err := c.sessionPath(sessionID, "/interrupt", opts)
+	if err != nil {
+		return result, err
+	}
+	input.IdempotencyKey = invocationKey(input.IdempotencyKey)
+	err = c.postJSON(ctx, path, input, &result)
+	return result, err
 }

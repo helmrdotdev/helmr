@@ -18,13 +18,12 @@ segments. A missing, malformed, expired, revoked, or insufficient credential
 is rejected by the Control Plane.
 
 ```sh
-curl "$HELMR_API_URL/v1/runs" \
+curl "$HELMR_API_URL/v1/sessions" \
   -H "Authorization: Bearer $HELMR_API_KEY"
 ```
 
 Keep keys out of source control and logs. The TypeScript `HelmrClient` accepts
 the same key as `apiKey`; the CLI reads `HELMR_API_KEY`.
 
-Browser session authentication, Token public-access credentials, Worker
-enrollment credentials, and Admin authorization are separate contracts and do
+Browser session authentication, Worker enrollment credentials and Admin authorization are separate contracts and do
 not authenticate a Developer API request merely because they are Bearer-like.

@@ -1,6 +1,6 @@
 import { query, type Options as ClaudeOptions } from "@anthropic-ai/claude-agent-sdk"
 import { Agent } from "@cursor/sdk"
-import { image, source, task, sandbox, type JsonValue } from "@helmr/sdk"
+import { agent, computer, image, source, type JsonValue } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
 import { runCodex as runCodexTurn, type CodexThreadOptions } from "./lib/agents/codex-app-server"
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_CURSOR_MODEL } from "./lib/agents/models"
@@ -39,17 +39,12 @@ const base = image("helmr-agent-toolchain-smoke")
   .run(["npm", "install", "-g", "bun@1.3.13"])
   .workdir("/sandbox")
 
-export const agentToolchainSmokeComputer = sandbox({ id: "helmr-agent-toolchain-smoke" })
-  .image(base)
-  .resources({ cpu: 2, memory: "4GiB" })
+export const agentToolchainSmokeComputer = computer({
+  id: "helmr-agent-toolchain-smoke",
+  image: base,
+  resources: { cpu: 2, memory: "4GiB" },
+})
 
-interface Payload {
-  readonly repository?: string
-  readonly ref?: string
-  readonly claudeModel?: string
-  readonly codexModel?: string
-  readonly cursorModel?: string
-}
 
 const payload = z.object({
   repository: z.string().optional(),
@@ -65,13 +60,14 @@ type CheckResult = {
   readonly detail: JsonValue
 }
 
-export const agentToolchainSmoke = task({
+export const agentToolchainSmoke = agent({
+  computer: agentToolchainSmokeComputer,
   id: "agent-toolchain-smoke",
-  maxDuration: "30m",
-  payload,
-  run: async (payload: Payload): Promise<JsonValue> => {
-    const repository = payload.repository?.trim() || "helmrdotdev/helmr"
-    const ref = payload.ref?.trim() || "main"
+  maxTurnDuration: "30m",
+  async turn(turn): Promise<JsonValue> {
+    const input = payload.parse(JSON.parse(turn.input.map(part => part.text).join("")))
+    const repository = input.repository?.trim() || "helmrdotdev/helmr"
+    const ref = input.ref?.trim() || "main"
     assertRepository(repository)
     assertGitRef(ref)
 
@@ -101,9 +97,9 @@ export const agentToolchainSmoke = task({
     }
 
     const sdk = {
-      claude: await collectCheck("claude-sdk", () => runClaude(payload.claudeModel?.trim() || DEFAULT_CLAUDE_MODEL).then((marker) => sdkResult("claude-sdk", marker))),
-      codex: await collectCheck("codex-sdk", () => runCodex(payload.codexModel?.trim() || DEFAULT_CODEX_MODEL).then((marker) => sdkResult("codex-sdk", marker))),
-      cursor: await collectCheck("cursor-sdk", () => runCursor(payload.cursorModel?.trim() || DEFAULT_CURSOR_MODEL).then((marker) => sdkResult("cursor-sdk", marker))),
+      claude: await collectCheck("claude-sdk", () => runClaude(input.claudeModel?.trim() || DEFAULT_CLAUDE_MODEL).then((marker) => sdkResult("claude-sdk", marker))),
+      codex: await collectCheck("codex-sdk", () => runCodex(input.codexModel?.trim() || DEFAULT_CODEX_MODEL).then((marker) => sdkResult("codex-sdk", marker))),
+      cursor: await collectCheck("cursor-sdk", () => runCursor(input.cursorModel?.trim() || DEFAULT_CURSOR_MODEL).then((marker) => sdkResult("cursor-sdk", marker))),
     }
     const failures = [...checks, ...Object.values(sdk)].filter((check) => !check.ok)
     const report = {

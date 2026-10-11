@@ -17,14 +17,15 @@ import (
 // All state is protected by the machine's computerBarrier, including Close.
 // Pointer identity prevents an old capture from releasing a later hold.
 type checkpointCapture struct {
-	machine     *guestMachine
-	request     vm.SnapshotRequest
-	attempted   bool
-	resumed     bool
-	completed   bool
-	artifact    vm.SnapshotArtifact
-	delivered   bool
-	snapshotErr error
+	machine           *guestMachine
+	request           vm.SnapshotRequest
+	attempted         bool
+	resumed           bool
+	completed         bool
+	artifact          vm.SnapshotArtifact
+	delivered         bool
+	snapshotErr       error
+	preparationFailed bool
 }
 
 func (s *guestMachine) BeginCheckpoint(ctx context.Context, request vm.SnapshotRequest) (vm.CheckpointCapture, error) {
@@ -39,13 +40,46 @@ func (s *guestMachine) BeginCheckpoint(ctx context.Context, request vm.SnapshotR
 	s.mu.Lock()
 	closed := s.closed
 	s.mu.Unlock()
-	if closed || s.computerHeld || s.checkpointHold != nil {
+	if closed || s.computerCaptureBlocked || s.checkpointHold != nil || s.agentContinuationPending {
 		return nil, errors.New("computer already held or closed")
 	}
 	capture := &checkpointCapture{machine: s, request: request}
-	s.computerHeld = true
+	s.computerCaptureBlocked = true
 	s.checkpointHold = capture
 	return capture, nil
+}
+
+func (c *checkpointCapture) PrepareGuest(ctx context.Context, exchange func(context.Context, vm.Stream) error) error {
+	s := c.machine
+	unlock, err := s.lockComputer(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if exchange == nil || s.checkpointHold != c || c.attempted || c.resumed || c.completed {
+		return errors.New("checkpoint guest preparation is no longer available")
+	}
+	c.preparationFailed = true
+	ctx, done, err := s.captureContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer done()
+	stream, err := s.OpenStream(ctx)
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+	closed := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() { defer close(closed); _ = stream.Close() })
+	defer func() {
+		if !stop() {
+			<-closed
+		}
+	}()
+	err = errors.Join(exchange(ctx, stream), ctx.Err())
+	c.preparationFailed = err != nil
+	return err
 }
 
 func (c *checkpointCapture) CreateSnapshot(ctx context.Context) (vm.SnapshotArtifact, error) {
@@ -54,7 +88,7 @@ func (c *checkpointCapture) CreateSnapshot(ctx context.Context) (vm.SnapshotArti
 	if err != nil {
 		return vm.SnapshotArtifact{}, err
 	}
-	if s.checkpointHold != c || c.attempted || c.resumed || c.completed {
+	if s.checkpointHold != c || c.attempted || c.resumed || c.completed || c.preparationFailed {
 		unlock()
 		return vm.SnapshotArtifact{}, errors.New("checkpoint snapshot is no longer available")
 	}
@@ -188,6 +222,6 @@ func (c *checkpointCapture) CompleteAbort(ctx context.Context) error {
 	}
 	c.completed = true
 	s.checkpointHold = nil
-	s.computerHeld = false
+	s.computerCaptureBlocked = false
 	return nil
 }

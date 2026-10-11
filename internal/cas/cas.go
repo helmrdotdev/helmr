@@ -72,6 +72,8 @@ type PresignedUpload struct {
 
 var (
 	ErrDigestMismatch = errors.New("cas object digest mismatch")
+	// ErrUnavailable marks a transient provider failure, preserving the original cause.
+	ErrUnavailable    = errors.New("object storage is temporarily unavailable")
 	errStageClosed    = errors.New("cas stage is closed")
 	errStageCommitted = errors.New("cas stage already committed")
 	errStageAborted   = errors.New("cas stage aborted")

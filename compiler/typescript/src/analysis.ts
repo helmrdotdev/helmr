@@ -18,7 +18,7 @@ export const VERIFICATION_RESULT_FORMAT_VERSION = 0 as const
 export type VerificationGeneratedFile = Readonly<{
   path:
     | "helmr/build-plan.json"
-    | "helmr/analysis-locators.json"
+    | "helmr/definition-index.json"
   content: string
 }>
 
@@ -26,7 +26,6 @@ export type VerificationResultFrame =
   | Readonly<{
       formatVersion: 0
       outcome: "succeeded"
-      declarations: AnalysisResult["programDeclarations"]
       files: readonly VerificationGeneratedFile[]
     }>
   | Readonly<{
@@ -45,18 +44,10 @@ export function successfulVerificationResult(
     path: "helmr/build-plan.json",
     content: decodeGeneratedFile(analysis.buildPlanBytes),
   }]
-  if (analysis.programDeclarations.length > 0) {
-    files.push(
-      {
-        path: "helmr/analysis-locators.json",
-        content: decodeGeneratedFile(analysis.declarationLocatorBytes),
-      },
-    )
-  }
+  files.push({ path: "helmr/definition-index.json", content: decodeGeneratedFile(analysis.definitionIndexBytes) })
   return Object.freeze({
     formatVersion: VERIFICATION_RESULT_FORMAT_VERSION,
     outcome: "succeeded",
-    declarations: analysis.programDeclarations,
     files: Object.freeze(files.map((file) => Object.freeze(file))),
   })
 }

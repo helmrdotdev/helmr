@@ -27,7 +27,7 @@ func TestAdvertisedWorkerDiskCapacityFitsNButNotNPlusOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	capacity, err := partitionWorkerDiskCapacity(hostMiB, 8192, 0)
+	capacity, err := partitionWorkerDiskCapacity(hostMiB, 8192)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,34 +39,6 @@ func TestAdvertisedWorkerDiskCapacityFitsNButNotNPlusOne(t *testing.T) {
 func TestAdmissionDiskFloorMatchesWorkerFilesystemContract(t *testing.T) {
 	if got := admissionDiskFloorMiB(8192, 1024); got != 9216 {
 		t.Fatalf("run disk floor = %d, want 9216", got)
-	}
-}
-
-func TestWorkerCacheBudgetUsesConfiguredValue(t *testing.T) {
-	got := workerCacheBudgetBytes(123, 10000, 1, 3, 4096, 32768)
-	if got != 123*1024*1024 {
-		t.Fatalf("budget bytes = %d, want configured MiB", got)
-	}
-}
-
-func TestWorkerCacheBudgetDerivesFromHostDisk(t *testing.T) {
-	got := workerCacheBudgetBytes(0, 96000, 1, 3, 4096, 32768)
-	if got != 32000*1024*1024 {
-		t.Fatalf("budget bytes = %d, want one third of host disk", got)
-	}
-}
-
-func TestWorkerCacheBudgetRespectsCeiling(t *testing.T) {
-	got := workerCacheBudgetBytes(0, 300000, 1, 3, 4096, 32768)
-	if got != 32768*1024*1024 {
-		t.Fatalf("budget bytes = %d, want ceiling", got)
-	}
-}
-
-func TestWorkerCacheBudgetShrinksForSmallDisk(t *testing.T) {
-	got := workerCacheBudgetBytes(0, 400, 1, 3, 4096, 32768)
-	if got != 200*1024*1024 {
-		t.Fatalf("budget bytes = %d, want half of small host disk", got)
 	}
 }
 
@@ -88,16 +60,16 @@ func TestWorkerDiskCapacityValidatesSingleVMShapeAgainstAggregate(t *testing.T) 
 }
 
 func TestPartitionWorkerDiskCapacityDoesNotDoubleCountPhysicalDisk(t *testing.T) {
-	capacity, err := partitionWorkerDiskCapacity(80*1024, 8192, 16*1024*1024*1024)
+	capacity, err := partitionWorkerDiskCapacity(80*1024, 8192)
 	if err != nil {
 		t.Fatal(err)
 	}
-	accounted := capacity.HostDiskBytes + 16*1024*1024*1024
-	if accounted > 80*1024*1024*1024 {
-		t.Fatalf("accounted bytes %d exceed host", accounted)
+	accounted := capacity.HostDiskBytes
+	if accounted != 80*1024*1024*1024 {
+		t.Fatalf("accounted bytes %d differ from host", accounted)
 	}
-	if got := capacity.HostDiskBytes / capacity.VMGuestEphemeralDiskBytes; got != 8 {
-		t.Fatalf("aggregate holds %d VMs, want eight-slot exact fit", got)
+	if got := capacity.HostDiskBytes / capacity.VMGuestEphemeralDiskBytes; got != 10 {
+		t.Fatalf("aggregate holds %d VMs, want ten-slot exact fit", got)
 	}
 }
 
@@ -121,9 +93,9 @@ func TestWorkerLifecycleFundingBoundaries(t *testing.T) {
 	}
 }
 
-func TestWorkerRecoveredDiskWithholdsResidueReserveAndCache(t *testing.T) {
+func TestWorkerRecoveredDiskWithholdsResidueAndReserve(t *testing.T) {
 	const required = int64(1000)
-	available, err := usableWorkerDiskBytes(required+300, 100, 200)
+	available, err := usableWorkerDiskBytes(required+100, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +103,7 @@ func TestWorkerRecoveredDiskWithholdsResidueReserveAndCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The filesystem reports one byte less when a leftover temporary file grows.
-	available, err = usableWorkerDiskBytes(required+299, 100, 200)
+	available, err = usableWorkerDiskBytes(required+99, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,10 +113,10 @@ func TestWorkerRecoveredDiskWithholdsResidueReserveAndCache(t *testing.T) {
 }
 
 func TestWorkerDiskPartitionRejectsByteOverflow(t *testing.T) {
-	if _, err := partitionWorkerDiskCapacity(1<<44, 1, 0); err == nil {
+	if _, err := partitionWorkerDiskCapacity(1<<44, 1); err == nil {
 		t.Fatal("host size overflow accepted")
 	}
-	if _, err := partitionWorkerDiskCapacity(1, 1<<44, 0); err == nil {
+	if _, err := partitionWorkerDiskCapacity(1, 1<<44); err == nil {
 		t.Fatal("scratch size overflow accepted")
 	}
 	if _, err := advertisedWorkerDiskMiB(t.TempDir(), 1<<44, 1); err == nil {

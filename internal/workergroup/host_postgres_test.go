@@ -29,7 +29,7 @@ func (f supplyFixture) enroll(t *testing.T, cfg HostAuthConfig, poolName string,
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrolled, err := EnrollHost(t.Context(), f.q, cfg, Enrollment{TokenHash: tokenHash, PoolName: poolName, ResourceID: resourceID})
+	enrolled, err := EnrollHost(t.Context(), f.pool, cfg, Enrollment{TokenHash: tokenHash, PoolName: poolName, ResourceID: resourceID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestEnrollHostRejectsRotatedEnrollmentToken(t *testing.T) {
 	if _, err := RotateGroupToken(t.Context(), f.q, f.groupID()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := EnrollHost(t.Context(), f.q, cfg, Enrollment{TokenHash: tokenHash, PoolName: "default", ResourceID: "i-rotated"}); !errors.Is(err, ErrInvalidEnrollmentToken) {
+	if _, err := EnrollHost(t.Context(), f.pool, cfg, Enrollment{TokenHash: tokenHash, PoolName: "default", ResourceID: "i-rotated"}); !errors.Is(err, ErrInvalidEnrollmentToken) {
 		t.Fatalf("error = %v, want ErrInvalidEnrollmentToken", err)
 	}
 }

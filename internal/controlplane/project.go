@@ -143,8 +143,10 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	}
 	principal := principalFromContext(r.Context())
 	project, environments, err := org.CreateProject(r.Context(), s.tx, principal.OrgID, org.ProjectInput{
-		ProjectDetails:  org.ProjectDetails{Slug: request.Slug, Name: request.Name},
-		DefaultRegionID: request.DefaultRegionID,
+		ExecutionLimits:  s.environmentExecutionLimits,
+		HistoryRetention: org.HistoryRetentionPolicy{Mode: request.HistoryRetentionMode, Seconds: request.HistoryRetentionSeconds},
+		ProjectDetails:   org.ProjectDetails{Slug: request.Slug, Name: request.Name},
+		DefaultRegionID:  request.DefaultRegionID,
 	})
 	if err != nil {
 		writeError(w, orgError(err))
@@ -194,7 +196,8 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
 	environment, err := org.CreateEnvironment(r.Context(), s.tx, principal.OrgID, projectID, org.EnvironmentDetails{
 		Slug: request.Slug, Name: request.Name, ColorHex: colorHex,
-	})
+		HistoryRetention: org.HistoryRetentionPolicy{Mode: request.HistoryRetentionMode, Seconds: request.HistoryRetentionSeconds},
+	}, s.environmentExecutionLimits)
 	if err != nil {
 		writeError(w, orgError(err))
 		return
@@ -246,6 +249,7 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
 	environment, err := org.UpdateEnvironment(r.Context(), s.db, principal.OrgID, projectID, environmentID, org.EnvironmentDetails{
 		Slug: request.Slug, Name: request.Name, ColorHex: colorHex,
+		HistoryRetention: org.HistoryRetentionPolicy{Mode: request.HistoryRetentionMode, Seconds: request.HistoryRetentionSeconds},
 	})
 	if err != nil {
 		writeError(w, orgError(err))
@@ -286,14 +290,20 @@ func projectResponseWithEnvironments(project db.Project, environments []db.Envir
 }
 
 func environmentResponse(environment db.Environment) api.EnvironmentSummary {
+	var seconds *int64
+	if environment.HistoryRetentionSeconds.Valid {
+		value := environment.HistoryRetentionSeconds.Int64
+		seconds = &value
+	}
 	return api.EnvironmentSummary{
-		ID:        pgvalue.MustUUIDValue(environment.ID).String(),
-		ProjectID: pgvalue.MustUUIDValue(environment.ProjectID).String(),
-		Slug:      environment.Slug,
-		Name:      environment.Name,
-		ColorHex:  environment.ColorHex,
-		IsDefault: environment.IsDefault,
-		CreatedAt: pgvalue.Time(environment.CreatedAt),
-		UpdatedAt: pgvalue.Time(environment.UpdatedAt),
+		HistoryRetentionPolicy: api.HistoryRetentionPolicy{HistoryRetentionMode: environment.HistoryRetentionMode, HistoryRetentionSeconds: seconds},
+		ID:                     pgvalue.MustUUIDValue(environment.ID).String(),
+		ProjectID:              pgvalue.MustUUIDValue(environment.ProjectID).String(),
+		Slug:                   environment.Slug,
+		Name:                   environment.Name,
+		ColorHex:               environment.ColorHex,
+		IsDefault:              environment.IsDefault,
+		CreatedAt:              pgvalue.Time(environment.CreatedAt),
+		UpdatedAt:              pgvalue.Time(environment.UpdatedAt),
 	}
 }

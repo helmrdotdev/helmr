@@ -3,7 +3,6 @@ package workergroup
 import (
 	"context"
 	"errors"
-	"github.com/jackc/pgx/v5"
 	"io"
 	"log/slog"
 	"sync"
@@ -11,6 +10,8 @@ import (
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -40,7 +41,7 @@ func TestStaleHostFencerFencesStaleActiveWorker(t *testing.T) {
 	if len(store.rechecks) != 1 || store.rechecks[0].ExpectedEpoch != candidate.CurrentEpoch {
 		t.Fatalf("rechecks = %+v, want selected epoch", store.rechecks)
 	}
-	if got := store.rechecks[0].ReasonCode.String; got != staleHostReasonCode {
+	if got := cycle.Results[0].Reason; got != staleHostReasonCode {
 		t.Fatalf("reason code = %q, want %q", got, staleHostReasonCode)
 	}
 }

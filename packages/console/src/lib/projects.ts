@@ -1,6 +1,8 @@
 import { postJson, request } from "./api";
 
-export type Environment = {
+export type HistoryRetentionPolicy = { history_retention_mode: "duration"; history_retention_seconds: number } | { history_retention_mode: "until_environment_deletion"; history_retention_seconds?: never };
+
+export type Environment = HistoryRetentionPolicy & {
   id: string;
   project_id: string;
   slug: string;
@@ -37,7 +39,7 @@ export type ListRegionsResponse = {
   regions: Region[];
 };
 
-export type CreateProjectInput = {
+export type CreateProjectInput = HistoryRetentionPolicy & {
   slug: string;
   name: string;
   default_region_id?: string;
@@ -48,13 +50,13 @@ export type UpdateProjectInput = {
   name: string;
 };
 
-export type CreateEnvironmentInput = {
+export type CreateEnvironmentInput = HistoryRetentionPolicy & {
   slug: string;
   name: string;
   color_hex: string;
 };
 
-export type UpdateEnvironmentInput = {
+export type UpdateEnvironmentInput = Partial<HistoryRetentionPolicy> & {
   slug: string;
   name: string;
   color_hex: string;

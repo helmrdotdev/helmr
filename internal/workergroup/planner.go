@@ -3,6 +3,7 @@ package workergroup
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -12,17 +13,15 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
-	planningScopePageSize     = int32(128)
-	maximumPlanningScopes     = int32(5000)
 	maximumPlanningCandidates = int32(5000)
 	maximumPlanningWorkers    = 1000
 	maximumPlanningPools      = 64
@@ -35,7 +34,6 @@ var ErrInvalidPlanRequest = errors.New("invalid capacity plan request")
 const (
 	reasonRunRole              = "worker_does_not_support_run"
 	reasonPerInstanceResources = "per_instance_resources"
-	reasonQueueConcurrency     = "queue_concurrency"
 	reasonRuntimeCompatibility = "runtime_compatibility"
 	reasonInvalidWorkload      = "invalid_workload_requirements"
 	reasonPrimaryPool          = "primary_pool_unavailable"
@@ -44,16 +42,21 @@ const (
 )
 
 type PlanStore interface {
+	ListAllocationPlanningChargedPools(context.Context, pgtype.UUID) ([]pgtype.UUID, error)
 	GetWorkerGroup(context.Context, pgtype.UUID) (db.WorkerGroup, error)
 	ListCapacityWorkerPools(context.Context, db.ListCapacityWorkerPoolsParams) ([]db.ListCapacityWorkerPoolsRow, error)
 	ListWorkerCapacityBins(context.Context, db.ListWorkerCapacityBinsParams) ([]db.ListWorkerCapacityBinsRow, error)
-	ListQueuedRunEligibleScopes(context.Context, db.ListQueuedRunEligibleScopesParams) ([]db.ListQueuedRunEligibleScopesRow, error)
-	ListQueuedRunPlanningUsage(context.Context, db.ListQueuedRunPlanningUsageParams) ([]db.ListQueuedRunPlanningUsageRow, error)
-	ListQueuedRunPlanningCandidatesForScopes(context.Context, db.ListQueuedRunPlanningCandidatesForScopesParams) ([]db.ListQueuedRunPlanningCandidatesForScopesRow, error)
-	ListPendingComputerCommandCapacityCandidates(context.Context, db.ListPendingComputerCommandCapacityCandidatesParams) ([]db.ListPendingComputerCommandCapacityCandidatesRow, error)
+	ListAllocationPlanningDemand(context.Context, db.ListAllocationPlanningDemandParams) ([]db.ListAllocationPlanningDemandRow, error)
+}
+
+type environmentBudget struct {
+	cpu, memory, residents int64
 }
 
 type item struct {
+	environment  [16]byte
+	budget       environmentBudget
+	computer     bool
 	role         string
 	resources    ResourceVector
 	targetPoolID pgtype.UUID
@@ -181,7 +184,7 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 		return response, nil
 	}
 
-	items, accountedPoolIDs, complete, err := discoverItems(ctx, store, group, now.UTC().Format(time.RFC3339Nano))
+	items, accountedPoolIDs, complete, err := discoverItems(ctx, store, group)
 	if err != nil {
 		return PlanResponse{}, err
 	}
@@ -222,6 +225,10 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 		if left.resources.MemoryBytes != right.resources.MemoryBytes {
 			return left.resources.MemoryBytes > right.resources.MemoryBytes
 		}
+		// Fresh work has exactly one eligible pool; restores may use secondary capacity.
+		if (left.restore == nil) != (right.restore == nil) {
+			return left.restore == nil
+		}
 		if left.resources.GuestEphemeralDiskBytes != right.resources.GuestEphemeralDiskBytes {
 			return left.resources.GuestEphemeralDiskBytes > right.resources.GuestEphemeralDiskBytes
 		}
@@ -231,7 +238,25 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 		return left.key < right.key
 	})
 
+	budgets := make(map[[16]byte]environmentBudget)
 	for _, candidate := range items {
+		budget, exists := budgets[candidate.environment]
+		if !exists {
+			budget = candidate.budget
+		}
+		residents := int64(0)
+		if candidate.computer {
+			residents = 1
+		}
+		if candidate.resources.CPUMillis > budget.cpu || candidate.resources.MemoryBytes > budget.memory || residents > budget.residents {
+			continue
+		}
+		consume := func() {
+			budget.cpu -= candidate.resources.CPUMillis
+			budget.memory -= candidate.resources.MemoryBytes
+			budget.residents -= residents
+			budgets[candidate.environment] = budget
+		}
 		if candidate.reason != "" {
 			reasons[candidate.reason]++
 			continue
@@ -247,6 +272,7 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 			}
 		}
 		if placed {
+			consume()
 			continue
 		}
 		var compatiblePoolIndexes [maximumPlanningPools]int
@@ -294,6 +320,7 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 			}
 		}
 		if assigned {
+			consume()
 			continue
 		}
 		// Reuse compatible capacity first. For new Workers, prefer the current
@@ -323,6 +350,8 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 		}
 		if !assigned {
 			reasons[reasonProviderSaturated]++
+		} else {
+			consume()
 		}
 	}
 	keys := make([]string, 0, len(reasons))
@@ -398,234 +427,52 @@ func candidateMatchesBin(candidate item, target bin) bool {
 	return candidate.targetPoolID.Valid && candidate.targetPoolID == target.workerPoolID
 }
 
-func discoverItems(ctx context.Context, store PlanStore, group db.WorkerGroup, scanSeed string) ([]item, map[[16]byte]struct{}, bool, error) {
-	result := make([]item, 0, maximumPlanningCandidates)
-	accountedPoolIDs := make(map[[16]byte]struct{}, maximumPlanningPools)
-	complete := true
-	seenComputers := make(map[[16]byte]struct{})
-	{
-		remaining := maximumPlanningCandidates
-		var after db.ListQueuedRunEligibleScopesRow
-		var visited int32
-		for remaining > 0 && visited < maximumPlanningScopes {
-			pageLimit := min(planningScopePageSize, maximumPlanningScopes-visited)
-			scopes, err := store.ListQueuedRunEligibleScopes(ctx, db.ListQueuedRunEligibleScopesParams{
-				AfterSortKey: after.SortKey, AfterOrgID: after.OrgID, AfterProjectID: after.ProjectID,
-				AfterEnvironmentID: after.EnvironmentID, AfterRegionID: after.RegionID,
-				AfterConcurrencyKey: after.ConcurrencyKey, AfterQueueName: after.QueueName,
-				RowLimit: pageLimit, ScanSeed: scanSeed, RegionFilter: group.RegionID,
-			})
-			if err != nil {
-				return nil, nil, false, fmt.Errorf("list capacity planning run scopes: %w", err)
-			}
-			if len(scopes) == 0 {
-				break
-			}
-			usage, err := store.ListQueuedRunPlanningUsage(ctx, planningUsageParams(scopes))
-			if err != nil {
-				return nil, nil, false, fmt.Errorf("list capacity planning run usage: %w", err)
-			}
-			if len(usage) != len(scopes) {
-				return nil, nil, false, fmt.Errorf("list capacity planning run usage: got %d rows for %d scopes", len(usage), len(scopes))
-			}
-			visited += int32(len(scopes))
-			for index := range scopes {
-				if usage[index].ScopeOrdinal != int64(index+1) {
-					return nil, nil, false, fmt.Errorf("list capacity planning run usage: ordinal %d at index %d", usage[index].ScopeOrdinal, index)
-				}
-			}
-			rows, err := store.ListQueuedRunPlanningCandidatesForScopes(ctx, planningCandidateParams(scopes, remaining+1))
-			if err != nil {
-				return nil, nil, false, fmt.Errorf("list capacity planning run candidates: %w", err)
-			}
-			if len(rows) > int(remaining) {
-				complete = false
-				rows = rows[:remaining]
-			}
-			var admission queueAdmissionState
-			var admissionOrdinal int64
-			for _, row := range rows {
-				if row.ScopeOrdinal < 1 || row.ScopeOrdinal > int64(len(scopes)) {
-					return nil, nil, false, fmt.Errorf("list capacity planning run candidates: ordinal %d outside page of %d scopes", row.ScopeOrdinal, len(scopes))
-				}
-				if row.ScopeOrdinal != admissionOrdinal {
-					admission = queueAdmissionStateFromUsage(usage[row.ScopeOrdinal-1])
-					admissionOrdinal = row.ScopeOrdinal
-				}
-				candidate := runItem(row)
-				if candidate.reason == "" && !admission.admit(row.QueueConcurrencyLimit) {
-					candidate.reason = reasonQueueConcurrency
-				}
-				remaining--
-				if len(row.AccountedPoolIds) > 0 {
-					for _, poolID := range row.AccountedPoolIds {
-						accountedPoolIDs[poolID.Bytes] = struct{}{}
-					}
-					continue
-				}
-				if candidate.reason == "" {
-					if _, seen := seenComputers[row.ComputerID.Bytes]; seen {
-						continue
-					}
-					seenComputers[row.ComputerID.Bytes] = struct{}{}
-				}
-				result = append(result, candidate)
-			}
-			last := scopes[len(scopes)-1]
-			after = last
-			if len(scopes) < int(pageLimit) {
-				break
-			}
-			if remaining == 0 {
-				complete = false
-			}
-		}
-		if visited >= maximumPlanningScopes {
-			complete = false
-		}
-	}
-	commands, err := store.ListPendingComputerCommandCapacityCandidates(ctx, db.ListPendingComputerCommandCapacityCandidatesParams{
-		RegionID: group.RegionID,
-		RowLimit: maximumPlanningCandidates + 1,
-	})
+func discoverItems(ctx context.Context, store PlanStore, group db.WorkerGroup) ([]item, map[[16]byte]struct{}, bool, error) {
+	rows, err := store.ListAllocationPlanningDemand(ctx, db.ListAllocationPlanningDemandParams{RegionID: group.RegionID, WorkerGroupID: group.ID, RowLimit: maximumPlanningCandidates + 1})
 	if err != nil {
-		return nil, nil, false, fmt.Errorf("list capacity planning Computer Command candidates: %w", err)
+		return nil, nil, false, fmt.Errorf("list allocation capacity demand: %w", err)
 	}
-	if len(commands) > int(maximumPlanningCandidates) {
-		complete = false
-		commands = commands[:maximumPlanningCandidates]
+	complete := len(rows) <= int(maximumPlanningCandidates)
+	if !complete {
+		rows = rows[:maximumPlanningCandidates]
 	}
-	for _, row := range commands {
-		if len(row.AccountedPoolIds) > 0 {
-			for _, poolID := range row.AccountedPoolIds {
-				accountedPoolIDs[poolID.Bytes] = struct{}{}
-			}
-			continue
-		}
-		if _, seen := seenComputers[row.ComputerID.Bytes]; seen {
-			continue
-		}
-		seenComputers[row.ComputerID.Bytes] = struct{}{}
-		result = append(result, computerCommandItem(row))
+	result := make([]item, 0, len(rows))
+	charged, err := store.ListAllocationPlanningChargedPools(ctx, group.ID)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("list allocation charged pools: %w", err)
 	}
-	return result, accountedPoolIDs, complete, nil
+	accounted := make(map[[16]byte]struct{})
+	for _, id := range charged {
+		accounted[id.Bytes] = struct{}{}
+	}
+	for _, row := range rows {
+		result = append(result, allocationItem(row))
+	}
+	return result, accounted, complete, nil
 }
 
-type queueAdmissionState struct {
-	activeRuns, activeLimit int64
-	admitted                int64
-}
-
-func planningUsageParams(scopes []db.ListQueuedRunEligibleScopesRow) db.ListQueuedRunPlanningUsageParams {
-	params := db.ListQueuedRunPlanningUsageParams{
-		EnvironmentIds:  make([]pgtype.UUID, 0, len(scopes)),
-		ConcurrencyKeys: make([]string, 0, len(scopes)),
-		QueueNames:      make([]string, 0, len(scopes)),
-	}
-	for _, scope := range scopes {
-		params.EnvironmentIds = append(params.EnvironmentIds, scope.EnvironmentID)
-		params.ConcurrencyKeys = append(params.ConcurrencyKeys, scope.ConcurrencyKey)
-		params.QueueNames = append(params.QueueNames, scope.QueueName)
-	}
-	return params
-}
-
-func planningCandidateParams(scopes []db.ListQueuedRunEligibleScopesRow, limit int32) db.ListQueuedRunPlanningCandidatesForScopesParams {
-	params := db.ListQueuedRunPlanningCandidatesForScopesParams{
-		RowLimit: limit, OrgIds: make([]pgtype.UUID, 0, len(scopes)),
-		ProjectIds: make([]pgtype.UUID, 0, len(scopes)), EnvironmentIds: make([]pgtype.UUID, 0, len(scopes)),
-		RegionIds: make([]string, 0, len(scopes)), ConcurrencyKeys: make([]string, 0, len(scopes)),
-		QueueNames: make([]string, 0, len(scopes)),
-	}
-	for _, scope := range scopes {
-		params.OrgIds = append(params.OrgIds, scope.OrgID)
-		params.ProjectIds = append(params.ProjectIds, scope.ProjectID)
-		params.EnvironmentIds = append(params.EnvironmentIds, scope.EnvironmentID)
-		params.RegionIds = append(params.RegionIds, scope.RegionID)
-		params.ConcurrencyKeys = append(params.ConcurrencyKeys, scope.ConcurrencyKey)
-		params.QueueNames = append(params.QueueNames, scope.QueueName)
-	}
-	return params
-}
-
-func queueAdmissionStateFromUsage(usage db.ListQueuedRunPlanningUsageRow) queueAdmissionState {
-	return queueAdmissionState{
-		activeRuns: usage.ActiveRuns, activeLimit: usage.ActiveLimit,
-	}
-}
-
-func (s *queueAdmissionState) admit(candidateLimit pgtype.Int8) bool {
-	if exceedsQueueLimit(s.activeRuns+s.admitted, candidateLimit, s.activeLimit) {
-		return false
-	}
-	s.admitted++
-	return true
-}
-
-func exceedsQueueLimit(used int64, candidateLimit pgtype.Int8, pinnedLimit int64) bool {
-	limit := candidateLimit
-	if pinnedLimit > 0 && (!limit.Valid || pinnedLimit < limit.Int64) {
-		limit = pgtype.Int8{Int64: pinnedLimit, Valid: true}
-	}
-	return limit.Valid && used >= limit.Int64
-}
-
-func runItem(row db.ListQueuedRunPlanningCandidatesForScopesRow) item {
-	result := freshExecutionItem(fmt.Sprintf("computer:%x", row.ComputerID.Bytes), row.ComputerConfig)
-	if result.reason != "" {
+func allocationItem(row db.ListAllocationPlanningDemandRow) item {
+	result := item{environment: row.EnvironmentID.Bytes, computer: row.Kind == "computer", budget: environmentBudget{cpu: row.RemainingCpuMillis, memory: row.RemainingMemoryBytes, residents: row.RemainingResidents}, role: "run", key: fmt.Sprintf("%s:%x:%x", row.Kind, row.EnvironmentID.Bytes, row.OwnerID.Bytes)}
+	var declared definition.ResourcesManifest
+	if json.Unmarshal(row.Resources, &declared) != nil || definition.ValidateResourcesManifest(declared) != nil || declared.MemoryMiB > math.MaxInt64/mebibyte {
+		result.reason = reasonInvalidWorkload
 		return result
 	}
-	resources := result.resources
+	cpu, err := vm.ReservedCPUMillis(declared.MilliCPU)
+	if err != nil {
+		result.reason = reasonInvalidWorkload
+		return result
+	}
+	result.resources = ResourceVector{CPUMillis: cpu, MemoryBytes: declared.MemoryMiB * mebibyte, VMSlots: 1}
 	if row.RequiredVMPlatformID != "" {
-		if !row.RequiredWorkerGroupID.Valid || row.RequiredVMVCPUCount <= 0 ||
-			row.RequiredCPUConfigDigest == "" || row.RequiredCPUMillis <= 0 ||
-			row.RequiredMemoryBytes <= 0 || row.RequiredGuestEphemeralDiskBytes <= 0 {
+		if !row.RequiredWorkerGroupID.Valid || row.RequiredVMVCPUCount <= 0 || row.RequiredCPUConfigDigest == "" || row.RequiredCPUMillis <= 0 || row.RequiredMemoryBytes <= 0 || row.RequiredScratchBytes <= 0 {
 			result.reason = reasonInvalidWorkload
 			return result
 		}
-		resources = ResourceVector{
-			CPUMillis: row.RequiredCPUMillis, MemoryBytes: row.RequiredMemoryBytes,
-			GuestEphemeralDiskBytes: row.RequiredGuestEphemeralDiskBytes, VMSlots: 1,
-		}
-		result.restore = &RestoreRequirements{
-			WorkerGroupID: pgvalue.MustUUIDValue(row.RequiredWorkerGroupID), VMPlatformID: row.RequiredVMPlatformID,
-			VCPUCount: row.RequiredVMVCPUCount, CPUConfigDigest: row.RequiredCPUConfigDigest,
-			Resources: resources,
-		}
+		result.resources = ResourceVector{CPUMillis: row.RequiredCPUMillis, MemoryBytes: row.RequiredMemoryBytes, GuestEphemeralDiskBytes: row.RequiredScratchBytes, VMSlots: 1}
+		result.restore = &RestoreRequirements{WorkerGroupID: pgvalue.MustUUIDValue(row.RequiredWorkerGroupID), VMPlatformID: row.RequiredVMPlatformID, VCPUCount: row.RequiredVMVCPUCount, CPUConfigDigest: row.RequiredCPUConfigDigest, Resources: result.resources}
+		result.vmPlatformID = row.RequiredVMPlatformID
 	}
-	result.resources = resources
-	result.vmPlatformID = row.RequiredVMPlatformID
-	return result
-}
-
-func computerCommandItem(row db.ListPendingComputerCommandCapacityCandidatesRow) item {
-	return runItem(db.ListQueuedRunPlanningCandidatesForScopesRow{
-		ComputerID: row.ComputerID, ComputerConfig: row.ComputerConfig,
-		RequiredWorkerGroupID: row.RequiredWorkerGroupID, RequiredVMPlatformID: row.RequiredVMPlatformID,
-		RequiredVMVCPUCount: row.RequiredVMVCPUCount, RequiredCPUConfigDigest: row.RequiredCPUConfigDigest,
-		RequiredCPUMillis: row.RequiredCPUMillis, RequiredMemoryBytes: row.RequiredMemoryBytes,
-		RequiredGuestEphemeralDiskBytes: row.RequiredGuestEphemeralDiskBytes,
-	})
-}
-
-func freshExecutionItem(key string, configJSON []byte) item {
-	result := item{role: "run", key: key}
-	manifest, err := definition.ParseComputerConfig(configJSON)
-	if err != nil {
-		result.reason = reasonInvalidWorkload
-		return result
-	}
-	if manifest.Resources.MilliCPU <= 0 || manifest.Resources.MemoryMiB <= 0 ||
-		manifest.Resources.MemoryMiB > math.MaxInt64/mebibyte {
-		result.reason = reasonInvalidWorkload
-		return result
-	}
-	resources := ResourceVector{
-		CPUMillis: manifest.Resources.MilliCPU, MemoryBytes: manifest.Resources.MemoryMiB * mebibyte,
-		GuestEphemeralDiskBytes: disk.SeedCapacity,
-		VMSlots:                 1,
-	}
-	result.resources = resources
 	return result
 }
 
@@ -679,6 +526,18 @@ func binFromRow(row db.ListWorkerCapacityBinsRow) bin {
 }
 
 func incompatibility(candidate item, target bin) string {
+	if candidate.restore == nil {
+		qualified := false
+		for _, shape := range target.cpuShapes {
+			if int64(shape.VCPUCount) == candidate.resources.CPUMillis/1000 && shape.CPUConfigDigest != "" {
+				qualified = true
+				break
+			}
+		}
+		if !qualified {
+			return reasonRuntimeCompatibility
+		}
+	}
 	if candidate.role == "run" && !target.supportsRun {
 		return reasonRunRole
 	}
@@ -698,6 +557,9 @@ func incompatibility(candidate item, target bin) string {
 }
 
 func place(target *bin, candidate item) bool {
+	if candidate.restore == nil {
+		candidate.resources.GuestEphemeralDiskBytes = target.perVM.GuestEphemeralDiskBytes
+	}
 	if incompatibility(candidate, *target) != "" {
 		return false
 	}

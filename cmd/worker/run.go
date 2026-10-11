@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"sync"
 	"syscall"
 	"uuid"
 
@@ -19,8 +18,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computerhost"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/executor"
 	"github.com/helmrdotdev/helmr/internal/firecracker"
+	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
+	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/reservation"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/worker"
@@ -49,10 +49,16 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure checkpoint encryption: %w", err)
 	}
+	log.Info("configured checkpoint encryption", "checkpoint_key_id", checkpointEncryptor.KeyID())
 	workDir := cfg.WorkDir
 	if workDir == "" {
 		workDir = defaultWorkDir()
 	}
+	workDir, jailerDir, err := resolveWorkerRecoveryRoots(workDir, cfg.JailerChrootDir)
+	if err != nil {
+		return err
+	}
+	cfg.JailerChrootDir = jailerDir
 	networkConfig := firecracker.Config{
 		JailerUID:               cfg.JailerUID,
 		JailerGID:               cfg.JailerGID,
@@ -70,7 +76,6 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure routed network reclaimer: %w", err)
 	}
-	instanceCapacity := deriveWorkerInstanceCapacity(cfg.WorkerExecutionSlots)
 	var platformStore cas.ImmutableStore
 	verifierCgroupRoot, err := worker.PrepareVerifierHost()
 	if err != nil {
@@ -95,7 +100,6 @@ func run(log *slog.Logger) error {
 	if err := os.Remove(filepath.Join(workDir, drainCompleteMarkerName)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("clear stale drain marker: %w", err)
 	}
-	artifactCacheDir := filepath.Join(workDir, "artifact-cache")
 	var controlPlaneClient *workerclient.Client
 	workerHostSecret, err := resolveAuthenticatedWorkerHostSecret(ctx, cfg, workDir, func(hostSecret workerHostSecretFile) error {
 		candidate, candidateErr := workerclient.New(cfg.ControlPlaneURL,
@@ -113,6 +117,34 @@ func run(log *slog.Logger) error {
 	})
 	if err != nil {
 		return fmt.Errorf("configure authenticated control client: %w", err)
+	}
+	reclaimCgroup := func(owner vm.Owner) error {
+		return firecracker.RemoveStoppedCgroup(networkConfig.StateDir, cfg.CgroupVersion, owner)
+	}
+	vmResources := resolveVMResources(cfg)
+	hostDiskMiB, err := advertisedWorkerDiskMiB(workDir, cfg.WorkerDiskMiB, cfg.WorkerDiskReserveMiB)
+	if err != nil {
+		return fmt.Errorf("inspect worker disk capacity: %w", err)
+	}
+	diskCapacity, err := partitionWorkerDiskCapacity(hostDiskMiB, vmResources.DiskMiB)
+	if err != nil {
+		return fmt.Errorf("partition worker physical disk capacity: %w", err)
+	}
+	perSlotDisk, err := computerhost.HostDiskPerSlot(vmResources.MemoryMiB, vmResources.DiskMiB, cfg.ComputerStagingMiB*(1<<20), checkpointEncryptor)
+	if err != nil {
+		return fmt.Errorf("calculate worker lifecycle disk: %w", err)
+	}
+	if err := validateWorkerDiskFunding(diskCapacity.HostDiskBytes, perSlotDisk, cfg.WorkerExecutionSlots); err != nil {
+		return err
+	}
+	hostReservations, err := reservation.New(reservation.Vector{
+		CPUMillis:     cfg.WorkerCapacityVCPUs * 1000,
+		MemoryBytes:   cfg.WorkerCapacityMemoryMiB * 1024 * 1024,
+		HostDiskBytes: diskCapacity.HostDiskBytes,
+		VMSlots:       int64(cfg.WorkerExecutionSlots),
+	})
+	if err != nil {
+		return fmt.Errorf("configure worker capacity: %w", err)
 	}
 	imagesDir := cfg.ImagesDir
 	if imagesDir == "" {
@@ -139,13 +171,35 @@ func run(log *slog.Logger) error {
 	connectorConfig.ScratchDiskMiB = cfg.VMScratchDiskMiB
 	connectorConfig.InitTimeout = cfg.VMInitTimeout
 	connectorConfig.HealthTimeout = cfg.VMHealthTimeout
-	runtimeCandidate, err := firecracker.NewConnector(connectorConfig)
+	startupEvidence, connector, err := recoverAndQualifyWorkerRuntime(ctx, log,
+		func(recoveryCtx context.Context) (worker.RecoveryEvidence, error) {
+			return worker.RecoverLocalVMState(recoveryCtx, workDir, cfg.JailerChrootDir, cfg.IPPath, networkReclaimer.Reclaim, reclaimCgroup)
+		},
+		func() error {
+			return computerhost.CheckComputerAttachmentsReleased(filepath.Join(workDir, "tmp"), cfg.ComputerDevices)
+		},
+		func(qualificationCtx context.Context, evidence worker.RecoveryEvidence) (*firecracker.QualifiedRuntime, error) {
+			available, err := availableWorkerDiskBytes(workDir, cfg.WorkerDiskReserveMiB*(1<<20))
+			if err != nil {
+				return nil, fmt.Errorf("inspect recovered worker disk: %w", err)
+			}
+			if err := validateWorkerDiskFunding(available, perSlotDisk, cfg.WorkerExecutionSlots); err != nil {
+				return nil, fmt.Errorf("fund recovered worker disk: %w", err)
+			}
+			runtimeCandidate, err := firecracker.NewConnector(connectorConfig)
+			if err != nil {
+				return nil, fmt.Errorf("configure Firecracker connector: %w", err)
+			}
+			return qualifyRecoveredRuntime(qualificationCtx, evidence, hostReservations, reservation.Vector{
+				CPUMillis:     vmResources.MilliCPU,
+				MemoryBytes:   vmResources.MemoryMiB * 1024 * 1024,
+				HostDiskBytes: perSlotDisk,
+				VMSlots:       1,
+			}, runtimeCandidate.Qualify)
+		},
+	)
 	if err != nil {
-		return fmt.Errorf("configure Firecracker connector: %w", err)
-	}
-	connector, err := runtimeCandidate.Qualify(ctx)
-	if err != nil {
-		return fmt.Errorf("qualify Firecracker worker runtime: %w", err)
+		return err
 	}
 	hostRuntimeEvidence := connector.HostRuntimeEvidence()
 	runtimeCapabilities := connector.RuntimeCapabilities()
@@ -175,26 +229,9 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
 	}
-	vmResources := resolveVMResources(cfg)
-	runtimeBackend, err := vm.NewStartLimiter(connector, instanceCapacity.hostStartLimit)
+	runtimeBackend, err := vm.NewStartLimiter(connector, int(cfg.WorkerExecutionSlots))
 	if err != nil {
 		return fmt.Errorf("configure host runtime start limit: %w", err)
-	}
-	hostDiskMiB, err := advertisedWorkerDiskMiB(workDir, cfg.WorkerDiskMiB, cfg.WorkerDiskReserveMiB)
-	if err != nil {
-		return fmt.Errorf("inspect worker disk capacity: %w", err)
-	}
-	artifactCacheMaxBytes := workerCacheBudgetBytes(cfg.ArtifactCacheMaxMiB, hostDiskMiB, 1, 6, 2048, 16384)
-	diskCapacity, err := partitionWorkerDiskCapacity(hostDiskMiB, vmResources.DiskMiB, artifactCacheMaxBytes)
-	if err != nil {
-		return fmt.Errorf("partition worker physical disk capacity: %w", err)
-	}
-	perSlotDisk, err := computerhost.HostDiskPerSlot(vmResources.MemoryMiB, vmResources.DiskMiB, cfg.ComputerStagingMiB*(1<<20), checkpointEncryptor)
-	if err != nil {
-		return fmt.Errorf("calculate worker lifecycle disk: %w", err)
-	}
-	if err := validateWorkerDiskFunding(diskCapacity.HostDiskBytes, perSlotDisk, cfg.WorkerExecutionSlots); err != nil {
-		return err
 	}
 	allocatable := vm.Resources{
 		MilliCPU:  cfg.WorkerCapacityVCPUs * 1000,
@@ -213,153 +250,54 @@ func run(log *slog.Logger) error {
 		VMGuestEphemeralDiskBytes: diskCapacity.VMGuestEphemeralDiskBytes,
 		ExecutionSlotsAvailable:   int32(allocatable.Slots),
 	}
-	hostReservations, err := reservation.New(reservation.Vector{
-		CPUMillis:     workerCapabilities.MaxVCPUs * 1000,
-		MemoryBytes:   workerCapabilities.MaxMemoryMiB * 1024 * 1024,
-		HostDiskBytes: diskCapacity.HostDiskBytes,
-		VMSlots:       int64(workerCapabilities.ExecutionSlotsAvailable),
-	})
-	if err != nil {
-		return fmt.Errorf("configure worker capacity: %w", err)
-	}
-	computerMounts := computerhost.NewMounts()
-	computerCaptures := &computerhost.CaptureRuns{}
-	preparedMachines := computerhost.NewPreparedMachines(runtimeBackend, store, instanceCapacity.preparedMachineCount, log)
-	closePreparedMachine := retryableWorkerCloser{close: preparedMachines.Close}
-	defer func() {
-		if err := closePreparedMachine.Close(context.Background()); err != nil {
-			log.Warn("prepared machines close failed", "error", err)
-		}
-	}()
+	preparedMachines := computerhost.NewPreparedMachines(runtimeBackend, store, log)
+	preparedMachines.CommandLogLimits = &computerv0.CommandLogLimits{ChunkBytes: int32(cfg.LogChunkBytes), BufferBytes: cfg.LogBufferBytes, BufferRecords: int32(cfg.LogBufferRecords)}
+	preparedMachines.SessionLogLimits = &agentv1.SessionLogLimits{ChunkBytes: int32(cfg.LogChunkBytes), BufferBytes: cfg.LogBufferBytes, BufferRecords: int32(cfg.LogBufferRecords)}
+	preparedMachines.PreparationLogLimits = &computerv0.PreparationLogLimits{ChunkBytes: int32(cfg.LogChunkBytes), BufferBytes: cfg.LogBufferBytes, BufferRecords: int32(cfg.LogBufferRecords)}
 	preparedMachines.TempDir = filepath.Join(workDir, "tmp")
-	preparedMachines.ArtifactCacheDir = artifactCacheDir
-	preparedMachines.ArtifactCacheMaxBytes = artifactCacheMaxBytes
-	preparedMachines.CheckpointEncryptor = checkpointEncryptor
-	preparedMachines.ComputerCaptures = computerCaptures
-	preparedMachines.Checkpoints = controlPlaneClient
 	preparedMachines.ComputerObjects = store
-	preparedMachines.ComputerPreparation = controlPlaneClient
+	preparedMachines.CheckpointCipher = checkpointEncryptor
 	preparedMachines.ComputerRanges = store
 	preparedMachines.ComputerDevices = cfg.ComputerDevices
 	preparedMachines.ComputerStagingBytes = cfg.ComputerStagingMiB * (1 << 20)
+	preparedMachines.ComputerSaveEvery = cfg.ComputerSaveEvery
 	preparedMachines.ComputerHelper, err = os.Executable()
 	if err != nil {
 		return err
 	}
-	preparedMachines.ComputerInstances = controlPlaneClient
 	preparedMachines.Reservations = hostReservations
 	preparedMachines.PlatformStore = platformStore
 	preparedMachines.RuntimeArchitecture = runtimeArchitecture
 	preparedMachines.VerifierCgroupRoot = verifierCgroupRoot
-	log.Info("prepared machines enabled", "count", instanceCapacity.preparedMachineCount)
-	runLeaseTasks, err := executor.NewProgramRunner(executor.ProgramRunner{
-		ControlPlane: executor.ControlPlane{
-			Leases:        controlPlaneClient,
-			Waits:         controlPlaneClient,
-			Observability: controlPlaneClient,
-			Sessions:      controlPlaneClient,
-			Actors:        controlPlaneClient,
-			Computers:     controlPlaneClient,
-			Children:      controlPlaneClient,
-		},
-		ComputerCaptures: computerCaptures,
-		CAS:              store,
-		Mounts:           computerMounts,
-		Log:              log,
-		TempDir:          filepath.Join(workDir, "tmp"),
-	})
-	if err != nil {
-		return fmt.Errorf("configure run lease tasks: %w", err)
-	}
-	computerServer, err := computerhost.NewServer(computerhost.Server{
-		RestoreControl:        controlPlaneClient,
-		ComputerSaves:         controlPlaneClient,
-		ComputerSaveEvery:     cfg.ComputerSaveEvery,
-		ComputerObjects:       store,
-		CAS:                   store,
-		Mounts:                computerMounts,
-		TempDir:               filepath.Join(workDir, "tmp"),
-		ArtifactCacheDir:      artifactCacheDir,
-		ArtifactCacheMaxBytes: artifactCacheMaxBytes,
-		Log:                   log,
-		Machines:              preparedMachines,
-	})
-	if err != nil {
-		return fmt.Errorf("configure computer server: %w", err)
-	}
-	runner, err := worker.NewRunner(
-		controlPlaneClient,
-		executor.Executor{
-			RunLeases:     controlPlaneClient,
-			RunLeaseTasks: runLeaseTasks,
-		},
-		computerServer,
-		workerCapabilities,
-		worker.WithReservations(hostReservations),
-		worker.WithPollEvery(cfg.PollEvery),
-		worker.WithLogger(log),
-	)
-	if err != nil {
-		return fmt.Errorf("configure worker: %w", err)
-	}
-	consumerSpecs := make([]worker.ConsumerSpec, 0, 4)
-	admission := map[string]int{}
-	admission["run"] = int(cfg.WorkerExecutionSlots)
-	admission["computer"] = int(cfg.WorkerExecutionSlots)
-	consumerSpecs = append(consumerSpecs,
-		worker.ConsumerSpec{Name: "run", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "run", ContinueDuringDrain: true, Consumer: worker.NewRunConsumer(runner)},
-		worker.ConsumerSpec{Name: "computer", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "computer", ContinueDuringDrain: true, BypassAdmissionDuringDrain: true, Consumer: worker.NewComputerConsumer(runner)},
-	)
-	background := []worker.BackgroundSpec{{Name: "instance-controller", DrainEligible: true, Run: func(runCtx context.Context) error {
-		return preparedMachines.ReconcileDesiredInstances(runCtx, controlPlaneClient)
-	}}}
 	hardAdmission, err := worker.NewHardAdmission(worker.HardAdmissionConfig{
 		Probe: worker.SystemHostHealthProbe{
 			WorkDir: workDir, CgroupVersion: cfg.CgroupVersion, FirecrackerPath: cfg.FirecrackerPath,
 		},
-		DiskFloorBytes:    admissionDiskFloorMiB(cfg.VMScratchDiskMiB, cfg.WorkerDiskReserveMiB) * 1024 * 1024,
-		FDHeadroom:        256,
-		InstanceSlotCount: cfg.WorkerExecutionSlots,
-		DatapathHealth:    connector.DatapathHealth,
+		DiskFloorBytes: admissionDiskFloorMiB(cfg.VMScratchDiskMiB, cfg.WorkerDiskReserveMiB) * 1024 * 1024,
+		FDHeadroom:     256,
+		DatapathHealth: connector.DatapathHealth,
 	})
 	if err != nil {
 		return fmt.Errorf("configure worker hard admission: %w", err)
 	}
+	allocations, err := newAllocationConsumer(preparedMachines, controlPlaneClient, int(cfg.WorkerExecutionSlots), cfg.PollEvery, hardAdmission)
+	if err != nil {
+		return fmt.Errorf("configure allocation consumer: %w", err)
+	}
+	consumerSpecs := []worker.ConsumerSpec{{
+		Name: "allocation", Concurrency: int(cfg.WorkerExecutionSlots),
+		ContinueDuringDrain: true, Consumer: allocations,
+	}}
 	supervisor, err := worker.New(worker.Config{
-		ControlPlane: controlPlaneClient, Capabilities: workerCapabilities, Consumers: consumerSpecs, Admission: admission,
-		Background: background, PollEvery: cfg.PollEvery,
+		ControlPlane: controlPlaneClient, Capabilities: workerCapabilities, Consumers: consumerSpecs,
+		Background:         []worker.BackgroundSpec{{Name: "allocation discovery", DrainEligible: true, Run: allocations.RunDiscovery}},
+		PollEvery:          cfg.PollEvery,
 		AdmissionEvaluator: hardAdmission, Log: log,
 		Recover: func(recoveryCtx context.Context) (worker.RecoveryEvidence, error) {
-			var evidence worker.RecoveryEvidence
-			var err error
-			evidence, err = worker.RecoverLocalVMState(recoveryCtx, workDir, cfg.JailerChrootDir, cfg.IPPath, networkReclaimer.Reclaim)
-			if err != nil {
-				return evidence, err
-			}
-			if len(evidence.Quarantined) != len(evidence.QuarantinedOwners) {
-				return evidence, errors.New("startup recovery found VM residue without exact ownership")
-			}
-			for _, owner := range evidence.QuarantinedOwners {
-				if owner.Kind != vm.OwnerInstance {
-					continue
-				}
-				created, err := hostReservations.Reserve(
-					reservation.Key{Kind: "quarantine", Epoch: 1, ID: owner.ID},
-					reservation.Vector{
-						CPUMillis:     workerCapabilities.VMMilliCPU,
-						MemoryBytes:   workerCapabilities.VMMemoryMiB * 1024 * 1024,
-						HostDiskBytes: perSlotDisk,
-						VMSlots:       1,
-					},
-				)
-				if err != nil {
-					return evidence, fmt.Errorf("reserve quarantined instance capacity: %w", err)
-				}
-				if !created {
-					return evidence, errors.New("quarantined instance is already reserved")
-				}
-			}
-			available, err := availableWorkerDiskBytes(workDir, cfg.WorkerDiskReserveMiB*(1<<20), artifactCacheMaxBytes)
+			// Preserve the first inventory, including reclaimed and quarantined
+			// owners. Only final drain performs a fresh destructive recovery.
+			evidence := startupEvidence
+			available, err := availableWorkerDiskBytes(workDir, cfg.WorkerDiskReserveMiB*(1<<20))
 			if err != nil {
 				return evidence, fmt.Errorf("inspect recovered worker disk at %s: %w", workDir, err)
 			}
@@ -369,10 +307,7 @@ func run(log *slog.Logger) error {
 			return evidence, nil
 		},
 		FinalizeDrain: func(finalizeCtx context.Context) (worker.RecoveryEvidence, error) {
-			if err := closePreparedMachine.Close(finalizeCtx); err != nil {
-				return worker.RecoveryEvidence{}, fmt.Errorf("close prepared machines: %w", err)
-			}
-			first, err := worker.RecoverLocalVMState(finalizeCtx, workDir, cfg.JailerChrootDir, cfg.IPPath, networkReclaimer.Reclaim)
+			first, err := worker.RecoverLocalVMState(finalizeCtx, workDir, cfg.JailerChrootDir, cfg.IPPath, networkReclaimer.Reclaim, reclaimCgroup)
 			if err != nil {
 				return worker.RecoveryEvidence{}, err
 			}
@@ -381,7 +316,11 @@ func run(log *slog.Logger) error {
 			}
 			// The first pass reclaims any residue. A second complete inventory is
 			// the proof submitted to control and therefore must be empty.
-			return worker.RecoverLocalVMState(finalizeCtx, workDir, cfg.JailerChrootDir, cfg.IPPath, networkReclaimer.Reclaim)
+			final, err := worker.RecoverLocalVMState(finalizeCtx, workDir, cfg.JailerChrootDir, cfg.IPPath, networkReclaimer.Reclaim, reclaimCgroup)
+			if err != nil {
+				return final, err
+			}
+			return final, computerhost.CheckComputerAttachmentsReleased(filepath.Join(workDir, "tmp"), cfg.ComputerDevices)
 		},
 		DrainCompleted: func(status workerapi.StatusResponse) error {
 			return writeDrainCompleteMarker(workDir, status.WorkerHostID)
@@ -390,24 +329,11 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure worker supervisor: %w", err)
 	}
-	preparedMachines.AdmitInstanceStart = supervisor.AdmitInstanceStart
 	log.Info("Helmr worker listening", "controlplane_url", cfg.ControlPlaneURL, "worker_host_id", workerHostSecret.WorkerHostID)
 	if err := supervisor.Run(ctx); err != nil && err != context.Canceled {
 		return err
 	}
 	return nil
-}
-
-type workerInstanceCapacity struct {
-	preparedMachineCount int
-	hostStartLimit       int
-}
-
-func deriveWorkerInstanceCapacity(executionSlots int32) workerInstanceCapacity {
-	return workerInstanceCapacity{
-		preparedMachineCount: int(executionSlots),
-		hostStartLimit:       int(executionSlots),
-	}
 }
 
 func resolveVMResources(cfg config.Worker) vm.Resources {
@@ -417,27 +343,4 @@ func resolveVMResources(cfg config.Worker) vm.Resources {
 		DiskMiB:   cfg.VMScratchDiskMiB,
 		Slots:     1,
 	}
-}
-
-type retryableWorkerCloser struct {
-	mu     sync.Mutex
-	close  func(context.Context) error
-	closed bool
-}
-
-func (c *retryableWorkerCloser) Close(ctx context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return nil
-	}
-	if c.close == nil {
-		c.closed = true
-		return nil
-	}
-	if err := c.close(ctx); err != nil {
-		return err
-	}
-	c.closed = true
-	return nil
 }

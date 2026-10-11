@@ -1,46 +1,41 @@
 package artifact
 
 import (
-	"testing"
-
+	"encoding/json"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/secretbinding"
+	"testing"
 )
 
-func TestProgramIndexCloneOwnsNestedValues(t *testing.T) {
-	ttl := int64(100)
-	attempts := int64(3)
-	limit := int64(2)
-	run := definition.RunManifest{TTLMs: &ttl, Retry: definition.RetryManifest{MaxAttempts: &attempts, Backoff: &definition.RetryBackoff{}}}
-	index := ProgramIndex{Declarations: []ProgramIndexDeclaration{
-		{Task: &definition.TaskManifest{Run: run, Schedule: &definition.ScheduleManifest{Computer: definition.ScheduleComputerManifest{Secrets: []secretbinding.Binding{{Name: "original"}}}}}, Locator: &ProgramLocator{ExportName: "original"}},
-		{Actor: &definition.ActorManifest{Run: run}},
-		{Sandbox: &definition.SandboxManifest{}},
-	}, Queues: []definition.QueueInput{{Name: "original", ConcurrencyLimit: &limit}}}
+func TestProgramMetadataCloneOwnsNestedValues(t *testing.T) {
+	index := testProgramMetadata(t)
+	a := index.Definitions[0].Agent
+	a.MaxTurnDurationMs = new(int64(100))
+	a.CloseAfterIdleMs = new(int64(200))
+	c := index.Definitions[2].Computer
+	c.Resources.DiskMiB = new(int64(500))
+	c.Refresh = &definition.ComputerRefresh{EveryMs: 1000, MaxAgeMs: new(int64(2000))}
+	c.Seed.Config.Env = []string{"KEY=value"}
+	c.Seed.Config.Cmd = []string{"true"}
+	c.Seed.Config.Entrypoint = []string{"sh"}
+	c.Secrets = []definition.SecretBinding{{SecretID: "original", Env: &definition.SecretBindingEnv{Name: "KEY", Mode: "raw"}}}
+	c.BuildSecrets = []definition.SecretBinding{{SecretID: "original", Env: &definition.SecretBindingEnv{Name: "BUILD", Mode: "raw"}}}
+	before, _ := json.Marshal(index)
 	clone := index.Clone()
-	*clone.Declarations[0].Task.Run.TTLMs = 200
-	*clone.Declarations[0].Task.Run.Retry.MaxAttempts = 9
-	clone.Declarations[0].Task.Run.Retry.Backoff.MinMs = 123
-	clone.Declarations[0].Task.Schedule.Computer.Secrets[0].Name = "changed"
-	clone.Declarations[0].Locator.ExportName = "changed"
-	*clone.Declarations[1].Actor.Run.TTLMs = 300
-	*clone.Declarations[1].Actor.Run.Retry.MaxAttempts = 10
-	clone.Declarations[1].Actor.Run.Retry.Backoff.MinMs = 456
-	clone.Declarations[2].Sandbox.Resources.MemoryMiB = 999
-	*clone.Queues[0].ConcurrencyLimit = 99
-	clone.Queues[0].Name = "changed"
-	for _, original := range []definition.RunManifest{index.Declarations[0].Task.Run, index.Declarations[1].Actor.Run} {
-		if *original.TTLMs != 100 || *original.Retry.MaxAttempts != 3 || original.Retry.Backoff.MinMs != 0 {
-			t.Errorf("clone mutation changed source Run: ttl=%d attempts=%d backoff=%d", *original.TTLMs, *original.Retry.MaxAttempts, original.Retry.Backoff.MinMs)
-		}
-	}
-	if index.Declarations[0].Task.Schedule.Computer.Secrets[0].Name != "original" ||
-		index.Declarations[0].Locator.ExportName != "original" ||
-		index.Declarations[2].Sandbox.Resources.MemoryMiB != 0 ||
-		*index.Queues[0].ConcurrencyLimit != 2 || index.Queues[0].Name != "original" {
-		t.Error("clone mutation changed source schedule, locator, sandbox or queue")
-	}
-	if got := (ProgramIndex{Declarations: []ProgramIndexDeclaration{}, Queues: []definition.QueueInput{}}).Clone(); got.Declarations == nil || got.Queues == nil {
-		t.Fatal("clone lost canonical empty arrays")
+	*clone.Definitions[0].Agent.MaxTurnDurationMs = 101
+	*clone.Definitions[0].Agent.CloseAfterIdleMs = 201
+	clone.Definitions[0].Agent.Triggers["daily"].Input[0] = 'x'
+	clone.Definitions[0].Agent.Triggers["new"] = definition.CronTrigger{}
+	cc := clone.Definitions[2].Computer
+	*cc.Resources.DiskMiB = 501
+	cc.Refresh.EveryMs = 1001
+	*cc.Refresh.MaxAgeMs = 2001
+	cc.Seed.Config.Env[0] = "changed"
+	cc.Seed.Config.Cmd[0] = "changed"
+	cc.Seed.Config.Entrypoint[0] = "changed"
+	cc.Secrets[0].SecretID = "changed"
+	cc.BuildSecrets[0].SecretID = "changed"
+	after, _ := json.Marshal(index)
+	if string(before) != string(after) {
+		t.Fatal("clone mutation changed original")
 	}
 }

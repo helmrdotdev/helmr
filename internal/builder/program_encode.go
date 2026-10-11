@@ -33,7 +33,7 @@ func encodeProgram(
 	verification VerificationResult,
 	configResultDigest string,
 	runtimeDigest string,
-	computerImages []bundle.ComputerImage,
+	computerSeeds []bundle.ComputerSeed,
 	compiler artifact.CompilerInputs,
 	nodeVersion string,
 ) (_ *encodedProgram, returnErr error) {
@@ -58,9 +58,6 @@ func encodeProgram(
 	plan, err := definition.ParseBuildPlan(verification.BuildPlan())
 	if err != nil {
 		return nil, err
-	}
-	if len(artifact.BuildPlanProgramDeclarations(plan)) == 0 {
-		return nil, errors.New("program encoding requires a program-backed verification")
 	}
 	compilerResultRaw, err := tree.inspected.Read(
 		ctx,
@@ -89,18 +86,18 @@ func encodeProgram(
 	if err := artifact.VerifyProgramCompilerFiles(ctx, tree.inspected, compilerResult); err != nil {
 		return nil, err
 	}
-	locator, err := artifact.ParseDeclarationLocator(verification.Declarations())
+	locator, err := artifact.ParseDefinitionIndex(verification.DefinitionIndex())
 	if err != nil {
 		return nil, err
 	}
 	if err := artifact.ValidateProgramCompilerLocators(compilerResult, locator); err != nil {
 		return nil, err
 	}
-	images := make(map[string]definition.ComputerImage, len(computerImages))
-	for _, image := range computerImages {
-		images[image.DeclaredID] = image.Artifact.ComputerImage()
+	images := make(map[string]definition.ComputerSeed, len(computerSeeds))
+	for _, image := range computerSeeds {
+		images[image.DeclaredID] = image.Artifact.Seed()
 	}
-	index, err := artifact.BuildProgramIndex(
+	index, err := artifact.BuildProgramMetadata(
 		plan,
 		locator,
 		images,
@@ -110,13 +107,13 @@ func encodeProgram(
 	if err != nil {
 		return nil, err
 	}
-	indexRaw, err := artifact.CanonicalProgramIndex(index)
+	indexRaw, err := artifact.CanonicalProgramMetadata(index)
 	if err != nil {
 		return nil, err
 	}
 	manifest := artifact.ProgramManifestFromCompilerResult(
 		compilerResult,
-		artifact.ProgramIndexDigest(indexRaw),
+		artifact.ProgramMetadataDigest(indexRaw),
 	)
 	manifestRaw, err := artifact.CanonicalProgramManifest(manifest)
 	if err != nil {
@@ -124,7 +121,8 @@ func encodeProgram(
 	}
 	generated := map[string][]byte{
 		"helmr/program-manifest.json": manifestRaw,
-		"helmr/declarations.json":     indexRaw,
+		"helmr/program-metadata.json": indexRaw,
+		"helmr/definition-index.json": verification.DefinitionIndex(),
 	}
 	content, err := encodeProgramTree(
 		ctx,
@@ -150,7 +148,7 @@ func encodeProgram(
 			SizeBytes: descriptor.SizeBytes,
 			MediaType: descriptor.MediaType,
 		},
-		Index: index,
+		Metadata: index,
 	}
 	if err := artifact.ValidateProgramOutput(output); err != nil {
 		return nil, err
@@ -304,7 +302,7 @@ func (program *encodedProgram) Publish(
 		return artifact.ProgramOutput{}, fmt.Errorf("publish program: %w", err)
 	}
 	output := program.Output
-	output.Index = output.Index.Clone()
+	output.Metadata = output.Metadata.Clone()
 	return output, nil
 }
 

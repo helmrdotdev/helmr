@@ -47,7 +47,7 @@ export interface ClientSecretsApi {
     request: SecretCreateRequest,
     options?: RequestOptions,
   ): Promise<Secret>
-  retrieve(id: string, options?: RequestOptions): Promise<Secret>
+  get(id: string, options?: RequestOptions): Promise<Secret>
   ref(id: string): SecretRef
   list(
     query?: SecretListQuery,
@@ -93,7 +93,7 @@ export function createClientSecrets(
         }),
       )
     },
-    async retrieve(
+    async get(
       id: string,
       options: RequestOptions = {},
     ): Promise<Secret> {

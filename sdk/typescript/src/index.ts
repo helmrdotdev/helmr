@@ -1,56 +1,44 @@
-export { actor } from "./actor"
-export { sessions, MessageRejected } from "./session"
+export { MessageRejected } from "./message-error"
+export { agent, computer, triggers } from "./agent"
+export type { CronTrigger, Json, Duration, MaybePromise, ComputerIdentity, BuildContext, SecretBinding, ComputerDefinition, TurnOutcome, OutputReceipt, InputSource, InputMessage, Turn, InitContext, AgentContext, AgentDefinition } from "./agent"
 export { HelmrClient } from "./client"
 export { image, source } from "./image"
 export { builder } from "./builder"
-export { logger } from "./logger"
-export { metadata } from "./metadata"
 export { defineConfig } from "./config"
-export { schedules } from "./schedules"
-export { queue, task } from "./task"
-export { timers } from "./timers"
-export { tokens } from "./tokens"
-export { sandbox, computers } from "./computer"
+
+export type { SessionListQuery, ClientSessionRef, ClientSessionsApi } from "./client-session"
 
 export type {
-  ActorInfo,
-  ActorListItem,
-  ActorListQuery,
-  ActorPage,
-  ActorRetrieveQuery,
-  ActorStartRequest,
-} from "./client-actor"
-
-export type { SessionListQuery } from "./client-session"
+  ClientComputerDefinitionsApi,
+  ComputerDefinitionInfo,
+  ComputerDefinitionListItem,
+  ComputerDefinitionListQuery,
+  ComputerDefinitionPage,
+  ComputerDefinitionGetQuery,
+} from "./client-computer-definition"
 
 export type {
-  SandboxInfo,
-  SandboxListItem,
-  SandboxListQuery,
-  SandboxPage,
-  SandboxRetrieveQuery,
-} from "./client-sandbox"
-
-export type {
+  ClientComputersApi,
   ClientComputerRef,
   ComputerListItem,
   ComputerListQuery,
 } from "./client-computer"
 
 export type {
+  ClientDeploymentsApi,
   DeploymentListItem,
   DeploymentListQuery,
   Deployment,
 } from "./client-deployment"
 
 export type {
-  ScheduleFailure,
+  ClientSchedulesApi,
   ScheduleListQuery,
   Schedule,
-  ScheduleStatus,
 } from "./client-schedule"
 
 export type {
+  ClientSecretsApi,
   SecretRef,
   SecretCreateRequest,
   SecretListQuery,
@@ -60,37 +48,10 @@ export type {
   SecretStatus,
 } from "./client-secret"
 
-export type {
-  ActorRunCancellationReceipt,
-  RunCancelRequest,
-  RunCancellation,
-  RunEntrypointKind,
-  RunListQuery,
-  RunLogQuery,
-  RunEventQuery,
-  TaskStartRequest,
-  HelmrClientOptions,
-  TaskInfo,
-  TaskListItem,
-  TaskListQuery,
-  TaskPage,
-  TaskRetrieveQuery,
-  RunEventRecord,
-  RunListItem,
-  RunLogRecord,
-  StreamRunLogRecord,
-  StructuredRunLogRecord,
-  TokenCancelRequest,
-  TokenCompleteRequest,
-} from "./client"
+export type { HelmrClientOptions } from "./client"
 
 export type { RequestOptions } from "./request"
 
-
-export type {
-  LogAttributes,
-  RunLogLevel,
-} from "./logger"
 
 export type {
   HelmrBuildConfig,
@@ -102,26 +63,20 @@ export type { Builder, BuilderStep } from "./builder"
 
 export type {
   APIError,
-  ActorContext,
-  ActorConfig,
-  Actor,
-  ActorSession,
-  ActorSessionReceiveOptions,
-  Turn,
-  TurnRef,
-  TurnState,
-  TurnSource,
-  TurnStatus,
-  Message,
   MessageReceipt,
-  RecordWriter,
-  OutputReceipt,
-  Session,
+  TurnRef,
   SessionRef,
+  TurnState,
+  TurnListQuery,
+  SessionHold,
+  AskState,
+  AskResponseReceipt,
+  AskQuery,
+  AskPage,
+  TurnAsks,
+  TurnStatus,
+  Session,
   SessionStatus,
-  SessionDispatch,
-  SessionFailure,
-  SessionFailureCode,
   SessionOperationOptions,
   SessionAdmissionReceipt,
   SessionMessageReceipt,
@@ -132,40 +87,12 @@ export type {
   SessionEventQuery,
   SessionCloseReceipt,
   SessionCancelReceipt,
-  TurnInterruptReceipt,
+  SessionInterruptReceipt,
   SessionResumeRequest,
   SessionResumeReceipt,
-  ActorStartOptions,
-  ActorStartResult,
-  WaitTimeoutError,
   CursorPage,
-  Duration,
   HelmrError,
   JsonValue,
-  MaybePromise,
-  Metadata,
-  PayloadSchema,
-  Queue,
-  QueueConfig,
-  RetryPolicy,
-  RunCause,
-  RunFailure,
-  RunHandle,
-  RunOptions,
-  Run,
-  RunStatus,
-  Serializable,
-  TaskCallOptions,
-  TaskConfig,
-  TaskConfigWithPayload,
-  TaskConfigWithoutPayload,
-  Task,
-  TaskContext,
-  TaskInput,
-  TaskOutput,
-  TaskResult,
-  TaskStartOptions,
-  TaskWait,
 } from "./contract"
 
 export type {
@@ -175,54 +102,28 @@ export type {
 } from "./image"
 
 export type {
-  Cron,
-  ScheduledTaskConfig,
-  ScheduledTaskInput,
-  ScheduledTaskPayload,
-} from "./schedules"
-
-export type {
-  TokenCreateRequest,
-  TokenCreateResult,
-  TokenCancelledError,
-  TokenExpiredError,
-  TokenRef,
-  TokenListItem,
-  TokenListQuery,
-  Token,
-  TokenStatus,
-  TokenWait,
-  TokenWaitError,
-  TokenWaitOptions,
-  TokenWaitResult,
-} from "./tokens"
-
-export type {
-  SandboxBuilder,
-  SandboxConfig,
-  SandboxResourceBuilder,
+  ComputerRef,
   ComputerCreateRequest,
   ComputerDeleteRequest,
   ComputerDeleteReceipt,
-  Sandbox,
   ComputerCommandRequest,
   ComputerMembersQuery,
   ComputerMember,
-  ComputerMemory,
-  ComputerRef,
-  ComputerResources,
-  ComputerSecretBinding,
   Computer,
   ComputerStatus,
   ComputerResidency,
 } from "./computer"
 
-export type {
-  PayloadSchemaInput,
-  PayloadSchemaOutput,
-  StandardSchemaV1,
-} from "./schema/payload"
+export { type CancelReceipt, type CommandRef, type CommandInfo, type CommandOutcome, type CommandWaitOptions, type TimedCommandWaitResult } from "./command"
 
-export { type CancelReceipt, type CommandRef, type CommandInfo, type CommandOutcome, type CommandWaitOptions } from "./command"
+export type { CommandLogQuery, CommandLogStreamQuery, CommandLogRecord, CommandLogReadPage } from "./command-logs"
 
-export type { CommandLogQuery, CommandLogStreamQuery, CommandLogRecord } from "./command-logs"
+export type { ClientAgentsApi, AgentStartRequest, AgentStartReceipt } from "./client-agent"
+export type { ClientAgentDefinitionsApi, AgentDefinitionGetQuery, AgentDefinitionListQuery, AgentDefinitionListItem, AgentDefinitionInfo, AgentDefinitionPage } from "./client-agent-definition"
+
+export type { ContentPart, Content, HumanContent, InputPart, InputContent } from "./content"
+
+export type { ChoiceOption, AnswerControl, Question, ChoiceAnswer, AnswerFor, AskResponse } from "./question"
+
+
+export type { TurnWaitOptions, TimedTurnWaitResult } from "./contract"

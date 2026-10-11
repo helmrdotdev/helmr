@@ -20,6 +20,8 @@ try {
   if (prepared.status !== 0) throw new Error("fixture preparation failed")
   for (const [name, dirs] of [
     ["execution", ["cases"]],
+    ["sessions", ["cases/sessions"]],
+    ["persistence", ["cases/persistence"]],
     ["schedule", ["fixtures/schedule/tasks"]],
   ]) {
     const config = resolve(output, `${name}-config.json`)
@@ -63,17 +65,16 @@ try {
     const result = JSON.parse(frame.subarray(4))
     if (result.outcome !== "succeeded") throw new Error(result.error.message)
     const plan = JSON.parse(result.files[0].content)
-    const tasks = plan.definitions.filter((d) => d.kind === "task")
-    if (name === "execution" && tasks.some((d) => d.manifest.schedule !== undefined))
+    const agents = plan.definitions.filter((d) => d.kind === "agent")
+    const computers = new Set(plan.definitions.filter((d) => d.kind === "computer").map(d => d.declaredId))
+    if (agents.length === 0 || agents.some(d => !computers.has(d.manifest.computerDefinitionId)))
+      throw new Error(`${name} did not discover each Agent's Computer dependency`)
+    if (name !== "schedule" && agents.some(d => Object.keys(d.manifest.triggers ?? {}).length !== 0))
       throw new Error("ordinary dev workflows must be schedule-free")
-    if (
-      name === "schedule" &&
-      (tasks.length !== 1 ||
-        tasks[0].manifest.schedule === undefined ||
-        tasks[0].declaredId !== "schedule-smoke" ||
-        tasks[0].manifest.run.ttlMs !== 300000)
-    )
-      throw new Error("Schedule fixture must analyze one bounded schedule-smoke Task")
+    if (name === "schedule" && (agents.length !== 1 || agents[0].declaredId !== "schedule-smoke" ||
+      agents[0].manifest.maxTurnDurationMs !== 300000 ||
+      agents[0].manifest.triggers?.["each-minute"]?.cron !== "* * * * *"))
+      throw new Error("Schedule fixture must analyze one bounded schedule-smoke Agent")
     console.log(`analyzed ${name}: ${plan.definitions.length} definitions`)
   }
 } finally {

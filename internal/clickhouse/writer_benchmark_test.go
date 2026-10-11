@@ -23,7 +23,7 @@ func BenchmarkWriterEnvelope(b *testing.B) {
 		b.Skip("HELMR_TEST_CLICKHOUSE_URL is not set")
 	}
 	for _, kind := range []string{"logs", "events"} {
-		for _, size := range []int{512, 4096, map[string]int{"logs": telemetry.MaxRunLogContentBytes, "events": telemetry.MaxEventPayloadBytes}[kind]} {
+		for _, size := range []int{512, 4096, map[string]int{"logs": 64 << 10, "events": telemetry.MaxEventPayloadBytes}[kind]} {
 			for _, random := range []bool{false, true} {
 				for _, budget := range []struct{ rows, mib int }{{250, 8}, {10000, 8}, {10000, 16}, {10000, 32}, {10000, 64}} {
 					b.Run(fmt.Sprintf("%s/bytes%d/random%t/rows%d/mib%d", kind, size, random, budget.rows, budget.mib), func(b *testing.B) {
@@ -38,24 +38,30 @@ func BenchmarkWriterEnvelope(b *testing.B) {
 							ctx = ch.Context(ctx, ch.WithSettings(ch.Settings{"async_insert": 0}))
 						}
 						count := min(budget.rows, (budget.mib<<20)/size)
-						org, run, lease := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
-						now := time.Now().UTC()
-						logs := make([]telemetry.RunLogRecord, 0, count)
+						org, subject := uuid.NewV7(), uuid.NewV7()
+						now := time.Now().UTC().Truncate(time.Microsecond)
+						var logs []telemetry.StoredDiagnostic
+						if kind == "logs" {
+							logs = diagnosticRows(telemetry.DiagnosticSource{EnvironmentID: org, Kind: "session", ID: subject, ProducerEpoch: 1}, count, size, now)
+						}
 						events := make([]telemetry.EventRecord, 0, count)
 						rng := rand.NewChaCha8([32]byte{1})
 						for i := 0; i < count; i++ {
-							content := make([]byte, size)
+							var content []byte
+							if kind == "logs" {
+								content = logs[i].Record.Data
+							} else {
+								content = make([]byte, size)
+							}
 							if random {
 								_, _ = rng.Read(content)
 							}
-							if kind == "logs" {
-								logs = append(logs, telemetry.RunLogRecord{OrgID: org, RunID: run, RunLeaseID: lease, AttemptNumber: 1, StreamName: "stdout", Seq: uint64(i + 1), ObservedSeq: uint64(i + 1), Content: content, SizeBytes: uint32(size), ObservedAt: now, AcceptedAt: now})
-							} else {
+							if kind != "logs" {
 								for j := range content {
 									content[j] = 'a' + content[j]%26
 								}
 								content[0], content[len(content)-1] = '"', '"'
-								events = append(events, telemetry.EventRecord{OrgID: org, SubjectKind: "run", SubjectID: run, RunID: &run, EventKind: "benchmark", Seq: uint64(i + 1), Body: string(content), ObservedAt: now, AcceptedAt: now})
+								events = append(events, telemetry.EventRecord{OrgID: org, SubjectKind: "deployment", SubjectID: subject, DeploymentID: &subject, EventKind: "benchmark", Seq: uint64(i + 1), Body: string(content), ObservedAt: now, AcceptedAt: now})
 							}
 						}
 						b.SetBytes(int64(count * size))
@@ -64,7 +70,7 @@ func BenchmarkWriterEnvelope(b *testing.B) {
 						for range b.N {
 							var rejected []telemetry.RejectedRow
 							if kind == "logs" {
-								rejected, err = writer.WriteRunLogs(ctx, logs)
+								rejected, err = writer.WriteDiagnostics(ctx, "session", logs)
 							} else {
 								rejected, err = writer.WriteEvents(ctx, events)
 							}
@@ -88,21 +94,18 @@ func TestWriterInsertStrategyMeasurement(t *testing.T) {
 		t.Skip("HELMR_TEST_CLICKHOUSE_INSERT_PROBE is not set")
 	}
 	client := disposableClient(t)
-	if err := client.Exec(t.Context(), "SYSTEM STOP MERGES helmr_telemetry.run_logs"); err != nil {
+	if err := client.Exec(t.Context(), "SYSTEM STOP MERGES helmr_telemetry.session_logs"); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = client.Exec(context.Background(), "SYSTEM START MERGES helmr_telemetry.run_logs") })
+	t.Cleanup(func() { _ = client.Exec(context.Background(), "SYSTEM START MERGES helmr_telemetry.session_logs") })
 	for _, mode := range []int{0, 1} {
-		org, run, lease := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
-		now := time.Now().UTC()
-		rows := make([]telemetry.RunLogRecord, 250)
-		for i := range rows {
-			rows[i] = telemetry.RunLogRecord{OrgID: org, RunID: run, RunLeaseID: lease, StreamName: "stdout", Seq: uint64(i + 1), Content: make([]byte, 512), SizeBytes: 512, ObservedAt: now, AcceptedAt: now}
-		}
+		org, subject := uuid.NewV7(), uuid.NewV7()
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		rows := diagnosticRows(telemetry.DiagnosticSource{EnvironmentID: org, Kind: "session", ID: subject, ProducerEpoch: 1}, 250, 512, now)
 		ctx := ch.Context(t.Context(), ch.WithSettings(ch.Settings{"async_insert": mode, "wait_for_async_insert": 1, "async_insert_use_adaptive_busy_timeout": 0, "async_insert_busy_timeout_ms": 100}))
 		start := time.Now()
 		for range 5 {
-			if rejected, err := NewWriter(settingsBatchClient{client, ch.Settings{"async_insert": mode, "wait_for_async_insert": 1, "async_insert_use_adaptive_busy_timeout": 0, "async_insert_busy_timeout_ms": 100}}).WriteRunLogs(ctx, rows); err != nil || len(rejected) > 0 {
+			if rejected, err := NewWriter(settingsBatchClient{client, ch.Settings{"async_insert": mode, "wait_for_async_insert": 1, "async_insert_use_adaptive_busy_timeout": 0, "async_insert_busy_timeout_ms": 100}}).WriteDiagnostics(ctx, "session", rows); err != nil || len(rejected) > 0 {
 				t.Fatalf("write: %v %v", rejected, err)
 			}
 		}
@@ -111,7 +114,7 @@ func TestWriterInsertStrategyMeasurement(t *testing.T) {
 			Rows  uint64 `ch:"rows"`
 			Parts uint64 `ch:"parts"`
 		}
-		if err := client.Select(t.Context(), &got, "SELECT count() AS rows,uniqExact(_part) AS parts FROM helmr_telemetry.run_logs WHERE org_id = ?", org); err != nil {
+		if err := client.Select(t.Context(), &got, "SELECT count() AS rows,uniqExact(_part) AS parts FROM helmr_telemetry.session_logs WHERE environment_id = ?", org); err != nil {
 			t.Fatal(err)
 		}
 		if len(got) != 1 || got[0].Rows != 1250 || got[0].Parts != 5 {

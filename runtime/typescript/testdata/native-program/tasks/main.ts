@@ -1,12 +1,15 @@
-import { task, actor } from "@helmr/sdk"
+import { agent, computer, image } from "@helmr/sdk"
 import { state, again } from "mixed"
 import sqlite3 from "sqlite3"
 import { Worker } from "node:worker_threads"
 import { fork } from "node:child_process"
 
-export const deploy = task({
+export const nativeComputer = computer({ id: "native-program", image: image("native-program").from("debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132"), resources: { cpu: 1, memory: "1GiB" } })
+
+export const deploy = agent({
   id: "deploy",
-  run: async () => {
+  computer: nativeComputer,
+  turn: async () => {
     if (process.cwd() !== "/workspace") throw new Error("unexpected Program cwd")
     const database = new sqlite3.Database(":memory:")
     const native = await new Promise<number>((resolve, reject) => database.get("SELECT 42 AS answer", (error, row: { answer: number }) => error ? reject(error) : resolve(row.answer)))
@@ -25,6 +28,7 @@ export const deploy = task({
     return { asset: state.asset, native, same: state === (await again()).state, worker, fork: forked }
   },
 })
-export const worker = actor({ id: "worker", run: async () => {
-  if (state !== (await again()).state || state.asset !== "installed") throw new Error("Actor module identity changed")
+export const worker = agent({ id: "worker", computer: nativeComputer, turn: async () => {
+  if (state !== (await again()).state || state.asset !== "installed") throw new Error("Agent module identity changed")
+  return { asset: state.asset, same: true }
 } })

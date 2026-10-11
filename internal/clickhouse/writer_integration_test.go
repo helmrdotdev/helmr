@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 )
 
-func TestWriterMaximumBoundedBatchesAgainstDisposableClickHouse(t *testing.T) {
+func TestWriterBoundedBatchesAgainstDisposableClickHouse(t *testing.T) {
 	client := disposableClient(t)
 	writer := NewWriter(client)
 	if err := client.Exec(t.Context(), `SELECT 1`); err != nil {
@@ -25,20 +24,20 @@ func TestWriterMaximumBoundedBatchesAgainstDisposableClickHouse(t *testing.T) {
 	orgID := uuid.NewV7()
 	projectID := uuid.NewV7()
 	environmentID := uuid.NewV7()
-	runID := uuid.NewV7()
+	deploymentID := uuid.NewV7()
 	now := time.Now().UTC()
 	batchKind := os.Getenv("HELMR_TEST_CLICKHOUSE_BATCH_KIND")
-	var eventElapsed, runLogElapsed time.Duration
+	var eventElapsed, diagnosticElapsed time.Duration
 
-	if batchKind != "run_logs" {
+	if batchKind != "diagnostics" {
 		eventBody := `{"data":"` + strings.Repeat("x", telemetry.MaxEventPayloadBytes-len(`{"data":"`)-len(`"}`)) + `"}`
 		eventCount := telemetry.MaxTelemetryBatchBytes / (telemetry.MaxEventPayloadBytes + telemetry.MaxEventMessageBytes)
 		events := make([]telemetry.EventRecord, eventCount)
 		for idx := range events {
 			events[idx] = telemetry.EventRecord{
 				OrgID: orgID, ProjectID: projectID, EnvironmentID: environmentID,
-				SubjectKind: "run", SubjectID: runID, EventKind: "test.maximum", Seq: uint64(idx + 1),
-				RunID: &runID, Message: strings.Repeat("m", telemetry.MaxEventMessageBytes), Body: strings.Clone(eventBody),
+				SubjectKind: "deployment", SubjectID: deploymentID, EventKind: "test.maximum", Seq: uint64(idx + 1),
+				DeploymentID: &deploymentID, Message: strings.Repeat("m", telemetry.MaxEventMessageBytes), Body: strings.Clone(eventBody),
 				RetentionClass: "standard", RedactionClass: "internal", ObservedAt: now, AcceptedAt: now,
 			}
 		}
@@ -57,33 +56,27 @@ func TestWriterMaximumBoundedBatchesAgainstDisposableClickHouse(t *testing.T) {
 	}
 
 	if batchKind != "events" {
-		runLogCount := telemetry.MaxTelemetryBatchBytes / telemetry.MaxRunLogContentBytes
-		decodedLogs := make([][]byte, runLogCount)
-		runLogs := make([]telemetry.RunLogRecord, runLogCount)
-		for idx := range runLogs {
-			decodedLogs[idx] = make([]byte, telemetry.MaxRunLogContentBytes)
-			runLogs[idx] = telemetry.RunLogRecord{
-				OrgID: orgID, ProjectID: projectID, EnvironmentID: environmentID, RunID: runID,
-				AttemptNumber: 1, StreamName: "stdout", Seq: uint64(idx + 1), ObservedSeq: uint64(idx + 1),
-				Content: decodedLogs[idx], SizeBytes: uint32(len(decodedLogs[idx])), RetentionClass: "standard",
-				RedactionClass: "internal", Source: "worker", ObservedAt: now, AcceptedAt: now,
+
+		// Exercise both many bounded chunks and the largest configured transport chunk.
+		// Diagnostic export batch limits are configured independently of event limits.
+		for _, chunkBytes := range []int{64 << 10, 16 << 20} {
+			const batchBytes = 16 << 20
+			count := batchBytes / chunkBytes
+			source := telemetry.DiagnosticSource{EnvironmentID: environmentID, Kind: "session", ID: uuid.New(), ProducerEpoch: 1}
+			rows := diagnosticRows(source, count, chunkBytes, now.Truncate(time.Microsecond))
+			started := time.Now()
+			result, err := writer.WriteDiagnostics(t.Context(), "session", rows)
+			if err != nil || len(result) != 0 {
+				t.Fatalf("diagnostics chunk=%d: %v %v", chunkBytes, result, err)
+			}
+			diagnosticElapsed += time.Since(started)
+			if err := client.Exec(t.Context(), `SELECT throwIf(count() != ? OR min(length(data)) != ? OR max(length(data)) != ?, 'unexpected stored diagnostic batch') FROM helmr_telemetry.session_logs WHERE environment_id = ? AND session_id = ?`, count, chunkBytes, chunkBytes, environmentID, source.ID); err != nil {
+				t.Fatal(err)
 			}
 		}
-		started := time.Now()
-		result, err := writer.WriteRunLogs(t.Context(), runLogs)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(result) != 0 {
-			t.Fatalf("maximum run-log rejects = %+v", result)
-		}
-		runtime.KeepAlive(decodedLogs)
-		runLogElapsed = time.Since(started)
-		if err := client.Exec(t.Context(), `SELECT throwIf(count() != ?, 'unexpected stored run-log count') FROM helmr_telemetry.run_logs WHERE org_id = ?`, runLogCount, orgID); err != nil {
-			t.Fatal(err)
-		}
+
 	}
-	t.Logf("maximum batches: events=%s run_logs=%s", eventElapsed, runLogElapsed)
+	t.Logf("bounded batches: events=%s diagnostics=%s", eventElapsed, diagnosticElapsed)
 }
 
 func TestWriterAgainstDisposableClickHouse(t *testing.T) {
@@ -92,11 +85,11 @@ func TestWriterAgainstDisposableClickHouse(t *testing.T) {
 	orgID := uuid.NewV7()
 	projectID := uuid.NewV7()
 	environmentID := uuid.NewV7()
-	runID := uuid.NewV7()
+	deploymentID := uuid.NewV7()
 	now := time.Now().UTC()
 	rows := []telemetry.EventRecord{{
-		OrgID: orgID, ProjectID: projectID, EnvironmentID: environmentID, SubjectKind: "run", SubjectID: runID,
-		EventKind: "test.valid", Seq: 1, RunID: &runID, Message: "valid", Body: `{}`,
+		OrgID: orgID, ProjectID: projectID, EnvironmentID: environmentID, SubjectKind: "deployment", SubjectID: deploymentID,
+		EventKind: "test.valid", Seq: 1, DeploymentID: &deploymentID, Message: "valid", Body: `{}`,
 		RetentionClass: "standard", RedactionClass: "internal", ObservedAt: now, AcceptedAt: now,
 	}}
 	result, err := writer.WriteEvents(t.Context(), rows)

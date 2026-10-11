@@ -25,15 +25,14 @@ func (s *Server) workerClaimComputerCommand(w http.ResponseWriter, r *http.Reque
 		writeError(w, fmt.Errorf("invalid computer exec claim JSON: %w", err))
 		return
 	}
-	org, err := ids.Parse(request.OrgID)
-	environment, e2 := ids.Parse(request.EnvironmentID)
+	environment, err := ids.Parse(request.EnvironmentID)
 	instance, e3 := ids.Parse(request.ComputerInstanceID)
-	if err != nil || e2 != nil || e3 != nil || request.WriterGeneration <= 0 {
-		writeError(w, badRequest(errors.New("canonical organization, environment, Instance and positive writer generation are required")))
+	if err != nil || e3 != nil || request.WriterGeneration <= 0 {
+		writeError(w, badRequest(errors.New("canonical environment, Instance and positive writer generation are required")))
 		return
 	}
 	claimed, err := command.Claim(r.Context(), s.tx, workerFromContext(r.Context()), command.ClaimRequest{
-		OrgID: org, EnvironmentID: environment, InstanceID: instance, WriterGeneration: request.WriterGeneration,
+		EnvironmentID: environment, InstanceID: instance, WriterGeneration: request.WriterGeneration,
 		ActiveCommandIDs: activeCommandIDs(request.ActiveCommandIDs), ActiveCancellationIDs: activeCommandIDs(request.ActiveCancellationIDs),
 	})
 	if err != nil {
@@ -58,6 +57,14 @@ func (s *Server) workerClaimComputerCommand(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	authority := claimed.Start
+	if authority.TailOnly {
+		if err := command.CheckStart(r.Context(), s.tx, workerFromContext(r.Context()), *authority); err != nil {
+			writeError(w, commandError(err, commandClaimOperation))
+			return
+		}
+		writeJSON(w, http.StatusOK, workerapi.ComputerCommandClaimResponse{Command: &workerapi.ComputerCommand{TailOnly: true, CommandID: pgvalue.UUIDString(authority.Command.ID), ComputerID: pgvalue.UUIDString(authority.Command.ComputerID), ComputerInstanceID: authority.Lease.InstanceID.String(), RequestFingerprint: hex.EncodeToString(authority.RequestFingerprint), Request: json.RawMessage(`{}`), WriterGeneration: authority.Lease.Epoch, ExpiresAt: *authority.Lease.ExpiresAt}})
+		return
+	}
 	stdin := bytes.Clone(authority.Command.Stdin)
 	if len(stdin) > command.MaxStdinBytes {
 		clear(stdin)
@@ -82,11 +89,11 @@ func (s *Server) workerClaimComputerCommand(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	defer clearComputerSecretDeliveries(deliveries)
-	protected, err := workerProtectedEnv(r.Context(), s.db, authority.Command.EnvironmentID, authority.Command.ComputerID)
-	if err != nil {
-		writeError(w, conflict(secret.ErrDeliveryUnavailable))
-		return
+	var protected *workerapi.ProtectedEnv
+	if len(authority.ProtectedEnv) > 0 {
+		protected = &workerapi.ProtectedEnv{Env: authority.ProtectedEnv, CA: authority.ProxyCA}
 	}
+
 	var execEnv map[string]string
 	if err := json.Unmarshal(authority.Command.Env, &execEnv); err != nil {
 		writeError(w, errors.New("decode computer exec environment"))
@@ -102,8 +109,13 @@ func (s *Server) workerClaimComputerCommand(w http.ResponseWriter, r *http.Reque
 		writeError(w, errors.New("encode computer exec launch"))
 		return
 	}
-	writeJSON(w, http.StatusOK, workerapi.ComputerCommandClaimResponse{Command: &workerapi.ComputerCommand{
-		CommandID: pgvalue.UUIDString(authority.Command.ID), ComputerID: pgvalue.UUIDString(authority.Command.ComputerID), ComputerInstanceID: pgvalue.UUIDString(authority.Instance.ID), RequestFingerprint: hex.EncodeToString(authority.RequestFingerprint), Request: launchRequest, Stdin: stdin, Secrets: deliveries, ProtectedEnv: protected, WriterGeneration: authority.Instance.WriterGeneration, ExpiresAt: authority.Instance.WriterExpiresAt.Time,
+	if err = command.CheckStart(r.Context(), s.tx, workerFromContext(r.Context()), *authority); err != nil {
+		writeError(w, commandError(err, commandClaimOperation))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, workerapi.ComputerCommandClaimResponse{Command: &workerapi.ComputerCommand{TailOnly: authority.TailOnly,
+		CommandID: pgvalue.UUIDString(authority.Command.ID), ComputerID: pgvalue.UUIDString(authority.Command.ComputerID), ComputerInstanceID: authority.Lease.InstanceID.String(), RequestFingerprint: hex.EncodeToString(authority.RequestFingerprint), Request: launchRequest, Stdin: stdin, Secrets: deliveries, ProtectedEnv: protected, WriterGeneration: authority.Lease.Epoch, ExpiresAt: *authority.Lease.ExpiresAt,
 	}})
 }
 
@@ -173,22 +185,22 @@ func (s *Server) workerCommandCompletion(w http.ResponseWriter, r *http.Request,
 // completionReport reads the canonical identities of a completion request;
 // the command owner validates the reported result.
 func completionReport(request workerapi.ComputerCommandCompleteRequest) (command.CompletionReport, error) {
-	org, e1 := ids.Parse(request.OrgID)
+	environment, e1 := ids.Parse(request.EnvironmentID)
 	commandID, e2 := ids.Parse(request.CommandID)
 	instance, e3 := ids.Parse(request.ComputerInstanceID)
 	if e1 != nil || e2 != nil || e3 != nil || request.WriterGeneration <= 0 {
-		return command.CompletionReport{}, errors.New("canonical command, organization and instance IDs and a positive writer generation are required")
+		return command.CompletionReport{}, errors.New("canonical command, environment and instance IDs and a positive writer generation are required")
 	}
 	return command.CompletionReport{
-		OrgID: org, CommandID: commandID, InstanceID: instance, WriterGeneration: request.WriterGeneration,
-		Outcome: request.Outcome, ExitCode: request.ExitCode, Error: request.Error,
+		EnvironmentID: environment, CommandID: commandID, InstanceID: instance, WriterGeneration: request.WriterGeneration,
+		Stdout: command.OutputBoundary{ThroughSequence: request.Stdout.ThroughSequence, Complete: request.Stdout.Complete, Gapped: request.Stdout.Gapped}, Stderr: command.OutputBoundary{ThroughSequence: request.Stderr.ThroughSequence, Complete: request.Stderr.Complete, Gapped: request.Stderr.Gapped}, OutputFenced: request.OutputFenced, Outcome: request.Outcome, ExitCode: request.ExitCode, Error: request.Error,
 	}, nil
 }
 
 // completionRequest is the wire form of a recorded completion.
 func completionRequest(report command.CompletionReport) workerapi.ComputerCommandCompleteRequest {
 	return workerapi.ComputerCommandCompleteRequest{
-		OrgID: report.OrgID.String(), CommandID: report.CommandID.String(), ComputerInstanceID: report.InstanceID.String(),
-		WriterGeneration: report.WriterGeneration, Outcome: report.Outcome, ExitCode: report.ExitCode, Error: report.Error,
+		EnvironmentID: report.EnvironmentID.String(), CommandID: report.CommandID.String(), ComputerInstanceID: report.InstanceID.String(),
+		Stdout: workerapi.CommandOutputBoundary{ThroughSequence: report.Stdout.ThroughSequence, Complete: report.Stdout.Complete, Gapped: report.Stdout.Gapped}, Stderr: workerapi.CommandOutputBoundary{ThroughSequence: report.Stderr.ThroughSequence, Complete: report.Stderr.Complete, Gapped: report.Stderr.Gapped}, OutputFenced: report.OutputFenced, WriterGeneration: report.WriterGeneration, Outcome: report.Outcome, ExitCode: report.ExitCode, Error: report.Error,
 	}
 }

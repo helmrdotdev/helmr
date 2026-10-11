@@ -1,6 +1,6 @@
 // Package deployment owns persisted Deployments of an environment: finalizing
-// an uploaded bundle into a Deployment, promoting a Deployment together with
-// its schedules and their Secret bindings, and reading Deployments and their
+// an uploaded bundle into a Deployment, promoting its schedules and preparation
+// refresh policy, and reading Deployments and their
 // declared definitions. Operations take the calling principal where
 // authorization applies, own their transactions and return the errors declared
 // here; callers map them to their transport.
@@ -21,7 +21,8 @@ import (
 )
 
 var (
-	ErrPermissionRequired = errors.New("permission is required")
+	ErrFinalizationConflict = errors.New("finalization retry key belongs to another bundle")
+	ErrPermissionRequired   = errors.New("permission is required")
 	// ErrNotFound reports a Deployment that is absent from the environment.
 	ErrNotFound = errors.New("deployment not found")
 	// ErrNotDeployable reports a promotion target that is absent from the
@@ -30,9 +31,6 @@ var (
 	// ErrNoCurrentDeployment reports an environment without a promoted
 	// Deployment.
 	ErrNoCurrentDeployment = errors.New("no current deployment")
-	// ErrFinalizationInProgress reports a finalization whose idempotency key
-	// another finalization holds without having completed.
-	ErrFinalizationInProgress = errors.New("deployment bundle finalization is in progress")
 	// ErrDefinitionNotFound reports a definition the Deployment does not
 	// declare.
 	ErrDefinitionNotFound = errors.New("definition not found")
@@ -42,9 +40,6 @@ var (
 	// ErrNoCurrentDefinitions reports a definition read of the current
 	// Deployment in an environment without one.
 	ErrNoCurrentDefinitions = errors.New("environment has no current deployment")
-	// ErrDefinitionsNotMaterialized reports a Deployment whose definitions
-	// cannot be read because its Program is not recorded.
-	ErrDefinitionsNotMaterialized = errors.New("deployment definitions are not materialized")
 )
 
 // InputError reports a caller-supplied request or bundle that the Deployment
@@ -80,11 +75,11 @@ func authorize(principal auth.Principal, scope auth.Scope, permissions ...auth.P
 }
 
 func authorizeDeploy(principal auth.Principal, scope auth.Scope) error {
-	return authorize(principal, scope, auth.PermissionTasksDeploy)
+	return authorize(principal, scope, auth.PermissionDeploymentsWrite)
 }
 
 func authorizeRead(principal auth.Principal, scope auth.Scope) error {
-	return authorize(principal, scope, auth.PermissionTasksDeploy, auth.PermissionRunsRead)
+	return authorize(principal, scope, auth.PermissionDeploymentsWrite, auth.PermissionSessionsRead)
 }
 
 func scopeIDs(scope auth.Scope) (pgtype.UUID, pgtype.UUID, error) {

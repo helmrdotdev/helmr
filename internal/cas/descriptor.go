@@ -57,7 +57,7 @@ func VerifyDescriptorFile(ctx context.Context, expected Descriptor, file *os.Fil
 			}
 			sizeBytes += int64(count)
 			if sizeBytes > expected.SizeBytes {
-				return fmt.Errorf("immutable file exceeds expected size %d", expected.SizeBytes)
+				return fmt.Errorf("%w: immutable file exceeds expected size %d", ErrDigestMismatch, expected.SizeBytes)
 			}
 		}
 		if readErr != nil {
@@ -71,11 +71,11 @@ func VerifyDescriptorFile(ctx context.Context, expected Descriptor, file *os.Fil
 		}
 	}
 	if sizeBytes != expected.SizeBytes {
-		return fmt.Errorf("immutable file size = %d, want %d", sizeBytes, expected.SizeBytes)
+		return fmt.Errorf("%w: immutable file size = %d, want %d", ErrDigestMismatch, sizeBytes, expected.SizeBytes)
 	}
 	actual := sha256sum.FormatDigest(digest.Sum(nil))
 	if actual != expected.Digest {
-		return fmt.Errorf("immutable file digest = %s, want %s", actual, expected.Digest)
+		return fmt.Errorf("%w: immutable file digest = %s, want %s", ErrDigestMismatch, actual, expected.Digest)
 	}
 	return nil
 }

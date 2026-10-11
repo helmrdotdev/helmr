@@ -1,96 +1,35 @@
-import { setTimeout as delay } from "node:timers/promises"
-import assert from "node:assert/strict"
+import { fixtureInput } from "../../support/runtime-mcp"
 import { execFile } from "node:child_process"
-import { randomUUID } from "node:crypto"
-import { mkdir, writeFile } from "node:fs/promises"
+import { writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
-import { HelmrClient, type ComputerRef } from "@helmr/sdk"
-import type { networkTask } from "./task"
-import { deadline } from "../../support/deadline"
+import { verify, assert, assertEqual, waitOutput, completedResult } from "../../support/context"
 
-const apiUrl = process.env["HELMR_API_URL"], apiKey = process.env["HELMR_API_KEY"]
-const evidenceDir = process.env["HELMR_EVIDENCE_DIR"]
-assert(apiUrl && apiKey && evidenceDir, "API URL/key and new evidence directory required")
-assert.equal(apiUrl.replace(/\/$/, ""), "http://127.0.0.1:58080", "run on the dedicated runtime host")
-await mkdir(evidenceDir, { recursive: false, mode: 0o700 })
-const client = new HelmrClient({ url: apiUrl, apiKey })
-const marker = randomUUID(), tokenIds: string[] = []
-const evidence: Record<string, unknown> = { case: "metadata-isolation", marker, startedAt: new Date().toISOString(), passed: false }
-let computer: ComputerRef | undefined, runId: string | undefined, failure: unknown
-const request = () => ({ signal: deadline(30_000) })
-const terminal = new Set(["succeeded", "failed", "system_failed", "cancelled", "expired"])
-async function phase(name: string) {
-  const signal = deadline(180_000)
-  while (!signal.aborted) {
-    try {
-      const logs = await client.runs.logs(runId!, { limit: 100 }, { signal })
-      if (logs.items.some(log => log.kind === "structured" && log.attributes["marker"] === marker && log.attributes["phase"] === name)) return
-    } catch (error) {
-      // Telemetry replay can lag a live Run; retain the same bounded wait.
-      if (!(error instanceof Error) || !("code" in error) || error.code !== "telemetry_lagging") throw error
-      evidence["telemetryLagResponses"] = Number(evidence["telemetryLagResponses"] ?? 0) + 1
-    }
-    const run = await client.runs.retrieve(runId!, { signal })
-    assert(!terminal.has(run.status), `Run ended with ${run.status} before ${name}`)
-    await delay(1000, undefined, { signal })
+await verify("metadata-isolation", async ({ marker, computer, startAgent }) => {
+  assertEqual(process.env.HELMR_API_URL?.replace(/\/$/, ""), "http://127.0.0.1:58080", "Run on the dedicated runtime host")
+  const tool = process.env.HELMR_RUNTIME_HOST_TOOL
+  assert(tool, "HELMR_RUNTIME_HOST_TOOL is required")
+  const target = await computer("verification", "network")
+  const started = await startAgent("verification-network", { computer: target, input: { marker }, idempotencyKey: `${marker}:network` })
+  const phase = (name: string) => waitOutput(started.session, started.turn, value => value !== null && typeof value === "object" && "phase" in value && value.phase === name)
+  const observe = async (name: string) => {
+    const { stdout } = await promisify(execFile)("sudo", ["-n", "python3", fileURLToPath(new URL("./observe.py", import.meta.url)), started.session.id, tool], { timeout: 30_000, maxBuffer: 65536 })
+    const result = JSON.parse(stdout) as { runtime_id: string; namespace: string; metadata_in_deny_set: boolean; denied_packets: number }
+    await writeFile(join(process.env.HELMR_EVIDENCE_DIR!, `${name}.json`), JSON.stringify(result, null, 2) + "\n", { mode: 0o600 })
+    return result
   }
-  signal.throwIfAborted()
-}
-async function observe() {
-  assert(process.env["HELMR_RUNTIME_HOST_TOOL"], "HELMR_RUNTIME_HOST_TOOL is required")
-  const { stdout } = await promisify(execFile)("sudo", ["-n", "python3",
-    fileURLToPath(new URL("./observe.py", import.meta.url)), runId!, process.env["HELMR_RUNTIME_HOST_TOOL"]!], { timeout: 30_000 })
-  return JSON.parse(stdout) as { runtime_id: string; namespace: string; metadata_in_deny_set: boolean; denied_packets: number }
-}
-try {
-  for (const name of ["start", "finish"]) tokenIds.push((await client.tokens.create({ timeout: "10m", idempotencyKey: `${marker}:${name}` }, request())).id)
-  evidence["tokenIds"] = tokenIds
-  computer = await client.sandboxes.createComputer("verification", { key: marker, idempotencyKey: `${marker}:computer` }, request())
-  evidence["computerId"] = computer.id
-  const run = await client.tasks.start<typeof networkTask>("verification-network", { computer,
-    payload: { marker, startToken: tokenIds[0]!, finishToken: tokenIds[1]! }, idempotencyKey: `${marker}:run` }, request())
-  runId = run.id
-  evidence["runId"] = runId
   await phase("ready")
-  const before = await observe()
-  evidence["before"] = before
-  await client.tokens.complete(tokenIds[0]!, { result: {}, idempotencyKey: `${marker}:start` }, request())
+  const before = await observe("network-before")
+  await started.turn.send(fixtureInput({ phase: "start" }), { idempotencyKey: `${marker}:start` })
   await phase("observed")
-  const after = await observe()
-  evidence["after"] = after
-  assert.equal(after.runtime_id, before.runtime_id)
-  assert.equal(after.namespace, before.namespace)
+  const after = await observe("network-after")
+  assertEqual(after.runtime_id, before.runtime_id, "Network probe changed runtime")
+  assertEqual(after.namespace, before.namespace, "Network probe changed namespace")
   assert(before.metadata_in_deny_set && after.metadata_in_deny_set)
-  assert(after.denied_packets > before.denied_packets, "no native denied packet observed; timeout alone is insufficient")
-  await client.tokens.complete(tokenIds[1]!, { result: {}, idempotencyKey: `${marker}:finish` }, request())
-  const output = await client.runs.wait(run, { signal: deadline(180_000) }).unwrap()
-  assert.deepEqual(output, { marker, blocked: true, positiveStatus: 200, runId, computerId: computer.id })
-  evidence["output"] = output
-  evidence["passed"] = true
-} catch (error) {
-  failure = error
-  evidence["failure"] = error instanceof Error ? error.message : String(error)
-} finally {
-  for (const [name, cleanup] of [
-    ["runCleanup", runId && failure ? async () => {
-      await client.runs.cancel(runId!, { idempotencyKey: `${marker}:cancel` }, request())
-      const signal = deadline(180_000)
-      while (!terminal.has((await client.runs.retrieve(runId!, { signal })).status)) await delay(1000, undefined, { signal })
-    } : undefined],
-    ["tokenCleanup", async () => {
-      for (const id of tokenIds) if ((await client.tokens.retrieve(id, request())).status === "pending")
-        await client.tokens.cancel(id, { idempotencyKey: `${marker}:cancel:${id}` }, request())
-    }],
-    ["computerCleanup", computer ? () => computer!.delete({ idempotencyKey: `${marker}:delete` }, request()) : undefined],
-  ] as const) {
-    if (!cleanup) continue
-    try { await cleanup(); evidence[name] = "request-accepted" }
-    catch (error) { evidence[name] = "failed"; evidence[`${name}Failure`] = String(error); failure ??= error }
-  }
-  evidence["finishedAt"] = new Date().toISOString()
-  await writeFile(join(evidenceDir, "network.json"), JSON.stringify(evidence, null, 2) + "\n", { mode: 0o600 })
-}
-if (failure) throw failure
-console.log(`Metadata isolation assertions passed; evidence: ${join(evidenceDir, "network.json")}`)
+  assert(after.denied_packets > before.denied_packets, "No native denied packet observed; timeout alone is insufficient")
+  await started.turn.send(fixtureInput({ phase: "finish" }), { idempotencyKey: `${marker}:finish` })
+  const output = await completedResult(started.turn, 180_000)
+  assertEqual(output, { marker, blocked: true, positiveStatus: 200, turnId: started.turn.id, sessionId: started.session.id, computerId: target.id }, "Network result changed")
+  return { before, after, output }
+})

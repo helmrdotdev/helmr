@@ -79,7 +79,7 @@ export function OrganizationNew() {
     <AuthScreen>
       <AuthTitle>Create your organization</AuthTitle>
       <AuthCopy>
-        Organizations own members, projects, environments, credentials, and runs.
+        Organizations own members, projects, environments, credentials, and Sessions.
       </AuthCopy>
       <form onSubmit={submit}>
         <label class={ui.field}>

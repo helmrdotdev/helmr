@@ -13,7 +13,7 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
-const CronSemanticsVersion = "robfig-cron-v3.0.1/standard-5-field"
+const CronSemanticsVersion = "helmr-cron-v1/standard-5-field/first-local-occurrence"
 
 var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 
@@ -29,8 +29,17 @@ const tzdbRoot = "/usr/share/zoneinfo"
 var zoneNamesManifest string
 
 func ValidateCron(expression string) error {
-	if _, err := cronParser.Parse(expression); err != nil {
+	if len(strings.Fields(expression)) != 5 {
+		return errors.New("cron must contain exactly five fields")
+	}
+	schedule, err := cronParser.Parse(expression)
+	if err != nil {
 		return fmt.Errorf("cron is invalid: %w", err)
+	}
+	// With no year field, every possible calendar combination recurs within the
+	// parser's five-year horizon. Use a fixed UTC anchor, independent of admission.
+	if schedule.Next(time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)).IsZero() {
+		return errors.New("cron has no calendar occurrences")
 	}
 	return nil
 }
@@ -57,7 +66,7 @@ func NextCronTime(expression string, timezone string, anchor time.Time) (time.Ti
 		return time.Time{}, fmt.Errorf("load timezone rules: %w", err)
 	}
 	spec, _ := cronParser.Parse(expression)
-	next := spec.Next(anchor.In(loc)).UTC()
+	next := nextCronOccurrence(spec, anchor.In(loc)).UTC()
 	if next.IsZero() {
 		return time.Time{}, errors.New("cron has no future occurrences")
 	}
@@ -82,7 +91,7 @@ func NextCronTimes(expression string, timezone string, anchor time.Time, count i
 	result := make([]time.Time, 0, count)
 	cursor := anchor.In(loc)
 	for len(result) < count {
-		next := spec.Next(cursor)
+		next := nextCronOccurrence(spec, cursor)
 		if next.IsZero() {
 			return nil, errors.New("cron has no future occurrences")
 		}
@@ -90,6 +99,28 @@ func NextCronTimes(expression string, timezone string, anchor time.Time, count i
 		cursor = next
 	}
 	return result, nil
+}
+
+// nextCronOccurrence omits the second instance of local times repeated by a
+// backwards timezone transition. This also handles non-hour offset changes.
+func nextCronOccurrence(spec cron.Schedule, anchor time.Time) time.Time {
+	for {
+		next := spec.Next(anchor)
+		if next.IsZero() {
+			return next
+		}
+		start, _ := next.ZoneBounds()
+		if start.IsZero() {
+			return next
+		}
+		_, before := start.Add(-time.Nanosecond).Zone()
+		_, after := next.Zone()
+		repeated := time.Duration(before-after) * time.Second
+		if repeated <= 0 || !next.Before(start.Add(repeated)) {
+			return next
+		}
+		anchor = next
+	}
 }
 
 func loadLocation(name string) (*time.Location, error) {

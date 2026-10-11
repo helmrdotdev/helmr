@@ -27,6 +27,7 @@ func TestWorkerGroupErrorMapsHTTPContract(t *testing.T) {
 		{name: "stale claims first", err: errors.Join(workergroup.ErrStaleClaims, workergroup.ErrHostNotFound, conflicting), status: http.StatusUnauthorized, code: "unauthorized", message: "worker authentication is required"},
 		{name: "unauthenticated", err: workergroup.ErrUnauthenticated, status: http.StatusUnauthorized, code: "unauthorized", message: "worker authentication is required"},
 		{name: "enrollment token", err: workergroup.ErrInvalidEnrollmentToken, status: http.StatusUnauthorized, code: "unauthorized", message: "worker enrollment token is invalid"},
+		{name: "retained host custody", err: workergroup.ErrHostCustody, status: http.StatusConflict, code: "worker_resource_custody", message: workergroup.ErrHostCustody.Error()},
 		{name: "observation conflict", err: workergroup.ErrObservationConflict, status: http.StatusForbidden, code: "forbidden", message: "worker observation conflicts with this worker epoch"},
 		{name: "input", err: input, status: http.StatusBadRequest, code: "bad_request"},
 		{name: "invalid plan", err: fmt.Errorf("%w: pools", workergroup.ErrInvalidPlanRequest), status: http.StatusBadRequest, code: "bad_request", message: "invalid capacity plan request: pools"},

@@ -19,6 +19,11 @@ type Config struct {
 }
 
 func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
+	writeback, err := openComputerWriteback()
+	if err != nil {
+		return fmt.Errorf("open computer writeback: %w", err)
+	}
+	defer writeback.close()
 	healthListener, err := vsock.Listen(uint32(cfg.HealthPort), nil)
 	if err != nil {
 		return fmt.Errorf("listen health vsock: %w", err)
@@ -35,8 +40,9 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	ready.Store(true)
 	logger.Info("guestd ready", "vsock_port", cfg.VsockPort, "health_port", cfg.HealthPort)
 
-	registry := newWaitingRunRegistry()
 	computerRegistry := newComputerOperationRegistry()
+	computerRegistry.setWallClock = setGuestWallClock
+	computerRegistry.writeback = writeback
 	for {
 		conn, err := runListener.Accept()
 		if err != nil {
@@ -46,18 +52,9 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			return fmt.Errorf("accept guest task connection: %w", err)
 		}
 		go func() {
-			closeConn := true
-			defer func() {
-				if closeConn {
-					_ = conn.Close()
-				}
-			}()
-			keepOpen, err := handleConnection(ctx, conn, logger, registry, computerRegistry)
-			if keepOpen {
-				closeConn = false
-			}
-			if err != nil {
-				logger.Error("run failed", "error", err)
+			defer conn.Close()
+			if err := handleConnection(ctx, conn, logger, computerRegistry); err != nil {
+				logger.Error("guest connection failed", "error", err)
 			}
 		}()
 	}

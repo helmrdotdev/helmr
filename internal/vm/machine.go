@@ -50,19 +50,43 @@ type Machine interface {
 	Close(context.Context) error
 }
 
+// GuestControlMachine excludes VM pause, snapshot and close while a bounded
+// guest control exchange samples authority time and consumes its response.
+type GuestControlMachine interface {
+	Machine
+	WithRunningGuestControl(context.Context, GuestControlStage, func(context.Context) error) error
+}
+
+// Installation starts a continuation fence before the clock observation can
+// reach the guest. Only acknowledged activation releases it. A lost response
+// permits current-process retry or terminal exclusion, never reversible pause.
+type GuestControlStage uint8
+
+const (
+	GuestControlOrdinary GuestControlStage = iota
+	GuestControlInstallation
+	GuestControlActivation
+)
+
 // CheckpointCapture owns one reversible VM hold. ResumeGuestControl permits only
 // guest control processing: the caller must keep member cgroups sealed until it
 // installs the Control Plane's exact abort grants. CompleteAbort releases the
 // host hold only after the matching guest acknowledgment. Close remains the
 // separate terminal operation when the checkpoint has been adopted.
 type CheckpointCapture interface {
+	// PrepareGuest supplies an owned stream for a bounded freeze exchange under
+	// this capture's lifecycle barrier, before serialization or abort has begun.
+	// It closes the stream on cancellation and return. Failure retains the hold
+	// and blocks CreateSnapshot until a successful identical retry. Only explicit
+	// abort or terminal close releases the hold.
+	PrepareGuest(context.Context, func(context.Context, Stream) error) error
 	CreateSnapshot(context.Context) (SnapshotArtifact, error)
 	ResumeGuestControl(context.Context) error
 	CompleteAbort(context.Context) error
 }
 
 type CheckpointableMachine interface {
-	Machine
+	GuestControlMachine
 	SnapshotLimits() (SnapshotLimits, error)
 	BeginCheckpoint(context.Context, SnapshotRequest) (CheckpointCapture, error)
 	CaptureComputer(context.Context) (*ComputerSnapshot, error)

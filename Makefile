@@ -24,7 +24,7 @@ datapath-bpf:
 	$(GO) generate ./internal/firecracker/datapath
 
 proto: tools
-	$(BUF) generate proto --template proto/buf.gen.yaml --path proto/program.proto --path proto/computer.proto
+	$(BUF) generate proto --template proto/buf.gen.yaml --path proto/computer.proto --path proto/agent.proto
 	@for file in proto/typescript/src/gen/*.ts; do \
 		awk 'NF { last = NR } { lines[NR] = $$0 } END { for (i = 1; i <= last; i++) print lines[i] }' "$$file" >"$$file.tmp"; \
 		mv "$$file.tmp" "$$file"; \

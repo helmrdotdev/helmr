@@ -1,22 +1,9 @@
 , target AS (SELECT c.* FROM computers c,input WHERE c.id=(args->>'computer_id')::uuid)
 SELECT jsonb_build_object(
- 'computer', (SELECT jsonb_build_object('id',id,'status',status,'writer_generation',writer_generation) FROM target),
- 'instances', COALESCE((SELECT jsonb_agg(jsonb_build_object(
- 'id',i.id,'worker_host_id',i.worker_host_id,'worker_epoch',i.worker_epoch,
- 'observed_state',i.observed_state,'reclaimed_at',i.reclaimed_at,
- 'source_checkpoint_id',i.source_checkpoint_id,'source_disk_version_id',i.source_disk_version_id,
- 'ready_at',i.ready_at,'mount_state',i.mount_state,
- 'allocated_at',i.allocated_at,'initial_disk_version_id',i.initial_disk_version_id,
- 'initial_publication_fingerprint',encode(i.initial_publication_fingerprint,'hex'),
- 'seed_id',i.seed_id,'seed_preparation_generation',i.seed_preparation_generation) ORDER BY i.allocated_at,i.id)
- FROM computer_instances i JOIN target c ON c.id=i.computer_id),'[]'::jsonb),
- 'checkpoints', COALESCE((SELECT jsonb_agg(jsonb_build_object(
- 'id',p.id,'status',p.status,'source_computer_instance_id',p.source_computer_instance_id,
- 'private_computer_disk_version_id',p.private_computer_disk_version_id,
- 'ready_at',p.ready_at,'resume_computer_instance_id',p.resume_computer_instance_id,
- 'resume_committed_at',p.resume_committed_at) ORDER BY p.created_at,p.id)
- FROM computer_checkpoints p JOIN target c ON c.id=p.computer_id),'[]'::jsonb),
- 'commands', COALESCE((SELECT jsonb_agg(jsonb_build_object(
- 'id',cmd.id,'status',cmd.status,'computer_instance_id',cmd.computer_instance_id,
- 'exit_code',cmd.exit_code) ORDER BY cmd.created_at,cmd.id)
- FROM computer_commands cmd JOIN target c ON c.id=cmd.computer_id),'[]'::jsonb));
+ 'computer', (SELECT jsonb_build_object('id',id,'deleted_at',deleted_at,'preparation_id',preparation_id,'initial_root_id',initial_root_id,'initial_root_digest',encode(initial_root_digest,'hex'),'recovery_save_id',recovery_save_id) FROM target),
+ 'leases', COALESCE((SELECT jsonb_agg(jsonb_build_object('epoch',l.epoch,'status',l.status,'computer_instance_id',l.computer_instance_id,'worker_host_id',l.worker_host_id,'worker_epoch',l.worker_epoch,'delivered_at',l.delivered_at,'initialized_at',l.initialized_at,'expires_at',l.expires_at,'fenced_at',l.fenced_at,'fence_evidence',l.fence_evidence,'restored_from_save_id',l.restored_from_save_id) ORDER BY l.epoch) FROM computer_leases l JOIN target c ON c.environment_id=l.environment_id AND c.id=l.computer_id),'[]'::jsonb),
+ 'checkpoints', COALESCE((SELECT jsonb_agg(jsonb_build_object('id',p.id,'status',p.status,'source_lease_epoch',p.source_lease_epoch,'target_lease_epoch',p.target_lease_epoch,'disk_save_id',p.disk_save_id,'created_at',p.created_at,'ready_at',p.ready_at,'controls_reconciled_at',p.controls_reconciled_at,
+ 'members',(SELECT COALESCE(jsonb_agg(jsonb_build_object('session_id',m.session_id,'process_epoch',m.process_epoch) ORDER BY m.session_id),'[]'::jsonb) FROM computer_checkpoint_members m WHERE m.environment_id=p.environment_id AND m.checkpoint_id=p.id),
+ 'artifacts',(SELECT COALESCE(jsonb_agg(jsonb_build_object('role',o.role,'digest',o.digest,'size_bytes',o.size_bytes,'media_type',o.media_type) ORDER BY o.role),'[]'::jsonb) FROM computer_checkpoint_objects o WHERE o.environment_id=p.environment_id AND o.checkpoint_id=p.id)) ORDER BY p.created_at,p.id) FROM computer_checkpoints p JOIN target c ON c.environment_id=p.environment_id AND c.id=p.computer_id),'[]'::jsonb),
+ 'saves', COALESCE((SELECT jsonb_agg(jsonb_build_object('id',s.id,'seq',s.seq,'status',s.status,'computer_lease_epoch',s.computer_lease_epoch,'turn_id',s.turn_id,'requested_at',s.requested_at,'captured_at',s.captured_at,'root_id',s.root_id) ORDER BY s.seq) FROM computer_saves s JOIN target c ON c.environment_id=s.environment_id AND c.id=s.computer_id),'[]'::jsonb),
+ 'commands', COALESCE((SELECT jsonb_agg(jsonb_build_object('id',cmd.id,'status',cmd.status,'computer_lease_epoch',cmd.computer_lease_epoch,'exit_code',cmd.exit_code) ORDER BY cmd.created_at,cmd.id) FROM computer_commands cmd JOIN target c ON c.environment_id=cmd.environment_id AND c.id=cmd.computer_id),'[]'::jsonb));

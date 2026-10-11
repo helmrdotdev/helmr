@@ -2,7 +2,6 @@ package secret
 
 import (
 	"bytes"
-	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"errors"
@@ -11,140 +10,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5/pgtype"
 )
-
-func TestLockAttemptDeliveryReturnsExactRecordedVersion(t *testing.T) {
-	runID := pgvalue.UUID(uuid.New())
-	computerID := pgvalue.UUID(uuid.New())
-	environmentID := pgvalue.UUID(uuid.New())
-	secretID := pgvalue.UUID(uuid.New())
-	oldVersionID := pgvalue.UUID(uuid.New())
-	currentVersionID := pgvalue.UUID(uuid.New())
-	secret := db.Secret{
-		ID:                   secretID,
-		EnvironmentID:        environmentID,
-		Status:               "active",
-		CurrentVersionID:     currentVersionID,
-		RevocationGeneration: 3,
-	}
-	store := &fakeDeliveryStore{
-		rows: []db.LockAttemptSecretDeliveryRow{
-			deliveryRow(runID, computerID, secret, oldVersionID, 3, "env", "TOKEN"),
-			deliveryRow(runID, computerID, secret, oldVersionID, 3, "file", "/run/helmr/token"),
-		},
-		version: db.SecretVersion{ID: oldVersionID, SecretID: secretID, Version: 1},
-	}
-
-	envelopes, err := LockAttemptDelivery(t.Context(), store, runID, 2, computerID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(envelopes) != 2 ||
-		envelopes[0].Version.ID != oldVersionID ||
-		envelopes[1].Version.ID != oldVersionID ||
-		store.versionReads != 1 {
-		t.Fatalf("envelopes=%+v version_reads=%d", envelopes, store.versionReads)
-	}
-	if store.params.RunID != runID ||
-		store.params.AttemptNumber != (pgtype.Int4{Int32: 2, Valid: true}) ||
-		store.params.ComputerID != computerID {
-		t.Fatalf("params = %+v", store.params)
-	}
-}
-
-func TestLockAttemptDeliveryRejectsIncompleteOrRevokedAuthority(t *testing.T) {
-	runID := pgvalue.UUID(uuid.New())
-	computerID := pgvalue.UUID(uuid.New())
-	environmentID := pgvalue.UUID(uuid.New())
-	secretID := pgvalue.UUID(uuid.New())
-	versionID := pgvalue.UUID(uuid.New())
-	active := db.Secret{
-		ID:                   secretID,
-		EnvironmentID:        environmentID,
-		Status:               "active",
-		CurrentVersionID:     versionID,
-		RevocationGeneration: 4,
-	}
-	for _, test := range []struct {
-		name string
-		edit func(*db.LockAttemptSecretDeliveryRow)
-	}{
-		{name: "missing resolution", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.ResolutionID = pgtype.UUID{} }},
-		{name: "wrong Run", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.ResolutionRunID = pgvalue.UUID(uuid.New()) }},
-		{name: "wrong Attempt", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.ResolutionAttemptNumber.Int32++ }},
-		{name: "future resolution generation", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.ResolutionRevocationGeneration.Int64++ }},
-		{name: "revoked with missing resolution", edit: func(row *db.LockAttemptSecretDeliveryRow) {
-			row.Secret.Status = "revoked"
-			row.ResolutionID = pgtype.UUID{}
-		}},
-		{name: "revocation generation changed", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.Secret.RevocationGeneration++ }},
-		{name: "revoked", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.Secret.Status = "revoked" }},
-		{name: "wrong Computer", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.ComputerSecret.ComputerID = pgvalue.UUID(uuid.New()) }},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			row := deliveryRow(runID, computerID, active, versionID, 4, "env", "TOKEN")
-			test.edit(&row)
-			store := &fakeDeliveryStore{
-				rows:    []db.LockAttemptSecretDeliveryRow{row},
-				version: db.SecretVersion{ID: versionID, SecretID: secretID, Version: 1},
-			}
-			_, err := LockAttemptDelivery(t.Context(), store, runID, 2, computerID)
-			if !errors.Is(err, ErrDeliveryUnavailable) {
-				t.Fatalf("error = %v", err)
-			}
-			revoked := test.name == "revoked" || test.name == "revocation generation changed"
-			if errors.Is(err, ErrDeliveryRevoked) != revoked {
-				t.Fatalf("revocation classification=%v want=%v", err, revoked)
-			}
-			if store.versionReads != 0 {
-				t.Fatalf("version reads = %d, want 0", store.versionReads)
-			}
-		})
-	}
-}
-
-func TestLockAttemptDeliveryAllowsEmptyComputerSecretSet(t *testing.T) {
-	envelopes, err := LockAttemptDelivery(
-		t.Context(),
-		&fakeDeliveryStore{},
-		pgvalue.UUID(uuid.New()),
-		1,
-		pgvalue.UUID(uuid.New()),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(envelopes) != 0 {
-		t.Fatalf("envelopes = %+v", envelopes)
-	}
-}
-
-func TestLockAttemptDeliveryRejectsPlacementOverflow(t *testing.T) {
-	runID := pgvalue.UUID(uuid.New())
-	computerID := pgvalue.UUID(uuid.New())
-	environmentID := pgvalue.UUID(uuid.New())
-	rows := make([]db.LockAttemptSecretDeliveryRow, maxComputerSecretPlacements+1)
-	for index := range rows {
-		secretID := pgvalue.UUID(uuid.New())
-		versionID := pgvalue.UUID(uuid.New())
-		rows[index] = deliveryRow(runID, computerID, db.Secret{
-			ID:                   secretID,
-			EnvironmentID:        environmentID,
-			Status:               "active",
-			CurrentVersionID:     versionID,
-			RevocationGeneration: 1,
-		}, versionID, 1, "env", "TOKEN")
-	}
-	store := &fakeDeliveryStore{rows: rows}
-	_, err := LockAttemptDelivery(t.Context(), store, runID, 2, computerID)
-	if !errors.Is(err, ErrDeliveryUnavailable) {
-		t.Fatalf("error = %v", err)
-	}
-	if store.versionReads != 0 {
-		t.Fatalf("version reads = %d, want 0", store.versionReads)
-	}
-}
 
 func TestOpenDeliveriesUsesRecordedVersionAfterRotation(t *testing.T) {
 	environmentID := uuid.New()
@@ -205,6 +71,7 @@ func TestOpenDeliveriesRejectsAuthorityMismatch(t *testing.T) {
 	versionID := uuid.New()
 	store := &Store{}
 	envelope := DeliveryEnvelope{
+		Mode:            "raw",
 		PlacementKind:   "env",
 		PlacementTarget: "TOKEN",
 		Secret: db.Secret{
@@ -235,53 +102,4 @@ func TestOpenDeliveriesRejectsAuthorityMismatch(t *testing.T) {
 			}
 		})
 	}
-}
-
-func deliveryRow(
-	runID pgtype.UUID,
-	computerID pgtype.UUID,
-	secret db.Secret,
-	versionID pgtype.UUID,
-	revocationGeneration int64,
-	placementKind string,
-	placementTarget string,
-) db.LockAttemptSecretDeliveryRow {
-	return db.LockAttemptSecretDeliveryRow{
-		ComputerSecret: db.ComputerSecret{
-			ComputerID:      computerID,
-			EnvironmentID:   secret.EnvironmentID,
-			PlacementKind:   placementKind,
-			PlacementTarget: placementTarget,
-			SecretID:        secret.ID,
-		},
-		Secret:                         secret,
-		ResolutionID:                   pgvalue.UUID(uuid.New()),
-		ResolutionRunID:                runID,
-		ResolutionAttemptNumber:        pgtype.Int4{Int32: 2, Valid: true},
-		ResolutionSecretVersionID:      versionID,
-		ResolutionRevocationGeneration: pgtype.Int8{Int64: revocationGeneration, Valid: true},
-	}
-}
-
-type fakeDeliveryStore struct {
-	params       db.LockAttemptSecretDeliveryParams
-	rows         []db.LockAttemptSecretDeliveryRow
-	version      db.SecretVersion
-	versionReads int
-}
-
-func (s *fakeDeliveryStore) LockAttemptSecretDelivery(
-	_ context.Context,
-	params db.LockAttemptSecretDeliveryParams,
-) ([]db.LockAttemptSecretDeliveryRow, error) {
-	s.params = params
-	return s.rows, nil
-}
-
-func (s *fakeDeliveryStore) GetSecretVersion(
-	_ context.Context,
-	_ db.GetSecretVersionParams,
-) (db.SecretVersion, error) {
-	s.versionReads++
-	return s.version, nil
 }

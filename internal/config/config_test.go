@@ -68,6 +68,7 @@ func TestLoadBootstrapIgnoresSeedInputsWhenDisabled(t *testing.T) {
 }
 
 func TestLoadDispatcherReadsConnectionConfig(t *testing.T) {
+	t.Setenv("PUBLIC_URL", "https://console.example.test")
 	setDispatcherFencing(t)
 	t.Setenv("DATABASE_URL", " postgres://example ")
 	t.Setenv("CLICKHOUSE_URL", " https://clickhouse.example.test ")
@@ -77,7 +78,7 @@ func TestLoadDispatcherReadsConnectionConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.ControlPlaneURL != "https://api.example.test" || cfg.DatabaseURL != "postgres://example" ||
-		cfg.ClickHouseURL != "https://clickhouse.example.test" {
+		cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.PublicURL != "https://console.example.test" {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -94,6 +95,9 @@ func TestLoadDispatcherRejectsInvalidComputerFencingKey(t *testing.T) {
 }
 
 func setDispatcherFencing(t *testing.T) {
+	setDiagnosticAdmissionEnv(t)
+	t.Setenv("DIAGNOSTIC_EXPORT_BATCH_RECORDS", "16")
+	t.Setenv("DIAGNOSTIC_EXPORT_BATCH_BYTES", "4096")
 	t.Helper()
 	t.Setenv("CONTROL_PLANE_URL", "https://api.example.test")
 	t.Setenv("ENCRYPTION_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
@@ -101,7 +105,7 @@ func setDispatcherFencing(t *testing.T) {
 }
 
 func TestLoadControlPlaneReadsRequiredConfig(t *testing.T) {
-	setControlPlaneTokenCredentialEnv(t)
+	setControlPlaneExecutionEnv(t)
 	t.Setenv("DATABASE_URL", " postgres://example\n")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("DEPLOYMENT_MODE", " managed-cloud ")
@@ -118,7 +122,6 @@ func TestLoadControlPlaneReadsRequiredConfig(t *testing.T) {
 	t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("COMPUTER_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 	t.Setenv("PUBLIC_URL", " https://helmr.example.test ")
-	t.Setenv("API_ORIGIN", " https://API.HELMR.EXAMPLE.TEST/ ")
 	t.Setenv("MAGIC_LINK_DEBUG_URLS", " true ")
 	t.Setenv("SMTP_ADDR", " smtp.example.test:587 ")
 	t.Setenv("SMTP_USERNAME", " smtp-user ")
@@ -131,7 +134,7 @@ func TestLoadControlPlaneReadsRequiredConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.DeploymentRuntimeDescriptorPath != "/etc/helmr/runtime.descriptor.json" || cfg.PlatformStoreURI != "s3://helmr-cas/runtimes" || !bytes.Equal(cfg.WorkerHostCredentialSigningKey, bytes.Repeat([]byte{1}, 32)) || cfg.SetupToken != "setup-token" || !bytes.Equal(cfg.AuthKey, bytes.Repeat([]byte{4}, 32)) || !bytes.Equal(cfg.EncryptionKey, make([]byte, 32)) || !bytes.Equal(cfg.ComputerFencingKey, bytes.Repeat([]byte{2}, 32)) || !bytes.Equal(cfg.TokenCredentialKey, bytes.Repeat([]byte{3}, 32)) || cfg.PublicURL != "https://helmr.example.test" || cfg.APIOrigin != "https://api.helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
+	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.DeploymentRuntimeDescriptorPath != "/etc/helmr/runtime.descriptor.json" || cfg.PlatformStoreURI != "s3://helmr-cas/runtimes" || !bytes.Equal(cfg.WorkerHostCredentialSigningKey, bytes.Repeat([]byte{1}, 32)) || cfg.SetupToken != "setup-token" || !bytes.Equal(cfg.AuthKey, bytes.Repeat([]byte{4}, 32)) || !bytes.Equal(cfg.EncryptionKey, make([]byte, 32)) || !bytes.Equal(cfg.ComputerFencingKey, bytes.Repeat([]byte{2}, 32)) || cfg.PublicURL != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -317,19 +320,15 @@ func TestLoadControlPlaneDefaultsPublicURL(t *testing.T) {
 	if cfg.PublicURL != DefaultPublicURL {
 		t.Fatalf("public URL = %q", cfg.PublicURL)
 	}
-	if cfg.APIOrigin != cfg.PublicURL {
-		t.Fatalf("API origin = %q, public URL = %q", cfg.APIOrigin, cfg.PublicURL)
-	}
 }
 
-func TestLoadControlPlaneRejectsNonOriginPublicAndAPIURLs(t *testing.T) {
+func TestLoadControlPlaneRejectsNonOriginPublicURLs(t *testing.T) {
 	for _, test := range []struct {
 		name  string
 		value string
 	}{
 		{"PUBLIC_URL", "https://helmr.example.test/console"},
-		{"API_ORIGIN", "https://api.helmr.example.test/v1"},
-		{"API_ORIGIN", "https://user@api.helmr.example.test"},
+		{"PUBLIC_URL", "https://user@helmr.example.test"},
 	} {
 		t.Run(test.name+"="+test.value, func(t *testing.T) {
 			setControlPlaneRequiredEnv(t)
@@ -439,18 +438,19 @@ func TestLoadControlPlaneReadsResendConfig(t *testing.T) {
 
 func setControlPlaneRequiredEnv(t *testing.T) {
 	t.Helper()
-	setControlPlaneTokenCredentialEnv(t)
+	setControlPlaneExecutionEnv(t)
 	t.Setenv("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH", "/etc/helmr/runtime.descriptor.json")
 	t.Setenv("PLATFORM_STORE_URI", "s3://helmr-cas/runtimes")
 	t.Setenv("COMPUTER_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 }
 
-func setControlPlaneTokenCredentialEnv(t *testing.T) {
+func setControlPlaneExecutionEnv(t *testing.T) {
+	setDiagnosticAdmissionEnv(t)
+	setEnvironmentExecutionLimits(t)
 	t.Setenv("COMPUTER_WRAPPING_KEY_ID", "test-computer-root")
 	t.Setenv("COMPUTER_WRAPPING_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
 	t.Setenv("COMPUTER_KMS_KEY_ARN", "arn:aws:kms:us-east-1:123456789012:key/test")
 	t.Helper()
-	t.Setenv("TOKEN_CREDENTIAL_KEY", "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=")
 }
 
 func setWorkerRuntimeEnv(t *testing.T) {
@@ -461,10 +461,12 @@ func setWorkerRuntimeEnv(t *testing.T) {
 	t.Setenv("WORKER_NETWORK_TRANSLATION_POOL", "100.96.0.0/16")
 	t.Setenv("WORKER_NETWORK_RESOLVER_IPV4", "1.1.1.1")
 	t.Setenv("WORKER_NETWORK_BLOCKED_IPV4_CIDRS", "[]")
-	t.Setenv("WORKER_ARTIFACT_CACHE_MAX_MIB", "4096")
 }
 
 func setWorkerEnrollmentEnv(t *testing.T) {
+	t.Setenv("WORKER_LOG_CHUNK_BYTES", "1024")
+	t.Setenv("WORKER_LOG_BUFFER_BYTES", "4096")
+	t.Setenv("WORKER_LOG_BUFFER_RECORDS", "16")
 	t.Setenv("WORKER_COMPUTER_SAVE_EVERY", "1m")
 	t.Helper()
 	secretFile := t.TempDir() + "/worker-enrollment-token"
@@ -538,7 +540,6 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	t.Setenv("WORKER_CAPACITY_VCPUS", " 8 ")
 	t.Setenv("WORKER_CAPACITY_MEMORY_MIB", " 16384 ")
 	t.Setenv("WORKER_DISK_RESERVE_MIB", " 2048 ")
-	t.Setenv("WORKER_ARTIFACT_CACHE_MAX_MIB", " 16384 ")
 	t.Setenv("WORKER_EXECUTION_SLOTS", " 4 ")
 	t.Setenv("VM_INIT_TIMEOUT", " 45s ")
 	t.Setenv("VM_HEALTH_TIMEOUT", " 90s ")
@@ -550,7 +551,7 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	if cfg.CASURI != "s3://helmr-cas" || cfg.WorkDir != "/var/lib/helmr/scratch/worker" || cfg.ImagesDir != "/var/lib/helmr/images" {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.WorkerPoolName != "execution-v0" || cfg.FirecrackerPath != "/usr/bin/firecracker" || cfg.CPUTemplateHelperPath != "/usr/bin/cpu-template-helper" || cfg.NetworkLinkPool != "169.254.128.0/18" || cfg.NetworkTranslationPool != "100.97.0.0/16" || cfg.NetworkResolverIPv4 != "1.0.0.1" || cfg.VMVCPUCount != 4 || cfg.VMMemoryMiB != 4096 || cfg.VMScratchDiskMiB != 12288 || cfg.WorkerCapacityVCPUs != 8 || cfg.WorkerCapacityMemoryMiB != 16384 || cfg.WorkerDiskReserveMiB != 2048 || cfg.ArtifactCacheMaxMiB != 16384 || cfg.WorkerExecutionSlots != 4 || cfg.VMInitTimeout != 45*time.Second || cfg.VMHealthTimeout != 90*time.Second {
+	if cfg.WorkerPoolName != "execution-v0" || cfg.FirecrackerPath != "/usr/bin/firecracker" || cfg.CPUTemplateHelperPath != "/usr/bin/cpu-template-helper" || cfg.NetworkLinkPool != "169.254.128.0/18" || cfg.NetworkTranslationPool != "100.97.0.0/16" || cfg.NetworkResolverIPv4 != "1.0.0.1" || cfg.VMVCPUCount != 4 || cfg.VMMemoryMiB != 4096 || cfg.VMScratchDiskMiB != 12288 || cfg.WorkerCapacityVCPUs != 8 || cfg.WorkerCapacityMemoryMiB != 16384 || cfg.WorkerDiskReserveMiB != 2048 || cfg.WorkerExecutionSlots != 4 || cfg.VMInitTimeout != 45*time.Second || cfg.VMHealthTimeout != 90*time.Second {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if len(cfg.NetworkBlockedIPv4CIDRs) != 2 || cfg.NetworkBlockedIPv4CIDRs[1].String() != "169.254.0.0/16" {
@@ -746,5 +747,50 @@ func TestLoadDispatcherRequiresControlPlaneURL(t *testing.T) {
 	t.Setenv("CONTROL_PLANE_URL", "")
 	if _, err := LoadDispatcher(); err == nil || !strings.Contains(err.Error(), "CONTROL_PLANE_URL") {
 		t.Fatalf("missing serving endpoint: %v", err)
+	}
+}
+
+func setEnvironmentExecutionLimits(t *testing.T) {
+	t.Helper()
+	for name, value := range map[string]string{
+		"ENVIRONMENT_MAX_RESIDENT_COMPUTERS": "10", "ENVIRONMENT_MAX_CPU_MILLIS": "16000", "ENVIRONMENT_MAX_MEMORY_BYTES": "68719476736", "ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES": "1099511627776", "ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS": "100", "ENVIRONMENT_MAX_CAUSAL_DEPTH": "8", "ENVIRONMENT_ADMISSION_RATE_PER_SECOND": "10", "ENVIRONMENT_ADMISSION_BURST": "20", "ENVIRONMENT_PREPARATION_TIMEOUT_MS": "600000",
+	} {
+		t.Setenv(name, value)
+	}
+}
+func TestEnvironmentExecutionLimitsRequireExplicitConfiguration(t *testing.T) {
+	setEnvironmentExecutionLimits(t)
+	for _, invalid := range []string{"", "0", "-1", "1.5", "9223372036854775808"} {
+		t.Setenv("ENVIRONMENT_ADMISSION_BURST", invalid)
+		if _, err := LoadEnvironmentExecutionLimits(); err == nil {
+			t.Fatalf("accepted invalid admission burst %q", invalid)
+		}
+	}
+	setEnvironmentExecutionLimits(t)
+	if limits, err := LoadEnvironmentExecutionLimits(); err != nil || limits.AdmissionBurst != 20 {
+		t.Fatalf("configured limits: %+v %v", limits, err)
+	}
+}
+
+func TestLoadWorkerRequiresExplicitLogBounds(t *testing.T) {
+	for _, name := range []string{"WORKER_LOG_CHUNK_BYTES", "WORKER_LOG_BUFFER_BYTES", "WORKER_LOG_BUFFER_RECORDS"} {
+		for _, value := range []string{"", "0", "-1", "bad"} {
+			t.Run(name+"/"+value, func(t *testing.T) {
+				setValidWorkerEnv(t)
+				t.Setenv(name, value)
+				if _, err := LoadWorker(); err == nil || !strings.Contains(err.Error(), name) {
+					t.Fatalf("accepted invalid %s: %v", name, err)
+				}
+			})
+		}
+	}
+	for _, test := range []struct{ name, value string }{{"WORKER_LOG_CHUNK_BYTES", "16777217"}, {"WORKER_LOG_BUFFER_BYTES", "1023"}, {"WORKER_LOG_BUFFER_RECORDS", "2147483648"}} {
+		t.Run(test.name+"/inconsistent", func(t *testing.T) {
+			setValidWorkerEnv(t)
+			t.Setenv(test.name, test.value)
+			if _, err := LoadWorker(); err == nil {
+				t.Fatal("accepted inconsistent bounds")
+			}
+		})
 	}
 }

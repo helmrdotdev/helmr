@@ -10,6 +10,7 @@ import (
 	"uuid"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -51,6 +52,12 @@ func newPostgresServer(t *testing.T, pool *pgxpool.Pool, configure ...func(*Serv
 	cfg := completeServerConfig(t)
 	cfg.DB = queries
 	cfg.TX = pool
+	cfg.DiagnosticDB = pool
+	allocator, err := agent.NewAllocator(pool, make([]byte, 32), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Allocator = allocator
 	cfg.Auth = identity.NewAPIKeyAuthenticator(queries)
 	for _, apply := range configure {
 		apply(&cfg)

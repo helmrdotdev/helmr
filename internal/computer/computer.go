@@ -1,28 +1,6 @@
-// Package computer owns the durable Computer aggregate: creation with its
-// secret placements and proxy CA, reads, lists, members and deletion, the
-// secret authority ceiling between Computers, program admission, the
-// protected environment delivered to guests, the Instance write capability,
-// and Retention of unreferenced Computer storage. It also owns the physical
-// Instance lifecycle a worker host reports and holds: readiness, close and
-// failure observations, the guest channel claim, writer renewal, Run process
-// cleanup, the restore plan, reconcile targets, expiry and preparation
-// settlement, the restore fence and the member fences other owners compose.
-// It delivers the data keys of preparing Instances (KeyBroker), records the
-// disk objects worker hosts upload and publishes the versions they compose:
-// initial versions, checkpoint objects and saves (Publisher). It owns the
-// checkpoint lifecycle of an Instance's resident set: beginning a capture,
-// including idle capture, and the registration, readiness and failure a
-// worker host reports for it. A capture seals, and readiness parks, the
-// Instance's Run members as one set; transitions that grant a member
-// execution stay with dispatch.
-// Operations take domain inputs and return the errors declared here; callers
-// map them to their transport.
-//
-// Operations that another owner composes with its own locks take the
-// caller's transaction, document which locks must already be held and report
-// a fence that no longer holds as pgx.ErrNoRows; pglock documents the
-// resulting order. Operations that own their transactions report it as
-// ErrAuthorityChanged.
+// Package computer owns external Computer creation, reads, member discovery and
+// deletion, including Secret placement validation and retry receipts. The Agent
+// domain owns allocation, preparation, Session membership and saving lifecycles.
 package computer
 
 import (
@@ -48,7 +26,7 @@ var (
 	// ErrPreparationExhausted reports that the Computer reached its
 	// preparation limit and admits no new work.
 	ErrPreparationExhausted = errors.New("computer preparation limit reached")
-	// ErrNotDeployed reports that the addressed Sandbox declaration is not in
+	// ErrNotDeployed reports that the addressed Computer declaration is not in
 	// the deployment the creation resolves.
 	ErrNotDeployed = errors.New("computer declaration is not deployed")
 	// ErrSecretUnavailable reports a Secret that is not active, or a binding

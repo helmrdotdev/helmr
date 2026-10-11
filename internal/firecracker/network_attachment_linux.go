@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/helmrdotdev/helmr/internal/firecracker/datapath"
@@ -247,8 +248,8 @@ func (c *Connector) cleanupNetworkAttachment(ctx context.Context, owner vm.Owner
 		if err := c.deleteNftTable(ctx, manifest.NamespaceName, networkPolicyTableName); err != nil {
 			return err
 		}
-		if err := exec.CommandContext(ctx, c.cfg.IPPath, "netns", "delete", manifest.NamespaceName).Run(); err != nil {
-			return fmt.Errorf("delete routed network namespace: %w", err)
+		if output, err := exec.CommandContext(ctx, c.cfg.IPPath, "netns", "delete", manifest.NamespaceName).CombinedOutput(); err != nil {
+			return fmt.Errorf("delete routed network namespace: %w: %s", err, strings.TrimSpace(string(output)))
 		}
 	}
 	if _, err := netlink.LinkByName(manifest.RootVethName); err == nil {

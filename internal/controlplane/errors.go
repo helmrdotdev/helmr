@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -38,72 +37,8 @@ type errorCoder interface {
 	ErrorCode() string
 }
 
-type errorRetryer interface {
-	ErrorRetryable() bool
-}
-
 type errorDetailer interface {
 	ErrorDetails() map[string]json.RawMessage
-}
-
-type staleAuthorityOperation string
-
-const (
-	staleAuthorityRunStart       staleAuthorityOperation = "run_start"
-	staleAuthorityTaskCompletion staleAuthorityOperation = "task_completion"
-	staleAuthorityChildTask      staleAuthorityOperation = "child_task_invoke"
-)
-
-type staleAuthorityError struct {
-	operation staleAuthorityOperation
-	point     string
-	cause     error
-}
-
-func (e *staleAuthorityError) Error() string {
-	switch e.operation {
-	case staleAuthorityRunStart:
-		return "run start authority is stale"
-	case staleAuthorityTaskCompletion:
-		return "task completion authority is stale"
-	case staleAuthorityChildTask:
-		return "child task invocation authority is stale"
-	default:
-		return "worker authority is stale"
-	}
-}
-
-func (e *staleAuthorityError) Unwrap() error { return e.cause }
-
-func (e *staleAuthorityError) ErrorCode() string {
-	return string(e.operation) + "_stale"
-}
-
-func (e *staleAuthorityError) ErrorDetails() map[string]json.RawMessage {
-	point, _ := json.Marshal(e.point)
-	return map[string]json.RawMessage{"point": point}
-}
-
-// childTaskInvokeStaleAt marks a stale child task invocation with the point
-// where it was found stale. The innermost point is kept; other errors are
-// returned unchanged.
-func childTaskInvokeStaleAt[P ~string](point P, err error) error {
-	if err == nil || point == "" || !errors.Is(err, run.ErrChildInvokeStale) {
-		return err
-	}
-	var existing *staleAuthorityError
-	if errors.As(err, &existing) {
-		return err
-	}
-	return &staleAuthorityError{operation: staleAuthorityChildTask, point: string(point), cause: err}
-}
-
-func staleAuthorityPointOf(err error) (string, bool) {
-	var stale *staleAuthorityError
-	if !errors.As(err, &stale) || stale.point == "" {
-		return "", false
-	}
-	return stale.point, true
 }
 
 type codedError struct {

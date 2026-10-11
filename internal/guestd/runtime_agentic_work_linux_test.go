@@ -21,7 +21,7 @@ import (
 // TestManagedNodeAgenticWork runs representative tool work on a writable Computer
 // disk decoded from the builder's seed. Handlers run through the managed Program
 // launch path with the Runtime's Node flags. This checks actual deployment bytes,
-// but not the guest task protocol, Firecracker or checkpoint/resume.
+// but not the Session protocol, Firecracker or checkpoint/resume.
 // tests/build/agentic-work.test.sh provides the inputs.
 func TestManagedNodeAgenticWork(t *testing.T) {
 	descriptor := os.Getenv("HELMR_GUESTD_AGENTIC_COMPUTER_SEED")
@@ -32,7 +32,7 @@ func TestManagedNodeAgenticWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var seed bundle.ComputerImageArtifact
+	var seed bundle.ComputerSeedArtifact
 	if err := json.Unmarshal(raw, &seed); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestManagedNodeAgenticWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cleanup()
-	flags, err := managedProgramNodeFlags()
+	flags, err := managedProgramNodeFlags(bootProgramMounts().Runtime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,8 +90,12 @@ func TestManagedNodeAgenticWork(t *testing.T) {
 		if managed {
 			env = managedRuntimeEnv(image.Config, user, defaultRuntimeWorkdir)
 		}
+		program := programMounts{}
+		if managed {
+			program = bootProgramMounts()
+		}
 		cmd, err := imageCommand(ctx, path, args, defaultRuntimeWorkdir, env, imageRoot, user,
-			imageCommandOptions{ManagedProgram: managed})
+			imageCommandOptions{Program: program})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -102,18 +106,18 @@ func TestManagedNodeAgenticWork(t *testing.T) {
 		}
 		return stdout.String(), stderr.String()
 	}
-	invoke := func(t *testing.T, task string, output any) {
+	invoke := func(t *testing.T, agent string, output any) {
 		t.Helper()
 		stdout, stderr := launch(t, true, managedProgramNode,
-			append(append([]string{}, flags...), "/opt/helmr/program/probe/invoke.mjs", task)...)
+			append(append([]string{}, flags...), "/opt/helmr/program/probe/invoke.mjs", agent)...)
 		t.Logf("%s", stdout)
 		var result struct {
-			Task   string          `json:"task"`
+			Agent  string          `json:"agent"`
 			Output json.RawMessage `json:"output"`
 		}
 		lines := strings.Split(strings.TrimSpace(stdout), "\n")
-		if err := json.Unmarshal([]byte(lines[len(lines)-1]), &result); err != nil || result.Task != task {
-			t.Fatalf("task output %q: %v\nstderr: %s", stdout, err, stderr)
+		if err := json.Unmarshal([]byte(lines[len(lines)-1]), &result); err != nil || result.Agent != agent {
+			t.Fatalf("Agent output %q: %v\nstderr: %s", stdout, err, stderr)
 		}
 		if err := json.Unmarshal(result.Output, output); err != nil {
 			t.Fatal(err)

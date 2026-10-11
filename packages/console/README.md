@@ -1,6 +1,11 @@
 # Console
 
-Console dashboard for managing a self-hosted Helmr control plane.
+Console provides inspection, settings and operational controls for a Helmr control
+plane. Start Agents, send Session work, answer questions and manage Computers
+through the CLI or a connected Slack conversation. Console retains Session
+interrupt/cancel, uncertain Slack delivery recovery, and Deployment list/detail
+and Promote with its normal permission and confirmation. It shows complete
+question details and exact CLI answer instructions.
 
 ## Local development
 
@@ -33,7 +38,7 @@ The script fails fast if a required port is already in use or an owned stack is 
 ### Persistence and reset
 
 Owned Postgres and ClickHouse data persist across restarts; S3 objects are never reset. Dev seed runs once on a fresh
-owned database only; renames, deletions, and completed Tokens survive restarts. To restore
+owned database only; renames, deletions, and retained Session history survive restarts. To restore
 fixtures:
 
 ```sh
@@ -47,10 +52,11 @@ on fresh initialization.
 ### Demo environment fixtures
 
 Production and Staging are empty by default (CLI onboarding on Overview). A third **Demo**
-environment is seeded with synthetic Tasks, Actors, Sessions, Runs, Tokens, and related records.
-Select **Demo** under Settings → Environments to browse fixtures.
+environment contains a synthetic Agent definition, a revoked Deployment, a Computer with
+failed preparation, and a closed Session with one failed Turn. Select **Demo** under
+Settings → Environments to browse its retained input and events.
 
-Fixtures are terminal-only: no queued Runs and no live schedule claims. The sample schedule is
-archived (no `next_fire_at`; fixture-only, never executed). Pending Tokens use a long `expires_at` so the Demo
-Overview stays useful across restarts. Session conversation history is synthetic; submitting new
-session input through the console can create real work against your dev stack.
+These fixtures are illustrative terminal history. They have no executable bundle,
+VM, process, Save or checkpoint. The Deployment is revoked and its schedule has ended,
+so browsing the fixtures cannot create Worker demand. Deploy a real Agent in an empty
+environment to start new work.

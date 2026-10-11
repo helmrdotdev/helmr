@@ -1,0 +1,61 @@
+---
+title: Agents
+description: Define Computer placement, initialization and one handler for each admitted input.
+---
+
+# Agents
+
+An Agent is a deployed definition. It selects a Computer recipe and handles one
+Turn at a time in each Session. The same model supports a single request or a
+continuing conversation.
+
+```ts
+import { agent, computer, image } from "@helmr/sdk"
+
+const workspace = computer({
+  id: "workspace",
+  image: image("workspace").from("node:24-bookworm-slim"),
+  resources: { cpu: 1, memory: "1GiB" },
+})
+
+export const reviewer = agent({
+  id: "reviewer",
+  computer: workspace,
+  async init(ctx) {
+    return { sessionId: ctx.session.id, turns: 0 }
+  },
+  async turn(turn, ctx) {
+    ctx.initResult.turns += 1
+    await turn.output.write("Review started")
+    await turn.respond("Review complete")
+    return { input: turn.input, turns: ctx.initResult.turns }
+  },
+})
+```
+
+`init` is optional. Its result may contain mutable objects or native handles.
+Healthy hibernation preserves it; exceptional reconstruction can rerun initialization
+against retained disk. It is not a separate durable key/value store. Use
+`ctx.recovery` to distinguish initialization from reconstruction and reconcile
+external effects in application code.
+
+`turn` is required. Inputs are JSON arrays of text parts; machine results are arbitrary JSON.
+Validate application-specific commands in the handler. Await output,
+questions and native work before returning. Throwing fails the Turn; it does not
+request an automatic retry.
+
+`maxTurnDuration` optionally limits elapsed time through processing, human waits
+and finalization. It has no universal duration default. `closeAfterIdle` closes
+an idle Session after seven days by default; use a positive duration or `"never"`
+to configure it. Idle time excludes queued or active Turns, pending questions,
+message callbacks, holds, active owned children and unfinished saves or process
+stops. Closure uses the normal drain and process-stop lifecycle. Compute parking
+and stored-history retention are separate policies.
+
+Use `turn.signal` to cancel Turn work and `ctx.signal` for initialization/process shutdown.
+The managed MCP connection carries Session runtime authority. Root Sessions can
+create owned children with `spawn` or independent roots with `start`. An explicit
+`HelmrClient` uses only its supplied authentication, including inside Agent code.
+
+See [Agents, Sessions and Turns](/docs/reference/sdk/agents-and-sessions) for
+client operations and [Schedules](/docs/concepts/schedules) for cron triggers.

@@ -20,7 +20,13 @@ type ProjectSummary struct {
 	Environments    []EnvironmentSummary `json:"environments,omitempty"`
 }
 
+type HistoryRetentionPolicy struct {
+	HistoryRetentionMode    string `json:"history_retention_mode"`
+	HistoryRetentionSeconds *int64 `json:"history_retention_seconds,omitempty"`
+}
+
 type EnvironmentSummary struct {
+	HistoryRetentionPolicy
 	ID        string    `json:"id"`
 	ProjectID string    `json:"project_id"`
 	Slug      string    `json:"slug"`
@@ -37,6 +43,7 @@ type ListProjectsResponse struct {
 }
 
 type CreateProjectRequest struct {
+	HistoryRetentionPolicy
 	Slug            string `json:"slug"`
 	Name            string `json:"name"`
 	DefaultRegionID string `json:"default_region_id"`
@@ -48,12 +55,14 @@ type UpdateProjectRequest struct {
 }
 
 type CreateEnvironmentRequest struct {
+	HistoryRetentionPolicy
 	Slug     string `json:"slug"`
 	Name     string `json:"name"`
 	ColorHex string `json:"color_hex"`
 }
 
 type UpdateEnvironmentRequest struct {
+	HistoryRetentionPolicy
 	Slug     string `json:"slug"`
 	Name     string `json:"name"`
 	ColorHex string `json:"color_hex"`

@@ -12,53 +12,20 @@ import (
 )
 
 const appendDeploymentEvent = `-- name: AppendDeploymentEvent :one
-WITH target_deployment AS (
-    SELECT deployments.id,
-           deployments.org_id,
-           deployments.project_id,
-           deployments.environment_id
-      FROM deployments
-     WHERE deployments.org_id = $1
-       AND deployments.project_id = $2
-       AND deployments.environment_id = $3
-       AND deployments.id = $4
-),
-appended AS (
-    INSERT INTO telemetry_outbox (
-        org_id, stream_kind, source_kind, source_id, project_id,
-        environment_id, deployment_id, category, severity, source, kind, message,
-        payload, redaction_class, observed_at
-    )
-    SELECT target_deployment.org_id,
-           'event',
-           'deployment',
-           target_deployment.id,
-           target_deployment.project_id,
-           target_deployment.environment_id,
-           target_deployment.id,
-           COALESCE(NULLIF($5::text, ''), 'system'),
-           COALESCE(NULLIF($6::text, ''), 'info'),
-           COALESCE(NULLIF($7::text, ''), 'control'),
-           $8::text,
-           COALESCE($9::text, ''),
-           COALESCE($10::jsonb, '{}'::jsonb),
-           COALESCE(NULLIF($11::text, ''), 'internal'),
-           now()
-      FROM target_deployment
-    RETURNING telemetry_outbox.deployment_id AS id,
-              telemetry_outbox.org_id,
-              telemetry_outbox.project_id,
-              telemetry_outbox.environment_id
-)
-SELECT id, org_id, project_id, environment_id
-  FROM appended
+INSERT INTO telemetry_outbox(environment_id,deployment_id,stream_kind,category,severity,source,kind,message,payload,redaction_class)
+SELECT d.environment_id,d.id,'event',
+ COALESCE(NULLIF($1::text,''),'system'),
+ COALESCE(NULLIF($2::text,''),'info'),
+ COALESCE(NULLIF($3::text,''),'control'),$4::text,
+ COALESCE($5::text,''),COALESCE($6::jsonb,'{}'::jsonb),
+ COALESCE(NULLIF($7::text,''),'internal')
+FROM deployments d JOIN environments e ON e.id=d.environment_id
+WHERE d.environment_id=$8 AND d.id=$9
+ AND e.org_id=$10 AND e.project_id=$11
+RETURNING id
 `
 
 type AppendDeploymentEventParams struct {
-	OrgID          pgtype.UUID `json:"org_id"`
-	ProjectID      pgtype.UUID `json:"project_id"`
-	EnvironmentID  pgtype.UUID `json:"environment_id"`
-	DeploymentID   pgtype.UUID `json:"deployment_id"`
 	Category       string      `json:"category"`
 	Severity       string      `json:"severity"`
 	Source         string      `json:"source"`
@@ -66,21 +33,14 @@ type AppendDeploymentEventParams struct {
 	Message        string      `json:"message"`
 	Payload        []byte      `json:"payload"`
 	RedactionClass string      `json:"redaction_class"`
+	EnvironmentID  pgtype.UUID `json:"environment_id"`
+	DeploymentID   pgtype.UUID `json:"deployment_id"`
+	OrgID          pgtype.UUID `json:"org_id"`
+	ProjectID      pgtype.UUID `json:"project_id"`
 }
 
-type AppendDeploymentEventRow struct {
-	ID            pgtype.UUID `json:"id"`
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-}
-
-func (q *Queries) AppendDeploymentEvent(ctx context.Context, arg AppendDeploymentEventParams) (AppendDeploymentEventRow, error) {
+func (q *Queries) AppendDeploymentEvent(ctx context.Context, arg AppendDeploymentEventParams) (int64, error) {
 	row := q.db.QueryRow(ctx, appendDeploymentEvent,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.DeploymentID,
 		arg.Category,
 		arg.Severity,
 		arg.Source,
@@ -88,114 +48,12 @@ func (q *Queries) AppendDeploymentEvent(ctx context.Context, arg AppendDeploymen
 		arg.Message,
 		arg.Payload,
 		arg.RedactionClass,
-	)
-	var i AppendDeploymentEventRow
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-	)
-	return i, err
-}
-
-const appendRunEvent = `-- name: AppendRunEvent :one
-WITH event_args AS (
-    SELECT $1::text AS event_kind,
-           $2::jsonb AS event_payload
-),
-target_run AS (
-    SELECT runs.id,
-           runs.project_id,
-           runs.environment_id,
-           runs.current_attempt_number,
-           runs.trace_id,
-           runs.root_span_id,
-           runs.revision
-      FROM runs
-     WHERE runs.org_id = $3
-       AND runs.id = $4
-),
-appended AS (
-    INSERT INTO telemetry_outbox (
-        org_id, stream_kind, source_kind, source_id, project_id,
-        environment_id, run_id, attempt_number, trace_id, span_id, traceparent,
-        category, severity, source, kind, message, payload, redaction_class,
-        snapshot_version, observed_at
-    )
-    SELECT $3::uuid,
-           'event',
-           'run',
-           target_run.id,
-           target_run.project_id,
-           target_run.environment_id,
-           target_run.id,
-           target_run.current_attempt_number,
-           target_run.trace_id,
-           target_run.root_span_id,
-           '00-' || target_run.trace_id || '-' || target_run.root_span_id || '-01',
-           'system',
-           'info',
-           'control',
-           event_args.event_kind,
-           event_args.event_kind,
-           event_args.event_payload,
-           'internal',
-           target_run.revision,
-           now()
-      FROM target_run
-      CROSS JOIN event_args
-    RETURNING telemetry_outbox.run_id AS id,
-              telemetry_outbox.project_id,
-              telemetry_outbox.environment_id,
-              COALESCE(telemetry_outbox.attempt_number, 0)::integer AS current_attempt_number,
-              telemetry_outbox.trace_id,
-              COALESCE(telemetry_outbox.span_id, '')::text AS root_span_id,
-              COALESCE(telemetry_outbox.snapshot_version, 0)::bigint AS revision,
-              telemetry_outbox.kind AS event_kind,
-              telemetry_outbox.payload AS event_payload
-)
-SELECT id, project_id, environment_id, current_attempt_number, trace_id, root_span_id, revision, event_kind, event_payload
-  FROM appended
-`
-
-type AppendRunEventParams struct {
-	Kind    string      `json:"kind"`
-	Payload []byte      `json:"payload"`
-	OrgID   pgtype.UUID `json:"org_id"`
-	RunID   pgtype.UUID `json:"run_id"`
-}
-
-type AppendRunEventRow struct {
-	ID                   pgtype.UUID `json:"id"`
-	ProjectID            pgtype.UUID `json:"project_id"`
-	EnvironmentID        pgtype.UUID `json:"environment_id"`
-	CurrentAttemptNumber int32       `json:"current_attempt_number"`
-	TraceID              pgtype.Text `json:"trace_id"`
-	RootSpanID           string      `json:"root_span_id"`
-	Revision             int64       `json:"revision"`
-	EventKind            string      `json:"event_kind"`
-	EventPayload         []byte      `json:"event_payload"`
-}
-
-func (q *Queries) AppendRunEvent(ctx context.Context, arg AppendRunEventParams) (AppendRunEventRow, error) {
-	row := q.db.QueryRow(ctx, appendRunEvent,
-		arg.Kind,
-		arg.Payload,
+		arg.EnvironmentID,
+		arg.DeploymentID,
 		arg.OrgID,
-		arg.RunID,
+		arg.ProjectID,
 	)
-	var i AppendRunEventRow
-	err := row.Scan(
-		&i.ID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.CurrentAttemptNumber,
-		&i.TraceID,
-		&i.RootSpanID,
-		&i.Revision,
-		&i.EventKind,
-		&i.EventPayload,
-	)
-	return i, err
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }

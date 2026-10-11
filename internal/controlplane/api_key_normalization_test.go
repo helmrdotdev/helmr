@@ -10,20 +10,20 @@ import (
 
 func TestNormalizeAPIKeyPermissionGrantsCanonicalizes(t *testing.T) {
 	grants, permissions, err := normalizeAPIKeyPermissionGrants([]api.APIKeyPermissionGrant{
-		{Scopes: []api.APIKeyScope{api.APIKeyScopeTokensRead, api.APIKeyScopeRunsRead}},
-		{Scopes: []api.APIKeyScope{api.APIKeyScopeRunsRead, api.APIKeyScopeActorsStart}},
+		{Scopes: []api.APIKeyScope{api.APIKeyScopeSessionsSend, api.APIKeyScopeSessionsRead}},
+		{Scopes: []api.APIKeyScope{api.APIKeyScopeSessionsRead, api.APIKeyScopeAgentsStart}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantPermissions := []auth.Permission{auth.PermissionActorsStart, auth.PermissionRunsRead, auth.PermissionTokensRead}
+	wantPermissions := []auth.Permission{auth.PermissionAgentsStart, auth.PermissionSessionsRead, auth.PermissionSessionsSend}
 	if !reflect.DeepEqual(permissions, wantPermissions) {
 		t.Fatalf("permissions = %v, want %v", permissions, wantPermissions)
 	}
 	wantGrants := []api.APIKeyPermissionGrant{{Scopes: []api.APIKeyScope{
-		api.APIKeyScopeActorsStart,
-		api.APIKeyScopeRunsRead,
-		api.APIKeyScopeTokensRead,
+		api.APIKeyScopeAgentsStart,
+		api.APIKeyScopeSessionsRead,
+		api.APIKeyScopeSessionsSend,
 	}}}
 	if !reflect.DeepEqual(grants, wantGrants) {
 		t.Fatalf("grants = %+v, want %+v", grants, wantGrants)

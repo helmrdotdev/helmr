@@ -111,7 +111,7 @@ func run(ctx context.Context, arguments []string) error {
 		Compiler:          compiler,
 		Runtime:           runtime,
 		RuntimeMetadata:   metadata,
-		ComputerImages:    images,
+		ComputerSeeds:     images,
 	})
 	if err != nil {
 		return err
@@ -145,10 +145,10 @@ func run(ctx context.Context, arguments []string) error {
 		Path:   result.ObjectPath,
 	})
 	_, err = builder.FinalizeBundle(ctx, cleanAbsolute(*bundleOutput), builder.BundleInput{
-		Runtime:        runtime,
-		Program:        result.Program,
-		ComputerImages: images,
-		Objects:        objects,
+		Runtime:       runtime,
+		Program:       result.Program,
+		ComputerSeeds: images,
+		Objects:       objects,
 	})
 	return err
 }

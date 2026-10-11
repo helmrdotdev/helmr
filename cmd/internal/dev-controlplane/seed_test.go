@@ -40,7 +40,7 @@ func TestDevSeedWithFreshPostgres(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("bootstrap local worker group: %v", err)
 	}
-	cfg := devConfig{bootstrap: config.Bootstrap{RegionID: "dev-local"}}
+	cfg := devConfig{environmentExecutionLimits: devTestExecutionLimits(), bootstrap: config.Bootstrap{RegionID: "dev-local"}}
 	if err := seedDevData(ctx, pool, cfg); err != nil {
 		t.Fatalf("seed fresh database: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestDevSeedPreservesUserEditsAcrossRestart(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	cfg := devConfig{bootstrap: config.Bootstrap{RegionID: "dev-local"}}
+	cfg := devConfig{environmentExecutionLimits: devTestExecutionLimits(), bootstrap: config.Bootstrap{RegionID: "dev-local"}}
 	if err := seedDevData(ctx, pool, cfg); err != nil {
 		t.Fatal(err)
 	}

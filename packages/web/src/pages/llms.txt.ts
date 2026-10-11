@@ -32,7 +32,7 @@ Source code: ${SITE.githubUrl}
 License: Apache 2.0
 
 ## Product Context
-- Runs on Helmr Cloud (coming soon) or self-hosted in your own AWS account.
+- Self-hosted in your own AWS account. Managed Helmr Cloud is planned and is not currently available.
 - Every docs page is also served as Markdown by appending .md to the page path.
 
 ## Core Pages

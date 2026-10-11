@@ -21,15 +21,14 @@ func TestSessionPermissionsAdvertiseEveryRoleGrant(t *testing.T) {
 		t.Fatalf("owner permissions = %v, want %v", got, owner)
 	}
 	for _, permission := range []string{
-		"tokens.create", "tokens.read", "tokens.complete", "tokens.cancel",
-		"sessions.read", "sessions.send", "sessions.close", "sessions.interrupt", "sessions.resume", "actors.start",
+		"sessions.read", "sessions.send", "sessions.close", "sessions.interrupt", "sessions.resume", "agents.start",
 	} {
 		if !slices.Contains(owner, permission) {
 			t.Fatalf("owner permissions omit %s: %v", permission, owner)
 		}
 	}
 	if got := sessionPermissions(auth.RoleViewer); !slices.Equal(got, []string{
-		"runs.read", "sessions.read", "tokens.read", "computers.read",
+		"sessions.read", "computers.read",
 	}) {
 		t.Fatalf("viewer permissions = %v", got)
 	}

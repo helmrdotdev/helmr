@@ -1,10 +1,13 @@
-import { A } from "@solidjs/router";
 import { createInfiniteQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { runHref } from "../features/runs/navigation";
 import { ApiError } from "../lib/api";
 import { useScope } from "../lib/scope";
-import { listSessions, sessionConsolePath, type Session, type SessionStatus } from "../lib/sessions";
+import {
+  listSessions,
+  sessionConsolePath,
+  type Session,
+  type SessionStatus,
+} from "../lib/sessions";
 import { DataTable } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
 import { PageHeader } from "../ui/PageHeader";
@@ -21,7 +24,7 @@ const FILTERS: SelectOption<SessionFilter>[] = [
   { value: "open", label: "Open" },
   { value: "closed", label: "Closed" },
   { value: "closing", label: "Closing" },
-  { value: "failed", label: "Failed" },
+  { value: "cancelled", label: "Cancelled" },
 ];
 
 function sessionsErrorMessage(error: unknown): string {
@@ -32,32 +35,40 @@ function sessionsErrorMessage(error: unknown): string {
   return "Could not load Sessions.";
 }
 
-function SessionRow(props: { session: Session; projectID: string; environmentID: string }) {
+function SessionRow(props: {
+  session: Session;
+  projectID: string;
+  environmentID: string;
+}) {
   return (
     <tr>
       <td>
-        <A
-          href={sessionConsolePath(props.session.id, props.projectID, props.environmentID)}
-          class="font-medium text-console-text hover:text-console-accent"
-        >
-          {props.session.actor_id}
-        </A>
+        <IDText value={props.session.id} mode="link"
+          href={sessionConsolePath(props.session.id, props.projectID, props.environmentID)} />
       </td>
+      <td><IDText value={props.session.agent_id} /></td>
       <td>
-        <Show when={props.session.key} fallback={<span class="text-console-faint">—</span>}>
+        <Show
+          when={props.session.key}
+          fallback={<span class="text-console-faint">—</span>}
+        >
           {(key) => <code>{key()}</code>}
         </Show>
       </td>
-      <td><StatusBadge resource="session" status={props.session.status} /></td>
+      <td>
+        <StatusBadge resource="session" status={props.session.status} />
+      </td>
+      <td>{props.session.holds.length ? `${props.session.holds.length} active` : "None"}</td>
       <td>
         <IDText
-          value={props.session.current_run_id ?? ""}
+          value={props.session.computer_id}
           mode="link"
-          href={props.session.current_run_id ? runHref(props.session.current_run_id, props.projectID, props.environmentID) : undefined}
+          href={`/computers/${props.session.computer_id}`}
         />
       </td>
-      <td><RelativeTime value={props.session.created_at} /></td>
-      <td><RelativeTime value={props.session.updated_at} /></td>
+      <td>
+        <RelativeTime value={props.session.created_at} />
+      </td>
     </tr>
   );
 }
@@ -83,17 +94,25 @@ export function Sessions() {
     getNextPageParam: (page) => page.next_cursor,
     enabled: !!projectID() && !!environmentID(),
     retry: false,
+    refetchInterval: 5_000,
   }));
-  const items = createMemo(() => sessions.data?.pages.flatMap((page) => page.sessions) ?? []);
+  const items = createMemo(
+    () => sessions.data?.pages.flatMap((page) => page.sessions) ?? [],
+  );
 
   return (
     <section class={ui.page}>
       <PageHeader
         title="Sessions"
-        subtitle="Actor Sessions in the selected environment, with the Run currently serving each one."
+        subtitle="Agent Sessions and retained work in the selected environment."
         actions={
           <div class="w-44">
-            <Select<SessionFilter> value={filter()} options={FILTERS} onChange={setFilter} ariaLabel="Filter sessions" />
+            <Select<SessionFilter>
+              value={filter()}
+              options={FILTERS}
+              onChange={setFilter}
+              ariaLabel="Filter sessions"
+            />
           </div>
         }
       />
@@ -101,7 +120,10 @@ export function Sessions() {
       <Show when={sessions.isError}>
         <StatePanel error={sessionsErrorMessage(sessions.error)} />
       </Show>
-      <Show when={!sessions.isPending} fallback={<StatePanel loading="Loading Sessions..." />}>
+      <Show
+        when={!sessions.isPending}
+        fallback={<StatePanel loading="Loading Sessions..." />}
+      >
         <Show
           when={items().length > 0}
           fallback={
@@ -109,13 +131,25 @@ export function Sessions() {
               when={filter() === "all"}
               fallback={<StatePanel empty="No Sessions match this filter." />}
             >
-              <StatePanel empty="No Sessions yet." hint="Starting a declared Actor creates a Session." />
+              <StatePanel
+                empty="No Sessions yet."
+                hint="Starting an Agent creates a Session."
+              />
             </Show>
           }
         >
-          <DataTable columns={["Actor", "Key", "Status", "Current run", "Created", "Updated"]} minWidth="min-w-200">
+          <DataTable
+            columns={["Session", "Agent", "Key", "Status", "Holds", "Computer", "Created"]}
+            minWidth="min-w-200"
+          >
             <For each={items()}>
-              {(session) => <SessionRow session={session} projectID={projectID()} environmentID={environmentID()} />}
+              {(session) => (
+                <SessionRow
+                  session={session}
+                  projectID={projectID()}
+                  environmentID={environmentID()}
+                />
+              )}
             </For>
           </DataTable>
           <Show when={sessions.hasNextPage}>

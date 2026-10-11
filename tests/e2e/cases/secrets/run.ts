@@ -21,7 +21,7 @@ await verify("secrets", async ({ client, marker, objects, cleanup }) => {
   )
   assertEqual(exactSecretPage.items.length, 1, "Secret name lookup was not exact")
   assertEqual(exactSecretPage.items[0]!.id, secret.id, "Secret name lookup changed the ID")
-  const retrievedSecret = await client.secrets.retrieve(secret.id, {
+  const retrievedSecret = await client.secrets.get(secret.id, {
     signal: AbortSignal.timeout(30_000),
   })
   assertEqual(retrievedSecret.id, secret.id, "Secret retrieval changed the ID")

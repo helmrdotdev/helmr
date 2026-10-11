@@ -6,15 +6,15 @@ Infrastructure and APIs for your own agent harness.<br>
 Your agents. Your workflows. Your rules.
 
 Write your agent logic in TypeScript, bring your tools and integrations, and
-run it in isolated Linux microVMs. Keep your computer across runs, pause for
+run it in isolated Linux microVMs. Keep your computer across turns, pause for
 human input, and inspect what happened.
 
 ## What you get
 
-- **Persistent computers** — files and dependencies kept across runs.
-- **Tasks and sessions** — one-shot jobs or agents you can steer over time.
+- **Persistent computers** — files and dependencies kept across turns.
+- **Agents and sessions** — define agent behavior and continue its work across turns.
 - **Human input** — pause for approval or external input, then continue.
-- **Secrets and visibility** — runtime secret injection, logs, and run history.
+- **Secrets and visibility** — runtime secret injection, logs, and session history.
 - **Infrastructure you control** — self-host in your own AWS account.
 
 ## Get started
@@ -26,7 +26,7 @@ curl -fsSL https://helmr.dev/install | bash
 ```
 
 Follow the [quickstart](https://helmr.dev/docs/quickstart/) to deploy and run your
-first task. You'll need a running control plane and worker; the
+first agent. You'll need a running control plane and worker; the
 [self-hosting guide](https://helmr.dev/docs/self-hosting/overview/) covers setup.
 
 ## Build from source

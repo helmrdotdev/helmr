@@ -17,7 +17,6 @@ case "$*" in
       auth_key:"arn:auth-key",
       encryption_key:"arn:encryption-key",
       computer_fencing_key:"arn:computer-fencing-key",
-      token_credential_key:"arn:token-credential-key",
       checkpoint_encryption_key:"arn:checkpoint-encryption-key"
     } + if $setup == "1" then {setup_token:"arn:setup-token",computer_wrapping_key:"arn:computer-wrapping-key"} else {} end'
     ;;
@@ -63,8 +62,8 @@ run_helper present
 
 : >"${tmp}/puts"
 run_helper missing
-[ "$(wc -l <"${tmp}/puts" | tr -d ' ')" = 9 ] || {
-  printf 'expected all nine missing secret values to be initialized\n' >&2
+[ "$(wc -l <"${tmp}/puts" | tr -d ' ')" = 8 ] || {
+  printf 'expected all eight missing secret values to be initialized\n' >&2
   exit 1
 }
 
@@ -81,7 +80,7 @@ PYTEST
 
 : >"${tmp}/puts"
 MOCK_SETUP_TOKEN_PRESENT=0 run_helper missing
-[ "$(wc -l <"${tmp}/puts" | tr -d ' ')" = 7 ] || {
+[ "$(wc -l <"${tmp}/puts" | tr -d ' ')" = 6 ] || {
   printf 'managed secret initialization required a setup token\n' >&2
   exit 1
 }

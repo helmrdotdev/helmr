@@ -16,7 +16,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -30,38 +29,27 @@ type preparationCall struct {
 func preparationCalls() []preparationCall {
 	id := uuid.NewV7().String()
 	key := workerapi.ComputerKeyMaterial{Scope: "scope", ID: id, Key: bytes.Repeat([]byte{1}, 32)}
-	root := disk.VersionRoot{FormatVersion: 1, LogicalBytes: 4096, Offset: 128, Pack: disk.VersionPack{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 512, Rank: 2}, Page: disk.VersionPage{Digest: "sha256:" + strings.Repeat("b", 64), Salt: strings.Repeat("c", 64), KeyID: id, Kind: 3, Count: 1, SizeBytes: 64}}
+	request := workerapi.PreparationExecutor{ChannelCredential: []byte("channel")}
 	return []preparationCall{
-		{"seed", "/worker/v1/run/computer-instances/initialization/seed", workerapi.ComputerSeedPreparation{Status: "convert", Key: &key}, func(ctx context.Context, c *Client) error {
-			m, e := c.PrepareComputerSeed(ctx, workerapi.PrepareComputerSeedRequest{ComputerInstanceID: id, DesiredVersion: 7})
-			if m.Key != nil {
-				defer clear(m.Key.Key)
+		{"key", "/worker/v1/allocations/preparation/key", key, func(ctx context.Context, c *Client) error {
+			material, err := c.PreparationWriteKey(ctx, request)
+			defer clear(material.Key)
+			if err == nil && (material.ID != id || !bytes.Equal(material.Key, key.Key)) {
+				return errors.New("wrong preparation key")
 			}
-			if e == nil && (m.Status != "convert" || m.Key == nil || m.Key.ID != id || len(m.Key.Key) != 32) {
-				return errors.New("wrong seed key")
+			return err
+		}},
+		{"secrets", "/worker/v1/allocations/preparation/secrets", workerapi.PreparationSecrets{Secrets: []workerapi.SecretDelivery{{Value: []byte("value")}}}, func(ctx context.Context, c *Client) error {
+			material, err := c.PreparationSecrets(ctx, request)
+			defer func() {
+				for _, secret := range material.Secrets {
+					clear(secret.Value)
+				}
+			}()
+			if err == nil && (len(material.Secrets) != 1 || string(material.Secrets[0].Value) != "value") {
+				return errors.New("wrong preparation Secrets")
 			}
-			return e
-		}},
-		{"source", "/worker/v1/run/computer-instances/computer-source", workerapi.ComputerSourceMaterial{VersionID: id, WriteKeyID: id, Root: root, Keys: []workerapi.ComputerKeyMaterial{key}}, func(ctx context.Context, c *Client) error {
-			m, e := c.ComputerSource(ctx, workerapi.ComputerSourceRequest{ComputerInstanceID: id, DesiredVersion: 7})
-			defer m.Clear()
-			if e == nil && (m.VersionID != id || len(m.Keys) != 1) {
-				return errors.New("wrong source")
-			}
-			return e
-		}},
-		{"register", "/worker/v1/run/computer-instances/initialization/objects/register", struct{}{}, func(ctx context.Context, c *Client) error {
-			return c.RegisterInitialComputerObject(ctx, workerapi.InitialComputerObjectRequest{ComputerInstanceID: id, DesiredVersion: 7})
-		}},
-		{"certify", "/worker/v1/run/computer-instances/initialization/objects/certify", struct{}{}, func(ctx context.Context, c *Client) error {
-			return c.CertifyInitialComputerObject(ctx, workerapi.InitialComputerObjectRequest{ComputerInstanceID: id, DesiredVersion: 7})
-		}},
-		{"publish", "/worker/v1/run/computer-instances/initialization/version", workerapi.InitialComputerVersionResponse{ComputerID: id, VersionID: id}, func(ctx context.Context, c *Client) error {
-			m, e := c.PublishInitialComputerVersion(ctx, workerapi.InitialComputerVersionRequest{ComputerInstanceID: id, DesiredVersion: 7, Root: root})
-			if e == nil && (m.ComputerID != id || m.VersionID != id) {
-				return errors.New("wrong publication")
-			}
-			return e
+			return err
 		}},
 	}
 }
@@ -222,7 +210,7 @@ func TestPreparationRefreshThenRetriesWithoutChangingPayload(t *testing.T) {
 				defer mu.Unlock()
 				if r.URL.Path == "/worker/v1/instance/credential" {
 					credentials++
-					json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "renewed", ExpiresInSeconds: 3600})
+					json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{WorkerEpoch: 7, Credential: "renewed", ExpiresInSeconds: 3600})
 					return
 				}
 				body, _ := io.ReadAll(r.Body)
@@ -283,7 +271,7 @@ func TestPreparationRefreshesOnlyOnce(t *testing.T) {
 				defer mu.Unlock()
 				if r.URL.Path == "/worker/v1/instance/credential" {
 					credentials++
-					json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "renewed", ExpiresInSeconds: 3600})
+					json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{WorkerEpoch: 7, Credential: "renewed", ExpiresInSeconds: 3600})
 					return
 				}
 				requests++
@@ -319,28 +307,27 @@ func TestPreparationSensitiveTransportDetailsAreNotRetained(t *testing.T) {
 	}
 }
 
-func TestPreparationSnapshotsPublicationRequest(t *testing.T) {
+func TestPreparationSnapshotsCredentialRequest(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		id := uuid.NewV7().String()
-		request := workerapi.InitialComputerVersionRequest{ComputerInstanceID: id, DesiredVersion: 7}
-		request.Config.Env = []string{"VALUE=original"}
+		request := workerapi.PreparationExecutor{ChannelCredential: []byte("original")}
 		var bodies [][]byte
 		client := preparationClient(t, "http://127.0.0.1", &http.Client{Transport: preparationRoundTrip(func(r *http.Request) (*http.Response, error) {
 			body, _ := io.ReadAll(r.Body)
 			bodies = append(bodies, body)
-			status, encoded := 200, `{"computer_id":"`+id+`","version_id":"`+id+`"}`
+			status, encoded := 200, `{"id":"`+id+`","scope":"scope","key":"`+strings.Repeat("AQEB", 10)+`AQE="}`
 			if len(bodies) == 1 {
-				request.Config.Env[0] = "VALUE=changed"
+				copy(request.ChannelCredential, "modified")
 				status = 503
 				encoded = ""
 			}
 			return &http.Response{StatusCode: status, Status: http.StatusText(status), Body: io.NopCloser(strings.NewReader(encoded)), Header: make(http.Header)}, nil
 		})})
-		if _, err := client.PublishInitialComputerVersion(t.Context(), request); err != nil {
+		if _, err := client.PreparationWriteKey(t.Context(), request); err != nil {
 			t.Fatal(err)
 		}
-		if len(bodies) != 2 || !bytes.Equal(bodies[0], bodies[1]) || !bytes.Contains(bodies[1], []byte("VALUE=original")) {
-			t.Fatalf("publication changed during retry: %q", bodies)
+		if len(bodies) != 2 || !bytes.Equal(bodies[0], bodies[1]) || !bytes.Contains(bodies[1], []byte("b3JpZ2luYWw=")) {
+			t.Fatalf("credential request changed during retry: %q", bodies)
 		}
 	})
 }
@@ -351,7 +338,7 @@ func TestPreparationDoesNotExtendRetryToOtherWorkerMutations(t *testing.T) {
 		calls++
 		return &http.Response{StatusCode: 503, Status: "503", Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
 	})})
-	_, err := client.RegisterCheckpoint(t.Context(), workerapi.RegisterCheckpointRequest{})
+	err := client.RegisterPreparationObject(t.Context(), workerapi.PreparationObject{})
 	if calls != 1 || !httpclient.IsStatus(err, 503) {
 		t.Fatalf("unrelated mutation retried: calls=%d err=%v", calls, err)
 	}

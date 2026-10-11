@@ -29,28 +29,20 @@ type definitionListCursor struct {
 	AfterID       string `json:"after_id"`
 }
 
-func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
-	s.listDefinitions(w, r, definition.KindTask)
+func (s *Server) listAgentDefinitions(w http.ResponseWriter, r *http.Request) {
+	s.listDefinitions(w, r, definition.KindAgent)
 }
 
-func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
-	s.getDefinition(w, r, definition.KindTask, chi.URLParam(r, "taskID"))
+func (s *Server) getAgentDefinition(w http.ResponseWriter, r *http.Request) {
+	s.getDefinition(w, r, definition.KindAgent, chi.URLParam(r, "agentDefinitionID"))
 }
 
-func (s *Server) listActors(w http.ResponseWriter, r *http.Request) {
-	s.listDefinitions(w, r, definition.KindActor)
+func (s *Server) listComputerDefinitions(w http.ResponseWriter, r *http.Request) {
+	s.listDefinitions(w, r, definition.KindComputer)
 }
 
-func (s *Server) getActor(w http.ResponseWriter, r *http.Request) {
-	s.getDefinition(w, r, definition.KindActor, chi.URLParam(r, "actorID"))
-}
-
-func (s *Server) listSandboxes(w http.ResponseWriter, r *http.Request) {
-	s.listDefinitions(w, r, definition.KindSandbox)
-}
-
-func (s *Server) getSandbox(w http.ResponseWriter, r *http.Request) {
-	s.getDefinition(w, r, definition.KindSandbox, chi.URLParam(r, "sandboxID"))
+func (s *Server) getComputerDefinition(w http.ResponseWriter, r *http.Request) {
+	s.getDefinition(w, r, definition.KindComputer, chi.URLParam(r, "computerDefinitionID"))
 }
 
 func (s *Server) listDefinitions(w http.ResponseWriter, r *http.Request, kind definition.Kind) {
@@ -70,7 +62,7 @@ func (s *Server) listDefinitions(w http.ResponseWriter, r *http.Request, kind de
 		cursorDeploymentID := uuid.MustParse(cursor.DeploymentID)
 		selected, after = &cursorDeploymentID, &cursor.AfterID
 	}
-	page, err := deployment.ListDefinitions(r.Context(), s.db, principal, scope, kind, selected, limit, after)
+	page, err := deployment.ListDefinitions(r.Context(), s.tx, principal, scope, kind, selected, limit, after)
 	if err != nil {
 		s.writeDeploymentError(w, err)
 		return
@@ -80,14 +72,14 @@ func (s *Server) listDefinitions(w http.ResponseWriter, r *http.Request, kind de
 	if page.HasMore {
 		nextCursor, err = encodeDefinitionListCursor(definitionListCursor{
 			ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
-			DeploymentID: deploymentID, Kind: string(kind), AfterID: page.DeclaredIDs[len(page.DeclaredIDs)-1],
+			DeploymentID: deploymentID, Kind: string(kind), AfterID: page.Items[len(page.Items)-1].ID,
 		})
 		if err != nil {
 			writeError(w, errors.New("list Definitions"))
 			return
 		}
 	}
-	writeDefinitionList(w, kind, deploymentID, page.DeclaredIDs, nextCursor)
+	writeDefinitionList(w, kind, deploymentID, page.Items, nextCursor)
 }
 
 func (s *Server) getDefinition(w http.ResponseWriter, r *http.Request, kind definition.Kind, id string) {
@@ -106,12 +98,12 @@ func (s *Server) getDefinition(w http.ResponseWriter, r *http.Request, kind defi
 		writeError(w, badRequest(err))
 		return
 	}
-	deploymentID, declaredID, err := deployment.GetDefinition(r.Context(), s.db, principal, scope, kind, selected, id)
+	deploymentID, item, err := deployment.GetDefinition(r.Context(), s.tx, principal, scope, kind, selected, id)
 	if err != nil {
 		s.writeDeploymentError(w, err)
 		return
 	}
-	writeDefinition(w, kind, declaredID, deploymentID.String())
+	writeDefinition(w, kind, item, deploymentID.String())
 }
 
 func parseDefinitionListQuery(
@@ -208,36 +200,28 @@ func decodeDefinitionListCursor(raw string) (definitionListCursor, error) {
 	return cursor, nil
 }
 
-func writeDefinitionList(w http.ResponseWriter, kind definition.Kind, deploymentID string, ids []string, nextCursor string) {
+func writeDefinitionList(w http.ResponseWriter, kind definition.Kind, deploymentID string, records []deployment.DefinitionRecord, nextCursor string) {
 	switch kind {
-	case definition.KindTask:
-		items := make([]api.DefinitionListItem, 0, len(ids))
-		for _, id := range ids {
-			items = append(items, api.DefinitionListItem{ID: id})
+	case definition.KindAgent:
+		items := make([]api.AgentDefinitionListItem, 0, len(records))
+		for _, item := range records {
+			items = append(items, api.AgentDefinitionListItem{ID: item.ID, AgentID: item.AgentID.String()})
 		}
-		writeJSON(w, http.StatusOK, api.ListTasksResponse{DeploymentID: deploymentID, Tasks: items, NextCursor: nextCursor})
-	case definition.KindActor:
-		items := make([]api.DefinitionListItem, 0, len(ids))
-		for _, id := range ids {
-			items = append(items, api.DefinitionListItem{ID: id})
+		writeJSON(w, http.StatusOK, api.ListAgentDefinitionsResponse{DeploymentID: deploymentID, AgentDefinitions: items, NextCursor: nextCursor})
+	case definition.KindComputer:
+		items := make([]api.DefinitionListItem, 0, len(records))
+		for _, item := range records {
+			items = append(items, api.DefinitionListItem{ID: item.ID})
 		}
-		writeJSON(w, http.StatusOK, api.ListActorsResponse{DeploymentID: deploymentID, Actors: items, NextCursor: nextCursor})
-	case definition.KindSandbox:
-		items := make([]api.DefinitionListItem, 0, len(ids))
-		for _, id := range ids {
-			items = append(items, api.DefinitionListItem{ID: id})
-		}
-		writeJSON(w, http.StatusOK, api.ListSandboxesResponse{DeploymentID: deploymentID, Sandboxes: items, NextCursor: nextCursor})
+		writeJSON(w, http.StatusOK, api.ListComputerDefinitionsResponse{DeploymentID: deploymentID, ComputerDefinitions: items, NextCursor: nextCursor})
 	}
 }
 
-func writeDefinition(w http.ResponseWriter, kind definition.Kind, id, deploymentID string) {
+func writeDefinition(w http.ResponseWriter, kind definition.Kind, item deployment.DefinitionRecord, deploymentID string) {
 	switch kind {
-	case definition.KindTask:
-		writeJSON(w, http.StatusOK, api.Task{ID: id, DeploymentID: deploymentID})
-	case definition.KindActor:
-		writeJSON(w, http.StatusOK, api.Actor{ID: id, DeploymentID: deploymentID})
-	case definition.KindSandbox:
-		writeJSON(w, http.StatusOK, api.Sandbox{ID: id, DeploymentID: deploymentID})
+	case definition.KindAgent:
+		writeJSON(w, http.StatusOK, api.AgentDefinition{ID: item.ID, AgentID: item.AgentID.String(), DeploymentID: deploymentID})
+	case definition.KindComputer:
+		writeJSON(w, http.StatusOK, api.ComputerDefinition{ID: item.ID, DeploymentID: deploymentID})
 	}
 }

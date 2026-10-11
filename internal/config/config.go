@@ -27,6 +27,8 @@ const (
 )
 
 type ControlPlane struct {
+	DiagnosticAdmission             DiagnosticAdmission
+	EnvironmentExecutionLimits      EnvironmentExecutionLimits
 	Addr                            string
 	DeploymentMode                  string
 	DatabaseURL                     string
@@ -47,9 +49,7 @@ type ControlPlane struct {
 	ComputerWrappingKeyID           string
 	ComputerKMSKeyARN               string
 	ComputerFencingKey              []byte
-	TokenCredentialKey              []byte
 	PublicURL                       string
-	APIOrigin                       string
 	MagicLinkDebugURLs              bool
 	AdminEmails                     []string
 	EmailProvider                   string
@@ -72,6 +72,8 @@ type Bootstrap struct {
 }
 
 type Dispatcher struct {
+	PublicURL          string
+	DiagnosticExporter DiagnosticExporter
 	ControlPlaneURL    string
 	EncryptionKey      []byte
 	DatabaseURL        string
@@ -92,6 +94,9 @@ type ClickHouse struct {
 }
 
 type Worker struct {
+	LogChunkBytes             int64
+	LogBufferBytes            int64
+	LogBufferRecords          int64
 	ComputerSaveEvery         time.Duration
 	ComputerDevices           []string
 	ComputerStagingMiB        int64
@@ -128,7 +133,6 @@ type Worker struct {
 	WorkerCapacityMemoryMiB   int64
 	WorkerDiskMiB             int64
 	WorkerDiskReserveMiB      int64
-	ArtifactCacheMaxMiB       int64
 	WorkerExecutionSlots      int32
 	VMInitTimeout             time.Duration
 	VMHealthTimeout           time.Duration

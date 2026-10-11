@@ -37,6 +37,20 @@ type VersionPage struct {
 	SizeBytes int64  `json:"size_bytes"`
 }
 
+// Digest identifies the complete locator, including its page, key and capacity.
+// A pack digest alone can contain several different roots. This identity is not
+// evidence that the referenced bytes have been uploaded or authenticated.
+func (r VersionRoot) Digest() (string, error) {
+	if err := r.Validate(r.LogicalBytes); err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(r)
+	if err != nil {
+		return "", err
+	}
+	return sha256sum.DigestBytes(raw), nil
+}
+
 func (r VersionRoot) Validate(capacity int64) error {
 	if r.FormatVersion != 1 || capacity <= 0 || capacity%4096 != 0 || r.LogicalBytes != capacity {
 		return errors.New("invalid computer disk version format or capacity")

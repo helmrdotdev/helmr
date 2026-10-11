@@ -2,7 +2,6 @@ package firecracker
 
 import (
 	"encoding/json"
-	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -26,34 +25,6 @@ func TestVMRuntimeDescriptorGoldenJSONAndDigest(t *testing.T) {
 	}
 	if digest != goldenDigest {
 		t.Fatalf("descriptor digest = %s, want %s", digest, goldenDigest)
-	}
-}
-
-func TestVCPUCountForMilliCPUIsOverflowSafe(t *testing.T) {
-	tests := []struct {
-		milliCPU int64
-		want     int64
-	}{
-		{milliCPU: 1, want: 1},
-		{milliCPU: 999, want: 1},
-		{milliCPU: 1000, want: 1},
-		{milliCPU: 1001, want: 2},
-		{milliCPU: 2000, want: 2},
-		{milliCPU: math.MaxInt64, want: (math.MaxInt64-1)/1000 + 1},
-	}
-	for _, test := range tests {
-		got, err := VCPUCountForMilliCPU(test.milliCPU)
-		if err != nil {
-			t.Fatalf("VCPUCountForMilliCPU(%d): %v", test.milliCPU, err)
-		}
-		if got != test.want {
-			t.Fatalf("VCPUCountForMilliCPU(%d) = %d, want %d", test.milliCPU, got, test.want)
-		}
-	}
-	for _, invalid := range []int64{0, -1} {
-		if _, err := VCPUCountForMilliCPU(invalid); err == nil {
-			t.Fatalf("VCPUCountForMilliCPU(%d) succeeded", invalid)
-		}
 	}
 }
 

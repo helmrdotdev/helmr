@@ -15,11 +15,11 @@ Start with the narrowest failing layer and use ECS service events, CloudWatch lo
 | `/readyz` fails while `/healthz` passes | Check `DATABASE_URL`, database reachability, whether the serving connection is read only, and whether migrations for the deployed image completed successfully. |
 | GitHub login fails | The callback must be exactly `<controlplane_url>/auth/github/callback`; verify the client ID and that the secret matches the same OAuth app. |
 | Stale-host fencing stays suspended | Check the Dispatcher’s `CONTROL_PLANE_URL`, access to that same Worker-facing endpoint, `/readyz`, and the logged suspension reason. After recovery, allow 120 seconds of successful checks. |
-| Run stays queued | Confirm a dispatcher task is running, desired worker capacity is nonzero, and at least one compatible execution Worker is active. |
+| Turn stays queued | Confirm a dispatcher task is running, desired worker capacity is nonzero, and at least one compatible execution Worker is active. |
 | Worker does not become active | Run `worker status`; inspect its systemd journal through SSM. Check KVM, Firecracker, jailer, `ip`, `nft`, certified guest artifacts, the enrollment-token file, Pool name, capacity settings, and Control Plane reachability. |
 | Worker fails with `worker_api_version_mismatch` | Enrollment, token exchange, or activation rejected a missing or incompatible worker API version. The error names both API versions. Deploy a compatible worker AMI or roll the Control Plane back; follow the drain-first procedure in Upgrades for incompatible releases. |
 | Worker launch or drain stalls | Check the Auto Scaling lifecycle hook, worker unit status, active executions, launch timeout, and whether provider scaling attempted to bypass protected, claim-fenced draining. |
-| Task cannot reach a repository or API | Check the task secret and its scope, task configuration, worker NAT or egress, DNS, and blocked network policy. |
+| Agent cannot reach a repository or API | Check its Computer Secret bindings and scope, image/tools, worker NAT or egress, DNS, and blocked network policy. |
 | Bundle build fails | Run `helmr build` locally and inspect the isolated builder output, lockfile, dependency credentials, and available local or CI disk. |
 | Checkpoint resume fails after replacement | Check checkpoint encryption-key availability and compatibility of backend, architecture, ABI, kernel, rootfs, runtime configuration, vCPU, memory, and network ABI. |
 | Service fails after an upgrade | Compare the resolved image and AMI with the recorded release, verify migrations ran before service rollout, and follow the prepared rollback plan. An image downgrade alone does not reverse schema changes. |

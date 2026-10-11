@@ -20,6 +20,8 @@ func NewNetworkReclaimer(Config) (*NetworkReclaimer, error) { return nil, ErrUns
 
 func (*NetworkReclaimer) Reclaim(context.Context, vm.Owner) error { return ErrUnsupported }
 
+func RemoveStoppedCgroup(string, string, vm.Owner) error { return ErrUnsupported }
+
 func NewConnector(Config) (*Connector, error) {
 	return nil, ErrUnsupported
 }

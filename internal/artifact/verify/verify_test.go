@@ -3,12 +3,10 @@ package verify
 import (
 	"context"
 	"crypto/sha256"
-	"strings"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
-	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -18,15 +16,15 @@ func TestProgramArtifactAcceptsProgram(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if verified.Index().Declarations[0].DeclaredID != "build" {
-		t.Fatalf("verified index = %#v", verified.Index())
+	if verified.Metadata().Definitions[0].DeclaredID != "build" {
+		t.Fatalf("verified index = %#v", verified.Metadata())
 	}
 }
 
 func TestProgramArtifactRejectsContractDivergence(t *testing.T) {
 	tests := map[string]func(*testProgram){
 		"Program index": func(program *testProgram) {
-			program.artifact.Files["helmr/declarations.json"] = []byte(
+			program.artifact.Files["helmr/program-metadata.json"] = []byte(
 				`{"declarations":[],"formatVersion":0}`,
 			)
 		},
@@ -238,33 +236,10 @@ func newTestProgram(t *testing.T) *testProgram {
 		`{"assets":[],"dirs":["tasks"],"external":[],"ignorePatterns":[]}`,
 	)
 	sourcePath := "helmr/app/entry-0.mjs"
-	sourceRaw := []byte("export const build = task({ id: \"build\" })\n")
-	programRaw, err := artifact.CanonicalProgramIndex(artifact.ProgramIndex{
-		Architecture:       definition.ArchitectureX8664,
-		ConfigResultDigest: artifacttest.Digest(string(configRaw)),
-		Declarations: []artifact.ProgramIndexDeclaration{{
-			Kind:       definition.KindTask,
-			DeclaredID: "build",
-			Task: &definition.TaskManifest{
-				Payload: definition.SchemaManifest{Kind: definition.SchemaKindNone},
-				Run: definition.RunManifest{
-					Queue:         "task/build",
-					MaxDurationMs: 900000,
-					Retry:         definition.RetryManifest{Enabled: false},
-				},
-			},
-			Locator: &artifact.ProgramLocator{
-				ExportName: "build",
-				ModulePath: sourcePath,
-				Slot:       artifact.DeclarationSlotHandler,
-			},
-		}},
-		Queues: []definition.QueueInput{{
-			Name: "task/build",
-		}},
-		RuntimeContract: definition.RuntimeContract,
-		RuntimeDigest:   "sha256:" + strings.Repeat("f", 64),
-	})
+	sourceRaw := []byte("export const build = {}\n")
+	index := artifacttest.ProgramMetadata(t)
+	index.ConfigResultDigest = artifacttest.Digest(string(configRaw))
+	programRaw, err := artifact.CanonicalProgramMetadata(index)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,8 +249,8 @@ func newTestProgram(t *testing.T) *testProgram {
 			Digest: artifacttest.Digest(string(configRaw)),
 			Path:   "helmr/config.json",
 		},
-		PayloadDigest:      artifacttest.Digest("pending"),
-		ProgramIndexDigest: artifacttest.Digest(string(programRaw)),
+		PayloadDigest:         artifacttest.Digest("pending"),
+		ProgramMetadataDigest: artifacttest.Digest(string(programRaw)),
 	}
 	manifestRaw, err := artifact.CanonicalProgramManifest(manifest)
 	if err != nil {
@@ -287,7 +262,13 @@ func newTestProgram(t *testing.T) *testProgram {
 	memory.AddDirectory("helmr/app")
 	memory.AddFile("helmr/program-manifest.json", manifestRaw, 0644)
 	memory.AddFile("helmr/config.json", configRaw, 0644)
-	memory.AddFile("helmr/declarations.json", programRaw, 0644)
+	memory.AddFile("helmr/program-metadata.json", programRaw, 0644)
+	agentRaw, err := artifact.CanonicalDefinitionIndex(artifacttest.DefinitionIndex())
+	if err != nil {
+		t.Fatal(err)
+	}
+	memory.AddFile("helmr/definition-index.json", agentRaw, 0644)
+	memory.AddFile(artifacttest.ModulePath("b"), []byte("export const chat = {}"), 0644)
 	memory.AddFile(sourcePath, sourceRaw, 0644)
 	memory.AddFile("helmr.config.ts", configSourceRaw, 0644)
 	memory.AddFile("package.json", []byte(`{"packageManager":"bun@1.3.13"}`), 0644)
@@ -334,4 +315,50 @@ func (program *testProgram) refreshManifest(t *testing.T) {
 func digestBytes(raw []byte) string {
 	digest := sha256.Sum256(raw)
 	return sha256sum.FormatDigest(digest[:])
+}
+
+func TestProgramArtifactRequiresExactDefinitionIndex(t *testing.T) {
+	for name, mutate := range map[string]func(*testProgram){
+		"missing index": func(p *testProgram) { delete(p.artifact.Files, "helmr/definition-index.json") },
+		"old path": func(p *testProgram) {
+			raw := p.artifact.Files["helmr/definition-index.json"]
+			delete(p.artifact.Files, "helmr/definition-index.json")
+			p.artifact.AddFile("helmr/agents.json", raw, 0644)
+		},
+		"invalid index": func(p *testProgram) { p.artifact.ReplaceFile("helmr/definition-index.json", []byte(`{}`)) },
+		"Agent identity mismatch": func(p *testProgram) {
+			index := artifacttest.DefinitionIndex()
+			index.Agents[0].ID = "other"
+			raw, err := artifact.CanonicalDefinitionIndex(index)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.artifact.ReplaceFile("helmr/definition-index.json", raw)
+		},
+		"Computer module missing": func(p *testProgram) {
+			index := artifacttest.DefinitionIndex()
+			index.Computers[0].ThroughAgent = false
+			index.Computers[0].ModulePath = "helmr/app/entry-9.mjs"
+			raw, err := artifact.CanonicalDefinitionIndex(index)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.artifact.ReplaceFile("helmr/definition-index.json", raw)
+		},
+		"index symlink": func(p *testProgram) {
+			p.artifact.Mutate("helmr/definition-index.json", func(e *artifact.Entry) {
+				e.Kind = artifact.EntrySymlink
+				e.LinkTarget = "program-metadata.json"
+				e.SizeBytes = 0
+			})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := newTestProgram(t)
+			mutate(p)
+			if _, err := verifyProgramArtifact(t.Context(), p.descriptor); err == nil {
+				t.Fatal("accepted invalid definition index")
+			}
+		})
+	}
 }

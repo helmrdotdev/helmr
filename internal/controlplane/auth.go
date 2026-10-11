@@ -43,60 +43,6 @@ func (s *Server) requireAPIKeyWithErrorWriter(
 
 type authErrorWriter func(http.ResponseWriter, *slog.Logger, error)
 
-func (s *Server) requirePrincipalWithErrorWriter(
-	next http.Handler,
-	writeAuthError authErrorWriter,
-) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if token, ok := bearerToken(r.Header.Get("authorization")); ok {
-			principal, err := s.bearerPrincipal(r, token)
-			if err != nil {
-				writeAuthError(w, s.log, err)
-				return
-			}
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
-			return
-		}
-		principal, rawSession, err := s.sessionPrincipal(r)
-		if err != nil {
-			if errors.Is(err, auth.ErrUnauthenticated) {
-				clearSessionCookie(w, r)
-			}
-			writeAuthError(w, s.log, err)
-			return
-		}
-		r = r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal))
-		recorder := newSessionRefreshResponseWriter(w, r, rawSession, s.identity.Lifetimes().Session)
-		next.ServeHTTP(recorder, r)
-		recorder.finish()
-	})
-}
-
-func (s *Server) bearerPrincipal(r *http.Request, token string) (auth.Principal, error) {
-	token = strings.TrimSpace(token)
-	if strings.HasPrefix(token, auth.APIKeyPrefix) {
-		principal, err := s.apiKeyPrincipal(r, token)
-		if err == nil {
-			return principal, nil
-		}
-		if !errors.Is(err, auth.ErrUnauthenticated) {
-			return auth.Principal{}, err
-		}
-		return s.sessionPrincipalFromToken(r, token)
-	}
-	principal, err := s.sessionPrincipalFromToken(r, token)
-	if err == nil {
-		return principal, nil
-	}
-	if !errors.Is(err, auth.ErrUnauthenticated) && s.userAuthConfigured() == nil {
-		return auth.Principal{}, fmt.Errorf("session authentication: %w", err)
-	}
-	if s.auth == nil {
-		return auth.Principal{}, auth.ErrUnauthenticated
-	}
-	return s.apiKeyPrincipal(r, token)
-}
-
 func (s *Server) apiKeyPrincipal(r *http.Request, token string) (auth.Principal, error) {
 	if s.auth == nil {
 		return auth.Principal{}, fmt.Errorf("api key authentication: authentication is not configured")
@@ -170,22 +116,6 @@ func writeSessionAuthError(w http.ResponseWriter, _ *slog.Logger, _ error) {
 	writeError(w, unauthorized(errors.New("session authentication is required")))
 }
 
-func writeActorStartAuthError(w http.ResponseWriter, log *slog.Logger, err error) {
-	if !errors.Is(err, auth.ErrUnauthenticated) {
-		log.Error("Actor start authentication failed", "error", err)
-		writeError(w, unavailable(codedError{
-			code:      "actor_start_authority_unavailable",
-			message:   "actor start authentication is unavailable",
-			retryable: true,
-		}))
-		return
-	}
-	writeError(w, unauthorized(codedError{
-		code:    "authentication_required",
-		message: "authentication is required",
-	}))
-}
-
 func looksLikeSessionBearerToken(token string) bool {
 	if len(token) < 40 {
 		return false
@@ -237,6 +167,10 @@ func (s *Server) requireWorker(next http.Handler) http.Handler {
 	return s.requireWorkerHost(workergroup.AuthenticateHost, next)
 }
 
+func (s *Server) requireDiagnosticWorker(next http.Handler) http.Handler {
+	return s.requireWorkerHostStore(workergroup.AuthenticateHost, db.New(s.diagnosticDB), next)
+}
+
 func (s *Server) requireWorkerActivation(next http.Handler) http.Handler {
 	return s.requireWorkerHost(workergroup.AuthenticateActivatingHost, next)
 }
@@ -257,13 +191,17 @@ func (s *Server) requireWorkerFence(next http.Handler) http.Handler {
 type hostAuthenticator func(context.Context, db.Querier, workergroup.HostAuthConfig, string, time.Time) (workergroup.HostPrincipal, error)
 
 func (s *Server) requireWorkerHost(authenticate hostAuthenticator, next http.Handler) http.Handler {
+	return s.requireWorkerHostStore(authenticate, s.db, next)
+}
+
+func (s *Server) requireWorkerHostStore(authenticate hostAuthenticator, store db.Querier, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token, ok := bearerToken(r.Header.Get("authorization"))
 		if !ok {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}
-		worker, err := authenticate(r.Context(), s.db, s.hostAuth, token, time.Now())
+		worker, err := authenticate(r.Context(), store, s.hostAuth, token, time.Now())
 		if errors.Is(err, workergroup.ErrUnauthenticated) {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return

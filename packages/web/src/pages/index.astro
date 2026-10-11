@@ -63,13 +63,13 @@ const annotated = (source: string, notes: Note[]) => {
 
 const computerNotes: Note[] = [
   { from: "image:", to: "resources:", title: "Exactly this image.", text: "No hidden base, no drift." },
-  { from: "buildSecrets:", to: "  secrets:", title: "Secrets by purpose.", text: "Build and run kept apart." },
+  { from: "buildSecrets:", to: "allowedOrigins", title: "Secrets by purpose.", text: "Protected keys stay outside the VM." },
   { from: "async prepare", to: "  },", title: "One prepared version.", text: "Every new computer starts from it." },
   { from: "refresh:", to: "refresh:", title: "Kept fresh.", text: "Rebuilt on a schedule." },
 ];
 
 const agentNotes: Note[] = [
-  { from: "async setup", to: "return { client", title: "Start once, keep it alive.", text: "Runs before the first turn. Hibernation keeps it." },
+  { from: "async init", to: "return { client", title: "Start once, keep it alive.", text: "Runs before the first turn. Hibernation keeps it." },
   { from: "client.session.promptAsync", to: "    })", title: "One conversation, every turn.", text: "Each turn sends the next instruction to the same OpenCode session." },
   { from: "OpenCode asks", to: "client.question.reply", title: "Questions go to your team.", text: "When OpenCode asks, turn.ask brings the question to a teammate." },
   { from: "triggers: [", to: "  ],", title: "Run on a schedule.", text: "Each run starts a fresh session." },
@@ -273,7 +273,7 @@ const nav = [
         <section id="work" class="block" aria-labelledby="work-title">
           <h2 id="work-title">Write agent work like a local script.</h2>
           <p>
-            Start the coding agent you already use in <code>setup</code>, then hand it each turn. When it
+            Start the coding agent you already use in <code>init</code>, then hand it each turn. When it
             needs a decision, a teammate answers. No workflow engine, and no rewriting your agent for
             someone else&rsquo;s API.
           </p>
@@ -366,7 +366,7 @@ const nav = [
           <p>
             There&rsquo;s no checkpoint API, no state to serialize, no storage to manage. Memory, processes
             and files are saved outside the VM as your agent works, so it picks up where it left off,
-            even on another machine, without repeating work or running setup again.
+            even on another machine, without repeating work or running <code>init</code> again.
           </p>
           <a class="side-link" href={docsFor("durable").href}><span>Docs</span>{docsFor("durable").label} &rarr;</a>
           <figure class="carry" aria-label="A VM's memory, processes and files are saved outside it and appear unchanged in another VM">
@@ -434,8 +434,8 @@ const nav = [
           <a class="side-link" href={docsFor("open-source").href}><span>Docs</span>{docsFor("open-source").label} &rarr;</a>
           <div class="homes">
             <div class="card home">
-              <p class="home-title">Helmr Cloud <span class="soon">coming soon</span></p>
-              <p>A managed fleet. Projects, environments and immutable deployments, with no infrastructure to run.</p>
+              <p class="home-title">Helmr Cloud <span class="soon">planned</span></p>
+              <p>Managed hosting is planned and is not currently available.</p>
               <a href="/docs">Read the docs &rarr;</a>
             </div>
             <div class="card home home-dark">

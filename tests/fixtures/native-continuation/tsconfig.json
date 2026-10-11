@@ -1,0 +1,17 @@
+{
+  "extends": "../../../examples/issue-fixer/tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM"],
+    "typeRoots": ["../../../node_modules/@types"],
+    "paths": {
+      "@helmr/sdk": ["../../../sdk/typescript/src/index.ts"],
+      "@helmr/sdk/mcp": ["../../../sdk/typescript/src/mcp.ts"],
+      "@helmr/sdk/internal": ["../../../sdk/typescript/src/internal.ts"]
+    }
+  },
+  "include": [
+    "production.ts",
+    "production-driver.ts",
+    "../../../runtime/typescript/src/node-crypto.d.ts"
+  ]
+}

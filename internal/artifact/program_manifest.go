@@ -16,12 +16,12 @@ import (
 
 const ProgramManifestFormatVersion = 0
 
-// ProgramManifest binds the executable payload and its declaration index.
+// ProgramManifest binds the executable payload and its definition metadata.
 type ProgramManifest struct {
-	FormatVersion      int               `json:"formatVersion"`
-	Config             ProgramPathDigest `json:"config"`
-	PayloadDigest      string            `json:"payloadDigest"`
-	ProgramIndexDigest string            `json:"programIndexDigest"`
+	FormatVersion         int               `json:"formatVersion"`
+	Config                ProgramPathDigest `json:"config"`
+	PayloadDigest         string            `json:"payloadDigest"`
+	ProgramMetadataDigest string            `json:"programMetadataDigest"`
 }
 type ProgramPathDigest struct {
 	Digest string `json:"digest"`
@@ -81,13 +81,13 @@ func CanonicalProgramManifest(manifest ProgramManifest) ([]byte, error) {
 
 func validateProgramManifest(value ProgramManifest) error {
 	if value.FormatVersion != ProgramManifestFormatVersion || value.Config.Path != "helmr/config.json" ||
-		!sha256DigestPattern.MatchString(value.Config.Digest) || !sha256DigestPattern.MatchString(value.PayloadDigest) || !sha256DigestPattern.MatchString(value.ProgramIndexDigest) {
+		!sha256DigestPattern.MatchString(value.Config.Digest) || !sha256DigestPattern.MatchString(value.PayloadDigest) || !sha256DigestPattern.MatchString(value.ProgramMetadataDigest) {
 		return errors.New("program manifest v0 authority is invalid")
 	}
 	return nil
 }
 func ProgramManifestFromCompilerResult(value ProgramCompilerResult, indexDigest string) ProgramManifest {
-	return ProgramManifest{FormatVersion: ProgramManifestFormatVersion, Config: value.Config, PayloadDigest: value.PayloadDigest, ProgramIndexDigest: indexDigest}
+	return ProgramManifest{FormatVersion: ProgramManifestFormatVersion, Config: value.Config, PayloadDigest: value.PayloadDigest, ProgramMetadataDigest: indexDigest}
 }
 func VerifyProgramManifestFiles(ctx context.Context, artifact *Tree, value ProgramManifest) error {
 	if err := VerifyProgramPathDigest(ctx, artifact, value.Config); err != nil {
@@ -199,7 +199,7 @@ func resolveProgramArtifactPath(
 	return Entry{}, "", fmt.Errorf("program path %q is empty", value)
 }
 
-func ProgramIndexDigest(raw []byte) string {
+func ProgramMetadataDigest(raw []byte) string {
 	digest := sha256.Sum256(raw)
 	return sha256sum.FormatDigest(digest[:])
 }

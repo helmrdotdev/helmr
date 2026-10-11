@@ -125,7 +125,7 @@ with another service. The Worker image must contain `kmod` and the host NBD modu
 
 `computer_staging_mib` defaults to 65536 MiB per Instance and is a reserved typed
 environment setting. Explicit disk capacity must fund every configured slot after
-reserve and artifact cache. A slot includes guest scratch, the 32-GiB Computer
+reserve. A slot includes guest scratch, the 32-GiB Computer
 projection, Computer staging, 16 GiB of Program/runtime files, retained restored
 RAM/state and full checkpoint intermediates. The module bounds the current
 filepack and encryption formats; the Worker also checks fresh filesystem space

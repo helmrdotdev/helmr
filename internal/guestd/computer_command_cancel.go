@@ -13,9 +13,6 @@ import (
 // Cancellation acknowledges intent. The output stream publishes the outcome only
 // after the command's process scope has been reaped; peers retain their authority.
 func (r *computerOperationRegistry) cancelCommand(ctx context.Context, a *computerv0.ComputerCommandAuthority) error {
-	if err := validateComputerBasicExecClaim(ctx, &computerv0.ComputerBasicExecRequest{Envelope: a}); err != nil {
-		return err
-	}
 	entry, release, ok := r.acquireCommandInstance(a.GetComputerInstanceId(), a.GetComputerId(), a.GetChannelCredential())
 	if !ok {
 		return errors.New("command Instance is unavailable")
@@ -28,7 +25,7 @@ func (r *computerOperationRegistry) cancelCommand(ctx context.Context, a *comput
 	if !r.currentMountLocked(entry, entry.computerInstanceID, a.GetComputerId(), a.GetChannelCredential()) || entry.writerGeneration != a.GetWriterGeneration() {
 		return errors.New("command writer changed")
 	}
-	if err := validateComputerBasicExecClaim(ctx, &computerv0.ComputerBasicExecRequest{Envelope: a}); err != nil {
+	if err := validateComputerBasicExecClaim(ctx, &computerv0.ComputerBasicExecRequest{Envelope: a}, entry.authorityNow()); err != nil {
 		return err
 	}
 	if command := entry.commands[a.GetOperationId()]; command != nil {
@@ -43,16 +40,19 @@ func (r *computerOperationRegistry) cancelCommand(ctx context.Context, a *comput
 	if r.captureSealed() || entry.stopping {
 		return errors.New("computer has sealed Command admission")
 	}
-	output, err := newCommandOutputSpool()
+	output, err := newCommandOutputSpool(diagnosticLimits{ChunkBytes: 1, BufferBytes: 1, BufferRecords: 1})
 	if err != nil {
 		return err
 	}
-	if err := validateComputerBasicExecClaim(ctx, &computerv0.ComputerBasicExecRequest{Envelope: a}); err != nil {
+	if err := validateComputerBasicExecClaim(ctx, &computerv0.ComputerBasicExecRequest{Envelope: a}, entry.authorityNow()); err != nil {
 		output.close()
 		return err
 	}
 	// A cancellation arriving before launch must prevent a delayed launch too.
 	command := &computerBasicExec{envelope: proto.Clone(a).(*computerv0.ComputerCommandAuthority), done: make(chan struct{}), output: output, result: computerBasicCommandFailure(a.GetRequestFingerprint(), "computer_command_cancelled", context.Canceled)}
+	output.finish(true)
+	command.result.Stdout = output.boundaries["stdout"]
+	command.result.Stderr = output.boundaries["stderr"]
 	close(command.done)
 	if entry.commands == nil {
 		entry.commands = make(map[string]*computerBasicExec)

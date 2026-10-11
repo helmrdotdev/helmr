@@ -308,10 +308,22 @@ func insertLiveTelemetryTestRow(t *testing.T, pool interface {
 	deploymentID := uuid.NewV7()
 	var outboxID int64
 	if err := pool.QueryRow(t.Context(), `
-		INSERT INTO telemetry_outbox (
-			org_id, stream_kind, source_kind, source_id, project_id,
-			environment_id, deployment_id, kind, message, publish_attempts
-		) VALUES ($1, 'event', 'deployment', $2, $3, $4, $2, 'deployment.ready', $5, $6)
+        WITH region AS (
+          INSERT INTO regions(id,display_name) VALUES($1::text,'Test') RETURNING id
+        ), org AS (
+          INSERT INTO organizations(id,name,slug) VALUES($1::uuid,'Test',$1::text) RETURNING id
+        ), project AS (
+          INSERT INTO projects(id,org_id,default_region_id,slug,name)
+          SELECT $3::uuid,org.id,region.id,'test','Test' FROM org,region RETURNING id,org_id
+        ), env AS (
+          INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex)
+          SELECT 'until_environment_deletion',$4::uuid,org_id,id,'test','Test','#112233' FROM project RETURNING id
+        ), deployment AS (
+          INSERT INTO deployments(environment_id,id,bundle_digest)
+          SELECT id,$2::uuid,'sha256:'||repeat('a',64) FROM env RETURNING environment_id,id
+        )
+        INSERT INTO telemetry_outbox(environment_id,deployment_id,stream_kind,kind,message,publish_attempts)
+        SELECT environment_id,id,'event','deployment.promoted',$5,$6 FROM deployment
 		RETURNING id
 	`, orgID, deploymentID, projectID, environmentID, label, attempts).Scan(&outboxID); err != nil {
 		t.Fatal(err)
@@ -377,7 +389,7 @@ func testLiveTelemetryRow(seq int64, streamKey string) db.ClaimLiveTelemetryOutb
 	now := time.Unix(1_700_000_000, seq).UTC()
 	return db.ClaimLiveTelemetryOutboxRow{
 		OutboxID:       seq,
-		StreamKind:     db.TelemetryStreamKindEvent,
+		StreamKind:     "event",
 		StreamKey:      streamKey,
 		Attempts:       1,
 		Seq:            seq,

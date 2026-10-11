@@ -9,18 +9,17 @@ import { ScopeSwitcher } from "./components/ScopeSwitcher";
 import { SettingsLayout } from "./components/SettingsLayout";
 import { getMe, logout } from "./lib/auth";
 import { ScopeProvider, useScope } from "./lib/scope";
-import { listTokens } from "./lib/tokens";
 import { cx, ui } from "./ui/styles";
 import { Overview } from "./routes/overview";
 import { Invite } from "./routes/invite";
 import { Login } from "./routes/login";
+import { AuthSlackLink } from "./routes/auth-slack-link";
+import { SlackConnect } from "./routes/slack-connect";
+import { AuthSlackCallback } from "./routes/auth-slack-callback";
+import { SlackSettings } from "./routes/slack-settings";
 import { AuthGitHubCallback } from "./routes/auth-github-callback";
 import { AuthMagicLinkCallback } from "./routes/auth-magic-link-callback";
-import { RunDetail } from "./routes/run-detail";
-import { Runs } from "./routes/runs";
 import { Sessions } from "./routes/sessions";
-import { Tokens } from "./routes/tokens";
-import { TokenDetail } from "./routes/token-detail";
 import { Computers } from "./routes/computers";
 import { Deployments } from "./routes/deployments";
 import { DeploymentDetail } from "./routes/deployment-detail";
@@ -34,6 +33,7 @@ import { OrganizationNew } from "./routes/organization-new";
 import { AccessRequired } from "./routes/access-required";
 import { Device } from "./routes/device";
 import { ComputerDetail } from "./routes/computer-detail";
+import { QuestionDetail } from "./routes/question-detail";
 import { SessionDetail } from "./routes/session-detail";
 import { AdminRegions } from "./routes/admin-regions";
 import { AdminWorkerGroups } from "./routes/admin-worker-groups";
@@ -138,6 +138,14 @@ function ProfileMenu() {
             <div class={"mt-0.75 font-mono text-[10.5px] font-medium uppercase tracking-[0.06em] text-console-subtle"}>{role()}</div>
           </div>
           <div class={"p-1"}>
+            <A
+              href="/account/slack"
+              class={ui.scopeAction}
+              role="menuitem"
+              onClick={() => setOpen(false)}
+            >
+              Slack account
+            </A>
             <Show when={me.data?.admin}>
               <A
                 href="/admin"
@@ -163,41 +171,6 @@ function ProfileMenu() {
         </div>
       </Show>
     </div>
-  );
-}
-
-function AttentionBadge() {
-  const scope = useScope();
-  const pending = createQuery(() => ({
-    queryKey: ["tokens", "pending-count", scope.selectedProjectID(), scope.selectedEnvironmentID()],
-    queryFn: () => listTokens(
-      { projectID: scope.selectedProjectID(), environmentID: scope.selectedEnvironmentID() },
-      { status: "pending", limit: 99 },
-    ),
-    enabled: !!scope.selectedProjectID() && !!scope.selectedEnvironmentID(),
-    retry: false,
-    refetchInterval: 30_000,
-  }));
-  const label = createMemo(() => {
-    const page = pending.data;
-    if (!page) return null;
-    if (page.next_cursor) return "99+";
-    return page.tokens.length > 0 ? String(page.tokens.length) : null;
-  });
-  return (
-    <Show when={label()}>
-      {(count) => (
-        <A
-          href="/"
-          class={"inline-flex h-7 shrink-0 items-center gap-1 rounded-xs border border-[#e5c26e] bg-[#fff7df] px-2 font-mono text-[11px] font-medium leading-none text-console-warning transition duration-100 hover:border-console-warning"}
-          aria-label={`${count()} pending Tokens need attention`}
-          title="Pending Tokens"
-        >
-          <span class="size-1.5 rounded-full bg-current" aria-hidden="true" />
-          {count()} waiting
-        </A>
-      )}
-    </Show>
   );
 }
 
@@ -231,14 +204,11 @@ function AppShell(props: { children?: JSX.Element }) {
         <span class={"h-5 w-px shrink-0 bg-console-border"} aria-hidden="true" />
         <nav class={"flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-1 scrollbar-none [&::-webkit-scrollbar]:hidden"} aria-label="Sections">
           <TabLink href="/">Overview</TabLink>
-          <TabLink href="/runs">Runs</TabLink>
           <TabLink href="/sessions">Sessions</TabLink>
-          <TabLink href="/tokens">Tokens</TabLink>
           <TabLink href="/computers">Computers</TabLink>
           <TabLink href="/deployments">Deployments</TabLink>
         </nav>
         <div class={"flex items-center gap-2"}>
-          <AttentionBadge />
           <SettingsLink />
           <ProfileMenu />
         </div>
@@ -273,6 +243,21 @@ const wrapSettings = (Inner: () => JSX.Element) => () => (
   </RequireAuth>
 );
 
+const wrapAccount = (Inner: () => JSX.Element) => () => (
+  <RequireAuth requirement="organization">
+    <div class="min-h-dvh text-sm text-console-text">
+      <header class="flex h-10 items-center justify-between border-b border-console-border-strong bg-console-surface px-5">
+        <A href="/" class={ui.tabLink}>Helmr Console</A>
+        <ProfileMenu />
+      </header>
+      <main class={ui.page}>
+        <p class={ui.h3}>Your account</p>
+        <div class="mt-3"><Inner /></div>
+      </main>
+    </div>
+  </RequireAuth>
+);
+
 const wrapAdmin = (Inner: () => JSX.Element) => () => (
   <RequireAdmin>
     <AdminLayout>
@@ -288,17 +273,17 @@ export function App() {
       <Route path="/login" component={Login} />
       <Route path="/invite" component={Invite} />
       <Route path="/auth/device" component={() => <RequireAuth requirement="organization"><Device /></RequireAuth>} />
+      <Route path="/auth/slack/callback" component={AuthSlackCallback} />
+      <Route path="/auth/slack/link" component={AuthSlackLink} />
+      <Route path="/auth/slack/connect" component={SlackConnect} />
       <Route path="/auth/github/callback" component={AuthGitHubCallback} />
       <Route path="/auth/magic-link/callback" component={AuthMagicLinkCallback} />
       <Route path="/access-required" component={() => <RequireAuth requirement="session"><AccessRequired /></RequireAuth>} />
       <Route path="/organizations/new" component={() => <RequireAuth requirement="session"><OrganizationNew /></RequireAuth>} />
 
-      <Route path="/runs" component={wrap(Runs)} />
-      <Route path="/runs/:run_id" component={wrap(RunDetail)} />
       <Route path="/sessions" component={wrap(Sessions)} />
       <Route path="/sessions/:session_id" component={wrap(SessionDetail)} />
-      <Route path="/tokens" component={wrap(Tokens)} />
-      <Route path="/tokens/:token_id" component={wrap(TokenDetail)} />
+      <Route path="/sessions/:session_id/turns/:turn_id/asks/:ask_id" component={wrap(QuestionDetail)} />
       <Route path="/computers" component={wrap(Computers)} />
       <Route path="/computers/:computer_id" component={wrap(ComputerDetail)} />
       <Route path="/deployments" component={wrap(Deployments)} />
@@ -315,6 +300,7 @@ export function App() {
       <Route path="/settings/members" component={wrapSettings(Members)} />
       <Route path="/settings/api-keys" component={wrapSettings(ApiKeys)} />
       <Route path="/settings/secrets" component={wrapSettings(Secrets)} />
+      <Route path="/account/slack" component={wrapAccount(SlackSettings)} />
     </Router>
   );
 }

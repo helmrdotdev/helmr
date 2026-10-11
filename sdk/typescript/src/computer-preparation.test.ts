@@ -3,7 +3,8 @@ import { createClientComputers } from "./client-computer"
 
 const computer = {
   id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
-  sandbox_id: "repository-agent",
+  definition_id: "repository-agent",
+      delete_after_unused_ms: null, unused_since: null,
   deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
   status: "available",
       residency: "unavailable",
@@ -14,13 +15,13 @@ const computer = {
   updated_at: "2026-07-24T11:50:00Z",
 }
 
-test("Computer preparation failure remains readable through retrieve and list", async () => {
+test("Computer preparation failure remains readable through get and list", async () => {
   const client = createClientComputers({
     async request(_method, path) {
       return path.startsWith("/v1/computers/") ? computer : { computers: [computer] }
     },
   })
-  const retrieved = await client.retrieve(computer.id)
+  const retrieved = await client.get(computer.id)
   const listed = await client.list()
   expect(retrieved.error?.code).toBe("computer_preparation_exhausted")
   expect(listed.items[0]?.error).toEqual(retrieved.error)

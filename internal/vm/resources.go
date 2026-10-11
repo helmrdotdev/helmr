@@ -1,6 +1,10 @@
 package vm
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+	"math"
+)
 
 // Resources is a VM resource shape; memory and disk are in MiB.
 type Resources struct {
@@ -25,4 +29,27 @@ func (r Resources) Validate() error {
 		problems = append(problems, errors.New("slots must be positive"))
 	}
 	return errors.Join(problems...)
+}
+
+// VCPUCountForMilliCPU is the resource conversion from a
+// positive milliCPU request to the VM vCPU shape. The subtraction
+// form avoids overflowing at MaxInt64.
+func VCPUCountForMilliCPU(milliCPU int64) (int64, error) {
+	if milliCPU <= 0 {
+		return 0, fmt.Errorf("milliCPU must be positive, got %d", milliCPU)
+	}
+	return (milliCPU-1)/1000 + 1, nil
+}
+
+// ReservedCPUMillis accounts for the whole vCPUs the VM actually receives.
+// Fractional authored requests do not configure a fractional host CPU quota.
+func ReservedCPUMillis(milliCPU int64) (int64, error) {
+	vcpus, err := VCPUCountForMilliCPU(milliCPU)
+	if err != nil {
+		return 0, err
+	}
+	if vcpus > math.MaxInt64/1000 {
+		return 0, errors.New("physical CPU reservation exceeds supported integer range")
+	}
+	return vcpus * 1000, nil
 }

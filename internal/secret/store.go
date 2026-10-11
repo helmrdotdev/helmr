@@ -13,22 +13,18 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
+	"unicode"
+	"unicode/utf8"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secretname"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const (
-	maxWriteAttempts = 3
-	envelopeDomain   = "helmr.secret-envelope.v0"
-)
+const envelopeDomain = "helmr.secret-envelope.v0"
 
 type Store struct {
 	db         db.Querier
@@ -112,397 +108,212 @@ func (s *Store) create(ctx context.Context, environmentID uuid.UUID, name string
 	return secretFromCreate(row), nil
 }
 
-func (s *Store) rotate(ctx context.Context, environmentID uuid.UUID, secretID uuid.UUID, value []byte) (db.Secret, error) {
-	var lastErr error
-	for range maxWriteAttempts {
-		record, err := s.db.GetSecret(ctx, db.GetSecretParams{
-			EnvironmentID: pgvalue.UUID(environmentID),
-			ID:            pgvalue.UUID(secretID),
-		})
-		if err != nil {
-			return db.Secret{}, err
-		}
-		if record.Status != "active" {
-			return db.Secret{}, UnavailableError{Err: fmt.Errorf("secret %q is %s", record.Name, record.Status)}
-		}
-		current, err := s.db.GetCurrentSecretValue(ctx, db.GetCurrentSecretValueParams{
-			EnvironmentID: pgvalue.UUID(environmentID),
-			SecretID:      record.ID,
-		})
-		if err != nil {
-			return db.Secret{}, err
-		}
-		versionID := uuid.NewV7()
-		version := current.Version + 1
-		encrypted, err := s.encrypt(environmentID, secretID, versionID, version, value)
-		if err != nil {
-			return db.Secret{}, err
-		}
-		updated, err := s.db.RotateSecret(ctx, db.RotateSecretParams{
-			VersionID:                pgvalue.UUID(versionID),
-			Version:                  version,
-			Nonce:                    encrypted.nonce,
-			Ciphertext:               encrypted.ciphertext,
-			EnvironmentID:            pgvalue.UUID(environmentID),
-			SecretID:                 record.ID,
-			ExpectedRevision:         record.Revision,
-			ExpectedCurrentVersionID: record.CurrentVersionID,
-		})
-		if err == nil {
-			return updated, nil
-		}
-		if errors.Is(err, pgx.ErrNoRows) {
-			lastErr = err
-			continue
-		}
-		return db.Secret{}, err
+// ErrMutationConflict means a retry key was reused with different content.
+var ErrMutationConflict = errors.New("secret retry identity conflicts with its original request")
+var ErrInvalidMutation = errors.New("invalid Secret mutation")
+
+func mutationKey(raw string, required bool) (string, error) {
+	key := strings.TrimSpace(raw)
+	if !required && key == "" {
+		return "", nil
 	}
-	return db.Secret{}, fmt.Errorf("rotate secret after concurrent updates: %w", lastErr)
+	if key == "" || len(key) > 512 || !utf8.ValidString(key) || strings.ContainsFunc(key, unicode.IsControl) {
+		return "", ErrInvalidMutation
+	}
+	return key, nil
 }
 
-type mutationReceipt struct {
-	SecretID        string `json:"secretId"`
-	SecretVersionID string `json:"secretVersionId"`
-}
-
-func (s *Store) Create(
-	ctx context.Context,
-	environmentID uuid.UUID,
-	name string,
-	value []byte,
-	idempotencyKey string,
-) (db.GetSecretSnapshotRow, error) {
+// Create serializes Environment-owned name and retry identities. Its first
+// encrypted version is the immutable value receipt, even after rotation/revocation.
+func (s *Store) Create(ctx context.Context, env uuid.UUID, name string, value []byte, retryKey string) (db.GetSecretSnapshotRow, error) {
 	if s.tx == nil {
 		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
+	}
+	if env == uuid.Nil() {
+		return db.GetSecretSnapshotRow{}, ErrInvalidMutation
 	}
 	if err := secretname.Validate(name); err != nil {
 		return db.GetSecretSnapshotRow{}, err
 	}
-	idempotencyKey = strings.TrimSpace(idempotencyKey)
-	tx, err := s.tx.Begin(ctx)
+	key, err := mutationKey(retryKey, false)
 	if err != nil {
-		return db.GetSecretSnapshotRow{}, fmt.Errorf("begin secret creation: %w", err)
+		return db.GetSecretSnapshotRow{}, err
 	}
-	defer tx.Rollback(ctx)
-
-	queries := db.New(tx)
-	var claim *db.IdempotencyClaim
-	if idempotencyKey != "" {
-		claims, err := idempotency.TransactionFor(tx)
-		if err != nil {
-			return db.GetSecretSnapshotRow{}, err
+	var result db.GetSecretSnapshotRow
+	err = db.RunTx(ctx, s.tx, func(tx pgx.Tx) error {
+		var locked uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 AND retired_at IS NULL FOR NO KEY UPDATE`, env).Scan(&locked); err != nil {
+			return err
 		}
-		request, err := idempotency.NewSecretCreateRequest(
-			environmentID,
-			name,
-			idempotencyKey,
-		)
+		q := db.New(tx)
+		claims, _ := idempotency.TransactionFor(tx)
+		var acquired idempotency.Result
+		if key != "" {
+			request, err := idempotency.NewSecretCreateRequest(env, name, key)
+			if err != nil {
+				return err
+			}
+			acquired, err = claims.Acquire(ctx, request)
+			if err != nil {
+				return err
+			}
+			if !acquired.New {
+				id := pgvalue.MustUUIDValue(acquired.Claim.SecretID)
+				if err = s.compareVersion(ctx, tx, env, id, pgvalue.MustUUIDValue(acquired.Claim.SecretVersionID), value); err != nil {
+					return err
+				}
+				result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: acquired.Claim.SecretID})
+				return err
+			}
+		}
+		bound := *s
+		bound.db = q
+		record, err := bound.create(ctx, env, name, value)
 		if err != nil {
-			return db.GetSecretSnapshotRow{}, err
+			return err
+		}
+		if key != "" {
+			_, err = claims.Complete(ctx, acquired.Claim, idempotency.Target{SecretID: pgvalue.MustUUIDValue(record.ID), SecretVersionID: pgvalue.MustUUIDValue(record.CurrentVersionID)}, []byte(`{}`))
+			if err != nil {
+				return err
+			}
+		}
+		result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID})
+		return err
+	})
+	return result, err
+}
+
+// Rotate binds retries to the exact encrypted version and never rewrites pins.
+func (s *Store) Rotate(ctx context.Context, env, id uuid.UUID, value []byte, retryKey string) (db.GetSecretSnapshotRow, error) {
+	if s.tx == nil {
+		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
+	}
+	key, err := mutationKey(retryKey, true)
+	if err != nil || env == uuid.Nil() || id == uuid.Nil() {
+		return db.GetSecretSnapshotRow{}, ErrInvalidMutation
+	}
+	var result db.GetSecretSnapshotRow
+	err = db.RunTx(ctx, s.tx, func(tx pgx.Tx) error {
+		claims, _ := idempotency.TransactionFor(tx)
+		request, err := idempotency.NewSecretRotateRequest(env, id, key)
+		if err != nil {
+			return err
 		}
 		acquired, err := claims.Acquire(ctx, request)
 		if err != nil {
-			return db.GetSecretSnapshotRow{}, err
+			return err
 		}
+		record, err := lockMutationSecret(ctx, tx, env, id)
+		if err != nil {
+			return err
+		}
+		q := db.New(tx)
 		if !acquired.New {
-			snapshot, err := s.replayMutation(ctx, queries, acquired.Claim, value)
-			if err != nil {
-				return db.GetSecretSnapshotRow{}, err
+			if err = s.compareVersion(ctx, tx, env, id, pgvalue.MustUUIDValue(acquired.Claim.SecretVersionID), value); err != nil {
+				return err
 			}
-			if err := tx.Commit(ctx); err != nil {
-				return db.GetSecretSnapshotRow{}, fmt.Errorf("commit secret creation replay: %w", err)
-			}
-			return snapshot, nil
-		}
-		claim = &acquired.Claim
-	}
-
-	bound := *s
-	bound.db = queries
-	record, err := bound.create(ctx, environmentID, name, value)
-	if err != nil {
-		return db.GetSecretSnapshotRow{}, err
-	}
-	snapshot, err := queries.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{
-		EnvironmentID: pgvalue.UUID(environmentID),
-		ID:            record.ID,
-	})
-	if err != nil {
-		return db.GetSecretSnapshotRow{}, err
-	}
-	if claim != nil {
-		claims, err := idempotency.TransactionFor(tx)
-		if err != nil {
-			return db.GetSecretSnapshotRow{}, err
-		}
-		if err := completeMutation(ctx, claims, *claim, record.ID, record.CurrentVersionID); err != nil {
-			return db.GetSecretSnapshotRow{}, err
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return db.GetSecretSnapshotRow{}, fmt.Errorf("commit secret creation: %w", err)
-	}
-	return snapshot, nil
-}
-
-func (s *Store) Rotate(
-	ctx context.Context,
-	environmentID uuid.UUID,
-	secretID uuid.UUID,
-	value []byte,
-	idempotencyKey string,
-) (db.GetSecretSnapshotRow, error) {
-	if s.tx == nil {
-		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
-	}
-	tx, err := s.tx.Begin(ctx)
-	if err != nil {
-		return db.GetSecretSnapshotRow{}, fmt.Errorf("begin secret rotation: %w", err)
-	}
-	defer tx.Rollback(ctx)
-	claims, err := idempotency.TransactionFor(tx)
-	if err != nil {
-		return db.GetSecretSnapshotRow{}, err
-	}
-	queries := claims.Queries()
-	request, err := idempotency.NewSecretRotateRequest(
-		environmentID,
-		secretID,
-		strings.TrimSpace(idempotencyKey),
-	)
-	if err != nil {
-		return db.GetSecretSnapshotRow{}, err
-	}
-	acquired, err := claims.Acquire(ctx, request)
-	if err != nil {
-		return db.GetSecretSnapshotRow{}, err
-	}
-	if !acquired.New {
-		snapshot, err := s.replayMutation(ctx, queries, acquired.Claim, value)
-		if err != nil {
-			return db.GetSecretSnapshotRow{}, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return db.GetSecretSnapshotRow{}, fmt.Errorf("commit secret rotation replay: %w", err)
-		}
-		return snapshot, nil
-	}
-	bound := *s
-	bound.db = queries
-	rotated, err := bound.rotate(ctx, environmentID, secretID, value)
-	if err != nil {
-		return db.GetSecretSnapshotRow{}, err
-	}
-	snapshot, err := queries.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{
-		EnvironmentID: pgvalue.UUID(environmentID),
-		ID:            rotated.ID,
-	})
-	if err != nil {
-		return db.GetSecretSnapshotRow{}, err
-	}
-	if err := completeMutation(ctx, claims, acquired.Claim, rotated.ID, rotated.CurrentVersionID); err != nil {
-		return db.GetSecretSnapshotRow{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return db.GetSecretSnapshotRow{}, fmt.Errorf("commit secret rotation: %w", err)
-	}
-	return snapshot, nil
-}
-
-func completeMutation(
-	ctx context.Context,
-	claims *idempotency.Transaction,
-	claim db.IdempotencyClaim,
-	secretID pgtype.UUID,
-	secretVersionID pgtype.UUID,
-) error {
-	receipt, err := json.Marshal(mutationReceipt{
-		SecretID:        pgvalue.MustUUIDValue(secretID).String(),
-		SecretVersionID: pgvalue.MustUUIDValue(secretVersionID).String(),
-	})
-	if err != nil {
-		return fmt.Errorf("marshal secret mutation receipt: %w", err)
-	}
-	_, err = claims.Complete(ctx, claim, receipt)
-	return err
-}
-
-func (s *Store) replayMutation(
-	ctx context.Context,
-	queries *db.Queries,
-	claim db.IdempotencyClaim,
-	value []byte,
-) (db.GetSecretSnapshotRow, error) {
-	if claim.Status != "completed" {
-		return db.GetSecretSnapshotRow{}, fmt.Errorf(
-			"secret mutation claim is %s",
-			claim.Status,
-		)
-	}
-	var receipt mutationReceipt
-	if err := json.Unmarshal(claim.Receipt, &receipt); err != nil {
-		return db.GetSecretSnapshotRow{}, errors.New("secret mutation receipt is invalid")
-	}
-	secretID, err := ids.Parse(receipt.SecretID)
-	if err != nil {
-		return db.GetSecretSnapshotRow{}, errors.New("secret mutation receipt is invalid")
-	}
-	secretVersionID, err := ids.Parse(receipt.SecretVersionID)
-	if err != nil {
-		return db.GetSecretSnapshotRow{}, errors.New("secret mutation receipt is invalid")
-	}
-	version, err := queries.LockSecretVersion(ctx, db.LockSecretVersionParams{
-		EnvironmentID: claim.EnvironmentID,
-		SecretID:      pgvalue.UUID(secretID),
-		VersionID:     pgvalue.UUID(secretVersionID),
-	})
-	if err != nil {
-		return db.GetSecretSnapshotRow{}, fmt.Errorf("lock replayed secret version: %w", err)
-	}
-	plaintext, err := s.decryptVersion(
-		pgvalue.MustUUIDValue(claim.EnvironmentID),
-		secretID,
-		secretVersionID,
-		version,
-	)
-	if err != nil {
-		return db.GetSecretSnapshotRow{}, fmt.Errorf("decrypt replayed secret version: %w", err)
-	}
-	if subtle.ConstantTimeCompare(plaintext, value) != 1 {
-		return db.GetSecretSnapshotRow{}, idempotency.ConflictError{
-			ClaimID: pgvalue.MustUUIDValue(claim.ID),
-		}
-	}
-	return queries.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{
-		EnvironmentID: claim.EnvironmentID,
-		ID:            pgvalue.UUID(secretID),
-	})
-}
-
-func (s *Store) Revoke(ctx context.Context, environmentID uuid.UUID, secretID uuid.UUID, idempotencyKey string) (db.GetSecretSnapshotRow, error) {
-	if s.tx == nil {
-		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
-	}
-	request, err := idempotency.NewSecretRevokeRequest(
-		environmentID,
-		secretID,
-		strings.TrimSpace(idempotencyKey),
-	)
-	if err != nil {
-		return db.GetSecretSnapshotRow{}, err
-	}
-	tx, err := s.tx.Begin(ctx)
-	if err != nil {
-		return db.GetSecretSnapshotRow{}, fmt.Errorf("begin secret revocation: %w", err)
-	}
-	defer tx.Rollback(ctx)
-	claims, err := idempotency.TransactionFor(tx)
-	if err != nil {
-		return db.GetSecretSnapshotRow{}, err
-	}
-	acquired, err := claims.Acquire(ctx, request)
-	if err != nil {
-		return db.GetSecretSnapshotRow{}, err
-	}
-	queries := claims.Queries()
-	if !acquired.New {
-		if acquired.Claim.Status != "completed" {
-			return db.GetSecretSnapshotRow{}, fmt.Errorf(
-				"secret revoke claim is %s",
-				acquired.Claim.Status,
-			)
-		}
-		snapshot, err := queries.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{
-			EnvironmentID: pgvalue.UUID(environmentID),
-			ID:            pgvalue.UUID(secretID),
-		})
-		if err != nil {
-			return db.GetSecretSnapshotRow{}, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return db.GetSecretSnapshotRow{}, fmt.Errorf("commit secret revoke replay: %w", err)
-		}
-		return snapshot, nil
-	}
-	bound := *s
-	bound.db = queries
-	record, changed, err := bound.revoke(ctx, environmentID, secretID)
-	if err != nil {
-		return db.GetSecretSnapshotRow{}, err
-	}
-	if changed {
-		payload, err := json.Marshal(map[string]any{
-			"environmentId":        environmentID.String(),
-			"revocationGeneration": record.RevocationGeneration,
-			"secretId":             secretID.String(),
-		})
-		if err != nil {
-			return db.GetSecretSnapshotRow{}, fmt.Errorf("marshal secret revocation intent: %w", err)
-		}
-		if _, err := queries.CreateControlOutbox(ctx, db.CreateControlOutboxParams{
-			ID:          pgvalue.UUID(uuid.NewV7()),
-			Topic:       "secret.revoked",
-			Payload:     payload,
-			AvailableAt: pgvalue.TimestamptzUTCZeroInvalid(time.Now()),
-		}); err != nil {
-			return db.GetSecretSnapshotRow{}, fmt.Errorf("create secret revocation intent: %w", err)
-		}
-	}
-	snapshot, err := queries.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{
-		EnvironmentID: pgvalue.UUID(environmentID),
-		ID:            pgvalue.UUID(secretID),
-	})
-	if err != nil {
-		return db.GetSecretSnapshotRow{}, err
-	}
-	receipt, err := json.Marshal(map[string]any{
-		"revocationGeneration": record.RevocationGeneration,
-		"secretId":             secretID.String(),
-		"revision":             record.Revision,
-	})
-	if err != nil {
-		return db.GetSecretSnapshotRow{}, fmt.Errorf("marshal secret revoke receipt: %w", err)
-	}
-	if _, err := claims.Complete(ctx, acquired.Claim, receipt); err != nil {
-		return db.GetSecretSnapshotRow{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return db.GetSecretSnapshotRow{}, fmt.Errorf("commit secret revocation: %w", err)
-	}
-	return snapshot, nil
-}
-
-func (s *Store) revoke(ctx context.Context, environmentID uuid.UUID, secretID uuid.UUID) (db.Secret, bool, error) {
-	var lastErr error
-	for range maxWriteAttempts {
-		record, err := s.db.GetSecret(ctx, db.GetSecretParams{
-			EnvironmentID: pgvalue.UUID(environmentID),
-			ID:            pgvalue.UUID(secretID),
-		})
-		if err != nil {
-			return db.Secret{}, false, err
-		}
-		if record.Status == "revoked" {
-			return record, false, nil
+			result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID})
+			return err
 		}
 		if record.Status != "active" {
-			return db.Secret{}, false, UnavailableError{Err: fmt.Errorf("secret %q is %s", record.Name, record.Status)}
+			return UnavailableError{Err: fmt.Errorf("secret %q is %s", record.Name, record.Status)}
 		}
-		revoked, err := s.db.RevokeSecret(ctx, db.RevokeSecretParams{
-			EnvironmentID:    pgvalue.UUID(environmentID),
-			ID:               record.ID,
-			ExpectedRevision: record.Revision,
-		})
-		if err == nil {
-			return revoked, true, nil
+		current, err := q.GetCurrentSecretValue(ctx, db.GetCurrentSecretValueParams{EnvironmentID: pgvalue.UUID(env), SecretID: record.ID})
+		if err != nil {
+			return err
 		}
-		if errors.Is(err, pgx.ErrNoRows) {
-			lastErr = err
-			continue
+		versionID := uuid.NewV7()
+		version := current.Version + 1
+		encrypted, err := s.encrypt(env, id, versionID, version, value)
+		if err != nil {
+			return err
 		}
-		return db.Secret{}, false, err
+		updated, err := q.RotateSecret(ctx, db.RotateSecretParams{VersionID: pgvalue.UUID(versionID), Version: version, Nonce: encrypted.nonce, Ciphertext: encrypted.ciphertext, EnvironmentID: pgvalue.UUID(env), SecretID: record.ID, ExpectedRevision: record.Revision, ExpectedCurrentVersionID: record.CurrentVersionID})
+		if err != nil {
+			return err
+		}
+		if _, err = claims.Complete(ctx, acquired.Claim, idempotency.Target{SecretID: id, SecretVersionID: versionID}, []byte(`{}`)); err != nil {
+			return err
+		}
+		result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: updated.ID})
+		return err
+	})
+	return result, err
+}
+
+// Revoke records intent, never a claim that physical execution has stopped.
+func (s *Store) Revoke(ctx context.Context, env, id uuid.UUID, retryKey string) (db.GetSecretSnapshotRow, error) {
+	if s.tx == nil {
+		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
 	}
-	return db.Secret{}, false, fmt.Errorf("revoke secret after concurrent updates: %w", lastErr)
+	key, err := mutationKey(retryKey, false)
+	if err != nil || env == uuid.Nil() || id == uuid.Nil() {
+		return db.GetSecretSnapshotRow{}, ErrInvalidMutation
+	}
+	var result db.GetSecretSnapshotRow
+	err = db.RunTx(ctx, s.tx, func(tx pgx.Tx) error {
+		claims, _ := idempotency.TransactionFor(tx)
+		var acquired idempotency.Result
+		if key != "" {
+			request, err := idempotency.NewSecretRevokeRequest(env, id, key)
+			if err != nil {
+				return err
+			}
+			acquired, err = claims.Acquire(ctx, request)
+			if err != nil {
+				return err
+			}
+		}
+		record, err := lockMutationSecret(ctx, tx, env, id)
+		if err != nil {
+			return err
+		}
+		q := db.New(tx)
+		if record.Status != "revoked" {
+			if _, err = q.RevokeSecret(ctx, db.RevokeSecretParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID, ExpectedRevision: record.Revision}); err != nil {
+				return err
+			}
+			payload, err := json.Marshal(secretRevocationPayload{EnvironmentID: env.String(), SecretID: id.String(), RevocationGeneration: record.RevocationGeneration + 1})
+			if err != nil {
+				return err
+			}
+			if _, err = tx.Exec(ctx, `INSERT INTO control_outbox(id,topic,payload) VALUES($1,'secret.revoked',$2)`, uuid.NewV7(), payload); err != nil {
+				return err
+			}
+
+		}
+		if key != "" && acquired.New {
+			if _, err = claims.Complete(ctx, acquired.Claim, idempotency.Target{SecretID: id}, []byte(`{}`)); err != nil {
+				return err
+			}
+		}
+		result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID})
+		return err
+	})
+	return result, err
+}
+func lockMutationSecret(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) (db.Secret, error) {
+	var locked uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT s.id FROM secrets s JOIN environments e ON e.id=s.environment_id WHERE s.environment_id=$1 AND s.id=$2 AND e.retired_at IS NULL FOR UPDATE OF s`, env, id).Scan(&locked); err != nil {
+		return db.Secret{}, err
+	}
+	return db.New(tx).GetSecret(ctx, db.GetSecretParams{EnvironmentID: pgvalue.UUID(env), ID: pgvalue.UUID(id)})
+}
+func (s *Store) compareVersion(ctx context.Context, tx pgx.Tx, env, id, versionID uuid.UUID, value []byte) error {
+	var version db.SecretVersion
+	if err := tx.QueryRow(ctx, `SELECT version,nonce,ciphertext FROM secret_versions WHERE secret_id=$1 AND id=$2`, id, versionID).Scan(&version.Version, &version.Nonce, &version.Ciphertext); err != nil {
+		return err
+	}
+	plaintext, err := s.decryptVersion(env, id, versionID, version)
+	if err != nil {
+		return fmt.Errorf("decrypt original Secret value: %w", err)
+	}
+	defer clear(plaintext)
+	if subtle.ConstantTimeCompare(plaintext, value) != 1 {
+		return ErrMutationConflict
+	}
+	return nil
 }
 
 type encryptedSecret struct {

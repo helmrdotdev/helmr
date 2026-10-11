@@ -1,22 +1,30 @@
 package controlplane
 
 import (
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
+	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/telemetry/diagnostic"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/bundle"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/identity"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 type constructionDB struct{ db.TxDB }
 
-type constructionKeys struct{ computer.KeyWrapper }
+type constructionKeys struct{ agent.DataKeyWrapper }
 
 type constructionTelemetry struct{ telemetry.Reader }
 
@@ -26,24 +34,27 @@ func completeServerConfig(t *testing.T) ServerConfig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	credentialKey, err := auth.NewCredentialKey(make([]byte, 32))
+	store := newTestUploadStore(t)
+	allocator, err := agent.NewAllocator(constructionDB{}, make([]byte, 32), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := newTestUploadStore(t)
 	return ServerConfig{
+		Allocator:                      allocator,
+		EnvironmentExecutionLimits:     org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000},
 		ComputerKeys:                   constructionKeys{},
 		Log:                            discardTestLogger(),
 		DB:                             routeWorkerAuthStore{},
 		TX:                             constructionDB{},
+		DiagnosticDB:                   constructionDB{},
 		Auth:                           identity.NewAPIKeyAuthenticator(routeWorkerAuthStore{}),
 		CAS:                            store,
-		BundleAdmission:                bundle.Admission{Runtime: claimResponseRuntimeDescriptor()},
+		BundleAdmission:                bundle.Admission{Runtime: testRuntimeDescriptor()},
 		PlatformStore:                  store,
-		SecretDelivery:                 claimHTTPSecrets{},
+		SecretDelivery:                 emptyTestSecretDelivery{},
 		ComputerFencingKey:             fencingKey,
-		TokenCredentialKey:             credentialKey,
 		TelemetryReader:                constructionTelemetry{},
+		DiagnosticBounds:               diagnostic.Bounds{ChunkBytes: 1024, SourceBytes: 4096, SourceRecords: 16, EnvironmentBytes: 16384, EnvironmentRecords: 64, QueueBytes: 65536, QueueRecords: 256},
 		AuthKey:                        testAuthRootKey(),
 		WorkerHostCredentialSigningKey: testWorkerHostCredentialSigningKey(),
 	}
@@ -96,5 +107,43 @@ func TestNewServerValidatesWorkerHostCredentialSigningKey(t *testing.T) {
 	handler, err := NewServer(cfg)
 	if err == nil || handler != nil || !strings.Contains(err.Error(), "worker host credential signing key must be exactly 32 bytes") {
 		t.Fatalf("NewServer with a short worker host credential signing key = %v, %v", handler, err)
+	}
+}
+
+func TestNewServerRequiresEnvironmentExecutionLimits(t *testing.T) {
+	cfg := completeServerConfig(t)
+	cfg.EnvironmentExecutionLimits = org.ExecutionLimits{}
+	handler, err := NewServer(cfg)
+	if err == nil || handler != nil || !strings.Contains(err.Error(), "environment execution limits") {
+		t.Fatalf("missing policy: %v %v", handler, err)
+	}
+}
+
+func TestNewServerRequiresAllocator(t *testing.T) {
+	cfg := completeServerConfig(t)
+	cfg.Allocator = nil
+	handler, err := NewServer(cfg)
+	if err == nil || handler != nil || !strings.Contains(err.Error(), "allocation owner is required") {
+		t.Fatalf("NewServer without allocator = %v, %v", handler, err)
+	}
+}
+
+func testRuntimeDescriptor() artifact.RuntimeDescriptor {
+	return artifact.RuntimeDescriptor{Architecture: definition.ArchitectureX8664, Digest: "sha256:" + strings.Repeat("9", 64), FormatVersion: artifact.RuntimeDescriptorFormatVersion, MediaType: artifact.RuntimeArtifactMediaType, RuntimeContract: definition.RuntimeContract, SizeBytes: 4096}
+}
+
+type emptyTestSecretDelivery struct{}
+
+func (emptyTestSecretDelivery) OpenDeliveries(uuid.UUID, []secret.DeliveryEnvelope) ([]secret.DeliveryMaterial, error) {
+	return nil, nil
+}
+
+func discardTestLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+func TestNewServerRequiresDiagnosticPool(t *testing.T) {
+	cfg := completeServerConfig(t)
+	cfg.DiagnosticDB = nil
+	if _, err := NewServer(cfg); err == nil {
+		t.Fatal("missing diagnostic pool accepted")
 	}
 }

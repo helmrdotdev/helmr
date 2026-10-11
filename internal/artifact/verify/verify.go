@@ -19,10 +19,10 @@ type artifactInput struct {
 }
 
 type verifiedProgram struct {
-	index artifact.ProgramIndex
+	index artifact.ProgramMetadata
 }
 
-func (program *verifiedProgram) Index() artifact.ProgramIndex {
+func (program *verifiedProgram) Metadata() artifact.ProgramMetadata {
 	return program.index.Clone()
 }
 

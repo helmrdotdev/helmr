@@ -121,6 +121,10 @@ func projectCreateCommand() *cobra.Command {
 		Short: "Create a project.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			retention, err := historyRetentionFlags(cmd, true)
+			if err != nil {
+				return err
+			}
 			name := strings.TrimSpace(args[0])
 			if name == "" {
 				return errors.New("project name is required")
@@ -133,7 +137,7 @@ func projectCreateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			project, err := controlPlane.CreateProject(cmd.Context(), api.CreateProjectRequest{Slug: slug, Name: name})
+			project, err := controlPlane.CreateProject(cmd.Context(), api.CreateProjectRequest{HistoryRetentionPolicy: retention, Slug: slug, Name: name})
 			if err != nil {
 				return err
 			}
@@ -146,6 +150,7 @@ func projectCreateCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&slug, "slug", "", "Project slug. Defaults to a slug generated from NAME.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
+	addHistoryRetentionFlags(cmd)
 	return cmd
 }
 
@@ -276,6 +281,10 @@ func envCreateCommand() *cobra.Command {
 		Short: "Create an environment.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			retention, err := historyRetentionFlags(cmd, true)
+			if err != nil {
+				return err
+			}
 			projectRef, err := requireProjectFlag(cmd)
 			if err != nil {
 				return err
@@ -303,7 +312,7 @@ func envCreateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			environment, err := controlPlane.CreateEnvironment(cmd.Context(), project.ID, api.CreateEnvironmentRequest{Slug: slug, Name: name, ColorHex: colorHex})
+			environment, err := controlPlane.CreateEnvironment(cmd.Context(), project.ID, api.CreateEnvironmentRequest{HistoryRetentionPolicy: retention, Slug: slug, Name: name, ColorHex: colorHex})
 			if err != nil {
 				return err
 			}
@@ -318,6 +327,7 @@ func envCreateCommand() *cobra.Command {
 	cmd.Flags().StringVar(&slug, "slug", "", "Environment slug. Defaults to a slug generated from NAME.")
 	cmd.Flags().StringVar(&colorHex, "color", "", "Environment color as #RRGGBB. Defaults from the slug.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
+	addHistoryRetentionFlags(cmd)
 	return cmd
 }
 
@@ -332,12 +342,16 @@ func envUpdateCommand() *cobra.Command {
 		Short: "Update an environment.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			retention, err := historyRetentionFlags(cmd, false)
+			if err != nil {
+				return err
+			}
 			projectRef, err := requireProjectFlag(cmd)
 			if err != nil {
 				return err
 			}
-			if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("slug") && !cmd.Flags().Changed("color") {
-				return errors.New("environment update requires --name, --slug, or --color")
+			if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("slug") && !cmd.Flags().Changed("color") && !cmd.Flags().Changed("history-retention-mode") && !cmd.Flags().Changed("history-retention-seconds") {
+				return errors.New("environment update requires a name, slug, color, or history retention change")
 			}
 			controlPlane, err := sessionControlPlaneClient(cmd)
 			if err != nil {
@@ -369,7 +383,7 @@ func envUpdateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			updated, err := controlPlane.UpdateEnvironment(cmd.Context(), project.ID, environment.ID, api.UpdateEnvironmentRequest{Slug: slug, Name: name, ColorHex: colorHex})
+			updated, err := controlPlane.UpdateEnvironment(cmd.Context(), project.ID, environment.ID, api.UpdateEnvironmentRequest{HistoryRetentionPolicy: retention, Slug: slug, Name: name, ColorHex: colorHex})
 			if err != nil {
 				return err
 			}
@@ -385,6 +399,7 @@ func envUpdateCommand() *cobra.Command {
 	cmd.Flags().StringVar(&slug, "slug", "", "Environment slug.")
 	cmd.Flags().StringVar(&colorHex, "color", "", "Environment color as #RRGGBB.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
+	addHistoryRetentionFlags(cmd)
 	return cmd
 }
 
@@ -473,6 +488,10 @@ func writeEnvironment(w io.Writer, environment api.EnvironmentSummary) error {
 	fmt.Fprintf(w, "Slug: %s\n", environment.Slug)
 	fmt.Fprintf(w, "Name: %s\n", environment.Name)
 	fmt.Fprintf(w, "Color: %s\n", environment.ColorHex)
+	fmt.Fprintf(w, "History retention: %s\n", environment.HistoryRetentionMode)
+	if environment.HistoryRetentionSeconds != nil {
+		fmt.Fprintf(w, "History retention seconds: %d\n", *environment.HistoryRetentionSeconds)
+	}
 	return nil
 }
 
@@ -514,4 +533,26 @@ func customEnvironmentColorHex(slug string) string {
 		hash = hash*31 + uint32(r)
 	}
 	return palette[int(hash%uint32(len(palette)))]
+}
+
+func addHistoryRetentionFlags(cmd *cobra.Command) {
+	cmd.Flags().String("history-retention-mode", "", "Session history policy: duration or until_environment_deletion. Required when creating.")
+	cmd.Flags().Int64("history-retention-seconds", 0, "Positive seconds after Session termination and obligation release; required only for duration mode.")
+}
+func historyRetentionFlags(cmd *cobra.Command, required bool) (api.HistoryRetentionPolicy, error) {
+	mode, _ := cmd.Flags().GetString("history-retention-mode")
+	seconds, _ := cmd.Flags().GetInt64("history-retention-seconds")
+	hasSeconds := cmd.Flags().Changed("history-retention-seconds")
+	p := api.HistoryRetentionPolicy{HistoryRetentionMode: mode}
+	if !required && !cmd.Flags().Changed("history-retention-mode") && !hasSeconds {
+		return p, nil
+	}
+	if mode == "until_environment_deletion" && !hasSeconds {
+		return p, nil
+	}
+	if mode == "duration" && hasSeconds && seconds > 0 {
+		p.HistoryRetentionSeconds = &seconds
+		return p, nil
+	}
+	return p, errors.New("choose --history-retention-mode duration with positive --history-retention-seconds, or --history-retention-mode until_environment_deletion without seconds")
 }

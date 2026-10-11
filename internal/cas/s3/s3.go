@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	awsv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/config"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
@@ -98,6 +99,7 @@ func New(ctx context.Context, rawURI string, opts ...Option) (*Store, error) {
 		return nil, err
 	}
 	client := awss3.NewFromConfig(cfg, func(options *awss3.Options) {
+		observeNativeHTTP(options, uri.Host, strings.Trim(uri.Path, "/"))
 		if endpoint := uri.Query().Get("endpoint"); endpoint != "" {
 			options.BaseEndpoint = aws.String(endpoint)
 			options.UsePathStyle = true
@@ -722,7 +724,7 @@ func (c *Store) Stat(ctx context.Context, digest string) (cas.Object, error) {
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		return cas.Object{}, err
+		return cas.Object{}, storageReadFailure(ctx, err)
 	}
 	return cas.Object{
 		Digest:    digest,
@@ -742,7 +744,7 @@ func (c *Store) Get(ctx context.Context, digest string) (io.ReadCloser, error) {
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		return nil, err
+		return nil, storageReadFailure(ctx, err)
 	}
 	return cas.NewVerifyingReadCloser(output.Body, digest), nil
 }
@@ -845,7 +847,7 @@ func (c *Store) Publish(
 	if errors.Is(uploadErr, errImmutableObjectExists) {
 		object, err = c.Stat(ctx, expected.Digest)
 		if err != nil {
-			return cas.Object{}, fmt.Errorf("stat existing immutable object: %w", err)
+			return cas.Object{}, fmt.Errorf("stat existing immutable object: %w", storageFailure(ctx, err))
 		}
 		if object.SizeBytes != expected.SizeBytes ||
 			object.MediaType != expected.MediaType {
@@ -855,7 +857,7 @@ func (c *Store) Publish(
 			)
 		}
 	} else if uploadErr != nil {
-		return cas.Object{}, uploadErr
+		return cas.Object{}, storageFailure(ctx, uploadErr)
 	} else {
 		object = cas.Object{
 			Digest:    expected.Digest,
@@ -983,3 +985,23 @@ func isObjectNotFound(err error) bool {
 }
 
 var _ cas.UploadStore = (*Store)(nil)
+
+var storageRetryPolicy = retry.NewStandard()
+
+// Provider retry classification survives the SDK's exhausted request attempts.
+// The physical owner decides how long to reconcile its exact retained cut.
+func storageFailure(ctx context.Context, err error) error {
+	var api smithy.APIError
+	if err != nil && ctx.Err() == nil && (storageRetryPolicy.IsErrorRetryable(err) || (errors.As(err, &api) && api.ErrorFault() == smithy.FaultServer) || errors.Is(err, errImmutableObjectConflict)) {
+		return fmt.Errorf("%w: %w", cas.ErrUnavailable, err)
+	}
+	return err
+}
+
+func storageReadFailure(ctx context.Context, err error) error {
+	var api smithy.APIError
+	if ctx.Err() == nil && errors.As(err, &api) && (api.ErrorCode() == "NoSuchKey" || api.ErrorCode() == "NotFound") {
+		return errors.Join(os.ErrNotExist, err)
+	}
+	return storageFailure(ctx, err)
+}

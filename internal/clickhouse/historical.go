@@ -2,7 +2,6 @@ package clickhouse
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -24,7 +23,7 @@ func NewReader(client historicalClient) *Reader {
 }
 
 func (r *Reader) ListEvents(ctx context.Context, q telemetry.EventQuery) (telemetry.EventPage, error) {
-	sql := `SELECT seq, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, event_kind, message, body, redaction_class, observed_at
+	sql := `SELECT seq, deployment_id, trace_id, span_id, traceparent, category, severity, source, event_kind, message, body, redaction_class, observed_at
 FROM helmr_telemetry.events FINAL
 WHERE org_id = @org_id
   AND subject_kind = @subject_kind
@@ -45,7 +44,7 @@ LIMIT @row_limit`
 	); err != nil {
 		return telemetry.EventPage{}, fmt.Errorf("%w: %v", telemetry.ErrHistoricalUnavailable, err)
 	}
-	events := make([]api.RunEvent, 0, len(rows))
+	events := make([]api.DiagnosticEvent, 0, len(rows))
 	last := q.AfterSeq
 	for _, row := range rows {
 		events = append(events, row.event())
@@ -54,47 +53,9 @@ LIMIT @row_limit`
 	return telemetry.EventPage{Events: events, LastSeq: last, Historical: len(events)}, nil
 }
 
-func (r *Reader) ListRunLogChunks(ctx context.Context, q telemetry.RunLogChunkQuery) (telemetry.RunLogChunkPage, error) {
-	sql := `SELECT run_id, run_lease_id, attempt_number, stream_name, seq, observed_seq, content, size_bytes, observed_at
-FROM helmr_telemetry.run_logs FINAL
-WHERE org_id = @org_id
-  AND run_id = @run_id
-  AND (
-    @all_levels
-    OR (
-      stream_name = 'structured'
-      AND level IN @levels
-    )
-  )
-  AND seq > @after
-ORDER BY seq ASC
-LIMIT @row_limit`
-	var rows []runLogRow
-	if err := r.client.Select(ctx, &rows, sql,
-		Named("org_id", q.OrgID),
-		Named("run_id", q.RunID),
-		Named("all_levels", len(q.Levels) == 0),
-		Named("levels", q.Levels),
-		Named("after", uint64(q.AfterSeq)),
-		Named("row_limit", uint32(q.Limit)),
-	); err != nil {
-		return telemetry.RunLogChunkPage{}, fmt.Errorf("%w: %v", telemetry.ErrHistoricalUnavailable, err)
-	}
-	chunks := make([]api.RunLogChunk, 0, len(rows))
-	last := q.AfterSeq
-	for _, row := range rows {
-		chunks = append(chunks, row.chunk())
-		last = int64(row.Seq)
-	}
-	return telemetry.RunLogChunkPage{Chunks: chunks, LastSeq: last, Historical: len(chunks)}, nil
-}
-
 type eventRow struct {
 	Seq            uint64    `ch:"seq"`
-	RunID          *string   `ch:"run_id"`
 	DeploymentID   *string   `ch:"deployment_id"`
-	RunLeaseID     *string   `ch:"run_lease_id"`
-	AttemptNumber  *int32    `ch:"attempt_number"`
 	TraceID        string    `ch:"trace_id"`
 	SpanID         string    `ch:"span_id"`
 	Traceparent    string    `ch:"traceparent"`
@@ -108,12 +69,8 @@ type eventRow struct {
 	ObservedAt     time.Time `ch:"observed_at"`
 }
 
-func (r eventRow) event() api.RunEvent {
-	var runID, deploymentID *string
-	if r.RunID != nil {
-		value := *r.RunID
-		runID = &value
-	}
+func (r eventRow) event() api.DiagnosticEvent {
+	var deploymentID *string
 	if r.DeploymentID != nil {
 		value := *r.DeploymentID
 		deploymentID = &value
@@ -126,11 +83,9 @@ func (r eventRow) event() api.RunEvent {
 	if r.RedactionClass == "sensitive" {
 		attrs = json.RawMessage(`{"redacted":true}`)
 	}
-	return api.RunEvent{
+	return api.DiagnosticEvent{
 		ID:             telemetry.Cursor(int64(r.Seq)),
-		RunID:          runID,
 		DeploymentID:   deploymentID,
-		AttemptNumber:  r.AttemptNumber,
 		Trace:          api.TraceContext{TraceID: r.TraceID, SpanID: r.SpanID, Traceparent: r.Traceparent},
 		Category:       r.Category,
 		Severity:       r.Severity,
@@ -141,31 +96,6 @@ func (r eventRow) event() api.RunEvent {
 		OccurredAt:     at,
 		RedactionClass: r.RedactionClass,
 		Attributes:     attrs,
-	}
-}
-
-type runLogRow struct {
-	RunID         string    `ch:"run_id"`
-	RunLeaseID    string    `ch:"run_lease_id"`
-	AttemptNumber int32     `ch:"attempt_number"`
-	StreamName    string    `ch:"stream_name"`
-	Seq           uint64    `ch:"seq"`
-	ObservedSeq   uint64    `ch:"observed_seq"`
-	Content       []byte    `ch:"content"`
-	SizeBytes     uint32    `ch:"size_bytes"`
-	ObservedAt    time.Time `ch:"observed_at"`
-}
-
-func (r runLogRow) chunk() api.RunLogChunk {
-	return api.RunLogChunk{
-		ID:            telemetry.Cursor(int64(r.Seq)),
-		RunID:         r.RunID,
-		AttemptNumber: r.AttemptNumber,
-		Stream:        r.StreamName,
-		ContentBase64: base64.StdEncoding.EncodeToString(r.Content),
-		Bytes:         int64(r.SizeBytes),
-		ObservedSeq:   int64(r.ObservedSeq),
-		At:            r.ObservedAt.UTC(),
 	}
 }
 

@@ -7,9 +7,10 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/helmrdotdev/helmr/internal/telemetry/diagnostic"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // Log streams a Command's output is recorded on.
@@ -22,13 +23,17 @@ const (
 // the worker host that runs it on the Instance incarnation and writer
 // generation it acts for. The caller has already bounded Content.
 type LogChunk struct {
-	OrgID            uuid.UUID
+	EnvironmentID    uuid.UUID
 	CommandID        uuid.UUID
 	InstanceID       uuid.UUID
 	WriterGeneration int64
 	Stream           string
 	ObservedSeq      uint64
 	ObservedAt       time.Time
+	Kind             string
+	ThroughSequence  uint64
+	DroppedBytes     int64
+	Complete         bool
 	Content          []byte
 }
 
@@ -39,67 +44,74 @@ func (c LogChunk) valid() bool {
 }
 
 // AppendLog records a log chunk while its producer still runs the Command,
-// fencing the physical producer independently of Run lifetimes. Replaying a
+// fencing the physical producer by its Computer lease. Replaying a
 // recorded sequence with the same content is accepted; different content is
 // ErrChanged.
-func AppendLog(ctx context.Context, txb db.TxBeginner, worker workergroup.HostPrincipal, chunk LogChunk) error {
-	return changed(db.RunTx(ctx, txb, func(tx pgx.Tx) error {
-		return appendLog(ctx, tx, worker, chunk)
-	}))
+func AppendLog(ctx context.Context, txb db.TxBeginner, worker workergroup.HostPrincipal, chunk LogChunk, bounds diagnostic.Bounds) (telemetry.DiagnosticReceipt, error) {
+	var result telemetry.DiagnosticReceipt
+	record := diagnostic.Record{Stream: chunk.Stream, Kind: chunk.Kind, Sequence: int64(chunk.ObservedSeq), ThroughSequence: int64(chunk.ThroughSequence), ObservedAtUnixNano: chunk.ObservedAt.UnixNano(), Data: chunk.Content, DroppedBytes: chunk.DroppedBytes, Complete: chunk.Complete}
+	if !chunk.valid() || chunk.ThroughSequence > uint64(1<<63-1) || record.Validate(bounds.ChunkBytes) != nil {
+		return result, ErrInvalidLog
+	}
+	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
+		admission, err := telemetry.BeginDiagnosticAdmission(ctx, tx, telemetry.DiagnosticSource{EnvironmentID: chunk.EnvironmentID, Kind: "computer_command", ID: chunk.CommandID, ProducerEpoch: 1}, bounds)
+		if err != nil {
+			return err
+		}
+		result, err = appendLog(ctx, tx, worker, chunk, record, &admission)
+		return err
+	})
+	if err != nil {
+		return telemetry.DiagnosticReceipt{}, changed(err)
+	}
+	return result, nil
 }
 
-func appendLog(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, chunk LogChunk) error {
-	if !chunk.valid() {
-		return ErrInvalidLog
-	}
+func appendLog(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, chunk LogChunk, record diagnostic.Record, admission *telemetry.DiagnosticAdmission) (telemetry.DiagnosticReceipt, error) {
+	var receipt telemetry.DiagnosticReceipt
 	q := db.New(tx)
 	target, err := q.GetComputerCommandTarget(ctx, db.GetComputerCommandTargetParams{
-		OrgID: pgvalue.UUID(chunk.OrgID), CommandID: pgvalue.UUID(chunk.CommandID),
+		EnvironmentID: pgvalue.UUID(chunk.EnvironmentID), CommandID: pgvalue.UUID(chunk.CommandID),
 	})
 	if err != nil {
-		return err
+		return receipt, err
 	}
-	// Serialize credential revocation before taking physical and member locks.
-	if _, err = workergroup.LockHost(ctx, q, worker); err != nil {
-		return err
+	if err = lockHost(ctx, tx, worker); err != nil {
+		return receipt, err
 	}
-	// Lock the Command's bound Instance; the worker authority below decides
-	// whether it still admits this producer.
-	if _, err = lockCommandInstance(ctx, tx, target, pgvalue.UUID(chunk.CommandID)); err != nil {
-		return err
-	}
-	authority, err := q.LockComputerCommandWorkerAuthority(ctx, db.LockComputerCommandWorkerAuthorityParams{
-		OrgID: pgvalue.UUID(chunk.OrgID), CommandID: pgvalue.UUID(chunk.CommandID), WorkerGroupID: pgvalue.UUID(worker.GroupID),
-		WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch,
-	})
+	lease, err := lockCommandLease(ctx, tx, target, chunk.CommandID)
 	if err != nil {
-		return err
+		return receipt, err
 	}
-	instance := authority.ComputerInstance
-	if instance.ID != pgvalue.UUID(chunk.InstanceID) || instance.WorkerGroupID != pgvalue.UUID(worker.GroupID) ||
-		instance.ReclaimedAt.Valid || instance.DesiredState != db.InstanceDesiredStateReady ||
-		instance.WriterGeneration != chunk.WriterGeneration ||
-		(authority.ComputerCommand.Status != "running" && authority.ComputerCommand.Status != "stopping") {
-		return pgx.ErrNoRows
+	if !lease.matches(worker, chunk.InstanceID, chunk.WriterGeneration) {
+		return receipt, pgx.ErrNoRows
 	}
-	_, err = q.InsertCommandLogChunk(ctx, db.InsertCommandLogChunkParams{
-		OrgID: target.OrgID, ProjectID: target.ProjectID,
-		EnvironmentID: authority.ComputerCommand.EnvironmentID, CommandID: authority.ComputerCommand.ID,
-		StreamName: chunk.Stream, ObservedSeq: int64(chunk.ObservedSeq), Content: chunk.Content,
-		ObservedAt: pgtype.Timestamptz{Time: chunk.ObservedAt.UTC().Truncate(time.Millisecond), Valid: true},
-	})
+	process, err := lockCommand(ctx, tx, lease.EnvironmentID, lease.ComputerID, chunk.CommandID)
 	if err != nil {
-		return err
+		return receipt, err
 	}
-	authorized, err := q.CommandLogProducerStillAuthorized(ctx, db.CommandLogProducerStillAuthorizedParams{
-		WorkerHostID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID),
-		WorkerEpoch: worker.Epoch, ExpiresAt: instance.WriterExpiresAt,
-	})
+	if !process.ComputerLeaseEpoch.Valid || process.ComputerLeaseEpoch.Int64 != lease.Epoch || (!process.TerminalAt.Valid && process.Status != "running" && process.Status != "stopping") {
+		return receipt, pgx.ErrNoRows
+	}
+	if process.ProcessReconciledAt.Valid || process.OutputFenced {
+		return receipt, pgx.ErrNoRows
+	}
+	if process.TerminalAt.Valid {
+		final, complete, gapped := process.StdoutFinalThrough, process.StdoutFinalComplete, process.StdoutFinalGapped
+		if chunk.Stream == "stderr" {
+			final, complete, gapped = process.StderrFinalThrough, process.StderrFinalComplete, process.StderrFinalGapped
+		}
+		if !final.Valid || record.ThroughSequence > final.Int64 || (record.Kind == "end" && (record.ThroughSequence != final.Int64 || record.Complete != complete.Bool)) || (record.Kind == "gap" && !gapped.Bool) {
+			return receipt, pgx.ErrNoRows
+		}
+	}
+	if err = producerStillAuthorized(ctx, tx, worker, lease, false); err != nil {
+		return receipt, err
+	}
+
+	receipt, err = admission.Append(ctx, record)
 	if err != nil {
-		return err
+		return receipt, err
 	}
-	if !authorized.Valid || !authorized.Bool {
-		return pgx.ErrNoRows
-	}
-	return nil
+	return receipt, producerStillAuthorized(ctx, tx, worker, lease, false)
 }

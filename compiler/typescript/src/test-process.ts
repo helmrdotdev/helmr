@@ -44,6 +44,6 @@ export async function analyzeProject(options: {root: string; architecture: "x86_
     const verification = runEntry("program-compiler", ["--analyze",payload,configPath,nodeVersion,`sha256:${"1".repeat(64)}`,resolve(bundle,"bundle.json"),output])
     if (verification.outcome !== "succeeded") throw new Error(verification.error.message)
     const result = JSON.parse(await readFile(resolve(output,"helmr/compiler-result.json"),"utf8"))
-    return {buildPlan: JSON.parse(verification.files[0].content),declarationLocator:JSON.parse(verification.files[1]?.content ?? '{"declarations":[]}'),programDeclarations:verification.declarations,modules:JSON.parse(await readFile(resolve(bundle,"bundle.json"),"utf8")).entries.map((entry: {sourcePath:string})=>entry.sourcePath),result}
+    return {buildPlan: JSON.parse(verification.files.find((file: {path: string}) => file.path === "helmr/build-plan.json").content),definitionIndex:JSON.parse(verification.files.find((file: {path: string}) => file.path === "helmr/definition-index.json").content),modules:JSON.parse(await readFile(resolve(bundle,"bundle.json"),"utf8")).entries.map((entry: {sourcePath:string})=>entry.sourcePath),result}
   } finally {await rm(output,{recursive:true,force:true})}
 }

@@ -1,4 +1,4 @@
-import { image, source, task, sandbox } from "@helmr/sdk"
+import { agent, computer, image, source } from "@helmr/sdk"
 import { spawn } from "node:child_process"
 import { writeFile } from "node:fs/promises"
 import { z } from "zod"
@@ -19,21 +19,25 @@ const base = image("cli-tooling")
   .run(["bun", "install"])
   .workdir("/sandbox")
 
-export const cliToolingComputer = sandbox({ id: "cli-tooling" })
-  .image(base)
-  .resources({ cpu: 1, memory: "1GiB" })
+export const cliToolingComputer = computer({
+  id: "cli-tooling",
+  image: base,
+  resources: { cpu: 1, memory: "1GiB" },
+})
 
 const payload = z.object({
   pattern: z.string().optional(),
 })
 
-export const cliTooling = task({
+export const cliTooling = agent({
+  computer: cliToolingComputer,
   id: "cli-tooling",
-  maxDuration: "5m",
-  payload,
-  run: async (payload, ctx) => {
-    const pattern = payload.pattern?.trim() || "export const"
-    const { stdout, stderr, exitCode } = await runCommand(["rg", "--json", pattern, "tasks"])
+  maxTurnDuration: "5m",
+  async turn(turn) {
+    const input = payload.parse(JSON.parse(turn.input.map(part => part.text).join("")))
+    const pattern = input.pattern?.trim() || "export const"
+    await writeFile("sample.ts", "export const greeting = \"hello Helmr\"\n")
+    const { stdout, stderr, exitCode } = await runCommand(["rg", "--json", pattern, "sample.ts"], turn.signal)
     if (exitCode !== 0) {
       throw new Error(`rg exited ${exitCode}: ${stderr}`)
     }
@@ -50,7 +54,7 @@ export const cliTooling = task({
         text: event.data.lines.text.trim(),
       }))
 
-    const report = { runId: ctx.run.id, tool: "ripgrep", pattern, matches }
+    const report = { turnId: turn.id, tool: "ripgrep", pattern, matches }
     await writeFile("cli-tooling-report.json", `${JSON.stringify(report, null, 2)}\n`)
     console.info({ report: "cli-tooling-report.json", matches: matches.length })
     return report
@@ -68,9 +72,9 @@ interface RipgrepMatch {
   }
 }
 
-function runCommand(command: readonly string[]): Promise<{ stdout: string, stderr: string, exitCode: number | null }> {
+function runCommand(command: readonly string[], signal: AbortSignal): Promise<{ stdout: string, stderr: string, exitCode: number | null }> {
   return new Promise((resolve, reject) => {
-    const proc = spawn(command[0] ?? "", command.slice(1), { stdio: ["ignore", "pipe", "pipe"] })
+    const proc = spawn(command[0] ?? "", command.slice(1), { signal, stdio: ["ignore", "pipe", "pipe"] })
     let stdout = ""
     let stderr = ""
     proc.stdout.setEncoding("utf8")

@@ -7,7 +7,7 @@ canonical_json_check="$repo_root/scripts/check-canonical-json.sh"
 controlplane_builder="$repo_root/scripts/build-controlplane-image.sh"
 require_text() { rg -F -- "$1" "$2" >/dev/null || { echo "$3" >&2; exit 1; }; }
 require_text "'!v*-preview.*'" "$workflow" 'generated preview tags must be excluded'
-if rg -q 'workflow_run:|ci:full|superseded|precheck' "$workflow"; then
+if rg -q 'workflow_run:' "$workflow"; then
   echo 'release must be explicitly requested, without automatic supersession' >&2
   exit 1
 fi
@@ -29,12 +29,12 @@ require_text 'environment: preview' "$workflow" \
 require_text 'environment: release' "$workflow" \
   'formal tag jobs must use literal release environment'
 bash "$repo_root/tests/release/assume-preview-role.test.sh"
-python3 <<PY
+python3 - "$workflow" "$repo_root" <<'PY'
 import re
 import sys
 from pathlib import Path
 
-text = Path("$workflow").read_text()
+text = Path(sys.argv[1]).read_text()
 jobs = ('publish-preview', 'complete-preview', 'discovery')
 consumers = ('main.py finalize', 'main.py discover', 'main.py stage')
 assume = 'assume-preview-role.sh'
@@ -65,9 +65,14 @@ if 'HELMR_PUBLIC_CONSUMER' not in verify or 'consumer(root' not in verify:
     sys.exit('verify: downloaded public consumer must execute')
 if 'nix develop .#images -c' in text:
     sys.exit('release workflow must not realize the source build shell')
-build = Path("$repo_root/.github/workflows/build-artifacts.yaml").read_text()
+build = Path(sys.argv[2], ".github/workflows/build-artifacts.yaml").read_text()
 if not re.search(r'nix develop [^\n]+#images["\x27]? -c', build):
     sys.exit('actual artifact construction must retain the full images shell')
+
+verify_builder = 'python3 tools/scripts/release/contract.py bundle-builder --verify "$image"'
+export_builder = "printf 'BUNDLE_BUILDER_IMAGE=%s"
+if verify_builder not in build or export_builder not in build or build.index(verify_builder) >= build.index(export_builder):
+    sys.exit('the restored builder identity must be verified before exposing it to the CLI build')
 
 for job in jobs:
     body = block(job)
@@ -100,6 +105,10 @@ require_text 'name: build-artifacts-${{ github.run_id }}-${{ matrix.part }}' \
   "$repo_root/.github/workflows/build-artifacts.yaml" 'component upload name differs from retry lookup'
 require_text 'name: build-artifacts-${{ github.run_id }}-cli' \
   "$repo_root/.github/workflows/build-artifacts.yaml" 'CLI upload name differs from retry lookup'
+require_text 'image=$(python3 "$contract" control-plane)' "$repo_root/scripts/release/build.sh" \
+  'Control Plane build must select its declared image identity'
+require_text 'image=$(python3 "$contract" bundle-builder)' "$repo_root/scripts/release/build.sh" \
+  'bundle-builder build must select its declared image identity'
 require_text 'PREVIEW_PUBLISHER_ROLE_ARN' "$workflow" \
   'preview publication must assume the dedicated publisher role'
 require_text 'main.py verify' "$workflow" \

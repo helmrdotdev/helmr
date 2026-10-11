@@ -1,6 +1,5 @@
-import { image, source, task, sandbox } from "@helmr/sdk"
+import { agent, computer, image, source } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
-import { z } from "zod"
 
 const base = image("hello-world")
   .from("node:24-bookworm-slim")
@@ -11,22 +10,21 @@ const base = image("hello-world")
   .run(["bun", "install"])
   .workdir("/sandbox")
 
-export const helloWorldComputer = sandbox({ id: "hello-world" })
-  .image(base)
-  .resources({ cpu: 1, memory: "1GiB" })
-
-const payload = z.object({
-  name: z.string().optional(),
+export const helloWorldComputer = computer({
+  id: "hello-world",
+  image: base,
+  resources: { cpu: 1, memory: "1GiB" },
 })
 
-export const helloWorld = task({
+
+export const helloWorld = agent({
+  computer: helloWorldComputer,
   id: "hello-world",
-  maxDuration: "5m",
-  payload,
-  run: async (payload, ctx) => {
-    const name = payload.name?.trim() || "Helmr"
+  maxTurnDuration: "5m",
+  async turn(turn) {
+    const name = turn.input.map(part => part.text).join("").trim() || "Helmr"
     const greeting = `hello ${name}`
-    await writeFile("hello.txt", `${greeting}\nrun=${ctx.run.id}\n`)
-    return { greeting, runId: ctx.run.id }
+    await writeFile("hello.txt", `${greeting}\nturn=${turn.id}\n`)
+    return { greeting, turnId: turn.id }
   },
 })

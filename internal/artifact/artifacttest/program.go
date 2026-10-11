@@ -8,8 +8,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/definition"
 )
 
-// ModulePath is the program module holding the handler for digit "a" (the
-// Task) or any other digit (the Actor).
+// ModulePath identifies either generated Agent entry module.
 func ModulePath(digit string) string {
 	if digit == "a" {
 		return "helmr/app/entry-0.mjs"
@@ -17,38 +16,20 @@ func ModulePath(digit string) string {
 	return "helmr/app/entry-1.mjs"
 }
 
-// AnalysisDeclarationLocator locates the handlers BuildPlan declares.
-func AnalysisDeclarationLocator() artifact.DeclarationLocator {
-	return artifact.DeclarationLocator{
-		FormatVersion: artifact.DeclarationLocatorFormatVersion,
-		Declarations: []artifact.LocatedDeclaration{
-			{
-				Kind:       artifact.DeclarationKindTask,
-				DeclaredID: "build",
-				ModulePath: ModulePath("a"),
-				ExportName: "build",
-				Slot:       artifact.DeclarationSlotHandler,
-			},
-			{
-				Kind:       artifact.DeclarationKindActor,
-				DeclaredID: "chat",
-				ModulePath: ModulePath("b"),
-				ExportName: "chat",
-				Slot:       artifact.DeclarationSlotHandler,
-			},
-		},
-	}
+func DefinitionIndex() artifact.DefinitionIndex {
+	return artifact.DefinitionIndex{APIVersion: "helmr.definition-index.v1", Agents: []artifact.AgentBundleEntry{
+		{ID: "build", ComputerDefinitionID: "repo", ModulePath: ModulePath("a"), ExportName: "build"},
+		{ID: "chat", ComputerDefinitionID: "repo", ModulePath: ModulePath("b"), ExportName: "chat"},
+	}, Computers: []artifact.ComputerBundleEntry{{ID: "repo", ModulePath: ModulePath("a"), ExportName: "build", ThroughAgent: true}}}
 }
 
-// ProgramIndex indexes BuildPlan with AnalysisDeclarationLocator and a Sandbox
-// image for "repo".
-func ProgramIndex(t *testing.T) artifact.ProgramIndex {
+func ProgramMetadata(t *testing.T) artifact.ProgramMetadata {
 	t.Helper()
 	plan := BuildPlan()
-	index, err := artifact.BuildProgramIndex(
+	index, err := artifact.BuildProgramMetadata(
 		plan,
-		AnalysisDeclarationLocator(),
-		map[string]definition.ComputerImage{
+		DefinitionIndex(),
+		map[string]definition.ComputerSeed{
 			"repo": {
 				Profile:      definition.ComputerSeedProfile,
 				Digest:       "sha256:" + strings.Repeat("d", 64),

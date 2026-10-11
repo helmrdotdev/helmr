@@ -20,26 +20,26 @@ type contractFixture struct {
 	} `json:"manifest"`
 }
 
-func TestProgramIndexCanonicalRoundTrip(t *testing.T) {
-	index := testProgramIndex(t)
-	raw, err := CanonicalProgramIndex(index)
+func TestProgramMetadataCanonicalRoundTrip(t *testing.T) {
+	index := testProgramMetadata(t)
+	raw, err := CanonicalProgramMetadata(index)
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := ParseProgramIndex(raw)
+	parsed, err := ParseProgramMetadata(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reencoded, err := CanonicalProgramIndex(parsed)
+	reencoded, err := CanonicalProgramMetadata(parsed)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(reencoded) != string(raw) {
 		t.Fatalf("reencoded Program index differs:\n%s\n%s", reencoded, raw)
 	}
-	if parsed.Declarations[0].Kind != definition.KindActor ||
-		parsed.Declarations[1].Kind != definition.KindSandbox ||
-		parsed.Declarations[2].Kind != definition.KindTask {
+	if parsed.Definitions[0].Kind != definition.KindAgent ||
+		parsed.Definitions[1].Kind != definition.KindAgent ||
+		parsed.Definitions[2].Kind != definition.KindComputer {
 		t.Fatalf("Program index declarations are not in unsigned UTF-8 kind order")
 	}
 }
@@ -51,7 +51,7 @@ func TestProgramOutputCanonicalRoundTrip(t *testing.T) {
 			SizeBytes: 1024,
 			MediaType: ProgramArtifactMediaType,
 		},
-		Index: testProgramIndex(t),
+		Metadata: testProgramMetadata(t),
 	}
 	raw, err := CanonicalProgramOutput(output)
 	if err != nil {
@@ -70,72 +70,53 @@ func TestProgramOutputCanonicalRoundTrip(t *testing.T) {
 	}
 }
 
-func TestProgramIndexRejectsInvalidAuthority(t *testing.T) {
+func TestProgramMetadataRejectsInvalidAuthority(t *testing.T) {
 	tests := []struct {
 		name   string
-		change func(*ProgramIndex)
+		change func(*ProgramMetadata)
 	}{
 		{
 			name: "empty declarations",
-			change: func(index *ProgramIndex) {
-				index.Declarations = nil
+			change: func(index *ProgramMetadata) {
+				index.Definitions = nil
 			},
 		},
 		{
 			name: "declaration order",
-			change: func(index *ProgramIndex) {
-				index.Declarations[0], index.Declarations[1] =
-					index.Declarations[1], index.Declarations[0]
-			},
-		},
-		{
-			name: "duplicate queue",
-			change: func(index *ProgramIndex) {
-				index.Queues = append(index.Queues, index.Queues[0])
+			change: func(index *ProgramMetadata) {
+				index.Definitions[0], index.Definitions[1] =
+					index.Definitions[1], index.Definitions[0]
 			},
 		},
 		{
 			name: "invalid runtime API",
-			change: func(index *ProgramIndex) {
+			change: func(index *ProgramMetadata) {
 				index.RuntimeContract = "helmr.runtime.unsupported"
 			},
 		},
 		{
 			name: "invalid config digest",
-			change: func(index *ProgramIndex) {
+			change: func(index *ProgramMetadata) {
 				index.ConfigResultDigest = "sha256:invalid"
 			},
 		},
-		{
-			name: "invalid locator",
-			change: func(index *ProgramIndex) {
-				index.Declarations[0].Locator.ModulePath = "../tasks/operator.ts"
-			},
-		},
-		{
-			name: "Sandbox locator",
-			change: func(index *ProgramIndex) {
-				index.Declarations[1].Locator = &ProgramLocator{
-					ExportName: "repo",
-					ModulePath: ".helmr/modules/" + strings.Repeat("a", 64) + ".mjs",
-					Slot:       DeclarationSlotHandler,
-				}
-			},
-		},
+		{name: "absent Computer", change: func(index *ProgramMetadata) { index.Definitions[0].Agent.ComputerDefinitionID = "absent" }},
+		{name: "wrong manifest kind", change: func(index *ProgramMetadata) { index.Definitions[0].Computer = index.Definitions[2].Computer }},
+		{name: "duplicate declaration", change: func(index *ProgramMetadata) { index.Definitions[1] = index.Definitions[0] }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			index := cloneProgramIndex(testProgramIndex(t))
+			index := cloneProgramMetadata(testProgramMetadata(t))
 			test.change(&index)
-			if err := ValidateProgramIndex(index); err == nil {
-				t.Fatal("ValidateProgramIndex returned nil error")
+			if err := ValidateProgramMetadata(index); err == nil {
+				t.Fatal("ValidateProgramMetadata returned nil error")
 			}
 		})
 	}
 }
 
-func TestProgramIndexRejectsUnknownAndNoncanonicalJSON(t *testing.T) {
-	raw, err := CanonicalProgramIndex(testProgramIndex(t))
+func TestProgramMetadataRejectsUnknownAndNoncanonicalJSON(t *testing.T) {
+	raw, err := CanonicalProgramMetadata(testProgramMetadata(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,20 +129,20 @@ func TestProgramIndexRejectsUnknownAndNoncanonicalJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ParseProgramIndex(unknown); err == nil {
-		t.Fatal("ParseProgramIndex accepted an unknown root member")
+	if _, err := ParseProgramMetadata(unknown); err == nil {
+		t.Fatal("ParseProgramMetadata accepted an unknown root member")
 	}
-	if _, err := ParseProgramIndex(append([]byte(" "), raw...)); err == nil {
-		t.Fatal("ParseProgramIndex accepted noncanonical bytes")
+	if _, err := ParseProgramMetadata(append([]byte(" "), raw...)); err == nil {
+		t.Fatal("ParseProgramMetadata accepted noncanonical bytes")
 	}
 }
 
-func TestProgramIndexParserEnforcesSizeBound(t *testing.T) {
-	if _, err := ParseProgramIndex(nil); err == nil {
-		t.Fatal("ParseProgramIndex accepted empty input")
+func TestProgramMetadataParserEnforcesSizeBound(t *testing.T) {
+	if _, err := ParseProgramMetadata(nil); err == nil {
+		t.Fatal("ParseProgramMetadata accepted empty input")
 	}
-	if _, err := ParseProgramIndex(make([]byte, MaxProgramFileSizeBytes+1)); err == nil {
-		t.Fatal("ParseProgramIndex accepted oversized input")
+	if _, err := ParseProgramMetadata(make([]byte, MaxProgramFileSizeBytes+1)); err == nil {
+		t.Fatal("ParseProgramMetadata accepted oversized input")
 	}
 }
 
@@ -179,13 +160,13 @@ func TestManifestDigestMatchesSharedGoldenFixture(t *testing.T) {
 	}
 }
 
-func testProgramIndex(t *testing.T) ProgramIndex {
+func testProgramMetadata(t *testing.T) ProgramMetadata {
 	t.Helper()
 	plan := testBuildPlan()
-	index, err := BuildProgramIndex(
+	index, err := BuildProgramMetadata(
 		plan,
-		testAnalysisDeclarationLocator(),
-		map[string]definition.ComputerImage{
+		testDefinitionIndex(),
+		map[string]definition.ComputerSeed{
 			"repo": {
 				Profile:      definition.ComputerSeedProfile,
 				Digest:       "sha256:" + strings.Repeat("d", 64),

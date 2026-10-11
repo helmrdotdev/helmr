@@ -1,4 +1,5 @@
-import { image, source, task, sandbox, type JsonValue } from "@helmr/sdk"
+import { fixtureValue } from "../../support/runtime-mcp"
+import { image, source, agent, computer, type Json } from "@helmr/sdk"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { z } from "zod"
@@ -15,11 +16,9 @@ const base = image("helmr-datapath-network")
     "apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*",
   ])
   .user("root")
-  .workdir("/sandbox")
+  .workdir("/workspace")
 
-export const datapathNetworkComputer = sandbox({ id: "helmr-datapath-network" })
-  .image(base)
-  .resources({ cpu: 1, memory: "1GiB" })
+export const datapathNetworkComputer = computer({ id: "helmr-datapath-network", image: base, resources: { cpu: 1, memory: "1GiB" } })
 
 const address = z.string().min(1).max(253).regex(/^[A-Za-z0-9.:%_-]+$/)
 const mac = z.string().regex(/^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$/)
@@ -42,16 +41,27 @@ const payload = z.object({
   expectReply: z.boolean().optional(),
   queryName: z.string().min(1).max(253).optional(),
   transport: z.enum(["udp", "tcp"]).optional(),
+  holdForObservation: z.boolean().default(false),
 }).strict()
 
-type Payload = z.infer<typeof payload>
-
-export const datapathNetwork = task({
+export const datapathNetwork = agent({
   id: "datapath-network",
-  maxDuration: "10m",
-  retry: { enabled: false },
-  payload,
-  run: async (input: Payload): Promise<JsonValue> => {
+  computer: datapathNetworkComputer,
+  maxTurnDuration: "10m",
+  turn: async (turn): Promise<Json> => {
+    const input = payload.parse(fixtureValue(turn.input))
+    let finish!: () => void
+    const observed = new Promise<void>(resolve => { finish = resolve })
+    if (input.holdForObservation) {
+      let start!: () => void
+      const prepared = new Promise<void>(resolve => { start = resolve })
+      await turn.onMessage(message => {
+        if (fixtureValue(message) === "start") start()
+        if (fixtureValue(message) === "finish") finish()
+      })
+      await turn.output.write([{ type: "json", value: { phase: "ready", campaignId: input.campaignId } }])
+      await prepared
+    }
     if (input.startDelayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, input.startDelayMs))
     }
@@ -76,6 +86,7 @@ export const datapathNetwork = task({
       ["/opt/helmr/datapath-network-probe.py", JSON.stringify(probeInput)],
       {
         timeout: 330_000,
+        signal: turn.signal,
         maxBuffer: 64 * 1024,
         windowsHide: true,
       },
@@ -117,10 +128,15 @@ export const datapathNetwork = task({
     ) {
       throw new Error("datapath TCP probe returned an invalid flow identity")
     }
-    return {
+    const output = {
       campaignId: input.campaignId,
       caseId: input.caseId,
-      probe: result as JsonValue,
+      probe: result as Json,
     }
+    if (input.holdForObservation) {
+      await turn.output.write([{ type: "json", value: { ...output, phase: "observed" } }])
+      await observed
+    }
+    return output
   },
 })
