@@ -56,11 +56,11 @@ Required value formats:
 
 - `database_url`: `postgres://helmr_app:<application-password>@<postgres_endpoint>/helmr?sslmode=require`
 - `setup_token`: high-entropy string used only in self-hosted mode; read it from Secrets Manager for first organization setup
-- `worker_host_credential_signing_key`, `auth_key`, `encryption_key`, `checkpoint_encryption_key`, `computer_fencing_key`, `token_credential_key`: base64-encoded 32-byte keys
+- `worker_host_credential_signing_key`, `auth_key`, `encryption_key`, `checkpoint_encryption_key`, `computer_fencing_key`: base64-encoded 32-byte keys
 - `github_oauth_client_secret`: GitHub OAuth client secret
 
 The helper script generates `worker_host_credential_signing_key`, `auth_key`, `encryption_key`,
-`computer_fencing_key`, `token_credential_key`, `checkpoint_encryption_key`, and `setup_token` locally and writes them
+`computer_fencing_key`, `checkpoint_encryption_key`, and `setup_token` locally and writes them
 directly to Secrets Manager:
 
 ```sh
@@ -141,7 +141,6 @@ worker_root_volume_iops               = 3000
 worker_root_volume_throughput         = 125
 worker_disk_mib                       = 491520
 worker_disk_reserve_mib               = 8192
-worker_artifact_cache_max_mib         = 16384
 worker_vm_vcpus                       = 1
 worker_vm_memory_mib                  = 2048
 worker_vm_scratch_disk_mib            = 32768

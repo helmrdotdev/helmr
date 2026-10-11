@@ -298,17 +298,7 @@ variable "worker_execution_slots" {
 
 
 
-variable "artifact_cache_max_mib" {
-  description = "Optional maximum artifact cache size in MiB. Set explicitly when the VM disk shape and host volume leave less room than the derived cache budget."
-  type        = number
-  default     = null
-  nullable    = true
 
-  validation {
-    condition     = var.artifact_cache_max_mib == null || var.artifact_cache_max_mib > 0
-    error_message = "artifact_cache_max_mib must be null or positive."
-  }
-}
 
 variable "worker_controlplane_url" {
   description = "Worker-facing control-plane API URL for CONTROL_PLANE_URL. Prefer a private DNS name that matches the HTTPS certificate."
