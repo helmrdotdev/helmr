@@ -72,9 +72,9 @@ Historical definition reads do not select a Deployment for a new start.
 | `ctx.initResult` | The value returned by `init`, including live application/native handles. |
 | `ctx.signal` | Process shutdown and initialization cancellation. |
 | `turn.id`, `.sequence`, `.createdAt` | This input's identity, admission sequence and creation time. |
-| `turn.input`, `.source` | Text-part array input and origin facts: kind, optional requester Session and origin Turn IDs. |
+| `turn.input`, `.source` | Text-part array input and origin facts: caller kind, optional requester Session and origin Turn IDs, and optional Slack coordinates. |
 | `turn.signal` | Cancellation for this Turn's processing. |
-| `turn.onMessage(handler)` | Await registration; `handler(message: InputContent)` processes serial exact-Turn steering. |
+| `turn.onMessage(handler)` | Await registration; `handler(input: InputContent, message: InputMessage)` processes serial exact-Turn steering. |
 | `turn.output.pipe(values, { signal? })` | Append an async iterable of Content/string fragments; await completion. |
 
 Runtime delegation uses the Session-bound managed MCP connection returned by
@@ -202,3 +202,92 @@ existing holds remain. `session.cancel()` cancels the owned tree, discards queue
 work and requests active work to stop. Control acceptance is separate from
 physical convergence. Independent Sessions are unaffected by controls on their
 requester. Explicit Computer deletion can remain busy until physical cleanup.
+
+## Input provenance and retention
+
+Native Slack input includes `turn.source.slack` with `teamId`, `channelId`,
+`threadTs`, `messageTs` and `userId`. `source.kind` remains the caller kind.
+Each steering callback receives its own `{ id, source }` as the second argument;
+it does not inherit the initial Turn's author. These are references to the
+accepted input, not a transcript. Helmr does not fetch conversation history or
+choose model context. Application code can use the Slack SDK with an explicitly
+supplied customer credential through Secrets; native integration tokens are not
+exposed to Agent code.
+
+History is optional. These two handlers use the same input contract (with an
+existing `myComputer` definition):
+
+```ts
+import { agent } from "@helmr/sdk"
+import { WebClient } from "@slack/web-api"
+
+export const inputOnly = agent({
+  id: "input-only",
+  computer: myComputer,
+  async turn(turn) {
+    return { input: turn.input }
+  },
+})
+
+export const withThreadPage = agent({
+  id: "with-thread-page",
+  computer: myComputer,
+  async turn(turn) {
+    const source = turn.source.slack
+    if (!source) return { input: turn.input, context: [], nextCursor: null, hasMore: false }
+    const token = process.env["SLACK_CONTEXT_TOKEN"]
+    if (!token) throw new Error("SLACK_CONTEXT_TOKEN is required")
+    const slack = new WebClient(token, {
+      timeout: 10_000,
+      rejectRateLimitedCalls: true,
+      retryConfig: { retries: 0 },
+    })
+    const page = await slack.conversations.replies({
+      channel: source.channelId,
+      ts: source.threadTs,
+      latest: source.messageTs,
+      inclusive: true,
+      limit: 15,
+    })
+    return {
+      input: turn.input,
+      context: (page.messages ?? []).map(message => ({
+        user: message.user ?? null,
+        text: message.text ?? "",
+        ts: message.ts ?? null,
+      })),
+      nextCursor: page.response_metadata?.next_cursor ?? null,
+      hasMore: page.has_more ?? false,
+    }
+  },
+})
+```
+
+Install `@slack/web-api` in the application and supply your own Slack token as
+an Environment Secret bound to the Computer, for example using a protected env
+binding named `SLACK_CONTEXT_TOKEN` with `allowedOrigins: ["https://slack.com"]`.
+The token needs access to the source workspace/channel and the scopes required
+by [Slack's `conversations.replies`](https://docs.slack.dev/reference/methods/conversations.replies/).
+The example fetches one page through the submitted message; it does not claim a
+complete or immutable transcript. The application decides whether to paginate,
+handle rate limits or unavailable history, and pass the result to its harness.
+Use each callback's `message.source.slack` when retrieving context for a later
+`onMessage` input. A custom Slack listener also owns its authentication, retry
+keys, thread-to-Session mapping and publication; supplying Slack IDs in text does
+not grant native integration authority.
+
+In shared Slack channels, native input requires an explicit mention of the
+owning bot. Ordinary discussion, mentions of other people or bots, and bot names
+inside code or quotes do not trigger work. One thread belongs to one Agent;
+mention another Agent in a new thread. A closed Session does not reopen from a
+late reply. Exact question-response and control actions retain their own rules.
+
+`agent({ closeAfterIdle })` sets the default for new Sessions. The default is
+`"7d"`; `"never"` disables automatic closure. A `closeAfterIdle` option on
+`client.agents.start(id, request)` overrides the definition for that new Session.
+Its receipt and Session reads expose the resolved `closeAfterIdle`; `idleSince`
+is null while an idle interval has not been established. Changing a definition
+does not rewrite existing Sessions. Reusing a `sessionKey` preserves its policy;
+an explicit conflicting override is rejected. Managed MCP `start` and `spawn`
+accept `closeAfterIdleMs` as positive safe integer milliseconds or null for never.
+Omitting it inherits the definition.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/lifetime"
 	"time"
 	"uuid"
 
@@ -27,11 +28,12 @@ type Creator struct{ ca CAIssuer }
 func NewCreator(ca CAIssuer) Creator { return Creator{ca: ca} }
 
 type Request struct {
-	Scope          Scope
-	DefinitionKey  string
-	Key            *string
-	Secrets        []secretbinding.Reference
-	IdempotencyKey string
+	DeleteAfterUnused lifetime.Policy
+	Scope             Scope
+	DefinitionKey     string
+	Key               *string
+	Secrets           []secretbinding.Reference
+	IdempotencyKey    string
 }
 type Created struct {
 	ComputerID uuid.UUID
@@ -46,7 +48,7 @@ type createReceipt struct {
 // actual Computer bindings. A replay reads its retained receipt, never the
 // Environment's later current Deployment or current Secret versions.
 func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request) (Created, error) {
-	if !definition.ValidDeclaredID(request.DefinitionKey) {
+	if !request.DeleteAfterUnused.Valid() || !definition.ValidDeclaredID(request.DefinitionKey) {
 		return Created{}, invalidInput("invalid Computer definition key")
 	}
 	if err := ValidateKey(request.Key); err != nil {
@@ -66,7 +68,7 @@ func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request)
 	}
 	var retry idempotency.Request
 	if request.IdempotencyKey != "" {
-		retry, err = idempotency.NewExternalComputerCreateRequest(request.Scope.EnvironmentID, request.DefinitionKey, request.IdempotencyKey, idempotency.ComputerCreateFingerprint{Key: request.Key, Secrets: raw})
+		retry, err = idempotency.NewExternalComputerCreateRequest(request.Scope.EnvironmentID, request.DefinitionKey, request.IdempotencyKey, idempotency.ComputerCreateFingerprint{Key: request.Key, Secrets: raw, DeleteAfterUnused: request.DeleteAfterUnused})
 		if err != nil {
 			return Created{}, invalidInput("%v", err)
 		}
@@ -138,6 +140,11 @@ func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request)
 		id, err := agent.CreateStandaloneComputer(ctx, tx, c.ca, request.Scope.EnvironmentID, *deployment, request.DefinitionKey, refs)
 		if err != nil {
 			return err
+		}
+		if request.DeleteAfterUnused.Set {
+			if _, err = tx.Exec(ctx, `UPDATE computers SET delete_after_unused_ms=$3 WHERE environment_id=$1 AND id=$2`, request.Scope.EnvironmentID, id, request.DeleteAfterUnused.Milliseconds); err != nil {
+				return err
+			}
 		}
 		if request.Key != nil {
 			if _, err = tx.Exec(ctx, `UPDATE computers SET key=$3 WHERE environment_id=$1 AND id=$2`, request.Scope.EnvironmentID, id, *request.Key); err != nil {

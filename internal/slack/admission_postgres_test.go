@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -302,5 +303,53 @@ func TestSlackSelectorTextDoesNotChangeFront(t *testing.T) {
 	var exact bool
 	if err := f.Pool.QueryRow(t.Context(), `SELECT r.session_id=$2 AND convert_from(t.input,'UTF8')::jsonb='[{"type":"text","text":" !reviewer inspect"}]'::jsonb FROM slack_requests r JOIN turns t ON t.id=r.turn_id WHERE r.id=$1`, id, f.Session).Scan(&exact); err != nil || !exact {
 		t.Fatal(exact, err)
+	}
+}
+
+func TestSlackInputSourceBelongsToEachAcceptedMessage(t *testing.T) {
+	f := newStatusFixture(t)
+	f.link(t)
+	ctx := t.Context()
+	first := f.reply(t, "initial-source", false)
+	if err := admitMessage(ctx, f.Pool, nil, f.admissionClient(t), first); err != nil {
+		t.Fatal(err)
+	}
+	e := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+	turn, err := agent.Dispatch(ctx, f.Pool, e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if turn.Source.Kind != "user" || turn.Source.Slack == nil || turn.Source.Slack.UserID != "human" || turn.Source.Slack.ThreadTS != "123.456" || turn.Source.Slack.TeamID != "team" {
+		t.Fatalf("wrong Turn source: %+v", turn.Source)
+	}
+	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
+	if err = agent.RuntimeRegisterMessages(ctx, f.Pool, host, e, turn.TurnID); err != nil {
+		t.Fatal(err)
+	}
+	user := uuid.NewV7()
+	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO users(id,display_name) VALUES($1,'Second'); INSERT INTO org_members(org_id,user_id,role) SELECT org_id,$1,'developer' FROM environments WHERE id=$2; INSERT INTO slack_user_links(team_id,slack_user_id,user_id) VALUES('team','second-human',$1)`, pgx.QueryExecModeSimpleProtocol, user, f.Environment)
+	payload, _ := json.Marshal(messageGesture{Channel: "C1", Timestamp: slackNow(), Thread: "123.456", Text: "<@bot> another author"})
+	now := time.Now().UTC()
+	second, err := receiveGesture(ctx, f.Pool, inboundGesture{Installation: f.installation, Key: "second-source", Actor: "second-human", OccurredAt: now, ExpiresAt: now.Add(time.Minute), Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = admitMessage(ctx, f.Pool, nil, f.admissionClient(t), second.ID); err != nil {
+		t.Fatal(err)
+	}
+	attachment, err := agent.AcquireRuntimeAttachment(ctx, f.Pool, host, e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := agent.ClaimRuntimeMessage(ctx, f.Pool, host, e, attachment.Sequence, turn.TurnID)
+	if err != nil || message == nil {
+		t.Fatalf("message: %+v %v", message, err)
+	}
+	if message.Source.Kind != "user" || message.Source.Slack == nil || message.Source.Slack.UserID != "second-human" || message.Source.Slack.MessageTS == turn.Source.Slack.MessageTS {
+		t.Fatalf("message reused Turn author: %+v", message.Source)
+	}
+	repeated, err := agent.ClaimRuntimeMessage(ctx, f.Pool, host, e, attachment.Sequence, turn.TurnID)
+	if err != nil || repeated == nil || repeated.ID != message.ID || *repeated.Source.Slack != *message.Source.Slack {
+		t.Fatalf("replay lost attribution: %+v %v", repeated, err)
 	}
 }

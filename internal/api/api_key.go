@@ -58,6 +58,7 @@ const (
 	APIKeyScopeComputersCreate       APIKeyScope = "computers:create"
 	APIKeyScopeComputersRead         APIKeyScope = "computers:read"
 	APIKeyScopeComputersDelete       APIKeyScope = "computers:delete"
+	APIKeyScopeComputersUpdate       APIKeyScope = "computers:update"
 	APIKeyScopeComputerCommandCreate APIKeyScope = "computer-exec:create"
 	APIKeyScopeSecretsWrite          APIKeyScope = "secrets:write"
 	APIKeyScopeDeploymentsWrite      APIKeyScope = "deployments:write"

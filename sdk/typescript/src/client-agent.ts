@@ -1,3 +1,4 @@
+import { retentionMilliseconds, retentionFromMilliseconds, type Duration } from "./duration"
 import { slackStartOption } from "./client-slack"
 import type { TurnRef } from "./contract"
 import type { RequestOptions } from "./request"
@@ -8,6 +9,7 @@ import { parseTurnAdmission } from "./internal/session"
 import { sessionOperationOptions } from "./session"
 
 export interface AgentStartRequest {
+  readonly closeAfterIdle?: Duration
   readonly slack?: Readonly<{ channelId: string }>
   readonly input: InputContent
   readonly computer?: Readonly<{ id: string }>
@@ -15,6 +17,7 @@ export interface AgentStartRequest {
   readonly idempotencyKey?: string
 }
 export interface AgentStartReceipt {
+  readonly closeAfterIdle: Duration
   readonly session: ClientSessionRef
   readonly turn: TurnRef
   readonly created: boolean
@@ -45,6 +48,7 @@ export function createClientAgents(transport: AgentTransport): ClientAgentsApi {
         {
           body: {
             input: request.input,
+            ...(request.closeAfterIdle === undefined ? {} : { close_after_idle_ms: retentionMilliseconds(request.closeAfterIdle, "closeAfterIdle") }),
             ...(request.slack === undefined ? {} : { slack: slackStartOption(request.slack) }),
             idempotency_key: sessionOperationOptions(request).idempotencyKey,
             ...(request.sessionKey === undefined
@@ -72,6 +76,7 @@ export function createClientAgents(transport: AgentTransport): ClientAgentsApi {
         session,
         turn: session.turns.ref(admission.turnId),
         created: value.created,
+        closeAfterIdle: retentionFromMilliseconds((value as Record<string, unknown>)["close_after_idle_ms"], "closeAfterIdle"),
       })
     },
   } satisfies ClientAgentsApi)

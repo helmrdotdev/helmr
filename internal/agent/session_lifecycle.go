@@ -52,6 +52,10 @@ func reconcileSessionLifecycle(ctx context.Context, database db.TxDB, after sess
 	scanCtx, cancelScan := context.WithTimeout(ctx, 10*time.Second)
 	defer cancelScan()
 	rows, err := database.Query(scanCtx, `SELECT environment_id,session_id FROM (
+  SELECT environment_id,id AS session_id FROM sessions s WHERE status='open' AND close_after_idle_ms IS NOT NULL
+   AND (idle_since IS NULL OR extract(epoch FROM (clock_timestamp()-idle_since))*1000>=close_after_idle_ms
+    OR EXISTS(SELECT 1 FROM computer_saves save WHERE save.environment_id=s.environment_id AND save.computer_id=s.computer_id AND save.requested_at>=s.idle_since AND (save.turn_id IS NULL OR EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=save.environment_id AND t.id=save.turn_id AND t.session_id=s.id))))
+  UNION
   SELECT environment_id,session_id FROM turns WHERE status IN ('running','finalizing') AND deadline_at<=clock_timestamp()
   UNION
   SELECT t.environment_id,t.session_id FROM turns t
@@ -94,6 +98,9 @@ func reconcileSessionLifecycle(ctx context.Context, database db.TxDB, after sess
 		err := expireSessionDeadline(ctx, database, candidate.environment, candidate.session)
 		if err == nil {
 			err = reconcileSessionCompletion(ctx, database, candidate.environment, candidate.session)
+		}
+		if err == nil {
+			err = reconcileSessionIdle(ctx, database, candidate.environment, candidate.session)
 		}
 		if err == nil {
 			err = ReconcileSessionClosure(ctx, database, candidate.environment, candidate.session)

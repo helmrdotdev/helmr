@@ -149,6 +149,9 @@ func prepareStart(ctx context.Context, pool db.TxBeginner, caller Caller, req St
 				if !bytes.Equal(prior, digest[:]) {
 					return ErrConflict
 				}
+				if err = tx.QueryRow(ctx, `SELECT close_after_idle_ms FROM sessions WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, value.SessionID).Scan(&value.CloseAfterIdleMs); err != nil {
+					return err
+				}
 				receipt = &value
 				return nil
 			}

@@ -138,7 +138,7 @@ func TestSlackFrontHistoryWaitsForOwnedActivityToSettle(t *testing.T) {
 	fenceHistoryProcess(t, c)
 	// The physical stop can already be known while its event remains unread.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_thread_sources SET projected_event_seq=0 WHERE session_id=$1`, c.session)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET history_retention_mode='duration',history_retention_seconds=60,history_eligible_at=clock_timestamp()-interval '2 minutes',history_expires_at=EXTRACT(epoch FROM clock_timestamp())-60 WHERE id=$1`, f.session)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET history_retention_mode='duration',history_retention_seconds=60,history_eligible_at=statement_timestamp()-interval '2 minutes',history_expires_at=EXTRACT(epoch FROM statement_timestamp())-60 WHERE id=$1`, f.session)
 	reconcileHistory(t, f)
 	var expired bool
 	if err = f.pool.QueryRow(t.Context(), `SELECT history_expired_at IS NOT NULL FROM sessions WHERE id=$1`, f.session).Scan(&expired); err != nil || expired {

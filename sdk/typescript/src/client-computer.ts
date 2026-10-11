@@ -1,4 +1,4 @@
-import { durationMilliseconds } from "./duration"
+import { durationMilliseconds, retentionMilliseconds, type Duration } from "./duration"
 import { encodeCommandLogQuery, parseCommandLogPage, streamCommandLogs, type CommandLogQuery, type CommandLogStreamQuery } from "./command-logs"
 import { parseCancelReceipt, parseCommandInfo, parseCommandReceipt, waitForCommand, type CommandRef, type CommandWaitOptions, type CommandOutcome, type TimedCommandWaitResult } from "./command"
 import type { CursorPage } from "./contract"
@@ -39,7 +39,7 @@ export interface ClientComputersApi {
 
 export interface ComputerTransport {
   request(
-    method: "GET" | "POST" | "DELETE",
+    method: "GET" | "POST" | "DELETE" | "PATCH",
     path: string,
     options?: Readonly<{ body?: unknown; signal?: AbortSignal }>,
   ): Promise<unknown>
@@ -61,6 +61,7 @@ export function createClientComputers(
         {
           body: {
             ...(request.key === undefined ? {} : { key: request.key }),
+            ...(request.deleteAfterUnused === undefined ? {} : { delete_after_unused_ms: retentionMilliseconds(request.deleteAfterUnused, "deleteAfterUnused") }),
             ...(request.secrets === undefined ? {} : { secrets }),
             ...(request.idempotencyKey === undefined ? {} : { idempotency_key: request.idempotencyKey }),
           },
@@ -111,6 +112,7 @@ function parseComputerListItem(value: unknown): ComputerListItem {
 }
 
 export interface ClientComputerRef extends ComputerRef {
+  update(request: Readonly<{ deleteAfterUnused: Duration }>, options?: RequestOptions): Promise<Computer>
   exec(request: ComputerCommandRequest, options?: RequestOptions): Promise<CommandRef>
 }
 
@@ -122,6 +124,9 @@ export function createClientComputerRef(
   const path = `/v1/computers/${encodeURIComponent(computerID)}`
   const ref = {
     id: computerID,
+    async update(request: Readonly<{ deleteAfterUnused: Duration }>, options: RequestOptions = {}): Promise<Computer> {
+      return parseComputer(await transport.request("PATCH", path, { body: { delete_after_unused_ms: retentionMilliseconds(request.deleteAfterUnused, "deleteAfterUnused") }, ...(options.signal === undefined ? {} : { signal: options.signal }) }))
+    },
     async members(query: ComputerMembersQuery = {}, options: RequestOptions = {}): Promise<CursorPage<ComputerMember>> {
       const encoded = encodeComputerMembersQuery(query)
       const params = new URLSearchParams()

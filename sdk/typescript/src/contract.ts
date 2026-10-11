@@ -1,3 +1,4 @@
+import type { Duration } from "./duration"
 import type { AnswerControl } from "./question"
 import type { Content, InputContent } from "./content"
 import type { RequestOptions } from "./request"
@@ -39,6 +40,8 @@ export interface SessionHold {
   readonly createdAt: string
 }
 export interface Session {
+  readonly closeAfterIdle: Duration
+  readonly idleSince: string | null
   readonly id: string
   readonly agentId: string
   readonly deploymentId: string

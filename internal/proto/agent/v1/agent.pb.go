@@ -788,6 +788,7 @@ type MessageDelivery struct {
 	TurnId        string                 `protobuf:"bytes,1,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
 	MessageId     string                 `protobuf:"bytes,2,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
 	InputJson     []byte                 `protobuf:"bytes,3,opt,name=input_json,json=inputJson,proto3" json:"input_json,omitempty"`
+	SourceJson    []byte                 `protobuf:"bytes,4,opt,name=source_json,json=sourceJson,proto3" json:"source_json,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -839,6 +840,13 @@ func (x *MessageDelivery) GetMessageId() string {
 func (x *MessageDelivery) GetInputJson() []byte {
 	if x != nil {
 		return x.InputJson
+	}
+	return nil
+}
+
+func (x *MessageDelivery) GetSourceJson() []byte {
+	if x != nil {
+		return x.SourceJson
 	}
 	return nil
 }
@@ -3800,13 +3808,15 @@ const file_agent_proto_rawDesc = "" +
 	"\n" +
 	"input_json\x18\x04 \x01(\fR\tinputJson\x12\x1f\n" +
 	"\vsource_json\x18\x05 \x01(\fR\n" +
-	"sourceJson\"h\n" +
+	"sourceJson\"\x89\x01\n" +
 	"\x0fMessageDelivery\x12\x17\n" +
 	"\aturn_id\x18\x01 \x01(\tR\x06turnId\x12\x1d\n" +
 	"\n" +
 	"message_id\x18\x02 \x01(\tR\tmessageId\x12\x1d\n" +
 	"\n" +
-	"input_json\x18\x03 \x01(\fR\tinputJson\"@\n" +
+	"input_json\x18\x03 \x01(\fR\tinputJson\x12\x1f\n" +
+	"\vsource_json\x18\x04 \x01(\fR\n" +
+	"sourceJson\"@\n" +
 	"\rTurnInterrupt\x12\x17\n" +
 	"\aturn_id\x18\x01 \x01(\tR\x06turnId\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\"(\n" +

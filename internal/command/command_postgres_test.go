@@ -516,6 +516,15 @@ func TestCommandStandaloneComputerCreateReplayAndDeletion(t *testing.T) {
 		t.Fatalf("delete replay %+v %v", again, err)
 	}
 	snapshot, err := computer.Read(t.Context(), f.Pool, scope, first.ComputerID)
+	if err != nil || snapshot.Status != computer.StatusDeleting {
+		t.Fatalf("deletion accepted before storage release: %+v %v", snapshot, err)
+	}
+	// Deletion acceptance does not release the retained root or reservation.
+	// Complete the normal collector pass before expecting a deleted tombstone.
+	if err := agent.ReconcileComputerDiskRetention(t.Context(), f.Pool); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = computer.Read(t.Context(), f.Pool, scope, first.ComputerID)
 	if err != nil || snapshot.Status != computer.StatusDeleted {
 		t.Fatalf("tombstone %+v %v", snapshot, err)
 	}

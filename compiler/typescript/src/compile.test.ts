@@ -167,3 +167,16 @@ test("pins a literal cron Slack configuration and rejects malformed destinations
     expect(() => compile(entry({ ...worker, triggers: [{ ...trigger, slack }] }))).toThrow()
   }
 })
+
+test("retention omission, duration and never are distinct from execution timeouts", () => {
+  for (const policy of [undefined, "1d", "never"] as const) {
+    const worker = agent({ id: "worker", computer: computer({ ...machine(), ...(policy === undefined ? {} : { deleteAfterUnused: policy }) }), turn: () => null, ...(policy === undefined ? {} : { closeAfterIdle: policy }) })
+    const result = compile(entry(worker))
+    const a = result.buildPlan.definitions.find(d => d.kind === "agent")!.manifest
+    const c = result.buildPlan.definitions.find(d => d.kind === "computer")!.manifest
+    expect(a).toMatchObject(policy === "never" ? { closeAfterIdleNever: true } : policy === "1d" ? { closeAfterIdleMs: 86400000 } : {})
+    expect(c).toMatchObject(policy === "never" ? { deleteAfterUnusedNever: true } : policy === "1d" ? { deleteAfterUnusedMs: 86400000 } : {})
+    if (policy === undefined) { expect(a).not.toHaveProperty("closeAfterIdleNever"); expect(a).not.toHaveProperty("closeAfterIdleMs"); expect(c).not.toHaveProperty("deleteAfterUnusedMs") }
+  }
+  expect(() => compile(entry(agent({ id: "worker", computer: machine(), turn: () => null, maxTurnDuration: "never" })))).toThrow()
+})

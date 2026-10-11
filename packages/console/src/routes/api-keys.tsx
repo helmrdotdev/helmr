@@ -95,6 +95,11 @@ const API_KEY_SCOPE_OPTIONS: {
     description: "Allow automation to read Computer state and configuration.",
   },
   {
+    value: "computers:update",
+    label: "Update computer retention",
+    description: "Allow automation to change Computer retention policies.",
+  },
+  {
     value: "computers:delete",
     label: "Delete computers",
     description: "Allow automation to delete Computers.",

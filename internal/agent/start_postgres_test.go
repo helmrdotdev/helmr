@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/conversation"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -73,7 +74,7 @@ func TestStartAtomicFreshAdmissionAndConcurrentRetry(t *testing.T) {
 		if first.TurnID == uuid.Nil() {
 			first = a
 		}
-		if a != first || !a.Created || a.Sequence != 1 {
+		if !reflect.DeepEqual(a, first) || !a.Created || a.Sequence != 1 {
 			t.Fatalf("changed retry: %+v %+v", first, a)
 		}
 	}
@@ -88,7 +89,7 @@ func TestStartAtomicFreshAdmissionAndConcurrentRetry(t *testing.T) {
 	}
 	// Reconciliation still returns the recorded resolution after defaults disappear.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET current_deployment_id=NULL,admission_tokens=0,admission_refilled_at=clock_timestamp()+interval '1 day' WHERE id=$1`, f.env)
-	if a, err := Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("same")); err != nil || a != first {
+	if a, err := Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("same")); err != nil || !reflect.DeepEqual(a, first) {
 		t.Fatalf("retry resolved defaults: %+v %v", a, err)
 	}
 }
@@ -122,7 +123,7 @@ func TestStartConversationPreservesPinAndPlacement(t *testing.T) {
 		t.Fatalf("closed key reopened: %v", err)
 	}
 	req.RetryKey = "second"
-	if a, err := Start(t.Context(), f.pool, nil, f.caller(), req); err != nil || a != second {
+	if a, err := Start(t.Context(), f.pool, nil, f.caller(), req); err != nil || !reflect.DeepEqual(a, second) {
 		t.Fatalf("closed historical receipt: %+v %v", a, err)
 	}
 }
@@ -246,7 +247,7 @@ func TestStartAndEnqueueShareOneTokenBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initial Session consumed more than one token: %v", err)
 	}
-	if retry, err := Start(t.Context(), f.pool, nil, f.caller(), req); err != nil || retry != first {
+	if retry, err := Start(t.Context(), f.pool, nil, f.caller(), req); err != nil || !reflect.DeepEqual(retry, first) {
 		t.Fatalf("start retry charged: %+v %v", retry, err)
 	}
 	if retry, err := Enqueue(t.Context(), f.pool, f.caller(), enqueue); err != nil || retry != second {
@@ -490,7 +491,7 @@ func TestSessionHistoryPolicyPinnedAtAdmission(t *testing.T) {
 		t.Fatalf("admission policy snapshot: %v %v", valid, err)
 	}
 	replay, err := Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("history-first"))
-	if err != nil || replay != first {
+	if err != nil || !reflect.DeepEqual(replay, first) {
 		t.Fatalf("policy update changed retry: %+v %v", replay, err)
 	}
 }
@@ -520,7 +521,7 @@ func TestMCPStartAndSpawnRetainSessionOriginWithoutInventingTurn(t *testing.T) {
 					t.Fatalf("Session origin %v %v", valid, err)
 				}
 				again, err := admitSession(t.Context(), f.pool, nil, caller, req, method)
-				if err != nil || again != receipt {
+				if err != nil || !reflect.DeepEqual(again, receipt) {
 					t.Fatalf("retry %+v %v", again, err)
 				}
 				view, err := RuntimeObserveTurn(t.Context(), f.pool, caller, receipt.SessionID, receipt.TurnID)

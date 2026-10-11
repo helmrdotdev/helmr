@@ -64,6 +64,7 @@ message MessageDelivery {
   string turn_id = 1;
   string message_id = 2;
   bytes input_json = 3;
+  bytes source_json = 4;
 }
 message TurnInterrupt { string turn_id = 1; string reason = 2; }
 message TurnReconcile { string turn_id = 1; }

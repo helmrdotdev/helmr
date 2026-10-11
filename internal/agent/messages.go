@@ -134,6 +134,7 @@ func RuntimeRegisterMessages(ctx context.Context, pool db.TxBeginner, host worke
 }
 
 type MessageDelivery struct {
+	Source     TurnSource
 	ID, TurnID uuid.UUID
 	Input      json.RawMessage
 }
@@ -158,6 +159,9 @@ func ClaimRuntimeMessage(ctx context.Context, pool db.TxBeginner, host workergro
 		var m MessageDelivery
 		err := tx.QueryRow(ctx, `SELECT id,turn_id,message FROM turn_messages WHERE environment_id=$1 AND session_id=$2 AND turn_id=$3 AND status='started'`, e.EnvironmentID, e.SessionID, turn).Scan(&m.ID, &m.TurnID, &m.Input)
 		if err == nil {
+			if err = loadMessageSource(ctx, tx, e.EnvironmentID, &m); err != nil {
+				return err
+			}
 			result = &m
 			return nil
 		}
@@ -169,6 +173,9 @@ func ClaimRuntimeMessage(ctx context.Context, pool db.TxBeginner, host workergro
 			return nil
 		}
 		if err != nil {
+			return err
+		}
+		if err = loadMessageSource(ctx, tx, e.EnvironmentID, &m); err != nil {
 			return err
 		}
 		result = &m

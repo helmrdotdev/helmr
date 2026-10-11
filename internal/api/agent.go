@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/lifetime"
 	"time"
 )
 
@@ -23,6 +24,7 @@ type ListAgentDefinitionsResponse struct {
 }
 
 type StartAgentRequest struct {
+	CloseAfterIdle lifetime.Policy `json:"close_after_idle_ms,omitzero"`
 	Slack          json.RawMessage `json:"slack,omitempty"`
 	Input          json.RawMessage `json:"input,omitempty"`
 	ComputerID     string          `json:"computer_id,omitempty"`
@@ -43,12 +45,15 @@ type TurnAdmission struct {
 }
 
 type StartAgentResponse struct {
+	CloseAfterIdleMs *int64 `json:"close_after_idle_ms"`
 	TurnAdmission
 	Created bool `json:"created"`
 }
 
 // AgentSession is a retained conversation, independent of a physical process.
 type AgentSession struct {
+	CloseAfterIdleMs   *int64                   `json:"close_after_idle_ms"`
+	IdleSince          *time.Time               `json:"idle_since"`
 	ID                 string                   `json:"id"`
 	AgentID            string                   `json:"agent_id"`
 	DeploymentID       string                   `json:"deployment_id"`

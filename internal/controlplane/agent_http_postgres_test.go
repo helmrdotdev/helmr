@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"uuid"
 
@@ -90,7 +91,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT c.preparation_id IS NOT NULL AND c.id<>$2 AND s.deployment_id=$3 AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=s.environment_id AND l.computer_id=s.computer_id) FROM sessions s JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id) WHERE s.id=$1`, first.SessionID, f.Computer, f.Deployment).Scan(&pendingPreparation); err != nil || !pendingPreparation {
 		t.Fatalf("fresh admission did not queue preparation: %v %v", pendingPreparation, err)
 	}
-	if retry := decode(call(start, owner, input, http.StatusOK)); retry != first {
+	if retry := decode(call(start, owner, input, http.StatusOK)); !reflect.DeepEqual(retry, first) {
 		t.Fatalf("retry changed: %+v / %+v", first, retry)
 	}
 	expectCode(call(start, owner, `{"input":[{"type":"text","text":"2"}],"session_key":"conversation","idempotency_key":"first"}`, http.StatusConflict), "idempotency_conflict")
@@ -109,7 +110,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	if third.SessionID != first.SessionID || third.Sequence != 3 {
 		t.Fatalf("enqueue: %+v", third)
 	}
-	if replay := decode(call(enqueue, owner, `{"input":[{"type":"text","text":"3"}],"idempotency_key":"third"}`, http.StatusOK)); replay != third {
+	if replay := decode(call(enqueue, owner, `{"input":[{"type":"text","text":"3"}],"idempotency_key":"third"}`, http.StatusOK)); !reflect.DeepEqual(replay, third) {
 		t.Fatalf("enqueue retry changed: %+v", replay)
 	}
 	call(enqueue, viewer, `{"input":[{"type":"text","text":"4"}]}`, http.StatusForbidden)
@@ -152,6 +153,43 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	var valid bool
 	if err := f.Pool.QueryRow(t.Context(), `SELECT t.caller_kind='api_key' AND t.caller_id=k.id AND t.environment_id=k.environment_id FROM turns t JOIN api_keys k ON k.token_hash=$2 WHERE t.id=$1`, keyAdmission.TurnID, auth.HashAPIKey(starter)).Scan(&valid); err != nil || !valid {
 		t.Fatalf("API key identity: %v %v", valid, err)
+	}
+
+	// Lifetime policy survives both HTTP transports; preservation is separately scoped.
+	never := decode(call("/v1/agents/agent/start", starter, `{"input":[],"close_after_idle_ms":null}`, http.StatusOK))
+	if never.CloseAfterIdleMs != nil {
+		t.Fatalf("never policy: %+v", never)
+	}
+	finite := decode(call(start, owner, `{"input":[],"close_after_idle_ms":12000}`, http.StatusOK))
+	if finite.CloseAfterIdleMs == nil || *finite.CloseAfterIdleMs != 12000 {
+		t.Fatalf("finite policy: %+v", finite)
+	}
+	for _, body := range []string{`{"input":[],"close_after_idle_ms":0}`, `{"input":[],"close_after_idle_ms":1.5}`} {
+		call(start, owner, body, http.StatusBadRequest)
+	}
+	preserver := issue(auth.PermissionComputersUpdate)
+	computerPath := "/v1/computers/" + f.Computer.String()
+	for _, tc := range []struct {
+		token, body string
+		status      int
+	}{
+		{sender, `{"delete_after_unused_ms":null}`, http.StatusForbidden},
+		{preserver, `{}`, http.StatusBadRequest},
+		{preserver, `{"delete_after_unused_ms":0}`, http.StatusBadRequest},
+		{preserver, `{"delete_after_unused_ms":null}`, http.StatusOK},
+	} {
+		response := httpFixture.request(t, http.MethodPatch, computerPath, tc.token, tc.body)
+		if response.Code != tc.status {
+			t.Fatalf("preservation: %d %s, want %d", response.Code, response.Body.String(), tc.status)
+		}
+	}
+	var stored *int64
+	if err := f.Pool.QueryRow(t.Context(), `SELECT delete_after_unused_ms FROM computers WHERE id=$1`, f.Computer).Scan(&stored); err != nil || stored != nil {
+		t.Fatalf("preservation persisted: %v %v", stored, err)
+	}
+	response := httpFixture.request(t, http.MethodPatch, base+"/computers/"+f.Computer.String(), owner, `{"delete_after_unused_ms":5000}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("session preservation: %d %s", response.Code, response.Body.String())
 	}
 
 	// Explicit recovery releases only its named hold through the same owner on

@@ -1,3 +1,4 @@
+import { retentionFromMilliseconds } from "./duration"
 import type { SecretBinding } from "./agent"
 import type { Duration, CursorPage } from "./contract"
 import type { RequestOptions } from "./request"
@@ -14,6 +15,7 @@ export type ComputerStatus =
   | "deleting"
 
 export interface ComputerCreateRequest {
+  readonly deleteAfterUnused?: Duration
   readonly definition: string
   readonly key?: string
   readonly secrets?: readonly SecretBinding[]
@@ -21,6 +23,8 @@ export interface ComputerCreateRequest {
 }
 
 export interface Computer {
+  readonly deleteAfterUnused: Duration
+  readonly unusedSince: string | null
   readonly error?: Readonly<{ code: string; message: string }>
   readonly id: string
   readonly key?: string
@@ -184,6 +188,8 @@ export function parseComputer(value: unknown): Computer {
   }
   return Object.freeze({
     id: resourceID(input["id"], "Computer response.id"),
+    deleteAfterUnused: retentionFromMilliseconds(input["delete_after_unused_ms"], "deleteAfterUnused"),
+    unusedSince: input["unused_since"] === null ? null : timestampString(input["unused_since"], "Computer.unused_since"),
     ...(key === undefined ? {} : { key }),
     definitionId,
     deploymentId: resourceID(input["deployment_id"], "Computer response.deployment_id"),

@@ -73,6 +73,9 @@ func PrepareSessionDelivery(ctx context.Context, pool db.TxBeginner, host worker
  WHERE environment_id=$1 AND session_id=$2 AND epoch=$3`, e.EnvironmentID, e.SessionID, e.ProcessEpoch, sequence, attachment, authority.Generation, kind); err != nil {
 				return err
 			}
+			if _, err = tx.Exec(ctx, `UPDATE sessions SET idle_since=NULL WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, e.SessionID); err != nil {
+				return err
+			}
 			acknowledged, failure = nil, nil
 		}
 		// A process-row wait may consume the remaining physical lease lifetime.

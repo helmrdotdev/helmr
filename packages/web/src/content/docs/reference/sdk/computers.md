@@ -23,7 +23,7 @@ keeps the selected Deployment. Use `.get(id, { deploymentId? })` for one
 identity and its owning Deployment. Limits range from 1 to 100.
 
 Create an actual Computer with
-`client.computers.create({ definition: id, key?, idempotencyKey?, secrets? })`.
+`client.computers.create({ definition: id, key?, idempotencyKey?, secrets?, deleteAfterUnused? })`.
 Creation uses the current Deployment and returns a `ClientComputerRef`.
 `definition` is the authored ID from `computer({ id: ... })`. `key` is an optional
 immutable lookup value; it does not make creation get-or-create. Reuse an
@@ -49,6 +49,7 @@ const computer = await client.computers.create({
 | `get()` | Current Computer lifecycle, residency and secret bindings. |
 | `members({ cursor?, limit? })` | A page of Sessions and Commands attached to the Computer. |
 | `exec({ command, idempotencyKey, cwd?, env?, stdin?, timeout? })` | A durable `CommandRef` after admission. |
+| `update({ deleteAfterUnused })` | Current snapshot after updating retention. |
 | `delete({ idempotencyKey? })` | Deletion receipt. |
 
 Computer `status` describes resource lifecycle: `available`, `deleting`, or `deleted`.
@@ -129,3 +130,25 @@ the Command's creation time crosses the 90-day retention boundary, even if some
 newer chunks have not yet expired from storage.
 
 Execution and observation timeouts accept positive integer milliseconds or a positive integer followed by `ms`, `s`, `m`, `h`, or `d`. Compound and fractional strings are rejected. An observation timeout stops waiting without cancelling execution. Aborts and transport failures reject; a nonzero process exit remains an ordinary `exited` outcome.
+
+## Unused Computer retention
+
+`computer({ deleteAfterUnused })` sets retention for newly created Computers.
+The default is `"7d"`; use a positive duration or `"never"`. A
+`deleteAfterUnused` option on `client.computers.create()` overrides the definition.
+Agent-created Computers inherit their Computer definition. Placing a Session on
+an existing Computer preserves that Computer's policy.
+
+A Computer is unused only when every Session is terminal, all processes are
+fenced, Commands have settled and reconciled, and pending Saves have finished.
+New Session or Command admission resets the unused interval. Deletion after this
+interval uses the same checks as explicit deletion; physical cleanup and storage
+release finish separately. Retaining a Computer does not imply continuous VM use.
+
+Reads expose `deleteAfterUnused` and `unusedSince` (null until an unused interval
+is established). Before deletion, preserve a Computer with
+`await client.computers.ref(id).update({ deleteAfterUnused: "never" })`.
+This requires `computers:update` on an API key. Changing the policy preserves the
+current continuous unused interval. It cannot restore a deleted Computer.
+The HTTP update is `PATCH /v1/computers/{id}` with `delete_after_unused_ms`:
+positive safe integer milliseconds, or null for never.

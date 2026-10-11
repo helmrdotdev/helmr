@@ -54,11 +54,12 @@ func (s *Server) createComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := s.computers.Create(r.Context(), s.tx, computer.Request{
-		Scope:          computerScope(principal.OrgID, projectID, environmentID),
-		DefinitionKey:  declaredID,
-		Key:            request.Key,
-		Secrets:        request.Secrets,
-		IdempotencyKey: idempotencyKey,
+		Scope:             computerScope(principal.OrgID, projectID, environmentID),
+		DefinitionKey:     declaredID,
+		DeleteAfterUnused: request.DeleteAfterUnused,
+		Key:               request.Key,
+		Secrets:           request.Secrets,
+		IdempotencyKey:    idempotencyKey,
 	})
 	if err != nil {
 		s.writeComputerError(w, err, computerCreateOperation, "create Computer failed")
@@ -140,7 +141,7 @@ func (s *Server) deleteComputerHTTP(w http.ResponseWriter, r *http.Request) {
 
 // apiComputerSnapshot is the public Computer resource of an owner snapshot.
 func apiComputerSnapshot(snapshot computer.Snapshot) api.ComputerSnapshot {
-	return api.ComputerSnapshot{
+	return api.ComputerSnapshot{DeleteAfterUnusedMs: snapshot.DeleteAfterUnusedMs, UnusedSince: snapshot.UnusedSince,
 		Residency:      api.ComputerResidency(snapshot.Residency),
 		Error:          snapshot.Error,
 		ID:             snapshot.ID,
@@ -156,7 +157,7 @@ func apiComputerSnapshot(snapshot computer.Snapshot) api.ComputerSnapshot {
 }
 
 func apiComputerListItem(item computer.ListItem) api.ComputerListItem {
-	return api.ComputerListItem{
+	return api.ComputerListItem{DeleteAfterUnusedMs: item.DeleteAfterUnusedMs, UnusedSince: item.UnusedSince,
 		Residency:      api.ComputerResidency(item.Residency),
 		Error:          item.Error,
 		ID:             item.ID,
@@ -178,4 +179,37 @@ func apiComputerMembers(page computer.MembersPage) api.ListComputerMembersRespon
 		})
 	}
 	return response
+}
+
+func (s *Server) updateComputerHTTP(w http.ResponseWriter, r *http.Request) {
+	principal := principalFromContext(r.Context())
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
+	if err != nil {
+		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
+		return
+	}
+	if !principal.HasPermission(auth.PermissionComputersUpdate, scope) {
+		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
+		return
+	}
+	id, err := ids.Parse(chi.URLParam(r, "computerID"))
+	if err != nil {
+		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: "computer ID is invalid"}))
+		return
+	}
+	var request api.UpdateComputerRequest
+	if err = decodeRequestJSON(r, &request); err != nil {
+		if isRequestBodyTooLarge(err) {
+			writeError(w, err)
+			return
+		}
+		writeError(w, badRequest(codedError{code: "invalid_computer_update", message: err.Error()}))
+		return
+	}
+	snapshot, err := computer.UpdateRetention(r.Context(), s.tx, computerScope(principal.OrgID, projectID, environmentID), id, request.DeleteAfterUnused)
+	if err != nil {
+		s.writeComputerError(w, err, computerCreateOperation, "update Computer failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, apiComputerSnapshot(snapshot))
 }

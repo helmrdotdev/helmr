@@ -47,7 +47,7 @@ function transport(responses: unknown[]) {
 describe("Session lifecycle client", () => {
   test("Agent starts with an initial Turn and supports subsequent admission", async () => {
     const { client, requests } = transport([
-      { session_id: sessionId, turn_id: turnId, sequence: 1, created: true },
+      { session_id: sessionId, turn_id: turnId, sequence: 1, created: true, close_after_idle_ms: 604800000 },
       { session_id: sessionId, turn_id: messageId, sequence: 2 },
     ])
     const { session, turn, created } = await client.agents.start("operator", {
@@ -212,6 +212,7 @@ describe("Session lifecycle client", () => {
         requester_session_id: null,
         initial_turn: { id: turnId, status: "queued" },
         parent_session_id: null,
+        close_after_idle_ms: null, idle_since: null,
         deployment_id: holdId,
         computer_id: holdId,
         status: "closing",

@@ -1,3 +1,4 @@
+import { retentionFromMilliseconds } from "../duration"
 import type {
   JsonValue,
   Session,
@@ -43,6 +44,8 @@ export function parseSession(value: unknown): Session {
       : { key: requiredString(v["key"], "Session.key") }),
     status: sessionStatus(v["status"]),
     createdAt: timestampString(v["created_at"], "Session.created_at"),
+    closeAfterIdle: retentionFromMilliseconds(v["close_after_idle_ms"], "closeAfterIdle"),
+    idleSince: v["idle_since"] === null ? null : timestampString(v["idle_since"], "Session.idle_since"),
     holds: Object.freeze(
       v["holds"].map((value) => {
         const h = objectValue(value, "Session hold")

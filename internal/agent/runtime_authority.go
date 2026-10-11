@@ -66,6 +66,9 @@ func AcquireRuntimeAttachment(ctx context.Context, pool db.TxBeginner, host work
     RETURNING attachment_sequence`, e.EnvironmentID, e.SessionID, e.ProcessEpoch).Scan(&result.Sequence); err != nil {
 			return err
 		}
+		if _, err = tx.Exec(ctx, `UPDATE sessions SET idle_since=NULL WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, e.SessionID); err != nil {
+			return err
+		}
 		// Updating the process may wait for a row lock. Recheck physical
 		// authority after that wait; rejection rolls back the sequence too.
 		result.Authority, err = lockRuntimeAuthority(ctx, tx, host, e)

@@ -65,28 +65,7 @@ func Delete(ctx context.Context, txb db.TxBeginner, deletion Deletion) (Deleted,
 		if err = tx.QueryRow(ctx, `SELECT deleted_at IS NOT NULL FROM computers WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, deletion.Scope.EnvironmentID, deletion.ComputerID).Scan(&deleted); err != nil {
 			return err
 		}
-		if !deleted {
-			var busy bool
-			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM sessions WHERE environment_id=$1 AND computer_id=$2 AND status IN ('open','closing'))
- OR EXISTS(SELECT 1 FROM session_processes WHERE environment_id=$1 AND computer_id=$2 AND fenced_at IS NULL)
- OR EXISTS(SELECT 1 FROM computer_commands WHERE environment_id=$1 AND computer_id=$2 AND (terminal_at IS NULL OR (computer_lease_epoch IS NOT NULL AND process_reconciled_at IS NULL)))
- OR EXISTS(SELECT 1 FROM computer_saves WHERE environment_id=$1 AND computer_id=$2 AND status IN ('requested','captured'))`, deletion.Scope.EnvironmentID, deletion.ComputerID).Scan(&busy); err != nil {
-				return err
-			}
-			if busy {
-				return ErrBusy
-			}
-			if _, err = tx.Exec(ctx, `UPDATE computers SET deleted_at=clock_timestamp(),updated_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, deletion.Scope.EnvironmentID, deletion.ComputerID); err != nil {
-				return err
-			}
-			if _, err = tx.Exec(ctx, `UPDATE computer_checkpoints SET status='lost',capture_request=NULL,terminal_evidence='Computer deletion retired continuation' WHERE environment_id=$1 AND computer_id=$2 AND status IN ('capturing','sealed','ready','restoring','aborting')`, deletion.Scope.EnvironmentID, deletion.ComputerID); err != nil {
-				return err
-			}
-			if _, err = tx.Exec(ctx, `UPDATE computer_leases SET status='releasing' WHERE environment_id=$1 AND computer_id=$2 AND fenced_at IS NULL AND status IN ('acquiring','active')`, deletion.Scope.EnvironmentID, deletion.ComputerID); err != nil {
-				return err
-			}
-		}
-		if _, err = tx.Exec(ctx, `UPDATE computers c SET key=NULL WHERE environment_id=$1 AND id=$2 AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL)`, deletion.Scope.EnvironmentID, deletion.ComputerID); err != nil {
+		if err = deleteLocked(ctx, tx, deletion.Scope.EnvironmentID, deletion.ComputerID, deleted); err != nil {
 			return err
 		}
 		if accepted != nil {
@@ -108,4 +87,35 @@ func Delete(ctx context.Context, txb db.TxBeginner, deletion Deletion) (Deleted,
 		return Deleted{}, err
 	}
 	return result, nil
+}
+
+const computerBusySQL = `SELECT EXISTS(SELECT 1 FROM sessions WHERE environment_id=$1 AND computer_id=$2 AND status IN ('open','closing'))
+ OR EXISTS(SELECT 1 FROM session_processes WHERE environment_id=$1 AND computer_id=$2 AND fenced_at IS NULL)
+ OR EXISTS(SELECT 1 FROM computer_commands WHERE environment_id=$1 AND computer_id=$2 AND (terminal_at IS NULL OR (computer_lease_epoch IS NOT NULL AND process_reconciled_at IS NULL)))
+ OR EXISTS(SELECT 1 FROM computer_saves WHERE environment_id=$1 AND computer_id=$2 AND status IN ('requested','captured'))`
+
+func deleteLocked(ctx context.Context, tx pgx.Tx, env, id uuid.UUID, deleted bool) error {
+	var err error
+	if !deleted {
+		var busy bool
+		if err = tx.QueryRow(ctx, computerBusySQL, env, id).Scan(&busy); err != nil {
+			return err
+		}
+		if busy {
+			return ErrBusy
+		}
+		if _, err = tx.Exec(ctx, `UPDATE computers SET deleted_at=clock_timestamp(),updated_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, env, id); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `UPDATE computer_checkpoints SET status='lost',capture_request=NULL,terminal_evidence='Computer deletion retired continuation' WHERE environment_id=$1 AND computer_id=$2 AND status IN ('capturing','sealed','ready','restoring','aborting')`, env, id); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `UPDATE computer_leases SET status='releasing' WHERE environment_id=$1 AND computer_id=$2 AND fenced_at IS NULL AND status IN ('acquiring','active')`, env, id); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec(ctx, `UPDATE computers c SET key=NULL WHERE environment_id=$1 AND id=$2 AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL)`, env, id); err != nil {
+		return err
+	}
+	return nil
 }

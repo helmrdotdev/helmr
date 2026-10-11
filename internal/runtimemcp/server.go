@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/lifetime"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -28,10 +29,11 @@ type agentsInput struct {
 	Cursor    string `json:"cursor,omitempty"`
 }
 type createInput struct {
-	AgentID        string     `json:"agentId"`
-	Input          []textPart `json:"input" jsonschema:"Ordered text parts delivered unchanged to the new Turn."`
-	ComputerID     string     `json:"computerId,omitempty"`
-	IdempotencyKey string     `json:"idempotencyKey" jsonschema:"Reuse this key with identical arguments when the outcome is uncertain."`
+	CloseAfterIdle json.RawMessage `json:"closeAfterIdleMs,omitempty" jsonschema:"Idle retention in positive integer milliseconds; null disables idle closure. Omit to inherit the Agent definition."`
+	AgentID        string          `json:"agentId"`
+	Input          []textPart      `json:"input" jsonschema:"Ordered text parts delivered unchanged to the new Turn."`
+	ComputerID     string          `json:"computerId,omitempty"`
+	IdempotencyKey string          `json:"idempotencyKey" jsonschema:"Reuse this key with identical arguments when the outcome is uncertain."`
 }
 type enqueueInput struct {
 	SessionID      string     `json:"sessionId"`
@@ -113,6 +115,12 @@ func add[I any](server *mcp.Server, invoke Invoke, name, description string) {
 	if operation := schema.Properties["operation"]; operation != nil {
 		operation.Enum = []any{"spawn", "start"}
 	}
+	if retention := schema.Properties["closeAfterIdleMs"]; retention != nil {
+		retention.Type = ""
+		retention.Types = []string{"integer", "null"}
+		retention.Properties = nil
+		retention.AdditionalProperties = nil
+	}
 	mcp.AddTool(server, &mcp.Tool{Name: name, Description: description, InputSchema: schema}, func(ctx context.Context, _ *mcp.CallToolRequest, input I) (*mcp.CallToolResult, any, error) {
 		if err := validate(input); err != nil {
 			return nil, nil, err
@@ -147,6 +155,12 @@ func validate(input any) error {
 			return errors.New("limit must be from 1 to 100")
 		}
 	case createInput:
+		if len(value.CloseAfterIdle) > 0 {
+			var policy lifetime.Policy
+			if err := json.Unmarshal(value.CloseAfterIdle, &policy); err != nil {
+				return err
+			}
+		}
 		raw, err := json.Marshal(value.Input)
 		if err != nil {
 			return err

@@ -521,6 +521,7 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.Get("/projects/{projectID}/environments/{environmentID}/computers/{computerID}", s.getComputerHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/computers/{computerID}/members", s.listComputerMembersHTTP)
 		r.Delete("/projects/{projectID}/environments/{environmentID}/computers/{computerID}", s.deleteComputerHTTP)
+		r.Patch("/projects/{projectID}/environments/{environmentID}/computers/{computerID}", s.updateComputerHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/computer-definitions", s.listComputerDefinitions)
 		r.Get("/projects/{projectID}/environments/{environmentID}/computer-definitions/{computerDefinitionID}", s.getComputerDefinition)
 	})
@@ -583,6 +584,7 @@ func (s *Server) mountDeveloperRoutes(r chi.Router) {
 		r.Get("/computers/{computerID}", s.getComputerHTTP)
 		r.Get("/computers/{computerID}/members", s.listComputerMembersHTTP)
 		r.Delete("/computers/{computerID}", s.deleteComputerHTTP)
+		r.Patch("/computers/{computerID}", s.updateComputerHTTP)
 	})
 }
 

@@ -24,6 +24,7 @@ const (
 	PermissionComputersCreate       Permission = "computers.create"
 	PermissionComputersRead         Permission = "computers.read"
 	PermissionComputersDelete       Permission = "computers.delete"
+	PermissionComputersUpdate       Permission = "computers.update"
 	PermissionComputerCommandCreate Permission = "computer.exec.create"
 	PermissionSecretsWrite          Permission = "secrets.write"
 	PermissionDeploymentsWrite      Permission = "deployments.write"
@@ -48,6 +49,7 @@ func AllPermissions() []Permission {
 		PermissionComputersCreate,
 		PermissionComputersRead,
 		PermissionComputersDelete,
+		PermissionComputersUpdate,
 		PermissionComputerCommandCreate,
 		PermissionSecretsWrite,
 		PermissionDeploymentsWrite,
@@ -94,6 +96,7 @@ func RoleAllows(role Role, permission Permission) bool {
 			PermissionComputersCreate,
 			PermissionComputersRead,
 			PermissionComputersDelete,
+			PermissionComputersUpdate,
 			PermissionComputerCommandCreate,
 			PermissionDeploymentsWrite:
 			return true
@@ -127,6 +130,7 @@ func ParseAPIKeyGrant(value string) (Permission, bool) {
 		PermissionComputersCreate,
 		PermissionComputersRead,
 		PermissionComputersDelete,
+		PermissionComputersUpdate,
 		PermissionComputerCommandCreate,
 		PermissionSecretsWrite,
 		PermissionDeploymentsWrite:

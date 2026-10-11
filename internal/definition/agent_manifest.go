@@ -14,6 +14,7 @@ import (
 type AgentManifest struct {
 	ComputerDefinitionID string                 `json:"computerDefinitionId"`
 	Setup                bool                   `json:"setup"`
+	CloseAfterIdleNever  bool                   `json:"closeAfterIdleNever,omitempty"`
 	CloseAfterIdleMs     *int64                 `json:"closeAfterIdleMs,omitempty"`
 	MaxTurnDurationMs    *int64                 `json:"maxTurnDurationMs,omitempty"`
 	Triggers             map[string]CronTrigger `json:"triggers"`
@@ -32,15 +33,20 @@ type ComputerRefresh struct {
 }
 
 type ComputerInputManifest struct {
-	ImageBuild   ImageBuild        `json:"imageBuild"`
-	Resources    ResourcesManifest `json:"resources"`
-	Prepare      bool              `json:"prepare"`
-	Refresh      *ComputerRefresh  `json:"refresh,omitempty"`
-	Secrets      []SecretBinding   `json:"secrets"`
-	BuildSecrets []SecretBinding   `json:"buildSecrets"`
+	DeleteAfterUnusedMs    *int64            `json:"deleteAfterUnusedMs,omitempty"`
+	DeleteAfterUnusedNever bool              `json:"deleteAfterUnusedNever,omitempty"`
+	ImageBuild             ImageBuild        `json:"imageBuild"`
+	Resources              ResourcesManifest `json:"resources"`
+	Prepare                bool              `json:"prepare"`
+	Refresh                *ComputerRefresh  `json:"refresh,omitempty"`
+	Secrets                []SecretBinding   `json:"secrets"`
+	BuildSecrets           []SecretBinding   `json:"buildSecrets"`
 }
 
 func ValidateAgentManifest(m AgentManifest) error {
+	if m.CloseAfterIdleNever && m.CloseAfterIdleMs != nil {
+		return errors.New("conflicting idle close policy")
+	}
 	if !ValidDeclaredID(m.ComputerDefinitionID) {
 		return errors.New("agent computerDefinitionId is invalid")
 	}
@@ -97,12 +103,14 @@ func ValidateSecretBindings(refs []SecretBinding) error {
 // ComputerManifest records the resolved base seed and authored preparation inputs.
 // A seed is not an eligible prepared revision; preparation must publish that output.
 type ComputerManifest struct {
-	Seed         ComputerSeedManifest `json:"seed"`
-	Resources    ResourcesManifest    `json:"resources"`
-	Prepare      bool                 `json:"prepare"`
-	Refresh      *ComputerRefresh     `json:"refresh,omitempty"`
-	Secrets      []SecretBinding      `json:"secrets"`
-	BuildSecrets []SecretBinding      `json:"buildSecrets"`
+	DeleteAfterUnusedMs    *int64               `json:"deleteAfterUnusedMs,omitempty"`
+	DeleteAfterUnusedNever bool                 `json:"deleteAfterUnusedNever,omitempty"`
+	Seed                   ComputerSeedManifest `json:"seed"`
+	Resources              ResourcesManifest    `json:"resources"`
+	Prepare                bool                 `json:"prepare"`
+	Refresh                *ComputerRefresh     `json:"refresh,omitempty"`
+	Secrets                []SecretBinding      `json:"secrets"`
+	BuildSecrets           []SecretBinding      `json:"buildSecrets"`
 }
 type ComputerSeedManifest struct {
 	Profile        string            `json:"profile"`
@@ -112,6 +120,9 @@ type ComputerSeedManifest struct {
 }
 
 func ValidateComputerManifest(m ComputerManifest) error {
+	if err := ValidateUnusedPolicy(m.DeleteAfterUnusedMs, m.DeleteAfterUnusedNever); err != nil {
+		return err
+	}
 	if m.Seed.Profile != ComputerSeedProfile || m.Seed.MediaType != ComputerSeedMediaType {
 		return errors.New("unsupported Computer seed contract")
 	}
@@ -122,3 +133,10 @@ func ValidateComputerManifest(m ComputerManifest) error {
 }
 
 var computerSeedDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+func ValidateUnusedPolicy(duration *int64, never bool) error {
+	if duration != nil && (never || !positiveSafeInteger(*duration)) {
+		return errors.New("invalid Computer unused retention")
+	}
+	return nil
+}

@@ -130,6 +130,7 @@ type AgentDefinition struct {
 	Triggers              []byte      `json:"triggers"`
 	MaxTurnDurationMs     pgtype.Int8 `json:"max_turn_duration_ms"`
 	CloseAfterIdleMs      pgtype.Int8 `json:"close_after_idle_ms"`
+	CloseAfterIdleNever   bool        `json:"close_after_idle_never"`
 }
 
 type AgentPublication struct {
@@ -220,6 +221,8 @@ type CasUploadReclaim struct {
 }
 
 type Computer struct {
+	DeleteAfterUnusedMs         pgtype.Int8        `json:"delete_after_unused_ms"`
+	UnusedSince                 pgtype.Timestamptz `json:"unused_since"`
 	EnvironmentID               pgtype.UUID        `json:"environment_id"`
 	ID                          pgtype.UUID        `json:"id"`
 	Key                         pgtype.Text        `json:"key"`
@@ -362,13 +365,15 @@ type ComputerDataKey struct {
 }
 
 type ComputerDefinition struct {
-	EnvironmentID     pgtype.UUID `json:"environment_id"`
-	DeploymentID      pgtype.UUID `json:"deployment_id"`
-	DefinitionKey     string      `json:"definition_key"`
-	PreparationSpecID pgtype.UUID `json:"preparation_spec_id"`
-	Resources         []byte      `json:"resources"`
-	RefreshEveryMs    pgtype.Int8 `json:"refresh_every_ms"`
-	MaxImageAgeMs     pgtype.Int8 `json:"max_image_age_ms"`
+	EnvironmentID          pgtype.UUID `json:"environment_id"`
+	DeploymentID           pgtype.UUID `json:"deployment_id"`
+	DefinitionKey          string      `json:"definition_key"`
+	PreparationSpecID      pgtype.UUID `json:"preparation_spec_id"`
+	Resources              []byte      `json:"resources"`
+	RefreshEveryMs         pgtype.Int8 `json:"refresh_every_ms"`
+	MaxImageAgeMs          pgtype.Int8 `json:"max_image_age_ms"`
+	DeleteAfterUnusedMs    pgtype.Int8 `json:"delete_after_unused_ms"`
+	DeleteAfterUnusedNever bool        `json:"delete_after_unused_never"`
 }
 
 type ComputerDiskRoot struct {
@@ -775,6 +780,8 @@ type SecretVersion struct {
 }
 
 type Session struct {
+	CloseAfterIdleMs        pgtype.Int8        `json:"close_after_idle_ms"`
+	IdleSince               pgtype.Timestamptz `json:"idle_since"`
 	HistoryRetentionMode    string             `json:"history_retention_mode"`
 	HistoryRetentionSeconds pgtype.Int8        `json:"history_retention_seconds"`
 	HistoryEligibleAt       pgtype.Timestamptz `json:"history_eligible_at"`

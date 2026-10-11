@@ -323,7 +323,7 @@ func lockControlTree(ctx context.Context, tx pgx.Tx, env, target uuid.UUID, call
 }
 
 func advanceControlAuthority(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID) error {
-	_, err := tx.Exec(ctx, `UPDATE sessions SET authority_generation=authority_generation+1 WHERE environment_id=$1 AND id=ANY($2)`, env, ids)
+	_, err := tx.Exec(ctx, `UPDATE sessions SET authority_generation=authority_generation+1,idle_since=NULL WHERE environment_id=$1 AND id=ANY($2)`, env, ids)
 	return err
 }
 

@@ -174,9 +174,13 @@ func (h EventHandler) receiveEvent(ctx context.Context, envelope eventEnvelope) 
 		if e.User == bot {
 			return nil
 		}
+		// Routing syntax, not the Slack event type, decides whether this is work.
+		// Human discussion must not create requests or account-link prompts.
+		if stripRoutingMention(e.Text, bot) == e.Text {
+			return nil
+		}
 		if e.Type == "message" {
-			// Ordinary chatter is retained only in bound threads. Duplicate mention
-			// notifications are recognized by their normalized source below.
+			// Duplicate mention notifications are recognized by normalized source.
 			if e.Thread == "" {
 				return nil
 			}

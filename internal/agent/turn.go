@@ -50,10 +50,11 @@ type EnqueueRequest struct {
 }
 
 type Admission struct {
-	SessionID uuid.UUID
-	TurnID    uuid.UUID
-	Sequence  int64
-	Created   bool
+	CloseAfterIdleMs *int64
+	SessionID        uuid.UUID
+	TurnID           uuid.UUID
+	Sequence         int64
+	Created          bool
 }
 
 type owners struct {
@@ -263,7 +264,7 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, caller Caller, r
 		}
 		result.SessionID = req.SessionID
 		result.TurnID = uuid.NewV7()
-		if err = tx.QueryRow(ctx, `UPDATE sessions SET next_turn_seq=next_turn_seq+1 WHERE environment_id=$1 AND id=$2 RETURNING next_turn_seq-1`, req.EnvironmentID, req.SessionID).Scan(&result.Sequence); err != nil {
+		if err = tx.QueryRow(ctx, `UPDATE sessions SET next_turn_seq=next_turn_seq+1,idle_since=NULL WHERE environment_id=$1 AND id=$2 RETURNING next_turn_seq-1`, req.EnvironmentID, req.SessionID).Scan(&result.Sequence); err != nil {
 			return err
 		}
 		_, err = tx.Exec(ctx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,retry_key,request_digest,input,origin_turn_id)
@@ -400,10 +401,19 @@ func executionPhysical(ctx context.Context, tx pgx.Tx, e Execution, allowStartin
 // Dispatch returns a stable execution assignment. Repeating the same process
 // claim reconciles a lost reply; it is not permission to invoke a handler twice.
 // The guest deduplicates delivery by Turn identity and reports the recorded phase.
+type SlackInputSource struct {
+	TeamID    string `json:"teamId"`
+	ChannelID string `json:"channelId"`
+	ThreadTS  string `json:"threadTs"`
+	MessageTS string `json:"messageTs"`
+	UserID    string `json:"userId"`
+}
+
 type TurnSource struct {
-	Kind               string     `json:"kind"`
-	RequesterSessionID *uuid.UUID `json:"requesterSessionId,omitempty"`
-	OriginTurnID       *uuid.UUID `json:"originTurnId,omitempty"`
+	Slack              *SlackInputSource `json:"slack,omitempty"`
+	Kind               string            `json:"kind"`
+	RequesterSessionID *uuid.UUID        `json:"requesterSessionId,omitempty"`
+	OriginTurnID       *uuid.UUID        `json:"originTurnId,omitempty"`
 }
 
 type TurnDispatch struct {
@@ -520,5 +530,9 @@ func lockRuntimeHost(ctx context.Context, tx pgx.Tx, caller Caller) error {
 }
 
 func loadTurnDispatch(ctx context.Context, tx pgx.Tx, environment uuid.UUID, dispatch *TurnDispatch) error {
-	return tx.QueryRow(ctx, `SELECT seq,created_at,input,caller_kind,CASE WHEN caller_kind='session' THEN caller_id END,origin_turn_id FROM turns WHERE environment_id=$1 AND id=$2`, environment, dispatch.TurnID).Scan(&dispatch.Sequence, &dispatch.CreatedAt, &dispatch.Input, &dispatch.Source.Kind, &dispatch.Source.RequesterSessionID, &dispatch.Source.OriginTurnID)
+	if err := tx.QueryRow(ctx, `SELECT seq,created_at,input,caller_kind,CASE WHEN caller_kind='session' THEN caller_id END,origin_turn_id FROM turns WHERE environment_id=$1 AND id=$2`, environment, dispatch.TurnID).Scan(&dispatch.Sequence, &dispatch.CreatedAt, &dispatch.Input, &dispatch.Source.Kind, &dispatch.Source.RequesterSessionID, &dispatch.Source.OriginTurnID); err != nil {
+		return err
+	}
+	return loadSlackInputSource(ctx, tx, environment, dispatch.TurnID, uuid.Nil(), &dispatch.Source)
+
 }
