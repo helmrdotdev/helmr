@@ -45,32 +45,6 @@ func admissionDiskFloorMiB(vmScratchMiB, reserveMiB int64) int64 {
 	return reserveMiB + vmScratchMiB
 }
 
-func workerCacheBudgetBytes(configuredMiB int64, hostDiskMiB int64, numerator int64, denominator int64, floorMiB int64, ceilingMiB int64) int64 {
-	if configuredMiB > 0 {
-		return configuredMiB * 1024 * 1024
-	}
-	return workerDerivedCacheBudgetBytes(hostDiskMiB, numerator, denominator, floorMiB, ceilingMiB)
-}
-
-func workerDerivedCacheBudgetBytes(hostDiskMiB int64, numerator int64, denominator int64, floorMiB int64, ceilingMiB int64) int64 {
-	budgetMiB := ceilingMiB
-	if hostDiskMiB > 0 && denominator > 0 {
-		budgetMiB = hostDiskMiB * numerator / denominator
-		if hostDiskMiB < floorMiB*2 {
-			budgetMiB = hostDiskMiB / 2
-		} else if budgetMiB < floorMiB {
-			budgetMiB = floorMiB
-		}
-		if budgetMiB > ceilingMiB {
-			budgetMiB = ceilingMiB
-		}
-	}
-	if budgetMiB <= 0 {
-		return 0
-	}
-	return budgetMiB * 1024 * 1024
-}
-
 // workerDiskCapacity distinguishes the guest scratch shape from the physical
 // supply shared by every stage of an Instance's lifetime.
 type workerDiskCapacity struct {
@@ -78,14 +52,14 @@ type workerDiskCapacity struct {
 	HostDiskBytes             int64
 }
 
-func partitionWorkerDiskCapacity(hostMiB, vmMiB, cacheBytes int64) (workerDiskCapacity, error) {
+func partitionWorkerDiskCapacity(hostMiB, vmMiB int64) (workerDiskCapacity, error) {
 	const mib = int64(1024 * 1024)
-	if hostMiB <= 0 || vmMiB <= 0 || hostMiB > math.MaxInt64/mib || vmMiB > math.MaxInt64/mib || cacheBytes < 0 || cacheBytes > hostMiB*mib {
+	if hostMiB <= 0 || vmMiB <= 0 || hostMiB > math.MaxInt64/mib || vmMiB > math.MaxInt64/mib {
 		return workerDiskCapacity{}, errors.New("worker physical disk budget is invalid")
 	}
 	capacity := workerDiskCapacity{
 		VMGuestEphemeralDiskBytes: vmMiB * mib,
-		HostDiskBytes:             hostMiB*mib - cacheBytes,
+		HostDiskBytes:             hostMiB * mib,
 	}
 	return capacity, capacity.Validate()
 }
@@ -114,7 +88,7 @@ func validateWorkerDiskFunding(supply, perSlot int64, slots int32) error {
 	return nil
 }
 
-func availableWorkerDiskBytes(workDir string, reserveBytes, cacheBytes int64) (int64, error) {
+func availableWorkerDiskBytes(workDir string, reserveBytes int64) (int64, error) {
 	var stat unix.Statfs_t
 	if err := unix.Statfs(workDir, &stat); err != nil {
 		return 0, err
@@ -122,12 +96,12 @@ func availableWorkerDiskBytes(workDir string, reserveBytes, cacheBytes int64) (i
 	if stat.Bsize <= 0 || uint64(stat.Bavail) > uint64(math.MaxInt64)/uint64(stat.Bsize) {
 		return 0, errors.New("worker filesystem available capacity overflow")
 	}
-	return usableWorkerDiskBytes(int64(stat.Bavail)*int64(stat.Bsize), reserveBytes, cacheBytes)
+	return usableWorkerDiskBytes(int64(stat.Bavail)*int64(stat.Bsize), reserveBytes)
 }
 
-func usableWorkerDiskBytes(available, reserve, cache int64) (int64, error) {
-	if available < 0 || reserve <= 0 || cache < 0 || reserve > available || cache > available-reserve {
-		return 0, errors.New("worker filesystem cannot fund reserve and cache")
+func usableWorkerDiskBytes(available, reserve int64) (int64, error) {
+	if available < 0 || reserve <= 0 || reserve > available {
+		return 0, errors.New("worker filesystem cannot fund reserve")
 	}
-	return available - reserve - cache, nil
+	return available - reserve, nil
 }

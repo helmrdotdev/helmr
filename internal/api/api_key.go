@@ -47,24 +47,18 @@ type APIKeyPermissionGrant struct {
 type APIKeyScope string
 
 const (
-	APIKeyScopeRunsCreate            APIKeyScope = "runs:create"
-	APIKeyScopeRunsRead              APIKeyScope = "runs:read"
-	APIKeyScopeRunsManage            APIKeyScope = "runs:manage"
+	APIKeyScopeAsksRespond           APIKeyScope = "asks:respond"
 	APIKeyScopeSessionsRead          APIKeyScope = "sessions:read"
-	APIKeyScopeActorsStart           APIKeyScope = "actors:start"
+	APIKeyScopeAgentsStart           APIKeyScope = "agents:start"
 	APIKeyScopeSessionsSend          APIKeyScope = "sessions:send"
 	APIKeyScopeSessionsInterrupt     APIKeyScope = "sessions:interrupt"
 	APIKeyScopeSessionsResume        APIKeyScope = "sessions:resume"
 	APIKeyScopeSessionsClose         APIKeyScope = "sessions:close"
 	APIKeyScopeSessionsCancel        APIKeyScope = "sessions:cancel"
-	APIKeyScopeTokensCreate          APIKeyScope = "tokens:create"
-	APIKeyScopeTokensRead            APIKeyScope = "tokens:read"
-	APIKeyScopeTokensComplete        APIKeyScope = "tokens:complete"
-	APIKeyScopeTokensCancel          APIKeyScope = "tokens:cancel"
 	APIKeyScopeComputersCreate       APIKeyScope = "computers:create"
 	APIKeyScopeComputersRead         APIKeyScope = "computers:read"
 	APIKeyScopeComputersDelete       APIKeyScope = "computers:delete"
 	APIKeyScopeComputerCommandCreate APIKeyScope = "computer-exec:create"
 	APIKeyScopeSecretsWrite          APIKeyScope = "secrets:write"
-	APIKeyScopeTasksDeploy           APIKeyScope = "tasks:deploy"
+	APIKeyScopeDeploymentsWrite      APIKeyScope = "deployments:write"
 )

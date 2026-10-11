@@ -47,7 +47,6 @@ export async function compileProgram(options: {
       config: { path: "helmr/config.json", digest: `sha256:${createHash("sha256").update(configBytes).digest("hex")}` },
       payloadDigest: options.payloadDigest,
       modules: [...modules].sort(compareUTF8),
-      selections: analysis.declarationLocator.declarations,
     }
     return { analysis, modules, files: new Map([
       ["helmr/config.json", configBytes],

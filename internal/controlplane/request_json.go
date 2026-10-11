@@ -1,11 +1,13 @@
 package controlplane
 
 import (
+	"bytes"
 	"encoding"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"reflect"
 	"strconv"
 	"strings"
@@ -98,15 +100,6 @@ func parseRequestBody[T any](r *http.Request, parse func([]byte) (T, error)) (T,
 	return value, raw, nil
 }
 
-// canonicalRequestJSON canonicalizes a request body read by readRequestBody.
-func canonicalRequestJSON(raw []byte) ([]byte, error) {
-	canonical, err := canonicalJSON(raw)
-	if err != nil {
-		return nil, badRequest(err)
-	}
-	return canonical, nil
-}
-
 // canonicalJSON canonicalizes one JSON value held in request-derived or stored
 // bytes. Its errors are left for the caller to classify.
 func canonicalJSON(raw json.RawMessage) (json.RawMessage, error) {
@@ -115,25 +108,6 @@ func canonicalJSON(raw json.RawMessage) (json.RawMessage, error) {
 		return nil, publicJSONDecodeError(err)
 	}
 	return json.RawMessage(canonical), nil
-}
-
-// decodeClosedJSON decodes one JSON value held in request-derived or stored
-// bytes, rejecting unknown members. Its errors are left for the caller to
-// classify.
-func decodeClosedJSON(raw []byte, destination any) error {
-	if len(raw) == 0 {
-		return errors.New("value is required")
-	}
-	decoder := json.NewDecoder(strings.NewReader(string(raw)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		return publicJSONDecodeError(err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return errors.New("trailing JSON value")
-	}
-	return nil
 }
 
 func isRequestBodyTooLarge(err error) bool {
@@ -320,4 +294,86 @@ func jsonExpectedType(target reflect.Type) string {
 	default:
 		return ""
 	}
+}
+
+func decodeAgentPayload(body []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		return errors.New("operation contains trailing data")
+	}
+	return nil
+}
+
+// Decode only the transport envelope here. The answer owner classifies invalid
+// answer Unicode, duplicate keys and control violations as answer_invalid.
+type askAnswerEnvelope struct {
+	Answer     json.RawMessage
+	ResponseID string
+}
+
+func decodeAskAnswerRequest(r *http.Request) (askAnswerEnvelope, error) {
+	var result askAnswerEnvelope
+	raw, err := readRequestBody(r)
+	if err != nil {
+		return result, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return result, badRequest(errors.New("answer request must be an object"))
+	}
+	seen := map[string]bool{}
+	for decoder.More() {
+		start := decoder.InputOffset()
+		token, err := decoder.Token()
+		if err != nil {
+			return result, requestBodyError(err)
+		}
+		key, ok := token.(string)
+		if !ok || seen[key] || (key != "answer" && key != "response_id") {
+			return result, badRequest(errors.New("answer request contains an unknown or duplicate field"))
+		}
+		keyRaw := bytes.TrimSpace(raw[start:decoder.InputOffset()])
+		keyRaw = bytes.TrimSpace(bytes.TrimPrefix(keyRaw, []byte(",")))
+		if _, err := canonicalJSON(keyRaw); err != nil {
+			return result, badRequest(err)
+		}
+		seen[key] = true
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return result, requestBodyError(err)
+		}
+		if key == "answer" {
+			result.Answer = value
+			continue
+		}
+		if _, err := canonicalJSON(value); err != nil {
+			return result, badRequest(err)
+		}
+		if err := json.Unmarshal(value, &result.ResponseID); err != nil {
+			return result, badRequest(errors.New("response_id must be a string"))
+		}
+	}
+	if token, err := decoder.Token(); err != nil || token != json.Delim('}') {
+		return result, badRequest(errors.New("invalid answer request"))
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return result, badRequest(errors.New("answer request contains trailing data"))
+	}
+	if !seen["answer"] || !seen["response_id"] || result.ResponseID == "" {
+		return result, badRequest(errors.New("answer and response_id are required"))
+	}
+	return result, nil
+}
+
+// decodeRequestForm reads OAuth form_post callbacks through the body owner.
+func decodeRequestForm(r *http.Request) (url.Values, error) {
+	if err := r.ParseForm(); err != nil {
+		return nil, requestBodyError(err)
+	}
+	return r.PostForm, nil
 }

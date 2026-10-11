@@ -17,7 +17,7 @@ func initCommand() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Create a starter Helmr task project.",
+		Short: "Create a starter Helmr Agent project.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			root := "."
@@ -45,7 +45,7 @@ func writeStarterProject(root string, force bool) error {
 		"helmr.config.ts": starterHelmrConfig,
 		".helmrignore":    starterHelmrIgnore,
 		"package.json":    starterPackageJSON(),
-		"tasks/hello.ts":  starterHelloTask,
+		"tasks/hello.ts":  starterHelloAgent,
 		"tsconfig.json":   starterTSConfig,
 	}
 	if !force {
@@ -152,21 +152,20 @@ const starterTSConfig = `{
 }
 `
 
-const starterHelloTask = `import { image, sandbox, source, task } from "@helmr/sdk"
+const starterHelloAgent = `import { agent, computer, image } from "@helmr/sdk"
 
-const runtime = image("hello")
-  .from("node:24-bookworm-slim")
-  .workdir("/app")
-  .run(["npm", "install", "-g", "bun@1.3.13"])
-  .copy(source.file("package.json"), "/app/package.json")
-  .run(["bun", "install"])
-
-export const helloSandbox = sandbox({ id: "hello" })
-  .image(runtime)
-  .resources({ cpu: 1, memory: "1GiB" })
-
-export const hello = task({
+export const helloComputer = computer({
   id: "hello",
-  run: async () => ({ ok: true }),
+  image: image("hello").from("node:24-bookworm-slim").workdir("/app"),
+  resources: { cpu: 1, memory: "1GiB" },
+})
+
+export const hello = agent({
+  id: "hello",
+  computer: helloComputer,
+  async turn(turn) {
+    await turn.respond("Hello from Helmr")
+    return { ok: true }
+  },
 })
 `

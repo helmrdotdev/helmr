@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/idempotency"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestPrunedOperationReceiptHasExplicitTransportOutcome(t *testing.T) {
@@ -20,14 +19,6 @@ func TestPrunedOperationReceiptHasExplicitTransportOutcome(t *testing.T) {
 		"computer create": func(w http.ResponseWriter, err error) {
 			server.writeComputerError(w, err, computerCreateOperation, "create Computer failed")
 		},
-		"actor start": func(w http.ResponseWriter, err error) {
-			server.writeSessionError(w, err, sessionStartOperation)
-		},
-		"task start": server.writeTaskStartError,
-		"session": func(w http.ResponseWriter, err error) {
-			server.writeSessionError(w, err, sessionPublicOperation)
-		},
-		"token": server.writeTokenError,
 	} {
 		t.Run(name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
@@ -46,22 +37,6 @@ func TestPrunedOperationReceiptHasExplicitTransportOutcome(t *testing.T) {
 			}
 			if body.Error.Code != "operation_expired" || body.Error.Retryable {
 				t.Fatalf("body=%s", recorder.Body)
-			}
-		})
-	}
-	for name, convert := range map[string]func(error) (workerapi.RuntimeOperationFailure, bool){
-		"computer create": func(err error) (workerapi.RuntimeOperationFailure, bool) {
-			return workerComputerFailure(err, computerCreateOperation)
-		},
-		"computer delete": func(err error) (workerapi.RuntimeOperationFailure, bool) {
-			return workerComputerFailure(err, computerDeleteOperation)
-		},
-		"actor start": actorStartFailure, "worker Session": sessionWorkerFailure,
-	} {
-		t.Run(name+" worker", func(t *testing.T) {
-			result, ok := convert(idempotency.ExpiredError{})
-			if !ok || result.Code != "operation_expired" || result.Retryable {
-				t.Fatalf("failure=%+v mapped=%v", result, ok)
 			}
 		})
 	}

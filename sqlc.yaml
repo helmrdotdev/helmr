@@ -16,13 +16,9 @@ sql:
           vm_platform_id: VMPlatformID
           required_vm_platform_id: RequiredVMPlatformID
           api_key: APIKey
-          api_key_id: APIKeyID
-          artifact_kind_computer_checkpoint_vm_state: ArtifactKindComputerCheckpointVMState
           available_cpu_millis: AvailableCPUMillis
           available_vm_slots: AvailableVMSlots
-          build_available_cpu_millis: BuildAvailableCPUMillis
           capacity_cpu_millis: CapacityCPUMillis
-          cancel_ids: CancelIDs
           cpu_config_digest: CPUConfigDigest
           cpu_environment: CPUEnvironment
           cpu_environment_digest: CPUEnvironmentDigest
@@ -38,31 +34,12 @@ sql:
           per_vm_guest_ephemeral_disk_bytes: PerVMGuestEphemeralDiskBytes
           per_vm_memory_bytes: PerVMMemoryBytes
           profile_image_url: ProfileImageURL
-          queued_run_cpu_millis: QueuedRunCPUMillis
-          queued_run_memory_mib: QueuedRunMemoryMiB
           requested_cpu_millis: RequestedCPUMillis
           required_cpu_config_digest: RequiredCPUConfigDigest
           required_cpu_millis: RequiredCPUMillis
           required_vm_vcpu_count: RequiredVMVCPUCount
           reserved_cpu_millis: ReservedCPUMillis
-          run_ids: RunIDs
-          run_available_cpu_millis: RunAvailableCPUMillis
-          run_available_vm_slots: RunAvailableVMSlots
-          run_lease_ids: RunLeaseIDs
-          runtime_ids: RuntimeIDs
-          vm_runtime_contract: VMRuntimeContract
-          vm_runtime_descriptor_digest: VMRuntimeDescriptorDigest
-          vm_config_artifact_id: VMConfigArtifactID
-          vm_config_digest: VMConfigDigest
-          vm_config_size_bytes: VMConfigSizeBytes
-          vm_config_media_type: VMConfigMediaType
-          artifact_kind_computer_checkpoint_vm_config: ArtifactKindComputerCheckpointVMConfig
-          vm_state_artifact_id: VMStateArtifactID
-          vm_state_media_type: VMStateMediaType
-          vm_state_size_bytes: VMStateSizeBytes
           vm_vcpu_count: VMVCPUCount
           vcpu_count: VCPUCount
           worker_pool_ids: WorkerPoolIDs
-          source_sha: SourceSHA
           vm_state: VMState
-          vm_state_digest: VMStateDigest

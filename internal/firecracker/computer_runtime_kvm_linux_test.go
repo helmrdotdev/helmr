@@ -18,6 +18,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/nbd"
@@ -26,8 +27,9 @@ import (
 )
 
 // This opt-in qualification requires an operator-owned disposable KVM host.
-// It exercises the production connector and NBD device, but not CP authority,
-// remote storage, customer programs or RAM continuation. Keep failed arenas.
+// It exercises the production connector and NBD device, optionally with a
+// remote store and guest commands. It does not prove CP authority, native
+// harnesses or RAM continuation. Keep failed arenas.
 func TestComputerRuntimeKVM(t *testing.T) {
 	path := os.Getenv("HELMR_COMPUTER_KVM_CONFIG")
 	if path == "" {
@@ -37,10 +39,12 @@ func TestComputerRuntimeKVM(t *testing.T) {
 		t.Fatal("explicit disposable root host required")
 	}
 	var input struct {
-		Runtime Config
-		Arena   string
-		Helper  string
-		Devices []string
+		Runtime     Config
+		Arena       string
+		Helper      string
+		Devices     []string
+		SeedRoot    string
+		RemoteStore string
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -85,8 +89,11 @@ func TestComputerRuntimeKVM(t *testing.T) {
 	}
 	t.Logf("production qualification=%s", time.Since(start))
 	source := filepath.Join(input.Arena, "seed.ext4")
-	const filesystemBytes = int64(64 << 20)
-	const capacity = filesystemBytes + 4096
+	filesystemBytes := int64(64 << 20)
+	if input.SeedRoot != "" {
+		filesystemBytes = 512 << 20
+	}
+	capacity := filesystemBytes + 4096
 	f, err := os.Create(source)
 	if err != nil {
 		t.Fatal(err)
@@ -98,18 +105,40 @@ func TestComputerRuntimeKVM(t *testing.T) {
 	if err = f.Close(); err != nil {
 		t.Fatal(err)
 	}
-	computerProofCommand(t, "mke2fs", "-q", "-t", "ext4", "-F", source)
+	if input.SeedRoot != "" {
+		if !filepath.IsAbs(input.SeedRoot) {
+			t.Fatal("SeedRoot must be an absolute prepared Linux root with /bin/sh")
+		}
+		computerProofCommand(t, "mke2fs", "-q", "-t", "ext4", "-F", "-d", input.SeedRoot, source)
+	} else {
+		computerProofCommand(t, "mke2fs", "-q", "-t", "ext4", "-F", source)
+	}
 	// The final block is outside ext4. Host-injected synthetic markers identify
 	// consecutive captures without modifying a mounted guest filesystem. This
 	// tests version freshness, not guest application write/fsync semantics.
 	if err := os.Truncate(source, capacity); err != nil {
 		t.Fatal(err)
 	}
-	store, err := cas.NewFile(filepath.Join(input.Arena, "published"))
-	if err != nil {
-		t.Fatal(err)
+	var store interface {
+		cas.Reader
+		blockformat.RangeSource
 	}
-	publisher := &kvmPublication{filesystemPublication: filesystemPublication{store}, certified: map[string]bool{}}
+	var upload func(context.Context, cas.Descriptor, *os.File) (cas.Object, error)
+	if input.RemoteStore == "" {
+		localStore, err := cas.NewFile(filepath.Join(input.Arena, "published"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		store, upload = localStore, (filesystemPublication{localStore}).Upload
+	} else {
+		remoteStore, err := cass3.NewImmutable(t.Context(), input.RemoteStore, cass3.WithTempDir(input.Arena))
+		if err != nil {
+			t.Fatal(err)
+		}
+		store, upload = remoteStore, remoteStore.Publish
+	}
+	publisher := &kvmPublication{Reader: store, upload: upload, certified: map[string]bool{}}
+
 	keyID := uuid.NewV7().String()
 	keys := map[string][]byte{keyID: bytes.Repeat([]byte{11}, 32)} // synthetic data only
 	f, err = os.Open(source)
@@ -135,6 +164,9 @@ func TestComputerRuntimeKVM(t *testing.T) {
 	}
 	var wantMarker []byte
 	verifyMarker := func(root disk.VersionRoot) {
+		if input.SeedRoot != "" {
+			return
+		}
 		tree, err := disk.OpenVersion(t.Context(), store, "kvm-qualification", keys, root, capacity)
 		if err != nil {
 			t.Fatal(err)
@@ -207,6 +239,10 @@ func TestComputerRuntimeKVM(t *testing.T) {
 					t.Fatalf("cold marker mismatch: %d %v", n, err)
 				}
 			}
+			if input.SeedRoot != "" {
+				root = qualifyOnlineGuestWrites(t, machine.(*guestMachine), name, publisher)
+				return
+			}
 			live := machine.(interface {
 				CaptureComputer(context.Context) (*vm.ComputerSnapshot, error)
 			})
@@ -221,9 +257,9 @@ func TestComputerRuntimeKVM(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				pause := time.Since(start)
+				captureTime := time.Since(start)
 				// Require a fresh application health response before publication; a
-				// successful host-side resume response alone is not guest progress.
+				// successful host-side disk cut alone is not guest progress.
 				guest := machine.(*guestMachine)
 				err = connector.waitForHealth(t.Context(), guest.vsockHostPath, guest.machineExit, t.Logf)
 				if err != nil {
@@ -237,7 +273,7 @@ func TestComputerRuntimeKVM(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				t.Logf("%s capture=%d pause_and_capture=%s publish=%s", name, i, pause, time.Since(start))
+				t.Logf("%s capture=%d flush_and_capture=%s publish=%s", name, i, captureTime, time.Since(start))
 				verifyMarker(root)
 			}
 			cut, err := machine.(vm.ComputerCaptureMachine).PauseComputerForTermination(t.Context())
@@ -259,15 +295,28 @@ func TestComputerRuntimeKVM(t *testing.T) {
 			return
 		}
 		verifyMarker(root)
+		if input.RemoteStore != "" && name == "initial" {
+			// All native owners have joined above. Delete only this fixture's
+			// mutable source; the cold VM must fetch the published objects.
+			if err := os.RemoveAll(filepath.Join(input.Arena, "initial")); err != nil {
+				t.Fatal(err)
+			}
+			t.Log("source mutable disk state removed before remote-backed cold recovery")
+		}
 	}
 	t.Log("production Computer capture and cold materialization passed; no CP or RAM continuation claim")
 }
 
 type kvmPublication struct {
-	filesystemPublication
+	cas.Reader
+	upload    func(context.Context, cas.Descriptor, *os.File) (cas.Object, error)
 	certified map[string]bool
 }
 
+func (p *kvmPublication) Register(context.Context, blockformat.ObjectInspection) error { return nil }
+func (p *kvmPublication) Upload(ctx context.Context, d cas.Descriptor, file *os.File) (cas.Object, error) {
+	return p.upload(ctx, d, file)
+}
 func (p *kvmPublication) Certify(_ context.Context, e blockformat.ObjectInspection) error {
 	raw, err := json.Marshal(e)
 	if err == nil {

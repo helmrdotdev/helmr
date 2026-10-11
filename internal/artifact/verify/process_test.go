@@ -57,10 +57,10 @@ func TestVerifierResultRoundTrip(t *testing.T) {
 		{
 			name: "invalid",
 			write: func(output *bytes.Buffer) error {
-				return writeVerifierInvalid(output, "program index is missing")
+				return writeVerifierInvalid(output, "program metadata is missing")
 			},
 			kind:       verifierInvalid,
-			diagnostic: "program index is missing",
+			diagnostic: "program metadata is missing",
 		},
 		{
 			name: "failed",
@@ -247,34 +247,9 @@ func verifierRecordBytes(kind verifierRecordKind, payload []byte) []byte {
 	return output.Bytes()
 }
 
-func canonicalVerifierProgramIndex(t *testing.T) []byte {
+func canonicalVerifierProgramMetadata(t *testing.T) []byte {
 	t.Helper()
-	canonical, err := artifact.CanonicalProgramIndex(artifact.ProgramIndex{
-		Architecture:       definition.ArchitectureX8664,
-		ConfigResultDigest: "sha256:" + strings.Repeat("8", 64),
-		Declarations: []artifact.ProgramIndexDeclaration{{
-			Kind:       definition.KindTask,
-			DeclaredID: "verify",
-			Task: &definition.TaskManifest{
-				Payload: definition.SchemaManifest{Kind: definition.SchemaKindNone},
-				Run: definition.RunManifest{
-					Queue:         "task/verify",
-					MaxDurationMs: 900000,
-					Retry:         definition.RetryManifest{Enabled: false},
-				},
-			},
-			Locator: &artifact.ProgramLocator{
-				ExportName: "verify",
-				ModulePath: artifacttest.ModulePath("a"),
-				Slot:       artifact.DeclarationSlotHandler,
-			},
-		}},
-		Queues: []definition.QueueInput{{
-			Name: "task/verify",
-		}},
-		RuntimeContract: definition.RuntimeContract,
-		RuntimeDigest:   "sha256:" + strings.Repeat("f", 64),
-	})
+	canonical, err := artifact.CanonicalProgramMetadata(artifacttest.ProgramMetadata(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,13 +258,13 @@ func canonicalVerifierProgramIndex(t *testing.T) []byte {
 
 func canonicalVerifierProgramVerification(t *testing.T) []byte {
 	t.Helper()
-	var index artifact.ProgramIndex
-	if err := json.Unmarshal(canonicalVerifierProgramIndex(t), &index); err != nil {
+	var index artifact.ProgramMetadata
+	if err := json.Unmarshal(canonicalVerifierProgramMetadata(t), &index); err != nil {
 		t.Fatal(err)
 	}
 	canonical, err := canonicalProgramVerification(programVerification{
 		FormatVersion: programVerificationVersion,
-		Index:         index,
+		Metadata:      index,
 	})
 	if err != nil {
 		t.Fatal(err)

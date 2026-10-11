@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@helmr/sdk": ["../../sdk/typescript/src/index.ts"],
+      "@helmr/sdk/internal": ["../../sdk/typescript/src/internal.ts"],
+      "@helmr/sdk/mcp": ["../../sdk/typescript/src/mcp.ts"],
+      "@helmr/proto": ["../../proto/typescript/src/index.ts"]
+    }
+  },
+  "include": ["probes/**/*.ts", "../../runtime/typescript/src/node-crypto.d.ts"]
+}

@@ -30,6 +30,10 @@ type Placement struct {
 }
 
 func Normalize(input []Placement) ([]Placement, error) {
+	return normalize(input, secretname.Validate)
+}
+
+func normalize(input []Placement, validateSource func(string) error) ([]Placement, error) {
 	if len(input) > MaxBindings {
 		return nil, fmt.Errorf("at most %d computer secret placements are allowed", MaxBindings)
 	}
@@ -39,7 +43,7 @@ func Normalize(input []Placement) ([]Placement, error) {
 	originCount := 0
 	for index := range placements {
 		placement := &placements[index]
-		if err := secretname.Validate(placement.Name); err != nil {
+		if err := validateSource(placement.Name); err != nil {
 			return nil, err
 		}
 		switch placement.Kind {

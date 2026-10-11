@@ -55,8 +55,9 @@
 //     deletion then locks the live source Run with the target Computer.
 //     Under the Computer lock, deletion updates the Computer's checkpoint
 //     rows before it locks the Computer instance.
-//   - Worker host credential authentication locks the credential, host, group
-//     and pool rows in one FOR UPDATE statement rather than in separate steps.
+//   - Worker host credential authentication locks worker_groups, worker_pools,
+//     worker_hosts and worker_host_secrets FOR UPDATE in that order, through
+//     dependent stages of one statement.
 //   - Computer Instance operations take the order above through the computer
 //     owner. Channel claim, writer renewal and the restore plan lock secrets,
 //     worker_groups, worker_hosts, the Computer and then its Instance; the

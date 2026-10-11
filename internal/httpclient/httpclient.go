@@ -149,7 +149,16 @@ func (t *Transport) DoSensitive(req *http.Request) (*http.Response, error) {
 }
 
 func (t *Transport) DoJSON(req *http.Request, out any) error {
-	resp, err := t.Do(req)
+	return t.doJSON(req, out, false)
+}
+
+// DoJSONWithStatus preserves a received rejection even when its body is truncated.
+func (t *Transport) DoJSONWithStatus(req *http.Request, out any) error {
+	return t.doJSON(req, out, true)
+}
+
+func (t *Transport) doJSON(req *http.Request, out any, retainStatus bool) error {
+	resp, err := t.do(req, retainStatus)
 	if err != nil {
 		return err
 	}

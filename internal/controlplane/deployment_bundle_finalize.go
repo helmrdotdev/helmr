@@ -61,7 +61,7 @@ func (s *Server) finalizeDeploymentBundle(w http.ResponseWriter, r *http.Request
 		ctx context.Context,
 		progress func(objectDigest string) error,
 	) (api.DeploymentResponse, error) {
-		record, err := s.deploymentFinalizer.Finalize(ctx, s.db, s.tx, finalization, progress)
+		record, err := s.deploymentFinalizer.Finalize(ctx, s.tx, finalization, progress)
 		if err != nil {
 			return api.DeploymentResponse{}, err
 		}
@@ -188,10 +188,9 @@ func writeDeploymentFinalizeEvent(w io.Writer, event string, payload any) error 
 func publicDeploymentFinalizeError(err error) api.DeploymentBundleFinalizeError {
 	var expired idempotency.ExpiredError
 	if errors.As(err, &expired) {
-		return api.DeploymentBundleFinalizeError{Code: expired.ErrorCode(), Message: expired.Error()}
+		return api.DeploymentBundleFinalizeError{Code: "operation_expired", Message: "operation receipt has expired"}
 	}
-	var idempotencyConflict idempotency.ConflictError
-	if errors.As(err, &idempotencyConflict) {
+	if errors.Is(err, deployment.ErrFinalizationConflict) {
 		return api.DeploymentBundleFinalizeError{
 			Code: "idempotency_conflict", Message: "idempotency key conflicts with another deployment bundle",
 		}

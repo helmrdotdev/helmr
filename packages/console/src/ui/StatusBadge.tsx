@@ -12,20 +12,8 @@ const TONE_CLASSES: Record<Tone, string> = {
 };
 
 const TONES = {
-  run: {
-    queued: "active",
-    running: "active",
-    waiting: "waiting",
-    retry_delayed: "waiting",
-    cancel_requested: "waiting",
-    succeeded: "succeeded",
-    failed: "revoked",
-    system_failed: "revoked",
-    cancelled: "revoked",
-    expired: "expired",
-  },
-  session: { open: "active", closing: "waiting", closed: "succeeded", failed: "revoked" },
-  token: { pending: "waiting", completed: "succeeded", expired: "expired", cancelled: "revoked" },
+  turn: { queued: "waiting", running: "active", finalizing: "waiting", completed: "succeeded", failed: "revoked", interrupted: "expired", cancelled: "revoked" },
+  session: { open: "active", closing: "waiting", closed: "succeeded", cancelled: "revoked" },
   computer: { available: "succeeded", deleted: "expired", deleting: "expired" },
   computer_command: { pending: "waiting", starting: "waiting", running: "active", stopping: "waiting", exited: "succeeded", failed: "revoked", cancelled: "revoked", timed_out: "revoked", lost: "revoked" },
   schedule: { active: "active", errored: "revoked", archived: "expired" },

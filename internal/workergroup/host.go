@@ -35,8 +35,11 @@ type EnrolledHost struct {
 
 // EnrollHost creates a registering worker host with a new host secret in the
 // named pool of the worker group that the enrollment token authorizes,
-// creating the pool when it does not exist, in one statement.
-func EnrollHost(ctx context.Context, q db.Querier, cfg HostAuthConfig, enrollment Enrollment) (EnrolledHost, error) {
+// creating the pool when it does not exist. Authority is locked before checking
+// existing allocations so a lock wait cannot hide a newly committed writer.
+// This uses the database's READ COMMITTED isolation; allocation transactions
+// must retain at least a shared group lock through their commit.
+func EnrollHost(ctx context.Context, pool db.TxBeginner, cfg HostAuthConfig, enrollment Enrollment) (EnrolledHost, error) {
 	if enrollment.ResourceID == "" || strings.TrimSpace(enrollment.ResourceID) != enrollment.ResourceID || len(enrollment.ResourceID) > MaxResourceIDBytes {
 		return EnrolledHost{}, invalidInput("resource_id is required and must not exceed %d bytes", MaxResourceIDBytes)
 	}
@@ -50,16 +53,39 @@ func EnrollHost(ctx context.Context, q db.Querier, cfg HostAuthConfig, enrollmen
 	if err != nil {
 		return EnrolledHost{}, fmt.Errorf("generate worker host secret: %w", err)
 	}
-	hostSecret, err := q.EnrollWorkerHost(ctx, db.EnrollWorkerHostParams{
-		TokenHash:        enrollment.TokenHash,
-		WorkerPoolID:     pgvalue.UUID(uuid.NewV7()),
-		PoolName:         enrollment.PoolName,
-		WorkerHostID:     pgvalue.UUID(uuid.NewV7()),
-		CurrentServiceID: pgvalue.UUID(uuid.NewV7()),
-		ResourceID:       enrollment.ResourceID,
-		HostSecretID:     pgvalue.UUID(uuid.NewV7()),
-		KeyPrefix:        generated.KeyPrefix,
-		SecretHash:       generated.SecretHash,
+	var hostSecret db.EnrollWorkerHostRow
+	err = db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		var group uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT g.id FROM worker_group_tokens t JOIN worker_groups g ON g.token_id=t.id
+ WHERE t.token_hash=$1 AND g.status IN ('active','paused') FOR UPDATE OF t,g`, enrollment.TokenHash).Scan(&group); err != nil {
+			return err
+		}
+		// Use a fresh statement snapshot after the group lock. An allocation
+		// committed while enrollment waited must remain visible across every
+		// incarnation of this resource, including lost host rows.
+		var custody bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM worker_hosts h
+ WHERE h.worker_group_id=$1 AND h.resource_id=$2 AND (
+ EXISTS(SELECT 1 FROM computer_leases l WHERE l.worker_host_id=h.id AND l.fenced_at IS NULL)
+ OR EXISTS(SELECT 1 FROM computer_preparations p WHERE p.worker_host_id=h.id AND p.fenced_at IS NULL)))`, group, enrollment.ResourceID).Scan(&custody); err != nil {
+			return err
+		}
+		if custody {
+			return ErrHostCustody
+		}
+		var err error
+		hostSecret, err = db.New(tx).EnrollWorkerHost(ctx, db.EnrollWorkerHostParams{
+			TokenHash:        enrollment.TokenHash,
+			WorkerPoolID:     pgvalue.UUID(uuid.NewV7()),
+			PoolName:         enrollment.PoolName,
+			WorkerHostID:     pgvalue.UUID(uuid.NewV7()),
+			CurrentServiceID: pgvalue.UUID(uuid.NewV7()),
+			ResourceID:       enrollment.ResourceID,
+			HostSecretID:     pgvalue.UUID(uuid.NewV7()),
+			KeyPrefix:        generated.KeyPrefix,
+			SecretHash:       generated.SecretHash,
+		})
+		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return EnrolledHost{}, ErrInvalidEnrollmentToken
@@ -234,8 +260,9 @@ func poolMatches(pool db.WorkerPool, shapes []db.WorkerPoolCpuShape, template Te
 	return true
 }
 
-// RecordStartupRecovery records the startup recovery evidence of the
-// authenticated epoch, which returns the recovering host to service.
+// RecordStartupRecovery acknowledges completed cleanup for the current recovering
+// epoch. Computer physical observations must already be committed; this gate does
+// not infer closure from an inventory or retain an audit record.
 func RecordStartupRecovery(ctx context.Context, q db.Querier, principal HostPrincipal, evidence []byte) error {
 	_, err := q.CompleteWorkerStartupRecovery(ctx, db.CompleteWorkerStartupRecoveryParams{
 		WorkerHostID: pgvalue.UUID(principal.HostID), WorkerGroupID: pgvalue.UUID(principal.GroupID),
@@ -363,7 +390,6 @@ func FenceHost(ctx context.Context, q db.Querier, principal HostPrincipal, reaso
 		WorkerGroupID:        pgvalue.UUID(principal.GroupID),
 		ExpectedEpoch:        pgtype.Int8{Int64: principal.Epoch, Valid: true},
 		ExpectedClaimVersion: principal.HostClaimVersion,
-		ReasonCode:           pgtype.Text{String: reasonCode, Valid: true},
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrHostNotFound

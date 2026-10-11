@@ -17,8 +17,8 @@ func TestCommandLogRefreshPreservesChunkIdentityAndBytes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/worker/v1/instance/credential":
-			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "credential", ExpiresInSeconds: 3600})
-		case "/worker/v1/run/computer-commands/logs/append":
+			_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{WorkerEpoch: 7, Credential: "credential", ExpiresInSeconds: 3600})
+		case "/worker/v1/computer-commands/logs/append":
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
 				t.Error(err)
@@ -29,7 +29,8 @@ func TestCommandLogRefreshPreservesChunkIdentityAndBytes(t *testing.T) {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
-			w.WriteHeader(http.StatusNoContent)
+			now := time.Now()
+			_ = json.NewEncoder(w).Encode(workerapi.DiagnosticLogReceipt{ThroughSequence: 42, AcceptedAt: now, ExpiresAt: now.Add(90 * 24 * time.Hour)})
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -41,12 +42,12 @@ func TestCommandLogRefreshPreservesChunkIdentityAndBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := workerapi.CommandLogAppendRequest{
-		OrgID: "019c0225-f0c9-7f66-8a23-7782ca0a8460", CommandID: "019c0225-f0c9-7f66-8a23-7782ca0a8461",
+		EnvironmentID: "019c0225-f0c9-7f66-8a23-7782ca0a8460", CommandID: "019c0225-f0c9-7f66-8a23-7782ca0a8461",
 		ComputerInstanceID: "019c0225-f0c9-7f66-8a23-7782ca0a8462", WriterGeneration: 9,
-		Stream: workerapi.LogStreamStderr, ObservedSeq: 42, ObservedAt: time.Now().UTC().Truncate(time.Millisecond),
+		Kind: "data", ThroughSequence: 42, Stream: workerapi.LogStreamStderr, ObservedSeq: 42, ObservedAt: time.Now().UTC().Truncate(time.Millisecond),
 		Content: []byte{0, 255, 128},
 	}
-	if err := client.AppendCommandLog(t.Context(), request); err != nil {
+	if _, err := client.AppendCommandLog(t.Context(), request); err != nil {
 		t.Fatal(err)
 	}
 	if len(bodies) != 2 || !bytes.Equal(bodies[0], bodies[1]) {

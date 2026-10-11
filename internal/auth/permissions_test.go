@@ -14,11 +14,11 @@ func TestAPIKeyPermissionIsLimitedByCreatorRole(t *testing.T) {
 		Role:          RoleViewer,
 		ProjectID:     "00000000-0000-0000-0000-000000000101",
 		EnvironmentID: "00000000-0000-0000-0000-000000000102",
-		Permissions:   []Permission{PermissionRunsRead, PermissionSecretsWrite},
+		Permissions:   []Permission{PermissionSessionsRead, PermissionSecretsWrite},
 	}
 
 	scope := Scope{OrgID: orgID, ProjectID: "00000000-0000-0000-0000-000000000101", EnvironmentID: "00000000-0000-0000-0000-000000000102"}
-	if !principal.HasPermission(PermissionRunsRead, scope) {
+	if !principal.HasPermission(PermissionSessionsRead, scope) {
 		t.Fatal("viewer-backed api key should keep read grants")
 	}
 	if principal.HasPermission(PermissionSecretsWrite, scope) {
@@ -32,7 +32,7 @@ func TestAPIKeyScopeDoesNotMatchOrgScope(t *testing.T) {
 		OrgID:       orgID,
 		Kind:        PrincipalKindAPIKey,
 		Role:        RoleOwner,
-		Permissions: []Permission{PermissionRunsRead},
+		Permissions: []Permission{PermissionSessionsRead},
 	}
 	scope := Scope{
 		OrgID:         orgID,
@@ -40,10 +40,10 @@ func TestAPIKeyScopeDoesNotMatchOrgScope(t *testing.T) {
 		EnvironmentID: "00000000-0000-0000-0000-000000000102",
 	}
 
-	if principal.HasPermission(PermissionRunsRead, scope) {
+	if principal.HasPermission(PermissionSessionsRead, scope) {
 		t.Fatal("api key without environment scope matched an environment-scoped resource")
 	}
-	if principal.HasPermission(PermissionRunsRead, Scope{OrgID: orgID}) {
+	if principal.HasPermission(PermissionSessionsRead, Scope{OrgID: orgID}) {
 		t.Fatal("api key matched org-level scope")
 	}
 
@@ -53,9 +53,9 @@ func TestAPIKeyScopeDoesNotMatchOrgScope(t *testing.T) {
 		Role:          RoleOwner,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
-		Permissions:   []Permission{PermissionRunsRead},
+		Permissions:   []Permission{PermissionSessionsRead},
 	}
-	if concretePrincipal.HasPermission(PermissionRunsRead, Scope{OrgID: orgID}) {
+	if concretePrincipal.HasPermission(PermissionSessionsRead, Scope{OrgID: orgID}) {
 		t.Fatal("environment-scoped api key matched an org-level scope")
 	}
 }
@@ -75,7 +75,7 @@ func TestGranularComputerPermissionsDoNotEscalate(t *testing.T) {
 		EnvironmentID: scope.EnvironmentID,
 		Permissions: []Permission{
 			PermissionComputersRead,
-			PermissionRunsRead,
+			PermissionSessionsRead,
 		},
 	}
 
@@ -101,27 +101,35 @@ func TestSessionSendPermissionRequiresWritableRole(t *testing.T) {
 	}
 }
 
-func TestActorStartPermissionIsWritableButNotReadableRoleAuthority(t *testing.T) {
-	if !RoleAllows(RoleDeveloper, PermissionActorsStart) {
-		t.Fatal("developer should be allowed to start an Actor")
+func TestAgentStartPermissionIsWritableButNotReadableRoleAuthority(t *testing.T) {
+	if !RoleAllows(RoleDeveloper, PermissionAgentsStart) {
+		t.Fatal("developer should be allowed to start an Agent")
 	}
-	if RoleAllows(RoleViewer, PermissionActorsStart) {
-		t.Fatal("viewer should not be allowed to start an Actor")
+	if RoleAllows(RoleViewer, PermissionAgentsStart) {
+		t.Fatal("viewer should not be allowed to start an Agent")
 	}
-	normalized, ok := ParseAPIKeyGrant(string(PermissionActorsStart))
-	if !ok || normalized != PermissionActorsStart {
-		t.Fatalf("normalized Actor start permission = %v", normalized)
+	normalized, ok := ParseAPIKeyGrant(string(PermissionAgentsStart))
+	if !ok || normalized != PermissionAgentsStart {
+		t.Fatalf("normalized Agent start permission = %v", normalized)
 	}
 }
 
-func TestActorReadPermissionAllowsReadOnlyRoles(t *testing.T) {
+func TestSessionReadPermissionAllowsReadOnlyRoles(t *testing.T) {
 	for _, role := range []Role{RoleOwner, RoleAdmin, RoleDeveloper, RoleViewer} {
 		if !RoleAllows(role, PermissionSessionsRead) {
-			t.Fatalf("%s should be allowed to read Actors", role)
+			t.Fatalf("%s should be allowed to read Sessions", role)
 		}
 	}
 	normalized, ok := ParseAPIKeyGrant(string(PermissionSessionsRead))
 	if !ok || normalized != PermissionSessionsRead {
-		t.Fatalf("normalized Actor read permission = %v", normalized)
+		t.Fatalf("normalized Session read permission = %v", normalized)
+	}
+}
+
+func TestAPIKeyGrantRejectsUnknownPermission(t *testing.T) {
+	for _, grant := range []string{"", "*", "unsupported.permission"} {
+		if permission, ok := ParseAPIKeyGrant(grant); ok {
+			t.Fatalf("unknown grant %q accepted as %q", grant, permission)
+		}
 	}
 }

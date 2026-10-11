@@ -13,7 +13,7 @@ import (
 )
 
 func TestCommandOutcomeSeparatesFailureExitAndReconciliation(t *testing.T) {
-	base := db.ComputerCommand{ID: pgvalue.NewUUIDv7(), ComputerID: pgvalue.NewUUIDv7(), ComputerInstanceID: pgvalue.NewUUIDv7(), TerminalAt: pgvalue.Timestamptz(time.Now()), Status: db.ComputerCommandStatusFailed, ExitCode: pgtype.Int4{Int32: 0, Valid: true}, FailureReason: pgvalue.Text("scope_termination_failed")}
+	base := db.ComputerCommand{ID: pgvalue.NewUUIDv7(), ComputerID: pgvalue.NewUUIDv7(), ComputerLeaseEpoch: pgtype.Int8{Int64: 1, Valid: true}, TerminalAt: pgvalue.Timestamptz(time.Now()), Status: db.ComputerCommandStatusFailed, ExitCode: pgtype.Int4{Int32: 0, Valid: true}, FailureReason: pgvalue.Text("scope_termination_failed")}
 	info, err := publicCommandInfo(base)
 	if err != nil || info.Outcome == nil || info.Outcome.Kind != "system_failed" || info.Outcome.Failure.Reason != "scope_termination_failed" || info.Outcome.ExitCode == nil || *info.Outcome.ExitCode != 0 || info.ProcessReconciled {
 		t.Fatalf("info=%+v err=%v", info, err)

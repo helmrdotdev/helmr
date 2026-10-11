@@ -1,21 +1,19 @@
-import { verify, assertEqual, deadline } from "../../support/context"
-await verify("computer-overwrite", async ({ client, marker, objects, computer }) => {
+import { verify, assertEqual, completedResult } from "../../support/context"
+await verify("computer-overwrite", async ({ marker, computer, startAgent }) => {
   const target = await computer("helmr-edge-smoke")
-  const run = await client.tasks.start(
+  const { turn } = await startAgent(
     "edge-smoke",
     {
       computer: target,
-      payload: { mode: "sandbox-overwrite", marker },
+      input: { mode: "computer-overwrite", marker },
       idempotencyKey: `computer-overwrite:${marker}`,
     },
-    { signal: deadline(30_000) },
   )
-  objects.run_ids.push(run.id)
-  const output = await client.runs.wait(run, { signal: deadline(20 * 60_000) }).unwrap()
+  const output = await completedResult(turn)
   assertEqual(
     output,
     {
-      mode: "sandbox-overwrite",
+      mode: "computer-overwrite",
       marker,
       computer: { path: "edge/overwrite.txt", content: `final:${marker}\n` },
     },

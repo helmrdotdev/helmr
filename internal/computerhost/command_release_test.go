@@ -53,9 +53,9 @@ func TestCommandReleaseWaitsForGuestReceipt(t *testing.T) {
 				done <- frameio.WriteProtoFrame(guest, &computerv0.ComputerCommandReleaseResponse{Released: guestError == "", Error: guestError})
 			}()
 			client := &commandReleaseClient{}
-			mount := workerapi.ComputerInstanceAssignment{OrgID: "org", ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 2, GuestChannelCredential: "token"}
-			receipt := workerapi.ComputerCommandRelease{ComputerID: "computer", RequestFingerprint: "fingerprint", Completion: workerapi.ComputerCommandCompleteRequest{OrgID: "org", CommandID: "command", ComputerInstanceID: "instance", WriterGeneration: 2, Outcome: "exited"}}
-			err := (Server{}).releaseComputerCommand(t.Context(), &serverTestMachine{operation: host}, mount, receipt, client)
+			mount := commandAuthority{EnvironmentID: "org", ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 2, GuestChannelCredential: "token"}
+			receipt := workerapi.ComputerCommandRelease{ComputerID: "computer", RequestFingerprint: "fingerprint", Completion: workerapi.ComputerCommandCompleteRequest{EnvironmentID: "org", CommandID: "command", ComputerInstanceID: "instance", WriterGeneration: 2, Outcome: "exited"}}
+			err := (commandService{}).releaseComputerCommand(t.Context(), &serverTestMachine{operation: host}, mount, receipt, client)
 			if (err == nil) != (guestError == "") || client.reconciled != (guestError == "") {
 				t.Fatalf("err=%v reconciled=%v", err, client.reconciled)
 			}
@@ -85,11 +85,11 @@ func TestCommandReleaseCancelsSilentPeer(t *testing.T) {
 		cancel()
 	}()
 	client := &commandReleaseClient{}
-	mount := workerapi.ComputerInstanceAssignment{OrgID: "org", ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 2, GuestChannelCredential: "token"}
-	receipt := workerapi.ComputerCommandRelease{ComputerID: "computer", RequestFingerprint: "fingerprint", Completion: workerapi.ComputerCommandCompleteRequest{OrgID: "org", CommandID: "command", ComputerInstanceID: "instance", WriterGeneration: 2}}
+	mount := commandAuthority{EnvironmentID: "org", ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 2, GuestChannelCredential: "token"}
+	receipt := workerapi.ComputerCommandRelease{ComputerID: "computer", RequestFingerprint: "fingerprint", Completion: workerapi.ComputerCommandCompleteRequest{EnvironmentID: "org", CommandID: "command", ComputerInstanceID: "instance", WriterGeneration: 2}}
 	result := make(chan error, 1)
 	go func() {
-		result <- (Server{}).releaseComputerCommand(ctx, &serverTestMachine{operation: host}, mount, receipt, client)
+		result <- (commandService{}).releaseComputerCommand(ctx, &serverTestMachine{operation: host}, mount, receipt, client)
 	}()
 	select {
 	case err := <-result:
@@ -149,11 +149,11 @@ func TestCommandReleaseReconcilesBeforeClosingGuestStream(t *testing.T) {
 	}
 	stream := &commandReleaseOrderStream{response: bytes.NewReader(response.Bytes()), record: record, closeStarted: make(chan struct{}), releaseClose: make(chan struct{})}
 	client := &commandReleaseOrderClient{record: record}
-	mount := workerapi.ComputerInstanceAssignment{OrgID: "org", ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 2, GuestChannelCredential: "token"}
-	receipt := workerapi.ComputerCommandRelease{ComputerID: "computer", RequestFingerprint: "fingerprint", Completion: workerapi.ComputerCommandCompleteRequest{OrgID: "org", CommandID: "command", ComputerInstanceID: "instance", WriterGeneration: 2, Outcome: "exited"}}
+	mount := commandAuthority{EnvironmentID: "org", ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 2, GuestChannelCredential: "token"}
+	receipt := workerapi.ComputerCommandRelease{ComputerID: "computer", RequestFingerprint: "fingerprint", Completion: workerapi.ComputerCommandCompleteRequest{EnvironmentID: "org", CommandID: "command", ComputerInstanceID: "instance", WriterGeneration: 2, Outcome: "exited"}}
 	result := make(chan error, 1)
 	go func() {
-		result <- (Server{}).releaseComputerCommand(t.Context(), &guestControlTestMachine{stream: testVMStream(stream)}, mount, receipt, client)
+		result <- (commandService{}).releaseComputerCommand(t.Context(), &guestControlTestMachine{stream: testVMStream(stream)}, mount, receipt, client)
 	}()
 	select {
 	case <-stream.closeStarted:

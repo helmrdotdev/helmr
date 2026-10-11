@@ -13,32 +13,16 @@ type ScheduleCron struct {
 	Timezone string `json:"timezone"`
 }
 
-type ScheduleFailure struct {
-	Code    string          `json:"code"`
-	Message string          `json:"message"`
-	Details json.RawMessage `json:"details"`
-}
-
-type ScheduleStatus string
-
-const (
-	ScheduleStatusActive   ScheduleStatus = "active"
-	ScheduleStatusErrored  ScheduleStatus = "errored"
-	ScheduleStatusArchived ScheduleStatus = "archived"
-)
-
 type ScheduleResponse struct {
-	ID            string           `json:"id"`
-	TaskID        string           `json:"task_id"`
-	Cron          ScheduleCron     `json:"cron"`
-	Status        ScheduleStatus   `json:"status"`
-	Generation    int64            `json:"generation"`
-	EffectiveFrom time.Time        `json:"effective_from"`
-	NextFireAt    *time.Time       `json:"next_fire_at,omitempty"`
-	LastFireAt    *time.Time       `json:"last_fire_at,omitempty"`
-	LastFailure   *ScheduleFailure `json:"last_failure,omitempty"`
-	CreatedAt     time.Time        `json:"created_at"`
-	UpdatedAt     time.Time        `json:"updated_at"`
+	ID           string          `json:"id"`
+	AgentID      string          `json:"agent_id"`
+	DeploymentID string          `json:"deployment_id"`
+	TriggerKey   string          `json:"trigger_key"`
+	Cron         ScheduleCron    `json:"cron"`
+	Input        json.RawMessage `json:"input"`
+	ActiveFrom   time.Time       `json:"active_from"`
+	ActiveUntil  *time.Time      `json:"active_until,omitempty"`
+	NextFireAt   *time.Time      `json:"next_fire_at,omitempty"`
 }
 
 type ListSchedulesResponse struct {

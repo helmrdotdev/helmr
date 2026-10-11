@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/command"
 	"log/slog"
 	"net"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bundle"
@@ -36,6 +38,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/eventstream"
 	"github.com/helmrdotdev/helmr/internal/identity"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
@@ -54,7 +57,6 @@ const (
 	defaultWorkerHostCredentialKey = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
 	defaultSecretEncryptionKey     = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 	defaultComputerFencingKey      = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="
-	defaultTokenCredentialKey      = "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM="
 	defaultUserID                  = "00000000-0000-7000-8000-000000000101"
 )
 
@@ -127,6 +129,18 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("connect database: %w", err)
 	}
 	defer pool.Close()
+	diagnosticAdmission, err := config.LoadDiagnosticAdmission()
+	if err != nil {
+		return err
+	}
+	diagnosticConfig := poolConfig.Copy()
+	diagnosticConfig.MaxConns = diagnosticAdmission.MaxConnections
+	diagnosticConfig.MinConns = 0
+	diagnosticPool, err := dbpool.New(ctx, diagnosticConfig)
+	if err != nil {
+		return fmt.Errorf("connect diagnostic database: %w", err)
+	}
+	defer diagnosticPool.Close()
 	queries := db.New(pool)
 	clickHouseConfig := clickhouse.Config{
 		URL:      cfg.clickHouseURL,
@@ -169,10 +183,6 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure Computer fencing key: %w", err)
 	}
-	tokenCredentialKey, err := auth.NewCredentialKey(cfg.tokenCredentialKey)
-	if err != nil {
-		return fmt.Errorf("configure Token credential key: %w", err)
-	}
 	publicURL, err := url.Parse(cfg.publicURL)
 	if err != nil {
 		return fmt.Errorf("parse public URL: %w", err)
@@ -183,7 +193,15 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure Computer wrapping key: %w", err)
 	}
+	allocator, err := agent.NewAllocator(pool, cfg.computerFencingKey, secretStore)
+	if err != nil {
+		return fmt.Errorf("configure allocation owner: %w", err)
+	}
 	app, err := controlplane.NewServer(controlplane.ServerConfig{
+		Allocator:                      allocator,
+		DiagnosticDB:                   diagnosticPool,
+		DiagnosticBounds:               diagnosticAdmission.Bounds,
+		EnvironmentExecutionLimits:     cfg.environmentExecutionLimits,
 		ComputerKeys:                   computerKeys,
 		Log:                            log,
 		DeploymentMode:                 cfg.deploymentMode,
@@ -198,12 +216,10 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		SecretDelivery:                 secretStore,
 		SecretProxy:                    secretStore,
 		ComputerFencingKey:             computerFencingKey,
-		TokenCredentialKey:             tokenCredentialKey,
 		WorkerHostCredentialSigningKey: cfg.workerHostCredentialKey,
 		SetupToken:                     cfg.setupToken,
 		AuthKey:                        cfg.authKey,
 		PublicURL:                      publicURL,
-		APIOrigin:                      publicURL,
 		EventStream:                    eventStream,
 		TelemetryReader:                telemetryReader,
 	})
@@ -225,6 +241,12 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		IdleTimeout:       120 * time.Second,
 	}
 	loops := []backgroundLoop{
+		{name: "allocation", run: func(ctx context.Context) error { return allocator.Run(ctx, log) }},
+		{name: "commands", run: func(ctx context.Context) error { return command.ReconcileCommands(ctx, pool, log) }},
+		{name: "Session history retention", run: func(ctx context.Context) error { return agent.RunSessionHistoryRetention(ctx, pool, log) }},
+		{name: "Session lifecycle", run: func(ctx context.Context) error { return agent.RunSessionLifecycle(ctx, pool, log) }},
+		{name: "Computer lifecycle", run: func(ctx context.Context) error { return agent.RunComputerLifecycle(ctx, pool, log) }},
+		{name: "preparation lifecycle", run: func(ctx context.Context) error { return agent.RunPreparationLifecycle(ctx, pool, log) }},
 		{name: "event stream publisher", run: eventStream.RunPublisher},
 		{name: "telemetry ingester", run: telemetryIngestor.Run},
 	}
@@ -302,6 +324,7 @@ func serveDev(
 }
 
 type devConfig struct {
+	environmentExecutionLimits      org.ExecutionLimits
 	addr                            string
 	deploymentMode                  string
 	databaseURL                     string
@@ -320,7 +343,6 @@ type devConfig struct {
 	encryptionKey                   []byte
 	computerWrappingKey             []byte
 	computerFencingKey              []byte
-	tokenCredentialKey              []byte
 	seedData                        bool
 }
 
@@ -357,7 +379,6 @@ func loadConfig() (devConfig, error) {
 		{name: "COMPUTER_WRAPPING_KEY", fallback: "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=", target: &cfg.computerWrappingKey},
 		{name: "ENCRYPTION_KEY", fallback: defaultSecretEncryptionKey, target: &cfg.encryptionKey},
 		{name: "COMPUTER_FENCING_KEY", fallback: defaultComputerFencingKey, target: &cfg.computerFencingKey},
-		{name: "TOKEN_CREDENTIAL_KEY", fallback: defaultTokenCredentialKey, target: &cfg.tokenCredentialKey},
 	} {
 		*key.target, err = decodeRootKey(key.name, secretEnv(key.name, key.fallback))
 		if err != nil {
@@ -385,6 +406,12 @@ func loadConfig() (devConfig, error) {
 	if cfg.clickHouseURL == "" {
 		return cfg, errors.New("CLICKHOUSE_URL is required")
 	}
+	limits, err := config.LoadEnvironmentExecutionLimits()
+	if err != nil {
+		return cfg, err
+	}
+
+	cfg.environmentExecutionLimits = org.ExecutionLimits(limits)
 	return cfg, nil
 }
 

@@ -13,8 +13,8 @@ import (
 const programVerificationVersion = 0
 
 type programVerification struct {
-	FormatVersion int                   `json:"formatVersion"`
-	Index         artifact.ProgramIndex `json:"index"`
+	FormatVersion int                      `json:"formatVersion"`
+	Metadata      artifact.ProgramMetadata `json:"metadata"`
 }
 
 func parseProgramVerification(raw []byte) (programVerification, error) {
@@ -52,7 +52,7 @@ func parseProgramVerification(raw []byte) (programVerification, error) {
 			"program verification does not match the complete canonical v0 shape",
 		)
 	}
-	verified.Index = verified.Index.Clone()
+	verified.Metadata = verified.Metadata.Clone()
 	return verified, nil
 }
 
@@ -85,7 +85,7 @@ func validateProgramVerification(verified programVerification) error {
 			programVerificationVersion,
 		)
 	}
-	if err := artifact.ValidateProgramIndex(verified.Index); err != nil {
+	if err := artifact.ValidateProgramMetadata(verified.Metadata); err != nil {
 		return fmt.Errorf("program verification index: %w", err)
 	}
 	return nil

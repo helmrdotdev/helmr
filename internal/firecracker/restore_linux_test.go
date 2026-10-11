@@ -109,11 +109,8 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 		},
 		{name: "manifest memory exceeds worker capacity", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.MemoryMiB = cfg.MemoryMiB + 1 }, want: "checkpoint manifest memory"},
 		{name: "manifest scratch disk exceeds worker capacity", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.ScratchDiskMiB = cfg.ScratchDiskMiB + 1 }, want: "checkpoint manifest scratch disk size"},
-		{name: "legacy kernel IP bootstrap", editManifest: func(m *snapshotManifest) {
-			m.RecoveryPoint.Runtime.KernelArgs = strings.Replace(m.RecoveryPoint.Runtime.KernelArgs, "helmr.ip=", "ip=", 1)
-		}, want: "checkpoint manifest runtime ports or kernel args do not match"},
-		{name: "old VM descriptor", editManifest: func(m *snapshotManifest) {
-			m.RecoveryPoint.Runtime.DescriptorDigest = "sha256:8502b2ce12e03d6576a88c976059fabb7f62cb9b05a99c9ca5d1839cfb1f2e30"
+		{name: "mismatched VM descriptor", editManifest: func(m *snapshotManifest) {
+			m.RecoveryPoint.Runtime.DescriptorDigest = "sha256:" + strings.Repeat("a", 64)
 		}, want: "descriptor"},
 		{name: "manifest kernel args", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.KernelArgs = "other" }, want: "checkpoint manifest runtime ports or kernel args do not match"},
 		{name: "manifest guest port", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.GuestPort++ }, want: "checkpoint manifest runtime ports or kernel args do not match"},
@@ -245,7 +242,7 @@ func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 	var mu sync.Mutex
 	var phases []vm.Phase
 
-	_, err := connector.restore(context.Background(), vm.RestoreRequest{
+	request := vm.RestoreRequest{
 		Topology: topology, Resources: vm.Resources{MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.ScratchDiskMiB},
 		ID:                 "checkpoint-1",
 		ComputerInstanceID: computerInstanceID,
@@ -267,9 +264,10 @@ func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 			defer mu.Unlock()
 			phases = append(phases, phase)
 		},
-	})
+	}
+	_, err := connector.restore(context.Background(), request)
 
-	if err == nil || !strings.Contains(err.Error(), "unpack checkpoint memory") {
+	if !errors.Is(err, filepack.ErrInvalidContent) || !strings.Contains(err.Error(), "unpack checkpoint memory") {
 		t.Fatalf("err = %v, want memory unpack failure", err)
 	}
 	if !hasPhase(phases, "restore_validate_identity", "") {
@@ -284,6 +282,11 @@ func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 	entries, readErr := os.ReadDir(cfg.StateDir)
 	if readErr != nil || len(entries) != 0 {
 		t.Fatalf("failed restore left owner state: entries=%v err=%v", entries, readErr)
+	}
+	// A fresh Connector cannot recreate a failed restore under the consumed identity.
+	retry := testConnector(t, cfg)
+	if _, err := retry.restore(t.Context(), request); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("failed restore identity was reusable: %v", err)
 	}
 }
 

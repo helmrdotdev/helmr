@@ -14,6 +14,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./internal": "./src/internal.ts",
-    "./internal/fuzzy": "./src/fuzzy.ts"
+    "./internal/fuzzy": "./src/fuzzy.ts",
+    "./mcp": "./src/mcp.ts"
   }
 }

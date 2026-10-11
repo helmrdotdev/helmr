@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
@@ -16,9 +15,9 @@ import (
 const (
 	computerSpecDigestDomain = "helmr.computer-spec.v0\x00"
 
-	RuntimeContract             = "helmr.runtime.v0"
-	ArchitectureX8664           = RuntimeArchitecture("x86_64")
-	MaxComputerImageBytes int64 = 17179869184
+	RuntimeContract            = "helmr.runtime.v0"
+	ArchitectureX8664          = RuntimeArchitecture("x86_64")
+	MaxComputerSeedBytes int64 = 17179869184
 
 	// ComputerSeedProfile and ComputerSeedMediaType identify the client-built
 	// Computer seed disk format.
@@ -28,8 +27,8 @@ const (
 
 type RuntimeArchitecture string
 
-// ComputerImage is the verified seed image a sandbox manifest is compiled against.
-type ComputerImage struct {
+// ComputerSeed is the verified seed image used by a Computer definition.
+type ComputerSeed struct {
 	Profile      string
 	Config       oci.RuntimeConfig
 	Architecture RuntimeArchitecture
@@ -55,29 +54,6 @@ type ComputerSpec struct {
 	Digest [sha256.Size]byte
 }
 
-// CompileComputerSpec is shared by bundle compilation and admission. It does not
-// include the declaration's name: equal environments have equal identities even
-// when multiple declarations or deployments refer to them.
-func CompileComputerSpec(manifest SandboxManifest, image ComputerImage) (ComputerSpec, error) {
-	if manifest.Image.Profile != image.Profile ||
-		manifest.Image.ArtifactDigest != image.Digest ||
-		manifest.Image.MediaType != image.MediaType ||
-		!equalImageConfig(manifest.Image.Config, image.Config) {
-		return ComputerSpec{}, errors.New("computer seed does not match sandbox manifest")
-	}
-	config := ComputerConfig{
-		Architecture: image.Architecture, RuntimeContract: RuntimeContract,
-		Profile: image.Profile, Image: image.Config, Resources: manifest.Resources,
-	}
-	raw, err := json.Marshal(config)
-	if err != nil {
-		return ComputerSpec{}, fmt.Errorf("encode computer config: %w", err)
-	}
-	return ParseComputerSpec(raw, cas.Descriptor{
-		Digest: image.Digest, SizeBytes: image.SizeBytes, MediaType: image.MediaType,
-	})
-}
-
 // ParseComputerSpec validates stored JSON, then normalizes before hashing. It
 // therefore has the same identity after a JSONB round trip without accepting
 // duplicate keys or silently discarding unknown configuration.
@@ -89,7 +65,7 @@ func ParseComputerSpec(raw []byte, seed cas.Descriptor) (ComputerSpec, error) {
 	if err := cas.ValidateDescriptor(seed); err != nil {
 		return ComputerSpec{}, fmt.Errorf("computer seed: %w", err)
 	}
-	if seed.MediaType != ComputerSeedMediaType || seed.SizeBytes > MaxComputerImageBytes {
+	if seed.MediaType != ComputerSeedMediaType || seed.SizeBytes > MaxComputerSeedBytes {
 		return ComputerSpec{}, errors.New("unsupported computer seed descriptor")
 	}
 	normalized, err := json.Marshal(config)
@@ -145,9 +121,4 @@ type seedObject struct {
 	Digest    string `json:"digest"`
 	SizeBytes int64  `json:"sizeBytes"`
 	MediaType string `json:"mediaType"`
-}
-
-func equalImageConfig(left, right oci.RuntimeConfig) bool {
-	return left.WorkingDir == right.WorkingDir && left.User == right.User &&
-		slices.Equal(left.Env, right.Env) && slices.Equal(left.Entrypoint, right.Entrypoint) && slices.Equal(left.Cmd, right.Cmd)
 }

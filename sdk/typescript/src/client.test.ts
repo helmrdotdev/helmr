@@ -1,120 +1,14 @@
 import { describe, expect, test } from "bun:test"
 
-import { HelmrClient, actor, task, computers } from "./index"
-import { installRuntimeOperations } from "./internal"
-
-describe("HelmrClient Tasks", () => {
-  test("starts a typed Task by runtime declared ID", async () => {
-    const requests: Array<{ url: string; init?: RequestInit }> = []
-    const resizeImage = task({
-      id: "resize-image",
-      payload: {
-        "~standard": {
-          version: 1,
-          vendor: "test",
-          validate(value: unknown) {
-            return { value: value as { imageId: string } }
-          },
-        },
-      },
-      run: async (payload) => ({ resized: payload.imageId }),
-    })
-    const client = new HelmrClient({
-      url: "https://api.example.test",
-      apiKey: "api-key",
-      fetch: (async (input: URL | RequestInfo, init?: RequestInit) => {
-        requests.push({ url: String(input), init })
-        return Response.json({
-          run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
-        }, { status: 201 })
-      }) as typeof fetch,
-    })
-    const signal = new AbortController().signal
-
-    const run = await client.tasks.start<typeof resizeImage>("resize-image", {
-      payload: { imageId: "image-1" },
-      computer: computers.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
-      idempotencyKey: "image-1",
-      concurrencyKey: "customer-1",
-      retry: { maxAttempts: 3 },
-      metadata: { source: "backend" },
-      tags: ["image"],
-    }, { signal })
-
-    expect(run).toEqual({ id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" })
-    expect(requests[0]!.url).toBe(
-      "https://api.example.test/v1/tasks/resize-image/start",
-    )
-    expect(JSON.parse(String(requests[0]!.init?.body))).toEqual({
-      payload: { imageId: "image-1" },
-      computer: { id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32" },
-      idempotency_key: "image-1",
-      concurrency_key: "customer-1",
-      retry: { max_attempts: 3 },
-      metadata: { source: "backend" },
-      tags: ["image"],
-    })
-    expect(requests[0]!.init?.signal).toBe(signal)
-  })
-
-  test("separates Definition page ownership from compact list items", async () => {
-    const deploymentId = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35"
-    const responses: unknown[] = [
-      { deployment_id: deploymentId, tasks: [{ id: "resize-image" }] },
-      { id: "resize-image", deployment_id: deploymentId },
-    ]
-    const client = new HelmrClient({
-      url: "https://api.example.test",
-      apiKey: "api-key",
-      fetch: (async () => Response.json(responses.shift())) as typeof fetch,
-    })
-
-    const page = await client.tasks.list({ deploymentId })
-    expect(page).toEqual({
-      deploymentId,
-      items: [{ id: "resize-image" }],
-    })
-    expect(await client.tasks.retrieve("resize-image", { deploymentId })).toEqual({
-      id: "resize-image",
-      deploymentId,
-    })
-  })
-
-  test("rejects item pagination and invalid collection bounds before transport", async () => {
-    let requests = 0
-    const client = new HelmrClient({
-      url: "https://api.example.test",
-      apiKey: "api-key",
-      fetch: (async () => {
-        requests++
-        return Response.json({})
-      }) as typeof fetch,
-    })
-
-    await expect(client.tasks.retrieve(
-      "resize-image",
-      { cursor: "opaque" } as never,
-    )).rejects.toThrow("Task item query does not accept cursor or limit")
-    await expect(client.runs.list({ limit: 0 })).rejects.toThrow(
-      "Run limit must be an integer in [1,100]",
-    )
-    await expect(client.tokens.list({ cursor: "" })).rejects.toThrow(
-      "Token cursor is required",
-    )
-    await expect(client.schedules.list(
-      { taskId: "resize-image", limit: 1 } as never,
-    )).rejects.toThrow("Schedule exact task lookup does not accept cursor or limit")
-    expect(requests).toBe(0)
-  })
-})
+import { HelmrClient } from "./index"
 
 describe("HelmrClient Computers", () => {
-  test("creates from a Sandbox and uses Computer UUID refs", async () => {
+  test("creates from a Computer definition and uses Computer UUID refs", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = []
     const computer = {
       id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
       key: "repository",
-      sandbox_id: "repository-agent",
+      definition_key: "repository-agent",
       deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
       status: "available",
       residency: "cold",
@@ -130,7 +24,7 @@ describe("HelmrClient Computers", () => {
 			computers: [{
 				id: computer.id,
 				key: computer.key,
-				sandbox_id: computer.sandbox_id,
+				definition_key: computer.definition_key,
 				deployment_id: computer.deployment_id,
 				status: "available",
  residency: "unavailable",
@@ -153,12 +47,12 @@ describe("HelmrClient Computers", () => {
     })
     const signal = new AbortController().signal
 
-    await expect(client.sandboxes.createComputer("repository-agent", {
+    await expect(client.computerDefinitions.createComputer("repository-agent", {
       secrets: [{
-        secret: { name: "GITHUB_TOKEN" } as never,
+        secretId: { name: "GITHUB_TOKEN" } as never,
         env: { name: "GITHUB_TOKEN", mode: "raw" },
       }],
-    })).rejects.toThrow("Secret name is invalid")
+    })).rejects.toThrow("Secret ID")
     expect(requests).toHaveLength(0)
 
     const inertRef = client.computers.ref(
@@ -167,13 +61,13 @@ describe("HelmrClient Computers", () => {
     expect(inertRef.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")
     expect(requests).toHaveLength(0)
 
-    const created = await client.sandboxes.createComputer(
+    const created = await client.computerDefinitions.createComputer(
       "repository-agent",
       {
         key: "repository",
         secrets: [
-          { secret: "GITHUB_TOKEN", env: { name: "GITHUB_TOKEN", mode: "raw" } },
-          { secret: "MODEL_CONFIG", file: { path: "/run/secrets/model.json" } },
+          { secretId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38", env: { name: "GITHUB_TOKEN", mode: "raw" } },
+          { secretId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc39", file: { path: "/run/secrets/model.json" } },
         ],
         idempotencyKey: "create-repository",
       },
@@ -181,13 +75,13 @@ describe("HelmrClient Computers", () => {
     )
     expect(created.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")
     expect(requests[0]!.url).toBe(
-      "https://api.example.test/v1/sandboxes/repository-agent/computers",
+      "https://api.example.test/v1/computer-definitions/repository-agent/computers",
     )
     expect(JSON.parse(String(requests[0]!.init?.body))).toEqual({
       key: "repository",
       secrets: [
-        { secret: "GITHUB_TOKEN", env: { name: "GITHUB_TOKEN", mode: "raw" } },
-        { secret: "MODEL_CONFIG", file: { path: "/run/secrets/model.json" } },
+        { secretId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38", env: { name: "GITHUB_TOKEN", mode: "raw" } },
+        { secretId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc39", file: { path: "/run/secrets/model.json" } },
       ],
       idempotency_key: "create-repository",
     })
@@ -197,14 +91,14 @@ describe("HelmrClient Computers", () => {
     expect(retrieved).toMatchObject({
       id: computer.id,
       key: "repository",
-      sandboxId: "repository-agent",
+      definitionKey: "repository-agent",
     })
     expect(requests[1]!.url).toBe(
       "https://api.example.test/v1/computers/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
     )
 
     const matches = await client.computers.list({ key: "repository" })
-    expect(matches.items[0]?.sandboxId).toBe("repository-agent")
+    expect(matches.items[0]?.definitionKey).toBe("repository-agent")
     expect(matches.items[0]?.residency).toBe("unavailable")
     expect(requests[2]!.url).toBe(
       "https://api.example.test/v1/computers?key=repository",
@@ -257,138 +151,7 @@ describe("HelmrClient Computers", () => {
   })
 })
 
-describe("HelmrClient Actors", () => {
-  test("uses JSON null as the successful Actor Run completion value", async () => {
-    const runId = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
-    const client = new HelmrClient({
-      url: "https://api.example.test",
-      apiKey: "api-key",
-      fetch: (async (input: URL | RequestInfo) => {
-        const path = new URL(String(input)).pathname
-        if (path.endsWith("/start")) {
-          return Response.json({
-            session_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-            run_id: runId,
-          })
-        }
-        return Response.json({
-          id: runId,
-          status: "succeeded",
-          entrypoint: { kind: "actor", id: "operator" },
-          deployment: {
-            id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-            version: "20260806.1",
-          },
-          computer_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
-          session_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-          current_attempt_number: 1,
-          cause: { type: "actor_start" },
-          metadata: {},
-          tags: [],
-          output: null,
-          created_at: "2026-08-06T00:00:00Z",
-          started_at: "2026-08-06T00:00:01Z",
-          terminal_at: "2026-08-06T00:00:02Z",
-        })
-      }) as typeof fetch,
-    })
-    const started = await client.actors.start("operator", {
-      computer: computers.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
-    })
-
-    await expect(client.runs.wait(started.run).unwrap()).resolves.toBeNull()
-  })
-
-})
-
-describe("HelmrClient Tokens", () => {
-  test("creates an Environment-scoped Token through authenticated REST", async () => {
-    const requests: Array<{ url: string; init?: RequestInit }> = []
-    const client = new HelmrClient({
-      url: "https://api.example.test",
-      apiKey: "api-key",
-      fetch: (async (input: URL | RequestInfo, init?: RequestInit) => {
-        requests.push({ url: String(input), init })
-        return Response.json({
-          id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
-          status: "pending",
-          callback_url: "https://api.example.test/v1/token-callbacks/token/secret",
-          public_access_token: "hlmr_pub_secret",
-          timeout_at: "2026-07-24T12:00:00Z",
-          metadata: { approval: true },
-          tags: ["review"],
-          created_at: "2026-07-24T11:50:00Z",
-          updated_at: "2026-07-24T11:50:00Z",
-        }, { status: 201 })
-      }) as typeof fetch,
-    })
-    const signal = new AbortController().signal
-
-    const token = await client.tokens.create({
-      timeout: "10m",
-      metadata: { approval: true },
-      tags: ["review"],
-      idempotencyKey: "approval-1",
-    }, { signal })
-
-    expect(token.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37")
-    expect(requests).toHaveLength(1)
-    expect(requests[0]!.url).toBe("https://api.example.test/v1/tokens")
-    expect(requests[0]!.init?.method).toBe("POST")
-    expect(requests[0]!.init?.headers).toMatchObject({
-      Authorization: "Bearer api-key",
-    })
-    expect(JSON.parse(String(requests[0]!.init?.body))).toEqual({
-      timeout: "10m",
-      metadata: { approval: true },
-      tags: ["review"],
-      idempotency_key: "approval-1",
-    })
-    expect(requests[0]!.init?.signal).toBe(signal)
-  })
-
-  test("lists bounded Token projections with a status filter", async () => {
-    const requests: string[] = []
-    const client = new HelmrClient({
-      url: "https://api.example.test",
-      apiKey: "api-key",
-      fetch: (async (input: URL | RequestInfo) => {
-        requests.push(String(input))
-        return Response.json({
-          tokens: [{
-            id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
-            status: "completed",
-            tags: ["review"],
-            timeout_at: "2026-07-24T12:00:00Z",
-            completed_at: "2026-07-24T11:55:00Z",
-            created_at: "2026-07-24T11:50:00Z",
-            updated_at: "2026-07-24T11:55:00Z",
-          }],
-          next_cursor: "cursor-next",
-        })
-      }) as typeof fetch,
-    })
-
-    const page = await client.tokens.list({
-      status: "completed",
-      cursor: "cursor-current",
-      limit: 10,
-    })
-    expect(page.items[0]).toEqual({
-      id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
-      status: "completed",
-      tags: ["review"],
-      timeoutAt: "2026-07-24T12:00:00Z",
-      completedAt: "2026-07-24T11:55:00Z",
-      createdAt: "2026-07-24T11:50:00Z",
-      updatedAt: "2026-07-24T11:55:00Z",
-    })
-    expect(page.nextCursor).toBe("cursor-next")
-    expect(requests[0]).toBe(
-      "https://api.example.test/v1/tokens?status=completed&cursor=cursor-current&limit=10",
-    )
-  })
-
+describe("HelmrClient transport errors", () => {
   test.each([400, 401, 403, 409, 410])(
     "preserves structured Helmr errors for status %i",
     async (status) => {
@@ -397,9 +160,9 @@ describe("HelmrClient Tokens", () => {
         apiKey: "api-key",
         fetch: (async () => Response.json({
           error: {
-            code: `token_error_${status}`,
+            code: `session_error_${status}`,
             message: `request failed with ${status}`,
-            details: { token_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37" },
+            details: { session_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37" },
           },
         }, {
           status,
@@ -408,15 +171,15 @@ describe("HelmrClient Tokens", () => {
       })
 
       try {
-        await client.tokens.retrieve("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37")
-        throw new Error("expected Token retrieve to fail")
+        await client.sessions.retrieve("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37")
+        throw new Error("expected Session retrieve to fail")
       } catch (error) {
         expect(error).toMatchObject({
           name: "HelmrError",
           message: `request failed with ${status}`,
-          code: `token_error_${status}`,
+          code: `session_error_${status}`,
           requestId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38",
-          details: { token_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37" },
+          details: { session_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37" },
         })
       }
     },
@@ -433,8 +196,8 @@ describe("HelmrClient Tokens", () => {
     })
 
     try {
-      await client.tokens.retrieve("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37")
-      throw new Error("expected Token retrieve to fail")
+      await client.sessions.retrieve("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37")
+      throw new Error("expected Session retrieve to fail")
     } catch (error) {
       expect(error).toMatchObject({
         name: "HelmrError",
@@ -617,107 +380,45 @@ describe("HelmrClient Deployments", () => {
 })
 
 describe("HelmrClient Schedules", () => {
-  test("retrieves and pages declarative Schedule status", async () => {
-    const schedule = {
-      id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
-      task_id: "scheduled-maintenance",
-      cron: { pattern: "0 * * * *", timezone: "UTC" },
-      status: "active",
-      generation: 1,
-      effective_from: "2026-07-24T11:00:00Z",
-      next_fire_at: "2026-07-24T12:00:00Z",
-      created_at: "2026-07-24T11:00:00Z",
-      updated_at: "2026-07-24T11:00:00Z",
+  const id = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36"
+  const schedule = { id, agent_id:id, deployment_id:id, trigger_key:"daily", input:[{type:"text",text:"Create the report"}], cron:{pattern:"0 * * * *",timezone:"UTC"}, active_from:"2026-07-24T11:00:00Z", next_fire_at:"2026-07-24T12:00:00Z" }
+  test("retrieves pinned activations and pages Agent-filtered triggers", async () => {
+    const requests:string[]=[]
+    const client = new HelmrClient({url:"https://api.example.test",apiKey:"api-key",fetch:(async (input: URL | RequestInfo) => {
+      requests.push(String(input)); return String(input).includes("?") ? Response.json({schedules:[schedule],next_cursor:"next"}) : Response.json(schedule)
+    }) as typeof fetch})
+    expect(await client.schedules.retrieve(id)).toMatchObject({id,agentId:id,deploymentId:id,triggerKey:"daily",input:[{type:"text",text:"Create the report"}],activeFrom:schedule.active_from})
+    const page = await client.schedules.list({agentId:id,limit:2,cursor:"previous"})
+    expect(page.items).toHaveLength(1)
+    expect(page.nextCursor).toBe("next")
+    expect(requests[1]).toBe(`https://api.example.test/v1/schedules?agent_id=${id}&cursor=previous&limit=2`)
+  })
+  test("requires the pinned Agent and Deployment identities",async()=>{
+    for (const field of ["id","agent_id","deployment_id"] as const) {
+      const client = new HelmrClient({url:"https://api.example.test",apiKey:"api-key",fetch:(async()=>Response.json({...schedule,[field]:"invalid"})) as typeof fetch})
+      await expect(client.schedules.retrieve(id)).rejects.toThrow("ID")
     }
-    const requests: string[] = []
-    const client = new HelmrClient({
-      url: "https://api.example.test",
-      apiKey: "api-key",
-      fetch: (async (input: URL | RequestInfo) => {
-        requests.push(String(input))
-        return String(input).includes("?")
-          ? Response.json({
-              schedules: [schedule],
-              next_cursor: "cursor-next",
-            })
-          : Response.json(schedule)
-      }) as typeof fetch,
-    })
-
-    const retrieved = await client.schedules.retrieve(
-      "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
-    )
-    const listed = await client.schedules.list({
-      cursor: "cursor-previous",
-      limit: 10,
-    })
-
-    expect(retrieved).toMatchObject({
-      id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
-      taskId: "scheduled-maintenance",
-      generation: 1,
-      effectiveFrom: "2026-07-24T11:00:00Z",
-      status: "active",
-    })
-    expect(listed.items).toHaveLength(1)
-    expect(listed.nextCursor).toBe("cursor-next")
-    expect(requests[1]).toBe(
-      "https://api.example.test/v1/schedules?cursor=cursor-previous&limit=10",
-    )
-  })
-
-  test("rejects a non-v7 Schedule ID in a Schedule response", async () => {
-    const client = new HelmrClient({
-      url: "https://api.example.test",
-      apiKey: "api-key",
-      fetch: (async () => Response.json({
-        id: "60af6067-a253-47b5-915c-2b889fb132c7",
-        task_id: "scheduled-maintenance",
-        cron: { pattern: "0 * * * *", timezone: "UTC" },
-        status: "active",
-        created_at: "2026-07-24T11:00:00Z",
-        updated_at: "2026-07-24T11:00:00Z",
-      })) as typeof fetch,
-    })
-
-    await expect(client.schedules.retrieve(
-      "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
-    )).rejects.toThrow("Schedule response.id")
-  })
-
-  test("requires last_failure for an errored Schedule", async () => {
-    const client = new HelmrClient({
-      url: "https://api.example.test",
-      apiKey: "api-key",
-      fetch: (async () => Response.json({
-        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
-        task_id: "scheduled-maintenance",
-        cron: { pattern: "0 * * * *", timezone: "UTC" },
-        status: "errored",
-        created_at: "2026-07-24T11:00:00Z",
-        updated_at: "2026-07-24T11:00:00Z",
-      })) as typeof fetch,
-    })
-
-    await expect(client.schedules.retrieve(
-      "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
-    )).rejects.toThrow("must contain last_failure")
   })
 })
 
 describe("HelmrClient Sessions", () => {
+  const session = {
+    id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+    agent_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
+    deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
+    root_session_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+    initial_turn: null,
+    parent_session_id: null,
+    requester_session_id: null,
+    holds: [],
+    status: "open",
+    created_at: "2026-07-24T11:50:00Z",
+  }
   test("requires the owning Computer on every Session", async () => {
     const client = new HelmrClient({
       url: "https://api.example.test",
       apiKey: "api-key",
-      fetch: (async () => Response.json({
-        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-        actor_id: "operator",
-        deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-        status: "open",
-        created_at: "2026-07-24T11:50:00Z",
-        updated_at: "2026-07-24T11:50:01Z",
-      })) as typeof fetch,
+      fetch: (async () => Response.json(session)) as typeof fetch,
     })
 
     await expect(client.sessions.retrieve(
@@ -732,19 +433,19 @@ describe("HelmrClient Sessions", () => {
       apiKey: "api-key",
       fetch: (async (input: URL | RequestInfo) => {
         requests.push(String(input))
-        return Response.json({ sessions: [], next_cursor: "cursor-next" })
+        return Response.json({ sessions: [], next_cursor: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc39" })
       }) as typeof fetch,
     })
 
     const page = await client.sessions.list({
-      status: ["open", "failed"],
+      status: ["open", "cancelled"],
       cursor: "cursor-previous",
       limit: 5,
     })
-    expect(page).toEqual({ items: [], nextCursor: "cursor-next" })
+    expect(page).toEqual({ items: [], nextCursor: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc39" })
     await client.sessions.list({ status: "closed" })
     expect(requests).toEqual([
-      "https://api.example.test/v1/sessions?status=open&status=failed&cursor=cursor-previous&limit=5",
+      "https://api.example.test/v1/sessions?status=open&status=cancelled&cursor=cursor-previous&limit=5",
       "https://api.example.test/v1/sessions?status=closed",
     ])
     await expect(client.sessions.list({
@@ -752,7 +453,7 @@ describe("HelmrClient Sessions", () => {
       status: "unknown",
     })).rejects.toThrow("Session list status is invalid")
     await expect(client.sessions.list({
-      actorId: "operator",
+      agentId: session.agent_id,
       key: "thread:1",
       // @ts-expect-error the exact key lookup does not filter by status.
       status: "open",
@@ -760,420 +461,21 @@ describe("HelmrClient Sessions", () => {
     expect(requests).toHaveLength(2)
   })
 
-  test("requires failure for an unsuccessful Session", async () => {
+  test("rejects unknown Session response statuses", async () => {
     const sessionId = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
     const client = new HelmrClient({
       url: "https://api.example.test",
       apiKey: "api-key",
       fetch: (async () => Response.json({
-        id: sessionId,
-        actor_id: "operator",
-        deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
+        ...session,
         computer_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
-        status: "failed",
-        created_at: "2026-07-24T11:50:00Z",
-        updated_at: "2026-07-24T11:50:01Z",
+        status: "invalid-status",
       })) as typeof fetch,
     })
 
     await expect(client.sessions.retrieve(sessionId)).rejects.toThrow(
-      "inconsistent failure projection",
+      "Session.status is invalid",
     )
   })
 
-})
-
-describe("HelmrClient Runs", () => {
-  const runID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
-
-  test("retrieves a Run and lists its bounded projection", async () => {
-    const requests: string[] = []
-    const run = {
-      id: runID,
-      status: "running",
-      entrypoint: { kind: "task", id: "resize-image" },
-      deployment: {
-        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-        version: "2026.07.24.1",
-      },
-      computer_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
-      current_attempt_number: 2,
-      cause: { type: "api" },
-      metadata: { source: "backend" },
-      tags: ["image"],
-      created_at: "2026-07-24T11:50:00Z",
-      started_at: "2026-07-24T11:50:01Z",
-    }
-    const client = new HelmrClient({
-      url: "https://api.example.test",
-      apiKey: "api-key",
-      fetch: (async (input: URL | RequestInfo) => {
-        requests.push(String(input))
-		return String(input).includes("?")
-			? Response.json({
-				runs: [{
-					id: run.id,
-					status: run.status,
-					entrypoint: run.entrypoint,
-					computer_id: run.computer_id,
-					current_attempt_number: run.current_attempt_number,
-					created_at: run.created_at,
-					started_at: run.started_at,
-				}],
-				next_cursor: "cursor-next",
-			})
-          : Response.json(run)
-      }) as typeof fetch,
-    })
-
-    const retrieved = await client.runs.retrieve(runID)
-    const signal = new AbortController().signal
-    const listed = await client.runs.list({
-      status: ["running", "waiting"],
-      kind: "actor",
-      sessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-      cursor: "cursor-previous",
-      limit: 10,
-    }, { signal })
-
-    expect(retrieved).toMatchObject({
-      id: runID,
-      status: "running",
-      entrypoint: { kind: "task", id: "resize-image" },
-      currentAttemptNumber: 2,
-      cause: { type: "api" },
-    })
-    expect(listed.items).toHaveLength(1)
-    expect(listed.nextCursor).toBe("cursor-next")
-    expect(requests[1]).toBe(
-      "https://api.example.test/v1/runs?status=running&status=waiting&kind=actor&session_id=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33&cursor=cursor-previous&limit=10",
-    )
-    await client.runs.list({ kind: ["task", "actor"] })
-    expect(requests[2]).toBe("https://api.example.test/v1/runs?kind=task&kind=actor")
-    await expect(client.runs.list({ sessionId: "not-a-session" })).rejects.toThrow(
-      "Run list Session ID",
-    )
-    await expect(client.runs.list({
-      // @ts-expect-error only task and actor entrypoints exist.
-      kind: "schedule",
-    })).rejects.toThrow("Run list kind is invalid")
-  })
-
-  test("reads finite structured logs and events with bound query cursors", async () => {
-    const requests: Array<{ url: string; init?: RequestInit }> = []
-    const responses = [
-      {
-        logs: [
-          {
-            id: "log-cursor",
-            kind: "structured",
-            run_id: runID,
-            attempt_number: 2,
-            level: "warn",
-            message: "retrying",
-            attributes: { dependency: "image-service" },
-            at: "2026-07-24T11:50:02Z",
-          },
-          {
-            id: "stderr-cursor",
-            kind: "stderr",
-            run_id: runID,
-            attempt_number: 2,
-            observed_sequence: 8,
-            content_base64: "d2FybmluZwo=",
-            bytes: 8,
-            at: "2026-07-24T11:50:03Z",
-          },
-        ],
-        next_cursor: "logs-next-cursor",
-      },
-      {
-        events: [
-          {
-            id: "event-cursor",
-            run_id: runID,
-            attempt_number: 2,
-            category: "lifecycle",
-            severity: "error",
-            source: "runtime",
-            kind: "run.failed",
-            message: "Task failed",
-            attributes: { code: "task_failed" },
-            occurred_at: "2026-07-24T11:50:04Z",
-            at: "2026-07-24T11:50:05Z",
-          },
-        ],
-      },
-    ]
-    const client = new HelmrClient({
-      url: "https://api.example.test",
-      apiKey: "api-key",
-      fetch: (async (input: URL | RequestInfo, init?: RequestInit) => {
-        requests.push({ url: String(input), init })
-        return Response.json(responses.shift())
-      }) as typeof fetch,
-    })
-    const signal = new AbortController().signal
-
-    const logs = await client.runs.logs(runID, {
-      cursor: "logs-cursor",
-      limit: 25,
-      level: ["warn", "error"],
-    }, { signal })
-    const events = await client.runs.events(runID, {
-      severity: "error",
-    })
-
-    expect(logs).toEqual({
-      items: [
-        {
-          id: "log-cursor",
-          kind: "structured",
-          runId: runID,
-          attemptNumber: 2,
-          level: "warn",
-          message: "retrying",
-          attributes: { dependency: "image-service" },
-          at: "2026-07-24T11:50:02Z",
-        },
-        {
-          id: "stderr-cursor",
-          kind: "stderr",
-          runId: runID,
-          attemptNumber: 2,
-          observedSequence: 8,
-          contentBase64: "d2FybmluZwo=",
-          bytes: 8,
-          at: "2026-07-24T11:50:03Z",
-        },
-      ],
-      nextCursor: "logs-next-cursor",
-    })
-    expect(events.items[0]).toMatchObject({
-      id: "event-cursor",
-      runId: runID,
-      severity: "error",
-      attributes: { code: "task_failed" },
-    })
-    expect(requests[0]!.url).toBe(
-      `https://api.example.test/v1/runs/${runID}/logs?cursor=logs-cursor&limit=25&level=warn&level=error`,
-    )
-    expect(requests[0]!.init?.signal).toBe(signal)
-    expect(requests[1]!.url).toBe(
-      `https://api.example.test/v1/runs/${runID}/events?severity=error`,
-    )
-  })
-
-  test("cancels a Run and returns its terminal resource", async () => {
-    const requests: Array<{ url: string; init?: RequestInit }> = []
-    const client = new HelmrClient({
-      url: "https://api.example.test",
-      apiKey: "api-key",
-      fetch: (async (input: URL | RequestInfo, init?: RequestInit) => {
-        requests.push({ url: String(input), init })
-        return Response.json({
-          id: runID,
-          status: "cancelled",
-          entrypoint: { kind: "task", id: "resize-image" },
-          deployment: {
-            id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-            version: "2026.07.24.1",
-          },
-          computer_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
-          current_attempt_number: 1,
-          cause: { type: "api" },
-          metadata: {},
-          tags: [],
-          failure: {
-            code: "run_cancelled",
-            message: "Run was cancelled",
-            details: {},
-          },
-          created_at: "2026-07-24T11:50:00Z",
-          terminal_at: "2026-07-24T11:50:05Z",
-        })
-      }) as typeof fetch,
-    })
-
-    const run = await client.runs.cancel(runID)
-
-    expect(run).toMatchObject({
-      id: runID,
-      status: "cancelled",
-      failure: {
-        code: "run_cancelled",
-        message: "Run was cancelled",
-        details: {},
-      },
-    })
-    expect(run.failure).not.toBeInstanceOf(Error)
-    expect(requests).toHaveLength(1)
-    expect(requests[0]!.url).toBe(
-      `https://api.example.test/v1/runs/${runID}/cancel`,
-    )
-    expect(requests[0]!.init?.method).toBe("POST")
-    expect(JSON.parse(String(requests[0]!.init?.body)).idempotency_key).toEqual(expect.any(String))
-  })
-
-  test("wait unwraps success and throws a recorded Run failure", async () => {
-    const succeeded = new HelmrClient({
-      url: "https://api.example.test",
-      apiKey: "api-key",
-      fetch: (async () => Response.json({
-        id: runID,
-        status: "succeeded",
-        entrypoint: { kind: "task", id: "resize-image" },
-        deployment: {
-          id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-          version: "2026.07.24.1",
-        },
-        computer_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
-        current_attempt_number: 1,
-        cause: { type: "api" },
-        metadata: {},
-        tags: [],
-        output: { resized: "image-1" },
-        created_at: "2026-07-24T11:50:00Z",
-        terminal_at: "2026-07-24T11:50:05Z",
-      })) as typeof fetch,
-    })
-    await expect(succeeded.runs.wait(runID).unwrap()).resolves.toEqual({
-      resized: "image-1",
-    })
-
-    const failed = new HelmrClient({
-      url: "https://api.example.test",
-      apiKey: "api-key",
-      fetch: (async () => Response.json({
-        id: runID,
-        status: "failed",
-        entrypoint: { kind: "task", id: "resize-image" },
-        deployment: {
-          id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-          version: "2026.07.24.1",
-        },
-        computer_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
-        current_attempt_number: 3,
-        cause: { type: "api" },
-        metadata: {},
-        tags: [],
-        failure: {
-          code: "task_failed",
-          message: "resize failed",
-          details: { imageId: "image-1" },
-        },
-        created_at: "2026-07-24T11:50:00Z",
-        terminal_at: "2026-07-24T11:50:05Z",
-      })) as typeof fetch,
-    })
-    try {
-      await failed.runs.wait(runID).unwrap()
-      throw new Error("expected Run wait to fail")
-    } catch (error) {
-      expect(error).toMatchObject({
-        name: "RunFailure",
-        message: "resize failed",
-        code: "task_failed",
-        details: { imageId: "image-1" },
-      })
-    }
-  })
-
-  test("polls active Runs and honors AbortSignal between requests", async () => {
-    let requests = 0
-    const active = {
-      id: runID,
-      status: "running",
-      entrypoint: { kind: "task", id: "resize-image" },
-      deployment: {
-        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-        version: "2026.07.24.1",
-      },
-      computer_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
-      current_attempt_number: 1,
-      cause: { type: "api" },
-      metadata: {},
-      tags: [],
-      created_at: "2026-07-24T11:50:00Z",
-      started_at: "2026-07-24T11:50:01Z",
-    }
-    const polling = new HelmrClient({
-      url: "https://api.example.test",
-      apiKey: "api-key",
-      fetch: (async () => {
-        requests++
-        return Response.json(requests === 1
-          ? active
-          : {
-              ...active,
-              status: "succeeded",
-              output: { resized: "image-1" },
-              terminal_at: "2026-07-24T11:50:05Z",
-            })
-      }) as typeof fetch,
-    })
-    await expect(polling.runs.wait(runID).unwrap()).resolves.toEqual({
-      resized: "image-1",
-    })
-    expect(requests).toBe(2)
-
-    requests = 0
-    const controller = new AbortController()
-    const aborting = new HelmrClient({
-      url: "https://api.example.test",
-      apiKey: "api-key",
-      fetch: (async () => {
-        requests++
-        return Response.json(active)
-      }) as typeof fetch,
-    })
-    const waiting = aborting.runs.wait(runID, { signal: controller.signal }).unwrap()
-    await Promise.resolve()
-    controller.abort(new Error("stop waiting"))
-    await expect(waiting).rejects.toThrow("stop waiting")
-    const requestsAtAbort = requests
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    expect(requests).toBe(requestsAtAbort)
-  })
-
-  test("rejects external wait inside the managed runtime", async () => {
-    const uninstall = installRuntimeOperations({
-      waitFor: async () => {},
-      waitUntil: async () => {},
-      tokenCreate: async () => ({
-        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
-        status: "pending",
-        timeoutAt: "2026-07-24T12:00:00Z",
-        metadata: {},
-        tags: [],
-        createdAt: "2026-07-24T11:50:00Z",
-        updatedAt: "2026-07-24T11:50:00Z",
-        callbackUrl: "https://api.example.test/callback",
-        publicAccessToken: "hlmr_pub_secret",
-      }),
-      tokenWait: async () => null,
-    })
-    try {
-      const client = new HelmrClient({
-        url: "https://api.example.test",
-        apiKey: "api-key",
-        fetch: (async () => {
-          throw new Error("fetch must not be called")
-        }) as typeof fetch,
-      })
-      const exec = client.commands.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36")
-      const unsupported = "Command operations are unavailable inside a Helmr Run"
-      expect(() => exec.wait()).toThrow(unsupported)
-      expect(() => exec.streamLogs()).toThrow(unsupported)
-      await expect(exec.retrieve()).rejects.toThrow(unsupported)
-      await expect(exec.logs()).rejects.toThrow(unsupported)
-      await expect(exec.cancel()).rejects.toThrow(unsupported)
-      await expect(client.computers.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32").exec({ command: ["true"], idempotencyKey: "test" })).rejects.toThrow(unsupported)
-      expect(() => client.runs.wait(runID)).toThrow(
-        "client.runs.wait() is unavailable inside an active Helmr Run",
-      )
-    } finally {
-      uninstall()
-    }
-  })
 })

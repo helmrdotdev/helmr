@@ -14,8 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
-	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -59,7 +59,7 @@ func (r *computerOperationRegistry) startComputerBasicExec(ctx context.Context, 
 		return nil, "computer_command_unavailable", errors.New("computer capture has sealed command admission")
 	}
 	envelope := request.GetEnvelope()
-	if err := validateComputerBasicExecClaim(ctx, request); err != nil {
+	if err := validateComputerBasicExecClaim(ctx, request, entry.authorityNow()); err != nil {
 		return nil, "computer_command_fenced", err
 	}
 	if !r.currentMountLocked(entry, entry.computerInstanceID, envelope.GetComputerId(), envelope.GetChannelCredential()) || entry.computerInstanceID != envelope.GetComputerInstanceId() || entry.writerGeneration != envelope.GetWriterGeneration() {
@@ -85,14 +85,14 @@ func (r *computerOperationRegistry) startComputerBasicExec(ctx context.Context, 
 		}
 		return execution, "", nil
 	}
-	output, err := newCommandOutputSpool()
-	if err != nil {
-		entry.processesMu.Lock()
-		entry.recoveryRequired = true
-		entry.processesMu.Unlock()
-		return nil, "computer_command_unavailable", err
+	if request.GetTailOnly() {
+		return nil, "computer_command_unavailable", errors.New("retained command output is unavailable")
 	}
-	if err := validateComputerBasicExecClaim(ctx, request); err != nil {
+	output, err := newCommandOutputSpool(diagnosticLimits{ChunkBytes: int(request.GetLogLimits().GetChunkBytes()), BufferBytes: request.GetLogLimits().GetBufferBytes(), BufferRecords: int(request.GetLogLimits().GetBufferRecords())})
+	if err != nil {
+		return nil, "computer_command_invalid", err
+	}
+	if err := validateComputerBasicExecClaim(ctx, request, entry.authorityNow()); err != nil {
 		output.close()
 		return nil, "computer_command_fenced", err
 	}
@@ -121,6 +121,9 @@ func (r *computerOperationRegistry) startComputerBasicExec(ctx context.Context, 
 		defer r.release(entry)
 		defer cancel()
 		execution.result = entry.executeBasicExec(executionCtx, requestCopy, output)
+		output.finish(execution.result.GetOutcome() != "computer_command_output_capture_failed" && execution.result.GetOutcome() != "computer_command_scope_termination_failed")
+		execution.result.Stdout = output.boundaries["stdout"]
+		execution.result.Stderr = output.boundaries["stderr"]
 		clearComputerBasicExecRequest(requestCopy)
 		entry.processesMu.Lock()
 		entry.processAdmissions--
@@ -130,7 +133,7 @@ func (r *computerOperationRegistry) startComputerBasicExec(ctx context.Context, 
 	return execution, "", nil
 }
 
-func validateComputerBasicExecClaim(ctx context.Context, request *computerv0.ComputerBasicExecRequest) error {
+func validateComputerBasicExecClaim(ctx context.Context, request *computerv0.ComputerBasicExecRequest, now time.Time) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -138,7 +141,7 @@ func validateComputerBasicExecClaim(ctx context.Context, request *computerv0.Com
 	if strings.TrimSpace(e.GetOperationId()) == "" || strings.TrimSpace(e.GetRequestFingerprint()) == "" || strings.TrimSpace(e.GetComputerInstanceId()) == "" || strings.TrimSpace(e.GetComputerId()) == "" || strings.TrimSpace(e.GetChannelCredential()) == "" || e.GetWriterGeneration() <= 0 {
 		return errors.New("command authority is incomplete")
 	}
-	if time.Now().UnixNano() >= e.GetOperationExpiresAtUnixNano() {
+	if now.UnixNano() >= e.GetOperationExpiresAtUnixNano() {
 		return errors.New("computer exec claim expired")
 	}
 	return nil
@@ -241,7 +244,7 @@ func (entry *computerMountEntry) executeComputerBasicExec(
 		return computerBasicCommandFailure(fingerprint, "computer_command_launch_failed", err)
 	}
 	var cleanupErr error
-	err, cleanupErr = runScopedCommand(cmd, scope)
+	err, cleanupErr = runScopedCommand(cmd, scope, nil)
 	if cleanupErr != nil {
 		entry.processesMu.Lock()
 		entry.recoveryRequired = true
@@ -298,15 +301,15 @@ func computerBasicExecImageCommandOptions(leaf string) imageCommandOptions {
 
 func computerBasicExecSecrets(
 	deliveries []*computerv0.ComputerSecretDelivery,
-) ([]*programv0.ProgramSecret, error) {
-	secrets := make([]*programv0.ProgramSecret, 0, len(deliveries))
+) ([]*agentv1.SessionSecret, error) {
+	secrets := make([]*agentv1.SessionSecret, 0, len(deliveries))
 	for _, delivery := range deliveries {
-		secret := &programv0.ProgramSecret{Value: bytes.Clone(delivery.GetValue())}
+		secret := &agentv1.SessionSecret{Value: bytes.Clone(delivery.GetValue())}
 		switch delivery.GetPlacementKind() {
 		case "env":
-			secret.Placement = &programv0.ProgramSecret_Env{Env: delivery.GetPlacementTarget()}
+			secret.Placement = &agentv1.SessionSecret_Env{Env: delivery.GetPlacementTarget()}
 		case "file":
-			secret.Placement = &programv0.ProgramSecret_File{File: delivery.GetPlacementTarget()}
+			secret.Placement = &agentv1.SessionSecret_File{File: delivery.GetPlacementTarget()}
 		default:
 			clear(secret.Value)
 			clearProgramSecretValues(secrets)

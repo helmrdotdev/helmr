@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/command"
@@ -9,9 +10,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-// Base64 payload plus the bounded execution identity and timestamp envelope.
-const workerCommandLogRequestBodyLimit = int64(1024 + (telemetry.MaxRunLogContentBytes+2)/3*4)
-
 func (s *Server) workerAppendCommandLogs(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.CommandLogAppendRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
@@ -19,8 +17,29 @@ func (s *Server) workerAppendCommandLogs(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	chunk, err := commandLogChunk(request)
+	var receipt telemetry.DiagnosticReceipt
 	if err == nil {
-		err = command.AppendLog(r.Context(), s.tx, workerFromContext(r.Context()), chunk)
+		receipt, err = command.AppendLog(r.Context(), s.diagnosticDB, workerFromContext(r.Context()), chunk, s.diagnosticBounds)
+	}
+	if telemetry.IsDiagnosticBusy(err) {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "diagnostic_busy"})
+		return
+	}
+	if errors.Is(err, telemetry.ErrDiagnosticCapacity) {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "diagnostic_capacity_unavailable"})
+		return
+	}
+	if errors.Is(err, telemetry.ErrDiagnosticInvalid) {
+		writeError(w, badRequest(err))
+		return
+	}
+	if errors.Is(err, telemetry.ErrDiagnosticClosed) {
+		writeJSON(w, http.StatusGone, map[string]string{"error": "diagnostic_stream_closed"})
+		return
+	}
+	if errors.Is(err, telemetry.ErrDiagnosticStale) || errors.Is(err, telemetry.ErrDiagnosticConflict) || errors.Is(err, telemetry.ErrDiagnosticSequence) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "diagnostic_identity_conflict"})
+		return
 	}
 	if err != nil {
 		mapped := commandError(err, commandLogAppendOperation)
@@ -30,20 +49,20 @@ func (s *Server) workerAppendCommandLogs(w http.ResponseWriter, r *http.Request)
 		writeError(w, mapped)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, workerapi.DiagnosticLogReceipt{Expired: receipt.Expired, ThroughSequence: receipt.ThroughSequence, AcceptedAt: receipt.AcceptedAt, ExpiresAt: receipt.ExpiresAt})
 }
 
 // commandLogChunk reads the canonical identities of a log record and bounds
 // its content; the command owner validates its observation.
 func commandLogChunk(request workerapi.CommandLogAppendRequest) (command.LogChunk, error) {
-	org, e1 := ids.Parse(request.OrgID)
+	environment, e1 := ids.Parse(request.EnvironmentID)
 	commandID, e2 := ids.Parse(request.CommandID)
 	instance, e3 := ids.Parse(request.ComputerInstanceID)
-	if e1 != nil || e2 != nil || e3 != nil || telemetry.ValidateRunLog(request.Content) != nil {
+	if e1 != nil || e2 != nil || e3 != nil {
 		return command.LogChunk{}, command.ErrInvalidLog
 	}
 	return command.LogChunk{
-		OrgID: org, CommandID: commandID, InstanceID: instance, WriterGeneration: request.WriterGeneration,
-		Stream: string(request.Stream), ObservedSeq: request.ObservedSeq, ObservedAt: request.ObservedAt, Content: request.Content,
+		EnvironmentID: environment, CommandID: commandID, InstanceID: instance, WriterGeneration: request.WriterGeneration,
+		Kind: request.Kind, ThroughSequence: request.ThroughSequence, DroppedBytes: request.DroppedBytes, Complete: request.Complete, Stream: string(request.Stream), ObservedSeq: request.ObservedSeq, ObservedAt: request.ObservedAt, Content: request.Content,
 	}, nil
 }

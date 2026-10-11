@@ -9,11 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"syscall"
-	"time"
 
+	"github.com/helmrdotdev/helmr/internal/firecracker/custody"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
@@ -38,15 +36,30 @@ func (c *Connector) cleanup(ctx context.Context, owner vm.Owner) error {
 	return c.cleanupOwned(ctx, owner, retained)
 }
 
-func (c *Connector) cleanupOwned(ctx context.Context, owner vm.Owner, retained *computerDeviceOwner) (retErr error) {
+func (c *Connector) cleanupOwned(ctx context.Context, owner vm.Owner, retained *computerDeviceOwner) error {
+	state := custody.StateRoot{Base: c.cfg.StateDir}
+	return c.cleanupOwnedProcesses(ctx, owner, retained,
+		func() ([]int, error) { return custody.MatchingPIDs(state, c.cfg.JailerChrootBaseDir, owner) },
+		func(ctx context.Context, pid int) error {
+			return custody.Stop(ctx, state, c.cfg.JailerChrootBaseDir, owner, pid)
+		},
+	)
+}
+
+// The process boundary is substitutable to verify failed inventories and unproved
+// stops preserve custody. Production always uses the shared exact-owner mechanics.
+func (c *Connector) cleanupOwnedProcesses(ctx context.Context, owner vm.Owner, retained *computerDeviceOwner, inventory func() ([]int, error), stop func(context.Context, int) error) (retErr error) {
 	defer func() {
 		if retErr == nil && retained != nil {
 			c.computerDevices.CompareAndDelete(owner, retained)
 		}
 	}()
+	if err := ctx.Err(); err != nil {
+		return cleanupUnproven(owner, err)
+	}
 	statePath := filepath.Join(c.cfg.StateDir, owner.ID)
 	jailerPath := filepath.Join(c.cfg.JailerChrootBaseDir, "firecracker", owner.ID)
-	pids, err := exactRuntimePIDs(owner.ID)
+	pids, err := inventory()
 	if err != nil {
 		return cleanupUnproven(owner, fmt.Errorf("inventory Firecracker processes: %w", err))
 	}
@@ -62,7 +75,15 @@ func (c *Connector) cleanupOwned(ctx context.Context, owner vm.Owner, retained *
 	if err != nil {
 		return cleanupUnproven(owner, fmt.Errorf("inspect Firecracker jailer state: %w", err))
 	}
-	if !stateExists && !jailerExists && !netns && len(pids) == 0 {
+	cgroupPath, err := runtimeCgroupPath(c.cfg.CgroupVersion, owner.ID)
+	if err != nil {
+		return cleanupUnproven(owner, err)
+	}
+	cgroupExists, err := pathExists(cgroupPath)
+	if err != nil {
+		return cleanupUnproven(owner, fmt.Errorf("inspect Firecracker cgroup: %w", err))
+	}
+	if !stateExists && !jailerExists && !netns && len(pids) == 0 && !cgroupExists {
 		return c.releaseComputerDevice(ctx, owner, retained)
 	}
 	if !stateExists {
@@ -72,17 +93,14 @@ func (c *Connector) cleanupOwned(ctx context.Context, owner vm.Owner, retained *
 		return cleanupUnproven(owner, err)
 	}
 	for _, pid := range pids {
-		if err := stopExactRuntimePID(ctx, pid); err != nil {
+		if err := stop(ctx, pid); err != nil {
 			return cleanupUnproven(owner, fmt.Errorf("stop Firecracker process %d: %w", pid, err))
 		}
 	}
 	if err := c.cleanupNetworkAttachment(ctx, owner); err != nil {
 		return cleanupUnproven(owner, err)
 	}
-	if err := os.RemoveAll(jailerPath); err != nil {
-		return cleanupUnproven(owner, fmt.Errorf("remove Firecracker jailer state: %w", err))
-	}
-	remaining, err := exactRuntimePIDs(owner.ID)
+	remaining, err := inventory()
 	if err != nil {
 		return cleanupUnproven(owner, fmt.Errorf("verify Firecracker processes absent: %w", err))
 	}
@@ -93,6 +111,18 @@ func (c *Connector) cleanupOwned(ctx context.Context, owner vm.Owner, retained *
 		return cleanupUnproven(owner, fmt.Errorf("verify Firecracker netns absent: %w", verifyErr))
 	} else if exists {
 		return cleanupUnproven(owner, errors.New("verify Firecracker netns absent: namespace remains"))
+	}
+	if err := validateOwnerMarker(statePath, owner); err != nil {
+		return cleanupUnproven(owner, err)
+	}
+	// Kernel rmdir rejects populated groups and child groups. Never recursively
+	// remove cgroups or delete the shared jailer parent. Keep the owner marker and
+	// retained device until this exact owner is physically absent.
+	if err := removeRuntimeCgroup(cgroupPath); err != nil {
+		return cleanupUnproven(owner, err)
+	}
+	if err := os.RemoveAll(jailerPath); err != nil {
+		return cleanupUnproven(owner, fmt.Errorf("remove Firecracker jailer state: %w", err))
 	}
 	if exists, verifyErr := pathExists(jailerPath); verifyErr != nil {
 		return cleanupUnproven(owner, fmt.Errorf("verify Firecracker jailer state absent: %w", verifyErr))
@@ -130,24 +160,20 @@ func pathExists(path string) (bool, error) {
 }
 
 func validateOwnerMarker(statePath string, owner vm.Owner) error {
-	info, err := os.Stat(statePath)
-	if err != nil {
-		return fmt.Errorf("inspect Firecracker ownership root: %w", err)
-	}
-	if !info.IsDir() {
-		return errors.New("the Firecracker ownership root is not a directory")
-	}
-	marker, err := os.ReadFile(filepath.Join(statePath, "owner"))
+	recorded, err := (custody.StateRoot{Base: filepath.Dir(statePath)}).ReadOwner(filepath.Base(statePath))
 	if err != nil {
 		return fmt.Errorf("read Firecracker ownership marker: %w", err)
 	}
-	if string(marker) != string(owner.Kind)+"\n"+owner.ID+"\n" {
+	if recorded != owner {
 		return errors.New("the Firecracker ownership marker does not match exact owner")
 	}
 	return nil
 }
 
 func removeStateRootLast(statePath string, owner vm.Owner) error {
+	if err := validateOwnerMarker(statePath, owner); err != nil {
+		return err
+	}
 	entries, err := os.ReadDir(statePath)
 	if err != nil {
 		return fmt.Errorf("inventory Firecracker state: %w", err)
@@ -183,62 +209,4 @@ func (c *Connector) runtimeNetNSExists(ctx context.Context, runtimeID string) (b
 		}
 	}
 	return false, nil
-}
-
-func exactRuntimePIDs(runtimeID string) ([]int, error) {
-	entries, err := os.ReadDir("/proc")
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var pids []int
-	for _, entry := range entries {
-		pid, parseErr := strconv.Atoi(entry.Name())
-		if parseErr != nil {
-			continue
-		}
-		cmdline, readErr := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
-		if readErr != nil {
-			continue
-		}
-		args := strings.Split(strings.TrimSuffix(string(cmdline), "\x00"), "\x00")
-		if len(args) == 0 || (filepath.Base(args[0]) != "firecracker" && filepath.Base(args[0]) != "jailer") {
-			continue
-		}
-		for _, arg := range args[1:] {
-			if arg == runtimeID {
-				pids = append(pids, pid)
-				break
-			}
-		}
-	}
-	return pids, nil
-}
-
-func stopExactRuntimePID(ctx context.Context, pid int) error {
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return err
-	}
-	if err := process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		return err
-	}
-	ticker := time.NewTicker(50 * time.Millisecond)
-	defer ticker.Stop()
-	deadline := time.NewTimer(2 * time.Second)
-	defer deadline.Stop()
-	for {
-		if err := process.Signal(syscall.Signal(0)); errors.Is(err, os.ErrProcessDone) {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline.C:
-			return process.Kill()
-		case <-ticker.C:
-		}
-	}
 }

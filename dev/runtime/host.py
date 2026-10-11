@@ -20,6 +20,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -29,6 +30,8 @@ USER = 'helmr-services'
 SERVICES = ['postgres', 'redis', 'clickhouse', 'control-plane', 'dispatcher']
 WORKER_DATA = Path('/var/lib/helmr/verification-worker')
 JAILER_DATA = Path('/var/lib/helmr/jailer')
+SYSTEMD = Path('/etc/systemd/system')
+RETIRED = Path('/var/lib/helmr-retired')
 
 
 def run(*args, **kwargs):
@@ -57,8 +60,19 @@ def merge_owned(supplied, owned):
 
 def compile_config(raw):
     """Generate stable per-scope credentials once, without accessing a host."""
-    if set(raw) - {'capture_reply_faults'} != {'binaries', 'control_plane', 'worker', 'services_candidate', 'worker_host_receipt', 'worker_runtime_receipt'}:
+    if set(raw) - {'capture_reply_faults', 'public_url'} != {'binaries', 'control_plane', 'worker', 'services_candidate', 'worker_host_receipt', 'worker_runtime_receipt'}:
         raise ValueError('expected binaries, control_plane, worker, services_candidate, worker_host_receipt, worker_runtime_receipt')
+    public_url = 'http://127.0.0.1:58080'
+    if 'public_url' in raw:
+        value = raw['public_url']
+        if not isinstance(value, str) or any(c.isspace() or ord(c) < 32 for c in value):
+            raise ValueError('public_url must be an HTTPS origin')
+        parsed = urllib.parse.urlsplit(value)
+        if (parsed.scheme != 'https' or not parsed.hostname or parsed.username is not None
+                or parsed.password is not None or parsed.path not in ['', '/'] or parsed.query or parsed.fragment
+                or (parsed.port is not None and parsed.port == 0)):
+            raise ValueError('public_url must be an HTTPS origin without credentials, path, query or fragment')
+        public_url = urllib.parse.urlunsplit(('https', parsed.netloc.lower(), '', '', ''))
     reply_faults = raw.get('capture_reply_faults', False)
     if type(reply_faults) is not bool:
         raise ValueError('capture_reply_faults must be a boolean')
@@ -74,6 +88,11 @@ def compile_config(raw):
                 'GITHUB_OAUTH_CLIENT_ID', 'GITHUB_OAUTH_CLIENT_SECRET', 'BOOTSTRAP_WORKER_TOKEN']:
         if not cp.get(key):
             raise ValueError(f'{key} is required')
+    # The operator supplies execution policy; this host may use real capacity.
+    for key in ['ENVIRONMENT_MAX_RESIDENT_COMPUTERS', 'ENVIRONMENT_MAX_CPU_MILLIS', 'ENVIRONMENT_MAX_MEMORY_BYTES', 'ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES', 'ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS', 'ENVIRONMENT_MAX_CAUSAL_DEPTH', 'ENVIRONMENT_ADMISSION_RATE_PER_SECOND', 'ENVIRONMENT_ADMISSION_BURST', 'ENVIRONMENT_PREPARATION_TIMEOUT_MS']:
+        value = cp.get(key, "")
+        if not isinstance(value, str) or not value.isascii() or not value.isdigit() or not 0 < int(value) <= 9223372036854775807:
+            raise ValueError(f"{key} must be explicitly configured as a positive integer")
     for key in ['CAS_URI', 'PLATFORM_STORE_URI']:
         if not cp[key].startswith('s3://'):
             raise ValueError(f'{key} must use real S3')
@@ -83,13 +102,13 @@ def compile_config(raw):
     owned = {
         'DEPLOYMENT_MODE': 'self-hosted', 'DATABASE_URL': f'postgres://helmr:{db_password}@127.0.0.1:55432/helmr?sslmode=disable',
         'REDIS_URL': 'redis://127.0.0.1:56379/0', 'CLICKHOUSE_URL': 'http://127.0.0.1:58123',
-        'CONTROL_PLANE_ADDR': '127.0.0.1:58080', 'PUBLIC_URL': 'http://127.0.0.1:58080',
-        'API_ORIGIN': 'http://127.0.0.1:58080', 'BOOTSTRAP_ENABLED': 'true',
+        'CONTROL_PLANE_ADDR': '127.0.0.1:58080', 'PUBLIC_URL': public_url,
+        'BOOTSTRAP_ENABLED': 'true',
         'BOOTSTRAP_REGION_ID': 'default', 'BOOTSTRAP_WORKER_GROUP_NAME': 'default',
         'SETUP_TOKEN': secrets.token_urlsafe(32), 'COMPUTER_WRAPPING_KEY_ID': 'verification',
         'EMAIL_PROVIDER': 'none',
     }
-    for key in ['AUTH_KEY', 'TOKEN_CREDENTIAL_KEY', 'COMPUTER_FENCING_KEY', 'ENCRYPTION_KEY',
+    for key in ['AUTH_KEY', 'COMPUTER_FENCING_KEY', 'ENCRYPTION_KEY',
                 'WORKER_HOST_CREDENTIAL_SIGNING_KEY', 'COMPUTER_WRAPPING_KEY']:
         owned[key] = base64.b64encode(secrets.token_bytes(32)).decode()
     ch = {}
@@ -117,7 +136,10 @@ def compile_config(raw):
         'CHECKPOINT_ENCRYPTION_KEY': base64.b64encode(secrets.token_bytes(32)).decode(),
     })
     worker.setdefault('WORKER_COMPUTER_SAVE_EVERY', '30s')
-    dispatcher = {key: cp[key] for key in ['DATABASE_URL', 'CLICKHOUSE_URL', 'COMPUTER_FENCING_KEY', 'ENCRYPTION_KEY']}
+    dispatcher = {key: cp[key] for key in ['DATABASE_URL', 'CLICKHOUSE_URL', 'COMPUTER_FENCING_KEY', 'ENCRYPTION_KEY', 'PUBLIC_URL']}
+    for key in ['DIAGNOSTIC_EXPORT_BATCH_BYTES', 'DIAGNOSTIC_EXPORT_BATCH_RECORDS', 'DIAGNOSTIC_CHUNK_BYTES', 'DIAGNOSTIC_SOURCE_BYTES', 'DIAGNOSTIC_SOURCE_RECORDS', 'DIAGNOSTIC_ENVIRONMENT_BYTES', 'DIAGNOSTIC_ENVIRONMENT_RECORDS', 'DIAGNOSTIC_QUEUE_BYTES', 'DIAGNOSTIC_QUEUE_RECORDS', 'DIAGNOSTIC_DB_MAX_CONNECTIONS']:
+        if key in cp:
+            dispatcher[key] = cp[key]
     dispatcher['CONTROL_PLANE_URL'] = 'http://127.0.0.1:58080'
     dispatcher.update(CLICKHOUSE_USER=ch['CLICKHOUSE_INGESTER_USER'], CLICKHOUSE_PASSWORD=ch['CLICKHOUSE_INGESTER_PASSWORD'])
     for values in [cp, worker, dispatcher, ch]:
@@ -307,6 +329,9 @@ def start(cfg):
         if state(unit(name)) not in ['inactive', 'failed']:
             raise RuntimeError('stop application services before running migrations')
     b = cfg['binaries']
+    # Validate native service configuration before starting dependencies or migrating.
+    for name, values in [('control-plane', cfg['control_plane']), ('dispatcher', cfg['dispatcher'])]:
+        service_run(b[name], 'check-config', env={'PATH': os.environ.get('PATH', os.defpath)} | values)
     for name in SERVICES[:3]:
         run('systemctl', 'start', unit(name))
     def sql(query):
@@ -379,16 +404,16 @@ def read_candidate(directory):
     return candidate
 
 
-def update_kind(previous, candidate, reset):
+def update_kind(previous, candidate, reset, include_dispatcher=False):
     for name in ['worker', 'guestd', 'runtime-support', 'toolchain']:
         if previous['inputs'][name] != candidate['inputs'][name]:
             raise ValueError(f'{name} inputs changed; materialize matching Worker/runtime artifacts in a new profile')
     if not reset:
         if previous['inputs']['schema'] != candidate['inputs']['schema']:
             raise ValueError('schema content changed, including existing migration edits; --reset-data is required')
-        if previous['inputs']['dispatcher'] != candidate['inputs']['dispatcher']:
-            raise ValueError('Dispatcher inputs changed; CP-only update is insufficient')
-    return ['control-plane', 'dispatcher'] if reset else ['control-plane']
+        if not include_dispatcher and previous['inputs']['dispatcher'] != candidate['inputs']['dispatcher']:
+            raise ValueError('Dispatcher inputs changed; --include-dispatcher is required')
+    return ['control-plane', 'dispatcher'] if reset or include_dispatcher else ['control-plane']
 
 
 def service_identity(name):
@@ -505,6 +530,99 @@ def replace_binary(source, destination):
     os.replace(temporary, destination)
 
 
+def retire_profile(cfg, source, generation):
+    """Archive an inactive disposable profile, keeping CONFIG until the last move."""
+    if not re.fullmatch(r'[0-9a-f]{40}', source or ''):
+        raise ValueError('expected installed source commit is required')
+    generation = str(uuid.UUID(generation))
+    if json.loads((CONFIG / 'installed-candidate.json').read_text())['source_commit'] != source:
+        raise RuntimeError('installed source differs from the selected retirement target')
+    if json.loads((CONFIG / 'data-generation.json').read_text())['id'] != generation:
+        raise RuntimeError('data generation differs from the selected retirement target')
+    if any((CONFIG / name).exists() for name in ['pending-update.json', 'pending-retirement.json', 'retired-config.json']):
+        raise RuntimeError('incomplete profile operation; inspect before retirement')
+    names = [unit(n) for n in SERVICES] + ['helmr-worker.service', 'helmr-verification-reset.service']
+    for name in names:
+        if state(name) != 'inactive':
+            raise RuntimeError('all profile services must be inactive before retirement')
+        enabled = run('systemctl', 'show', name, '-p', 'UnitFileState', '--value', capture_output=True, text=True).stdout.strip()
+        if enabled not in {'', 'disabled', 'static'}:
+            raise RuntimeError('profile service must be disabled before retirement')
+        group = run('systemctl', 'show', name, '-p', 'ControlGroup', '--value', capture_output=True, text=True).stdout.strip()
+        if group:
+            cgroup = Path('/sys/fs/cgroup') / group.lstrip('/')
+            if not cgroup.is_dir() or any(p.read_text().strip() for p in cgroup.rglob('cgroup.procs')):
+                raise RuntimeError('service cgroup is missing or still populated')
+    service_uid = pwd.getpwnam(USER).pw_uid
+    for process in Path('/proc').iterdir():
+        if not process.name.isdigit():
+            continue
+        try:
+            uid = process.stat().st_uid
+            command = (process / 'comm').read_text().strip()
+        except FileNotFoundError:
+            continue
+        if uid in {service_uid, 1001} or command in {'firecracker', 'jailer', 'worker'}:
+            raise RuntimeError('a service or guest process remains; refusing retirement')
+    for device in cfg['worker']['WORKER_COMPUTER_DEVICES'].split():
+        if not re.fullmatch(r'/dev/nbd[0-9]+', device) or Path('/sys/block', Path(device).name, 'pid').exists():
+            raise RuntimeError('invalid or connected Worker NBD device')
+    expected = {'WORKER_WORK_DIR': str(WORKER_DATA), 'JAILER_CHROOT_DIR': str(JAILER_DATA)}
+    if any(cfg['worker'].get(k) != v for k, v in expected.items()):
+        raise RuntimeError('profile does not own the expected data paths')
+    override = SYSTEMD / 'helmr-worker.service.d'
+    if override.is_symlink() or {p.name for p in override.iterdir()} != {'verification.conf'}:
+        raise RuntimeError('unexpected Worker overrides; refusing retirement')
+    owned_units = [SYSTEMD / unit(n) for n in SERVICES]
+    for installed, saved in [(p, CONFIG / p.name) for p in owned_units] + [(override / 'verification.conf', CONFIG / 'worker-override.conf')]:
+        if installed.is_symlink() or saved.is_symlink() or installed.read_bytes() != saved.read_bytes():
+            raise RuntimeError('service definition differs from the saved profile')
+    paths = [*owned_units, override, DATA, WORKER_DATA, JAILER_DATA, CONFIG]
+    mounts = [re.sub(r'\\([0-7]{3})', lambda m: chr(int(m[1], 8)), line.split()[4])
+              for line in Path('/proc/self/mountinfo').read_text().splitlines()]
+    if RETIRED.is_symlink():
+        raise RuntimeError('retirement root cannot be a symlink')
+    if RETIRED.parent.resolve() != RETIRED.parent:
+        raise RuntimeError('retirement parent cannot traverse a symlink')
+    if RETIRED.exists() and (RETIRED.stat().st_uid != 0 or RETIRED.stat().st_mode & 0o077):
+        raise RuntimeError('retirement root must be private and root-owned')
+    destination = RETIRED / generation
+    if destination.exists() or destination.is_symlink():
+        raise RuntimeError('retirement destination already exists')
+    absent = []
+    for path in paths:
+        if path.is_symlink() or path.resolve() != path:
+            raise RuntimeError('retirement source is missing or traverses a symlink')
+        if not path.exists():
+            if path != WORKER_DATA:
+                raise RuntimeError('retirement source is missing or traverses a symlink')
+            # Worker creates this lazily; startup can fail before it runs.
+            absent.append(str(path))
+            continue
+        if any(m == str(path) or m.startswith(str(path) + '/') for m in mounts):
+            raise RuntimeError('retirement source remains mounted')
+        if path.stat().st_dev != (RETIRED if RETIRED.exists() else RETIRED.parent).stat().st_dev:
+            raise RuntimeError('retirement requires atomic moves on the same filesystem')
+    paths = [path for path in paths if str(path) not in absent]
+    RETIRED.mkdir(mode=0o700, exist_ok=True)
+    destination.mkdir(mode=0o700)
+    # First profile mutation removes the entrypoint used by every installed
+    # script version. CONFIG still blocks install even if the next write fails.
+    (CONFIG / 'config.json').rename(CONFIG / 'retired-config.json')
+    write_json(CONFIG / 'pending-retirement.json', {'source_commit': source, 'generation': generation,
+                                                    'archive': str(destination), 'absent_data_paths': absent})
+    for path in paths[:-1]:
+        path.rename(destination / path.name)
+    run('systemctl', 'daemon-reload')
+    for name in [unit(n) for n in SERVICES]:
+        loaded = run('systemctl', 'show', name, '-p', 'LoadState', '--value', capture_output=True, text=True).stdout.strip()
+        if loaded != 'not-found':
+            raise RuntimeError('retired service still loads; inspect the incomplete retirement')
+    # CONFIG is the final installation blocker; no fallible host work follows.
+    CONFIG.rename(destination / 'config')
+    print(json.dumps({'retired_source': source, 'data_generation': generation, 'archive': str(destination)}))
+
+
 def reset_private_data(cfg):
     # stop() must have completed against the OLD schema before this function.
     if any(state(name) != 'inactive' for name in [unit(n) for n in SERVICES] + ['helmr-worker.service']):
@@ -528,11 +646,36 @@ def reset_private_data(cfg):
     service_run(cfg['binaries']['initdb'], '-D', str(DATA / 'postgres'), '--auth-local=peer', '--auth-host=scram-sha-256')
 
 
-def apply_services(cfg, directory, reset):
+def candidate_config(cfg, attempt, names):
+    # check-config parses environment only; private attempt files remain root-only.
+    for name in names:
+        values = cfg['control_plane' if name == 'control-plane' else name]
+        run(str(attempt / name), 'check-config',
+            env={'PATH': os.environ.get('PATH', os.defpath)} | values,
+            capture_output=True, text=True)
+
+
+def dispatcher_started(identity):
+    if service_identity(unit('dispatcher')) != identity:
+        raise RuntimeError('Dispatcher process changed during startup')
+    output = run('journalctl', '--quiet', '--no-pager', '-o', 'json',
+                 '_SYSTEMD_INVOCATION_ID=' + identity['InvocationID'],
+                 capture_output=True, text=True).stdout
+    for line in output.splitlines():
+        message = json.loads(line).get('MESSAGE', '')
+        try:
+            if json.loads(message).get('msg') == 'Helmr dispatcher running':
+                return True
+        except (ValueError, AttributeError):
+            continue
+    return False
+
+
+def apply_services(cfg, directory, reset, include_dispatcher=False):
     previous = json.loads((CONFIG / 'installed-candidate.json').read_text())
     previous_hashes = json.loads((CONFIG / 'binary-digests.json').read_text())
     candidate = read_candidate(directory)
-    names = update_kind(previous, candidate, reset)
+    names = update_kind(previous, candidate, reset, include_dispatcher)
     if (CONFIG / 'pending-update.json').exists():
         raise RuntimeError('incomplete update; collect evidence and recreate this disposable environment')
     require_active_services()
@@ -541,18 +684,22 @@ def apply_services(cfg, directory, reset):
     attempt.mkdir(parents=True, mode=0o700)
     for name in ['control-plane', 'dispatcher', 'source.tar', 'candidate.json']:
         shutil.copyfile(directory / name, attempt / name)
+        if name in ['control-plane', 'dispatcher']:
+            (attempt / name).chmod(0o700)
     candidate = read_candidate(attempt)
-    names = update_kind(previous, candidate, reset)
+    names = update_kind(previous, candidate, reset, include_dispatcher)
     for name in names:
         if digest(Path(cfg['binaries'][name])) != previous['binaries'][name]:
             raise ValueError('installed service bytes differ from last accepted candidate')
     untouched = [unit(n) for n in SERVICES if n not in names] + ['helmr-worker.service']
     before = {name: service_identity(name) for name in untouched}
-    evidence = {'candidate': candidate['source_commit'], 'reset_data': reset, 'phase': 'prepared',
+    evidence = {'candidate': candidate['source_commit'], 'reset_data': reset, 'services': names, 'phase': 'prepared',
                 'before': before, 'attempt': str(attempt), 'started_at': time.time()}
     generation = json.loads((CONFIG / 'data-generation.json').read_text())
     if generation['schema'] != previous['inputs']['schema']:
         raise ValueError('installed schema and data generation differ')
+    if not reset:
+        candidate_config(cfg, attempt, names)
     # This marker blocks testing a partial update; it is not a resume journal.
     write_json(CONFIG / 'pending-update.json', evidence)
     write_json(attempt / 'result.json', evidence)
@@ -587,16 +734,22 @@ def apply_services(cfg, directory, reset):
         print('Reset services ready; repeat normal setup, API keys and case deployment. No behavior case has passed.')
         return
     try:
-        run('systemctl', 'stop', unit('control-plane'), timeout=180)
+        # Stop Dispatcher schedules, outbox and fencing before replacing CP.
+        for name in reversed(names):
+            run('systemctl', 'stop', unit(name), timeout=180)
         for name in names:
             replace_binary(attempt / name, Path(cfg['binaries'][name]))
         run('systemctl', 'start', unit('control-plane'))
         wait_for(lambda: http_ready('http://127.0.0.1:58080/readyz'), 'updated Control Plane', unit_name=unit('control-plane'))
+        if 'dispatcher' in names:
+            run('systemctl', 'start', unit('dispatcher'))
+            identity = service_identity(unit('dispatcher'))
+            wait_for(lambda: dispatcher_started(identity), 'updated Dispatcher', unit_name=unit('dispatcher'))
         require_active_services()
         after = {name: service_identity(name) for name in untouched}
         evidence['after'] = after
         if before != after:
-            raise RuntimeError('a retained service process changed during CP-only update')
+            raise RuntimeError('a retained service process changed during service update')
         for name in names:
             if service_identity(unit(name))['executable_sha256'] != candidate['binaries'][name]:
                 raise RuntimeError('running service bytes do not match candidate')
@@ -630,37 +783,38 @@ def read_observation(cfg, name, inputs):
 
 
 def persistence_matches(value, action):
-    if action == 'wait-aborted':
-        return bool(value and value.get('attempt_number') == 1 and value.get('acknowledged')
-                    and not value.get('source_reclaimed') and value.get('source_state') != 'closed'
-                    and value.get('other_instances') == 0 and value.get('lease_on_source')
-                    and value.get('writer_generation') == value.get('captured_writer_generation'))
-    if not value or value.get('attempt_number') != 1 or not value.get('checkpoint_id'):
+    if not value or not value.get('checkpoint_id'):
         return False
-    if value.get('prior_runtime_state') != 'closed' or value.get('prior_runtime_reclaimed') is not True:
+    if action == 'wait-aborted':
+        return (value.get('source_abort') is True and value.get('checkpoint_status') == 'consumed' and value.get('acknowledged') is True
+                and value.get('source_fenced') is False and value.get('source_state') == 'active'
+                and value.get('later_leases') == 0 and value.get('lease_on_source') is True)
+    if value.get('source_fenced') is not True:
         return False
     if action == 'wait-parked':
-        return (value.get('run_status') == 'waiting' and value.get('condition') == 'pending'
-                and value.get('suspension') == 'parked' and value.get('checkpoint_status') == 'ready')
-    return value.get('run_status') == 'succeeded' and bool(value.get('restored_runtime_ids'))
+        return value.get('checkpoint_status') == 'ready' and value.get('target_lease_epoch') is None
+    return (value.get('checkpoint_status') == 'consumed' and value.get('controls_reconciled') is True
+            and value.get('target_current') is True and bool(value.get('target_runtime_id')))
 
 
-def observe_persistence(cfg, run_id, action):
-    if not run_id or str(uuid.UUID(run_id)) != run_id:
-        raise ValueError('a canonical Run UUID is required')
+def observe_persistence(cfg, session_id, action):
+    if not session_id or str(uuid.UUID(session_id)) != session_id or uuid.UUID(session_id).version != 7:
+        raise ValueError('a canonical Session UUIDv7 is required')
     query = Path(__file__).with_name('capture_abort.sql' if action == 'wait-aborted' else 'persistence.sql').read_text()
     observed = None
     def check():
         nonlocal observed
         raw = service_run(cfg['binaries']['psql'], '-h', str(DATA), '-p', '55432', '-d', 'helmr',
-                          '-X', '-v', 'ON_ERROR_STOP=1', '-v', 'run_id=' + run_id, '-At',
+                          '-X', '-v', 'ON_ERROR_STOP=1', '-v', 'session_id=' + session_id, '-At',
                           input=query, capture_output=True, text=True,
                           env=dict(os.environ, PGOPTIONS='-c default_transaction_read_only=on -c statement_timeout=5000'),
                           timeout=10).stdout.strip()
+        if len(raw.encode()) > 262144:
+            raise RuntimeError('observation exceeds 256 KiB')
         observed = json.loads(raw) if raw else None
-        status = observed.get('run_status') if observed else None
-        if status in ['failed', 'system_failed', 'cancelled', 'expired'] or (status == 'succeeded' and action == 'wait-parked'):
-            raise RuntimeError(f"Run ended with {status} before {action}: {json.dumps(observed.get('run_failure'))}")
+        status = observed.get('session_status') if observed else None
+        if status in ['closed', 'cancelled']:
+            raise RuntimeError(f"Session ended with {status} before {action}")
         return persistence_matches(observed, action)
     wait_for(check, action, seconds=180)
     print(json.dumps(observed))
@@ -692,18 +846,28 @@ def require_reset_runner():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['render', 'install', 'start', 'stop', 'inspect', 'apply-services', 'wait-parked', 'verify-restored', 'wait-aborted', 'observe'])
+    parser.add_argument('action', choices=['render', 'install', 'start', 'stop', 'inspect', 'retire-profile', 'apply-services', 'wait-parked', 'verify-restored', 'wait-aborted', 'observe'])
+    parser.add_argument('--expected-source', help='exact installed source for retire-profile')
+    parser.add_argument('--expected-generation', help='exact private data generation for retire-profile')
     parser.add_argument('--config', type=Path, help='input JSON for render/install')
     parser.add_argument('--output', type=Path, help='new private directory for offline render')
     parser.add_argument('--candidate', type=Path, help='build_services.py output for apply-services')
+    parser.add_argument('--include-dispatcher', action='store_true', help='restart CP and Dispatcher together while retaining data')
     parser.add_argument('--reset-data', action='store_true', help='explicitly discard private scope fixtures and recreate schema')
-    parser.add_argument('--run-id', help='Run UUID for persistence evidence')
+    parser.add_argument('--session-id', help='Session UUIDv7 for persistence evidence')
     parser.add_argument('--observation', help='fixed named read-only observation')
     parser.add_argument('--inputs', help='typed JSON observation inputs')
     parser.add_argument('--reset-runner', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.action == 'retire-profile':
+        if not args.expected_source or not args.expected_generation:
+            parser.error('retire-profile requires --expected-source and --expected-generation')
+    elif args.expected_source or args.expected_generation:
+        parser.error('expected retirement identities are only valid with retire-profile')
     if args.candidate is not None and args.action != 'apply-services':
         parser.error('--candidate is only valid with apply-services')
+    if args.include_dispatcher and (args.action != 'apply-services' or args.reset_data):
+        parser.error('--include-dispatcher requires apply-services without --reset-data')
     reset_action = args.action == 'apply-services' and args.reset_data
     if args.reset_runner and not reset_action:
         parser.error('reset runner is only valid for a reset')
@@ -736,17 +900,24 @@ def main():
         if args.action == 'install':
             install(raw)
             return
+        if (CONFIG / 'retired-config.json').exists():
+            if args.action == 'inspect':
+                print(json.dumps({'status': 'blocked', 'blockers': ['incomplete retirement; inspect preserved profile and archive']}))
+                sys.exit(1)
+            raise RuntimeError('incomplete retirement; inspect preserved profile and archive')
         cfg = json.loads((CONFIG / 'config.json').read_text())
         if args.action == 'start':
             if (CONFIG / 'pending-update.json').exists():
                 raise RuntimeError('incomplete update; recreate this disposable environment before starting')
             start(cfg)
+        elif args.action == 'retire-profile':
+            retire_profile(cfg, args.expected_source, args.expected_generation)
         elif args.action == 'apply-services':
             if args.candidate is None:
                 parser.error('--candidate is required')
-            apply_services(cfg, args.candidate, args.reset_data)
+            apply_services(cfg, args.candidate, args.reset_data, args.include_dispatcher)
         elif args.action in ['wait-parked', 'verify-restored', 'wait-aborted']:
-            observe_persistence(cfg, args.run_id, args.action)
+            observe_persistence(cfg, args.session_id, args.action)
         elif args.action == 'observe':
             print(json.dumps(read_observation(cfg, args.observation, json.loads(args.inputs or '{}'))))
         elif args.action == 'stop':

@@ -1,4 +1,4 @@
-import { image, source, task, sandbox } from "@helmr/sdk"
+import { agent, computer, image, source } from "@helmr/sdk"
 import { z } from "zod"
 
 const base = image("github-pr-review")
@@ -10,17 +10,19 @@ const base = image("github-pr-review")
   .run(["bun", "install"])
   .workdir("/sandbox")
 
-export const githubPRReviewComputer = sandbox({ id: "github-pr-review" })
-  .image(base)
-  .resources({ cpu: 1, memory: "1GiB" })
-
-const payload = z.object({
-  owner: z.string().optional(),
-  repo: z.string().optional(),
-  prNumber: z.number().int().positive(),
+export const githubPRReviewComputer = computer({
+  id: "github-pr-review",
+  image: base,
+  resources: { cpu: 1, memory: "1GiB" },
+  // Replace this example UUID with the Environment Secret ID before deployment.
+  secrets: [{ secretId: "01900000-0000-7000-8000-000000000001", env: { name: "GITHUB_TOKEN", mode: "raw" } }],
 })
 
-type Payload = z.infer<typeof payload>
+const payload = z.object({
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  prNumber: z.number().int().positive(),
+})
 
 interface PullRequest {
   readonly title: string
@@ -32,19 +34,21 @@ interface PullRequestFile {
   readonly deletions: number
 }
 
-export const reviewPullRequest = task({
+export const reviewPullRequest = agent({
+  computer: githubPRReviewComputer,
   id: "github-pr-review",
-  maxDuration: "10m",
-  payload,
-  run: async (payload, ctx) => {
+  maxTurnDuration: "10m",
+  async turn(turn) {
+    const input = payload.parse(JSON.parse(turn.input.map(part => part.text).join("")))
     const token = requireEnv("GITHUB_TOKEN")
-    const target = resolveTarget(payload)
+    const target = input
     const repoPath = `${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}`
     const pull = await github<PullRequest>(
       token,
       `/repos/${repoPath}/pulls/${target.prNumber}`,
+      { signal: turn.signal },
     )
-    const files = await listPullRequestFiles(token, repoPath, target.prNumber)
+    const files = await listPullRequestFiles(token, repoPath, target.prNumber, turn.signal)
 
     const summary = [
       `PR #${target.prNumber}: ${pull.title}`,
@@ -64,17 +68,6 @@ function requireEnv(name: string): string {
     throw new Error(`${name} is required`)
   }
   return value
-}
-
-function resolveTarget(payload: Payload): Required<Payload> {
-  if (payload.owner && payload.repo) {
-    return payload as Required<Payload>
-  }
-  const [owner, repo] = process.env.GITHUB_REPOSITORY?.split("/") ?? []
-  if (!owner || !repo) {
-    throw new Error("owner/repo payload fields or GITHUB_REPOSITORY are required")
-  }
-  return { owner, repo, prNumber: payload.prNumber }
 }
 
 async function github<T>(token: string, path: string, init: RequestInit = {}): Promise<T> {
@@ -98,12 +91,14 @@ async function listPullRequestFiles(
   token: string,
   repoPath: string,
   prNumber: number,
+  signal: AbortSignal,
 ): Promise<PullRequestFile[]> {
   const files: PullRequestFile[] = []
   for (let page = 1; ; page++) {
     const batch = await github<PullRequestFile[]>(
       token,
       `/repos/${repoPath}/pulls/${prNumber}/files?per_page=100&page=${page}`,
+      { signal },
     )
     files.push(...batch)
     if (batch.length < 100) {

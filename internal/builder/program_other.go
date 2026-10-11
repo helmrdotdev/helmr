@@ -30,7 +30,7 @@ type PreparedProgramInput struct {
 	Compiler          artifact.CompilerInputs
 	Runtime           artifact.RuntimeDescriptor
 	RuntimeMetadata   artifact.RuntimeMetadata
-	ComputerImages    []bundle.ComputerImage
+	ComputerSeeds     []bundle.ComputerSeed
 }
 
 type ProgramResult struct {

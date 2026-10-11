@@ -5,7 +5,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"log/slog"
 	"syscall"
+	"time"
 )
 
 const MaxRequest = 1 << 20
@@ -27,6 +29,12 @@ func ServeTransmission(ctx context.Context, rw io.ReadWriter, d BlockDevice, siz
 	if size <= 0 {
 		return errors.New("invalid export size")
 	}
+	started := time.Now()
+	var readRequests, readBytes int64
+	var readTime, longestRead time.Duration
+	defer func() {
+		slog.InfoContext(ctx, "block device transmission stopped", "logical_bytes", size, "elapsed_ms", time.Since(started).Milliseconds(), "read_requests", readRequests, "read_bytes", readBytes, "read_ms", readTime.Milliseconds(), "longest_read_ms", longestRead.Milliseconds())
+	}()
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -70,7 +78,14 @@ func ServeTransmission(ctx context.Context, rw io.ReadWriter, d BlockDevice, siz
 			switch cmd {
 			case 0:
 				result = make([]byte, int(n))
-				if count, err := d.ReadAt(ctx, result, int64(off)); err != nil || count != len(result) {
+				readStarted := time.Now()
+				count, err := d.ReadAt(ctx, result, int64(off))
+				elapsed := time.Since(readStarted)
+				readRequests++
+				readBytes += int64(count)
+				readTime += elapsed
+				longestRead = max(longestRead, elapsed)
+				if err != nil || count != len(result) {
 					errno = 5
 					deviceErr = err
 					result = nil

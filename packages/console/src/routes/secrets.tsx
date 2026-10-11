@@ -164,7 +164,7 @@ export function Secrets() {
   const invalidateSecrets = () => queryClient.invalidateQueries({ queryKey: ["secrets"] });
 
   const revoke = async (secret: Secret) => {
-    if (!window.confirm(`Revoke secret "${secret.name}"?`)) return;
+    if (!window.confirm(`Revoke secret "${secret.name}"?\n\nAffected running Turns may be interrupted and fail to complete. Pending inputs are retained but cannot run on affected Computers.`)) return;
     setRevokeError(null);
     setRevokingID(secret.id);
     try {
@@ -181,7 +181,7 @@ export function Secrets() {
     <>
       <PageHeader
         title="Secrets"
-        subtitle="Environment-scoped secret names for tasks. Values are never displayed after saving."
+        subtitle="Environment-scoped secret names for Agents. Values are never displayed after saving."
         actions={<button class={ui.button} type="button" disabled={!scope.selectedEnvironmentID()} onClick={() => setModalSecret(null)}>Set secret</button>}
       />
 

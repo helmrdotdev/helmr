@@ -3,26 +3,20 @@ import { ApiError, del, postJson, request } from "./api";
 export type ApiKeyStatus = "active" | "expired" | "revoked";
 
 export type ApiKeyScope =
-  | "runs:create"
-  | "runs:read"
-  | "runs:manage"
+  | "asks:respond"
   | "sessions:read"
-  | "actors:start"
+  | "agents:start"
   | "sessions:send"
   | "sessions:interrupt"
   | "sessions:resume"
   | "sessions:close"
   | "sessions:cancel"
-  | "tokens:create"
-  | "tokens:read"
-  | "tokens:complete"
-  | "tokens:cancel"
   | "computers:create"
   | "computers:read"
   | "computers:delete"
   | "computer-exec:create"
   | "secrets:write"
-  | "tasks:deploy";
+  | "deployments:write";
 
 type ApiKeyPermissionGrant = {
   scopes: ApiKeyScope[];

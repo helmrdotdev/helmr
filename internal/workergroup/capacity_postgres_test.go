@@ -3,12 +3,13 @@ package workergroup
 import (
 	"errors"
 	"testing"
-	"time"
 	"uuid"
 
+	"github.com/jackc/pgx/v5"
+
+	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/run/runtest"
 )
 
 func TestCapacityResolvePostgres(t *testing.T) {
@@ -70,48 +71,50 @@ func TestCapacityHostsPostgres(t *testing.T) {
 		t.Fatalf("DrainHost = %+v, %v", drained, err)
 	}
 
-	lost, err := ConfirmHostProviderAbsent(t.Context(), f.q, f.pool, first)
+}
+
+func TestConfirmHostProviderAbsenceSupply(t *testing.T) {
+	f := newSupplyFixture(t)
+	pool := f.activePool(t, "run-current")
+	first := f.activeHost(t, pool, "host-1")
+	second := f.activeHost(t, pool, "host-2")
+	var conflicting ConflictError
+	lost, err := confirmSupplyAbsence(t, f, first)
 	if err != nil || lost.Status != WorkerHostStatusLost || lost.LostAt == nil {
 		t.Fatalf("ConfirmHostProviderAbsent = %+v, %v", lost, err)
 	}
-	if _, err := ConfirmHostProviderAbsent(t.Context(), f.q, f.pool, uuid.NewV7()); !errors.Is(err, ErrHostNotFound) {
+	if _, err := confirmSupplyAbsence(t, f, uuid.NewV7()); !errors.Is(err, ErrHostNotFound) {
 		t.Fatalf("missing host absence error = %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET status = 'termination_ready', draining_at = now(), drain_reason = 'shutdown', termination_ready_at = now() WHERE id = $1`, second)
-	if _, err := ConfirmHostProviderAbsent(t.Context(), f.q, f.pool, second); !errors.As(err, &conflicting) {
+	if _, err := confirmSupplyAbsence(t, f, second); !errors.As(err, &conflicting) {
 		t.Fatalf("termination-ready absence error = %v, want ConflictError", err)
 	}
 }
 
 func TestDrainHostPostgresRejectsQueuedDemand(t *testing.T) {
-	f := runtest.New(t)
-	work := f.AddRunLease(t, "assigned", time.Now())
-	var computerID uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT computer_id FROM run_leases WHERE id=$1`, work.LeaseID).Scan(&computerID); err != nil {
-		t.Fatal(err)
-	}
-	claimID, commandID := uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO idempotency_claims(id,environment_id,operation,slot_hash,request_fingerprint,accepted_at,receipt_expires_at) VALUES($1,$2,'computer.command.create',$3,$4,now(),now()+interval '30 days')`, claimID, f.EnvironmentID, dbtest.Hash(commandID.String()), dbtest.Hash("drain-command"))
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_commands(id,environment_id,computer_id,claim_id,argv,cwd,env,stdin,timeout_ms,created_by_subject_type,created_by_subject_id) VALUES($1,$2,$3,$4,ARRAY['true'],'/workspace','{}','',300000,'api_key','fixture')`, commandID, f.EnvironmentID, computerID, claimID)
+	f := agenttest.New(t)
+	queuedTurn(t, f)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2`, f.Environment, f.Session)
 	q := db.New(f.Pool)
-	host, err := GetHost(t.Context(), q, f.WorkerID)
+	host, err := GetHost(t.Context(), q, f.Worker)
 	if err != nil {
 		t.Fatal(err)
 	}
 	request := DrainWorkerHostRequest{ExpectedEpoch: 1, ExpectedClaimVersion: host.ClaimVersion, Reason: DrainReasonIdleScaleIn}
-	if _, err := DrainHost(t.Context(), f.Pool, f.WorkerID, request); !errors.Is(err, ErrQueuedDemand) {
+	if _, err := DrainHost(t.Context(), f.Pool, f.Worker, request); !errors.Is(err, ErrQueuedDemand) {
 		t.Fatalf("idle drain with queued demand error = %v, want ErrQueuedDemand", err)
 	}
-	if unchanged, err := GetHost(t.Context(), q, f.WorkerID); err != nil || unchanged.Status != WorkerHostStatusActive || unchanged.ClaimVersion != host.ClaimVersion {
+	if unchanged, err := GetHost(t.Context(), q, f.Worker); err != nil || unchanged.Status != WorkerHostStatusActive || unchanged.ClaimVersion != host.ClaimVersion {
 		t.Fatalf("host after rejected drain = %+v, %v", unchanged, err)
 	}
 	request.Reason = DrainReasonReplacement
-	drained, err := DrainHost(t.Context(), f.Pool, f.WorkerID, request)
+	drained, err := DrainHost(t.Context(), f.Pool, f.Worker, request)
 	if err != nil || drained.Status != WorkerHostStatusDraining || drained.DrainReason != "replacement" {
 		t.Fatalf("replacement drain = %+v, %v", drained, err)
 	}
 	request.Reason = DrainReasonCapacityReduction
-	replay, err := DrainHost(t.Context(), f.Pool, f.WorkerID, request)
+	replay, err := DrainHost(t.Context(), f.Pool, f.Worker, request)
 	if err != nil || replay.DrainReason != "replacement" || replay.ClaimVersion != drained.ClaimVersion || !replay.DrainingAt.Equal(*drained.DrainingAt) {
 		t.Fatalf("drain replay = %+v, %v", replay, err)
 	}
@@ -129,4 +132,13 @@ func TestListHostsPostgresAppliesLimit(t *testing.T) {
 			t.Fatalf("ListHosts(limit %d) = %d hosts, %v", limit, len(listed.WorkerHosts), err)
 		}
 	}
+}
+
+func confirmSupplyAbsence(t *testing.T, f supplyFixture, host uuid.UUID) (WorkerHost, error) {
+	t.Helper()
+	err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error { _, err := ConfirmHostProviderAbsent(t.Context(), tx, host); return err })
+	if err != nil {
+		return WorkerHost{}, err
+	}
+	return GetHost(t.Context(), f.q, host)
 }

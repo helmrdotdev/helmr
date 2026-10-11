@@ -1,4 +1,0 @@
-{
-  "extends": "./tsconfig.json",
-  "include": ["src/program.ts", "src/node-crypto.d.ts"]
-}

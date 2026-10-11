@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -135,10 +134,8 @@ func TestCommandUsesSavedLoginWhenEnvIsUnset(t *testing.T) {
 					ID: "019c10d5-a6f7-7af2-8f5f-bb97bcc0dc32", Slug: "env-1",
 				}},
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30/environments/019c10d5-a6f7-7af2-8f5f-bb97bcc0dc32/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs":
-			_ = json.NewEncoder(w).Encode(api.RunLogPage{Logs: []api.RunLogRecord{{
-				Kind: "stdout", ContentBase64: base64.StdEncoding.EncodeToString([]byte("hello\n")),
-			}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30/environments/019c10d5-a6f7-7af2-8f5f-bb97bcc0dc32/sessions/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31":
+			_ = json.NewEncoder(w).Encode(api.AgentSession{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", Status: "open"})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
@@ -152,16 +149,16 @@ func TestCommandUsesSavedLoginWhenEnvIsUnset(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"run", "logs", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", "--project", "project-1", "--env", "env-1"})
+	cmd.SetArgs([]string{"session", "get", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", "--project", "project-1", "--env", "env-1"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if out.String() != "hello\n" {
+	if !strings.Contains(out.String(), "session_status: open") {
 		t.Fatalf("output = %q", out.String())
 	}
 }
 
-func TestRunCommandWithSavedLoginRequiresExplicitScope(t *testing.T) {
+func TestSessionCommandWithSavedLoginRequiresExplicitScope(t *testing.T) {
 	state := installTestCLIConfig(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -174,14 +171,14 @@ func TestRunCommandWithSavedLoginRequiresExplicitScope(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"run", "logs", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
+	cmd.SetArgs([]string{"session", "get", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "--project and --env are required with helmr login") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestRunCommandWithAPIKeyRejectsExplicitScope(t *testing.T) {
+func TestSessionCommandWithAPIKeyRejectsExplicitScope(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 	}))
@@ -192,7 +189,7 @@ func TestRunCommandWithAPIKeyRejectsExplicitScope(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"run", "get", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", "--project", "project-1", "--env", "env-1"})
+	cmd.SetArgs([]string{"session", "get", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", "--project", "project-1", "--env", "env-1"})
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "API keys are already environment scoped") {
 		t.Fatalf("err = %v", err)

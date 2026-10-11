@@ -65,7 +65,7 @@ func ActivateGroup(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, ex
 }
 
 // BeginGroupDrain starts draining the worker group and clears its primary
-// pool.
+// pool after all physical custody and retained checkpoints have been resolved.
 func BeginGroupDrain(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, expectedClaimVersion int64) (GroupStatus, error) {
 	return transitionGroup(ctx, txb, groupID, expectedClaimVersion, db.WorkerGroupStatusDraining)
 }
@@ -90,6 +90,29 @@ func transitionGroup(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, 
 		}
 		if _, err := ReadGroupStatus(ctx, q, groupID); err != nil {
 			return err
+		}
+		if target == db.WorkerGroupStatusDraining {
+			// Take the same row lock as allocation and capture before reading
+			// dependencies in a new statement, including changes committed while
+			// waiting for this lock under READ COMMITTED.
+			if _, err := q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(groupID)); err != nil {
+				return fmt.Errorf("lock worker group drain: %w", err)
+			}
+			var retained bool
+			if err := tx.QueryRow(ctx, `SELECT
+ EXISTS(SELECT 1 FROM computer_leases l JOIN worker_hosts h ON h.id=l.worker_host_id
+ WHERE h.worker_group_id=$1 AND l.fenced_at IS NULL)
+ OR EXISTS(SELECT 1 FROM computer_preparations p JOIN worker_hosts h ON h.id=p.worker_host_id
+ WHERE h.worker_group_id=$1 AND p.fenced_at IS NULL)
+ OR EXISTS(SELECT 1 FROM computer_checkpoints c
+ JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(c.environment_id,c.computer_id,c.source_lease_epoch)
+ JOIN worker_hosts h ON h.id=l.worker_host_id
+ WHERE h.worker_group_id=$1 AND c.status IN ('capturing','sealed','ready','restoring','aborting'))`, groupID).Scan(&retained); err != nil {
+				return fmt.Errorf("read worker group dependencies: %w", err)
+			}
+			if retained {
+				return conflict("worker group retains physical custody or Computer checkpoints")
+			}
 		}
 		row, err := q.TransitionWorkerGroupStatus(ctx, db.TransitionWorkerGroupStatusParams{
 			WorkerGroupID: pgvalue.UUID(groupID), ExpectedClaimVersion: expectedClaimVersion, TargetStatus: target,

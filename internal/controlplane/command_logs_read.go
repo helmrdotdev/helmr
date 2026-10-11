@@ -21,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/helmrdotdev/helmr/internal/telemetry/diagnostic"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -60,7 +61,7 @@ func (s *Server) listCommandLogsHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeRunTelemetryError(w, err)
+		writeTelemetryError(w, err)
 		return
 	}
 	query, err := url.ParseQuery(r.URL.RawQuery)
@@ -88,7 +89,7 @@ func (s *Server) listCommandLogsHTTP(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, errTelemetryInvalidCursor) {
 			writeError(w, badRequest(err))
 		} else {
-			writeRunTelemetryError(w, err)
+			writeTelemetryError(w, err)
 		}
 		return
 	}
@@ -96,12 +97,7 @@ func (s *Server) listCommandLogsHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) readCommandLogs(ctx context.Context, orgID pgtype.UUID, command db.ComputerCommand, raw string, limit int32) (api.CommandLogPage, error) {
-	// Once the command spans the retention boundary, missing history cannot be
-	// distinguished from empty output after outbox collection. Do not invent EOF.
-	if !command.CreatedAt.Valid || !time.Now().Before(command.CreatedAt.Time.Add(90*24*time.Hour)) {
-		return api.CommandLogPage{}, gone(codedError{code: "command_log_history_unavailable", message: "complete command log history is outside retention"})
-	}
-	position := commandLogCursor{EnvironmentID: pgvalue.UUIDString(command.EnvironmentID), CommandID: pgvalue.UUIDString(command.ID), Stdout: -1, Stderr: -1}
+	position := commandLogCursor{EnvironmentID: pgvalue.UUIDString(command.EnvironmentID), CommandID: pgvalue.UUIDString(command.ID)}
 	if raw != "" {
 		parsed, err := s.parseCommandLogCursor(raw)
 		if err != nil || parsed.EnvironmentID != position.EnvironmentID || parsed.CommandID != position.CommandID {
@@ -118,88 +114,90 @@ func (s *Server) readCommandLogs(ctx context.Context, orgID pgtype.UUID, command
 	streams := []string{"stdout", "stderr"}
 	positions := []int64{position.Stdout, position.Stderr}
 	pages := make([][]telemetry.CommandLogChunk, 2)
-	var lagging error
 	for i, stream := range streams {
-		var after *uint64
-		if positions[i] >= 0 {
-			v := uint64(positions[i])
-			after = &v
-		}
-		page, err := s.telemetryReader.ListCommandLogChunks(ctx, telemetry.CommandLogChunkQuery{OrgID: pgvalue.MustUUIDValue(orgID), EnvironmentID: pgvalue.MustUUIDValue(command.EnvironmentID), CommandID: pgvalue.MustUUIDValue(command.ID), Stream: stream, AfterObservedSeq: after, Limit: min(limit, 64)})
+		after := uint64(positions[i])
+		page, err := s.telemetryReader.ListCommandLogChunks(ctx, telemetry.CommandLogChunkQuery{OrgID: pgvalue.MustUUIDValue(orgID), EnvironmentID: pgvalue.MustUUIDValue(command.EnvironmentID), CommandID: pgvalue.MustUUIDValue(command.ID), Stream: stream, AfterObservedSeq: &after, Limit: min(limit, 64)})
 		if err != nil {
 			return api.CommandLogPage{}, err
-		}
-		last := positions[i]
-		for _, chunk := range page.Chunks {
-			if chunk.ObservedSeq > math.MaxInt64 || int64(chunk.ObservedSeq) <= last {
-				return api.CommandLogPage{}, telemetry.ErrHistoricalUnavailable
-			}
-			last = int64(chunk.ObservedSeq)
-		}
-		through := pgtype.Int8{}
-		if len(page.Chunks) == int(min(limit, 64)) {
-			through = pgtype.Int8{Int64: last, Valid: true}
-		}
-		// Check after reading the sink so an in-flight delivery is never skipped.
-		frontier, err := s.db.GetCommandLogFrontier(ctx, db.GetCommandLogFrontierParams{OrgID: orgID, EnvironmentID: command.EnvironmentID, CommandID: command.ID, StreamName: stream, AfterObservedSeq: positions[i], ThroughObservedSeq: through})
-		if err != nil {
-			return api.CommandLogPage{}, err
-		}
-		if frontier.PendingSeq >= 0 {
-			for len(page.Chunks) > 0 && int64(page.Chunks[len(page.Chunks)-1].ObservedSeq) >= frontier.PendingSeq {
-				page.Chunks = page.Chunks[:len(page.Chunks)-1]
-			}
-		}
-		if len(page.Chunks) == 0 && (frontier.PendingSeq >= 0 || frontier.ObservedSeq > positions[i]) {
-			lagging = telemetry.LaggingError{WatermarkSeq: positions[i], WantSeq: frontier.ObservedSeq}
 		}
 		pages[i] = page.Chunks
 	}
-	result := api.CommandLogPage{OutputState: commandOutputState(command), Logs: make([]api.CommandLogRecord, 0, limit)}
+	// Read owner progress after the sink: publication may have advanced during either read.
+	current, err := s.db.GetCommandLogState(ctx, db.GetCommandLogStateParams{OrgID: orgID, EnvironmentID: command.EnvironmentID, CommandID: command.ID})
+	if err != nil {
+		return api.CommandLogPage{}, err
+	}
+	accepted := []int64{current.StdoutAcceptedThrough, current.StderrAcceptedThrough}
+	expired := []int64{current.StdoutExpiredThrough, current.StderrExpiredThrough}
+	expires := []pgtype.Timestamptz{current.StdoutLastExpiresAt, current.StderrLastExpiresAt}
+	for i := range streams {
+		if (expired[i] > positions[i]) || (accepted[i] > positions[i] && expires[i].Valid && !expires[i].Time.After(time.Now())) {
+			return api.CommandLogPage{}, gone(codedError{code: "command_log_history_unavailable", message: "command log history is outside retention"})
+		}
+	}
+	result := api.CommandLogPage{OutputState: "open", Logs: make([]api.CommandLogRecord, 0, limit)}
+	var lagging error
+	ended := [2]bool{}
 	for len(result.Logs) < int(limit) && (len(pages[0]) > 0 || len(pages[1]) > 0) {
 		i := 0
 		if len(pages[0]) == 0 || (len(pages[1]) > 0 && pages[1][0].ObservedAt.Before(pages[0][0].ObservedAt)) {
 			i = 1
 		}
 		chunk := pages[i][0]
-		record := api.CommandLogRecord{Stream: streams[i]}
-		if int64(chunk.ObservedSeq) > positions[i]+1 {
-			if !command.TerminalAt.Valid {
-				lagging = telemetry.LaggingError{WatermarkSeq: positions[i], WantSeq: int64(chunk.ObservedSeq)}
-				pages[i] = nil
-				continue
-			}
-			// Only collected/expired history may become a gap. If the outbox
-			// still knows these chunks, an incomplete sink read is retryable.
-			missing, err := s.db.GetCommandLogFrontier(ctx, db.GetCommandLogFrontierParams{OrgID: orgID, EnvironmentID: command.EnvironmentID, CommandID: command.ID, StreamName: streams[i], AfterObservedSeq: positions[i], ThroughObservedSeq: pgtype.Int8{Int64: int64(chunk.ObservedSeq) - 1, Valid: true}})
-			if err != nil {
-				return api.CommandLogPage{}, err
-			}
-			if missing.ObservedSeq >= 0 {
-				lagging = telemetry.LaggingError{WatermarkSeq: positions[i], WantSeq: missing.ObservedSeq}
-				pages[i] = nil
-				continue
-			}
-			record.Kind = "gap"
-			record.FromSequence = strconv.FormatInt(positions[i]+1, 10)
-			record.ThroughSequence = strconv.FormatInt(int64(chunk.ObservedSeq)-1, 10)
-			positions[i] = int64(chunk.ObservedSeq) - 1
-		} else {
-			record.Kind = "output"
-			record.ContentBase64 = base64.StdEncoding.EncodeToString(chunk.Content)
-			at := chunk.ObservedAt
-			record.ObservedAt = &at
-			positions[i] = int64(chunk.ObservedSeq)
-			pages[i] = pages[i][1:]
+		if chunk.ObservedSeq > math.MaxInt64 || chunk.ThroughSequence > math.MaxInt64 {
+			return api.CommandLogPage{}, telemetry.ErrHistoricalUnavailable
 		}
+		record := diagnostic.Record{Stream: streams[i], Kind: chunk.Kind, Sequence: int64(chunk.ObservedSeq), ThroughSequence: int64(chunk.ThroughSequence), ObservedAtUnixNano: chunk.ObservedAt.UnixNano(), Data: chunk.Content, DroppedBytes: chunk.DroppedBytes, Complete: chunk.Complete}
+		if record.Validate(s.diagnosticBounds.ChunkBytes) != nil || record.Sequence <= positions[i] || record.ThroughSequence > accepted[i] || ended[i] {
+			return api.CommandLogPage{}, telemetry.ErrHistoricalUnavailable
+		}
+		if record.Sequence != positions[i]+1 {
+			// Absence in an eventually available sink never proves a producer gap.
+			lagging = telemetry.LaggingError{WatermarkSeq: positions[i], WantSeq: record.Sequence}
+			pages[i] = nil
+			continue
+		}
+		pages[i] = pages[i][1:]
+		if record.Kind == "end" {
+			ended[i] = true
+			if record.ThroughSequence != accepted[i] {
+				return api.CommandLogPage{}, telemetry.ErrHistoricalUnavailable
+			}
+			// End is protocol evidence, not a public output record. Re-reading it is harmless.
+			continue
+		}
+		public := api.CommandLogRecord{Stream: streams[i]}
+		if record.Kind == "gap" {
+			public.Kind = "gap"
+			public.FromSequence = strconv.FormatInt(record.Sequence, 10)
+			public.ThroughSequence = strconv.FormatInt(record.ThroughSequence, 10)
+		} else {
+			public.Kind = "output"
+			public.ContentBase64 = base64.StdEncoding.EncodeToString(record.Data)
+			at := chunk.ObservedAt
+			public.ObservedAt = &at
+		}
+		positions[i] = record.ThroughSequence
 		position.Stdout, position.Stderr = positions[0], positions[1]
 		cursor, err := s.signCommandLogCursor(position)
 		if err != nil {
 			return api.CommandLogPage{}, err
 		}
-		record.Cursor = cursor
-		result.Logs = append(result.Logs, record)
+		public.Cursor = cursor
+		result.Logs = append(result.Logs, public)
 		result.NextCursor = cursor
+	}
+	covered := true
+	for i := range streams {
+		if positions[i] < accepted[i] && !ended[i] {
+			covered = false
+			if len(pages[i]) == 0 {
+				lagging = telemetry.LaggingError{WatermarkSeq: positions[i], WantSeq: accepted[i]}
+			}
+		}
+	}
+	if covered {
+		result.OutputState = commandOutputState(current)
 	}
 	if len(result.Logs) == 0 && lagging != nil {
 		return api.CommandLogPage{}, lagging
@@ -244,26 +242,25 @@ func (s *Server) parseCommandLogCursor(raw string) (commandLogCursor, error) {
 	}
 	decoder := json.NewDecoder(strings.NewReader(string(payload)))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&position) != nil || position.Stdout < -1 || position.Stderr < -1 || position.CommandID == "" || position.EnvironmentID == "" {
+	if decoder.Decode(&position) != nil || position.Stdout < 0 || position.Stderr < 0 || position.CommandID == "" || position.EnvironmentID == "" {
 		return position, errTelemetryInvalidCursor
 	}
 	return position, nil
 }
 
-// Output closure is not the command's result-retention lifecycle. The producer
-// must acknowledge every chunk before these completion reasons can be recorded.
+// Output closure follows explicit pipe frontiers, independently of process exit.
 func commandOutputState(command db.ComputerCommand) string {
 	if !command.TerminalAt.Valid {
 		return "open"
 	}
-	if !command.ComputerInstanceID.Valid {
+	if !command.ComputerLeaseEpoch.Valid {
 		return "closed"
 	}
-	switch command.TerminalReasonCode.String {
-	case "computer_command_completed", "computer_command_timed_out", "computer_command_cancelled",
-		"computer_command_signaled", "computer_command_launch_failed", "computer_command_secret_delivery_failed":
+	if command.StdoutEnded && command.StderrEnded && command.StdoutEndComplete && command.StderrEndComplete && command.StdoutFinalThrough.Valid && command.StderrFinalThrough.Valid && command.StdoutAcceptedThrough == command.StdoutFinalThrough.Int64 && command.StderrAcceptedThrough == command.StderrFinalThrough.Int64 {
 		return "closed"
-	default:
+	}
+	if command.OutputFenced || command.Status == "lost" || command.ProcessReconciledAt.Valid || (command.StdoutEnded && !command.StdoutEndComplete) || (command.StderrEnded && !command.StderrEndComplete) {
 		return "unavailable"
 	}
+	return "open"
 }

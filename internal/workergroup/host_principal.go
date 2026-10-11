@@ -1,11 +1,13 @@
 package workergroup
 
 import (
+	"context"
 	"errors"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/jackc/pgx/v5"
 )
 
 // ErrStaleClaims reports that a host's or group's claim version changed after
@@ -44,4 +46,24 @@ func (p HostPrincipal) checkLockedClaims(host db.WorkerHost, group db.WorkerGrou
 		return ErrStaleClaims
 	}
 	return nil
+}
+
+// LockRuntimeHost locks the group then host for read-only runtime admission.
+// The caller must retain these shared locks through its operation. A false
+// result rejects lifecycle or epoch changes; stale credentials and missing rows
+// retain their distinct errors so each caller can apply its denial semantics.
+func LockRuntimeHost(ctx context.Context, tx pgx.Tx, host HostPrincipal) (bool, error) {
+	var groupClaim, hostClaim int64
+	var groupStatus, hostStatus string
+	var epoch *int64
+	if err := tx.QueryRow(ctx, `SELECT claim_version,status FROM worker_groups WHERE id=$1 FOR SHARE`, host.GroupID).Scan(&groupClaim, &groupStatus); err != nil {
+		return false, err
+	}
+	if err := tx.QueryRow(ctx, `SELECT claim_version,current_epoch,status FROM worker_hosts WHERE id=$1 AND worker_group_id=$2 FOR SHARE`, host.HostID, host.GroupID).Scan(&hostClaim, &epoch, &hostStatus); err != nil {
+		return false, err
+	}
+	if groupClaim != host.GroupClaimVersion || hostClaim != host.HostClaimVersion {
+		return false, ErrStaleClaims
+	}
+	return epoch != nil && *epoch == host.Epoch && (hostStatus == "active" || hostStatus == "draining") && (groupStatus == "active" || groupStatus == "paused" || groupStatus == "draining"), nil
 }

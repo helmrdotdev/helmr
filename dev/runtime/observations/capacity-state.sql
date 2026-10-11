@@ -36,32 +36,20 @@
      ORDER BY worker_hosts.id
 
 ), usage AS (
-    SELECT live_workers.worker_host_id,
-           COALESCE((SELECT sum(computer_instances.reserved_cpu_millis)
-                      FROM computer_instances
-                     WHERE computer_instances.worker_host_id = live_workers.worker_host_id
-                        AND computer_instances.worker_epoch = live_workers.worker_epoch
-                        AND computer_instances.reclaimed_at IS NULL), 0) AS cpu_millis,
-           COALESCE((SELECT sum(computer_instances.reserved_memory_bytes)
-                      FROM computer_instances
-                     WHERE computer_instances.worker_host_id = live_workers.worker_host_id
-                        AND computer_instances.worker_epoch = live_workers.worker_epoch
-                        AND computer_instances.reclaimed_at IS NULL), 0) AS memory_bytes,
-           COALESCE((SELECT sum(computer_instances.reserved_guest_ephemeral_disk_bytes)
-                      FROM computer_instances
-                     WHERE computer_instances.worker_host_id = live_workers.worker_host_id
-                        AND computer_instances.worker_epoch = live_workers.worker_epoch
-                        AND computer_instances.reclaimed_at IS NULL), 0) AS guest_ephemeral_disk_bytes,
-           COALESCE((SELECT count(*) FROM computer_instances
-                      WHERE computer_instances.worker_host_id = live_workers.worker_host_id
-                        AND computer_instances.worker_epoch = live_workers.worker_epoch
-                        AND (computer_instances.observed_state IN ('allocated', 'ready')
-                             OR (computer_instances.observed_state IN ('failed', 'lost') AND computer_instances.reclaimed_at IS NULL))), 0)::bigint AS vm_slots,
-           COALESCE((SELECT count(*) FROM computer_instances
-                      WHERE computer_instances.worker_host_id = live_workers.worker_host_id
-                        AND computer_instances.worker_epoch = live_workers.worker_epoch
-                        AND computer_instances.observed_state = 'allocated'), 0)::bigint AS instance_starts
-      FROM live_workers
+ SELECT h.worker_host_id,
+   COALESCE(sum(a.cpu),0)::bigint cpu_millis,
+   COALESCE(sum(a.memory),0)::bigint memory_bytes,
+   COALESCE(sum(a.scratch),0)::bigint guest_ephemeral_disk_bytes,
+   count(a.host_id)::bigint vm_slots,
+   count(a.host_id) FILTER (WHERE a.starting)::bigint instance_starts
+ FROM live_workers h LEFT JOIN (
+  SELECT worker_host_id host_id,reserved_cpu_millis cpu,reserved_memory_bytes memory,reserved_scratch_bytes scratch,initialized_at IS NULL starting
+  FROM computer_leases WHERE fenced_at IS NULL
+  UNION ALL
+  SELECT worker_host_id,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,delivered_at IS NULL
+  FROM computer_preparations WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL
+ ) a ON a.host_id=h.worker_host_id
+ GROUP BY h.worker_host_id
 )
 , bins AS (
 SELECT live_workers.worker_group_id,

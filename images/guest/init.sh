@@ -125,6 +125,12 @@ load_vsock() {
 	fi
 }
 
+load_session_program_devices() {
+	# Each Session retains its own immutable executable images on Scratch.
+	modprobe loop
+	[ -c /dev/loop-control ]
+}
+
 valid_ipv4() (
 	case "$1" in ''|.*|*.|*..*|*[!0-9.]*) return 1 ;; esac
 	IFS=.
@@ -245,6 +251,7 @@ configure_program_cgroups
 enable_user_namespaces
 mount_scratch
 load_vsock
+load_session_program_devices
 mount_computer
 mount_program
 configure_network

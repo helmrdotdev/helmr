@@ -9,17 +9,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pglock"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/run/runtest"
 )
 
 func TestStaleHostFencerSkipsCycleWhileLockIsHeld(t *testing.T) {
-	fixture := runtest.New(t)
+	fixture := agenttest.New(t)
 	if _, err := fixture.Pool.Exec(t.Context(),
 		`UPDATE worker_hosts SET observed_at = now() - interval '10 minutes' WHERE id = $1`,
-		fixture.WorkerID,
+		fixture.Worker,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestStaleHostFencerSkipsCycleWhileLockIsHeld(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cycle.LockAcquired || cycle.Selected != 1 || cycle.Fenced != 1 || cycle.Results[0].WorkerHostID != pgvalue.UUID(fixture.WorkerID) {
+	if !cycle.LockAcquired || cycle.Selected != 1 || cycle.Fenced != 1 || cycle.Results[0].WorkerHostID != pgvalue.UUID(fixture.Worker) {
 		t.Fatalf("cycle after release = %+v, want the stale host fenced", cycle)
 	}
 	assertHostStatus(t, fixture, db.WorkerHostStatusLost)
@@ -93,11 +93,11 @@ func TestStaleHostFencerSkipsCycleWhileLockIsHeld(t *testing.T) {
 	}
 }
 
-func assertHostStatus(t *testing.T, fixture runtest.Fixture, want db.WorkerHostStatus) {
+func assertHostStatus(t *testing.T, fixture agenttest.Fixture, want db.WorkerHostStatus) {
 	t.Helper()
 	var status db.WorkerHostStatus
 	if err := fixture.Pool.QueryRow(t.Context(),
-		`SELECT status FROM worker_hosts WHERE id = $1`, fixture.WorkerID,
+		`SELECT status FROM worker_hosts WHERE id = $1`, fixture.Worker,
 	).Scan(&status); err != nil {
 		t.Fatal(err)
 	}
@@ -128,10 +128,9 @@ func (q expiringFenceQueries) RecheckAndFenceStaleWorkerHost(ctx context.Context
 	return row, err
 }
 
-func TestExpiredServingEvidenceRollsBackHostAndInstanceFences(t *testing.T) {
-	fixture := runtest.New(t)
-	fixture.AddRunLease(t, "running", time.Now().Add(-time.Minute))
-	if _, err := fixture.Pool.Exec(t.Context(), `UPDATE worker_hosts SET observed_at=now()-interval '10 minutes' WHERE id=$1`, fixture.WorkerID); err != nil {
+func TestExpiredServingEvidenceRollsBackHostFence(t *testing.T) {
+	fixture := agenttest.New(t)
+	if _, err := fixture.Pool.Exec(t.Context(), `UPDATE worker_hosts SET observed_at=now()-interval '10 minutes' WHERE id=$1`, fixture.Worker); err != nil {
 		t.Fatal(err)
 	}
 	clock := &advancingFenceClock{now: time.Now()}
@@ -151,10 +150,10 @@ func TestExpiredServingEvidenceRollsBackHostAndInstanceFences(t *testing.T) {
 	}
 	assertHostStatus(t, fixture, db.WorkerHostStatusActive)
 	var ready int
-	if err := fixture.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_instances WHERE worker_host_id=$1 AND observed_state='ready'`, fixture.WorkerID).Scan(&ready); err != nil {
+	if err := fixture.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_leases WHERE worker_host_id=$1 AND status='active' AND fenced_at IS NULL`, fixture.Worker).Scan(&ready); err != nil {
 		t.Fatal(err)
 	}
 	if ready != 1 {
-		t.Fatalf("rolled-back instance fence retained: ready=%d", ready)
+		t.Fatalf("lease custody changed after rejected Host fence: active=%d", ready)
 	}
 }

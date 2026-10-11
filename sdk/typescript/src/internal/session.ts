@@ -1,127 +1,135 @@
 import type {
   JsonValue,
   Session,
-  SessionDispatch,
-  SessionFailure,
   SessionStatus,
-  TurnSource,
+  CursorPage,
   TurnState,
   SessionAdmissionReceipt,
   SessionMessageReceipt,
   SessionCloseReceipt,
   SessionCancelReceipt,
-  TurnInterruptReceipt,
+  SessionInterruptReceipt,
   SessionResumeReceipt,
   SessionEvent,
   SessionEventKind,
   SessionEventPage,
-  OutputReceipt,
 } from "../contract"
-import { validateTaskId } from "../schema/task"
+import { normalizeContent, normalizeInput } from "../content"
 import { canonicalizeJsonValue } from "./jsoncanon"
 import { resourceID } from "./id"
+import { slackStartOption } from "../client-slack"
 import { timestampString } from "./timestamp"
 
 export function parseSession(value: unknown): Session {
   const v = objectValue(value, "Session")
-  const status = sessionStatus(v["status"])
-  const actorId = requiredString(v["actor_id"], "actor_id")
-  validateTaskId(actorId)
-  const failure =
-    v["failure"] === undefined ? undefined : parseSessionFailure(v["failure"])
-  if ((status === "failed") !== (failure !== undefined))
-    throw new Error("Session response has an inconsistent failure projection")
+  const initial = v["initial_turn"] === null ? null : objectValue(v["initial_turn"], "Session.initial_turn")
+  if (!Array.isArray(v["holds"]))
+    throw new Error("Session.holds must be an array")
   return Object.freeze({
     id: resourceID(v["id"], "Session.id"),
-    actorId,
+    agentId: resourceID(v["agent_id"], "Session.agent_id"),
     deploymentId: resourceID(v["deployment_id"], "Session.deployment_id"),
     computerId: resourceID(v["computer_id"], "Session.computer_id"),
+    rootSessionId: resourceID(v["root_session_id"], "Session.root_session_id"),
+    ...(v["slack_channel_id"] === undefined ? {} : { slackChannelId: slackStartOption({ channelId: v["slack_channel_id"] }).channel_id }),
+    parentSessionId: nullableID(
+      v["parent_session_id"],
+      "Session.parent_session_id",
+    ),
+    requesterSessionId: nullableID(v["requester_session_id"], "Session.requester_session_id"),
+    initialTurn: initial === null ? null : Object.freeze({ id: resourceID(initial["id"], "Session.initial_turn.id"), status: turnStatus(initial["status"]) }),
     ...(v["key"] === undefined
       ? {}
       : { key: requiredString(v["key"], "Session.key") }),
-    status,
-    ...(v["cancel_requested_at"] === undefined ? {} : {cancelRequestedAt: timestampString(v["cancel_requested_at"], "Session.cancel_requested_at")}),
+    status: sessionStatus(v["status"]),
     createdAt: timestampString(v["created_at"], "Session.created_at"),
-    updatedAt: timestampString(v["updated_at"], "Session.updated_at"),
-    currentRunId: nullableID(v["current_run_id"], "Session.current_run_id"),
-    activeTurnId: nullableID(v["active_turn_id"], "Session.active_turn_id"),
-    dispatch: parseDispatch(v["dispatch"]),
-    ...(failure === undefined ? {} : { failure }),
+    holds: Object.freeze(
+      v["holds"].map((value) => {
+        const h = objectValue(value, "Session hold")
+        if (h["scope"] !== "local" && h["scope"] !== "subtree")
+          throw new Error("Session hold.scope is invalid")
+        if (typeof h["reason"] !== "string")
+          throw new Error("Session hold.reason is invalid")
+        return Object.freeze({
+          id: resourceID(h["id"], "Session hold.id"),
+          sessionId: resourceID(h["session_id"], "Session hold.session_id"),
+          scope: h["scope"],
+          reason: h["reason"],
+          createdAt: timestampString(
+            h["created_at"],
+            "Session hold.created_at",
+          ),
+        })
+      }),
+    ),
   })
 }
-function parseDispatch(value: unknown): SessionDispatch {
-  const v = objectValue(value, "Session.dispatch")
-  if (v["state"] === "ready") return Object.freeze({ state: "ready" })
-  if (
-    v["state"] !== "held" ||
-    ![
-      "interrupt_requested",
-      "interrupted",
-      "recovery_required",
-    ].includes(v["reason"] as string)
-  )
-    throw new Error("Session.dispatch is invalid")
+export function parseSessionPage(value: unknown): CursorPage<Session> {
+  const page = objectValue(value, "Session list response")
+  if (!Array.isArray(page["sessions"])) throw new Error("Session list response.sessions must be an array")
   return Object.freeze({
-    state: "held",
-    holdId: resourceID(v["hold_id"], "Session.dispatch.hold_id"),
-    reason: v["reason"] as Extract<
-      SessionDispatch,
-      { state: "held" }
-    >["reason"],
+    items: Object.freeze(page["sessions"].map(parseSession)),
+    ...(page["next_cursor"] === undefined ? {} : { nextCursor: resourceID(page["next_cursor"], "Session list response.next_cursor") }),
   })
 }
-export function parseTurnSource(value: unknown): TurnSource {
-  const v = objectValue(value, "Turn.source")
-  if (v["type"] === "external") return Object.freeze({ type: "external" })
-  if (v["type"] === "run")
-    return Object.freeze({
-      type: "run",
-      runId: resourceID(v["run_id"], "Turn.source.run_id"),
-    })
-  throw new Error("Turn.source.type is invalid")
+
+function turnStatus(value: unknown): TurnState["status"] {
+  if (typeof value !== "string" || !["queued", "running", "finalizing", "completed", "failed", "interrupted", "cancelled"].includes(value)) throw new Error("Turn.status is invalid")
+  return value as TurnState["status"]
 }
+
 export function parseTurnState(value: unknown): TurnState {
   const v = objectValue(value, "Turn")
-  if (
-    !["queued", "running", "completed", "failed", "interrupted", "cancelled"].includes(
-      v["status"] as string,
-    )
+  const status = turnStatus(v["status"])
+  const terminal = ["completed", "failed", "interrupted", "cancelled"].includes(
+    v["status"] as string,
   )
-    throw new Error("Turn.status is invalid")
+  if (terminal !== (v["terminal_at"] !== undefined))
+    throw new Error("Turn terminal timestamp is inconsistent")
+  if ((v["status"] === "completed") !== (v["completion_save_id"] !== undefined))
+    throw new Error("Turn completion save is inconsistent")
+  if ((Object.hasOwn(v, "result") || Object.hasOwn(v, "response")) && v["status"] !== "completed")
+    throw new Error("An unfinished Turn cannot publish a result")
+  const expired = v["payload_expired_at"] !== undefined
+  if (expired && (!terminal || ["input", "result", "response"].some(key => Object.hasOwn(v, key))))
+    throw new Error("Expired Turn payload is inconsistent")
+  if (!expired && !Object.hasOwn(v, "input")) throw new Error("Turn.input is required")
+  const failure = v["error"] === undefined ? undefined : objectValue(v["error"], "Turn.error")
+  if (failure !== undefined && (v["status"] !== "failed" || typeof failure["code"] !== "string" || !failure["code"] || (expired ? failure["message"] !== undefined : typeof failure["message"] !== "string")))
+    throw new Error("Turn.error is invalid")
   return Object.freeze({
+    ...(failure === undefined ? {} : { error: Object.freeze({ code: failure["code"] as string, ...(expired ? {} : { message: failure["message"] as string }) }) }),
     id: resourceID(v["id"], "Turn.id"),
     sessionId: resourceID(v["session_id"], "Turn.session_id"),
     sequence: safeSequence(v["sequence"], "Turn.sequence"),
-    input: jsonValue(v["input"]),
-    source: parseTurnSource(v["source"]),
-    status: v["status"] as TurnState["status"],
-    createdAt: timestampString(v["created_at"], "Turn.created_at"),
-    interruptRequested: booleanValue(
-      v["interrupt_requested"],
-      "Turn.interrupt_requested",
-    ),
-    acceptsMessages: booleanValue(
-      v["accepts_messages"],
-      "Turn.accepts_messages",
-    ),
-    ...(v["terminal_event_id"] === undefined
+    ...(expired ? { payloadExpiredAt: timestampString(v["payload_expired_at"], "Turn.payload_expired_at") } : { input: normalizeInput(v["input"]) }),
+    status,
+    ...(v["started_at"] === undefined
+      ? {}
+      : { startedAt: timestampString(v["started_at"], "Turn.started_at") }),
+    ...(v["terminal_at"] === undefined
+      ? {}
+      : { terminalAt: timestampString(v["terminal_at"], "Turn.terminal_at") }),
+    ...(v["completion_save_id"] === undefined
       ? {}
       : {
-          terminalEventId: resourceID(
-            v["terminal_event_id"],
-            "Turn.terminal_event_id",
+          completionSaveId: resourceID(
+            v["completion_save_id"],
+            "Turn.completion_save_id",
           ),
         }),
-    ...(v["computer_disk_version_id"] === undefined
-      ? {}
-      : {
-          computerDiskVersionId: resourceID(
-            v["computer_disk_version_id"],
-            "Turn.computer_disk_version_id",
-          ),
-        }),
+    ...(Object.hasOwn(v, "response") ? { response: normalizeContent(v["response"], false) } : {}),
     ...(Object.hasOwn(v, "result") ? { result: jsonValue(v["result"]) } : {}),
-    ...(Object.hasOwn(v, "error") ? { error: jsonValue(v["error"]) } : {}),
+  })
+}
+export function parseTurnAdmission(
+  value: unknown,
+): Readonly<{ sessionId: string; turnId: string; sequence: number }> {
+  const v = objectValue(value, "Turn admission")
+  return Object.freeze({
+    sessionId: resourceID(v["session_id"], "Turn admission.session_id"),
+    turnId: resourceID(v["turn_id"], "Turn admission.turn_id"),
+    sequence: safeSequence(v["sequence"], "Turn admission.sequence"),
   })
 }
 export function parseSessionAdmissionReceipt(
@@ -164,7 +172,9 @@ export function parseSessionCloseReceipt(value: unknown): SessionCloseReceipt {
     status: v["status"],
   })
 }
-export function parseSessionCancelReceipt(value: unknown): SessionCancelReceipt {
+export function parseSessionCancelReceipt(
+  value: unknown,
+): SessionCancelReceipt {
   const v = objectValue(value, "Cancel receipt")
   if (v["status"] !== "accepted")
     throw new Error("Cancel receipt.status is invalid")
@@ -174,16 +184,15 @@ export function parseSessionCancelReceipt(value: unknown): SessionCancelReceipt 
     status: v["status"],
   })
 }
-export function parseTurnInterruptReceipt(
+export function parseSessionInterruptReceipt(
   value: unknown,
-): TurnInterruptReceipt {
+): SessionInterruptReceipt {
   const v = objectValue(value, "Interrupt receipt")
   if (v["status"] !== "accepted")
     throw new Error("Interrupt receipt.status is invalid")
   return Object.freeze({
     id: resourceID(v["id"], "Interrupt receipt.id"),
     sessionId: resourceID(v["session_id"], "Interrupt receipt.session_id"),
-    turnId: resourceID(v["turn_id"], "Interrupt receipt.turn_id"),
     holdId: resourceID(v["hold_id"], "Interrupt receipt.hold_id"),
     status: v["status"],
   })
@@ -201,79 +210,39 @@ export function parseSessionResumeReceipt(
     status: v["status"],
   })
 }
-export function parseOutputReceipt(value: unknown): OutputReceipt {
-  const v = objectValue(value, "Output receipt")
-  return Object.freeze({
-    id: resourceID(v["id"], "Output receipt.id"),
-    sessionId: resourceID(v["session_id"], "Output receipt.session_id"),
-    turnId: nullableID(v["turn_id"], "Output receipt.turn_id"),
-    sequence: safeSequence(v["sequence"], "Output receipt.sequence"),
-    runId: resourceID(v["run_id"], "Output receipt.run_id"),
-    attemptNumber: safeSequence(
-      v["attempt_number"],
-      "Output receipt.attempt_number",
-    ),
-    runGeneration: safeSequence(
-      v["run_generation"],
-      "Output receipt.run_generation",
-    ),
-  })
-}
 const eventKinds: readonly SessionEventKind[] = [
-  "output",
-  "turn.enqueued",
-  "turn.started",
-  "turn.interrupt_requested",
+  "message.admitted", "message.started", "message.delivered", "message.rejected",
+  "slack.delivery_unavailable",
+  "ask.created", "ask.responded", "ask.cancelled",
+  "turn.output",
+  "turn.queued",
+  "turn.running",
+  "turn.finalizing",
   "turn.completed",
   "turn.failed",
   "turn.interrupted",
-  "message.accepted",
-  "message.handled",
-  "message.rejected",
-  "message.unknown",
-  "session.closing",
-  "session.closed",
-  "session.cancel_requested",
   "turn.cancelled",
-  "session.failed",
-  "session.held",
-  "session.resumed",
-  "session.execution_lost",
+  "session.cancelled",
+  "session.closed",
+  "session.process_stopped",
+  "session.process_failed",
+  "session.deadline",
+  "session.interrupt",
+  "session.resume",
+  "session.close",
+  "session.cancel",
 ]
 export function parseSessionEvent(value: unknown): SessionEvent {
   const v = objectValue(value, "Session event")
   if (!eventKinds.includes(v["kind"] as SessionEventKind))
     throw new Error("Session event.kind is invalid")
-  const p =
-    v["provenance"] === null
-      ? null
-      : objectValue(v["provenance"], "Session event.provenance")
   return Object.freeze({
-    id: resourceID(v["id"], "Session event.id"),
     sessionId: resourceID(v["session_id"], "Session event.session_id"),
     turnId: nullableID(v["turn_id"], "Session event.turn_id"),
     sequence: safeSequence(v["sequence"], "Session event.sequence"),
     createdAt: timestampString(v["created_at"], "Session event.created_at"),
     kind: v["kind"] as SessionEventKind,
     data: jsonValue(v["data"]),
-    provenance:
-      p === null
-        ? null
-        : Object.freeze({
-            runId: resourceID(p["run_id"], "provenance.run_id"),
-            attemptNumber: safeSequence(
-              p["attempt_number"],
-              "provenance.attempt_number",
-            ),
-            runGeneration: safeSequence(
-              p["run_generation"],
-              "provenance.run_generation",
-            ),
-            deploymentId: resourceID(
-              p["deployment_id"],
-              "provenance.deployment_id",
-            ),
-          }),
   })
 }
 export function parseSessionEventPage(value: unknown): SessionEventPage {
@@ -290,19 +259,6 @@ export function parseSessionEventPage(value: unknown): SessionEventPage {
     ),
   })
 }
-function parseSessionFailure(value: unknown): SessionFailure {
-  const v = objectValue(value, "Session failure"),
-    d = objectValue(v["details"], "Session failure.details")
-  return Object.freeze({
-    code: requiredString(v["code"], "Session failure.code"),
-    message: requiredString(v["message"], "Session failure.message"),
-    details: Object.freeze(
-      d["run_id"] === undefined
-        ? {}
-        : { runId: resourceID(d["run_id"], "Session failure.details.run_id") },
-    ),
-  })
-}
 export function sessionStatus(
   value: unknown,
   label = "Session.status",
@@ -311,7 +267,7 @@ export function sessionStatus(
     value !== "open" &&
     value !== "closing" &&
     value !== "closed" &&
-    value !== "failed"
+    value !== "cancelled"
   )
     throw new Error(`${label} is invalid`)
   return value

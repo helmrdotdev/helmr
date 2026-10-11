@@ -285,7 +285,7 @@ func (s *Server) revokeSecret(w http.ResponseWriter, r *http.Request, id uuid.UU
 		writeError(w, fmt.Errorf("invalid secret revoke request JSON: %w", err))
 		return
 	}
-	idempotencyKey, err := requiredIdempotencyKey(request.IdempotencyKey)
+	idempotencyKey, err := normalizeIdempotencyKey(request.IdempotencyKey)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -348,16 +348,18 @@ func (s *Server) writeSecretMutationError(
 	operation string,
 	err error,
 ) {
-	var expired idempotency.ExpiredError
-	if errors.As(err, &expired) {
-		writeError(w, gone(expired))
-		return
-	}
-	var conflictErr idempotency.ConflictError
 	var pgErr *pgconn.PgError
+	var expired idempotency.ExpiredError
+	var retryConflict idempotency.ConflictError
 	switch {
-	case errors.As(err, &conflictErr):
-		writeError(w, conflict(conflictErr))
+	case errors.As(err, &expired):
+		writeError(w, gone(expired))
+	case errors.As(err, &retryConflict):
+		writeError(w, conflict(retryConflict))
+	case errors.Is(err, secret.ErrMutationConflict):
+		writeError(w, conflict(secret.ErrMutationConflict))
+	case errors.Is(err, secret.ErrInvalidMutation):
+		writeError(w, badRequest(secret.ErrInvalidMutation))
 	case secret.IsUnavailable(err):
 		writeError(w, conflict(err))
 	case errors.As(err, &pgErr) && pgErr.Code == "23505":
@@ -495,6 +497,9 @@ func secretResponse(
 	if err != nil {
 		return api.SecretResponse{}, err
 	}
+	createdAt.Time = createdAt.Time.UTC()
+	rotatedAt.Time = rotatedAt.Time.UTC()
+	revokedAt.Time = revokedAt.Time.UTC()
 	return api.SecretResponse{
 		ID:        pgvalue.MustUUIDValue(id).String(),
 		Name:      name,

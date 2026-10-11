@@ -13,7 +13,7 @@ func TestLostComputerOwnerRetainsAttachmentEvidenceAndCapacity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = ledger.Reserve(computerStagingKey(id, 1), reservation.Vector{HostDiskBytes: 1024}); err != nil {
+	if _, err = ledger.Reserve(instanceReservationKey(id, 1), reservation.Vector{HostDiskBytes: 1024}); err != nil {
 		t.Fatal(err)
 	}
 	machines := &PreparedMachines{TempDir: t.TempDir(), Reservations: ledger}

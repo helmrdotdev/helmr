@@ -27,6 +27,7 @@ type authentication struct {
 	secret       string
 	serviceID    string
 	credential   string
+	workerEpoch  int64
 	expiresAt    time.Time
 	refreshDone  chan struct{}
 	mu           sync.Mutex
@@ -79,6 +80,17 @@ func (c *Client) AuthenticateWorker(ctx context.Context) error {
 	return err
 }
 
+// HostIdentity returns the incarnation established by AuthenticateWorker. It is
+// retained across credential refreshes so physical owners cannot change epochs.
+func (c *Client) HostIdentity() (string, int64, error) {
+	c.auth.mu.Lock()
+	defer c.auth.mu.Unlock()
+	if c.auth.workerEpoch <= 0 {
+		return "", 0, errors.New("worker host has not authenticated")
+	}
+	return c.auth.workerHostID, c.auth.workerEpoch, nil
+}
+
 func (c *Client) postJSON(ctx context.Context, path string, bearer string, in any, out any) error {
 	var body bytes.Buffer
 	if err := json.NewEncoder(&body).Encode(in); err != nil {
@@ -93,13 +105,21 @@ func (c *Client) postJSON(ctx context.Context, path string, bearer string, in an
 }
 
 func (c *Client) postWorkerJSON(ctx context.Context, path string, in any, out any) error {
+	return c.postWorkerJSONStatus(ctx, path, in, out, false)
+}
+
+func (c *Client) postWorkerJSONStatus(ctx context.Context, path string, in any, out any, retainStatus bool) error {
 	var payload []byte
 	if in != nil {
-		var err error
-		payload, err = json.Marshal(in)
-		if err != nil {
+		var body bytes.Buffer
+		encoder := json.NewEncoder(&body)
+		// This is application/json, never embedded HTML. Preserve bounded
+		// runtime JSON payloads without expanding '<', '>' and '&' sixfold.
+		encoder.SetEscapeHTML(false)
+		if err := encoder.Encode(in); err != nil {
 			return fmt.Errorf("encode request: %w", err)
 		}
+		payload = body.Bytes()
 	}
 	for attempt := range 2 {
 		credential, err := c.hostCredential(ctx)
@@ -113,7 +133,11 @@ func (c *Client) postWorkerJSON(ctx context.Context, path string, in any, out an
 		if in != nil {
 			req.Header.Set("content-type", "application/json")
 		}
-		err = c.transport.DoJSON(req, out)
+		if retainStatus {
+			err = c.transport.DoJSONWithStatus(req, out)
+		} else {
+			err = c.transport.DoJSON(req, out)
+		}
 		if attempt == 0 && httpclient.IsStatus(err, http.StatusUnauthorized) {
 			c.invalidateHostCredential(credential)
 			continue
@@ -181,9 +205,13 @@ func (c *Client) hostCredential(ctx context.Context) (string, error) {
 		c.auth.refreshDone = done
 		c.auth.mu.Unlock()
 
-		credential, expiresAt, err := c.requestHostCredential(ctx)
+		credential, expiresAt, epoch, err := c.requestHostCredential(ctx)
 		c.auth.mu.Lock()
+		if err == nil && c.auth.workerEpoch != 0 && c.auth.workerEpoch != epoch {
+			err = HostAuthorityRejectedError{Err: errors.New("worker host epoch changed within the service process")}
+		}
 		if err == nil {
+			c.auth.workerEpoch = epoch
 			c.auth.credential = credential
 			c.auth.expiresAt = expiresAt
 		}
@@ -203,22 +231,22 @@ func (e HostAuthorityRejectedError) Error() string                 { return e.Er
 func (e HostAuthorityRejectedError) Unwrap() error                 { return e.Err }
 func (e HostAuthorityRejectedError) WorkerAuthorityRejected() bool { return true }
 
-func (c *Client) requestHostCredential(ctx context.Context) (string, time.Time, error) {
+func (c *Client) requestHostCredential(ctx context.Context) (string, time.Time, int64, error) {
 	if c.auth.serviceID == "" {
-		return "", time.Time{}, errors.New("worker service id is required")
+		return "", time.Time{}, 0, errors.New("worker service id is required")
 	}
 	var body bytes.Buffer
 	if err := json.NewEncoder(&body).Encode(workerapi.HostCredentialRequest{
 		WorkerHostID: c.auth.workerHostID, WorkerHostSecret: c.auth.secret,
 		ServiceID: c.auth.serviceID, APIVersion: workerapi.APIVersion,
 	}); err != nil {
-		return "", time.Time{}, fmt.Errorf("encode worker host credential request: %w", err)
+		return "", time.Time{}, 0, fmt.Errorf("encode worker host credential request: %w", err)
 	}
 	credentialCtx, cancel := context.WithTimeout(ctx, hostCredentialRequestTimeout)
 	defer cancel()
 	req, err := c.transport.Request(credentialCtx, http.MethodPost, "/worker/v1/instance/credential", &body, "")
 	if err != nil {
-		return "", time.Time{}, err
+		return "", time.Time{}, 0, err
 	}
 	req.Header.Set("content-type", "application/json")
 	var response workerapi.HostCredentialResponse
@@ -226,13 +254,16 @@ func (c *Client) requestHostCredential(ctx context.Context) (string, time.Time, 
 		if httpclient.IsStatus(err, http.StatusUnauthorized) || httpclient.IsStatus(err, http.StatusForbidden) {
 			err = HostAuthorityRejectedError{Err: err}
 		}
-		return "", time.Time{}, err
+		return "", time.Time{}, 0, err
 	}
 	if response.Credential == "" {
-		return "", time.Time{}, errors.New("worker host credential is empty")
+		return "", time.Time{}, 0, errors.New("worker host credential is empty")
 	}
 	if response.ExpiresInSeconds <= 0 {
-		return "", time.Time{}, errors.New("worker host credential response expires_in_seconds must be positive")
+		return "", time.Time{}, 0, errors.New("worker host credential response expires_in_seconds must be positive")
 	}
-	return response.Credential, time.Now().Add(time.Duration(response.ExpiresInSeconds) * time.Second), nil
+	if response.WorkerEpoch <= 0 {
+		return "", time.Time{}, 0, errors.New("worker host credential response worker_epoch must be positive")
+	}
+	return response.Credential, time.Now().Add(time.Duration(response.ExpiresInSeconds) * time.Second), response.WorkerEpoch, nil
 }

@@ -1,14 +1,14 @@
-import { A, useParams } from "@solidjs/router";
+import { useParams } from "@solidjs/router";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
 import { canPromoteDeployment, PromoteDeploymentModal } from "../features/deployments/PromoteDeploymentModal";
-import { StartDefinitionModal, type StartKind } from "../features/deployments/StartDefinitionModal";
+import { AgentConnectionModal } from "../features/slack/AgentConnectionModal";
 import { ApiError } from "../lib/api";
 import { getMe, hasPermission } from "../lib/auth";
 import { getCurrentDeployment, getDeployment, getDeploymentEvents } from "../lib/deployments";
 import { listSchedules } from "../lib/schedules";
 import { useScope } from "../lib/scope";
-import { listActors, listSandboxes, listTasks, type DefinitionListItem } from "../lib/definitions";
+import { listAgents, listComputerDefinitions, type DefinitionListItem } from "../lib/definitions";
 import { DataTable } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
 import { PageHeader } from "../ui/PageHeader";
@@ -17,13 +17,12 @@ import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
 import { cx, ui } from "../ui/styles";
 
-const TABS = ["tasks", "actors", "sandboxes", "schedules", "events"] as const;
+const TABS = ["agents", "computer_definitions", "schedules", "events"] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_LABELS: Record<Tab, string> = {
-  tasks: "Tasks",
-  actors: "Actors",
-  sandboxes: "Sandboxes",
+  agents: "Agents",
+  computer_definitions: "Computer definitions",
   schedules: "Schedules",
   events: "Events",
 };
@@ -42,14 +41,12 @@ function DefinitionTable(props: {
   items: DefinitionListItem[] | undefined;
   pending: boolean;
   error: unknown;
-  history?: boolean;
-  onStart?: ((id: string) => void) | undefined;
+  onSlack?: ((id: string) => void) | undefined;
 }) {
   const noun = () => props.label.toLowerCase();
   const columns = () => [
     props.label.replace(/e?s$/, ""),
-    ...(props.history ? ["History"] : []),
-    ...(props.onStart ? [{ label: "Actions", srOnly: true }] : []),
+    ...((props.onSlack) ? [{ label: "Actions", srOnly: true }] : []),
   ];
   return (
     <Show when={!props.pending} fallback={<StatePanel loading={`Loading ${noun()}...`} />}>
@@ -63,17 +60,10 @@ function DefinitionTable(props: {
               {(item) => (
                 <tr>
                   <td><strong class="font-medium text-console-text">{item.id}</strong></td>
-                  <Show when={props.history}>
-                    <td>
-                      <A href="/runs" class="font-mono text-[11.5px] text-console-accent hover:text-console-accent-hover">Runs</A>
+                  <Show when={props.onSlack}>
+                    <td class={ui.actionsCell}>
+                      <Show when={props.onSlack}>{(edit) => <button type="button" class={ui.secondaryButton} onClick={() => edit()(item.id)}>Slack connection</button>}</Show>
                     </td>
-                  </Show>
-                  <Show when={props.onStart}>
-                    {(onStart) => (
-                      <td class={ui.actionsCell}>
-                        <button type="button" class={ui.button} onClick={() => onStart()(item.id)}>Start</button>
-                      </td>
-                    )}
                   </Show>
                 </tr>
               )}
@@ -93,9 +83,15 @@ export function DeploymentDetail() {
   const environmentID = () => scope.selectedEnvironmentID();
   const enabled = () => !!deploymentID() && !!projectID() && !!environmentID();
   const resourceScope = () => ({ projectID: projectID(), environmentID: environmentID() });
-  const [tab, setTab] = createSignal<Tab>("tasks");
-  const [starting, setStarting] = createSignal<{ kind: StartKind; id: string } | null>(null);
+  const [tab, setTab] = createSignal<Tab>("agents");
+  const [slackAgent, setSlackAgent] = createSignal<string>();
   const [promoting, setPromoting] = createSignal(false);
+  const selection = createMemo(() => JSON.stringify([projectID(), environmentID(), deploymentID()]));
+  createEffect(on(selection, () => {
+    setSlackAgent(undefined);
+    setPromoting(false);
+    setTab("agents");
+  }, { defer: true }));
   const me = createQuery(() => ({ queryKey: ["me"], queryFn: getMe, retry: false, staleTime: 60_000 }));
 
   const deployment = createQuery(() => ({
@@ -112,41 +108,33 @@ export function DeploymentDetail() {
   }));
   const isCurrent = createMemo(() => !!current.data && current.data.id === deploymentID());
   const canPromote = createMemo(() => !!deployment.data && canPromoteDeployment({
-    permitted: hasPermission(me.data, "tasks.deploy"),
+    permitted: hasPermission(me.data, "deployments.write"),
     currentLoaded: current.isSuccess,
     isCurrent: isCurrent(),
   }));
-  // Start always targets the current Deployment, so the controls only appear there.
-  const startTask = createMemo(() => isCurrent() && hasPermission(me.data, "runs.create")
-    ? (id: string) => setStarting({ kind: "task", id })
-    : undefined);
-  const startActor = createMemo(() => isCurrent() && hasPermission(me.data, "actors.start")
-    ? (id: string) => setStarting({ kind: "actor", id })
-    : undefined);
-
   const definitionOptions = () => ({ ...resourceScope(), deploymentID: deploymentID(), limit: 100 });
-  const tasks = createQuery(() => ({
-    queryKey: ["tasks", deploymentID(), projectID(), environmentID()],
-    queryFn: () => listTasks(definitionOptions()),
-    enabled: enabled() && tab() === "tasks",
+  const agents = createInfiniteQuery(() => ({
+    queryKey: ["agents", deploymentID(), projectID(), environmentID()],
+    queryFn: ({ pageParam }) => listAgents({ ...definitionOptions(), cursor: pageParam || undefined }),
+    initialPageParam: "",
+    getNextPageParam: page => page.next_cursor,
+    enabled: enabled() && tab() === "agents",
     retry: false,
   }));
-  const actors = createQuery(() => ({
-    queryKey: ["actors", deploymentID(), projectID(), environmentID()],
-    queryFn: () => listActors(definitionOptions()),
-    enabled: enabled() && tab() === "actors",
+  const computerDefinitions = createInfiniteQuery(() => ({
+    queryKey: ["computer_definitions", deploymentID(), projectID(), environmentID()],
+    queryFn: ({ pageParam }) => listComputerDefinitions({ ...definitionOptions(), cursor: pageParam || undefined }),
+    initialPageParam: "",
+    getNextPageParam: page => page.next_cursor,
+    enabled: enabled() && tab() === "computer_definitions",
     retry: false,
   }));
-  const sandboxes = createQuery(() => ({
-    queryKey: ["sandboxes", deploymentID(), projectID(), environmentID()],
-    queryFn: () => listSandboxes(definitionOptions()),
-    enabled: enabled() && tab() === "sandboxes",
-    retry: false,
-  }));
-  const schedules = createQuery(() => ({
+  const schedules = createInfiniteQuery(() => ({
     queryKey: ["schedules", projectID(), environmentID()],
-    queryFn: () => listSchedules(resourceScope()),
-    enabled: enabled() && tab() === "schedules" && isCurrent(),
+    queryFn: ({ pageParam }) => listSchedules(resourceScope(), pageParam || undefined),
+    initialPageParam: "",
+    getNextPageParam: (page) => page.next_cursor ?? undefined,
+    enabled: enabled() && tab() === "schedules",
     retry: false,
   }));
   const events = createInfiniteQuery(() => ({
@@ -158,7 +146,7 @@ export function DeploymentDetail() {
     retry: false,
   }));
   const eventItems = createMemo(() => events.data?.pages.flatMap((page) => page.events) ?? []);
-  const scheduleItems = createMemo(() => schedules.data?.schedules ?? []);
+  const scheduleItems = createMemo(() => schedules.data?.pages.flatMap((page) => page.schedules).filter((schedule) => schedule.deployment_id === deploymentID()) ?? []);
 
   return (
     <section class={ui.page}>
@@ -209,42 +197,37 @@ export function DeploymentDetail() {
           </For>
         </div>
 
-        <Show when={tab() === "tasks"}>
-          <DefinitionTable label="Tasks" items={tasks.data?.tasks} pending={tasks.isPending} error={tasks.error} history onStart={startTask()} />
+        <Show when={tab() === "agents"}>
+          <p class={`${ui.muted} mb-3`}>Start Agents through the CLI or their connected Slack app.</p>
+          <DefinitionTable label="Agents" items={agents.data?.pages.flatMap(page => page.agents)} pending={agents.isPending} error={agents.error} onSlack={me.data?.role === "owner" || me.data?.role === "admin" ? setSlackAgent : undefined} />
+          <Show when={agents.hasNextPage}>
+            <button type="button" class={ui.secondaryButton} disabled={agents.isFetchingNextPage} onClick={() => void agents.fetchNextPage()}>Load more Agents</button>
+          </Show>
         </Show>
-        <Show when={tab() === "actors"}>
-          <DefinitionTable label="Actors" items={actors.data?.actors} pending={actors.isPending} error={actors.error} onStart={startActor()} />
-        </Show>
-        <Show when={tab() === "sandboxes"}>
-          <DefinitionTable label="Sandboxes" items={sandboxes.data?.sandboxes} pending={sandboxes.isPending} error={sandboxes.error} />
+        <Show when={tab() === "computer_definitions"}>
+          <DefinitionTable label="Computer definitions" items={computerDefinitions.data?.pages.flatMap(page => page.computer_definitions)} pending={computerDefinitions.isPending} error={computerDefinitions.error} />
+          <Show when={computerDefinitions.hasNextPage}>
+            <button type="button" class={ui.secondaryButton} disabled={computerDefinitions.isFetchingNextPage} onClick={() => void computerDefinitions.fetchNextPage()}>Load more Computer definitions</button>
+          </Show>
         </Show>
 
         <Show when={tab() === "schedules"}>
-          <Show
-            when={isCurrent()}
-            fallback={<StatePanel empty="Schedules follow the current Deployment." hint="Promote this Deployment to see its schedules take effect." />}
-          >
             <Show when={schedules.isError}>
               <StatePanel error={errorMessage(schedules.error, "Could not load schedules.")} />
             </Show>
             <Show when={!schedules.isPending} fallback={<StatePanel loading="Loading schedules..." />}>
-              <Show when={scheduleItems().length > 0} fallback={<StatePanel empty="This Deployment declares no schedules." />}>
-                <DataTable columns={["Task", "Status", "Last failure", "Cron", "Timezone", "Next", "Last", "Generation", "ID"]} minWidth="min-w-250">
+              <Show when={scheduleItems().length > 0} fallback={<StatePanel empty="No schedule activations for this Deployment in the loaded pages." />}>
+                <DataTable columns={["Agent", "Trigger", "Cron", "Timezone", "Next", "Active from", "Active until", "ID"]} minWidth="min-w-250">
                   <For each={scheduleItems()}>
                     {(schedule) => (
                       <tr>
-                        <td><strong class="font-medium text-console-text">{schedule.task_id}</strong></td>
-                        <td><StatusBadge resource="schedule" status={schedule.status} /></td>
-                        <td>
-                          <Show when={schedule.last_failure} fallback={<span class="text-console-faint">—</span>}>
-                            {(failure) => <span class={ui.muted} title={failure().code}>{failure().message}</span>}
-                          </Show>
-                        </td>
+                        <td><IDText value={schedule.agent_id} /></td>
+                        <td>{schedule.trigger_key}</td>
                         <td><code>{schedule.cron.pattern}</code></td>
                         <td><span class={ui.muted}>{schedule.cron.timezone}</span></td>
                         <td><RelativeTime value={schedule.next_fire_at} /></td>
-                        <td><RelativeTime value={schedule.last_fire_at} /></td>
-                        <td>{schedule.generation}</td>
+                        <td><RelativeTime value={schedule.active_from} /></td>
+                        <td><RelativeTime value={schedule.active_until} /></td>
                         <td><IDText value={schedule.id} /></td>
                       </tr>
                     )}
@@ -252,6 +235,8 @@ export function DeploymentDetail() {
                 </DataTable>
               </Show>
             </Show>
+          <Show when={schedules.hasNextPage}>
+            <button type="button" class={ui.secondaryButton} disabled={schedules.isFetchingNextPage} onClick={() => void schedules.fetchNextPage()}>Load more schedules</button>
           </Show>
         </Show>
 
@@ -302,17 +287,8 @@ export function DeploymentDetail() {
         )}
       </Show>
 
-      <Show when={starting()}>
-        {(target) => (
-          <StartDefinitionModal
-            kind={target().kind}
-            definitionID={target().id}
-            projectID={projectID()}
-            environmentID={environmentID()}
-            onClose={() => setStarting(null)}
-          />
-        )}
-      </Show>
+      <Show when={slackAgent()} keyed>{(agentName) => <AgentConnectionModal agentName={agentName} projectID={projectID()} environmentID={environmentID()} onClose={() => setSlackAgent(undefined)} />}</Show>
+
     </section>
   );
 }

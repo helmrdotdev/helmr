@@ -7,9 +7,8 @@ import (
 	"net/url"
 	"slices"
 
-	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -55,52 +54,69 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 			clear(value)
 		}
 	}()
+	isPreparation, err := agent.IsPreparationProxyInstance(r.Context(), s.tx, instanceID)
+	if err != nil {
+		s.writeAllocationError(w, err)
+		return
+	}
 	// These ordinary primary SELECTs each run as a fresh command snapshot. Do
 	// not wrap resolution in an inherited transaction or add material lookups.
-	if resolve {
-		if err = secret.ValidateProtectedSelectors(request.Placeholders); err == nil {
-			var captured []db.CaptureProtectedSecretEnvelopesRow
-			captured, err = s.db.CaptureProtectedSecretEnvelopes(r.Context(), db.CaptureProtectedSecretEnvelopesParams{
-				ComputerInstanceID: pgvalue.UUID(instanceID), WorkerHostID: pgvalue.UUID(worker.HostID),
-				WorkerEpoch: worker.Epoch, WorkerGroupID: pgvalue.UUID(worker.GroupID),
-				ClaimVersion: worker.HostClaimVersion, GroupClaimVersion: worker.GroupClaimVersion,
-				Origin: request.Origin, Placeholders: request.Placeholders,
-			})
-			if err == nil && slices.ContainsFunc(captured, func(row db.CaptureProtectedSecretEnvelopesRow) bool { return !row.ClaimsCurrent }) {
-				err = workergroup.ErrStaleClaims
-			}
+	if isPreparation {
+		if resolve {
+			var captured []secret.ProtectedCapture
+			captured, err = agent.CapturePreparationProtectedSecrets(r.Context(), s.tx, worker, instanceID, request.Origin, request.Placeholders)
 			if err == nil {
-				resolution.Values, err = s.secretProxy.OpenProtected(captured, request.Placeholders)
+				resolution.Values, err = s.secretProxy.OpenProtectedCapture(captured, request.Placeholders)
 			}
+		} else {
+			var captured agent.PreparationProxyTrust
+			captured, err = agent.CapturePreparationProxyTrust(r.Context(), s.tx, worker, instanceID)
+			if err == nil && len(captured.Origins) > 0 {
+				hosts := []string{}
+				for _, origin := range captured.Origins {
+					var parsed *url.URL
+					parsed, err = url.Parse(origin)
+					if err != nil {
+						break
+					}
+					if !slices.Contains(hosts, parsed.Hostname()) {
+						hosts = append(hosts, parsed.Hostname())
+					}
+				}
+				if err == nil {
+					preparation.Origins = captured.Origins
+					preparation.Certificate, preparation.PrivateKey, err = s.secretProxy.PreparationProxyLeaf(captured.Trust, hosts)
+				}
+			}
+		}
+	} else if resolve {
+		var captured []secret.ProtectedCapture
+		captured, err = agent.CaptureComputerProtectedSecrets(r.Context(), s.tx, worker, instanceID, request.Origin, request.Placeholders)
+		if err == nil {
+			resolution.Values, err = s.secretProxy.OpenProtectedCapture(captured, request.Placeholders)
 		}
 	} else {
-		var captured db.CaptureSecretProxyPreparationRow
-		captured, err = s.db.CaptureSecretProxyPreparation(r.Context(), db.CaptureSecretProxyPreparationParams{
-			ComputerInstanceID: pgvalue.UUID(instanceID), WorkerHostID: pgvalue.UUID(worker.HostID),
-			WorkerEpoch: worker.Epoch, WorkerGroupID: pgvalue.UUID(worker.GroupID),
-			ClaimVersion: worker.HostClaimVersion, GroupClaimVersion: worker.GroupClaimVersion,
-		})
-		if err == nil && !captured.ClaimsCurrent {
-			err = workergroup.ErrStaleClaims
-		}
-		if err == nil && len(captured.Origins) != 0 {
+		var captured agent.ComputerProxyTrust
+		captured, err = agent.CaptureComputerProxyTrust(r.Context(), s.tx, worker, instanceID)
+		if err == nil && len(captured.Origins) > 0 {
 			hosts := []string{}
-			for _, o := range captured.Origins {
-				var u *url.URL
-				u, err = url.Parse(o)
+			for _, origin := range captured.Origins {
+				var parsed *url.URL
+				parsed, err = url.Parse(origin)
 				if err != nil {
 					break
 				}
-				if !slices.Contains(hosts, u.Hostname()) {
-					hosts = append(hosts, u.Hostname())
+				if !slices.Contains(hosts, parsed.Hostname()) {
+					hosts = append(hosts, parsed.Hostname())
 				}
 			}
 			if err == nil {
 				preparation.Origins = captured.Origins
-				preparation.Certificate, preparation.PrivateKey, err = s.secretProxy.ProxyLeaf(captured, hosts)
+				preparation.Certificate, preparation.PrivateKey, err = s.secretProxy.ComputerProxyLeaf(captured.Trust, hosts)
 			}
 		}
 	}
+
 	// The store refuses stale captures too; both answer re-authentication.
 	if errors.Is(err, secret.ErrWorkerClaimsStale) {
 		err = workergroup.ErrStaleClaims
@@ -116,6 +132,7 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 		}
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	if resolve {
 		writeJSON(w, http.StatusOK, resolution)
 	} else {

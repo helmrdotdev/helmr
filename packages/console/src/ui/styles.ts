@@ -117,7 +117,7 @@ export const ui = {
   permissionOption:
     "grid cursor-pointer grid-cols-[15px_1fr] gap-2 border border-console-border bg-console-bg-panel px-2.5 py-2 transition hover:border-console-border-strong hover:bg-white [&_input]:mt-px [&_input]:size-[15px] [&_input]:accent-console-accent [&_span]:block [&_strong]:block [&_strong]:text-[12px] [&_strong]:font-medium [&_strong]:text-console-text [&_span_span]:mt-0.5 [&_span_span]:text-[11.5px] [&_span_span]:font-normal [&_span_span]:leading-snug [&_span_span]:text-console-muted",
   panel:
-    "w-full max-w-98 border border-console-border-strong bg-console-surface px-4 pb-4 pt-4 text-console-text shadow-[2px_2px_0_rgb(15_23_42/0.12)] [&_a]:mt-3 [&_a]:inline-block [&_a]:cursor-pointer [&_a]:text-[12.5px] [&_a]:text-console-accent [&_a:hover]:text-console-accent-hover [&_button]:w-full [&_p]:text-[12.5px] [&_p]:leading-normal [&_p]:text-console-muted",
+    "w-full max-w-98 border border-console-border-strong bg-console-surface px-4 pb-4 pt-4 text-console-text shadow-[2px_2px_0_rgb(15_23_42/0.12)] [:where(&_a)]:mt-3 [:where(&_a)]:inline-block [:where(&_a)]:cursor-pointer [:where(&_a)]:text-[12.5px] [:where(&_a)]:text-console-accent [:where(&_a:hover)]:text-console-accent-hover [&_button]:w-full [&_p]:text-[12.5px] [&_p]:leading-normal [&_p]:text-console-muted",
   authTitle: "mb-2 text-[1.2rem] font-medium leading-tight text-console-text",
   authCopy: "mb-3.5 text-[12.5px] leading-normal text-console-muted",
   authActions: "mt-3 flex flex-col gap-1.5",

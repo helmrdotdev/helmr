@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/helmrdotdev/helmr/internal/org"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,6 +39,15 @@ func TestLoadConfigRejectsSetupTokenWhitespace(t *testing.T) {
 
 func setDevRegionConfig(t *testing.T) {
 	t.Helper()
+	t.Setenv("ENVIRONMENT_MAX_RESIDENT_COMPUTERS", "10")
+	t.Setenv("ENVIRONMENT_MAX_CPU_MILLIS", "16000")
+	t.Setenv("ENVIRONMENT_MAX_MEMORY_BYTES", "68719476736")
+	t.Setenv("ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES", "1099511627776")
+	t.Setenv("ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS", "100")
+	t.Setenv("ENVIRONMENT_MAX_CAUSAL_DEPTH", "8")
+	t.Setenv("ENVIRONMENT_ADMISSION_RATE_PER_SECOND", "10")
+	t.Setenv("ENVIRONMENT_ADMISSION_BURST", "20")
+	t.Setenv("ENVIRONMENT_PREPARATION_TIMEOUT_MS", "600000")
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH", "/etc/helmr/runtime.descriptor.json")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
@@ -91,4 +101,8 @@ func TestMigrationPathsFindsSourceRootWhenCwdDiffers(t *testing.T) {
 		}
 		t.Fatalf("expected fallback migration path to be absolute, got %q", path)
 	}
+}
+
+func devTestExecutionLimits() org.ExecutionLimits {
+	return org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}
 }

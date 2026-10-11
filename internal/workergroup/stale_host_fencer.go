@@ -281,7 +281,6 @@ func (f *StaleHostFencer) ReconcileOnce(ctx context.Context) (StaleHostFenceCycl
 				ExpectedEpoch:               candidate.CurrentEpoch,
 				RegistrationStaleBefore:     registrationStaleBefore,
 				ObservationFreshnessSeconds: ObservationFreshnessSeconds,
-				ReasonCode:                  pgtype.Text{String: staleHostReasonCode, Valid: true},
 			})
 			switch {
 			case err == nil:

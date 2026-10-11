@@ -2,6 +2,7 @@ package deployment
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 	"uuid"
@@ -10,175 +11,170 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5"
 )
 
-// Position is the sort key of the last Deployment on a previous page.
 type Position struct {
 	CreatedAt time.Time
 	ID        uuid.UUID
 }
 
-// List returns up to limit Deployments of the environment after the given
-// position, newest first, and whether more follow.
-func List(ctx context.Context, q db.Querier, principal auth.Principal, scope auth.Scope, limit int32, after *Position) ([]db.ListScopedDeploymentsRow, bool, error) {
+func (r Record) Version() string { return version(r.ID) }
+
+// List returns finalized Deployments, newest first, within the authorized scope.
+func List(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope, limit int32, after *Position) ([]Record, bool, error) {
 	if err := authorizeRead(principal, scope); err != nil {
 		return nil, false, err
 	}
-	projectID, environmentID, err := scopeIDs(scope)
+	if limit < 1 || limit > 100 {
+		return nil, false, invalidInput(errors.New("deployment page limit must be between 1 and 100"))
+	}
+	project, env, err := scopeIDs(scope)
 	if err != nil {
 		return nil, false, err
 	}
-	params := db.ListScopedDeploymentsParams{
-		OrgID: pgvalue.UUID(principal.OrgID), ProjectID: projectID,
-		EnvironmentID: environmentID, RowLimit: limit + 1,
-	}
+	var afterTime *time.Time
+	var afterID *uuid.UUID
 	if after != nil {
-		params.HasAfter = true
-		params.AfterCreatedAt = pgvalue.Timestamptz(after.CreatedAt)
-		params.AfterID = pgvalue.UUID(after.ID)
+		afterTime = &after.CreatedAt
+		afterID = &after.ID
 	}
-	rows, err := q.ListScopedDeployments(ctx, params)
+	rows, err := q.Query(ctx, `SELECT d.id,e.org_id,e.project_id,d.environment_id,d.bundle_digest,d.created_at FROM deployments d JOIN environments e ON e.id=d.environment_id WHERE e.org_id=$1 AND e.project_id=$2 AND e.id=$3 AND ($4::timestamptz IS NULL OR (d.created_at,d.id)<($4,$5::uuid)) ORDER BY d.created_at DESC,d.id DESC LIMIT $6`, principal.OrgID, project, env, afterTime, afterID, limit+1)
 	if err != nil {
-		return nil, false, fmt.Errorf("list deployments: %w", err)
+		return nil, false, err
 	}
-	if len(rows) > int(limit) {
-		return rows[:limit], true, nil
+	defer rows.Close()
+	result := []Record{}
+	for rows.Next() {
+		var r Record
+		if err := rows.Scan(&r.ID, &r.OrgID, &r.ProjectID, &r.EnvironmentID, &r.BundleDigest, &r.CreatedAt); err != nil {
+			return nil, false, err
+		}
+		result = append(result, r)
 	}
-	return rows, false, nil
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	if len(result) > int(limit) {
+		return result[:limit], true, nil
+	}
+	return result, false, nil
 }
 
-// Get returns a Deployment of the environment.
-func Get(ctx context.Context, q db.Querier, principal auth.Principal, scope auth.Scope, deploymentID uuid.UUID) (db.Deployment, error) {
+func Get(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope, id uuid.UUID) (Record, error) {
 	if err := authorizeRead(principal, scope); err != nil {
-		return db.Deployment{}, err
+		return Record{}, err
 	}
-	projectID, environmentID, err := scopeIDs(scope)
+	project, env, err := scopeIDs(scope)
 	if err != nil {
-		return db.Deployment{}, err
+		return Record{}, err
 	}
-	record, err := q.GetDeploymentForOrg(ctx, db.GetDeploymentForOrgParams{
-		OrgID: pgvalue.UUID(principal.OrgID), ID: pgvalue.UUID(deploymentID),
-	})
-	if isNoRows(err) || (err == nil && (record.ProjectID != projectID || record.EnvironmentID != environmentID)) {
-		return db.Deployment{}, ErrNotFound
+	r, err := readRecord(ctx, q, pgvalue.MustUUIDValue(env), id)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && (r.OrgID != principal.OrgID || r.ProjectID != pgvalue.MustUUIDValue(project)) {
+		return Record{}, ErrNotFound
 	}
-	if err != nil {
-		return db.Deployment{}, fmt.Errorf("get deployment: %w", err)
-	}
-	return record, nil
+	return r, err
 }
 
-// GetCurrent returns the environment's promoted Deployment.
-func GetCurrent(ctx context.Context, q db.Querier, principal auth.Principal, scope auth.Scope) (db.Deployment, error) {
-	if err := authorize(principal, scope, auth.PermissionRunsRead); err != nil {
-		return db.Deployment{}, err
+func GetCurrent(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope) (Record, error) {
+	if err := authorizeRead(principal, scope); err != nil {
+		return Record{}, err
 	}
-	projectID, environmentID, err := scopeIDs(scope)
+	project, env, err := scopeIDs(scope)
 	if err != nil {
-		return db.Deployment{}, err
+		return Record{}, err
 	}
-	record, err := q.GetCurrentDeployment(ctx, db.GetCurrentDeploymentParams{
-		OrgID: pgvalue.UUID(principal.OrgID), ProjectID: projectID, EnvironmentID: environmentID,
-	})
-	if isNoRows(err) {
-		return db.Deployment{}, ErrNoCurrentDeployment
+	var id uuid.UUID
+	err = q.QueryRow(ctx, `SELECT current_deployment_id FROM environments WHERE id=$1 AND org_id=$2 AND project_id=$3 AND current_deployment_id IS NOT NULL`, env, principal.OrgID, project).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Record{}, ErrNoCurrentDeployment
 	}
 	if err != nil {
-		return db.Deployment{}, fmt.Errorf("get current deployment: %w", err)
+		return Record{}, err
 	}
-	return record, nil
+	return readRecord(ctx, q, pgvalue.MustUUIDValue(env), id)
 }
 
-// DefinitionPage is one page of the definitions of one kind that a
-// Deployment declares, ordered by declared ID.
 type DefinitionPage struct {
 	DeploymentID uuid.UUID
 	DeclaredIDs  []string
 	HasMore      bool
 }
 
-// ListDefinitions returns up to limit declared IDs of the given kind after
-// afterDeclaredID, from the selected Deployment or, when selected is nil, the
-// environment's current one.
-func ListDefinitions(ctx context.Context, q db.Querier, principal auth.Principal, scope auth.Scope, kind definition.Kind, selected *uuid.UUID, limit int32, afterDeclaredID *string) (DefinitionPage, error) {
-	if err := authorizeRead(principal, scope); err != nil {
-		return DefinitionPage{}, err
+func definitionTable(kind definition.Kind) (string, error) {
+	switch kind {
+	case definition.KindAgent:
+		return "agent_definitions", nil
+	case definition.KindComputer:
+		return "computer_definitions", nil
+	default:
+		return "", invalidInput(fmt.Errorf("unsupported definition kind %q", kind))
 	}
-	target, environmentID, err := definitionDeployment(ctx, q, principal, scope, selected)
+}
+func definitionDeployment(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope, selected *uuid.UUID) (Record, error) {
+	if selected != nil {
+		r, err := Get(ctx, q, principal, scope, *selected)
+		if errors.Is(err, ErrNotFound) {
+			err = ErrSelectedDeploymentNotFound
+		}
+		return r, err
+	}
+	r, err := GetCurrent(ctx, q, principal, scope)
+	if errors.Is(err, ErrNoCurrentDeployment) {
+		err = ErrNoCurrentDefinitions
+	}
+	return r, err
+}
+func ListDefinitions(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope, kind definition.Kind, selected *uuid.UUID, limit int32, after *string) (DefinitionPage, error) {
+	if limit < 1 || limit > 100 {
+		return DefinitionPage{}, invalidInput(errors.New("definition page limit must be between 1 and 100"))
+	}
+	table, err := definitionTable(kind)
 	if err != nil {
 		return DefinitionPage{}, err
 	}
-	params := db.ListDefinitionSnapshotsParams{
-		EnvironmentID: environmentID, DeploymentID: target.ID, Kind: string(kind), RowLimit: limit + 1,
-	}
-	if afterDeclaredID != nil {
-		params.HasAfter = true
-		params.AfterID = *afterDeclaredID
-	}
-	declaredIDs, err := q.ListDefinitionSnapshots(ctx, params)
+	r, err := definitionDeployment(ctx, q, principal, scope, selected)
 	if err != nil {
-		return DefinitionPage{}, fmt.Errorf("list %s definitions: %w", kind, err)
+		return DefinitionPage{}, err
 	}
-	page := DefinitionPage{DeploymentID: pgvalue.MustUUIDValue(target.ID), DeclaredIDs: declaredIDs}
-	if len(declaredIDs) > int(limit) {
-		page.DeclaredIDs, page.HasMore = declaredIDs[:limit], true
+	rows, err := q.Query(ctx, `SELECT definition_key FROM `+table+` WHERE environment_id=$1 AND deployment_id=$2 AND ($3::text IS NULL OR definition_key>$3) ORDER BY definition_key LIMIT $4`, r.EnvironmentID, r.ID, after, limit+1)
+	if err != nil {
+		return DefinitionPage{}, err
+	}
+	defer rows.Close()
+	page := DefinitionPage{DeploymentID: r.ID, DeclaredIDs: []string{}}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return DefinitionPage{}, err
+		}
+		page.DeclaredIDs = append(page.DeclaredIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return DefinitionPage{}, err
+	}
+	if len(page.DeclaredIDs) > int(limit) {
+		page.DeclaredIDs = page.DeclaredIDs[:limit]
+		page.HasMore = true
 	}
 	return page, nil
 }
-
-// GetDefinition returns the declared definition from the selected Deployment
-// or, when selected is nil, the environment's current one, together with that
-// Deployment's ID.
-func GetDefinition(ctx context.Context, q db.Querier, principal auth.Principal, scope auth.Scope, kind definition.Kind, selected *uuid.UUID, declaredID string) (uuid.UUID, string, error) {
-	if err := authorizeRead(principal, scope); err != nil {
-		return uuid.UUID{}, "", err
-	}
-	target, environmentID, err := definitionDeployment(ctx, q, principal, scope, selected)
+func GetDefinition(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope, kind definition.Kind, selected *uuid.UUID, id string) (uuid.UUID, string, error) {
+	table, err := definitionTable(kind)
 	if err != nil {
-		return uuid.UUID{}, "", err
+		return uuid.Nil(), "", err
 	}
-	declared, err := q.GetDefinitionSnapshot(ctx, db.GetDefinitionSnapshotParams{
-		EnvironmentID: environmentID, DeploymentID: target.ID, Kind: string(kind), DeclaredID: declaredID,
-	})
-	if isNoRows(err) {
-		return uuid.UUID{}, "", ErrDefinitionNotFound
+	r, err := definitionDeployment(ctx, q, principal, scope, selected)
+	if err != nil {
+		return uuid.Nil(), "", err
+	}
+	var found string
+	err = q.QueryRow(ctx, `SELECT definition_key FROM `+table+` WHERE environment_id=$1 AND deployment_id=$2 AND definition_key=$3`, r.EnvironmentID, r.ID, id).Scan(&found)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = ErrDefinitionNotFound
 	}
 	if err != nil {
-		return uuid.UUID{}, "", fmt.Errorf("get definition: %w", err)
+		return uuid.Nil(), "", err
 	}
-	return pgvalue.MustUUIDValue(target.ID), declared, nil
-}
-
-// definitionDeployment resolves the Deployment whose definitions a read
-// targets. Only a Deployment with a recorded Program has readable definitions.
-func definitionDeployment(ctx context.Context, q db.Querier, principal auth.Principal, scope auth.Scope, selected *uuid.UUID) (db.Deployment, pgtype.UUID, error) {
-	projectID, environmentID, err := scopeIDs(scope)
-	if err != nil {
-		return db.Deployment{}, pgtype.UUID{}, err
-	}
-	orgID := pgvalue.UUID(principal.OrgID)
-	var target db.Deployment
-	if selected != nil {
-		target, err = q.GetDeployment(ctx, db.GetDeploymentParams{
-			OrgID: orgID, ProjectID: projectID, EnvironmentID: environmentID, ID: pgvalue.UUID(*selected),
-		})
-		if isNoRows(err) {
-			return db.Deployment{}, pgtype.UUID{}, ErrSelectedDeploymentNotFound
-		}
-	} else {
-		target, err = q.GetCurrentDeploymentForRoute(ctx, db.GetCurrentDeploymentForRouteParams{
-			OrgID: orgID, ProjectID: projectID, EnvironmentID: environmentID,
-		})
-		if isNoRows(err) {
-			return db.Deployment{}, pgtype.UUID{}, ErrNoCurrentDefinitions
-		}
-	}
-	if err != nil {
-		return db.Deployment{}, pgtype.UUID{}, fmt.Errorf("resolve definition deployment: %w", err)
-	}
-	if !target.ProgramArtifactID.Valid || len(target.ProgramIndexDigest) == 0 || target.RuntimeArtifactDigest == "" {
-		return db.Deployment{}, pgtype.UUID{}, ErrDefinitionsNotMaterialized
-	}
-	return target, environmentID, nil
+	return r.ID, found, nil
 }

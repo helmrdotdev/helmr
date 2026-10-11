@@ -1,16 +1,22 @@
 package controlplane
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
+	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/worker"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -182,7 +188,7 @@ func TestWorkerHostLifecycleHTTP(t *testing.T) {
 		t.Fatalf("drain = %+v, err = %v", draining, err)
 	}
 	assertAdminError(t, f.request(t, http.MethodGet, "/worker/v1/instance", hostCredential, ""), http.StatusUnauthorized, "unauthorized")
-	// The completion contract has no body; a legacy JSON proof is rejected.
+	// Drain completion accepts no body.
 	hostCredential = host.issue(t, f)
 	assertAdminError(t, f.request(t, http.MethodPost, "/worker/v1/instance/drain/complete", hostCredential, `{}`), http.StatusBadRequest, "bad_request")
 	completed, err := host.client.CompleteWorkerDrain(t.Context())
@@ -231,5 +237,37 @@ func TestProviderTerminationFenceUsesWorkerProtocolReason(t *testing.T) {
 	}
 	if _, err := host.client.ObserveWorker(t.Context(), workerapi.Observation{}); !httpclient.IsStatus(err, http.StatusUnauthorized) {
 		t.Fatalf("fenced host observation=%v", err)
+	}
+}
+
+// A local probe has no old allocation for the Control Plane to fence. Its
+// quarantine still cannot turn a sealed pool into a smaller available host.
+func TestWorkerHostQuarantineCannotActivateReducedPoolTemplate(t *testing.T) {
+	f := newWorkerHTTPFixture(t)
+	first := f.host(t, f.enroll(t, "default", "healthy"))
+	caps := validWorkerCapabilities(t)
+	first.start(t, caps)
+	retained := f.host(t, f.enroll(t, "default", "retained"))
+	owner := vm.Owner{Kind: vm.OwnerInstance, ID: uuid.NewV7().String()}
+	supervisor, err := worker.New(worker.Config{
+		ControlPlane: retained.client, Capabilities: caps, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Recover: func(context.Context) (worker.RecoveryEvidence, error) {
+			return worker.RecoveryEvidence{ObservedAt: time.Now(), Quarantined: []string{owner.ID}, QuarantinedOwners: []vm.Owner{owner}}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if err := supervisor.Run(ctx); !httpclient.IsStatus(err, http.StatusConflict) || !strings.Contains(err.Error(), "activate worker:") {
+		t.Fatalf("quarantine changed sealed pool capacity: %v", err)
+	}
+	// An ordinary later startup with clean recovery restores the unchanged
+	// capabilities. This test has no actual VM custody to reconcile.
+	restarted := f.host(t, retained.enrolled)
+	status := restarted.start(t, caps)
+	if status.Status != workerapi.StatusActive {
+		t.Fatalf("clean restart: %+v", status)
 	}
 }

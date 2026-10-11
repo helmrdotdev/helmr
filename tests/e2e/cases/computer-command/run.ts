@@ -1,26 +1,25 @@
-import { verify, assert, assertEqual, errorCode, readTelemetry, deleteComputer } from "../../support/context"
-import type { ComputerRef, CommandRef } from "@helmr/sdk"
-import type { runtimeSmoke } from "../runtime/task"
-await verify("computer-command", async ({ client, marker, objects, cleanup }) => {
+import { verify, assert, assertEqual, errorCode, completedResult, waitOutput, deleteComputer } from "../../support/context"
+import type { ClientComputerRef, CommandRef } from "@helmr/sdk"
+await verify("computer-command", async ({ client, marker, objects, cleanup, startAgent }) => {
   const computerKey = `runtime-smoke-${marker}`
   const computerCreateOptions = {
     key: computerKey,
     idempotencyKey: `computer:create:${marker}`,
   } as const
-  const created = await client.sandboxes.createComputer(
+  const created = await client.computerDefinitions.createComputer(
     "helmr-runtime-smoke",
     computerCreateOptions,
   )
   objects.computer_ids.push(created.id)
   cleanup(() => deleteComputer(created, `computer:delete:${marker}`))
-  const replayedCreate = await client.sandboxes.createComputer(
+  const replayedCreate = await client.computerDefinitions.createComputer(
     "helmr-runtime-smoke",
     computerCreateOptions,
   )
   assertEqual(replayedCreate.id, created.id, "computer create replay changed the ID")
-  let unexpectedConflictComputer: ComputerRef | undefined
+  let unexpectedConflictComputer: ClientComputerRef | undefined
   try {
-    unexpectedConflictComputer = await client.sandboxes.createComputer("helmr-runtime-smoke", {
+    unexpectedConflictComputer = await client.computerDefinitions.createComputer("helmr-runtime-smoke", {
       ...computerCreateOptions,
       key: `${computerKey}-conflict`,
     })
@@ -43,7 +42,7 @@ await verify("computer-command", async ({ client, marker, objects, cleanup }) =>
   const computer = matches.items[0]!
   const byKey = client.computers.ref(computer.id)
   assertEqual(computer.id, created.id, "computer key resolved to a different Computer")
-  assertEqual(computer.sandboxId, "helmr-runtime-smoke", "computer Sandbox ID mismatch")
+  assertEqual(computer.definitionKey, "helmr-runtime-smoke", "computer definition key mismatch")
 
   const markerDirectory = "sandbox-smoke/nested"
   const markerPath = `${markerDirectory}/marker.txt`
@@ -88,63 +87,38 @@ await verify("computer-command", async ({ client, marker, objects, cleanup }) =>
     "Command idempotency replay changed the result",
   )
 
-  const taskMarker = `${marker}-task`
-  const started = await client.tasks.start<typeof runtimeSmoke>(
-    "runtime-smoke",
-    {
-      payload: {
-        scenario: "computer-basic-exec-client-smoke",
-        marker: taskMarker,
-        expectedComputerMarker: marker,
-        expectedEnvironment: "unknown",
-        exerciseToken: false,
-        tokenTimeout: 120,
-        largeFileKiB,
-      },
-      computer: byKey,
-      idempotencyKey: `task:start:${marker}`,
-      tags: ["smoke", "computer-basic-exec"],
-      metadata: { marker: marker },
+  const turnMarker = `${marker}-turn`
+  const started = await startAgent("runtime-smoke", {
+    input: {
+      scenario: "computer-basic-exec-client-smoke",
+      marker: turnMarker,
+      expectedComputerMarker: marker,
+      expectedEnvironment: "unknown",
+      exerciseQuestion: false,
+      largeFileKiB,
     },
-    { signal: AbortSignal.timeout(30_000) },
-  )
-  objects.run_ids.push(started.id)
-  const taskOutput = await client.runs
-    .wait(started, {
-      signal: AbortSignal.timeout(20 * 60 * 1_000),
-    })
-    .unwrap()
-  const taskLogs = await readTelemetry(() => client.runs.logs(started.id, { limit: 100 }))
-  const taskEvents = await readTelemetry(() => client.runs.events(started.id, { limit: 100 }))
-  for (const level of ["debug", "info", "warn", "error"] as const) {
-    assert(
-      taskLogs.items.some(
-        (record) =>
-          record.kind === "structured" &&
-          record.level === level &&
-          record.attributes["marker"] === taskMarker,
-      ),
-      `Task logs did not include the ${level} structured logger probe`,
-    )
-  }
-  assert(
-    taskEvents.items.some((event) => event.runId === started.id),
-    "Task events did not include the completed Run",
-  )
-  const postTaskExec = await collectCommand(await byKey.exec(
+    computer: { id: byKey.id },
+    idempotencyKey: `agent:start:${marker}`,
+  })
+  const output = await waitOutput(started.session, started.turn, value =>
+    value !== null && typeof value === "object" && !Array.isArray(value) &&
+    "phase" in value && value.phase === "runtime-smoke" && "marker" in value && value.marker === turnMarker)
+  const turnResult = await completedResult(started.turn)
+  const postTurnExec = await collectCommand(await byKey.exec(
     {
       command: ["cat", markerPath],
       cwd: "/workspace",
-      idempotencyKey: `computer:verify-task:${marker}`,
+      idempotencyKey: `computer:verify-turn:${marker}`,
     },
     {
       signal: AbortSignal.timeout(15 * 60_000),
     },
   ))
-  assertEqual(postTaskExec.exitCode, 0, "Task Computer verification command failed")
-  const taskFile = new TextDecoder().decode(postTaskExec.stdout)
-  assert(taskFile.includes(`marker=${taskMarker}`), "Task did not update the Computer file")
+  assertEqual(postTurnExec.exitCode, 0, "Agent Computer verification command failed")
+  const turnFile = new TextDecoder().decode(postTurnExec.stdout)
+  assert(turnFile.includes(`marker=${turnMarker}`), "Agent did not update the Computer file")
 
+  await started.session.cancel({ idempotencyKey: `session:cancel:${marker}` })
   const deleted = await deleteComputer(byKey, `computer:delete:${marker}`)
   assertEqual(deleted.computerId, created.id, "Computer delete receipt changed the ID")
   const deleteReplay = await created.delete({
@@ -156,8 +130,8 @@ await verify("computer-command", async ({ client, marker, objects, cleanup }) =>
     computerCreateReplay: true,
     computerDeleteReplay: true,
     executionReplay: true,
-    taskOutput,
-    telemetry: true,
+    turnResult,
+    output,
   }
 })
 function assertExec(result: CollectedCommand, marker: string): void {

@@ -7,7 +7,6 @@
 package computerv0
 
 import (
-	v0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -21,6 +20,104 @@ const (
 	// Verify that runtime/protoimpl is sufficiently up-to-date.
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
+
+// The owned VM transport selects the single Computer filesystem. Acknowledgement
+// covers its retained descriptor; it does not attest remote publication.
+type FlushComputerRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	OperationId   string                 `protobuf:"bytes,1,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FlushComputerRequest) Reset() {
+	*x = FlushComputerRequest{}
+	mi := &file_computer_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FlushComputerRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FlushComputerRequest) ProtoMessage() {}
+
+func (x *FlushComputerRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_computer_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FlushComputerRequest.ProtoReflect.Descriptor instead.
+func (*FlushComputerRequest) Descriptor() ([]byte, []int) {
+	return file_computer_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *FlushComputerRequest) GetOperationId() string {
+	if x != nil {
+		return x.OperationId
+	}
+	return ""
+}
+
+type FlushComputerResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	OperationId   string                 `protobuf:"bytes,1,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
+	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FlushComputerResponse) Reset() {
+	*x = FlushComputerResponse{}
+	mi := &file_computer_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FlushComputerResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FlushComputerResponse) ProtoMessage() {}
+
+func (x *FlushComputerResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_computer_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FlushComputerResponse.ProtoReflect.Descriptor instead.
+func (*FlushComputerResponse) Descriptor() ([]byte, []int) {
+	return file_computer_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *FlushComputerResponse) GetOperationId() string {
+	if x != nil {
+		return x.OperationId
+	}
+	return ""
+}
+
+func (x *FlushComputerResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
 
 type ComputerOperationEnvelope struct {
 	state                      protoimpl.MessageState `protogen:"open.v1"`
@@ -40,7 +137,7 @@ type ComputerOperationEnvelope struct {
 
 func (x *ComputerOperationEnvelope) Reset() {
 	*x = ComputerOperationEnvelope{}
-	mi := &file_computer_proto_msgTypes[0]
+	mi := &file_computer_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -52,7 +149,7 @@ func (x *ComputerOperationEnvelope) String() string {
 func (*ComputerOperationEnvelope) ProtoMessage() {}
 
 func (x *ComputerOperationEnvelope) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[0]
+	mi := &file_computer_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -65,7 +162,7 @@ func (x *ComputerOperationEnvelope) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerOperationEnvelope.ProtoReflect.Descriptor instead.
 func (*ComputerOperationEnvelope) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{0}
+	return file_computer_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *ComputerOperationEnvelope) GetOperationId() string {
@@ -138,1319 +235,18 @@ func (x *ComputerOperationEnvelope) GetRequestFingerprint() string {
 	return ""
 }
 
-type ComputerArtifact struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Digest        string                 `protobuf:"bytes,1,opt,name=digest,proto3" json:"digest,omitempty"`
-	MediaType     string                 `protobuf:"bytes,2,opt,name=media_type,json=mediaType,proto3" json:"media_type,omitempty"`
-	Encoding      string                 `protobuf:"bytes,3,opt,name=encoding,proto3" json:"encoding,omitempty"`
-	SizeBytes     uint64                 `protobuf:"varint,4,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
-	EntryCount    uint32                 `protobuf:"varint,5,opt,name=entry_count,json=entryCount,proto3" json:"entry_count,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ComputerArtifact) Reset() {
-	*x = ComputerArtifact{}
-	mi := &file_computer_proto_msgTypes[1]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ComputerArtifact) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ComputerArtifact) ProtoMessage() {}
-
-func (x *ComputerArtifact) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[1]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ComputerArtifact.ProtoReflect.Descriptor instead.
-func (*ComputerArtifact) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{1}
-}
-
-func (x *ComputerArtifact) GetDigest() string {
-	if x != nil {
-		return x.Digest
-	}
-	return ""
-}
-
-func (x *ComputerArtifact) GetMediaType() string {
-	if x != nil {
-		return x.MediaType
-	}
-	return ""
-}
-
-func (x *ComputerArtifact) GetEncoding() string {
-	if x != nil {
-		return x.Encoding
-	}
-	return ""
-}
-
-func (x *ComputerArtifact) GetSizeBytes() uint64 {
-	if x != nil {
-		return x.SizeBytes
-	}
-	return 0
-}
-
-func (x *ComputerArtifact) GetEntryCount() uint32 {
-	if x != nil {
-		return x.EntryCount
-	}
-	return 0
-}
-
-type ComputerAuthorityFence struct {
-	state                     protoimpl.MessageState `protogen:"open.v1"`
-	WorkerHostId              string                 `protobuf:"bytes,1,opt,name=worker_host_id,json=workerHostId,proto3" json:"worker_host_id,omitempty"`
-	WorkerEpoch               int64                  `protobuf:"varint,2,opt,name=worker_epoch,json=workerEpoch,proto3" json:"worker_epoch,omitempty"`
-	ComputerInstanceId        string                 `protobuf:"bytes,3,opt,name=computer_instance_id,json=computerInstanceId,proto3" json:"computer_instance_id,omitempty"`
-	VmPlatformId              string                 `protobuf:"bytes,4,opt,name=vm_platform_id,json=vmPlatformId,proto3" json:"vm_platform_id,omitempty"`
-	ComputerId                string                 `protobuf:"bytes,5,opt,name=computer_id,json=computerId,proto3" json:"computer_id,omitempty"`
-	RunId                     string                 `protobuf:"bytes,7,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	AttemptNumber             uint32                 `protobuf:"varint,8,opt,name=attempt_number,json=attemptNumber,proto3" json:"attempt_number,omitempty"`
-	RunLeaseId                string                 `protobuf:"bytes,9,opt,name=run_lease_id,json=runLeaseId,proto3" json:"run_lease_id,omitempty"`
-	LeaseSequence             int64                  `protobuf:"varint,10,opt,name=lease_sequence,json=leaseSequence,proto3" json:"lease_sequence,omitempty"`
-	WriterGeneration          int64                  `protobuf:"varint,13,opt,name=writer_generation,json=writerGeneration,proto3" json:"writer_generation,omitempty"`
-	ExpiresAtUnixNano         int64                  `protobuf:"varint,15,opt,name=expires_at_unix_nano,json=expiresAtUnixNano,proto3" json:"expires_at_unix_nano,omitempty"`
-	BaseComputerDiskVersionId string                 `protobuf:"bytes,16,opt,name=base_computer_disk_version_id,json=baseComputerDiskVersionId,proto3" json:"base_computer_disk_version_id,omitempty"`
-	unknownFields             protoimpl.UnknownFields
-	sizeCache                 protoimpl.SizeCache
-}
-
-func (x *ComputerAuthorityFence) Reset() {
-	*x = ComputerAuthorityFence{}
-	mi := &file_computer_proto_msgTypes[2]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ComputerAuthorityFence) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ComputerAuthorityFence) ProtoMessage() {}
-
-func (x *ComputerAuthorityFence) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[2]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ComputerAuthorityFence.ProtoReflect.Descriptor instead.
-func (*ComputerAuthorityFence) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *ComputerAuthorityFence) GetWorkerHostId() string {
-	if x != nil {
-		return x.WorkerHostId
-	}
-	return ""
-}
-
-func (x *ComputerAuthorityFence) GetWorkerEpoch() int64 {
-	if x != nil {
-		return x.WorkerEpoch
-	}
-	return 0
-}
-
-func (x *ComputerAuthorityFence) GetComputerInstanceId() string {
-	if x != nil {
-		return x.ComputerInstanceId
-	}
-	return ""
-}
-
-func (x *ComputerAuthorityFence) GetVmPlatformId() string {
-	if x != nil {
-		return x.VmPlatformId
-	}
-	return ""
-}
-
-func (x *ComputerAuthorityFence) GetComputerId() string {
-	if x != nil {
-		return x.ComputerId
-	}
-	return ""
-}
-
-func (x *ComputerAuthorityFence) GetRunId() string {
-	if x != nil {
-		return x.RunId
-	}
-	return ""
-}
-
-func (x *ComputerAuthorityFence) GetAttemptNumber() uint32 {
-	if x != nil {
-		return x.AttemptNumber
-	}
-	return 0
-}
-
-func (x *ComputerAuthorityFence) GetRunLeaseId() string {
-	if x != nil {
-		return x.RunLeaseId
-	}
-	return ""
-}
-
-func (x *ComputerAuthorityFence) GetLeaseSequence() int64 {
-	if x != nil {
-		return x.LeaseSequence
-	}
-	return 0
-}
-
-func (x *ComputerAuthorityFence) GetWriterGeneration() int64 {
-	if x != nil {
-		return x.WriterGeneration
-	}
-	return 0
-}
-
-func (x *ComputerAuthorityFence) GetExpiresAtUnixNano() int64 {
-	if x != nil {
-		return x.ExpiresAtUnixNano
-	}
-	return 0
-}
-
-func (x *ComputerAuthorityFence) GetBaseComputerDiskVersionId() string {
-	if x != nil {
-		return x.BaseComputerDiskVersionId
-	}
-	return ""
-}
-
-type ComputerRunAuthority struct {
-	state             protoimpl.MessageState  `protogen:"open.v1"`
-	Fence             *ComputerAuthorityFence `protobuf:"bytes,1,opt,name=fence,proto3" json:"fence,omitempty"`
-	ChannelCredential string                  `protobuf:"bytes,2,opt,name=channel_credential,json=channelCredential,proto3" json:"channel_credential,omitempty"`
-	WriteCapability   string                  `protobuf:"bytes,3,opt,name=write_capability,json=writeCapability,proto3" json:"write_capability,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
-}
-
-func (x *ComputerRunAuthority) Reset() {
-	*x = ComputerRunAuthority{}
-	mi := &file_computer_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ComputerRunAuthority) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ComputerRunAuthority) ProtoMessage() {}
-
-func (x *ComputerRunAuthority) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ComputerRunAuthority.ProtoReflect.Descriptor instead.
-func (*ComputerRunAuthority) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *ComputerRunAuthority) GetFence() *ComputerAuthorityFence {
-	if x != nil {
-		return x.Fence
-	}
-	return nil
-}
-
-func (x *ComputerRunAuthority) GetChannelCredential() string {
-	if x != nil {
-		return x.ChannelCredential
-	}
-	return ""
-}
-
-func (x *ComputerRunAuthority) GetWriteCapability() string {
-	if x != nil {
-		return x.WriteCapability
-	}
-	return ""
-}
-
-type RenewComputerAuthorityRequest struct {
-	state                protoimpl.MessageState `protogen:"open.v1"`
-	Previous             *ComputerRunAuthority  `protobuf:"bytes,1,opt,name=previous,proto3" json:"previous,omitempty"`
-	NewExpiresAtUnixNano int64                  `protobuf:"varint,2,opt,name=new_expires_at_unix_nano,json=newExpiresAtUnixNano,proto3" json:"new_expires_at_unix_nano,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
-}
-
-func (x *RenewComputerAuthorityRequest) Reset() {
-	*x = RenewComputerAuthorityRequest{}
-	mi := &file_computer_proto_msgTypes[4]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *RenewComputerAuthorityRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*RenewComputerAuthorityRequest) ProtoMessage() {}
-
-func (x *RenewComputerAuthorityRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[4]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use RenewComputerAuthorityRequest.ProtoReflect.Descriptor instead.
-func (*RenewComputerAuthorityRequest) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{4}
-}
-
-func (x *RenewComputerAuthorityRequest) GetPrevious() *ComputerRunAuthority {
-	if x != nil {
-		return x.Previous
-	}
-	return nil
-}
-
-func (x *RenewComputerAuthorityRequest) GetNewExpiresAtUnixNano() int64 {
-	if x != nil {
-		return x.NewExpiresAtUnixNano
-	}
-	return 0
-}
-
-type RenewComputerAuthorityResponse struct {
-	state         protoimpl.MessageState  `protogen:"open.v1"`
-	Fence         *ComputerAuthorityFence `protobuf:"bytes,1,opt,name=fence,proto3" json:"fence,omitempty"`
-	Error         string                  `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *RenewComputerAuthorityResponse) Reset() {
-	*x = RenewComputerAuthorityResponse{}
-	mi := &file_computer_proto_msgTypes[5]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *RenewComputerAuthorityResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*RenewComputerAuthorityResponse) ProtoMessage() {}
-
-func (x *RenewComputerAuthorityResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[5]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use RenewComputerAuthorityResponse.ProtoReflect.Descriptor instead.
-func (*RenewComputerAuthorityResponse) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{5}
-}
-
-func (x *RenewComputerAuthorityResponse) GetFence() *ComputerAuthorityFence {
-	if x != nil {
-		return x.Fence
-	}
-	return nil
-}
-
-func (x *RenewComputerAuthorityResponse) GetError() string {
-	if x != nil {
-		return x.Error
-	}
-	return ""
-}
-
-type GrantProgramResumeRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Authority     *ComputerRunAuthority  `protobuf:"bytes,1,opt,name=authority,proto3" json:"authority,omitempty"`
-	RunWaitId     string                 `protobuf:"bytes,2,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
-	CheckpointId  string                 `protobuf:"bytes,3,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *GrantProgramResumeRequest) Reset() {
-	*x = GrantProgramResumeRequest{}
-	mi := &file_computer_proto_msgTypes[6]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *GrantProgramResumeRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*GrantProgramResumeRequest) ProtoMessage() {}
-
-func (x *GrantProgramResumeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[6]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use GrantProgramResumeRequest.ProtoReflect.Descriptor instead.
-func (*GrantProgramResumeRequest) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{6}
-}
-
-func (x *GrantProgramResumeRequest) GetAuthority() *ComputerRunAuthority {
-	if x != nil {
-		return x.Authority
-	}
-	return nil
-}
-
-func (x *GrantProgramResumeRequest) GetRunWaitId() string {
-	if x != nil {
-		return x.RunWaitId
-	}
-	return ""
-}
-
-func (x *GrantProgramResumeRequest) GetCheckpointId() string {
-	if x != nil {
-		return x.CheckpointId
-	}
-	return ""
-}
-
-type GrantProgramResumeResponse struct {
-	state         protoimpl.MessageState  `protogen:"open.v1"`
-	Fence         *ComputerAuthorityFence `protobuf:"bytes,1,opt,name=fence,proto3" json:"fence,omitempty"`
-	Attach        *v0.ResumeAttach        `protobuf:"bytes,2,opt,name=attach,proto3" json:"attach,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *GrantProgramResumeResponse) Reset() {
-	*x = GrantProgramResumeResponse{}
-	mi := &file_computer_proto_msgTypes[7]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *GrantProgramResumeResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*GrantProgramResumeResponse) ProtoMessage() {}
-
-func (x *GrantProgramResumeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[7]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use GrantProgramResumeResponse.ProtoReflect.Descriptor instead.
-func (*GrantProgramResumeResponse) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{7}
-}
-
-func (x *GrantProgramResumeResponse) GetFence() *ComputerAuthorityFence {
-	if x != nil {
-		return x.Fence
-	}
-	return nil
-}
-
-func (x *GrantProgramResumeResponse) GetAttach() *v0.ResumeAttach {
-	if x != nil {
-		return x.Attach
-	}
-	return nil
-}
-
-type CapturedRun struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	AttemptNumber uint32                 `protobuf:"varint,2,opt,name=attempt_number,json=attemptNumber,proto3" json:"attempt_number,omitempty"`
-	RunWaitId     string                 `protobuf:"bytes,3,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
-	RunLeaseId    string                 `protobuf:"bytes,4,opt,name=run_lease_id,json=runLeaseId,proto3" json:"run_lease_id,omitempty"`
-	CorrelationId string                 `protobuf:"bytes,5,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *CapturedRun) Reset() {
-	*x = CapturedRun{}
-	mi := &file_computer_proto_msgTypes[8]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *CapturedRun) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*CapturedRun) ProtoMessage() {}
-
-func (x *CapturedRun) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[8]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use CapturedRun.ProtoReflect.Descriptor instead.
-func (*CapturedRun) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{8}
-}
-
-func (x *CapturedRun) GetRunId() string {
-	if x != nil {
-		return x.RunId
-	}
-	return ""
-}
-
-func (x *CapturedRun) GetAttemptNumber() uint32 {
-	if x != nil {
-		return x.AttemptNumber
-	}
-	return 0
-}
-
-func (x *CapturedRun) GetRunWaitId() string {
-	if x != nil {
-		return x.RunWaitId
-	}
-	return ""
-}
-
-func (x *CapturedRun) GetRunLeaseId() string {
-	if x != nil {
-		return x.RunLeaseId
-	}
-	return ""
-}
-
-func (x *CapturedRun) GetCorrelationId() string {
-	if x != nil {
-		return x.CorrelationId
-	}
-	return ""
-}
-
-type ComputerRestoreIdentity struct {
-	state                    protoimpl.MessageState `protogen:"open.v1"`
-	ComputerId               string                 `protobuf:"bytes,1,opt,name=computer_id,json=computerId,proto3" json:"computer_id,omitempty"`
-	SourceComputerInstanceId string                 `protobuf:"bytes,2,opt,name=source_computer_instance_id,json=sourceComputerInstanceId,proto3" json:"source_computer_instance_id,omitempty"`
-	WriterGeneration         int64                  `protobuf:"varint,3,opt,name=writer_generation,json=writerGeneration,proto3" json:"writer_generation,omitempty"`
-	CheckpointId             string                 `protobuf:"bytes,4,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
-	Runs                     []*CapturedRun         `protobuf:"bytes,5,rep,name=runs,proto3" json:"runs,omitempty"`
-	unknownFields            protoimpl.UnknownFields
-	sizeCache                protoimpl.SizeCache
-}
-
-func (x *ComputerRestoreIdentity) Reset() {
-	*x = ComputerRestoreIdentity{}
-	mi := &file_computer_proto_msgTypes[9]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ComputerRestoreIdentity) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ComputerRestoreIdentity) ProtoMessage() {}
-
-func (x *ComputerRestoreIdentity) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[9]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ComputerRestoreIdentity.ProtoReflect.Descriptor instead.
-func (*ComputerRestoreIdentity) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{9}
-}
-
-func (x *ComputerRestoreIdentity) GetComputerId() string {
-	if x != nil {
-		return x.ComputerId
-	}
-	return ""
-}
-
-func (x *ComputerRestoreIdentity) GetSourceComputerInstanceId() string {
-	if x != nil {
-		return x.SourceComputerInstanceId
-	}
-	return ""
-}
-
-func (x *ComputerRestoreIdentity) GetWriterGeneration() int64 {
-	if x != nil {
-		return x.WriterGeneration
-	}
-	return 0
-}
-
-func (x *ComputerRestoreIdentity) GetCheckpointId() string {
-	if x != nil {
-		return x.CheckpointId
-	}
-	return ""
-}
-
-func (x *ComputerRestoreIdentity) GetRuns() []*CapturedRun {
-	if x != nil {
-		return x.Runs
-	}
-	return nil
-}
-
-// One request seals and freezes the entire admitted set before VM capture.
-type ComputerCaptureRun struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	AttemptNumber uint32                 `protobuf:"varint,2,opt,name=attempt_number,json=attemptNumber,proto3" json:"attempt_number,omitempty"`
-	RunWaitId     string                 `protobuf:"bytes,3,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
-	RunLeaseId    string                 `protobuf:"bytes,4,opt,name=run_lease_id,json=runLeaseId,proto3" json:"run_lease_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ComputerCaptureRun) Reset() {
-	*x = ComputerCaptureRun{}
-	mi := &file_computer_proto_msgTypes[10]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ComputerCaptureRun) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ComputerCaptureRun) ProtoMessage() {}
-
-func (x *ComputerCaptureRun) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[10]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ComputerCaptureRun.ProtoReflect.Descriptor instead.
-func (*ComputerCaptureRun) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{10}
-}
-
-func (x *ComputerCaptureRun) GetRunId() string {
-	if x != nil {
-		return x.RunId
-	}
-	return ""
-}
-
-func (x *ComputerCaptureRun) GetAttemptNumber() uint32 {
-	if x != nil {
-		return x.AttemptNumber
-	}
-	return 0
-}
-
-func (x *ComputerCaptureRun) GetRunWaitId() string {
-	if x != nil {
-		return x.RunWaitId
-	}
-	return ""
-}
-
-func (x *ComputerCaptureRun) GetRunLeaseId() string {
-	if x != nil {
-		return x.RunLeaseId
-	}
-	return ""
-}
-
-type FreezeComputerRequest struct {
-	state              protoimpl.MessageState `protogen:"open.v1"`
-	ComputerId         string                 `protobuf:"bytes,1,opt,name=computer_id,json=computerId,proto3" json:"computer_id,omitempty"`
-	ComputerInstanceId string                 `protobuf:"bytes,2,opt,name=computer_instance_id,json=computerInstanceId,proto3" json:"computer_instance_id,omitempty"`
-	WriterGeneration   int64                  `protobuf:"varint,3,opt,name=writer_generation,json=writerGeneration,proto3" json:"writer_generation,omitempty"`
-	CheckpointId       string                 `protobuf:"bytes,4,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
-	DesiredVersion     int64                  `protobuf:"varint,5,opt,name=desired_version,json=desiredVersion,proto3" json:"desired_version,omitempty"`
-	MembershipRevision int64                  `protobuf:"varint,6,opt,name=membership_revision,json=membershipRevision,proto3" json:"membership_revision,omitempty"`
-	Runs               []*ComputerCaptureRun  `protobuf:"bytes,7,rep,name=runs,proto3" json:"runs,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
-}
-
-func (x *FreezeComputerRequest) Reset() {
-	*x = FreezeComputerRequest{}
-	mi := &file_computer_proto_msgTypes[11]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *FreezeComputerRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*FreezeComputerRequest) ProtoMessage() {}
-
-func (x *FreezeComputerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[11]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use FreezeComputerRequest.ProtoReflect.Descriptor instead.
-func (*FreezeComputerRequest) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{11}
-}
-
-func (x *FreezeComputerRequest) GetComputerId() string {
-	if x != nil {
-		return x.ComputerId
-	}
-	return ""
-}
-
-func (x *FreezeComputerRequest) GetComputerInstanceId() string {
-	if x != nil {
-		return x.ComputerInstanceId
-	}
-	return ""
-}
-
-func (x *FreezeComputerRequest) GetWriterGeneration() int64 {
-	if x != nil {
-		return x.WriterGeneration
-	}
-	return 0
-}
-
-func (x *FreezeComputerRequest) GetCheckpointId() string {
-	if x != nil {
-		return x.CheckpointId
-	}
-	return ""
-}
-
-func (x *FreezeComputerRequest) GetDesiredVersion() int64 {
-	if x != nil {
-		return x.DesiredVersion
-	}
-	return 0
-}
-
-func (x *FreezeComputerRequest) GetMembershipRevision() int64 {
-	if x != nil {
-		return x.MembershipRevision
-	}
-	return 0
-}
-
-func (x *FreezeComputerRequest) GetRuns() []*ComputerCaptureRun {
-	if x != nil {
-		return x.Runs
-	}
-	return nil
-}
-
-type FreezeComputerResponse struct {
-	state              protoimpl.MessageState   `protogen:"open.v1"`
-	Identity           *ComputerRestoreIdentity `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
-	DesiredVersion     int64                    `protobuf:"varint,2,opt,name=desired_version,json=desiredVersion,proto3" json:"desired_version,omitempty"`
-	MembershipRevision int64                    `protobuf:"varint,3,opt,name=membership_revision,json=membershipRevision,proto3" json:"membership_revision,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
-}
-
-func (x *FreezeComputerResponse) Reset() {
-	*x = FreezeComputerResponse{}
-	mi := &file_computer_proto_msgTypes[12]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *FreezeComputerResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*FreezeComputerResponse) ProtoMessage() {}
-
-func (x *FreezeComputerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[12]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use FreezeComputerResponse.ProtoReflect.Descriptor instead.
-func (*FreezeComputerResponse) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{12}
-}
-
-func (x *FreezeComputerResponse) GetIdentity() *ComputerRestoreIdentity {
-	if x != nil {
-		return x.Identity
-	}
-	return nil
-}
-
-func (x *FreezeComputerResponse) GetDesiredVersion() int64 {
-	if x != nil {
-		return x.DesiredVersion
-	}
-	return 0
-}
-
-func (x *FreezeComputerResponse) GetMembershipRevision() int64 {
-	if x != nil {
-		return x.MembershipRevision
-	}
-	return 0
-}
-
-// Installation replaces expired guest grants only for the same source capture.
-// Activation follows restoration of host-to-guest grant renewal and waits for
-// every captured member to thaw or finish its ordinary cancellation path.
-type ComputerCaptureAbortMember struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	Member         *ComputerCaptureRun    `protobuf:"bytes,1,opt,name=member,proto3" json:"member,omitempty"`
-	Authority      *ComputerRunAuthority  `protobuf:"bytes,2,opt,name=authority,proto3" json:"authority,omitempty"`
-	Cancelled      bool                   `protobuf:"varint,3,opt,name=cancelled,proto3" json:"cancelled,omitempty"`
-	AttachSequence uint64                 `protobuf:"varint,4,opt,name=attach_sequence,json=attachSequence,proto3" json:"attach_sequence,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
-}
-
-func (x *ComputerCaptureAbortMember) Reset() {
-	*x = ComputerCaptureAbortMember{}
-	mi := &file_computer_proto_msgTypes[13]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ComputerCaptureAbortMember) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ComputerCaptureAbortMember) ProtoMessage() {}
-
-func (x *ComputerCaptureAbortMember) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[13]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ComputerCaptureAbortMember.ProtoReflect.Descriptor instead.
-func (*ComputerCaptureAbortMember) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{13}
-}
-
-func (x *ComputerCaptureAbortMember) GetMember() *ComputerCaptureRun {
-	if x != nil {
-		return x.Member
-	}
-	return nil
-}
-
-func (x *ComputerCaptureAbortMember) GetAuthority() *ComputerRunAuthority {
-	if x != nil {
-		return x.Authority
-	}
-	return nil
-}
-
-func (x *ComputerCaptureAbortMember) GetCancelled() bool {
-	if x != nil {
-		return x.Cancelled
-	}
-	return false
-}
-
-func (x *ComputerCaptureAbortMember) GetAttachSequence() uint64 {
-	if x != nil {
-		return x.AttachSequence
-	}
-	return 0
-}
-
-type ComputerCaptureAbortRequest struct {
-	state               protoimpl.MessageState        `protogen:"open.v1"`
-	Capture             *FreezeComputerRequest        `protobuf:"bytes,1,opt,name=capture,proto3" json:"capture,omitempty"`
-	AbortDesiredVersion int64                         `protobuf:"varint,2,opt,name=abort_desired_version,json=abortDesiredVersion,proto3" json:"abort_desired_version,omitempty"`
-	Members             []*ComputerCaptureAbortMember `protobuf:"bytes,3,rep,name=members,proto3" json:"members,omitempty"`
-	Activate            bool                          `protobuf:"varint,4,opt,name=activate,proto3" json:"activate,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
-}
-
-func (x *ComputerCaptureAbortRequest) Reset() {
-	*x = ComputerCaptureAbortRequest{}
-	mi := &file_computer_proto_msgTypes[14]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ComputerCaptureAbortRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ComputerCaptureAbortRequest) ProtoMessage() {}
-
-func (x *ComputerCaptureAbortRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[14]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ComputerCaptureAbortRequest.ProtoReflect.Descriptor instead.
-func (*ComputerCaptureAbortRequest) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{14}
-}
-
-func (x *ComputerCaptureAbortRequest) GetCapture() *FreezeComputerRequest {
-	if x != nil {
-		return x.Capture
-	}
-	return nil
-}
-
-func (x *ComputerCaptureAbortRequest) GetAbortDesiredVersion() int64 {
-	if x != nil {
-		return x.AbortDesiredVersion
-	}
-	return 0
-}
-
-func (x *ComputerCaptureAbortRequest) GetMembers() []*ComputerCaptureAbortMember {
-	if x != nil {
-		return x.Members
-	}
-	return nil
-}
-
-func (x *ComputerCaptureAbortRequest) GetActivate() bool {
-	if x != nil {
-		return x.Activate
-	}
-	return false
-}
-
-type ComputerCaptureAbortResponse struct {
-	state               protoimpl.MessageState `protogen:"open.v1"`
-	CheckpointId        string                 `protobuf:"bytes,1,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
-	AbortDesiredVersion int64                  `protobuf:"varint,2,opt,name=abort_desired_version,json=abortDesiredVersion,proto3" json:"abort_desired_version,omitempty"`
-	Activated           bool                   `protobuf:"varint,3,opt,name=activated,proto3" json:"activated,omitempty"`
-	// Definitive completed cancellation cleanup failure; the source cannot thaw.
-	CleanupFailed bool `protobuf:"varint,4,opt,name=cleanup_failed,json=cleanupFailed,proto3" json:"cleanup_failed,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ComputerCaptureAbortResponse) Reset() {
-	*x = ComputerCaptureAbortResponse{}
-	mi := &file_computer_proto_msgTypes[15]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ComputerCaptureAbortResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ComputerCaptureAbortResponse) ProtoMessage() {}
-
-func (x *ComputerCaptureAbortResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[15]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ComputerCaptureAbortResponse.ProtoReflect.Descriptor instead.
-func (*ComputerCaptureAbortResponse) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{15}
-}
-
-func (x *ComputerCaptureAbortResponse) GetCheckpointId() string {
-	if x != nil {
-		return x.CheckpointId
-	}
-	return ""
-}
-
-func (x *ComputerCaptureAbortResponse) GetAbortDesiredVersion() int64 {
-	if x != nil {
-		return x.AbortDesiredVersion
-	}
-	return 0
-}
-
-func (x *ComputerCaptureAbortResponse) GetActivated() bool {
-	if x != nil {
-		return x.Activated
-	}
-	return false
-}
-
-func (x *ComputerCaptureAbortResponse) GetCleanupFailed() bool {
-	if x != nil {
-		return x.CleanupFailed
-	}
-	return false
-}
-
-// A fresh transport for an unchanged source member, authorized by abort installation.
-type ComputerCaptureAbortAttachRequest struct {
-	state               protoimpl.MessageState `protogen:"open.v1"`
-	CheckpointId        string                 `protobuf:"bytes,1,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
-	AbortDesiredVersion int64                  `protobuf:"varint,2,opt,name=abort_desired_version,json=abortDesiredVersion,proto3" json:"abort_desired_version,omitempty"`
-	Member              *ComputerCaptureRun    `protobuf:"bytes,3,opt,name=member,proto3" json:"member,omitempty"`
-	Authority           *ComputerRunAuthority  `protobuf:"bytes,4,opt,name=authority,proto3" json:"authority,omitempty"`
-	AttachSequence      uint64                 `protobuf:"varint,5,opt,name=attach_sequence,json=attachSequence,proto3" json:"attach_sequence,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
-}
-
-func (x *ComputerCaptureAbortAttachRequest) Reset() {
-	*x = ComputerCaptureAbortAttachRequest{}
-	mi := &file_computer_proto_msgTypes[16]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ComputerCaptureAbortAttachRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ComputerCaptureAbortAttachRequest) ProtoMessage() {}
-
-func (x *ComputerCaptureAbortAttachRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[16]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ComputerCaptureAbortAttachRequest.ProtoReflect.Descriptor instead.
-func (*ComputerCaptureAbortAttachRequest) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{16}
-}
-
-func (x *ComputerCaptureAbortAttachRequest) GetCheckpointId() string {
-	if x != nil {
-		return x.CheckpointId
-	}
-	return ""
-}
-
-func (x *ComputerCaptureAbortAttachRequest) GetAbortDesiredVersion() int64 {
-	if x != nil {
-		return x.AbortDesiredVersion
-	}
-	return 0
-}
-
-func (x *ComputerCaptureAbortAttachRequest) GetMember() *ComputerCaptureRun {
-	if x != nil {
-		return x.Member
-	}
-	return nil
-}
-
-func (x *ComputerCaptureAbortAttachRequest) GetAuthority() *ComputerRunAuthority {
-	if x != nil {
-		return x.Authority
-	}
-	return nil
-}
-
-func (x *ComputerCaptureAbortAttachRequest) GetAttachSequence() uint64 {
-	if x != nil {
-		return x.AttachSequence
-	}
-	return 0
-}
-
-type ComputerCaptureAbortAttachResponse struct {
-	state               protoimpl.MessageState `protogen:"open.v1"`
-	CheckpointId        string                 `protobuf:"bytes,1,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
-	AbortDesiredVersion int64                  `protobuf:"varint,2,opt,name=abort_desired_version,json=abortDesiredVersion,proto3" json:"abort_desired_version,omitempty"`
-	Member              *ComputerCaptureRun    `protobuf:"bytes,3,opt,name=member,proto3" json:"member,omitempty"`
-	AttachSequence      uint64                 `protobuf:"varint,4,opt,name=attach_sequence,json=attachSequence,proto3" json:"attach_sequence,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
-}
-
-func (x *ComputerCaptureAbortAttachResponse) Reset() {
-	*x = ComputerCaptureAbortAttachResponse{}
-	mi := &file_computer_proto_msgTypes[17]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ComputerCaptureAbortAttachResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ComputerCaptureAbortAttachResponse) ProtoMessage() {}
-
-func (x *ComputerCaptureAbortAttachResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[17]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ComputerCaptureAbortAttachResponse.ProtoReflect.Descriptor instead.
-func (*ComputerCaptureAbortAttachResponse) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{17}
-}
-
-func (x *ComputerCaptureAbortAttachResponse) GetCheckpointId() string {
-	if x != nil {
-		return x.CheckpointId
-	}
-	return ""
-}
-
-func (x *ComputerCaptureAbortAttachResponse) GetAbortDesiredVersion() int64 {
-	if x != nil {
-		return x.AbortDesiredVersion
-	}
-	return 0
-}
-
-func (x *ComputerCaptureAbortAttachResponse) GetMember() *ComputerCaptureRun {
-	if x != nil {
-		return x.Member
-	}
-	return nil
-}
-
-func (x *ComputerCaptureAbortAttachResponse) GetAttachSequence() uint64 {
-	if x != nil {
-		return x.AttachSequence
-	}
-	return 0
-}
-
-type VerifyComputerRestoreRequest struct {
-	state         protoimpl.MessageState   `protogen:"open.v1"`
-	Identity      *ComputerRestoreIdentity `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *VerifyComputerRestoreRequest) Reset() {
-	*x = VerifyComputerRestoreRequest{}
-	mi := &file_computer_proto_msgTypes[18]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *VerifyComputerRestoreRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VerifyComputerRestoreRequest) ProtoMessage() {}
-
-func (x *VerifyComputerRestoreRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[18]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VerifyComputerRestoreRequest.ProtoReflect.Descriptor instead.
-func (*VerifyComputerRestoreRequest) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{18}
-}
-
-func (x *VerifyComputerRestoreRequest) GetIdentity() *ComputerRestoreIdentity {
-	if x != nil {
-		return x.Identity
-	}
-	return nil
-}
-
-type VerifyComputerRestoreResponse struct {
-	state         protoimpl.MessageState   `protogen:"open.v1"`
-	Identity      *ComputerRestoreIdentity `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *VerifyComputerRestoreResponse) Reset() {
-	*x = VerifyComputerRestoreResponse{}
-	mi := &file_computer_proto_msgTypes[19]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *VerifyComputerRestoreResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VerifyComputerRestoreResponse) ProtoMessage() {}
-
-func (x *VerifyComputerRestoreResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[19]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VerifyComputerRestoreResponse.ProtoReflect.Descriptor instead.
-func (*VerifyComputerRestoreResponse) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{19}
-}
-
-func (x *VerifyComputerRestoreResponse) GetIdentity() *ComputerRestoreIdentity {
-	if x != nil {
-		return x.Identity
-	}
-	return nil
-}
-
 type MaterializeComputerRequest struct {
-	state                protoimpl.MessageState     `protogen:"open.v1"`
-	Envelope             *ComputerOperationEnvelope `protobuf:"bytes,1,opt,name=envelope,proto3" json:"envelope,omitempty"`
-	MountPath            string                     `protobuf:"bytes,2,opt,name=mount_path,json=mountPath,proto3" json:"mount_path,omitempty"`
-	Target               *ComputerMountTarget       `protobuf:"bytes,3,opt,name=target,proto3" json:"target,omitempty"`
-	ComputerImage        *ComputerArtifact          `protobuf:"bytes,4,opt,name=computer_image,json=computerImage,proto3" json:"computer_image,omitempty"`
-	UsePreparedRuntime   bool                       `protobuf:"varint,5,opt,name=use_prepared_runtime,json=usePreparedRuntime,proto3" json:"use_prepared_runtime,omitempty"`
-	RestoredCheckpointId string                     `protobuf:"bytes,7,opt,name=restored_checkpoint_id,json=restoredCheckpointId,proto3" json:"restored_checkpoint_id,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	state         protoimpl.MessageState     `protogen:"open.v1"`
+	Envelope      *ComputerOperationEnvelope `protobuf:"bytes,1,opt,name=envelope,proto3" json:"envelope,omitempty"`
+	MountPath     string                     `protobuf:"bytes,2,opt,name=mount_path,json=mountPath,proto3" json:"mount_path,omitempty"`
+	Target        *ComputerMountTarget       `protobuf:"bytes,3,opt,name=target,proto3" json:"target,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *MaterializeComputerRequest) Reset() {
 	*x = MaterializeComputerRequest{}
-	mi := &file_computer_proto_msgTypes[20]
+	mi := &file_computer_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1462,7 +258,7 @@ func (x *MaterializeComputerRequest) String() string {
 func (*MaterializeComputerRequest) ProtoMessage() {}
 
 func (x *MaterializeComputerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[20]
+	mi := &file_computer_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1475,7 +271,7 @@ func (x *MaterializeComputerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MaterializeComputerRequest.ProtoReflect.Descriptor instead.
 func (*MaterializeComputerRequest) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{20}
+	return file_computer_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *MaterializeComputerRequest) GetEnvelope() *ComputerOperationEnvelope {
@@ -1499,27 +295,6 @@ func (x *MaterializeComputerRequest) GetTarget() *ComputerMountTarget {
 	return nil
 }
 
-func (x *MaterializeComputerRequest) GetComputerImage() *ComputerArtifact {
-	if x != nil {
-		return x.ComputerImage
-	}
-	return nil
-}
-
-func (x *MaterializeComputerRequest) GetUsePreparedRuntime() bool {
-	if x != nil {
-		return x.UsePreparedRuntime
-	}
-	return false
-}
-
-func (x *MaterializeComputerRequest) GetRestoredCheckpointId() string {
-	if x != nil {
-		return x.RestoredCheckpointId
-	}
-	return ""
-}
-
 type ComputerMountPhase struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -1533,7 +308,7 @@ type ComputerMountPhase struct {
 
 func (x *ComputerMountPhase) Reset() {
 	*x = ComputerMountPhase{}
-	mi := &file_computer_proto_msgTypes[21]
+	mi := &file_computer_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1545,7 +320,7 @@ func (x *ComputerMountPhase) String() string {
 func (*ComputerMountPhase) ProtoMessage() {}
 
 func (x *ComputerMountPhase) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[21]
+	mi := &file_computer_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1558,7 +333,7 @@ func (x *ComputerMountPhase) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerMountPhase.ProtoReflect.Descriptor instead.
 func (*ComputerMountPhase) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{21}
+	return file_computer_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ComputerMountPhase) GetName() string {
@@ -1608,7 +383,7 @@ type MaterializeComputerResponse struct {
 
 func (x *MaterializeComputerResponse) Reset() {
 	*x = MaterializeComputerResponse{}
-	mi := &file_computer_proto_msgTypes[22]
+	mi := &file_computer_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1620,7 +395,7 @@ func (x *MaterializeComputerResponse) String() string {
 func (*MaterializeComputerResponse) ProtoMessage() {}
 
 func (x *MaterializeComputerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[22]
+	mi := &file_computer_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1633,7 +408,7 @@ func (x *MaterializeComputerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MaterializeComputerResponse.ProtoReflect.Descriptor instead.
 func (*MaterializeComputerResponse) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{22}
+	return file_computer_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *MaterializeComputerResponse) GetStatus() string {
@@ -1678,7 +453,7 @@ type RuntimeImageConfig struct {
 
 func (x *RuntimeImageConfig) Reset() {
 	*x = RuntimeImageConfig{}
-	mi := &file_computer_proto_msgTypes[23]
+	mi := &file_computer_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1690,7 +465,7 @@ func (x *RuntimeImageConfig) String() string {
 func (*RuntimeImageConfig) ProtoMessage() {}
 
 func (x *RuntimeImageConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[23]
+	mi := &file_computer_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1703,7 +478,7 @@ func (x *RuntimeImageConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuntimeImageConfig.ProtoReflect.Descriptor instead.
 func (*RuntimeImageConfig) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{23}
+	return file_computer_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *RuntimeImageConfig) GetEnv() []string {
@@ -1747,8 +522,7 @@ type PrepareComputerRuntimeRequest struct {
 	WriterGeneration   int64                  `protobuf:"varint,6,opt,name=writer_generation,json=writerGeneration,proto3" json:"writer_generation,omitempty"`
 	ComputerInstanceId string                 `protobuf:"bytes,1,opt,name=computer_instance_id,json=computerInstanceId,proto3" json:"computer_instance_id,omitempty"`
 	MountPath          string                 `protobuf:"bytes,2,opt,name=mount_path,json=mountPath,proto3" json:"mount_path,omitempty"`
-	ComputerImage      *ComputerArtifact      `protobuf:"bytes,3,opt,name=computer_image,json=computerImage,proto3" json:"computer_image,omitempty"`
-	// When present, the substrate is already mounted and no image frame follows.
+	// The substrate is already mounted; the request supplies its admitted settings.
 	MountedImageConfig *RuntimeImageConfig `protobuf:"bytes,4,opt,name=mounted_image_config,json=mountedImageConfig,proto3" json:"mounted_image_config,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
@@ -1756,7 +530,7 @@ type PrepareComputerRuntimeRequest struct {
 
 func (x *PrepareComputerRuntimeRequest) Reset() {
 	*x = PrepareComputerRuntimeRequest{}
-	mi := &file_computer_proto_msgTypes[24]
+	mi := &file_computer_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1768,7 +542,7 @@ func (x *PrepareComputerRuntimeRequest) String() string {
 func (*PrepareComputerRuntimeRequest) ProtoMessage() {}
 
 func (x *PrepareComputerRuntimeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[24]
+	mi := &file_computer_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1781,7 +555,7 @@ func (x *PrepareComputerRuntimeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PrepareComputerRuntimeRequest.ProtoReflect.Descriptor instead.
 func (*PrepareComputerRuntimeRequest) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{24}
+	return file_computer_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *PrepareComputerRuntimeRequest) GetComputerId() string {
@@ -1812,13 +586,6 @@ func (x *PrepareComputerRuntimeRequest) GetMountPath() string {
 	return ""
 }
 
-func (x *PrepareComputerRuntimeRequest) GetComputerImage() *ComputerArtifact {
-	if x != nil {
-		return x.ComputerImage
-	}
-	return nil
-}
-
 func (x *PrepareComputerRuntimeRequest) GetMountedImageConfig() *RuntimeImageConfig {
 	if x != nil {
 		return x.MountedImageConfig
@@ -1837,7 +604,7 @@ type PrepareComputerRuntimeResponse struct {
 
 func (x *PrepareComputerRuntimeResponse) Reset() {
 	*x = PrepareComputerRuntimeResponse{}
-	mi := &file_computer_proto_msgTypes[25]
+	mi := &file_computer_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1849,7 +616,7 @@ func (x *PrepareComputerRuntimeResponse) String() string {
 func (*PrepareComputerRuntimeResponse) ProtoMessage() {}
 
 func (x *PrepareComputerRuntimeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[25]
+	mi := &file_computer_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1862,7 +629,7 @@ func (x *PrepareComputerRuntimeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PrepareComputerRuntimeResponse.ProtoReflect.Descriptor instead.
 func (*PrepareComputerRuntimeResponse) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{25}
+	return file_computer_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *PrepareComputerRuntimeResponse) GetStatus() string {
@@ -1886,118 +653,6 @@ func (x *PrepareComputerRuntimeResponse) GetPhases() []*ComputerMountPhase {
 	return nil
 }
 
-type HeartbeatComputerRequest struct {
-	state           protoimpl.MessageState     `protogen:"open.v1"`
-	Envelope        *ComputerOperationEnvelope `protobuf:"bytes,1,opt,name=envelope,proto3" json:"envelope,omitempty"`
-	Status          string                     `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
-	DirtyGeneration uint64                     `protobuf:"varint,3,opt,name=dirty_generation,json=dirtyGeneration,proto3" json:"dirty_generation,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
-}
-
-func (x *HeartbeatComputerRequest) Reset() {
-	*x = HeartbeatComputerRequest{}
-	mi := &file_computer_proto_msgTypes[26]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *HeartbeatComputerRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*HeartbeatComputerRequest) ProtoMessage() {}
-
-func (x *HeartbeatComputerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[26]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use HeartbeatComputerRequest.ProtoReflect.Descriptor instead.
-func (*HeartbeatComputerRequest) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{26}
-}
-
-func (x *HeartbeatComputerRequest) GetEnvelope() *ComputerOperationEnvelope {
-	if x != nil {
-		return x.Envelope
-	}
-	return nil
-}
-
-func (x *HeartbeatComputerRequest) GetStatus() string {
-	if x != nil {
-		return x.Status
-	}
-	return ""
-}
-
-func (x *HeartbeatComputerRequest) GetDirtyGeneration() uint64 {
-	if x != nil {
-		return x.DirtyGeneration
-	}
-	return 0
-}
-
-type HeartbeatComputerResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Status        string                 `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
-	StopRequested bool                   `protobuf:"varint,2,opt,name=stop_requested,json=stopRequested,proto3" json:"stop_requested,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *HeartbeatComputerResponse) Reset() {
-	*x = HeartbeatComputerResponse{}
-	mi := &file_computer_proto_msgTypes[27]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *HeartbeatComputerResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*HeartbeatComputerResponse) ProtoMessage() {}
-
-func (x *HeartbeatComputerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[27]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use HeartbeatComputerResponse.ProtoReflect.Descriptor instead.
-func (*HeartbeatComputerResponse) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{27}
-}
-
-func (x *HeartbeatComputerResponse) GetStatus() string {
-	if x != nil {
-		return x.Status
-	}
-	return ""
-}
-
-func (x *HeartbeatComputerResponse) GetStopRequested() bool {
-	if x != nil {
-		return x.StopRequested
-	}
-	return false
-}
-
 // The host has already materialized the retained Computer disk version.
 type ComputerMountTarget struct {
 	state                     protoimpl.MessageState `protogen:"open.v1"`
@@ -2008,7 +663,7 @@ type ComputerMountTarget struct {
 
 func (x *ComputerMountTarget) Reset() {
 	*x = ComputerMountTarget{}
-	mi := &file_computer_proto_msgTypes[28]
+	mi := &file_computer_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2020,7 +675,7 @@ func (x *ComputerMountTarget) String() string {
 func (*ComputerMountTarget) ProtoMessage() {}
 
 func (x *ComputerMountTarget) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[28]
+	mi := &file_computer_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2033,7 +688,7 @@ func (x *ComputerMountTarget) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerMountTarget.ProtoReflect.Descriptor instead.
 func (*ComputerMountTarget) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{28}
+	return file_computer_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ComputerMountTarget) GetBaseComputerDiskVersionId() string {
@@ -2058,7 +713,7 @@ type ComputerCommandAuthority struct {
 
 func (x *ComputerCommandAuthority) Reset() {
 	*x = ComputerCommandAuthority{}
-	mi := &file_computer_proto_msgTypes[29]
+	mi := &file_computer_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2070,7 +725,7 @@ func (x *ComputerCommandAuthority) String() string {
 func (*ComputerCommandAuthority) ProtoMessage() {}
 
 func (x *ComputerCommandAuthority) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[29]
+	mi := &file_computer_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2083,7 +738,7 @@ func (x *ComputerCommandAuthority) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerCommandAuthority.ProtoReflect.Descriptor instead.
 func (*ComputerCommandAuthority) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{29}
+	return file_computer_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ComputerCommandAuthority) GetOperationId() string {
@@ -2143,13 +798,15 @@ type ComputerBasicExecRequest struct {
 	Stdin         []byte                    `protobuf:"bytes,4,opt,name=stdin,proto3" json:"stdin,omitempty"`
 	ProtectedEnv  map[string]string         `protobuf:"bytes,5,rep,name=protected_env,json=protectedEnv,proto3" json:"protected_env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	ProxyCa       []byte                    `protobuf:"bytes,6,opt,name=proxy_ca,json=proxyCa,proto3" json:"proxy_ca,omitempty"`
+	LogLimits     *CommandLogLimits         `protobuf:"bytes,7,opt,name=log_limits,json=logLimits,proto3" json:"log_limits,omitempty"`
+	TailOnly      bool                      `protobuf:"varint,8,opt,name=tail_only,json=tailOnly,proto3" json:"tail_only,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ComputerBasicExecRequest) Reset() {
 	*x = ComputerBasicExecRequest{}
-	mi := &file_computer_proto_msgTypes[30]
+	mi := &file_computer_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2161,7 +818,7 @@ func (x *ComputerBasicExecRequest) String() string {
 func (*ComputerBasicExecRequest) ProtoMessage() {}
 
 func (x *ComputerBasicExecRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[30]
+	mi := &file_computer_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2174,7 +831,7 @@ func (x *ComputerBasicExecRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerBasicExecRequest.ProtoReflect.Descriptor instead.
 func (*ComputerBasicExecRequest) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{30}
+	return file_computer_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ComputerBasicExecRequest) GetEnvelope() *ComputerCommandAuthority {
@@ -2219,19 +876,35 @@ func (x *ComputerBasicExecRequest) GetProxyCa() []byte {
 	return nil
 }
 
+func (x *ComputerBasicExecRequest) GetLogLimits() *CommandLogLimits {
+	if x != nil {
+		return x.LogLimits
+	}
+	return nil
+}
+
+func (x *ComputerBasicExecRequest) GetTailOnly() bool {
+	if x != nil {
+		return x.TailOnly
+	}
+	return false
+}
+
 type ComputerBasicExecResult struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	ErrorJson          string                 `protobuf:"bytes,1,opt,name=error_json,json=errorJson,proto3" json:"error_json,omitempty"`
 	ExitCode           int32                  `protobuf:"varint,2,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
 	Outcome            string                 `protobuf:"bytes,5,opt,name=outcome,proto3" json:"outcome,omitempty"`
 	RequestFingerprint string                 `protobuf:"bytes,6,opt,name=request_fingerprint,json=requestFingerprint,proto3" json:"request_fingerprint,omitempty"`
+	Stdout             *CommandOutputBoundary `protobuf:"bytes,7,opt,name=stdout,proto3" json:"stdout,omitempty"`
+	Stderr             *CommandOutputBoundary `protobuf:"bytes,8,opt,name=stderr,proto3" json:"stderr,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ComputerBasicExecResult) Reset() {
 	*x = ComputerBasicExecResult{}
-	mi := &file_computer_proto_msgTypes[31]
+	mi := &file_computer_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2243,7 +916,7 @@ func (x *ComputerBasicExecResult) String() string {
 func (*ComputerBasicExecResult) ProtoMessage() {}
 
 func (x *ComputerBasicExecResult) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[31]
+	mi := &file_computer_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2256,7 +929,7 @@ func (x *ComputerBasicExecResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerBasicExecResult.ProtoReflect.Descriptor instead.
 func (*ComputerBasicExecResult) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{31}
+	return file_computer_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ComputerBasicExecResult) GetErrorJson() string {
@@ -2287,19 +960,37 @@ func (x *ComputerBasicExecResult) GetRequestFingerprint() string {
 	return ""
 }
 
+func (x *ComputerBasicExecResult) GetStdout() *CommandOutputBoundary {
+	if x != nil {
+		return x.Stdout
+	}
+	return nil
+}
+
+func (x *ComputerBasicExecResult) GetStderr() *CommandOutputBoundary {
+	if x != nil {
+		return x.Stderr
+	}
+	return nil
+}
+
 type CommandOutputChunk struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	Stream             string                 `protobuf:"bytes,1,opt,name=stream,proto3" json:"stream,omitempty"`
 	Sequence           uint64                 `protobuf:"varint,2,opt,name=sequence,proto3" json:"sequence,omitempty"`
 	ObservedAtUnixNano int64                  `protobuf:"varint,3,opt,name=observed_at_unix_nano,json=observedAtUnixNano,proto3" json:"observed_at_unix_nano,omitempty"`
 	Content            []byte                 `protobuf:"bytes,4,opt,name=content,proto3" json:"content,omitempty"`
+	Kind               string                 `protobuf:"bytes,5,opt,name=kind,proto3" json:"kind,omitempty"`
+	ThroughSequence    uint64                 `protobuf:"varint,6,opt,name=through_sequence,json=throughSequence,proto3" json:"through_sequence,omitempty"`
+	DroppedBytes       int64                  `protobuf:"varint,7,opt,name=dropped_bytes,json=droppedBytes,proto3" json:"dropped_bytes,omitempty"`
+	Complete           bool                   `protobuf:"varint,8,opt,name=complete,proto3" json:"complete,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
 
 func (x *CommandOutputChunk) Reset() {
 	*x = CommandOutputChunk{}
-	mi := &file_computer_proto_msgTypes[32]
+	mi := &file_computer_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2311,7 +1002,7 @@ func (x *CommandOutputChunk) String() string {
 func (*CommandOutputChunk) ProtoMessage() {}
 
 func (x *CommandOutputChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[32]
+	mi := &file_computer_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2324,7 +1015,7 @@ func (x *CommandOutputChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommandOutputChunk.ProtoReflect.Descriptor instead.
 func (*CommandOutputChunk) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{32}
+	return file_computer_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *CommandOutputChunk) GetStream() string {
@@ -2355,6 +1046,215 @@ func (x *CommandOutputChunk) GetContent() []byte {
 	return nil
 }
 
+func (x *CommandOutputChunk) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *CommandOutputChunk) GetThroughSequence() uint64 {
+	if x != nil {
+		return x.ThroughSequence
+	}
+	return 0
+}
+
+func (x *CommandOutputChunk) GetDroppedBytes() int64 {
+	if x != nil {
+		return x.DroppedBytes
+	}
+	return 0
+}
+
+func (x *CommandOutputChunk) GetComplete() bool {
+	if x != nil {
+		return x.Complete
+	}
+	return false
+}
+
+type CommandLogLimits struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ChunkBytes    int32                  `protobuf:"varint,1,opt,name=chunk_bytes,json=chunkBytes,proto3" json:"chunk_bytes,omitempty"`
+	BufferBytes   int64                  `protobuf:"varint,2,opt,name=buffer_bytes,json=bufferBytes,proto3" json:"buffer_bytes,omitempty"`
+	BufferRecords int32                  `protobuf:"varint,3,opt,name=buffer_records,json=bufferRecords,proto3" json:"buffer_records,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CommandLogLimits) Reset() {
+	*x = CommandLogLimits{}
+	mi := &file_computer_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CommandLogLimits) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CommandLogLimits) ProtoMessage() {}
+
+func (x *CommandLogLimits) ProtoReflect() protoreflect.Message {
+	mi := &file_computer_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CommandLogLimits.ProtoReflect.Descriptor instead.
+func (*CommandLogLimits) Descriptor() ([]byte, []int) {
+	return file_computer_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *CommandLogLimits) GetChunkBytes() int32 {
+	if x != nil {
+		return x.ChunkBytes
+	}
+	return 0
+}
+
+func (x *CommandLogLimits) GetBufferBytes() int64 {
+	if x != nil {
+		return x.BufferBytes
+	}
+	return 0
+}
+
+func (x *CommandLogLimits) GetBufferRecords() int32 {
+	if x != nil {
+		return x.BufferRecords
+	}
+	return 0
+}
+
+type CommandOutputBoundary struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	ThroughSequence uint64                 `protobuf:"varint,1,opt,name=through_sequence,json=throughSequence,proto3" json:"through_sequence,omitempty"`
+	Complete        bool                   `protobuf:"varint,2,opt,name=complete,proto3" json:"complete,omitempty"`
+	Gapped          bool                   `protobuf:"varint,3,opt,name=gapped,proto3" json:"gapped,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *CommandOutputBoundary) Reset() {
+	*x = CommandOutputBoundary{}
+	mi := &file_computer_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CommandOutputBoundary) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CommandOutputBoundary) ProtoMessage() {}
+
+func (x *CommandOutputBoundary) ProtoReflect() protoreflect.Message {
+	mi := &file_computer_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CommandOutputBoundary.ProtoReflect.Descriptor instead.
+func (*CommandOutputBoundary) Descriptor() ([]byte, []int) {
+	return file_computer_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *CommandOutputBoundary) GetThroughSequence() uint64 {
+	if x != nil {
+		return x.ThroughSequence
+	}
+	return 0
+}
+
+func (x *CommandOutputBoundary) GetComplete() bool {
+	if x != nil {
+		return x.Complete
+	}
+	return false
+}
+
+func (x *CommandOutputBoundary) GetGapped() bool {
+	if x != nil {
+		return x.Gapped
+	}
+	return false
+}
+
+// Only a committed durable receipt or explicit expiry can release a head.
+type CommandOutputAck struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Stream          string                 `protobuf:"bytes,1,opt,name=stream,proto3" json:"stream,omitempty"`
+	ThroughSequence uint64                 `protobuf:"varint,2,opt,name=through_sequence,json=throughSequence,proto3" json:"through_sequence,omitempty"`
+	Disposition     string                 `protobuf:"bytes,3,opt,name=disposition,proto3" json:"disposition,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *CommandOutputAck) Reset() {
+	*x = CommandOutputAck{}
+	mi := &file_computer_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CommandOutputAck) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CommandOutputAck) ProtoMessage() {}
+
+func (x *CommandOutputAck) ProtoReflect() protoreflect.Message {
+	mi := &file_computer_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CommandOutputAck.ProtoReflect.Descriptor instead.
+func (*CommandOutputAck) Descriptor() ([]byte, []int) {
+	return file_computer_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *CommandOutputAck) GetStream() string {
+	if x != nil {
+		return x.Stream
+	}
+	return ""
+}
+
+func (x *CommandOutputAck) GetThroughSequence() uint64 {
+	if x != nil {
+		return x.ThroughSequence
+	}
+	return 0
+}
+
+func (x *CommandOutputAck) GetDisposition() string {
+	if x != nil {
+		return x.Disposition
+	}
+	return ""
+}
+
 type ComputerBasicExecEvent struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Event:
@@ -2368,7 +1268,7 @@ type ComputerBasicExecEvent struct {
 
 func (x *ComputerBasicExecEvent) Reset() {
 	*x = ComputerBasicExecEvent{}
-	mi := &file_computer_proto_msgTypes[33]
+	mi := &file_computer_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2380,7 +1280,7 @@ func (x *ComputerBasicExecEvent) String() string {
 func (*ComputerBasicExecEvent) ProtoMessage() {}
 
 func (x *ComputerBasicExecEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[33]
+	mi := &file_computer_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2393,7 +1293,7 @@ func (x *ComputerBasicExecEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerBasicExecEvent.ProtoReflect.Descriptor instead.
 func (*ComputerBasicExecEvent) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{33}
+	return file_computer_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ComputerBasicExecEvent) GetEvent() isComputerBasicExecEvent_Event {
@@ -2448,7 +1348,7 @@ type ComputerSecretDelivery struct {
 
 func (x *ComputerSecretDelivery) Reset() {
 	*x = ComputerSecretDelivery{}
-	mi := &file_computer_proto_msgTypes[34]
+	mi := &file_computer_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2460,7 +1360,7 @@ func (x *ComputerSecretDelivery) String() string {
 func (*ComputerSecretDelivery) ProtoMessage() {}
 
 func (x *ComputerSecretDelivery) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[34]
+	mi := &file_computer_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2473,7 +1373,7 @@ func (x *ComputerSecretDelivery) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerSecretDelivery.ProtoReflect.Descriptor instead.
 func (*ComputerSecretDelivery) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{34}
+	return file_computer_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ComputerSecretDelivery) GetPlacementKind() string {
@@ -2500,13 +1400,14 @@ func (x *ComputerSecretDelivery) GetValue() []byte {
 type ComputerCommandReleaseRequest struct {
 	state         protoimpl.MessageState    `protogen:"open.v1"`
 	Authority     *ComputerCommandAuthority `protobuf:"bytes,1,opt,name=authority,proto3" json:"authority,omitempty"`
+	OutputFenced  bool                      `protobuf:"varint,2,opt,name=output_fenced,json=outputFenced,proto3" json:"output_fenced,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ComputerCommandReleaseRequest) Reset() {
 	*x = ComputerCommandReleaseRequest{}
-	mi := &file_computer_proto_msgTypes[35]
+	mi := &file_computer_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2518,7 +1419,7 @@ func (x *ComputerCommandReleaseRequest) String() string {
 func (*ComputerCommandReleaseRequest) ProtoMessage() {}
 
 func (x *ComputerCommandReleaseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[35]
+	mi := &file_computer_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2531,7 +1432,7 @@ func (x *ComputerCommandReleaseRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerCommandReleaseRequest.ProtoReflect.Descriptor instead.
 func (*ComputerCommandReleaseRequest) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{35}
+	return file_computer_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ComputerCommandReleaseRequest) GetAuthority() *ComputerCommandAuthority {
@@ -2539,6 +1440,13 @@ func (x *ComputerCommandReleaseRequest) GetAuthority() *ComputerCommandAuthority
 		return x.Authority
 	}
 	return nil
+}
+
+func (x *ComputerCommandReleaseRequest) GetOutputFenced() bool {
+	if x != nil {
+		return x.OutputFenced
+	}
+	return false
 }
 
 type ComputerCommandReleaseResponse struct {
@@ -2551,7 +1459,7 @@ type ComputerCommandReleaseResponse struct {
 
 func (x *ComputerCommandReleaseResponse) Reset() {
 	*x = ComputerCommandReleaseResponse{}
-	mi := &file_computer_proto_msgTypes[36]
+	mi := &file_computer_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2563,7 +1471,7 @@ func (x *ComputerCommandReleaseResponse) String() string {
 func (*ComputerCommandReleaseResponse) ProtoMessage() {}
 
 func (x *ComputerCommandReleaseResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[36]
+	mi := &file_computer_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2576,7 +1484,7 @@ func (x *ComputerCommandReleaseResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerCommandReleaseResponse.ProtoReflect.Descriptor instead.
 func (*ComputerCommandReleaseResponse) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{36}
+	return file_computer_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ComputerCommandReleaseResponse) GetReleased() bool {
@@ -2602,7 +1510,7 @@ type ComputerCommandCancelRequest struct {
 
 func (x *ComputerCommandCancelRequest) Reset() {
 	*x = ComputerCommandCancelRequest{}
-	mi := &file_computer_proto_msgTypes[37]
+	mi := &file_computer_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2614,7 +1522,7 @@ func (x *ComputerCommandCancelRequest) String() string {
 func (*ComputerCommandCancelRequest) ProtoMessage() {}
 
 func (x *ComputerCommandCancelRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[37]
+	mi := &file_computer_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2627,7 +1535,7 @@ func (x *ComputerCommandCancelRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerCommandCancelRequest.ProtoReflect.Descriptor instead.
 func (*ComputerCommandCancelRequest) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{37}
+	return file_computer_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ComputerCommandCancelRequest) GetAuthority() *ComputerCommandAuthority {
@@ -2647,7 +1555,7 @@ type ComputerCommandCancelResponse struct {
 
 func (x *ComputerCommandCancelResponse) Reset() {
 	*x = ComputerCommandCancelResponse{}
-	mi := &file_computer_proto_msgTypes[38]
+	mi := &file_computer_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2659,7 +1567,7 @@ func (x *ComputerCommandCancelResponse) String() string {
 func (*ComputerCommandCancelResponse) ProtoMessage() {}
 
 func (x *ComputerCommandCancelResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[38]
+	mi := &file_computer_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2672,7 +1580,7 @@ func (x *ComputerCommandCancelResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerCommandCancelResponse.ProtoReflect.Descriptor instead.
 func (*ComputerCommandCancelResponse) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{38}
+	return file_computer_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ComputerCommandCancelResponse) GetAccepted() bool {
@@ -2689,32 +1597,33 @@ func (x *ComputerCommandCancelResponse) GetError() string {
 	return ""
 }
 
-// Installs the entire restored membership while admission remains sealed.
-type ComputerRestoreInstallation struct {
-	state          protoimpl.MessageState     `protogen:"open.v1"`
-	Envelope       *ComputerOperationEnvelope `protobuf:"bytes,1,opt,name=envelope,proto3" json:"envelope,omitempty"`
-	CheckpointId   string                     `protobuf:"bytes,2,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
-	DesiredVersion int64                      `protobuf:"varint,3,opt,name=desired_version,json=desiredVersion,proto3" json:"desired_version,omitempty"`
-	Grants         []*ComputerRunAuthority    `protobuf:"bytes,4,rep,name=grants,proto3" json:"grants,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+// One private preparation owns the mounted image until capture and physical stop.
+// Empty start probes or renews an existing executor; it never starts authored code.
+type PreparationIdentity struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	PreparationId     string                 `protobuf:"bytes,1,opt,name=preparation_id,json=preparationId,proto3" json:"preparation_id,omitempty"`
+	InstanceId        string                 `protobuf:"bytes,2,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	Epoch             int64                  `protobuf:"varint,3,opt,name=epoch,proto3" json:"epoch,omitempty"`
+	ChannelCredential []byte                 `protobuf:"bytes,4,opt,name=channel_credential,json=channelCredential,proto3" json:"channel_credential,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
-func (x *ComputerRestoreInstallation) Reset() {
-	*x = ComputerRestoreInstallation{}
-	mi := &file_computer_proto_msgTypes[39]
+func (x *PreparationIdentity) Reset() {
+	*x = PreparationIdentity{}
+	mi := &file_computer_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ComputerRestoreInstallation) String() string {
+func (x *PreparationIdentity) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ComputerRestoreInstallation) ProtoMessage() {}
+func (*PreparationIdentity) ProtoMessage() {}
 
-func (x *ComputerRestoreInstallation) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[39]
+func (x *PreparationIdentity) ProtoReflect() protoreflect.Message {
+	mi := &file_computer_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2725,61 +1634,65 @@ func (x *ComputerRestoreInstallation) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ComputerRestoreInstallation.ProtoReflect.Descriptor instead.
-func (*ComputerRestoreInstallation) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{39}
+// Deprecated: Use PreparationIdentity.ProtoReflect.Descriptor instead.
+func (*PreparationIdentity) Descriptor() ([]byte, []int) {
+	return file_computer_proto_rawDescGZIP(), []int{23}
 }
 
-func (x *ComputerRestoreInstallation) GetEnvelope() *ComputerOperationEnvelope {
+func (x *PreparationIdentity) GetPreparationId() string {
 	if x != nil {
-		return x.Envelope
-	}
-	return nil
-}
-
-func (x *ComputerRestoreInstallation) GetCheckpointId() string {
-	if x != nil {
-		return x.CheckpointId
+		return x.PreparationId
 	}
 	return ""
 }
 
-func (x *ComputerRestoreInstallation) GetDesiredVersion() int64 {
+func (x *PreparationIdentity) GetInstanceId() string {
 	if x != nil {
-		return x.DesiredVersion
+		return x.InstanceId
+	}
+	return ""
+}
+
+func (x *PreparationIdentity) GetEpoch() int64 {
+	if x != nil {
+		return x.Epoch
 	}
 	return 0
 }
 
-func (x *ComputerRestoreInstallation) GetGrants() []*ComputerRunAuthority {
+func (x *PreparationIdentity) GetChannelCredential() []byte {
 	if x != nil {
-		return x.Grants
+		return x.ChannelCredential
 	}
 	return nil
 }
 
-type ComputerRestoreInstallationResponse struct {
-	state         protoimpl.MessageState       `protogen:"open.v1"`
-	Installation  *ComputerRestoreInstallation `protobuf:"bytes,1,opt,name=installation,proto3" json:"installation,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+type PreparationStart struct {
+	state                protoimpl.MessageState    `protogen:"open.v1"`
+	ComputerDefinitionId string                    `protobuf:"bytes,1,opt,name=computer_definition_id,json=computerDefinitionId,proto3" json:"computer_definition_id,omitempty"`
+	Secrets              []*ComputerSecretDelivery `protobuf:"bytes,2,rep,name=secrets,proto3" json:"secrets,omitempty"`
+	LogLimits            *PreparationLogLimits     `protobuf:"bytes,3,opt,name=log_limits,json=logLimits,proto3" json:"log_limits,omitempty"`
+	ProtectedEnv         map[string]string         `protobuf:"bytes,4,rep,name=protected_env,json=protectedEnv,proto3" json:"protected_env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	ProxyCa              []byte                    `protobuf:"bytes,5,opt,name=proxy_ca,json=proxyCa,proto3" json:"proxy_ca,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
-func (x *ComputerRestoreInstallationResponse) Reset() {
-	*x = ComputerRestoreInstallationResponse{}
-	mi := &file_computer_proto_msgTypes[40]
+func (x *PreparationStart) Reset() {
+	*x = PreparationStart{}
+	mi := &file_computer_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ComputerRestoreInstallationResponse) String() string {
+func (x *PreparationStart) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ComputerRestoreInstallationResponse) ProtoMessage() {}
+func (*PreparationStart) ProtoMessage() {}
 
-func (x *ComputerRestoreInstallationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[40]
+func (x *PreparationStart) ProtoReflect() protoreflect.Message {
+	mi := &file_computer_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2790,46 +1703,134 @@ func (x *ComputerRestoreInstallationResponse) ProtoReflect() protoreflect.Messag
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ComputerRestoreInstallationResponse.ProtoReflect.Descriptor instead.
-func (*ComputerRestoreInstallationResponse) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{40}
+// Deprecated: Use PreparationStart.ProtoReflect.Descriptor instead.
+func (*PreparationStart) Descriptor() ([]byte, []int) {
+	return file_computer_proto_rawDescGZIP(), []int{24}
 }
 
-func (x *ComputerRestoreInstallationResponse) GetInstallation() *ComputerRestoreInstallation {
+func (x *PreparationStart) GetComputerDefinitionId() string {
 	if x != nil {
-		return x.Installation
+		return x.ComputerDefinitionId
+	}
+	return ""
+}
+
+func (x *PreparationStart) GetSecrets() []*ComputerSecretDelivery {
+	if x != nil {
+		return x.Secrets
 	}
 	return nil
 }
 
-type ComputerRunCleanupRequest struct {
+func (x *PreparationStart) GetLogLimits() *PreparationLogLimits {
+	if x != nil {
+		return x.LogLimits
+	}
+	return nil
+}
+
+func (x *PreparationStart) GetProtectedEnv() map[string]string {
+	if x != nil {
+		return x.ProtectedEnv
+	}
+	return nil
+}
+
+func (x *PreparationStart) GetProxyCa() []byte {
+	if x != nil {
+		return x.ProxyCa
+	}
+	return nil
+}
+
+type PreparationLogLimits struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ChunkBytes    int32                  `protobuf:"varint,1,opt,name=chunk_bytes,json=chunkBytes,proto3" json:"chunk_bytes,omitempty"`
+	BufferBytes   int64                  `protobuf:"varint,2,opt,name=buffer_bytes,json=bufferBytes,proto3" json:"buffer_bytes,omitempty"`
+	BufferRecords int32                  `protobuf:"varint,3,opt,name=buffer_records,json=bufferRecords,proto3" json:"buffer_records,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PreparationLogLimits) Reset() {
+	*x = PreparationLogLimits{}
+	mi := &file_computer_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PreparationLogLimits) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PreparationLogLimits) ProtoMessage() {}
+
+func (x *PreparationLogLimits) ProtoReflect() protoreflect.Message {
+	mi := &file_computer_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PreparationLogLimits.ProtoReflect.Descriptor instead.
+func (*PreparationLogLimits) Descriptor() ([]byte, []int) {
+	return file_computer_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *PreparationLogLimits) GetChunkBytes() int32 {
+	if x != nil {
+		return x.ChunkBytes
+	}
+	return 0
+}
+
+func (x *PreparationLogLimits) GetBufferBytes() int64 {
+	if x != nil {
+		return x.BufferBytes
+	}
+	return 0
+}
+
+func (x *PreparationLogLimits) GetBufferRecords() int32 {
+	if x != nil {
+		return x.BufferRecords
+	}
+	return 0
+}
+
+type PreparationLog struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
-	ComputerId         string                 `protobuf:"bytes,1,opt,name=computer_id,json=computerId,proto3" json:"computer_id,omitempty"`
-	ComputerInstanceId string                 `protobuf:"bytes,2,opt,name=computer_instance_id,json=computerInstanceId,proto3" json:"computer_instance_id,omitempty"`
-	WriterGeneration   int64                  `protobuf:"varint,3,opt,name=writer_generation,json=writerGeneration,proto3" json:"writer_generation,omitempty"`
-	ChannelCredential  string                 `protobuf:"bytes,4,opt,name=channel_credential,json=channelCredential,proto3" json:"channel_credential,omitempty"`
-	RunId              string                 `protobuf:"bytes,5,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	AttemptNumber      uint32                 `protobuf:"varint,6,opt,name=attempt_number,json=attemptNumber,proto3" json:"attempt_number,omitempty"`
-	RunLeaseId         string                 `protobuf:"bytes,7,opt,name=run_lease_id,json=runLeaseId,proto3" json:"run_lease_id,omitempty"`
+	Kind               string                 `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
+	Sequence           int64                  `protobuf:"varint,2,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	ThroughSequence    int64                  `protobuf:"varint,3,opt,name=through_sequence,json=throughSequence,proto3" json:"through_sequence,omitempty"`
+	ObservedAtUnixNano int64                  `protobuf:"varint,4,opt,name=observed_at_unix_nano,json=observedAtUnixNano,proto3" json:"observed_at_unix_nano,omitempty"`
+	Data               []byte                 `protobuf:"bytes,5,opt,name=data,proto3" json:"data,omitempty"`
+	DroppedBytes       int64                  `protobuf:"varint,6,opt,name=dropped_bytes,json=droppedBytes,proto3" json:"dropped_bytes,omitempty"`
+	Complete           bool                   `protobuf:"varint,7,opt,name=complete,proto3" json:"complete,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
 
-func (x *ComputerRunCleanupRequest) Reset() {
-	*x = ComputerRunCleanupRequest{}
-	mi := &file_computer_proto_msgTypes[41]
+func (x *PreparationLog) Reset() {
+	*x = PreparationLog{}
+	mi := &file_computer_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ComputerRunCleanupRequest) String() string {
+func (x *PreparationLog) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ComputerRunCleanupRequest) ProtoMessage() {}
+func (*PreparationLog) ProtoMessage() {}
 
-func (x *ComputerRunCleanupRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[41]
+func (x *PreparationLog) ProtoReflect() protoreflect.Message {
+	mi := &file_computer_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2840,117 +1841,214 @@ func (x *ComputerRunCleanupRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ComputerRunCleanupRequest.ProtoReflect.Descriptor instead.
-func (*ComputerRunCleanupRequest) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{41}
+// Deprecated: Use PreparationLog.ProtoReflect.Descriptor instead.
+func (*PreparationLog) Descriptor() ([]byte, []int) {
+	return file_computer_proto_rawDescGZIP(), []int{26}
 }
 
-func (x *ComputerRunCleanupRequest) GetComputerId() string {
+func (x *PreparationLog) GetKind() string {
 	if x != nil {
-		return x.ComputerId
+		return x.Kind
 	}
 	return ""
 }
 
-func (x *ComputerRunCleanupRequest) GetComputerInstanceId() string {
+func (x *PreparationLog) GetSequence() int64 {
 	if x != nil {
-		return x.ComputerInstanceId
-	}
-	return ""
-}
-
-func (x *ComputerRunCleanupRequest) GetWriterGeneration() int64 {
-	if x != nil {
-		return x.WriterGeneration
+		return x.Sequence
 	}
 	return 0
 }
 
-func (x *ComputerRunCleanupRequest) GetChannelCredential() string {
+func (x *PreparationLog) GetThroughSequence() int64 {
 	if x != nil {
-		return x.ChannelCredential
-	}
-	return ""
-}
-
-func (x *ComputerRunCleanupRequest) GetRunId() string {
-	if x != nil {
-		return x.RunId
-	}
-	return ""
-}
-
-func (x *ComputerRunCleanupRequest) GetAttemptNumber() uint32 {
-	if x != nil {
-		return x.AttemptNumber
+		return x.ThroughSequence
 	}
 	return 0
 }
 
-func (x *ComputerRunCleanupRequest) GetRunLeaseId() string {
+func (x *PreparationLog) GetObservedAtUnixNano() int64 {
 	if x != nil {
-		return x.RunLeaseId
+		return x.ObservedAtUnixNano
 	}
-	return ""
+	return 0
 }
 
-type ComputerRunCleanupResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Reconciled    bool                   `protobuf:"varint,1,opt,name=reconciled,proto3" json:"reconciled,omitempty"`
-	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ComputerRunCleanupResponse) Reset() {
-	*x = ComputerRunCleanupResponse{}
-	mi := &file_computer_proto_msgTypes[42]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ComputerRunCleanupResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ComputerRunCleanupResponse) ProtoMessage() {}
-
-func (x *ComputerRunCleanupResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_computer_proto_msgTypes[42]
+func (x *PreparationLog) GetData() []byte {
 	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
+		return x.Data
 	}
-	return mi.MessageOf(x)
+	return nil
 }
 
-// Deprecated: Use ComputerRunCleanupResponse.ProtoReflect.Descriptor instead.
-func (*ComputerRunCleanupResponse) Descriptor() ([]byte, []int) {
-	return file_computer_proto_rawDescGZIP(), []int{42}
-}
-
-func (x *ComputerRunCleanupResponse) GetReconciled() bool {
+func (x *PreparationLog) GetDroppedBytes() int64 {
 	if x != nil {
-		return x.Reconciled
+		return x.DroppedBytes
+	}
+	return 0
+}
+
+func (x *PreparationLog) GetComplete() bool {
+	if x != nil {
+		return x.Complete
 	}
 	return false
 }
 
-func (x *ComputerRunCleanupResponse) GetError() string {
+type PreparationControlRequest struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	Identity            *PreparationIdentity   `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
+	ExpiresAtUnixNano   int64                  `protobuf:"varint,2,opt,name=expires_at_unix_nano,json=expiresAtUnixNano,proto3" json:"expires_at_unix_nano,omitempty"`
+	Start               *PreparationStart      `protobuf:"bytes,3,opt,name=start,proto3" json:"start,omitempty"`
+	RenewOnly           bool                   `protobuf:"varint,4,opt,name=renew_only,json=renewOnly,proto3" json:"renew_only,omitempty"`
+	LogStream           string                 `protobuf:"bytes,5,opt,name=log_stream,json=logStream,proto3" json:"log_stream,omitempty"`
+	AcknowledgedThrough int64                  `protobuf:"varint,6,opt,name=acknowledged_through,json=acknowledgedThrough,proto3" json:"acknowledged_through,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *PreparationControlRequest) Reset() {
+	*x = PreparationControlRequest{}
+	mi := &file_computer_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PreparationControlRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PreparationControlRequest) ProtoMessage() {}
+
+func (x *PreparationControlRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_computer_proto_msgTypes[27]
 	if x != nil {
-		return x.Error
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PreparationControlRequest.ProtoReflect.Descriptor instead.
+func (*PreparationControlRequest) Descriptor() ([]byte, []int) {
+	return file_computer_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *PreparationControlRequest) GetIdentity() *PreparationIdentity {
+	if x != nil {
+		return x.Identity
+	}
+	return nil
+}
+
+func (x *PreparationControlRequest) GetExpiresAtUnixNano() int64 {
+	if x != nil {
+		return x.ExpiresAtUnixNano
+	}
+	return 0
+}
+
+func (x *PreparationControlRequest) GetStart() *PreparationStart {
+	if x != nil {
+		return x.Start
+	}
+	return nil
+}
+
+func (x *PreparationControlRequest) GetRenewOnly() bool {
+	if x != nil {
+		return x.RenewOnly
+	}
+	return false
+}
+
+func (x *PreparationControlRequest) GetLogStream() string {
+	if x != nil {
+		return x.LogStream
 	}
 	return ""
+}
+
+func (x *PreparationControlRequest) GetAcknowledgedThrough() int64 {
+	if x != nil {
+		return x.AcknowledgedThrough
+	}
+	return 0
+}
+
+type PreparationControlResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	State         string                 `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
+	ErrorCode     string                 `protobuf:"bytes,2,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	Log           *PreparationLog        `protobuf:"bytes,3,opt,name=log,proto3" json:"log,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PreparationControlResponse) Reset() {
+	*x = PreparationControlResponse{}
+	mi := &file_computer_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PreparationControlResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PreparationControlResponse) ProtoMessage() {}
+
+func (x *PreparationControlResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_computer_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PreparationControlResponse.ProtoReflect.Descriptor instead.
+func (*PreparationControlResponse) Descriptor() ([]byte, []int) {
+	return file_computer_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *PreparationControlResponse) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+func (x *PreparationControlResponse) GetErrorCode() string {
+	if x != nil {
+		return x.ErrorCode
+	}
+	return ""
+}
+
+func (x *PreparationControlResponse) GetLog() *PreparationLog {
+	if x != nil {
+		return x.Log
+	}
+	return nil
 }
 
 var File_computer_proto protoreflect.FileDescriptor
 
 const file_computer_proto_rawDesc = "" +
 	"\n" +
-	"\x0ecomputer.proto\x12\x11helmr.computer.v0\x1a\rprogram.proto\"\xd9\x03\n" +
+	"\x0ecomputer.proto\x12\x11helmr.computer.v0\"9\n" +
+	"\x14FlushComputerRequest\x12!\n" +
+	"\foperation_id\x18\x01 \x01(\tR\voperationId\"P\n" +
+	"\x15FlushComputerResponse\x12!\n" +
+	"\foperation_id\x18\x01 \x01(\tR\voperationId\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"\xd9\x03\n" +
 	"\x19ComputerOperationEnvelope\x12!\n" +
 	"\foperation_id\x18\x01 \x01(\tR\voperationId\x120\n" +
 	"\x14computer_instance_id\x18\x02 \x01(\tR\x12computerInstanceId\x12\x1f\n" +
@@ -2963,120 +2061,12 @@ const file_computer_proto_rawDesc = "" +
 	"\rfencing_token\x18\b \x01(\tR\ffencingToken\x12B\n" +
 	"\x1eoperation_expires_at_unix_nano\x18\t \x01(\x03R\x1aoperationExpiresAtUnixNano\x12/\n" +
 	"\x13request_fingerprint\x18\n" +
-	" \x01(\tR\x12requestFingerprint\"\xa5\x01\n" +
-	"\x10ComputerArtifact\x12\x16\n" +
-	"\x06digest\x18\x01 \x01(\tR\x06digest\x12\x1d\n" +
-	"\n" +
-	"media_type\x18\x02 \x01(\tR\tmediaType\x12\x1a\n" +
-	"\bencoding\x18\x03 \x01(\tR\bencoding\x12\x1d\n" +
-	"\n" +
-	"size_bytes\x18\x04 \x01(\x04R\tsizeBytes\x12\x1f\n" +
-	"\ventry_count\x18\x05 \x01(\rR\n" +
-	"entryCount\"\x81\x04\n" +
-	"\x16ComputerAuthorityFence\x12$\n" +
-	"\x0eworker_host_id\x18\x01 \x01(\tR\fworkerHostId\x12!\n" +
-	"\fworker_epoch\x18\x02 \x01(\x03R\vworkerEpoch\x120\n" +
-	"\x14computer_instance_id\x18\x03 \x01(\tR\x12computerInstanceId\x12$\n" +
-	"\x0evm_platform_id\x18\x04 \x01(\tR\fvmPlatformId\x12\x1f\n" +
-	"\vcomputer_id\x18\x05 \x01(\tR\n" +
-	"computerId\x12\x15\n" +
-	"\x06run_id\x18\a \x01(\tR\x05runId\x12%\n" +
-	"\x0eattempt_number\x18\b \x01(\rR\rattemptNumber\x12 \n" +
-	"\frun_lease_id\x18\t \x01(\tR\n" +
-	"runLeaseId\x12%\n" +
-	"\x0elease_sequence\x18\n" +
-	" \x01(\x03R\rleaseSequence\x12+\n" +
-	"\x11writer_generation\x18\r \x01(\x03R\x10writerGeneration\x12/\n" +
-	"\x14expires_at_unix_nano\x18\x0f \x01(\x03R\x11expiresAtUnixNano\x12@\n" +
-	"\x1dbase_computer_disk_version_id\x18\x10 \x01(\tR\x19baseComputerDiskVersionId\"\xb1\x01\n" +
-	"\x14ComputerRunAuthority\x12?\n" +
-	"\x05fence\x18\x01 \x01(\v2).helmr.computer.v0.ComputerAuthorityFenceR\x05fence\x12-\n" +
-	"\x12channel_credential\x18\x02 \x01(\tR\x11channelCredential\x12)\n" +
-	"\x10write_capability\x18\x03 \x01(\tR\x0fwriteCapability\"\x9c\x01\n" +
-	"\x1dRenewComputerAuthorityRequest\x12C\n" +
-	"\bprevious\x18\x01 \x01(\v2'.helmr.computer.v0.ComputerRunAuthorityR\bprevious\x126\n" +
-	"\x18new_expires_at_unix_nano\x18\x02 \x01(\x03R\x14newExpiresAtUnixNano\"w\n" +
-	"\x1eRenewComputerAuthorityResponse\x12?\n" +
-	"\x05fence\x18\x01 \x01(\v2).helmr.computer.v0.ComputerAuthorityFenceR\x05fence\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\"\xa7\x01\n" +
-	"\x19GrantProgramResumeRequest\x12E\n" +
-	"\tauthority\x18\x01 \x01(\v2'.helmr.computer.v0.ComputerRunAuthorityR\tauthority\x12\x1e\n" +
-	"\vrun_wait_id\x18\x02 \x01(\tR\trunWaitId\x12#\n" +
-	"\rcheckpoint_id\x18\x03 \x01(\tR\fcheckpointId\"\x95\x01\n" +
-	"\x1aGrantProgramResumeResponse\x12?\n" +
-	"\x05fence\x18\x01 \x01(\v2).helmr.computer.v0.ComputerAuthorityFenceR\x05fence\x126\n" +
-	"\x06attach\x18\x02 \x01(\v2\x1e.helmr.program.v0.ResumeAttachR\x06attach\"\xb4\x01\n" +
-	"\vCapturedRun\x12\x15\n" +
-	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12%\n" +
-	"\x0eattempt_number\x18\x02 \x01(\rR\rattemptNumber\x12\x1e\n" +
-	"\vrun_wait_id\x18\x03 \x01(\tR\trunWaitId\x12 \n" +
-	"\frun_lease_id\x18\x04 \x01(\tR\n" +
-	"runLeaseId\x12%\n" +
-	"\x0ecorrelation_id\x18\x05 \x01(\tR\rcorrelationId\"\xff\x01\n" +
-	"\x17ComputerRestoreIdentity\x12\x1f\n" +
-	"\vcomputer_id\x18\x01 \x01(\tR\n" +
-	"computerId\x12=\n" +
-	"\x1bsource_computer_instance_id\x18\x02 \x01(\tR\x18sourceComputerInstanceId\x12+\n" +
-	"\x11writer_generation\x18\x03 \x01(\x03R\x10writerGeneration\x12#\n" +
-	"\rcheckpoint_id\x18\x04 \x01(\tR\fcheckpointId\x122\n" +
-	"\x04runs\x18\x05 \x03(\v2\x1e.helmr.computer.v0.CapturedRunR\x04runs\"\x94\x01\n" +
-	"\x12ComputerCaptureRun\x12\x15\n" +
-	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12%\n" +
-	"\x0eattempt_number\x18\x02 \x01(\rR\rattemptNumber\x12\x1e\n" +
-	"\vrun_wait_id\x18\x03 \x01(\tR\trunWaitId\x12 \n" +
-	"\frun_lease_id\x18\x04 \x01(\tR\n" +
-	"runLeaseId\"\xd1\x02\n" +
-	"\x15FreezeComputerRequest\x12\x1f\n" +
-	"\vcomputer_id\x18\x01 \x01(\tR\n" +
-	"computerId\x120\n" +
-	"\x14computer_instance_id\x18\x02 \x01(\tR\x12computerInstanceId\x12+\n" +
-	"\x11writer_generation\x18\x03 \x01(\x03R\x10writerGeneration\x12#\n" +
-	"\rcheckpoint_id\x18\x04 \x01(\tR\fcheckpointId\x12'\n" +
-	"\x0fdesired_version\x18\x05 \x01(\x03R\x0edesiredVersion\x12/\n" +
-	"\x13membership_revision\x18\x06 \x01(\x03R\x12membershipRevision\x129\n" +
-	"\x04runs\x18\a \x03(\v2%.helmr.computer.v0.ComputerCaptureRunR\x04runs\"\xba\x01\n" +
-	"\x16FreezeComputerResponse\x12F\n" +
-	"\bidentity\x18\x01 \x01(\v2*.helmr.computer.v0.ComputerRestoreIdentityR\bidentity\x12'\n" +
-	"\x0fdesired_version\x18\x02 \x01(\x03R\x0edesiredVersion\x12/\n" +
-	"\x13membership_revision\x18\x03 \x01(\x03R\x12membershipRevision\"\xe9\x01\n" +
-	"\x1aComputerCaptureAbortMember\x12=\n" +
-	"\x06member\x18\x01 \x01(\v2%.helmr.computer.v0.ComputerCaptureRunR\x06member\x12E\n" +
-	"\tauthority\x18\x02 \x01(\v2'.helmr.computer.v0.ComputerRunAuthorityR\tauthority\x12\x1c\n" +
-	"\tcancelled\x18\x03 \x01(\bR\tcancelled\x12'\n" +
-	"\x0fattach_sequence\x18\x04 \x01(\x04R\x0eattachSequence\"\xfa\x01\n" +
-	"\x1bComputerCaptureAbortRequest\x12B\n" +
-	"\acapture\x18\x01 \x01(\v2(.helmr.computer.v0.FreezeComputerRequestR\acapture\x122\n" +
-	"\x15abort_desired_version\x18\x02 \x01(\x03R\x13abortDesiredVersion\x12G\n" +
-	"\amembers\x18\x03 \x03(\v2-.helmr.computer.v0.ComputerCaptureAbortMemberR\amembers\x12\x1a\n" +
-	"\bactivate\x18\x04 \x01(\bR\bactivate\"\xbc\x01\n" +
-	"\x1cComputerCaptureAbortResponse\x12#\n" +
-	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\x122\n" +
-	"\x15abort_desired_version\x18\x02 \x01(\x03R\x13abortDesiredVersion\x12\x1c\n" +
-	"\tactivated\x18\x03 \x01(\bR\tactivated\x12%\n" +
-	"\x0ecleanup_failed\x18\x04 \x01(\bR\rcleanupFailed\"\xab\x02\n" +
-	"!ComputerCaptureAbortAttachRequest\x12#\n" +
-	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\x122\n" +
-	"\x15abort_desired_version\x18\x02 \x01(\x03R\x13abortDesiredVersion\x12=\n" +
-	"\x06member\x18\x03 \x01(\v2%.helmr.computer.v0.ComputerCaptureRunR\x06member\x12E\n" +
-	"\tauthority\x18\x04 \x01(\v2'.helmr.computer.v0.ComputerRunAuthorityR\tauthority\x12'\n" +
-	"\x0fattach_sequence\x18\x05 \x01(\x04R\x0eattachSequence\"\xe5\x01\n" +
-	"\"ComputerCaptureAbortAttachResponse\x12#\n" +
-	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\x122\n" +
-	"\x15abort_desired_version\x18\x02 \x01(\x03R\x13abortDesiredVersion\x12=\n" +
-	"\x06member\x18\x03 \x01(\v2%.helmr.computer.v0.ComputerCaptureRunR\x06member\x12'\n" +
-	"\x0fattach_sequence\x18\x04 \x01(\x04R\x0eattachSequence\"f\n" +
-	"\x1cVerifyComputerRestoreRequest\x12F\n" +
-	"\bidentity\x18\x01 \x01(\v2*.helmr.computer.v0.ComputerRestoreIdentityR\bidentity\"g\n" +
-	"\x1dVerifyComputerRestoreResponse\x12F\n" +
-	"\bidentity\x18\x01 \x01(\v2*.helmr.computer.v0.ComputerRestoreIdentityR\bidentity\"\xf9\x02\n" +
+	" \x01(\tR\x12requestFingerprint\"\xd7\x01\n" +
 	"\x1aMaterializeComputerRequest\x12H\n" +
 	"\benvelope\x18\x01 \x01(\v2,.helmr.computer.v0.ComputerOperationEnvelopeR\benvelope\x12\x1d\n" +
 	"\n" +
 	"mount_path\x18\x02 \x01(\tR\tmountPath\x12>\n" +
-	"\x06target\x18\x03 \x01(\v2&.helmr.computer.v0.ComputerMountTargetR\x06target\x12J\n" +
-	"\x0ecomputer_image\x18\x04 \x01(\v2#.helmr.computer.v0.ComputerArtifactR\rcomputerImage\x120\n" +
-	"\x14use_prepared_runtime\x18\x05 \x01(\bR\x12usePreparedRuntime\x124\n" +
-	"\x16restored_checkpoint_id\x18\a \x01(\tR\x14restoredCheckpointId\"\x9f\x01\n" +
+	"\x06target\x18\x03 \x01(\v2&.helmr.computer.v0.ComputerMountTargetR\x06targetJ\x04\b\x04\x10\x05J\x04\b\x05\x10\x06J\x04\b\a\x10\b\"\x9f\x01\n" +
 	"\x12ComputerMountPhase\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1f\n" +
 	"\vduration_ms\x18\x02 \x01(\x04R\n" +
@@ -3099,27 +2089,19 @@ const file_computer_proto_rawDesc = "" +
 	"\n" +
 	"entrypoint\x18\x04 \x03(\tR\n" +
 	"entrypoint\x12\x10\n" +
-	"\x03cmd\x18\x05 \x03(\tR\x03cmd\"\xe3\x02\n" +
+	"\x03cmd\x18\x05 \x03(\tR\x03cmd\"\x9d\x02\n" +
 	"\x1dPrepareComputerRuntimeRequest\x12\x1f\n" +
 	"\vcomputer_id\x18\x05 \x01(\tR\n" +
 	"computerId\x12+\n" +
 	"\x11writer_generation\x18\x06 \x01(\x03R\x10writerGeneration\x120\n" +
 	"\x14computer_instance_id\x18\x01 \x01(\tR\x12computerInstanceId\x12\x1d\n" +
 	"\n" +
-	"mount_path\x18\x02 \x01(\tR\tmountPath\x12J\n" +
-	"\x0ecomputer_image\x18\x03 \x01(\v2#.helmr.computer.v0.ComputerArtifactR\rcomputerImage\x12W\n" +
-	"\x14mounted_image_config\x18\x04 \x01(\v2%.helmr.computer.v0.RuntimeImageConfigR\x12mountedImageConfig\"\xa9\x01\n" +
+	"mount_path\x18\x02 \x01(\tR\tmountPath\x12W\n" +
+	"\x14mounted_image_config\x18\x04 \x01(\v2%.helmr.computer.v0.RuntimeImageConfigR\x12mountedImageConfigJ\x04\b\x03\x10\x04\"\xa9\x01\n" +
 	"\x1ePrepareComputerRuntimeResponse\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x120\n" +
 	"\x14computer_instance_id\x18\x02 \x01(\tR\x12computerInstanceId\x12=\n" +
-	"\x06phases\x18\x03 \x03(\v2%.helmr.computer.v0.ComputerMountPhaseR\x06phases\"\xa7\x01\n" +
-	"\x18HeartbeatComputerRequest\x12H\n" +
-	"\benvelope\x18\x01 \x01(\v2,.helmr.computer.v0.ComputerOperationEnvelopeR\benvelope\x12\x16\n" +
-	"\x06status\x18\x02 \x01(\tR\x06status\x12)\n" +
-	"\x10dirty_generation\x18\x03 \x01(\x04R\x0fdirtyGeneration\"Z\n" +
-	"\x19HeartbeatComputerResponse\x12\x16\n" +
-	"\x06status\x18\x01 \x01(\tR\x06status\x12%\n" +
-	"\x0estop_requested\x18\x02 \x01(\bR\rstopRequested\"W\n" +
+	"\x06phases\x18\x03 \x03(\v2%.helmr.computer.v0.ComputerMountPhaseR\x06phases\"W\n" +
 	"\x13ComputerMountTarget\x12@\n" +
 	"\x1dbase_computer_disk_version_id\x18\x01 \x01(\tR\x19baseComputerDiskVersionId\"\xe1\x02\n" +
 	"\x18ComputerCommandAuthority\x12!\n" +
@@ -3130,28 +2112,50 @@ const file_computer_proto_rawDesc = "" +
 	"\x12channel_credential\x18\x04 \x01(\tR\x11channelCredential\x12+\n" +
 	"\x11writer_generation\x18\x05 \x01(\x03R\x10writerGeneration\x12B\n" +
 	"\x1eoperation_expires_at_unix_nano\x18\x06 \x01(\x03R\x1aoperationExpiresAtUnixNano\x12/\n" +
-	"\x13request_fingerprint\x18\a \x01(\tR\x12requestFingerprint\"\xa1\x03\n" +
+	"\x13request_fingerprint\x18\a \x01(\tR\x12requestFingerprint\"\x82\x04\n" +
 	"\x18ComputerBasicExecRequest\x12G\n" +
 	"\benvelope\x18\x01 \x01(\v2+.helmr.computer.v0.ComputerCommandAuthorityR\benvelope\x12!\n" +
 	"\frequest_json\x18\x02 \x01(\tR\vrequestJson\x12C\n" +
 	"\asecrets\x18\x03 \x03(\v2).helmr.computer.v0.ComputerSecretDeliveryR\asecrets\x12\x14\n" +
 	"\x05stdin\x18\x04 \x01(\fR\x05stdin\x12b\n" +
 	"\rprotected_env\x18\x05 \x03(\v2=.helmr.computer.v0.ComputerBasicExecRequest.ProtectedEnvEntryR\fprotectedEnv\x12\x19\n" +
-	"\bproxy_ca\x18\x06 \x01(\fR\aproxyCa\x1a?\n" +
+	"\bproxy_ca\x18\x06 \x01(\fR\aproxyCa\x12B\n" +
+	"\n" +
+	"log_limits\x18\a \x01(\v2#.helmr.computer.v0.CommandLogLimitsR\tlogLimits\x12\x1b\n" +
+	"\ttail_only\x18\b \x01(\bR\btailOnly\x1a?\n" +
 	"\x11ProtectedEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa0\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa4\x02\n" +
 	"\x17ComputerBasicExecResult\x12\x1d\n" +
 	"\n" +
 	"error_json\x18\x01 \x01(\tR\terrorJson\x12\x1b\n" +
 	"\texit_code\x18\x02 \x01(\x05R\bexitCode\x12\x18\n" +
 	"\aoutcome\x18\x05 \x01(\tR\aoutcome\x12/\n" +
-	"\x13request_fingerprint\x18\x06 \x01(\tR\x12requestFingerprint\"\x95\x01\n" +
+	"\x13request_fingerprint\x18\x06 \x01(\tR\x12requestFingerprint\x12@\n" +
+	"\x06stdout\x18\a \x01(\v2(.helmr.computer.v0.CommandOutputBoundaryR\x06stdout\x12@\n" +
+	"\x06stderr\x18\b \x01(\v2(.helmr.computer.v0.CommandOutputBoundaryR\x06stderr\"\x95\x02\n" +
 	"\x12CommandOutputChunk\x12\x16\n" +
 	"\x06stream\x18\x01 \x01(\tR\x06stream\x12\x1a\n" +
 	"\bsequence\x18\x02 \x01(\x04R\bsequence\x121\n" +
 	"\x15observed_at_unix_nano\x18\x03 \x01(\x03R\x12observedAtUnixNano\x12\x18\n" +
-	"\acontent\x18\x04 \x01(\fR\acontent\"\xa8\x01\n" +
+	"\acontent\x18\x04 \x01(\fR\acontent\x12\x12\n" +
+	"\x04kind\x18\x05 \x01(\tR\x04kind\x12)\n" +
+	"\x10through_sequence\x18\x06 \x01(\x04R\x0fthroughSequence\x12#\n" +
+	"\rdropped_bytes\x18\a \x01(\x03R\fdroppedBytes\x12\x1a\n" +
+	"\bcomplete\x18\b \x01(\bR\bcomplete\"}\n" +
+	"\x10CommandLogLimits\x12\x1f\n" +
+	"\vchunk_bytes\x18\x01 \x01(\x05R\n" +
+	"chunkBytes\x12!\n" +
+	"\fbuffer_bytes\x18\x02 \x01(\x03R\vbufferBytes\x12%\n" +
+	"\x0ebuffer_records\x18\x03 \x01(\x05R\rbufferRecords\"v\n" +
+	"\x15CommandOutputBoundary\x12)\n" +
+	"\x10through_sequence\x18\x01 \x01(\x04R\x0fthroughSequence\x12\x1a\n" +
+	"\bcomplete\x18\x02 \x01(\bR\bcomplete\x12\x16\n" +
+	"\x06gapped\x18\x03 \x01(\bR\x06gapped\"w\n" +
+	"\x10CommandOutputAck\x12\x16\n" +
+	"\x06stream\x18\x01 \x01(\tR\x06stream\x12)\n" +
+	"\x10through_sequence\x18\x02 \x01(\x04R\x0fthroughSequence\x12 \n" +
+	"\vdisposition\x18\x03 \x01(\tR\vdisposition\"\xa8\x01\n" +
 	"\x16ComputerBasicExecEvent\x12?\n" +
 	"\x06output\x18\x01 \x01(\v2%.helmr.computer.v0.CommandOutputChunkH\x00R\x06output\x12D\n" +
 	"\x06result\x18\x02 \x01(\v2*.helmr.computer.v0.ComputerBasicExecResultH\x00R\x06resultB\a\n" +
@@ -3159,9 +2163,10 @@ const file_computer_proto_rawDesc = "" +
 	"\x16ComputerSecretDelivery\x12%\n" +
 	"\x0eplacement_kind\x18\x01 \x01(\tR\rplacementKind\x12)\n" +
 	"\x10placement_target\x18\x02 \x01(\tR\x0fplacementTarget\x12\x14\n" +
-	"\x05value\x18\x03 \x01(\fR\x05value\"j\n" +
+	"\x05value\x18\x03 \x01(\fR\x05value\"\x8f\x01\n" +
 	"\x1dComputerCommandReleaseRequest\x12I\n" +
-	"\tauthority\x18\x01 \x01(\v2+.helmr.computer.v0.ComputerCommandAuthorityR\tauthority\"R\n" +
+	"\tauthority\x18\x01 \x01(\v2+.helmr.computer.v0.ComputerCommandAuthorityR\tauthority\x12#\n" +
+	"\routput_fenced\x18\x02 \x01(\bR\foutputFenced\"R\n" +
 	"\x1eComputerCommandReleaseResponse\x12\x1a\n" +
 	"\breleased\x18\x01 \x01(\bR\breleased\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\"i\n" +
@@ -3169,29 +2174,50 @@ const file_computer_proto_rawDesc = "" +
 	"\tauthority\x18\x01 \x01(\v2+.helmr.computer.v0.ComputerCommandAuthorityR\tauthority\"Q\n" +
 	"\x1dComputerCommandCancelResponse\x12\x1a\n" +
 	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\"\xf6\x01\n" +
-	"\x1bComputerRestoreInstallation\x12H\n" +
-	"\benvelope\x18\x01 \x01(\v2,.helmr.computer.v0.ComputerOperationEnvelopeR\benvelope\x12#\n" +
-	"\rcheckpoint_id\x18\x02 \x01(\tR\fcheckpointId\x12'\n" +
-	"\x0fdesired_version\x18\x03 \x01(\x03R\x0edesiredVersion\x12?\n" +
-	"\x06grants\x18\x04 \x03(\v2'.helmr.computer.v0.ComputerRunAuthorityR\x06grants\"y\n" +
-	"#ComputerRestoreInstallationResponse\x12R\n" +
-	"\finstallation\x18\x01 \x01(\v2..helmr.computer.v0.ComputerRestoreInstallationR\finstallation\"\xaa\x02\n" +
-	"\x19ComputerRunCleanupRequest\x12\x1f\n" +
-	"\vcomputer_id\x18\x01 \x01(\tR\n" +
-	"computerId\x120\n" +
-	"\x14computer_instance_id\x18\x02 \x01(\tR\x12computerInstanceId\x12+\n" +
-	"\x11writer_generation\x18\x03 \x01(\x03R\x10writerGeneration\x12-\n" +
-	"\x12channel_credential\x18\x04 \x01(\tR\x11channelCredential\x12\x15\n" +
-	"\x06run_id\x18\x05 \x01(\tR\x05runId\x12%\n" +
-	"\x0eattempt_number\x18\x06 \x01(\rR\rattemptNumber\x12 \n" +
-	"\frun_lease_id\x18\a \x01(\tR\n" +
-	"runLeaseId\"R\n" +
-	"\x1aComputerRunCleanupResponse\x12\x1e\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"\xa2\x01\n" +
+	"\x13PreparationIdentity\x12%\n" +
+	"\x0epreparation_id\x18\x01 \x01(\tR\rpreparationId\x12\x1f\n" +
+	"\vinstance_id\x18\x02 \x01(\tR\n" +
+	"instanceId\x12\x14\n" +
+	"\x05epoch\x18\x03 \x01(\x03R\x05epoch\x12-\n" +
+	"\x12channel_credential\x18\x04 \x01(\fR\x11channelCredential\"\x8d\x03\n" +
+	"\x10PreparationStart\x124\n" +
+	"\x16computer_definition_id\x18\x01 \x01(\tR\x14computerDefinitionId\x12C\n" +
+	"\asecrets\x18\x02 \x03(\v2).helmr.computer.v0.ComputerSecretDeliveryR\asecrets\x12F\n" +
 	"\n" +
-	"reconciled\x18\x01 \x01(\bR\n" +
-	"reconciled\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05errorBDZBgithub.com/helmrdotdev/helmr/internal/proto/computer/v0;computerv0b\x06proto3"
+	"log_limits\x18\x03 \x01(\v2'.helmr.computer.v0.PreparationLogLimitsR\tlogLimits\x12Z\n" +
+	"\rprotected_env\x18\x04 \x03(\v25.helmr.computer.v0.PreparationStart.ProtectedEnvEntryR\fprotectedEnv\x12\x19\n" +
+	"\bproxy_ca\x18\x05 \x01(\fR\aproxyCa\x1a?\n" +
+	"\x11ProtectedEnvEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x81\x01\n" +
+	"\x14PreparationLogLimits\x12\x1f\n" +
+	"\vchunk_bytes\x18\x01 \x01(\x05R\n" +
+	"chunkBytes\x12!\n" +
+	"\fbuffer_bytes\x18\x02 \x01(\x03R\vbufferBytes\x12%\n" +
+	"\x0ebuffer_records\x18\x03 \x01(\x05R\rbufferRecords\"\xf3\x01\n" +
+	"\x0ePreparationLog\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x1a\n" +
+	"\bsequence\x18\x02 \x01(\x03R\bsequence\x12)\n" +
+	"\x10through_sequence\x18\x03 \x01(\x03R\x0fthroughSequence\x121\n" +
+	"\x15observed_at_unix_nano\x18\x04 \x01(\x03R\x12observedAtUnixNano\x12\x12\n" +
+	"\x04data\x18\x05 \x01(\fR\x04data\x12#\n" +
+	"\rdropped_bytes\x18\x06 \x01(\x03R\fdroppedBytes\x12\x1a\n" +
+	"\bcomplete\x18\a \x01(\bR\bcomplete\"\xbc\x02\n" +
+	"\x19PreparationControlRequest\x12B\n" +
+	"\bidentity\x18\x01 \x01(\v2&.helmr.computer.v0.PreparationIdentityR\bidentity\x12/\n" +
+	"\x14expires_at_unix_nano\x18\x02 \x01(\x03R\x11expiresAtUnixNano\x129\n" +
+	"\x05start\x18\x03 \x01(\v2#.helmr.computer.v0.PreparationStartR\x05start\x12\x1d\n" +
+	"\n" +
+	"renew_only\x18\x04 \x01(\bR\trenewOnly\x12\x1d\n" +
+	"\n" +
+	"log_stream\x18\x05 \x01(\tR\tlogStream\x121\n" +
+	"\x14acknowledged_through\x18\x06 \x01(\x03R\x13acknowledgedThrough\"\x86\x01\n" +
+	"\x1aPreparationControlResponse\x12\x14\n" +
+	"\x05state\x18\x01 \x01(\tR\x05state\x12\x1d\n" +
+	"\n" +
+	"error_code\x18\x02 \x01(\tR\terrorCode\x123\n" +
+	"\x03log\x18\x03 \x01(\v2!.helmr.computer.v0.PreparationLogR\x03logBDZBgithub.com/helmrdotdev/helmr/internal/proto/computer/v0;computerv0b\x06proto3"
 
 var (
 	file_computer_proto_rawDescOnce sync.Once
@@ -3205,97 +2231,68 @@ func file_computer_proto_rawDescGZIP() []byte {
 	return file_computer_proto_rawDescData
 }
 
-var file_computer_proto_msgTypes = make([]protoimpl.MessageInfo, 44)
+var file_computer_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
 var file_computer_proto_goTypes = []any{
-	(*ComputerOperationEnvelope)(nil),           // 0: helmr.computer.v0.ComputerOperationEnvelope
-	(*ComputerArtifact)(nil),                    // 1: helmr.computer.v0.ComputerArtifact
-	(*ComputerAuthorityFence)(nil),              // 2: helmr.computer.v0.ComputerAuthorityFence
-	(*ComputerRunAuthority)(nil),                // 3: helmr.computer.v0.ComputerRunAuthority
-	(*RenewComputerAuthorityRequest)(nil),       // 4: helmr.computer.v0.RenewComputerAuthorityRequest
-	(*RenewComputerAuthorityResponse)(nil),      // 5: helmr.computer.v0.RenewComputerAuthorityResponse
-	(*GrantProgramResumeRequest)(nil),           // 6: helmr.computer.v0.GrantProgramResumeRequest
-	(*GrantProgramResumeResponse)(nil),          // 7: helmr.computer.v0.GrantProgramResumeResponse
-	(*CapturedRun)(nil),                         // 8: helmr.computer.v0.CapturedRun
-	(*ComputerRestoreIdentity)(nil),             // 9: helmr.computer.v0.ComputerRestoreIdentity
-	(*ComputerCaptureRun)(nil),                  // 10: helmr.computer.v0.ComputerCaptureRun
-	(*FreezeComputerRequest)(nil),               // 11: helmr.computer.v0.FreezeComputerRequest
-	(*FreezeComputerResponse)(nil),              // 12: helmr.computer.v0.FreezeComputerResponse
-	(*ComputerCaptureAbortMember)(nil),          // 13: helmr.computer.v0.ComputerCaptureAbortMember
-	(*ComputerCaptureAbortRequest)(nil),         // 14: helmr.computer.v0.ComputerCaptureAbortRequest
-	(*ComputerCaptureAbortResponse)(nil),        // 15: helmr.computer.v0.ComputerCaptureAbortResponse
-	(*ComputerCaptureAbortAttachRequest)(nil),   // 16: helmr.computer.v0.ComputerCaptureAbortAttachRequest
-	(*ComputerCaptureAbortAttachResponse)(nil),  // 17: helmr.computer.v0.ComputerCaptureAbortAttachResponse
-	(*VerifyComputerRestoreRequest)(nil),        // 18: helmr.computer.v0.VerifyComputerRestoreRequest
-	(*VerifyComputerRestoreResponse)(nil),       // 19: helmr.computer.v0.VerifyComputerRestoreResponse
-	(*MaterializeComputerRequest)(nil),          // 20: helmr.computer.v0.MaterializeComputerRequest
-	(*ComputerMountPhase)(nil),                  // 21: helmr.computer.v0.ComputerMountPhase
-	(*MaterializeComputerResponse)(nil),         // 22: helmr.computer.v0.MaterializeComputerResponse
-	(*RuntimeImageConfig)(nil),                  // 23: helmr.computer.v0.RuntimeImageConfig
-	(*PrepareComputerRuntimeRequest)(nil),       // 24: helmr.computer.v0.PrepareComputerRuntimeRequest
-	(*PrepareComputerRuntimeResponse)(nil),      // 25: helmr.computer.v0.PrepareComputerRuntimeResponse
-	(*HeartbeatComputerRequest)(nil),            // 26: helmr.computer.v0.HeartbeatComputerRequest
-	(*HeartbeatComputerResponse)(nil),           // 27: helmr.computer.v0.HeartbeatComputerResponse
-	(*ComputerMountTarget)(nil),                 // 28: helmr.computer.v0.ComputerMountTarget
-	(*ComputerCommandAuthority)(nil),            // 29: helmr.computer.v0.ComputerCommandAuthority
-	(*ComputerBasicExecRequest)(nil),            // 30: helmr.computer.v0.ComputerBasicExecRequest
-	(*ComputerBasicExecResult)(nil),             // 31: helmr.computer.v0.ComputerBasicExecResult
-	(*CommandOutputChunk)(nil),                  // 32: helmr.computer.v0.CommandOutputChunk
-	(*ComputerBasicExecEvent)(nil),              // 33: helmr.computer.v0.ComputerBasicExecEvent
-	(*ComputerSecretDelivery)(nil),              // 34: helmr.computer.v0.ComputerSecretDelivery
-	(*ComputerCommandReleaseRequest)(nil),       // 35: helmr.computer.v0.ComputerCommandReleaseRequest
-	(*ComputerCommandReleaseResponse)(nil),      // 36: helmr.computer.v0.ComputerCommandReleaseResponse
-	(*ComputerCommandCancelRequest)(nil),        // 37: helmr.computer.v0.ComputerCommandCancelRequest
-	(*ComputerCommandCancelResponse)(nil),       // 38: helmr.computer.v0.ComputerCommandCancelResponse
-	(*ComputerRestoreInstallation)(nil),         // 39: helmr.computer.v0.ComputerRestoreInstallation
-	(*ComputerRestoreInstallationResponse)(nil), // 40: helmr.computer.v0.ComputerRestoreInstallationResponse
-	(*ComputerRunCleanupRequest)(nil),           // 41: helmr.computer.v0.ComputerRunCleanupRequest
-	(*ComputerRunCleanupResponse)(nil),          // 42: helmr.computer.v0.ComputerRunCleanupResponse
-	nil,                                         // 43: helmr.computer.v0.ComputerBasicExecRequest.ProtectedEnvEntry
-	(*v0.ResumeAttach)(nil),                     // 44: helmr.program.v0.ResumeAttach
+	(*FlushComputerRequest)(nil),           // 0: helmr.computer.v0.FlushComputerRequest
+	(*FlushComputerResponse)(nil),          // 1: helmr.computer.v0.FlushComputerResponse
+	(*ComputerOperationEnvelope)(nil),      // 2: helmr.computer.v0.ComputerOperationEnvelope
+	(*MaterializeComputerRequest)(nil),     // 3: helmr.computer.v0.MaterializeComputerRequest
+	(*ComputerMountPhase)(nil),             // 4: helmr.computer.v0.ComputerMountPhase
+	(*MaterializeComputerResponse)(nil),    // 5: helmr.computer.v0.MaterializeComputerResponse
+	(*RuntimeImageConfig)(nil),             // 6: helmr.computer.v0.RuntimeImageConfig
+	(*PrepareComputerRuntimeRequest)(nil),  // 7: helmr.computer.v0.PrepareComputerRuntimeRequest
+	(*PrepareComputerRuntimeResponse)(nil), // 8: helmr.computer.v0.PrepareComputerRuntimeResponse
+	(*ComputerMountTarget)(nil),            // 9: helmr.computer.v0.ComputerMountTarget
+	(*ComputerCommandAuthority)(nil),       // 10: helmr.computer.v0.ComputerCommandAuthority
+	(*ComputerBasicExecRequest)(nil),       // 11: helmr.computer.v0.ComputerBasicExecRequest
+	(*ComputerBasicExecResult)(nil),        // 12: helmr.computer.v0.ComputerBasicExecResult
+	(*CommandOutputChunk)(nil),             // 13: helmr.computer.v0.CommandOutputChunk
+	(*CommandLogLimits)(nil),               // 14: helmr.computer.v0.CommandLogLimits
+	(*CommandOutputBoundary)(nil),          // 15: helmr.computer.v0.CommandOutputBoundary
+	(*CommandOutputAck)(nil),               // 16: helmr.computer.v0.CommandOutputAck
+	(*ComputerBasicExecEvent)(nil),         // 17: helmr.computer.v0.ComputerBasicExecEvent
+	(*ComputerSecretDelivery)(nil),         // 18: helmr.computer.v0.ComputerSecretDelivery
+	(*ComputerCommandReleaseRequest)(nil),  // 19: helmr.computer.v0.ComputerCommandReleaseRequest
+	(*ComputerCommandReleaseResponse)(nil), // 20: helmr.computer.v0.ComputerCommandReleaseResponse
+	(*ComputerCommandCancelRequest)(nil),   // 21: helmr.computer.v0.ComputerCommandCancelRequest
+	(*ComputerCommandCancelResponse)(nil),  // 22: helmr.computer.v0.ComputerCommandCancelResponse
+	(*PreparationIdentity)(nil),            // 23: helmr.computer.v0.PreparationIdentity
+	(*PreparationStart)(nil),               // 24: helmr.computer.v0.PreparationStart
+	(*PreparationLogLimits)(nil),           // 25: helmr.computer.v0.PreparationLogLimits
+	(*PreparationLog)(nil),                 // 26: helmr.computer.v0.PreparationLog
+	(*PreparationControlRequest)(nil),      // 27: helmr.computer.v0.PreparationControlRequest
+	(*PreparationControlResponse)(nil),     // 28: helmr.computer.v0.PreparationControlResponse
+	nil,                                    // 29: helmr.computer.v0.ComputerBasicExecRequest.ProtectedEnvEntry
+	nil,                                    // 30: helmr.computer.v0.PreparationStart.ProtectedEnvEntry
 }
 var file_computer_proto_depIdxs = []int32{
-	2,  // 0: helmr.computer.v0.ComputerRunAuthority.fence:type_name -> helmr.computer.v0.ComputerAuthorityFence
-	3,  // 1: helmr.computer.v0.RenewComputerAuthorityRequest.previous:type_name -> helmr.computer.v0.ComputerRunAuthority
-	2,  // 2: helmr.computer.v0.RenewComputerAuthorityResponse.fence:type_name -> helmr.computer.v0.ComputerAuthorityFence
-	3,  // 3: helmr.computer.v0.GrantProgramResumeRequest.authority:type_name -> helmr.computer.v0.ComputerRunAuthority
-	2,  // 4: helmr.computer.v0.GrantProgramResumeResponse.fence:type_name -> helmr.computer.v0.ComputerAuthorityFence
-	44, // 5: helmr.computer.v0.GrantProgramResumeResponse.attach:type_name -> helmr.program.v0.ResumeAttach
-	8,  // 6: helmr.computer.v0.ComputerRestoreIdentity.runs:type_name -> helmr.computer.v0.CapturedRun
-	10, // 7: helmr.computer.v0.FreezeComputerRequest.runs:type_name -> helmr.computer.v0.ComputerCaptureRun
-	9,  // 8: helmr.computer.v0.FreezeComputerResponse.identity:type_name -> helmr.computer.v0.ComputerRestoreIdentity
-	10, // 9: helmr.computer.v0.ComputerCaptureAbortMember.member:type_name -> helmr.computer.v0.ComputerCaptureRun
-	3,  // 10: helmr.computer.v0.ComputerCaptureAbortMember.authority:type_name -> helmr.computer.v0.ComputerRunAuthority
-	11, // 11: helmr.computer.v0.ComputerCaptureAbortRequest.capture:type_name -> helmr.computer.v0.FreezeComputerRequest
-	13, // 12: helmr.computer.v0.ComputerCaptureAbortRequest.members:type_name -> helmr.computer.v0.ComputerCaptureAbortMember
-	10, // 13: helmr.computer.v0.ComputerCaptureAbortAttachRequest.member:type_name -> helmr.computer.v0.ComputerCaptureRun
-	3,  // 14: helmr.computer.v0.ComputerCaptureAbortAttachRequest.authority:type_name -> helmr.computer.v0.ComputerRunAuthority
-	10, // 15: helmr.computer.v0.ComputerCaptureAbortAttachResponse.member:type_name -> helmr.computer.v0.ComputerCaptureRun
-	9,  // 16: helmr.computer.v0.VerifyComputerRestoreRequest.identity:type_name -> helmr.computer.v0.ComputerRestoreIdentity
-	9,  // 17: helmr.computer.v0.VerifyComputerRestoreResponse.identity:type_name -> helmr.computer.v0.ComputerRestoreIdentity
-	0,  // 18: helmr.computer.v0.MaterializeComputerRequest.envelope:type_name -> helmr.computer.v0.ComputerOperationEnvelope
-	28, // 19: helmr.computer.v0.MaterializeComputerRequest.target:type_name -> helmr.computer.v0.ComputerMountTarget
-	1,  // 20: helmr.computer.v0.MaterializeComputerRequest.computer_image:type_name -> helmr.computer.v0.ComputerArtifact
-	21, // 21: helmr.computer.v0.MaterializeComputerResponse.phases:type_name -> helmr.computer.v0.ComputerMountPhase
-	28, // 22: helmr.computer.v0.MaterializeComputerResponse.target:type_name -> helmr.computer.v0.ComputerMountTarget
-	1,  // 23: helmr.computer.v0.PrepareComputerRuntimeRequest.computer_image:type_name -> helmr.computer.v0.ComputerArtifact
-	23, // 24: helmr.computer.v0.PrepareComputerRuntimeRequest.mounted_image_config:type_name -> helmr.computer.v0.RuntimeImageConfig
-	21, // 25: helmr.computer.v0.PrepareComputerRuntimeResponse.phases:type_name -> helmr.computer.v0.ComputerMountPhase
-	0,  // 26: helmr.computer.v0.HeartbeatComputerRequest.envelope:type_name -> helmr.computer.v0.ComputerOperationEnvelope
-	29, // 27: helmr.computer.v0.ComputerBasicExecRequest.envelope:type_name -> helmr.computer.v0.ComputerCommandAuthority
-	34, // 28: helmr.computer.v0.ComputerBasicExecRequest.secrets:type_name -> helmr.computer.v0.ComputerSecretDelivery
-	43, // 29: helmr.computer.v0.ComputerBasicExecRequest.protected_env:type_name -> helmr.computer.v0.ComputerBasicExecRequest.ProtectedEnvEntry
-	32, // 30: helmr.computer.v0.ComputerBasicExecEvent.output:type_name -> helmr.computer.v0.CommandOutputChunk
-	31, // 31: helmr.computer.v0.ComputerBasicExecEvent.result:type_name -> helmr.computer.v0.ComputerBasicExecResult
-	29, // 32: helmr.computer.v0.ComputerCommandReleaseRequest.authority:type_name -> helmr.computer.v0.ComputerCommandAuthority
-	29, // 33: helmr.computer.v0.ComputerCommandCancelRequest.authority:type_name -> helmr.computer.v0.ComputerCommandAuthority
-	0,  // 34: helmr.computer.v0.ComputerRestoreInstallation.envelope:type_name -> helmr.computer.v0.ComputerOperationEnvelope
-	3,  // 35: helmr.computer.v0.ComputerRestoreInstallation.grants:type_name -> helmr.computer.v0.ComputerRunAuthority
-	39, // 36: helmr.computer.v0.ComputerRestoreInstallationResponse.installation:type_name -> helmr.computer.v0.ComputerRestoreInstallation
-	37, // [37:37] is the sub-list for method output_type
-	37, // [37:37] is the sub-list for method input_type
-	37, // [37:37] is the sub-list for extension type_name
-	37, // [37:37] is the sub-list for extension extendee
-	0,  // [0:37] is the sub-list for field type_name
+	2,  // 0: helmr.computer.v0.MaterializeComputerRequest.envelope:type_name -> helmr.computer.v0.ComputerOperationEnvelope
+	9,  // 1: helmr.computer.v0.MaterializeComputerRequest.target:type_name -> helmr.computer.v0.ComputerMountTarget
+	4,  // 2: helmr.computer.v0.MaterializeComputerResponse.phases:type_name -> helmr.computer.v0.ComputerMountPhase
+	9,  // 3: helmr.computer.v0.MaterializeComputerResponse.target:type_name -> helmr.computer.v0.ComputerMountTarget
+	6,  // 4: helmr.computer.v0.PrepareComputerRuntimeRequest.mounted_image_config:type_name -> helmr.computer.v0.RuntimeImageConfig
+	4,  // 5: helmr.computer.v0.PrepareComputerRuntimeResponse.phases:type_name -> helmr.computer.v0.ComputerMountPhase
+	10, // 6: helmr.computer.v0.ComputerBasicExecRequest.envelope:type_name -> helmr.computer.v0.ComputerCommandAuthority
+	18, // 7: helmr.computer.v0.ComputerBasicExecRequest.secrets:type_name -> helmr.computer.v0.ComputerSecretDelivery
+	29, // 8: helmr.computer.v0.ComputerBasicExecRequest.protected_env:type_name -> helmr.computer.v0.ComputerBasicExecRequest.ProtectedEnvEntry
+	14, // 9: helmr.computer.v0.ComputerBasicExecRequest.log_limits:type_name -> helmr.computer.v0.CommandLogLimits
+	15, // 10: helmr.computer.v0.ComputerBasicExecResult.stdout:type_name -> helmr.computer.v0.CommandOutputBoundary
+	15, // 11: helmr.computer.v0.ComputerBasicExecResult.stderr:type_name -> helmr.computer.v0.CommandOutputBoundary
+	13, // 12: helmr.computer.v0.ComputerBasicExecEvent.output:type_name -> helmr.computer.v0.CommandOutputChunk
+	12, // 13: helmr.computer.v0.ComputerBasicExecEvent.result:type_name -> helmr.computer.v0.ComputerBasicExecResult
+	10, // 14: helmr.computer.v0.ComputerCommandReleaseRequest.authority:type_name -> helmr.computer.v0.ComputerCommandAuthority
+	10, // 15: helmr.computer.v0.ComputerCommandCancelRequest.authority:type_name -> helmr.computer.v0.ComputerCommandAuthority
+	18, // 16: helmr.computer.v0.PreparationStart.secrets:type_name -> helmr.computer.v0.ComputerSecretDelivery
+	25, // 17: helmr.computer.v0.PreparationStart.log_limits:type_name -> helmr.computer.v0.PreparationLogLimits
+	30, // 18: helmr.computer.v0.PreparationStart.protected_env:type_name -> helmr.computer.v0.PreparationStart.ProtectedEnvEntry
+	23, // 19: helmr.computer.v0.PreparationControlRequest.identity:type_name -> helmr.computer.v0.PreparationIdentity
+	24, // 20: helmr.computer.v0.PreparationControlRequest.start:type_name -> helmr.computer.v0.PreparationStart
+	26, // 21: helmr.computer.v0.PreparationControlResponse.log:type_name -> helmr.computer.v0.PreparationLog
+	22, // [22:22] is the sub-list for method output_type
+	22, // [22:22] is the sub-list for method input_type
+	22, // [22:22] is the sub-list for extension type_name
+	22, // [22:22] is the sub-list for extension extendee
+	0,  // [0:22] is the sub-list for field type_name
 }
 
 func init() { file_computer_proto_init() }
@@ -3303,7 +2300,7 @@ func file_computer_proto_init() {
 	if File_computer_proto != nil {
 		return
 	}
-	file_computer_proto_msgTypes[33].OneofWrappers = []any{
+	file_computer_proto_msgTypes[17].OneofWrappers = []any{
 		(*ComputerBasicExecEvent_Output)(nil),
 		(*ComputerBasicExecEvent_Result)(nil),
 	}
@@ -3313,7 +2310,7 @@ func file_computer_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_computer_proto_rawDesc), len(file_computer_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   44,
+			NumMessages:   31,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

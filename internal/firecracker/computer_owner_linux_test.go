@@ -120,6 +120,9 @@ func TestComputerDeviceCleanupRetainsFailedOwner(t *testing.T) {
 	if _, err := os.Stat(state); !os.IsNotExist(err) {
 		t.Fatalf("state not removed: %v", err)
 	}
+	if _, err := createOwnerStateRoot(c.cfg.StateDir, owner); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("cleanup made the same physical identity reusable: %v", err)
+	}
 }
 
 func TestComputerExportFailureCancelsLaunchContext(t *testing.T) {

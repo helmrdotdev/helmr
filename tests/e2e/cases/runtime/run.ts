@@ -1,20 +1,13 @@
-import { verify, assert, deadline } from "../../support/context"
-await verify("runtime", async ({ client, marker, objects, computer }) => {
+import { verify, assert, completedResult } from "../../support/context"
+await verify("runtime", async ({ marker, computer, startAgent }) => {
   const target = await computer("helmr-runtime-smoke")
-  const run = await client.tasks.start(
-    "runtime-smoke",
-    {
-      computer: target,
-      payload: { scenario: "runtime", marker, expectedEnvironment: "unknown" },
-      idempotencyKey: `runtime:${marker}`,
-    },
-    { signal: deadline(30_000) },
-  )
-  objects.run_ids.push(run.id)
-  const output = await client.runs.wait(run, { signal: deadline(20 * 60_000) }).unwrap()
-  assert(
-    output !== null && typeof output === "object" && "ok" in output && output.ok === true,
-    "Runtime fixture failed",
-  )
-  return { verified: true }
+  const { turn } = await startAgent("runtime-smoke", {
+    computer: target,
+    input: { scenario: "runtime", marker, expectedEnvironment: "unknown" },
+    idempotencyKey: `runtime:${marker}`,
+  })
+  const output = await completedResult(turn)
+  assert(output !== null && typeof output === "object" && "ok" in output && output.ok === true,
+    "Runtime fixture failed")
+  return { verified: true, output }
 })

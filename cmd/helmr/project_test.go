@@ -36,11 +36,11 @@ func TestProjectCreateCommandGeneratesSlug(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"project", "create", "Production App!"})
+	cmd.SetArgs([]string{"project", "create", "Production App!", "--history-retention-mode", "until_environment_deletion"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if request.Name != "Production App!" || request.Slug != "production-app" {
+	if request.Name != "Production App!" || request.Slug != "production-app" || request.HistoryRetentionMode != "until_environment_deletion" || request.HistoryRetentionSeconds != nil {
 		t.Fatalf("request = %+v", request)
 	}
 	if !strings.Contains(out.String(), projectID+"\tproduction-app\tProduction App!") {
@@ -254,7 +254,7 @@ func TestEnvCreateCommandResolvesProjectAndGeneratesSlug(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"env", "create", "QA Environment", "--project", "prod"})
+	cmd.SetArgs([]string{"env", "create", "QA Environment", "--project", "prod", "--history-retention-mode", "duration", "--history-retention-seconds", "86400"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -461,5 +461,17 @@ func TestDefaultEnvironmentColorHexUsesSemanticAndCustomPalette(t *testing.T) {
 	}
 	if !customPalette[first] {
 		t.Fatalf("custom color = %q, want preset palette color", first)
+	}
+}
+
+func TestHistoryRetentionFlagsRequireExplicitPolicy(t *testing.T) {
+	for _, args := range [][]string{{}, {"--history-retention-mode", "duration"}, {"--history-retention-mode", "duration", "--history-retention-seconds", "0"}, {"--history-retention-mode", "until_environment_deletion", "--history-retention-seconds", "1"}} {
+		cmd := projectCreateCommand()
+		if err := cmd.ParseFlags(args); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := historyRetentionFlags(cmd, true); err == nil {
+			t.Fatalf("invalid history flags accepted: %v", args)
+		}
 	}
 }

@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"os"
 	"path/filepath"
 	"strings"
@@ -104,16 +105,16 @@ func writeTestDeploymentBundleDirectory(t *testing.T) (string, Manifest) {
 	computer := []byte("computer")
 	bundle.Program.Artifact.Digest = sha256sum.DigestBytes(program)
 	bundle.Program.Artifact.SizeBytes = int64(len(program))
-	bundle.ComputerImages[0].Artifact.Digest = sha256sum.DigestBytes(computer)
-	bundle.ComputerImages[0].Artifact.SizeBytes = int64(len(computer))
-	for index := range bundle.Program.Index.Declarations {
-		if bundle.Program.Index.Declarations[index].Sandbox != nil {
-			bundle.Program.Index.Declarations[index].Sandbox.Image.ArtifactDigest = bundle.ComputerImages[0].Artifact.Digest
+	bundle.ComputerSeeds[0].Artifact.Digest = sha256sum.DigestBytes(computer)
+	bundle.ComputerSeeds[0].Artifact.SizeBytes = int64(len(computer))
+	for index := range bundle.Program.Metadata.Definitions {
+		if bundle.Program.Metadata.Definitions[index].Computer != nil {
+			bundle.Program.Metadata.Definitions[index].Computer.Seed.ArtifactDigest = bundle.ComputerSeeds[0].Artifact.Digest
 		}
 	}
 	bundle.Objects = []Object{
 		{Digest: bundle.Program.Artifact.Digest, SizeBytes: int64(len(program)), MediaType: artifact.ProgramArtifactMediaType},
-		{Digest: bundle.ComputerImages[0].Artifact.Digest, SizeBytes: int64(len(computer)), MediaType: ComputerImageMediaType},
+		{Digest: bundle.ComputerSeeds[0].Artifact.Digest, SizeBytes: int64(len(computer)), MediaType: definition.ComputerSeedMediaType},
 	}
 	SortObjects(bundle.Objects)
 	raw, err := Canonical(bundle)
@@ -129,8 +130,8 @@ func writeTestDeploymentBundleDirectory(t *testing.T) (string, Manifest) {
 		t.Fatal(err)
 	}
 	contents := map[string][]byte{
-		bundle.Program.Artifact.Digest:           program,
-		bundle.ComputerImages[0].Artifact.Digest: computer,
+		bundle.Program.Artifact.Digest:          program,
+		bundle.ComputerSeeds[0].Artifact.Digest: computer,
 	}
 	for digest, content := range contents {
 		if err := os.WriteFile(filepath.Join(objects, strings.TrimPrefix(digest, "sha256:")), content, 0o600); err != nil {

@@ -29,7 +29,7 @@ func TestWorkerObservationRecoversAfterHungRequest(t *testing.T) {
 				_, _ = io.Copy(io.Discard, r.Body)
 				switch r.URL.Path {
 				case "/worker/v1/instance/credential":
-					_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{Credential: "credential", ExpiresInSeconds: 3600})
+					_ = json.NewEncoder(w).Encode(workerapi.HostCredentialResponse{WorkerEpoch: 7, Credential: "credential", ExpiresInSeconds: 3600})
 				case "/worker/v1/instance/observations":
 					if observations.Add(1) == 1 {
 						<-r.Context().Done()

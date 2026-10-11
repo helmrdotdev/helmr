@@ -24,6 +24,8 @@ var (
 	// ErrInvalidEnrollmentToken rejects an enrollment that no active or
 	// paused worker group's enrollment token authorizes.
 	ErrInvalidEnrollmentToken = errors.New("worker enrollment token is invalid")
+	// ErrHostCustody prevents registration from hiding an unfenced physical owner.
+	ErrHostCustody = errors.New("worker resource has retained VM allocations; confirm physical cleanup before enrollment")
 	// ErrObservationConflict rejects a worker host observation that does not
 	// match the host's current epoch.
 	ErrObservationConflict = errors.New("worker observation conflicts with this worker epoch")

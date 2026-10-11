@@ -12,14 +12,16 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/command/commandtest"
+	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
+	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -34,9 +36,9 @@ type workerClaimsRace struct {
 	bodies          map[string][][]byte
 }
 
-func newWorkerClaimsRace(t *testing.T, f runtest.Fixture, server *Server, handlers map[string]http.HandlerFunc, races map[string]func(context.Context) error) *workerClaimsRace {
+func newWorkerClaimsRace(t *testing.T, f agenttest.Fixture, server *Server, handlers map[string]http.HandlerFunc, races map[string]func(context.Context) error) *workerClaimsRace {
 	t.Helper()
-	hostSecret := seedHostSecret(t, f.Pool, f.WorkerID)
+	hostSecret := seedHostSecret(t, f.Pool, f.Worker)
 	server.hostAuth = testHostAuthConfig(t)
 	server.log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	race := &workerClaimsRace{statuses: map[string][]int{}, bodies: map[string][][]byte{}}
@@ -104,26 +106,36 @@ func (r *workerClaimsRace) requireReplayed(t *testing.T, path string) {
 	}
 }
 
-func drainWorkerHost(f runtest.Fixture) func(context.Context) error {
+func drainWorkerHost(f agenttest.Fixture) func(context.Context) error {
 	return func(ctx context.Context) error {
 		var claim int64
-		if err := f.Pool.QueryRow(ctx, `SELECT claim_version FROM worker_hosts WHERE id=$1`, f.WorkerID).Scan(&claim); err != nil {
+		if err := f.Pool.QueryRow(ctx, `SELECT claim_version FROM worker_hosts WHERE id=$1`, f.Worker).Scan(&claim); err != nil {
 			return err
 		}
 		_, err := db.New(f.Pool).DrainWorkerHost(ctx, db.DrainWorkerHostParams{DrainReason: "shutdown",
-			ID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID),
+			ID: pgvalue.UUID(f.Worker), WorkerGroupID: pgvalue.UUID(f.Group),
 			ExpectedEpoch: pgtype.Int8{Int64: 1, Valid: true}, ExpectedClaimVersion: claim,
 		})
 		return err
 	}
 }
 
-func runningComputerCommand(t *testing.T, f runtest.Fixture) (uuid.UUID, uuid.UUID, int64) {
+func runningComputerCommand(t *testing.T, f agenttest.Fixture) (uuid.UUID, uuid.UUID, int64) {
 	t.Helper()
-	member := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET status='running',started_at=now(),active_started_at=now() WHERE id=$1`, member.RunID)
-	command := commandtest.Bound(t, f, member.LeaseID, "running")
-	return command.ID, command.InstanceID, command.WriterGeneration
+	var org, project uuid.UUID
+	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&org, &project); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET observed_at=clock_timestamp() WHERE id=$1`, f.Worker)
+	created, err := command.Create(t.Context(), f.Pool, command.CreateRequest{OrgID: org, ProjectID: project, EnvironmentID: f.Environment, ComputerID: f.Computer, Creator: command.Creator{SubjectType: string(auth.PrincipalKindSession), SubjectID: f.User.String()}, Argv: []string{"true"}, IdempotencyKey: "race"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := command.Claim(t.Context(), f.Pool, workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}, command.ClaimRequest{EnvironmentID: f.Environment, InstanceID: f.Computer, WriterGeneration: 1})
+	if err != nil || claimed.Start == nil {
+		t.Fatalf("claim: %v", err)
+	}
+	return pgvalue.MustUUIDValue(created.ID), f.Computer, 1
 }
 
 func TestComputerCommandOperationsReauthenticateAcrossDrain(t *testing.T) {
@@ -131,22 +143,22 @@ func TestComputerCommandOperationsReauthenticateAcrossDrain(t *testing.T) {
 		name, path string
 		stopping   bool
 		handler    func(*Server) http.HandlerFunc
-		call       func(*testing.T, runtest.Fixture, *workerclient.Client, uuid.UUID, uuid.UUID, int64)
+		call       func(*testing.T, agenttest.Fixture, *workerclient.Client, uuid.UUID, uuid.UUID, int64)
 	}{
-		{name: "completion", path: "/worker/v1/run/computer-commands/complete", handler: func(s *Server) http.HandlerFunc { return s.workerCompleteComputerCommand },
-			call: func(t *testing.T, f runtest.Fixture, client *workerclient.Client, command, instance uuid.UUID, generation int64) {
+		{name: "completion", path: "/worker/v1/computer-commands/complete", handler: func(s *Server) http.HandlerFunc { return s.workerCompleteComputerCommand },
+			call: func(t *testing.T, f agenttest.Fixture, client *workerclient.Client, command, instance uuid.UUID, generation int64) {
 				code := int32(0)
-				if err := client.CompleteComputerCommand(t.Context(), workerapi.ComputerCommandCompleteRequest{OrgID: f.OrgID.String(), CommandID: command.String(), ComputerInstanceID: instance.String(), WriterGeneration: generation, Outcome: "exited", ExitCode: &code}); err != nil {
+				if err := client.CompleteComputerCommand(t.Context(), workerapi.ComputerCommandCompleteRequest{EnvironmentID: f.Environment.String(), CommandID: command.String(), ComputerInstanceID: instance.String(), WriterGeneration: generation, Outcome: "exited", ExitCode: &code, Stdout: workerapi.CommandOutputBoundary{ThroughSequence: 1, Complete: true}, Stderr: workerapi.CommandOutputBoundary{ThroughSequence: 1, Complete: true}}); err != nil {
 					t.Fatalf("completion across drain: %v", err)
 				}
 				var completed bool
-				if err := f.Pool.QueryRow(t.Context(), `SELECT c.status='exited' AND c.exit_code=0 AND h.status='draining' FROM computer_commands c JOIN worker_hosts h ON h.id=$2 WHERE c.id=$1`, command, f.WorkerID).Scan(&completed); err != nil || !completed {
+				if err := f.Pool.QueryRow(t.Context(), `SELECT c.status='exited' AND c.exit_code=0 AND h.status='draining' FROM computer_commands c JOIN worker_hosts h ON h.id=$2 WHERE c.id=$1`, command, f.Worker).Scan(&completed); err != nil || !completed {
 					t.Fatalf("completion was not durable on the draining host: %v %v", completed, err)
 				}
 			}},
-		{name: "claim", path: "/worker/v1/run/computer-commands/claim", handler: func(s *Server) http.HandlerFunc { return s.workerClaimComputerCommand },
-			call: func(t *testing.T, f runtest.Fixture, client *workerclient.Client, command, instance uuid.UUID, generation int64) {
-				response, err := client.ClaimComputerCommand(t.Context(), workerapi.ComputerCommandClaimRequest{OrgID: f.OrgID.String(), EnvironmentID: f.EnvironmentID.String(), ComputerInstanceID: instance.String(), WriterGeneration: generation})
+		{name: "claim", path: "/worker/v1/computer-commands/claim", handler: func(s *Server) http.HandlerFunc { return s.workerClaimComputerCommand },
+			call: func(t *testing.T, f agenttest.Fixture, client *workerclient.Client, command, instance uuid.UUID, generation int64) {
+				response, err := client.ClaimComputerCommand(t.Context(), workerapi.ComputerCommandClaimRequest{EnvironmentID: f.Environment.String(), ComputerInstanceID: instance.String(), WriterGeneration: generation})
 				if err != nil {
 					t.Fatalf("claim across drain: %v", err)
 				}
@@ -154,9 +166,9 @@ func TestComputerCommandOperationsReauthenticateAcrossDrain(t *testing.T) {
 					t.Fatalf("claim replay response: %+v", response)
 				}
 			}},
-		{name: "cancellation", path: "/worker/v1/run/computer-commands/claim", stopping: true, handler: func(s *Server) http.HandlerFunc { return s.workerClaimComputerCommand },
-			call: func(t *testing.T, f runtest.Fixture, client *workerclient.Client, command, instance uuid.UUID, generation int64) {
-				response, err := client.ClaimComputerCommand(t.Context(), workerapi.ComputerCommandClaimRequest{OrgID: f.OrgID.String(), EnvironmentID: f.EnvironmentID.String(), ComputerInstanceID: instance.String(), WriterGeneration: generation})
+		{name: "cancellation", path: "/worker/v1/computer-commands/claim", stopping: true, handler: func(s *Server) http.HandlerFunc { return s.workerClaimComputerCommand },
+			call: func(t *testing.T, f agenttest.Fixture, client *workerclient.Client, command, instance uuid.UUID, generation int64) {
+				response, err := client.ClaimComputerCommand(t.Context(), workerapi.ComputerCommandClaimRequest{EnvironmentID: f.Environment.String(), ComputerInstanceID: instance.String(), WriterGeneration: generation})
 				if err != nil {
 					t.Fatalf("cancellation claim across drain: %v", err)
 				}
@@ -164,9 +176,9 @@ func TestComputerCommandOperationsReauthenticateAcrossDrain(t *testing.T) {
 					t.Fatalf("cancellation replay response: %+v", response)
 				}
 			}},
-		{name: "log append", path: "/worker/v1/run/computer-commands/logs/append", handler: func(s *Server) http.HandlerFunc { return s.workerAppendCommandLogs },
-			call: func(t *testing.T, f runtest.Fixture, client *workerclient.Client, command, instance uuid.UUID, generation int64) {
-				if err := client.AppendCommandLog(t.Context(), workerapi.CommandLogAppendRequest{OrgID: f.OrgID.String(), CommandID: command.String(), ComputerInstanceID: instance.String(), WriterGeneration: generation, Stream: workerapi.LogStreamStdout, ObservedAt: time.Now().UTC().Truncate(time.Millisecond), Content: []byte("output")}); err != nil {
+		{name: "log append", path: "/worker/v1/computer-commands/logs/append", handler: func(s *Server) http.HandlerFunc { return s.workerAppendCommandLogs },
+			call: func(t *testing.T, f agenttest.Fixture, client *workerclient.Client, command, instance uuid.UUID, generation int64) {
+				if _, err := client.AppendCommandLog(t.Context(), workerapi.CommandLogAppendRequest{EnvironmentID: f.Environment.String(), CommandID: command.String(), ComputerInstanceID: instance.String(), WriterGeneration: generation, Stream: workerapi.LogStreamStdout, Kind: "data", ObservedSeq: 1, ThroughSequence: 1, ObservedAt: time.Now().UTC().Truncate(time.Millisecond), Content: []byte("output")}); err != nil {
 					t.Fatalf("log append across drain: %v", err)
 				}
 				var accepted int
@@ -176,12 +188,12 @@ func TestComputerCommandOperationsReauthenticateAcrossDrain(t *testing.T) {
 			}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			f := runtest.New(t)
+			f := agenttest.New(t)
 			command, instance, generation := runningComputerCommand(t, f)
 			if test.stopping {
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET status='stopping',cancel_requested_at=now() WHERE id=$1`, command)
 			}
-			server := &Server{db: db.New(f.Pool), tx: f.Pool, secretDelivery: claimHTTPSecrets{}}
+			server := &Server{db: db.New(f.Pool), tx: f.Pool, diagnosticDB: f.Pool, diagnosticBounds: completeServerConfig(t).DiagnosticBounds, secretDelivery: emptyTestSecretDelivery{}}
 			race := newWorkerClaimsRace(t, f, server, map[string]http.HandlerFunc{test.path: test.handler(server)}, map[string]func(context.Context) error{test.path: drainWorkerHost(f)})
 			test.call(t, f, race.client, command, instance, generation)
 			race.requireReplayed(t, test.path)
@@ -236,17 +248,15 @@ func TestSecretProxySeparatesStaleClaimsFromRevocation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			f := newSnapshotFixture(t, 1, true)
 			if test.sql == "" {
-				if _, err := f.store.Revoke(t.Context(), f.fixture.EnvironmentID, pgvalue.MustUUIDValue(f.secrets[0]), "revoke"); err != nil {
+				if _, err := f.store.Revoke(t.Context(), f.fixture.Environment, pgvalue.MustUUIDValue(f.secrets[0]), "revoke"); err != nil {
 					t.Fatal(err)
 				}
 			} else {
-				dbtest.MustExec(t, t.Context(), f.fixture.Pool, test.sql, f.fixture.WorkerID)
+				dbtest.MustExec(t, t.Context(), f.fixture.Pool, test.sql, f.fixture.Worker)
 			}
 			for _, resolve := range []bool{false, true} {
 				status := test.status
-				if !resolve && test.name == "revoked Secret" {
-					status = http.StatusOK // Preparation carries no Secret material.
-				}
+
 				response := f.invoke(t.Context(), resolve)
 				if response.Code != status {
 					t.Fatalf("resolve=%v status=%d want=%d body=%s", resolve, response.Code, status, response.Body.String())

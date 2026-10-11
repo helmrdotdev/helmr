@@ -38,7 +38,7 @@ func (c *parallelCommandClient) ClaimComputerCommand(ctx context.Context, reques
 				}
 			}
 			if c.releaseFirst && command.CommandID == "first" {
-				return workerapi.ComputerCommandClaimResponse{Release: &workerapi.ComputerCommandRelease{ComputerID: command.ComputerID, RequestFingerprint: command.RequestFingerprint, Completion: workerapi.ComputerCommandCompleteRequest{OrgID: "org", CommandID: command.CommandID, ComputerInstanceID: command.ComputerInstanceID, WriterGeneration: command.WriterGeneration, Outcome: "exited"}}}, nil
+				return workerapi.ComputerCommandClaimResponse{Release: &workerapi.ComputerCommandRelease{ComputerID: command.ComputerID, RequestFingerprint: command.RequestFingerprint, Completion: workerapi.ComputerCommandCompleteRequest{EnvironmentID: "org", CommandID: command.CommandID, ComputerInstanceID: command.ComputerInstanceID, WriterGeneration: command.WriterGeneration, Outcome: "exited"}}}, nil
 			}
 			return workerapi.ComputerCommandClaimResponse{Command: &command}, nil
 		}
@@ -82,7 +82,7 @@ func TestCommandsProgressWhilePeerStreamIsBlocked(t *testing.T) {
 			host2, guest2 := net.Pipe()
 			defer guest2.Close()
 			physical := &parallelCommandMachine{serverTestMachine: &serverTestMachine{streams: []io.ReadWriteCloser{host1, host2}}, firstOpened: make(chan struct{})}
-			mount := workerapi.ComputerInstanceAssignment{OrgID: "org", ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 2, GuestChannelCredential: "token"}
+			mount := commandAuthority{EnvironmentID: "org", ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 2, GuestChannelCredential: "token"}
 			commands := []workerapi.ComputerCommand{}
 			for _, id := range []string{"first", "second"} {
 				commands = append(commands, workerapi.ComputerCommand{CommandID: id, ComputerID: mount.ComputerID, ComputerInstanceID: mount.ComputerInstanceID, WriterGeneration: 2, ExpiresAt: time.Now().Add(time.Minute), RequestFingerprint: id, Request: json.RawMessage(`{"command":["true"]}`)})
@@ -109,7 +109,7 @@ func TestCommandsProgressWhilePeerStreamIsBlocked(t *testing.T) {
 						close(firstRequestRead)
 					}
 					if err == nil && blockCompletion {
-						err = frameio.WriteProtoFrame(guest1, &computerv0.ComputerBasicExecEvent{Event: &computerv0.ComputerBasicExecEvent_Result{Result: &computerv0.ComputerBasicExecResult{Outcome: "exited", RequestFingerprint: "first"}}})
+						err = frameio.WriteProtoFrame(guest1, &computerv0.ComputerBasicExecEvent{Event: &computerv0.ComputerBasicExecEvent_Result{Result: &computerv0.ComputerBasicExecResult{Outcome: "exited", RequestFingerprint: "first", Stdout: &computerv0.CommandOutputBoundary{ThroughSequence: 1, Complete: true}, Stderr: &computerv0.CommandOutputBoundary{ThroughSequence: 1, Complete: true}}}})
 					} else if err == nil {
 						var b [1]byte
 						_, err = guest1.Read(b[:])
@@ -144,14 +144,13 @@ func TestCommandsProgressWhilePeerStreamIsBlocked(t *testing.T) {
 					err = frameio.ReadProtoFrame(guest2, &r)
 				}
 				if err == nil {
-					err = frameio.WriteProtoFrame(guest2, &computerv0.ComputerBasicExecEvent{Event: &computerv0.ComputerBasicExecEvent_Result{Result: &computerv0.ComputerBasicExecResult{Outcome: "exited", RequestFingerprint: r.Envelope.RequestFingerprint}}})
+					err = frameio.WriteProtoFrame(guest2, &computerv0.ComputerBasicExecEvent{Event: &computerv0.ComputerBasicExecEvent_Result{Result: &computerv0.ComputerBasicExecResult{Outcome: "exited", RequestFingerprint: r.Envelope.RequestFingerprint, Stdout: &computerv0.CommandOutputBoundary{ThroughSequence: 1, Complete: true}, Stderr: &computerv0.CommandOutputBoundary{ThroughSequence: 1, Complete: true}}}})
 				}
 				secondDone <- err
 			}()
 			client := &parallelCommandClient{commands: commands, finish: cancel, completionStarted: completionStarted, firstOpened: physical.firstOpened, releaseFirst: name == "release"}
-			m := Server{PollEvery: time.Millisecond}
-			renewal := m.startRenewalLoop(ctx, workerapi.ComputerInstanceRenewRequest{}, client, time.Hour, time.Now().Add(time.Hour))
-			err := m.serveComputerMount(ctx, renewal, newInstanceMount(physical), nil, mount, client, nil)
+			m := commandService{PollEvery: time.Millisecond}
+			err := m.Serve(ctx, physical, mount, client)
 			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("serve: %v", err)
 			}

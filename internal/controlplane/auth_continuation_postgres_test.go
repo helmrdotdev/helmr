@@ -50,7 +50,7 @@ func TestAuthContinuationUsesEffectiveOrganization(t *testing.T) {
 		t.Fatalf("me used another membership: %d %+v", status, response)
 	} else {
 		for _, permission := range response.Permissions {
-			if permission == "tasks.deploy" {
+			if permission == "deployments.write" {
 				t.Fatal("advertised first org owner permission")
 			}
 		}

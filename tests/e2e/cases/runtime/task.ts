@@ -1,13 +1,5 @@
-import {
-  image,
-  logger,
-  metadata,
-  source,
-  task,
-  tokens,
-  sandbox,
-  type JsonValue,
-} from "@helmr/sdk"
+import { fixtureValue } from "../../support/runtime-mcp"
+import { agent, computer, image, source, type Json } from "@helmr/sdk"
 import { createHash, randomUUID } from "node:crypto"
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import { checkCommand as checkProcessCommand } from "./process"
@@ -17,7 +9,7 @@ const guideInputs = source.directory("cases/runtime/guides")
 
 const base = image("helmr-runtime-smoke")
   .from("node:24-bookworm-slim")
-  .workdir("/sandbox")
+  .workdir("/workspace")
   .copy(guideInputs, "/opt/verification/inputs")
   .run([
     "sh",
@@ -29,52 +21,43 @@ const base = image("helmr-runtime-smoke")
     ].join(" && "),
   ])
   .run(["npm", "install", "-g", "bun@1.3.13"])
-  .workdir("/sandbox")
+  .workdir("/workspace")
 
-export const runtimeSmokeComputer = sandbox({ id: "helmr-runtime-smoke" })
-  .image(base)
-  .resources({ cpu: 2, memory: "2GiB" })
+export const runtimeSmokeComputer = computer({
+  id: "helmr-runtime-smoke", image: base, resources: { cpu: 2, memory: "2GiB" },
+})
 
 export const runtimeSmokePayload = z.object({
   scenario: z.string().default("release-smoke"),
   marker: z.string().optional(),
   expectedComputerMarker: z.string().optional(),
   expectedEnvironment: z.enum(["production", "staging", "unknown"]).default("unknown"),
-  exerciseToken: z.boolean().default(false),
-  externalTokenId: z.uuidv7().optional(),
-  tokenTimeout: z.number().int().positive().max(900).default(120),
+  exerciseQuestion: z.boolean().default(false),
   largeFileKiB: z.number().int().min(1).max(4096).default(256),
 }).strict()
-
-type Payload = z.infer<typeof runtimeSmokePayload>
-
-const approvalDecision = z.object({
-  approved: z.boolean(),
-  note: z.string().optional(),
-})
 
 type Check = {
   readonly name: string
   readonly ok: boolean
-  readonly detail: JsonValue
+  readonly detail: Json
 }
 
-export const runtimeSmoke = task({
+export const runtimeSmoke = agent({
   id: "runtime-smoke",
-  maxDuration: "20m",
-  payload: runtimeSmokePayload,
-  run: async (input: Payload, ctx): Promise<JsonValue> => {
-    const marker = input.marker?.trim() || `runtime-smoke-${ctx.run.id}`
+  computer: runtimeSmokeComputer,
+  maxTurnDuration: "20m",
+  turn: async (turn, ctx): Promise<Json> => {
+    const input = runtimeSmokePayload.parse(fixtureValue(turn.input))
+    const marker = input.marker?.trim() || `runtime-smoke-${turn.id}`
     const checks: Check[] = []
 
     checks.push({
-      name: "run-context",
+      name: "turn-context",
       ok: true,
       detail: {
-        runId: ctx.run.id,
-        attemptNumber: ctx.run.attemptNumber,
+        turnId: turn.id,
+        sessionId: ctx.session.id,
         deploymentId: ctx.deployment.id,
-        deploymentVersion: ctx.deployment.version,
         computer: { id: ctx.computer.id },
       },
     })
@@ -85,58 +68,25 @@ export const runtimeSmoke = task({
     checks.push(await collectCheck("bun-version", () => checkCommand("bun-version", ["bun", "--version"])))
     checks.push(await collectCheck("ripgrep-json", () => checkCommand("ripgrep-json", ["rg", "--json", "Helmr", "/opt/verification/inputs"])))
 
-    await metadata.set("smoke.phase", "running")
-    await metadata.patch({
-      "smoke.marker": marker,
-      "smoke.scenario": input.scenario,
-    })
-    await metadata.increment("smoke.checks", checks.length)
-    await logger.debug("runtime smoke diagnostics complete", {
-      marker,
-      checkCount: checks.length,
-    })
-    await logger.info("runtime smoke reached token phase", {
-      marker,
-      exerciseToken: input.exerciseToken,
-    })
-    await logger.warn("runtime smoke warning probe", {
-      marker,
-      expected: true,
-    })
-    await logger.error("runtime smoke error-level probe", {
-      marker,
-      expected: true,
-    })
-
-    console.info({
-      phase: "runtime-smoke",
-      scenario: input.scenario,
-      expectedEnvironment: input.expectedEnvironment,
-      marker,
-      checks: checks.map((check) => check.name),
-    })
-    let tokenResult: JsonValue = null
-    if (input.exerciseToken) {
-      checks.push(await collectCheck("human-token", async () => {
-        const timeout = `${input.tokenTimeout}s`
-        const token = input.externalTokenId === undefined
-          ? await tokens.create({
-              timeout,
-              tags: ["smoke", "runtime", marker],
-              metadata: { marker, subject: `Approve Helmr product smoke marker ${marker}` },
-            })
-          : tokens.ref(input.externalTokenId)
-        tokenResult = await token.wait({
-          schema: approvalDecision,
-          timeout,
-          tags: ["smoke", "runtime", marker],
-          metadata: { marker, subject: `Approve Helmr product smoke marker ${marker}` },
-        }).unwrap()
-        return {
-          name: "human-token",
-          ok: true,
-          detail: tokenResult,
-        }
+    await turn.output.write([{ type: "json", value: {
+      phase: "runtime-smoke", scenario: input.scenario, marker,
+      checks: checks.map(check => check.name),
+    } }])
+    // Process diagnostics remain internal; only selected application data above
+    // is appended to the public Session timeline.
+    console.info({ phase: "runtime-smoke", marker, checkCount: checks.length })
+    let answer: Json = null
+    if (input.exerciseQuestion) {
+      checks.push(await collectCheck("human-question", async () => {
+        const response = await turn.ask({
+          prompt: [{ type: "text", text: `Approve product smoke marker ${marker}` }],
+          answer: { type: "choice", options: [
+            { id: "approve", label: "Approve", value: true },
+            { id: "decline", label: "Decline", value: false },
+          ], allowText: true },
+        })
+        answer = response.answer
+        return { name: "human-question", ok: true, detail: answer }
       }))
     }
 
@@ -146,7 +96,7 @@ export const runtimeSmoke = task({
       scenario: input.scenario,
       marker,
       expectedEnvironment: input.expectedEnvironment,
-      token: tokenResult,
+      answer,
       checks,
     }
     await writeFile("runtime-smoke-report.json", `${JSON.stringify(report, null, 2)}\n`)
@@ -154,7 +104,7 @@ export const runtimeSmoke = task({
       console.error(JSON.stringify({ phase: "runtime-smoke", marker, failures }))
       throw new Error(`runtime smoke failed ${failures.length} check(s): ${failures.map((check) => check.name).join(", ")}`)
     }
-    await metadata.set("smoke.phase", "complete")
+    await turn.output.write("Runtime checks complete")
     return report
   },
 })

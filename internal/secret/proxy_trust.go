@@ -15,7 +15,6 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 var ErrProxyTrustExpired = errors.New("computer Secret transport has expired; create a new Computer")
@@ -33,6 +32,7 @@ func proxyTrustAAD(environmentID, computerID uuid.UUID) []byte {
 type ProxyTrust struct {
 	EnvironmentID        uuid.UUID
 	ComputerID           uuid.UUID
+	PreparationID        uuid.UUID
 	Certificate          []byte
 	PrivateKeyNonce      []byte
 	PrivateKeyCiphertext []byte
@@ -42,17 +42,37 @@ type ProxyTrust struct {
 // GenerateProxyTrust does not persist or retrieve material. Callers persist it
 // only in the transaction that inserted the Computer, using that row's CreatedAt.
 func (s *Store) GenerateProxyTrust(environmentID, computerID uuid.UUID, createdAt time.Time) (ProxyTrust, error) {
-	row := ProxyTrust{EnvironmentID: environmentID, ComputerID: computerID}
-	if s == nil || s.encryption == nil || createdAt.IsZero() || environmentID == uuid.Nil() || computerID == uuid.Nil() {
+	return s.generateProxyTrust(ProxyTrust{EnvironmentID: environmentID, ComputerID: computerID}, createdAt, createdAt.AddDate(10, 0, 0))
+}
+
+// GeneratePreparationProxyTrust binds the signer to one private preparation
+// attempt. Its authority and certificate cannot outlive the fixed deadline.
+func (s *Store) GeneratePreparationProxyTrust(environmentID, preparationID uuid.UUID, createdAt, deadline time.Time) (ProxyTrust, error) {
+	return s.generateProxyTrust(ProxyTrust{EnvironmentID: environmentID, PreparationID: preparationID}, createdAt, deadline)
+}
+
+func trustAAD(row ProxyTrust) ([]byte, error) {
+	if row.EnvironmentID == uuid.Nil() || (row.ComputerID == uuid.Nil()) == (row.PreparationID == uuid.Nil()) {
+		return nil, ErrDeliveryUnavailable
+	}
+	if row.PreparationID != uuid.Nil() {
+		return []byte("helmr.preparation-secret-proxy-trust.v1\x00" + row.EnvironmentID.String() + "\x00" + row.PreparationID.String()), nil
+	}
+	return proxyTrustAAD(row.EnvironmentID, row.ComputerID), nil
+}
+
+func (s *Store) generateProxyTrust(row ProxyTrust, createdAt, expires time.Time) (ProxyTrust, error) {
+	aad, err := trustAAD(row)
+	if err != nil || s == nil || s.encryption == nil || createdAt.IsZero() {
 		return row, ErrDeliveryUnavailable
+	}
+	expires = expires.Truncate(time.Second)
+	if !expires.After(createdAt) || !time.Now().Before(expires) {
+		return row, ErrProxyTrustExpired
 	}
 	entropy := s.rand
 	if entropy == nil {
 		entropy = rand.Reader
-	}
-	expires := createdAt.AddDate(10, 0, 0).Truncate(time.Second)
-	if !time.Now().Before(expires) {
-		return row, ErrProxyTrustExpired
 	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), entropy)
 	if err != nil {
@@ -78,7 +98,7 @@ func (s *Store) GenerateProxyTrust(environmentID, computerID uuid.UUID, createdA
 	if _, err := io.ReadFull(entropy, nonce); err != nil {
 		return row, err
 	}
-	ciphertext := s.encryption.Seal(nil, nonce, private, proxyTrustAAD(environmentID, computerID))
+	ciphertext := s.encryption.Seal(nil, nonce, private, aad)
 	row.Certificate = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 	row.PrivateKeyNonce, row.PrivateKeyCiphertext, row.NotAfter = nonce, ciphertext, expires
 	return row, nil
@@ -99,22 +119,21 @@ func ValidateProxyTrust(certificate []byte, notAfter, now time.Time) error {
 	return nil
 }
 
-// ProxyLeaf signs a leaf with the Computer CA captured by one authorized
-// preparation statement, refusing a capture made with stale Worker claims.
-func (s *Store) ProxyLeaf(captured db.CaptureSecretProxyPreparationRow, hosts []string) ([]byte, []byte, error) {
-	if !captured.ClaimsCurrent {
-		return nil, nil, ErrWorkerClaimsStale
-	}
-	environmentID, e1 := pgvalue.UUIDValue(captured.EnvironmentID)
-	computerID, e2 := pgvalue.UUIDValue(captured.ComputerID)
-	if e1 != nil || e2 != nil {
+// PreparationProxyLeaf consumes already-authorized, attempt-owned trust. The
+// caller captures current authority and these encrypted bytes in one statement.
+func (s *Store) PreparationProxyLeaf(row ProxyTrust, hosts []string) ([]byte, []byte, error) {
+	if row.PreparationID == uuid.Nil() || row.ComputerID != uuid.Nil() {
 		return nil, nil, ErrDeliveryUnavailable
 	}
-	return s.proxyLeaf(ProxyTrust{
-		EnvironmentID: environmentID, ComputerID: computerID,
-		Certificate: captured.Certificate, NotAfter: captured.NotAfter.Time,
-		PrivateKeyNonce: captured.PrivateKeyNonce, PrivateKeyCiphertext: captured.PrivateKeyCiphertext,
-	}, hosts)
+	return s.proxyLeaf(row, hosts)
+}
+
+// ComputerProxyLeaf consumes an authorized capture from the current lease owner.
+func (s *Store) ComputerProxyLeaf(row ProxyTrust, hosts []string) ([]byte, []byte, error) {
+	if row.ComputerID == uuid.Nil() || row.PreparationID != uuid.Nil() {
+		return nil, nil, ErrDeliveryUnavailable
+	}
+	return s.proxyLeaf(row, hosts)
 }
 
 func (s *Store) proxyLeaf(row ProxyTrust, hosts []string) ([]byte, []byte, error) {
@@ -124,12 +143,14 @@ func (s *Store) proxyLeaf(row ProxyTrust, hosts []string) ([]byte, []byte, error
 	if err := ValidateProxyTrust(row.Certificate, row.NotAfter, time.Now()); err != nil {
 		return nil, nil, err
 	}
-	environmentID := row.EnvironmentID
-	computerID := row.ComputerID
+	aad, err := trustAAD(row)
+	if err != nil {
+		return nil, nil, err
+	}
 	if s == nil || s.encryption == nil || len(row.PrivateKeyNonce) != s.encryption.NonceSize() || len(row.PrivateKeyCiphertext) == 0 {
 		return nil, nil, ErrDeliveryUnavailable
 	}
-	private, err := s.encryption.Open(nil, row.PrivateKeyNonce, row.PrivateKeyCiphertext, proxyTrustAAD(environmentID, computerID))
+	private, err := s.encryption.Open(nil, row.PrivateKeyNonce, row.PrivateKeyCiphertext, aad)
 	if err != nil {
 		return nil, nil, ErrDeliveryUnavailable
 	}
@@ -193,7 +214,16 @@ func ValidateProtectedSelectors(selectors []string) error {
 // OpenProtected consumes only envelopes captured by one authorized primary
 // statement. Later rotation/revocation may overlap this already-authorized use;
 // no mutable database read may select a replacement version during decryption.
-func (s *Store) OpenProtected(rows []db.CaptureProtectedSecretEnvelopesRow, selectors []string) (map[string][]byte, error) {
+type ProtectedCapture struct {
+	Placeholder                        string
+	EnvironmentID, SecretID, VersionID uuid.UUID
+	Version                            int64
+	Nonce, Ciphertext, Certificate     []byte
+	NotAfter, AuthorizedAt             time.Time
+	ClaimsCurrent                      bool
+}
+
+func (s *Store) OpenProtectedCapture(rows []ProtectedCapture, selectors []string) (map[string][]byte, error) {
 	for _, row := range rows {
 		if !row.ClaimsCurrent {
 			return nil, ErrWorkerClaimsStale
@@ -208,11 +238,11 @@ func (s *Store) OpenProtected(rows []db.CaptureProtectedSecretEnvelopesRow, sele
 	}
 	// Validate complete coverage and public trust before decrypting any value.
 	for _, row := range rows {
-		if !expected[row.Placeholder] || !row.EnvironmentID.Valid || !row.SecretID.Valid || !row.VersionID.Valid || !row.AuthorizedAt.Valid {
+		if !expected[row.Placeholder] || row.EnvironmentID == uuid.Nil() || row.SecretID == uuid.Nil() || row.VersionID == uuid.Nil() || row.AuthorizedAt.IsZero() {
 			return nil, ErrDeliveryUnavailable
 		}
 		delete(expected, row.Placeholder)
-		if err := ValidateProxyTrust(row.Certificate, row.NotAfter.Time, row.AuthorizedAt.Time); err != nil {
+		if err := ValidateProxyTrust(row.Certificate, row.NotAfter, row.AuthorizedAt); err != nil {
 			return nil, err
 		}
 	}
@@ -226,8 +256,8 @@ func (s *Store) OpenProtected(rows []db.CaptureProtectedSecretEnvelopesRow, sele
 		}
 	}()
 	for _, row := range rows {
-		value, err := s.decryptVersion(pgvalue.MustUUIDValue(row.EnvironmentID), pgvalue.MustUUIDValue(row.SecretID),
-			pgvalue.MustUUIDValue(row.VersionID), db.SecretVersion{Version: row.Version, Nonce: row.Nonce, Ciphertext: row.Ciphertext})
+		value, err := s.decryptVersion(row.EnvironmentID, row.SecretID,
+			row.VersionID, db.SecretVersion{Version: row.Version, Nonce: row.Nonce, Ciphertext: row.Ciphertext})
 		if err != nil {
 			return nil, ErrDeliveryUnavailable
 		}

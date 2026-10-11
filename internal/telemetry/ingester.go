@@ -28,8 +28,6 @@ const (
 
 type ingestStore interface {
 	ClaimEventIngestBatch(context.Context, db.ClaimEventIngestBatchParams) ([]db.ClaimEventIngestBatchRow, error)
-	ClaimRunLogIngestBatch(context.Context, db.ClaimRunLogIngestBatchParams) ([]db.ClaimRunLogIngestBatchRow, error)
-	ClaimCommandLogIngestBatch(context.Context, db.ClaimCommandLogIngestBatchParams) ([]db.ClaimCommandLogIngestBatchRow, error)
 	MarkTelemetryOutboxWritten(context.Context, db.MarkTelemetryOutboxWrittenParams) (int64, error)
 	MarkTelemetryOutboxBatchFailed(context.Context, db.MarkTelemetryOutboxBatchFailedParams) (int64, error)
 	PruneTelemetryOutboxWritten(context.Context, db.PruneTelemetryOutboxWrittenParams) (int64, error)
@@ -103,16 +101,6 @@ func (i *Ingestor) runIngest(ctx context.Context) error {
 		if err != nil {
 			hadError = true
 			i.log.Warn("ingest event telemetry failed", "error", err)
-		}
-		_, err = i.ingestRunLogs(ctx)
-		if err != nil {
-			hadError = true
-			i.log.Warn("ingest run log telemetry failed", "error", err)
-		}
-		_, err = i.ingestCommandLogs(ctx)
-		if err != nil {
-			hadError = true
-			i.log.Warn("ingest exec log telemetry failed", "error", err)
 		}
 		if hadError {
 			if err := sleep(ctx, i.retryAfter); err != nil {
@@ -202,44 +190,6 @@ func (i *Ingestor) ingestEvents(ctx context.Context) (int, error) {
 	return len(rows), firstErr
 }
 
-func (i *Ingestor) ingestRunLogs(ctx context.Context) (int, error) {
-	ctx, cancel := context.WithTimeout(ctx, defaultIngestOperationTimeout)
-	defer cancel()
-	rows, err := i.db.ClaimRunLogIngestBatch(ctx, db.ClaimRunLogIngestBatchParams{
-		RowLimit:      i.batchSize,
-		MaxBatchBytes: i.batchBytes,
-		LeaseDuration: pgvalue.Interval(i.leaseDuration),
-	})
-	if err != nil || len(rows) == 0 {
-		return len(rows), err
-	}
-	claims := make([]telemetryOutboxClaim, 0, len(rows))
-	candidates := make([]runLogIngestCandidate, 0, len(rows))
-	var firstErr error
-	for _, row := range rows {
-		candidates = append(candidates, runLogIngestCandidate{
-			outboxID:   row.OutboxID,
-			retryCount: row.RetryCount,
-			createdAt:  pgvalue.Time(row.CreatedAt),
-			record:     runLogRecord(row),
-		})
-	}
-	if len(candidates) > 0 {
-		successes, err := i.writeRunLogCandidates(ctx, candidates)
-		if err != nil && firstErr == nil {
-			firstErr = err
-		}
-		claims = append(claims, runLogCandidateClaims(successes)...)
-	}
-	if len(claims) == 0 {
-		return len(rows), firstErr
-	}
-	if err := i.markWritten(ctx, claims); err != nil {
-		return len(rows), err
-	}
-	return len(rows), firstErr
-}
-
 func (i *Ingestor) writeEventCandidates(ctx context.Context, candidates []eventIngestCandidate) ([]eventIngestCandidate, error) {
 	if len(candidates) == 0 {
 		return nil, nil
@@ -267,39 +217,6 @@ func (i *Ingestor) writeEventCandidates(ctx context.Context, candidates []eventI
 		})
 		rejectionErr = errors.Join(rejectionErr, cause)
 		i.log.Warn("ingest event row rejected", "outbox_id", candidate.outboxID,
-			"retry_count", candidate.retryCount,
-			"pending_age", time.Since(candidate.createdAt).Truncate(time.Millisecond), "error", cause)
-	}
-	return successes, errors.Join(rejectionErr, i.markFailed(ctx, failedClaims, rejectionErr))
-}
-
-func (i *Ingestor) writeRunLogCandidates(ctx context.Context, candidates []runLogIngestCandidate) ([]runLogIngestCandidate, error) {
-	if len(candidates) == 0 {
-		return nil, nil
-	}
-	records := make([]RunLogRecord, 0, len(candidates))
-	for _, candidate := range candidates {
-		records = append(records, candidate.record)
-	}
-	result, sendErr := i.writer.WriteRunLogs(ctx, records)
-	if sendErr != nil {
-		return nil, errors.Join(sendErr, i.markFailed(ctx, runLogCandidateClaims(candidates), sendErr))
-	}
-	rejected := rejectedIndexes(result)
-	successes := make([]runLogIngestCandidate, 0, len(candidates)-len(rejected))
-	failedClaims := make([]telemetryOutboxClaim, 0, len(rejected))
-	var rejectionErr error
-	for idx, candidate := range candidates {
-		cause, failed := rejected[idx]
-		if !failed {
-			successes = append(successes, candidate)
-			continue
-		}
-		failedClaims = append(failedClaims, telemetryOutboxClaim{
-			outboxID: candidate.outboxID, retryCount: candidate.retryCount,
-		})
-		rejectionErr = errors.Join(rejectionErr, cause)
-		i.log.Warn("ingest run log row rejected", "outbox_id", candidate.outboxID,
 			"retry_count", candidate.retryCount,
 			"pending_age", time.Since(candidate.createdAt).Truncate(time.Millisecond), "error", cause)
 	}
@@ -364,16 +281,6 @@ func eventCandidateClaims(candidates []eventIngestCandidate) []telemetryOutboxCl
 	return claims
 }
 
-func runLogCandidateClaims(candidates []runLogIngestCandidate) []telemetryOutboxClaim {
-	claims := make([]telemetryOutboxClaim, len(candidates))
-	for idx := range candidates {
-		claims[idx] = telemetryOutboxClaim{
-			outboxID: candidates[idx].outboxID, retryCount: candidates[idx].retryCount,
-		}
-	}
-	return claims
-}
-
 func telemetryOutboxClaimArrays(claims []telemetryOutboxClaim) ([]int64, []int32, error) {
 	ids := make([]int64, len(claims))
 	retryCounts := make([]int32, len(claims))
@@ -406,13 +313,6 @@ type eventIngestCandidate struct {
 	record     EventRecord
 }
 
-type runLogIngestCandidate struct {
-	outboxID   int64
-	retryCount int32
-	createdAt  time.Time
-	record     RunLogRecord
-}
-
 func eventRecord(row db.ClaimEventIngestBatchRow) EventRecord {
 	body := json.RawMessage(row.Payload)
 	if len(body) == 0 || !json.Valid(body) {
@@ -426,45 +326,15 @@ func eventRecord(row db.ClaimEventIngestBatchRow) EventRecord {
 		SubjectID:      pgvalue.MustUUIDValue(row.SubjectID),
 		EventKind:      row.Kind,
 		Seq:            uint64(row.Seq),
-		RunID:          optionalUUID(row.RunID),
 		DeploymentID:   optionalUUID(row.DeploymentID),
-		RunLeaseID:     optionalUUID(row.RunLeaseID),
-		AttemptNumber:  optionalInt32(row.AttemptNumber),
-		TraceID:        pgvalue.TextValue(row.TraceID),
-		SpanID:         pgvalue.TextValue(row.SpanID),
-		ParentSpanID:   pgvalue.TextValue(row.ParentSpanID),
-		Traceparent:    pgvalue.TextValue(row.Traceparent),
 		Category:       row.Category,
 		Severity:       row.Severity,
 		Source:         row.Source,
 		Message:        row.Message,
 		Body:           string(body),
-		IdempotencyKey: row.IdempotencyKey,
 		RetentionClass: "standard",
 		RedactionClass: row.RedactionClass,
 		ObservedAt:     observedAt(row.OccurredAt, row.CreatedAt),
-		AcceptedAt:     pgvalue.Time(row.CreatedAt),
-	}
-}
-
-func runLogRecord(row db.ClaimRunLogIngestBatchRow) RunLogRecord {
-	return RunLogRecord{
-		OrgID:          pgvalue.MustUUIDValue(row.OrgID),
-		ProjectID:      pgvalue.MustUUIDValue(row.ProjectID),
-		EnvironmentID:  pgvalue.MustUUIDValue(row.EnvironmentID),
-		RunID:          pgvalue.MustUUIDValue(row.RunID),
-		RunLeaseID:     pgvalue.MustUUIDValue(row.RunLeaseID),
-		AttemptNumber:  row.AttemptNumber.Int32,
-		StreamName:     string(row.Stream),
-		Seq:            uint64(row.Seq),
-		ObservedSeq:    uint64(pgvalue.Int8Value(row.ObservedSeq)),
-		Content:        row.Content,
-		SizeBytes:      uint32(pgvalue.Int8Value(row.SizeBytes)),
-		IdempotencyKey: row.IdempotencyKey,
-		RetentionClass: "standard",
-		RedactionClass: "standard",
-		Source:         "worker",
-		ObservedAt:     observedAt(pgtype.Timestamptz{}, row.CreatedAt),
 		AcceptedAt:     pgvalue.Time(row.CreatedAt),
 	}
 }
@@ -475,13 +345,6 @@ func optionalUUID(value pgtype.UUID) *uuid.UUID {
 	}
 	id := pgvalue.MustUUIDValue(value)
 	return &id
-}
-
-func optionalInt32(value pgtype.Int4) *int32 {
-	if !value.Valid {
-		return nil
-	}
-	return &value.Int32
 }
 
 func observedAt(primary pgtype.Timestamptz, fallback pgtype.Timestamptz) time.Time {
@@ -511,113 +374,5 @@ func sleep(ctx context.Context, duration time.Duration) error {
 		return ctx.Err()
 	case <-timer.C:
 		return nil
-	}
-}
-
-func (i *Ingestor) ingestCommandLogs(ctx context.Context) (int, error) {
-	ctx, cancel := context.WithTimeout(ctx, defaultIngestOperationTimeout)
-	defer cancel()
-	rows, err := i.db.ClaimCommandLogIngestBatch(ctx, db.ClaimCommandLogIngestBatchParams{
-		RowLimit:      i.batchSize,
-		MaxBatchBytes: i.batchBytes,
-		LeaseDuration: pgvalue.Interval(i.leaseDuration),
-	})
-	if err != nil || len(rows) == 0 {
-		return len(rows), err
-	}
-	claims := make([]telemetryOutboxClaim, 0, len(rows))
-	candidates := make([]commandLogIngestCandidate, 0, len(rows))
-	var firstErr error
-	for _, row := range rows {
-		candidates = append(candidates, commandLogIngestCandidate{
-			outboxID:   row.OutboxID,
-			retryCount: row.RetryCount,
-			createdAt:  pgvalue.Time(row.CreatedAt),
-			record:     commandLogRecord(row),
-		})
-	}
-	if len(candidates) > 0 {
-		successes, err := i.writeCommandLogCandidates(ctx, candidates)
-		if err != nil && firstErr == nil {
-			firstErr = err
-		}
-		claims = append(claims, commandLogCandidateClaims(successes)...)
-	}
-	if len(claims) == 0 {
-		return len(rows), firstErr
-	}
-	if err := i.markWritten(ctx, claims); err != nil {
-		return len(rows), err
-	}
-	return len(rows), firstErr
-}
-
-func (i *Ingestor) writeCommandLogCandidates(ctx context.Context, candidates []commandLogIngestCandidate) ([]commandLogIngestCandidate, error) {
-	if len(candidates) == 0 {
-		return nil, nil
-	}
-	records := make([]CommandLogRecord, 0, len(candidates))
-	for _, candidate := range candidates {
-		records = append(records, candidate.record)
-	}
-	result, sendErr := i.writer.WriteCommandLogs(ctx, records)
-	if sendErr != nil {
-		return nil, errors.Join(sendErr, i.markFailed(ctx, commandLogCandidateClaims(candidates), sendErr))
-	}
-	rejected := rejectedIndexes(result)
-	successes := make([]commandLogIngestCandidate, 0, len(candidates)-len(rejected))
-	failedClaims := make([]telemetryOutboxClaim, 0, len(rejected))
-	var rejectionErr error
-	for idx, candidate := range candidates {
-		cause, failed := rejected[idx]
-		if !failed {
-			successes = append(successes, candidate)
-			continue
-		}
-		failedClaims = append(failedClaims, telemetryOutboxClaim{
-			outboxID: candidate.outboxID, retryCount: candidate.retryCount,
-		})
-		rejectionErr = errors.Join(rejectionErr, cause)
-		i.log.Warn("ingest exec log row rejected", "outbox_id", candidate.outboxID,
-			"retry_count", candidate.retryCount,
-			"pending_age", time.Since(candidate.createdAt).Truncate(time.Millisecond), "error", cause)
-	}
-	return successes, errors.Join(rejectionErr, i.markFailed(ctx, failedClaims, rejectionErr))
-}
-
-func commandLogCandidateClaims(candidates []commandLogIngestCandidate) []telemetryOutboxClaim {
-	claims := make([]telemetryOutboxClaim, len(candidates))
-	for idx := range candidates {
-		claims[idx] = telemetryOutboxClaim{
-			outboxID: candidates[idx].outboxID, retryCount: candidates[idx].retryCount,
-		}
-	}
-	return claims
-}
-
-type commandLogIngestCandidate struct {
-	outboxID   int64
-	retryCount int32
-	createdAt  time.Time
-	record     CommandLogRecord
-}
-
-func commandLogRecord(row db.ClaimCommandLogIngestBatchRow) CommandLogRecord {
-	return CommandLogRecord{
-		OrgID:          pgvalue.MustUUIDValue(row.OrgID),
-		ProjectID:      pgvalue.MustUUIDValue(row.ProjectID),
-		EnvironmentID:  pgvalue.MustUUIDValue(row.EnvironmentID),
-		CommandID:      pgvalue.MustUUIDValue(row.CommandID),
-		StreamName:     string(row.Stream),
-		Seq:            uint64(row.Seq),
-		ObservedSeq:    uint64(pgvalue.Int8Value(row.ObservedSeq)),
-		Content:        row.Content,
-		SizeBytes:      uint32(pgvalue.Int8Value(row.SizeBytes)),
-		IdempotencyKey: row.IdempotencyKey,
-		RetentionClass: "standard",
-		RedactionClass: "standard",
-		Source:         "worker",
-		ObservedAt:     observedAt(row.ObservedAt, row.CreatedAt),
-		AcceptedAt:     pgvalue.Time(row.CreatedAt),
 	}
 }

@@ -13,9 +13,6 @@ import (
 	"testing"
 	"time"
 	"uuid"
-
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestProxyTrustCustodyLifetimeAndScope(t *testing.T) {
@@ -122,21 +119,60 @@ func TestProxyMaterialRefusesStaleWorkerClaims(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	captured := db.CaptureSecretProxyPreparationRow{
-		EnvironmentID: pgvalue.UUID(root.EnvironmentID), ComputerID: pgvalue.UUID(root.ComputerID),
-		Certificate: root.Certificate, NotAfter: pgtype.Timestamptz{Time: root.NotAfter, Valid: true},
-		PrivateKeyNonce: root.PrivateKeyNonce, PrivateKeyCiphertext: root.PrivateKeyCiphertext, ClaimsCurrent: true,
-	}
-	if _, key, err := store.ProxyLeaf(captured, []string{"api.github.com"}); err != nil || len(key) == 0 {
-		t.Fatalf("current capture: %v", err)
-	}
-	captured.ClaimsCurrent = false
-	if certificate, key, err := store.ProxyLeaf(captured, []string{"api.github.com"}); !errors.Is(err, ErrWorkerClaimsStale) || certificate != nil || key != nil {
-		t.Fatalf("stale capture signed a leaf: %v", err)
+	if _, key, err := store.ComputerProxyLeaf(root, []string{"api.github.com"}); err != nil || len(key) == 0 {
+		t.Fatalf("authorized capture: %v", err)
 	}
 	selector := "hlmr_protected_" + strings.Repeat("a", 64)
-	rows := []db.CaptureProtectedSecretEnvelopesRow{{Placeholder: selector, ClaimsCurrent: false}}
-	if values, err := store.OpenProtected(rows, []string{selector}); !errors.Is(err, ErrWorkerClaimsStale) || values != nil {
+	rows := []ProtectedCapture{{Placeholder: selector, ClaimsCurrent: false}}
+	if values, err := store.OpenProtectedCapture(rows, []string{selector}); !errors.Is(err, ErrWorkerClaimsStale) || values != nil {
 		t.Fatalf("stale capture opened material: %v", err)
+	}
+}
+
+func TestPreparationProxyTrustSeparatesAttemptAndComputerCustody(t *testing.T) {
+	store := &Store{encryption: testCipher(t)}
+	now, deadline := time.Now(), time.Now().Add(15*time.Minute)
+	env, attempt := uuid.NewV7(), uuid.NewV7()
+	trust, err := store.GeneratePreparationProxyTrust(env, attempt, now, deadline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if trust.ComputerID != uuid.Nil() || trust.PreparationID != attempt || !trust.NotAfter.Equal(deadline.Truncate(time.Second)) {
+		t.Fatal("incorrect preparation trust scope or expiry")
+	}
+	certificate, key, err := store.PreparationProxyLeaf(trust, []string{"api.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(key)
+	pair, err := tls.X509KeyPair(certificate, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil || leaf.NotAfter.After(trust.NotAfter) {
+		t.Fatal("leaf outlived attempt")
+	}
+	for _, mutate := range []func(*ProxyTrust){
+		func(v *ProxyTrust) { v.EnvironmentID = uuid.NewV7() },
+		func(v *ProxyTrust) { v.PreparationID = uuid.NewV7() },
+		func(v *ProxyTrust) { v.ComputerID, v.PreparationID = attempt, uuid.Nil() },
+		func(v *ProxyTrust) { v.ComputerID = attempt },
+	} {
+		wrong := trust
+		mutate(&wrong)
+		if _, value, err := store.proxyLeaf(wrong, []string{"api.example.com"}); err == nil {
+			clear(value)
+			t.Fatal("signer opened under wrong owner")
+		}
+	}
+	computer, err := store.GenerateProxyTrust(env, attempt, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	computer.ComputerID, computer.PreparationID = uuid.Nil(), attempt
+	if _, value, err := store.PreparationProxyLeaf(computer, []string{"api.example.com"}); err == nil {
+		clear(value)
+		t.Fatal("Computer signer opened as preparation")
 	}
 }

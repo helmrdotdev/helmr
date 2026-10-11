@@ -1,27 +1,36 @@
-import { task, tokens, logger } from "@helmr/sdk"
+import { fixtureValue } from "../../support/runtime-mcp"
+import { agent } from "@helmr/sdk"
 import { z } from "zod"
+import { verificationComputer } from "../agent/task"
 
-export const networkTask = task({
-  id: "verification-network",
-  maxDuration: "10m",
-  retry: { enabled: false },
-  payload: z.object({ marker: z.string().min(1), startToken: z.string(), finishToken: z.string() }).strict(),
-  run: async ({ marker, startToken, finishToken }, ctx) => {
-    const positive = await fetch("https://example.com/", { signal: AbortSignal.timeout(15_000) })
+export const networkAgent = agent({
+  id: "verification-network", computer: verificationComputer, maxTurnDuration: "10m",
+  turn: async (turn, ctx) => {
+    const { marker } = z.object({ marker: z.string().min(1) }).strict().parse(fixtureValue(turn.input))
+    let start!: () => void, finish!: () => void
+    const started = new Promise<void>(resolve => { start = resolve })
+    const finished = new Promise<void>(resolve => { finish = resolve })
+    await turn.onMessage(value => {
+      const message = z.object({ phase: z.enum(["start", "finish"]) }).strict().parse(fixtureValue(value))
+      if (message.phase === "start") start()
+      else finish()
+    })
+    const positive = await fetch("https://example.com/", { signal: AbortSignal.any([turn.signal, AbortSignal.timeout(15_000)]) })
     if (!positive.ok) throw new Error(`public HTTPS control failed: ${positive.status}`)
     await positive.arrayBuffer()
-    // Take the baseline after public egress, then keep this exact VM alive.
-    await logger.info("verification network ready", { marker, phase: "ready" })
-    await tokens.ref(startToken).wait({ timeout: "8m", idleTimeout: "8m" }).unwrap()
+    // Application message gates keep this Turn active while the driver reads
+    // counters in this exact VM.
+    await turn.output.write([{ type: "json", value: { phase: "ready", marker } }])
+    await started
     let blocked = false
     try {
-      // Probe only the metadata index; never request credentials or an IMDS token.
-      const response = await fetch("http://169.254.169.254/latest/meta-data/", { signal: AbortSignal.timeout(5000) })
+      // Probe only the metadata index, never credentials or an IMDS token.
+      const response = await fetch("http://169.254.169.254/latest/meta-data/", { signal: AbortSignal.any([turn.signal, AbortSignal.timeout(5000)]) })
       await response.body?.cancel()
-    } catch { blocked = true }
+    } catch { turn.signal.throwIfAborted(); blocked = true }
     if (!blocked) throw new Error("metadata endpoint returned an HTTP response")
-    await logger.info("verification network observed", { marker, phase: "observed", positiveStatus: positive.status, blocked })
-    await tokens.ref(finishToken).wait({ timeout: "8m", idleTimeout: "8m" }).unwrap()
-    return { marker, blocked, positiveStatus: positive.status, runId: ctx.run.id, computerId: ctx.computer.id }
+    await turn.output.write([{ type: "json", value: { phase: "observed", marker, positiveStatus: positive.status, blocked } }])
+    await finished
+    return { marker, blocked, positiveStatus: positive.status, turnId: turn.id, sessionId: ctx.session.id, computerId: ctx.computer.id }
   },
 })

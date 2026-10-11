@@ -7,6 +7,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
@@ -59,6 +60,8 @@ func commandError(err error, operation commandOperation) error {
 	switch {
 	case errors.Is(err, workergroup.ErrStaleClaims):
 		return unauthorized(errors.New("worker authentication is required"))
+	case errors.Is(err, secret.ErrDeliveryUnavailable):
+		return conflict(codedError{code: "secret_unavailable", message: "command Secret delivery is unavailable"})
 	case errors.Is(err, command.ErrChanged):
 		return conflict(errors.New(commandChanged[operation]))
 	case operation == commandCompletionOperation && errors.Is(err, command.ErrInvalidCompletion):

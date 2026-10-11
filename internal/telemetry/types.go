@@ -22,7 +22,6 @@ func (e LaggingError) Error() string {
 type Reader interface {
 	CommandLogReader
 	ListEvents(ctx context.Context, query EventQuery) (EventPage, error)
-	ListRunLogChunks(ctx context.Context, query RunLogChunkQuery) (RunLogChunkPage, error)
 }
 
 type EventQuery struct {
@@ -35,22 +34,7 @@ type EventQuery struct {
 }
 
 type EventPage struct {
-	Events     []api.RunEvent
-	LastSeq    int64
-	Watermark  int64
-	Historical int
-}
-
-type RunLogChunkQuery struct {
-	OrgID    uuid.UUID
-	RunID    uuid.UUID
-	AfterSeq int64
-	Limit    int32
-	Levels   []string
-}
-
-type RunLogChunkPage struct {
-	Chunks     []api.RunLogChunk
+	Events     []api.DiagnosticEvent
 	LastSeq    int64
 	Watermark  int64
 	Historical int
@@ -58,8 +42,6 @@ type RunLogChunkPage struct {
 
 type IngestWriter interface {
 	WriteEvents(context.Context, []EventRecord) ([]RejectedRow, error)
-	WriteRunLogs(context.Context, []RunLogRecord) ([]RejectedRow, error)
-	WriteCommandLogs(context.Context, []CommandLogRecord) ([]RejectedRow, error)
 }
 
 type RejectedRow struct {

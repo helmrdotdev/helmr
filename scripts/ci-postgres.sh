@@ -84,6 +84,7 @@ fi
 CGO_ENABLED=1 go test -race -count=1 \
 	./dev/runtime \
 	./cmd/internal/dev-controlplane \
+	./internal/agent \
 	./internal/command \
 	./internal/computer \
 	./internal/controlplane \
@@ -91,17 +92,14 @@ CGO_ENABLED=1 go test -race -count=1 \
 	./internal/db/schema \
 	./internal/deployment \
 	./internal/eventstream \
-	./internal/dispatch \
 	./internal/idempotency \
 	./internal/identity \
 	./internal/org \
-	./internal/run \
-	./internal/scheduler \
 	./internal/secret \
-	./internal/session \
+	./internal/slack \
+	./internal/telemetry \
 	./internal/pglock \
 	./internal/region \
-	./internal/token \
 	./internal/workergroup \
 	./cmd/control-plane \
 	./cmd/dispatcher

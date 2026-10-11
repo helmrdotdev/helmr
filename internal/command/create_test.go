@@ -6,11 +6,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"uuid"
-
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 func TestNormalizeAppliesClosedDefaults(t *testing.T) {
@@ -85,42 +80,6 @@ func TestCreateReceiptEncoding(t *testing.T) {
 	encoded, err := json.Marshal(createReceipt{CommandID: "0190b5c2-0000-7000-8000-000000000001"})
 	if err != nil || string(encoded) != `{"command_id":"0190b5c2-0000-7000-8000-000000000001"}` {
 		t.Fatalf("receipt = %s, %v", encoded, err)
-	}
-}
-
-// A Computer that failed a capture or recovery, or is in recovery, reports
-// recovery before deletion; any other state that does not admit, including
-// lost dirty state, is busy, and an admitting Computer that reached its
-// preparation limit is exhausted.
-func TestAdmitsReportsComputerState(t *testing.T) {
-	orgID, projectID := uuid.NewV7(), uuid.NewV7()
-	request := CreateRequest{OrgID: orgID, ProjectID: projectID}
-	admitting := db.LockComputerAdmissionAuthorityRow{
-		OrgID: pgvalue.UUID(orgID), ProjectID: pgvalue.UUID(projectID), Status: db.ComputerStatusActive,
-		DesiredState: db.ComputerDesiredStateStopped, DirtyState: db.ComputerDirtyStateClean, HeadDiskVersionID: pgvalue.UUID(uuid.NewV7()),
-	}
-	for name, test := range map[string]struct {
-		mutate func(*db.LockComputerAdmissionAuthorityRow)
-		want   error
-	}{
-		"admits":          {func(*db.LockComputerAdmissionAuthorityRow) {}, nil},
-		"recovery failed": {func(r *db.LockComputerAdmissionAuthorityRow) { r.RecoveryFailure = []byte(`{}`) }, computer.ErrRecoveryRequired},
-		"recovery over delete": {func(r *db.LockComputerAdmissionAuthorityRow) {
-			r.Status, r.RecoveryFailure = db.ComputerStatusDeleting, []byte(`{}`)
-		}, computer.ErrRecoveryRequired},
-		"recovery required":     {func(r *db.LockComputerAdmissionAuthorityRow) { r.Status = db.ComputerStatusRecoveryRequired }, computer.ErrRecoveryRequired},
-		"deleting":              {func(r *db.LockComputerAdmissionAuthorityRow) { r.Status = db.ComputerStatusDeleting }, computer.ErrDeleting},
-		"dirty state lost":      {func(r *db.LockComputerAdmissionAuthorityRow) { r.DirtyState = db.ComputerDirtyStateDirtyStateLost }, computer.ErrBusy},
-		"other project":         {func(r *db.LockComputerAdmissionAuthorityRow) { r.ProjectID = pgvalue.UUID(uuid.NewV7()) }, computer.ErrBusy},
-		"preparation exhausted": {func(r *db.LockComputerAdmissionAuthorityRow) { r.PreparationFailure = []byte(`{}`) }, computer.ErrPreparationExhausted},
-	} {
-		t.Run(name, func(t *testing.T) {
-			row := admitting
-			test.mutate(&row)
-			if err := admits(row, request); !errors.Is(err, test.want) {
-				t.Fatalf("admits = %v, want %v", err, test.want)
-			}
-		})
 	}
 }
 

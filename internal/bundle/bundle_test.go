@@ -60,11 +60,11 @@ func TestParseDeploymentBundleRequiresClosedCanonicalShape(t *testing.T) {
 			errMsg: "unknown field",
 		},
 		{
-			name: "producer sandbox build instructions",
+			name: "producer Computer build instructions",
 			raw: func() []byte {
 				return mutateDeploymentBundleJSON(t, raw, func(root map[string]any) {
 					definitions := root["plan"].(map[string]any)["definitions"].([]any)
-					deploymentBundleJSONDefinition(t, definitions, "sandbox")["manifest"].(map[string]any)["imageBuild"] = map[string]any{}
+					deploymentBundleJSONDefinition(t, definitions, "computer")["manifest"].(map[string]any)["imageBuild"] = map[string]any{}
 				})
 			},
 			errMsg: "unknown field",
@@ -74,53 +74,53 @@ func TestParseDeploymentBundleRequiresClosedCanonicalShape(t *testing.T) {
 			raw: func() []byte {
 				return mutateDeploymentBundleJSON(t, raw, func(root map[string]any) {
 					program := root["program"].(map[string]any)
-					program["index"].(map[string]any)["runtimeDigest"] =
+					program["metadata"].(map[string]any)["runtimeDigest"] =
 						"sha256:" + strings.Repeat("e", 64)
 				})
 			},
 			errMsg: "Runtime digest does not match runtime",
 		},
 		{
-			name: "deployment plan queue differs from Program Index",
-			raw: func() []byte {
-				return mutateDeploymentBundleJSON(t, raw, func(root map[string]any) {
-					queues := root["plan"].(map[string]any)["queues"].([]any)
-					queues[0].(map[string]any)["concurrencyLimit"] = float64(2)
-				})
-			},
-			errMsg: "program index does not match deployment plan",
-		},
-		{
-			name: "deployment plan locator differs from Program Index",
+			name: "deployment plan trigger differs from Program Index",
 			raw: func() []byte {
 				return mutateDeploymentBundleJSON(t, raw, func(root map[string]any) {
 					definitions := root["plan"].(map[string]any)["definitions"].([]any)
-					definitions[0].(map[string]any)["locator"].(map[string]any)["exportName"] = "other"
+					definitions[0].(map[string]any)["manifest"].(map[string]any)["triggers"].(map[string]any)["daily"].(map[string]any)["cron"] = "0 10 * * *"
 				})
 			},
-			errMsg: "program index does not match deployment plan",
+			errMsg: "program metadata does not match deployment plan",
 		},
 		{
-			name: "deployment plan sandbox digest differs from Computer Image",
+			name: "deployment plan setup differs from Program Index",
 			raw: func() []byte {
 				return mutateDeploymentBundleJSON(t, raw, func(root map[string]any) {
 					definitions := root["plan"].(map[string]any)["definitions"].([]any)
-					deploymentBundleJSONDefinition(t, definitions, "sandbox")["manifest"].(map[string]any)["image"].(map[string]any)["artifactDigest"] =
+					definitions[0].(map[string]any)["manifest"].(map[string]any)["setup"] = false
+				})
+			},
+			errMsg: "program metadata does not match deployment plan",
+		},
+		{
+			name: "deployment plan Computer digest differs from Computer Image",
+			raw: func() []byte {
+				return mutateDeploymentBundleJSON(t, raw, func(root map[string]any) {
+					definitions := root["plan"].(map[string]any)["definitions"].([]any)
+					deploymentBundleJSONDefinition(t, definitions, "computer")["manifest"].(map[string]any)["seed"].(map[string]any)["artifactDigest"] =
 						"sha256:" + strings.Repeat("e", 64)
 				})
 			},
 			errMsg: "artifact does not match plan",
 		},
 		{
-			name: "deployment plan sandbox media type is not final",
+			name: "deployment plan Computer media type is not final",
 			raw: func() []byte {
 				return mutateDeploymentBundleJSON(t, raw, func(root map[string]any) {
 					definitions := root["plan"].(map[string]any)["definitions"].([]any)
-					deploymentBundleJSONDefinition(t, definitions, "sandbox")["manifest"].(map[string]any)["image"].(map[string]any)["mediaType"] =
+					deploymentBundleJSONDefinition(t, definitions, "computer")["manifest"].(map[string]any)["seed"].(map[string]any)["mediaType"] =
 						"application/octet-stream"
 				})
 			},
-			errMsg: "sandbox image mediaType",
+			errMsg: "unsupported Computer seed contract",
 		},
 		{
 			name: "missing object",
@@ -198,7 +198,7 @@ func TestDeploymentBundleAdmissionRequiresExactRuntimeRelease(t *testing.T) {
 
 	changed := bundle
 	changed.Runtime.Artifact.Digest = "sha256:" + strings.Repeat("2", 64)
-	changed.Program.Index.RuntimeDigest = changed.Runtime.Artifact.Digest
+	changed.Program.Metadata.RuntimeDigest = changed.Runtime.Artifact.Digest
 	if err := validate(changed); err != nil {
 		t.Fatalf("ValidateDeploymentBundle: %v", err)
 	}
@@ -208,21 +208,21 @@ func TestDeploymentBundleAdmissionRequiresExactRuntimeRelease(t *testing.T) {
 	}
 }
 
-func TestDeploymentBundleObjectClosureAllowsSharedComputerImageObject(t *testing.T) {
+func TestDeploymentBundleObjectClosureAllowsSharedComputerSeedObject(t *testing.T) {
 	bundle := testDeploymentBundle(t)
-	shared := bundle.ComputerImages[0]
+	shared := bundle.ComputerSeeds[0]
 	shared.DeclaredID = "repo-copy"
-	bundle.ComputerImages = append(bundle.ComputerImages, shared)
+	bundle.ComputerSeeds = append(bundle.ComputerSeeds, shared)
 
 	if err := validateBundleObjectClosure(bundle); err != nil {
 		t.Fatalf("validateBundleObjectClosure: %v", err)
 	}
 
 	conflicting := bundle
-	conflicting.ComputerImages = append(
-		[]ComputerImage(nil), bundle.ComputerImages...,
+	conflicting.ComputerSeeds = append(
+		[]ComputerSeed(nil), bundle.ComputerSeeds...,
 	)
-	conflicting.ComputerImages[1].Artifact.SizeBytes++
+	conflicting.ComputerSeeds[1].Artifact.SizeBytes++
 	if err := validateBundleObjectClosure(conflicting); err == nil ||
 		!strings.Contains(err.Error(), "conflicting reference metadata") {
 		t.Fatalf("validateBundleObjectClosure error = %v", err)
@@ -237,21 +237,20 @@ func testDeploymentBundle(t *testing.T) Manifest {
 			SizeBytes: 4096,
 			MediaType: artifact.ProgramArtifactMediaType,
 		},
-		Index: artifacttest.ProgramIndex(t),
+		Metadata: artifacttest.ProgramMetadata(t),
 	}
-	program.Index.RuntimeDigest = "sha256:" + strings.Repeat("f", 64)
+	program.Metadata.RuntimeDigest = "sha256:" + strings.Repeat("f", 64)
 	plan := Plan{
 		FormatVersion: definition.DeploymentPlanFormatVersion,
-		Definitions:   append([]artifact.ProgramIndexDeclaration(nil), program.Index.Declarations...),
-		Queues:        program.Index.Clone().Queues,
+		Definitions:   append([]artifact.ProgramDefinition(nil), program.Metadata.Definitions...),
 	}
-	computerImage := ComputerImage{
+	computerImage := ComputerSeed{
 		DeclaredID: "repo",
-		Artifact: ComputerImageArtifact{
+		Artifact: ComputerSeedArtifact{
 			Profile:      definition.ComputerSeedProfile,
 			Architecture: definition.ArchitectureX8664,
 			Digest:       "sha256:" + strings.Repeat("d", 64),
-			MediaType:    ComputerImageMediaType,
+			MediaType:    definition.ComputerSeedMediaType,
 			SizeBytes:    4096,
 		},
 	}
@@ -270,8 +269,8 @@ func testDeploymentBundle(t *testing.T) Manifest {
 				MediaType: artifact.RuntimeArtifactMediaType,
 			},
 		},
-		Program:        program,
-		ComputerImages: []ComputerImage{computerImage},
+		Program:       program,
+		ComputerSeeds: []ComputerSeed{computerImage},
 		Objects: []Object{
 			{Digest: program.Artifact.Digest, SizeBytes: program.Artifact.SizeBytes, MediaType: program.Artifact.MediaType},
 			{Digest: computerImage.Artifact.Digest, SizeBytes: computerImage.Artifact.SizeBytes, MediaType: computerImage.Artifact.MediaType},
@@ -329,16 +328,16 @@ func deploymentBundleJSONDefinition(
 }
 
 func TestDeploymentBundleBindsDiskProfileAndConfig(t *testing.T) {
-	for _, kind := range []string{"profile", "config", "legacy-format"} {
+	for _, kind := range []string{"profile", "config", "media type"} {
 		t.Run(kind, func(t *testing.T) {
 			bundle := testDeploymentBundle(t)
 			switch kind {
 			case "profile":
-				bundle.ComputerImages[0].Artifact.Profile = "other"
+				bundle.ComputerSeeds[0].Artifact.Profile = "other"
 			case "config":
-				bundle.ComputerImages[0].Artifact.Config.User = "root"
-			case "legacy-format":
-				bundle.ComputerImages[0].Artifact.MediaType = "application/vnd.helmr.computer-image.v0.oci-tar"
+				bundle.ComputerSeeds[0].Artifact.Config.User = "root"
+			case "media type":
+				bundle.ComputerSeeds[0].Artifact.MediaType = "application/octet-stream"
 			}
 			if err := validate(bundle); err == nil {
 				t.Fatal("mismatched disk contract accepted")

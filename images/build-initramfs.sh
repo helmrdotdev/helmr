@@ -76,6 +76,7 @@ docker run --rm --platform linux/amd64 \
 	copy_module kernel/fs/jbd2/jbd2.ko
 	copy_module kernel/fs/mbcache.ko
 	copy_module kernel/fs/squashfs/squashfs.ko
+	copy_module kernel/drivers/block/loop.ko
 	copy_module kernel/lib/crc16.ko
 	copy_module kernel/net/packet/af_packet.ko
 	copy_module kernel/net/vmw_vsock/vsock.ko

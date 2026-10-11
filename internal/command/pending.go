@@ -2,8 +2,6 @@ package command
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -13,7 +11,7 @@ import (
 
 // Pending is a pending Command at the revision its discovery observed.
 type Pending struct {
-	OrgID            uuid.UUID
+	EnvironmentID    uuid.UUID
 	CommandID        uuid.UUID
 	ExpectedRevision int64
 }
@@ -38,11 +36,11 @@ func FailPending(ctx context.Context, tx pgx.Tx, pending Pending, failure Failur
 func failPending(ctx context.Context, tx pgx.Tx, pending Pending, failure Failure) error {
 	q := db.New(tx)
 	commandID := pgvalue.UUID(pending.CommandID)
-	target, err := q.GetComputerCommandTarget(ctx, db.GetComputerCommandTargetParams{OrgID: pgvalue.UUID(pending.OrgID), CommandID: commandID})
+	target, err := q.GetComputerCommandTarget(ctx, db.GetComputerCommandTargetParams{EnvironmentID: pgvalue.UUID(pending.EnvironmentID), CommandID: commandID})
 	if err != nil {
 		return err
 	}
-	if _, err = lockCommandInstance(ctx, tx, target, commandID); err != nil {
+	if _, err = lockCommandLease(ctx, tx, target, pending.CommandID); err != nil {
 		return err
 	}
 	command, err := q.LockComputerCommand(ctx, db.LockComputerCommandParams{EnvironmentID: target.EnvironmentID, ComputerID: target.ComputerID, CommandID: commandID})
@@ -52,15 +50,11 @@ func failPending(ctx context.Context, tx pgx.Tx, pending Pending, failure Failur
 	if command.Revision != pending.ExpectedRevision {
 		return ErrChanged
 	}
-	_, err = q.FailPendingComputerCommand(ctx, db.FailPendingComputerCommandParams{
-		ReasonCode: pgvalue.Text(failure.Code), Error: failure.Detail,
-		EnvironmentID: target.EnvironmentID, CommandID: commandID,
-	})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrChanged
-		}
-		return fmt.Errorf("fail pending Command: %w", err)
+	if command.Status != "pending" || command.ComputerLeaseEpoch.Valid {
+		return ErrChanged
 	}
-	return nil
+	_, err = tx.Exec(ctx, `UPDATE computer_commands SET status='failed',failure_reason='dispatch_failed',error=$3,
+ terminal_at=clock_timestamp(),terminal_reason_code=$4,result_expires_at=clock_timestamp()+interval '30 days',revision=revision+1,updated_at=clock_timestamp()
+ WHERE environment_id=$1 AND id=$2`, target.EnvironmentID, commandID, failure.Detail, failure.Code)
+	return err
 }

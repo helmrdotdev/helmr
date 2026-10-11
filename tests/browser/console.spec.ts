@@ -1,13 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const NAVIGATION = ["Overview", "Runs", "Sessions", "Tokens", "Computers", "Deployments"];
+const NAVIGATION = ["Overview", "Sessions", "Computers", "Deployments"];
 
 async function login(page: Page) {
   await page.goto("/dev/login");
   await expect(page).toHaveURL("/");
 }
 
-test("local developer can enter the console and sees the six sections", async ({ page }) => {
+test("local developer can enter the console and sees the four sections", async ({ page }) => {
   await login(page);
 
   await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
@@ -24,8 +24,8 @@ test("local developer can enter the console and sees the six sections", async ({
 test("an environment without a deployment shows the CLI onboarding on the Overview", async ({ page }) => {
   await login(page);
 
-  await expect(page.getByRole("heading", { name: "Set up your first task" })).toBeVisible();
-  await expect(page.getByText("helmr deploy ./my-helmr-tasks")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Set up your first Agent" })).toBeVisible();
+  await expect(page.getByText("helmr init --dir ./my-agent")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Needs you" })).toHaveCount(0);
 });
 
@@ -43,40 +43,13 @@ test("every navigation item resolves to its page", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Sessions" })).toBeVisible();
   await expect(page.getByText("No Sessions yet.")).toBeVisible();
 
-  await navigation.getByRole("link", { name: "Tokens", exact: true }).click();
-  await expect(page).toHaveURL("/tokens");
-  await expect(page.getByRole("heading", { name: "Tokens" })).toBeVisible();
-  await expect(page.getByText("No Tokens match this filter.")).toBeVisible();
-
   await navigation.getByRole("link", { name: "Computers", exact: true }).click();
   await expect(page).toHaveURL("/computers");
   await expect(page.getByRole("heading", { name: "Computers" })).toBeVisible();
   await expect(page.getByText("No Computers yet.")).toBeVisible();
 
-  await navigation.getByRole("link", { name: "Runs", exact: true }).click();
-  await expect(page).toHaveURL("/runs");
-  await expect(page.getByRole("heading", { name: "Runs" })).toBeVisible();
-
   await navigation.getByRole("link", { name: "Overview", exact: true }).click();
   await expect(page).toHaveURL("/");
-});
-
-test("the Runs ledger filters by kind through the server", async ({ page }) => {
-  await login(page);
-  await page.goto("/runs");
-  await expect(page.getByRole("heading", { name: "Runs" })).toBeVisible();
-  await expect(page.getByText("No runs match this filter.")).toBeVisible();
-
-  const kindSelect = page.getByRole("button", { name: "Filter runs by kind" });
-  await expect(kindSelect).toHaveText(/All kinds/);
-  const actorRequest = page.waitForRequest((request) =>
-    request.url().includes("/runs?") && new URL(request.url()).searchParams.get("kind") === "actor",
-  );
-  await kindSelect.click();
-  await page.getByRole("option", { name: "Actor" }).click();
-  await actorRequest;
-  await expect(kindSelect).toHaveText(/Actor/);
-  await expect(page.getByText("No runs match this filter.")).toBeVisible();
 });
 
 test("the Sessions page filters by status and shows the empty state", async ({ page }) => {
@@ -86,25 +59,13 @@ test("the Sessions page filters by status and shows the empty state", async ({ p
   await expect(page.getByText("No Sessions yet.")).toBeVisible();
 
   const statusSelect = page.getByRole("button", { name: "Filter sessions" });
-  const failedRequest = page.waitForRequest((request) =>
-    request.url().includes("/sessions?") && new URL(request.url()).searchParams.get("status") === "failed",
+  const cancelledRequest = page.waitForRequest((request) =>
+    request.url().includes("/sessions?") && new URL(request.url()).searchParams.get("status") === "cancelled",
   );
   await statusSelect.click();
-  await page.getByRole("option", { name: "Failed" }).click();
-  await failedRequest;
+  await page.getByRole("option", { name: "Cancelled" }).click();
+  await cancelledRequest;
   await expect(page.getByText("No Sessions match this filter.")).toBeVisible();
-});
-
-test("the Tokens page shows its empty state and no Token actions", async ({ page }) => {
-  await login(page);
-
-  await page.goto("/tokens");
-  await expect(page.getByRole("heading", { name: "Tokens" })).toBeVisible();
-  await expect(page.getByText("No Tokens match this filter.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Complete" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
-  await expect(page.locator("main")).not.toContainText("callback_url");
-  await expect(page.locator("main")).not.toContainText("public_access_token");
 });
 
 test("an environment can be renamed and recolored from Settings and the header dot follows", async ({ page }) => {
@@ -136,61 +97,4 @@ test("an environment can be renamed and recolored from Settings and the header d
 
   await page.reload();
   await expect(page.getByRole("row", { name: /Staging Renamed/ })).toBeVisible();
-});
-
-const PROJECT_ID = "00000000-0000-7000-8000-000000000301";
-const ENVIRONMENT_ID = "00000000-0000-7000-8000-000000000401";
-
-async function createToken(page: Page, tag: string): Promise<string> {
-  const response = await page.request.post(`/api/projects/${PROJECT_ID}/environments/${ENVIRONMENT_ID}/tokens`, {
-    data: { timeout: "1h", tags: [tag], idempotency_key: crypto.randomUUID() },
-  });
-  expect(response.ok()).toBeTruthy();
-  const token = (await response.json()) as { id: string };
-  return token.id;
-}
-
-test("a pending Token is completed and cancelled from its detail page; list rows only link", async ({ page }) => {
-  await login(page);
-  const completeID = await createToken(page, "complete-me");
-  const cancelID = await createToken(page, "cancel-me");
-  const shortCancelID = cancelID.slice(cancelID.lastIndexOf("-") + 1);
-
-  await page.goto(`/tokens/${completeID}`);
-  await expect(page.getByRole("heading", { name: "Token", exact: true })).toBeVisible();
-  // The full ID appears once, under the title, as the click-to-copy control.
-  await expect(page.getByRole("button", { name: `Copy ${completeID}` })).toBeVisible();
-  await expect(page.locator("main").getByText(completeID, { exact: true })).toHaveCount(1);
-  await expect(page.locator("main")).not.toContainText("callback_url");
-  await expect(page.locator("main")).not.toContainText("token-callbacks");
-  await expect(page.locator("main")).not.toContainText("hlmr_pub_");
-  await page.getByRole("button", { name: "Complete" }).click();
-  const completeDialog = page.getByRole("dialog", { name: "Complete Token" });
-  await expect(completeDialog).toContainText(completeID);
-  await expect(completeDialog).toContainText("complete-me");
-  await completeDialog.getByLabel("Result (JSON)").fill('{"approved": true}');
-  await completeDialog.getByRole("button", { name: "Complete" }).click();
-  await expect(completeDialog).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Result" })).toBeVisible();
-  await expect(page.locator("main")).toContainText('"approved": true');
-  await expect(page.getByRole("button", { name: "Complete" })).toHaveCount(0);
-
-  await page.goto("/tokens");
-  await expect(page.getByRole("row", { name: /complete-me/ })).toContainText("Completed");
-  const cancelRow = page.getByRole("row", { name: /cancel-me/ });
-  await expect(cancelRow).toContainText("Pending");
-  await expect(cancelRow.getByRole("button")).toHaveCount(0);
-  await expect(cancelRow).not.toContainText("…");
-  const cancelLink = cancelRow.getByRole("link", { name: shortCancelID, exact: true });
-  await expect(cancelLink).toHaveAttribute("title", cancelID);
-  await cancelLink.click();
-  await expect(page).toHaveURL(`/tokens/${cancelID}`);
-
-  await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  const cancelDialog = page.getByRole("dialog", { name: "Cancel Token" });
-  await expect(cancelDialog).toContainText(cancelID);
-  await cancelDialog.getByRole("button", { name: "Cancel Token" }).click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(page.locator("main")).toContainText("Cancelled");
-  await expect(page.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
 });

@@ -1,7 +1,7 @@
 package guestd
 
 import (
-	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
+	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,7 +11,7 @@ func TestProcessSecretStagingKeepsPeerMaterial(t *testing.T) {
 	root := t.TempDir()
 	stage := func(value string) (string, func()) {
 		env := []string{}
-		path, cleanup, err := stageProgramSecrets(root, []*programv0.ProgramSecret{{Placement: &programv0.ProgramSecret_File{File: "/secrets/token"}, Value: []byte(value)}}, nil, &env)
+		path, cleanup, err := stageProgramSecrets(root, []*agentv1.SessionSecret{{Placement: &agentv1.SessionSecret_File{File: "/secrets/token"}, Value: []byte(value)}}, nil, &env)
 		if err != nil {
 			t.Fatal(err)
 		}

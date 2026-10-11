@@ -245,16 +245,6 @@ func (descriptor VMRuntimeDescriptor) Digest() (string, error) {
 	return sha256sum.DigestBytes(canonical), nil
 }
 
-// VCPUCountForMilliCPU is the single restore-contract conversion from a
-// positive milliCPU request to the Firecracker vCPU shape. The subtraction
-// form avoids overflowing at MaxInt64.
-func VCPUCountForMilliCPU(milliCPU int64) (int64, error) {
-	if milliCPU <= 0 {
-		return 0, fmt.Errorf("milliCPU must be positive, got %d", milliCPU)
-	}
-	return (milliCPU-1)/1000 + 1, nil
-}
-
 type CPUTemplateSelectorKind string
 
 const (

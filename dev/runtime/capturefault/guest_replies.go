@@ -8,14 +8,14 @@ import (
 	"io"
 	"net"
 	"os"
-	"slices"
+
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
-	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
+	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"google.golang.org/protobuf/proto"
 )
@@ -190,45 +190,70 @@ func (r *guestRelay) forward(client *net.UnixConn) error {
 		return err
 	}
 	r.forwarded.Add(1)
-	if header.Type != wire.StreamTypeComputerCaptureAbort || bodySize != 0 {
+	if header.Type != wire.StreamTypeAgentComputer || bodySize != 0 {
 		return relayStreams(client, upstream, in, out)
 	}
 	var requestBytes bytes.Buffer
-	var request computerv0.ComputerCaptureAbortRequest
-	if err := frameio.ReadProtoFrameBounded(io.TeeReader(in, &requestBytes), 1<<20, &request); err != nil {
+	request := new(agentv1.ComputerSessionControl)
+	if err := frameio.ReadProtoFrameBounded(io.TeeReader(in, &requestBytes), 16*1024*1024+64*1024, request); err != nil {
 		return err
+	}
+	if !r.fault.awaitInspect(request.GetInspect()) {
+		return nil
 	}
 	if _, err := upstream.Write(requestBytes.Bytes()); err != nil {
 		return err
 	}
+	if request.GetInstall() != nil {
+		// Installation is bidirectional before its final receipt. Relay the guest
+		// nonce and host clock observation byte-for-byte, without recording either.
+		var challengeBytes bytes.Buffer
+		challenge := new(agentv1.ComputerAuthorityChallenge)
+		if err := frameio.ReadProtoFrameBounded(io.TeeReader(out, &challengeBytes), 256, challenge); err != nil {
+			return err
+		}
+		if _, err := client.Write(challengeBytes.Bytes()); err != nil {
+			return err
+		}
+		var observationBytes bytes.Buffer
+		observation := new(agentv1.ComputerAuthorityObservation)
+		if err := frameio.ReadProtoFrameBounded(io.TeeReader(in, &observationBytes), 256, observation); err != nil {
+			return err
+		}
+		if _, err := upstream.Write(observationBytes.Bytes()); err != nil {
+			return err
+		}
+	}
 	var responseBytes bytes.Buffer
-	var response computerv0.ComputerCaptureAbortResponse
-	if err := frameio.ReadProtoFrameBounded(io.TeeReader(out, &responseBytes), 1<<20, &response); err != nil {
-		r.fault.guestReadError(&request)
+	response := new(agentv1.ComputerSessionReceipt)
+	if err := frameio.ReadProtoFrameBounded(io.TeeReader(out, &responseBytes), 64*1024, response); err != nil {
 		return err
 	}
-	if r.fault.guestResponse(&request, &response) {
+	if r.fault.guestResponse(request, response) {
 		return nil
 	}
 	_, err = client.Write(responseBytes.Bytes())
 	return err
 }
 
-func (f *replyFault) guestReadError(request *computerv0.ComputerCaptureAbortRequest) {
+// Every matching Inspect is gated, including retries after the worker's
+// request timeout. Session transport and renewal streams remain independent.
+func (f *replyFault) awaitInspect(c *agentv1.ComputerSessionCapture) bool {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.target == nil || f.target.Mode != "drop" || request.GetCapture().GetCheckpointId() != f.target.CheckpointID || request.GetCapture().GetComputerInstanceId() != f.target.InstanceID {
-		return
+	if c == nil || f.capture == nil || !proto.Equal(c, f.capture) || f.released {
+		f.mu.Unlock()
+		return true
 	}
-	if len(f.events) >= 100 {
-		f.failure = "reply fault exceeded bounded case observations"
-		return
+	gate := f.gate
+	f.mu.Unlock()
+	select {
+	case <-gate:
+		return true
+	case <-time.After(3 * time.Minute):
+		f.fail(errors.New("capture inspection gate exceeded deadline"))
+		f.release()
+		return false
 	}
-	kind := "guest-prepare"
-	if request.Activate {
-		kind = "guest-activate"
-	}
-	f.events = append(f.events, replyEvent{Kind: kind, At: time.Now().UTC(), Error: "complete response not received", Version: request.AbortDesiredVersion})
 }
 
 func relayStreams(client, upstream net.Conn, in, out io.Reader) error {
@@ -248,60 +273,84 @@ func relayStreams(client, upstream net.Conn, in, out io.Reader) error {
 	return nil
 }
 
-func (f *replyFault) guestResponse(request *computerv0.ComputerCaptureAbortRequest, response *computerv0.ComputerCaptureAbortResponse) bool {
+func (f *replyFault) guestResponse(request *agentv1.ComputerSessionControl, receipt *agentv1.ComputerSessionReceipt) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	capture := request.GetCapture()
-	if f.failure != "" || f.target == nil || f.target.Mode != "drop" || capture.GetCheckpointId() != f.target.CheckpointID || capture.GetComputerInstanceId() != f.target.InstanceID {
+	if f.failure != "" || f.target == nil || f.target.Mode != "drop" {
 		return false
 	}
-	b := f.baseline
-	if b == nil || capture.GetComputerId() != b.ComputerID || capture.GetWriterGeneration() != b.WriterGeneration || capture.GetMembershipRevision() != b.MembershipRevision || capture.GetDesiredVersion() != b.DesiredVersion || request.AbortDesiredVersion != b.AbortDesiredVersion || response.CheckpointId != capture.CheckpointId || response.AbortDesiredVersion != request.AbortDesiredVersion || response.Activated != request.Activate {
-		f.failure = "guest abort success changed source fence"
-		return false
-	}
-	ids := make([]string, 0, len(request.Members))
-	for _, member := range request.Members {
-		ids = append(ids, member.GetMember().GetRunId())
-		matched := false
-		for _, prior := range b.Members {
-			current := member.GetMember()
-			if current.GetRunId() == prior.RunID && current.GetAttemptNumber() == uint32(prior.AttemptNumber) && current.GetRunWaitId() == prior.RunWaitID && current.GetRunLeaseId() == prior.Lease.ID && member.Cancelled == prior.Cancelled {
-				matched = true
-			}
-		}
-		if !matched {
-			f.failure = "guest abort changed CP member authority"
+	if c := request.GetCapture(); c != nil {
+		if !f.selected(c) {
 			return false
 		}
-		found := false
-		for _, sealed := range capture.Runs {
-			if proto.Equal(sealed, member.GetMember()) {
-				found = true
+		if receipt.Error != "" || receipt.ErrorCode != 0 {
+			return false
+		}
+		if receipt.CheckpointId != c.CheckpointId || receipt.DesiredVersion != c.DesiredVersion || !receipt.Frozen || receipt.Installed || receipt.Activated || receipt.ActivationStarted {
+			f.failure = "capture receipt was not a complete frozen source"
+			return false
+		}
+		if f.capture != nil && !proto.Equal(f.capture, c) {
+			f.failure = "capture replay changed request"
+			return false
+		}
+		f.capture = proto.Clone(c).(*agentv1.ComputerSessionCapture)
+		f.target.CheckpointID = c.CheckpointId
+		return f.record(replyEvent{Kind: "guest-capture", Version: c.DesiredVersion, Digest: digest(c), ExpiresAt: time.Unix(0, c.Envelope.OperationExpiresAtUnixNano).UTC()}, 0)
+	}
+	if c := request.GetInspect(); c != nil {
+		if !proto.Equal(c, f.capture) {
+			return false
+		}
+		f.record(replyEvent{Kind: "guest-inspect", Version: receipt.DesiredVersion, Installed: receipt.Installed, Activated: receipt.Activated}, -1)
+		return false
+	}
+	if c := request.GetControls(); c != nil {
+		if f.capture == nil || c.CheckpointId != f.capture.CheckpointId || c.GetEnvelope().GetComputerInstanceId() != f.target.InstanceID {
+			return false
+		}
+		if receipt.Error != "" || receipt.ErrorCode != 0 {
+			return false
+		}
+		if f.baseline == nil || c.DesiredVersion != f.baseline.DesiredVersion || receipt.CheckpointId != c.CheckpointId || receipt.DesiredVersion != c.DesiredVersion || !receipt.Installed || !receipt.Frozen || receipt.Activated || !bytes.Equal(receipt.ControlsDigest, messageDigest(c)) {
+			f.failure = "controls receipt changed installed request"
+			return false
+		}
+		f.controls = proto.Clone(c).(*agentv1.ComputerSessionControls)
+		stopped := []string{}
+		for _, s := range c.Sessions {
+			if s.Stopped {
+				stopped = append(stopped, s.GetIdentity().GetSessionId())
 			}
 		}
-		if !found {
-			f.failure = "guest abort changed sealed member"
+		f.record(replyEvent{Kind: "guest-controls", Version: c.DesiredVersion, Digest: digest(c), Stopped: stopped}, -1)
+		return false
+	}
+	p, kind, stage := request.GetInstall(), "guest-install", 2
+	if p == nil {
+		p, kind, stage = request.GetActivate(), "guest-activate", 3
+	}
+	if p == nil || !f.selected(p.Capture) {
+		return false
+	}
+	if receipt.Error != "" || receipt.ErrorCode != 0 {
+		return false
+	}
+	if f.baseline == nil || !proto.Equal(f.baseline, p) || receipt.CheckpointId != p.Capture.CheckpointId || receipt.DesiredVersion != p.DesiredVersion || !receipt.Installed {
+		f.failure = "guest continuation changed CP installation"
+		return false
+	}
+	if kind == "guest-install" {
+		if !receipt.Activated && (!receipt.Frozen || receipt.ActivationStarted) {
+			f.failure = "installation receipt was not frozen"
+			return false
+		}
+		f.installed = true
+	} else {
+		if receipt.Frozen || !receipt.Activated || !receipt.ActivationStarted || f.controls == nil || !bytes.Equal(receipt.ControlsDigest, messageDigest(f.controls)) {
+			f.failure = "activation omitted current controls"
 			return false
 		}
 	}
-	slices.Sort(ids)
-	if len(capture.Runs) != len(ids) || !slices.Equal(ids, f.target.RunIDs) {
-		f.failure = "guest abort changed member set"
-		return false
-	}
-	kind, stage := "guest-prepare", 1
-	if request.Activate {
-		kind, stage = "guest-activate", 2
-	}
-	drop := f.stage == stage
-	if drop {
-		f.stage++
-	}
-	f.events = append(f.events, replyEvent{Kind: kind, At: time.Now().UTC(), Dropped: drop, Version: request.AbortDesiredVersion})
-	if len(f.events) > 100 {
-		f.failure = "reply fault exceeded bounded case observations"
-		return false
-	}
-	return drop
+	return f.record(replyEvent{Kind: kind, Version: p.DesiredVersion, Digest: digest(p), Installed: receipt.Installed, Activated: receipt.Activated}, stage)
 }

@@ -25,7 +25,7 @@ type linuxProcessCgroup struct {
 }
 
 func enterProcessCgroupNamespace(leaf string) error {
-	if err := validateProcessCgroupLeaf(leaf); err != nil {
+	if err := validateAssignedProcessCgroup(leaf); err != nil {
 		return err
 	}
 	raw, err := os.ReadFile("/proc/self/cgroup")
@@ -49,6 +49,20 @@ func enterProcessCgroupNamespace(leaf string) error {
 }
 
 func createProcessCgroup(leaf string) (processCgroup, error) {
+	return createProcessCgroupWithPolicy(leaf, false)
+}
+
+// Duplicate Session startup must never kill an existing process epoch. Its
+// retained owner, including RAM restoration, is the only cleanup authority.
+func createSessionProcessCgroup(sessionID string, epoch int64) (*linuxProcessCgroup, error) {
+	leaf, err := sessionCgroupLeafName(sessionID, epoch)
+	if err != nil {
+		return nil, err
+	}
+	return createProcessCgroupWithPolicy(leaf, true)
+}
+
+func createProcessCgroupWithPolicy(leaf string, exclusive bool) (*linuxProcessCgroup, error) {
 	if err := validateProcessCgroupLeaf(leaf); err != nil {
 		return nil, err
 	}
@@ -70,7 +84,7 @@ func createProcessCgroup(leaf string) (processCgroup, error) {
 	}
 	path := filepath.Join(processCgroupRoot, leaf)
 	if err := unix.Mkdirat(rootFD, leaf, 0o755); err != nil {
-		if !errors.Is(err, unix.EEXIST) {
+		if exclusive || !errors.Is(err, unix.EEXIST) {
 			return nil, fmt.Errorf("create program cgroup: %w", err)
 		}
 		if cleanupErr := cleanupStaleProcessCgroup(path); cleanupErr != nil {
@@ -103,7 +117,7 @@ func cleanupStaleProcessCgroup(path string) error {
 	if err := waitCgroupEmpty(path); err != nil {
 		return fmt.Errorf("empty stale program cgroup: %w", err)
 	}
-	if err := os.Remove(path); err != nil {
+	if err := removeEmptyCgroupTree(path); err != nil {
 		return fmt.Errorf("remove stale program cgroup: %w", err)
 	}
 	return nil
@@ -252,17 +266,47 @@ func parseProgramCgroupState(body []byte) (frozen bool, populated bool, err erro
 }
 
 func (c *linuxProcessCgroup) kill() error {
-	if c == nil || c.path == "" {
+	if c == nil || c.file == nil {
 		return errors.New("program cgroup is required")
 	}
-	return killCgroup(c.path)
+	fd, err := unix.Openat(int(c.file.Fd()), "cgroup.kill", unix.O_WRONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return fmt.Errorf("open program cgroup kill control: %w", err)
+	}
+	n, writeErr := unix.Write(fd, []byte("1"))
+	closeErr := unix.Close(fd)
+	if writeErr == nil && n != 1 {
+		writeErr = io.ErrShortWrite
+	}
+	return errors.Join(writeErr, closeErr)
 }
 
 func (c *linuxProcessCgroup) waitEmpty() error {
-	if c == nil || c.path == "" {
+	if c == nil || c.file == nil {
 		return errors.New("program cgroup is required")
 	}
-	return waitCgroupEmpty(c.path)
+	ctx, cancel := context.WithTimeout(context.Background(), processCgroupCleanupTimeout)
+	defer cancel()
+	return c.waitEmptyContext(ctx)
+}
+
+func (c *linuxProcessCgroup) waitEmptyContext(ctx context.Context) error {
+	ticker := time.NewTicker(programCgroupTransitionPoll)
+	defer ticker.Stop()
+	for {
+		_, populated, err := c.state()
+		if err != nil {
+			return err
+		}
+		if !populated {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("wait for program cgroup to empty: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 func (c *linuxProcessCgroup) close() error {
@@ -271,12 +315,25 @@ func (c *linuxProcessCgroup) close() error {
 	}
 	var closeErr error
 	if c.file != nil {
+		// A workload may remove an empty subgroup and recreate its name. Cleanup
+		// owns the opened identity, not whichever directory now has that name.
+		if c.path != "" {
+			owned, statErr := c.file.Stat()
+			named, pathErr := os.Lstat(c.path)
+			if statErr != nil || pathErr != nil {
+				closeErr = errors.Join(statErr, pathErr)
+			} else if !os.SameFile(owned, named) {
+				closeErr = errors.New("program cgroup cleanup identity changed")
+			} else {
+				closeErr = removeEmptyCgroupTree(c.path)
+			}
+		}
+		if closeErr != nil {
+			return closeErr
+		}
 		closeErr = c.file.Close()
 		c.file = nil
 	}
-	if c.path != "" {
-		closeErr = errors.Join(closeErr, os.Remove(c.path))
-		c.path = ""
-	}
+	c.path = ""
 	return closeErr
 }

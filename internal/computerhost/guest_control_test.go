@@ -98,71 +98,62 @@ func (s *guestControlBlockingCloseStream) Close() error {
 	return nil
 }
 
-var guestControlTestCancellations = []guestControlCancellation{
-	guestControlCancelReadOnly,
-	guestControlCancelCloseStream,
-	guestControlCancelCloseStreamAndRead,
-	guestControlCancelAwaitStreamClose,
-}
-
 func TestGuestControlExchangeFramesHeaderAndRequest(t *testing.T) {
-	for _, cancellation := range guestControlTestCancellations {
-		client, server := net.Pipe()
-		header := wire.StreamHeader{Type: wire.StreamTypeComputerRestoreVerify, ComputerID: "computer", ComputerInstanceID: "instance", CheckpointID: "checkpoint", RunID: "run", OperationID: "operation"}
-		request := &computerv0.VerifyComputerRestoreRequest{Identity: &computerv0.ComputerRestoreIdentity{ComputerId: "computer", CheckpointId: "checkpoint", WriterGeneration: 4}}
-		done := make(chan error, 1)
-		go func() {
-			defer server.Close()
-			got, size, err := wire.ReadStreamFrameHeader(server)
-			if err != nil {
-				done <- err
-				return
-			}
-			if got != header || size != 0 {
-				done <- errors.New("stream header changed")
-				return
-			}
-			var received computerv0.VerifyComputerRestoreRequest
-			if err := frameio.ReadProtoFrame(server, &received); err != nil {
-				done <- err
-				return
-			}
-			if !proto.Equal(&received, request) {
-				done <- errors.New("request frame changed")
-				return
-			}
-			if err := frameio.WriteProtoFrame(server, &computerv0.VerifyComputerRestoreResponse{Identity: received.Identity}); err != nil {
-				done <- err
-				return
-			}
-			// The exchange closes its stream once the response is read.
-			_, err = server.Read(make([]byte, 1))
-			if !errors.Is(err, io.EOF) {
-				done <- errors.New("stream stayed open after the response")
-				return
-			}
-			done <- nil
-		}()
-		machine := &guestControlTestMachine{stream: client}
-		var response computerv0.VerifyComputerRestoreResponse
-		_, err := guestControl{machine: machine}.exchange(t.Context(), guestControlExchange{header: header, request: request, response: &response, cancellation: cancellation})
+	client, server := net.Pipe()
+	header := wire.StreamHeader{Type: wire.StreamTypeComputerCommandCancel, ComputerID: "computer", ComputerInstanceID: "instance", CheckpointID: "checkpoint", OperationID: "operation"}
+	request := &computerv0.ComputerCommandCancelRequest{Authority: &computerv0.ComputerCommandAuthority{ComputerId: "computer", WriterGeneration: 4}}
+	done := make(chan error, 1)
+	go func() {
+		defer server.Close()
+		got, size, err := wire.ReadStreamFrameHeader(server)
 		if err != nil {
-			t.Fatalf("cancellation %d: exchange: %v", cancellation, err)
+			done <- err
+			return
 		}
-		if !proto.Equal(response.Identity, request.Identity) {
-			t.Fatalf("cancellation %d: response=%v", cancellation, &response)
+		if got != header || size != 0 {
+			done <- errors.New("stream header changed")
+			return
 		}
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Fatalf("cancellation %d: %v", cancellation, err)
-			}
-		case <-time.After(3 * time.Second):
-			t.Fatalf("cancellation %d: guest did not observe the complete exchange", cancellation)
+		var received computerv0.ComputerCommandCancelRequest
+		if err := frameio.ReadProtoFrame(server, &received); err != nil {
+			done <- err
+			return
 		}
-		if machine.closed {
-			t.Fatal("exchange closed the machine")
+		if !proto.Equal(&received, request) {
+			done <- errors.New("request frame changed")
+			return
 		}
+		if err := frameio.WriteProtoFrame(server, &computerv0.ComputerCommandCancelResponse{Accepted: true}); err != nil {
+			done <- err
+			return
+		}
+		// The exchange closes its stream once the response is read.
+		_, err = server.Read(make([]byte, 1))
+		if !errors.Is(err, io.EOF) {
+			done <- errors.New("stream stayed open after the response")
+			return
+		}
+		done <- nil
+	}()
+	machine := &guestControlTestMachine{stream: client}
+	var response computerv0.ComputerCommandCancelResponse
+	_, err := guestControl{machine: machine}.exchange(t.Context(), guestControlExchange{header: header, request: request, response: &response})
+	if err != nil {
+		t.Fatalf("exchange: %v", err)
+	}
+	if !response.Accepted {
+		t.Fatalf("response=%v", &response)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("%v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("guest did not observe the complete exchange")
+	}
+	if machine.closed {
+		t.Fatal("exchange closed the machine")
 	}
 }
 
@@ -176,7 +167,7 @@ func guestControlTestHeaderLength(t *testing.T, header wire.StreamHeader) int {
 }
 
 func TestGuestControlExchangeReportsFailedStepAndClosesStream(t *testing.T) {
-	header := wire.StreamHeader{Type: wire.StreamTypeComputerRunCleanup, RunID: "run"}
+	header := wire.StreamHeader{Type: wire.StreamTypeComputerCommandCancel, ComputerID: "computer"}
 	openErr := errors.New("open failed")
 	for _, test := range []struct {
 		name       string
@@ -194,7 +185,7 @@ func TestGuestControlExchangeReportsFailedStepAndClosesStream(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			stream := &guestControlFailingStream{writeLimit: test.writeLimit}
 			machine := &guestControlTestMachine{stream: testVMStream(stream), openErr: test.openErr}
-			step, err := guestControl{machine: machine}.exchange(t.Context(), guestControlExchange{header: header, request: &computerv0.ComputerRunCleanupRequest{ComputerId: "computer", RunId: "run"}, response: &computerv0.ComputerRunCleanupResponse{}})
+			step, err := guestControl{machine: machine}.exchange(t.Context(), guestControlExchange{header: header, request: &computerv0.ComputerCommandCancelRequest{Authority: &computerv0.ComputerCommandAuthority{ComputerId: "computer"}}, response: &computerv0.ComputerCommandCancelResponse{}})
 			if err != test.cause || step != test.step {
 				t.Fatalf("step=%d err=%v, want step=%d err=%v", step, err, test.step, test.cause)
 			}
@@ -205,46 +196,13 @@ func TestGuestControlExchangeReportsFailedStepAndClosesStream(t *testing.T) {
 	}
 }
 
-func TestComputerAuthorityRenewalMarksEveryExchangeFailureAsTransport(t *testing.T) {
-	fence := &computerv0.ComputerAuthorityFence{RunId: "run", ComputerId: "computer", ComputerInstanceId: "instance", ExpiresAtUnixNano: 1}
-	request := &computerv0.RenewComputerAuthorityRequest{Previous: &computerv0.ComputerRunAuthority{Fence: fence}, NewExpiresAtUnixNano: 2}
-	header := wire.StreamHeader{Type: wire.StreamTypeComputerAuthorityRenew, RunID: "run", ComputerID: "computer", ComputerInstanceID: "instance"}
-	for _, test := range []struct {
-		name       string
-		openErr    error
-		writeLimit int
-		want       string
-	}{
-		{name: "open", openErr: errors.New("open failed"), want: "computer control transport: open computer authority renewal stream: open failed"},
-		{name: "header", writeLimit: 0, want: "computer control transport: write computer authority renewal header: guest control test write failed"},
-		{name: "request", writeLimit: guestControlTestHeaderLength(t, header), want: "computer control transport: write computer authority renewal request: guest control test write failed"},
-		{name: "response", writeLimit: 1 << 20, want: "computer control transport: read computer authority renewal response: EOF"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			stream := &guestControlFailingStream{writeLimit: test.writeLimit}
-			machine := &guestControlTestMachine{stream: testVMStream(stream), openErr: test.openErr}
-			fenceOut, err := guestControl{machine: machine}.renewAuthority(t.Context(), request)
-			if fenceOut != nil || !errors.Is(err, ErrControlTransport) || err.Error() != test.want {
-				t.Fatalf("renewal = %v, %v; want %q", fenceOut, err, test.want)
-			}
-		})
-	}
-}
-
 func TestGuestControlExchangeCancellation(t *testing.T) {
 	for _, test := range []struct {
-		name         string
-		cancellation guestControlCancellation
-		readRequest  bool
-		want         error
+		name        string
+		readRequest bool
 	}{
-		{name: "read only during response read", cancellation: guestControlCancelReadOnly, readRequest: true, want: context.Canceled},
-		{name: "close stream during request write", cancellation: guestControlCancelCloseStream},
-		{name: "close stream during response read", cancellation: guestControlCancelCloseStream, readRequest: true},
-		{name: "close stream and read during request write", cancellation: guestControlCancelCloseStreamAndRead},
-		{name: "close stream and read during response read", cancellation: guestControlCancelCloseStreamAndRead, readRequest: true},
-		{name: "await close during request write", cancellation: guestControlCancelAwaitStreamClose},
-		{name: "await close during response read", cancellation: guestControlCancelAwaitStreamClose, readRequest: true},
+		{name: "during request write"},
+		{name: "during response read", readRequest: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			client, server := net.Pipe()
@@ -255,10 +213,9 @@ func TestGuestControlExchangeCancellation(t *testing.T) {
 			done := make(chan error, 1)
 			go func() {
 				_, err := guestControl{machine: machine}.exchange(ctx, guestControlExchange{
-					header:       wire.StreamHeader{Type: wire.StreamTypeComputerFreeze, ComputerID: "computer"},
-					request:      &computerv0.FreezeComputerRequest{ComputerId: "computer"},
-					response:     &computerv0.FreezeComputerResponse{},
-					cancellation: test.cancellation,
+					header:   wire.StreamHeader{Type: wire.StreamTypeComputerCommandCancel, ComputerID: "computer"},
+					request:  &computerv0.ComputerCommandCancelRequest{Authority: &computerv0.ComputerCommandAuthority{ComputerId: "computer"}},
+					response: &computerv0.ComputerCommandCancelResponse{},
 				})
 				done <- err
 			}()
@@ -266,7 +223,7 @@ func TestGuestControlExchangeCancellation(t *testing.T) {
 				t.Fatal(err)
 			}
 			if test.readRequest {
-				var request computerv0.FreezeComputerRequest
+				var request computerv0.ComputerCommandCancelRequest
 				if err := frameio.ReadProtoFrame(server, &request); err != nil {
 					t.Fatal(err)
 				}
@@ -276,9 +233,6 @@ func TestGuestControlExchangeCancellation(t *testing.T) {
 			case err := <-done:
 				if err == nil {
 					t.Fatal("cancelled exchange succeeded")
-				}
-				if test.want != nil && !errors.Is(err, test.want) {
-					t.Fatalf("error = %v, want %v", err, test.want)
 				}
 			case <-time.After(3 * time.Second):
 				t.Fatal("blocked stream did not cancel")
@@ -293,43 +247,6 @@ func TestGuestControlExchangeCancellation(t *testing.T) {
 	}
 }
 
-func TestGuestControlReadOnlyCancellationLeavesRequestWriteBlocked(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		client, server := net.Pipe()
-		defer server.Close()
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		done := make(chan error, 1)
-		go func() {
-			_, err := guestControl{machine: &guestControlTestMachine{stream: client}}.exchange(ctx, guestControlExchange{
-				header:       wire.StreamHeader{Type: wire.StreamTypeComputerRestoreVerify, ComputerID: "computer"},
-				request:      &computerv0.VerifyComputerRestoreRequest{Identity: &computerv0.ComputerRestoreIdentity{ComputerId: "computer"}},
-				response:     &computerv0.VerifyComputerRestoreResponse{},
-				cancellation: guestControlCancelReadOnly,
-			})
-			done <- err
-		}()
-		if _, _, err := wire.ReadStreamFrameHeader(server); err != nil {
-			t.Fatal(err)
-		}
-		synctest.Wait()
-		cancel()
-		synctest.Wait()
-		select {
-		case err := <-done:
-			t.Fatalf("cancellation cut off the request write: %v", err)
-		default:
-		}
-		var request computerv0.VerifyComputerRestoreRequest
-		if err := frameio.ReadProtoFrame(server, &request); err != nil {
-			t.Fatalf("request was not delivered: %v", err)
-		}
-		if err := <-done; !errors.Is(err, context.Canceled) {
-			t.Fatalf("error = %v, want %v", err, context.Canceled)
-		}
-	})
-}
-
 func TestGuestControlAwaitedCancellationWaitsForStreamClose(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		stream := newGuestControlBlockingCloseStream()
@@ -338,10 +255,9 @@ func TestGuestControlAwaitedCancellationWaitsForStreamClose(t *testing.T) {
 		done := make(chan error, 1)
 		go func() {
 			_, err := guestControl{machine: &guestControlTestMachine{stream: testVMStream(stream)}}.exchange(ctx, guestControlExchange{
-				header:       wire.StreamHeader{Type: wire.StreamTypeComputerCommandCancel, OperationID: "command"},
-				request:      &computerv0.ComputerCommandCancelRequest{},
-				response:     &computerv0.ComputerCommandCancelResponse{},
-				cancellation: guestControlCancelAwaitStreamClose,
+				header:   wire.StreamHeader{Type: wire.StreamTypeComputerCommandCancel, OperationID: "command"},
+				request:  &computerv0.ComputerCommandCancelRequest{},
+				response: &computerv0.ComputerCommandCancelResponse{},
 			})
 			done <- err
 		}()

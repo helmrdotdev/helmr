@@ -1,94 +1,32 @@
-import {
-  inspectDefinition,
-  inspectImage,
-  isQueue,
-  inspectSandboxDefinition,
-  validateQueueName,
-  type InternalImage,
-  type InternalImageStep,
-  type InternalActorDefinition,
-  type InternalDefinition,
-  type InternalTaskDefinition,
-  type InternalSandboxDefinition,
-  type EncodedComputerSecret,
-  type ProgramDeclaration,
-  type RuntimeArchitecture,
-} from "@helmr/sdk/internal"
-import { canonicalizeJsonValue, type JsonValue } from "@helmr/sdk/internal"
+import type { InputContent } from "@helmr/sdk"
+import { normalizeInput, encodeComputerSecrets, inspectImage, canonicalizeJsonValue, type InternalImage, type InternalImageStep, type JsonValue, type DefinitionIndex, type RuntimeArchitecture } from "@helmr/sdk/internal"
+import type { AgentDefinition, ComputerDefinition, SecretBinding, Json } from "@helmr/sdk"
 import { compareUTF8, hasOnlyUnicodeScalarValues } from "./utf8"
 
 export const BUILD_PLAN_FORMAT_VERSION = 0 as const
-export const DECLARATION_LOCATOR_FORMAT_VERSION = 0 as const
-export type NormalizedRetry =
-  | Readonly<{ enabled: false }>
-  | Readonly<{
-      enabled: true
-      maxAttempts: number
-      backoff: Readonly<{
-        minMs: number
-        maxMs: number
-        factor: number
-        jitter: "none" | "full"
-      }>
-    }>
 
-export interface NormalizedRunManifest {
-  readonly queue: string
-  readonly maxDurationMs: number
-  readonly retry: NormalizedRetry
-  readonly ttlMs?: number
+export interface ComputerManifest {
+  readonly imageBuild: ImageBuild
+  readonly resources: { readonly milliCpu: number; readonly memoryMiB: number; readonly diskMiB?: number }
+  readonly prepare: boolean
+  readonly refresh?: { readonly everyMs: number; readonly maxAgeMs?: number }
+  readonly secrets: readonly SecretBinding[]
+  readonly buildSecrets: readonly SecretBinding[]
 }
-
+export interface AgentManifest {
+  readonly computerDefinitionId: string
+  readonly setup: boolean
+  readonly closeAfterIdleMs?: number
+  readonly maxTurnDurationMs?: number
+  readonly triggers: Readonly<Record<string, { readonly cron: string; readonly timezone: string; readonly input: Json; readonly slack?: Readonly<{ channelId: string }> }>>
+}
 export type BuildPlanDefinition =
-  | Readonly<{
-      kind: "task"
-      declaredId: string
-      manifest: Readonly<{
-        payload:
-          | Readonly<{ kind: "none" }>
-          | Readonly<{ kind: "standard_schema" }>
-        run: NormalizedRunManifest
-        schedule?: Readonly<{
-          cron: string
-          timezone: string
-          computer: Readonly<{
-            sandboxId: string
-            secrets: readonly EncodedComputerSecret[]
-          }>
-        }>
-      }>
-    }>
-  | Readonly<{
-      kind: "actor"
-      declaredId: string
-      manifest: Readonly<{
-        run: NormalizedRunManifest
-        idleTimeoutMs: number
-      }>
-    }>
-  | Readonly<{
-      kind: "sandbox"
-      declaredId: string
-      manifest: Readonly<{
-        imageBuild: ImageBuild
-        resources: Readonly<{
-          milliCpu: number
-          memoryMiB: number
-        }>
-      }>
-    }>
-
-export interface BuildPlanQueue {
-  readonly name: string
-  readonly concurrencyLimit?: number
-}
-
+  | Readonly<{ kind: "agent"; declaredId: string; manifest: AgentManifest }>
+  | Readonly<{ kind: "computer"; declaredId: string; manifest: ComputerManifest }>
 export interface BuildPlan {
   readonly formatVersion: 0
   readonly definitions: readonly BuildPlanDefinition[]
-  readonly queues: readonly BuildPlanQueue[]
 }
-
 export interface ImageBuild {
   readonly root: string
   readonly images: readonly ImageSpec[]
@@ -137,419 +75,112 @@ export type ImageStep =
   | Readonly<{ user: Readonly<{ name: string }> }>
   | Readonly<{ env: Readonly<{ key: string; value: string }> }>
 
-export interface DeclarationLocatorEntry {
-  readonly declaredId: string
-  readonly exportName: string
-  readonly kind: "task" | "actor"
-  readonly modulePath: string
-  readonly slot: "handler"
-}
-
-export interface DeclarationLocator {
-  readonly declarations: readonly DeclarationLocatorEntry[]
-  readonly formatVersion: 0
-}
-
-export interface AnalysisExport {
-  readonly modulePath: string
-  readonly exportName: string
-  readonly value: unknown
-}
-
-export interface AnalyzeOptions {
-  readonly architecture: RuntimeArchitecture
-  readonly exports: readonly AnalysisExport[]
-}
-
+export interface AnalysisExport { readonly modulePath: string; readonly exportName: string; readonly value: unknown }
+export interface AnalyzeOptions { readonly architecture: RuntimeArchitecture; readonly exports: readonly AnalysisExport[] }
 export interface AnalysisResult {
   readonly buildPlan: BuildPlan
   readonly buildPlanBytes: Uint8Array
-  readonly declarationLocator: DeclarationLocator
-  readonly declarationLocatorBytes: Uint8Array
-  readonly programDeclarations: readonly ProgramDeclaration[]
+  readonly definitionIndex: DefinitionIndex
+  readonly definitionIndexBytes: Uint8Array
 }
-
-export interface ProgramExportAnalysis {
-  readonly declarationLocator: DeclarationLocator
-  readonly programDeclarations: readonly ProgramDeclaration[]
-}
-
-interface LocatedDefinition {
-  readonly definition: InternalDefinition | InternalSandboxDefinition
-  readonly modulePath: string
-  readonly exportName: string
-  readonly value: object
-}
+type Definition = AgentDefinition<InputContent, Json, unknown> | ComputerDefinition
+interface LocatedDefinition { readonly definition: Definition; readonly modulePath: string; readonly exportName: string; readonly throughAgent: boolean }
 
 export function analyze(options: AnalyzeOptions): AnalysisResult {
   const located = locateDefinitions(options)
-  const queues = compileQueues(located, options.exports)
-  const sandboxExports = new Map<string, object>()
-  for (const item of located) {
-    if (item.definition.kind === "sandbox") {
-      sandboxExports.set(item.definition.id, item.value)
+  const definitions = located.map(({ definition }): BuildPlanDefinition => {
+    if (definition.kind === "agent") {
+      const triggers: Record<string, { cron: string; timezone: string; input: Json; slack?: { channelId: string } }> = Object.create(null)
+      if (definition.triggers !== undefined && !Array.isArray(definition.triggers)) throw new Error("Agent triggers must be an array")
+      for (const trigger of definition.triggers ?? []) {
+        assertMembers(trigger, ["id", "cron", "timezone", "input", "slack"], "Agent trigger")
+        const key = trigger.id
+        validateID(key)
+        if (Object.hasOwn(triggers, key)) throw new Error("Duplicate Agent trigger id")
+        if (!trigger || typeof trigger.cron !== "string" || !trigger.cron.trim() || (typeof trigger.timezone !== "string" || !trigger.timezone.trim())) throw new Error("Agent trigger requires cron and timezone")
+        normalizeInput(trigger.input)
+        if (trigger.slack !== undefined) {
+          assertMembers(trigger.slack, ["channelId"], "Cron Slack destination")
+          if (typeof trigger.slack.channelId !== "string" || !/^[CG][A-Z0-9]{1,99}$/.test(trigger.slack.channelId)) throw new Error("Cron Slack channelId must be a Slack channel ID")
+        }
+        triggers[key] = { cron: trigger.cron, timezone: trigger.timezone, input: trigger.input, ...(trigger.slack === undefined ? {} : { slack: { channelId: trigger.slack.channelId } }) }
+      }
+      return { kind: "agent", declaredId: definition.id, manifest: {
+        computerDefinitionId: definition.computer.id, setup: definition.setup !== undefined, triggers,
+        ...(definition.closeAfterIdle === undefined ? {} : { closeAfterIdleMs: duration(definition.closeAfterIdle, "closeAfterIdle") }),
+        ...(definition.maxTurnDuration === undefined ? {} : { maxTurnDurationMs: duration(definition.maxTurnDuration, "maxTurnDuration") }),
+      } }
     }
-  }
-  const definitions = located.map(({ definition }) =>
-    compileDefinition(definition, options, queues, sandboxExports),
-  )
-  const programExports = compileProgramExports(located)
-  const buildPlan: BuildPlan = Object.freeze({
-    formatVersion: BUILD_PLAN_FORMAT_VERSION,
-    definitions: Object.freeze(definitions),
-    queues: Object.freeze(
-      [...queues.values()]
-        .map((entry) => Object.freeze({ ...entry }))
-        .sort((left, right) => compareUTF8(left.name, right.name)),
-    ),
+    const image = inspectImage(definition.image)
+    if (!image) throw new Error("Computer image must be created by image()")
+    const refresh = definition.refresh
+    if (refresh !== undefined) assertMembers(refresh, ["every", "maxAge"], "Computer refresh")
+    return { kind: "computer", declaredId: definition.id, manifest: {
+      imageBuild: compileImageBuild(image, options), resources: normalizeComputerResources(definition.resources),
+      prepare: definition.prepare !== undefined,
+      ...(refresh === undefined ? {} : { refresh: { everyMs: duration(refresh.every, "refresh.every"), ...(refresh.maxAge === undefined ? {} : { maxAgeMs: duration(refresh.maxAge, "refresh.maxAge") }) } }),
+      secrets: secretBindings(definition.secrets), buildSecrets: secretBindings(definition.buildSecrets),
+    } }
   })
-  const declarationLocator: DeclarationLocator = Object.freeze({
-    declarations: programExports.declarationLocator.declarations,
-    formatVersion: DECLARATION_LOCATOR_FORMAT_VERSION,
-  })
-  return {
-    buildPlan,
-    buildPlanBytes: canonicalizeJsonValue(buildPlan as unknown as JsonValue),
-    declarationLocator,
-    declarationLocatorBytes: canonicalizeJsonValue(
-      declarationLocator as unknown as JsonValue,
-    ),
-    programDeclarations: programExports.programDeclarations,
-  }
+  const buildPlan: BuildPlan = { formatVersion: BUILD_PLAN_FORMAT_VERSION, definitions }
+  const agents = located.filter(item => item.definition.kind === "agent").map(item => ({ id: item.definition.id, computerDefinitionId: (item.definition as AgentDefinition).computer.id, modulePath: item.modulePath, exportName: item.exportName }))
+  const computers = located.filter(item => item.definition.kind === "computer").map(item => ({ id: item.definition.id, modulePath: item.modulePath, exportName: item.exportName, throughAgent: item.throughAgent }))
+  const definitionIndex: DefinitionIndex = { apiVersion: "helmr.definition-index.v1", agents, computers }
+  return { buildPlan, buildPlanBytes: canonicalizeJsonValue(buildPlan as unknown as JsonValue), definitionIndex, definitionIndexBytes: canonicalizeJsonValue(definitionIndex as unknown as JsonValue) }
 }
-
-export function analyzeProgramExports(
-  options: AnalyzeOptions,
-): ProgramExportAnalysis {
-  return compileProgramExports(locateDefinitions(options))
-}
-
 function locateDefinitions(options: AnalyzeOptions): LocatedDefinition[] {
-  if (options.architecture !== "x86_64") {
-    throw new Error(`unsupported architecture ${JSON.stringify(options.architecture)}`)
-  }
-  const located = discoverDefinitions(options.exports)
-  if (located.length === 0) {
-    throw new Error("BuildPlan definitions must be non-empty")
-  }
-  if (located.length > 10_000) {
-    throw new Error("BuildPlan definitions exceed 10000")
-  }
-  located.sort(compareLocatedDefinitions)
-  return located
-}
-
-function compileProgramExports(
-  located: readonly LocatedDefinition[],
-): ProgramExportAnalysis {
-  const declarations = located.flatMap((item) =>
-    item.definition.kind === "sandbox" ? [] : [locatorEntry(item)],
-  )
-  const programDeclarations = located.flatMap(({ definition }) =>
-    definition.kind === "sandbox"
-      ? []
-      : [programDeclaration(definition)],
-  )
-  return Object.freeze({
-    declarationLocator: Object.freeze({
-      declarations: Object.freeze(declarations),
-      formatVersion: DECLARATION_LOCATOR_FORMAT_VERSION,
-    }),
-    programDeclarations: Object.freeze(programDeclarations),
-  })
-}
-
-export function normalizeComputerResources(
-  resources: Readonly<{ cpu: number; memory: string }>,
-): Readonly<{
-  milliCpu: number
-  memoryMiB: number
-}> {
-  return Object.freeze({
-    milliCpu: normalizeCpu(resources.cpu),
-    memoryMiB: normalizeIecMiB(resources.memory, "memory"),
-  })
-}
-
-function discoverDefinitions(
-  exports: readonly AnalysisExport[],
-): LocatedDefinition[] {
-  const identities = new Map<string, {
-    readonly value: object
-    located: LocatedDefinition
-  }>()
-  for (const item of exports) {
-    const definition =
-      inspectDefinition(item.value) ?? inspectSandboxDefinition(item.value)
-    if (definition === undefined) continue
-    validateModulePath(item.modulePath)
-    validateExportName(item.exportName)
+  if (options.architecture !== "x86_64") throw new Error("Unsupported architecture")
+  const found = new Map<string, LocatedDefinition>()
+  const add = (definition: Definition, item: AnalysisExport, throughAgent: boolean) => {
+    validateID(definition.id); validateModulePath(item.modulePath); validateExportName(item.exportName)
     const key = `${definition.kind}\0${definition.id}`
-    const existing = identities.get(key)
-    if (existing !== undefined) {
-      if (existing.value === item.value) {
-        const candidate = {
-          definition,
-          modulePath: item.modulePath,
-          exportName: item.exportName,
-          value: item.value as object,
-        }
-        if (compareLocatorOccurrence(candidate, existing.located) < 0) {
-          existing.located = candidate
-        }
-        continue
-      }
-      throw new Error(
-        `duplicate ${definition.kind} declaration ${JSON.stringify(definition.id)} at ${existing.located.modulePath}#${existing.located.exportName} and ${item.modulePath}#${item.exportName}`,
-      )
-    }
-    const located = {
-      definition,
-      modulePath: item.modulePath,
-      exportName: item.exportName,
-      value: item.value as object,
-    }
-    identities.set(key, {
-      value: item.value as object,
-      located,
-    })
+    const candidate = { definition, modulePath: item.modulePath, exportName: item.exportName, throughAgent }
+    const previous = found.get(key)
+    if (previous && previous.definition !== definition) throw new Error(`duplicate ${definition.kind} declaration ${JSON.stringify(definition.id)}`)
+    if (!previous || Number(throughAgent) - Number(previous.throughAgent) < 0 || (throughAgent === previous.throughAgent && (compareUTF8(item.modulePath, previous.modulePath) || compareUTF8(item.exportName, previous.exportName)) < 0)) found.set(key, candidate)
   }
-  return [...identities.values()].map((item) => item.located)
-}
-
-function compileDefinition(
-  definition: InternalDefinition | InternalSandboxDefinition,
-  options: AnalyzeOptions,
-  queues: ReadonlyMap<string, BuildPlanQueue>,
-  sandboxExports: ReadonlyMap<string, object>,
-): BuildPlanDefinition {
-  switch (definition.kind) {
-    case "task":
-      return {
-        kind: "task",
-        declaredId: definition.id,
-        manifest: {
-          payload: {
-            kind: definition.hasPayload ? "standard_schema" : "none",
-          },
-          run: normalizeRun(definition, "task", queues),
-          ...(definition.schedule === undefined
-            ? {}
-            : {
-                schedule: compileSchedule(definition, sandboxExports),
-              }),
-        },
-      }
-    case "actor":
-      return {
-        kind: "actor",
-        declaredId: definition.id,
-        manifest: {
-          run: normalizeRun(definition, "actor", queues),
-          idleTimeoutMs:
-            definition.idleTimeout === undefined
-              ? 30_000
-              : normalizeDuration(
-                  definition.idleTimeout,
-                  `actor ${JSON.stringify(definition.id)} idleTimeout`,
-                  1,
-                  3_600_000,
-                ),
-        },
-      }
-    case "sandbox":
-      return {
-        kind: "sandbox",
-        declaredId: definition.id,
-        manifest: {
-          imageBuild: compileImageBuild(definition.image, options),
-          resources: normalizeComputerResources(definition.resources),
-        },
-      }
+  for (const item of options.exports) {
+    const value = item.value as Partial<Definition> | undefined
+    if (!value || (value.kind !== "agent" && value.kind !== "computer")) continue
+    if (value.kind === "agent") {
+      assertMembers(value, ["kind", "id", "computer", "setup", "turn", "closeAfterIdle", "maxTurnDuration", "triggers"], "Agent")
+      if (typeof value.turn !== "function" || (value.setup !== undefined && typeof value.setup !== "function") || value.computer?.kind !== "computer") throw new Error("Invalid Agent definition")
+      add(value as Definition, item, false)
+      add(value.computer, item, true)
+    } else add(value as Definition, item, false)
   }
-}
-
-function compileSchedule(
-  definition: InternalTaskDefinition,
-  sandboxExports: ReadonlyMap<string, object>,
-): NonNullable<
-  Extract<BuildPlanDefinition, { kind: "task" }>["manifest"]["schedule"]
-> {
-  const schedule = definition.schedule
-  if (schedule === undefined) throw new Error("Task schedule is undefined")
-  const sandbox = inspectSandboxDefinition(schedule.computer.sandbox)
-  if (sandbox === undefined) {
-    throw new Error(
-      `task ${JSON.stringify(definition.id)} schedule has an invalid Sandbox definition`,
-    )
-  }
-  const exported = sandboxExports.get(sandbox.id)
-  if (exported === undefined) {
-    throw new Error(
-      `task ${JSON.stringify(definition.id)} schedule references unexported Sandbox ${JSON.stringify(sandbox.id)}`,
-    )
-  }
-  if (exported !== schedule.computer.sandbox) {
-    throw new Error(
-      `task ${JSON.stringify(definition.id)} schedule references a different Sandbox object than the exported definition ${JSON.stringify(sandbox.id)}`,
-    )
-  }
-  return {
-    cron: schedule.cron,
-    timezone: schedule.timezone,
-    computer: {
-      sandboxId: sandbox.id,
-      secrets: schedule.computer.secrets,
-    },
-  }
-}
-
-function compileQueues(
-  located: readonly LocatedDefinition[],
-  exports: readonly AnalysisExport[],
-): Map<string, BuildPlanQueue> {
-  const queues = new Map<string, QueueEntry>()
-  for (const item of exports) {
-    if (isQueue(item.value)) {
-      addQueue(queues, item.value, item.value)
+  for (const { definition } of found.values()) {
+    if (definition.kind === "computer") {
+      assertMembers(definition, ["kind", "id", "image", "resources", "prepare", "refresh", "secrets", "buildSecrets"], "Computer")
+      if (definition.prepare !== undefined && typeof definition.prepare !== "function") throw new Error("Computer prepare must be a function")
     }
   }
-  for (const { definition } of located) {
-    if (definition.kind !== "task" && definition.kind !== "actor") continue
-    if (typeof definition.queue === "object") {
-      addQueue(queues, definition.queue, definition.queue)
-    } else if (definition.queue === undefined) {
-      addQueue(queues, {
-        name: `${definition.kind}/${definition.id}`,
-      }, definition)
-    }
-  }
-  for (const { definition } of located) {
-    if (
-      (definition.kind === "task" || definition.kind === "actor") &&
-      typeof definition.queue === "string" &&
-      !queues.has(definition.queue)
-    ) {
-      throw new Error(
-        `${definition.kind} ${JSON.stringify(definition.id)} references undefined queue ${JSON.stringify(definition.queue)}`,
-      )
-    }
-  }
-  if (queues.size > 1000) throw new Error("BuildPlan queues exceed 1000")
-  return new Map(
-    [...queues].map(([name, entry]) => [name, entry.queue]),
-  )
+  if (found.size === 0 || found.size > 10_000) throw new Error("BuildPlan definitions must contain 1 to 10000 definitions")
+  return [...found.values()].sort((a, b) => compareUTF8(a.definition.kind, b.definition.kind) || compareUTF8(a.definition.id, b.definition.id))
 }
-
-interface QueueEntry {
-  readonly owner: object
-  readonly queue: BuildPlanQueue
+function validateID(value: unknown): asserts value is string {
+  if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value)) throw new Error("Definition id is invalid")
 }
-
-function addQueue(
-  queues: Map<string, QueueEntry>,
-  queue: { readonly name: string; readonly concurrencyLimit?: number | null },
-  owner: object,
-): void {
-  validateQueueName(queue.name)
-  const next: BuildPlanQueue = {
-    name: queue.name,
-    ...(queue.concurrencyLimit === undefined ||
-    queue.concurrencyLimit === null
-      ? {}
-      : { concurrencyLimit: queue.concurrencyLimit }),
-  }
-  const existing = queues.get(queue.name)
-  if (existing !== undefined) {
-    if (existing.owner === owner) return
-    throw new Error(`duplicate queue declaration ${JSON.stringify(queue.name)}`)
-  }
-  queues.set(queue.name, { owner, queue: next })
+function assertMembers(value: unknown, allowed: readonly string[], label: string): void {
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => !allowed.includes(key))) throw new Error(`${label} has invalid or unknown members`)
 }
-
-function normalizeRun(
-  definition: InternalTaskDefinition | InternalActorDefinition,
-  kind: "task" | "actor",
-  queues: ReadonlyMap<string, BuildPlanQueue>,
-): NormalizedRunManifest {
-  const queue =
-    definition.queue === undefined
-      ? `${kind}/${definition.id}`
-      : typeof definition.queue === "string"
-        ? definition.queue
-        : definition.queue.name
-  if (!queues.has(queue)) {
-    throw new Error(`${kind} ${JSON.stringify(definition.id)} queue is undefined`)
-  }
-  const maxDurationMs =
-    definition.maxDuration === undefined
-      ? 900_000
-      : normalizeDuration(
-          definition.maxDuration,
-          `${kind} ${JSON.stringify(definition.id)} maxDuration`,
-          5_000,
-          86_400_000,
-        )
-  return {
-    queue,
-    maxDurationMs,
-    retry: normalizeRetry(definition.retry),
-    ...(definition.ttl === undefined
-      ? {}
-      : {
-          ttlMs: normalizeDuration(
-            definition.ttl,
-            `${kind} ${JSON.stringify(definition.id)} ttl`,
-            1,
-            31_536_000_000,
-          ),
-        }),
-  }
+function secretBindings(value: ComputerDefinition["secrets"]): ComputerManifest["secrets"] {
+  const result = [...encodeComputerSecrets(value)]
+  return result.sort((a, b) => compareUTF8(a.env ? "env" : "file", b.env ? "env" : "file") || compareUTF8(a.env?.name ?? a.file!.path, b.env?.name ?? b.file!.path) || compareUTF8(a.secretId, b.secretId))
 }
-
-function normalizeRetry(
-  retry: InternalTaskDefinition["retry"],
-): NormalizedRetry {
-  if (retry === undefined || retry.enabled === false) {
-    return { enabled: false }
+export function normalizeComputerResources(resources: Readonly<{ cpu: number; memory: string; disk?: string }>): ComputerManifest["resources"] {
+  assertMembers(resources, ["cpu", "memory", "disk"], "Computer resources")
+  return { milliCpu: normalizeCpu(resources.cpu), memoryMiB: normalizeIecMiB(resources.memory, "memory"), ...(resources.disk === undefined ? {} : { diskMiB: normalizeIecMiB(resources.disk, "disk") }) }
+}
+function duration(value: string | number, label: string): number {
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${label} must be positive safe integer milliseconds`)
+    return value
   }
-  if (!Number.isInteger(retry.maxAttempts) || retry.maxAttempts < 1 || retry.maxAttempts > 10) {
-    throw new Error("retry maxAttempts must be an integer in [1,10]")
-  }
-  const minMs =
-    retry.backoff?.minDelay === undefined
-      ? 1_000
-      : normalizeDuration(
-          retry.backoff.minDelay,
-          "retry backoff minDelay",
-          1,
-          86_400_000,
-        )
-  const maxMs =
-    retry.backoff?.maxDelay === undefined
-      ? 30_000
-      : normalizeDuration(
-          retry.backoff.maxDelay,
-          "retry backoff maxDelay",
-          1,
-          86_400_000,
-        )
-  const factor = retry.backoff?.factor ?? 2
-  const jitter = retry.backoff?.jitter ?? "full"
-  if (minMs > maxMs) {
-    throw new Error("retry backoff minDelay must not exceed maxDelay")
-  }
-  if (!Number.isSafeInteger(factor) || factor < 1 || factor > 100) {
-    throw new Error("retry backoff factor must be an integer in [1,100]")
-  }
-  if (jitter !== "none" && jitter !== "full") {
-    throw new Error("retry backoff jitter must be none or full")
-  }
-  return {
-    enabled: true,
-    maxAttempts: retry.maxAttempts,
-    backoff: { minMs, maxMs, factor, jitter },
-  }
+  const match = /^([1-9][0-9]*)(ms|s|m|h|d)$/.exec(value)
+  if (!match) throw new Error(`${label} must be a positive duration`)
+  const scale: Record<string, bigint> = { ms: 1n, s: 1000n, m: 60000n, h: 3600000n, d: 86400000n }
+  return safePositiveNumber(BigInt(match[1]!) * scale[match[2]!]!, label)
 }
 
 function compileImageBuild(
@@ -680,38 +311,6 @@ function assertExactKeys(
   }
 }
 
-function locatorEntry(item: LocatedDefinition): DeclarationLocatorEntry {
-  if (item.definition.kind === "sandbox") {
-    throw new Error("Sandbox has no executable locator")
-  }
-  return {
-    declaredId: item.definition.id,
-    exportName: item.exportName,
-    kind: item.definition.kind,
-    modulePath: item.modulePath,
-    slot: "handler",
-  }
-}
-
-function programDeclaration(definition: InternalDefinition): ProgramDeclaration {
-  switch (definition.kind) {
-    case "task":
-      return {
-        kind: "task",
-        declaredId: definition.id,
-        slots: definition.hasPayload
-          ? ["handler", "payloadSchema"]
-          : ["handler"],
-      }
-    case "actor":
-      return {
-        kind: "actor",
-        declaredId: definition.id,
-        slots: ["handler"],
-      }
-  }
-}
-
 function normalizeCpu(cpu: number): number {
   if (!Number.isFinite(cpu) || cpu <= 0) {
     throw new Error("computer cpu must be a finite positive number")
@@ -749,38 +348,6 @@ function normalizeIecMiB(value: string, label: string): number {
   return safePositiveNumber(result, `computer ${label} MiB`)
 }
 
-function normalizeDuration(
-  value: string,
-  label: string,
-  minimumMs: number,
-  maximumMs: number,
-): number {
-  const match = /^([1-9][0-9]*)(ms|s|m|h|d)$/.exec(value)
-  if (match === null) {
-    throw new Error(
-      `${label} must match ^[1-9][0-9]*(ms|s|m|h|d)$`,
-    )
-  }
-  const multipliers: Readonly<Record<string, bigint>> = {
-    ms: 1n,
-    s: 1_000n,
-    m: 60_000n,
-    h: 3_600_000n,
-    d: 86_400_000n,
-  }
-  const milliseconds =
-    BigInt(match[1] as string) * (multipliers[match[2] as string] as bigint)
-  if (
-    milliseconds < BigInt(minimumMs) ||
-    milliseconds > BigInt(maximumMs)
-  ) {
-    throw new Error(
-      `${label} must resolve to milliseconds in [${minimumMs},${maximumMs}]`,
-    )
-  }
-  return Number(milliseconds)
-}
-
 function safePositiveNumber(value: bigint, label: string): number {
   if (value <= 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new Error(`${label} must be a positive safe integer`)
@@ -805,29 +372,4 @@ function validateExportName(name: string): void {
   ) {
     throw new Error(`exportName ${JSON.stringify(name)} is invalid`)
   }
-}
-
-function compareLocatedDefinitions(
-  left: LocatedDefinition,
-  right: LocatedDefinition,
-): number {
-  const order: Readonly<Record<LocatedDefinition["definition"]["kind"], number>> = {
-    task: 0,
-    actor: 1,
-    sandbox: 2,
-  }
-  return (
-    order[left.definition.kind] - order[right.definition.kind] ||
-    compareUTF8(left.definition.id, right.definition.id)
-  )
-}
-
-function compareLocatorOccurrence(
-  left: LocatedDefinition,
-  right: LocatedDefinition,
-): number {
-  return (
-    compareUTF8(left.modulePath, right.modulePath) ||
-    compareUTF8(left.exportName, right.exportName)
-  )
 }

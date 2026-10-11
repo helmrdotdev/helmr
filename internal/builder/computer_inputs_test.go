@@ -50,7 +50,7 @@ func TestReadComputerImageInputsDerivesFinalArtifactIdentity(t *testing.T) {
 	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(packed))
 	if len(images) != 1 || images[0].DeclaredID != "sandbox" ||
 		images[0].Artifact.Digest != digest ||
-		images[0].Artifact.MediaType != bundle.ComputerImageMediaType ||
+		images[0].Artifact.MediaType != definition.ComputerSeedMediaType ||
 		images[0].Artifact.Profile != definition.ComputerSeedProfile || images[0].Artifact.Config.WorkingDir != "/workspace" ||
 		images[0].Artifact.Architecture != definition.ArchitectureX8664 ||
 		len(objects) != 1 || objects[0].Digest != digest || objects[0].Path == imagePath {
@@ -113,7 +113,7 @@ func TestReadComputerImageInputsAcceptsSharedPath(t *testing.T) {
 	}
 
 	inspectCount := 0
-	images, objects, err := readComputerImageInputs(context.Background(), documentPath, func(path string) (bundle.ComputerImageArtifact, string, error) {
+	images, objects, err := readComputerImageInputs(context.Background(), documentPath, func(path string) (bundle.ComputerSeedArtifact, string, error) {
 		inspectCount++
 		target := filepath.Join(root, "disk.filepack")
 		artifact, err := buildComputerDisk(t.Context(), path, target, root, mkfs, config)
@@ -209,15 +209,15 @@ func TestDiskBuildFinalizeAndUpload(t *testing.T) {
 		t.Fatal(err)
 	}
 	programPath, programBytes, index := writeVerifiedProgramFixture(t, root, images...)
-	input := testBundleInput(programPath, programBytes)
-	input.Program.Index = index
-	input.ComputerImages = images
-	input.Objects = append(input.Objects, objects...)
+	input := testBundleInput(t, programPath, programBytes)
+	input.Program.Metadata = index
+	input.ComputerSeeds = images
+	input.Objects = append(input.Objects[:1], objects...)
 	result, err := FinalizeBundle(t.Context(), filepath.Join(root, "bundle"), input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(result.Bundle.ComputerImages, images) {
+	if !reflect.DeepEqual(result.Bundle.ComputerSeeds, images) {
 		t.Fatal("disk contract changed during finalization")
 	}
 	store, err := cas.NewFile(filepath.Join(root, "cas"))

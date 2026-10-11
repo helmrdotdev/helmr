@@ -9,6 +9,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/bundle"
 )
 
-func buildComputerDisk(context.Context, string, string, string, string, string) (bundle.ComputerImageArtifact, error) {
-	return bundle.ComputerImageArtifact{}, errors.New("deployment disk generation requires the Linux builder")
+func buildComputerDisk(context.Context, string, string, string, string, string) (bundle.ComputerSeedArtifact, error) {
+	return bundle.ComputerSeedArtifact{}, errors.New("deployment disk generation requires the Linux builder")
 }

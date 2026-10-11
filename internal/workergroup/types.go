@@ -29,8 +29,8 @@ const (
 )
 
 // ObservationFreshnessSeconds bounds how old a Worker Host observation may be
-// for admission (dispatch, preparation, Run claim and start) and capture.
-// Operations continuing an already started Run do not require freshness; stale
+// for allocation admission, preparation, Session start and capture.
+// Operations continuing an already started Session do not require freshness; stale
 // fencing revokes them instead.
 const ObservationFreshnessSeconds = int64(120)
 
@@ -184,8 +184,7 @@ type PoolPlan struct {
 // replace the worker's local cleanup acknowledgment.
 type HostDrainBlockers struct {
 	UnreclaimedInstances         int64 `json:"unreclaimed_instances"`
-	UnreconciledRunProcesses     int64 `json:"unreconciled_run_processes"`
-	UnreconciledCommandProcesses int64 `json:"unreconciled_command_processes"`
+	UnreconciledSessionProcesses int64 `json:"unreconciled_session_processes"`
 }
 
 type WorkerHost struct {

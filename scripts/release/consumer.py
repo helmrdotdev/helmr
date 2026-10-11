@@ -156,19 +156,19 @@ def consumer(directory, cli_archive, work, expected_builder=None):
         # lockfile install inside BuildKit without exposing a host test server.
         (project / 'helmr.config.ts').write_text('import {defineConfig} from "@helmr/sdk"; export default defineConfig({dirs:["tasks"],'
             'build:{installCommand:"npm ci --offline --cache .npm-cache --ignore-scripts --no-audit --no-fund"}});\n')
-        (project / 'tasks/hello.ts').write_text('import {task,sandbox,image} from "@helmr/sdk"; '
-            'export const hello=task({id:"preview-hello",run:()=>"preview-ok"});\n'
-            'export const machine=sandbox({id:"preview-machine"}).image(image("preview-base").from('
-            + json.dumps(expected_builder) + ')).resources({cpu:1,memory:"1GiB"});\n')
+        (project / 'tasks/hello.ts').write_text('import {agent,computer,image} from "@helmr/sdk"; '
+            'export const machine=computer({id:"preview-machine",image:image("preview-base").from('
+            + json.dumps(expected_builder) + '),resources:{cpu:1,memory:"1GiB"}});\n'
+            'export const hello=agent({id:"preview-hello",computer:machine,turn:()=>"preview-ok"});\n')
         (project / 'consumer.ts').write_text('''import {HelmrClient, source} from "@helmr/sdk";
 const file = source.file("./package.json");
 if (!file) throw Error("source.file failed");
 let called = false;
 const client = new HelmrClient({url:"https://example.invalid",apiKey:"fixture",fetch:async (url, init)=>{
- if(String(url)!=="https://example.invalid/v1/tasks/preview-hello/start" || init?.method!=="POST") throw Error("SDK wire contract");
- called=true; return Response.json({run_id:"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"});
+ if(String(url)!=="https://example.invalid/v1/agents/preview-hello/start" || init?.method!=="POST") throw Error("SDK wire contract");
+ called=true; return Response.json({session_id:"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",turn_id:"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",sequence:1,created:true});
 }});
-await client.tasks.start("preview-hello", {payload:null,computer:client.computers.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")});
+await client.agents.start("preview-hello", {input:null,computer:client.computers.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")});
 if(!called) throw Error("SDK request missing");
 ''')
         run(project / 'node_modules/.bin/tsc', '--strict', '--skipLibCheck', 'false', '--target', 'ES2022', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', 'consumer.ts', cwd=project)
@@ -180,7 +180,7 @@ if(!called) throw Error("SDK request missing");
         run(work / 'bin/helmr', 'build', project, '--output', work / 'bundle', env=build_env)
         bundle = read(work / 'bundle/bundle.json')
         require(bundle['contract'] == 'helmr.deployment-bundle.v0', 'wrong bundle contract')
-        require({(d['kind'], d['declaredId']) for d in bundle['plan']['definitions']} == {('task', 'preview-hello'), ('sandbox', 'preview-machine')}, 'compiled fixture definitions differ')
+        require({(d['kind'], d['declaredId']) for d in bundle['plan']['definitions']} == {('agent', 'preview-hello'), ('computer', 'preview-machine')}, 'compiled fixture definitions differ')
         require(len(bundle['computerImages']) == 1 and bundle['computerImages'][0]['declaredId'] == 'preview-machine', 'computer OCI stage missing')
         runtime = read(directory / 'bundle-builder.json')['runtime']
         require(bundle['runtime']['artifact']['digest'] == runtime['digest'], 'bundle did not use canonical Runtime')

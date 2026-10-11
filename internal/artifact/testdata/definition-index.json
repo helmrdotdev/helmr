@@ -1,0 +1,1 @@
+{"agents":[{"computerDefinitionId":"workspace","exportName":"coder","id":"coder","modulePath":"helmr/app/entry-0.mjs"}],"apiVersion":"helmr.definition-index.v1","computers":[{"exportName":"coder","id":"workspace","modulePath":"helmr/app/entry-0.mjs","throughAgent":true}]}

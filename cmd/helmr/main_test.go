@@ -82,15 +82,19 @@ func TestCommandSurface(t *testing.T) {
 	for _, path := range [][]string{
 		{"build"},
 		{"computer"},
-		{"task"},
-		{"actor"},
+		{"agent"},
+		{"agent", "start"},
+		{"agent", "list"},
+		{"agent", "get"},
+		{"computer", "definition", "list"},
+		{"computer", "definition", "get"},
+		{"session", "turn", "wait"},
+		{"session", "turn", "ask", "list"},
+		{"session", "turn", "ask", "get"},
+		{"session", "turn", "ask", "respond"},
 		{"session"},
-		{"run"},
 		{"schedule"},
 		{"deployment"},
-		{"token"},
-		{"task", "start"},
-		{"actor", "start"},
 		{"session", "get"},
 		{"session", "send"},
 		{"session", "events"},
@@ -100,9 +104,6 @@ func TestCommandSurface(t *testing.T) {
 		{"session", "turn"},
 		{"schedule", "list"},
 		{"schedule", "get"},
-		{"token", "get"},
-		{"token", "complete"},
-		{"token", "cancel"},
 	} {
 		if commandByPath(root, path...) == nil {
 			t.Fatalf("command %q is not registered", strings.Join(path, " "))
@@ -126,4 +127,11 @@ func commandByPath(root *cobra.Command, path ...string) *cobra.Command {
 		}
 	}
 	return current
+}
+
+func TestInterruptIsSessionScoped(t *testing.T) {
+	root := newRootCommand()
+	if commandByPath(root, "session", "turn", "interrupt") != nil {
+		t.Fatal("Turn interrupt remains registered")
+	}
 }

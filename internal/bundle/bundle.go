@@ -24,21 +24,21 @@ const (
 	MediaType = "application/vnd.helmr.deployment-bundle.v0+json"
 	TargetOS  = "linux"
 
-	MaxBytes          = 16 << 20
-	MaxComputerImages = 256
-	maxObjects        = 257
-	maxObjectBytes    = int64(4 << 30)
-	maxTotalBytes     = int64(4 << 30)
+	MaxBytes         = 16 << 20
+	MaxComputerSeeds = 256
+	maxObjects       = 257
+	maxObjectBytes   = int64(4 << 30)
+	maxTotalBytes    = int64(4 << 30)
 )
 
 type Manifest struct {
-	Contract       string                 `json:"contract"`
-	Platform       Platform               `json:"platform"`
-	Plan           Plan                   `json:"plan"`
-	Runtime        Runtime                `json:"runtime"`
-	Program        artifact.ProgramOutput `json:"program"`
-	ComputerImages []ComputerImage        `json:"computerImages"`
-	Objects        []Object               `json:"objects"`
+	Contract      string                 `json:"contract"`
+	Platform      Platform               `json:"platform"`
+	Plan          Plan                   `json:"plan"`
+	Runtime       Runtime                `json:"runtime"`
+	Program       artifact.ProgramOutput `json:"program"`
+	ComputerSeeds []ComputerSeed         `json:"computerSeeds"`
+	Objects       []Object               `json:"objects"`
 }
 
 // Admission is the exact Product release authority accepted by
@@ -82,12 +82,12 @@ type Runtime struct {
 	Artifact Object `json:"artifact"`
 }
 
-type ComputerImage struct {
-	DeclaredID string                `json:"declaredId"`
-	Artifact   ComputerImageArtifact `json:"artifact"`
+type ComputerSeed struct {
+	DeclaredID string               `json:"declaredId"`
+	Artifact   ComputerSeedArtifact `json:"artifact"`
 }
 
-type ComputerImageArtifact struct {
+type ComputerSeedArtifact struct {
 	Profile      string                         `json:"profile"`
 	Config       oci.RuntimeConfig              `json:"config"`
 	Architecture definition.RuntimeArchitecture `json:"architecture"`
@@ -96,9 +96,9 @@ type ComputerImageArtifact struct {
 	SizeBytes    int64                          `json:"sizeBytes"`
 }
 
-// ComputerImage returns the seed image input a sandbox manifest is compiled against.
-func (artifact ComputerImageArtifact) ComputerImage() definition.ComputerImage {
-	return definition.ComputerImage{
+// Seed returns the resolved initial disk input for a Computer definition.
+func (artifact ComputerSeedArtifact) Seed() definition.ComputerSeed {
+	return definition.ComputerSeed{
 		Profile:      artifact.Profile,
 		Config:       artifact.Config,
 		Architecture: artifact.Architecture,
@@ -213,21 +213,21 @@ func validate(bundle Manifest) error {
 	if err := artifact.ValidateProgramOutput(bundle.Program); err != nil {
 		return fmt.Errorf("deployment bundle program: %w", err)
 	}
-	if bundle.Program.Index.Architecture != bundle.Platform.Architecture {
+	if bundle.Program.Metadata.Architecture != bundle.Platform.Architecture {
 		return errors.New("deployment bundle program architecture does not match platform")
 	}
-	if bundle.Program.Index.RuntimeContract != bundle.Runtime.Contract {
+	if bundle.Program.Metadata.RuntimeContract != bundle.Runtime.Contract {
 		return errors.New("deployment bundle program runtime contract does not match runtime")
 	}
-	if bundle.Program.Index.RuntimeDigest != bundle.Runtime.Artifact.Digest {
+	if bundle.Program.Metadata.RuntimeDigest != bundle.Runtime.Artifact.Digest {
 		return errors.New("deployment bundle program Runtime digest does not match runtime")
 	}
 
-	if err := validateBundleComputerImages(bundle); err != nil {
+	if err := validateBundleComputerSeeds(bundle); err != nil {
 		return err
 	}
-	if err := validateProgramIndexDeployment(bundle.Program.Index, bundle.Plan); err != nil {
-		return fmt.Errorf("deployment bundle program index: %w", err)
+	if err := validateProgramMetadataDeployment(bundle.Program.Metadata, bundle.Plan); err != nil {
+		return fmt.Errorf("deployment bundle program metadata: %w", err)
 	}
 	return validateBundleObjectClosure(bundle)
 }
@@ -253,65 +253,65 @@ func validateBundleRuntime(runtime Runtime) error {
 	return nil
 }
 
-func validateBundleComputerImages(bundle Manifest) error {
-	if bundle.ComputerImages == nil {
-		return errors.New("deployment bundle computerImages must be an array")
+func validateBundleComputerSeeds(bundle Manifest) error {
+	if bundle.ComputerSeeds == nil {
+		return errors.New("deployment bundle computerSeeds must be an array")
 	}
-	if len(bundle.ComputerImages) > MaxComputerImages {
+	if len(bundle.ComputerSeeds) > MaxComputerSeeds {
 		return fmt.Errorf(
-			"deployment bundle has more than %d computer images",
-			MaxComputerImages,
+			"deployment bundle has more than %d Computer seeds",
+			MaxComputerSeeds,
 		)
 	}
-	sandboxes := deploymentPlanSandboxes(bundle.Plan)
-	if len(bundle.ComputerImages) != len(sandboxes) {
-		return errors.New("deployment bundle computerImages do not match plan")
+	computers := deploymentPlanComputers(bundle.Plan)
+	if len(bundle.ComputerSeeds) != len(computers) {
+		return errors.New("deployment bundle computerSeeds do not match plan")
 	}
-	for index, image := range bundle.ComputerImages {
-		if index > 0 && image.DeclaredID <= bundle.ComputerImages[index-1].DeclaredID {
+	for index, image := range bundle.ComputerSeeds {
+		if index > 0 && image.DeclaredID <= bundle.ComputerSeeds[index-1].DeclaredID {
 			return fmt.Errorf(
-				"deployment bundle computerImages are not in canonical declaredId order at position %d",
+				"deployment bundle computerSeeds are not in canonical declaredId order at position %d",
 				index,
 			)
 		}
-		if image.DeclaredID != sandboxes[index].DeclaredID {
+		if image.DeclaredID != computers[index].DeclaredID {
 			return fmt.Errorf(
-				"deployment bundle computerImages[%d] declaredId does not match plan",
+				"deployment bundle computerSeeds[%d] declaredId does not match plan",
 				index,
 			)
 		}
-		if sandboxes[index].Sandbox == nil ||
-			sandboxes[index].Sandbox.Image.ArtifactDigest != image.Artifact.Digest ||
-			sandboxes[index].Sandbox.Image.MediaType != image.Artifact.MediaType ||
-			sandboxes[index].Sandbox.Image.Profile != image.Artifact.Profile ||
-			!reflect.DeepEqual(sandboxes[index].Sandbox.Image.Config, image.Artifact.Config) {
+		if computers[index].Computer == nil ||
+			computers[index].Computer.Seed.ArtifactDigest != image.Artifact.Digest ||
+			computers[index].Computer.Seed.MediaType != image.Artifact.MediaType ||
+			computers[index].Computer.Seed.Profile != image.Artifact.Profile ||
+			!reflect.DeepEqual(computers[index].Computer.Seed.Config, image.Artifact.Config) {
 			return fmt.Errorf(
-				"deployment bundle computerImages[%d] artifact does not match plan",
+				"deployment bundle computerSeeds[%d] artifact does not match plan",
 				index,
 			)
 		}
 		artifact := image.Artifact
 		if artifact.Architecture != bundle.Platform.Architecture {
 			return fmt.Errorf(
-				"deployment bundle computerImages[%d] architecture does not match platform",
+				"deployment bundle computerSeeds[%d] architecture does not match platform",
 				index,
 			)
 		}
 		object := Object{
 			Digest: artifact.Digest, SizeBytes: artifact.SizeBytes, MediaType: artifact.MediaType,
 		}
-		if err := validateBundleObject(object, fmt.Sprintf("computerImages[%d]", index)); err != nil {
+		if err := validateBundleObject(object, fmt.Sprintf("computerSeeds[%d]", index)); err != nil {
 			return err
 		}
 		if artifact.Profile != definition.ComputerSeedProfile {
 			return fmt.Errorf("deployment disk profile %q is unsupported", artifact.Profile)
 		}
-		if artifact.MediaType != ComputerImageMediaType {
+		if artifact.MediaType != definition.ComputerSeedMediaType {
 			return fmt.Errorf(
-				"deployment bundle computerImages[%d] mediaType = %q, want %q",
+				"deployment bundle computerSeeds[%d] mediaType = %q, want %q",
 				index,
 				artifact.MediaType,
-				ComputerImageMediaType,
+				definition.ComputerSeedMediaType,
 			)
 		}
 	}
@@ -328,14 +328,14 @@ func validateBundleObjectClosure(bundle Manifest) error {
 			maxObjects,
 		)
 	}
-	expected := make(map[string]Object, 1+len(bundle.ComputerImages))
+	expected := make(map[string]Object, 1+len(bundle.ComputerSeeds))
 	program := Object{
 		Digest:    bundle.Program.Artifact.Digest,
 		SizeBytes: bundle.Program.Artifact.SizeBytes,
 		MediaType: bundle.Program.Artifact.MediaType,
 	}
 	expected[program.Digest] = program
-	for _, image := range bundle.ComputerImages {
+	for _, image := range bundle.ComputerSeeds {
 		object := Object{
 			Digest:    image.Artifact.Digest,
 			SizeBytes: image.Artifact.SizeBytes,
@@ -394,7 +394,7 @@ func validateBundleObject(object Object, name string) error {
 		)
 	}
 	if object.MediaType != artifact.ProgramArtifactMediaType &&
-		object.MediaType != ComputerImageMediaType &&
+		object.MediaType != definition.ComputerSeedMediaType &&
 		object.MediaType != artifact.RuntimeArtifactMediaType {
 		return fmt.Errorf("deployment bundle %s mediaType %q is unsupported", name, object.MediaType)
 	}

@@ -11,10 +11,11 @@ import (
 )
 
 type programVerifier struct {
-	ctx      context.Context
-	artifact *artifact.Tree
-	index    artifact.ProgramIndex
-	manifest artifact.ProgramManifest
+	ctx             context.Context
+	artifact        *artifact.Tree
+	index           artifact.ProgramMetadata
+	manifest        artifact.ProgramManifest
+	definitionIndex artifact.DefinitionIndex
 }
 
 func (verifier *programVerifier) verify() error {
@@ -40,11 +41,11 @@ func (verifier *programVerifier) verify() error {
 func (verifier *programVerifier) readDocuments() error {
 	indexRaw, err := verifier.artifact.Read(
 		verifier.ctx,
-		"helmr/declarations.json",
+		"helmr/program-metadata.json",
 		artifact.MaxProgramFileSizeBytes,
 	)
 	if err != nil {
-		return fmt.Errorf("program index: %w", err)
+		return fmt.Errorf("program metadata: %w", err)
 	}
 	manifestRaw, err := verifier.artifact.Read(
 		verifier.ctx,
@@ -58,19 +59,31 @@ func (verifier *programVerifier) readDocuments() error {
 	if err != nil {
 		return fmt.Errorf("program manifest: %w", err)
 	}
-	verifier.index, err = artifact.ParseProgramIndex(indexRaw)
+	verifier.index, err = artifact.ParseProgramMetadata(indexRaw)
 	if err != nil {
-		return fmt.Errorf("program index: %w", err)
+		return fmt.Errorf("program metadata: %w", err)
 	}
 	if verifier.manifest.Config.Digest != verifier.index.ConfigResultDigest {
 		return fmt.Errorf(
-			"program manifest config digest does not match program index",
+			"program manifest config digest does not match program metadata",
 		)
 	}
-	if verifier.manifest.ProgramIndexDigest != artifact.ProgramIndexDigest(indexRaw) {
+	if verifier.manifest.ProgramMetadataDigest != artifact.ProgramMetadataDigest(indexRaw) {
 		return fmt.Errorf(
-			"program manifest index digest does not match program index",
+			"program manifest index digest does not match program metadata",
 		)
+	}
+
+	agentRaw, err := verifier.artifact.Read(verifier.ctx, "helmr/definition-index.json", artifact.MaxProgramFileSizeBytes)
+	if err != nil {
+		return fmt.Errorf("definition index: %w", err)
+	}
+	verifier.definitionIndex, err = artifact.ParseDefinitionIndex(agentRaw)
+	if err != nil {
+		return fmt.Errorf("definition index: %w", err)
+	}
+	if err := artifact.ValidateProgramDefinitionIndex(verifier.index, verifier.definitionIndex); err != nil {
+		return err
 	}
 
 	return nil
@@ -82,7 +95,7 @@ func (verifier *programVerifier) verifyLayout() error {
 			return err
 		}
 	}
-	for _, required := range []string{"helmr/program-manifest.json", "helmr/config.json", "helmr/declarations.json"} {
+	for _, required := range []string{"helmr/program-manifest.json", "helmr/config.json", "helmr/program-metadata.json", "helmr/definition-index.json"} {
 		if _, err := verifier.artifact.Require(required, artifact.EntryRegular); err != nil {
 			return err
 		}
@@ -91,21 +104,24 @@ func (verifier *programVerifier) verifyLayout() error {
 		return fmt.Errorf("root node_modules must be a directory")
 	}
 	for _, entry := range verifier.artifact.Entries() {
-		if strings.HasPrefix(entry.Path, "helmr/") && !artifact.IsGeneratedProgramEntry(entry) && entry.Path != "helmr/program-manifest.json" && entry.Path != "helmr/config.json" && entry.Path != "helmr/declarations.json" {
+		if strings.HasPrefix(entry.Path, "helmr/") && !artifact.IsGeneratedProgramEntry(entry) && entry.Path != "helmr/program-manifest.json" && entry.Path != "helmr/config.json" && entry.Path != "helmr/program-metadata.json" && entry.Path != "helmr/definition-index.json" {
 			return fmt.Errorf("unknown platform-owned path %q", entry.Path)
 		}
 	}
 	return nil
 }
 func (verifier *programVerifier) verifyDeclarations() error {
-	for _, declaration := range verifier.index.Declarations {
-		if declaration.Locator == nil {
-			continue
-		}
-		if err := artifact.VerifyDeclarationModule(verifier.artifact, declaration.Locator.ModulePath); err != nil {
+	for _, entry := range verifier.definitionIndex.Agents {
+		if err := artifact.VerifyDeclarationModule(verifier.artifact, entry.ModulePath); err != nil {
 			return err
 		}
 	}
+	for _, entry := range verifier.definitionIndex.Computers {
+		if err := artifact.VerifyDeclarationModule(verifier.artifact, entry.ModulePath); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

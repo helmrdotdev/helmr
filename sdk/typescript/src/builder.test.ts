@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { builder, defineConfig, image, sandbox, source } from "./index"
-import { inspectConfig, isBuilder } from "./internal"
+import { builder, defineConfig, image, source } from "./index"
+import { inspectConfig, inspectImage, isBuilder } from "./internal"
 
 describe("builder", () => {
   test("records ordered immutable steps and lets branches share a prefix", () => {
@@ -43,7 +43,7 @@ describe("builder", () => {
   test("is a different role from a Computer image", () => {
     expect(isBuilder(builder())).toBe(true)
     expect(isBuilder(image("computer"))).toBe(false)
-    expect(() => sandbox({ id: "wrong-role" }).image(builder() as never)).toThrow()
+    expect(inspectImage(builder())).toBeUndefined()
     expect(() => defineConfig({ build: { builder: image("computer").from("debian") as never } }))
       .toThrow("must be created by builder()")
   })

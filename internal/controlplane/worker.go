@@ -10,6 +10,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -42,7 +43,7 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		tokenHash = nil
 	}
-	enrolled, err := workergroup.EnrollHost(r.Context(), s.db, s.hostAuth, workergroup.Enrollment{
+	enrolled, err := workergroup.EnrollHost(r.Context(), s.tx, s.hostAuth, workergroup.Enrollment{
 		TokenHash: tokenHash, PoolName: request.PoolName, ResourceID: request.ResourceID,
 	})
 	if err != nil {
@@ -135,6 +136,14 @@ func (s *Server) workerStartupRecovery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
+	quarantined := make([]uuid.UUID, len(request.Quarantined))
+	for i, value := range request.Quarantined {
+		quarantined[i] = uuid.MustParse(value)
+	}
+	if err := agent.ObserveRecoveredHostComputers(r.Context(), s.tx, worker, quarantined); err != nil {
+		s.writeAgentComputerError(w, err)
+		return
+	}
 	evidence, err := json.Marshal(request)
 	if err != nil {
 		writeError(w, badRequest(errors.New("encode startup recovery evidence")))
@@ -188,7 +197,7 @@ func (s *Server) workerDrain(w http.ResponseWriter, r *http.Request) {
 		s.writeWorkerHostError(w, "drain worker", err)
 		return
 	}
-	s.captureDrainingComputers(r.Context(), worker.HostID, uuid.Nil())
+
 	s.writeWorkerStatus(w, r, worker)
 }
 
