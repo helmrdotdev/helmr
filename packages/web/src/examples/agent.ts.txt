@@ -1,0 +1,51 @@
+import { agent, triggers } from "@helmr/sdk"
+import { createOpencode } from "@opencode-ai/sdk/v2"
+import { workspace } from "./computer"
+
+export const coder = agent({
+  id: "coder",
+  computer: workspace,
+
+  async init(ctx) {
+    const { client } = await createOpencode({ signal: ctx.signal })
+    const { data: session } = await client.session.create({}, { throwOnError: true })
+    return { client, sessionID: session.id }
+  },
+
+  async turn(turn, { initResult: { client, sessionID } }) {
+    const events = await client.event.subscribe()
+    await client.session.promptAsync({
+      sessionID,
+      parts: turn.input.map((part) => ({ type: "text", text: part.text })),
+    })
+
+    for await (const event of events.stream) {
+      if (event.type === "session.idle") break
+      if (event.type !== "question.asked") continue
+
+      // OpenCode asks; a teammate answers.
+      const [question] = event.properties.questions
+      const { answer } = await turn.ask({
+        prompt: [{ type: "text", text: question.question }],
+        answer: {
+          type: "choice",
+          options: question.options.map((o) => ({
+            id: o.label,
+            label: o.label,
+            value: o.label,
+          })),
+        },
+      })
+      const answers = [answer.selected.map((s) => String(s.value))]
+      await client.question.reply({ requestID: event.properties.id, answers })
+    }
+    return null
+  },
+
+  triggers: [
+    triggers.cron("weekday-deps", "0 9 * * 1-5", {
+      timezone: "Asia/Tokyo",
+      input: [{ type: "text", text: "Update dependencies." }],
+    }),
+  ],
+})
