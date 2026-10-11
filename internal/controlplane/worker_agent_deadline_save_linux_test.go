@@ -31,7 +31,7 @@ func (g *nativePublicationGate) holdNativeDeadline(ctx context.Context, save str
  JOIN turns t ON(t.environment_id,t.id)=(s.environment_id,s.turn_id)
  JOIN sessions se ON(se.environment_id,se.id)=(t.environment_id,t.session_id)
  JOIN agents a ON(a.environment_id,a.id)=(se.environment_id,se.agent_id)
- WHERE s.environment_id=$1 AND s.id=$2 AND a.name='deadline')`, g.environment, save).Scan(&deadline)
+ WHERE s.environment_id=$1 AND s.id=$2 AND a.key='deadline')`, g.environment, save).Scan(&deadline)
 	if err != nil || !deadline {
 		return err
 	}
@@ -118,7 +118,7 @@ func verifyNativeDeadlineSave(ctx context.Context, pool *pgxpool.Pool, env uuid.
       FROM session_events e JOIN turns peer ON(peer.environment_id,peer.id)=(e.environment_id,e.turn_id)
       JOIN sessions se ON(se.environment_id,se.id)=(peer.environment_id,peer.session_id)
       JOIN agents a ON(a.environment_id,a.id)=(se.environment_id,se.agent_id)
-      WHERE e.environment_id=t.environment_id AND peer.computer_id=t.computer_id AND a.name='peer'
+      WHERE e.environment_id=t.environment_id AND peer.computer_id=t.computer_id AND a.key='peer'
       AND e.kind='turn.output' AND e.created_at>=$10 AND e.created_at<t.deadline_at
       AND peer.started_at<=$10 AND (peer.terminal_at IS NULL OR peer.terminal_at>=t.deadline_at))
  AND t.deadline_at>=t.started_at+interval '30 seconds' AND t.deadline_at<=t.started_at+interval '31 seconds'

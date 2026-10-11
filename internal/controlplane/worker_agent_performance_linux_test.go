@@ -160,7 +160,7 @@ func (g *nativePerformanceGate) ServeHTTP(w http.ResponseWriter, r *http.Request
  JOIN turns t ON (t.environment_id,t.id)=(s.environment_id,s.turn_id)
  JOIN sessions se ON (se.environment_id,se.id)=(t.environment_id,t.session_id)
  JOIN agents a ON (a.environment_id,a.id)=(se.environment_id,se.agent_id)
- WHERE s.environment_id=$1 AND s.id=$2 AND a.name IN ('codex','claude')
+ WHERE s.environment_id=$1 AND s.id=$2 AND a.key IN ('codex','claude')
 ), EXISTS(SELECT 1 FROM computer_objects o WHERE o.environment_id=$1 AND o.digest=$3 AND NOT o.certified)`, g.environment, save, digest).Scan(&native, &uncertified)
 		if err != nil {
 			g.observerFailed("classify certification request", save, err)
@@ -327,7 +327,7 @@ func retainNativePerformance(ctx context.Context, pool *pgxpool.Pool, env uuid.U
  SELECT t.*,lag(t.terminal_at) OVER(PARTITION BY t.session_id ORDER BY t.seq) AS predecessor_terminal_at
  FROM turns t JOIN sessions se ON(se.environment_id,se.id)=(t.environment_id,t.session_id)
  JOIN agents a ON(a.environment_id,a.id)=(se.environment_id,se.agent_id)
- WHERE t.environment_id=$1 AND se.computer_id=$2 AND a.name IN ('codex','claude'))
+ WHERE t.environment_id=$1 AND se.computer_id=$2 AND a.key IN ('codex','claude'))
  SELECT COALESCE(jsonb_agg(jsonb_build_object('id',id,'sessionId',session_id,'sequence',seq,'createdAt',created_at,
  'startedAt',started_at,'processingClosedAt',processing_closed_at,'resultRecordedAt',result_recorded_at,'terminalAt',terminal_at,
  'firstOutputAcceptedAt',(SELECT min(e.created_at) FROM session_events e WHERE e.environment_id=native.environment_id AND e.turn_id=native.id AND e.kind='turn.output'),
@@ -342,7 +342,7 @@ func retainNativePerformance(ctx context.Context, pool *pgxpool.Pool, env uuid.U
  'progress',(convert_from(e.data,'UTF8')::jsonb->0->>'text')::jsonb) ORDER BY e.seq),'[]'::jsonb)
  FROM session_events e JOIN sessions s ON(s.environment_id,s.id)=(e.environment_id,e.session_id)
  JOIN agents a ON(a.environment_id,a.id)=(s.environment_id,s.agent_id)
- WHERE e.environment_id=$1 AND s.computer_id=$2 AND a.name='peer' AND e.kind='turn.output'`,
+ WHERE e.environment_id=$1 AND s.computer_id=$2 AND a.key='peer' AND e.kind='turn.output'`,
 	}
 	for name, query := range queries {
 		var value json.RawMessage

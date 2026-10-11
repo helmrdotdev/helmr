@@ -208,10 +208,12 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    admitted(provider, "initial", started.turn, startMS, startAt)
    sessions.push(started.session); nativeSessions[provider] = started.session.id
    if (options.sessionDiscovery) {
+    // The first save gate observes a queued successor before releasing publication.
+    const stopping = await started.session.enqueue(fixtureInput("fixture-native-stop"), undefined, { signal })
     const first = await finish(started.turn, provider, 1)
     native[provider] = { session: started.session, previous: first }
     const queued = await interruptNativeTurn(client, provider, started.session, computer.id, first,
-      nativeInput(`${provider} before idle two`), options.checkpointObservations + ".stops", signal, nativeStops)
+      nativeInput(`${provider} before idle two`), options.checkpointObservations + ".stops", signal, nativeStops, stopping)
     await finish(queued, provider, 2)
    } else {
    const enqueueMS = performance.now(), enqueueAt = new Date().toISOString()

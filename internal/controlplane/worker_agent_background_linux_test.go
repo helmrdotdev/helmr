@@ -51,7 +51,7 @@ func (g *nativePublicationGate) observeBackgroundPublication(ctx context.Context
  JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id)
  JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(s.environment_id,s.computer_id,s.computer_lease_epoch)
  JOIN sessions p ON (p.environment_id,p.computer_id)=(s.environment_id,s.computer_id)
- JOIN agents a ON (a.environment_id,a.id)=(p.environment_id,p.agent_id) AND a.name='peer'
+ JOIN agents a ON (a.environment_id,a.id)=(p.environment_id,p.agent_id) AND a.key='peer'
  JOIN turns t ON (t.environment_id,t.session_id)=(p.environment_id,p.id) AND t.status='running'
  WHERE s.environment_id=$1 AND s.id=$2 AND s.turn_id IS NULL
  AND NOT EXISTS(SELECT 1 FROM computer_checkpoints cp WHERE cp.environment_id=s.environment_id AND cp.disk_save_id=s.id)`, g.environment, save).Scan(&valid, &observation)

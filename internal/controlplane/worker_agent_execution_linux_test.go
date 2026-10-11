@@ -685,8 +685,8 @@ FROM save`, env, turn.ID, turn.Save, receipt.PeerSessionID).Scan(&timeline)
 	}
 	var mcpTurns int
 	err = database.Pool.QueryRow(ctx, `SELECT count(*) FROM turns t JOIN sessions source ON (source.environment_id,source.id)=(t.environment_id,t.caller_id) JOIN agents a ON (a.environment_id,a.id)=(source.environment_id,source.agent_id)
-  WHERE t.environment_id=$1 AND t.session_id=$2 AND t.caller_kind='session' AND t.admission_method='enqueue' AND t.origin_turn_id IS NULL AND ((a.name='codex' AND source.id=$3) OR (a.name='claude' AND source.id=$4))
-  AND (t.retry_key IN (a.name||'-1',a.name||'-3') OR ($5 AND t.retry_key=a.name||'-5') OR ($6 AND t.retry_key IN (a.name||'-5',a.name||'-7')))`, env, receipt.PeerSessionID, receipt.NativeSessions["codex"], receipt.NativeSessions["claude"], nativeProcessLoss || cancelSave, healthyRAM).Scan(&mcpTurns)
+  WHERE t.environment_id=$1 AND t.session_id=$2 AND t.caller_kind='session' AND t.admission_method='enqueue' AND t.origin_turn_id IS NULL AND ((a.key='codex' AND source.id=$3) OR (a.key='claude' AND source.id=$4))
+  AND (t.retry_key IN (a.key||'-1',a.key||'-3') OR ($5 AND t.retry_key=a.key||'-5') OR ($6 AND t.retry_key IN (a.key||'-5',a.key||'-7')))`, env, receipt.PeerSessionID, receipt.NativeSessions["codex"], receipt.NativeSessions["claude"], nativeProcessLoss || cancelSave, healthyRAM).Scan(&mcpTurns)
 	expectedSaves := expectedTurns
 	if cancelSave {
 		expectedSaves += 2
@@ -1112,7 +1112,7 @@ func (g *nativePublicationGate) observe(ctx context.Context, save string) error 
 	var peer, turn, session uuid.UUID
 	var sequence int64
 	var result json.RawMessage
-	err := g.pool.QueryRow(ctx, `SELECT a.name IN ('codex','claude'), t.status='finalizing' AND t.completion_save_id IS NULL AND s.status='captured' AND s.root_id IS NULL, t.id, t.session_id, t.seq, t.result
+	err := g.pool.QueryRow(ctx, `SELECT a.key IN ('codex','claude'), t.status='finalizing' AND t.completion_save_id IS NULL AND s.status='captured' AND s.root_id IS NULL, t.id, t.session_id, t.seq, t.result
   FROM computer_saves s JOIN turns t ON (t.environment_id,t.id)=(s.environment_id,s.turn_id) JOIN sessions se ON(se.environment_id,se.id)=(t.environment_id,t.session_id) JOIN agents a ON(a.environment_id,a.id)=(se.environment_id,se.agent_id) WHERE s.environment_id=$1 AND s.id=$2`, g.environment, save).Scan(&native, &valid, &turn, &session, &sequence, &result)
 	if err != nil {
 		return err
@@ -1173,7 +1173,7 @@ func (g *nativePublicationGate) observe(ctx context.Context, save string) error 
 			return err
 		}
 	}
-	err = g.pool.QueryRow(ctx, `SELECT p.id FROM computer_saves s JOIN sessions p ON (p.environment_id,p.computer_id)=(s.environment_id,s.computer_id) JOIN agents a ON(a.environment_id,a.id)=(p.environment_id,p.agent_id) JOIN turns t ON(t.environment_id,t.session_id)=(p.environment_id,p.id) WHERE s.environment_id=$1 AND s.id=$2 AND a.name='peer' AND t.status='running'`, g.environment, save).Scan(&peer)
+	err = g.pool.QueryRow(ctx, `SELECT p.id FROM computer_saves s JOIN sessions p ON (p.environment_id,p.computer_id)=(s.environment_id,s.computer_id) JOIN agents a ON(a.environment_id,a.id)=(p.environment_id,p.agent_id) JOIN turns t ON(t.environment_id,t.session_id)=(p.environment_id,p.id) WHERE s.environment_id=$1 AND s.id=$2 AND a.key='peer' AND t.status='running'`, g.environment, save).Scan(&peer)
 	if err != nil {
 		return err
 	}

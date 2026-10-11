@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises"
 import { setTimeout as delay } from "node:timers/promises"
 import type { HelmrClient } from "../../../sdk/typescript/src/client"
 import type { ClientSessionRef } from "../../../sdk/typescript/src/client-session"
+import type { TurnRef } from "../../../sdk/typescript/src/contract"
 import { fixtureInput } from "../../e2e/support/runtime-mcp"
 
 interface StopObservation {
@@ -12,8 +13,8 @@ interface StopObservation {
 
 export async function interruptNativeTurn(client: HelmrClient, provider: string, session: ClientSessionRef,
   computerID: string, previous: Record<string, unknown>, nextInput: string, observationPath: string,
-  signal: AbortSignal, records: Record<string, unknown>[]) {
-  const interrupted = await session.enqueue(fixtureInput("fixture-native-stop"), undefined, { signal })
+  signal: AbortSignal, records: Record<string, unknown>[], admitted?: TurnRef) {
+  const interrupted = admitted ?? await session.enqueue(fixtureInput("fixture-native-stop"), undefined, { signal })
   let askID: string
   for (;;) {
     const page = await interrupted.asks.list({ limit: 100 }, { signal })
