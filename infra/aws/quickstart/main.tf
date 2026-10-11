@@ -8,7 +8,6 @@ locals {
     userdata = filesha256("${path.module}/../modules/worker/templates/user-data.sh.tftpl")
   }))
 
-  worker_artifact_cache_mib       = coalesce(var.worker_artifact_cache_max_mib, 0)
   worker_guest_ephemeral_disk_mib = coalesce(var.worker_execution_slots, 0) * var.worker_vm_scratch_disk_mib
   worker_generation_inputs = {
     generation_key        = var.worker_generation_key
@@ -41,7 +40,6 @@ locals {
       disk = {
         total_mib            = var.worker_disk_mib
         reserve_mib          = var.worker_disk_reserve_mib
-        artifact_cache_mib   = var.worker_artifact_cache_max_mib
         computer_staging_mib = var.worker_computer_staging_mib
       }
       lifecycle = {
@@ -100,7 +98,6 @@ locals {
       worker_capacity_vcpus        = spec.generation_inputs.capacity.cpu_millis / 1000
       worker_capacity_memory_mib   = spec.generation_inputs.capacity.memory_mib
       worker_execution_slots       = spec.generation_inputs.capacity.vm_slots
-      artifact_cache_max_mib       = spec.generation_inputs.supply.disk.artifact_cache_mib
       computer_staging_mib         = spec.generation_inputs.supply.disk.computer_staging_mib
       lifecycle                    = spec.generation_inputs.supply.lifecycle
       sealed_provider_definition   = spec.sealed_provider_definition
@@ -160,7 +157,6 @@ module "controlplane" {
   public_subnet_ids                          = module.controlplane_network.public_subnet_ids
   private_subnet_ids                         = module.controlplane_network.private_subnet_ids
   public_url                                 = var.public_url
-  api_origin                                 = var.api_origin
   deployment_mode                            = var.deployment_mode
   computer_wrapping_key_id                   = var.computer_wrapping_key_id
   bootstrap_worker_group_name                = var.worker_group_name
@@ -255,7 +251,6 @@ module "worker_group" {
   worker_capacity_vcpus                           = local.worker_generations[each.key].worker_capacity_vcpus
   worker_capacity_memory_mib                      = local.worker_generations[each.key].worker_capacity_memory_mib
   worker_execution_slots                          = local.worker_generations[each.key].worker_execution_slots
-  artifact_cache_max_mib                          = local.worker_generations[each.key].artifact_cache_max_mib
   computer_staging_mib                            = local.worker_generations[each.key].computer_staging_mib
   worker_controlplane_url                         = local.worker_controlplane_url
   cas_uri                                         = module.controlplane.cas_uri
@@ -317,10 +312,9 @@ resource "terraform_data" "quickstart_preconditions" {
         coalesce(var.worker_disk_mib, 0) > var.worker_disk_reserve_mib &&
         coalesce(var.worker_capacity_vcpus, 0) > 0 &&
         coalesce(var.worker_capacity_memory_mib, 0) > 0 &&
-        coalesce(var.worker_execution_slots, 0) > 0 &&
-        local.worker_artifact_cache_mib > 0
+        coalesce(var.worker_execution_slots, 0) > 0
       )
-      error_message = "worker groups require configured CPU, memory, cache, disk, and execution-slot capacity."
+      error_message = "worker groups require configured CPU, memory, disk, and execution-slot capacity."
     }
 
   }

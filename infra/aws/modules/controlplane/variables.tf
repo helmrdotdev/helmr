@@ -5,6 +5,8 @@ variable "enable_deployment_rollback" {
   nullable    = false
 }
 
+
+
 variable "permissions_boundary_arn" {
   description = "Optional caller-owned IAM ceiling; does not grant resource permissions."
   type        = string
@@ -54,12 +56,6 @@ variable "public_url" {
   nullable    = true
 }
 
-variable "api_origin" {
-  description = "External HTTPS origin used for machine-facing Control Plane API URLs. Defaults to the effective public URL."
-  type        = string
-  default     = null
-  nullable    = true
-}
 
 variable "deployment_mode" {
   description = "Helmr deployment mode passed to control-plane tasks."
@@ -407,6 +403,13 @@ variable "controlplane_environment" {
   description = "Additional non-secret environment variables for helmr-controlplane. Managed Helmr variables such as REDIS_URL are owned by this module."
   type        = map(string)
   default     = {}
+  validation {
+    condition = alltrue([for name in ["ENVIRONMENT_MAX_RESIDENT_COMPUTERS", "ENVIRONMENT_MAX_CPU_MILLIS", "ENVIRONMENT_MAX_MEMORY_BYTES", "ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES", "ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS", "ENVIRONMENT_MAX_CAUSAL_DEPTH", "ENVIRONMENT_ADMISSION_RATE_PER_SECOND", "ENVIRONMENT_ADMISSION_BURST", "ENVIRONMENT_PREPARATION_TIMEOUT_MS"] :
+      can(regex("^[0-9]+$", var.controlplane_environment[name])) &&
+      try(tonumber(var.controlplane_environment[name]) > 0 && tonumber(var.controlplane_environment[name]) <= 9223372036854775807, false)
+    ])
+    error_message = "controlplane_environment must explicitly set every ENVIRONMENT execution limit to a positive integer; see the Environment execution policy documentation."
+  }
 }
 
 variable "dispatcher_environment" {

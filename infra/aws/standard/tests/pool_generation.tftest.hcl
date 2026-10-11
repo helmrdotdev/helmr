@@ -54,6 +54,17 @@ override_module {
 }
 
 variables {
+  controlplane_environment = {
+    ENVIRONMENT_MAX_RESIDENT_COMPUTERS     = "10"
+    ENVIRONMENT_MAX_CPU_MILLIS             = "16000"
+    ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
+    ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES = "1099511627776"
+    ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS = "100"
+    ENVIRONMENT_MAX_CAUSAL_DEPTH           = "8"
+    ENVIRONMENT_ADMISSION_RATE_PER_SECOND  = "10"
+    ENVIRONMENT_ADMISSION_BURST            = "20"
+    ENVIRONMENT_PREPARATION_TIMEOUT_MS     = "600000"
+  }
   worker_computer_save_interval_seconds    = 60
   worker_computer_devices                  = ["/dev/nbd0", "/dev/nbd1"]
   aws_region                               = "us-east-1"
@@ -91,7 +102,6 @@ variables {
   worker_vm_vcpus                     = 2
   worker_vm_memory_mib                = 4096
   worker_vm_scratch_disk_mib          = 32768
-  worker_artifact_cache_max_mib       = 16384
 }
 
 run "baseline_execution_generation" {
@@ -267,7 +277,18 @@ run "fixed_capacity_plan" {
     create_worker             = true
     worker_count              = 2
     capacity_token_secret_arn = "arn:aws:secretsmanager:us-east-1:111122223333:secret:capacity-token"
-    controlplane_environment  = { ADMIN_EMAILS = "operator@example.test" }
+    controlplane_environment = {
+      ENVIRONMENT_MAX_RESIDENT_COMPUTERS     = "10"
+      ENVIRONMENT_MAX_CPU_MILLIS             = "16000"
+      ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
+      ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES = "1099511627776"
+      ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS = "100"
+      ENVIRONMENT_MAX_CAUSAL_DEPTH           = "8"
+      ENVIRONMENT_ADMISSION_RATE_PER_SECOND  = "10"
+      ENVIRONMENT_ADMISSION_BURST            = "20"
+      ENVIRONMENT_PREPARATION_TIMEOUT_MS     = "600000"
+      ADMIN_EMAILS                           = "operator@example.test"
+    }
   }
 }
 
@@ -374,4 +395,8 @@ run "computer_staging_rotates_and_retains_generation" {
     )
     error_message = "Staging must rotate the Pool, preserve retained staging, and keep guest capacity separate from host files."
   }
+}
+
+run "slack_no_global_credentials" {
+  command = plan
 }
