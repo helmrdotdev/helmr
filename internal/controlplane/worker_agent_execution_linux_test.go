@@ -500,6 +500,52 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	if writeErr := os.WriteFile(filepath.Join(input.Evidence, "driver.log"), diagnostic.Bytes(), 0600); writeErr != nil {
 		t.Fatal(writeErr)
 	}
+	if sessionDiscovery {
+		settleCtx, stopSettle := context.WithTimeout(t.Context(), 3*time.Second)
+		for {
+			var settled bool
+			settleErr := database.Pool.QueryRow(settleCtx, `SELECT NOT EXISTS (
+ SELECT 1 FROM computer_commands WHERE environment_id=$1 AND terminal_at IS NOT NULL AND NOT output_fenced
+ AND NOT COALESCE(stdout_final_through IS NOT NULL AND stderr_final_through IS NOT NULL
+   AND stdout_ended AND stderr_ended AND stdout_accepted_through=stdout_final_through
+   AND stderr_accepted_through=stderr_final_through,false))`, env).Scan(&settled)
+			if settleErr != nil {
+				t.Logf("command diagnostic output settlement: %v", settleErr)
+				break
+			}
+			if settled {
+				break
+			}
+			select {
+			case <-settleCtx.Done():
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+		stopSettle()
+		diagnosticCtx, stopDiagnostic := context.WithTimeout(t.Context(), 5*time.Second)
+		var commands []byte
+		commandErr := database.Pool.QueryRow(diagnosticCtx, `SELECT COALESCE(jsonb_agg(to_jsonb(command) ORDER BY created_at),'[]'::jsonb)
+ FROM (SELECT c.id,c.status,c.timeout_ms,c.created_at,c.started_at,c.process_exited_at,
+              c.process_reconciled_at,c.terminal_at,c.exit_code,c.error,c.terminal_reason_code,c.output_fenced,
+              c.stdout_accepted_through,c.stdout_final_through,c.stdout_ended,c.stdout_end_complete,c.stdout_gapped,
+              c.stderr_accepted_through,c.stderr_final_through,c.stderr_ended,c.stderr_end_complete,c.stderr_gapped,
+              c.stdout_final_complete,c.stdout_final_gapped,c.stderr_final_complete,c.stderr_final_gapped,
+              COALESCE(c.stdout_final_through IS NOT NULL AND c.stderr_final_through IS NOT NULL
+                AND c.stdout_ended AND c.stderr_ended AND c.stdout_accepted_through=c.stdout_final_through
+                AND c.stderr_accepted_through=c.stderr_final_through,false) AS output_settled,
+              (SELECT COALESCE(jsonb_agg(jsonb_build_object('stream',o.stream,'sequence',o.sequence,
+                  'acceptedAt',o.accepted_at,'observedAtUnixNano',o.observed_at_unix_nano,
+                  'dataBase64',encode(o.data,'base64')) ORDER BY o.id),'[]'::jsonb)
+               FROM telemetry_outbox o WHERE o.environment_id=c.environment_id AND o.command_id=c.id AND o.kind='data') AS output
+       FROM computer_commands c WHERE c.environment_id=$1) command`, env).Scan(&commands)
+		stopDiagnostic()
+		if commandErr == nil {
+			commandErr = os.WriteFile(filepath.Join(input.Evidence, "command-diagnostics.json"), commands, 0600)
+		}
+		if commandErr != nil {
+			t.Logf("retain command diagnostics: %v", commandErr)
+		}
+	}
 	if err != nil {
 		if healthyRAM || checkpointFault != "" {
 			diagnosticCtx, stopDiagnostic := context.WithTimeout(t.Context(), 5*time.Second)
