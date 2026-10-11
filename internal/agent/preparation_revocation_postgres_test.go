@@ -65,7 +65,7 @@ func TestPreparationImageRevocationStopsPeersAndPreservesFinalization(t *testing
 		t.Fatalf("revoked capture: %v", err)
 	}
 	for range 2 {
-		if err = reconcileComputerImageRevocation(t.Context(), f.pool, f.env, f.computer); err != nil {
+		if err = reconcileComputerSecretRevocation(t.Context(), f.pool, f.env, f.computer); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -182,7 +182,7 @@ func TestPreparationImageRevocationDuringRestoreKeepsStopControl(t *testing.T) {
 			if err != nil || delivery.Kind != "shutdown" {
 				t.Fatalf("restore shutdown: %v %v", delivery, err)
 			}
-			if err = reconcileComputerImageRevocation(t.Context(), r.f.pool, r.f.env, r.f.computer); err != nil {
+			if err = reconcileComputerSecretRevocation(t.Context(), r.f.pool, r.f.env, r.f.computer); err != nil {
 				t.Fatal(err)
 			}
 			var state string
@@ -238,7 +238,7 @@ func TestPreparationImageRevocationPreservesQueueWithoutProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := reconcileComputerImageRevocation(t.Context(), p.f.pool, p.f.env, p.f.computer); err != nil {
+		if err := reconcileComputerSecretRevocation(t.Context(), p.f.pool, p.f.env, p.f.computer); err != nil {
 			t.Fatal(err)
 		}
 		next, more, err := reconcilePreparationLifecycle(t.Context(), p.f.pool, preparationLifecyclePosition{})
@@ -295,7 +295,7 @@ func TestPreparationImageRevocationObserverBeforeReaper(t *testing.T) {
 				t.Fatalf("observer explanation %d: %v", holds, err)
 			}
 			for range 2 {
-				if err = reconcileComputerImageRevocation(t.Context(), f.pool, f.env, f.computer); err != nil {
+				if err = reconcileComputerSecretRevocation(t.Context(), f.pool, f.env, f.computer); err != nil {
 					t.Fatal(err)
 				}
 			}

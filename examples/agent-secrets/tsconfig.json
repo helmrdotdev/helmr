@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "noEmit": true,
+    "strict": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node"],
+    "paths": {
+      "@helmr/proto": ["../../proto/typescript/src/index.ts"],
+      "@helmr/sdk": ["../../sdk/typescript/src/index.ts"],
+      "@helmr/sdk/*": ["../../sdk/typescript/src/*"]
+    }
+  },
+  "include": ["agents/**/*.ts", "helmr.config.ts"]
+}

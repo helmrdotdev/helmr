@@ -100,7 +100,7 @@ UPDATE worker_hosts
            AND worker_hosts.cpu_environment_digest = $11
        )
    )
-RETURNING worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.run_paused_reason, worker_hosts.vm_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
+RETURNING worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.admission_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
 `
 
 type ActivateWorkerHostParams struct {
@@ -159,8 +159,7 @@ func (q *Queries) ActivateWorkerHost(ctx context.Context, arg ActivateWorkerHost
 		&i.CPUEnvironment,
 		&i.CPUEnvironmentDigest,
 		&i.ObservedAt,
-		&i.RunPausedReason,
-		&i.VMPausedReason,
+		&i.AdmissionPausedReason,
 		&i.EpochStartedAt,
 		&i.ActivatedAt,
 		&i.DrainingAt,
@@ -190,7 +189,7 @@ UPDATE worker_hosts SET updated_at=now() FROM target
  AND NOT EXISTS (
  SELECT 1 FROM computer_preparations p WHERE p.worker_host_id=target.id AND p.worker_epoch<target.current_epoch
  AND p.fenced_at IS NULL AND p.instance_id NOT IN (SELECT quarantined.id FROM quarantined))
- RETURNING worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.run_paused_reason, worker_hosts.vm_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
+ RETURNING worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.admission_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
 `
 
 type CompleteWorkerStartupRecoveryParams struct {
@@ -231,8 +230,7 @@ func (q *Queries) CompleteWorkerStartupRecovery(ctx context.Context, arg Complet
 		&i.CPUEnvironment,
 		&i.CPUEnvironmentDigest,
 		&i.ObservedAt,
-		&i.RunPausedReason,
-		&i.VMPausedReason,
+		&i.AdmissionPausedReason,
 		&i.EpochStartedAt,
 		&i.ActivatedAt,
 		&i.DrainingAt,
@@ -246,32 +244,17 @@ func (q *Queries) CompleteWorkerStartupRecovery(ctx context.Context, arg Complet
 }
 
 const getWorkerHostStatus = `-- name: GetWorkerHostStatus :one
-SELECT worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.run_paused_reason, worker_hosts.vm_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at,
+SELECT worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.admission_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at,
        vm_platforms.rootfs_digest,
        vm_platforms.contract,
        vm_platforms.arch,
-	       COALESCE((
-	           worker_hosts.status = 'active'
-	           AND worker_groups.status = 'active'
-           AND worker_hosts.observed_at >= transaction_timestamp()
-               - $1::bigint * interval '1 second'
-           AND worker_hosts.run_paused_reason IS NULL
-       ), false)::boolean AS run_ready,
-	       COALESCE((
-	           worker_hosts.status = 'active'
-	           AND worker_groups.status = 'active'
-           AND worker_hosts.observed_at >= transaction_timestamp()
-               - $1::bigint * interval '1 second'
-           AND worker_hosts.vm_paused_reason IS NULL
-       ), false)::boolean AS instance_ready,
        COALESCE((
            worker_hosts.status = 'active'
            AND worker_groups.status = 'active'
            AND worker_hosts.observed_at >= transaction_timestamp()
                - $1::bigint * interval '1 second'
-	           AND worker_hosts.run_paused_reason IS NULL
-	           AND worker_hosts.vm_paused_reason IS NULL
-       ), false)::boolean AS all_configured_roles_ready,
+           AND worker_hosts.admission_paused_reason IS NULL
+       ), false)::boolean AS admission_ready,
        (SELECT count(*)::int FROM computer_leases i
           WHERE i.worker_host_id=worker_hosts.id AND i.worker_epoch=worker_hosts.current_epoch
             AND i.fenced_at IS NULL)
@@ -312,8 +295,7 @@ type GetWorkerHostStatusRow struct {
 	CPUEnvironment               []byte             `json:"cpu_environment"`
 	CPUEnvironmentDigest         pgtype.Text        `json:"cpu_environment_digest"`
 	ObservedAt                   pgtype.Timestamptz `json:"observed_at"`
-	RunPausedReason              pgtype.Text        `json:"run_paused_reason"`
-	VMPausedReason               pgtype.Text        `json:"vm_paused_reason"`
+	AdmissionPausedReason        pgtype.Text        `json:"admission_paused_reason"`
 	EpochStartedAt               pgtype.Timestamptz `json:"epoch_started_at"`
 	ActivatedAt                  pgtype.Timestamptz `json:"activated_at"`
 	DrainingAt                   pgtype.Timestamptz `json:"draining_at"`
@@ -325,9 +307,7 @@ type GetWorkerHostStatusRow struct {
 	RootfsDigest                 pgtype.Text        `json:"rootfs_digest"`
 	Contract                     pgtype.Text        `json:"contract"`
 	Arch                         pgtype.Text        `json:"arch"`
-	RunReady                     bool               `json:"run_ready"`
-	InstanceReady                bool               `json:"instance_ready"`
-	AllConfiguredRolesReady      bool               `json:"all_configured_roles_ready"`
+	AdmissionReady               bool               `json:"admission_ready"`
 	ActiveInstances              int32              `json:"active_instances"`
 }
 
@@ -355,8 +335,7 @@ func (q *Queries) GetWorkerHostStatus(ctx context.Context, arg GetWorkerHostStat
 		&i.CPUEnvironment,
 		&i.CPUEnvironmentDigest,
 		&i.ObservedAt,
-		&i.RunPausedReason,
-		&i.VMPausedReason,
+		&i.AdmissionPausedReason,
 		&i.EpochStartedAt,
 		&i.ActivatedAt,
 		&i.DrainingAt,
@@ -368,9 +347,7 @@ func (q *Queries) GetWorkerHostStatus(ctx context.Context, arg GetWorkerHostStat
 		&i.RootfsDigest,
 		&i.Contract,
 		&i.Arch,
-		&i.RunReady,
-		&i.InstanceReady,
-		&i.AllConfiguredRolesReady,
+		&i.AdmissionReady,
 		&i.ActiveInstances,
 	)
 	return i, err

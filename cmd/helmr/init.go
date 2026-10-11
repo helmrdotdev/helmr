@@ -31,7 +31,7 @@ func initCommand() *cobra.Command {
 			fmt.Fprintln(cmd.OutOrStdout(), "created .helmrignore")
 			fmt.Fprintln(cmd.OutOrStdout(), "created package.json")
 			fmt.Fprintln(cmd.OutOrStdout(), "created tsconfig.json")
-			fmt.Fprintln(cmd.OutOrStdout(), "created tasks/hello.ts")
+			fmt.Fprintln(cmd.OutOrStdout(), "created agents/hello.ts")
 			return nil
 		},
 	}
@@ -45,11 +45,11 @@ func writeStarterProject(root string, force bool) error {
 		"helmr.config.ts": starterHelmrConfig,
 		".helmrignore":    starterHelmrIgnore,
 		"package.json":    starterPackageJSON(),
-		"tasks/hello.ts":  starterHelloAgent,
+		"agents/hello.ts": starterHelloAgent,
 		"tsconfig.json":   starterTSConfig,
 	}
 	if !force {
-		for _, name := range []string{".helmrignore", "helmr.config.ts", "package.json", "tasks/hello.ts", "tsconfig.json"} {
+		for _, name := range []string{".helmrignore", "helmr.config.ts", "package.json", "agents/hello.ts", "tsconfig.json"} {
 			path := filepath.Join(root, filepath.FromSlash(name))
 			if _, err := os.Stat(path); err == nil {
 				return fmt.Errorf("%s already exists; pass --force to overwrite", path)
@@ -58,7 +58,7 @@ func writeStarterProject(root string, force bool) error {
 			}
 		}
 	}
-	if err := os.MkdirAll(filepath.Join(root, "tasks"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "agents"), 0o755); err != nil {
 		return err
 	}
 	for name, contents := range files {
@@ -73,7 +73,7 @@ func writeStarterProject(root string, force bool) error {
 const starterHelmrConfig = `import { defineConfig } from "@helmr/sdk"
 
 export default defineConfig({
-  dirs: ["tasks"],
+  dirs: ["agents"],
   ignorePatterns: ["**/*.test.ts"],
 })
 `
@@ -148,7 +148,7 @@ const starterTSConfig = `{
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["tasks/**/*.ts"]
+  "include": ["agents/**/*.ts"]
 }
 `
 

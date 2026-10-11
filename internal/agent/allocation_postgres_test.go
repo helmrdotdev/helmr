@@ -542,7 +542,7 @@ func TestAllocationUndeliveredComputerStartsAfterHostDrain(t *testing.T) {
 	}
 	identity := ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computer, InstanceID: r.InstanceID, Epoch: r.Epoch}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp(),drain_reason='admin' WHERE id=$1`, f.worker)
-	for _, pause := range []string{"run_paused_reason", "vm_paused_reason"} {
+	for _, pause := range []string{"admission_paused_reason"} {
 		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET `+pause+`='disk_floor' WHERE id=$1`, f.worker)
 		if _, err := a.DeliverComputer(t.Context(), *f.host(), identity); !errors.Is(err, ErrNotReady) {
 			t.Fatalf("drain bypassed temporary health denial (%s): %v", pause, err)
@@ -560,11 +560,11 @@ func TestAllocationUndeliveredComputerStartsAfterHostDrain(t *testing.T) {
 	if _, err := CaptureComputerProxyTrust(t.Context(), f.pool, *f.host(), r.InstanceID); err != nil {
 		t.Fatalf("acquiring proxy trust on drain: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET vm_paused_reason='disk_floor' WHERE id=$1`, f.worker)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET admission_paused_reason='disk_floor' WHERE id=$1`, f.worker)
 	if _, err := CaptureComputerProxyTrust(t.Context(), f.pool, *f.host(), r.InstanceID); err == nil {
 		t.Fatal("drain bypassed acquiring health gate")
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET vm_paused_reason=NULL WHERE id=$1`, f.worker)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET admission_paused_reason=NULL WHERE id=$1`, f.worker)
 	if err := ObserveFreshComputerReady(t.Context(), f.pool, *f.host(), identity, r.Shape, r.BaseVersion); err != nil {
 		t.Fatal(err)
 	}
@@ -581,7 +581,7 @@ func TestAllocationUndeliveredPreparationStartsAfterHostDrain(t *testing.T) {
 	}
 	identity := PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp(),drain_reason='admin' WHERE id=$1`, f.worker)
-	for _, pause := range []string{"run_paused_reason", "vm_paused_reason"} {
+	for _, pause := range []string{"admission_paused_reason"} {
 		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET `+pause+`='disk_floor' WHERE id=$1`, f.worker)
 		if _, err := a.DeliverPreparation(t.Context(), *f.host(), identity); !errors.Is(err, ErrNotReady) {
 			t.Fatalf("drain bypassed temporary health denial (%s): %v", pause, err)

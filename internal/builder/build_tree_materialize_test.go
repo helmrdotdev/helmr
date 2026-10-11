@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
-	"github.com/helmrdotdev/helmr/internal/artifact/snapshot"
+	"github.com/helmrdotdev/helmr/internal/artifact/localcopy"
 )
 
 func TestMaterializeApplicationExcludesOnlyRootManagerNamespace(t *testing.T) {
@@ -31,7 +31,7 @@ func TestMaterializeApplicationExcludesOnlyRootManagerNamespace(t *testing.T) {
 		t.Fatal(err)
 	}
 	tree := &buildTree{
-		content:   &snapshot.Artifact{},
+		content:   &localcopy.Artifact{},
 		inspected: inspected,
 	}
 	root, cleanup, err := tree.MaterializeApplication(context.Background(), t.TempDir())

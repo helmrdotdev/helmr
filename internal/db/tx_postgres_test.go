@@ -105,22 +105,21 @@ func TestRunTxCancelledCommitDiagnostics(t *testing.T) {
 		cancel()
 		return nil
 	})
-	if !errors.Is(err, context.Canceled) || !errors.Is(err, pgx.ErrTxClosed) {
-		t.Fatalf("commit/rollback identities: %v", err)
+	if !errors.Is(err, context.Canceled) || errors.Is(err, pgx.ErrTxClosed) {
+		t.Fatalf("cancelled commit did not roll back cleanly: %v", err)
 	}
 	var output bytes.Buffer
 	slog.New(slog.NewJSONHandler(&output, nil)).Error("transaction failed", "error", err)
 	var record struct {
 		Error struct {
-			Operation, Rollback struct{ Stage, Cause string }
+			Stage, Cause string
 		}
 	}
 	if err := json.Unmarshal(output.Bytes(), &record); err != nil {
 		t.Fatal(err)
 	}
-	if record.Error.Operation.Stage != "commit transaction" || record.Error.Operation.Cause != "context_cancelled" ||
-		record.Error.Rollback.Stage != "rollback transaction" || record.Error.Rollback.Cause != "transaction_closed" {
-		t.Fatalf("joined diagnostics: %s", output.String())
+	if record.Error.Stage != "commit transaction" || record.Error.Cause != "context_cancelled" {
+		t.Fatalf("cancellation diagnostics: %s", output.String())
 	}
 	var rows int
 	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM cancelled_commit_probe`).Scan(&rows); err != nil || rows != 0 {

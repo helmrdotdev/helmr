@@ -16,20 +16,20 @@ import type { HelmrConfig } from "@helmr/sdk/internal"
 describe("declaration discovery", () => {
   test("uses only explicit dirs without name-based default ignores", async () => {
     const root = await project()
-    await writeModule(root, "tasks/shared.js", task("shared"))
+    await writeModule(root, "agents/shared.js", agentModule("shared"))
     await writeModule(
       root,
-      "tasks/barrel.js",
+      "agents/barrel.js",
       'export { shared } from "./shared.js"\n',
     )
-    await writeModule(root, "tasks/a.test.js", task("test"))
-    await writeModule(root, "tasks/_worker.js", task("underscore"))
-    await writeModule(root, "tasks/.hidden.js", task("hidden"))
-    await writeModule(root, "tasks/generated/ignored.js", 'throw new Error("ignored module imported")\n')
-    await writeModule(root, "outside.js", task("outside"))
+    await writeModule(root, "agents/a.test.js", agentModule("test"))
+    await writeModule(root, "agents/_worker.js", agentModule("underscore"))
+    await writeModule(root, "agents/.hidden.js", agentModule("hidden"))
+    await writeModule(root, "agents/generated/ignored.js", 'throw new Error("ignored module imported")\n')
+    await writeModule(root, "outside.js", agentModule("outside"))
     const config = normalizedConfig({
-      dirs: ["./tasks", "./tasks/generated"],
-      ignorePatterns: ["tasks/generated/**"],
+      dirs: ["./agents", "./agents/generated"],
+      ignorePatterns: ["agents/generated/**"],
     })
 
     const result = await analyzeProject({
@@ -39,11 +39,11 @@ describe("declaration discovery", () => {
     })
 
     expect(result.modules).toEqual([
-      "tasks/.hidden.js",
-      "tasks/_worker.js",
-      "tasks/a.test.js",
-      "tasks/barrel.js",
-      "tasks/shared.js",
+      "agents/.hidden.js",
+      "agents/_worker.js",
+      "agents/a.test.js",
+      "agents/barrel.js",
+      "agents/shared.js",
     ])
     expect(result.buildPlan.definitions.filter((item) => item.kind === "agent").map((item) => item.declaredId)).toEqual([
       "hidden",
@@ -61,9 +61,9 @@ describe("declaration discovery", () => {
 
   test("deduplicates overlapping dirs and ignores directory symlinks", async () => {
     const root = await project()
-    await writeModule(root, "tasks/nested/task.js", task("nested"))
+    await writeModule(root, "agents/nested/agent.js", agentModule("nested"))
     const config = normalizedConfig({
-      dirs: ["./tasks", "./tasks/nested"],
+      dirs: ["./agents", "./agents/nested"],
     })
 
     const result = await analyzeProject({
@@ -71,7 +71,7 @@ describe("declaration discovery", () => {
       architecture: "x86_64",
       config,
     })
-    expect(result.modules).toEqual(["tasks/nested/task.js"])
+    expect(result.modules).toEqual(["agents/nested/agent.js"])
     expect(result.buildPlan.definitions).toHaveLength(2)
   })
 
@@ -81,7 +81,7 @@ describe("declaration discovery", () => {
     await expect(analyzeProject({
       root: reserved,
       architecture: "x86_64",
-      config: normalizedConfig({ dirs: ["./tasks"] }),
+      config: normalizedConfig({ dirs: ["./agents"] }),
     })).rejects.toThrow("reserved")
 
     const dependency = await project()
@@ -94,16 +94,16 @@ describe("declaration discovery", () => {
 
   test("compiles TypeScript declaration candidates", async () => {
     const root = await project()
-    await writeModule(root, "tasks/task.ts", task("plain"))
-    await writeModule(root, "tasks/types.d.ts", "export interface Ignored {}\n")
-    await writeModule(root, "tasks/types.d.mts", "export interface Ignored {}\n")
-    await writeModule(root, "tasks/types.d.cts", "export interface Ignored {}\n")
+    await writeModule(root, "agents/agent.ts", agentModule("plain"))
+    await writeModule(root, "agents/types.d.ts", "export interface Ignored {}\n")
+    await writeModule(root, "agents/types.d.mts", "export interface Ignored {}\n")
+    await writeModule(root, "agents/types.d.cts", "export interface Ignored {}\n")
     const result = await analyzeProject({
       root,
       architecture: "x86_64",
-      config: normalizedConfig({ dirs: ["./tasks"] }),
+      config: normalizedConfig({ dirs: ["./agents"] }),
     })
-    expect(result.modules).toEqual(["tasks/task.ts"])
+    expect(result.modules).toEqual(["agents/agent.ts"])
     expect(result.buildPlan.definitions.filter((item) => item.kind === "agent")).toEqual([{
       declaredId: "plain",
       kind: "agent",
@@ -114,7 +114,7 @@ describe("declaration discovery", () => {
 
 async function project(): Promise<string> {
   const root = await mkdtemp(resolve(tmpdir(), "helmr-discovery-"))
-  await mkdir(resolve(root, "tasks"), { recursive: true })
+  await mkdir(resolve(root, "agents"), { recursive: true })
   await writeFile(
     resolve(root, "package.json"),
     JSON.stringify({ name: "analysis-fixture", private: true, type: "module" }),
@@ -155,7 +155,7 @@ async function writeModule(
   await writeFile(target, source)
 }
 
-function task(id: string): string {
+function agentModule(id: string): string {
   return [
     'import { agent, computer, image } from "@helmr/sdk"',
     `export const ${id.replace("-", "_")} = agent({`,

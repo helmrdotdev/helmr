@@ -5,9 +5,9 @@ import { readFile, writeFile, mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { createRuntimeMcpConnection, type RuntimeMcpConnection } from "../../../sdk/typescript/src/mcp"
 import type { Turn } from "../../../sdk/typescript/src/agent"
-import { CodexHarness } from "../../../examples/issue-fixer/tasks/issue-fixer/codex-harness"
-import { ClaudeHarness } from "../../../examples/issue-fixer/tasks/issue-fixer/claude-harness"
-import { conversation } from "../../../examples/issue-fixer/tasks/issue-fixer/conversation"
+import { CodexHarness } from "../../../examples/issue-fixer/agents/issue-fixer/codex-harness"
+import { ClaudeHarness } from "../../../examples/issue-fixer/agents/issue-fixer/claude-harness"
+import { conversation } from "../../../examples/issue-fixer/agents/issue-fixer/conversation"
 
 interface SetupState {
   harness: CodexHarness | ClaudeHarness

@@ -250,7 +250,7 @@ function normalizeConfig(value: object): HelmrConfig {
     }
   }
   const dirs = normalizeStringSet(
-    hasOwn(descriptors, "dirs") ? descriptors["dirs"]?.value : ["tasks"],
+    hasOwn(descriptors, "dirs") ? descriptors["dirs"]?.value : ["agents"],
     "config dirs",
     validateDirectory,
     true,

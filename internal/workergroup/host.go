@@ -280,8 +280,7 @@ func RecordStartupRecovery(ctx context.Context, q db.Querier, principal HostPrin
 // HostObservation is a worker host's report of why it pauses run or VM
 // work; an empty reason reports that the role is not paused.
 type HostObservation struct {
-	RunPausedReason string
-	VMPausedReason  string
+	AdmissionPausedReason string
 }
 
 // RecordObservation records an observation of the authenticated epoch.
@@ -298,9 +297,8 @@ func RecordObservation(ctx context.Context, q db.Querier, principal HostPrincipa
 
 func observationParams(principal HostPrincipal, observation HostObservation) db.RecordWorkerObservationParams {
 	return db.RecordWorkerObservationParams{
-		RunPausedReason: pgtype.Text{String: observation.RunPausedReason, Valid: observation.RunPausedReason != ""},
-		VMPausedReason:  pgtype.Text{String: observation.VMPausedReason, Valid: observation.VMPausedReason != ""},
-		WorkerHostID:    pgvalue.UUID(principal.HostID), WorkerGroupID: pgvalue.UUID(principal.GroupID),
+		AdmissionPausedReason: pgtype.Text{String: observation.AdmissionPausedReason, Valid: observation.AdmissionPausedReason != ""},
+		WorkerHostID:          pgvalue.UUID(principal.HostID), WorkerGroupID: pgvalue.UUID(principal.GroupID),
 		WorkerEpoch: pgtype.Int8{Int64: principal.Epoch, Valid: true},
 	}
 }

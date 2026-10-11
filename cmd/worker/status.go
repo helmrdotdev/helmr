@@ -42,18 +42,15 @@ func runStatus(log *slog.Logger) error {
 	if status.Status != workerapi.StatusActive {
 		return fmt.Errorf("worker status is %s", status.Status)
 	}
-	if status.Readiness.Run == nil || !status.Readiness.Run.Ready {
-		return fmt.Errorf("worker run role is not ready: %s", workerPauseReason(status.Readiness.Run))
-	}
-	if status.Readiness.Instance == nil || !status.Readiness.Instance.Ready {
-		return fmt.Errorf("worker instance role is not ready: %s", workerPauseReason(status.Readiness.Instance))
+	if !status.Readiness.Ready {
+		return fmt.Errorf("worker admission is not ready: %s", workerPauseReason(status.Readiness))
 	}
 	log.Info("worker ready", "worker_host_id", status.WorkerHostID, "active_instances", status.ActiveInstances)
 	return nil
 }
 
-func workerPauseReason(readiness *workerapi.RoleReadiness) string {
-	if readiness == nil || readiness.PausedReason == "" {
+func workerPauseReason(readiness workerapi.Readiness) string {
+	if readiness.PausedReason == "" {
 		return "unavailable"
 	}
 	return readiness.PausedReason

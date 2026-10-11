@@ -159,12 +159,11 @@ func (a *HardAdmission) Observation() workerapi.Observation {
 	}
 	if datapathErr != nil {
 		reason := string(AdmissionDatapathUnverified)
-		observation.RunPausedReason = reason
-		observation.VMPausedReason = reason
+		observation.AdmissionPausedReason = reason
 		return observation
 	}
 	if !decision.Allowed && decision.Reason != "" {
-		observation.RunPausedReason, observation.VMPausedReason = string(decision.Reason), string(decision.Reason)
+		observation.AdmissionPausedReason = string(decision.Reason)
 	}
 	return observation
 }

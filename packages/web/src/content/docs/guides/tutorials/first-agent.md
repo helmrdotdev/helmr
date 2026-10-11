@@ -17,8 +17,8 @@ cd ./hello-helmr
 bun install
 ```
 
-The generated config discovers exported declarations in `tasks/`. This directory
-name is configuration, not an execution primitive. Replace `tasks/hello.ts` with:
+The generated config discovers exported declarations in `agents/`. This directory
+name is configuration, not an execution primitive. Replace `agents/hello.ts` with:
 
 ```ts
 import { agent, computer, image } from "@helmr/sdk"

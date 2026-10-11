@@ -74,13 +74,13 @@ scripts/build-npm-packages.sh >> "$output/dependencies.log" 2>&1
 (cd examples/issue-fixer && bun install --frozen-lockfile --ignore-scripts) >> "$output/dependencies.log" 2>&1
 make platform-entries > "$output/entries.log" 2>&1
 go build -trimpath -ldflags="-X main.deploymentBundleBuilderImage=$endpoint/builder@$digest" -o "$tmp/helmr" ./cmd/helmr
-mkdir -p "$tmp/project/tasks"
+mkdir -p "$tmp/project/agents"
 # Close the repository-relative fixture helpers into a declaration source module.
 # The ordinary compiler still discovers, analyzes and builds this application;
 # no definition index, Program manifest or Computer seed is fabricated here.
 bun build tests/fixtures/native-continuation/production.ts --target=node \
   --define "process.env.HELMR_NATIVE_PERFORMANCE=\"$performance_fixture\"" \
-  --external '@anthropic-ai/claude-agent-sdk' --outfile "$tmp/project/tasks/agents.mjs"
+  --external '@anthropic-ai/claude-agent-sdk' --outfile "$tmp/project/agents/agents.mjs"
 if [[ "$performance_fixture" == 1 ]]; then
   mkdir -p "$tmp/project/performance/dependencies"
   cp -R tests/fixtures/native-continuation/performance/. "$tmp/project/performance/"
@@ -96,7 +96,7 @@ PY
 fi
 cp tests/fixtures/native-continuation/{package.json,package-lock.json} "$tmp/project/"
 cat > "$tmp/project/helmr.config.ts" <<'CONFIG'
-export default { dirs: ["tasks"], build: { external: ["@openai/codex", "@anthropic-ai/claude-agent-sdk"] } }
+export default { dirs: ["agents"], build: { external: ["@openai/codex", "@anthropic-ai/claude-agent-sdk"] } }
 CONFIG
 "$tmp/helmr" build "$tmp/project" --output "$output/bundle" > "$output/bundle.log" 2>&1
 cp "$tmp/runtime-release/"{runtime.squashfs,runtime.descriptor.json} "$output/"

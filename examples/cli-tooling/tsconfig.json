@@ -13,5 +13,5 @@
       "@helmr/sdk/*": ["../../sdk/typescript/src/*"]
     }
   },
-  "include": ["tasks/**/*.ts", "helmr.config.ts"]
+  "include": ["agents/**/*.ts", "helmr.config.ts"]
 }

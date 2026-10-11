@@ -115,28 +115,13 @@ SELECT worker_hosts.*,
        vm_platforms.rootfs_digest,
        vm_platforms.contract,
        vm_platforms.arch,
-	       COALESCE((
-	           worker_hosts.status = 'active'
-	           AND worker_groups.status = 'active'
-           AND worker_hosts.observed_at >= transaction_timestamp()
-               - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
-           AND worker_hosts.run_paused_reason IS NULL
-       ), false)::boolean AS run_ready,
-	       COALESCE((
-	           worker_hosts.status = 'active'
-	           AND worker_groups.status = 'active'
-           AND worker_hosts.observed_at >= transaction_timestamp()
-               - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
-           AND worker_hosts.vm_paused_reason IS NULL
-       ), false)::boolean AS instance_ready,
        COALESCE((
            worker_hosts.status = 'active'
            AND worker_groups.status = 'active'
            AND worker_hosts.observed_at >= transaction_timestamp()
                - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
-	           AND worker_hosts.run_paused_reason IS NULL
-	           AND worker_hosts.vm_paused_reason IS NULL
-       ), false)::boolean AS all_configured_roles_ready,
+           AND worker_hosts.admission_paused_reason IS NULL
+       ), false)::boolean AS admission_ready,
        (SELECT count(*)::int FROM computer_leases i
           WHERE i.worker_host_id=worker_hosts.id AND i.worker_epoch=worker_hosts.current_epoch
             AND i.fenced_at IS NULL)

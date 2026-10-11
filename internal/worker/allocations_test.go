@@ -323,13 +323,13 @@ func TestAllocationHealthObservationRecoversWithoutDeliveredOwner(t *testing.T) 
 		t.Fatal(err)
 	}
 	denied := s.observation(t.Context(), StatusActive, RecoveryEvidence{})
-	if denied.VMPausedReason == "" {
+	if denied.AdmissionPausedReason == "" {
 		t.Fatal("unhealthy host did not pause")
 	}
 	// No owner or claim can refresh the gate after the prior allocation retires.
 	probe.unhealthy.Store(false)
 	recovered := s.observation(t.Context(), StatusActive, RecoveryEvidence{})
-	if recovered.VMPausedReason != "" || recovered.RunPausedReason != "" {
+	if recovered.AdmissionPausedReason != "" {
 		t.Fatal("stale pause prevented new delivery after health recovery")
 	}
 }

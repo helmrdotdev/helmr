@@ -15,33 +15,33 @@ func TestPlatformScopeAndCanonicalPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	af, _ := a.idempotencyRequest().fingerprint()
-	bf, _ := b.idempotencyRequest().fingerprint()
-	if af != bf || idempotencySlotHash(a.idempotencyRequest()) != idempotencySlotHash(b.idempotencyRequest()) {
+	af := a.fingerprint
+	bf := b.fingerprint
+	if af != bf || idempotencySlotHash(a) != idempotencySlotHash(b) {
 		t.Fatal("JSON key order changed retry identity")
 	}
-	other := a.idempotencyRequest()
+	other := *a
 	otherID := uuid.NewV7()
 	other.scope = otherID[:]
-	if idempotencySlotHash(other) == idempotencySlotHash(a.idempotencyRequest()) {
+	if idempotencySlotHash(&other) == idempotencySlotHash(a) {
 		t.Fatal("Computer scope omitted")
 	}
 	first, _ := NewSecretCreateRequest(env, "FIRST", "key")
 	second, _ := NewSecretCreateRequest(env, "SECOND", "key")
-	if idempotencySlotHash(first.idempotencyRequest()) == idempotencySlotHash(second.idempotencyRequest()) {
+	if idempotencySlotHash(first) == idempotencySlotHash(second) {
 		t.Fatal("Secret name scope omitted")
 	}
 }
 
 func TestSlotHashFramesEveryAuthorityField(t *testing.T) {
-	base := request{environmentID: uuid.NewV7(), operation: operationSecretCreate, scope: []byte("ab"), key: "c"}
-	want := idempotencySlotHash(base)
-	for _, variant := range []request{
+	base := Request{environmentID: uuid.NewV7(), operation: operationSecretCreate, scope: []byte("ab"), key: "c"}
+	want := idempotencySlotHash(&base)
+	for _, variant := range []Request{
 		{environmentID: uuid.NewV7(), operation: base.operation, scope: base.scope, key: base.key},
 		{environmentID: base.environmentID, operation: operationSecretRotate, scope: base.scope, key: base.key},
 		{environmentID: base.environmentID, operation: base.operation, scope: []byte("a"), key: "bc"},
 	} {
-		if idempotencySlotHash(variant) == want {
+		if idempotencySlotHash(&variant) == want {
 			t.Fatal("retry namespace collision")
 		}
 	}

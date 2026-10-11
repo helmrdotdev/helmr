@@ -195,11 +195,11 @@ func launchAvailable(ctx context.Context, tx db.DBTX, host workergroup.HostPrinc
 	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computers c JOIN environments e ON e.id=c.environment_id
  WHERE c.environment_id=$1 AND c.id=$2 AND e.retired_at IS NULL AND c.deleted_at IS NULL AND c.integrity_fault_at IS NULL
  AND c.initial_root_id IS NOT NULL AND c.preparation_failed_at IS NULL
- AND NOT EXISTS(SELECT 1 FROM computer_secret_revocations r WHERE r.environment_id=c.environment_id AND r.computer_id=c.id)
+ AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) r WHERE r.environment_id=c.environment_id AND r.computer_id=c.id)
  AND NOT EXISTS(SELECT 1 FROM computer_checkpoints cp WHERE cp.environment_id=c.environment_id AND cp.computer_id=c.id AND (cp.status IN ('capturing','sealed','ready','restoring','aborting') OR (cp.status='consumed' AND cp.controls_reconciled_at IS NULL)))
  AND NOT EXISTS(SELECT 1 FROM computer_saves s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.computer_lease_epoch<>$3 AND s.status IN ('requested','captured'))
  AND (NOT $4 OR EXISTS(SELECT 1 FROM worker_hosts h JOIN worker_groups g ON g.id=h.worker_group_id JOIN worker_pools p ON p.id=h.worker_pool_id
- WHERE h.id=$5 AND h.status='active' AND g.status='active' AND p.status='active' AND h.run_paused_reason IS NULL AND h.vm_paused_reason IS NULL)))`, l.EnvironmentID, l.ComputerID, l.Epoch, newLaunch, host.HostID).Scan(&ok)
+ WHERE h.id=$5 AND h.status='active' AND g.status='active' AND p.status='active' AND h.admission_paused_reason IS NULL)))`, l.EnvironmentID, l.ComputerID, l.Epoch, newLaunch, host.HostID).Scan(&ok)
 	if err != nil {
 		return err
 	}

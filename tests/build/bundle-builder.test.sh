@@ -125,7 +125,7 @@ prepare_host_sdk() {
 }
 
 project="$tmp/project"
-mkdir -p "$project/tasks"
+mkdir -p "$project/agents"
 prepare_host_sdk "$project"
 # Installation lifecycle checks use the actual packed SDK. Keep it inside the
 # captured project so every package manager can install without a fake SDK API.
@@ -157,11 +157,11 @@ write_config() {
   [ -n "$build" ] || build='{}'
   cat >"$target/helmr.config.ts" <<TS
 import { defineConfig } from "@helmr/sdk"
-export default defineConfig({ dirs: ["tasks"], ignorePatterns: [], build: $build })
+export default defineConfig({ dirs: ["agents"], ignorePatterns: [], build: $build })
 TS
 }
 write_config "$project"
-cat >"$project/tasks/hello.ts" <<TS
+cat >"$project/agents/hello.ts" <<TS
 import { agent, computer, image } from "@helmr/sdk"
 const machine = computer({ id: "machine", image: image("machine").from("$builder_image"), resources: { cpu: 1, memory: "1GiB" } })
 export const hello = agent({ id: "hello", computer: machine, turn: () => "hello" })
@@ -254,11 +254,11 @@ cp -a "$project" "$mutation_project"
 # Tenant isolation is a property of the target phases. The config now runs on
 # the host, so the hostile module is a declaration module the target imports.
 write_config "$mutation_project" '{ installCommand: "./prepare.sh" }'
-cat >"$mutation_project/tasks/fixture-image.ts" <<TS
+cat >"$mutation_project/agents/fixture-image.ts" <<TS
 import { image } from "@helmr/sdk"
 export const fixtureImage = image("machine").from("$builder_image")
 TS
-cat >"$mutation_project/tasks/hello.ts" <<'TS'
+cat >"$mutation_project/agents/hello.ts" <<'TS'
 import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { agent, computer } from "@helmr/sdk"
@@ -306,7 +306,7 @@ if grep -F 'detached-mutation.txt' <<<"$mutation_program_listing"; then
 fi
 
 computer_project="$tmp/computer-project"
-mkdir -p "$computer_project/tasks"
+mkdir -p "$computer_project/agents"
 cp "$project/helmr.config.ts" "$computer_project/helmr.config.ts"
 cat >"$computer_project/package.json" <<'JSON'
 {"name":"bundle-computer-e2e","private":true}
@@ -314,7 +314,7 @@ JSON
 cp -R "$project/vendor" "$computer_project/vendor"
 cp "$project/runtime-dependencies.json" "$computer_project/runtime-dependencies.json"
 cp "$project/prepare.sh" "$computer_project/prepare.sh"
-cat >"$computer_project/tasks/hello.ts" <<TS
+cat >"$computer_project/agents/hello.ts" <<TS
 import { agent, computer, image, triggers } from "@helmr/sdk"
 export const machine = computer({ id: "machine", image: image("machine").from("$builder_image"), resources: { cpu: 1, memory: "1GiB" } })
 export const hello = agent({
@@ -429,7 +429,7 @@ role_project="$tmp/role-project"
 cp -a "$native_project" "$role_project"
 cat >"$role_project/helmr.config.ts" <<'TS'
 import { defineConfig, image } from "@helmr/sdk"
-export default defineConfig({ dirs: ["tasks"], build: { builder: image("not-a-builder").from("ubuntu:24.04") as never } })
+export default defineConfig({ dirs: ["agents"], build: { builder: image("not-a-builder").from("ubuntu:24.04") as never } })
 TS
 if "$tmp/helmr" build "$role_project" --output "$tmp/role" 2>"$tmp/role.log"; then
   echo "a Computer image was accepted as the build environment" >&2
@@ -497,7 +497,7 @@ chmod +x "$tmp/shim/docker"
 PATH="$tmp/shim:$PATH" "$tmp/helmr" build "$project" --output "$tmp/native-program-bundle" 2>"$tmp/pipeline.log" || { tail -n 100 "$tmp/pipeline.log" >&2; exit 1; }
 digest=$(jq -er '.program.artifact.digest | sub("^sha256:"; "")' "$tmp/native-program-bundle/bundle.json")
 unsquashfs -d "$tmp/program" "$tmp/native-program-bundle/objects/sha256/$digest" >"$tmp/unpack.log"
-test ! -e "$tmp/program/tasks"
+test ! -e "$tmp/program/agents"
 test ! -e "$tmp/program/helmr.config.ts"
 test ! -e "$tmp/program/tsconfig.json"
 test ! -e "$tmp/program/node_modules/@helmr/sdk"

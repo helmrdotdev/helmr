@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
-	"github.com/helmrdotdev/helmr/internal/artifact/snapshot"
+	"github.com/helmrdotdev/helmr/internal/artifact/localcopy"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -18,7 +18,7 @@ const maxBuildTreeStreamBytes int64 = 11 << 30
 // buildTree is the one lease-private, read-only post-lifecycle tree used by
 // analysis, Computer image construction, and Program encoding.
 type buildTree struct {
-	content    *snapshot.Artifact
+	content    *localcopy.Artifact
 	inspected  *artifact.Tree
 	descriptor buildTreeDescriptor
 }
@@ -32,7 +32,7 @@ type buildTreeDescriptor struct {
 }
 
 func newBuildTree(
-	content *snapshot.Artifact,
+	content *localcopy.Artifact,
 	inspected *artifact.Tree,
 	descriptor buildTreeDescriptor,
 ) (*buildTree, error) {

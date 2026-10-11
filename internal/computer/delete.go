@@ -37,48 +37,37 @@ func Delete(ctx context.Context, txb db.TxBeginner, deletion Deletion) (Deleted,
 		if !found {
 			return ErrNotFound
 		}
-		claims, err := idempotency.TransactionFor(tx)
-		if err != nil {
-			return err
-		}
-		var accepted *db.PlatformRetryKey
+		var request *idempotency.Request
+		var err error
 		if deletion.IdempotencyKey != "" {
-			request, err := idempotency.NewComputerDeleteRequest(deletion.Scope.EnvironmentID, deletion.ComputerID, deletion.IdempotencyKey)
+			request, err = idempotency.NewComputerDeleteRequest(deletion.Scope.EnvironmentID, deletion.ComputerID, deletion.IdempotencyKey)
 			if err != nil {
 				return err
 			}
-			acquired, err := claims.Acquire(ctx, request)
-			if err != nil {
-				return err
-			}
+		}
+		return idempotency.Run(ctx, tx, request, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
 			if !acquired.New {
 				var receipt deleteReceipt
 				if json.Unmarshal(acquired.Claim.Receipt, &receipt) != nil || receipt.ComputerID != deletion.ComputerID.String() || !acquired.Claim.ComputerID.Valid || uuid.UUID(acquired.Claim.ComputerID.Bytes) != deletion.ComputerID {
-					return ErrReceiptInvalid
+					return idempotency.Completion{}, ErrReceiptInvalid
 				}
 				result = Deleted{ComputerID: deletion.ComputerID, Replayed: true}
-				return nil
+				return idempotency.Completion{}, nil
 			}
-			accepted = &acquired.Claim
-		}
-		var deleted bool
-		if err = tx.QueryRow(ctx, `SELECT deleted_at IS NOT NULL FROM computers WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, deletion.Scope.EnvironmentID, deletion.ComputerID).Scan(&deleted); err != nil {
-			return err
-		}
-		if err = deleteLocked(ctx, tx, deletion.Scope.EnvironmentID, deletion.ComputerID, deleted); err != nil {
-			return err
-		}
-		if accepted != nil {
+			var deleted bool
+			if err = tx.QueryRow(ctx, `SELECT deleted_at IS NOT NULL FROM computers WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, deletion.Scope.EnvironmentID, deletion.ComputerID).Scan(&deleted); err != nil {
+				return idempotency.Completion{}, err
+			}
+			if err = deleteLocked(ctx, tx, deletion.Scope.EnvironmentID, deletion.ComputerID, deleted); err != nil {
+				return idempotency.Completion{}, err
+			}
 			receipt, err := json.Marshal(deleteReceipt{ComputerID: deletion.ComputerID.String()})
 			if err != nil {
-				return err
+				return idempotency.Completion{}, err
 			}
-			if _, err = claims.Complete(ctx, *accepted, idempotency.Target{ComputerID: deletion.ComputerID}, receipt); err != nil {
-				return err
-			}
-		}
-		result = Deleted{ComputerID: deletion.ComputerID}
-		return nil
+			result = Deleted{ComputerID: deletion.ComputerID}
+			return idempotency.Completion{Target: idempotency.Target{ComputerID: deletion.ComputerID}, Receipt: receipt}, nil
+		})
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound

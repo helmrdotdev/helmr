@@ -314,7 +314,7 @@ func writeVerifiedProgramFixtureWithMetadata(t *testing.T, root string, edit fun
 	if encoder == "" {
 		t.Skip("HELMR_SQUASHFS_ENCODER is not set")
 	}
-	configRaw := []byte(`{"assets":[],"dirs":["tasks"],"external":[],"ignorePatterns":[]}`)
+	configRaw := []byte(`{"assets":[],"dirs":["agents"],"external":[],"ignorePatterns":[]}`)
 	sourcePath := "helmr/app/entry-0.mjs"
 	sourceRaw := []byte("export const build = {}\n")
 	runtimeDigest := "sha256:" + strings.Repeat("f", 64)
@@ -348,14 +348,14 @@ func writeVerifiedProgramFixtureWithMetadata(t *testing.T, root string, edit fun
 	}
 	files := map[string][]byte{
 		"bun.lock":                    []byte("lockfileVersion = 1\n"),
-		"helmr.config.ts":             []byte("export default { dirs: [\"tasks\"] };\n"),
+		"helmr.config.ts":             []byte("export default { dirs: [\"agents\"] };\n"),
 		"helmr/config.json":           configRaw,
 		"helmr/program-metadata.json": indexRaw,
 		"helmr/definition-index.json": definitionIndexRaw,
 		"package.json":                []byte(`{"packageManager":"yarn@4.9.2"}`),
 		sourcePath:                    sourceRaw,
 	}
-	directories := []string{"helmr", "helmr/app", "node_modules", "tasks"}
+	directories := []string{"helmr", "helmr/app", "node_modules", "agents"}
 	inputRoot := t.TempDir()
 	for _, name := range directories {
 		if err := os.MkdirAll(filepath.Join(inputRoot, name), 0755); err != nil {

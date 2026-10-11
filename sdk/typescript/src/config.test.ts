@@ -5,8 +5,8 @@ import { inspectConfig, matchesIgnorePattern } from "./internal"
 
 describe("defineConfig", () => {
   test("normalizes and copies the closed config", () => {
-    const dirs = ["./tasks", "actors"]
-    const ignorePatterns = ["tasks/generated/**", "**/*.test.js"]
+    const dirs = ["./agents", "actors"]
+    const ignorePatterns = ["agents/generated/**", "**/*.test.js"]
     const config = defineConfig({
       dirs,
       ignorePatterns,
@@ -14,8 +14,8 @@ describe("defineConfig", () => {
     dirs.push("./actors")
     ignorePatterns.push("actors/generated/**")
     expect(config).toMatchObject({
-      dirs: ["actors", "tasks"],
-      ignorePatterns: ["**/*.test.js", "tasks/generated/**"],
+      dirs: ["actors", "agents"],
+      ignorePatterns: ["**/*.test.js", "agents/generated/**"],
     })
     expect(Object.isFrozen(config)).toBe(true)
     expect(Object.isFrozen(config.dirs)).toBe(true)
@@ -43,61 +43,61 @@ describe("defineConfig", () => {
 
   test("requires the explicit config shape", () => {
     expect(() => defineConfig({ dirs: [] })).toThrow()
-    expect(defineConfig({ dirs: ["tasks"] })).toMatchObject({
-      dirs: ["tasks"],
+    expect(defineConfig({ dirs: ["agents"] })).toMatchObject({
+      dirs: ["agents"],
       ignorePatterns: [],
     })
     expect(() =>
-      defineConfig({ dirs: ["tasks", "./tasks"] }),
+      defineConfig({ dirs: ["agents", "./agents"] }),
     ).toThrow("duplicate")
     expect(() =>
       defineConfig({
-        dirs: ["./tasks/../other"],
+        dirs: ["./agents/../other"],
       }),
     ).toThrow()
     expect(() =>
       defineConfig({
-        dirs: ["./tasks//other"],
+        dirs: ["./agents//other"],
       }),
     ).toThrow()
     expect(() =>
       defineConfig({
-        dirs: ["./tasks/./other"],
+        dirs: ["./agents/./other"],
       }),
     ).toThrow()
     expect(() =>
       defineConfig({
-        dirs: ["./tasks"],
+        dirs: ["./agents"],
         extra: true,
       } as never),
     ).toThrow()
     expect(() =>
       inspectConfig({
-        dirs: ["tasks"],
+        dirs: ["agents"],
         ignorePatterns: undefined,
       }),
     ).toThrow()
-    expect(() => defineConfig({ dirs: ["tasks/\ud800"] })).toThrow()
+    expect(() => defineConfig({ dirs: ["agents/\ud800"] })).toThrow()
   })
 
   test("rejects executable or exotic config values", () => {
     const accessor = {}
     Object.defineProperty(accessor, "dirs", {
       enumerable: true,
-      get: () => ["tasks"],
+      get: () => ["agents"],
     })
     expect(() => inspectConfig(accessor)).toThrow("data properties")
 
     const customPrototype = Object.create({ inherited: true }) as {
       dirs: string[]
     }
-    customPrototype.dirs = ["tasks"]
+    customPrototype.dirs = ["agents"]
     expect(() => inspectConfig(customPrototype)).toThrow("ordinary object")
 
     const symbol = Symbol("extra")
     expect(() =>
       inspectConfig({
-        dirs: ["tasks"],
+        dirs: ["agents"],
         [symbol]: true,
       }),
     ).toThrow()
@@ -167,8 +167,8 @@ describe("defineConfig", () => {
         value: () => new Uint8Array(),
       })
       config = inspectConfig({
-        dirs: ["tasks/z", "./tasks/a"],
-        ignorePatterns: ["tasks/z/**", "**/*.test.js"],
+        dirs: ["agents/z", "./agents/a"],
+        ignorePatterns: ["agents/z/**", "**/*.test.js"],
       })
     } finally {
       Object.defineProperty(Array.prototype, "map", arrayMap as PropertyDescriptor)
@@ -200,28 +200,28 @@ describe("defineConfig", () => {
       )
     }
     expect(config).toMatchObject({
-      dirs: ["tasks/a", "tasks/z"],
-      ignorePatterns: ["**/*.test.js", "tasks/z/**"],
+      dirs: ["agents/a", "agents/z"],
+      ignorePatterns: ["**/*.test.js", "agents/z/**"],
     })
   })
 
   test("accepts only the closed glob subset", () => {
     for (const pattern of [
       "",
-      "./tasks/**",
-      "/tasks/**",
-      "tasks/",
-      "tasks//file.ts",
-      "tasks/../file.ts",
-      "tasks/[ab].ts",
-      "tasks/{a,b}.ts",
-      "tasks/**file.ts",
-      "!tasks/file.ts",
-      "tasks/@(a).ts",
+      "./agents/**",
+      "/agents/**",
+      "agents/",
+      "agents//file.ts",
+      "agents/../file.ts",
+      "agents/[ab].ts",
+      "agents/{a,b}.ts",
+      "agents/**file.ts",
+      "!agents/file.ts",
+      "agents/@(a).ts",
     ]) {
       expect(() =>
         defineConfig({
-          dirs: ["./tasks"],
+          dirs: ["./agents"],
           ignorePatterns: [pattern],
         }),
       ).toThrow()
@@ -231,18 +231,18 @@ describe("defineConfig", () => {
 
 describe("ignore pattern matching", () => {
   test("implements segment-local stars and zero-or-more segment globstars", () => {
-    expect(matchesIgnorePattern("tasks/*.ts", "tasks/a.ts")).toBe(true)
-    expect(matchesIgnorePattern("tasks/*.ts", "tasks/nested/a.ts")).toBe(false)
-    expect(matchesIgnorePattern("tasks/**/generated?.ts", "tasks/generated1.ts")).toBe(true)
-    expect(matchesIgnorePattern("tasks/**/generated?.ts", "tasks/a/b/generated1.ts")).toBe(true)
-    expect(matchesIgnorePattern("tasks/**", "tasks/a.ts")).toBe(true)
-    expect(matchesIgnorePattern("tasks/**", "tasks")).toBe(false)
+    expect(matchesIgnorePattern("agents/*.ts", "agents/a.ts")).toBe(true)
+    expect(matchesIgnorePattern("agents/*.ts", "agents/nested/a.ts")).toBe(false)
+    expect(matchesIgnorePattern("agents/**/generated?.ts", "agents/generated1.ts")).toBe(true)
+    expect(matchesIgnorePattern("agents/**/generated?.ts", "agents/a/b/generated1.ts")).toBe(true)
+    expect(matchesIgnorePattern("agents/**", "agents/a.ts")).toBe(true)
+    expect(matchesIgnorePattern("agents/**", "agents")).toBe(false)
     expect(matchesIgnorePattern("**/*.test.ts", ".hidden/a.test.ts")).toBe(true)
-    expect(matchesIgnorePattern("tasks/?/a.ts", "tasks/🦀/a.ts")).toBe(true)
+    expect(matchesIgnorePattern("agents/?/a.ts", "agents/🦀/a.ts")).toBe(true)
   })
 })
 
 test("empty config uses defaults and unknown options are rejected", () => {
- expect(defineConfig({})).toMatchObject({dirs:["tasks"],ignorePatterns:[]})
+ expect(defineConfig({})).toMatchObject({dirs:["agents"],ignorePatterns:[]})
  expect(() => inspectConfig({unexpectedOption:true})).toThrow()
 })

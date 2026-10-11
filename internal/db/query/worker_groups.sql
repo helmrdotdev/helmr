@@ -82,7 +82,7 @@ SELECT count(*)::bigint
    AND h.current_epoch IS NOT NULL
    AND h.activated_at IS NOT NULL
    AND h.observed_at >= clock_timestamp() - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
-   AND h.run_paused_reason IS NULL AND h.vm_paused_reason IS NULL
+   AND h.admission_paused_reason IS NULL
    AND h.vm_platform_id = p.vm_platform_id
    AND h.per_vm_cpu_millis >= p.per_vm_cpu_millis
    AND h.per_vm_memory_bytes >= p.per_vm_memory_bytes
@@ -271,8 +271,7 @@ WITH live_workers AS (
            worker_hosts.per_vm_guest_ephemeral_disk_bytes,
            worker_hosts.max_vm_slots,
            worker_hosts.max_vm_starts,
-           worker_hosts.run_paused_reason,
-           worker_hosts.vm_paused_reason,
+           worker_hosts.admission_paused_reason,
            worker_hosts.epoch_cpu_millis,
            worker_hosts.epoch_memory_bytes,
            worker_hosts.epoch_guest_ephemeral_disk_bytes
@@ -326,8 +325,7 @@ SELECT live_workers.worker_group_id,
        GREATEST(live_workers.epoch_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes, 0)::bigint AS available_guest_ephemeral_disk_bytes,
        GREATEST(live_workers.max_vm_slots - usage.vm_slots, 0)::bigint AS available_vm_slots,
        GREATEST(live_workers.max_vm_starts - usage.instance_starts, 0)::bigint AS available_instance_starts,
-	       live_workers.run_paused_reason,
-	       live_workers.vm_paused_reason,
+	       live_workers.admission_paused_reason,
        COALESCE((
            SELECT array_agg(worker_pool_cpu_shapes.vcpu_count ORDER BY worker_pool_cpu_shapes.vcpu_count)
              FROM worker_pool_cpu_shapes
@@ -344,8 +342,7 @@ SELECT live_workers.worker_group_id,
 -- name: RecordWorkerObservation :one
 UPDATE worker_hosts
    SET observed_at = transaction_timestamp(),
-       run_paused_reason = sqlc.narg(run_paused_reason),
-       vm_paused_reason = sqlc.narg(vm_paused_reason),
+       admission_paused_reason = sqlc.narg(admission_paused_reason),
        updated_at = now()
  WHERE worker_hosts.id = sqlc.arg(worker_host_id)
    AND worker_hosts.worker_group_id = sqlc.arg(worker_group_id)

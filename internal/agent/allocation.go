@@ -142,7 +142,7 @@ func lockAllocationSupply(ctx context.Context, tx pgx.Tx, env, host uuid.UUID, p
 	}
 	admitting, err := workergroup.LockDispatchSupply(ctx, tx, workergroup.DispatchSupply{
 		GroupID: pgvalue.UUID(s.group), HostID: pgvalue.UUID(host), Epoch: s.epoch,
-		RegionID: region, RunArchitecture: string(definition.ArchitectureX8664), RequirePrimary: primary,
+		RegionID: region, RuntimeArchitecture: string(definition.ArchitectureX8664), RequirePrimary: primary,
 	})
 	if err != nil {
 		return s, err
@@ -409,7 +409,7 @@ func (a *Allocator) AllocateFreshComputer(ctx context.Context, env, computer uui
 		if err := requireAllocationFreshSupply(ctx, tx, supply); err != nil {
 			return err
 		}
-		return requireComputerImageAllowed(ctx, tx, env, computer)
+		return requireComputerSecretsNotRevoked(ctx, tx, env, computer)
 	})
 	if err != nil {
 		return ComputerAllocation{}, allocationError(err)
@@ -526,7 +526,7 @@ func (a *Allocator) AllocateRestoredComputer(ctx context.Context, env, checkpoin
 		if err := requireAllocationFreshSupply(ctx, tx, supply); err != nil {
 			return err
 		}
-		return requireComputerImageAllowed(ctx, tx, env, computer)
+		return requireComputerSecretsNotRevoked(ctx, tx, env, computer)
 	})
 	if err != nil {
 		return ComputerAllocation{}, allocationError(err)

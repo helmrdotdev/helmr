@@ -4,7 +4,7 @@ import { setupScript } from "./environment/paths"
 // Evaluated once on the invoking host, before any Linux environment exists.
 // The helper import is extensionless TypeScript on purpose.
 export default defineConfig({
-  dirs: ["tasks"],
+  dirs: ["agents"],
   build: {
     external: ["opencode-ai"],
     assets: [

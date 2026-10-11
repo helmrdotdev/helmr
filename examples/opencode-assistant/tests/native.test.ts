@@ -8,7 +8,7 @@ import { join } from "node:path"
 import { SessionRuntime, type SessionDriver } from "../../../runtime/typescript/src/agent-session"
 import { NativeContinuationLost } from "../../../runtime/typescript/src/agent-native"
 import { localNativeRuntime } from "../../issue-fixer/probes/native-runtime"
-import { OpenCodeHarness } from "../tasks/opencode"
+import { OpenCodeHarness } from "../agents/opencode"
 
 test("native binary matches the application pin", () => {
   assert.equal(execFileSync("opencode", ["--version"], { encoding: "utf8" }).trim(), "1.18.30")

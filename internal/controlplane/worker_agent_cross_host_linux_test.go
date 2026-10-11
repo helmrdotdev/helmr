@@ -101,7 +101,7 @@ func handoffNativeCheckpoint(ctx context.Context, pool *pgxpool.Pool, env uuid.U
 	err = awaitLossCondition(ctx, func() (bool, error) {
 		var ready, sourceStale bool
 		err := pool.QueryRow(ctx, `SELECT target.id,
- COALESCE(target.status='active' AND target.current_epoch IS NOT NULL AND target.run_paused_reason IS NULL AND target.vm_paused_reason IS NULL
+ COALESCE(target.status='active' AND target.current_epoch IS NOT NULL AND target.admission_paused_reason IS NULL
  AND target.observed_at>=clock_timestamp()-$6*interval '1 second'
  AND target.vm_platform_id=$3 AND EXISTS(SELECT 1 FROM worker_pool_cpu_shapes shape WHERE shape.worker_pool_id=target.worker_pool_id AND shape.vcpu_count=$4 AND shape.cpu_config_digest=$5),false),
  source.observed_at<clock_timestamp()-$6*interval '1 second',

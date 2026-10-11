@@ -9,12 +9,12 @@ import { fileURLToPath } from "node:url"
 async function fixture(files: Record<string, unknown>) {
  const temporary = await mkdtemp(resolve(tmpdir(), "helmr-bundle-"))
  const root = resolve(temporary,"project"), output = resolve(temporary,"bundle")
- for (const [name, value] of Object.entries({"package.json":{type:"module"},"tasks/main.ts":"export const value: number = 1",...files})) {
+ for (const [name, value] of Object.entries({"package.json":{type:"module"},"agents/main.ts":"export const value: number = 1",...files})) {
   const target = resolve(root,name); await mkdir(dirname(target),{recursive:true}); await writeFile(target,typeof value === "string" ? value : JSON.stringify(value))
  }
  return {root,output,close:()=>rm(temporary,{recursive:true,force:true})}
 }
-const config = {dirs:["tasks"],ignorePatterns:[],external:[],assets:[]}
+const config = {dirs:["agents"],ignorePatterns:[],external:[],assets:[]}
 const run = (f: {root:string;output:string}, overrides = {}) => bundleProgram({...f,nodeVersion:"24.21.0",config:{...config,...overrides}})
 
 test("selective payload preserves root imports and explicit assets, excluding author source and dev dependencies",async()=>{
@@ -58,7 +58,7 @@ test("assets reject missing matches, managed namespaces and symlink traversal",a
 })
 
 test("package tsconfig extends and path aliases are resolved during bundling",async()=>{
- const f=await fixture({"tsconfig.json":{extends:"@config/base/config.json",compilerOptions:{baseUrl:".",paths:{"@/*":["src/*"]}}},"node_modules/@config/base/package.json":{name:"@config/base",version:"1.0.0"},"node_modules/@config/base/config.json":{compilerOptions:{target:"ESNext",module:"Preserve"}},"src/value.ts":"export const value:number=42","tasks/main.ts":"export {value} from '@/value'"})
+ const f=await fixture({"tsconfig.json":{extends:"@config/base/config.json",compilerOptions:{baseUrl:".",paths:{"@/*":["src/*"]}}},"node_modules/@config/base/package.json":{name:"@config/base",version:"1.0.0"},"node_modules/@config/base/config.json":{compilerOptions:{target:"ESNext",module:"Preserve"}},"src/value.ts":"export const value:number=42","agents/main.ts":"export {value} from '@/value'"})
  try{await run(f);expect(await readFile(resolve(f.output,"payload/helmr/app/entry-0.mjs"),"utf8")).toContain("42")}finally{await f.close()}
 })
 
@@ -88,7 +88,7 @@ test("runtime lock admission accepts bundled records but rejects unsupported tra
 })
 
 test("ordinary createRequire bindings remain executable after bundling",async()=>{
- const f=await fixture({"tasks/main.ts":`import {createRequire} from 'node:module';const require=createRequire(import.meta.url);export const value=require('node:path').sep`})
+ const f=await fixture({"agents/main.ts":`import {createRequire} from 'node:module';const require=createRequire(import.meta.url);export const value=require('node:path').sep`})
  try{
   await run(f)
   const {spawnSync}=await import("node:child_process")
@@ -101,7 +101,7 @@ test("Program imports cannot reach a symlinked build config through its canonica
   for (const specifier of ["../helmr.config.ts", "../config/project.ts"]) {
     const f = await fixture({
       "config/project.ts": "export const setting = 42",
-      "tasks/main.ts": `export { setting } from ${JSON.stringify(specifier)}`,
+      "agents/main.ts": `export { setting } from ${JSON.stringify(specifier)}`,
     })
     try {
       await symlink("config/project.ts", resolve(f.root, "helmr.config.ts"))
@@ -114,7 +114,7 @@ test("Program imports cannot reach a symlinked build config through its canonica
 
 test("generated source maps report the original TypeScript location", async () => {
   const f = await fixture({
-    "tasks/main.ts": "const message: string = 'source-map-probe'\nthrow new Error(message)\n",
+    "agents/main.ts": "const message: string = 'source-map-probe'\nthrow new Error(message)\n",
   })
   try {
     await run(f)
@@ -125,7 +125,7 @@ test("generated source maps report the original TypeScript location", async () =
       resolve(f.output, "payload/helmr/app/entry-0.mjs"),
     ], { encoding: "utf8" })
     expect(child.status).not.toBe(0)
-    expect(child.stderr).toContain("tasks/main.ts:2")
+    expect(child.stderr).toContain("agents/main.ts:2")
     const map = JSON.parse(await readFile(resolve(f.output, "payload/helmr/app/entry-0.mjs.map"), "utf8"))
     expect(map.sourcesContent).toContain("const message: string = 'source-map-probe'\nthrow new Error(message)\n")
   } finally {

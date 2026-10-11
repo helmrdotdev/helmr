@@ -25,7 +25,7 @@ func TestInitCommandCreatesStarterProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task, err := os.ReadFile(filepath.Join(root, "tasks", "hello.ts"))
+	agentSource, err := os.ReadFile(filepath.Join(root, "agents", "hello.ts"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,11 +59,11 @@ func TestInitCommandCreatesStarterProject(t *testing.T) {
 	if string(pkg) != starterPackageJSON() {
 		t.Fatalf("package = %q", pkg)
 	}
-	if string(task) != starterHelloAgent {
-		t.Fatalf("task = %q", task)
+	if string(agentSource) != starterHelloAgent {
+		t.Fatalf("agentSource = %q", agentSource)
 	}
 	for _, expected := range []string{`helloComputer = computer({`, `hello = agent({`, `computer: helloComputer`, `memory: "1GiB"`} {
-		if !strings.Contains(string(task), expected) {
+		if !strings.Contains(string(agentSource), expected) {
 			t.Fatalf("starter Agent is missing current SDK syntax %q", expected)
 		}
 	}
@@ -78,14 +78,14 @@ func TestInitCommandCreatesStarterProject(t *testing.T) {
 		"created .helmrignore",
 		"created helmr.config.ts",
 		"created package.json",
-		"created tasks/hello.ts",
+		"created agents/hello.ts",
 		"created tsconfig.json",
 	} {
 		if !strings.Contains(out.String(), message) {
 			t.Fatalf("output = %q", out.String())
 		}
 	}
-	if !strings.Contains(string(config), `dirs: ["tasks"]`) {
+	if !strings.Contains(string(config), `dirs: ["agents"]`) {
 		t.Fatalf("output = %q", out.String())
 	}
 }

@@ -1,3 +1,3 @@
 import { defineConfig } from "@helmr/sdk"
 
-export default defineConfig({ dirs: ["./tasks"] })
+export default defineConfig({ dirs: ["./agents"] })

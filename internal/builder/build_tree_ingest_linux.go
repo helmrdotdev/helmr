@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
-	"github.com/helmrdotdev/helmr/internal/artifact/snapshot"
+	"github.com/helmrdotdev/helmr/internal/artifact/localcopy"
 	"github.com/helmrdotdev/helmr/internal/artifact/verify"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
@@ -78,11 +78,11 @@ func ingestBuildTreeArchive(
 	limited := &io.LimitedReader{R: source, N: archiveSize}
 	digest := sha256.New()
 	reader := io.TeeReader(limited, digest)
-	content, err := snapshot.Produce(
+	content, err := localcopy.Produce(
 		ctx,
 		directory,
 		artifact.RoleBuildTree,
-		snapshot.Owner{UID: os.Geteuid(), GID: os.Getegid()},
+		localcopy.Owner{UID: os.Geteuid(), GID: os.Getegid()},
 		false,
 		func(destination *os.File) error {
 			return encodeSquashFS(ctx, encoder, reader, destination)

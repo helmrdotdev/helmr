@@ -13,7 +13,7 @@ SELECT COALESCE(jsonb_agg(jsonb_build_object(
  'epoch_cpu_millis',h.epoch_cpu_millis,'epoch_memory_bytes',h.epoch_memory_bytes,
  'epoch_guest_ephemeral_disk_bytes',h.epoch_guest_ephemeral_disk_bytes,'max_vm_slots',h.max_vm_slots,
  'observation_age_seconds',extract(epoch FROM now()-h.observed_at),
- 'run_paused_reason',h.run_paused_reason,'vm_paused_reason',h.vm_paused_reason,
+ 'admission_paused_reason',h.admission_paused_reason,
  'created_at',h.created_at,'activated_at',h.activated_at,'observed_at',h.observed_at
 ) ORDER BY h.worker_group,h.resource_id),'[]'::jsonb)
 FROM current_hosts h LEFT JOIN vm_platforms v ON v.id=h.vm_platform_id;

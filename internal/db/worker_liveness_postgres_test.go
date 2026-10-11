@@ -316,13 +316,13 @@ func TestWorkerObservationFollowsTheLiveEpochThroughDrain(t *testing.T) {
 	}
 	observed, err := db.New(pool).RecordWorkerObservation(ctx, db.RecordWorkerObservationParams{
 		WorkerHostID: pgvalue.UUID(workerID), WorkerGroupID: dbtest.DefaultWorkerGroupID,
-		WorkerEpoch:     pgtype.Int8{Int64: 1, Valid: true},
-		RunPausedReason: pgtype.Text{String: "startup_recovery_leak", Valid: true},
+		WorkerEpoch:           pgtype.Int8{Int64: 1, Valid: true},
+		AdmissionPausedReason: pgtype.Text{String: "startup_recovery_leak", Valid: true},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if observed.Status != db.WorkerHostStatusDraining || !observed.ObservedAt.Valid || observed.RunPausedReason.String != "startup_recovery_leak" {
+	if observed.Status != db.WorkerHostStatusDraining || !observed.ObservedAt.Valid || observed.AdmissionPausedReason.String != "startup_recovery_leak" {
 		t.Fatalf("draining observation = %+v", observed)
 	}
 	staleEpoch := workerObservation(workerID)

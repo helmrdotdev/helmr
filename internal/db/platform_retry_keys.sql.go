@@ -11,72 +11,16 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const completePlatformRetryKey = `-- name: CompletePlatformRetryKey :one
-UPDATE platform_retry_keys SET deployment_id=$1,secret_id=$2,secret_version_id=$3,
-    computer_id=$4,command_id=$5,receipt=$6
-WHERE environment_id=$7 AND id=$8 AND request_fingerprint=$9
-    AND receipt IS NULL AND receipt_pruned_at IS NULL
-RETURNING environment_id, id, operation, slot_hash, request_fingerprint, scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key, deployment_id, secret_id, secret_version_id, computer_id, command_id, accepted_at, receipt_expires_at, receipt, receipt_pruned_at
-`
-
-type CompletePlatformRetryKeyParams struct {
-	DeploymentID       pgtype.UUID `json:"deployment_id"`
-	SecretID           pgtype.UUID `json:"secret_id"`
-	SecretVersionID    pgtype.UUID `json:"secret_version_id"`
-	ComputerID         pgtype.UUID `json:"computer_id"`
-	CommandID          pgtype.UUID `json:"command_id"`
-	Receipt            []byte      `json:"receipt"`
-	EnvironmentID      pgtype.UUID `json:"environment_id"`
-	ID                 pgtype.UUID `json:"id"`
-	RequestFingerprint []byte      `json:"request_fingerprint"`
-}
-
-func (q *Queries) CompletePlatformRetryKey(ctx context.Context, arg CompletePlatformRetryKeyParams) (PlatformRetryKey, error) {
-	row := q.db.QueryRow(ctx, completePlatformRetryKey,
-		arg.DeploymentID,
-		arg.SecretID,
-		arg.SecretVersionID,
-		arg.ComputerID,
-		arg.CommandID,
-		arg.Receipt,
-		arg.EnvironmentID,
-		arg.ID,
-		arg.RequestFingerprint,
-	)
-	var i PlatformRetryKey
-	err := row.Scan(
-		&i.EnvironmentID,
-		&i.ID,
-		&i.Operation,
-		&i.SlotHash,
-		&i.RequestFingerprint,
-		&i.ScopeSecretName,
-		&i.ScopeSecretID,
-		&i.ScopeComputerID,
-		&i.ScopeCommandID,
-		&i.ScopeCallerKind,
-		&i.ScopeComputerKey,
-		&i.DeploymentID,
-		&i.SecretID,
-		&i.SecretVersionID,
-		&i.ComputerID,
-		&i.CommandID,
-		&i.AcceptedAt,
-		&i.ReceiptExpiresAt,
-		&i.Receipt,
-		&i.ReceiptPrunedAt,
-	)
-	return i, err
-}
-
 const createPlatformRetryKey = `-- name: CreatePlatformRetryKey :one
 INSERT INTO platform_retry_keys(environment_id,id,operation,slot_hash,request_fingerprint,
     scope_secret_name,scope_secret_id,scope_computer_id,scope_command_id,scope_caller_kind,scope_computer_key,
+    deployment_id,secret_id,secret_version_id,computer_id,command_id,receipt,
     accepted_at,receipt_expires_at)
 VALUES($1,$2,$3,$4,$5,
     $6,$7,$8,$9,$10,$11,
+    $12,$13,$14,$15,$16,$17,
     statement_timestamp(),statement_timestamp()+interval '720 hours')
-ON CONFLICT(environment_id,operation,slot_hash) DO NOTHING RETURNING environment_id, id, operation, slot_hash, request_fingerprint, scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key, deployment_id, secret_id, secret_version_id, computer_id, command_id, accepted_at, receipt_expires_at, receipt, receipt_pruned_at
+RETURNING environment_id, id, operation, slot_hash, request_fingerprint, scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key, deployment_id, secret_id, secret_version_id, computer_id, command_id, accepted_at, receipt_expires_at, receipt, receipt_pruned_at
 `
 
 type CreatePlatformRetryKeyParams struct {
@@ -91,6 +35,12 @@ type CreatePlatformRetryKeyParams struct {
 	ScopeCommandID     pgtype.UUID `json:"scope_command_id"`
 	ScopeCallerKind    pgtype.Text `json:"scope_caller_kind"`
 	ScopeComputerKey   pgtype.Text `json:"scope_computer_key"`
+	DeploymentID       pgtype.UUID `json:"deployment_id"`
+	SecretID           pgtype.UUID `json:"secret_id"`
+	SecretVersionID    pgtype.UUID `json:"secret_version_id"`
+	ComputerID         pgtype.UUID `json:"computer_id"`
+	CommandID          pgtype.UUID `json:"command_id"`
+	Receipt            []byte      `json:"receipt"`
 }
 
 func (q *Queries) CreatePlatformRetryKey(ctx context.Context, arg CreatePlatformRetryKeyParams) (PlatformRetryKey, error) {
@@ -106,6 +56,12 @@ func (q *Queries) CreatePlatformRetryKey(ctx context.Context, arg CreatePlatform
 		arg.ScopeCommandID,
 		arg.ScopeCallerKind,
 		arg.ScopeComputerKey,
+		arg.DeploymentID,
+		arg.SecretID,
+		arg.SecretVersionID,
+		arg.ComputerID,
+		arg.CommandID,
+		arg.Receipt,
 	)
 	var i PlatformRetryKey
 	err := row.Scan(

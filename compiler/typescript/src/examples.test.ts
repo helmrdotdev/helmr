@@ -8,7 +8,7 @@ const repository = new URL("../../../", import.meta.url).pathname
 const examples = {
   "hello-world": ["checked-reply", "hello-world"],
   "cli-tooling": ["cli-tooling"],
-  "task-secrets": ["use-secret"],
+  "agent-secrets": ["use-secret"],
   "github-pr-review": ["github-pr-review"],
 }
 
@@ -16,7 +16,7 @@ for (const [name, agents] of Object.entries(examples)) {
   test(`${name} compiles with the packed SDK as an independent Agent project`, async () => {
     const root = await realpath(await mkdtemp(resolve(tmpdir(), "helmr-example-")))
     try {
-      for (const path of ["tasks", "package.json", "helmr.config.ts", "tsconfig.json"]) {
+      for (const path of ["agents", "package.json", "helmr.config.ts", "tsconfig.json"]) {
         await cp(resolve(repository, "examples", name, path), resolve(root, path), { recursive: true })
       }
       await mkdir(resolve(root, "node_modules/@helmr"), { recursive: true })

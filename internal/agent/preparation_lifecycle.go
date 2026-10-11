@@ -305,7 +305,7 @@ func reconcilePreparationLifecycle(ctx context.Context, database db.TxDB, after 
   SELECT c.environment_id,c.id,'image' FROM computers c JOIN computer_preparations p ON (p.environment_id,p.id)=(c.environment_id,c.preparation_id)
    WHERE c.initial_root_digest IS NULL AND p.status='succeeded' AND c.preparation_failed_at IS NULL AND c.deleted_at IS NULL AND c.preparation_deadline_at>statement_timestamp()
   UNION
-  SELECT revoked.environment_id,revoked.computer_id,'image_revocation' FROM computer_secret_revocations revoked
+  SELECT revoked.environment_id,revoked.computer_id,'secret_revocation' FROM (`+db.RevokedComputerSecretsSQL+`) revoked
    JOIN session_processes p ON (p.environment_id,p.computer_id)=(revoked.environment_id,revoked.computer_id)
    WHERE p.fenced_at IS NULL AND (p.status IN ('starting','ready') OR EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=p.environment_id AND t.session_id=p.session_id AND t.process_epoch=p.epoch AND t.status='running'))
   UNION
@@ -351,8 +351,8 @@ func reconcilePreparationLifecycle(ctx context.Context, database db.TxDB, after 
 			err = reconcileUnattachedComputer(ctx, database, candidate.environment, candidate.id)
 		case "image":
 			err = reconcileComputerImage(ctx, database, candidate.environment, candidate.id)
-		case "image_revocation":
-			err = reconcileComputerImageRevocation(ctx, database, candidate.environment, candidate.id)
+		case "secret_revocation":
+			err = reconcileComputerSecretRevocation(ctx, database, candidate.environment, candidate.id)
 		case "revocation":
 			err = reconcilePreparationRevocation(ctx, database, candidate.environment, candidate.id)
 		}

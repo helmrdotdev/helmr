@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
-	"github.com/helmrdotdev/helmr/internal/artifact/snapshot"
+	"github.com/helmrdotdev/helmr/internal/artifact/localcopy"
 	"github.com/helmrdotdev/helmr/internal/artifact/verify"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/definition"
@@ -69,8 +69,8 @@ func NewPreparedMachines(backend vm.Backend, store cas.Store, log *slog.Logger) 
 }
 
 type programSnapshots struct {
-	runtime  *snapshot.Runtime
-	artifact *snapshot.Program
+	runtime  *localcopy.Runtime
+	artifact *localcopy.Program
 }
 
 func (s *programSnapshots) close() error {
@@ -92,7 +92,7 @@ func (p *PreparedMachines) prepareProgramArtifacts(ctx context.Context, tempDir,
 		RuntimeContract: definition.RuntimeContract,
 		SizeBytes:       program.Runtime.SizeBytes,
 	}
-	runtimeSnapshot, err := snapshot.ReadRuntime(
+	runtimeSnapshot, err := localcopy.ReadRuntime(
 		ctx,
 		p.PlatformStore,
 		tempDir,
@@ -136,7 +136,7 @@ func (p *PreparedMachines) prepareProgramArtifacts(ctx context.Context, tempDir,
 	programDescriptor := artifact.ProgramDescriptor{
 		Digest: program.Artifact.Digest, SizeBytes: program.Artifact.SizeBytes, MediaType: program.Artifact.MediaType,
 	}
-	programSnapshot, err := snapshot.ReadProgram(
+	programSnapshot, err := localcopy.ReadProgram(
 		ctx,
 		p.CAS,
 		tempDir,

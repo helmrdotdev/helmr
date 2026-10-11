@@ -18,7 +18,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
@@ -182,8 +181,7 @@ func (s *Server) workerObserve(w http.ResponseWriter, r *http.Request) {
 	}
 	worker := workerFromContext(r.Context())
 	if err := workergroup.RecordObservation(r.Context(), s.db, worker, workergroup.HostObservation{
-		RunPausedReason: request.Observation.RunPausedReason,
-		VMPausedReason:  request.Observation.VMPausedReason,
+		AdmissionPausedReason: request.Observation.AdmissionPausedReason,
 	}); err != nil {
 		s.writeWorkerHostError(w, "record worker observation", err)
 		return
@@ -243,10 +241,7 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 		s.writeWorkerHostError(w, "get worker status", err)
 		return
 	}
-	readiness := workerapi.Readiness{
-		Run:      workerRoleReadiness(state, state.RunReady, state.RunPausedReason),
-		Instance: workerRoleReadiness(state, state.InstanceReady, state.VMPausedReason),
-	}
+	readiness := workerAdmissionReadiness(state)
 	status, err := workerPublicStatus(state.Status)
 	if err != nil {
 		s.log.Error("project worker status", "worker_host_id", worker.HostID.String(), "error", err)
@@ -287,18 +282,14 @@ func workerPublicStatus(state string) (workerapi.Status, error) {
 	}
 }
 
-func workerRoleReadiness(
-	state db.GetWorkerHostStatusRow,
-	ready bool,
-	pausedReason pgtype.Text,
-) *workerapi.RoleReadiness {
-	result := &workerapi.RoleReadiness{Ready: ready}
-	if ready {
+func workerAdmissionReadiness(state db.GetWorkerHostStatusRow) workerapi.Readiness {
+	result := workerapi.Readiness{Ready: state.AdmissionReady}
+	if state.AdmissionReady {
 		return result
 	}
 	switch {
-	case pausedReason.Valid:
-		result.PausedReason = pausedReason.String
+	case state.AdmissionPausedReason.Valid:
+		result.PausedReason = state.AdmissionPausedReason.String
 	case state.Status != string(db.WorkerHostStatusActive):
 		result.PausedReason = "worker_not_active"
 	case !state.ObservedAt.Valid:

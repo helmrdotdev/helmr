@@ -20,7 +20,7 @@ SELECT count(*)::bigint
    AND h.current_epoch IS NOT NULL
    AND h.activated_at IS NOT NULL
    AND h.observed_at >= clock_timestamp() - $2::bigint * interval '1 second'
-   AND h.run_paused_reason IS NULL AND h.vm_paused_reason IS NULL
+   AND h.admission_paused_reason IS NULL
    AND h.vm_platform_id = p.vm_platform_id
    AND h.per_vm_cpu_millis >= p.per_vm_cpu_millis
    AND h.per_vm_memory_bytes >= p.per_vm_memory_bytes
@@ -440,8 +440,7 @@ WITH live_workers AS (
            worker_hosts.per_vm_guest_ephemeral_disk_bytes,
            worker_hosts.max_vm_slots,
            worker_hosts.max_vm_starts,
-           worker_hosts.run_paused_reason,
-           worker_hosts.vm_paused_reason,
+           worker_hosts.admission_paused_reason,
            worker_hosts.epoch_cpu_millis,
            worker_hosts.epoch_memory_bytes,
            worker_hosts.epoch_guest_ephemeral_disk_bytes
@@ -495,8 +494,7 @@ SELECT live_workers.worker_group_id,
        GREATEST(live_workers.epoch_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes, 0)::bigint AS available_guest_ephemeral_disk_bytes,
        GREATEST(live_workers.max_vm_slots - usage.vm_slots, 0)::bigint AS available_vm_slots,
        GREATEST(live_workers.max_vm_starts - usage.instance_starts, 0)::bigint AS available_instance_starts,
-	       live_workers.run_paused_reason,
-	       live_workers.vm_paused_reason,
+	       live_workers.admission_paused_reason,
        COALESCE((
            SELECT array_agg(worker_pool_cpu_shapes.vcpu_count ORDER BY worker_pool_cpu_shapes.vcpu_count)
              FROM worker_pool_cpu_shapes
@@ -536,8 +534,7 @@ type ListWorkerCapacityBinsRow struct {
 	AvailableGuestEphemeralDiskBytes int64       `json:"available_guest_ephemeral_disk_bytes"`
 	AvailableVMSlots                 int64       `json:"available_vm_slots"`
 	AvailableInstanceStarts          int64       `json:"available_instance_starts"`
-	RunPausedReason                  pgtype.Text `json:"run_paused_reason"`
-	VMPausedReason                   pgtype.Text `json:"vm_paused_reason"`
+	AdmissionPausedReason            pgtype.Text `json:"admission_paused_reason"`
 	CPUShapeVCPUCounts               []int32     `json:"cpu_shape_vcpu_counts"`
 	CPUShapeConfigDigests            []string    `json:"cpu_shape_config_digests"`
 }
@@ -573,8 +570,7 @@ func (q *Queries) ListWorkerCapacityBins(ctx context.Context, arg ListWorkerCapa
 			&i.AvailableGuestEphemeralDiskBytes,
 			&i.AvailableVMSlots,
 			&i.AvailableInstanceStarts,
-			&i.RunPausedReason,
-			&i.VMPausedReason,
+			&i.AdmissionPausedReason,
 			&i.CPUShapeVCPUCounts,
 			&i.CPUShapeConfigDigests,
 		); err != nil {
@@ -747,7 +743,7 @@ func (q *Queries) LockWorkerGroupMutation(ctx context.Context, lockKey int64) er
 }
 
 const lockWorkerHostForActivation = `-- name: LockWorkerHostForActivation :one
-SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, vm_platform_id, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_vm_starts, cpu_environment, cpu_environment_digest, observed_at, run_paused_reason, vm_paused_reason, epoch_started_at, activated_at, draining_at, drain_reason, termination_ready_at, lost_at, created_at, updated_at
+SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, vm_platform_id, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_vm_starts, cpu_environment, cpu_environment_digest, observed_at, admission_paused_reason, epoch_started_at, activated_at, draining_at, drain_reason, termination_ready_at, lost_at, created_at, updated_at
   FROM worker_hosts
  WHERE id = $1
    AND worker_group_id = $2
@@ -792,8 +788,7 @@ func (q *Queries) LockWorkerHostForActivation(ctx context.Context, arg LockWorke
 		&i.CPUEnvironment,
 		&i.CPUEnvironmentDigest,
 		&i.ObservedAt,
-		&i.RunPausedReason,
-		&i.VMPausedReason,
+		&i.AdmissionPausedReason,
 		&i.EpochStartedAt,
 		&i.ActivatedAt,
 		&i.DrainingAt,
@@ -879,28 +874,25 @@ func (q *Queries) LockWorkerPoolActiveHosts(ctx context.Context, arg LockWorkerP
 const recordWorkerObservation = `-- name: RecordWorkerObservation :one
 UPDATE worker_hosts
    SET observed_at = transaction_timestamp(),
-       run_paused_reason = $1,
-       vm_paused_reason = $2,
+       admission_paused_reason = $1,
        updated_at = now()
- WHERE worker_hosts.id = $3
-   AND worker_hosts.worker_group_id = $4
-   AND worker_hosts.current_epoch = $5
+ WHERE worker_hosts.id = $2
+   AND worker_hosts.worker_group_id = $3
+   AND worker_hosts.current_epoch = $4
    AND worker_hosts.status IN ('active', 'draining')
-RETURNING worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.run_paused_reason, worker_hosts.vm_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
+RETURNING worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.admission_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
 `
 
 type RecordWorkerObservationParams struct {
-	RunPausedReason pgtype.Text `json:"run_paused_reason"`
-	VMPausedReason  pgtype.Text `json:"vm_paused_reason"`
-	WorkerHostID    pgtype.UUID `json:"worker_host_id"`
-	WorkerGroupID   pgtype.UUID `json:"worker_group_id"`
-	WorkerEpoch     pgtype.Int8 `json:"worker_epoch"`
+	AdmissionPausedReason pgtype.Text `json:"admission_paused_reason"`
+	WorkerHostID          pgtype.UUID `json:"worker_host_id"`
+	WorkerGroupID         pgtype.UUID `json:"worker_group_id"`
+	WorkerEpoch           pgtype.Int8 `json:"worker_epoch"`
 }
 
 func (q *Queries) RecordWorkerObservation(ctx context.Context, arg RecordWorkerObservationParams) (WorkerHost, error) {
 	row := q.db.QueryRow(ctx, recordWorkerObservation,
-		arg.RunPausedReason,
-		arg.VMPausedReason,
+		arg.AdmissionPausedReason,
 		arg.WorkerHostID,
 		arg.WorkerGroupID,
 		arg.WorkerEpoch,
@@ -927,8 +919,7 @@ func (q *Queries) RecordWorkerObservation(ctx context.Context, arg RecordWorkerO
 		&i.CPUEnvironment,
 		&i.CPUEnvironmentDigest,
 		&i.ObservedAt,
-		&i.RunPausedReason,
-		&i.VMPausedReason,
+		&i.AdmissionPausedReason,
 		&i.EpochStartedAt,
 		&i.ActivatedAt,
 		&i.DrainingAt,

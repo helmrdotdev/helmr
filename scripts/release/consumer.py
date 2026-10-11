@@ -136,7 +136,7 @@ def consumer(directory, cli_archive, work, expected_builder=None):
             env=dict(os.environ, PATH=str(shim) + os.pathsep + os.environ['PATH'], HELMR_INSTALL_DIR=str(work / 'bin')))
         project = work / 'project'
         project.mkdir()
-        (project / 'tasks').mkdir()
+        (project / 'agents').mkdir()
         # Normal documented source selection: dependencies are installed in BuildKit.
         # Keep the ordinary npm cache selected, including its long filenames.
         (project / '.helmrignore').write_text('node_modules/\n')
@@ -154,9 +154,9 @@ def consumer(directory, cli_archive, work, expected_builder=None):
         require(read(project / 'node_modules/@helmr/proto/package.json')['version'] == version, 'installed proto differs')
         # npm fetched exact package bytes normally. Its cache allows the same
         # lockfile install inside BuildKit without exposing a host test server.
-        (project / 'helmr.config.ts').write_text('import {defineConfig} from "@helmr/sdk"; export default defineConfig({dirs:["tasks"],'
+        (project / 'helmr.config.ts').write_text('import {defineConfig} from "@helmr/sdk"; export default defineConfig({dirs:["agents"],'
             'build:{installCommand:"npm ci --offline --cache .npm-cache --ignore-scripts --no-audit --no-fund"}});\n')
-        (project / 'tasks/hello.ts').write_text('import {agent,computer,image} from "@helmr/sdk"; '
+        (project / 'agents/hello.ts').write_text('import {agent,computer,image} from "@helmr/sdk"; '
             'export const machine=computer({id:"preview-machine",image:image("preview-base").from('
             + json.dumps(expected_builder) + '),resources:{cpu:1,memory:"1GiB"}});\n'
             'export const hello=agent({id:"preview-hello",computer:machine,turn:()=>"preview-ok"});\n')

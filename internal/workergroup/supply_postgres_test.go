@@ -27,7 +27,7 @@ func (f supplyFixture) begin(t *testing.T) pgx.Tx {
 func (f supplyFixture) dispatchSupply(hostID uuid.UUID) DispatchSupply {
 	return DispatchSupply{
 		GroupID: f.group.ID, RegionID: fixtureRegionID,
-		HostID: pgvalue.UUID(hostID), Epoch: 1, RunArchitecture: "x86_64",
+		HostID: pgvalue.UUID(hostID), Epoch: 1, RuntimeArchitecture: "x86_64",
 	}
 }
 
@@ -74,15 +74,15 @@ UPDATE worker_groups SET status = 'paused' WHERE id = $1`, f.group.ID)
 	}
 }
 
-func TestDispatchSupplyRequiresRunReadyHost(t *testing.T) {
+func TestDispatchSupplyRequiresAdmissionReadyHost(t *testing.T) {
 	for _, test := range []struct {
 		name, sql    string
 		continuation bool
 		eligible     bool
 	}{
 		{"ready", ``, false, true},
-		{"Run paused", `UPDATE worker_hosts SET run_paused_reason='startup_recovery_leak' WHERE id=$1`, false, false},
-		{"Run paused continuation", `UPDATE worker_hosts SET run_paused_reason='startup_recovery_leak' WHERE id=$1`, true, true},
+		{"Admission paused", `UPDATE worker_hosts SET admission_paused_reason='startup_recovery_leak' WHERE id=$1`, false, false},
+		{"Admission paused continuation", `UPDATE worker_hosts SET admission_paused_reason='startup_recovery_leak' WHERE id=$1`, true, true},
 		{"stale observation", `UPDATE worker_hosts SET observed_at=clock_timestamp()-interval '1 hour' WHERE id=$1`, false, false},
 		{"unobserved", `UPDATE worker_hosts SET observed_at=NULL WHERE id=$1`, false, false},
 		{"draining", `UPDATE worker_hosts SET status='draining',draining_at = clock_timestamp(), drain_reason = 'shutdown' WHERE id=$1`, false, false},

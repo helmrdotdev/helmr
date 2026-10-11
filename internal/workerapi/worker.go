@@ -64,8 +64,7 @@ type StartupRecoveryRequest struct {
 }
 
 type Observation struct {
-	RunPausedReason string `json:"run_paused_reason,omitempty"`
-	VMPausedReason  string `json:"vm_paused_reason,omitempty"`
+	AdmissionPausedReason string `json:"admission_paused_reason,omitempty"`
 }
 
 type Capabilities struct {
@@ -99,11 +98,6 @@ type StatusResponse struct {
 }
 
 type Readiness struct {
-	Run      *RoleReadiness `json:"run,omitempty"`
-	Instance *RoleReadiness `json:"instance,omitempty"`
-}
-
-type RoleReadiness struct {
 	Ready        bool   `json:"ready"`
 	PausedReason string `json:"paused_reason,omitempty"`
 }

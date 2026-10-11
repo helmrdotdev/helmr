@@ -13,8 +13,7 @@
            worker_hosts.per_vm_guest_ephemeral_disk_bytes,
            worker_hosts.max_vm_slots,
            worker_hosts.max_vm_starts,
-           worker_hosts.run_paused_reason,
-           worker_hosts.vm_paused_reason,
+           worker_hosts.admission_paused_reason,
            worker_hosts.epoch_cpu_millis,
            worker_hosts.epoch_memory_bytes,
            worker_hosts.epoch_guest_ephemeral_disk_bytes
@@ -68,8 +67,7 @@ SELECT live_workers.worker_group_id,
        GREATEST(live_workers.epoch_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes, 0)::bigint AS available_guest_ephemeral_disk_bytes,
        GREATEST(live_workers.max_vm_slots - usage.vm_slots, 0)::bigint AS available_vm_slots,
        GREATEST(live_workers.max_vm_starts - usage.instance_starts, 0)::bigint AS available_instance_starts,
-	       live_workers.run_paused_reason,
-	       live_workers.vm_paused_reason,
+	       live_workers.admission_paused_reason,
        COALESCE((
            SELECT array_agg(worker_pool_cpu_shapes.vcpu_count ORDER BY worker_pool_cpu_shapes.vcpu_count)
              FROM worker_pool_cpu_shapes

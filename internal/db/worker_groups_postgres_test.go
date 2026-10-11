@@ -47,7 +47,7 @@ INSERT INTO worker_hosts (
     epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
     per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes,
     max_vm_slots, max_vm_starts, cpu_environment, cpu_environment_digest,
-    run_paused_reason, observed_at, epoch_started_at, activated_at
+    admission_paused_reason, observed_at, epoch_started_at, activated_at
 )
 SELECT ('00000000-0000-7000-8000-' || lpad(value::text, 12, '0'))::uuid,
        'capacity-worker-' || value,
@@ -184,8 +184,8 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if activated.ObservedAt.Valid || activated.RunPausedReason.Valid || activated.VMPausedReason.Valid {
-		t.Fatalf("initial activation liveness = observed:%+v run:%+v vm:%+v", activated.ObservedAt, activated.RunPausedReason, activated.VMPausedReason)
+	if activated.ObservedAt.Valid || activated.AdmissionPausedReason.Valid {
+		t.Fatalf("initial activation liveness = observed:%+v admission:%+v", activated.ObservedAt, activated.AdmissionPausedReason)
 	}
 	bins, err := q.ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{
 		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
@@ -224,8 +224,7 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 	if _, err := pool.Exec(ctx, `
 		UPDATE worker_hosts
 		   SET observed_at = $2,
-		       run_paused_reason = NULL,
-		       vm_paused_reason = 'startup_recovery_leak'
+		       admission_paused_reason = 'startup_recovery_leak'
 		 WHERE id = $1
 	`, workerID, sentinel); err != nil {
 		t.Fatal(err)
@@ -234,9 +233,9 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !replayed.ObservedAt.Valid || !replayed.ObservedAt.Time.Equal(sentinel) || replayed.RunPausedReason.Valid ||
-		!replayed.VMPausedReason.Valid || replayed.VMPausedReason.String != "startup_recovery_leak" {
-		t.Fatalf("activation replay changed liveness = observed:%+v run:%+v vm:%+v", replayed.ObservedAt, replayed.RunPausedReason, replayed.VMPausedReason)
+	if !replayed.ObservedAt.Valid || !replayed.ObservedAt.Time.Equal(sentinel) ||
+		!replayed.AdmissionPausedReason.Valid || replayed.AdmissionPausedReason.String != "startup_recovery_leak" {
+		t.Fatalf("activation replay changed liveness = observed:%+v admission:%+v", replayed.ObservedAt, replayed.AdmissionPausedReason)
 	}
 
 	sameEpoch := authenticate(serviceID)
@@ -244,12 +243,12 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 		t.Fatalf("same service epoch = %+v, want %+v", sameEpoch.CurrentEpoch, firstEpoch.CurrentEpoch)
 	}
 	var preservedObservedAt pgtype.Timestamptz
-	var preservedVMPause pgtype.Text
-	if err := pool.QueryRow(ctx, `SELECT observed_at, vm_paused_reason FROM worker_hosts WHERE id = $1`, workerID).Scan(&preservedObservedAt, &preservedVMPause); err != nil {
+	var preservedAdmissionPause pgtype.Text
+	if err := pool.QueryRow(ctx, `SELECT observed_at, admission_paused_reason FROM worker_hosts WHERE id = $1`, workerID).Scan(&preservedObservedAt, &preservedAdmissionPause); err != nil {
 		t.Fatal(err)
 	}
-	if !preservedObservedAt.Valid || !preservedObservedAt.Time.Equal(sentinel) || preservedVMPause.String != "startup_recovery_leak" {
-		t.Fatalf("same service changed liveness = observed:%+v vm:%+v", preservedObservedAt, preservedVMPause)
+	if !preservedObservedAt.Valid || !preservedObservedAt.Time.Equal(sentinel) || preservedAdmissionPause.String != "startup_recovery_leak" {
+		t.Fatalf("same service changed liveness = observed:%+v admission:%+v", preservedObservedAt, preservedAdmissionPause)
 	}
 
 	nextEpoch := authenticate(uuid.NewV7())
@@ -257,12 +256,12 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 		t.Fatalf("new service epoch = %+v", nextEpoch)
 	}
 	var observedAt pgtype.Timestamptz
-	var runPause, vmPause pgtype.Text
-	if err := pool.QueryRow(ctx, `SELECT observed_at, run_paused_reason, vm_paused_reason FROM worker_hosts WHERE id = $1`, workerID).Scan(&observedAt, &runPause, &vmPause); err != nil {
+	var admissionPause pgtype.Text
+	if err := pool.QueryRow(ctx, `SELECT observed_at, admission_paused_reason FROM worker_hosts WHERE id = $1`, workerID).Scan(&observedAt, &admissionPause); err != nil {
 		t.Fatal(err)
 	}
-	if observedAt.Valid || runPause.Valid || vmPause.Valid {
-		t.Fatalf("new epoch retained liveness = observed:%+v run:%+v vm:%+v", observedAt, runPause, vmPause)
+	if observedAt.Valid || admissionPause.Valid {
+		t.Fatalf("new epoch retained liveness = observed:%+v admission:%+v", observedAt, admissionPause)
 	}
 }
 

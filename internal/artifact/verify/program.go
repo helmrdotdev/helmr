@@ -7,14 +7,14 @@ import (
 	"os"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
-	"github.com/helmrdotdev/helmr/internal/artifact/snapshot"
+	"github.com/helmrdotdev/helmr/internal/artifact/localcopy"
 )
 
 func Program(
 	ctx context.Context,
 	unitCgroupRoot string,
 	leaseIdentity string,
-	programSnapshot *snapshot.Program,
+	programSnapshot *localcopy.Program,
 ) (artifact.ProgramMetadata, error) {
 	if ctx == nil {
 		return artifact.ProgramMetadata{}, errors.New("program verification context is nil")

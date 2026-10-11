@@ -29,7 +29,7 @@ sql:
           epoch_cpu_millis: EpochCPUMillis
           max_vm_slots: MaxVMSlots
           max_vm_starts: MaxVMStarts
-          vm_paused_reason: VMPausedReason
+          admission_paused_reason: AdmissionPausedReason
           per_vm_cpu_millis: PerVMCPUMillis
           per_vm_guest_ephemeral_disk_bytes: PerVMGuestEphemeralDiskBytes
           per_vm_memory_bytes: PerVMMemoryBytes

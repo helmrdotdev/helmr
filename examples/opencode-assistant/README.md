@@ -5,7 +5,7 @@ conversation belong to each Helmr Session. Slack and Console use the same Agent;
 the application does not store Slack credentials or host another Slack endpoint.
 
 Create an Environment Secret for your OpenCode Go API key, and replace the example
-Secret UUID in `tasks/assistant.ts` with its stable ID. Never put the key in source,
+Secret UUID in `agents/assistant.ts` with its stable ID. Never put the key in source,
 an image, a prompt or a Slack message. Protected Secret delivery substitutes the
 key only on authorized HTTPS requests to `https://opencode.ai`; the Computer and
 its commands receive a placeholder. The sample selects `opencode-go/glm-5.3`

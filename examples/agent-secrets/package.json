@@ -1,0 +1,17 @@
+{
+  "name": "agent-secrets",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.13",
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "24.21.0",
+      "onFail": "error"
+    }
+  },
+  "version": "0.1.0",
+  "dependencies": {
+    "@helmr/sdk": "latest"
+  }
+}

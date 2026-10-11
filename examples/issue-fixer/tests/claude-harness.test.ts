@@ -5,7 +5,7 @@ import { expect, mock, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { Queue } from "../tasks/issue-fixer/queue"
+import { Queue } from "../agents/issue-fixer/queue"
 import type { Turn } from "../../../sdk/typescript/src/agent"
 
 let events: Queue<any>, prompts: AsyncIterator<any>
@@ -20,7 +20,7 @@ mock.module("@anthropic-ai/claude-agent-sdk", () => ({ query: (configuration: an
   const child = configuration.options.spawnClaudeCodeProcess({ command: "fixture", args: [], env: {}, signal: new AbortController().signal })
   return Object.assign(events, { close: () => { child.kill(); events.end() }, interrupt: async () => {}, stopTask: async () => {}, initializationResult: async () => initializationPending ? new Promise(() => {}) : {} })
 } }))
-const { ClaudeHarness } = await import("../tasks/issue-fixer/claude-harness")
+const { ClaudeHarness } = await import("../agents/issue-fixer/claude-harness")
 const flush = () => new Promise<void>(resolve => setImmediate(resolve))
 
 test("held-back results and old task events cannot complete or enter a later Turn", async () => {

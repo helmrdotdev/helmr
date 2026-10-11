@@ -9,8 +9,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { SessionRuntime, type SessionDriver } from "../../../runtime/typescript/src/agent-session"
-import { CodexHarness } from "../tasks/issue-fixer/codex-harness"
-import { conversation } from "../tasks/issue-fixer/conversation"
+import { CodexHarness } from "../agents/issue-fixer/codex-harness"
+import { conversation } from "../agents/issue-fixer/conversation"
 import { codexModel } from "./native-model"
 
 for (const scenario of ["answer", "malformed", "handler-failure", "stopped-process"]) test(`Codex warm Session: ${scenario}`, { timeout: 30_000 }, async () => {

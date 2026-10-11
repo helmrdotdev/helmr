@@ -10,7 +10,7 @@ import { codex as nativeCodex, claude as nativeClaude } from "./agent"
 import { startNativeModels } from "./model-server"
 import { checkSessionDiscovery, type DiscoveryState } from "./session-discovery"
 import { checkSecretBindings, type SecretBindingState } from "./secret-bindings"
-import { conversation } from "../../../examples/issue-fixer/tasks/issue-fixer/conversation"
+import { conversation } from "../../../examples/issue-fixer/agents/issue-fixer/conversation"
 
 const baseImage = image("native-computer").from("node:24.21.0-bookworm-slim")
 // Replaced by the fixture packaging command, before ordinary compilation.

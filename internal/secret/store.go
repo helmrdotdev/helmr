@@ -145,41 +145,32 @@ func (s *Store) Create(ctx context.Context, env uuid.UUID, name string, value []
 		if err := tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 AND retired_at IS NULL FOR NO KEY UPDATE`, env).Scan(&locked); err != nil {
 			return err
 		}
-		q := db.New(tx)
-		claims, _ := idempotency.TransactionFor(tx)
-		var acquired idempotency.Result
+		var request *idempotency.Request
 		if key != "" {
-			request, err := idempotency.NewSecretCreateRequest(env, name, key)
+			request, err = idempotency.NewSecretCreateRequest(env, name, key)
 			if err != nil {
 				return err
 			}
-			acquired, err = claims.Acquire(ctx, request)
-			if err != nil {
-				return err
-			}
+		}
+		return idempotency.Run(ctx, tx, request, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
+			q := db.New(tx)
 			if !acquired.New {
 				id := pgvalue.MustUUIDValue(acquired.Claim.SecretID)
 				if err = s.compareVersion(ctx, tx, env, id, pgvalue.MustUUIDValue(acquired.Claim.SecretVersionID), value); err != nil {
-					return err
+					return idempotency.Completion{}, err
 				}
 				result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: acquired.Claim.SecretID})
-				return err
+				return idempotency.Completion{}, err
 			}
-		}
-		bound := *s
-		bound.db = q
-		record, err := bound.create(ctx, env, name, value)
-		if err != nil {
-			return err
-		}
-		if key != "" {
-			_, err = claims.Complete(ctx, acquired.Claim, idempotency.Target{SecretID: pgvalue.MustUUIDValue(record.ID), SecretVersionID: pgvalue.MustUUIDValue(record.CurrentVersionID)}, []byte(`{}`))
+			bound := *s
+			bound.db = q
+			record, err := bound.create(ctx, env, name, value)
 			if err != nil {
-				return err
+				return idempotency.Completion{}, err
 			}
-		}
-		result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID})
-		return err
+			result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID})
+			return idempotency.Completion{Target: idempotency.Target{SecretID: pgvalue.MustUUIDValue(record.ID), SecretVersionID: pgvalue.MustUUIDValue(record.CurrentVersionID)}, Receipt: []byte(`{}`)}, err
+		})
 	})
 	return result, err
 }
@@ -195,49 +186,43 @@ func (s *Store) Rotate(ctx context.Context, env, id uuid.UUID, value []byte, ret
 	}
 	var result db.GetSecretSnapshotRow
 	err = db.RunTx(ctx, s.tx, func(tx pgx.Tx) error {
-		claims, _ := idempotency.TransactionFor(tx)
 		request, err := idempotency.NewSecretRotateRequest(env, id, key)
 		if err != nil {
 			return err
 		}
-		acquired, err := claims.Acquire(ctx, request)
-		if err != nil {
-			return err
-		}
-		record, err := lockMutationSecret(ctx, tx, env, id)
-		if err != nil {
-			return err
-		}
-		q := db.New(tx)
-		if !acquired.New {
-			if err = s.compareVersion(ctx, tx, env, id, pgvalue.MustUUIDValue(acquired.Claim.SecretVersionID), value); err != nil {
-				return err
+		return idempotency.Run(ctx, tx, request, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
+			record, err := lockMutationSecret(ctx, tx, env, id)
+			if err != nil {
+				return idempotency.Completion{}, err
 			}
-			result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID})
-			return err
-		}
-		if record.Status != "active" {
-			return UnavailableError{Err: fmt.Errorf("secret %q is %s", record.Name, record.Status)}
-		}
-		current, err := q.GetCurrentSecretValue(ctx, db.GetCurrentSecretValueParams{EnvironmentID: pgvalue.UUID(env), SecretID: record.ID})
-		if err != nil {
-			return err
-		}
-		versionID := uuid.NewV7()
-		version := current.Version + 1
-		encrypted, err := s.encrypt(env, id, versionID, version, value)
-		if err != nil {
-			return err
-		}
-		updated, err := q.RotateSecret(ctx, db.RotateSecretParams{VersionID: pgvalue.UUID(versionID), Version: version, Nonce: encrypted.nonce, Ciphertext: encrypted.ciphertext, EnvironmentID: pgvalue.UUID(env), SecretID: record.ID, ExpectedRevision: record.Revision, ExpectedCurrentVersionID: record.CurrentVersionID})
-		if err != nil {
-			return err
-		}
-		if _, err = claims.Complete(ctx, acquired.Claim, idempotency.Target{SecretID: id, SecretVersionID: versionID}, []byte(`{}`)); err != nil {
-			return err
-		}
-		result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: updated.ID})
-		return err
+			q := db.New(tx)
+			if !acquired.New {
+				if err = s.compareVersion(ctx, tx, env, id, pgvalue.MustUUIDValue(acquired.Claim.SecretVersionID), value); err != nil {
+					return idempotency.Completion{}, err
+				}
+				result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID})
+				return idempotency.Completion{}, err
+			}
+			if record.Status != "active" {
+				return idempotency.Completion{}, UnavailableError{Err: fmt.Errorf("secret %q is %s", record.Name, record.Status)}
+			}
+			current, err := q.GetCurrentSecretValue(ctx, db.GetCurrentSecretValueParams{EnvironmentID: pgvalue.UUID(env), SecretID: record.ID})
+			if err != nil {
+				return idempotency.Completion{}, err
+			}
+			versionID := uuid.NewV7()
+			version := current.Version + 1
+			encrypted, err := s.encrypt(env, id, versionID, version, value)
+			if err != nil {
+				return idempotency.Completion{}, err
+			}
+			updated, err := q.RotateSecret(ctx, db.RotateSecretParams{VersionID: pgvalue.UUID(versionID), Version: version, Nonce: encrypted.nonce, Ciphertext: encrypted.ciphertext, EnvironmentID: pgvalue.UUID(env), SecretID: record.ID, ExpectedRevision: record.Revision, ExpectedCurrentVersionID: record.CurrentVersionID})
+			if err != nil {
+				return idempotency.Completion{}, err
+			}
+			result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: updated.ID})
+			return idempotency.Completion{Target: idempotency.Target{SecretID: id, SecretVersionID: versionID}, Receipt: []byte(`{}`)}, err
+		})
 	})
 	return result, err
 }
@@ -253,43 +238,35 @@ func (s *Store) Revoke(ctx context.Context, env, id uuid.UUID, retryKey string) 
 	}
 	var result db.GetSecretSnapshotRow
 	err = db.RunTx(ctx, s.tx, func(tx pgx.Tx) error {
-		claims, _ := idempotency.TransactionFor(tx)
-		var acquired idempotency.Result
+		var request *idempotency.Request
 		if key != "" {
-			request, err := idempotency.NewSecretRevokeRequest(env, id, key)
-			if err != nil {
-				return err
-			}
-			acquired, err = claims.Acquire(ctx, request)
+			request, err = idempotency.NewSecretRevokeRequest(env, id, key)
 			if err != nil {
 				return err
 			}
 		}
-		record, err := lockMutationSecret(ctx, tx, env, id)
-		if err != nil {
-			return err
-		}
-		q := db.New(tx)
-		if record.Status != "revoked" {
-			if _, err = q.RevokeSecret(ctx, db.RevokeSecretParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID, ExpectedRevision: record.Revision}); err != nil {
-				return err
-			}
-			payload, err := json.Marshal(secretRevocationPayload{EnvironmentID: env.String(), SecretID: id.String(), RevocationGeneration: record.RevocationGeneration + 1})
+		return idempotency.Run(ctx, tx, request, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
+			record, err := lockMutationSecret(ctx, tx, env, id)
 			if err != nil {
-				return err
+				return idempotency.Completion{}, err
 			}
-			if _, err = tx.Exec(ctx, `INSERT INTO control_outbox(id,topic,payload) VALUES($1,'secret.revoked',$2)`, uuid.NewV7(), payload); err != nil {
-				return err
-			}
+			q := db.New(tx)
+			if record.Status != "revoked" {
+				if _, err = q.RevokeSecret(ctx, db.RevokeSecretParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID, ExpectedRevision: record.Revision}); err != nil {
+					return idempotency.Completion{}, err
+				}
+				payload, err := json.Marshal(secretRevocationPayload{EnvironmentID: env.String(), SecretID: id.String(), RevocationGeneration: record.RevocationGeneration + 1})
+				if err != nil {
+					return idempotency.Completion{}, err
+				}
+				if _, err = tx.Exec(ctx, `INSERT INTO control_outbox(id,topic,payload) VALUES($1,'secret.revoked',$2)`, uuid.NewV7(), payload); err != nil {
+					return idempotency.Completion{}, err
+				}
 
-		}
-		if key != "" && acquired.New {
-			if _, err = claims.Complete(ctx, acquired.Claim, idempotency.Target{SecretID: id}, []byte(`{}`)); err != nil {
-				return err
 			}
-		}
-		result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID})
-		return err
+			result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID})
+			return idempotency.Completion{Target: idempotency.Target{SecretID: id}, Receipt: []byte(`{}`)}, err
+		})
 	})
 	return result, err
 }

@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
-	"github.com/helmrdotdev/helmr/internal/artifact/snapshot"
+	"github.com/helmrdotdev/helmr/internal/artifact/localcopy"
 )
 
 func encodeProgramTree(
@@ -22,7 +22,7 @@ func encodeProgramTree(
 	role artifact.Role,
 	entries iter.Seq2[treeEntry, error],
 	allowEmpty bool,
-) (_ *snapshot.Artifact, returnErr error) {
+) (_ *localcopy.Artifact, returnErr error) {
 	if directory == "" ||
 		!filepath.IsAbs(directory) ||
 		filepath.Clean(directory) != directory {
@@ -48,11 +48,11 @@ func encodeProgramTree(
 		}
 	}()
 
-	content, err := snapshot.Produce(
+	content, err := localcopy.Produce(
 		ctx,
 		leaseDirectory,
 		role,
-		snapshot.Owner{UID: os.Geteuid(), GID: os.Getegid()},
+		localcopy.Owner{UID: os.Geteuid(), GID: os.Getegid()},
 		true,
 		func(destination *os.File) error {
 			reader, writer := io.Pipe()

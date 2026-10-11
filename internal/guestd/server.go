@@ -34,7 +34,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 
 	runListener, err := vsock.Listen(uint32(cfg.VsockPort), nil)
 	if err != nil {
-		return fmt.Errorf("listen guest task vsock: %w", err)
+		return fmt.Errorf("listen guest execution vsock: %w", err)
 	}
 	defer runListener.Close()
 	ready.Store(true)
@@ -49,7 +49,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			return fmt.Errorf("accept guest task connection: %w", err)
+			return fmt.Errorf("accept guest execution connection: %w", err)
 		}
 		go func() {
 			defer conn.Close()
