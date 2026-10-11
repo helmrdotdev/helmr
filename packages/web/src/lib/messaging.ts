@@ -1,256 +1,130 @@
 export const positioning =
-  "Devin, Cursor Cloud and Codex Cloud ship the agent as a finished product. Helmr ships it as infrastructure: every part is a TypeScript value you pick, swap, or write yourself.";
+  "Choose your native harness, tools and workflow in TypeScript. Helmr gives that code Sessions, attributable Turns and persistent Computers in infrastructure you control.";
 
 export const logos = {
   claude: "/logos/claude.svg",
   openai: "/logos/openai.svg",
-  cursor: "/logos/cursor.svg",
-  opencode: "/logos/opencode.svg",
-  pi: "/logos/pi.svg",
   slack: "/logos/slack.svg",
-  discord: "/logos/discord.svg",
-  microsoftTeams: "/logos/microsoft-teams.svg",
-  github: "/logos/github.svg",
-  linear: "/logos/linear.svg",
 } as const;
 
-export const usecases = [
-  {
-    key: "review",
-    name: "PR reviewer",
-    icon: "merge",
-    id: "review-pr",
-    primitive: "task",
-    imports: 'import { image, sandbox, source, task, tokens } from "@helmr/sdk"',
-    head: `export const reviewPr = task({
-  id: "review-pr",
-  payload: z.object({ prNumber: z.number().int().positive() }),
-  run: async (event, ctx) => {
-    const brief = \`Review PR #\${event.prNumber} and propose a patch.\``,
-    meta: '      metadata: { subject: "Post this review to GitHub?" }',
-    action: "    if (decision.approved) await postReview(event.prNumber, output)",
-  },
-  {
-    key: "bugs",
-    name: "Bug hunter",
-    icon: "bug",
-    id: "bug-hunter",
-    primitive: "task",
-    imports: 'import { image, sandbox, source, task, tokens } from "@helmr/sdk"',
-    head: `export const huntBug = task({
-  id: "bug-hunter",
-  payload: z.object({ errorId: z.string() }),
-  run: async (event, ctx) => {
-    const brief = \`Reproduce error \${event.errorId} in /workspace, find the root cause and write a fix.\``,
-    meta: '      metadata: { subject: "Post the root cause and fix?" }',
-    action: "    if (decision.approved) await postReport(event.errorId, output)",
-  },
-  {
-    key: "mention",
-    name: "@-mention teammate",
-    icon: "mention",
-    id: "fix-issue",
-    primitive: "actor",
-    imports: 'import { actor, image, sandbox, source, tokens } from "@helmr/sdk"',
-    head: `export const fixIssue = actor({
-  id: "fix-issue",
-  async run(session) {
-    const turn = await session.receive({ idleTimeout: "30m" })
-    if (turn === null) return
-    const event = z.object({
-    issue: z.string(), repo: z.string(),
-    channel: z.string().optional(), channelId: z.string().optional(),
-    conversationId: z.string().optional(), prNumber: z.number().optional(),
-    issueId: z.string().optional()
-  }).parse(turn.input)
-    const brief = \`Fix \${event.issue} in \${event.repo}. Run the tests, then open a PR.\``,
-    meta: '      metadata: { subject: "Open a PR for this fix?" }',
-    action: `    if (decision.approved) {
-      await turn.output.write({
-        type: "permission_admitted", requestId: approval.id,
-        actionBinding: { action: "open_pr", repo: event.repo, output }
-      })
-      await openPr(event.repo, output)
-      await turn.output.write({ type: "pr-opened" })
-    }
-    await turn.complete()`,
-  },
-  {
-    key: "fleet",
-    name: "3 a.m. fleet job",
-    icon: "moon",
-    id: "fleet-bump",
-    primitive: "schedules.task",
-    imports: 'import { image, sandbox, schedules, source, tokens } from "@helmr/sdk"',
-    head: `export const fleetBump = schedules.task({
-  id: "fleet-bump",
-  cron: { pattern: "0 3 * * *", timezone: "UTC" },
-  run: async (event, ctx) => {
-    const brief = \`Bump dependencies across every repo; run each test suite.\``,
-    meta: '      metadata: { subject: "Open PRs for all repos?" }',
-    action: "    if (decision.approved) await openFleetPrs(output)",
-  },
-] as const;
+export const usecases = ([
+  { key: "review", name: "PR reviewer", icon: "merge", id: "review-pr", brief: "Review the requested PR. Explain findings; do not publish a review." },
+  { key: "bugs", name: "Bug hunter", icon: "bug", id: "bug-hunter", brief: "Reproduce the reported error, find its cause and test a fix." },
+  { key: "mention", name: "Conversation teammate", icon: "mention", id: "repo-teammate", brief: "Help with the repository request. Ask when a decision is needed." },
+  { key: "fleet", name: "3 a.m. audit", icon: "moon", id: "nightly-audit", brief: "Audit this repository for outdated dependencies and report findings." },
+] as const).map(usecase => ({
+  ...usecase,
+  primitive: usecase.key === "fleet" ? "triggers.cron()" : "agent()",
+  imports: `import { agent${usecase.key === "fleet" ? ", triggers" : ""} } from "@helmr/sdk"`,
+  head: `export const workflow = agent({
+  id: "${usecase.id}",
+  computer: workspace,
+  ${usecase.key === "fleet" ? `
+  closeAfterIdle: "5m",
+  triggers: [triggers.cron("nightly", "0 3 * * *", {
+    timezone: "UTC", input: [{ type: "text", text: "Audit dependencies." }]
+  })],` : ""}`,
+  prompt: `    const brief = ${JSON.stringify(usecase.brief)}
+      + "\\nInput: " + JSON.stringify(turn.input)`,
+}));
 
+// These imports refer to application code in the linked issue-fixer example.
+// Helmr does not supply a common provider adapter API.
 export const harnesses = [
   {
-    key: "claude",
-    name: "Claude Agent SDK",
-    meta: "@anthropic-ai/claude-agent-sdk",
-    icon: logos.claude,
-    imports: 'import { query } from "@anthropic-ai/claude-agent-sdk"',
-    agent: `    let output = ""
-    for await (const message of query({
-      prompt: brief,
-      options: {
-        cwd: "/workspace",
-        permissionMode: "bypassPermissions", // the microVM is the sandbox
-        allowDangerouslySkipPermissions: true
-      }
-    })) {
-      if (message.type === "result" && message.subtype === "success") output = message.result
-    }`,
+    key: "claude", name: "Claude Agent SDK", meta: "application adapter · Claude Agent SDK", icon: logos.claude,
+    imports: `import { ClaudeHarness } from "./claude-harness"
+import { createRuntimeMcpConnection } from "@helmr/sdk/mcp"`,
+    turn: "  async turn(turn, { setupResult }) {",
+    setup: `  async setup(context) {
+    const mcp = await createRuntimeMcpConnection()
+    return ClaudeHarness.open("/workspace/repository", context.session.id,
+      process.env, { helmr: { type: "http", url: mcp.url, headers: mcp.headers } })
+  },`,
+    agent: "    return setupResult.run(turn, brief)",
   },
   {
-    key: "codex",
-    name: "Codex",
-    meta: "@openai/codex-sdk",
-    icon: logos.openai,
-    imports: 'import { Codex } from "@openai/codex-sdk"',
-    agent: `    const codex = new Codex()
-    const thread = codex.startThread({
-      workingDirectory: "/workspace",
-      sandboxMode: "danger-full-access" // the microVM is the sandbox
-    })
-    const nativeTurn = await thread.run(brief)
-    const output = nativeTurn.finalResponse`,
+    key: "codex", name: "Codex", meta: "application adapter · Codex", icon: logos.openai,
+    imports: `import { CodexHarness } from "./codex-harness"
+import { createRuntimeMcpConnection } from "@helmr/sdk/mcp"`,
+    turn: "  async turn(turn, { setupResult }) {",
+    setup: `  async setup(context) {
+    const mcp = await createRuntimeMcpConnection()
+    return CodexHarness.open("/workspace/repository", context.session.id,
+      process.env, mcp)
+  },`,
+    agent: "    return setupResult.run(turn, brief)",
   },
   {
-    key: "cursor",
-    name: "Cursor",
-    meta: "@cursor/sdk",
-    icon: logos.cursor,
-    imports: 'import { Agent } from "@cursor/sdk"',
-    agent: `    const result = await Agent.prompt(brief, {
-      apiKey: process.env.CURSOR_API_KEY!, // protected env: the VM only holds a placeholder
-      model: { id: "composer-2.5" },
-      local: { cwd: "/workspace" }
-    })
-    const output = result.result ?? ""`,
-  },
-  {
-    key: "opencode",
-    name: "OpenCode",
-    meta: "@opencode-ai/sdk · opencode serve",
-    icon: logos.opencode,
-    imports: 'import { createOpencode } from "@opencode-ai/sdk"',
-    agent: `    const { client } = await createOpencode()
-    const nativeSession = await client.session.create({ body: { title: "run" } })
-    const result = await client.session.prompt({
-      path: { id: nativeSession.data.id },
-      body: {
-        model: { providerID: "openrouter", modelID: "z-ai/glm-4.6" },
-        parts: [{ type: "text", text: brief }]
-      }
-    })
-    const output = result.data.parts
-      .filter((part) => part.type === "text")
-      .map((part) => part.text)
-      .join("")`,
-  },
-  {
-    key: "pi",
-    name: "Pi",
-    meta: "@earendil-works/pi-coding-agent",
-    icon: logos.pi,
-    imports: 'import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent"',
-    agent: `    const { session: nativeSession } = await createAgentSession({
-      cwd: "/workspace",
-      sessionManager: SessionManager.inMemory()
-    })
-    let output = ""
-    nativeSession.subscribe((e) => {
-      if (e.type === "message_update" && e.assistantMessageEvent.type === "text_delta") {
-        output += e.assistantMessageEvent.delta
-      }
-    })
-    await nativeSession.prompt(brief)`,
-  },
-  {
-    key: "own",
-    name: "Your own harness",
-    meta: "ai · @ai-sdk/amazon-bedrock",
-    icon: null,
-    imports: `import { generateText, tool, stepCountIs } from "ai"
-import { bedrock } from "@ai-sdk/amazon-bedrock"`,
-    agent: `    const { text: output } = await generateText({
-      model: bedrock("anthropic.claude-sonnet-4-6"), // or Vertex, Ollama — any provider the AI SDK speaks
-      tools: {
-        sh: tool({
-          description: "Run a shell command in /workspace",
-          inputSchema: z.object({ cmd: z.string() }),
-          execute: ({ cmd }) => sh(cmd)
-        })
-      },
-      stopWhen: stepCountIs(40),
-      prompt: brief
-    })`,
+    key: "own", name: "Your own harness", meta: "application code · implement runMyAgent", icon: null,
+    imports: 'import { runMyAgent } from "./my-agent"',
+    turn: "  async turn(turn) {",
+    setup: "  // runMyAgent owns native lifecycle, cancellation and output handling.",
+    agent: "    return runMyAgent(turn, brief)",
   },
 ] as const;
 
 export const interfaces = [
   {
-    key: "slack",
-    name: "Slack",
-    icon: logos.slack,
-    code: `    await sendSlackApproval({
-      channel: event.channel,
-      callbackUrl: approval.callbackUrl
-    })`,
+    key: "slack", name: "Slack", icon: logos.slack,
+    imports: 'import type { HelmrClient, InputContent } from "@helmr/sdk"',
+    code: `// Call from your authenticated application, after deployment.
+// Connect the Agent to its dedicated Slack app and invite it to this channel.
+// channelId is the actual Slack channel ID, such as C0123456789.
+export async function start(client: HelmrClient, input: InputContent, channelId: string) {
+  return client.agents.start(workflow.id, {
+    input, slack: { channelId }
+  })
+}`,
   },
   {
-    key: "discord",
-    name: "Discord",
-    icon: logos.discord,
-    code: `    await sendDiscordApproval({
-      channelId: event.channelId,
-      callbackUrl: approval.callbackUrl
-    })`,
+    key: "cli", name: "CLI", icon: null,
+    imports: "",
+    code: `// After deployment, from an authenticated shell:
+// helmr agent start AGENT_ID --project agents --env development \\
+//   --input-json '[{"type":"text","text":"Review the latest changes."}]'
+// Inspect questions with: helmr session turn ask list SESSION_ID TURN_ID
+// Include --project agents --env development for each command.`,
   },
   {
-    key: "teams",
-    name: "Microsoft Teams",
-    icon: logos.microsoftTeams,
-    code: `    await sendTeamsCard({
-      conversationId: event.conversationId,
-      callbackUrl: approval.callbackUrl
-    })`,
-  },
-  {
-    key: "github",
-    name: "GitHub",
-    icon: logos.github,
-    code: `    await commentOnPr({
-      prNumber: event.prNumber,
-      body: approval.callbackUrl
-    })`,
-  },
-  {
-    key: "linear",
-    name: "Linear",
-    icon: logos.linear,
-    code: `    await commentOnIssue({
-      issueId: event.issueId,
-      body: approval.callbackUrl
-    })`,
-  },
-  {
-    key: "product",
-    name: "Your product",
-    icon: null,
-    code: `    await notify({
-      topic: "approval-requested",
-      callbackUrl: approval.callbackUrl
-    })`,
+    key: "product", name: "Your product", icon: null,
+    imports: 'import type { HelmrClient, InputContent } from "@helmr/sdk"',
+    code: `// Call from your authenticated server, after deployment.
+export async function start(client: HelmrClient, input: InputContent) {
+  const { session, turn } = await client.agents.start(workflow.id, { input })
+  // Follow session.events and answer exact Turn asks in your UI.
+  return { sessionId: session.id, turnId: turn.id }
+}`,
   },
 ] as const;
+
+export const fixedCode = {
+  computer: 'import { issueFixerComputer as workspace } from "./computer"',
+  close: "  }\n})",
+} as const;
+
+export const codeRecipe: ReadonlyArray<readonly [string, "usecase" | "agent" | "interface" | null]> = [
+  ["usecase.imports", "usecase"],
+  ["agent.imports", "agent"],
+  ["interface.imports", "interface"],
+  ["fixed.computer", null],
+  ["blank", null],
+  ["usecase.head", "usecase"],
+  ["agent.setup", "agent"],
+  ["agent.turn", "agent"],
+  ["usecase.prompt", "usecase"],
+  ["agent.body", "agent"],
+  ["fixed.close", null],
+  ["blank", null],
+  ["interface.lines", "interface"],
+];
+
+export function composeExample(usecase: typeof usecases[number], harness: typeof harnesses[number], transport: typeof interfaces[number]): string {
+  const parts: Record<string, string> = {
+    "usecase.imports": usecase.imports, "usecase.head": usecase.head, "usecase.prompt": usecase.prompt,
+    "agent.imports": harness.imports, "agent.setup": harness.setup, "agent.body": harness.agent, "agent.turn": harness.turn,
+    "interface.lines": transport.code, "interface.imports": transport.imports, blank: "",
+    ...Object.fromEntries(Object.entries(fixedCode).map(([key, value]) => [`fixed.${key}`, value])),
+  };
+  return codeRecipe.map(([key]) => parts[key]).join("\n");
+}

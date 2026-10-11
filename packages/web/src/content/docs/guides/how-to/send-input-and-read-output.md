@@ -1,57 +1,56 @@
 ---
 title: Send input and read output
-description: Continue an Actor Session and page through its durable output.
+description: Continue a Session and reconnect to its durable timeline.
 ---
 
 # Send input and read output
 
-Send one JSON value to an open Session:
+Enqueue one JSON input for a new Turn:
 
 ```sh
-helmr session send SESSION_ID \
+helmr session enqueue SESSION_ID \
   --project agents --env development \
-  --data-json '{"type":"instruction","text":"also update the tests"}' \
-  --idempotency-key slack:T123:C456:1712345678.000100
+  --input-json '[{"type":"text","text":"also update the tests"}]' \
+  --idempotency-key request:revision-42:tests
 ```
 
-Use a stable upstream event identifier as the idempotency key. A retry then
-replays the original admission instead of adding duplicate work. `send` routes to
-the active Turn before settlement or enqueues when idle; use `enqueue` to always
-queue a new Turn. Messages accepted before handler registration wait for delivery
-to that same Turn. Acceptance does not mean the application has handled the message;
-inspect message outcomes in the Session timeline. A held Session rejects `send`.
-For an answer or approval tied to existing work, use `session.turn(turnId).send`
-or `helmr session turn send SESSION_ID TURN_ID`. These never retarget a late reply.
+Reuse the same key and input for retries of that request. To steer current work,
+use `helmr session send ... --data-json JSON`; it targets active work or enqueues
+when idle. Exact `helmr session turn send SESSION_ID TURN_ID --data-json JSON`
+never retargets another Turn. Message acceptance is separate from delivery and
+application. Held Sessions reject automatic send. Questions use the
+[exact ask response API](/docs/guides/how-to/wait-for-human-input).
 
-Read one finite event page:
+Read a finite event page while work is running or finalizing:
 
 ```sh
-helmr session events SESSION_ID \
-  --project agents --env development \
+helmr session events SESSION_ID --project agents --env development \
   --after 0 --limit 50 --json
 ```
 
-Each event has a durable `sequence`, `kind`, data, timestamp, nullable Turn ID
-and nullable Run provenance. Pass `next_after` as `--after` to continue. Multiple
-readers can keep independent cursors. Output EOF is not a terminal Turn outcome.
-
-With the SDK:
+Pass `next_after` unchanged as the next `--after`. Readers can keep independent
+cursors. Each record has a sequence, kind, data, creation time, Session ID and
+nullable Turn ID. Retention metadata identifies unavailable earlier history.
 
 ```ts
-const session = client.sessions.ref("SESSION_ID")
-await session.send(
-  { type: "instruction", text: "also update the tests" },
-  { idempotencyKey: "slack:T123:C456:1712345678.000100" },
-)
+import { HelmrClient } from "@helmr/sdk"
 
-const page = await session.events.list({
-  after: 0,
-  limit: 50,
+const url = process.env["HELMR_API_URL"]
+if (!url) throw new Error("Set HELMR_API_URL to your control plane URL")
+const client = new HelmrClient({ url, apiKey: process.env["HELMR_API_KEY"]! })
+const session = client.sessions.get("SESSION_ID")
+const turn = await session.enqueue([{ type: "text", text: "also update the tests" }], {
+  idempotencyKey: "request:revision-42:tests",
 })
+const observation = turn.wait({ timeout: "10m" })
+const page = await session.events.list({ after: 0, limit: 50 })
 for (const record of page.records) {
-  console.log(record.sequence, record.data)
+  console.log(record.sequence, record.kind, record.data)
 }
+const outcome = await observation
 ```
 
-Run logs are execution telemetry. Session output is the Actor's durable
-application protocol; do not substitute one for the other.
+Follow pages or use `session.events.stream` for continuing progress. A page ending
+or output EOF is not completion. Read the Turn outcome for result and response;
+a timed observation does not cancel execution. Process diagnostics are internal,
+and authored content should never expose credentials or private native payloads.

@@ -1,6 +1,6 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
-import { harnesses, interfaces, positioning, usecases } from "../lib/messaging";
+import { codeRecipe, fixedCode, harnesses, interfaces, positioning, usecases } from "../lib/messaging";
 import { pixelsFromRows } from "../lib/pixels";
 import { SITE, breadcrumbJsonLd, softwareJsonLd } from "../lib/seo";
 
@@ -237,73 +237,97 @@ const pixelIcons = {
 const cloudPixels = pixelsFromRows(pixelIcons.cloud);
 const shieldPixels = pixelsFromRows(pixelIcons.shield);
 
-const taskFeatures = [
+const agentFeatures = [
   {
-    label: "task()",
+    label: "agent()",
     icon: "shield",
     tone: "green",
-    title: "Write the Task",
+    title: "Write the Agent",
     caption:
-      "One exported const with a typed payload and a run function. That is the whole unit Helmr deploys.",
-    code: `export const reviewPr = task({
-  id: "review-pr",
-  payload: z.object({ prNumber: z.number() }),
-  run: async ({ prNumber }) => {
-    return draftReview(prNumber)
+      "Choose a Computer and handle one input at a time. Return a machine result; stage a human response explicitly.",
+    code: `import { agent } from "@helmr/sdk"
+import { workspace } from "./computer"
+import { draftReview } from "./review"
+
+export const reviewer = agent({
+  id: "reviewer",
+  computer: workspace,
+  async turn(turn) {
+    const result = await draftReview(turn.input, turn.signal)
+    await turn.respond(result.summary)
+    return result
   }
 })`,
     lang: "ts",
   },
   {
-    label: "client.tasks.start()",
+    label: "client.agents.start()",
     icon: "bolt",
     tone: "pink",
     title: "Start it from anywhere",
-    caption: "Your product, a webhook, or CI starts a deployed Task with a typed payload against an existing Computer.",
-    code: `const run = await client.tasks.start<typeof reviewPr>(
-  "review-pr",
+    caption: "Your product, a webhook, or CI starts a deployed Agent. Keep the Session for follow-up Turns and inspect each outcome.",
+    code: `import { HelmrClient } from "@helmr/sdk"
+
+const url = process.env["HELMR_API_URL"]
+if (!url) throw new Error("Set HELMR_API_URL to your control plane URL")
+const client = new HelmrClient({
+  url,
+  apiKey: process.env["HELMR_API_KEY"]!
+})
+const { session, turn } = await client.agents.start(
+  "reviewer",
   {
-    payload: { prNumber: 482 },
-    computer
+    input: { prNumber: 482 },
+    idempotencyKey: "review:482:revision-1"
   }
-)`,
+)
+const outcome = await turn.wait({ timeout: "10m" })`,
     lang: "ts",
   },
   {
-    label: "schedules.task()",
+    label: "triggers.cron()",
     icon: "clock",
     tone: "blue",
     title: "Put it on a cron",
-    caption: "The schedule lives beside the code and ships with it. Every fire gets a fresh Computer.",
-    code: `export const nightly = schedules.task({
+    caption: "The trigger ships with your Agent. Every fire starts an independent Session on a fresh Computer with the declared input.",
+    code: `import { agent, triggers } from "@helmr/sdk"
+import { workspace } from "./computer"
+import { runAudit } from "./audit"
+
+export const nightly = agent({
   id: "nightly-audit",
-  cron: {
-    pattern: "0 9 * * 1-5", timezone: "Asia/Tokyo"
-  },
-  computer: { sandbox: repoSandbox },
-  run: async (_, ctx) => runAudit(ctx)
+  computer: workspace,
+  closeAfterIdle: "5m",
+  triggers: [triggers.cron("weekdays", "0 9 * * 1-5", {
+    timezone: "Asia/Tokyo", input: { scope: "all" }
+  })],
+  async turn(turn) {
+    return runAudit(turn.input, turn.signal)
+  }
 })`,
     lang: "ts",
   },
   {
-    label: "tokens.create()",
+    label: "turn.ask()",
     icon: "pause",
     tone: "yellow",
     title: "Wait for a human",
     caption:
-      "The microVM freezes whole while it waits — filesystem, memory, process. A scoped callback completes one value.",
-    code: `const approval = await tokens.create({ timeout: "30m" })
+      "Ask a question on the exact Turn. Answers carry authenticated attribution; application code decides what to do with them.",
+    code: `import type { Turn } from "@helmr/sdk"
 
-const decision = await approval.wait({
-  schema: z.object({ approved: z.boolean() }),
-  timeout: "30m",
-  tags: ["approval", "github-review"]
-}).unwrap()`,
+export async function chooseRevision(turn: Turn) {
+  const { answer, respondedBy } = await turn.ask({
+    prompt: [{ type: "text", text: "Which revision?" }],
+    answer: { type: "text" }
+  })
+  return { revision: answer, responder: respondedBy }
+}`,
     lang: "ts",
   },
 ] as const;
 
-const renderedTaskFeatures = taskFeatures.map((feature) => ({
+const renderedAgentFeatures = agentFeatures.map((feature) => ({
   ...feature,
   html: feature.lang === "ts" ? highlightTypeScript(feature.code) : highlightShell(feature.code),
   pixels: pixelsFromRows(pixelIcons[feature.icon]),
@@ -311,43 +335,49 @@ const renderedTaskFeatures = taskFeatures.map((feature) => ({
 
 const computerFeatures = [
   {
-    label: "image() + sandbox()",
+    label: "image() + computer()",
     icon: "cloud",
     tone: "blue",
     title: "Define the environment",
-    caption: "Choose the base image, install CLIs, and set the working directory and resources behind the Computer.",
-    code: `const base = image("repo-agent")
+    caption: "Choose the base image, install tools, and set the working directory and resources behind the Computer.",
+    code: `import { computer, image } from "@helmr/sdk"
+
+const base = image("repo-agent")
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
-  .run(["npm", "install", "-g", "@openai/codex"])
+  .run(["sh", "-ceu", "apt-get update && apt-get install -y git"])
 
-export const repoSandbox = sandbox({
-  id: "repo-agent"
-})
-  .image(base)
-  .resources({
-    cpu: 2,
-    memory: "4GiB"
-  })`,
+export const workspace = computer({
+  id: "repo-agent",
+  image: base,
+  resources: { cpu: 2, memory: "4GiB" }
+})`,
   },
   {
-    label: "client.sandboxes.createComputer()",
+    label: "client.computerDefinitions.createComputer()",
     icon: "resume",
     tone: "green",
     title: "Create the Computer",
-    caption: "Create it once, run bounded commands, and attach later Task and Actor Runs to the same files.",
-    code: `const computer = await client.sandboxes.createComputer(
-  "repo-agent",
-  {
-    key: \`github-pr:\${pr.id}\`,
-    idempotencyKey: \`computer:\${pr.id}\`
-  }
-)
+    caption: "Create it once, run bounded commands, and explicitly place later Sessions on it to share files. Each Agent still owns its setup state.",
+    code: `import { HelmrClient } from "@helmr/sdk"
 
+const url = process.env["HELMR_API_URL"]
+if (!url) throw new Error("Set HELMR_API_URL to your control plane URL")
+const client = new HelmrClient({
+  url,
+  apiKey: process.env["HELMR_API_KEY"]!
+})
+const computer = await client.computerDefinitions.createComputer(
+  "repo-agent", { idempotencyKey: "computer:482" }
+)
 const result = await computer.exec({
-  command: ["bash", "-lc", "bun test"],
+  command: ["node", "--version"],
   cwd: "/workspace",
-  idempotencyKey: \`verify:\${pr.id}\`
+  idempotencyKey: "verify:482"
+})
+const { session } = await client.agents.start("reviewer", {
+  input: { prNumber: 482 }, computer,
+  idempotencyKey: "review:482:shared-workspace"
 })`,
   },
 ] as const;
@@ -358,48 +388,56 @@ const renderedComputerFeatures = computerFeatures.map((feature) => ({
   pixels: pixelsFromRows(pixelIcons[feature.icon]),
 }));
 
-const actorFeature = {
+const sessionFeature = {
   title: "Steerable agent sessions.",
   caption:
-    "Send a correction from Slack, your product, or the CLI. The Session history survives waits and continuation Runs.",
-  define: `export const reviewer = actor({
+    "Retain setup state across Turns and healthy RAM restoration. Register a message handler to apply live corrections. The Session timeline records work; only a settled outcome establishes completion.",
+  define: `import { agent } from "@helmr/sdk"
+import { workspace } from "./computer"
+import { createReviewer } from "./review"
+
+export const reviewer = agent({
   id: "reviewer",
-  async run(session) {
-    for (;;) {
-      const turn = await session.receive()
-      if (turn === null) return
-      await turn.onMessage(async ({ data }) => {
-        await applyCorrection(data)
-      })
-      await turn.output.pipe(review(turn.input, {
-        signal: turn.signal
-      }))
-      await runTests()
-      await turn.complete()
-    }
+  computer: workspace,
+  messages: { content: ["text", "json"] },
+  async setup() {
+    return createReviewer()
+  },
+  async turn(turn, { setupResult }) {
+    await turn.onMessage(async message => {
+      await setupResult.correct(message)
+    })
+    const result = await setupResult.review(turn.input, turn.signal)
+    await turn.respond(result.summary)
+    return result
   }
 })`,
-  send: `// From your product or webhook:
-const session = client.sessions.ref(sessionId)
-const turn = await session.enqueue({ issue: "APP-42" })
+  send: `import { HelmrClient } from "@helmr/sdk"
 
-// When this exact Turn is ready for messages:
-await turn.send({
-  type: "update_constraints",
-  instruction: "Please also update the tests."
-}, { idempotencyKey: "slack:thread-1:message-7" })
-
+const url = process.env["HELMR_API_URL"]
+if (!url) throw new Error("Set HELMR_API_URL to your control plane URL")
+const client = new HelmrClient({
+  url,
+  apiKey: process.env["HELMR_API_KEY"]!
+})
+const session = client.sessions.get("SESSION_ID")
+const turn = await session.enqueue({ issue: "APP-42" }, {
+  idempotencyKey: "issue:event-42"
+})
+// When this exact Turn is processing with its handler ready:
+await turn.send({ instruction: "Please also update the tests." }, {
+  idempotencyKey: "issue:correction-43"
+})
 const page = await session.events.list({ after: 0 })
 for (const event of page.records) {
-  render(event.sequence, event.kind, event.data)
+  console.log(event.sequence, event.kind, event.data)
 }`,
-
 };
 
-const renderedActor = {
-  ...actorFeature,
-  defineHtml: highlightTypeScript(actorFeature.define),
-  sendHtml: highlightTypeScript(actorFeature.send),
+const renderedSession = {
+  ...sessionFeature,
+  defineHtml: highlightTypeScript(sessionFeature.define),
+  sendHtml: highlightTypeScript(sessionFeature.send),
   definePixels: pixelsFromRows(pixelIcons.hourglass),
   sendPixels: pixelsFromRows(pixelIcons.steer),
 };
@@ -412,27 +450,6 @@ const arrowRightPixels = pixelsFromRows(pixelIcons.arrowRight);
 const hlLines = (text: string) =>
   text.split("\n").map((line) => highlightTypeScript(line) || "&nbsp;");
 
-const fixedCode = {
-  zimport: 'import { z } from "zod"',
-  image: `const base = image("repo-agent")
-  .from("node:24-bookworm-slim")
-  .workdir("/workspace")
-  .run(["sh", "-ceu", "apt-get update && apt-get install -y git ripgrep"])
-  .copy(source.file("package.json"), "/workspace/package.json")
-  .run(["bun", "install"])`,
-  sandbox: `export const repoSandbox = sandbox({ id: "repo-agent" })
-  .image(base)
-  .resources({ cpu: 2, memory: "4GiB" })`,
-  approvalPre: '    const approval = await tokens.create({ timeout: "30m" })',
-  wait: `    // The microVM freezes here — filesystem, memory, process.
-    const decision = await approval.wait({
-      schema: z.object({ approved: z.boolean() }),
-      timeout: "30m",`,
-  unwrap: "    }).unwrap()",
-  close: `  }
-})`,
-} as const;
-
 const codeParts = {
   fixed: Object.fromEntries(
     Object.entries(fixedCode).map(([key, text]) => [key, hlLines(text)]),
@@ -440,11 +457,11 @@ const codeParts = {
   agents: Object.fromEntries(
     harnesses.map((harness) => [
       harness.key,
-      { imports: hlLines(harness.imports), body: hlLines(harness.agent), meta: harness.meta },
+      { imports: hlLines(harness.imports), body: hlLines(harness.agent), setup: hlLines(harness.setup), turn: hlLines(harness.turn), meta: harness.meta },
     ]),
   ),
   interfaces: Object.fromEntries(
-    interfaces.map((iface) => [iface.key, { lines: hlLines(iface.code) }]),
+    interfaces.map((iface) => [iface.key, { lines: hlLines(iface.code), imports: hlLines(iface.imports) }]),
   ),
   usecases: Object.fromEntries(
     usecases.map((usecase) => [
@@ -454,34 +471,11 @@ const codeParts = {
         primitive: usecase.primitive,
         imports: hlLines(usecase.imports),
         head: hlLines(usecase.head),
-        meta: hlLines(usecase.meta),
-        action: hlLines(usecase.action),
+        prompt: hlLines(usecase.prompt),
       },
     ]),
   ),
 };
-
-const codeRecipe: ReadonlyArray<readonly [string, "usecase" | "agent" | "interface" | null]> = [
-  ["usecase.imports", "usecase"],
-  ["agent.imports", "agent"],
-  ["fixed.zimport", null],
-  ["blank", null],
-  ["fixed.image", null],
-  ["blank", null],
-  ["fixed.sandbox", null],
-  ["blank", null],
-  ["usecase.head", "usecase"],
-  ["blank", null],
-  ["agent.body", "agent"],
-  ["blank", null],
-  ["fixed.approvalPre", null],
-  ["interface.lines", "interface"],
-  ["fixed.wait", null],
-  ["usecase.meta", "usecase"],
-  ["fixed.unwrap", null],
-  ["usecase.action", "usecase"],
-  ["fixed.close", null],
-];
 
 const codePick = { usecase: "review", agent: "claude", interface: "slack" } as const;
 
@@ -492,8 +486,8 @@ const codeSegment = (
   if (key === "blank") return ["&nbsp;"];
   const [scope, name] = key.split(".") as [string, string];
   if (scope === "agent") {
-    const agent = codeParts.agents[pick.agent] as { imports: string[]; body: string[]; meta: string };
-    return agent[name as "imports" | "body"];
+    const agent = codeParts.agents[pick.agent] as { imports: string[]; body: string[]; setup: string[]; turn: string[]; meta: string };
+    return agent[name as "imports" | "body" | "setup" | "turn"];
   }
   if (scope === "usecase") {
     const usecase = codeParts.usecases[pick.usecase] as {
@@ -501,13 +495,12 @@ const codeSegment = (
       primitive: string;
       imports: string[];
       head: string[];
-      meta: string[];
-      action: string[];
+      prompt: string[];
     };
-    return usecase[name as "imports" | "head" | "meta" | "action"];
+    return usecase[name as "imports" | "head" | "prompt"];
   }
   if (scope === "interface") {
-    return codeParts.interfaces[pick.interface]!.lines;
+    return codeParts.interfaces[pick.interface]![name as "lines" | "imports"];
   }
   return codeParts.fixed[name] as string[];
 };
@@ -630,7 +623,7 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
       <div class="section-head">
         <h2 class="headline section-title">
           Assemble the factory yourself.
-          <span class="faint">It's all TypeScript, so nothing is fixed.</span>
+          <span class="faint">Your code defines the workflow.</span>
         </h2>
         <p class="section-note">
           {positioning} Change a part below and the
@@ -641,7 +634,7 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
         <div class="choice">
           <div class="choice-copy">
             <p class="choice-title">Any job.</p>
-            <p class="choice-sub">A one-shot task, a durable actor session, or a cron schedule.</p>
+            <p class="choice-sub">A single request, a continuing Session, or a cron trigger.</p>
           </div>
           <div class="choice-chips" data-pick="usecase" style={`--chip-tint: ${tints[regionStyle.usecase.tone]}`}>
             {usecaseChips.map((usecase) => (
@@ -664,7 +657,7 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
         <div class="choice">
           <div class="choice-copy">
             <p class="choice-title">Any agent.</p>
-            <p class="choice-sub">Claude Code, Codex, an open harness on a cheap model, or the loop you wrote yourself.</p>
+            <p class="choice-sub">Start with the Claude or Codex application examples, or implement your own harness.</p>
           </div>
           <div class="choice-chips" data-pick="agent" style={`--chip-tint: ${tints[regionStyle.agent.tone]}`}>
             {harnesses.map((harness) => (
@@ -691,7 +684,7 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
         <div class="choice">
           <div class="choice-copy">
             <p class="choice-title">Any interface.</p>
-            <p class="choice-sub">Wherever your team already works. Helmr is the runtime behind it, not the chat window in front.</p>
+            <p class="choice-sub">Start from an approved Slack channel, the CLI, or your own authenticated application.</p>
           </div>
           <div class="choice-chips" data-pick="interface" style={`--chip-tint: ${tints[regionStyle.interface.tone]}`}>
             {interfaces.map((iface) => (
@@ -738,18 +731,20 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
           ))}
         </div>
       </div>
+      <p class="feature-caption">Application sketch: local imports, repository preparation and credentials must be configured. The Claude and Codex adapters handle native lifecycle, output and questions. See the <a href="https://github.com/helmrdotdev/helmr/tree/main/examples/issue-fixer">complete application examples</a> and <a href="/docs/reference/sdk/questions">question contract</a>. Changing the interface selects client usage; it does not install an integration.</p>
       <script is:inline type="application/json" data-code-parts set:html={JSON.stringify({ parts: codeParts, recipe: codeRecipe, pick: codePick, tagPicks }).replaceAll("<", "\\u003c")} />
     </section>
 
-    <section id="primitives" class="features" aria-label="Task patterns">
+    <section id="primitives" class="features" aria-label="Agent patterns">
       <div class="section-head">
         <h2 class="headline section-title">
           Workflows as functions.{" "}
-          <span class="faint">Typed in, typed out, durable in between.</span>
+          <span class="faint">JSON inputs, recorded outcomes.</span>
         </h2>
       </div>
+      <p class="feature-caption">Local imports such as draftReview, runAudit and createReviewer are application code.</p>
       <div class="feature-grid">
-        {renderedTaskFeatures.map((feature) => (
+        {renderedAgentFeatures.map((feature) => (
           <div class="feature">
             <div class="feature-head">
               <svg class="feature-icon" viewBox="0 0 10 10" aria-hidden="true" style={`background: ${tints[feature.tone]}`}>
@@ -772,35 +767,35 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
       </div>
     </section>
 
-    <section id="actor" class="actor-section" aria-label="Actor steering">
+    <section id="sessions" class="actor-section" aria-label="Session steering">
       <div class="section-head">
         <h2 class="headline section-title">
-          {renderedActor.title}{" "}
-          <span class="faint">Input and output, kept across Runs.</span>
+          {renderedSession.title}{" "}
+          <span class="faint">Input and output, kept across Turns.</span>
         </h2>
       </div>
       <div class="pair-panels">
         <div class="paired-feature">
           <div class="feature-head">
             <svg class="feature-icon" viewBox="0 0 10 10" aria-hidden="true" style={`background: ${tints.yellow}`}>
-              {renderedActor.definePixels.map((pixel) => (
+              {renderedSession.definePixels.map((pixel) => (
                 <rect x={pixel.x} y={pixel.y} width="1" height="1" />
               ))}
             </svg>
-            <h3 class="feature-title">Define the Actor</h3>
+            <h3 class="feature-title">Define the Agent</h3>
           </div>
           <div class="feature-panel panel panel-screen">
             <div class="code-cap">
-              <span>actor()</span>
+              <span>agent()</span>
               <span class="cap-meta">typescript</span>
             </div>
-            <pre><code set:html={renderedActor.defineHtml}></code></pre>
+            <pre><code set:html={renderedSession.defineHtml}></code></pre>
           </div>
         </div>
         <div class="paired-feature">
           <div class="feature-head">
             <svg class="feature-icon" viewBox="0 0 10 10" aria-hidden="true" style={`background: ${tints.blue}`}>
-              {renderedActor.sendPixels.map((pixel) => (
+              {renderedSession.sendPixels.map((pixel) => (
                 <rect x={pixel.x} y={pixel.y} width="1" height="1" />
               ))}
             </svg>
@@ -808,21 +803,21 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
           </div>
           <div class="feature-panel panel panel-screen">
             <div class="code-cap">
-              <span>client.sessions.ref()</span>
+              <span>client.sessions.get()</span>
               <span class="cap-meta">typescript</span>
             </div>
-            <pre><code set:html={renderedActor.sendHtml}></code></pre>
+            <pre><code set:html={renderedSession.sendHtml}></code></pre>
           </div>
         </div>
       </div>
-      <p class="feature-caption actor-caption">{renderedActor.caption}</p>
+      <p class="feature-caption actor-caption">{renderedSession.caption}</p>
     </section>
 
     <section id="computer" class="computer-section" aria-label="Shared Computer">
       <div class="section-head">
         <h2 class="headline section-title">
           Persistent VM filesystems.{" "}
-          <span class="faint">The same /workspace, Run after Run.</span>
+          <span class="faint">The same /workspace, Turn after Turn.</span>
         </h2>
       </div>
       <div class="pair-panels computer-panels">
@@ -852,7 +847,7 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
     <section id="security" class="security-section" aria-label="Security">
       <div class="section-head">
         <h2 class="headline section-title">
-          The agent never sees the key.{" "}
+          Keep protected keys outside the VM.{" "}
           <span class="faint">Secrets are swapped in at the network boundary — outside the VM.</span>
         </h2>
       </div>
@@ -890,7 +885,7 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
       </div>
       <p class="wire-note">
         Bind a secret as <code>protected</code> and the VM only ever holds a
-        placeholder. Helmr replaces it for the origins you allow, checks the run
+        placeholder. Helmr replaces it for the origins you allow, checks the operation
         is still authorized, and fails the request if the secret was revoked.
         <a class="wire-docs" href="/docs/concepts/secrets">How protected secrets work →</a>
       </p>
@@ -899,8 +894,8 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
     <section class="homes" aria-label="Deployment options">
       <div class="section-head">
         <h2 class="headline section-title">
-          Run on our cloud,{" "}
-          <span class="faint">or in your AWS.</span>
+          Run in your AWS.{" "}
+          <span class="faint">Own the infrastructure.</span>
         </h2>
         <p class="section-note mono">
           Early, open, Apache 2.0. Read the source before you trust it with your repos.
@@ -921,11 +916,11 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
                 <rect x={pixel.x} y={pixel.y} width="1" height="1" />
               ))}
             </svg>
-            Helmr Cloud <span class="chip chip-warm">coming soon</span>
+            Helmr Cloud <span class="chip chip-warm">planned</span>
           </p>
           <p class="home-text">
-            A managed fleet. Projects, environments, immutable deployments &mdash;
-            no infrastructure to run.
+            Managed hosting is planned and is not currently available.
+            Start with the self-hosted deployment.
           </p>
           <a class="btn btn-light" href="/docs">Read the docs</a>
         </div>
@@ -939,8 +934,8 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
             Your AWS account
           </p>
           <p class="home-text">
-            The identical control plane and workers in your VPC, Apache 2.0.
-            Credentials never leave your boundary.
+            Run the open-source control plane and workers in your VPC.
+            Configure credentials and allowed destinations for your workflows.
           </p>
           <a class="btn btn-dark" href="/docs/self-hosting/overview">Self-hosting guide</a>
         </div>

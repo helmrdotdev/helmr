@@ -1,58 +1,57 @@
 ---
 title: Security
-description: Isolation, credentials, data handling, and public capability boundaries.
+description: Environment authority, Computer isolation and attributable interaction.
 ---
 
 # Security
 
-Helmr separates control authority, execution, and application data through
-scoped credentials and isolated runtime resources.
+Helmr separates Environment authority, Computer execution and retained
+application data. Native harnesses retain their own permission policies.
 
-## Runtime isolation
+## Runtime and build boundaries
 
-Task and Actor code, plus bounded Computer exec, run in Firecracker-backed
-Linux guests on workers. The Sandbox selects the image, CPU, and memory. Helmr
-attaches the approved Computer and materializes its fixed Secret placements.
-Application code should rely on normal guest behavior, not host paths, worker
-credentials, guest-control protocols, or networking implementation details.
+Agents and Computer Commands execute inside Linux guests on workers. Computer
+definitions select the image and resources; actual Computers have fixed Secret
+bindings. Sessions sharing a Computer share files and process authority. Agent code
+within an Environment is mutually trusted, including reachable files, native
+histories, credentials and services. Helmr does not promise isolation for mutually
+untrusted code; an Environment label alone does not establish that boundary.
 
-Deployment bundles are produced in Helmr's digest-pinned Linux builder on the
-developer or CI machine. Package lifecycle scripts are untrusted build input,
-so the builder receives neither runtime Secrets nor host filesystem or Docker
-socket access. The Control Plane verifies the completed artifact closure and
-never runs package installation or project build commands.
+The local Linux builder installs dependencies and produces immutable artifacts.
+Package lifecycle scripts are untrusted build input. The isolated installation
+receives only explicitly selected build Secrets, without a host Docker socket or
+unrestricted host filesystem. The Control Plane verifies the completed artifact
+closure rather than running project installation. The host-side Helmr config is
+trusted local code with the invoking user's authority.
 
-## Credentials and capabilities
+## Credentials and questions
 
-Environment API keys are stored by hash, may expire or be revoked, and carry
-explicit actions within one Project Environment. Permissions for Task starts,
-Actor starts, Session input/read/close, Runs, Computers, Tokens, Secrets, and
-Deployments are distinct.
+Environment API keys carry explicit operation permissions. An authenticated client
+uses those credentials even inside Agent code. Injected Turn operations and a
+managed Session-bound MCP connection use their runtime authority instead.
 
-Token creation returns a callback URL and public access token for completing
-that one Token. Treat them as bearer credentials and prefer this narrow
-capability for public approval links. A Session input capability grants access
-to a continuing Actor channel and should remain in trusted integrations.
+Questions have exact Session, Turn and ask identities. Answering requires current
+membership or explicit API-key permission and records the authenticated responder.
+Channel visibility alone does not grant that authority. Native permission adapters
+must validate the live callback and propagate cancellation; a retained answer or
+output receipt does not grant permission to a different request.
 
-## Data handling
+## Data and Secret handling
 
-Run payload, metadata, tags, logs, events, Actor input and output, Token
-completion results, and committed Computer files are durable data surfaces.
-Do not place API keys, tokens, passwords, private keys, or unnecessary personal
-data in them.
+Inputs, results, authored content, question answers, event history and retained
+Computer files are durable data surfaces. Keep credentials out of them. Secret
+reads return metadata; values are delivered only through selected bindings.
+Protected env substitutes credentials at approved HTTPS origins, while raw env
+and files expose values to Computer processes. See [Secrets](/docs/concepts/secrets)
+for exact boundaries and unsupported transports.
 
-Secrets are encrypted, versioned, environment-scoped values. Public responses
-do not return plaintext. Bind them during Computer creation and read them only
-from the declared runtime placement. Avoid printing values or passing them to
-child processes in visible command lines.
+Use stable, nonsensitive request identities for idempotency. They reconcile
+uncertain delivery but do not authenticate callers or make external effects
+exactly once.
 
-Use idempotency keys derived from stable upstream operations. They protect
-retries from duplicating starts or messages, but they are not authentication
-credentials and should not contain sensitive data.
+## Retention and stopping
 
-## Durable state
-
-Computers outlive Runs unless deleted. Session output and input histories are
-durable. Cancellation requests may take time to converge. Plan retention and
-cleanup around the resources that actually hold application state rather than
-assuming a terminal Run removes them.
+A completed Turn does not delete its Session or Computer. Controls acknowledge
+intent separately from physical convergence. Explicit Computer deletion can remain
+busy while associated Sessions, execution or saving remain unresolved. Plan
+retention and cleanup around the resources that hold the data.

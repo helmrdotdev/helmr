@@ -1,7 +1,8 @@
 # Runtime
 
-The TypeScript runtime executes SDK Task and Actor handlers and translates their
-waits, streams, metadata and outcomes into the guest protocol. `guestd` launches
+The TypeScript runtime runs one Agent Session per process, retains setup across
+Turns, and carries output, questions, messages and settlement over the guest
+Session protocol. Computer preparation runs through a separate private entry. `guestd` launches
 the verified platform-owned Node 24.21 runtime, fixed entry and module preload.
 It does not use the Computer image's Node for Program control code.
 
@@ -34,7 +35,9 @@ Prepare and admit that tree with the bundle builder, then mount the admitted
 Program at `/opt/helmr/program` and the matching Runtime at `/opt/helmr/runtime`,
 both read-only. Bundle the test driver for Node with the repository generation
 tools and run it with the Runtime's Node and `HELMR_NATIVE_RUNTIME_TEST=1`.
-It checks Task/Actor protocol execution, assets, native addon loading, process termination and the unchanged Computer working directory. Ordinary host tests skip this suite; passing
+It checks Agent/Session protocol execution, assets, native addon loading, idle
+process termination and the unchanged Computer working directory. The driver
+acknowledges finalization locally; it does not prove remote disk publication. Ordinary host tests skip this suite; passing
 it in a container does not qualify Firecracker checkpoint/resume.
 
 ## External Runtime dependencies

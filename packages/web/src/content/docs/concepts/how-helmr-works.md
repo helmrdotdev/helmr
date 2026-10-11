@@ -1,44 +1,39 @@
 ---
 title: How Helmr works
-description: The core resources and lifecycle behind deployed durable programs.
-sidebarLabel: How Helmr works
+description: Deployed Agents, retained Sessions, serial Turns and durable Computers.
 ---
 
 # How Helmr works
 
-Helmr deploys JavaScript and TypeScript programs, runs them in isolated Linux
-sandboxes, and keeps execution state in explicit durable resources.
+Helmr runs deployed JavaScript and TypeScript Agents in Linux Computers. You
+choose the native harness, model, tools and work procedure. Helmr manages
+admission, execution, retained outcomes and the Computer lifecycle.
 
-```text
-Project + Environment
-  -> current immutable Deployment
-  -> Task, Actor, Sandbox, and Schedule declarations
+| Resource | Purpose |
+| --- | --- |
+| Deployment | Immutable code and definitions selected in a Project Environment. |
+| Agent | A Computer recipe, optional setup and a Turn handler. |
+| Computer | A working environment with retained disk and execution state. |
+| Session | A continuing work context pinned to a Deployment and Computer. |
+| Turn | One admitted input and one terminal outcome, processed serially within a Session. |
 
-Sandbox -> Computer -> Task or Actor Run
-Actor Run <-> Session input and output
-Run -> attempts, logs, events, waits, and terminal result
-```
+Starting an Agent admits a Session and its first Turn. Later inputs enter the same
+Session with `enqueue`. A Computer definition is a recipe; an actual Computer is
+created from it unless the caller selects an existing one. Sessions sharing a
+Computer share files but keep separate identities and native histories.
 
-A **Deployment** is an immutable verified bundle of one project. Promotion makes its
-declarations current in an Environment. A **Sandbox** declaration selects an
-image and resources. Creating from it produces a durable **Computer** with a
-committed filesystem and fixed Secret placements.
+Setup runs before the first Turn. Its live result is available as
+`ctx.setupResult`. Healthy hibernation preserves that result and native processes.
+Loss of a valid continuation holds the affected Session for explicit recovery;
+Helmr does not silently replay interrupted inputs.
 
-A **Task** is bounded one-shot work. Starting it with a Computer creates a
-**Run**. An **Actor** adds a stable **Session** for ordered input and output;
-the work that handles those messages still occurs in managed Runs. A Run can
-park durably while waiting for Actor input, a Token, or a timer.
+A handler return begins finalization. Completed requires drainage and publication
+of the Turn's adequate Computer disk Save. Output can be read before completion.
+The machine result and optional human response are separate values.
 
-Resources are addressed by IDs. Optional keys on Computers and Sessions are
-stable collection lookups, not substitutes for resource IDs in every API.
-Idempotency keys make create, start, input, and mutation requests safe to retry.
+Use resource IDs for operations. Session keys identify conversations; idempotency
+keys reconcile retries of the same request. Promotion selects code for new work;
+it does not upgrade existing Sessions.
 
-The `/v1` developer API and `HelmrClient` expose the same main lifecycle:
-definitions are read from the current or selected Deployment, Computers are
-created from Sandbox IDs, Tasks and Actors start against Computer references,
-and Runs, Sessions, Schedules, and Secrets have dedicated read surfaces.
-
-Helmr separates application state from diagnostics. Computer files and Actor
-output are durable application surfaces. Run logs and events explain execution.
-Payload and metadata are persisted operational data, so credentials belong in
-Secrets rather than either surface.
+Keep credentials in Secrets. Inputs, results, human content and event history are
+retained application data and must not contain credentials.

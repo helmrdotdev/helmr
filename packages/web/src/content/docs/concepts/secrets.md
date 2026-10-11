@@ -6,12 +6,12 @@ description: Store credentials and choose how Computers use them.
 # Secrets
 
 A Secret is a named, encrypted value scoped to one Project Environment. Create it
-once and reference its name when creating a Computer. Secrets persist
+once and reference its stable ID when creating a Computer. Secrets persist
 independently of Computers, so you can reuse them in new Computers and rotate
 values without changing their names. Read APIs return metadata, not the value.
 
 A binding specifies how a Computer uses a Secret. Bindings are fixed at
-Computer creation; later Runs use those bindings and cannot override them.
+Computer creation; later Sessions use those bindings and cannot override them.
 
 ## Choose a delivery mode
 
@@ -26,18 +26,18 @@ keeps the value outside the Computer unless you also expose the same Secret
 through a raw binding. Helmr never automatically falls back from protected to raw.
 
 ```ts
-const computer = await client.sandboxes.createComputer("reviewer", {
+const computer = await client.computerDefinitions.createComputer("reviewer", {
   secrets: [
     {
-      secret: "github-token",
+      secretId: process.env.HELMR_GITHUB_SECRET_ID!,
       env: {
         name: "GH_TOKEN",
         mode: "protected",
         allowedOrigins: ["https://api.github.com"],
       },
     },
-    { secret: "database-password", env: { name: "PGPASSWORD", mode: "raw" } },
-    { secret: "client-key", file: { path: "/run/secrets/client.key" } },
+    { secretId: databaseSecret.id, env: { name: "PGPASSWORD", mode: "raw" } },
+    { secretId: clientKeySecret.id, file: { path: "/run/secrets/client.key" } },
   ],
 })
 ```
@@ -141,8 +141,7 @@ value is restored from a guest snapshot.
 ## Delegation
 
 Code running in a Computer can use only its existing Secret permissions when
-creating another Computer, executing in an existing Computer, or starting a
-child task. It cannot add a Secret, expand allowed origins, or change protected
+using runtime-bound Agent creation and explicit Computer placement. It cannot add a Secret, expand allowed origins, or change protected
 access to raw access. If it already has raw access to a Secret, it can delegate
 that Secret in either mode.
 
@@ -174,5 +173,5 @@ delivered to the Computer. This technical limit does not change the recommended
 lifecycle: retain a Computer for the work that needs it, then delete it.
 
 See [Use secrets](/docs/guides/how-to/use-secrets) for creation, binding, rotation,
-and revocation commands. Keep credentials out of payloads, metadata, tags, logs,
-source archives, image literals, and Actor/Token results.
+and revocation commands. Keep credentials out of inputs, results, logs,
+source archives, image literals and human content.

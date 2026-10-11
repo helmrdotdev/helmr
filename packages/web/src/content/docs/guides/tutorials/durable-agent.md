@@ -1,93 +1,85 @@
 ---
-title: Build a durable agent
-description: Build an Actor that receives follow-up input and publishes durable output.
-sidebarLabel: Durable agent
+title: Build a durable Agent
+description: Retain setup state while processing continuing inputs in one Session.
 ---
 
-# Build a durable agent
+# Build a durable Agent
 
-Tasks are a good fit for bounded one-shot work. An Actor adds a stable Session
-with ordered input and output, while each period of execution is still a Run.
+An Agent Session processes serial Turns and retains setup state through healthy
+continuation. This example counts Turns in a live setup object. It demonstrates
+Session state without requiring a model provider.
 
-## Define the Actor
-
-Add a declaration beside your existing Sandbox:
+## Define the Agent
 
 ```ts
-import { actor } from "@helmr/sdk"
+import { agent, computer, image } from "@helmr/sdk"
 
-export const assistant = actor({
+export const workspace = computer({
   id: "assistant",
-  idleTimeout: "90s",
-  async run(session, ctx) {
-    await session.output.write({ type: "ready", runId: ctx.run.id })
-    for (;;) {
-      const turn = await session.receive()
-      if (turn === null) return
-      await turn.output.write({ type: "reply", received: turn.input })
-      await turn.complete()
-    }
+  image: image("assistant").from("node:24-bookworm-slim"),
+  resources: { cpu: 1, memory: "1GiB" },
+})
+
+export const assistant = agent({
+  id: "assistant",
+  computer: workspace,
+  async setup(ctx) {
+    return { turns: 0, recovery: ctx.recovery.kind }
+  },
+  async turn(turn, ctx) {
+    ctx.setupResult.turns += 1
+    await turn.output.write("Processing input")
+    await turn.respond(`Processed Turn ${ctx.setupResult.turns}`)
+    return { input: turn.input, turns: ctx.setupResult.turns }
   },
 })
 ```
 
-The Actor-level `idleTimeout` supplies the default hot-wait duration for Session
-input, Token, and timer waits inside the Actor. An individual wait can override
-it where its API accepts `idleTimeout`. It is separate from a response timeout
-and is not a billing cap. `receive()` can durably park the
-managed Run without closing the Session. New input resumes work without
-discarding the Session's identity or ordered history. A later continuation may
-use a different Run ID.
+Healthy hibernation preserves the live object and native processes. The counter
+is not a separate durable database: exceptional reconstruction reruns setup and
+resets it. Applications that reconstruct important state should use retained disk
+or their own authoritative store and reconcile external effects.
+
+For a model-backed Agent, initialize its managed native harness in setup and use
+that same harness in each Turn. Read the text parts from `turn.input` explicitly,
+propagate `turn.signal`, validate native completion and finish post-processing
+before return. Select human response content separately from raw native events.
 
 ## Deploy and start
 
 ```sh
 helmr deploy . --project demo --env development
-
-COMPUTER_ID="$(helmr computer create hello \
-  --project demo --env development \
-  --key tutorial:assistant \
-  --idempotency-key tutorial:assistant:computer)"
-
-helmr actor start assistant \
-  --project demo --env development \
-  --computer "$COMPUTER_ID" \
-  --key user:ada \
-  --idempotency-key tutorial:assistant:start \
-  --json
+helmr agent start assistant --project demo --env development \
+  --input-json '[{"type":"text","text":"first"}]' --session-key user:ada \
+  --idempotency-key tutorial:assistant:1 --json
 ```
 
-The response contains both `session_id` and the boot `run_id`. Save the Session
-ID for all later interaction.
+The receipt returns a Session and first Turn. Save the Session ID for later
+interaction. A Session key chooses the conversation; an idempotency key reconciles
+one input request.
 
 ## Continue the Session
 
 ```sh
-helmr session enqueue SESSION_ID \
-  --project demo --env development \
-  --data-json '{"type":"message","text":"summarize our work"}' \
-  --idempotency-key tutorial:assistant:message:2
-
-helmr session events SESSION_ID \
-  --project demo --env development \
-  --after 0 --jsonl
+helmr session enqueue SESSION_ID --project demo --env development \
+  --input-json '[{"type":"text","text":"second"}]' --idempotency-key tutorial:assistant:2 --json
+helmr session events SESSION_ID --project demo --env development --after 0 --json
 ```
 
-Event reads are finite pages; output and lifecycle events share one sequence.
-A page ending does not complete a Turn. Pass the last durable sequence back through
-`--after` to read only newer records. Input idempotency keys should come from a
-stable upstream event ID so delivery retries do not duplicate application
-commands.
+Read event pages using `next_after` for the next `--after` value. Observe each Turn
+with `helmr session turn get` or bounded `turn wait`; output EOF is not completion.
+Promotion does not upgrade the existing Session's Agent code.
 
-Inspect the current managed Run with `helmr session get SESSION_ID`. When the
-conversation is finished, close the Session explicitly:
+## Interrupt or finish
 
 ```sh
-helmr session close SESSION_ID \
-  --project demo --env development \
-  --idempotency-key tutorial:assistant:close
+helmr session interrupt SESSION_ID --project demo --env development --json
+helmr session get SESSION_ID --project demo --env development --json
+helmr session resume SESSION_ID --hold HOLD_ID --project demo --env development
+helmr session close SESSION_ID --project demo --env development
 ```
 
-Closing stops future input admission; it does not turn Actor output into Run
-logs. Use the Session output channel for application messages and Run logs and
-events for execution diagnostics.
+Use the exact hold ID returned by interrupt, and its owning Session for resume.
+Interrupt preserves queued Turns; resume permits future work without replaying the
+interrupted input. Close drains accepted work but does not clear holds. Receipts
+acknowledge controls; inspect retained state for convergence.

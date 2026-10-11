@@ -1,12 +1,12 @@
 ---
 title: Quickstart
-description: Create, deploy, and run a Helmr Task in a durable Computer.
+description: Create, deploy, and start a Helmr Agent.
 sidebarLabel: Quickstart
 ---
 
 # Quickstart
 
-This path takes a TypeScript project from source to a completed Run. You need a
+This path takes a TypeScript project from source to a completed Turn. You need a
 Helmr control plane with at least one active worker, plus a project and
 environment you can deploy to.
 
@@ -40,8 +40,8 @@ bun install
 
 `helmr init` creates the Helmr config, TypeScript config, package manifest,
 ignore file, and a starter declaration in `tasks/hello.ts`. The declaration
-exports a Sandbox backed by a container image and a Task that returns one
-result.
+exports a Computer recipe and an Agent that stages a greeting and returns a
+machine result.
 
 ## Deploy it
 
@@ -52,51 +52,49 @@ helmr deploy . --project PROJECT --env ENVIRONMENT
 The CLI builds a content-addressed bundle in the official local builder,
 uploads it, and promotes the verified Deployment by default.
 
-## Create a Computer
-
-Create a durable Computer from the deployed `hello` Sandbox:
+## Start the Agent
 
 ```sh
-COMPUTER_ID="$(helmr computer create hello \
+helmr agent start hello \
   --project PROJECT \
   --env ENVIRONMENT \
-  --key quickstart \
-  --idempotency-key quickstart:computer)"
+  --input-json '[]' \
+  --idempotency-key quickstart:hello \
+  --json
 ```
 
-The key gives the Computer a stable lookup value. The idempotency key makes a
-retried create request safe.
+The receipt contains `session_id` and `turn_id`. Helmr creates the Computer from
+the Agent's definition. Admission means the input was accepted; execution and
+saving can still be pending. Retry an uncertain request with the same key and
+arguments.
 
-## Start the Task
+## Observe the Turn
+
+Use the IDs from the receipt:
 
 ```sh
-helmr task start hello \
-  --project PROJECT \
-  --env ENVIRONMENT \
-  --computer "$COMPUTER_ID" \
-  --idempotency-key quickstart:run \
-  --wait
+helmr session events SESSION_ID --project PROJECT --env ENVIRONMENT
+helmr session turn wait SESSION_ID TURN_ID --timeout 10m --project PROJECT --env ENVIRONMENT --json
+helmr session turn get SESSION_ID TURN_ID --project PROJECT --env ENVIRONMENT --json
 ```
 
-`--wait` waits for the Run to reach a terminal state. Without it, the command
-returns after the Run is accepted.
+Read events while work proceeds. The bounded wait returns either a settled
+outcome or timeout; timeout does not cancel work. Completed includes the committed
+machine result and staged human response after required Save publication.
 
-## Inspect the Run
+## Continue or close the Session
 
 ```sh
-helmr run list --project PROJECT --env ENVIRONMENT
-helmr run get RUN_ID --project PROJECT --env ENVIRONMENT
-helmr run logs RUN_ID --project PROJECT --env ENVIRONMENT
-helmr run events RUN_ID --project PROJECT --env ENVIRONMENT
+helmr session enqueue SESSION_ID --input-json '[]' --project PROJECT --env ENVIRONMENT
+helmr session close SESSION_ID --project PROJECT --env ENVIRONMENT
 ```
 
-Continue with [Run your first Task](/docs/guides/tutorials/first-task) for a
-typed payload and Computer file example, or [Durable agent](/docs/guides/tutorials/durable-agent)
-to add ongoing input and output with an Actor.
+Enqueue adds another Turn. Close rejects new ordinary admission and drains work
+already accepted. Continue with the [Agent reference](/docs/reference/sdk/agents-and-sessions).
 
 ## Local development note
 
 In the Helmr repository, `make dev` starts a local database, control plane, and
 web UI. It uses the S3 object stores named by `CAS_URI` and `PLATFORM_STORE_URI`
-and does not provide worker capacity. A remotely executed Task still needs an
+and does not provide worker capacity. A remotely executed Agent still needs an
 active worker.

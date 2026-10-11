@@ -1,46 +1,39 @@
 # Hello World
 
-The smallest Helmr Task and Computer declarations: build an image, define the
-Computer that uses it, accept Task payload, and write a file during the Run.
+Define an Agent and its Computer, validate each Turn's input, and write a file
+on the Computer. The Session retains that file across later Turns.
 
 ```bash
 helmr deploy PATH/TO/hello-world --project PROJECT --env ENVIRONMENT
+helmr agent start hello-world --text Helmr --project PROJECT --env ENVIRONMENT --json
 ```
 
-## Session lifecycle examples
+The admission includes a Session ID and a Turn ID. Inspect the outcome with
+`helmr session turn wait SESSION_ID TURN_ID --timeout 5m --json`, using the same
+project and environment flags. A timeout stops observation and leaves work running.
 
-`tasks/session.ts` adds two editable Actors using the same Computer:
+## Output, response and questions
 
-- `checked-reply` emits finite output, performs a deterministic check, then
-  completes with a required typed result or fails. Enqueue
-  `{"text":"hello","expected":"hello"}` for success; change `expected` to observe
-  output followed by `turn.failed`. A stream ending never determines success.
-- `external-ci` emits an authenticated integration request and waits on a generic
-  Token. Enqueue `{"commit":"your-commit"}`; consume `ci_requested` from the Session
-  event timeline and deduplicate the CI start using that event's ID. Complete the
-  Token through an authenticated client:
+`tasks/session.ts` defines `checked-reply` with the same default Computer definition:
 
-  ```ts
-  await client.tokens.complete(tokenId, {
-    result: { passed: true, reportUrl: "https://ci.example/build/123" },
-    idempotencyKey: "ci:build-123:finished",
-  })
-  ```
+- `checked-reply` writes output, validates it, stages a response, and returns a
+  machine result. Send `{"text":"hello","expected":"hello"}` as the text of one
+  input part for success.
+  Change `expected` to observe output followed by failure. Output alone never
+  establishes success; successful settlement publishes the staged response.
 
-Start an Actor without input, then enqueue with the returned Session ID. Read
-`helmr session events SESSION_ID --json` and retain `next_after`; inspect a Turn
-with `helmr session turn get SESSION_ID TURN_ID`. Output and lifecycle share one
-sequence. The external CI service is application-owned; the example does not
-contact a provider automatically.
+This Agent parses JSON from text. For example:
 
-To exercise a managed wait, enqueue A and wait for `ci_requested`, then enqueue B.
-Interrupt A using its exact Turn ID. A Token completion that races interruption
-does not authorize further Turn output or replay A; inspect the Turn's terminal
-outcome. Queued B remains behind the hold. Once interruption converges, resume
-using the exact hold from the stop receipt (`session resume SESSION_ID --hold ID`).
-Stopping this wait does not globally cancel its Token or another consumer's wait.
-The SDK supports shared Token consumers; this example creates one per Turn.
+```bash
+helmr agent start checked-reply --text '{"text":"hello","expected":"hello"}' --project PROJECT --env ENVIRONMENT --json
+```
 
-This managed Token wait can checkpoint; it makes no claim that an arbitrary
-provider socket or callback survives suspension. Native VM race/restore
-qualification is separate from typechecking these examples.
+Use `helmr session events SESSION_ID --json` and retain `next_after` to reconnect.
+To hold a Session and its owned descendants, use `helmr session interrupt SESSION_ID`.
+Queued work remains; resume the owning Session using the returned exact hold ID
+with `helmr session resume SESSION_ID --hold HOLD_ID`. Interrupted input is not
+replayed. A question response racing interruption does not authorize continued
+output or successful settlement of the interrupted Turn.
+
+These examples require a deployed environment for lifecycle and restoration
+qualification; local typechecking does not establish that runtime evidence.

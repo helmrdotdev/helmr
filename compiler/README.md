@@ -21,6 +21,29 @@ Computer Image source-copy operations still use the captured installed project.
 They do not use the selective Program payload. The server executes generated
 JavaScript; it does not interpret the author's TypeScript configuration.
 
+## Agent and Computer declarations
+
+Analysis discovers exported `agent()` and `computer()` values. An Agent also
+makes its referenced Computer discoverable, including an inline declaration.
+Re-exports of one object have one deterministic locator; distinct objects with
+the same kind and ID fail the build. IDs use
+`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`.
+
+The build plan records resources, preparation and execution function presence,
+freshness policy, triggers, and separate build/runtime Secret ID bindings.
+The verification frame emits the build plan and one runtime locator,
+`helmr/definition-index.json`, which locates the bundled Agent and Computer objects.
+The compiler result records input/module provenance without copying the locators. Preparation
+loads the original `prepare` function from that object, retaining its supporting
+modules and closures. Analysis does not invoke `prepare`, `setup`, or `turn`, and
+does not serialize functions. A Computer exported directly is preferred over
+reaching it through an Agent when both refer to the same object.
+
+Author cron triggers with `triggers.cron(id, expression, { timezone, input })`
+and supply them in the Agent's `triggers` array. A timezone is required; analysis
+preserves the authored cron/timezone, and Control validates calendar semantics.
+Unknown policy members and duplicate trigger IDs fail analysis.
+
 ## Runtime dependencies and files
 
 ```ts

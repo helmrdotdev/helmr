@@ -1,211 +1,105 @@
-# Issue fixer with native human interaction
+# Issue fixer with retained native sessions
 
-These editable Actors use the prerelease Session/Turn SDK with the provider versions
-already pinned in `examples/issue-fixer/package.json`: Codex app-server 0.133.0 and Claude
-Agent SDK 0.3.149. They are application examples, not a provider adapter package.
-The Actors accept JSON and validate it locally with Zod. Input formats are not
-declared on the Actor.
+These Agents use the pinned Codex app-server and Claude Agent SDK versions in
+`package.json`. Each Agent opens one native harness during Session setup and reuses
+it across Turns. The wrappers in `codex.ts` and `claude.ts` connect the adapters to
+the authored Agent lifecycle; the application owns provider configuration and
+interpretation of answers.
 
-- `codex.ts`: a native thread/turn, exact `turn/steer`, command/file approvals and
-  `item/tool/requestUserInput`. Unsupported interactive methods fail closed. Secret
-  questions require a private application channel and are rejected here.
-- `claude.ts`: `canUseTool`, `AskUserQuestion`, and streaming-input follow-ups. The sample
-  queues follow-ups and submits them after each native result.
-- `human.ts`: live request correlation and the fresh permission admission write.
-  This map disappears with the process; it is not a Token or managed durable wait.
-- `../../interfaces/issue-fixer-slack.ts`: verified Slack intake and a retained-event
-  projection, independent of the chosen Actor/provider.
+- `codex-harness.ts` runs an app-server thread, delivers exact native steering,
+  and converts native questions and one-time command/file approvals to Turn asks.
+- `claude-harness.ts` retains a streaming query, serializes follow-ups, converts
+  native questions/permissions to Turn asks, and rejects background work.
+- `native-lifecycle.ts` registers setup and operation lifetimes with the managed
+  Runtime. Native terminal text alone does not establish physical convergence.
+- `native-content.ts` and `native-questions.ts` translate supported text/JSON and
+  question controls. Secret questions and unsupported semantics fail visibly.
 
-## Running in an isolated computer
+## Configure the Computer
 
-Set `ISSUE_FIXER_REPOSITORY` to a disposable, Session-owned repository checkout in
-the Actor computer. Different Sessions must not share its writable directory.
-Install the pinned workflow dependencies, configure the chosen provider's ordinary
-credentials on the runtime host, and edit `checks.ts` to use that repository's fixed
-deterministic check command. The webhook cannot select a path or shell command.
-Provider use can incur its normal usage charges; local tests below do not invoke a
-model. The samples do not create commits, push changes or open pull requests.
+Before use, edit `computer.ts` to prepare your fixed repository under
+`/workspace/repository` and bind the required provider credentials by stable
+Environment Secret ID. The checked-in image only supplies tools and a directory;
+it does not fetch your repository or contain credentials. Use a disposable
+repository and a separate Computer for each independent Session. Set
+`ISSUE_FIXER_REPOSITORY` if you choose another fixed path. Input cannot select a
+filesystem path or shell command.
 
-Deploy these Actors using the existing workflow configuration. Start either Actor
-with the ordinary `actors.start`/CLI flow and retain the resulting Session ID.
-Each Helmr Turn starts a native process and resumes the Session's saved native
-conversation when present. The conversation files must survive in the Computer;
-see the continuity requirements and qualification limits below.
+Edit `checks.ts` to use that repository's deterministic validation command. The
+sample runs `npm test -- --runInBand`. A native result is followed by that check;
+only a successful handler return permits successful Turn settlement and publication
+of the staged native response. Failed checks remain failed Turns, even if output
+was already visible.
 
-Mount `acceptSlackEvent` in your HTTP application, supplying the original body
-bytes, a 64 KiB body limit and a request-read timeout. Bind one configured Slack
-app/team/channel and an explicit user allowlist to the Session reference. Subscribe
-to `app_mention`. Signature validation is not user authorization; both checks apply.
-The function waits at most 1.8 seconds for the Helmr request after reading the body,
-then acknowledges only success. A timeout returns non-2xx so Slack retries the same
-event ID/idempotency key. Monitor failed deliveries: Slack retries are finite; this
-small ingress does not promise indefinite durable delivery. For stronger intake
-availability, persist the verified event in the application's durable queue before
-ACK and dispatch with that same key. Do not replay unknown effects after the
-operation history retention window without reconciliation.
+The default native credentials come from the configured Computer environment.
+The application does not copy authentication from developer home directories.
+Provider calls can incur ordinary provider charges. Tests use synthetic credentials
+and local responses. Running the actual Agent requires your configured environment.
 
-Commands after mentioning the bot:
+## Start and interact
 
-```text
-send The login form loses its error message
-fix Add a regression test for password reset
-send Keep the current public API
-reply TURN_A {"type":"update_constraints","text":"Do not change the public API"}
-reply TURN_A {"type":"answer","requestId":"REQUEST_ID","answers":{"QUESTION_KEY":["Keep existing behavior"]}}
-reply TURN_A {"type":"approval","requestId":"REQUEST_ID","allow":true}
-stop TURN_A
-resume CURRENT_HOLD_ID
+```bash
+helmr deploy PATH/TO/issue-fixer --project PROJECT --env ENVIRONMENT
+helmr agent start codex-issue-fixer --input-json '[{"type":"text","text":"Fix the login regression"}]' --project PROJECT --env ENVIRONMENT --json
 ```
 
-Use the question keys from `human_requested`: Codex uses question IDs; Claude uses
-question text. Approvals apply only to the displayed operation, never a future or
-Session-wide permission. Application reply payloads are freely designed; these
-schemas are examples, not new Helmr message types.
+Use `claude-issue-fixer` for Claude. Initial input and native follow-ups are text-part
+arrays such as `[{"type":"text","text":"Keep the existing public API"}]`.
+Send follow-ups to the exact Turn; enqueue for a new Turn. Observe retained message
+dispositions when native completion races delivery.
 
-Create a bot-owned Slack status message once and configure its channel/`ts` for
-`projectSlackStatus`. Run one projector per Session/state file, calling it repeatedly.
-It updates that fixed message and saves the event cursor only after success. A crash
-between update and cursor persistence repeats an update instead of creating a second
-message. Keep the state path dedicated to the same Session and destination. This
-compact status projection retains eight event summaries; use the Helmr timeline for
-full request bodies/history. A large request may be truncated on Slack: inspect its
-full action in the timeline before replying. Use a restricted channel; tool inputs,
-model output and replies can contain repository content. Never send secrets here.
+Setup obtains `createRuntimeMcpConnection()` from `@helmr/sdk/mcp` and supplies the
+Session-bound endpoint and headers to the native harness. Runtime owns upstream
+authority renewal. Do not log the descriptor or put its headers into model input.
+Native tool permission policy remains separate from Helmr's runtime authority.
+Unsupported native interactive request forms are rejected.
 
-A remote failure or `cursor_expired` must remain visible to the host; do not reset the
-cursor or treat a failed update as delivered. Use a bot token/destination that remain
-valid for long waits rather than a short-lived interaction response URL. This code
-was not run against a real Slack computer as part of local qualification.
+Questions use the ordinary exact-Turn ask list/get/respond workflow. They carry
+question controls and authenticated responder attribution. This application maps
+an approval answer to one displayed native operation; an answer never grants
+Session-wide permission. Helmr validates answer authority and lifecycle while
+the application interprets the answer. A late or cancelled answer cannot move to
+the next Turn.
 
-## Lifecycle exercise
+Slack is configured in Console and delivered through Helmr's conversation routes.
+This example does not host a second Slack ingress, store Slack bot credentials, or
+project its own status messages. Use the retained Helmr timeline for full output,
+questions and lifecycle history.
 
-1. Enqueue issue A, then issue B. B must remain queued while A is running.
-2. While A awaits a native question/approval, send a constraint or reply to **A's**
-   exact Turn. Human waits do not occupy the serial Helmr message handler.
-3. Stop A before replying. The live request is invalidated; a late reply cannot be
-   redirected to B or grant an action. Stop is not an ordinary application failure.
-4. Read the Session after convergence and resume with its **current** hold ID. The
-   interrupt receipt's initial hold can already be stale. Recovery-required holds
-   need operator reconciliation rather than ordinary resume.
-5. B runs after resume. Provider stream completion alone does not complete it:
-   deterministic checks run next, and only their success calls `turn.complete()`.
-   A failed check calls `turn.fail()`.
+## Retention and interruption
 
-The runtime owns writer exclusion, Computer proof and the terminal stop state.
-Stopping a local process does not undo remote effects. Native background/external
-work requires application reconciliation before recovery. The small samples do not
-qualify arbitrary native sockets or callback Promises for checkpoint/restore.
+`conversation.ts` records native history identity under
+`<repository>/.helmr/issue-fixer/<session>/<provider>`. Keep `.helmr/` out of commits
+and preserve it with the Computer. Healthy continuation retains setup and native
+process state. Exceptional reconstruction must use retained native history and
+fail visibly when that history is unavailable; a reserved native ID alone is not
+proof of persisted history. Pending native permission callbacks are not reconstructed.
 
-## Primitive design observations
+Interrupt the Session and its owned descendants through the Session control API.
+Inspect convergence and the returned hold, then resume the owning Session with the
+exact authorized hold ID. Queued inputs remain; interrupted input is not replayed.
+Runtime owns fencing and physical writer exclusion. Stopping local work does not
+roll back an already performed external effect.
 
-`session.enqueue(input)` and `session.turn(id).send(message)` express different
-intent here: new work versus interaction with an already identified operation.
-Automatic `session.send({issue})` uses the same conversational payload both idle and
-active. The Slack `send` command demonstrates it; `fix` deliberately queues a new
-Turn. Both native Actors accept issue payloads as follow-ups, alongside independently
-validated exact questions/approvals. Codex registers its handler only after the native
-Turn exists, so startup input can wait in Helmr without being prematurely rejected.
-A provider completion can still beat delivery; the application rejects that message
-rather than pretending it was consumed. Inspect the retained message disposition.
+## Local verification
 
-The permission fence deserves separate scrutiny: `output.write` provides a fresh,
-Turn-scoped admission ordering point, not a permission interpretation. The record
-binds the exact live native operation and is awaited before allow. Failed or
-ambiguous writes never grant. A separate permission primitive would need to provide
-an additional guarantee beyond that fence; merely hiding provider-specific pending
-request state would not do so. Native cancellation and native response formats remain
-application responsibilities.
+From the repository root, build the local SDK with
+`scripts/build-npm-packages.sh`. Then, inside this example, run:
 
-## Local validation and remaining proof
-
-```sh
-nix develop .#default --command sh -c 'bun run --cwd examples/issue-fixer typecheck && bun test examples/issue-fixer/tests/issue-fixer.test.ts && bun test examples/issue-fixer/tests/issue-fixer-native.test.ts'
+```bash
+bun install --frozen-lockfile --ignore-scripts
+bun run typecheck
+bun run test
+bun run test:native-probes
 ```
 
-The tests cover delayed subprocess exit before checks, two rapid Claude follow-ups,
-native cancellation while output projection is blocked, live correlation,
-duplicate/stale replies, cancellation during a
-fresh admission write, stop-before-local-signal and ambiguous writes, plus signed
-interface authorization, Slack text decoding, immutable request targeting and
-repeated fixed-message updates after an uncertain response. They do not prove a
-provider executed or cancelled an action, an actual Slack delivery, or VM/process-tree
-exclusion. The complete A/B interruption exercise still requires package 5's isolated
-runtime/provider qualification. Do not mark those gates passed from these tests.
+Run through the repository's Nix environment. The mock tests run in separate
+processes so provider mocks cannot leak into other tests. Native probes bundle for
+and execute under Node, matching Runtime's required Node APIs. They exercise
+warm process identity, questions, application failure, interruption and Codex-only local MCP
+connection initialization using real pinned provider processes with loopback
+services. They do not call remote models.
 
-Protocol references checked 2026-09-20:
-
-- [Codex app-server](https://learn.chatgpt.com/docs/app-server): the pinned binary's
-  `app-server generate-ts` supplies the version-matched question/answer definitions.
-  Question APIs are experimental. The sample initializes that capability explicitly.
-  It also enables `features.default_mode_request_user_input`; on pinned 0.133.0,
-  experimental client capability alone does not allow questions in Default mode.
-- [Claude approvals and questions](https://code.claude.com/docs/en/agent-sdk/user-input):
-  callbacks only cover requests reaching the native permission prompt, not all tools.
-  No bypass mode or Session-wide grants are requested by this sample.
-- [Slack signatures](https://docs.slack.dev/authentication/verifying-requests-from-slack/)
-  and [event delivery](https://docs.slack.dev/apis/events-api/).
-
-## Conversation continuity
-
-`conversation.ts` stores each Session/provider's native conversation ID and provider
-home under `<repository>/.helmr/issue-fixer/<session>/<provider>`. Keep `.helmr/` out
-of commits and preserve it in the captured Computer; do not delete it when checking
-out the next task. Codex uses this location as CODEX_HOME, starts a persisted thread
-and later calls thread/resume. Claude uses it as CLAUDE_CONFIG_DIR with persistence
-and later passes resume. Configure existing provider authentication through the
-application's environment; the samples do not copy credentials from host homes.
-These locations contain private transcripts and possibly provider state.
-
-Each Run can start fresh native processes while retaining conversation history.
-A missing/corrupt saved conversation must fail visibly, never silently start a new
-conversation. Only provider history/state persists: pending approval callbacks and
-permission grants are not reconstructed. An interruption still requires Helmr's
-physical convergence and exact current-hold resume before queued work proceeds.
-
-The local Claude fixture invokes the Actor twice with separate Run heaps and checks
-that the second query receives the persisted native ID. This proves application
-wiring only, not native model memory, provider crash durability or Computer restore.
-Native end-to-end context continuation remains a runtime/provider qualification gate.
-
-Run the real pinned Codex process qualification separately from mocked native tests:
-
-```sh
-nix develop --command bun test examples/issue-fixer/probes/codex-conversation.test.ts
-```
-
-This probe uses a loopback Responses fixture and the actual Actor/app-server code.
-It checks native questions and answers (including the answer after resume), denied
-command approval, interruption while a question is pending, stale reply rejection,
-and saved conversation identity/history after restarting the native process.
-It does not call a remote model or execute the denied command. Helmr handler
-delivery and repository checks are fixtures; this is not a deployed Session,
-queue/hold exercise, crash-durability proof or VM Computer restore test.
-
-The Claude probe runs the production Actor and its HumanRequests helper with the
-actual pinned SDK/native processes:
-
-```sh
-nix develop --command bun test examples/issue-fixer/probes/claude-conversation.test.ts
-```
-
-Run it separately from other test files: it replaces repository checks and isolates
-the process environment to fixture credentials and a temporary home. Loopback
-Messages responses exercise AskUserQuestion, exact answer handling, duplicate and
-stale reply rejection, Bash approval denial with no marker file, two serialized
-follow-ups and answered/denied history after fresh-process resume. A second scenario
-interrupts a pending question, rejects its old reply in both the old and next Actor
-invocations, and resumes the same native conversation. Native SDK results can arrive
-after interruption; they do not authorize Helmr completion. The check fixture honors
-the abort signal, and the interrupted invocation neither runs checks nor completes.
-
-The Actor waits for its direct child exit before returning. These probes qualify
-application integration, not durable Helmr message delivery, physical descendant
-exclusion, managed waits, crash durability, real inference or VM Computer restore.
-
-A non-inference probe of pinned Codex 0.133.0 accepted thread/start but a new
-process immediately attempting thread/resume returned "no rollout found". An empty
-thread's ID is not proof of persisted history. The sample deliberately propagates
-that failure instead of silently opening a replacement conversation; applications
-must reconcile missing native history. Neither a Helmr output receipt nor Computer
-capture can make a provider persist data that it has not written. The probe made no
-turn/start, model, login or outbound interface request.
+These checks do not prove deployed admission, real provider inference, actual
+Slack delivery, guest descendant containment, VM capture/restore, or cross-host
+continuation. Those require the corresponding runtime qualification.

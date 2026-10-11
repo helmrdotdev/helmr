@@ -55,7 +55,7 @@ The Make build/test/lint targets and CI entrypoints perform this generation.
   without deploying a host. The Linux process-boundary check remains separate.
 - `nix develop -c bash dev/local/start.test.sh`: local composition tooling.
 - `nix develop -c scripts/check-e2e.sh`: case typechecks and helper unit tests;
-  does not run Tasks, Actors or browsers and does not prove runtime behavior.
+  does not execute Agents or browsers and does not prove runtime behavior.
 - Build fixture analysis: run `scripts/build-compiler-entry.sh` and
   `scripts/build-hostconfig-entry.sh`, then `node tests/build/check-fixture-analysis.mjs`
   in the Nix development shell. This is compiler analysis, not real execution.
@@ -65,6 +65,10 @@ The Make build/test/lint targets and CI entrypoints perform this generation.
 - Real behavior: choose cases and follow [E2E instructions](e2e/README.md).
 - Browser: use the repository Playwright configuration and select the relevant
   spec. Artifact/provider tests retain their own explicit prerequisites.
+- `nix develop -c bash tests/build/preparation.test.sh`: authored Computer
+  preparation and descendant cleanup in a disposable privileged Docker container.
+  Requires a local Linux Docker engine; it does not exercise Firecracker or
+  Control Plane allocation.
 
 Fast PR CI keeps its existing source checks. The broader Nix CI entrypoints
 compose the same checks explicitly; changing file layout does not add real-host

@@ -1,52 +1,43 @@
 ---
 title: Wait for human input
-description: Use a Token for one external decision or Actor input for a conversation.
+description: Ask a typed question and respond to its exact Session and Turn.
 ---
 
 # Wait for human input
 
-Choose the primitive by capability: Actor input continues a durable channel;
-a Token grants one narrow completion for one value.
-
-For an approval link or provider callback, create and wait on a Token inside
-the owning Run:
+In an Agent handler, await an exact question:
 
 ```ts
-import { tokens } from "@helmr/sdk"
+import type { Turn } from "@helmr/sdk"
 
-const approval = await tokens.create({
-  timeout: "30m",
-  metadata: { action: "publish-review" },
-  tags: ["approval"],
-  idempotencyKey: `approval:${ctx.run.id}`,
-})
-
-await sendApprovalLink(approval.callbackUrl)
-const decision = await approval.wait({
-  timeout: "35m",
-  schema: approvalSchema,
-}).unwrap()
+export async function chooseRevision(turn: Turn) {
+  const { answer, respondedBy } = await turn.ask({
+    prompt: [{ type: "text", text: "Which revision should I review?" }],
+    answer: { type: "text" },
+  })
+  return { revision: answer, responder: respondedBy }
+}
 ```
 
-The create response is the public SDK result that includes `callbackUrl` and
-`publicAccessToken`. Treat both as credentials. Completion makes the Token
-`completed`; cancellation and expiry reject the wait with typed errors.
+The handler can then validate and use the answer. Finishing the question does
+not finish the Turn. Complete native work and application checks before returning
+its machine result or staging a response.
 
-For continuing questions, corrections or commands, receive work with
-`session.receive()` and register `await turn.onMessage(handler)` before publishing
-a question. External callers use `client.sessions.ref(id).turn(turnId).send(data)`
-for exact replies. Input `type`, request IDs and answer/approval payloads belong
-to your application; Helmr does not prescribe a question or permission schema.
+Find and answer the question from an authenticated CLI:
 
-The generic Token SDK is also available inside an Actor. Completing a Token does
-not complete the Turn or grant permission to perform a stopped action. For a live
-native approval, bind the answer to the exact request/action and await a fenced
-`turn.output.write({ type: "permission_admitted", requestId, actionBinding })`
-before returning allow, only while that callback is still live. A rejected or
-ambiguous write, historical receipt, or abort signal alone cannot authorize it.
-Helmr treats this output as opaque application data.
+```sh
+helmr session turn ask list SESSION_ID TURN_ID --project agents --env development --json
+helmr session turn ask get SESSION_ID TURN_ID ASK_ID --project agents --env development --json
+helmr session turn ask respond SESSION_ID TURN_ID ASK_ID \
+  --project agents --env development \
+  --answer-json '"revision-42"' --response-id answer:revision-42 --json
+```
 
-Managed Token waits can park the Run. Native provider callbacks and arbitrary
-sockets are not automatically durable; use their native cancellation contracts.
-Set timeouts, reject late replies, and explicitly complete/fail the Turn only
-after the application work has settled.
+Use the displayed control to construct the answer. Keep the same response ID
+and answer across an uncertain retry. Current membership or explicit API-key
+answer permission is required. Answers are attributed to that principal.
+
+Use `turn.onMessage` for free-form steering and exact Turn messages for live
+corrections. Use the ask response API for questions; a message does not settle an
+ask. Native permission callbacks must bind the answer to their live native request
+and observe stop/convergence rules. See [Questions](/docs/reference/sdk/questions).
