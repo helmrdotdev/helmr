@@ -36,7 +36,7 @@ func commandFixture(t *testing.T) fixture {
 	return f
 }
 func (f fixture) request(key string) CreateRequest {
-	return CreateRequest{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.Environment, ComputerID: f.Computer, Creator: Creator{SubjectType: string(auth.PrincipalKindSession), SubjectID: f.User.String()}, Argv: []string{"true"}, IdempotencyKey: key}
+	return CreateRequest{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.Environment, ComputerID: f.Computer, Creator: Creator{Kind: string(auth.PrincipalKindSession), ID: f.User}, Argv: []string{"true"}, IdempotencyKey: key}
 }
 func (f fixture) ref(id uuid.UUID) Ref {
 	return Ref{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.Environment, CommandID: id}
@@ -146,7 +146,7 @@ func TestCommandReplayAfterDeletionAndExpiredReceipt(t *testing.T) {
 	if _, err = Create(t.Context(), f.Pool, f.request("new")); !errors.Is(err, computer.ErrDeleting) {
 		t.Fatalf("new admission: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE platform_retry_keys SET accepted_at=accepted_at-interval '31 days',receipt_expires_at=receipt_expires_at-interval '31 days' WHERE environment_id=$1 AND command_id=$2`, f.Environment, id)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE platform_retry_keys SET accepted_at=accepted_at-interval '31 days' WHERE environment_id=$1 AND command_id=$2`, f.Environment, id)
 	var expired idempotency.ExpiredError
 	if _, err = Create(t.Context(), f.Pool, f.request("replay")); !errors.As(err, &expired) {
 		t.Fatalf("expired create: %v", err)

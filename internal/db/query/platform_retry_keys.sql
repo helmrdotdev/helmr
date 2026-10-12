@@ -1,6 +1,6 @@
 -- name: LockPlatformRetryKey :one
 SELECT sqlc.embed(k),
-    k.receipt_expires_at<=clock_timestamp() AND NOT EXISTS (
+    k.accepted_at<=clock_timestamp()-interval '720 hours' AND NOT EXISTS (
         SELECT 1 FROM computer_commands c WHERE c.environment_id=k.environment_id AND c.id=k.command_id
         AND (c.terminal_at IS NULL OR (c.computer_lease_epoch IS NOT NULL AND c.process_reconciled_at IS NULL))
     ) AS expired
@@ -12,20 +12,20 @@ FOR UPDATE OF k;
 INSERT INTO platform_retry_keys(environment_id,id,operation,slot_hash,request_fingerprint,
     scope_secret_name,scope_secret_id,scope_computer_id,scope_command_id,scope_caller_kind,scope_computer_key,
     deployment_id,secret_id,secret_version_id,computer_id,command_id,receipt,
-    accepted_at,receipt_expires_at)
+    accepted_at)
 VALUES(sqlc.arg(environment_id),sqlc.arg(id),sqlc.arg(operation),sqlc.arg(slot_hash),sqlc.arg(request_fingerprint),
     sqlc.narg(scope_secret_name),sqlc.narg(scope_secret_id),sqlc.narg(scope_computer_id),sqlc.narg(scope_command_id),sqlc.narg(scope_caller_kind),sqlc.narg(scope_computer_key),
     sqlc.narg(deployment_id),sqlc.narg(secret_id),sqlc.narg(secret_version_id),sqlc.narg(computer_id),sqlc.narg(command_id),sqlc.arg(receipt),
-    statement_timestamp(),statement_timestamp()+interval '720 hours')
+    statement_timestamp())
 RETURNING *;
 
 -- name: PruneExpiredPlatformRetryReceipts :execrows
 WITH candidates AS MATERIALIZED (
     SELECT k.environment_id,k.id FROM platform_retry_keys k
-    WHERE k.receipt IS NOT NULL AND k.receipt_pruned_at IS NULL AND k.receipt_expires_at<=statement_timestamp()
+    WHERE k.receipt IS NOT NULL AND k.receipt_pruned_at IS NULL AND k.accepted_at<=statement_timestamp()-interval '720 hours'
     AND NOT EXISTS(SELECT 1 FROM computer_commands c WHERE c.environment_id=k.environment_id AND c.id=k.command_id
         AND (c.terminal_at IS NULL OR (c.computer_lease_epoch IS NOT NULL AND c.process_reconciled_at IS NULL)))
-    ORDER BY k.receipt_expires_at,k.id LIMIT sqlc.arg(row_limit) FOR UPDATE OF k SKIP LOCKED
+    ORDER BY k.accepted_at,k.id LIMIT sqlc.arg(row_limit) FOR UPDATE OF k SKIP LOCKED
 )
 UPDATE platform_retry_keys k SET receipt=NULL,receipt_pruned_at=statement_timestamp()
 FROM candidates c WHERE k.environment_id=c.environment_id AND k.id=c.id;

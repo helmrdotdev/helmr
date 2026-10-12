@@ -7,7 +7,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -15,12 +14,11 @@ import (
 // DispatchSupply shares Group and Pool locks and locks the selected Host.
 // Continuation preserves already admitted work through paused/draining supply.
 type DispatchSupply struct {
-	GroupID             pgtype.UUID
-	RegionID            string
-	HostID              pgtype.UUID
-	Epoch               int64
-	RuntimeArchitecture string
-	RequirePrimary      bool
+	GroupID        pgtype.UUID
+	RegionID       string
+	HostID         pgtype.UUID
+	Epoch          int64
+	RequirePrimary bool
 	// Continuation continues already admitted work: it accepts a paused or
 	// draining Group, a draining Pool or Host and admission pauses. Admission
 	// requires active supply without an admission pause.
@@ -64,7 +62,6 @@ SELECT worker_pools.status = 'active'
 	hostAdmitting, err := db.New(tx).LockAdmissionEligibleWorkerHost(ctx, db.LockAdmissionEligibleWorkerHostParams{
 		ID: supply.HostID, WorkerGroupID: supply.GroupID, WorkerEpoch: supply.Epoch,
 		Continuation: supply.Continuation, WorkerFreshnessSeconds: ObservationFreshnessSeconds,
-		RuntimeArchitecture: supply.RuntimeArchitecture, Contract: vmplatform.Contract,
 	})
 	if err != nil {
 		return false, fmt.Errorf("lock eligible worker epoch: %w", err)

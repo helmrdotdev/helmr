@@ -41,7 +41,6 @@ WITH locked AS (
     WHERE secrets.environment_id = sqlc.arg(environment_id)
       AND secrets.id = sqlc.arg(secret_id)
       AND secrets.status = 'active'
-      AND secrets.revision = sqlc.arg(expected_revision)
       AND secrets.current_version_id = sqlc.arg(expected_current_version_id)
     FOR UPDATE
 ),
@@ -64,7 +63,6 @@ version AS (
 )
 UPDATE secrets
 SET current_version_id = version.id,
-    revision = revision + 1,
     updated_at = now()
 FROM version
 WHERE secrets.id = version.secret_id
@@ -72,7 +70,6 @@ RETURNING secrets.*;
 -- name: RevokeSecret :one
 UPDATE secrets
 SET status = 'revoked',
-    revision = revision + 1,
     current_version_id = NULL,
     revocation_generation = revocation_generation + 1,
     revoked_at = now(),
@@ -80,7 +77,7 @@ SET status = 'revoked',
 WHERE environment_id = sqlc.arg(environment_id)
   AND id = sqlc.arg(id)
   AND status = 'active'
-  AND revision = sqlc.arg(expected_revision)
+  AND current_version_id = sqlc.arg(expected_current_version_id)
 RETURNING *;
 -- name: GetSecretSnapshotByName :one
 SELECT

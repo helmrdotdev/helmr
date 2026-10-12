@@ -239,7 +239,7 @@ func TestVerificationObservationCapacityAndFleet(t *testing.T) {
 		}
 	}
 	fleet := observe(t, f.Pool, "worker-fleet", map[string]any{"region": "test"}).([]any)
-	if len(fleet) != 1 || fleet[0].(map[string]any)["arch"] != "x86_64" || fleet[0].(map[string]any)["kernel_digest"] == nil {
+	if len(fleet) != 1 || fleet[0].(map[string]any)["rootfs_digest"] == nil || fleet[0].(map[string]any)["kernel_digest"] == nil {
 		t.Fatalf("fleet=%v", fleet)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET observed_at=now()-interval '10 minutes'`)
@@ -303,7 +303,7 @@ func TestVerificationObservationCheckpointMembership(t *testing.T) {
 		}
 	}
 	command := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_commands(environment_id,id,computer_id,argv,env,stdin,timeout_ms,created_by_subject_type,created_by_subject_id) VALUES($1,$2,$3,ARRAY['true'],'{}','',1000,'user','fixture')`, f.Environment, command, f.Computer)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_commands(environment_id,id,computer_id,argv,env,stdin,timeout_ms,caller_kind,caller_id) VALUES($1,$2,$3,ARRAY['true'],'{}','',1000,'session',uuidv7())`, f.Environment, command, f.Computer)
 	commands := func() []any {
 		return observe(t, f.Pool, "computer-path", map[string]any{"computer_id": f.Computer.String()}).(map[string]any)["commands"].([]any)
 	}
@@ -329,7 +329,6 @@ func TestSlackDeliveryObservationExcludesPrivatePayloads(t *testing.T) {
  SELECT $2,$11,org_id,'app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['chat:write'],$3 FROM environments WHERE id=$1;
  INSERT INTO agent_publications(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($5,$1,$6,$11,$2,$3);
  INSERT INTO slack_channels(id,installation_id,slack_channel_id,environment_id,publication_id,organization_id,team_id) SELECT $4,$2,'C1',$1,$5,org_id,'team' FROM environments WHERE id=$1;
- UPDATE sessions SET slack_channel_id=$4 WHERE environment_id=$1 AND id=$7;
  INSERT INTO slack_threads(id,channel_id,environment_id,front_session_id,organization_id,team_id,slack_channel_id,thread_ts,opening_publication_key,stream_status_repair,delivery_error)
  SELECT $8,$4,$1,$7,org_id,'team','C1','123.456','opening',true,'slack_delivery_warning' FROM environments WHERE id=$1;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($9,$8,$1,$7);

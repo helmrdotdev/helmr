@@ -275,10 +275,10 @@ func (s saveObjectScope) lockMatching(ctx context.Context, tx pgx.Tx, object sav
 
 func (s saveObjectScope) pin(ctx context.Context, tx pgx.Tx, object saveObject) error {
 	if s.preparationID.Valid {
-		_, err := tx.Exec(ctx, `INSERT INTO computer_object_pins(environment_id,preparation_id,digest) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, s.environmentID, s.preparationID, object.digest)
+		_, err := tx.Exec(ctx, `INSERT INTO computer_object_pins(id,environment_id,preparation_id,digest) VALUES(uuidv7(),$1,$2,$3) ON CONFLICT DO NOTHING`, s.environmentID, s.preparationID, object.digest)
 		return err
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO computer_object_pins(environment_id,save_id,digest) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, s.environmentID, s.saveID, object.digest)
+	_, err := tx.Exec(ctx, `INSERT INTO computer_object_pins(id,environment_id,save_id,digest) VALUES(uuidv7(),$1,$2,$3) ON CONFLICT DO NOTHING`, s.environmentID, s.saveID, object.digest)
 	return err
 }
 

@@ -61,7 +61,7 @@ func TestWorkerPreparationLogDurableReceiptAndFences(t *testing.T) {
 	if _, err := client.AppendPreparationLog(t.Context(), changed); err == nil {
 		t.Fatal("foreign epoch accepted")
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_preparations SET stdout_last_accepted_at=stdout_last_accepted_at-interval '2200 hours',stdout_last_expires_at=stdout_last_expires_at-interval '2200 hours'`)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_preparations SET stdout_last_accepted_at=stdout_last_accepted_at-interval '2200 hours'`)
 	expired, err := client.AppendPreparationLog(t.Context(), request)
 	if err != nil || !expired.Expired || expired.ThroughSequence != 1 {
 		t.Fatalf("expired receipt: %v %v", expired, err)

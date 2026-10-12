@@ -58,14 +58,15 @@ CGO_ENABLED=1 go test -race -count=1 \
 	./internal/computer \
 	./internal/controlplane \
 	./internal/db \
+	./internal/db/dbpool \
 	./internal/db/schema \
 	./internal/deployment \
-	./internal/eventstream \
 	./internal/idempotency \
 	./internal/identity \
 	./internal/org \
 	./internal/secret \
 	./internal/slack \
+	./internal/sqlpolicy \
 	./internal/telemetry \
 	./internal/pglock \
 	./internal/region \

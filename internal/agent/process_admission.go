@@ -7,7 +7,6 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -55,7 +54,7 @@ func (a *Allocator) AllocateSessionProcess(ctx context.Context, env, session uui
  WHERE s.environment_id=$1 AND s.id=$2 AND l.fenced_at IS NULL`, env, session).Scan(&group, &host, &hostEpoch, &region); err != nil {
 			return err
 		}
-		admitting, err := workergroup.LockDispatchSupply(ctx, tx, workergroup.DispatchSupply{GroupID: pgvalue.UUID(group), HostID: pgvalue.UUID(host), Epoch: hostEpoch, RegionID: region, RuntimeArchitecture: string(definition.ArchitectureX8664), Continuation: true})
+		admitting, err := workergroup.LockDispatchSupply(ctx, tx, workergroup.DispatchSupply{GroupID: pgvalue.UUID(group), HostID: pgvalue.UUID(host), Epoch: hostEpoch, RegionID: region, Continuation: true})
 		if err != nil {
 			return err
 		}

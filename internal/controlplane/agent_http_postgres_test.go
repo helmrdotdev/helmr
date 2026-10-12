@@ -139,7 +139,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 		return key.Raw
 	}
 	otherEnvironment := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex) VALUES('until_environment_deletion',$1,$2,$3,'other','Other','#112233')`, otherEnvironment, orgID, projectID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES('until_environment_deletion',$1,$2,$3,'other','Other','#112233',1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp())`, otherEnvironment, orgID, projectID)
 	otherScope := scope
 	otherScope.EnvironmentID = otherEnvironment.String()
 	otherKey, err := identity.IssueAPIKey(t.Context(), queries, issuer, otherScope, identity.APIKeyInput{Name: "other", Permissions: []auth.Permission{auth.PermissionSessionsSend}})

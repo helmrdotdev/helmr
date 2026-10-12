@@ -133,7 +133,7 @@ func TestDiagnosticTypedOwnerRetentionAndExportNeverLockLifecycle(t *testing.T) 
 			if _, err = appendDiagnosticTest(t, pool, source, record, diagnosticTestBounds()); err != nil {
 				t.Fatal(err)
 			}
-			dbtest.MustExec(t, t.Context(), pool, `UPDATE diagnostic_chunks SET accepted_at=accepted_at-interval '2200 hours',expires_at=expires_at-interval '2200 hours'`)
+			dbtest.MustExec(t, t.Context(), pool, `UPDATE diagnostic_chunks SET accepted_at=accepted_at-interval '2200 hours'`)
 			blocker, err = pool.Begin(t.Context())
 			if err != nil {
 				t.Fatal(err)

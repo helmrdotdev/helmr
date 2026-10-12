@@ -140,7 +140,7 @@ func TestPlatformExpiredIdentityCannotExecuteBeforeOrAfterCollection(t *testing.
 	f := agenttest.New(t)
 	request := deploymentRequest(t, f, "expired")
 	claim := accept(t, f, request, retry.Target{DeploymentID: f.Deployment})
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE platform_retry_keys SET accepted_at=accepted_at-interval '31 days',receipt_expires_at=receipt_expires_at-interval '31 days' WHERE environment_id=$1 AND id=$2`, f.Environment, claim.ID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE platform_retry_keys SET accepted_at=accepted_at-interval '31 days' WHERE environment_id=$1 AND id=$2`, f.Environment, claim.ID)
 	var expired retry.ExpiredError
 	if err := acquireError(t, f, request); !errors.As(err, &expired) {
 		t.Fatalf("uncollected expiry: %v", err)

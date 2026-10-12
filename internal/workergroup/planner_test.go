@@ -616,8 +616,8 @@ func plannerPool(row db.ListCapacityWorkerPoolsRow) Pool {
 func plannerBin(row db.ListCapacityWorkerPoolsRow, primaryRunPoolID pgtype.UUID) db.ListWorkerCapacityBinsRow {
 	return db.ListWorkerCapacityBinsRow{
 		WorkerGroupID: pgvalue.UUID(plannerTestGroupID), PrimaryPoolID: primaryRunPoolID, WorkerPoolID: row.ID,
-		WorkerHostID: plannerTestUUID(row.ID.Bytes[15] + 100),
-		VMPlatformID: row.VMPlatformID, Arch: "x86_64", Contract: vmplatform.Contract,
+		WorkerHostID:   plannerTestUUID(row.ID.Bytes[15] + 100),
+		VMPlatformID:   row.VMPlatformID,
 		PerVMCPUMillis: row.PerVMCPUMillis.Int64, PerVMMemoryBytes: row.PerVMMemoryBytes.Int64,
 		PerVMGuestEphemeralDiskBytes: row.PerVMGuestEphemeralDiskBytes.Int64,
 		AvailableCPUMillis:           row.CapacityCPUMillis.Int64, AvailableMemoryBytes: row.CapacityMemoryBytes.Int64,

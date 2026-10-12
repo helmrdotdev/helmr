@@ -97,8 +97,7 @@ CROSS JOIN LATERAL (
   UNION ALL SELECT reserved_cpu_millis,reserved_memory_bytes,0 FROM computer_preparations WHERE environment_id=e.id AND worker_host_id IS NOT NULL AND fenced_at IS NULL
  ) physical
 ) usage
-WHERE e.admission_rate_per_second IS NOT NULL
- AND e.max_cpu_millis-usage.cpu >= CASE WHEN d.required_cpu_millis>0 THEN d.required_cpu_millis ELSE ((d.resources->>'milliCpu')::bigint+999)/1000*1000 END
+WHERE e.max_cpu_millis-usage.cpu >= CASE WHEN d.required_cpu_millis>0 THEN d.required_cpu_millis ELSE ((d.resources->>'milliCpu')::bigint+999)/1000*1000 END
  AND e.max_memory_bytes-usage.memory >= CASE WHEN d.required_memory_bytes>0 THEN d.required_memory_bytes ELSE (d.resources->>'memoryMiB')::bigint*1048576 END
  AND (d.kind='preparation' OR e.max_resident_computers-usage.residents>=1)
  AND EXISTS (

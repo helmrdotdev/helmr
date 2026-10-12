@@ -9,7 +9,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -40,8 +39,8 @@ func seedPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) postgre
 		VALUES ($1, $2, $3, $4, 'Project')
 	`, ids.projectID, ids.orgID, dbtest.DefaultRegionID, projectSlug)
 	dbtest.MustExec(t, ctx, pool, `
-		INSERT INTO environments (history_retention_mode,id, org_id, project_id, slug, name, color_hex)
-		VALUES ('until_environment_deletion',$1, $2, $3, $4, 'Environment', '#3366ff')
+		INSERT INTO environments (history_retention_mode,id, org_id, project_id, slug, name, color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at)
+		VALUES ('until_environment_deletion',$1, $2, $3, $4, 'Environment', '#3366ff',1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp())
 	`, ids.environmentID, ids.orgID, ids.projectID, environmentSlug)
 	dbtest.MustExec(t, ctx, pool, `INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$2,$3)`, ids.environmentID, ids.deploymentID, dbtest.Digest("deployment-"+ids.deploymentID.String()))
 	return ids
@@ -69,18 +68,17 @@ func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 	}
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO vm_platforms (
-			id, arch, contract, descriptor_digest,
+			id, descriptor_digest,
 			firecracker_digest, firecracker_version, snapshot_format_version,
-			host_kernel_release, cpu_template_kind,
+			host_kernel_release,
 			kernel_digest, initramfs_digest, rootfs_digest
 		) VALUES (
-			$1, 'x86_64', $2, $3,
-			$4, '1.16.1', '6.0.0', '6.8.0-test', 'none',
-			$5, $6, $7
+			$1, $2,
+			$3, '1.16.1', '6.0.0', '6.8.0-test',
+			$4, $5, $6
 		)
 	`,
 		dbtest.DefaultRuntimeID,
-		vmplatform.Contract,
 		dbtest.Digest("db-test-vm-runtime-descriptor"),
 		dbtest.Digest("db-test-firecracker"),
 		dbtest.Digest("db-test-kernel"),

@@ -142,7 +142,7 @@ func lockAllocationSupply(ctx context.Context, tx pgx.Tx, env, host uuid.UUID, p
 	}
 	admitting, err := workergroup.LockDispatchSupply(ctx, tx, workergroup.DispatchSupply{
 		GroupID: pgvalue.UUID(s.group), HostID: pgvalue.UUID(host), Epoch: s.epoch,
-		RegionID: region, RuntimeArchitecture: string(definition.ArchitectureX8664), RequirePrimary: primary,
+		RegionID: region, RequirePrimary: primary,
 	})
 	if err != nil {
 		return s, err
@@ -179,9 +179,6 @@ func qualifyAllocationShape(ctx context.Context, tx pgx.Tx, supply allocationSup
 }
 
 func requireAllocationCapacity(ctx context.Context, tx pgx.Tx, env uuid.UUID, supply allocationSupply, policy admissionEnvironment, shape AllocationShape, computer bool) error {
-	if !policy.configured {
-		return errEnvironmentCapacity
-	}
 	var environment, host allocationCapacity
 	var computers int64
 	if err := tx.QueryRow(ctx, `SELECT COALESCE(sum(cpu),0),COALESCE(sum(memory),0),COALESCE(sum(computers),0) FROM (

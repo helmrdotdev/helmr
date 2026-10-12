@@ -1,11 +1,11 @@
 -- name: CreateComputerCommand :one
 INSERT INTO computer_commands (
     id, environment_id, computer_id, argv, cwd, env, stdin,
-    timeout_ms, created_by_subject_type, created_by_subject_id
+    timeout_ms, caller_kind, caller_id
 ) VALUES (
     sqlc.arg(id), sqlc.arg(environment_id), sqlc.arg(computer_id),
     sqlc.arg(argv), sqlc.narg(cwd), sqlc.arg(env), sqlc.arg(stdin), sqlc.arg(timeout_ms),
-    sqlc.arg(created_by_subject_type), sqlc.arg(created_by_subject_id)
+    sqlc.arg(caller_kind), sqlc.arg(caller_id)
 ) RETURNING *;
 
 -- name: GetComputerCommandByRetryKey :one

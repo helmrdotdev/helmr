@@ -63,7 +63,7 @@ func newSnapshotFixture(t *testing.T, count int, root bool) *snapshotFixture {
 		f.markers = append(f.markers, secret.RuntimeSelector(f.fixture.Environment, "process", f.fixture.Session, 1, marker))
 		f.secrets = append(f.secrets, record.ID)
 		dbtest.MustExec(t, t.Context(), f.fixture.Pool, "INSERT INTO computer_secret_bindings(computer_id,environment_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder) VALUES($1,$2,$3,'env',$4,'protected',ARRAY['https://example.com'],$5)", f.computer, f.fixture.Environment, record.ID, "TOKEN_"+name, marker)
-		dbtest.MustExec(t, t.Context(), f.fixture.Pool, `INSERT INTO secret_exposures(environment_id,session_id,process_epoch,secret_id,version_id,revocation_generation) SELECT $1,$2,1,id,current_version_id,revocation_generation FROM secrets WHERE id=$3`, f.fixture.Environment, f.fixture.Session, record.ID)
+		dbtest.MustExec(t, t.Context(), f.fixture.Pool, `INSERT INTO secret_exposures(id,environment_id,session_id,process_epoch,secret_id,version_id,revocation_generation) SELECT uuidv7(),$1,$2,1,id,current_version_id,revocation_generation FROM secrets WHERE id=$3`, f.fixture.Environment, f.fixture.Session, record.ID)
 	}
 	if root {
 		createTestComputerCA(t, f.fixture.Pool, f.store, f.fixture.Environment, f.computer)

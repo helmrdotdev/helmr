@@ -105,17 +105,17 @@ CREATE TABLE environments (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     current_deployment_id UUID,
     retired_at timestamptz,
-    max_outstanding_admissions bigint CHECK (max_outstanding_admissions > 0),
-    max_causal_depth integer CHECK (max_causal_depth > 0),
-    max_resident_computers bigint CHECK (max_resident_computers>0),
-    max_cpu_millis bigint CHECK (max_cpu_millis>0),
-    max_memory_bytes bigint CHECK (max_memory_bytes>0),
-    max_reserved_storage_bytes bigint CHECK (max_reserved_storage_bytes>0),
-    preparation_timeout_ms bigint CHECK (preparation_timeout_ms>0),
-    admission_rate_per_second bigint CHECK (admission_rate_per_second>0),
-    admission_burst bigint CHECK (admission_burst>0),
-    admission_tokens numeric NOT NULL DEFAULT 0 CHECK (admission_tokens>=0),
-    admission_refilled_at timestamptz,
+    max_outstanding_admissions bigint NOT NULL CHECK (max_outstanding_admissions > 0),
+    max_causal_depth integer NOT NULL CHECK (max_causal_depth > 0),
+    max_resident_computers bigint NOT NULL CHECK (max_resident_computers>0),
+    max_cpu_millis bigint NOT NULL CHECK (max_cpu_millis>0),
+    max_memory_bytes bigint NOT NULL CHECK (max_memory_bytes>0),
+    max_reserved_storage_bytes bigint NOT NULL CHECK (max_reserved_storage_bytes>0),
+    preparation_timeout_ms bigint NOT NULL CHECK (preparation_timeout_ms>0),
+    admission_rate_per_second bigint NOT NULL CHECK (admission_rate_per_second>0),
+    admission_burst bigint NOT NULL CHECK (admission_burst>0),
+    admission_tokens numeric NOT NULL CHECK (admission_tokens>=0),
+    admission_refilled_at timestamptz NOT NULL,
     CHECK ((history_retention_mode='duration' AND history_retention_seconds IS NOT NULL AND history_retention_seconds>0)
         OR (history_retention_mode='until_environment_deletion' AND history_retention_seconds IS NULL)),
     UNIQUE (org_id, project_id, id),
@@ -123,16 +123,9 @@ CREATE TABLE environments (
     FOREIGN KEY (org_id, project_id)
         REFERENCES projects(org_id, id)
         ON DELETE CASCADE,
-    -- Creation supplies explicit operating limits in its transaction. An Environment
-    -- without configured limits cannot admit new execution; absence is not unlimited.
-    CHECK (
-        (max_outstanding_admissions IS NULL AND max_causal_depth IS NULL AND max_resident_computers IS NULL AND max_cpu_millis IS NULL AND max_memory_bytes IS NULL
-         AND max_reserved_storage_bytes IS NULL AND preparation_timeout_ms IS NULL
-         AND admission_rate_per_second IS NULL AND admission_burst IS NULL AND admission_refilled_at IS NULL)
-        OR (max_outstanding_admissions IS NOT NULL AND max_causal_depth IS NOT NULL AND max_resident_computers IS NOT NULL AND max_cpu_millis IS NOT NULL AND max_memory_bytes IS NOT NULL
-         AND max_reserved_storage_bytes IS NOT NULL AND preparation_timeout_ms IS NOT NULL
-         AND admission_rate_per_second IS NOT NULL AND admission_burst IS NOT NULL AND admission_refilled_at IS NOT NULL
-         AND admission_tokens<=admission_burst))
+    -- Creation supplies the operating limits with the row; there is no unlimited
+    -- or unconfigured Environment.
+    CHECK (admission_tokens<=admission_burst)
 );
 
 CREATE UNIQUE INDEX environments_one_default ON environments(org_id,project_id) WHERE is_default;
@@ -277,7 +270,6 @@ CREATE TABLE secrets (
     environment_id UUID NOT NULL,
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked')),
-    revision BIGINT NOT NULL DEFAULT 1 CHECK (revision > 0),
     current_version_id UUID,
     revocation_generation BIGINT NOT NULL DEFAULT 0 CHECK (revocation_generation >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -371,22 +363,16 @@ CREATE INDEX worker_groups_active_dispatch_idx
 
 CREATE TABLE vm_platforms (
     id TEXT PRIMARY KEY CHECK (id ~ '^sha256:[0-9a-f]{64}$'),
-    arch TEXT NOT NULL CHECK (arch = 'x86_64'),
-    contract TEXT NOT NULL CHECK (contract = 'helmr.vm-runtime.v0'),
     descriptor_digest TEXT NOT NULL CHECK (descriptor_digest ~ '^sha256:[0-9a-f]{64}$'),
     firecracker_digest TEXT NOT NULL CHECK (firecracker_digest ~ '^sha256:[0-9a-f]{64}$'),
     firecracker_version TEXT NOT NULL CHECK (firecracker_version ~ '^[0-9]+\.[0-9]+\.[0-9]+$'),
     snapshot_format_version TEXT NOT NULL CHECK (snapshot_format_version ~ '^[0-9]+\.[0-9]+\.[0-9]+$'),
     host_kernel_release TEXT NOT NULL CHECK (btrim(host_kernel_release) <> '' AND octet_length(host_kernel_release) <= 255),
-    cpu_template_kind TEXT NOT NULL CHECK (cpu_template_kind IN ('none', 'custom')),
     cpu_template_digest TEXT CHECK (cpu_template_digest IS NULL OR cpu_template_digest ~ '^sha256:[0-9a-f]{64}$'),
     kernel_digest TEXT NOT NULL CHECK (kernel_digest ~ '^sha256:[0-9a-f]{64}$'),
     initramfs_digest TEXT NOT NULL CHECK (initramfs_digest ~ '^sha256:[0-9a-f]{64}$'),
     rootfs_digest TEXT NOT NULL CHECK (rootfs_digest ~ '^sha256:[0-9a-f]{64}$'),
-    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT vm_platforms_cpu_template_check CHECK ((cpu_template_kind = 'none' AND cpu_template_digest IS NULL)
-        OR (cpu_template_kind = 'custom' AND cpu_template_digest IS NOT NULL))
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE worker_pools (
@@ -724,7 +710,6 @@ CREATE TABLE computer_preparations (
     stdout_last_sequence bigint,
     stdout_last_digest bytea CHECK (stdout_last_digest IS NULL OR octet_length(stdout_last_digest)=32),
     stdout_last_accepted_at timestamptz,
-    stdout_last_expires_at timestamptz,
     stderr_accepted_through bigint NOT NULL DEFAULT 0 CHECK (stderr_accepted_through>=0),
     stderr_byte_offset bigint NOT NULL DEFAULT 0 CHECK (stderr_byte_offset>=0),
     stderr_ended boolean NOT NULL DEFAULT false,
@@ -734,7 +719,6 @@ CREATE TABLE computer_preparations (
     stderr_last_sequence bigint,
     stderr_last_digest bytea CHECK (stderr_last_digest IS NULL OR octet_length(stderr_last_digest)=32),
     stderr_last_accepted_at timestamptz,
-    stderr_last_expires_at timestamptz,
     write_key_id uuid,
     disk_released_at timestamptz,
     write_key_required boolean GENERATED ALWAYS AS
@@ -745,13 +729,11 @@ CREATE TABLE computer_preparations (
     capture_evidence text CHECK (octet_length(capture_evidence) BETWEEN 1 AND 4096),
     CHECK (num_nonnulls(proxy_ca_certificate,proxy_ca_private_key_nonce,proxy_ca_private_key_ciphertext,proxy_ca_not_after) IN (0,4)),
     CHECK (proxy_ca_certificate IS NULL OR (status='running' AND octet_length(proxy_ca_certificate) BETWEEN 1 AND 16384 AND octet_length(proxy_ca_private_key_nonce)=12 AND octet_length(proxy_ca_private_key_ciphertext)>0)),
-    CHECK ((stdout_accepted_through=0 AND stdout_last_sequence IS NULL AND stdout_last_digest IS NULL AND stdout_last_accepted_at IS NULL AND stdout_last_expires_at IS NULL AND NOT stdout_ended)
-        OR (stdout_accepted_through>0 AND stdout_last_sequence IS NOT NULL AND stdout_last_expires_at IS NOT NULL AND stdout_last_sequence BETWEEN 1 AND stdout_accepted_through AND stdout_last_accepted_at IS NOT NULL
-            AND stdout_last_expires_at=stdout_last_accepted_at+interval '2160 hours'
+    CHECK ((stdout_accepted_through=0 AND stdout_last_sequence IS NULL AND stdout_last_digest IS NULL AND stdout_last_accepted_at IS NULL AND NOT stdout_ended)
+        OR (stdout_accepted_through>0 AND stdout_last_sequence IS NOT NULL AND stdout_last_sequence BETWEEN 1 AND stdout_accepted_through AND stdout_last_accepted_at IS NOT NULL
             AND (stdout_last_digest IS NOT NULL OR stdout_expired_through=stdout_accepted_through))),
-    CHECK ((stderr_accepted_through=0 AND stderr_last_sequence IS NULL AND stderr_last_digest IS NULL AND stderr_last_accepted_at IS NULL AND stderr_last_expires_at IS NULL AND NOT stderr_ended)
-        OR (stderr_accepted_through>0 AND stderr_last_sequence IS NOT NULL AND stderr_last_expires_at IS NOT NULL AND stderr_last_sequence BETWEEN 1 AND stderr_accepted_through AND stderr_last_accepted_at IS NOT NULL
-            AND stderr_last_expires_at=stderr_last_accepted_at+interval '2160 hours'
+    CHECK ((stderr_accepted_through=0 AND stderr_last_sequence IS NULL AND stderr_last_digest IS NULL AND stderr_last_accepted_at IS NULL AND NOT stderr_ended)
+        OR (stderr_accepted_through>0 AND stderr_last_sequence IS NOT NULL AND stderr_last_sequence BETWEEN 1 AND stderr_accepted_through AND stderr_last_accepted_at IS NOT NULL
             AND (stderr_last_digest IS NOT NULL OR stderr_expired_through=stderr_accepted_through))),
     UNIQUE(environment_id,id,executor_epoch),
     PRIMARY KEY(environment_id,id),
@@ -1046,8 +1028,8 @@ CREATE TABLE computer_commands (
     env jsonb CHECK (jsonb_typeof(env)='object'),
     stdin bytea CHECK (octet_length(stdin)<=1048576),
     timeout_ms bigint NOT NULL CHECK (timeout_ms>0),
-    created_by_subject_type text NOT NULL CHECK (btrim(created_by_subject_type)<>''),
-    created_by_subject_id text NOT NULL CHECK (btrim(created_by_subject_id)<>''),
+    caller_kind text NOT NULL CHECK (caller_kind IN ('api_key','session')),
+    caller_id uuid NOT NULL,
     started_at timestamptz,
     cancel_requested_at timestamptz,
     process_exited_at timestamptz,
@@ -1077,7 +1059,6 @@ CREATE TABLE computer_commands (
     stdout_last_sequence bigint,
     stdout_last_digest bytea CHECK (stdout_last_digest IS NULL OR octet_length(stdout_last_digest)=32),
     stdout_last_accepted_at timestamptz,
-    stdout_last_expires_at timestamptz,
     stderr_accepted_through bigint NOT NULL DEFAULT 0 CHECK (stderr_accepted_through>=0),
     stderr_byte_offset bigint NOT NULL DEFAULT 0 CHECK (stderr_byte_offset>=0),
     stderr_ended boolean NOT NULL DEFAULT false,
@@ -1087,17 +1068,14 @@ CREATE TABLE computer_commands (
     stderr_last_sequence bigint,
     stderr_last_digest bytea CHECK (stderr_last_digest IS NULL OR octet_length(stderr_last_digest)=32),
     stderr_last_accepted_at timestamptz,
-    stderr_last_expires_at timestamptz,
     CHECK ((stdout_final_through IS NULL AND stdout_final_complete IS NULL AND stdout_final_gapped IS NULL AND stderr_final_through IS NULL AND stderr_final_complete IS NULL AND stderr_final_gapped IS NULL)
        OR (stdout_final_through IS NOT NULL AND stdout_final_complete IS NOT NULL AND stdout_final_gapped IS NOT NULL AND stderr_final_through IS NOT NULL AND stderr_final_complete IS NOT NULL AND stderr_final_gapped IS NOT NULL AND terminal_at IS NOT NULL)),
     CHECK (NOT output_fenced OR terminal_at IS NOT NULL),
-    CHECK ((stdout_accepted_through=0 AND stdout_last_sequence IS NULL AND stdout_last_digest IS NULL AND stdout_last_accepted_at IS NULL AND stdout_last_expires_at IS NULL AND NOT stdout_ended)
-        OR (stdout_accepted_through>0 AND stdout_last_sequence IS NOT NULL AND stdout_last_expires_at IS NOT NULL AND stdout_last_sequence BETWEEN 1 AND stdout_accepted_through AND stdout_last_accepted_at IS NOT NULL
-            AND stdout_last_expires_at=stdout_last_accepted_at+interval '2160 hours'
+    CHECK ((stdout_accepted_through=0 AND stdout_last_sequence IS NULL AND stdout_last_digest IS NULL AND stdout_last_accepted_at IS NULL AND NOT stdout_ended)
+        OR (stdout_accepted_through>0 AND stdout_last_sequence IS NOT NULL AND stdout_last_sequence BETWEEN 1 AND stdout_accepted_through AND stdout_last_accepted_at IS NOT NULL
             AND (stdout_last_digest IS NOT NULL OR stdout_expired_through=stdout_accepted_through))),
-    CHECK ((stderr_accepted_through=0 AND stderr_last_sequence IS NULL AND stderr_last_digest IS NULL AND stderr_last_accepted_at IS NULL AND stderr_last_expires_at IS NULL AND NOT stderr_ended)
-        OR (stderr_accepted_through>0 AND stderr_last_sequence IS NOT NULL AND stderr_last_expires_at IS NOT NULL AND stderr_last_sequence BETWEEN 1 AND stderr_accepted_through AND stderr_last_accepted_at IS NOT NULL
-            AND stderr_last_expires_at=stderr_last_accepted_at+interval '2160 hours'
+    CHECK ((stderr_accepted_through=0 AND stderr_last_sequence IS NULL AND stderr_last_digest IS NULL AND stderr_last_accepted_at IS NULL AND NOT stderr_ended)
+        OR (stderr_accepted_through>0 AND stderr_last_sequence IS NOT NULL AND stderr_last_sequence BETWEEN 1 AND stderr_accepted_through AND stderr_last_accepted_at IS NOT NULL
             AND (stderr_last_digest IS NOT NULL OR stderr_expired_through=stderr_accepted_through))),
     PRIMARY KEY(environment_id,id),
     UNIQUE(environment_id,computer_id,id),
@@ -1139,7 +1117,6 @@ CREATE TABLE platform_retry_keys (
     computer_id uuid,
     command_id uuid,
     accepted_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    receipt_expires_at timestamptz NOT NULL,
     receipt jsonb CHECK (jsonb_typeof(receipt)='object'),
     receipt_pruned_at timestamptz,
     PRIMARY KEY(environment_id,id),
@@ -1153,8 +1130,7 @@ CREATE TABLE platform_retry_keys (
     FOREIGN KEY(environment_id,computer_id) REFERENCES computers(environment_id,id),
     FOREIGN KEY(environment_id,command_id) REFERENCES computer_commands(environment_id,id),
     FOREIGN KEY(environment_id,scope_computer_id,command_id) REFERENCES computer_commands(environment_id,computer_id,id),
-    CHECK (receipt_expires_at=accepted_at+interval '720 hours'),
-    CHECK (receipt_pruned_at IS NULL OR (receipt IS NULL AND receipt_pruned_at>=receipt_expires_at)),
+    CHECK (receipt_pruned_at IS NULL OR (receipt IS NULL AND receipt_pruned_at>=accepted_at+interval '720 hours')),
     CHECK ((
         (operation='deployment.finalize' AND num_nonnulls(scope_secret_name,scope_secret_id,scope_computer_id,scope_command_id,scope_caller_kind,scope_computer_key)=0)
         OR (operation='secret.create' AND scope_secret_name IS NOT NULL AND octet_length(scope_secret_name)>0 AND num_nonnulls(scope_secret_id,scope_computer_id,scope_command_id,scope_caller_kind,scope_computer_key)=0)
@@ -1181,7 +1157,7 @@ CREATE TABLE platform_retry_keys (
 
 CREATE UNIQUE INDEX platform_retry_keys_command_creation ON platform_retry_keys(environment_id,command_id) WHERE operation='computer.exec';
 
-CREATE INDEX platform_retry_keys_receipt_expiry ON platform_retry_keys(receipt_expires_at,id) WHERE receipt_pruned_at IS NULL;
+CREATE INDEX platform_retry_keys_receipt_expiry ON platform_retry_keys(accepted_at,id) WHERE receipt_pruned_at IS NULL;
 
 -- Slack configuration generations never own execution state.
 CREATE TABLE slack_app_registrations (
@@ -1248,7 +1224,6 @@ CREATE TABLE agent_publications (
     id uuid NOT NULL UNIQUE,
     environment_id uuid NOT NULL,
     agent_id uuid NOT NULL,
-    provider text NOT NULL DEFAULT 'slack' CHECK (provider='slack'),
     slack_app_registration_id uuid NOT NULL REFERENCES slack_app_registrations(id),
     slack_installation_id uuid,
     created_by_user_id uuid NOT NULL REFERENCES users(id),
@@ -1410,7 +1385,6 @@ CREATE TABLE session_processes (
     stdout_last_sequence bigint,
     stdout_last_digest bytea CHECK (stdout_last_digest IS NULL OR octet_length(stdout_last_digest)=32),
     stdout_last_accepted_at timestamptz,
-    stdout_last_expires_at timestamptz,
     stderr_accepted_through bigint NOT NULL DEFAULT 0 CHECK (stderr_accepted_through>=0),
     stderr_byte_offset bigint NOT NULL DEFAULT 0 CHECK (stderr_byte_offset>=0),
     stderr_ended boolean NOT NULL DEFAULT false,
@@ -1420,14 +1394,11 @@ CREATE TABLE session_processes (
     stderr_last_sequence bigint,
     stderr_last_digest bytea CHECK (stderr_last_digest IS NULL OR octet_length(stderr_last_digest)=32),
     stderr_last_accepted_at timestamptz,
-    stderr_last_expires_at timestamptz,
-    CHECK ((stdout_accepted_through=0 AND stdout_last_sequence IS NULL AND stdout_last_digest IS NULL AND stdout_last_accepted_at IS NULL AND stdout_last_expires_at IS NULL AND NOT stdout_ended)
-        OR (stdout_accepted_through>0 AND stdout_last_sequence IS NOT NULL AND stdout_last_expires_at IS NOT NULL AND stdout_last_sequence BETWEEN 1 AND stdout_accepted_through AND stdout_last_accepted_at IS NOT NULL
-            AND stdout_last_expires_at=stdout_last_accepted_at+interval '2160 hours'
+    CHECK ((stdout_accepted_through=0 AND stdout_last_sequence IS NULL AND stdout_last_digest IS NULL AND stdout_last_accepted_at IS NULL AND NOT stdout_ended)
+        OR (stdout_accepted_through>0 AND stdout_last_sequence IS NOT NULL AND stdout_last_sequence BETWEEN 1 AND stdout_accepted_through AND stdout_last_accepted_at IS NOT NULL
             AND (stdout_last_digest IS NOT NULL OR stdout_expired_through=stdout_accepted_through))),
-    CHECK ((stderr_accepted_through=0 AND stderr_last_sequence IS NULL AND stderr_last_digest IS NULL AND stderr_last_accepted_at IS NULL AND stderr_last_expires_at IS NULL AND NOT stderr_ended)
-        OR (stderr_accepted_through>0 AND stderr_last_sequence IS NOT NULL AND stderr_last_expires_at IS NOT NULL AND stderr_last_sequence BETWEEN 1 AND stderr_accepted_through AND stderr_last_accepted_at IS NOT NULL
-            AND stderr_last_expires_at=stderr_last_accepted_at+interval '2160 hours'
+    CHECK ((stderr_accepted_through=0 AND stderr_last_sequence IS NULL AND stderr_last_digest IS NULL AND stderr_last_accepted_at IS NULL AND NOT stderr_ended)
+        OR (stderr_accepted_through>0 AND stderr_last_sequence IS NOT NULL AND stderr_last_sequence BETWEEN 1 AND stderr_accepted_through AND stderr_last_accepted_at IS NOT NULL
             AND (stderr_last_digest IS NOT NULL OR stderr_expired_through=stderr_accepted_through))),
     PRIMARY KEY (environment_id,session_id,epoch),
     UNIQUE (environment_id,computer_id,session_id,epoch),
@@ -1443,6 +1414,7 @@ CREATE INDEX session_processes_computer_custody
     WHERE fenced_at IS NULL;
 
 CREATE TABLE secret_exposures (
+    id uuid PRIMARY KEY,
     environment_id uuid NOT NULL,
     preparation_id uuid,
     session_id uuid,
@@ -1649,6 +1621,7 @@ CREATE TABLE computer_saves (
 );
 
 CREATE TABLE computer_object_pins (
+    id uuid PRIMARY KEY,
     environment_id uuid NOT NULL,
     save_id uuid,
     preparation_id uuid,
@@ -1850,7 +1823,6 @@ CREATE TABLE diagnostic_chunks (
     dropped_bytes bigint NOT NULL,
     complete boolean NOT NULL,
     accepted_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    expires_at timestamptz NOT NULL,
     export_claim uuid,
     export_after timestamptz NOT NULL DEFAULT '-infinity',
     ingest_size_bytes bigint GENERATED ALWAYS AS (octet_length(data)::bigint) STORED NOT NULL,
@@ -1861,7 +1833,7 @@ CREATE TABLE diagnostic_chunks (
     FOREIGN KEY(environment_id,preparation_id,preparation_epoch) REFERENCES computer_preparations(environment_id,id,executor_epoch),
     FOREIGN KEY(environment_id,command_id) REFERENCES computer_commands(environment_id,id),
     CHECK (sequence>0 AND through_sequence>=sequence AND byte_offset>=0 AND through_byte_offset>=byte_offset AND observed_at_unix_nano>0
-        AND dropped_bytes>=0 AND expires_at=accepted_at+interval '2160 hours'
+        AND dropped_bytes>=0
         AND ((kind='data' AND sequence=through_sequence AND octet_length(data)>0 AND dropped_bytes=0 AND NOT complete AND through_byte_offset=byte_offset+octet_length(data))
           OR (kind='gap' AND octet_length(data)=0 AND dropped_bytes>=through_sequence-sequence+1 AND NOT complete AND through_byte_offset=byte_offset+dropped_bytes)
           OR (kind='end' AND sequence=through_sequence AND octet_length(data)=0 AND dropped_bytes=0 AND through_byte_offset=byte_offset)))
@@ -1888,7 +1860,7 @@ CREATE INDEX diagnostic_chunks_producer ON diagnostic_chunks(environment_id,sour
 
 CREATE INDEX diagnostic_chunks_pending ON diagnostic_chunks(source_kind,export_after,id);
 
-CREATE INDEX diagnostic_chunks_expiry ON diagnostic_chunks(expires_at,id);
+CREATE INDEX diagnostic_chunks_expiry ON diagnostic_chunks(accepted_at,id);
 
 CREATE INDEX deployment_events_deployment ON deployment_events(environment_id,deployment_id,id);
 

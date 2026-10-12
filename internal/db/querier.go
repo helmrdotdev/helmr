@@ -129,7 +129,7 @@ type Querier interface {
 	// Worker Host fence for dispatch and Computer preparation. The caller
 	// (workergroup.LockDispatchSupply) must already hold the Worker Group and Pool share
 	// locks and have validated their status. This query locks the Worker Host and
-	// checks epoch, observation freshness and platform. Admission also requires an
+	// checks epoch and observation freshness. Admission also requires an
 	// active host without an admission pause; continuation of admitted work accepts a
 	// draining host and ignores pauses. admitting reports whether the locked host
 	// could admit new work, including the admission pause.

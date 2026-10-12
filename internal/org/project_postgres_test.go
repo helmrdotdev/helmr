@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"os"
 	"sort"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -333,6 +335,7 @@ func newProjectFixture(t *testing.T, projectCount, environmentsEach int) project
 	projectIDs := make([]uuid.UUID, projectCount)
 	projectRows := make([][]any, 0, projectCount)
 	environmentRows := make([][]any, 0, projectCount*environmentsEach)
+	limits := testExecutionLimits()
 	for projectIndex := range projectCount {
 		projectID := uuid.NewV7()
 		projectIDs[projectIndex] = projectID
@@ -348,6 +351,8 @@ func newProjectFixture(t *testing.T, projectCount, environmentsEach int) project
 				fmt.Sprintf("environment-%02d", environmentIndex+1),
 				fmt.Sprintf("Environment %02d", environmentIndex+1),
 				"#315FCE", environmentIndex == 0, "until_environment_deletion",
+				limits.MaxOutstandingAdmissions, int32(limits.MaxCausalDepth), limits.MaxResidentComputers, limits.MaxCPUMillis, limits.MaxMemoryBytes, limits.MaxReservedStorageBytes,
+				limits.PreparationTimeoutMS, limits.AdmissionRatePerSecond, limits.AdmissionBurst, pgtype.Numeric{Int: big.NewInt(limits.AdmissionBurst), Valid: true}, time.Now(),
 			})
 		}
 	}
@@ -357,7 +362,9 @@ func newProjectFixture(t *testing.T, projectCount, environmentsEach int) project
 		t.Fatal(err)
 	}
 	if _, err := database.Pool.CopyFrom(t.Context(), pgx.Identifier{"environments"},
-		[]string{"id", "org_id", "project_id", "slug", "name", "color_hex", "is_default", "history_retention_mode"},
+		[]string{"id", "org_id", "project_id", "slug", "name", "color_hex", "is_default", "history_retention_mode",
+			"max_outstanding_admissions", "max_causal_depth", "max_resident_computers", "max_cpu_millis", "max_memory_bytes", "max_reserved_storage_bytes",
+			"preparation_timeout_ms", "admission_rate_per_second", "admission_burst", "admission_tokens", "admission_refilled_at"},
 		pgx.CopyFromRows(environmentRows)); err != nil {
 		t.Fatal(err)
 	}
@@ -494,25 +501,20 @@ func TestProjectCreationRequiresLimitsWithoutPartialEnvironment(t *testing.T) {
 	}
 }
 
-func TestExecutionLimitsCannotReinitializeEnvironment(t *testing.T) {
+func TestEnvironmentCreationRequiresExecutionLimits(t *testing.T) {
 	f := newProjectFixture(t, 0, 0)
-	_, envs, err := CreateProject(t.Context(), f.pool, f.orgID, ProjectInput{HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"}, ProjectDetails: ProjectDetails{Slug: "once", Name: "Once"}, ExecutionLimits: testExecutionLimits()})
-	if err != nil {
-		t.Fatal(err)
+	project, envs, err := CreateProject(t.Context(), f.pool, f.orgID, ProjectInput{HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"}, ProjectDetails: ProjectDetails{Slug: "limits", Name: "Limits"}, ExecutionLimits: testExecutionLimits()})
+	if err != nil || len(envs) != 2 {
+		t.Fatalf("create project: %d %v", len(envs), err)
 	}
-	env := pgvalue.MustUUIDValue(envs[0].ID)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET admission_tokens=0 WHERE id=$1`, env)
-	tx, err := f.pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
+	partial := testExecutionLimits()
+	partial.AdmissionBurst = 0
+	if _, err := CreateEnvironment(t.Context(), f.pool, f.orgID, pgvalue.MustUUIDValue(project.ID), EnvironmentDetails{Slug: "partial", Name: "Partial", ColorHex: "#123456", HistoryRetention: HistoryRetentionPolicy{Mode: "until_environment_deletion"}}, partial); err == nil {
+		t.Fatal("Environment created without a complete limit set")
 	}
-	defer tx.Rollback(context.Background())
-	if err := testExecutionLimits().InitializeEnvironment(t.Context(), tx, env); err == nil {
-		t.Fatal("existing Environment policy reset")
-	}
-	var zero bool
-	if err := tx.QueryRow(t.Context(), `SELECT admission_tokens=0 FROM environments WHERE id=$1`, env).Scan(&zero); err != nil || !zero {
-		t.Fatalf("tokens reset: %v %v", zero, err)
+	var count int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM environments WHERE project_id=$1`, project.ID).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("environments after rejected creation: %d %v", count, err)
 	}
 }
 

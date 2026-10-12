@@ -246,8 +246,6 @@ func (q *Queries) CompleteWorkerStartupRecovery(ctx context.Context, arg Complet
 const getWorkerHostStatus = `-- name: GetWorkerHostStatus :one
 SELECT worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.admission_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at,
        vm_platforms.rootfs_digest,
-       vm_platforms.contract,
-       vm_platforms.arch,
        COALESCE((
            worker_hosts.status = 'active'
            AND worker_groups.status = 'active'
@@ -305,8 +303,6 @@ type GetWorkerHostStatusRow struct {
 	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
 	RootfsDigest                 pgtype.Text        `json:"rootfs_digest"`
-	Contract                     pgtype.Text        `json:"contract"`
-	Arch                         pgtype.Text        `json:"arch"`
 	AdmissionReady               bool               `json:"admission_ready"`
 	ActiveInstances              int32              `json:"active_instances"`
 }
@@ -345,8 +341,6 @@ func (q *Queries) GetWorkerHostStatus(ctx context.Context, arg GetWorkerHostStat
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.RootfsDigest,
-		&i.Contract,
-		&i.Arch,
 		&i.AdmissionReady,
 		&i.ActiveInstances,
 	)
