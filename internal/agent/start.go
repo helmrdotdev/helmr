@@ -6,13 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/lifetime"
-	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"math"
 	"strings"
 	"time"
 	"unicode/utf8"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/lifetime"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 
 	"github.com/helmrdotdev/helmr/internal/conversation"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -128,8 +129,8 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 		}
 		var binding slackAdmissionBinding
 		if caller.Kind == "session" && method == "spawn" {
-			var sourceRoute *uuid.UUID
-			if err := tx.QueryRow(ctx, `SELECT slack_channel_id FROM sessions WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, caller.ID).Scan(&sourceRoute); err != nil {
+			sourceRoute, err := slackRouteOf(ctx, tx, req.EnvironmentID, caller.ID)
+			if err != nil {
 				return err
 			}
 			if sourceRoute != nil {
@@ -137,7 +138,6 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 					return err
 				}
 			}
-			var err error
 			binding, err = resolveSlackChildBinding(ctx, tx, req.EnvironmentID, caller.ID)
 			if err != nil {
 				return err
@@ -279,8 +279,8 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 				return ErrInvalidInput
 			}
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,origin_turn_id,causal_depth,session_key,slack_channel_id,close_after_idle_ms,history_retention_mode,history_retention_seconds,creation_caller_kind,creation_caller_id,creation_method,creation_retry_key,creation_digest,creation_turn_id,idle_since,next_turn_seq)
- SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,history_retention_mode,history_retention_seconds,$14,$15,$16,NULLIF($17,''),$18,$19,CASE WHEN $19::uuid IS NULL THEN clock_timestamp() END,CASE WHEN $19::uuid IS NULL THEN 1 ELSE 2 END FROM environments WHERE id=$1`, req.EnvironmentID, result.SessionID, agentID, deployment, nullableID(computer), root, parent, requester, origin, causal, req.SessionKey, route, result.CloseAfterIdleMs, caller.Kind, caller.ID, method, req.RetryKey, digest[:], nullableID(result.TurnID)); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,origin_turn_id,causal_depth,session_key,close_after_idle_ms,history_retention_mode,history_retention_seconds,creation_caller_kind,creation_caller_id,creation_method,creation_retry_key,creation_digest,creation_turn_id,idle_since,next_turn_seq)
+ SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,history_retention_mode,history_retention_seconds,$13,$14,$15,NULLIF($16,''),$17,$18,CASE WHEN $18::uuid IS NULL THEN clock_timestamp() END,CASE WHEN $18::uuid IS NULL THEN 1 ELSE 2 END FROM environments WHERE id=$1`, req.EnvironmentID, result.SessionID, agentID, deployment, nullableID(computer), root, parent, requester, origin, causal, req.SessionKey, result.CloseAfterIdleMs, caller.Kind, caller.ID, method, req.RetryKey, digest[:], nullableID(result.TurnID)); err != nil {
 			return err
 		}
 		if parent != nil {

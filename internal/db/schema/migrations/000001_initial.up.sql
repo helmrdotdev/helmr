@@ -1343,7 +1343,6 @@ CREATE TABLE sessions (
     next_turn_seq bigint NOT NULL DEFAULT 1 CHECK (next_turn_seq > 0),
     next_event_seq bigint NOT NULL DEFAULT 1 CHECK (next_event_seq > 0),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    slack_channel_id uuid,
     creation_caller_kind text CHECK (creation_caller_kind IN ('user','api_key','session')),
     creation_caller_id uuid,
     creation_method text CHECK (creation_method IN ('create','spawn')),
@@ -1373,10 +1372,7 @@ CREATE TABLE sessions (
     CHECK ((parent_session_id IS NULL AND root_session_id=id)
         OR (parent_session_id IS NOT NULL AND root_session_id=parent_session_id AND root_session_id<>id AND requester_session_id IS NOT NULL AND requester_session_id=parent_session_id)),
     CHECK (origin_turn_id IS NULL OR requester_session_id IS NOT NULL),
-    CHECK ((requester_session_id IS NULL AND causal_depth=0) OR (requester_session_id IS NOT NULL AND causal_depth>0)),
-    FOREIGN KEY(slack_channel_id,environment_id) REFERENCES slack_channels(id,environment_id),
-    UNIQUE(environment_id,id,slack_channel_id),
-    CHECK (parent_session_id IS NULL OR slack_channel_id IS NULL)
+    CHECK ((requester_session_id IS NULL AND causal_depth=0) OR (requester_session_id IS NOT NULL AND causal_depth>0))
 );
 
 CREATE INDEX sessions_idle_policy ON sessions(environment_id,id) WHERE status='open' AND close_after_idle_ms IS NOT NULL;
@@ -1904,6 +1900,9 @@ CREATE TABLE slack_threads (
     channel_id uuid NOT NULL,
     environment_id uuid NOT NULL,
     front_session_id uuid NOT NULL,
+    -- Only a root Session owns a Slack route: the carrier equals the front
+    -- Session and the key it references holds only rows whose root is itself.
+    front_root_session_id uuid GENERATED ALWAYS AS (front_session_id) STORED NOT NULL,
     organization_id uuid NOT NULL,
     team_id text NOT NULL,
     slack_channel_id text NOT NULL,
@@ -1931,7 +1930,7 @@ CREATE TABLE slack_threads (
     UNIQUE(id,environment_id),
     UNIQUE(environment_id,front_session_id),
     FOREIGN KEY(channel_id,environment_id,organization_id,team_id,slack_channel_id) REFERENCES slack_channels(id,environment_id,organization_id,team_id,slack_channel_id),
-    FOREIGN KEY(environment_id,front_session_id,channel_id) REFERENCES sessions(environment_id,id,slack_channel_id),
+    FOREIGN KEY(environment_id,front_session_id,front_root_session_id) REFERENCES sessions(environment_id,id,root_session_id),
     UNIQUE(organization_id,team_id,slack_channel_id,thread_ts),
     UNIQUE(channel_id,opening_publication_key),
     CHECK ((recipient_team_id IS NULL)=(recipient_user_id IS NULL)),

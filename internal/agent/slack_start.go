@@ -62,20 +62,31 @@ func ReadSlackConnection(ctx context.Context, tx pgx.Tx, env, agent uuid.UUID, c
 	return c, err
 }
 
-func readSlackStartSource(ctx context.Context, tx pgx.Tx, env, caller uuid.UUID) (*SlackStartSource, error) {
-	var route *uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT slack_channel_id FROM sessions WHERE environment_id=$1 AND id=$2`, env, caller).Scan(&route); err != nil {
+// slackRouteOf returns the channel of the Slack route a root Session owns, or
+// nil when the Session owns none. The thread row is the route authority.
+func slackRouteOf(ctx context.Context, tx pgx.Tx, env, session uuid.UUID) (*uuid.UUID, error) {
+	var route uuid.UUID
+	err := tx.QueryRow(ctx, `SELECT channel_id FROM slack_threads WHERE environment_id=$1 AND front_session_id=$2`, env, session).Scan(&route)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
 		return nil, err
 	}
-	if route == nil {
-		return nil, nil
+	return &route, nil
+}
+
+func readSlackStartSource(ctx context.Context, tx pgx.Tx, env, caller uuid.UUID) (*SlackStartSource, error) {
+	route, err := slackRouteOf(ctx, tx, env, caller)
+	if err != nil || route == nil {
+		return nil, err
 	}
 	source := &SlackStartSource{SessionID: caller, RouteID: *route}
 	c := &source.Connection
 	c.EnvironmentID = env
 	var root *string
 	var active, abandoned bool
-	err := tx.QueryRow(ctx, `SELECT t.id,t.thread_ts,c.publication_id,r.id,i.id,c.organization_id,c.team_id,c.slack_channel_id,i.app_id,i.bot_user_id,s.agent_id,a.key,i.credential_revision,i.authorized_at,
+	err = tx.QueryRow(ctx, `SELECT t.id,t.thread_ts,c.publication_id,r.id,i.id,c.organization_id,c.team_id,c.slack_channel_id,i.app_id,i.bot_user_id,s.agent_id,a.key,i.credential_revision,i.authorized_at,
  p.revoked_at IS NULL AND r.retired_at IS NULL AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND t.deleted_at IS NULL,
  EXISTS(SELECT 1 FROM slack_posts post WHERE post.thread_id=t.id AND post.role='opening' AND (post.delivery_disposed_at IS NOT NULL OR (t.thread_ts IS NULL AND post.status IN ('failed','suppressed'))))
  FROM slack_threads t JOIN slack_channels c ON c.id=t.channel_id JOIN agent_publications p ON p.id=c.publication_id
