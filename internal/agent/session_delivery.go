@@ -234,7 +234,7 @@ func readCurrentSessionDelivery(ctx context.Context, tx pgx.Tx, host workergroup
  AND h.status IN ('active','draining') AND g.status IN ('active','paused','draining')
  AND l.fenced_at IS NULL AND l.expires_at>clock_timestamp() AND c.integrity_fault_at IS NULL AND c.deleted_at IS NULL
  AND ((l.status='active' AND p.status IN ('ready','starting','stopping') AND p.fenced_at IS NULL)
- OR (l.status='acquiring' AND p.status<>'stopped' AND EXISTS(SELECT 1 FROM computer_checkpoints cp JOIN computer_checkpoint_members m ON (m.environment_id,m.checkpoint_id)=(cp.environment_id,cp.id)
+ OR (l.status='acquiring' AND p.status<>'stopped' AND EXISTS(SELECT 1 FROM checkpoints cp JOIN checkpoint_processes m ON (m.environment_id,m.checkpoint_id)=(cp.environment_id,cp.id)
  WHERE cp.environment_id=l.environment_id AND cp.computer_id=l.computer_id AND cp.target_lease_epoch=l.epoch AND cp.status IN ('restoring','consumed') AND cp.controls_reconciled_at IS NULL
  AND m.session_id=p.session_id AND m.process_epoch=p.epoch)))
  AND p.attachment_sequence=$10 AND p.control_attachment=$10 AND p.control_generation=s.authority_generation

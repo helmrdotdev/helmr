@@ -455,7 +455,7 @@ func TestComputerRestoreFailureWithdrawsOnlyExactRetainedCheckpoint(t *testing.T
 				t.Fatalf("unbound checkpoint report: %v", err)
 			}
 			var intact bool
-			if err := r.f.pool.QueryRow(t.Context(), `SELECT cp.status IN ('ready','restoring') AND l.fenced_at IS NULL FROM computer_checkpoints cp JOIN computer_leases l ON l.environment_id=cp.environment_id AND l.computer_id=cp.computer_id WHERE cp.id=$1 AND l.epoch=$2`, r.manifest.CheckpointID, r.epoch).Scan(&intact); err != nil || !intact {
+			if err := r.f.pool.QueryRow(t.Context(), `SELECT cp.status IN ('ready','restoring') AND l.fenced_at IS NULL FROM checkpoints cp JOIN computer_leases l ON l.environment_id=cp.environment_id AND l.computer_id=cp.computer_id WHERE cp.id=$1 AND l.epoch=$2`, r.manifest.CheckpointID, r.epoch).Scan(&intact); err != nil || !intact {
 				t.Fatalf("unbound report mutated state: %v %v", intact, err)
 			}
 			for range 2 {
@@ -464,7 +464,7 @@ func TestComputerRestoreFailureWithdrawsOnlyExactRetainedCheckpoint(t *testing.T
 				}
 			}
 			var lost bool
-			if err := r.f.pool.QueryRow(t.Context(), `SELECT status='lost' AND capture_request IS NULL AND manifest IS NOT NULL FROM computer_checkpoints WHERE id=$1`, r.manifest.CheckpointID).Scan(&lost); err != nil || !lost {
+			if err := r.f.pool.QueryRow(t.Context(), `SELECT status='lost' AND capture_request IS NULL AND manifest IS NOT NULL FROM checkpoints WHERE id=$1`, r.manifest.CheckpointID).Scan(&lost); err != nil || !lost {
 				t.Fatalf("checkpoint remained eligible: %v %v", lost, err)
 			}
 			if err := r.f.pool.QueryRow(t.Context(), `SELECT bool_and(status='lost' AND failure_recorded_at IS NOT NULL AND fenced_at IS NOT NULL) FROM session_processes WHERE computer_id=$1`, r.f.computer).Scan(&lost); err != nil || !lost {
@@ -540,7 +540,7 @@ func TestComputerRestoreInvalidCheckpointPreservesCompletedOutcomeAndRejectsStal
 		t.Fatal(err)
 	}
 	var intact bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT cp.status='ready' AND l.fenced_at IS NULL FROM computer_checkpoints cp JOIN computer_leases l ON l.computer_id=cp.computer_id WHERE cp.id=$1 AND l.epoch=$2`, r.manifest.CheckpointID, r.epoch).Scan(&intact); err != nil || !intact {
+	if err := f.pool.QueryRow(t.Context(), `SELECT cp.status='ready' AND l.fenced_at IS NULL FROM checkpoints cp JOIN computer_leases l ON l.computer_id=cp.computer_id WHERE cp.id=$1 AND l.epoch=$2`, r.manifest.CheckpointID, r.epoch).Scan(&intact); err != nil || !intact {
 		t.Fatalf("stale report changed current restore: %v %v", intact, err)
 	}
 	if err := ObserveComputerStopped(t.Context(), f.pool, r.host, current, r.manifest.CheckpointID); err != nil {

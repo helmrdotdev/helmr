@@ -30,7 +30,7 @@ func TestPreparationTrustConcurrentAllocationCommitsOneSigner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_secret_bindings SET mode='protected',placeholder=$3,allowed_origins=ARRAY['https://api.example.com'] WHERE environment_id=$1 AND preparation_spec_id=$2 AND placement_target='TOKEN'`, f.env, p.SpecID, marker)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE secret_bindings SET mode='protected',placeholder=$3,allowed_origins=ARRAY['https://api.example.com'] WHERE environment_id=$1 AND preparation_spec_id=$2 AND placement_target='TOKEN'`, f.env, p.SpecID, marker)
 	issuer := &countingPreparationTrustIssuer{PreparationTrustIssuer: f.secrets}
 	a.trust = issuer
 	const callers = 8
@@ -68,7 +68,7 @@ func TestPreparationTrustConcurrentAllocationCommitsOneSigner(t *testing.T) {
 		t.Fatalf("signer generated %d times for one committed allocation", issuer.calls.Load())
 	}
 	var before []byte
-	if err := f.pool.QueryRow(t.Context(), `SELECT proxy_ca_private_key_ciphertext FROM computer_preparations WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&before); err != nil || len(before) == 0 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT proxy_ca_private_key_ciphertext FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&before); err != nil || len(before) == 0 {
 		t.Fatalf("committed signer: %v", err)
 	}
 	restarted, err := NewAllocator(f.pool, bytes.Repeat([]byte{19}, 32), issuer)
@@ -79,7 +79,7 @@ func TestPreparationTrustConcurrentAllocationCommitsOneSigner(t *testing.T) {
 		t.Fatal(err)
 	}
 	var after []byte
-	if err := f.pool.QueryRow(t.Context(), `SELECT proxy_ca_private_key_ciphertext FROM computer_preparations WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&after); err != nil || !bytes.Equal(before, after) || issuer.calls.Load() != 1 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT proxy_ca_private_key_ciphertext FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&after); err != nil || !bytes.Equal(before, after) || issuer.calls.Load() != 1 {
 		t.Fatal("restart replaced committed signer")
 	}
 }

@@ -241,7 +241,7 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 			}
 			if req.ComputerID != uuid.Nil() {
 				var profile string
-				if err = tx.QueryRow(ctx, `SELECT spec.seed->>'profile' FROM computers c JOIN computer_preparation_specs spec ON (spec.environment_id,spec.id)=(c.environment_id,c.preparation_spec_id) WHERE c.environment_id=$1 AND c.id=$2`, req.EnvironmentID, computer).Scan(&profile); err != nil {
+				if err = tx.QueryRow(ctx, `SELECT spec.seed->>'profile' FROM computers c JOIN image_specs spec ON (spec.environment_id,spec.id)=(c.environment_id,c.preparation_spec_id) WHERE c.environment_id=$1 AND c.id=$2`, req.EnvironmentID, computer).Scan(&profile); err != nil {
 					return err
 				}
 				if profile != definition.ComputerSeedProfile {
@@ -412,7 +412,7 @@ func createComputer(ctx context.Context, tx pgx.Tx, trust ComputerTrustIssuer, e
 	var seed []byte
 	var maxAge, deleteUnused *int64
 	var deleteNever bool
-	if err := tx.QueryRow(ctx, `SELECT d.template_id,d.preparation_spec_id,d.cpu_millis,d.memory_bytes,d.disk_bytes,d.max_image_age_ms,s.seed,d.delete_after_unused_ms,d.delete_after_unused_never FROM template_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) JOIN computer_preparation_specs s ON (s.environment_id,s.id)=(d.environment_id,d.preparation_spec_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND t.key=$3`, env, deployment, key).Scan(&template, &spec, &cpuMillis, &memoryBytes, &diskBytes, &maxAge, &seed, &deleteUnused, &deleteNever); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT d.template_id,d.preparation_spec_id,d.cpu_millis,d.memory_bytes,d.disk_bytes,d.max_image_age_ms,s.seed,d.delete_after_unused_ms,d.delete_after_unused_never FROM template_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) JOIN image_specs s ON (s.environment_id,s.id)=(d.environment_id,d.preparation_spec_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND t.key=$3`, env, deployment, key).Scan(&template, &spec, &cpuMillis, &memoryBytes, &diskBytes, &maxAge, &seed, &deleteUnused, &deleteNever); err != nil {
 		return uuid.Nil(), err
 	}
 	var base definition.ComputerSeedManifest
@@ -456,7 +456,7 @@ func createComputer(ctx context.Context, tx pgx.Tx, trust ComputerTrustIssuer, e
 	}
 
 	var protected bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_secret_bindings WHERE environment_id=$1 AND computer_id=$2 AND mode='protected')`, env, id).Scan(&protected); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM secret_bindings WHERE environment_id=$1 AND computer_id=$2 AND mode='protected')`, env, id).Scan(&protected); err != nil {
 		return uuid.Nil(), err
 	}
 	if protected {

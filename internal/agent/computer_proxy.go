@@ -32,9 +32,9 @@ const computerProxyAuthority = `WITH authority AS (
    AND h.admission_paused_reason IS NULL
    AND EXISTS(SELECT 1 FROM worker_pools p WHERE p.id=h.worker_pool_id AND p.status='active')))
  AND c.deleted_at IS NULL AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL
- AND NOT EXISTS(SELECT 1 FROM computer_preparations p WHERE p.instance_id=l.computer_instance_id)
+ AND NOT EXISTS(SELECT 1 FROM image_builds p WHERE p.instance_id=l.computer_instance_id)
  AND NOT EXISTS(SELECT 1 FROM (` + db.RevokedComputerSecretsSQL + `) r WHERE r.environment_id=c.environment_id AND r.computer_id=c.id)
- AND NOT EXISTS(SELECT 1 FROM computer_secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id)
+ AND NOT EXISTS(SELECT 1 FROM secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id)
    WHERE b.environment_id=c.environment_id AND b.computer_id=c.id AND s.status<>'active')
 ) `
 
@@ -48,7 +48,7 @@ func CaptureComputerProxyTrust(ctx context.Context, database db.DBTX, host worke
 	var expiry *time.Time
 	var current bool
 	err := database.QueryRow(ctx, computerProxyAuthority+`SELECT a.environment_id,a.id,a.certificate,a.not_after,a.nonce,a.ciphertext,a.claims_current,
- ARRAY(SELECT DISTINCT unnest(b.allowed_origins) FROM computer_secret_bindings b WHERE b.environment_id=a.environment_id AND b.computer_id=a.id AND b.mode='protected')
+ ARRAY(SELECT DISTINCT unnest(b.allowed_origins) FROM secret_bindings b WHERE b.environment_id=a.environment_id AND b.computer_id=a.id AND b.mode='protected')
  FROM authority a`, instance, host.HostID, host.Epoch, host.GroupID, host.HostClaimVersion, host.GroupClaimVersion).Scan(&result.Trust.EnvironmentID, &result.Trust.ComputerID, &result.Trust.Certificate, &expiry, &result.Trust.PrivateKeyNonce, &result.Trust.PrivateKeyCiphertext, &current, &result.Origins)
 	if err != nil {
 		return ComputerProxyTrust{}, hideMissing(err)
@@ -87,18 +87,18 @@ func CaptureComputerProtectedSecrets(ctx context.Context, database db.DBTX, host
  WHERE p.status IN ('starting','ready') AND p.fenced_at IS NULL AND p.failure_recorded_at IS NULL AND d.execution_revoked_at IS NULL AND s.status IN ('open','closing')
  UNION ALL
  SELECT c.environment_id,c.computer_id,c.id,0::bigint,'command'::text FROM authority a
- JOIN computer_commands c ON c.environment_id=a.environment_id AND c.computer_id=a.id AND c.computer_lease_epoch=a.epoch
+ JOIN commands c ON c.environment_id=a.environment_id AND c.computer_id=a.id AND c.computer_lease_epoch=a.epoch
  WHERE c.status IN ('starting','running') AND c.cancel_requested_at IS NULL
 ), candidates AS (
  SELECT 'hlmr_protected_'||encode(sha256(convert_to('helmr.runtime-secret-selector.v1|'||a.environment_id::text||'|'||o.kind||'|'||o.owner_id::text||'|'||o.owner_epoch::text||'|'||b.placeholder,'UTF8')),'hex') AS placeholder,
  a.environment_id,b.secret_id,x.version_id,v.version,v.nonce,v.ciphertext,a.certificate,a.not_after,a.authorized_at,a.claims_current
  FROM authority a JOIN owners o ON o.environment_id=a.environment_id AND o.computer_id=a.id
- JOIN computer_secret_bindings b ON b.environment_id=a.environment_id AND b.computer_id=a.id
+ JOIN secret_bindings b ON b.environment_id=a.environment_id AND b.computer_id=a.id
  JOIN secret_exposures x ON x.environment_id=a.environment_id AND x.secret_id=b.secret_id
  AND ((o.kind='process' AND x.session_id=o.owner_id AND x.process_epoch=o.owner_epoch) OR (o.kind='command' AND x.command_id=o.owner_id))
  JOIN secret_versions v ON v.secret_id=x.secret_id AND v.id=x.version_id
  WHERE a.status='active' AND b.mode='protected' AND $8=ANY(b.allowed_origins)
- AND NOT EXISTS(SELECT 1 FROM computer_checkpoints cp WHERE cp.environment_id=a.environment_id AND cp.computer_id=a.id
+ AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=a.environment_id AND cp.computer_id=a.id
  AND (cp.status IN ('capturing','sealed','ready','restoring','aborting') OR (cp.status='consumed' AND cp.controls_reconciled_at IS NULL)))
 ) SELECT * FROM candidates WHERE placeholder=ANY($7::text[]) ORDER BY placeholder`, instance, host.HostID, host.Epoch, host.GroupID, host.HostClaimVersion, host.GroupClaimVersion, selectors, origin)
 	if err != nil {

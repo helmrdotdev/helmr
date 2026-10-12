@@ -198,18 +198,18 @@ type createReceipt struct {
 // then locks the Computer's Secrets and the Computer, records the admission,
 // the Command, and completes the receipt. Secret versions are selected only
 // at the first possible delivery to this Command.
-func Create(ctx context.Context, txb db.TxBeginner, request CreateRequest) (db.ComputerCommand, error) {
+func Create(ctx context.Context, txb db.TxBeginner, request CreateRequest) (db.Command, error) {
 	switch request.Creator.Kind {
 	case string(auth.PrincipalKindAPIKey), string(auth.PrincipalKindSession):
 	default:
-		return db.ComputerCommand{}, invalid("creator type is invalid")
+		return db.Command{}, invalid("creator type is invalid")
 	}
 	if request.Creator.ID == uuid.Nil() {
-		return db.ComputerCommand{}, invalid("creator ID is invalid")
+		return db.Command{}, invalid("creator ID is invalid")
 	}
 	normalized, err := normalize(request)
 	if err != nil {
-		return db.ComputerCommand{}, err
+		return db.Command{}, err
 	}
 	claimRequest, err := idempotency.NewComputerCommandRequest(
 		request.EnvironmentID,
@@ -224,36 +224,36 @@ func Create(ctx context.Context, txb db.TxBeginner, request CreateRequest) (db.C
 		},
 	)
 	if err != nil {
-		return db.ComputerCommand{}, invalid("%v", err)
+		return db.Command{}, invalid("%v", err)
 	}
-	var created db.ComputerCommand
+	var created db.Command
 	err = db.RunTx(ctx, txb, func(tx pgx.Tx) error {
 		var err error
 		created, err = create(ctx, tx, request, normalized, claimRequest)
 		return err
 	})
 	if err != nil {
-		return db.ComputerCommand{}, err
+		return db.Command{}, err
 	}
 	return created, nil
 }
 
-func create(ctx context.Context, tx pgx.Tx, request CreateRequest, normalized normalizedRequest, claimRequest *idempotency.Request) (db.ComputerCommand, error) {
+func create(ctx context.Context, tx pgx.Tx, request CreateRequest, normalized normalizedRequest, claimRequest *idempotency.Request) (db.Command, error) {
 	var scoped bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS (
  SELECT 1 FROM computers c JOIN environments e ON e.id=c.environment_id
  WHERE c.id=$1 AND c.environment_id=$2 AND e.org_id=$3 AND e.project_id=$4
 )`, request.ComputerID, request.EnvironmentID, request.OrgID, request.ProjectID).Scan(&scoped); err != nil {
-		return db.ComputerCommand{}, err
+		return db.Command{}, err
 	}
 	if !scoped {
-		return db.ComputerCommand{}, computer.ErrNotFound
+		return db.Command{}, computer.ErrNotFound
 	}
-	var result db.ComputerCommand
+	var result db.Command
 	err := idempotency.Run(ctx, tx, claimRequest, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
 		q := db.New(tx)
 		if !acquired.New {
-			replayed, err := q.GetComputerCommandByRetryKey(ctx, db.GetComputerCommandByRetryKeyParams{
+			replayed, err := q.GetCommandByRetryKey(ctx, db.GetCommandByRetryKeyParams{
 				EnvironmentID: pgvalue.UUID(request.EnvironmentID),
 				RetryKeyID:    acquired.Claim.ID,
 			})
@@ -273,7 +273,7 @@ func create(ctx context.Context, tx pgx.Tx, request CreateRequest, normalized no
 		// Secret locks precede the Computer lock, matching revocation. Admission
 		// checks availability and placements without selecting a runtime version.
 		rows, err := tx.Query(ctx, `SELECT b.placement_kind,b.placement_target,s.status
- FROM computer_secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id)
+ FROM secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id)
  WHERE b.environment_id=$1 AND b.computer_id=$2 ORDER BY s.id,b.placement_kind,b.placement_target FOR SHARE OF s`, request.EnvironmentID, request.ComputerID)
 		if err != nil {
 			return idempotency.Completion{}, err
@@ -324,7 +324,7 @@ func create(ctx context.Context, tx pgx.Tx, request CreateRequest, normalized no
 		if _, err = tx.Exec(ctx, `UPDATE computers SET unused_since=NULL WHERE environment_id=$1 AND id=$2`, request.EnvironmentID, request.ComputerID); err != nil {
 			return idempotency.Completion{}, err
 		}
-		created, err := q.CreateComputerCommand(ctx, db.CreateComputerCommandParams{
+		created, err := q.CreateCommand(ctx, db.CreateCommandParams{
 			ID:            pgvalue.UUID(uuid.NewV7()),
 			EnvironmentID: pgvalue.UUID(request.EnvironmentID),
 			ComputerID:    pgvalue.UUID(request.ComputerID),
@@ -348,7 +348,7 @@ func create(ctx context.Context, tx pgx.Tx, request CreateRequest, normalized no
 		return idempotency.Completion{Target: idempotency.Target{CommandID: uuid.UUID(created.ID.Bytes)}, Receipt: receipt}, nil
 	})
 	if err != nil {
-		return db.ComputerCommand{}, err
+		return db.Command{}, err
 	}
 	return result, nil
 }

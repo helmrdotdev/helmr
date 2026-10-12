@@ -19,7 +19,7 @@ func protectedPreparationAllocationFixture(t *testing.T) (preparationFixture, Pr
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_secret_bindings SET mode='protected',placeholder=$3,allowed_origins=ARRAY['https://api.example.com'] WHERE environment_id=$1 AND preparation_spec_id=$2 AND placement_target='TOKEN'`, f.env, p.SpecID, marker)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE secret_bindings SET mode='protected',placeholder=$3,allowed_origins=ARRAY['https://api.example.com'] WHERE environment_id=$1 AND preparation_spec_id=$2 AND placement_target='TOKEN'`, f.env, p.SpecID, marker)
 	a.trust = f.secrets
 	allocation, err := a.AllocatePreparation(t.Context(), f.env, p.ID, f.worker)
 	if err != nil {
@@ -138,7 +138,7 @@ func TestPreparationProxyClosesAuthorityAndClearsSigner(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "deadline":
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_preparations SET deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, ref.PreparationID)
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, ref.PreparationID)
 				if err := expirePreparation(t.Context(), f.pool, f.env, ref.PreparationID); err != nil {
 					t.Fatal(err)
 				}
@@ -162,7 +162,7 @@ func TestPreparationProxyClosesAuthorityAndClearsSigner(t *testing.T) {
 				t.Fatalf("closed authority value: %v", err)
 			}
 			var cleared, unfenced bool
-			if err := f.pool.QueryRow(t.Context(), `SELECT proxy_ca_certificate IS NULL AND proxy_ca_private_key_nonce IS NULL AND proxy_ca_private_key_ciphertext IS NULL AND proxy_ca_not_after IS NULL,fenced_at IS NULL FROM computer_preparations WHERE environment_id=$1 AND id=$2`, f.env, ref.PreparationID).Scan(&cleared, &unfenced); err != nil || !cleared {
+			if err := f.pool.QueryRow(t.Context(), `SELECT proxy_ca_certificate IS NULL AND proxy_ca_private_key_nonce IS NULL AND proxy_ca_private_key_ciphertext IS NULL AND proxy_ca_not_after IS NULL,fenced_at IS NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, ref.PreparationID).Scan(&cleared, &unfenced); err != nil || !cleared {
 				t.Fatalf("signer retained: %v", err)
 			}
 			if transition != "physical stop" && !unfenced {
@@ -178,16 +178,16 @@ func TestPreparationProxyRawAllocationAndRollbackHaveNoTrust(t *testing.T) {
 		t.Fatal(err)
 	}
 	var empty bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT proxy_ca_certificate IS NULL FROM computer_preparations WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&empty); err != nil || !empty {
+	if err := f.pool.QueryRow(t.Context(), `SELECT proxy_ca_certificate IS NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&empty); err != nil || !empty {
 		t.Fatal("raw allocation created trust")
 	}
 	other, attempt, allocator := preparationAllocationFixture(t)
 	marker, _ := secretbinding.Placeholder("protected")
-	dbtest.MustExec(t, t.Context(), other.pool, `UPDATE computer_secret_bindings SET mode='protected',placeholder=$3,allowed_origins=ARRAY['https://api.example.com'] WHERE environment_id=$1 AND preparation_spec_id=$2 AND placement_target='TOKEN'`, other.env, attempt.SpecID, marker)
+	dbtest.MustExec(t, t.Context(), other.pool, `UPDATE secret_bindings SET mode='protected',placeholder=$3,allowed_origins=ARRAY['https://api.example.com'] WHERE environment_id=$1 AND preparation_spec_id=$2 AND placement_target='TOKEN'`, other.env, attempt.SpecID, marker)
 	if _, err := allocator.AllocatePreparation(t.Context(), other.env, attempt.ID, other.worker); err == nil {
 		t.Fatal("missing issuer accepted")
 	}
-	if err := other.pool.QueryRow(t.Context(), `SELECT status='queued' AND worker_host_id IS NULL AND proxy_ca_certificate IS NULL FROM computer_preparations WHERE environment_id=$1 AND id=$2`, other.env, attempt.ID).Scan(&empty); err != nil || !empty {
+	if err := other.pool.QueryRow(t.Context(), `SELECT status='queued' AND worker_host_id IS NULL AND proxy_ca_certificate IS NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, other.env, attempt.ID).Scan(&empty); err != nil || !empty {
 		t.Fatal("failed trust generation leaked allocation")
 	}
 }

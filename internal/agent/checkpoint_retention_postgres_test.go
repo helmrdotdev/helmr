@@ -9,11 +9,11 @@ import (
 func TestCheckpointRetentionRequiresBothPhysicalClosures(t *testing.T) {
 	f := newComputerRestoreFixture(t)
 	f.prepare(t)
-	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE computer_checkpoints SET status='lost',capture_request=NULL,terminal_evidence='logical target loss' WHERE environment_id=$1 AND id=$2`, f.f.env, f.manifest.CheckpointID)
+	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE checkpoints SET status='lost',capture_request=NULL,terminal_evidence='logical target loss' WHERE environment_id=$1 AND id=$2`, f.f.env, f.manifest.CheckpointID)
 	assertObjects := func(count int) {
 		t.Helper()
 		var got int
-		if err := f.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_checkpoint_objects WHERE environment_id=$1 AND checkpoint_id=$2`, f.f.env, f.manifest.CheckpointID).Scan(&got); err != nil || got != count {
+		if err := f.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM checkpoint_objects WHERE environment_id=$1 AND checkpoint_id=$2`, f.f.env, f.manifest.CheckpointID).Scan(&got); err != nil || got != count {
 			t.Fatalf("checkpoint objects=%d want=%d error=%v", got, count, err)
 		}
 	}
@@ -27,7 +27,7 @@ func TestCheckpointRetentionRequiresBothPhysicalClosures(t *testing.T) {
 	}
 	assertObjects(0)
 	var retained bool
-	if err := f.f.pool.QueryRow(t.Context(), `SELECT k.manifest IS NOT NULL AND octet_length(k.capture_digest)=32 AND k.status='lost' AND (SELECT count(*) FROM computer_checkpoint_members m WHERE m.environment_id=k.environment_id AND m.checkpoint_id=k.id)=2 FROM computer_checkpoints k WHERE environment_id=$1 AND id=$2`, f.f.env, f.manifest.CheckpointID).Scan(&retained); err != nil || !retained {
+	if err := f.f.pool.QueryRow(t.Context(), `SELECT k.manifest IS NOT NULL AND octet_length(k.capture_digest)=32 AND k.status='lost' AND (SELECT count(*) FROM checkpoint_processes m WHERE m.environment_id=k.environment_id AND m.checkpoint_id=k.id)=2 FROM checkpoints k WHERE environment_id=$1 AND id=$2`, f.f.env, f.manifest.CheckpointID).Scan(&retained); err != nil || !retained {
 		t.Fatalf("checkpoint identity lost: %v %v", retained, err)
 	}
 }
@@ -46,19 +46,19 @@ func TestCheckpointRetentionKeepsUnreconciledConsumedImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err := f.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_checkpoint_objects WHERE environment_id=$1 AND checkpoint_id=$2`, f.f.env, f.manifest.CheckpointID).Scan(&count); err != nil || count != 4 {
+	if err := f.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM checkpoint_objects WHERE environment_id=$1 AND checkpoint_id=$2`, f.f.env, f.manifest.CheckpointID).Scan(&count); err != nil || count != 4 {
 		t.Fatalf("unreconciled consumed image removed: %d %v", count, err)
 	}
 }
 
 func TestCheckpointRetentionDoesNotTreatLostSourceAsStopped(t *testing.T) {
 	f := readyCheckpointFixture(t)
-	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE computer_checkpoints SET status='lost',capture_request=NULL,terminal_evidence='logical source loss' WHERE environment_id=$1 AND id=$2`, f.f.env, f.manifest.CheckpointID)
+	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE checkpoints SET status='lost',capture_request=NULL,terminal_evidence='logical source loss' WHERE environment_id=$1 AND id=$2`, f.f.env, f.manifest.CheckpointID)
 	if err := ReconcileComputerDiskRetention(t.Context(), f.f.pool); err != nil {
 		t.Fatal(err)
 	}
 	var count int
-	if err := f.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_checkpoint_objects WHERE environment_id=$1 AND checkpoint_id=$2`, f.f.env, f.manifest.CheckpointID).Scan(&count); err != nil || count != 4 {
+	if err := f.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM checkpoint_objects WHERE environment_id=$1 AND checkpoint_id=$2`, f.f.env, f.manifest.CheckpointID).Scan(&count); err != nil || count != 4 {
 		t.Fatalf("unfenced source image removed: %d %v", count, err)
 	}
 }
@@ -87,9 +87,9 @@ func TestCheckpointRetentionPreservesConsumedManifestAfterUnpinning(t *testing.T
 	}
 	var retained bool
 	err = f.f.pool.QueryRow(ctx, `SELECT k.status='consumed' AND k.controls_reconciled_at IS NOT NULL AND k.manifest=$3
-  AND NOT EXISTS(SELECT 1 FROM computer_checkpoint_objects o WHERE o.environment_id=k.environment_id AND o.checkpoint_id=k.id)
-  AND (SELECT count(*)=2 FROM computer_checkpoint_members m WHERE m.environment_id=k.environment_id AND m.checkpoint_id=k.id)
-  FROM computer_checkpoints k WHERE environment_id=$1 AND id=$2`, f.f.env, f.manifest.CheckpointID, expected).Scan(&retained)
+  AND NOT EXISTS(SELECT 1 FROM checkpoint_objects o WHERE o.environment_id=k.environment_id AND o.checkpoint_id=k.id)
+  AND (SELECT count(*)=2 FROM checkpoint_processes m WHERE m.environment_id=k.environment_id AND m.checkpoint_id=k.id)
+  FROM checkpoints k WHERE environment_id=$1 AND id=$2`, f.f.env, f.manifest.CheckpointID, expected).Scan(&retained)
 	if err != nil || !retained {
 		t.Fatalf("consumed checkpoint identity after unpinning: %v %v", retained, err)
 	}

@@ -385,12 +385,12 @@ func TestWorkerAgentComputerOwnerRetainsAuthorityAndReconcilesLostReplies(t *tes
 				}
 				var rejected bool
 				if scenario == "control-failure-unrecorded" || scenario == "control-failure-concurrent-rejection" {
-					if err := f.Pool.QueryRow(t.Context(), `SELECT controls_reconciled_at IS NULL FROM computer_checkpoints WHERE id=$1`, capture.CheckpointId).Scan(&rejected); err != nil || !rejected {
+					if err := f.Pool.QueryRow(t.Context(), `SELECT controls_reconciled_at IS NULL FROM checkpoints WHERE id=$1`, capture.CheckpointId).Scan(&rejected); err != nil || !rejected {
 						t.Fatalf("uncertain failure released continuation: %v %v", rejected, err)
 					}
 					return
 				}
-				if err := f.Pool.QueryRow(t.Context(), `SELECT cp.controls_reconciled_at IS NULL AND p.control_error IS NOT NULL FROM computer_checkpoints cp JOIN computer_checkpoint_members m ON m.checkpoint_id=cp.id JOIN session_processes p ON p.session_id=m.session_id AND p.epoch=m.process_epoch WHERE cp.id=$1`, capture.CheckpointId).Scan(&rejected); err != nil || !rejected {
+				if err := f.Pool.QueryRow(t.Context(), `SELECT cp.controls_reconciled_at IS NULL AND p.control_error IS NOT NULL FROM checkpoints cp JOIN checkpoint_processes m ON m.checkpoint_id=cp.id JOIN session_processes p ON p.session_id=m.session_id AND p.epoch=m.process_epoch WHERE cp.id=$1`, capture.CheckpointId).Scan(&rejected); err != nil || !rejected {
 					t.Fatalf("failure was not durable: %v %v", rejected, err)
 				}
 				return
@@ -409,7 +409,7 @@ func TestWorkerAgentComputerOwnerRetainsAuthorityAndReconcilesLostReplies(t *tes
 				t.Fatalf("attachment retry: %d attachments, %d controls", attachments.Load(), controls.Load())
 			}
 			var reconciled bool
-			if err := f.Pool.QueryRow(t.Context(), `SELECT controls_reconciled_at IS NOT NULL FROM computer_checkpoints WHERE id=$1`, capture.CheckpointId).Scan(&reconciled); err != nil || !reconciled {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT controls_reconciled_at IS NOT NULL FROM checkpoints WHERE id=$1`, capture.CheckpointId).Scan(&reconciled); err != nil || !reconciled {
 				t.Fatalf("completion: %v %v", reconciled, err)
 			}
 			if err := owner.Close(); err != nil {

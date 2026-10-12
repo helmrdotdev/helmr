@@ -71,7 +71,7 @@ func handoffNativeCheckpoint(ctx context.Context, pool *pgxpool.Pool, env uuid.U
 	var platform, cpuDigest string
 	var vcpus int64
 	err := pool.QueryRow(ctx, `SELECT l.worker_host_id,p.vm_platform_id,l.cpu_config_digest,l.vm_vcpu_count
- FROM computer_checkpoints p JOIN computer_leases l ON(l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.source_lease_epoch)
+ FROM checkpoints p JOIN computer_leases l ON(l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.source_lease_epoch)
  JOIN worker_hosts h ON h.id=l.worker_host_id
  WHERE p.environment_id=$1 AND p.id=$2 AND p.status='ready' AND l.fenced_at>=p.ready_at
  AND h.resource_id=$3`, env, request.CheckpointID, input.SourceHostID).Scan(&source, &platform, &cpuDigest, &vcpus)
@@ -124,7 +124,7 @@ func handoffNativeCheckpoint(ctx context.Context, pool *pgxpool.Pool, env uuid.U
 		return fmt.Errorf("target qualification or source observation expiry did not complete: %w; last observation: %s; inspect target worker log", err, receipt)
 	}
 	var stillReady bool
-	if err := pool.QueryRow(ctx, `SELECT status='ready' AND target_lease_epoch IS NULL FROM computer_checkpoints WHERE environment_id=$1 AND id=$2`, env, request.CheckpointID).Scan(&stillReady); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT status='ready' AND target_lease_epoch IS NULL FROM checkpoints WHERE environment_id=$1 AND id=$2`, env, request.CheckpointID).Scan(&stillReady); err != nil {
 		return err
 	}
 	if !stillReady {
@@ -166,7 +166,7 @@ func verifyNativeCrossHostContinuation(ctx context.Context, pool *pgxpool.Pool, 
  AND ((source.id<>target.id)=$6) AND a.vm_platform_id=b.vm_platform_id AND a.cpu_config_digest=b.cpu_config_digest,
  jsonb_build_object('checkpointId',p.id,'sourceHostId',source.id,'targetHostId',target.id,
  'sourceResourceId',source.resource_id,'targetResourceId',target.resource_id,'vmPlatformId',a.vm_platform_id,'cpuConfigDigest',a.cpu_config_digest)
- FROM computer_checkpoints p
+ FROM checkpoints p
  JOIN computer_leases a ON(a.environment_id,a.computer_id,a.epoch)=(p.environment_id,p.computer_id,p.source_lease_epoch)
  JOIN computer_leases b ON(b.environment_id,b.computer_id,b.epoch)=(p.environment_id,p.computer_id,p.target_lease_epoch)
  JOIN worker_hosts source ON source.id=a.worker_host_id JOIN worker_hosts target ON target.id=b.worker_host_id

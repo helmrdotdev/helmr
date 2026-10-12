@@ -143,8 +143,8 @@ func checkpointImageExposure(t *testing.T, f fixture) preparationFixture {
 		t.Fatal(err)
 	}
 	clear(key.Key)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_preparations p SET status='succeeded',logical_bytes=1048576,capture_root='sha256:'||encode(c.initial_root_digest,'hex'),capture_evidence='fixture authenticated root' FROM computers c WHERE p.environment_id=$1 AND p.id=$2 AND c.environment_id=$1 AND c.id=$3;
- INSERT INTO computer_images(environment_id,id,preparation_spec_id,preparation_id,seq,root_id,publication_evidence) SELECT $1,$2,$4,$2,1,initial_root_id,'fixture lineage' FROM computers WHERE environment_id=$1 AND id=$3;
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds p SET status='succeeded',logical_bytes=1048576,capture_root='sha256:'||encode(c.initial_root_digest,'hex'),capture_evidence='fixture authenticated root' FROM computers c WHERE p.environment_id=$1 AND p.id=$2 AND c.environment_id=$1 AND c.id=$3;
+ INSERT INTO images(environment_id,id,preparation_spec_id,preparation_id,seq,root_id,publication_evidence) SELECT $1,$2,$4,$2,1,initial_root_id,'fixture lineage' FROM computers WHERE environment_id=$1 AND id=$3;
  UPDATE computers SET preparation_spec_id=$4,image_id=$2 WHERE environment_id=$1 AND id=$3;`, pgx.QueryExecModeSimpleProtocol, f.env, attempt.ID, f.computer, f.deployment)
 	return p
 }
@@ -186,7 +186,7 @@ func TestPreparationImageRevocationDuringRestoreKeepsStopControl(t *testing.T) {
 				t.Fatal(err)
 			}
 			var state string
-			if err = r.f.pool.QueryRow(t.Context(), `SELECT status FROM computer_checkpoints WHERE environment_id=$1 AND id=$2`, r.f.env, r.manifest.CheckpointID).Scan(&state); err != nil {
+			if err = r.f.pool.QueryRow(t.Context(), `SELECT status FROM checkpoints WHERE environment_id=$1 AND id=$2`, r.f.env, r.manifest.CheckpointID).Scan(&state); err != nil {
 				t.Fatal(err)
 			}
 			want := "restoring"

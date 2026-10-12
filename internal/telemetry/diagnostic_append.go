@@ -124,9 +124,9 @@ func diagnosticOwner(source DiagnosticSource) (table, predicate string) {
 	case "session":
 		return "session_processes", "environment_id=$1 AND session_id=$2 AND epoch=$3"
 	case "computer_preparation":
-		return "computer_preparations", "environment_id=$1 AND id=$2 AND executor_epoch=$3"
+		return "image_builds", "environment_id=$1 AND id=$2 AND executor_epoch=$3"
 	case "computer_command":
-		return "computer_commands", "environment_id=$1 AND id=$2 AND $3::bigint=1"
+		return "commands", "environment_id=$1 AND id=$2 AND $3::bigint=1"
 	default:
 		panic("validated diagnostic source required")
 	}

@@ -95,7 +95,7 @@ func registerSecretBindings(ctx context.Context, tx pgx.Tx, env uuid.UUID, bindi
 	if err != nil {
 		return err
 	}
-	tag, err := tx.Exec(ctx, `INSERT INTO computer_secret_bindings AS existing(environment_id,computer_id,preparation_spec_id,deployment_id,template_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder)
+	tag, err := tx.Exec(ctx, `INSERT INTO secret_bindings AS existing(environment_id,computer_id,preparation_spec_id,deployment_id,template_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder)
  SELECT $1,v.computer_id,v.preparation_spec_id,v.deployment_id,v.template_id,v.secret_id,v.placement_kind,v.placement_target,v.mode,v.allowed_origins,NULLIF(v.placeholder,'')
  FROM jsonb_to_recordset($2::jsonb) AS v(computer_id uuid,preparation_spec_id uuid,deployment_id uuid,template_id uuid,secret_id uuid,placement_kind text,placement_target text,mode text,allowed_origins text[],placeholder text)
  ON CONFLICT (environment_id,preparation_spec_id,deployment_id,template_id,computer_id,placement_kind,placement_target)
@@ -116,7 +116,7 @@ type preparationBinding struct {
 }
 
 func readPreparationBindings(ctx context.Context, tx pgx.Tx, env, spec uuid.UUID) ([]preparationBinding, error) {
-	rows, err := tx.Query(ctx, `SELECT secret_id,placement_kind,placement_target,mode,allowed_origins FROM computer_secret_bindings WHERE environment_id=$1 AND preparation_spec_id=$2 ORDER BY placement_kind,placement_target`, env, spec)
+	rows, err := tx.Query(ctx, `SELECT secret_id,placement_kind,placement_target,mode,allowed_origins FROM secret_bindings WHERE environment_id=$1 AND preparation_spec_id=$2 ORDER BY placement_kind,placement_target`, env, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +128,7 @@ func readPreparationBindings(ctx context.Context, tx pgx.Tx, env, spec uuid.UUID
 }
 
 func copyDefinitionSecretBindings(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, template uuid.UUID, computer uuid.UUID) error {
-	rows, err := tx.Query(ctx, `SELECT secret_id::text,placement_kind,placement_target,mode,allowed_origins FROM computer_secret_bindings WHERE environment_id=$1 AND deployment_id=$2 AND template_id=$3 ORDER BY placement_kind,placement_target`, env, deployment, template)
+	rows, err := tx.Query(ctx, `SELECT secret_id::text,placement_kind,placement_target,mode,allowed_origins FROM secret_bindings WHERE environment_id=$1 AND deployment_id=$2 AND template_id=$3 ORDER BY placement_kind,placement_target`, env, deployment, template)
 	if err != nil {
 		return err
 	}

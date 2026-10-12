@@ -171,7 +171,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	get("/v1/agents"+selected, issue(auth.PermissionSessionsCreate), http.StatusForbidden)
 	dbtest.MustExec(t, t.Context(), f.Pool, `
  UPDATE environments SET current_deployment_id=$2 WHERE id=$1;
- UPDATE computer_preparation_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1;
+ UPDATE image_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1;
  UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1;
  `, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, definition.ComputerSeedProfile)
 	var resourceList api.ListTemplateDefinitionsResponse

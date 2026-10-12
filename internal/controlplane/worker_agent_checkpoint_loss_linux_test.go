@@ -65,7 +65,7 @@ func injectNativeCheckpointFault(ctx context.Context, pool *pgxpool.Pool, env uu
 	}
 	var object nativeCheckpointObject
 	err = pool.QueryRow(ctx, `SELECT o.role,o.digest,o.size_bytes
- FROM computer_checkpoint_objects o JOIN computer_checkpoints p ON (p.environment_id,p.id)=(o.environment_id,o.checkpoint_id)
+ FROM checkpoint_objects o JOIN checkpoints p ON (p.environment_id,p.id)=(o.environment_id,o.checkpoint_id)
  JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.source_lease_epoch)
  WHERE p.environment_id=$1 AND p.id=$2 AND p.status='ready' AND l.fenced_at>=p.ready_at
  AND o.role=$3`, env, request.CheckpointID, role).Scan(&object.Role, &object.Digest, &object.SizeBytes)
@@ -196,7 +196,7 @@ func verifyNativeCheckpointLoss(ctx context.Context, pool *pgxpool.Pool, env uui
  jsonb_build_object('checkpointId',p.id,'status',p.status,'terminalEvidence',p.terminal_evidence,'sourceFencedAt',source.fenced_at,
  'leases',(SELECT jsonb_agg(jsonb_build_object('epoch',l.epoch,'status',l.status,'deliveredAt',l.delivered_at,'initializedAt',l.initialized_at,'fencedAt',l.fenced_at,'fenceEvidence',l.fence_evidence)) FROM computer_leases l WHERE l.environment_id=p.environment_id AND l.computer_id=p.computer_id),
  'processes',(SELECT jsonb_agg(jsonb_build_object('sessionId',s.session_id,'epoch',s.epoch,'status',s.status,'fencedAt',s.fenced_at,'failureRecordedAt',s.failure_recorded_at)) FROM session_processes s WHERE s.environment_id=p.environment_id AND s.computer_id=p.computer_id))
- FROM computer_checkpoints p JOIN computer_leases source ON (source.environment_id,source.computer_id,source.epoch)=(p.environment_id,p.computer_id,p.source_lease_epoch)
+ FROM checkpoints p JOIN computer_leases source ON (source.environment_id,source.computer_id,source.epoch)=(p.environment_id,p.computer_id,p.source_lease_epoch)
  WHERE p.environment_id=$1 AND p.computer_id=$2 AND p.id=$3 AND p.source_lease_epoch=$4`, env, receipt.ComputerID, fault.Checkpoint.CheckpointID, fault.Checkpoint.SourceEpoch).Scan(&valid, &raw)
 	if err != nil {
 		return err

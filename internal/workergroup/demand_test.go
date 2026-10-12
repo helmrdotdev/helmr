@@ -53,12 +53,12 @@ func TestQueuedDemandIncludesUnassignedPreparationsUntilDeadline(t *testing.T) {
 		t.Fatalf("idle fixture: %v %v", got, err)
 	}
 	id := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_preparations(environment_id,id,preparation_spec_id,retry_key,deadline_at) VALUES($1,$2,$3,'pending',clock_timestamp()+interval '1 hour')`, f.Environment, id, f.Deployment)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_builds(environment_id,id,preparation_spec_id,retry_key,deadline_at) VALUES($1,$2,$3,'pending',clock_timestamp()+interval '1 hour')`, f.Environment, id, f.Deployment)
 	got, err = HasQueuedDemand(t.Context(), f.Pool, f.Group)
 	if err != nil || !got {
 		t.Fatalf("queued preparation: %v %v", got, err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_preparations SET deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.Environment, id)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_builds SET deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.Environment, id)
 	got, err = HasQueuedDemand(t.Context(), f.Pool, f.Group)
 	if err != nil || got {
 		t.Fatalf("expired preparation: %v %v", got, err)

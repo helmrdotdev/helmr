@@ -178,12 +178,12 @@ func requireAllocationCapacity(ctx context.Context, tx pgx.Tx, env uuid.UUID, su
 	var computers int64
 	if err := tx.QueryRow(ctx, `SELECT COALESCE(sum(cpu),0),COALESCE(sum(memory),0),COALESCE(sum(computers),0) FROM (
  SELECT reserved_cpu_millis cpu,reserved_memory_bytes memory,1::bigint computers FROM computer_leases WHERE environment_id=$1 AND fenced_at IS NULL
- UNION ALL SELECT reserved_cpu_millis,reserved_memory_bytes,0 FROM computer_preparations WHERE environment_id=$1 AND worker_host_id IS NOT NULL AND fenced_at IS NULL) usage`, env).Scan(&environment.cpu, &environment.memory, &computers); err != nil {
+ UNION ALL SELECT reserved_cpu_millis,reserved_memory_bytes,0 FROM image_builds WHERE environment_id=$1 AND worker_host_id IS NOT NULL AND fenced_at IS NULL) usage`, env).Scan(&environment.cpu, &environment.memory, &computers); err != nil {
 		return err
 	}
 	if err := tx.QueryRow(ctx, `SELECT COALESCE(sum(cpu),0),COALESCE(sum(memory),0),COALESCE(sum(scratch),0),count(*) FROM (
  SELECT reserved_cpu_millis cpu,reserved_memory_bytes memory,reserved_scratch_bytes scratch FROM computer_leases WHERE worker_host_id=$1 AND fenced_at IS NULL
- UNION ALL SELECT reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes FROM computer_preparations WHERE worker_host_id=$1 AND fenced_at IS NULL) usage`, supply.host).Scan(&host.cpu, &host.memory, &host.scratch, &host.slots); err != nil {
+ UNION ALL SELECT reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes FROM image_builds WHERE worker_host_id=$1 AND fenced_at IS NULL) usage`, supply.host).Scan(&host.cpu, &host.memory, &host.scratch, &host.slots); err != nil {
 		return err
 	}
 	fits := func(used, added, limit int64) bool { return added > 0 && added <= limit && used <= limit-added }
@@ -214,7 +214,7 @@ func requireAllocationFreshSupply(ctx context.Context, tx pgx.Tx, supply allocat
 func readPreparationAllocation(ctx context.Context, q db.DBTX, env, preparation uuid.UUID) (Allocation, error) {
 	r := Allocation{EnvironmentID: env, OwnerID: preparation}
 	err := q.QueryRow(ctx, `SELECT instance_id,executor_epoch,worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
- vm_platform_id,vm_vcpu_count,cpu_config_digest,status,delivered_at,executor_expires_at,fenced_at FROM computer_preparations
+ vm_platform_id,vm_vcpu_count,cpu_config_digest,status,delivered_at,executor_expires_at,fenced_at FROM image_builds
  WHERE environment_id=$1 AND id=$2 AND worker_host_id IS NOT NULL`, env, preparation).Scan(&r.InstanceID, &r.Epoch, &r.HostID, &r.HostEpoch,
 		&r.Shape.CPUMillis, &r.Shape.MemoryBytes, &r.Shape.ScratchBytes, &r.Shape.VMPlatformID, &r.Shape.VCPUCount, &r.Shape.CPUConfigDigest,
 		&r.Status, &r.DeliveredAt, &r.ExpiresAt, &r.FencedAt)
@@ -267,7 +267,7 @@ func (a *Allocator) AllocatePreparation(ctx context.Context, env, preparation, h
 			return err
 		}
 		var locked uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT id FROM computer_preparations WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, preparation).Scan(&locked); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT id FROM image_builds WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, preparation).Scan(&locked); err != nil {
 			return err
 		}
 		if prior, err := readPreparationAllocation(ctx, tx, env, preparation); err == nil {
@@ -289,10 +289,10 @@ func (a *Allocator) AllocatePreparation(ctx context.Context, env, preparation, h
 		}
 		result = Allocation{EnvironmentID: env, OwnerID: preparation, InstanceID: uuid.NewV7(), Epoch: 1, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "running"}
 		digest := sha256.Sum256(a.preparationCredential(result))
-		changed, err := tx.Exec(ctx, `UPDATE computer_preparations SET status='running',executor_epoch=1,worker_host_id=$3,worker_epoch=$4,instance_id=$5,channel_credential_digest=$6,
+		changed, err := tx.Exec(ctx, `UPDATE image_builds SET status='running',executor_epoch=1,worker_host_id=$3,worker_epoch=$4,instance_id=$5,channel_credential_digest=$6,
  reserved_cpu_millis=$7,reserved_memory_bytes=$8,reserved_scratch_bytes=$9,vm_platform_id=$10,vm_vcpu_count=$11,cpu_config_digest=$12
  WHERE environment_id=$1 AND id=$2 AND status='queued' AND deadline_at>clock_timestamp() AND NOT EXISTS(
- SELECT 1 FROM computer_secret_bindings binding JOIN secrets s ON s.environment_id=binding.environment_id AND s.id=binding.secret_id
+ SELECT 1 FROM secret_bindings binding JOIN secrets s ON s.environment_id=binding.environment_id AND s.id=binding.secret_id
  WHERE binding.environment_id=$1 AND binding.preparation_spec_id=$13 AND s.status='revoked')`, env, preparation, host, supply.epoch, result.InstanceID, digest[:], shape.CPUMillis, shape.MemoryBytes, shape.ScratchBytes, shape.VMPlatformID, shape.VCPUCount, shape.CPUConfigDigest, p.SpecID)
 		if err != nil {
 			return err
@@ -302,7 +302,7 @@ func (a *Allocator) AllocatePreparation(ctx context.Context, env, preparation, h
 		}
 		var protected bool
 		var now, deadline time.Time
-		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_secret_bindings b WHERE b.environment_id=p.environment_id AND b.preparation_spec_id=p.preparation_spec_id AND b.mode='protected'),clock_timestamp(),p.deadline_at FROM computer_preparations p WHERE p.environment_id=$1 AND p.id=$2`, env, preparation).Scan(&protected, &now, &deadline); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM secret_bindings b WHERE b.environment_id=p.environment_id AND b.preparation_spec_id=p.preparation_spec_id AND b.mode='protected'),clock_timestamp(),p.deadline_at FROM image_builds p WHERE p.environment_id=$1 AND p.id=$2`, env, preparation).Scan(&protected, &now, &deadline); err != nil {
 			return err
 		}
 		if protected {
@@ -313,7 +313,7 @@ func (a *Allocator) AllocatePreparation(ctx context.Context, env, preparation, h
 			if err != nil {
 				return err
 			}
-			if _, err := tx.Exec(ctx, `UPDATE computer_preparations SET proxy_ca_certificate=$3,proxy_ca_private_key_nonce=$4,proxy_ca_private_key_ciphertext=$5,proxy_ca_not_after=$6 WHERE environment_id=$1 AND id=$2`, env, preparation, trust.Certificate, trust.PrivateKeyNonce, trust.PrivateKeyCiphertext, trust.NotAfter); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE image_builds SET proxy_ca_certificate=$3,proxy_ca_private_key_nonce=$4,proxy_ca_private_key_ciphertext=$5,proxy_ca_not_after=$6 WHERE environment_id=$1 AND id=$2`, env, preparation, trust.Certificate, trust.PrivateKeyNonce, trust.PrivateKeyCiphertext, trust.NotAfter); err != nil {
 				return err
 			}
 		}
@@ -321,7 +321,7 @@ func (a *Allocator) AllocatePreparation(ctx context.Context, env, preparation, h
 			return err
 		}
 		var current bool
-		if err := tx.QueryRow(ctx, `SELECT deadline_at>clock_timestamp() FROM computer_preparations WHERE environment_id=$1 AND id=$2`, env, preparation).Scan(&current); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT deadline_at>clock_timestamp() FROM image_builds WHERE environment_id=$1 AND id=$2`, env, preparation).Scan(&current); err != nil {
 			return err
 		}
 		if !current {
@@ -424,7 +424,7 @@ func (a *Allocator) AllocateRestoredComputer(ctx context.Context, env, checkpoin
 		return ComputerAllocation{}, ErrInvalidInput
 	}
 	var computer, save uuid.UUID
-	if err := a.database.QueryRow(ctx, `SELECT computer_id,disk_save_id FROM computer_checkpoints WHERE environment_id=$1 AND id=$2`, env, checkpoint).Scan(&computer, &save); err != nil {
+	if err := a.database.QueryRow(ctx, `SELECT computer_id,disk_save_id FROM checkpoints WHERE environment_id=$1 AND id=$2`, env, checkpoint).Scan(&computer, &save); err != nil {
 		return ComputerAllocation{}, allocationError(err)
 	}
 	if r, err := readComputerAllocation(ctx, a.database, env, computer, epoch); err == nil {
@@ -491,7 +491,7 @@ func (a *Allocator) AllocateRestoredComputer(ctx context.Context, env, checkpoin
 			return ErrNotReady
 		}
 		var raw []byte
-		if err := tx.QueryRow(ctx, `SELECT manifest FROM computer_checkpoints WHERE environment_id=$1 AND id=$2`, env, checkpoint).Scan(&raw); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT manifest FROM checkpoints WHERE environment_id=$1 AND id=$2`, env, checkpoint).Scan(&raw); err != nil {
 			return err
 		}
 		var manifest computercheckpoint.Manifest

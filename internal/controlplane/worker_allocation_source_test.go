@@ -70,14 +70,14 @@ func TestWorkerComputerAllocationSourceBindsDiskAndBootWithoutProgram(t *testing
 	// Storage certification is fixture state. The key broker and authenticated
 	// HTTP path are real; OpenVersion below authenticates the returned key/root.
 	dbtest.MustExec(t, t.Context(), f.Pool, `
- INSERT INTO computer_data_keys(id,environment_id,wrapping_key_id,wrapped_key) VALUES($3,$1,$4,$5);
+ INSERT INTO disk_encryption_keys(id,environment_id,wrapping_key_id,wrapped_key) VALUES($3,$1,$4,$5);
  INSERT INTO cas_blobs(digest,size_bytes) VALUES($6,$7);
  INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$6,$7,'application/octet-stream' FROM environments WHERE id=$1;
- INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$6,org_id,project_id,$7,'application/octet-stream','root',$8,'{}',clock_timestamp() FROM environments WHERE id=$1;
- INSERT INTO computer_object_keys(environment_id,digest,key_id,is_direct) VALUES($1,$6,$3,true);
+ INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$6,org_id,project_id,$7,'application/octet-stream','root',$8,'{}',clock_timestamp() FROM environments WHERE id=$1;
+ INSERT INTO disk_object_keys(environment_id,digest,key_id,is_direct) VALUES($1,$6,$3,true);
  `+agenttest.DiskRootInsert("$1", "$9", "$10")+`;
  UPDATE computers SET initial_root_id=$9,initial_root_digest=decode(substring($11::text from 8),'hex'),preparation_spec_id=$12 WHERE environment_id=$1 AND id=$2;
- UPDATE computer_preparation_specs SET seed=$13 WHERE environment_id=$1 AND id=$12;
+ UPDATE image_specs SET seed=$13 WHERE environment_id=$1 AND id=$12;
  UPDATE deployments SET execution_revoked_at=clock_timestamp() WHERE environment_id=$1;
 	`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Computer, keyID, envelope.WrappingKeyID, envelope.Ciphertext, root.Pack.Digest, root.Pack.SizeBytes, root.Pack.Rank, uuid.NewV7(), string(raw), digest, f.Deployment, string(seed))
 	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.ComputerKeys = wrapper }))

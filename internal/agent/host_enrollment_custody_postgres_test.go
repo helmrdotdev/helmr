@@ -30,7 +30,7 @@ func TestHostEnrollmentRetainsLostResourceCustody(t *testing.T) {
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET status='lost',lost_at=clock_timestamp(),claim_version=claim_version+1 WHERE id=$1;
  UPDATE computer_leases SET status='lost' WHERE worker_host_id=$1 AND fenced_at IS NULL;
- UPDATE computer_preparations SET status='failed',error_code='executor_lost' WHERE worker_host_id=$1 AND fenced_at IS NULL`, pgx.QueryExecModeSimpleProtocol, f.worker)
+ UPDATE image_builds SET status='failed',error_code='executor_lost' WHERE worker_host_id=$1 AND fenced_at IS NULL`, pgx.QueryExecModeSimpleProtocol, f.worker)
 			cfg, err := workergroup.NewHostAuthConfig(bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 32), time.Hour)
 			if err != nil {
 				t.Fatal(err)

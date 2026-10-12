@@ -94,7 +94,7 @@ func oldestComputerSave(ctx context.Context, tx pgx.Tx, identity ComputerLeaseId
 	var save SaveRequest
 	var checkpoint bool
 	err := tx.QueryRow(ctx, `SELECT s.id,s.computer_id,s.computer_lease_epoch,s.seq,s.requested_at,
- EXISTS(SELECT 1 FROM computer_checkpoints p WHERE p.environment_id=s.environment_id AND p.disk_save_id=s.id)
+ EXISTS(SELECT 1 FROM checkpoints p WHERE p.environment_id=s.environment_id AND p.disk_save_id=s.id)
  FROM computer_saves s WHERE s.environment_id=$1 AND s.computer_id=$2 AND s.computer_lease_epoch=$3
  AND s.status IN ('requested','captured') ORDER BY s.seq LIMIT 1`, identity.EnvironmentID, identity.ComputerID, identity.Epoch).Scan(&save.ID, &save.ComputerID, &save.LeaseEpoch, &save.Sequence, &save.RequestedAt, &checkpoint)
 	if errors.Is(err, pgx.ErrNoRows) {

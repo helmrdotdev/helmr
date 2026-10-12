@@ -102,7 +102,7 @@ func (a *Allocator) DeliverPreparation(ctx context.Context, host workergroup.Hos
 			return err
 		}
 		var digest []byte
-		if err := tx.QueryRow(ctx, `SELECT channel_credential_digest FROM computer_preparations WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, preparation).Scan(&digest); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT channel_credential_digest FROM image_builds WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, preparation).Scan(&digest); err != nil {
 			return err
 		}
 		r, err := readPreparationAllocation(ctx, tx, env, preparation)
@@ -115,11 +115,11 @@ func (a *Allocator) DeliverPreparation(ctx context.Context, host workergroup.Hos
 		if !allocationBelongsToHost(r, host) || r.InstanceID != identity.InstanceID || r.Epoch != identity.Epoch || subtle.ConstantTimeCompare(digest, expected[:]) != 1 {
 			return ErrDenied
 		}
-		if err := tx.QueryRow(ctx, `UPDATE computer_preparations p SET delivered_at=COALESCE(delivered_at,clock_timestamp()),
+		if err := tx.QueryRow(ctx, `UPDATE image_builds p SET delivered_at=COALESCE(delivered_at,clock_timestamp()),
  executor_expires_at=COALESCE(executor_expires_at,LEAST(deadline_at,clock_timestamp()+interval '1 minute'))
  WHERE environment_id=$1 AND id=$2 AND status='running' AND fenced_at IS NULL AND deadline_at>clock_timestamp()
  AND (delivered_at IS NULL OR executor_expires_at>clock_timestamp())
- AND NOT EXISTS(SELECT 1 FROM computer_secret_bindings binding JOIN secrets s ON s.environment_id=binding.environment_id AND s.id=binding.secret_id
+ AND NOT EXISTS(SELECT 1 FROM secret_bindings binding JOIN secrets s ON s.environment_id=binding.environment_id AND s.id=binding.secret_id
  WHERE binding.environment_id=$1 AND binding.preparation_spec_id=$3 AND s.status='revoked')
  RETURNING delivered_at,executor_expires_at`, env, preparation, p.SpecID).Scan(&r.DeliveredAt, &r.ExpiresAt); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {

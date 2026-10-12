@@ -30,8 +30,8 @@ func writeNativeCheckpointObservations(ctx context.Context, pool *pgxpool.Pool, 
 		err := pool.QueryRow(ctx, `SELECT COALESCE(jsonb_agg(observed),'[]'::jsonb) FROM (
  SELECT jsonb_build_object('computerId',p.computer_id,'checkpointId',p.id,'sourceEpoch',p.source_lease_epoch,'sourceFenced',l.fenced_at IS NOT NULL,'status',p.status,'observedAt',clock_timestamp(),
   'unfencedLeases',(SELECT count(*) FROM computer_leases live WHERE live.environment_id=p.environment_id AND live.computer_id=p.computer_id AND live.fenced_at IS NULL),
-  'runtimeObjects',(SELECT jsonb_agg(jsonb_build_object('role',o.role,'digest',o.digest,'sizeBytes',o.size_bytes)) FROM computer_checkpoint_objects o WHERE o.environment_id=p.environment_id AND o.checkpoint_id=p.id)) observed
- FROM computer_checkpoints p JOIN computer_leases l ON(l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.source_lease_epoch)
+  'runtimeObjects',(SELECT jsonb_agg(jsonb_build_object('role',o.role,'digest',o.digest,'sizeBytes',o.size_bytes)) FROM checkpoint_objects o WHERE o.environment_id=p.environment_id AND o.checkpoint_id=p.id)) observed
+ FROM checkpoints p JOIN computer_leases l ON(l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.source_lease_epoch)
  WHERE p.environment_id=$1 AND p.ready_at IS NOT NULL ORDER BY p.created_at DESC LIMIT 10) recent`, env).Scan(&raw)
 		if err != nil {
 			return err
@@ -106,14 +106,14 @@ func verifyNativeHealthyContinuation(ctx context.Context, pool *pgxpool.Pool, en
    AND (NOT $5 OR (target.epoch=source.epoch+1
     AND target.delivered_at-source.fenced_at>=interval '2 hours'
     AND $6::timestamptz>=source.fenced_at AND target.delivered_at>=$7::timestamptz))
-   AND (SELECT count(*)=4 AND bool_and(m.process_epoch=1) FROM computer_checkpoint_members m WHERE m.environment_id=p.environment_id AND m.checkpoint_id=p.id),
+   AND (SELECT count(*)=4 AND bool_and(m.process_epoch=1) FROM checkpoint_processes m WHERE m.environment_id=p.environment_id AND m.checkpoint_id=p.id),
    jsonb_build_object('checkpointId',p.id,'sourceInstance',source.computer_instance_id,'targetInstance',target.computer_instance_id,
     'sourceHost',source.worker_host_id,'targetHost',target.worker_host_id,'sourceEpoch',source.epoch,'targetEpoch',target.epoch,
     'readyAt',p.ready_at,'sourceFencedAt',source.fenced_at,'sourceFenceEvidence',source.fence_evidence,'targetDeliveredAt',target.delivered_at,'controlsReconciledAt',p.controls_reconciled_at,
     'status',p.status,'diskSaveStatus',s.status,'credentialsRotated',source.channel_credential_digest<>target.channel_credential_digest,
-    'memberCount',(SELECT count(*) FROM computer_checkpoint_members m WHERE m.environment_id=p.environment_id AND m.checkpoint_id=p.id),
-    'memberProcessEpochs',(SELECT jsonb_agg(m.process_epoch) FROM computer_checkpoint_members m WHERE m.environment_id=p.environment_id AND m.checkpoint_id=p.id)),p.manifest
- FROM computer_checkpoints p JOIN computer_leases source ON(source.environment_id,source.computer_id,source.epoch)=(p.environment_id,p.computer_id,p.source_lease_epoch)
+    'memberCount',(SELECT count(*) FROM checkpoint_processes m WHERE m.environment_id=p.environment_id AND m.checkpoint_id=p.id),
+    'memberProcessEpochs',(SELECT jsonb_agg(m.process_epoch) FROM checkpoint_processes m WHERE m.environment_id=p.environment_id AND m.checkpoint_id=p.id)),p.manifest
+ FROM checkpoints p JOIN computer_leases source ON(source.environment_id,source.computer_id,source.epoch)=(p.environment_id,p.computer_id,p.source_lease_epoch)
  JOIN computer_leases target ON(target.environment_id,target.computer_id,target.epoch)=(p.environment_id,p.computer_id,p.target_lease_epoch)
  JOIN computer_saves s ON(s.environment_id,s.id)=(p.environment_id,p.disk_save_id)
  WHERE p.environment_id=$1 AND p.computer_id=$2 AND p.id=$3`, env, receipt.ComputerID, id, cycle.Checkpoint.SourceEpoch, longIdle && index == 0, cycle.IdleStartedAt, cycle.IdleFinishedAt).Scan(&valid, &raw, &manifestBytes)

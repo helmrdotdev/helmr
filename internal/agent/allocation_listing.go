@@ -47,7 +47,7 @@ func ListHostAllocations(ctx context.Context, database db.TxBeginner, host worke
  SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,computer_instance_id instance_id FROM computer_leases
  WHERE worker_host_id=$1 AND worker_epoch=$2 AND fenced_at IS NULL
  UNION ALL
- SELECT 'preparation',environment_id,id,executor_epoch,instance_id FROM computer_preparations
+ SELECT 'preparation',environment_id,id,executor_epoch,instance_id FROM image_builds
  WHERE worker_host_id=$1 AND worker_epoch=$2 AND fenced_at IS NULL
  ) assignments WHERE (kind,environment_id,owner_id,epoch)>($3,$4,$5,$6)
  ORDER BY kind,environment_id,owner_id,epoch LIMIT 100`, host.HostID, host.Epoch, cursor.Kind, cursor.EnvironmentID, cursor.OwnerID, cursor.Epoch)

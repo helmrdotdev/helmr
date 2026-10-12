@@ -47,7 +47,7 @@ func (f fixture) host() workergroup.HostPrincipal {
 func (f fixture) claim() ClaimRequest {
 	return ClaimRequest{EnvironmentID: f.Environment, InstanceID: f.Computer, WriterGeneration: 1}
 }
-func (f fixture) create(t *testing.T, key string) db.ComputerCommand {
+func (f fixture) create(t *testing.T, key string) db.Command {
 	t.Helper()
 	c, err := Create(t.Context(), f.Pool, f.request(key))
 	if err != nil {
@@ -64,7 +64,7 @@ func (f fixture) start(t *testing.T, key string) Start {
 	}
 	return *r.Start
 }
-func (f fixture) get(t *testing.T, id uuid.UUID) db.ComputerCommand {
+func (f fixture) get(t *testing.T, id uuid.UUID) db.Command {
 	t.Helper()
 	c, err := Get(t.Context(), db.New(f.Pool), f.ref(id))
 	if err != nil {
@@ -117,7 +117,7 @@ func TestCommandCreateConcurrentRetryAndConflict(t *testing.T) {
 		t.Fatalf("premature physical assignment: %+v", c)
 	}
 	var count int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM platform_retry_keys WHERE environment_id=$1 AND command_id=$2 AND operation='computer.exec' AND receipt->>'command_id'=$2::text`, f.Environment, id).Scan(&count); err != nil || count != 1 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM idempotency_receipts WHERE environment_id=$1 AND command_id=$2 AND operation='computer.exec' AND receipt->>'command_id'=$2::text`, f.Environment, id).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("binding count=%d %v", count, err)
 	}
 	r.Argv = []string{"false"}
@@ -146,7 +146,7 @@ func TestCommandReplayAfterDeletionAndExpiredReceipt(t *testing.T) {
 	if _, err = Create(t.Context(), f.Pool, f.request("new")); !errors.Is(err, computer.ErrDeleting) {
 		t.Fatalf("new admission: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE platform_retry_keys SET accepted_at=accepted_at-interval '31 days' WHERE environment_id=$1 AND command_id=$2`, f.Environment, id)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE idempotency_receipts SET accepted_at=accepted_at-interval '31 days' WHERE environment_id=$1 AND command_id=$2`, f.Environment, id)
 	var expired idempotency.ExpiredError
 	if _, err = Create(t.Context(), f.Pool, f.request("replay")); !errors.As(err, &expired) {
 		t.Fatalf("expired create: %v", err)
@@ -155,7 +155,7 @@ func TestCommandReplayAfterDeletionAndExpiredReceipt(t *testing.T) {
 		t.Fatalf("expired cancel: %v", err)
 	}
 	var count int
-	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_commands WHERE environment_id=$1`, f.Environment).Scan(&count); err != nil || count != 1 {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM commands WHERE environment_id=$1`, f.Environment).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("expired replay admitted another command: %d %v", count, err)
 	}
 }
@@ -194,7 +194,7 @@ func TestCommandScopeAndCancellationReceipt(t *testing.T) {
 	if c.Status != "cancelled" || !c.TerminalAt.Valid || c.ComputerLeaseEpoch.Valid {
 		t.Fatalf("pending cancellation: %+v", c)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET result_expires_at=clock_timestamp()-interval '1 day',result_pruned_at=clock_timestamp(),argv=NULL,cwd=NULL,env=NULL,stdin=NULL,error=NULL WHERE environment_id=$1 AND id=$2`, f.Environment, id)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE commands SET result_expires_at=clock_timestamp()-interval '1 day',result_pruned_at=clock_timestamp(),argv=NULL,cwd=NULL,env=NULL,stdin=NULL,error=NULL WHERE environment_id=$1 AND id=$2`, f.Environment, id)
 	again, err = Cancel(t.Context(), f.Pool, f.ref(id))
 	if err != nil || again != receipt {
 		t.Fatalf("pruned replay %+v %v", again, err)
@@ -313,7 +313,7 @@ func TestCommandExpiryNeverReconcilesPhysicalScope(t *testing.T) {
 		t.Fatal("physical fence not reconciled")
 	}
 	var epoch int64
-	if err := f.Pool.QueryRow(t.Context(), `SELECT computer_lease_epoch FROM computer_commands WHERE environment_id=$1 AND id=$2`, f.Environment, id).Scan(&epoch); err != nil || epoch != 1 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT computer_lease_epoch FROM commands WHERE environment_id=$1 AND id=$2`, f.Environment, id).Scan(&epoch); err != nil || epoch != 1 {
 		t.Fatalf("execution rebound: %d %v", epoch, err)
 	}
 }
@@ -353,7 +353,7 @@ func commandSecrets(t *testing.T, f fixture) (*secret.Store, uuid.UUID) {
 		t.Fatal(err)
 	}
 	id := uuid.UUID(s.ID.Bytes)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_secret_bindings(environment_id,computer_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw')`, f.Environment, f.Computer, id)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secret_bindings(environment_id,computer_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw')`, f.Environment, f.Computer, id)
 	return store, id
 }
 func TestCommandSecretSelectionOccursAtFirstDelivery(t *testing.T) {
@@ -409,7 +409,7 @@ func TestCommandSecretSelectionOccursAtFirstDelivery(t *testing.T) {
 		t.Fatalf("revocation pass more=%v %v", more, err)
 	}
 	var converged int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_commands WHERE environment_id=$1 AND cancel_requested_at IS NOT NULL`, f.Environment).Scan(&converged); err != nil || converged != 2 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM commands WHERE environment_id=$1 AND cancel_requested_at IS NOT NULL`, f.Environment).Scan(&converged); err != nil || converged != 2 {
 		t.Fatalf("revocation converged %d %v", converged, err)
 	}
 	c = f.get(t, id)
@@ -473,7 +473,7 @@ func TestCommandStandaloneComputerCreateReplayAndDeletion(t *testing.T) {
 	f := commandFixture(t)
 	store, secretID := commandSecrets(t, f)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1 AND deployment_id=$2`, f.Environment, f.Deployment)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_preparation_specs SET seed='{"profile":"linux-amd64-ext4-v1"}' WHERE environment_id=$1 AND id=$2`, f.Environment, f.Deployment)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET seed='{"profile":"linux-amd64-ext4-v1"}' WHERE environment_id=$1 AND id=$2`, f.Environment, f.Deployment)
 	creator := computer.NewCreator(store)
 	key := "repair-shell"
 	scope := computer.Scope{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.Environment}
@@ -486,7 +486,7 @@ func TestCommandStandaloneComputerCreateReplayAndDeletion(t *testing.T) {
 		t.Fatalf("creation projection %+v", first.Snapshot)
 	}
 	var bound uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT secret_id FROM computer_secret_bindings WHERE environment_id=$1 AND computer_id=$2`, f.Environment, first.ComputerID).Scan(&bound); err != nil || bound != secretID {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT secret_id FROM secret_bindings WHERE environment_id=$1 AND computer_id=$2`, f.Environment, first.ComputerID).Scan(&bound); err != nil || bound != secretID {
 		t.Fatalf("logical identifier did not pin internal Secret: %s %v", bound, err)
 	}
 	other := request
@@ -567,7 +567,7 @@ func TestCommandProtectedSelectorTracksLogicalOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_secret_bindings(environment_id,computer_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder) VALUES($1,$2,$3,'env','PROTECTED_TOKEN','protected',ARRAY['https://api.example.com'],$4)`, f.Environment, f.Computer, secretID, marker)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secret_bindings(environment_id,computer_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder) VALUES($1,$2,$3,'env','PROTECTED_TOKEN','protected',ARRAY['https://api.example.com'],$4)`, f.Environment, f.Computer, secretID, marker)
 	trust, err := store.GenerateProxyTrust(f.Environment, f.Computer, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -609,7 +609,7 @@ func TestCommandPendingTimeoutRetainsIdentity(t *testing.T) {
 	f := commandFixture(t)
 	c := f.create(t, "timeout")
 	id := uuid.UUID(c.ID.Bytes)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET created_at=clock_timestamp()-interval '11 minutes' WHERE environment_id=$1 AND id=$2`, f.Environment, id)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE commands SET created_at=clock_timestamp()-interval '11 minutes' WHERE environment_id=$1 AND id=$2`, f.Environment, id)
 	n, err := ExpirePending(t.Context(), f.Pool, 10)
 	if err != nil || n != 1 {
 		t.Fatalf("expiry %d %v", n, err)

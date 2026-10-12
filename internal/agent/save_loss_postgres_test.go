@@ -33,7 +33,7 @@ func TestComputerSaveLossDistinguishesCommittedPublication(t *testing.T) {
 					}
 				}
 				var pinsBefore int
-				if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_object_pins WHERE save_id=$1`, save.ID).Scan(&pinsBefore); err != nil {
+				if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM disk_object_pins WHERE save_id=$1`, save.ID).Scan(&pinsBefore); err != nil {
 					t.Fatal(err)
 				}
 				for range 2 {
@@ -89,7 +89,7 @@ func TestComputerSaveLossDistinguishesCommittedPublication(t *testing.T) {
 					t.Fatal("lost execution dispatched queued followup")
 				}
 				var pinsAfter int
-				if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_object_pins WHERE save_id=$1`, save.ID).Scan(&pinsAfter); err != nil || pinsAfter != pinsBefore {
+				if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM disk_object_pins WHERE save_id=$1`, save.ID).Scan(&pinsAfter); err != nil || pinsAfter != pinsBefore {
 					t.Fatalf("loss bypassed retention owner: %d -> %d %v", pinsBefore, pinsAfter, err)
 				}
 			})

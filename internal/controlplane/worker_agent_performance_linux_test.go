@@ -161,7 +161,7 @@ func (g *nativePerformanceGate) ServeHTTP(w http.ResponseWriter, r *http.Request
  JOIN sessions se ON (se.environment_id,se.id)=(t.environment_id,t.session_id)
  JOIN agents a ON (a.environment_id,a.id)=(se.environment_id,se.agent_id)
  WHERE s.environment_id=$1 AND s.id=$2 AND a.key IN ('codex','claude')
-), EXISTS(SELECT 1 FROM computer_objects o WHERE o.environment_id=$1 AND o.digest=$3 AND NOT o.certified)`, g.environment, save, digest).Scan(&native, &uncertified)
+), EXISTS(SELECT 1 FROM disk_objects o WHERE o.environment_id=$1 AND o.digest=$3 AND NOT o.certified)`, g.environment, save, digest).Scan(&native, &uncertified)
 		if err != nil {
 			g.observerFailed("classify certification request", save, err)
 			http.Error(w, "performance observation query failed", http.StatusInternalServerError)
@@ -336,7 +336,7 @@ func retainNativePerformance(ctx context.Context, pool *pgxpool.Pool, env uuid.U
 
 		"performance-saves.json": `SELECT COALESCE(jsonb_agg(jsonb_build_object('id',s.id,'turnId',s.turn_id,'sequence',s.seq,'status',s.status,
  'requestedAt',s.requested_at,'capturedAt',s.captured_at,'retained',s.root_id IS NOT NULL,'payloadRetiredAt',s.payload_retired_at,
- 'checkpoint',EXISTS(SELECT 1 FROM computer_checkpoints cp WHERE cp.environment_id=s.environment_id AND cp.disk_save_id=s.id)) ORDER BY s.seq),'[]'::jsonb)
+ 'checkpoint',EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=s.environment_id AND cp.disk_save_id=s.id)) ORDER BY s.seq),'[]'::jsonb)
  FROM computer_saves s WHERE s.environment_id=$1 AND s.computer_id=$2`,
 		"performance-peer-io.json": `SELECT COALESCE(jsonb_agg(jsonb_build_object('sequence',e.seq,'turnId',e.turn_id,'acceptedAt',e.created_at,
  'progress',(convert_from(e.data,'UTF8')::jsonb->0->>'text')::jsonb) ORDER BY e.seq),'[]'::jsonb)
@@ -355,7 +355,7 @@ func retainNativePerformance(ctx context.Context, pool *pgxpool.Pool, env uuid.U
 	}
 	var background int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM computer_saves s WHERE s.environment_id=$1 AND s.computer_id=$2 AND s.turn_id IS NULL
- AND NOT EXISTS(SELECT 1 FROM computer_checkpoints p WHERE p.environment_id=s.environment_id AND p.disk_save_id=s.id)`, env, receipt.ComputerID).Scan(&background); err != nil {
+ AND NOT EXISTS(SELECT 1 FROM checkpoints p WHERE p.environment_id=s.environment_id AND p.disk_save_id=s.id)`, env, receipt.ComputerID).Scan(&background); err != nil {
 		return err
 	}
 	if (background > 0) != input.Performance.Background {

@@ -69,14 +69,14 @@ func attachComputerPreparation(ctx context.Context, tx pgx.Tx, env, computer uui
      SELECT 1 FROM worker_hosts h WHERE h.id=p.worker_host_id AND h.current_epoch=p.worker_epoch AND h.status IN ('active','draining'))))
    AND NOT EXISTS (SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
      WHERE x.environment_id=p.environment_id AND x.preparation_id=p.id AND s.status='revoked')
-   FROM computer_preparations p WHERE p.environment_id=$1 AND p.preparation_spec_id=$2
+   FROM image_builds p WHERE p.environment_id=$1 AND p.preparation_spec_id=$2
    AND (p.status IN ('queued','running') OR (p.worker_host_id IS NOT NULL AND p.fenced_at IS NULL))`, env, spec).Scan(&attempt, &usable)
 	if errors.Is(err, pgx.ErrNoRows) {
 		var successorPending bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_preparations p
- JOIN computer_preparation_specs spec ON (spec.environment_id,spec.id)=(p.environment_id,p.preparation_spec_id)
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM image_builds p
+ JOIN image_specs spec ON (spec.environment_id,spec.id)=(p.environment_id,p.preparation_spec_id)
  WHERE p.environment_id=$1 AND p.preparation_spec_id=$2
- AND NOT EXISTS(SELECT 1 FROM computer_preparations successor WHERE successor.environment_id=p.environment_id AND successor.successor_of=p.id)
+ AND NOT EXISTS(SELECT 1 FROM image_builds successor WHERE successor.environment_id=p.environment_id AND successor.successor_of=p.id)
  AND `+preparationSuccessorEligibilitySQL+`)`, env, spec).Scan(&successorPending); err != nil {
 			return result, err
 		}
@@ -85,7 +85,7 @@ func attachComputerPreparation(ctx context.Context, tx pgx.Tx, env, computer uui
 		}
 		usable = true
 		attempt = uuid.NewV7()
-		if _, err = tx.Exec(ctx, `INSERT INTO computer_preparations(environment_id,id,preparation_spec_id,retry_key,deadline_at)
+		if _, err = tx.Exec(ctx, `INSERT INTO image_builds(environment_id,id,preparation_spec_id,retry_key,deadline_at)
     VALUES($1,$2,$3,$4,$5)`, env, attempt, spec, "computer:"+computer.String(), deadline); err != nil {
 			return result, err
 		}
@@ -104,11 +104,11 @@ func attachComputerPreparation(ctx context.Context, tx pgx.Tx, env, computer uui
 
 func lockPreparationSpec(ctx context.Context, tx pgx.Tx, env, spec uuid.UUID) error {
 	var locked uuid.UUID
-	return tx.QueryRow(ctx, `SELECT id FROM computer_preparation_specs WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, spec).Scan(&locked)
+	return tx.QueryRow(ctx, `SELECT id FROM image_specs WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, spec).Scan(&locked)
 }
 func readPreparation(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) (Preparation, error) {
 	result := Preparation{EnvironmentID: env, ID: id}
-	err := tx.QueryRow(ctx, `SELECT preparation_spec_id,status,deadline_at FROM computer_preparations WHERE environment_id=$1 AND id=$2`, env, id).Scan(&result.SpecID, &result.Status, &result.Deadline)
+	err := tx.QueryRow(ctx, `SELECT preparation_spec_id,status,deadline_at FROM image_builds WHERE environment_id=$1 AND id=$2`, env, id).Scan(&result.SpecID, &result.Status, &result.Deadline)
 	return result, err
 }
 
@@ -151,7 +151,7 @@ func lockPreparationExecutorOnHost(ctx context.Context, tx pgx.Tx, host workergr
 		return err
 	}
 	var id uuid.UUID
-	if err = tx.QueryRow(ctx, `SELECT id FROM computer_preparations WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, p.EnvironmentID, p.ID).Scan(&id); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT id FROM image_builds WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, p.EnvironmentID, p.ID).Scan(&id); err != nil {
 		return err
 	}
 	return checkPreparationExecutor(ctx, tx, host, ref, live)
@@ -162,7 +162,7 @@ func checkPreparationExecutor(ctx context.Context, tx pgx.Tx, host workergroup.H
 	err := tx.QueryRow(ctx, `SELECT channel_credential_digest,COALESCE(worker_host_id=$3 AND worker_epoch=$4 AND executor_epoch=$5 AND instance_id=$6
   AND (NOT $7 OR (status='running' AND fenced_at IS NULL AND deadline_at>clock_timestamp() AND executor_expires_at>clock_timestamp()
    AND NOT EXISTS(SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id) WHERE x.environment_id=$1 AND x.preparation_id=$2 AND s.status='revoked'))), false)
-  FROM computer_preparations WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.PreparationID, host.HostID, host.Epoch, ref.Epoch, ref.InstanceID, live).Scan(&digest, &valid)
+  FROM image_builds WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.PreparationID, host.HostID, host.Epoch, ref.Epoch, ref.InstanceID, live).Scan(&digest, &valid)
 	if err != nil {
 		return err
 	}
@@ -178,7 +178,7 @@ func RenewPreparation(ctx context.Context, pool db.TxBeginner, host workergroup.
 		if err := lockPreparationExecutor(ctx, tx, host, ref, true); err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, `UPDATE computer_preparations SET executor_expires_at=LEAST(deadline_at,GREATEST(executor_expires_at,clock_timestamp()+interval '1 minute'))
+		return tx.QueryRow(ctx, `UPDATE image_builds SET executor_expires_at=LEAST(deadline_at,GREATEST(executor_expires_at,clock_timestamp()+interval '1 minute'))
    WHERE environment_id=$1 AND id=$2 RETURNING executor_expires_at`, ref.EnvironmentID, ref.PreparationID).Scan(&expires)
 	})
 	if err != nil {
@@ -211,7 +211,7 @@ func RecordPreparationExposure(ctx context.Context, pool db.TxBeginner, host wor
 			return err
 		}
 		var spec uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT s.id FROM computer_preparations p JOIN computer_preparation_specs s ON (s.environment_id,s.id)=(p.environment_id,p.preparation_spec_id)
+		if err := tx.QueryRow(ctx, `SELECT s.id FROM image_builds p JOIN image_specs s ON (s.environment_id,s.id)=(p.environment_id,p.preparation_spec_id)
    WHERE p.environment_id=$1 AND p.id=$2`, ref.EnvironmentID, ref.PreparationID).Scan(&spec); err != nil {
 			return err
 		}
@@ -255,14 +255,14 @@ func RecordPreparationExposure(ctx context.Context, pool db.TxBeginner, host wor
 			return err
 		}
 		var locked uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT id FROM computer_preparations WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, ref.EnvironmentID, ref.PreparationID).Scan(&locked); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT id FROM image_builds WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, ref.EnvironmentID, ref.PreparationID).Scan(&locked); err != nil {
 			return err
 		}
 		if err := checkPreparationExecutor(ctx, tx, host, ref, true); err != nil {
 			return err
 		}
 		var sealed bool
-		if err := tx.QueryRow(ctx, `SELECT logical_bytes IS NOT NULL FROM computer_preparations WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.PreparationID).Scan(&sealed); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT logical_bytes IS NOT NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.PreparationID).Scan(&sealed); err != nil {
 			return err
 		}
 		if sealed {
@@ -332,7 +332,7 @@ func FailPreparation(ctx context.Context, pool db.TxBeginner, host workergroup.H
 		if err := lockPreparationExecutor(ctx, tx, host, ref, false); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `UPDATE computer_preparations SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,status='failed',error_code=$3
+		_, err := tx.Exec(ctx, `UPDATE image_builds SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,status='failed',error_code=$3
    WHERE environment_id=$1 AND id=$2 AND status='running'`, ref.EnvironmentID, ref.PreparationID, code)
 		return err
 	}))
@@ -367,7 +367,7 @@ func ObservePreparationStopped(ctx context.Context, pool db.TxBeginner, host wor
 		}
 		var owned bool
 		if err := tx.QueryRow(ctx, `SELECT COALESCE(worker_host_id=$3 AND worker_epoch=$4 AND executor_epoch=$5 AND instance_id=$6,false)
- FROM computer_preparations WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, ref.EnvironmentID, ref.PreparationID, host.HostID, host.Epoch, ref.Epoch, ref.InstanceID).Scan(&owned); err != nil {
+ FROM image_builds WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, ref.EnvironmentID, ref.PreparationID, host.HostID, host.Epoch, ref.Epoch, ref.InstanceID).Scan(&owned); err != nil {
 			return err
 		}
 		if !owned {
@@ -377,7 +377,7 @@ func ObservePreparationStopped(ctx context.Context, pool db.TxBeginner, host wor
 	}))
 }
 func recordPreparationStopped(ctx context.Context, tx pgx.Tx, env, id uuid.UUID, evidence string) error {
-	_, err := tx.Exec(ctx, `UPDATE computer_preparations SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,fenced_at=COALESCE(fenced_at,clock_timestamp()),fence_evidence=COALESCE(fence_evidence,$3),
+	_, err := tx.Exec(ctx, `UPDATE image_builds SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,fenced_at=COALESCE(fenced_at,clock_timestamp()),fence_evidence=COALESCE(fence_evidence,$3),
   status=CASE WHEN status IN ('queued','running') THEN 'failed' ELSE status END,
   error_code=CASE WHEN status IN ('queued','running') THEN 'executor_stopped' ELSE error_code END WHERE environment_id=$1 AND id=$2 AND worker_host_id IS NOT NULL`, env, id, evidence)
 	return err

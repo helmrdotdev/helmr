@@ -29,8 +29,8 @@ func slackRouteFixture(t *testing.T, f fixture) (uuid.UUID, uuid.UUID) {
  SELECT $4,org_id,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$6 FROM environments WHERE id=$1;
  INSERT INTO slack_installations(id,app_registration_id,organization_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id)
  SELECT $2,$4,org_id,'app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['app_mentions:read','channels:read','channels:history','groups:read','groups:history','chat:write','assistant:write'],$6 FROM environments WHERE id=$1;
- INSERT INTO agent_publications(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($5,$1,$7,$4,$2,$6);
- INSERT INTO slack_channels(id,environment_id,publication_id,installation_id,organization_id,team_id,slack_channel_id) SELECT $3,$1,$5,$2,org_id,'team','C1' FROM environments WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, installation, channel, registration, publication, f.user, f.agent)
+ INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($5,$1,$7,$4,$2,$6);
+ INSERT INTO slack_channel_bindings(id,environment_id,publication_id,installation_id,organization_id,team_id,slack_channel_id) SELECT $3,$1,$5,$2,org_id,'team','C1' FROM environments WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, installation, channel, registration, publication, f.user, f.agent)
 	return installation, channel
 }
 
@@ -69,7 +69,7 @@ func TestSlackStartCreatesOpeningAndPreservesReceiptAndKeyedRoute(t *testing.T) 
 	if err = f.pool.QueryRow(t.Context(), `SELECT t.thread_ts IS NULL AND p.role='opening' AND p.turn_id=$2 AND p.session_id=t.front_session_id AND p.source_thread_id IS NULL AND p.publication_key=t.opening_publication_key FROM slack_threads t JOIN slack_posts p ON p.thread_id=t.id WHERE t.front_session_id=$1`, first.SessionID, first.TurnID).Scan(&exact); err != nil || !exact {
 		t.Fatal(exact, err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE environment_id=$1`, f.env)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE environment_id=$1`, f.env)
 	retry, err := Start(t.Context(), f.pool, nil, f.caller(), req)
 	if err != nil || retry.TurnID != first.TurnID || calls != 1 {
 		t.Fatal(retry, calls, err)
@@ -118,7 +118,7 @@ func TestSlackStartPreflightRejectsWithoutAdmissionAndRechecksGeneration(t *test
 					return nil, ErrSlackChannelUnavailable
 				}
 				// This independent write would block if preflight retained the SQL gates.
-				if _, err := f.pool.Exec(ctx, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE id=$1`, value.Route.Target.PublicationID); err != nil {
+				if _, err := f.pool.Exec(ctx, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, value.Route.Target.PublicationID); err != nil {
 					return nil, err
 				}
 				return acceptedStartPreflight(ctx, value)
@@ -165,7 +165,7 @@ func TestSlackSpawnJoinsSourceButStartOwnsIndependentRoot(t *testing.T) {
 	// The route authority is the thread row, and only a root Session may own
 	// one: the schema rejects a thread fronted by the child.
 	var violation *pgconn.PgError
-	if _, err := f.pool.Exec(t.Context(), `INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,organization_id,team_id,slack_channel_id,thread_ts) SELECT $1,$2,$3,c.id,c.organization_id,c.team_id,c.slack_channel_id,'999.000' FROM slack_channels c WHERE c.environment_id=$2`, uuid.NewV7(), f.env, child.SessionID); !errors.As(err, &violation) || violation.Code != "23503" {
+	if _, err := f.pool.Exec(t.Context(), `INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,organization_id,team_id,slack_channel_id,thread_ts) SELECT $1,$2,$3,c.id,c.organization_id,c.team_id,c.slack_channel_id,'999.000' FROM slack_channel_bindings c WHERE c.environment_id=$2`, uuid.NewV7(), f.env, child.SessionID); !errors.As(err, &violation) || violation.Code != "23503" {
 		t.Fatalf("child owned a Slack route: %v", err)
 	}
 	req.RetryKey = "independent"
@@ -182,7 +182,7 @@ func TestSlackSpawnJoinsSourceButStartOwnsIndependentRoot(t *testing.T) {
 	if err = f.pool.QueryRow(t.Context(), `SELECT s.parent_session_id IS NULL AND s.root_session_id=s.id AND s.requester_session_id=$2 AND t.front_session_id=s.id AND p.source_thread_id=source.id FROM sessions s JOIN slack_threads t ON t.front_session_id=s.id JOIN slack_posts p ON p.thread_id=t.id AND p.role='opening' JOIN slack_threads source ON source.front_session_id=$2 WHERE s.id=$1`, independent.SessionID, f.session).Scan(&exact); err != nil || !exact {
 		t.Fatal(exact, err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE environment_id=$1`, f.env)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE environment_id=$1`, f.env)
 	retry, err := Start(t.Context(), f.pool, nil, caller, req)
 	if err != nil || retry.TurnID != independent.TurnID {
 		t.Fatal(retry, err)
@@ -231,7 +231,7 @@ func TestSlackPublicationAdmissionRequiresEveryBotScope(t *testing.T) {
 	f := newAdmissionFixture(t)
 	installation, _ := slackRouteFixture(t, f)
 	var publication uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM agent_publications WHERE environment_id=$1 AND agent_id=$2`, f.env, f.agent).Scan(&publication); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM slack_connections WHERE environment_id=$1 AND agent_id=$2`, f.env, f.agent).Scan(&publication); err != nil {
 		t.Fatal(err)
 	}
 	// Keep the expected permissions independent from the production definition.

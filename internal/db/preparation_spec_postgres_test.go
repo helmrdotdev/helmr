@@ -23,10 +23,10 @@ func TestPreparationSpecJSONBRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := uuid.NewV7()
-	dbtest.MustExec(t, ctx, pool, `INSERT INTO computer_preparation_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$2,$3,$4::jsonb,'{}')`, ids.environmentID, id, digest, canonical)
+	dbtest.MustExec(t, ctx, pool, `INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$2,$3,$4::jsonb,'{}')`, ids.environmentID, id, digest, canonical)
 	var raw []byte
 	var storedDigest string
-	if err := pool.QueryRow(ctx, `SELECT spec::text,spec_digest FROM computer_preparation_specs WHERE environment_id=$1 AND id=$2`, ids.environmentID, id).Scan(&raw, &storedDigest); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT spec::text,spec_digest FROM image_specs WHERE environment_id=$1 AND id=$2`, ids.environmentID, id).Scan(&raw, &storedDigest); err != nil {
 		t.Fatal(err)
 	}
 	parsed, err := artifact.ParseComputerPreparationSpec(raw)

@@ -94,7 +94,7 @@ const computerProjection = `SELECT c.id::text,c.key,(SELECT key FROM templates t
  c.last_activity_at,c.created_at,c.updated_at,c.delete_after_unused_ms,c.unused_since
  FROM computers c JOIN environments e ON e.id=c.environment_id
  LEFT JOIN computer_leases l ON l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL
- LEFT JOIN computer_checkpoints cp ON cp.environment_id=c.environment_id AND cp.computer_id=c.id AND cp.status IN ('capturing','sealed','ready','restoring','aborting')
+ LEFT JOIN checkpoints cp ON cp.environment_id=c.environment_id AND cp.computer_id=c.id AND cp.status IN ('capturing','sealed','ready','restoring','aborting')
  WHERE e.org_id=$1 AND e.project_id=$2 AND c.environment_id=$3`
 
 func scanComputer(row pgx.Row) (ListItem, error) {
@@ -111,7 +111,7 @@ func Read(ctx context.Context, database db.DBTX, scope Scope, id uuid.UUID) (Sna
 	if err != nil {
 		return Snapshot{}, err
 	}
-	rows, err := database.Query(ctx, `SELECT s.name,b.placement_kind,b.placement_target,b.mode,b.allowed_origins FROM computer_secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id) WHERE b.environment_id=$1 AND b.computer_id=$2 ORDER BY b.placement_kind,b.placement_target`, scope.EnvironmentID, id)
+	rows, err := database.Query(ctx, `SELECT s.name,b.placement_kind,b.placement_target,b.mode,b.allowed_origins FROM secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id) WHERE b.environment_id=$1 AND b.computer_id=$2 ORDER BY b.placement_kind,b.placement_target`, scope.EnvironmentID, id)
 	if err != nil {
 		return Snapshot{}, err
 	}

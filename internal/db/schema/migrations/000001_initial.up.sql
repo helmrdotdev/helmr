@@ -134,7 +134,7 @@ CREATE INDEX environments_current_deployment_idx
     ON environments(org_id, project_id, current_deployment_id)
     WHERE current_deployment_id IS NOT NULL;
 
-CREATE TABLE auth_sessions (
+CREATE TABLE login_sessions (
     id UUID PRIMARY KEY,
     org_id UUID,
     user_id UUID NOT NULL,
@@ -147,9 +147,9 @@ CREATE TABLE auth_sessions (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
-CREATE INDEX auth_sessions_user_active_idx ON auth_sessions(user_id) WHERE revoked_at IS NULL;
+CREATE INDEX login_sessions_user_active_idx ON login_sessions(user_id) WHERE revoked_at IS NULL;
 
-CREATE INDEX auth_sessions_expiry_active_idx ON auth_sessions(expires_at) WHERE revoked_at IS NULL;
+CREATE INDEX login_sessions_expiry_active_idx ON login_sessions(expires_at) WHERE revoked_at IS NULL;
 
 CREATE TABLE invitations (
     id UUID PRIMARY KEY,
@@ -569,7 +569,7 @@ CREATE INDEX deployment_objects_cas ON deployment_objects(org_id,digest);
 
 -- Preparation input identity is immutable. Scheduling policy is derived from
 -- promoted definitions and never changes the input specification.
-CREATE TABLE computer_preparation_specs (
+CREATE TABLE image_specs (
     environment_id uuid NOT NULL REFERENCES environments(id),
     id uuid NOT NULL,
     spec_digest text NOT NULL CHECK (spec_digest ~ '^sha256:[0-9a-f]{64}$'),
@@ -583,10 +583,10 @@ CREATE TABLE computer_preparation_specs (
     CHECK ((refresh_every_ms IS NULL) = (next_refresh_at IS NULL))
 );
 
-CREATE INDEX computer_preparation_specs_due ON computer_preparation_specs(next_refresh_at)
+CREATE INDEX image_specs_due ON image_specs(next_refresh_at)
     WHERE next_refresh_at IS NOT NULL;
 
-CREATE INDEX computer_preparation_specs_refresh ON computer_preparation_specs(environment_id,id)
+CREATE INDEX image_specs_refresh ON image_specs(environment_id,id)
     WHERE refresh_every_ms IS NOT NULL;
 
 CREATE TABLE templates (
@@ -613,7 +613,7 @@ CREATE TABLE template_definitions (
     PRIMARY KEY (environment_id,template_id,deployment_id),
     FOREIGN KEY (environment_id,template_id) REFERENCES templates(environment_id,id),
     FOREIGN KEY (environment_id,deployment_id) REFERENCES deployments(environment_id,id),
-    FOREIGN KEY (environment_id,preparation_spec_id) REFERENCES computer_preparation_specs(environment_id,id)
+    FOREIGN KEY (environment_id,preparation_spec_id) REFERENCES image_specs(environment_id,id)
 );
 
 CREATE INDEX template_definitions_deployment ON template_definitions(environment_id,deployment_id,template_id);
@@ -646,7 +646,7 @@ CREATE TABLE agent_definitions (
 
 CREATE INDEX agent_definitions_deployment ON agent_definitions(environment_id,deployment_id,agent_id);
 
-CREATE TABLE computer_data_keys (
+CREATE TABLE disk_encryption_keys (
     id UUID PRIMARY KEY,
     environment_id UUID NOT NULL,
     writer_computer_id UUID,
@@ -656,7 +656,7 @@ CREATE TABLE computer_data_keys (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     retired_at TIMESTAMPTZ,
     available BOOLEAN GENERATED ALWAYS AS (retired_at IS NULL) STORED,
-    CONSTRAINT computer_data_keys_material_check CHECK (
+    CONSTRAINT disk_encryption_keys_material_check CHECK (
         (retired_at IS NULL AND wrapped_key IS NOT NULL AND octet_length(wrapped_key) BETWEEN 1 AND 6144)
         OR (retired_at IS NOT NULL AND wrapped_key IS NULL)
     ),
@@ -674,7 +674,7 @@ CREATE TABLE computer_data_keys (
 );
 
 -- Logical outcome never substitutes for proof that a preparation writer stopped.
-CREATE TABLE computer_preparations (
+CREATE TABLE image_builds (
     environment_id uuid NOT NULL,
     id uuid NOT NULL,
     preparation_spec_id uuid NOT NULL,
@@ -741,9 +741,9 @@ CREATE TABLE computer_preparations (
     UNIQUE(environment_id,preparation_spec_id,id),
     UNIQUE(environment_id,preparation_spec_id,retry_key),
     UNIQUE(environment_id,successor_of),
-    FOREIGN KEY(environment_id,preparation_spec_id,successor_of) REFERENCES computer_preparations(environment_id,preparation_spec_id,id),
+    FOREIGN KEY(environment_id,preparation_spec_id,successor_of) REFERENCES image_builds(environment_id,preparation_spec_id,id),
     CHECK (successor_of IS NULL OR successor_of<>id),
-    FOREIGN KEY(environment_id,preparation_spec_id) REFERENCES computer_preparation_specs(environment_id,id),
+    FOREIGN KEY(environment_id,preparation_spec_id) REFERENCES image_specs(environment_id,id),
     CHECK ((status='failed')=(error_code IS NOT NULL)),
     CHECK ((fenced_at IS NULL)=(fence_evidence IS NULL)),
     CHECK ((worker_host_id IS NULL AND executor_epoch=0 AND worker_epoch IS NULL AND instance_id IS NULL AND channel_credential_digest IS NULL AND executor_expires_at IS NULL AND fenced_at IS NULL)
@@ -756,26 +756,26 @@ CREATE TABLE computer_preparations (
     CHECK (fenced_at IS NULL OR status IN ('succeeded','failed')),
     CHECK (disk_released_at IS NULL OR (fenced_at IS NOT NULL AND write_key_id IS NOT NULL)),
     FOREIGN KEY (environment_id,id,write_key_id)
-        REFERENCES computer_data_keys(environment_id,writer_preparation_id,id),
+        REFERENCES disk_encryption_keys(environment_id,writer_preparation_id,id),
     FOREIGN KEY (environment_id,id,write_key_id,write_key_required)
-        REFERENCES computer_data_keys(environment_id,writer_preparation_id,id,available),
+        REFERENCES disk_encryption_keys(environment_id,writer_preparation_id,id,available),
     CHECK ((capture_root IS NULL)=(capture_evidence IS NULL)),
     CHECK (status<>'succeeded' OR capture_root IS NOT NULL),
     CHECK (capture_root IS NULL OR (logical_bytes IS NOT NULL AND write_key_id IS NOT NULL))
 );
 
-CREATE UNIQUE INDEX computer_preparations_exclusive ON computer_preparations(environment_id,preparation_spec_id)
+CREATE UNIQUE INDEX image_builds_exclusive ON image_builds(environment_id,preparation_spec_id)
     WHERE status IN ('queued','running') OR (worker_host_id IS NOT NULL AND fenced_at IS NULL);
 
-CREATE INDEX computer_preparations_deadline ON computer_preparations(deadline_at) WHERE status IN ('queued','running');
+CREATE INDEX image_builds_deadline ON image_builds(deadline_at) WHERE status IN ('queued','running');
 
-CREATE INDEX computer_preparations_expiry ON computer_preparations(executor_expires_at) WHERE status='running';
+CREATE INDEX image_builds_expiry ON image_builds(executor_expires_at) WHERE status='running';
 
-CREATE INDEX computer_preparations_host ON computer_preparations(worker_host_id,worker_epoch) WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL;
+CREATE INDEX image_builds_host ON image_builds(worker_host_id,worker_epoch) WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL;
 
-CREATE INDEX computer_preparations_environment_allocations ON computer_preparations(environment_id) WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL;
+CREATE INDEX image_builds_environment_allocations ON image_builds(environment_id) WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL;
 
-CREATE TABLE computer_objects (
+CREATE TABLE disk_objects (
     environment_id UUID NOT NULL,
     digest TEXT NOT NULL CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),
     org_id UUID NOT NULL,
@@ -799,7 +799,7 @@ CREATE TABLE computer_objects (
         REFERENCES cas_objects(org_id, digest, size_bytes, media_type) ON DELETE RESTRICT
 );
 
-CREATE TABLE computer_object_keys (
+CREATE TABLE disk_object_keys (
     environment_id UUID NOT NULL,
     digest TEXT NOT NULL,
     key_id UUID NOT NULL,
@@ -808,14 +808,14 @@ CREATE TABLE computer_object_keys (
     PRIMARY KEY (environment_id, digest, key_id),
     UNIQUE (environment_id, digest, key_id, is_direct),
     FOREIGN KEY (environment_id, digest)
-        REFERENCES computer_objects(environment_id, digest) ON DELETE CASCADE,
+        REFERENCES disk_objects(environment_id, digest) ON DELETE CASCADE,
     FOREIGN KEY (environment_id, key_id, availability_required)
-        REFERENCES computer_data_keys(environment_id, id, available) ON DELETE RESTRICT
+        REFERENCES disk_encryption_keys(environment_id, id, available) ON DELETE RESTRICT
 );
 
-CREATE INDEX computer_object_keys_key ON computer_object_keys(environment_id,key_id);
+CREATE INDEX disk_object_keys_key ON disk_object_keys(environment_id,key_id);
 
-CREATE TABLE computer_object_edges (
+CREATE TABLE disk_object_edges (
     environment_id UUID NOT NULL,
     parent_digest TEXT NOT NULL,
     child_digest TEXT NOT NULL,
@@ -825,14 +825,14 @@ CREATE TABLE computer_object_edges (
     PRIMARY KEY (environment_id, parent_digest, child_digest),
     CHECK (child_rank < parent_rank),
     FOREIGN KEY (environment_id, parent_digest, parent_rank)
-        REFERENCES computer_objects(environment_id, digest, rank) ON DELETE CASCADE,
+        REFERENCES disk_objects(environment_id, digest, rank) ON DELETE CASCADE,
     FOREIGN KEY (environment_id, child_digest, child_rank, certification_required)
-        REFERENCES computer_objects(environment_id, digest, rank, certified) ON DELETE RESTRICT
+        REFERENCES disk_objects(environment_id, digest, rank, certified) ON DELETE RESTRICT
 );
 
-CREATE INDEX computer_object_edges_child ON computer_object_edges(environment_id,child_digest);
+CREATE INDEX disk_object_edges_child ON disk_object_edges(environment_id,child_digest);
 
-CREATE TABLE computer_disk_roots (
+CREATE TABLE disk_roots (
     environment_id UUID NOT NULL,
     id UUID PRIMARY KEY,
     format_version INTEGER NOT NULL CHECK (format_version = 1),
@@ -857,13 +857,13 @@ CREATE TABLE computer_disk_roots (
     UNIQUE (environment_id, id),
     UNIQUE (environment_id, pack_digest, page_offset),
     FOREIGN KEY (environment_id, pack_digest, pack_size_bytes, pack_rank, certification_required, root_kind)
-        REFERENCES computer_objects(environment_id, digest, size_bytes, rank, certified, kind) ON DELETE RESTRICT,
+        REFERENCES disk_objects(environment_id, digest, size_bytes, rank, certified, kind) ON DELETE RESTRICT,
     FOREIGN KEY (environment_id, pack_digest, page_key_id, direct_key_required)
-        REFERENCES computer_object_keys(environment_id, digest, key_id, is_direct) ON DELETE RESTRICT,
+        REFERENCES disk_object_keys(environment_id, digest, key_id, is_direct) ON DELETE RESTRICT,
     FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE RESTRICT
 );
 
-CREATE TABLE computer_images (
+CREATE TABLE images (
     environment_id uuid NOT NULL,
     id uuid NOT NULL,
     preparation_spec_id uuid NOT NULL,
@@ -878,8 +878,8 @@ CREATE TABLE computer_images (
     UNIQUE (environment_id,preparation_id),
     UNIQUE (environment_id,preparation_spec_id,id),
     UNIQUE (environment_id,preparation_spec_id,seq),
-    FOREIGN KEY (environment_id,preparation_spec_id,preparation_id) REFERENCES computer_preparations(environment_id,preparation_spec_id,id),
-    FOREIGN KEY (environment_id,root_id) REFERENCES computer_disk_roots(environment_id,id)
+    FOREIGN KEY (environment_id,preparation_spec_id,preparation_id) REFERENCES image_builds(environment_id,preparation_spec_id,id),
+    FOREIGN KEY (environment_id,root_id) REFERENCES disk_roots(environment_id,id)
 );
 
 CREATE TABLE computers (
@@ -922,8 +922,8 @@ CREATE TABLE computers (
     PRIMARY KEY (environment_id,id),
     FOREIGN KEY(environment_id,origin_template_id,origin_deployment_id) REFERENCES template_definitions(environment_id,template_id,deployment_id),
     CHECK (storage_reservation_bytes IS NOT NULL OR deleted_at IS NOT NULL),
-    FOREIGN KEY(environment_id,preparation_spec_id) REFERENCES computer_preparation_specs(environment_id,id),
-    FOREIGN KEY(environment_id,preparation_spec_id,preparation_id) REFERENCES computer_preparations(environment_id,preparation_spec_id,id),
+    FOREIGN KEY(environment_id,preparation_spec_id) REFERENCES image_specs(environment_id,id),
+    FOREIGN KEY(environment_id,preparation_spec_id,preparation_id) REFERENCES image_builds(environment_id,preparation_spec_id,id),
     CHECK (initial_root_digest IS NOT NULL OR (preparation_spec_id IS NOT NULL AND preparation_deadline_at IS NOT NULL)),
     CHECK (preparation_id IS NULL OR preparation_spec_id IS NOT NULL),
     CHECK (preparation_failed_at IS NULL OR (initial_root_digest IS NULL AND preparation_deadline_at IS NOT NULL)),
@@ -931,8 +931,8 @@ CREATE TABLE computers (
     CHECK ((initial_root_digest IS NOT NULL) = (initial_root_id IS NOT NULL OR initial_payload_retired_at IS NOT NULL)),
     CHECK (initial_payload_retired_at IS NULL OR (initial_root_id IS NULL AND deleted_at IS NOT NULL)),
     FOREIGN KEY (environment_id,initial_root_id)
-    REFERENCES computer_disk_roots(environment_id,id),
-    FOREIGN KEY (environment_id,preparation_spec_id,image_id) REFERENCES computer_images(environment_id,preparation_spec_id,id),
+    REFERENCES disk_roots(environment_id,id),
+    FOREIGN KEY (environment_id,preparation_spec_id,image_id) REFERENCES images(environment_id,preparation_spec_id,id),
     CHECK (image_id IS NULL OR (preparation_spec_id IS NOT NULL AND initial_root_digest IS NOT NULL))
 );
 
@@ -948,7 +948,7 @@ CREATE INDEX computers_preparation_deadline ON computers(preparation_deadline_at
 
 CREATE INDEX computers_image ON computers(environment_id,image_id) WHERE image_id IS NOT NULL;
 
-CREATE TABLE computer_secret_bindings (
+CREATE TABLE secret_bindings (
     environment_id uuid NOT NULL,
     preparation_spec_id uuid,
     deployment_id uuid,
@@ -966,13 +966,13 @@ CREATE TABLE computer_secret_bindings (
     CHECK ((mode='protected' AND placement_kind='env' AND cardinality(allowed_origins) BETWEEN 1 AND 16)
         OR (mode='raw' AND cardinality(allowed_origins)=0)),
     UNIQUE NULLS NOT DISTINCT (environment_id,preparation_spec_id,deployment_id,template_id,computer_id,placement_kind,placement_target),
-    FOREIGN KEY (environment_id,preparation_spec_id) REFERENCES computer_preparation_specs(environment_id,id),
+    FOREIGN KEY (environment_id,preparation_spec_id) REFERENCES image_specs(environment_id,id),
     FOREIGN KEY (environment_id,template_id,deployment_id) REFERENCES template_definitions(environment_id,template_id,deployment_id),
     FOREIGN KEY (environment_id,computer_id) REFERENCES computers(environment_id,id),
     FOREIGN KEY (environment_id,secret_id) REFERENCES secrets(environment_id,id)
 );
 
-CREATE INDEX computer_secret_bindings_secret ON computer_secret_bindings(environment_id,secret_id);
+CREATE INDEX secret_bindings_secret ON secret_bindings(environment_id,secret_id);
 
 CREATE TABLE computer_leases (
     environment_id uuid NOT NULL,
@@ -1014,11 +1014,11 @@ CREATE TABLE computer_leases (
     CHECK (status NOT IN ('active','acquiring') OR fenced_at IS NULL),
     CHECK ((base_root_id IS NULL)=(write_key_id IS NULL)),
     CHECK (disk_released_at IS NULL OR (fenced_at IS NOT NULL AND base_root_id IS NOT NULL)),
-    FOREIGN KEY (environment_id,retained_base_root_id) REFERENCES computer_disk_roots(environment_id,id),
+    FOREIGN KEY (environment_id,retained_base_root_id) REFERENCES disk_roots(environment_id,id),
     FOREIGN KEY (environment_id,computer_id,write_key_id)
-        REFERENCES computer_data_keys(environment_id,writer_computer_id,id),
+        REFERENCES disk_encryption_keys(environment_id,writer_computer_id,id),
     FOREIGN KEY (environment_id,computer_id,write_key_id,write_key_required)
-        REFERENCES computer_data_keys(environment_id,writer_computer_id,id,available)
+        REFERENCES disk_encryption_keys(environment_id,writer_computer_id,id,available)
 );
 
 CREATE UNIQUE INDEX computer_leases_one_writer ON computer_leases(environment_id,computer_id) WHERE fenced_at IS NULL;
@@ -1028,7 +1028,7 @@ CREATE INDEX computer_leases_expiring ON computer_leases(expires_at,environment_
 CREATE INDEX computer_leases_host_unfenced ON computer_leases(worker_host_id,worker_epoch) WHERE fenced_at IS NULL;
 
 -- Ordinary commands are pinned to one Computer lease when execution is admitted.
-CREATE TABLE computer_commands (
+CREATE TABLE commands (
     environment_id uuid NOT NULL,
     id uuid NOT NULL,
     computer_id uuid NOT NULL,
@@ -1105,13 +1105,13 @@ CREATE TABLE computer_commands (
             AND argv IS NULL AND cwd IS NULL AND env IS NULL AND stdin IS NULL AND error IS NULL))
 );
 
-CREATE INDEX computer_commands_pending ON computer_commands(created_at,id) WHERE status='pending';
+CREATE INDEX commands_pending ON commands(created_at,id) WHERE status='pending';
 
-CREATE INDEX computer_commands_unreconciled ON computer_commands(environment_id,computer_id,computer_lease_epoch) WHERE computer_lease_epoch IS NOT NULL AND process_reconciled_at IS NULL;
+CREATE INDEX commands_unreconciled ON commands(environment_id,computer_id,computer_lease_epoch) WHERE computer_lease_epoch IS NOT NULL AND process_reconciled_at IS NULL;
 
 -- Scoped platform mutation identity survives response expiry. Domain mutation and
 -- target binding commit together; an unfinished acquisition is never durable work.
-CREATE TABLE platform_retry_keys (
+CREATE TABLE idempotency_receipts (
     environment_id uuid NOT NULL REFERENCES environments(id),
     id uuid NOT NULL,
     operation text NOT NULL CHECK (operation IN ('deployment.finalize','secret.create','secret.rotate','secret.revoke','computer.create','computer.delete','computer.exec','command.cancel')),
@@ -1135,13 +1135,13 @@ CREATE TABLE platform_retry_keys (
     UNIQUE(environment_id,operation,slot_hash),
     FOREIGN KEY(environment_id,scope_secret_id) REFERENCES secrets(environment_id,id),
     FOREIGN KEY(environment_id,scope_computer_id) REFERENCES computers(environment_id,id),
-    FOREIGN KEY(environment_id,scope_command_id) REFERENCES computer_commands(environment_id,id),
+    FOREIGN KEY(environment_id,scope_command_id) REFERENCES commands(environment_id,id),
     FOREIGN KEY(environment_id,deployment_id) REFERENCES deployments(environment_id,id),
     FOREIGN KEY(environment_id,secret_id) REFERENCES secrets(environment_id,id),
     FOREIGN KEY(secret_id,secret_version_id) REFERENCES secret_versions(secret_id,id),
     FOREIGN KEY(environment_id,computer_id) REFERENCES computers(environment_id,id),
-    FOREIGN KEY(environment_id,command_id) REFERENCES computer_commands(environment_id,id),
-    FOREIGN KEY(environment_id,scope_computer_id,command_id) REFERENCES computer_commands(environment_id,computer_id,id),
+    FOREIGN KEY(environment_id,command_id) REFERENCES commands(environment_id,id),
+    FOREIGN KEY(environment_id,scope_computer_id,command_id) REFERENCES commands(environment_id,computer_id,id),
     CHECK (receipt_pruned_at IS NULL OR (receipt IS NULL AND receipt_pruned_at>=accepted_at+interval '720 hours')),
     CHECK ((
         (operation='deployment.finalize' AND num_nonnulls(scope_secret_name,scope_secret_id,scope_computer_id,scope_command_id,scope_caller_kind,scope_computer_key)=0)
@@ -1151,7 +1151,7 @@ CREATE TABLE platform_retry_keys (
         OR (operation IN ('computer.delete','computer.exec') AND scope_computer_id IS NOT NULL AND num_nonnulls(scope_secret_name,scope_secret_id,scope_command_id,scope_caller_kind,scope_computer_key)=0)
         OR (operation='command.cancel' AND scope_command_id IS NOT NULL AND num_nonnulls(scope_secret_name,scope_secret_id,scope_computer_id,scope_caller_kind,scope_computer_key)=0)
     ) IS TRUE),
-    CONSTRAINT platform_retry_keys_complete CHECK ((
+    CONSTRAINT idempotency_receipts_complete CHECK ((
         num_nonnulls(deployment_id,secret_id,computer_id,command_id)=1
         AND (receipt IS NOT NULL OR receipt_pruned_at IS NOT NULL)
         AND (
@@ -1167,9 +1167,9 @@ CREATE TABLE platform_retry_keys (
     ) IS TRUE)
 );
 
-CREATE UNIQUE INDEX platform_retry_keys_command_creation ON platform_retry_keys(environment_id,command_id) WHERE operation='computer.exec';
+CREATE UNIQUE INDEX idempotency_receipts_command_creation ON idempotency_receipts(environment_id,command_id) WHERE operation='computer.exec';
 
-CREATE INDEX platform_retry_keys_receipt_expiry ON platform_retry_keys(accepted_at,id) WHERE receipt_pruned_at IS NULL;
+CREATE INDEX idempotency_receipts_receipt_expiry ON idempotency_receipts(accepted_at,id) WHERE receipt_pruned_at IS NULL;
 
 -- Slack configuration generations never own execution state.
 CREATE TABLE slack_app_registrations (
@@ -1232,7 +1232,7 @@ CREATE TABLE slack_installations (
 
 CREATE UNIQUE INDEX slack_installations_active ON slack_installations(app_id,team_id) WHERE disconnected_at IS NULL;
 
-CREATE TABLE agent_publications (
+CREATE TABLE slack_connections (
     id uuid NOT NULL UNIQUE,
     environment_id uuid NOT NULL,
     agent_id uuid NOT NULL,
@@ -1247,9 +1247,9 @@ CREATE TABLE agent_publications (
     FOREIGN KEY(slack_installation_id,slack_app_registration_id) REFERENCES slack_installations(id,app_registration_id)
 );
 
-CREATE UNIQUE INDEX agent_publications_configured ON agent_publications(environment_id,agent_id) WHERE revoked_at IS NULL;
+CREATE UNIQUE INDEX slack_connections_configured ON slack_connections(environment_id,agent_id) WHERE revoked_at IS NULL;
 
-CREATE UNIQUE INDEX agent_publications_installation_claim ON agent_publications(slack_installation_id) WHERE revoked_at IS NULL AND slack_installation_id IS NOT NULL;
+CREATE UNIQUE INDEX slack_connections_installation_claim ON slack_connections(slack_installation_id) WHERE revoked_at IS NULL AND slack_installation_id IS NOT NULL;
 
 CREATE TABLE slack_user_links (
     team_id text NOT NULL CHECK (team_id<>''),
@@ -1260,7 +1260,7 @@ CREATE TABLE slack_user_links (
     UNIQUE(team_id,user_id)
 );
 
-CREATE TABLE slack_channels (
+CREATE TABLE slack_channel_bindings (
     id uuid PRIMARY KEY,
     environment_id uuid NOT NULL,
     publication_id uuid NOT NULL,
@@ -1272,11 +1272,11 @@ CREATE TABLE slack_channels (
     UNIQUE(publication_id,slack_channel_id),
     UNIQUE(id,environment_id),
     UNIQUE(id,environment_id,organization_id,team_id,slack_channel_id),
-    FOREIGN KEY(publication_id,environment_id,installation_id) REFERENCES agent_publications(id,environment_id,slack_installation_id),
+    FOREIGN KEY(publication_id,environment_id,installation_id) REFERENCES slack_connections(id,environment_id,slack_installation_id),
     FOREIGN KEY(installation_id,organization_id,team_id) REFERENCES slack_installations(id,organization_id,team_id)
 );
 
-CREATE INDEX slack_channels_environment ON slack_channels(environment_id,id);
+CREATE INDEX slack_channel_bindings_environment ON slack_channel_bindings(environment_id,id);
 
 -- Every promotion starts a new half-open schedule activation interval.
 -- A trigger as authored on one Agent definition. Only time triggers exist; a
@@ -1311,7 +1311,7 @@ CREATE TABLE trigger_activations (
     FOREIGN KEY (environment_id,agent_id,deployment_id,trigger_key) REFERENCES agent_triggers(environment_id,agent_id,deployment_id,key),
     CHECK (active_until IS NULL OR active_until >= active_from),
     CHECK (next_fire_at >= active_from),
-    FOREIGN KEY(slack_channel_id,environment_id) REFERENCES slack_channels(id,environment_id)
+    FOREIGN KEY(slack_channel_id,environment_id) REFERENCES slack_channel_bindings(id,environment_id)
 );
 
 CREATE UNIQUE INDEX trigger_activations_current ON trigger_activations(environment_id,agent_id,trigger_key) WHERE active_until IS NULL;
@@ -1451,9 +1451,9 @@ CREATE TABLE secret_exposures (
     exposed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CHECK (num_nonnulls(preparation_id,session_id,command_id)=1),
     CHECK ((session_id IS NULL)=(process_epoch IS NULL)),
-    FOREIGN KEY(environment_id,preparation_id) REFERENCES computer_preparations(environment_id,id),
+    FOREIGN KEY(environment_id,preparation_id) REFERENCES image_builds(environment_id,id),
     FOREIGN KEY(environment_id,session_id,process_epoch) REFERENCES session_processes(environment_id,session_id,epoch),
-    FOREIGN KEY(environment_id,command_id) REFERENCES computer_commands(environment_id,id),
+    FOREIGN KEY(environment_id,command_id) REFERENCES commands(environment_id,id),
     FOREIGN KEY(environment_id,secret_id) REFERENCES secrets(environment_id,id),
     FOREIGN KEY(secret_id,version_id) REFERENCES secret_versions(secret_id,id)
 );
@@ -1644,10 +1644,10 @@ CREATE TABLE computer_saves (
     CHECK ((status='failed') = (failure_evidence IS NOT NULL)),
     UNIQUE (environment_id,computer_id,id),
     FOREIGN KEY (environment_id,root_id)
-    REFERENCES computer_disk_roots(environment_id,id)
+    REFERENCES disk_roots(environment_id,id)
 );
 
-CREATE TABLE computer_object_pins (
+CREATE TABLE disk_object_pins (
     id uuid PRIMARY KEY,
     environment_id uuid NOT NULL,
     save_id uuid,
@@ -1656,13 +1656,13 @@ CREATE TABLE computer_object_pins (
     CHECK (num_nonnulls(save_id,preparation_id)=1),
     UNIQUE NULLS NOT DISTINCT (environment_id,save_id,preparation_id,digest),
     FOREIGN KEY (environment_id,save_id) REFERENCES computer_saves(environment_id,id),
-    FOREIGN KEY (environment_id,preparation_id) REFERENCES computer_preparations(environment_id,id),
-    FOREIGN KEY (environment_id,digest) REFERENCES computer_objects(environment_id,digest)
+    FOREIGN KEY (environment_id,preparation_id) REFERENCES image_builds(environment_id,id),
+    FOREIGN KEY (environment_id,digest) REFERENCES disk_objects(environment_id,digest)
 );
 
-CREATE INDEX computer_object_pins_digest ON computer_object_pins(environment_id,digest);
+CREATE INDEX disk_object_pins_digest ON disk_object_pins(environment_id,digest);
 
-CREATE TABLE computer_checkpoints (
+CREATE TABLE checkpoints (
     environment_id uuid NOT NULL,
     id uuid NOT NULL,
     computer_id uuid NOT NULL,
@@ -1701,21 +1701,21 @@ CREATE TABLE computer_checkpoints (
     CHECK ((status IN ('cancelled','lost') OR controls_reconciled_at IS NOT NULL) = (capture_request IS NULL))
 );
 
-CREATE UNIQUE INDEX computer_checkpoints_one_pending ON computer_checkpoints(environment_id,computer_id)
+CREATE UNIQUE INDEX checkpoints_one_pending ON checkpoints(environment_id,computer_id)
     WHERE status IN ('capturing','sealed','ready','restoring','aborting');
 
-CREATE TABLE computer_checkpoint_members (
+CREATE TABLE checkpoint_processes (
     environment_id uuid NOT NULL,
     computer_id uuid NOT NULL,
     checkpoint_id uuid NOT NULL,
     session_id uuid NOT NULL,
     process_epoch bigint NOT NULL,
     PRIMARY KEY (environment_id,checkpoint_id,session_id),
-    FOREIGN KEY (environment_id,computer_id,checkpoint_id) REFERENCES computer_checkpoints(environment_id,computer_id,id),
+    FOREIGN KEY (environment_id,computer_id,checkpoint_id) REFERENCES checkpoints(environment_id,computer_id,id),
     FOREIGN KEY (environment_id,computer_id,session_id,process_epoch) REFERENCES session_processes(environment_id,computer_id,session_id,epoch)
 );
 
-CREATE TABLE computer_checkpoint_objects (
+CREATE TABLE checkpoint_objects (
     environment_id uuid NOT NULL,
     checkpoint_id uuid NOT NULL,
     role text NOT NULL CHECK (role IN ('vm_config','vm_state','memory','scratch_disk')),
@@ -1724,7 +1724,7 @@ CREATE TABLE computer_checkpoint_objects (
     media_type text NOT NULL,
     availability_required boolean GENERATED ALWAYS AS (true) STORED,
     PRIMARY KEY (environment_id,checkpoint_id,role),
-    FOREIGN KEY (environment_id,checkpoint_id) REFERENCES computer_checkpoints(environment_id,id),
+    FOREIGN KEY (environment_id,checkpoint_id) REFERENCES checkpoints(environment_id,id),
     FOREIGN KEY (digest,size_bytes,availability_required) REFERENCES cas_blobs(digest,size_bytes,not_retired)
 );
 
@@ -1857,8 +1857,8 @@ CREATE TABLE diagnostic_chunks (
     CHECK ((session_id IS NULL)=(process_epoch IS NULL)),
     CHECK ((preparation_id IS NULL)=(preparation_epoch IS NULL)),
     FOREIGN KEY(environment_id,session_id,process_epoch) REFERENCES session_processes(environment_id,session_id,epoch),
-    FOREIGN KEY(environment_id,preparation_id,preparation_epoch) REFERENCES computer_preparations(environment_id,id,executor_epoch),
-    FOREIGN KEY(environment_id,command_id) REFERENCES computer_commands(environment_id,id),
+    FOREIGN KEY(environment_id,preparation_id,preparation_epoch) REFERENCES image_builds(environment_id,id,executor_epoch),
+    FOREIGN KEY(environment_id,command_id) REFERENCES commands(environment_id,id),
     CHECK (sequence>0 AND through_sequence>=sequence AND byte_offset>=0 AND through_byte_offset>=byte_offset AND observed_at_unix_nano>0
         AND dropped_bytes>=0
         AND ((kind='data' AND sequence=through_sequence AND octet_length(data)>0 AND dropped_bytes=0 AND NOT complete AND through_byte_offset=byte_offset+octet_length(data))
@@ -1928,7 +1928,7 @@ CREATE TABLE slack_threads (
     CHECK (thread_ts IS NOT NULL OR opening_publication_key IS NOT NULL),
     UNIQUE(id,environment_id),
     UNIQUE(environment_id,front_session_id),
-    FOREIGN KEY(channel_id,environment_id,organization_id,team_id,slack_channel_id) REFERENCES slack_channels(id,environment_id,organization_id,team_id,slack_channel_id),
+    FOREIGN KEY(channel_id,environment_id,organization_id,team_id,slack_channel_id) REFERENCES slack_channel_bindings(id,environment_id,organization_id,team_id,slack_channel_id),
     FOREIGN KEY(environment_id,front_session_id,front_root_session_id) REFERENCES sessions(environment_id,id,root_session_id),
     UNIQUE(organization_id,team_id,slack_channel_id,thread_ts),
     UNIQUE(channel_id,opening_publication_key),
@@ -2131,6 +2131,6 @@ ALTER TABLE turns
     ADD FOREIGN KEY (environment_id,computer_id,id,completion_save_id,completion_published)
     REFERENCES computer_saves(environment_id,computer_id,turn_id,id,published);
 
-ALTER TABLE computer_data_keys
-    ADD FOREIGN KEY (environment_id, writer_preparation_id) REFERENCES computer_preparations(environment_id,id),
+ALTER TABLE disk_encryption_keys
+    ADD FOREIGN KEY (environment_id, writer_preparation_id) REFERENCES image_builds(environment_id,id),
     ADD FOREIGN KEY (environment_id, writer_computer_id) REFERENCES computers(environment_id,id) ON DELETE RESTRICT;

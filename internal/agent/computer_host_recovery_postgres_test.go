@@ -167,7 +167,7 @@ func TestComputerHostRecoverySettlesUnpublishedCaptureAfterFencing(t *testing.T)
 			}
 			var status, failure string
 			var lost bool
-			if err := f.pool.QueryRow(t.Context(), `SELECT s.status,COALESCE(s.failure_evidence,''),c.status='lost' AND c.capture_request IS NULL AND l.fenced_at IS NOT NULL FROM computer_saves s JOIN computer_checkpoints c ON c.disk_save_id=s.id JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(s.environment_id,s.computer_id,s.computer_lease_epoch) WHERE s.id=$1`, result.SaveID).Scan(&status, &failure, &lost); err != nil {
+			if err := f.pool.QueryRow(t.Context(), `SELECT s.status,COALESCE(s.failure_evidence,''),c.status='lost' AND c.capture_request IS NULL AND l.fenced_at IS NOT NULL FROM computer_saves s JOIN checkpoints c ON c.disk_save_id=s.id JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(s.environment_id,s.computer_id,s.computer_lease_epoch) WHERE s.id=$1`, result.SaveID).Scan(&status, &failure, &lost); err != nil {
 				t.Fatal(err)
 			}
 			if !lost || status != "failed" || failure != "publication absent after writer authority ended" {

@@ -96,7 +96,7 @@ func (s *Server) listCommandLogsHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, page)
 }
 
-func (s *Server) readCommandLogs(ctx context.Context, orgID pgtype.UUID, command db.ComputerCommand, raw string, limit int32) (api.CommandLogPage, error) {
+func (s *Server) readCommandLogs(ctx context.Context, orgID pgtype.UUID, command db.Command, raw string, limit int32) (api.CommandLogPage, error) {
 	position := commandLogCursor{EnvironmentID: pgvalue.UUIDString(command.EnvironmentID), CommandID: pgvalue.UUIDString(command.ID)}
 	if raw != "" {
 		parsed, err := s.parseCommandLogCursor(raw)
@@ -249,7 +249,7 @@ func (s *Server) parseCommandLogCursor(raw string) (commandLogCursor, error) {
 }
 
 // Output closure follows explicit pipe frontiers, independently of process exit.
-func commandOutputState(command db.ComputerCommand) string {
+func commandOutputState(command db.Command) string {
 	if !command.TerminalAt.Valid {
 		return "open"
 	}

@@ -44,8 +44,8 @@ func (g *nativePublicationGate) observeBackgroundPublication(ctx context.Context
  'pendingSaves',(SELECT count(*) FROM computer_saves pending WHERE pending.environment_id=s.environment_id AND pending.computer_id=s.computer_id AND pending.status IN ('requested','captured')),
  'retainedSaves',(SELECT count(*) FROM computer_saves retained WHERE retained.environment_id=s.environment_id AND retained.computer_id=s.computer_id AND retained.root_id IS NOT NULL),
  'retainedRoots',(SELECT count(DISTINCT retained.root_id) FROM computer_saves retained WHERE retained.environment_id=s.environment_id AND retained.computer_id=s.computer_id AND retained.root_id IS NOT NULL),
- 'pinnedBytes',(SELECT COALESCE(sum(o.size_bytes),0) FROM computer_objects o WHERE o.environment_id=s.environment_id AND EXISTS(
-  SELECT 1 FROM computer_object_pins pin JOIN computer_saves retained ON (retained.environment_id,retained.id)=(pin.environment_id,pin.save_id)
+ 'pinnedBytes',(SELECT COALESCE(sum(o.size_bytes),0) FROM disk_objects o WHERE o.environment_id=s.environment_id AND EXISTS(
+  SELECT 1 FROM disk_object_pins pin JOIN computer_saves retained ON (retained.environment_id,retained.id)=(pin.environment_id,pin.save_id)
   WHERE pin.environment_id=o.environment_id AND pin.digest=o.digest AND retained.computer_id=s.computer_id)))
  FROM computer_saves s
  JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id)
@@ -54,7 +54,7 @@ func (g *nativePublicationGate) observeBackgroundPublication(ctx context.Context
  JOIN agents a ON (a.environment_id,a.id)=(p.environment_id,p.agent_id) AND a.key='peer'
  JOIN turns t ON (t.environment_id,t.session_id)=(p.environment_id,p.id) AND t.status='running'
  WHERE s.environment_id=$1 AND s.id=$2 AND s.turn_id IS NULL
- AND NOT EXISTS(SELECT 1 FROM computer_checkpoints cp WHERE cp.environment_id=s.environment_id AND cp.disk_save_id=s.id)`, g.environment, save).Scan(&valid, &observation)
+ AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=s.environment_id AND cp.disk_save_id=s.id)`, g.environment, save).Scan(&valid, &observation)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}

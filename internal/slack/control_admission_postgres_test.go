@@ -138,7 +138,7 @@ func TestSlackControlRejectsStaleBindingActorAndToken(t *testing.T) {
 				c.ExpiresAt = time.Now().Add(-time.Minute).Unix()
 				want = "gesture_expired"
 			case "publication":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
 				want = "binding_unavailable"
 			}
 			id := f.controlReceipt(t, c, json.RawMessage(`"yes"`))

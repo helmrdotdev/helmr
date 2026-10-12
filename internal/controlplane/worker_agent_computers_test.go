@@ -23,7 +23,7 @@ func runtimeDiscoveryEnvironment(t *testing.T, original agenttest.Fixture) agent
       INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at)
         SELECT history_retention_mode,$2,org_id,project_id,$2::text,'Other','#112233',max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$1;
       INSERT INTO deployments(environment_id,id,bundle_digest) SELECT $2,$3,bundle_digest FROM deployments WHERE environment_id=$1 AND id=$6;
-      INSERT INTO computer_preparation_specs(environment_id,id,spec_digest,spec,seed) SELECT $2,$3,spec_digest,spec,seed FROM computer_preparation_specs WHERE environment_id=$1 AND id=$6;
+      INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) SELECT $2,$3,spec_digest,spec,seed FROM image_specs WHERE environment_id=$1 AND id=$6;
       INSERT INTO templates(environment_id,id,key) VALUES($2,$3,'fixture-computer');
  INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,cpu_millis,memory_bytes,disk_bytes) VALUES($2,$3,$3,$3,1000,536870912,NULL);
       INSERT INTO agents(environment_id,id,key) VALUES($2,$4,'agent');

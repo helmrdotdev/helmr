@@ -25,7 +25,7 @@ type runtimeSecretBinding struct {
 }
 
 func readRuntimeBindings(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) ([]runtimeSecretBinding, error) {
-	rows, err := tx.Query(ctx, `SELECT secret_id,placement_kind,placement_target,mode,allowed_origins,COALESCE(placeholder,'') FROM computer_secret_bindings WHERE environment_id=$1 AND computer_id=$2 ORDER BY placement_kind,placement_target`, env, computer)
+	rows, err := tx.Query(ctx, `SELECT secret_id,placement_kind,placement_target,mode,allowed_origins,COALESCE(placeholder,'') FROM secret_bindings WHERE environment_id=$1 AND computer_id=$2 ORDER BY placement_kind,placement_target`, env, computer)
 	if err != nil {
 		return nil, err
 	}

@@ -22,7 +22,7 @@ import (
 func runtimeAdmissionOrigin(t *testing.T) (agenttest.Fixture, agent.Admission, agent.Execution) {
 	t.Helper()
 	f := agenttest.New(t)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_preparation_specs SET seed=jsonb_build_object('profile',$2::text) WHERE environment_id=$1;
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET seed=jsonb_build_object('profile',$2::text) WHERE environment_id=$1;
  UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1;
  UPDATE computers SET preparation_spec_id=$3,origin_deployment_id=$3,origin_template_id=origin_deployment_id,cpu_millis=1000,memory_bytes=536870912,storage_reservation_bytes=$4 WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, definition.ComputerSeedProfile, f.Deployment, disk.SeedCapacity)
 	origin, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "origin", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
@@ -155,7 +155,7 @@ func TestWorkerAgentStartSpawnRejectCallerAndPayloadSubstitution(t *testing.T) {
 		}
 	}
 	var sessions, computers, preparations, turns int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM sessions),(SELECT count(*) FROM computers),(SELECT count(*) FROM computer_preparations),(SELECT count(*) FROM turns)`).Scan(&sessions, &computers, &preparations, &turns); err != nil || sessions != 1 || computers != 1 || preparations != 0 || turns != 1 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM sessions),(SELECT count(*) FROM computers),(SELECT count(*) FROM image_builds),(SELECT count(*) FROM turns)`).Scan(&sessions, &computers, &preparations, &turns); err != nil || sessions != 1 || computers != 1 || preparations != 0 || turns != 1 {
 		t.Fatalf("unauthorized admission/reservation: sessions=%d computers=%d preparations=%d turns=%d err=%v", sessions, computers, preparations, turns, err)
 	}
 }

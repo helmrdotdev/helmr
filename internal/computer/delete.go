@@ -80,7 +80,7 @@ func Delete(ctx context.Context, txb db.TxBeginner, deletion Deletion) (Deleted,
 
 const computerBusySQL = `SELECT EXISTS(SELECT 1 FROM sessions WHERE environment_id=$1 AND computer_id=$2 AND status IN ('open','closing'))
  OR EXISTS(SELECT 1 FROM session_processes WHERE environment_id=$1 AND computer_id=$2 AND fenced_at IS NULL)
- OR EXISTS(SELECT 1 FROM computer_commands WHERE environment_id=$1 AND computer_id=$2 AND (terminal_at IS NULL OR (computer_lease_epoch IS NOT NULL AND process_reconciled_at IS NULL)))
+ OR EXISTS(SELECT 1 FROM commands WHERE environment_id=$1 AND computer_id=$2 AND (terminal_at IS NULL OR (computer_lease_epoch IS NOT NULL AND process_reconciled_at IS NULL)))
  OR EXISTS(SELECT 1 FROM computer_saves WHERE environment_id=$1 AND computer_id=$2 AND status IN ('requested','captured'))`
 
 func deleteLocked(ctx context.Context, tx pgx.Tx, env, id uuid.UUID, deleted bool) error {
@@ -96,7 +96,7 @@ func deleteLocked(ctx context.Context, tx pgx.Tx, env, id uuid.UUID, deleted boo
 		if _, err = tx.Exec(ctx, `UPDATE computers SET deleted_at=clock_timestamp(),updated_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, env, id); err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE computer_checkpoints SET status='lost',capture_request=NULL,terminal_evidence='Computer deletion retired continuation' WHERE environment_id=$1 AND computer_id=$2 AND status IN ('capturing','sealed','ready','restoring','aborting')`, env, id); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE checkpoints SET status='lost',capture_request=NULL,terminal_evidence='Computer deletion retired continuation' WHERE environment_id=$1 AND computer_id=$2 AND status IN ('capturing','sealed','ready','restoring','aborting')`, env, id); err != nil {
 			return err
 		}
 		if _, err = tx.Exec(ctx, `UPDATE computer_leases SET status='releasing' WHERE environment_id=$1 AND computer_id=$2 AND fenced_at IS NULL AND status IN ('acquiring','active')`, env, id); err != nil {

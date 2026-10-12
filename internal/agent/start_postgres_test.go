@@ -20,7 +20,7 @@ import (
 func newAdmissionFixture(t *testing.T) fixture {
 	t.Helper()
 	f := newFixture(t)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_preparation_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1 AND id=$2;
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1 AND id=$2;
  UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912,max_image_age_ms=12345 WHERE environment_id=$1 AND deployment_id=$2;
  UPDATE computers SET preparation_spec_id=$2,origin_deployment_id=$2,origin_template_id=origin_deployment_id,cpu_millis=1000,memory_bytes=536870912,storage_reservation_bytes=$4 WHERE environment_id=$1;`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, definition.ComputerSeedProfile, disk.SeedCapacity)
 	return f
@@ -161,7 +161,7 @@ func TestStartBudgetFailureRollsBackPreparationAndComputer(t *testing.T) {
 		t.Fatalf("rate exhaustion: %v", err)
 	}
 	var clean bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM computers WHERE environment_id=$1)=1 AND NOT EXISTS(SELECT 1 FROM computer_preparations WHERE environment_id=$1) AND NOT EXISTS(SELECT 1 FROM turns WHERE environment_id=$1) AND (SELECT count(*) FROM sessions WHERE environment_id=$1)=1`, f.env).Scan(&clean); err != nil || !clean {
+	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM computers WHERE environment_id=$1)=1 AND NOT EXISTS(SELECT 1 FROM image_builds WHERE environment_id=$1) AND NOT EXISTS(SELECT 1 FROM turns WHERE environment_id=$1) AND (SELECT count(*) FROM sessions WHERE environment_id=$1)=1`, f.env).Scan(&clean); err != nil || !clean {
 		t.Fatalf("partial admission: %v %v", clean, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET admission_tokens=1,max_reserved_storage_bytes=$2 WHERE id=$1`, f.env, disk.SeedCapacity)

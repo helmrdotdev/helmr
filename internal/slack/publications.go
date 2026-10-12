@@ -33,7 +33,7 @@ func BeginPublication(ctx context.Context, pool db.TxBeginner, org, user, enviro
 			return err
 		}
 		var eligible bool
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM agents a JOIN environments e ON e.id=a.environment_id JOIN agent_definitions d ON (d.environment_id,d.agent_id,d.deployment_id)=(a.environment_id,a.id,e.current_deployment_id) WHERE a.environment_id=$1 AND a.id=$2) AND NOT EXISTS(SELECT 1 FROM agent_publications WHERE environment_id=$1 AND agent_id=$2 AND revoked_at IS NULL)`, environment, agent).Scan(&eligible)
+		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM agents a JOIN environments e ON e.id=a.environment_id JOIN agent_definitions d ON (d.environment_id,d.agent_id,d.deployment_id)=(a.environment_id,a.id,e.current_deployment_id) WHERE a.environment_id=$1 AND a.id=$2) AND NOT EXISTS(SELECT 1 FROM slack_connections WHERE environment_id=$1 AND agent_id=$2 AND revoked_at IS NULL)`, environment, agent).Scan(&eligible)
 		if err != nil {
 			return err
 		}
@@ -44,7 +44,7 @@ func BeginPublication(ctx context.Context, pool db.TxBeginner, org, user, enviro
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO agent_publications(id,environment_id,agent_id,slack_app_registration_id,created_by_user_id) VALUES($1,$2,$3,$4,$5)`, setup.ID, environment, agent, setup.RegistrationID, user)
+		_, err = tx.Exec(ctx, `INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,created_by_user_id) VALUES($1,$2,$3,$4,$5)`, setup.ID, environment, agent, setup.RegistrationID, user)
 		return err
 	})
 	if err != nil {
@@ -92,7 +92,7 @@ func GetPublication(ctx context.Context, pool db.TxBeginner, org, user, environm
 		err := tx.QueryRow(ctx, `SELECT p.id,r.id,p.slack_installation_id,
  CASE WHEN i.id IS NULL THEN 'setup_incomplete' WHEN i.disconnected_at IS NOT NULL OR r.retired_at IS NOT NULL THEN 'disconnected' WHEN i.authorization_lost_at IS NOT NULL THEN 'reauthorization_required' ELSE 'connected' END,
  r.client_id,r.credential_revision>0,r.app_id,i.team_id,i.workspace_name,r.app_name,r.app_icon_url
- FROM agent_publications p JOIN environments e ON e.id=p.environment_id JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id LEFT JOIN slack_installations i ON i.id=p.slack_installation_id
+ FROM slack_connections p JOIN environments e ON e.id=p.environment_id JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id LEFT JOIN slack_installations i ON i.id=p.slack_installation_id
  WHERE p.environment_id=$1 AND p.agent_id=$2 AND e.org_id=$3 AND r.organization_id=$3 AND p.revoked_at IS NULL`, environment, agent, org).Scan(&value.ID, &value.RegistrationID, &value.InstallationID, &value.Status, &value.ClientID, &value.CredentialsConfigured, &value.AppID, &value.TeamID, &value.WorkspaceName, &value.AppName, &value.AppIconURL)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
@@ -115,7 +115,7 @@ func (s *CredentialStore) DisconnectPublication(ctx context.Context, org, user, 
 		}
 		var registration uuid.UUID
 		var installation *uuid.UUID
-		err := tx.QueryRow(ctx, `SELECT p.slack_app_registration_id,p.slack_installation_id FROM agent_publications p JOIN environments e ON e.id=p.environment_id WHERE p.id=$1 AND p.environment_id=$2 AND e.org_id=$3`, publication, environment, org).Scan(&registration, &installation)
+		err := tx.QueryRow(ctx, `SELECT p.slack_app_registration_id,p.slack_installation_id FROM slack_connections p JOIN environments e ON e.id=p.environment_id WHERE p.id=$1 AND p.environment_id=$2 AND e.org_id=$3`, publication, environment, org).Scan(&registration, &installation)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrPublicationUnavailable
 		}
@@ -132,7 +132,7 @@ func (s *CredentialStore) DisconnectPublication(ctx context.Context, org, user, 
 			}
 		}
 		var current *uuid.UUID
-		if err = tx.QueryRow(ctx, `SELECT slack_installation_id FROM agent_publications WHERE id=$1 FOR NO KEY UPDATE`, publication).Scan(&current); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT slack_installation_id FROM slack_connections WHERE id=$1 FOR NO KEY UPDATE`, publication).Scan(&current); err != nil {
 			return err
 		}
 		// Setup may have completed since optimistic discovery. Retry from the start
@@ -152,7 +152,7 @@ func (s *CredentialStore) DisconnectPublication(ctx context.Context, org, user, 
 				return err
 			}
 		}
-		if _, err = tx.Exec(ctx, `UPDATE agent_publications SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE id=$1`, publication); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE slack_connections SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE id=$1`, publication); err != nil {
 			return err
 		}
 		_, err = tx.Exec(ctx, `UPDATE slack_app_registrations SET retired_at=COALESCE(retired_at,clock_timestamp()),credential_ciphertext=NULL,credential_nonce=NULL WHERE id=$1`, registration)

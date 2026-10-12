@@ -43,7 +43,7 @@ func projectParticipant(ctx context.Context, pool db.TxBeginner, participant uui
 		o := projectionOwner{config: config}
 		o.participant = participant
 		err := tx.QueryRow(ctx, `SELECT c.installation_id,c.id,p.environment_id,p.session_id,p.thread_id,pr.slug,e.slug
- FROM slack_thread_sources p JOIN slack_threads t ON t.id=p.thread_id JOIN slack_channels c ON c.id=t.channel_id JOIN environments e ON e.id=p.environment_id JOIN projects pr ON pr.id=e.project_id WHERE p.id=$1`, participant).Scan(&o.installation, &o.channel, &o.environment, &o.session, &o.thread, &o.project, &o.environmentRef)
+ FROM slack_thread_sources p JOIN slack_threads t ON t.id=p.thread_id JOIN slack_channel_bindings c ON c.id=t.channel_id JOIN environments e ON e.id=p.environment_id JOIN projects pr ON pr.id=e.project_id WHERE p.id=$1`, participant).Scan(&o.installation, &o.channel, &o.environment, &o.session, &o.thread, &o.project, &o.environmentRef)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}

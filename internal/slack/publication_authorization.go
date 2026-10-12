@@ -26,7 +26,7 @@ func (s *CredentialStore) publicationAuthorization(ctx context.Context, org, use
 		if err := lockInstallationManager(ctx, tx, org, user); err != nil {
 			return err
 		}
-		err := tx.QueryRow(ctx, `SELECT r.id,p.slack_installation_id,r.credential_revision,r.client_id,r.app_id FROM agent_publications p JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id JOIN environments e ON e.id=p.environment_id WHERE p.id=$1 AND e.org_id=$2 AND r.organization_id=$2 AND p.revoked_at IS NULL AND r.retired_at IS NULL AND r.credential_revision>0`, publication, org).Scan(&value.registration, &value.installation, &value.revision, &value.clientID, &value.app)
+		err := tx.QueryRow(ctx, `SELECT r.id,p.slack_installation_id,r.credential_revision,r.client_id,r.app_id FROM slack_connections p JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id JOIN environments e ON e.id=p.environment_id WHERE p.id=$1 AND e.org_id=$2 AND r.organization_id=$2 AND p.revoked_at IS NULL AND r.retired_at IS NULL AND r.credential_revision>0`, publication, org).Scan(&value.registration, &value.installation, &value.revision, &value.clientID, &value.app)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrPublicationUnavailable
 		}
@@ -114,7 +114,7 @@ func (s *CredentialStore) attachPublicationGrant(ctx context.Context, org, user,
 		}
 		var current *uuid.UUID
 		var environment uuid.UUID
-		err = tx.QueryRow(ctx, `SELECT environment_id,slack_installation_id FROM agent_publications WHERE id=$1 AND slack_app_registration_id=$2 AND revoked_at IS NULL FOR NO KEY UPDATE`, publication, observed.registration).Scan(&environment, &current)
+		err = tx.QueryRow(ctx, `SELECT environment_id,slack_installation_id FROM slack_connections WHERE id=$1 AND slack_app_registration_id=$2 AND revoked_at IS NULL FOR NO KEY UPDATE`, publication, observed.registration).Scan(&environment, &current)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrPublicationUnavailable
 		}
@@ -146,7 +146,7 @@ func (s *CredentialStore) attachPublicationGrant(ctx context.Context, org, user,
 		if _, err = tx.Exec(ctx, `UPDATE slack_app_registrations SET app_id=$2 WHERE id=$1 AND app_id IS NULL`, observed.registration, grant.app); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE agent_publications SET slack_installation_id=$2 WHERE id=$1 AND slack_installation_id IS NULL`, publication, installation)
+		_, err = tx.Exec(ctx, `UPDATE slack_connections SET slack_installation_id=$2 WHERE id=$1 AND slack_installation_id IS NULL`, publication, installation)
 		return err
 	})
 	if err != nil {

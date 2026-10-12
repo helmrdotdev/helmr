@@ -19,7 +19,7 @@ func TestSecretExposureTypedOwnersAndPinnedVersions(t *testing.T) {
 	}
 	version := values[0].VersionID
 	command := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_commands(environment_id,id,computer_id,computer_lease_epoch,argv,env,stdin,timeout_ms,caller_kind,caller_id)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO commands(environment_id,id,computer_id,computer_lease_epoch,argv,env,stdin,timeout_ms,caller_kind,caller_id)
  VALUES($1,$2,$3,1,ARRAY['true'],'{}','',1000,'session',$4)`, f.env, command, f.computer, f.user)
 	// The same version may be exposed independently to all three typed owners.
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO secret_exposures(id,environment_id,session_id,process_epoch,secret_id,version_id,revocation_generation) VALUES(uuidv7(),$1,$2,1,$3,$4,0)`, f.env, f.session, f.secretID, version)

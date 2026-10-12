@@ -23,7 +23,7 @@ func expirePreparation(ctx context.Context, pool db.TxBeginner, env, id uuid.UUI
 		}
 		var host, group *uuid.UUID
 		var spec uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT p.preparation_spec_id,p.worker_host_id,h.worker_group_id FROM computer_preparations p LEFT JOIN worker_hosts h ON h.id=p.worker_host_id WHERE p.environment_id=$1 AND p.id=$2`, env, id).Scan(&spec, &host, &group); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT p.preparation_spec_id,p.worker_host_id,h.worker_group_id FROM image_builds p LEFT JOIN worker_hosts h ON h.id=p.worker_host_id WHERE p.environment_id=$1 AND p.id=$2`, env, id).Scan(&spec, &host, &group); err != nil {
 			return err
 		}
 		if host != nil {
@@ -41,7 +41,7 @@ func expirePreparation(ctx context.Context, pool db.TxBeginner, env, id uuid.UUI
 		var status string
 		if err := tx.QueryRow(ctx, `SELECT p.worker_host_id IS NOT DISTINCT FROM $3::uuid,p.status,p.deadline_at<=clock_timestamp(),
     COALESCE(p.executor_expires_at<=clock_timestamp() OR h.current_epoch IS DISTINCT FROM p.worker_epoch OR h.status NOT IN ('active','draining'),false)
-   FROM computer_preparations p LEFT JOIN worker_hosts h ON h.id=p.worker_host_id WHERE p.environment_id=$1 AND p.id=$2 FOR NO KEY UPDATE OF p`, env, id, host).Scan(&same, &status, &deadline, &unavailable); err != nil {
+   FROM image_builds p LEFT JOIN worker_hosts h ON h.id=p.worker_host_id WHERE p.environment_id=$1 AND p.id=$2 FOR NO KEY UPDATE OF p`, env, id, host).Scan(&same, &status, &deadline, &unavailable); err != nil {
 			return err
 		}
 		if !same {
@@ -57,7 +57,7 @@ func expirePreparation(ctx context.Context, pool db.TxBeginner, env, id uuid.UUI
 		if deadline {
 			code = "deadline_exceeded"
 		}
-		_, err := tx.Exec(ctx, `UPDATE computer_preparations SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,status='failed',error_code=$3 WHERE environment_id=$1 AND id=$2`, env, id, code)
+		_, err := tx.Exec(ctx, `UPDATE image_builds SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,status='failed',error_code=$3 WHERE environment_id=$1 AND id=$2`, env, id, code)
 		return err
 	}))
 }
@@ -95,7 +95,7 @@ func reconcilePreparationRevocation(ctx context.Context, pool db.TxBeginner, env
 		if err = lockPreparationSpec(ctx, tx, env, p.SpecID); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE computer_preparations p SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,status='failed',error_code='secret_revoked'
+		_, err = tx.Exec(ctx, `UPDATE image_builds p SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,status='failed',error_code='secret_revoked'
    WHERE p.environment_id=$1 AND p.id=$2 AND p.status IN ('queued','running') AND EXISTS(
     SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
     WHERE x.environment_id=p.environment_id AND x.preparation_id=p.id AND s.status='revoked')`, env, id)
@@ -109,7 +109,7 @@ type stoppedPreparation struct {
 }
 
 func hostPreparations(ctx context.Context, tx pgx.Tx, host uuid.UUID, beforeEpoch *int64, quarantined []uuid.UUID) ([]stoppedPreparation, error) {
-	rows, err := tx.Query(ctx, `SELECT environment_id,preparation_spec_id,id,instance_id,worker_epoch FROM computer_preparations
+	rows, err := tx.Query(ctx, `SELECT environment_id,preparation_spec_id,id,instance_id,worker_epoch FROM image_builds
   WHERE worker_host_id=$1 AND fenced_at IS NULL AND ($2::bigint IS NULL OR worker_epoch<$2) AND NOT(instance_id=ANY($3::uuid[]))
   ORDER BY environment_id,preparation_spec_id,id`, host, beforeEpoch, quarantined)
 	if err != nil {
@@ -302,22 +302,22 @@ func reconcilePreparationLifecycle(ctx context.Context, database db.TxDB, after 
   UNION
   SELECT c.environment_id,c.id,'unattached' FROM computers c JOIN environments e ON e.id=c.environment_id WHERE e.retired_at IS NULL AND c.initial_root_digest IS NULL AND preparation_id IS NULL AND preparation_failed_at IS NULL AND deleted_at IS NULL AND preparation_deadline_at>statement_timestamp()
   UNION
-  SELECT c.environment_id,c.id,'image' FROM computers c JOIN computer_preparations p ON (p.environment_id,p.id)=(c.environment_id,c.preparation_id)
+  SELECT c.environment_id,c.id,'image' FROM computers c JOIN image_builds p ON (p.environment_id,p.id)=(c.environment_id,c.preparation_id)
    WHERE c.initial_root_digest IS NULL AND p.status='succeeded' AND c.preparation_failed_at IS NULL AND c.deleted_at IS NULL AND c.preparation_deadline_at>statement_timestamp()
   UNION
   SELECT revoked.environment_id,revoked.computer_id,'secret_revocation' FROM (`+db.RevokedComputerSecretsSQL+`) revoked
    JOIN session_processes p ON (p.environment_id,p.computer_id)=(revoked.environment_id,revoked.computer_id)
    WHERE p.fenced_at IS NULL AND (p.status IN ('starting','ready') OR EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=p.environment_id AND t.session_id=p.session_id AND t.process_epoch=p.epoch AND t.status='running'))
   UNION
-  SELECT environment_id,id,'attempt' FROM computer_preparations WHERE status IN ('queued','running') AND deadline_at<=statement_timestamp()
+  SELECT environment_id,id,'attempt' FROM image_builds WHERE status IN ('queued','running') AND deadline_at<=statement_timestamp()
   UNION
-  SELECT environment_id,id,'attempt' FROM computer_preparations WHERE status='running' AND executor_expires_at<=statement_timestamp()
+  SELECT environment_id,id,'attempt' FROM image_builds WHERE status='running' AND executor_expires_at<=statement_timestamp()
   UNION
-  SELECT p.environment_id,p.id,'attempt' FROM worker_hosts h JOIN computer_preparations p ON p.worker_host_id=h.id
+  SELECT p.environment_id,p.id,'attempt' FROM worker_hosts h JOIN image_builds p ON p.worker_host_id=h.id
    WHERE p.status='running' AND (h.current_epoch IS DISTINCT FROM p.worker_epoch OR h.status NOT IN ('active','draining'))
   UNION
   SELECT p.environment_id,p.id,'revocation' FROM secrets s JOIN secret_exposures x ON (x.environment_id,x.secret_id)=(s.environment_id,s.id)
-   JOIN computer_preparations p ON (p.environment_id,p.id)=(x.environment_id,x.preparation_id)
+   JOIN image_builds p ON (p.environment_id,p.id)=(x.environment_id,x.preparation_id)
    WHERE s.status='revoked' AND p.status IN ('queued','running')
  ) SELECT environment_id,id,kind FROM candidates WHERE (environment_id,id,kind)>($1,$2,$3) ORDER BY environment_id,id,kind LIMIT 100`, after.environment, after.id, after.kind)
 	if err != nil {

@@ -48,7 +48,7 @@ func TestDiskRetentionPreservesWriterUncertaintyAndRecoveryHead(t *testing.T) {
    (old.root_id IS NULL)=$5 AND (old.payload_retired_at IS NOT NULL)=$5
    AND head.root_id IS NOT NULL AND c.recovery_save_id=head.id
    AND l.disk_released_at IS NULL AND pending.status='captured'
-   AND EXISTS(SELECT 1 FROM computer_object_pins p WHERE p.environment_id=c.environment_id AND p.save_id=pending.id)
+   AND EXISTS(SELECT 1 FROM disk_object_pins p WHERE p.environment_id=c.environment_id AND p.save_id=pending.id)
    AND t.status='completed' AND t.completion_save_id=old.id
    FROM computers c JOIN computer_leases l ON l.environment_id=c.environment_id AND l.computer_id=c.id
    JOIN computer_saves old ON old.environment_id=c.environment_id AND old.id=$2
@@ -84,8 +84,8 @@ func TestDiskRetentionPreservesWriterUncertaintyAndRecoveryHead(t *testing.T) {
 	}
 	var graphCollected, headRetained, membershipCollected bool
 	if err := f.pool.QueryRow(t.Context(), `SELECT
- NOT EXISTS(SELECT 1 FROM computer_objects WHERE environment_id=$1 AND digest=$2),
- EXISTS(SELECT 1 FROM computer_objects WHERE environment_id=$1 AND digest=$3),
+ NOT EXISTS(SELECT 1 FROM disk_objects WHERE environment_id=$1 AND digest=$2),
+ EXISTS(SELECT 1 FROM disk_objects WHERE environment_id=$1 AND digest=$3),
  NOT EXISTS(SELECT 1 FROM cas_objects WHERE digest=$2)`, f.env, oldRoot.Pack.Digest, headRoot.Pack.Digest).Scan(&graphCollected, &headRetained, &membershipCollected); err != nil || !graphCollected || !headRetained || !membershipCollected {
 		t.Fatalf("graph collection=%v head=%v membership collected=%v error=%v", graphCollected, headRetained, membershipCollected, err)
 	}
@@ -114,7 +114,7 @@ func TestDiskRetentionSkipsLockedOwnerBeforeBatchBound(t *testing.T) {
 	}
 	later, key := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) SELECT environment_id,$3,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes FROM computers WHERE environment_id=$1 AND id=$2`, f.env, f.computer, later)
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_data_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'test',decode('01','hex'))`, key, f.env, later)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO disk_encryption_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'test',decode('01','hex'))`, key, f.env, later)
 	dbtest.MustExec(t, t.Context(), f.pool, copyLease, f.env, f.computer, later, 1, uuid.NewV7(), key)
 	tx, err := f.pool.Begin(t.Context())
 	if err != nil {

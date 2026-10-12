@@ -83,7 +83,7 @@ const historyReleased = `s.status IN ('closed','cancelled')
  AND NOT EXISTS(SELECT 1 FROM turn_messages m WHERE m.environment_id=s.environment_id AND m.session_id=s.id AND m.status IN ('admitted','started'))
  AND NOT EXISTS(SELECT 1 FROM turn_asks a WHERE a.environment_id=s.environment_id AND a.session_id=s.id AND a.status='pending')
  AND NOT EXISTS(SELECT 1 FROM computer_saves save JOIN turns t ON t.environment_id=save.environment_id AND t.id=save.turn_id WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND save.status IN ('requested','captured'))
- AND NOT EXISTS(SELECT 1 FROM computer_checkpoint_members m JOIN computer_checkpoints k ON k.environment_id=m.environment_id AND k.id=m.checkpoint_id WHERE m.environment_id=s.environment_id AND m.session_id=s.id AND k.status NOT IN ('cancelled','lost') AND k.controls_reconciled_at IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM checkpoint_processes m JOIN checkpoints k ON k.environment_id=m.environment_id AND k.id=m.checkpoint_id WHERE m.environment_id=s.environment_id AND m.session_id=s.id AND k.status NOT IN ('cancelled','lost') AND k.controls_reconciled_at IS NULL)
  AND NOT EXISTS(SELECT 1 FROM slack_thread_sources p WHERE p.environment_id=s.environment_id AND p.session_id=s.id AND p.projected_event_seq<s.next_event_seq-1)
  AND NOT EXISTS(SELECT 1 FROM sessions child JOIN slack_thread_sources src ON (src.environment_id,src.session_id)=(child.environment_id,child.id)
  JOIN slack_threads thread ON thread.id=src.thread_id

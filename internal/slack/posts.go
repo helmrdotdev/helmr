@@ -40,7 +40,7 @@ func ClaimPost(ctx context.Context, pool db.TxBeginner, post uuid.UUID) (*PostCl
 		var installation, channel, targetChannel, env, thread uuid.UUID
 		var team, slackChannel string
 		err := tx.QueryRow(ctx, `SELECT c.installation_id,c.id,p.environment_id,t.channel_id,p.thread_id,c.team_id,c.slack_channel_id
- FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id) JOIN slack_channels c ON c.id=sender.channel_id WHERE p.id=$1`, post).Scan(&installation, &channel, &env, &targetChannel, &thread, &team, &slackChannel)
+ FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id) JOIN slack_channel_bindings c ON c.id=sender.channel_id WHERE p.id=$1`, post).Scan(&installation, &channel, &env, &targetChannel, &thread, &team, &slackChannel)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -117,7 +117,7 @@ func ClaimPost(ctx context.Context, pool db.TxBeginner, post uuid.UUID) (*PostCl
 		selected := "chat.postMessage"
 		if len(frozen) == 0 && path == "stream" {
 			var slackChannel string
-			if err = tx.QueryRow(ctx, `SELECT slack_channel_id FROM slack_channels WHERE id=$1`, channel).Scan(&slackChannel); err != nil {
+			if err = tx.QueryRow(ctx, `SELECT slack_channel_id FROM slack_channel_bindings WHERE id=$1`, channel).Scan(&slackChannel); err != nil {
 				return err
 			}
 			mutation, err := prepareStreamMutation(ctx, tx, post, thread, env, slackChannel, root, message, body, revision, stream)
@@ -135,7 +135,7 @@ func ClaimPost(ctx context.Context, pool db.TxBeginner, post uuid.UUID) (*PostCl
 				return errors.New("invalid frozen Slack message body")
 			}
 			var slackChannel string
-			if err = tx.QueryRow(ctx, `SELECT slack_channel_id FROM slack_channels WHERE id=$1`, channel).Scan(&slackChannel); err != nil {
+			if err = tx.QueryRow(ctx, `SELECT slack_channel_id FROM slack_channel_bindings WHERE id=$1`, channel).Scan(&slackChannel); err != nil {
 				return err
 			}
 			// Routing and reconciliation identifiers come from durable owners, never from
@@ -332,9 +332,9 @@ func postClaimAuthorized(ctx context.Context, pool db.TxBeginner, claim PostClai
 		return tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_posts p
  JOIN slack_threads t ON t.id=p.thread_id AND (t.deleted_at IS NULL OR (p.inflight_method='chat.stopStream' AND p.message_ts IS NOT NULL AND p.closed_at IS NOT NULL))
  JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id)
- JOIN slack_channels c ON c.id=sender.channel_id JOIN slack_installations i ON i.id=c.installation_id
- JOIN agent_publications publication ON publication.id=c.publication_id JOIN slack_app_registrations registration ON registration.id=publication.slack_app_registration_id
- JOIN slack_channels target_channel ON target_channel.id=t.channel_id JOIN agent_publications target_publication ON target_publication.id=target_channel.publication_id
+ JOIN slack_channel_bindings c ON c.id=sender.channel_id JOIN slack_installations i ON i.id=c.installation_id
+ JOIN slack_connections publication ON publication.id=c.publication_id JOIN slack_app_registrations registration ON registration.id=publication.slack_app_registration_id
+ JOIN slack_channel_bindings target_channel ON target_channel.id=t.channel_id JOIN slack_connections target_publication ON target_publication.id=target_channel.publication_id
  JOIN slack_installations target_installation ON target_installation.id=target_channel.installation_id
  JOIN slack_app_registrations target_registration ON target_registration.id=target_publication.slack_app_registration_id
  WHERE p.id=$1 AND p.status='sending' AND p.claim_epoch=$2 AND p.inflight_attempt_id=$3 AND p.claimed_until>clock_timestamp()

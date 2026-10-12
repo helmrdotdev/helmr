@@ -190,7 +190,7 @@ func issueLoginSession(ctx context.Context, q db.Querier, cfg Config, userID pgt
 	if err != nil {
 		return "", fmt.Errorf("hash login session: %w", err)
 	}
-	if _, err := q.CreateAuthSession(ctx, db.CreateAuthSessionParams{
+	if _, err := q.CreateLoginSession(ctx, db.CreateLoginSessionParams{
 		ID:        pgvalue.UUID(uuid.NewV7()),
 		OrgID:     orgID,
 		UserID:    userID,
@@ -212,7 +212,7 @@ func AuthenticateLoginSession(ctx context.Context, q db.Querier, cfg Config, raw
 	if err != nil {
 		return auth.Principal{}, err
 	}
-	row, err := q.GetAuthSessionByTokenHash(ctx, tokenHash)
+	row, err := q.GetLoginSessionByTokenHash(ctx, tokenHash)
 	if isNoRows(err) {
 		return auth.Principal{}, auth.ErrUnauthenticated
 	}
@@ -227,7 +227,7 @@ func AuthenticateLoginSession(ctx context.Context, q db.Querier, cfg Config, raw
 	if err != nil {
 		return auth.Principal{}, fmt.Errorf("login session user id: %w", err)
 	}
-	if err := q.RefreshAuthSession(ctx, db.RefreshAuthSessionParams{
+	if err := q.RefreshLoginSession(ctx, db.RefreshLoginSessionParams{
 		ID:        row.ID,
 		ExpiresAt: pgvalue.Timestamptz(time.Now().Add(cfg.lifetimes.Session)),
 	}); err != nil {
@@ -260,7 +260,7 @@ func RevokeLoginSession(ctx context.Context, q db.Querier, cfg Config, rawSessio
 	if err != nil {
 		return err
 	}
-	if _, err := q.RevokeAuthSessionByTokenHash(ctx, tokenHash); err != nil {
+	if _, err := q.RevokeLoginSessionByTokenHash(ctx, tokenHash); err != nil {
 		return fmt.Errorf("revoke login session: %w", err)
 	}
 	return nil

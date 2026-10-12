@@ -152,10 +152,10 @@ func (b *ComputerKeyBroker) pin(ctx context.Context, host workergroup.HostPrinci
 		var root disk.VersionRoot
 		if restored == nil {
 			result.source.BaseVersion = initial
-			err = tx.QueryRow(ctx, `SELECT r.id,`+diskRootColumns+` FROM computers c JOIN computer_disk_roots r ON (r.environment_id,r.id)=(c.environment_id,c.initial_root_id) WHERE c.environment_id=$1 AND c.id=$2`, identity.EnvironmentID, identity.ComputerID).Scan(append([]any{&result.rootID}, diskRootFields(&root)...)...)
+			err = tx.QueryRow(ctx, `SELECT r.id,`+diskRootColumns+` FROM computers c JOIN disk_roots r ON (r.environment_id,r.id)=(c.environment_id,c.initial_root_id) WHERE c.environment_id=$1 AND c.id=$2`, identity.EnvironmentID, identity.ComputerID).Scan(append([]any{&result.rootID}, diskRootFields(&root)...)...)
 		} else {
 			result.source.BaseVersion = restored.String()
-			err = tx.QueryRow(ctx, `SELECT r.id,`+diskRootColumns+` FROM computer_saves s JOIN computer_disk_roots r ON (r.environment_id,r.id)=(s.environment_id,s.root_id) WHERE s.environment_id=$1 AND s.computer_id=$2 AND s.id=$3`, identity.EnvironmentID, identity.ComputerID, *restored).Scan(append([]any{&result.rootID}, diskRootFields(&root)...)...)
+			err = tx.QueryRow(ctx, `SELECT r.id,`+diskRootColumns+` FROM computer_saves s JOIN disk_roots r ON (r.environment_id,r.id)=(s.environment_id,s.root_id) WHERE s.environment_id=$1 AND s.computer_id=$2 AND s.id=$3`, identity.EnvironmentID, identity.ComputerID, *restored).Scan(append([]any{&result.rootID}, diskRootFields(&root)...)...)
 		}
 		if err != nil {
 			return err
@@ -182,7 +182,7 @@ func (b *ComputerKeyBroker) pin(ctx context.Context, host workergroup.HostPrinci
 			if candidate.id == uuid.Nil() || len(candidate.envelope.WrappingKeyID) == 0 || len(candidate.envelope.WrappingKeyID) > 2048 || len(candidate.envelope.Ciphertext) == 0 || len(candidate.envelope.Ciphertext) > computerkey.MaxWrappedSize {
 				return ErrInvalidInput
 			}
-			if _, err := tx.Exec(ctx, `INSERT INTO computer_data_keys(environment_id,id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,$4,$5)`, identity.EnvironmentID, candidate.id, identity.ComputerID, candidate.envelope.WrappingKeyID, candidate.envelope.Ciphertext); err != nil {
+			if _, err := tx.Exec(ctx, `INSERT INTO disk_encryption_keys(environment_id,id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,$4,$5)`, identity.EnvironmentID, candidate.id, identity.ComputerID, candidate.envelope.WrappingKeyID, candidate.envelope.Ciphertext); err != nil {
 				return err
 			}
 			if _, err := tx.Exec(ctx, `UPDATE computer_leases SET base_root_id=$4,write_key_id=$5 WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND base_root_id IS NULL AND disk_released_at IS NULL`, identity.EnvironmentID, identity.ComputerID, identity.Epoch, result.rootID, candidate.id); err != nil {
@@ -194,8 +194,8 @@ func (b *ComputerKeyBroker) pin(ctx context.Context, host workergroup.HostPrinci
 		} else if boundRoot != result.rootID {
 			return ErrConflict
 		}
-		rows, err := tx.Query(ctx, `SELECT k.id,k.wrapping_key_id,k.wrapped_key,k.available FROM computer_data_keys k
- WHERE k.environment_id=$1 AND (k.id=$3 OR k.id IN (SELECT key_id FROM computer_object_keys WHERE environment_id=$1 AND digest=$2)) ORDER BY k.id FOR KEY SHARE`, identity.EnvironmentID, result.source.Root.Pack.Digest, result.source.WriteKeyID)
+		rows, err := tx.Query(ctx, `SELECT k.id,k.wrapping_key_id,k.wrapped_key,k.available FROM disk_encryption_keys k
+ WHERE k.environment_id=$1 AND (k.id=$3 OR k.id IN (SELECT key_id FROM disk_object_keys WHERE environment_id=$1 AND digest=$2)) ORDER BY k.id FOR KEY SHARE`, identity.EnvironmentID, result.source.Root.Pack.Digest, result.source.WriteKeyID)
 		if err != nil {
 			return err
 		}

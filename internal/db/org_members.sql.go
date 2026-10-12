@@ -44,13 +44,13 @@ disabled_member AS (
     RETURNING org_id, user_id, role, display_name, disabled_at, created_at, updated_at
 ),
 revoked_sessions AS (
-    UPDATE auth_sessions
+    UPDATE login_sessions
        SET revoked_at = now()
       FROM disabled_member
-     WHERE auth_sessions.user_id = disabled_member.user_id
-       AND (auth_sessions.org_id = disabled_member.org_id OR auth_sessions.org_id IS NULL)
-       AND auth_sessions.revoked_at IS NULL
-    RETURNING auth_sessions.id
+     WHERE login_sessions.user_id = disabled_member.user_id
+       AND (login_sessions.org_id = disabled_member.org_id OR login_sessions.org_id IS NULL)
+       AND login_sessions.revoked_at IS NULL
+    RETURNING login_sessions.id
 )
 SELECT disabled_member.org_id, disabled_member.user_id, disabled_member.role, disabled_member.display_name, disabled_member.disabled_at, disabled_member.created_at, disabled_member.updated_at,
        (SELECT count(*)::int FROM revoked_sessions) AS revoked_session_count

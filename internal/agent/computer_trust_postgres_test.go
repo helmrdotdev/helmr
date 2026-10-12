@@ -34,7 +34,7 @@ func TestComputerTrustCreationIsAtomicAndRetriesPreserveSigner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_secret_bindings(environment_id,deployment_id,template_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO secret_bindings(environment_id,deployment_id,template_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder)
  VALUES($1,$2,$2,$3,'env','RUNTIME_TOKEN','protected',ARRAY['https://api.example.com'],$4)`, f.env, f.deployment, f.secretID, marker)
 	req := f.startRequest("computer-trust")
 	if _, err = Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, ErrNotReady) {
@@ -94,7 +94,7 @@ func TestComputerTrustCreationIsAtomicAndRetriesPreserveSigner(t *testing.T) {
 		t.Fatalf("retry replaced signer: %v", err)
 	}
 	var copiedMarker string
-	if err = f.pool.QueryRow(t.Context(), `SELECT placeholder FROM computer_secret_bindings WHERE environment_id=$1 AND computer_id=$2`, f.env, trust.ComputerID).Scan(&copiedMarker); err != nil || copiedMarker == marker || copiedMarker == "" {
+	if err = f.pool.QueryRow(t.Context(), `SELECT placeholder FROM secret_bindings WHERE environment_id=$1 AND computer_id=$2`, f.env, trust.ComputerID).Scan(&copiedMarker); err != nil || copiedMarker == marker || copiedMarker == "" {
 		t.Fatalf("actual Computer selector was not independently allocated: %v", err)
 	}
 }

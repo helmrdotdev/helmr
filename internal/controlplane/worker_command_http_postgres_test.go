@@ -127,7 +127,7 @@ func TestWorkerCommandRoutesMapOwnerErrors(t *testing.T) {
 
 func TestWorkerCommandClaimDeliversCancellation(t *testing.T) {
 	f, worker, command := commandHTTPFixture(t)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET computer_lease_epoch=1,status='stopping',started_at=now(),cancel_requested_at=now() WHERE id=$1`, command.ID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE commands SET computer_lease_epoch=1,status='stopping',started_at=now(),cancel_requested_at=now() WHERE id=$1`, command.ID)
 	claim := workerapi.ComputerCommandClaimRequest{EnvironmentID: f.EnvironmentID.String(), ComputerInstanceID: command.InstanceID.String(), WriterGeneration: command.WriterGeneration}
 	var response workerapi.ComputerCommandClaimResponse
 	worker.post(t, "/worker/v1/computer-commands/claim", claim, http.StatusOK, &response)

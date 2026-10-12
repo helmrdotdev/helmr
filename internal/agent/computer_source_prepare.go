@@ -47,7 +47,7 @@ func PrepareComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host wo
 			return ErrConflict
 		}
 		var raw []byte
-		if err = tx.QueryRow(ctx, `SELECT capture_request FROM computer_checkpoints WHERE environment_id=$1 AND id=$2`, env, checkpoint).Scan(&raw); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT capture_request FROM checkpoints WHERE environment_id=$1 AND id=$2`, env, checkpoint).Scan(&raw); err != nil {
 			return err
 		}
 		capture := new(agentv1.ComputerSessionCapture)

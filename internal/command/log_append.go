@@ -70,7 +70,7 @@ func AppendLog(ctx context.Context, txb db.TxBeginner, worker workergroup.HostPr
 func appendLog(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, chunk LogChunk, record diagnostic.Record, admission *telemetry.DiagnosticAdmission) (telemetry.DiagnosticReceipt, error) {
 	var receipt telemetry.DiagnosticReceipt
 	q := db.New(tx)
-	target, err := q.GetComputerCommandTarget(ctx, db.GetComputerCommandTargetParams{
+	target, err := q.GetCommandTarget(ctx, db.GetCommandTargetParams{
 		EnvironmentID: pgvalue.UUID(chunk.EnvironmentID), CommandID: pgvalue.UUID(chunk.CommandID),
 	})
 	if err != nil {

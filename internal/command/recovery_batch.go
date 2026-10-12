@@ -28,10 +28,10 @@ func RecoverBatch(ctx context.Context, database db.TxDB, after RecoveryPosition,
 	if limit <= 0 {
 		return after, false, errors.New("command recovery batch limit must be positive")
 	}
-	rows, err := database.Query(ctx, `SELECT c.environment_id,c.id,c.computer_id,c.revision,c.updated_at FROM computer_commands c JOIN environments e ON e.id=c.environment_id
+	rows, err := database.Query(ctx, `SELECT c.environment_id,c.id,c.computer_id,c.revision,c.updated_at FROM commands c JOIN environments e ON e.id=c.environment_id
  LEFT JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(c.environment_id,c.computer_id,c.computer_lease_epoch)
  WHERE ((c.computer_lease_epoch IS NOT NULL AND c.process_reconciled_at IS NULL AND (l.fenced_at IS NOT NULL OR (c.terminal_at IS NULL AND (l.status IN ('lost','released') OR l.expires_at<=clock_timestamp()))))
- OR (c.terminal_at IS NULL AND c.cancel_requested_at IS NULL AND EXISTS(SELECT 1 FROM computer_secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id) WHERE b.environment_id=c.environment_id AND b.computer_id=c.computer_id AND s.status='revoked')))
+ OR (c.terminal_at IS NULL AND c.cancel_requested_at IS NULL AND EXISTS(SELECT 1 FROM secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id) WHERE b.environment_id=c.environment_id AND b.computer_id=c.computer_id AND s.status='revoked')))
  AND (c.updated_at,c.id)>($2::timestamptz,$3::uuid)
  ORDER BY c.updated_at,c.id LIMIT $1`, limit, after.UpdatedAt, after.ID)
 	if err != nil {

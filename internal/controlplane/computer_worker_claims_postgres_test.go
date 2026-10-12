@@ -152,7 +152,7 @@ func TestComputerCommandOperationsReauthenticateAcrossDrain(t *testing.T) {
 					t.Fatalf("completion across drain: %v", err)
 				}
 				var completed bool
-				if err := f.Pool.QueryRow(t.Context(), `SELECT c.status='exited' AND c.exit_code=0 AND h.status='draining' FROM computer_commands c JOIN worker_hosts h ON h.id=$2 WHERE c.id=$1`, command, f.Worker).Scan(&completed); err != nil || !completed {
+				if err := f.Pool.QueryRow(t.Context(), `SELECT c.status='exited' AND c.exit_code=0 AND h.status='draining' FROM commands c JOIN worker_hosts h ON h.id=$2 WHERE c.id=$1`, command, f.Worker).Scan(&completed); err != nil || !completed {
 					t.Fatalf("completion was not durable on the draining host: %v %v", completed, err)
 				}
 			}},
@@ -191,7 +191,7 @@ func TestComputerCommandOperationsReauthenticateAcrossDrain(t *testing.T) {
 			f := agenttest.New(t)
 			command, instance, generation := runningComputerCommand(t, f)
 			if test.stopping {
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET status='stopping',cancel_requested_at=now() WHERE id=$1`, command)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE commands SET status='stopping',cancel_requested_at=now() WHERE id=$1`, command)
 			}
 			server := &Server{db: db.New(f.Pool), tx: f.Pool, diagnosticDB: f.Pool, diagnosticBounds: completeServerConfig(t).DiagnosticBounds, secretDelivery: emptyTestSecretDelivery{}}
 			race := newWorkerClaimsRace(t, f, server, map[string]http.HandlerFunc{test.path: test.handler(server)}, map[string]func(context.Context) error{test.path: drainWorkerHost(f)})

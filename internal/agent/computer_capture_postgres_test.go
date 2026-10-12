@@ -182,7 +182,7 @@ func TestComputerCaptureRejectsActivePeerWithoutAllocatingSave(t *testing.T) {
 		t.Fatalf("active peer captured: %v", err)
 	}
 	var saves, checkpoints int
-	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM computer_saves),(SELECT count(*) FROM computer_checkpoints)`).Scan(&saves, &checkpoints); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM computer_saves),(SELECT count(*) FROM checkpoints)`).Scan(&saves, &checkpoints); err != nil {
 		t.Fatal(err)
 	}
 	if saves != 0 || checkpoints != 0 {
@@ -201,7 +201,7 @@ func TestComputerCaptureAbsentEvidenceMustFollowExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_checkpoints SET capture_expires_at=$2,capture_request=$3 WHERE id=$1`, req.CheckpointID, expired, raw)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE checkpoints SET capture_expires_at=$2,capture_request=$3 WHERE id=$1`, req.CheckpointID, expired, raw)
 	if err = CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, UnsealedCaptureEvidence{AbsentObservedAt: expired.Add(-time.Second)}); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("late delivery of old absence accepted: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestComputerCaptureContradictoryDiskCutKeepsSeal(t *testing.T) {
 		t.Fatalf("disk cut was silently discarded: %v", err)
 	}
 	var state string
-	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM computer_checkpoints WHERE id=$1`, req.CheckpointID).Scan(&state); err != nil || state != "capturing" {
+	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM checkpoints WHERE id=$1`, req.CheckpointID).Scan(&state); err != nil || state != "capturing" {
 		t.Fatalf("seal changed: %s %v", state, err)
 	}
 }
@@ -250,7 +250,7 @@ func TestComputerCaptureUnsealedCancelAllowsMemberFencing(t *testing.T) {
 		t.Fatalf("membership drift trapped never-sealed source: %v", err)
 	}
 	var scrubbed bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT capture_request IS NULL FROM computer_checkpoints WHERE id=$1`, req.CheckpointID).Scan(&scrubbed); err != nil || !scrubbed {
+	if err := f.pool.QueryRow(t.Context(), `SELECT capture_request IS NULL FROM checkpoints WHERE id=$1`, req.CheckpointID).Scan(&scrubbed); err != nil || !scrubbed {
 		t.Fatalf("cancelled source secret retained: %v", err)
 	}
 	f.enqueue(t, "healthy-peer")
@@ -277,7 +277,7 @@ func TestComputerCaptureLossPreservesUnacknowledgedAndRecordedCuts(t *testing.T)
 			}
 			var state string
 			var scrubbed bool
-			if err := f.pool.QueryRow(t.Context(), `SELECT s.status,c.capture_request IS NULL FROM computer_saves s JOIN computer_checkpoints c ON c.disk_save_id=s.id WHERE s.id=$1`, result.SaveID).Scan(&state, &scrubbed); err != nil {
+			if err := f.pool.QueryRow(t.Context(), `SELECT s.status,c.capture_request IS NULL FROM computer_saves s JOIN checkpoints c ON c.disk_save_id=s.id WHERE s.id=$1`, result.SaveID).Scan(&state, &scrubbed); err != nil {
 				t.Fatal(err)
 			}
 			want := "requested"
@@ -325,9 +325,9 @@ func TestComputerCaptureRejectsCrossComputerStorageAndMembers(t *testing.T) {
 		name, statement string
 		args            []any
 	}{
-		{"save", `UPDATE computer_checkpoints SET disk_save_id=$3 WHERE environment_id=$1 AND id=$2`, []any{f.env, req.CheckpointID, save}},
-		{"process", `INSERT INTO computer_checkpoint_members(environment_id,computer_id,checkpoint_id,session_id,process_epoch) VALUES($1,$2,$3,$4,1)`, []any{f.env, f.computer, req.CheckpointID, session}},
-		{"checkpoint", `INSERT INTO computer_checkpoint_members(environment_id,computer_id,checkpoint_id,session_id,process_epoch) VALUES($1,$2,$3,$4,1)`, []any{f.env, other, req.CheckpointID, session}},
+		{"save", `UPDATE checkpoints SET disk_save_id=$3 WHERE environment_id=$1 AND id=$2`, []any{f.env, req.CheckpointID, save}},
+		{"process", `INSERT INTO checkpoint_processes(environment_id,computer_id,checkpoint_id,session_id,process_epoch) VALUES($1,$2,$3,$4,1)`, []any{f.env, f.computer, req.CheckpointID, session}},
+		{"checkpoint", `INSERT INTO checkpoint_processes(environment_id,computer_id,checkpoint_id,session_id,process_epoch) VALUES($1,$2,$3,$4,1)`, []any{f.env, other, req.CheckpointID, session}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := f.pool.Exec(t.Context(), tc.statement, tc.args...)

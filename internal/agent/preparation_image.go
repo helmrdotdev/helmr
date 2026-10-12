@@ -79,13 +79,13 @@ func pinComputerImage(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) (
 		return result, ErrNotReady
 	}
 	var image uuid.UUID
-	err := tx.QueryRow(ctx, `SELECT i.id FROM computer_images i
- JOIN computer_preparations p ON (p.environment_id,p.id)=(i.environment_id,i.preparation_id)
- JOIN computer_preparation_specs spec ON (spec.environment_id,spec.id)=(i.environment_id,i.preparation_spec_id)
+	err := tx.QueryRow(ctx, `SELECT i.id FROM images i
+ JOIN image_builds p ON (p.environment_id,p.id)=(i.environment_id,i.preparation_id)
+ JOIN image_specs spec ON (spec.environment_id,spec.id)=(i.environment_id,i.preparation_spec_id)
  WHERE i.environment_id=$1 AND i.preparation_spec_id=$2 AND i.root_id IS NOT NULL AND p.status='succeeded'
  AND ($4::uuid IS NULL OR p.id=$4 OR p.successor_of=$4)
  AND ($3::bigint IS NULL OR extract(epoch FROM clock_timestamp()-i.published_at)*1000<=$3)
- AND NOT EXISTS (SELECT 1 FROM computer_secret_bindings binding WHERE binding.environment_id=spec.environment_id AND binding.preparation_spec_id=spec.id AND NOT EXISTS (
+ AND NOT EXISTS (SELECT 1 FROM secret_bindings binding WHERE binding.environment_id=spec.environment_id AND binding.preparation_spec_id=spec.id AND NOT EXISTS (
    SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
    WHERE x.environment_id=p.environment_id AND x.preparation_id=p.id AND x.secret_id=binding.secret_id
      AND s.status='active' AND s.current_version_id=x.version_id))
@@ -123,7 +123,7 @@ func pinComputerImage(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) (
 // new pins. Missing declared owners are rejected by the complete exposure query.
 func lockPreparationImageSecrets(ctx context.Context, tx pgx.Tx, env, spec uuid.UUID) error {
 	rows, err := tx.Query(ctx, `SELECT s.id FROM secrets s WHERE s.environment_id=$1 AND s.id IN (
- SELECT secret_id FROM computer_secret_bindings WHERE environment_id=$1 AND preparation_spec_id=$2) ORDER BY s.id FOR SHARE`, env, spec)
+ SELECT secret_id FROM secret_bindings WHERE environment_id=$1 AND preparation_spec_id=$2) ORDER BY s.id FOR SHARE`, env, spec)
 	if err != nil {
 		return err
 	}
@@ -141,9 +141,9 @@ func readComputerImage(ctx context.Context, tx pgx.Tx, env, spec, image uuid.UUI
 	result := ComputerImage{ID: image}
 	var rootID uuid.UUID
 	var captured string
-	err := tx.QueryRow(ctx, `SELECT i.preparation_id,i.seq,i.root_id,p.capture_root,`+diskRootColumns+` FROM computer_images i
- JOIN computer_disk_roots r ON (r.environment_id,r.id)=(i.environment_id,i.root_id)
- JOIN computer_preparations p ON (p.environment_id,p.id)=(i.environment_id,i.preparation_id)
+	err := tx.QueryRow(ctx, `SELECT i.preparation_id,i.seq,i.root_id,p.capture_root,`+diskRootColumns+` FROM images i
+ JOIN disk_roots r ON (r.environment_id,r.id)=(i.environment_id,i.root_id)
+ JOIN image_builds p ON (p.environment_id,p.id)=(i.environment_id,i.preparation_id)
  WHERE i.environment_id=$1 AND i.preparation_spec_id=$2 AND i.id=$3 AND p.status='succeeded'`, env, spec, image).Scan(append([]any{&result.PreparationID, &result.Sequence, &rootID, &captured}, diskRootFields(&result.Root)...)...)
 	if err != nil {
 		return ComputerImage{}, uuid.Nil(), err

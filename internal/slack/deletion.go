@@ -19,7 +19,7 @@ func (h EventHandler) observeDeletion(ctx context.Context, team, channel, timest
 	var owners []owner
 	err := db.RunTx(ctx, h.Database, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT DISTINCT c.installation_id,t.id FROM slack_threads t
- JOIN slack_channels c ON c.id=t.channel_id JOIN slack_installations i ON i.id=c.installation_id
+ JOIN slack_channel_bindings c ON c.id=t.channel_id JOIN slack_installations i ON i.id=c.installation_id
  WHERE i.app_id=$1 AND i.team_id=$2 AND c.slack_channel_id=$3 AND
  (t.thread_ts=$4 OR EXISTS(SELECT 1 FROM slack_posts p JOIN slack_thread_sources s ON s.id=p.thread_source_id WHERE s.thread_id=t.id AND p.message_ts=$4))
  ORDER BY c.installation_id,t.id`, h.AppID, team, channel, timestamp)
