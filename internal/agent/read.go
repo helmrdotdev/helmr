@@ -152,7 +152,7 @@ func readTransaction(ctx context.Context, pool db.TxBeginner, caller Caller, env
 
 const sessionViewColumns = `(SELECT a.key FROM agents a WHERE a.environment_id=sessions.environment_id AND a.id=sessions.agent_id),
  (SELECT t.key FROM agent_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=sessions.environment_id AND d.deployment_id=sessions.deployment_id AND d.agent_id=sessions.agent_id),
- id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,session_key,status,created_at,(SELECT c.slack_channel_id FROM slack_channels c WHERE c.id=sessions.slack_channel_id),requester_session_id,
+ id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,session_key,status,created_at,(SELECT c.slack_channel_id FROM slack_threads t JOIN slack_channels c ON c.id=t.channel_id WHERE t.environment_id=sessions.environment_id AND t.front_session_id=sessions.id),requester_session_id,
  (SELECT t.id FROM turns t WHERE t.environment_id=sessions.environment_id AND t.session_id=sessions.id AND t.seq=1) AS initial_turn_id,
  (SELECT t.status FROM turns t WHERE t.environment_id=sessions.environment_id AND t.session_id=sessions.id AND t.seq=1) AS initial_turn_status,
  (WITH RECURSIVE ancestors AS (
