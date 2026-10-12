@@ -108,7 +108,7 @@ func TestPreparationKeyReauthorizesProviderIO(t *testing.T) {
 							t.Fatal(err)
 						}
 					case "stop":
-						if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), ref.Identity()); err != nil {
+						if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
 							t.Fatal(err)
 						}
 					}

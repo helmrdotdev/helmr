@@ -2,31 +2,12 @@ package secret
 
 import (
 	"bytes"
-	"encoding/base64"
 	"testing"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
-
-func TestKeyFromBase64RequiresExactly32Bytes(t *testing.T) {
-	key := bytes.Repeat([]byte{7}, 32)
-	decoded, err := KeyFromBase64(base64.StdEncoding.EncodeToString(key))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(decoded, key) {
-		t.Fatal("decoded key changed")
-	}
-	for _, size := range []int{16, 31, 33} {
-		if _, err := KeyFromBase64(
-			base64.StdEncoding.EncodeToString(make([]byte, size)),
-		); err == nil {
-			t.Fatalf("%d-byte key was accepted", size)
-		}
-	}
-}
 
 func TestAESGCMEnvelopeAuthenticatesSecretIdentity(t *testing.T) {
 	store := newCipherStore(t, bytes.Repeat([]byte{1}, 32))

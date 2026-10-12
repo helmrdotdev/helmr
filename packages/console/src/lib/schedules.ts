@@ -1,6 +1,6 @@
 import { request } from "./api";
 
-export type Schedule = {
+type Schedule = {
   id: string;
   agent: string;
   deployment_id: string;

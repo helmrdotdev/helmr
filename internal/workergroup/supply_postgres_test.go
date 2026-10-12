@@ -149,8 +149,8 @@ func TestLockHostWithPoolEnforcesContinuationFences(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if locked.Host.ID != pgvalue.UUID(hostID) || locked.Group.ID != f.group.ID || !locked.Continues() {
-				t.Fatalf("locked host = %v group = %v continues = %v", locked.Host.ID, locked.Group.ID, locked.Continues())
+			if locked.Host.ID != pgvalue.UUID(hostID) || locked.Group.ID != f.group.ID || !hostContinues(locked) {
+				t.Fatalf("locked host = %v group = %v continues = %v", locked.Host.ID, locked.Group.ID, hostContinues(locked))
 			}
 
 		})
@@ -187,4 +187,12 @@ SELECT count(*)
 		case <-ticker.C:
 		}
 	}
+}
+
+// hostContinues reports whether the locked rows still describe the epoch the
+// Host was locked under.
+func hostContinues(l LockedHost) bool {
+	return l.Host.CurrentEpoch.Valid && l.Host.CurrentEpoch.Int64 == l.epoch &&
+		(l.Host.Status == db.WorkerHostStatusActive || l.Host.Status == db.WorkerHostStatusDraining) &&
+		(l.Group.Status == db.WorkerGroupStatusActive || l.Group.Status == db.WorkerGroupStatusPaused || l.Group.Status == db.WorkerGroupStatusDraining)
 }

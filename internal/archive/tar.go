@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -16,14 +15,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/safepath"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
-const (
-	defaultMaxExtractedBytes   = int64(512 << 20)
-	defaultMaxExtractedEntries = 100000
-)
+const ()
 
 type TarOptions struct {
 	// ObserveEntry receives normalized metadata in emitted order and returns
@@ -41,29 +36,11 @@ type TarOptions struct {
 	MaxFileBytes    int64
 }
 
-type ExtractOptions struct {
-	MaxBytes   int64
-	MaxEntries int
-}
-
-type ExtractStats struct {
-	EntryCount int
-	SizeBytes  int64
-}
-
 type Tar struct {
 	Path       string
 	Digest     string
 	SizeBytes  int64
 	EntryCount int
-}
-
-func CreateTar(root, tempDir string) (Tar, func(), error) {
-	return CreateTarWithOptions(root, tempDir, TarOptions{})
-}
-
-func CreateTarWithOptions(root, tempDir string, options TarOptions) (Tar, func(), error) {
-	return CreateTarWithOptionsContext(context.Background(), root, tempDir, options)
 }
 
 func CreateTarWithOptionsContext(ctx context.Context, root, tempDir string, options TarOptions) (Tar, func(), error) {
@@ -138,146 +115,6 @@ func CreateTarWithOptionsContext(ctx context.Context, root, tempDir string, opti
 		SizeBytes:  info.Size(),
 		EntryCount: stats.entries,
 	}, cleanup, nil
-}
-
-func ExtractTar(body io.Reader, destination string) error {
-	return ExtractTarWithOptions(body, destination, ExtractOptions{
-		MaxBytes:   defaultMaxExtractedBytes,
-		MaxEntries: defaultMaxExtractedEntries,
-	})
-}
-
-func ExtractTarWithOptions(body io.Reader, destination string, options ExtractOptions) error {
-	_, err := ExtractTarWithStats(body, destination, options)
-	return err
-}
-
-func ExtractTarWithStats(body io.Reader, destination string, options ExtractOptions) (ExtractStats, error) {
-	destination = strings.TrimSpace(destination)
-	if destination == "" {
-		return ExtractStats{}, errors.New("tar archive destination is required")
-	}
-	if err := os.MkdirAll(destination, 0o755); err != nil {
-		return ExtractStats{}, fmt.Errorf("create tar archive destination: %w", err)
-	}
-	return extractTar(body, destination, options)
-}
-
-func extractTar(body io.Reader, destination string, options ExtractOptions) (ExtractStats, error) {
-	reader := tar.NewReader(body)
-	var extractedBytes int64
-	var extractedEntries int
-	directoryModes := map[string]os.FileMode{}
-	for {
-		header, err := reader.Next()
-		if errors.Is(err, io.EOF) {
-			if err := applyDirectoryModes(directoryModes); err != nil {
-				return ExtractStats{}, err
-			}
-			return ExtractStats{EntryCount: extractedEntries, SizeBytes: extractedBytes}, nil
-		}
-		if err != nil {
-			return ExtractStats{}, fmt.Errorf("read tar archive: %w", err)
-		}
-		if tarHeaderIsRootDir(header) {
-			continue
-		}
-		extractedEntries++
-		if options.MaxEntries > 0 && extractedEntries > options.MaxEntries {
-			return ExtractStats{}, fmt.Errorf("tar archive contains too many entries")
-		}
-		if err := validateHeaderSize(header, &extractedBytes, options.MaxBytes); err != nil {
-			return ExtractStats{}, err
-		}
-		name, err := safepath.CleanSlash(header.Name, safepath.CleanOptions{})
-		if err != nil {
-			return ExtractStats{}, fmt.Errorf("unsafe tar path %q", header.Name)
-		}
-		target, err := safepath.JoinSlash(destination, name)
-		if err != nil {
-			return ExtractStats{}, fmt.Errorf("unsafe tar path %q", name)
-		}
-		switch header.Typeflag {
-		case tar.TypeDir:
-			if err := mkdirAllSafe(destination, target, 0o755); err != nil {
-				return ExtractStats{}, err
-			}
-			directoryModes[target] = permissionBits(header.FileInfo().Mode())
-		case tar.TypeReg:
-			if err := mkdirAllSafe(destination, filepath.Dir(target), 0o755); err != nil {
-				return ExtractStats{}, err
-			}
-			if err := writeRegularFile(target, reader, header.FileInfo().Mode(), header.Size); err != nil {
-				return ExtractStats{}, err
-			}
-		case tar.TypeSymlink:
-			if err := validateSymlinkTarget(destination, target, header.Linkname); err != nil {
-				return ExtractStats{}, fmt.Errorf("unsafe symlink target for %q: %w", header.Name, err)
-			}
-			if err := mkdirAllSafe(destination, filepath.Dir(target), 0o755); err != nil {
-				return ExtractStats{}, err
-			}
-			if err := os.RemoveAll(target); err != nil {
-				return ExtractStats{}, err
-			}
-			if err := os.Symlink(header.Linkname, target); err != nil {
-				return ExtractStats{}, err
-			}
-		case tar.TypeLink:
-			return ExtractStats{}, fmt.Errorf("unsupported tar hardlink entry %q", header.Name)
-		default:
-			return ExtractStats{}, fmt.Errorf("unsupported tar archive entry %q type %d", header.Name, header.Typeflag)
-		}
-	}
-}
-
-func tarHeaderIsRootDir(header *tar.Header) bool {
-	if header == nil || header.Typeflag != tar.TypeDir {
-		return false
-	}
-	name := strings.TrimSpace(header.Name)
-	if name == "" || path.IsAbs(name) || filepath.IsAbs(name) {
-		return false
-	}
-	return path.Clean(filepath.ToSlash(name)) == "."
-}
-
-func validateHeaderSize(header *tar.Header, extractedBytes *int64, maxExtractedBytes int64) error {
-	switch header.Typeflag {
-	case tar.TypeReg:
-		return ValidateTarRegularFileSize(header, extractedBytes, maxExtractedBytes)
-	}
-	return nil
-}
-
-func ValidateTarRegularFileSize(header *tar.Header, extractedBytes *int64, maxExtractedBytes int64) error {
-	if hasSparseMetadata(header) {
-		return fmt.Errorf("unsupported sparse tar archive entry %q", header.Name)
-	}
-	if header.Size < 0 {
-		return fmt.Errorf("tar archive entry %q has invalid size", header.Name)
-	}
-	if maxExtractedBytes <= 0 {
-		*extractedBytes += header.Size
-		return nil
-	}
-	if header.Size > maxExtractedBytes {
-		return fmt.Errorf("tar archive entry %q exceeds extracted size limit", header.Name)
-	}
-	if *extractedBytes > maxExtractedBytes-header.Size {
-		return fmt.Errorf("tar archive exceeds extracted size limit")
-	}
-	*extractedBytes += header.Size
-	return nil
-}
-
-func hasSparseMetadata(header *tar.Header) bool {
-	for key := range header.PAXRecords {
-		if strings.HasPrefix(key, "GNU.sparse.") || strings.HasPrefix(key, "SCHILY.realsize") {
-			return true
-		}
-	}
-	return false
 }
 
 type tarStats struct {
@@ -524,80 +361,6 @@ func globPatternSource(pattern string) string {
 	}
 	source.WriteString("$")
 	return source.String()
-}
-
-func validateSymlinkTarget(destination string, target string, linkname string) error {
-	if strings.ContainsRune(linkname, '\x00') {
-		return errors.New("target contains NUL")
-	}
-	if linkname == "" || path.IsAbs(linkname) || filepath.IsAbs(linkname) {
-		return fmt.Errorf("unsafe target path %q", linkname)
-	}
-	resolved := filepath.Clean(filepath.Join(filepath.Dir(target), filepath.FromSlash(linkname)))
-	rel, err := filepath.Rel(destination, resolved)
-	if err != nil {
-		return err
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return fmt.Errorf("unsafe target path %q", linkname)
-	}
-	return nil
-}
-
-func mkdirAllSafe(root, dir string, mode os.FileMode) error {
-	rel, err := filepath.Rel(root, dir)
-	if err != nil {
-		return err
-	}
-	if err := safepath.MkdirAllNoSymlink(root, filepath.ToSlash(rel), mode); err != nil {
-		return fmt.Errorf("unsafe tar parent: %w", err)
-	}
-	return nil
-}
-
-func writeRegularFile(target string, reader io.Reader, mode os.FileMode, size int64) error {
-	mode = permissionBits(mode)
-	if err := os.RemoveAll(target); err != nil {
-		return err
-	}
-	file, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
-	if err != nil {
-		return err
-	}
-	if err := file.Chmod(mode); err != nil {
-		_ = file.Close()
-		_ = os.Remove(target)
-		return err
-	}
-	_, copyErr := io.Copy(file, io.LimitReader(reader, size))
-	closeErr := file.Close()
-	if copyErr != nil {
-		_ = os.Remove(target)
-		return copyErr
-	}
-	if closeErr != nil {
-		_ = os.Remove(target)
-		return closeErr
-	}
-	return nil
-}
-
-func applyDirectoryModes(modes map[string]os.FileMode) error {
-	paths := make([]string, 0, len(modes))
-	for path := range modes {
-		paths = append(paths, path)
-	}
-	sort.Slice(paths, func(i, j int) bool { return len(paths[i]) > len(paths[j]) })
-	for _, path := range paths {
-		if err := os.Chmod(path, modes[path]); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func permissionBits(mode os.FileMode) os.FileMode {
-	return mode & os.ModePerm
 }
 
 // Enforce the physical limit at the writer, including writer.Close framing.

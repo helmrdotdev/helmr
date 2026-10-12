@@ -9,15 +9,8 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/jackc/pgx/v5"
 )
-
-func CloseProcessing(ctx context.Context, pool db.TxBeginner, e Execution, turn uuid.UUID) error {
-	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		return closeProcessing(ctx, tx, e, turn)
-	})
-}
 
 func closeProcessing(ctx context.Context, tx pgx.Tx, e Execution, turn uuid.UUID) error {
 	o, err := lockSession(ctx, tx, e.EnvironmentID, e.SessionID)
@@ -36,27 +29,6 @@ func closeProcessing(ctx context.Context, tx pgx.Tx, e Execution, turn uuid.UUID
 		return ErrNotReady
 	}
 	return rejectTurnMessages(ctx, tx, e.EnvironmentID, e.SessionID, turn, false, "turn_closed")
-}
-
-// RecordResult is called after native registration, callback and output drainage.
-// The worker attestation must identify that completed drainage, not just an empty
-// database queue. The operation records the result and exact save request together.
-func RecordResult(ctx context.Context, pool db.TxBeginner, e Execution, turn uuid.UUID, result json.RawMessage, drainEvidence string) (SaveRequest, error) {
-	var save SaveRequest
-	digest, err := digestJSON(result)
-	if err != nil {
-		return save, err
-	}
-	if drainEvidence == "" {
-		return save, ErrNotReady
-	}
-	err = db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		return recordResult(ctx, tx, e, turn, result, digest, drainEvidence, &save)
-	})
-	if err != nil {
-		return SaveRequest{}, err
-	}
-	return save, nil
 }
 
 func recordResult(ctx context.Context, tx pgx.Tx, e Execution, turn uuid.UUID, result json.RawMessage, digest [32]byte, drainEvidence string, save *SaveRequest) error {
@@ -124,19 +96,6 @@ type CaptureEvidence struct {
 	Evidence      string
 }
 
-// RecordCapture records a verified operation-bound capture receipt. The worker
-// protocol establishes flush and capture ordering after receipt of the committed
-// save request; database timestamps record observation, not synchronized host time.
-func RecordCapture(ctx context.Context, pool db.TxBeginner, c CaptureEvidence) error {
-	if !sha256sum.ValidDigest(c.DiskRoot) {
-		return ErrInvalidInput
-	}
-	if c.Evidence == "" {
-		return ErrNotReady
-	}
-	return db.RunTx(ctx, pool, func(tx pgx.Tx) error { return recordCapture(ctx, tx, c) })
-}
-
 func recordCapture(ctx context.Context, tx pgx.Tx, c CaptureEvidence) error {
 	var computer uuid.UUID
 	if err := tx.QueryRow(ctx, `SELECT computer_id FROM computer_saves WHERE environment_id=$1 AND id=$2`, c.EnvironmentID, c.SaveID).Scan(&computer); err != nil {
@@ -173,32 +132,6 @@ func recordCapture(ctx context.Context, tx pgx.Tx, c CaptureEvidence) error {
 	}
 	_, err = tx.Exec(ctx, `WITH observed AS MATERIALIZED (SELECT clock_timestamp() AS at) UPDATE computer_saves SET status='captured',flush_acknowledged_at=observed.at,captured_at=observed.at,captured_root_digest=decode(substring($3::text from 8),'hex'),capture_evidence=$4 FROM observed WHERE environment_id=$1 AND id=$2`, c.EnvironmentID, c.SaveID, c.DiskRoot, c.Evidence)
 	return err
-}
-
-// ReconcileSavePublication observes the committed receipt after an uncertain
-// response. It performs no new publication and is safe after writer expiry.
-// Uploaded objects without a committed publication remain unresolved.
-func ReconcileSavePublication(ctx context.Context, pool db.TxBeginner, env, saveID uuid.UUID, diskRoot string) error {
-	if !sha256sum.ValidDigest(diskRoot) {
-		return ErrInvalidInput
-	}
-	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		var state string
-		var root *string
-		if err := tx.QueryRow(ctx, `SELECT status,'sha256:'||encode(captured_root_digest,'hex') FROM computer_saves WHERE environment_id=$1 AND id=$2`, env, saveID).Scan(&state, &root); err != nil {
-			return err
-		}
-		if state == "failed" {
-			return ErrTerminal
-		}
-		if root != nil && *root != diskRoot {
-			return ErrConflict
-		}
-		if state != "published" {
-			return ErrNotReady
-		}
-		return nil
-	}))
 }
 
 // Complete reconciles the Turn's own published save, even after source loss.

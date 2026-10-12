@@ -73,34 +73,6 @@ func NextCronTime(expression string, timezone string, anchor time.Time) (time.Ti
 	return next, nil
 }
 
-func NextCronTimes(expression string, timezone string, anchor time.Time, count int) ([]time.Time, error) {
-	if count < 0 {
-		return nil, errors.New("cron occurrence count cannot be negative")
-	}
-	if err := ValidateCron(expression); err != nil {
-		return nil, err
-	}
-	if err := ValidateTimezone(timezone); err != nil {
-		return nil, err
-	}
-	loc, err := loadLocation(timezone)
-	if err != nil {
-		return nil, fmt.Errorf("load timezone rules: %w", err)
-	}
-	spec, _ := cronParser.Parse(expression)
-	result := make([]time.Time, 0, count)
-	cursor := anchor.In(loc)
-	for len(result) < count {
-		next := nextCronOccurrence(spec, cursor)
-		if next.IsZero() {
-			return nil, errors.New("cron has no future occurrences")
-		}
-		result = append(result, next.UTC())
-		cursor = next
-	}
-	return result, nil
-}
-
 // nextCronOccurrence omits the second instance of local times repeated by a
 // backwards timezone transition. This also handles non-hour offset changes.
 func nextCronOccurrence(spec cron.Schedule, anchor time.Time) time.Time {

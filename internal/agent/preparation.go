@@ -27,28 +27,6 @@ type Preparation struct {
 	Deadline      time.Time
 }
 
-// AttachComputerPreparation attaches an already admitted, waiting Computer to an
-// execution. It does not authorize or create a Computer. The Computer is the
-// durable demand owner, so lost acknowledgements return its original attachment
-// even after that attempt terminates. A new retry key cannot silently replay code.
-// Fresh demand waits behind an eligible pending rotation successor, then joins
-// its existing execution window without extending either deadline.
-func AttachComputerPreparation(ctx context.Context, pool db.TxBeginner, env, computer uuid.UUID) (Preparation, error) {
-	var result Preparation
-	if env == uuid.Nil() || computer == uuid.Nil() {
-		return result, ErrInvalidInput
-	}
-	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		var err error
-		result, err = attachComputerPreparation(ctx, tx, env, computer)
-		return err
-	})
-	if err != nil {
-		return Preparation{}, hideMissing(err)
-	}
-	return result, nil
-}
-
 // attachComputerPreparation participates in its caller's admission transaction. It acquires
 // Environment and preparation owners before the Computer, so callers must invoke
 // it before acquiring existing Session-root or Computer locks. An error leaves
@@ -367,10 +345,6 @@ type PreparationIdentity struct {
 	PreparationID uuid.UUID
 	InstanceID    uuid.UUID
 	Epoch         int64
-}
-
-func (e PreparationExecutor) Identity() PreparationIdentity {
-	return PreparationIdentity{EnvironmentID: e.EnvironmentID, PreparationID: e.PreparationID, InstanceID: e.InstanceID, Epoch: e.Epoch}
 }
 
 // ObservePreparationStopped accepts only the owning Host's joined physical VM

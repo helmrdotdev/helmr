@@ -15,7 +15,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
@@ -30,10 +29,6 @@ type constructionTelemetry struct{ telemetry.Reader }
 
 func completeServerConfig(t *testing.T) ServerConfig {
 	t.Helper()
-	fencingKey, err := disk.NewFencingKey(make([]byte, 32))
-	if err != nil {
-		t.Fatal(err)
-	}
 	store := newTestUploadStore(t)
 	allocator, err := agent.NewAllocator(constructionDB{}, make([]byte, 32), nil)
 	if err != nil {
@@ -52,7 +47,6 @@ func completeServerConfig(t *testing.T) ServerConfig {
 		BundleAdmission:                bundle.Admission{Runtime: testRuntimeDescriptor()},
 		PlatformStore:                  store,
 		SecretDelivery:                 emptyTestSecretDelivery{},
-		ComputerFencingKey:             fencingKey,
 		TelemetryReader:                constructionTelemetry{},
 		DiagnosticBounds:               diagnostic.Bounds{ChunkBytes: 1024, SourceBytes: 4096, SourceRecords: 16, EnvironmentBytes: 16384, EnvironmentRecords: 64, QueueBytes: 65536, QueueRecords: 256},
 		AuthKey:                        testAuthRootKey(),

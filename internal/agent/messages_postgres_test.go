@@ -14,7 +14,7 @@ import (
 func TestMessagesKeepExactDispositionAndDrain(t *testing.T) {
 	f := newFixture(t)
 	first := f.enqueue(t, "first")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	req := EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, RetryKey: "steer", Input: json.RawMessage(`[{"type":"text","text":"{\"text\":\"one\\u0000雪\"}"}]`)}
@@ -102,7 +102,7 @@ func TestMessagesKeepExactDispositionAndDrain(t *testing.T) {
 func TestMessagesCancellationAndExpiredRetry(t *testing.T) {
 	f := newFixture(t)
 	first := f.enqueue(t, "first")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	if err := RuntimeRegisterMessages(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID); err != nil {
@@ -134,7 +134,7 @@ func TestMessagesCancellationAndExpiredRetry(t *testing.T) {
 func TestMessagesSteerClosingSessionWithoutEnqueueAuthority(t *testing.T) {
 	f := newFixture(t)
 	first := f.enqueue(t, "first")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	if err := RuntimeRegisterMessages(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID); err != nil {
@@ -176,7 +176,7 @@ func TestRuntimeSendTurnRequiresOwnedTarget(t *testing.T) {
 	turns := make(map[uuid.UUID]uuid.UUID)
 	for _, target := range []fixture{f, child, peer, sibling} {
 		admission := target.enqueue(t, "active")
-		if _, err := Dispatch(t.Context(), target.pool, target.execution()); err != nil {
+		if _, err := dispatchTurnForTest(t.Context(), target.pool, target.execution()); err != nil {
 			t.Fatal(err)
 		}
 		if err := RuntimeRegisterMessages(t.Context(), target.pool, *target.host(), target.execution(), admission.TurnID); err != nil {

@@ -121,7 +121,7 @@ func TestCreateSessionKeyNeverContinuesExistingSession(t *testing.T) {
 func TestRuntimeCreationSelectsCurrentStartAndPinnedSpawn(t *testing.T) {
 	f := newAdmissionFixture(t)
 	admitted := f.enqueue(t, "caller")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	caller := Caller{Kind: "session", ID: f.session, TurnID: admitted.TurnID, Execution: f.execution(), Host: f.host()}
@@ -146,7 +146,7 @@ func TestRuntimeCreationSelectsCurrentStartAndPinnedSpawn(t *testing.T) {
 			t.Fatalf("creation ownership: %v %v", valid, err)
 		}
 	}
-	if err := CloseProcessing(t.Context(), f.pool, f.execution(), admitted.TurnID); err != nil {
+	if err := closeProcessingForTest(t.Context(), f.pool, f.execution(), admitted.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Start(t.Context(), f.pool, nil, caller, f.startRequest("late")); !errors.Is(err, ErrDenied) {
@@ -257,7 +257,7 @@ func TestStartAndEnqueueShareOneTokenBudget(t *testing.T) {
 func TestRuntimeCreationRechecksTurnAfterLockWait(t *testing.T) {
 	f := newAdmissionFixture(t)
 	a := f.enqueue(t, "caller")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	caller := Caller{Kind: "session", ID: f.session, TurnID: a.TurnID, Execution: f.execution(), Host: f.host()}
@@ -294,7 +294,7 @@ func TestRuntimeCreationRechecksTurnAfterLockWait(t *testing.T) {
 		case <-time.After(time.Millisecond):
 		}
 	}
-	if err = CloseProcessing(ctx, f.pool, f.execution(), a.TurnID); err != nil {
+	if err = closeProcessingForTest(ctx, f.pool, f.execution(), a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -375,7 +375,7 @@ func TestCreateAllowsOmittedInputAndRejectsFaultedPlacement(t *testing.T) {
 func TestRuntimeStartPreservesCausalLimitAcrossIndependentRoots(t *testing.T) {
 	f := newAdmissionFixture(t)
 	a := f.enqueue(t, "caller")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	caller := Caller{Kind: "session", ID: f.session, TurnID: a.TurnID, Execution: f.execution(), Host: f.host()}
@@ -414,7 +414,7 @@ func TestStartRejectsUnsupportedDiskSizeWithoutReservations(t *testing.T) {
 func TestRuntimeCreationWithFreshComputer(t *testing.T) {
 	f := newAdmissionFixture(t)
 	first := f.enqueue(t, "caller")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	caller := Caller{Kind: "session", ID: f.session, TurnID: first.TurnID, Execution: f.execution(), Host: f.host()}
@@ -434,7 +434,7 @@ func TestRuntimeCreationWithFreshComputer(t *testing.T) {
 func TestOwnedCallerCannotCreateOrDiscoverNewWork(t *testing.T) {
 	f := newAdmissionFixture(t)
 	first := f.enqueue(t, "caller")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	peer := f.peer(t)

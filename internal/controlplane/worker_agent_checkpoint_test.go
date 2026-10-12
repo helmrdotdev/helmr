@@ -9,7 +9,6 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
@@ -35,12 +34,7 @@ func TestWorkerCheckpointPublicationThroughHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
-	keyID := uuid.NewV7()
-	key := bytes.Repeat([]byte{21}, 32)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'test',decode('01','hex'))`, keyID, f.Environment, f.Computer)
-	if _, err := agent.BindComputerLeaseDisk(t.Context(), f.Pool, host, f.Environment, f.Computer, 1, keyID); err != nil {
-		t.Fatal(err)
-	}
+	keyID, key := bindFixtureLeaseDisk(t, f.Pool, host, f.Environment, f.Computer, 1)
 	file, err := os.CreateTemp(t.TempDir(), "disk")
 	if err != nil {
 		t.Fatal(err)

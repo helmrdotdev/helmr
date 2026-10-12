@@ -2,7 +2,6 @@ package oci
 
 import (
 	"archive/tar"
-	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/json"
@@ -71,14 +70,6 @@ type configBlob struct {
 	} `json:"Config"`
 }
 
-func Unpack(r io.Reader, destination string) (Image, error) {
-	return UnpackAt(r, destination, "")
-}
-
-func UnpackAt(r io.Reader, destination, scratchRoot string) (Image, error) {
-	return unpack(r, destination, scratchRoot, ApplyLayerTar)
-}
-
 func unpack(r io.Reader, destination, scratchRoot string, apply func(io.Reader, string) error) (Image, error) {
 	if err := os.MkdirAll(destination, 0o755); err != nil {
 		return Image{}, fmt.Errorf("create oci destination: %w", err)
@@ -128,55 +119,6 @@ func unpack(r io.Reader, destination, scratchRoot string, apply func(io.Reader, 
 	}, nil
 }
 
-func ReadConfig(r io.Reader) (RuntimeConfig, error) {
-	metadata, err := Inspect(r)
-	if err != nil {
-		return RuntimeConfig{}, err
-	}
-	return metadata.Config, nil
-}
-
-func Inspect(r io.Reader) (Metadata, error) {
-	indexJSON, blobs, err := inspectBlobs(r)
-	if err != nil {
-		return Metadata{}, err
-	}
-	var index Index
-	if err := json.Unmarshal(indexJSON, &index); err != nil {
-		return Metadata{}, fmt.Errorf("decode oci index: %w", err)
-	}
-	if len(index.Manifests) == 0 {
-		return Metadata{}, errors.New("oci index has no manifests")
-	}
-	manifestDescriptor := index.Manifests[0]
-	manifestBytes, err := readMetadataBlob(blobs, manifestDescriptor)
-	if err != nil {
-		return Metadata{}, err
-	}
-	var manifest Manifest
-	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
-		return Metadata{}, fmt.Errorf("decode oci manifest: %w", err)
-	}
-	configBytes, err := readMetadataBlob(blobs, manifest.Config)
-	if err != nil {
-		return Metadata{}, err
-	}
-	config, err := DecodeConfig(configBytes)
-	if err != nil {
-		return Metadata{}, err
-	}
-	for _, layer := range manifest.Layers {
-		if err := validateLayerDescriptor(blobs, layer); err != nil {
-			return Metadata{}, err
-		}
-	}
-	return Metadata{
-		Config:        config,
-		Platform:      manifestDescriptor.Platform,
-		ManifestCount: len(index.Manifests),
-	}, nil
-}
-
 func DecodeConfig(body []byte) (RuntimeConfig, error) {
 	var blob configBlob
 	if err := json.Unmarshal(body, &blob); err != nil {
@@ -189,241 +131,6 @@ func DecodeConfig(body []byte) (RuntimeConfig, error) {
 		Entrypoint: blob.Config.Entrypoint,
 		Cmd:        blob.Config.Cmd,
 	}, nil
-}
-
-func ApplyLayerTar(r io.Reader, destination string) error {
-	reader := tar.NewReader(r)
-	currentLayerEntries := map[string]bool{}
-	for {
-		header, err := reader.Next()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("read oci layer: %w", err)
-		}
-		if tarEntryIsRootDir(header) {
-			continue
-		}
-		relative := filepath.ToSlash(filepath.Clean(header.Name))
-		if relative == "." || strings.HasPrefix(relative, "../") || filepath.IsAbs(relative) {
-			return fmt.Errorf("unsafe oci layer path %q", header.Name)
-		}
-		if applied, err := applyWhiteout(destination, relative, currentLayerEntries); err != nil {
-			return err
-		} else if applied {
-			continue
-		}
-		target, err := confinedLayerPath(destination, relative)
-		if err != nil {
-			return err
-		}
-		switch header.Typeflag {
-		case tar.TypeDir:
-			if err := mkdirLayerDir(destination, relative, os.FileMode(header.Mode)&0o777); err != nil {
-				return err
-			}
-			if err := os.Chmod(target, os.FileMode(header.Mode)&0o777); err != nil {
-				return err
-			}
-			currentLayerEntries[relative] = true
-		case tar.TypeReg:
-			if err := ensureLayerParentDir(destination, relative); err != nil {
-				return err
-			}
-			if err := os.RemoveAll(target); err != nil {
-				return err
-			}
-			file, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(header.Mode)&0o777)
-			if err != nil {
-				return err
-			}
-			_, copyErr := io.Copy(file, reader)
-			closeErr := file.Close()
-			if copyErr != nil {
-				return copyErr
-			}
-			if closeErr != nil {
-				return closeErr
-			}
-			if err := os.Chmod(target, os.FileMode(header.Mode)&0o777); err != nil {
-				return err
-			}
-			currentLayerEntries[relative] = true
-		case tar.TypeSymlink:
-			if err := validateLayerSymlinkTarget(relative, header.Linkname); err != nil {
-				return err
-			}
-			if err := ensureLayerParentDir(destination, relative); err != nil {
-				return err
-			}
-			if err := os.RemoveAll(target); err != nil {
-				return err
-			}
-			if err := os.Symlink(header.Linkname, target); err != nil {
-				return err
-			}
-			currentLayerEntries[relative] = true
-		case tar.TypeLink:
-			if filepath.IsAbs(header.Linkname) || strings.HasPrefix(filepath.Clean(header.Linkname), "..") {
-				return fmt.Errorf("unsafe hardlink target %q for %q", header.Linkname, header.Name)
-			}
-			linkTarget, err := confinedLayerPath(destination, header.Linkname)
-			if err != nil {
-				return err
-			}
-			if err := ensureLayerParentDir(destination, relative); err != nil {
-				return err
-			}
-			if err := os.RemoveAll(target); err != nil {
-				return err
-			}
-			if err := os.Link(linkTarget, target); err != nil {
-				return err
-			}
-			currentLayerEntries[relative] = true
-		default:
-			return fmt.Errorf("unsupported oci layer entry %q type %d", header.Name, header.Typeflag)
-		}
-	}
-}
-
-type inspectedBlob struct {
-	body []byte
-	size int64
-}
-
-func inspectBlobs(r io.Reader) ([]byte, map[string]inspectedBlob, error) {
-	reader := tar.NewReader(r)
-	var indexJSON []byte
-	indexSeen := false
-	blobs := map[string]inspectedBlob{}
-	for {
-		header, err := reader.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, nil, fmt.Errorf("read oci tar: %w", err)
-		}
-		name := filepath.ToSlash(filepath.Clean(header.Name))
-		if name == "." || filepath.IsAbs(name) || strings.HasPrefix(name, "../") {
-			return nil, nil, fmt.Errorf("unsafe oci tar path %q", header.Name)
-		}
-		if header.Typeflag == tar.TypeDir {
-			continue
-		}
-		if header.Typeflag != tar.TypeReg {
-			return nil, nil, fmt.Errorf("unsupported oci tar entry %q type %d", header.Name, header.Typeflag)
-		}
-		switch {
-		case name == "index.json":
-			if indexSeen {
-				return nil, nil, errors.New("oci image tar contains duplicate index.json")
-			}
-			body, err := readLimited(reader, maxJSONBlobBytes)
-			if err != nil {
-				return nil, nil, fmt.Errorf("read oci index: %w", err)
-			}
-			indexJSON = body
-			indexSeen = true
-		case strings.HasPrefix(name, "blobs/sha256/"):
-			digest := strings.TrimPrefix(name, "blobs/sha256/")
-			if err := validateHexDigest(digest); err != nil {
-				return nil, nil, err
-			}
-			if _, exists := blobs[digest]; exists {
-				return nil, nil, fmt.Errorf("oci image tar contains duplicate blob %s", digest)
-			}
-			hash := sha256.New()
-			var buf bytes.Buffer
-			writer := io.Writer(hash)
-			if header.Size >= 0 && header.Size <= maxJSONBlobBytes {
-				if header.Size > 0 {
-					buf.Grow(int(header.Size))
-				}
-				writer = io.MultiWriter(hash, &buf)
-			}
-			if _, err := io.Copy(writer, reader); err != nil {
-				return nil, nil, fmt.Errorf("read oci blob %s: %w", name, err)
-			}
-			actual := sha256sum.HexHash(hash)
-			if actual != digest {
-				return nil, nil, fmt.Errorf("oci blob %s has sha256 %s", name, actual)
-			}
-			blob := inspectedBlob{size: header.Size}
-			if header.Size <= maxJSONBlobBytes {
-				blob.body = buf.Bytes()
-			}
-			blobs[digest] = blob
-		case name == "oci-layout":
-			if _, err := readLimited(reader, maxJSONBlobBytes); err != nil {
-				return nil, nil, fmt.Errorf("read oci layout: %w", err)
-			}
-		default:
-			return nil, nil, fmt.Errorf("unsupported oci tar entry %q", header.Name)
-		}
-	}
-	if !indexSeen {
-		return nil, nil, errors.New("oci image tar missing index.json")
-	}
-	return indexJSON, blobs, nil
-}
-
-func readMetadataBlob(blobs map[string]inspectedBlob, descriptor Descriptor) ([]byte, error) {
-	hexDigest, err := parseDigest(descriptor.Digest)
-	if err != nil {
-		return nil, err
-	}
-	blob, ok := blobs[hexDigest]
-	if !ok {
-		return nil, fmt.Errorf("oci blob %s is missing", descriptor.Digest)
-	}
-	if descriptor.Size < 0 || blob.size != descriptor.Size {
-		return nil, fmt.Errorf(
-			"oci blob %s size is %d, descriptor declares %d",
-			descriptor.Digest,
-			blob.size,
-			descriptor.Size,
-		)
-	}
-	if blob.body == nil {
-		return nil, fmt.Errorf(
-			"oci JSON blob %s exceeds %d bytes",
-			descriptor.Digest,
-			maxJSONBlobBytes,
-		)
-	}
-	return blob.body, nil
-}
-
-func validateLayerDescriptor(blobs map[string]inspectedBlob, descriptor Descriptor) error {
-	hexDigest, err := parseDigest(descriptor.Digest)
-	if err != nil {
-		return err
-	}
-	blob, ok := blobs[hexDigest]
-	if !ok {
-		return fmt.Errorf("oci layer %s is missing", descriptor.Digest)
-	}
-	if descriptor.Size < 0 || blob.size != descriptor.Size {
-		return fmt.Errorf(
-			"oci layer %s size is %d, descriptor declares %d",
-			descriptor.Digest,
-			blob.size,
-			descriptor.Size,
-		)
-	}
-	switch descriptor.MediaType {
-	case "application/vnd.oci.image.layer.v1.tar",
-		"application/vnd.docker.image.rootfs.diff.tar",
-		"application/vnd.oci.image.layer.v1.tar+gzip",
-		"application/vnd.docker.image.rootfs.diff.tar.gzip",
-		"application/vnd.oci.image.layer.v1.tar+zstd":
-		return nil
-	default:
-		return fmt.Errorf("unsupported oci layer media type %q", descriptor.MediaType)
-	}
 }
 
 func unpackTar(r io.Reader, blobsDir string) ([]byte, error) {
@@ -528,112 +235,6 @@ func applyLayer(blobsDir string, layer Descriptor, destination string, apply fun
 	}
 }
 
-func applyWhiteout(destination, relative string, currentLayerEntries map[string]bool) (bool, error) {
-	base := filepath.Base(relative)
-	if base == ".wh..wh..opq" {
-		parent := filepath.Dir(relative)
-		if parent == "." {
-			parent = ""
-		}
-		target, err := confinedLayerPath(destination, parent)
-		if err != nil {
-			return false, err
-		}
-		entries, err := readLayerDir(target)
-		if errors.Is(err, os.ErrNotExist) {
-			return true, nil
-		}
-		if err != nil {
-			return false, err
-		}
-		for _, entry := range entries {
-			entryRelative := filepath.ToSlash(filepath.Join(parent, entry.Name()))
-			if currentLayerEntries[entryRelative] {
-				continue
-			}
-			if err := os.RemoveAll(filepath.Join(target, entry.Name())); err != nil {
-				return false, err
-			}
-		}
-		return true, nil
-	}
-	name, ok := strings.CutPrefix(base, ".wh.")
-	if !ok {
-		return false, nil
-	}
-	parent := filepath.Dir(relative)
-	if parent == "." {
-		parent = ""
-	}
-	target, err := confinedLayerPath(destination, filepath.Join(parent, name))
-	if err != nil {
-		return false, err
-	}
-	if err := os.RemoveAll(target); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func ensureLayerParentDir(destination, relative string) error {
-	parent := filepath.Dir(relative)
-	if parent == "." {
-		return nil
-	}
-	return mkdirLayerDir(destination, parent, 0o755)
-}
-
-func mkdirLayerDir(destination, relative string, mode os.FileMode) error {
-	clean := filepath.Clean(filepath.FromSlash(relative))
-	if clean == "." {
-		return nil
-	}
-	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("unsafe oci layer path %q", relative)
-	}
-	current := destination
-	parts := strings.Split(clean, string(filepath.Separator))
-	for i, part := range parts {
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
-		if err == nil {
-			if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-				return fmt.Errorf("unsafe oci layer directory %q", current)
-			}
-			continue
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		perm := os.FileMode(0o755)
-		if i == len(parts)-1 {
-			perm = mode
-		}
-		if err := os.Mkdir(current, perm); err != nil && !errors.Is(err, os.ErrExist) {
-			return err
-		}
-		info, err = os.Lstat(current)
-		if err != nil {
-			return err
-		}
-		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-			return fmt.Errorf("unsafe oci layer directory %q", current)
-		}
-	}
-	return nil
-}
-
-func readLayerDir(path string) ([]os.DirEntry, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return nil, fmt.Errorf("unsafe oci layer directory %q", path)
-	}
-	return os.ReadDir(path)
-}
-
 func parseDigest(digest string) (string, error) {
 	hexDigest, ok := strings.CutPrefix(digest, "sha256:")
 	if !ok {
@@ -683,20 +284,6 @@ func ConfinedLayerPath(root, relative string) (string, error) {
 	return filepath.Join(root, clean), nil
 }
 
-func confinedLayerPath(root, relative string) (string, error) {
-	return ConfinedLayerPath(root, relative)
-}
-
-func validateLayerSymlinkTarget(linkPath, target string) error {
-	if strings.TrimSpace(target) == "" {
-		return fmt.Errorf("unsafe symlink target %q for %q", target, linkPath)
-	}
-	if filepath.IsAbs(target) {
-		return nil
-	}
-	return validateSymlinkTarget(linkPath, target)
-}
-
 func readLimited(r io.Reader, max int64) ([]byte, error) {
 	var buf strings.Builder
 	buf.Grow(4096)
@@ -716,29 +303,6 @@ func copyWithSHA256(w io.Writer, r io.Reader) (string, error) {
 		return "", err
 	}
 	return sha256sum.HexHash(hash), nil
-}
-
-func validateSymlinkTarget(linkPath, target string) error {
-	if target == "" || filepath.IsAbs(target) {
-		return fmt.Errorf("unsafe symlink target %q for %q", target, linkPath)
-	}
-	depth := len(strings.Split(filepath.Dir(linkPath), string(filepath.Separator)))
-	if filepath.Dir(linkPath) == "." {
-		depth = 0
-	}
-	for part := range strings.SplitSeq(filepath.Clean(target), string(filepath.Separator)) {
-		switch part {
-		case ".", "":
-		case "..":
-			if depth == 0 {
-				return fmt.Errorf("unsafe symlink target %q for %q", target, linkPath)
-			}
-			depth--
-		default:
-			depth++
-		}
-	}
-	return nil
 }
 
 func tarEntryIsRootDir(header *tar.Header) bool {

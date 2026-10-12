@@ -11,7 +11,6 @@ import (
 )
 
 const nativeLauncherDirectory = "/opt/helmr/native"
-const nativeLauncherExecutable = nativeLauncherDirectory + "/launch"
 const nativeLauncherSocket = nativeLauncherDirectory + "/broker.sock"
 
 // The empty launch file is only a mount target. Bind the currently executing

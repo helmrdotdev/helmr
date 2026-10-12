@@ -13,7 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	productversion "github.com/helmrdotdev/helmr/internal/version"
-	"github.com/helmrdotdev/helmr/internal/vmplatform"
 )
 
 const NodeNoStripTypes = "--no-strip-types"
@@ -119,18 +118,6 @@ func NodeProgramFlags(version string) ([]string, error) {
 		return nil, err
 	}
 	return append(flags, "--import=file:///opt/helmr/runtime/helmr/module-preload.mjs"), nil
-}
-
-func RuntimeArchitectureFromGo(value string) (definition.RuntimeArchitecture, error) {
-	architecture, err := vmplatform.ArchitectureFromGo(value)
-	return definition.RuntimeArchitecture(architecture), err
-}
-
-func RuntimeArchitectureGo(value definition.RuntimeArchitecture) (string, error) {
-	if value == definition.ArchitectureX8664 {
-		return "amd64", nil
-	}
-	return "", fmt.Errorf("runtime architecture %q is unsupported", value)
 }
 
 func ValidateRuntimeArchitecture(value definition.RuntimeArchitecture) error {

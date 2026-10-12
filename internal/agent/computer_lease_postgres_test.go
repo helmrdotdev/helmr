@@ -23,7 +23,7 @@ func TestComputerLeaseExpiryKeepsUnknownWriterAndPreparedResult(t *testing.T) {
 	f := newFixture(t)
 	peer := f.peer(t)
 	active := f.enqueue(t, "running")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	queued := f.enqueue(t, "queued")
@@ -197,7 +197,7 @@ func TestComputerLeaseLossAfterConsumptionDoesNotReplayCheckpoint(t *testing.T) 
 	}
 	// Epoch replacement allows loss reconciliation, but is not physical fencing.
 	dbtest.MustExec(t, t.Context(), r.f.pool, `UPDATE worker_hosts SET current_epoch=current_epoch+1 WHERE id=$1`, r.host.HostID)
-	if err := LoseUnreadyComputerCapture(t.Context(), r.f.pool, r.f.env, r.manifest.CheckpointID); err != nil {
+	if err := loseUnreadyComputerCaptureForTest(t.Context(), r.f.pool, r.f.env, r.manifest.CheckpointID); err != nil {
 		t.Fatal(err)
 	}
 	var holds int
@@ -288,9 +288,9 @@ func TestComputerLeaseExpiryKeepsSeparatelyPlacedHelperRunning(t *testing.T) {
  INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,computer_instance_id,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) SELECT environment_id,$2,epoch,worker_host_id,worker_epoch,expires_at,$2,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE computer_id=$1;
  DELETE FROM session_processes WHERE session_id=$3;
  UPDATE sessions SET computer_id=$2 WHERE id=$3;
- INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,control_kind,control_generation,control_acknowledged_at) VALUES($4,$3,1,$2,1,'ready','resume',1,clock_timestamp())`, pgx.QueryExecModeSimpleProtocol, f.computer, child.computer, child.session, f.env)
+ INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,attachment_sequence,control_sequence,control_attachment,control_kind,control_generation,control_acknowledged_at) VALUES($4,$3,1,$2,1,'ready',1,1,1,'resume',1,clock_timestamp())`, pgx.QueryExecModeSimpleProtocol, f.computer, child.computer, child.session, f.env)
 	active := child.enqueue(t, "helper")
-	if _, err := Dispatch(t.Context(), f.pool, child.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, child.execution()); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE computer_id=$1`, f.computer)
@@ -335,7 +335,7 @@ func TestComputerCaptureLossPreservesStoppedMember(t *testing.T) {
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='physical owner destroyed' WHERE computer_id=$1`, f.computer)
 			for range 2 {
-				if err := LoseUnreadyComputerCapture(t.Context(), f.pool, f.env, uuid.MustParse(p.Capture.CheckpointId)); err != nil {
+				if err := loseUnreadyComputerCaptureForTest(t.Context(), f.pool, f.env, uuid.MustParse(p.Capture.CheckpointId)); err != nil {
 					t.Fatal(err)
 				}
 			}

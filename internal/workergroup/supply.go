@@ -107,9 +107,3 @@ func LockHostWithPool(ctx context.Context, q db.Querier, groupID, poolID, hostID
 	}
 	return LockedHost{Group: group, Host: host, epoch: epoch}, nil
 }
-
-func (l LockedHost) Continues() bool {
-	return l.Host.CurrentEpoch.Valid && l.Host.CurrentEpoch.Int64 == l.epoch &&
-		(l.Host.Status == db.WorkerHostStatusActive || l.Host.Status == db.WorkerHostStatusDraining) &&
-		(l.Group.Status == db.WorkerGroupStatusActive || l.Group.Status == db.WorkerGroupStatusPaused || l.Group.Status == db.WorkerGroupStatusDraining)
-}

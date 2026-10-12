@@ -2,7 +2,6 @@ package definition
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,8 +13,7 @@ const (
 	BuildPlanFormatVersion      = 0
 	DeploymentPlanFormatVersion = 0
 
-	manifestDigestDomain       = "helmr.deployment-definition-manifest.v0\x00"
-	maxJSONSafeInteger   int64 = 9007199254740991
+	maxJSONSafeInteger int64 = 9007199254740991
 
 	KindAgent    = Kind("agent")
 	KindTemplate = Kind("template")
@@ -244,24 +242,4 @@ func definitionKindOrder(kind Kind) int {
 	default:
 		return 2
 	}
-}
-
-func CanonicalManifestAndDigest(raw []byte) ([]byte, [sha256.Size]byte, error) {
-	canonical, err := jsoncanon.Transform(raw)
-	if err != nil {
-		return nil, [sha256.Size]byte{}, fmt.Errorf("canonicalize deployment manifest: %w", err)
-	}
-	if len(canonical) == 0 || canonical[0] != '{' {
-		return nil, [sha256.Size]byte{}, fmt.Errorf("deployment manifest root must be an object")
-	}
-	return canonical, domainDigest(manifestDigestDomain, canonical), nil
-}
-
-func domainDigest(domain string, canonical []byte) [sha256.Size]byte {
-	hash := sha256.New()
-	hash.Write([]byte(domain))
-	hash.Write(canonical)
-	var digest [sha256.Size]byte
-	copy(digest[:], hash.Sum(nil))
-	return digest
 }

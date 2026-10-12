@@ -2,7 +2,6 @@ package conversation
 
 import (
 	"encoding/json"
-	"strings"
 )
 
 // Input is the single authored input contract for starts, queued work and live
@@ -24,23 +23,4 @@ func Input(raw json.RawMessage) (json.RawMessage, error) {
 		}
 	}
 	return canonical, nil
-}
-
-// InputText projects validated input without adding separators or trimming text.
-func InputText(raw json.RawMessage) (string, error) {
-	canonical, err := Input(raw)
-	if err != nil {
-		return "", err
-	}
-	var parts []struct {
-		Text string `json:"text"`
-	}
-	if err := json.Unmarshal(canonical, &parts); err != nil {
-		return "", ErrInvalid
-	}
-	var text strings.Builder
-	for _, part := range parts {
-		text.WriteString(part.Text)
-	}
-	return text.String(), nil
 }

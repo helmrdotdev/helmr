@@ -2,9 +2,10 @@ package agent
 
 import (
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -199,7 +200,7 @@ func TestSourceContinuationCompletesAfterStoppedPeerGenerationAdvances(t *testin
 		t.Fatal(err)
 	}
 	queued := f.enqueue(t, "healthy-after-stopped-peer")
-	dispatched, err := Dispatch(t.Context(), f.pool, f.execution())
+	dispatched, err := dispatchTurnForTest(t.Context(), f.pool, f.execution())
 	if err != nil || dispatched.TurnID != queued.TurnID {
 		t.Fatalf("healthy peer dispatch: %+v %v", dispatched, err)
 	}

@@ -315,7 +315,7 @@ func TestSlackInputSourceBelongsToEachAcceptedMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
-	turn, err := agent.Dispatch(ctx, f.Pool, e)
+	turn, err := dispatchRuntimeTurn(ctx, f.Pool, e)
 	if err != nil {
 		t.Fatal(err)
 	}

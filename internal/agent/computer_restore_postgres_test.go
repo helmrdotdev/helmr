@@ -64,7 +64,7 @@ func (r *computerRestoreFixture) newTarget(t *testing.T) {
 	// Acquisition/fencing and capacity are fixture setup, not a VM or allocator proof.
 	dbtest.MustExec(t, t.Context(), r.f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='owned physical closure' WHERE environment_id=$1 AND computer_id=$2 AND fenced_at IS NULL;
  INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,computer_instance_id,channel_credential_digest,restored_from_save_id,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) VALUES($1,$2,$3,$4,1,clock_timestamp()+interval '1 hour',$5,$6,$7,'acquiring',1000,536870912,1073741824,'sha256:1111111111111111111111111111111111111111111111111111111111111111',1,'sha256:1111111111111111111111111111111111111111111111111111111111111111',clock_timestamp(),NULL)`, pgx.QueryExecModeSimpleProtocol, r.f.env, r.f.computer, r.epoch, r.host.HostID, uuid.NewV7(), digest[:], r.save)
-	if _, err := BindComputerLeaseDisk(t.Context(), r.f.pool, r.host, r.f.env, r.f.computer, r.epoch, uuid.MustParse(r.writer.ActiveKey)); err != nil {
+	if _, err := bindComputerLeaseDiskForTest(t.Context(), r.f.pool, r.host, r.f.env, r.f.computer, r.epoch, uuid.MustParse(r.writer.ActiveKey)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -104,7 +104,7 @@ func TestComputerRestoreInstallsControlBeforeDispatch(t *testing.T) {
 			t.Fatal("stale grant")
 		}
 	}
-	if _, err := Dispatch(ctx, f.f.pool, e); !errors.Is(err, ErrNotReady) {
+	if _, err := dispatchTurnForTest(ctx, f.f.pool, e); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("acquiring dispatch: %v", err)
 	}
 	caller := Caller{Kind: "session", ID: f.f.session, Execution: e, Host: &f.host}
@@ -132,7 +132,7 @@ func TestComputerRestoreInstallsControlBeforeDispatch(t *testing.T) {
 	if err = ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, initial); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("old image retried: %v", err)
 	}
-	if err = LoseUnreadyComputerCapture(ctx, f.f.pool, f.f.env, f.manifest.CheckpointID); !errors.Is(err, ErrNotReady) {
+	if err = loseUnreadyComputerCaptureForTest(ctx, f.f.pool, f.f.env, f.manifest.CheckpointID); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("historical source fence lost current target: %v", err)
 	}
 	admitted := f.f.enqueue(t, "queued-through-restore")
@@ -151,7 +151,7 @@ func TestComputerRestoreInstallsControlBeforeDispatch(t *testing.T) {
 		}
 	}
 	e.AuthorityGeneration = 3
-	dispatched, err := Dispatch(ctx, f.f.pool, e)
+	dispatched, err := dispatchTurnForTest(ctx, f.f.pool, e)
 	if err != nil || dispatched.TurnID != admitted.TurnID {
 		t.Fatalf("restored FIFO: %+v %v", dispatched, err)
 	}
@@ -186,7 +186,7 @@ func TestComputerRestoreRetriesOnlyBeforeConsumption(t *testing.T) {
 		t.Fatalf("consumed snapshot reloaded: %v", err)
 	}
 	// Loss follows the consumed physical owner, not the newly admitted fixture lease.
-	if err := LoseUnreadyComputerCapture(ctx, f.f.pool, f.f.env, f.manifest.CheckpointID); err != nil {
+	if err := loseUnreadyComputerCaptureForTest(ctx, f.f.pool, f.f.env, f.manifest.CheckpointID); err != nil {
 		t.Fatal(err)
 	}
 	var holds int
@@ -265,7 +265,7 @@ func TestRuntimeControlRenewalSurvivesDeploymentRevocation(t *testing.T) {
 	if _, err := RenewRuntimeAuthority(ctx, f.pool, *f.host(), f.execution()); err != nil {
 		t.Fatalf("revocation blocked control delivery: %v", err)
 	}
-	if _, err := Dispatch(ctx, f.pool, f.execution()); !errors.Is(err, ErrNotReady) {
+	if _, err := dispatchTurnForTest(ctx, f.pool, f.execution()); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("revoked business admission: %v", err)
 	}
 }

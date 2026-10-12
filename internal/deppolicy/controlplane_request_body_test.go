@@ -55,7 +55,6 @@ var controlPlaneDecodersOutsideOwner = map[string]string{
 	"parseSessionListCursor":             "opaque cursor, fixed message",
 	"githubOAuthProvider.Resolve":        "identity provider response",
 	"githubOAuthProvider.verifiedEmails": "identity provider response",
-	"normalizeAnnotations":               "owner-decoded metadata, fixed message",
 }
 
 // TestControlPlaneRequestBodiesDecodeThroughOwner keeps client-facing request

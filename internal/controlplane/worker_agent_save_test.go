@@ -5,13 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
@@ -55,13 +56,13 @@ func TestWorkerAgentSavePublicationThroughHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agent.Dispatch(t.Context(), f.Pool, execution); err != nil {
+	if _, err := dispatchRuntimeTurn(t, f.Pool, execution); err != nil {
 		t.Fatal(err)
 	}
-	if err := agent.CloseProcessing(t.Context(), f.Pool, execution, a.TurnID); err != nil {
+	if err := closeRuntimeProcessing(t, f.Pool, execution, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	save, err := agent.RecordResult(t.Context(), f.Pool, execution, a.TurnID, json.RawMessage(`{"saved":true}`), "native work drained")
+	save, err := finalizeRuntimeTurn(t, f.Pool, execution, a.TurnID, json.RawMessage(`{"saved":true}`), "native work drained")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,12 +76,7 @@ func TestWorkerAgentSavePublicationThroughHTTP(t *testing.T) {
 	if _, err := client.NextAgentSave(t.Context(), workerapi.AgentSaveDiscovery{AllocationIdentity: wrongAllocation}); err == nil {
 		t.Fatal("foreign physical allocation discovered save")
 	}
-	keyID := uuid.NewV7()
-	key := bytes.Repeat([]byte{21}, 32)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'test',decode('01','hex'))`, keyID, f.Environment, f.Computer)
-	if _, err := agent.BindComputerLeaseDisk(t.Context(), f.Pool, host, f.Environment, f.Computer, 1, keyID); err != nil {
-		t.Fatal(err)
-	}
+	keyID, key := bindFixtureLeaseDisk(t, f.Pool, host, f.Environment, f.Computer, 1)
 	// The file is a deterministic quiescent capture fixture; this test verifies
 	// real encrypted bytes, HTTP authentication and PostgreSQL publication.
 	file, err := os.CreateTemp(t.TempDir(), "disk")

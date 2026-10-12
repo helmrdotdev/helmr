@@ -12,7 +12,7 @@ import (
 func runtimeReadCaller(t *testing.T, f fixture) Caller {
 	t.Helper()
 	a := f.enqueue(t, "caller")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	return Caller{Kind: "session", ID: f.session, TurnID: a.TurnID, Execution: f.execution(), Host: f.host()}
@@ -118,7 +118,7 @@ func TestRuntimeTurnObservationRechecksCaller(t *testing.T) {
 			case "hold":
 				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','test')`, f.env, uuid.NewV7(), f.session)
 			case "processing":
-				if err := CloseProcessing(t.Context(), f.pool, f.execution(), caller.TurnID); err != nil {
+				if err := closeProcessingForTest(t.Context(), f.pool, f.execution(), caller.TurnID); err != nil {
 					t.Fatal(err)
 				}
 			case "deadline":

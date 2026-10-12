@@ -372,7 +372,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 			}
 		}
 		e := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
-		if _, err := agent.Dispatch(t.Context(), f.Pool, e); err != nil {
+		if _, err := dispatchRuntimeTurn(t, f.Pool, e); err != nil {
 			t.Fatal(err)
 		}
 		var receipt api.TurnInterruptReceipt

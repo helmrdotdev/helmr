@@ -100,7 +100,7 @@ func TestWorkerAgentInvalidArgumentsSettleWithoutPoisoningAttachment(t *testing.
 	}
 	_ = computerhost.ServeAgentSession(ctx, connection, f.Environment.String(), client, func(context.Context, *agentv1.GuestSessionMessage) error {
 		return errors.New("unexpected observer event")
-	})
+	}, nil)
 	<-finished
 	var count int
 	if err = f.Pool.QueryRow(t.Context(), "SELECT count(*) FROM turns").Scan(&count); err != nil || count != 2 {
@@ -160,7 +160,7 @@ func TestWorkerAgentServiceRenewsCurrentGenerationWithoutSetup(t *testing.T) {
 	}
 	_ = computerhost.ServeAgentSession(ctx, connection, f.Environment.String(), client, func(context.Context, *agentv1.GuestSessionMessage) error {
 		return errors.New("unexpected observer event")
-	})
+	}, nil)
 	select {
 	case next := <-observed:
 		if next.GetAuthorityGeneration() != 2 || next.GetComputerLeaseEpoch() != 1 || next.GetChannelCredential() != grant.ChannelCredential || next.GetIdentity().GetProcessEpoch() != 1 || next.GetExpiresAtUnixNano() <= time.Now().UnixNano() {
@@ -269,7 +269,7 @@ func TestWorkerAgentHotCredentialRefreshPreservesAttachment(t *testing.T) {
 	}
 	_ = computerhost.ServeAgentSession(ctx, connection, f.Environment.String(), client, func(context.Context, *agentv1.GuestSessionMessage) error {
 		return errors.New("unexpected non-operation event")
-	})
+	}, nil)
 	if err := <-finished; err != nil {
 		t.Fatal(err)
 	}

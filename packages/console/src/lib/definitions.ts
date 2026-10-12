@@ -1,6 +1,6 @@
 import { request } from "./api";
 
-export type AgentListItem = { agent: string; template: string };
+type AgentListItem = { agent: string; template: string };
 export type TemplateListItem = { template: string; resources: { milliCpu: number; memoryMiB: number; diskMiB?: number } };
 export type DefinitionListItem = AgentListItem | TemplateListItem;
 export function definitionName(item: DefinitionListItem): string { return "agent" in item ? item.agent : item.template; }

@@ -28,7 +28,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -68,7 +67,6 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		BundleAdmission:                bundle.Admission{Runtime: smokeRuntimeDescriptor()},
 		PlatformStore:                  unusedUploadStore{},
 		SecretDelivery:                 controlplanetestSecretDeliveryOpener{},
-		ComputerFencingKey:             controlplanetestComputerFencingKey(),
 		AuthKey:                        make([]byte, auth.RootKeySize),
 		WorkerHostCredentialSigningKey: make([]byte, workergroup.HostCredentialSigningKeySize),
 		PublicURL:                      publicURL,
@@ -254,14 +252,6 @@ func (controlplanetestSecretDeliveryOpener) OpenDeliveries(
 	[]secret.DeliveryEnvelope,
 ) ([]secret.DeliveryMaterial, error) {
 	return nil, nil
-}
-
-func controlplanetestComputerFencingKey() disk.FencingKey {
-	key, err := disk.NewFencingKey(make([]byte, disk.FencingKeySize))
-	if err != nil {
-		panic(err)
-	}
-	return key
 }
 
 func TestRunServesReadyzAndDeviceStart(t *testing.T) {

@@ -13,7 +13,7 @@ func TestRuntimeFinalizationReconcilesOriginalSaveAfterGrantChange(t *testing.T)
 	f := newFixture(t)
 	s := newSaveStorageFixture(t, f)
 	a := f.enqueue(t, "finalize")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	if err := RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
@@ -74,7 +74,7 @@ func TestRuntimeFinalizationReconcilesOriginalSaveAfterGrantChange(t *testing.T)
 func TestRuntimeFinalizationDoesNotPromoteStaleGrantForNewResult(t *testing.T) {
 	f := newFixture(t)
 	a := f.enqueue(t, "stale")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	if err := RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
@@ -148,10 +148,10 @@ func TestResultAdmissionRechecksDeadlineAfterOwnerLock(t *testing.T) {
 		t.Run(fmt.Sprintf("runtime=%v", runtime), func(t *testing.T) {
 			f := newFixture(t)
 			a := f.enqueue(t, "late-result")
-			if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+			if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 				t.Fatal(err)
 			}
-			if err := CloseProcessing(t.Context(), f.pool, f.execution(), a.TurnID); err != nil {
+			if err := closeProcessingForTest(t.Context(), f.pool, f.execution(), a.TurnID); err != nil {
 				t.Fatal(err)
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turns SET deadline_at=clock_timestamp()+interval '1 hour' WHERE id=$1`, a.TurnID)
@@ -172,7 +172,7 @@ func TestResultAdmissionRechecksDeadlineAfterOwnerLock(t *testing.T) {
 					}
 					done <- err
 				} else {
-					_, err := RecordResult(t.Context(), f.pool, f.execution(), a.TurnID, json.RawMessage(`1`), "joined")
+					_, err := recordResultForTest(t.Context(), f.pool, f.execution(), a.TurnID, json.RawMessage(`1`), "joined")
 					if errors.Is(err, ErrNotReady) {
 						done <- nil
 					} else {

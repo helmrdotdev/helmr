@@ -11,7 +11,7 @@ import (
 func TestTurnDispatchRetainsAdmissionTimeAndExactOrigin(t *testing.T) {
 	f := newFixture(t)
 	origin := f.enqueue(t, "origin")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	peer := f.peer(t)
@@ -20,11 +20,11 @@ func TestTurnDispatchRetainsAdmissionTimeAndExactOrigin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := Dispatch(t.Context(), f.pool, peer.execution())
+	first, err := dispatchTurnForTest(t.Context(), f.pool, peer.execution())
 	if err != nil {
 		t.Fatal(err)
 	}
-	replay, err := Dispatch(t.Context(), f.pool, peer.execution())
+	replay, err := dispatchTurnForTest(t.Context(), f.pool, peer.execution())
 	if err != nil || !reflect.DeepEqual(first, replay) {
 		t.Fatalf("dispatch changed on replay: %+v %+v %v", first, replay, err)
 	}

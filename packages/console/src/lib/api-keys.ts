@@ -1,6 +1,6 @@
 import { ApiError, del, postJson, request } from "./api";
 
-export type ApiKeyStatus = "active" | "expired" | "revoked";
+type ApiKeyStatus = "active" | "expired" | "revoked";
 
 export type ApiKeyScope =
   | "asks:respond"

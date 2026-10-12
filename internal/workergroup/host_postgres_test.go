@@ -252,26 +252,6 @@ func TestHostCredentialsGoStaleWithGroupTransitions(t *testing.T) {
 	}
 }
 
-func TestCheckLockedClaimsReportsStaleClaims(t *testing.T) {
-	f := newSupplyFixture(t)
-	cfg := testHostAuthConfig(t)
-	host := f.start(t, cfg, "default", "i-claims", validHostTemplate(t))
-	locked := func() (db.WorkerHost, db.WorkerGroup) {
-		t.Helper()
-		_, claim := f.hostState(t, host.enrolled.HostID)
-		return db.WorkerHost{ClaimVersion: claim}, f.currentGroup(t)
-	}
-	if err := host.principal.checkLockedClaims(locked()); err != nil {
-		t.Fatalf("current claims: %v", err)
-	}
-	if _, err := PauseGroup(t.Context(), f.pool, f.groupID(), f.currentGroup(t).ClaimVersion); err != nil {
-		t.Fatal(err)
-	}
-	if err := host.principal.checkLockedClaims(locked()); !errors.Is(err, ErrStaleClaims) {
-		t.Fatalf("group transition error = %v, want ErrStaleClaims", err)
-	}
-}
-
 func TestActivateHostRejectsTemplateMismatchWithSealedPool(t *testing.T) {
 	f := newSupplyFixture(t)
 	cfg := testHostAuthConfig(t)
@@ -338,32 +318,6 @@ func TestHostOperationsRejectAnotherEpoch(t *testing.T) {
 	other.GroupID = uuid.NewV7()
 	if _, err := ReadHost(t.Context(), f.q, other); !errors.Is(err, ErrHostNotFound) {
 		t.Fatalf("read error = %v, want ErrHostNotFound", err)
-	}
-}
-
-func TestDrainInvalidEpochDrainsAnActiveHostOnce(t *testing.T) {
-	f := newSupplyFixture(t)
-	cfg := testHostAuthConfig(t)
-	host := f.start(t, cfg, "default", "i-invalid", validHostTemplate(t))
-	status := func() (db.WorkerHostStatus, int64) {
-		t.Helper()
-		return f.hostState(t, host.enrolled.HostID)
-	}
-	if err := DrainInvalidEpoch(t.Context(), f.pool, f.groupID(), host.enrolled.HostID, host.principal.Epoch); err != nil {
-		t.Fatal(err)
-	}
-	drained, claim := status()
-	if drained != db.WorkerHostStatusDraining {
-		t.Fatalf("status = %s, want draining", drained)
-	}
-	if err := DrainInvalidEpoch(t.Context(), f.pool, f.groupID(), host.enrolled.HostID, host.principal.Epoch); err != nil {
-		t.Fatal(err)
-	}
-	if again, againClaim := status(); again != db.WorkerHostStatusDraining || againClaim != claim {
-		t.Fatalf("second drain changed the host: %s claim %d, want claim %d", again, againClaim, claim)
-	}
-	if err := DrainInvalidEpoch(t.Context(), f.pool, f.groupID(), host.enrolled.HostID, host.principal.Epoch+1); err == nil {
-		t.Fatal("another epoch was drained")
 	}
 }
 

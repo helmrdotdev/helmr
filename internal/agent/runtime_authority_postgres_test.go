@@ -8,6 +8,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
@@ -34,7 +36,7 @@ func TestRuntimeAttachmentsAreMonotonicAcrossConcurrentRequests(t *testing.T) {
 			t.Fatal(result.err)
 		}
 		attachment := result.attachment
-		if attachment.Sequence < 1 || attachment.Sequence > count || seen[attachment.Sequence] || attachment.Authority.Generation != 1 || !attachment.Authority.ExpiresAt.After(time.Now()) {
+		if attachment.Sequence <= agenttest.SeededAttachment || attachment.Sequence > agenttest.SeededAttachment+count || seen[attachment.Sequence] || attachment.Authority.Generation != 1 || !attachment.Authority.ExpiresAt.After(time.Now()) {
 			t.Fatalf("invalid or reused attachment: %+v", attachment)
 		}
 		seen[attachment.Sequence] = true
@@ -45,7 +47,7 @@ func TestRuntimeAttachmentsAreMonotonicAcrossConcurrentRequests(t *testing.T) {
 	// Even if a prior acquisition's response was lost, the next connection
 	// advances. Ordinary renewal does not consume a new attachment sequence.
 	next, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
-	if err != nil || next.Sequence != count+1 {
+	if err != nil || next.Sequence != agenttest.SeededAttachment+count+1 {
 		t.Fatalf("next attachment: %+v %v", next, err)
 	}
 }
@@ -55,7 +57,7 @@ func TestRuntimeAttachmentPreservesHeldClosingSession(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, "UPDATE sessions SET status='closing',authority_generation=2")
 	dbtest.MustExec(t, t.Context(), f.pool, "INSERT INTO session_holds(environment_id,id,session_id,scope,reason) SELECT environment_id,gen_random_uuid(),id,'local','test' FROM sessions")
 	attachment, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
-	if err != nil || attachment.Sequence != 1 || attachment.Authority.Generation != 2 {
+	if err != nil || attachment.Sequence != agenttest.SeededAttachment+1 || attachment.Authority.Generation != 2 {
 		t.Fatalf("control attachment: %+v %v", attachment, err)
 	}
 	var unchanged bool
@@ -71,7 +73,7 @@ func TestRuntimeAttachmentRejectsUnavailableExecution(t *testing.T) {
 		t.Run(failure, func(t *testing.T) {
 			f := newFixture(t)
 			execution := f.execution()
-			var expectedSequence int64
+			expectedSequence := agenttest.SeededAttachment
 			switch failure {
 			case "process":
 				execution.ProcessEpoch++
@@ -155,7 +157,7 @@ func TestRuntimeAttachmentRechecksLeaseAfterProcessLock(t *testing.T) {
 		t.Fatalf("expired lease accepted: %v", err)
 	}
 	var sequence int64
-	if err = f.pool.QueryRow(t.Context(), "SELECT attachment_sequence FROM session_processes").Scan(&sequence); err != nil || sequence != 0 {
+	if err = f.pool.QueryRow(t.Context(), "SELECT attachment_sequence FROM session_processes").Scan(&sequence); err != nil || sequence != agenttest.SeededAttachment {
 		t.Fatalf("rejected attachment advanced sequence: %d %v", sequence, err)
 	}
 }
@@ -184,12 +186,12 @@ func TestRuntimeAttachmentRejectsOtherAndSupersededOwners(t *testing.T) {
 		t.Fatalf("superseded owner acquired: %+v %v", attachment, err)
 	}
 	var sequence int64
-	if err = f.pool.QueryRow(t.Context(), "SELECT attachment_sequence FROM session_processes").Scan(&sequence); err != nil || sequence != 0 {
+	if err = f.pool.QueryRow(t.Context(), "SELECT attachment_sequence FROM session_processes").Scan(&sequence); err != nil || sequence != agenttest.SeededAttachment {
 		t.Fatalf("denied owner advanced sequence: %d %v", sequence, err)
 	}
 	otherExecution.LeaseEpoch = 2
 	attachment, err = AcquireRuntimeAttachment(t.Context(), f.pool, otherHost, otherExecution)
-	if err != nil || attachment.Sequence != 1 {
+	if err != nil || attachment.Sequence != agenttest.SeededAttachment+1 {
 		t.Fatalf("current owner rejected: %+v %v", attachment, err)
 	}
 }

@@ -140,7 +140,7 @@ func TestRuntimeSessionDiscoveryRetainsRelationsAndReceipts(t *testing.T) {
 			t.Fatalf("invalid query %+v: %v", req, err)
 		}
 	}
-	if err := CloseProcessing(t.Context(), f.pool, f.execution(), caller.TurnID); err != nil {
+	if err := closeProcessingForTest(t.Context(), f.pool, f.execution(), caller.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := RuntimeGetSession(t.Context(), f.pool, caller, owned.session); !errors.Is(err, ErrDenied) {

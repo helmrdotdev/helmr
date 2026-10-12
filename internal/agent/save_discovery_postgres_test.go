@@ -3,10 +3,11 @@ package agent
 import (
 	"encoding/json"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"sync"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
 func saveIdentity(f fixture) ComputerLeaseIdentity {
@@ -71,7 +72,7 @@ func TestBackgroundSavePublicationDoesNotCompleteRunningTurn(t *testing.T) {
 	f := newFixture(t)
 	storage := newSaveStorageFixture(t, f)
 	admitted := f.enqueue(t, "running")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	save, err := NextComputerSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true)
@@ -92,10 +93,10 @@ func TestBackgroundSavePublicationDoesNotCompleteRunningTurn(t *testing.T) {
 	if err := Complete(t.Context(), f.pool, f.env, f.session, admitted.TurnID); err == nil {
 		t.Fatalf("background completed Turn: %v", err)
 	}
-	if err := CloseProcessing(t.Context(), f.pool, f.execution(), admitted.TurnID); err != nil {
+	if err := closeProcessingForTest(t.Context(), f.pool, f.execution(), admitted.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	required, err := RecordResult(t.Context(), f.pool, f.execution(), admitted.TurnID, json.RawMessage(`{"ok":true}`), "work drained")
+	required, err := recordResultForTest(t.Context(), f.pool, f.execution(), admitted.TurnID, json.RawMessage(`{"ok":true}`), "work drained")
 	if err != nil || required.ID == save.ID || required.Sequence != save.Sequence+1 {
 		t.Fatalf("required own save: %+v %v", required, err)
 	}
@@ -252,7 +253,7 @@ func TestBackgroundSaveDiscoveryDoesNotLockComputerUntilDue(t *testing.T) {
 func TestBackgroundSaveLossInterruptsWorkWithoutCompletingIt(t *testing.T) {
 	f := newFixture(t)
 	turn := f.enqueue(t, "running")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	save, err := NextComputerSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true)

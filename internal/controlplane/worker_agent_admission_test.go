@@ -30,7 +30,7 @@ func runtimeAdmissionOrigin(t *testing.T) (agenttest.Fixture, agent.Admission, a
 		t.Fatal(err)
 	}
 	execution := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
-	if _, err = agent.Dispatch(t.Context(), f.Pool, execution); err != nil {
+	if _, err = dispatchRuntimeTurn(t, f.Pool, execution); err != nil {
 		t.Fatal(err)
 	}
 	return f, origin, execution
@@ -105,7 +105,7 @@ func TestWorkerAgentStartSpawnReconcileLostResponse(t *testing.T) {
 				if err != nil || !valid {
 					t.Fatalf("admission ownership/placement/count: %v %v", valid, err)
 				}
-				if err = agent.CloseProcessing(t.Context(), f.Pool, execution, origin.TurnID); err != nil {
+				if err = closeRuntimeProcessing(t, f.Pool, execution, origin.TurnID); err != nil {
 					t.Fatal(err)
 				}
 				replay, err := client.AgentOperation(t.Context(), request)
@@ -187,7 +187,7 @@ func TestWorkerAgentMCPCreationUsesSessionAuthorityAndStableKey(t *testing.T) {
                 FROM sessions s JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id) WHERE s.environment_id=$1 AND s.id=$2`, f.Environment, receipt.SessionID, f.Session, tool).Scan(&valid); err != nil || !valid {
 				t.Fatalf("origin %v %v", valid, err)
 			}
-			if err := agent.CloseProcessing(t.Context(), f.Pool, execution, origin.TurnID); err != nil {
+			if err := closeRuntimeProcessing(t, f.Pool, execution, origin.TurnID); err != nil {
 				t.Fatal(err)
 			}
 			request.RequestID = "reconnect-rpc"

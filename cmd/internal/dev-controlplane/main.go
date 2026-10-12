@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/command"
 	"log/slog"
 	"net"
 	"net/http"
@@ -22,6 +21,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/command"
+
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -36,7 +37,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
-	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/eventstream"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/org"
@@ -180,10 +180,6 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)
 	}
-	computerFencingKey, err := disk.NewFencingKey(cfg.computerFencingKey)
-	if err != nil {
-		return fmt.Errorf("configure Computer fencing key: %w", err)
-	}
 	publicURL, err := url.Parse(cfg.publicURL)
 	if err != nil {
 		return fmt.Errorf("parse public URL: %w", err)
@@ -216,7 +212,6 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		Secrets:                        secretStore,
 		SecretDelivery:                 secretStore,
 		SecretProxy:                    secretStore,
-		ComputerFencingKey:             computerFencingKey,
 		WorkerHostCredentialSigningKey: cfg.workerHostCredentialKey,
 		SetupToken:                     cfg.setupToken,
 		AuthKey:                        cfg.authKey,

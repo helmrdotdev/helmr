@@ -1,9 +1,10 @@
 package agent
 
 import (
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
 func TestRuntimeHoldDuringSetupIsLocalAndIdempotent(t *testing.T) {
@@ -32,7 +33,7 @@ func TestRuntimeHoldDuringSetupIsLocalAndIdempotent(t *testing.T) {
 		t.Fatalf("process %s: %v", status, err)
 	}
 	next := peer.enqueue(t, "peer")
-	if dispatch, err := Dispatch(t.Context(), peer.pool, peer.execution()); err != nil || dispatch.TurnID != next.TurnID {
+	if dispatch, err := dispatchTurnForTest(t.Context(), peer.pool, peer.execution()); err != nil || dispatch.TurnID != next.TurnID {
 		t.Fatalf("peer stopped: %+v %v", dispatch, err)
 	}
 	req := controlRequest(f, "resume", "release-setup")

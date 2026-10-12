@@ -4,7 +4,7 @@ import type { JsonValue } from "../../../../sdk/typescript/src/contract";
 import { postJson, request } from "./api";
 
 export type SessionStatus = "open" | "closing" | "closed" | "cancelled";
-export type ProcessStop = { process_epoch: number; turn_id: string | null; state: "requested" | "stopping" | "stopped"; deadline: string };
+type ProcessStop = { process_epoch: number; turn_id: string | null; state: "requested" | "stopping" | "stopped"; deadline: string };
 export type Session = {
   agent: string;
   template: string;
@@ -30,7 +30,7 @@ export type Session = {
     created_at: string;
   }[];
 };
-export type SessionTurn = {
+type SessionTurn = {
   stop?: ProcessStop;
   id: string;
   session_id: string;
@@ -192,7 +192,6 @@ export function questionCLICommands(address: AskAddress, origin: string) {
   };
 }
 
-export type { AskState, AskPage } from "../../../../sdk/typescript/src/contract";
 export function askConsolePath(address: AskAddress): string {
   const query = new URLSearchParams({ project: address.projectID, environment: address.environmentID });
   return `/sessions/${encodeURIComponent(address.sessionID)}/turns/${encodeURIComponent(address.turnID)}/asks/${encodeURIComponent(address.askID)}?${query}`;

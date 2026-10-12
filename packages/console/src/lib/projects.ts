@@ -27,7 +27,7 @@ type ListProjectsResponse = {
   next_cursor?: string;
 };
 
-export type Region = {
+type Region = {
   id: string;
   display_name: string;
   location?: string;

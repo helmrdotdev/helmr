@@ -66,18 +66,10 @@ func (connection *AgentSessionConnection) forwardOperation(ctx context.Context, 
 	return connection.Acknowledge(ctx, event.GetEventSequence())
 }
 
-// ServeAgentSession runs one replaceable attachment. Upstream uncertainty closes
-// only this transport; the caller reacquires a CP attachment sequence and attaches
-// to the same process. A replay keeps original payload, generation and retry key.
-// observe must durably handle non-operation events before returning successfully.
-// It may run concurrently for each diagnostic stream and lifecycle events. A log
-// temporary error retries without blocking control. Expiry releases the exact
-// retained head; a definite rejection stops that stream without claiming EOF.
-func ServeAgentSession(ctx context.Context, connection *AgentSessionConnection, environmentID string, client AgentRuntimeClient, observe func(context.Context, *agentv1.GuestSessionMessage) error) error {
-	return serveAgentSession(ctx, connection, environmentID, client, observe, nil)
-}
-
-func serveAgentSession(ctx context.Context, connection *AgentSessionConnection, environmentID string, client AgentRuntimeClient, observe func(context.Context, *agentv1.GuestSessionMessage) error, activated <-chan struct{}) error {
+// ServeAgentSession serves one attached Session over its guest connection until
+// the connection or context ends. A nil activated channel serves without waiting
+// for activation.
+func ServeAgentSession(ctx context.Context, connection *AgentSessionConnection, environmentID string, client AgentRuntimeClient, observe func(context.Context, *agentv1.GuestSessionMessage) error, activated <-chan struct{}) error {
 	if connection == nil || environmentID == "" || client == nil || observe == nil {
 		return errors.New("session service requires its owner, Control Plane and event observer")
 	}

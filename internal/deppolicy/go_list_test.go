@@ -11,7 +11,7 @@ func goList(t *testing.T, root, goos string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("go", append([]string{"list", "-buildvcs=false"}, args...)...)
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64", "CGO_ENABLED=0")
+	cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64", "CGO_ENABLED=0", "GOFLAGS=")
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	output, err := cmd.Output()

@@ -6,7 +6,6 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/subtle"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -71,17 +70,6 @@ func New(database db.Querier, transactions db.TxBeginner, encryptionKey []byte) 
 		encryption: encryption,
 		rand:       rand.Reader,
 	}, nil
-}
-
-func KeyFromBase64(raw string) ([]byte, error) {
-	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(raw))
-	if err != nil {
-		return nil, fmt.Errorf("decode secret encryption key: %w", err)
-	}
-	if len(decoded) != 32 {
-		return nil, fmt.Errorf("secret encryption key must decode to 32 bytes, got %d", len(decoded))
-	}
-	return decoded, nil
 }
 
 func (s *Store) create(ctx context.Context, environmentID uuid.UUID, name string, value []byte) (db.Secret, error) {

@@ -52,4 +52,3 @@ func Resolve(override Policy, duration *int64, never bool) *int64 {
 	value := DefaultMilliseconds
 	return &value
 }
-func Same(a, b *int64) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }

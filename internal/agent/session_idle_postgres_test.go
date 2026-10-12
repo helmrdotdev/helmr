@@ -67,7 +67,7 @@ func TestStartSnapshotsIdlePolicyAndRejectsKeyedMismatch(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_definitions SET close_after_idle_never=true WHERE environment_id=$1`, f.env)
 	req.RetryKey = "first"
 	b, err := Start(t.Context(), f.pool, nil, f.caller(), req)
-	if err != nil || b.SessionID != a.SessionID || !lifetime.Same(a.CloseAfterIdleMs, b.CloseAfterIdleMs) {
+	if err != nil || b.SessionID != a.SessionID || !sameLifetime(a.CloseAfterIdleMs, b.CloseAfterIdleMs) {
 		t.Fatalf("redeployment changed policy: %+v %v", b, err)
 	}
 	req.RetryKey = "mismatch"

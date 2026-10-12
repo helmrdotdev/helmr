@@ -13,7 +13,6 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -59,7 +58,7 @@ func TestWorkerAgentSessionDiscovery(t *testing.T) {
 		}
 	}
 	// Session MCP stays available after an exact Turn closes.
-	if err := agent.CloseProcessing(t.Context(), f.Pool, execution, origin.TurnID); err != nil {
+	if err := closeRuntimeProcessing(t, f.Pool, execution, origin.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	handler := runtimemcp.NewHandler(func(_ context.Context, tool string, arguments json.RawMessage) (json.RawMessage, error) {

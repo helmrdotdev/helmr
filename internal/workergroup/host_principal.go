@@ -39,15 +39,6 @@ type HostPrincipal struct {
 	EpochStartedAt    time.Time
 }
 
-// checkLockedClaims compares the authenticated claim versions with the worker
-// host and group rows the caller has locked.
-func (p HostPrincipal) checkLockedClaims(host db.WorkerHost, group db.WorkerGroup) error {
-	if host.ClaimVersion != p.HostClaimVersion || group.ClaimVersion != p.GroupClaimVersion {
-		return ErrStaleClaims
-	}
-	return nil
-}
-
 // LockRuntimeHost locks the group then host for read-only runtime admission.
 // The caller must retain these shared locks through its operation. A false
 // result rejects lifecycle or epoch changes; stale credentials and missing rows
