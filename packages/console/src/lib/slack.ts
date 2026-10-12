@@ -1,27 +1,27 @@
 import { postJson, request } from "./api";
 
 export type AgentSlackAddress = { projectID: string; environmentID: string; agentName: string };
-export type AgentSlackPublication = {
+export type AgentSlackConnection = {
   id: string; registration_id: string; installation_id: string | null;
   status: "setup_incomplete" | "connected" | "reauthorization_required" | "disconnected";
   credentials_configured: boolean; client_id: string | null; app_id: string | null;
   team_id: string | null; workspace_name: string | null; app_name: string | null; app_icon_url: string | null;
 };
-type AgentSlackConnection = { publication: AgentSlackPublication | null; manifest?: unknown; create_app_url?: string };
+type AgentSlackConnectionState = { connection: AgentSlackConnection | null; manifest?: unknown; create_app_url?: string };
 type SlackAppCredentials = { client_id: string; client_secret: string; signing_secret: string };
-function publicationPath(address: AgentSlackAddress): string {
+function connectionPath(address: AgentSlackAddress): string {
   return `/api/projects/${encodeURIComponent(address.projectID)}/environments/${encodeURIComponent(address.environmentID)}/agents/${encodeURIComponent(address.agentName)}/slack`;
 }
-export function getAgentSlackConnection(address: AgentSlackAddress): Promise<AgentSlackConnection> { return request(publicationPath(address)); }
-export function beginAgentSlackConnection(address: AgentSlackAddress): Promise<AgentSlackConnection> { return postJson(publicationPath(address), {}); }
+export function getAgentSlackConnection(address: AgentSlackAddress): Promise<AgentSlackConnectionState> { return request(connectionPath(address)); }
+export function beginAgentSlackConnection(address: AgentSlackAddress): Promise<AgentSlackConnectionState> { return postJson(connectionPath(address), {}); }
 export function saveSlackAppCredentials(address: AgentSlackAddress, id: string, credentials: SlackAppCredentials): Promise<void> {
-  return request(`${publicationPath(address)}/${encodeURIComponent(id)}/credentials`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(credentials) });
+  return request(`${connectionPath(address)}/${encodeURIComponent(id)}/credentials`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(credentials) });
 }
 export function authorizeAgentSlackConnection(address: AgentSlackAddress, id: string, returnTo: string): Promise<{ redirect_url: string }> {
-  return postJson(`${publicationPath(address)}/${encodeURIComponent(id)}/authorize`, { return_to: returnTo });
+  return postJson(`${connectionPath(address)}/${encodeURIComponent(id)}/authorize`, { return_to: returnTo });
 }
 export function disconnectAgentSlackConnection(address: AgentSlackAddress, id: string): Promise<void> {
-  return request(`${publicationPath(address)}/${encodeURIComponent(id)}`, { method: "DELETE" });
+  return request(`${connectionPath(address)}/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 export function finishSlackAuthorization(input: { state: string; code: string; error?: string }): Promise<{ installation_id: string; return_url: string }> {
   return postJson("/api/slack/installations/finish", input, { redirectOnUnauthorized: false });

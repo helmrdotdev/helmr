@@ -12,7 +12,7 @@ import (
 	"unicode/utf8"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -52,7 +52,7 @@ func scanAsk(row pgx.Row) (AskView, error) {
 // RuntimeAsk admits one frozen question and its event together. Creation identity
 // is the ask identity; retries retain that identity after cancellation or expiry.
 func RuntimeAsk(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, turn, id uuid.UUID, raw json.RawMessage) error {
-	question, err := conversation.Question(raw)
+	question, err := content.Question(raw)
 	if err != nil {
 		return err
 	}
@@ -96,7 +96,7 @@ func RuntimeAsk(ctx context.Context, pool db.TxBeginner, host workergroup.HostPr
 			return err
 		}
 		if tag.RowsAffected() != 1 {
-			return fmt.Errorf("%w: Turn progress and questions exceed 8 MiB", conversation.ErrLimit)
+			return fmt.Errorf("%w: Turn progress and questions exceed 8 MiB", content.ErrLimit)
 		}
 		var sequence int64
 		data, _ := json.Marshal(map[string]any{"ask_id": id, "question": question})
@@ -214,10 +214,10 @@ func RespondAsk(ctx context.Context, pool db.TxBeginner, caller Caller, req AskA
 	}
 	value, err := jsoncanon.Transform(req.Answer)
 	if err != nil {
-		return view, conversation.ErrAnswerInvalid
+		return view, content.ErrAnswerInvalid
 	}
-	if len(value) > conversation.AnswerBytes {
-		return view, fmt.Errorf("%w: Answer exceeds 64 KiB", conversation.ErrLimit)
+	if len(value) > content.AnswerBytes {
+		return view, fmt.Errorf("%w: Answer exceeds 64 KiB", content.ErrLimit)
 	}
 	digest := sha256.Sum256(value)
 	err = db.RunTx(ctx, pool, func(tx pgx.Tx) error {
@@ -260,7 +260,7 @@ func RespondAsk(ctx context.Context, pool db.TxBeginner, caller Caller, req AskA
 		if !running {
 			return ErrNotReady
 		}
-		if _, err := conversation.Answer(view.Question, value); err != nil {
+		if _, err := content.Answer(view.Question, value); err != nil {
 			return err
 		}
 		var user, key *uuid.UUID

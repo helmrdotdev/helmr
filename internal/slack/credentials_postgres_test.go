@@ -50,7 +50,7 @@ func refreshResult() oauthResult {
 	return oauthResult{grant: oauthGrant{bundle: credentialBundle{AccessToken: "new-access", RefreshToken: "new-refresh", ExpiresAt: &expires}, app: "app", team: "team", bot: "bot", scopes: agent.RequiredSlackScopes()}}
 }
 
-func TestCredentialRefreshSerializesAndPreservesPublicationAuthority(t *testing.T) {
+func TestCredentialRefreshSerializesAndPreservesConnectionAuthority(t *testing.T) {
 	f, store, _ := credentialFixture(t)
 	post := f.post(t, 1, "content", "lifecycle", nil)
 	postClaim := f.postClaim(t, post)
@@ -137,11 +137,11 @@ func TestCredentialRefreshLossSuppressesOnlyUnsentAndRejectsLateReplacement(t *t
 
 func (f statusFixture) reauthorize(t *testing.T, store *CredentialStore, org uuid.UUID, grant oauthGrant) (uuid.UUID, error) {
 	t.Helper()
-	observed, err := store.publicationAuthorization(t.Context(), org, f.User, f.publication)
+	observed, err := store.connectionAuthorization(t.Context(), org, f.User, f.publication)
 	if err != nil {
 		return uuid.Nil(), err
 	}
-	return store.attachPublicationGrant(t.Context(), org, f.User, f.publication, observed, grant)
+	return store.attachConnectionGrant(t.Context(), org, f.User, f.publication, observed, grant)
 }
 
 func TestCredentialReauthorizationFencesRefreshAndDisconnectRetiresGeneration(t *testing.T) {
@@ -162,7 +162,7 @@ func TestCredentialReauthorizationFencesRefreshAndDisconnectRetiresGeneration(t 
 	if token, err := store.BotToken(t.Context(), f.installation, 2); err != nil || token != "reauthorized" {
 		t.Fatal("late refresh overwrote reauthorization", err)
 	}
-	if err = store.DisconnectPublication(t.Context(), org, f.User, f.Environment, f.publication); err != nil {
+	if err = store.DisconnectConnection(t.Context(), org, f.User, f.Environment, f.publication); err != nil {
 		t.Fatal(err)
 	}
 	var retained bool
@@ -172,11 +172,11 @@ func TestCredentialReauthorizationFencesRefreshAndDisconnectRetiresGeneration(t 
 	if token, err := store.BotToken(t.Context(), f.installation, 2); err == nil || token != "" {
 		t.Fatal("retired credential usable", err)
 	}
-	if _, err = f.reauthorize(t, store, org, grant); !errors.Is(err, ErrPublicationUnavailable) {
+	if _, err = f.reauthorize(t, store, org, grant); !errors.Is(err, ErrConnectionUnavailable) {
 		t.Fatal("retired generation resurrected", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.Environment, f.Deployment)
-	setup, err := BeginPublication(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent)
+	setup, err := BeginConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestCredentialReauthorizationFencesRefreshAndDisconnectRetiresGeneration(t 
 	if _, err = f.reauthorize(t, store, org, grant); !errors.Is(err, errInstallationAuthority) {
 		t.Fatal("non-manager reauthorized", err)
 	}
-	if err = store.DisconnectPublication(t.Context(), org, f.User, f.Environment, f.publication); !errors.Is(err, errInstallationAuthority) {
+	if err = store.DisconnectConnection(t.Context(), org, f.User, f.Environment, f.publication); !errors.Is(err, errInstallationAuthority) {
 		t.Fatal("non-manager disconnected", err)
 	}
 }

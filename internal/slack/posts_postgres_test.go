@@ -167,7 +167,7 @@ func TestSlackPostUncertainProgressBlocksDependentsButAllowsExactQuestion(t *tes
 	f.postClaim(t, response)
 }
 
-func TestSlackPostRechecksPublicationAndAuthorizationLoss(t *testing.T) {
+func TestSlackPostRechecksConnectionAndAuthorizationLoss(t *testing.T) {
 	for _, kind := range []string{"publication", "authorization"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newStatusFixture(t)

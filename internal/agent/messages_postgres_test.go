@@ -7,7 +7,7 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
@@ -18,7 +18,7 @@ func TestMessagesKeepExactDispositionAndDrain(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "steer", Input: json.RawMessage(`[{"type":"text","text":"{\"text\":\"one\\u0000雪\"}"}]`)}
-	canonicalInput, err := conversation.Input(req.Input)
+	canonicalInput, err := content.Input(req.Input)
 	req.Input = canonicalInput
 	if err != nil {
 		t.Fatal(err)

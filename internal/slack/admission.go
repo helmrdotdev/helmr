@@ -8,7 +8,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
@@ -74,7 +74,7 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 		return reject("thread_generation_unavailable")
 	}
 	var enabled, connected time.Time
-	if err = tx.QueryRow(ctx, `SELECT p.created_at,i.connected_at FROM slack_connections p JOIN slack_installations i ON i.id=p.slack_installation_id WHERE p.id=$1`, p.route.Target.PublicationID).Scan(&enabled, &connected); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT p.created_at,i.connected_at FROM slack_connections p JOIN slack_installations i ON i.id=p.slack_installation_id WHERE p.id=$1`, p.route.Target.ConnectionID).Scan(&enabled, &connected); err != nil {
 		return nil, err
 	}
 	if occurred.Before(enabled) || occurred.Before(connected) || occurred.Before(p.route.Target.AuthorizedAt) {
@@ -90,11 +90,11 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 	}
 	var owner uuid.UUID
 	var deleted bool
-	err = tx.QueryRow(ctx, `SELECT t.id,t.front_session_id,s.id,c.publication_id,t.deleted_at IS NOT NULL
+	err = tx.QueryRow(ctx, `SELECT t.id,t.front_session_id,s.id,c.connection_id,t.deleted_at IS NOT NULL
  FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.channel_id JOIN slack_thread_sources s ON s.thread_id=t.id AND s.session_id=t.front_session_id
  WHERE t.org_id=$1 AND t.team_id=$2 AND t.slack_channel_id=$3 AND t.thread_ts=$4`, p.route.Target.OrganizationID, p.route.Target.TeamID, p.message.Channel, p.root).Scan(&p.thread, &p.session, &p.source, &owner, &deleted)
 	if err == nil {
-		if owner != p.route.Target.PublicationID || deleted {
+		if owner != p.route.Target.ConnectionID || deleted {
 			return reject("thread_generation_unavailable")
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -144,14 +144,14 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust agent.ComputerT
 	if err != nil {
 		return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 			code := "content_invalid"
-			if errors.Is(err, conversation.ErrUnsupported) {
+			if errors.Is(err, content.ErrUnsupported) {
 				code = "content_unsupported"
 			}
 			return rejectMessage(ctx, tx, id, code)
 		})
 	}
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		active, err := agent.LockSlackPublications(ctx, tx, p.route.Target.EnvironmentID, []uuid.UUID{p.route.Target.PublicationID})
+		active, err := agent.LockSlackConnections(ctx, tx, p.route.Target.EnvironmentID, []uuid.UUID{p.route.Target.ConnectionID})
 		if err != nil {
 			return err
 		}
@@ -173,7 +173,7 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust agent.ComputerT
 		if err != nil || current == nil {
 			return err
 		}
-		if current.user != p.user || current.route.Target.PublicationID != p.route.Target.PublicationID || !current.route.Target.AuthorizedAt.Equal(p.route.Target.AuthorizedAt) {
+		if current.user != p.user || current.route.Target.ConnectionID != p.route.Target.ConnectionID || !current.route.Target.AuthorizedAt.Equal(p.route.Target.AuthorizedAt) {
 			return agent.ErrConversationChanged
 		}
 		// A concurrent mention may have created the same front during remote checks.
@@ -215,7 +215,7 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust agent.ComputerT
 				return rejectMessage(ctx, tx, id, "permission_denied")
 			case errors.Is(err, agent.ErrNotReady), errors.Is(err, agent.ErrTerminal):
 				return rejectMessage(ctx, tx, id, "session_unavailable")
-			case errors.Is(err, agent.ErrInvalidInput), errors.Is(err, conversation.ErrUnsupported):
+			case errors.Is(err, agent.ErrInvalidInput), errors.Is(err, content.ErrUnsupported):
 				return rejectMessage(ctx, tx, id, "content_unsupported")
 			default:
 				return err

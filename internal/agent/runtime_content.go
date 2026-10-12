@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -20,7 +20,7 @@ var ErrResponseAlreadyStaged = errors.New("response already staged")
 // Output is durable progress, independent of the result's mandatory own save.
 // The same operation returns its original sequence, including after settlement.
 func RuntimeOutput(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, turn, operation uuid.UUID, raw json.RawMessage) (int64, error) {
-	value, err := conversation.Content(raw, true)
+	value, err := content.Content(raw, true)
 	if err != nil {
 		return 0, err
 	}
@@ -62,7 +62,7 @@ func RuntimeOutput(ctx context.Context, pool db.TxBeginner, host workergroup.Hos
 			return err
 		}
 		if tag.RowsAffected() != 1 {
-			return fmt.Errorf("%w: Turn progress and questions exceed 8 MiB", conversation.ErrLimit)
+			return fmt.Errorf("%w: Turn progress and questions exceed 8 MiB", content.ErrLimit)
 		}
 		err = tx.QueryRow(ctx, `WITH allocated AS (UPDATE sessions SET next_event_seq=next_event_seq+1 WHERE environment_id=$1 AND id=$2 RETURNING next_event_seq-1 AS seq)
  INSERT INTO session_events(environment_id,session_id,seq,turn_id,kind,data,operation_id,operation_digest)
@@ -81,7 +81,7 @@ func RuntimeOutput(ctx context.Context, pool db.TxBeginner, host workergroup.Hos
 // RuntimeRespond stages one optional answer. It is exposed only by a Completed
 // outcome; accepting it does not complete processing or consume progress budget.
 func RuntimeRespond(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, turn, operation uuid.UUID, raw json.RawMessage) error {
-	value, err := conversation.Content(raw, true)
+	value, err := content.Content(raw, true)
 	if err != nil {
 		return err
 	}

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"unicode/utf8"
 
-	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/content"
 )
 
 var errCLIAnswer = errors.New("question requires CLI answer")
@@ -27,7 +27,7 @@ type formQuestion struct {
 
 func parseFormQuestion(raw json.RawMessage) (formQuestion, error) {
 	var q formQuestion
-	canonical, err := conversation.Question(raw)
+	canonical, err := content.Question(raw)
 	if err != nil {
 		return q, err
 	}
@@ -109,11 +109,11 @@ func parseFormAnswer(question json.RawMessage, state formState) (json.RawMessage
 		expected["text"] = true
 	}
 	if len(state) != len(expected) {
-		return nil, conversation.ErrAnswerInvalid
+		return nil, content.ErrAnswerInvalid
 	}
 	for id, entries := range state {
 		if !expected[id] || len(entries) != 1 || entries[id] == nil {
-			return nil, conversation.ErrAnswerInvalid
+			return nil, content.ErrAnswerInvalid
 		}
 	}
 	requiredField := func(block, member string) bool {
@@ -127,7 +127,7 @@ func parseFormAnswer(question json.RawMessage, state formState) (json.RawMessage
 			Value *string `json:"value"`
 		}
 		if !requiredField("text", "value") || json.Unmarshal(state["text"]["text"], &field) != nil || field.Type != "plain_text_input" {
-			return nil, conversation.ErrAnswerInvalid
+			return nil, content.ErrAnswerInvalid
 		}
 		if field.Value != nil {
 			text = *field.Value
@@ -135,7 +135,7 @@ func parseFormAnswer(question json.RawMessage, state formState) (json.RawMessage
 	}
 	if q.Answer.Type == "text" {
 		raw, _ := json.Marshal(text)
-		return conversation.Answer(question, raw)
+		return content.Answer(question, raw)
 	}
 	var field struct {
 		Type     string `json:"type"`
@@ -147,22 +147,22 @@ func parseFormAnswer(question json.RawMessage, state formState) (json.RawMessage
 		} `json:"selected_options"`
 	}
 	if json.Unmarshal(state["choice"]["choice"], &field) != nil {
-		return nil, conversation.ErrAnswerInvalid
+		return nil, content.ErrAnswerInvalid
 	}
 	ids := map[string]bool{}
 	if q.Answer.Multiple {
 		if !requiredField("choice", "selected_options") || field.Type != "multi_static_select" || field.Selected != nil {
-			return nil, conversation.ErrAnswerInvalid
+			return nil, content.ErrAnswerInvalid
 		}
 		for _, item := range field.Selections {
 			if ids[item.Value] {
-				return nil, conversation.ErrAnswerInvalid
+				return nil, content.ErrAnswerInvalid
 			}
 			ids[item.Value] = true
 		}
 	} else {
 		if !requiredField("choice", "selected_option") || field.Type != "static_select" || len(field.Selections) != 0 {
-			return nil, conversation.ErrAnswerInvalid
+			return nil, content.ErrAnswerInvalid
 		}
 		if field.Selected != nil {
 			ids[field.Selected.Value] = true
@@ -176,12 +176,12 @@ func parseFormAnswer(question json.RawMessage, state formState) (json.RawMessage
 		}
 	}
 	if len(ids) != 0 {
-		return nil, conversation.ErrAnswerInvalid
+		return nil, content.ErrAnswerInvalid
 	}
 	answer := map[string]any{"selected": selected}
 	if text != "" {
 		answer["text"] = text
 	}
 	raw, _ := json.Marshal(answer)
-	return conversation.Answer(question, raw)
+	return content.Answer(question, raw)
 }

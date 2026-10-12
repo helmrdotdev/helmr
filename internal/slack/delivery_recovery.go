@@ -156,7 +156,7 @@ func RecoverDelivery(ctx context.Context, pool db.TxBeginner, org, user, environ
 			}
 			var available bool
 			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id OR t.id=p.source_thread_id
- JOIN slack_channel_bindings c ON c.id=t.channel_id JOIN slack_connections pub ON pub.id=c.publication_id
+ JOIN slack_channel_bindings c ON c.id=t.channel_id JOIN slack_connections pub ON pub.id=c.connection_id
  JOIN slack_app_registrations reg ON reg.id=pub.slack_app_registration_id JOIN slack_installations i ON i.id=c.installation_id
  WHERE p.id=$1 AND pub.revoked_at IS NULL AND reg.retired_at IS NULL AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL)`, post).Scan(&available); err != nil {
 				return err

@@ -9,17 +9,17 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-var ErrPublicationUnavailable = errors.New("the Agent's Slack connection is unavailable")
+var ErrConnectionUnavailable = errors.New("the Agent's Slack connection is unavailable")
 
-type PublicationSetup struct {
+type ConnectionSetup struct {
 	ID             uuid.UUID `json:"id"`
 	RegistrationID uuid.UUID `json:"registration_id"`
 }
 
-// BeginPublication reserves the Agent's sole connection slot, including pending
+// BeginConnection reserves the Agent's sole connection slot, including pending
 // setup. A failed setup must be discarded before another can be created.
-func BeginPublication(ctx context.Context, pool db.TxBeginner, org, user, environment, agent uuid.UUID) (PublicationSetup, error) {
-	setup := PublicationSetup{ID: uuid.NewV7(), RegistrationID: uuid.NewV7()}
+func BeginConnection(ctx context.Context, pool db.TxBeginner, org, user, environment, agent uuid.UUID) (ConnectionSetup, error) {
+	setup := ConnectionSetup{ID: uuid.NewV7(), RegistrationID: uuid.NewV7()}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if err := lockInstallationManager(ctx, tx, org, user); err != nil {
 			return err
@@ -27,7 +27,7 @@ func BeginPublication(ctx context.Context, pool db.TxBeginner, org, user, enviro
 		var id uuid.UUID
 		err := tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 AND org_id=$2 FOR NO KEY UPDATE`, environment, org).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrPublicationUnavailable
+			return ErrConnectionUnavailable
 		}
 		if err != nil {
 			return err
@@ -38,7 +38,7 @@ func BeginPublication(ctx context.Context, pool db.TxBeginner, org, user, enviro
 			return err
 		}
 		if !eligible {
-			return ErrPublicationUnavailable
+			return ErrConnectionUnavailable
 		}
 		_, err = tx.Exec(ctx, `INSERT INTO slack_app_registrations(id,org_id,created_by_user_id) VALUES($1,$2,$3)`, setup.RegistrationID, org, user)
 		if err != nil {
@@ -48,12 +48,12 @@ func BeginPublication(ctx context.Context, pool db.TxBeginner, org, user, enviro
 		return err
 	})
 	if err != nil {
-		return PublicationSetup{}, err
+		return ConnectionSetup{}, err
 	}
 	return setup, nil
 }
 
-type PublicationView struct {
+type ConnectionView struct {
 	ID                    uuid.UUID  `json:"id"`
 	RegistrationID        uuid.UUID  `json:"registration_id"`
 	InstallationID        *uuid.UUID `json:"installation_id"`
@@ -67,7 +67,7 @@ type PublicationView struct {
 	AppIconURL            *string    `json:"app_icon_url"`
 }
 
-func PublicationAgent(ctx context.Context, pool db.TxBeginner, org, user, environment uuid.UUID, name string) (uuid.UUID, error) {
+func ConnectionAgent(ctx context.Context, pool db.TxBeginner, org, user, environment uuid.UUID, name string) (uuid.UUID, error) {
 	var agent uuid.UUID
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if err := lockInstallationManager(ctx, tx, org, user); err != nil {
@@ -75,20 +75,20 @@ func PublicationAgent(ctx context.Context, pool db.TxBeginner, org, user, enviro
 		}
 		err := tx.QueryRow(ctx, `SELECT a.id FROM agents a JOIN environments e ON e.id=a.environment_id WHERE a.environment_id=$1 AND a.key=$2 AND e.org_id=$3`, environment, name, org).Scan(&agent)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrPublicationUnavailable
+			return ErrConnectionUnavailable
 		}
 		return err
 	})
 	return agent, err
 }
 
-func GetPublication(ctx context.Context, pool db.TxBeginner, org, user, environment, agent uuid.UUID) (*PublicationView, error) {
-	var view *PublicationView
+func GetConnection(ctx context.Context, pool db.TxBeginner, org, user, environment, agent uuid.UUID) (*ConnectionView, error) {
+	var view *ConnectionView
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if err := lockInstallationManager(ctx, tx, org, user); err != nil {
 			return err
 		}
-		var value PublicationView
+		var value ConnectionView
 		err := tx.QueryRow(ctx, `SELECT p.id,r.id,p.slack_installation_id,
  CASE WHEN i.id IS NULL THEN 'setup_incomplete' WHEN i.disconnected_at IS NOT NULL OR r.retired_at IS NOT NULL THEN 'disconnected' WHEN i.authorization_lost_at IS NOT NULL THEN 'reauthorization_required' ELSE 'connected' END,
  r.client_id,r.credential_revision>0,r.app_id,i.team_id,i.workspace_name,r.app_name,r.app_icon_url
@@ -106,18 +106,18 @@ func GetPublication(ctx context.Context, pool db.TxBeginner, org, user, environm
 	return view, err
 }
 
-// DisconnectPublication fences the exact generation, including pending setup.
+// DisconnectConnection fences the exact generation, including pending setup.
 // Running work remains available through Console/API and is not cancelled.
-func (s *CredentialStore) DisconnectPublication(ctx context.Context, org, user, environment, publication uuid.UUID) error {
+func (s *CredentialStore) DisconnectConnection(ctx context.Context, org, user, environment, connection uuid.UUID) error {
 	return db.RunTx(ctx, s.pool, func(tx pgx.Tx) error {
 		if err := lockInstallationManager(ctx, tx, org, user); err != nil {
 			return err
 		}
 		var registration uuid.UUID
 		var installation *uuid.UUID
-		err := tx.QueryRow(ctx, `SELECT p.slack_app_registration_id,p.slack_installation_id FROM slack_connections p JOIN environments e ON e.id=p.environment_id WHERE p.id=$1 AND p.environment_id=$2 AND e.org_id=$3`, publication, environment, org).Scan(&registration, &installation)
+		err := tx.QueryRow(ctx, `SELECT p.slack_app_registration_id,p.slack_installation_id FROM slack_connections p JOIN environments e ON e.id=p.environment_id WHERE p.id=$1 AND p.environment_id=$2 AND e.org_id=$3`, connection, environment, org).Scan(&registration, &installation)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrPublicationUnavailable
+			return ErrConnectionUnavailable
 		}
 		if err != nil {
 			return err
@@ -132,13 +132,13 @@ func (s *CredentialStore) DisconnectPublication(ctx context.Context, org, user, 
 			}
 		}
 		var current *uuid.UUID
-		if err = tx.QueryRow(ctx, `SELECT slack_installation_id FROM slack_connections WHERE id=$1 FOR NO KEY UPDATE`, publication).Scan(&current); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT slack_installation_id FROM slack_connections WHERE id=$1 FOR NO KEY UPDATE`, connection).Scan(&current); err != nil {
 			return err
 		}
 		// Setup may have completed since optimistic discovery. Retry from the start
-		// to acquire the newly discovered installation before the Publication gate.
+		// to acquire the newly discovered installation before the connection gate.
 		if (installation == nil) != (current == nil) || current != nil && *current != *installation {
-			return ErrPublicationUnavailable
+			return ErrConnectionUnavailable
 		}
 		if err = tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 AND org_id=$2 FOR SHARE`, environment, org).Scan(&id); err != nil {
 			return err
@@ -152,7 +152,7 @@ func (s *CredentialStore) DisconnectPublication(ctx context.Context, org, user, 
 				return err
 			}
 		}
-		if _, err = tx.Exec(ctx, `UPDATE slack_connections SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE id=$1`, publication); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE slack_connections SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE id=$1`, connection); err != nil {
 			return err
 		}
 		_, err = tx.Exec(ctx, `UPDATE slack_app_registrations SET retired_at=COALESCE(retired_at,clock_timestamp()),credential_ciphertext=NULL,credential_nonce=NULL WHERE id=$1`, registration)

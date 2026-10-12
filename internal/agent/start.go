@@ -14,7 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/lifetime"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 
-	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/disk"
@@ -71,7 +71,7 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 	hasInput := req.Input != nil
 	if hasInput || caller.Kind == "session" || method == "spawn" {
 		var err error
-		req.Input, err = conversation.Input(req.Input)
+		req.Input, err = content.Input(req.Input)
 		if err != nil {
 			return Admission{}, err
 		}
@@ -115,11 +115,11 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 		}
 		routeActive := true
 		if prepared != nil {
-			pubs := []uuid.UUID{prepared.Target.PublicationID}
+			pubs := []uuid.UUID{prepared.Target.ConnectionID}
 			if prepared.Source != nil {
-				pubs = append(pubs, prepared.Source.Connection.PublicationID)
+				pubs = append(pubs, prepared.Source.Connection.ConnectionID)
 			}
-			active, err := LockSlackPublications(ctx, tx, req.EnvironmentID, pubs)
+			active, err := LockSlackConnections(ctx, tx, req.EnvironmentID, pubs)
 			if err != nil {
 				return err
 			}

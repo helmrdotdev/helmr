@@ -76,12 +76,12 @@ func (s *Server) finishSlackAuthorization(w http.ResponseWriter, r *http.Request
 		writeError(w, badRequest(errors.New("the Slack authorization was not completed")))
 		return
 	}
-	publication, err := ids.Parse(flow.PublicationID)
-	if err != nil || publication == uuid.Nil() {
+	connection, err := ids.Parse(flow.ConnectionID)
+	if err != nil || connection == uuid.Nil() {
 		writeError(w, badRequest(errors.New("invalid Agent connection")))
 		return
 	}
-	installation, err := s.slackConfig.Credentials.AuthorizePublication(r.Context(), principal.OrgID, principal.UserID, publication, request.Code, s.slackRedirectURL(), s.slackConfig.Transport)
+	installation, err := s.slackConfig.Credentials.AuthorizeConnection(r.Context(), principal.OrgID, principal.UserID, connection, request.Code, s.slackRedirectURL(), s.slackConfig.Transport)
 	if err != nil {
 		s.writeSlackError(w, err)
 		return
@@ -97,7 +97,7 @@ func (s *Server) writeSlackError(w http.ResponseWriter, err error) {
 	switch {
 	case slack.IsInstallationDenied(err):
 		writeError(w, forbidden(errors.New("the Slack connection is unavailable or organization management authority changed")))
-	case errors.Is(err, slack.ErrPublicationUnavailable):
+	case errors.Is(err, slack.ErrConnectionUnavailable):
 		writeError(w, conflict(err))
 	case errors.Is(err, slack.ErrOAuthAuthorization):
 		writeError(w, badRequest(err))

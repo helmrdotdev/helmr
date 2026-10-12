@@ -23,7 +23,7 @@ var dynamicStatementSites = map[string]string{
 	"cmd/control-plane:bootstrapDatabase":           "runs the checked-in migration files",
 	"cmd/internal/dev-controlplane:migrate":         "runs the checked-in migration files",
 	"internal/agent:reclaimComputerGraphRow":        "statement is a constant at each caller, which the preparation test covers",
-	"internal/agent:lockSlackPublications":          "two constant lock statements selected by lock strength",
+	"internal/agent:lockSlackConnections":           "two constant lock statements selected by lock strength",
 	"internal/telemetry:BeginDiagnosticAdmission":   "owner table and prefix composed over a fixed set; covered by telemetry PostgreSQL tests",
 	"internal/telemetry:DiagnosticAdmission.Append": "owner table and prefix composed over a fixed set; covered by telemetry PostgreSQL tests",
 }

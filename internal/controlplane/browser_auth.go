@@ -27,7 +27,7 @@ const (
 )
 
 type browserAuthFlow struct {
-	PublicationID     string          `json:"publication_id,omitempty"`
+	ConnectionID      string          `json:"connection_id,omitempty"`
 	AppRegistrationID string          `json:"app_registration_id,omitempty"`
 	EnvironmentID     string          `json:"environment_id,omitempty"`
 	SlackLinkToken    string          `json:"slack_link_token,omitempty"`

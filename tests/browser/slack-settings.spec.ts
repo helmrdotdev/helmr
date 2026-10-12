@@ -13,24 +13,24 @@ async function openAgent(page: Page) {
   await page.goto("/agents/demo-agent");
   await page.getByRole("button", { name: "Manage Slack connection", exact: true }).click();
 }
-const publication = (status: string, configured = true) => ({
-  id: "publication-A", registration_id: "registration-A", installation_id: status === "setup_incomplete" ? null : "installation-A",
+const connection = (status: string, configured = true) => ({
+  id: "connection-A", registration_id: "registration-A", installation_id: status === "setup_incomplete" ? null : "installation-A",
   status, credentials_configured: configured, client_id: configured ? "client-A" : null,
   app_id: "app-A", team_id: "team-A", workspace_name: "Workspace A", app_name: "Dedicated Agent", app_icon_url: null,
 });
 
 test("Agent connection setup saves credentials and authorizes only its exact generation", async ({ page }, testInfo) => {
-  let current: ReturnType<typeof publication> | null = null;
+  let current: ReturnType<typeof connection> | null = null;
   const writes: { path: string; body: unknown }[] = [];
   await page.route(`**${endpoint}**`, async route => {
     const request = route.request(), path = new URL(request.url()).pathname;
     if (request.method() !== "GET") {
       writes.push({ path, body: request.postDataJSON() });
-      if (path === endpoint) current = publication("setup_incomplete", false);
-      else if (path.endsWith("/credentials")) { current = publication("setup_incomplete"); await route.fulfill({ status: 204 }); return; }
+      if (path === endpoint) current = connection("setup_incomplete", false);
+      else if (path.endsWith("/credentials")) { current = connection("setup_incomplete"); await route.fulfill({ status: 204 }); return; }
       else if (path.endsWith("/authorize")) { await route.fulfill({ json: { redirect_url: "https://slack.com/oauth/v2/authorize?state=fixture" } }); return; }
     }
-    await route.fulfill({ json: { publication: current, manifest: { settings: { event_subscriptions: { request_url: "https://example.test/integrations/slack/apps/registration-A/events" } } }, create_app_url: "https://api.slack.com/apps?new_app=1" } });
+    await route.fulfill({ json: { connection: current, manifest: { settings: { event_subscriptions: { request_url: "https://example.test/integrations/slack/apps/registration-A/events" } } }, create_app_url: "https://api.slack.com/apps?new_app=1" } });
   });
   await page.route("https://slack.com/oauth/v2/authorize?**", route => route.fulfill({ contentType: "text/html", body: "<p>OAuth destination fixture</p>" }));
   await openAgent(page);
@@ -50,8 +50,8 @@ test("Agent connection setup saves credentials and authorizes only its exact gen
   await expect(page).toHaveURL("https://slack.com/oauth/v2/authorize?state=fixture");
   expect(writes).toEqual([
     { path: endpoint, body: {} },
-    { path: `${endpoint}/publication-A/credentials`, body: { client_id: "client-A", client_secret: "synthetic-client-secret", signing_secret: "synthetic-signing-secret" } },
-    { path: `${endpoint}/publication-A/authorize`, body: { return_to: "/agents/demo-agent" } },
+    { path: `${endpoint}/connection-A/credentials`, body: { client_id: "client-A", client_secret: "synthetic-client-secret", signing_secret: "synthetic-signing-secret" } },
+    { path: `${endpoint}/connection-A/authorize`, body: { return_to: "/agents/demo-agent" } },
   ]);
 });
 
@@ -60,7 +60,7 @@ test("Agent disconnect describes the existing-thread boundary and requires confi
   const deletions: string[] = [];
   await page.route(`**${endpoint}**`, async route => {
     if (route.request().method() === "DELETE") { deletions.push(new URL(route.request().url()).pathname); connected = false; await route.fulfill({ status: 204 }); return; }
-    await route.fulfill({ json: { publication: connected ? publication("connected") : null } });
+    await route.fulfill({ json: { connection: connected ? connection("connected") : null } });
   });
   await openAgent(page);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -73,14 +73,14 @@ test("Agent disconnect describes the existing-thread boundary and requires confi
   await page.screenshot({ path: testInfo.outputPath("agent-slack-disconnect-mobile.png"), fullPage: true });
   await dialog.getByRole("button", { name: "Disconnect Slack", exact: true }).click();
   await expect(dialog.getByRole("button", { name: "Connect Slack", exact: true })).toBeVisible();
-  expect(deletions).toEqual([`${endpoint}/publication-A`]);
+  expect(deletions).toEqual([`${endpoint}/connection-A`]);
 });
 
 test("Agent reauthorization keeps its app and workspace identity", async ({ page }) => {
   const starts: unknown[] = [];
   await page.route(`**${endpoint}**`, async route => {
     if (route.request().method() === "POST") { starts.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() }); await route.fulfill({ json: { redirect_url: "https://slack.com/oauth/v2/authorize?state=repair" } }); }
-    else await route.fulfill({ json: { publication: publication("reauthorization_required") } });
+    else await route.fulfill({ json: { connection: connection("reauthorization_required") } });
   });
   await page.route("https://slack.com/oauth/v2/authorize?**", route => route.fulfill({ contentType: "text/html", body: "<p>OAuth destination fixture</p>" }));
   await openAgent(page);
@@ -89,7 +89,7 @@ test("Agent reauthorization keeps its app and workspace identity", async ({ page
   await expect(dialog.getByLabel("Client ID", { exact: true })).toHaveAttribute("readonly", "");
   await dialog.getByRole("button", { name: "Reauthorize in Slack" }).click();
   await expect(page).toHaveURL("https://slack.com/oauth/v2/authorize?state=repair");
-  expect(starts).toEqual([{ path: `${endpoint}/publication-A/authorize`, body: { return_to: "/agents/demo-agent" } }]);
+  expect(starts).toEqual([{ path: `${endpoint}/connection-A/authorize`, body: { return_to: "/agents/demo-agent" } }]);
 });
 
 test("Slack callback removes credentials from the URL and reports a changed account", async ({ page }) => {

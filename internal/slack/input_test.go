@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/content"
 )
 
 func TestSlackMessageInputPreservesCodeQuotesAndLinks(t *testing.T) {
@@ -37,11 +37,11 @@ func TestSlackMessageInputPreservesCodeQuotesAndLinks(t *testing.T) {
 
 func TestSlackMessageInputRejectsUnsupportedFilesAndOversizedText(t *testing.T) {
 	for _, sample := range []messageGesture{{Text: "keep", UnsupportedFiles: true}, {Text: "keep", FileIDs: []string{"F1"}}} {
-		if _, err := messageInput(sample, "bot"); !errors.Is(err, conversation.ErrUnsupported) {
+		if _, err := messageInput(sample, "bot"); !errors.Is(err, content.ErrUnsupported) {
 			t.Fatalf("file silently discarded: %v", err)
 		}
 	}
-	if _, err := messageInput(messageGesture{Text: strings.Repeat("x", conversation.ContentBytes)}, "bot"); !errors.Is(err, conversation.ErrLimit) {
+	if _, err := messageInput(messageGesture{Text: strings.Repeat("x", content.ContentBytes)}, "bot"); !errors.Is(err, content.ErrLimit) {
 		t.Fatalf("oversized input truncated or accepted: %v", err)
 	}
 }

@@ -330,7 +330,7 @@ func TestSlackDeliveryObservationExcludesPrivatePayloads(t *testing.T) {
  INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id)
  SELECT $2,$11,org_id,'app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['chat:write'],$3 FROM environments WHERE id=$1;
  INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($5,$1,$6,$11,$2,$3);
- INSERT INTO slack_channel_bindings(id,installation_id,slack_channel_id,environment_id,publication_id,org_id,team_id) SELECT $4,$2,'C1',$1,$5,org_id,'team' FROM environments WHERE id=$1;
+ INSERT INTO slack_channel_bindings(id,installation_id,slack_channel_id,environment_id,connection_id,org_id,team_id) SELECT $4,$2,'C1',$1,$5,org_id,'team' FROM environments WHERE id=$1;
  INSERT INTO slack_threads(id,channel_id,environment_id,front_session_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key,stream_status_repair,delivery_error)
  SELECT $8,$4,$1,$7,org_id,'team','C1','123.456','opening',true,'slack_delivery_warning' FROM environments WHERE id=$1;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($9,$8,$1,$7);

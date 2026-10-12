@@ -141,7 +141,7 @@ func ReconcileUnknownPost(ctx context.Context, pool db.TxBeginner, client *WebCl
 		}
 		var ready bool
 		err = tx.QueryRow(ctx, `SELECT i.id,i.credential_revision,i.history_next_at<=clock_timestamp() FROM slack_channel_bindings c
- JOIN slack_connections p ON p.id=c.publication_id JOIN slack_installations i ON i.id=c.installation_id JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id
+ JOIN slack_connections p ON p.id=c.connection_id JOIN slack_installations i ON i.id=c.installation_id JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id
  WHERE c.id=ANY($1::uuid[]) AND p.revoked_at IS NULL AND r.retired_at IS NULL AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND i.credential_ciphertext IS NOT NULL
  ORDER BY (i.history_next_at<=clock_timestamp()) DESC,(i.id=$2) DESC,i.id LIMIT 1`, []uuid.UUID{sourceChannel, targetChannel}, sender).Scan(&installation, &credential, &ready)
 		if errors.Is(err, pgx.ErrNoRows) {

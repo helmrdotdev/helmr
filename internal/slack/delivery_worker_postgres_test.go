@@ -427,7 +427,7 @@ func TestSlackDeliveryWorkerBlockedContinuationsDoNotHideReadyStream(t *testing.
 	}
 }
 
-func TestSlackDeliveryWorkerSuppressesBlockedTailWhenPublicationAuthorityEnds(t *testing.T) {
+func TestSlackDeliveryWorkerSuppressesBlockedTailWhenConnectionAuthorityEnds(t *testing.T) {
 	for _, reason := range []string{"channel", "speaker", "disconnected", "authorization"} {
 		t.Run(reason, func(t *testing.T) {
 			f := newStatusFixture(t)

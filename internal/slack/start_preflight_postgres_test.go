@@ -173,7 +173,7 @@ func TestCrossAppStartVerifiesBothSendersAndPinsOpening(t *testing.T) {
 						t.Fatal(err)
 					}
 					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='owner' WHERE org_id=$1 AND user_id=$2`, org, f.User)
-					if err = store.DisconnectPublication(t.Context(), org, f.User, f.Environment, f.publication); err != nil {
+					if err = store.DisconnectConnection(t.Context(), org, f.User, f.Environment, f.publication); err != nil {
 						t.Fatal(err)
 					}
 					f.link(t)

@@ -1263,16 +1263,16 @@ CREATE TABLE slack_user_links (
 CREATE TABLE slack_channel_bindings (
     id uuid PRIMARY KEY,
     environment_id uuid NOT NULL,
-    publication_id uuid NOT NULL,
+    connection_id uuid NOT NULL,
     installation_id uuid NOT NULL,
     org_id uuid NOT NULL,
     team_id text NOT NULL,
     slack_channel_id text NOT NULL CHECK (slack_channel_id<>''),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    UNIQUE(publication_id,slack_channel_id),
+    UNIQUE(connection_id,slack_channel_id),
     UNIQUE(id,environment_id),
     UNIQUE(id,environment_id,org_id,team_id,slack_channel_id),
-    FOREIGN KEY(publication_id,environment_id,installation_id) REFERENCES slack_connections(id,environment_id,slack_installation_id),
+    FOREIGN KEY(connection_id,environment_id,installation_id) REFERENCES slack_connections(id,environment_id,slack_installation_id),
     FOREIGN KEY(installation_id,org_id,team_id) REFERENCES slack_installations(id,org_id,team_id)
 );
 

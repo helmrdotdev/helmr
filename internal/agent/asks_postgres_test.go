@@ -8,7 +8,7 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/content"
 )
 
 func askFixture(t *testing.T) (fixture, Admission, uuid.UUID, json.RawMessage) {
@@ -113,7 +113,7 @@ func TestAskAnswerArbitrationAndCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: pending, ResponseID: "invalid", Answer: json.RawMessage(`null`)}
-	if _, err := RespondAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, conversation.ErrAnswerInvalid) {
+	if _, err := RespondAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, content.ErrAnswerInvalid) {
 		t.Fatal(err)
 	}
 	if err := RuntimeWithdrawAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, pending); err != nil {
@@ -139,7 +139,7 @@ func TestAskTerminalCancellationAndBudget(t *testing.T) {
 	if err := RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id, q); err != nil {
 		t.Fatal(err)
 	}
-	if err := RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), q); !errors.Is(err, conversation.ErrLimit) {
+	if err := RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), q); !errors.Is(err, content.ErrLimit) {
 		t.Fatalf("budget %v", err)
 	}
 	if _, err := f.pool.Exec(t.Context(), `UPDATE turns SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, a.TurnID); err != nil {
