@@ -25,7 +25,7 @@ func newStatusFixture(t *testing.T) statusFixture {
  INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id)
  SELECT $2,$10,org_id,'app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['app_mentions:read','channels:read','channels:history','groups:read','groups:history','chat:write','assistant:write'],$3 FROM environments WHERE id=$1;
  INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($5,$1,$6,$10,$2,$3);
- INSERT INTO slack_channel_bindings(id,environment_id,publication_id,installation_id,org_id,team_id,slack_channel_id) SELECT $4,$1,$5,$2,org_id,'team','C1' FROM environments WHERE id=$1;
+ INSERT INTO slack_channel_bindings(id,environment_id,connection_id,installation_id,org_id,team_id,slack_channel_id) SELECT $4,$1,$5,$2,org_id,'team','C1' FROM environments WHERE id=$1;
  INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key) SELECT $8,$1,$7,$4,org_id,'team','C1','123.456','opening' FROM environments WHERE id=$1;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($9,$8,$1,$7)`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.installation, f.User, f.channel, f.publication, f.Agent, f.Session, f.thread, f.participant, f.registration)
 

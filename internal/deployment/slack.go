@@ -66,9 +66,9 @@ func prepareTriggerRoutes(ctx context.Context, pool db.TxBeginner, principal aut
 func pinTriggerRoutes(ctx context.Context, tx pgx.Tx, env uuid.UUID, routes map[triggerRouteKey]agent.SlackConnection) (map[triggerRouteKey]uuid.UUID, error) {
 	pubs := []uuid.UUID{}
 	for _, connection := range routes {
-		pubs = append(pubs, connection.PublicationID)
+		pubs = append(pubs, connection.ConnectionID)
 	}
-	active, err := agent.LockSlackPublications(ctx, tx, env, pubs)
+	active, err := agent.LockSlackConnections(ctx, tx, env, pubs)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +84,7 @@ func pinTriggerRoutes(ctx context.Context, tx pgx.Tx, env uuid.UUID, routes map[
 		if err != nil {
 			return nil, err
 		}
-		if current.PublicationID != expected.PublicationID || current.InstallationID != expected.InstallationID || !current.AuthorizedAt.Equal(expected.AuthorizedAt) {
+		if current.ConnectionID != expected.ConnectionID || current.InstallationID != expected.InstallationID || !current.AuthorizedAt.Equal(expected.AuthorizedAt) {
 			return nil, agent.ErrConversationChanged
 		}
 		id, err := agent.ResolveSlackRoute(ctx, tx, current)

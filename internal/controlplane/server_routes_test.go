@@ -35,7 +35,7 @@ func TestControlPlaneRoutesMatchCurrentProtocol(t *testing.T) {
 	want := strings.Split(strings.TrimSpace(`
 DELETE /api/invitations/{id}
 DELETE /api/members/{userID}
-DELETE /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{publicationID}
+DELETE /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{connectionID}
 DELETE /api/projects/{project}/environments/{environment}/api-keys/{id}
 DELETE /api/projects/{project}/environments/{environment}/computers/{computerID}
 DELETE /api/slack/user-links/{teamID}/{slackUserID}
@@ -153,7 +153,7 @@ POST /api/organizations
 POST /api/projects
 POST /api/projects/{project}/environments
 POST /api/projects/{project}/environments/{environment}/agents/{agentName}/slack
-POST /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{publicationID}/authorize
+POST /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{connectionID}/authorize
 POST /api/projects/{project}/environments/{environment}/api-keys
 POST /api/projects/{project}/environments/{environment}/commands/{commandID}/cancel
 POST /api/projects/{project}/environments/{environment}/computers
@@ -272,7 +272,7 @@ POST /worker/v1/sessions/start/release
 POST /worker/v1/sessions/stopped
 POST /worker/v1/sessions/turn
 POST /worker/v1/sessions/turn/receipt
-PUT /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{publicationID}/credentials
+PUT /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{connectionID}/credentials
 PUT /capacity/v1/worker-groups/{workerGroupID}/primary-pool
 `), "\n")
 	if !slices.IsSorted(want) {

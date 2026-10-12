@@ -233,7 +233,7 @@ func TestSlackNewHumanRootAcceptsText(t *testing.T) {
 	}
 }
 
-func TestSlackHistoricalRootCannotBindAcrossPublicationGeneration(t *testing.T) {
+func TestSlackHistoricalRootCannotBindAcrossConnectionGeneration(t *testing.T) {
 	f := newStatusFixture(t)
 	f.link(t)
 	nextPublication := uuid.NewV7()

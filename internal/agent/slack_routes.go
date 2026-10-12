@@ -17,19 +17,19 @@ var ErrTargetWorkspaceMismatch = errors.New("target Agent is connected to a diff
 var ErrStartMessageTooLarge = errors.New("start input and attribution must fit in one Slack message")
 var ErrConversationChanged = errors.New("conversation configuration changed during validation; retry the same request")
 
-// RequiredSlackScopes returns the bot scopes needed by connected Publications.
+// RequiredSlackScopes returns the bot scopes needed by connected Slack connections.
 // OAuth, app manifests and transactional admission use the same scope set.
 func RequiredSlackScopes() []string {
 	return []string{"app_mentions:read", "channels:read", "channels:history", "groups:read", "groups:history", "chat:write", "assistant:write"}
 }
 
-// LockSlackPublications takes registration, installation, then Publication gates
+// LockSlackConnections takes registration, installation, then connection gates
 // before Environment or Session owners. Immutable routes never confer access.
-func LockSlackPublications(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID) (bool, error) {
-	return lockSlackPublications(ctx, tx, env, ids, false)
+func LockSlackConnections(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID) (bool, error) {
+	return lockSlackConnections(ctx, tx, env, ids, false)
 }
 
-func lockSlackPublications(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID, reserve bool) (bool, error) {
+func lockSlackConnections(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID, reserve bool) (bool, error) {
 	if len(ids) == 0 {
 		return true, nil
 	}
@@ -64,7 +64,7 @@ func lockSlackPublications(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []
 	}
 	installationLock := "FOR SHARE"
 	// Delivery owners also reserve installation-wide pacing. Take the write gate
-	// here, before Publication/Environment/Session locks, to avoid lock upgrades.
+	// here, before connection/Environment/Session locks, to avoid lock upgrades.
 	if reserve {
 		installationLock = "FOR NO KEY UPDATE"
 	}
@@ -141,7 +141,7 @@ func lockSlackChannels(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid
 	if len(ids) == 0 {
 		return true, nil
 	}
-	rows, err := tx.Query(ctx, `SELECT id,publication_id FROM slack_channel_bindings WHERE environment_id=$1 AND id=ANY($2::uuid[])`, env, ids)
+	rows, err := tx.Query(ctx, `SELECT id,connection_id FROM slack_channel_bindings WHERE environment_id=$1 AND id=ANY($2::uuid[])`, env, ids)
 	if err != nil {
 		return false, err
 	}
@@ -160,7 +160,7 @@ func lockSlackChannels(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid
 	if err = rows.Err(); err != nil {
 		return false, err
 	}
-	active, err := lockSlackPublications(ctx, tx, env, pubs, reserve)
+	active, err := lockSlackConnections(ctx, tx, env, pubs, reserve)
 	if err != nil {
 		return false, err
 	}

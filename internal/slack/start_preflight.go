@@ -10,7 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
@@ -37,7 +37,7 @@ func (c *WebClient) PrepareStart(ctx context.Context, value agent.SlackStartCont
 	if err != nil {
 		return nil, err
 	}
-	input, err := conversation.Input(value.Input)
+	input, err := content.Input(value.Input)
 	if err != nil {
 		return nil, err
 	}

@@ -13,7 +13,7 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -244,7 +244,7 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust ComputerTr
 				return err
 			}
 		}
-		req.Input, err = conversation.Input(req.Input)
+		req.Input, err = content.Input(req.Input)
 		if err != nil {
 			return err
 		}

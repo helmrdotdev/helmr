@@ -30,7 +30,7 @@ async function catalog(page: Page, options: { current?: boolean; defined?: boole
     else if (path === `${base}/agents/support/status`) json = record;
     else if (path === `${base}/agents/support`) json = { agent: "support", template: "browser", deployment_id: url.searchParams.get("deployment_id") ?? deployment };
     else if (path === `${base}/templates/browser`) json = { template: "browser", resources: { milliCpu: 1000, memoryMiB: 512 }, deployment_id: url.searchParams.get("deployment_id") ?? deployment };
-    else if (path === `${base}/agents/support/slack`) json = { publication: null };
+    else if (path === `${base}/agents/support/slack`) json = { connection: null };
     else if (path === `${base}/triggers`) json = url.searchParams.has("cursor") ? { triggers: [] } : { triggers: [{ id: historical, agent: "support", deployment_id: historical, trigger_key: "daily", cron: { pattern: "0 9 * * *", timezone: "UTC" }, input: [], active_from: now, active_until: now }], next_cursor: "older" };
     else if (path === `${base}/sessions`) json = { sessions: [] };
     else { await route.fulfill({ status: 404, json: { error: { code: "not_found", message: path } } }); return; }

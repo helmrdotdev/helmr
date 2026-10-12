@@ -87,7 +87,7 @@ func TestMentionRootReadsSharePacingAndRespectRetryAfter(t *testing.T) {
 
 }
 
-func TestPublicationAdmissionSharesGateButDeliverySerializesPacing(t *testing.T) {
+func TestConnectionAdmissionSharesGateButDeliverySerializesPacing(t *testing.T) {
 	f := newStatusFixture(t)
 	first, err := f.Pool.Begin(t.Context())
 	if err != nil {
@@ -99,12 +99,12 @@ func TestPublicationAdmissionSharesGateButDeliverySerializesPacing(t *testing.T)
 		t.Fatal(err)
 	}
 	defer second.Rollback(context.Background())
-	if ok, err := agent.LockSlackPublications(t.Context(), first, f.Environment, []uuid.UUID{f.publication}); err != nil || !ok {
+	if ok, err := agent.LockSlackConnections(t.Context(), first, f.Environment, []uuid.UUID{f.publication}); err != nil || !ok {
 		t.Fatal(ok, err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if ok, err := agent.LockSlackPublications(ctx, second, f.Environment, []uuid.UUID{f.publication}); err != nil || !ok {
+	if ok, err := agent.LockSlackConnections(ctx, second, f.Environment, []uuid.UUID{f.publication}); err != nil || !ok {
 		t.Fatal("independent admission serialized", ok, err)
 	}
 	writer, err := f.Pool.Begin(t.Context())

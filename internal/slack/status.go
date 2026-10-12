@@ -186,7 +186,7 @@ func statusClaimAuthorized(ctx context.Context, pool db.TxBeginner, claim Status
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.channel_id
  JOIN slack_installations i ON i.id=c.installation_id JOIN environments e ON e.id=c.environment_id
- JOIN slack_connections pub ON pub.id=c.publication_id JOIN slack_app_registrations reg ON reg.id=pub.slack_app_registration_id
+ JOIN slack_connections pub ON pub.id=c.connection_id JOIN slack_app_registrations reg ON reg.id=pub.slack_app_registration_id
  WHERE t.id=$1 AND t.claim_epoch=$2 AND t.inflight_attempt_id=$3 AND t.claimed_until>clock_timestamp() AND t.deleted_at IS NULL
  AND pub.revoked_at IS NULL AND reg.retired_at IS NULL AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND i.org_id=e.org_id
  AND NOT EXISTS(SELECT 1 FROM slack_posts opening WHERE opening.thread_id=t.id AND opening.role='opening' AND opening.delivery_disposed_at IS NOT NULL)

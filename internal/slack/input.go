@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/content"
 )
 
 var slackTextEntities = strings.NewReplacer("&amp;", "&", "&lt;", "<", "&gt;", ">")
@@ -13,10 +13,10 @@ var slackTextEntities = strings.NewReplacer("&amp;", "&", "&lt;", "<", "&gt;", "
 // discarded, and neither channel history nor human identity is injected into it.
 func messageInput(message messageGesture, bot string) (json.RawMessage, error) {
 	if message.UnsupportedFiles || len(message.FileIDs) > 0 {
-		return nil, conversation.ErrUnsupported
+		return nil, content.ErrUnsupported
 	}
-	content, _ := json.Marshal([]map[string]string{{"type": "text", "text": slackTextEntities.Replace(stripRoutingMention(message.Text, bot))}})
-	return conversation.Input(content)
+	raw, _ := json.Marshal([]map[string]string{{"type": "text", "text": slackTextEntities.Replace(stripRoutingMention(message.Text, bot))}})
+	return content.Input(raw)
 }
 
 // Slack's text contains explicit user tokens and mrkdwn delimiters. Preserve

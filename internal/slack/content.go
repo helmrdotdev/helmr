@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/content"
 )
 
 // Leave room for identity and exact controls below Slack's message limits. These
@@ -67,7 +67,7 @@ func RenderContent(sources []ContentSource, emptyCompletion bool) ([]ContentPost
 		if source.Sequence < 1 || (i > 0 && source.Sequence <= sources[i-1].Sequence) {
 			return nil, fmt.Errorf("content source sequence is not increasing")
 		}
-		value, err := conversation.Content(source.Content, false)
+		value, err := content.Content(source.Content, false)
 		if err != nil {
 			return nil, err
 		}

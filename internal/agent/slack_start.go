@@ -19,11 +19,11 @@ func ValidSlackChannelID(value string) bool { return definition.ValidSlackChanne
 // only the actual Slack channel ID; none of these resolved identities enter the
 // caller's idempotency fingerprint.
 type SlackConnection struct {
-	PublicationID, RegistrationID, InstallationID, EnvironmentID, OrganizationID uuid.UUID
-	AgentID                                                                      uuid.UUID
-	TeamID, ChannelID, AppID, BotUserID, AgentName                               string
-	CredentialRevision                                                           int64
-	AuthorizedAt                                                                 time.Time
+	ConnectionID, RegistrationID, InstallationID, EnvironmentID, OrganizationID uuid.UUID
+	AgentID                                                                     uuid.UUID
+	TeamID, ChannelID, AppID, BotUserID, AgentName                              string
+	CredentialRevision                                                          int64
+	AuthorizedAt                                                                time.Time
 }
 type SlackStartSource struct {
 	Connection                   SlackConnection
@@ -55,7 +55,7 @@ func ReadSlackConnection(ctx context.Context, tx pgx.Tx, env, agent uuid.UUID, c
  JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id JOIN slack_installations i ON i.id=p.slack_installation_id
  WHERE p.environment_id=$1 AND p.agent_id=$2 AND p.revoked_at IS NULL AND r.retired_at IS NULL AND r.credential_ciphertext IS NOT NULL
  AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND i.credential_ciphertext IS NOT NULL AND i.granted_scopes @> $3::text[]
- AND i.org_id=e.org_id AND r.org_id=e.org_id AND r.app_id=i.app_id`, env, agent, RequiredSlackScopes()).Scan(&c.PublicationID, &c.RegistrationID, &c.InstallationID, &c.OrganizationID, &c.TeamID, &c.AppID, &c.BotUserID, &c.AgentName, &c.CredentialRevision, &c.AuthorizedAt)
+ AND i.org_id=e.org_id AND r.org_id=e.org_id AND r.app_id=i.app_id`, env, agent, RequiredSlackScopes()).Scan(&c.ConnectionID, &c.RegistrationID, &c.InstallationID, &c.OrganizationID, &c.TeamID, &c.AppID, &c.BotUserID, &c.AgentName, &c.CredentialRevision, &c.AuthorizedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, ErrTargetNotPublished
 	}
@@ -86,13 +86,13 @@ func readSlackStartSource(ctx context.Context, tx pgx.Tx, env, caller uuid.UUID)
 	c.EnvironmentID = env
 	var root *string
 	var active, abandoned bool
-	err = tx.QueryRow(ctx, `SELECT t.id,t.thread_ts,c.publication_id,r.id,i.id,c.org_id,c.team_id,c.slack_channel_id,i.app_id,i.bot_user_id,s.agent_id,a.key,i.credential_revision,i.authorized_at,
+	err = tx.QueryRow(ctx, `SELECT t.id,t.thread_ts,c.connection_id,r.id,i.id,c.org_id,c.team_id,c.slack_channel_id,i.app_id,i.bot_user_id,s.agent_id,a.key,i.credential_revision,i.authorized_at,
  p.revoked_at IS NULL AND r.retired_at IS NULL AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND t.deleted_at IS NULL,
  EXISTS(SELECT 1 FROM slack_posts post WHERE post.thread_id=t.id AND post.role='opening' AND (post.delivery_disposed_at IS NOT NULL OR (t.thread_ts IS NULL AND post.status IN ('failed','suppressed'))))
- FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.channel_id JOIN slack_connections p ON p.id=c.publication_id
+ FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.channel_id JOIN slack_connections p ON p.id=c.connection_id
  JOIN slack_installations i ON i.id=c.installation_id JOIN slack_app_registrations r ON r.id=i.app_registration_id
  JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.front_session_id) JOIN agents a ON (a.environment_id,a.id)=(s.environment_id,s.agent_id)
- WHERE t.environment_id=$1 AND t.front_session_id=$2 AND t.channel_id=$3`, env, caller, *route).Scan(&source.ThreadID, &root, &c.PublicationID, &c.RegistrationID, &c.InstallationID, &c.OrganizationID, &c.TeamID, &c.ChannelID, &c.AppID, &c.BotUserID, &c.AgentID, &c.AgentName, &c.CredentialRevision, &c.AuthorizedAt, &active, &abandoned)
+ WHERE t.environment_id=$1 AND t.front_session_id=$2 AND t.channel_id=$3`, env, caller, *route).Scan(&source.ThreadID, &root, &c.ConnectionID, &c.RegistrationID, &c.InstallationID, &c.OrganizationID, &c.TeamID, &c.ChannelID, &c.AppID, &c.BotUserID, &c.AgentID, &c.AgentName, &c.CredentialRevision, &c.AuthorizedAt, &active, &abandoned)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrSourceConversationUnavailable
 	}
@@ -222,7 +222,7 @@ func validateSlackStart(ctx context.Context, tx pgx.Tx, env, agent, deployment u
 	if err != nil {
 		return ErrConversationChanged
 	}
-	if c.PublicationID != p.Target.PublicationID || c.RegistrationID != p.Target.RegistrationID || c.InstallationID != p.Target.InstallationID || c.TeamID != p.Target.TeamID || c.OrganizationID != p.Target.OrganizationID || !c.AuthorizedAt.Equal(p.Target.AuthorizedAt) {
+	if c.ConnectionID != p.Target.ConnectionID || c.RegistrationID != p.Target.RegistrationID || c.InstallationID != p.Target.InstallationID || c.TeamID != p.Target.TeamID || c.OrganizationID != p.Target.OrganizationID || !c.AuthorizedAt.Equal(p.Target.AuthorizedAt) {
 		return ErrConversationChanged
 	}
 	if caller.Kind == "session" {
@@ -248,14 +248,14 @@ func validateSlackStart(ctx context.Context, tx pgx.Tx, env, agent, deployment u
 
 func ResolveSlackRoute(ctx context.Context, tx pgx.Tx, c SlackConnection) (uuid.UUID, error) {
 	id := uuid.NewV7()
-	tag, err := tx.Exec(ctx, `INSERT INTO slack_channel_bindings(id,environment_id,publication_id,installation_id,org_id,team_id,slack_channel_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(publication_id,slack_channel_id) DO NOTHING`, id, c.EnvironmentID, c.PublicationID, c.InstallationID, c.OrganizationID, c.TeamID, c.ChannelID)
+	tag, err := tx.Exec(ctx, `INSERT INTO slack_channel_bindings(id,environment_id,connection_id,installation_id,org_id,team_id,slack_channel_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(connection_id,slack_channel_id) DO NOTHING`, id, c.EnvironmentID, c.ConnectionID, c.InstallationID, c.OrganizationID, c.TeamID, c.ChannelID)
 	if err != nil {
 		return uuid.Nil(), err
 	}
 	if tag.RowsAffected() == 1 {
 		return id, nil
 	}
-	err = tx.QueryRow(ctx, `SELECT id FROM slack_channel_bindings WHERE publication_id=$1 AND environment_id=$2 AND installation_id=$3 AND slack_channel_id=$4`, c.PublicationID, c.EnvironmentID, c.InstallationID, c.ChannelID).Scan(&id)
+	err = tx.QueryRow(ctx, `SELECT id FROM slack_channel_bindings WHERE connection_id=$1 AND environment_id=$2 AND installation_id=$3 AND slack_channel_id=$4`, c.ConnectionID, c.EnvironmentID, c.InstallationID, c.ChannelID).Scan(&id)
 	return id, err
 }
 

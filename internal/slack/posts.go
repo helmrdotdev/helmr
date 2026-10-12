@@ -333,8 +333,8 @@ func postClaimAuthorized(ctx context.Context, pool db.TxBeginner, claim PostClai
  JOIN slack_threads t ON t.id=p.thread_id AND (t.deleted_at IS NULL OR (p.inflight_method='chat.stopStream' AND p.message_ts IS NOT NULL AND p.closed_at IS NOT NULL))
  JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id)
  JOIN slack_channel_bindings c ON c.id=sender.channel_id JOIN slack_installations i ON i.id=c.installation_id
- JOIN slack_connections publication ON publication.id=c.publication_id JOIN slack_app_registrations registration ON registration.id=publication.slack_app_registration_id
- JOIN slack_channel_bindings target_channel ON target_channel.id=t.channel_id JOIN slack_connections target_publication ON target_publication.id=target_channel.publication_id
+ JOIN slack_connections publication ON publication.id=c.connection_id JOIN slack_app_registrations registration ON registration.id=publication.slack_app_registration_id
+ JOIN slack_channel_bindings target_channel ON target_channel.id=t.channel_id JOIN slack_connections target_publication ON target_publication.id=target_channel.connection_id
  JOIN slack_installations target_installation ON target_installation.id=target_channel.installation_id
  JOIN slack_app_registrations target_registration ON target_registration.id=target_publication.slack_app_registration_id
  WHERE p.id=$1 AND p.status='sending' AND p.claim_epoch=$2 AND p.inflight_attempt_id=$3 AND p.claimed_until>clock_timestamp()

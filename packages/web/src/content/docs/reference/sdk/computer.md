@@ -42,7 +42,7 @@ Returns a frozen definition with `kind: "template"`. Throws `TypeError` when
 | `resources.disk` | no | Must be `"32GiB"` in this release; omit it to use that size. |
 | `prepare` | no | Preparation function. Runs with a `BuildContext` to set up the Computer's filesystem (for example cloning a repository and installing dependencies) before the Computer is used. |
 | `refresh.every` | yes, with `refresh` | Intended interval between re-preparations. Recorded, but not yet acted on in this release. |
-| `refresh.maxAge` | no | Maximum age of a prepared baseline a new Computer may start from; an older one is prepared again first. |
+| `refresh.maxAge` | no | Maximum age of a prepared image a new Computer may start from; an older one is prepared again first. |
 | `deleteAfterUnused` | no | Retention after the Computer becomes unused: a `Duration` or `"never"`. Default `"7d"`. |
 | `secrets` | no | Secret bindings available to processes on the Computer. |
 | `buildSecrets` | no | Secret bindings available to `prepare`. |

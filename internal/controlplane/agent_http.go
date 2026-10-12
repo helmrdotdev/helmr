@@ -2,7 +2,7 @@ package controlplane
 
 import (
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/conversation"
+	"github.com/helmrdotdev/helmr/internal/content"
 	"net/http"
 	"uuid"
 
@@ -275,17 +275,17 @@ func (s *Server) writeAgentHTTPError(w http.ResponseWriter, err error) {
 		writeError(w, conflict(notInterruptible))
 	case errors.Is(err, agent.ErrMessageClosed):
 		writeError(w, conflict(codedError{code: "message_closed", message: "turn is not accepting messages"}))
-	case errors.Is(err, conversation.ErrUnsupported):
+	case errors.Is(err, content.ErrUnsupported):
 		writeErrorStatus(w, http.StatusUnprocessableEntity, codedError{code: "content_kind_unsupported", message: "Content kind is unsupported by the pinned Agent"})
-	case errors.Is(err, conversation.ErrLimit):
+	case errors.Is(err, content.ErrLimit):
 		writeErrorStatus(w, http.StatusRequestEntityTooLarge, codedError{code: "content_limit_exceeded", message: err.Error()})
-	case errors.Is(err, conversation.ErrAnswerInvalid):
+	case errors.Is(err, content.ErrAnswerInvalid):
 		writeErrorStatus(w, http.StatusUnprocessableEntity, codedError{code: "answer_invalid", message: "Answer does not match its declared control"})
 	case errors.Is(err, agent.ErrAskAlreadyResponded):
 		writeError(w, conflict(codedError{code: "ask_already_responded", message: "Ask already has a response"}))
 	case errors.Is(err, agent.ErrAskCancelled):
 		writeError(w, conflict(codedError{code: "ask_cancelled", message: "Ask is cancelled"}))
-	case errors.Is(err, conversation.ErrInvalid):
+	case errors.Is(err, content.ErrInvalid):
 		writeError(w, badRequest(codedError{code: "bad_request", message: "Input must be an array of text parts"}))
 	case errors.Is(err, agent.ErrInvalidCursor):
 		writeError(w, badRequest(codedError{code: "invalid_cursor", message: "Session event cursor exceeds the allocated end"}))
