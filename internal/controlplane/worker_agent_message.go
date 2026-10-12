@@ -2,10 +2,11 @@ package controlplane
 
 import (
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"net/http"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func (server *Server) workerAgentMessage(w http.ResponseWriter, r *http.Request) {

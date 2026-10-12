@@ -5,6 +5,8 @@ import (
 	"errors"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -14,6 +16,10 @@ type admissionEnvironment struct {
 	maxResident                                       int64
 	maxCausal                                         int
 	maxCPU, maxMemory, maxStorage, preparationTimeout int64
+}
+
+func (p admissionEnvironment) computerLimits() computer.Limits {
+	return computer.Limits{MaxCPU: p.maxCPU, MaxMemory: p.maxMemory, MaxStorage: p.maxStorage, PreparationTimeout: p.preparationTimeout}
 }
 
 func lockAdmissionEnvironment(ctx context.Context, tx pgx.Tx, env uuid.UUID) (admissionEnvironment, error) {

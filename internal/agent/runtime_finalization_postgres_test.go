@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
@@ -23,7 +25,7 @@ func TestRuntimeFinalizationReconcilesOriginalSaveAfterGrantChange(t *testing.T)
 	if outcome, err := RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, result, "drained"); err != nil || outcome != nil {
 		t.Fatalf("prepared result reported terminal: %s %v", outcome, err)
 	}
-	var save SaveRequest
+	var save computer.SaveRequest
 	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM computer_saves WHERE turn_id=$1`, a.TurnID).Scan(&save.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -105,14 +107,14 @@ func TestRuntimeFinalizationObservesOriginalTurnAfterPhysicalOwnerRestore(t *tes
 		t.Fatal(err)
 	}
 	cp := checkpointStorageForSaveFixture(t, s)
-	if err := cp.publisher.RegisterCheckpoint(t.Context(), cp.ref, cp.manifest); err != nil {
+	if err := cp.checkpoints.RegisterCheckpoint(t.Context(), cp.ref, cp.manifest); err != nil {
 		t.Fatal(err)
 	}
 	cp.upload(t)
 	if err := cp.publish(t, cp.save, cp.manifest.Disk); err != nil {
 		t.Fatal(err)
 	}
-	if err := cp.publisher.CompleteCheckpoint(t.Context(), cp.ref, cp.manifest); err != nil {
+	if err := cp.checkpoints.CompleteCheckpoint(t.Context(), cp.ref, cp.manifest); err != nil {
 		t.Fatal(err)
 	}
 	r := restoreCheckpointFixture(t, cp)

@@ -2,9 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,6 +9,10 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 
 	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/jackc/pgx/v5/pgxpool"

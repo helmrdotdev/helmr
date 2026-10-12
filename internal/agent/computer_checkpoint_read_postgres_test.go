@@ -5,6 +5,8 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
@@ -12,7 +14,7 @@ func TestComputerCheckpointReadRequiresExactLiveRestoreAllocation(t *testing.T) 
 	for _, change := range []string{"none", "instance", "host", "epoch", "environment", "undelivered", "expired", "consumed", "aborting", "corrupt", "revoked"} {
 		t.Run(change, func(t *testing.T) {
 			f := newComputerRestoreFixture(t)
-			id := ComputerLeaseIdentity{EnvironmentID: f.f.env, ComputerID: f.f.computer, Epoch: f.epoch}
+			id := computer.ComputerLeaseIdentity{EnvironmentID: f.f.env, ComputerID: f.f.computer, Epoch: f.epoch}
 			if err := f.f.pool.QueryRow(t.Context(), `SELECT allocation_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, id.EnvironmentID, id.ComputerID, id.Epoch).Scan(&id.InstanceID); err != nil {
 				t.Fatal(err)
 			}

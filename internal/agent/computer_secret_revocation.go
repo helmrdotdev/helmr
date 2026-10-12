@@ -6,6 +6,8 @@ import (
 	"slices"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
@@ -34,7 +36,7 @@ func recordComputerSecretRevocationFailure(ctx context.Context, tx pgx.Tx, e Exe
 // reconcileComputerSecretRevocation interrupts exposed peers and preserves queued
 // input for explicit disposition. It does not cancel descendants on other Computers or erase
 // recorded results. Only existing exact lease stop evidence may fence a process.
-func reconcileComputerSecretRevocation(ctx context.Context, pool db.TxBeginner, env, computer uuid.UUID) error {
+func reconcileComputerSecretRevocation(ctx context.Context, pool db.TxBeginner, env, computerID uuid.UUID) error {
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout='1s'`); err != nil {
 			return err
@@ -42,7 +44,7 @@ func reconcileComputerSecretRevocation(ctx context.Context, pool db.TxBeginner, 
 		// Include Sessions with queued work but no process. Admission must acquire
 		// this same Computer lock; revalidate discovery after the complete owner set.
 		read := func() ([]uuid.UUID, error) {
-			rows, err := tx.Query(ctx, `SELECT id FROM sessions WHERE environment_id=$1 AND computer_id=$2 ORDER BY id`, env, computer)
+			rows, err := tx.Query(ctx, `SELECT id FROM sessions WHERE environment_id=$1 AND computer_id=$2 ORDER BY id`, env, computerID)
 			if err != nil {
 				return nil, err
 			}
@@ -52,7 +54,7 @@ func reconcileComputerSecretRevocation(ctx context.Context, pool db.TxBeginner, 
 		if err != nil {
 			return err
 		}
-		if _, err = lockSessionsAndComputers(ctx, tx, env, before, []uuid.UUID{computer}); err != nil {
+		if _, err = lockSessionsAndComputers(ctx, tx, env, before, []uuid.UUID{computerID}); err != nil {
 			return err
 		}
 		after, err := read()
@@ -62,12 +64,12 @@ func reconcileComputerSecretRevocation(ctx context.Context, pool db.TxBeginner, 
 		if !slices.Equal(before, after) {
 			return ErrNotReady
 		}
-		if err = requireComputerSecretsNotRevoked(ctx, tx, env, computer); err == nil {
+		if err = computer.RequireSecretsNotRevoked(ctx, tx, env, computerID); err == nil {
 			return nil
 		} else if !errors.Is(err, ErrDenied) {
 			return err
 		}
-		rows, err := tx.Query(ctx, `SELECT session_id,epoch,computer_lease_epoch FROM session_processes WHERE environment_id=$1 AND computer_id=$2 AND fenced_at IS NULL ORDER BY session_id FOR NO KEY UPDATE`, env, computer)
+		rows, err := tx.Query(ctx, `SELECT session_id,epoch,computer_lease_epoch FROM session_processes WHERE environment_id=$1 AND computer_id=$2 AND fenced_at IS NULL ORDER BY session_id FOR NO KEY UPDATE`, env, computerID)
 		if err != nil {
 			return err
 		}

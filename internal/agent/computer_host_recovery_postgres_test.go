@@ -6,6 +6,8 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -134,10 +136,10 @@ func TestComputerHostRecoveryExcludesCurrentAndForeignAllocations(t *testing.T) 
 		host  uuid.UUID
 		epoch int64
 	}{{h.HostID, h.Epoch}, {otherHost, 1}} {
-		computer := uuid.NewV7()
+		computerID := uuid.NewV7()
 		dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) SELECT environment_id,$2,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes FROM computers WHERE id=$1;
  INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,allocation_id,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
- SELECT environment_id,$2,epoch,$3,$4,expires_at,$2,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE computer_id=$1`, pgx.QueryExecModeSimpleProtocol, f.computer, computer, owner.host, owner.epoch)
+ SELECT environment_id,$2,epoch,$3,$4,expires_at,$2,channel_credential_digest,status,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE computer_id=$1`, pgx.QueryExecModeSimpleProtocol, f.computer, computerID, owner.host, owner.epoch)
 	}
 	if err := ObserveRecoveredHostComputers(t.Context(), f.pool, h, []uuid.UUID{}); err != nil {
 		t.Fatal(err)
@@ -155,7 +157,7 @@ func TestComputerHostRecoverySettlesUnpublishedCaptureAfterFencing(t *testing.T)
 			req := f.captureRequest()
 			result, _ := beginCapture(t, f, req)
 			if recorded {
-				if err := recordCaptureForTest(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: result.SaveID, LeaseEpoch: 1, DiskRoot: "sha256:1111111111111111111111111111111111111111111111111111111111111111", Evidence: "frozen cut"}); err != nil {
+				if err := recordCaptureForTest(t.Context(), f.pool, computer.CaptureEvidence{EnvironmentID: f.env, SaveID: result.SaveID, LeaseEpoch: 1, DiskRoot: "sha256:1111111111111111111111111111111111111111111111111111111111111111", Evidence: "frozen cut"}); err != nil {
 					t.Fatal(err)
 				}
 			}

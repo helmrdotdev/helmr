@@ -6,6 +6,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -91,14 +93,14 @@ func (r captureRecord) requireMembers(ctx context.Context, tx pgx.Tx, env uuid.U
 // It does not make any snapshot remotely durable or authorize source teardown.
 func RecordComputerSealed(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, env, checkpoint uuid.UUID, receipt *agentv1.ComputerSessionReceipt) error {
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockComputerHost(ctx, tx, host); err != nil {
+		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
 		r, err := lockCapture(ctx, tx, env, checkpoint)
 		if err != nil {
 			return err
 		}
-		if _, err = currentComputerLease(ctx, tx, host, env, r.Computer, r.SourceEpoch); err != nil {
+		if _, err = computer.CurrentLease(ctx, tx, host, env, r.Computer, r.SourceEpoch); err != nil {
 			return err
 		}
 		if receipt.GetCheckpointId() != checkpoint.String() || receipt.GetDesiredVersion() != r.Version || !receipt.GetFrozen() || receipt.GetInstalled() || receipt.GetActivationStarted() || receipt.GetActivated() || receipt.GetError() != "" {
@@ -130,14 +132,14 @@ type UnsealedCaptureEvidence struct {
 
 func CancelUnsealedComputerCapture(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, env, checkpoint uuid.UUID, evidence UnsealedCaptureEvidence) error {
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockComputerHost(ctx, tx, host); err != nil {
+		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
 		r, err := lockCapture(ctx, tx, env, checkpoint)
 		if err != nil {
 			return err
 		}
-		if _, err = currentComputerLease(ctx, tx, host, env, r.Computer, r.SourceEpoch); err != nil {
+		if _, err = computer.CurrentLease(ctx, tx, host, env, r.Computer, r.SourceEpoch); err != nil {
 			return err
 		}
 		if r.State == "cancelled" {

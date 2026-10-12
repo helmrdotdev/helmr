@@ -5,6 +5,8 @@ import (
 	"errors"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -20,7 +22,7 @@ func ObserveRecoveredHostComputers(ctx context.Context, database db.TxDB, host w
 		return ErrInvalidInput
 	}
 	type stoppedAllocation struct {
-		identity  ComputerLeaseIdentity
+		identity  computer.ComputerLeaseIdentity
 		hostEpoch int64
 	}
 	var allocations []stoppedAllocation

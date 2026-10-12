@@ -4,20 +4,22 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/jackc/pgx/v5"
 )
 
 func TestDeletedComputerStorageWaitsForCheckpointCleanup(t *testing.T) {
 	f := checkpointStorageForFixture(t, newAdmissionFixture(t))
-	if err := f.publisher.RegisterCheckpoint(t.Context(), f.ref, f.manifest); err != nil {
+	if err := f.checkpoints.RegisterCheckpoint(t.Context(), f.ref, f.manifest); err != nil {
 		t.Fatal(err)
 	}
 	f.upload(t)
 	if err := f.publish(t, f.save, f.manifest.Disk); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.publisher.CompleteCheckpoint(t.Context(), f.ref, f.manifest); err != nil {
+	if err := f.checkpoints.CompleteCheckpoint(t.Context(), f.ref, f.manifest); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE environment_id=$1;
@@ -25,7 +27,7 @@ func TestDeletedComputerStorageWaitsForCheckpointCleanup(t *testing.T) {
  UPDATE computers SET deleted_at=clock_timestamp() WHERE environment_id=$1 AND id=$2;
  UPDATE checkpoints SET status='lost',capture_request=NULL,terminal_evidence='Computer deletion retired continuation' WHERE environment_id=$1;
  UPDATE computer_leases SET status='releasing' WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.f.env, f.f.computer)
-	if err := ObserveComputerStopped(t.Context(), f.f.pool, *f.f.host(), ComputerLeaseIdentity{EnvironmentID: f.f.env, ComputerID: f.f.computer, InstanceID: f.f.computer, Epoch: 1}, uuid.Nil()); err != nil {
+	if err := ObserveComputerStopped(t.Context(), f.f.pool, *f.f.host(), computer.ComputerLeaseIdentity{EnvironmentID: f.f.env, ComputerID: f.f.computer, InstanceID: f.f.computer, Epoch: 1}, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	blocker, err := f.f.pool.Begin(t.Context())
@@ -36,7 +38,7 @@ func TestDeletedComputerStorageWaitsForCheckpointCleanup(t *testing.T) {
 	if _, err := blocker.Exec(t.Context(), `SELECT id FROM checkpoints WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, f.f.env, f.manifest.CheckpointID); err != nil {
 		t.Fatal(err)
 	}
-	if err := ReconcileComputerDiskRetention(t.Context(), f.f.pool); err != nil {
+	if err := computer.ReconcileComputerDiskRetention(t.Context(), f.f.pool); err != nil {
 		t.Fatal(err)
 	}
 	var retained bool
@@ -49,7 +51,7 @@ func TestDeletedComputerStorageWaitsForCheckpointCleanup(t *testing.T) {
 	if err := blocker.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := ReconcileComputerDiskRetention(t.Context(), f.f.pool); err != nil {
+	if err := computer.ReconcileComputerDiskRetention(t.Context(), f.f.pool); err != nil {
 		t.Fatal(err)
 	}
 	var released bool

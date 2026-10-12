@@ -4,16 +4,18 @@ import (
 	"errors"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/computer"
 )
 
 func startingSessionFixture(t *testing.T) (fixture, *Allocator, Execution) {
 	t.Helper()
-	f, a, computer := freshComputerAllocationFixture(t)
+	f, a, computerID := freshComputerAllocationFixture(t)
 	var session uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM sessions WHERE environment_id=$1 AND computer_id=$2`, f.env, computer).Scan(&session); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM sessions WHERE environment_id=$1 AND computer_id=$2`, f.env, computerID).Scan(&session); err != nil {
 		t.Fatal(err)
 	}
-	r, err := a.AllocateFreshComputer(t.Context(), f.env, computer, 1, f.worker)
+	r, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 1, f.worker)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +26,7 @@ func startingSessionFixture(t *testing.T) (fixture, *Allocator, Execution) {
 	if _, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), beforeReady); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("attachment before VM readiness: %v", err)
 	}
-	identity := ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computer, InstanceID: r.InstanceID, Epoch: r.Epoch}
+	identity := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
 	if _, err := a.DeliverComputer(t.Context(), *f.host(), identity); err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +37,7 @@ func startingSessionFixture(t *testing.T) (fixture, *Allocator, Execution) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Status != "starting" || p.ComputerID != computer || p.InstanceID != r.InstanceID {
+	if p.Status != "starting" || p.ComputerID != computerID || p.InstanceID != r.InstanceID {
 		t.Fatalf("wrong process allocation: %+v", p)
 	}
 	e := Execution{EnvironmentID: f.env, SessionID: session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.worker, WorkerEpoch: 1, AuthorityGeneration: 1}

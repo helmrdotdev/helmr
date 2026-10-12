@@ -9,6 +9,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -37,7 +39,7 @@ func (f fixture) enqueue(t *testing.T, key string) Admission {
 	}
 	return a
 }
-func (f fixture) finalize(t *testing.T, key string) (Admission, SaveRequest) {
+func (f fixture) finalize(t *testing.T, key string) (Admission, computer.SaveRequest) {
 	t.Helper()
 	a := f.enqueue(t, key)
 	id, err := dispatchTurnForTest(t.Context(), f.pool, f.execution())
@@ -53,10 +55,10 @@ func (f fixture) finalize(t *testing.T, key string) (Admission, SaveRequest) {
 	}
 	return a, s
 }
-func (f fixture) capture(t *testing.T, s SaveRequest, root string) {
+func (f fixture) capture(t *testing.T, s computer.SaveRequest, root string) {
 	t.Helper()
 
-	if err := recordCaptureForTest(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: s.ID, LeaseEpoch: s.LeaseEpoch, DiskRoot: root, Evidence: "verified flush and ordered cut receipt"}); err != nil {
+	if err := recordCaptureForTest(t.Context(), f.pool, computer.CaptureEvidence{EnvironmentID: f.env, SaveID: s.ID, LeaseEpoch: s.LeaseEpoch, DiskRoot: root, Evidence: "verified flush and ordered cut receipt"}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -172,7 +174,7 @@ func TestCompletionRequiresOwnSaveAndMonotonicHead(t *testing.T) {
 	storage := newSaveStorageFixture(t, f)
 	cut1, root1 := storage.cut(t, 2)
 	cut2, root2 := storage.cut(t, 3)
-	err := recordCaptureForTest(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: save2.ID, LeaseEpoch: 1, DiskRoot: root2, Evidence: "verified flush and ordered cut receipt"})
+	err := recordCaptureForTest(t.Context(), f.pool, computer.CaptureEvidence{EnvironmentID: f.env, SaveID: save2.ID, LeaseEpoch: 1, DiskRoot: root2, Evidence: "verified flush and ordered cut receipt"})
 	if !errors.Is(err, ErrNotReady) {
 		t.Fatalf("out of order capture: %v", err)
 	}

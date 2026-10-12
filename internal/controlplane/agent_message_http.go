@@ -2,11 +2,12 @@ package controlplane
 
 import (
 	"encoding/json"
+	"net/http"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"net/http"
 )
 
 func (s *Server) sendSessionHTTP(w http.ResponseWriter, r *http.Request) {

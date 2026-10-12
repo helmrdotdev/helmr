@@ -3,12 +3,15 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -24,7 +27,8 @@ type saveStorageFixture struct {
 	local, remote *cas.File
 	writer        blockformat.Writer
 	base          blockformat.Locator
-	publisher     *SavePublisher
+	publisher     *computer.SavePublisher
+	checkpoints   *CheckpointPublisher
 }
 
 // The initial-image producer is outside this save protocol. Bootstrap its exact
@@ -50,7 +54,7 @@ func newSaveStorageFixture(t *testing.T, f fixture) *saveStorageFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	object, err := describeSaveObject(blockformat.ObjectInspection{Pack: &inspected})
+	object, err := describeStoredObject(blockformat.ObjectInspection{Pack: &inspected})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,17 +79,21 @@ func newSaveStorageFixture(t *testing.T, f fixture) *saveStorageFixture {
 	}
 	writer.ActiveKey = writeKeyID.String()
 	writer.Keys[writeKeyID.String()] = bytes.Repeat([]byte{6}, 32)
-	p, err := NewSavePublisher(f.pool, remote)
+	p, err := computer.NewSavePublisher(f.pool, remote)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &saveStorageFixture{f: f, local: local, remote: remote, writer: writer, base: base, publisher: p}
+	checkpoints, err := NewCheckpointPublisher(f.pool, remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &saveStorageFixture{f: f, local: local, remote: remote, writer: writer, base: base, publisher: p, checkpoints: checkpoints}
 	s.uploadObject(t, object)
 	return s
 }
 
-func (s *saveStorageFixture) ref(save uuid.UUID) SavePublication {
-	return SavePublication{EnvironmentID: s.f.env, SaveID: save, LeaseEpoch: 1, Host: *s.f.host()}
+func (s *saveStorageFixture) ref(save uuid.UUID) computer.SavePublication {
+	return computer.SavePublication{EnvironmentID: s.f.env, SaveID: save, LeaseEpoch: 1, Host: *s.f.host()}
 }
 
 func (s *saveStorageFixture) cut(t *testing.T, value byte) (disk.VersionRoot, string) {
@@ -105,7 +113,7 @@ func (s *saveStorageFixture) cut(t *testing.T, value byte) (disk.VersionRoot, st
 	return result, identity
 }
 
-func (s *saveStorageFixture) uploadObject(t *testing.T, object saveObject) {
+func (s *saveStorageFixture) uploadObject(t *testing.T, object storedObject) {
 	t.Helper()
 	d := cas.Descriptor{Digest: object.digest, SizeBytes: object.size, MediaType: "application/octet-stream"}
 	file, err := s.local.OpenImmutable(t.Context(), d)
@@ -130,7 +138,7 @@ func (s *saveStorageFixture) inspect(t *testing.T, root disk.VersionRoot) []bloc
 	var result []blockformat.ObjectInspection
 	seen := map[string]bool{}
 	record := func(e blockformat.ObjectInspection) {
-		object, err := describeSaveObject(e)
+		object, err := describeStoredObject(e)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -163,11 +171,11 @@ func (s *saveStorageFixture) inspect(t *testing.T, root disk.VersionRoot) []bloc
 	return result
 }
 
-func (s *saveStorageFixture) certify(t *testing.T, ref SavePublication, root disk.VersionRoot) []blockformat.ObjectInspection {
+func (s *saveStorageFixture) certify(t *testing.T, ref computer.SavePublication, root disk.VersionRoot) []blockformat.ObjectInspection {
 	t.Helper()
 	inspections := s.inspect(t, root)
 	for _, e := range inspections {
-		object, err := describeSaveObject(e)
+		object, err := describeStoredObject(e)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -240,7 +248,7 @@ func TestSavePublicationRetryRestartAndLostAcknowledgement(t *testing.T) {
 		if err := s.publisher.Register(t.Context(), ref, e); err != nil {
 			t.Fatal(err)
 		}
-		object, _ := describeSaveObject(e)
+		object, _ := describeStoredObject(e)
 		s.uploadObject(t, object)
 		if err := s.publisher.Certify(t.Context(), ref, e); err != nil {
 			t.Fatal(err)
@@ -250,12 +258,12 @@ func TestSavePublicationRetryRestartAndLostAcknowledgement(t *testing.T) {
 	if err := s.publisher.Register(t.Context(), ref, e); err != nil {
 		t.Fatal(err)
 	}
-	object, _ := describeSaveObject(e)
+	object, _ := describeStoredObject(e)
 	s.uploadObject(t, object)
-	unavailable, _ := NewSavePublisher(f.pool, saveStatFunc(func(context.Context, string) (cas.Object, error) {
+	unavailable, _ := computer.NewSavePublisher(f.pool, saveStatFunc(func(context.Context, string) (cas.Object, error) {
 		return cas.Object{}, errors.New("temporarily unavailable")
 	}))
-	if err := unavailable.Certify(t.Context(), ref, e); !errors.Is(err, ErrSaveStorageUnavailable) {
+	if err := unavailable.Certify(t.Context(), ref, e); !errors.Is(err, computer.ErrSaveStorageUnavailable) {
 		t.Fatalf("transient storage: %v", err)
 	}
 	if err := savePublicationForTest(t.Context(), f.pool, f.env, save.ID, identity); !errors.Is(err, ErrNotReady) {
@@ -270,7 +278,7 @@ func TestSavePublicationRetryRestartAndLostAcknowledgement(t *testing.T) {
 	}
 	// The persistence service restarts, not the customer process or physical
 	// writer. Exact local/remote bytes, the Save and unexpired authority survive.
-	restarted, err := NewSavePublisher(f.pool, s.remote)
+	restarted, err := computer.NewSavePublisher(f.pool, s.remote)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,10 +369,10 @@ func TestSaveCertificationRechecksAuthorityAfterStorageIO(t *testing.T) {
 	if err := s.publisher.Register(t.Context(), ref, e); err != nil {
 		t.Fatal(err)
 	}
-	object, _ := describeSaveObject(e)
+	object, _ := describeStoredObject(e)
 	s.uploadObject(t, object)
 	entered, release := make(chan struct{}), make(chan struct{})
-	p, _ := NewSavePublisher(f.pool, saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
+	p, _ := computer.NewSavePublisher(f.pool, saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
 		close(entered)
 		<-release
 		return s.remote.Stat(ctx, digest)
@@ -411,7 +419,7 @@ func TestSavePublicationRejectsUncertifiedAndChangedGraph(t *testing.T) {
 		if err := s.publisher.Register(t.Context(), ref, e); err != nil {
 			t.Fatal(err)
 		}
-		object, _ := describeSaveObject(e)
+		object, _ := describeStoredObject(e)
 		s.uploadObject(t, object)
 		if err := s.publisher.Certify(t.Context(), ref, e); err != nil {
 			t.Fatal(err)
@@ -440,9 +448,9 @@ func TestSavePublicationRejectsUncertifiedAndChangedGraph(t *testing.T) {
 	if err := s.publisher.Publish(t.Context(), ref, root, "root not uploaded"); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("published uncertified root: %v", err)
 	}
-	object, _ := describeSaveObject(rootEvidence)
+	object, _ := describeStoredObject(rootEvidence)
 	s.uploadObject(t, object)
-	wrongStore, _ := NewSavePublisher(f.pool, saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
+	wrongStore, _ := computer.NewSavePublisher(f.pool, saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
 		obj, err := s.remote.Stat(ctx, digest)
 		obj.SizeBytes++
 		return obj, err
@@ -659,7 +667,7 @@ func TestSaveStorageRestoredSourceAndTransitiveKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = recordCaptureForTest(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: nextSave, LeaseEpoch: 2, DiskRoot: newIdentity, Evidence: "ordered cut on admitted restored disk"}); err != nil {
+	if err = recordCaptureForTest(t.Context(), f.pool, computer.CaptureEvidence{EnvironmentID: f.env, SaveID: nextSave, LeaseEpoch: 2, DiskRoot: newIdentity, Evidence: "ordered cut on admitted restored disk"}); err != nil {
 		t.Fatal(err)
 	}
 	s.certify(t, ref, newRoot)
@@ -749,7 +757,7 @@ func TestPublishedSaveReceiptSurvivesPayloadRetirement(t *testing.T) {
 	if err := savePublicationForTest(t.Context(), f.pool, f.env, save.ID, otherIdentity); !errors.Is(err, ErrConflict) {
 		t.Fatalf("retired receipt accepted different cut: %v", err)
 	}
-	if err := recordCaptureForTest(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: save.ID, LeaseEpoch: 1, DiskRoot: identity, Evidence: "capture retry"}); err != nil {
+	if err := recordCaptureForTest(t.Context(), f.pool, computer.CaptureEvidence{EnvironmentID: f.env, SaveID: save.ID, LeaseEpoch: 1, DiskRoot: identity, Evidence: "capture retry"}); err != nil {
 		t.Fatalf("retired receipt lost capture evidence: %v", err)
 	}
 	var retained bool
@@ -806,4 +814,29 @@ func TestLeaseDiskPinsRetainPendingCheckpointAfterSavePublication(t *testing.T) 
 	if err := releaseComputerLeaseDiskForTest(t.Context(), f.f.pool, f.f.env, f.f.computer, 1); err != nil {
 		t.Fatalf("settled continuation retained historical lease pins: %v", err)
 	}
+}
+
+// storedObject is the test's own view of an inspected storage object: the CAS
+// descriptor and the recorded inspection.
+type storedObject struct {
+	digest  string
+	size    int64
+	rank    int
+	encoded []byte
+}
+
+func describeStoredObject(e blockformat.ObjectInspection) (storedObject, error) {
+	var out storedObject
+	switch {
+	case e.Segment != nil:
+		out.digest, out.size = "sha256:"+hex.EncodeToString(e.Segment.Digest[:]), e.Segment.Size
+	case e.Pack != nil && len(e.Pack.Pages) > 0:
+		ref := e.Pack.Pages[0].Locator.Pack
+		out.digest, out.size, out.rank = "sha256:"+hex.EncodeToString(ref.Digest[:]), ref.Size, ref.Rank
+	default:
+		return out, errors.New("one object inspection is required")
+	}
+	raw, err := json.Marshal(e)
+	out.encoded = raw
+	return out, err
 }

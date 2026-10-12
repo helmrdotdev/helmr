@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/disk"
@@ -12,7 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
-func protectedPreparationAllocationFixture(t *testing.T) (preparationFixture, PreparationExecutor, *Allocator, string) {
+func protectedPreparationAllocationFixture(t *testing.T) (preparationFixture, computer.PreparationExecutor, *Allocator, string) {
 	t.Helper()
 	f, p, a := preparationAllocationFixture(t)
 	marker, err := secretbinding.Placeholder("protected")
@@ -25,7 +27,7 @@ func protectedPreparationAllocationFixture(t *testing.T) (preparationFixture, Pr
 	if err != nil {
 		t.Fatal(err)
 	}
-	delivery, err := a.DeliverPreparation(t.Context(), *f.host(), PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: allocation.InstanceID, Epoch: allocation.Epoch})
+	delivery, err := a.DeliverPreparation(t.Context(), *f.host(), computer.PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: allocation.InstanceID, Epoch: allocation.Epoch})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,31 +36,31 @@ func protectedPreparationAllocationFixture(t *testing.T) (preparationFixture, Pr
 
 func TestPreparationProxyAllocationReusesTrustAndPinsExposure(t *testing.T) {
 	f, ref, a, marker := protectedPreparationAllocationFixture(t)
-	capture, err := CapturePreparationProxyTrust(t.Context(), f.pool, *f.host(), ref.InstanceID)
+	capture, err := computer.CapturePreparationProxyTrust(t.Context(), f.pool, *f.host(), ref.InstanceID)
 	if err != nil || capture.Env["TOKEN"] != marker || len(capture.Env) != 1 || len(capture.Trust.Certificate) == 0 {
 		t.Fatalf("public trust capture: %+v %v", capture.Env, err)
 	}
 	if _, err := a.AllocatePreparation(t.Context(), f.env, ref.PreparationID, f.worker); err != nil {
 		t.Fatal(err)
 	}
-	replay, err := CapturePreparationProxyTrust(t.Context(), f.pool, *f.host(), ref.InstanceID)
+	replay, err := computer.CapturePreparationProxyTrust(t.Context(), f.pool, *f.host(), ref.InstanceID)
 	if err != nil || !bytes.Equal(capture.Trust.Certificate, replay.Trust.Certificate) || !bytes.Equal(capture.Trust.PrivateKeyCiphertext, replay.Trust.PrivateKeyCiphertext) {
 		t.Fatal("retry replaced trust")
 	}
 	resolve := func(origin string, markers []string) error {
-		_, err := CapturePreparationProtectedSecrets(t.Context(), f.pool, *f.host(), ref.InstanceID, origin, markers)
+		_, err := computer.CapturePreparationProtectedSecrets(t.Context(), f.pool, *f.host(), ref.InstanceID, origin, markers)
 		return err
 	}
 	if err := resolve("https://api.example.com", []string{marker}); !errors.Is(err, ErrDenied) {
 		t.Fatalf("value available before exposure commit: %v", err)
 	}
-	if _, err := RecordPreparationExposure(t.Context(), f.pool, *f.host(), ref); err != nil {
+	if _, err := computer.RecordPreparationExposure(t.Context(), f.pool, *f.host(), ref); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.secrets.Rotate(t.Context(), f.env, f.secretID, []byte("v2"), "rotate-proxy"); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := CapturePreparationProtectedSecrets(t.Context(), f.pool, *f.host(), ref.InstanceID, "https://api.example.com", []string{marker})
+	rows, err := computer.CapturePreparationProtectedSecrets(t.Context(), f.pool, *f.host(), ref.InstanceID, "https://api.example.com", []string{marker})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,10 +85,10 @@ func TestPreparationProxyAllocationReusesTrustAndPinsExposure(t *testing.T) {
 	}
 	stale := *f.host()
 	stale.HostClaimVersion++
-	if _, err := CapturePreparationProxyTrust(t.Context(), f.pool, stale, ref.InstanceID); !errors.Is(err, workergroup.ErrStaleClaims) {
+	if _, err := computer.CapturePreparationProxyTrust(t.Context(), f.pool, stale, ref.InstanceID); !errors.Is(err, workergroup.ErrStaleClaims) {
 		t.Fatalf("stale CA claims: %v", err)
 	}
-	if _, err := CapturePreparationProtectedSecrets(t.Context(), f.pool, stale, ref.InstanceID, "https://api.example.com", []string{marker}); !errors.Is(err, workergroup.ErrStaleClaims) {
+	if _, err := computer.CapturePreparationProtectedSecrets(t.Context(), f.pool, stale, ref.InstanceID, "https://api.example.com", []string{marker}); !errors.Is(err, workergroup.ErrStaleClaims) {
 		t.Fatalf("stale value claims: %v", err)
 	}
 	if _, err := f.secrets.Revoke(t.Context(), f.env, f.secretID, "revoke-proxy"); err != nil {
@@ -107,12 +109,12 @@ func TestPreparationProxyClosesAuthorityAndClearsSigner(t *testing.T) {
 	for _, transition := range []string{"capture", "failure", "physical stop", "deadline", "host epoch", "revocation"} {
 		t.Run(transition, func(t *testing.T) {
 			f, ref, _, marker := protectedPreparationAllocationFixture(t)
-			if _, err := RecordPreparationExposure(t.Context(), f.pool, *f.host(), ref); err != nil {
+			if _, err := computer.RecordPreparationExposure(t.Context(), f.pool, *f.host(), ref); err != nil {
 				t.Fatal(err)
 			}
 			switch transition {
 			case "capture":
-				broker, _ := NewPreparationKeyBroker(f.pool, preparationWrapper(t))
+				broker, _ := computer.NewPreparationKeyBroker(f.pool, preparationWrapper(t))
 				key, err := broker.WriteKey(t.Context(), *f.host(), ref)
 				if err != nil {
 					t.Fatal(err)
@@ -122,7 +124,7 @@ func TestPreparationProxyClosesAuthorityAndClearsSigner(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				publisher, err := NewPreparationPublisher(f.pool, remote)
+				publisher, err := computer.NewPreparationPublisher(f.pool, remote)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -130,11 +132,11 @@ func TestPreparationProxyClosesAuthorityAndClearsSigner(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "failure":
-				if err := FailPreparation(t.Context(), f.pool, *f.host(), ref, "preparation_failed"); err != nil {
+				if err := computer.FailPreparation(t.Context(), f.pool, *f.host(), ref, "preparation_failed"); err != nil {
 					t.Fatal(err)
 				}
 			case "physical stop":
-				if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), PreparationIdentity{EnvironmentID: ref.EnvironmentID, PreparationID: ref.PreparationID, InstanceID: ref.InstanceID, Epoch: ref.Epoch}); err != nil {
+				if err := computer.ObservePreparationStopped(t.Context(), f.pool, *f.host(), computer.PreparationIdentity{EnvironmentID: ref.EnvironmentID, PreparationID: ref.PreparationID, InstanceID: ref.InstanceID, Epoch: ref.Epoch}); err != nil {
 					t.Fatal(err)
 				}
 			case "deadline":
@@ -155,10 +157,10 @@ func TestPreparationProxyClosesAuthorityAndClearsSigner(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, err := CapturePreparationProxyTrust(t.Context(), f.pool, *f.host(), ref.InstanceID); !errors.Is(err, ErrDenied) {
+			if _, err := computer.CapturePreparationProxyTrust(t.Context(), f.pool, *f.host(), ref.InstanceID); !errors.Is(err, ErrDenied) {
 				t.Fatalf("closed authority leaf: %v", err)
 			}
-			if _, err := CapturePreparationProtectedSecrets(t.Context(), f.pool, *f.host(), ref.InstanceID, "https://api.example.com", []string{marker}); !errors.Is(err, ErrDenied) {
+			if _, err := computer.CapturePreparationProtectedSecrets(t.Context(), f.pool, *f.host(), ref.InstanceID, "https://api.example.com", []string{marker}); !errors.Is(err, ErrDenied) {
 				t.Fatalf("closed authority value: %v", err)
 			}
 			var cleared, unfenced bool

@@ -7,21 +7,18 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 	"unicode/utf8"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
 	"github.com/helmrdotdev/helmr/internal/lifetime"
-	"github.com/helmrdotdev/helmr/internal/secretbinding"
 
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/disk"
-	"github.com/helmrdotdev/helmr/internal/secret"
-	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -41,20 +38,16 @@ type StartRequest struct {
 	Input          json.RawMessage
 }
 
-type ComputerTrustIssuer interface {
-	GenerateProxyTrust(environmentID, computerID uuid.UUID, createdAt time.Time) (secret.ProxyTrust, error)
-}
-
-func Start(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIssuer, caller Caller, req StartRequest) (Admission, error) {
+func Start(ctx context.Context, pool db.TxBeginner, trust computer.ComputerTrustIssuer, caller Caller, req StartRequest) (Admission, error) {
 	return admitSession(ctx, pool, trust, caller, req, "create")
 }
-func Spawn(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIssuer, caller Caller, req StartRequest) (Admission, error) {
+func Spawn(ctx context.Context, pool db.TxBeginner, trust computer.ComputerTrustIssuer, caller Caller, req StartRequest) (Admission, error) {
 	return admitSession(ctx, pool, trust, caller, req, "spawn")
 }
 
 // Creation commits a durable Session receipt, optionally with its first Turn and
 // Computer admission. Empty Sessions pin code without allocating execution.
-func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIssuer, caller Caller, req StartRequest, method string) (Admission, error) {
+func admitSession(ctx context.Context, pool db.TxBeginner, trust computer.ComputerTrustIssuer, caller Caller, req StartRequest, method string) (Admission, error) {
 	if !req.CloseAfterIdle.Valid() || req.EnvironmentID == uuid.Nil() || !definition.ValidDeclaredID(req.Agent) || len(req.IdempotencyKey) > 512 || !utf8.ValidString(req.IdempotencyKey) || strings.ContainsRune(req.IdempotencyKey, 0) || (req.SessionKey != nil && (len(*req.SessionKey) == 0 || len(*req.SessionKey) > 512 || !utf8.ValidString(*req.SessionKey) || strings.ContainsRune(*req.SessionKey, 0))) {
 		return Admission{}, ErrInvalidInput
 	}
@@ -212,9 +205,9 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 		} else if req.SlackChannelID != nil {
 			return slackroute.ErrConversationChanged
 		}
-		computer := req.ComputerID
-		if computer == uuid.Nil() && hasInput {
-			computer, err = createAdmissionComputer(ctx, tx, trust, req.EnvironmentID, deployment, templateKey, policy)
+		computerID := req.ComputerID
+		if computerID == uuid.Nil() && hasInput {
+			computerID, err = computer.CreateForAdmission(ctx, tx, trust, req.EnvironmentID, deployment, templateKey, policy.computerLimits())
 			if err != nil {
 				return err
 			}
@@ -223,8 +216,8 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 		if caller.Kind == "session" {
 			callerIDs = append(callerIDs, caller.ID)
 		}
-		if computer != uuid.Nil() {
-			computerIDs = append(computerIDs, computer)
+		if computerID != uuid.Nil() {
+			computerIDs = append(computerIDs, computerID)
 		}
 		locked, err := lockSessionsAndComputers(ctx, tx, req.EnvironmentID, callerIDs, computerIDs)
 		if err != nil {
@@ -237,13 +230,13 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 		} else if err = authorizeStart(ctx, tx, caller, req.EnvironmentID); err != nil {
 			return err
 		}
-		if computer != uuid.Nil() {
-			if err = computerAcceptsAdmission(ctx, tx, req.EnvironmentID, computer, true); err != nil {
+		if computerID != uuid.Nil() {
+			if err = computerAcceptsAdmission(ctx, tx, req.EnvironmentID, computerID, true); err != nil {
 				return err
 			}
 			if req.ComputerID != uuid.Nil() {
 				var profile string
-				if err = tx.QueryRow(ctx, `SELECT spec.seed->>'profile' FROM computers c JOIN image_specs spec ON (spec.environment_id,spec.id)=(c.environment_id,c.image_spec_id) WHERE c.environment_id=$1 AND c.id=$2`, req.EnvironmentID, computer).Scan(&profile); err != nil {
+				if err = tx.QueryRow(ctx, `SELECT spec.seed->>'profile' FROM computers c JOIN image_specs spec ON (spec.environment_id,spec.id)=(c.environment_id,c.image_spec_id) WHERE c.environment_id=$1 AND c.id=$2`, req.EnvironmentID, computerID).Scan(&profile); err != nil {
 					return err
 				}
 				if profile != definition.ComputerSeedProfile {
@@ -281,7 +274,7 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 			}
 		}
 		if _, err = tx.Exec(ctx, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,origin_turn_id,causal_depth,key,close_after_idle_ms,history_retention_mode,history_retention_seconds,creation_caller_kind,creation_caller_id,creation_method,creation_idempotency_key,creation_digest,creation_turn_id,idle_since,next_turn_seq)
- SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,history_retention_mode,history_retention_seconds,$13,$14,$15,NULLIF($16,''),$17,$18,CASE WHEN $18::uuid IS NULL THEN clock_timestamp() END,CASE WHEN $18::uuid IS NULL THEN 1 ELSE 2 END FROM environments WHERE id=$1`, req.EnvironmentID, result.SessionID, agentID, deployment, nullableID(computer), root, parent, requester, origin, causal, req.SessionKey, result.CloseAfterIdleMs, caller.Kind, caller.ID, method, req.IdempotencyKey, digest[:], nullableID(result.TurnID)); err != nil {
+ SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,history_retention_mode,history_retention_seconds,$13,$14,$15,NULLIF($16,''),$17,$18,CASE WHEN $18::uuid IS NULL THEN clock_timestamp() END,CASE WHEN $18::uuid IS NULL THEN 1 ELSE 2 END FROM environments WHERE id=$1`, req.EnvironmentID, result.SessionID, agentID, deployment, nullableID(computerID), root, parent, requester, origin, causal, req.SessionKey, result.CloseAfterIdleMs, caller.Kind, caller.ID, method, req.IdempotencyKey, digest[:], nullableID(result.TurnID)); err != nil {
 			return err
 		}
 		if parent != nil {
@@ -299,7 +292,7 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIs
 			}
 		}
 		if hasInput {
-			if _, err = tx.Exec(ctx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,idempotency_key,request_digest,input,origin_turn_id) VALUES($1,$2,$3,$4,1,$5,$6,$7,$8,NULLIF($9,''),$10,$11,$12)`, req.EnvironmentID, result.TurnID, result.SessionID, computer, caller.Kind, caller.ID, method, agentID, req.IdempotencyKey, digest[:], req.Input, nullableID(caller.TurnID)); err != nil {
+			if _, err = tx.Exec(ctx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,idempotency_key,request_digest,input,origin_turn_id) VALUES($1,$2,$3,$4,1,$5,$6,$7,$8,NULLIF($9,''),$10,$11,$12)`, req.EnvironmentID, result.TurnID, result.SessionID, computerID, caller.Kind, caller.ID, method, agentID, req.IdempotencyKey, digest[:], req.Input, nullableID(caller.TurnID)); err != nil {
 				return err
 			}
 		}
@@ -380,115 +373,14 @@ func authorizeStart(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UUID
 	return nil
 }
 
-func computerAcceptsAdmission(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, newPlacement bool) error {
+func computerAcceptsAdmission(ctx context.Context, tx pgx.Tx, env, computerID uuid.UUID, newPlacement bool) error {
 	var available bool
-	if err := tx.QueryRow(ctx, `SELECT preparation_failed_at IS NULL AND deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2) AND (NOT $3 OR (integrity_fault_at IS NULL AND (initial_root_id IS NOT NULL OR preparation_deadline_at>clock_timestamp()))) FROM computers WHERE environment_id=$1 AND id=$2`, env, computer, newPlacement).Scan(&available); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT preparation_failed_at IS NULL AND deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2) AND (NOT $3 OR (integrity_fault_at IS NULL AND (initial_root_id IS NOT NULL OR preparation_deadline_at>clock_timestamp()))) FROM computers WHERE environment_id=$1 AND id=$2`, env, computerID, newPlacement).Scan(&available); err != nil {
 		return err
 	}
 	if !available {
 		return ErrNotReady
 	}
-	_, err := tx.Exec(ctx, `UPDATE computers SET unused_since=NULL WHERE environment_id=$1 AND id=$2`, env, computer)
+	_, err := tx.Exec(ctx, `UPDATE computers SET unused_since=NULL WHERE environment_id=$1 AND id=$2`, env, computerID)
 	return err
-}
-
-func createAdmissionComputer(ctx context.Context, tx pgx.Tx, trust ComputerTrustIssuer, env, deployment uuid.UUID, key string, policy admissionEnvironment) (uuid.UUID, error) {
-	return createComputer(ctx, tx, trust, env, deployment, key, policy, nil)
-}
-
-// CreateStandaloneComputer joins the external owner's transaction. Explicit
-// runtime bindings are actual-Computer declarations; Agent-created Computers
-// instead copy their immutable definition bindings. Both share preparation,
-// trust, resource validation and reservation admission.
-func CreateStandaloneComputer(ctx context.Context, tx pgx.Tx, trust ComputerTrustIssuer, env, deployment uuid.UUID, key string, bindings []secretbinding.Reference) (uuid.UUID, error) {
-	policy, err := lockAdmissionEnvironment(ctx, tx, env)
-	if err != nil {
-		return uuid.Nil(), err
-	}
-	if bindings == nil {
-		bindings = []secretbinding.Reference{}
-	}
-	return createComputer(ctx, tx, trust, env, deployment, key, policy, &bindings)
-}
-
-func createComputer(ctx context.Context, tx pgx.Tx, trust ComputerTrustIssuer, env, deployment uuid.UUID, key string, policy admissionEnvironment, explicit *[]secretbinding.Reference) (uuid.UUID, error) {
-	var spec, template uuid.UUID
-	var cpuMillis, memoryBytes int64
-	var diskBytes *int64
-	var seed []byte
-	var maxAge, deleteUnused *int64
-	var deleteNever bool
-	if err := tx.QueryRow(ctx, `SELECT d.template_id,d.image_spec_id,d.cpu_millis,d.memory_bytes,d.disk_bytes,d.max_image_age_ms,s.seed,d.delete_after_unused_ms,d.delete_after_unused_never FROM template_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) JOIN image_specs s ON (s.environment_id,s.id)=(d.environment_id,d.image_spec_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND t.key=$3`, env, deployment, key).Scan(&template, &spec, &cpuMillis, &memoryBytes, &diskBytes, &maxAge, &seed, &deleteUnused, &deleteNever); err != nil {
-		return uuid.Nil(), err
-	}
-	var base definition.ComputerSeedManifest
-	if json.Unmarshal(seed, &base) != nil || base.Profile != definition.ComputerSeedProfile {
-		return uuid.Nil(), ErrInvalidInput
-	}
-	physicalCPU, err := vm.ReservedCPUMillis(cpuMillis)
-	if err != nil || (diskBytes != nil && *diskBytes != disk.SeedCapacity) || physicalCPU > policy.maxCPU || memoryBytes > policy.maxMemory || disk.SeedCapacity > policy.maxStorage {
-		return uuid.Nil(), ErrInvalidInput
-	}
-	var reserved int64
-	if err := tx.QueryRow(ctx, `SELECT COALESCE(sum(storage_reservation_bytes),0) FROM computers WHERE environment_id=$1`, env).Scan(&reserved); err != nil {
-		return uuid.Nil(), err
-	}
-	if reserved > policy.maxStorage-disk.SeedCapacity {
-		return uuid.Nil(), ErrNotReady
-	}
-	id := uuid.NewV7()
-	if _, err := tx.Exec(ctx, `INSERT INTO computers(environment_id,id,image_spec_id,origin_deployment_id,origin_template_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes,preparation_deadline_at,preparation_max_age_ms,delete_after_unused_ms) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,clock_timestamp()+$10*interval '1 millisecond',$11,$12)`, env, id, spec, deployment, template, cpuMillis, memoryBytes, diskBytes, disk.SeedCapacity, policy.preparationTimeout, maxAge, lifetime.Resolve(lifetime.Policy{}, deleteUnused, deleteNever)); err != nil {
-		return uuid.Nil(), err
-	}
-	if explicit == nil {
-		if err := copyDefinitionSecretBindings(ctx, tx, env, deployment, template, id); err != nil {
-			return uuid.Nil(), err
-		}
-	} else {
-		resolved, err := resolveSecretReferences(ctx, tx, env, *explicit)
-		if err != nil {
-			return uuid.Nil(), err
-		}
-		bindings, err := registrationSecretBindings(*explicit, resolved, nil, nil, nil)
-		if err != nil {
-			return uuid.Nil(), err
-		}
-		for i := range bindings {
-			bindings[i].Computer = &id
-		}
-		if err = registerSecretBindings(ctx, tx, env, bindings); err != nil {
-			return uuid.Nil(), err
-		}
-	}
-
-	var protected bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM secret_bindings WHERE environment_id=$1 AND computer_id=$2 AND mode='protected')`, env, id).Scan(&protected); err != nil {
-		return uuid.Nil(), err
-	}
-	if protected {
-		if trust == nil {
-			return uuid.Nil(), ErrNotReady
-		}
-		var createdAt time.Time
-		if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&createdAt); err != nil {
-			return uuid.Nil(), err
-		}
-		material, err := trust.GenerateProxyTrust(env, id, createdAt)
-		if err != nil {
-			return uuid.Nil(), err
-		}
-		if _, err = tx.Exec(ctx, `UPDATE computers SET proxy_ca_certificate=$3,proxy_ca_not_after=$4,proxy_ca_private_key_nonce=$5,proxy_ca_private_key_ciphertext=$6 WHERE environment_id=$1 AND id=$2`, env, id, material.Certificate, material.NotAfter, material.PrivateKeyNonce, material.PrivateKeyCiphertext); err != nil {
-			return uuid.Nil(), err
-		}
-	}
-
-	if _, err := pinComputerImage(ctx, tx, env, id); err == nil {
-		return id, nil
-	} else if !errors.Is(err, ErrNotReady) {
-		return uuid.Nil(), err
-	}
-	if _, err := attachComputerPreparation(ctx, tx, env, id); err != nil && !errors.Is(err, ErrNotReady) {
-		return uuid.Nil(), err
-	}
-	return id, nil
 }

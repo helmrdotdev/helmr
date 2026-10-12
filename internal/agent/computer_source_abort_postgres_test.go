@@ -6,6 +6,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
@@ -177,7 +179,7 @@ func TestSourceAbortPreservesRecordedDiskCutAndLaterCancelledPeer(t *testing.T) 
 	storage := newSaveStorageFixture(t, f)
 	p, save := sourceAbort(t, f)
 	cut, root := storage.cut(t, 4)
-	if err := recordCaptureForTest(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: save, LeaseEpoch: 1, DiskRoot: root, Evidence: "coherent frozen cut"}); err != nil {
+	if err := recordCaptureForTest(t.Context(), f.pool, computer.CaptureEvidence{EnvironmentID: f.env, SaveID: save, LeaseEpoch: 1, DiskRoot: root, Evidence: "coherent frozen cut"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err != nil {
@@ -300,7 +302,7 @@ func TestSourceAbortSaveAbsenceRacesCapture(t *testing.T) {
 	}()
 	go func() {
 		<-start
-		results <- recordCaptureForTest(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: save, LeaseEpoch: 1, DiskRoot: p.BaseComputerDiskVersionId, Evidence: "original disk cut receipt"})
+		results <- recordCaptureForTest(t.Context(), f.pool, computer.CaptureEvidence{EnvironmentID: f.env, SaveID: save, LeaseEpoch: 1, DiskRoot: p.BaseComputerDiskVersionId, Evidence: "original disk cut receipt"})
 	}()
 	close(start)
 	a, b := <-results, <-results

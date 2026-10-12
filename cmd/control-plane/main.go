@@ -260,14 +260,14 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	casReclaimer, err := agent.NewCASReclaimer(pool, casStore, log)
+	casReclaimer, err := computer.NewCASReclaimer(pool, casStore, log)
 	if err != nil {
 		return fmt.Errorf("configure CAS reclamation: %w", err)
 	}
 
 	workflows := []backgroundWorkflow{
 		{name: "CAS reclamation", run: casReclaimer.Run},
-		{name: "Computer disk retention", run: func(ctx context.Context) error { return agent.RunComputerDiskRetention(ctx, pool, log) }},
+		{name: "Computer disk retention", run: func(ctx context.Context) error { return computer.RunComputerDiskRetention(ctx, pool, log) }},
 		{name: "allocation", run: func(ctx context.Context) error { return allocator.Run(ctx, log) }},
 		{name: "commands", run: func(ctx context.Context) error { return command.ReconcileCommands(ctx, pool, log) }},
 		{name: "Session history retention", run: func(ctx context.Context) error { return agent.RunSessionHistoryRetention(ctx, pool, log) }},
@@ -406,7 +406,7 @@ func runMigrate(log *slog.Logger, args []string) error {
 
 // Provider selection is explicit; a managed provider failure never selects local
 // wrapping material. The key ARN fixes the regional KMS endpoint.
-func configuredComputerKeys(ctx context.Context, cfg config.ControlPlane) (agent.DataKeyWrapper, error) {
+func configuredComputerKeys(ctx context.Context, cfg config.ControlPlane) (computer.DataKeyWrapper, error) {
 	switch cfg.DeploymentMode {
 	case config.DeploymentModeSelfHosted:
 		return computerkey.NewLocal(cfg.ComputerWrappingKeyID, cfg.ComputerWrappingKey)

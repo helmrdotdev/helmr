@@ -5,6 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os/exec"
+	"path/filepath"
+	"testing"
+	"time"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -15,13 +23,6 @@ import (
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
-	"net/http"
-	"net/http/httptest"
-	"os/exec"
-	"path/filepath"
-	"testing"
-	"time"
-	"uuid"
 )
 
 func TestWorkerAgentMessageReceiptSurvivesReattachment(t *testing.T) {

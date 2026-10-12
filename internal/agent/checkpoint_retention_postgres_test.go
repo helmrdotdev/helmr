@@ -3,6 +3,8 @@ package agent
 import (
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
@@ -17,12 +19,12 @@ func TestCheckpointRetentionRequiresBothPhysicalClosures(t *testing.T) {
 			t.Fatalf("checkpoint objects=%d want=%d error=%v", got, count, err)
 		}
 	}
-	if err := ReconcileComputerDiskRetention(t.Context(), f.f.pool); err != nil {
+	if err := computer.ReconcileComputerDiskRetention(t.Context(), f.f.pool); err != nil {
 		t.Fatal(err)
 	}
 	assertObjects(4)
 	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='target physical closure' WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, f.f.env, f.f.computer, f.epoch)
-	if err := ReconcileComputerDiskRetention(t.Context(), f.f.pool); err != nil {
+	if err := computer.ReconcileComputerDiskRetention(t.Context(), f.f.pool); err != nil {
 		t.Fatal(err)
 	}
 	assertObjects(0)
@@ -42,7 +44,7 @@ func TestCheckpointRetentionKeepsUnreconciledConsumedImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='target physical closure' WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, f.f.env, f.f.computer, f.epoch)
-	if err := ReconcileComputerDiskRetention(t.Context(), f.f.pool); err != nil {
+	if err := computer.ReconcileComputerDiskRetention(t.Context(), f.f.pool); err != nil {
 		t.Fatal(err)
 	}
 	var count int
@@ -54,7 +56,7 @@ func TestCheckpointRetentionKeepsUnreconciledConsumedImage(t *testing.T) {
 func TestCheckpointRetentionDoesNotTreatLostSourceAsStopped(t *testing.T) {
 	f := readyCheckpointFixture(t)
 	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE checkpoints SET status='lost',capture_request=NULL,terminal_evidence='logical source loss' WHERE environment_id=$1 AND id=$2`, f.f.env, f.manifest.CheckpointID)
-	if err := ReconcileComputerDiskRetention(t.Context(), f.f.pool); err != nil {
+	if err := computer.ReconcileComputerDiskRetention(t.Context(), f.f.pool); err != nil {
 		t.Fatal(err)
 	}
 	var count int
@@ -78,7 +80,7 @@ func TestCheckpointRetentionPreservesConsumedManifestAfterUnpinning(t *testing.T
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, ctx, f.f.pool, `UPDATE computer_leases SET status='released',fenced_at=clock_timestamp(),fence_evidence='target physical closure' WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, f.f.env, f.f.computer, f.epoch)
-	if err := ReconcileComputerDiskRetention(ctx, f.f.pool); err != nil {
+	if err := computer.ReconcileComputerDiskRetention(ctx, f.f.pool); err != nil {
 		t.Fatal(err)
 	}
 	expected, err := f.manifest.Encode()

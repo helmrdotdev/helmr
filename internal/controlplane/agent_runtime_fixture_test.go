@@ -7,6 +7,8 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -63,17 +65,17 @@ func closeRuntimeProcessing(t *testing.T, pool db.TxBeginner, e agent.Execution,
 	return agent.RuntimeCloseProcessing(t.Context(), pool, fixtureHostFor(t, pool, e), e, turn)
 }
 
-func finalizeRuntimeTurn(t *testing.T, pool db.TxBeginner, e agent.Execution, turn uuid.UUID, result json.RawMessage, evidence string) (agent.SaveRequest, error) {
+func finalizeRuntimeTurn(t *testing.T, pool db.TxBeginner, e agent.Execution, turn uuid.UUID, result json.RawMessage, evidence string) (computer.SaveRequest, error) {
 	t.Helper()
 	if _, err := agent.RuntimeFinalize(t.Context(), pool, fixtureHostFor(t, pool, e), e, turn, result, evidence); err != nil {
-		return agent.SaveRequest{}, err
+		return computer.SaveRequest{}, err
 	}
-	var save agent.SaveRequest
+	var save computer.SaveRequest
 	err := db.RunTx(t.Context(), pool, func(tx pgx.Tx) error {
 		return tx.QueryRow(t.Context(), `SELECT id,computer_id,computer_lease_epoch,seq,requested_at FROM computer_saves WHERE environment_id=$1 AND turn_id=$2`, e.EnvironmentID, turn).Scan(&save.ID, &save.ComputerID, &save.LeaseEpoch, &save.Sequence, &save.RequestedAt)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return agent.SaveRequest{}, agent.ErrNotReady
+		return computer.SaveRequest{}, agent.ErrNotReady
 	}
 	return save, err
 }
@@ -84,7 +86,7 @@ func finalizeRuntimeTurn(t *testing.T, pool db.TxBeginner, e agent.Execution, tu
 // host does and returns the write key it may encrypt captures with. The shared
 // fixture seeds the Computer's initial data key with a placeholder envelope, so
 // the seeded rows are first re-wrapped under the fixture wrapper.
-func bindFixtureLeaseDisk(t *testing.T, pool *pgxpool.Pool, host workergroup.HostPrincipal, env, computer uuid.UUID, epoch int64) (uuid.UUID, []byte) {
+func bindFixtureLeaseDisk(t *testing.T, pool *pgxpool.Pool, host workergroup.HostPrincipal, env, computerID uuid.UUID, epoch int64) (uuid.UUID, []byte) {
 	t.Helper()
 	wrapper := fixtureKeyWrapper(t)
 	var org string
@@ -111,11 +113,11 @@ func bindFixtureLeaseDisk(t *testing.T, pool *pgxpool.Pool, host workergroup.Hos
 		}
 		dbtest.MustExec(t, t.Context(), pool, `UPDATE disk_encryption_keys SET wrapping_key_id=$3,wrapped_key=$4 WHERE environment_id=$1 AND id=$2`, env, id, envelope.WrappingKeyID, envelope.Ciphertext)
 	}
-	broker, err := agent.NewComputerKeyBroker(pool, wrapper)
+	broker, err := computer.NewComputerKeyBroker(pool, wrapper)
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := broker.Source(t.Context(), host, agent.ComputerLeaseIdentity{EnvironmentID: env, ComputerID: computer, InstanceID: computer, Epoch: epoch})
+	source, err := broker.Source(t.Context(), host, computer.ComputerLeaseIdentity{EnvironmentID: env, ComputerID: computerID, InstanceID: computerID, Epoch: epoch})
 	if err != nil {
 		t.Fatal(err)
 	}

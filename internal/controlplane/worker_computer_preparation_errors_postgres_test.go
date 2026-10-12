@@ -8,17 +8,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/computerkey"
 )
 
 type rejectedPreparationKeys struct {
-	agent.DataKeyWrapper
+	computer.DataKeyWrapper
 	failure          string
 	returned, copies [][]byte
 }

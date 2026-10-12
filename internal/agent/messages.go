@@ -8,6 +8,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -21,7 +23,7 @@ type SendReceipt struct {
 }
 
 // RouteSlackInput applies the Slack integration policy under one destination lock.
-func RouteSlackInput(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIssuer, caller Caller, req EnqueueRequest) (SendReceipt, error) {
+func RouteSlackInput(ctx context.Context, pool db.TxBeginner, trust computer.ComputerTrustIssuer, caller Caller, req EnqueueRequest) (SendReceipt, error) {
 	return admitSessionInput(ctx, pool, trust, caller, req, "slack_route", uuid.Nil())
 }
 func SendTurn(ctx context.Context, pool db.TxBeginner, caller Caller, req EnqueueRequest, turn uuid.UUID) (SendReceipt, error) {

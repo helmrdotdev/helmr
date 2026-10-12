@@ -28,7 +28,7 @@ func (s *Server) workerAgentListComputers(w http.ResponseWriter, r *http.Request
 		}
 		page.After = &computer.ListPosition{CreatedAt: cursor.CreatedAt, ID: uuid.MustParse(cursor.ID)}
 	}
-	listing, scope, err := computer.ListRuntime(r.Context(), s.tx, caller, page)
+	listing, scope, err := agent.RuntimeListComputers(r.Context(), s.tx, caller, page)
 	if err != nil {
 		s.writeAgentAdmissionError(w, requestID, err)
 		return

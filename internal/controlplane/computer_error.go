@@ -2,9 +2,10 @@ package controlplane
 
 import (
 	"errors"
+	"net/http"
+
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
-	"net/http"
 )
 
 var errComputerAuthorityUnavailable = errors.New("computer authority is unavailable")

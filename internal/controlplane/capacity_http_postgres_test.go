@@ -2,9 +2,6 @@ package controlplane
 
 import (
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
-	"github.com/helmrdotdev/helmr/internal/version"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +9,10 @@ import (
 	"strings"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
+	"github.com/helmrdotdev/helmr/internal/version"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )

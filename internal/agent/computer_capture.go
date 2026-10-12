@@ -6,8 +6,9 @@ import (
 	"crypto/sha256"
 	"errors"
 	"slices"
-	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
@@ -50,14 +51,14 @@ func BeginComputerCapture(ctx context.Context, pool db.TxBeginner, host workergr
 		return result, ErrInvalidInput
 	}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockComputerHost(ctx, tx, host); err != nil {
+		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
 		members, err := lockComputerMembers(ctx, tx, req.EnvironmentID, req.ComputerID)
 		if err != nil {
 			return err
 		}
-		lease, err := currentComputerLease(ctx, tx, host, req.EnvironmentID, req.ComputerID, req.LeaseEpoch)
+		lease, err := computer.CurrentLease(ctx, tx, host, req.EnvironmentID, req.ComputerID, req.LeaseEpoch)
 		if err != nil {
 			return err
 		}
@@ -65,7 +66,7 @@ func BeginComputerCapture(ctx context.Context, pool db.TxBeginner, host workergr
 		if !bytes.Equal(lease.CredentialDigest, supplied[:]) {
 			return ErrDenied
 		}
-		if err = requireComputerSecretsNotRevoked(ctx, tx, req.EnvironmentID, req.ComputerID); err != nil {
+		if err = computer.RequireSecretsNotRevoked(ctx, tx, req.EnvironmentID, req.ComputerID); err != nil {
 			return err
 		}
 		var priorComputer uuid.UUID
@@ -84,7 +85,7 @@ func BeginComputerCapture(ctx context.Context, pool db.TxBeginner, host workergr
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
-		if err = computerDispatchAvailable(ctx, tx, req.EnvironmentID, req.ComputerID); err != nil {
+		if err = computer.DispatchAvailable(ctx, tx, req.EnvironmentID, req.ComputerID); err != nil {
 			return err
 		}
 		if len(members) == 0 {
@@ -166,24 +167,20 @@ func BeginComputerCapture(ctx context.Context, pool db.TxBeginner, host workergr
 	return result, nil
 }
 
-func lockComputerHost(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal) error {
-	return lockRuntimeHost(ctx, tx, Caller{Host: &host, Execution: Execution{WorkerHostID: host.HostID, WorkerEpoch: host.Epoch}})
-}
-
 // Membership discovery precedes ownership-root locks. Re-read under the Computer
 // lock: an admission that added an unseen root makes this attempt ineligible.
 // Process admissions must take the same Computer lock and reject pending checkpoints.
-func lockComputerMembers(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) ([]computerMember, error) {
-	return lockComputerCheckpointMembers(ctx, tx, env, computer, uuid.Nil())
+func lockComputerMembers(ctx context.Context, tx pgx.Tx, env, computerID uuid.UUID) ([]computerMember, error) {
+	return lockComputerCheckpointMembers(ctx, tx, env, computerID, uuid.Nil())
 }
 
 // A failed restore must lock immutable captured members, including already fenced
 // members, before taking the Computer lock. Late Session locking reverses the
 // shared ownership-tree lock order.
-func lockComputerCheckpointMembers(ctx context.Context, tx pgx.Tx, env, computer, checkpoint uuid.UUID) ([]computerMember, error) {
+func lockComputerCheckpointMembers(ctx context.Context, tx pgx.Tx, env, computerID, checkpoint uuid.UUID) ([]computerMember, error) {
 	read := func() ([]computerMember, error) {
 		rows, err := tx.Query(ctx, `SELECT p.session_id,p.epoch,p.status,p.computer_lease_epoch FROM session_processes p WHERE p.environment_id=$1 AND p.computer_id=$2
- AND (p.fenced_at IS NULL OR EXISTS(SELECT 1 FROM checkpoint_processes m WHERE m.environment_id=p.environment_id AND m.computer_id=p.computer_id AND m.checkpoint_id=$3 AND m.session_id=p.session_id AND m.process_epoch=p.epoch)) ORDER BY p.session_id,p.epoch`, env, computer, checkpoint)
+ AND (p.fenced_at IS NULL OR EXISTS(SELECT 1 FROM checkpoint_processes m WHERE m.environment_id=p.environment_id AND m.computer_id=p.computer_id AND m.checkpoint_id=$3 AND m.session_id=p.session_id AND m.process_epoch=p.epoch)) ORDER BY p.session_id,p.epoch`, env, computerID, checkpoint)
 		if err != nil {
 			return nil, err
 		}
@@ -212,7 +209,7 @@ func lockComputerCheckpointMembers(ctx context.Context, tx pgx.Tx, env, computer
 	// lockSessions has no Computer to lock when no resident is present.
 	if len(ids) == 0 {
 		var id uuid.UUID
-		if err = tx.QueryRow(ctx, `SELECT id FROM computers WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, computer).Scan(&id); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT id FROM computers WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, computerID).Scan(&id); err != nil {
 			return nil, err
 		}
 	}
@@ -226,32 +223,4 @@ func lockComputerCheckpointMembers(ctx context.Context, tx pgx.Tx, env, computer
 		return nil, ErrNotReady
 	}
 	return after, nil
-}
-
-type computerLeaseAuthority struct {
-	Instance         uuid.UUID
-	CredentialDigest []byte
-	BaseVersion      string
-	Expires          time.Time
-}
-
-func currentComputerLease(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, env, computer uuid.UUID, epoch int64) (computerLeaseAuthority, error) {
-	var lease computerLeaseAuthority
-	err := tx.QueryRow(ctx, `SELECT l.allocation_id,l.channel_credential_digest,COALESCE(l.restored_from_save_id::text,'sha256:'||encode(c.initial_root_digest,'hex')),LEAST(l.expires_at,clock_timestamp()+interval '30 seconds')
-  FROM computer_leases l JOIN computers c ON (c.environment_id,c.id)=(l.environment_id,l.computer_id)
-  WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=$3 AND l.worker_host_id=$4 AND l.worker_epoch=$5
-   AND l.status='active' AND l.fenced_at IS NULL AND l.expires_at>clock_timestamp()`, env, computer, epoch, host.HostID, host.Epoch).Scan(&lease.Instance, &lease.CredentialDigest, &lease.BaseVersion, &lease.Expires)
-	return lease, err
-}
-
-func computerDispatchAvailable(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) error {
-	var sealed bool
-	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2) OR EXISTS(SELECT 1 FROM checkpoints WHERE environment_id=$1 AND computer_id=$2 AND (status IN ('capturing','sealed','ready','restoring','aborting') OR (status='consumed' AND controls_reconciled_at IS NULL)))`, env, computer).Scan(&sealed)
-	if err != nil {
-		return err
-	}
-	if sealed {
-		return ErrNotReady
-	}
-	return nil
 }

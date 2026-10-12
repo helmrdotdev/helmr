@@ -4,6 +4,8 @@ import (
 	"context"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
@@ -30,14 +32,14 @@ func ReadComputerContinuationControls(ctx context.Context, pool db.TxBeginner, h
 		var r captureRecord
 		var err error
 		if p.GetSourceAbort() {
-			if err = lockComputerHost(ctx, tx, host); err != nil {
+			if err = computer.LockHost(ctx, tx, host); err != nil {
 				return err
 			}
 			r, err = lockCapture(ctx, tx, env, checkpoint)
 			if err != nil {
 				return err
 			}
-			if _, err = currentComputerLease(ctx, tx, host, env, r.Computer, r.SourceEpoch); err != nil {
+			if _, err = computer.CurrentLease(ctx, tx, host, env, r.Computer, r.SourceEpoch); err != nil {
 				return err
 			}
 			if r.State != "consumed" {
@@ -78,9 +80,9 @@ func ReadComputerContinuationControls(ctx context.Context, pool db.TxBeginner, h
 			control.Held = control.Held || control.Stopped
 			result.Sessions = append(result.Sessions, control)
 		}
-		var lease computerLeaseAuthority
+		var lease computer.LeaseAuthority
 		if p.GetSourceAbort() {
-			lease, err = currentComputerLease(ctx, tx, host, env, r.Computer, r.SourceEpoch)
+			lease, err = computer.CurrentLease(ctx, tx, host, env, r.Computer, r.SourceEpoch)
 		} else {
 			lease, err = restoreTargetLease(ctx, tx, host, env, r, *r.TargetEpoch)
 		}

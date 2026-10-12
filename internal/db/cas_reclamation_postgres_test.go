@@ -10,7 +10,8 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -205,7 +206,7 @@ func TestCasReclamationRetainsLateUploadsAndFailures(t *testing.T) {
 	p := registeredUpload(t, f)
 	abandonUpload(t, f, p)
 	store := &reclaimProbe{t: t, pool: f.Pool, uploads: []string{"upload-1"}, versions: 1, failDelete: true}
-	r, err := agent.NewCASReclaimer(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	r, err := computer.NewCASReclaimer(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +236,7 @@ func TestCasReclamationRetainsLateUploadsAndFailures(t *testing.T) {
 		t.Fatalf("forgot multipart ID: %d aborts", store.aborts)
 	}
 	// Recreating the process after a claim/connection loss needs no local state.
-	r, err = agent.NewCASReclaimer(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	r, err = computer.NewCASReclaimer(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +258,7 @@ func TestCasReclamationFairMultipartProgress(t *testing.T) {
 	for i := range 25 {
 		store.uploads = append(store.uploads, fmt.Sprintf("%02d", i))
 	}
-	r, err := agent.NewCASReclaimer(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	r, err := computer.NewCASReclaimer(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}

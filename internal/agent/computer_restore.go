@@ -8,6 +8,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -30,7 +32,7 @@ func PrepareComputerRestore(ctx context.Context, pool db.TxBeginner, host worker
 	}
 	var result *agentv1.ComputerSessionInstallation
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockComputerHost(ctx, tx, host); err != nil {
+		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
 		r, err := lockCapture(ctx, tx, env, checkpoint)
@@ -58,7 +60,7 @@ func PrepareComputerRestore(ctx context.Context, pool db.TxBeginner, host worker
 		if json.Unmarshal(raw, &manifest) != nil {
 			return ErrNotReady
 		}
-		if err = validateCheckpointRuntime(ctx, tx, host, manifest.Runtime); err != nil {
+		if err = computer.ValidateCheckpointRuntime(ctx, tx, host, manifest.Runtime); err != nil {
 			return err
 		}
 		eligible, err := checkpointDiskEligible(ctx, tx, env, r.Computer, r.Save)
@@ -144,8 +146,8 @@ func PrepareComputerRestore(ctx context.Context, pool db.TxBeginner, host worker
 	return result, nil
 }
 
-func restoreTargetLease(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, env uuid.UUID, r captureRecord, epoch int64) (computerLeaseAuthority, error) {
-	var lease computerLeaseAuthority
+func restoreTargetLease(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, env uuid.UUID, r captureRecord, epoch int64) (computer.LeaseAuthority, error) {
+	var lease computer.LeaseAuthority
 	if epoch <= r.SourceEpoch {
 		return lease, ErrDenied
 	}
@@ -173,7 +175,7 @@ func ValidateComputerRestore(ctx context.Context, pool db.TxBeginner, host worke
 		if err != nil {
 			return err
 		}
-		if err = requireComputerSecretsNotRevoked(ctx, tx, env, r.Computer); err != nil {
+		if err = computer.RequireSecretsNotRevoked(ctx, tx, env, r.Computer); err != nil {
 			return err
 		}
 		var stored []byte
@@ -216,7 +218,7 @@ func CommitComputerRestore(ctx context.Context, pool db.TxBeginner, host workerg
 		if r.State == "consumed" {
 			return nil
 		}
-		if err = requireComputerSecretsNotRevoked(ctx, tx, env, r.Computer); err != nil {
+		if err = computer.RequireSecretsNotRevoked(ctx, tx, env, r.Computer); err != nil {
 			return err
 		}
 		// A pre-freeze acknowledgement cannot release this continuation. Reset
@@ -258,7 +260,7 @@ func CompleteComputerRestore(ctx context.Context, pool db.TxBeginner, host worke
 		if r.ControlsReconciled {
 			return nil
 		}
-		if err = requireComputerSecretsNotRevoked(ctx, tx, env, r.Computer); err != nil {
+		if err = computer.RequireSecretsNotRevoked(ctx, tx, env, r.Computer); err != nil {
 			return err
 		}
 		if err = requireComputerControlReceipts(ctx, tx, env, r); err != nil {
@@ -288,7 +290,7 @@ func matchRestoreInstallation(ctx context.Context, tx pgx.Tx, env, checkpoint uu
 
 func validateRestoreInstallation(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, env, checkpoint uuid.UUID, p *agentv1.ComputerSessionInstallation, observed *agentv1.ComputerSessionReceipt, commit bool) (captureRecord, error) {
 	var r captureRecord
-	if err := lockComputerHost(ctx, tx, host); err != nil {
+	if err := computer.LockHost(ctx, tx, host); err != nil {
 		return r, err
 	}
 	r, err := lockCapture(ctx, tx, env, checkpoint)
@@ -390,10 +392,10 @@ func validateRestoreInstallation(ctx context.Context, tx pgx.Tx, host workergrou
 
 // checkpointDiskEligible is shared by restore admission and logical-process loss.
 // A newer or unresolved disk cut makes a retained RAM image ineligible.
-func checkpointDiskEligible(ctx context.Context, tx pgx.Tx, env, computer, save uuid.UUID) (bool, error) {
+func checkpointDiskEligible(ctx context.Context, tx pgx.Tx, env, computerID, save uuid.UUID) (bool, error) {
 	var eligible bool
 	err := tx.QueryRow(ctx, `SELECT COALESCE(c.integrity_fault_at IS NULL AND c.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id) AND c.recovery_save_id=$3
    AND NOT EXISTS(SELECT 1 FROM computer_saves s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.status IN ('requested','captured')),false)
-   FROM computers c WHERE c.environment_id=$1 AND c.id=$2`, env, computer, save).Scan(&eligible)
+   FROM computers c WHERE c.environment_id=$1 AND c.id=$2`, env, computerID, save).Scan(&eligible)
 	return eligible, err
 }

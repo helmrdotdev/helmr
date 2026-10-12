@@ -9,6 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
+	"github.com/jackc/pgx/v5"
 )
 
 type initialRootFixture struct {
@@ -63,4 +64,23 @@ func DiskRootInsert(environment, id, root string) string {
  SELECT ` + environment + `,` + id + `,(r->>'format_version')::int,(r->>'logical_bytes')::bigint,r->'pack'->>'digest',(r->'pack'->>'size_bytes')::bigint,(r->'pack'->>'rank')::int,
  r->'page'->>'digest',r->'page'->>'salt',(r->'page'->>'key_id')::uuid,(r->'page'->>'kind')::int,(r->'page'->>'count')::int,(r->'page'->>'size_bytes')::bigint,(r->>'offset')::bigint
  FROM (SELECT ` + root + `::jsonb AS r) root`
+}
+
+// ReplaceInitialRoot gives the fixture Computer a new certified initial root,
+// leaving the previous root and its descriptor unreferenced.
+func ReplaceInitialRoot(t *testing.T, f Fixture) {
+	t.Helper()
+	r := newInitialRoot(t, f.Environment)
+	_, err := f.Pool.Exec(t.Context(), `
+      INSERT INTO disk_encryption_keys(id,environment_id,wrapping_key_id,wrapped_key) VALUES($2,$1,'test',decode('01','hex'));
+      INSERT INTO cas_blobs(digest,size_bytes) VALUES($3,$4);
+      INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$3,$4,'application/octet-stream' FROM environments WHERE id=$1;
+      INSERT INTO disk_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$3,org_id,project_id,$4,'application/octet-stream','root',$5,$6,clock_timestamp() FROM environments WHERE id=$1;
+      INSERT INTO disk_object_keys(environment_id,digest,key_id,is_direct) VALUES($1,$3,$2,true);
+      `+DiskRootInsert("$1", "$7", "$8")+`;
+      UPDATE computers SET initial_root_id=$7,initial_root_digest=decode(substring($9::text from 8),'hex') WHERE environment_id=$1 AND id=$10;
+    `, pgx.QueryExecModeSimpleProtocol, f.Environment, r.key, r.root.Pack.Digest, r.root.Pack.SizeBytes, r.root.Pack.Rank, string(r.inspection), r.id, string(r.locator), r.identity, f.Computer)
+	if err != nil {
+		t.Fatal(err)
+	}
 }

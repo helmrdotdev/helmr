@@ -113,14 +113,14 @@ func TestSessionLogReceiptSurvivesPhysicalHostRestore(t *testing.T) {
 	// Discard the receipt at the producer, then retain the logical process through
 	// the normal checkpoint publication and target-authority installation.
 	checkpoint := checkpointStorageForFixture(t, f)
-	if err = checkpoint.publisher.RegisterCheckpoint(ctx, checkpoint.ref, checkpoint.manifest); err != nil {
+	if err = checkpoint.checkpoints.RegisterCheckpoint(ctx, checkpoint.ref, checkpoint.manifest); err != nil {
 		t.Fatal(err)
 	}
 	checkpoint.upload(t)
 	if err = checkpoint.publish(t, checkpoint.save, checkpoint.manifest.Disk); err != nil {
 		t.Fatal(err)
 	}
-	if err = checkpoint.publisher.CompleteCheckpoint(ctx, checkpoint.ref, checkpoint.manifest); err != nil {
+	if err = checkpoint.checkpoints.CompleteCheckpoint(ctx, checkpoint.ref, checkpoint.manifest); err != nil {
 		t.Fatal(err)
 	}
 	host := *f.host()

@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/disk"
@@ -18,8 +20,8 @@ import (
 
 type preparationPublicationTest struct {
 	f         preparationFixture
-	ref       PreparationExecutor
-	publisher *PreparationPublisher
+	ref       computer.PreparationExecutor
+	publisher *computer.PreparationPublisher
 	remote    *cas.File
 	inspected []blockformat.ObjectInspection
 }
@@ -37,22 +39,22 @@ func (p *preparationPublicationTest) Upload(ctx context.Context, d cas.Descripto
 	}
 	return p.remote.Put(ctx, d.MediaType, io.NewSectionReader(f, 0, d.SizeBytes))
 }
-func newPreparationPublicationTest(t *testing.T) (*preparationPublicationTest, PreparationKey) {
+func newPreparationPublicationTest(t *testing.T) (*preparationPublicationTest, computer.PreparationKey) {
 	t.Helper()
 	return preparationPublicationTestFor(t, newPreparationFixture(t))
 }
-func preparationPublicationTestFor(t *testing.T, f preparationFixture) (*preparationPublicationTest, PreparationKey) {
+func preparationPublicationTestFor(t *testing.T, f preparationFixture) (*preparationPublicationTest, computer.PreparationKey) {
 	t.Helper()
 	ref := f.claim(t, f.attach(t, f.waiter(t)))
 	remote, err := cas.NewFile(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	publisher, err := NewPreparationPublisher(f.pool, remote)
+	publisher, err := computer.NewPreparationPublisher(f.pool, remote)
 	if err != nil {
 		t.Fatal(err)
 	}
-	broker, _ := NewPreparationKeyBroker(f.pool, preparationWrapper(t))
+	broker, _ := computer.NewPreparationKeyBroker(f.pool, preparationWrapper(t))
 	key, err := broker.WriteKey(t.Context(), *f.host(), ref)
 	if err != nil {
 		t.Fatal(err)
@@ -60,19 +62,19 @@ func preparationPublicationTestFor(t *testing.T, f preparationFixture) (*prepara
 	t.Cleanup(func() { clear(key.Key) })
 	return &preparationPublicationTest{f: f, ref: ref, remote: remote, publisher: publisher}, key
 }
-func (p *preparationPublicationTest) capture(t *testing.T, key PreparationKey) disk.VersionRoot {
+func (p *preparationPublicationTest) capture(t *testing.T, key computer.PreparationKey) disk.VersionRoot {
 	t.Helper()
 	return p.captureCapacity(t, key, disk.SeedCapacity)
 }
-func (p *preparationPublicationTest) captureCapacity(t *testing.T, key PreparationKey, capacity int64) disk.VersionRoot {
+func (p *preparationPublicationTest) captureCapacity(t *testing.T, key computer.PreparationKey, capacity int64) disk.VersionRoot {
 	t.Helper()
-	if _, err := RecordPreparationExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); err != nil {
+	if _, err := computer.RecordPreparationExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.publisher.BeginCapture(t.Context(), *p.f.host(), p.ref, capacity); err != nil {
 		t.Fatal(err)
 	}
-	if values, err := RecordPreparationExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); !errors.Is(err, ErrDenied) || values != nil {
+	if values, err := computer.RecordPreparationExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); !errors.Is(err, ErrDenied) || values != nil {
 		t.Fatalf("sealed delivery: %v", err)
 	}
 	file, err := os.CreateTemp(t.TempDir(), "disk")
@@ -143,7 +145,7 @@ func TestPreparationPublicationFullGraphAndReplay(t *testing.T) {
 	if err := p.f.pool.QueryRow(t.Context(), `SELECT status='succeeded',fenced_at IS NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, p.f.env, p.ref.PreparationID).Scan(&succeeded, &unfenced); err != nil || !succeeded || !unfenced {
 		t.Fatalf("publication fenced executor: %v", err)
 	}
-	if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
+	if err := computer.ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, p.f.env, p.ref.PreparationID)
@@ -184,11 +186,11 @@ func TestPreparationPublicationImageSequence(t *testing.T) {
 		if want == 2 {
 			break
 		}
-		if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
+		if err := computer.ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 			t.Fatal(err)
 		}
 		p.ref = p.f.claim(t, p.f.attach(t, p.f.waiter(t)))
-		broker, _ := NewPreparationKeyBroker(p.f.pool, preparationWrapper(t))
+		broker, _ := computer.NewPreparationKeyBroker(p.f.pool, preparationWrapper(t))
 		var err error
 		key, err = broker.WriteKey(t.Context(), *p.f.host(), p.ref)
 		if err != nil {
@@ -205,7 +207,7 @@ func TestPreparationPublicationRequiresLiveExecutor(t *testing.T) {
 			root := p.capture(t, key)
 			switch change {
 			case "stop":
-				if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
+				if err := computer.ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 					t.Fatal(err)
 				}
 			case "expire":
@@ -228,7 +230,7 @@ func TestPreparationPublicationRequiresLiveExecutor(t *testing.T) {
 
 func TestPreparationCertificationRechecksStorageIO(t *testing.T) {
 	p, key := newPreparationPublicationTest(t)
-	if _, err := RecordPreparationExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); err != nil {
+	if _, err := computer.RecordPreparationExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.publisher.BeginCapture(t.Context(), *p.f.host(), p.ref, disk.SeedCapacity); err != nil {
@@ -247,7 +249,7 @@ func TestPreparationCertificationRechecksStorageIO(t *testing.T) {
 	if err = p.Register(t.Context(), inspection); err != nil {
 		t.Fatal(err)
 	}
-	guarded, _ := NewPreparationPublisher(p.f.pool, saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
+	guarded, _ := computer.NewPreparationPublisher(p.f.pool, saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
 		// A separate transaction must complete while Stat is in flight.
 		revokeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
@@ -259,7 +261,7 @@ func TestPreparationCertificationRechecksStorageIO(t *testing.T) {
 	if err = guarded.Certify(t.Context(), *p.f.host(), p.ref, inspection); !errors.Is(err, ErrDenied) {
 		t.Fatalf("certified after revocation: %v", err)
 	}
-	object, _ := describeSaveObject(inspection)
+	object, _ := describeStoredObject(inspection)
 	var certified bool
 	if err = p.f.pool.QueryRow(t.Context(), `SELECT certified FROM disk_objects WHERE environment_id=$1 AND digest=$2`, p.f.env, object.digest).Scan(&certified); err != nil || certified {
 		t.Fatalf("certified stale object: %v", err)
@@ -269,7 +271,7 @@ func TestPreparationCertificationRechecksStorageIO(t *testing.T) {
 func TestPreparationPublicationRejectsUnrelatedCertifiedObject(t *testing.T) {
 	p, _ := newPreparationPublicationTest(t)
 	unrelated := newSaveStorageFixture(t, p.f.fixture)
-	if _, err := RecordPreparationExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); err != nil {
+	if _, err := computer.RecordPreparationExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.publisher.BeginCapture(t.Context(), *p.f.host(), p.ref, disk.SeedCapacity); err != nil {

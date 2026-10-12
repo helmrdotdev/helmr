@@ -5,6 +5,8 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -13,7 +15,7 @@ func TestSecretExposureTypedOwnersAndPinnedVersions(t *testing.T) {
 	f := newPreparationFixture(t)
 	p := f.attach(t, f.waiter(t))
 	ref := f.claim(t, p)
-	values, err := RecordPreparationExposure(t.Context(), f.pool, *f.host(), ref)
+	values, err := computer.RecordPreparationExposure(t.Context(), f.pool, *f.host(), ref)
 	if err != nil || len(values) == 0 {
 		t.Fatalf("exposure: %v", err)
 	}

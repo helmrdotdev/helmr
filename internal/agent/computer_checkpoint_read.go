@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -13,13 +15,13 @@ import (
 
 // ReadComputerCheckpoint supplies only the coherent image bound to an admitted,
 // delivered restore allocation. It grants neither installation nor activation.
-func ReadComputerCheckpoint(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, identity ComputerLeaseIdentity) (computercheckpoint.Manifest, error) {
-	if !identity.valid() {
+func ReadComputerCheckpoint(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, identity computer.ComputerLeaseIdentity) (computercheckpoint.Manifest, error) {
+	if !identity.Valid() {
 		return computercheckpoint.Manifest{}, ErrInvalidInput
 	}
 	var result computercheckpoint.Manifest
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockComputerHost(ctx, tx, host); err != nil {
+		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
 		var checkpoint uuid.UUID
@@ -45,7 +47,7 @@ func ReadComputerCheckpoint(ctx context.Context, pool db.TxBeginner, host worker
 		if target.Instance != identity.InstanceID {
 			return ErrDenied
 		}
-		if err := requireComputerSecretsNotRevoked(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
+		if err := computer.RequireSecretsNotRevoked(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
 			return err
 		}
 		eligible, err := checkpointDiskEligible(ctx, tx, identity.EnvironmentID, identity.ComputerID, r.Save)
@@ -72,7 +74,7 @@ func ReadComputerCheckpoint(ctx context.Context, pool db.TxBeginner, host worker
 		if _, err := result.Encode(); err != nil {
 			return ErrNotReady
 		}
-		return validateCheckpointRuntime(ctx, tx, host, result.Runtime)
+		return computer.ValidateCheckpointRuntime(ctx, tx, host, result.Runtime)
 	})
 	if err != nil {
 		return computercheckpoint.Manifest{}, hideMissing(err)

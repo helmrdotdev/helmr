@@ -3,6 +3,8 @@ package agent
 import (
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
@@ -22,7 +24,7 @@ func TestPreparationDiskRetentionRequiresPhysicalClosure(t *testing.T) {
 			}
 			reconcile := func() {
 				t.Helper()
-				if err := ReconcileComputerDiskRetention(t.Context(), p.f.pool); err != nil {
+				if err := computer.ReconcileComputerDiskRetention(t.Context(), p.f.pool); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -34,7 +36,7 @@ func TestPreparationDiskRetentionRequiresPhysicalClosure(t *testing.T) {
 			if _, err := p.f.pool.Exec(t.Context(), `UPDATE disk_encryption_keys SET retired_at=clock_timestamp(),wrapped_key=NULL WHERE id=$1`, key.ID); err == nil {
 				t.Fatal("unfenced preparation key retired")
 			}
-			if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
+			if err := computer.ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 				t.Fatal(err)
 			}
 			for range 8 {

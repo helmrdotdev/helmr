@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
@@ -25,14 +27,14 @@ func PrepareComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host wo
 	}
 	var result *agentv1.ComputerSessionInstallation
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockComputerHost(ctx, tx, host); err != nil {
+		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
 		r, err := lockCapture(ctx, tx, env, checkpoint)
 		if err != nil {
 			return err
 		}
-		lease, err := currentComputerLease(ctx, tx, host, env, r.Computer, r.SourceEpoch)
+		lease, err := computer.CurrentLease(ctx, tx, host, env, r.Computer, r.SourceEpoch)
 		if err != nil {
 			return err
 		}

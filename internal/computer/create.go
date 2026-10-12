@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/lifetime"
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/lifetime"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
@@ -101,7 +101,7 @@ func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request)
 			if !live {
 				return idempotency.Completion{}, ErrNotDeployed
 			}
-			id, err := agent.CreateStandaloneComputer(ctx, tx, c.ca, request.Scope.EnvironmentID, *deployment, request.DefinitionKey, refs)
+			id, err := CreateStandaloneComputer(ctx, tx, c.ca, request.Scope.EnvironmentID, *deployment, request.DefinitionKey, refs)
 			if err != nil {
 				return idempotency.Completion{}, err
 			}
@@ -127,9 +127,6 @@ func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request)
 			return idempotency.Completion{Target: idempotency.Target{ComputerID: id}, Receipt: body}, nil
 		})
 	})
-	if errors.Is(err, agent.ErrSecretUnavailable) {
-		return Created{}, ErrSecretUnavailable
-	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Created{}, ErrNotDeployed
 	}

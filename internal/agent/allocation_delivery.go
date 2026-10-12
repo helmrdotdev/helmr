@@ -7,6 +7,8 @@ import (
 	"errors"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -45,7 +47,7 @@ func (s materializationSupply) firstExecution() error {
 // credential and remaining lifetime; it cannot renew or resurrect authority.
 type PreparationDelivery struct {
 	Allocation
-	Executor PreparationExecutor
+	Executor computer.PreparationExecutor
 }
 type ComputerDelivery struct {
 	ComputerAllocation
@@ -77,7 +79,7 @@ func lockMaterializationHost(ctx context.Context, tx pgx.Tx, host workergroup.Ho
 	return materializationSupply{admitting: admitting, draining: draining, healthy: healthy, hostDrainContinuation: hostDrainContinuation}, nil
 }
 
-func (a *Allocator) DeliverPreparation(ctx context.Context, host workergroup.HostPrincipal, identity PreparationIdentity) (PreparationDelivery, error) {
+func (a *Allocator) DeliverPreparation(ctx context.Context, host workergroup.HostPrincipal, identity computer.PreparationIdentity) (PreparationDelivery, error) {
 	if identity.EnvironmentID == uuid.Nil() || identity.PreparationID == uuid.Nil() || identity.InstanceID == uuid.Nil() || identity.Epoch <= 0 {
 		return PreparationDelivery{}, ErrInvalidInput
 	}
@@ -91,14 +93,14 @@ func (a *Allocator) DeliverPreparation(ctx context.Context, host workergroup.Hos
 		if err != nil {
 			return err
 		}
-		p, err := readPreparation(ctx, tx, env, preparation)
+		p, err := computer.ReadImageBuild(ctx, tx, env, preparation)
 		if err != nil {
 			return err
 		}
-		if err := lockPreparationImageSecrets(ctx, tx, env, p.SpecID); err != nil {
+		if err := computer.LockImageSpecSecrets(ctx, tx, env, p.SpecID); err != nil {
 			return err
 		}
-		if err := lockPreparationSpec(ctx, tx, env, p.SpecID); err != nil {
+		if err := computer.LockImageSpec(ctx, tx, env, p.SpecID); err != nil {
 			return err
 		}
 		var digest []byte
@@ -132,7 +134,7 @@ func (a *Allocator) DeliverPreparation(ctx context.Context, host workergroup.Hos
 				return err
 			}
 		}
-		result = PreparationDelivery{Allocation: r, Executor: PreparationExecutor{EnvironmentID: env, PreparationID: preparation, InstanceID: r.InstanceID, Epoch: r.Epoch, ChannelCredential: credential}}
+		result = PreparationDelivery{Allocation: r, Executor: computer.PreparationExecutor{EnvironmentID: env, PreparationID: preparation, InstanceID: r.InstanceID, Epoch: r.Epoch, ChannelCredential: credential}}
 		return nil
 	})
 	if err != nil {
@@ -141,8 +143,8 @@ func (a *Allocator) DeliverPreparation(ctx context.Context, host workergroup.Hos
 	return result, nil
 }
 
-func (a *Allocator) DeliverComputer(ctx context.Context, host workergroup.HostPrincipal, identity ComputerLeaseIdentity) (ComputerDelivery, error) {
-	if !identity.valid() {
+func (a *Allocator) DeliverComputer(ctx context.Context, host workergroup.HostPrincipal, identity computer.ComputerLeaseIdentity) (ComputerDelivery, error) {
+	if !identity.Valid() {
 		return ComputerDelivery{}, ErrInvalidInput
 	}
 	var result ComputerDelivery
@@ -171,7 +173,7 @@ func (a *Allocator) DeliverComputer(ctx context.Context, host workergroup.HostPr
 		if !allocationBelongsToHost(r.Allocation, host) || r.InstanceID != identity.InstanceID || subtle.ConstantTimeCompare(digest, expected[:]) != 1 {
 			return ErrDenied
 		}
-		if err := requireComputerSecretsNotRevoked(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
+		if err := computer.RequireSecretsNotRevoked(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
 			if errors.Is(err, ErrDenied) {
 				return ErrAllocationClosed
 			}
@@ -202,8 +204,8 @@ func (a *Allocator) DeliverComputer(ctx context.Context, host workergroup.HostPr
 // ObserveFreshComputerReady accepts the owning Host's exact materialization
 // receipt before any Session process can be admitted. Restores have their own
 // checkpoint-member validation and may not use this fresh-boot transition.
-func ObserveFreshComputerReady(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, identity ComputerLeaseIdentity, shape AllocationShape, base string) error {
-	if !identity.valid() {
+func ObserveFreshComputerReady(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, identity computer.ComputerLeaseIdentity, shape AllocationShape, base string) error {
+	if !identity.Valid() {
 		return ErrInvalidInput
 	}
 	return allocationError(db.RunTx(ctx, database, func(tx pgx.Tx) error {
@@ -224,7 +226,7 @@ func ObserveFreshComputerReady(ctx context.Context, database db.TxBeginner, host
 		if !allocationBelongsToHost(r.Allocation, host) || r.InstanceID != identity.InstanceID || r.Shape != shape || r.BaseVersion != base || r.RestoredFrom != nil {
 			return ErrDenied
 		}
-		if err := requireComputerSecretsNotRevoked(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
+		if err := computer.RequireSecretsNotRevoked(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
 			if errors.Is(err, ErrDenied) {
 				return ErrAllocationClosed
 			}

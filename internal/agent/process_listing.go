@@ -4,6 +4,8 @@ import (
 	"context"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -22,8 +24,8 @@ type ProcessIdentity struct {
 // A deleted Computer requests physical closure through the same stop response;
 // it remains charged until the worker acknowledges actual absence.
 // An empty page ends the scan; the next poll starts without a cursor.
-func ListComputerProcesses(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, identity ComputerLeaseIdentity, after *ProcessIdentity) ([]ProcessIdentity, error) {
-	if !identity.valid() || after != nil && (after.SessionID == uuid.Nil() || after.Epoch <= 0) {
+func ListComputerProcesses(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, identity computer.ComputerLeaseIdentity, after *ProcessIdentity) ([]ProcessIdentity, error) {
+	if !identity.Valid() || after != nil && (after.SessionID == uuid.Nil() || after.Epoch <= 0) {
 		return nil, ErrInvalidInput
 	}
 	cursor := ProcessIdentity{}
@@ -35,7 +37,7 @@ func ListComputerProcesses(ctx context.Context, database db.TxBeginner, host wor
 		if err := allocationLockTimeout(ctx, tx); err != nil {
 			return err
 		}
-		if err := lockComputerHost(ctx, tx, host); err != nil {
+		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
 		var owned, closed bool

@@ -8,6 +8,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
 	"github.com/helmrdotdev/helmr/internal/content"
@@ -81,7 +83,7 @@ func evaluateTrigger(s triggerActivation, now time.Time) (triggerEvaluation, err
 // EvaluateTrigger serializes with Environment promotion. Occurrence identity,
 // admission (or its rejected/missed disposition), and the next cursor commit
 // together. The activation's pinned definition is never replaced by current defaults.
-func EvaluateTrigger(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIssuer, env, id uuid.UUID) error {
+func EvaluateTrigger(ctx context.Context, pool db.TxBeginner, trust computer.ComputerTrustIssuer, env, id uuid.UUID) error {
 	if env == uuid.Nil() || id == uuid.Nil() {
 		return ErrInvalidInput
 	}
@@ -181,7 +183,7 @@ func EvaluateTrigger(ctx context.Context, pool db.TxBeginner, trust ComputerTrus
 	})
 }
 
-func admitScheduledSession(ctx context.Context, tx pgx.Tx, trust ComputerTrustIssuer, s triggerActivation, at time.Time, policy admissionEnvironment) (Admission, error) {
+func admitScheduledSession(ctx context.Context, tx pgx.Tx, trust computer.ComputerTrustIssuer, s triggerActivation, at time.Time, policy admissionEnvironment) (Admission, error) {
 	if s.slackChannelID != nil && !s.slackRouteActive {
 		return Admission{}, ErrSlackChannelUnavailable
 	}
@@ -206,23 +208,23 @@ func admitScheduledSession(ctx context.Context, tx pgx.Tx, trust ComputerTrustIs
 	if err := tx.QueryRow(ctx, `SELECT t.key,d.close_after_idle_ms,d.close_after_idle_never FROM agent_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=$1 AND d.agent_id=$2 AND d.deployment_id=$3`, s.environment, s.agent, s.deployment).Scan(&key, &idle, &never); err != nil {
 		return Admission{}, err
 	}
-	computer, err := createAdmissionComputer(ctx, tx, trust, s.environment, s.deployment, key, policy)
+	computerID, err := computer.CreateForAdmission(ctx, tx, trust, s.environment, s.deployment, key, policy.computerLimits())
 	if err != nil {
 		return Admission{}, err
 	}
-	if err = computerAcceptsAdmission(ctx, tx, s.environment, computer, true); err != nil {
+	if err = computerAcceptsAdmission(ctx, tx, s.environment, computerID, true); err != nil {
 		return Admission{}, err
 	}
 	idle = lifetime.Resolve(lifetime.Policy{}, idle, never)
 	receipt := Admission{CloseAfterIdleMs: idle, SessionID: uuid.NewV7(), TurnID: uuid.NewV7(), Sequence: 1, Created: true}
-	if _, err = tx.Exec(ctx, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,next_turn_seq,close_after_idle_ms,history_retention_mode,history_retention_seconds) SELECT $1,$2,$3,$4,$5,$2,0,2,$6,history_retention_mode,history_retention_seconds FROM environments WHERE id=$1`, s.environment, receipt.SessionID, s.agent, s.deployment, computer, idle); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,next_turn_seq,close_after_idle_ms,history_retention_mode,history_retention_seconds) SELECT $1,$2,$3,$4,$5,$2,0,2,$6,history_retention_mode,history_retention_seconds FROM environments WHERE id=$1`, s.environment, receipt.SessionID, s.agent, s.deployment, computerID, idle); err != nil {
 		return Admission{}, err
 	}
 	digest, err := digestJSON(s.input)
 	if err != nil {
 		return Admission{}, fmt.Errorf("trigger input: %w", err)
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,idempotency_key,request_digest,input) VALUES($1,$2,$3,$4,1,'schedule',$5,'schedule',$6,$7,$8,$9)`, s.environment, receipt.TurnID, receipt.SessionID, computer, s.id, s.agent, at.UTC().Format(time.RFC3339Nano), digest[:], s.input); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,idempotency_key,request_digest,input) VALUES($1,$2,$3,$4,1,'schedule',$5,'schedule',$6,$7,$8,$9)`, s.environment, receipt.TurnID, receipt.SessionID, computerID, s.id, s.agent, at.UTC().Format(time.RFC3339Nano), digest[:], s.input); err != nil {
 		return Admission{}, err
 	}
 	if s.slackChannelID != nil {

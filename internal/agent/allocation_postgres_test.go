@@ -6,6 +6,8 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -15,7 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func preparationAllocationFixture(t *testing.T) (preparationFixture, Preparation, *Allocator) {
+func preparationAllocationFixture(t *testing.T) (preparationFixture, computer.Preparation, *Allocator) {
 	t.Helper()
 	f := preparationFixtureFor(t, newAdmissionFixture(t))
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET primary_pool_id=(SELECT worker_pool_id FROM worker_hosts WHERE id=$1) WHERE id=$2;
@@ -66,24 +68,24 @@ func TestAllocationPreparationDeliveryIsStableAndCannotResurrect(t *testing.T) {
 		t.Fatal(err)
 	}
 	wrong, _ := NewAllocator(f.pool, bytes.Repeat([]byte{20}, 32), nil)
-	if _, err := wrong.DeliverPreparation(t.Context(), *f.host(), PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); !errors.Is(err, ErrDenied) {
+	if _, err := wrong.DeliverPreparation(t.Context(), *f.host(), computer.PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); !errors.Is(err, ErrDenied) {
 		t.Fatalf("mismatched key accepted: %v", err)
 	}
 	other := *f.host()
 	other.Epoch++
-	if _, err := a.DeliverPreparation(t.Context(), other, PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); !errors.Is(err, ErrDenied) && !errors.Is(err, ErrNotReady) {
+	if _, err := a.DeliverPreparation(t.Context(), other, computer.PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); !errors.Is(err, ErrDenied) && !errors.Is(err, ErrNotReady) {
 		t.Fatalf("wrong epoch accepted: %v", err)
 	}
 	var untouched bool
 	if err := f.pool.QueryRow(t.Context(), `SELECT delivered_at IS NULL AND executor_expires_at IS NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&untouched); err != nil || !untouched {
 		t.Fatalf("failed delivery changed authority: %v %v", untouched, err)
 	}
-	first, err := a.DeliverPreparation(t.Context(), *f.host(), PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch})
+	first, err := a.DeliverPreparation(t.Context(), *f.host(), computer.PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch})
 	if err != nil {
 		t.Fatal(err)
 	}
 	restarted, _ := NewAllocator(f.pool, bytes.Repeat([]byte{19}, 32), nil)
-	again, err := restarted.DeliverPreparation(t.Context(), *f.host(), PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch})
+	again, err := restarted.DeliverPreparation(t.Context(), *f.host(), computer.PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +93,7 @@ func TestAllocationPreparationDeliveryIsStableAndCannotResurrect(t *testing.T) {
 		t.Fatalf("redelivery changed identity or authority")
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
-	if _, err := a.DeliverPreparation(t.Context(), *f.host(), PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); !errors.Is(err, ErrAllocationClosed) {
+	if _, err := a.DeliverPreparation(t.Context(), *f.host(), computer.PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); !errors.Is(err, ErrAllocationClosed) {
 		t.Fatalf("expired delivery resurrected: %v", err)
 	}
 }
@@ -109,27 +111,27 @@ func freshComputerAllocationFixture(t *testing.T) (fixture, *Allocator, uuid.UUI
 	if err != nil {
 		t.Fatal(err)
 	}
-	var computer uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT computer_id FROM sessions WHERE environment_id=$1 AND id=$2`, f.env, admitted.SessionID).Scan(&computer); err != nil {
+	var computerID uuid.UUID
+	if err := f.pool.QueryRow(t.Context(), `SELECT computer_id FROM sessions WHERE environment_id=$1 AND id=$2`, f.env, admitted.SessionID).Scan(&computerID); err != nil {
 		t.Fatal(err)
 	}
-	return f.fixture, a, computer
+	return f.fixture, a, computerID
 }
 
 func TestAllocationFreshComputerRequiresExactDeliveredReadyReceipt(t *testing.T) {
-	f, a, computer := freshComputerAllocationFixture(t)
-	r, err := a.AllocateFreshComputer(t.Context(), f.env, computer, 1, f.worker)
+	f, a, computerID := freshComputerAllocationFixture(t)
+	r, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 1, f.worker)
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity := ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computer, InstanceID: r.InstanceID, Epoch: r.Epoch}
+	identity := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
 	if r.DeliveredAt != nil || r.InitializedAt != nil || r.ExpiresAt != nil {
 		t.Fatal("premature authority")
 	}
 	if err := ObserveFreshComputerReady(t.Context(), f.pool, *f.host(), identity, r.Shape, r.BaseVersion); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("ready before delivery: %v", err)
 	}
-	if err := expireComputerLease(t.Context(), f.pool, f.env, computer, 1); err != nil {
+	if err := expireComputerLease(t.Context(), f.pool, f.env, computerID, 1); err != nil {
 		t.Fatal(err)
 	}
 	first, err := a.DeliverComputer(t.Context(), *f.host(), identity)
@@ -153,14 +155,14 @@ func TestAllocationFreshComputerRequiresExactDeliveredReadyReceipt(t *testing.T)
 	if err := ObserveFreshComputerReady(t.Context(), f.pool, *f.host(), identity, r.Shape, r.BaseVersion); err != nil {
 		t.Fatal(err)
 	}
-	got, err := a.AllocateFreshComputer(t.Context(), f.env, computer, 1, f.worker)
+	got, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 1, f.worker)
 	if err != nil || got.Status != "active" || got.InitializedAt == nil {
 		t.Fatalf("missing ready receipt: %+v %v", got, err)
 	}
 	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.AllocateFreshComputer(t.Context(), f.env, computer, 2, f.worker); !errors.Is(err, ErrNotReady) {
+	if _, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 2, f.worker); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("initialized Computer cold booted: %v", err)
 	}
 }
@@ -204,7 +206,7 @@ func TestAllocationRestoreRetainsCheckpointShapeAndSingleWriter(t *testing.T) {
 	if _, err := a.AllocateRestoredComputer(t.Context(), f.env, cp.manifest.CheckpointID, 2, f.worker); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("source still owns VM: %v", err)
 	}
-	source := ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: cp.manifest.InstanceID}
+	source := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: cp.manifest.InstanceID}
 	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), source, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +225,7 @@ func TestAllocationRestoreRetainsCheckpointShapeAndSingleWriter(t *testing.T) {
 	if _, err := a.AllocateFreshComputer(t.Context(), f.env, f.computer, 2, f.worker); !errors.Is(err, ErrConflict) {
 		t.Fatalf("restore receipt became fresh: %v", err)
 	}
-	identity := ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 2, InstanceID: r.InstanceID}
+	identity := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 2, InstanceID: r.InstanceID}
 	if _, err := a.DeliverComputer(t.Context(), *f.host(), identity); err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +246,7 @@ func TestAllocationRestoreRetainsCheckpointShapeAndSingleWriter(t *testing.T) {
 	if _, err := exposed.secrets.Revoke(t.Context(), f.env, exposed.secretID, "revoke-restore"); err != nil {
 		t.Fatal(err)
 	}
-	target := ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: replacement.InstanceID, Epoch: 3}
+	target := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: replacement.InstanceID, Epoch: 3}
 	if _, err := a.DeliverComputer(t.Context(), *f.host(), target); !errors.Is(err, ErrAllocationClosed) {
 		t.Fatalf("revoked restore delivery not terminal: %v", err)
 	}
@@ -301,25 +303,25 @@ func TestAllocationPreparationStopDoesNotRequireDeliveredCredential(t *testing.T
 				t.Fatal(err)
 			}
 			if delivered {
-				if _, err := a.DeliverPreparation(t.Context(), *f.host(), PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); err != nil {
+				if _, err := a.DeliverPreparation(t.Context(), *f.host(), computer.PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); err != nil {
 					t.Fatal(err)
 				}
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET deadline_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
-			if _, err := a.DeliverPreparation(t.Context(), *f.host(), PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); !errors.Is(err, ErrAllocationClosed) {
+			if _, err := a.DeliverPreparation(t.Context(), *f.host(), computer.PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); !errors.Is(err, ErrAllocationClosed) {
 				t.Fatalf("deadline is not terminal: %v", err)
 			}
 			if err := expirePreparation(t.Context(), f.pool, f.env, p.ID); err != nil {
 				t.Fatal(err)
 			}
-			identity := PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}
+			identity := computer.PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}
 			wrong := identity
 			wrong.InstanceID = uuid.NewV7()
-			if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), wrong); !errors.Is(err, ErrDenied) {
+			if err := computer.ObservePreparationStopped(t.Context(), f.pool, *f.host(), wrong); !errors.Is(err, ErrDenied) {
 				t.Fatalf("wrong stop accepted: %v", err)
 			}
 			for range 2 {
-				if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), identity); err != nil {
+				if err := computer.ObservePreparationStopped(t.Context(), f.pool, *f.host(), identity); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -338,25 +340,25 @@ func TestAllocationDeliveryDistinguishesPauseFromDrain(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET status='paused' WHERE id=$1`, f.group)
-	if _, err := a.DeliverPreparation(t.Context(), *f.host(), PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); !errors.Is(err, ErrNotReady) {
+	if _, err := a.DeliverPreparation(t.Context(), *f.host(), computer.PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("paused delivery not retryable: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET status='draining' WHERE id=$1`, f.group)
-	if _, err := a.DeliverPreparation(t.Context(), *f.host(), PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); !errors.Is(err, ErrAllocationClosed) {
+	if _, err := a.DeliverPreparation(t.Context(), *f.host(), computer.PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); !errors.Is(err, ErrAllocationClosed) {
 		t.Fatalf("drained delivery not terminal: %v", err)
 	}
-	if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); err != nil {
+	if err := computer.ObservePreparationStopped(t.Context(), f.pool, *f.host(), computer.PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestAllocationComputerDeliveryDistinguishesPauseFromDrain(t *testing.T) {
-	f, a, computer := freshComputerAllocationFixture(t)
-	r, err := a.AllocateFreshComputer(t.Context(), f.env, computer, 1, f.worker)
+	f, a, computerID := freshComputerAllocationFixture(t)
+	r, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 1, f.worker)
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity := ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computer, InstanceID: r.InstanceID, Epoch: 1}
+	identity := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: 1}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET status='paused' WHERE id=$1`, f.group)
 	if _, err := a.DeliverComputer(t.Context(), *f.host(), identity); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("paused delivery not retryable: %v", err)
@@ -384,7 +386,7 @@ func TestAllocationRestoreDiscoversCompatibleNonPrimaryPool(t *testing.T) {
  UPDATE worker_hosts SET observed_at=clock_timestamp(),epoch_cpu_millis=8000,epoch_memory_bytes=8589934592,epoch_guest_ephemeral_disk_bytes=8589934592,max_vm_slots=8,max_vm_starts=8 WHERE id IN ($1,$5);
  UPDATE environments SET max_resident_computers=1,max_cpu_millis=2000,max_memory_bytes=1073741824 WHERE id=$3`, pgx.QueryExecModeSimpleProtocol, f.worker, f.group, f.env, primary, target)
 	f.enqueue(t, "restore-demand")
-	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: cp.manifest.InstanceID, Epoch: 1}, uuid.Nil()); err != nil {
+	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: cp.manifest.InstanceID, Epoch: 1}, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp(),drain_reason='admin' WHERE id=$1`, f.worker)
@@ -430,12 +432,12 @@ func TestAllocationHostCapacitySerializesDifferentEnvironments(t *testing.T) {
 func TestAllocationRevokedImageRequiresPhysicalStop(t *testing.T) {
 	for _, delivered := range []bool{false, true} {
 		t.Run(map[bool]string{false: "before-delivery", true: "before-ready"}[delivered], func(t *testing.T) {
-			f, a, computer := freshComputerAllocationFixture(t)
-			r, err := a.AllocateFreshComputer(t.Context(), f.env, computer, 1, f.worker)
+			f, a, computerID := freshComputerAllocationFixture(t)
+			r, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 1, f.worker)
 			if err != nil {
 				t.Fatal(err)
 			}
-			identity := ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computer, InstanceID: r.InstanceID, Epoch: 1}
+			identity := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: 1}
 			if delivered {
 				if _, err := a.DeliverComputer(t.Context(), *f.host(), identity); err != nil {
 					t.Fatal(err)
@@ -443,7 +445,7 @@ func TestAllocationRevokedImageRequiresPhysicalStop(t *testing.T) {
 			}
 			var secretID uuid.UUID
 			if err := f.pool.QueryRow(t.Context(), `SELECT x.secret_id FROM computers c JOIN images i ON (i.environment_id,i.id)=(c.environment_id,c.image_id)
- JOIN secret_exposures x ON (x.environment_id,x.image_build_id)=(i.environment_id,i.image_build_id) WHERE c.environment_id=$1 AND c.id=$2 LIMIT 1`, f.env, computer).Scan(&secretID); err != nil {
+ JOIN secret_exposures x ON (x.environment_id,x.image_build_id)=(i.environment_id,i.image_build_id) WHERE c.environment_id=$1 AND c.id=$2 LIMIT 1`, f.env, computerID).Scan(&secretID); err != nil {
 				t.Fatal(err)
 			}
 			store, err := secret.New(db.New(f.pool), f.pool, bytes.Repeat([]byte{17}, 32))
@@ -508,12 +510,12 @@ func TestAllocationInitialReceiptSurvivesPayloadRetirement(t *testing.T) {
 }
 
 func TestAllocationDeliveredComputerBecomesReadyAfterHostDrain(t *testing.T) {
-	f, a, computer := freshComputerAllocationFixture(t)
-	r, err := a.AllocateFreshComputer(t.Context(), f.env, computer, 1, f.worker)
+	f, a, computerID := freshComputerAllocationFixture(t)
+	r, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 1, f.worker)
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity := ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computer, InstanceID: r.InstanceID, Epoch: r.Epoch}
+	identity := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
 	first, err := a.DeliverComputer(t.Context(), *f.host(), identity)
 	if err != nil {
 		t.Fatal(err)
@@ -527,7 +529,7 @@ func TestAllocationDeliveredComputerBecomesReadyAfterHostDrain(t *testing.T) {
 	if err := ObserveFreshComputerReady(t.Context(), f.pool, *f.host(), identity, r.Shape, r.BaseVersion); err != nil {
 		t.Fatalf("admitted materialization rejected by Host drain: %v", err)
 	}
-	ready, err := readComputerAllocation(t.Context(), f.pool, f.env, computer, r.Epoch)
+	ready, err := readComputerAllocation(t.Context(), f.pool, f.env, computerID, r.Epoch)
 	if err != nil || ready.InitializedAt == nil || ready.Status != "active" {
 		t.Fatalf("ready allocation = %+v, %v", ready, err)
 	}
@@ -537,12 +539,12 @@ func TestAllocationDeliveredComputerBecomesReadyAfterHostDrain(t *testing.T) {
 }
 
 func TestAllocationUndeliveredComputerStartsAfterHostDrain(t *testing.T) {
-	f, a, computer := freshComputerAllocationFixture(t)
-	r, err := a.AllocateFreshComputer(t.Context(), f.env, computer, 1, f.worker)
+	f, a, computerID := freshComputerAllocationFixture(t)
+	r, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 1, f.worker)
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity := ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computer, InstanceID: r.InstanceID, Epoch: r.Epoch}
+	identity := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp(),drain_reason='admin' WHERE id=$1`, f.worker)
 	for _, pause := range []string{"admission_paused_reason"} {
 		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET `+pause+`='disk_floor' WHERE id=$1`, f.worker)
@@ -559,11 +561,11 @@ func TestAllocationUndeliveredComputerStartsAfterHostDrain(t *testing.T) {
 	if err != nil || replay.ChannelCredential != first.ChannelCredential || !replay.ExpiresAt.Equal(*first.ExpiresAt) {
 		t.Fatalf("delivery retry changed grant: %v", err)
 	}
-	if _, err := CaptureComputerProxyTrust(t.Context(), f.pool, *f.host(), r.InstanceID); err != nil {
+	if _, err := computer.CaptureComputerProxyTrust(t.Context(), f.pool, *f.host(), r.InstanceID); err != nil {
 		t.Fatalf("acquiring proxy trust on drain: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET admission_paused_reason='disk_floor' WHERE id=$1`, f.worker)
-	if _, err := CaptureComputerProxyTrust(t.Context(), f.pool, *f.host(), r.InstanceID); err == nil {
+	if _, err := computer.CaptureComputerProxyTrust(t.Context(), f.pool, *f.host(), r.InstanceID); err == nil {
 		t.Fatal("drain bypassed acquiring health gate")
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET admission_paused_reason=NULL WHERE id=$1`, f.worker)
@@ -581,7 +583,7 @@ func TestAllocationUndeliveredPreparationStartsAfterHostDrain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity := PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}
+	identity := computer.PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp(),drain_reason='admin' WHERE id=$1`, f.worker)
 	for _, pause := range []string{"admission_paused_reason"} {
 		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET `+pause+`='disk_floor' WHERE id=$1`, f.worker)
@@ -598,7 +600,7 @@ func TestAllocationUndeliveredPreparationStartsAfterHostDrain(t *testing.T) {
 	if err != nil || !bytes.Equal(replay.Executor.ChannelCredential, first.Executor.ChannelCredential) || !replay.ExpiresAt.Equal(*first.ExpiresAt) {
 		t.Fatalf("preparation retry changed grant: %v", err)
 	}
-	if _, err := RenewPreparation(t.Context(), f.pool, *f.host(), first.Executor); err != nil {
+	if _, err := computer.RenewPreparation(t.Context(), f.pool, *f.host(), first.Executor); err != nil {
 		t.Fatalf("preparation renewal on drain: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
@@ -609,9 +611,9 @@ func TestAllocationUndeliveredPreparationStartsAfterHostDrain(t *testing.T) {
 
 func TestAllocationHostDrainRejectsNewAssignment(t *testing.T) {
 	t.Run("computer", func(t *testing.T) {
-		f, a, computer := freshComputerAllocationFixture(t)
+		f, a, computerID := freshComputerAllocationFixture(t)
 		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp(),drain_reason='admin' WHERE id=$1`, f.worker)
-		if _, err := a.AllocateFreshComputer(t.Context(), f.env, computer, 1, f.worker); err == nil {
+		if _, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 1, f.worker); err == nil {
 			t.Fatal("new Computer assigned to draining Host")
 		}
 	})
@@ -619,7 +621,7 @@ func TestAllocationHostDrainRejectsNewAssignment(t *testing.T) {
 		f, p, a := preparationAllocationFixture(t)
 		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp(),drain_reason='admin' WHERE id=$1`, f.worker)
 		if _, err := a.AllocatePreparation(t.Context(), f.env, p.ID, f.worker); err == nil {
-			t.Fatal("new Preparation assigned to draining Host")
+			t.Fatal("new computer.Preparation assigned to draining Host")
 		}
 	})
 }
@@ -641,7 +643,7 @@ func TestAllocationPreparationRemainsInDrainReadinessUntilFenced(t *testing.T) {
 	check(2)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET status='failed',error_code='executor_lost' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
 	check(2)
-	if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); err != nil {
+	if err := computer.ObservePreparationStopped(t.Context(), f.pool, *f.host(), computer.PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: r.InstanceID, Epoch: r.Epoch}); err != nil {
 		t.Fatal(err)
 	}
 	check(1)

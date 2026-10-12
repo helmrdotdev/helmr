@@ -7,26 +7,28 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
-func saveIdentity(f fixture) ComputerLeaseIdentity {
-	return ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}
+func saveIdentity(f fixture) computer.ComputerLeaseIdentity {
+	return computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}
 }
 
 func TestBackgroundSaveAdmissionConvergesAndPreservesRequiredOrder(t *testing.T) {
 	f := newFixture(t)
 	identity := saveIdentity(f)
-	if save, err := NextComputerSave(t.Context(), f.pool, *f.host(), identity, false); err != nil || save != nil {
+	if save, err := computer.NextComputerSave(t.Context(), f.pool, *f.host(), identity, false); err != nil || save != nil {
 		t.Fatalf("not due: %+v %v", save, err)
 	}
 	const n = 8
-	results := make(chan *SaveRequest, n)
+	results := make(chan *computer.SaveRequest, n)
 	errs := make(chan error, n)
 	var wg sync.WaitGroup
 	for range n {
 		wg.Go(func() {
-			s, e := NextComputerSave(t.Context(), f.pool, *f.host(), identity, true)
+			s, e := computer.NextComputerSave(t.Context(), f.pool, *f.host(), identity, true)
 			results <- s
 			errs <- e
 		})
@@ -39,7 +41,7 @@ func TestBackgroundSaveAdmissionConvergesAndPreservesRequiredOrder(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	var first *SaveRequest
+	var first *computer.SaveRequest
 	for result := range results {
 		if result == nil {
 			t.Fatal("missing optional request")
@@ -55,11 +57,11 @@ func TestBackgroundSaveAdmissionConvergesAndPreservesRequiredOrder(t *testing.T)
 	if required.Sequence != 2 || required.ID == first.ID {
 		t.Fatalf("required cut reused background: %+v", required)
 	}
-	if s, e := NextComputerSave(t.Context(), f.pool, *f.host(), identity, true); e != nil || s == nil || s.ID != first.ID {
+	if s, e := computer.NextComputerSave(t.Context(), f.pool, *f.host(), identity, true); e != nil || s == nil || s.ID != first.ID {
 		t.Fatalf("uncertain admission displaced: %+v %v", s, e)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_saves SET status='failed',failure_evidence='fixture settlement' WHERE environment_id=$1 AND id=$2`, f.env, first.ID)
-	if s, e := NextComputerSave(t.Context(), f.pool, *f.host(), identity, true); e != nil || s == nil || s.ID != required.ID {
+	if s, e := computer.NextComputerSave(t.Context(), f.pool, *f.host(), identity, true); e != nil || s == nil || s.ID != required.ID {
 		t.Fatalf("required priority: %+v %v", s, e)
 	}
 	var count int
@@ -75,7 +77,7 @@ func TestBackgroundSavePublicationDoesNotCompleteRunningTurn(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	save, err := NextComputerSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true)
+	save, err := computer.NextComputerSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true)
 	if err != nil || save == nil {
 		t.Fatalf("optional: %+v %v", save, err)
 	}
@@ -135,7 +137,7 @@ func TestBackgroundSaveDeclinesOptionalWorkButDiscoversPending(t *testing.T) {
 					expected = save.ID
 				}
 				dbtest.MustExec(t, t.Context(), f.pool, query, f.worker)
-				save, err := NextComputerSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true)
+				save, err := computer.NextComputerSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -156,11 +158,11 @@ func TestBackgroundSaveAndCheckpointAdmissionSerialize(t *testing.T) {
 		f := newFixture(t)
 		start := make(chan struct{})
 		var wg sync.WaitGroup
-		var save *SaveRequest
+		var save *computer.SaveRequest
 		var saveErr, captureErr error
 		wg.Go(func() {
 			<-start
-			save, saveErr = NextComputerSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true)
+			save, saveErr = computer.NextComputerSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true)
 		})
 		wg.Go(func() {
 			<-start
@@ -202,7 +204,7 @@ func TestBackgroundSaveRequiresExactLiveAuthority(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if save, err := NextComputerSave(t.Context(), f.pool, *f.host(), identity, true); !errors.Is(err, ErrDenied) || save != nil {
+			if save, err := computer.NextComputerSave(t.Context(), f.pool, *f.host(), identity, true); !errors.Is(err, ErrDenied) || save != nil {
 				t.Fatalf("invalid writer: %+v %v", save, err)
 			}
 		})
@@ -220,7 +222,7 @@ func TestBackgroundSaveDeclinesRevokedImage(t *testing.T) {
 		if _, err := p.f.secrets.Revoke(t.Context(), f.env, p.f.secretID, "revoke"); err != nil {
 			t.Fatal(err)
 		}
-		save, err := NextComputerSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true)
+		save, err := computer.NextComputerSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -243,10 +245,10 @@ func TestBackgroundSaveDiscoveryDoesNotLockComputerUntilDue(t *testing.T) {
 	if _, err := tx.Exec(t.Context(), `SELECT id FROM computers WHERE id=$1 FOR NO KEY UPDATE`, f.computer); err != nil {
 		t.Fatal(err)
 	}
-	if save, err := NextComputerSave(t.Context(), f.pool, *f.host(), saveIdentity(f), false); err != nil || save != nil {
+	if save, err := computer.NextComputerSave(t.Context(), f.pool, *f.host(), saveIdentity(f), false); err != nil || save != nil {
 		t.Fatalf("ordinary discovery blocked: %+v %v", save, err)
 	}
-	if save, err := NextComputerSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true); !errors.Is(err, ErrNotReady) || save != nil {
+	if save, err := computer.NextComputerSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true); !errors.Is(err, ErrNotReady) || save != nil {
 		t.Fatalf("optional admission bypassed lock: %+v %v", save, err)
 	}
 }
@@ -256,7 +258,7 @@ func TestBackgroundSaveLossInterruptsWorkWithoutCompletingIt(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	save, err := NextComputerSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true)
+	save, err := computer.NextComputerSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true)
 	if err != nil || save == nil {
 		t.Fatalf("admission: %+v %v", save, err)
 	}
@@ -272,7 +274,7 @@ func TestBackgroundSaveLossInterruptsWorkWithoutCompletingIt(t *testing.T) {
 func TestBackgroundSaveThenCheckpointKeepsCoherentRecoveryHead(t *testing.T) {
 	f := newFixture(t)
 	storage := newSaveStorageFixture(t, f)
-	optional, err := NextComputerSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true)
+	optional, err := computer.NextComputerSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true)
 	if err != nil || optional == nil {
 		t.Fatalf("background admission: %+v %v", optional, err)
 	}
@@ -284,17 +286,17 @@ func TestBackgroundSaveThenCheckpointKeepsCoherentRecoveryHead(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkpoint := checkpointStorageForSaveFixture(t, storage)
-	if err := checkpoint.publisher.RegisterCheckpoint(t.Context(), checkpoint.ref, checkpoint.manifest); err != nil {
+	if err := checkpoint.checkpoints.RegisterCheckpoint(t.Context(), checkpoint.ref, checkpoint.manifest); err != nil {
 		t.Fatal(err)
 	}
 	checkpoint.upload(t)
 	if err := checkpoint.publish(t, checkpoint.save, checkpoint.manifest.Disk); err != nil {
 		t.Fatal(err)
 	}
-	if err := checkpoint.publisher.CompleteCheckpoint(t.Context(), checkpoint.ref, checkpoint.manifest); err != nil {
+	if err := checkpoint.checkpoints.CompleteCheckpoint(t.Context(), checkpoint.ref, checkpoint.manifest); err != nil {
 		t.Fatal(err)
 	}
-	if save, err := NextComputerSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true); err != nil || save != nil {
+	if save, err := computer.NextComputerSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true); err != nil || save != nil {
 		t.Fatalf("optional passed ready checkpoint: %+v %v", save, err)
 	}
 	var valid bool

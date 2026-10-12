@@ -3,6 +3,8 @@ package controlplane
 import (
 	"net/http"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
@@ -11,12 +13,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func preparationExecutor(in workerapi.PreparationExecutor) (agent.PreparationExecutor, error) {
+func preparationExecutor(in workerapi.PreparationExecutor) (computer.PreparationExecutor, error) {
 	identity, err := allocationIdentity(in.Identity)
 	if err != nil || identity.Kind != "preparation" || len(in.ChannelCredential) != 32 {
-		return agent.PreparationExecutor{}, agent.ErrInvalidInput
+		return computer.PreparationExecutor{}, agent.ErrInvalidInput
 	}
-	return agent.PreparationExecutor{EnvironmentID: identity.EnvironmentID, PreparationID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch, ChannelCredential: in.ChannelCredential}, nil
+	return computer.PreparationExecutor{EnvironmentID: identity.EnvironmentID, PreparationID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch, ChannelCredential: in.ChannelCredential}, nil
 }
 func (server *Server) workerRenewPreparation(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.PreparationExecutor
@@ -30,7 +32,7 @@ func (server *Server) workerRenewPreparation(w http.ResponseWriter, r *http.Requ
 		server.writeAllocationError(w, err)
 		return
 	}
-	result, err := agent.RenewPreparation(r.Context(), server.tx, workerFromContext(r.Context()), ref)
+	result, err := computer.RenewPreparation(r.Context(), server.tx, workerFromContext(r.Context()), ref)
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return
@@ -70,7 +72,7 @@ func (server *Server) workerFailPreparation(w http.ResponseWriter, r *http.Reque
 		server.writeAllocationError(w, err)
 		return
 	}
-	err = agent.FailPreparation(r.Context(), server.tx, workerFromContext(r.Context()), ref, request.Code)
+	err = computer.FailPreparation(r.Context(), server.tx, workerFromContext(r.Context()), ref, request.Code)
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return
@@ -188,7 +190,7 @@ func (server *Server) workerPreparationSecrets(w http.ResponseWriter, r *http.Re
 		return
 	}
 	host := workerFromContext(r.Context())
-	exposed, err := agent.RecordPreparationExposure(r.Context(), server.tx, host, ref)
+	exposed, err := computer.RecordPreparationExposure(r.Context(), server.tx, host, ref)
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return
@@ -205,7 +207,7 @@ func (server *Server) workerPreparationSecrets(w http.ResponseWriter, r *http.Re
 	}
 	var protected *workerapi.ProtectedEnv
 	if hasProtected {
-		captured, err := agent.CapturePreparationProxyTrust(r.Context(), server.tx, host, ref.InstanceID)
+		captured, err := computer.CapturePreparationProxyTrust(r.Context(), server.tx, host, ref.InstanceID)
 		if err != nil {
 			server.writeAllocationError(w, err)
 			return
@@ -226,7 +228,7 @@ func (server *Server) workerPreparationSecrets(w http.ResponseWriter, r *http.Re
 		server.writeAllocationError(w, err)
 		return
 	}
-	if _, err = agent.RecordPreparationExposure(r.Context(), server.tx, host, ref); err != nil {
+	if _, err = computer.RecordPreparationExposure(r.Context(), server.tx, host, ref); err != nil {
 		server.writeAllocationError(w, err)
 		return
 	}
@@ -257,7 +259,7 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	host := workerFromContext(r.Context())
-	start, err := agent.ReadPreparationStart(r.Context(), server.tx, host, ref)
+	start, err := computer.ReadPreparationStart(r.Context(), server.tx, host, ref)
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return
@@ -271,14 +273,14 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 		server.writeAllocationError(w, agent.ErrConflict)
 		return
 	}
-	var computer *definition.TemplateManifest
+	var computerID *definition.TemplateManifest
 	for _, d := range manifest.Program.Metadata.Definitions {
 		if d.Kind == definition.KindTemplate && d.DeclaredID == start.Spec.TemplateDefinitionID {
-			computer = d.Template
+			computerID = d.Template
 			break
 		}
 	}
-	if computer == nil {
+	if computerID == nil {
 		server.writeAllocationError(w, agent.ErrConflict)
 		return
 	}
@@ -289,7 +291,7 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 			break
 		}
 	}
-	if seedObject.Digest != computer.Seed.ArtifactDigest {
+	if seedObject.Digest != computerID.Seed.ArtifactDigest {
 		server.writeAllocationError(w, agent.ErrConflict)
 		return
 	}
@@ -298,10 +300,10 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 		server.writeAllocationError(w, err)
 		return
 	}
-	_, err = agent.ReadPreparationStart(r.Context(), server.tx, host, ref)
+	_, err = computer.ReadPreparationStart(r.Context(), server.tx, host, ref)
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, workerapi.PreparationStart{Program: program, TemplateDefinitionID: start.Spec.TemplateDefinitionID, Seed: computer.Seed, SeedObject: seedObject, RootfsDigest: start.RootfsDigest})
+	writeJSON(w, http.StatusOK, workerapi.PreparationStart{Program: program, TemplateDefinitionID: start.Spec.TemplateDefinitionID, Seed: computerID.Seed, SeedObject: seedObject, RootfsDigest: start.RootfsDigest})
 }

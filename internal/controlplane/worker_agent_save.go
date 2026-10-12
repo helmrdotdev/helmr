@@ -2,23 +2,25 @@ package controlplane
 
 import (
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"net/http"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
-func agentSavePublication(in workerapi.AgentSave, host workergroup.HostPrincipal) (agent.SavePublication, error) {
+func agentSavePublication(in workerapi.AgentSave, host workergroup.HostPrincipal) (computer.SavePublication, error) {
 	env, err := uuid.Parse(in.EnvironmentID)
 	if err != nil || env == uuid.Nil() {
-		return agent.SavePublication{}, agent.ErrInvalidInput
+		return computer.SavePublication{}, agent.ErrInvalidInput
 	}
 	id, err := uuid.Parse(in.SaveID)
 	if err != nil || id == uuid.Nil() || in.LeaseEpoch <= 0 {
-		return agent.SavePublication{}, agent.ErrInvalidInput
+		return computer.SavePublication{}, agent.ErrInvalidInput
 	}
-	return agent.SavePublication{EnvironmentID: env, SaveID: id, LeaseEpoch: in.LeaseEpoch, Host: host}, nil
+	return computer.SavePublication{EnvironmentID: env, SaveID: id, LeaseEpoch: in.LeaseEpoch, Host: host}, nil
 }
 func (server *Server) workerRegisterAgentSaveObject(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.AgentSaveObject
@@ -96,7 +98,7 @@ func (server *Server) workerNextAgentSave(w http.ResponseWriter, r *http.Request
 		server.writeAgentWorkerError(w, agent.ErrInvalidInput)
 		return
 	}
-	save, err := agent.NextComputerSave(r.Context(), server.tx, workerFromContext(r.Context()), agent.ComputerLeaseIdentity{EnvironmentID: identity.EnvironmentID, ComputerID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch}, request.BackgroundDue)
+	save, err := computer.NextComputerSave(r.Context(), server.tx, workerFromContext(r.Context()), computer.ComputerLeaseIdentity{EnvironmentID: identity.EnvironmentID, ComputerID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch}, request.BackgroundDue)
 	if errors.Is(err, agent.ErrNotReady) {
 		writeError(w, unavailable(errors.New("save discovery is temporarily unavailable")))
 		return

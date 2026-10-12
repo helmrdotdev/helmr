@@ -8,6 +8,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
@@ -267,7 +269,7 @@ func TestComputerCaptureLossPreservesUnacknowledgedAndRecordedCuts(t *testing.T)
 			result, _ := beginCapture(t, f, req)
 			root := "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 			if recorded {
-				if err := recordCaptureForTest(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: result.SaveID, LeaseEpoch: 1, DiskRoot: root, Evidence: "frozen cut"}); err != nil {
+				if err := recordCaptureForTest(t.Context(), f.pool, computer.CaptureEvidence{EnvironmentID: f.env, SaveID: result.SaveID, LeaseEpoch: 1, DiskRoot: root, Evidence: "frozen cut"}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -288,7 +290,7 @@ func TestComputerCaptureLossPreservesUnacknowledgedAndRecordedCuts(t *testing.T)
 				t.Fatalf("lost source state: save=%s scrubbed=%v", state, scrubbed)
 			}
 			if !recorded {
-				if err := recordCaptureForTest(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: result.SaveID, LeaseEpoch: 1, DiskRoot: root, Evidence: "recovered original cut after lost acknowledgement"}); err != nil {
+				if err := recordCaptureForTest(t.Context(), f.pool, computer.CaptureEvidence{EnvironmentID: f.env, SaveID: result.SaveID, LeaseEpoch: 1, DiskRoot: root, Evidence: "recovered original cut after lost acknowledgement"}); err != nil {
 					t.Fatal(err)
 				}
 			}

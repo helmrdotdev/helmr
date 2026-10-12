@@ -2,12 +2,13 @@ package controlplane
 
 import (
 	"encoding/json"
+	"net/http/httptest"
+	"testing"
+
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"net/http/httptest"
-	"testing"
 )
 
 func TestWorkerAgentFailureHasOneObservableOutcome(t *testing.T) {

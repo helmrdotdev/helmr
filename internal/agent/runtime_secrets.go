@@ -5,6 +5,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -13,7 +15,7 @@ import (
 
 type SessionStartExposure struct {
 	Start        ProcessStart
-	Secrets      []ExposedSecret
+	Secrets      []computer.ExposedSecret
 	ProtectedEnv map[string]string
 	ProxyCA      []byte
 }
@@ -24,8 +26,8 @@ type runtimeSecretBinding struct {
 	origins                         []string
 }
 
-func readRuntimeBindings(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) ([]runtimeSecretBinding, error) {
-	rows, err := tx.Query(ctx, `SELECT secret_id,placement_kind,placement_target,mode,allowed_origins,COALESCE(placeholder,'') FROM secret_bindings WHERE environment_id=$1 AND computer_id=$2 ORDER BY placement_kind,placement_target`, env, computer)
+func readRuntimeBindings(ctx context.Context, tx pgx.Tx, env, computerID uuid.UUID) ([]runtimeSecretBinding, error) {
+	rows, err := tx.Query(ctx, `SELECT secret_id,placement_kind,placement_target,mode,allowed_origins,COALESCE(placeholder,'') FROM secret_bindings WHERE environment_id=$1 AND computer_id=$2 ORDER BY placement_kind,placement_target`, env, computerID)
 	if err != nil {
 		return nil, err
 	}
@@ -48,14 +50,14 @@ func RecordSessionStartExposure(ctx context.Context, database db.TxBeginner, hos
 		if err := allocationLockTimeout(ctx, tx); err != nil {
 			return err
 		}
-		if err := lockComputerHost(ctx, tx, host); err != nil {
+		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
-		var computer uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT computer_id FROM sessions WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, e.SessionID).Scan(&computer); err != nil {
+		var computerID uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT computer_id FROM sessions WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, e.SessionID).Scan(&computerID); err != nil {
 			return err
 		}
-		bindings, err := readRuntimeBindings(ctx, tx, e.EnvironmentID, computer)
+		bindings, err := readRuntimeBindings(ctx, tx, e.EnvironmentID, computerID)
 		if err != nil {
 			return err
 		}
@@ -89,7 +91,7 @@ func RecordSessionStartExposure(ctx context.Context, database db.TxBeginner, hos
 		if err = checkSessionStart(ctx, tx, host, e, attachment, &result.Start); err != nil {
 			return err
 		}
-		if result.Start.ComputerID != computer {
+		if result.Start.ComputerID != computerID {
 			return ErrDenied
 		}
 		if _, err = tx.Exec(ctx, `INSERT INTO secret_exposures(id,environment_id,session_id,process_epoch,secret_id,version_id,revocation_generation)
@@ -97,10 +99,10 @@ func RecordSessionStartExposure(ctx context.Context, database db.TxBeginner, hos
    ON CONFLICT(environment_id,session_id,process_epoch,secret_id) WHERE session_id IS NOT NULL DO NOTHING`, e.EnvironmentID, e.SessionID, e.ProcessEpoch, ids); err != nil {
 			return err
 		}
-		result.Secrets = make([]ExposedSecret, 0, len(bindings))
+		result.Secrets = make([]computer.ExposedSecret, 0, len(bindings))
 		result.ProtectedEnv = map[string]string{}
 		for _, b := range bindings {
-			value := ExposedSecret{Target: b.target, Kind: b.kind, Mode: b.mode, AllowedOrigins: b.origins, SecretID: b.secret}
+			value := computer.ExposedSecret{Target: b.target, Kind: b.kind, Mode: b.mode, AllowedOrigins: b.origins, SecretID: b.secret}
 			if err = tx.QueryRow(ctx, `SELECT x.version_id,v.version,v.nonce,v.ciphertext FROM secret_exposures x JOIN secret_versions v ON v.secret_id=x.secret_id AND v.id=x.version_id WHERE x.environment_id=$1 AND x.session_id=$2 AND x.process_epoch=$3 AND x.secret_id=$4`, e.EnvironmentID, e.SessionID, e.ProcessEpoch, b.secret).Scan(&value.VersionID, &value.Version, &value.Nonce, &value.Ciphertext); err != nil {
 				return err
 			}
@@ -111,7 +113,7 @@ func RecordSessionStartExposure(ctx context.Context, database db.TxBeginner, hos
 		}
 		if len(result.ProtectedEnv) > 0 {
 			var expiry time.Time
-			if err = tx.QueryRow(ctx, `SELECT proxy_ca_certificate,proxy_ca_not_after FROM computers WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, computer).Scan(&result.ProxyCA, &expiry); err != nil {
+			if err = tx.QueryRow(ctx, `SELECT proxy_ca_certificate,proxy_ca_not_after FROM computers WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, computerID).Scan(&result.ProxyCA, &expiry); err != nil {
 				return err
 			}
 			if err = secret.ValidateProxyTrust(result.ProxyCA, expiry, time.Now()); err != nil {

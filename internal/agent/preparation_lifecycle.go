@@ -8,6 +8,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -34,7 +36,7 @@ func expirePreparation(ctx context.Context, pool db.TxBeginner, env, id uuid.UUI
 				return err
 			}
 		}
-		if err := lockPreparationSpec(ctx, tx, env, spec); err != nil {
+		if err := computer.LockImageSpec(ctx, tx, env, spec); err != nil {
 			return err
 		}
 		var same, deadline, unavailable bool
@@ -69,7 +71,7 @@ func reconcilePreparationRevocation(ctx context.Context, pool db.TxBeginner, env
 		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout='1s'`); err != nil {
 			return err
 		}
-		p, err := readPreparation(ctx, tx, env, id)
+		p, err := computer.ReadImageBuild(ctx, tx, env, id)
 		if err != nil {
 			return err
 		}
@@ -92,7 +94,7 @@ func reconcilePreparationRevocation(ctx context.Context, pool db.TxBeginner, env
 		if err != nil {
 			return err
 		}
-		if err = lockPreparationSpec(ctx, tx, env, p.SpecID); err != nil {
+		if err = computer.LockImageSpec(ctx, tx, env, p.SpecID); err != nil {
 			return err
 		}
 		_, err = tx.Exec(ctx, `UPDATE image_builds p SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,status='failed',error_code='secret_revoked'
@@ -130,7 +132,7 @@ func lockAbsentHostPreparations(ctx context.Context, tx pgx.Tx, host uuid.UUID) 
 		return nil, err
 	}
 	for _, p := range attempts {
-		if err = lockPreparationSpec(ctx, tx, p.env, p.spec); err != nil {
+		if err = computer.LockImageSpec(ctx, tx, p.env, p.spec); err != nil {
 			return nil, err
 		}
 	}
@@ -158,10 +160,10 @@ func observeRecoveredHostPreparations(ctx context.Context, database db.TxDB, hos
 			if err := lockRecoveringComputerHost(ctx, tx, host); err != nil {
 				return err
 			}
-			if err := lockPreparationSpec(ctx, tx, p.env, p.spec); err != nil {
+			if err := computer.LockImageSpec(ctx, tx, p.env, p.spec); err != nil {
 				return err
 			}
-			return recordPreparationStopped(ctx, tx, p.env, p.id, "successor worker completed local VM inventory and physical cleanup")
+			return computer.RecordImageBuildStopped(ctx, tx, p.env, p.id, "successor worker completed local VM inventory and physical cleanup")
 		})
 		if err != nil {
 			var lock *pgconn.PgError
@@ -180,24 +182,24 @@ func observeRecoveredHostPreparations(ctx context.Context, database db.TxDB, hos
 
 // expirePreparationWaiter fails only never-dispatched work. Computer storage and
 // the executor's physical lifetime remain owned by their separate reconcilers.
-func expirePreparationWaiter(ctx context.Context, pool db.TxBeginner, env, computer uuid.UUID) error {
+func expirePreparationWaiter(ctx context.Context, pool db.TxBeginner, env, computerID uuid.UUID) error {
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout='1s'`); err != nil {
 			return err
 		}
 		var spec *uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT image_spec_id FROM computers WHERE environment_id=$1 AND id=$2`, env, computer).Scan(&spec); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT image_spec_id FROM computers WHERE environment_id=$1 AND id=$2`, env, computerID).Scan(&spec); err != nil {
 			return err
 		}
 		if spec == nil {
 			return nil
 		}
-		if err := lockPreparationSpec(ctx, tx, env, *spec); err != nil {
+		if err := computer.LockImageSpec(ctx, tx, env, *spec); err != nil {
 			return err
 		}
 		read := func() ([]uuid.UUID, error) {
 			rows, err := tx.Query(ctx, `WITH roots AS (SELECT DISTINCT root_session_id AS id FROM sessions WHERE environment_id=$1 AND computer_id=$2)
-    SELECT s.id FROM sessions s JOIN roots r ON r.id=s.root_session_id WHERE s.environment_id=$1 ORDER BY s.id`, env, computer)
+    SELECT s.id FROM sessions s JOIN roots r ON r.id=s.root_session_id WHERE s.environment_id=$1 ORDER BY s.id`, env, computerID)
 			if err != nil {
 				return nil, err
 			}
@@ -207,7 +209,7 @@ func expirePreparationWaiter(ctx context.Context, pool db.TxBeginner, env, compu
 		if err != nil {
 			return err
 		}
-		if _, err = lockSessionsAndComputers(ctx, tx, env, before, []uuid.UUID{computer}); err != nil {
+		if _, err = lockSessionsAndComputers(ctx, tx, env, before, []uuid.UUID{computerID}); err != nil {
 			return err
 		}
 		after, err := read()
@@ -219,24 +221,24 @@ func expirePreparationWaiter(ctx context.Context, pool db.TxBeginner, env, compu
 		}
 		var due bool
 		if err = tx.QueryRow(ctx, `SELECT initial_root_digest IS NULL AND preparation_failed_at IS NULL AND deleted_at IS NULL AND preparation_deadline_at<=clock_timestamp()
-   FROM computers WHERE environment_id=$1 AND id=$2`, env, computer).Scan(&due); err != nil {
+   FROM computers WHERE environment_id=$1 AND id=$2`, env, computerID).Scan(&due); err != nil {
 			return err
 		}
 		if !due {
 			return nil
 		}
 		var dispatched bool
-		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND computer_id=$2 AND started_at IS NOT NULL)`, env, computer).Scan(&dispatched); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND computer_id=$2 AND started_at IS NOT NULL)`, env, computerID).Scan(&dispatched); err != nil {
 			return err
 		}
 		if dispatched {
 			return ErrConflict
 		}
-		if _, err = tx.Exec(ctx, `UPDATE computers SET preparation_failed_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, env, computer); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE computers SET preparation_failed_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, env, computerID); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `UPDATE turns SET status='failed',terminal_at=clock_timestamp(),processing_closed_at=clock_timestamp()
-   WHERE environment_id=$1 AND computer_id=$2 AND status='queued' RETURNING id,session_id`, env, computer)
+   WHERE environment_id=$1 AND computer_id=$2 AND status='queued' RETURNING id,session_id`, env, computerID)
 		if err != nil {
 			return err
 		}
@@ -254,7 +256,7 @@ func expirePreparationWaiter(ctx context.Context, pool db.TxBeginner, env, compu
 				return err
 			}
 		}
-		if _, err = tx.Exec(ctx, `UPDATE sessions SET status='closing' WHERE environment_id=$1 AND computer_id=$2 AND status='open'`, env, computer); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE sessions SET status='closing' WHERE environment_id=$1 AND computer_id=$2 AND status='open'`, env, computerID); err != nil {
 			return err
 		}
 		return drainClosingSessions(ctx, tx, env, after)
@@ -369,24 +371,24 @@ func reconcilePreparationLifecycle(ctx context.Context, database db.TxDB, after 
 
 // Attached waiters only resolve their existing chain; failure is never retried
 // here. Never-attached demand is handled by reconcileUnattachedComputer.
-func reconcileComputerImage(ctx context.Context, database db.TxDB, env, computer uuid.UUID) error {
+func reconcileComputerImage(ctx context.Context, database db.TxDB, env, computerID uuid.UUID) error {
 	// Bound each waiter independently: contention must not spend another
 	// Computer's scan/settlement budget. The scan context only owns discovery.
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	if _, err := PinComputerImage(ctx, database, env, computer); err == nil {
+	if _, err := computer.PinComputerImage(ctx, database, env, computerID); err == nil {
 		return nil
 	} else if !errors.Is(err, ErrNotReady) {
 		return err
 	}
 	var attached *uuid.UUID
-	if err := database.QueryRow(ctx, `SELECT image_build_id FROM computers WHERE environment_id=$1 AND id=$2`, env, computer).Scan(&attached); err != nil {
+	if err := database.QueryRow(ctx, `SELECT image_build_id FROM computers WHERE environment_id=$1 AND id=$2`, env, computerID).Scan(&attached); err != nil {
 		return err
 	}
 	if attached == nil {
 		return nil
 	}
-	_, err := EnsurePreparationSuccessor(ctx, database, env, *attached)
+	_, err := computer.EnsurePreparationSuccessor(ctx, database, env, *attached)
 	if errors.Is(err, ErrNotReady) {
 		return nil
 	}
@@ -395,16 +397,16 @@ func reconcileComputerImage(ctx context.Context, database db.TxDB, env, computer
 
 // Unattached demand has never consumed an attempt. It may wait behind an
 // unusable physical executor, but does not retry an attached failed chain.
-func reconcileUnattachedComputer(ctx context.Context, database db.TxDB, env, computer uuid.UUID) error {
+func reconcileUnattachedComputer(ctx context.Context, database db.TxDB, env, computerID uuid.UUID) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if _, err := pinComputerImage(ctx, tx, env, computer); err == nil {
+		if _, err := computer.PinImage(ctx, tx, env, computerID); err == nil {
 			return nil
 		} else if !errors.Is(err, ErrNotReady) {
 			return err
 		}
-		_, err := attachComputerPreparation(ctx, tx, env, computer)
+		_, err := computer.AttachImageBuild(ctx, tx, env, computerID)
 		return err
 	})
 	if errors.Is(err, ErrNotReady) {

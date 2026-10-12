@@ -3,63 +3,24 @@ package agent
 import (
 	"context"
 	"errors"
-	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
-// ComputerLeaseIdentity names the exact physical allocation, not logical Session
-// continuity. Restoring a retained Session always uses a different allocation.
-type ComputerLeaseIdentity struct {
-	EnvironmentID uuid.UUID
-	ComputerID    uuid.UUID
-	InstanceID    uuid.UUID
-	Epoch         int64
-}
-
-func (identity ComputerLeaseIdentity) valid() bool {
-	return identity.EnvironmentID != uuid.Nil() && identity.ComputerID != uuid.Nil() && identity.InstanceID != uuid.Nil() && identity.Epoch > 0
-}
-
-// RenewComputerLease extends a still-live allocation. Expired authority is never
-// resurrected, even when no replacement has acquired the Computer yet.
-func RenewComputerLease(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, identity ComputerLeaseIdentity) (time.Time, error) {
-	if !identity.valid() {
-		return time.Time{}, ErrInvalidInput
-	}
-	var expires time.Time
-	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockComputerHost(ctx, tx, host); err != nil {
-			return err
-		}
-		var id uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT id FROM computers WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, identity.EnvironmentID, identity.ComputerID).Scan(&id); err != nil {
-			return err
-		}
-		// The time predicate runs after the ownership lock, including any lock wait.
-		return tx.QueryRow(ctx, `UPDATE computer_leases SET expires_at=GREATEST(expires_at,clock_timestamp()+interval '1 minute')
- WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND allocation_id=$4 AND worker_host_id=$5 AND worker_epoch=$6
- AND status IN ('active','acquiring','releasing') AND fenced_at IS NULL AND expires_at>clock_timestamp()
- AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2) RETURNING expires_at`, identity.EnvironmentID, identity.ComputerID, identity.Epoch, identity.InstanceID, host.HostID, host.Epoch).Scan(&expires)
-	})
-	if err != nil {
-		return time.Time{}, hideMissing(err)
-	}
-	return expires, nil
-}
-
 // ObserveComputerStopped is called only after the owning worker has joined the
 // exact physical VM's closure. Expiry and an epoch change are not this evidence.
 // A retained coherent checkpoint keeps its logical processes available to restore.
-func ObserveComputerStopped(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, identity ComputerLeaseIdentity, invalidCheckpoint uuid.UUID) error {
-	if !identity.valid() {
+func ObserveComputerStopped(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, identity computer.ComputerLeaseIdentity, invalidCheckpoint uuid.UUID) error {
+	if !identity.Valid() {
 		return ErrInvalidInput
 	}
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockComputerHost(ctx, tx, host); err != nil {
+		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
 		return recordComputerStopped(ctx, tx, host.HostID, host.Epoch, identity, "owning worker joined physical VM closure", invalidCheckpoint)
@@ -68,13 +29,13 @@ func ObserveComputerStopped(ctx context.Context, pool db.TxBeginner, host worker
 
 // Expiry rejects new execution and retains the unique writer blocker. Only a
 // later physical observation may fence the lease and release its allocation.
-func expireComputerLease(ctx context.Context, pool db.TxBeginner, env, computer uuid.UUID, epoch int64) error {
+func expireComputerLease(ctx context.Context, pool db.TxBeginner, env, computerID uuid.UUID, epoch int64) error {
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout='1s'`); err != nil {
 			return err
 		}
 		var host, group uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT l.worker_host_id,h.worker_group_id FROM computer_leases l JOIN worker_hosts h ON h.id=l.worker_host_id WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=$3`, env, computer, epoch).Scan(&host, &group); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT l.worker_host_id,h.worker_group_id FROM computer_leases l JOIN worker_hosts h ON h.id=l.worker_host_id WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=$3`, env, computerID, epoch).Scan(&host, &group); err != nil {
 			return err
 		}
 		// Supply changes and worker epoch replacement use the same supply-first order.
@@ -84,30 +45,30 @@ func expireComputerLease(ctx context.Context, pool db.TxBeginner, env, computer 
 		if _, err := tx.Exec(ctx, `SELECT id FROM worker_hosts WHERE id=$1 FOR SHARE`, host); err != nil {
 			return err
 		}
-		members, err := lockComputerMembers(ctx, tx, env, computer)
+		members, err := lockComputerMembers(ctx, tx, env, computerID)
 		if err != nil {
 			return err
 		}
 		var due bool
 		if err = tx.QueryRow(ctx, `SELECT l.fenced_at IS NULL AND l.status IN ('active','acquiring','releasing')
  AND (COALESCE(l.expires_at<=clock_timestamp(),false) OR h.current_epoch IS DISTINCT FROM l.worker_epoch OR h.status NOT IN ('active','draining'))
- FROM computer_leases l JOIN worker_hosts h ON h.id=l.worker_host_id WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=$3 FOR NO KEY UPDATE OF l`, env, computer, epoch).Scan(&due); err != nil {
+ FROM computer_leases l JOIN worker_hosts h ON h.id=l.worker_host_id WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=$3 FOR NO KEY UPDATE OF l`, env, computerID, epoch).Scan(&due); err != nil {
 			return err
 		}
 		if !due {
 			return nil
 		}
-		if _, err = tx.Exec(ctx, `UPDATE computer_leases SET status='lost' WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, env, computer, epoch); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE computer_leases SET status='lost' WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, env, computerID, epoch); err != nil {
 			return err
 		}
-		if err := loseComputerProcesses(ctx, tx, env, computer, epoch, members, false); err != nil {
+		if err := loseComputerProcesses(ctx, tx, env, computerID, epoch, members, false); err != nil {
 			return err
 		}
-		return settleLostComputerSaves(ctx, tx, env, computer, epoch)
+		return settleLostComputerSaves(ctx, tx, env, computerID, epoch)
 	}))
 }
 
-func loseComputerProcesses(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, epoch int64, members []computerMember, physicalStopped bool) error {
+func loseComputerProcesses(ctx context.Context, tx pgx.Tx, env, computerID uuid.UUID, epoch int64, members []computerMember, physicalStopped bool) error {
 	for _, member := range members {
 		if member.LeaseEpoch != epoch {
 			continue
@@ -116,12 +77,12 @@ func loseComputerProcesses(ctx context.Context, tx pgx.Tx, env, computer uuid.UU
 		err := tx.QueryRow(ctx, `SELECT cp.disk_save_id FROM checkpoints cp
  JOIN checkpoint_processes m ON (m.environment_id,m.checkpoint_id)=(cp.environment_id,cp.id)
  WHERE cp.environment_id=$1 AND cp.computer_id=$2 AND cp.status IN ('ready','restoring')
- AND (cp.source_lease_epoch=$3 OR cp.target_lease_epoch=$3) AND m.session_id=$4 AND m.process_epoch=$5`, env, computer, epoch, member.Session, member.Epoch).Scan(&save)
+ AND (cp.source_lease_epoch=$3 OR cp.target_lease_epoch=$3) AND m.session_id=$4 AND m.process_epoch=$5`, env, computerID, epoch, member.Session, member.Epoch).Scan(&save)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
 		if err == nil {
-			retained, err := checkpointDiskEligible(ctx, tx, env, computer, save)
+			retained, err := checkpointDiskEligible(ctx, tx, env, computerID, save)
 			if err != nil {
 				return err
 			}
@@ -181,7 +142,7 @@ func loseSessionProcess(ctx context.Context, tx pgx.Tx, e Execution, physicalSto
 
 // The caller has locked and validated the observer's supply authority. hostEpoch
 // identifies the stopped allocation, which may precede the observer after recovery.
-func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hostEpoch int64, identity ComputerLeaseIdentity, evidence string, invalidCheckpoint uuid.UUID) error {
+func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hostEpoch int64, identity computer.ComputerLeaseIdentity, evidence string, invalidCheckpoint uuid.UUID) error {
 	members, err := lockComputerCheckpointMembers(ctx, tx, identity.EnvironmentID, identity.ComputerID, invalidCheckpoint)
 	if err != nil {
 		return err
@@ -252,7 +213,7 @@ func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hos
 
 // The Computer lock held by the physical-stop owner serializes this release
 // with placement. Expired authority alone never releases a deleted key.
-func releaseDeletedComputerKey(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) error {
-	_, err := tx.Exec(ctx, `UPDATE computers c SET key=NULL WHERE environment_id=$1 AND id=$2 AND deleted_at IS NOT NULL AND key IS NOT NULL AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL)`, env, computer)
+func releaseDeletedComputerKey(ctx context.Context, tx pgx.Tx, env, computerID uuid.UUID) error {
+	_, err := tx.Exec(ctx, `UPDATE computers c SET key=NULL WHERE environment_id=$1 AND id=$2 AND deleted_at IS NOT NULL AND key IS NOT NULL AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL)`, env, computerID)
 	return err
 }

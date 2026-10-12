@@ -8,7 +8,8 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
@@ -42,7 +43,7 @@ func claimRequests(ctx context.Context, pool db.TxBeginner, limit int) ([]uuid.U
 
 // ReconcileRequest owns completion of one durable input receipt. Success means
 // the receipt is terminal, not that an admitted Turn has started or completed.
-func ReconcileRequest(ctx context.Context, pool db.TxBeginner, trust agent.ComputerTrustIssuer, config ProjectionConfig, client *WebClient, id uuid.UUID) error {
+func ReconcileRequest(ctx context.Context, pool db.TxBeginner, trust computer.ComputerTrustIssuer, config ProjectionConfig, client *WebClient, id uuid.UUID) error {
 	if !config.valid() {
 		return errGestureInvalid
 	}
@@ -77,7 +78,7 @@ func ReconcileRequest(ctx context.Context, pool db.TxBeginner, trust agent.Compu
 // ReconcileRequests advances a bounded batch. Operational errors leave received
 // rows retryable after the reserved interval; source expiry still prevents late
 // admission. One failed request does not prevent independent receipts progressing.
-func ReconcileRequests(ctx context.Context, pool db.TxBeginner, trust agent.ComputerTrustIssuer, config ProjectionConfig, client *WebClient, limit int) (int, error) {
+func ReconcileRequests(ctx context.Context, pool db.TxBeginner, trust computer.ComputerTrustIssuer, config ProjectionConfig, client *WebClient, limit int) (int, error) {
 	ids, err := claimRequests(ctx, pool, limit)
 	if err != nil {
 		return 0, err
@@ -93,7 +94,7 @@ func ReconcileRequests(ctx context.Context, pool db.TxBeginner, trust agent.Comp
 
 // RunRequests consumes only authenticated durable receipts. Slack HTTP handlers
 // acknowledge persistence; this dispatcher loop owns subsequent core admission.
-func RunRequests(ctx context.Context, pool db.TxBeginner, trust agent.ComputerTrustIssuer, config ProjectionConfig, client *WebClient, log *slog.Logger) error {
+func RunRequests(ctx context.Context, pool db.TxBeginner, trust computer.ComputerTrustIssuer, config ProjectionConfig, client *WebClient, log *slog.Logger) error {
 	if pool == nil || client == nil || log == nil || !config.valid() {
 		return errGestureInvalid
 	}

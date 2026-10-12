@@ -5,6 +5,8 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
@@ -14,7 +16,7 @@ func TestComputerProcessListingPreservesCustodyWithoutExecutionAuthority(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity := ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: p.ComputerID, InstanceID: p.InstanceID, Epoch: p.LeaseEpoch}
+	identity := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: p.ComputerID, InstanceID: p.InstanceID, Epoch: p.LeaseEpoch}
 	assertListed := func() {
 		t.Helper()
 		rows, err := ListComputerProcesses(t.Context(), f.pool, *f.host(), identity, nil)

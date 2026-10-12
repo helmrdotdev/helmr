@@ -5,6 +5,8 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -31,14 +33,14 @@ func TestHostAllocationListingRetainsUndeliveredClosedPreparation(t *testing.T) 
 	if found == nil || found.InstanceID != allocation.InstanceID || found.Epoch != allocation.Epoch || found.EnvironmentID != f.env {
 		t.Fatalf("closed allocation disappeared: %+v", records)
 	}
-	if _, err := a.DeliverPreparation(t.Context(), *f.host(), PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: allocation.InstanceID, Epoch: allocation.Epoch}); !errors.Is(err, ErrAllocationClosed) {
+	if _, err := a.DeliverPreparation(t.Context(), *f.host(), computer.PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, InstanceID: allocation.InstanceID, Epoch: allocation.Epoch}); !errors.Is(err, ErrAllocationClosed) {
 		t.Fatalf("closed preparation delivered: %v", err)
 	}
 	var untouched bool
 	if err := f.pool.QueryRow(t.Context(), `SELECT delivered_at IS NULL AND executor_expires_at IS NULL AND fenced_at IS NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&untouched); err != nil || !untouched {
 		t.Fatalf("listing granted authority or released custody: %v %v", untouched, err)
 	}
-	if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), PreparationIdentity{EnvironmentID: found.EnvironmentID, PreparationID: found.OwnerID, Epoch: found.Epoch, InstanceID: found.InstanceID}); err != nil {
+	if err := computer.ObservePreparationStopped(t.Context(), f.pool, *f.host(), computer.PreparationIdentity{EnvironmentID: found.EnvironmentID, PreparationID: found.OwnerID, Epoch: found.Epoch, InstanceID: found.InstanceID}); err != nil {
 		t.Fatal(err)
 	}
 	records, err = ListHostAllocations(t.Context(), f.pool, *f.host(), nil)
@@ -71,33 +73,33 @@ func TestHostAllocationListingRejectsForeignAndStaleAuthority(t *testing.T) {
 }
 
 func TestHostAllocationListingIncludesLostComputerAndAdvancesCursor(t *testing.T) {
-	f, a, computer := freshComputerAllocationFixture(t)
-	allocation, err := a.AllocateFreshComputer(t.Context(), f.env, computer, 1, f.worker)
+	f, a, computerID := freshComputerAllocationFixture(t)
+	allocation, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 1, f.worker)
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost' WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.env, computer)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost' WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.env, computerID)
 	records, err := ListHostAllocations(t.Context(), f.pool, *f.host(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var found *HostAllocation
 	for i := range records {
-		if records[i].Kind == "computer" && records[i].OwnerID == computer {
+		if records[i].Kind == "computer" && records[i].OwnerID == computerID {
 			found = &records[i]
 		}
 	}
 	if found == nil || found.InstanceID != allocation.InstanceID || found.Epoch != 1 {
 		t.Fatalf("lost undelivered Computer disappeared: %+v", records)
 	}
-	if _, err := a.DeliverComputer(t.Context(), *f.host(), ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computer, Epoch: 1, InstanceID: allocation.InstanceID}); !errors.Is(err, ErrAllocationClosed) {
+	if _, err := a.DeliverComputer(t.Context(), *f.host(), computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, Epoch: 1, InstanceID: allocation.InstanceID}); !errors.Is(err, ErrAllocationClosed) {
 		t.Fatalf("lost allocation delivered: %v", err)
 	}
 	next, err := ListHostAllocations(t.Context(), f.pool, *f.host(), &records[len(records)-1])
 	if err != nil || len(next) != 0 {
 		t.Fatalf("cursor did not advance: %+v %v", next, err)
 	}
-	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), ComputerLeaseIdentity{EnvironmentID: found.EnvironmentID, ComputerID: found.OwnerID, Epoch: found.Epoch, InstanceID: found.InstanceID}, uuid.Nil()); err != nil {
+	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), computer.ComputerLeaseIdentity{EnvironmentID: found.EnvironmentID, ComputerID: found.OwnerID, Epoch: found.Epoch, InstanceID: found.InstanceID}, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	records, err = ListHostAllocations(t.Context(), f.pool, *f.host(), nil)
@@ -105,7 +107,7 @@ func TestHostAllocationListingIncludesLostComputerAndAdvancesCursor(t *testing.T
 		t.Fatal(err)
 	}
 	for _, r := range records {
-		if r.Kind == "computer" && r.OwnerID == computer {
+		if r.Kind == "computer" && r.OwnerID == computerID {
 			t.Fatal("physically stopped Computer still listed")
 		}
 	}
@@ -116,10 +118,10 @@ func TestHostAllocationListingPagesBeyondOneHundred(t *testing.T) {
 	// Populate custody history directly: this test exercises enumeration, not
 	// placement or capacity admission. Every synthetic Computer has its own lease.
 	for range 101 {
-		computer := uuid.NewV7()
+		computerID := uuid.NewV7()
 		dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) SELECT environment_id,$2,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes FROM computers WHERE environment_id=$1 LIMIT 1;
  INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at)
- SELECT environment_id,$2,epoch,worker_host_id,worker_epoch,expires_at,status,$2,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE environment_id=$1 LIMIT 1`, pgx.QueryExecModeSimpleProtocol, f.env, computer)
+ SELECT environment_id,$2,epoch,worker_host_id,worker_epoch,expires_at,status,$2,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE environment_id=$1 LIMIT 1`, pgx.QueryExecModeSimpleProtocol, f.env, computerID)
 	}
 	seen := map[uuid.UUID]bool{}
 	var cursor *HostAllocation
@@ -158,8 +160,8 @@ func TestPreparationDeliveryRejectsWrongPhysicalIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	correct := PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, Epoch: r.Epoch, InstanceID: r.InstanceID}
-	for _, change := range []func(*PreparationIdentity){func(i *PreparationIdentity) { i.Epoch++ }, func(i *PreparationIdentity) { i.InstanceID = uuid.NewV7() }} {
+	correct := computer.PreparationIdentity{EnvironmentID: f.env, PreparationID: p.ID, Epoch: r.Epoch, InstanceID: r.InstanceID}
+	for _, change := range []func(*computer.PreparationIdentity){func(i *computer.PreparationIdentity) { i.Epoch++ }, func(i *computer.PreparationIdentity) { i.InstanceID = uuid.NewV7() }} {
 		wrong := correct
 		change(&wrong)
 		if _, err := a.DeliverPreparation(t.Context(), *f.host(), wrong); !errors.Is(err, ErrDenied) {

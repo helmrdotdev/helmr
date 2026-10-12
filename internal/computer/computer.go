@@ -1,6 +1,9 @@
-// Package computer owns external Computer creation, reads, member discovery and
-// deletion, including Secret placement validation and retry receipts. The Agent
-// domain owns allocation, preparation, Session membership and saving lifecycles.
+// Package computer owns Computers and everything stored for them: creation,
+// reads, member discovery and deletion; leases and image builds as allocation
+// records; image specs, builds and images; saves, checkpoints and their disk
+// and CAS storage; Secret bindings and exposures; and the retention of all of
+// these. Session and dispatch operations call its focused functions inside
+// their own transactions; it imports neither.
 package computer
 
 import (

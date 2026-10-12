@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -12,13 +14,13 @@ import (
 
 // Fixture allocation isolates executor authority tests from supply selection.
 // Production allocation must go through Allocator and its capacity transaction.
-func claimPreparationFixture(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, ref PreparationExecutor) (time.Time, error) {
-	if !ref.valid() || ref.Epoch != 1 {
+func claimPreparationFixture(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, ref computer.PreparationExecutor) (time.Time, error) {
+	if !ref.Valid() || ref.Epoch != 1 {
 		return time.Time{}, ErrInvalidInput
 	}
 	var expires time.Time
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockComputerHost(ctx, tx, host); err != nil {
+		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
 		var available bool
@@ -28,11 +30,11 @@ func claimPreparationFixture(ctx context.Context, pool db.TxBeginner, host worke
 		if !available {
 			return ErrNotReady
 		}
-		p, err := readPreparation(ctx, tx, ref.EnvironmentID, ref.PreparationID)
+		p, err := computer.ReadImageBuild(ctx, tx, ref.EnvironmentID, ref.PreparationID)
 		if err != nil {
 			return err
 		}
-		if err = lockPreparationSpec(ctx, tx, p.EnvironmentID, p.SpecID); err != nil {
+		if err = computer.LockImageSpec(ctx, tx, p.EnvironmentID, p.SpecID); err != nil {
 			return err
 		}
 		var claimed bool
@@ -42,7 +44,7 @@ func claimPreparationFixture(ctx context.Context, pool db.TxBeginner, host worke
 			return err
 		}
 		if claimed {
-			if err = checkPreparationExecutor(ctx, tx, host, ref, true); err != nil {
+			if err = computer.CheckImageBuildExecutor(ctx, tx, host, ref, true); err != nil {
 				return err
 			}
 			return tx.QueryRow(ctx, `SELECT executor_expires_at FROM image_builds WHERE environment_id=$1 AND id=$2`, p.EnvironmentID, p.ID).Scan(&expires)

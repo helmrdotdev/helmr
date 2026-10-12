@@ -7,6 +7,8 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/content"
 )
 
@@ -96,7 +98,7 @@ func TestRuntimeResponsePublishesOnlyWithOwnSave(t *testing.T) {
 	if err != nil || view.Status != "finalizing" || view.Response != nil || view.Result != nil {
 		t.Fatalf("unpublished while saving %+v: %v", view, err)
 	}
-	var save SaveRequest
+	var save computer.SaveRequest
 	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM computer_saves WHERE turn_id=$1`, a.TurnID).Scan(&save.ID); err != nil {
 		t.Fatal(err)
 	}

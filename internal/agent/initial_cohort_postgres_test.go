@@ -6,29 +6,31 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/jackc/pgx/v5"
 )
 
-func initialSession(t *testing.T, f fixture, computer uuid.UUID) uuid.UUID {
+func initialSession(t *testing.T, f fixture, computerID uuid.UUID) uuid.UUID {
 	t.Helper()
 	var session uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM sessions WHERE environment_id=$1 AND computer_id=$2 ORDER BY id LIMIT 1`, f.env, computer).Scan(&session); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM sessions WHERE environment_id=$1 AND computer_id=$2 ORDER BY id LIMIT 1`, f.env, computerID).Scan(&session); err != nil {
 		t.Fatal(err)
 	}
 	return session
 }
 func TestInitialCohortContinuesAfterDrainButLaterSessionDoesNot(t *testing.T) {
-	f, a, computer := freshComputerAllocationFixture(t)
-	first := initialSession(t, f, computer)
+	f, a, computerID := freshComputerAllocationFixture(t)
+	first := initialSession(t, f, computerID)
 	req := f.startRequest("initial-peer")
-	req.ComputerID = computer
+	req.ComputerID = computerID
 	peer, err := Start(t.Context(), f.pool, nil, f.caller(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := a.AllocateFreshComputer(t.Context(), f.env, computer, 1, f.worker)
+	r, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 1, f.worker)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +40,7 @@ func TestInitialCohortContinuesAfterDrainButLaterSessionDoesNot(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp(),drain_reason='admin' WHERE id=$1`, f.worker)
-	identity := ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computer, InstanceID: r.InstanceID, Epoch: r.Epoch}
+	identity := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
 	for _, session := range []uuid.UUID{first, peer.SessionID} {
 		if _, err := a.AllocateSessionProcess(t.Context(), f.env, session, 1); err != nil {
 			t.Fatalf("committed initial assignment unavailable: %v", err)
@@ -76,26 +78,26 @@ func TestInitialCohortContinuesAfterDrainButLaterSessionDoesNot(t *testing.T) {
 func TestInitialCohortNeverReadyLossRetriesWithoutFailureHold(t *testing.T) {
 	for _, expired := range []bool{false, true} {
 		t.Run(map[bool]string{false: "stop", true: "expiry_then_stop"}[expired], func(t *testing.T) {
-			f, a, computer := freshComputerAllocationFixture(t)
-			session := initialSession(t, f, computer)
-			r, err := a.AllocateFreshComputer(t.Context(), f.env, computer, 1, f.worker)
+			f, a, computerID := freshComputerAllocationFixture(t)
+			session := initialSession(t, f, computerID)
+			r, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 1, f.worker)
 			if err != nil {
 				t.Fatal(err)
 			}
-			identity := ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computer, InstanceID: r.InstanceID, Epoch: r.Epoch}
+			identity := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
 			if expired {
 				if _, err := a.DeliverComputer(t.Context(), *f.host(), identity); err != nil {
 					t.Fatal(err)
 				}
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.env, computer)
-				if err := expireComputerLease(t.Context(), f.pool, f.env, computer, 1); err != nil {
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.env, computerID)
+				if err := expireComputerLease(t.Context(), f.pool, f.env, computerID, 1); err != nil {
 					t.Fatal(err)
 				}
 				var retained bool
 				if err := f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NULL AND failure_recorded_at IS NULL FROM session_processes WHERE environment_id=$1 AND session_id=$2 AND epoch=1`, f.env, session).Scan(&retained); err != nil || !retained {
 					t.Fatalf("expiry lost physical custody: %v", err)
 				}
-				if _, err := a.AllocateFreshComputer(t.Context(), f.env, computer, 2, f.worker); err == nil {
+				if _, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 2, f.worker); err == nil {
 					t.Fatal("replacement before physical absence")
 				}
 			}
@@ -109,7 +111,7 @@ func TestInitialCohortNeverReadyLossRetriesWithoutFailureHold(t *testing.T) {
    FROM session_processes p WHERE p.environment_id=$1 AND p.session_id=$2 AND p.epoch=1`, f.env, session).Scan(&clean); err != nil || !clean {
 				t.Fatalf("unexecuted assignment recorded execution failure: %v", err)
 			}
-			next, err := a.AllocateFreshComputer(t.Context(), f.env, computer, 2, f.worker)
+			next, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 2, f.worker)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -123,7 +125,7 @@ func TestInitialCohortNeverReadyLossRetriesWithoutFailureHold(t *testing.T) {
 
 func TestInitialCohortInitializedLossStillRequiresResume(t *testing.T) {
 	f, _, e := startingSessionFixture(t)
-	var identity ComputerLeaseIdentity
+	var identity computer.ComputerLeaseIdentity
 	identity.EnvironmentID = f.env
 	identity.Epoch = e.LeaseEpoch
 	if err := f.pool.QueryRow(t.Context(), `SELECT l.computer_id,l.allocation_id FROM computer_leases l JOIN sessions s ON (s.environment_id,s.computer_id)=(l.environment_id,l.computer_id) WHERE s.environment_id=$1 AND s.id=$2 AND l.epoch=$3`, f.env, e.SessionID, e.LeaseEpoch).Scan(&identity.ComputerID, &identity.InstanceID); err != nil {
@@ -167,14 +169,14 @@ func (tx *cohortCommitTx) Commit(ctx context.Context) error {
 func TestInitialCohortAllocationAndDrainSerialize(t *testing.T) {
 	for _, allocationFirst := range []bool{true, false} {
 		t.Run(map[bool]string{true: "allocation_first", false: "drain_first"}[allocationFirst], func(t *testing.T) {
-			f, a, computer := freshComputerAllocationFixture(t)
+			f, a, computerID := freshComputerAllocationFixture(t)
 			allocateDone := make(chan error, 1)
 			if allocationFirst {
 				barrier := &cohortCommitBarrier{TxDB: f.pool, reached: make(chan struct{}), release: make(chan struct{})}
 				candidate := *a
 				candidate.database = barrier
 				go func() {
-					_, err := candidate.AllocateFreshComputer(t.Context(), f.env, computer, 1, f.worker)
+					_, err := candidate.AllocateFreshComputer(t.Context(), f.env, computerID, 1, f.worker)
 					allocateDone <- err
 				}()
 				<-barrier.reached
@@ -201,7 +203,7 @@ func TestInitialCohortAllocationAndDrainSerialize(t *testing.T) {
 					t.Fatal(err)
 				}
 				go func() {
-					_, err := a.AllocateFreshComputer(t.Context(), f.env, computer, 1, f.worker)
+					_, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 1, f.worker)
 					allocateDone <- err
 				}()
 				waitSessionLifecycleLock(t, f)
@@ -213,7 +215,7 @@ func TestInitialCohortAllocationAndDrainSerialize(t *testing.T) {
 				}
 			}
 			var assigned bool
-			if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM session_processes WHERE environment_id=$1 AND computer_id=$2)`, f.env, computer).Scan(&assigned); err != nil || assigned != allocationFirst {
+			if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM session_processes WHERE environment_id=$1 AND computer_id=$2)`, f.env, computerID).Scan(&assigned); err != nil || assigned != allocationFirst {
 				t.Fatalf("initial cohort not atomic with allocation: %v %v", assigned, err)
 			}
 		})
@@ -221,13 +223,13 @@ func TestInitialCohortAllocationAndDrainSerialize(t *testing.T) {
 }
 
 func TestInitialCohortExcludesHeldSessionUntilLaterAdmission(t *testing.T) {
-	f, a, computer := freshComputerAllocationFixture(t)
-	session := initialSession(t, f, computer)
+	f, a, computerID := freshComputerAllocationFixture(t)
+	session := initialSession(t, f, computerID)
 	hold, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: session, Kind: "interrupt", IdempotencyKey: "before-allocation", Reason: "wait"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := a.AllocateFreshComputer(t.Context(), f.env, computer, 1, f.worker)
+	r, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 1, f.worker)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +238,7 @@ func TestInitialCohortExcludesHeldSessionUntilLaterAdmission(t *testing.T) {
 		t.Fatalf("held session joined initial cohort: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp(),drain_reason='admin' WHERE id=$1`, f.worker)
-	identity := ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computer, InstanceID: r.InstanceID, Epoch: r.Epoch}
+	identity := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
 	if _, err := a.DeliverComputer(t.Context(), *f.host(), identity); err != nil {
 		t.Fatal(err)
 	}
@@ -252,16 +254,16 @@ func TestInitialCohortExcludesHeldSessionUntilLaterAdmission(t *testing.T) {
 }
 
 func TestInitialCohortCancellationBeforeReadyPreservesCancelledOutcome(t *testing.T) {
-	f, a, computer := freshComputerAllocationFixture(t)
-	session := initialSession(t, f, computer)
-	r, err := a.AllocateFreshComputer(t.Context(), f.env, computer, 1, f.worker)
+	f, a, computerID := freshComputerAllocationFixture(t)
+	session := initialSession(t, f, computerID)
+	r, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 1, f.worker)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: session, Kind: "cancel", IdempotencyKey: "before-ready"}); err != nil {
 		t.Fatal(err)
 	}
-	identity := ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computer, InstanceID: r.InstanceID, Epoch: r.Epoch}
+	identity := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
 	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
@@ -272,9 +274,9 @@ func TestInitialCohortCancellationBeforeReadyPreservesCancelledOutcome(t *testin
 }
 
 func TestInitialCohortInterruptBeforeReadyDoesNotAddFailureHold(t *testing.T) {
-	f, a, computer := freshComputerAllocationFixture(t)
-	session := initialSession(t, f, computer)
-	r, err := a.AllocateFreshComputer(t.Context(), f.env, computer, 1, f.worker)
+	f, a, computerID := freshComputerAllocationFixture(t)
+	session := initialSession(t, f, computerID)
+	r, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 1, f.worker)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +284,7 @@ func TestInitialCohortInterruptBeforeReadyDoesNotAddFailureHold(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity := ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computer, InstanceID: r.InstanceID, Epoch: r.Epoch}
+	identity := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: computerID, InstanceID: r.InstanceID, Epoch: r.Epoch}
 	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +295,7 @@ func TestInitialCohortInterruptBeforeReadyDoesNotAddFailureHold(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE environment_id=$1 AND session_id=$2 AND released_at IS NULL`, f.env, session).Scan(&holds); err != nil || holds != 0 {
 		t.Fatalf("unexecuted interrupted process acquired failure hold: %d %v", holds, err)
 	}
-	if _, err := a.AllocateFreshComputer(t.Context(), f.env, computer, 2, f.worker); err != nil {
+	if _, err := a.AllocateFreshComputer(t.Context(), f.env, computerID, 2, f.worker); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.AllocateSessionProcess(t.Context(), f.env, session, 2); err != nil {

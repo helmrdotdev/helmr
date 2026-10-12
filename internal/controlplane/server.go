@@ -59,10 +59,11 @@ type Server struct {
 	diagnosticBounds           diagnostic.Bounds
 	allocator                  *agent.Allocator
 	environmentExecutionLimits org.ExecutionLimits
-	allocationKeys             *agent.ComputerKeyBroker
-	preparationKeys            *agent.PreparationKeyBroker
-	preparationPublisher       *agent.PreparationPublisher
-	savePublisher              *agent.SavePublisher
+	allocationKeys             *computer.ComputerKeyBroker
+	preparationKeys            *computer.PreparationKeyBroker
+	preparationPublisher       *computer.PreparationPublisher
+	savePublisher              *computer.SavePublisher
+	checkpointPublisher        *agent.CheckpointPublisher
 	log                        *slog.Logger
 	deploymentMode             string
 	db                         db.Querier
@@ -102,7 +103,7 @@ type ServerConfig struct {
 	DiagnosticBounds           diagnostic.Bounds
 	Allocator                  *agent.Allocator
 	EnvironmentExecutionLimits org.ExecutionLimits
-	ComputerKeys               agent.DataKeyWrapper
+	ComputerKeys               computer.DataKeyWrapper
 	Log                        *slog.Logger
 	DeploymentMode             string
 
@@ -209,19 +210,23 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if _, unconfigured := mailer.(email.Unconfigured); !unconfigured && cfg.MagicLinkDelivery == nil {
 		return nil, errors.New("magic link delivery worker is required")
 	}
-	allocationKeys, err := agent.NewComputerKeyBroker(cfg.TX, cfg.ComputerKeys)
+	allocationKeys, err := computer.NewComputerKeyBroker(cfg.TX, cfg.ComputerKeys)
 	if err != nil {
 		return nil, err
 	}
-	preparationKeys, err := agent.NewPreparationKeyBroker(cfg.TX, cfg.ComputerKeys)
+	preparationKeys, err := computer.NewPreparationKeyBroker(cfg.TX, cfg.ComputerKeys)
 	if err != nil {
 		return nil, err
 	}
-	preparationPublisher, err := agent.NewPreparationPublisher(cfg.TX, cfg.CAS)
+	preparationPublisher, err := computer.NewPreparationPublisher(cfg.TX, cfg.CAS)
 	if err != nil {
 		return nil, err
 	}
-	savePublisher, err := agent.NewSavePublisher(cfg.TX, cfg.CAS)
+	savePublisher, err := computer.NewSavePublisher(cfg.TX, cfg.CAS)
+	if err != nil {
+		return nil, err
+	}
+	checkpointPublisher, err := agent.NewCheckpointPublisher(cfg.TX, cfg.CAS)
 	if err != nil {
 		return nil, err
 	}
@@ -236,6 +241,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		preparationKeys:            preparationKeys,
 		preparationPublisher:       preparationPublisher,
 		savePublisher:              savePublisher,
+		checkpointPublisher:        checkpointPublisher,
 		log:                        log,
 		deploymentMode:             deploymentMode,
 		db:                         cfg.DB,

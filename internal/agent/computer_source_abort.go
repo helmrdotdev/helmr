@@ -8,6 +8,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -73,7 +75,7 @@ func validateSourceAbort(ctx context.Context, tx pgx.Tx, host workergroup.HostPr
 	if !healthy {
 		return ErrNotReady
 	}
-	lease, err := currentComputerLease(ctx, tx, host, env, r.Computer, r.SourceEpoch)
+	lease, err := computer.CurrentLease(ctx, tx, host, env, r.Computer, r.SourceEpoch)
 	if err != nil {
 		return err
 	}
@@ -148,7 +150,7 @@ func validateSourceAbort(ctx context.Context, tx pgx.Tx, host workergroup.HostPr
 	}
 	// Owner locks stabilize identity, but not wall-clock lease expiry during
 	// the member checks. Recheck that deadline before issuing authority.
-	_, err = currentComputerLease(ctx, tx, host, env, r.Computer, r.SourceEpoch)
+	_, err = computer.CurrentLease(ctx, tx, host, env, r.Computer, r.SourceEpoch)
 	return err
 }
 
@@ -166,7 +168,7 @@ func ValidateComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host w
 		return ErrInvalidInput
 	}
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockComputerHost(ctx, tx, host); err != nil {
+		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
 		r, err := lockCapture(ctx, tx, env, checkpoint)
@@ -174,7 +176,7 @@ func ValidateComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host w
 			return err
 		}
 		// Do not disclose continuation state to another physical owner.
-		if _, err = currentComputerLease(ctx, tx, host, env, r.Computer, r.SourceEpoch); err != nil {
+		if _, err = computer.CurrentLease(ctx, tx, host, env, r.Computer, r.SourceEpoch); err != nil {
 			return err
 		}
 		if r.State != "capturing" && r.State != "sealed" && r.State != "ready" && r.State != "aborting" && r.State != "consumed" {
@@ -236,7 +238,7 @@ func CommitComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host wor
 		return ErrInvalidInput
 	}
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockComputerHost(ctx, tx, host); err != nil {
+		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
 		r, err := lockCapture(ctx, tx, env, checkpoint)
@@ -244,7 +246,7 @@ func CommitComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host wor
 			return err
 		}
 		// Do not disclose continuation state to another physical owner.
-		if _, err = currentComputerLease(ctx, tx, host, env, r.Computer, r.SourceEpoch); err != nil {
+		if _, err = computer.CurrentLease(ctx, tx, host, env, r.Computer, r.SourceEpoch); err != nil {
 			return err
 		}
 		if r.State != "aborting" && r.State != "consumed" {
@@ -289,7 +291,7 @@ func CompleteComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host w
 		return ErrInvalidInput
 	}
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockComputerHost(ctx, tx, host); err != nil {
+		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
 		r, err := lockCapture(ctx, tx, env, checkpoint)
@@ -297,7 +299,7 @@ func CompleteComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host w
 			return err
 		}
 		// Do not disclose continuation state to another physical owner.
-		if _, err = currentComputerLease(ctx, tx, host, env, r.Computer, r.SourceEpoch); err != nil {
+		if _, err = computer.CurrentLease(ctx, tx, host, env, r.Computer, r.SourceEpoch); err != nil {
 			return err
 		}
 		if r.State != "consumed" {
@@ -320,7 +322,7 @@ func CompleteComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host w
 		}
 		// The receipt reads above can outlast the lease while owner locks
 		// remain held; those locks do not stop wall-clock expiry.
-		if _, err = currentComputerLease(ctx, tx, host, env, r.Computer, r.SourceEpoch); err != nil {
+		if _, err = computer.CurrentLease(ctx, tx, host, env, r.Computer, r.SourceEpoch); err != nil {
 			return err
 		}
 		_, err = tx.Exec(ctx, `UPDATE checkpoints SET controls_reconciled_at=clock_timestamp(),capture_request=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint)
@@ -360,7 +362,7 @@ func RecordCheckpointSaveAbsence(ctx context.Context, pool db.TxBeginner, host w
 		return ErrInvalidInput
 	}
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockComputerHost(ctx, tx, host); err != nil {
+		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
 		r, err := lockCapture(ctx, tx, env, checkpoint)
@@ -368,7 +370,7 @@ func RecordCheckpointSaveAbsence(ctx context.Context, pool db.TxBeginner, host w
 			return err
 		}
 		// Do not disclose continuation state to another physical owner.
-		if _, err = currentComputerLease(ctx, tx, host, env, r.Computer, r.SourceEpoch); err != nil {
+		if _, err = computer.CurrentLease(ctx, tx, host, env, r.Computer, r.SourceEpoch); err != nil {
 			return err
 		}
 		if r.State != "aborting" && r.State != "consumed" {

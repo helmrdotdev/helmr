@@ -4,6 +4,8 @@ import (
 	"context"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -67,7 +69,7 @@ func checkSessionStart(ctx context.Context, tx pgx.Tx, host workergroup.HostPrin
  WHERE s.environment_id=$1 AND s.id=$2`, e.EnvironmentID, e.SessionID).Scan(&result.DeploymentID, &result.ComputerID, &result.BundleDigest, &result.AgentKey, &result.SessionKey, &result.ParentSessionID, &result.TerminalSequence); err != nil {
 		return err
 	}
-	if err = computerDispatchAvailable(ctx, tx, e.EnvironmentID, result.ComputerID); err != nil {
+	if err = computer.DispatchAvailable(ctx, tx, e.EnvironmentID, result.ComputerID); err != nil {
 		return err
 	}
 	var pendingSave bool

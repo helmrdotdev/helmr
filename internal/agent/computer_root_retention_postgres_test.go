@@ -4,6 +4,8 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/jackc/pgx/v5"
 )
@@ -26,14 +28,14 @@ func TestDeletedComputerRootsWaitForPhysicalClosure(t *testing.T) {
  UPDATE sessions SET status='closed' WHERE environment_id=$1 AND computer_id=$2;
  UPDATE computers SET deleted_at=clock_timestamp() WHERE environment_id=$1 AND id=$2;
  UPDATE computer_leases SET status='releasing' WHERE environment_id=$1 AND computer_id=$2`, pgx.QueryExecModeSimpleProtocol, f.env, f.computer)
-	if err := ReconcileComputerDiskRetention(t.Context(), f.pool); err != nil {
+	if err := computer.ReconcileComputerDiskRetention(t.Context(), f.pool); err != nil {
 		t.Fatal(err)
 	}
 	var retained bool
 	if err := f.pool.QueryRow(t.Context(), `SELECT initial_root_id IS NOT NULL AND recovery_save_id=$3 AND storage_reservation_bytes IS NOT NULL FROM computers WHERE environment_id=$1 AND id=$2`, f.env, f.computer, save.ID).Scan(&retained); err != nil || !retained {
 		t.Fatalf("accepted deletion lost physical source: %v %v", retained, err)
 	}
-	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil()); err != nil {
+	if err := ObserveComputerStopped(t.Context(), f.pool, *f.host(), computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	blocker, err := f.pool.Begin(t.Context())
@@ -44,7 +46,7 @@ func TestDeletedComputerRootsWaitForPhysicalClosure(t *testing.T) {
 	if _, err := blocker.Exec(t.Context(), `SELECT id FROM computer_saves WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, f.env, save.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := ReconcileComputerDiskRetention(t.Context(), f.pool); err != nil {
+	if err := computer.ReconcileComputerDiskRetention(t.Context(), f.pool); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT initial_root_id IS NULL AND recovery_save_id IS NULL AND storage_reservation_bytes IS NOT NULL FROM computers WHERE environment_id=$1 AND id=$2`, f.env, f.computer).Scan(&retained); err != nil || !retained {
@@ -54,7 +56,7 @@ func TestDeletedComputerRootsWaitForPhysicalClosure(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 8 {
-		if err := ReconcileComputerDiskRetention(t.Context(), f.pool); err != nil {
+		if err := computer.ReconcileComputerDiskRetention(t.Context(), f.pool); err != nil {
 			t.Fatal(err)
 		}
 	}

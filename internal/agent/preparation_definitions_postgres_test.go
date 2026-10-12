@@ -8,6 +8,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
@@ -80,7 +81,7 @@ func TestTemplateDefinitionRegistrationRejectsForeignSecretAndConflictingStoredI
 		}
 		return registerTemplateDefinitions(t.Context(), tx, f.env, f.deployment, output)
 	})
-	if !errors.Is(err, ErrSecretUnavailable) {
+	if !errors.Is(err, computer.ErrSecretUnavailable) {
 		t.Fatalf("foreign Secret %v", err)
 	}
 	output.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{}
@@ -193,7 +194,7 @@ func TestTemplateDefinitionRegistrationUsesStableScopedSecretReferences(t *testi
 		})
 	}
 	output.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{{Secret: "FOREIGN_TOKEN", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
-	if err := register(); !errors.Is(err, ErrSecretUnavailable) {
+	if err := register(); !errors.Is(err, computer.ErrSecretUnavailable) {
 		t.Fatalf("foreign stable reference: %v", err)
 	}
 	output.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{
@@ -201,7 +202,7 @@ func TestTemplateDefinitionRegistrationUsesStableScopedSecretReferences(t *testi
 		{Secret: "OLD_TOKEN", File: &secretbinding.File{Path: "/etc/build/token"}},
 	}
 	output.Metadata.Definitions[2].Template.Secrets = []definition.SecretBinding{{Secret: "OLD_TOKEN", Env: &definition.SecretBindingEnv{Name: "RUNTIME_TOKEN", Mode: "raw"}}}
-	if err := register(); !errors.Is(err, ErrSecretUnavailable) {
+	if err := register(); !errors.Is(err, computer.ErrSecretUnavailable) {
 		t.Fatalf("revoked Secret registered: %v", err)
 	}
 	for i := range output.Metadata.Definitions[2].Template.BuildSecrets {

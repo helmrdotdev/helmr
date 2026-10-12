@@ -12,6 +12,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -20,7 +22,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // AllocationShape is the immutable physical reservation and materialization
@@ -123,8 +124,7 @@ func allocationLockTimeout(ctx context.Context, tx pgx.Tx) error {
 }
 
 func allocationError(err error) error {
-	var lock *pgconn.PgError
-	if errors.Is(err, pgx.ErrNoRows) || (errors.As(err, &lock) && lock.Code == "55P03") {
+	if errors.Is(err, pgx.ErrNoRows) || db.IsLockNotAvailable(err) {
 		return ErrNotReady
 	}
 	return err
@@ -173,7 +173,7 @@ func qualifyAllocationShape(ctx context.Context, tx pgx.Tx, supply allocationSup
 	return shape, err
 }
 
-func requireAllocationCapacity(ctx context.Context, tx pgx.Tx, env uuid.UUID, supply allocationSupply, policy admissionEnvironment, shape AllocationShape, computer bool) error {
+func requireAllocationCapacity(ctx context.Context, tx pgx.Tx, env uuid.UUID, supply allocationSupply, policy admissionEnvironment, shape AllocationShape, computerID bool) error {
 	var environment, host allocationCapacity
 	var computers int64
 	if err := tx.QueryRow(ctx, `SELECT COALESCE(sum(cpu),0),COALESCE(sum(memory),0),COALESCE(sum(computers),0) FROM (
@@ -188,7 +188,7 @@ func requireAllocationCapacity(ctx context.Context, tx pgx.Tx, env uuid.UUID, su
 	}
 	fits := func(used, added, limit int64) bool { return added > 0 && added <= limit && used <= limit-added }
 	if !fits(environment.cpu, shape.CPUMillis, policy.maxCPU) || !fits(environment.memory, shape.MemoryBytes, policy.maxMemory) ||
-		(computer && !fits(computers, 1, policy.maxResident)) {
+		(computerID && !fits(computers, 1, policy.maxResident)) {
 		return errEnvironmentCapacity
 	}
 	if !fits(host.cpu, shape.CPUMillis, supply.capacity.cpu) ||
@@ -221,11 +221,11 @@ func readPreparationAllocation(ctx context.Context, q db.DBTX, env, preparation 
 	return r, err
 }
 
-func readComputerAllocation(ctx context.Context, q db.DBTX, env, computer uuid.UUID, epoch int64) (ComputerAllocation, error) {
-	r := ComputerAllocation{Allocation: Allocation{EnvironmentID: env, OwnerID: computer, Epoch: epoch}}
+func readComputerAllocation(ctx context.Context, q db.DBTX, env, computerID uuid.UUID, epoch int64) (ComputerAllocation, error) {
+	r := ComputerAllocation{Allocation: Allocation{EnvironmentID: env, OwnerID: computerID, Epoch: epoch}}
 	err := q.QueryRow(ctx, `SELECT l.allocation_id,l.worker_host_id,l.worker_epoch,l.reserved_cpu_millis,l.reserved_memory_bytes,l.reserved_scratch_bytes,
  l.vm_platform_id,l.vm_vcpu_count,l.cpu_config_digest,l.status,l.delivered_at,l.expires_at,l.fenced_at,COALESCE(l.restored_from_save_id::text,'sha256:'||encode(c.initial_root_digest,'hex')),l.restored_from_save_id,l.initialized_at
- FROM computer_leases l JOIN computers c ON (c.environment_id,c.id)=(l.environment_id,l.computer_id) WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=$3`, env, computer, epoch).Scan(&r.InstanceID, &r.HostID, &r.HostEpoch,
+ FROM computer_leases l JOIN computers c ON (c.environment_id,c.id)=(l.environment_id,l.computer_id) WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=$3`, env, computerID, epoch).Scan(&r.InstanceID, &r.HostID, &r.HostEpoch,
 		&r.Shape.CPUMillis, &r.Shape.MemoryBytes, &r.Shape.ScratchBytes, &r.Shape.VMPlatformID, &r.Shape.VCPUCount, &r.Shape.CPUConfigDigest,
 		&r.Status, &r.DeliveredAt, &r.ExpiresAt, &r.FencedAt, &r.BaseVersion, &r.RestoredFrom, &r.InitializedAt)
 	return r, err
@@ -256,14 +256,14 @@ func (a *Allocator) AllocatePreparation(ctx context.Context, env, preparation, h
 		if err != nil {
 			return err
 		}
-		p, err := readPreparation(ctx, tx, env, preparation)
+		p, err := computer.ReadImageBuild(ctx, tx, env, preparation)
 		if err != nil {
 			return err
 		}
-		if err := lockPreparationImageSecrets(ctx, tx, env, p.SpecID); err != nil {
+		if err := computer.LockImageSpecSecrets(ctx, tx, env, p.SpecID); err != nil {
 			return err
 		}
-		if err := lockPreparationSpec(ctx, tx, env, p.SpecID); err != nil {
+		if err := computer.LockImageSpec(ctx, tx, env, p.SpecID); err != nil {
 			return err
 		}
 		var locked uuid.UUID
@@ -338,11 +338,11 @@ func (a *Allocator) AllocatePreparation(ctx context.Context, env, preparation, h
 // AllocateFreshComputer is only for a first physical execution. The CP retains
 // the requested epoch across retries; requesting the next epoch is a new attempt,
 // permissible only after all previous VMs stopped without ever becoming ready.
-func (a *Allocator) AllocateFreshComputer(ctx context.Context, env, computer uuid.UUID, epoch int64, host uuid.UUID) (ComputerAllocation, error) {
-	if env == uuid.Nil() || computer == uuid.Nil() || epoch <= 0 || host == uuid.Nil() {
+func (a *Allocator) AllocateFreshComputer(ctx context.Context, env, computerID uuid.UUID, epoch int64, host uuid.UUID) (ComputerAllocation, error) {
+	if env == uuid.Nil() || computerID == uuid.Nil() || epoch <= 0 || host == uuid.Nil() {
 		return ComputerAllocation{}, ErrInvalidInput
 	}
-	if prior, err := readComputerAllocation(ctx, a.database, env, computer, epoch); err == nil {
+	if prior, err := readComputerAllocation(ctx, a.database, env, computerID, epoch); err == nil {
 		if prior.RestoredFrom != nil {
 			return ComputerAllocation{}, ErrConflict
 		}
@@ -363,11 +363,11 @@ func (a *Allocator) AllocateFreshComputer(ctx context.Context, env, computer uui
 		if err != nil {
 			return err
 		}
-		sessions, err := lockInitialComputerSessions(ctx, tx, env, computer)
+		sessions, err := lockInitialComputerSessions(ctx, tx, env, computerID)
 		if err != nil {
 			return err
 		}
-		if prior, err := readComputerAllocation(ctx, tx, env, computer, epoch); err == nil {
+		if prior, err := readComputerAllocation(ctx, tx, env, computerID, epoch); err == nil {
 			if prior.RestoredFrom != nil {
 				return ErrConflict
 			}
@@ -381,7 +381,7 @@ func (a *Allocator) AllocateFreshComputer(ctx context.Context, env, computer uui
 		if err := tx.QueryRow(ctx, `SELECT cpu_millis,memory_bytes,'sha256:'||encode(initial_root_digest,'hex') FROM computers c WHERE environment_id=$1 AND id=$2
  AND initial_root_id IS NOT NULL AND image_id IS NOT NULL AND preparation_failed_at IS NULL AND deleted_at IS NULL AND integrity_fault_at IS NULL AND recovery_save_id IS NULL
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=$1 AND l.computer_id=$2 AND (l.fenced_at IS NULL OR l.initialized_at IS NOT NULL))
- AND (SELECT COALESCE(max(l.epoch),0) FROM computer_leases l WHERE l.environment_id=$1 AND l.computer_id=$2)=$3::bigint-1`, env, computer, epoch).Scan(&cpuMillis, &memoryBytes, &base); err != nil {
+ AND (SELECT COALESCE(max(l.epoch),0) FROM computer_leases l WHERE l.environment_id=$1 AND l.computer_id=$2)=$3::bigint-1`, env, computerID, epoch).Scan(&cpuMillis, &memoryBytes, &base); err != nil {
 			return err
 		}
 		shape, err := qualifyAllocationShape(ctx, tx, supply, cpuMillis, memoryBytes)
@@ -391,7 +391,7 @@ func (a *Allocator) AllocateFreshComputer(ctx context.Context, env, computer uui
 		if err := requireAllocationCapacity(ctx, tx, env, supply, policy, shape, true); err != nil {
 			return err
 		}
-		result = ComputerAllocation{Allocation: Allocation{EnvironmentID: env, OwnerID: computer, InstanceID: uuid.NewV7(), Epoch: epoch, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "acquiring"}, BaseVersion: base}
+		result = ComputerAllocation{Allocation: Allocation{EnvironmentID: env, OwnerID: computerID, InstanceID: uuid.NewV7(), Epoch: epoch, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "acquiring"}, BaseVersion: base}
 		if err := a.insertComputerAllocation(ctx, tx, result); err != nil {
 			return err
 		}
@@ -401,7 +401,7 @@ func (a *Allocator) AllocateFreshComputer(ctx context.Context, env, computer uui
 		if err := requireAllocationFreshSupply(ctx, tx, supply); err != nil {
 			return err
 		}
-		return requireComputerSecretsNotRevoked(ctx, tx, env, computer)
+		return computer.RequireSecretsNotRevoked(ctx, tx, env, computerID)
 	})
 	if err != nil {
 		return ComputerAllocation{}, allocationError(err)
@@ -423,11 +423,11 @@ func (a *Allocator) AllocateRestoredComputer(ctx context.Context, env, checkpoin
 	if env == uuid.Nil() || checkpoint == uuid.Nil() || epoch <= 0 || host == uuid.Nil() {
 		return ComputerAllocation{}, ErrInvalidInput
 	}
-	var computer, save uuid.UUID
-	if err := a.database.QueryRow(ctx, `SELECT computer_id,disk_save_id FROM checkpoints WHERE environment_id=$1 AND id=$2`, env, checkpoint).Scan(&computer, &save); err != nil {
+	var computerID, save uuid.UUID
+	if err := a.database.QueryRow(ctx, `SELECT computer_id,disk_save_id FROM checkpoints WHERE environment_id=$1 AND id=$2`, env, checkpoint).Scan(&computerID, &save); err != nil {
 		return ComputerAllocation{}, allocationError(err)
 	}
-	if r, err := readComputerAllocation(ctx, a.database, env, computer, epoch); err == nil {
+	if r, err := readComputerAllocation(ctx, a.database, env, computerID, epoch); err == nil {
 		if r.RestoredFrom == nil || *r.RestoredFrom != save {
 			return ComputerAllocation{}, ErrConflict
 		}
@@ -452,7 +452,7 @@ func (a *Allocator) AllocateRestoredComputer(ctx context.Context, env, checkpoin
 		if err != nil {
 			return err
 		}
-		if r, err := readComputerAllocation(ctx, tx, env, computer, epoch); err == nil {
+		if r, err := readComputerAllocation(ctx, tx, env, computerID, epoch); err == nil {
 			if r.RestoredFrom == nil || *r.RestoredFrom != save {
 				return ErrConflict
 			}
@@ -464,7 +464,7 @@ func (a *Allocator) AllocateRestoredComputer(ctx context.Context, env, checkpoin
 		if (capture.State != "ready" && capture.State != "restoring") || epoch <= capture.SourceEpoch {
 			return ErrNotReady
 		}
-		eligible, err := checkpointDiskEligible(ctx, tx, env, computer, save)
+		eligible, err := checkpointDiskEligible(ctx, tx, env, computerID, save)
 		if err != nil {
 			return err
 		}
@@ -473,13 +473,13 @@ func (a *Allocator) AllocateRestoredComputer(ctx context.Context, env, checkpoin
 		}
 		var noWriter bool
 		if err := tx.QueryRow(ctx, `SELECT NOT EXISTS(SELECT 1 FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND fenced_at IS NULL)
- AND (SELECT COALESCE(max(epoch),0) FROM computer_leases WHERE environment_id=$1 AND computer_id=$2)=$3::bigint-1`, env, computer, epoch).Scan(&noWriter); err != nil {
+ AND (SELECT COALESCE(max(epoch),0) FROM computer_leases WHERE environment_id=$1 AND computer_id=$2)=$3::bigint-1`, env, computerID, epoch).Scan(&noWriter); err != nil {
 			return err
 		}
 		if !noWriter {
 			return ErrNotReady
 		}
-		source, err := readComputerAllocation(ctx, tx, env, computer, capture.SourceEpoch)
+		source, err := readComputerAllocation(ctx, tx, env, computerID, capture.SourceEpoch)
 		if err != nil {
 			return err
 		}
@@ -498,7 +498,7 @@ func (a *Allocator) AllocateRestoredComputer(ctx context.Context, env, checkpoin
 		if json.Unmarshal(raw, &manifest) != nil {
 			return ErrNotReady
 		}
-		if err := validateCheckpointRuntime(ctx, tx, workergroup.HostPrincipal{HostID: host}, manifest.Runtime); err != nil {
+		if err := computer.ValidateCheckpointRuntime(ctx, tx, workergroup.HostPrincipal{HostID: host}, manifest.Runtime); err != nil {
 			if errors.Is(err, ErrConflict) {
 				return ErrNotReady
 			}
@@ -511,14 +511,14 @@ func (a *Allocator) AllocateRestoredComputer(ctx context.Context, env, checkpoin
 		if err := requireAllocationCapacity(ctx, tx, env, supply, policy, shape, true); err != nil {
 			return err
 		}
-		result = ComputerAllocation{Allocation: Allocation{EnvironmentID: env, OwnerID: computer, InstanceID: uuid.NewV7(), Epoch: epoch, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "acquiring"}, BaseVersion: save.String(), RestoredFrom: &save}
+		result = ComputerAllocation{Allocation: Allocation{EnvironmentID: env, OwnerID: computerID, InstanceID: uuid.NewV7(), Epoch: epoch, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "acquiring"}, BaseVersion: save.String(), RestoredFrom: &save}
 		if err := a.insertComputerAllocation(ctx, tx, result); err != nil {
 			return err
 		}
 		if err := requireAllocationFreshSupply(ctx, tx, supply); err != nil {
 			return err
 		}
-		return requireComputerSecretsNotRevoked(ctx, tx, env, computer)
+		return computer.RequireSecretsNotRevoked(ctx, tx, env, computerID)
 	})
 	if err != nil {
 		return ComputerAllocation{}, allocationError(err)

@@ -6,20 +6,22 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
 
 func TestPreparationAttachmentSharesAdmissionRollback(t *testing.T) {
 	f := newPreparationFixture(t)
-	computer := uuid.NewV7()
+	computerID := uuid.NewV7()
 	rejected := errors.New("initial Turn rejected")
 	var attempt uuid.UUID
 	err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(t.Context(), `INSERT INTO computers(environment_id,id,image_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,1000,536870912,NULL,34359738368)`, f.env, computer, f.deployment); err != nil {
+		if _, err := tx.Exec(t.Context(), `INSERT INTO computers(environment_id,id,image_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,1000,536870912,NULL,34359738368)`, f.env, computerID, f.deployment); err != nil {
 			return err
 		}
-		p, err := attachComputerPreparation(t.Context(), tx, f.env, computer)
+		p, err := computer.AttachImageBuild(t.Context(), tx, f.env, computerID)
 		if err != nil {
 			return err
 		}
@@ -30,7 +32,7 @@ func TestPreparationAttachmentSharesAdmissionRollback(t *testing.T) {
 		t.Fatalf("admission: %v", err)
 	}
 	var leaked bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM computers WHERE environment_id=$1 AND id=$2) OR EXISTS(SELECT 1 FROM image_builds WHERE environment_id=$1 AND id=$3)`, f.env, computer, attempt).Scan(&leaked); err != nil || leaked {
+	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM computers WHERE environment_id=$1 AND id=$2) OR EXISTS(SELECT 1 FROM image_builds WHERE environment_id=$1 AND id=$3)`, f.env, computerID, attempt).Scan(&leaked); err != nil || leaked {
 		t.Fatalf("rollback leaked demand or attempt: %v, %v", leaked, err)
 	}
 }
@@ -41,14 +43,14 @@ func TestPreparationImageSharesAdmissionRollback(t *testing.T) {
 	if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "certified"); err != nil {
 		t.Fatal(err)
 	}
-	computer := uuid.NewV7()
+	computerID := uuid.NewV7()
 	rejected := errors.New("initial Turn rejected")
 	var image uuid.UUID
 	err := db.RunTx(t.Context(), p.f.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(t.Context(), `INSERT INTO computers(environment_id,id,image_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,1000,536870912,NULL,34359738368)`, p.f.env, computer, p.f.deployment); err != nil {
+		if _, err := tx.Exec(t.Context(), `INSERT INTO computers(environment_id,id,image_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,1000,536870912,NULL,34359738368)`, p.f.env, computerID, p.f.deployment); err != nil {
 			return err
 		}
-		selected, err := pinComputerImage(t.Context(), tx, p.f.env, computer)
+		selected, err := computer.PinImage(t.Context(), tx, p.f.env, computerID)
 		if err != nil {
 			return err
 		}
@@ -59,12 +61,12 @@ func TestPreparationImageSharesAdmissionRollback(t *testing.T) {
 		t.Fatalf("admission: %v", err)
 	}
 	var leaked bool
-	if err := p.f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM computers WHERE environment_id=$1 AND id=$2)`, p.f.env, computer).Scan(&leaked); err != nil || leaked {
+	if err := p.f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM computers WHERE environment_id=$1 AND id=$2)`, p.f.env, computerID).Scan(&leaked); err != nil || leaked {
 		t.Fatalf("rollback leaked Computer or root pin: %v, %v", leaked, err)
 	}
 	// The shared image survives another admission's rollback and remains usable.
 	fresh := p.f.waiter(t)
-	selected, err := PinComputerImage(t.Context(), p.f.pool, p.f.env, fresh)
+	selected, err := computer.PinComputerImage(t.Context(), p.f.pool, p.f.env, fresh)
 	if err != nil || selected.ID != image {
 		t.Fatalf("shared image lost: %v, %v", selected, err)
 	}
@@ -75,7 +77,7 @@ func TestPreparationUnattachedDemandWaitsForPhysicalExclusion(t *testing.T) {
 	originalComputer := f.waiter(t)
 	original := f.attach(t, originalComputer)
 	executor := f.claim(t, original)
-	if err := FailPreparation(t.Context(), f.pool, *f.host(), executor, "prepare_failed"); err != nil {
+	if err := computer.FailPreparation(t.Context(), f.pool, *f.host(), executor, "prepare_failed"); err != nil {
 		t.Fatal(err)
 	}
 	fresh := f.waiter(t)
@@ -94,7 +96,7 @@ func TestPreparationUnattachedDemandWaitsForPhysicalExclusion(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT image_build_id FROM computers WHERE environment_id=$1 AND id=$2`, f.env, fresh).Scan(&attached); err != nil || attached != nil {
 		t.Fatalf("unfenced executor admitted replacement: %v %v", attached, err)
 	}
-	if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), preparationIdentity(executor)); err != nil {
+	if err := computer.ObservePreparationStopped(t.Context(), f.pool, *f.host(), preparationIdentity(executor)); err != nil {
 		t.Fatal(err)
 	}
 	reconcile()
@@ -145,7 +147,7 @@ func TestPreparationFreshDemandDoesNotPreemptRotationSuccessor(t *testing.T) {
 	if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "certified"); err != nil {
 		t.Fatal(err)
 	}
-	if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
+	if err := computer.ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 		t.Fatal(err)
 	}
 	// Sort fresh demand before every attached waiter in the actual scan page.

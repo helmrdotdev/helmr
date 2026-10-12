@@ -2,13 +2,14 @@ package controlplane
 
 import (
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/agent"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 
 	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"

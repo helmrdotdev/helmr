@@ -7,6 +7,8 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -23,7 +25,7 @@ import (
 
 type constructionDB struct{ db.TxDB }
 
-type constructionKeys struct{ agent.DataKeyWrapper }
+type constructionKeys struct{ computer.DataKeyWrapper }
 
 type constructionTelemetry struct{ telemetry.CommandLogReader }
 

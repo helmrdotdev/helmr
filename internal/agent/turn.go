@@ -13,6 +13,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
@@ -21,12 +23,14 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+// Session outcomes are the Computer owner's outcomes: a Computer outcome
+// returned through a Session operation keeps its meaning.
 var (
-	ErrInvalidInput = errors.New("invalid operation input")
-	ErrDenied       = errors.New("operation not authorized")
-	ErrConflict     = errors.New("request identity conflicts with its original request")
-	ErrNotReady     = errors.New("execution is not ready")
-	ErrTerminal     = errors.New("turn is terminal")
+	ErrInvalidInput = computer.ErrInvalidInput
+	ErrDenied       = computer.ErrDenied
+	ErrConflict     = computer.ErrConflict
+	ErrNotReady     = computer.ErrNotReady
+	ErrTerminal     = computer.ErrTerminal
 )
 
 // Caller is transport-authenticated identity. Runtime requests carry the stable
@@ -107,13 +111,13 @@ func lockSessionsAndComputers(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids
 	// Another first enqueue may have assigned placement while we waited for the
 	// root. Never carry its pre-lock NULL forward or omit the new Computer lock.
 	for id, o := range rows {
-		var computer *uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT computer_id FROM sessions WHERE environment_id=$1 AND id=$2`, env, id).Scan(&computer); err != nil {
+		var computerID *uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT computer_id FROM sessions WHERE environment_id=$1 AND id=$2`, env, id).Scan(&computerID); err != nil {
 			return nil, err
 		}
-		if computer != nil {
-			o.computer = *computer
-			computers[*computer] = true
+		if computerID != nil {
+			o.computer = *computerID
+			computers[*computerID] = true
 		}
 		rows[id] = o
 	}
@@ -158,12 +162,12 @@ func digestJSON(input json.RawMessage) ([32]byte, error) {
 // Enqueue atomically accepts one input and records its observation event. The
 // Environment lock serializes capacity/admission; the Session lock fixes queue
 // order and the model-owned retry receipt before live eligibility is considered.
-func Enqueue(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIssuer, caller Caller, req EnqueueRequest) (Admission, error) {
+func Enqueue(ctx context.Context, pool db.TxBeginner, trust computer.ComputerTrustIssuer, caller Caller, req EnqueueRequest) (Admission, error) {
 	result, err := admitSessionInput(ctx, pool, trust, caller, req, "enqueue", uuid.Nil())
 	return result.Admission, err
 }
 
-func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIssuer, caller Caller, req EnqueueRequest, method string, exactTurn uuid.UUID) (SendReceipt, error) {
+func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust computer.ComputerTrustIssuer, caller Caller, req EnqueueRequest, method string, exactTurn uuid.UUID) (SendReceipt, error) {
 	var result SendReceipt
 	target := req.SessionID
 	if method == "turn_send" {
@@ -275,7 +279,7 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust ComputerTr
 			if err = tx.QueryRow(ctx, `SELECT t.key FROM sessions s JOIN agent_definitions d ON (d.environment_id,d.agent_id,d.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id) JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE s.environment_id=$1 AND s.id=$2`, req.EnvironmentID, req.SessionID).Scan(&templateKey); err != nil {
 				return err
 			}
-			o.computer, err = createAdmissionComputer(ctx, tx, trust, req.EnvironmentID, deployment, templateKey, policy)
+			o.computer, err = computer.CreateForAdmission(ctx, tx, trust, req.EnvironmentID, deployment, templateKey, policy.computerLimits())
 			if err != nil {
 				return err
 			}
@@ -406,7 +410,7 @@ func executionAvailable(ctx context.Context, tx pgx.Tx, e Execution, o owners, a
 	if err := executionPhysical(ctx, tx, e, allowStarting, true); err != nil {
 		return err
 	}
-	return computerDispatchAvailable(ctx, tx, e.EnvironmentID, o.computer)
+	return computer.DispatchAvailable(ctx, tx, e.EnvironmentID, o.computer)
 }
 
 // A receipt observes prior acceptance, so ordinary Turn completion or a target
@@ -536,16 +540,6 @@ func dispatchTurn(ctx context.Context, tx pgx.Tx, e Execution, result *TurnDispa
 	return loadTurnDispatch(ctx, tx, e.EnvironmentID, result)
 }
 
-// SaveRequest is durable before the worker may flush/capture. An uncertain reply
-// is reconciled with this identity, never replaced by another cut.
-type SaveRequest struct {
-	ID          uuid.UUID
-	ComputerID  uuid.UUID
-	LeaseEpoch  int64
-	Sequence    int64
-	RequestedAt time.Time
-}
-
 func nullableID(id uuid.UUID) any {
 	if id == uuid.Nil() {
 		return nil
@@ -578,24 +572,17 @@ func lockFirstComputerImage(ctx context.Context, tx pgx.Tx, env, session uuid.UU
 	if err != nil {
 		return err
 	}
-	if err = lockPreparationImageSecrets(ctx, tx, env, spec); err != nil {
+	if err = computer.LockImageSpecSecrets(ctx, tx, env, spec); err != nil {
 		return err
 	}
-	return lockPreparationSpec(ctx, tx, env, spec)
+	return computer.LockImageSpec(ctx, tx, env, spec)
 }
 
 func lockRuntimeHost(ctx context.Context, tx pgx.Tx, caller Caller) error {
 	if caller.Host == nil || caller.Host.HostID != caller.Execution.WorkerHostID || caller.Host.Epoch != caller.Execution.WorkerEpoch {
 		return ErrDenied
 	}
-	eligible, err := workergroup.LockRuntimeHost(ctx, tx, *caller.Host)
-	if err != nil {
-		return err
-	}
-	if !eligible {
-		return ErrDenied
-	}
-	return nil
+	return computer.LockHost(ctx, tx, *caller.Host)
 }
 
 func loadTurnDispatch(ctx context.Context, tx pgx.Tx, environment uuid.UUID, dispatch *TurnDispatch) error {

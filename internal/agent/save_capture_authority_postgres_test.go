@@ -5,6 +5,8 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
@@ -65,20 +67,20 @@ func TestPublishedSaveCompletesWithoutSourceWorker(t *testing.T) {
 
 func TestSaveDiscoveryDoesNotTakeCheckpointCut(t *testing.T) {
 	f := newFixture(t)
-	identity := ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}
+	identity := computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}
 	checkpoint, _ := beginCapture(t, f, f.captureRequest())
-	if save, err := NextComputerSave(t.Context(), f.pool, *f.host(), identity, true); err != nil || save != nil {
+	if save, err := computer.NextComputerSave(t.Context(), f.pool, *f.host(), identity, true); err != nil || save != nil {
 		t.Fatalf("checkpoint cut entered live capture: %+v %v", save, err)
 	}
 	// Even an older checkpoint blocks a later unlinked disk request.
 	optional := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq) VALUES($1,$2,$3,1,2)`, f.env, optional, f.computer)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET next_save_seq=3 WHERE environment_id=$1 AND id=$2`, f.env, f.computer)
-	if save, err := NextComputerSave(t.Context(), f.pool, *f.host(), identity, true); err != nil || save != nil {
+	if save, err := computer.NextComputerSave(t.Context(), f.pool, *f.host(), identity, true); err != nil || save != nil {
 		t.Fatalf("later cut passed checkpoint: %+v %v", save, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_saves SET status='failed',failure_evidence='checkpoint cancelled before capture' WHERE environment_id=$1 AND id=$2`, f.env, checkpoint.SaveID)
-	if save, err := NextComputerSave(t.Context(), f.pool, *f.host(), identity, false); err != nil || save == nil || save.ID != optional {
+	if save, err := computer.NextComputerSave(t.Context(), f.pool, *f.host(), identity, false); err != nil || save == nil || save.ID != optional {
 		t.Fatalf("unlinked disk cut missing: %+v %v", save, err)
 	}
 }

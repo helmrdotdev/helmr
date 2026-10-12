@@ -11,6 +11,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
 	"github.com/helmrdotdev/helmr/internal/agent"
@@ -209,7 +210,7 @@ func deploymentError(err error) error {
 		return conflict(retryConflict)
 	case errors.As(err, &input):
 		return badRequest(err)
-	case errors.Is(err, agent.ErrSecretUnavailable):
+	case errors.Is(err, computer.ErrSecretUnavailable):
 		return conflict(codedError{code: "secret_unavailable", message: "A declared Secret is missing or revoked in this Environment"})
 	case errors.Is(err, deployment.ErrFinalizationConflict):
 		return conflict(err)

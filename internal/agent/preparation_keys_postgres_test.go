@@ -7,12 +7,14 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
 type preparationKeyProvider struct {
-	DataKeyWrapper
+	computer.DataKeyWrapper
 	beforeWrap   func()
 	beforeUnwrap func()
 	lastPlain    []byte
@@ -44,12 +46,12 @@ func preparationWrapper(t *testing.T) *computerkey.Local {
 func TestPreparationKeyConcurrentRetryAndOwnership(t *testing.T) {
 	f := newPreparationFixture(t)
 	ref := f.claim(t, f.attach(t, f.waiter(t)))
-	broker, err := NewPreparationKeyBroker(f.pool, preparationWrapper(t))
+	broker, err := computer.NewPreparationKeyBroker(f.pool, preparationWrapper(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	const n = 8
-	results := make(chan PreparationKey, n)
+	results := make(chan computer.PreparationKey, n)
 	failures := make(chan error, n)
 	var wg sync.WaitGroup
 	for range n {
@@ -63,7 +65,7 @@ func TestPreparationKeyConcurrentRetryAndOwnership(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	var first PreparationKey
+	var first computer.PreparationKey
 	for k := range results {
 		if first.Key == nil {
 			first = k
@@ -108,7 +110,7 @@ func TestPreparationKeyReauthorizesProviderIO(t *testing.T) {
 							t.Fatal(err)
 						}
 					case "stop":
-						if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
+						if err := computer.ObservePreparationStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
 							t.Fatal(err)
 						}
 					}
@@ -118,7 +120,7 @@ func TestPreparationKeyReauthorizesProviderIO(t *testing.T) {
 				} else {
 					provider.beforeUnwrap = mutate
 				}
-				broker, _ := NewPreparationKeyBroker(f.pool, provider)
+				broker, _ := computer.NewPreparationKeyBroker(f.pool, provider)
 				key, err := broker.WriteKey(t.Context(), *f.host(), ref)
 				if !errors.Is(err, ErrDenied) || key.Key != nil {
 					t.Fatalf("key escaped: %v", err)

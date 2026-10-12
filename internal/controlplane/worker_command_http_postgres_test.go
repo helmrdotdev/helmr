@@ -5,12 +5,13 @@ import (
 	"testing"
 	"time"
 
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"uuid"
 )
 
 type commandRouteFixture struct {

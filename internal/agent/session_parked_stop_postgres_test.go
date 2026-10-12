@@ -5,6 +5,8 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
@@ -17,7 +19,7 @@ func TestSessionLifecycleStopsTerminalParkedProcess(t *testing.T) {
 				ctx := t.Context()
 				park := func() {
 					t.Helper()
-					if err := ObserveComputerStopped(ctx, f.pool, *f.host(), ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil()); err != nil {
+					if err := ObserveComputerStopped(ctx, f.pool, *f.host(), computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil()); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -125,7 +127,7 @@ func TestSessionLifecycleRechecksRestoreTargetAfterComputerLock(t *testing.T) {
 	checkpoint := readyCheckpointFixture(t)
 	f := checkpoint.f
 	ctx := t.Context()
-	if err := ObserveComputerStopped(ctx, f.pool, *f.host(), ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil()); err != nil {
+	if err := ObserveComputerStopped(ctx, f.pool, *f.host(), computer.ComputerLeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ControlSession(ctx, f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {

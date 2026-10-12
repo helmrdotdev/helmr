@@ -5,6 +5,8 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -148,7 +150,7 @@ func TestComputerSaveLossSerializesWithPublication(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer tx.Rollback(t.Context())
-				first, err := NewSavePublisher(tx, storage.publisher.objects)
+				first, err := computer.NewSavePublisher(tx, storage.remote)
 				if err != nil {
 					t.Fatal(err)
 				}

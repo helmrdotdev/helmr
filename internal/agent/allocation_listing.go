@@ -4,6 +4,8 @@ import (
 	"context"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -40,7 +42,7 @@ func ListHostAllocations(ctx context.Context, database db.TxBeginner, host worke
 		if err := allocationLockTimeout(ctx, tx); err != nil {
 			return err
 		}
-		if err := lockComputerHost(ctx, tx, host); err != nil {
+		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `SELECT kind,environment_id,owner_id,epoch,allocation_id FROM (

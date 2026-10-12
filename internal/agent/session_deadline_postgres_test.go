@@ -9,6 +9,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
@@ -23,7 +25,7 @@ func TestSessionDeadlineHoldsOnlyItsSessionAndPreservesSave(t *testing.T) {
 			child := ownedFixture(t, f)
 			peer := f.peer(t)
 			var active Admission
-			var save SaveRequest
+			var save computer.SaveRequest
 			if finalizing {
 				active, save = f.finalize(t, "active")
 			} else {

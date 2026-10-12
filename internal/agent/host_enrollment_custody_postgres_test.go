@@ -7,6 +7,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -21,7 +23,7 @@ func TestHostEnrollmentRetainsLostResourceCustody(t *testing.T) {
 			p := f.attach(t, f.waiter(t))
 			ref := f.claim(t, p)
 			if kind == "computer" {
-				if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
+				if err := computer.ObservePreparationStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
 					t.Fatal(err)
 				}
 			}

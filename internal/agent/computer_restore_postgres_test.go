@@ -24,14 +24,14 @@ func readyCheckpointFixture(t *testing.T) checkpointStorageFixture {
 	t.Helper()
 	f := newCheckpointStorageFixture(t)
 	ctx := t.Context()
-	if err := f.publisher.RegisterCheckpoint(ctx, f.ref, f.manifest); err != nil {
+	if err := f.checkpoints.RegisterCheckpoint(ctx, f.ref, f.manifest); err != nil {
 		t.Fatal(err)
 	}
 	f.upload(t)
 	if err := f.publish(t, f.save, f.manifest.Disk); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.publisher.CompleteCheckpoint(ctx, f.ref, f.manifest); err != nil {
+	if err := f.checkpoints.CompleteCheckpoint(ctx, f.ref, f.manifest); err != nil {
 		t.Fatal(err)
 	}
 	return f

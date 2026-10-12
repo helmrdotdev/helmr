@@ -4,6 +4,8 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -80,15 +82,15 @@ func (server *Server) workerDeliverPreparationAllocation(w http.ResponseWriter, 
 		server.writeAllocationError(w, err)
 		return
 	}
-	result, err := server.allocator.DeliverPreparation(r.Context(), workerFromContext(r.Context()), agent.PreparationIdentity{EnvironmentID: identity.EnvironmentID, PreparationID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch})
+	result, err := server.allocator.DeliverPreparation(r.Context(), workerFromContext(r.Context()), computer.PreparationIdentity{EnvironmentID: identity.EnvironmentID, PreparationID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch})
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.PreparationAllocationDelivery{Identity: allocationWireReceipt("preparation", result.Allocation), Shape: allocationWireShape(result.Shape), ExpiresAt: *result.ExpiresAt, ChannelCredential: result.Executor.ChannelCredential})
 }
-func computerAllocationIdentity(in agent.HostAllocation) agent.ComputerLeaseIdentity {
-	return agent.ComputerLeaseIdentity{EnvironmentID: in.EnvironmentID, ComputerID: in.OwnerID, InstanceID: in.InstanceID, Epoch: in.Epoch}
+func computerAllocationIdentity(in agent.HostAllocation) computer.ComputerLeaseIdentity {
+	return computer.ComputerLeaseIdentity{EnvironmentID: in.EnvironmentID, ComputerID: in.OwnerID, InstanceID: in.InstanceID, Epoch: in.Epoch}
 }
 func (server *Server) workerDeliverComputerAllocation(w http.ResponseWriter, r *http.Request) {
 	identity, err := decodeAllocationIdentity(r, "computer")
@@ -135,7 +137,7 @@ func (server *Server) workerPreparationStopped(w http.ResponseWriter, r *http.Re
 		server.writeAllocationError(w, err)
 		return
 	}
-	if err := agent.ObservePreparationStopped(r.Context(), server.tx, workerFromContext(r.Context()), agent.PreparationIdentity{EnvironmentID: identity.EnvironmentID, PreparationID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch}); err != nil {
+	if err := computer.ObservePreparationStopped(r.Context(), server.tx, workerFromContext(r.Context()), computer.PreparationIdentity{EnvironmentID: identity.EnvironmentID, PreparationID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch}); err != nil {
 		server.writeAllocationError(w, err)
 		return
 	}
@@ -186,7 +188,7 @@ func (server *Server) workerComputerAllocationSource(w http.ResponseWriter, r *h
 		return
 	}
 	defer source.Clear()
-	boot, err := agent.ReadComputerBoot(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity))
+	boot, err := computer.ReadComputerBoot(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity))
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return

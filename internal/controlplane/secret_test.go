@@ -1,11 +1,12 @@
 package controlplane
 
 import (
-	"github.com/jackc/pgx/v5/pgtype"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestSecretListCursorRoundTripAndScope(t *testing.T) {

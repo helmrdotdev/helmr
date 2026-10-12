@@ -8,6 +8,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
@@ -31,7 +33,7 @@ func closeProcessing(ctx context.Context, tx pgx.Tx, e Execution, turn uuid.UUID
 	return rejectTurnMessages(ctx, tx, e.EnvironmentID, e.SessionID, turn, false, "turn_closed")
 }
 
-func recordResult(ctx context.Context, tx pgx.Tx, e Execution, turn uuid.UUID, result json.RawMessage, digest [32]byte, drainEvidence string, save *SaveRequest) error {
+func recordResult(ctx context.Context, tx pgx.Tx, e Execution, turn uuid.UUID, result json.RawMessage, digest [32]byte, drainEvidence string, save *computer.SaveRequest) error {
 	o, err := lockSession(ctx, tx, e.EnvironmentID, e.SessionID)
 	if err != nil {
 		return err
@@ -86,52 +88,6 @@ func recordResult(ctx context.Context, tx pgx.Tx, e Execution, turn uuid.UUID, r
 		return err
 	}
 	return event(ctx, tx, e.EnvironmentID, e.SessionID, turn, "turn.finalizing")
-}
-
-type CaptureEvidence struct {
-	EnvironmentID uuid.UUID
-	SaveID        uuid.UUID
-	LeaseEpoch    int64
-	DiskRoot      string
-	Evidence      string
-}
-
-func recordCapture(ctx context.Context, tx pgx.Tx, c CaptureEvidence) error {
-	var computer uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT computer_id FROM computer_saves WHERE environment_id=$1 AND id=$2`, c.EnvironmentID, c.SaveID).Scan(&computer); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, `SELECT id FROM computers WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, c.EnvironmentID, computer); err != nil {
-		return err
-	}
-	var state string
-	var seq, epoch int64
-	var oldRoot *string
-	err := tx.QueryRow(ctx, `SELECT status,seq,computer_lease_epoch,'sha256:'||encode(captured_root_digest,'hex') FROM computer_saves WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, c.EnvironmentID, c.SaveID).Scan(&state, &seq, &epoch, &oldRoot)
-	if err != nil {
-		return err
-	}
-	if epoch != c.LeaseEpoch {
-		return ErrDenied
-	}
-	if state == "captured" || state == "published" {
-		if oldRoot == nil || *oldRoot != c.DiskRoot {
-			return ErrConflict
-		}
-		return nil
-	}
-	if state != "requested" {
-		return ErrTerminal
-	}
-	var earlier bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_saves WHERE environment_id=$1 AND computer_id=$2 AND seq<$3 AND status='requested')`, c.EnvironmentID, computer, seq).Scan(&earlier); err != nil {
-		return err
-	}
-	if earlier {
-		return ErrNotReady
-	}
-	_, err = tx.Exec(ctx, `WITH observed AS MATERIALIZED (SELECT clock_timestamp() AS at) UPDATE computer_saves SET status='captured',flush_acknowledged_at=observed.at,captured_at=observed.at,captured_root_digest=decode(substring($3::text from 8),'hex'),capture_evidence=$4 FROM observed WHERE environment_id=$1 AND id=$2`, c.EnvironmentID, c.SaveID, c.DiskRoot, c.Evidence)
-	return err
 }
 
 // Complete reconciles the Turn's own published save, even after source loss.

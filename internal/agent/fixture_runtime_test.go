@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
@@ -72,56 +74,56 @@ func closeProcessingForTest(ctx context.Context, pool db.TxBeginner, e Execution
 	return RuntimeCloseProcessing(ctx, pool, host, e, turn)
 }
 
-func recordResultForTest(ctx context.Context, pool db.TxBeginner, e Execution, turn uuid.UUID, result json.RawMessage, evidence string) (SaveRequest, error) {
+func recordResultForTest(ctx context.Context, pool db.TxBeginner, e Execution, turn uuid.UUID, result json.RawMessage, evidence string) (computer.SaveRequest, error) {
 	host, err := testHostFor(ctx, pool, e)
 	if err != nil {
-		return SaveRequest{}, err
+		return computer.SaveRequest{}, err
 	}
 	if _, err := RuntimeFinalize(ctx, pool, host, e, turn, result, evidence); err != nil {
-		return SaveRequest{}, err
+		return computer.SaveRequest{}, err
 	}
-	var save SaveRequest
+	var save computer.SaveRequest
 	err = db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT id,computer_id,computer_lease_epoch,seq,requested_at FROM computer_saves WHERE environment_id=$1 AND turn_id=$2`, e.EnvironmentID, turn).Scan(&save.ID, &save.ComputerID, &save.LeaseEpoch, &save.Sequence, &save.RequestedAt)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return SaveRequest{}, ErrNotReady
+		return computer.SaveRequest{}, ErrNotReady
 	}
 	return save, err
 }
 
-func recordCaptureForTest(ctx context.Context, pool db.TxBeginner, c CaptureEvidence) error {
+func recordCaptureForTest(ctx context.Context, pool db.TxBeginner, c computer.CaptureEvidence) error {
 	if !sha256sum.ValidDigest(c.DiskRoot) {
 		return ErrInvalidInput
 	}
 	if c.Evidence == "" {
 		return ErrNotReady
 	}
-	return db.RunTx(ctx, pool, func(tx pgx.Tx) error { return recordCapture(ctx, tx, c) })
+	return db.RunTx(ctx, pool, func(tx pgx.Tx) error { return computer.RecordCapture(ctx, tx, c) })
 }
 
-func attachComputerPreparationForTest(ctx context.Context, pool db.TxBeginner, env, computer uuid.UUID) (Preparation, error) {
-	var result Preparation
-	if env == uuid.Nil() || computer == uuid.Nil() {
+func attachComputerPreparationForTest(ctx context.Context, pool db.TxBeginner, env, computerID uuid.UUID) (computer.Preparation, error) {
+	var result computer.Preparation
+	if env == uuid.Nil() || computerID == uuid.Nil() {
 		return result, ErrInvalidInput
 	}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var err error
-		result, err = attachComputerPreparation(ctx, tx, env, computer)
+		result, err = computer.AttachImageBuild(ctx, tx, env, computerID)
 		return err
 	})
 	if err != nil {
-		return Preparation{}, hideMissing(err)
+		return computer.Preparation{}, hideMissing(err)
 	}
 	return result, nil
 }
 
-func releaseComputerLeaseDiskForTest(ctx context.Context, pool db.TxBeginner, env, computer uuid.UUID, epoch int64) error {
-	if env == uuid.Nil() || computer == uuid.Nil() || epoch <= 0 {
+func releaseComputerLeaseDiskForTest(ctx context.Context, pool db.TxBeginner, env, computerID uuid.UUID, epoch int64) error {
+	if env == uuid.Nil() || computerID == uuid.Nil() || epoch <= 0 {
 		return ErrInvalidInput
 	}
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		return releaseComputerLeaseDisk(ctx, tx, env, computer, epoch)
+		return computer.ReleaseLeaseDisk(ctx, tx, env, computerID, epoch)
 	}))
 }
 
@@ -153,31 +155,31 @@ func savePublicationForTest(ctx context.Context, pool db.TxBeginner, env, saveID
 
 // bindComputerLeaseDiskForTest records the admitted lease's mounted source and
 // write key as the Worker's key broker does after acquisition.
-func bindComputerLeaseDiskForTest(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, env, computer uuid.UUID, epoch int64, writeKey uuid.UUID) (disk.VersionRoot, error) {
+func bindComputerLeaseDiskForTest(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, env, computerID uuid.UUID, epoch int64, writeKey uuid.UUID) (disk.VersionRoot, error) {
 	var result disk.VersionRoot
-	if env == uuid.Nil() || computer == uuid.Nil() || epoch <= 0 || writeKey == uuid.Nil() {
+	if env == uuid.Nil() || computerID == uuid.Nil() || epoch <= 0 || writeKey == uuid.Nil() {
 		return result, ErrInvalidInput
 	}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockComputerHost(ctx, tx, host); err != nil {
+		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
 		var initial string
 		if err := tx.QueryRow(ctx, `SELECT 'sha256:'||encode(initial_root_digest,'hex') FROM computers WHERE environment_id=$1 AND id=$2
- AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2) FOR NO KEY UPDATE`, env, computer).Scan(&initial); err != nil {
+ AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2) FOR NO KEY UPDATE`, env, computerID).Scan(&initial); err != nil {
 			return err
 		}
 		var restored *uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT restored_from_save_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND worker_host_id=$4 AND worker_epoch=$5 AND status IN ('acquiring','active','releasing') AND fenced_at IS NULL AND expires_at>clock_timestamp()`, env, computer, epoch, host.HostID, host.Epoch).Scan(&restored); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT restored_from_save_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND worker_host_id=$4 AND worker_epoch=$5 AND status IN ('acquiring','active','releasing') AND fenced_at IS NULL AND expires_at>clock_timestamp()`, env, computerID, epoch, host.HostID, host.Epoch).Scan(&restored); err != nil {
 			return err
 		}
 		var rootID uuid.UUID
 		if restored == nil {
-			if err := tx.QueryRow(ctx, `SELECT r.id,`+diskRootColumns+` FROM computers c JOIN disk_roots r ON (r.environment_id,r.id)=(c.environment_id,c.initial_root_id) WHERE c.environment_id=$1 AND c.id=$2`, env, computer).Scan(append([]any{&rootID}, diskRootFields(&result)...)...); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT r.id,`+computer.DiskRootColumns+` FROM computers c JOIN disk_roots r ON (r.environment_id,r.id)=(c.environment_id,c.initial_root_id) WHERE c.environment_id=$1 AND c.id=$2`, env, computerID).Scan(append([]any{&rootID}, computer.DiskRootFields(&result)...)...); err != nil {
 				return err
 			}
 		} else {
-			if err := tx.QueryRow(ctx, `SELECT r.id,`+diskRootColumns+` FROM computer_saves v JOIN disk_roots r ON (r.environment_id,r.id)=(v.environment_id,v.root_id) WHERE v.environment_id=$1 AND v.computer_id=$2 AND v.id=$3`, env, computer, *restored).Scan(append([]any{&rootID}, diskRootFields(&result)...)...); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT r.id,`+computer.DiskRootColumns+` FROM computer_saves v JOIN disk_roots r ON (r.environment_id,r.id)=(v.environment_id,v.root_id) WHERE v.environment_id=$1 AND v.computer_id=$2 AND v.id=$3`, env, computerID, *restored).Scan(append([]any{&rootID}, computer.DiskRootFields(&result)...)...); err != nil {
 				return err
 			}
 		}
@@ -189,21 +191,21 @@ func bindComputerLeaseDiskForTest(ctx context.Context, pool db.TxBeginner, host 
 			return ErrConflict
 		}
 		var authorizedKey uuid.UUID
-		if err = tx.QueryRow(ctx, `SELECT id FROM disk_encryption_keys WHERE environment_id=$1 AND writer_computer_id=$2 AND id=$3 AND available FOR KEY SHARE`, env, computer, writeKey).Scan(&authorizedKey); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT id FROM disk_encryption_keys WHERE environment_id=$1 AND writer_computer_id=$2 AND id=$3 AND available FOR KEY SHARE`, env, computerID, writeKey).Scan(&authorizedKey); err != nil {
 			return hideMissing(err)
 		}
-		if _, err = tx.Exec(ctx, `UPDATE computer_leases SET base_root_id=$4,write_key_id=$5 WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND base_root_id IS NULL AND disk_released_at IS NULL`, env, computer, epoch, rootID, writeKey); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE computer_leases SET base_root_id=$4,write_key_id=$5 WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND base_root_id IS NULL AND disk_released_at IS NULL`, env, computerID, epoch, rootID, writeKey); err != nil {
 			return err
 		}
 		var priorRoot, priorKey uuid.UUID
-		if err = tx.QueryRow(ctx, `SELECT base_root_id,write_key_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND base_root_id IS NOT NULL AND disk_released_at IS NULL`, env, computer, epoch).Scan(&priorRoot, &priorKey); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT base_root_id,write_key_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND base_root_id IS NOT NULL AND disk_released_at IS NULL`, env, computerID, epoch).Scan(&priorRoot, &priorKey); err != nil {
 			return err
 		}
 		if priorRoot != rootID || priorKey != writeKey {
 			return ErrConflict
 		}
 		var valid bool
-		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND fenced_at IS NULL AND status IN ('acquiring','active','releasing') AND expires_at>clock_timestamp()) AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2)`, env, computer, epoch).Scan(&valid); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND fenced_at IS NULL AND status IN ('acquiring','active','releasing') AND expires_at>clock_timestamp()) AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2)`, env, computerID, epoch).Scan(&valid); err != nil {
 			return err
 		}
 		if !valid {
@@ -266,8 +268,8 @@ func loseUnreadyComputerCaptureForTest(ctx context.Context, pool db.TxBeginner, 
 	}))
 }
 
-func preparationIdentity(e PreparationExecutor) PreparationIdentity {
-	return PreparationIdentity{EnvironmentID: e.EnvironmentID, PreparationID: e.PreparationID, InstanceID: e.InstanceID, Epoch: e.Epoch}
+func preparationIdentity(e computer.PreparationExecutor) computer.PreparationIdentity {
+	return computer.PreparationIdentity{EnvironmentID: e.EnvironmentID, PreparationID: e.PreparationID, InstanceID: e.InstanceID, Epoch: e.Epoch}
 }
 
 func sameLifetime(a, b *int64) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }

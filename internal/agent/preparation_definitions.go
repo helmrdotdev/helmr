@@ -9,6 +9,8 @@ import (
 	"math"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
@@ -38,7 +40,7 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 		refs = append(refs, d.Template.Secrets...)
 		refs = append(refs, d.Template.BuildSecrets...)
 	}
-	resolved, err := resolveSecretReferences(ctx, tx, env, refs)
+	resolved, err := computer.ResolveSecretReferences(ctx, tx, env, refs)
 	if err != nil {
 		return err
 	}
@@ -164,8 +166,8 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 	}
 	found := 0
 	specIDs := make([]uuid.UUID, 0, len(inputs))
-	buildBindings := make([]registeredSecretBinding, 0)
-	runtimeBindings := make([]registeredSecretBinding, 0)
+	buildBindings := make([]computer.RegisteredSecretBinding, 0)
+	runtimeBindings := make([]computer.RegisteredSecretBinding, 0)
 	for rows.Next() {
 		var specID uuid.UUID
 		var digest string
@@ -202,7 +204,7 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 			rows.Close()
 			return err
 		}
-		bindings, err := registrationSecretBindings(refs, resolved, &specID, nil, nil)
+		bindings, err := computer.RegistrationSecretBindings(refs, resolved, &specID, nil, nil)
 		if err != nil {
 			rows.Close()
 			return err
@@ -213,7 +215,7 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 			rows.Close()
 			return err
 		}
-		bindings, err = registrationSecretBindings(refs, resolved, nil, &deployment, &want.TemplateID)
+		bindings, err = computer.RegistrationSecretBindings(refs, resolved, nil, &deployment, &want.TemplateID)
 		if err != nil {
 			rows.Close()
 			return err
@@ -229,7 +231,7 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 	if found != len(inputs) {
 		return errors.New("preparation registration did not record every spec")
 	}
-	if err := registerSecretBindings(ctx, tx, env, buildBindings); err != nil {
+	if err := computer.RegisterSecretBindings(ctx, tx, env, buildBindings); err != nil {
 		return err
 	}
 	var count int
@@ -249,7 +251,7 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 	if inserted.RowsAffected() != int64(len(inputs)) {
 		return errors.New("computer registration did not record every definition")
 	}
-	return registerSecretBindings(ctx, tx, env, runtimeBindings)
+	return computer.RegisterSecretBindings(ctx, tx, env, runtimeBindings)
 }
 
 // RegisterProgramDefinitions records the Computer and Agent definitions of an
