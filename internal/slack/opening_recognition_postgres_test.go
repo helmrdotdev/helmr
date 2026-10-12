@@ -19,7 +19,7 @@ func TestOpeningRecognitionUsesActualSenderAndKeepsAbandonment(t *testing.T) {
 				t.Fatal(err)
 			}
 			var org uuid.UUID
-			if err := f.Pool.QueryRow(t.Context(), `SELECT organization_id FROM slack_installations WHERE id=$1`, f.installation).Scan(&org); err != nil {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT org_id FROM slack_installations WHERE id=$1`, f.installation).Scan(&org); err != nil {
 				t.Fatal(err)
 			}
 			if kind == "abandoned" {

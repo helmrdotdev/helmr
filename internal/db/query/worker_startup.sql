@@ -104,10 +104,10 @@ WITH target AS (
 UPDATE worker_hosts SET updated_at=now() FROM target
  WHERE worker_hosts.id=target.id AND NOT EXISTS (
  SELECT 1 FROM computer_leases l WHERE l.worker_host_id=target.id AND l.worker_epoch<target.current_epoch
- AND l.fenced_at IS NULL AND l.computer_instance_id NOT IN (SELECT quarantined.id FROM quarantined))
+ AND l.fenced_at IS NULL AND l.allocation_id NOT IN (SELECT quarantined.id FROM quarantined))
  AND NOT EXISTS (
  SELECT 1 FROM image_builds p WHERE p.worker_host_id=target.id AND p.worker_epoch<target.current_epoch
- AND p.fenced_at IS NULL AND p.instance_id NOT IN (SELECT quarantined.id FROM quarantined))
+ AND p.fenced_at IS NULL AND p.allocation_id NOT IN (SELECT quarantined.id FROM quarantined))
  RETURNING worker_hosts.*;
 
 -- name: GetWorkerHostStatus :one

@@ -6,7 +6,7 @@ package db
 // static copy in query/allocation_planning.sql identical for sqlc.
 const RevokedComputerSecretsSQL = `SELECT c.environment_id,c.id AS computer_id,x.secret_id
     FROM computers c JOIN images i ON (i.environment_id,i.id)=(c.environment_id,c.image_id)
-    JOIN secret_exposures x ON (x.environment_id,x.preparation_id)=(i.environment_id,i.preparation_id)
+    JOIN secret_exposures x ON (x.environment_id,x.image_build_id)=(i.environment_id,i.image_build_id)
     JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
     WHERE s.status='revoked'
     UNION

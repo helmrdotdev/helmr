@@ -28,7 +28,7 @@ func activityChild(t *testing.T, f statusFixture, running bool) (statusFixture, 
 	}
 	host := activityHost(f)
 	caller := agent.Caller{Kind: "session", ID: f.Session, TurnID: parentTurn, Execution: activityExecution(f), Host: &host}
-	receipt, err := agent.Spawn(t.Context(), f.Pool, nil, caller, agent.StartRequest{EnvironmentID: f.Environment, Agent: "agent", ComputerID: f.Computer, RetryKey: uuid.NewV7().String(), Input: json.RawMessage(`[{"type":"text","text":"PRIVATE CHILD ASSIGNMENT"}]`)})
+	receipt, err := agent.Spawn(t.Context(), f.Pool, nil, caller, agent.StartRequest{EnvironmentID: f.Environment, Agent: "agent", ComputerID: f.Computer, IdempotencyKey: uuid.NewV7().String(), Input: json.RawMessage(`[{"type":"text","text":"PRIVATE CHILD ASSIGNMENT"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}

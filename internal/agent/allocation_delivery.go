@@ -120,7 +120,7 @@ func (a *Allocator) DeliverPreparation(ctx context.Context, host workergroup.Hos
  WHERE environment_id=$1 AND id=$2 AND status='running' AND fenced_at IS NULL AND deadline_at>clock_timestamp()
  AND (delivered_at IS NULL OR executor_expires_at>clock_timestamp())
  AND NOT EXISTS(SELECT 1 FROM secret_bindings binding JOIN secrets s ON s.environment_id=binding.environment_id AND s.id=binding.secret_id
- WHERE binding.environment_id=$1 AND binding.preparation_spec_id=$3 AND s.status='revoked')
+ WHERE binding.environment_id=$1 AND binding.image_spec_id=$3 AND s.status='revoked')
  RETURNING delivered_at,executor_expires_at`, env, preparation, p.SpecID).Scan(&r.DeliveredAt, &r.ExpiresAt); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrAllocationClosed

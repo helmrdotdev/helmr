@@ -92,7 +92,7 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 	var deleted bool
 	err = tx.QueryRow(ctx, `SELECT t.id,t.front_session_id,s.id,c.publication_id,t.deleted_at IS NOT NULL
  FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.channel_id JOIN slack_thread_sources s ON s.thread_id=t.id AND s.session_id=t.front_session_id
- WHERE t.organization_id=$1 AND t.team_id=$2 AND t.slack_channel_id=$3 AND t.thread_ts=$4`, p.route.Target.OrganizationID, p.route.Target.TeamID, p.message.Channel, p.root).Scan(&p.thread, &p.session, &p.source, &owner, &deleted)
+ WHERE t.org_id=$1 AND t.team_id=$2 AND t.slack_channel_id=$3 AND t.thread_ts=$4`, p.route.Target.OrganizationID, p.route.Target.TeamID, p.message.Channel, p.root).Scan(&p.thread, &p.session, &p.source, &owner, &deleted)
 	if err == nil {
 		if owner != p.route.Target.PublicationID || deleted {
 			return reject("thread_generation_unavailable")
@@ -182,9 +182,9 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust agent.ComputerT
 		err = db.RunTx(ctx, tx, func(core pgx.Tx) error {
 			var err error
 			if p.thread == uuid.Nil() {
-				receipt.Admission, err = agent.Start(ctx, core, trust, agent.Caller{Kind: "user", ID: p.user}, agent.StartRequest{EnvironmentID: p.route.Target.EnvironmentID, Agent: p.route.Target.AgentName, SlackChannelID: &p.message.Channel, PreparedSlack: &p.route, RetryKey: "slack:" + id.String(), Input: input})
+				receipt.Admission, err = agent.Start(ctx, core, trust, agent.Caller{Kind: "user", ID: p.user}, agent.StartRequest{EnvironmentID: p.route.Target.EnvironmentID, Agent: p.route.Target.AgentName, SlackChannelID: &p.message.Channel, PreparedSlack: &p.route, IdempotencyKey: "slack:" + id.String(), Input: input})
 			} else {
-				receipt, err = agent.RouteSlackInput(ctx, core, trust, agent.Caller{Kind: "user", ID: p.user}, agent.EnqueueRequest{EnvironmentID: p.route.Target.EnvironmentID, SessionID: p.session, RetryKey: "slack:" + id.String(), Input: input})
+				receipt, err = agent.RouteSlackInput(ctx, core, trust, agent.Caller{Kind: "user", ID: p.user}, agent.EnqueueRequest{EnvironmentID: p.route.Target.EnvironmentID, SessionID: p.session, IdempotencyKey: "slack:" + id.String(), Input: input})
 			}
 			if err != nil {
 				return err
@@ -231,7 +231,7 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust agent.ComputerT
 		}
 		var message any
 		if receipt.MessageID != uuid.Nil() {
-			operation = "send"
+			operation = "slack_route"
 			message = receipt.MessageID
 		}
 		_, err = tx.Exec(ctx, `UPDATE slack_requests SET status='accepted',finished_at=clock_timestamp(),user_id=$2,thread_id=$3,thread_source_id=$4,environment_id=$5,session_id=$6,operation=$8,turn_id=$7,message_id=$9 WHERE id=$1`, id, p.user, p.thread, p.source, p.route.Target.EnvironmentID, p.session, receipt.TurnID, operation, message)

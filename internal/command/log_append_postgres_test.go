@@ -101,9 +101,9 @@ func TestCommandLogProducerFenceReplayAndCompletion(t *testing.T) {
 			call(mutated, ErrInvalidLog)
 		})
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE computer_instance_id=$1`, instanceID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE allocation_id=$1`, instanceID)
 	call(request, ErrChanged)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET expires_at=clock_timestamp()+interval '5 minutes' WHERE computer_instance_id=$1`, instanceID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET expires_at=clock_timestamp()+interval '5 minutes' WHERE allocation_id=$1`, instanceID)
 	// Cancellation still permits the producer to flush before terminalization.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE commands SET status='stopping',cancel_requested_at=now() WHERE id=$1`, commandID)
 	request.ObservedSeq++

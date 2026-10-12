@@ -25,12 +25,12 @@ func acceptedStartPreflight(context.Context, SlackStartContext) (json.RawMessage
 func slackRouteFixture(t *testing.T, f fixture) (uuid.UUID, uuid.UUID) {
 	t.Helper()
 	installation, channel, registration, publication := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO slack_app_registrations(id,organization_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO slack_app_registrations(id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id)
  SELECT $4,org_id,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$6 FROM environments WHERE id=$1;
- INSERT INTO slack_installations(id,app_registration_id,organization_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id)
+ INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id)
  SELECT $2,$4,org_id,'app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['app_mentions:read','channels:read','channels:history','groups:read','groups:history','chat:write','assistant:write'],$6 FROM environments WHERE id=$1;
  INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($5,$1,$7,$4,$2,$6);
- INSERT INTO slack_channel_bindings(id,environment_id,publication_id,installation_id,organization_id,team_id,slack_channel_id) SELECT $3,$1,$5,$2,org_id,'team','C1' FROM environments WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, installation, channel, registration, publication, f.user, f.agent)
+ INSERT INTO slack_channel_bindings(id,environment_id,publication_id,installation_id,org_id,team_id,slack_channel_id) SELECT $3,$1,$5,$2,org_id,'team','C1' FROM environments WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, installation, channel, registration, publication, f.user, f.agent)
 	return installation, channel
 }
 
@@ -66,7 +66,7 @@ func TestSlackStartCreatesOpeningAndPreservesReceiptAndKeyedRoute(t *testing.T) 
 		t.Fatal(err)
 	}
 	var exact bool
-	if err = f.pool.QueryRow(t.Context(), `SELECT t.thread_ts IS NULL AND p.role='opening' AND p.turn_id=$2 AND p.session_id=t.front_session_id AND p.source_thread_id IS NULL AND p.publication_key=t.opening_publication_key FROM slack_threads t JOIN slack_posts p ON p.thread_id=t.id WHERE t.front_session_id=$1`, first.SessionID, first.TurnID).Scan(&exact); err != nil || !exact {
+	if err = f.pool.QueryRow(t.Context(), `SELECT t.thread_ts IS NULL AND p.role='opening' AND p.turn_id=$2 AND p.session_id=t.front_session_id AND p.source_thread_id IS NULL AND p.post_key=t.opening_post_key FROM slack_threads t JOIN slack_posts p ON p.thread_id=t.id WHERE t.front_session_id=$1`, first.SessionID, first.TurnID).Scan(&exact); err != nil || !exact {
 		t.Fatal(exact, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE environment_id=$1`, f.env)
@@ -74,12 +74,12 @@ func TestSlackStartCreatesOpeningAndPreservesReceiptAndKeyedRoute(t *testing.T) 
 	if err != nil || retry.TurnID != first.TurnID || calls != 1 {
 		t.Fatal(retry, calls, err)
 	}
-	req.RetryKey = "continue"
+	req.IdempotencyKey = "continue"
 	req.SlackChannelID = nil
 	if _, err := Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, ErrConflict) {
 		t.Fatalf("duplicate key: %v", err)
 	}
-	next, err := Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, RetryKey: "send", Input: req.Input})
+	next, err := Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, IdempotencyKey: "send", Input: req.Input})
 	if err != nil || next.Sequence != 2 || calls != 1 {
 		t.Fatal(next, calls, err)
 	}
@@ -88,12 +88,12 @@ func TestSlackStartCreatesOpeningAndPreservesReceiptAndKeyedRoute(t *testing.T) 
 		t.Fatal(count, err)
 	}
 	other := "COTHER"
-	req.RetryKey = "different-channel"
+	req.IdempotencyKey = "different-channel"
 	req.SlackChannelID = &other
 	if _, err = Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, ErrConflict) {
 		t.Fatal(err)
 	}
-	req.RetryKey = "fresh"
+	req.IdempotencyKey = "fresh"
 	req.SessionKey = nil
 	req.SlackChannelID = &channel
 	if _, err = Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, ErrTargetNotPublished) {
@@ -165,10 +165,10 @@ func TestSlackSpawnJoinsSourceButStartOwnsIndependentRoot(t *testing.T) {
 	// The route authority is the thread row, and only a root Session may own
 	// one: the schema rejects a thread fronted by the child.
 	var violation *pgconn.PgError
-	if _, err := f.pool.Exec(t.Context(), `INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,organization_id,team_id,slack_channel_id,thread_ts) SELECT $1,$2,$3,c.id,c.organization_id,c.team_id,c.slack_channel_id,'999.000' FROM slack_channel_bindings c WHERE c.environment_id=$2`, uuid.NewV7(), f.env, child.SessionID); !errors.As(err, &violation) || violation.Code != "23503" {
+	if _, err := f.pool.Exec(t.Context(), `INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,org_id,team_id,slack_channel_id,thread_ts) SELECT $1,$2,$3,c.id,c.org_id,c.team_id,c.slack_channel_id,'999.000' FROM slack_channel_bindings c WHERE c.environment_id=$2`, uuid.NewV7(), f.env, child.SessionID); !errors.As(err, &violation) || violation.Code != "23503" {
 		t.Fatalf("child owned a Slack route: %v", err)
 	}
-	req.RetryKey = "independent"
+	req.IdempotencyKey = "independent"
 	req.SlackPreflight = startPreflightFunc(func(ctx context.Context, value SlackStartContext) (json.RawMessage, error) {
 		if value.Route.Source == nil || value.Route.Source.SessionID != f.session {
 			t.Fatal("missing source provenance")
@@ -187,7 +187,7 @@ func TestSlackSpawnJoinsSourceButStartOwnsIndependentRoot(t *testing.T) {
 	if err != nil || retry.TurnID != independent.TurnID {
 		t.Fatal(retry, err)
 	}
-	req.RetryKey = "unavailable"
+	req.IdempotencyKey = "unavailable"
 	if _, err = Start(t.Context(), f.pool, nil, caller, req); !errors.Is(err, ErrSourceConversationUnavailable) {
 		t.Fatal(err)
 	}

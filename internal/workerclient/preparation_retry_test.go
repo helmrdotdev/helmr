@@ -31,7 +31,7 @@ func preparationCalls() []preparationCall {
 	key := workerapi.ComputerKeyMaterial{Scope: "scope", ID: id, Key: bytes.Repeat([]byte{1}, 32)}
 	request := workerapi.PreparationExecutor{ChannelCredential: []byte("channel")}
 	return []preparationCall{
-		{"key", "/worker/v1/allocations/preparation/key", key, func(ctx context.Context, c *Client) error {
+		{"key", "/worker/v1/allocations/image-build/key", key, func(ctx context.Context, c *Client) error {
 			material, err := c.PreparationWriteKey(ctx, request)
 			defer clear(material.Key)
 			if err == nil && (material.ID != id || !bytes.Equal(material.Key, key.Key)) {
@@ -39,7 +39,7 @@ func preparationCalls() []preparationCall {
 			}
 			return err
 		}},
-		{"secrets", "/worker/v1/allocations/preparation/secrets", workerapi.PreparationSecrets{Secrets: []workerapi.SecretDelivery{{Value: []byte("value")}}}, func(ctx context.Context, c *Client) error {
+		{"secrets", "/worker/v1/allocations/image-build/secrets", workerapi.PreparationSecrets{Secrets: []workerapi.SecretDelivery{{Value: []byte("value")}}}, func(ctx context.Context, c *Client) error {
 			material, err := c.PreparationSecrets(ctx, request)
 			defer func() {
 				for _, secret := range material.Secrets {

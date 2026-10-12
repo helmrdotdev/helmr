@@ -60,7 +60,7 @@ func TestPreparationKeyFailuresClearMaterialAndHideResponseCause(t *testing.T) {
 			defer server.Close()
 			auth := seedHostSecret(t, f.Pool, f.Worker)
 			raw, _ := json.Marshal(request)
-			response := postAgentComputerJSON(t, server, auth, "/worker/v1/allocations/preparation/key", raw)
+			response := postAgentComputerJSON(t, server, auth, "/worker/v1/allocations/image-build/key", raw)
 			defer response.Body.Close()
 			body, err := io.ReadAll(response.Body)
 			if err != nil {

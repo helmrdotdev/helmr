@@ -64,7 +64,7 @@ func TestPromoteCreatesHalfOpenIntervalsAndRecomputesRefresh(t *testing.T) {
 		t.Fatalf("unchanged cadence reset: %v", err)
 	}
 	// A new Program with no refresh stops background work for its older inputs.
-	f.request.retryKey = "second"
+	f.request.idempotencyKey = "second"
 	f.request.bundle.root.Digest = artifacttest.Digest("second bundle")
 	f.request.bundle.bundle.Program.Artifact.Digest = artifacttest.Digest("second program")
 	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.Refresh = nil
@@ -82,13 +82,13 @@ func TestPromoteCreatesHalfOpenIntervalsAndRecomputesRefresh(t *testing.T) {
 	}
 	// Re-promoting without refresh must not rewrite inactive historical specs.
 	var beforeCTID, afterCTID string
-	if err = f.pool.QueryRow(t.Context(), `SELECT s.ctid::text FROM image_specs s JOIN template_definitions d ON (d.environment_id,d.preparation_spec_id)=(s.environment_id,s.id) WHERE d.deployment_id=$1`, first.ID).Scan(&beforeCTID); err != nil {
+	if err = f.pool.QueryRow(t.Context(), `SELECT s.ctid::text FROM image_specs s JOIN template_definitions d ON (d.environment_id,d.image_spec_id)=(s.environment_id,s.id) WHERE d.deployment_id=$1`, first.ID).Scan(&beforeCTID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = Promote(t.Context(), f.pool, f.principal(), f.scope(), second.ID, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err = f.pool.QueryRow(t.Context(), `SELECT s.ctid::text FROM image_specs s JOIN template_definitions d ON (d.environment_id,d.preparation_spec_id)=(s.environment_id,s.id) WHERE d.deployment_id=$1`, first.ID).Scan(&afterCTID); err != nil || afterCTID != beforeCTID {
+	if err = f.pool.QueryRow(t.Context(), `SELECT s.ctid::text FROM image_specs s JOIN template_definitions d ON (d.environment_id,d.image_spec_id)=(s.environment_id,s.id) WHERE d.deployment_id=$1`, first.ID).Scan(&afterCTID); err != nil || afterCTID != beforeCTID {
 		t.Fatalf("historical spec rewritten %s -> %s: %v", beforeCTID, afterCTID, err)
 	}
 	// Old definitions remain executable pins for existing Sessions.
@@ -214,7 +214,7 @@ func TestTriggerActivationsFollowPromotionsAndShareOccurrenceIdentity(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.request.retryKey = "second"
+	f.request.idempotencyKey = "second"
 	f.request.bundle.root.Digest = artifacttest.Digest("second bundle")
 	f.request.bundle.bundle.Program.Artifact.Digest = artifacttest.Digest("second program")
 	second, err := register(t.Context(), f.pool, f.request)

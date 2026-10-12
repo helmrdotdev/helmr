@@ -27,11 +27,11 @@ func TestSlackDeliveryHTTPReadsCurrentScopeAndRestrictsRecoveryToManagers(t *tes
 	}
 	installation, channel, publication, thread, participant, registration := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='owner' WHERE user_id=$1;
- INSERT INTO slack_app_registrations(id,organization_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) VALUES($11,$3,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$1);
- INSERT INTO slack_installations(id,app_registration_id,organization_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id) VALUES($2,$11,$3,'app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['app_mentions:read','channels:read','channels:history','groups:read','groups:history','chat:write','assistant:write'],$1);
+ INSERT INTO slack_app_registrations(id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) VALUES($11,$3,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$1);
+ INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id) VALUES($2,$11,$3,'app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['app_mentions:read','channels:read','channels:history','groups:read','groups:history','chat:write','assistant:write'],$1);
  INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($6,$5,$7,$11,$2,$1);
- INSERT INTO slack_channel_bindings(id,environment_id,publication_id,installation_id,organization_id,team_id,slack_channel_id) VALUES($4,$5,$6,$2,$3,'team','C1');
- INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,organization_id,team_id,slack_channel_id,thread_ts,opening_publication_key) VALUES($9,$5,$8,$4,$3,'team','C1','123.456','opening');
+ INSERT INTO slack_channel_bindings(id,environment_id,publication_id,installation_id,org_id,team_id,slack_channel_id) VALUES($4,$5,$6,$2,$3,'team','C1');
+ INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key) VALUES($9,$5,$8,$4,$3,'team','C1','123.456','opening');
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($10,$9,$5,$8)`, pgx.QueryExecModeSimpleProtocol, f.User, installation, org, channel, f.Environment, publication, f.Agent, f.Session, thread, participant, registration)
 	var first uuid.UUID
 	var attempt uuid.UUID
@@ -39,7 +39,7 @@ func TestSlackDeliveryHTTPReadsCurrentScopeAndRestrictsRecoveryToManagers(t *tes
 		post := uuid.NewV7()
 		body := []byte(`{"text":"visible fallback","blocks":[{"type":"actions","elements":[{"value":"DO_NOT_RETURN_SIGNED_CONTROL"}]}]}`)
 		digest := sha256.Sum256(body)
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_posts(id,environment_id,session_id,thread_id,thread_source_id,seq,publication_key,role,payload,payload_digest,presentation_path) VALUES($1,$2,$3,(SELECT thread_id FROM slack_thread_sources WHERE id=$4),$4,$5,$6,'lifecycle',$7,$8,'post'); UPDATE slack_installations SET delivery_next_at=clock_timestamp() WHERE id=$9`, pgx.QueryExecModeSimpleProtocol, post, f.Environment, f.Session, participant, seq, fmt.Sprint(seq), body, digest[:], installation)
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_posts(id,environment_id,session_id,thread_id,thread_source_id,seq,post_key,role,payload,payload_digest,presentation_path) VALUES($1,$2,$3,(SELECT thread_id FROM slack_thread_sources WHERE id=$4),$4,$5,$6,'lifecycle',$7,$8,'post'); UPDATE slack_installations SET delivery_next_at=clock_timestamp() WHERE id=$9`, pgx.QueryExecModeSimpleProtocol, post, f.Environment, f.Session, participant, seq, fmt.Sprint(seq), body, digest[:], installation)
 		claim, err := slack.ClaimPost(t.Context(), f.Pool, post)
 		if err != nil || claim == nil {
 			t.Fatal(claim, err)

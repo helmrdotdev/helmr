@@ -22,7 +22,7 @@ type SendReceipt struct {
 
 // RouteSlackInput applies the Slack integration policy under one destination lock.
 func RouteSlackInput(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIssuer, caller Caller, req EnqueueRequest) (SendReceipt, error) {
-	return admitSessionInput(ctx, pool, trust, caller, req, "send", uuid.Nil())
+	return admitSessionInput(ctx, pool, trust, caller, req, "slack_route", uuid.Nil())
 }
 func SendTurn(ctx context.Context, pool db.TxBeginner, caller Caller, req EnqueueRequest, turn uuid.UUID) (SendReceipt, error) {
 	if turn == uuid.Nil() {
@@ -33,7 +33,7 @@ func SendTurn(ctx context.Context, pool db.TxBeginner, caller Caller, req Enqueu
 
 func messageRetry(ctx context.Context, tx pgx.Tx, caller Caller, req EnqueueRequest, method string, target uuid.UUID, digest [32]byte, result *SendReceipt) (bool, error) {
 	var prior []byte
-	err := tx.QueryRow(ctx, `SELECT session_id,turn_id,id,request_digest FROM turn_messages WHERE environment_id=$1 AND caller_kind=$2 AND caller_id=$3 AND admission_method=$4 AND target_id=$5 AND retry_key=$6 AND session_id=$7`, req.EnvironmentID, caller.Kind, caller.ID, method, target, req.RetryKey, req.SessionID).Scan(&result.SessionID, &result.TurnID, &result.MessageID, &prior)
+	err := tx.QueryRow(ctx, `SELECT session_id,turn_id,id,request_digest FROM turn_messages WHERE environment_id=$1 AND caller_kind=$2 AND caller_id=$3 AND admission_method=$4 AND target_id=$5 AND idempotency_key=$6 AND session_id=$7`, req.EnvironmentID, caller.Kind, caller.ID, method, target, req.IdempotencyKey, req.SessionID).Scan(&result.SessionID, &result.TurnID, &result.MessageID, &prior)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -83,8 +83,8 @@ func admitMessage(ctx context.Context, tx pgx.Tx, caller Caller, req EnqueueRequ
 	if method == "turn_send" {
 		target = turn
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO turn_messages(environment_id,id,session_id,turn_id,process_epoch,seq,message,caller_kind,caller_id,origin_turn_id,admission_method,target_id,retry_key,request_digest)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NULLIF($13,''),$14)`, req.EnvironmentID, result.MessageID, req.SessionID, turn, e.ProcessEpoch, sequence, []byte(req.Input), caller.Kind, caller.ID, nullableID(caller.TurnID), method, target, req.RetryKey, digest[:]); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO turn_messages(environment_id,id,session_id,turn_id,process_epoch,seq,message,caller_kind,caller_id,origin_turn_id,admission_method,target_id,idempotency_key,request_digest)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NULLIF($13,''),$14)`, req.EnvironmentID, result.MessageID, req.SessionID, turn, e.ProcessEpoch, sequence, []byte(req.Input), caller.Kind, caller.ID, nullableID(caller.TurnID), method, target, req.IdempotencyKey, digest[:]); err != nil {
 		return false, err
 	}
 	return true, messageEvent(ctx, tx, req.EnvironmentID, req.SessionID, turn, result.MessageID, "admitted", "")

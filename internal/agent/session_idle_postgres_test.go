@@ -65,18 +65,18 @@ func TestStartSnapshotsIdlePolicyAndRejectsKeyedMismatch(t *testing.T) {
 		t.Fatalf("default: %+v %v", a, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_definitions SET close_after_idle_never=true WHERE environment_id=$1`, f.env)
-	req.RetryKey = "first"
+	req.IdempotencyKey = "first"
 	b, err := Start(t.Context(), f.pool, nil, f.caller(), req)
 	if err != nil || b.SessionID != a.SessionID || !sameLifetime(a.CloseAfterIdleMs, b.CloseAfterIdleMs) {
 		t.Fatalf("redeployment changed policy: %+v %v", b, err)
 	}
-	req.RetryKey = "mismatch"
+	req.IdempotencyKey = "mismatch"
 	req.CloseAfterIdle = lifetime.Policy{Set: true}
 	if _, err = Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, ErrConflict) {
 		t.Fatalf("keyed mismatch: %v", err)
 	}
 	req.SessionKey = nil
-	req.RetryKey = "never"
+	req.IdempotencyKey = "never"
 	c, err := Start(t.Context(), f.pool, nil, f.caller(), req)
 	if err != nil || c.CloseAfterIdleMs != nil {
 		t.Fatalf("explicit never: %+v %v", c, err)

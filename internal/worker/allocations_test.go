@@ -60,7 +60,7 @@ func (o *allocationOwnerTest) Run(context.Context) error {
 }
 func (o *allocationOwnerTest) Finished() bool { return o.done.Load() }
 func allocationTestIdentity(kind string) workerapi.AllocationIdentity {
-	return workerapi.AllocationIdentity{Kind: kind, EnvironmentID: uuid.NewV7().String(), OwnerID: uuid.NewV7().String(), InstanceID: uuid.NewV7().String(), Epoch: 1}
+	return workerapi.AllocationIdentity{Kind: kind, EnvironmentID: uuid.NewV7().String(), OwnerID: uuid.NewV7().String(), AllocationID: uuid.NewV7().String(), Epoch: 1}
 }
 func TestAllocationConsumerBoundsCustodyAndDiscoversWhileFull(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {

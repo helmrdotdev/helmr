@@ -10,10 +10,10 @@ import (
 )
 
 func releasePreparationDiskAttachments(ctx context.Context, database db.TxDB) error {
-	rows, err := database.Query(ctx, `SELECT p.environment_id,p.preparation_spec_id,p.id FROM image_builds p
- JOIN image_specs spec ON spec.environment_id=p.environment_id AND spec.id=p.preparation_spec_id
+	rows, err := database.Query(ctx, `SELECT p.environment_id,p.image_spec_id,p.id FROM image_builds p
+ JOIN image_specs spec ON spec.environment_id=p.environment_id AND spec.id=p.image_spec_id
  WHERE p.disk_released_at IS NULL AND p.write_key_id IS NOT NULL AND p.fenced_at IS NOT NULL AND p.status IN ('succeeded','failed')
- AND (p.status='failed' OR EXISTS(SELECT 1 FROM images i WHERE i.environment_id=p.environment_id AND i.preparation_id=p.id))
+ AND (p.status='failed' OR EXISTS(SELECT 1 FROM images i WHERE i.environment_id=p.environment_id AND i.image_build_id=p.id))
  ORDER BY p.environment_id,p.id LIMIT 100 FOR NO KEY UPDATE OF spec,p SKIP LOCKED`)
 	if err != nil {
 		return err
@@ -39,8 +39,8 @@ func releasePreparationDiskAttachments(ctx context.Context, database db.TxDB) er
 			}
 			var eligible bool
 			if err := tx.QueryRow(ctx, `SELECT p.disk_released_at IS NULL AND p.write_key_id IS NOT NULL AND p.fenced_at IS NOT NULL AND p.status IN ('succeeded','failed')
- AND (p.status='failed' OR EXISTS(SELECT 1 FROM images i WHERE i.environment_id=p.environment_id AND i.preparation_id=p.id))
- FROM image_builds p WHERE p.environment_id=$1 AND p.id=$2 AND p.preparation_spec_id=$3 FOR NO KEY UPDATE OF p SKIP LOCKED`, c.environment, c.id, c.spec).Scan(&eligible); err != nil {
+ AND (p.status='failed' OR EXISTS(SELECT 1 FROM images i WHERE i.environment_id=p.environment_id AND i.image_build_id=p.id))
+ FROM image_builds p WHERE p.environment_id=$1 AND p.id=$2 AND p.image_spec_id=$3 FOR NO KEY UPDATE OF p SKIP LOCKED`, c.environment, c.id, c.spec).Scan(&eligible); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					return nil
 				}
@@ -49,7 +49,7 @@ func releasePreparationDiskAttachments(ctx context.Context, database db.TxDB) er
 			if !eligible {
 				return nil
 			}
-			if _, err := tx.Exec(ctx, `DELETE FROM disk_object_pins WHERE environment_id=$1 AND preparation_id=$2`, c.environment, c.id); err != nil {
+			if _, err := tx.Exec(ctx, `DELETE FROM disk_object_pins WHERE environment_id=$1 AND image_build_id=$2`, c.environment, c.id); err != nil {
 				return err
 			}
 			_, err := tx.Exec(ctx, `UPDATE image_builds SET disk_released_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, c.environment, c.id)

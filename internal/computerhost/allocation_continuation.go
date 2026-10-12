@@ -121,7 +121,7 @@ func (o *ComputerAllocationOwner) prepareContinuation(ctx context.Context, deliv
 		return nil, err
 	}
 	e := p.GetEnvelope()
-	if p.GetSourceAbort() != sourceAbort || e.GetComputerId() != o.identity.OwnerID || e.GetComputerInstanceId() != o.identity.InstanceID || e.GetWriterGeneration() != uint64(o.identity.Epoch) || e.GetChannelCredential() != delivery.ChannelCredential || p.GetBaseComputerDiskVersionId() != delivery.BaseVersion || (capture != nil && !proto.Equal(p.GetCapture(), capture)) || (!sourceAbort && p.GetCapture().GetCheckpointId() != o.checkpoint.CheckpointID.String()) {
+	if p.GetSourceAbort() != sourceAbort || e.GetComputerId() != o.identity.OwnerID || e.GetComputerInstanceId() != o.identity.AllocationID || e.GetWriterGeneration() != uint64(o.identity.Epoch) || e.GetChannelCredential() != delivery.ChannelCredential || p.GetBaseComputerDiskVersionId() != delivery.BaseVersion || (capture != nil && !proto.Equal(p.GetCapture(), capture)) || (!sourceAbort && p.GetCapture().GetCheckpointId() != o.checkpoint.CheckpointID.String()) {
 		return nil, errors.New("computer installation differs from physical allocation")
 	}
 	if sourceAbort {

@@ -942,7 +942,7 @@ func inspectLossCustody(ctx context.Context, pool *pgxpool.Pool, env uuid.UUID, 
 			c.close()
 		}
 	}()
-	err = pool.QueryRow(ctx, `SELECT l.computer_id::text,l.computer_instance_id::text,l.worker_host_id::text,l.epoch,l.worker_epoch
+	err = pool.QueryRow(ctx, `SELECT l.computer_id::text,l.allocation_id::text,l.worker_host_id::text,l.epoch,l.worker_epoch
  FROM computer_saves s JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(s.environment_id,s.computer_id,s.computer_lease_epoch)
  WHERE s.environment_id=$1 AND s.id=$2 AND l.status='active' AND l.fenced_at IS NULL AND l.expires_at>clock_timestamp()`, env, save.SaveID).Scan(&c.Computer, &c.Instance, &c.Host, &c.Epoch, &c.WorkerEpoch)
 	if err != nil {

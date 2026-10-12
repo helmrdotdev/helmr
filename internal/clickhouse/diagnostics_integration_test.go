@@ -19,7 +19,7 @@ import (
 func TestDiagnosticHistoriesPreserveBinaryIdentityAndOffsets(t *testing.T) {
 	client := disposableClient(t)
 	writer := NewWriter(client)
-	for _, kind := range []string{"session", "computer_preparation", "computer_command"} {
+	for _, kind := range []string{"session", "image_build", "computer_command"} {
 		t.Run(kind, func(t *testing.T) {
 			now := time.Now().UTC().Truncate(time.Microsecond)
 			source := telemetry.DiagnosticSource{EnvironmentID: uuid.New(), Kind: kind, ID: uuid.New(), ProducerEpoch: 7}
@@ -68,14 +68,14 @@ func TestDiagnosticHistoriesFromPostgresAcceptance(t *testing.T) {
 	client := disposableClient(t)
 	writer := NewWriter(client)
 	bounds := diagnostic.Bounds{ChunkBytes: 5, SourceBytes: 10, SourceRecords: 4, EnvironmentBytes: 20, EnvironmentRecords: 8, QueueBytes: 40, QueueRecords: 16}
-	for _, kind := range []string{"session", "computer_preparation", "computer_command"} {
+	for _, kind := range []string{"session", "image_build", "computer_command"} {
 		t.Run(kind, func(t *testing.T) {
 			f := agenttest.New(t)
 			source := telemetry.DiagnosticSource{EnvironmentID: f.Environment, Kind: kind, ID: f.Session, ProducerEpoch: 1}
 			switch kind {
-			case "computer_preparation":
+			case "image_build":
 				source.ID = uuid.NewV7()
-				dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_builds(environment_id,id,preparation_spec_id,retry_key,status,deadline_at,executor_epoch,worker_host_id,worker_epoch,instance_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest)
+				dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,status,deadline_at,executor_epoch,worker_host_id,worker_epoch,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest)
               SELECT $1,$2,$3,'diagnostics','running',clock_timestamp()+interval '1 hour',1,worker_host_id,worker_epoch,$2,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest FROM computer_leases LIMIT 1`, f.Environment, source.ID, f.Deployment)
 			case "computer_command":
 				source.ID = uuid.NewV7()
@@ -161,7 +161,7 @@ func TestDiagnosticReplayKeepsAcceptedPartitionAndRetention(t *testing.T) {
 	c := disposableClient(t)
 	writer := NewWriter(c)
 	accepted := time.Now().UTC().Truncate(time.Microsecond).Add(-48 * time.Hour)
-	for _, kind := range []string{"session", "computer_preparation", "computer_command"} {
+	for _, kind := range []string{"session", "image_build", "computer_command"} {
 		t.Run(kind, func(t *testing.T) {
 			table, owner, err := diagnosticTable(kind)
 			if err != nil {

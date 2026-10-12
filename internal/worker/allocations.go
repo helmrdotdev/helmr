@@ -74,7 +74,7 @@ func (c *AllocationConsumer) discoverPage(ctx context.Context) error {
 	}
 	previous := c.after
 	for _, identity := range page.Allocations {
-		if (identity.Kind != "computer" && identity.Kind != "preparation") || identity.Epoch <= 0 || ids.Validate(identity.EnvironmentID) != nil || ids.Validate(identity.OwnerID) != nil || ids.Validate(identity.InstanceID) != nil || (previous != nil && !allocationAfter(identity, *previous)) {
+		if (identity.Kind != "computer" && identity.Kind != "preparation") || identity.Epoch <= 0 || ids.Validate(identity.EnvironmentID) != nil || ids.Validate(identity.OwnerID) != nil || ids.Validate(identity.AllocationID) != nil || (previous != nil && !allocationAfter(identity, *previous)) {
 			c.after = nil
 			return errors.New("invalid or unordered physical allocation page")
 		}

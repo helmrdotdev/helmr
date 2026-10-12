@@ -237,7 +237,7 @@ type computerLeaseAuthority struct {
 
 func currentComputerLease(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, env, computer uuid.UUID, epoch int64) (computerLeaseAuthority, error) {
 	var lease computerLeaseAuthority
-	err := tx.QueryRow(ctx, `SELECT l.computer_instance_id,l.channel_credential_digest,COALESCE(l.restored_from_save_id::text,'sha256:'||encode(c.initial_root_digest,'hex')),LEAST(l.expires_at,clock_timestamp()+interval '30 seconds')
+	err := tx.QueryRow(ctx, `SELECT l.allocation_id,l.channel_credential_digest,COALESCE(l.restored_from_save_id::text,'sha256:'||encode(c.initial_root_digest,'hex')),LEAST(l.expires_at,clock_timestamp()+interval '30 seconds')
   FROM computer_leases l JOIN computers c ON (c.environment_id,c.id)=(l.environment_id,l.computer_id)
   WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=$3 AND l.worker_host_id=$4 AND l.worker_epoch=$5
    AND l.status='active' AND l.fenced_at IS NULL AND l.expires_at>clock_timestamp()`, env, computer, epoch, host.HostID, host.Epoch).Scan(&lease.Instance, &lease.CredentialDigest, &lease.BaseVersion, &lease.Expires)

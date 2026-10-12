@@ -14,18 +14,18 @@ import (
 // owner locks. Fresh demand must not pre-empt an eligible attached chain's one
 // replacement and force two sequential preparations for the same current inputs.
 const preparationSuccessorEligibilitySQL = `p.successor_of IS NULL AND p.status='succeeded' AND p.fenced_at IS NOT NULL
- AND EXISTS(SELECT 1 FROM images i WHERE i.environment_id=p.environment_id AND i.preparation_id=p.id)
- AND NOT EXISTS(SELECT 1 FROM secret_bindings binding WHERE binding.environment_id=spec.environment_id AND binding.preparation_spec_id=spec.id AND NOT EXISTS(
+ AND EXISTS(SELECT 1 FROM images i WHERE i.environment_id=p.environment_id AND i.image_build_id=p.id)
+ AND NOT EXISTS(SELECT 1 FROM secret_bindings binding WHERE binding.environment_id=spec.environment_id AND binding.image_spec_id=spec.id AND NOT EXISTS(
    SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
-   WHERE x.environment_id=p.environment_id AND x.preparation_id=p.id AND x.secret_id=binding.secret_id AND s.status='active'))
+   WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND x.secret_id=binding.secret_id AND s.status='active'))
  AND NOT EXISTS(SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
-   WHERE x.environment_id=p.environment_id AND x.preparation_id=p.id AND s.status<>'active')
+   WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND s.status<>'active')
  AND EXISTS(SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
-   WHERE x.environment_id=p.environment_id AND x.preparation_id=p.id AND s.current_version_id<>x.version_id)
- AND NOT EXISTS(SELECT 1 FROM image_builds other WHERE other.environment_id=p.environment_id AND other.preparation_spec_id=p.preparation_spec_id
+   WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND s.current_version_id<>x.version_id)
+ AND NOT EXISTS(SELECT 1 FROM image_builds other WHERE other.environment_id=p.environment_id AND other.image_spec_id=p.image_spec_id
    AND (other.status IN ('queued','running') OR (other.worker_host_id IS NOT NULL AND other.fenced_at IS NULL)))
- AND EXISTS(SELECT 1 FROM computers c JOIN images i ON (i.environment_id,i.preparation_id)=(c.environment_id,c.preparation_id)
-   WHERE c.environment_id=p.environment_id AND c.preparation_id=p.id AND c.initial_root_digest IS NULL AND c.preparation_failed_at IS NULL AND c.deleted_at IS NULL
+ AND EXISTS(SELECT 1 FROM computers c JOIN images i ON (i.environment_id,i.image_build_id)=(c.environment_id,c.image_build_id)
+   WHERE c.environment_id=p.environment_id AND c.image_build_id=p.id AND c.initial_root_digest IS NULL AND c.preparation_failed_at IS NULL AND c.deleted_at IS NULL
    AND c.preparation_deadline_at>clock_timestamp()
    AND (c.preparation_max_age_ms IS NULL OR extract(epoch FROM clock_timestamp()-i.published_at)*1000<=c.preparation_max_age_ms))`
 
@@ -63,7 +63,7 @@ func EnsurePreparationSuccessor(ctx context.Context, pool db.TxBeginner, env, pr
 		}
 		var eligible bool
 		err = tx.QueryRow(ctx, `SELECT `+preparationSuccessorEligibilitySQL+`
- FROM image_builds p JOIN image_specs spec ON (spec.environment_id,spec.id)=(p.environment_id,p.preparation_spec_id)
+ FROM image_builds p JOIN image_specs spec ON (spec.environment_id,spec.id)=(p.environment_id,p.image_spec_id)
  WHERE p.environment_id=$1 AND p.id=$2 FOR NO KEY UPDATE OF p`, env, predecessor).Scan(&eligible)
 		if err != nil {
 			return err
@@ -73,7 +73,7 @@ func EnsurePreparationSuccessor(ctx context.Context, pool db.TxBeginner, env, pr
 		}
 		// Pinning, attachment and waiter expiry all acquire the spec first. The
 		// selected Computer set is therefore stable until this transaction ends.
-		rows, err := tx.Query(ctx, `SELECT id FROM computers WHERE environment_id=$1 AND preparation_id=$2
+		rows, err := tx.Query(ctx, `SELECT id FROM computers WHERE environment_id=$1 AND image_build_id=$2
  AND initial_root_digest IS NULL AND preparation_failed_at IS NULL AND deleted_at IS NULL
  ORDER BY id FOR NO KEY UPDATE`, env, predecessor)
 		if err != nil {
@@ -84,8 +84,8 @@ func EnsurePreparationSuccessor(ctx context.Context, pool db.TxBeginner, env, pr
 			return err
 		}
 		var deadline *time.Time
-		if err = tx.QueryRow(ctx, `SELECT max(c.preparation_deadline_at) FROM computers c JOIN images i ON (i.environment_id,i.preparation_id)=(c.environment_id,c.preparation_id)
- WHERE c.environment_id=$1 AND c.preparation_id=$2 AND c.initial_root_digest IS NULL AND c.preparation_failed_at IS NULL AND c.deleted_at IS NULL AND c.preparation_deadline_at>clock_timestamp()
+		if err = tx.QueryRow(ctx, `SELECT max(c.preparation_deadline_at) FROM computers c JOIN images i ON (i.environment_id,i.image_build_id)=(c.environment_id,c.image_build_id)
+ WHERE c.environment_id=$1 AND c.image_build_id=$2 AND c.initial_root_digest IS NULL AND c.preparation_failed_at IS NULL AND c.deleted_at IS NULL AND c.preparation_deadline_at>clock_timestamp()
  AND (c.preparation_max_age_ms IS NULL OR extract(epoch FROM clock_timestamp()-i.published_at)*1000<=c.preparation_max_age_ms)`, env, predecessor).Scan(&deadline); err != nil {
 			return err
 		}
@@ -93,7 +93,7 @@ func EnsurePreparationSuccessor(ctx context.Context, pool db.TxBeginner, env, pr
 			return ErrNotReady
 		}
 		id := uuid.NewV7()
-		_, err = tx.Exec(ctx, `INSERT INTO image_builds(environment_id,id,preparation_spec_id,successor_of,retry_key,deadline_at)
+		_, err = tx.Exec(ctx, `INSERT INTO image_builds(environment_id,id,image_spec_id,successor_of,idempotency_key,deadline_at)
  VALUES($1,$2,$3,$4,$5,$6)`, env, id, p.SpecID, predecessor, "successor:"+predecessor.String(), *deadline)
 		if err != nil {
 			return err

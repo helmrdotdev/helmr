@@ -51,7 +51,7 @@ func pinComputerImage(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) (
 		return result, err
 	}
 	var spec *uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT preparation_spec_id FROM computers WHERE environment_id=$1 AND id=$2`, env, computer).Scan(&spec); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT image_spec_id FROM computers WHERE environment_id=$1 AND id=$2`, env, computer).Scan(&spec); err != nil {
 		return result, err
 	}
 	if spec == nil {
@@ -66,8 +66,8 @@ func pinComputerImage(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) (
 	var pinned, attached *uuid.UUID
 	var live bool
 	var maxAge *int64
-	if err := tx.QueryRow(ctx, `SELECT image_id,preparation_id,initial_root_digest IS NULL AND preparation_failed_at IS NULL AND deleted_at IS NULL AND preparation_deadline_at>clock_timestamp(),preparation_max_age_ms
- FROM computers WHERE environment_id=$1 AND id=$2 AND preparation_spec_id=$3 FOR NO KEY UPDATE`, env, computer, *spec).Scan(&pinned, &attached, &live, &maxAge); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT image_id,image_build_id,initial_root_digest IS NULL AND preparation_failed_at IS NULL AND deleted_at IS NULL AND preparation_deadline_at>clock_timestamp(),preparation_max_age_ms
+ FROM computers WHERE environment_id=$1 AND id=$2 AND image_spec_id=$3 FOR NO KEY UPDATE`, env, computer, *spec).Scan(&pinned, &attached, &live, &maxAge); err != nil {
 		return result, err
 	}
 	if pinned != nil {
@@ -80,17 +80,17 @@ func pinComputerImage(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) (
 	}
 	var image uuid.UUID
 	err := tx.QueryRow(ctx, `SELECT i.id FROM images i
- JOIN image_builds p ON (p.environment_id,p.id)=(i.environment_id,i.preparation_id)
- JOIN image_specs spec ON (spec.environment_id,spec.id)=(i.environment_id,i.preparation_spec_id)
- WHERE i.environment_id=$1 AND i.preparation_spec_id=$2 AND i.root_id IS NOT NULL AND p.status='succeeded'
+ JOIN image_builds p ON (p.environment_id,p.id)=(i.environment_id,i.image_build_id)
+ JOIN image_specs spec ON (spec.environment_id,spec.id)=(i.environment_id,i.image_spec_id)
+ WHERE i.environment_id=$1 AND i.image_spec_id=$2 AND i.root_id IS NOT NULL AND p.status='succeeded'
  AND ($4::uuid IS NULL OR p.id=$4 OR p.successor_of=$4)
  AND ($3::bigint IS NULL OR extract(epoch FROM clock_timestamp()-i.published_at)*1000<=$3)
- AND NOT EXISTS (SELECT 1 FROM secret_bindings binding WHERE binding.environment_id=spec.environment_id AND binding.preparation_spec_id=spec.id AND NOT EXISTS (
+ AND NOT EXISTS (SELECT 1 FROM secret_bindings binding WHERE binding.environment_id=spec.environment_id AND binding.image_spec_id=spec.id AND NOT EXISTS (
    SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
-   WHERE x.environment_id=p.environment_id AND x.preparation_id=p.id AND x.secret_id=binding.secret_id
+   WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND x.secret_id=binding.secret_id
      AND s.status='active' AND s.current_version_id=x.version_id))
  AND NOT EXISTS (SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
-   WHERE x.environment_id=p.environment_id AND x.preparation_id=p.id AND (s.status<>'active' OR s.current_version_id<>x.version_id))
+   WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND (s.status<>'active' OR s.current_version_id<>x.version_id))
  ORDER BY i.seq DESC LIMIT 1`, env, *spec, maxAge, attached).Scan(&image)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrNotReady
@@ -123,7 +123,7 @@ func pinComputerImage(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) (
 // new pins. Missing declared owners are rejected by the complete exposure query.
 func lockPreparationImageSecrets(ctx context.Context, tx pgx.Tx, env, spec uuid.UUID) error {
 	rows, err := tx.Query(ctx, `SELECT s.id FROM secrets s WHERE s.environment_id=$1 AND s.id IN (
- SELECT secret_id FROM secret_bindings WHERE environment_id=$1 AND preparation_spec_id=$2) ORDER BY s.id FOR SHARE`, env, spec)
+ SELECT secret_id FROM secret_bindings WHERE environment_id=$1 AND image_spec_id=$2) ORDER BY s.id FOR SHARE`, env, spec)
 	if err != nil {
 		return err
 	}
@@ -141,10 +141,10 @@ func readComputerImage(ctx context.Context, tx pgx.Tx, env, spec, image uuid.UUI
 	result := ComputerImage{ID: image}
 	var rootID uuid.UUID
 	var captured string
-	err := tx.QueryRow(ctx, `SELECT i.preparation_id,i.seq,i.root_id,p.capture_root,`+diskRootColumns+` FROM images i
+	err := tx.QueryRow(ctx, `SELECT i.image_build_id,i.seq,i.root_id,p.capture_root,`+diskRootColumns+` FROM images i
  JOIN disk_roots r ON (r.environment_id,r.id)=(i.environment_id,i.root_id)
- JOIN image_builds p ON (p.environment_id,p.id)=(i.environment_id,i.preparation_id)
- WHERE i.environment_id=$1 AND i.preparation_spec_id=$2 AND i.id=$3 AND p.status='succeeded'`, env, spec, image).Scan(append([]any{&result.PreparationID, &result.Sequence, &rootID, &captured}, diskRootFields(&result.Root)...)...)
+ JOIN image_builds p ON (p.environment_id,p.id)=(i.environment_id,i.image_build_id)
+ WHERE i.environment_id=$1 AND i.image_spec_id=$2 AND i.id=$3 AND p.status='succeeded'`, env, spec, image).Scan(append([]any{&result.PreparationID, &result.Sequence, &rootID, &captured}, diskRootFields(&result.Root)...)...)
 	if err != nil {
 		return ComputerImage{}, uuid.Nil(), err
 	}

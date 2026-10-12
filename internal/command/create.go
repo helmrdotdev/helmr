@@ -253,9 +253,9 @@ func create(ctx context.Context, tx pgx.Tx, request CreateRequest, normalized no
 	err := idempotency.Run(ctx, tx, claimRequest, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
 		q := db.New(tx)
 		if !acquired.New {
-			replayed, err := q.GetCommandByRetryKey(ctx, db.GetCommandByRetryKeyParams{
+			replayed, err := q.GetCommandByIdempotencyReceipt(ctx, db.GetCommandByIdempotencyReceiptParams{
 				EnvironmentID: pgvalue.UUID(request.EnvironmentID),
-				RetryKeyID:    acquired.Claim.ID,
+				ReceiptID:     acquired.Claim.ID,
 			})
 			if errors.Is(err, pgx.ErrNoRows) {
 				return idempotency.Completion{}, ErrReceiptInvalid

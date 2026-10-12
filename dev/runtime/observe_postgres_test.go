@@ -212,7 +212,7 @@ func TestVerificationObservationCapacityAndFleet(t *testing.T) {
 	inputs := map[string]any{"region": "test", "max_age_seconds": 300}
 	// Host epoch changes alone do not release either physical reservation owner.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET current_epoch=2,epoch_cpu_millis=4000,epoch_memory_bytes=4294967296,epoch_guest_ephemeral_disk_bytes=4294967296,max_vm_slots=4,max_vm_starts=4`)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_builds(environment_id,id,preparation_spec_id,retry_key,status,deadline_at,executor_epoch,worker_host_id,worker_epoch,instance_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest) SELECT environment_id,$1,$2,'observer','running',now()+interval '1 hour',1,worker_host_id,worker_epoch,$3,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest FROM computer_leases`, uuid.NewV7(), f.Deployment, uuid.NewV7())
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,status,deadline_at,executor_epoch,worker_host_id,worker_epoch,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest) SELECT environment_id,$1,$2,'observer','running',now()+interval '1 hour',1,worker_host_id,worker_epoch,$3,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest FROM computer_leases`, uuid.NewV7(), f.Deployment, uuid.NewV7())
 	for _, fenced := range []bool{false, true} {
 		if fenced {
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET status='released',fenced_at=now(),fence_evidence='observed shutdown'; UPDATE image_builds SET status='failed',error_code='cancelled',fenced_at=now(),fence_evidence='observed shutdown'`)
@@ -288,7 +288,7 @@ func TestVerificationObservationCheckpointMembership(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO checkpoint_processes(environment_id,checkpoint_id,session_id,process_epoch,computer_id) VALUES($1,$2,$3,1,$4)`, f.Environment, checkpoint, peer, f.Computer)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_saves SET status='published',flush_acknowledged_at=requested_at,captured_at=requested_at,captured_root_digest=c.initial_root_digest,root_id=c.initial_root_id,capture_evidence='captured',publication_evidence='published' FROM computers c WHERE computer_saves.computer_id=c.id AND computer_saves.environment_id=c.environment_id`)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET status='released',fenced_at=now(),fence_evidence='source stopped'`)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,computer_instance_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at,restored_from_save_id) SELECT environment_id,computer_id,2,worker_host_id,worker_epoch,now()+interval '1 hour','active',$1,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,now(),now(),$2 FROM computer_leases WHERE epoch=1`, uuid.NewV7(), save)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at,restored_from_save_id) SELECT environment_id,computer_id,2,worker_host_id,worker_epoch,now()+interval '1 hour','active',$1,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,now(),now(),$2 FROM computer_leases WHERE epoch=1`, uuid.NewV7(), save)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE checkpoints SET status='consumed',manifest='manifest',vm_platform_id=(SELECT vm_platform_id FROM computer_leases WHERE epoch=2),ready_at=now(),target_lease_epoch=2,restore_control_version=2,controls_reconciled_at=now(),capture_request=NULL WHERE id=$1`, checkpoint)
 	path = observe(t, f.Pool, "computer-path", map[string]any{"computer_id": f.Computer.String()}).(map[string]any)
 	cp = path["checkpoints"].([]any)[0].(map[string]any)
@@ -326,15 +326,15 @@ func TestSlackDeliveryObservationExcludesPrivatePayloads(t *testing.T) {
 	f := agenttest.New(t)
 	installation, channel, publication, thread, participant, registration := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `
- INSERT INTO slack_app_registrations(id,organization_id,created_by_user_id) SELECT $11,org_id,$3 FROM environments WHERE id=$1;
- INSERT INTO slack_installations(id,app_registration_id,organization_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id)
+ INSERT INTO slack_app_registrations(id,org_id,created_by_user_id) SELECT $11,org_id,$3 FROM environments WHERE id=$1;
+ INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id)
  SELECT $2,$11,org_id,'app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['chat:write'],$3 FROM environments WHERE id=$1;
  INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($5,$1,$6,$11,$2,$3);
- INSERT INTO slack_channel_bindings(id,installation_id,slack_channel_id,environment_id,publication_id,organization_id,team_id) SELECT $4,$2,'C1',$1,$5,org_id,'team' FROM environments WHERE id=$1;
- INSERT INTO slack_threads(id,channel_id,environment_id,front_session_id,organization_id,team_id,slack_channel_id,thread_ts,opening_publication_key,stream_status_repair,delivery_error)
+ INSERT INTO slack_channel_bindings(id,installation_id,slack_channel_id,environment_id,publication_id,org_id,team_id) SELECT $4,$2,'C1',$1,$5,org_id,'team' FROM environments WHERE id=$1;
+ INSERT INTO slack_threads(id,channel_id,environment_id,front_session_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key,stream_status_repair,delivery_error)
  SELECT $8,$4,$1,$7,org_id,'team','C1','123.456','opening',true,'slack_delivery_warning' FROM environments WHERE id=$1;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($9,$8,$1,$7);
- INSERT INTO slack_posts(id,environment_id,session_id,thread_source_id,thread_id,seq,publication_key,role,payload,payload_digest,presentation_path)
+ INSERT INTO slack_posts(id,environment_id,session_id,thread_source_id,thread_id,seq,post_key,role,payload,payload_digest,presentation_path)
  VALUES($10,$1,$7,$9,$8,1,'lifecycle','lifecycle',convert_to('PRIVATE_PAYLOAD','UTF8'),decode(repeat('11',32),'hex'),'post')`, pgx.QueryExecModeSimpleProtocol, f.Environment, installation, f.User, channel, publication, f.Agent, f.Session, thread, participant, uuid.NewV7(), registration)
 	value := observe(t, f.Pool, "slack-delivery", map[string]any{"session_id": f.Session.String()}).(map[string]any)
 	if value["participant"].(map[string]any)["projected_event_seq"] != float64(0) || value["thread"].(map[string]any)["stream_status_repair"] != true || len(value["posts"].([]any)) != 1 {

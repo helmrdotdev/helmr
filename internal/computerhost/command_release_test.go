@@ -54,7 +54,7 @@ func TestCommandReleaseWaitsForGuestReceipt(t *testing.T) {
 			}()
 			client := &commandReleaseClient{}
 			mount := commandAuthority{EnvironmentID: "org", ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 2, GuestChannelCredential: "token"}
-			receipt := workerapi.ComputerCommandRelease{ComputerID: "computer", RequestFingerprint: "fingerprint", Completion: workerapi.ComputerCommandCompleteRequest{EnvironmentID: "org", CommandID: "command", ComputerInstanceID: "instance", WriterGeneration: 2, Outcome: "exited"}}
+			receipt := workerapi.ComputerCommandRelease{ComputerID: "computer", RequestFingerprint: "fingerprint", Completion: workerapi.ComputerCommandCompleteRequest{EnvironmentID: "org", CommandID: "command", AllocationID: "instance", WriterGeneration: 2, Outcome: "exited"}}
 			err := (commandService{}).releaseComputerCommand(t.Context(), &serverTestMachine{operation: host}, mount, receipt, client)
 			if (err == nil) != (guestError == "") || client.reconciled != (guestError == "") {
 				t.Fatalf("err=%v reconciled=%v", err, client.reconciled)
@@ -86,7 +86,7 @@ func TestCommandReleaseCancelsSilentPeer(t *testing.T) {
 	}()
 	client := &commandReleaseClient{}
 	mount := commandAuthority{EnvironmentID: "org", ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 2, GuestChannelCredential: "token"}
-	receipt := workerapi.ComputerCommandRelease{ComputerID: "computer", RequestFingerprint: "fingerprint", Completion: workerapi.ComputerCommandCompleteRequest{EnvironmentID: "org", CommandID: "command", ComputerInstanceID: "instance", WriterGeneration: 2}}
+	receipt := workerapi.ComputerCommandRelease{ComputerID: "computer", RequestFingerprint: "fingerprint", Completion: workerapi.ComputerCommandCompleteRequest{EnvironmentID: "org", CommandID: "command", AllocationID: "instance", WriterGeneration: 2}}
 	result := make(chan error, 1)
 	go func() {
 		result <- (commandService{}).releaseComputerCommand(ctx, &serverTestMachine{operation: host}, mount, receipt, client)
@@ -150,7 +150,7 @@ func TestCommandReleaseReconcilesBeforeClosingGuestStream(t *testing.T) {
 	stream := &commandReleaseOrderStream{response: bytes.NewReader(response.Bytes()), record: record, closeStarted: make(chan struct{}), releaseClose: make(chan struct{})}
 	client := &commandReleaseOrderClient{record: record}
 	mount := commandAuthority{EnvironmentID: "org", ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 2, GuestChannelCredential: "token"}
-	receipt := workerapi.ComputerCommandRelease{ComputerID: "computer", RequestFingerprint: "fingerprint", Completion: workerapi.ComputerCommandCompleteRequest{EnvironmentID: "org", CommandID: "command", ComputerInstanceID: "instance", WriterGeneration: 2, Outcome: "exited"}}
+	receipt := workerapi.ComputerCommandRelease{ComputerID: "computer", RequestFingerprint: "fingerprint", Completion: workerapi.ComputerCommandCompleteRequest{EnvironmentID: "org", CommandID: "command", AllocationID: "instance", WriterGeneration: 2, Outcome: "exited"}}
 	result := make(chan error, 1)
 	go func() {
 		result <- (commandService{}).releaseComputerCommand(t.Context(), &guestControlTestMachine{stream: testVMStream(stream)}, mount, receipt, client)

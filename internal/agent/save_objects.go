@@ -275,7 +275,7 @@ func (s saveObjectScope) lockMatching(ctx context.Context, tx pgx.Tx, object sav
 
 func (s saveObjectScope) pin(ctx context.Context, tx pgx.Tx, object saveObject) error {
 	if s.preparationID.Valid {
-		_, err := tx.Exec(ctx, `INSERT INTO disk_object_pins(id,environment_id,preparation_id,digest) VALUES(uuidv7(),$1,$2,$3) ON CONFLICT DO NOTHING`, s.environmentID, s.preparationID, object.digest)
+		_, err := tx.Exec(ctx, `INSERT INTO disk_object_pins(id,environment_id,image_build_id,digest) VALUES(uuidv7(),$1,$2,$3) ON CONFLICT DO NOTHING`, s.environmentID, s.preparationID, object.digest)
 		return err
 	}
 	_, err := tx.Exec(ctx, `INSERT INTO disk_object_pins(id,environment_id,save_id,digest) VALUES(uuidv7(),$1,$2,$3) ON CONFLICT DO NOTHING`, s.environmentID, s.saveID, object.digest)
@@ -286,7 +286,7 @@ func (r saveObjectRetention) requireRetained(ctx context.Context, tx pgx.Tx, obj
 	var retained bool
 	var err error
 	if r.preparationID.Valid {
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM disk_object_pins WHERE environment_id=$1 AND preparation_id=$2 AND digest=$3)`, r.environmentID, r.preparationID, object.digest).Scan(&retained)
+		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM disk_object_pins WHERE environment_id=$1 AND image_build_id=$2 AND digest=$3)`, r.environmentID, r.preparationID, object.digest).Scan(&retained)
 	} else {
 		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM disk_object_pins WHERE environment_id=$1 AND save_id=$2 AND digest=$3)`, r.environmentID, r.saveID, object.digest).Scan(&retained)
 	}

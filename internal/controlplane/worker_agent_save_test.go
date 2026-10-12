@@ -52,7 +52,7 @@ func TestWorkerAgentSavePublicationThroughHTTP(t *testing.T) {
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	execution := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
-	a, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "save-http", Input: json.RawMessage(`[]`)})
+	a, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "save-http", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,13 +66,13 @@ func TestWorkerAgentSavePublicationThroughHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	allocation := workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: f.Environment.String(), OwnerID: f.Computer.String(), InstanceID: f.Computer.String(), Epoch: 1}
+	allocation := workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: f.Environment.String(), OwnerID: f.Computer.String(), AllocationID: f.Computer.String(), Epoch: 1}
 	next, err := client.NextAgentSave(t.Context(), workerapi.AgentSaveDiscovery{AllocationIdentity: allocation})
 	if err != nil || next.Save == nil || next.Save.SaveID != save.ID.String() || next.Sequence != save.Sequence {
 		t.Fatalf("durable request: %+v %v", next, err)
 	}
 	wrongAllocation := allocation
-	wrongAllocation.InstanceID = uuid.NewV7().String()
+	wrongAllocation.AllocationID = uuid.NewV7().String()
 	if _, err := client.NextAgentSave(t.Context(), workerapi.AgentSaveDiscovery{AllocationIdentity: wrongAllocation}); err == nil {
 		t.Fatal("foreign physical allocation discovered save")
 	}
@@ -171,7 +171,7 @@ func TestWorkerSaveDiscoveryContentionIsTemporary(t *testing.T) {
 	if _, err := tx.Exec(t.Context(), `SELECT id FROM worker_hosts WHERE id=$1 FOR UPDATE`, f.Worker); err != nil {
 		t.Fatal(err)
 	}
-	allocation := workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: f.Environment.String(), OwnerID: f.Computer.String(), InstanceID: f.Computer.String(), Epoch: 1}
+	allocation := workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: f.Environment.String(), OwnerID: f.Computer.String(), AllocationID: f.Computer.String(), Epoch: 1}
 	if _, err := client.NextAgentSave(t.Context(), workerapi.AgentSaveDiscovery{AllocationIdentity: allocation}); !httpclient.IsStatus(err, http.StatusServiceUnavailable) {
 		t.Fatalf("contention must be temporary: %v", err)
 	}

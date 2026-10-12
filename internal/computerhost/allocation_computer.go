@@ -72,7 +72,7 @@ func NewComputerAllocationOwner(machines *PreparedMachines, client AllocatedComp
 	if !filepath.IsAbs(machines.ComputerHelper) || len(machines.ComputerDevices) == 0 || machines.ComputerRanges == nil || machines.ComputerObjects == nil || machines.CheckpointCipher == nil {
 		return nil, errors.New("computer allocation requires an explicit device helper and source")
 	}
-	for _, id := range []string{identity.EnvironmentID, identity.OwnerID, identity.InstanceID, hostID} {
+	for _, id := range []string{identity.EnvironmentID, identity.OwnerID, identity.AllocationID, hostID} {
 		if ids.Validate(id) != nil {
 			return nil, errors.New("invalid Computer allocation identity")
 		}
@@ -81,7 +81,7 @@ func NewComputerAllocationOwner(machines *PreparedMachines, client AllocatedComp
 }
 
 func (o *ComputerAllocationOwner) leaseRequest() workerapi.AgentComputerLeaseRequest {
-	return workerapi.AgentComputerLeaseRequest{EnvironmentID: o.identity.EnvironmentID, ComputerID: o.identity.OwnerID, InstanceID: o.identity.InstanceID, LeaseEpoch: o.identity.Epoch}
+	return workerapi.AgentComputerLeaseRequest{EnvironmentID: o.identity.EnvironmentID, ComputerID: o.identity.OwnerID, AllocationID: o.identity.AllocationID, LeaseEpoch: o.identity.Epoch}
 }
 
 func (o *ComputerAllocationOwner) Finished() bool {
@@ -162,7 +162,7 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 		request.HostDiskBytes += extra
 	}
 
-	if err := waitAllocationCapacity(ctx, o.admitStart, o.machines.Reservations, instanceReservationKey(o.identity.InstanceID, o.identity.Epoch), request); err != nil {
+	if err := waitAllocationCapacity(ctx, o.admitStart, o.machines.Reservations, instanceReservationKey(o.identity.AllocationID, o.identity.Epoch), request); err != nil {
 		if errors.Is(err, ErrCheckpointKeyUnavailable) {
 			o.closing = true
 		}
@@ -181,7 +181,7 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 	if delivery.RestoredFrom != "" {
 		err = o.restore(ctx, delivery, source, device)
 	} else {
-		o.machine, err = o.machines.Backend.Materialize(ctx, vm.MaterializeRequest{ID: o.identity.InstanceID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.InstanceID, Generation: 1, ComputerInstanceID: o.identity.InstanceID, VMPlatformID: shape.VMPlatformID}, RootfsDigest: source.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: delivery.BaseVersion, Resources: vm.Resources{MilliCPU: shape.CPUMillis, MemoryMiB: shape.MemoryBytes / mebibyte, DiskMiB: shape.ScratchBytes / mebibyte, Slots: 1}, VMVCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, VersionID: delivery.BaseVersion, SizeBytes: source.Disk.Root.LogicalBytes, Device: device}}})
+		o.machine, err = o.machines.Backend.Materialize(ctx, vm.MaterializeRequest{ID: o.identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.AllocationID, Generation: 1, ComputerInstanceID: o.identity.AllocationID, VMPlatformID: shape.VMPlatformID}, RootfsDigest: source.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: delivery.BaseVersion, Resources: vm.Resources{MilliCPU: shape.CPUMillis, MemoryMiB: shape.MemoryBytes / mebibyte, DiskMiB: shape.ScratchBytes / mebibyte, Slots: 1}, VMVCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, VersionID: delivery.BaseVersion, SizeBytes: source.Disk.Root.LogicalBytes, Device: device}}})
 	}
 	if err != nil {
 		return err
@@ -225,7 +225,7 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 		}
 	}
 	jobs.Go(func() {
-		authority := commandAuthority{EnvironmentID: o.identity.EnvironmentID, ComputerID: o.identity.OwnerID, ComputerInstanceID: o.identity.InstanceID, WriterGeneration: o.identity.Epoch, GuestChannelCredential: delivery.ChannelCredential}
+		authority := commandAuthority{EnvironmentID: o.identity.EnvironmentID, ComputerID: o.identity.OwnerID, ComputerInstanceID: o.identity.AllocationID, WriterGeneration: o.identity.Epoch, GuestChannelCredential: delivery.ChannelCredential}
 		cancel((commandService{LogLimits: o.machines.CommandLogLimits}).Serve(ctx, o.machine, authority, o.client))
 	})
 	live, ok := o.machine.(liveCaptureMachine)
@@ -322,13 +322,13 @@ func (o *ComputerAllocationOwner) cleanup() error {
 	}
 	// A machine may cache a failed Close result. Exact backend reconciliation
 	// retries physical absence independently before releasing device custody.
-	if err := o.machines.Backend.Cleanup(ctx, vm.Owner{Kind: vm.OwnerInstance, ID: o.identity.InstanceID}); err != nil {
+	if err := o.machines.Backend.Cleanup(ctx, vm.Owner{Kind: vm.OwnerInstance, ID: o.identity.AllocationID}); err != nil {
 		return fmt.Errorf("prove allocated Computer absent: %w", errors.Join(closeErr, err))
 	}
 	// Stop device I/O before reporting physical absence, but retain its arena and
 	// funded capacity until the CP acknowledges physical stop and save disposition.
 	// The closed arena is retained custody, not a resumable publication owner.
-	if err := o.machines.releaseComputerDevice(o.identity.InstanceID, o.identity.Epoch); err != nil {
+	if err := o.machines.releaseComputerDevice(o.identity.AllocationID, o.identity.Epoch); err != nil {
 		return err
 	}
 	if err := o.client.ObserveAgentComputerStopped(ctx, workerapi.AgentComputerStoppedRequest{AgentComputerLeaseRequest: o.leaseRequest(), InvalidCheckpointID: o.invalidCheckpointID}); err != nil {
@@ -341,7 +341,7 @@ func (o *ComputerAllocationOwner) cleanup() error {
 		o.checkpointCut.Release()
 		o.checkpointCut = nil
 	}
-	if err := o.machines.releaseInstanceCapacity(o.identity.InstanceID, o.identity.Epoch); err != nil {
+	if err := o.machines.releaseInstanceCapacity(o.identity.AllocationID, o.identity.Epoch); err != nil {
 		return err
 	}
 	o.finished.Store(true)

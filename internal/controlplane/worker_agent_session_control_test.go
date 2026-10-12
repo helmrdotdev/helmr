@@ -142,7 +142,7 @@ func TestWorkerAgentSessionControls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	human, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: childID, Kind: "interrupt", RetryKey: "human"})
+	human, err := agent.ControlSession(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: childID, Kind: "interrupt", IdempotencyKey: "human"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -83,7 +83,7 @@ func (s *Server) createSessionHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := agent.Start(r.Context(), s.tx, s.secretProxy, caller, agent.StartRequest{
 		SlackPreflight: preflight, EnvironmentID: environment, Agent: request.Agent, ComputerID: computerID,
-		CloseAfterIdle: request.CloseAfterIdle, SessionKey: request.Key, SlackChannelID: slackChannelID, RetryKey: request.IdempotencyKey, Input: request.Input,
+		CloseAfterIdle: request.CloseAfterIdle, SessionKey: request.Key, SlackChannelID: slackChannelID, IdempotencyKey: request.IdempotencyKey, Input: request.Input,
 	})
 	if err != nil {
 		s.writeAgentHTTPError(w, err)
@@ -114,7 +114,7 @@ func (s *Server) enqueueSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := agent.Enqueue(r.Context(), s.tx, s.secretProxy, caller, agent.EnqueueRequest{
-		EnvironmentID: environment, SessionID: sessionID, RetryKey: request.IdempotencyKey, Input: request.Input,
+		EnvironmentID: environment, SessionID: sessionID, IdempotencyKey: request.IdempotencyKey, Input: request.Input,
 	})
 	if err != nil {
 		s.writeAgentHTTPError(w, err)
@@ -140,7 +140,7 @@ func (s *Server) interruptSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := agent.ControlSession(r.Context(), s.tx, caller, agent.SessionControlRequest{
-		EnvironmentID: environment, SessionID: sessionID, Kind: "interrupt", RetryKey: request.IdempotencyKey,
+		EnvironmentID: environment, SessionID: sessionID, Kind: "interrupt", IdempotencyKey: request.IdempotencyKey,
 	})
 	if err != nil {
 		s.writeAgentHTTPError(w, err)
@@ -171,7 +171,7 @@ func (s *Server) interruptTurnHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := agent.ControlSession(r.Context(), s.tx, caller, agent.SessionControlRequest{
-		EnvironmentID: environment, SessionID: sessionID, TurnID: turnID, Kind: "turn_interrupt", RetryKey: request.IdempotencyKey,
+		EnvironmentID: environment, SessionID: sessionID, TurnID: turnID, Kind: "turn_interrupt", IdempotencyKey: request.IdempotencyKey,
 	})
 	if err != nil {
 		s.writeAgentHTTPError(w, err)
@@ -197,7 +197,7 @@ func (s *Server) closeSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := agent.ControlSession(r.Context(), s.tx, caller, agent.SessionControlRequest{
-		EnvironmentID: environment, SessionID: sessionID, Kind: "close", RetryKey: request.IdempotencyKey,
+		EnvironmentID: environment, SessionID: sessionID, Kind: "close", IdempotencyKey: request.IdempotencyKey,
 	})
 	if err != nil {
 		s.writeAgentHTTPError(w, err)
@@ -223,7 +223,7 @@ func (s *Server) cancelSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := agent.ControlSession(r.Context(), s.tx, caller, agent.SessionControlRequest{
-		EnvironmentID: environment, SessionID: sessionID, Kind: "cancel", RetryKey: request.IdempotencyKey,
+		EnvironmentID: environment, SessionID: sessionID, Kind: "cancel", IdempotencyKey: request.IdempotencyKey,
 	})
 	if err != nil {
 		s.writeAgentHTTPError(w, err)
@@ -254,7 +254,7 @@ func (s *Server) resumeSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := agent.ControlSession(r.Context(), s.tx, caller, agent.SessionControlRequest{
-		EnvironmentID: environment, SessionID: sessionID, Kind: "resume", RetryKey: request.IdempotencyKey, HoldID: holdID,
+		EnvironmentID: environment, SessionID: sessionID, Kind: "resume", IdempotencyKey: request.IdempotencyKey, HoldID: holdID,
 	})
 	if err != nil {
 		s.writeAgentHTTPError(w, err)

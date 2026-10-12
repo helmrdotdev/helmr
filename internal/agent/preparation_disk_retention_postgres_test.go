@@ -28,7 +28,7 @@ func TestPreparationDiskRetentionRequiresPhysicalClosure(t *testing.T) {
 			}
 			reconcile()
 			var pinned bool
-			if err := p.f.pool.QueryRow(t.Context(), `SELECT disk_released_at IS NULL AND EXISTS(SELECT 1 FROM disk_object_pins x WHERE x.environment_id=p.environment_id AND x.preparation_id=p.id) FROM image_builds p WHERE environment_id=$1 AND id=$2`, p.f.env, p.ref.PreparationID).Scan(&pinned); err != nil || !pinned {
+			if err := p.f.pool.QueryRow(t.Context(), `SELECT disk_released_at IS NULL AND EXISTS(SELECT 1 FROM disk_object_pins x WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id) FROM image_builds p WHERE environment_id=$1 AND id=$2`, p.f.env, p.ref.PreparationID).Scan(&pinned); err != nil || !pinned {
 				t.Fatalf("unfenced preparation lost pins: %v %v", pinned, err)
 			}
 			if _, err := p.f.pool.Exec(t.Context(), `UPDATE disk_encryption_keys SET retired_at=clock_timestamp(),wrapped_key=NULL WHERE id=$1`, key.ID); err == nil {

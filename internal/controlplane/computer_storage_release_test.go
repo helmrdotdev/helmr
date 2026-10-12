@@ -23,7 +23,7 @@ func computerStorageFixture(t *testing.T) (agenttest.Fixture, computer.Scope) {
 	f := agenttest.New(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1 AND id=$2;
  UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1;
- UPDATE computers SET preparation_spec_id=$2,origin_deployment_id=$2,origin_template_id=origin_deployment_id,cpu_millis=1000,memory_bytes=536870912,storage_reservation_bytes=$4 WHERE environment_id=$1;
+ UPDATE computers SET image_spec_id=$2,origin_deployment_id=$2,origin_template_id=origin_deployment_id,cpu_millis=1000,memory_bytes=536870912,storage_reservation_bytes=$4 WHERE environment_id=$1;
  UPDATE environments SET max_reserved_storage_bytes=$4 WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, definition.ComputerSeedProfile, disk.SeedCapacity)
 	scope := computer.Scope{EnvironmentID: f.Environment}
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&scope.OrgID, &scope.ProjectID); err != nil {
@@ -35,7 +35,7 @@ func computerStorageFixture(t *testing.T) (agenttest.Fixture, computer.Scope) {
 func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
 	f, scope := computerStorageFixture(t)
 	start := func(key string) error {
-		_, err := agent.Start(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.StartRequest{EnvironmentID: f.Environment, Agent: "agent", RetryKey: key, Input: json.RawMessage(`[{"type":"text","text":"{\"work\":1}"}]`)})
+		_, err := agent.Start(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.StartRequest{EnvironmentID: f.Environment, Agent: "agent", IdempotencyKey: key, Input: json.RawMessage(`[{"type":"text","text":"{\"work\":1}"}]`)})
 		return err
 	}
 	assertStatus := func(want computer.Status) {

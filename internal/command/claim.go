@@ -68,7 +68,7 @@ func claimNext(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal,
 	}
 	var computer uuid.UUID
 	if err := tx.QueryRow(ctx, `SELECT l.computer_id FROM computer_leases l
- WHERE l.environment_id=$1 AND l.computer_instance_id=$2 AND l.epoch=$3 AND l.worker_host_id=$4 AND l.worker_epoch=$5`, request.EnvironmentID, request.InstanceID, request.WriterGeneration, worker.HostID, worker.Epoch).Scan(&computer); err != nil {
+ WHERE l.environment_id=$1 AND l.allocation_id=$2 AND l.epoch=$3 AND l.worker_host_id=$4 AND l.worker_epoch=$5`, request.EnvironmentID, request.InstanceID, request.WriterGeneration, worker.HostID, worker.Epoch).Scan(&computer); err != nil {
 		return ClaimResult{}, err
 	}
 	bindings, err := lockBindings(ctx, tx, request.EnvironmentID, computer)

@@ -224,20 +224,20 @@ POST /worker/v1/allocations/computer/deliver
 POST /worker/v1/allocations/computer/processes
 POST /worker/v1/allocations/computer/ready
 POST /worker/v1/allocations/computer/source
+POST /worker/v1/allocations/image-build/capture
+POST /worker/v1/allocations/image-build/capture/begin
+POST /worker/v1/allocations/image-build/deliver
+POST /worker/v1/allocations/image-build/fail
+POST /worker/v1/allocations/image-build/key
+POST /worker/v1/allocations/image-build/logs
+POST /worker/v1/allocations/image-build/objects/certify
+POST /worker/v1/allocations/image-build/objects/register
+POST /worker/v1/allocations/image-build/publish
+POST /worker/v1/allocations/image-build/renew
+POST /worker/v1/allocations/image-build/secrets
+POST /worker/v1/allocations/image-build/start
+POST /worker/v1/allocations/image-build/stopped
 POST /worker/v1/allocations/list
-POST /worker/v1/allocations/preparation/capture
-POST /worker/v1/allocations/preparation/capture/begin
-POST /worker/v1/allocations/preparation/deliver
-POST /worker/v1/allocations/preparation/fail
-POST /worker/v1/allocations/preparation/key
-POST /worker/v1/allocations/preparation/logs
-POST /worker/v1/allocations/preparation/objects/certify
-POST /worker/v1/allocations/preparation/objects/register
-POST /worker/v1/allocations/preparation/publish
-POST /worker/v1/allocations/preparation/renew
-POST /worker/v1/allocations/preparation/secrets
-POST /worker/v1/allocations/preparation/start
-POST /worker/v1/allocations/preparation/stopped
 POST /worker/v1/computer-commands/claim
 POST /worker/v1/computer-commands/complete
 POST /worker/v1/computer-commands/logs/append
@@ -431,7 +431,7 @@ func TestProcessDiagnosticsRemainInternal(t *testing.T) {
 		}
 	}
 	for _, route := range []string{
-		"POST /worker/v1/sessions/logs", "POST /worker/v1/allocations/preparation/logs",
+		"POST /worker/v1/sessions/logs", "POST /worker/v1/allocations/image-build/logs",
 		"GET /v1/commands/{commandID}/logs",
 	} {
 		if !registered[route] {

@@ -40,7 +40,7 @@ func BeginPublication(ctx context.Context, pool db.TxBeginner, org, user, enviro
 		if !eligible {
 			return ErrPublicationUnavailable
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO slack_app_registrations(id,organization_id,created_by_user_id) VALUES($1,$2,$3)`, setup.RegistrationID, org, user)
+		_, err = tx.Exec(ctx, `INSERT INTO slack_app_registrations(id,org_id,created_by_user_id) VALUES($1,$2,$3)`, setup.RegistrationID, org, user)
 		if err != nil {
 			return err
 		}
@@ -93,7 +93,7 @@ func GetPublication(ctx context.Context, pool db.TxBeginner, org, user, environm
  CASE WHEN i.id IS NULL THEN 'setup_incomplete' WHEN i.disconnected_at IS NOT NULL OR r.retired_at IS NOT NULL THEN 'disconnected' WHEN i.authorization_lost_at IS NOT NULL THEN 'reauthorization_required' ELSE 'connected' END,
  r.client_id,r.credential_revision>0,r.app_id,i.team_id,i.workspace_name,r.app_name,r.app_icon_url
  FROM slack_connections p JOIN environments e ON e.id=p.environment_id JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id LEFT JOIN slack_installations i ON i.id=p.slack_installation_id
- WHERE p.environment_id=$1 AND p.agent_id=$2 AND e.org_id=$3 AND r.organization_id=$3 AND p.revoked_at IS NULL`, environment, agent, org).Scan(&value.ID, &value.RegistrationID, &value.InstallationID, &value.Status, &value.ClientID, &value.CredentialsConfigured, &value.AppID, &value.TeamID, &value.WorkspaceName, &value.AppName, &value.AppIconURL)
+ WHERE p.environment_id=$1 AND p.agent_id=$2 AND e.org_id=$3 AND r.org_id=$3 AND p.revoked_at IS NULL`, environment, agent, org).Scan(&value.ID, &value.RegistrationID, &value.InstallationID, &value.Status, &value.ClientID, &value.CredentialsConfigured, &value.AppID, &value.TeamID, &value.WorkspaceName, &value.AppName, &value.AppIconURL)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -123,7 +123,7 @@ func (s *CredentialStore) DisconnectPublication(ctx context.Context, org, user, 
 			return err
 		}
 		var id uuid.UUID
-		if err = tx.QueryRow(ctx, `SELECT id FROM slack_app_registrations WHERE id=$1 AND organization_id=$2 FOR NO KEY UPDATE`, registration, org).Scan(&id); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT id FROM slack_app_registrations WHERE id=$1 AND org_id=$2 FOR NO KEY UPDATE`, registration, org).Scan(&id); err != nil {
 			return err
 		}
 		if installation != nil {

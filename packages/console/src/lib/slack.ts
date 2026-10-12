@@ -30,7 +30,7 @@ export function finishSlackAuthorization(input: { state: string; code: string; e
 export type SlackUserLink = { team_id: string; slack_user_id: string; linked_at: string };
 type SlackLinkWorkspace = { installation_id: string; team_id: string; workspace_name: string | null };
 export type SlackIdentityProof = { identity: { team_id: string; slack_user_id: string; name: string }; confirmation: string; helmr_user_id: string; helmr_display_name: string; helmr_org_name: string; workspace_name: string | null; return_url: string };
-export type SlackFirstUseLink = { organization_id: string; installation_id: string; team_id: string; slack_user_id: string; workspace_name: string | null; organization_name: string; helmr_display_name: string; return_url: string; linked: boolean };
+export type SlackFirstUseLink = { org_id: string; installation_id: string; team_id: string; slack_user_id: string; workspace_name: string | null; organization_name: string; helmr_display_name: string; return_url: string; linked: boolean };
 export function getSlackFirstUseLink(link: string): Promise<SlackFirstUseLink> {
   return request(`/api/slack/user-links/first-use?${new URLSearchParams({ link })}`, { redirectOnUnauthorized: false });
 }

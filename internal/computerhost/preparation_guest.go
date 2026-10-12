@@ -21,7 +21,7 @@ func (o *PreparationAllocationOwner) runGuestPreparation(ctx context.Context, st
 	if err := prepareAllocationImage(ctx, o.machine, o.identity, base64.RawURLEncoding.EncodeToString(o.executor.ChannelCredential), start.Seed.ArtifactDigest, start.Seed.Config); err != nil {
 		return err
 	}
-	identity := &computerv0.PreparationIdentity{PreparationId: o.identity.OwnerID, InstanceId: o.identity.InstanceID, Epoch: o.identity.Epoch, ChannelCredential: o.executor.ChannelCredential}
+	identity := &computerv0.PreparationIdentity{PreparationId: o.identity.OwnerID, InstanceId: o.identity.AllocationID, Epoch: o.identity.Epoch, ChannelCredential: o.executor.ChannelCredential}
 	// Lease delivery and execution state progress independently of both diagnostic
 	// streams. No log receipt gates the preparation result or subsequent capture.
 	ctx, cancel := context.WithCancel(ctx)

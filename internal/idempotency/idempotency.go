@@ -159,7 +159,7 @@ func acquire(ctx context.Context, tx pgx.Tx, r *Request, slot [sha256.Size]byte)
 		return Result{Claim: claim}, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return Result{}, fmt.Errorf("read platform retry key: %w", err)
+		return Result{}, fmt.Errorf("read idempotency receipt: %w", err)
 	}
 	claim, err := newClaim(r, slot)
 	return Result{Claim: claim, New: true}, err

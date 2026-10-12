@@ -83,10 +83,10 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
 	}
 	caller := agent.Caller{Kind: "user", ID: uuid.MustParse("00000000-0000-7000-8000-000000000101")}
 	env := uuid.MustParse(demoSeedEnvironmentID)
-	if _, err := agent.Start(ctx, pool, nil, caller, agent.StartRequest{EnvironmentID: env, Agent: "demo-agent", RetryKey: "should-not-start", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, agent.ErrDenied) {
+	if _, err := agent.Start(ctx, pool, nil, caller, agent.StartRequest{EnvironmentID: env, Agent: "demo-agent", IdempotencyKey: "should-not-start", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("synthetic Deployment start=%v, want denied", err)
 	}
-	if _, err := agent.Enqueue(ctx, pool, nil, caller, agent.EnqueueRequest{EnvironmentID: env, SessionID: uuid.MustParse(demoSeedSessionID), RetryKey: "should-not-enqueue", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, agent.ErrNotReady) {
+	if _, err := agent.Enqueue(ctx, pool, nil, caller, agent.EnqueueRequest{EnvironmentID: env, SessionID: uuid.MustParse(demoSeedSessionID), IdempotencyKey: "should-not-enqueue", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("terminal demo enqueue=%v, want not ready", err)
 	}
 }

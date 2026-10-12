@@ -100,11 +100,11 @@ func TestSlackRequestDigestBindsActorAndSourceTime(t *testing.T) {
 	changed := gesture
 	changed.Actor = "another-human"
 	if _, err := receiveGesture(t.Context(), f.Pool, changed); !errors.Is(err, errGestureConflict) {
-		t.Fatal("actor changed under retry key")
+		t.Fatal("actor changed under idempotency key")
 	}
 	changed = gesture
 	changed.OccurredAt = changed.OccurredAt.Add(time.Second)
 	if _, err := receiveGesture(t.Context(), f.Pool, changed); !errors.Is(err, errGestureConflict) {
-		t.Fatal("source timestamp changed under retry key")
+		t.Fatal("source timestamp changed under idempotency key")
 	}
 }

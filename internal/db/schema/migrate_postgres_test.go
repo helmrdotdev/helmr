@@ -457,7 +457,7 @@ func assertWorkerGroupUUIDSchema(t *testing.T, ctx context.Context, pool *pgxpoo
 func assertTelemetrySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	var columns int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='diagnostic_chunks' AND column_name=ANY($1::text[])`, []string{"session_id", "process_epoch", "preparation_id", "preparation_epoch", "command_id", "source_kind", "source_id", "producer_epoch", "stream"}).Scan(&columns); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='diagnostic_chunks' AND column_name=ANY($1::text[])`, []string{"session_id", "process_epoch", "image_build_id", "preparation_epoch", "command_id", "source_kind", "source_id", "producer_epoch", "stream"}).Scan(&columns); err != nil {
 		t.Fatal(err)
 	}
 	if columns != 9 {
@@ -539,7 +539,7 @@ func assertExecutionOwnershipSchema(t *testing.T, ctx context.Context, pool *pgx
 	t.Helper()
 	for _, fk := range [][3]string{
 		{"agent_definitions", "environment_id, template_id, deployment_id", "template_definitions(environment_id, template_id, deployment_id)"},
-		{"template_definitions", "environment_id, preparation_spec_id", "image_specs(environment_id, id)"},
+		{"template_definitions", "environment_id, image_spec_id", "image_specs(environment_id, id)"},
 		{"computer_saves", "environment_id, computer_id, computer_lease_epoch", "computer_leases(environment_id, computer_id, epoch)"},
 		{"computer_saves", "environment_id, turn_id, computer_id, requires_recorded_result", "turns(environment_id, id, computer_id, has_recorded_result)"},
 		{"turns", "environment_id, computer_id, id, completion_save_id, completion_published", "computer_saves(environment_id, computer_id, turn_id, id, published)"},

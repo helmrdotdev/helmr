@@ -37,7 +37,7 @@ func (r *commandHistoryReader) ListCommandLogChunks(_ context.Context, q telemet
 
 func TestCommandHistoryUsesExplicitCoverageAndAcceptanceRetention(t *testing.T) {
 	f, worker, target := commandHTTPFixture(t)
-	claim := workerapi.ComputerCommandClaimRequest{EnvironmentID: f.EnvironmentID.String(), ComputerInstanceID: target.InstanceID.String(), WriterGeneration: 1}
+	claim := workerapi.ComputerCommandClaimRequest{EnvironmentID: f.EnvironmentID.String(), AllocationID: target.InstanceID.String(), WriterGeneration: 1}
 	worker.post(t, "/worker/v1/computer-commands/claim", claim, http.StatusOK, nil)
 	binary := []byte{0, 255, 128, 10}
 	now := time.Now().UTC().Truncate(time.Microsecond)
@@ -52,13 +52,13 @@ func TestCommandHistoryUsesExplicitCoverageAndAcceptanceRetention(t *testing.T) 
 	for stream, pipe := range rows {
 		for i, row := range pipe {
 			var receipt workerapi.DiagnosticLogReceipt
-			request := workerapi.CommandLogAppendRequest{EnvironmentID: f.EnvironmentID.String(), CommandID: target.ID.String(), ComputerInstanceID: target.InstanceID.String(), WriterGeneration: 1, Stream: workerapi.LogStream(stream), Kind: row.Kind, ObservedSeq: row.ObservedSeq, ThroughSequence: row.ThroughSequence, DroppedBytes: row.DroppedBytes, Complete: row.Complete, Content: row.Content, ObservedAt: row.ObservedAt}
+			request := workerapi.CommandLogAppendRequest{EnvironmentID: f.EnvironmentID.String(), CommandID: target.ID.String(), AllocationID: target.InstanceID.String(), WriterGeneration: 1, Stream: workerapi.LogStream(stream), Kind: row.Kind, ObservedSeq: row.ObservedSeq, ThroughSequence: row.ThroughSequence, DroppedBytes: row.DroppedBytes, Complete: row.Complete, Content: row.Content, ObservedAt: row.ObservedAt}
 			worker.post(t, "/worker/v1/computer-commands/logs/append", request, http.StatusOK, &receipt)
 			rows[stream][i].AcceptedAt, rows[stream][i].ExpiresAt = receipt.AcceptedAt, receipt.ExpiresAt
 		}
 	}
 	code := int32(0)
-	worker.post(t, "/worker/v1/computer-commands/complete", workerapi.ComputerCommandCompleteRequest{EnvironmentID: f.EnvironmentID.String(), CommandID: target.ID.String(), ComputerInstanceID: target.InstanceID.String(), WriterGeneration: 1, Outcome: "exited", ExitCode: &code, Stdout: workerapi.CommandOutputBoundary{ThroughSequence: 4, Complete: true, Gapped: true}, Stderr: workerapi.CommandOutputBoundary{ThroughSequence: 1, Complete: true}}, http.StatusOK, nil)
+	worker.post(t, "/worker/v1/computer-commands/complete", workerapi.ComputerCommandCompleteRequest{EnvironmentID: f.EnvironmentID.String(), CommandID: target.ID.String(), AllocationID: target.InstanceID.String(), WriterGeneration: 1, Outcome: "exited", ExitCode: &code, Stdout: workerapi.CommandOutputBoundary{ThroughSequence: 4, Complete: true, Gapped: true}, Stderr: workerapi.CommandOutputBoundary{ThroughSequence: 1, Complete: true}}, http.StatusOK, nil)
 	// A command's creation clock must not expire newly accepted output.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE commands SET created_at=created_at-interval '91 days' WHERE id=$1`, target.ID)
 	q := db.New(f.Pool)

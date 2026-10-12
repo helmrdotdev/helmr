@@ -329,7 +329,7 @@ func (g *nativePublicationGate) restartIdentity(ctx context.Context, save string
 	var expires time.Time
 	var state string
 	var valid bool
-	err := g.pool.QueryRow(ctx, `SELECT s.computer_id::text,l.computer_instance_id::text,l.worker_host_id::text,
+	err := g.pool.QueryRow(ctx, `SELECT s.computer_id::text,l.allocation_id::text,l.worker_host_id::text,
  encode(s.captured_root_digest,'hex'),s.capture_evidence,t.result::text,l.epoch,l.worker_epoch,s.captured_at,l.expires_at,s.status,
  COALESCE((SELECT jsonb_agg(p.digest ORDER BY p.digest)::text FROM disk_object_pins p WHERE p.environment_id=s.environment_id AND p.save_id=s.id),'[]'),
  COALESCE((SELECT sum(o.size_bytes) FROM disk_object_pins p JOIN disk_objects o ON (o.environment_id,o.digest)=(p.environment_id,p.digest) WHERE p.environment_id=s.environment_id AND p.save_id=s.id),0),

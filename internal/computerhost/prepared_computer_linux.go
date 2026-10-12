@@ -36,7 +36,7 @@ func (p *PreparedMachines) prepareAllocationDevice(ctx context.Context, identity
 	if _, err := disk.OpenVersion(ctx, p.ComputerRanges, scope, keys, material.Root, material.Root.LogicalBytes); err != nil {
 		return nil, disk.PublishedSourceFailure(err)
 	}
-	dir := p.computerPreparationDirectory(identity.InstanceID, identity.Epoch)
+	dir := p.computerPreparationDirectory(identity.AllocationID, identity.Epoch)
 	if err := os.MkdirAll(filepath.Dir(dir), 0700); err != nil {
 		return nil, err
 	}
@@ -49,7 +49,7 @@ func (p *PreparedMachines) prepareAllocationDevice(ctx context.Context, identity
 	}
 	device, err := disk.AttachDevice(ctx, local, nbd.Config{Helper: p.ComputerHelper, Devices: p.ComputerDevices, Arena: dir, Socket: filepath.Join(dir, "nbd.sock"), Size: material.Root.LogicalBytes})
 	if device != nil {
-		p.retainComputerDevice(identity.InstanceID, identity.Epoch, device)
+		p.retainComputerDevice(identity.AllocationID, identity.Epoch, device)
 	}
 	return device, err
 }

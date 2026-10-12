@@ -20,13 +20,13 @@ type statusFixture struct {
 func newStatusFixture(t *testing.T) statusFixture {
 	t.Helper()
 	f := statusFixture{Fixture: agenttest.New(t), installation: uuid.NewV7(), registration: uuid.NewV7(), publication: uuid.NewV7(), channel: uuid.NewV7(), thread: uuid.NewV7(), participant: uuid.NewV7()}
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_app_registrations(id,organization_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_app_registrations(id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id)
  SELECT $10,org_id,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$3 FROM environments WHERE id=$1;
- INSERT INTO slack_installations(id,app_registration_id,organization_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id)
+ INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id)
  SELECT $2,$10,org_id,'app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['app_mentions:read','channels:read','channels:history','groups:read','groups:history','chat:write','assistant:write'],$3 FROM environments WHERE id=$1;
  INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($5,$1,$6,$10,$2,$3);
- INSERT INTO slack_channel_bindings(id,environment_id,publication_id,installation_id,organization_id,team_id,slack_channel_id) SELECT $4,$1,$5,$2,org_id,'team','C1' FROM environments WHERE id=$1;
- INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,organization_id,team_id,slack_channel_id,thread_ts,opening_publication_key) SELECT $8,$1,$7,$4,org_id,'team','C1','123.456','opening' FROM environments WHERE id=$1;
+ INSERT INTO slack_channel_bindings(id,environment_id,publication_id,installation_id,org_id,team_id,slack_channel_id) SELECT $4,$1,$5,$2,org_id,'team','C1' FROM environments WHERE id=$1;
+ INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key) SELECT $8,$1,$7,$4,org_id,'team','C1','123.456','opening' FROM environments WHERE id=$1;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($9,$8,$1,$7)`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.installation, f.User, f.channel, f.publication, f.Agent, f.Session, f.thread, f.participant, f.registration)
 
 	return f
@@ -57,7 +57,7 @@ func TestSlackStatusAggregatesAttentionBeforeWorkAndRefreshesIdle(t *testing.T) 
 	if err := FinishStatus(t.Context(), f.Pool, active, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
-	queued, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "work", Input: json.RawMessage(`[]`)})
+	queued, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "work", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,17 +168,17 @@ func TestSlackStatusTerminalChildDoesNotMaskWorkingFront(t *testing.T) {
  SELECT history_retention_mode,environment_id,$2,agent_id,deployment_id,computer_id,root_session_id,id,id,1 FROM sessions WHERE id=$1;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($3,$4,$5,$2)`, pgx.QueryExecModeSimpleProtocol, f.Session, peer, participant, f.thread, f.Environment)
 	caller := agent.Caller{Kind: "user", ID: f.User}
-	if _, err := agent.Enqueue(t.Context(), f.Pool, nil, caller, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "work", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := agent.Enqueue(t.Context(), f.Pool, nil, caller, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "work", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agent.ControlSession(t.Context(), f.Pool, caller, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: peer, Kind: "interrupt", RetryKey: "pause", Reason: "attention"}); err != nil {
+	if _, err := agent.ControlSession(t.Context(), f.Pool, caller, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: peer, Kind: "interrupt", IdempotencyKey: "pause", Reason: "attention"}); err != nil {
 		t.Fatal(err)
 	}
 	suspended := f.claim(t, "suspended")
 	if err := FinishStatus(t.Context(), f.Pool, suspended, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agent.ControlSession(t.Context(), f.Pool, caller, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: peer, Kind: "cancel", RetryKey: "cancel"}); err != nil {
+	if _, err := agent.ControlSession(t.Context(), f.Pool, caller, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: peer, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 		t.Fatal(err)
 	}
 	f.due(t)
@@ -191,7 +191,7 @@ func TestSlackStatusRateLimitDelaysOtherThread(t *testing.T) {
 	other, peer, participant := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth)
  SELECT history_retention_mode,environment_id,$2,agent_id,deployment_id,computer_id,$2,0 FROM sessions WHERE id=$1;
- INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,organization_id,team_id,slack_channel_id,thread_ts,opening_publication_key) SELECT $4,$6,$2,$5,organization_id,team_id,slack_channel_id,'789.012','other' FROM slack_channel_bindings WHERE id=$5;
+ INSERT INTO slack_threads(id,environment_id,front_session_id,channel_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key) SELECT $4,$6,$2,$5,org_id,team_id,slack_channel_id,'789.012','other' FROM slack_channel_bindings WHERE id=$5;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($3,$4,$6,$2)`, pgx.QueryExecModeSimpleProtocol, f.Session, peer, participant, other, f.channel, f.Environment)
 	if err := FinishStatus(t.Context(), f.Pool, claim, DeliveryResult{Disposition: RateLimited, Code: "ratelimited", RetryAfter: 90 * time.Second}); err != nil {
 		t.Fatal(err)

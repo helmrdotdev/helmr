@@ -14,7 +14,7 @@ type AllocationIdentity struct {
 	EnvironmentID string `json:"environment_id"`
 	OwnerID       string `json:"owner_id"`
 	Epoch         int64  `json:"epoch"`
-	InstanceID    string `json:"instance_id"`
+	AllocationID  string `json:"allocation_id"`
 }
 type AllocationListRequest struct {
 	After *AllocationIdentity `json:"after,omitempty"`

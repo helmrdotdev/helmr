@@ -43,10 +43,10 @@ type Caller struct {
 }
 
 type EnqueueRequest struct {
-	EnvironmentID uuid.UUID
-	SessionID     uuid.UUID
-	RetryKey      string
-	Input         json.RawMessage
+	EnvironmentID  uuid.UUID
+	SessionID      uuid.UUID
+	IdempotencyKey string
+	Input          json.RawMessage
 }
 
 type Admission struct {
@@ -173,7 +173,7 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust ComputerTr
 	if err != nil {
 		return result, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
-	if len(req.RetryKey) > 512 {
+	if len(req.IdempotencyKey) > 512 {
 		return result, ErrInvalidInput
 	}
 	if caller.ID == uuid.Nil() {
@@ -219,10 +219,10 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust ComputerTr
 		} else if err = authorizeEnqueue(ctx, tx, caller, req.EnvironmentID, locked[caller.ID]); err != nil {
 			return err
 		}
-		if req.RetryKey != "" {
+		if req.IdempotencyKey != "" {
 			var prior []byte
 			err = tx.QueryRow(ctx, `SELECT session_id,id,seq,request_digest FROM turns
-              WHERE environment_id=$1 AND caller_kind=$2 AND caller_id=$3 AND admission_method=$6 AND target_id=$4 AND retry_key=$5`, req.EnvironmentID, caller.Kind, caller.ID, target, req.RetryKey, method).Scan(&result.SessionID, &result.TurnID, &result.Sequence, &prior)
+              WHERE environment_id=$1 AND caller_kind=$2 AND caller_id=$3 AND admission_method=$6 AND target_id=$4 AND idempotency_key=$5`, req.EnvironmentID, caller.Kind, caller.ID, target, req.IdempotencyKey, method).Scan(&result.SessionID, &result.TurnID, &result.Sequence, &prior)
 			if err == nil {
 				if !bytes.Equal(prior, digest[:]) {
 					return ErrConflict
@@ -233,7 +233,7 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust ComputerTr
 				return err
 			}
 		}
-		if method != "enqueue" && req.RetryKey != "" {
+		if method != "enqueue" && req.IdempotencyKey != "" {
 			found, err := messageRetry(ctx, tx, caller, req, method, target, digest, &result)
 			if err != nil || found {
 				return err
@@ -308,8 +308,8 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust ComputerTr
 		if err = tx.QueryRow(ctx, `UPDATE sessions SET next_turn_seq=next_turn_seq+1,idle_since=NULL WHERE environment_id=$1 AND id=$2 RETURNING next_turn_seq-1`, req.EnvironmentID, req.SessionID).Scan(&result.Sequence); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,retry_key,request_digest,input,origin_turn_id)
-            VALUES($1,$2,$3,$4,$5,$6,$7,$12,$3,NULLIF($8,''),$9,$10,$11)`, req.EnvironmentID, result.TurnID, req.SessionID, o.computer, result.Sequence, caller.Kind, caller.ID, req.RetryKey, digest[:], req.Input, nullableID(caller.TurnID), method)
+		_, err = tx.Exec(ctx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,idempotency_key,request_digest,input,origin_turn_id)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$12,$3,NULLIF($8,''),$9,$10,$11)`, req.EnvironmentID, result.TurnID, req.SessionID, o.computer, result.Sequence, caller.Kind, caller.ID, req.IdempotencyKey, digest[:], req.Input, nullableID(caller.TurnID), method)
 		if err != nil {
 			return err
 		}

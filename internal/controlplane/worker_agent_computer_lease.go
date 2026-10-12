@@ -18,7 +18,7 @@ func decodeAgentComputerLease(r *http.Request) (agent.ComputerLeaseIdentity, err
 func agentComputerLeaseIdentity(request workerapi.AgentComputerLeaseRequest) (agent.ComputerLeaseIdentity, error) {
 	env, e1 := agentComputerID(request.EnvironmentID)
 	computer, e2 := agentComputerID(request.ComputerID)
-	instance, e3 := agentComputerID(request.InstanceID)
+	instance, e3 := agentComputerID(request.AllocationID)
 	if e1 != nil || e2 != nil || e3 != nil || request.LeaseEpoch <= 0 {
 		return agent.ComputerLeaseIdentity{}, agent.ErrInvalidInput
 	}

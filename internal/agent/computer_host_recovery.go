@@ -28,8 +28,8 @@ func ObserveRecoveredHostComputers(ctx context.Context, database db.TxDB, host w
 		if err := lockRecoveringComputerHost(ctx, tx, host); err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, `SELECT environment_id,computer_id,computer_instance_id,epoch,worker_epoch FROM computer_leases
- WHERE worker_host_id=$1 AND worker_epoch<$2 AND fenced_at IS NULL AND NOT (computer_instance_id=ANY($3::uuid[]))
+		rows, err := tx.Query(ctx, `SELECT environment_id,computer_id,allocation_id,epoch,worker_epoch FROM computer_leases
+ WHERE worker_host_id=$1 AND worker_epoch<$2 AND fenced_at IS NULL AND NOT (allocation_id=ANY($3::uuid[]))
  ORDER BY environment_id,computer_id,epoch`, host.HostID, host.Epoch, quarantined)
 		if err != nil {
 			return err

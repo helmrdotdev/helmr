@@ -17,7 +17,7 @@ func TestMessagesKeepExactDispositionAndDrain(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	req := EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, RetryKey: "steer", Input: json.RawMessage(`[{"type":"text","text":"{\"text\":\"one\\u0000雪\"}"}]`)}
+	req := EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "steer", Input: json.RawMessage(`[{"type":"text","text":"{\"text\":\"one\\u0000雪\"}"}]`)}
 	canonicalInput, err := conversation.Input(req.Input)
 	req.Input = canonicalInput
 	if err != nil {
@@ -51,7 +51,7 @@ func TestMessagesKeepExactDispositionAndDrain(t *testing.T) {
 			t.Fatal("send retry changed disposition")
 		}
 	}
-	req.RetryKey = "later"
+	req.IdempotencyKey = "later"
 	later, err := SendTurn(t.Context(), f.pool, f.caller(), req, first.TurnID)
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +84,7 @@ func TestMessagesKeepExactDispositionAndDrain(t *testing.T) {
 	if _, err := RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID, json.RawMessage(`null`), "joined"); err != nil {
 		t.Fatal(err)
 	}
-	req.RetryKey = "steer"
+	req.IdempotencyKey = "steer"
 	retried, err := RouteSlackInput(t.Context(), f.pool, nil, f.caller(), req)
 	if err != nil || retried.MessageID != admitted.MessageID {
 		t.Fatalf("rejected steering fell back: %+v %v", retried, err)
@@ -93,7 +93,7 @@ func TestMessagesKeepExactDispositionAndDrain(t *testing.T) {
 	if _, err := RouteSlackInput(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, ErrConflict) {
 		t.Fatalf("changed retry: %v", err)
 	}
-	req.RetryKey = "new"
+	req.IdempotencyKey = "new"
 	queued, err := RouteSlackInput(t.Context(), f.pool, nil, f.caller(), req)
 	if err != nil || queued.MessageID != uuid.Nil() || queued.TurnID == first.TurnID {
 		t.Fatalf("new send didn't queue: %+v %v", queued, err)
@@ -108,12 +108,12 @@ func TestMessagesCancellationAndExpiredRetry(t *testing.T) {
 	if err := RuntimeRegisterMessages(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	req := EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, RetryKey: "steer", Input: json.RawMessage(`[]`)}
+	req := EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "steer", Input: json.RawMessage(`[]`)}
 	admitted, err := SendTurn(t.Context(), f.pool, f.caller(), req, first.TurnID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", RetryKey: "stop"}); err != nil {
+	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	var rejected bool
@@ -140,7 +140,7 @@ func TestMessagesSteerClosingSessionWithoutEnqueueAuthority(t *testing.T) {
 	if err := RuntimeRegisterMessages(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", RetryKey: "close"}); err != nil {
+	if _, err := ControlSession(t.Context(), f.pool, f.caller(), SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", IdempotencyKey: "close"}); err != nil {
 		t.Fatal(err)
 	}
 	runtime := Caller{Kind: "session", ID: f.session, TurnID: first.TurnID, Execution: f.execution(), Host: f.host()}
@@ -199,7 +199,7 @@ func TestRuntimeSendTurnRequiresOwnedTarget(t *testing.T) {
 		{"sibling", childCaller, sibling, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			req := EnqueueRequest{EnvironmentID: f.env, SessionID: test.target.session, RetryKey: test.name, Input: json.RawMessage(`[{"type":"text","text":"steer"}]`)}
+			req := EnqueueRequest{EnvironmentID: f.env, SessionID: test.target.session, IdempotencyKey: test.name, Input: json.RawMessage(`[{"type":"text","text":"steer"}]`)}
 			first, err := SendTurn(t.Context(), f.pool, test.caller, req, turns[test.target.session])
 			if !test.allowed {
 				if !errors.Is(err, ErrDenied) {

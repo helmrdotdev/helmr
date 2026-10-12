@@ -8,10 +8,10 @@ INSERT INTO commands (
     sqlc.arg(caller_kind), sqlc.arg(caller_id)
 ) RETURNING *;
 
--- name: GetCommandByRetryKey :one
+-- name: GetCommandByIdempotencyReceipt :one
 SELECT command.* FROM commands command
  JOIN idempotency_receipts k ON k.environment_id=command.environment_id AND k.command_id=command.id AND k.operation='computer.exec'
- WHERE k.environment_id=sqlc.arg(environment_id) AND k.id=sqlc.arg(retry_key_id);
+ WHERE k.environment_id=sqlc.arg(environment_id) AND k.id=sqlc.arg(receipt_id);
 
 -- name: GetCommand :one
 SELECT command.* FROM commands command

@@ -46,9 +46,9 @@ func New(t *testing.T) Fixture {
       UPDATE environments SET current_deployment_id=$5 WHERE id=$4;
       INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) VALUES($4,$5,$6,'{}','{}');
       INSERT INTO templates(environment_id,id,key) VALUES($4,$5,'fixture-computer');
- INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,cpu_millis,memory_bytes,disk_bytes) VALUES($4,$5,$5,$5,1000,536870912,NULL);
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes) VALUES($4,$5,$5,$5,1000,536870912,NULL);
       INSERT INTO agents(environment_id,id,key) VALUES($4,$7,'agent');
-      INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,setup) VALUES($4,$7,$5,$5,false);
+      INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) VALUES($4,$7,$5,$5,false);
       INSERT INTO disk_encryption_keys(id,environment_id,wrapping_key_id,wrapped_key) VALUES($15,$4,'test',decode('01','hex'));
       INSERT INTO cas_blobs(digest,size_bytes) VALUES($16,$17);
       INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$16,$17,'application/octet-stream');
@@ -63,7 +63,7 @@ func New(t *testing.T) Fixture {
       INSERT INTO worker_pools(id,worker_group_id,name,status,sealed_at,vm_platform_id,capacity_cpu_millis,capacity_memory_bytes,capacity_guest_ephemeral_disk_bytes,per_vm_cpu_millis,per_vm_memory_bytes,per_vm_guest_ephemeral_disk_bytes,max_vm_slots) VALUES($12,$11,'pool','active',clock_timestamp(),$6,1000,1073741824,1073741824,1000,1073741824,1073741824,1);
       INSERT INTO worker_pool_cpu_shapes(worker_pool_id,vcpu_count,cpu_config_digest) VALUES($12,1,$6);
       INSERT INTO worker_hosts(id,resource_id,worker_group_id,worker_pool_id,status,current_epoch,current_service_id,epoch_started_at,activated_at,epoch_cpu_millis,epoch_memory_bytes,per_vm_cpu_millis,per_vm_memory_bytes,per_vm_guest_ephemeral_disk_bytes,vm_platform_id,max_vm_slots,max_vm_starts,cpu_environment,cpu_environment_digest) VALUES($13,'host',$11,$12,'active',1,$13,clock_timestamp(),clock_timestamp(),1000,1073741824,1000,1073741824,1073741824,$6,1,1,'{}'::jsonb,$6);
-      INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,computer_instance_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) VALUES($4,$8,1,$13,1,clock_timestamp()+interval '1 hour','active',$8,$14,1000,536870912,1073741824,'sha256:1111111111111111111111111111111111111111111111111111111111111111',1,'sha256:1111111111111111111111111111111111111111111111111111111111111111',clock_timestamp(),clock_timestamp());
+      INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) VALUES($4,$8,1,$13,1,clock_timestamp()+interval '1 hour','active',$8,$14,1000,536870912,1073741824,'sha256:1111111111111111111111111111111111111111111111111111111111111111',1,'sha256:1111111111111111111111111111111111111111111111111111111111111111',clock_timestamp(),clock_timestamp());
       INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,attachment_sequence,control_sequence,control_attachment,control_kind,control_generation,control_acknowledged_at) VALUES($4,$9,1,$8,1,'ready',1,1,1,'resume',1,clock_timestamp());
     `, pgx.QueryExecModeSimpleProtocol, org, f.User, project, f.Environment, f.Deployment, "sha256:"+strings.Repeat("1", 64), f.Agent, f.Computer, f.Session, token, group, pool, f.Worker, channelDigest[:], initial.key, initial.root.Pack.Digest, initial.root.Pack.SizeBytes, initial.root.Pack.Rank, string(initial.inspection), initial.id, string(initial.locator), initial.identity)
 	if err != nil {

@@ -732,7 +732,7 @@ FROM save`, env, turn.ID, turn.Save, receipt.PeerSessionID).Scan(&timeline)
 	var mcpTurns int
 	err = database.Pool.QueryRow(ctx, `SELECT count(*) FROM turns t JOIN sessions source ON (source.environment_id,source.id)=(t.environment_id,t.caller_id) JOIN agents a ON (a.environment_id,a.id)=(source.environment_id,source.agent_id)
   WHERE t.environment_id=$1 AND t.session_id=$2 AND t.caller_kind='session' AND t.admission_method='enqueue' AND t.origin_turn_id IS NULL AND ((a.key='codex' AND source.id=$3) OR (a.key='claude' AND source.id=$4))
-  AND (t.retry_key IN (a.key||'-1',a.key||'-3') OR ($5 AND t.retry_key=a.key||'-5') OR ($6 AND t.retry_key IN (a.key||'-5',a.key||'-7')))`, env, receipt.PeerSessionID, receipt.NativeSessions["codex"], receipt.NativeSessions["claude"], nativeProcessLoss || cancelSave, healthyRAM).Scan(&mcpTurns)
+  AND (t.idempotency_key IN (a.key||'-1',a.key||'-3') OR ($5 AND t.idempotency_key=a.key||'-5') OR ($6 AND t.idempotency_key IN (a.key||'-5',a.key||'-7')))`, env, receipt.PeerSessionID, receipt.NativeSessions["codex"], receipt.NativeSessions["claude"], nativeProcessLoss || cancelSave, healthyRAM).Scan(&mcpTurns)
 	expectedSaves := expectedTurns
 	if cancelSave {
 		expectedSaves += 2

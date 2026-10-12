@@ -76,7 +76,7 @@ func TestPreparationKeyConcurrentRetryAndOwnership(t *testing.T) {
 	}
 	defer clear(first.Key)
 	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM disk_encryption_keys WHERE environment_id=$1 AND writer_preparation_id=$2`, f.env, ref.PreparationID).Scan(&count); err != nil || count != 1 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM disk_encryption_keys WHERE environment_id=$1 AND writer_image_build_id=$2`, f.env, ref.PreparationID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("keys %d: %v", count, err)
 	}
 	if _, err := f.pool.Exec(t.Context(), `UPDATE disk_encryption_keys SET writer_computer_id=$3 WHERE environment_id=$1 AND id=$2`, f.env, first.ID, f.computer); err == nil {
@@ -128,7 +128,7 @@ func TestPreparationKeyReauthorizesProviderIO(t *testing.T) {
 				}
 				if phase == "wrap" {
 					var count int
-					if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM disk_encryption_keys WHERE environment_id=$1 AND writer_preparation_id=$2`, f.env, ref.PreparationID).Scan(&count); err != nil || count != 0 {
+					if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM disk_encryption_keys WHERE environment_id=$1 AND writer_image_build_id=$2`, f.env, ref.PreparationID).Scan(&count); err != nil || count != 0 {
 						t.Fatalf("unauthorized insert %d: %v", count, err)
 					}
 				}

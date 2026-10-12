@@ -18,7 +18,7 @@ func TestWorkerAgentComputerLeaseRenewalAndPhysicalObservation(t *testing.T) {
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
-	request := workerapi.AgentComputerLeaseRequest{EnvironmentID: f.Environment.String(), ComputerID: f.Computer.String(), InstanceID: f.Computer.String(), LeaseEpoch: 1}
+	request := workerapi.AgentComputerLeaseRequest{EnvironmentID: f.Environment.String(), ComputerID: f.Computer.String(), AllocationID: f.Computer.String(), LeaseEpoch: 1}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET expires_at=clock_timestamp()+interval '10 seconds'`)
 	response, err := client.RenewAgentComputerLease(t.Context(), request)
 	if err != nil || time.Until(response.ExpiresAt) < 50*time.Second {
@@ -31,7 +31,7 @@ func TestWorkerAgentComputerLeaseRenewalAndPhysicalObservation(t *testing.T) {
 		t.Fatalf("non-owner fenced Computer: %v", err)
 	}
 	wrong := request
-	wrong.InstanceID = uuid.NewV7().String()
+	wrong.AllocationID = uuid.NewV7().String()
 	if err = client.ObserveAgentComputerStopped(t.Context(), workerapi.AgentComputerStoppedRequest{AgentComputerLeaseRequest: wrong}); !httpclient.IsStatus(err, http.StatusConflict) {
 		t.Fatalf("wrong instance fenced Computer: %v", err)
 	}

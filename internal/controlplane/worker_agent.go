@@ -353,7 +353,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 		if server.slackConfig != nil {
 			preflight = server.slackConfig.Client
 		}
-		admission := agent.StartRequest{CloseAfterIdle: input.CloseAfterIdle, SlackPreflight: preflight, EnvironmentID: execution.EnvironmentID, Agent: input.AgentID, ComputerID: computer, RetryKey: input.IdempotencyKey, Input: input.Input}
+		admission := agent.StartRequest{CloseAfterIdle: input.CloseAfterIdle, SlackPreflight: preflight, EnvironmentID: execution.EnvironmentID, Agent: input.AgentID, ComputerID: computer, IdempotencyKey: input.IdempotencyKey, Input: input.Input}
 		var receipt agent.Admission
 		if method == agentv1.Operation_METHOD_SPAWN {
 			receipt, err = agent.Spawn(r.Context(), server.tx, server.secretProxy, caller, admission)
@@ -388,7 +388,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "MCP mutation requires an idempotency key"))
 			return
 		}
-		receipt, err := agent.SendTurn(r.Context(), server.tx, caller, agent.EnqueueRequest{EnvironmentID: execution.EnvironmentID, SessionID: target, RetryKey: input.IdempotencyKey, Input: input.Message}, turn)
+		receipt, err := agent.SendTurn(r.Context(), server.tx, caller, agent.EnqueueRequest{EnvironmentID: execution.EnvironmentID, SessionID: target, IdempotencyKey: input.IdempotencyKey, Input: input.Message}, turn)
 		if err != nil {
 			server.writeAgentAdmissionError(w, request.RequestID, err)
 			return
@@ -433,7 +433,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		receipt, err := agent.ControlSession(r.Context(), server.tx, caller, agent.SessionControlRequest{
-			EnvironmentID: execution.EnvironmentID, SessionID: target, TurnID: targetTurn, Kind: input.Kind, HoldID: hold, RetryKey: input.IdempotencyKey,
+			EnvironmentID: execution.EnvironmentID, SessionID: target, TurnID: targetTurn, Kind: input.Kind, HoldID: hold, IdempotencyKey: input.IdempotencyKey,
 		})
 		if err != nil {
 			server.writeAgentAdmissionError(w, request.RequestID, err)
@@ -467,7 +467,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "MCP mutation requires an idempotency key"))
 			return
 		}
-		receipt, err := agent.Enqueue(r.Context(), server.tx, server.secretProxy, caller, agent.EnqueueRequest{EnvironmentID: execution.EnvironmentID, SessionID: target, RetryKey: input.IdempotencyKey, Input: input.Input})
+		receipt, err := agent.Enqueue(r.Context(), server.tx, server.secretProxy, caller, agent.EnqueueRequest{EnvironmentID: execution.EnvironmentID, SessionID: target, IdempotencyKey: input.IdempotencyKey, Input: input.Input})
 		if err != nil {
 			server.writeAgentAdmissionError(w, request.RequestID, err)
 			return

@@ -38,7 +38,7 @@ func attachComputerPreparation(ctx context.Context, tx pgx.Tx, env, computer uui
 		return result, err
 	}
 	var spec uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT preparation_spec_id FROM computers WHERE environment_id=$1 AND id=$2`, env, computer).Scan(&spec); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT image_spec_id FROM computers WHERE environment_id=$1 AND id=$2`, env, computer).Scan(&spec); err != nil {
 		return result, err
 	}
 	if err := lockPreparationImageSecrets(ctx, tx, env, spec); err != nil {
@@ -50,8 +50,8 @@ func attachComputerPreparation(ctx context.Context, tx pgx.Tx, env, computer uui
 	var attached *uuid.UUID
 	var deadline time.Time
 	var live bool
-	if err := tx.QueryRow(ctx, `SELECT preparation_id,preparation_deadline_at,initial_root_digest IS NULL AND preparation_failed_at IS NULL AND deleted_at IS NULL AND preparation_deadline_at>clock_timestamp()
-   FROM computers WHERE environment_id=$1 AND id=$2 AND preparation_spec_id=$3 FOR NO KEY UPDATE`, env, computer, spec).Scan(&attached, &deadline, &live); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT image_build_id,preparation_deadline_at,initial_root_digest IS NULL AND preparation_failed_at IS NULL AND deleted_at IS NULL AND preparation_deadline_at>clock_timestamp()
+   FROM computers WHERE environment_id=$1 AND id=$2 AND image_spec_id=$3 FOR NO KEY UPDATE`, env, computer, spec).Scan(&attached, &deadline, &live); err != nil {
 		return result, err
 	}
 	if attached != nil {
@@ -68,14 +68,14 @@ func attachComputerPreparation(ctx context.Context, tx pgx.Tx, env, computer uui
    AND (p.worker_host_id IS NULL OR ((p.delivered_at IS NULL OR p.executor_expires_at>clock_timestamp()) AND EXISTS (
      SELECT 1 FROM worker_hosts h WHERE h.id=p.worker_host_id AND h.current_epoch=p.worker_epoch AND h.status IN ('active','draining'))))
    AND NOT EXISTS (SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
-     WHERE x.environment_id=p.environment_id AND x.preparation_id=p.id AND s.status='revoked')
-   FROM image_builds p WHERE p.environment_id=$1 AND p.preparation_spec_id=$2
+     WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND s.status='revoked')
+   FROM image_builds p WHERE p.environment_id=$1 AND p.image_spec_id=$2
    AND (p.status IN ('queued','running') OR (p.worker_host_id IS NOT NULL AND p.fenced_at IS NULL))`, env, spec).Scan(&attempt, &usable)
 	if errors.Is(err, pgx.ErrNoRows) {
 		var successorPending bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM image_builds p
- JOIN image_specs spec ON (spec.environment_id,spec.id)=(p.environment_id,p.preparation_spec_id)
- WHERE p.environment_id=$1 AND p.preparation_spec_id=$2
+ JOIN image_specs spec ON (spec.environment_id,spec.id)=(p.environment_id,p.image_spec_id)
+ WHERE p.environment_id=$1 AND p.image_spec_id=$2
  AND NOT EXISTS(SELECT 1 FROM image_builds successor WHERE successor.environment_id=p.environment_id AND successor.successor_of=p.id)
  AND `+preparationSuccessorEligibilitySQL+`)`, env, spec).Scan(&successorPending); err != nil {
 			return result, err
@@ -85,7 +85,7 @@ func attachComputerPreparation(ctx context.Context, tx pgx.Tx, env, computer uui
 		}
 		usable = true
 		attempt = uuid.NewV7()
-		if _, err = tx.Exec(ctx, `INSERT INTO image_builds(environment_id,id,preparation_spec_id,retry_key,deadline_at)
+		if _, err = tx.Exec(ctx, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,deadline_at)
     VALUES($1,$2,$3,$4,$5)`, env, attempt, spec, "computer:"+computer.String(), deadline); err != nil {
 			return result, err
 		}
@@ -95,7 +95,7 @@ func attachComputerPreparation(ctx context.Context, tx pgx.Tx, env, computer uui
 	if err == nil && !usable {
 		return result, ErrNotReady
 	}
-	if _, err = tx.Exec(ctx, `UPDATE computers SET preparation_id=$3 WHERE environment_id=$1 AND id=$2`, env, computer, attempt); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE computers SET image_build_id=$3 WHERE environment_id=$1 AND id=$2`, env, computer, attempt); err != nil {
 		return result, err
 	}
 	result, err = readPreparation(ctx, tx, env, attempt)
@@ -108,7 +108,7 @@ func lockPreparationSpec(ctx context.Context, tx pgx.Tx, env, spec uuid.UUID) er
 }
 func readPreparation(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) (Preparation, error) {
 	result := Preparation{EnvironmentID: env, ID: id}
-	err := tx.QueryRow(ctx, `SELECT preparation_spec_id,status,deadline_at FROM image_builds WHERE environment_id=$1 AND id=$2`, env, id).Scan(&result.SpecID, &result.Status, &result.Deadline)
+	err := tx.QueryRow(ctx, `SELECT image_spec_id,status,deadline_at FROM image_builds WHERE environment_id=$1 AND id=$2`, env, id).Scan(&result.SpecID, &result.Status, &result.Deadline)
 	return result, err
 }
 
@@ -159,9 +159,9 @@ func lockPreparationExecutorOnHost(ctx context.Context, tx pgx.Tx, host workergr
 func checkPreparationExecutor(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, ref PreparationExecutor, live bool) error {
 	var digest []byte
 	var valid bool
-	err := tx.QueryRow(ctx, `SELECT channel_credential_digest,COALESCE(worker_host_id=$3 AND worker_epoch=$4 AND executor_epoch=$5 AND instance_id=$6
+	err := tx.QueryRow(ctx, `SELECT channel_credential_digest,COALESCE(worker_host_id=$3 AND worker_epoch=$4 AND executor_epoch=$5 AND allocation_id=$6
   AND (NOT $7 OR (status='running' AND fenced_at IS NULL AND deadline_at>clock_timestamp() AND executor_expires_at>clock_timestamp()
-   AND NOT EXISTS(SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id) WHERE x.environment_id=$1 AND x.preparation_id=$2 AND s.status='revoked'))), false)
+   AND NOT EXISTS(SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id) WHERE x.environment_id=$1 AND x.image_build_id=$2 AND s.status='revoked'))), false)
   FROM image_builds WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.PreparationID, host.HostID, host.Epoch, ref.Epoch, ref.InstanceID, live).Scan(&digest, &valid)
 	if err != nil {
 		return err
@@ -211,7 +211,7 @@ func RecordPreparationExposure(ctx context.Context, pool db.TxBeginner, host wor
 			return err
 		}
 		var spec uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT s.id FROM image_builds p JOIN image_specs s ON (s.environment_id,s.id)=(p.environment_id,p.preparation_spec_id)
+		if err := tx.QueryRow(ctx, `SELECT s.id FROM image_builds p JOIN image_specs s ON (s.environment_id,s.id)=(p.environment_id,p.image_spec_id)
    WHERE p.environment_id=$1 AND p.id=$2`, ref.EnvironmentID, ref.PreparationID).Scan(&spec); err != nil {
 			return err
 		}
@@ -268,7 +268,7 @@ func RecordPreparationExposure(ctx context.Context, pool db.TxBeginner, host wor
 		if sealed {
 			return ErrDenied
 		}
-		rows, err := tx.Query(ctx, `SELECT secret_id,version_id FROM secret_exposures WHERE environment_id=$1 AND preparation_id=$2`, ref.EnvironmentID, ref.PreparationID)
+		rows, err := tx.Query(ctx, `SELECT secret_id,version_id FROM secret_exposures WHERE environment_id=$1 AND image_build_id=$2`, ref.EnvironmentID, ref.PreparationID)
 		if err != nil {
 			return err
 		}
@@ -298,7 +298,7 @@ func RecordPreparationExposure(ctx context.Context, pool db.TxBeginner, host wor
 			versions = prior // Reconnect never replaces an attempt's already exposed version.
 		} else {
 			for _, id := range ids {
-				if _, err = tx.Exec(ctx, `INSERT INTO secret_exposures(id,environment_id,preparation_id,secret_id,version_id,revocation_generation) SELECT uuidv7(),$1,$2,$3,$4,revocation_generation FROM secrets WHERE environment_id=$1 AND id=$3`, ref.EnvironmentID, ref.PreparationID, id, versions[id]); err != nil {
+				if _, err = tx.Exec(ctx, `INSERT INTO secret_exposures(id,environment_id,image_build_id,secret_id,version_id,revocation_generation) SELECT uuidv7(),$1,$2,$3,$4,revocation_generation FROM secrets WHERE environment_id=$1 AND id=$3`, ref.EnvironmentID, ref.PreparationID, id, versions[id]); err != nil {
 					return err
 				}
 			}
@@ -366,7 +366,7 @@ func ObservePreparationStopped(ctx context.Context, pool db.TxBeginner, host wor
 			return err
 		}
 		var owned bool
-		if err := tx.QueryRow(ctx, `SELECT COALESCE(worker_host_id=$3 AND worker_epoch=$4 AND executor_epoch=$5 AND instance_id=$6,false)
+		if err := tx.QueryRow(ctx, `SELECT COALESCE(worker_host_id=$3 AND worker_epoch=$4 AND executor_epoch=$5 AND allocation_id=$6,false)
  FROM image_builds WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, ref.EnvironmentID, ref.PreparationID, host.HostID, host.Epoch, ref.Epoch, ref.InstanceID).Scan(&owned); err != nil {
 			return err
 		}

@@ -160,9 +160,9 @@ func projectContent(ctx context.Context, tx pgx.Tx, o projectionOwner, e project
 	var recipientTeam, recipientUser *string
 	if role == "intermediate" {
 		var raw []byte
-		err := tx.QueryRow(ctx, `SELECT p.publication_key,p.source_start_seq,p.payload,p.presentation_path,p.recipient_team_id,p.recipient_user_id FROM slack_posts p
+		err := tx.QueryRow(ctx, `SELECT p.post_key,p.source_start_seq,p.payload,p.presentation_path,p.recipient_team_id,p.recipient_user_id FROM slack_posts p
  WHERE p.thread_source_id=$1 AND p.turn_id=$2 AND p.role='intermediate' AND p.continuation_ordinal=0 AND p.suppressed_revision=0 AND p.status NOT IN ('failed','suppressed')
- AND EXISTS(SELECT 1 FROM slack_posts tail WHERE tail.thread_source_id=p.thread_source_id AND tail.publication_key=p.publication_key AND tail.closed_at IS NULL)
+ AND EXISTS(SELECT 1 FROM slack_posts tail WHERE tail.thread_source_id=p.thread_source_id AND tail.post_key=p.post_key AND tail.closed_at IS NULL)
  ORDER BY p.seq DESC LIMIT 1`, o.participant, e.turn).Scan(&key, &start, &raw, &path, &recipientTeam, &recipientUser)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
@@ -266,13 +266,13 @@ func projectContent(ctx context.Context, tx pgx.Tx, o projectionOwner, e project
 		}
 		digest := sha256.Sum256(body)
 		var existing uuid.UUID
-		err = tx.QueryRow(ctx, `SELECT id FROM slack_posts WHERE thread_source_id=$1 AND publication_key=$2 AND continuation_ordinal=$3 FOR NO KEY UPDATE`, o.participant, key, ordinal).Scan(&existing)
+		err = tx.QueryRow(ctx, `SELECT id FROM slack_posts WHERE thread_source_id=$1 AND post_key=$2 AND continuation_ordinal=$3 FOR NO KEY UPDATE`, o.participant, key, ordinal).Scan(&existing)
 		if err == nil {
 			_, err = tx.Exec(ctx, `UPDATE slack_posts SET payload=$2,payload_digest=$3,desired_revision=desired_revision+1,
  source_end_seq=$4,source_end_offset=$5,source_digest=$6,status=CASE WHEN status='posted' THEN 'pending' ELSE status END
  WHERE id=$1 AND payload_digest<>$3 AND closed_at IS NULL AND suppressed_revision=0 AND status NOT IN ('failed','suppressed')`, existing, body, digest[:], part.EndSequence, part.EndOffset, part.SourceDigest[:])
 		} else if errors.Is(err, pgx.ErrNoRows) {
-			_, err = tx.Exec(ctx, `INSERT INTO slack_posts(id,environment_id,session_id,thread_source_id,thread_id,seq,publication_key,continuation_ordinal,role,turn_id,ask_id,
+			_, err = tx.Exec(ctx, `INSERT INTO slack_posts(id,environment_id,session_id,thread_source_id,thread_id,seq,post_key,continuation_ordinal,role,turn_id,ask_id,
  source_start_seq,source_start_offset,source_end_seq,source_end_offset,source_digest,payload,payload_digest,presentation_path,closed_at,recipient_team_id,recipient_user_id)
  SELECT $1,$2,$3,$4,(SELECT thread_id FROM slack_thread_sources WHERE id=$4),COALESCE(max(seq),0)+1,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,CASE WHEN $7='intermediate' AND $18 THEN NULL ELSE clock_timestamp() END,$19,$20 FROM slack_posts WHERE thread_source_id=$4`, uuid.NewV7(), o.environment, o.session, o.participant, key, ordinal, role, e.turn, ask, part.StartSequence, part.StartOffset, part.EndSequence, part.EndOffset, part.SourceDigest[:], body, digest[:], path, ordinal == len(rendered)-1, recipientTeam, recipientUser)
 		}
@@ -280,7 +280,7 @@ func projectContent(ctx context.Context, tx pgx.Tx, o projectionOwner, e project
 			return err
 		}
 		if ordinal < len(rendered)-1 {
-			if _, err = tx.Exec(ctx, `UPDATE slack_posts SET closed_at=COALESCE(closed_at,clock_timestamp()) WHERE thread_source_id=$1 AND publication_key=$2 AND continuation_ordinal=$3`, o.participant, key, ordinal); err != nil {
+			if _, err = tx.Exec(ctx, `UPDATE slack_posts SET closed_at=COALESCE(closed_at,clock_timestamp()) WHERE thread_source_id=$1 AND post_key=$2 AND continuation_ordinal=$3`, o.participant, key, ordinal); err != nil {
 				return err
 			}
 		}

@@ -28,7 +28,7 @@ func (s *Server) sendSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	req := agent.EnqueueRequest{EnvironmentID: environment, SessionID: session, RetryKey: request.IdempotencyKey, Input: request.Data}
+	req := agent.EnqueueRequest{EnvironmentID: environment, SessionID: session, IdempotencyKey: request.IdempotencyKey, Input: request.Data}
 	turn, err := ids.Parse(chi.URLParam(r, "turnID"))
 	if err != nil {
 		s.writeAgentHTTPError(w, agent.ErrInvalidInput)

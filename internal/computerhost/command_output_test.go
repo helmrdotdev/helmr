@@ -51,7 +51,7 @@ func TestCommandOutputAppendRetryPreservesIdentity(t *testing.T) {
 	mount := commandAuthority{EnvironmentID: "env", ComputerInstanceID: "instance"}
 	command := workerapi.ComputerCommand{CommandID: "command", WriterGeneration: 4}
 	chunk := outputChunk("stdout", 1, "data")
-	request := workerapi.CommandLogAppendRequest{EnvironmentID: mount.EnvironmentID, CommandID: command.CommandID, ComputerInstanceID: mount.ComputerInstanceID, WriterGeneration: 4, Kind: chunk.Kind, Stream: "stdout", ObservedSeq: 1, ThroughSequence: 1, ObservedAt: time.Unix(0, chunk.ObservedAtUnixNano), Content: chunk.Content}
+	request := workerapi.CommandLogAppendRequest{EnvironmentID: mount.EnvironmentID, CommandID: command.CommandID, AllocationID: mount.ComputerInstanceID, WriterGeneration: 4, Kind: chunk.Kind, Stream: "stdout", ObservedSeq: 1, ThroughSequence: 1, ObservedAt: time.Unix(0, chunk.ObservedAtUnixNano), Content: chunk.Content}
 	for range 2 {
 		receipt, err := service.appendCommandOutput(t.Context(), client, request)
 		if err != nil || receipt.ThroughSequence != 1 {

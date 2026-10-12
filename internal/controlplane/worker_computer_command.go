@@ -26,7 +26,7 @@ func (s *Server) workerClaimComputerCommand(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	environment, err := ids.Parse(request.EnvironmentID)
-	instance, e3 := ids.Parse(request.ComputerInstanceID)
+	instance, e3 := ids.Parse(request.AllocationID)
 	if err != nil || e3 != nil || request.WriterGeneration <= 0 {
 		writeError(w, badRequest(errors.New("canonical environment, Instance and positive writer generation are required")))
 		return
@@ -41,7 +41,7 @@ func (s *Server) workerClaimComputerCommand(w http.ResponseWriter, r *http.Reque
 	}
 	if cancellation := claimed.Cancellation; cancellation != nil {
 		writeJSON(w, http.StatusOK, workerapi.ComputerCommandClaimResponse{Cancellation: &workerapi.ComputerCommandCancellation{
-			CommandID: cancellation.CommandID.String(), ComputerID: cancellation.ComputerID.String(), ComputerInstanceID: cancellation.InstanceID.String(),
+			CommandID: cancellation.CommandID.String(), ComputerID: cancellation.ComputerID.String(), AllocationID: cancellation.InstanceID.String(),
 			WriterGeneration: cancellation.WriterGeneration, RequestFingerprint: hex.EncodeToString(cancellation.RequestFingerprint), ExpiresAt: cancellation.ExpiresAt,
 		}})
 		return
@@ -62,7 +62,7 @@ func (s *Server) workerClaimComputerCommand(w http.ResponseWriter, r *http.Reque
 			writeError(w, commandError(err, commandClaimOperation))
 			return
 		}
-		writeJSON(w, http.StatusOK, workerapi.ComputerCommandClaimResponse{Command: &workerapi.ComputerCommand{TailOnly: true, CommandID: pgvalue.UUIDString(authority.Command.ID), ComputerID: pgvalue.UUIDString(authority.Command.ComputerID), ComputerInstanceID: authority.Lease.InstanceID.String(), RequestFingerprint: hex.EncodeToString(authority.RequestFingerprint), Request: json.RawMessage(`{}`), WriterGeneration: authority.Lease.Epoch, ExpiresAt: *authority.Lease.ExpiresAt}})
+		writeJSON(w, http.StatusOK, workerapi.ComputerCommandClaimResponse{Command: &workerapi.ComputerCommand{TailOnly: true, CommandID: pgvalue.UUIDString(authority.Command.ID), ComputerID: pgvalue.UUIDString(authority.Command.ComputerID), AllocationID: authority.Lease.InstanceID.String(), RequestFingerprint: hex.EncodeToString(authority.RequestFingerprint), Request: json.RawMessage(`{}`), WriterGeneration: authority.Lease.Epoch, ExpiresAt: *authority.Lease.ExpiresAt}})
 		return
 	}
 	stdin := bytes.Clone(authority.Command.Stdin)
@@ -115,7 +115,7 @@ func (s *Server) workerClaimComputerCommand(w http.ResponseWriter, r *http.Reque
 	}
 
 	writeJSON(w, http.StatusOK, workerapi.ComputerCommandClaimResponse{Command: &workerapi.ComputerCommand{TailOnly: authority.TailOnly,
-		CommandID: pgvalue.UUIDString(authority.Command.ID), ComputerID: pgvalue.UUIDString(authority.Command.ComputerID), ComputerInstanceID: authority.Lease.InstanceID.String(), RequestFingerprint: hex.EncodeToString(authority.RequestFingerprint), Request: launchRequest, Stdin: stdin, Secrets: deliveries, ProtectedEnv: protected, WriterGeneration: authority.Lease.Epoch, ExpiresAt: *authority.Lease.ExpiresAt,
+		CommandID: pgvalue.UUIDString(authority.Command.ID), ComputerID: pgvalue.UUIDString(authority.Command.ComputerID), AllocationID: authority.Lease.InstanceID.String(), RequestFingerprint: hex.EncodeToString(authority.RequestFingerprint), Request: launchRequest, Stdin: stdin, Secrets: deliveries, ProtectedEnv: protected, WriterGeneration: authority.Lease.Epoch, ExpiresAt: *authority.Lease.ExpiresAt,
 	}})
 }
 
@@ -187,7 +187,7 @@ func (s *Server) workerCommandCompletion(w http.ResponseWriter, r *http.Request,
 func completionReport(request workerapi.ComputerCommandCompleteRequest) (command.CompletionReport, error) {
 	environment, e1 := ids.Parse(request.EnvironmentID)
 	commandID, e2 := ids.Parse(request.CommandID)
-	instance, e3 := ids.Parse(request.ComputerInstanceID)
+	instance, e3 := ids.Parse(request.AllocationID)
 	if e1 != nil || e2 != nil || e3 != nil || request.WriterGeneration <= 0 {
 		return command.CompletionReport{}, errors.New("canonical command, environment and instance IDs and a positive writer generation are required")
 	}
@@ -200,7 +200,7 @@ func completionReport(request workerapi.ComputerCommandCompleteRequest) (command
 // completionRequest is the wire form of a recorded completion.
 func completionRequest(report command.CompletionReport) workerapi.ComputerCommandCompleteRequest {
 	return workerapi.ComputerCommandCompleteRequest{
-		EnvironmentID: report.EnvironmentID.String(), CommandID: report.CommandID.String(), ComputerInstanceID: report.InstanceID.String(),
+		EnvironmentID: report.EnvironmentID.String(), CommandID: report.CommandID.String(), AllocationID: report.InstanceID.String(),
 		Stdout: workerapi.CommandOutputBoundary{ThroughSequence: report.Stdout.ThroughSequence, Complete: report.Stdout.Complete, Gapped: report.Stdout.Gapped}, Stderr: workerapi.CommandOutputBoundary{ThroughSequence: report.Stderr.ThroughSequence, Complete: report.Stderr.Complete, Gapped: report.Stderr.Gapped}, OutputFenced: report.OutputFenced, WriterGeneration: report.WriterGeneration, Outcome: report.Outcome, ExitCode: report.ExitCode, Error: report.Error,
 	}
 }

@@ -17,7 +17,7 @@ import (
 // guest releases it only after the authenticated host forwards durable acceptance
 // or an explicit expired disposition. Neither loop owns preparation lifecycle.
 func (o *PreparationAllocationOwner) deliverPreparationLogs(ctx context.Context, stream string) {
-	request := &computerv0.PreparationControlRequest{Identity: &computerv0.PreparationIdentity{PreparationId: o.identity.OwnerID, InstanceId: o.identity.InstanceID, Epoch: o.identity.Epoch, ChannelCredential: o.executor.ChannelCredential}, LogStream: stream}
+	request := &computerv0.PreparationControlRequest{Identity: &computerv0.PreparationIdentity{PreparationId: o.identity.OwnerID, InstanceId: o.identity.AllocationID, Epoch: o.identity.Epoch, ChannelCredential: o.executor.ChannelCredential}, LogStream: stream}
 	for ctx.Err() == nil {
 		request.ExpiresAtUnixNano = o.expires.Load()
 		var response computerv0.PreparationControlResponse
@@ -34,7 +34,7 @@ func (o *PreparationAllocationOwner) deliverPreparationLogs(ctx context.Context,
 		}
 		log := response.Log
 		if wire.ValidatePreparationLog(log, o.machines.PreparationLogLimits.GetChunkBytes()) != nil || log.Sequence != request.AcknowledgedThrough+1 {
-			slog.Warn("preparation diagnostic envelope rejected", "preparation_id", o.identity.OwnerID, "stream", stream)
+			slog.Warn("preparation diagnostic envelope rejected", "image_build_id", o.identity.OwnerID, "stream", stream)
 			return
 		}
 		upload := workerapi.PreparationLogRequest{Executor: o.executor, Stream: stream, Kind: log.Kind, Sequence: log.Sequence, ThroughSequence: log.ThroughSequence, ObservedAtUnixNano: log.ObservedAtUnixNano, Data: log.Data, DroppedBytes: log.DroppedBytes, Complete: log.Complete}
@@ -44,7 +44,7 @@ func (o *PreparationAllocationOwner) deliverPreparationLogs(ctx context.Context,
 			stop()
 			if err == nil {
 				if receipt.ThroughSequence != log.ThroughSequence || (receipt.Expired && (!receipt.AcceptedAt.IsZero() || !receipt.ExpiresAt.IsZero())) || (!receipt.Expired && (receipt.AcceptedAt.IsZero() || receipt.ExpiresAt.Sub(receipt.AcceptedAt) != 90*24*time.Hour)) {
-					slog.Warn("preparation diagnostic receipt rejected", "preparation_id", o.identity.OwnerID, "stream", stream)
+					slog.Warn("preparation diagnostic receipt rejected", "image_build_id", o.identity.OwnerID, "stream", stream)
 					return
 				}
 				request.AcknowledgedThrough = receipt.ThroughSequence
@@ -52,7 +52,7 @@ func (o *PreparationAllocationOwner) deliverPreparationLogs(ctx context.Context,
 			}
 			var response *httpclient.Error
 			if errors.As(err, &response) && response.StatusCode >= 400 && response.StatusCode < 500 && response.StatusCode != 408 && response.StatusCode != 429 {
-				slog.Warn("preparation diagnostic stream rejected", "preparation_id", o.identity.OwnerID, "stream", stream)
+				slog.Warn("preparation diagnostic stream rejected", "image_build_id", o.identity.OwnerID, "stream", stream)
 				return
 			}
 			if sleepWithContext(ctx, time.Second) != nil {

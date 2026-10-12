@@ -167,7 +167,7 @@ func lockCheckpointPublication(ctx context.Context, tx pgx.Tx, ref CheckpointPub
 	}
 	var instance, host uuid.UUID
 	var epoch int64
-	if err = tx.QueryRow(ctx, `SELECT computer_instance_id,worker_host_id,worker_epoch FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, ref.EnvironmentID, r.Computer, r.SourceEpoch).Scan(&instance, &host, &epoch); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT allocation_id,worker_host_id,worker_epoch FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, ref.EnvironmentID, r.Computer, r.SourceEpoch).Scan(&instance, &host, &epoch); err != nil {
 		return r, nil, false, err
 	}
 	if host != ref.Host.HostID || epoch != ref.Host.Epoch {

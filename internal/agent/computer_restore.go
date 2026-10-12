@@ -149,7 +149,7 @@ func restoreTargetLease(ctx context.Context, tx pgx.Tx, host workergroup.HostPri
 	if epoch <= r.SourceEpoch {
 		return lease, ErrDenied
 	}
-	err := tx.QueryRow(ctx, `SELECT l.computer_instance_id,l.channel_credential_digest,l.restored_from_save_id::text,LEAST(l.expires_at,clock_timestamp()+interval '30 seconds')
+	err := tx.QueryRow(ctx, `SELECT l.allocation_id,l.channel_credential_digest,l.restored_from_save_id::text,LEAST(l.expires_at,clock_timestamp()+interval '30 seconds')
  FROM computer_leases l
  JOIN computer_saves s ON (s.environment_id,s.computer_id,s.id,s.root_id)=(l.environment_id,l.computer_id,l.restored_from_save_id,l.base_root_id)
  WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=$3 AND l.worker_host_id=$4 AND l.worker_epoch=$5

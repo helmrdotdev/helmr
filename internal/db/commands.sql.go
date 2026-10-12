@@ -183,19 +183,19 @@ func (q *Queries) GetCommand(ctx context.Context, arg GetCommandParams) (Command
 	return i, err
 }
 
-const getCommandByRetryKey = `-- name: GetCommandByRetryKey :one
+const getCommandByIdempotencyReceipt = `-- name: GetCommandByIdempotencyReceipt :one
 SELECT command.environment_id, command.id, command.computer_id, command.computer_lease_epoch, command.status, command.revision, command.argv, command.cwd, command.env, command.stdin, command.timeout_ms, command.caller_kind, command.caller_id, command.started_at, command.cancel_requested_at, command.process_exited_at, command.process_reconciled_at, command.stdout_final_through, command.stdout_final_complete, command.stdout_final_gapped, command.stderr_final_through, command.stderr_final_complete, command.stderr_final_gapped, command.output_fenced, command.exit_code, command.error, command.terminal_at, command.terminal_reason_code, command.failure_reason, command.result_expires_at, command.result_pruned_at, command.created_at, command.updated_at, command.stdout_accepted_through, command.stdout_byte_offset, command.stdout_ended, command.stdout_end_complete, command.stdout_gapped, command.stdout_expired_through, command.stdout_last_sequence, command.stdout_last_digest, command.stdout_last_accepted_at, command.stderr_accepted_through, command.stderr_byte_offset, command.stderr_ended, command.stderr_end_complete, command.stderr_gapped, command.stderr_expired_through, command.stderr_last_sequence, command.stderr_last_digest, command.stderr_last_accepted_at FROM commands command
  JOIN idempotency_receipts k ON k.environment_id=command.environment_id AND k.command_id=command.id AND k.operation='computer.exec'
  WHERE k.environment_id=$1 AND k.id=$2
 `
 
-type GetCommandByRetryKeyParams struct {
+type GetCommandByIdempotencyReceiptParams struct {
 	EnvironmentID pgtype.UUID `json:"environment_id"`
-	RetryKeyID    pgtype.UUID `json:"retry_key_id"`
+	ReceiptID     pgtype.UUID `json:"receipt_id"`
 }
 
-func (q *Queries) GetCommandByRetryKey(ctx context.Context, arg GetCommandByRetryKeyParams) (Command, error) {
-	row := q.db.QueryRow(ctx, getCommandByRetryKey, arg.EnvironmentID, arg.RetryKeyID)
+func (q *Queries) GetCommandByIdempotencyReceipt(ctx context.Context, arg GetCommandByIdempotencyReceiptParams) (Command, error) {
+	row := q.db.QueryRow(ctx, getCommandByIdempotencyReceipt, arg.EnvironmentID, arg.ReceiptID)
 	var i Command
 	err := row.Scan(
 		&i.EnvironmentID,

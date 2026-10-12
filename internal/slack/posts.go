@@ -18,7 +18,7 @@ import (
 // omits known-blocked pending mutations; the claim remains authoritative.
 const blockingPostPredecessor = `EXISTS(SELECT 1 FROM slack_posts prior
  WHERE prior.thread_source_id=p.thread_source_id AND prior.id<>p.id AND prior.delivery_disposed_at IS NULL AND (prior.status IN ('pending','sending','uncertain') OR (prior.presentation_path='stream' AND prior.stream_state='open')) AND
- ((prior.publication_key=p.publication_key AND prior.continuation_ordinal<p.continuation_ordinal)
+ ((prior.post_key=p.post_key AND prior.continuation_ordinal<p.continuation_ordinal)
  OR (p.role IN ('intermediate','response') AND prior.turn_id=p.turn_id AND prior.role='intermediate' AND prior.seq<p.seq)))`
 
 type PostClaim struct {
@@ -60,7 +60,7 @@ func ClaimPost(ctx context.Context, pool db.TxBeginner, post uuid.UUID) (*PostCl
 		var root *string
 		var opening *string
 		var deleted, statusBusy, abandoned bool
-		if err = tx.QueryRow(ctx, `SELECT thread_ts,opening_publication_key,deleted_at IS NOT NULL,(inflight_method IS NOT NULL AND claimed_until>clock_timestamp()) OR stream_status_repair,EXISTS(SELECT 1 FROM slack_posts opening WHERE opening.thread_id=slack_threads.id AND opening.role='opening' AND (opening.delivery_disposed_at IS NOT NULL OR (slack_threads.thread_ts IS NULL AND opening.status IN ('failed','suppressed')))) FROM slack_threads WHERE id=$1 FOR NO KEY UPDATE`, thread).Scan(&root, &opening, &deleted, &statusBusy, &abandoned); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT thread_ts,opening_post_key,deleted_at IS NOT NULL,(inflight_method IS NOT NULL AND claimed_until>clock_timestamp()) OR stream_status_repair,EXISTS(SELECT 1 FROM slack_posts opening WHERE opening.thread_id=slack_threads.id AND opening.role='opening' AND (opening.delivery_disposed_at IS NOT NULL OR (slack_threads.thread_ts IS NULL AND opening.status IN ('failed','suppressed')))) FROM slack_threads WHERE id=$1 FOR NO KEY UPDATE`, thread).Scan(&root, &opening, &deleted, &statusBusy, &abandoned); err != nil {
 			return err
 		}
 		var state, path, publication, role string
@@ -73,7 +73,7 @@ func ClaimPost(ctx context.Context, pool db.TxBeginner, post uuid.UUID) (*PostCl
 		var method *string
 		var stream streamSnapshot
 		var streamText *string
-		if err = tx.QueryRow(ctx, `SELECT role,status,presentation_path,publication_key,continuation_ordinal,next_attempt_at<=clock_timestamp(),
+		if err = tx.QueryRow(ctx, `SELECT role,status,presentation_path,post_key,continuation_ordinal,next_attempt_at<=clock_timestamp(),
  COALESCE(claimed_until<=clock_timestamp(),false),desired_revision,message_ts,payload,inflight_payload,inflight_method,inflight_revision,stream_state,confirmed_stream_text,recipient_team_id,recipient_user_id,closed_at IS NOT NULL,suppressed_revision>=desired_revision,confirmed_revision,inflight_stream_text
  FROM slack_posts WHERE id=$1 FOR NO KEY UPDATE`, post).Scan(&role, &state, &path, &publication, &ordinal, &due, &expired, &revision, &message, &body, &frozen, &method, &frozenRevision, &stream.state, &stream.confirmed, &stream.recipientTeam, &stream.recipientUser, &stream.closed, &stream.suppressed, &stream.confirmedRevision, &streamText); err != nil {
 			return err
@@ -258,7 +258,7 @@ func finishPostClaim(ctx context.Context, tx pgx.Tx, claim PostClaim, result Del
 			return err
 		}
 		_, err = tx.Exec(ctx, `UPDATE slack_threads t SET thread_ts=$2 FROM slack_posts p WHERE p.id=$1 AND t.id=$3
- AND p.role='opening' AND t.front_session_id=p.session_id AND t.opening_publication_key=p.publication_key AND p.continuation_ordinal=0 AND t.thread_ts IS NULL`, claim.PostID, timestamp, claim.ThreadID)
+ AND p.role='opening' AND t.front_session_id=p.session_id AND t.opening_post_key=p.post_key AND p.continuation_ordinal=0 AND t.thread_ts IS NULL`, claim.PostID, timestamp, claim.ThreadID)
 		return err
 	case RateLimited:
 		retry := result.RetryAfter

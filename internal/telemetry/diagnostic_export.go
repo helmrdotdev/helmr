@@ -32,7 +32,7 @@ type DiagnosticExportClaim struct {
 // ClaimDiagnostics holds no database lock while the sink is called. A new claim
 // token fences a slow exporter whose claim expired before its sink reply arrived.
 func ClaimDiagnostics(ctx context.Context, pool db.TxBeginner, kind string, bounds diagnostic.ExportBounds) (DiagnosticExportClaim, error) {
-	if kind != "session" && kind != "computer_preparation" && kind != "computer_command" {
+	if kind != "session" && kind != "image_build" && kind != "computer_command" {
 		return DiagnosticExportClaim{}, ErrDiagnosticInvalid
 	}
 	if err := bounds.Validate(); err != nil {

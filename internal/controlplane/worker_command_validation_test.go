@@ -12,7 +12,7 @@ import (
 func TestCommandCompletionRequiresCanonicalUUIDv7(t *testing.T) {
 	valid := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
 	exitCode := int32(0)
-	base := workerapi.ComputerCommandCompleteRequest{EnvironmentID: valid, CommandID: valid, ComputerInstanceID: valid, WriterGeneration: 1, Outcome: "exited", ExitCode: &exitCode, Stdout: workerapi.CommandOutputBoundary{ThroughSequence: 1, Complete: true}, Stderr: workerapi.CommandOutputBoundary{ThroughSequence: 1, Complete: true}}
+	base := workerapi.ComputerCommandCompleteRequest{EnvironmentID: valid, CommandID: valid, AllocationID: valid, WriterGeneration: 1, Outcome: "exited", ExitCode: &exitCode, Stdout: workerapi.CommandOutputBoundary{ThroughSequence: 1, Complete: true}, Stderr: workerapi.CommandOutputBoundary{ThroughSequence: 1, Complete: true}}
 	if report, err := completionReport(base); err != nil || report.Validate() != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func TestCommandCompletionRequiresCanonicalUUIDv7(t *testing.T) {
 				case "command":
 					request.CommandID = value
 				case "instance":
-					request.ComputerInstanceID = value
+					request.AllocationID = value
 				}
 				if _, err := completionReport(request); err == nil {
 					t.Fatalf("accepted %s ID %q", field, value)

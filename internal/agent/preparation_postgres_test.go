@@ -43,13 +43,13 @@ func preparationFixtureFor(t *testing.T, resident fixture) preparationFixture {
 		t.Fatal(err)
 	}
 	f.secretID = pgvalue.MustUUIDValue(record.ID)
-	dbtest.MustExec(t, t.Context(), f.pool, `DELETE FROM secret_bindings WHERE environment_id=$1 AND preparation_spec_id=$2; INSERT INTO secret_bindings(environment_id,preparation_spec_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw'),($1,$2,$3,'env','TOKEN_ALIAS','raw')`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, f.secretID)
+	dbtest.MustExec(t, t.Context(), f.pool, `DELETE FROM secret_bindings WHERE environment_id=$1 AND image_spec_id=$2; INSERT INTO secret_bindings(environment_id,image_spec_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw'),($1,$2,$3,'env','TOKEN_ALIAS','raw')`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, f.secretID)
 	return f
 }
 func (f preparationFixture) waiter(t *testing.T) uuid.UUID {
 	t.Helper()
 	id := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,1000,536870912,NULL,34359738368)`, f.env, id, f.deployment)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computers(environment_id,id,image_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,1000,536870912,NULL,34359738368)`, f.env, id, f.deployment)
 	return id
 }
 func (f preparationFixture) attach(t *testing.T, id uuid.UUID) Preparation {
@@ -168,7 +168,7 @@ func TestPreparationExposurePinsBeforeDeliveryAndNeverSwapsVersions(t *testing.T
 		t.Fatalf("exposure: %+v %v", exposed, err)
 	}
 	var pins int
-	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM secret_exposures WHERE environment_id=$1 AND preparation_id=$2`, f.env, p.ID).Scan(&pins); err != nil || pins != 1 {
+	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM secret_exposures WHERE environment_id=$1 AND image_build_id=$2`, f.env, p.ID).Scan(&pins); err != nil || pins != 1 {
 		t.Fatalf("alias pins=%d: %v", pins, err)
 	}
 	if _, err = f.secrets.Rotate(t.Context(), f.env, f.secretID, []byte("v3"), "rotate-3"); err != nil {
@@ -205,7 +205,7 @@ func TestPreparationExposureFailureReturnsNoMaterial(t *testing.T) {
 		t.Fatalf("failed commit released material: %+v %v", values, err)
 	}
 	var count int
-	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM secret_exposures WHERE environment_id=$1 AND preparation_id=$2`, f.env, p.ID).Scan(&count); err != nil || count != 0 {
+	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM secret_exposures WHERE environment_id=$1 AND image_build_id=$2`, f.env, p.ID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("rollback count=%d: %v", count, err)
 	}
 	// Expiry is checked after the spec lock, not at the earlier metadata read.
@@ -341,7 +341,7 @@ func TestPreparationWaiterDeadlineFailsOnlyPendingWorkAndSealsSessions(t *testin
 	ref := f.claim(t, p)
 	session := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth) VALUES('until_environment_deletion',$1,$2,$3,$4,$5,$2,0)`, f.env, session, f.agent, f.deployment, computer)
-	request := EnqueueRequest{EnvironmentID: f.env, SessionID: session, RetryKey: "pending", Input: []byte(`[{"type":"text","text":"{\"input\":1}"}]`)}
+	request := EnqueueRequest{EnvironmentID: f.env, SessionID: session, IdempotencyKey: "pending", Input: []byte(`[{"type":"text","text":"{\"input\":1}"}]`)}
 	admitted, err := Enqueue(t.Context(), f.pool, nil, f.caller(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -358,7 +358,7 @@ func TestPreparationWaiterDeadlineFailsOnlyPendingWorkAndSealsSessions(t *testin
 	if _, err = Enqueue(t.Context(), f.pool, nil, f.caller(), request); err != nil {
 		t.Fatalf("original admission identity disappeared: %v", err)
 	}
-	request.RetryKey = "new"
+	request.IdempotencyKey = "new"
 	if _, err = Enqueue(t.Context(), f.pool, nil, f.caller(), request); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("failed Computer admitted new work: %v", err)
 	}

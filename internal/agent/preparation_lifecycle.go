@@ -23,7 +23,7 @@ func expirePreparation(ctx context.Context, pool db.TxBeginner, env, id uuid.UUI
 		}
 		var host, group *uuid.UUID
 		var spec uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT p.preparation_spec_id,p.worker_host_id,h.worker_group_id FROM image_builds p LEFT JOIN worker_hosts h ON h.id=p.worker_host_id WHERE p.environment_id=$1 AND p.id=$2`, env, id).Scan(&spec, &host, &group); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT p.image_spec_id,p.worker_host_id,h.worker_group_id FROM image_builds p LEFT JOIN worker_hosts h ON h.id=p.worker_host_id WHERE p.environment_id=$1 AND p.id=$2`, env, id).Scan(&spec, &host, &group); err != nil {
 			return err
 		}
 		if host != nil {
@@ -76,7 +76,7 @@ func reconcilePreparationRevocation(ctx context.Context, pool db.TxBeginner, env
 		// Lock exposures' Secrets before the spec. The attempt's exposure set can
 		// only grow under these same Secrets and spec locks, then is immutable.
 		rows, err := tx.Query(ctx, `SELECT s.id FROM secrets s JOIN secret_exposures x ON (x.environment_id,x.secret_id)=(s.environment_id,s.id)
-   WHERE x.environment_id=$1 AND x.preparation_id=$2 ORDER BY s.id FOR SHARE OF s`, env, id)
+   WHERE x.environment_id=$1 AND x.image_build_id=$2 ORDER BY s.id FOR SHARE OF s`, env, id)
 		if err != nil {
 			return err
 		}
@@ -98,7 +98,7 @@ func reconcilePreparationRevocation(ctx context.Context, pool db.TxBeginner, env
 		_, err = tx.Exec(ctx, `UPDATE image_builds p SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,status='failed',error_code='secret_revoked'
    WHERE p.environment_id=$1 AND p.id=$2 AND p.status IN ('queued','running') AND EXISTS(
     SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
-    WHERE x.environment_id=p.environment_id AND x.preparation_id=p.id AND s.status='revoked')`, env, id)
+    WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND s.status='revoked')`, env, id)
 		return err
 	}))
 }
@@ -109,9 +109,9 @@ type stoppedPreparation struct {
 }
 
 func hostPreparations(ctx context.Context, tx pgx.Tx, host uuid.UUID, beforeEpoch *int64, quarantined []uuid.UUID) ([]stoppedPreparation, error) {
-	rows, err := tx.Query(ctx, `SELECT environment_id,preparation_spec_id,id,instance_id,worker_epoch FROM image_builds
-  WHERE worker_host_id=$1 AND fenced_at IS NULL AND ($2::bigint IS NULL OR worker_epoch<$2) AND NOT(instance_id=ANY($3::uuid[]))
-  ORDER BY environment_id,preparation_spec_id,id`, host, beforeEpoch, quarantined)
+	rows, err := tx.Query(ctx, `SELECT environment_id,image_spec_id,id,allocation_id,worker_epoch FROM image_builds
+  WHERE worker_host_id=$1 AND fenced_at IS NULL AND ($2::bigint IS NULL OR worker_epoch<$2) AND NOT(allocation_id=ANY($3::uuid[]))
+  ORDER BY environment_id,image_spec_id,id`, host, beforeEpoch, quarantined)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +186,7 @@ func expirePreparationWaiter(ctx context.Context, pool db.TxBeginner, env, compu
 			return err
 		}
 		var spec *uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT preparation_spec_id FROM computers WHERE environment_id=$1 AND id=$2`, env, computer).Scan(&spec); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT image_spec_id FROM computers WHERE environment_id=$1 AND id=$2`, env, computer).Scan(&spec); err != nil {
 			return err
 		}
 		if spec == nil {
@@ -300,9 +300,9 @@ func reconcilePreparationLifecycle(ctx context.Context, database db.TxDB, after 
 	rows, err := database.Query(scanCtx, `WITH candidates AS (
   SELECT environment_id,id,'waiter'::text AS kind FROM computers WHERE initial_root_digest IS NULL AND preparation_failed_at IS NULL AND deleted_at IS NULL AND preparation_deadline_at<=statement_timestamp()
   UNION
-  SELECT c.environment_id,c.id,'unattached' FROM computers c JOIN environments e ON e.id=c.environment_id WHERE e.retired_at IS NULL AND c.initial_root_digest IS NULL AND preparation_id IS NULL AND preparation_failed_at IS NULL AND deleted_at IS NULL AND preparation_deadline_at>statement_timestamp()
+  SELECT c.environment_id,c.id,'unattached' FROM computers c JOIN environments e ON e.id=c.environment_id WHERE e.retired_at IS NULL AND c.initial_root_digest IS NULL AND image_build_id IS NULL AND preparation_failed_at IS NULL AND deleted_at IS NULL AND preparation_deadline_at>statement_timestamp()
   UNION
-  SELECT c.environment_id,c.id,'image' FROM computers c JOIN image_builds p ON (p.environment_id,p.id)=(c.environment_id,c.preparation_id)
+  SELECT c.environment_id,c.id,'image' FROM computers c JOIN image_builds p ON (p.environment_id,p.id)=(c.environment_id,c.image_build_id)
    WHERE c.initial_root_digest IS NULL AND p.status='succeeded' AND c.preparation_failed_at IS NULL AND c.deleted_at IS NULL AND c.preparation_deadline_at>statement_timestamp()
   UNION
   SELECT revoked.environment_id,revoked.computer_id,'secret_revocation' FROM (`+db.RevokedComputerSecretsSQL+`) revoked
@@ -317,7 +317,7 @@ func reconcilePreparationLifecycle(ctx context.Context, database db.TxDB, after 
    WHERE p.status='running' AND (h.current_epoch IS DISTINCT FROM p.worker_epoch OR h.status NOT IN ('active','draining'))
   UNION
   SELECT p.environment_id,p.id,'revocation' FROM secrets s JOIN secret_exposures x ON (x.environment_id,x.secret_id)=(s.environment_id,s.id)
-   JOIN image_builds p ON (p.environment_id,p.id)=(x.environment_id,x.preparation_id)
+   JOIN image_builds p ON (p.environment_id,p.id)=(x.environment_id,x.image_build_id)
    WHERE s.status='revoked' AND p.status IN ('queued','running')
  ) SELECT environment_id,id,kind FROM candidates WHERE (environment_id,id,kind)>($1,$2,$3) ORDER BY environment_id,id,kind LIMIT 100`, after.environment, after.id, after.kind)
 	if err != nil {
@@ -380,7 +380,7 @@ func reconcileComputerImage(ctx context.Context, database db.TxDB, env, computer
 		return err
 	}
 	var attached *uuid.UUID
-	if err := database.QueryRow(ctx, `SELECT preparation_id FROM computers WHERE environment_id=$1 AND id=$2`, env, computer).Scan(&attached); err != nil {
+	if err := database.QueryRow(ctx, `SELECT image_build_id FROM computers WHERE environment_id=$1 AND id=$2`, env, computer).Scan(&attached); err != nil {
 		return err
 	}
 	if attached == nil {
