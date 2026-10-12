@@ -48,7 +48,7 @@ func New(t *testing.T) Fixture {
       INSERT INTO templates(environment_id,id,key) VALUES($4,$5,'fixture-computer');
  INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,cpu_millis,memory_bytes,disk_bytes) VALUES($4,$5,$5,$5,1000,536870912,NULL);
       INSERT INTO agents(environment_id,id,key) VALUES($4,$7,'agent');
-      INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,setup,triggers) VALUES($4,$7,$5,$5,false,'{}');
+      INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,setup) VALUES($4,$7,$5,$5,false);
       INSERT INTO computer_data_keys(id,environment_id,wrapping_key_id,wrapped_key) VALUES($15,$4,'test',decode('01','hex'));
       INSERT INTO cas_blobs(digest,size_bytes) VALUES($16,$17);
       INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$16,$17,'application/octet-stream');

@@ -7,12 +7,13 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/definition"
 	"io"
 	"log/slog"
 	"strings"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/definition"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bundle"

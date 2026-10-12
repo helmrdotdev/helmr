@@ -55,12 +55,12 @@ func TestScheduledTextInputRetainsBytes(t *testing.T) {
 	f := newAdmissionFixture(t)
 	id := seedSchedule(t, f, time.Now().UTC().Truncate(time.Minute))
 	input := json.RawMessage(`[{"type":"text","text":"scheduled\u0000"}]`)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_schedules SET input=$2 WHERE id=$1`, id, input)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_triggers t SET input=$2 FROM trigger_activations a WHERE a.id=$1 AND (t.environment_id,t.agent_id,t.deployment_id,t.key)=(a.environment_id,a.agent_id,a.deployment_id,a.trigger_key)`, id, input)
 	if err := EvaluateSchedule(t.Context(), f.pool, nil, f.env, id); err != nil {
 		t.Fatal(err)
 	}
 	var got []byte
-	if err := f.pool.QueryRow(t.Context(), `SELECT t.input FROM turns t JOIN agent_schedule_occurrences o ON o.turn_id=t.id WHERE o.schedule_id=$1`, id).Scan(&got); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT t.input FROM turns t JOIN trigger_occurrences o ON o.turn_id=t.id WHERE o.activation_id=$1`, id).Scan(&got); err != nil {
 		t.Fatal(err)
 	}
 	canonical, _ := conversation.Input(input)

@@ -9,13 +9,14 @@ import (
 	"testing"
 	"time"
 
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"uuid"
 )
 
 func TestDeploymentMaximumDefinitionRegistrationAndPromotion(t *testing.T) {
@@ -94,7 +95,7 @@ func measureDeploymentRegistration(t *testing.T, computerCount, secretCount int)
 	if counter.calls.Load() > 15 {
 		t.Fatalf("promotion grew database round trips with schedule count: %d", counter.calls.Load())
 	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM agent_schedules WHERE active_until IS NULL`).Scan(&count); err != nil || count != agentCount {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM trigger_activations WHERE active_until IS NULL`).Scan(&count); err != nil || count != agentCount {
 		t.Fatalf("activated=%d: %v", count, err)
 	}
 }

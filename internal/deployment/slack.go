@@ -2,14 +2,12 @@ package deployment
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -30,45 +28,24 @@ func prepareScheduleRoutes(ctx context.Context, pool db.TxBeginner, principal au
 		if !allowed {
 			return ErrNotDeployable
 		}
-		type authored struct {
-			agent uuid.UUID
-			raw   []byte
-		}
-		rows, err := tx.Query(ctx, `SELECT agent_id,triggers FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2`, env, deployment)
+		rows, err := tx.Query(ctx, `SELECT DISTINCT agent_id,slack_destination FROM agent_triggers WHERE environment_id=$1 AND deployment_id=$2 AND slack_destination IS NOT NULL ORDER BY agent_id,slack_destination`, env, deployment)
 		if err != nil {
 			return err
 		}
-		values, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (authored, error) {
-			var a authored
-			err := row.Scan(&a.agent, &a.raw)
+		values, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (scheduleRouteKey, error) {
+			var a scheduleRouteKey
+			err := row.Scan(&a.agent, &a.channel)
 			return a, err
 		})
 		if err != nil {
 			return err
 		}
 		for _, value := range values {
-			var triggers map[string]definition.CronTrigger
-			if err = json.Unmarshal(value.raw, &triggers); err != nil {
+			connection, err := agent.ReadSlackConnection(ctx, tx, env, value.agent, value.channel)
+			if err != nil {
 				return err
 			}
-			for _, trigger := range triggers {
-				channel, err := definition.SlackChannelReference(trigger.Slack)
-				if err != nil {
-					return err
-				}
-				if channel == nil {
-					continue
-				}
-				key := scheduleRouteKey{value.agent, *channel}
-				if _, ok := routes[key]; ok {
-					continue
-				}
-				connection, err := agent.ReadSlackConnection(ctx, tx, env, value.agent, *channel)
-				if err != nil {
-					return err
-				}
-				routes[key] = connection
-			}
+			routes[value] = connection
 		}
 		return nil
 	})

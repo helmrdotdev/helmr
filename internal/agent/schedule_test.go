@@ -26,7 +26,7 @@ func TestScheduleEvaluationBoundsRecoveryAndActivation(t *testing.T) {
 		{"spring gap", "30 2 * * *", "America/New_York", "2026-03-07T07:30:00Z", "2026-03-08T07:31:00Z", "", "", "2026-03-09T06:30:00Z", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := scheduleActivation{cron: tc.cron, timezone: tc.zone, next: at(tc.next), graceMS: 300000}
+			s := scheduleActivation{cron: tc.cron, timezone: tc.zone, next: at(tc.next)}
 			if tc.until != "" {
 				v := at(tc.until)
 				s.until = &v

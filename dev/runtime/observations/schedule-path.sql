@@ -1,7 +1,7 @@
-, target AS (SELECT s.* FROM agent_schedules s,input WHERE s.id=(args->>'schedule_id')::uuid),
+, target AS (SELECT s.* FROM trigger_activations s,input WHERE s.id=(args->>'schedule_id')::uuid),
 occurrences AS (
  SELECT o.*, s.computer_id, s.deployment_id, t.status AS turn_status
- FROM agent_schedule_occurrences o JOIN target a ON a.environment_id=o.environment_id AND a.id=o.schedule_id
+ FROM trigger_occurrences o JOIN target a ON a.environment_id=o.environment_id AND a.id=o.activation_id
  LEFT JOIN sessions s ON s.environment_id=o.environment_id AND s.id=o.session_id
  LEFT JOIN turns t ON t.environment_id=o.environment_id AND t.session_id=o.session_id AND t.id=o.turn_id
  ORDER BY o.scheduled_at LIMIT 257

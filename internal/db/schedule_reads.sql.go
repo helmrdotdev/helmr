@@ -12,10 +12,12 @@ import (
 )
 
 const getScheduleByID = `-- name: GetScheduleByID :one
-SELECT s.environment_id, s.id, s.agent_id, s.deployment_id, s.trigger_key, s.cron, s.timezone, s.input, s.active_from, s.active_until, s.next_fire_at, s.lateness_tolerance_ms, s.slack_channel_id, a.key AS agent FROM agent_schedules s
-JOIN agents a ON (a.environment_id,a.id)=(s.environment_id,s.agent_id)
-JOIN environments e ON e.id=s.environment_id
-WHERE e.org_id=$1 AND e.project_id=$2 AND e.id=$3 AND s.id=$4
+SELECT a.id,a.agent_id,a.deployment_id,a.trigger_key,t.cron,t.timezone,t.input,a.active_from,a.active_until,a.next_fire_at,ag.key AS agent
+FROM trigger_activations a
+JOIN agent_triggers t ON (t.environment_id,t.agent_id,t.deployment_id,t.key)=(a.environment_id,a.agent_id,a.deployment_id,a.trigger_key)
+JOIN agents ag ON (ag.environment_id,ag.id)=(a.environment_id,a.agent_id)
+JOIN environments e ON e.id=a.environment_id
+WHERE e.org_id=$1 AND e.project_id=$2 AND e.id=$3 AND a.id=$4
 `
 
 type GetScheduleByIDParams struct {
@@ -26,8 +28,17 @@ type GetScheduleByIDParams struct {
 }
 
 type GetScheduleByIDRow struct {
-	AgentSchedule AgentSchedule `json:"agent_schedule"`
-	Agent         string        `json:"agent"`
+	ID           pgtype.UUID        `json:"id"`
+	AgentID      pgtype.UUID        `json:"agent_id"`
+	DeploymentID pgtype.UUID        `json:"deployment_id"`
+	TriggerKey   string             `json:"trigger_key"`
+	Cron         string             `json:"cron"`
+	Timezone     string             `json:"timezone"`
+	Input        []byte             `json:"input"`
+	ActiveFrom   pgtype.Timestamptz `json:"active_from"`
+	ActiveUntil  pgtype.Timestamptz `json:"active_until"`
+	NextFireAt   pgtype.Timestamptz `json:"next_fire_at"`
+	Agent        string             `json:"agent"`
 }
 
 func (q *Queries) GetScheduleByID(ctx context.Context, arg GetScheduleByIDParams) (GetScheduleByIDRow, error) {
@@ -39,32 +50,31 @@ func (q *Queries) GetScheduleByID(ctx context.Context, arg GetScheduleByIDParams
 	)
 	var i GetScheduleByIDRow
 	err := row.Scan(
-		&i.AgentSchedule.EnvironmentID,
-		&i.AgentSchedule.ID,
-		&i.AgentSchedule.AgentID,
-		&i.AgentSchedule.DeploymentID,
-		&i.AgentSchedule.TriggerKey,
-		&i.AgentSchedule.Cron,
-		&i.AgentSchedule.Timezone,
-		&i.AgentSchedule.Input,
-		&i.AgentSchedule.ActiveFrom,
-		&i.AgentSchedule.ActiveUntil,
-		&i.AgentSchedule.NextFireAt,
-		&i.AgentSchedule.LatenessToleranceMs,
-		&i.AgentSchedule.SlackChannelID,
+		&i.ID,
+		&i.AgentID,
+		&i.DeploymentID,
+		&i.TriggerKey,
+		&i.Cron,
+		&i.Timezone,
+		&i.Input,
+		&i.ActiveFrom,
+		&i.ActiveUntil,
+		&i.NextFireAt,
 		&i.Agent,
 	)
 	return i, err
 }
 
 const listSchedules = `-- name: ListSchedules :many
-SELECT s.environment_id, s.id, s.agent_id, s.deployment_id, s.trigger_key, s.cron, s.timezone, s.input, s.active_from, s.active_until, s.next_fire_at, s.lateness_tolerance_ms, s.slack_channel_id, a.key AS agent FROM agent_schedules s
-JOIN agents a ON (a.environment_id,a.id)=(s.environment_id,s.agent_id)
-JOIN environments e ON e.id=s.environment_id
+SELECT a.id,a.agent_id,a.deployment_id,a.trigger_key,t.cron,t.timezone,t.input,a.active_from,a.active_until,a.next_fire_at,ag.key AS agent
+FROM trigger_activations a
+JOIN agent_triggers t ON (t.environment_id,t.agent_id,t.deployment_id,t.key)=(a.environment_id,a.agent_id,a.deployment_id,a.trigger_key)
+JOIN agents ag ON (ag.environment_id,ag.id)=(a.environment_id,a.agent_id)
+JOIN environments e ON e.id=a.environment_id
 WHERE e.org_id=$1 AND e.project_id=$2 AND e.id=$3
-AND ($4::text IS NULL OR a.key=$4)
-AND ($5::uuid IS NULL OR (s.agent_id,s.id)>($6::uuid,$5::uuid))
-ORDER BY s.agent_id,s.id LIMIT $7
+AND ($4::text IS NULL OR ag.key=$4)
+AND ($5::uuid IS NULL OR (a.agent_id,a.id)>($6::uuid,$5::uuid))
+ORDER BY a.agent_id,a.id LIMIT $7
 `
 
 type ListSchedulesParams struct {
@@ -78,8 +88,17 @@ type ListSchedulesParams struct {
 }
 
 type ListSchedulesRow struct {
-	AgentSchedule AgentSchedule `json:"agent_schedule"`
-	Agent         string        `json:"agent"`
+	ID           pgtype.UUID        `json:"id"`
+	AgentID      pgtype.UUID        `json:"agent_id"`
+	DeploymentID pgtype.UUID        `json:"deployment_id"`
+	TriggerKey   string             `json:"trigger_key"`
+	Cron         string             `json:"cron"`
+	Timezone     string             `json:"timezone"`
+	Input        []byte             `json:"input"`
+	ActiveFrom   pgtype.Timestamptz `json:"active_from"`
+	ActiveUntil  pgtype.Timestamptz `json:"active_until"`
+	NextFireAt   pgtype.Timestamptz `json:"next_fire_at"`
+	Agent        string             `json:"agent"`
 }
 
 func (q *Queries) ListSchedules(ctx context.Context, arg ListSchedulesParams) ([]ListSchedulesRow, error) {
@@ -100,19 +119,16 @@ func (q *Queries) ListSchedules(ctx context.Context, arg ListSchedulesParams) ([
 	for rows.Next() {
 		var i ListSchedulesRow
 		if err := rows.Scan(
-			&i.AgentSchedule.EnvironmentID,
-			&i.AgentSchedule.ID,
-			&i.AgentSchedule.AgentID,
-			&i.AgentSchedule.DeploymentID,
-			&i.AgentSchedule.TriggerKey,
-			&i.AgentSchedule.Cron,
-			&i.AgentSchedule.Timezone,
-			&i.AgentSchedule.Input,
-			&i.AgentSchedule.ActiveFrom,
-			&i.AgentSchedule.ActiveUntil,
-			&i.AgentSchedule.NextFireAt,
-			&i.AgentSchedule.LatenessToleranceMs,
-			&i.AgentSchedule.SlackChannelID,
+			&i.ID,
+			&i.AgentID,
+			&i.DeploymentID,
+			&i.TriggerKey,
+			&i.Cron,
+			&i.Timezone,
+			&i.Input,
+			&i.ActiveFrom,
+			&i.ActiveUntil,
+			&i.NextFireAt,
 			&i.Agent,
 		); err != nil {
 			return nil, err
