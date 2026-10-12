@@ -39,13 +39,23 @@ export interface SessionHold {
   readonly reason: string
   readonly createdAt: string
 }
+export interface ProcessStop {
+  readonly processEpoch: number
+  readonly turnId: string | null
+  readonly state: "requested" | "stopping" | "stopped"
+  readonly deadline: string
+}
+export interface SessionActivity {
+  readonly process: Readonly<{epoch: number; status: "starting" | "ready" | "stopping" | "lost" | "stopped"; applied: boolean; reconstructionRequired: boolean; stop: ProcessStop | null}> | null
+}
 export interface Session {
+  readonly activity: SessionActivity
   readonly closeAfterIdle: Duration
   readonly idleSince: string | null
   readonly id: string
   readonly agentId: string
   readonly deploymentId: string
-  readonly computerId: string
+  readonly computerId: string | null
   readonly rootSessionId: string
   readonly slackChannelId?: string
   readonly parentSessionId: string | null
@@ -58,6 +68,7 @@ export interface Session {
 }
 export type TurnStatus = "queued" | "running" | "finalizing" | "completed" | "failed" | "interrupted" | "cancelled"
 export interface TurnState {
+  readonly stop?: ProcessStop
   readonly payloadExpiredAt?: string
   readonly response?: Content
   readonly error?: Readonly<{ code: string; message?: string }>
@@ -101,14 +112,6 @@ export interface SessionResumeReceipt {
 export interface SessionResumeRequest extends SessionOperationOptions {
   readonly holdId: string
 }
-export type SessionAdmissionReceipt =
-  | Readonly<{ id: string; kind: "enqueued"; turnId: string }>
-  | Readonly<{
-      id: string
-      kind: "messaged"
-      turnId: string
-      messageId: string
-    }>
 export interface SessionMessageReceipt {
   readonly id: string
   readonly turnId: string
@@ -135,6 +138,7 @@ export type SessionEventKind =
   | "turn.finalizing"
   | "turn.completed"
   | "turn.failed"
+  | "turn.interrupt"
   | "turn.interrupted"
   | "turn.cancelled"
   | "session.cancelled"
@@ -204,7 +208,14 @@ export type TimedTurnWaitResult<O extends JsonValue = JsonValue> =
   | Readonly<{ status: "timeout" }>
   | Readonly<{ status: "settled"; outcome: TurnOutcome<O> }>
 
+export interface TurnInterruptReceipt {
+  readonly id: string
+  readonly sessionId: string
+  readonly turnId: string
+  readonly status: "accepted"
+}
 export interface TurnRef {
+  interrupt(request?: SessionOperationOptions, options?: RequestOptions): Promise<TurnInterruptReceipt>
   wait(options: TurnWaitOptions & { readonly timeout: string | number }): Promise<TimedTurnWaitResult>
   wait(options?: TurnWaitOptions & { readonly timeout?: undefined }): Promise<TurnOutcome>
   wait(options: TurnWaitOptions): Promise<TurnOutcome | TimedTurnWaitResult>
@@ -218,20 +229,8 @@ export interface TurnRef {
   ): Promise<MessageReceipt>
   get(options?: RequestOptions): Promise<TurnState>
 }
-export type SessionSendResult =
-  | Readonly<{ kind: "enqueued"; turn: TurnRef }>
-  | Readonly<{
-      kind: "messaged"
-      turn: TurnRef
-      message: MessageReceipt
-    }>
 export interface SessionRef {
   readonly id: string
-  send(
-    data: InputContent,
-    request?: SessionOperationOptions,
-    options?: RequestOptions,
-  ): Promise<SessionSendResult>
   enqueue(
     input: InputContent,
     request?: SessionOperationOptions,

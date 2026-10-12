@@ -193,7 +193,7 @@ failed test alone does not require recreation.
 
 ## First ordinary Agent case
 
-The `tests/e2e/cases/agent` fixture contains a Computer definition and an Agent
+The `tests/e2e/cases/agent` fixture contains a Template definition and an Agent
 whose initial Turn round-trips a unique marker through the guest filesystem and
 returns Turn, Session and Computer identities. The driver waits for the Turn
 outcome, cancels the Session, and requests Computer deletion. Add or remove ordinary `tests/e2e/cases/<behavior>/` files with

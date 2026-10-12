@@ -58,7 +58,7 @@ func TestSlackStatusAggregatesAttentionBeforeWorkAndRefreshesIdle(t *testing.T) 
 	if err := FinishStatus(t.Context(), f.Pool, active, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
-	queued, err := agent.Enqueue(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "work", Input: json.RawMessage(`[]`)})
+	queued, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "work", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestSlackStatusTerminalChildDoesNotMaskWorkingFront(t *testing.T) {
  SELECT history_retention_mode,environment_id,$2,agent_id,deployment_id,computer_id,root_session_id,id,id,1 FROM sessions WHERE id=$1;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($3,$4,$5,$2)`, pgx.QueryExecModeSimpleProtocol, f.Session, peer, participant, f.thread, f.Environment)
 	caller := agent.Caller{Kind: "user", ID: f.User}
-	if _, err := agent.Enqueue(t.Context(), f.Pool, caller, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "work", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := agent.Enqueue(t.Context(), f.Pool, nil, caller, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "work", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := agent.ControlSession(t.Context(), f.Pool, caller, agent.SessionControlRequest{EnvironmentID: f.Environment, SessionID: peer, Kind: "interrupt", RetryKey: "pause", Reason: "attention"}); err != nil {

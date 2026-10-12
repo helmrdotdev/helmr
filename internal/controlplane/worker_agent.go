@@ -141,18 +141,22 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 		case "send_turn":
 			method = agentv1.Operation_METHOD_SEND_MESSAGE
 			payload = call.Arguments
-		case "interrupt_session", "resume_session", "close_session", "cancel_session":
+		case "interrupt_turn", "interrupt_session", "resume_session", "close_session", "cancel_session":
 			var input struct {
 				SessionID      string `json:"sessionId"`
+				TurnID         string `json:"turnId,omitempty"`
 				HoldID         string `json:"holdId,omitempty"`
 				IdempotencyKey string `json:"idempotencyKey"`
 			}
-			if err := decodeAgentPayload(call.Arguments, &input); err != nil || input.IdempotencyKey == "" || (call.Tool != "resume_session" && input.HoldID != "") || (call.Tool == "resume_session" && input.HoldID == "") {
+			if err := decodeAgentPayload(call.Arguments, &input); err != nil || input.IdempotencyKey == "" || ((call.Tool == "interrupt_turn") != (input.TurnID != "")) || (call.Tool != "resume_session" && input.HoldID != "") || (call.Tool == "resume_session" && input.HoldID == "") {
 				writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "invalid Session control arguments"))
 				return
 			}
 			kind := strings.TrimSuffix(call.Tool, "_session")
-			payload, _ = json.Marshal(map[string]string{"sessionId": input.SessionID, "kind": kind, "holdId": input.HoldID, "idempotencyKey": input.IdempotencyKey})
+			if call.Tool == "interrupt_turn" {
+				kind = "turn_interrupt"
+			}
+			payload, _ = json.Marshal(map[string]string{"sessionId": input.SessionID, "kind": kind, "turnId": input.TurnID, "holdId": input.HoldID, "idempotencyKey": input.IdempotencyKey})
 			method = agentv1.Operation_METHOD_CONTROL_SESSION
 		case "enqueue":
 			method = agentv1.Operation_METHOD_ENQUEUE
@@ -360,7 +364,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 			server.writeAgentAdmissionError(w, request.RequestID, err)
 			return
 		}
-		body, _ := json.Marshal(map[string]any{"sessionId": receipt.SessionID.String(), "turnId": receipt.TurnID.String(), "sequence": receipt.Sequence, "created": receipt.Created, "closeAfterIdleMs": receipt.CloseAfterIdleMs})
+		body, _ := json.Marshal(map[string]any{"sessionId": receipt.SessionID.String(), "turnId": receipt.TurnID.String(), "sequence": receipt.Sequence, "closeAfterIdleMs": receipt.CloseAfterIdleMs})
 		writeJSON(w, http.StatusOK, workerapi.AgentOperationResponse{RequestID: request.RequestID, Value: body})
 
 	case agentv1.Operation_METHOD_SEND_MESSAGE:
@@ -395,6 +399,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 		var input struct {
 			SessionID      string `json:"sessionId"`
 			Kind           string `json:"kind"`
+			TurnID         string `json:"turnId,omitempty"`
 			HoldID         string `json:"holdId,omitempty"`
 			IdempotencyKey string `json:"idempotencyKey,omitempty"`
 		}
@@ -406,6 +411,14 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 		if err != nil || target == uuid.Nil() {
 			writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "invalid control target Session"))
 			return
+		}
+		var targetTurn uuid.UUID
+		if input.TurnID != "" {
+			targetTurn, err = uuid.Parse(input.TurnID)
+			if err != nil || targetTurn == uuid.Nil() {
+				writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "invalid control target Turn"))
+				return
+			}
 		}
 		var hold uuid.UUID
 		if input.HoldID != "" {
@@ -420,7 +433,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		receipt, err := agent.ControlSession(r.Context(), server.tx, caller, agent.SessionControlRequest{
-			EnvironmentID: execution.EnvironmentID, SessionID: target, Kind: input.Kind, HoldID: hold, RetryKey: input.IdempotencyKey,
+			EnvironmentID: execution.EnvironmentID, SessionID: target, TurnID: targetTurn, Kind: input.Kind, HoldID: hold, RetryKey: input.IdempotencyKey,
 		})
 		if err != nil {
 			server.writeAgentAdmissionError(w, request.RequestID, err)
@@ -429,6 +442,9 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 		value := map[string]any{"id": receipt.ID.String(), "sessionId": receipt.SessionID.String(), "status": "accepted"}
 		if receipt.HoldID != uuid.Nil() {
 			value["holdId"] = receipt.HoldID.String()
+		}
+		if targetTurn != uuid.Nil() {
+			value["turnId"] = targetTurn.String()
 		}
 		body, _ := json.Marshal(value)
 		writeJSON(w, http.StatusOK, workerapi.AgentOperationResponse{RequestID: request.RequestID, Value: body})
@@ -451,7 +467,7 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "MCP mutation requires an idempotency key"))
 			return
 		}
-		receipt, err := agent.Enqueue(r.Context(), server.tx, caller, agent.EnqueueRequest{EnvironmentID: execution.EnvironmentID, SessionID: target, RetryKey: input.IdempotencyKey, Input: input.Input})
+		receipt, err := agent.Enqueue(r.Context(), server.tx, server.secretProxy, caller, agent.EnqueueRequest{EnvironmentID: execution.EnvironmentID, SessionID: target, RetryKey: input.IdempotencyKey, Input: input.Input})
 		if err != nil {
 			server.writeAgentAdmissionError(w, request.RequestID, err)
 			return
@@ -464,6 +480,12 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 }
 
 func (server *Server) writeAgentAdmissionError(w http.ResponseWriter, id string, err error) {
+	var notInterruptible agent.TurnNotInterruptibleError
+	if errors.As(err, &notInterruptible) {
+		writeJSON(w, http.StatusOK, agentOperationFailure(id, notInterruptible.ErrorCode(), notInterruptible.Error()))
+		return
+	}
+
 	code := ""
 	switch {
 	case errors.Is(err, agent.ErrSourceConversationPending):

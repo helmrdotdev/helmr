@@ -16,11 +16,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// registerComputerDefinitions records verified deployment inputs in the caller's
+// registerTemplateDefinitions records verified deployment inputs in the caller's
 // registration transaction. The caller must admit the exact Program and all seed
 // objects before calling; this operation does not turn producer metadata into proof.
 // The caller holds the Environment lock before Secret and preparation-spec locks.
-func registerComputerDefinitions(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, output artifact.ProgramOutput) error {
+func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, output artifact.ProgramOutput) error {
 	if env == uuid.Nil() || deployment == uuid.Nil() {
 		return ErrInvalidInput
 	}
@@ -29,14 +29,14 @@ func registerComputerDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 		return fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
 	var locked uuid.UUID
-	manifests := make(map[string]*definition.ComputerManifest, len(specs))
+	manifests := make(map[string]*definition.TemplateManifest, len(specs))
 	secretIDs := make(map[uuid.UUID]struct{})
 	for _, d := range output.Metadata.Definitions {
-		if d.Computer == nil {
+		if d.Template == nil {
 			continue
 		}
-		manifests[d.DeclaredID] = d.Computer
-		for _, refs := range [][]definition.SecretBinding{d.Computer.Secrets, d.Computer.BuildSecrets} {
+		manifests[d.DeclaredID] = d.Template
+		for _, refs := range [][]definition.SecretBinding{d.Template.Secrets, d.Template.BuildSecrets} {
 			for _, ref := range refs {
 				secretIDs[uuid.MustParse(ref.SecretID)] = struct{}{}
 			}
@@ -73,6 +73,7 @@ func registerComputerDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 	}
 	type input struct {
 		ID           uuid.UUID       `json:"id"`
+		TemplateID   uuid.UUID       `json:"template_id"`
 		Digest       string          `json:"digest"`
 		Definition   string          `json:"definition"`
 		Spec         json.RawMessage `json:"spec"`
@@ -96,7 +97,7 @@ func registerComputerDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 		if err != nil {
 			return err
 		}
-		m := manifests[spec.ComputerDefinitionID]
+		m := manifests[spec.TemplateDefinitionID]
 		seed, err := json.Marshal(m.Seed)
 		if err != nil {
 			return err
@@ -126,13 +127,47 @@ func registerComputerDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 			every = &m.Refresh.EveryMs
 			maxAge = m.Refresh.MaxAgeMs
 		}
-		inputs = append(inputs, input{ID: uuid.NewV7(), Digest: digest, Definition: spec.ComputerDefinitionID, Spec: raw, Seed: seed, BuildRefs: buildRefs, Resources: resources, RuntimeRefs: runtimeRefs, Every: every, MaxAge: maxAge, DeleteUnused: m.DeleteAfterUnusedMs, DeleteNever: m.DeleteAfterUnusedNever})
+		inputs = append(inputs, input{ID: uuid.NewV7(), TemplateID: uuid.NewV7(), Digest: digest, Definition: spec.TemplateDefinitionID, Spec: raw, Seed: seed, BuildRefs: buildRefs, Resources: resources, RuntimeRefs: runtimeRefs, Every: every, MaxAge: maxAge, DeleteUnused: m.DeleteAfterUnusedMs, DeleteNever: m.DeleteAfterUnusedNever})
 		digests = append(digests, digest)
 	}
 	if len(inputs) == 0 {
 		return nil
 	}
 	raw, err := json.Marshal(inputs)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO templates(environment_id,id,key)
+ SELECT $1,v.template_id,v.definition FROM jsonb_to_recordset($2::jsonb) AS v(template_id uuid,definition text)
+ ON CONFLICT(environment_id,key) DO NOTHING`, env, raw); err != nil {
+		return err
+	}
+	templateRows, err := tx.Query(ctx, `SELECT key,id FROM templates WHERE environment_id=$1`, env)
+	if err != nil {
+		return err
+	}
+	templates, err := pgx.CollectRows(templateRows, func(row pgx.CollectableRow) (struct {
+		key string
+		id  uuid.UUID
+	}, error) {
+		var value struct {
+			key string
+			id  uuid.UUID
+		}
+		err := row.Scan(&value.key, &value.id)
+		return value, err
+	})
+	if err != nil {
+		return err
+	}
+	templateIDs := make(map[string]uuid.UUID, len(templates))
+	for _, value := range templates {
+		templateIDs[value.key] = value.id
+	}
+	for i := range inputs {
+		inputs[i].TemplateID = templateIDs[inputs[i].Definition]
+	}
+	raw, err = json.Marshal(inputs)
 	if err != nil {
 		return err
 	}
@@ -200,7 +235,7 @@ func registerComputerDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 			rows.Close()
 			return err
 		}
-		bindings, err = registrationSecretBindings(refs, nil, &deployment, &want.Definition)
+		bindings, err = registrationSecretBindings(refs, nil, &deployment, &want.TemplateID)
 		if err != nil {
 			rows.Close()
 			return err
@@ -226,9 +261,9 @@ func registerComputerDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 	if count != len(buildBindings) {
 		return ErrConflict
 	}
-	inserted, err := tx.Exec(ctx, `INSERT INTO computer_definitions(environment_id,deployment_id,definition_key,preparation_spec_id,resources,refresh_every_ms,max_image_age_ms,delete_after_unused_ms,delete_after_unused_never)
- SELECT $1,$2,v.definition,s.id,v.resources,v.every_ms,v.max_age_ms,v.delete_unused_ms,v.delete_never
- FROM jsonb_to_recordset($3::jsonb) AS v(definition text,digest text,resources jsonb,runtime_refs jsonb,every_ms bigint,max_age_ms bigint,delete_unused_ms bigint,delete_never boolean)
+	inserted, err := tx.Exec(ctx, `INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,resources,refresh_every_ms,max_image_age_ms,delete_after_unused_ms,delete_after_unused_never)
+ SELECT $1,$2,v.template_id,s.id,v.resources,v.every_ms,v.max_age_ms,v.delete_unused_ms,v.delete_never
+ FROM jsonb_to_recordset($3::jsonb) AS v(template_id uuid,definition text,digest text,resources jsonb,runtime_refs jsonb,every_ms bigint,max_age_ms bigint,delete_unused_ms bigint,delete_never boolean)
  JOIN computer_preparation_specs s ON s.environment_id=$1 AND s.spec_digest=v.digest`, env, deployment, raw)
 	if err != nil {
 		return err
@@ -245,7 +280,7 @@ func registerComputerDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 // deployment. The caller must hold the Environment lock and verify Program and
 // seed bytes before registration.
 func RegisterProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, output artifact.ProgramOutput) error {
-	if err := registerComputerDefinitions(ctx, tx, env, deployment, output); err != nil {
+	if err := registerTemplateDefinitions(ctx, tx, env, deployment, output); err != nil {
 		return err
 	}
 
@@ -266,7 +301,7 @@ func RegisterProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment 
 			if err != nil {
 				return err
 			}
-			inputs = append(inputs, agentInput{Name: d.DeclaredID, Computer: d.Agent.ComputerDefinitionID, Setup: d.Agent.Setup, Triggers: triggers, MaxTurn: d.Agent.MaxTurnDurationMs, CloseIdle: d.Agent.CloseAfterIdleMs, CloseNever: d.Agent.CloseAfterIdleNever, ID: uuid.NewV7()})
+			inputs = append(inputs, agentInput{Name: d.DeclaredID, Computer: d.Agent.TemplateDefinitionID, Setup: d.Agent.Setup, Triggers: triggers, MaxTurn: d.Agent.MaxTurnDurationMs, CloseIdle: d.Agent.CloseAfterIdleMs, CloseNever: d.Agent.CloseAfterIdleNever, ID: uuid.NewV7()})
 		}
 	}
 	if len(inputs) == 0 {
@@ -276,15 +311,16 @@ func RegisterProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment 
 	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO agents(environment_id,id,name)
+	if _, err := tx.Exec(ctx, `INSERT INTO agents(environment_id,id,key)
  SELECT $1,v.id,v.name FROM jsonb_to_recordset($2::jsonb) AS v(id uuid,name text)
- ON CONFLICT(environment_id,name) DO NOTHING`, env, raw); err != nil {
+ ON CONFLICT(environment_id,key) DO NOTHING`, env, raw); err != nil {
 		return err
 	}
-	inserted, err := tx.Exec(ctx, `INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,definition_key,computer_definition_key,setup,triggers,max_turn_duration_ms,close_after_idle_ms,close_after_idle_never)
- SELECT $1,a.id,$2,v.name,v.computer,v.setup,decode(v.triggers,'base64'),v.max_turn_ms,v.close_idle_ms,v.close_never
+	inserted, err := tx.Exec(ctx, `INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,setup,triggers,max_turn_duration_ms,close_after_idle_ms,close_after_idle_never)
+ SELECT $1,a.id,$2,t.id,v.setup,decode(v.triggers,'base64'),v.max_turn_ms,v.close_idle_ms,v.close_never
  FROM jsonb_to_recordset($3::jsonb) AS v(name text,computer text,setup boolean,triggers text,max_turn_ms bigint,close_idle_ms bigint,close_never boolean)
- JOIN agents a ON a.environment_id=$1 AND a.name=v.name`, env, deployment, raw)
+ JOIN agents a ON a.environment_id=$1 AND a.key=v.name
+ JOIN templates t ON t.environment_id=$1 AND t.key=v.computer`, env, deployment, raw)
 	if err != nil {
 		return err
 	}

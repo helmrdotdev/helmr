@@ -67,7 +67,7 @@ func TestPreparationRetainsOneExecutionAndReplaysOutput(t *testing.T) {
 	if err != nil || absent.State != "absent" || runs.Load() != 0 {
 		t.Fatalf("probe started code: %+v %v", absent, err)
 	}
-	request.Start = &computerv0.PreparationStart{LogLimits: &computerv0.PreparationLogLimits{ChunkBytes: 1024, BufferBytes: 2048, BufferRecords: 4}, ComputerDefinitionId: "repo"}
+	request.Start = &computerv0.PreparationStart{LogLimits: &computerv0.PreparationLogLimits{ChunkBytes: 1024, BufferBytes: 2048, BufferRecords: 4}, TemplateDefinitionId: "repo"}
 	if _, err := registry.controlPreparation(t.Context(), request, run); err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestPreparationRetainsOneExecutionAndReplaysOutput(t *testing.T) {
 		}
 	}
 	wrong := proto.Clone(request).(*computerv0.PreparationControlRequest)
-	wrong.Start = &computerv0.PreparationStart{LogLimits: &computerv0.PreparationLogLimits{ChunkBytes: 1024, BufferBytes: 2048, BufferRecords: 4}, ComputerDefinitionId: "other"}
+	wrong.Start = &computerv0.PreparationStart{LogLimits: &computerv0.PreparationLogLimits{ChunkBytes: 1024, BufferBytes: 2048, BufferRecords: 4}, TemplateDefinitionId: "other"}
 	if _, err := registry.controlPreparation(t.Context(), wrong, run); err == nil {
 		t.Fatal("changed Program was accepted")
 	}
@@ -119,7 +119,7 @@ func TestPreparationRenewalExpiryAndCleanupFailure(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			registry, entry, request := preparationGuestFixture(t)
 			request.ExpiresAtUnixNano = time.Now().Add(100 * time.Millisecond).UnixNano()
-			request.Start = &computerv0.PreparationStart{LogLimits: &computerv0.PreparationLogLimits{ChunkBytes: 1024, BufferBytes: 2048, BufferRecords: 4}, ComputerDefinitionId: "repo"}
+			request.Start = &computerv0.PreparationStart{LogLimits: &computerv0.PreparationLogLimits{ChunkBytes: 1024, BufferBytes: 2048, BufferRecords: 4}, TemplateDefinitionId: "repo"}
 			started := make(chan struct{})
 			run := func(_ *computerMountEntry, ctx context.Context, _ *computerv0.PreparationStart, _ *preparationOutput) (error, error) {
 				close(started)
@@ -164,7 +164,7 @@ func TestPreparationRenewalExpiryAndCleanupFailure(t *testing.T) {
 					t.Fatal("cleanup failure permitted capture")
 				}
 			}
-			request.Start = &computerv0.PreparationStart{LogLimits: &computerv0.PreparationLogLimits{ChunkBytes: 1024, BufferBytes: 2048, BufferRecords: 4}, ComputerDefinitionId: "repo"}
+			request.Start = &computerv0.PreparationStart{LogLimits: &computerv0.PreparationLogLimits{ChunkBytes: 1024, BufferBytes: 2048, BufferRecords: 4}, TemplateDefinitionId: "repo"}
 			request.ExpiresAtUnixNano = time.Now().Add(time.Hour).UnixNano()
 			replay, err := registry.controlPreparation(t.Context(), request, run)
 			if err == nil || replay != nil {
@@ -190,7 +190,7 @@ func TestPreparationControlSecretFrameBounds(t *testing.T) {
 				binary.BigEndian.PutUint32(header[:], wire.PreparationControlFrameBytes+1)
 				_, _ = host.Write(header[:])
 			} else {
-				request := &computerv0.PreparationControlRequest{Identity: &computerv0.PreparationIdentity{PreparationId: "missing", InstanceId: "missing", Epoch: 1, ChannelCredential: bytes.Repeat([]byte{1}, 32)}, Start: &computerv0.PreparationStart{LogLimits: &computerv0.PreparationLogLimits{ChunkBytes: 1024, BufferBytes: 2048, BufferRecords: 4}, ComputerDefinitionId: "repo", Secrets: []*computerv0.ComputerSecretDelivery{{PlacementKind: "env", PlacementTarget: "LARGE", Value: bytes.Repeat([]byte{65}, 80<<10)}}}}
+				request := &computerv0.PreparationControlRequest{Identity: &computerv0.PreparationIdentity{PreparationId: "missing", InstanceId: "missing", Epoch: 1, ChannelCredential: bytes.Repeat([]byte{1}, 32)}, Start: &computerv0.PreparationStart{LogLimits: &computerv0.PreparationLogLimits{ChunkBytes: 1024, BufferBytes: 2048, BufferRecords: 4}, TemplateDefinitionId: "repo", Secrets: []*computerv0.ComputerSecretDelivery{{PlacementKind: "env", PlacementTarget: "LARGE", Value: bytes.Repeat([]byte{65}, 80<<10)}}}}
 				if err := frameio.WriteProtoFrame(host, request); err != nil {
 					t.Fatal(err)
 				}

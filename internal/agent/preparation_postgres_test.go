@@ -49,7 +49,7 @@ func preparationFixtureFor(t *testing.T, resident fixture) preparationFixture {
 func (f preparationFixture) waiter(t *testing.T) uuid.UUID {
 	t.Helper()
 	id := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes')`, f.env, id, f.deployment)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,'{}',34359738368)`, f.env, id, f.deployment)
 	return id
 }
 func (f preparationFixture) attach(t *testing.T, id uuid.UUID) Preparation {
@@ -338,7 +338,7 @@ func TestPreparationWaiterDeadlineFailsOnlyPendingWorkAndSealsSessions(t *testin
 	session := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO sessions(history_retention_mode,environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth) VALUES('until_environment_deletion',$1,$2,$3,$4,$5,$2,0)`, f.env, session, f.agent, f.deployment, computer)
 	request := EnqueueRequest{EnvironmentID: f.env, SessionID: session, RetryKey: "pending", Input: []byte(`[{"type":"text","text":"{\"input\":1}"}]`)}
-	admitted, err := Enqueue(t.Context(), f.pool, f.caller(), request)
+	admitted, err := Enqueue(t.Context(), f.pool, nil, f.caller(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,11 +351,11 @@ func TestPreparationWaiterDeadlineFailsOnlyPendingWorkAndSealsSessions(t *testin
 	if err = f.pool.QueryRow(t.Context(), `SELECT t.status,t.started_at IS NOT NULL,s.status,c.preparation_failed_at IS NOT NULL FROM turns t JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.session_id) JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id) WHERE t.environment_id=$1 AND t.id=$2`, f.env, admitted.TurnID).Scan(&state, &started, &lifecycle, &failed); err != nil || state != "failed" || started || lifecycle != "closed" || !failed {
 		t.Fatalf("turn=%s started=%v session=%s failed=%v: %v", state, started, lifecycle, failed, err)
 	}
-	if _, err = Enqueue(t.Context(), f.pool, f.caller(), request); err != nil {
+	if _, err = Enqueue(t.Context(), f.pool, nil, f.caller(), request); err != nil {
 		t.Fatalf("original admission identity disappeared: %v", err)
 	}
 	request.RetryKey = "new"
-	if _, err = Enqueue(t.Context(), f.pool, f.caller(), request); !errors.Is(err, ErrNotReady) {
+	if _, err = Enqueue(t.Context(), f.pool, nil, f.caller(), request); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("failed Computer admitted new work: %v", err)
 	}
 	// Failing a waiter never claims its shared preparation writer stopped.

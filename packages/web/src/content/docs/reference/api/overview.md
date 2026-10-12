@@ -42,9 +42,9 @@ see [Authentication](/docs/reference/api/authentication). The TypeScript
 | | `POST` | `/v1/sessions/{sessionID}/turns/{turnID}/asks/{askID}/respond` |
 | Schedules | `GET` | `/v1/schedules` |
 | | `GET` | `/v1/schedules/{scheduleID}` |
-| Computer definitions | `GET` | `/v1/computer-definitions` |
-| | `GET` | `/v1/computer-definitions/{computerDefinitionID}` |
-| | `POST` | `/v1/computer-definitions/{computerDefinitionID}/computers` |
+| Template definitions | `GET` | `/v1/template-definitions` |
+| | `GET` | `/v1/template-definitions/{templateDefinitionID}` |
+| | `POST` | `/v1/template-definitions/{templateDefinitionID}/computers` |
 | Computers | `GET` | `/v1/computers` |
 | | `GET` | `/v1/computers/{computerID}` |
 | | `PATCH` | `/v1/computers/{computerID}` |
@@ -60,7 +60,7 @@ see [Authentication](/docs/reference/api/authentication). The TypeScript
 | | `POST` | `/v1/secrets/{secretID}/rotate` |
 | | `POST` | `/v1/secrets/{secretID}/revoke` |
 
-`{agentName}`, `{agentDefinitionID}` and `{computerDefinitionID}` are
+`{agentName}`, `{agentDefinitionID}` and `{templateDefinitionID}` are
 definition IDs declared in code. All other path IDs are server-assigned UUIDs.
 
 `PATCH /v1/computers/{computerID}` changes Computer retention. Its body is

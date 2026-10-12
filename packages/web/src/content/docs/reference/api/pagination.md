@@ -23,7 +23,7 @@ Pass `next_cursor` unchanged as `cursor` in the next request. A response without
 | `GET /v1/sessions/{sessionID}/turns` | `turns` | 1–100, default 50 |
 | `GET /v1/sessions/{sessionID}/turns/{turnID}/asks` | `asks` | 1–100, default 50 |
 | `GET /v1/agent-definitions` | `agent_definitions` | 1–100, default 50 |
-| `GET /v1/computer-definitions` | `computer_definitions` | 1–100, default 50 |
+| `GET /v1/template-definitions` | `template_definitions` | 1–100, default 50 |
 | `GET /v1/computers` | `computers` | 1–100, default 50 |
 | `GET /v1/computers/{computerID}/members` | `members` | 1–100, default 50 |
 | `GET /v1/schedules` | `schedules` | 1–100, default 50 |

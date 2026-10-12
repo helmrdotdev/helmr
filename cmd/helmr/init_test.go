@@ -62,7 +62,7 @@ func TestInitCommandCreatesStarterProject(t *testing.T) {
 	if string(agentSource) != starterHelloAgent {
 		t.Fatalf("agentSource = %q", agentSource)
 	}
-	for _, expected := range []string{`helloComputer = computer({`, `hello = agent({`, `computer: helloComputer`, `memory: "1GiB"`} {
+	for _, expected := range []string{`helloComputer = template({`, `hello = agent({`, `template: helloComputer`, `memory: "1GiB"`} {
 		if !strings.Contains(string(agentSource), expected) {
 			t.Fatalf("starter Agent is missing current SDK syntax %q", expected)
 		}

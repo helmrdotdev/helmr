@@ -40,7 +40,7 @@ and local responses. Running the actual Agent requires your configured environme
 
 ```bash
 helmr deploy PATH/TO/issue-fixer --project PROJECT --env ENVIRONMENT
-helmr agent start codex-issue-fixer --input-json '[{"type":"text","text":"Fix the login regression"}]' --project PROJECT --env ENVIRONMENT --json
+helmr session create codex-issue-fixer --input-json '[{"type":"text","text":"Fix the login regression"}]' --project PROJECT --env ENVIRONMENT --json
 ```
 
 Use `claude-issue-fixer` for Claude. Initial input and native follow-ups are text-part

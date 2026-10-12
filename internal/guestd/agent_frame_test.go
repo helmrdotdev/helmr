@@ -37,7 +37,7 @@ func TestAgentFrameEpochAndBounds(t *testing.T) {
 		}
 	}
 	var output bytes.Buffer
-	command := &agentv1.GuestCommand{Identity: identity, Command: &agentv1.GuestCommand_Resume{Resume: &agentv1.SessionResume{}}}
+	command := &agentv1.GuestCommand{Identity: identity, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "run"}}}
 	if err := writeAgentCommand(&output, identity, command); err != nil {
 		t.Fatal(err)
 	}

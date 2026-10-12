@@ -194,7 +194,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		duration, driverTimeout = 35*time.Minute, 30*60*1000
 	}
 	longIdle := mode == nativeExecutionLongIdle
-	// Discovery includes sequential interruption, replacement and cancellation before both restores.
+	// Discovery includes sequential interruption, retained-process continuation and cancellation before both restores.
 	if keyMismatch || sessionDiscovery {
 		duration, driverTimeout = 20*time.Minute, 15*60*1000
 	}
@@ -225,6 +225,9 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		t.Fatal(err)
 	}
 	var extraPermissions []auth.Permission
+	if sessionDiscovery {
+		extraPermissions = append(extraPermissions, auth.PermissionSessionsInterrupt)
+	}
 	if secretBindings {
 		extraPermissions = []auth.Permission{auth.PermissionComputersCreate, auth.PermissionSecretsWrite}
 	}
@@ -425,7 +428,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		observeCtx, stopObserving := context.WithCancel(ctx)
 		observed := make(chan error, 1)
 		go func() {
-			observed <- writeNativeCheckpointObservations(observeCtx, database.Pool, env, checkpointObservations)
+			observed <- writeNativeCheckpointObservations(observeCtx, database.Pool, env, checkpointObservations, sessionDiscovery)
 		}()
 		defer func() {
 			stopObserving()
@@ -496,6 +499,52 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	performanceFinished = time.Now()
 	if writeErr := os.WriteFile(filepath.Join(input.Evidence, "driver.log"), diagnostic.Bytes(), 0600); writeErr != nil {
 		t.Fatal(writeErr)
+	}
+	if sessionDiscovery {
+		settleCtx, stopSettle := context.WithTimeout(t.Context(), 3*time.Second)
+		for {
+			var settled bool
+			settleErr := database.Pool.QueryRow(settleCtx, `SELECT NOT EXISTS (
+ SELECT 1 FROM computer_commands WHERE environment_id=$1 AND terminal_at IS NOT NULL AND NOT output_fenced
+ AND NOT COALESCE(stdout_final_through IS NOT NULL AND stderr_final_through IS NOT NULL
+   AND stdout_ended AND stderr_ended AND stdout_accepted_through=stdout_final_through
+   AND stderr_accepted_through=stderr_final_through,false))`, env).Scan(&settled)
+			if settleErr != nil {
+				t.Logf("command diagnostic output settlement: %v", settleErr)
+				break
+			}
+			if settled {
+				break
+			}
+			select {
+			case <-settleCtx.Done():
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+		stopSettle()
+		diagnosticCtx, stopDiagnostic := context.WithTimeout(t.Context(), 5*time.Second)
+		var commands []byte
+		commandErr := database.Pool.QueryRow(diagnosticCtx, `SELECT COALESCE(jsonb_agg(to_jsonb(command) ORDER BY created_at),'[]'::jsonb)
+ FROM (SELECT c.id,c.status,c.timeout_ms,c.created_at,c.started_at,c.process_exited_at,
+              c.process_reconciled_at,c.terminal_at,c.exit_code,c.error,c.terminal_reason_code,c.output_fenced,
+              c.stdout_accepted_through,c.stdout_final_through,c.stdout_ended,c.stdout_end_complete,c.stdout_gapped,
+              c.stderr_accepted_through,c.stderr_final_through,c.stderr_ended,c.stderr_end_complete,c.stderr_gapped,
+              c.stdout_final_complete,c.stdout_final_gapped,c.stderr_final_complete,c.stderr_final_gapped,
+              COALESCE(c.stdout_final_through IS NOT NULL AND c.stderr_final_through IS NOT NULL
+                AND c.stdout_ended AND c.stderr_ended AND c.stdout_accepted_through=c.stdout_final_through
+                AND c.stderr_accepted_through=c.stderr_final_through,false) AS output_settled,
+              (SELECT COALESCE(jsonb_agg(jsonb_build_object('stream',o.stream,'sequence',o.sequence,
+                  'acceptedAt',o.accepted_at,'observedAtUnixNano',o.observed_at_unix_nano,
+                  'dataBase64',encode(o.data,'base64')) ORDER BY o.id),'[]'::jsonb)
+               FROM telemetry_outbox o WHERE o.environment_id=c.environment_id AND o.command_id=c.id AND o.kind='data') AS output
+       FROM computer_commands c WHERE c.environment_id=$1) command`, env).Scan(&commands)
+		stopDiagnostic()
+		if commandErr == nil {
+			commandErr = os.WriteFile(filepath.Join(input.Evidence, "command-diagnostics.json"), commands, 0600)
+		}
+		if commandErr != nil {
+			t.Logf("retain command diagnostics: %v", commandErr)
+		}
 	}
 	if err != nil {
 		if healthyRAM || checkpointFault != "" {
@@ -573,6 +622,9 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		}
 	}
 	if sessionDiscovery {
+		if err := verifyNativeStops(ctx, database.Pool, env, result.Bytes(), input.Evidence); err != nil {
+			t.Fatal(err)
+		}
 		if err := verifyNativeSessionControls(ctx, database.Pool, env, result.Bytes(), input.Evidence); err != nil {
 			t.Fatal(err)
 		}
@@ -679,8 +731,8 @@ FROM save`, env, turn.ID, turn.Save, receipt.PeerSessionID).Scan(&timeline)
 	}
 	var mcpTurns int
 	err = database.Pool.QueryRow(ctx, `SELECT count(*) FROM turns t JOIN sessions source ON (source.environment_id,source.id)=(t.environment_id,t.caller_id) JOIN agents a ON (a.environment_id,a.id)=(source.environment_id,source.agent_id)
-  WHERE t.environment_id=$1 AND t.session_id=$2 AND t.caller_kind='session' AND t.admission_method='enqueue' AND t.origin_turn_id IS NULL AND ((a.name='codex' AND source.id=$3) OR (a.name='claude' AND source.id=$4))
-  AND (t.retry_key IN (a.name||'-1',a.name||'-3') OR ($5 AND t.retry_key=a.name||'-5') OR ($6 AND t.retry_key IN (a.name||'-5',a.name||'-7')))`, env, receipt.PeerSessionID, receipt.NativeSessions["codex"], receipt.NativeSessions["claude"], nativeProcessLoss || cancelSave, healthyRAM).Scan(&mcpTurns)
+  WHERE t.environment_id=$1 AND t.session_id=$2 AND t.caller_kind='session' AND t.admission_method='enqueue' AND t.origin_turn_id IS NULL AND ((a.key='codex' AND source.id=$3) OR (a.key='claude' AND source.id=$4))
+  AND (t.retry_key IN (a.key||'-1',a.key||'-3') OR ($5 AND t.retry_key=a.key||'-5') OR ($6 AND t.retry_key IN (a.key||'-5',a.key||'-7')))`, env, receipt.PeerSessionID, receipt.NativeSessions["codex"], receipt.NativeSessions["claude"], nativeProcessLoss || cancelSave, healthyRAM).Scan(&mcpTurns)
 	expectedSaves := expectedTurns
 	if cancelSave {
 		expectedSaves += 2
@@ -834,7 +886,7 @@ func seedNativeExecution(t *testing.T, pool *pgxpool.Pool, extraPermissions ...a
  INSERT INTO projects(id,org_id,default_region_id,slug,name) VALUES($3,$1,'native-proof','native-proof','Native proof');
  INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex) VALUES('until_environment_deletion',$4,$1,$3,'native-proof','Native proof','#112233');
  UPDATE environments SET max_outstanding_admissions=128,max_causal_depth=8,max_resident_computers=2,max_cpu_millis=4000,max_memory_bytes=17179869184,max_reserved_storage_bytes=137438953472,preparation_timeout_ms=600000,admission_rate_per_second=100,admission_burst=100,admission_tokens=100,admission_refilled_at=clock_timestamp() WHERE id=$4;`, pgx.QueryExecModeSimpleProtocol, org, user, project, env)
-	issued, err := identity.IssueAPIKey(t.Context(), db.New(pool), auth.Principal{OrgID: org, UserID: user, Kind: auth.PrincipalKindSession, Role: auth.RoleOwner}, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: env.String()}, identity.APIKeyInput{Name: "native proof", Permissions: append([]auth.Permission{auth.PermissionDeploymentsWrite, auth.PermissionAgentsStart, auth.PermissionSessionsRead, auth.PermissionSessionsSend, auth.PermissionSessionsClose, auth.PermissionSessionsCancel, auth.PermissionSessionsResume, auth.PermissionComputersRead, auth.PermissionComputersDelete, auth.PermissionComputerCommandCreate, auth.PermissionAsksRespond}, extraPermissions...)})
+	issued, err := identity.IssueAPIKey(t.Context(), db.New(pool), auth.Principal{OrgID: org, UserID: user, Kind: auth.PrincipalKindSession, Role: auth.RoleOwner}, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: env.String()}, identity.APIKeyInput{Name: "native proof", Permissions: append([]auth.Permission{auth.PermissionDeploymentsWrite, auth.PermissionSessionsCreate, auth.PermissionSessionsRead, auth.PermissionSessionsSend, auth.PermissionSessionsClose, auth.PermissionSessionsCancel, auth.PermissionSessionsResume, auth.PermissionComputersRead, auth.PermissionComputersDelete, auth.PermissionComputerCommandCreate, auth.PermissionAsksRespond}, extraPermissions...)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1106,7 +1158,7 @@ func (g *nativePublicationGate) observe(ctx context.Context, save string) error 
 	var peer, turn, session uuid.UUID
 	var sequence int64
 	var result json.RawMessage
-	err := g.pool.QueryRow(ctx, `SELECT a.name IN ('codex','claude'), t.status='finalizing' AND t.completion_save_id IS NULL AND s.status='captured' AND s.root_id IS NULL, t.id, t.session_id, t.seq, t.result
+	err := g.pool.QueryRow(ctx, `SELECT a.key IN ('codex','claude'), t.status='finalizing' AND t.completion_save_id IS NULL AND s.status='captured' AND s.root_id IS NULL, t.id, t.session_id, t.seq, t.result
   FROM computer_saves s JOIN turns t ON (t.environment_id,t.id)=(s.environment_id,s.turn_id) JOIN sessions se ON(se.environment_id,se.id)=(t.environment_id,t.session_id) JOIN agents a ON(a.environment_id,a.id)=(se.environment_id,se.agent_id) WHERE s.environment_id=$1 AND s.id=$2`, g.environment, save).Scan(&native, &valid, &turn, &session, &sequence, &result)
 	if err != nil {
 		return err
@@ -1167,7 +1219,7 @@ func (g *nativePublicationGate) observe(ctx context.Context, save string) error 
 			return err
 		}
 	}
-	err = g.pool.QueryRow(ctx, `SELECT p.id FROM computer_saves s JOIN sessions p ON (p.environment_id,p.computer_id)=(s.environment_id,s.computer_id) JOIN agents a ON(a.environment_id,a.id)=(p.environment_id,p.agent_id) JOIN turns t ON(t.environment_id,t.session_id)=(p.environment_id,p.id) WHERE s.environment_id=$1 AND s.id=$2 AND a.name='peer' AND t.status='running'`, g.environment, save).Scan(&peer)
+	err = g.pool.QueryRow(ctx, `SELECT p.id FROM computer_saves s JOIN sessions p ON (p.environment_id,p.computer_id)=(s.environment_id,s.computer_id) JOIN agents a ON(a.environment_id,a.id)=(p.environment_id,p.agent_id) JOIN turns t ON(t.environment_id,t.session_id)=(p.environment_id,p.id) WHERE s.environment_id=$1 AND s.id=$2 AND a.key='peer' AND t.status='running'`, g.environment, save).Scan(&peer)
 	if err != nil {
 		return err
 	}

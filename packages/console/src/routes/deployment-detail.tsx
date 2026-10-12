@@ -7,8 +7,8 @@ import { ApiError } from "../lib/api";
 import { getMe, hasPermission } from "../lib/auth";
 import { getCurrentDeployment, getDeployment, getDeploymentEvents } from "../lib/deployments";
 import { listSchedules } from "../lib/schedules";
-import { useScope } from "../lib/scope";
-import { listAgentDefinitions, listComputerDefinitions, type DefinitionListItem } from "../lib/definitions";
+import { useRouteScope, useScope } from "../lib/scope";
+import { definitionHref, listAgentDefinitions, listTemplateDefinitions, type DefinitionListItem } from "../lib/definitions";
 import { DataTable } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
 import { PageHeader } from "../ui/PageHeader";
@@ -17,12 +17,12 @@ import { StatePanel } from "../ui/StatePanel";
 import { StatusBadge } from "../ui/StatusBadge";
 import { cx, ui } from "../ui/styles";
 
-const TABS = ["agent_definitions", "computer_definitions", "schedules", "events"] as const;
+const TABS = ["agent_definitions", "template_definitions", "schedules", "events"] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_LABELS: Record<Tab, string> = {
   agent_definitions: "Agent definitions",
-  computer_definitions: "Computer definitions",
+  template_definitions: "Template definitions",
   schedules: "Schedules",
   events: "Events",
 };
@@ -38,6 +38,7 @@ function errorMessage(error: unknown, fallback: string): string {
 
 function DefinitionTable(props: {
   label: string;
+  href: (id: string) => string;
   items: DefinitionListItem[] | undefined;
   pending: boolean;
   error: unknown;
@@ -59,7 +60,7 @@ function DefinitionTable(props: {
             <For each={props.items}>
               {(item) => (
                 <tr>
-                  <td><strong class="font-medium text-console-text">{item.id}</strong></td>
+                  <td><a class="text-console-accent hover:text-console-accent-hover" href={props.href(item.id)}>{item.id}</a></td>
                   <Show when={props.onSlack}>
                     <td class={ui.actionsCell}>
                       <Show when={props.onSlack}>{(edit) => <button type="button" class={ui.secondaryButton} onClick={() => edit()(item.id)}>Slack connection</button>}</Show>
@@ -77,10 +78,11 @@ function DefinitionTable(props: {
 
 export function DeploymentDetail() {
   const params = useParams();
-  const scope = useScope();
+  const scope = useRouteScope();
+  const globalScope = useScope();
   const deploymentID = createMemo(() => params["deployment_id"]?.trim() ?? "");
-  const projectID = () => scope.selectedProjectID();
-  const environmentID = () => scope.selectedEnvironmentID();
+  const projectID = () => scope().projectID;
+  const environmentID = () => scope().environmentID;
   const enabled = () => !!deploymentID() && !!projectID() && !!environmentID();
   const resourceScope = () => ({ projectID: projectID(), environmentID: environmentID() });
   const [tab, setTab] = createSignal<Tab>("agent_definitions");
@@ -105,6 +107,8 @@ export function DeploymentDetail() {
     queryFn: () => getCurrentDeployment(resourceScope()),
     enabled: enabled(),
     retry: false,
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
   }));
   const isCurrent = createMemo(() => !!current.data && current.data.id === deploymentID());
   const canPromote = createMemo(() => !!deployment.data && canPromoteDeployment({
@@ -121,12 +125,12 @@ export function DeploymentDetail() {
     enabled: enabled() && tab() === "agent_definitions",
     retry: false,
   }));
-  const computerDefinitions = createInfiniteQuery(() => ({
-    queryKey: ["computer_definitions", deploymentID(), projectID(), environmentID()],
-    queryFn: ({ pageParam }) => listComputerDefinitions({ ...definitionOptions(), cursor: pageParam || undefined }),
+  const templateDefinitions = createInfiniteQuery(() => ({
+    queryKey: ["template_definitions", deploymentID(), projectID(), environmentID()],
+    queryFn: ({ pageParam }) => listTemplateDefinitions({ ...definitionOptions(), cursor: pageParam || undefined }),
     initialPageParam: "",
     getNextPageParam: page => page.next_cursor,
-    enabled: enabled() && tab() === "computer_definitions",
+    enabled: enabled() && tab() === "template_definitions",
     retry: false,
   }));
   const schedules = createInfiniteQuery(() => ({
@@ -153,7 +157,7 @@ export function DeploymentDetail() {
       <PageHeader
         title={deployment.data?.version ?? "Deployment"}
         back={{ href: "/deployments", label: "Deployments" }}
-        badge={<Show when={isCurrent()}><StatusBadge resource="deployment" status="current" /></Show>}
+        badge={<Show when={current.isSuccess} fallback={<span>Checking current Deployment…</span>}><Show when={isCurrent()} fallback={<span>Non-current</span>}><StatusBadge resource="deployment" status="current" /></Show></Show>}
         subtitle={
           <Show when={deployment.data}>
             {(record) => (
@@ -198,17 +202,17 @@ export function DeploymentDetail() {
         </div>
 
         <Show when={tab() === "agent_definitions"}>
-          <p class={`${ui.muted} mb-3`}>Start Agents through the CLI or their connected Slack app.</p>
-          <DefinitionTable label="Agent definitions" items={agents.data?.pages.flatMap(page => page.agent_definitions)} pending={agents.isPending} error={agents.error} onSlack={me.data?.role === "owner" || me.data?.role === "admin" ? setSlackAgent : undefined} />
+          <p class={`${ui.muted} mb-3`}>Definitions in this Deployment. New independent Sessions use only the current Deployment; existing Sessions and owned children keep their pinned definitions. Inspecting another Deployment does not promote it.</p>
+          <DefinitionTable href={id => definitionHref("agents", id, { ...resourceScope(), deploymentID: deploymentID() })} label="Agent definitions" items={agents.data?.pages.flatMap(page => page.agent_definitions)} pending={agents.isPending} error={agents.error} onSlack={me.data?.role === "owner" || me.data?.role === "admin" ? setSlackAgent : undefined} />
           <Show when={agents.hasNextPage}>
             <button type="button" class={ui.secondaryButton} disabled={agents.isFetchingNextPage} onClick={() => void agents.fetchNextPage()}>Load more Agent definitions</button>
           </Show>
         </Show>
-        <Show when={tab() === "computer_definitions"}>
-          <p class={`${ui.muted} mb-3`}>Computer configurations declared in this Deployment. Create a Computer to run work.</p>
-          <DefinitionTable label="Computer definitions" items={computerDefinitions.data?.pages.flatMap(page => page.computer_definitions)} pending={computerDefinitions.isPending} error={computerDefinitions.error} />
-          <Show when={computerDefinitions.hasNextPage}>
-            <button type="button" class={ui.secondaryButton} disabled={computerDefinitions.isFetchingNextPage} onClick={() => void computerDefinitions.fetchNextPage()}>Load more Computer definitions</button>
+        <Show when={tab() === "template_definitions"}>
+          <p class={`${ui.muted} mb-3`}>Computer creation settings in this Deployment. New Computers use the current Deployment. Existing Computers keep their original Template definition.</p>
+          <DefinitionTable href={id => definitionHref("templates", id, { ...resourceScope(), deploymentID: deploymentID() })} label="Template definitions" items={templateDefinitions.data?.pages.flatMap(page => page.template_definitions)} pending={templateDefinitions.isPending} error={templateDefinitions.error} />
+          <Show when={templateDefinitions.hasNextPage}>
+            <button type="button" class={ui.secondaryButton} disabled={templateDefinitions.isFetchingNextPage} onClick={() => void templateDefinitions.fetchNextPage()}>Load more Template definitions</button>
           </Show>
         </Show>
 
@@ -282,7 +286,7 @@ export function DeploymentDetail() {
             deployment={record()}
             projectID={projectID()}
             environmentID={environmentID()}
-            environmentName={scope.selectedEnvironment()?.name}
+            environmentName={globalScope.selectedEnvironment()?.name}
             onClose={() => setPromoting(false)}
           />
         )}

@@ -51,7 +51,7 @@ func TestPreparationIdentityIncludesReadableMetadataOutsidePayload(t *testing.T)
 	if a == b {
 		t.Fatal("readable generated metadata omitted from preparation identity")
 	}
-	if output.Metadata.Definitions[1].Kind != definition.KindComputer {
+	if output.Metadata.Definitions[1].Kind != definition.KindTemplate {
 		t.Fatal("fixture Computer selection changed")
 	}
 }

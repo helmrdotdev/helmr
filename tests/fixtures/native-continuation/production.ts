@@ -1,10 +1,11 @@
 import { fixtureValue } from "../../e2e/support/runtime-mcp"
 // Authored application for the integrated worker qualification. The driver
 // starts the local model through an ordinary Computer command before native setup.
-import { agent, computer, image, source, type Json, type InputContent } from "../../../sdk/typescript/src/index"
+import { agent, template, image, source, type Json, type InputContent } from "../../../sdk/typescript/src/index"
 import assert from "node:assert/strict"
-import { readFile, writeFile, rename } from "node:fs/promises"
+import { readFile, writeFile, rename, unlink } from "node:fs/promises"
 import { setTimeout as delay } from "node:timers/promises"
+import { spawnSync } from "node:child_process"
 import type { NativeProcess, NativeRuntimeHooks } from "../../../sdk/typescript/src/internal/native-runtime"
 import { codex as nativeCodex, claude as nativeClaude } from "./agent"
 import { startNativeModels } from "./model-server"
@@ -18,7 +19,7 @@ const computerImage = process.env.HELMR_NATIVE_PERFORMANCE === "1"
   ? baseImage.copy(source.directory("performance"), "/opt/native-performance")
       .run(["sh", "/opt/native-performance/prepare-image.sh"])
   : baseImage
-export const workspace = computer({
+export const workspace = template({
   id: "native-continuation",
   image: computerImage
     .run(["mkdir", "-p", "/workspace"])
@@ -29,7 +30,7 @@ export const workspace = computer({
 function native(definition: typeof nativeCodex) {
   return agent({
     id: definition.id,
-    computer: workspace,
+    template: workspace,
     async init(context) {
       // Observe the ordinary launcher without replacing its authority or process
       // admission. This fixture kills only the exact proxy handle it receives;
@@ -82,7 +83,43 @@ function native(definition: typeof nativeCodex) {
         assert(/^\/workspace\/[a-zA-Z0-9_-]+$/.test(directory))
         await writeFile(`/workspace/performance-${definition.id}.json`, JSON.stringify({ command: `cd ${directory} && node /opt/native-performance/workload.mjs ${performanceKind} ${turn.sequence}` }))
       }
-      const nativeResult = await definition.turn(turn, context)
+      const stopping = input === "fixture-native-stop"
+      const stopPath = `/workspace/native-stop-${definition.id}.json`
+      if (stopping) await writeFile(stopPath, JSON.stringify({ turnId: turn.id, directory: `/workspace/${context.session.id}` }))
+      let nativeResult: Awaited<ReturnType<typeof definition.turn>>
+      try { nativeResult = await definition.turn(turn, context) }
+      catch (error) {
+        if (!stopping) throw error
+        assert(turn.signal.aborted, "native control Turn failed without interruption")
+        const identity = await context.initResult.nativeProcess.ready
+        let commandLock: string | undefined
+        if (definition.id === "codex") {
+          const command = `/workspace/${context.session.id}/owned-command-${turn.id}`
+          assert.equal(await readFile(`${command}.started`, "utf8"), turn.id)
+          commandLock = `${command}.lock`
+          // The shared inode identifies the command across isolated PID namespaces.
+          const lock = spawnSync("/usr/bin/flock", ["--nonblock", "--exclusive", commandLock, "/bin/true"], { timeout: 1_000 })
+          assert.equal(lock.status, 0, "owned native command retained its lifetime lock")
+        }
+        await unlink(stopPath)
+        const gateStartedAt = Date.now()
+        const marker = `/workspace/native-stop-settled-${turn.id}.json`
+        await writeFile(`${marker}.tmp`, JSON.stringify({ turnId: turn.id, gateStartedAt, pid: process.pid, nativePid: context.initResult.harness.processId,
+          nonce: context.initResult.nonce, setupCount: context.initResult.setupCount, nativeScopeId: identity.scopeId, commandLock }))
+        await rename(`${marker}.tmp`, marker)
+        // Authored cleanup deliberately waits for the external fixture to observe
+        // pending-stop admission. A bounded failure cannot retain the gate forever.
+        const deadline = gateStartedAt + 4_000
+        for (;;) {
+          try { assert.equal(await readFile(`${marker}.release`, "utf8"), turn.id); break }
+          catch (missing) { if ((missing as NodeJS.ErrnoException).code !== "ENOENT") throw missing }
+          assert(Date.now() < deadline, "fixture cleanup gate exceeded 4s; release observation was too slow")
+          await delay(50)
+        }
+        process.stderr.write(JSON.stringify({ nativeStopGate: { turnId: turn.id, durationMs: Date.now() - gateStartedAt } }) + "\n")
+        throw error
+      }
+      assert(!stopping, "native control Turn completed without interruption")
       const saved = await conversation(`/workspace/${context.session.id}`, context.session.id, definition.id)
       assert(saved.id, "successful native Turn has no established conversation")
       const identity = await context.initResult.nativeProcess.ready
@@ -100,13 +137,13 @@ export const codex = native(nativeCodex)
 export const claude = native(nativeClaude)
 
 export const receipt = agent<InputContent, Json, unknown>({
-  id: "receipt", computer: workspace,
+  id: "receipt", template: workspace,
   async turn(turn, { session }) {
     const input = fixtureValue(turn.input)
+    const marker = `/workspace/control-${session.id}.json`
+    await writeFile(`${marker}.tmp`, JSON.stringify({ turnId: turn.id, processId: process.pid }))
+    await rename(`${marker}.tmp`, marker)
     if (input === "native-control-hold") {
-      const marker = `/workspace/control-${session.id}.json`
-      await writeFile(`${marker}.tmp`, JSON.stringify({ turnId: turn.id }))
-      await rename(`${marker}.tmp`, marker)
       for (;;) await delay(60_000, undefined, { signal: turn.signal })
     }
     return input
@@ -118,7 +155,7 @@ export const receipt = agent<InputContent, Json, unknown>({
 // across each mandatory save; elapsed time alone is not the assertion.
 export const peer = agent({
   id: "peer",
-  computer: workspace,
+  template: workspace,
   init: () => ({ nonce: crypto.randomUUID(), count: 0, discovery: undefined as DiscoveryState | undefined, secrets: undefined as SecretBindingState | undefined }),
   async turn(turn, { initResult: state, session, computer }): Promise<Json> {
     const input = fixtureValue(turn.input)
@@ -158,7 +195,7 @@ export const peer = agent({
 // Authored listeners pin compute. Park them before hibernation while retaining
 // request history and setup state in RAM; reopen the same ports after restoration.
 export const models = agent({
-  id: "models", computer: workspace,
+  id: "models", template: workspace,
   async init() {
     const target = { session: "", performance: false }
     const model = await startNativeModels(() => { assert(target.session); return target.session }, undefined, undefined, () => target.performance)
@@ -183,7 +220,7 @@ export const models = agent({
       state.target.session = input.peerSession; state.target.performance = true
     }
     if (!state.servers.length) {
-      const model = await startNativeModels(() => state.target.session, state.endpoints, state.requests, () => state.target.performance)
+      const model = await startNativeModels(() => state.target.session, state.endpoints, state.requests, () => state.target.performance, state.controlState)
       state.servers = model.servers
     }
     return { nonce: state.nonce, pid: process.pid, count: ++state.count,
@@ -193,6 +230,6 @@ export const models = agent({
 
 // The elapsed Turn deadline includes ordinary mandatory Save publication.
 export const deadline = agent({
-  id: "deadline", computer: workspace, maxTurnDuration: "30s",
+  id: "deadline", template: workspace, maxTurnDuration: "30s",
   turn(turn) { return { input: fixtureValue(turn.input) } },
 })

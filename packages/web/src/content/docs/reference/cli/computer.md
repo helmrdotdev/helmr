@@ -7,8 +7,8 @@ sidebarLabel: computer
 # `helmr computer`
 
 ```text
-helmr computer definition list [--deployment DEPLOYMENT_ID] [--limit N] [--cursor CURSOR] [--json]
-helmr computer definition get DEFINITION_ID [--deployment DEPLOYMENT_ID] [--json]
+helmr template definition list [--deployment DEPLOYMENT_ID] [--limit N] [--cursor CURSOR] [--json]
+helmr template definition get DEFINITION_ID [--deployment DEPLOYMENT_ID] [--json]
 helmr computer create DECLARED_ID [--key KEY] [--idempotency-key KEY] [--json]
 helmr computer get (--id UUID | --key KEY) [--json]
 helmr computer delete (--id UUID | --key KEY) [--idempotency-key KEY] [--json]
@@ -60,7 +60,7 @@ Computer detail page shows modes and origins without values.
 
 ## Inspect definitions
 
-`definition list` and `definition get` inspect the current Deployment, or the
+`helmr template definition list` and `helmr template definition get` inspect the current Deployment, or the
 explicit `--deployment` snapshot. A list returns the pinned Deployment ID and a
 continuation cursor when needed; its default limit is 50, maximum 100. These are
-authored Computer definitions. `get --id COMPUTER_ID` inspects an actual Computer.
+authored Template definitions. `get --id COMPUTER_ID` inspects an actual Computer.

@@ -292,7 +292,7 @@ func TestAgentRelayFullWriterQueueCannotPreventShutdown(t *testing.T) {
 	for range cap(relay.writes) {
 		relay.writes <- agentQueuedWrite{write: func() error { return nil }}
 	}
-	command := &agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "shutdown", Command: &agentv1.GuestCommand_Shutdown{Shutdown: &agentv1.SessionShutdown{Reason: "stop unresponsive reader"}}}
+	command := &agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "shutdown", ControlSequence: 5, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "shutdown"}}}
 	if err := relay.handleHostMessage(guest, 1, &agentv1.HostSessionMessage{AttachmentSequence: 1, Message: &agentv1.HostSessionMessage_Command{Command: command}}); err != nil {
 		t.Fatal(err)
 	}
@@ -432,7 +432,7 @@ func TestAgentRelayCheckpointSealsAdmissionAndRejectsUnfinishedWork(t *testing.T
 	if !session.held {
 		t.Fatal("checkpoint released a hold")
 	}
-	if err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "resume", ControlSequence: 1, Command: &agentv1.GuestCommand_Resume{Resume: &agentv1.SessionResume{}}}); err == nil {
+	if err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "resume", ControlSequence: 1, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "run"}}}); err == nil {
 		t.Fatal("command crossed the capture barrier")
 	}
 	if !session.held {
@@ -548,7 +548,7 @@ func TestAgentRelayReconstructionRequiredIsRetainedReceipt(t *testing.T) {
 	relay := newAgentRelay(ctx, session, nil)
 	go relay.sendLoop()
 	host := attachAgentRelay(t, relay, 1, session.grant)
-	command := &agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "resume", ControlSequence: 1, Command: &agentv1.GuestCommand_Resume{Resume: &agentv1.SessionResume{}}}
+	command := &agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "resume", ControlSequence: 1, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "run"}}}
 	if err := writeAgentTransportFrame(host, &agentv1.HostSessionMessage{AttachmentSequence: 1, Message: &agentv1.HostSessionMessage_Command{Command: command}}); err != nil {
 		t.Fatal(err)
 	}

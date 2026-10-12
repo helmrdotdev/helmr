@@ -117,20 +117,19 @@ type APIKey struct {
 type Agent struct {
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
-	Name          string      `json:"name"`
+	Key           string      `json:"key"`
 }
 
 type AgentDefinition struct {
-	EnvironmentID         pgtype.UUID `json:"environment_id"`
-	AgentID               pgtype.UUID `json:"agent_id"`
-	DeploymentID          pgtype.UUID `json:"deployment_id"`
-	DefinitionKey         string      `json:"definition_key"`
-	ComputerDefinitionKey string      `json:"computer_definition_key"`
-	Setup                 bool        `json:"setup"`
-	Triggers              []byte      `json:"triggers"`
-	MaxTurnDurationMs     pgtype.Int8 `json:"max_turn_duration_ms"`
-	CloseAfterIdleMs      pgtype.Int8 `json:"close_after_idle_ms"`
-	CloseAfterIdleNever   bool        `json:"close_after_idle_never"`
+	EnvironmentID       pgtype.UUID `json:"environment_id"`
+	AgentID             pgtype.UUID `json:"agent_id"`
+	DeploymentID        pgtype.UUID `json:"deployment_id"`
+	TemplateID          pgtype.UUID `json:"template_id"`
+	Setup               bool        `json:"setup"`
+	Triggers            []byte      `json:"triggers"`
+	MaxTurnDurationMs   pgtype.Int8 `json:"max_turn_duration_ms"`
+	CloseAfterIdleMs    pgtype.Int8 `json:"close_after_idle_ms"`
+	CloseAfterIdleNever bool        `json:"close_after_idle_never"`
 }
 
 type AgentPublication struct {
@@ -234,7 +233,7 @@ type Computer struct {
 	InitialPayloadRetiredAt     pgtype.Timestamptz `json:"initial_payload_retired_at"`
 	PreparationSpecID           pgtype.UUID        `json:"preparation_spec_id"`
 	OriginDeploymentID          pgtype.UUID        `json:"origin_deployment_id"`
-	OriginDefinitionKey         pgtype.Text        `json:"origin_definition_key"`
+	OriginTemplateID            pgtype.UUID        `json:"origin_template_id"`
 	Resources                   []byte             `json:"resources"`
 	StorageReservationBytes     pgtype.Int8        `json:"storage_reservation_bytes"`
 	PreparationID               pgtype.UUID        `json:"preparation_id"`
@@ -362,18 +361,6 @@ type ComputerDataKey struct {
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	RetiredAt           pgtype.Timestamptz `json:"retired_at"`
 	Available           pgtype.Bool        `json:"available"`
-}
-
-type ComputerDefinition struct {
-	EnvironmentID          pgtype.UUID `json:"environment_id"`
-	DeploymentID           pgtype.UUID `json:"deployment_id"`
-	DefinitionKey          string      `json:"definition_key"`
-	PreparationSpecID      pgtype.UUID `json:"preparation_spec_id"`
-	Resources              []byte      `json:"resources"`
-	RefreshEveryMs         pgtype.Int8 `json:"refresh_every_ms"`
-	MaxImageAgeMs          pgtype.Int8 `json:"max_image_age_ms"`
-	DeleteAfterUnusedMs    pgtype.Int8 `json:"delete_after_unused_ms"`
-	DeleteAfterUnusedNever bool        `json:"delete_after_unused_never"`
 }
 
 type ComputerDiskRoot struct {
@@ -564,7 +551,7 @@ type ComputerSecretBinding struct {
 	EnvironmentID     pgtype.UUID `json:"environment_id"`
 	PreparationSpecID pgtype.UUID `json:"preparation_spec_id"`
 	DeploymentID      pgtype.UUID `json:"deployment_id"`
-	DefinitionKey     pgtype.Text `json:"definition_key"`
+	TemplateID        pgtype.UUID `json:"template_id"`
 	ComputerID        pgtype.UUID `json:"computer_id"`
 	SecretID          pgtype.UUID `json:"secret_id"`
 	PlacementKind     string      `json:"placement_kind"`
@@ -798,6 +785,12 @@ type Session struct {
 	NextEventSeq            int64              `json:"next_event_seq"`
 	CreatedAt               pgtype.Timestamptz `json:"created_at"`
 	SlackChannelID          pgtype.UUID        `json:"slack_channel_id"`
+	CreationCallerKind      pgtype.Text        `json:"creation_caller_kind"`
+	CreationCallerID        pgtype.UUID        `json:"creation_caller_id"`
+	CreationMethod          pgtype.Text        `json:"creation_method"`
+	CreationRetryKey        pgtype.Text        `json:"creation_retry_key"`
+	CreationDigest          []byte             `json:"creation_digest"`
+	CreationTurnID          pgtype.UUID        `json:"creation_turn_id"`
 }
 
 type SessionControl struct {
@@ -810,6 +803,7 @@ type SessionControl struct {
 	RetryKey      string             `json:"retry_key"`
 	RequestDigest []byte             `json:"request_digest"`
 	HoldID        pgtype.UUID        `json:"hold_id"`
+	TurnID        pgtype.UUID        `json:"turn_id"`
 	AcceptedAt    pgtype.Timestamptz `json:"accepted_at"`
 }
 
@@ -850,6 +844,9 @@ type SessionProcess struct {
 	ControlAttachment     int64              `json:"control_attachment"`
 	ControlGeneration     int64              `json:"control_generation"`
 	ControlKind           pgtype.Text        `json:"control_kind"`
+	StopSequence          int64              `json:"stop_sequence"`
+	StopTurnID            pgtype.UUID        `json:"stop_turn_id"`
+	StopDeadlineAt        pgtype.Timestamptz `json:"stop_deadline_at"`
 	ControlAcknowledgedAt pgtype.Timestamptz `json:"control_acknowledged_at"`
 	FailureRecordedAt     pgtype.Timestamptz `json:"failure_recorded_at"`
 	ControlError          pgtype.Text        `json:"control_error"`
@@ -1101,6 +1098,24 @@ type TelemetryOutbox struct {
 	PublishError       string             `json:"publish_error"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Template struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ID            pgtype.UUID `json:"id"`
+	Key           string      `json:"key"`
+}
+
+type TemplateDefinition struct {
+	EnvironmentID          pgtype.UUID `json:"environment_id"`
+	DeploymentID           pgtype.UUID `json:"deployment_id"`
+	TemplateID             pgtype.UUID `json:"template_id"`
+	PreparationSpecID      pgtype.UUID `json:"preparation_spec_id"`
+	Resources              []byte      `json:"resources"`
+	RefreshEveryMs         pgtype.Int8 `json:"refresh_every_ms"`
+	MaxImageAgeMs          pgtype.Int8 `json:"max_image_age_ms"`
+	DeleteAfterUnusedMs    pgtype.Int8 `json:"delete_after_unused_ms"`
+	DeleteAfterUnusedNever bool        `json:"delete_after_unused_never"`
 }
 
 type Turn struct {

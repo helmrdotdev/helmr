@@ -39,7 +39,7 @@ helmr env create production --project agents
 A Deployment is an immutable, content-addressed bundle of your Project's code.
 The Helmr CLI builds it on your machine or in CI: it installs dependencies,
 evaluates `helmr.config.ts`, compiles your Agents and Computers, builds the
-Computer images and records every Agent, Computer definition and trigger. The
+Computer images and records every Agent, Template definition and trigger. The
 control plane verifies and registers the finished bundle without rebuilding
 it.
 
@@ -84,7 +84,7 @@ exists:
   cron triggers with the ones declared in the new Deployment. See
   [Triggers](/docs/concepts/triggers).
 - **Computer refresh settings are replaced** with the ones declared in the new
-  Deployment's Computer definitions.
+  Deployment's Template definitions.
 
 The Deployment itself is never modified.
 

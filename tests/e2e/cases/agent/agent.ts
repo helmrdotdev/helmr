@@ -1,8 +1,8 @@
 import { fixtureValue } from "../../support/runtime-mcp"
-import { agent, computer, image } from "@helmr/sdk"
+import { agent, template, image } from "@helmr/sdk"
 import { readFile, writeFile } from "node:fs/promises"
 
-export const verificationComputer = computer({
+export const verificationComputer = template({
   id: "verification",
   image: image("verification").from("node:24-bookworm-slim").workdir("/sandbox"),
   resources: { cpu: 1, memory: "1GiB" },
@@ -10,7 +10,7 @@ export const verificationComputer = computer({
 
 export const verificationAgent = agent({
   id: "verification-agent",
-  computer: verificationComputer,
+  template: verificationComputer,
   maxTurnDuration: "2m",
   turn: async (turn, ctx) => {
     const input = fixtureValue(turn.input)

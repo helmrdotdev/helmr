@@ -24,10 +24,11 @@ func runtimeDiscoveryEnvironment(t *testing.T, original agenttest.Fixture) agent
         SELECT history_retention_mode,$2,org_id,project_id,$2::text,'Other','#112233' FROM environments WHERE id=$1;
       INSERT INTO deployments(environment_id,id,bundle_digest) SELECT $2,$3,bundle_digest FROM deployments WHERE environment_id=$1 AND id=$6;
       INSERT INTO computer_preparation_specs(environment_id,id,spec_digest,spec,seed) SELECT $2,$3,spec_digest,spec,seed FROM computer_preparation_specs WHERE environment_id=$1 AND id=$6;
-      INSERT INTO computer_definitions(environment_id,deployment_id,definition_key,preparation_spec_id,resources) VALUES($2,$3,'fixture-computer',$3,'{}');
-      INSERT INTO agents(environment_id,id,name) VALUES($2,$4,'agent');
-      INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,definition_key,computer_definition_key,setup,triggers) VALUES($2,$4,$3,'agent','fixture-computer',false,'{}');
-      INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at) VALUES($2,$5,$3,clock_timestamp()+interval '1 hour');
+      INSERT INTO templates(environment_id,id,key) VALUES($2,$3,'fixture-computer');
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,resources) VALUES($2,$3,$3,$3,'{}');
+      INSERT INTO agents(environment_id,id,key) VALUES($2,$4,'agent');
+      INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,setup,triggers) VALUES($2,$4,$3,$3,false,'{}');
+      INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes) VALUES($2,$5,$3,clock_timestamp()+interval '1 hour',$3,$3,'{}',34359738368);
     `, pgx.QueryExecModeSimpleProtocol, original.Environment, f.Environment, f.Deployment, f.Agent, f.Computer, original.Deployment)
 	return f
 }
@@ -37,8 +38,7 @@ func TestWorkerAgentMCPListsEnvironmentComputers(t *testing.T) {
 	foreign := runtimeDiscoveryEnvironment(t, f)
 	// More than one page, including Computers with no Session relationship.
 	for range 51 {
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest)
-        SELECT environment_id,$2,initial_root_id,initial_root_digest FROM computers WHERE environment_id=$1 AND id=$3`, f.Environment, uuid.NewV7(), f.Computer)
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes) SELECT environment_id,$2,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes FROM computers WHERE environment_id=$1 AND id=$3`, f.Environment, uuid.NewV7(), f.Computer)
 	}
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
@@ -108,9 +108,9 @@ func TestWorkerAgentMCPListsPinnedAgentDefinitions(t *testing.T) {
 	addDefinition := func(f agenttest.Fixture, key string) {
 		t.Helper()
 		id := uuid.NewV7()
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agents(environment_id,id,name) VALUES($1,$2,$3)`, f.Environment, id, key)
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,definition_key,computer_definition_key,setup,triggers)
-            SELECT environment_id,$2,deployment_id,$3,computer_definition_key,setup,triggers FROM agent_definitions WHERE environment_id=$1 AND agent_id=$4`, f.Environment, id, key, f.Agent)
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,$3)`, f.Environment, id, key)
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,setup,triggers)
+            SELECT environment_id,$2,deployment_id,template_id,setup,triggers FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3`, f.Environment, id, f.Agent)
 	}
 	for i := range 51 {
 		addDefinition(f, fmt.Sprintf("worker-%02d", i))
@@ -120,10 +120,10 @@ func TestWorkerAgentMCPListsPinnedAgentDefinitions(t *testing.T) {
 	promoted := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `
       INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$3,'sha256:'||repeat('2',64));
-      INSERT INTO computer_definitions(environment_id,deployment_id,definition_key,preparation_spec_id,resources)
-        SELECT environment_id,$3,definition_key,preparation_spec_id,resources FROM computer_definitions WHERE environment_id=$1 AND deployment_id=$2;
-      INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,definition_key,computer_definition_key,setup,triggers)
-        SELECT environment_id,agent_id,$3,'promoted-only',computer_definition_key,setup,triggers FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2 AND agent_id=$4;
+      INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,resources)
+        SELECT environment_id,$3,template_id,preparation_spec_id,resources FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2;
+      INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,setup,triggers)
+        SELECT environment_id,agent_id,$3,template_id,setup,triggers FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2 AND agent_id=$4;
       UPDATE environments SET current_deployment_id=$3 WHERE id=$1;
     `, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, promoted, f.Agent)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
@@ -174,7 +174,7 @@ func TestWorkerAgentMCPListsPinnedAgentDefinitions(t *testing.T) {
 	if response.Error != nil {
 		t.Fatal(response.Error)
 	}
-	if err := json.Unmarshal(response.Value, &current); err != nil || current.DeploymentID != promoted || len(current.Agents) != 1 || current.Agents[0].ID != "promoted-only" {
+	if err := json.Unmarshal(response.Value, &current); err != nil || current.DeploymentID != promoted || len(current.Agents) != 1 || current.Agents[0].ID != "agent" {
 		t.Fatalf("current start definitions: %+v %v", current, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.Environment, f.Deployment)

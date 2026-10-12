@@ -37,7 +37,7 @@ func TestSlackPublishedStartHTTPAndSDK(t *testing.T) {
 	installation, registration, publication := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	channel := "C1"
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_preparation_specs SET seed=jsonb_build_object('profile',$7::text) WHERE environment_id=$5;
- UPDATE computer_definitions SET resources='{"milliCpu":1000,"memoryMiB":512}' WHERE environment_id=$5;
+ UPDATE template_definitions SET resources='{"milliCpu":1000,"memoryMiB":512}' WHERE environment_id=$5;
  UPDATE org_members SET role='owner' WHERE user_id=$4;
  INSERT INTO slack_app_registrations(id,organization_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id)
  SELECT $2,org_id,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$4 FROM environments WHERE id=$5;
@@ -93,17 +93,17 @@ func TestSlackPublishedStartHTTPAndSDK(t *testing.T) {
 	call("GET", base+"/slack/channels", owner, "", 404)
 	call("GET", base+"/slack/channels/"+channel, owner, "", 404)
 	for _, slack := range []string{`null`, `{}`, `{"channel_id":""}`, `{"channel_id":"bad"}`, fmt.Sprintf(`{"channel_id":%q,"other":true}`, channel), `[]`} {
-		call("POST", base+"/agents/agent/start", owner, `{"input":[],"slack":`+slack+`}`, 400)
+		call("POST", base+"/sessions", owner, `{"agent":"agent","input":[{"type":"text","text":"work"}],"slack":`+slack+`}`, 400)
 	}
 	viewerID := h.user(t, "Viewer")
 	h.member(t, orgID, viewerID, db.OrgMemberRoleViewer)
 	viewer := h.session(t, viewerID, orgID)
 	call("GET", base+"/slack/channels", viewer, "", 404)
 	call("GET", base+"/slack/channels/"+channel, viewer, "", 404)
-	call("POST", base+"/agents/agent/start", viewer, fmt.Sprintf(`{"input":[],"slack":{"channel_id":%q}}`, channel), 404)
+	call("POST", base+"/sessions", viewer, fmt.Sprintf(`{"agent":"agent","input":[{"type":"text","text":"work"}],"slack":{"channel_id":%q}}`, channel), 404)
 	issuer := auth.Principal{OrgID: orgID, UserID: f.User, Kind: auth.PrincipalKindSession, Role: auth.RoleOwner}
 	scope := auth.Scope{OrgID: orgID, ProjectID: projectID.String(), EnvironmentID: f.Environment.String()}
-	key, err := identity.IssueAPIKey(t.Context(), queries, issuer, scope, identity.APIKeyInput{Name: "Slack SDK", Permissions: []auth.Permission{auth.PermissionAgentsStart, auth.PermissionSessionsRead, auth.PermissionSessionsSend}})
+	key, err := identity.IssueAPIKey(t.Context(), queries, issuer, scope, identity.APIKeyInput{Name: "Slack SDK", Permissions: []auth.Permission{auth.PermissionSessionsCreate, auth.PermissionSessionsRead, auth.PermissionSessionsSend}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,16 +122,16 @@ func TestSlackPublishedStartHTTPAndSDK(t *testing.T) {
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("SDK HTTP: %v\n%s", err, output)
 	}
-	call("POST", base+"/agents/agent/start", owner, fmt.Sprintf(`{"input":[],"session_key":"http-route","idempotency_key":"http-first","slack":{"channel_id":%q}}`, channel), 200)
+	call("POST", base+"/sessions", owner, fmt.Sprintf(`{"agent":"agent","input":[{"type":"text","text":"work"}],"key":"http-route","idempotency_key":"http-first","slack":{"channel_id":%q}}`, channel), 200)
 	missing := "COTHER"
-	expectCode(call("POST", base+"/agents/agent/start", owner, fmt.Sprintf(`{"input":[],"session_key":"http-route","idempotency_key":"http-first","slack":{"channel_id":%q}}`, missing), 409), "idempotency_conflict")
-	expectCode(call("POST", base+"/agents/agent/start", owner, fmt.Sprintf(`{"input":[],"session_key":"http-route","idempotency_key":"http-next","slack":{"channel_id":%q}}`, missing), 409), "slack_destination_conflict")
+	expectCode(call("POST", base+"/sessions", owner, fmt.Sprintf(`{"agent":"agent","input":[{"type":"text","text":"work"}],"key":"http-route","idempotency_key":"http-first","slack":{"channel_id":%q}}`, missing), 409), "idempotency_conflict")
+	expectCode(call("POST", base+"/sessions", owner, fmt.Sprintf(`{"agent":"agent","input":[{"type":"text","text":"work"}],"key":"http-route","idempotency_key":"http-next","slack":{"channel_id":%q}}`, missing), 409), "idempotency_conflict")
 	before := preflights
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_publications SET revoked_at=clock_timestamp() WHERE id=$1`, publication)
 	call(http.MethodGet, "/v1/slack/channels/"+channel, key.Raw, "", 404)
-	call("POST", base+"/agents/agent/start", owner, fmt.Sprintf(`{"input":[],"session_key":"http-route","idempotency_key":"http-first","slack":{"channel_id":%q}}`, channel), 200)
-	call("POST", base+"/agents/agent/start", owner, `{"input":[],"session_key":"http-route","idempotency_key":"http-continue"}`, 200)
-	expectCode(call(http.MethodPost, "/v1/agents/agent/start", key.Raw, fmt.Sprintf(`{"input":[],"slack":{"channel_id":%q}}`, channel), 409), "target_not_published")
+	call("POST", base+"/sessions", owner, fmt.Sprintf(`{"agent":"agent","input":[{"type":"text","text":"work"}],"key":"http-route","idempotency_key":"http-first","slack":{"channel_id":%q}}`, channel), 200)
+	expectCode(call("POST", base+"/sessions", owner, `{"agent":"agent","input":[{"type":"text","text":"work"}],"key":"http-route","idempotency_key":"http-continue"}`, 409), "idempotency_conflict")
+	expectCode(call(http.MethodPost, "/v1/sessions", key.Raw, fmt.Sprintf(`{"agent":"agent","input":[{"type":"text","text":"work"}],"slack":{"channel_id":%q}}`, channel), 409), "target_not_published")
 	if preflights != before {
 		t.Fatal("retired publication triggered another preflight")
 	}

@@ -20,7 +20,7 @@ func BuildProgramMetadata(plan definition.BuildPlan, runtimeIndex DefinitionInde
 		switch input.Kind {
 		case definition.KindAgent:
 			d.Agent = input.Agent
-		case definition.KindComputer:
+		case definition.KindTemplate:
 			image, exists := computerSeeds[input.DeclaredID]
 			if !exists {
 				return ProgramMetadata{}, fmt.Errorf("computer %q has no seed result", input.DeclaredID)
@@ -31,11 +31,11 @@ func BuildProgramMetadata(plan definition.BuildPlan, runtimeIndex DefinitionInde
 			if err := cas.ValidateDescriptor(cas.Descriptor{Digest: image.Digest, SizeBytes: image.SizeBytes, MediaType: image.MediaType}); err != nil {
 				return ProgramMetadata{}, err
 			}
-			d.Computer = &definition.ComputerManifest{
+			d.Template = &definition.TemplateManifest{
 				Seed:                definition.ComputerSeedManifest{Profile: image.Profile, Config: image.Config, ArtifactDigest: image.Digest, MediaType: image.MediaType},
-				DeleteAfterUnusedMs: input.Computer.DeleteAfterUnusedMs, DeleteAfterUnusedNever: input.Computer.DeleteAfterUnusedNever,
-				Resources: input.Computer.Resources, Prepare: input.Computer.Prepare,
-				Refresh: input.Computer.Refresh, Secrets: input.Computer.Secrets, BuildSecrets: input.Computer.BuildSecrets,
+				DeleteAfterUnusedMs: input.Template.DeleteAfterUnusedMs, DeleteAfterUnusedNever: input.Template.DeleteAfterUnusedNever,
+				Resources: input.Template.Resources, Prepare: input.Template.Prepare,
+				Refresh: input.Template.Refresh, Secrets: input.Template.Secrets, BuildSecrets: input.Template.BuildSecrets,
 			}
 		default:
 			return ProgramMetadata{}, fmt.Errorf("unsupported definition kind %q", input.Kind)
@@ -58,24 +58,24 @@ func ValidateProgramDefinitionIndex(index ProgramMetadata, runtimeIndex Definiti
 	if err := ValidateDefinitionIndex(runtimeIndex); err != nil {
 		return err
 	}
-	if len(index.Definitions) != len(runtimeIndex.Agents)+len(runtimeIndex.Computers) {
+	if len(index.Definitions) != len(runtimeIndex.Agents)+len(runtimeIndex.Templates) {
 		return errors.New("definition index does not match program definitions")
 	}
 	agents := make(map[string]string, len(runtimeIndex.Agents))
-	computers := make(map[string]struct{}, len(runtimeIndex.Computers))
+	computers := make(map[string]struct{}, len(runtimeIndex.Templates))
 	for _, a := range runtimeIndex.Agents {
-		agents[a.ID] = a.ComputerDefinitionID
+		agents[a.ID] = a.TemplateDefinitionID
 	}
-	for _, c := range runtimeIndex.Computers {
+	for _, c := range runtimeIndex.Templates {
 		computers[c.ID] = struct{}{}
 	}
 	for _, d := range index.Definitions {
 		switch d.Kind {
 		case definition.KindAgent:
-			if d.Agent == nil || agents[d.DeclaredID] != d.Agent.ComputerDefinitionID {
+			if d.Agent == nil || agents[d.DeclaredID] != d.Agent.TemplateDefinitionID {
 				return errors.New("agent bundle entry does not match program definition")
 			}
-		case definition.KindComputer:
+		case definition.KindTemplate:
 			if _, exists := computers[d.DeclaredID]; !exists {
 				return errors.New("computer bundle entry does not match program definition")
 			}

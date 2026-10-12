@@ -36,10 +36,10 @@ transport, for example a model harness running inside the Computer:
 import { agent } from "@helmr/sdk"
 import { createRuntimeMcpConnection } from "@helmr/sdk/mcp"
 
-// `repoComputer` is an existing computer() definition.
+// `repoComputer` is an existing template() definition.
 export const coordinator = agent({
   id: "coordinator",
-  computer: repoComputer,
+  template: repoComputer,
   async init() {
     const { url, headers } = await createRuntimeMcpConnection()
     return { helmrMcp: { url, headers } }
@@ -136,7 +136,7 @@ Session records the caller as its requester but is not owned by it.
 | `computerId` | string | Optional. Existing Computer ID. Omit to create a Computer from the target's definition. |
 | `closeAfterIdleMs` | integer or `null` | Optional. Idle retention in positive milliseconds; `null` disables idle closure. Omit to inherit the definition. |
 
-Result: `{ "sessionId", "turnId", "sequence", "created", "closeAfterIdleMs" }`.
+Result: `{ "sessionId", "turnId", "sequence", "closeAfterIdleMs" }`.
 Runtime creation has no Session key.
 
 ### `enqueue`
@@ -165,6 +165,16 @@ as a fallback. A result confirms admission, not delivery to the handler.
 | `idempotencyKey` | string | Required. |
 
 Result: `{ "id", "turnId" }`, where `id` is the message ID.
+
+### `interrupt_turn`
+
+Interrupt exactly one running Turn in an owned descendant Session. Takes required
+`sessionId`, `turnId`, and `idempotencyKey`. Returns
+`{ id, sessionId, turnId, status: "accepted" }`. It creates no hold and does not
+interrupt the target Session's children. Queued, finalizing, and settled Turns
+return `turn_not_interruptible`, with the target status and rejection reason.
+Acceptance does not prove the handler has stopped; dispatch waits for stop
+acknowledgement. Failure to stop isolates the Session for explicit recovery.
 
 ### `interrupt_session`, `close_session`, `cancel_session`
 

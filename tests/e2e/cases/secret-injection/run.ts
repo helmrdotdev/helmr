@@ -13,7 +13,7 @@ await verify("secret-injection", async ({ client, marker, cleanup, objects, star
       .ref(secret.id)
       .revoke({ idempotencyKey: `revoke:${marker}` }, { signal: deadline(30_000) }),
   )
-  const computer = await client.computers.create({ definition: "helmr-secret-smoke", key: marker,
+  const computer = await client.computers.create({ template: "helmr-secret-smoke", key: marker,
       idempotencyKey: `computer:${marker}`,
       secrets: [{ secretId: secret.id, env: { name: "VERIFICATION_SECRET", mode: "raw" } }], }, { signal: deadline(30_000) })
   objects.computer_ids.push(computer.id)

@@ -208,3 +208,18 @@ test("terminal notification remains live while questions wait and no late native
     expect(sent.some(value => value.id === 9)).toBe(false)
   } finally { finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
 })
+
+for (const status of ["completed", "failed", "declined"]) test(`terminal command ${status} without exit code drains before Turn completion`, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "helmr-native-terminal-command-"))
+  const harness = await CodexHarness.open(directory, "session", {})
+  const turn = { id: "turn", signal: new AbortController().signal, onMessage: async () => {}, output: { write: async () => ({ sequence: 1 }) } } as unknown as Turn
+  try {
+    const pending = harness.run(turn, "inspect")
+    await new Promise<void>(resolve => setImmediate(resolve))
+    messages.push({ method: "item/started", params: { threadId: "native", turnId: "native-turn", item: { type: "commandExecution", id: "command", status: "inProgress", exitCode: null } } })
+    messages.push({ method: "item/completed", params: { threadId: "native", turnId: "native-turn", item: { type: "commandExecution", id: "command", status, exitCode: null } } })
+    messages.push({ method: "turn/completed", params: { threadId: "native", turn: { id: "native-turn", status: "completed" } } })
+    await pending
+    expect(harness.reusable).toBe(true)
+  } finally { finishExit(); messages.end(); await harness.close(); await rm(directory, { recursive: true, force: true }) }
+})

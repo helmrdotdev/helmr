@@ -40,7 +40,7 @@ func newDeploymentFinalizePostgresFixture(t *testing.T) deploymentFinalizePostgr
 		t.Fatal(err)
 	}
 	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
-	return deploymentFinalizePostgresFixture{pool: database.Pool, request: Finalization{orgID: org, projectID: pgvalue.UUID(project), environmentID: pgvalue.UUID(env), retryKey: "finalize", bundle: preparedBundle{root: cas.Descriptor{Digest: artifacttest.Digest("bundle"), SizeBytes: 1024, MediaType: bundle.MediaType}, bundle: bundle.Manifest{Program: output}, objects: []cas.Descriptor{{Digest: output.Artifact.Digest, SizeBytes: output.Artifact.SizeBytes, MediaType: output.Artifact.MediaType}, {Digest: output.Metadata.Definitions[2].Computer.Seed.ArtifactDigest, SizeBytes: 4096, MediaType: definition.ComputerSeedMediaType}}}}}
+	return deploymentFinalizePostgresFixture{pool: database.Pool, request: Finalization{orgID: org, projectID: pgvalue.UUID(project), environmentID: pgvalue.UUID(env), retryKey: "finalize", bundle: preparedBundle{root: cas.Descriptor{Digest: artifacttest.Digest("bundle"), SizeBytes: 1024, MediaType: bundle.MediaType}, bundle: bundle.Manifest{Program: output}, objects: []cas.Descriptor{{Digest: output.Artifact.Digest, SizeBytes: output.Artifact.SizeBytes, MediaType: output.Artifact.MediaType}, {Digest: output.Metadata.Definitions[2].Template.Seed.ArtifactDigest, SizeBytes: 4096, MediaType: definition.ComputerSeedMediaType}}}}}
 }
 
 func TestRegisterPostgresConvergesConcurrentRequests(t *testing.T) {
@@ -68,7 +68,7 @@ func TestRegisterPostgresConvergesConcurrentRequests(t *testing.T) {
 			t.Fatal("same bundle created distinct deployments")
 		}
 	}
-	for table, want := range map[string]int{"deployments": 1, "telemetry_outbox": 1, "platform_retry_keys": 2, "computer_preparation_specs": 1, "computer_definitions": 1, "agents": 2, "agent_definitions": 2, "cas_objects": 3, "deployment_objects": 3} {
+	for table, want := range map[string]int{"deployments": 1, "telemetry_outbox": 1, "platform_retry_keys": 2, "computer_preparation_specs": 1, "template_definitions": 1, "agents": 2, "agent_definitions": 2, "cas_objects": 3, "deployment_objects": 3} {
 		var count int
 		if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+table).Scan(&count); err != nil || count != want {
 			t.Fatalf("%s=%d want %d: %v", table, count, want, err)
@@ -84,17 +84,17 @@ func TestRegisterPostgresConvergesConcurrentRequests(t *testing.T) {
 func TestRegisterPostgresRollsBackDefinitionsObjectsAndReceipt(t *testing.T) {
 	f := newDeploymentFinalizePostgresFixture(t)
 	// A well-formed but foreign Secret fails inside the registration transaction.
-	f.request.bundle.bundle.Program.Metadata.Definitions[2].Computer.BuildSecrets = []definition.SecretBinding{{SecretID: uuid.NewV7().String(), Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
+	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{{SecretID: uuid.NewV7().String(), Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
 	if _, err := register(t.Context(), f.pool, f.request); err == nil {
 		t.Fatal("foreign Secret accepted")
 	}
-	for _, table := range []string{"deployments", "telemetry_outbox", "platform_retry_keys", "computer_preparation_specs", "computer_definitions", "agents", "agent_definitions", "deployment_objects", "cas_objects", "cas_blobs"} {
+	for _, table := range []string{"deployments", "telemetry_outbox", "platform_retry_keys", "computer_preparation_specs", "template_definitions", "agents", "agent_definitions", "deployment_objects", "cas_objects", "cas_blobs"} {
 		var count int
 		if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+table).Scan(&count); err != nil || count != 0 {
 			t.Fatalf("partial %s=%d: %v", table, count, err)
 		}
 	}
-	f.request.bundle.bundle.Program.Metadata.Definitions[2].Computer.BuildSecrets = []definition.SecretBinding{}
+	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{}
 	if _, err := register(t.Context(), f.pool, f.request); err != nil {
 		t.Fatal(err)
 	}

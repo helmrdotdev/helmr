@@ -37,12 +37,12 @@ func (s *Server) getAgentDefinition(w http.ResponseWriter, r *http.Request) {
 	s.getDefinition(w, r, definition.KindAgent, chi.URLParam(r, "agentDefinitionID"))
 }
 
-func (s *Server) listComputerDefinitions(w http.ResponseWriter, r *http.Request) {
-	s.listDefinitions(w, r, definition.KindComputer)
+func (s *Server) listTemplateDefinitions(w http.ResponseWriter, r *http.Request) {
+	s.listDefinitions(w, r, definition.KindTemplate)
 }
 
-func (s *Server) getComputerDefinition(w http.ResponseWriter, r *http.Request) {
-	s.getDefinition(w, r, definition.KindComputer, chi.URLParam(r, "computerDefinitionID"))
+func (s *Server) getTemplateDefinition(w http.ResponseWriter, r *http.Request) {
+	s.getDefinition(w, r, definition.KindTemplate, chi.URLParam(r, "templateDefinitionID"))
 }
 
 func (s *Server) listDefinitions(w http.ResponseWriter, r *http.Request, kind definition.Kind) {
@@ -205,23 +205,23 @@ func writeDefinitionList(w http.ResponseWriter, kind definition.Kind, deployment
 	case definition.KindAgent:
 		items := make([]api.AgentDefinitionListItem, 0, len(records))
 		for _, item := range records {
-			items = append(items, api.AgentDefinitionListItem{ID: item.ID, AgentID: item.AgentID.String()})
+			items = append(items, api.AgentDefinitionListItem{ID: item.ID, AgentID: item.AgentID.String(), TemplateID: *item.TemplateID})
 		}
 		writeJSON(w, http.StatusOK, api.ListAgentDefinitionsResponse{DeploymentID: deploymentID, AgentDefinitions: items, NextCursor: nextCursor})
-	case definition.KindComputer:
+	case definition.KindTemplate:
 		items := make([]api.DefinitionListItem, 0, len(records))
 		for _, item := range records {
-			items = append(items, api.DefinitionListItem{ID: item.ID})
+			items = append(items, api.DefinitionListItem{ID: item.ID, Resources: item.Resources})
 		}
-		writeJSON(w, http.StatusOK, api.ListComputerDefinitionsResponse{DeploymentID: deploymentID, ComputerDefinitions: items, NextCursor: nextCursor})
+		writeJSON(w, http.StatusOK, api.ListTemplateDefinitionsResponse{DeploymentID: deploymentID, TemplateDefinitions: items, NextCursor: nextCursor})
 	}
 }
 
 func writeDefinition(w http.ResponseWriter, kind definition.Kind, item deployment.DefinitionRecord, deploymentID string) {
 	switch kind {
 	case definition.KindAgent:
-		writeJSON(w, http.StatusOK, api.AgentDefinition{ID: item.ID, AgentID: item.AgentID.String(), DeploymentID: deploymentID})
-	case definition.KindComputer:
-		writeJSON(w, http.StatusOK, api.ComputerDefinition{ID: item.ID, DeploymentID: deploymentID})
+		writeJSON(w, http.StatusOK, api.AgentDefinition{ID: item.ID, AgentID: item.AgentID.String(), DeploymentID: deploymentID, TemplateID: *item.TemplateID})
+	case definition.KindTemplate:
+		writeJSON(w, http.StatusOK, api.TemplateDefinition{ID: item.ID, DeploymentID: deploymentID, Resources: item.Resources})
 	}
 }

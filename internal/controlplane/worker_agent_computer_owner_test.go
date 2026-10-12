@@ -220,7 +220,7 @@ func TestWorkerAgentComputerOwnerRetainsAuthorityAndReconcilesLostReplies(t *tes
 								t.Error("command preceded activation")
 								return
 							}
-							if command.GetResume() == nil {
+							if command.GetControl().GetDesired() != "run" {
 								t.Error("unexpected owner control")
 								return
 							}

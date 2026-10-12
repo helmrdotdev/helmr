@@ -186,7 +186,8 @@ func ObserveSessionReady(ctx context.Context, database db.TxBeginner, host worke
 			return err
 		}
 		var currentAttachment int64
-		if err := tx.QueryRow(ctx, `SELECT attachment_sequence FROM session_processes WHERE environment_id=$1 AND session_id=$2 AND epoch=$3 FOR NO KEY UPDATE`, e.EnvironmentID, e.SessionID, e.ProcessEpoch).Scan(&currentAttachment); err != nil {
+		var stopPending bool
+		if err := tx.QueryRow(ctx, `SELECT attachment_sequence,stop_deadline_at IS NOT NULL FROM session_processes WHERE environment_id=$1 AND session_id=$2 AND epoch=$3 FOR NO KEY UPDATE`, e.EnvironmentID, e.SessionID, e.ProcessEpoch).Scan(&currentAttachment, &stopPending); err != nil {
 			return err
 		}
 		if currentAttachment != attachment {
@@ -196,14 +197,14 @@ func ObserveSessionReady(ctx context.Context, database db.TxBeginner, host worke
 		if err != nil {
 			return err
 		}
-		if control == "shutdown" {
+		if control == "shutdown" || stopPending {
 			if _, err := lockRuntimeAuthority(ctx, tx, host, e); err != nil {
 				return err
 			}
 			return ErrConflict
 		}
 		changed, err := tx.Exec(ctx, `UPDATE session_processes SET status='ready' WHERE environment_id=$1 AND session_id=$2 AND epoch=$3 AND computer_lease_epoch=$4
- AND status IN ('starting','ready') AND fenced_at IS NULL AND attachment_sequence=$5 AND failure_recorded_at IS NULL`, e.EnvironmentID, e.SessionID, e.ProcessEpoch, e.LeaseEpoch, attachment)
+ AND status IN ('starting','ready') AND fenced_at IS NULL AND attachment_sequence=$5 AND failure_recorded_at IS NULL AND stop_deadline_at IS NULL`, e.EnvironmentID, e.SessionID, e.ProcessEpoch, e.LeaseEpoch, attachment)
 		if err != nil {
 			return err
 		}

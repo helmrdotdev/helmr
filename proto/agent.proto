@@ -66,14 +66,14 @@ message MessageDelivery {
   bytes input_json = 3;
   bytes source_json = 4;
 }
-message TurnInterrupt { string turn_id = 1; string reason = 2; }
+message SessionControl {
+  string desired = 1; // run, hold, shutdown
+  int64 stop_sequence = 2;
+  optional string stop_turn_id = 3; // absent with a stop means interrupted setup
+  int64 stop_deadline_unix_nano = 4;
+}
 message TurnReconcile { string turn_id = 1; }
 message TurnAcknowledged { string turn_id = 1; int64 sequence = 2; }
-// Issued only after the control plane releases the exact hold and the guest has
-// installed current authority. Other effective holds prohibit this command.
-message SessionResume {}
-message SessionSuspend { string reason = 1; }
-message SessionShutdown { string reason = 1; }
 // Private supervisor handshake; it does not change the Session hold state.
 message SessionCheckpoint { string checkpoint_id = 1; }
 message SessionCheckpointReady {
@@ -103,13 +103,10 @@ message GuestCommand {
     SessionStart start = 3;
     TurnDispatch dispatch = 4;
     MessageDelivery message = 5;
-    TurnInterrupt interrupt = 6;
+    SessionControl control = 6;
     TurnReconcile reconcile = 7;
     TurnAcknowledged acknowledged = 8;
     OperationResult operation_result = 9;
-    SessionResume resume = 10;
-    SessionShutdown shutdown = 11;
-    SessionSuspend suspend = 12;
     SessionCheckpoint checkpoint = 14;
   }
 }

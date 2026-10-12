@@ -600,16 +600,37 @@ receipt, requires its successor to remain queued under the exact hold for at lea
 seconds, then
 resumes that hold and requires successful successor completion. Replaying the
 original interrupt must not recreate the released hold. A separate owned child
-checks runtime cancellation of running and queued work. These are authored SDK
-controls; managed MCP only observes their state. The driver requires three
-observations with unchanged discovery identities and fresh reads of all four
+checks runtime cancellation of running and queued work. These controls use managed MCP; the external driver also reads their public SDK state. The driver requires three
+observations with unchanged discovery identities and fresh reads of all six
 controlled Turn outcomes. SQL independently binds successor dispatch to hold
-release and old-process fencing, requires a replacement process epoch, and checks
+release, requires the same process epoch, and checks
 physical closure of the cancelled process with its queued input never started.
 The held observations are a bounded live interval, supplemented by the deterministic
 control-owner tests; they are not a scheduler latency bound. Existing native/setup/history and four-member checkpoint
 assertions remain in force; this case does not claim setup-time MCP recovery or
 independent-target lifecycle authority.
+
+The discovery case also interrupts each real native adapter before the first RAM
+release and after the first restore. Claude waits on a pending Ask; Codex starts
+an owned background command and then waits on an Ask. A queued successor must
+remain unstarted with no user hold while the exact stop target is pending. An
+explicit authored cleanup gate retains that interval after the native adapter
+joins its interrupted work. Ordinary Computer Commands verify unchanged setup,
+managed/native process and scope identities, and absence of the owned command,
+then release the gate after three fresh read-only PostgreSQL observations. The
+gate has a 4-second failure bound and does not change production stop deadlines.
+The Codex command holds an exclusive advisory lock for its lifetime. The driver
+requires lock contention before interrupting it; the authored handler and external
+Command both require successful non-blocking acquisition after it stops. This
+checks the same shared inode across the isolated PID namespaces.
+The pre-interrupt Command has a 60-second startup allowance and records launcher,
+Node, marker and lock-check stages. This allowance is outside the cleanup gate;
+the post-interrupt gate and production stop deadlines remain unchanged.
+The driver requires Ask cancellation and exact stop clearance before accepting
+warm successor completion. `native-stop-settlement.json` binds those observations
+to durable Turn/process/Ask state. The ordinary eight completed own-Save Turns and
+two coherent four-member RAM restorations remain required. Synthetic model replies
+use no external provider credentials. This does not qualify normal OAuth setup.
 
 Set `HELMR_NATIVE_SECRET_BINDINGS_PROOF=1` to select
 `TestWorkerAgentSecretBindingsContinuation`. Its disposable API key additionally
@@ -636,8 +657,8 @@ the execution package still builds the application through the ordinary compiler
 and its packaged SDK.
 
 The expanded discovery/control case uses 15-minute driver, 20-minute fixture and
-24-minute outer test bounds. These include the sequential held interval, process
-replacement and cancellation before two RAM cycles, rather than setting a product
+24-minute outer test bounds. These include the sequential held interval, retained-process
+continuation and cancellation before two RAM cycles, rather than setting a product
 latency budget. After assertions end, fixture retirement forwards requests directly
 to the production CP handler; retained failure evidence is unchanged, and a failed
 driver never becomes success through cleanup.

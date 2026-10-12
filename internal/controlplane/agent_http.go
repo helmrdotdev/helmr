@@ -40,8 +40,8 @@ func (s *Server) agentRequestAuthority(r *http.Request, permission auth.Permissi
 	return caller, pgvalue.MustUUIDValue(environment), err
 }
 
-func (s *Server) startAgentHTTP(w http.ResponseWriter, r *http.Request) {
-	var request api.StartAgentRequest
+func (s *Server) createSessionHTTP(w http.ResponseWriter, r *http.Request) {
+	var request api.CreateSessionRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
 		writeError(w, err)
 		return
@@ -61,7 +61,7 @@ func (s *Server) startAgentHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		slackChannelID = &route.ChannelID
 	}
-	caller, environment, err := s.agentRequestAuthority(r, auth.PermissionAgentsStart)
+	caller, environment, err := s.agentRequestAuthority(r, auth.PermissionSessionsCreate)
 	if err != nil {
 		if slackChannelID != nil && errors.Is(err, agent.ErrDenied) {
 			err = agent.ErrSlackChannelUnavailable
@@ -82,14 +82,19 @@ func (s *Server) startAgentHTTP(w http.ResponseWriter, r *http.Request) {
 		preflight = s.slackConfig.Client
 	}
 	result, err := agent.Start(r.Context(), s.tx, s.secretProxy, caller, agent.StartRequest{
-		SlackPreflight: preflight, EnvironmentID: environment, Agent: chi.URLParam(r, "agentName"), ComputerID: computerID,
-		CloseAfterIdle: request.CloseAfterIdle, SessionKey: request.SessionKey, SlackChannelID: slackChannelID, RetryKey: request.IdempotencyKey, Input: request.Input,
+		SlackPreflight: preflight, EnvironmentID: environment, Agent: request.Agent, ComputerID: computerID,
+		CloseAfterIdle: request.CloseAfterIdle, SessionKey: request.Key, SlackChannelID: slackChannelID, RetryKey: request.IdempotencyKey, Input: request.Input,
 	})
 	if err != nil {
 		s.writeAgentHTTPError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, api.StartAgentResponse{TurnAdmission: agentAdmission(result), Created: result.Created, CloseAfterIdleMs: result.CloseAfterIdleMs})
+	var turn *api.TurnAdmission
+	if result.TurnID != uuid.Nil() {
+		admission := agentAdmission(result)
+		turn = &admission
+	}
+	writeJSON(w, http.StatusOK, api.CreateSessionResponse{SessionID: result.SessionID.String(), Turn: turn, CloseAfterIdleMs: result.CloseAfterIdleMs})
 }
 
 func (s *Server) enqueueSessionHTTP(w http.ResponseWriter, r *http.Request) {
@@ -108,7 +113,7 @@ func (s *Server) enqueueSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	result, err := agent.Enqueue(r.Context(), s.tx, caller, agent.EnqueueRequest{
+	result, err := agent.Enqueue(r.Context(), s.tx, s.secretProxy, caller, agent.EnqueueRequest{
 		EnvironmentID: environment, SessionID: sessionID, RetryKey: request.IdempotencyKey, Input: request.Input,
 	})
 	if err != nil {
@@ -142,6 +147,37 @@ func (s *Server) interruptSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, api.SessionInterruptReceipt{ID: result.ID.String(), SessionID: result.SessionID.String(), HoldID: result.HoldID.String(), Status: "accepted"})
+}
+
+func (s *Server) interruptTurnHTTP(w http.ResponseWriter, r *http.Request) {
+	caller, environment, err := s.agentRequestAuthority(r, auth.PermissionSessionsInterrupt)
+	if err != nil {
+		s.writeAgentHTTPError(w, err)
+		return
+	}
+	sessionID, err := ids.Parse(chi.URLParam(r, "sessionID"))
+	if err != nil {
+		s.writeAgentHTTPError(w, agent.ErrInvalidInput)
+		return
+	}
+	turnID, err := ids.Parse(chi.URLParam(r, "turnID"))
+	if err != nil {
+		s.writeAgentHTTPError(w, agent.ErrInvalidInput)
+		return
+	}
+	var request api.InterruptTurnRequest
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, err)
+		return
+	}
+	result, err := agent.ControlSession(r.Context(), s.tx, caller, agent.SessionControlRequest{
+		EnvironmentID: environment, SessionID: sessionID, TurnID: turnID, Kind: "turn_interrupt", RetryKey: request.IdempotencyKey,
+	})
+	if err != nil {
+		s.writeAgentHTTPError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, api.TurnInterruptReceipt{ID: result.ID.String(), SessionID: result.SessionID.String(), TurnID: turnID.String(), Status: "accepted"})
 }
 
 func (s *Server) closeSessionHTTP(w http.ResponseWriter, r *http.Request) {
@@ -233,7 +269,10 @@ func agentAdmission(receipt agent.Admission) api.TurnAdmission {
 
 func (s *Server) writeAgentHTTPError(w http.ResponseWriter, err error) {
 	var invalidScope environmentScopeReferenceError
+	var notInterruptible agent.TurnNotInterruptibleError
 	switch {
+	case errors.As(err, &notInterruptible):
+		writeError(w, conflict(notInterruptible))
 	case errors.Is(err, agent.ErrMessageClosed):
 		writeError(w, conflict(codedError{code: "message_closed", message: "turn is not accepting messages"}))
 	case errors.Is(err, conversation.ErrUnsupported):

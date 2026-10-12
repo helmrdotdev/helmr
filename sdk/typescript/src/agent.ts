@@ -22,8 +22,8 @@ export type SecretBinding = { readonly secretId: string } & (
   | { readonly env: { readonly name: string; readonly mode: "raw" }; readonly file?: never }
   | { readonly file: { readonly path: string }; readonly env?: never }
 )
-export interface ComputerDefinition {
-  readonly kind: "computer"
+export interface TemplateDefinition {
+  readonly kind: "template"
   readonly id: string
   readonly image: ImageBuilder
   readonly resources: { readonly cpu: number; readonly memory: string; readonly disk?: string }
@@ -33,10 +33,10 @@ export interface ComputerDefinition {
   readonly secrets?: readonly SecretBinding[]
   readonly buildSecrets?: readonly SecretBinding[]
 }
-export function computer(config: Omit<ComputerDefinition, "kind">): ComputerDefinition {
+export function template(config: Omit<TemplateDefinition, "kind">): TemplateDefinition {
   if (!config.id.trim()) throw new TypeError("Computer id is required")
   if (!(config.resources.cpu > 0) || !config.resources.memory) throw new TypeError("Computer resources are required")
-  return Object.freeze({ ...config, kind: "computer" as const })
+  return Object.freeze({ ...config, kind: "template" as const })
 }
 export interface OutputReceipt { readonly sequence: number }
 export interface InputSource {
@@ -95,7 +95,7 @@ export const triggers = Object.freeze({
 export interface AgentDefinition<I extends InputContent = InputContent, O extends Json = Json, S = unknown> {
   readonly kind: "agent"
   readonly id: string
-  readonly computer: ComputerDefinition
+  readonly template: TemplateDefinition
   readonly init?: (ctx: InitContext) => MaybePromise<S>
   readonly turn: (turn: Turn<I>, ctx: AgentContext<S>) => MaybePromise<O>
   readonly closeAfterIdle?: Duration
@@ -103,7 +103,7 @@ export interface AgentDefinition<I extends InputContent = InputContent, O extend
   readonly triggers?: readonly CronTrigger<I>[]
 }
 export function agent<I extends InputContent = InputContent, O extends Json = Json, S = undefined>(config: Omit<AgentDefinition<I, O, S>, "kind">): AgentDefinition<I, O, S> {
-  if (!config.id.trim() || config.computer.kind !== "computer" || typeof config.turn !== "function") throw new TypeError("Agent id, Computer and turn handler are required")
+  if (!config.id.trim() || config.template.kind !== "template" || typeof config.turn !== "function") throw new TypeError("Agent id, Template and turn handler are required")
   return Object.freeze({ ...config, kind: "agent" as const })
 }
 

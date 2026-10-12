@@ -6,7 +6,7 @@ import { issueFixerComputer } from "./computer"
 
 export const codexIssueFixer = agent({
   id: "codex-issue-fixer",
-  computer: issueFixerComputer,
+  template: issueFixerComputer,
   async init(context) {
     const cwd = repository()
     const mcp = await createRuntimeMcpConnection()

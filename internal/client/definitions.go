@@ -97,9 +97,9 @@ func (c *Client) GetAgentDefinition(ctx context.Context, id string, opts Definit
 	return result, err
 }
 
-func (c *Client) ListComputerDefinitions(ctx context.Context, opts DefinitionListOptions) (api.ListComputerDefinitionsResponse, error) {
-	result := api.ListComputerDefinitionsResponse{ComputerDefinitions: []api.DefinitionListItem{}}
-	path, err := c.definitionListPath("/computer-definitions", opts)
+func (c *Client) ListTemplateDefinitions(ctx context.Context, opts DefinitionListOptions) (api.ListTemplateDefinitionsResponse, error) {
+	result := api.ListTemplateDefinitionsResponse{TemplateDefinitions: []api.DefinitionListItem{}}
+	path, err := c.definitionListPath("/template-definitions", opts)
 	if err != nil {
 		return result, err
 	}
@@ -111,12 +111,12 @@ func (c *Client) ListComputerDefinitions(ctx context.Context, opts DefinitionLis
 	return result, err
 }
 
-func (c *Client) GetComputerDefinition(ctx context.Context, id string, opts DefinitionGetOptions) (api.ComputerDefinition, error) {
-	var result api.ComputerDefinition
+func (c *Client) GetTemplateDefinition(ctx context.Context, id string, opts DefinitionGetOptions) (api.TemplateDefinition, error) {
+	var result api.TemplateDefinition
 	if err := api.ValidateDefinitionID(id); err != nil {
 		return result, err
 	}
-	path, err := c.definitionPath("/computer-definitions", id, opts)
+	path, err := c.definitionPath("/template-definitions", id, opts)
 	if err != nil {
 		return result, err
 	}

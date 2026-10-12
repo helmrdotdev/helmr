@@ -1,3 +1,6 @@
+import { retentionMilliseconds, retentionFromMilliseconds, type Duration } from "./duration"
+import { slackStartOption } from "./client-slack"
+import type { InputContent } from "./content"
 import { normalizeInput } from "./content"
 import { waitForTurn } from "./internal/turn-wait"
 import { parseAsk, parseAskPage, parseAskReceipt } from "./internal/asks"
@@ -23,11 +26,11 @@ import {
   parseSessionPage,
   parseTurnState,
   parseTurnAdmission,
-  parseSessionAdmissionReceipt,
   parseSessionMessageReceipt,
   parseSessionCloseReceipt,
   parseSessionCancelReceipt,
   parseSessionInterruptReceipt,
+  parseTurnInterruptReceipt,
   parseSessionResumeReceipt,
   parseSessionEventPage,
   sessionStatus,
@@ -65,7 +68,25 @@ export interface ClientSessionRef extends SessionRef {
     ): Promise<CursorPage<TurnState>>
   }>
 }
+export interface SessionCreateRequest {
+  readonly agent: string
+  readonly key?: string
+  readonly input?: InputContent
+  readonly computer?: Readonly<{ id: string }>
+  readonly closeAfterIdle?: Duration
+  readonly slack?: Readonly<{ channelId: string }>
+  readonly idempotencyKey?: string
+}
+export interface SessionCreateReceipt<T extends TurnRef | null = TurnRef | null> {
+  readonly session: ClientSessionRef
+  readonly turn: T
+  readonly closeAfterIdle: Duration
+}
 export interface ClientSessionsApi {
+  create(request: SessionCreateRequest & { readonly input: InputContent }, options?: RequestOptions): Promise<SessionCreateReceipt<TurnRef>>
+  create(request: SessionCreateRequest & { readonly input?: undefined }, options?: RequestOptions): Promise<SessionCreateReceipt<null>>
+  create(request: SessionCreateRequest, options?: RequestOptions): Promise<SessionCreateReceipt>
+
   get(id: string, options?: RequestOptions): Promise<Session>
   list(
     query?: SessionListQuery,
@@ -83,7 +104,35 @@ interface SessionTransport {
 export function createClientSessions(
   transport: SessionTransport,
 ): ClientSessionsApi {
+  async function create(request: SessionCreateRequest & { readonly input: InputContent }, options?: RequestOptions): Promise<SessionCreateReceipt<TurnRef>>
+  async function create(request: SessionCreateRequest & { readonly input?: undefined }, options?: RequestOptions): Promise<SessionCreateReceipt<null>>
+  async function create(request: SessionCreateRequest, options?: RequestOptions): Promise<SessionCreateReceipt>
+  async function create(request: SessionCreateRequest, options?: RequestOptions): Promise<SessionCreateReceipt> {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(request.agent)) throw new Error("Invalid Agent key")
+    if (request.input !== undefined) {
+      if (request.input.length === 0) throw new Error("Initial input must not be empty")
+      normalizeInput(request.input)
+    }
+    const value = objectValue(await transport.request("POST", "/v1/sessions", {
+      body: {
+        agent: request.agent,
+        ...(request.input === undefined ? {} : { input: request.input }),
+        ...(request.key === undefined ? {} : { key: request.key }),
+        ...(request.computer === undefined ? {} : { computer_id: resourceID(request.computer.id, "Computer ID") }),
+        ...(request.closeAfterIdle === undefined ? {} : { close_after_idle_ms: retentionMilliseconds(request.closeAfterIdle, "closeAfterIdle") }),
+        ...(request.slack === undefined ? {} : { slack: slackStartOption(request.slack) }),
+        idempotency_key: sessionOperationOptions(request).idempotencyKey,
+      },
+      ...(options?.signal === undefined ? {} : { signal: options.signal }),
+    }), "Session create response")
+    const session = createSessionRef(resourceID(value["session_id"], "Session ID"), transport)
+    const admission = value["turn"] === null ? null : parseTurnAdmission(value["turn"])
+    if (admission !== null && admission.sessionId !== session.id) throw new Error("Initial Turn belongs to another Session")
+    if ((request.input === undefined) !== (admission === null)) throw new Error("Session create response has inconsistent initial Turn")
+    return Object.freeze({session, turn: admission === null ? null : session.turns.ref(admission.turnId), closeAfterIdle: retentionFromMilliseconds(value["close_after_idle_ms"], "closeAfterIdle")})
+  }
   return Object.freeze({
+    create,
     get(id, options) {
       return createSessionRef(id, transport).get(options)
     },
@@ -127,6 +176,11 @@ export function createSessionRef(
     return Object.freeze({
       id: turnId,
       sessionId,
+      async interrupt(request, options) {
+        const receipt = parseTurnInterruptReceipt(await post(path + "/interrupt", { idempotency_key: sessionOperationOptions(request).idempotencyKey }, options))
+        if (receipt.sessionId !== sessionId || receipt.turnId !== turnId) throw new Error("Interrupt receipt belongs to another Turn")
+        return receipt
+      },
       wait,
       asks: Object.freeze({
         async list(query = {}, options) {
@@ -166,29 +220,6 @@ export function createSessionRef(
   }
   return Object.freeze({
     id: sessionId,
-    async send(data, request, options) {
-      normalizeInput(data)
-      const receipt = parseSessionAdmissionReceipt(
-        await post(
-          "/send",
-          {
-            data,
-            idempotency_key: sessionOperationOptions(request).idempotencyKey,
-          },
-          options,
-        ),
-      )
-      return receipt.kind === "enqueued"
-        ? Object.freeze({ kind: receipt.kind, turn: turn(receipt.turnId) })
-        : Object.freeze({
-            kind: receipt.kind,
-            turn: turn(receipt.turnId),
-            message: Object.freeze({
-              id: receipt.messageId,
-              status: "accepted" as const,
-            }),
-          })
-    },
     async enqueue(input, request, options) {
       normalizeInput(input)
       const receipt = parseTurnAdmission(

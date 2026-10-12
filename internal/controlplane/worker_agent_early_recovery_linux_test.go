@@ -112,7 +112,7 @@ func (g *nativePublicationGate) serveEarlyRecovery(w http.ResponseWriter, r *htt
  JOIN turns t ON (t.environment_id,t.id)=(s.environment_id,s.turn_id)
  JOIN sessions se ON (se.environment_id,se.id)=(t.environment_id,t.session_id)
  JOIN agents a ON (a.environment_id,a.id)=(se.environment_id,se.agent_id)
- WHERE s.environment_id=$1 AND s.id=$2 AND a.name IN ('codex','claude'))`, g.environment, save).Scan(&native)
+ WHERE s.environment_id=$1 AND s.id=$2 AND a.key IN ('codex','claude'))`, g.environment, save).Scan(&native)
 	if err != nil {
 		return err
 	}

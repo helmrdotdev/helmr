@@ -71,6 +71,8 @@ func (owner *agentSessionControls) apply(ctx context.Context) error {
 	if terminal {
 		return nil
 	}
+	owner.connection.deliveryMu.Lock()
+	defer owner.connection.deliveryMu.Unlock()
 	requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	control, err := owner.client.PrepareAgentControl(requestCtx, owner.request())
 	cancel()
@@ -93,23 +95,23 @@ func (owner *agentSessionControls) apply(ctx context.Context) error {
 		return errors.New("invalid Session control authority")
 	}
 	command := &agentv1.GuestCommand{Identity: owner.connection.identity, DeliveryId: controlDeliveryID(control), ControlSequence: control.Sequence}
-	switch control.Kind {
-	case "suspend":
-		command.Command = &agentv1.GuestCommand_Suspend{Suspend: &agentv1.SessionSuspend{Reason: "Session is held"}}
-	case "resume":
-		command.Command = &agentv1.GuestCommand_Resume{Resume: &agentv1.SessionResume{}}
-	case "shutdown":
-		command.Command = &agentv1.GuestCommand_Shutdown{Shutdown: &agentv1.SessionShutdown{Reason: "Session process must stop"}}
-	default:
+	desired := map[string]string{"suspend": "hold", "resume": "run", "shutdown": "shutdown"}[control.Kind]
+	if desired == "" {
 		return errors.New("unknown Session control")
 	}
+	envelope := &agentv1.SessionControl{Desired: desired, StopSequence: control.StopSequence, StopTurnId: control.StopTurnID}
+	if control.StopDeadline != nil {
+		envelope.StopDeadlineUnixNano = control.StopDeadline.UnixNano()
+	}
+	command.Command = &agentv1.GuestCommand_Control{Control: envelope}
+
 	owner.mu.Lock()
 	if control.Sequence < owner.latest.Sequence {
 		owner.mu.Unlock()
 		return errors.New("session control sequence regressed")
 	}
 	owner.latest = control
-	send := !control.Acknowledged && owner.sent != control.Sequence && (control.Kind != "resume" || owner.ready)
+	send := !control.Acknowledged && owner.sent != control.Sequence && (control.Kind != "resume" || owner.ready || control.StopDeadline != nil)
 	owner.mu.Unlock()
 	if control.Error != "" {
 		return owner.fail(ctx, control.Kind, control.Error, nil)
@@ -184,7 +186,7 @@ func (owner *agentSessionControls) observe(ctx context.Context, message *agentv1
 		failure = "Session control was not applied"
 	}
 	r := owner.request()
-	err := owner.client.AcknowledgeAgentControl(ctx, workerapi.AgentControlReceipt{Session: r.Session, AttachmentSequence: r.AttachmentSequence, Sequence: current.Sequence, AuthorityGeneration: current.AuthorityGeneration, Kind: current.Kind, Error: failure})
+	err := owner.client.AcknowledgeAgentControl(ctx, workerapi.AgentControlReceipt{Session: r.Session, AttachmentSequence: r.AttachmentSequence, Sequence: current.Sequence, StopSequence: current.StopSequence, AuthorityGeneration: current.AuthorityGeneration, Kind: current.Kind, Error: failure})
 	if failure != "" {
 		// The guest has definitively rejected this control even if storing its
 		// receipt is uncertain. Reattachment must not erase or replay that failure.

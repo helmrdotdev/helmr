@@ -216,7 +216,7 @@ func allAPIKeyPermissionScopes() []api.APIKeyScope {
 	return []api.APIKeyScope{
 		api.APIKeyScopeAsksRespond,
 		api.APIKeyScopeSessionsRead,
-		api.APIKeyScopeAgentsStart,
+		api.APIKeyScopeSessionsCreate,
 		api.APIKeyScopeSessionsSend,
 		api.APIKeyScopeSessionsInterrupt,
 		api.APIKeyScopeSessionsResume,

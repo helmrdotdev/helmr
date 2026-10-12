@@ -1,14 +1,14 @@
 import { fixtureValue } from "../../support/runtime-mcp"
 import { setTimeout as sleep } from "node:timers/promises"
-import { image, agent, computer } from "@helmr/sdk"
+import { image, agent, template } from "@helmr/sdk"
 import { randomUUID } from "node:crypto"
 import { readFile, writeFile } from "node:fs/promises"
 import { z } from "zod"
 
-export const renewalComputer = computer({ id: "verification-drain-renewal", image: image("verification-drain-renewal").from("node:24-bookworm-slim").workdir("/workspace"), resources: { cpu: 1, memory: "1GiB" } })
+export const renewalComputer = template({ id: "verification-drain-renewal", image: image("verification-drain-renewal").from("node:24-bookworm-slim").workdir("/workspace"), resources: { cpu: 1, memory: "1GiB" } })
 
 export const renewalAgent = agent({
-  id: "verification-drain-renewal", computer: renewalComputer, maxTurnDuration: "40m",
+  id: "verification-drain-renewal", template: renewalComputer, maxTurnDuration: "40m",
   turn: async (turn, ctx) => {
     const { marker } = z.object({ marker: z.string() }).strict().parse(fixtureValue(turn.input))
     const nonce = randomUUID()

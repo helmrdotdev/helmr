@@ -173,7 +173,8 @@ func agentOptionalID(id *uuid.UUID) *string {
 	return &value
 }
 func agentSessionResponse(v agent.SessionView) api.AgentSession {
-	result := api.AgentSession{CloseAfterIdleMs: v.CloseAfterIdleMs, IdleSince: v.IdleSince, ID: v.ID.String(), AgentID: v.AgentID.String(), DeploymentID: v.DeploymentID.String(), ComputerID: v.ComputerID.String(), RootSessionID: v.RootSessionID.String(), ParentSessionID: agentOptionalID(v.ParentSessionID), SlackChannelID: v.SlackChannelID, Key: v.Key, Status: v.Status, CreatedAt: v.CreatedAt.UTC(), Holds: []api.AgentSessionHold{}}
+	result := api.AgentSession{AgentDefinitionID: v.AgentDefinitionID, TemplateDefinitionID: v.TemplateDefinitionID, CloseAfterIdleMs: v.CloseAfterIdleMs, IdleSince: agentUTCTime(v.IdleSince), ID: v.ID.String(), AgentID: v.AgentID.String(), DeploymentID: v.DeploymentID.String(), ComputerID: agentOptionalID(v.ComputerID), RootSessionID: v.RootSessionID.String(), ParentSessionID: agentOptionalID(v.ParentSessionID), SlackChannelID: v.SlackChannelID, Key: v.Key, Status: v.Status, CreatedAt: v.CreatedAt.UTC(), Holds: []api.AgentSessionHold{}}
+	result.Activity = agentActivityResponse(v.Activity)
 	result.RequesterSessionID = agentOptionalID(v.RequesterSessionID)
 	if v.InitialTurnID != nil && v.InitialTurnStatus != nil {
 		result.InitialTurn = &api.AgentSessionInitialTurn{ID: v.InitialTurnID.String(), Status: *v.InitialTurnStatus}
@@ -191,7 +192,7 @@ func agentTurnResponse(v agent.TurnView) api.AgentTurn {
 	if failure != nil && v.PayloadExpiredAt != nil {
 		failure.Message = nil
 	}
-	return api.AgentTurn{PayloadExpiredAt: agentUTCTime(v.PayloadExpiredAt), Error: failure, ID: v.ID.String(), SessionID: v.SessionID.String(), Sequence: v.Sequence, Status: v.Status, Input: v.Input, Result: v.Result, Response: v.Response, StartedAt: agentUTCTime(v.StartedAt), TerminalAt: agentUTCTime(v.TerminalAt), CompletionSaveID: agentOptionalID(v.CompletionSaveID)}
+	return api.AgentTurn{Stop: agentStopResponse(v.Stop), PayloadExpiredAt: agentUTCTime(v.PayloadExpiredAt), Error: failure, ID: v.ID.String(), SessionID: v.SessionID.String(), Sequence: v.Sequence, Status: v.Status, Input: v.Input, Result: v.Result, Response: v.Response, StartedAt: agentUTCTime(v.StartedAt), TerminalAt: agentUTCTime(v.TerminalAt), CompletionSaveID: agentOptionalID(v.CompletionSaveID)}
 }
 
 func agentUTCTime(value *time.Time) *time.Time {
@@ -244,4 +245,19 @@ func (s *Server) listAgentEventsHTTP(w http.ResponseWriter, r *http.Request) {
 		response.Records = append(response.Records, api.AgentSessionEvent{SessionID: e.SessionID.String(), TurnID: agentOptionalID(e.TurnID), Sequence: e.Sequence, Kind: e.Kind, Data: e.Data, CreatedAt: e.CreatedAt.UTC()})
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func agentStopResponse(v *agent.ProcessStopView) *api.AgentProcessStop {
+	if v == nil {
+		return nil
+	}
+	return &api.AgentProcessStop{ProcessEpoch: v.ProcessEpoch, TurnID: v.TurnID, State: v.State, Deadline: v.Deadline.UTC()}
+}
+func agentActivityResponse(v agent.SessionActivityView) api.AgentSessionActivity {
+	result := api.AgentSessionActivity{}
+	if v.Process != nil {
+		p := v.Process
+		result.Process = &api.AgentProcessActivity{Epoch: p.Epoch, Status: p.Status, Applied: p.Applied, ReconstructionRequired: p.ReconstructionRequired, Stop: agentStopResponse(p.Stop)}
+	}
+	return result
 }

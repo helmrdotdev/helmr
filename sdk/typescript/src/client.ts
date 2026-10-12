@@ -1,4 +1,3 @@
-import { createClientAgents, type ClientAgentsApi } from "./client-agent"
 import { createClientAgentDefinitions, type ClientAgentDefinitionsApi } from "./client-agent-definition"
 import type { CommandRef } from "./command"
 import type { JsonValue } from "./contract"
@@ -8,9 +7,9 @@ import {
   type ClientComputersApi,
 } from "./client-computer"
 import {
-  createClientComputerDefinitions,
-  type ClientComputerDefinitionsApi,
-} from "./client-computer-definition"
+  createClientTemplateDefinitions,
+  type ClientTemplateDefinitionsApi,
+} from "./client-template-definition"
 import {
   createClientSessions,
   type ClientSessionsApi,
@@ -35,10 +34,9 @@ export interface HelmrClientOptions {
 }
 
 export class HelmrClient {
-  readonly agents: ClientAgentsApi
   readonly agentDefinitions: ClientAgentDefinitionsApi
   readonly sessions: ClientSessionsApi
-  readonly computerDefinitions: ClientComputerDefinitionsApi
+  readonly templateDefinitions: ClientTemplateDefinitionsApi
   readonly deployments: ClientDeploymentsApi
   readonly schedules: ClientSchedulesApi
   readonly secrets: ClientSecretsApi
@@ -47,10 +45,9 @@ export class HelmrClient {
 
   constructor(options: HelmrClientOptions) {
     const transport = new ClientTransport(options)
-    this.agents = createClientAgents(transport)
     this.agentDefinitions = createClientAgentDefinitions(transport)
     this.sessions = createClientSessions(transport)
-    this.computerDefinitions = createClientComputerDefinitions(transport)
+    this.templateDefinitions = createClientTemplateDefinitions(transport)
     this.deployments = createClientDeployments(transport)
     this.schedules = createClientSchedules(transport)
     this.secrets = createClientSecrets(transport)

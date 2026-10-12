@@ -27,8 +27,8 @@ container=""
 (cd "$repo_root" && bun scripts/build-platform-entries.ts runtime --out-dir "$tmp/entries")
 cp "$tmp/entries/internal/runtime/"{entry.mjs,module-preload.mjs} "$tmp/runtime/helmr/"
 go -C "$repo_root" run ./tests/fixtures/native-continuation/runtime-metadata "$tmp/runtime"
-bun build "$repo_root/tests/fixtures/native-continuation/agent.ts" --target=node --external '@anthropic-ai/claude-agent-sdk' --outfile "$tmp/agent.mjs"
-bun build "$repo_root/tests/fixtures/native-continuation/model.ts" --target=node --outfile "$output/model.mjs"
+bun build "$repo_root/tests/fixtures/native-continuation/agent.ts" --tsconfig-override "$repo_root/tests/fixtures/native-continuation/tsconfig.json" --target=node --external '@anthropic-ai/claude-agent-sdk' --outfile "$tmp/agent.mjs"
+bun build "$repo_root/tests/fixtures/native-continuation/model.ts" --tsconfig-override "$repo_root/tests/fixtures/native-continuation/tsconfig.json" --target=node --outfile "$output/model.mjs"
 cp "$repo_root/tests/fixtures/native-continuation/"{package.json,package-lock.json} "$tmp/"
 node_version=$(jq -er '.node.version' "$repo_root/internal/version/runtime-dependencies.json")
 cat > "$tmp/Dockerfile" <<'DOCKERFILE'
@@ -40,7 +40,7 @@ WORKDIR /program
 COPY package.json package-lock.json .
 RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY agent.mjs helmr/app/entry-0.mjs
-RUN printf '%s' '{"apiVersion":"helmr.definition-index.v1","agents":[{"id":"codex","computerDefinitionId":"native-continuation","modulePath":"helmr/app/entry-0.mjs","exportName":"codex"},{"id":"claude","computerDefinitionId":"native-continuation","modulePath":"helmr/app/entry-0.mjs","exportName":"claude"}],"computers":[{"id":"native-continuation","modulePath":"helmr/app/entry-0.mjs","exportName":"codex","throughAgent":true}]}' > helmr/definition-index.json
+RUN printf '%s' '{"apiVersion":"helmr.definition-index.v1","agents":[{"id":"codex","templateDefinitionId":"native-continuation","modulePath":"helmr/app/entry-0.mjs","exportName":"codex"},{"id":"claude","templateDefinitionId":"native-continuation","modulePath":"helmr/app/entry-0.mjs","exportName":"claude"}],"templates":[{"id":"native-continuation","modulePath":"helmr/app/entry-0.mjs","exportName":"codex","throughAgent":true}]}' > helmr/definition-index.json
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends squashfs-tools e2fsprogs && rm -rf /var/lib/apt/lists/*
 COPY --from=computer / /computer/

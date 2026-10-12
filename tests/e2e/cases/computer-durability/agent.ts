@@ -1,16 +1,16 @@
 import { fixtureValue } from "../../support/runtime-mcp"
-import { agent, image, computer } from "@helmr/sdk"
+import { agent, image, template } from "@helmr/sdk"
 import { randomUUID } from "node:crypto"
 import { mkdir, readFile, readlink, symlink, writeFile } from "node:fs/promises"
 import { z } from "zod"
 
-export const durabilityComputer = computer({
+export const durabilityComputer = template({
   id: "computer-durability", image: image("computer-durability").from("node:24-bookworm-slim").workdir("/workspace"),
   resources: { cpu: 1, memory: "1GiB" },
 })
 
 export const durabilityAgent = agent({
-  id: "computer-durability", computer: durabilityComputer, maxTurnDuration: "10m",
+  id: "computer-durability", template: durabilityComputer, maxTurnDuration: "10m",
   init: () => ({ runtimeNonce: randomUUID(), count: 0, path: `/root/helmr-durability/${randomUUID()}`, marker: "" }),
   turn: async (turn, ctx) => {
     const { marker } = z.object({ marker: z.string().min(1) }).strict().parse(fixtureValue(turn.input))

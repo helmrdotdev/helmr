@@ -45,78 +45,42 @@ function transport(responses: unknown[]) {
 }
 
 describe("Session lifecycle client", () => {
-  test("Agent starts with an initial Turn and supports subsequent admission", async () => {
+  test("Session creation admits an optional initial Turn", async () => {
     const { client, requests } = transport([
-      { session_id: sessionId, turn_id: turnId, sequence: 1, created: true, close_after_idle_ms: 604800000 },
+      { session_id: sessionId, turn: {session_id: sessionId, turn_id: turnId, sequence: 1}, close_after_idle_ms: 604800000 },
       { session_id: sessionId, turn_id: messageId, sequence: 2 },
     ])
-    const { session, turn, created } = await client.agents.start("operator", {
-      input: [{ type: "text", text: "initial" }],
+    const { session, turn } = await client.sessions.create({ agent: "operator", input: [{ type: "text", text: "initial" }],
       computer: client.computers.ref(holdId),
-      sessionKey: "thread:1",
-      idempotencyKey: "start-1",
-    })
+      key: "thread:1",
+      idempotencyKey: "start-1", })
     expect(turn.id).toBe(turnId)
-    expect(created).toBe(true)
     expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({
+      agent: "operator",
       input: [{ type: "text", text: "initial" }],
       computer_id: holdId,
-      session_key: "thread:1",
+      key: "thread:1",
       idempotency_key: "start-1",
     })
     expect((await session.enqueue([])).id).toBe(messageId)
     expect(requests.map((r) => new URL(r.url).pathname)).toEqual([
-      "/v1/agents/operator/start",
+      "/v1/sessions",
       `/v1/sessions/${sessionId}/enqueue`,
     ])
   })
-  test("send creates references for its fixed route and exact replies preserve message identity", async () => {
-    const { client, requests } = transport([
-      { id: operationId, kind: "enqueued", turn_id: turnId },
-      {
-        id: operationId,
-        kind: "messaged",
-        turn_id: turnId,
-        message_id: messageId,
-      },
-      {
-        id: operationId,
-        turn_id: turnId,
-        message_id: messageId,
-        status: "accepted",
-      },
+  test("empty creation does not invent a Turn and exact send never routes to new work", async () => {
+    const {client, requests} = transport([
+      {session_id:sessionId, turn:null, close_after_idle_ms:604800000},
+      {id:operationId, turn_id:turnId, message_id:messageId, status:"accepted"},
     ])
-    const ref = client.sessions.ref(sessionId),
-      signal = new AbortController().signal
-    const first = await ref.send(
-      [{ type: "text", text: "work" }],
-      { idempotencyKey: "send-1" },
-      { signal },
-    )
-    expect(first.kind).toBe("enqueued")
-    expect(first.turn.id).toBe(turnId)
-    expect(first.turn.sessionId).toBe(sessionId)
-    const second = await ref.send([{ type: "text", text: "reply" }])
-    expect(second).toMatchObject({
-      kind: "messaged",
-      turn: { id: turnId },
-      message: { id: messageId, status: "accepted" },
-    })
-    expect(await first.turn.send([])).toEqual({
-      id: messageId,
-      status: "accepted",
-    })
-    expect(requests[2]?.url).toEndWith(`/turns/${turnId}/messages`)
-    expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({
-      data: [{ type: "text", text: "work" }],
-      idempotency_key: "send-1",
-    })
-    expect(requests[0]?.init?.signal).toBe(signal)
-    const keys = requests
-      .slice(1)
-      .map((r) => JSON.parse(String(r.init?.body)).idempotency_key)
-    expect(keys[0]).toMatch(/^[0-9a-f-]{36}$/)
-    expect(keys[1]).not.toBe(keys[0])
+    const empty = await client.sessions.create({agent:"operator", idempotencyKey:"empty"})
+    expect(empty.turn).toBeNull()
+    expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({agent:"operator",idempotency_key:"empty"})
+    expect("send" in empty.session).toBe(false)
+    const receipt = await empty.session.turns.ref(turnId).send([{type:"text",text:"reply"}],{idempotencyKey:"exact"})
+    expect(receipt).toEqual({id:messageId,status:"accepted"})
+    expect(requests[1]?.url).toEndWith(`/turns/${turnId}/messages`)
+    await expect(client.sessions.create({agent:"operator",input:[]})).rejects.toThrow("empty")
   })
   test("events have one ordered cursor and explicit retention gaps", async () => {
     const event = {
@@ -211,6 +175,7 @@ describe("Session lifecycle client", () => {
         root_session_id: sessionId,
         requester_session_id: null,
         initial_turn: { id: turnId, status: "queued" },
+        activity: { process: null },
         parent_session_id: null,
         close_after_idle_ms: null, idle_since: null,
         deployment_id: holdId,

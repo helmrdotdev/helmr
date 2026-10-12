@@ -23,7 +23,7 @@ JavaScript; it does not interpret the author's TypeScript configuration.
 
 ## Agent and Computer declarations
 
-Analysis discovers exported `agent()` and `computer()` values. An Agent also
+Analysis discovers exported `agent()` and `template()` values. An Agent also
 makes its referenced Computer discoverable, including an inline declaration.
 Re-exports of one object have one deterministic locator; distinct objects with
 the same kind and ID fail the build. IDs use

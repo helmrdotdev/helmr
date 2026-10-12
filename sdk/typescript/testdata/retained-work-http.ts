@@ -4,13 +4,12 @@ const config = (await Bun.stdin.json()) as { url: string; apiKey: string }
 const client = new HelmrClient({ url: config.url, apiKey: config.apiKey })
 const request = {
   input: [{type: "text" as const, text: "start"}],
-  sessionKey: "sdk-composition",
+  key: "sdk-composition",
   idempotencyKey: "sdk-start",
 }
-const started = await client.agents.start("agent", request)
-const replayStart = await client.agents.start("agent", request)
+const started = await client.sessions.create({ agent: "agent", ...request })
+const replayStart = await client.sessions.create({ agent: "agent", ...request })
 if (
-  !started.created ||
   started.session.id !== replayStart.session.id ||
   started.turn.id !== replayStart.turn.id
 )

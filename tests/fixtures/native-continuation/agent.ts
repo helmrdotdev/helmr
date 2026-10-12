@@ -18,7 +18,7 @@ interface SetupState {
 
 function specimen(provider: "codex" | "claude") {
   return {
-    kind: "agent" as const, id: provider, computer: { kind: "computer" as const, id: "native-continuation" },
+    kind: "agent" as const, id: provider, template: { kind: "template" as const, id: "native-continuation" },
     async init(context: { session: { id: string } }): Promise<SetupState> {
       const directory = join("/workspace", context.session.id)
       await mkdir(directory, { recursive: true })

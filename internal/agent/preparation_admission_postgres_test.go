@@ -16,7 +16,7 @@ func TestPreparationAttachmentSharesAdmissionRollback(t *testing.T) {
 	rejected := errors.New("initial Turn rejected")
 	var attempt uuid.UUID
 	err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(t.Context(), `INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes')`, f.env, computer, f.deployment); err != nil {
+		if _, err := tx.Exec(t.Context(), `INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,'{}',34359738368)`, f.env, computer, f.deployment); err != nil {
 			return err
 		}
 		p, err := attachComputerPreparation(t.Context(), tx, f.env, computer)
@@ -45,7 +45,7 @@ func TestPreparationImageSharesAdmissionRollback(t *testing.T) {
 	rejected := errors.New("initial Turn rejected")
 	var image uuid.UUID
 	err := db.RunTx(t.Context(), p.f.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(t.Context(), `INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes')`, p.f.env, computer, p.f.deployment); err != nil {
+		if _, err := tx.Exec(t.Context(), `INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,'{}',34359738368)`, p.f.env, computer, p.f.deployment); err != nil {
 			return err
 		}
 		selected, err := pinComputerImage(t.Context(), tx, p.f.env, computer)
@@ -150,7 +150,7 @@ func TestPreparationFreshDemandDoesNotPreemptRotationSuccessor(t *testing.T) {
 	}
 	// Sort fresh demand before every attached waiter in the actual scan page.
 	fresh := uuid.MustParse("00000000-0000-0000-0000-000000000001")
-	if _, err := p.f.pool.Exec(t.Context(), `INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes')`, p.f.env, fresh, p.f.deployment); err != nil {
+	if _, err := p.f.pool.Exec(t.Context(), `INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,'{}',34359738368)`, p.f.env, fresh, p.f.deployment); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := AttachComputerPreparation(t.Context(), p.f.pool, p.f.env, fresh); !errors.Is(err, ErrNotReady) {

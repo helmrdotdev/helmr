@@ -107,7 +107,7 @@ describe("declaration discovery", () => {
     expect(result.buildPlan.definitions.filter((item) => item.kind === "agent")).toEqual([{
       declaredId: "plain",
       kind: "agent",
-      manifest: { computerDefinitionId: "plain-computer", setup: false, triggers: {} },
+      manifest: { templateDefinitionId: "plain-computer", setup: false, triggers: {} },
     }])
   })
 })
@@ -157,10 +157,10 @@ async function writeModule(
 
 function agentModule(id: string): string {
   return [
-    'import { agent, computer, image } from "@helmr/sdk"',
+    'import { agent, template, image } from "@helmr/sdk"',
     `export const ${id.replace("-", "_")} = agent({`,
     `  id: ${JSON.stringify(id)},`,
-    `  computer: computer({ id: ${JSON.stringify(id+"-computer")}, image: image("root").from("ubuntu:24.04"), resources: { cpu: 1, memory: "1GiB" } }),`,
+    `  template: template({ id: ${JSON.stringify(id+"-computer")}, image: image("root").from("ubuntu:24.04"), resources: { cpu: 1, memory: "1GiB" } }),`,
     "  turn: () => null,",
     "})",
   ].join("\n")

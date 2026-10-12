@@ -152,9 +152,9 @@ const starterTSConfig = `{
 }
 `
 
-const starterHelloAgent = `import { agent, computer, image } from "@helmr/sdk"
+const starterHelloAgent = `import { agent, template, image } from "@helmr/sdk"
 
-export const helloComputer = computer({
+export const helloComputer = template({
   id: "hello",
   image: image("hello").from("node:24-bookworm-slim").workdir("/app"),
   resources: { cpu: 1, memory: "1GiB" },
@@ -162,7 +162,7 @@ export const helloComputer = computer({
 
 export const hello = agent({
   id: "hello",
-  computer: helloComputer,
+  template: helloComputer,
   async turn(turn) {
     await turn.respond("Hello from Helmr")
     return { ok: true }

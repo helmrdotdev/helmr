@@ -51,14 +51,14 @@ func TestPreparationImageRevocationStopsPeersAndPreservesFinalization(t *testing
 	if _, err = Dispatch(t.Context(), f.pool, f.execution()); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("revoked dispatch: %v", err)
 	}
-	if _, err = Enqueue(t.Context(), f.pool, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, RetryKey: "after-revoke", Input: json.RawMessage(`[{"type":"text","text":"{}"}]`)}); !errors.Is(err, ErrNotReady) {
+	if _, err = Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, RetryKey: "after-revoke", Input: json.RawMessage(`[{"type":"text","text":"{}"}]`)}); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("revoked enqueue: %v", err)
 	}
 	shutdown, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence)
 	if err != nil || shutdown.Kind != "shutdown" || shutdown.Sequence <= resume.Sequence {
 		t.Fatalf("shutdown: %v %v", shutdown, err)
 	}
-	if err = AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, resume.Sequence, resume.Generation, resume.Kind, ""); !errors.Is(err, ErrConflict) {
+	if err = AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, resume.Sequence, resume.Generation, resume.Kind, "", 0); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale resume: %v", err)
 	}
 	if _, err = BeginComputerCapture(t.Context(), f.pool, *f.host(), f.captureRequest()); !errors.Is(err, ErrDenied) {
@@ -91,7 +91,7 @@ func TestPreparationImageRevocationStopsPeersAndPreservesFinalization(t *testing
 	if err != nil || shutdown.Kind != "shutdown" {
 		t.Fatalf("control after reaper: %v %v", shutdown, err)
 	}
-	if err = AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, shutdown.Sequence, shutdown.Generation, shutdown.Kind, ""); err != nil {
+	if err = AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, shutdown.Sequence, shutdown.Generation, shutdown.Kind, "", 0); err != nil {
 		t.Fatal(err)
 	}
 	if err = ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence); err != nil {

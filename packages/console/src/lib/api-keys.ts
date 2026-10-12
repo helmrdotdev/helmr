@@ -5,7 +5,7 @@ export type ApiKeyStatus = "active" | "expired" | "revoked";
 export type ApiKeyScope =
   | "asks:respond"
   | "sessions:read"
-  | "agents:start"
+  | "sessions:create"
   | "sessions:send"
   | "sessions:interrupt"
   | "sessions:resume"

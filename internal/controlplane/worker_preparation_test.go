@@ -335,7 +335,7 @@ func TestWorkerPreparationStartBindsProgramAndRechecksStorageRead(t *testing.T) 
 			client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 			start, err := client.PreparationStart(t.Context(), request)
 			if mode == "current" {
-				if err != nil || start.Program.Artifact.Digest != manifest.Program.Artifact.Digest || start.Program.Runtime.Digest != manifest.Runtime.Artifact.Digest || start.ComputerDefinitionID != spec.ComputerDefinitionID || start.Seed.ArtifactDigest != manifest.ComputerSeeds[0].Artifact.Digest {
+				if err != nil || start.Program.Artifact.Digest != manifest.Program.Artifact.Digest || start.Program.Runtime.Digest != manifest.Runtime.Artifact.Digest || start.TemplateDefinitionID != spec.TemplateDefinitionID || start.Seed.ArtifactDigest != manifest.ComputerSeeds[0].Artifact.Digest {
 					t.Fatalf("executable preparation input: %+v %v", start, err)
 				}
 			} else if err == nil || start.Program.Artifact.Digest != "" {

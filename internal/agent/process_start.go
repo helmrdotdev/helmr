@@ -60,10 +60,10 @@ func checkSessionStart(ctx context.Context, tx pgx.Tx, host workergroup.HostPrin
 	if err = executionPhysical(ctx, tx, e, true, true); err != nil {
 		return err
 	}
-	if err = tx.QueryRow(ctx, `SELECT s.deployment_id,s.computer_id,d.bundle_digest,a.definition_key,s.session_key,s.parent_session_id::text,
+	if err = tx.QueryRow(ctx, `SELECT s.deployment_id,s.computer_id,d.bundle_digest,a.key,s.session_key,s.parent_session_id::text,
  COALESCE((SELECT min(seq)-1 FROM turns WHERE environment_id=s.environment_id AND session_id=s.id AND terminal_at IS NULL),s.next_turn_seq-1)
  FROM sessions s JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id)
- JOIN agent_definitions a ON (a.environment_id,a.agent_id,a.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id)
+ JOIN agents a ON (a.environment_id,a.id)=(s.environment_id,s.agent_id)
  WHERE s.environment_id=$1 AND s.id=$2`, e.EnvironmentID, e.SessionID).Scan(&result.DeploymentID, &result.ComputerID, &result.BundleDigest, &result.AgentKey, &result.SessionKey, &result.ParentSessionID, &result.TerminalSequence); err != nil {
 		return err
 	}

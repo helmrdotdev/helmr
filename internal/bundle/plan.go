@@ -64,13 +64,13 @@ func validatePlan(plan Plan) error {
 	}
 	computers := make(map[string]struct{})
 	for _, d := range plan.Definitions {
-		if d.Computer != nil {
+		if d.Template != nil {
 			computers[d.DeclaredID] = struct{}{}
 		}
 	}
 	for _, d := range plan.Definitions {
 		if d.Agent != nil {
-			if _, exists := computers[d.Agent.ComputerDefinitionID]; !exists {
+			if _, exists := computers[d.Agent.TemplateDefinitionID]; !exists {
 				return errors.New("deployment Agent references an absent Computer")
 			}
 		}
@@ -105,7 +105,7 @@ func validateProgramMetadataDeployment(index artifact.ProgramMetadata, plan Plan
 func deploymentPlanComputers(plan Plan) []artifact.ProgramDefinition {
 	computers := make([]artifact.ProgramDefinition, 0)
 	for _, declaration := range plan.Definitions {
-		if declaration.Kind == definition.KindComputer {
+		if declaration.Kind == definition.KindTemplate {
 			computers = append(computers, declaration.Clone())
 		}
 	}

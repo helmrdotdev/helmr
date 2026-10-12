@@ -38,7 +38,7 @@ func activityChild(t *testing.T, f statusFixture, running bool) (statusFixture, 
 		t.Fatal(err)
 	}
 	if running {
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status) VALUES($1,$2,1,$3,1,'ready')`, f.Environment, child.Session, f.Computer)
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,control_kind,control_generation,control_acknowledged_at) VALUES($1,$2,1,$3,1,'ready','resume',1,clock_timestamp())`, f.Environment, child.Session, f.Computer)
 		if _, err = agent.Dispatch(t.Context(), f.Pool, activityExecution(child)); err != nil {
 			t.Fatal(err)
 		}

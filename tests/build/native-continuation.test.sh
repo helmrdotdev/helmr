@@ -22,13 +22,13 @@ if [[ -n "${HELMR_NATIVE_CP_CONFIG:-}" ]]; then
   test_pattern="^TestAgentNativeManagedMCP$"
   container_options+=(--mount "type=bind,src=$HELMR_NATIVE_CP_CONFIG,dst=/cp.json,readonly" -e HELMR_NATIVE_CP_CONFIG=/cp.json -e "HELMR_NATIVE_TARGET_SESSION=$(jq -er .TargetSession "$HELMR_NATIVE_CP_CONFIG")")
 fi
-bun build "$repo_root/tests/fixtures/native-continuation/agent.ts" --target=node --external '@anthropic-ai/claude-agent-sdk' --outfile "$tmp/agent.mjs"
-bun build "$repo_root/tests/fixtures/native-continuation/model.ts" --target=node --outfile "$tmp/model.mjs"
+bun build "$repo_root/tests/fixtures/native-continuation/agent.ts" --tsconfig-override "$repo_root/tests/fixtures/native-continuation/tsconfig.json" --target=node --external '@anthropic-ai/claude-agent-sdk' --outfile "$tmp/agent.mjs"
+bun build "$repo_root/tests/fixtures/native-continuation/model.ts" --tsconfig-override "$repo_root/tests/fixtures/native-continuation/tsconfig.json" --target=node --outfile "$tmp/model.mjs"
 (cd "$repo_root" && bun scripts/build-platform-entries.ts runtime --out-dir "$tmp/entries")
 cp "$tmp/entries/internal/runtime/"{entry.mjs,module-preload.mjs} "$tmp/"
 docker_arch=$(docker version --format '{{.Server.Arch}}')
 case "$docker_arch" in amd64|arm64) ;; *) echo "unsupported Docker architecture: $docker_arch" >&2; exit 1;; esac
-CGO_ENABLED=0 GOOS=linux GOARCH="$docker_arch" go -C "$repo_root" test -c ./internal/guestd -o "$tmp/guestd.test"
+GOFLAGS= CGO_ENABLED=0 GOOS=linux GOARCH="$docker_arch" go -C "$repo_root" test -c ./internal/guestd -o "$tmp/guestd.test"
 cp "$repo_root/tests/fixtures/native-continuation/"{package.json,package-lock.json} "$tmp/"
 node_version=$(jq -er '.node.version' "$repo_root/internal/version/runtime-dependencies.json")
 cat > "$tmp/Dockerfile" <<'DOCKERFILE'
@@ -47,7 +47,7 @@ COPY --from=computer /fixture-package/node_modules /var/lib/helmr/program/artifa
 COPY package.json /var/lib/helmr/program/artifact/package.json
 COPY entry.mjs module-preload.mjs /var/lib/helmr/program/runtime/helmr/
 COPY agent.mjs /var/lib/helmr/program/artifact/helmr/app/entry-0.mjs
-RUN printf '%s' '{"apiVersion":"helmr.definition-index.v1","agents":[{"id":"codex","computerDefinitionId":"native-continuation","modulePath":"helmr/app/entry-0.mjs","exportName":"codex"},{"id":"claude","computerDefinitionId":"native-continuation","modulePath":"helmr/app/entry-0.mjs","exportName":"claude"}],"computers":[{"id":"native-continuation","modulePath":"helmr/app/entry-0.mjs","exportName":"codex","throughAgent":true}]}' > /var/lib/helmr/program/artifact/helmr/definition-index.json
+RUN printf '%s' '{"apiVersion":"helmr.definition-index.v1","agents":[{"id":"codex","templateDefinitionId":"native-continuation","modulePath":"helmr/app/entry-0.mjs","exportName":"codex"},{"id":"claude","templateDefinitionId":"native-continuation","modulePath":"helmr/app/entry-0.mjs","exportName":"claude"}],"templates":[{"id":"native-continuation","modulePath":"helmr/app/entry-0.mjs","exportName":"codex","throughAgent":true}]}' > /var/lib/helmr/program/artifact/helmr/definition-index.json
 COPY model.mjs /model.mjs
 COPY guestd.test /guestd.test
 ENV HELMR_PRIVILEGED_PROGRAM_TEST=1 HELMR_NATIVE_COMPUTER_ROOT=/fixture-root

@@ -44,7 +44,7 @@ their permissions are described in [Authentication](/docs/reference/api/authenti
 | `agents` | `start` | [Agent](/docs/reference/sdk/agent#client-start-an-agent) |
 | `agentDefinitions` | `get`, `list` | [Agent](/docs/reference/sdk/agent#client-agent-definitions) |
 | `sessions` | `get`, `list`, `ref` | [Agent](/docs/reference/sdk/agent#client-sessions) |
-| `computerDefinitions` | `get`, `list` | [Computer](/docs/reference/sdk/computer#client-computer-definitions) |
+| `templateDefinitions` | `get`, `list` | [Computer](/docs/reference/sdk/computer#client-template-definitions) |
 | `computers` | `create`, `get`, `list`, `ref` | [Computer](/docs/reference/sdk/computer#client-computers) |
 | `commands` | `ref` | [Computer](/docs/reference/sdk/computer#client-commands) |
 | `deployments` | `list`, `current`, `get` | [Deployments](#deployments) |

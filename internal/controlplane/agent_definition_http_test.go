@@ -32,8 +32,8 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `
  UPDATE org_members SET role='owner' WHERE user_id=$1;
- INSERT INTO agents(environment_id,id,name) VALUES($2,$3,'zebra');
- INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,definition_key,computer_definition_key,setup,triggers) VALUES($2,$3,$4,'zebra','fixture-computer',false,'{}');
+ INSERT INTO agents(environment_id,id,key) VALUES($2,$3,'zebra');
+ INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,setup,triggers) VALUES($2,$3,$4,$4,false,'{}');
  `, pgx.QueryExecModeSimpleProtocol, f.User, f.Environment, uuid.NewV7(), f.Deployment)
 	queries := db.New(f.Pool)
 	cfg := completeServerConfig(t)
@@ -64,20 +64,20 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 		return r.Body.Bytes()
 	}
 
-	computerBase := strings.TrimSuffix(base, "/agent-definitions") + "/computer-definitions"
-	var definitions api.ListComputerDefinitionsResponse
+	computerBase := strings.TrimSuffix(base, "/agent-definitions") + "/template-definitions"
+	var definitions api.ListTemplateDefinitionsResponse
 	if err := json.Unmarshal(get(computerBase, owner, http.StatusOK), &definitions); err != nil {
 		t.Fatal(err)
 	}
-	if definitions.DeploymentID != f.Deployment.String() || len(definitions.ComputerDefinitions) != 1 || definitions.ComputerDefinitions[0].ID != "fixture-computer" {
-		t.Fatalf("computer definitions: %+v", definitions)
+	if definitions.DeploymentID != f.Deployment.String() || len(definitions.TemplateDefinitions) != 1 || definitions.TemplateDefinitions[0].ID != "fixture-computer" {
+		t.Fatalf("template definitions: %+v", definitions)
 	}
-	var computerDefinition api.ComputerDefinition
-	if err := json.Unmarshal(get(computerBase+"/fixture-computer", owner, http.StatusOK), &computerDefinition); err != nil {
+	var templateDefinition api.TemplateDefinition
+	if err := json.Unmarshal(get(computerBase+"/fixture-computer", owner, http.StatusOK), &templateDefinition); err != nil {
 		t.Fatal(err)
 	}
-	if computerDefinition.ID != "fixture-computer" || computerDefinition.DeploymentID != f.Deployment.String() {
-		t.Fatalf("computer definition: %+v", computerDefinition)
+	if templateDefinition.ID != "fixture-computer" || templateDefinition.DeploymentID != f.Deployment.String() {
+		t.Fatalf("template definition: %+v", templateDefinition)
 	}
 	get(strings.TrimSuffix(base, "/agent-definitions")+"/sandboxes", owner, http.StatusNotFound)
 	get(strings.TrimSuffix(base, "/agent-definitions")+"/agents", owner, http.StatusNotFound)
@@ -90,7 +90,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	if err := json.Unmarshal(get(base+"?limit=1", owner, http.StatusOK), &first); err != nil {
 		t.Fatal(err)
 	}
-	if first.DeploymentID != f.Deployment.String() || len(first.AgentDefinitions) != 1 || first.AgentDefinitions[0].ID != "agent" || first.AgentDefinitions[0].AgentID != f.Agent.String() || first.NextCursor == "" {
+	if first.DeploymentID != f.Deployment.String() || len(first.AgentDefinitions) != 1 || first.AgentDefinitions[0].ID != "agent" || first.AgentDefinitions[0].AgentID != f.Agent.String() || first.AgentDefinitions[0].TemplateID != "fixture-computer" || first.NextCursor == "" {
 		t.Fatalf("first page: %+v", first)
 	}
 	// Removing the mutable current selection must not move the cursor's snapshot.
@@ -103,12 +103,21 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 		t.Fatalf("second page: %+v", second)
 	}
 	get(computerBase+"?cursor="+url.QueryEscape(first.NextCursor), owner, http.StatusBadRequest)
+	var pinned api.AgentSession
+	sessionPath := strings.TrimSuffix(base, "/agent-definitions") + "/sessions/" + f.Session.String()
+	if err := json.Unmarshal(get(sessionPath, owner, http.StatusOK), &pinned); err != nil {
+		t.Fatal(err)
+	}
+	if pinned.AgentDefinitionID != "agent" || pinned.TemplateDefinitionID != "fixture-computer" || pinned.DeploymentID != f.Deployment.String() {
+		t.Fatalf("HTTP pinned definitions: %+v", pinned)
+	}
+
 	selected := "?deployment_id=" + f.Deployment.String()
 	var item api.AgentDefinition
 	if err := json.Unmarshal(get(base+"/agent"+selected, owner, http.StatusOK), &item); err != nil {
 		t.Fatal(err)
 	}
-	if item.ID != "agent" || item.AgentID != f.Agent.String() || item.DeploymentID != first.DeploymentID {
+	if item.ID != "agent" || item.AgentID != f.Agent.String() || item.DeploymentID != first.DeploymentID || item.TemplateID != "fixture-computer" {
 		t.Fatalf("item: %+v", item)
 	}
 	get(base, owner, http.StatusNotFound)
@@ -132,17 +141,38 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	reader := issue(auth.PermissionSessionsRead)
 	get("/v1/agent-definitions"+selected, reader, http.StatusOK)
 	get("/v1/agent-definitions/agent"+selected, reader, http.StatusOK)
-	get("/v1/agent-definitions"+selected, issue(auth.PermissionAgentsStart), http.StatusForbidden)
+	get("/v1/agent-definitions"+selected, issue(auth.PermissionSessionsCreate), http.StatusForbidden)
 	dbtest.MustExec(t, t.Context(), f.Pool, `
  UPDATE environments SET current_deployment_id=$2 WHERE id=$1;
  UPDATE computer_preparation_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1;
- UPDATE computer_definitions SET resources='{"milliCpu":1000,"memoryMiB":512}' WHERE environment_id=$1;
+ UPDATE template_definitions SET resources='{"milliCpu":1000,"memoryMiB":512}' WHERE environment_id=$1;
  `, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, definition.ComputerSeedProfile)
-	get("/v1/computer-definitions", reader, http.StatusOK)
-	get("/v1/computer-definitions/fixture-computer", reader, http.StatusOK)
+	var resourceList api.ListTemplateDefinitionsResponse
+	if err := json.Unmarshal(get("/v1/template-definitions", reader, http.StatusOK), &resourceList); err != nil {
+		t.Fatal(err)
+	}
+	if len(resourceList.TemplateDefinitions) != 1 {
+		t.Fatalf("list resources: %+v", resourceList)
+	}
+	var listedResources definition.ResourcesManifest
+	if err := json.Unmarshal(resourceList.TemplateDefinitions[0].Resources, &listedResources); err != nil || listedResources.MemoryMiB != 512 || listedResources.MilliCPU != 1000 {
+		t.Fatalf("list resources: %+v %v", listedResources, err)
+	}
+
+	var resourceDefinition api.TemplateDefinition
+	if err := json.Unmarshal(get("/v1/template-definitions/fixture-computer", reader, http.StatusOK), &resourceDefinition); err != nil {
+		t.Fatal(err)
+	}
+	var resources struct {
+		CPU    int `json:"milliCpu"`
+		Memory int `json:"memoryMiB"`
+	}
+	if err := json.Unmarshal(resourceDefinition.Resources, &resources); err != nil || resources.CPU != 1000 || resources.Memory != 512 {
+		t.Fatalf("definition resources: %+v %v", resources, err)
+	}
 	get("/v1/sandboxes", reader, http.StatusNotFound)
-	get("/v1/computer-definitions", issue(auth.PermissionAgentsStart), http.StatusForbidden)
-	denied := h.request(t, http.MethodPost, "/v1/computer-definitions/fixture-computer/computers", reader, `{}`)
+	get("/v1/template-definitions", issue(auth.PermissionSessionsCreate), http.StatusForbidden)
+	denied := h.request(t, http.MethodPost, "/v1/computers", reader, `{"template":"fixture-computer"}`)
 	if denied.Code != http.StatusForbidden {
 		t.Fatalf("read key created Computer: %d %s", denied.Code, denied.Body.String())
 	}

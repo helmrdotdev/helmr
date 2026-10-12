@@ -20,15 +20,15 @@ type SendReceipt struct {
 	MessageID uuid.UUID
 }
 
-// Send resolves steering or enqueue once under the same destination owner lock.
-func Send(ctx context.Context, pool db.TxBeginner, caller Caller, req EnqueueRequest) (SendReceipt, error) {
-	return admitSessionInput(ctx, pool, caller, req, "send", uuid.Nil())
+// RouteSlackInput applies the Slack integration policy under one destination lock.
+func RouteSlackInput(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIssuer, caller Caller, req EnqueueRequest) (SendReceipt, error) {
+	return admitSessionInput(ctx, pool, trust, caller, req, "send", uuid.Nil())
 }
 func SendTurn(ctx context.Context, pool db.TxBeginner, caller Caller, req EnqueueRequest, turn uuid.UUID) (SendReceipt, error) {
 	if turn == uuid.Nil() {
 		return SendReceipt{}, ErrInvalidInput
 	}
-	return admitSessionInput(ctx, pool, caller, req, "turn_send", turn)
+	return admitSessionInput(ctx, pool, nil, caller, req, "turn_send", turn)
 }
 
 func messageRetry(ctx context.Context, tx pgx.Tx, caller Caller, req EnqueueRequest, method string, target uuid.UUID, digest [32]byte, result *SendReceipt) (bool, error) {

@@ -7,19 +7,19 @@ description: Linux working environments with a retained disk, defined in source 
 
 A Computer is the Linux environment an Agent's Sessions run in. It has its own
 disk, processes and Secret bindings, and it outlives the Sessions that use it.
-Every Computer is created from a Computer definition that you declare in source
-with `computer()` and deploy with your Agents.
+Every Computer is created from a Template definition that you declare in source
+with `template()` and deploy with your Agents.
 
 ## Defining a Computer
 
 ```ts
-import { agent, computer, image } from "@helmr/sdk"
+import { agent, template, image } from "@helmr/sdk"
 
 // Secret IDs come from `helmr secret create` in the target Environment.
 const GITHUB_TOKEN = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
 const REGISTRY_TOKEN_ID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
 
-export const repo = computer({
+export const repo = template({
   id: "repo",
   image: image("repo")
     .from("node:24-bookworm-slim")
@@ -72,7 +72,7 @@ waiting for it report an `unavailable` residency with the error code
 
 Helmr prepares a baseline when a Computer needs one and no usable baseline
 exists. Computers created at the same time share one preparation. A baseline
-belongs to one Computer definition in one deployed build; deploying changed
+belongs to one Template definition in one deployed build; deploying changed
 code or definitions produces a new baseline the next time a Computer needs one.
 
 ## Refresh
@@ -94,7 +94,7 @@ needs one.
 
 ## Build and runtime Secrets
 
-A Computer definition has two separate sets of [Secret](/docs/concepts/secrets)
+A Template definition has two separate sets of [Secret](/docs/concepts/secrets)
 bindings:
 
 | Binding | Available to | Effect of rotation |
@@ -112,20 +112,18 @@ explicitly to `client.computers.create`.
 ## Lifecycle
 
 Starting an Agent without an existing Computer creates a new one from the
-Agent's Computer definition. You can also create a Computer directly and place
+Agent's Template definition. You can also create a Computer directly and place
 Sessions on it:
 
 ```ts
 const computer = await client.computers.create({
-  definition: "repo",
+  template: "repo",
   key: "repo:acme/app",
   idempotencyKey: "create:repo:acme/app",
 })
 
-await client.agents.start("fixer", {
-  input: [{ type: "text", text: "Fix the failing test" }],
-  computer: { id: computer.id },
-})
+await client.sessions.create({ agent: "fixer", input: [{ type: "text", text: "Fix the failing test" }],
+  computer: { id: computer.id }, })
 ```
 
 `key` is an optional immutable lookup value; it does not make creation

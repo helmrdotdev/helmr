@@ -73,7 +73,7 @@ func PublicationAgent(ctx context.Context, pool db.TxBeginner, org, user, enviro
 		if err := lockInstallationManager(ctx, tx, org, user); err != nil {
 			return err
 		}
-		err := tx.QueryRow(ctx, `SELECT a.id FROM agents a JOIN environments e ON e.id=a.environment_id WHERE a.environment_id=$1 AND a.name=$2 AND e.org_id=$3`, environment, name, org).Scan(&agent)
+		err := tx.QueryRow(ctx, `SELECT a.id FROM agents a JOIN environments e ON e.id=a.environment_id WHERE a.environment_id=$1 AND a.key=$2 AND e.org_id=$3`, environment, name, org).Scan(&agent)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrPublicationUnavailable
 		}

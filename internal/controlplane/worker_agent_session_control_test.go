@@ -26,7 +26,11 @@ func TestWorkerAgentSessionControls(t *testing.T) {
 			tool = "start"
 		case agentv1.Operation_METHOD_CONTROL_SESSION:
 			tool, _ = arguments["kind"].(string)
-			tool += "_session"
+			if tool == "turn_interrupt" {
+				tool = "interrupt_turn"
+			} else {
+				tool += "_session"
+			}
 			delete(arguments, "kind")
 		}
 		if _, ok := arguments["idempotencyKey"]; !ok {
@@ -59,11 +63,42 @@ func TestWorkerAgentSessionControls(t *testing.T) {
 		}
 		return values
 	}
-	admission := map[string]any{"agentId": "agent", "input": json.RawMessage(`[]`), "computerId": f.Computer.String()}
+	admission := map[string]any{"agentId": "agent", "input": json.RawMessage(`[{"type":"text","text":"work"}]`), "computerId": f.Computer.String()}
 	child := call(request, admission, "")
 	request.Method = int32(agentv1.Operation_METHOD_START)
 	request.RequestID = "independent"
 	independent := call(request, admission, "")
+	exactRequest := request
+	exactRequest.Method = int32(agentv1.Operation_METHOD_SPAWN)
+	exactRequest.RequestID = "exact-child"
+	exactChild := call(exactRequest, admission, "")
+	exactID, err := uuid.Parse(exactChild["sessionId"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,control_kind,control_generation,control_acknowledged_at) VALUES($1,$2,1,$3,1,'ready','resume',1,clock_timestamp())`, f.Environment, exactID, f.Computer)
+	exactExecution := execution
+	exactExecution.SessionID = exactID
+	if _, err := agent.Dispatch(t.Context(), f.Pool, exactExecution); err != nil {
+		t.Fatal(err)
+	}
+	exactRequest.Method = int32(agentv1.Operation_METHOD_CONTROL_SESSION)
+	exactRequest.RequestID = "exact-interrupt"
+	exactBody := map[string]any{"sessionId": exactChild["sessionId"], "turnId": exactChild["turnId"], "kind": "turn_interrupt"}
+	exactReceipt := call(exactRequest, exactBody, "")
+	if exactReceipt["status"] != "accepted" || exactReceipt["turnId"] != exactChild["turnId"] || exactReceipt["holdId"] != "" {
+		t.Fatalf("exact receipt: %+v", exactReceipt)
+	}
+	if got := call(exactRequest, exactBody, ""); got["id"] != exactReceipt["id"] {
+		t.Fatalf("exact retry: %+v", got)
+	}
+	var holds int
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE session_id=$1`, exactID).Scan(&holds); err != nil || holds != 0 {
+		t.Fatalf("exact holds=%d: %v", holds, err)
+	}
+	for _, target := range []map[string]string{{"sessionId": f.Session.String(), "turnId": origin.TurnID.String()}, independent} {
+		call(exactRequest, map[string]any{"sessionId": target["sessionId"], "turnId": target["turnId"], "kind": "turn_interrupt"}, "authority_changed")
+	}
 	request.Method = int32(agentv1.Operation_METHOD_CONTROL_SESSION)
 	request.RequestID = "interrupt"
 	body := map[string]any{"sessionId": child["sessionId"], "kind": "interrupt"}

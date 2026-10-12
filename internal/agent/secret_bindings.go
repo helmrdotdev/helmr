@@ -13,7 +13,7 @@ type registeredSecretBinding struct {
 	Computer    *uuid.UUID `json:"computer_id"`
 	Preparation *uuid.UUID `json:"preparation_spec_id"`
 	Deployment  *uuid.UUID `json:"deployment_id"`
-	Definition  *string    `json:"definition_key"`
+	Template    *uuid.UUID `json:"template_id"`
 	Secret      string     `json:"secret_id"`
 	Kind        string     `json:"placement_kind"`
 	Target      string     `json:"placement_target"`
@@ -22,7 +22,7 @@ type registeredSecretBinding struct {
 	Placeholder string     `json:"placeholder"`
 }
 
-func registrationSecretBindings(refs []secretbinding.Reference, preparation, deployment *uuid.UUID, definition *string) ([]registeredSecretBinding, error) {
+func registrationSecretBindings(refs []secretbinding.Reference, preparation, deployment *uuid.UUID, template *uuid.UUID) ([]registeredSecretBinding, error) {
 	placements, err := secretbinding.NormalizeReferences(refs)
 	if err != nil {
 		return nil, err
@@ -37,7 +37,7 @@ func registrationSecretBindings(refs []secretbinding.Reference, preparation, dep
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, registeredSecretBinding{Computer: nil, Preparation: preparation, Deployment: deployment, Definition: definition, Secret: p.Name, Kind: p.Kind, Target: p.Target, Mode: p.Mode, Origins: origins, Placeholder: placeholder})
+		result = append(result, registeredSecretBinding{Computer: nil, Preparation: preparation, Deployment: deployment, Template: template, Secret: p.Name, Kind: p.Kind, Target: p.Target, Mode: p.Mode, Origins: origins, Placeholder: placeholder})
 	}
 	return result, nil
 }
@@ -52,10 +52,10 @@ func registerSecretBindings(ctx context.Context, tx pgx.Tx, env uuid.UUID, bindi
 	if err != nil {
 		return err
 	}
-	tag, err := tx.Exec(ctx, `INSERT INTO computer_secret_bindings AS existing(environment_id,computer_id,preparation_spec_id,deployment_id,definition_key,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder)
- SELECT $1,v.computer_id,v.preparation_spec_id,v.deployment_id,v.definition_key,v.secret_id,v.placement_kind,v.placement_target,v.mode,v.allowed_origins,NULLIF(v.placeholder,'')
- FROM jsonb_to_recordset($2::jsonb) AS v(computer_id uuid,preparation_spec_id uuid,deployment_id uuid,definition_key text,secret_id uuid,placement_kind text,placement_target text,mode text,allowed_origins text[],placeholder text)
- ON CONFLICT (environment_id,preparation_spec_id,deployment_id,definition_key,computer_id,placement_kind,placement_target)
+	tag, err := tx.Exec(ctx, `INSERT INTO computer_secret_bindings AS existing(environment_id,computer_id,preparation_spec_id,deployment_id,template_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder)
+ SELECT $1,v.computer_id,v.preparation_spec_id,v.deployment_id,v.template_id,v.secret_id,v.placement_kind,v.placement_target,v.mode,v.allowed_origins,NULLIF(v.placeholder,'')
+ FROM jsonb_to_recordset($2::jsonb) AS v(computer_id uuid,preparation_spec_id uuid,deployment_id uuid,template_id uuid,secret_id uuid,placement_kind text,placement_target text,mode text,allowed_origins text[],placeholder text)
+ ON CONFLICT (environment_id,preparation_spec_id,deployment_id,template_id,computer_id,placement_kind,placement_target)
  DO UPDATE SET secret_id=EXCLUDED.secret_id WHERE existing.secret_id=EXCLUDED.secret_id AND existing.mode=EXCLUDED.mode AND existing.allowed_origins=EXCLUDED.allowed_origins`, env, raw)
 	if err != nil {
 		return err
@@ -84,8 +84,8 @@ func readPreparationBindings(ctx context.Context, tx pgx.Tx, env, spec uuid.UUID
 	})
 }
 
-func copyDefinitionSecretBindings(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, definition string, computer uuid.UUID) error {
-	rows, err := tx.Query(ctx, `SELECT secret_id::text,placement_kind,placement_target,mode,allowed_origins FROM computer_secret_bindings WHERE environment_id=$1 AND deployment_id=$2 AND definition_key=$3 ORDER BY placement_kind,placement_target`, env, deployment, definition)
+func copyDefinitionSecretBindings(ctx context.Context, tx pgx.Tx, env, deployment uuid.UUID, template uuid.UUID, computer uuid.UUID) error {
+	rows, err := tx.Query(ctx, `SELECT secret_id::text,placement_kind,placement_target,mode,allowed_origins FROM computer_secret_bindings WHERE environment_id=$1 AND deployment_id=$2 AND template_id=$3 ORDER BY placement_kind,placement_target`, env, deployment, template)
 	if err != nil {
 		return err
 	}

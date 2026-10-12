@@ -1,7 +1,8 @@
 import { HistoryRetentionFields, historyRetentionPolicy, type HistoryRetentionDraft } from "../ui/HistoryRetentionFields";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
-import { A } from "@solidjs/router";
+import { A, useLocation, useNavigate } from "@solidjs/router";
+import { scopeSwitchPath } from "../lib/scope-navigation";
 import { defaultEnvironmentColor, ENVIRONMENT_COLOR_PRESETS, normalizeEnvironmentColor } from "../features/projects/display";
 import { ApiError } from "../lib/api";
 import { createEnvironment, createProject, listRegions } from "../lib/projects";
@@ -30,6 +31,8 @@ function createErrorMessage(error: unknown): string {
 
 export function ScopeSwitcher() {
   const scope = useScope();
+  const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const [open, setOpen] = createSignal(false);
   const [mobileMenuStyle, setMobileMenuStyle] = createSignal<Record<string, string> | undefined>();
@@ -201,11 +204,13 @@ export function ScopeSwitcher() {
 
   const pickProject = (id: string) => {
     scope.setSelectedProjectID(id);
+    navigate(scopeSwitchPath(location.pathname));
     closeAll();
   };
 
   const pickEnv = (envID: string) => {
     scope.setSelectedEnvironmentID(envID);
+    navigate(scopeSwitchPath(location.pathname));
     closeAll();
   };
 
@@ -228,6 +233,7 @@ export function ScopeSwitcher() {
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       scope.setSelectedProjectID(project.id);
       scope.setSelectedEnvironmentID(environment?.id ?? "");
+      navigate(scopeSwitchPath(location.pathname));
       setCreating(null);
       resetForm();
     } catch (error) {
@@ -256,6 +262,7 @@ export function ScopeSwitcher() {
       const env = await createEnvironment(projectID, { name, slug, color_hex: formColorHex(), ...historyRetentionPolicy(retention()) });
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       scope.setSelectedEnvironmentID(env.id);
+      navigate(scopeSwitchPath(location.pathname));
       setCreating(null);
       resetForm();
     } catch (error) {

@@ -8,18 +8,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
-// SessionDataRequest is the envelope for automatic send and exact messages.
+// SessionDataRequest contains input for one exact Turn.
 // The endpoint, never application data, determines routing.
 type SessionDataRequest struct {
 	Data           json.RawMessage `json:"data"`
 	IdempotencyKey string          `json:"idempotency_key,omitempty"`
-}
-
-type SessionAdmissionReceipt struct {
-	ID        string  `json:"id"`
-	Kind      string  `json:"kind"`
-	TurnID    string  `json:"turn_id"`
-	MessageID *string `json:"message_id,omitempty"`
 }
 
 type SessionMessageReceipt struct {
@@ -75,4 +68,14 @@ func ValidateSessionDataRequest(request SessionDataRequest) error {
 		return fmt.Errorf("data must be unambiguous I-JSON: %w", err)
 	}
 	return nil
+}
+
+type InterruptTurnRequest struct {
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+type TurnInterruptReceipt struct {
+	ID        string `json:"id"`
+	SessionID string `json:"session_id"`
+	TurnID    string `json:"turn_id"`
+	Status    string `json:"status"`
 }

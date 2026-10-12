@@ -31,8 +31,8 @@ for (const [name, agents] of Object.entries(examples)) {
       }
       const result = await analyzeProject({ root, architecture: "x86_64", config: runHostConfig(root).discovery })
       expect(result.definitionIndex.agents.map((entry: { id: string }) => entry.id).sort()).toEqual(agents)
-      expect(result.definitionIndex.computers).toHaveLength(1)
-      expect(new Set(result.buildPlan.definitions.map((entry: { kind: string }) => entry.kind))).toEqual(new Set(["agent", "computer"]))
+      expect(result.definitionIndex.templates).toHaveLength(1)
+      expect(new Set(result.buildPlan.definitions.map((entry: { kind: string }) => entry.kind))).toEqual(new Set(["agent", "template"]))
     } finally {
       await rm(root, { recursive: true, force: true })
     }

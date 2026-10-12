@@ -36,6 +36,8 @@ type agentSessionTurns struct {
 }
 
 func (owner *agentSessionTurns) dispatch(ctx context.Context) error {
+	owner.connection.deliveryMu.Lock()
+	defer owner.connection.deliveryMu.Unlock()
 	owner.mu.Lock()
 	defer owner.mu.Unlock()
 	if owner.pending != "" {

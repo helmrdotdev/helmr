@@ -96,7 +96,7 @@ type ComputerSeedArtifact struct {
 	SizeBytes    int64                          `json:"sizeBytes"`
 }
 
-// Seed returns the resolved initial disk input for a Computer definition.
+// Seed returns the resolved initial disk input for a Template definition.
 func (artifact ComputerSeedArtifact) Seed() definition.ComputerSeed {
 	return definition.ComputerSeed{
 		Profile:      artifact.Profile,
@@ -280,11 +280,11 @@ func validateBundleComputerSeeds(bundle Manifest) error {
 				index,
 			)
 		}
-		if computers[index].Computer == nil ||
-			computers[index].Computer.Seed.ArtifactDigest != image.Artifact.Digest ||
-			computers[index].Computer.Seed.MediaType != image.Artifact.MediaType ||
-			computers[index].Computer.Seed.Profile != image.Artifact.Profile ||
-			!reflect.DeepEqual(computers[index].Computer.Seed.Config, image.Artifact.Config) {
+		if computers[index].Template == nil ||
+			computers[index].Template.Seed.ArtifactDigest != image.Artifact.Digest ||
+			computers[index].Template.Seed.MediaType != image.Artifact.MediaType ||
+			computers[index].Template.Seed.Profile != image.Artifact.Profile ||
+			!reflect.DeepEqual(computers[index].Template.Seed.Config, image.Artifact.Config) {
 			return fmt.Errorf(
 				"deployment bundle computerSeeds[%d] artifact does not match plan",
 				index,

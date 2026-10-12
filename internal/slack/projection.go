@@ -77,7 +77,7 @@ func projectParticipant(ctx context.Context, pool db.TxBeginner, participant uui
 			return err
 		}
 		if active && !deleted && !e.at.Before(authorized) {
-			if err = tx.QueryRow(ctx, `SELECT a.name FROM agents a JOIN sessions s ON (s.environment_id,s.agent_id)=(a.environment_id,a.id) WHERE s.environment_id=$1 AND s.id=$2 FOR SHARE OF a`, o.environment, o.session).Scan(&o.name); err != nil {
+			if err = tx.QueryRow(ctx, `SELECT a.key FROM agents a JOIN sessions s ON (s.environment_id,s.agent_id)=(a.environment_id,a.id) WHERE s.environment_id=$1 AND s.id=$2 FOR SHARE OF a`, o.environment, o.session).Scan(&o.name); err != nil {
 				return err
 			}
 			o.label = o.name

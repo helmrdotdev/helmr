@@ -48,7 +48,12 @@ func (server *Server) workerAgentControl(w http.ResponseWriter, r *http.Request)
 		server.writeAgentWorkerError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, workerapi.AgentControlResponse{Sequence: control.Sequence, AuthorityGeneration: control.Generation, Kind: control.Kind, Acknowledged: control.Acknowledged, Error: control.Error, ExpiresAt: control.ExpiresAt})
+	var stopTurn *string
+	if control.StopTurnID != nil {
+		id := control.StopTurnID.String()
+		stopTurn = &id
+	}
+	writeJSON(w, http.StatusOK, workerapi.AgentControlResponse{StopSequence: control.StopSequence, StopTurnID: stopTurn, StopDeadline: control.StopDeadline, Sequence: control.Sequence, AuthorityGeneration: control.Generation, Kind: control.Kind, Acknowledged: control.Acknowledged, Error: control.Error, ExpiresAt: control.ExpiresAt})
 }
 
 func (server *Server) workerAgentControlReceipt(w http.ResponseWriter, r *http.Request) {
@@ -63,7 +68,7 @@ func (server *Server) workerAgentControlReceipt(w http.ResponseWriter, r *http.R
 		writeError(w, badRequest(errors.New("invalid Session control receipt")))
 		return
 	}
-	if err := agent.AcknowledgeSessionDelivery(r.Context(), server.tx, host, e, request.AttachmentSequence, request.Sequence, request.AuthorityGeneration, request.Kind, request.Error); err != nil {
+	if err := agent.AcknowledgeSessionDelivery(r.Context(), server.tx, host, e, request.AttachmentSequence, request.Sequence, request.AuthorityGeneration, request.Kind, request.Error, request.StopSequence); err != nil {
 		if errors.Is(err, agent.ErrConflict) {
 			// Current authority accepted the receipt, but a newer desired control
 			// has superseded it. Retire the old guest event and keep converging.

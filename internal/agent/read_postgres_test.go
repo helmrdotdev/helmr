@@ -13,7 +13,7 @@ func TestRetainedWorkReads(t *testing.T) {
 	p := preparationResidentImage(t)
 	f := p.f.fixture
 	first := f.enqueue(t, "first")
-	second, err := Enqueue(t.Context(), f.pool, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, RetryKey: "second", Input: json.RawMessage(`[{"type":"text","text":"{\"retained\":[1,\"two\",null]}"}]`)})
+	second, err := Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, RetryKey: "second", Input: json.RawMessage(`[{"type":"text","text":"{\"retained\":[1,\"two\",null]}"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestRetainedWorkReads(t *testing.T) {
 		t.Fatalf("foreign Session: %v", err)
 	}
 	session, err := GetSession(t.Context(), f.pool, f.caller(), f.env, f.session)
-	if err != nil || session.Status != "open" || session.ComputerID != f.computer {
+	if err != nil || session.Status != "open" || session.ComputerID == nil || *session.ComputerID != f.computer {
 		t.Fatalf("session: %+v %v", session, err)
 	}
 	holdA, holdB := uuid.NewV7(), uuid.NewV7()
@@ -82,5 +82,19 @@ func TestFinalizingReadDoesNotPublishResult(t *testing.T) {
 	turn, err := GetTurn(t.Context(), f.pool, f.caller(), f.env, f.session, admission.TurnID)
 	if err != nil || turn.Status != "finalizing" || len(turn.Result) != 0 || turn.CompletionSaveID != nil {
 		t.Fatalf("provisional result escaped: %+v %v", turn, err)
+	}
+}
+
+func TestSessionDefinitionsRemainPinnedOutsideCurrentDeployment(t *testing.T) {
+	f := newFixture(t)
+	// A removal or promotion must not hide the open Session or retarget its links.
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET current_deployment_id=NULL WHERE id=$1`, f.env)
+	session, err := GetSession(t.Context(), f.pool, f.caller(), f.env, f.session)
+	if err != nil || session.AgentDefinitionID != "agent" || session.TemplateDefinitionID != "fixture-computer" || session.DeploymentID != f.deployment {
+		t.Fatalf("pinned definitions: %+v %v", session, err)
+	}
+	page, err := ListSessions(t.Context(), f.pool, f.caller(), SessionListRequest{EnvironmentID: f.env, Statuses: []string{"open"}, Limit: 100})
+	if err != nil || len(page.Sessions) != 1 || page.Sessions[0].ID != f.session || page.Sessions[0].TemplateDefinitionID != "fixture-computer" {
+		t.Fatalf("hidden old Session: %+v %v", page, err)
 	}
 }

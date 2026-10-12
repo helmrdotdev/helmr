@@ -23,13 +23,13 @@ func TestPreparedProgramMemoDescriptorAndOwnership(t *testing.T) {
 	descriptor := artifact.ProgramDescriptor{Digest: "sha256:one", SizeBytes: 42, MediaType: artifact.ProgramArtifactMediaType}
 	index := artifacttest.ProgramMetadata(t)
 	index.Definitions[0].Agent.Triggers["nightly"] = definition.CronTrigger{Input: []byte(`[{"type":"text","text":"{\"original\":true}"}]`)}
-	index.Definitions[2].Computer.Secrets = []definition.SecretBinding{{SecretID: "original", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
-	index.Definitions[2].Computer.Seed.Config.Env = []string{"KEY=original"}
+	index.Definitions[2].Template.Secrets = []definition.SecretBinding{{SecretID: "original", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
+	index.Definitions[2].Template.Seed.Config.Env = []string{"KEY=original"}
 	original := index.Clone()
 	mutate := func(value artifact.ProgramMetadata) {
 		value.Definitions[0].Agent.Triggers["nightly"].Input[2] = 'X'
-		value.Definitions[2].Computer.Secrets = []definition.SecretBinding{{SecretID: "changed", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
-		value.Definitions[2].Computer.Seed.Config.Env[0] = "KEY=changed"
+		value.Definitions[2].Template.Secrets = []definition.SecretBinding{{SecretID: "changed", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
+		value.Definitions[2].Template.Seed.Config.Env[0] = "KEY=changed"
 	}
 	calls := 0
 	verify := func() (artifact.ProgramMetadata, error) { calls++; return index, nil }

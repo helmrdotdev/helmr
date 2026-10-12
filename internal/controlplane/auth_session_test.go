@@ -21,7 +21,7 @@ func TestSessionPermissionsAdvertiseEveryRoleGrant(t *testing.T) {
 		t.Fatalf("owner permissions = %v, want %v", got, owner)
 	}
 	for _, permission := range []string{
-		"sessions.read", "sessions.send", "sessions.close", "sessions.interrupt", "sessions.resume", "agents.start",
+		"sessions.read", "sessions.send", "sessions.close", "sessions.interrupt", "sessions.resume", "sessions.create",
 	} {
 		if !slices.Contains(owner, permission) {
 			t.Fatalf("owner permissions omit %s: %v", permission, owner)

@@ -156,19 +156,19 @@ def consumer(directory, cli_archive, work, expected_builder=None):
         # lockfile install inside BuildKit without exposing a host test server.
         (project / 'helmr.config.ts').write_text('import {defineConfig} from "@helmr/sdk"; export default defineConfig({dirs:["agents"],'
             'build:{installCommand:"npm ci --offline --cache .npm-cache --ignore-scripts --no-audit --no-fund"}});\n')
-        (project / 'agents/hello.ts').write_text('import {agent,computer,image} from "@helmr/sdk"; '
-            'export const machine=computer({id:"preview-machine",image:image("preview-base").from('
+        (project / 'agents/hello.ts').write_text('import {agent,template,image} from "@helmr/sdk"; '
+            'export const machine=template({id:"preview-machine",image:image("preview-base").from('
             + json.dumps(expected_builder) + '),resources:{cpu:1,memory:"1GiB"}});\n'
-            'export const hello=agent({id:"preview-hello",computer:machine,turn:()=>"preview-ok"});\n')
+            'export const hello=agent({id:"preview-hello",template:machine,turn:()=>"preview-ok"});\n')
         (project / 'consumer.ts').write_text('''import {HelmrClient, source} from "@helmr/sdk";
 const file = source.file("./package.json");
 if (!file) throw Error("source.file failed");
 let called = false;
 const client = new HelmrClient({url:"https://example.invalid",apiKey:"fixture",fetch:async (url, init)=>{
- if(String(url)!=="https://example.invalid/v1/agents/preview-hello/start" || init?.method!=="POST") throw Error("SDK wire contract");
- called=true; return Response.json({session_id:"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",turn_id:"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",sequence:1,created:true});
+ if(String(url)!=="https://example.invalid/v1/sessions" || init?.method!=="POST") throw Error("SDK wire contract");
+ called=true; return Response.json({session_id:"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",turn:{session_id:"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",turn_id:"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",sequence:1},close_after_idle_ms:604800000});
 }});
-await client.agents.start("preview-hello", {input:null,computer:client.computers.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")});
+await client.sessions.create({ agent: "preview-hello", input:[{type:"text",text:"hello"}],computer:client.computers.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32") });
 if(!called) throw Error("SDK request missing");
 ''')
         run(project / 'node_modules/.bin/tsc', '--strict', '--skipLibCheck', 'false', '--target', 'ES2022', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', 'consumer.ts', cwd=project)

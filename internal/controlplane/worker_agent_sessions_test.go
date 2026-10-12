@@ -38,7 +38,7 @@ func TestWorkerAgentSessionDiscovery(t *testing.T) {
 	}
 	create := func(method agentv1.Operation_Method) (session, turn string) {
 		t.Helper()
-		response := call(agentv1.Operation_METHOD_RUNTIME_MCP, "", map[string]any{"tool": strings.ToLower(strings.TrimPrefix(method.String(), "METHOD_")), "arguments": map[string]any{"agentId": "agent", "input": json.RawMessage(`[]`), "computerId": f.Computer.String(), "idempotencyKey": "create-" + method.String()}})
+		response := call(agentv1.Operation_METHOD_RUNTIME_MCP, "", map[string]any{"tool": strings.ToLower(strings.TrimPrefix(method.String(), "METHOD_")), "arguments": map[string]any{"agentId": "agent", "input": json.RawMessage(`[{"type":"text","text":"work"}]`), "computerId": f.Computer.String(), "idempotencyKey": "create-" + method.String()}})
 		var receipt struct{ SessionID, TurnID string }
 		if response.Error != nil || json.Unmarshal(response.Value, &receipt) != nil || receipt.SessionID == "" || receipt.TurnID == "" {
 			t.Fatalf("creation: %+v", response)

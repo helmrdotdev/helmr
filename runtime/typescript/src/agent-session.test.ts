@@ -30,7 +30,7 @@ function fixture(definition: Pick<AgentDefinition<InputContent, Json, unknown>, 
     hold: async reason => { calls.push(`hold:${reason}`) },
     ...overrides,
   }
-  const runtime = new SessionRuntime({ kind: "agent", id: "agent", computer: undefined!, ...definition }, context, driver, limits)
+  const runtime = new SessionRuntime({ kind: "agent", id: "agent", template: undefined!, ...definition }, context, driver, limits)
   return { runtime, calls, driver }
 }
 
@@ -169,9 +169,11 @@ test("authorized resume admits new input only after interruption settles", async
   } })
   const outcome = runtime.dispatch(request())
   await started.promise
-  runtime.interrupt("turn-1", new Error("human interrupt"))
+  runtime.suspend(new Error("Session held"))
+  const stopped = runtime.interrupt("turn-1", new Error("human interrupt"))
   assert.throws(() => runtime.resume(), /reconciliation/)
   assert.equal((await outcome).status, "interrupted")
+  await stopped
   await assert.rejects(runtime.dispatch(request(2)), /cannot dispatch/)
   runtime.resume()
   assert.equal((await runtime.dispatch(request(2))).result, 2)
@@ -378,26 +380,27 @@ test("failure convergence holds when a callback ignores interruption", async () 
   await callbackStarted.promise
   returnHandler.resolve()
   await new Promise<void>(resolve => setImmediate(resolve))
-  runtime.interrupt("turn-1", new Error("operator interrupt"))
+  const stopRejected = assert.rejects(runtime.interrupt("turn-1", new Error("operator interrupt")), /convergence timed out/)
   await assert.rejects(result, /convergence timed out/)
+  await stopRejected
   assert.ok(calls.includes("hold:native_convergence_failed"))
   assert.ok(!calls.includes("finalize"))
   await assert.rejects(runtime.dispatch(request(2)), /cannot dispatch/)
   callbackEnd.resolve(); await message
 })
 
-test("interrupt settles explicitly as interrupted and keeps dispatch held", async () => {
+test("exact interruption settles without adding a hold", async () => {
   const ready = deferred<void>()
   const { runtime } = fixture({ turn: turn => new Promise((_resolve, reject) => {
     turn.signal.addEventListener("abort", () => reject(turn.signal.reason), { once: true }); ready.resolve()
   }) })
   const result = runtime.dispatch(request())
   await ready.promise
-  runtime.interrupt("turn-1", new Error("operator interrupted"))
+  await runtime.interrupt("turn-1", new Error("operator interrupted"))
   const outcome = await result
   assert.equal(outcome.status, "interrupted")
   assert.equal(outcome.error?.code, "interrupted")
-  assert.equal(runtime.idle, false)
+  assert.equal(runtime.idle, true)
 })
 
 test("failure withdraws only outstanding asks exactly once even when answer never settles", async () => {
@@ -647,3 +650,24 @@ test("message callbacks retain their own immutable Slack source", async () => {
   await assert.rejects(runtime.deliverMessage("turn-1", "message", textInput("hello"), source), /identity changed/)
   done.resolve(); await result
 })
+
+for (const status of ["interrupted", "completed"] as const) {
+  test(`interrupt joins provisional finalization with authoritative ${status} outcome`, async () => {
+    const started = deferred<void>(), finish = deferred<TurnOutcome>()
+    let settlements = 0
+    const { runtime, calls } = fixture({ turn: () => 1 }, { finalize: async () => { settlements++; started.resolve(); return finish.promise } })
+    const original = runtime.dispatch(request())
+    await started.promise
+    let acknowledged = false
+    const stopped = runtime.interrupt("turn-1", new Error("durable stop")).then(() => { acknowledged = true })
+    const checked = status === "completed" ? assert.rejects(stopped, /already recorded/) : stopped
+    await Promise.resolve()
+    assert.equal(acknowledged, false)
+    finish.resolve(status === "completed" ? { status, result: 1 } : { status })
+    await Promise.all([original, checked])
+    assert.equal(settlements, 1)
+    assert.equal(acknowledged, status === "interrupted")
+    assert.equal(runtime.canCheckpoint, true)
+    assert.equal(calls.some(call => call.startsWith("hold:")), false)
+  })
+}

@@ -108,7 +108,7 @@ func TestComputerRestoreInstallsControlBeforeDispatch(t *testing.T) {
 		t.Fatalf("acquiring dispatch: %v", err)
 	}
 	caller := Caller{Kind: "session", ID: f.f.session, Execution: e, Host: &f.host}
-	if _, err := Enqueue(ctx, f.f.pool, caller, EnqueueRequest{EnvironmentID: f.f.env, SessionID: f.f.session, RetryKey: "acquiring-mutation", Input: []byte(`[]`)}); !errors.Is(err, ErrDenied) {
+	if _, err := Enqueue(ctx, f.f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.f.env, SessionID: f.f.session, RetryKey: "acquiring-mutation", Input: []byte(`[]`)}); !errors.Is(err, ErrDenied) {
 		t.Fatalf("control authority admitted business mutation: %v", err)
 	}
 	attachment, err := AcquireRuntimeAttachment(ctx, f.f.pool, f.host, e)

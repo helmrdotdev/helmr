@@ -1,8 +1,8 @@
 import { fixtureValue } from "../../support/runtime-mcp"
-import { agent, computer, image } from "@helmr/sdk"
+import { agent, template, image } from "@helmr/sdk"
 import { z } from "zod"
 
-export const questionComputer = computer({
+export const questionComputer = template({
   id: "verification-question",
   image: image("verification-question").from("node:24-bookworm-slim").workdir("/workspace"),
   resources: { cpu: 1, memory: "1GiB" },
@@ -10,7 +10,7 @@ export const questionComputer = computer({
 
 export const questionAgent = agent({
   id: "verification-question",
-  computer: questionComputer,
+  template: questionComputer,
   maxTurnDuration: "10m",
   async turn(turn) {
     const { marker } = z.object({ marker: z.string() }).strict().parse(fixtureValue(turn.input))

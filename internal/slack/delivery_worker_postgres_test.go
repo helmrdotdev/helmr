@@ -295,7 +295,7 @@ func TestSlackDeliveryWorkerStatusSuccessDoesNotEraseWaitingContentAge(t *testin
 		t.Fatal("initial assertion", methods)
 	}
 	// Change authoritative core state while retaining FinishStatus's refresh_at.
-	if _, err := agent.Enqueue(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "status-change", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "status-change", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET delivery_next_at=clock_timestamp() WHERE id=$1;
@@ -375,7 +375,7 @@ func TestSlackDeliveryWorkerUnconfirmedStatusPrecedesNewerContent(t *testing.T) 
 	if err := FinishStatus(t.Context(), f.Pool, initial, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agent.Enqueue(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "new-status", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "new-status", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	// Discover the core change while the previous call still owns the budget.

@@ -7,10 +7,11 @@ sidebarLabel: session
 # `helmr session`
 
 ```text
+helmr session create AGENT [--text TEXT | --input-json JSON | --input-file FILE]
+    [--computer COMPUTER_ID] [--key KEY] [--idempotency-key KEY] [--slack-channel CHANNEL_ID] [--json]
 helmr session list [--agent AGENT_UUID] [--key KEY] [--parent-session SESSION_ID] [--requester-session SESSION_ID]
     [--status STATUS] [--limit N] [--cursor CURSOR] [--json]
 helmr session get SESSION_ID [--json]
-helmr session send SESSION_ID (--text TEXT | --data-json JSON | --data-file FILE) [--idempotency-key KEY] [--json]
 helmr session enqueue SESSION_ID (--text TEXT | --input-json JSON | --input-file FILE) [--idempotency-key KEY] [--json]
 helmr session events SESSION_ID [--after N] [--limit N] [--json | --jsonl]
 helmr session interrupt SESSION_ID [--idempotency-key KEY] [--json]
@@ -20,6 +21,7 @@ helmr session cancel SESSION_ID [--idempotency-key KEY] [--json]
 helmr session turn list --session SESSION_ID [--limit N] [--cursor CURSOR] [--json]
 helmr session turn get TURN_ID --session SESSION_ID [--json]
 helmr session turn wait TURN_ID --session SESSION_ID --timeout DURATION [--json]
+helmr session turn interrupt TURN_ID --session SESSION_ID [--idempotency-key KEY] [--json]
 helmr session turn send TURN_ID --session SESSION_ID (--text TEXT | --data-json JSON | --data-file FILE) [--idempotency-key KEY] [--json]
 helmr session turn ask list --session SESSION_ID --turn TURN_ID [--limit N] [--cursor CURSOR] [--json]
 helmr session turn ask get ASK_ID --session SESSION_ID --turn TURN_ID [--json]
@@ -31,7 +33,7 @@ Every command also accepts `-p, --project` and `-e, --env`. They are required
 with a saved login and rejected with an API key. See
 [Credential selection](/docs/reference/cli/login#credential-selection).
 
-Start a Session with [`helmr agent start`](/docs/reference/cli/agent). For what
+Create a Session with `helmr session create AGENT`. For what
 each operation means, see [Sessions](/docs/concepts/sessions) and
 [Turns](/docs/concepts/turns). For a walkthrough, see
 [Start and observe a Session](/docs/guides/start-and-observe-a-session).
@@ -46,23 +48,39 @@ each operation means, see [Sessions](/docs/concepts/sessions) and
 | `--idempotency-key KEY` | Retry identity for a mutation. Reuse it with identical arguments to retry an uncertain request. When omitted, each invocation uses a new key. |
 | `--json` | Print the server resource or receipt as one JSON object. |
 
-`--text` and the JSON flags are mutually exclusive; one is required. A receipt
+`--text` and the JSON flags are mutually exclusive. Creation permits omitted
+input; enqueue and send require one input flag. A receipt
 confirms acceptance, not completion.
+
+## Create a Session
+
+`create AGENT` resolves the authored Agent ID in the current Deployment. Omit
+input to create a Session with zero Turns. Explicit empty input such as `--input-json '[]'` is rejected. Without `--computer`, assignment waits until
+first input. An explicit Computer binds placement without starting execution.
+
+`--key` gives the Session a unique identity within its Agent. An occupied key is
+a conflict, including for closed Sessions. Discover an existing Session with
+`list --agent AGENT_UUID --key KEY`, then enqueue input using its ID.
+`--idempotency-key` retries the same creation request and returns its receipt.
+`--slack-channel` optionally chooses one Slack channel ID.
+
+Text output prints `session_id` and, when present, `turn_id`. JSON output contains
+`session_id`, `close_after_idle_ms`, and `turn`: either `null` or an object with
+`session_id`, `turn_id`, and `sequence`.
 
 ## Sessions
 
 | Command | Description |
 | --- | --- |
-| `list` | One page of Sessions. Text output: `ID AGENT_ID STATUS COMPUTER_ID` per line, then `next_cursor` when more remain. |
+| `list` | One page of Sessions. Text output: `ID AGENT_UUID STATUS COMPUTER_ID` per line, then `next_cursor` when more remain. |
 | `get` | Session state, including the Computer and current holds. Text output includes `hold_id`, `hold_session_id` (the Session that owns the hold), `hold_scope` and `hold_reason` for each hold. |
-| `send` | Messages the active Turn, or enqueues a Turn when the Session is idle. Prints `id`, `kind` (`messaged` or `enqueued`), `turn_id` and, for a message, `message_id`. |
 | `enqueue` | Always admits a new Turn. Prints `session_id`, `turn_id` and `sequence`. |
 
 `list` flags:
 
 | Flag | Description |
 | --- | --- |
-| `--agent AGENT_UUID` | Filter by Agent UUID (`agent_id` from `helmr agent definition get`). |
+| `--agent AGENT_UUID` | Filter by stable Agent UUID (`agent_id` from definition inspection). |
 | `--key KEY` | Filter by Session key. Requires `--agent`. |
 | `--parent-session SESSION_ID` | Sessions owned by this parent. |
 | `--requester-session SESSION_ID` | Sessions requested by this Session. |
@@ -101,6 +119,7 @@ records are available. Event kinds are listed in
 | `turn list` | One page of Turns in admission order. `--limit` 1–100, default 50. |
 | `turn get` | Status, result or error, response, completion save and payload expiry when available. |
 | `turn wait` | Observes the Turn until it settles or `--timeout` elapses. |
+| `turn interrupt` | Interrupts exactly one running Turn without adding a hold or affecting owned Sessions. A queued, finalizing or settled Turn is rejected. |
 | `turn send` | Sends a message to exactly this Turn. It is never redirected to another Turn. |
 
 `turn wait` requires a positive `--timeout` such as `30s` or `10m`. A timeout

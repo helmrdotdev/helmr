@@ -261,7 +261,7 @@ func (relay *agentRelay) handleHostMessage(connection programConnection, sequenc
 		}
 		size := int64(proto.Size(value.Command))
 		full := len(relay.writes) == cap(relay.writes) || relay.writeBytes.Load()+size > 32*1024*1024
-		shutdown := value.Command.GetShutdown() != nil
+		shutdown := value.Command.GetControl().GetDesired() == "shutdown"
 		if full && !shutdown {
 			return errors.New("session command queue is full")
 		}
@@ -282,7 +282,7 @@ func (relay *agentRelay) handleHostMessage(connection programConnection, sequenc
 			relay.writeBytes.Add(size)
 			relay.writes <- agentQueuedWrite{write: write, size: size}
 		}
-		if value.Command.GetShutdown() != nil {
+		if value.Command.GetControl().GetDesired() == "shutdown" {
 			relay.shuttingDown = true
 			if relay.shutdownTimer == nil {
 				relay.shutdownTimer = time.AfterFunc(agentShutdownTimeout, func() { relay.finish(errors.New("session shutdown deadline")) })

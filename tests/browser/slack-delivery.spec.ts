@@ -25,7 +25,7 @@ async function fixture(page: Page, role = "owner", supplied?: SlackDeliveryPost[
     else if (endpoint === "/api/projects") json = { projects: [project] };
     else if (endpoint === `/api/projects/${projectID}`) json = project;
     else if (endpoint === base) json = environment;
-    else if (endpoint === path) json = { id: sessionID, agent_id: postID, deployment_id: postID, computer_id: postID, root_session_id: sessionID, parent_session_id: null, slack_channel_id: postID, status: "open", created_at: now, holds: [] };
+    else if (endpoint === path) json = { activity: { process: null }, initial_turn: null, id: sessionID, agent_id: postID, deployment_id: postID, computer_id: postID, root_session_id: sessionID, parent_session_id: null, slack_channel_id: postID, status: "open", created_at: now, holds: [] };
     else if (endpoint === `${path}/turns`) json = { turns: [] };
     else if (endpoint === `${path}/events`) json = { records: [], next_after: 0, has_more: false, retained_after: 0 };
     else if (endpoint === `${path}/slack-delivery`) json = { posts: url.searchParams.has("cursor") ? posts.slice(1) : posts.slice(0, 1), ...(!url.searchParams.has("cursor") && posts.length > 1 ? { next_cursor: "1" } : {}) };

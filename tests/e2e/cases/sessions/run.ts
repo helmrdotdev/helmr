@@ -6,7 +6,7 @@ import { assertSessionTurns } from "./assertions"
 await verify("sessions", async ({ marker, objects, computer, startAgent }) => {
   const target = await computer("verification", "sessions")
   const first = await startAgent("verification-session", {
-    computer: target, sessionKey: marker, input: { marker }, idempotencyKey: `session:${marker}`,
+    computer: target, key: marker, input: { marker }, idempotencyKey: `session:${marker}`,
   })
   const firstResult = await completedResult(first.turn, 180_000)
   assert(firstResult !== null && typeof firstResult === "object" && "nonce" in firstResult && typeof firstResult.nonce === "string")

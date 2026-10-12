@@ -36,7 +36,7 @@ ln -s "${repo_root}/sdk/typescript/node_modules/@bufbuild/protobuf" \
 cat >"${consumer}/consumer.ts" <<'EOF'
 import {
   HelmrClient, agent, computer, image, source,
-  type AgentDefinition, type ComputerDefinition, type ImageBuilder, type InputContent,
+  type AgentDefinition, type TemplateDefinition, type ImageBuilder, type InputContent,
   type SecretCreateRequest, type SourceDirectory, type SourceFile,
 } from "@helmr/sdk"
 
@@ -46,7 +46,7 @@ const fixtureImage: ImageBuilder = image("packed-consumer-image")
   .from("node:24-bookworm-slim")
   .copy(sourceFile, "/app/package.json")
   .copy(sourceDirectory, "/app/src")
-const machine: ComputerDefinition = computer({
+const machine: TemplateDefinition = computer({
   id: "packed-machine", image: fixtureImage, resources: { cpu: 1, memory: "1GiB" },
   prepare: async (build) => { await build.exec(["true"]) },
 })
@@ -75,9 +75,9 @@ const client = new HelmrClient({
     requests.push(path)
     if (new Headers(init?.headers).get("Authorization") !== "Bearer packed-consumer") throw new Error("missing client authentication")
     const body = init?.body === undefined ? undefined : JSON.parse(String(init.body))
-    if (path === "/v1/agents/packed-consumer/start") {
+    if (path === "/v1/sessions") {
       if (init?.method !== "POST" || body.input[0]?.type !== "text" || body.input[0]?.text !== "typed" || body.computer_id !== computerID || body.idempotency_key !== "start-1") throw new Error("invalid start envelope")
-      return Response.json({ session_id: sessionID, turn_id: turnID, sequence: 1, created: true })
+      return Response.json({ session_id: sessionID, turn: { session_id: sessionID, turn_id: turnID, sequence: 1 }, close_after_idle_ms: 604800000 })
     }
     if (path === `/v1/sessions/${sessionID}/enqueue`) {
       if (body.input[0]?.text !== '{"issue":"APP-42"}' || body.idempotency_key !== "queue-1") throw new Error("invalid enqueue envelope")
@@ -93,10 +93,8 @@ const client = new HelmrClient({
     throw new Error(`unexpected packed client request: ${path}`)
   },
 })
-const started = await client.agents.start(fixture.id, {
-  input: [{ type: "text", text: "typed" }], computer: client.computers.ref(computerID), idempotencyKey: "start-1",
-})
-if (!started.created || started.session.id !== sessionID || started.turn.id !== turnID) throw new Error("invalid Agent admission")
+const started = await client.sessions.create({ agent: fixture.id, input: [{ type: "text", text: "typed" }], computer: client.computers.ref(computerID), idempotencyKey: "start-1", })
+if (started.session.id !== sessionID || started.turn.id !== turnID) throw new Error("invalid Agent admission")
 const session = client.sessions.ref(sessionID)
 const queued = await session.enqueue([{ type: "text", text: JSON.stringify({ issue: "APP-42" }) }], { idempotencyKey: "queue-1" })
 if (queued.id !== turnID) throw new Error("enqueue did not return the exact Turn reference")

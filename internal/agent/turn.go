@@ -65,7 +65,7 @@ type owners struct {
 }
 
 // lockSession follows the ownership-root -> Computer -> Session order. Ownership
-// and placement are immutable; deciding state is read again after locking.
+// is immutable; assign-once placement is read again under its root lock.
 func lockSession(ctx context.Context, tx pgx.Tx, env, session uuid.UUID) (owners, error) {
 	rows, err := lockSessions(ctx, tx, env, []uuid.UUID{session})
 	return rows[session], err
@@ -79,16 +79,17 @@ func lockSessionsAndComputers(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids
 	rows := make(map[uuid.UUID]owners, len(ids))
 	roots, computers := make(map[uuid.UUID]bool), make(map[uuid.UUID]bool)
 	for _, id := range additionalComputers {
-		computers[id] = true
+		if id != uuid.Nil() {
+			computers[id] = true
+		}
 	}
 	for _, id := range ids {
 		var o owners
-		if err := tx.QueryRow(ctx, `SELECT root_session_id,computer_id FROM sessions WHERE environment_id=$1 AND id=$2`, env, id).Scan(&o.root, &o.computer); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT root_session_id FROM sessions WHERE environment_id=$1 AND id=$2`, env, id).Scan(&o.root); err != nil {
 			return nil, err
 		}
 		rows[id] = o
 		roots[o.root] = true
-		computers[o.computer] = true
 	}
 	sorted := func(set map[uuid.UUID]bool) []uuid.UUID {
 		ids := make([]uuid.UUID, 0, len(set))
@@ -102,6 +103,19 @@ func lockSessionsAndComputers(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids
 		if _, err := tx.Exec(ctx, `SELECT id FROM sessions WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, id); err != nil {
 			return nil, err
 		}
+	}
+	// Another first enqueue may have assigned placement while we waited for the
+	// root. Never carry its pre-lock NULL forward or omit the new Computer lock.
+	for id, o := range rows {
+		var computer *uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT computer_id FROM sessions WHERE environment_id=$1 AND id=$2`, env, id).Scan(&computer); err != nil {
+			return nil, err
+		}
+		if computer != nil {
+			o.computer = *computer
+			computers[*computer] = true
+		}
+		rows[id] = o
 	}
 	for _, id := range sorted(computers) {
 		if _, err := tx.Exec(ctx, `SELECT id FROM computers WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, id); err != nil {
@@ -144,12 +158,12 @@ func digestJSON(input json.RawMessage) ([32]byte, error) {
 // Enqueue atomically accepts one input and records its observation event. The
 // Environment lock serializes capacity/admission; the Session lock fixes queue
 // order and the model-owned retry receipt before live eligibility is considered.
-func Enqueue(ctx context.Context, pool db.TxBeginner, caller Caller, req EnqueueRequest) (Admission, error) {
-	result, err := admitSessionInput(ctx, pool, caller, req, "enqueue", uuid.Nil())
+func Enqueue(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIssuer, caller Caller, req EnqueueRequest) (Admission, error) {
+	result, err := admitSessionInput(ctx, pool, trust, caller, req, "enqueue", uuid.Nil())
 	return result.Admission, err
 }
 
-func admitSessionInput(ctx context.Context, pool db.TxBeginner, caller Caller, req EnqueueRequest, method string, exactTurn uuid.UUID) (SendReceipt, error) {
+func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust ComputerTrustIssuer, caller Caller, req EnqueueRequest, method string, exactTurn uuid.UUID) (SendReceipt, error) {
 	var result SendReceipt
 	target := req.SessionID
 	if method == "turn_send" {
@@ -236,6 +250,33 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, caller Caller, r
 		}
 		if o.lifecycle != "open" && o.lifecycle != "closing" {
 			return ErrNotReady
+		}
+		var deployment uuid.UUID
+		var revoked bool
+		if err = tx.QueryRow(ctx, `SELECT s.deployment_id,d.execution_revoked_at IS NOT NULL FROM sessions s JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id) WHERE s.environment_id=$1 AND s.id=$2 FOR SHARE OF d`, req.EnvironmentID, req.SessionID).Scan(&deployment, &revoked); err != nil {
+			return err
+		}
+		if revoked {
+			return ErrDenied
+		}
+		if o.computer == uuid.Nil() {
+			if method == "turn_send" {
+				return ErrMessageClosed
+			}
+			if o.lifecycle != "open" {
+				return ErrNotReady
+			}
+			var templateKey string
+			if err = tx.QueryRow(ctx, `SELECT t.key FROM sessions s JOIN agent_definitions d ON (d.environment_id,d.agent_id,d.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id) JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE s.environment_id=$1 AND s.id=$2`, req.EnvironmentID, req.SessionID).Scan(&templateKey); err != nil {
+				return err
+			}
+			o.computer, err = createAdmissionComputer(ctx, tx, trust, req.EnvironmentID, deployment, templateKey, policy)
+			if err != nil {
+				return err
+			}
+			if _, err = tx.Exec(ctx, `UPDATE sessions SET computer_id=$3 WHERE environment_id=$1 AND id=$2 AND computer_id IS NULL`, req.EnvironmentID, req.SessionID, o.computer); err != nil {
+				return err
+			}
 		}
 		var computerAvailable bool
 		if err = tx.QueryRow(ctx, `SELECT preparation_failed_at IS NULL AND deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2) FROM computers WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, o.computer).Scan(&computerAvailable); err != nil {
@@ -467,6 +508,16 @@ func dispatchTurn(ctx context.Context, tx pgx.Tx, e Execution, result *TurnDispa
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return err
+	}
+	// Existing work may be observed, but a new Turn needs the current applied
+	// run control and proof that the previous target has ceased execution.
+	var applied bool
+	if err = tx.QueryRow(ctx, `SELECT control_kind='resume' AND control_acknowledged_at IS NOT NULL AND control_error IS NULL AND control_attachment=attachment_sequence AND control_generation=$4 AND stop_deadline_at IS NULL
+ FROM session_processes WHERE environment_id=$1 AND session_id=$2 AND epoch=$3`, e.EnvironmentID, e.SessionID, e.ProcessEpoch, o.generation).Scan(&applied); err != nil {
+		return err
+	}
+	if !applied {
+		return ErrNotReady
 	}
 	err = tx.QueryRow(ctx, `SELECT id FROM turns WHERE environment_id=$1 AND session_id=$2 AND status='queued' ORDER BY seq LIMIT 1 FOR NO KEY UPDATE`, e.EnvironmentID, e.SessionID).Scan(&result.TurnID)
 	if errors.Is(err, pgx.ErrNoRows) {

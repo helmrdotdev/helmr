@@ -18,7 +18,7 @@ const (
 	maxJSONSafeInteger   int64 = 9007199254740991
 
 	KindAgent    = Kind("agent")
-	KindComputer = Kind("computer")
+	KindTemplate = Kind("template")
 
 	maxBuildPlanBytes   = 16 << 20
 	MaxBuildDefinitions = 10000
@@ -36,7 +36,7 @@ type Input struct {
 	Kind       Kind   `json:"-"`
 	DeclaredID string `json:"-"`
 	Agent      *AgentManifest
-	Computer   *ComputerInputManifest
+	Template   *TemplateInputManifest
 }
 
 type ResourcesManifest struct {
@@ -113,16 +113,16 @@ func ValidateBuildPlan(plan BuildPlan) error {
 		if i > 0 && compareDefinitionInputs(plan.Definitions[i-1], input) >= 0 {
 			return errors.New("build plan definitions are not in canonical order")
 		}
-		if input.Computer != nil {
+		if input.Template != nil {
 			computers[input.DeclaredID] = true
-			imageSteps += ImageBuildStepCount(input.Computer.ImageBuild)
+			imageSteps += ImageBuildStepCount(input.Template.ImageBuild)
 		}
 	}
 	if imageSteps > maxBuildImageSteps {
 		return errors.New("build plan exceeds 10000 image steps")
 	}
 	for _, input := range plan.Definitions {
-		if input.Agent != nil && !computers[input.Agent.ComputerDefinitionID] {
+		if input.Agent != nil && !computers[input.Agent.TemplateDefinitionID] {
 			return errors.New("agent references an undeclared Computer")
 		}
 	}
@@ -133,15 +133,15 @@ func (input Input) MarshalJSON() ([]byte, error) {
 	var manifest any
 	switch input.Kind {
 	case KindAgent:
-		if input.Agent == nil || input.Computer != nil {
+		if input.Agent == nil || input.Template != nil {
 			return nil, errors.New("agent input requires exactly one Agent manifest")
 		}
 		manifest = input.Agent
-	case KindComputer:
-		if input.Computer == nil || input.Agent != nil {
+	case KindTemplate:
+		if input.Template == nil || input.Agent != nil {
 			return nil, errors.New("computer input requires exactly one Computer manifest")
 		}
-		manifest = input.Computer
+		manifest = input.Template
 	default:
 		return nil, fmt.Errorf("definition kind %q is unsupported", input.Kind)
 	}
@@ -164,8 +164,8 @@ func (input *Input) UnmarshalJSON(raw []byte) error {
 	switch wire.Kind {
 	case KindAgent:
 		return decodeClosedDefinition(wire.Manifest, &input.Agent)
-	case KindComputer:
-		return decodeClosedDefinition(wire.Manifest, &input.Computer)
+	case KindTemplate:
+		return decodeClosedDefinition(wire.Manifest, &input.Template)
 	default:
 		return fmt.Errorf("definition kind %q is unsupported", wire.Kind)
 	}
@@ -186,21 +186,21 @@ func validateDefinitionInput(input Input) error {
 	}
 	switch input.Kind {
 	case KindAgent:
-		if input.Agent == nil || input.Computer != nil {
+		if input.Agent == nil || input.Template != nil {
 			return errors.New("agent requires exactly one manifest")
 		}
 		return ValidateAgentManifest(*input.Agent)
-	case KindComputer:
-		if input.Computer == nil || input.Agent != nil {
+	case KindTemplate:
+		if input.Template == nil || input.Agent != nil {
 			return errors.New("computer requires exactly one manifest")
 		}
-		if err := ValidateImageBuild(input.Computer.ImageBuild, string(ArchitectureX8664)); err != nil {
+		if err := ValidateImageBuild(input.Template.ImageBuild, string(ArchitectureX8664)); err != nil {
 			return err
 		}
-		if err := ValidateUnusedPolicy(input.Computer.DeleteAfterUnusedMs, input.Computer.DeleteAfterUnusedNever); err != nil {
+		if err := ValidateUnusedPolicy(input.Template.DeleteAfterUnusedMs, input.Template.DeleteAfterUnusedNever); err != nil {
 			return err
 		}
-		return validateComputerSettings(input.Computer.Resources, input.Computer.Refresh, input.Computer.Secrets, input.Computer.BuildSecrets)
+		return validateComputerSettings(input.Template.Resources, input.Template.Refresh, input.Template.Secrets, input.Template.BuildSecrets)
 	default:
 		return fmt.Errorf("definition kind %q is unsupported", input.Kind)
 	}
@@ -239,7 +239,7 @@ func definitionKindOrder(kind Kind) int {
 	switch kind {
 	case KindAgent:
 		return 0
-	case KindComputer:
+	case KindTemplate:
 		return 1
 	default:
 		return 2

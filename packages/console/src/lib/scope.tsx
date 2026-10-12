@@ -1,5 +1,6 @@
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
-import { batch, createContext, createEffect, createMemo, createSignal, useContext, type JSX } from "solid-js";
+import { useSearchParams } from "@solidjs/router";
+import { batch, createContext, createEffect, createMemo, createSignal, on, useContext, type JSX } from "solid-js";
 import { ApiError } from "./api";
 import {
   getProject,
@@ -77,8 +78,10 @@ function resolveEnvironment(
 }
 
 export function ScopeProvider(props: { children: JSX.Element }) {
-  const [selectedProjectID, setSelectedProjectIDState] = createSignal(localStorage.getItem(PROJECT_STORAGE_KEY) ?? "");
-  const [selectedEnvironmentID, setSelectedEnvironmentIDState] = createSignal(localStorage.getItem(ENVIRONMENT_STORAGE_KEY) ?? "");
+  const [search] = useSearchParams();
+  const routeValue = (key: string) => typeof search[key] === "string" ? search[key] as string : "";
+  const [selectedProjectID, setSelectedProjectIDState] = createSignal(routeValue("project_id") || localStorage.getItem(PROJECT_STORAGE_KEY) || "");
+  const [selectedEnvironmentID, setSelectedEnvironmentIDState] = createSignal(routeValue("environment_id") || localStorage.getItem(ENVIRONMENT_STORAGE_KEY) || "");
   const [environmentSelections, setEnvironmentSelections] = createSignal(readEnvironmentSelections());
   const [rejectedProjectIDs, setRejectedProjectIDs] = createSignal<ReadonlySet<string>>(new Set());
   const projectsQuery = createInfiniteQuery(() => ({
@@ -116,6 +119,15 @@ export function ScopeProvider(props: { children: JSX.Element }) {
       setSelectedEnvironmentIDState(environmentSelections()[id] ?? "");
     });
   };
+
+  // Deep links establish the same scope shown by the global selector. Explicit
+  // selector changes navigate away from old resource/query identities.
+  createEffect(on(() => [routeValue("project_id"), routeValue("environment_id")] as const, ([project, environment]) => {
+    batch(() => {
+      if (project) selectProjectID(project);
+      if (environment) setSelectedEnvironmentIDState(environment);
+    });
+  }, { defer: true }));
 
   createEffect(() => {
     const project = selectedProject();
@@ -211,4 +223,14 @@ export function useScope() {
   const value = useContext(ScopeContext);
   if (!value) throw new Error("ScopeProvider is missing");
   return value;
+}
+
+export function useRouteScope() {
+  const scope = useScope();
+  const [search] = useSearchParams();
+  const value = (key: string) => typeof search[key] === "string" ? search[key] as string : "";
+  return () => ({
+    projectID: value("project_id") || scope.selectedProjectID(),
+    environmentID: value("environment_id") || scope.selectedEnvironmentID(),
+  });
 }

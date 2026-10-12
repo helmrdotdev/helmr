@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestDeploymentHTTPPostgresSessionRoutes(t *testing.T) {
@@ -159,8 +160,9 @@ func deploymentHTTPDeployment(t *testing.T, fixture httpPostgresFixture, orgID, 
 	digest := "sha256:" + fmt.Sprintf("%064x", 1)
 	dbtest.MustExec(t, t.Context(), fixture.pool, `INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$2,$3)`, environmentID, deploymentID, digest)
 	dbtest.MustExec(t, t.Context(), fixture.pool, `INSERT INTO computer_preparation_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$2,$3,'{}','{}')`, environmentID, specID, digest)
-	dbtest.MustExec(t, t.Context(), fixture.pool, `INSERT INTO computer_definitions(environment_id,deployment_id,definition_key,preparation_spec_id,resources) VALUES($1,$2,'report-computer',$3,'{}')`, environmentID, deploymentID, specID)
-	dbtest.MustExec(t, t.Context(), fixture.pool, `INSERT INTO agents(environment_id,id,name) VALUES($1,$2,'daily-report')`, environmentID, agentID)
-	dbtest.MustExec(t, t.Context(), fixture.pool, `INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,definition_key,computer_definition_key,setup,triggers) VALUES($1,$2,$3,'daily-report','report-computer',false,'{}')`, environmentID, agentID, deploymentID)
+	dbtest.MustExec(t, t.Context(), fixture.pool, `INSERT INTO templates(environment_id,id,key) VALUES($1,$3,'report-computer');
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,preparation_spec_id,resources) VALUES($1,$2,$3,$3,'{}')`, pgx.QueryExecModeSimpleProtocol, environmentID, deploymentID, specID)
+	dbtest.MustExec(t, t.Context(), fixture.pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'daily-report')`, environmentID, agentID)
+	dbtest.MustExec(t, t.Context(), fixture.pool, `INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,setup,triggers) VALUES($1,$2,$3,(SELECT id FROM templates WHERE environment_id=$1 AND key='report-computer'),false,'{}')`, environmentID, agentID, deploymentID)
 	return deploymentID
 }

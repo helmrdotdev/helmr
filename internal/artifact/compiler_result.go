@@ -132,7 +132,7 @@ func ValidateProgramCompilerLocators(result ProgramCompilerResult, index Definit
 			return errors.New("agent module is not a discovery candidate")
 		}
 	}
-	for _, c := range index.Computers {
+	for _, c := range index.Templates {
 		if _, found := slices.BinarySearch(result.Modules, c.ModulePath); !found {
 			return errors.New("computer module is not a discovery candidate")
 		}

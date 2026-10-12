@@ -1,14 +1,14 @@
 import { fixtureValue } from "../../support/runtime-mcp"
-import { agent, computer, image } from "@helmr/sdk"
+import { agent, template, image } from "@helmr/sdk"
 import { createHash } from "node:crypto"
 import { z } from "zod"
 const base = image("verification-secret").from("node:24-bookworm-slim")
-export const secretComputer = computer({
+export const secretComputer = template({
   id: "helmr-secret-smoke", image: base, resources: { cpu: 1, memory: "1GiB" },
 })
 export const secretAgent = agent({
   id: "secret-smoke",
-  computer: secretComputer,
+  template: secretComputer,
   maxTurnDuration: "2m",
   turn: async (turn) => {
     const input = z.object({ sha256: z.string().length(64) }).strict().parse(fixtureValue(turn.input))

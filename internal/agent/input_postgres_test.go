@@ -36,7 +36,7 @@ func TestUniformTextInputAdmission(t *testing.T) {
 	if _, err := Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, conversation.ErrUnsupported) {
 		t.Fatalf("existing start ignored pin: %v", err)
 	}
-	if _, err := Enqueue(t.Context(), f.pool, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, Input: bad}); !errors.Is(err, conversation.ErrUnsupported) {
+	if _, err := Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, Input: bad}); !errors.Is(err, conversation.ErrUnsupported) {
 		t.Fatalf("enqueue ignored pin: %v", err)
 	}
 	var count int
@@ -44,7 +44,7 @@ func TestUniformTextInputAdmission(t *testing.T) {
 		t.Fatalf("rejection admitted work %d: %v", count, err)
 	}
 	for _, invalid := range []string{`{"type":"job","content":12}`, `{"type":"message","content":12}`, `null`, `"hello"`} {
-		if _, err := Enqueue(t.Context(), f.pool, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, Input: json.RawMessage(invalid)}); !errors.Is(err, conversation.ErrInvalid) {
+		if _, err := Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, Input: json.RawMessage(invalid)}); !errors.Is(err, conversation.ErrInvalid) {
 			t.Fatalf("accepted non-content input %s: %v", invalid, err)
 		}
 	}

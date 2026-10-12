@@ -46,6 +46,13 @@ func TestSessionDeadlineHoldsOnlyItsSessionAndPreservesSave(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if finalizing {
+				var unchanged bool
+				if err := f.pool.QueryRow(t.Context(), `SELECT t.status='finalizing' AND t.result_recorded_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM session_holds WHERE session_id=$2) AND EXISTS(SELECT 1 FROM computer_saves WHERE id=$3 AND status='requested') FROM turns t WHERE t.id=$1`, active.TurnID, f.session, save.ID).Scan(&unchanged); err != nil || !unchanged {
+					t.Fatalf("deadline altered recorded result: %v %v", unchanged, err)
+				}
+				return
+			}
 			for id, want := range map[uuid.UUID]string{active.TurnID: "interrupted", queued.TurnID: "queued", childTurn.TurnID: "running", peerTurn.TurnID: "running"} {
 				var state string
 				if err := f.pool.QueryRow(t.Context(), `SELECT status FROM turns WHERE id=$1`, id).Scan(&state); err != nil || state != want {

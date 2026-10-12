@@ -105,7 +105,7 @@ func TestAPIKeyPostgresReplacementIsAtomic(t *testing.T) {
 	fixture := newAPIKeyFixture(t)
 	ctx := t.Context()
 	original := fixture.issue(t, "replacement", auth.PermissionSessionsRead)
-	replacement := fixture.issue(t, "replacement", auth.PermissionSessionsRead, auth.PermissionAgentsStart)
+	replacement := fixture.issue(t, "replacement", auth.PermissionSessionsRead, auth.PermissionSessionsCreate)
 	var originalRevoked bool
 	if err := fixture.pool.QueryRow(ctx, `SELECT revoked_at IS NOT NULL FROM api_keys WHERE id = $1`, original.Record.ID).Scan(&originalRevoked); err != nil || !originalRevoked {
 		t.Fatalf("original revoked = %t, err = %v", originalRevoked, err)

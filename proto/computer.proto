@@ -180,7 +180,7 @@ message PreparationIdentity {
   bytes channel_credential = 4;
 }
 message PreparationStart {
-  string computer_definition_id = 1;
+  string template_definition_id = 1;
   repeated ComputerSecretDelivery secrets = 2;
   PreparationLogLimits log_limits = 3;
   map<string, string> protected_env = 4;

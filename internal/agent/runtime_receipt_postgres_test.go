@@ -8,7 +8,7 @@ import (
 )
 
 func TestRuntimeReceiptRecoveryRequiresCurrentGeneration(t *testing.T) {
-	for _, operation := range []string{"start", "spawn", "enqueue", "interrupt"} {
+	for _, operation := range []string{"create", "spawn", "enqueue", "interrupt"} {
 		t.Run(operation, func(t *testing.T) {
 			f := newAdmissionFixture(t)
 			caller := runtimeReadCaller(t, f)
@@ -17,13 +17,13 @@ func TestRuntimeReceiptRecoveryRequiresCurrentGeneration(t *testing.T) {
 			var original string
 			invoke := func() (string, error) {
 				switch operation {
-				case "start", "spawn":
+				case "create", "spawn":
 					req := f.startRequest("original-key")
 					req.ComputerID = f.computer
 					receipt, err := admitSession(t.Context(), f.pool, nil, caller, req, operation)
 					return receipt.TurnID.String(), err
 				case "enqueue":
-					receipt, err := Enqueue(t.Context(), f.pool, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: target.session, RetryKey: "original-key", Input: []byte(`[]`)})
+					receipt, err := Enqueue(t.Context(), f.pool, nil, caller, EnqueueRequest{EnvironmentID: f.env, SessionID: target.session, RetryKey: "original-key", Input: []byte(`[]`)})
 					return receipt.TurnID.String(), err
 				default:
 					receipt, err := ControlSession(t.Context(), f.pool, caller, SessionControlRequest{EnvironmentID: f.env, SessionID: target.session, Kind: "interrupt", RetryKey: "original-key"})

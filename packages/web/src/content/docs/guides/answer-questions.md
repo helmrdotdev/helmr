@@ -74,7 +74,7 @@ Once the question is answered, the Agent's `turn.ask` call returns and the Turn
 continues; follow it as described in
 [Start and observe a Session](/docs/guides/start-and-observe-a-session).
 
-A message sent with `helmr session send` or `session turn send` does not answer a
+A message sent with `helmr session turn send` does not answer a
 question. Use the respond command.
 
 ## Answer from the SDK

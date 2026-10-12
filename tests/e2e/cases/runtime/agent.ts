@@ -1,5 +1,5 @@
 import { fixtureValue } from "../../support/runtime-mcp"
-import { agent, computer, image, source, type Json } from "@helmr/sdk"
+import { agent, template, image, source, type Json } from "@helmr/sdk"
 import { createHash, randomUUID } from "node:crypto"
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import { checkCommand as checkProcessCommand } from "./process"
@@ -23,7 +23,7 @@ const base = image("helmr-runtime-smoke")
   .run(["npm", "install", "-g", "bun@1.3.13"])
   .workdir("/workspace")
 
-export const runtimeSmokeComputer = computer({
+export const runtimeSmokeComputer = template({
   id: "helmr-runtime-smoke", image: base, resources: { cpu: 2, memory: "2GiB" },
 })
 
@@ -44,7 +44,7 @@ type Check = {
 
 export const runtimeSmoke = agent({
   id: "runtime-smoke",
-  computer: runtimeSmokeComputer,
+  template: runtimeSmokeComputer,
   maxTurnDuration: "20m",
   turn: async (turn, ctx): Promise<Json> => {
     const input = runtimeSmokePayload.parse(fixtureValue(turn.input))

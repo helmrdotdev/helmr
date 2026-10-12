@@ -43,7 +43,7 @@ interface HelmrBuildInput {
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `dirs` | `["agents"]` | Directories, relative to the project root, searched for exported Agent and Computer definitions. Must be non-empty when set, without duplicates, `..`, absolute paths or backslashes. |
+| `dirs` | `["agents"]` | Directories, relative to the project root, searched for exported Agent and Template definitions. Must be non-empty when set, without duplicates, `..`, absolute paths or backslashes. |
 | `ignorePatterns` | `[]` | Glob patterns excluded from definition discovery only. Supports `*`, `?` and whole-segment `**`; negation, brackets, braces and extended globs are rejected. |
 | `build.builder` | Helmr's builder image | Steps that prepare the Linux build environment before dependencies are installed. See [Build environment](#build-environment). |
 | `build.installCommand` | Inferred from the package manager | One shell command, run unprivileged with `/bin/bash -euo pipefail -c`. |
@@ -268,7 +268,7 @@ operations and Computer tools keep their normal access. Helmr does not inject
 | Surface | Fields | Reference |
 | --- | --- | --- |
 | `agent()` | `id`, `computer`, `turn`; optional `init`, `closeAfterIdle` (default `"7d"`, or `"never"`), `maxTurnDuration`, `triggers` | [Agent](/docs/reference/sdk/agent) |
-| `computer()` | `id`, `image`, `resources`; optional `prepare`, `refresh`, `deleteAfterUnused` (default `"7d"`, or `"never"`), `secrets`, `buildSecrets` | [Computer](/docs/reference/sdk/computer) |
+| `template()` | `id`, `image`, `resources`; optional `prepare`, `refresh`, `deleteAfterUnused` (default `"7d"`, or `"never"`), `secrets`, `buildSecrets` | [Computer](/docs/reference/sdk/computer) |
 | `triggers.cron()` | trigger ID, expression, `{ timezone, input, slack? }` | [Triggers](/docs/reference/sdk/triggers) |
 | `image()` | `from`, `run`, `copy`, `copyFrom`, `workdir`, `env`, `user` | [Computer](/docs/reference/sdk/computer#images) |
 | `source` | `file(path)`, `directory(path)` | [Computer](/docs/reference/sdk/computer#images) |

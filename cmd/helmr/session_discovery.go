@@ -35,7 +35,11 @@ func sessionListCommand() *cobra.Command {
 			return writeJSON(cmd.OutOrStdout(), page)
 		}
 		for _, session := range page.Sessions {
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", session.ID, session.AgentID, session.Status, session.ComputerID)
+			computer := "No Computer assigned"
+			if session.ComputerID != nil {
+				computer = *session.ComputerID
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", session.ID, session.AgentID, session.Status, computer)
 		}
 		if page.NextCursor != "" {
 			fmt.Fprintf(cmd.OutOrStdout(), "next_cursor: %s\n", page.NextCursor)
@@ -43,7 +47,7 @@ func sessionListCommand() *cobra.Command {
 		return nil
 	}}
 	addScopeFlags(cmd, &project, &environment)
-	cmd.Flags().StringVar(&agent, "agent", "", "Filter by Agent definition UUID.")
+	cmd.Flags().StringVar(&agent, "agent", "", "Filter by stable Agent UUID.")
 	cmd.Flags().StringVar(&key, "key", "", "Filter by explicit Session key; requires --agent.")
 	cmd.Flags().StringVar(&parent, "parent-session", "", "Filter by owning parent Session UUID.")
 	cmd.Flags().StringVar(&requester, "requester-session", "", "Filter by requesting Session UUID.")

@@ -21,7 +21,7 @@ func TestWorkerAgentFinalizeRetainsPendingSaveAcrossLostReply(t *testing.T) {
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 	session := runtimeTestSession(f)
-	a, err := agent.Enqueue(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "finalize", Input: json.RawMessage(`[]`)})
+	a, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "finalize", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,6 +29,7 @@ func TestWorkerAgentFinalizeRetainsPendingSaveAcrossLostReply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	acknowledgeTestAgentControl(t, client, session, attachment.AttachmentSequence)
 	if _, err := client.NextAgentTurn(t.Context(), workerapi.AgentTurnRequest{Session: session, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration}); err != nil {
 		t.Fatal(err)
 	}

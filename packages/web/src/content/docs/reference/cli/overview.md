@@ -40,7 +40,7 @@ an Environment require both flags; each accepts a slug or ID. Details are in
 | `helmr agent` | `definition list`, `definition get`, `start` | Inspect Agent definitions and start Sessions. | [agent](/docs/reference/cli/agent) |
 | `helmr session` | `list`, `get`, `send`, `enqueue`, `events`, `interrupt`, `resume`, `close`, `cancel`, `turn list`, `turn get`, `turn wait`, `turn send`, `turn ask list`, `turn ask get`, `turn ask respond` | Work with Sessions, Turns and questions. | [session](/docs/reference/cli/session) |
 | `helmr schedule` | `list`, `get` | Inspect Schedules created by triggers. | [schedule](/docs/reference/cli/schedule) |
-| `helmr computer` | `definition list`, `definition get`, `create`, `get`, `delete`, `exec` | Work with Computer definitions and Computers. | [computer](/docs/reference/cli/computer) |
+| `helmr computer` | `definition list`, `definition get`, `create`, `get`, `delete`, `exec` | Work with Template definitions and Computers. | [computer](/docs/reference/cli/computer) |
 | `helmr command` | `get`, `wait`, `logs`, `cancel` | Observe and cancel Commands. | [command](/docs/reference/cli/command) |
 | `helmr project` | `list`, `get`, `create`, `update` | Manage Projects. Requires a saved login. | [project](/docs/reference/cli/project) |
 | `helmr env` | `list`, `get`, `create`, `update` | Manage a Project's Environments. Requires a saved login. | [project](/docs/reference/cli/project) |

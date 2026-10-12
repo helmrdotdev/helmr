@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workerclient"
 )
 
 func runtimeTestSession(f agenttest.Fixture) workerapi.RuntimeSession {
@@ -141,7 +142,7 @@ func TestWorkerAgentCommittedReceiptSurvivesAdmissionRevocation(t *testing.T) {
 			f := agenttest.New(t)
 			handler := newPostgresServer(t, f.Pool)
 			client := newWorkerHTTPClient(t, handler, f.Pool, f.Worker)
-			origin, err := agent.Enqueue(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "origin", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
+			origin, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "origin", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -240,5 +241,16 @@ func TestWorkerAgentAttachmentSurvivesClientReplacement(t *testing.T) {
 	var denied interface{ SessionAuthorityRejected() bool }
 	if !errors.As(err, &denied) || !denied.SessionAuthorityRejected() {
 		t.Fatalf("expired attachment not rejected: %v", err)
+	}
+}
+
+func acknowledgeTestAgentControl(t *testing.T, client *workerclient.Client, session workerapi.RuntimeSession, attachment int64) {
+	t.Helper()
+	control, err := client.PrepareAgentControl(t.Context(), workerapi.AgentControlRequest{Session: session, AttachmentSequence: attachment})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.AcknowledgeAgentControl(t.Context(), workerapi.AgentControlReceipt{Session: session, AttachmentSequence: attachment, Sequence: control.Sequence, AuthorityGeneration: control.AuthorityGeneration, Kind: control.Kind}); err != nil {
+		t.Fatal(err)
 	}
 }

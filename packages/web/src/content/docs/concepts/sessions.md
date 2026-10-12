@@ -6,26 +6,27 @@ description: A continuing conversation with an Agent, its input operations and i
 # Sessions
 
 A Session is one continuing conversation with an [Agent](/docs/concepts/agents).
-It has a stable ID, a pinned Deployment and one actual
-[Computer](/docs/concepts/computers). It runs the Agent's `init` and then
+It has a stable ID, a pinned Deployment and an optional assigned
+[Computer](/docs/concepts/computers). On its first input it runs the Agent's `init` and then
 processes its [Turns](/docs/concepts/turns) one at a time, in the order they
 were admitted. Several Sessions can share a Computer; they share its files but
 keep separate identities and histories.
 
 ## Starting a Session
 
-Starting an Agent creates a Session and its first Turn and returns both. With
+Creating a Session with input also admits its first Turn. Omitting input creates
+a Session with zero Turns; explicit empty input is rejected. With
 the CLI configured (see [Quickstart](/docs/quickstart)):
 
 ```sh
-helmr agent start reviewer --text "Review the open pull request"
+helmr session create reviewer --text "Review the open pull request"
 ```
 
-or from code with `client.agents.start(name, { input })`. A start can also:
+or from code with `client.sessions.create({ agent: name, input })`. Creation can also:
 
-- pass a **Session key** to name a continuing conversation. If an open Session
-  with that key already exists for the Agent, the input becomes a new Turn in
-  it instead of creating a Session.
+- pass a **Session key** to uniquely name the conversation within its Agent.
+  An occupied key conflicts. Find that Session by stable Agent UUID and key, then enqueue
+  input using its Session ID.
 - pass an **idempotency key** so an uncertain retry of the same request does
   not admit the input twice.
 - select an existing Computer by ID instead of preparing a new one.
@@ -37,25 +38,19 @@ Deployment does not change existing Sessions; see
 
 ## Sending input
 
-There are three ways to give a Session more input. Choose by what should happen
+There are two ways to give a Session more input. Choose by what should happen
 if a Turn is already running.
 
 | Need | SDK | CLI |
 | --- | --- | --- |
 | New work, always as a new Turn | `session.enqueue(input)` | `helmr session enqueue` |
-| Steer the running Turn, or start new work if none accepts messages | `session.send(data)` | `helmr session send` |
 | Message exactly one running Turn | `session.turns.ref(id).send(data)` | `helmr session turn send` |
 
-All three take a JSON array of text parts; the CLI also accepts `--text`.
+Both take a JSON array of text parts; the CLI also accepts `--text`.
 
 **Enqueue** always admits a new Turn at the end of the queue. It works while a
 Turn is running and while the Session is held; the Turn waits until the
 Session can process it.
-
-**Send** delivers the input as a message to the running Turn when that Turn has
-registered a message handler and the Session is not held. Otherwise it enqueues
-a new Turn. The result says which happened: `kind: "enqueued"` with the new
-Turn, or `kind: "messaged"` with the Turn and message ID.
 
 **Exact Turn send** targets one Turn. If that Turn is not running or has no
 message handler, the request is rejected rather than redirected to another
@@ -94,11 +89,16 @@ Turns run in the order they were admitted, first in, first out. Only one Turn
 runs at a time in a Session. A failed Turn does not block the next one; the
 Session stays open for later input.
 
+Session creation uses one admission token, whether it includes initial input or
+creates an empty Session. Each later enqueue uses one more; exact retries and
+rejected transactions use no additional committed tokens.
+
 ## Controls
 
 | Control | Effect |
 | --- | --- |
-| Interrupt | Stops the running Turn as `interrupted` and places a hold on this Session and the Sessions it owns. Queued Turns stay queued. |
+| Turn interrupt | Interrupts exactly one running Turn without a hold or effects on owned Sessions. The next Turn can run once the handler has stopped. Queued, finalizing and settled targets are rejected. |
+| Session interrupt | Stops the running Turn as `interrupted` and places a hold on this Session and the Sessions it owns. Queued Turns stay queued. |
 | Resume | Releases one hold by ID. Queued Turns continue; the interrupted Turn is not replayed. |
 | Close | Rejects new Turns and lets already-admitted Turns finish, then closes the Session and the Sessions it owns. Existing holds remain. |
 | Cancel | Stops the running Turn and cancels queued Turns, as `cancelled`, throughout the Session and the Sessions it owns. |

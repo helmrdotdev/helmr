@@ -1,11 +1,11 @@
 import type { InputContent } from "@helmr/sdk"
 import { durationMilliseconds, normalizeInput, encodeComputerSecrets, inspectImage, canonicalizeJsonValue, type InternalImage, type InternalImageStep, type JsonValue, type DefinitionIndex, type RuntimeArchitecture } from "@helmr/sdk/internal"
-import type { AgentDefinition, ComputerDefinition, SecretBinding, Json } from "@helmr/sdk"
+import type { AgentDefinition, TemplateDefinition, SecretBinding, Json } from "@helmr/sdk"
 import { compareUTF8, hasOnlyUnicodeScalarValues } from "./utf8"
 
 export const BUILD_PLAN_FORMAT_VERSION = 0 as const
 
-export interface ComputerManifest {
+export interface TemplateManifest {
   readonly deleteAfterUnusedMs?: number
   readonly deleteAfterUnusedNever?: boolean
   readonly imageBuild: ImageBuild
@@ -16,7 +16,7 @@ export interface ComputerManifest {
   readonly buildSecrets: readonly SecretBinding[]
 }
 export interface AgentManifest {
-  readonly computerDefinitionId: string
+  readonly templateDefinitionId: string
   readonly setup: boolean
   readonly closeAfterIdleMs?: number
   readonly closeAfterIdleNever?: boolean
@@ -25,7 +25,7 @@ export interface AgentManifest {
 }
 export type BuildPlanDefinition =
   | Readonly<{ kind: "agent"; declaredId: string; manifest: AgentManifest }>
-  | Readonly<{ kind: "computer"; declaredId: string; manifest: ComputerManifest }>
+  | Readonly<{ kind: "template"; declaredId: string; manifest: TemplateManifest }>
 export interface BuildPlan {
   readonly formatVersion: 0
   readonly definitions: readonly BuildPlanDefinition[]
@@ -86,7 +86,7 @@ export interface AnalysisResult {
   readonly definitionIndex: DefinitionIndex
   readonly definitionIndexBytes: Uint8Array
 }
-type Definition = AgentDefinition<InputContent, Json, unknown> | ComputerDefinition
+type Definition = AgentDefinition<InputContent, Json, unknown> | TemplateDefinition
 interface LocatedDefinition { readonly definition: Definition; readonly modulePath: string; readonly exportName: string; readonly throughAgent: boolean }
 
 export function analyze(options: AnalyzeOptions): AnalysisResult {
@@ -109,7 +109,7 @@ export function analyze(options: AnalyzeOptions): AnalysisResult {
         triggers[key] = { cron: trigger.cron, timezone: trigger.timezone, input: trigger.input, ...(trigger.slack === undefined ? {} : { slack: { channelId: trigger.slack.channelId } }) }
       }
       return { kind: "agent", declaredId: definition.id, manifest: {
-        computerDefinitionId: definition.computer.id, setup: definition.init !== undefined, triggers,
+        templateDefinitionId: definition.template.id, setup: definition.init !== undefined, triggers,
         ...(definition.closeAfterIdle === undefined ? {} : definition.closeAfterIdle === "never" ? { closeAfterIdleNever: true } : { closeAfterIdleMs: duration(definition.closeAfterIdle, "closeAfterIdle") }),
         ...(definition.maxTurnDuration === undefined ? {} : { maxTurnDurationMs: duration(definition.maxTurnDuration, "maxTurnDuration") }),
       } }
@@ -118,7 +118,7 @@ export function analyze(options: AnalyzeOptions): AnalysisResult {
     if (!image) throw new Error("Computer image must be created by image()")
     const refresh = definition.refresh
     if (refresh !== undefined) assertMembers(refresh, ["every", "maxAge"], "Computer refresh")
-    return { kind: "computer", declaredId: definition.id, manifest: {
+    return { kind: "template", declaredId: definition.id, manifest: {
       imageBuild: compileImageBuild(image, options), resources: normalizeComputerResources(definition.resources),
       prepare: definition.prepare !== undefined,
       ...(definition.deleteAfterUnused === undefined ? {} : definition.deleteAfterUnused === "never" ? { deleteAfterUnusedNever: true } : { deleteAfterUnusedMs: duration(definition.deleteAfterUnused, "deleteAfterUnused") }),
@@ -127,9 +127,9 @@ export function analyze(options: AnalyzeOptions): AnalysisResult {
     } }
   })
   const buildPlan: BuildPlan = { formatVersion: BUILD_PLAN_FORMAT_VERSION, definitions }
-  const agents = located.filter(item => item.definition.kind === "agent").map(item => ({ id: item.definition.id, computerDefinitionId: (item.definition as AgentDefinition).computer.id, modulePath: item.modulePath, exportName: item.exportName }))
-  const computers = located.filter(item => item.definition.kind === "computer").map(item => ({ id: item.definition.id, modulePath: item.modulePath, exportName: item.exportName, throughAgent: item.throughAgent }))
-  const definitionIndex: DefinitionIndex = { apiVersion: "helmr.definition-index.v1", agents, computers }
+  const agents = located.filter(item => item.definition.kind === "agent").map(item => ({ id: item.definition.id, templateDefinitionId: (item.definition as AgentDefinition).template.id, modulePath: item.modulePath, exportName: item.exportName }))
+  const templates = located.filter(item => item.definition.kind === "template").map(item => ({ id: item.definition.id, modulePath: item.modulePath, exportName: item.exportName, throughAgent: item.throughAgent }))
+  const definitionIndex: DefinitionIndex = { apiVersion: "helmr.definition-index.v1", agents, templates }
   return { buildPlan, buildPlanBytes: canonicalizeJsonValue(buildPlan as unknown as JsonValue), definitionIndex, definitionIndexBytes: canonicalizeJsonValue(definitionIndex as unknown as JsonValue) }
 }
 function locateDefinitions(options: AnalyzeOptions): LocatedDefinition[] {
@@ -145,16 +145,16 @@ function locateDefinitions(options: AnalyzeOptions): LocatedDefinition[] {
   }
   for (const item of options.exports) {
     const value = item.value as Partial<Definition> | undefined
-    if (!value || (value.kind !== "agent" && value.kind !== "computer")) continue
+    if (!value || (value.kind !== "agent" && value.kind !== "template")) continue
     if (value.kind === "agent") {
-      assertMembers(value, ["kind", "id", "computer", "init", "turn", "closeAfterIdle", "maxTurnDuration", "triggers"], "Agent")
-      if (typeof value.turn !== "function" || (value.init !== undefined && typeof value.init !== "function") || value.computer?.kind !== "computer") throw new Error("Invalid Agent definition")
+      assertMembers(value, ["kind", "id", "template", "init", "turn", "closeAfterIdle", "maxTurnDuration", "triggers"], "Agent")
+      if (typeof value.turn !== "function" || (value.init !== undefined && typeof value.init !== "function") || value.template?.kind !== "template") throw new Error("Invalid Agent definition")
       add(value as Definition, item, false)
-      add(value.computer, item, true)
+      add(value.template, item, true)
     } else add(value as Definition, item, false)
   }
   for (const { definition } of found.values()) {
-    if (definition.kind === "computer") {
+    if (definition.kind === "template") {
       assertMembers(definition, ["kind", "id", "image", "resources", "prepare", "refresh", "secrets", "buildSecrets", "deleteAfterUnused"], "Computer")
       if (definition.prepare !== undefined && typeof definition.prepare !== "function") throw new Error("Computer prepare must be a function")
     }
@@ -168,11 +168,11 @@ function validateID(value: unknown): asserts value is string {
 function assertMembers(value: unknown, allowed: readonly string[], label: string): void {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => !allowed.includes(key))) throw new Error(`${label} has invalid or unknown members`)
 }
-function secretBindings(value: ComputerDefinition["secrets"]): ComputerManifest["secrets"] {
+function secretBindings(value: TemplateDefinition["secrets"]): TemplateManifest["secrets"] {
   const result = [...encodeComputerSecrets(value)]
   return result.sort((a, b) => compareUTF8(a.env ? "env" : "file", b.env ? "env" : "file") || compareUTF8(a.env?.name ?? a.file!.path, b.env?.name ?? b.file!.path) || compareUTF8(a.secretId, b.secretId))
 }
-export function normalizeComputerResources(resources: Readonly<{ cpu: number; memory: string; disk?: string }>): ComputerManifest["resources"] {
+export function normalizeComputerResources(resources: Readonly<{ cpu: number; memory: string; disk?: string }>): TemplateManifest["resources"] {
   assertMembers(resources, ["cpu", "memory", "disk"], "Computer resources")
   return { milliCpu: normalizeCpu(resources.cpu), memoryMiB: normalizeIecMiB(resources.memory, "memory"), ...(resources.disk === undefined ? {} : { diskMiB: normalizeIecMiB(resources.disk, "disk") }) }
 }

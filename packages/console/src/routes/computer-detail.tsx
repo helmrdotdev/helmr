@@ -1,9 +1,10 @@
+import { definitionHref, scopedConsoleHref } from "../lib/definitions";
 import { useParams } from "@solidjs/router";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createMemo, For, Show } from "solid-js";
 import { deploymentHref } from "../features/deployments/navigation";
 import { ApiError } from "../lib/api";
-import { useScope } from "../lib/scope";
+import { useRouteScope } from "../lib/scope";
 import { sessionConsolePath } from "../lib/sessions";
 import {
   getComputer,
@@ -76,10 +77,10 @@ function ComputerMembersPanel(props: { computerID: string; scope: ComputerScope 
 
 export function ComputerDetail() {
   const params = useParams();
-  const scope = useScope();
+  const scope = useRouteScope();
   const computerID = createMemo(() => params["computer_id"]?.trim() ?? "");
-  const projectID = createMemo(() => scope.selectedProjectID());
-  const environmentID = createMemo(() => scope.selectedEnvironmentID());
+  const projectID = createMemo(() => scope().projectID);
+  const environmentID = createMemo(() => scope().environmentID);
   const hasScope = createMemo(() => projectID() !== "" && environmentID() !== "");
   const resourceScope = (): ComputerScope => ({ projectID: projectID(), environmentID: environmentID() });
   const computer = createQuery(() => ({
@@ -93,7 +94,7 @@ export function ComputerDetail() {
     <section class={ui.page}>
       <PageHeader
         title="Computer"
-        back={{ href: "/computers", label: "Computers" }}
+        back={{ href: scopedConsoleHref("/computers", resourceScope()), label: "Computers" }}
         badge={<Show when={computer.data}>{(current) => <StatusBadge resource="computer" status={current().status} />}</Show>}
         subtitle={<Show when={computer.data}>{(current) => <IDText value={current().id} mode="full" />}</Show>}
       />
@@ -142,9 +143,9 @@ export function ComputerDetail() {
                     <DetailItem label="Key">
                       <Show when={current().key} fallback={<span class="text-console-faint">—</span>}>{(key) => <code>{key()}</code>}</Show>
                     </DetailItem>
-                    <DetailItem label="Created from"><code>{current().definition_id}</code></DetailItem>
+                    <DetailItem label="Created from"><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", current().definition_id, { projectID: projectID(), environmentID: environmentID(), deploymentID: current().deployment_id })}>{current().definition_id}</a></DetailItem>
                     <DetailItem label="Deployment">
-                      <IDText value={current().deployment_id} mode="link" href={deploymentHref(current().deployment_id)} />
+                      <IDText value={current().deployment_id} mode="link" href={scopedConsoleHref(deploymentHref(current().deployment_id), resourceScope())} />
                     </DetailItem>
                     <DetailItem label="Last activity"><RelativeTime value={current().last_activity_at} /></DetailItem>
                     <DetailItem label="Created"><RelativeTime value={current().created_at} /></DetailItem>

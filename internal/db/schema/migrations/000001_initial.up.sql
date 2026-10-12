@@ -603,10 +603,18 @@ CREATE INDEX computer_preparation_specs_due ON computer_preparation_specs(next_r
 CREATE INDEX computer_preparation_specs_refresh ON computer_preparation_specs(environment_id,id)
     WHERE refresh_every_ms IS NOT NULL;
 
-CREATE TABLE computer_definitions (
+CREATE TABLE templates (
+    environment_id uuid NOT NULL REFERENCES environments(id),
+    id uuid NOT NULL,
+    key text NOT NULL CHECK (key ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'),
+    PRIMARY KEY (environment_id,id),
+    UNIQUE (environment_id,key)
+);
+
+CREATE TABLE template_definitions (
     environment_id uuid NOT NULL,
     deployment_id uuid NOT NULL,
-    definition_key text NOT NULL CHECK (octet_length(definition_key) BETWEEN 1 AND 256),
+    template_id uuid NOT NULL,
     preparation_spec_id uuid NOT NULL,
     resources jsonb NOT NULL CHECK (jsonb_typeof(resources) = 'object'),
     refresh_every_ms bigint CHECK (refresh_every_ms > 0),
@@ -614,27 +622,29 @@ CREATE TABLE computer_definitions (
     delete_after_unused_ms bigint CHECK (delete_after_unused_ms > 0),
     delete_after_unused_never boolean NOT NULL DEFAULT false,
     CHECK (NOT delete_after_unused_never OR delete_after_unused_ms IS NULL),
-    PRIMARY KEY (environment_id,deployment_id,definition_key),
+    PRIMARY KEY (environment_id,template_id,deployment_id),
+    FOREIGN KEY (environment_id,template_id) REFERENCES templates(environment_id,id),
     FOREIGN KEY (environment_id,deployment_id) REFERENCES deployments(environment_id,id),
     FOREIGN KEY (environment_id,preparation_spec_id) REFERENCES computer_preparation_specs(environment_id,id)
 );
 
-CREATE INDEX computer_definitions_preparation_spec ON computer_definitions(environment_id,preparation_spec_id);
+CREATE INDEX template_definitions_deployment ON template_definitions(environment_id,deployment_id,template_id);
+
+CREATE INDEX template_definitions_preparation_spec ON template_definitions(environment_id,preparation_spec_id);
 
 CREATE TABLE agents (
     environment_id uuid NOT NULL REFERENCES environments(id),
     id uuid NOT NULL,
-    name text NOT NULL CHECK (btrim(name) <> ''),
+    key text NOT NULL CHECK (key ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'),
     PRIMARY KEY (environment_id,id),
-    UNIQUE (environment_id,name)
+    UNIQUE (environment_id,key)
 );
 
 CREATE TABLE agent_definitions (
     environment_id uuid NOT NULL,
     agent_id uuid NOT NULL,
     deployment_id uuid NOT NULL,
-    definition_key text NOT NULL,
-    computer_definition_key text NOT NULL,
+    template_id uuid NOT NULL,
     setup boolean NOT NULL,
     triggers bytea NOT NULL,
     max_turn_duration_ms bigint CHECK (max_turn_duration_ms > 0),
@@ -642,11 +652,12 @@ CREATE TABLE agent_definitions (
     close_after_idle_never boolean NOT NULL DEFAULT false,
     CHECK (NOT close_after_idle_never OR close_after_idle_ms IS NULL),
     PRIMARY KEY (environment_id,agent_id,deployment_id),
-    UNIQUE (environment_id,deployment_id,definition_key),
-    FOREIGN KEY (environment_id,deployment_id,computer_definition_key) REFERENCES computer_definitions(environment_id,deployment_id,definition_key),
+    FOREIGN KEY (environment_id,template_id,deployment_id) REFERENCES template_definitions(environment_id,template_id,deployment_id),
     FOREIGN KEY (environment_id,agent_id) REFERENCES agents(environment_id,id),
     FOREIGN KEY (environment_id,deployment_id) REFERENCES deployments(environment_id,id)
 );
+
+CREATE INDEX agent_definitions_deployment ON agent_definitions(environment_id,deployment_id,agent_id);
 
 CREATE TABLE computer_data_keys (
     id UUID PRIMARY KEY,
@@ -892,9 +903,9 @@ CREATE TABLE computers (
     initial_root_digest bytea CHECK (octet_length(initial_root_digest)=32),
     initial_payload_retired_at timestamptz,
     preparation_spec_id uuid,
-    origin_deployment_id uuid,
-    origin_definition_key text,
-    resources jsonb CHECK (jsonb_typeof(resources)='object'),
+    origin_deployment_id uuid NOT NULL,
+    origin_template_id uuid NOT NULL,
+    resources jsonb NOT NULL CHECK (jsonb_typeof(resources)='object'),
     storage_reservation_bytes bigint CHECK (storage_reservation_bytes>0),
     preparation_id uuid,
     preparation_deadline_at timestamptz,
@@ -915,9 +926,8 @@ CREATE TABLE computers (
     CHECK (num_nonnulls(proxy_ca_certificate,proxy_ca_not_after,proxy_ca_private_key_nonce,proxy_ca_private_key_ciphertext) IN (0,4)),
     CHECK (proxy_ca_certificate IS NULL OR (octet_length(proxy_ca_certificate) BETWEEN 1 AND 16384 AND octet_length(proxy_ca_private_key_nonce)=12 AND octet_length(proxy_ca_private_key_ciphertext)>0)),
     PRIMARY KEY (environment_id,id),
-    FOREIGN KEY(environment_id,origin_deployment_id,origin_definition_key) REFERENCES computer_definitions(environment_id,deployment_id,definition_key),
-    CHECK ((origin_deployment_id IS NULL AND origin_definition_key IS NULL AND resources IS NULL AND storage_reservation_bytes IS NULL)
-        OR (origin_deployment_id IS NOT NULL AND origin_definition_key IS NOT NULL AND resources IS NOT NULL AND (storage_reservation_bytes IS NOT NULL OR deleted_at IS NOT NULL))),
+    FOREIGN KEY(environment_id,origin_template_id,origin_deployment_id) REFERENCES template_definitions(environment_id,template_id,deployment_id),
+    CHECK (storage_reservation_bytes IS NOT NULL OR deleted_at IS NOT NULL),
     FOREIGN KEY(environment_id,preparation_spec_id) REFERENCES computer_preparation_specs(environment_id,id),
     FOREIGN KEY(environment_id,preparation_spec_id,preparation_id) REFERENCES computer_preparations(environment_id,preparation_spec_id,id),
     CHECK (initial_root_digest IS NOT NULL OR (preparation_spec_id IS NOT NULL AND preparation_deadline_at IS NOT NULL)),
@@ -948,7 +958,7 @@ CREATE TABLE computer_secret_bindings (
     environment_id uuid NOT NULL,
     preparation_spec_id uuid,
     deployment_id uuid,
-    definition_key text,
+    template_id uuid,
     computer_id uuid,
     secret_id uuid NOT NULL,
     placement_kind text NOT NULL CHECK (placement_kind IN ('env','file')),
@@ -958,12 +968,12 @@ CREATE TABLE computer_secret_bindings (
     allowed_origins text[] NOT NULL DEFAULT '{}',
     CHECK ((mode='protected' AND placeholder IS NOT NULL AND placeholder ~ '^hlmr_protected_[0-9a-f]{64}$') OR (mode='raw' AND placeholder IS NULL)),
     CHECK (num_nonnulls(preparation_spec_id,deployment_id,computer_id)=1),
-    CHECK ((deployment_id IS NULL)=(definition_key IS NULL)),
+    CHECK ((deployment_id IS NULL)=(template_id IS NULL)),
     CHECK ((mode='protected' AND placement_kind='env' AND cardinality(allowed_origins) BETWEEN 1 AND 16)
         OR (mode='raw' AND cardinality(allowed_origins)=0)),
-    UNIQUE NULLS NOT DISTINCT (environment_id,preparation_spec_id,deployment_id,definition_key,computer_id,placement_kind,placement_target),
+    UNIQUE NULLS NOT DISTINCT (environment_id,preparation_spec_id,deployment_id,template_id,computer_id,placement_kind,placement_target),
     FOREIGN KEY (environment_id,preparation_spec_id) REFERENCES computer_preparation_specs(environment_id,id),
-    FOREIGN KEY (environment_id,deployment_id,definition_key) REFERENCES computer_definitions(environment_id,deployment_id,definition_key),
+    FOREIGN KEY (environment_id,template_id,deployment_id) REFERENCES template_definitions(environment_id,template_id,deployment_id),
     FOREIGN KEY (environment_id,computer_id) REFERENCES computers(environment_id,id),
     FOREIGN KEY (environment_id,secret_id) REFERENCES secrets(environment_id,id)
 );
@@ -1371,7 +1381,7 @@ CREATE TABLE sessions (
     id uuid NOT NULL,
     agent_id uuid NOT NULL,
     deployment_id uuid NOT NULL,
-    computer_id uuid NOT NULL,
+    computer_id uuid,
     root_session_id uuid NOT NULL,
     parent_session_id uuid,
     requester_session_id uuid,
@@ -1384,6 +1394,16 @@ CREATE TABLE sessions (
     next_event_seq bigint NOT NULL DEFAULT 1 CHECK (next_event_seq > 0),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     slack_channel_id uuid,
+    creation_caller_kind text CHECK (creation_caller_kind IN ('user','api_key','session')),
+    creation_caller_id uuid,
+    creation_method text CHECK (creation_method IN ('create','spawn')),
+    creation_retry_key text CHECK (octet_length(creation_retry_key) BETWEEN 1 AND 512),
+    creation_digest bytea CHECK (octet_length(creation_digest)=32),
+    creation_turn_id uuid,
+    CHECK (num_nonnulls(creation_caller_kind,creation_caller_id,creation_method,creation_digest) IN (0,4)),
+    CHECK (creation_retry_key IS NULL OR creation_digest IS NOT NULL),
+    CHECK (creation_turn_id IS NULL OR (creation_digest IS NOT NULL AND computer_id IS NOT NULL)),
+    UNIQUE(environment_id,creation_caller_kind,creation_caller_id,creation_method,agent_id,creation_retry_key),
     CHECK ((history_retention_mode='duration' AND history_retention_seconds IS NOT NULL AND history_retention_seconds>0)
         OR (history_retention_mode='until_environment_deletion' AND history_retention_seconds IS NULL)),
     CHECK (history_eligible_at IS NULL OR status IN ('closed','cancelled')),
@@ -1427,6 +1447,10 @@ CREATE TABLE session_processes (
     control_attachment bigint NOT NULL DEFAULT 0 CHECK (control_attachment >= 0),
     control_generation bigint NOT NULL DEFAULT 0 CHECK (control_generation >= 0),
     control_kind text CHECK (control_kind IN ('suspend','resume','shutdown')),
+    stop_sequence bigint NOT NULL DEFAULT 0 CHECK (stop_sequence >= 0),
+    stop_turn_id uuid,
+    stop_deadline_at timestamptz,
+    CHECK (stop_turn_id IS NULL OR stop_deadline_at IS NOT NULL),
     control_acknowledged_at timestamptz,
     failure_recorded_at timestamptz,
     control_error text,
@@ -1510,7 +1534,7 @@ CREATE TABLE turns (
     caller_id uuid NOT NULL,
     origin_turn_id uuid,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    admission_method text NOT NULL CHECK (admission_method IN ('start','spawn','enqueue','send','schedule')),
+    admission_method text NOT NULL CHECK (admission_method IN ('create','spawn','enqueue','send','schedule')),
     target_id uuid NOT NULL,
     retry_key text CHECK (octet_length(retry_key) BETWEEN 1 AND 512),
     request_digest bytea NOT NULL CHECK (octet_length(request_digest)=32),
@@ -1564,6 +1588,8 @@ CREATE TABLE turns (
     CHECK ((status='completed') = (completion_save_id IS NOT NULL))
 );
 
+ALTER TABLE sessions ADD FOREIGN KEY (environment_id,id,creation_turn_id) REFERENCES turns(environment_id,session_id,id) DEFERRABLE INITIALLY DEFERRED;
+
 CREATE UNIQUE INDEX turns_one_active ON turns(environment_id,session_id) WHERE status IN ('running','finalizing');
 
 CREATE INDEX turns_queue ON turns(environment_id,session_id,seq) WHERE status='queued';
@@ -1615,20 +1641,26 @@ CREATE TABLE session_controls (
     environment_id uuid NOT NULL,
     id uuid NOT NULL,
     session_id uuid NOT NULL,
-    kind text NOT NULL CHECK (kind IN ('interrupt','resume','close','cancel')),
+    kind text NOT NULL CHECK (kind IN ('interrupt','turn_interrupt','resume','close','cancel')),
     caller_kind text NOT NULL CHECK (caller_kind IN ('user','api_key','session')),
     caller_id uuid NOT NULL,
     retry_key text NOT NULL CHECK (octet_length(retry_key) BETWEEN 1 AND 512),
     request_digest bytea NOT NULL CHECK (octet_length(request_digest)=32),
     hold_id uuid,
+    turn_id uuid,
     accepted_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (environment_id,id),
-    UNIQUE (environment_id,session_id,caller_kind,caller_id,kind,retry_key),
+    UNIQUE NULLS NOT DISTINCT (environment_id,session_id,turn_id,caller_kind,caller_id,kind,retry_key),
+    FOREIGN KEY (environment_id,session_id,turn_id) REFERENCES turns(environment_id,session_id,id),
+    CHECK ((kind='turn_interrupt') = (turn_id IS NOT NULL)),
     FOREIGN KEY (environment_id,session_id) REFERENCES sessions(environment_id,id),
     FOREIGN KEY (environment_id,session_id,hold_id) REFERENCES session_holds(environment_id,session_id,id),
     CHECK ((kind IN ('interrupt','resume')) = (hold_id IS NOT NULL)),
     UNIQUE(environment_id,session_id,id)
 );
+
+ALTER TABLE session_processes ADD FOREIGN KEY (environment_id,session_id,stop_turn_id) REFERENCES turns(environment_id,session_id,id);
+CREATE INDEX session_processes_stop_due ON session_processes(stop_deadline_at) WHERE stop_deadline_at IS NOT NULL AND fenced_at IS NULL;
 
 CREATE UNIQUE INDEX session_controls_interrupt_hold ON session_controls(environment_id,hold_id) WHERE kind='interrupt';
 
@@ -2103,7 +2135,7 @@ CREATE TABLE slack_posts (
     FOREIGN KEY(environment_id,session_id,turn_id,ask_id) REFERENCES turn_asks(environment_id,session_id,turn_id,id),
     FOREIGN KEY(environment_id,session_id,request_id) REFERENCES slack_requests(environment_id,session_id,id),
     CHECK (role='opening' OR source_thread_id IS NULL),
-    CHECK (role<>'opening' OR (turn_id IS NOT NULL AND source_start_seq IS NULL AND continuation_ordinal=0 AND presentation_path='post')),
+    CHECK (role<>'opening' OR (source_start_seq IS NULL AND continuation_ordinal=0 AND presentation_path='post')),
     CHECK ((role='question')=(ask_id IS NOT NULL)),
     CHECK (role NOT IN ('intermediate','response','question') OR turn_id IS NOT NULL),
     CHECK ((role='request_feedback')=(request_id IS NOT NULL)),

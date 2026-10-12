@@ -78,8 +78,11 @@ func TestSlackStartCreatesOpeningAndPreservesReceiptAndKeyedRoute(t *testing.T) 
 	}
 	req.RetryKey = "continue"
 	req.SlackChannelID = nil
-	next, err := Start(t.Context(), f.pool, nil, f.caller(), req)
-	if err != nil || next.SessionID != first.SessionID || next.Sequence != 2 || calls != 1 {
+	if _, err := Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate key: %v", err)
+	}
+	next, err := Enqueue(t.Context(), f.pool, nil, f.caller(), EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, RetryKey: "send", Input: req.Input})
+	if err != nil || next.Sequence != 2 || calls != 1 {
 		t.Fatal(next, calls, err)
 	}
 	var count int
@@ -89,7 +92,7 @@ func TestSlackStartCreatesOpeningAndPreservesReceiptAndKeyedRoute(t *testing.T) 
 	other := "COTHER"
 	req.RetryKey = "different-channel"
 	req.SlackChannelID = &other
-	if _, err = Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, ErrSlackDestinationConflict) {
+	if _, err = Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, ErrConflict) {
 		t.Fatal(err)
 	}
 	req.RetryKey = "fresh"

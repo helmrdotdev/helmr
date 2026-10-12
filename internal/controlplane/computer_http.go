@@ -24,17 +24,17 @@ func computerScope(orgID uuid.UUID, projectID, environmentID pgtype.UUID) comput
 }
 
 func (s *Server) createComputerHTTP(w http.ResponseWriter, r *http.Request) {
-	declaredID := chi.URLParam(r, "computerDefinitionID")
-	if err := api.ValidateDefinitionID(declaredID); err != nil {
-		writeError(w, badRequest(codedError{code: "invalid_computer_create", message: err.Error()}))
-		return
-	}
 	var request api.CreateComputerRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
 		if isRequestBodyTooLarge(err) {
 			writeError(w, err)
 			return
 		}
+		writeError(w, badRequest(codedError{code: "invalid_computer_create", message: err.Error()}))
+		return
+	}
+	declaredID := request.Template
+	if err := api.ValidateDefinitionID(declaredID); err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_computer_create", message: err.Error()}))
 		return
 	}

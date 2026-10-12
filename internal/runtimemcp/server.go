@@ -46,6 +46,11 @@ type messageInput struct {
 	Message        []textPart `json:"message" jsonschema:"Ordered text parts delivered to this exact active Turn; never enqueued as fallback."`
 	IdempotencyKey string     `json:"idempotencyKey"`
 }
+type turnControlInput struct {
+	SessionID      string `json:"sessionId"`
+	TurnID         string `json:"turnId"`
+	IdempotencyKey string `json:"idempotencyKey"`
+}
 type controlInput struct {
 	SessionID      string `json:"sessionId"`
 	IdempotencyKey string `json:"idempotencyKey"`
@@ -84,6 +89,7 @@ func NewHandler(invoke Invoke) http.Handler {
 	add[createInput](server, invoke, "start", "Create independent work and return its Session and Turn admission receipt.")
 	add[enqueueInput](server, invoke, "enqueue", "Admit another Turn in an exact Session in this Environment. Existing holds remain in force.")
 	add[messageInput](server, invoke, "send_turn", "Send text to an owned descendant's exact active Turn. A receipt confirms admission, not native delivery.")
+	add[turnControlInput](server, invoke, "interrupt_turn", "Interrupt an owned descendant's exact running Turn without holding its Session or stopping its children. Acceptance does not prove cessation; a non-running Turn returns turn_not_interruptible with its status and reason.")
 	add[controlInput](server, invoke, "interrupt_session", "Request interruption of an owned descendant and its subtree. A receipt is not proof that execution has stopped.")
 	add[resumeInput](server, invoke, "resume_session", "Release only the exact hold this Session placed on an owned descendant. This does not replay input.")
 	add[controlInput](server, invoke, "close_session", "Close admission to an owned descendant while draining its accepted work.")

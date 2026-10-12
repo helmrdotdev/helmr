@@ -6,18 +6,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/definition"
 )
 
-func (c *Client) StartAgent(ctx context.Context, name string, input api.StartAgentRequest, scope EnvironmentScopeOptions) (api.StartAgentResponse, error) {
-	var result api.StartAgentResponse
-	if !definition.ValidDeclaredID(name) {
+func (c *Client) CreateSession(ctx context.Context, input api.CreateSessionRequest, scope EnvironmentScopeOptions) (api.CreateSessionResponse, error) {
+	var result api.CreateSessionResponse
+	if !definition.ValidDeclaredID(input.Agent) {
 		return result, fmt.Errorf("invalid Agent name")
 	}
-	path, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/agents/"+url.PathEscape(name)+"/start")
+	path, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/sessions")
 	if err != nil {
 		return result, err
 	}

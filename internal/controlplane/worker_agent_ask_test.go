@@ -34,7 +34,7 @@ func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 	session := runtimeTestSession(f)
 	caller := agent.Caller{Kind: "user", ID: f.User}
-	admission, err := agent.Enqueue(t.Context(), f.Pool, caller, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "ask", Input: json.RawMessage(`[]`)})
+	admission, err := agent.Enqueue(t.Context(), f.Pool, nil, caller, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "ask", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,6 +42,7 @@ func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	acknowledgeTestAgentControl(t, client, session, attachment.AttachmentSequence)
 	if _, err := client.NextAgentTurn(t.Context(), workerapi.AgentTurnRequest{Session: session, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration}); err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +194,7 @@ func TestWorkerAgentAskObservationsReleaseCapacity(t *testing.T) {
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 	session := runtimeTestSession(f)
-	a, err := agent.Enqueue(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "many asks", Input: json.RawMessage(`[]`)})
+	a, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "many asks", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,6 +202,7 @@ func TestWorkerAgentAskObservationsReleaseCapacity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	acknowledgeTestAgentControl(t, client, session, attachment.AttachmentSequence)
 	if _, err := client.NextAgentTurn(t.Context(), workerapi.AgentTurnRequest{Session: session, AttachmentSequence: attachment.AttachmentSequence, AuthorityGeneration: attachment.AuthorityGeneration}); err != nil {
 		t.Fatal(err)
 	}

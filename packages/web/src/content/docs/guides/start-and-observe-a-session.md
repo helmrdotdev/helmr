@@ -17,9 +17,9 @@ For what Sessions and Turns are, see [Sessions](/docs/concepts/sessions) and
 ## Start the Agent
 
 ```sh
-helmr agent start reviewer --project demo --env staging \
+helmr session create reviewer --project demo --env staging \
   --text "Review issue 42" \
-  --session-key issue-42 \
+  --key issue-42 \
   --idempotency-key issue-42:start
 ```
 
@@ -29,14 +29,13 @@ receipt. Input can be given in one of three ways:
 | Flag | Input |
 | --- | --- |
 | `--text TEXT` | One text part, whitespace preserved. |
-| `--input-json JSON` | A JSON array of text parts, such as `[{"type":"text","text":"Review issue 42"}]`. Use `[]` for no input. |
+| `--input-json JSON` | A JSON array of text parts, such as `[{"type":"text","text":"Review issue 42"}]`. Omit input flags for zero Turns; `[]` is rejected. |
 | `--input-file PATH` | The same JSON array, read from a file. |
 
-`--session-key` names the conversation: starting the same Agent again with the
-same key adds a Turn to the existing Session instead of creating a new one, and
-the receipt's `created` is `false`. `--idempotency-key` identifies this request:
-after an uncertain failure, repeat the command with the same key and input to
-get the same receipt. Use a new key for new work.
+`--key` uniquely names the Session within its Agent; another creation with that
+key conflicts. Use `session list --agent AGENT_UUID --key issue-42` to find it, using `agent_id` from definition inspection.
+`--idempotency-key` identifies this creation request: repeat the same request
+with that key after an uncertain failure to recover its receipt.
 
 Without `--computer`, Helmr creates a new Computer from the Agent's definition.
 Pass `--computer COMPUTER_ID` to run the Session on an existing Computer. To post
@@ -90,16 +89,13 @@ one at a time in order. The receipt includes the new `turn_id`.
 To steer the work that is running now, send a message instead:
 
 ```sh
-helmr session send SESSION_ID --project demo --env staging \
+helmr session turn send TURN_ID --session SESSION_ID --project demo --env staging \
   --text "Skip the generated files" --idempotency-key issue-42:steer
 ```
 
-`session send` delivers the message to the active Turn when there is one and
-enqueues a new Turn when the Session is idle. The receipt's `kind` is `messaged`
-or `enqueued`. To message one specific Turn and never fall back to a new Turn,
-use `helmr session turn send TURN_ID --session SESSION_ID --text ...`. The Agent
-receives live messages through `turn.onMessage`; see
-[Sessions](/docs/concepts/sessions) for how the three operations differ.
+`session turn send` targets the given running Turn. If it cannot accept messages,
+the request is rejected. The Agent receives messages through `turn.onMessage`.
+Use enqueue explicitly when you want new work.
 
 ## Inspect the outcome
 
@@ -141,11 +137,9 @@ const client = new HelmrClient({
   apiKey: process.env.HELMR_API_KEY!,
 })
 
-const { session, turn } = await client.agents.start("reviewer", {
-  input: [{ type: "text", text: "Review issue 42" }],
-  sessionKey: "issue-42",
-  idempotencyKey: "issue-42:start",
-})
+const { session, turn } = await client.sessions.create({ agent: "reviewer", input: [{ type: "text", text: "Review issue 42" }],
+  key: "issue-42",
+  idempotencyKey: "issue-42:start", })
 
 // Print progress while waiting for the first Turn.
 const watcher = new AbortController()
@@ -178,13 +172,12 @@ await session.close()
 
 | Call | Result |
 | --- | --- |
-| `client.agents.start(name, request)` | `{ session, turn, created, closeAfterIdle }`. Pass `computer: { id }` to use an existing Computer. |
+| `client.sessions.create({ agent: name, ...request })` | `{ session, turn, closeAfterIdle }`. Pass `computer: { id }` to use an existing Computer. |
 | `session.events.list({ after?, limit? })` | One page: `records`, `nextAfter`, `hasMore`. |
 | `session.events.stream({ after? })` | An async iterator that keeps polling for new records until aborted. |
 | `turn.wait({ timeout })` | `{ status: "settled", outcome }` or `{ status: "timeout" }`. Without `timeout`, waits for the outcome. |
 | `turn.get()` | The Turn's current state. |
 | `session.enqueue(input, { idempotencyKey })` | A reference to the new Turn. |
-| `session.send(input, { idempotencyKey })` | `{ kind: "messaged" \| "enqueued", turn }`. |
 | `session.turns.ref(id).send(input)` | A message to exactly that Turn. |
 
 To reconnect later, keep the IDs and rebuild the references with

@@ -1,14 +1,14 @@
 import { callMcp, fixtureInput, fixtureValue, waitManagedTurn, type ManagedAdmission } from "../../support/runtime-mcp"
-import { agent, computer, image, type Json } from "@helmr/sdk"
+import { agent, template, image, type Json } from "@helmr/sdk"
 import { readFile, writeFile } from "node:fs/promises"
 import { setTimeout as sleep } from "node:timers/promises"
 import { z } from "zod"
 
 const base = image("helmr-helper-smoke").from("node:24-bookworm-slim").workdir("/workspace")
-export const helperCallerComputer = computer({
+export const helperCallerComputer = template({
   id: "helmr-helper-caller-smoke", image: base, resources: { cpu: 1, memory: "1GiB" },
 })
-export const helperTargetComputer = computer({
+export const helperTargetComputer = template({
   id: "helmr-helper-target-smoke", image: base, resources: { cpu: 1, memory: "1GiB" },
 })
 const helperInput = z.object({
@@ -16,7 +16,7 @@ const helperInput = z.object({
   holdSeconds: z.number().int().min(0).max(240).default(0),
 }).strict()
 export const helperChild = agent({
-  id: "helper-smoke-child", computer: helperTargetComputer, maxTurnDuration: "5m",
+  id: "helper-smoke-child", template: helperTargetComputer, maxTurnDuration: "5m",
   turn: async (turn, ctx) => {
     const input = helperInput.parse(fixtureValue(turn.input))
     await writeFile("helper-smoke.json", JSON.stringify({ marker: input.marker, turnId: turn.id, sessionId: ctx.session.id }))
@@ -33,7 +33,7 @@ const callerInput = z.object({
   holdSeconds: z.number().int().min(0).max(240).default(0),
 }).strict()
 export const helperCaller = agent({
-  id: "helper-smoke", computer: helperCallerComputer, maxTurnDuration: "10m",
+  id: "helper-smoke", template: helperCallerComputer, maxTurnDuration: "10m",
   turn: async (turn, ctx): Promise<Json> => {
     const input = callerInput.parse(fixtureValue(turn.input))
     const options = {
@@ -64,7 +64,7 @@ export const helperCaller = agent({
 
 const continuityInput = z.object({ marker: z.string().min(1), childComputerId: z.string().min(1) }).strict()
 export const helperContinuity = agent({
-  id: "helper-continuity", computer: helperCallerComputer, maxTurnDuration: "10m",
+  id: "helper-continuity", template: helperCallerComputer, maxTurnDuration: "10m",
   init: () => ({ count: 0 }),
   turn: async (turn, ctx) => {
     const input = continuityInput.parse(fixtureValue(turn.input))

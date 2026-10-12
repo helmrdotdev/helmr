@@ -17,15 +17,18 @@ import (
 // process. Closing it never requests Session shutdown or re-runs customer setup.
 // The owning worker obtains grants and attachment sequences from the Control Plane.
 type AgentSessionConnection struct {
-	stream       vm.Stream
-	identity     *agentv1.SessionIdentity
-	attachment   uint64
-	mu           sync.Mutex
-	grant        *agentv1.SessionGrant
-	received     uint64
-	logReceived  [2]int64
-	readMu       sync.Mutex
-	writeMu      sync.Mutex
+	stream      vm.Stream
+	identity    *agentv1.SessionIdentity
+	attachment  uint64
+	mu          sync.Mutex
+	grant       *agentv1.SessionGrant
+	received    uint64
+	logReceived [2]int64
+	readMu      sync.Mutex
+	writeMu     sync.Mutex
+	// Orders CP dispatch/control decisions with their guest frame writes.
+	// Authority renewal and event/operation handling remain independent.
+	deliveryMu   sync.Mutex
 	renewMu      sync.Mutex
 	closeOnce    sync.Once
 	closed       chan struct{}

@@ -4,7 +4,7 @@ import { z } from "zod"
 import { verificationComputer } from "../agent/agent"
 
 export const networkAgent = agent({
-  id: "verification-network", computer: verificationComputer, maxTurnDuration: "10m",
+  id: "verification-network", template: verificationComputer, maxTurnDuration: "10m",
   turn: async (turn, ctx) => {
     const { marker } = z.object({ marker: z.string().min(1) }).strict().parse(fixtureValue(turn.input))
     let start!: () => void, finish!: () => void

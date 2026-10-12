@@ -7,6 +7,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 	"uuid"
 
@@ -14,11 +15,16 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// Allow ten seconds each for an in-flight dispatch query, the control query,
+// guest convergence, and delivery/acknowledgment before requiring reconstruction.
+const processStopTimeout = 40 * time.Second
+
 // SessionControlRequest identifies one intentional control operation. Acceptance
 // is durable; it does not assert that native processes have stopped.
 type SessionControlRequest struct {
 	EnvironmentID uuid.UUID
 	SessionID     uuid.UUID
+	TurnID        uuid.UUID
 	Kind          string
 	RetryKey      string
 	HoldID        uuid.UUID
@@ -37,7 +43,8 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 	var result SessionControlReceipt
 	if req.RetryKey == "" || len(req.RetryKey) > 512 || !utf8.ValidString(req.RetryKey) || strings.ContainsRune(req.RetryKey, 0) ||
 		len(req.Reason) > 4096 || !utf8.ValidString(req.Reason) || strings.ContainsRune(req.Reason, 0) || caller.ID == uuid.Nil() ||
-		(req.Kind != "interrupt" && req.Kind != "resume" && req.Kind != "close" && req.Kind != "cancel") ||
+		(req.Kind != "interrupt" && req.Kind != "turn_interrupt" && req.Kind != "resume" && req.Kind != "close" && req.Kind != "cancel") ||
+		(req.Kind == "turn_interrupt") != (req.TurnID != uuid.Nil()) ||
 		(req.Kind == "resume") != (req.HoldID != uuid.Nil()) ||
 		(req.Kind != "interrupt" && req.Reason != "") {
 		return result, ErrInvalidInput
@@ -68,7 +75,19 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 				return err
 			}
 		}
-		ids, locked, err := lockControlTree(ctx, tx, req.EnvironmentID, req.SessionID, caller)
+		var ids []uuid.UUID
+		var locked map[uuid.UUID]owners
+		var err error
+		if req.Kind == "turn_interrupt" {
+			ids = []uuid.UUID{req.SessionID}
+			targets := slices.Clone(ids)
+			if caller.Kind == "session" {
+				targets = append(targets, caller.ID)
+			}
+			locked, err = lockSessions(ctx, tx, req.EnvironmentID, targets)
+		} else {
+			ids, locked, err = lockControlTree(ctx, tx, req.EnvironmentID, req.SessionID, caller)
+		}
 		if err != nil {
 			return err
 		}
@@ -82,8 +101,8 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 		var prior []byte
 		var hold *uuid.UUID
 		err = tx.QueryRow(ctx, `SELECT id,hold_id,request_digest FROM session_controls
- WHERE environment_id=$1 AND session_id=$2 AND caller_kind=$3 AND caller_id=$4 AND kind=$5 AND retry_key=$6`,
-			req.EnvironmentID, req.SessionID, caller.Kind, caller.ID, req.Kind, req.RetryKey).Scan(&result.ID, &hold, &prior)
+ WHERE environment_id=$1 AND session_id=$2 AND caller_kind=$3 AND caller_id=$4 AND kind=$5 AND retry_key=$6 AND turn_id IS NOT DISTINCT FROM $7`,
+			req.EnvironmentID, req.SessionID, caller.Kind, caller.ID, req.Kind, req.RetryKey, nullableID(req.TurnID)).Scan(&result.ID, &hold, &prior)
 		if err == nil {
 			if !bytes.Equal(prior, digest[:]) {
 				return ErrConflict
@@ -106,6 +125,24 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 		}
 		result = SessionControlReceipt{ID: uuid.NewV7(), SessionID: req.SessionID, HoldID: req.HoldID}
 		switch req.Kind {
+		case "turn_interrupt":
+			var state string
+			var epoch *int64
+			if err = tx.QueryRow(ctx, `SELECT status,process_epoch FROM turns WHERE environment_id=$1 AND session_id=$2 AND id=$3 FOR NO KEY UPDATE`, req.EnvironmentID, req.SessionID, req.TurnID).Scan(&state, &epoch); err != nil {
+				return err
+			}
+			if state != "running" {
+				return TurnNotInterruptibleError{Status: state}
+			}
+			if epoch == nil {
+				return ErrNotReady
+			}
+			if err = interruptControlledTurn(ctx, tx, req.EnvironmentID, req.SessionID, req.TurnID, *epoch); err != nil {
+				return err
+			}
+			if err = advanceControlAuthority(ctx, tx, req.EnvironmentID, []uuid.UUID{req.SessionID}); err != nil {
+				return err
+			}
 		case "interrupt":
 			if locked[req.SessionID].lifecycle == "closed" || locked[req.SessionID].lifecycle == "cancelled" {
 				return ErrNotReady
@@ -118,7 +155,7 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 			if err = settleControlledTurns(ctx, tx, req.EnvironmentID, ids, false); err != nil {
 				return err
 			}
-			if _, err = tx.Exec(ctx, `UPDATE session_processes SET status='stopping' WHERE environment_id=$1 AND session_id=ANY($2) AND status='starting' AND fenced_at IS NULL`, req.EnvironmentID, ids); err != nil {
+			if _, err = tx.Exec(ctx, `UPDATE session_processes SET stop_sequence=stop_sequence+1,stop_deadline_at=clock_timestamp()+$3::bigint*interval '1 millisecond',control_acknowledged_at=NULL WHERE environment_id=$1 AND session_id=ANY($2) AND status='starting' AND fenced_at IS NULL AND stop_deadline_at IS NULL`, req.EnvironmentID, ids, processStopTimeout.Milliseconds()); err != nil {
 				return err
 			}
 			if err = advanceControlAuthority(ctx, tx, req.EnvironmentID, ids); err != nil {
@@ -176,8 +213,8 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 				return err
 			}
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO session_controls(environment_id,id,session_id,kind,caller_kind,caller_id,retry_key,request_digest,hold_id)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, req.EnvironmentID, result.ID, req.SessionID, req.Kind, caller.Kind, caller.ID, req.RetryKey, digest[:], nullableID(result.HoldID)); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO session_controls(environment_id,id,session_id,kind,caller_kind,caller_id,retry_key,request_digest,hold_id,turn_id)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, req.EnvironmentID, result.ID, req.SessionID, req.Kind, caller.Kind, caller.ID, req.RetryKey, digest[:], nullableID(result.HoldID), nullableID(req.TurnID)); err != nil {
 			return err
 		}
 		data, err := json.Marshal(struct {
@@ -186,6 +223,9 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 		}{result.ID, nullableID(result.HoldID)})
 		if err != nil {
 			return err
+		}
+		if req.Kind == "turn_interrupt" {
+			return eventData(ctx, tx, req.EnvironmentID, req.SessionID, req.TurnID, "turn.interrupt", data)
 		}
 		return eventData(ctx, tx, req.EnvironmentID, req.SessionID, uuid.Nil(), "session."+req.Kind, data)
 	})
@@ -260,6 +300,9 @@ func drainClosingSessions(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []u
 }
 
 func authorizeExternalControl(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UUID, kind string) error {
+	if kind == "turn_interrupt" {
+		kind = "interrupt"
+	}
 	var allowed bool
 	var err error
 	switch caller.Kind {
@@ -335,7 +378,7 @@ func settleControlledTurns(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []
 		status = "cancelled"
 	}
 	rows, err := tx.Query(ctx, `UPDATE turns SET status=$3,terminal_at=clock_timestamp(),processing_closed_at=COALESCE(processing_closed_at,clock_timestamp())
- WHERE environment_id=$1 AND session_id=ANY($2) AND (status IN ('running','finalizing') OR ($4 AND status='queued'))
+ WHERE environment_id=$1 AND session_id=ANY($2) AND (status='running' OR ($4 AND status IN ('queued','finalizing')))
  RETURNING id,session_id,process_epoch`, env, ids, status, cancel)
 	if err != nil {
 		return err
@@ -353,7 +396,12 @@ func settleControlledTurns(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []
 		return err
 	}
 	for _, turn := range turns {
-		if turn.epoch != nil {
+		if turn.epoch != nil && !cancel {
+			if err = requestProcessStop(ctx, tx, env, turn.session, turn.id, *turn.epoch); err != nil {
+				return err
+			}
+		}
+		if turn.epoch != nil && cancel {
 			if _, err = tx.Exec(ctx, `UPDATE session_processes SET status='stopping' WHERE environment_id=$1 AND session_id=$2 AND epoch=$3 AND fenced_at IS NULL AND status IN ('ready','starting')`, env, turn.session, *turn.epoch); err != nil {
 				return err
 			}
@@ -369,4 +417,49 @@ func settleControlledTurns(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []
 		}
 	}
 	return nil
+}
+
+// The first stop owns its deadline and target until current-epoch convergence.
+// Hold release and transport reattachment cannot extend this budget.
+func requestProcessStop(ctx context.Context, tx pgx.Tx, env, session, turn uuid.UUID, epoch int64) error {
+	_, err := tx.Exec(ctx, `UPDATE session_processes SET stop_sequence=stop_sequence+1,stop_turn_id=$4,stop_deadline_at=clock_timestamp()+$5::bigint*interval '1 millisecond',control_acknowledged_at=NULL
+ WHERE environment_id=$1 AND session_id=$2 AND epoch=$3 AND fenced_at IS NULL AND stop_deadline_at IS NULL`, env, session, epoch, nullableID(turn), processStopTimeout.Milliseconds())
+	return err
+}
+
+func interruptControlledTurn(ctx context.Context, tx pgx.Tx, env, session, turn uuid.UUID, epoch int64) error {
+	if _, err := tx.Exec(ctx, `UPDATE turns SET status='interrupted',terminal_at=clock_timestamp(),processing_closed_at=COALESCE(processing_closed_at,clock_timestamp()) WHERE environment_id=$1 AND session_id=$2 AND id=$3 AND status='running'`, env, session, turn); err != nil {
+		return err
+	}
+	if err := requestProcessStop(ctx, tx, env, session, turn, epoch); err != nil {
+		return err
+	}
+	if err := cancelTurnAsks(ctx, tx, env, session, turn); err != nil {
+		return err
+	}
+	if err := rejectTurnMessages(ctx, tx, env, session, turn, true, "turn_terminated"); err != nil {
+		return err
+	}
+	return event(ctx, tx, env, session, turn, "turn.interrupted")
+}
+
+// TurnNotInterruptibleError describes the exact authorized target's cutoff.
+type TurnNotInterruptibleError struct{ Status string }
+
+func (e TurnNotInterruptibleError) Reason() string {
+	switch e.Status {
+	case "queued":
+		return "not_started"
+	case "finalizing":
+		return "handler_finished"
+	default:
+		return "already_terminal"
+	}
+}
+func (e TurnNotInterruptibleError) Error() string     { return "Turn is " + e.Status + ": " + e.Reason() }
+func (e TurnNotInterruptibleError) ErrorCode() string { return "turn_not_interruptible" }
+func (e TurnNotInterruptibleError) ErrorDetails() map[string]json.RawMessage {
+	status, _ := json.Marshal(e.Status)
+	reason, _ := json.Marshal(e.Reason())
+	return map[string]json.RawMessage{"status": status, "reason": reason}
 }

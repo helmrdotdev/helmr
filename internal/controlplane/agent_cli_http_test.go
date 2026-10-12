@@ -31,12 +31,12 @@ func assertAgentCLIHTTP(t *testing.T, serverURL, key, owner, project, environmen
 		if scoped {
 			sessionKey = "go-client-scoped"
 		}
-		first, err := cp.StartAgent(t.Context(), "agent", api.StartAgentRequest{Input: json.RawMessage(`[{"type":"text","text":"{\"initial\":true}"}]`), SessionKey: &sessionKey, IdempotencyKey: sessionKey}, scope)
+		first, err := cp.CreateSession(t.Context(), api.CreateSessionRequest{Agent: "agent", Input: json.RawMessage(`[{"type":"text","text":"{\"initial\":true}"}]`), Key: &sessionKey, IdempotencyKey: sessionKey}, scope)
 		if err != nil {
 			t.Fatal(err)
 		}
 		session, err := cp.RetrieveSession(t.Context(), first.SessionID, scope)
-		if err != nil || session.AgentID == "" || session.ComputerID == "" || session.InitialTurn == nil || session.InitialTurn.ID != first.TurnID {
+		if err != nil || session.AgentID == "" || session.ComputerID == nil || session.InitialTurn == nil || session.InitialTurn.ID != first.Turn.TurnID {
 			t.Fatalf("session=%+v err=%v", session, err)
 		}
 		page, err := cp.ListSessions(t.Context(), client.SessionListOptions{AgentID: session.AgentID, Key: &sessionKey, Statuses: []string{"open"}, Limit: 1, EnvironmentScopeOptions: scope})
@@ -53,7 +53,7 @@ func assertAgentCLIHTTP(t *testing.T, serverURL, key, owner, project, environmen
 			t.Fatalf("replay=%+v err=%v", replay, err)
 		}
 		turns, err := cp.ListSessionTurns(t.Context(), session.ID, client.SessionTurnListOptions{Limit: 1, EnvironmentScopeOptions: scope})
-		if err != nil || len(turns.Turns) != 1 || turns.Turns[0].ID != first.TurnID || turns.NextCursor != "1" {
+		if err != nil || len(turns.Turns) != 1 || turns.Turns[0].ID != first.Turn.TurnID || turns.NextCursor != "1" {
 			t.Fatalf("turn page=%+v err=%v", turns, err)
 		}
 		turns, err = cp.ListSessionTurns(t.Context(), session.ID, client.SessionTurnListOptions{Limit: 1, Cursor: turns.NextCursor, EnvironmentScopeOptions: scope})
@@ -81,8 +81,8 @@ func assertAgentCLIHTTP(t *testing.T, serverURL, key, owner, project, environmen
 		}
 	}
 	run := newAgentTestCLI(t, serverURL, key)
-	var first api.StartAgentResponse
-	if err := json.Unmarshal(run("agent", "start", "agent", "--input-json", `[{"type":"text","text":"cli"}]`, "--idempotency-key", "cli-start", "--json"), &first); err != nil || first.TurnID == "" {
+	var first api.CreateSessionResponse
+	if err := json.Unmarshal(run("session", "create", "agent", "--input-json", `[{"type":"text","text":"cli"}]`, "--idempotency-key", "cli-start", "--json"), &first); err != nil || first.Turn.TurnID == "" {
 		t.Fatalf("CLI admission=%+v err=%v", first, err)
 	}
 	var next api.TurnAdmission

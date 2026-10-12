@@ -1,5 +1,5 @@
 import { fixtureValue } from "../../support/runtime-mcp"
-import { image, source, agent, computer, type Json } from "@helmr/sdk"
+import { image, source, agent, template, type Json } from "@helmr/sdk"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { z } from "zod"
@@ -18,7 +18,7 @@ const base = image("helmr-datapath-network")
   .user("root")
   .workdir("/workspace")
 
-export const datapathNetworkComputer = computer({ id: "helmr-datapath-network", image: base, resources: { cpu: 1, memory: "1GiB" } })
+export const datapathNetworkComputer = template({ id: "helmr-datapath-network", image: base, resources: { cpu: 1, memory: "1GiB" } })
 
 const address = z.string().min(1).max(253).regex(/^[A-Za-z0-9.:%_-]+$/)
 const mac = z.string().regex(/^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$/)
@@ -46,7 +46,7 @@ const payload = z.object({
 
 export const datapathNetwork = agent({
   id: "datapath-network",
-  computer: datapathNetworkComputer,
+  template: datapathNetworkComputer,
   maxTurnDuration: "10m",
   turn: async (turn): Promise<Json> => {
     const input = payload.parse(fixtureValue(turn.input))

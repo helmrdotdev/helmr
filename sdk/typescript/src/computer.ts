@@ -16,7 +16,7 @@ export type ComputerStatus =
 
 export interface ComputerCreateRequest {
   readonly deleteAfterUnused?: Duration
-  readonly definition: string
+  readonly template: string
   readonly key?: string
   readonly secrets?: readonly SecretBinding[]
   readonly idempotencyKey?: string

@@ -285,7 +285,7 @@ func (a *Allocator) AllocatePreparation(ctx context.Context, env, preparation, h
 			return err
 		}
 		var resources []byte
-		if err := tx.QueryRow(ctx, `SELECT resources FROM computer_definitions WHERE environment_id=$1 AND preparation_spec_id=$2 ORDER BY deployment_id,definition_key LIMIT 1`, env, p.SpecID).Scan(&resources); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT resources FROM template_definitions WHERE environment_id=$1 AND preparation_spec_id=$2 ORDER BY deployment_id,template_id LIMIT 1`, env, p.SpecID).Scan(&resources); err != nil {
 			return err
 		}
 		shape, err := qualifyAllocationShape(ctx, tx, supply, resources)

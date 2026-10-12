@@ -28,7 +28,7 @@ func TestWorkerAgentTurnDispatchUsesCurrentAttachment(t *testing.T) {
 	if next, err := client.NextAgentTurn(t.Context(), request); err != nil || next != nil {
 		t.Fatalf("empty queue: %+v %v", next, err)
 	}
-	admission, err := agent.Enqueue(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "dispatch", Input: json.RawMessage(`[{"type":"text","text":"{\"message\":\"hello\"}"}]`)})
+	admission, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "dispatch", Input: json.RawMessage(`[{"type":"text","text":"{\"message\":\"hello\"}"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,6 +57,10 @@ func TestWorkerAgentTurnDispatchUsesCurrentAttachment(t *testing.T) {
 		t.Fatalf("denied dispatch mutated Turn: %s %v", status, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE session_holds SET released_at=clock_timestamp() WHERE session_id=$1`, f.Session)
+	if next, err := client.NextAgentTurn(t.Context(), request); err != nil || next != nil {
+		t.Fatalf("unacknowledged control dispatched: %+v %v", next, err)
+	}
+	acknowledgeTestAgentControl(t, client, session, attachment.AttachmentSequence)
 	first, err := client.NextAgentTurn(t.Context(), request)
 	if err != nil || first == nil {
 		t.Fatalf("dispatch: %+v %v", first, err)
@@ -76,6 +80,7 @@ func TestWorkerAgentTurnDispatchUsesCurrentAttachment(t *testing.T) {
 		t.Fatalf("retired attachment: %v", err)
 	}
 	request.AttachmentSequence = newAttachment.AttachmentSequence
+	acknowledgeTestAgentControl(t, client, session, newAttachment.AttachmentSequence)
 	second, err = client.NextAgentTurn(t.Context(), request)
 	if err != nil || !reflect.DeepEqual(first, second) {
 		t.Fatalf("reattachment: %+v %v", second, err)

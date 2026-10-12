@@ -83,7 +83,7 @@ type Listing struct {
 	More  bool
 }
 
-const computerProjection = `SELECT c.id::text,c.key,COALESCE(c.origin_definition_key,''),COALESCE(c.origin_deployment_id::text,''),
+const computerProjection = `SELECT c.id::text,c.key,(SELECT key FROM templates t WHERE (t.environment_id,t.id)=(c.environment_id,c.origin_template_id)),COALESCE(c.origin_deployment_id::text,''),
  CASE WHEN c.deleted_at IS NULL THEN 'available' WHEN l.epoch IS NOT NULL OR c.storage_reservation_bytes IS NOT NULL THEN 'deleting' ELSE 'deleted' END,
  CASE WHEN c.integrity_fault_at IS NOT NULL OR c.preparation_failed_at IS NOT NULL OR l.status='lost' THEN 'unavailable'
  WHEN cp.status='restoring' THEN 'restoring' WHEN l.status='releasing' THEN 'parking'

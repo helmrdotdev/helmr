@@ -14,7 +14,7 @@ import (
 
 func TestPreparationSaturationKeepsExecutionAndStreamsIndependent(t *testing.T) {
 	registry, entry, request := preparationGuestFixture(t)
-	request.Start = &computerv0.PreparationStart{ComputerDefinitionId: "repo", LogLimits: &computerv0.PreparationLogLimits{ChunkBytes: 3, BufferBytes: 3, BufferRecords: 1}}
+	request.Start = &computerv0.PreparationStart{TemplateDefinitionId: "repo", LogLimits: &computerv0.PreparationLogLimits{ChunkBytes: 3, BufferBytes: 3, BufferRecords: 1}}
 	written := make(chan struct{})
 	finish := make(chan struct{})
 	run := func(_ *computerMountEntry, ctx context.Context, _ *computerv0.PreparationStart, output *preparationOutput) (error, error) {

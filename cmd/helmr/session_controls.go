@@ -44,7 +44,7 @@ func sessionResumeCommand() *cobra.Command {
 
 func sessionTurnCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "turn", Short: "Inspect or control an exact Session Turn."}
-	cmd.AddCommand(sessionTurnAskCommand(), sessionTurnWaitCommand(), sessionTurnListCommand(), sessionTurnGetCommand(), sessionTurnSendCommand())
+	cmd.AddCommand(sessionTurnAskCommand(), sessionTurnWaitCommand(), sessionTurnListCommand(), sessionTurnGetCommand(), sessionTurnSendCommand(), sessionTurnInterruptCommand())
 	return cmd
 }
 
@@ -67,6 +67,9 @@ func sessionTurnGetCommand() *cobra.Command {
 				return writeJSON(cmd.OutOrStdout(), turn)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "turn_id: %s\nsession_id: %s\nstatus: %s\nsequence: %d\n", turn.ID, turn.SessionID, turn.Status, turn.Sequence)
+			if turn.Stop != nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "stop_state: %s\nstop_process_epoch: %d\n", turn.Stop.State, turn.Stop.ProcessEpoch)
+			}
 			if len(turn.Result) > 0 {
 				fmt.Fprintf(cmd.OutOrStdout(), "result: %s\n", turn.Result)
 			}
@@ -130,5 +133,31 @@ func sessionTurnSendCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	cmd.Flags().String("text", "", "Message text, preserving whitespace.")
 	cmd.MarkFlagsMutuallyExclusive("text", "data-file", "data-json")
+	return cmd
+}
+
+func sessionTurnInterruptCommand() *cobra.Command {
+	var sessionID, projectID, environmentID, key string
+	var jsonOutput bool
+	cmd := &cobra.Command{Use: "interrupt TURN_ID --session SESSION_ID", Short: "Interrupt exactly this running Turn without adding a Session hold.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		cp, scope, err := scopedSessionClient(cmd, projectID, environmentID)
+		if err != nil {
+			return err
+		}
+		receipt, err := cp.InterruptSessionTurn(cmd.Context(), sessionID, args[0], api.InterruptTurnRequest{IdempotencyKey: strings.TrimSpace(key)}, scope)
+		if err != nil {
+			return err
+		}
+		if jsonOutput {
+			return writeJSON(cmd.OutOrStdout(), receipt)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "id: %s\nsession_id: %s\nturn_id: %s\nstatus: %s\n", receipt.ID, receipt.SessionID, receipt.TurnID, receipt.Status)
+		return nil
+	}}
+	cmd.Flags().StringVar(&sessionID, "session", "", "Parent Session ID.")
+	_ = cmd.MarkFlagRequired("session")
+	addScopeFlags(cmd, &projectID, &environmentID)
+	cmd.Flags().StringVar(&key, "idempotency-key", "", "Idempotency key for this exact Turn interruption.")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	return cmd
 }

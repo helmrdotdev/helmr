@@ -6,14 +6,14 @@ await verify("computer-command", async ({ client, marker, objects, cleanup, star
     key: computerKey,
     idempotencyKey: `computer:create:${marker}`,
   } as const
-  const created = await client.computers.create({ definition: "helmr-runtime-smoke", ...computerCreateOptions })
+  const created = await client.computers.create({ template: "helmr-runtime-smoke", ...computerCreateOptions })
   objects.computer_ids.push(created.id)
   cleanup(() => deleteComputer(created, `computer:delete:${marker}`))
-  const replayedCreate = await client.computers.create({ definition: "helmr-runtime-smoke", ...computerCreateOptions })
+  const replayedCreate = await client.computers.create({ template: "helmr-runtime-smoke", ...computerCreateOptions })
   assertEqual(replayedCreate.id, created.id, "computer create replay changed the ID")
   let unexpectedConflictComputer: ClientComputerRef | undefined
   try {
-    unexpectedConflictComputer = await client.computers.create({ definition: "helmr-runtime-smoke", ...computerCreateOptions,
+    unexpectedConflictComputer = await client.computers.create({ template: "helmr-runtime-smoke", ...computerCreateOptions,
       key: `${computerKey}-conflict`, })
   } catch (error) {
     assertEqual(
@@ -34,7 +34,7 @@ await verify("computer-command", async ({ client, marker, objects, cleanup, star
   const computer = matches.items[0]!
   const byKey = client.computers.ref(computer.id)
   assertEqual(computer.id, created.id, "computer key resolved to a different Computer")
-  assertEqual(computer.definitionId, "helmr-runtime-smoke", "computer definition key mismatch")
+  assertEqual(computer.definitionId, "helmr-runtime-smoke", "template definition key mismatch")
 
   const markerDirectory = "sandbox-smoke/nested"
   const markerPath = `${markerDirectory}/marker.txt`

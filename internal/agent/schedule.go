@@ -200,7 +200,7 @@ func admitScheduledSession(ctx context.Context, tx pgx.Tx, trust ComputerTrustIs
 	var key string
 	var idle *int64
 	var never bool
-	if err := tx.QueryRow(ctx, `SELECT computer_definition_key,close_after_idle_ms,close_after_idle_never FROM agent_definitions WHERE environment_id=$1 AND agent_id=$2 AND deployment_id=$3`, s.environment, s.agent, s.deployment).Scan(&key, &idle, &never); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT t.key,d.close_after_idle_ms,d.close_after_idle_never FROM agent_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=$1 AND d.agent_id=$2 AND d.deployment_id=$3`, s.environment, s.agent, s.deployment).Scan(&key, &idle, &never); err != nil {
 		return Admission{}, err
 	}
 	computer, err := createAdmissionComputer(ctx, tx, trust, s.environment, s.deployment, key, policy)

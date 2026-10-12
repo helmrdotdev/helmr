@@ -44,17 +44,17 @@ Computer is created:
 | Starting an Agent without `--computer` | The definition's `secrets`. |
 | `helmr computer create` or `client.computers.create` | Only the bindings passed in that request. The definition's `secrets` are not added. |
 
-### In the Computer definition
+### In the Template definition
 
 Use this for Computers that Agents create for their Sessions:
 
 ```ts
-import { agent, computer, image } from "@helmr/sdk"
+import { agent, template, image } from "@helmr/sdk"
 
 // ID from `helmr secret create GITHUB_TOKEN --json` in this Environment.
 const GITHUB_TOKEN = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
 
-export const reviewerComputer = computer({
+export const reviewerComputer = template({
   id: "reviewer",
   image: image("reviewer")
     .from("debian:bookworm-slim")
@@ -70,7 +70,7 @@ export const reviewerComputer = computer({
 
 export const reviewer = agent({
   id: "reviewer",
-  computer: reviewerComputer,
+  template: reviewerComputer,
   async turn() {
     // Processes started here, such as `gh api user`, see GH_TOKEN.
     return { ok: true }
@@ -107,7 +107,7 @@ With the SDK:
 
 ```ts
 const computer = await client.computers.create({
-  definition: "reviewer",
+  template: "reviewer",
   key: "github-review",
   idempotencyKey: "computer:github-review",
   secrets: [

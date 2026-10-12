@@ -7,7 +7,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"net/http"
-	"uuid"
 )
 
 func (s *Server) sendSessionHTTP(w http.ResponseWriter, r *http.Request) {
@@ -30,34 +29,15 @@ func (s *Server) sendSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req := agent.EnqueueRequest{EnvironmentID: environment, SessionID: session, RetryKey: request.IdempotencyKey, Input: request.Data}
-	var receipt agent.SendReceipt
-	exact := chi.URLParam(r, "turnID")
-	if exact != "" {
-		turn, err := ids.Parse(exact)
-		if err != nil {
-			s.writeAgentHTTPError(w, agent.ErrInvalidInput)
-			return
-		}
-		receipt, err = agent.SendTurn(r.Context(), s.tx, caller, req, turn)
-		if err != nil {
-			s.writeAgentHTTPError(w, err)
-			return
-		}
-	} else {
-		receipt, err = agent.Send(r.Context(), s.tx, caller, req)
-		if err != nil {
-			s.writeAgentHTTPError(w, err)
-			return
-		}
-	}
-	if receipt.MessageID == uuid.Nil() {
-		writeJSON(w, http.StatusOK, map[string]any{"id": receipt.TurnID.String(), "kind": "enqueued", "turn_id": receipt.TurnID.String()})
+	turn, err := ids.Parse(chi.URLParam(r, "turnID"))
+	if err != nil {
+		s.writeAgentHTTPError(w, agent.ErrInvalidInput)
 		return
 	}
-	response := map[string]any{"id": receipt.MessageID.String(), "kind": "messaged", "turn_id": receipt.TurnID.String(), "message_id": receipt.MessageID.String()}
-	if exact != "" {
-		delete(response, "kind")
-		response["status"] = "accepted"
+	receipt, err := agent.SendTurn(r.Context(), s.tx, caller, req, turn)
+	if err != nil {
+		s.writeAgentHTTPError(w, err)
+		return
 	}
-	writeJSON(w, http.StatusOK, response)
+	writeJSON(w, http.StatusOK, map[string]any{"id": receipt.MessageID.String(), "turn_id": receipt.TurnID.String(), "message_id": receipt.MessageID.String(), "status": "accepted"})
 }

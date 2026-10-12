@@ -1,16 +1,16 @@
 import { callMcp, fixtureInput, fixtureValue, waitManagedTurn, type ManagedAdmission } from "../../support/runtime-mcp"
-import { agent, image, computer } from "@helmr/sdk"
+import { agent, image, template } from "@helmr/sdk"
 import { randomUUID } from "node:crypto"
 import { readFile, writeFile } from "node:fs/promises"
 import { z } from "zod"
 
-export const restoreComputer = computer({
+export const restoreComputer = template({
   id: "helmr-computer-restore", image: image("helmr-computer-restore").from("node:24-bookworm-slim").workdir("/root"),
   resources: { cpu: 1, memory: "1GiB" },
 })
 const payload = z.object({ marker: z.string().min(1) }).strict()
 export const restoreChild = agent({
-  id: "computer-restore-child", computer: restoreComputer, maxTurnDuration: "1h",
+  id: "computer-restore-child", template: restoreComputer, maxTurnDuration: "1h",
   init: () => ({ nonce: randomUUID(), count: 0, marker: "" }),
   turn: async (turn, ctx) => {
     const { marker } = payload.parse(fixtureValue(turn.input))
@@ -27,7 +27,7 @@ export const restoreChild = agent({
   },
 })
 export const restoreParent = agent({
-  id: "computer-restore-parent", computer: restoreComputer, maxTurnDuration: "1h",
+  id: "computer-restore-parent", template: restoreComputer, maxTurnDuration: "1h",
   init: () => ({ nonce: randomUUID(), count: 0, marker: "", childSessionId: "", childNonce: "" }),
   turn: async (turn, ctx) => {
     const { marker } = payload.parse(fixtureValue(turn.input))

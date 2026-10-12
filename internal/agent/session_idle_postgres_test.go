@@ -65,7 +65,7 @@ func TestStartSnapshotsIdlePolicyAndRejectsKeyedMismatch(t *testing.T) {
 		t.Fatalf("default: %+v %v", a, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_definitions SET close_after_idle_never=true WHERE environment_id=$1`, f.env)
-	req.RetryKey = "second"
+	req.RetryKey = "first"
 	b, err := Start(t.Context(), f.pool, nil, f.caller(), req)
 	if err != nil || b.SessionID != a.SessionID || !lifetime.Same(a.CloseAfterIdleMs, b.CloseAfterIdleMs) {
 		t.Fatalf("redeployment changed policy: %+v %v", b, err)
@@ -120,7 +120,7 @@ func TestSessionIdleBlocksUnacknowledgedResume(t *testing.T) {
 	if err := f.pool.QueryRow(ctx, `SELECT status='open' AND idle_since IS NULL FROM sessions WHERE id=$1`, f.session).Scan(&blocked); err != nil || !blocked {
 		t.Fatalf("unfinished control aged: %v %v", blocked, err)
 	}
-	if err := AcknowledgeSessionDelivery(ctx, f.pool, *f.host(), f.execution(), attachment.Sequence, delivery.Sequence, delivery.Generation, delivery.Kind, ""); err != nil {
+	if err := AcknowledgeSessionDelivery(ctx, f.pool, *f.host(), f.execution(), attachment.Sequence, delivery.Sequence, delivery.Generation, delivery.Kind, "", 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := reconcileSessionIdle(ctx, f.pool, f.env, f.session); err != nil {

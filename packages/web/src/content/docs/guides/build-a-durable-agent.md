@@ -20,12 +20,12 @@ Environment. For the guarantees behind each step, see
 Create `agents/assistant.ts`:
 
 ```ts
-import { agent, computer, image } from "@helmr/sdk"
+import { agent, template, image } from "@helmr/sdk"
 import { appendFile, readFile } from "node:fs/promises"
 
 const LOG = "/workspace/log.txt"
 
-export const assistantComputer = computer({
+export const assistantComputer = template({
   id: "assistant",
   image: image("assistant").from("node:24-bookworm-slim"),
   resources: { cpu: 1, memory: "1GiB" },
@@ -33,7 +33,7 @@ export const assistantComputer = computer({
 
 export const assistant = agent({
   id: "assistant",
-  computer: assistantComputer,
+  template: assistantComputer,
   closeAfterIdle: "1d",
   maxTurnDuration: "10m",
 
@@ -72,8 +72,8 @@ The Agent keeps two kinds of state:
 
 ```sh
 helmr deploy . --project demo --env staging
-helmr agent start assistant --project demo --env staging \
-  --text "first" --session-key user:ada \
+helmr session create assistant --project demo --env staging \
+  --text "first" --key user:ada \
   --idempotency-key tutorial:assistant:1
 ```
 

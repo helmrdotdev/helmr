@@ -12,7 +12,7 @@ import (
 
 func sessionCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "session", Short: "Work with Agent Sessions."}
-	cmd.AddCommand(sessionListCommand(), sessionInterruptCommand(), sessionGetCommand(), sessionSendCommand(), sessionEnqueueCommand(), sessionResumeCommand(), sessionTurnCommand(), sessionEventsCommand(), sessionCloseCommand(), sessionCancelCommand())
+	cmd.AddCommand(sessionCreateCommand(), sessionListCommand(), sessionInterruptCommand(), sessionGetCommand(), sessionEnqueueCommand(), sessionResumeCommand(), sessionTurnCommand(), sessionEventsCommand(), sessionCloseCommand(), sessionCancelCommand())
 	return cmd
 }
 
@@ -38,7 +38,21 @@ func sessionGetCommand() *cobra.Command {
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "session_id: %s\n", session.ID)
 			fmt.Fprintf(cmd.OutOrStdout(), "session_status: %s\n", session.Status)
-			fmt.Fprintf(cmd.OutOrStdout(), "agent_id: %s\ncomputer_id: %s\n", session.AgentID, session.ComputerID)
+			fmt.Fprintf(cmd.OutOrStdout(), "agent_id: %s\n", session.AgentID)
+			if session.ComputerID == nil {
+				fmt.Fprintln(cmd.OutOrStdout(), "computer: No Computer assigned")
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "computer_id: %s\n", *session.ComputerID)
+			}
+			if session.InitialTurn == nil {
+				fmt.Fprintln(cmd.OutOrStdout(), "work: No input yet")
+			}
+			if p := session.Activity.Process; p != nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "process_status: %s\nreconstruction_required: %t\n", p.Status, p.ReconstructionRequired)
+				if p.Stop != nil {
+					fmt.Fprintf(cmd.OutOrStdout(), "stop_state: %s\nstop_process_epoch: %d\n", p.Stop.State, p.Stop.ProcessEpoch)
+				}
+			}
 			for _, hold := range session.Holds {
 				fmt.Fprintf(cmd.OutOrStdout(), "hold_id: %s\nhold_session_id: %s\nhold_scope: %s\n", hold.ID, hold.SessionID, hold.Scope)
 				if hold.Reason != "" {
@@ -50,52 +64,6 @@ func sessionGetCommand() *cobra.Command {
 	}
 	addScopeFlags(cmd, &projectID, &environmentID)
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
-	return cmd
-}
-
-func sessionSendCommand() *cobra.Command {
-	var projectID string
-	var environmentID string
-	var dataFile string
-	var dataJSON string
-	var idempotencyKey string
-	var jsonOutput bool
-	cmd := &cobra.Command{
-		Use:   "send SESSION_ID",
-		Short: "Send data to active work or enqueue a new Turn.",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			input, err := parseContentInput(cmd, dataFile, dataJSON, "--data")
-			if err != nil {
-				return err
-			}
-			controlPlane, scope, err := scopedSessionClient(cmd, projectID, environmentID)
-			if err != nil {
-				return err
-			}
-			response, err := controlPlane.SendSession(cmd.Context(), args[0], api.SessionDataRequest{Data: input, IdempotencyKey: strings.TrimSpace(idempotencyKey)}, scope)
-			if err != nil {
-				return err
-			}
-			if jsonOutput {
-				return writeJSON(cmd.OutOrStdout(), response)
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "id: %s\n", response.ID)
-			fmt.Fprintf(cmd.OutOrStdout(), "kind: %s\n", response.Kind)
-			fmt.Fprintf(cmd.OutOrStdout(), "turn_id: %s\n", response.TurnID)
-			if response.MessageID != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "message_id: %s\n", *response.MessageID)
-			}
-			return nil
-		},
-	}
-	addScopeFlags(cmd, &projectID, &environmentID)
-	cmd.Flags().StringVar(&dataFile, "data-file", "", "Read text-part array JSON from a file.")
-	cmd.Flags().StringVar(&dataJSON, "data-json", "", "Inline text-part array JSON literal.")
-	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for this send.")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
-	cmd.Flags().String("text", "", "Message text, preserving whitespace.")
-	cmd.MarkFlagsMutuallyExclusive("text", "data-file", "data-json")
 	return cmd
 }
 

@@ -1669,7 +1669,7 @@ func (x *PreparationIdentity) GetChannelCredential() []byte {
 
 type PreparationStart struct {
 	state                protoimpl.MessageState    `protogen:"open.v1"`
-	ComputerDefinitionId string                    `protobuf:"bytes,1,opt,name=computer_definition_id,json=computerDefinitionId,proto3" json:"computer_definition_id,omitempty"`
+	TemplateDefinitionId string                    `protobuf:"bytes,1,opt,name=template_definition_id,json=templateDefinitionId,proto3" json:"template_definition_id,omitempty"`
 	Secrets              []*ComputerSecretDelivery `protobuf:"bytes,2,rep,name=secrets,proto3" json:"secrets,omitempty"`
 	LogLimits            *PreparationLogLimits     `protobuf:"bytes,3,opt,name=log_limits,json=logLimits,proto3" json:"log_limits,omitempty"`
 	ProtectedEnv         map[string]string         `protobuf:"bytes,4,rep,name=protected_env,json=protectedEnv,proto3" json:"protected_env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
@@ -1708,9 +1708,9 @@ func (*PreparationStart) Descriptor() ([]byte, []int) {
 	return file_computer_proto_rawDescGZIP(), []int{24}
 }
 
-func (x *PreparationStart) GetComputerDefinitionId() string {
+func (x *PreparationStart) GetTemplateDefinitionId() string {
 	if x != nil {
-		return x.ComputerDefinitionId
+		return x.TemplateDefinitionId
 	}
 	return ""
 }
@@ -2182,7 +2182,7 @@ const file_computer_proto_rawDesc = "" +
 	"\x05epoch\x18\x03 \x01(\x03R\x05epoch\x12-\n" +
 	"\x12channel_credential\x18\x04 \x01(\fR\x11channelCredential\"\x8d\x03\n" +
 	"\x10PreparationStart\x124\n" +
-	"\x16computer_definition_id\x18\x01 \x01(\tR\x14computerDefinitionId\x12C\n" +
+	"\x16template_definition_id\x18\x01 \x01(\tR\x14templateDefinitionId\x12C\n" +
 	"\asecrets\x18\x02 \x03(\v2).helmr.computer.v0.ComputerSecretDeliveryR\asecrets\x12F\n" +
 	"\n" +
 	"log_limits\x18\x03 \x01(\v2'.helmr.computer.v0.PreparationLogLimitsR\tlogLimits\x12Z\n" +

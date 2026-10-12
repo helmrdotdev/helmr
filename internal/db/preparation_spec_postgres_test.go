@@ -13,7 +13,7 @@ func TestPreparationSpecJSONBRoundTrip(t *testing.T) {
 	ctx := t.Context()
 	pool := newPostgresDB(t, ctx)
 	ids := seedPostgres(t, ctx, pool)
-	spec := artifact.ComputerPreparationSpec{APIVersion: artifact.ComputerPreparationSpecVersion, ComputerDefinitionID: "repo", Program: artifact.ProgramDescriptor{Digest: dbtest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}}
+	spec := artifact.ComputerPreparationSpec{APIVersion: artifact.ComputerPreparationSpecVersion, TemplateDefinitionID: "repo", Program: artifact.ProgramDescriptor{Digest: dbtest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}}
 	canonical, err := artifact.CanonicalComputerPreparationSpec(spec)
 	if err != nil {
 		t.Fatal(err)

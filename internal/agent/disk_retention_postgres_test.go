@@ -113,7 +113,7 @@ func TestDiskRetentionSkipsLockedOwnerBeforeBatchBound(t *testing.T) {
 		dbtest.MustExec(t, t.Context(), f.pool, copyLease, f.env, f.computer, f.computer, epoch, uuid.NewV7(), nil)
 	}
 	later, key := uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest) SELECT environment_id,$3,initial_root_id,initial_root_digest FROM computers WHERE environment_id=$1 AND id=$2`, f.env, f.computer, later)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes) SELECT environment_id,$3,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes FROM computers WHERE environment_id=$1 AND id=$2`, f.env, f.computer, later)
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_data_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'test',decode('01','hex'))`, key, f.env, later)
 	dbtest.MustExec(t, t.Context(), f.pool, copyLease, f.env, f.computer, later, 1, uuid.NewV7(), key)
 	tx, err := f.pool.Begin(t.Context())

@@ -5,7 +5,7 @@ on the Computer. The Session retains that file across later Turns.
 
 ```bash
 helmr deploy PATH/TO/hello-world --project PROJECT --env ENVIRONMENT
-helmr agent start hello-world --text Helmr --project PROJECT --env ENVIRONMENT --json
+helmr session create hello-world --text Helmr --project PROJECT --env ENVIRONMENT --json
 ```
 
 The admission includes a Session ID and a Turn ID. Inspect the outcome with
@@ -14,7 +14,7 @@ project and environment flags. A timeout stops observation and leaves work runni
 
 ## Output, response and questions
 
-`agents/session.ts` defines `checked-reply` with the same default Computer definition:
+`agents/session.ts` defines `checked-reply` with the same default Template definition:
 
 - `checked-reply` writes output, validates it, stages a response, and returns a
   machine result. Send `{"text":"hello","expected":"hello"}` as the text of one
@@ -25,7 +25,7 @@ project and environment flags. A timeout stops observation and leaves work runni
 This Agent parses JSON from text. For example:
 
 ```bash
-helmr agent start checked-reply --text '{"text":"hello","expected":"hello"}' --project PROJECT --env ENVIRONMENT --json
+helmr session create checked-reply --text '{"text":"hello","expected":"hello"}' --project PROJECT --env ENVIRONMENT --json
 ```
 
 Use `helmr session events SESSION_ID --json` and retain `next_after` to reconnect.

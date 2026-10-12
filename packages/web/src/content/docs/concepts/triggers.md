@@ -10,9 +10,9 @@ source, and promoting a Deployment makes them active in that Environment. Each
 fire starts a new Session with the input you declared.
 
 ```ts
-import { agent, computer, image, triggers } from "@helmr/sdk"
+import { agent, template, image, triggers } from "@helmr/sdk"
 
-const reporting = computer({
+const reporting = template({
   id: "reporting",
   image: image("reporting").from("node:24-bookworm-slim"),
   resources: { cpu: 1, memory: "1GiB" },
@@ -20,7 +20,7 @@ const reporting = computer({
 
 export const dailyReport = agent({
   id: "daily-report",
-  computer: reporting,
+  template: reporting,
   closeAfterIdle: "5m",
   triggers: [
     triggers.cron("morning", "0 9 * * 1-5", {

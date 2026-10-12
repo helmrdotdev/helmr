@@ -28,7 +28,7 @@ export {
 export { resourceID } from "./internal/id"
 export {
   parseSession,
-  parseTurnState, parseSessionAdmissionReceipt, parseSessionMessageReceipt,
+  parseTurnState, parseSessionMessageReceipt,
   parseSessionCloseReceipt, parseSessionCancelReceipt, parseSessionResumeReceipt,
   parseSessionEvent, parseSessionEventPage,
 } from "./internal/session"

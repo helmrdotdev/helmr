@@ -23,7 +23,7 @@ func fixtureBuildPlan(t *testing.T) (BuildPlan, []byte) {
 }
 func TestAgentBuildPlanCompilerContract(t *testing.T) {
 	plan, raw := fixtureBuildPlan(t)
-	if len(plan.Definitions) != 2 || plan.Definitions[0].Agent.ComputerDefinitionID != "workspace" || *plan.Definitions[0].Agent.MaxTurnDurationMs != 300000 || plan.Definitions[1].Computer.BuildSecrets[0].SecretID != "01900000-0000-7000-8000-000000000002" {
+	if len(plan.Definitions) != 2 || plan.Definitions[0].Agent.TemplateDefinitionID != "workspace" || *plan.Definitions[0].Agent.MaxTurnDurationMs != 300000 || plan.Definitions[1].Template.BuildSecrets[0].SecretID != "01900000-0000-7000-8000-000000000002" {
 		t.Fatalf("unexpected compiler projection: %+v", plan)
 	}
 	got, err := CanonicalBuildPlan(plan)
@@ -36,10 +36,10 @@ func TestAgentBuildPlanCompilerContract(t *testing.T) {
 }
 func TestAgentBuildPlanRejectsMalformedAuthority(t *testing.T) {
 	tests := map[string]func(*BuildPlan){
-		"missing Computer":     func(p *BuildPlan) { p.Definitions[0].Agent.ComputerDefinitionID = "absent" },
+		"missing Computer":     func(p *BuildPlan) { p.Definitions[0].Agent.TemplateDefinitionID = "absent" },
 		"duplicate definition": func(p *BuildPlan) { p.Definitions = append(p.Definitions, p.Definitions[1]) },
 		"definition order":     func(p *BuildPlan) { p.Definitions[0], p.Definitions[1] = p.Definitions[1], p.Definitions[0] },
-		"mixed manifest":       func(p *BuildPlan) { p.Definitions[0].Computer = p.Definitions[1].Computer },
+		"mixed manifest":       func(p *BuildPlan) { p.Definitions[0].Template = p.Definitions[1].Template },
 		"negative duration":    func(p *BuildPlan) { p.Definitions[0].Agent.MaxTurnDurationMs = new(int64(-1)) },
 		"unsafe duration":      func(p *BuildPlan) { p.Definitions[0].Agent.MaxTurnDurationMs = new(int64(9007199254740992)) },
 		"malformed scheduled conversation": func(p *BuildPlan) {
@@ -64,17 +64,17 @@ func TestAgentBuildPlanRejectsMalformedAuthority(t *testing.T) {
 			v.Input = nil
 			p.Definitions[0].Agent.Triggers["nightly"] = v
 		},
-		"invalid disk":             func(p *BuildPlan) { p.Definitions[1].Computer.Resources.DiskMiB = new(int64(0)) },
-		"invalid freshness":        func(p *BuildPlan) { p.Definitions[1].Computer.Refresh.MaxAgeMs = new(int64(0)) },
-		"missing runtime bindings": func(p *BuildPlan) { p.Definitions[1].Computer.Secrets = nil },
-		"missing build bindings":   func(p *BuildPlan) { p.Definitions[1].Computer.BuildSecrets = nil },
+		"invalid disk":             func(p *BuildPlan) { p.Definitions[1].Template.Resources.DiskMiB = new(int64(0)) },
+		"invalid freshness":        func(p *BuildPlan) { p.Definitions[1].Template.Refresh.MaxAgeMs = new(int64(0)) },
+		"missing runtime bindings": func(p *BuildPlan) { p.Definitions[1].Template.Secrets = nil },
+		"missing build bindings":   func(p *BuildPlan) { p.Definitions[1].Template.BuildSecrets = nil },
 		"invalid build Secret": func(p *BuildPlan) {
-			p.Definitions[1].Computer.BuildSecrets[0].SecretID = "name"
+			p.Definitions[1].Template.BuildSecrets[0].SecretID = "name"
 		},
 		"invalid runtime Secret": func(p *BuildPlan) {
-			p.Definitions[1].Computer.Secrets[0].SecretID = "00000000-0000-0000-0000-000000000000"
+			p.Definitions[1].Template.Secrets[0].SecretID = "00000000-0000-0000-0000-000000000000"
 		},
-		"invalid image": func(p *BuildPlan) { p.Definitions[1].Computer.ImageBuild.Images[0].Steps = nil },
+		"invalid image": func(p *BuildPlan) { p.Definitions[1].Template.ImageBuild.Images[0].Steps = nil },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {

@@ -79,6 +79,7 @@ mkdir -p "$tmp/project/agents"
 # The ordinary compiler still discovers, analyzes and builds this application;
 # no definition index, Program manifest or Computer seed is fabricated here.
 bun build tests/fixtures/native-continuation/production.ts --target=node \
+  --tsconfig-override tests/fixtures/native-continuation/tsconfig.json \
   --define "process.env.HELMR_NATIVE_PERFORMANCE=\"$performance_fixture\"" \
   --external '@anthropic-ai/claude-agent-sdk' --outfile "$tmp/project/agents/agents.mjs"
 if [[ "$performance_fixture" == 1 ]]; then
@@ -101,8 +102,8 @@ CONFIG
 "$tmp/helmr" build "$tmp/project" --output "$output/bundle" > "$output/bundle.log" 2>&1
 cp "$tmp/runtime-release/"{runtime.squashfs,runtime.descriptor.json} "$output/"
 chmod 0400 "$output/runtime.squashfs"
-bun build tests/fixtures/native-continuation/production-driver.ts --target=node --outfile "$output/driver.mjs"
-bun build tests/fixtures/native-continuation/model.ts --target=node --outfile "$output/model.mjs"
+bun build tests/fixtures/native-continuation/production-driver.ts --target=node --tsconfig-override tests/fixtures/native-continuation/tsconfig.json --outfile "$output/driver.mjs"
+bun build tests/fixtures/native-continuation/model.ts --target=node --tsconfig-override tests/fixtures/native-continuation/tsconfig.json --outfile "$output/model.mjs"
 mkdir -p images/guest/out
 boot_tmp=$(mktemp -d images/guest/out/native-execution.XXXXXX)
 boot_relative="out/$(basename "$boot_tmp")"

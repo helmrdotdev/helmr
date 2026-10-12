@@ -16,15 +16,15 @@ import (
 type DefinitionIndex struct {
 	APIVersion string                `json:"apiVersion"`
 	Agents     []AgentBundleEntry    `json:"agents"`
-	Computers  []ComputerBundleEntry `json:"computers"`
+	Templates  []TemplateBundleEntry `json:"templates"`
 }
 type AgentBundleEntry struct {
 	ID                   string `json:"id"`
-	ComputerDefinitionID string `json:"computerDefinitionId"`
+	TemplateDefinitionID string `json:"templateDefinitionId"`
 	ModulePath           string `json:"modulePath"`
 	ExportName           string `json:"exportName"`
 }
-type ComputerBundleEntry struct {
+type TemplateBundleEntry struct {
 	ID           string `json:"id"`
 	ModulePath   string `json:"modulePath"`
 	ExportName   string `json:"exportName"`
@@ -78,16 +78,16 @@ func CanonicalDefinitionIndex(index DefinitionIndex) ([]byte, error) {
 	return raw, err
 }
 func ValidateDefinitionIndex(index DefinitionIndex) error {
-	count := len(index.Agents) + len(index.Computers)
-	if index.APIVersion != "helmr.definition-index.v1" || index.Agents == nil || index.Computers == nil || count < 1 || count > 10000 {
+	count := len(index.Agents) + len(index.Templates)
+	if index.APIVersion != "helmr.definition-index.v1" || index.Agents == nil || index.Templates == nil || count < 1 || count > 10000 {
 		return errors.New("invalid Definition index")
 	}
 	agents := make(map[string]struct{}, len(index.Agents))
-	computers := make(map[string]struct{}, len(index.Computers))
+	computers := make(map[string]struct{}, len(index.Templates))
 	type location struct{ module, export, computer string }
 	through := make(map[location]struct{}, len(index.Agents))
 	for _, entry := range index.Agents {
-		if !definition.ValidDeclaredID(entry.ID) || !definition.ValidDeclaredID(entry.ComputerDefinitionID) {
+		if !definition.ValidDeclaredID(entry.ID) || !definition.ValidDeclaredID(entry.TemplateDefinitionID) {
 			return errors.New("invalid Agent bundle id")
 		}
 		if _, exists := agents[entry.ID]; exists {
@@ -97,9 +97,9 @@ func ValidateDefinitionIndex(index DefinitionIndex) error {
 			return err
 		}
 		agents[entry.ID] = struct{}{}
-		through[location{entry.ModulePath, entry.ExportName, entry.ComputerDefinitionID}] = struct{}{}
+		through[location{entry.ModulePath, entry.ExportName, entry.TemplateDefinitionID}] = struct{}{}
 	}
-	for _, entry := range index.Computers {
+	for _, entry := range index.Templates {
 		if !definition.ValidDeclaredID(entry.ID) {
 			return errors.New("invalid Computer bundle id")
 		}
@@ -117,7 +117,7 @@ func ValidateDefinitionIndex(index DefinitionIndex) error {
 		computers[entry.ID] = struct{}{}
 	}
 	for _, entry := range index.Agents {
-		if _, exists := computers[entry.ComputerDefinitionID]; !exists {
+		if _, exists := computers[entry.TemplateDefinitionID]; !exists {
 			return fmt.Errorf("agent %q has no Computer bundle entry", entry.ID)
 		}
 	}

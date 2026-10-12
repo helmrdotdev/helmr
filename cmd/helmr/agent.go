@@ -11,23 +11,27 @@ import (
 )
 
 func agentCommand() *cobra.Command {
-	command := &cobra.Command{Use: "agent", Short: "Inspect deployed Agents and start work."}
-	command.AddCommand(agentDefinitionCommand(), agentStartCommand())
+	command := &cobra.Command{Use: "agent", Short: "Inspect deployed Agent definitions."}
+	command.AddCommand(agentDefinitionCommand())
 	return command
 }
 
-func agentStartCommand() *cobra.Command {
+func sessionCreateCommand() *cobra.Command {
 	var project, environment, inputJSON, inputFile, computer, key, retry string
 	var routes []string
 	var jsonOutput bool
-	start := &cobra.Command{Use: "start AGENT", Short: "Start a Session and its first Turn.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		input, err := parseContentInput(cmd, inputFile, inputJSON, "--input")
+	start := &cobra.Command{Use: "create AGENT", Short: "Create a Session with optional initial input.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		var input json.RawMessage
+		var err error
+		if cmd.Flags().Changed("text") || cmd.Flags().Changed("input-json") || cmd.Flags().Changed("input-file") {
+			input, err = parseContentInput(cmd, inputFile, inputJSON, "--input")
+		}
 		if err != nil {
 			return err
 		}
-		request := api.StartAgentRequest{Input: input, ComputerID: computer, IdempotencyKey: retry}
-		if cmd.Flags().Changed("session-key") {
-			request.SessionKey = &key
+		request := api.CreateSessionRequest{Agent: args[0], Input: input, ComputerID: computer, IdempotencyKey: retry}
+		if cmd.Flags().Changed("key") {
+			request.Key = &key
 		}
 		if cmd.Flags().Changed("slack-channel") {
 			if len(routes) != 1 {
@@ -51,21 +55,24 @@ func agentStartCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		result, err := controlPlane.StartAgent(cmd.Context(), args[0], request, scope)
+		result, err := controlPlane.CreateSession(cmd.Context(), request, scope)
 		if err != nil {
 			return err
 		}
 		if jsonOutput {
 			return writeJSON(cmd.OutOrStdout(), result)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "session_id: %s\nturn_id: %s\n", result.SessionID, result.TurnID)
+		fmt.Fprintf(cmd.OutOrStdout(), "session_id: %s\n", result.SessionID)
+		if result.Turn != nil {
+			fmt.Fprintf(cmd.OutOrStdout(), "turn_id: %s\n", result.Turn.TurnID)
+		}
 		return nil
 	}}
 	addScopeFlags(start, &project, &environment)
 	start.Flags().StringVar(&inputJSON, "input-json", "", "Input as a JSON array of text parts.")
 	start.Flags().StringVar(&inputFile, "input-file", "", "Read input JSON from a file.")
-	start.Flags().StringVar(&computer, "computer", "", "Existing Computer ID; omission prepares a new Computer.")
-	start.Flags().StringVar(&key, "session-key", "", "Explicit Session identity key.")
+	start.Flags().StringVar(&computer, "computer", "", "Existing Computer ID; omission assigns a Computer on first input.")
+	start.Flags().StringVar(&key, "key", "", "Explicit Session identity key.")
 	start.Flags().StringVar(&retry, "idempotency-key", "", "Retry identity for this admission.")
 	start.Flags().StringArrayVar(&routes, "slack-channel", nil, "Slack channel ID, such as C0123456789.")
 	start.Flags().BoolVar(&jsonOutput, "json", false, "Emit the admission receipt as JSON.")

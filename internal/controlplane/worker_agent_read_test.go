@@ -24,7 +24,7 @@ func TestWorkerAgentTurnObservation(t *testing.T) {
 	defer server.Close()
 	secret := seedHostSecret(t, f.Pool, f.Worker)
 	client := secret.client(t, server.URL)
-	origin, err := agent.Enqueue(t.Context(), f.Pool, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "origin", Input: json.RawMessage(`[]`)})
+	origin, err := agent.Enqueue(t.Context(), f.Pool, nil, agent.Caller{Kind: "user", ID: f.User}, agent.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, RetryKey: "origin", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}

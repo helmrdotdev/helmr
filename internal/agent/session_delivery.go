@@ -16,6 +16,9 @@ import (
 // SessionDelivery is the current process-owned control, not a public acceptance
 // receipt. Its identity survives an uncertain response on the same attachment.
 type SessionDelivery struct {
+	StopSequence int64
+	StopTurnID   *uuid.UUID
+	StopDeadline *time.Time
 	Sequence     int64
 	Generation   int64
 	Kind         string
@@ -83,7 +86,10 @@ func PrepareSessionDelivery(ctx context.Context, pool db.TxBeginner, host worker
 		if err != nil {
 			return err
 		}
-		result = SessionDelivery{Sequence: sequence, Generation: authority.Generation, Kind: kind, Acknowledged: acknowledged != nil, ExpiresAt: authority.ExpiresAt}
+		if err = tx.QueryRow(ctx, `SELECT stop_sequence,stop_turn_id,stop_deadline_at FROM session_processes WHERE environment_id=$1 AND session_id=$2 AND epoch=$3`, e.EnvironmentID, e.SessionID, e.ProcessEpoch).Scan(&result.StopSequence, &result.StopTurnID, &result.StopDeadline); err != nil {
+			return err
+		}
+		result = SessionDelivery{StopSequence: result.StopSequence, StopTurnID: result.StopTurnID, StopDeadline: result.StopDeadline, Sequence: sequence, Generation: authority.Generation, Kind: kind, Acknowledged: acknowledged != nil, ExpiresAt: authority.ExpiresAt}
 		if failure != nil {
 			result.Error = *failure
 		}
@@ -119,7 +125,7 @@ func desiredSessionControl(ctx context.Context, tx pgx.Tx, e Execution) (string,
 
 // AcknowledgeSessionDelivery records application only. A shutdown delivery result
 // is not process fencing; only a separately observed physical stop can do that.
-func AcknowledgeSessionDelivery(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, attachment, sequence, generation int64, kind, failure string) error {
+func AcknowledgeSessionDelivery(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, attachment, sequence, generation int64, kind, failure string, stopSequence int64) error {
 	if sequence <= 0 || generation <= 0 || len(failure) > 4096 || !utf8.ValidString(failure) || strings.ContainsRune(failure, 0) || (kind != "suspend" && kind != "resume" && kind != "shutdown") {
 		return ErrInvalidInput
 	}
@@ -137,8 +143,10 @@ func AcknowledgeSessionDelivery(ctx context.Context, pool db.TxBeginner, host wo
 		}
 		tag, err := tx.Exec(ctx, `UPDATE session_processes SET
  control_acknowledged_at=CASE WHEN $8='' THEN COALESCE(control_acknowledged_at,clock_timestamp()) ELSE control_acknowledged_at END,
- control_error=CASE WHEN control_acknowledged_at IS NULL THEN NULLIF($8,'') ELSE control_error END
- WHERE environment_id=$1 AND session_id=$2 AND epoch=$3 AND attachment_sequence=$4 AND control_attachment=$4 AND control_sequence=$5 AND control_generation=$6 AND control_kind=$7`, e.EnvironmentID, e.SessionID, e.ProcessEpoch, attachment, sequence, generation, kind, failure)
+ control_error=CASE WHEN control_acknowledged_at IS NULL THEN NULLIF($8,'') ELSE control_error END,
+ stop_turn_id=CASE WHEN $8='' AND $7<>'shutdown' AND stop_turn_id IS NOT NULL THEN NULL ELSE stop_turn_id END,
+ stop_deadline_at=CASE WHEN $8='' AND $7<>'shutdown' AND stop_turn_id IS NOT NULL THEN NULL ELSE stop_deadline_at END
+ WHERE environment_id=$1 AND session_id=$2 AND epoch=$3 AND attachment_sequence=$4 AND control_attachment=$4 AND control_sequence=$5 AND control_generation=$6 AND control_kind=$7 AND ($8<>'' OR $7='shutdown' OR stop_deadline_at IS NULL OR (stop_sequence=$9 AND stop_turn_id IS NOT NULL AND stop_deadline_at>clock_timestamp()))`, e.EnvironmentID, e.SessionID, e.ProcessEpoch, attachment, sequence, generation, kind, failure, stopSequence)
 		if err != nil {
 			return err
 		}
@@ -213,7 +221,7 @@ func readCurrentSessionDelivery(ctx context.Context, tx pgx.Tx, host workergroup
 	err := tx.QueryRow(ctx, `WITH RECURSIVE ancestors AS (
  SELECT id,parent_session_id FROM sessions WHERE environment_id=$1 AND id=$2
  UNION ALL SELECT s.id,s.parent_session_id FROM sessions s JOIN ancestors a ON s.id=a.parent_session_id WHERE s.environment_id=$1
- ) SELECT p.control_sequence,p.control_generation,p.control_kind,p.control_acknowledged_at IS NOT NULL,COALESCE(p.control_error,''),LEAST(l.expires_at,clock_timestamp()+interval '30 seconds')
+ ) SELECT p.control_sequence,p.control_generation,p.control_kind,p.control_acknowledged_at IS NOT NULL,COALESCE(p.control_error,''),p.stop_sequence,p.stop_turn_id,p.stop_deadline_at,LEAST(l.expires_at,clock_timestamp()+interval '30 seconds')
  FROM session_processes p
  JOIN sessions s ON (s.environment_id,s.id)=(p.environment_id,p.session_id)
  JOIN deployments d ON (d.environment_id,d.id)=(s.environment_id,s.deployment_id)
@@ -232,7 +240,7 @@ func readCurrentSessionDelivery(ctx context.Context, tx pgx.Tx, host workergroup
  AND p.attachment_sequence=$10 AND p.control_attachment=$10 AND p.control_generation=s.authority_generation
  AND p.control_kind=CASE WHEN s.status IN ('closed','cancelled') OR d.execution_revoked_at IS NOT NULL OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) OR p.status IN ('stopping','lost','stopped') THEN 'shutdown'
  WHEN EXISTS(SELECT 1 FROM session_holds hold JOIN ancestors a ON a.id=hold.session_id WHERE hold.environment_id=$1 AND hold.released_at IS NULL AND (hold.session_id=$2 OR hold.scope='subtree')) THEN 'suspend' ELSE 'resume' END`,
-		e.EnvironmentID, e.SessionID, e.ProcessEpoch, e.LeaseEpoch, host.HostID, host.Epoch, host.GroupID, host.GroupClaimVersion, host.HostClaimVersion, attachment).Scan(&result.Sequence, &result.Generation, &result.Kind, &result.Acknowledged, &result.Error, &result.ExpiresAt)
+		e.EnvironmentID, e.SessionID, e.ProcessEpoch, e.LeaseEpoch, host.HostID, host.Epoch, host.GroupID, host.GroupClaimVersion, host.HostClaimVersion, attachment).Scan(&result.Sequence, &result.Generation, &result.Kind, &result.Acknowledged, &result.Error, &result.StopSequence, &result.StopTurnID, &result.StopDeadline, &result.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SessionDelivery{}, false, nil
 	}

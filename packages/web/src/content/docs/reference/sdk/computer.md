@@ -1,6 +1,6 @@
 ---
 title: Computer
-description: computer(), image(), Secret bindings, and client methods for Computers, Computer definitions and Commands.
+description: template(), image(), Secret bindings, and client methods for Computers, Template definitions and Commands.
 sidebarLabel: Computer
 ---
 
@@ -12,13 +12,13 @@ Computers and Commands. For what a Computer is and how it persists, see
 [Prepare a Computer](/docs/guides/prepare-a-computer) and
 [Run commands](/docs/guides/run-commands).
 
-## `computer()`
+## `template()`
 
 ```ts
-function computer(config: Omit<ComputerDefinition, "kind">): ComputerDefinition
+function template(config: Omit<TemplateDefinition, "kind">): TemplateDefinition
 
-interface ComputerDefinition {
-  readonly kind: "computer"
+interface TemplateDefinition {
+  readonly kind: "template"
   readonly id: string
   readonly image: ImageBuilder
   readonly resources: { readonly cpu: number; readonly memory: string; readonly disk?: string }
@@ -30,7 +30,7 @@ interface ComputerDefinition {
 }
 ```
 
-Returns a frozen definition with `kind: "computer"`. Throws `TypeError` when
+Returns a frozen definition with `kind: "template"`. Throws `TypeError` when
 `id` is blank or `resources.cpu`/`resources.memory` is missing.
 
 | Field | Required | Description |
@@ -55,9 +55,9 @@ interface BuildContext {
 ```
 
 ```ts
-import { computer, image } from "@helmr/sdk"
+import { template, image } from "@helmr/sdk"
 
-export const repoComputer = computer({
+export const repoComputer = template({
   id: "app",
   image: image("app").from("node:24-bookworm"),
   resources: { cpu: 2, memory: "4GiB" },
@@ -132,14 +132,14 @@ Bindings reference Secrets by stable ID and never contain values. The same
 field names (`secretId`, `allowedOrigins`) are used in REST request bodies. See
 [Secrets](/docs/concepts/secrets) for the protection modes.
 
-## Client: Computer definitions
+## Client: Template definitions
 
 ```ts
-client.computerDefinitions.get(id: string, query?: { deploymentId?: string }, options?): Promise<ComputerDefinitionInfo>
-client.computerDefinitions.list(query?: { deploymentId?: string; cursor?: string; limit?: number }, options?): Promise<ComputerDefinitionPage>
+client.templateDefinitions.get(id: string, query?: { deploymentId?: string }, options?): Promise<TemplateDefinitionInfo>
+client.templateDefinitions.list(query?: { deploymentId?: string; cursor?: string; limit?: number }, options?): Promise<TemplateDefinitionPage>
 ```
 
-`ComputerDefinitionInfo` is `{ id, deploymentId }`. `ComputerDefinitionPage` is
+`TemplateDefinitionInfo` is `{ id, deploymentId }`. `TemplateDefinitionPage` is
 `{ deploymentId, items: { id }[], nextCursor? }`. Omitting `deploymentId` reads
 the current Deployment; a list cursor keeps its original Deployment. `limit` is
 1–100.
@@ -161,7 +161,7 @@ interface ComputerCreateRequest {
 }
 ```
 
-`create` uses the current Deployment. `definition` is the Computer definition
+`create` uses the current Deployment. `definition` is the Template definition
 ID. `key` is an optional immutable lookup value; it does not make creation
 get-or-create. `deleteAfterUnused` overrides the definition.
 

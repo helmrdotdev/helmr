@@ -23,7 +23,7 @@ func TestSessionDeliveryRetainsIdentityAndRejectsOldAttachment(t *testing.T) {
 	if err != nil || second.Sequence != first.Sequence {
 		t.Fatalf("retry: %+v %v", second, err)
 	}
-	if err := AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, first.Sequence, first.Generation, first.Kind, ""); err != nil {
+	if err := AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, first.Sequence, first.Generation, first.Kind, "", 0); err != nil {
 		t.Fatal(err)
 	}
 	acked, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
@@ -41,7 +41,7 @@ func TestSessionDeliveryRetainsIdentityAndRejectsOldAttachment(t *testing.T) {
 	if err != nil || latest.Sequence != first.Sequence+1 || latest.Acknowledged {
 		t.Fatalf("reattach: %+v %v", latest, err)
 	}
-	if err := AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, first.Sequence, first.Generation, first.Kind, ""); !errors.Is(err, ErrConflict) {
+	if err := AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, first.Sequence, first.Generation, first.Kind, "", 0); !errors.Is(err, ErrConflict) {
 		t.Fatalf("old ack: %v", err)
 	}
 }
@@ -60,7 +60,7 @@ func TestSessionDeliveryCurrentHoldAndPhysicalStopAreSeparate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, old.Sequence, old.Generation, old.Kind, ""); !errors.Is(err, ErrConflict) {
+	if err := AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, old.Sequence, old.Generation, old.Kind, "", 0); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale resume: %v", err)
 	}
 	held, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
@@ -83,7 +83,7 @@ func TestSessionDeliveryCurrentHoldAndPhysicalStopAreSeparate(t *testing.T) {
 	if err != nil || stop.Kind != "shutdown" {
 		t.Fatalf("stop: %+v %v", stop, err)
 	}
-	if err := AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, stop.Sequence, stop.Generation, stop.Kind, ""); err != nil {
+	if err := AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, stop.Sequence, stop.Generation, stop.Kind, "", 0); err != nil {
 		t.Fatal(err)
 	}
 	var fenced bool
@@ -126,7 +126,7 @@ func TestSessionDeliveryFailureIsInspectableAndDoesNotAcknowledge(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, delivery.Sequence, delivery.Generation, delivery.Kind, "native work did not converge"); err != nil {
+	if err := AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, delivery.Sequence, delivery.Generation, delivery.Kind, "native work did not converge", 0); err != nil {
 		t.Fatal(err)
 	}
 	failed, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)

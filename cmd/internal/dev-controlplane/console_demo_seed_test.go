@@ -83,10 +83,10 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
 	}
 	caller := agent.Caller{Kind: "user", ID: uuid.MustParse("00000000-0000-7000-8000-000000000101")}
 	env := uuid.MustParse(demoSeedEnvironmentID)
-	if _, err := agent.Start(ctx, pool, nil, caller, agent.StartRequest{EnvironmentID: env, Agent: "demo-agent", RetryKey: "should-not-start", Input: []byte(`[]`)}); !errors.Is(err, agent.ErrDenied) {
+	if _, err := agent.Start(ctx, pool, nil, caller, agent.StartRequest{EnvironmentID: env, Agent: "demo-agent", RetryKey: "should-not-start", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, agent.ErrDenied) {
 		t.Fatalf("synthetic Deployment start=%v, want denied", err)
 	}
-	if _, err := agent.Enqueue(ctx, pool, caller, agent.EnqueueRequest{EnvironmentID: env, SessionID: uuid.MustParse(demoSeedSessionID), RetryKey: "should-not-enqueue", Input: []byte(`[]`)}); !errors.Is(err, agent.ErrNotReady) {
+	if _, err := agent.Enqueue(ctx, pool, nil, caller, agent.EnqueueRequest{EnvironmentID: env, SessionID: uuid.MustParse(demoSeedSessionID), RetryKey: "should-not-enqueue", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, agent.ErrNotReady) {
 		t.Fatalf("terminal demo enqueue=%v, want not ready", err)
 	}
 }
@@ -130,7 +130,7 @@ func TestDevSeedRestartPreservesEditsWithoutReseeding(t *testing.T) {
 	`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE agents SET name='renamed-demo' WHERE environment_id=$1 AND id=$2`, demoSeedEnvironmentID, demoSeedAgentID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE agents SET key='renamed-demo' WHERE environment_id=$1 AND id=$2`, demoSeedEnvironmentID, demoSeedAgentID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `DELETE FROM agent_schedules WHERE id = $1`, demoSeedScheduleID); err != nil {
@@ -158,7 +158,7 @@ func TestDevSeedRestartPreservesEditsWithoutReseeding(t *testing.T) {
 	`).Scan(&name, &color); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT name FROM agents WHERE environment_id=$1 AND id=$2`, demoSeedEnvironmentID, demoSeedAgentID).Scan(&agentName); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT key FROM agents WHERE environment_id=$1 AND id=$2`, demoSeedEnvironmentID, demoSeedAgentID).Scan(&agentName); err != nil {
 		t.Fatal(err)
 	}
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM agent_schedules WHERE id = $1`, demoSeedScheduleID).Scan(&scheduleCount); err != nil {
@@ -173,7 +173,7 @@ func TestDevSeedRestartPreservesEditsWithoutReseeding(t *testing.T) {
 		t.Fatalf("environment after restart = %q/%q, want Renamed Production/#22C55E", name, color)
 	}
 	if agentName != "renamed-demo" {
-		t.Fatalf("agent name after restart=%q, want renamed-demo", agentName)
+		t.Fatalf("agent key after restart=%q, want renamed-demo", agentName)
 	}
 	if scheduleCount != 0 {
 		t.Fatalf("deleted schedule count after restart = %d, want 0", scheduleCount)

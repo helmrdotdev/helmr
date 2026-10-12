@@ -21,7 +21,7 @@ func preparationAllocationFixture(t *testing.T) (preparationFixture, Preparation
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET primary_pool_id=(SELECT worker_pool_id FROM worker_hosts WHERE id=$1) WHERE id=$2;
  UPDATE worker_hosts SET observed_at=clock_timestamp(),epoch_cpu_millis=8000,epoch_memory_bytes=8589934592,epoch_guest_ephemeral_disk_bytes=8589934592,max_vm_slots=8,max_vm_starts=8 WHERE id=$1;
  UPDATE environments SET max_resident_computers=1,max_cpu_millis=2000,max_memory_bytes=1073741824 WHERE id=$3;
- UPDATE computer_definitions SET resources=jsonb_set(resources,'{milliCpu}','500') WHERE environment_id=$3`, pgx.QueryExecModeSimpleProtocol, f.worker, f.group, f.env)
+ UPDATE template_definitions SET resources=jsonb_set(resources,'{milliCpu}','500') WHERE environment_id=$3`, pgx.QueryExecModeSimpleProtocol, f.worker, f.group, f.env)
 	a, err := NewAllocator(f.pool, bytes.Repeat([]byte{19}, 32), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -258,7 +258,8 @@ func TestAllocationPreparationConcurrentQuotaIsAtomic(t *testing.T) {
 	otherSpec := uuid.NewV7()
 	otherComputer := f.waiter(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_preparation_specs SELECT (jsonb_populate_record(NULL::computer_preparation_specs,to_jsonb(s)||jsonb_build_object('id',$3::text,'spec_digest','sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'))).* FROM computer_preparation_specs s WHERE environment_id=$1 AND id=$2;
- INSERT INTO computer_definitions SELECT (jsonb_populate_record(NULL::computer_definitions,to_jsonb(d)||jsonb_build_object('definition_key','other','preparation_spec_id',$3::text))).* FROM computer_definitions d WHERE environment_id=$1 AND deployment_id=$2;
+ INSERT INTO templates(environment_id,id,key) VALUES($1,$3,'other');
+ INSERT INTO template_definitions SELECT (jsonb_populate_record(NULL::template_definitions,to_jsonb(d)||jsonb_build_object('template_id',$3::text,'preparation_spec_id',$3::text))).* FROM template_definitions d WHERE environment_id=$1 AND deployment_id=$2;
  UPDATE computers SET preparation_spec_id=$3 WHERE environment_id=$1 AND id=$4`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, otherSpec, otherComputer)
 	second := f.attach(t, otherComputer)
 	otherHost := uuid.NewV7()
@@ -403,7 +404,8 @@ func TestAllocationHostCapacitySerializesDifferentEnvironments(t *testing.T) {
  INSERT INTO environments SELECT (jsonb_populate_record(NULL::environments,to_jsonb(e)||jsonb_build_object('id',$2::text,'slug','other','is_default',false,'current_deployment_id',NULL))).* FROM environments e WHERE e.id=$1;
  INSERT INTO deployments SELECT (jsonb_populate_record(NULL::deployments,to_jsonb(d)||jsonb_build_object('environment_id',$2::text))).* FROM deployments d WHERE d.environment_id=$1;
  INSERT INTO computer_preparation_specs SELECT (jsonb_populate_record(NULL::computer_preparation_specs,to_jsonb(s)||jsonb_build_object('environment_id',$2::text))).* FROM computer_preparation_specs s WHERE s.environment_id=$1;
- INSERT INTO computer_definitions SELECT (jsonb_populate_record(NULL::computer_definitions,to_jsonb(d)||jsonb_build_object('environment_id',$2::text))).* FROM computer_definitions d WHERE d.environment_id=$1;
+ INSERT INTO templates(environment_id,id,key) SELECT $2,id,key FROM templates WHERE environment_id=$1;
+ INSERT INTO template_definitions SELECT (jsonb_populate_record(NULL::template_definitions,to_jsonb(d)||jsonb_build_object('environment_id',$2::text))).* FROM template_definitions d WHERE d.environment_id=$1;
  INSERT INTO computer_preparations(environment_id,id,preparation_spec_id,retry_key,deadline_at) SELECT $2,id,preparation_spec_id,retry_key,deadline_at FROM computer_preparations WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, otherEnv, f.worker)
 	start := make(chan struct{})
 	results := make(chan error, 2)

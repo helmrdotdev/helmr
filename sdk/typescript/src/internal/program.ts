@@ -3,11 +3,11 @@ export interface DefinitionIndex {
   readonly apiVersion: "helmr.definition-index.v1"
   readonly agents: readonly {
     readonly id: string
-    readonly computerDefinitionId: string
+    readonly templateDefinitionId: string
     readonly modulePath: string
     readonly exportName: string
   }[]
-  readonly computers: readonly {
+  readonly templates: readonly {
     readonly id: string
     readonly modulePath: string
     readonly exportName: string

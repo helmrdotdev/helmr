@@ -21,7 +21,6 @@ func computerCommand() *cobra.Command {
 		Short: "Work with durable Computers.",
 	}
 	command.AddCommand(
-		computerDefinitionCommand(),
 		computerCreateCommand(),
 		computerGetCommand(),
 		computerDeleteCommand(),
@@ -73,7 +72,8 @@ func computerCreateCommand() *cobra.Command {
 					return e
 				}
 			}
-			response, err := controlPlane.CreateComputer(command.Context(), args[0], api.CreateComputerRequest{
+			response, err := controlPlane.CreateComputer(command.Context(), api.CreateComputerRequest{
+				Template:       args[0],
 				Key:            keyPointer,
 				Secrets:        bindings,
 				IdempotencyKey: idempotencyKey,

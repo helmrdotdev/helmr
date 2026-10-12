@@ -137,7 +137,7 @@ export async function runAgentProgram(definitionSource: AgentDefinition<InputCon
       const current = runtime!
       const activeChannel = channel
       const run = async (): Promise<Json> => {
-        const control = command.command.case === "interrupt" || command.command.case === "suspend" || command.command.case === "resume"
+        const control = command.command.case === "control"
         if (control) {
           if (command.controlSequence <= 0n) throw new Error("Control sequence is required")
           if (command.controlSequence <= controlSequence) return { superseded: true }
@@ -152,16 +152,30 @@ export async function runAgentProgram(definitionSource: AgentDefinition<InputCon
             const message = command.command.value
             await current.deliverMessage(message.turnId, message.messageId, normalizeInput(json(message.inputJson)), source(message.sourceJson)); return null
           }
-          case "interrupt": current.interrupt(command.command.value.turnId, new Error(command.command.value.reason)); controlSequence = command.controlSequence; return null
-          case "suspend": current.suspend(new Error(command.command.value.reason)); controlSequence = command.controlSequence; return null
+          case "control": {
+            const control = command.command.value
+            controlSequence = command.controlSequence
+            if (control.desired === "shutdown") { shutdown = true; stopped.abort(new Error("Session process must stop")); return null }
+            if (control.desired !== "hold" && control.desired !== "run") throw new Error("Invalid desired Session state")
+            if (control.desired === "hold") current.suspend(new Error("Session is held"))
+            if (control.stopDeadlineUnixNano !== 0n) {
+              if (!control.stopTurnId) {
+                shutdown = true
+                stopped.abort(new Error("Session initialization interrupted; reconstruction required"))
+                throw new Error("Session initialization requires reconstruction")
+              }
+              await current.interrupt(control.stopTurnId, new Error("Turn interrupted"))
+            }
+            if (controlSequence !== command.controlSequence) return { superseded: true }
+            if (control.desired === "run") {
+              await current.waitForResume()
+              if (controlSequence !== command.controlSequence) return { superseded: true }
+              current.resume()
+            }
+            return null
+          }
           case "reconcile": return await current.reconcileFinalization(command.command.value.turnId) as unknown as Json
           case "acknowledged": current.acknowledgeTerminal(command.command.value.turnId, safeSequence(command.command.value.sequence)); return null
-          case "resume":
-            controlSequence = command.controlSequence
-            await current.waitForResume()
-            if (controlSequence !== command.controlSequence) return { superseded: true }
-            current.resume(); return null
-          case "shutdown": shutdown = true; stopped.abort(new Error(command.command.value.reason)); return null
           default: throw new Error("Unknown guest command")
         }
       }
@@ -170,7 +184,7 @@ export async function runAgentProgram(definitionSource: AgentDefinition<InputCon
         error => activeChannel.event({ case: "deliveryResult", value: create(agentProto.DeliveryResultSchema, { deliveryId: command.deliveryId, outcome: { case: "error", value: failure(error) } }) }),
       )
       observe(delivery)
-      if (command.command.case === "shutdown") { await delivery; break }
+      if (command.command.case === "control" && shutdown) { await delivery; break }
     }
     if (!channel) throw new Error("Guest pipe closed before Session start")
     if (!shutdown) throw stopped.signal.reason ?? new Error("Guest pipe closed unexpectedly")

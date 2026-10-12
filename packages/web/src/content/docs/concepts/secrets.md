@@ -27,7 +27,7 @@ through a raw binding. Helmr never automatically falls back from protected to ra
 
 ```ts
 const computer = await client.computers.create({
-  definition: "reviewer",
+  template: "reviewer",
   secrets: [
     {
       secretId: process.env.HELMR_GITHUB_SECRET_ID!,
