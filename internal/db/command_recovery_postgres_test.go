@@ -7,7 +7,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/secret"
 )
 
 func insertRecoveryCommand(t *testing.T, f agenttest.Fixture, computer uuid.UUID, terminal bool) uuid.UUID {
@@ -26,9 +25,9 @@ func TestCommandRecoveryDiscoverySkipsPendingProcessCleanup(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes) SELECT environment_id,$2,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes FROM computers WHERE environment_id=$1 AND id=$3`, f.Environment, other, f.Computer)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,computer_instance_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) SELECT environment_id,$3,epoch,worker_host_id,worker_epoch,clock_timestamp()-interval '1 second','lost',$3,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE environment_id=$1 AND computer_id=$2`, f.Environment, f.Computer, other)
 	actionable := insertRecoveryCommand(t, f, other, false)
-	n, err := command.RecoverBatch(t.Context(), f.Pool, 1)
-	if err != nil || n != 1 {
-		t.Fatalf("recovery=%d %v", n, err)
+	position, more, err := command.RecoverBatch(t.Context(), f.Pool, command.RecoveryPosition{}, 1)
+	if err != nil || !more || position.ID != actionable {
+		t.Fatalf("recovery position=%+v more=%v %v", position, more, err)
 	}
 	var lost, unreconciled bool
 	if err := f.Pool.QueryRow(t.Context(), `SELECT status='lost',process_reconciled_at IS NULL FROM computer_commands WHERE environment_id=$1 AND id=$2`, f.Environment, actionable).Scan(&lost, &unreconciled); err != nil || !lost || !unreconciled {
@@ -46,9 +45,9 @@ func TestSecretRevocationDiscoveryAdvancesPastStoppedCommands(t *testing.T) {
 		if n == 0 {
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET status='pending',computer_lease_epoch=NULL WHERE environment_id=$1 AND id=$2`, f.Environment, id)
 		}
-		count, err := command.StopSecretRevokedCommands(t.Context(), f.Pool, secret.Revocation{EnvironmentID: f.Environment, SecretID: secretID, Generation: 2}, 1)
-		if err != nil || count != 1 {
-			t.Fatalf("revocation discovery %d=%d %v", n, count, err)
+		position, _, err := command.RecoverBatch(t.Context(), f.Pool, command.RecoveryPosition{}, 1)
+		if err != nil || position.ID != id {
+			t.Fatalf("revocation discovery %d: position=%+v %v", n, position, err)
 		}
 		var status string
 		var terminal, reconciled bool

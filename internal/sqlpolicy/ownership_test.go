@@ -55,7 +55,7 @@ var tableOwners = map[string]string{
 	// commands
 	"computer_commands": "internal/command", "platform_retry_keys": "internal/idempotency",
 	// secrets
-	"secrets": "internal/secret", "secret_versions": "internal/secret", "control_outbox": "internal/secret",
+	"secrets": "internal/secret", "secret_versions": "internal/secret",
 	// Slack
 	"agent_publications": "internal/slack", "slack_app_registrations": "internal/slack", "slack_channels": "internal/slack",
 	"slack_installations": "internal/slack", "slack_posts": "internal/slack", "slack_requests": "internal/slack",
@@ -104,7 +104,6 @@ var queryFileOwners = map[string]string{
 	"computer_commands.sql":     "internal/command",
 	"computer_disk_roots.sql":   "internal/agent",
 	"computer_objects.sql":      "internal/agent",
-	"control_outbox.sql":        "internal/secret",
 	"device_codes.sql":          "internal/identity",
 	"invitations.sql":           "internal/org",
 	"magic_links.sql":           "internal/identity",

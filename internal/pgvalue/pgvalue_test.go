@@ -2,7 +2,6 @@ package pgvalue
 
 import (
 	"testing"
-	"time"
 	"uuid"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -14,18 +13,6 @@ func TestText(t *testing.T) {
 	}
 	if got := Text("   "); got.Valid {
 		t.Fatalf("Text(blank).Valid = true")
-	}
-}
-
-func TestTimestamptzUTCZeroInvalid(t *testing.T) {
-	if got := TimestamptzUTCZeroInvalid(time.Time{}); got.Valid {
-		t.Fatalf("zero time Valid = true")
-	}
-	loc := time.FixedZone("test", 9*60*60)
-	value := time.Date(2026, 6, 13, 12, 0, 0, 0, loc)
-	got := TimestamptzUTCZeroInvalid(value)
-	if !got.Valid || got.Time.Location() != time.UTC || !got.Time.Equal(value) {
-		t.Fatalf("TimestamptzUTCZeroInvalid() = %#v", got)
 	}
 }
 

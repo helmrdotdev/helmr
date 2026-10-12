@@ -403,9 +403,14 @@ func TestCommandSecretSelectionOccursAtFirstDelivery(t *testing.T) {
 	if err = CheckStart(t.Context(), f.Pool, f.host(), *first.Start); !errors.Is(err, secret.ErrDeliveryRevoked) {
 		t.Fatalf("revoked delivery %v", err)
 	}
-	count, err = StopSecretRevokedCommands(t.Context(), f.Pool, secret.Revocation{EnvironmentID: f.Environment, SecretID: secretID, Generation: 1}, 10)
-	if err != nil || count != 2 {
-		t.Fatalf("revocation %d %v", count, err)
+	// The reconciler's recovery pass discovers both Commands through the
+	// revoked binding and records convergence intent for each.
+	if _, more, err := RecoverBatch(t.Context(), f.Pool, RecoveryPosition{}, 10); err != nil || more {
+		t.Fatalf("revocation pass more=%v %v", more, err)
+	}
+	var converged int
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_commands WHERE environment_id=$1 AND cancel_requested_at IS NOT NULL`, f.Environment).Scan(&converged); err != nil || converged != 2 {
+		t.Fatalf("revocation converged %d %v", converged, err)
 	}
 	c = f.get(t, id)
 	if c.Status != "stopping" || c.TerminalAt.Valid || c.ProcessReconciledAt.Valid {

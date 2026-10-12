@@ -10,16 +10,13 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
-	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
-	"github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/outbox"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/slack"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
@@ -98,27 +95,12 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure diagnostic exporter: %w", err)
 	}
-	secretRevocationDelivery, err :=
-		secret.NewRevocationDeliveryWorker(
-			log,
-			queries,
-			reconcileSecretRevocation(pool),
-		)
-	if err != nil {
-		return fmt.Errorf("configure secret revocation delivery: %w", err)
-	}
-	controlOutboxLifecycle, err := outbox.NewLifecycle(log, queries)
-	if err != nil {
-		return fmt.Errorf("configure control outbox lifecycle: %w", err)
-	}
 
 	runners := []dispatcherRunner{
 		{name: "stale host fencer", run: staleHostFencer.Run},
 		{name: "Agent schedules", run: func(ctx context.Context) error { return agent.RunSchedules(ctx, pool, secretStore, log) }},
-		{name: "secret revocation delivery", run: secretRevocationDelivery.Run},
 		{name: "Deployment event retention", run: func(ctx context.Context) error { return deployment.RunEventRetention(ctx, pool, log) }},
 		{name: "diagnostic exporter", run: diagnosticIngester.Run},
-		{name: "control outbox lifecycle", run: controlOutboxLifecycle.Run},
 	}
 	{
 		credentials, err := slack.NewCredentialStore(pool, cfg.EncryptionKey)
@@ -209,12 +191,4 @@ func newDispatchPool(ctx context.Context, databaseURL string, maxConns int32) (*
 		return nil, err
 	}
 	return pool, nil
-}
-
-// Agent preparation and image revocation converge in the control-plane owner
-// loops. This outbox callback converges affected ordinary Commands.
-func reconcileSecretRevocation(database db.TxDB) secret.RevocationReconcileBatch {
-	return func(ctx context.Context, environmentID, secretID uuid.UUID, generation int64, limit int32) (int, error) {
-		return command.StopSecretRevokedCommands(ctx, database, secret.Revocation{EnvironmentID: environmentID, SecretID: secretID, Generation: generation}, limit)
-	}
 }

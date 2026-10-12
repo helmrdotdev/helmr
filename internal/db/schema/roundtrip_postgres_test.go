@@ -12,7 +12,7 @@ func TestSchemaCleanRoundTrip(t *testing.T) {
 			t.Fatal(err)
 		}
 		var exists bool
-		if err := database.Pool.QueryRow(t.Context(), `SELECT to_regclass('public.agent_schedule_occurrences') IS NOT NULL AND to_regclass('public.control_outbox') IS NOT NULL`).Scan(&exists); err != nil || !exists {
+		if err := database.Pool.QueryRow(t.Context(), `SELECT to_regclass('public.agent_schedule_occurrences') IS NOT NULL AND to_regclass('public.deployment_events') IS NOT NULL`).Scan(&exists); err != nil || !exists {
 			t.Fatalf("owners missing: %v %v", exists, err)
 		}
 		if err := Down(t.Context(), database.DSN); err != nil {

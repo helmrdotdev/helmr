@@ -117,11 +117,6 @@ func TestSecretMutationReplayComparesExactEncryptedVersion(t *testing.T) {
 	if _, err = store.Revoke(t.Context(), environmentID, secretID, ""); err != nil {
 		t.Fatal(err)
 	}
-	var notices int
-	if err := database.Pool.QueryRow(t.Context(), `SELECT count(*) FROM control_outbox WHERE topic='secret.revoked' AND payload->>'environmentId'=$1 AND payload->>'secretId'=$2 AND payload->>'revocationGeneration'='1'`, environmentID.String(), secretID.String()).Scan(&notices); err != nil || notices != 1 {
-		t.Fatalf("revocation notices=%d: %v", notices, err)
-	}
-
 	replayed, err = store.Create(t.Context(), environmentID, "API_TOKEN", []byte("first-value"), "create-1")
 	if err != nil || replayed.Status != "revoked" {
 		t.Fatalf("revoked create replay: %+v %v", replayed, err)
@@ -296,34 +291,5 @@ func TestSecretDistinctConcurrentMutationsDoNotUpgradeForeignKeyLocks(t *testing
 	var count int
 	if err = database.Pool.QueryRow(t.Context(), `SELECT count(*) FROM secret_versions WHERE secret_id=$1`, id).Scan(&count); err != nil || count != 9 {
 		t.Fatalf("distinct rotations %d: %v", count, err)
-	}
-}
-
-func TestSecretMutationRollsBackWithoutRevocationNotice(t *testing.T) {
-	database := dbtest.Open(t)
-	if err := schema.Up(t.Context(), database.DSN); err != nil {
-		t.Fatal(err)
-	}
-	env := seedSecretEnvironment(t, database.Pool)
-	store, err := New(db.New(database.Pool), database.Pool, make([]byte, 32))
-	if err != nil {
-		t.Fatal(err)
-	}
-	created, err := store.Create(t.Context(), env, "TOKEN", []byte("test"), "create")
-	if err != nil {
-		t.Fatal(err)
-	}
-	id := pgvalue.MustUUIDValue(created.ID)
-	dbtest.MustExec(t, t.Context(), database.Pool, `ALTER TABLE control_outbox ADD CONSTRAINT injected_notice_failure CHECK (topic<>'secret.revoked')`)
-	if _, err = store.Revoke(t.Context(), env, id, "revoke"); err == nil {
-		t.Fatal("missing durable notice accepted")
-	}
-	var active bool
-	if err = database.Pool.QueryRow(t.Context(), `SELECT status='active' AND revocation_generation=0 AND current_version_id IS NOT NULL FROM secrets WHERE environment_id=$1 AND id=$2`, env, id).Scan(&active); err != nil || !active {
-		t.Fatalf("revocation leaked: %v %v", active, err)
-	}
-	dbtest.MustExec(t, t.Context(), database.Pool, `ALTER TABLE control_outbox DROP CONSTRAINT injected_notice_failure`)
-	if _, err = store.Revoke(t.Context(), env, id, "revoke"); err != nil {
-		t.Fatal(err)
 	}
 }

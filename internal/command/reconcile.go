@@ -48,13 +48,25 @@ func ExpirePending(ctx context.Context, database db.TxDB, limit int) (int, error
 func ReconcileCommands(ctx context.Context, database db.TxDB, log *slog.Logger) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	var position RecoveryPosition
 	for {
+		// A pass pages through every candidate before the next tick, so one
+		// slow or failing Command delays the rest by one attempt, not by a pass.
 		batch, cancel := context.WithTimeout(ctx, 15*time.Second)
-		_, recoveryErr := RecoverBatch(batch, database, 256)
+		next, more, recoveryErr := RecoverBatch(batch, database, position, 256)
+		cancel()
+		position = next
+		if recoveryErr != nil && ctx.Err() == nil {
+			log.ErrorContext(ctx, "reconcile Computer commands", "error", recoveryErr)
+		}
+		if more && ctx.Err() == nil {
+			continue
+		}
+		batch, cancel = context.WithTimeout(ctx, 15*time.Second)
 		_, pendingErr := ExpirePending(batch, database, 256)
 		cancel()
-		if err := errors.Join(recoveryErr, pendingErr); err != nil && ctx.Err() == nil {
-			log.ErrorContext(ctx, "reconcile Computer commands", "error", err)
+		if pendingErr != nil && ctx.Err() == nil {
+			log.ErrorContext(ctx, "reconcile Computer commands", "error", pendingErr)
 		}
 		select {
 		case <-ctx.Done():
