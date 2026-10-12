@@ -1,10 +1,10 @@
 import { request } from "./api";
 
-export type ComputerSecret =
+type ComputerSecret =
   | { secret: string; env: { name: string; mode: "raw"; allowedOrigins?: never } | { name: string; mode: "protected"; allowedOrigins: string[] }; file?: never }
   | { secret: string; file: { path: string }; env?: never };
 
-export type ComputerStatus = "available" | "deleted" | "deleting";
+type ComputerStatus = "available" | "deleted" | "deleting";
 
 export type Computer = {
   id: string;
@@ -22,7 +22,7 @@ export type Computer = {
 
 export type ComputerListItem = Omit<Computer, "secrets">;
 
-export type ListComputersResponse = {
+type ListComputersResponse = {
   computers: ComputerListItem[];
   next_cursor?: string;
 };
@@ -43,7 +43,7 @@ export async function listComputers(
   return request<ListComputersResponse>(`${environmentPath(scope)}/computers${query}`);
 }
 
-export type ComputerUsage = {
+type ComputerUsage = {
   id: string;
   usage_state: "admitted" | "running" | "waiting" | "parked" | "draining" | "unreconciled";
   created_at: string;

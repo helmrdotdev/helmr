@@ -480,10 +480,10 @@ describe("HelmrClient Sessions", () => {
 
 })
 
-test("removed Agent UUID selectors fail before transport instead of widening a list", async () => {
+test("unsupported list query keys fail before transport instead of widening a list", async () => {
   let calls = 0
   const client = new HelmrClient({ apiKey: "key", fetch: (async () => { calls++; throw new Error("unexpected request") }) as typeof fetch })
-  await expect(client.sessions.list({ agentId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37" } as never)).rejects.toThrow("Unsupported Session list query")
-  await expect(client.schedules.list({ agentId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37" } as never)).rejects.toThrow("Unsupported Schedule list query")
+  await expect(client.sessions.list({ owner: "someone" } as never)).rejects.toThrow("Unsupported Session list query")
+  await expect(client.schedules.list({ owner: "someone" } as never)).rejects.toThrow("Unsupported Schedule list query")
   expect(calls).toBe(0)
 })

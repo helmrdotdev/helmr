@@ -12,7 +12,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	productversion "github.com/helmrdotdev/helmr/internal/version"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
 )
@@ -151,13 +150,6 @@ func RuntimeDigestBytes(value string) ([]byte, error) {
 		return nil, fmt.Errorf("runtime digest is not a lowercase SHA-256 digest")
 	}
 	return digest, nil
-}
-
-func RuntimeDigestString(value []byte) (string, error) {
-	if len(value) != sha256.Size {
-		return "", fmt.Errorf("runtime digest is not %d bytes", sha256.Size)
-	}
-	return sha256sum.FormatDigest(value), nil
 }
 
 func ParseRuntimeIndex(raw []byte) (RuntimeIndex, error) {

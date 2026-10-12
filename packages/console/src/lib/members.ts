@@ -24,21 +24,21 @@ export type OrganizationInvitation = {
   expires_at: string;
 };
 
-export type ListMembersResponse = {
+type ListMembersResponse = {
   members: OrganizationMember[];
 };
 
-export type ListInvitationsResponse = {
+type ListInvitationsResponse = {
   invitations: OrganizationInvitation[];
   next_cursor?: string;
 };
 
-export type CreateInvitationInput = {
+type CreateInvitationInput = {
   email: string;
   role: MemberRole;
 };
 
-export type CreatedInvitation = {
+type CreatedInvitation = {
   invitation: OrganizationInvitation;
   invite_url: string;
 };

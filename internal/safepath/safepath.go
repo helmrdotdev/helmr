@@ -38,14 +38,6 @@ func CleanSlash(raw string, options CleanOptions) (string, error) {
 	return clean, nil
 }
 
-func CleanLocal(raw string, options CleanOptions) (string, error) {
-	clean, err := CleanSlash(raw, options)
-	if err != nil {
-		return "", err
-	}
-	return filepath.FromSlash(clean), nil
-}
-
 func JoinSlash(root, relative string) (string, error) {
 	clean := filepath.Clean(string(filepath.Separator) + filepath.FromSlash(relative))
 	if clean == string(filepath.Separator) {

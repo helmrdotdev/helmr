@@ -12,12 +12,12 @@ export type Schedule = {
   next_fire_at?: string;
 };
 
-export type ListSchedulesResponse = {
+type ListSchedulesResponse = {
   schedules: Schedule[];
   next_cursor?: string;
 };
 
-export type ScheduleScope = {
+type ScheduleScope = {
   projectID: string;
   environmentID: string;
 };

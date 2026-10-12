@@ -8,7 +8,7 @@ export type Secret = {
   revoked_at?: string;
 };
 
-export type ListSecretsResponse = {
+type ListSecretsResponse = {
   secrets: Secret[];
 };
 

@@ -310,31 +310,6 @@ func (e *CleanupUnprovenError) Unwrap() error {
 	return e.Cause
 }
 
-type GuestError struct {
-	Cause error
-}
-
-func NewGuestError(cause error) error {
-	if cause == nil {
-		return nil
-	}
-	return &GuestError{Cause: cause}
-}
-
-func (e *GuestError) Error() string {
-	if e == nil || e.Cause == nil {
-		return "guest execution failed"
-	}
-	return "guest execution failed: " + e.Cause.Error()
-}
-
-func (e *GuestError) Unwrap() error {
-	if e == nil {
-		return nil
-	}
-	return e.Cause
-}
-
 type CheckpointIdentity struct {
 	RuntimeBackend    string
 	RuntimeArch       string

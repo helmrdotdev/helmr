@@ -1,7 +1,7 @@
 import { For, type JSX } from "solid-js";
 import { cx, ui } from "./styles";
 
-export type Column = string | { label: string; srOnly?: boolean };
+type Column = string | { label: string; srOnly?: boolean };
 
 export function DataTable(props: { columns: readonly Column[]; minWidth?: string; children: JSX.Element }) {
   return (
