@@ -67,8 +67,9 @@ guarantee.
 Wait for a Turn with `turn.wait()` or `helmr session turn wait`, or read it with
 `turn.get()` or `helmr session turn get`. The outcome includes the status, the
 result, the response and an error code for failures. A wait with a timeout can
-return `timeout`; that ends the wait only, not the Turn. To stop a running Turn,
-[interrupt](/docs/concepts/sessions#controls) its Session.
+return `timeout`; that ends the wait only, not the Turn. Use
+[Turn interrupt](/docs/concepts/sessions#controls) to stop only the running Turn,
+or Session interrupt to also hold queued work.
 
 Stored inputs, results and responses are kept for the Environment's history
 retention period. After that, reads report that the payload has expired while
@@ -78,10 +79,13 @@ the Turn's identity and status remain.
 
 A `failed` Turn normally leaves the Session open, and the next queued Turn
 runs. If the harness's work cannot be stopped cleanly after the failure, the
-Session is held instead. An
-`interrupted` Turn holds the Session until someone resumes it. Helmr never
-replays an interrupted or failed Turn; retrying business work and reconciling
-external effects belong to the application.
+Session is held instead.
+
+An exact-Turn interrupt lets the next queued Turn run once processing has
+stopped. Session interruption, `maxTurnDuration`, and process or host loss hold
+the Session until someone resumes it. Helmr never replays an interrupted or
+failed Turn; retrying business work and reconciling external effects belong to
+the application.
 
 ## Related
 

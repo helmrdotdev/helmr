@@ -39,8 +39,9 @@ Work can also start from a [cron trigger](/docs/concepts/triggers), from
 
 ## Identity and retries
 
-Operations address resources by ID. A Session key names a continuing
-conversation so a later start reaches the same Session. An idempotency key
+Operations address resources by ID. A Session key lets you find an existing
+conversation within an Agent; enqueue input using its Session ID to continue it.
+Creating another Session with an occupied key conflicts. An idempotency key
 identifies one request so an uncertain retry does not admit the work twice.
 
 ## Data and credentials

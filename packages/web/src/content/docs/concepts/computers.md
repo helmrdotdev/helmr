@@ -38,7 +38,7 @@ export const repo = template({
 
 export const fixer = agent({
   id: "fixer",
-  computer: repo,
+  template: repo,
   async turn(turn) {
     return { received: turn.input.length }
   },
