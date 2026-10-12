@@ -30,14 +30,14 @@ func TestWriterBoundedBatchesAgainstDisposableClickHouse(t *testing.T) {
 	var eventElapsed, diagnosticElapsed time.Duration
 
 	if batchKind != "diagnostics" {
-		eventBody := `{"data":"` + strings.Repeat("x", telemetry.MaxEventPayloadBytes-len(`{"data":"`)-len(`"}`)) + `"}`
-		eventCount := telemetry.MaxTelemetryBatchBytes / (telemetry.MaxEventPayloadBytes + telemetry.MaxEventMessageBytes)
+		eventBody := `{"data":"` + strings.Repeat("x", 64<<10-len(`{"data":"`)-len(`"}`)) + `"}`
+		eventCount := telemetry.MaxTelemetryBatchBytes / (64<<10 + 4<<10)
 		events := make([]telemetry.EventRecord, eventCount)
 		for idx := range events {
 			events[idx] = telemetry.EventRecord{
 				OrgID: orgID, ProjectID: projectID, EnvironmentID: environmentID,
 				SubjectKind: "deployment", SubjectID: deploymentID, EventKind: "test.maximum", Seq: uint64(idx + 1),
-				DeploymentID: &deploymentID, Message: strings.Repeat("m", telemetry.MaxEventMessageBytes), Body: strings.Clone(eventBody),
+				DeploymentID: &deploymentID, Message: strings.Repeat("m", 4<<10), Body: strings.Clone(eventBody),
 				RetentionClass: "standard", RedactionClass: "internal", ObservedAt: now, AcceptedAt: now,
 			}
 		}

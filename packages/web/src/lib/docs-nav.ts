@@ -1,4 +1,4 @@
-export type DocsNavGroup = {
+type DocsNavGroup = {
   label?: string;
   ids: readonly string[];
 };

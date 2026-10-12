@@ -5,10 +5,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
 	"strings"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -44,7 +45,7 @@ func checkpointStorageForSaveFixture(t *testing.T, s *saveStorageFixture) checkp
 		t.Fatal(err)
 	}
 	root, identity := s.cut(t, 42)
-	if err := RecordCapture(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: capture.SaveID, LeaseEpoch: 1, DiskRoot: identity, Evidence: "owned coherent VM capture"}); err != nil {
+	if err := recordCaptureForTest(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: capture.SaveID, LeaseEpoch: 1, DiskRoot: identity, Evidence: "owned coherent VM capture"}); err != nil {
 		t.Fatal(err)
 	}
 	config := []byte(`{"config":"captured"}`)
@@ -127,7 +128,7 @@ func TestCheckpointRuntimeReadinessRetainsCompleteImage(t *testing.T) {
 	}
 	// Ready does not dispatch the still-sealed source, including newly queued work.
 	f.f.enqueue(t, "queued-while-ready")
-	if _, err = Dispatch(ctx, f.f.pool, f.f.execution()); !errors.Is(err, ErrNotReady) {
+	if _, err = dispatchTurnForTest(ctx, f.f.pool, f.f.execution()); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("ready dispatched: %v", err)
 	}
 	dbtest.MustExec(t, ctx, f.f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE computer_id=$1`, f.f.computer)

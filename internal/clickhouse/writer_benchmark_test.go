@@ -23,7 +23,7 @@ func BenchmarkWriterEnvelope(b *testing.B) {
 		b.Skip("HELMR_TEST_CLICKHOUSE_URL is not set")
 	}
 	for _, kind := range []string{"logs", "events"} {
-		for _, size := range []int{512, 4096, map[string]int{"logs": 64 << 10, "events": telemetry.MaxEventPayloadBytes}[kind]} {
+		for _, size := range []int{512, 4096, map[string]int{"logs": 64 << 10, "events": 64 << 10}[kind]} {
 			for _, random := range []bool{false, true} {
 				for _, budget := range []struct{ rows, mib int }{{250, 8}, {10000, 8}, {10000, 16}, {10000, 32}, {10000, 64}} {
 					b.Run(fmt.Sprintf("%s/bytes%d/random%t/rows%d/mib%d", kind, size, random, budget.rows, budget.mib), func(b *testing.B) {

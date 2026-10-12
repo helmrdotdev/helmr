@@ -159,7 +159,7 @@ func TestDispatchUsesMillisecondTurnDuration(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := f.enqueue(t, "milliseconds")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	var duration float64

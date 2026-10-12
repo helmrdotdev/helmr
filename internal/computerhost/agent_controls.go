@@ -198,11 +198,8 @@ func (owner *agentSessionControls) observe(ctx context.Context, message *agentv1
 // ServeControlledAgentSession connects durable controls to the retained Session
 // transport. An uncertain API/pipe outcome ends this attachment; its owner must
 // reacquire an attachment and reconcile, never restart setup to retry transport.
-func ServeControlledAgentSession(ctx context.Context, connection *AgentSessionConnection, attached *agentv1.SessionAttached, environment string, client AgentControlClient, observe func(context.Context, *agentv1.GuestSessionMessage) error) error {
-	return serveControlledAgentSession(ctx, connection, attached, environment, client, observe, nil)
-}
-
-func serveControlledAgentSession(ctx context.Context, connection *AgentSessionConnection, attached *agentv1.SessionAttached, environment string, client AgentControlClient, observe func(context.Context, *agentv1.GuestSessionMessage) error, activated <-chan struct{}) error {
+// A nil activated channel serves without waiting for activation.
+func ServeControlledAgentSession(ctx context.Context, connection *AgentSessionConnection, attached *agentv1.SessionAttached, environment string, client AgentControlClient, observe func(context.Context, *agentv1.GuestSessionMessage) error, activated <-chan struct{}) error {
 	if connection == nil || attached == nil || client == nil || observe == nil || environment == "" {
 		return errors.New("controlled Session requires its attachment, client and observer")
 	}
@@ -233,7 +230,7 @@ func serveControlledAgentSession(ctx context.Context, connection *AgentSessionCo
 			}
 		}
 	})
-	err := serveAgentSession(ctx, connection, environment, client, func(ctx context.Context, message *agentv1.GuestSessionMessage) error {
+	err := ServeAgentSession(ctx, connection, environment, client, func(ctx context.Context, message *agentv1.GuestSessionMessage) error {
 		if log := message.GetLog(); log != nil {
 			return connection.appendSessionLog(ctx, environment, client, log)
 		}

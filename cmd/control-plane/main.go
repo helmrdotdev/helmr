@@ -31,7 +31,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 	dbschema "github.com/helmrdotdev/helmr/internal/db/schema"
-	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/email"
 	emailresend "github.com/helmrdotdev/helmr/internal/email/resend"
 	"github.com/helmrdotdev/helmr/internal/eventstream"
@@ -201,10 +200,6 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)
 	}
-	computerFencingKey, err := disk.NewFencingKey(cfg.ComputerFencingKey)
-	if err != nil {
-		return fmt.Errorf("configure computer fencing key: %w", err)
-	}
 	casStore, err := cass3.New(ctx, cfg.CASURI)
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
@@ -256,7 +251,6 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		Secrets:                        secretStore,
 		SecretDelivery:                 secretStore,
 		SecretProxy:                    secretStore,
-		ComputerFencingKey:             computerFencingKey,
 		EventStream:                    eventStream,
 		TelemetryReader:                telemetryReader,
 		Mailer:                         mailer,

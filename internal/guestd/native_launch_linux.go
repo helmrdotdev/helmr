@@ -490,12 +490,6 @@ func (launcher *nativeLauncher) close(ctx context.Context) error {
 	return os.RemoveAll(launcher.directory)
 }
 
-func (launcher *nativeLauncher) verifyConverged(scopes []nativeScopeEvidence) error {
-	launcher.mu.Lock()
-	defer launcher.mu.Unlock()
-	return launcher.verifyConvergedLocked(scopes)
-}
-
 func (launcher *nativeLauncher) verifyConvergedLocked(scopes []nativeScopeEvidence) error {
 	if launcher.admission || launcher.stopped {
 		return errors.New("native launch admission is not sealed for completion")

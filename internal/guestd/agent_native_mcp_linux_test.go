@@ -111,7 +111,7 @@ func TestAgentNativeManagedMCP(t *testing.T) {
 		peer.stop = stopService
 		peer.serving = true
 		go func() {
-			peer.stopped <- computerhost.ServeAgentSession(serviceCtx, connection, config.Environment, peer, peer.observe)
+			peer.stopped <- computerhost.ServeAgentSession(serviceCtx, connection, config.Environment, peer, peer.observe, nil)
 		}()
 		t.Cleanup(func() {
 			peer.stop()
@@ -179,7 +179,7 @@ func TestAgentNativeManagedMCP(t *testing.T) {
 		peer.stop = stopService
 		peer.serving = true
 		go func() {
-			peer.stopped <- computerhost.ServeAgentSession(serviceCtx, connection, config.Environment, peer, peer.observe)
+			peer.stopped <- computerhost.ServeAgentSession(serviceCtx, connection, config.Environment, peer, peer.observe, nil)
 		}()
 		if !attached.Ready || attached.Terminal {
 			t.Fatal("reattachment lost the retained process")

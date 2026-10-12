@@ -67,7 +67,7 @@ func TestAgentServiceForwardsOriginalIdentityAndReceipt(t *testing.T) {
 				}
 				return workerapi.AgentOperationResponse{RequestID: r.RequestID, Value: []byte(`{"turnId":"accepted"}`)}, nil
 			}}
-			_ = ServeAgentSession(t.Context(), connection, "environment", client, func(context.Context, *agentv1.GuestSessionMessage) error {
+			_ = serveAgentSessionForTest(t.Context(), connection, "environment", client, func(context.Context, *agentv1.GuestSessionMessage) error {
 				return errors.New("unexpected non-operation event")
 			})
 			select {
@@ -103,7 +103,7 @@ func TestAgentServiceUncertainOperationClosesOnlyAttachment(t *testing.T) {
 	client := agentRuntimeTestClient{operation: func(context.Context, workerapi.AgentOperationRequest) (workerapi.AgentOperationResponse, error) {
 		return workerapi.AgentOperationResponse{}, uncertain
 	}}
-	err = ServeAgentSession(t.Context(), connection, "environment", client, func(context.Context, *agentv1.GuestSessionMessage) error { return nil })
+	err = serveAgentSessionForTest(t.Context(), connection, "environment", client, func(context.Context, *agentv1.GuestSessionMessage) error { return nil })
 	if !errors.Is(err, uncertain) {
 		t.Fatalf("uncertainty lost: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestAgentServiceSettlesInvalidAuthoredEnvelope(t *testing.T) {
 				t.Error("invalid envelope reached CP encoder")
 				return workerapi.AgentOperationResponse{}, errors.New("unexpected")
 			}}
-			_ = ServeAgentSession(t.Context(), connection, "environment", client, func(context.Context, *agentv1.GuestSessionMessage) error { return nil })
+			_ = serveAgentSessionForTest(t.Context(), connection, "environment", client, func(context.Context, *agentv1.GuestSessionMessage) error { return nil })
 			select {
 			case result := <-observed:
 				if result.GetRequestId() != id || result.GetError().GetCode() != "invalid_arguments" {
@@ -216,7 +216,7 @@ func TestAgentServiceBlockedDiagnosticsDoNotBlockOperations(t *testing.T) {
 	client := agentRuntimeTestClient{operation: func(_ context.Context, request workerapi.AgentOperationRequest) (workerapi.AgentOperationResponse, error) {
 		return workerapi.AgentOperationResponse{RequestID: request.RequestID, Value: []byte(`null`)}, nil
 	}}
-	err = ServeAgentSession(t.Context(), connection, "environment", client, func(ctx context.Context, event *agentv1.GuestSessionMessage) error {
+	err = serveAgentSessionForTest(t.Context(), connection, "environment", client, func(ctx context.Context, event *agentv1.GuestSessionMessage) error {
 		if event.GetLog() != nil {
 			close(logEntered)
 			select {
@@ -299,7 +299,7 @@ func TestAgentServiceTerminalDiagnosticDrain(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				err = ServeAgentSession(t.Context(), connection, "environment", agentRuntimeTestClient{}, func(_ context.Context, event *agentv1.GuestSessionMessage) error {
+				err = serveAgentSessionForTest(t.Context(), connection, "environment", agentRuntimeTestClient{}, func(_ context.Context, event *agentv1.GuestSessionMessage) error {
 					if event.GetLog().GetKind() == agentv1.SessionLog_KIND_DATA {
 						count := attempts.Add(1)
 						if expires || count == 1 {
@@ -381,7 +381,7 @@ func TestAgentServiceDiagnosticDispositionPreservesControl(t *testing.T) {
 					accepted := time.Now()
 					return workerapi.DiagnosticLogReceipt{ThroughSequence: request.ThroughSequence, AcceptedAt: accepted, ExpiresAt: accepted.Add(90 * 24 * time.Hour)}, nil
 				}}
-				err = ServeAgentSession(t.Context(), connection, "environment", client, func(ctx context.Context, event *agentv1.GuestSessionMessage) error {
+				err = serveAgentSessionForTest(t.Context(), connection, "environment", client, func(ctx context.Context, event *agentv1.GuestSessionMessage) error {
 					if log := event.GetLog(); log != nil {
 						return connection.appendSessionLog(ctx, "environment", client, log)
 					}

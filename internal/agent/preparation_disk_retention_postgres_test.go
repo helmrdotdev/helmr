@@ -34,7 +34,7 @@ func TestPreparationDiskRetentionRequiresPhysicalClosure(t *testing.T) {
 			if _, err := p.f.pool.Exec(t.Context(), `UPDATE computer_data_keys SET retired_at=clock_timestamp(),wrapped_key=NULL WHERE id=$1`, key.ID); err == nil {
 				t.Fatal("unfenced preparation key retired")
 			}
-			if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), p.ref.Identity()); err != nil {
+			if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 				t.Fatal(err)
 			}
 			for range 8 {

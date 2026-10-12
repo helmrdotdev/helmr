@@ -24,7 +24,7 @@ func TestComputerHostRecoveryRequiresPhysicalReportAndKeepsQuarantine(t *testing
 	instance := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET computer_instance_id=$1`, instance)
 	running := f.enqueue(t, "running")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	queued := f.enqueue(t, "queued")
@@ -155,7 +155,7 @@ func TestComputerHostRecoverySettlesUnpublishedCaptureAfterFencing(t *testing.T)
 			req := f.captureRequest()
 			result, _ := beginCapture(t, f, req)
 			if recorded {
-				if err := RecordCapture(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: result.SaveID, LeaseEpoch: 1, DiskRoot: "sha256:1111111111111111111111111111111111111111111111111111111111111111", Evidence: "frozen cut"}); err != nil {
+				if err := recordCaptureForTest(t.Context(), f.pool, CaptureEvidence{EnvironmentID: f.env, SaveID: result.SaveID, LeaseEpoch: 1, DiskRoot: "sha256:1111111111111111111111111111111111111111111111111111111111111111", Evidence: "frozen cut"}); err != nil {
 					t.Fatal(err)
 				}
 			}

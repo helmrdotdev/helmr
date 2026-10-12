@@ -28,7 +28,7 @@ func TestSessionInterruptPreservesFinalizingTurnQueueAndPeer(t *testing.T) {
 	active, _ := child.finalize(t, "active")
 	queued := child.enqueue(t, "queued")
 	peerActive := peer.enqueue(t, "peer")
-	if _, err := Dispatch(t.Context(), f.pool, peer.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, peer.execution()); err != nil {
 		t.Fatal(err)
 	}
 	r, err := ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "interrupt", "stop"))
@@ -108,7 +108,7 @@ func TestSessionControlRetryAdditiveHoldAndExactResume(t *testing.T) {
 	child.enqueue(t, "queued")
 	e := child.execution()
 	e.AuthorityGeneration = 4
-	if _, err := Dispatch(t.Context(), f.pool, e); !errors.Is(err, ErrNotReady) {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, e); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("child hold dispatch rejection: %v", err)
 	}
 }
@@ -205,7 +205,7 @@ func TestSessionHeldFinalizingSaveCompletesWithoutBlockingPeer(t *testing.T) {
 	}
 	e := f.execution()
 	e.AuthorityGeneration = 2
-	if _, err := Dispatch(t.Context(), f.pool, e); !errors.Is(err, ErrNotReady) {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, e); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("stopping process received business execution: %v", err)
 	}
 	f.capture(t, save, root)
@@ -249,7 +249,7 @@ func TestSessionCloseDrainsParentBeforeSealingChildren(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM sessions WHERE id=$1`, child.session).Scan(&lifecycle); err != nil || lifecycle != "open" {
 		t.Fatalf("child sealed before parent drained: %s %v", lifecycle, err)
 	}
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatalf("accepted closing work could not dispatch: %v", err)
 	}
 	// Model settlement without requiring the independent storage-publication
@@ -261,7 +261,7 @@ func TestSessionCloseDrainsParentBeforeSealingChildren(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM sessions WHERE id=$1`, child.session).Scan(&lifecycle); err != nil || lifecycle != "closing" {
 		t.Fatalf("child not sealed: %s %v", lifecycle, err)
 	}
-	if _, err := Dispatch(t.Context(), f.pool, child.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, child.execution()); err != nil {
 		t.Fatalf("accepted child work could not dispatch: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turns SET status='failed',terminal_at=clock_timestamp() WHERE id=$1`, childTurn.TurnID)

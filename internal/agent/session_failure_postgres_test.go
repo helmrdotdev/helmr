@@ -2,18 +2,19 @@ package agent
 
 import (
 	"errors"
+	"testing"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"testing"
-	"uuid"
 )
 
 func TestUnexpectedSessionStopHoldsOnlyFailedSession(t *testing.T) {
 	f := newFixture(t)
 	peer := f.peer(t)
 	active := f.enqueue(t, "active")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	queued := f.enqueue(t, "queued")
@@ -44,7 +45,7 @@ func TestUnexpectedSessionStopHoldsOnlyFailedSession(t *testing.T) {
 		t.Fatalf("stopped authority: %v", err)
 	}
 	next := peer.enqueue(t, "healthy-peer")
-	if got, err := Dispatch(t.Context(), peer.pool, peer.execution()); err != nil || got.TurnID != next.TurnID {
+	if got, err := dispatchTurnForTest(t.Context(), peer.pool, peer.execution()); err != nil || got.TurnID != next.TurnID {
 		t.Fatalf("peer dispatch %+v: %v", got, err)
 	}
 	req := controlRequest(f, "resume", "release-process-failure")
@@ -191,7 +192,7 @@ func TestUnexpectedSessionStopRejectsSupersededAttachment(t *testing.T) {
 func TestRevokedSessionStopInterruptsRunningTurn(t *testing.T) {
 	f := newFixture(t)
 	active := f.enqueue(t, "active")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	a, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
@@ -247,7 +248,7 @@ func TestSourcePreparationStopsFailedMemberAndResumesHealthyPeer(t *testing.T) {
 		t.Fatal(err)
 	}
 	next := f.enqueue(t, "healthy")
-	if got, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil || got.TurnID != next.TurnID {
+	if got, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil || got.TurnID != next.TurnID {
 		t.Fatalf("peer continuation: %+v %v", got, err)
 	}
 }

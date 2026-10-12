@@ -54,7 +54,7 @@ func (f preparationFixture) waiter(t *testing.T) uuid.UUID {
 }
 func (f preparationFixture) attach(t *testing.T, id uuid.UUID) Preparation {
 	t.Helper()
-	p, err := AttachComputerPreparation(t.Context(), f.pool, f.env, id)
+	p, err := attachComputerPreparationForTest(t.Context(), f.pool, f.env, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,11 @@ func TestPreparationDemandCoalescingRetainsTerminalAttachment(t *testing.T) {
 	errs := make(chan error, clients)
 	var wg sync.WaitGroup
 	for _, id := range computers {
-		wg.Go(func() { p, err := AttachComputerPreparation(t.Context(), f.pool, f.env, id); results <- p; errs <- err })
+		wg.Go(func() {
+			p, err := attachComputerPreparationForTest(t.Context(), f.pool, f.env, id)
+			results <- p
+			errs <- err
+		})
 	}
 	wg.Wait()
 	close(results)
@@ -102,10 +106,10 @@ func TestPreparationDemandCoalescingRetainsTerminalAttachment(t *testing.T) {
 	}
 	// Logical failure blocks a new writer without poisoning fresh demand.
 	fresh := f.waiter(t)
-	if _, err := AttachComputerPreparation(t.Context(), f.pool, f.env, fresh); !errors.Is(err, ErrNotReady) {
+	if _, err := attachComputerPreparationForTest(t.Context(), f.pool, f.env, fresh); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("unfenced writer: %v", err)
 	}
-	if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), ref.Identity()); err != nil {
+	if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
 		t.Fatal(err)
 	}
 	next := f.attach(t, fresh)
@@ -147,7 +151,7 @@ func TestPreparationClaimsDoNotReplaceOrResurrectExecutors(t *testing.T) {
 	if _, err := claimPreparationFixture(t.Context(), f.pool, *f.host(), ref); !errors.Is(err, ErrDenied) {
 		t.Fatalf("expired reclaim: %v", err)
 	}
-	if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), ref.Identity()); err != nil {
+	if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
 		t.Fatalf("late physical stop: %v", err)
 	}
 }
@@ -277,10 +281,10 @@ func TestPreparationDeadlineAndRevocationKeepPhysicalBlocker(t *testing.T) {
 			}
 			fresh := f.waiter(t)
 			if kind != "queued" {
-				if _, err := AttachComputerPreparation(t.Context(), f.pool, f.env, fresh); !errors.Is(err, ErrNotReady) {
+				if _, err := attachComputerPreparationForTest(t.Context(), f.pool, f.env, fresh); !errors.Is(err, ErrNotReady) {
 					t.Fatalf("unfenced blocker: %v", err)
 				}
-				if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), ref.Identity()); err != nil {
+				if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -401,7 +405,9 @@ func TestPreparationUnclaimedExecutorOperationsAreDenied(t *testing.T) {
 		"renew":  func() error { _, err := RenewPreparation(t.Context(), f.pool, *f.host(), ref); return err },
 		"expose": func() error { _, err := RecordPreparationExposure(t.Context(), f.pool, *f.host(), ref); return err },
 		"fail":   func() error { return FailPreparation(t.Context(), f.pool, *f.host(), ref, "failed") },
-		"stop":   func() error { return ObservePreparationStopped(t.Context(), f.pool, *f.host(), ref.Identity()) },
+		"stop": func() error {
+			return ObservePreparationStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref))
+		},
 	} {
 		if err := operation(); !errors.Is(err, ErrDenied) {
 			t.Fatalf("%s: %v", name, err)
@@ -420,14 +426,14 @@ func TestPreparationExpiredAttemptDoesNotAttachFreshDemand(t *testing.T) {
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_preparations SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, p.ID)
 			fresh := f.waiter(t)
-			if _, err := AttachComputerPreparation(t.Context(), f.pool, f.env, fresh); !errors.Is(err, ErrNotReady) {
+			if _, err := attachComputerPreparationForTest(t.Context(), f.pool, f.env, fresh); !errors.Is(err, ErrNotReady) {
 				t.Fatalf("expired attach: %v", err)
 			}
 			if err := expirePreparation(t.Context(), f.pool, f.env, p.ID); err != nil {
 				t.Fatal(err)
 			}
 			if claimed {
-				if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), ref.Identity()); err != nil {
+				if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -605,7 +611,7 @@ func TestPreparationKnownAuthorityLossDoesNotAttachFreshDemand(t *testing.T) {
 				}
 			}
 			fresh := f.waiter(t)
-			if _, err := AttachComputerPreparation(t.Context(), f.pool, f.env, fresh); !errors.Is(err, ErrNotReady) {
+			if _, err := attachComputerPreparationForTest(t.Context(), f.pool, f.env, fresh); !errors.Is(err, ErrNotReady) {
 				t.Fatalf("known %s loss before reconciliation: %v", kind, err)
 			}
 			if kind == "host" {
@@ -619,7 +625,7 @@ func TestPreparationKnownAuthorityLossDoesNotAttachFreshDemand(t *testing.T) {
 				if err := reconcilePreparationRevocation(t.Context(), f.pool, f.env, p.ID); err != nil {
 					t.Fatal(err)
 				}
-				if err := ObservePreparationStopped(t.Context(), f.pool, host, ref.Identity()); err != nil {
+				if err := ObservePreparationStopped(t.Context(), f.pool, host, preparationIdentity(ref)); err != nil {
 					t.Fatal(err)
 				}
 			}

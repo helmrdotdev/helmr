@@ -264,14 +264,6 @@ func NoCPUTemplateSelector() CPUTemplateSelector {
 	return CPUTemplateSelector{Kind: CPUTemplateNone}
 }
 
-func CustomCPUTemplateSelector(digest string) (CPUTemplateSelector, error) {
-	selector := CPUTemplateSelector{Kind: CPUTemplateCustom, Digest: digest}
-	if err := selector.Validate(); err != nil {
-		return CPUTemplateSelector{}, err
-	}
-	return selector, nil
-}
-
 func (selector CPUTemplateSelector) withDefaults() CPUTemplateSelector {
 	if selector.Kind == "" && selector.Digest == "" {
 		return NoCPUTemplateSelector()

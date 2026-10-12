@@ -502,7 +502,7 @@ func TestAllocationInitialReceiptSurvivesPayloadRetirement(t *testing.T) {
 	if _, err := a.AllocateFreshComputer(t.Context(), f.env, f.computer, 2, f.worker); err == nil {
 		t.Fatal("retired initial payload authorized a new allocation")
 	}
-	if _, err := BindComputerLeaseDisk(t.Context(), f.pool, *f.host(), f.env, f.computer, 1, key); !errors.Is(err, ErrDenied) {
+	if _, err := bindComputerLeaseDiskForTest(t.Context(), f.pool, *f.host(), f.env, f.computer, 1, key); !errors.Is(err, ErrDenied) {
 		t.Fatalf("historical initial evidence authorized materialization: %v", err)
 	}
 }

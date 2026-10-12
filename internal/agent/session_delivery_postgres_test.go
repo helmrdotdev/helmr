@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
@@ -16,7 +18,7 @@ func TestSessionDeliveryRetainsIdentityAndRejectsOldAttachment(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
-	if err != nil || first.Kind != "resume" || first.Sequence != 1 {
+	if err != nil || first.Kind != "resume" || first.Sequence != agenttest.SeededAttachment+1 {
 		t.Fatalf("first: %+v %v", first, err)
 	}
 	second, err := PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
@@ -111,7 +113,7 @@ func TestSessionDeliveryRejectsExpiredOwnerWithoutAdvancing(t *testing.T) {
 		t.Fatalf("expired: %v", err)
 	}
 	var seq int64
-	if err := f.pool.QueryRow(t.Context(), `SELECT control_sequence FROM session_processes`).Scan(&seq); err != nil || seq != 0 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT control_sequence FROM session_processes`).Scan(&seq); err != nil || seq != agenttest.SeededAttachment {
 		t.Fatalf("sequence %d: %v", seq, err)
 	}
 }

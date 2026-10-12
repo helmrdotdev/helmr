@@ -34,7 +34,7 @@ func TestRuntimeReceiptRecoveryRequiresCurrentGeneration(t *testing.T) {
 			if original, err = invoke(); err != nil {
 				t.Fatal(err)
 			}
-			if err := CloseProcessing(t.Context(), f.pool, f.execution(), caller.TurnID); err != nil {
+			if err := closeProcessingForTest(t.Context(), f.pool, f.execution(), caller.TurnID); err != nil {
 				t.Fatal(err)
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET authority_generation=2 WHERE id=$1`, f.session)

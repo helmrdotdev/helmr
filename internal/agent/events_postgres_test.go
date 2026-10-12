@@ -12,7 +12,7 @@ import (
 func TestSessionEventPagesAndRetention(t *testing.T) {
 	f := newFixture(t)
 	a := f.enqueue(t, "events")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	seq, err := RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), json.RawMessage(`"live\u0000text"`))

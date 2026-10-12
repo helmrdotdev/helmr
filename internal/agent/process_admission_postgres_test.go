@@ -48,7 +48,7 @@ func TestProcessAdmissionSetupReceiptPrecedesTurnDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Dispatch(t.Context(), f.pool, e); !errors.Is(err, ErrNotReady) {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, e); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("dispatched before setup: %v", err)
 	}
 	if err := ObserveSessionReady(t.Context(), f.pool, *f.host(), e, attachment.Sequence+1); !errors.Is(err, ErrNotReady) {
@@ -61,7 +61,7 @@ func TestProcessAdmissionSetupReceiptPrecedesTurnDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	acknowledgeAdmissionControl(t, f, e, attachment.Sequence)
-	if _, err := Dispatch(t.Context(), f.pool, e); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, e); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.AllocateSessionProcess(t.Context(), f.env, e.SessionID, 2); !errors.Is(err, ErrNotReady) {
@@ -162,7 +162,7 @@ func TestProcessReadinessReplayDoesNotBlockRestoreCompletion(t *testing.T) {
 		if err = ObserveSessionReady(ctx, r.f.pool, r.host, e, attachment.Sequence); err != nil {
 			t.Fatalf("retained Ready blocked acquiring member: %v", err)
 		}
-		if _, err = Dispatch(ctx, r.f.pool, e); !errors.Is(err, ErrNotReady) {
+		if _, err = dispatchTurnForTest(ctx, r.f.pool, e); !errors.Is(err, ErrNotReady) {
 			t.Fatalf("readiness admitted business work before restore completion: %v", err)
 		}
 		control, err := PrepareSessionDelivery(ctx, r.f.pool, r.host, e, attachment.Sequence)

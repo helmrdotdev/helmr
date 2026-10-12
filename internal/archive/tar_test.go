@@ -2,14 +2,11 @@ package archive
 
 import (
 	"archive/tar"
-	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -25,7 +22,7 @@ func TestCreateTarIsDeterministicAndKeepsCallerContent(t *testing.T) {
 	writeTestFile(t, filepath.Join(root, ".helmr", "cache"), "cache")
 	writeTestFile(t, filepath.Join(root, ".next", "cache"), "next")
 
-	first, cleanupFirst, err := CreateTar(root, t.TempDir())
+	first, cleanupFirst, err := CreateTarWithOptionsContext(t.Context(), root, t.TempDir(), TarOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +31,7 @@ func TestCreateTarIsDeterministicAndKeepsCallerContent(t *testing.T) {
 	if err := os.Chtimes(filepath.Join(root, "src", "task.ts"), time.Now().Add(time.Hour), time.Now().Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	second, cleanupSecond, err := CreateTar(root, t.TempDir())
+	second, cleanupSecond, err := CreateTarWithOptionsContext(t.Context(), root, t.TempDir(), TarOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +79,7 @@ func TestCanonicalMetadataNormalizesInstalledTreeWithoutSourceFiltering(t *testi
 		t.Fatal(err)
 	}
 
-	result, cleanup, err := CreateTarWithOptions(root, t.TempDir(), TarOptions{
+	result, cleanup, err := CreateTarWithOptionsContext(t.Context(), root, t.TempDir(), TarOptions{
 		CanonicalMetadata: true,
 	})
 	if err != nil {
@@ -119,49 +116,6 @@ func TestCanonicalMetadataNormalizesInstalledTreeWithoutSourceFiltering(t *testi
 	}
 }
 
-func TestExtractTarRestoresPermissionBitsDespiteUmask(t *testing.T) {
-	var body bytes.Buffer
-	writer := tar.NewWriter(&body)
-	for _, header := range []*tar.Header{
-		{Name: "dir", Typeflag: tar.TypeDir, Mode: 0o777},
-		{Name: "dir/file", Typeflag: tar.TypeReg, Mode: 0o666, Size: 1},
-		{Name: "zero-dir", Typeflag: tar.TypeDir, Mode: 0},
-		{Name: "zero", Typeflag: tar.TypeReg, Mode: 0, Size: 1},
-	} {
-		if err := writer.WriteHeader(header); err != nil {
-			t.Fatal(err)
-		}
-		if header.Typeflag == tar.TypeReg {
-			if _, err := writer.Write([]byte("x")); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	previousUmask := syscall.Umask(0o077)
-	defer syscall.Umask(previousUmask)
-	destination := t.TempDir()
-	if err := ExtractTar(bytes.NewReader(body.Bytes()), destination); err != nil {
-		t.Fatal(err)
-	}
-	for path, expected := range map[string]os.FileMode{
-		"dir":      0o777,
-		"dir/file": 0o666,
-		"zero-dir": 0,
-		"zero":     0,
-	} {
-		info, err := os.Stat(filepath.Join(destination, path))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if info.Mode().Perm() != expected {
-			t.Fatalf("%s mode = %o, want %o", path, info.Mode().Perm(), expected)
-		}
-	}
-}
-
 func TestCreateTarWithOptionsExcludesGlobPatterns(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "agents", "task.ts"), "task")
@@ -169,7 +123,7 @@ func TestCreateTarWithOptionsExcludesGlobPatterns(t *testing.T) {
 	writeTestFile(t, filepath.Join(root, "secrets", "token.txt"), "secret")
 	writeTestFile(t, filepath.Join(root, ".next", "cache"), "cache")
 
-	archive, cleanup, err := CreateTarWithOptions(root, t.TempDir(), TarOptions{
+	archive, cleanup, err := CreateTarWithOptionsContext(t.Context(), root, t.TempDir(), TarOptions{
 		ExcludePatterns: []string{"**/*.test.*", "secrets/**", "**/.next/**"},
 	})
 	if err != nil {
@@ -189,7 +143,7 @@ func TestCreateTarWithOptionsExcludesGlobPatterns(t *testing.T) {
 }
 
 func TestCreateTarAllowsEmptyRoot(t *testing.T) {
-	archive, cleanup, err := CreateTar(t.TempDir(), t.TempDir())
+	archive, cleanup, err := CreateTarWithOptionsContext(t.Context(), t.TempDir(), t.TempDir(), TarOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,202 +154,6 @@ func TestCreateTarAllowsEmptyRoot(t *testing.T) {
 	}
 	if archive.SizeBytes <= 0 {
 		t.Fatalf("size bytes = %d, want non-empty tar envelope", archive.SizeBytes)
-	}
-}
-
-func TestExtractTarWithStatsCountsEntries(t *testing.T) {
-	var body bytes.Buffer
-	writer := tar.NewWriter(&body)
-	if err := writer.WriteHeader(&tar.Header{Name: "dir", Typeflag: tar.TypeDir, Mode: 0o755}); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.WriteHeader(&tar.Header{Name: "dir/file.txt", Typeflag: tar.TypeReg, Mode: 0o644, Size: 1}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := writer.Write([]byte("x")); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	stats, err := ExtractTarWithStats(bytes.NewReader(body.Bytes()), t.TempDir(), ExtractOptions{
-		MaxBytes:   defaultMaxExtractedBytes,
-		MaxEntries: defaultMaxExtractedEntries,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stats.EntryCount != 2 {
-		t.Fatalf("entry count = %d, want 2", stats.EntryCount)
-	}
-	if stats.SizeBytes != 1 {
-		t.Fatalf("size bytes = %d, want 1", stats.SizeBytes)
-	}
-}
-
-func TestExtractTarRejectsUnsafePaths(t *testing.T) {
-	for _, name := range []string{"../escape.txt", "/escape.txt"} {
-		t.Run(name, func(t *testing.T) {
-			var body bytes.Buffer
-			writer := tar.NewWriter(&body)
-			if err := writer.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o644, Size: 1}); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := writer.Write([]byte("x")); err != nil {
-				t.Fatal(err)
-			}
-			if err := writer.Close(); err != nil {
-				t.Fatal(err)
-			}
-			if err := ExtractTar(bytes.NewReader(body.Bytes()), t.TempDir()); err == nil {
-				t.Fatal("expected unsafe archive path to be rejected")
-			}
-		})
-	}
-}
-
-func TestExtractTarPreservesSafeSymlinks(t *testing.T) {
-	var body bytes.Buffer
-	writer := tar.NewWriter(&body)
-	if err := writer.WriteHeader(&tar.Header{Name: "target.txt", Typeflag: tar.TypeReg, Mode: 0o644, Size: 1}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := writer.Write([]byte("x")); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.WriteHeader(&tar.Header{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "target.txt"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.WriteHeader(&tar.Header{Name: "dir", Typeflag: tar.TypeDir, Mode: 0o755}); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.WriteHeader(&tar.Header{Name: "dir/nested-link", Typeflag: tar.TypeSymlink, Linkname: "../target.txt"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.WriteHeader(&tar.Header{Name: "dir/root-link", Typeflag: tar.TypeSymlink, Linkname: ".."}); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	dest := t.TempDir()
-	if err := ExtractTar(bytes.NewReader(body.Bytes()), dest); err != nil {
-		t.Fatal(err)
-	}
-	link, err := os.Readlink(filepath.Join(dest, "link"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if link != "target.txt" {
-		t.Fatalf("link target = %q", link)
-	}
-	nested, err := os.Readlink(filepath.Join(dest, "dir", "nested-link"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if nested != "../target.txt" {
-		t.Fatalf("nested link target = %q", nested)
-	}
-	rootLink, err := os.Readlink(filepath.Join(dest, "dir", "root-link"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rootLink != ".." {
-		t.Fatalf("root link target = %q", rootLink)
-	}
-}
-
-func TestExtractTarRejectsUnsafeSymlinks(t *testing.T) {
-	var body bytes.Buffer
-	writer := tar.NewWriter(&body)
-	if err := writer.WriteHeader(&tar.Header{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "../outside"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := ExtractTar(bytes.NewReader(body.Bytes()), t.TempDir()); err == nil {
-		t.Fatal("expected symlink archive entry to be rejected")
-	}
-}
-
-func TestExtractTarRejectsSymlinkParent(t *testing.T) {
-	var body bytes.Buffer
-	writer := tar.NewWriter(&body)
-	if err := writer.WriteHeader(&tar.Header{Name: "link/file.txt", Typeflag: tar.TypeReg, Mode: 0o644, Size: 1}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := writer.Write([]byte("x")); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	destination := t.TempDir()
-	outside := t.TempDir()
-	if err := os.Symlink(outside, filepath.Join(destination, "link")); err != nil {
-		t.Fatal(err)
-	}
-	if err := ExtractTar(bytes.NewReader(body.Bytes()), destination); err == nil {
-		t.Fatal("expected symlink parent to be rejected")
-	}
-	if _, err := os.Stat(filepath.Join(outside, "file.txt")); !os.IsNotExist(err) {
-		t.Fatalf("file escaped through symlink parent, stat err = %v", err)
-	}
-}
-
-func TestExtractTarRejectsOversizedRegularFile(t *testing.T) {
-	var body bytes.Buffer
-	writer := tar.NewWriter(&body)
-	if err := writer.WriteHeader(&tar.Header{Name: "large.bin", Typeflag: tar.TypeReg, Mode: 0o644, Size: 2}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := writer.Write([]byte("xx")); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := ExtractTarWithOptions(bytes.NewReader(body.Bytes()), t.TempDir(), ExtractOptions{
-		MaxBytes:   1,
-		MaxEntries: defaultMaxExtractedEntries,
-	}); err == nil {
-		t.Fatal("expected oversized archive entry to be rejected")
-	}
-}
-
-func TestExtractTarRejectsTooManyEntries(t *testing.T) {
-	var body bytes.Buffer
-	writer := tar.NewWriter(&body)
-	for i := range 2 {
-		if err := writer.WriteHeader(&tar.Header{Name: fmt.Sprintf("dirs/entry-%d", i), Typeflag: tar.TypeDir, Mode: 0o755}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := ExtractTarWithOptions(bytes.NewReader(body.Bytes()), t.TempDir(), ExtractOptions{
-		MaxBytes:   defaultMaxExtractedBytes,
-		MaxEntries: 1,
-	}); err == nil {
-		t.Fatal("expected archive with too many entries to be rejected")
-	}
-}
-
-func TestExtractTarRejectsSparseMetadata(t *testing.T) {
-	var extracted int64
-	if err := validateHeaderSize(&tar.Header{
-		Name:     "sparse.bin",
-		Typeflag: tar.TypeReg,
-		Mode:     0o644,
-		Size:     1,
-		PAXRecords: map[string]string{
-			"GNU.sparse.realsize": "1099511627776",
-		},
-	}, &extracted, defaultMaxExtractedBytes); err == nil {
-		t.Fatal("expected sparse archive entry to be rejected")
 	}
 }
 

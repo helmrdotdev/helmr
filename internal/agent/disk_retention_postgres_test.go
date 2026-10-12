@@ -69,7 +69,7 @@ func TestDiskRetentionPreservesWriterUncertaintyAndRecoveryHead(t *testing.T) {
 	if err := s.publisher.Publish(t.Context(), s.ref(old.ID), oldRoot, "receipt retry after retirement"); err != nil {
 		t.Fatal(err)
 	}
-	if err := ReconcileSavePublication(t.Context(), f.pool, f.env, old.ID, oldIdentity); err != nil {
+	if err := savePublicationForTest(t.Context(), f.pool, f.env, old.ID, oldIdentity); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_saves SET status='failed',failure_evidence='source proved no publication' WHERE environment_id=$1 AND id=$2`, f.env, pending.ID)

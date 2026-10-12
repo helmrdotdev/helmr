@@ -2,9 +2,10 @@ package agent
 
 import (
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/db"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/db"
 )
 
 func TestRevokedImagePayloadRetirementPreservesLineageAndComputerRoot(t *testing.T) {
@@ -41,7 +42,7 @@ func TestRevokedImagePayloadRetirementPreservesLineageAndComputerRoot(t *testing
 			if err := p.f.pool.QueryRow(t.Context(), `SELECT root_id IS NOT NULL FROM computer_images WHERE environment_id=$1 AND id=$2`, p.f.env, image).Scan(&retained); err != nil || !retained {
 				t.Fatalf("unfenced image collected: %v %v", retained, err)
 			}
-			if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), p.ref.Identity()); err != nil {
+			if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 				t.Fatal(err)
 			}
 			for range 8 {

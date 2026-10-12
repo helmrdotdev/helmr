@@ -33,7 +33,7 @@ func TestCPUTemplateSelectorOnlyAllowsNoneOrCanonicalCustomDigest(t *testing.T) 
 		t.Fatal(err)
 	}
 	digest := "sha256:" + strings.Repeat("a", 64)
-	selector, err := CustomCPUTemplateSelector(digest)
+	selector, err := customCPUTemplateSelector(digest)
 	if err != nil {
 		t.Fatal(err)
 	}

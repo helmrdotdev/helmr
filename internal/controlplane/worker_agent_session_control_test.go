@@ -76,10 +76,10 @@ func TestWorkerAgentSessionControls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,control_kind,control_generation,control_acknowledged_at) VALUES($1,$2,1,$3,1,'ready','resume',1,clock_timestamp())`, f.Environment, exactID, f.Computer)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,attachment_sequence,control_sequence,control_attachment,control_kind,control_generation,control_acknowledged_at) VALUES($1,$2,1,$3,1,'ready',1,1,1,'resume',1,clock_timestamp())`, f.Environment, exactID, f.Computer)
 	exactExecution := execution
 	exactExecution.SessionID = exactID
-	if _, err := agent.Dispatch(t.Context(), f.Pool, exactExecution); err != nil {
+	if _, err := dispatchRuntimeTurn(t, f.Pool, exactExecution); err != nil {
 		t.Fatal(err)
 	}
 	exactRequest.Method = int32(agentv1.Operation_METHOD_CONTROL_SESSION)
@@ -161,7 +161,7 @@ func TestWorkerAgentSessionControls(t *testing.T) {
 	if err = f.Pool.QueryRow(t.Context(), `SELECT status='cancelled' AND started_at IS NULL FROM turns WHERE id=$1`, child["turnId"]).Scan(&cancelled); err != nil || !cancelled {
 		t.Fatalf("queued cancellation: %v %v", cancelled, err)
 	}
-	if err = agent.CloseProcessing(t.Context(), f.Pool, execution, origin.TurnID); err != nil {
+	if err = closeRuntimeProcessing(t, f.Pool, execution, origin.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	if got := call(request, body, ""); got["id"] != first["id"] {

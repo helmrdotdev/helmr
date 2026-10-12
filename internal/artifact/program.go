@@ -64,64 +64,6 @@ type ProgramOutput struct {
 	Metadata ProgramMetadata   `json:"metadata"`
 }
 
-func ParseProgramOutput(raw []byte) (ProgramOutput, error) {
-	if len(raw) == 0 || len(raw) > MaxProgramVerificationSizeBytes {
-		return ProgramOutput{}, fmt.Errorf(
-			"program output size is outside [1,%d]",
-			MaxProgramVerificationSizeBytes,
-		)
-	}
-	canonical, err := jsoncanon.Transform(raw)
-	if err != nil {
-		return ProgramOutput{}, fmt.Errorf("canonicalize program output: %w", err)
-	}
-	if !bytes.Equal(raw, canonical) {
-		return ProgramOutput{}, errors.New("program output is not RFC 8785 canonical JSON")
-	}
-	var output ProgramOutput
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&output); err != nil {
-		return ProgramOutput{}, fmt.Errorf("decode program output: %w", err)
-	}
-	if err := jsoncanon.RequireEOF(decoder, "program output"); err != nil {
-		return ProgramOutput{}, err
-	}
-	if err := ValidateProgramOutput(output); err != nil {
-		return ProgramOutput{}, err
-	}
-	complete, err := CanonicalProgramOutput(output)
-	if err != nil {
-		return ProgramOutput{}, err
-	}
-	if !bytes.Equal(raw, complete) {
-		return ProgramOutput{}, errors.New("program output does not match the complete canonical v0 shape")
-	}
-	output.Metadata = cloneProgramMetadata(output.Metadata)
-	return output, nil
-}
-
-func CanonicalProgramOutput(output ProgramOutput) ([]byte, error) {
-	if err := ValidateProgramOutput(output); err != nil {
-		return nil, err
-	}
-	raw, err := json.Marshal(output)
-	if err != nil {
-		return nil, fmt.Errorf("encode program output: %w", err)
-	}
-	canonical, err := jsoncanon.Transform(raw)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize program output: %w", err)
-	}
-	if len(canonical) == 0 || len(canonical) > MaxProgramVerificationSizeBytes {
-		return nil, fmt.Errorf(
-			"program output size is outside [1,%d]",
-			MaxProgramVerificationSizeBytes,
-		)
-	}
-	return canonical, nil
-}
-
 func validateProgramDescriptor(
 	descriptor ProgramDescriptor,
 	name string,

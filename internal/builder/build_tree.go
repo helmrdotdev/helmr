@@ -58,13 +58,6 @@ func newBuildTree(
 	}, nil
 }
 
-func (tree *buildTree) Descriptor() (buildTreeDescriptor, error) {
-	if tree == nil || tree.content == nil || tree.inspected == nil {
-		return buildTreeDescriptor{}, errors.New("build tree is closed")
-	}
-	return tree.descriptor, nil
-}
-
 func validateInspectedBuildTree(
 	ctx context.Context,
 	tree *artifact.Tree,

@@ -9,13 +9,14 @@ import (
 
 	"context"
 	"errors"
+	"strings"
+
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/agent/agenttest"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/runtimemcp"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"strings"
 )
 
 func TestWorkerAgentTurnObservation(t *testing.T) {
@@ -29,7 +30,7 @@ func TestWorkerAgentTurnObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	execution := agent.Execution{EnvironmentID: f.Environment, SessionID: f.Session, WorkerHostID: f.Worker, WorkerEpoch: 1, ProcessEpoch: 1, LeaseEpoch: 1, AuthorityGeneration: 1}
-	if _, err := agent.Dispatch(t.Context(), f.Pool, execution); err != nil {
+	if _, err := dispatchRuntimeTurn(t, f.Pool, execution); err != nil {
 		t.Fatal(err)
 	}
 	// The caller's admitted follow-up is observable; the human-origin Turn is not.

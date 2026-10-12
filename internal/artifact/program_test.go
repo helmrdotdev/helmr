@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/definition/definitiontest"
 )
 
 type contractFixture struct {
@@ -41,32 +42,6 @@ func TestProgramMetadataCanonicalRoundTrip(t *testing.T) {
 		parsed.Definitions[1].Kind != definition.KindAgent ||
 		parsed.Definitions[2].Kind != definition.KindTemplate {
 		t.Fatalf("Program index declarations are not in unsigned UTF-8 kind order")
-	}
-}
-
-func TestProgramOutputCanonicalRoundTrip(t *testing.T) {
-	output := ProgramOutput{
-		Artifact: ProgramDescriptor{
-			Digest:    "sha256:" + strings.Repeat("a", 64),
-			SizeBytes: 1024,
-			MediaType: ProgramArtifactMediaType,
-		},
-		Metadata: testProgramMetadata(t),
-	}
-	raw, err := CanonicalProgramOutput(output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	parsed, err := ParseProgramOutput(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reencoded, err := CanonicalProgramOutput(parsed)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(raw) != string(reencoded) {
-		t.Fatalf("Program output changed:\n%s\n%s", raw, reencoded)
 	}
 }
 
@@ -148,7 +123,7 @@ func TestProgramMetadataParserEnforcesSizeBound(t *testing.T) {
 
 func TestManifestDigestMatchesSharedGoldenFixture(t *testing.T) {
 	fixture := loadContractFixture(t)
-	canonical, manifestDigest, err := definition.CanonicalManifestAndDigest([]byte(fixture.Manifest.Input))
+	canonical, manifestDigest, err := definitiontest.CanonicalManifestAndDigest([]byte(fixture.Manifest.Input))
 	if err != nil {
 		t.Fatal(err)
 	}

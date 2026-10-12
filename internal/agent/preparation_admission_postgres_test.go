@@ -94,7 +94,7 @@ func TestPreparationUnattachedDemandWaitsForPhysicalExclusion(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT preparation_id FROM computers WHERE environment_id=$1 AND id=$2`, f.env, fresh).Scan(&attached); err != nil || attached != nil {
 		t.Fatalf("unfenced executor admitted replacement: %v %v", attached, err)
 	}
-	if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), executor.Identity()); err != nil {
+	if err := ObservePreparationStopped(t.Context(), f.pool, *f.host(), preparationIdentity(executor)); err != nil {
 		t.Fatal(err)
 	}
 	reconcile()
@@ -145,7 +145,7 @@ func TestPreparationFreshDemandDoesNotPreemptRotationSuccessor(t *testing.T) {
 	if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "certified"); err != nil {
 		t.Fatal(err)
 	}
-	if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), p.ref.Identity()); err != nil {
+	if err := ObservePreparationStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 		t.Fatal(err)
 	}
 	// Sort fresh demand before every attached waiter in the actual scan page.
@@ -153,7 +153,7 @@ func TestPreparationFreshDemandDoesNotPreemptRotationSuccessor(t *testing.T) {
 	if _, err := p.f.pool.Exec(t.Context(), `INSERT INTO computers(environment_id,id,preparation_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,resources,storage_reservation_bytes) VALUES($1,$2,$3,clock_timestamp()+interval '10 minutes',$3,$3,'{}',34359738368)`, p.f.env, fresh, p.f.deployment); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := AttachComputerPreparation(t.Context(), p.f.pool, p.f.env, fresh); !errors.Is(err, ErrNotReady) {
+	if _, err := attachComputerPreparationForTest(t.Context(), p.f.pool, p.f.env, fresh); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("fresh demand preempted pending successor: %v", err)
 	}
 	for range 2 {

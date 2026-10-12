@@ -18,20 +18,6 @@ func Text(value string) pgtype.Text {
 	return pgtype.Text{String: value, Valid: true}
 }
 
-func TextPtr(value *string) pgtype.Text {
-	if value == nil {
-		return pgtype.Text{}
-	}
-	return Text(*value)
-}
-
-func TextValue(value pgtype.Text) string {
-	if !value.Valid {
-		return ""
-	}
-	return value.String
-}
-
 func Time(value pgtype.Timestamptz) time.Time {
 	if !value.Valid {
 		return time.Time{}
@@ -60,13 +46,6 @@ func TimestamptzUTCZeroInvalid(value time.Time) pgtype.Timestamptz {
 
 func Interval(duration time.Duration) pgtype.Interval {
 	return pgtype.Interval{Microseconds: duration.Microseconds(), Valid: true}
-}
-
-func Int4Response(value pgtype.Int4) *int32 {
-	if !value.Valid {
-		return nil
-	}
-	return &value.Int32
 }
 
 func UUID(value uuid.UUID) pgtype.UUID {

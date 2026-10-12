@@ -466,15 +466,6 @@ type TurnDispatch struct {
 	Source    TurnSource
 }
 
-func Dispatch(ctx context.Context, pool db.TxBeginner, e Execution) (TurnDispatch, error) {
-	var result TurnDispatch
-	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error { return dispatchTurn(ctx, tx, e, &result) })
-	if err != nil {
-		return TurnDispatch{}, err
-	}
-	return result, nil
-}
-
 func dispatchTurn(ctx context.Context, tx pgx.Tx, e Execution, result *TurnDispatch) error {
 	o, err := lockSession(ctx, tx, e.EnvironmentID, e.SessionID)
 	if err != nil {

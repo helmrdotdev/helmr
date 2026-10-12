@@ -13,7 +13,7 @@ import (
 func TestRuntimeContentBudgetRetriesAndSeparateResponse(t *testing.T) {
 	f := newFixture(t)
 	a := f.enqueue(t, "content")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	empty, _ := conversation.Content(json.RawMessage(`""`), true)
@@ -62,7 +62,7 @@ func TestRuntimeResponsePublishesOnlyWithOwnSave(t *testing.T) {
 	f := newFixture(t)
 	storage := newSaveStorageFixture(t, f)
 	a := f.enqueue(t, "response")
-	if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
 	response := json.RawMessage(`[{"type":"text","text":"a\u0000b"},{"type":"json","value":false}]`)

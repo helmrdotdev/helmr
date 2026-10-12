@@ -1,8 +1,8 @@
 import { ApiError, del, postJson, request } from "./api";
 
 export type MemberRole = "owner" | "admin" | "developer" | "viewer";
-export type MemberStatus = "active" | "disabled";
-export type InvitationStatus = "pending" | "accepted" | "revoked" | "expired";
+type MemberStatus = "active" | "disabled";
+type InvitationStatus = "pending" | "accepted" | "revoked" | "expired";
 
 export type OrganizationMember = {
   user_id: string;

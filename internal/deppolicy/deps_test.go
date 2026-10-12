@@ -112,7 +112,7 @@ func TestLightProgramsDoNotReachDatabase(t *testing.T) {
 		for _, pkg := range packages {
 			cmd := exec.Command("go", "list", "-buildvcs=false", "-deps", pkg)
 			cmd.Dir = root
-			cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64")
+			cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64", "CGO_ENABLED=0", "GOFLAGS=")
 			output, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("go list %s for %s: %v\n%s", pkg, goos, err, output)
@@ -133,7 +133,7 @@ func TestWorkerDoesNotLinkHostCredentialSigning(t *testing.T) {
 	for _, goos := range []string{"linux", "darwin"} {
 		cmd := exec.Command("go", "list", "-buildvcs=false", "-deps", "./cmd/worker")
 		cmd.Dir = root
-		cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64")
+		cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64", "CGO_ENABLED=0", "GOFLAGS=")
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("go list ./cmd/worker for %s: %v\n%s", goos, err, output)
@@ -157,7 +157,7 @@ func TestWorkerSupplyDoesNotReachWireContracts(t *testing.T) {
 	for _, goos := range []string{"linux", "darwin"} {
 		cmd := exec.Command("go", "list", "-buildvcs=false", "-deps", "./internal/workergroup")
 		cmd.Dir = root
-		cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64")
+		cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64", "CGO_ENABLED=0", "GOFLAGS=")
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("go list ./internal/workergroup for %s: %v\n%s", goos, err, output)
@@ -188,7 +188,7 @@ func TestContractPackagesDoNotReachArtifactResources(t *testing.T) {
 		for _, pkg := range packages {
 			cmd := exec.Command("go", "list", "-buildvcs=false", "-deps", pkg)
 			cmd.Dir = root
-			cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64")
+			cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64", "CGO_ENABLED=0", "GOFLAGS=")
 			output, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("go list %s for %s: %v\n%s", pkg, goos, err, output)

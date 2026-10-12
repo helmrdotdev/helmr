@@ -2,11 +2,12 @@ package agent
 
 import (
 	"errors"
+	"testing"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"testing"
-	"uuid"
 )
 
 func TestSessionRuntimeFailureIsDurableAndLocal(t *testing.T) {
@@ -19,7 +20,7 @@ func TestSessionRuntimeFailureIsDurableAndLocal(t *testing.T) {
 			f := newFixture(t)
 			peer := f.peer(t)
 			active := f.enqueue(t, "active")
-			if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+			if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 				t.Fatal(err)
 			}
 			queued := f.enqueue(t, "queued")
@@ -68,7 +69,7 @@ func TestSessionRuntimeFailureIsDurableAndLocal(t *testing.T) {
 				t.Fatalf("retry recreated local hold: %d %v", holds, err)
 			}
 			next := peer.enqueue(t, "peer")
-			if got, err := Dispatch(t.Context(), peer.pool, peer.execution()); err != nil || got.TurnID != next.TurnID {
+			if got, err := dispatchTurnForTest(t.Context(), peer.pool, peer.execution()); err != nil || got.TurnID != next.TurnID {
 				t.Fatalf("peer: %+v %v", got, err)
 			}
 			if err = ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
@@ -163,7 +164,7 @@ func TestSessionRuntimeFailureRespectsLeaseExpiryAndRevocation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t)
 			active := f.enqueue(t, "active")
-			if _, err := Dispatch(t.Context(), f.pool, f.execution()); err != nil {
+			if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 				t.Fatal(err)
 			}
 			a, err := AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
