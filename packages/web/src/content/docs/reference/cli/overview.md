@@ -23,7 +23,7 @@ HTTP(S). With the CLI configured (see [Quickstart](/docs/quickstart)), run
 The CLI uses `HELMR_API_KEY` when it is set, and otherwise the saved login for
 the selected origin. An API key is bound to one Environment, so `-p, --project`
 and `-e, --env` are rejected with it. With a saved login, commands that act in
-an Environment require both flags; each accepts a slug or ID. Details are in
+an Environment require both flags; each accepts the public ID shown in the Console. Details are in
 [Credential selection](/docs/reference/cli/login#credential-selection).
 
 ## Commands
@@ -37,10 +37,11 @@ an Environment require both flags; each accepts a slug or ID. Details are in
 | `helmr build` | | Build a verified deployment bundle locally. | [build](/docs/reference/cli/build) |
 | `helmr deploy` | | Build, upload, finalize and promote a deployment bundle. | [deploy](/docs/reference/cli/deploy) |
 | `helmr deployment` | `list`, `get`, `promote` | Inspect Deployments and promote one to current. | [deployment](/docs/reference/cli/deployment) |
-| `helmr agent` | `definition list`, `definition get`, `start` | Inspect Agent definitions and start Sessions. | [agent](/docs/reference/cli/agent) |
-| `helmr session` | `list`, `get`, `send`, `enqueue`, `events`, `interrupt`, `resume`, `close`, `cancel`, `turn list`, `turn get`, `turn wait`, `turn send`, `turn ask list`, `turn ask get`, `turn ask respond` | Work with Sessions, Turns and questions. | [session](/docs/reference/cli/session) |
+| `helmr agent` | `list`, `get` | Inspect deployed Agents. | [agent](/docs/reference/cli/agent) |
+| `helmr session` | `create`, `list`, `get`, `enqueue`, `events`, `interrupt`, `resume`, `close`, `cancel`, `turn list`, `turn get`, `turn wait`, `turn send`, `turn interrupt`, `turn ask list`, `turn ask get`, `turn ask respond` | Work with Sessions, Turns and questions. | [session](/docs/reference/cli/session) |
 | `helmr schedule` | `list`, `get` | Inspect Schedules created by triggers. | [schedule](/docs/reference/cli/schedule) |
-| `helmr computer` | `definition list`, `definition get`, `create`, `get`, `delete`, `exec` | Work with Template definitions and Computers. | [computer](/docs/reference/cli/computer) |
+| `helmr template` | `list`, `get` | Inspect deployed Templates. | [template](/docs/reference/cli/template) |
+| `helmr computer` | `create`, `list`, `get`, `sessions`, `commands`, `update`, `delete`, `exec` | Work with Computers and their current usage. | [computer](/docs/reference/cli/computer) |
 | `helmr command` | `get`, `wait`, `logs`, `cancel` | Observe and cancel Commands. | [command](/docs/reference/cli/command) |
 | `helmr project` | `list`, `get`, `create`, `update` | Manage Projects. Requires a saved login. | [project](/docs/reference/cli/project) |
 | `helmr env` | `list`, `get`, `create`, `update` | Manage a Project's Environments. Requires a saved login. | [project](/docs/reference/cli/project) |

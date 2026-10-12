@@ -2,13 +2,14 @@ import type {
   CursorPage,
 } from "./contract"
 import type { RequestOptions } from "./request"
+import { validateDefinitionId } from "./schema/definition"
 import { resourceID } from "./internal/id"
 import { timestampString } from "./internal/timestamp"
 import { normalizeInput, type InputContent } from "./content"
 
 export interface Schedule {
   readonly id: string
-  readonly agentId: string
+  readonly agent: string
   readonly deploymentId: string
   readonly triggerKey: string
   readonly input: InputContent
@@ -18,7 +19,7 @@ export interface Schedule {
   readonly nextFireAt?: string
 }
 
-export type ScheduleListQuery = Readonly<{ agentId?: string; cursor?: string; limit?: number }>
+export type ScheduleListQuery = Readonly<{ agent?: string; cursor?: string; limit?: number }>
 
 export interface ClientSchedulesApi {
   get(
@@ -59,9 +60,13 @@ export function createClientSchedules(
       query: ScheduleListQuery = {},
       options: RequestOptions = {},
     ): Promise<CursorPage<Schedule>> {
+      for (const key of Object.keys(query)) {
+        if (!["agent", "cursor", "limit"].includes(key)) throw new Error(`Unsupported Schedule list query: ${key}`)
+      }
       const values = new URLSearchParams()
-      if (query.agentId !== undefined) {
-        values.set("agent_id", resourceID(query.agentId, "Agent ID"))
+      if (query.agent !== undefined) {
+        validateDefinitionId(query.agent)
+        values.set("agent", query.agent)
       }
       if (query.cursor !== undefined) {
         if (query.cursor.length === 0) throw new Error("Schedule cursor is required")
@@ -100,9 +105,11 @@ export function createClientSchedules(
 function parseSchedule(value: unknown): Schedule {
   const input = scheduleObject(value, "Schedule response")
   const cron = scheduleObject(input["cron"], "Schedule cron")
+  const agent = requiredString(input, "agent", "Schedule response")
+  validateDefinitionId(agent)
   return Object.freeze({
     id: resourceID(input["id"], "Schedule response.id"),
-    agentId: resourceID(input["agent_id"], "Agent ID"),
+    agent,
     deploymentId: resourceID(input["deployment_id"], "Deployment ID"),
     triggerKey: requiredString(input, "trigger_key", "Schedule response"),
     input: normalizeInput(input["input"]),

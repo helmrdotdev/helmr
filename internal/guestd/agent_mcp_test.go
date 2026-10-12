@@ -66,7 +66,7 @@ func mcpPost(ctx context.Context, descriptor agentMCPConnection, body string) mc
 	return mcpHTTPResult{response.StatusCode, string(data), err}
 }
 
-const mcpSpawnBody = `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"spawn","arguments":{"agentId":"helper","input":[{"type":"text","text":"work"}],"idempotencyKey":"stable"}}}`
+const mcpSpawnBody = `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"spawn","arguments":{"agent":"helper","input":[{"type":"text","text":"work"}],"idempotencyKey":"stable"}}}`
 
 func readMCPEvent(t *testing.T, host io.Reader) *agentv1.GuestSessionMessage {
 	t.Helper()
@@ -169,7 +169,7 @@ func TestAgentMCPRejectsExpiryHoldsAndInvalidClientsWithoutClosingSession(t *tes
 	if got := mcpPost(t.Context(), descriptor, catalog); got.status != 200 {
 		t.Fatalf("renewed local descriptor: %+v", got)
 	}
-	if got := mcpPost(t.Context(), descriptor, strings.Replace(mcpSpawnBody, `"agentId":"helper"`, `"callerSessionId":"other","agentId":"helper"`, 1)); !strings.Contains(got.body, "error") && !strings.Contains(got.body, "isError") {
+	if got := mcpPost(t.Context(), descriptor, strings.Replace(mcpSpawnBody, `"agent":"helper"`, `"callerSessionId":"other","agent":"helper"`, 1)); !strings.Contains(got.body, "error") && !strings.Contains(got.body, "isError") {
 		t.Fatalf("caller supplied identity accepted: %+v", got)
 	}
 	relay.mu.Lock()

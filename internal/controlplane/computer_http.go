@@ -171,16 +171,6 @@ func apiComputerListItem(item computer.ListItem) api.ComputerListItem {
 	}
 }
 
-func apiComputerMembers(page computer.MembersPage) api.ListComputerMembersResponse {
-	response := api.ListComputerMembersResponse{Members: make([]api.ComputerMember, 0, len(page.Members)), NextCursor: page.NextCursor}
-	for _, member := range page.Members {
-		response.Members = append(response.Members, api.ComputerMember{
-			Kind: member.Kind, ID: member.ID, State: member.State, CreatedAt: member.CreatedAt,
-		})
-	}
-	return response
-}
-
 func (s *Server) updateComputerHTTP(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)

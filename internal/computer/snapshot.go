@@ -40,7 +40,7 @@ type Snapshot struct {
 	Error               json.RawMessage           `json:"error,omitempty"`
 	ID                  string                    `json:"id"`
 	Key                 *string                   `json:"key,omitempty"`
-	DefinitionKey       string                    `json:"definition_id"`
+	DefinitionKey       string                    `json:"template"`
 	DeploymentID        string                    `json:"deployment_id"`
 	Status              Status                    `json:"status"`
 	Secrets             []secretbinding.Reference `json:"secrets"`
@@ -111,7 +111,7 @@ func Read(ctx context.Context, database db.DBTX, scope Scope, id uuid.UUID) (Sna
 	if err != nil {
 		return Snapshot{}, err
 	}
-	rows, err := database.Query(ctx, `SELECT secret_id::text,placement_kind,placement_target,mode,allowed_origins FROM computer_secret_bindings WHERE environment_id=$1 AND computer_id=$2 ORDER BY placement_kind,placement_target`, scope.EnvironmentID, id)
+	rows, err := database.Query(ctx, `SELECT s.name,b.placement_kind,b.placement_target,b.mode,b.allowed_origins FROM computer_secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id) WHERE b.environment_id=$1 AND b.computer_id=$2 ORDER BY b.placement_kind,b.placement_target`, scope.EnvironmentID, id)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -119,7 +119,7 @@ func Read(ctx context.Context, database db.DBTX, scope Scope, id uuid.UUID) (Sna
 		var r secretbinding.Reference
 		var kind, target, mode string
 		var origins []string
-		err := row.Scan(&r.SecretID, &kind, &target, &mode, &origins)
+		err := row.Scan(&r.Secret, &kind, &target, &mode, &origins)
 		if kind == "env" {
 			r.Env = &secretbinding.ReferenceEnv{Name: target, Mode: mode, AllowedOrigins: origins}
 		} else {

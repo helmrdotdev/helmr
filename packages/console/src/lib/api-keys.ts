@@ -27,8 +27,8 @@ export type ApiKeySummary = {
   id: string;
   name: string;
   key_prefix: string;
-  project_id: string;
-  environment_id: string;
+  project: string;
+  environment: string;
   permissions?: ApiKeyPermissionGrant[];
   status: ApiKeyStatus;
   created_at: string;

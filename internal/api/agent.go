@@ -7,21 +7,19 @@ import (
 )
 
 type AgentDefinition struct {
-	TemplateID   string `json:"template_id"`
-	AgentID      string `json:"agent_id"`
-	ID           string `json:"id"`
+	TemplateID   string `json:"template"`
+	ID           string `json:"agent"`
 	DeploymentID string `json:"deployment_id"`
 }
 
 type AgentDefinitionListItem struct {
-	TemplateID string `json:"template_id"`
-	ID         string `json:"id"`
-	AgentID    string `json:"agent_id"`
+	TemplateID string `json:"template"`
+	ID         string `json:"agent"`
 }
 
 type ListAgentDefinitionsResponse struct {
 	DeploymentID     string                    `json:"deployment_id"`
-	AgentDefinitions []AgentDefinitionListItem `json:"agent_definitions"`
+	AgentDefinitions []AgentDefinitionListItem `json:"agents"`
 	NextCursor       string                    `json:"next_cursor,omitempty"`
 }
 
@@ -55,13 +53,12 @@ type CreateSessionResponse struct {
 
 // AgentSession is a retained conversation, independent of a physical process.
 type AgentSession struct {
-	AgentDefinitionID    string                   `json:"agent_definition_id"`
-	TemplateDefinitionID string                   `json:"template_definition_id"`
+	AgentDefinitionID    string                   `json:"agent"`
+	TemplateDefinitionID string                   `json:"template"`
 	Activity             AgentSessionActivity     `json:"activity"`
 	CloseAfterIdleMs     *int64                   `json:"close_after_idle_ms"`
 	IdleSince            *time.Time               `json:"idle_since"`
 	ID                   string                   `json:"id"`
-	AgentID              string                   `json:"agent_id"`
 	DeploymentID         string                   `json:"deployment_id"`
 	ComputerID           *string                  `json:"computer_id"`
 	RootSessionID        string                   `json:"root_session_id"`

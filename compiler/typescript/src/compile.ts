@@ -170,7 +170,7 @@ function assertMembers(value: unknown, allowed: readonly string[], label: string
 }
 function secretBindings(value: TemplateDefinition["secrets"]): TemplateManifest["secrets"] {
   const result = [...encodeComputerSecrets(value)]
-  return result.sort((a, b) => compareUTF8(a.env ? "env" : "file", b.env ? "env" : "file") || compareUTF8(a.env?.name ?? a.file!.path, b.env?.name ?? b.file!.path) || compareUTF8(a.secretId, b.secretId))
+  return result.sort((a, b) => compareUTF8(a.env ? "env" : "file", b.env ? "env" : "file") || compareUTF8(a.env?.name ?? a.file!.path, b.env?.name ?? b.file!.path) || compareUTF8(a.secret, b.secret))
 }
 export function normalizeComputerResources(resources: Readonly<{ cpu: number; memory: string; disk?: string }>): TemplateManifest["resources"] {
   assertMembers(resources, ["cpu", "memory", "disk"], "Computer resources")

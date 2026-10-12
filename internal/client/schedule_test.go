@@ -46,7 +46,7 @@ func testScheduleReads(
 				t.Fatalf("%s %s", r.Method, r.URL.RequestURI())
 			}
 			_ = json.NewEncoder(w).Encode(api.ListSchedulesResponse{
-				Schedules:  []api.ScheduleResponse{{ID: testScheduleID, AgentID: "nightly", TriggerKey: "daily"}},
+				Schedules:  []api.ScheduleResponse{{ID: testScheduleID, Agent: "nightly", TriggerKey: "daily"}},
 				NextCursor: "cursor-next",
 			})
 		case collectionPath + "/" + testScheduleID:
@@ -54,7 +54,7 @@ func testScheduleReads(
 				t.Fatalf("%s %s", r.Method, r.URL.RequestURI())
 			}
 			_ = json.NewEncoder(w).Encode(api.ScheduleResponse{
-				ID: testScheduleID, AgentID: "nightly", TriggerKey: "daily",
+				ID: testScheduleID, Agent: "nightly", TriggerKey: "daily",
 			})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.RequestURI())
@@ -83,7 +83,7 @@ func testScheduleReads(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if schedule.ID != testScheduleID || schedule.AgentID != "nightly" {
+	if schedule.ID != testScheduleID || schedule.Agent != "nightly" {
 		t.Fatalf("schedule = %+v", schedule)
 	}
 }

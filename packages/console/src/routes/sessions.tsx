@@ -48,7 +48,7 @@ function SessionRow(props: {
         <IDText value={props.session.id} mode="link"
           href={sessionConsolePath(props.session.id, props.projectID, props.environmentID)} />
       </td>
-      <td><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("agents", props.session.agent_definition_id, { projectID: props.projectID, environmentID: props.environmentID, deploymentID: props.session.deployment_id })}>{props.session.agent_definition_id}</a></td>
+      <td><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("agents", props.session.agent, { projectID: props.projectID, environmentID: props.environmentID, deploymentID: props.session.deployment_id })}>{props.session.agent}</a></td>
       <td>
         <Show
           when={props.session.key}
@@ -79,16 +79,16 @@ export function Sessions() {
   const text = (v: string | string[] | undefined) => typeof v === "string" ? v : "";
   const projectID = () => scope().projectID;
   const environmentID = () => scope().environmentID;
-  const agentID = () => text(search["agent_id"]);
+  const agent = () => text(search["agent"]);
   const [filter, setFilter] = createSignal<SessionFilter>("all");
   const sessions = createInfiniteQuery(() => ({
-    queryKey: ["sessions", "list", filter(), projectID(), environmentID(), agentID()],
+    queryKey: ["sessions", "list", filter(), projectID(), environmentID(), agent()],
     queryFn: ({ pageParam }) => {
       const status = filter();
       return listSessions({
         projectID: projectID(),
         environmentID: environmentID(),
-        agentID: agentID() || undefined,
+        agent: agent() || undefined,
         statuses: status === "all" ? undefined : [status],
         cursor: pageParam || undefined,
         limit: 100,
@@ -121,7 +121,7 @@ export function Sessions() {
         }
       />
 
-      <Show when={agentID()}><p class={ui.muted}>Showing this Agent’s Sessions across all Deployments. <a class="text-console-accent hover:text-console-accent-hover" href={scopedConsoleHref("/sessions", { projectID: projectID(), environmentID: environmentID() })}>Show all Sessions</a></p></Show>
+      <Show when={agent()}><p class={ui.muted}>Showing this Agent’s Sessions across all Deployments. <a class="text-console-accent hover:text-console-accent-hover" href={scopedConsoleHref("/sessions", { projectID: projectID(), environmentID: environmentID() })}>Show all Sessions</a></p></Show>
       <Show when={sessions.isError}>
         <StatePanel error={sessionsErrorMessage(sessions.error)} />
       </Show>

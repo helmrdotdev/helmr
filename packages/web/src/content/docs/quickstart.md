@@ -62,7 +62,7 @@ helmr whoami
 ```
 
 With a saved login, commands that act on an Environment take `--project` and
-`--env` (short forms `-p` and `-e`), which accept a slug or an ID.
+`--env` (short forms `-p` and `-e`), which accept the public Project and Environment IDs.
 
 For automation, set `HELMR_API_KEY` to an
 [Environment API key](/docs/reference/api/authentication) and `HELMR_API_URL` to
@@ -76,7 +76,7 @@ The rest of the documentation assumes the CLI is configured as described here.
 ## Create a Project
 
 ```sh
-helmr project create "Hello Helmr" --slug hello \
+helmr project create hello --name "Hello Helmr" \
   --history-retention-mode duration --history-retention-seconds 2592000
 ```
 

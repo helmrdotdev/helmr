@@ -14,6 +14,7 @@ import (
 const maxScheduleListLimit = int32(100)
 
 type ListSchedulesOptions struct {
+	Agent  string
 	Cursor string
 	Limit  int32
 	EnvironmentScopeOptions
@@ -38,6 +39,13 @@ func (c *Client) ListSchedules(
 		return api.ListSchedulesResponse{}, err
 	}
 	query := url.Values{}
+	if opts.Agent != "" {
+		if err := api.ValidateDefinitionID(opts.Agent); err != nil {
+			return api.ListSchedulesResponse{}, err
+		}
+		query.Set("agent", opts.Agent)
+	}
+
 	if cursor := strings.TrimSpace(opts.Cursor); cursor != "" {
 		query.Set("cursor", cursor)
 	}

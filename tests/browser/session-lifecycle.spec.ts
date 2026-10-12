@@ -1,18 +1,19 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const projectID = "00000000-0000-7000-8000-000000000301";
-const environmentID = "00000000-0000-7000-8000-000000000403";
+const projectID = "console-demo";
+const environmentID = "demo";
 const id = "00000000-0000-7000-8000-000000000799";
 const turnID = "00000000-0000-7000-8000-000000000798";
 const base = `/api/projects/${projectID}/environments/${environmentID}`;
 const path = `${base}/sessions/${id}`;
-const url = `/sessions/${id}?project_id=${projectID}&environment_id=${environmentID}`;
+const url = `/sessions/${id}?project=${projectID}&environment=${environmentID}`;
 const now = "2026-10-06T00:00:00Z";
 const initialSession = {
   activity: { process: null },
   initial_turn: { id: turnID, status: "queued" },
   id,
-  agent_id: turnID,
+  agent: "support",
+  template: "browser",
   deployment_id: turnID,
   computer_id: turnID,
   root_session_id: id,
@@ -31,9 +32,7 @@ const initialTurn = {
 
 async function scope(page: Page, controls: string[] = []) {
   const environment = {
-    id: environmentID,
-    project_id: projectID,
-    slug: "dev",
+    environment: environmentID, project: projectID,
     name: "Development",
     color_hex: "#008000",
     is_default: true,
@@ -41,8 +40,7 @@ async function scope(page: Page, controls: string[] = []) {
     updated_at: now,
   };
   const project = {
-    id: projectID,
-    slug: "test",
+    project: projectID,
     name: "Test",
     default_region_id: "local",
     is_default: true,
@@ -327,5 +325,5 @@ test("inherited hold links its owner and cannot be released on a child", async (
   await page.goto(url);
   await expect(page.getByText("Parent paused (subtree)")).toBeVisible();
   await expect(page.locator("form")).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "000000000796", exact: true })).toHaveAttribute("href", `/sessions/${owner}?project_id=${projectID}&environment_id=${environmentID}`);
+  await expect(page.getByRole("link", { name: "000000000796", exact: true })).toHaveAttribute("href", `/sessions/${owner}?project=${projectID}&environment=${environmentID}`);
 });

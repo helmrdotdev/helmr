@@ -136,7 +136,7 @@ function validateLabel(value: string): string | null {
 function permissionText(keyItem: ApiKeySummary): string {
   const grants = keyItem.permissions ?? [];
   if (grants.length === 0) return "Not reported";
-  const scope = `${formatID(keyItem.project_id)} / ${formatID(keyItem.environment_id)}`;
+  const scope = `${formatID(keyItem.project)} / ${formatID(keyItem.environment)}`;
   return grants.map((grant) => {
     const labels = API_KEY_SCOPE_OPTIONS
       .filter((option) => grant.scopes.includes(option.value))

@@ -17,7 +17,7 @@ await verify("session-continuity", async ({ client, marker, objects, cleanup, co
   const second = await first.session.enqueue(fixtureInput(nextInput), { idempotencyKey: `continuity:second:${marker}` })
   objects.turn_ids.push(second.id)
   const state = await first.session.get()
-  const matches = await client.sessions.list({ agentId: state.agentId, key })
+  const matches = await client.sessions.list({ agent: state.agent, key })
   assertEqual(matches.items.length, 1, "Session key lookup was not exact")
   assertEqual(matches.items[0]!.id, first.session.id, "Session key changed identity")
   const byKey = client.sessions.ref(matches.items[0]!.id)

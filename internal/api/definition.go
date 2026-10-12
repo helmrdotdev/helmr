@@ -8,12 +8,12 @@ import (
 
 type TemplateDefinition struct {
 	Resources    json.RawMessage `json:"resources"`
-	ID           string          `json:"id"`
+	ID           string          `json:"template"`
 	DeploymentID string          `json:"deployment_id"`
 }
 type ListTemplateDefinitionsResponse struct {
 	DeploymentID        string               `json:"deployment_id"`
-	TemplateDefinitions []DefinitionListItem `json:"template_definitions"`
+	TemplateDefinitions []DefinitionListItem `json:"templates"`
 	NextCursor          string               `json:"next_cursor,omitempty"`
 }
 
@@ -26,5 +26,5 @@ func ValidateDefinitionID(id string) error {
 
 type DefinitionListItem struct {
 	Resources json.RawMessage `json:"resources"`
-	ID        string          `json:"id"`
+	ID        string          `json:"template"`
 }

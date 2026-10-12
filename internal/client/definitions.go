@@ -68,7 +68,7 @@ func (c *Client) definitionPath(collection, id string, opts DefinitionGetOptions
 
 func (c *Client) ListAgentDefinitions(ctx context.Context, opts DefinitionListOptions) (api.ListAgentDefinitionsResponse, error) {
 	result := api.ListAgentDefinitionsResponse{AgentDefinitions: []api.AgentDefinitionListItem{}}
-	path, err := c.definitionListPath("/agent-definitions", opts)
+	path, err := c.definitionListPath("/agents", opts)
 	if err != nil {
 		return result, err
 	}
@@ -85,7 +85,7 @@ func (c *Client) GetAgentDefinition(ctx context.Context, id string, opts Definit
 	if err := api.ValidateDefinitionID(id); err != nil {
 		return result, err
 	}
-	path, err := c.definitionPath("/agent-definitions", id, opts)
+	path, err := c.definitionPath("/agents", id, opts)
 	if err != nil {
 		return result, err
 	}
@@ -99,7 +99,7 @@ func (c *Client) GetAgentDefinition(ctx context.Context, id string, opts Definit
 
 func (c *Client) ListTemplateDefinitions(ctx context.Context, opts DefinitionListOptions) (api.ListTemplateDefinitionsResponse, error) {
 	result := api.ListTemplateDefinitionsResponse{TemplateDefinitions: []api.DefinitionListItem{}}
-	path, err := c.definitionListPath("/template-definitions", opts)
+	path, err := c.definitionListPath("/templates", opts)
 	if err != nil {
 		return result, err
 	}
@@ -116,7 +116,7 @@ func (c *Client) GetTemplateDefinition(ctx context.Context, id string, opts Defi
 	if err := api.ValidateDefinitionID(id); err != nil {
 		return result, err
 	}
-	path, err := c.definitionPath("/template-definitions", id, opts)
+	path, err := c.definitionPath("/templates", id, opts)
 	if err != nil {
 		return result, err
 	}

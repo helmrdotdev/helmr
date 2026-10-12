@@ -10,10 +10,10 @@ import {
   type ComputerCreateRequest,
   parseComputerDeleteReceipt,
   parseComputer,
-  parseComputerMembers,
-  encodeComputerMembersQuery,
-  type ComputerMembersQuery,
-  type ComputerMember,
+  parseComputerUsage,
+  encodeComputerUsageQuery,
+  type ComputerUsageQuery,
+  type ComputerUsage,
   type ComputerDeleteRequest,
   type ComputerDeleteReceipt,
   type ComputerCommandRequest,
@@ -123,19 +123,23 @@ export function createClientComputerRef(
 ): ClientComputerRef {
   const computerID = resourceID(id, "Computer ID")
   const path = `/v1/computers/${encodeURIComponent(computerID)}`
+  function usageCollection(collection: "sessions" | "commands") {
+    return Object.freeze({ async list(query: ComputerUsageQuery = {}, options: RequestOptions = {}): Promise<CursorPage<ComputerUsage>> {
+      const encoded = encodeComputerUsageQuery(query)
+      const params = new URLSearchParams()
+      if (encoded.cursor !== undefined) params.set("cursor", encoded.cursor)
+      if (encoded.limit !== undefined) params.set("limit", String(encoded.limit))
+      return parseComputerUsage(await transport.request("GET", `${path}/${collection}${params.size ? `?${params}` : ""}`,
+        options.signal === undefined ? {} : { signal: options.signal }), collection)
+    } })
+  }
   const ref = {
     id: computerID,
     async update(request: Readonly<{ deleteAfterUnused: Duration }>, options: RequestOptions = {}): Promise<Computer> {
       return parseComputer(await transport.request("PATCH", path, { body: { delete_after_unused_ms: retentionMilliseconds(request.deleteAfterUnused, "deleteAfterUnused") }, ...(options.signal === undefined ? {} : { signal: options.signal }) }))
     },
-    async members(query: ComputerMembersQuery = {}, options: RequestOptions = {}): Promise<CursorPage<ComputerMember>> {
-      const encoded = encodeComputerMembersQuery(query)
-      const params = new URLSearchParams()
-      if (encoded.cursor !== undefined) params.set("cursor", encoded.cursor)
-      if (encoded.limit !== undefined) params.set("limit", String(encoded.limit))
-      return parseComputerMembers(await transport.request("GET", `${path}/members${params.size ? `?${params}` : ""}`,
-        options.signal === undefined ? {} : { signal: options.signal }))
-    },
+    sessions: usageCollection("sessions"),
+    commands: usageCollection("commands"),
     async get(options: RequestOptions = {}): Promise<Computer> {
       return parseComputer(await transport.request(
         "GET",

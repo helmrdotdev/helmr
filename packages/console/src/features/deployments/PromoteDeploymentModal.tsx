@@ -37,7 +37,7 @@ export function PromoteDeploymentModal(props: {
       errorMessage={promoteErrorMessage}
     >
       <strong>{props.deployment.version}</strong> becomes the current Deployment for{" "}
-      <strong>{props.environmentName ?? "this environment"}</strong>. New Sessions use its Agent definitions and its schedules take effect. Agents absent from this Deployment stop accepting new independent Sessions and new Slack conversations; their identity and Slack connections remain. Reintroduced Agent IDs retain their identity. Existing Sessions keep their pinned Deployment, and inactive schedule intervals are not replayed.
+      <strong>{props.environmentName ?? "this environment"}</strong>. New Sessions use its Agents and its schedules take effect. Agents absent from this Deployment stop accepting new independent Sessions and new Slack conversations; their identity and Slack connections remain. Reintroduced Agent IDs retain their identity. Existing Sessions keep their pinned Deployment, and inactive schedule intervals are not replayed.
     </ConfirmModal>
   );
 }

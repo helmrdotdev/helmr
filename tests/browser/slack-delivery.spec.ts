@@ -1,15 +1,15 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { SlackDeliveryPost } from "../../packages/console/src/lib/slack";
 
-const projectID = "00000000-0000-7000-8000-000000000301";
-const environmentID = "00000000-0000-7000-8000-000000000403";
+const projectID = "console-demo";
+const environmentID = "demo";
 const sessionID = "00000000-0000-7000-8000-000000000799";
 const postID = "00000000-0000-7000-8000-000000000797";
 const attemptID = "00000000-0000-7000-8000-000000000795";
 const now = "2026-10-09T00:00:00Z";
 const base = `/api/projects/${projectID}/environments/${environmentID}`;
 const path = `${base}/sessions/${sessionID}`;
-const pageURL = `/sessions/${sessionID}?project_id=${projectID}&environment_id=${environmentID}`;
+const pageURL = `/sessions/${sessionID}?project=${projectID}&environment=${environmentID}`;
 const initial = (): SlackDeliveryPost => ({ id: postID, turn_id: null, sequence: 1, role: "intermediate", continuation_ordinal: 0, status: "uncertain", text: "Agent progress that may already be in Slack", payload_expired_at: null, created_at: now, desired_revision: 2, confirmed_revision: 0, publication_revision: 2, method: "chat.postMessage", attempt_id: attemptID, message_ts: null, root_known: true, opening: false, stream_state: "none", check_paused_at: now, disposed_at: null, disposed_by: null, error: "history_no_match" });
 
 async function fixture(page: Page, role = "owner", supplied?: SlackDeliveryPost[]) {
@@ -18,14 +18,14 @@ async function fixture(page: Page, role = "owner", supplied?: SlackDeliveryPost[
   let conflict = false;
   await page.route("**/api/**", async route => {
     const url = new URL(route.request().url()), endpoint = url.pathname;
-    const environment = { id: environmentID, project_id: projectID, slug: "dev", name: "Development", color_hex: "#008000", is_default: true, created_at: now, updated_at: now };
-    const project = { id: projectID, slug: "test", name: "Test", default_region_id: "local", is_default: true, environments: [environment], created_at: now, updated_at: now };
+    const environment = { environment: environmentID, project: projectID, name: "Development", color_hex: "#008000", is_default: true, created_at: now, updated_at: now };
+    const project = { project: projectID, name: "Test", default_region_id: "local", is_default: true, environments: [environment], created_at: now, updated_at: now };
     let json: unknown;
     if (endpoint === "/api/me") json = { user_id: "local", display_name: "Local", org_id: "org", role, permissions: ["sessions.read"], admin: false, organization_required: false, project_required: false };
     else if (endpoint === "/api/projects") json = { projects: [project] };
     else if (endpoint === `/api/projects/${projectID}`) json = project;
     else if (endpoint === base) json = environment;
-    else if (endpoint === path) json = { activity: { process: null }, initial_turn: null, id: sessionID, agent_id: postID, deployment_id: postID, computer_id: postID, root_session_id: sessionID, parent_session_id: null, slack_channel_id: postID, status: "open", created_at: now, holds: [] };
+    else if (endpoint === path) json = { activity: { process: null }, initial_turn: null, id: sessionID, agent: "support", template: "browser", deployment_id: postID, computer_id: postID, root_session_id: sessionID, parent_session_id: null, slack_channel_id: postID, status: "open", created_at: now, holds: [] };
     else if (endpoint === `${path}/turns`) json = { turns: [] };
     else if (endpoint === `${path}/events`) json = { records: [], next_after: 0, has_more: false, retained_after: 0 };
     else if (endpoint === `${path}/slack-delivery`) json = { posts: url.searchParams.has("cursor") ? posts.slice(1) : posts.slice(0, 1), ...(!url.searchParams.has("cursor") && posts.length > 1 ? { next_cursor: "1" } : {}) };

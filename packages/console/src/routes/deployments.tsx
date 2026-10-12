@@ -85,7 +85,7 @@ export function Deployments() {
   const currentID = createMemo(() => current.data?.id ?? "");
   const environmentColor = createMemo(() => {
     const environment = scope.selectedEnvironment();
-    return environment?.color_hex || defaultEnvironmentColor(environment?.slug);
+    return environment?.color_hex || defaultEnvironmentColor(environment?.environment);
   });
   const [promoting, setPromoting] = createSignal<Deployment | null>(null);
 

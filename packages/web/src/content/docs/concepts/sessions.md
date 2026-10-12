@@ -25,7 +25,7 @@ helmr session create reviewer --text "Review the open pull request"
 or from code with `client.sessions.create({ agent: name, input })`. Creation can also:
 
 - pass a **Session key** to uniquely name the conversation within its Agent.
-  An occupied key conflicts. Find that Session by stable Agent UUID and key, then enqueue
+  An occupied key conflicts. Find that Session by declared Agent identifier and Session key, then enqueue
   input using its Session ID.
 - pass an **idempotency key** so an uncertain retry of the same request does
   not admit the input twice.

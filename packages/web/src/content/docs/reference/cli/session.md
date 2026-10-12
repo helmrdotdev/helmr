@@ -9,7 +9,7 @@ sidebarLabel: session
 ```text
 helmr session create AGENT [--text TEXT | --input-json JSON | --input-file FILE]
     [--computer COMPUTER_ID] [--key KEY] [--idempotency-key KEY] [--slack-channel CHANNEL_ID] [--json]
-helmr session list [--agent AGENT_UUID] [--key KEY] [--parent-session SESSION_ID] [--requester-session SESSION_ID]
+helmr session list [--agent AGENT] [--key KEY] [--parent-session SESSION_ID] [--requester-session SESSION_ID]
     [--status STATUS] [--limit N] [--cursor CURSOR] [--json]
 helmr session get SESSION_ID [--json]
 helmr session enqueue SESSION_ID (--text TEXT | --input-json JSON | --input-file FILE) [--idempotency-key KEY] [--json]
@@ -60,7 +60,7 @@ first input. An explicit Computer binds placement without starting execution.
 
 `--key` gives the Session a unique identity within its Agent. An occupied key is
 a conflict, including for closed Sessions. Discover an existing Session with
-`list --agent AGENT_UUID --key KEY`, then enqueue input using its ID.
+`list --agent AGENT --key KEY`, then enqueue input using its ID.
 `--idempotency-key` retries the same creation request and returns its receipt.
 `--slack-channel` optionally chooses one Slack channel ID.
 
@@ -72,7 +72,7 @@ Text output prints `session_id` and, when present, `turn_id`. JSON output contai
 
 | Command | Description |
 | --- | --- |
-| `list` | One page of Sessions. Text output: `ID AGENT_UUID STATUS COMPUTER_ID` per line, then `next_cursor` when more remain. |
+| `list` | One page of Sessions. Text output: `ID AGENT STATUS COMPUTER_ID` per line, then `next_cursor` when more remain. |
 | `get` | Session state, including the Computer and current holds. Text output includes `hold_id`, `hold_session_id` (the Session that owns the hold), `hold_scope` and `hold_reason` for each hold. |
 | `enqueue` | Always admits a new Turn. Prints `session_id`, `turn_id` and `sequence`. |
 
@@ -80,7 +80,7 @@ Text output prints `session_id` and, when present, `turn_id`. JSON output contai
 
 | Flag | Description |
 | --- | --- |
-| `--agent AGENT_UUID` | Filter by stable Agent UUID (`agent_id` from definition inspection). |
+| `--agent AGENT` | Filter by the identifier declared in code, even if absent from current. |
 | `--key KEY` | Filter by Session key. Requires `--agent`. |
 | `--parent-session SESSION_ID` | Sessions owned by this parent. |
 | `--requester-session SESSION_ID` | Sessions requested by this Session. |

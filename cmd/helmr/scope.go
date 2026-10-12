@@ -26,7 +26,7 @@ func environmentScopeForClient(ctx context.Context, controlPlane *client.Client,
 	if err != nil {
 		return client.EnvironmentScopeOptions{}, err
 	}
-	return client.EnvironmentScopeOptions{ProjectID: project.ID, EnvironmentID: environment.ID}, nil
+	return client.EnvironmentScopeOptions{ProjectID: project.Project, EnvironmentID: environment.Environment}, nil
 }
 
 func computerScopeForClient(ctx context.Context, controlPlane *client.Client, projectID string, environmentID string) (client.ComputerScopeOptions, error) {
@@ -35,13 +35,13 @@ func computerScopeForClient(ctx context.Context, controlPlane *client.Client, pr
 }
 
 func addScopeFlags(cmd *cobra.Command, projectID *string, environmentID *string) {
-	cmd.Flags().StringVarP(projectID, "project", "p", "", "Project slug or ID.")
-	cmd.Flags().StringVarP(environmentID, "env", "e", "", "Environment slug or ID.")
+	cmd.Flags().StringVarP(projectID, "project", "p", "", "Project ID.")
+	cmd.Flags().StringVarP(environmentID, "env", "e", "", "Environment ID.")
 }
 
 func validateProjectFlag(project string) error {
 	if strings.Contains(project, "=") {
-		return errors.New("--project must be a project slug or ID")
+		return errors.New("--project must be a project ID")
 	}
 	return nil
 }

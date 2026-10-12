@@ -34,8 +34,8 @@ func TestSlackQuestionPromptBoundariesRemainVisibleAndAdvance(t *testing.T) {
 		for _, unbound := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/unbound=%v", tc.name, unbound), func(t *testing.T) {
 				f := newStatusFixture(t)
-				var project uuid.UUID
-				if err := f.Pool.QueryRow(t.Context(), `SELECT project_id FROM environments WHERE id=$1`, f.Environment).Scan(&project); err != nil {
+				var project, environment string
+				if err := f.Pool.QueryRow(t.Context(), `SELECT p.slug,e.slug FROM environments e JOIN projects p ON p.id=e.project_id WHERE e.id=$1`, f.Environment).Scan(&project, &environment); err != nil {
 					t.Fatal(err)
 				}
 				if unbound {
@@ -105,7 +105,7 @@ func TestSlackQuestionPromptBoundariesRemainVisibleAndAdvance(t *testing.T) {
 						t.Fatalf("CLI guidance must appear only on the last question post: post %d of %d", count+1, total)
 					}
 					if lastPost {
-						target := fmt.Sprintf("%s --session %s --turn %s --project %s --env %s", ask, f.Session, turn, project, f.Environment)
+						target := fmt.Sprintf("%s --session %s --turn %s --project %s --env %s", ask, f.Session, turn, project, environment)
 						for _, expected := range []string{"session turn ask get " + target + " --json", "session turn ask respond " + target + " --answer-file answer.json --response-id RESPONSE_ID", "helmr login", "--api-url", "unset HELMR_API_KEY", "same answer for retries"} {
 							if !strings.Contains(guide, expected) {
 								t.Fatalf("missing CLI guidance %q: %s", expected, guide)

@@ -432,15 +432,14 @@ func TestListProjectsOptions(t *testing.T) {
 func TestRevokeSecretUsesExplicitOperation(t *testing.T) {
 	var request api.RevokeSecretRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/secrets/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33/revoke" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/secrets/API_TOKEN/revoke" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
 		_ = json.NewEncoder(w).Encode(api.SecretResponse{
-			ID:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-			Name:   "API_TOKEN",
+			Secret: "API_TOKEN",
 			Status: "revoked",
 		})
 	}))
@@ -450,7 +449,7 @@ func TestRevokeSecretUsesExplicitOperation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := client.RevokeSecret(context.Background(), "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33", "revoke-1")
+	snapshot, err := client.RevokeSecret(context.Background(), "API_TOKEN", "revoke-1")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,8 +10,8 @@ export const workspace = template({
     .run(["npm", "install", "-g", "opencode-ai@1.18.30"])
     .workdir("/workspace"),
   resources: { cpu: 1, memory: "1GiB" },
-  // Replace the example UUID with the existing Environment Secret ID.
-  secrets: [{ secretId: "01900000-0000-7000-8000-000000000001", env: { name: "OPENCODE_GO_API_KEY", mode: "protected", allowedOrigins: ["https://opencode.ai"] } }],
+  // Create this Secret ID in each target Environment before deployment.
+  secrets: [{ secret: "OPENCODE_GO_API_KEY", env: { name: "OPENCODE_GO_API_KEY", mode: "protected", allowedOrigins: ["https://opencode.ai"] } }],
 })
 
 export const assistant = agent({

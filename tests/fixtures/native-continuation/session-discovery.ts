@@ -24,7 +24,7 @@ export async function checkSessionDiscovery(turn: Turn, caller: string, computer
   let state = prior
   if (!state) {
     const mcp = await createRuntimeMcpConnection()
-    const create = (operation: string) => callMcp<ManagedAdmission>(turn.signal, operation, { agentId: definition.id, input: fixtureInput(operation), computerId: computer.id, idempotencyKey: `${turn.id}:${operation}` },mcp)
+    const create = (operation: string) => callMcp<ManagedAdmission>(turn.signal, operation, { agent: definition.id, input: fixtureInput(operation), computerId: computer.id, idempotencyKey: `${turn.id}:${operation}` },mcp)
     const owned = await create("spawn"), requested = await create("start")
     for (const admission of [owned,requested]) assert.equal((await waitManagedTurn(turn.signal,admission.sessionId,admission.turnId)).status,"completed")
     const controls = await checkSessionControls(turn, computer, definition, {id:owned.sessionId},

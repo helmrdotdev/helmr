@@ -3,9 +3,7 @@
 An Agent reads a GitHub pull request and returns a summary of changed files.
 It does not post a review. GitHub requests carry the Turn's abort signal.
 
-Create an Environment Secret for the GitHub token and replace the example UUID
-in `agents/review-pull-request.ts` with its returned stable Secret ID before
-deployment. The Computer binds that Secret to `GITHUB_TOKEN` in raw mode so the
+Create the `GITHUB_TOKEN` Secret in the target Environment before deployment. The Computer binds that Secret to `GITHUB_TOKEN` in raw mode so the
 application can set the request authorization header. Keep the value out of
 source and Turn input.
 

@@ -56,8 +56,7 @@ SELECT *
 
 -- name: UpdateProjectDetails :one
 UPDATE projects
-   SET slug = sqlc.arg(slug),
-       name = sqlc.arg(name),
+   SET name = sqlc.arg(name),
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id)
@@ -92,8 +91,7 @@ RETURNING *;
 
 -- name: UpdateEnvironmentDetails :one
 UPDATE environments
-   SET slug = sqlc.arg(slug),
-       name = sqlc.arg(name),
+   SET name = sqlc.arg(name),
        color_hex = sqlc.arg(color_hex),
        history_retention_mode = CASE WHEN sqlc.arg(history_retention_mode)::text='' THEN history_retention_mode ELSE sqlc.arg(history_retention_mode) END,
        history_retention_seconds = CASE WHEN sqlc.arg(history_retention_mode)::text='' THEN history_retention_seconds ELSE sqlc.narg(history_retention_seconds)::bigint END,
@@ -116,3 +114,10 @@ SELECT *
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
  ORDER BY is_default DESC, lower(slug), created_at ASC;
+
+-- name: GetEnvironmentBySlug :one
+SELECT * FROM environments
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND slug = sqlc.arg(slug)
+   AND retired_at IS NULL;

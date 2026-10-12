@@ -73,14 +73,14 @@ func TestTemplateDefinitionRegistrationReusesExactInputsAndSeparatesPolicy(t *te
 func TestTemplateDefinitionRegistrationRejectsForeignSecretAndConflictingStoredInput(t *testing.T) {
 	f := newFixture(t)
 	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
-	output.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{{SecretID: uuid.NewV7().String(), Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
+	output.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{{Secret: "MISSING_TOKEN", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
 	err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
 		if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 			return err
 		}
 		return registerTemplateDefinitions(t.Context(), tx, f.env, f.deployment, output)
 	})
-	if !errors.Is(err, ErrDenied) {
+	if !errors.Is(err, ErrSecretUnavailable) {
 		t.Fatalf("foreign Secret %v", err)
 	}
 	output.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{}
@@ -176,9 +176,11 @@ func lockDefinitionTestEnvironment(t *testing.T, tx pgx.Tx, env uuid.UUID) error
 
 func TestTemplateDefinitionRegistrationUsesStableScopedSecretReferences(t *testing.T) {
 	f := newFixture(t)
-	otherEnv, foreign, revoked := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
+	otherEnv, foreign, revoked, active, version := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	if _, err := f.pool.Exec(t.Context(), `INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex) SELECT 'until_environment_deletion',$2,org_id,project_id,'other','Other','#112233' FROM environments WHERE id=$1;
- INSERT INTO secrets(id,environment_id,name,status,revoked_at) VALUES($3,$2,'TOKEN','revoked',clock_timestamp()),($4,$1,'OLD_TOKEN','revoked',clock_timestamp());`, pgx.QueryExecModeSimpleProtocol, f.env, otherEnv, foreign, revoked); err != nil {
+ INSERT INTO secrets(id,environment_id,name,status,revoked_at) VALUES($3,$2,'FOREIGN_TOKEN','revoked',clock_timestamp()),($4,$1,'OLD_TOKEN','revoked',clock_timestamp());
+ INSERT INTO secrets(id,environment_id,name,current_version_id) VALUES($5,$1,'TOKEN',$6);
+ INSERT INTO secret_versions(id,secret_id,version,nonce,ciphertext) VALUES($6,$5,1,decode(repeat('00',12),'hex'),decode(repeat('00',16),'hex'));`, pgx.QueryExecModeSimpleProtocol, f.env, otherEnv, foreign, revoked, active, version); err != nil {
 		t.Fatal(err)
 	}
 	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
@@ -190,17 +192,28 @@ func TestTemplateDefinitionRegistrationUsesStableScopedSecretReferences(t *testi
 			return RegisterProgramDefinitions(t.Context(), tx, f.env, f.deployment, output)
 		})
 	}
-	output.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{{SecretID: foreign.String(), Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
-	if err := register(); !errors.Is(err, ErrDenied) {
+	output.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{{Secret: "FOREIGN_TOKEN", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
+	if err := register(); !errors.Is(err, ErrSecretUnavailable) {
 		t.Fatalf("foreign stable reference: %v", err)
 	}
 	output.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{
-		{SecretID: revoked.String(), Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://API.EXAMPLE.COM:443", "https://api.example.com"}}},
-		{SecretID: revoked.String(), File: &secretbinding.File{Path: "/etc/build/token"}},
+		{Secret: "OLD_TOKEN", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://API.EXAMPLE.COM:443", "https://api.example.com"}}},
+		{Secret: "OLD_TOKEN", File: &secretbinding.File{Path: "/etc/build/token"}},
 	}
-	output.Metadata.Definitions[2].Template.Secrets = []definition.SecretBinding{{SecretID: revoked.String(), Env: &definition.SecretBindingEnv{Name: "RUNTIME_TOKEN", Mode: "raw"}}}
+	output.Metadata.Definitions[2].Template.Secrets = []definition.SecretBinding{{Secret: "OLD_TOKEN", Env: &definition.SecretBindingEnv{Name: "RUNTIME_TOKEN", Mode: "raw"}}}
+	if err := register(); !errors.Is(err, ErrSecretUnavailable) {
+		t.Fatalf("revoked Secret registered: %v", err)
+	}
+	for i := range output.Metadata.Definitions[2].Template.BuildSecrets {
+		output.Metadata.Definitions[2].Template.BuildSecrets[i].Secret = "TOKEN"
+	}
+	output.Metadata.Definitions[2].Template.Secrets[0].Secret = "TOKEN"
 	if err := register(); err != nil {
-		t.Fatalf("registration must not become a whole-deployment Secret readiness gate: %v", err)
+		t.Fatal(err)
+	}
+	var physical int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_secret_bindings WHERE environment_id=$1 AND secret_id=$2`, f.env, active).Scan(&physical); err != nil || physical != 3 {
+		t.Fatalf("public name did not pin the scoped internal identity: %d %v", physical, err)
 	}
 	rows, err := f.pool.Query(t.Context(), `SELECT preparation_spec_id IS NOT NULL,placement_kind,placement_target,mode,allowed_origins
         FROM computer_secret_bindings WHERE environment_id=$1 ORDER BY preparation_spec_id IS NOT NULL,placement_kind,placement_target`, f.env)

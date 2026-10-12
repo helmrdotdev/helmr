@@ -20,7 +20,7 @@ const client = new HelmrClient({
   apiKey: process.env.HELMR_API_KEY!,
 })
 
-const definitions = await client.templateDefinitions.list()
+const definitions = await client.templates.list()
 const computer = await client.computers.create({
   template: "issue-computer",
   key: "issue:123",
@@ -37,7 +37,7 @@ await session.enqueue([{ type: "text", text: "Check the tests" }], {
 
 Creation returns a Session and its initial Turn receipt. Retain their IDs for
 reconnection; observe the exact Turn for its result. Computer snapshots expose
-`definitionId` and `deploymentId`. Bind Secrets by stable `secretId` with explicit
+`template` and `deploymentId`. Bind Secrets by stable `secret` with explicit
 env or file placement; never place Secret values in business input.
 
 The client uses its supplied credentials even inside Agent code. Injected Turn

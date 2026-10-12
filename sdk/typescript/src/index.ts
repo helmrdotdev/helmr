@@ -9,13 +9,14 @@ export { defineConfig } from "./config"
 export type { SessionListQuery, ClientSessionRef, ClientSessionsApi } from "./client-session"
 
 export type {
-  ClientTemplateDefinitionsApi,
-  TemplateDefinitionInfo,
-  TemplateDefinitionListItem,
-  TemplateDefinitionListQuery,
-  TemplateDefinitionPage,
-  TemplateDefinitionGetQuery,
-} from "./client-template-definition"
+  ClientTemplatesApi,
+  TemplateInfo,
+  TemplateResources,
+  TemplateListItem,
+  TemplateListQuery,
+  TemplatePage,
+  TemplateGetQuery,
+} from "./client-template"
 
 export type {
   ClientComputersApi,
@@ -108,8 +109,9 @@ export type {
   ComputerDeleteRequest,
   ComputerDeleteReceipt,
   ComputerCommandRequest,
-  ComputerMembersQuery,
-  ComputerMember,
+  ComputerUsageQuery,
+  ComputerUsageCollection,
+  ComputerUsage,
   Computer,
   ComputerStatus,
   ComputerResidency,
@@ -120,7 +122,7 @@ export { type CancelReceipt, type CommandRef, type CommandInfo, type CommandOutc
 export type { CommandLogQuery, CommandLogStreamQuery, CommandLogRecord, CommandLogReadPage } from "./command-logs"
 
 export type { SessionCreateRequest, SessionCreateReceipt } from "./client-session"
-export type { ClientAgentDefinitionsApi, AgentDefinitionGetQuery, AgentDefinitionListQuery, AgentDefinitionListItem, AgentDefinitionInfo, AgentDefinitionPage } from "./client-agent-definition"
+export type { ClientAgentsApi, AgentGetQuery, AgentListQuery, AgentListItem, AgentInfo, AgentPage } from "./client-agent"
 
 export type { ContentPart, Content, HumanContent, InputPart, InputContent } from "./content"
 

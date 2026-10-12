@@ -34,7 +34,7 @@ function formErrorMessage(error: unknown): string {
 }
 
 function isProtectedEnvironment(env: Environment): boolean {
-  return PROTECTED_ENVIRONMENT_SLUGS.has(env.slug);
+  return PROTECTED_ENVIRONMENT_SLUGS.has(env.environment);
 }
 
 function ColorField(props: { value: string; onChange: (colorHex: string) => void }) {
@@ -90,8 +90,7 @@ function EditEnvironmentModal(props: {
     setSubmitting(true);
     setFormError(null);
     try {
-      // The slug is not editable from the console; the PATCH resends the current one.
-      await updateEnvironment(props.env.project_id, props.env.id, { slug: props.env.slug, name: nextName, color_hex: colorHex(), ...(retentionEdited() ? historyRetentionPolicy(retention()) : {}) });
+      await updateEnvironment(props.env.project, props.env.environment, { name: nextName, color_hex: colorHex(), ...(retentionEdited() ? historyRetentionPolicy(retention()) : {}) });
       await props.onSaved();
       props.onClose();
     } catch (error) {
@@ -117,8 +116,8 @@ function EditEnvironmentModal(props: {
           />
         </label>
         <label class={ui.field}>
-          <span>Slug</span>
-          <input type="text" class={ui.input} value={props.env.slug} disabled aria-label="Slug (not editable)" />
+          <span>Environment ID</span>
+          <input type="text" class={ui.input} value={props.env.environment} disabled aria-label="Environment ID (not editable)" />
         </label>
         <ColorField value={colorHex()} onChange={setColorHex} />
         <Show when={formError()}>
@@ -197,15 +196,15 @@ export function Environments() {
     const nextName = name().trim();
     const nextSlug = slug().trim();
     if (!nextName || !nextSlug) {
-      setFormError("Name and slug are required.");
+      setFormError("Name and Environment ID are required.");
       return;
     }
     setSubmitting(true);
     setFormError(null);
     try {
-      const env = await createEnvironment(currentProject.id, { name: nextName, slug: nextSlug, color_hex: colorHex(), ...historyRetentionPolicy(retention()) });
+      const env = await createEnvironment(currentProject.project, { name: nextName, environment: nextSlug, color_hex: colorHex(), ...historyRetentionPolicy(retention()) });
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
-      scope.setSelectedEnvironmentID(env.id);
+      scope.setSelectedEnvironmentID(env.environment);
       setCreating(false);
     } catch (error) {
       setFormError(formErrorMessage(error));
@@ -227,7 +226,7 @@ export function Environments() {
       />
 
       <Show when={project()} fallback={<StatePanel empty="No project selected." />}>
-        <DataTable columns={["Environment", "Slug", "Status", "History retention", "ID", { label: "Actions", srOnly: true }]} minWidth="min-w-200">
+        <DataTable columns={["Name", "Environment ID", "Status", "History retention", { label: "Actions", srOnly: true }]} minWidth="min-w-200">
           <For each={environments()}>
             {(env) => (
               <tr>
@@ -237,14 +236,13 @@ export function Environments() {
                     {env.name}
                   </span>
                 </td>
-                <td><code>{env.slug}</code></td>
-                <td><EnvironmentStatus env={env} selected={scope.selectedEnvironmentID() === env.id} /></td>
+                <td><IDText value={env.environment} mode="full" /></td>
+                <td><EnvironmentStatus env={env} selected={scope.selectedEnvironmentID() === env.environment} /></td>
                 <td>{env.history_retention_mode === "duration" ? `${env.history_retention_seconds} seconds after termination and obligation release` : "Until Environment deletion"}</td>
-                <td><IDText value={env.id} /></td>
                 <td class={ui.actionsCell}>
                   <div class="flex justify-end gap-1.5">
-                    <Show when={scope.selectedEnvironmentID() !== env.id}>
-                      <button type="button" class={ui.secondaryButton} onClick={() => scope.setSelectedEnvironmentID(env.id)}>
+                    <Show when={scope.selectedEnvironmentID() !== env.environment}>
+                      <button type="button" class={ui.secondaryButton} onClick={() => scope.setSelectedEnvironmentID(env.environment)}>
                         Use
                       </button>
                     </Show>
@@ -286,7 +284,7 @@ export function Environments() {
                 />
               </label>
               <label class={ui.field}>
-                <span>Slug</span>
+                <span>Environment ID</span>
                 <input
                   type="text"
                   class={ui.input}

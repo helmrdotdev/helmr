@@ -14,7 +14,7 @@ async function conversation(page: Page, kind: "text" | "choice" = "text") {
   const { session_id: sessionID, turn: { turn_id: turnID } } = await response.json() as { session_id: string; turn: { turn_id: string } };
   const askID = `00000000-0000-7000-8000-${crypto.randomUUID().slice(-12)}`;
   const seed = (mode: "text" | "choice" | "finalizing" | "output" | "disable-member" | "restore-member" | "expose-secret", referenceID = askID) => {
-    execFileSync("bash", ["tests/browser/fixtures/session-conversation.sh", catalog.environmentID, sessionID, turnID, referenceID, mode], { cwd: process.cwd() });
+    execFileSync("bash", ["tests/browser/fixtures/session-conversation.sh", catalog.environmentInternalID, sessionID, turnID, referenceID, mode], { cwd: process.cwd() });
   };
   seed(kind);
   const turnBase = `${catalog.base}/sessions/${sessionID}/turns/${turnID}`;
@@ -117,12 +117,12 @@ test("real API rejects a loaded question after organization scope loss and accep
 test("real Secret revocation preserves queued input for inspection and explicit cancellation", async ({ page }, testInfo) => {
   const f = await conversation(page);
   const created = await page.request.post(`${f.base}/secrets`, {
-    data: { name: "BROWSER_REVOCATION", value: "synthetic-browser-value", idempotency_key: crypto.randomUUID() },
+    data: { secret: "BROWSER_REVOCATION", value: "synthetic-browser-value", idempotency_key: crypto.randomUUID() },
   });
   expect(created.ok(), await created.text()).toBeTruthy();
   const secret = await created.json() as { id: string };
   // Exposure is a runtime fixture; revocation and its reconciliation use the real owners.
-  f.seed("expose-secret", secret.id);
+  f.seed("expose-secret", secret.secret);
   await page.goto(f.sessionURL);
   const enqueue = await page.request.post(`${f.base}/sessions/${f.sessionID}/enqueue`, { data: { input: [{ type: "text", text: "retained after revocation" }], idempotency_key: crypto.randomUUID() } });
   expect(enqueue.ok(), await enqueue.text()).toBeTruthy();

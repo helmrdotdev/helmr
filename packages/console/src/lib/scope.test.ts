@@ -4,10 +4,9 @@ import { resolveProjectSelection, resolveScopeID, type Project } from "./project
 
 const firstPage: Project[] = [
   {
-    id: "default-id",
-    slug: "default",
+    project: "default-id",
     name: "Default",
-    default_region_id: "region",
+    default_region_project: "region",
     is_default: true,
     created_at: "2026-09-02T00:00:00Z",
     updated_at: "2026-09-02T00:00:00Z",
@@ -22,7 +21,7 @@ test("does not replace a persisted project while detail is pending", () => {
 });
 
 test("uses resolved detail for a project beyond the loaded page", () => {
-  const detail = { ...firstPage[0], id: "page-two-id", slug: "page-two", is_default: false, environments: [] };
+  const detail = { ...firstPage[0], project: "page-two-id", is_default: false, environments: [] };
   expect(resolveProjectSelection(firstPage, "page-two-id", detail, false)).toEqual({
     project: detail,
     settled: true,
@@ -37,7 +36,7 @@ test("falls back only after detail returns not found", () => {
 });
 
 test("does not reselect a not-found project from a stale page", () => {
-  const stale = { ...firstPage[0], id: "deleted-id", slug: "deleted", is_default: false };
+  const stale = { ...firstPage[0], project: "deleted-id", is_default: false };
   expect(resolveProjectSelection([stale, firstPage[0]], "deleted-id", undefined, true)).toEqual({
     project: firstPage[0],
     settled: true,
@@ -45,7 +44,7 @@ test("does not reselect a not-found project from a stale page", () => {
 });
 
 test("definitive not-found wins over stale cached detail", () => {
-  const stale = { ...firstPage[0], id: "deleted-id", slug: "deleted", is_default: false };
+  const stale = { ...firstPage[0], project: "deleted-id", is_default: false };
   expect(resolveProjectSelection([stale, firstPage[0]], "deleted-id", stale, true)).toEqual({
     project: firstPage[0],
     settled: true,
@@ -53,7 +52,7 @@ test("definitive not-found wins over stale cached detail", () => {
 });
 
 test("not-found with no fallback stays settled without reselecting the stale project", () => {
-  const stale = { ...firstPage[0], id: "deleted-id", slug: "deleted", is_default: false };
+  const stale = { ...firstPage[0], project: "deleted-id", is_default: false };
   expect(resolveProjectSelection([stale], "deleted-id", stale, true)).toEqual({
     project: undefined,
     settled: true,
@@ -61,8 +60,8 @@ test("not-found with no fallback stays settled without reselecting the stale pro
 });
 
 test("consecutive not-found fallbacks exclude every rejected project", () => {
-  const projectA = { ...firstPage[0], id: "deleted-a", slug: "deleted-a", is_default: true };
-  const projectB = { ...firstPage[0], id: "deleted-b", slug: "deleted-b", is_default: false };
+  const projectA = { ...firstPage[0], project: "deleted-a", is_default: true };
+  const projectB = { ...firstPage[0], project: "deleted-b", is_default: false };
   expect(resolveProjectSelection([projectA, projectB], "deleted-b", projectB, true, new Set(["deleted-a"]))).toEqual({
     project: undefined,
     settled: true,

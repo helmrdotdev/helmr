@@ -25,8 +25,8 @@ how Slack conversations map to Sessions, see [Slack](/docs/concepts/slack).
 
 ## Create the Agent's Slack app
 
-1. In the Console, open a Deployment in the Environment. Under **Agent
-   definitions**, choose **Slack connection** next to the Agent.
+1. In the Console, select the Environment, open **Agents**, and choose the Agent.
+   Under **Slack Connection**, choose **Manage Slack connection**.
 2. Choose **Connect Slack**. Each Agent has one Slack connection per
    Environment.
 3. Choose **Create app in Slack**. Slack opens with an app manifest already

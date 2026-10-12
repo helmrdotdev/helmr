@@ -23,6 +23,7 @@ const (
 // MembersQuery selects a page of a Computer's members. A zero Limit selects
 // DefaultListLimit; Cursor continues a previous page of the same Computer.
 type MembersQuery struct {
+	Kind   string
 	Cursor string
 	Limit  int32
 }
@@ -57,6 +58,9 @@ func ValidateMembersQuery(environmentID, computerID uuid.UUID, query MembersQuer
 	return err
 }
 func parseMembersQuery(env, computer uuid.UUID, query MembersQuery) (int32, membersCursor, error) {
+	if query.Kind != "session" && query.Kind != "command" {
+		return 0, membersCursor{}, invalidInput("Computer usage kind must be session or command")
+	}
 	limit := query.Limit
 	if limit == 0 {
 		limit = DefaultListLimit
@@ -67,7 +71,7 @@ func parseMembersQuery(env, computer uuid.UUID, query MembersQuery) (int32, memb
 	var cursor membersCursor
 	if query.Cursor != "" {
 		raw, err := base64.RawURLEncoding.DecodeString(query.Cursor)
-		if err != nil || json.Unmarshal(raw, &cursor) != nil || cursor.CreatedAt.IsZero() || ids.Validate(cursor.ID) != nil || (cursor.Kind != "session" && cursor.Kind != "command") || cursor.EnvironmentID != env.String() || cursor.ComputerID != computer.String() {
+		if err != nil || json.Unmarshal(raw, &cursor) != nil || cursor.CreatedAt.IsZero() || ids.Validate(cursor.ID) != nil || cursor.Kind != query.Kind || cursor.EnvironmentID != env.String() || cursor.ComputerID != computer.String() {
 			return 0, cursor, invalidInput("computer member cursor is invalid for this Computer")
 		}
 	}
@@ -93,7 +97,7 @@ func ListMembers(ctx context.Context, database db.DBTX, scope Scope, computer uu
  FROM sessions s WHERE s.environment_id=$1 AND s.computer_id=$2 AND (s.status IN ('open','closing') OR EXISTS(SELECT 1 FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id AND p.fenced_at IS NULL))
  UNION ALL SELECT 'command',c.id,CASE WHEN c.terminal_at IS NOT NULL THEN 'unreconciled' WHEN c.status='stopping' THEN 'draining' WHEN c.status='running' THEN 'running' ELSE 'admitted' END,c.created_at
  FROM computer_commands c WHERE c.environment_id=$1 AND c.computer_id=$2 AND (c.terminal_at IS NULL OR (c.computer_lease_epoch IS NOT NULL AND c.process_reconciled_at IS NULL))
- ) SELECT kind,id::text,state,created_at FROM members WHERE NOT $3 OR (created_at,id,kind)<($4,$5,$6) ORDER BY created_at DESC,id DESC,kind DESC LIMIT $7`, scope.EnvironmentID, computer, query.Cursor != "", cursor.CreatedAt, after, cursor.Kind, limit+1)
+ ) SELECT kind,id::text,state,created_at FROM members WHERE kind=$8 AND (NOT $3 OR (created_at,id,kind)<($4,$5,$6)) ORDER BY created_at DESC,id DESC,kind DESC LIMIT $7`, scope.EnvironmentID, computer, query.Cursor != "", cursor.CreatedAt, after, cursor.Kind, limit+1, query.Kind)
 	if err != nil {
 		return MembersPage{}, err
 	}

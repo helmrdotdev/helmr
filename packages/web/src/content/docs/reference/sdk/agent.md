@@ -64,7 +64,7 @@ interface AgentDefinition<I extends InputContent = InputContent, O extends Json 
 
 | Field | Required | Description |
 | --- | --- | --- |
-| `id` | yes | Definition ID, matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Used by `client.sessions.create(id)` and `helmr session create`. |
+| `id` | yes | Definition ID, matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Used by `client.sessions.create({ agent: id })` and `helmr session create`. |
 | `template` | yes | A `template()` definition. New Sessions run on a Computer created from it unless the start request names an existing Computer. See [Computer](/docs/reference/sdk/computer). |
 | `init` | no | Runs once per Session process before its first Turn. The returned value is `ctx.initResult`. |
 | `turn` | yes | Handles one Turn. Its JSON return value is the Turn's machine `result`. |
@@ -265,7 +265,8 @@ client.sessions.ref(id: string): ClientSessionRef
 | Form | Fields |
 | --- | --- |
 | Page | `parentSessionId?`, `requesterSessionId?`, `status?` (one `SessionStatus` or an array), `cursor?`, `limit?` (1–100) |
-| Exact key lookup | `agentId` (Agent UUID) and `key`, both required; no other fields |
+| Agent filter | `agent` (declared identifier); current membership is not required |
+| Exact key lookup | One Agent selector plus the Session `key`; no other filters or pagination |
 
 ### `ClientSessionRef`
 
@@ -291,7 +292,8 @@ payloads are listed in [Session events](/docs/reference/events).
 
 | Field | Type |
 | --- | --- |
-| `id`, `agentId`, `deploymentId`, `rootSessionId` | `string` |
+| `id`, `deploymentId`, `rootSessionId` | `string` UUIDs |
+| `agent`, `template` | Authored Agent identifier and its pinned default Template identifier |
 | `computerId`, `parentSessionId`, `requesterSessionId` | `string \| null` |
 | `key` | `string`, optional |
 | `slackChannelId` | `string`, optional |
@@ -322,15 +324,15 @@ payloads are listed in [Session events](/docs/reference/events).
 `TurnOutcome` has `status` (`completed`, `failed`, `interrupted` or
 `cancelled`) and optional `result`, `response`, `error` and `payloadExpiredAt`.
 
-## Client: Agent definitions
+## Client: Agents
 
 ```ts
-client.agentDefinitions.get(id: string, query?: { deploymentId?: string }, options?): Promise<AgentDefinitionInfo>
-client.agentDefinitions.list(query?: { deploymentId?: string; cursor?: string; limit?: number }, options?): Promise<AgentDefinitionPage>
+client.agents.get(id: string, query?: { deploymentId?: string }, options?): Promise<AgentInfo>
+client.agents.list(query?: { deploymentId?: string; cursor?: string; limit?: number }, options?): Promise<AgentPage>
 ```
 
-`AgentDefinitionInfo` is `{ id, agentId, deploymentId }`, where `id` is the
-definition ID and `agentId` is the Agent's stable UUID across Deployments.
-`AgentDefinitionPage` is `{ deploymentId, items: { id, agentId }[], nextCursor? }`.
+`AgentInfo` is `{ agent, template, deploymentId }`, where `agent` is the
+identifier declared in code and remains stable across Deployments within its environment.
+`AgentPage` is `{ deploymentId, items: { agent, template }[], nextCursor? }`.
 Omitting `deploymentId` reads the current Deployment; a list cursor keeps its
 original Deployment.

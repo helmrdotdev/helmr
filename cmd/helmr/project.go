@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"unicode"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/client"
@@ -79,7 +78,7 @@ func projectListCommand() *cobra.Command {
 				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			for _, project := range response.Projects {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", project.ID, project.Slug, project.Name)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", project.Project, project.Name)
 			}
 			return nil
 		},
@@ -114,10 +113,10 @@ func projectGetCommand() *cobra.Command {
 }
 
 func projectCreateCommand() *cobra.Command {
-	var slug string
+	var name string
 	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use:   "create NAME",
+		Use:   "create PROJECT",
 		Short: "Create a project.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -125,30 +124,26 @@ func projectCreateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			name := strings.TrimSpace(args[0])
+			slug := strings.TrimSpace(args[0])
 			if name == "" {
-				return errors.New("project name is required")
-			}
-			slug = requestedSlug(slug, name)
-			if slug == "" {
-				return errors.New("project slug is required; pass --slug")
+				name = slug
 			}
 			controlPlane, err := sessionControlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			project, err := controlPlane.CreateProject(cmd.Context(), api.CreateProjectRequest{HistoryRetentionPolicy: retention, Slug: slug, Name: name})
+			project, err := controlPlane.CreateProject(cmd.Context(), api.CreateProjectRequest{HistoryRetentionPolicy: retention, Project: slug, Name: name})
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
 				return writeJSON(cmd.OutOrStdout(), project)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", project.ID, project.Slug, project.Name)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", project.Project, project.Name)
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&slug, "slug", "", "Project slug. Defaults to a slug generated from NAME.")
+	cmd.Flags().StringVar(&name, "name", "", "Display name. Defaults to the identifier.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	addHistoryRetentionFlags(cmd)
 	return cmd
@@ -156,15 +151,14 @@ func projectCreateCommand() *cobra.Command {
 
 func projectUpdateCommand() *cobra.Command {
 	var name string
-	var slug string
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "update PROJECT",
 		Short: "Update a project.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("slug") {
-				return errors.New("project update requires --name or --slug")
+			if !cmd.Flags().Changed("name") {
+				return errors.New("project update requires --name")
 			}
 			controlPlane, err := sessionControlPlaneClient(cmd)
 			if err != nil {
@@ -177,27 +171,19 @@ func projectUpdateCommand() *cobra.Command {
 			if !cmd.Flags().Changed("name") {
 				name = project.Name
 			}
-			if !cmd.Flags().Changed("slug") {
-				slug = project.Slug
-			}
 			name = strings.TrimSpace(name)
-			slug = strings.TrimSpace(slug)
-			if slug == "" {
-				return errors.New("--slug cannot be empty")
-			}
-			updated, err := controlPlane.UpdateProject(cmd.Context(), project.ID, api.UpdateProjectRequest{Slug: slug, Name: name})
+			updated, err := controlPlane.UpdateProject(cmd.Context(), project.Project, api.UpdateProjectRequest{Name: name})
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
 				return writeJSON(cmd.OutOrStdout(), updated)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", updated.ID, updated.Slug, updated.Name)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", updated.Project, updated.Name)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "Project name.")
-	cmd.Flags().StringVar(&slug, "slug", "", "Project slug.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	return cmd
 }
@@ -226,12 +212,12 @@ func envListCommand() *cobra.Command {
 				return writeJSON(cmd.OutOrStdout(), project.Environments)
 			}
 			for _, environment := range project.Environments {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", environment.ID, environment.Slug, environment.Name)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", environment.Environment, environment.Name)
 			}
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&projectRef, "project", "", "Project slug or ID.")
+	cmd.Flags().StringVar(&projectRef, "project", "", "Project ID.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON array.")
 	return cmd
 }
@@ -256,7 +242,7 @@ func envGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			environment, err = controlPlane.GetEnvironment(cmd.Context(), project.ID, environment.ID)
+			environment, err = controlPlane.GetEnvironment(cmd.Context(), project.Project, environment.Environment)
 			if err != nil {
 				return err
 			}
@@ -266,18 +252,18 @@ func envGetCommand() *cobra.Command {
 			return writeEnvironment(cmd.OutOrStdout(), environment)
 		},
 	}
-	cmd.Flags().StringVar(&projectRef, "project", "", "Project slug or ID.")
+	cmd.Flags().StringVar(&projectRef, "project", "", "Project ID.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	return cmd
 }
 
 func envCreateCommand() *cobra.Command {
 	var projectRef string
-	var slug string
+	var name string
 	var colorHex string
 	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use:   "create NAME --project PROJECT",
+		Use:   "create ENVIRONMENT --project PROJECT",
 		Short: "Create an environment.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -289,13 +275,9 @@ func envCreateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			name := strings.TrimSpace(args[0])
+			slug := strings.TrimSpace(args[0])
 			if name == "" {
-				return errors.New("environment name is required")
-			}
-			slug = requestedSlug(slug, name)
-			if slug == "" {
-				return errors.New("environment slug is required; pass --slug")
+				name = slug
 			}
 			if !cmd.Flags().Changed("color") {
 				colorHex = defaultEnvironmentColorHex(slug)
@@ -312,20 +294,20 @@ func envCreateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			environment, err := controlPlane.CreateEnvironment(cmd.Context(), project.ID, api.CreateEnvironmentRequest{HistoryRetentionPolicy: retention, Slug: slug, Name: name, ColorHex: colorHex})
+			environment, err := controlPlane.CreateEnvironment(cmd.Context(), project.Project, api.CreateEnvironmentRequest{HistoryRetentionPolicy: retention, Environment: slug, Name: name, ColorHex: colorHex})
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
 				return writeJSON(cmd.OutOrStdout(), environment)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", environment.ID, environment.Slug, environment.Name, environment.ColorHex)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", environment.Environment, environment.Name, environment.ColorHex)
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&projectRef, "project", "", "Project slug or ID.")
-	cmd.Flags().StringVar(&slug, "slug", "", "Environment slug. Defaults to a slug generated from NAME.")
-	cmd.Flags().StringVar(&colorHex, "color", "", "Environment color as #RRGGBB. Defaults from the slug.")
+	cmd.Flags().StringVar(&projectRef, "project", "", "Project ID.")
+	cmd.Flags().StringVar(&name, "name", "", "Display name. Defaults to the identifier.")
+	cmd.Flags().StringVar(&colorHex, "color", "", "Environment color as #RRGGBB. Defaults from the Environment ID.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	addHistoryRetentionFlags(cmd)
 	return cmd
@@ -334,7 +316,6 @@ func envCreateCommand() *cobra.Command {
 func envUpdateCommand() *cobra.Command {
 	var projectRef string
 	var name string
-	var slug string
 	var colorHex string
 	var jsonOutput bool
 	cmd := &cobra.Command{
@@ -350,8 +331,8 @@ func envUpdateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("slug") && !cmd.Flags().Changed("color") && !cmd.Flags().Changed("history-retention-mode") && !cmd.Flags().Changed("history-retention-seconds") {
-				return errors.New("environment update requires a name, slug, color, or history retention change")
+			if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("color") && !cmd.Flags().Changed("history-retention-mode") && !cmd.Flags().Changed("history-retention-seconds") {
+				return errors.New("environment update requires a name, color, or history retention change")
 			}
 			controlPlane, err := sessionControlPlaneClient(cmd)
 			if err != nil {
@@ -361,42 +342,34 @@ func envUpdateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			environment, err = controlPlane.GetEnvironment(cmd.Context(), project.ID, environment.ID)
+			environment, err = controlPlane.GetEnvironment(cmd.Context(), project.Project, environment.Environment)
 			if err != nil {
 				return err
 			}
 			if !cmd.Flags().Changed("name") {
 				name = environment.Name
 			}
-			if !cmd.Flags().Changed("slug") {
-				slug = environment.Slug
-			}
 			if !cmd.Flags().Changed("color") {
 				colorHex = environment.ColorHex
 			}
 			name = strings.TrimSpace(name)
-			slug = strings.TrimSpace(slug)
-			if slug == "" {
-				return errors.New("--slug cannot be empty")
-			}
 			colorHex, err = normalizeEnvironmentColorFlag(colorHex)
 			if err != nil {
 				return err
 			}
-			updated, err := controlPlane.UpdateEnvironment(cmd.Context(), project.ID, environment.ID, api.UpdateEnvironmentRequest{HistoryRetentionPolicy: retention, Slug: slug, Name: name, ColorHex: colorHex})
+			updated, err := controlPlane.UpdateEnvironment(cmd.Context(), project.Project, environment.Environment, api.UpdateEnvironmentRequest{HistoryRetentionPolicy: retention, Name: name, ColorHex: colorHex})
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
 				return writeJSON(cmd.OutOrStdout(), updated)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", updated.ID, updated.Slug, updated.Name, updated.ColorHex)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", updated.Environment, updated.Name, updated.ColorHex)
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&projectRef, "project", "", "Project slug or ID.")
+	cmd.Flags().StringVar(&projectRef, "project", "", "Project ID.")
 	cmd.Flags().StringVar(&name, "name", "", "Environment name.")
-	cmd.Flags().StringVar(&slug, "slug", "", "Environment slug.")
 	cmd.Flags().StringVar(&colorHex, "color", "", "Environment color as #RRGGBB.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	addHistoryRetentionFlags(cmd)
@@ -430,62 +403,29 @@ func resolveProjectEnvironment(ctx context.Context, controlPlane *client.Client,
 	}
 	environmentRef = strings.TrimSpace(environmentRef)
 	for _, environment := range project.Environments {
-		if environment.ID == environmentRef || environment.Slug == strings.ToLower(environmentRef) {
+		if environment.Environment == environmentRef {
 			return project, environment, nil
 		}
 	}
 	return api.ProjectSummary{}, api.EnvironmentSummary{}, fmt.Errorf("environment %q not found in project %q", environmentRef, projectRef)
 }
 
-func requestedSlug(raw string, name string) string {
-	raw = strings.TrimSpace(raw)
-	if raw != "" {
-		return strings.ToLower(raw)
-	}
-	return slugify(name)
-}
-
-func slugify(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	var builder strings.Builder
-	lastHyphen := false
-	for _, r := range value {
-		switch {
-		case r >= 'a' && r <= 'z' || r >= '0' && r <= '9':
-			builder.WriteRune(r)
-			lastHyphen = false
-		case unicode.IsSpace(r) || r == '-':
-			if builder.Len() > 0 && !lastHyphen {
-				builder.WriteByte('-')
-				lastHyphen = true
-			}
-		}
-	}
-	slug := strings.Trim(builder.String(), "-")
-	if len(slug) > 48 {
-		slug = slug[:48]
-	}
-	return strings.Trim(slug, "-")
-}
-
 func writeProject(w io.Writer, project api.ProjectSummary) error {
-	fmt.Fprintf(w, "ID: %s\n", project.ID)
-	fmt.Fprintf(w, "Slug: %s\n", project.Slug)
+	fmt.Fprintf(w, "ID: %s\n", project.Project)
 	fmt.Fprintf(w, "Name: %s\n", project.Name)
 	if len(project.Environments) == 0 {
 		return nil
 	}
 	fmt.Fprintln(w, "Environments:")
 	for _, environment := range project.Environments {
-		fmt.Fprintf(w, "  %s\t%s\t%s\t%s\n", environment.ID, environment.Slug, environment.Name, environment.ColorHex)
+		fmt.Fprintf(w, "  %s\t%s\t%s\n", environment.Environment, environment.Name, environment.ColorHex)
 	}
 	return nil
 }
 
 func writeEnvironment(w io.Writer, environment api.EnvironmentSummary) error {
-	fmt.Fprintf(w, "ID: %s\n", environment.ID)
-	fmt.Fprintf(w, "Project: %s\n", environment.ProjectID)
-	fmt.Fprintf(w, "Slug: %s\n", environment.Slug)
+	fmt.Fprintf(w, "ID: %s\n", environment.Environment)
+	fmt.Fprintf(w, "Project: %s\n", environment.Project)
 	fmt.Fprintf(w, "Name: %s\n", environment.Name)
 	fmt.Fprintf(w, "Color: %s\n", environment.ColorHex)
 	fmt.Fprintf(w, "History retention: %s\n", environment.HistoryRetentionMode)

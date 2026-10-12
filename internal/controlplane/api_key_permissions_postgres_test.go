@@ -89,11 +89,11 @@ func TestAPIKeyHTTPPostgresContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(issued.Permissions, wantGrants) || issued.RawKey == "" || issued.Status != api.APIKeyStatusActive ||
-		issued.ProjectID != fixture.projectID.String() || issued.EnvironmentID != fixture.environmentID.String() {
+		issued.Project != "api-keys" || issued.Environment != "production" {
 		t.Fatalf("issued = %+v", issued.APIKeySummary)
 	}
 
-	path := fmt.Sprintf("/api/projects/%s/environments/%s/api-keys/", fixture.projectID, fixture.environmentID)
+	path := "/api/projects/api-keys/environments/production/api-keys/"
 	if response := fixture.request(t, http.MethodDelete, path+issued.ID, fixture.token, ""); response.Code != http.StatusNoContent {
 		t.Fatalf("revoke status = %d: %s", response.Code, response.Body.String())
 	}
@@ -200,7 +200,7 @@ func (f apiKeyHTTPPostgresFixture) list(t *testing.T, filter string, cursor stri
 
 func (f apiKeyHTTPPostgresFixture) listRecorder(t *testing.T, query string) *httptest.ResponseRecorder {
 	t.Helper()
-	return f.request(t, http.MethodGet, fmt.Sprintf("/api/projects/%s/environments/%s/api-keys?%s", f.projectID, f.environmentID, query), f.token, "")
+	return f.request(t, http.MethodGet, "/api/projects/api-keys/environments/production/api-keys?"+query, f.token, "")
 }
 
 func (f apiKeyHTTPPostgresFixture) issueRecorder(t *testing.T, name string, grants []api.APIKeyPermissionGrant) *httptest.ResponseRecorder {
@@ -209,7 +209,7 @@ func (f apiKeyHTTPPostgresFixture) issueRecorder(t *testing.T, name string, gran
 	if err != nil {
 		t.Fatal(err)
 	}
-	return f.request(t, http.MethodPost, fmt.Sprintf("/api/projects/%s/environments/%s/api-keys", f.projectID, f.environmentID), f.token, string(body))
+	return f.request(t, http.MethodPost, "/api/projects/api-keys/environments/production/api-keys", f.token, string(body))
 }
 
 func allAPIKeyPermissionScopes() []api.APIKeyScope {

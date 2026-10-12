@@ -5,7 +5,7 @@ await verify("missing-secret", async ({ client, marker, cleanup, objects }) => {
       const ref = await client.computers.create({ template: "helmr-secret-smoke", key: marker,
           idempotencyKey: `missing:${marker}`,
           secrets: [
-            { secretId: "01900000-0000-7000-8000-000000000099", env: { name: "VERIFICATION_SECRET", mode: "raw" } },
+            { secret: "MISSING_SECRET", env: { name: "VERIFICATION_SECRET", mode: "raw" } },
           ], }, { signal: deadline(30_000) })
       objects.computer_ids.push(ref.id)
       cleanup(() =>

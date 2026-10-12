@@ -9,7 +9,6 @@ describe("HelmrClient Computers", () => {
       id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
       template: "repository-agent",
       key: "repository",
-      definition_id: "repository-agent",
       delete_after_unused_ms: null, unused_since: null,
       deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
       status: "available",
@@ -26,7 +25,7 @@ describe("HelmrClient Computers", () => {
 			computers: [{
 				id: computer.id,
 				key: computer.key,
-				definition_id: computer.definition_id,
+				template: computer.template,
       delete_after_unused_ms: null, unused_since: null,
 				deployment_id: computer.deployment_id,
 				status: "available",
@@ -51,9 +50,9 @@ describe("HelmrClient Computers", () => {
     const signal = new AbortController().signal
 
     await expect(client.computers.create({ template: "repository-agent", secrets: [{
-        secretId: { name: "GITHUB_TOKEN" } as never,
+        secret: { name: "GITHUB_TOKEN" } as never,
         env: { name: "GITHUB_TOKEN", mode: "raw" },
-      }], })).rejects.toThrow("Secret ID")
+      }], })).rejects.toThrow("Secret name")
     expect(requests).toHaveLength(0)
 
     const inertRef = client.computers.ref(
@@ -64,8 +63,8 @@ describe("HelmrClient Computers", () => {
 
     const created = await client.computers.create({ template: "repository-agent", key: "repository",
         secrets: [
-          { secretId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38", env: { name: "GITHUB_TOKEN", mode: "raw" } },
-          { secretId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc39", file: { path: "/run/secrets/model.json" } },
+          { secret: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38", env: { name: "GITHUB_TOKEN", mode: "raw" } },
+          { secret: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc39", file: { path: "/run/secrets/model.json" } },
         ],
         idempotencyKey: "create-repository", }, { signal })
     expect(created.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")
@@ -76,8 +75,8 @@ describe("HelmrClient Computers", () => {
       template: "repository-agent",
       key: "repository",
       secrets: [
-        { secretId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38", env: { name: "GITHUB_TOKEN", mode: "raw" } },
-        { secretId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc39", file: { path: "/run/secrets/model.json" } },
+        { secret: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38", env: { name: "GITHUB_TOKEN", mode: "raw" } },
+        { secret: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc39", file: { path: "/run/secrets/model.json" } },
       ],
       idempotency_key: "create-repository",
     })
@@ -87,14 +86,14 @@ describe("HelmrClient Computers", () => {
     expect(retrieved).toMatchObject({
       id: computer.id,
       key: "repository",
-      definitionId: "repository-agent",
+      template: "repository-agent",
     })
     expect(requests[1]!.url).toBe(
       "https://api.example.test/v1/computers/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
     )
 
     const matches = await client.computers.list({ key: "repository" })
-    expect(matches.items[0]?.definitionId).toBe("repository-agent")
+    expect(matches.items[0]?.template).toBe("repository-agent")
     expect(matches.items[0]?.residency).toBe("unavailable")
     expect(requests[2]!.url).toBe(
       "https://api.example.test/v1/computers?key=repository",
@@ -211,12 +210,11 @@ describe("HelmrClient transport errors", () => {
 })
 
 describe("HelmrClient Secrets", () => {
-  test("uses stable ID refs and exact name collection lookup", async () => {
+  test("uses one public identifier for creation, refs and retrieval", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = []
-    const secretID = "019c8f1e-9b42-7b2c-8a4c-4b3a7f9f6d21"
+    const secretID = "github-token"
     const active = {
-      id: secretID,
-      name: "github-token",
+      secret: secretID,
       status: "active",
       created_at: "2026-07-25T01:00:00Z",
     }
@@ -248,13 +246,13 @@ describe("HelmrClient Secrets", () => {
     const signal = new AbortController().signal
 
     const created = await client.secrets.create({
-      name: "github-token",
+      secret: "github-token",
       value: "first",
       idempotencyKey: "create-1",
     }, { signal })
-    expect(created.id).toBe(secretID)
+    expect(created.secret).toBe(secretID)
     expect(JSON.parse(String(requests[0]!.init?.body))).toEqual({
-      name: "github-token",
+      secret: "github-token",
       value: "first",
       idempotency_key: "create-1",
     })
@@ -266,7 +264,7 @@ describe("HelmrClient Secrets", () => {
     )
 
     const secretRef = client.secrets.ref(secretID)
-    expect(secretRef.id).toBe(secretID)
+    expect(secretRef.secret).toBe(secretID)
     const rotated = await secretRef.rotate({
       value: "second",
       idempotencyKey: "rotate-1",
@@ -299,7 +297,7 @@ describe("HelmrClient Secrets", () => {
     })
   })
 
-  test("rejects a non-v7 Secret ID before transport", () => {
+  test("rejects a malformed Secret ID before transport", () => {
     const client = new HelmrClient({
       url: "https://api.example.test",
       apiKey: "api-key",
@@ -309,8 +307,8 @@ describe("HelmrClient Secrets", () => {
     })
 
     expect(() =>
-      client.secrets.ref("019c8f1e-9b42-4b2c-8a4c-4b3a7f9f6d21")
-    ).toThrow("Secret ID must be a canonical UUIDv7")
+      client.secrets.ref("bad/name")
+    ).toThrow("Secret name is invalid")
   })
 })
 
@@ -383,20 +381,20 @@ describe("HelmrClient Deployments", () => {
 
 describe("HelmrClient Schedules", () => {
   const id = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36"
-  const schedule = { id, agent_id:id, deployment_id:id, trigger_key:"daily", input:[{type:"text",text:"Create the report"}], cron:{pattern:"0 * * * *",timezone:"UTC"}, active_from:"2026-07-24T11:00:00Z", next_fire_at:"2026-07-24T12:00:00Z" }
+  const schedule = { id, agent:"reporter", deployment_id:id, trigger_key:"daily", input:[{type:"text",text:"Create the report"}], cron:{pattern:"0 * * * *",timezone:"UTC"}, active_from:"2026-07-24T11:00:00Z", next_fire_at:"2026-07-24T12:00:00Z" }
   test("retrieves pinned activations and pages Agent-filtered triggers", async () => {
     const requests:string[]=[]
     const client = new HelmrClient({url:"https://api.example.test",apiKey:"api-key",fetch:(async (input: URL | RequestInfo) => {
       requests.push(String(input)); return String(input).includes("?") ? Response.json({schedules:[schedule],next_cursor:"next"}) : Response.json(schedule)
     }) as typeof fetch})
-    expect(await client.schedules.get(id)).toMatchObject({id,agentId:id,deploymentId:id,triggerKey:"daily",input:[{type:"text",text:"Create the report"}],activeFrom:schedule.active_from})
-    const page = await client.schedules.list({agentId:id,limit:2,cursor:"previous"})
+    expect(await client.schedules.get(id)).toMatchObject({id,agent:"reporter",deploymentId:id,triggerKey:"daily",input:[{type:"text",text:"Create the report"}],activeFrom:schedule.active_from})
+    const page = await client.schedules.list({agent:"reporter",limit:2,cursor:"previous"})
     expect(page.items).toHaveLength(1)
     expect(page.nextCursor).toBe("next")
-    expect(requests[1]).toBe(`https://api.example.test/v1/schedules?agent_id=${id}&cursor=previous&limit=2`)
+    expect(requests[1]).toBe(`https://api.example.test/v1/schedules?agent=reporter&cursor=previous&limit=2`)
   })
   test("requires the pinned Agent and Deployment identities",async()=>{
-    for (const field of ["id","agent_id","deployment_id"] as const) {
+    for (const field of ["id","deployment_id"] as const) {
       const client = new HelmrClient({url:"https://api.example.test",apiKey:"api-key",fetch:(async()=>Response.json({...schedule,[field]:"invalid"})) as typeof fetch})
       await expect(client.schedules.get(id)).rejects.toThrow("ID")
     }
@@ -405,8 +403,8 @@ describe("HelmrClient Schedules", () => {
 
 describe("HelmrClient Sessions", () => {
   const session = {
+    agent: "worker", template: "machine",
     id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-    agent_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
     deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
     root_session_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
     initial_turn: null, activity: { process: null },
@@ -455,7 +453,7 @@ describe("HelmrClient Sessions", () => {
       status: "unknown",
     })).rejects.toThrow("Session list status is invalid")
     await expect(client.sessions.list({
-      agentId: session.agent_id,
+      agent: "worker",
       key: "thread:1",
       // @ts-expect-error the exact key lookup does not filter by status.
       status: "open",
@@ -480,4 +478,12 @@ describe("HelmrClient Sessions", () => {
     )
   })
 
+})
+
+test("removed Agent UUID selectors fail before transport instead of widening a list", async () => {
+  let calls = 0
+  const client = new HelmrClient({ apiKey: "key", fetch: (async () => { calls++; throw new Error("unexpected request") }) as typeof fetch })
+  await expect(client.sessions.list({ agentId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37" } as never)).rejects.toThrow("Unsupported Session list query")
+  await expect(client.schedules.list({ agentId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37" } as never)).rejects.toThrow("Unsupported Schedule list query")
+  expect(calls).toBe(0)
 })

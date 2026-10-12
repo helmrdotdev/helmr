@@ -43,9 +43,9 @@ func TestDecodeRequestJSONPublicMessages(t *testing.T) {
 	}{
 		{
 			name: "mistyped nested field",
-			body: `{"secrets":[{"secretId":7}]}`,
+			body: `{"secrets":[{"secret":7}]}`,
 			out:  func() any { return new(api.CreateComputerRequest) },
-			want: `field "secrets.0.secretId" must be a JSON string, got number`,
+			want: `field "secrets.0.secret" must be a JSON string, got number`,
 		},
 		{
 			name: "mistyped array field",

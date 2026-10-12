@@ -25,7 +25,7 @@ test("project detail encodes the project reference", async () => {
   let requested = "";
   globalThis.fetch = (async (input) => {
     requested = String(input);
-    return Response.json({ id: "project-id", slug: "project slug", environments: [] });
+    return Response.json({ project: "project-id", environments: [] });
   }) as typeof fetch;
 
   await getProject("project slug");
@@ -33,13 +33,13 @@ test("project detail encodes the project reference", async () => {
   expect(requested).toBe("/api/projects/project%20slug");
 });
 
-test("environment update patches name and color and resends the slug", async () => {
+test("environment update patches name and color while preserving its identifier", async () => {
   let requested = "";
   let init: RequestInit | undefined;
   globalThis.fetch = (async (input, requestInit) => {
     requested = String(input);
     init = requestInit;
-    return Response.json({ id: "env-1", slug: "staging", name: "Staging 2", color_hex: "#F59E0B" });
+    return Response.json({ environment: "staging", name: "Staging 2", color_hex: "#F59E0B" });
   }) as typeof fetch;
 
   const environment = await updateEnvironment("project/1", "env/1", { slug: "staging", name: "Staging 2", color_hex: "#F59E0B" });

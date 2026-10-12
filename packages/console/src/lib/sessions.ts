@@ -6,14 +6,13 @@ import { postJson, request } from "./api";
 export type SessionStatus = "open" | "closing" | "closed" | "cancelled";
 export type ProcessStop = { process_epoch: number; turn_id: string | null; state: "requested" | "stopping" | "stopped"; deadline: string };
 export type Session = {
-  agent_definition_id: string;
-  template_definition_id: string;
+  agent: string;
+  template: string;
   activity: {
     process: { epoch: number; status: string; applied: boolean; reconstruction_required: boolean; stop: ProcessStop | null } | null;
   };
   slack_channel_id?: string | null;
   id: string;
-  agent_id: string;
   deployment_id: string;
   computer_id: string | null;
   root_session_id: string;
@@ -95,7 +94,7 @@ export type ListSessionsResponse = {
 export async function listSessions(options: {
   projectID: string;
   environmentID: string;
-  agentID?: string | undefined;
+  agent?: string | undefined;
   statuses?: SessionStatus[] | undefined;
   cursor?: string | undefined;
   limit?: number | undefined;
@@ -104,7 +103,7 @@ export async function listSessions(options: {
     throw new Error("Session project and environment are required");
   }
   const params = new URLSearchParams();
-  if (options.agentID) params.set("agent_id", options.agentID);
+  if (options.agent) params.set("agent", options.agent);
   for (const status of options.statuses ?? []) params.append("status", status);
   if (options.cursor) params.set("cursor", options.cursor);
   if (options.limit !== undefined) params.set("limit", String(options.limit));
@@ -149,8 +148,8 @@ export function sessionConsolePath(
   environmentID: string,
 ): string {
   const params = new URLSearchParams({
-    project_id: projectID,
-    environment_id: environmentID,
+    project: projectID,
+    environment: environmentID,
   });
   return `/sessions/${encodeURIComponent(sessionID)}?${params.toString()}`;
 }
@@ -203,7 +202,7 @@ export function questionCLICommands(address: AskAddress, origin: string) {
 
 export type { AskState, AskPage } from "../../../../sdk/typescript/src/contract";
 export function askConsolePath(address: AskAddress): string {
-  const query = new URLSearchParams({ project_id: address.projectID, environment_id: address.environmentID });
+  const query = new URLSearchParams({ project: address.projectID, environment: address.environmentID });
   return `/sessions/${encodeURIComponent(address.sessionID)}/turns/${encodeURIComponent(address.turnID)}/asks/${encodeURIComponent(address.askID)}?${query}`;
 }
 

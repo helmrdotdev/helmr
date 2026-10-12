@@ -8,7 +8,8 @@ import { useRouteScope } from "../lib/scope";
 import { sessionConsolePath } from "../lib/sessions";
 import {
   getComputer,
-  listComputerMembers,
+  listComputerSessions,
+  listComputerCommands,
   type ComputerScope,
 } from "../lib/computers";
 import { DataTable } from "../ui/DataTable";
@@ -33,46 +34,43 @@ function actionErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
-function ComputerMembersPanel(props: { computerID: string; scope: ComputerScope }) {
-  const members = createInfiniteQuery(() => ({
-    queryKey: ["computer-members", props.computerID, props.scope.projectID, props.scope.environmentID],
-    queryFn: ({ pageParam }) => listComputerMembers(props.computerID, props.scope, { cursor: pageParam || undefined }),
+function ComputerUsagePanel(props: { computerID: string; scope: ComputerScope; kind: "sessions" | "commands" }) {
+  const title = () => props.kind === "sessions" ? "Sessions" : "Commands";
+  const usage = createInfiniteQuery(() => ({
+    queryKey: ["computer", props.computerID, props.kind, props.scope.projectID, props.scope.environmentID],
+    queryFn: async ({ pageParam }) => {
+      const options = { cursor: pageParam || undefined };
+      if (props.kind === "sessions") {
+        const page = await listComputerSessions(props.computerID, props.scope, options);
+        return { items: page.sessions, next_cursor: page.next_cursor };
+      }
+      const page = await listComputerCommands(props.computerID, props.scope, options);
+      return { items: page.commands, next_cursor: page.next_cursor };
+    },
     initialPageParam: "",
-    getNextPageParam: (page) => page.next_cursor,
+    getNextPageParam: page => page.next_cursor,
     refetchInterval: 5_000,
     retry: false,
   }));
-  const items = createMemo(() => members.data?.pages.flatMap((page) => page.members) ?? []);
-  return (
-    <Panel title="Members">
-      <Show when={members.isError}>
-        <StatePanel error={actionErrorMessage(members.error, "Could not load Computer members.")} />
+  const items = createMemo(() => usage.data?.pages.flatMap(page => page.items) ?? []);
+  return <Panel title={title()}>
+    <p class={ui.muted}>Currently using this Computer, including work awaiting cleanup.</p>
+    <Show when={usage.isError}><StatePanel error={actionErrorMessage(usage.error, `Could not load ${props.kind}.`)} /></Show>
+    <Show when={usage.isPending}><StatePanel loading={`Loading ${props.kind}...`} /></Show>
+    <Show when={usage.data}>
+      <Show when={items().length > 0} fallback={<StatePanel empty={`No ${props.kind} are using this Computer.`} />}>
+        <DataTable columns={["ID", "Usage"]} minWidth="min-w-0">
+          <For each={items()}>{item => <tr>
+            <td><Show when={props.kind === "sessions"} fallback={<IDText value={item.id} />}>
+              <IDText value={item.id} mode="link" href={sessionConsolePath(item.id, props.scope.projectID, props.scope.environmentID)} />
+            </Show></td>
+            <td>{item.usage_state}</td>
+          </tr>}</For>
+        </DataTable>
       </Show>
-      <Show when={members.isPending}><StatePanel loading="Loading members..." /></Show>
-      <Show when={members.data}>
-        <Show when={items().length > 0} fallback={<StatePanel empty="No active members." />}>
-          <DataTable columns={["Kind", "ID", "Status"]} minWidth="min-w-0">
-            <For each={items()}>{(member) => (
-              <tr>
-                <td>{member.kind}</td>
-                <td>
-                  <Show when={member.kind === "session"} fallback={<IDText value={member.id} />}>
-                    <IDText value={member.id} mode="link" href={sessionConsolePath(member.id, props.scope.projectID, props.scope.environmentID)} />
-                  </Show>
-                </td>
-                <td>{member.state}</td>
-              </tr>
-            )}</For>
-          </DataTable>
-        </Show>
-        <Show when={members.hasNextPage}>
-          <button class={ui.secondaryButton} disabled={members.isFetchingNextPage} onClick={() => void members.fetchNextPage()}>
-            {members.isFetchingNextPage ? "Loading..." : "Load more"}
-          </button>
-        </Show>
-      </Show>
-    </Panel>
-  );
+      <Show when={usage.hasNextPage}><button class={ui.secondaryButton} disabled={usage.isFetchingNextPage} onClick={() => void usage.fetchNextPage()}>Load more {props.kind}</button></Show>
+    </Show>
+  </Panel>;
 }
 
 export function ComputerDetail() {
@@ -115,14 +113,15 @@ export function ComputerDetail() {
               {(current) => (
                 <div class="grid grid-cols-[minmax(0,1fr)_310px] items-start gap-3.5 max-[960px]:grid-cols-1">
                   <div class="grid gap-3.5">
-                    <ComputerMembersPanel computerID={current().id} scope={resourceScope()} />
+                    <ComputerUsagePanel computerID={current().id} scope={resourceScope()} kind="sessions" />
+                    <ComputerUsagePanel computerID={current().id} scope={resourceScope()} kind="commands" />
                     <Panel title="Secret placements">
                       <Show when={current().secrets.length > 0} fallback={<StatePanel empty="No Secrets are attached." />}>
                         <DataTable columns={["Secret", "Target", "Mode", "Origins"]} minWidth="min-w-0">
                           <For each={current().secrets}>
                             {(secret) => (
                               <tr>
-                                <td><code>{secret.secretId}</code></td>
+                                <td><code>{secret.secret}</code></td>
                                 <td><code>{secret.env?.name ?? secret.file?.path}</code></td>
                                 <td>{secret.env?.mode === "protected" ? "Protected env" : secret.env ? "Raw env" : "Raw file"}</td>
                                 <td>{secret.env?.allowedOrigins?.join(", ") ?? "—"}</td>
@@ -143,7 +142,7 @@ export function ComputerDetail() {
                     <DetailItem label="Key">
                       <Show when={current().key} fallback={<span class="text-console-faint">—</span>}>{(key) => <code>{key()}</code>}</Show>
                     </DetailItem>
-                    <DetailItem label="Created from"><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", current().definition_id, { projectID: projectID(), environmentID: environmentID(), deploymentID: current().deployment_id })}>{current().definition_id}</a></DetailItem>
+                    <DetailItem label="Created from"><a class="text-console-accent hover:text-console-accent-hover" href={definitionHref("templates", current().template, { projectID: projectID(), environmentID: environmentID(), deploymentID: current().deployment_id })}>{current().template}</a></DetailItem>
                     <DetailItem label="Deployment">
                       <IDText value={current().deployment_id} mode="link" href={scopedConsoleHref(deploymentHref(current().deployment_id), resourceScope())} />
                     </DetailItem>

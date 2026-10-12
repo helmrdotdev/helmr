@@ -18,9 +18,9 @@ var (
 	ErrOrganizationExists       = errors.New("organization already exists")
 	ErrOrganizationSlugInUse    = errors.New("organization slug is already in use")
 	ErrProjectNotFound          = errors.New("project not found")
-	ErrProjectSlugInUse         = errors.New("project slug is already in use")
+	ErrProjectSlugInUse         = errors.New("project identifier is already in use")
 	ErrEnvironmentNotFound      = errors.New("environment not found")
-	ErrEnvironmentSlugInUse     = errors.New("environment slug is already in use")
+	ErrEnvironmentSlugInUse     = errors.New("environment identifier is already in use")
 	ErrNoRegion                 = errors.New("no region configured")
 	ErrDefaultRegionNotFound    = errors.New("default region not found")
 	ErrMemberNotFound           = errors.New("member not found")
@@ -59,26 +59,31 @@ func normalizeSlugName(slug string, name string) (string, string, error) {
 	slug = strings.ToLower(strings.TrimSpace(slug))
 	name = strings.TrimSpace(name)
 	if !slugPattern.MatchString(slug) {
-		return "", "", invalidInput("slug must match %s", slugPattern.String())
+		return "", "", invalidInput("identifier must match %s", slugPattern.String())
 	}
 	if name == "" {
 		name = slug
 	}
-	if len(name) > 80 || strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
-		return "", "", invalidInput("name must be 1-80 characters and contain no control characters")
-	}
-	return slug, name, nil
+	name, err := normalizeDisplayName(name)
+	return slug, name, err
 }
 
-// normalizeProjectSlugName also rejects UUID slugs, which would make a project
-// reference ambiguous.
+func normalizeDisplayName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || len(name) > 80 || strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return "", invalidInput("name must be 1-80 characters and contain no control characters")
+	}
+	return name, nil
+}
+
+// Project identifiers exclude UUID values.
 func normalizeProjectSlugName(slug string, name string) (string, string, error) {
 	slug, name, err := normalizeSlugName(slug, name)
 	if err != nil {
 		return "", "", err
 	}
 	if _, err := ids.Parse(slug); err == nil {
-		return "", "", invalidInput("project slug must not be a UUID")
+		return "", "", invalidInput("project identifier must not be a UUID")
 	}
 	return slug, name, nil
 }

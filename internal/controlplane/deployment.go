@@ -207,6 +207,8 @@ func deploymentError(err error) error {
 		return conflict(retryConflict)
 	case errors.As(err, &input):
 		return badRequest(err)
+	case errors.Is(err, agent.ErrSecretUnavailable):
+		return conflict(codedError{code: "secret_unavailable", message: "A declared Secret is missing or revoked in this Environment"})
 	case errors.Is(err, deployment.ErrFinalizationConflict):
 		return conflict(err)
 	case errors.Is(err, deployment.ErrPermissionRequired):

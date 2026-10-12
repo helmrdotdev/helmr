@@ -220,3 +220,14 @@ func TestSlackProjectionQuestionBypassesUnknownOutputAndWithdrawsAnswerControl(t
 	}
 	f.noPostClaim(t, output)
 }
+
+func TestProjectionConsoleLinkUsesPublicScope(t *testing.T) {
+	owner := projectionOwner{project: "operations", environmentRef: "staging", environment: uuid.NewV7(), session: uuid.NewV7(), config: ProjectionConfig{PublicURL: &url.URL{Scheme: "https", Host: "console.example.test"}}}
+	link, err := url.Parse(owner.consoleLink())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if link.Path != "/sessions/"+owner.session.String() || link.Query().Get("project") != "operations" || link.Query().Get("environment") != "staging" || len(link.Query()) != 2 {
+		t.Fatalf("incorrect Console scope: %s", link)
+	}
+}

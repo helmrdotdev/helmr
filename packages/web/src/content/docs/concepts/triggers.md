@@ -109,6 +109,11 @@ helmr schedule list --json
 helmr schedule get SCHEDULE_ID --json
 ```
 
-In TypeScript, use `client.schedules.list()` and `client.schedules.get(id)`.
+In the Console, open the Agent page to inspect its Schedule activations across
+Deployments. Each activation links to the Deployment that declared it.
+
+Use `helmr schedule list --agent AGENT` or `client.schedules.list({ agent: "support" })`
+to filter by the identifier declared in code. In TypeScript, retrieve one activation
+with `client.schedules.get(id)`.
 See the [triggers reference](/docs/reference/sdk/triggers) and
 [`helmr schedule`](/docs/reference/cli/schedule).

@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 
-import { getComputer, listComputers, listComputerMembers } from "./computers";
+import { getComputer, listComputers, listComputerSessions } from "./computers";
 
 const originalFetch = globalThis.fetch;
 
@@ -35,11 +35,11 @@ test("lists Computers with a bounded cursor", async () => {
   expect(calls[0]?.url).toBe("/api/projects/project%2F1/environments/env-1/computers?cursor=c1&limit=100");
 });
 
-test("lists Computer members within scope and preserves pagination", async () => {
-  const page = { members: [{ kind: "session", id: "session-1", state: "admitted", created_at: "2026-09-26T00:00:00Z" }], next_cursor: "next" };
+test("lists Computer Sessions within scope and preserves pagination", async () => {
+  const page = { sessions: [{ id: "session-1", usage_state: "admitted", created_at: "2026-09-26T00:00:00Z" }], next_cursor: "next" };
   const calls = captureFetch(page);
-  const result = await listComputerMembers("computer/1", scope, { cursor: "after/+", limit: 50 });
-  expect(calls[0]?.url).toBe(`${base}/computers/computer%2F1/members?cursor=after%2F%2B&limit=50`);
+  const result = await listComputerSessions("computer/1", scope, { cursor: "after/+", limit: 50 });
+  expect(calls[0]?.url).toBe(`${base}/computers/computer%2F1/sessions?cursor=after%2F%2B&limit=50`);
   expect(result).toEqual(page);
 });
 

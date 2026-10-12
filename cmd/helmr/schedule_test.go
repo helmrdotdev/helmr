@@ -22,13 +22,13 @@ func TestScheduleListAndGet(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(api.ListSchedulesResponse{
 				Schedules: []api.ScheduleResponse{{
-					ID: scheduleID, AgentID: "nightly", TriggerKey: "daily",
+					ID: scheduleID, Agent: "nightly", TriggerKey: "daily",
 				}},
 				NextCursor: "cursor-next",
 			})
 		case "/v1/schedules/" + scheduleID:
 			_ = json.NewEncoder(w).Encode(api.ScheduleResponse{
-				ID: scheduleID, AgentID: "nightly", TriggerKey: "daily",
+				ID: scheduleID, Agent: "nightly", TriggerKey: "daily",
 			})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.RequestURI())
@@ -79,5 +79,17 @@ func TestScheduleListRejectsExplicitZeroLimit(t *testing.T) {
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "--limit must be in [1,100]") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestAgentUUIDSelectorIsNotPublic(t *testing.T) {
+	for _, resource := range []string{"session", "schedule"} {
+		cmd := newRootCommand()
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs([]string{resource, "list", "--agent-id", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37"})
+		if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "unknown flag: --agent-id") {
+			t.Fatalf("%s: %v", resource, err)
+		}
 	}
 }

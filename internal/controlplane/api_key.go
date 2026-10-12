@@ -11,6 +11,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -63,7 +64,7 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]api.APIKeySummary, 0, len(rows))
 	for _, row := range rows {
-		item, err := apiKeySummaryFromRow(row)
+		item, err := apiKeySummaryFromRow(row, chi.URLParam(r, "project"), chi.URLParam(r, "environment"))
 		if err != nil {
 			writeError(w, errors.New("format api key"))
 			return
@@ -133,7 +134,7 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, identityError(err))
 		return
 	}
-	summary, err := apiKeySummaryFromRecord(issued.Record)
+	summary, err := apiKeySummaryFromRecord(issued.Record, chi.URLParam(r, "project"), chi.URLParam(r, "environment"))
 	if err != nil {
 		writeError(w, errors.New("format api key"))
 		return
@@ -323,13 +324,13 @@ func apiKeyPermissionGrantsFromPermissions(permissions []string) []api.APIKeyPer
 	return []api.APIKeyPermissionGrant{{Scopes: scopes}}
 }
 
-func apiKeySummaryFromRecord(record db.APIKey) (api.APIKeySummary, error) {
+func apiKeySummaryFromRecord(record db.APIKey, project, environment string) (api.APIKeySummary, error) {
 	return apiKeySummary(
 		record.ID,
 		record.Name,
 		record.KeyPrefix,
-		record.ProjectID,
-		record.EnvironmentID,
+		project,
+		environment,
 		record.CreatedAt,
 		record.LastUsedAt,
 		record.ExpiresAt,
@@ -337,13 +338,13 @@ func apiKeySummaryFromRecord(record db.APIKey) (api.APIKeySummary, error) {
 	)
 }
 
-func apiKeySummaryFromRow(row db.ListAPIKeysRow) (api.APIKeySummary, error) {
+func apiKeySummaryFromRow(row db.ListAPIKeysRow, project, environment string) (api.APIKeySummary, error) {
 	return apiKeySummary(
 		row.ID,
 		row.Name,
 		row.KeyPrefix,
-		row.ProjectID,
-		row.EnvironmentID,
+		project,
+		environment,
 		row.CreatedAt,
 		row.LastUsedAt,
 		row.ExpiresAt,
@@ -351,16 +352,8 @@ func apiKeySummaryFromRow(row db.ListAPIKeysRow) (api.APIKeySummary, error) {
 	)
 }
 
-func apiKeySummary(id pgtype.UUID, name string, keyPrefix string, projectID pgtype.UUID, environmentID pgtype.UUID, createdAt pgtype.Timestamptz, lastUsedAt pgtype.Timestamptz, expiresAt pgtype.Timestamptz, revokedAt pgtype.Timestamptz) (api.APIKeySummary, error) {
+func apiKeySummary(id pgtype.UUID, name string, keyPrefix string, project string, environment string, createdAt pgtype.Timestamptz, lastUsedAt pgtype.Timestamptz, expiresAt pgtype.Timestamptz, revokedAt pgtype.Timestamptz) (api.APIKeySummary, error) {
 	parsedID, err := pgvalue.UUIDValue(id)
-	if err != nil {
-		return api.APIKeySummary{}, err
-	}
-	parsedProjectID, err := pgvalue.UUIDValue(projectID)
-	if err != nil {
-		return api.APIKeySummary{}, err
-	}
-	parsedEnvironmentID, err := pgvalue.UUIDValue(environmentID)
 	if err != nil {
 		return api.APIKeySummary{}, err
 	}
@@ -371,15 +364,15 @@ func apiKeySummary(id pgtype.UUID, name string, keyPrefix string, projectID pgty
 		status = api.APIKeyStatusExpired
 	}
 	return api.APIKeySummary{
-		ID:            parsedID.String(),
-		Name:          name,
-		KeyPrefix:     keyPrefix,
-		ProjectID:     parsedProjectID.String(),
-		EnvironmentID: parsedEnvironmentID.String(),
-		Status:        status,
-		CreatedAt:     pgvalue.Time(createdAt),
-		LastUsedAt:    pgvalue.TimePtr(lastUsedAt),
-		ExpiresAt:     pgvalue.TimePtr(expiresAt),
-		RevokedAt:     pgvalue.TimePtr(revokedAt),
+		ID:          parsedID.String(),
+		Name:        name,
+		KeyPrefix:   keyPrefix,
+		Project:     project,
+		Environment: environment,
+		Status:      status,
+		CreatedAt:   pgvalue.Time(createdAt),
+		LastUsedAt:  pgvalue.TimePtr(lastUsedAt),
+		ExpiresAt:   pgvalue.TimePtr(expiresAt),
+		RevokedAt:   pgvalue.TimePtr(revokedAt),
 	}, nil
 }

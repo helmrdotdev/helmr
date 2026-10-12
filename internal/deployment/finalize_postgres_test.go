@@ -6,8 +6,10 @@ import (
 	"io"
 	"sync"
 	"testing"
+	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
 	"github.com/helmrdotdev/helmr/internal/bundle"
@@ -84,7 +86,7 @@ func TestRegisterPostgresConvergesConcurrentRequests(t *testing.T) {
 func TestRegisterPostgresRollsBackDefinitionsObjectsAndReceipt(t *testing.T) {
 	f := newDeploymentFinalizePostgresFixture(t)
 	// A well-formed but foreign Secret fails inside the registration transaction.
-	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{{SecretID: uuid.NewV7().String(), Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
+	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{{Secret: "MISSING_TOKEN", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
 	if _, err := register(t.Context(), f.pool, f.request); err == nil {
 		t.Fatal("foreign Secret accepted")
 	}
@@ -192,4 +194,112 @@ func (s *registeredObjectStore) Stat(_ context.Context, digest string) (cas.Obje
 func (s *registeredObjectStore) Get(context.Context, string) (io.ReadCloser, error) {
 	s.reads++
 	return nil, errors.New("unexpected object read")
+}
+
+func TestRegisterScopesLogicalSecretsAndPreservesReplays(t *testing.T) {
+	f := newDeploymentFinalizePostgresFixture(t)
+	firstEnv := pgvalue.MustUUIDValue(f.request.environmentID)
+	secondEnv := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO environments(history_retention_mode,id,org_id,project_id,slug,name,color_hex) VALUES('until_environment_deletion',$1,$2,$3,'other','Other','#112233')`, secondEnv, f.request.orgID, f.request.projectID)
+	refs := []definition.SecretBinding{{Secret: "API_TOKEN", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
+	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.Secrets = refs
+	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.BuildSecrets = refs
+	records := make([]Record, 0, 2)
+	for _, env := range []uuid.UUID{firstEnv, secondEnv} {
+		secret := insertRegistrationSecret(t, f.pool, env, "API_TOKEN")
+		request := f.request
+		request.environmentID = pgvalue.UUID(env)
+		record, err := register(t.Context(), f.pool, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		records = append(records, record)
+		var bindings int
+		if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_secret_bindings WHERE environment_id=$1 AND secret_id=$2`, env, secret).Scan(&bindings); err != nil || bindings != 2 {
+			t.Fatalf("Environment did not pin its own Secret: %d %v", bindings, err)
+		}
+		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE secrets SET status='revoked',current_version_id=NULL,revoked_at=clock_timestamp() WHERE id=$1`, secret)
+		for _, key := range []string{request.retryKey, "same-bundle-new-key"} {
+			replay := request
+			replay.retryKey = key
+			got, err := register(t.Context(), f.pool, replay)
+			if err != nil || got.ID != record.ID {
+				t.Fatalf("revocation changed registered bundle replay: %+v %v", got, err)
+			}
+		}
+		request.retryKey = "new-bundle"
+		request.bundle.root.Digest = artifacttest.Digest("new bundle")
+		if _, err := register(t.Context(), f.pool, request); !errors.Is(err, agent.ErrSecretUnavailable) {
+			t.Fatalf("new Deployment accepted revoked Secret: %v", err)
+		}
+		var deployments, retained int
+		if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM deployments WHERE environment_id=$1`, env).Scan(&deployments); err != nil || deployments != 1 {
+			t.Fatalf("failed registration retained state: %d %v", deployments, err)
+		}
+		if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_secret_bindings WHERE environment_id=$1 AND secret_id=$2`, env, secret).Scan(&retained); err != nil || retained != 2 {
+			t.Fatalf("historical bindings changed: %d %v", retained, err)
+		}
+	}
+	if records[0].ID == records[1].ID {
+		t.Fatal("cross-Environment Deployment identity reused")
+	}
+	var digests int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(DISTINCT spec_digest) FROM computer_preparation_specs`).Scan(&digests); err != nil || digests != 1 {
+		t.Fatalf("logical definition changed across Environments: %d %v", digests, err)
+	}
+}
+
+func insertRegistrationSecret(t *testing.T, pool *pgxpool.Pool, env uuid.UUID, name string) uuid.UUID {
+	t.Helper()
+	id, version := uuid.NewV7(), uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), pool, `INSERT INTO secrets(id,environment_id,name,current_version_id) VALUES($1,$2,$3,$4); INSERT INTO secret_versions(id,secret_id,version,nonce,ciphertext) VALUES($4,$1,1,decode(repeat('00',12),'hex'),decode(repeat('00',16),'hex'))`, pgx.QueryExecModeSimpleProtocol, id, env, name, version)
+	return id
+}
+
+func TestRegisterRechecksSecretAfterConcurrentRevocation(t *testing.T) {
+	f := newDeploymentFinalizePostgresFixture(t)
+	secret := insertRegistrationSecret(t, f.pool, pgvalue.MustUUIDValue(f.request.environmentID), "API_TOKEN")
+	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.Secrets = []definition.SecretBinding{{Secret: "API_TOKEN", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
+	tx, err := f.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	var locked uuid.UUID
+	if err = tx.QueryRow(t.Context(), `SELECT id FROM secrets WHERE id=$1 FOR UPDATE`, secret).Scan(&locked); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := register(ctx, f.pool, f.request); done <- err }()
+	for {
+		var waiting bool
+		if err = f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT name,id FROM secrets%')`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("registration did not wait for revocation: %v", err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if _, err = tx.Exec(t.Context(), `UPDATE secrets SET status='revoked',current_version_id=NULL,revoked_at=clock_timestamp() WHERE id=$1`, secret); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-done; !errors.Is(err, agent.ErrSecretUnavailable) {
+		t.Fatalf("concurrent revocation bypassed admission: %v", err)
+	}
+	var count int
+	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM deployments`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("racing registration left state: %d %v", count, err)
+	}
 }

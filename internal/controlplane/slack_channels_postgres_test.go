@@ -74,7 +74,7 @@ func TestSlackPublishedStartHTTPAndSDK(t *testing.T) {
 	}
 	h := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys}
 	owner := h.session(t, f.User, orgID)
-	base := fmt.Sprintf("/api/projects/%s/environments/%s", projectID, f.Environment)
+	base := "/api/projects/project/environments/test"
 	call := func(method, path, token, body string, status int) []byte {
 		t.Helper()
 		r := h.request(t, method, path, token, body)

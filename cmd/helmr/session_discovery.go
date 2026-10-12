@@ -23,7 +23,7 @@ func sessionListCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		opts := client.SessionListOptions{AgentID: agent, ParentSessionID: parent, RequesterSessionID: requester, Statuses: statuses, Cursor: cursor, Limit: limit, EnvironmentScopeOptions: scope}
+		opts := client.SessionListOptions{Agent: agent, ParentSessionID: parent, RequesterSessionID: requester, Statuses: statuses, Cursor: cursor, Limit: limit, EnvironmentScopeOptions: scope}
 		if cmd.Flags().Changed("key") {
 			opts.Key = &key
 		}
@@ -39,7 +39,7 @@ func sessionListCommand() *cobra.Command {
 			if session.ComputerID != nil {
 				computer = *session.ComputerID
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", session.ID, session.AgentID, session.Status, computer)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", session.ID, session.AgentDefinitionID, session.Status, computer)
 		}
 		if page.NextCursor != "" {
 			fmt.Fprintf(cmd.OutOrStdout(), "next_cursor: %s\n", page.NextCursor)
@@ -47,7 +47,7 @@ func sessionListCommand() *cobra.Command {
 		return nil
 	}}
 	addScopeFlags(cmd, &project, &environment)
-	cmd.Flags().StringVar(&agent, "agent", "", "Filter by stable Agent UUID.")
+	cmd.Flags().StringVar(&agent, "agent", "", "Filter by the Agent identifier declared in code.")
 	cmd.Flags().StringVar(&key, "key", "", "Filter by explicit Session key; requires --agent.")
 	cmd.Flags().StringVar(&parent, "parent-session", "", "Filter by owning parent Session UUID.")
 	cmd.Flags().StringVar(&requester, "requester-session", "", "Filter by requesting Session UUID.")

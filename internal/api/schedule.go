@@ -14,8 +14,8 @@ type ScheduleCron struct {
 }
 
 type ScheduleResponse struct {
+	Agent        string          `json:"agent"`
 	ID           string          `json:"id"`
-	AgentID      string          `json:"agent_id"`
 	DeploymentID string          `json:"deployment_id"`
 	TriggerKey   string          `json:"trigger_key"`
 	Cron         ScheduleCron    `json:"cron"`

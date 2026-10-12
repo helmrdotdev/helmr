@@ -67,8 +67,8 @@ func TestComputerSnapshotEncodesAsPublicResource(t *testing.T) {
 		ID: uuid.NewV7().String(), Key: &key, DefinitionKey: "computer.v1", DeploymentID: uuid.NewV7().String(),
 		Status: computer.StatusAvailable,
 		Secrets: []secretbinding.Reference{
-			{SecretID: uuid.NewV7().String(), Env: &secretbinding.ReferenceEnv{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://example.com"}}},
-			{SecretID: uuid.NewV7().String(), File: &secretbinding.File{Path: "/run/secrets/key"}},
+			{Secret: uuid.NewV7().String(), Env: &secretbinding.ReferenceEnv{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://example.com"}}},
+			{Secret: uuid.NewV7().String(), File: &secretbinding.File{Path: "/run/secrets/key"}},
 		},
 		LastActivityAt: at, CreatedAt: at, UpdatedAt: at,
 	}

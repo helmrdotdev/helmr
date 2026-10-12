@@ -11,6 +11,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/lifetime"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/spf13/cobra"
 )
@@ -23,6 +24,10 @@ func computerCommand() *cobra.Command {
 	command.AddCommand(
 		computerCreateCommand(),
 		computerGetCommand(),
+		computerListCommand(),
+		computerUsageCommand("sessions"),
+		computerUsageCommand("commands"),
+		computerUpdateCommand(),
 		computerDeleteCommand(),
 		computerCommandCommand(),
 	)
@@ -37,8 +42,8 @@ func computerCreateCommand() *cobra.Command {
 	var idempotencyKey string
 	var jsonOutput bool
 	command := &cobra.Command{
-		Use:   "create DECLARED_ID",
-		Short: "Create a Computer from a deployed declaration.",
+		Use:   "create TEMPLATE",
+		Short: "Create a Computer from a deployed Template.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
 			controlPlane, scope, err := scopedComputerClient(command, projectID, environmentID)
@@ -59,7 +64,7 @@ func computerCreateCommand() *cobra.Command {
 				decoder := json.NewDecoder(io.LimitReader(file, 65537))
 				decoder.DisallowUnknownFields()
 				if e := decoder.Decode(&bindings); e != nil {
-					return fmt.Errorf("secrets-file must contain a JSON Secret reference array (secretId and allowedOrigins): %w", e)
+					return fmt.Errorf("secrets-file must contain a JSON Secret reference array (secret and allowedOrigins): %w", e)
 				}
 				var trailing any
 				if e := decoder.Decode(&trailing); e != io.EOF {
@@ -89,7 +94,7 @@ func computerCreateCommand() *cobra.Command {
 		},
 	}
 	addScopeFlags(command, &projectID, &environmentID)
-	command.Flags().StringVar(&secretsFile, "secrets-file", "", "JSON array of Secret references (secretId, env or file placement, and allowedOrigins; never values).")
+	command.Flags().StringVar(&secretsFile, "secrets-file", "", "JSON array of Secret references (secret, env or file placement, and allowedOrigins; never values).")
 	command.Flags().StringVar(&key, "key", "", "Immutable Computer key.")
 	command.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for safe retries.")
 	command.Flags().BoolVar(&jsonOutput, "json", false, "Emit JSON.")
@@ -248,7 +253,7 @@ func (flags computerAddressFlags) retrieve(
 	if flags.id != "" {
 		return controlPlane.GetComputer(command.Context(), flags.id, scope)
 	}
-	response, err := controlPlane.ListComputers(command.Context(), &flags.key, scope)
+	response, err := controlPlane.ListComputers(command.Context(), client.ComputerListOptions{Key: &flags.key}, scope)
 	if err != nil {
 		return api.ComputerSnapshot{}, err
 	}
@@ -325,4 +330,138 @@ type exitCodeError struct {
 
 func (e exitCodeError) Error() string {
 	return fmt.Sprintf("computer command exited with status %d", e.code)
+}
+
+func computerListCommand() *cobra.Command {
+	var project, environment, key, cursor string
+	var limit int32
+	var jsonOutput bool
+	cmd := &cobra.Command{Use: "list", Short: "List Computers.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		if cmd.Flags().Changed("limit") && limit < 1 {
+			return errors.New("--limit must be in [1,100]")
+		}
+		cp, scope, err := scopedComputerClient(cmd, project, environment)
+		if err != nil {
+			return err
+		}
+		query := client.ComputerListOptions{Cursor: cursor, Limit: limit}
+		if cmd.Flags().Changed("key") {
+			query.Key = &key
+		}
+		page, err := cp.ListComputers(cmd.Context(), query, scope)
+		if err != nil {
+			return err
+		}
+		if jsonOutput {
+			return writeJSON(cmd.OutOrStdout(), page)
+		}
+		for _, item := range page.Computers {
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", item.ID, item.DefinitionID, item.Status)
+		}
+		if page.NextCursor != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "next_cursor: %s\n", page.NextCursor)
+		}
+		return nil
+	}}
+	addScopeFlags(cmd, &project, &environment)
+	cmd.Flags().StringVar(&key, "key", "", "Find the Computer with this exact key.")
+	cmd.Flags().StringVar(&cursor, "cursor", "", "Continuation cursor.")
+	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum items (default 50, maximum 100).")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON page.")
+	return cmd
+}
+
+func computerUsageCommand(kind string) *cobra.Command {
+	var project, environment, cursor string
+	var address computerAddressFlags
+	var limit int32
+	var jsonOutput bool
+	cmd := &cobra.Command{Use: kind, Short: "List " + kind + " occupying this Computer, including pending cleanup.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		if cmd.Flags().Changed("limit") && limit < 1 {
+			return errors.New("--limit must be in [1,100]")
+		}
+		cp, scope, err := scopedComputerClient(cmd, project, environment)
+		if err != nil {
+			return err
+		}
+		id, err := address.resolveID(cmd, cp, scope)
+		if err != nil {
+			return err
+		}
+		query := client.ComputerUsageOptions{Cursor: cursor, Limit: limit}
+		var items []api.ComputerUsage
+		var next string
+		if kind == "sessions" {
+			page, err := cp.ListComputerSessions(cmd.Context(), id, query, scope)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return writeJSON(cmd.OutOrStdout(), page)
+			}
+			items, next = page.Sessions, page.NextCursor
+		} else {
+			page, err := cp.ListComputerCommands(cmd.Context(), id, query, scope)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return writeJSON(cmd.OutOrStdout(), page)
+			}
+			items, next = page.Commands, page.NextCursor
+		}
+		for _, item := range items {
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", item.ID, item.UsageState)
+		}
+		if next != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "next_cursor: %s\n", next)
+		}
+		return nil
+	}}
+	addScopeFlags(cmd, &project, &environment)
+	address.add(cmd)
+	cmd.Flags().StringVar(&cursor, "cursor", "", "Continuation cursor for this collection.")
+	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum items (default 50, maximum 100).")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON page.")
+	return cmd
+}
+
+func computerUpdateCommand() *cobra.Command {
+	var project, environment, retention string
+	var address computerAddressFlags
+	var jsonOutput bool
+	cmd := &cobra.Command{Use: "update", Short: "Update Computer retention.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		policy := lifetime.Policy{Set: true}
+		if retention != "never" {
+			duration, err := parseDuration(retention)
+			if err != nil || duration.Milliseconds() <= 0 {
+				return errors.New("--delete-after-unused must be a positive duration or never")
+			}
+			ms := duration.Milliseconds()
+			policy.Milliseconds = &ms
+		}
+		cp, scope, err := scopedComputerClient(cmd, project, environment)
+		if err != nil {
+			return err
+		}
+		id, err := address.resolveID(cmd, cp, scope)
+		if err != nil {
+			return err
+		}
+		updated, err := cp.UpdateComputer(cmd.Context(), id, api.UpdateComputerRequest{DeleteAfterUnused: policy}, scope)
+		if err != nil {
+			return err
+		}
+		if jsonOutput {
+			return writeJSON(cmd.OutOrStdout(), updated)
+		}
+		_, err = fmt.Fprintln(cmd.OutOrStdout(), updated.ID)
+		return err
+	}}
+	addScopeFlags(cmd, &project, &environment)
+	address.add(cmd)
+	cmd.Flags().StringVar(&retention, "delete-after-unused", "", "Retention after unused, such as 1h or never.")
+	_ = cmd.MarkFlagRequired("delete-after-unused")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit JSON.")
+	return cmd
 }

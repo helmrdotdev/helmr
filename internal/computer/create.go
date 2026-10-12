@@ -101,31 +101,6 @@ func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request)
 			if !live {
 				return idempotency.Completion{}, ErrNotDeployed
 			}
-			ids := []uuid.UUID{}
-			for _, ref := range refs {
-				ids = append(ids, uuid.MustParse(ref.SecretID))
-			}
-			rows, err := tx.Query(ctx, `SELECT id FROM secrets WHERE environment_id=$1 AND id=ANY($2::uuid[]) AND status='active' ORDER BY id FOR SHARE`, request.Scope.EnvironmentID, ids)
-			if err != nil {
-				return idempotency.Completion{}, err
-			}
-			locked, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (uuid.UUID, error) {
-				var id uuid.UUID
-				err := row.Scan(&id)
-				return id, err
-			})
-			if err != nil {
-				return idempotency.Completion{}, err
-			}
-			available := map[uuid.UUID]bool{}
-			for _, id := range locked {
-				available[id] = true
-			}
-			for _, id := range ids {
-				if !available[id] {
-					return idempotency.Completion{}, ErrSecretUnavailable
-				}
-			}
 			id, err := agent.CreateStandaloneComputer(ctx, tx, c.ca, request.Scope.EnvironmentID, *deployment, request.DefinitionKey, refs)
 			if err != nil {
 				return idempotency.Completion{}, err
@@ -152,6 +127,9 @@ func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request)
 			return idempotency.Completion{Target: idempotency.Target{ComputerID: id}, Receipt: body}, nil
 		})
 	})
+	if errors.Is(err, agent.ErrSecretUnavailable) {
+		return Created{}, ErrSecretUnavailable
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Created{}, ErrNotDeployed
 	}

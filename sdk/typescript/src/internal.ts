@@ -13,8 +13,8 @@ export {
   encodeComputerSecrets,
   parseComputerDeleteReceipt,
   parseComputer,
-  parseComputerMembers,
-  encodeComputerMembersQuery,
+  parseComputerUsage,
+  encodeComputerUsageQuery,
 } from "./computer"
 export {
   canonicalizeJsonValue,

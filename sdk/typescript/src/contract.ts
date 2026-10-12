@@ -49,11 +49,12 @@ export interface SessionActivity {
   readonly process: Readonly<{epoch: number; status: "starting" | "ready" | "stopping" | "lost" | "stopped"; applied: boolean; reconstructionRequired: boolean; stop: ProcessStop | null}> | null
 }
 export interface Session {
+  readonly agent: string
+  readonly template: string
   readonly activity: SessionActivity
   readonly closeAfterIdle: Duration
   readonly idleSince: string | null
   readonly id: string
-  readonly agentId: string
   readonly deploymentId: string
   readonly computerId: string | null
   readonly rootSessionId: string

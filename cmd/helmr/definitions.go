@@ -7,20 +7,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func agentDefinitionCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "definition", Short: "Inspect deployed Agent definitions."}
-	cmd.AddCommand(agentDefinitionListCommand(), agentDefinitionGetCommand())
-	return cmd
-}
-
 func templateCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "template", Short: "Inspect Computer Templates."}
-	cmd.AddCommand(templateDefinitionCommand())
-	return cmd
-}
-
-func templateDefinitionCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "definition", Short: "Inspect deployed Template definitions."}
+	cmd := &cobra.Command{Use: "template", Short: "Inspect deployed Templates."}
 	cmd.AddCommand(templateDefinitionListCommand(), templateDefinitionGetCommand())
 	return cmd
 }
@@ -29,7 +17,7 @@ func agentDefinitionListCommand() *cobra.Command {
 	var project, environment, deployment, cursor string
 	var limit int32
 	var jsonOutput bool
-	cmd := &cobra.Command{Use: "list", Short: "Read one page of deployed Agent definitions.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "list", Short: "Read one page of deployed Agents.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("limit") && limit < 1 {
 			return errors.New("--limit must be in [1,100]")
 		}
@@ -46,7 +34,7 @@ func agentDefinitionListCommand() *cobra.Command {
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "deployment_id: %s\n", page.DeploymentID)
 		for _, item := range page.AgentDefinitions {
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", item.ID, item.AgentID)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", item.ID, item.TemplateID)
 		}
 		if page.NextCursor != "" {
 			fmt.Fprintf(cmd.OutOrStdout(), "next_cursor: %s\n", page.NextCursor)
@@ -56,7 +44,7 @@ func agentDefinitionListCommand() *cobra.Command {
 	addScopeFlags(cmd, &project, &environment)
 	cmd.Flags().StringVar(&deployment, "deployment", "", "Inspect this Deployment; omission uses the current Deployment.")
 	cmd.Flags().StringVar(&cursor, "cursor", "", "Continuation cursor from the previous page.")
-	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum definitions (default 50, maximum 100).")
+	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum items (default 50, maximum 100).")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON page.")
 	return cmd
 }
@@ -64,7 +52,7 @@ func agentDefinitionListCommand() *cobra.Command {
 func agentDefinitionGetCommand() *cobra.Command {
 	var project, environment, deployment string
 	var jsonOutput bool
-	cmd := &cobra.Command{Use: "get DEFINITION_ID", Short: "Inspect one deployed Agent definition.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "get AGENT", Short: "Inspect one deployed Agent.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		cp, scope, err := scopedSessionClient(cmd, project, environment)
 		if err != nil {
 			return err
@@ -76,12 +64,12 @@ func agentDefinitionGetCommand() *cobra.Command {
 		if jsonOutput {
 			return writeJSON(cmd.OutOrStdout(), item)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "id: %s\nagent_id: %s\ndeployment_id: %s\n", item.ID, item.AgentID, item.DeploymentID)
+		fmt.Fprintf(cmd.OutOrStdout(), "agent: %s\ndeployment_id: %s\n", item.ID, item.DeploymentID)
 		return nil
 	}}
 	addScopeFlags(cmd, &project, &environment)
 	cmd.Flags().StringVar(&deployment, "deployment", "", "Inspect this Deployment; omission uses the current Deployment.")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON definition.")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON resource.")
 	return cmd
 }
 
@@ -89,7 +77,7 @@ func templateDefinitionListCommand() *cobra.Command {
 	var project, environment, deployment, cursor string
 	var limit int32
 	var jsonOutput bool
-	cmd := &cobra.Command{Use: "list", Short: "Read one page of deployed Template definitions.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "list", Short: "Read one page of deployed Templates.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("limit") && limit < 1 {
 			return errors.New("--limit must be in [1,100]")
 		}
@@ -116,7 +104,7 @@ func templateDefinitionListCommand() *cobra.Command {
 	addScopeFlags(cmd, &project, &environment)
 	cmd.Flags().StringVar(&deployment, "deployment", "", "Inspect this Deployment; omission uses the current Deployment.")
 	cmd.Flags().StringVar(&cursor, "cursor", "", "Continuation cursor from the previous page.")
-	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum definitions (default 50, maximum 100).")
+	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum items (default 50, maximum 100).")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON page.")
 	return cmd
 }
@@ -124,7 +112,7 @@ func templateDefinitionListCommand() *cobra.Command {
 func templateDefinitionGetCommand() *cobra.Command {
 	var project, environment, deployment string
 	var jsonOutput bool
-	cmd := &cobra.Command{Use: "get DEFINITION_ID", Short: "Inspect one deployed Template definition.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "get TEMPLATE", Short: "Inspect one deployed Template.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		cp, scope, err := scopedSessionClient(cmd, project, environment)
 		if err != nil {
 			return err
@@ -136,11 +124,11 @@ func templateDefinitionGetCommand() *cobra.Command {
 		if jsonOutput {
 			return writeJSON(cmd.OutOrStdout(), item)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "id: %s\ndeployment_id: %s\n", item.ID, item.DeploymentID)
+		fmt.Fprintf(cmd.OutOrStdout(), "template: %s\ndeployment_id: %s\n", item.ID, item.DeploymentID)
 		return nil
 	}}
 	addScopeFlags(cmd, &project, &environment)
 	cmd.Flags().StringVar(&deployment, "deployment", "", "Inspect this Deployment; omission uses the current Deployment.")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON definition.")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON resource.")
 	return cmd
 }

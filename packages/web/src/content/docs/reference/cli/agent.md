@@ -1,29 +1,32 @@
 ---
 title: helmr agent
-description: Inspect deployed Agent definitions.
+description: Inspect Agents in the current or a selected Deployment.
 sidebarLabel: agent
 ---
 
 # `helmr agent`
 
 ```text
-helmr agent definition list [--deployment DEPLOYMENT_ID] [--limit N] [--cursor CURSOR] [--json]
-helmr agent definition get DEFINITION_ID [--deployment DEPLOYMENT_ID] [--json]
+helmr agent list [--deployment DEPLOYMENT_ID] [--limit N] [--cursor CURSOR] [--json]
+helmr agent get AGENT [--deployment DEPLOYMENT_ID] [--json]
 ```
 
-Every command also accepts `-p, --project` and `-e, --env`. They are required
-with a saved login and rejected with an API key. See
-[Credential selection](/docs/reference/cli/login#credential-selection).
+`AGENT` is the `id` declared in `agent({ id: "support", ... })`. The response
+calls this value `agent`. It is the only public Agent identifier.
+Agent reads also include the default `template` and resolved `deployment_id`.
+Use `helmr session create support` to create a Session.
 
-## `definition list` and `definition get`
+Without `--deployment`, reads use the current Deployment. An explicit selector
+inspects that exact Deployment, including historical content. An Agent absent
+from the selected Deployment returns not found; the CLI does not choose an older
+configuration. Configuration changes belong in code and a new Deployment.
 
 | Flag | Description |
 | --- | --- |
-| `--deployment DEPLOYMENT_ID` | Read this Deployment. Defaults to the current Deployment. |
-| `--limit N` | Page size, 1–100. Default 50. |
-| `--cursor CURSOR` | Continuation cursor from the previous page. The cursor keeps the Deployment it started with. |
-| `--json` | Print one JSON page or definition. |
+| `--deployment ID` | Inspect this Deployment instead of current. |
+| `--limit N` | List page size, 1–100; default 50. |
+| `--cursor CURSOR` | Continue the same Deployment snapshot. |
+| `--json` | Print the resource or page as JSON. |
 
-Each definition has its definition `id` and an `agent_id`, the Agent's stable
-UUID across Deployments. Use the authored definition ID when creating a Session. See
-[`helmr session create`](/docs/reference/cli/session).
+Commands accept `-p, --project` and `-e, --env`. They are required with a saved
+login and rejected with an API key. See [Credential selection](/docs/reference/cli/login#credential-selection).

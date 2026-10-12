@@ -40,7 +40,7 @@ func measureDeploymentRegistration(t *testing.T, computerCount, secretCount int)
 			if _, err := tx.Exec(t.Context(), `INSERT INTO secrets(id,environment_id,name,current_version_id) VALUES($1,$2,$3,$4); INSERT INTO secret_versions(id,secret_id,version,nonce,ciphertext) VALUES($4,$1,1,decode(repeat('00',12),'hex'),decode(repeat('00',16),'hex'))`, pgx.QueryExecModeSimpleProtocol, id, pgvalue.MustUUIDValue(f.request.environmentID), name, version); err != nil {
 				return err
 			}
-			refs = append(refs, definition.SecretBinding{SecretID: id.String(), Env: &definition.SecretBindingEnv{Name: name, Mode: "raw"}})
+			refs = append(refs, definition.SecretBinding{Secret: name, Env: &definition.SecretBindingEnv{Name: name, Mode: "raw"}})
 		}
 		return nil
 	}); err != nil {

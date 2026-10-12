@@ -28,7 +28,7 @@ func invalidEnvironmentScopeReference(message string) error {
 func (s *Server) requestEnvironmentScope(ctx context.Context, principal auth.Principal, projectID string, environmentID string) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
 	if principal.Kind == auth.PrincipalKindAPIKey {
 		if projectID != "" || environmentID != "" {
-			return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, invalidEnvironmentScopeReference("project_id and environment_id are not accepted with API keys")
+			return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, invalidEnvironmentScopeReference("project and environment are not accepted with API keys")
 		}
 		scope, ok := principal.EnvironmentScope()
 		if !ok {
@@ -64,11 +64,11 @@ func (s *Server) requestEnvironmentScopeFromRequest(r *http.Request, principal a
 }
 
 func environmentScopeRefsFromRequest(r *http.Request, principal auth.Principal) (string, string, error) {
-	pathProjectID := chi.URLParam(r, "projectID")
-	pathEnvironmentID := chi.URLParam(r, "environmentID")
+	pathProjectID := chi.URLParam(r, "project")
+	pathEnvironmentID := chi.URLParam(r, "environment")
 	hasPathScope := pathProjectID != "" || pathEnvironmentID != ""
 	if hasPathScope && (pathProjectID == "" || pathEnvironmentID == "") {
-		return "", "", invalidEnvironmentScopeReference("project_id and environment_id must be provided together")
+		return "", "", invalidEnvironmentScopeReference("project and environment must be provided together")
 	}
 	switch principal.Kind {
 	case auth.PrincipalKindSession:

@@ -98,3 +98,17 @@ func TestSessionDefinitionsRemainPinnedOutsideCurrentDeployment(t *testing.T) {
 		t.Fatalf("hidden old Session: %+v %v", page, err)
 	}
 }
+
+func TestSessionAgentNameHistoryWithoutCurrentDeployment(t *testing.T) {
+	f := newFixture(t)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET current_deployment_id=NULL WHERE id=$1`, f.env)
+	page, err := ListSessions(t.Context(), f.pool, f.caller(), SessionListRequest{EnvironmentID: f.env, Limit: 50, Agent: "agent"})
+	if err != nil || len(page.Sessions) != 1 || page.Sessions[0].ID != f.session {
+		t.Fatalf("history query: %+v %v", page, err)
+	}
+	page, err = ListSessions(t.Context(), f.pool, f.caller(), SessionListRequest{EnvironmentID: f.env, Limit: 50, Agent: "missing"})
+	if err != nil || len(page.Sessions) != 0 {
+		t.Fatalf("unknown agent: %+v %v", page, err)
+	}
+
+}

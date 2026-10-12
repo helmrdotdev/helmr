@@ -1,19 +1,17 @@
 import { expect, test, type Page } from "@playwright/test";
-const projectID = "00000000-0000-7000-8000-000000000301";
-const environmentID = "00000000-0000-7000-8000-000000000403";
+const projectID = "console-demo";
+const environmentID = "demo";
 const sessionID = "00000000-0000-7000-8000-000000000799";
 const turnID = "00000000-0000-7000-8000-000000000798";
 const askID = "00000000-0000-7000-8000-000000000797";
 const userID = "00000000-0000-7000-8000-000000000796";
 const base = `/api/projects/${projectID}/environments/${environmentID}`;
 const path = `${base}/sessions/${sessionID}/turns/${turnID}/asks/${askID}`;
-const url = `/sessions/${sessionID}/turns/${turnID}/asks/${askID}?project_id=${projectID}&environment_id=${environmentID}`;
+const url = `/sessions/${sessionID}/turns/${turnID}/asks/${askID}?project=${projectID}&environment=${environmentID}`;
 const now = "2026-10-06T00:00:00Z";
 async function scope(page: Page) {
   const environment = {
-    id: environmentID,
-    project_id: projectID,
-    slug: "dev",
+    environment: environmentID, project: projectID,
     name: "Development",
     color_hex: "#008000",
     is_default: true,
@@ -21,8 +19,7 @@ async function scope(page: Page) {
     updated_at: now,
   };
   const project = {
-    id: projectID,
-    slug: "test",
+    project: projectID,
     name: "Test",
     default_region_id: "local",
     is_default: true,

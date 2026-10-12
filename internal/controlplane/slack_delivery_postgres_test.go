@@ -72,7 +72,7 @@ func TestSlackDeliveryHTTPReadsCurrentScopeAndRestrictsRecoveryToManagers(t *tes
 	}
 	h := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys}
 	owner := h.session(t, f.User, org)
-	base := fmt.Sprintf("/api/projects/%s/environments/%s/sessions/%s/slack-delivery", project, f.Environment, f.Session)
+	base := fmt.Sprintf("/api/projects/project/environments/test/sessions/%s/slack-delivery", f.Session)
 	call := func(method, path, token, body string, want int) []byte {
 		t.Helper()
 		w := h.request(t, method, path, token, body)
@@ -98,7 +98,7 @@ func TestSlackDeliveryHTTPReadsCurrentScopeAndRestrictsRecoveryToManagers(t *tes
 	action := base + "/" + first.String()
 	call(http.MethodPost, action+"/check", owner, string(input), 204)
 	call(http.MethodPost, action+"/check", owner, string(input), 409)
-	call(http.MethodGet, fmt.Sprintf("/api/projects/%s/environments/%s/sessions/%s/slack-delivery", project, f.Environment, uuid.NewV7()), owner, "", 404)
+	call(http.MethodGet, fmt.Sprintf("/api/projects/project/environments/test/sessions/%s/slack-delivery", uuid.NewV7()), owner, "", 404)
 	viewerID := h.user(t, "Viewer")
 	h.member(t, org, viewerID, db.OrgMemberRoleViewer)
 	viewer := h.session(t, viewerID, org)

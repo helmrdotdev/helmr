@@ -1,8 +1,7 @@
 import { request } from "./api";
 
 export type Secret = {
-  id: string;
-  name: string;
+  secret: string;
   status: "active" | "revoked";
   created_at: string;
   rotated_at?: string;
@@ -26,7 +25,7 @@ export async function createSecret(
   return request<Secret>(secretsPath(projectID, environmentID), {
     method: "POST",
     body: JSON.stringify({
-      name,
+      secret: name,
       value,
       idempotency_key: crypto.randomUUID(),
     }),

@@ -70,17 +70,19 @@ the declared `input`; there is no separate schedule payload.
 
 ```ts
 client.schedules.get(scheduleId: string, options?): Promise<Schedule>
-client.schedules.list(query?: { agentId?: string; cursor?: string; limit?: number }, options?): Promise<CursorPage<Schedule>>
+client.schedules.list(query?: { agent?: string; cursor?: string; limit?: number }, options?): Promise<CursorPage<Schedule>>
 ```
 
-`agentId` is the Agent UUID (see `agentId` on
-[Agent definitions](/docs/reference/sdk/agent#client-agent-definitions)).
+`agent` is the identifier declared in code.
+This filter searches retained Schedules even when the
+Agent is absent from the current Deployment. An unknown `agent` returns an empty
+page. See [Agents](/docs/reference/sdk/agent#client-agents).
 `limit` is 1–100.
 
 | `Schedule` field | Type | Description |
 | --- | --- | --- |
 | `id` | `string` | Schedule ID. |
-| `agentId` | `string` | Agent UUID. |
+| `agent` | `string` | Agent identifier declared in code. |
 | `deploymentId` | `string` | Deployment that declared the trigger. |
 | `triggerKey` | `string` | The trigger `id`. |
 | `input` | `InputContent` | Declared input. |

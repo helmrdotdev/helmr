@@ -24,11 +24,9 @@ import (
 func writeSessionScopeProject(t *testing.T, w http.ResponseWriter, projectSlug, environmentSlug string) {
 	t.Helper()
 	if err := json.NewEncoder(w).Encode(api.ProjectSummary{
-		ID:   "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30",
-		Slug: projectSlug,
+		Project: projectSlug,
 		Environments: []api.EnvironmentSummary{{
-			ID:   "019c10d5-a6f7-7af2-8f5f-bb97bcc0dc32",
-			Slug: environmentSlug,
+			Environment: environmentSlug,
 		}},
 	}); err != nil {
 		t.Fatal(err)
