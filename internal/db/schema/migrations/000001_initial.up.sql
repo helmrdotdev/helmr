@@ -1258,7 +1258,6 @@ CREATE TABLE slack_channel_bindings (
 
 CREATE INDEX slack_channel_bindings_environment ON slack_channel_bindings(environment_id, id);
 
--- Every promotion starts a new half-open schedule activation interval.
 -- A trigger as authored on one Agent definition. Only time triggers exist; a
 -- second kind adds its own declaration shape and identity rule.
 CREATE TABLE agent_triggers (
@@ -1798,9 +1797,9 @@ CREATE UNIQUE INDEX turn_messages_one_started ON turn_messages(environment_id, t
 
 CREATE INDEX turn_messages_pending ON turn_messages(environment_id, session_id, turn_id, seq) WHERE status IN ('admitted', 'started');
 
--- One queue retains accepted diagnostics and Deployment events. The typed owner
--- remains while payload delivery is outstanding; only diagnostic inserts share
--- the bounded admission gate. Deployment delivery has its own claims/lifetime.
+-- Accepted stdout/stderr chunks wait here until export or expiry. The typed
+-- owner remains while export is outstanding, and every insert shares the bounded
+-- admission gate. Deployment events have their own table.
 CREATE TABLE diagnostic_chunks (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     environment_id uuid NOT NULL REFERENCES environments(id),

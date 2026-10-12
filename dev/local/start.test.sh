@@ -262,30 +262,25 @@ test_concurrent_stacks_isolated() {
 }
 
 test_persistence_and_reset() {
-  local dir pid db_url production_name token_status schedule_count
+  local dir pid db_url production_name trigger_count
   dir="$(mktemp -d "${TMPDIR:-/tmp}/helmr-stack-persist.XXXXXX")"
   pid="$(launch_fresh_wrapper "${dir}" 36240 preview "${dir}/wrapper.log")"
   wait_ready 36240
   db_url="$(owned_database_url "${dir}" 36240 preview)"
   psql "${db_url}" -v ON_ERROR_STOP=1 -c \
     "UPDATE environments SET name = 'Renamed Production' WHERE id = '00000000-0000-7000-8000-000000000401'" >/dev/null
-  # Match token completion: SHA-256 of the canonical JSON result, stored as binary32.
   psql "${db_url}" -v ON_ERROR_STOP=1 -c \
-    "UPDATE tokens SET status = 'completed', result = '{\"approved\":true}'::jsonb, completed_at = now(), completion_fingerprint = sha256(convert_to('{\"approved\":true}', 'UTF8')) WHERE id = '00000000-0000-7000-8000-000000000801'" >/dev/null
-  psql "${db_url}" -v ON_ERROR_STOP=1 -c \
-    "DELETE FROM schedules WHERE id = '00000000-0000-7000-8000-000000000521'" >/dev/null
+    "DELETE FROM trigger_activations WHERE id = '00000000-0000-7000-8000-000000000521'" >/dev/null
   stop_wrapper "${pid}"
   pid="$(launch_wrapper "${dir}" 36240 preview "${dir}/restart.log")"
   wait_ready 36240
   db_url="$(owned_database_url "${dir}" 36240 preview)"
   production_name="$(psql "${db_url}" -At -c \
     "SELECT name FROM environments WHERE id = '00000000-0000-7000-8000-000000000401'")"
-  token_status="$(psql "${db_url}" -At -c \
-    "SELECT status FROM tokens WHERE id = '00000000-0000-7000-8000-000000000801'")"
-  schedule_count="$(psql "${db_url}" -At -c \
-    "SELECT count(*) FROM schedules WHERE id = '00000000-0000-7000-8000-000000000521'")"
-  if [ "${production_name}" != "Renamed Production" ] || [ "${token_status}" != "completed" ] || [ "${schedule_count}" != "0" ]; then
-    fail "restart without reset did not preserve edits (${production_name}/${token_status}/${schedule_count})"
+  trigger_count="$(psql "${db_url}" -At -c \
+    "SELECT count(*) FROM trigger_activations WHERE id = '00000000-0000-7000-8000-000000000521'")"
+  if [ "${production_name}" != "Renamed Production" ] || [ "${trigger_count}" != "0" ]; then
+    fail "restart without reset did not preserve edits (${production_name}/${trigger_count})"
   fi
   stop_wrapper "${pid}"
   wait_owned_services_stopped "${dir}" 36240 preview
@@ -295,12 +290,10 @@ test_persistence_and_reset() {
   db_url="$(owned_database_url "${dir}" 36240 preview)"
   production_name="$(psql "${db_url}" -At -c \
     "SELECT name FROM environments WHERE id = '00000000-0000-7000-8000-000000000401'")"
-  token_status="$(psql "${db_url}" -At -c \
-    "SELECT status FROM tokens WHERE id = '00000000-0000-7000-8000-000000000801'")"
-  schedule_count="$(psql "${db_url}" -At -c \
-    "SELECT count(*) FROM schedules WHERE id = '00000000-0000-7000-8000-000000000521'")"
-  if [ "${production_name}" != "Production" ] || [ "${token_status}" != "pending" ] || [ "${schedule_count}" != "1" ]; then
-    fail "reset did not restore fixtures (${production_name}/${token_status}/${schedule_count})"
+  trigger_count="$(psql "${db_url}" -At -c \
+    "SELECT count(*) FROM trigger_activations WHERE id = '00000000-0000-7000-8000-000000000521'")"
+  if [ "${production_name}" != "Production" ] || [ "${trigger_count}" != "1" ]; then
+    fail "reset did not restore fixtures (${production_name}/${trigger_count})"
   fi
   stop_wrapper "${pid}"
   wait_owned_services_stopped "${dir}" 36240 preview
