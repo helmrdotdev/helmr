@@ -201,7 +201,7 @@ func ListRetainedAgents(ctx context.Context, q db.DBTX, principal auth.Principal
 		return nil, err
 	}
 	if limit < 1 || limit > 100 {
-		return nil, invalidInput(errors.New("Agent page limit must be between 1 and 100"))
+		return nil, invalidInput(errors.New("agent page limit must be between 1 and 100"))
 	}
 	project, environment, err := scopeIDs(scope)
 	if err != nil {

@@ -85,7 +85,7 @@ func (s *Server) readRetainedAgents(w http.ResponseWriter, r *http.Request, sing
 	}
 	if single {
 		if len(items) == 0 {
-			writeError(w, notFound(errors.New("Agent not found")))
+			writeError(w, notFound(errors.New("agent not found")))
 			return
 		}
 		writeJSON(w, http.StatusOK, items[0])
